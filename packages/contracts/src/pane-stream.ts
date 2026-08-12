@@ -210,6 +210,7 @@ export const PaneStreamInputFrameSchemaZ = z.discriminatedUnion("kind", [
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: z.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
       data: InputTextSchemaZ,
+      performanceTraceId: z.uuid().optional(),
     })
     .strict(),
   z
@@ -219,6 +220,7 @@ export const PaneStreamInputFrameSchemaZ = z.discriminatedUnion("kind", [
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: z.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
       data: PaneStreamKeyNameSchemaZ,
+      performanceTraceId: z.uuid().optional(),
     })
     .strict(),
 ]);

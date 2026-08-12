@@ -38,6 +38,7 @@ describe("terminal delivery contracts", () => {
       type: "terminal.delivery",
       ...address,
       transactionId: "00000000-0000-4000-8000-000000000003",
+      performanceTraceId: "00000000-0000-4000-8000-000000000004",
       protocolVersion: 1,
       encoding: "semantic-v1",
       frame: "seed",
@@ -52,6 +53,9 @@ describe("terminal delivery contracts", () => {
       richPlacements: false,
     } as const;
     expect(TerminalDeliveryEnvelopeSchemaZ.parse(valid)).toEqual(valid);
+    expect(() =>
+      TerminalDeliveryEnvelopeSchemaZ.parse({ ...valid, performanceTraceId: "not-a-uuid" }),
+    ).toThrow();
     for (const mutation of [
       { chunkCount: 2 },
       { baseRevision: 0 },

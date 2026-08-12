@@ -9,7 +9,10 @@ import {
   SYSTEM_SESSION_RUNTIME_SCHEDULER,
   type SessionRuntimeScheduler,
 } from "./runtime-scheduler.ts";
-import type { SessionRuntimeObservability } from "./runtime-observability.ts";
+import type {
+  SessionRuntimeObservability,
+  SessionRuntimeTraceContext,
+} from "./runtime-observability.ts";
 
 export interface TerminalReplicaSubscription {
   readonly generation: SessionRuntimeGeneration;
@@ -35,11 +38,14 @@ export interface TerminalReplicaQualificationSnapshot {
 /** One parser/replica owner for one semantic pane inside one SessionRuntime. */
 export class SessionRuntimeTerminalReplicaOwner {
   readonly #interpreter: TerminalReplicaInterpreter;
-  readonly #listeners = new Set<(update: CanonicalTerminalReplicaUpdate) => void>();
+  readonly #listeners = new Set<
+    (update: CanonicalTerminalReplicaUpdate, trace: SessionRuntimeTraceContext | null) => void
+  >();
   readonly #rawListeners = new Set<(record: TerminalReplicaCommittedRaw) => void>();
   readonly #onClosed: (() => void) | undefined;
   readonly #onFault: ((error: unknown) => void) | undefined;
   readonly #scheduler: SessionRuntimeScheduler;
+  readonly #takeOutputTrace: (() => SessionRuntimeTraceContext | null) | undefined;
   readonly #start: Promise<void>;
   #upstream: MirrorSubscription | null = null;
   #disposed = false;
@@ -61,11 +67,13 @@ export class SessionRuntimeTerminalReplicaOwner {
       readonly onFault?: (error: unknown) => void;
       readonly scheduler?: SessionRuntimeScheduler;
       readonly observability?: SessionRuntimeObservability;
+      readonly takeOutputTrace?: () => SessionRuntimeTraceContext | null;
     },
   ) {
     this.#onClosed = options.onClosed;
     this.#onFault = options.onFault;
     this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
+    this.#takeOutputTrace = options.takeOutputTrace;
     this.#interpreter = new TerminalReplicaInterpreter({
       generation,
       workspaceName: session,
@@ -76,12 +84,12 @@ export class SessionRuntimeTerminalReplicaOwner {
       rows: this.#rows,
       scheduler: options.scheduler,
       observability: options.observability,
-      onUpdate: (update) => {
+      onUpdate: (update, trace) => {
         if (update.type === "terminal.seed") this.#bootstrapped = true;
         options.onRevision?.(update.revision);
         for (const listener of this.#listeners) {
           try {
-            listener(update);
+            listener(update, trace);
           } catch {
             // A client projection cannot block sibling subscribers.
           }
@@ -137,7 +145,10 @@ export class SessionRuntimeTerminalReplicaOwner {
   }
 
   async subscribe(
-    listener: (update: CanonicalTerminalReplicaUpdate) => void,
+    listener: (
+      update: CanonicalTerminalReplicaUpdate,
+      trace: SessionRuntimeTraceContext | null,
+    ) => void,
   ): Promise<TerminalReplicaSubscription> {
     if (this.#disposed) throw new Error("Terminal replica owner is disposed");
     try {
@@ -147,7 +158,7 @@ export class SessionRuntimeTerminalReplicaOwner {
       const seed = this.#interpreter.currentSeed();
       if (!seed) throw new Error("Terminal replica bootstrap did not produce a seed");
       try {
-        listener(seed);
+        listener(seed, null);
       } catch {
         // Bootstrap delivery has the same client-isolation rule as live frames.
       }
@@ -168,7 +179,10 @@ export class SessionRuntimeTerminalReplicaOwner {
   }
 
   async subscribeSource(
-    listener: (update: CanonicalTerminalReplicaUpdate) => void,
+    listener: (
+      update: CanonicalTerminalReplicaUpdate,
+      trace: SessionRuntimeTraceContext | null,
+    ) => void,
     onRaw: (record: TerminalReplicaCommittedRaw) => void,
   ): Promise<TerminalReplicaSourceSubscription> {
     const canonical = await this.subscribe(listener);
@@ -205,7 +219,14 @@ export class SessionRuntimeTerminalReplicaOwner {
       this.#reseed = { cols: event.cols, rows: event.rows, chunks: [] };
     } else if (event.type === "seed" || event.type === "delta") {
       if (this.#reseed) this.#reseed.chunks.push(event.data.slice());
-      else this.#supervise(this.#interpreter.enqueue({ type: "write", data: event.data }));
+      else
+        this.#supervise(
+          this.#interpreter.enqueue({
+            type: "write",
+            data: event.data,
+            trace: this.#takeOutputTrace?.() ?? null,
+          }),
+        );
     } else if (event.type === "cursor") {
       const reseed = this.#reseed;
       this.#reseed = null;

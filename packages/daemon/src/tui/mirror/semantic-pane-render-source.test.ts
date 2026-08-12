@@ -12,6 +12,7 @@ import {
 import type { CellArrays } from "./blit.ts";
 import {
   SemanticPaneReplica,
+  SemanticTerminalRenderSource,
   extractTerminalCellText,
   findTerminalCellMatches,
   projectTerminalTextRow,
@@ -32,7 +33,11 @@ function negotiated() {
   return result.negotiated;
 }
 
-function seedMessages(snapshot: TerminalReplicaSnapshot, txSuffix = "3") {
+function seedMessages(
+  snapshot: TerminalReplicaSnapshot,
+  txSuffix = "3",
+  performanceTraceId?: string,
+) {
   const bytes = encodeSemanticTerminalUpdate({ frame: "seed", revision: 0, snapshot });
   const transactionId = `00000000-0000-4000-8000-${txSuffix.padStart(12, "0")}`;
   const envelope = TerminalDeliveryEnvelopeSchemaZ.parse({
@@ -43,6 +48,7 @@ function seedMessages(snapshot: TerminalReplicaSnapshot, txSuffix = "3") {
     incarnation: `${generation}:7`,
     deliveryNonce: nonce,
     transactionId,
+    ...(performanceTraceId ? { performanceTraceId } : {}),
     protocolVersion: 1,
     encoding: "semantic-v1",
     frame: "seed",
@@ -108,6 +114,35 @@ describe("SemanticPaneReplica", () => {
     second.accept(silent.envelope);
     for (const chunk of silent.chunks) second.accept(chunk);
     expect(sink.terminalDelivery).toHaveBeenCalledOnce();
+  });
+
+  it("carries daemon trace authority to exactly one real framebuffer blit", () => {
+    const traceId = "00000000-0000-4000-8000-000000000099";
+    const replica = new SemanticPaneReplica({
+      negotiated: negotiated(),
+      workspaceName: "workspace.alpha",
+      semanticPaneId: pane,
+      ack: vi.fn(),
+      nack: vi.fn(),
+    });
+    const source = new SemanticTerminalRenderSource();
+    source.set(replica);
+    const delivery = seedMessages(blankTerminalReplicaSnapshot(2, 1), "98", traceId);
+    replica.accept(delivery.envelope);
+    for (const chunk of delivery.chunks) replica.accept(chunk);
+    const options = { full: true, dirtyRows: [] as number[] };
+
+    expect(source.blitPane(pane, arrays(2, 1), 2, 1, 0, 0xffffff, 0, options)).toEqual({
+      traceId,
+      generation,
+      incarnation: `${generation}:7`,
+    });
+    expect(
+      source.blitPane(pane, arrays(2, 1), 2, 1, 0, 0xffffff, 0, {
+        full: true,
+        dirtyRows: [],
+      }),
+    ).toBeNull();
   });
 
   it("isolates a diagnostic observer failure from terminal protocol truth", () => {

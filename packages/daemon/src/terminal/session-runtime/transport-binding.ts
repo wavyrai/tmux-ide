@@ -205,7 +205,12 @@ export class SessionRuntimeTransportBinding {
     return this.#binder.registry.submitAuthenticatedIntent(handle, operationId, intent);
   }
 
-  sendInput(semanticPaneId: string, kind: "text" | "key", data: string): void {
+  sendInput(
+    semanticPaneId: string,
+    kind: "text" | "key",
+    data: string,
+    performanceTraceId?: string,
+  ): void {
     this.assertController(semanticPaneId);
     const lease = this.#shared.lease;
     if (!lease) {
@@ -214,7 +219,7 @@ export class SessionRuntimeTransportBinding {
         "The transport no longer owns controller authority.",
       );
     }
-    this.#shared.consumer.sendInput(lease, semanticPaneId, kind, data);
+    this.#shared.consumer.sendInput(lease, semanticPaneId, kind, data, performanceTraceId);
   }
 
   fitViewport(cols: number, rows: number): void {

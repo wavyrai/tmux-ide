@@ -90,8 +90,14 @@ export interface TerminalPaneRenderSource {
     defaultFg: number,
     defaultBg: number,
     options: BlitOptions,
-  ): void;
+  ): TerminalPaintTrace | null;
   releasePane?(paneId: string, consumerId: object): void;
+}
+
+export interface TerminalPaintTrace {
+  readonly traceId: string;
+  readonly generation: string;
+  readonly incarnation: string;
 }
 
 const hardwareCursorOwner = new WeakMap<RenderContext, PaneSurfaceRenderable>();
@@ -320,7 +326,7 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
 
     this._graphemes.length = 0;
     this._dirtyRows.length = 0;
-    this._mirror.blitPane(
+    const paintTrace = this._mirror.blitPane(
       this._paneId,
       buffers,
       w,
@@ -390,7 +396,21 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
 
     if (performanceSink) {
       try {
-        performanceSink.terminalPaint(this._dirtyRows.length, performance.now() - paintStartedAt);
+        const paintEndedAt = performance.now();
+        performanceSink.terminalPaint(this._dirtyRows.length, paintEndedAt - paintStartedAt);
+        if (paintTrace && performanceSink.terminalTraceSpan)
+          performanceSink.terminalTraceSpan({
+            traceId: paintTrace.traceId,
+            scenario: "terminal-input-to-paint",
+            stage: "paint",
+            processId: `opentui:${process.pid}`,
+            clockId: "opentui-performance-now",
+            clockKind: "performance-now",
+            startedAtMicros: Math.floor(paintStartedAt * 1_000),
+            endedAtMicros: Math.floor(paintEndedAt * 1_000),
+            generation: paintTrace.generation,
+            incarnation: paintTrace.incarnation,
+          });
       } catch {
         // Diagnostics are observational and can never break terminal paint.
       }

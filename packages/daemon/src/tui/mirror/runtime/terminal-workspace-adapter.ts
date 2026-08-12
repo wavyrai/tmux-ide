@@ -6,7 +6,7 @@ import type {
 import { AsyncDisposableSlot } from "../../async-disposable-slot.ts";
 import type { CellArrays } from "../blit.ts";
 import type { BlitOptions, CursorState } from "../pane-mirror.ts";
-import type { TerminalPaneRenderSource } from "../pane-surface.tsx";
+import type { TerminalPaintTrace, TerminalPaneRenderSource } from "../pane-surface.tsx";
 import { SemanticSessionView } from "../semantic-session-view.ts";
 import { SemanticTerminalRenderSource } from "../semantic-pane-render-source.ts";
 import type { TerminalPaletteProjection } from "../theme.ts";
@@ -40,16 +40,18 @@ class RetainedTerminalRenderSource implements TerminalPaneRenderSource {
     defaultFg: number,
     defaultBg: number,
     options: BlitOptions,
-  ): void {
-    this.#source?.blitPane(
-      paneId,
-      buffers,
-      width,
-      height,
-      scrollOffset,
-      defaultFg,
-      defaultBg,
-      options,
+  ): TerminalPaintTrace | null {
+    return (
+      this.#source?.blitPane(
+        paneId,
+        buffers,
+        width,
+        height,
+        scrollOffset,
+        defaultFg,
+        defaultBg,
+        options,
+      ) ?? null
     );
   }
 

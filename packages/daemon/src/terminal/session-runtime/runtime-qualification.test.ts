@@ -161,6 +161,50 @@ describe("real SessionRuntime qualification", () => {
     await registry.dispose();
   });
 
+  it("correlates real parse, reduce and transport boundaries on one daemon clock", async () => {
+    const { registry, drivers } = rig();
+    const client = registry.connect("zz-sim", "opentui", "client:trace");
+    const messages: TerminalDeliveryServerMessage[] = [];
+    const opening = client.openTerminalDelivery("delivery:trace", "pane.alpha", OFFER, (message) =>
+      messages.push(message),
+    );
+    await waitForDriver(drivers);
+    await drivers[0]!.settleUntil(
+      () => messages.some((message) => message.type === "terminal.delivery"),
+      "trace seed",
+    );
+    const connection = await opening;
+    const seed = latest(messages);
+    connection.ack(ack(seed));
+    const traceId = "00000000-0000-4000-8000-000000000099";
+    const lease = client.acquireController();
+    client.sendInput(lease, "pane.alpha", "text", "printf TRACE", traceId);
+    drivers[0]!.output("%1", "TRACE");
+    await drivers[0]!.settleUntil(
+      () => latest(messages).canonicalRevision > seed.canonicalRevision,
+      "traced delivery",
+    );
+    const envelope = latest(messages);
+    expect(envelope.performanceTraceId).toBe(traceId);
+    const spans = registry
+      .qualificationSnapshot()
+      .observability.spans.filter(({ traceId }) => traceId === envelope.performanceTraceId);
+    expect(spans.map(({ stage }) => stage)).toEqual(["tmux", "parse", "reduce", "transport"]);
+    expect(new Set(spans.map(({ processId }) => processId)).size).toBe(1);
+    expect(new Set(spans.map(({ clockId }) => clockId)).size).toBe(1);
+    expect(spans.every(({ clockKind }) => clockKind === "performance-now")).toBe(true);
+    expect(spans.every(({ authority }) => authority?.generation === GENERATION)).toBe(true);
+    expect(spans[0]!.authority?.incarnation).toBeNull();
+    expect(
+      spans.slice(1).every(({ authority }) => authority?.incarnation === envelope.incarnation),
+    ).toBe(true);
+    for (let index = 1; index < spans.length; index += 1)
+      expect(spans[index - 1]!.endedAtMicros).toBeLessThanOrEqual(spans[index]!.startedAtMicros);
+    await connection.close();
+    await client.close();
+    await registry.dispose();
+  });
+
   it("keeps authenticated source and terminal mutation outcomes exact", async () => {
     const { registry, drivers, receipts } = rig();
     const client = registry.connect("zz-sim", "command-center", "client:sdk");

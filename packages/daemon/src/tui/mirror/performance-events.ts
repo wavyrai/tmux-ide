@@ -7,6 +7,20 @@ export interface TuiPerformanceEventSink {
   readonly frame: (intervalMs: number) => void;
   readonly terminalPaint: (dirtyRows: number, durationMs: number) => void;
   readonly terminalDelivery: (event: TuiTerminalDeliveryPerformanceEvent) => void;
+  readonly terminalTraceSpan?: (event: TuiTerminalTraceSpanEvent) => void;
+}
+
+export interface TuiTerminalTraceSpanEvent {
+  readonly traceId: string;
+  readonly scenario: "terminal-input-to-paint";
+  readonly stage: "paint";
+  readonly processId: string;
+  readonly clockId: "opentui-performance-now";
+  readonly clockKind: "performance-now";
+  readonly startedAtMicros: number;
+  readonly endedAtMicros: number;
+  readonly generation: string;
+  readonly incarnation: string;
 }
 
 export interface TuiTerminalDeliveryPerformanceEvent {

@@ -209,7 +209,12 @@ export interface SessionRuntimePaneStreamTransportBinding {
     operationId: string,
     intent: SessionRuntimeSemanticIntent,
   ): Promise<WorkspaceMultiplexerMutationResult | void>;
-  sendInput(semanticPaneId: string, kind: "text" | "key", data: string): void;
+  sendInput(
+    semanticPaneId: string,
+    kind: "text" | "key",
+    data: string,
+    performanceTraceId?: string,
+  ): void;
   fitViewport(cols: number, rows: number): void;
   close(): Promise<void>;
 }
@@ -1551,7 +1556,14 @@ export class PaneStreamLiveConnection {
       }
       return;
     }
-    this.#acceptInput(frame.pane, frame.seq, frame.kind, frame.data, byteLength);
+    this.#acceptInput(
+      frame.pane,
+      frame.seq,
+      frame.kind,
+      frame.data,
+      byteLength,
+      frame.performanceTraceId,
+    );
   };
 
   #deliveryChannel(address: {
@@ -1646,6 +1658,7 @@ export class PaneStreamLiveConnection {
     kind: "text" | "key",
     data: string,
     frameBytes: number,
+    performanceTraceId?: string,
   ): void {
     if (this.#descriptor.viewerMode !== "interactive") {
       this.#failProtocol("input-rejected");
@@ -1683,7 +1696,8 @@ export class PaneStreamLiveConnection {
     channel.nextInputSeq += 1;
     try {
       this.#sessionRuntimeBinding!.assertController(pane);
-      if (semanticDelivery) this.#sessionRuntimeBinding!.sendInput(pane, kind, data);
+      if (semanticDelivery)
+        this.#sessionRuntimeBinding!.sendInput(pane, kind, data, performanceTraceId);
       else if (kind === "text") channel.sub!.sendText(data);
       else channel.sub!.sendKey(data);
       sendControl(this.#socket, { type: "input-ack", pane, seq });

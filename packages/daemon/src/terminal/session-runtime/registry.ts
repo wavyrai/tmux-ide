@@ -58,6 +58,7 @@ import {
   type SessionRuntimeObservability,
   type SessionRuntimeObservabilitySnapshot,
 } from "./runtime-observability.ts";
+import { RuntimeTraceCorrelator } from "./runtime-trace-correlator.ts";
 
 export interface SessionRuntimeRegistryOptions {
   readonly generation: string;
@@ -139,6 +140,7 @@ export interface SessionRuntimeConsumer {
     semanticPaneId: string,
     kind: "text" | "key",
     data: string,
+    performanceTraceId?: string,
   ): void;
   fitViewport(lease: SessionRuntimeControllerLease, cols: number, rows: number): void;
   describe(): Promise<MirrorSessionDescription>;
@@ -507,6 +509,7 @@ class SessionRuntime {
   readonly #consumersByClientId = new Map<string, SessionRuntimeConsumerImpl>();
   readonly #terminalReplicas = new Map<string, SessionRuntimeTerminalReplicaOwner>();
   readonly #terminalReplicaClocks = new Map<string, { epoch: number; revision: number }>();
+  readonly #outputTraces: RuntimeTraceCorrelator;
   readonly #terminalDeliveryHub: SessionRuntimeTerminalDeliveryHub;
   readonly #scheduler: SessionRuntimeScheduler;
   readonly #observability: SessionRuntimeObservability;
@@ -547,6 +550,7 @@ class SessionRuntime {
   ) {
     this.#mirror = mirror;
     this.#scheduler = scheduler;
+    this.#outputTraces = new RuntimeTraceCorrelator(scheduler);
     this.#observability = observability;
     this.#createControllerToken = createControllerToken;
     this.#submitAuthorized = submitAuthorized;
@@ -712,17 +716,35 @@ class SessionRuntime {
     semanticPaneId: string,
     kind: "text" | "key",
     data: string,
+    performanceTraceId?: string,
   ): void {
     this.assertController(lease, clientId);
+    const trace = this.#observability.enabled
+      ? this.#observability.beginTrace(
+          "terminal-input-to-paint",
+          {
+            generation: this.generation,
+            incarnation: null,
+          },
+          performanceTraceId,
+        )
+      : null;
     const started = this.#observability.enabled ? this.#observability.nowMicros() : 0;
-    if (kind === "text") this.#mirror.sendText(this.session, semanticPaneId, data);
-    else this.#mirror.sendKey(this.session, semanticPaneId, data);
+    if (trace && performanceTraceId) this.#outputTraces.arm(semanticPaneId, trace);
+    try {
+      if (kind === "text") this.#mirror.sendText(this.session, semanticPaneId, data);
+      else this.#mirror.sendKey(this.session, semanticPaneId, data);
+    } catch (error) {
+      if (trace && performanceTraceId) this.#outputTraces.take(semanticPaneId);
+      throw error;
+    }
     if (this.#observability.enabled)
       this.#observability.recordSpan(
         "tmux",
         "raw-input-command",
         started,
         this.#observability.nowMicros(),
+        trace,
       );
   }
 
@@ -847,6 +869,16 @@ class SessionRuntime {
           },
           scheduler: this.#scheduler,
           observability: this.#observability,
+          takeOutputTrace: () => {
+            const pending = this.#outputTraces.take(semanticPaneId);
+            return pending
+              ? this.#observability.beginTrace(
+                  pending.scenario,
+                  { generation: this.generation, incarnation: `${this.generation}:${clock.epoch}` },
+                  pending.traceId,
+                )
+              : null;
+          },
         },
       );
       owner = candidate;
@@ -867,6 +899,7 @@ class SessionRuntime {
     const retention = this.#retention;
     this.#retention = null;
     this.#startPromise = null;
+    this.#outputTraces.clear();
     const owners = [...this.#terminalReplicas.values()];
     this.#terminalReplicas.clear();
     this.#restartBarrier = this.#restartBarrier.then(async () => {
@@ -885,6 +918,7 @@ class SessionRuntime {
     this.#clearController();
     this.#completedHandoffs.clear();
     this.#releasedLeases.clear();
+    this.#outputTraces.clear();
     await Promise.allSettled(
       [...this.#terminalReplicas.values()].map((owner) => owner.dispose("runtime-disposed")),
     );
@@ -1027,9 +1061,10 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
     semanticPaneId: string,
     kind: "text" | "key",
     data: string,
+    performanceTraceId?: string,
   ): void {
     this.#assertOpen();
-    this.#runtime.sendInput(this.clientId, lease, semanticPaneId, kind, data);
+    this.#runtime.sendInput(this.clientId, lease, semanticPaneId, kind, data, performanceTraceId);
   }
 
   fitViewport(lease: SessionRuntimeControllerLease, cols: number, rows: number): void {

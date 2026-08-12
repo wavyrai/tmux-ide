@@ -38,6 +38,7 @@ import {
 import {
   DISABLED_SESSION_RUNTIME_OBSERVABILITY,
   type SessionRuntimeObservability,
+  type SessionRuntimeTraceContext,
 } from "./runtime-observability.ts";
 
 export const MAX_CANONICAL_REVISIONS = 128;
@@ -96,6 +97,12 @@ export interface TerminalDeliveryConnection {
 interface RevisionRecord {
   readonly update: CanonicalTerminalReplicaUpdate;
   readonly state: TerminalReplicaState;
+  readonly trace: SessionRuntimeTraceContext | null;
+}
+
+interface PendingCanonicalUpdate {
+  readonly update: CanonicalTerminalReplicaUpdate;
+  readonly trace: SessionRuntimeTraceContext | null;
 }
 
 interface PaneState {
@@ -109,13 +116,16 @@ interface PaneState {
   rawBytes: number;
   rawFloorRevision: number;
   lastRawRevision: number;
-  readonly pendingCanonical: CanonicalTerminalReplicaUpdate[];
+  readonly pendingCanonical: PendingCanonicalUpdate[];
   canonicalScheduled: boolean;
 }
 
 export interface TerminalDeliverySourceOwner {
   subscribeSource(
-    listener: (update: CanonicalTerminalReplicaUpdate) => void,
+    listener: (
+      update: CanonicalTerminalReplicaUpdate,
+      trace: SessionRuntimeTraceContext | null,
+    ) => void,
     onRaw: (record: TerminalReplicaCommittedRaw) => void,
   ): Promise<TerminalReplicaSourceSubscription>;
 }
@@ -380,7 +390,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     this.#panes.set(semanticPaneId, pane);
     pane.start = owner
       .subscribeSource(
-        (update) => this.#observeCanonical(semanticPaneId, update),
+        (update, trace) => this.#observeCanonical(semanticPaneId, update, trace),
         (record) => this.#observeRaw(semanticPaneId, record),
       )
       .then(async (source) => {
@@ -398,17 +408,21 @@ export class SessionRuntimeTerminalDeliveryHub {
     return pane;
   }
 
-  #observeCanonical(semanticPaneId: string, update: CanonicalTerminalReplicaUpdate): void {
+  #observeCanonical(
+    semanticPaneId: string,
+    update: CanonicalTerminalReplicaUpdate,
+    trace: SessionRuntimeTraceContext | null,
+  ): void {
     const pane = this.#panes.get(semanticPaneId);
     if (!pane) return;
-    pane.pendingCanonical.push(update);
+    pane.pendingCanonical.push({ update, trace });
     if (pane.canonicalScheduled) return;
     pane.canonicalScheduled = true;
     this.#scheduler.microtask(() => {
       if (this.#panes.get(semanticPaneId) !== pane) return;
       pane.canonicalScheduled = false;
       for (const pending of pane.pendingCanonical.splice(0))
-        this.#applyCanonical(semanticPaneId, pane, pending);
+        this.#applyCanonical(semanticPaneId, pane, pending.update, pending.trace);
     });
   }
 
@@ -416,6 +430,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     semanticPaneId: string,
     pane: PaneState,
     update: CanonicalTerminalReplicaUpdate,
+    trace: SessionRuntimeTraceContext | null,
   ): void {
     if (
       update.workspaceName !== this.workspaceName ||
@@ -426,7 +441,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     const result = applyTerminalReplicaUpdate(pane.current, update);
     if (result.status !== "applied" && result.status !== "idempotent") return;
     pane.current = result.state;
-    const record = { update, state: result.state };
+    const record = { update, state: result.state, trace };
     pane.latest = record;
     pane.revisions.set(update.revision, record);
     while (pane.revisions.size > MAX_CANONICAL_REVISIONS)
@@ -536,6 +551,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         incarnation: target.update.incarnation,
         deliveryNonce: client.negotiated.deliveryNonce,
         transactionId,
+        ...(target.trace ? { performanceTraceId: target.trace.traceId } : {}),
         protocolVersion: 1,
         encoding: client.negotiated.encoding,
         frame: representation.frame,
@@ -573,6 +589,7 @@ export class SessionRuntimeTerminalDeliveryHub {
           "terminal-delivery-encode-enqueue",
           traceStarted,
           this.#observability.nowMicros(),
+          target.trace,
         );
     }
   }

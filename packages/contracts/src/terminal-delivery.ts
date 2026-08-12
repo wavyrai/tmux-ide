@@ -78,6 +78,11 @@ const DeliveryAddressSchemaZ = z.object({
 export const TerminalDeliveryEnvelopeSchemaZ = DeliveryAddressSchemaZ.extend({
   type: z.literal("terminal.delivery"),
   transactionId: z.uuid(),
+  /**
+   * Optional diagnostics-only causal id for the daemon output pipeline.
+   * It never grants authority and is absent while tracing is disabled.
+   */
+  performanceTraceId: z.uuid().optional(),
   protocolVersion: z.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
   encoding: TerminalDeliveryEncodingSchemaZ,
   frame: z.enum(["seed", "patch", "tombstone"]),

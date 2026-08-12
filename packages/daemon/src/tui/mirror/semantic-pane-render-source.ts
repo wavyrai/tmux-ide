@@ -29,7 +29,7 @@ import {
   type GraphemeOverride,
 } from "./blit.ts";
 import type { BlitOptions, CursorState } from "./pane-mirror.ts";
-import type { TerminalPaneRenderSource } from "./pane-surface.tsx";
+import type { TerminalPaintTrace, TerminalPaneRenderSource } from "./pane-surface.tsx";
 import type { TerminalPaletteProjection } from "./theme.ts";
 import { currentTuiPerformanceEventSink } from "./performance-events.ts";
 
@@ -117,6 +117,7 @@ export class SemanticPaneReplica {
   #renderKey: string;
   #surfaceOwner: object | null = null;
   #hasAcceptedSeed = false;
+  #pendingPaintTrace: TerminalPaintTrace | null = null;
   readonly #textRows = new WeakMap<TerminalReplicaRow, TerminalCellTextRow>();
 
   constructor(options: SemanticPaneReplicaOptions) {
@@ -271,6 +272,12 @@ export class SemanticPaneReplica {
     if (this.#surfaceOwner === consumerId) this.#surfaceOwner = null;
   }
 
+  takePaintTrace(): TerminalPaintTrace | null {
+    const trace = this.#pendingPaintTrace;
+    this.#pendingPaintTrace = null;
+    return trace;
+  }
+
   #acceptEnvelope(envelope: TerminalDeliveryEnvelope): void {
     const next = admitTerminalDeliveryEnvelope(this.#delivery, envelope);
     if (next.failed) {
@@ -313,6 +320,13 @@ export class SemanticPaneReplica {
     this.#delivery = committed.state;
     this.#assembler = null;
     this.#applySnapshot(previous, committed.state.canonicalSnapshot, envelope, payload);
+    this.#pendingPaintTrace = envelope.performanceTraceId
+      ? Object.freeze({
+          traceId: envelope.performanceTraceId,
+          generation: envelope.generation,
+          incarnation: envelope.incarnation,
+        })
+      : null;
     const reseed = envelope.frame === "seed" && this.#hasAcceptedSeed;
     if (envelope.frame === "seed") this.#hasAcceptedSeed = true;
     if (performanceSink) {
@@ -455,10 +469,10 @@ export class SemanticTerminalRenderSource implements TerminalPaneRenderSource {
     defaultFg: number,
     defaultBg: number,
     options: BlitOptions,
-  ): void {
-    this.#panes
-      .get(paneId)
-      ?.blit(buffers, width, height, scrollOffset, defaultFg, defaultBg, options);
+  ): TerminalPaintTrace | null {
+    const replica = this.#panes.get(paneId);
+    replica?.blit(buffers, width, height, scrollOffset, defaultFg, defaultBg, options);
+    return replica?.takePaintTrace() ?? null;
   }
 }
 
