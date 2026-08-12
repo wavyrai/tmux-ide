@@ -1695,6 +1695,7 @@ const mountTuiRoot = () => {
           connectOpenTuiSessionRuntime({
             sessionName,
             semanticPaneIds,
+            routing: daemonApplicationShellAuthority?.routing ?? null,
             onPaneChange: (paneId, change) => {
               if (request !== sessionRuntimeLaneRequest) return;
               publishSemanticPaneChange(change, {
@@ -1855,7 +1856,7 @@ const mountTuiRoot = () => {
     const retireDaemonApplicationShell = () => {
       disposeDaemonApplicationShellSubscription?.();
       disposeDaemonApplicationShellSubscription = null;
-      daemonApplicationShellAuthority?.session.dispose();
+      daemonApplicationShellAuthority?.dispose();
       daemonApplicationShellAuthority = null;
       toolResources.setTarget(null);
       setDaemonApplicationShellState(null);
@@ -1876,7 +1877,7 @@ const mountTuiRoot = () => {
           },
         });
         if (request !== daemonApplicationShellRequest) {
-          authority?.session.dispose();
+          authority?.dispose();
           return;
         }
         if (!authority) return;

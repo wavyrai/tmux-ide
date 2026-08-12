@@ -49,7 +49,8 @@ describe("OpenTUI canonical application-shell authority", () => {
 
   it("maps the runtime session through the catalog and creates the shared client session", async () => {
     const transport = {} as ApplicationShellTransport;
-    const session = {} as ApplicationShellSession;
+    const dispose = vi.fn();
+    const session = { dispose } as unknown as ApplicationShellSession;
     const createTransport = vi.fn(() => transport);
     const createSession = vi.fn(() => session);
     const authority = await connectOpenTuiApplicationShellAuthority("alpha", {
@@ -61,6 +62,11 @@ describe("OpenTUI canonical application-shell authority", () => {
     });
 
     expect(authority).toMatchObject({ workspaceName: "workspace.alpha", session });
+    expect(authority?.routing).toMatchObject({
+      daemonInstanceId: daemon.instanceId,
+      workspaceName: "workspace.alpha",
+      sessionName: "alpha",
+    });
     expect(authority?.target.workspaceName).toBe("workspace.alpha");
     expect(createTransport).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -70,6 +76,15 @@ describe("OpenTUI canonical application-shell authority", () => {
       }),
     );
     expect(createSession).toHaveBeenCalledWith({ target: authority?.target, transport });
+    authority?.dispose();
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(() =>
+      authority?.routing?.assertCurrent({
+        daemonInstanceId: daemon.instanceId,
+        workspaceName: "workspace.alpha",
+        sessionName: "alpha",
+      }),
+    ).toThrow("has been retired");
   });
 
   it("keeps standalone TUI mode when no canonical authority owns the session", async () => {

@@ -8,19 +8,20 @@ import type {
   WorkspaceMultiplexerMutationResult,
 } from "@tmux-ide/contracts";
 import {
-  openPaneStreamRuntimeClient,
   type PaneStreamClientSocket,
+  type PaneStreamRuntimeClient,
 } from "@tmux-ide/daemon-client/pane-stream-client";
 
-import {
-  canonicalDaemonUrl,
-  isCanonicalDaemonAlive,
-  readCanonicalDaemonInfo,
-} from "../../lib/canonical-daemon.ts";
+import { isCanonicalDaemonAlive, readCanonicalDaemonInfo } from "../../lib/canonical-daemon.ts";
 import {
   fetchCanonicalWorkspaceCatalog,
   workspaceNameForSession,
 } from "./canonical-workspace-routing.ts";
+import {
+  createOpenTuiVerifiedRoutingContext,
+  type OpenTuiVerifiedRoutingContext,
+  type OpenTuiVerifiedRoutingIdentity,
+} from "./open-tui-verified-routing.ts";
 import {
   SemanticPaneReplica,
   SemanticTerminalRenderSource,
@@ -98,10 +99,25 @@ export interface OpenTuiSessionRuntimeLane {
 export interface ConnectOpenTuiSessionRuntimeOptions {
   readonly sessionName: string;
   readonly semanticPaneIds: readonly string[];
+  readonly routing?: OpenTuiVerifiedRoutingContext | null;
   readonly onPaneChange: (paneId: string, change: SemanticPaneReplicaChange) => void;
   readonly onLayout?: (frame: Extract<PaneStreamServerFrame, { type: "layout" }>) => void;
   readonly onFault?: (error: Error) => void;
 }
+
+interface ConnectOpenTuiSessionRuntimeDependencies {
+  readonly readCanonicalDaemonInfo: typeof readCanonicalDaemonInfo;
+  readonly isCanonicalDaemonAlive: typeof isCanonicalDaemonAlive;
+  readonly fetchCanonicalWorkspaceCatalog: typeof fetchCanonicalWorkspaceCatalog;
+  readonly createRoutingContext: typeof createOpenTuiVerifiedRoutingContext;
+}
+
+const DEFAULT_RUNTIME_DEPENDENCIES: ConnectOpenTuiSessionRuntimeDependencies = {
+  readCanonicalDaemonInfo,
+  isCanonicalDaemonAlive,
+  fetchCanonicalWorkspaceCatalog,
+  createRoutingContext: createOpenTuiVerifiedRoutingContext,
+};
 
 /**
  * Open the one owner-brokered, generation-bound runtime lane for an OpenTUI
@@ -110,20 +126,33 @@ export interface ConnectOpenTuiSessionRuntimeOptions {
  */
 export async function connectOpenTuiSessionRuntime(
   options: ConnectOpenTuiSessionRuntimeOptions,
+  overrides: Partial<ConnectOpenTuiSessionRuntimeDependencies> = {},
 ): Promise<OpenTuiSessionRuntimeLane | null> {
   if (options.semanticPaneIds.length === 0) return null;
-  const daemon = readCanonicalDaemonInfo();
-  if (!daemon?.authToken || !(await isCanonicalDaemonAlive(daemon))) return null;
-  const ownerToken = daemon.authToken;
-  const catalog = await fetchCanonicalWorkspaceCatalog(daemon);
-  const workspaceName = workspaceNameForSession(catalog, options.sessionName);
-  if (!workspaceName) return null;
+  const dependencies = { ...DEFAULT_RUNTIME_DEPENDENCIES, ...overrides };
+  let routing = options.routing ?? null;
+  if (!routing) {
+    const daemon = dependencies.readCanonicalDaemonInfo();
+    if (!daemon?.authToken || !(await dependencies.isCanonicalDaemonAlive(daemon))) return null;
+    const catalog = await dependencies.fetchCanonicalWorkspaceCatalog(daemon);
+    const workspaceName = workspaceNameForSession(catalog, options.sessionName);
+    if (!workspaceName) return null;
+    routing = dependencies.createRoutingContext(daemon, workspaceName, options.sessionName);
+    if (!routing) return null;
+  }
+  const expectedRouting: OpenTuiVerifiedRoutingIdentity = {
+    daemonInstanceId: routing.daemonInstanceId,
+    workspaceName: routing.workspaceName,
+    sessionName: options.sessionName,
+  };
+  routing.assertCurrent(expectedRouting);
+  const workspaceName = routing.workspaceName;
 
   const source = new SemanticTerminalRenderSource();
   const pending = new Map<string, Parameters<SemanticPaneReplica["accept"]>[0][]>();
   let runtimeGeneration: string | null = null;
   const outbound: Array<TerminalDeliveryAck | TerminalDeliveryNack> = [];
-  let runtimeClient: Awaited<ReturnType<typeof openPaneStreamRuntimeClient>> | null = null;
+  let runtimeClient: PaneStreamRuntimeClient | null = null;
   const sendControl = (message: TerminalDeliveryAck | TerminalDeliveryNack): void => {
     if (!runtimeClient) {
       outbound.push(message);
@@ -133,10 +162,7 @@ export async function connectOpenTuiSessionRuntime(
     else runtimeClient.nack(message);
   };
   const open = (viewerMode: "interactive" | "read-only", requestId: string) =>
-    openPaneStreamRuntimeClient({
-      baseUrl: canonicalDaemonUrl("http", daemon.bindHostname, daemon.port),
-      ownerToken,
-      daemonInstanceId: daemon.instanceId,
+    routing.openPaneStream(expectedRouting, {
       origin: OPENTUI_ORIGIN,
       hostClientId: OPENTUI_HOST_CLIENT_ID,
       requestId,

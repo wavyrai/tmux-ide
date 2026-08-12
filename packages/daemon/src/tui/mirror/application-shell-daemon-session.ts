@@ -21,11 +21,17 @@ import {
   fetchCanonicalWorkspaceCatalog,
   workspaceNameForSession,
 } from "./canonical-workspace-routing.ts";
+import {
+  createOpenTuiVerifiedRoutingContext,
+  type OpenTuiVerifiedRoutingContext,
+} from "./open-tui-verified-routing.ts";
 
 export interface OpenTuiApplicationShellAuthority {
   readonly workspaceName: string;
   readonly target: DesktopApplicationShellTarget;
   readonly session: ApplicationShellSession;
+  readonly routing: OpenTuiVerifiedRoutingContext | null;
+  dispose(): void;
 }
 
 interface OpenTuiApplicationShellAuthorityDependencies {
@@ -114,15 +120,25 @@ export async function connectOpenTuiApplicationShellAuthority(
     // attachability-bearing terminal inventory used to admit that lane.
     applicationShellResourceVersion: APPLICATION_SHELL_RESOURCE_V2_VERSION,
   });
+  const session = dependencies.createSession({
+    target,
+    transport,
+    ...(dependencies.onInteractionReceipt
+      ? { onInteractionReceipt: dependencies.onInteractionReceipt }
+      : {}),
+  });
+  const routing = createOpenTuiVerifiedRoutingContext(daemon, workspaceName, sessionName);
+  let disposed = false;
   return {
     workspaceName,
     target,
-    session: dependencies.createSession({
-      target,
-      transport,
-      ...(dependencies.onInteractionReceipt
-        ? { onInteractionReceipt: dependencies.onInteractionReceipt }
-        : {}),
-    }),
+    session,
+    routing,
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      routing?.retire();
+      session.dispose();
+    },
   };
 }
