@@ -431,49 +431,18 @@ import {
   workbenchCanvasShortcutForPanel,
   workbenchDockTabForShortcut,
 } from "../workspace/workbench-controller.ts";
-import {
-  clipTerminal,
-  defaultMissionWorkspaceModel,
-  invalidatedMissionWorkspaceLoadState,
-  missionModelFromWorkspaceState,
-  missionSelectionFromWorkspaceState,
-  missionTmuxPanePreflightMatches,
-  missionTmuxPreflightCommands,
-  reconcileMissionWorkspaceModel,
-  resolveMissionDeepLink,
-  workspaceStateWithMissionModel,
-  workspaceStateWithMissionSelection,
-  type MissionDeepLinkKind,
-  type MissionDeepLinkResolution,
-  type MissionWorkspaceLoadState,
-  type MissionWorkspaceModel,
-  type MissionWorkspaceSnapshot,
-} from "../missions-workspace.ts";
-import {
-  missionDashboardHitTest,
-  missionDashboardMainSize,
-  missionDashboardProjection,
-} from "../missions-dashboard.ts";
-import { MissionsSurface, missionSurfaceLayout } from "../missions-surface.tsx";
+import { clipTerminal } from "../terminal-text.ts";
 import { HomeSurface, homeActionAtProjection } from "../home-surface.tsx";
 import {
   homeItemIndexAtProjection,
   projectHomeSurface,
   type HomeActionId,
 } from "../home-surface.ts";
-import {
-  activityOrderSequence,
-  activityRowHitTest,
-  orderActivityRows,
-  projectActivitySurface,
-  type ActivityRowDto,
-} from "../activity-surface.ts";
-import { ActivitySurface } from "../activity-surface.tsx";
-import {
-  handleMissionSurfaceKey,
-  handleMissionSurfacePointerDown,
-  handleMissionSurfaceScroll,
-} from "../missions-surface-controller.ts";
+import type {
+  MissionDeepLinkIntent,
+  MissionsActivityFeatureSession,
+  MissionsActivityHoverTarget,
+} from "../features/missions-activity/feature.tsx";
 import { TuiCleanupRegistry, resolveInputLayer } from "../input-lifecycle.ts";
 import {
   TuiApplicationLifecycle,
@@ -1102,11 +1071,15 @@ const mountTuiRoot = () => {
     const editorOpenIntent = new LatestIntentFence<string>();
     const changesPrepareIntent = new LatestIntentFence<string>();
     const changesHydrationIntent = new LatestIntentFence<string>();
+    const missionsHydrationIntent = new LatestIntentFence<string>();
+    const activityHydrationIntent = new LatestIntentFence<string>();
     const editorOpenScope = () => `${contextSession()}\u0000${contextDir() || invokeCwd}`;
     onCleanup(() => {
       editorOpenIntent.retire();
       changesPrepareIntent.retire();
       changesHydrationIntent.retire();
+      missionsHydrationIntent.retire();
+      activityHydrationIntent.retire();
     });
     const [projectsData, setProjectsData] = createSignal<FleetProject[]>([]);
     const optionalFeatures = createApplicationOptionalFeatureRegistry();
@@ -1115,9 +1088,25 @@ const mountTuiRoot = () => {
     const [changesFeature, setChangesFeature] =
       createSignal<ApplicationOptionalFeatures["changes"]>();
     const [changesSession, setChangesSession] = createSignal<ChangesFeatureSession>();
+    const [missionsActivityFeature, setMissionsActivityFeature] =
+      createSignal<ApplicationOptionalFeatures["missionsActivity"]>();
+    const [missionsActivitySession, setMissionsActivitySession] =
+      createSignal<MissionsActivityFeatureSession>();
     let toolResourceGeneration = -1;
     const pendingFilesCatalog = new GenerationBoundSlot<WorkspaceFilesCatalogEnvelopeV1>();
     const pendingChangesCatalog = new GenerationBoundSlot<WorkspaceChangesCatalogEnvelopeV1>();
+    const pendingMissionsCatalog = new GenerationBoundSlot<WorkspaceMissionsEnvelopeV1>();
+    let executeMissionDeepLinkIntent = (_intent: MissionDeepLinkIntent): void => undefined;
+    let persistMissionsFeatureState = (_state: {
+      panel: "missions";
+      selectedMissionId: string | null;
+      selectedTaskId: string | null;
+      navigation?: import("../workspace-ui-state.ts").WorkspaceMissionsNavigationState;
+    }): void => undefined;
+    let persistActivityFeatureState = (_state: {
+      selectedRowId: string | null;
+      scrollOffset: number;
+    }): void => undefined;
     let pendingFilesSelectionPath: string | null = null;
     const [filesFeatureLoadState, setFilesFeatureLoadState] = createSignal<
       "idle" | "loading" | "ready" | "failed"
@@ -1256,13 +1245,112 @@ const mountTuiRoot = () => {
       );
       return request;
     };
+    const [missionsActivityLoadState, setMissionsActivityLoadState] = createSignal<
+      "idle" | "loading" | "ready" | "failed"
+    >("idle");
+    let missionsActivityRequest: Promise<
+      ApplicationOptionalFeatures["missionsActivity"] | undefined
+    > | null = null;
+    const missionsActivityIdentity = () => {
+      const directory = contextDir() || invokeCwd;
+      const workspaceName = contextSession() || target;
+      const repository = workspaceUiController?.snapshot().repository;
+      return {
+        workspaceName,
+        directory,
+        projectRoot: repository?.metadata.projectRoot ?? directory,
+        identityKey: repository?.metadata.identityKey ?? `${workspaceName}\u0000${directory}`,
+      };
+    };
+    const missionsActivityIdentityScope = () => {
+      const identity = missionsActivityIdentity();
+      return `${identity.workspaceName}\u0000${identity.directory}\u0000${identity.identityKey}`;
+    };
+    const missionsActivityHover = (): MissionsActivityHoverTarget | null => {
+      const current = hover();
+      if (!current) return null;
+      if (current.region === "missionmode") return { kind: "mission-mode", index: current.index };
+      if (current.region === "missionbutton")
+        return { kind: "mission-button", index: current.index };
+      if (current.region === "missioncard") return { kind: "mission-card", index: current.index };
+      if (current.region === "missionhistory")
+        return { kind: "mission-history", index: current.index };
+      return null;
+    };
+    const ensureMissionsActivityFeature = (): Promise<
+      ApplicationOptionalFeatures["missionsActivity"] | undefined
+    > => {
+      const loaded = missionsActivityFeature();
+      if (loaded) return Promise.resolve(loaded);
+      if (missionsActivityRequest) return missionsActivityRequest;
+      setMissionsActivityLoadState("loading");
+      const request = optionalFeatures.request("missionsActivity");
+      missionsActivityRequest = request;
+      void request.then(
+        (feature) => {
+          if (missionsActivityRequest !== request) return;
+          if (!feature) {
+            setMissionsActivityLoadState("failed");
+            missionsActivityRequest = null;
+            return;
+          }
+          setMissionsActivityFeature(() => feature);
+          const session = feature.createMissionsActivityFeatureSession(
+            {
+              width: () => dockSurfaceWidth(),
+              height: () => dockSurfaceHeight(),
+              hover: missionsActivityHover,
+              agents: fleetAgents,
+              interactions: () =>
+                interactionFeed().activity.map((receipt) => ({
+                  operationId: receipt.operationId,
+                  sequence: receipt.sequence,
+                  at: receipt.at,
+                  source: interactionReceiptTargetLabel(receipt, interactionPaneLabel),
+                  message: interactionReceiptLabel(receipt),
+                  detail: `${receipt.workspaceName} · ${receipt.origin}`,
+                  phase: receipt.phase,
+                })),
+              refresh: () => toolResources.session.refresh("missions"),
+              setStatusNote,
+              persistMissions: (state) => persistMissionsFeatureState(state),
+              persistActivity: (state) => persistActivityFeatureState(state),
+              deepLinkContext: () => ({
+                projectRoot: missionsActivityIdentity().projectRoot,
+                views: (["terminals", "files", "diff"] as const).map((panel) =>
+                  nativeHostedViewForPanel(hostedViews(), panel),
+                ),
+                resolveProjectPath: absoluteProjectPath,
+              }),
+              executeDeepLink: (intent) => executeMissionDeepLinkIntent(intent),
+            },
+            missionsActivityIdentity(),
+            toolResourceGeneration,
+          );
+          setMissionsActivitySession(() => session);
+          const retainedCatalog = pendingMissionsCatalog.take(toolResourceGeneration);
+          if (retainedCatalog) session.applyCatalog(toolResourceGeneration, retainedCatalog);
+          setMissionsActivityLoadState("ready");
+          missionsActivityRequest = null;
+        },
+        () => {
+          if (missionsActivityRequest !== request) return;
+          setMissionsActivityLoadState("failed");
+          missionsActivityRequest = null;
+        },
+      );
+      return request;
+    };
     applicationLifecycle.registerCloser("optional-features", () => {
       filesFeatureRequest = null;
       changesFeatureRequest = null;
+      missionsActivityRequest = null;
       filesSession()?.dispose();
       changesSession()?.dispose();
+      missionsActivitySession()?.dispose();
       setFilesSession(undefined);
       setChangesSession(undefined);
+      setMissionsActivitySession(undefined);
       optionalFeatures.dispose();
       tuiPerfMark("optional-feature-metrics", { ...optionalFeatures.getMetrics() });
     });
@@ -1794,13 +1882,16 @@ const mountTuiRoot = () => {
       dockTabForPanel(initialView.panel) ? "dock-body" : "canvas",
     );
     const [hoveredDockTab, setHoveredDockTab] = createSignal<WorkbenchDockTabId | null>(null);
-    const [activitySelectedId, setActivitySelectedId] = createSignal<string | null>(null);
-    const [activityScrollOffset, setActivityScrollOffset] = createSignal(0);
     createEffect(() => {
       if (dockMode() !== "collapsed" && activeDockTab() === "files") void ensureFilesFeature();
     });
     createEffect(() => {
       if (dockMode() !== "collapsed" && activeDockTab() === "changes") void ensureChangesFeature();
+    });
+    createEffect(() => {
+      const dock = activeDockTab();
+      if (dockMode() !== "collapsed" && (dock === "missions" || dock === "activity"))
+        void ensureMissionsActivityFeature();
     });
     createEffect(() => {
       if (dockMode() === "collapsed") {
@@ -1903,19 +1994,6 @@ const mountTuiRoot = () => {
     const tab = (): Tab => legacyTabFromPanelKind(activePanel());
     const mode = (): "home" | "mirror" | "editor" | "diff" | "missions" => panelMode(activePanel());
     const surfaceSpans = createMemo(() => applicationShellProjection().tabs.map((tab) => tab.span));
-    const [missionWorkspaceLoad, setMissionWorkspaceLoad] = createSignal<MissionWorkspaceLoadState>(
-      {
-        status: "loading",
-        generation: 0,
-        projectKey: null,
-      },
-    );
-    const [missionWorkspaceSnapshot, setMissionWorkspaceSnapshot] =
-      createSignal<MissionWorkspaceSnapshot | null>(null);
-    const [missionWorkspaceModel, setMissionWorkspaceModel] = createSignal<MissionWorkspaceModel>(
-      defaultMissionWorkspaceModel(),
-    );
-
     const [curTarget, setCurTarget] = createSignal(initialContextSession);
     // Size truth (M22.8): the actual tmux window size when a co-attached terminal
     // has shrunk it below our pinned canvas (else null). Set in the tick from the
@@ -2058,7 +2136,6 @@ const mountTuiRoot = () => {
       if (panel === "missions") ensureMissionsLoaded();
     };
     const missionHostedView = () => nativeHostedViewForPanel(hostedViews(), "missions");
-    const missionViewId = () => missionHostedView().id;
     const selectViewForPanel = (viewId: string, panel: HostedPanelKind) => {
       if (panel === "home" || panel === "terminals") {
         activateCanvasPanel(panel);
@@ -2068,40 +2145,22 @@ const mountTuiRoot = () => {
       if (dockTab) activateDockTab(dockTab);
       else selectView(viewId);
     };
-    const missionLayoutSize = () => {
-      const size = missionDashboardMainSize(dockSurfaceWidth(), Math.max(1, dockSurfaceHeight()));
-      return { width: size.mainWidth, height: size.height };
-    };
-    const persistMissionSelection = (missionId: string | null, taskId: string | null = null) => {
-      const view = missionHostedView();
+    persistMissionsFeatureState = (state) => {
       if (activePanel() !== "missions") return;
-      touchedWorkspaceViewIds.add(view.id);
-      setWorkspaceUiState((state) =>
-        workspaceStateWithMissionSelection(state, view.id, missionId, taskId),
+      touchedWorkspaceViewIds.add(missionHostedView().id);
+      touchedWorkspaceSurfaceIds.add("missions");
+      setWorkspaceUiState((current) => setWorkspaceSurfaceState(current, state));
+    };
+    persistActivityFeatureState = (state) => {
+      touchedWorkspaceSurfaceIds.add("activity");
+      setWorkspaceUiState((current) =>
+        setWorkspaceSurfaceState(current, { panel: "activity", ...state }),
       );
-    };
-    const persistMissionModel = (model: MissionWorkspaceModel) => {
-      const view = missionHostedView();
-      if (activePanel() !== "missions") return;
-      touchedWorkspaceViewIds.add(view.id);
-      setWorkspaceUiState((state) => workspaceStateWithMissionModel(state, view.id, model));
-    };
-    const updateMissionModel = (
-      updater: (model: MissionWorkspaceModel) => MissionWorkspaceModel,
-    ) => {
-      setMissionWorkspaceModel((current) => {
-        const updated = updater(current);
-        const next =
-          updated.mode !== "detail" && updated.selectedMissionId !== current.selectedMissionId
-            ? { ...updated, selectedTaskId: null }
-            : updated;
-        if (next !== current) persistMissionModel(next);
-        return next;
-      });
     };
     const loadMissionsWorkspace = (reason: "activation" | "refresh" | "project") => {
       if (activeDockTab() !== "missions" && activeDockTab() !== "activity" && mode() !== "missions")
         return;
+      void ensureMissionsActivityFeature();
       toolResources.session.refresh("missions");
       if (reason === "refresh") setStatusNote("refreshing missions…");
     };
@@ -2280,8 +2339,7 @@ const mountTuiRoot = () => {
       touchedWorkspaceActiveView = false;
       hydratedWorkspaceSurfaceIds.clear();
       const uiGeneration = workspaceUiController.beginLoad();
-      setMissionWorkspaceSnapshot(null);
-      setMissionWorkspaceLoad(invalidatedMissionWorkspaceLoadState());
+      missionsActivitySession()?.reset(toolResourceGeneration);
       void resolveProjectConfigContext(dir)
         .then((context) => {
           if (!panelGeneration.isCurrent(generation)) return;
@@ -2310,6 +2368,7 @@ const mountTuiRoot = () => {
           };
           const identityChanged = currentWorkspaceUiIdentity !== repository.metadata.identityKey;
           currentWorkspaceUiIdentity = repository.metadata.identityKey;
+          missionsActivitySession()?.setWorkspaceIdentity(missionsActivityIdentity());
           const firstProjectLoad = !panelHostResolved || identityChanged;
           const initialChoice = firstProjectLoad
             ? chooseInitialWorkspaceView(nextViews, {
@@ -2359,8 +2418,17 @@ const mountTuiRoot = () => {
           setDockMode(explicitDockTab ? "open" : restoredDock.mode);
           setPreferredDockHeight(restoredDock.preferredHeight);
           setWorkbenchFocusZone(explicitDockTab ? "dock-body" : restoredDock.focusZone);
-          setActivitySelectedId(loadedUi.state.surfaces.activity.selectedRowId);
-          setActivityScrollOffset(loadedUi.state.surfaces.activity.scrollOffset);
+          const activityScope = missionsActivityIdentityScope();
+          const activityIntent = activityHydrationIntent.issue(activityScope);
+          const hydrateActivity = () => {
+            if (
+              activityHydrationIntent.isCurrent(activityIntent, missionsActivityIdentityScope())
+            ) {
+              missionsActivitySession()?.hydrateActivity(loadedUi.state.surfaces.activity);
+            }
+          };
+          if (missionsActivitySession()) hydrateActivity();
+          else void ensureMissionsActivityFeature().then(hydrateActivity, () => undefined);
           hydratedWorkspaceSurfaceIds.add("activity");
           loadStage = "hydrate active view";
           hydrateActiveWorkspaceView({ firstProjectLoad });
@@ -2827,90 +2895,13 @@ const mountTuiRoot = () => {
     // `menuSubSel` is the selection within that column. One level only.
     const [menuSub, setMenuSub] = createSignal<number | null>(null);
     const [menuSubSel, setMenuSubSel] = createSignal(0);
-    const activityRows = createMemo<ActivityRowDto[]>(() => {
-      const agentRows: ActivityRowDto[] = fleetAgents().map((agent, index) => ({
-        kind: "agent",
-        id: `agent:${agent.paneId}`,
-        sequence: activityOrderSequence(agent.since, index + 1),
-        timestampText: agent.since
-          ? (agentAgeLabel(agent.state, agent.since, Math.floor(Date.now() / 1000)) ?? "now")
-          : "now",
-        agent: agentDisplayKind(agent),
-        message: agent.statusText ?? agent.state,
-        detail: `${agent.session} · ${agent.paneId}`,
-        status: agent.state,
-        attention: agent.state === "blocked",
-      }));
-      const missionRows: ActivityRowDto[] = (missionWorkspaceSnapshot()?.history ?? [])
-        .filter((entry) => entry.lastEvent !== null)
-        .map((entry) => ({
-          kind: "event" as const,
-          id: `mission:${entry.mission.id}:${entry.lastEvent!.sequence}`,
-          sequence: activityOrderSequence(entry.lastEvent!.timestamp, entry.lastEvent!.sequence),
-          timestampText: entry.lastEvent!.timestamp.slice(11, 16),
-          source: entry.mission.title,
-          message: entry.lastEvent!.label,
-          detail: entry.lastEvent!.reason,
-          status:
-            entry.outcome === "completed"
-              ? ("done" as const)
-              : entry.outcome === "failed"
-                ? ("blocked" as const)
-                : ("idle" as const),
-          attention: entry.outcome === "failed",
-        }));
-      const interactionRows: ActivityRowDto[] = interactionFeed().activity.map((receipt) => ({
-        kind: "event" as const,
-        id: `interaction:${receipt.operationId}`,
-        sequence: receipt.sequence,
-        timestampText: receipt.at.slice(11, 16),
-        source: interactionReceiptTargetLabel(receipt, interactionPaneLabel),
-        message: interactionReceiptLabel(receipt),
-        detail: `${receipt.workspaceName} · ${receipt.origin}`,
-        status:
-          receipt.phase === "rejected" || receipt.phase === "timed-out"
-            ? ("blocked" as const)
-            : receipt.phase === "accepted"
-              ? ("working" as const)
-              : ("done" as const),
-        attention: receipt.phase === "rejected" || receipt.phase === "timed-out",
-      }));
-      return [...agentRows, ...missionRows, ...interactionRows];
-    });
-    const activityProjection = createMemo(() => {
-      const rows = activityRows();
-      const load = missionWorkspaceLoad();
-      return projectActivitySurface({
-        width: dockSurfaceWidth(),
-        height: dockSurfaceHeight(),
-        state:
-          rows.length > 0
-            ? "ready"
-            : load.status === "loading"
-              ? "loading"
-              : load.status === "error"
-                ? "error"
-                : "empty",
-        rows,
-        selectedRowId: activitySelectedId(),
-        scrollOffset: activityScrollOffset(),
-        message: load.status === "error" ? load.message : undefined,
+    const moveActivitySelection = (delta: -1 | 1) =>
+      missionsActivitySession()?.handleActivityKey({
+        name: delta > 0 ? "down" : "up",
+        ctrl: false,
+        meta: false,
+        shift: false,
       });
-    });
-    const moveActivitySelection = (delta: -1 | 1) => {
-      const rows = orderActivityRows(activityRows());
-      if (rows.length === 0) return;
-      const current = rows.findIndex((row) => row.id === activitySelectedId());
-      const nextIndex =
-        current < 0
-          ? delta > 0
-            ? 0
-            : rows.length - 1
-          : Math.max(0, Math.min(rows.length - 1, current + delta));
-      setActivitySelectedId(rows[nextIndex]!.id);
-      hydratedWorkspaceSurfaceIds.add("activity");
-      touchedWorkspaceSurfaceIds.add("activity");
-    };
 
     // ── IN-APP ATTENTION (M25.1) ─────────────────────────────────────────────
     // The 3s fleet poll diffs the previous per-pane agent states against the
@@ -3402,13 +3393,11 @@ const mountTuiRoot = () => {
           selectedPath: diffSelectedPath(),
         });
       } else if (activeDockTab() === "missions" && hydratedWorkspaceSurfaceIds.has("missions")) {
-        next = workspaceStateWithMissionModel(next, missionViewId(), missionWorkspaceModel());
+        const state = missionsActivitySession()?.missionsState();
+        if (state) next = setWorkspaceSurfaceState(next, state);
       } else if (activeDockTab() === "activity" && hydratedWorkspaceSurfaceIds.has("activity")) {
-        next = setWorkspaceSurfaceState(next, {
-          panel: "activity",
-          selectedRowId: activitySelectedId(),
-          scrollOffset: activityScrollOffset(),
-        });
+        const state = missionsActivitySession()?.activityState();
+        if (state) next = setWorkspaceSurfaceState(next, { panel: "activity", ...state });
       }
       next = setWorkspaceDockState(next, {
         activeTab: activeDockTab(),
@@ -3527,32 +3516,18 @@ const mountTuiRoot = () => {
         if (mode() === "diff") toolResources.session.refresh("changes");
       } else if (entry.panel === "missions") {
         hydratedWorkspaceSurfaceIds.add("missions");
-        setMissionWorkspaceModel((current) =>
-          reconcileMissionWorkspaceModel(
-            missionModelFromWorkspaceState(workspaceUiState(), view, current),
-            missionWorkspaceSnapshot(),
-            missionLayoutSize(),
-          ),
-        );
+        const scope = missionsActivityIdentityScope();
+        const intent = missionsHydrationIntent.issue(scope);
+        const hydrate = () => {
+          if (missionsHydrationIntent.isCurrent(intent, missionsActivityIdentityScope())) {
+            missionsActivitySession()?.hydrateMissions(entry);
+          }
+        };
+        if (missionsActivitySession()) hydrate();
+        else void ensureMissionsActivityFeature().then(hydrate, () => undefined);
       }
     };
     hydrateActiveWorkspaceView = (options = {}) => hydrateWorkspaceView(activeView(), options);
-    const missionSnapshotForModel = () => missionWorkspaceSnapshot();
-    const missionDeepLink = (kind: MissionDeepLinkKind): MissionDeepLinkResolution =>
-      resolveMissionDeepLink(
-        kind,
-        missionWorkspaceSnapshot()?.detail ?? null,
-        missionWorkspaceModel(),
-        {
-          projectRoot: workspaceUiProjectRoot(),
-          // Deep links target semantic native surfaces, which exist even when
-          // compatibility app.views omitted them or only exposed a composite.
-          views: (["terminals", "files", "diff"] as const).map((panel) =>
-            nativeHostedViewForPanel(hostedViews(), panel),
-          ),
-          resolveProjectPath: absoluteProjectPath,
-        },
-      );
     const execFileChecked = (file: string, args: string[]): Promise<string> =>
       new Promise((resolvePromise, rejectPromise) => {
         execFile(file, args, (error, stdout) => {
@@ -3560,21 +3535,19 @@ const mountTuiRoot = () => {
           else resolvePromise(stdout);
         });
       });
-    const followMissionDeepLink = (kind: MissionDeepLinkKind) => {
-      const resolved = missionDeepLink(kind);
-      if (!resolved.available) {
-        setStatusNote(resolved.reason);
-        return;
-      }
-      const intent = resolved.intent;
+    executeMissionDeepLinkIntent = (intent) => {
       if (intent.kind === "terminal") {
-        const preflight = missionTmuxPreflightCommands(intent);
-        void execFileChecked(preflight[0]!.file, preflight[0]!.args)
+        void execFileChecked("tmux", ["has-session", "-t", `=${intent.session}`])
           .then(async () => {
-            const panePreflight = preflight.find((command) => command.kind === "pane");
-            if (panePreflight && intent.paneId) {
-              const output = await execFileChecked(panePreflight.file, panePreflight.args);
-              if (!missionTmuxPanePreflightMatches(output, intent.session, intent.paneId)) {
+            if (intent.paneId) {
+              const output = await execFileChecked("tmux", [
+                "display-message",
+                "-p",
+                "-t",
+                intent.paneId,
+                "#{session_name}\t#{pane_id}",
+              ]);
+              if (output.trimEnd() !== `${intent.session}\t${intent.paneId}`) {
                 throw new Error("pane does not belong to target session");
               }
             }
@@ -3621,59 +3594,11 @@ const mountTuiRoot = () => {
       meta: boolean;
       shift: boolean;
     }): boolean => {
-      return handleMissionSurfaceKey(
-        evt,
-        {
-          model: missionWorkspaceModel(),
-          snapshot: missionSnapshotForModel(),
-          layoutSize: missionLayoutSize(),
-          persistedTaskId: missionSelectionFromWorkspaceState(workspaceUiState(), missionViewId())
-            .selectedTaskId,
-        },
-        {
-          updateModel: updateMissionModel,
-          refresh: () => loadMissionsWorkspace("refresh"),
-          followDeepLink: followMissionDeepLink,
-          persistSelection: persistMissionSelection,
-        },
-      );
+      return missionsActivitySession()?.handleMissionKey(evt) ?? false;
     };
-    const missionLoadErrorMessage = (): string => {
-      const state = missionWorkspaceLoad();
-      return state.status === "error" ? state.message : "";
-    };
-    const missionProjectLabel = (): string =>
-      workspaceUiController.snapshot().repository?.metadata.projectRoot ?? workspaceDir();
-    const missionLayoutPresentation = () => ({
-      loadStatus: missionWorkspaceLoad().status,
-      projectLabel: missionProjectLabel(),
-      errorMessage: missionLoadErrorMessage(),
-      quitHint: QUIT_HINT,
-    });
-    const missionsLayout = createMemo(() =>
-      missionSurfaceLayout(
-        dockSurfaceWidth(),
-        Math.max(1, dockSurfaceHeight()),
-        missionWorkspaceModel(),
-        missionWorkspaceSnapshot(),
-        missionLayoutPresentation(),
-      ),
-    );
-    const missionsDashboard = createMemo(() =>
-      missionDashboardProjection(
-        dockSurfaceWidth(),
-        Math.max(1, dockSurfaceHeight()),
-        missionWorkspaceModel(),
-        missionWorkspaceSnapshot(),
-        {
-          ...missionLayoutPresentation(),
-          agents: fleetAgents(),
-        },
-      ),
-    );
     const missionHitAt = (x: number, y: number) => {
       const gy = y - TABBAR_H;
-      return missionDashboardHitTest(missionsDashboard(), x - sidebarW(), gy);
+      return missionsActivitySession()?.missionHoverAt(x - sidebarW(), gy) ?? null;
     };
 
     // The daemon owns filesystem/git observation. Returning to Files asks the
@@ -3696,10 +3621,18 @@ const mountTuiRoot = () => {
       editorOpenIntent.retire();
       changesPrepareIntent.retire();
       changesHydrationIntent.retire();
+      missionsHydrationIntent.retire();
+      activityHydrationIntent.retire();
       setContextSession(session);
       const wd = dir ?? invokeCwd;
       setContextDir(wd);
       changesSession()?.setWorkspaceIdentity({ workspaceName: session, directory: wd });
+      missionsActivitySession()?.setWorkspaceIdentity({
+        workspaceName: session,
+        directory: wd,
+        projectRoot: wd,
+        identityKey: `${session}\u0000${wd}`,
+      });
       toolResources.session.refresh("files");
       switchTarget(session);
     };
@@ -5438,97 +5371,9 @@ const mountTuiRoot = () => {
     };
 
     const applyMissionsCatalog = (envelope: WorkspaceMissionsEnvelopeV1) => {
-      const resource = envelope.resource.missionWorkspace;
-      if (resource.status === "degraded") {
-        setMissionWorkspaceSnapshot(null);
-        setMissionWorkspaceLoad({
-          status: "error",
-          generation: 0,
-          projectKey: envelope.resource.workspaceName,
-          message: resource.reason,
-        });
-        return;
-      }
-      const emptyColumns = { planned: [], running: [], blocked: [], review: [], done: [] };
-      const cards = resource.missions.map((mission) => ({
-        version: 1 as const,
-        id: mission.id,
-        title: mission.title,
-        summary: mission.summary,
-        status: mission.status,
-        column: mission.column,
-        labels: [],
-        createdAt: mission.startedAt ?? mission.updatedAt,
-        updatedAt: mission.updatedAt,
-        ...(mission.startedAt ? { startedAt: mission.startedAt } : {}),
-        ...(mission.finishedAt ? { finishedAt: mission.finishedAt } : {}),
-        durationMs: mission.durationMs,
-        progress: mission.progress,
-        blockedBy: [],
-        latestAttempt: null,
-        proofSummary: {
-          proofIds: [],
-          hasProof: mission.proof.hasProof,
-          noProofReasons: mission.proof.noProofReasons,
-          notesCount: mission.proof.notesCount,
-          tests: mission.proof.tests,
-          commits: [],
-          diff: {
-            summaries: [],
-            urls: [],
-            filesChanged: mission.proof.filesChanged,
-            insertions: mission.proof.insertions,
-            deletions: mission.proof.deletions,
-          },
-          prs: [],
-          artifacts: [],
-        },
-        refs: { missionId: mission.id, taskIds: [], attemptIds: [], proofIds: [] },
-      }));
-      const columns = { ...emptyColumns } as Record<(typeof cards)[number]["column"], typeof cards>;
-      for (const card of cards) columns[card.column].push(card);
-      const snapshot: MissionWorkspaceSnapshot = {
-        board: {
-          version: 1,
-          columns,
-          counts: {
-            planned: columns.planned.length,
-            running: columns.running.length,
-            blocked: columns.blocked.length,
-            review: columns.review.length,
-            done: columns.done.length,
-            total: cards.length,
-          },
-        },
-        history: [],
-        detail: null,
-        project: {
-          identityKey: envelope.resource.workspaceName,
-          projectRoot: workspaceDir(),
-        },
-        loadedAt: new Date().toISOString(),
-      };
-      setMissionWorkspaceSnapshot(snapshot);
-      setMissionWorkspaceLoad({
-        status: cards.length === 0 ? "empty" : "ready",
-        generation: 0,
-        snapshot,
-      });
-      const persistedSelection = missionSelectionFromWorkspaceState(
-        workspaceUiState(),
-        missionViewId(),
-      );
-      updateMissionModel((current) =>
-        reconcileMissionWorkspaceModel(
-          missionModelFromWorkspaceState(workspaceUiState(), missionHostedView(), current),
-          snapshot,
-          {
-            persistedMissionId: persistedSelection.selectedMissionId,
-            persistedTaskId: persistedSelection.selectedTaskId,
-            ...missionLayoutSize(),
-          },
-        ),
-      );
+      const session = missionsActivitySession();
+      if (session) session.applyCatalog(toolResourceGeneration, envelope);
+      else pendingMissionsCatalog.retain(toolResourceGeneration, envelope);
     };
 
     const applyToolResource = (resource: TuiToolResource): void => {
@@ -5554,6 +5399,7 @@ const mountTuiRoot = () => {
           toolResourceGeneration = state.generation;
           pendingFilesCatalog.advance(state.generation);
           pendingChangesCatalog.advance(state.generation);
+          pendingMissionsCatalog.advance(state.generation);
           appliedToolSnapshots.clear();
           latestFleetCatalog = null;
           latestSessionCatalog = null;
@@ -5564,8 +5410,7 @@ const mountTuiRoot = () => {
           setProjectsData([]);
           filesSession()?.resetCatalog();
           changesSession()?.reset();
-          setMissionWorkspaceSnapshot(null);
-          setMissionWorkspaceLoad(invalidatedMissionWorkspaceLoadState());
+          missionsActivitySession()?.reset(state.generation);
         }
         for (const slot of state.slots.values()) {
           if (
@@ -6572,7 +6417,7 @@ const mountTuiRoot = () => {
           searchOpen: Boolean(search()),
           mode: mode() === "mirror" ? "mirror" : mode(),
           activePanelInert: isHostedPanelInert(activePanel()),
-          missionMode: missionWorkspaceModel().mode,
+          missionMode: missionsActivitySession()?.missionMode() ?? "board",
           editorFocus: filesFocus(),
           editorFilterOpen: filesQuery() !== null,
           diffFilterOpen: diffFilterOpen(),
@@ -7165,10 +7010,14 @@ const mountTuiRoot = () => {
         } else if (activeDockTab() === "changes") {
           setChangesHoverTarget(changesSession()?.hoverTargetAt(localX, localY) ?? null);
         } else if (activeDockTab() === "missions") {
-          const hit = missionDashboardHitTest(missionsDashboard(), localX, localY);
-          if (hit?.kind === "card") setHoverIf({ region: "missioncard", index: hit.hoverKey });
-          else if (hit?.kind === "history" || hit?.kind === "detail-row")
-            setHoverIf({ region: "missionhistory", index: hit.hoverKey });
+          const hit = missionsActivitySession()?.missionHoverAt(localX, localY);
+          if (hit?.kind === "mission-card") setHoverIf({ region: "missioncard", index: hit.index });
+          else if (hit?.kind === "mission-history")
+            setHoverIf({ region: "missionhistory", index: hit.index });
+          else if (hit?.kind === "mission-mode")
+            setHoverIf({ region: "missionmode", index: hit.index });
+          else if (hit?.kind === "mission-button")
+            setHoverIf({ region: "missionbutton", index: hit.index });
           else setHoverIf(null);
         } else setHoverIf(null);
         return;
@@ -7236,57 +7085,14 @@ const mountTuiRoot = () => {
       }
       if (m === "missions") {
         const hit = missionHitAt(x, y);
-        if (hit?.kind === "mode") {
-          setHoverIf({ region: "missionmode", index: hit.mode === "board" ? 0 : 1 });
-        } else if (
-          hit?.kind === "refresh" ||
-          hit?.kind === "density" ||
-          hit?.kind === "horizontal" ||
-          hit?.kind === "collapse" ||
-          hit?.kind === "zoom"
-        ) {
-          setHoverIf({
-            region: "missionbutton",
-            index:
-              hit.kind === "refresh"
-                ? 0
-                : hit.kind === "density"
-                  ? 1
-                  : hit.kind === "horizontal"
-                    ? hit.direction < 0
-                      ? 2
-                      : 3
-                    : hit.kind === "collapse"
-                      ? 4
-                      : 5,
-          });
-        } else if (hit?.kind === "card") {
-          setHoverIf({ region: "missioncard", index: hit.hoverKey });
-        } else if (hit?.kind === "history") {
-          setHoverIf({ region: "missionhistory", index: hit.hoverKey });
-        } else if (hit?.kind === "detail-section") {
-          setHoverIf({
-            region: "missionbutton",
-            index:
-              10 +
-              (hit.section === "tasks"
-                ? 0
-                : hit.section === "timeline"
-                  ? 1
-                  : hit.section === "attempts"
-                    ? 2
-                    : 3),
-          });
-        } else if (hit?.kind === "deep-link") {
-          setHoverIf({
-            region: "missionbutton",
-            index: hit.link === "terminal" ? 20 : hit.link === "files" ? 21 : 22,
-          });
-        } else if (hit?.kind === "detail-row") {
-          setHoverIf({ region: "missionhistory", index: hit.hoverKey });
-        } else {
-          setHoverIf(null);
-        }
+        if (hit?.kind === "mission-mode") setHoverIf({ region: "missionmode", index: hit.index });
+        else if (hit?.kind === "mission-button")
+          setHoverIf({ region: "missionbutton", index: hit.index });
+        else if (hit?.kind === "mission-card")
+          setHoverIf({ region: "missioncard", index: hit.index });
+        else if (hit?.kind === "mission-history")
+          setHoverIf({ region: "missionhistory", index: hit.index });
+        else setHoverIf(null);
         return;
       }
       // semanticView mode: the per-window strip lives on gy=0. Pane actions occupy the
@@ -7622,48 +7428,16 @@ const mountTuiRoot = () => {
       }
 
       if (activeDockTab() === "missions") {
-        const missionHit = missionDashboardHitTest(missionsDashboard(), localX, localY);
         if (e.type === "scroll") {
           const direction = e.scroll?.direction;
           if (direction === "up" || direction === "down") {
-            handleMissionSurfaceScroll(
-              missionHit,
-              direction,
-              {
-                model: missionWorkspaceModel(),
-                snapshot: missionWorkspaceSnapshot(),
-                layoutSize: missionLayoutSize(),
-                persistedTaskId: missionSelectionFromWorkspaceState(
-                  workspaceUiState(),
-                  missionViewId(),
-                ).selectedTaskId,
-              },
-              { updateModel: updateMissionModel },
-              SCROLL_STEP,
-            );
+            missionsActivitySession()?.handleMissionScroll(localX, localY, direction, SCROLL_STEP);
           }
           return true;
         }
         if (e.type === "down" && e.button !== 2) {
           hydratedWorkspaceSurfaceIds.add("missions");
-          handleMissionSurfacePointerDown(
-            missionHit,
-            {
-              model: missionWorkspaceModel(),
-              snapshot: missionWorkspaceSnapshot(),
-              layoutSize: missionLayoutSize(),
-              persistedTaskId: missionSelectionFromWorkspaceState(
-                workspaceUiState(),
-                missionViewId(),
-              ).selectedTaskId,
-            },
-            {
-              updateModel: updateMissionModel,
-              refresh: () => loadMissionsWorkspace("refresh"),
-              followDeepLink: followMissionDeepLink,
-              persistSelection: persistMissionSelection,
-            },
-          );
+          missionsActivitySession()?.handleMissionPointer(localX, localY);
         }
         return true;
       }
@@ -7671,18 +7445,14 @@ const mountTuiRoot = () => {
       if (e.type === "scroll") {
         const direction = e.scroll?.direction;
         if (direction === "up" || direction === "down") {
-          const delta = direction === "up" ? -SCROLL_STEP : SCROLL_STEP;
-          setActivityScrollOffset((offset) =>
-            Math.max(0, Math.min(activityProjection().maximumScrollOffset, offset + delta)),
-          );
+          missionsActivitySession()?.handleActivityScroll(direction, SCROLL_STEP);
           hydratedWorkspaceSurfaceIds.add("activity");
           touchedWorkspaceSurfaceIds.add("activity");
         }
         return true;
       }
       if (e.type === "down" && e.button !== 2) {
-        const row = activityRowHitTest(activityProjection(), localX, localY);
-        if (row) setActivitySelectedId(row.rowId);
+        missionsActivitySession()?.handleActivityPointer(localX, localY);
         hydratedWorkspaceSurfaceIds.add("activity");
         touchedWorkspaceSurfaceIds.add("activity");
       }
@@ -8005,22 +7775,12 @@ const mountTuiRoot = () => {
           return;
         }
         if (mode() === "missions" && type === "scroll") {
-          const hit = missionHitAt(x, y);
           const direction = e.scroll?.direction;
           if (direction !== "up" && direction !== "down") return;
-          handleMissionSurfaceScroll(
-            hit,
+          missionsActivitySession()?.handleMissionScroll(
+            x - sidebarW(),
+            y - TABBAR_H,
             direction,
-            {
-              model: missionWorkspaceModel(),
-              snapshot: missionWorkspaceSnapshot(),
-              layoutSize: missionLayoutSize(),
-              persistedTaskId: missionSelectionFromWorkspaceState(
-                workspaceUiState(),
-                missionViewId(),
-              ).selectedTaskId,
-            },
-            { updateModel: updateMissionModel },
             SCROLL_STEP,
           );
           return;
@@ -8063,25 +7823,7 @@ const mountTuiRoot = () => {
           return;
         }
         if (mode() === "missions") {
-          const hit = missionHitAt(x, y);
-          handleMissionSurfacePointerDown(
-            hit,
-            {
-              model: missionWorkspaceModel(),
-              snapshot: missionWorkspaceSnapshot(),
-              layoutSize: missionLayoutSize(),
-              persistedTaskId: missionSelectionFromWorkspaceState(
-                workspaceUiState(),
-                missionViewId(),
-              ).selectedTaskId,
-            },
-            {
-              updateModel: updateMissionModel,
-              refresh: () => loadMissionsWorkspace("refresh"),
-              followDeepLink: followMissionDeepLink,
-              persistSelection: persistMissionSelection,
-            },
-          );
+          missionsActivitySession()?.handleMissionPointer(x - sidebarW(), y - TABBAR_H);
         }
         return;
       }
@@ -8554,7 +8296,7 @@ const mountTuiRoot = () => {
         focusZone: workbenchProjection().focusZone,
         dockMode: workbenchProjection().dockMode,
         activeDockTab: activeDockTab(),
-        missionMode: missionWorkspaceModel().mode,
+        missionMode: missionsActivitySession()?.missionMode() ?? "board",
         editorFocus: filesFocus(),
         editorFilterOpen: filesQuery() !== null,
         diffFilterOpen: diffFilterOpen(),
@@ -9009,21 +8751,56 @@ const mountTuiRoot = () => {
                     )}
                   </Show>
                 </Show>
-                <Show when={activeDockTab() === "missions"}>
-                  <MissionsSurface
-                    width={dockSurfaceWidth()}
-                    dashboard={missionsDashboard()}
-                    model={missionWorkspaceModel()}
-                    snapshot={missionWorkspaceSnapshot()}
-                    loadState={missionWorkspaceLoad()}
-                    errorMessage={missionLoadErrorMessage()}
-                    resolveDeepLink={missionDeepLink}
-                    isHovered={isHovered}
-                    theme={semanticTheme()}
-                  />
-                </Show>
-                <Show when={activeDockTab() === "activity"}>
-                  <ActivitySurface theme={semanticTheme()} projection={activityProjection()} />
+                <Show when={activeDockTab() === "missions" || activeDockTab() === "activity"}>
+                  <Show
+                    when={missionsActivityFeature()}
+                    fallback={
+                      <box
+                        width="100%"
+                        height="100%"
+                        flexDirection="column"
+                        justifyContent="center"
+                        alignItems="center"
+                        backgroundColor={semanticTheme().roles.surfaces.panel}
+                      >
+                        <text fg={semanticTheme().roles.text.secondary}>
+                          {missionsActivityLoadState() === "failed"
+                            ? "Missions and Activity unavailable · reopen to retry"
+                            : "Loading Missions and Activity…"}
+                        </text>
+                      </box>
+                    }
+                  >
+                    {(feature) => (
+                      <Show when={missionsActivitySession()}>
+                        {(session) => (
+                          <Show
+                            when={activeDockTab() === "missions"}
+                            fallback={
+                              <Dynamic
+                                component={feature().ActivitySurface}
+                                theme={semanticTheme()}
+                                projection={session().activityProjection()}
+                              />
+                            }
+                          >
+                            <Dynamic
+                              component={feature().MissionsSurface}
+                              width={dockSurfaceWidth()}
+                              dashboard={session().missionProjection()}
+                              model={session().missionModel()}
+                              snapshot={session().missionSnapshot()}
+                              loadState={session().missionLoadState()}
+                              errorMessage={session().missionErrorMessage()}
+                              resolveDeepLink={session().resolveDeepLink}
+                              isHovered={isHovered}
+                              theme={semanticTheme()}
+                            />
+                          </Show>
+                        )}
+                      </Show>
+                    )}
+                  </Show>
                 </Show>
               </>
             }

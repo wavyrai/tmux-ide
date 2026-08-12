@@ -12,8 +12,7 @@ describe("application optional feature loaders", () => {
     for (const specifier of [
       "../features/files/feature.tsx",
       "../features/changes/feature.tsx",
-      "../missions-surface.tsx",
-      "../activity-surface.tsx",
+      "../features/missions-activity/feature.tsx",
       "../workspace/command-palette-surface.tsx",
       "../widget-surface.tsx",
     ]) {
@@ -58,6 +57,28 @@ describe("application optional feature loaders", () => {
     const [left, right] = await Promise.all([first, second]);
     expect(left).toBe(right);
     expect(left?.createChangesFeatureController).toBeTypeOf("function");
+    expect(registry.getMetrics()).toMatchObject({
+      loadsStarted: 1,
+      loadsSucceeded: 1,
+      publications: 1,
+      joinedRequests: 1,
+    });
+    registry.dispose();
+  });
+
+  it("evaluates and publishes one shared Missions and Activity module exactly once", async () => {
+    const registry = createApplicationOptionalFeatureRegistry();
+    const first = registry.request("missionsActivity");
+    const second = registry.request("missionsActivity");
+    expect(first).toBe(second);
+    expect(registry.getMetrics()).toMatchObject({ loadsStarted: 0, retainedIntents: 1 });
+
+    registry.admit();
+    const [left, right] = await Promise.all([first, second]);
+    expect(left).toBe(right);
+    expect(left?.createMissionsActivityFeatureSession).toBeTypeOf("function");
+    expect(left?.MissionsSurface).toBeTypeOf("function");
+    expect(left?.ActivitySurface).toBeTypeOf("function");
     expect(registry.getMetrics()).toMatchObject({
       loadsStarted: 1,
       loadsSucceeded: 1,
