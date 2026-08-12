@@ -33,10 +33,7 @@ import { swapCells, paintBg, type CellArrays, type GraphemeOverride } from "./bl
 import { rowSelectionRange, visibleSelRows, type Cell } from "./selection.ts";
 import type { SearchMatch } from "./search-model.ts";
 import type { TerminalPaletteProjection } from "./theme.ts";
-import {
-  currentTuiPerformanceDiagnosticSink,
-  currentTuiPerformanceEventSink,
-} from "./performance-events.ts";
+import { currentTuiPerformanceEventSink } from "./performance-events.ts";
 
 /** The scrollback-search highlight payload for one pane: matches keyed by
  *  ABSOLUTE buffer line (mapped to a visible row via `baseY`), the query length,
@@ -346,13 +343,6 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
         palette: this._terminalPalette,
       },
     );
-    if (paintTrace)
-      currentTuiPerformanceDiagnosticSink()?.({
-        phase: "paint-trace-consumed",
-        paneId: this._paneId,
-        traceId: paintTrace.traceId,
-        hasSink: Boolean(performanceSink),
-      });
 
     // Multi-codepoint graphemes (ZWJ/flag emoji, combining marks) — the native
     // setCell handles the full string + its width; rare, so the RGBA is fine.

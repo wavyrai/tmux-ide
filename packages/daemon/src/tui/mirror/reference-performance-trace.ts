@@ -4,7 +4,6 @@ import { dirname } from "node:path";
 
 import {
   installTuiPerformanceEventSink,
-  installTuiPerformanceDiagnosticSink,
   type TuiPerformanceEventSink,
   type TuiTerminalTraceSpanEvent,
 } from "./performance-events.ts";
@@ -32,9 +31,6 @@ export function installReferencePerformanceTraceCollectorFromEnvironment(): void
     append,
     diagnostics: true,
   });
-  installTuiPerformanceDiagnosticSink((event) =>
-    append({ version: 1, type: "performance.trace.diagnostic", ...event }),
-  );
   installTuiPerformanceEventSink(sink);
 }
 
