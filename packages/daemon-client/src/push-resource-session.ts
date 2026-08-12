@@ -261,10 +261,18 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
     | ((keys: ReadonlySet<string>) => void | PromiseLike<void>)
     | null = null;
   let installedInterestSignature = "";
-  let interestConvergenceRunning = false;
+  let activeInterestConvergence: {
+    readonly generation: number;
+    readonly subscriptionEpoch: number;
+  } | null = null;
 
   const closeEvents = (resetRetry = true): void => {
     subscriptionEpoch += 1;
+    // A physical subscription retirement also retires its convergence mutex.
+    // Its updater promise may be uncooperative and never settle; identity checks
+    // below fence its eventual result while the replacement generation is free
+    // to converge immediately.
+    activeInterestConvergence = null;
     pendingSubscriptionEpoch = null;
     const close = closeSubscription;
     closeSubscription = null;
@@ -548,12 +556,23 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
    * signature exactly matches the latest desired signature.
    */
   const convergeInstalledInterests = (expectedGeneration: number): void => {
-    if (interestConvergenceRunning) return;
-    interestConvergenceRunning = true;
+    const expectedSubscriptionEpoch = subscriptionEpoch;
+    if (
+      activeInterestConvergence?.generation === expectedGeneration &&
+      activeInterestConvergence.subscriptionEpoch === expectedSubscriptionEpoch
+    )
+      return;
+    const convergence = {
+      generation: expectedGeneration,
+      subscriptionEpoch: expectedSubscriptionEpoch,
+    };
+    activeInterestConvergence = convergence;
     void (async () => {
       try {
         while (
           current(expectedGeneration) &&
+          expectedSubscriptionEpoch === subscriptionEpoch &&
+          activeInterestConvergence === convergence &&
           closeSubscription !== null &&
           updateSubscriptionInterests !== null
         ) {
@@ -582,6 +601,8 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
           }
           if (
             !current(expectedGeneration) ||
+            expectedSubscriptionEpoch !== subscriptionEpoch ||
+            activeInterestConvergence !== convergence ||
             updater !== updateSubscriptionInterests ||
             subscription !== closeSubscription
           )
@@ -594,15 +615,20 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
           }
         }
       } finally {
-        interestConvergenceRunning = false;
-        if (
-          !disposed &&
-          target !== null &&
-          closeSubscription !== null &&
-          updateSubscriptionInterests !== null &&
-          installedInterestSignature !== interestSignature(eventInterests())
-        ) {
-          convergeInstalledInterests(generation);
+        // Never let a retired async continuation clear the replacement run.
+        if (activeInterestConvergence === convergence) {
+          activeInterestConvergence = null;
+          if (
+            !disposed &&
+            expectedGeneration === generation &&
+            expectedSubscriptionEpoch === subscriptionEpoch &&
+            target !== null &&
+            closeSubscription !== null &&
+            updateSubscriptionInterests !== null &&
+            installedInterestSignature !== interestSignature(eventInterests())
+          ) {
+            convergeInstalledInterests(generation);
+          }
         }
       }
     })();

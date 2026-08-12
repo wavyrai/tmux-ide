@@ -61,6 +61,11 @@ describe("production OpenTUI data path", () => {
     expect(source).toContain('"list-panes", "-s", "-t", `=${sessionName}`');
     expect(source).toContain("SESSION_PANE_DESCRIPTOR_FORMAT");
     expect(source).toContain("candidate.setRuntimeDescriptors(");
+    expect(source).toContain("candidate.setRuntimeAuthorityGeneration(authorityGeneration)");
+    expect(source).toContain("candidate.retireRuntimeAuthority()");
+    expect(source).toContain(
+      "refreshLocalRuntimeDescriptors(sessionName, candidate, authorityGeneration)",
+    );
     expect(source).toContain("parseSessionPaneDescriptors(stdout.trimEnd().split");
     expect(source).toContain("projectAuthoritativeAgentRows");
   });

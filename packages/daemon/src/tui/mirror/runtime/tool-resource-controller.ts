@@ -58,7 +58,10 @@ export interface TuiToolResourceFailure {
 export interface TuiToolResourceMetrics {
   readonly toolFetches: number;
   readonly invalidations: number;
+  /** Authoritative state snapshots published by the underlying resource session. */
   readonly statePublications: number;
+  /** Fan-out deliveries to controller subscribers, including their initial snapshot. */
+  readonly subscriberDeliveries: number;
   readonly dirtyUpdates: number;
   readonly subprocessLaunches: number;
   /** Event-store maintenance wakeups; structurally zero without an idle timer. */
@@ -653,7 +656,7 @@ export function createTuiToolResourceController(
   let releaseSessions: (() => void) | null = null;
   let releaseProjects: (() => void) | null = null;
   let releaseDock: (() => void) | null = null;
-  let publications = 0;
+  let subscriberDeliveries = 0;
   let dirtyUpdates = 0;
   let previousState = session.getState();
   let nativeRenderPasses = 0;
@@ -693,7 +696,7 @@ export function createTuiToolResourceController(
     },
     subscribe(listener) {
       return session.subscribe((state) => {
-        publications += 1;
+        subscriberDeliveries += 1;
         if (
           state.generation !== previousState.generation ||
           state.slots.size !== previousState.slots.size ||
@@ -709,7 +712,8 @@ export function createTuiToolResourceController(
       return {
         toolFetches: metrics.fetchesStarted,
         invalidations: metrics.invalidationsObserved,
-        statePublications: publications,
+        statePublications: metrics.publications,
+        subscriberDeliveries,
         dirtyUpdates,
         subprocessLaunches,
         idleWakeups: metrics.idleWakeups,

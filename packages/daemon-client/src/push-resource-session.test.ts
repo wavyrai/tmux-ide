@@ -244,6 +244,44 @@ describe("push resource session", () => {
     expect(session.getState().slots.get("terminal")?.status).toBe("loaded");
   });
 
+  it("lets a replacement generation converge while a retired updater never settles", async () => {
+    const updates = new Map<string, string[][]>();
+    const session = createPushResourceSession(
+      adapter({
+        connect: (current) => ({
+          status: "connected",
+          close: () => undefined,
+          updateInterests: (next) => {
+            const generationUpdates = updates.get(current.generation) ?? [];
+            generationUpdates.push([...next].sort());
+            updates.set(current.generation, generationUpdates);
+            if (current.generation === "one") return new Promise<void>(() => undefined);
+          },
+        }),
+      }),
+      { generation: "one" },
+    );
+    session.activate("files");
+    await turn();
+
+    // Generation one's physical updater never ACKs.
+    session.activate("changes");
+    expect(updates.get("one")).toEqual([["changes", "files"]]);
+
+    // Retirement must release the logical mutex without waiting for that ACK.
+    session.setTarget({ generation: "two" });
+    await turn();
+    session.activate("terminal");
+    await turn();
+
+    expect(updates.get("two")).toEqual([["changes", "files", "terminal"]]);
+    expect(session.getState().slots.get("terminal")).toMatchObject({
+      status: "loaded",
+      resource: "two:terminal",
+    });
+    session.dispose();
+  });
+
   it("establishes subscription interest before the initial read", async () => {
     let events: PushResourceEventHandlers<Key> | null = null;
     let finishConnect: (() => void) | null = null;

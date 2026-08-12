@@ -56,6 +56,7 @@ export class SemanticSessionView {
   #source: SemanticTerminalRenderSource | null = null;
   #inventoryDescriptors: SessionPaneDescriptor[] = [];
   #runtimeDescriptors: SessionPaneDescriptor[] = [];
+  #runtimeAuthorityGeneration: string | null = null;
   #layouts = new Map<string, Extract<PaneStreamServerFrame, { type: "layout" }>>();
   #focused = "";
   #richPlacementCache = new Map<
@@ -94,13 +95,37 @@ export class SemanticSessionView {
         windowName: null,
         windowId: resource.windowResourceId ?? null,
       }));
+    if (this.#inventoryDescriptors.length === 0) {
+      this.#runtimeAuthorityGeneration = null;
+      this.#runtimeDescriptors = [];
+    }
     const active = inventory.activeResourceId ?? "";
-    if (active) this.#focused = active;
+    this.#focused = active;
     this.#options.onDirty?.();
   }
 
-  /** Accept generation-bound, process-local tmux identity proof. Raw ids stay local. */
-  setRuntimeDescriptors(descriptors: readonly SessionPaneDescriptor[]): void {
+  /** Begin one physical semantic-lane authority generation, retiring every old raw join. */
+  setRuntimeAuthorityGeneration(generation: string): void {
+    if (generation === this.#runtimeAuthorityGeneration) return;
+    this.#runtimeAuthorityGeneration = generation;
+    this.#runtimeDescriptors = [];
+    this.#options.onDirty?.();
+  }
+
+  /** Retire local raw identity before an empty inventory, disconnect, or reconnect. */
+  retireRuntimeAuthority(): void {
+    if (this.#runtimeAuthorityGeneration === null && this.#runtimeDescriptors.length === 0) return;
+    this.#runtimeAuthorityGeneration = null;
+    this.#runtimeDescriptors = [];
+    this.#options.onDirty?.();
+  }
+
+  /** Accept process-local tmux identity proof only for the live physical authority. */
+  setRuntimeDescriptors(
+    authorityGeneration: string,
+    descriptors: readonly SessionPaneDescriptor[],
+  ): boolean {
+    if (authorityGeneration !== this.#runtimeAuthorityGeneration) return false;
     this.#runtimeDescriptors = descriptors
       .filter(
         (descriptor) =>
@@ -108,6 +133,7 @@ export class SemanticSessionView {
       )
       .map((descriptor) => ({ ...descriptor }));
     this.#options.onDirty?.();
+    return true;
   }
 
   acceptLayout(frame: Extract<PaneStreamServerFrame, { type: "layout" }>): void {
@@ -278,6 +304,7 @@ export class SemanticSessionView {
     this.#source = null;
     this.#inventoryDescriptors = [];
     this.#runtimeDescriptors = [];
+    this.#runtimeAuthorityGeneration = null;
     this.#richPlacementCache.clear();
   }
 }

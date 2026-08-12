@@ -1235,16 +1235,18 @@ const mountTuiRoot = () => {
     };
     let localDescriptorRequest = 0;
     let localDescriptorSignature: string | null = null;
+    let localDescriptorAuthorityGeneration: string | null = null;
     const refreshLocalRuntimeDescriptors = (
       sessionName: string,
       candidate: SemanticSessionView,
+      authorityGeneration: string,
     ): void => {
       const semanticIds = candidate
         .paneDescriptors()
         .map(({ semanticPaneId }) => semanticPaneId)
         .filter((paneId): paneId is string => paneId !== null)
         .sort();
-      const signature = `${sessionName}\0${semanticIds.join("\0")}`;
+      const signature = `${authorityGeneration}\0${sessionName}\0${semanticIds.join("\0")}`;
       if (semanticIds.length === 0 || signature === localDescriptorSignature) return;
       localDescriptorSignature = signature;
       const request = ++localDescriptorRequest;
@@ -1256,6 +1258,7 @@ const mountTuiRoot = () => {
           if (
             request !== localDescriptorRequest ||
             semanticView !== candidate ||
+            localDescriptorAuthorityGeneration !== authorityGeneration ||
             localDescriptorSignature !== signature
           )
             return;
@@ -1265,6 +1268,7 @@ const mountTuiRoot = () => {
             return;
           }
           candidate.setRuntimeDescriptors(
+            authorityGeneration,
             parseSessionPaneDescriptors(stdout.trimEnd().split("\n")),
           );
           reconcileAuthoritativeAgents();
@@ -1314,6 +1318,10 @@ const mountTuiRoot = () => {
     };
     const retireSessionRuntimeLane = () => {
       sessionRuntimeLaneRequest += 1;
+      localDescriptorRequest += 1;
+      localDescriptorSignature = null;
+      localDescriptorAuthorityGeneration = null;
+      semanticView?.retireRuntimeAuthority();
       sessionRuntimeLaneKey = null;
       sessionRuntimeLane()?.close();
       setSessionRuntimeLane(null);
@@ -1332,11 +1340,20 @@ const mountTuiRoot = () => {
         .map((descriptor) => descriptor.semanticPaneId)
         .filter((paneId): paneId is string => paneId !== null)
         .sort();
-      if (semanticPaneIds.length === 0) return;
+      if (semanticPaneIds.length === 0) {
+        if (sessionRuntimeLaneKey !== null || sessionRuntimeLane()) retireSessionRuntimeLane();
+        else candidate.retireRuntimeAuthority();
+        return;
+      }
       const key = `${sessionName}\0${semanticPaneIds.join("\0")}`;
       if (sessionRuntimeLaneKey === key) return;
       const request = ++sessionRuntimeLaneRequest;
+      const authorityGeneration = `${sessionName}\0runtime:${request}`;
       sessionRuntimeLaneKey = key;
+      localDescriptorRequest += 1;
+      localDescriptorSignature = null;
+      localDescriptorAuthorityGeneration = null;
+      candidate.retireRuntimeAuthority();
       sessionRuntimeLane()?.close();
       setSessionRuntimeLane(null);
       runtimeLaneFitKey = null;
@@ -1379,6 +1396,10 @@ const mountTuiRoot = () => {
             },
             onFault: () => {
               if (request !== sessionRuntimeLaneRequest) return;
+              localDescriptorRequest += 1;
+              localDescriptorSignature = null;
+              localDescriptorAuthorityGeneration = null;
+              candidate.retireRuntimeAuthority();
               sessionRuntimeLaneKey = null;
               sessionRuntimeLane()?.close();
               setSessionRuntimeLane(null);
@@ -1405,6 +1426,9 @@ const mountTuiRoot = () => {
           return;
         }
         if (!lane) return;
+        localDescriptorAuthorityGeneration = authorityGeneration;
+        candidate.setRuntimeAuthorityGeneration(authorityGeneration);
+        refreshLocalRuntimeDescriptors(sessionName, candidate, authorityGeneration);
         candidate.setSource(lane.source);
         setSessionRuntimeLane(lane);
         reconcileAuthoritativeAgents();
@@ -1416,7 +1440,13 @@ const mountTuiRoot = () => {
           pendingSemanticFocus = null;
         }
       } catch {
-        if (request === sessionRuntimeLaneRequest) sessionRuntimeLaneKey = null;
+        if (request === sessionRuntimeLaneRequest) {
+          localDescriptorRequest += 1;
+          localDescriptorSignature = null;
+          localDescriptorAuthorityGeneration = null;
+          candidate.retireRuntimeAuthority();
+          sessionRuntimeLaneKey = null;
+        }
       }
     };
     const [daemonApplicationShellState, setDaemonApplicationShellState] =
@@ -1494,7 +1524,13 @@ const mountTuiRoot = () => {
           const inventory = state.data?.terminalInventory;
           if (inventory && semanticView) {
             semanticView.setInventory(inventory);
-            refreshLocalRuntimeDescriptors(sessionName, semanticView);
+            if (localDescriptorAuthorityGeneration) {
+              refreshLocalRuntimeDescriptors(
+                sessionName,
+                semanticView,
+                localDescriptorAuthorityGeneration,
+              );
+            }
             reconcileAuthoritativeAgents();
             void reconcileSessionRuntimeLane(sessionName, semanticView);
           }
@@ -3365,11 +3401,9 @@ const mountTuiRoot = () => {
       pendingAttachTarget = null;
       const previousSupervisor = mirrorSupervisor;
       mirrorSupervisor = null;
-      semanticView = null;
-      localDescriptorRequest += 1;
-      localDescriptorSignature = null;
-      void previousSupervisor?.stop();
       retireSessionRuntimeLane();
+      semanticView = null;
+      void previousSupervisor?.stop();
       terminalWorkspaceAdapter?.dispose();
       terminalWorkspaceAdapter = null;
       scrollOffsets.clear();
@@ -3430,7 +3464,13 @@ const mountTuiRoot = () => {
           const inventory = daemonApplicationShellState()?.data?.terminalInventory;
           if (inventory) {
             semanticView.setInventory(inventory);
-            refreshLocalRuntimeDescriptors(name, semanticView);
+            if (localDescriptorAuthorityGeneration) {
+              refreshLocalRuntimeDescriptors(
+                name,
+                semanticView,
+                localDescriptorAuthorityGeneration,
+              );
+            }
             reconcileAuthoritativeAgents();
           }
           setStatus("live");
@@ -3438,9 +3478,11 @@ const mountTuiRoot = () => {
           void reconcileSessionRuntimeLane(name, state.value);
           markDirty();
         } else if (state.phase === "reconnecting") {
+          retireSessionRuntimeLane();
           semanticView = null;
           setStatus(`reconnecting ${name} (attempt ${state.attempt})…`);
         } else if (state.phase === "failed") {
+          retireSessionRuntimeLane();
           semanticView = null;
           setStatus("tmux connection failed");
         }

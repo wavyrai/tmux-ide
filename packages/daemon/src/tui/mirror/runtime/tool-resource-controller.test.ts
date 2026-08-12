@@ -124,6 +124,25 @@ describe("OpenTUI demand-driven tool resources", () => {
     controller.dispose();
   });
 
+  it("reports authoritative publications separately from subscriber fan-out", () => {
+    const log: string[] = [];
+    const { adapter } = fakeAdapter(log);
+    const controller = createTuiToolResourceController(adapter);
+    controller.setTarget(TARGET);
+    const beforeSubscribe = controller.getMetrics();
+
+    const first = controller.subscribe(() => undefined);
+    const second = controller.subscribe(() => undefined);
+
+    expect(controller.getMetrics()).toMatchObject({
+      statePublications: beforeSubscribe.statePublications,
+      subscriberDeliveries: beforeSubscribe.subscriberDeliveries + 2,
+    });
+    first();
+    second();
+    controller.dispose();
+  });
+
   it("admits tool demand only after terminal readiness", async () => {
     const log: string[] = [];
     const { adapter } = fakeAdapter(log);
