@@ -360,6 +360,72 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
   };
   let nextDevHostSessionGeneration = 0;
   let devHostSession: DevHostSessionBootstrap | null = null;
+  const takeEmbeddedDevHostSession = (): string | null => {
+    if (config.transport !== "same-origin-gateway" || typeof document === "undefined") return null;
+    const element = document.querySelector<HTMLMetaElement>(
+      'meta[name="tmux-ide-dev-host-session"]',
+    );
+    const parsed = z.uuid().safeParse(element?.content);
+    element?.remove();
+    return parsed.success ? parsed.data : null;
+  };
+  let embeddedDevHostSession = takeEmbeddedDevHostSession();
+  const useGatewayXmlHttpRequest = embeddedDevHostSession !== null;
+  const httpRequest = (input: string, init: RequestInit): Promise<Response> => {
+    if (!useGatewayXmlHttpRequest) return fetch(input, init);
+    return new Promise<Response>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      let settled = false;
+      const finish = (action: () => void): void => {
+        if (settled) return;
+        settled = true;
+        init.signal?.removeEventListener("abort", abort);
+        action();
+      };
+      const abort = (): void => {
+        xhr.abort();
+        finish(() => reject(new DOMException("The request was aborted", "AbortError")));
+      };
+      if (init.signal?.aborted) {
+        abort();
+        return;
+      }
+      xhr.open(init.method ?? "GET", input);
+      const headers = new Headers(init.headers);
+      headers.forEach((value, name) => xhr.setRequestHeader(name, value));
+      xhr.addEventListener("load", () => {
+        finish(() => {
+          const responseHeaders = new Headers();
+          for (const line of xhr
+            .getAllResponseHeaders()
+            .trim()
+            .split(/[\r\n]+/u)) {
+            const separator = line.indexOf(":");
+            if (separator <= 0) continue;
+            responseHeaders.append(
+              line.slice(0, separator).trim(),
+              line.slice(separator + 1).trim(),
+            );
+          }
+          resolve(
+            new Response(xhr.responseText, {
+              status: xhr.status,
+              statusText: xhr.statusText,
+              headers: responseHeaders,
+            }),
+          );
+        });
+      });
+      xhr.addEventListener("error", () =>
+        finish(() => reject(new TypeError("The development gateway request failed"))),
+      );
+      xhr.addEventListener("abort", () =>
+        finish(() => reject(new DOMException("The request was aborted", "AbortError"))),
+      );
+      init.signal?.addEventListener("abort", abort, { once: true });
+      xhr.send(typeof init.body === "string" ? init.body : null);
+    });
+  };
   const loadDevHostSession = (
     staleGeneration: number | null = null,
     signal?: AbortSignal,
@@ -394,13 +460,26 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
       devHostSession = record;
       const pending = (async () => {
         try {
-          const response = await fetch("/__tmux_ide_host_session", {
+          if (embeddedDevHostSession !== null) {
+            const token = embeddedDevHostSession;
+            embeddedDevHostSession = null;
+            const lease = { generation, token };
+            if (devHostSession !== record || disposed) throw new DevHostFailure(DISPOSED);
+            resolvedDevHostSession = lease;
+            return lease;
+          }
+          const response = await httpRequest(`${config.daemonOrigin}/api/dev/host-session`, {
             method: "POST",
             cache: "no-store",
             credentials: "omit",
             signal: controller.signal,
           });
-          if (!response.ok) throw new DevHostFailure(REQUEST_FAILED);
+          if (!response.ok) {
+            console.warn(
+              `[tmux-ide] development host session request failed -> ${response.status}`,
+            );
+            throw new DevHostFailure(REQUEST_FAILED);
+          }
           const token = z
             .object({ token: z.uuid() })
             .strict()
@@ -499,7 +578,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         ...(config.ownerToken ? { Authorization: `Bearer ${config.ownerToken}` } : {}),
         ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
       };
-      let response = await fetch(url(pathname), {
+      let response = await httpRequest(url(pathname), {
         method: wireMethod,
         headers: wireHeaders,
         ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
@@ -527,7 +606,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           controller.signal,
           timeoutMs,
         );
-        response = await fetch(url(pathname), {
+        response = await httpRequest(url(pathname), {
           method: wireMethod,
           headers: {
             ...extraHeaders,
@@ -610,15 +689,18 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
    */
   async function loadIdentity(signal?: AbortSignal): Promise<DaemonInstanceIdentity> {
     if (identity) return identity;
-    const result = DesktopDaemonCapabilitiesResultSchemaZ.parse(
-      await request(
-        "/api/v2/capabilities",
-        { method: "POST", body: {} },
-        {},
-        REQUEST_TIMEOUT_MS,
-        signal,
-      ),
+    const rawResult = await request(
+      "/api/v2/capabilities",
+      { method: "POST", body: {} },
+      {},
+      REQUEST_TIMEOUT_MS,
+      signal,
     );
+    const parsedResult = DesktopDaemonCapabilitiesResultSchemaZ.safeParse(rawResult);
+    if (!parsedResult.success) {
+      throw new DevHostFailure(INVALID_RESPONSE);
+    }
+    const result = parsedResult.data;
     if (result.status !== "ok") throw new DevHostFailure(result.error);
     identity = result.daemon;
     return identity;

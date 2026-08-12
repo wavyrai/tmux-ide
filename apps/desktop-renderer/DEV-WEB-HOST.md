@@ -35,6 +35,15 @@ daemon. A malformed or non-loopback daemon origin is a hard startup error.
 `vite build` output is untouched; the packaged renderer's CSP is still owned by
 `apps/electron-shell/src/packaged-renderer-protocol.ts`.
 
+In gateway mode Vite mints an expiring, document-scoped host capability into
+the served HTML. The renderer consumes and removes that capability before its
+first daemon request. Vite accepts API and WebSocket traffic only when that
+capability resolves to a live host session, then substitutes the server-owned
+daemon bearer and stable host-client identity. This also works in embedded
+browsers that omit `Origin` on loopback WebSockets or apply a stricter policy
+to `fetch`; the renderer uses an XHR transport for that document while keeping
+the same typed host interface.
+
 `TMUX_IDE_DEV_SERVER_PORT` moves the dev server and its CSP together. Prefer it
 over `vite --port`, which would move the server but leave the CSP naming 5173.
 

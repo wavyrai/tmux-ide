@@ -303,7 +303,7 @@ describe("development web host route keying", () => {
           headers: (init?.headers ?? {}) as Record<string, string>,
         });
         const body =
-          url.pathname === "/__tmux_ide_host_session"
+          url.pathname === "/api/dev/host-session"
             ? { token: "33333333-3333-4333-8333-333333333333" }
             : url.pathname === "/api/v2/capabilities"
               ? {
@@ -425,7 +425,7 @@ describe("development gateway host sessions", () => {
       "fetch",
       vi.fn(async (input: string | URL, init?: RequestInit) => {
         const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
-        expect(pathname).toBe("/__tmux_ide_host_session");
+        expect(pathname).toBe("/api/dev/host-session");
         bootstrapSignal = init?.signal ?? undefined;
         return new Promise<Response>((_resolve, reject) => {
           bootstrapSignal?.addEventListener("abort", () => reject(new Error("aborted")), {
@@ -471,7 +471,7 @@ describe("development gateway host sessions", () => {
       "fetch",
       vi.fn(async (input: string | URL, init?: RequestInit) => {
         const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
-        if (pathname === "/__tmux_ide_host_session") {
+        if (pathname === "/api/dev/host-session") {
           return jsonResponse(200, { token: bootstrapTokens[bootstrapCount++] });
         }
         const headers = init?.headers as Record<string, string>;
@@ -500,7 +500,7 @@ describe("development gateway host sessions", () => {
       "fetch",
       vi.fn(async (input: string | URL) => {
         const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
-        if (pathname === "/__tmux_ide_host_session") {
+        if (pathname === "/api/dev/host-session") {
           bootstrapCount += 1;
           return bootstrapCount === 1
             ? jsonResponse(503, { unavailable: true })
@@ -523,7 +523,7 @@ describe("development gateway host sessions", () => {
       "fetch",
       vi.fn(async (input: string | URL, init?: RequestInit) => {
         const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
-        if (pathname === "/__tmux_ide_host_session") {
+        if (pathname === "/api/dev/host-session") {
           return jsonResponse(200, { token: "77777777-7777-4777-8777-777777777777" });
         }
         apiRequests.push(init ?? {});
@@ -554,7 +554,7 @@ describe("development gateway host sessions", () => {
       "fetch",
       vi.fn(async (input: string | URL, init?: RequestInit) => {
         const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
-        if (pathname === "/__tmux_ide_host_session") {
+        if (pathname === "/api/dev/host-session") {
           bootstrapCount += 1;
           return jsonResponse(200, {
             token:
@@ -616,7 +616,7 @@ describe("development gateway host sessions", () => {
       "fetch",
       vi.fn(async (input: string | URL, init?: RequestInit) => {
         const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
-        if (pathname === "/__tmux_ide_host_session") {
+        if (pathname === "/api/dev/host-session") {
           const index = bootstrapCount++;
           if (index === 1) await refreshGate;
           return jsonResponse(200, { token: tokens[index] });
@@ -651,7 +651,7 @@ describe("development gateway host sessions", () => {
       "fetch",
       vi.fn(async (input: string | URL, init?: RequestInit) => {
         const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
-        if (pathname === "/__tmux_ide_host_session") {
+        if (pathname === "/api/dev/host-session") {
           bootstrapSignal = init?.signal ?? undefined;
           return new Promise<Response>((resolve) => {
             releaseBootstrap = resolve;
@@ -682,7 +682,7 @@ describe("development gateway host sessions", () => {
       "fetch",
       vi.fn(async (input: string | URL, init?: RequestInit) => {
         const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
-        if (pathname === "/__tmux_ide_host_session") {
+        if (pathname === "/api/dev/host-session") {
           bootstrapSignal = init?.signal ?? undefined;
           return new Promise<Response>((resolve) => {
             releaseBootstrap = resolve;
@@ -712,7 +712,7 @@ describe("development gateway host sessions", () => {
       "fetch",
       vi.fn(async (input: string | URL, init?: RequestInit) => {
         const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
-        if (pathname === "/__tmux_ide_host_session") {
+        if (pathname === "/api/dev/host-session") {
           return jsonResponse(200, { token: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" });
         }
         readinessSignal = init?.signal ?? undefined;
@@ -743,7 +743,7 @@ describe("development gateway host sessions", () => {
       "fetch",
       vi.fn(async (input: string | URL) => {
         const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
-        if (pathname === "/__tmux_ide_host_session") {
+        if (pathname === "/api/dev/host-session") {
           bootstrapCount += 1;
           return jsonResponse(200, { token: "66666666-6666-4666-8666-666666666666" });
         }
