@@ -2,8 +2,9 @@
  * The MirrorService's tmux control-mode channel (m43 card 1).
  *
  * One channel per session, spawned with the flood-spike's VERIFIED policy:
- * `attach -f pause-after=2` bounds server-side buffering for a stalled
- * reader (~2s x output rate) and switches pane bytes to the
+ * `attach -f ignore-size,pause-after=2,active-pane` keeps this retained
+ * observer size-passive, bounds server-side buffering for a stalled reader
+ * (~2s x output rate), and switches pane bytes to the
  * `%extended-output` framing whose age field is fall-behind telemetry. Both
  * framings are parsed (`parseControlLine` — shared with the TUI mirror, which
  * never sets pause flags and so never sees the extended framing).
@@ -192,6 +193,29 @@ export interface MirrorControlChannelOptions {
   pauseAfterSeconds?: number;
 }
 
+export function mirrorControlAttachArgs(
+  options: Pick<
+    MirrorControlChannelOptions,
+    "session" | "socketName" | "socketPath" | "configFile"
+  >,
+  pauseAfterSeconds = DEFAULT_PAUSE_AFTER_SECONDS,
+): string[] {
+  return [
+    ...(options.socketPath
+      ? ["-S", options.socketPath]
+      : options.socketName
+        ? ["-L", options.socketName]
+        : []),
+    ...(options.configFile ? ["-f", options.configFile] : []),
+    "-C",
+    "attach",
+    "-t",
+    options.session,
+    "-f",
+    `ignore-size,pause-after=${pauseAfterSeconds},active-pane`,
+  ];
+}
+
 /** Spike-verified default: bounds a stalled reader's server-side buffering
  *  without pausing during ordinary render hitches. */
 export const DEFAULT_PAUSE_AFTER_SECONDS = 2;
@@ -211,18 +235,8 @@ export class MirrorControlChannel implements MirrorChannelIo {
   }
 
   start(): Promise<void> {
-    const { session, socketName, socketPath, configFile } = this.opts;
     const pauseAfter = this.opts.pauseAfterSeconds ?? DEFAULT_PAUSE_AFTER_SECONDS;
-    const args = [
-      ...(socketPath ? ["-S", socketPath] : socketName ? ["-L", socketName] : []),
-      ...(configFile ? ["-f", configFile] : []),
-      "-C",
-      "attach",
-      "-t",
-      session,
-      "-f",
-      `pause-after=${pauseAfter}`,
-    ];
+    const args = mirrorControlAttachArgs(this.opts, pauseAfter);
     const proc = spawn(this.opts.executable ?? "tmux", args, {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, TMUX: "" },

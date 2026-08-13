@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  SessionRuntimeAuthorityLeaseSchemaZ,
+  SessionRuntimeAuthoritySnapshotSchemaZ,
   SessionRuntimeControllerLeaseSchemaZ,
   SessionRuntimeControllerSnapshotSchemaZ,
   SessionRuntimeSemanticIntentSchemaZ,
@@ -31,6 +33,45 @@ describe("session runtime architecture contract", () => {
         revision: 0,
       }),
     ).toMatchObject({ controllerClientId: null, revision: 0 });
+  });
+
+  it("pins separated authority leases to one capability and generation", () => {
+    const lease = {
+      generation: "11111111-1111-4111-8111-111111111111",
+      session: "alpha",
+      clientId: "client:web",
+      authority: "geometry" as const,
+      token: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      revision: 3,
+    };
+    expect(SessionRuntimeAuthorityLeaseSchemaZ.parse(lease)).toEqual(lease);
+    expect(
+      SessionRuntimeAuthorityLeaseSchemaZ.safeParse({ ...lease, authority: "controller" }).success,
+    ).toBe(false);
+  });
+
+  it("represents input, focus, and geometry owners independently", () => {
+    const snapshot = SessionRuntimeAuthoritySnapshotSchemaZ.parse({
+      generation: "11111111-1111-4111-8111-111111111111",
+      session: "alpha",
+      revision: 7,
+      owners: { input: "client:web", focus: null, geometry: "client:tui" },
+      nativeGeometryYieldUntilMs: 0,
+      clients: [
+        {
+          clientId: "client:web",
+          surface: "web",
+          state: "foreground",
+          connectedRevision: 1,
+          activityRevision: 4,
+        },
+      ],
+    });
+    expect(snapshot.owners).toEqual({
+      input: "client:web",
+      focus: null,
+      geometry: "client:tui",
+    });
   });
 
   it("accepts semantic intents and refuses raw tmux addresses", () => {

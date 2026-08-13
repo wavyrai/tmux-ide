@@ -8,6 +8,11 @@ import {
   type SessionRuntimeControllerLease,
   type SessionRuntimeControllerRole,
   type SessionRuntimeControllerSnapshot,
+  type SessionRuntimeActivityKind,
+  type SessionRuntimeAuthorityKind,
+  type SessionRuntimeAuthorityLease,
+  type SessionRuntimeAuthoritySnapshot,
+  type SessionRuntimePresenceState,
   type SessionRuntimeGeneration,
   type SessionRuntimeSemanticIntent,
   type CanonicalTerminalReplicaUpdate,
@@ -60,6 +65,7 @@ import {
   type SessionRuntimeTraceContext,
 } from "./runtime-observability.ts";
 import { RuntimeTraceCorrelator } from "./runtime-trace-correlator.ts";
+import { SessionRuntimeAuthorityArbiter } from "./authority-arbiter.ts";
 
 export interface SessionRuntimeRegistryOptions {
   readonly generation: string;
@@ -67,6 +73,8 @@ export interface SessionRuntimeRegistryOptions {
   readonly semanticMutations?: SessionSemanticMutationExecutorOptions;
   /** Deterministic seam for lease tests. Production uses cryptographic UUIDs. */
   readonly createControllerToken?: () => string;
+  /** Native terminal activity quiet period before tmux-ide may size again. */
+  readonly nativeGeometryHysteresisMs?: number;
   readonly scheduler?: SessionRuntimeScheduler;
   readonly observability?: SessionRuntimeObservability;
   /** Deterministic qualification seam; never invoked while observability is disabled. */
@@ -127,6 +135,11 @@ export interface SessionRuntimeConsumer {
   readonly clientId: string;
   controllerRole(): SessionRuntimeControllerRole;
   controllerSnapshot(): SessionRuntimeControllerSnapshot;
+  authoritySnapshot(): SessionRuntimeAuthoritySnapshot;
+  updatePresence(state: SessionRuntimePresenceState): void;
+  noteActivity(activity: SessionRuntimeActivityKind): void;
+  acquireAuthority(authority: SessionRuntimeAuthorityKind): SessionRuntimeAuthorityLease | null;
+  releaseAuthority(authority: SessionRuntimeAuthorityKind): void;
   acquireController(): SessionRuntimeControllerLease;
   handoffController(
     lease: SessionRuntimeControllerLease,
@@ -197,6 +210,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   readonly #semanticMutations: SessionSemanticMutationExecutor | null;
   readonly #resolveSession: ((workspaceName: string) => string | null) | null;
   readonly #createControllerToken: () => string;
+  readonly #nativeGeometryHysteresisMs: number | undefined;
   readonly #scheduler: SessionRuntimeScheduler;
   readonly #observability: SessionRuntimeObservability;
   readonly #createTraceCorrelator: (scheduler: SessionRuntimeScheduler) => RuntimeTraceCorrelator;
@@ -222,6 +236,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
       : null;
     this.#resolveSession = options.semanticMutations?.resolveSession ?? null;
     this.#createControllerToken = options.createControllerToken ?? randomUUID;
+    this.#nativeGeometryHysteresisMs = options.nativeGeometryHysteresisMs;
     this.#stopExitObserver = this.#mirror.onSessionExit((session) => {
       this.#sessions.get(session)?.noteControlExit();
     });
@@ -470,6 +485,15 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     return count;
   }
 
+  authoritySnapshot(session: string): SessionRuntimeAuthoritySnapshot {
+    return this.#runtime(session).authoritySnapshot();
+  }
+
+  /** Native client activity makes an existing daemon runtime size-passive. */
+  noteNativeGeometryActivity(session: string): void {
+    this.#sessions.get(session)?.noteNativeGeometryActivity();
+  }
+
   qualificationSnapshot(): SessionRuntimeQualificationSnapshot {
     return Object.freeze({
       generation: this.generation,
@@ -509,6 +533,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
       this.#scheduler,
       this.#observability,
       this.#createTraceCorrelator,
+      this.#nativeGeometryHysteresisMs,
       (
         owner,
         lease,
@@ -541,6 +566,7 @@ class SessionRuntime {
   #outputTraces: RuntimeTraceCorrelator | null;
   readonly #createTraceCorrelator: (scheduler: SessionRuntimeScheduler) => RuntimeTraceCorrelator;
   readonly #terminalDeliveryHub: SessionRuntimeTerminalDeliveryHub;
+  readonly #authority: SessionRuntimeAuthorityArbiter;
   readonly #scheduler: SessionRuntimeScheduler;
   readonly #observability: SessionRuntimeObservability;
   readonly #createControllerToken: () => string;
@@ -570,6 +596,7 @@ class SessionRuntime {
     scheduler: SessionRuntimeScheduler,
     observability: SessionRuntimeObservability,
     createTraceCorrelator: (scheduler: SessionRuntimeScheduler) => RuntimeTraceCorrelator,
+    nativeGeometryHysteresisMs: number | undefined,
     submitAuthorized: (
       runtime: SessionRuntime,
       lease: SessionRuntimeControllerLease,
@@ -586,6 +613,14 @@ class SessionRuntime {
     this.#observability = observability;
     this.#createControllerToken = createControllerToken;
     this.#submitAuthorized = submitAuthorized;
+    this.#authority = new SessionRuntimeAuthorityArbiter({
+      generation,
+      session,
+      scheduler,
+      nativeGeometryHysteresisMs,
+      onGeometryAuthorityChanged: (clientId) =>
+        this.#mirror.setGeometryParticipation(this.session, clientId !== null),
+    });
     this.#terminalDeliveryHub = new SessionRuntimeTerminalDeliveryHub(
       generation,
       session,
@@ -602,6 +637,7 @@ class SessionRuntime {
     const consumer = new SessionRuntimeConsumerImpl(this, surface, clientId);
     this.#consumers.add(consumer);
     this.#consumersByClientId.set(clientId, consumer);
+    this.#authority.connect(clientId, surface);
     return consumer;
   }
 
@@ -616,6 +652,33 @@ class SessionRuntime {
       controllerClientId: this.#controllerClientId,
       revision: this.#controllerRevision,
     };
+  }
+
+  authoritySnapshot(): SessionRuntimeAuthoritySnapshot {
+    return this.#authority.snapshot();
+  }
+
+  updatePresence(clientId: string, state: SessionRuntimePresenceState): void {
+    this.#authority.updatePresence(clientId, state);
+  }
+
+  noteActivity(clientId: string, activity: SessionRuntimeActivityKind): void {
+    this.#authority.noteActivity(clientId, activity);
+  }
+
+  acquireAuthority(
+    clientId: string,
+    authority: SessionRuntimeAuthorityKind,
+  ): SessionRuntimeAuthorityLease | null {
+    return this.#authority.claim(clientId, authority);
+  }
+
+  releaseAuthority(clientId: string, authority: SessionRuntimeAuthorityKind): void {
+    this.#authority.release(clientId, authority);
+  }
+
+  noteNativeGeometryActivity(): void {
+    this.#authority.noteNativeGeometryActivity();
   }
 
   ownsConsumer(candidate: SessionRuntimeConsumer): boolean {
@@ -646,13 +709,22 @@ class SessionRuntime {
 
   acquireController(clientId: string): SessionRuntimeControllerLease {
     this.#assertConnected(clientId);
-    if (this.#controllerClientId === clientId) return this.#currentLease();
+    if (this.#controllerClientId === clientId) {
+      this.#authority.updatePresence(clientId, "foreground");
+      this.#authority.claim(clientId, "input");
+      return this.#currentLease();
+    }
     if (this.#controllerClientId !== null) {
       throw new SessionRuntimeControllerLeaseError(
         "controller-conflict",
         `Session ${this.session} already has a controller.`,
       );
     }
+    // Compatibility adapter for v1 clients: the historical controller means
+    // input authority only. Geometry is acquired lazily by fitViewport and
+    // shared focus is never implied by interactivity.
+    this.#authority.updatePresence(clientId, "foreground");
+    this.#authority.claim(clientId, "input");
     return this.#assignController(clientId);
   }
 
@@ -682,6 +754,11 @@ class SessionRuntime {
       );
     }
     if (parsedTarget === this.#controllerClientId) return this.#currentLease();
+    this.#authority.release(callerClientId, "input");
+    this.#authority.release(callerClientId, "geometry");
+    this.#authority.updatePresence(callerClientId, "background");
+    this.#authority.updatePresence(parsedTarget, "foreground");
+    this.#authority.claim(parsedTarget, "input");
     const handedOff = this.#assignController(parsedTarget);
     this.#completedHandoffs.set(replayKey, handedOff);
     if (this.#completedHandoffs.size > 32) {
@@ -700,6 +777,8 @@ class SessionRuntime {
       this.#releasedLeases.delete(this.#releasedLeases.values().next().value!);
     }
     this.#clearController();
+    this.#authority.release(callerClientId, "input");
+    this.#authority.release(callerClientId, "geometry");
   }
 
   assertController(lease: SessionRuntimeControllerLease, callerClientId?: string): void {
@@ -751,6 +830,13 @@ class SessionRuntime {
     performanceTraceId?: string,
   ): void {
     this.assertController(lease, clientId);
+    const inputLease = this.#authority.leaseFor(clientId, "input");
+    if (!inputLease) {
+      throw new SessionRuntimeControllerLeaseError(
+        "stale-controller-lease",
+        "The client no longer owns input authority.",
+      );
+    }
     if (performanceTraceId !== undefined) performanceTraceId = z.uuid().parse(performanceTraceId);
     const trace: SessionRuntimeTraceContext | null = performanceTraceId
       ? Object.freeze({
@@ -796,6 +882,15 @@ class SessionRuntime {
     rows: number,
   ): void {
     this.assertController(lease, clientId);
+    const geometryLease =
+      this.#authority.leaseFor(clientId, "geometry") ?? this.#authority.claim(clientId, "geometry");
+    if (!geometryLease) {
+      throw new SessionRuntimeControllerLeaseError(
+        "invalid-client-capability",
+        "The client is not the foreground geometry authority.",
+      );
+    }
+    this.#mirror.setGeometryParticipation(this.session, true);
     this.#mirror.fitViewport(this.session, cols, rows);
   }
 
@@ -947,6 +1042,7 @@ class SessionRuntime {
       this.#consumersByClientId.delete(consumer.clientId);
     }
     if (this.#controllerClientId === consumer.clientId) this.#clearController();
+    this.#authority.disconnect(consumer.clientId);
   }
 
   noteControlExit(): void {
@@ -970,6 +1066,7 @@ class SessionRuntime {
     const consumers = [...this.#consumers];
     await Promise.allSettled(consumers.map((consumer) => consumer.close()));
     this.#clearController();
+    this.#authority.dispose();
     this.#completedHandoffs.clear();
     this.#releasedLeases.clear();
     this.#outputTraces?.clear();
@@ -1082,6 +1179,31 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
   controllerSnapshot(): SessionRuntimeControllerSnapshot {
     this.#assertOpen();
     return this.#runtime.controllerSnapshot();
+  }
+
+  authoritySnapshot(): SessionRuntimeAuthoritySnapshot {
+    this.#assertOpen();
+    return this.#runtime.authoritySnapshot();
+  }
+
+  updatePresence(state: SessionRuntimePresenceState): void {
+    this.#assertOpen();
+    this.#runtime.updatePresence(this.clientId, state);
+  }
+
+  noteActivity(activity: SessionRuntimeActivityKind): void {
+    this.#assertOpen();
+    this.#runtime.noteActivity(this.clientId, activity);
+  }
+
+  acquireAuthority(authority: SessionRuntimeAuthorityKind): SessionRuntimeAuthorityLease | null {
+    this.#assertOpen();
+    return this.#runtime.acquireAuthority(this.clientId, authority);
+  }
+
+  releaseAuthority(authority: SessionRuntimeAuthorityKind): void {
+    this.#assertOpen();
+    this.#runtime.releaseAuthority(this.clientId, authority);
   }
 
   acquireController(): SessionRuntimeControllerLease {

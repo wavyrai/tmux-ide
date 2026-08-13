@@ -459,6 +459,20 @@ describe("input path", () => {
     ]);
     await rig.channel.dispose();
   });
+
+  it("changes geometry participation only on authority edges", async () => {
+    const rig = await startedRig();
+    const before = rig.sim.written.length;
+    rig.channel.setGeometryParticipation(true);
+    rig.channel.setGeometryParticipation(true);
+    rig.channel.setGeometryParticipation(false);
+    rig.channel.setGeometryParticipation(false);
+    expect(rig.sim.written.slice(before)).toEqual([
+      "refresh-client -f !ignore-size",
+      "refresh-client -f ignore-size",
+    ]);
+    await rig.channel.dispose();
+  });
 });
 
 describe("age telemetry", () => {

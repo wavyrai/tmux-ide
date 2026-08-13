@@ -24,8 +24,10 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const hostSession = "_tmux-ide-testdrive";
-const runtimeDir = join(repoRoot, ".tasks", "tui-testdrive");
+const hostSession = process.env.TMUX_IDE_TESTDRIVE_HOST_SESSION?.trim() || "_tmux-ide-testdrive";
+const runtimeDir = resolve(
+  process.env.TMUX_IDE_TESTDRIVE_RUNTIME_DIR?.trim() || join(repoRoot, ".tasks", "tui-testdrive"),
+);
 const stateHome = join(runtimeDir, "home");
 const launcherPath = join(runtimeDir, "launch.sh");
 const logPath = join(runtimeDir, "stderr.log");
@@ -34,6 +36,7 @@ const metadataPath = join(runtimeDir, "state.json");
 const namespaceSocketName = `tmux-ide-testdrive-${process.getuid?.() ?? process.pid}`;
 const cleanupToken = `testdrive:cleanup:${process.getuid?.() ?? process.pid}`;
 const targetSocketName = process.env.TMUX_IDE_TESTDRIVE_TARGET_SOCKET_NAME?.trim() || null;
+const hostSocketPath = process.env.TMUX_IDE_TESTDRIVE_HOST_SOCKET_PATH?.trim() || null;
 const compiledTui = join(repoRoot, "packages", "daemon", "dist", "tui", "tmux-ide-tui");
 const sourceTui = join(repoRoot, "packages", "daemon", "src", "tui", "mirror", "app.tsx");
 
@@ -77,7 +80,7 @@ function shQuote(value) {
 }
 
 function tmux(args, options = {}) {
-  return execFileSync("tmux", args, {
+  return execFileSync("tmux", [...(hostSocketPath ? ["-S", hostSocketPath] : []), ...args], {
     cwd: repoRoot,
     env: { ...process.env, TMUX: "", TMUX_TMPDIR: "" },
     encoding: "utf8",
@@ -219,6 +222,27 @@ function readMetadata() {
   }
 }
 
+function readLifecycleTimings(metadata = readMetadata()) {
+  let marks = [];
+  try {
+    marks = readFileSync(perfLogPath, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+  } catch {
+    // A missing/partial performance log means the boundary is not observed.
+  }
+  const elapsed = (phase) => {
+    const mark = marks.find((candidate) => candidate?.phase === phase);
+    return Number.isFinite(mark?.elapsedMs) ? Math.round(mark.elapsedMs) : null;
+  };
+  return {
+    appChromeFrameMs: elapsed("first-frame") ?? metadata?.appChromeFrameMs ?? null,
+    coherentTerminalFrameMs: elapsed("first-terminal-frame"),
+  };
+}
+
 function liveHostSize() {
   if (!sessionExists(hostSession)) return null;
   try {
@@ -313,7 +337,10 @@ async function start(args) {
   // look absent and leave the TUI in its reconnecting state forever.
   chmodSync(stateHome, 0o700);
   if (process.env.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON === "1") {
-    const canonicalHome = join(process.env.HOME ?? "", ".tmux-ide");
+    const canonicalHome = resolve(
+      process.env.TMUX_IDE_TESTDRIVE_CANONICAL_HOME?.trim() ||
+        join(process.env.HOME ?? "", ".tmux-ide"),
+    );
     const daemonInfoPath = join(canonicalHome, "daemon.json");
     if (!existsSync(daemonInfoPath)) fail(`Canonical daemon info missing at ${daemonInfoPath}`);
     const copiedDaemonInfoPath = join(stateHome, "daemon.json");
@@ -398,7 +425,7 @@ async function start(args) {
     launcherPath,
   ]);
   const frame = await waitForFrame((value) => value.includes("tmux-ide"));
-  const firstFrameMs = performance.now() - launchStartedAt;
+  const appChromeFrameMs = performance.now() - launchStartedAt;
   const metadata = {
     hostSession,
     target,
@@ -407,12 +434,16 @@ async function start(args) {
     runtime,
     debug: options.debug,
     startedAt: new Date().toISOString(),
-    firstFrameMs: Math.round(firstFrameMs),
+    // Keep the two readiness boundaries honest. App chrome is useful but is
+    // not evidence that a semantic terminal seed has reached the renderer.
+    appChromeFrameMs: Math.round(appChromeFrameMs),
+    coherentTerminalFrameMs: null,
+    firstFrameMs: Math.round(appChromeFrameMs),
   };
   writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
 
   process.stdout.write(
-    `OpenTUI test-drive ready in ${firstFrameMs.toFixed(0)}ms (${runtime}, ${options.cols}x${options.rows}, target ${target})\n` +
+    `OpenTUI test-drive chrome ready in ${appChromeFrameMs.toFixed(0)}ms (${runtime}, ${options.cols}x${options.rows}, target ${target})\n` +
       `Attach: tmux attach -t ${hostSession}\n` +
       `Logs:   ${logPath}\n\n${frame}\n`,
   );
@@ -420,9 +451,11 @@ async function start(args) {
 
 async function status(json = false) {
   const running = sessionExists(hostSession);
+  const metadata = readMetadata();
   const result = {
     running,
-    ...readMetadata(),
+    ...metadata,
+    readiness: readLifecycleTimings(metadata),
     ...(running ? liveHostSize() : null),
     daemon: daemonStatus(),
     logPath,

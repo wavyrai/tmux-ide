@@ -1,5 +1,27 @@
 import { describe, expect, it, vi } from "vitest";
-import { ControlChannelCore } from "./control-channel.ts";
+import { ControlChannelCore, mirrorControlAttachArgs } from "./control-channel.ts";
+
+describe("retained control client attach policy", () => {
+  it("starts passive, flow-controlled, and active-pane aware", () => {
+    expect(
+      mirrorControlAttachArgs({
+        session: "alpha",
+        socketName: "isolated",
+        socketPath: undefined,
+        configFile: undefined,
+      }),
+    ).toEqual([
+      "-L",
+      "isolated",
+      "-C",
+      "attach",
+      "-t",
+      "alpha",
+      "-f",
+      "ignore-size,pause-after=2,active-pane",
+    ]);
+  });
+});
 
 describe("ControlChannelCore reply ownership", () => {
   it("does not let a server-side hook reply spend a client-command FIFO slot", async () => {

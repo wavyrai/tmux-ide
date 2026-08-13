@@ -40,4 +40,15 @@ describe("TerminalToolReadinessGate", () => {
     gate.observeTerminalFrameCommitted();
     expect(admit).toHaveBeenCalledTimes(1);
   });
+
+  it("admits configless Home through the same readiness transition", () => {
+    const admit = vi.fn();
+    const gate = new TerminalToolReadinessGate(admit);
+
+    gate.observeCatalogReady();
+    gate.observeCatalogReady();
+
+    expect(admit).toHaveBeenCalledTimes(1);
+    expect(gate.snapshot()).toEqual({ phase: "ready" });
+  });
 });

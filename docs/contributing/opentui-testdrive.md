@@ -15,22 +15,51 @@ pnpm build:cli
 pnpm build:tui
 ```
 
-Start the canonical daemon in one terminal:
-
-```bash
-node bin/cli.js --headless
-```
-
-Start the browser renderer in another terminal:
+Start the browser renderer. This command discovers or starts the canonical
+daemon itself:
 
 ```bash
 pnpm dev:web
 ```
 
-`dev:web` reads the owner-only canonical daemon record and starts Vite with the
+`dev:web` ensures the daemon, then reads the owner-only canonical record and starts Vite with the
 same-origin development gateway. Open
 `http://127.0.0.1:5173/?devHost=1`. A plain `vite` invocation deliberately
 falls back to illustrative preview data because it has no daemon authority.
+
+## Unified real-product rig
+
+Use the product rig when a change must be proven in Web, OpenTUI, and tmux at
+the same time:
+
+```bash
+pnpm product:testdrive start
+pnpm product:testdrive status --json
+pnpm product:testdrive capture --json
+pnpm product:testdrive smoke --json
+pnpm product:testdrive stop
+```
+
+The rig owns exactly one disposable runtime namespace under `/tmp`: one
+non-default tmux socket and target session, one daemon generation, one real
+OpenTUI process hosted in a PTY, and one real Chromium page behind the reviewed
+same-origin development gateway. It never reads or mutates the default tmux
+socket or canonical user catalog. Every capture writes terminal ANSI, a Web
+screenshot and DOM summary, tmux layout truth, and a timestamped JSONL timeline
+under `.tasks/product-test-rig/artifacts`.
+
+Readiness deliberately names two separate boundaries:
+
+- `appChromeFrameMs`: OpenTUI has painted application chrome;
+- `coherentTerminalFrameMs`: a non-empty semantic terminal layout has reached
+  the OpenTUI renderer.
+
+The former is not counted as a usable terminal frame. `smoke` currently proves
+boot, shared daemon/session identity, a TUI viewport resize, evidence capture,
+and bounded cleanup. It does not yet prove concurrent input ownership, atomic
+session handoff, daemon/tmux death recovery, or operation-correlated drag/resize
+settlement; those remain product-roadmap acceptance journeys rather than claims
+made by this first rig slice.
 
 ## Test-drive the compiled TUI
 

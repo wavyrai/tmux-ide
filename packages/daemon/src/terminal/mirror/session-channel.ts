@@ -157,6 +157,7 @@ export class SessionChannel {
   private degraded = false;
   private readonly ageByRuntime = new Map<string, number>();
   private maxAgeMs = 0;
+  private geometryParticipating = false;
   private cancelSync: (() => void) | null = null;
   private disposed = false;
   /** Settles once the FIRST identity join lands (or is proven impossible), so
@@ -315,6 +316,14 @@ export class SessionChannel {
     }
     this.input.flush();
     this.io.send(`refresh-client -C ${cols}x${rows}`);
+  }
+
+  /** Toggle whether the retained control client participates in tmux sizing. */
+  setGeometryParticipation(active: boolean): void {
+    if (this.geometryParticipating === active) return;
+    this.geometryParticipating = active;
+    this.input.flush();
+    this.io.send(`refresh-client -f ${active ? "!ignore-size" : "ignore-size"}`);
   }
 
   subscriberCount(): number {

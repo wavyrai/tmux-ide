@@ -197,6 +197,7 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync, readFileSync, openSync, writeSync, closeSync } from "node:fs";
 import { TUI_RENDERER_CADENCE } from "./renderer-cadence.ts";
 import { publishSemanticPaneChange } from "./semantic-pane-publication.ts";
+import { TerminalSessionHandoff } from "./terminal-session-handoff.ts";
 import { stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { Dynamic, render, useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
@@ -1516,6 +1517,7 @@ const mountTuiRoot = () => {
       return (nodeSpawn as unknown as (...values: unknown[]) => unknown)(...args);
     }) as typeof nodeSpawn;
     let terminalToolReadiness!: TerminalToolReadinessGate;
+    let terminalSessionHandoff!: TerminalSessionHandoff;
     let reconcileFleetResources = (): void => undefined;
     let latestAuthoritativeAgents: AgentRowInput[] = [];
     let latestApplicationShellAgents: readonly ApplicationShellAgentRowSource[] = [];
@@ -1624,15 +1626,29 @@ const mountTuiRoot = () => {
       );
     };
     let terminalWorkspaceAdapter: OpenTuiTerminalWorkspaceAdapter | null = null;
+    let presentedTerminalWorkspaceAdapter: OpenTuiTerminalWorkspaceAdapter | null = null;
+    let retiringTerminalWorkspaceAdapter: OpenTuiTerminalWorkspaceAdapter | null = null;
+    let terminalHandoffGeneration = 0;
+    const pendingSemanticPaneVersions = new Map<string, number>();
+    const [terminalPresentationEpoch, setTerminalPresentationEpoch] = createSignal(0);
     applicationLifecycle.registerCloser("terminal-workspace", () => {
       terminalWorkspaceAdapter?.dispose();
+      if (presentedTerminalWorkspaceAdapter !== terminalWorkspaceAdapter)
+        presentedTerminalWorkspaceAdapter?.dispose();
+      if (
+        retiringTerminalWorkspaceAdapter !== terminalWorkspaceAdapter &&
+        retiringTerminalWorkspaceAdapter !== presentedTerminalWorkspaceAdapter
+      )
+        retiringTerminalWorkspaceAdapter?.dispose();
       terminalWorkspaceAdapter = null;
+      presentedTerminalWorkspaceAdapter = null;
+      retiringTerminalWorkspaceAdapter = null;
     });
     const [sessionRuntimeLane, setSessionRuntimeLane] =
       createSignal<OpenTuiSessionRuntimeLane | null>(null);
     const terminalRenderSourceEpoch = (): number => {
-      sessionRuntimeLane();
-      return terminalWorkspaceAdapter?.renderEpoch ?? 0;
+      terminalPresentationEpoch();
+      return presentedTerminalWorkspaceAdapter?.renderEpoch ?? 0;
     };
     const [semanticPaneVersions, setSemanticPaneVersions] = createSignal<
       ReadonlyMap<string, number>
@@ -1651,18 +1667,22 @@ const mountTuiRoot = () => {
         .find((descriptor) => descriptor.semanticPaneId === semanticPaneId)?.runtimePaneId ??
       semanticPaneId;
     const semanticReplicaForRuntime = (runtimePaneId: string) => {
-      const lane = sessionRuntimeLane();
-      const adapter = terminalWorkspaceAdapter;
-      if (!lane || !adapter) return null;
+      const adapter = presentedTerminalWorkspaceAdapter ?? terminalWorkspaceAdapter;
+      if (!adapter) return null;
       // SemanticSessionView panes are already keyed by durable ids; sidebar
       // actions may still arrive with raw runtime ids. Resolve both without
       // synthesizing a second `pane.*` identity around an already-semantic id.
-      const semanticPaneId = lane.source.replica(runtimePaneId)
+      const semanticPaneId = adapter.view
+        .paneDescriptors()
+        .some((descriptor) => descriptor.semanticPaneId === runtimePaneId)
         ? runtimePaneId
-        : semanticPaneIdForRuntime(runtimePaneId);
-      return { adapter, lane, semanticPaneId };
+        : (adapter.view
+            .paneDescriptors()
+            .find((descriptor) => descriptor.runtimePaneId === runtimePaneId)?.semanticPaneId ??
+          semanticPaneIdForRuntime(runtimePaneId));
+      return { adapter, semanticPaneId };
     };
-    const retireSessionRuntimeLane = () => {
+    const retireSessionRuntimeLane = (preservePresentation = false) => {
       sessionRuntimeLaneRequest += 1;
       localDescriptorRequest += 1;
       localDescriptorSignature = null;
@@ -1677,7 +1697,7 @@ const mountTuiRoot = () => {
       focusProjectionGeneration = null;
       resizeTransaction?.retire();
       semanticPaneCanonicalSize.clear();
-      setSemanticPaneVersions(new Map());
+      if (!preservePresentation) setSemanticPaneVersions(new Map());
     };
     const reconcileSessionRuntimeLane = async (
       sessionName: string,
@@ -1711,7 +1731,10 @@ const mountTuiRoot = () => {
       sessionRuntimeLane()?.close();
       setSessionRuntimeLane(null);
       runtimeLaneFitKey = null;
-      setSemanticPaneVersions(new Map());
+      if (!presentedTerminalWorkspaceAdapter) setSemanticPaneVersions(new Map());
+      pendingSemanticPaneVersions.clear();
+      const candidateAdapter =
+        terminalWorkspaceAdapter?.view === candidate ? terminalWorkspaceAdapter : null;
       try {
         tuiPerfMark("runtime-lane-connecting", {
           sessionName,
@@ -1727,6 +1750,10 @@ const mountTuiRoot = () => {
               if (request !== sessionRuntimeLaneRequest) return;
               publishSemanticPaneChange(change, {
                 publishContentVersion: (version) => {
+                  if (candidateAdapter !== presentedTerminalWorkspaceAdapter) {
+                    pendingSemanticPaneVersions.set(paneId, version);
+                    return;
+                  }
                   setSemanticPaneVersions((current) => {
                     const next = new Map(current);
                     next.set(paneId, version);
@@ -1754,6 +1781,11 @@ const mountTuiRoot = () => {
                   });
               }
               candidate.acceptLayout(frame);
+              if (frame.currentWindow)
+                terminalSessionHandoff.observeCurrentLayout(
+                  terminalHandoffGeneration,
+                  frame.panes.filter((pane) => pane.pane !== null).length,
+                );
               terminalToolReadiness.observeGeometry();
               reconcileAuthoritativeAgents();
               observePendingResizeLayout();
@@ -1775,10 +1807,18 @@ const mountTuiRoot = () => {
               sessionRuntimeLane()?.close();
               setSessionRuntimeLane(null);
               runtimeLaneFitKey = null;
-              setSemanticPaneVersions(new Map());
+              terminalSessionHandoff.fault(terminalHandoffGeneration, error.message);
+              if (!presentedTerminalWorkspaceAdapter) setSemanticPaneVersions(new Map());
               markDirty();
               const retry = setTimeout(() => {
                 if (request === sessionRuntimeLaneRequest && semanticView === candidate) {
+                  terminalHandoffGeneration = terminalSessionHandoff.begin(sessionName);
+                  terminalSessionHandoff.observeInventory(
+                    terminalHandoffGeneration,
+                    candidate
+                      .paneDescriptors()
+                      .filter((descriptor) => descriptor.semanticPaneId !== null).length,
+                  );
                   void reconcileSessionRuntimeLane(sessionName, candidate);
                 }
               }, 1_000);
@@ -1916,8 +1956,7 @@ const mountTuiRoot = () => {
               scopeKey: "__catalog__",
             });
             toolResources.markCatalogReady();
-            setTerminalFeaturesAdmitted(true);
-            optionalFeatures.admit();
+            terminalToolReadiness.observeCatalogReady();
           }
           return false;
         }
@@ -1958,6 +1997,12 @@ const mountTuiRoot = () => {
           });
           if (inventory && semanticView) {
             semanticView.setInventory(inventory);
+            terminalSessionHandoff.observeInventory(
+              terminalHandoffGeneration,
+              inventory.resources.filter(
+                ({ attachability }) => attachability.status === "available",
+              ).length,
+            );
             tuiPerfMark("application-shell-inventory-applied", {
               sessionName,
               descriptorCount: semanticView.paneDescriptors().length,
@@ -2334,23 +2379,41 @@ const mountTuiRoot = () => {
       if (noteTimer) clearTimeout(noteTimer);
       noteTimer = setTimeout(() => setNote(""), 3000);
     };
-    terminalToolReadiness = new TerminalToolReadinessGate(
-      () => {
-        toolResources.markTerminalReady();
-        setTerminalFeaturesAdmitted(true);
-        optionalFeatures.admit();
+    const admitOptionalFeatures = () => {
+      toolResources.markTerminalReady();
+      setTerminalFeaturesAdmitted(true);
+      optionalFeatures.admit();
+    };
+    terminalToolReadiness = new TerminalToolReadinessGate(admitOptionalFeatures, (state) => {
+      if (state.phase === "degraded") setStatusNote(`terminal fit degraded: ${state.reason}`);
+    });
+    terminalSessionHandoff = new TerminalSessionHandoff({
+      onReady: () => {
+        const retired = retiringTerminalWorkspaceAdapter;
+        retiringTerminalWorkspaceAdapter = null;
+        if (retired && retired !== presentedTerminalWorkspaceAdapter) retired.dispose();
+        setStatus("live");
       },
-      (state) => {
-        if (state.phase === "degraded") setStatusNote(`terminal fit degraded: ${state.reason}`);
+      onState: (state) => {
+        tuiPerfMark("terminal-handoff", {
+          phase: state.phase,
+          target: "target" in state ? state.target : null,
+          presentedTarget: state.presentedTarget,
+        });
       },
-    );
+    });
     let terminalFramePublicationPending = false;
+    let terminalFrameHandoffGeneration: number | null = null;
     let firstTerminalFrameMarked = false;
     const acknowledgeTerminalFramePublication = () => {
       toolResources.noteNativeRenderPass();
       if (!terminalFramePublicationPending) return;
       terminalFramePublicationPending = false;
       terminalToolReadiness.observeTerminalFrameCommitted();
+      if (terminalFrameHandoffGeneration !== null) {
+        terminalSessionHandoff.observeFrameCommitted(terminalFrameHandoffGeneration);
+        terminalFrameHandoffGeneration = null;
+      }
       // A target is usable only after semantic layout produced a non-empty
       // pane projection and OpenTUI acknowledged the native frame containing
       // it. SemanticSessionView.start() reports status before inventory,
@@ -3541,18 +3604,23 @@ const mountTuiRoot = () => {
         return;
       }
       pendingAttachTarget = null;
+      terminalHandoffGeneration = terminalSessionHandoff.begin(name);
       const previousSupervisor = mirrorSupervisor;
       mirrorSupervisor = null;
-      retireSessionRuntimeLane();
+      // Keep the currently presented adapter and framebuffer alive until the
+      // replacement proves inventory + current layout + a committed native
+      // frame. Closing transport authority must not paint an empty interstitial.
+      const supersededCandidate =
+        terminalWorkspaceAdapter && terminalWorkspaceAdapter !== presentedTerminalWorkspaceAdapter
+          ? terminalWorkspaceAdapter
+          : null;
+      retiringTerminalWorkspaceAdapter =
+        presentedTerminalWorkspaceAdapter ?? terminalWorkspaceAdapter;
+      retireSessionRuntimeLane(Boolean(retiringTerminalWorkspaceAdapter));
       semanticView = null;
       void previousSupervisor?.stop();
-      terminalWorkspaceAdapter?.dispose();
+      supersededCandidate?.dispose();
       terminalWorkspaceAdapter = null;
-      scrollOffsets.clear();
-      latestRichPreviewRequests = [];
-      richPreviewSession()?.sync([]);
-      setFocusedPaneId(null);
-      setPanes([]);
       setStatus(`attaching ${name}…`);
       void connectDaemonApplicationShell(name);
       // A fresh semanticView pins at the current canvas size — no re-pin in flight.
@@ -3611,6 +3679,12 @@ const mountTuiRoot = () => {
           });
           if (inventory) {
             semanticView.setInventory(inventory);
+            terminalSessionHandoff.observeInventory(
+              terminalHandoffGeneration,
+              inventory.resources.filter(
+                ({ attachability }) => attachability.status === "available",
+              ).length,
+            );
             tuiPerfMark("semantic-view-inventory-applied", {
               sessionName: name,
               descriptorCount: semanticView.paneDescriptors().length,
@@ -3624,17 +3698,20 @@ const mountTuiRoot = () => {
             }
             reconcileAuthoritativeAgents();
           }
-          setStatus("live");
+          setStatus(`preparing ${name} terminal…`);
           void state.value.windows().then(setWindowTabs);
           void reconcileSessionRuntimeLane(name, state.value);
           markDirty();
         } else if (state.phase === "reconnecting") {
-          retireSessionRuntimeLane();
-          semanticView = null;
+          terminalSessionHandoff.fault(
+            terminalHandoffGeneration,
+            `connection attempt ${state.attempt}`,
+          );
+          retireSessionRuntimeLane(true);
           setStatus(`reconnecting ${name} (attempt ${state.attempt})…`);
         } else if (state.phase === "failed") {
-          retireSessionRuntimeLane();
-          semanticView = null;
+          terminalSessionHandoff.fault(terminalHandoffGeneration, "tmux connection failed");
+          retireSessionRuntimeLane(true);
           setStatus("tmux connection failed");
         }
       });
@@ -5517,6 +5594,39 @@ const mountTuiRoot = () => {
         // styled-row rebuild) — the <pane_surface> reads cells via the blit and
         // gates its walk on the version, so unchanged panes cost nothing.
         const raw = semanticView.panes(scrollOffsets, !FB_PANES, terminalPalette());
+        const handoff = terminalSessionHandoff.snapshot();
+        const candidateIsPresented =
+          terminalWorkspaceAdapter !== null &&
+          terminalWorkspaceAdapter === presentedTerminalWorkspaceAdapter;
+        if (!candidateIsPresented) {
+          // Preserve the last good pane surfaces until the replacement has both
+          // authenticated attachability and a non-empty current-window layout.
+          if (
+            handoff.phase !== "awaiting-frame" ||
+            handoff.generation !== terminalHandoffGeneration ||
+            raw.length === 0 ||
+            !terminalWorkspaceAdapter
+          )
+            return;
+          // Retire workspace-local presentation state at the atomic commit, not
+          // when the replacement merely starts connecting.
+          scrollOffsets.clear();
+          clearSelection();
+          latestRichPreviewRequests = [];
+          richPreviewSession()?.sync([]);
+          setFocusedPaneId(null);
+          presentedTerminalWorkspaceAdapter = terminalWorkspaceAdapter;
+          setTerminalPresentationEpoch((epoch) => epoch + 1);
+          setSemanticPaneVersions(new Map(pendingSemanticPaneVersions));
+          pendingSemanticPaneVersions.clear();
+          terminalFrameHandoffGeneration = terminalHandoffGeneration;
+        } else if (
+          handoff.phase === "awaiting-frame" &&
+          handoff.generation === terminalHandoffGeneration &&
+          raw.length > 0
+        ) {
+          terminalFrameHandoffGeneration = terminalHandoffGeneration;
+        }
         if (raw.length > 0) terminalFramePublicationPending = true;
         if (FB_PANES) setPaneRuntime(livePaneRuntime(raw));
         // Size truth (M22.8, event-driven M23.5): the effective window size is
@@ -6818,8 +6928,7 @@ const mountTuiRoot = () => {
           scopeKey: "__catalog__",
         });
         toolResources.markCatalogReady();
-        setTerminalFeaturesAdmitted(true);
-        optionalFeatures.admit();
+        terminalToolReadiness.observeCatalogReady();
       };
       resolveInputReady();
     });

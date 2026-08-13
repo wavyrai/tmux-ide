@@ -7617,7 +7617,7 @@ var init_terminal_replica = __esm({
 
 // packages/contracts/src/session-runtime.ts
 import { z as z47 } from "zod";
-var SessionRuntimeGenerationSchemaZ, SessionRuntimeClientIdSchemaZ, SessionRuntimeSessionNameSchemaZ, SessionRuntimeControllerRoleSchemaZ, SessionRuntimeControllerLeaseSchemaZ, SessionRuntimeControllerSnapshotSchemaZ, TerminalReplicaRevisionSchemaZ, TerminalReplicaFrameMetadataSchemaZ, CanonicalTerminalReplicaSeedSchemaZ, CanonicalTerminalReplicaPatchSchemaZ, CanonicalTerminalReplicaTombstoneSchemaZ, CanonicalTerminalReplicaUpdateSchemaZ, SessionRuntimePaneReadIntentSchemaZ, SessionRuntimeSemanticIntentSchemaZ;
+var SessionRuntimeGenerationSchemaZ, SessionRuntimeClientIdSchemaZ, SessionRuntimeSessionNameSchemaZ, SessionRuntimeControllerRoleSchemaZ, SessionRuntimeControllerLeaseSchemaZ, SessionRuntimeControllerSnapshotSchemaZ, SessionRuntimeAuthorityKindSchemaZ, SessionRuntimeClientSurfaceSchemaZ, SessionRuntimePresenceStateSchemaZ, SessionRuntimeActivityKindSchemaZ, SessionRuntimeAuthorityLeaseSchemaZ, SessionRuntimeClientPresenceSchemaZ, SessionRuntimeAuthoritySnapshotSchemaZ, TerminalReplicaRevisionSchemaZ, TerminalReplicaFrameMetadataSchemaZ, CanonicalTerminalReplicaSeedSchemaZ, CanonicalTerminalReplicaPatchSchemaZ, CanonicalTerminalReplicaTombstoneSchemaZ, CanonicalTerminalReplicaUpdateSchemaZ, SessionRuntimePaneReadIntentSchemaZ, SessionRuntimeSemanticIntentSchemaZ;
 var init_session_runtime = __esm({
   "packages/contracts/src/session-runtime.ts"() {
     "use strict";
@@ -7643,6 +7643,49 @@ var init_session_runtime = __esm({
       session: SessionRuntimeSessionNameSchemaZ,
       controllerClientId: SessionRuntimeClientIdSchemaZ.nullable(),
       revision: z47.number().int().nonnegative()
+    }).strict();
+    SessionRuntimeAuthorityKindSchemaZ = z47.enum(["input", "focus", "geometry"]);
+    SessionRuntimeClientSurfaceSchemaZ = z47.enum([
+      "web",
+      "opentui",
+      "cli",
+      "sdk",
+      "native-tmux",
+      "unknown"
+    ]);
+    SessionRuntimePresenceStateSchemaZ = z47.enum(["foreground", "background"]);
+    SessionRuntimeActivityKindSchemaZ = z47.enum([
+      "heartbeat",
+      "input",
+      "focus",
+      "geometry"
+    ]);
+    SessionRuntimeAuthorityLeaseSchemaZ = z47.object({
+      generation: SessionRuntimeGenerationSchemaZ,
+      session: SessionRuntimeSessionNameSchemaZ,
+      clientId: SessionRuntimeClientIdSchemaZ,
+      authority: SessionRuntimeAuthorityKindSchemaZ,
+      token: z47.uuid(),
+      revision: z47.number().int().positive()
+    }).strict();
+    SessionRuntimeClientPresenceSchemaZ = z47.object({
+      clientId: SessionRuntimeClientIdSchemaZ,
+      surface: SessionRuntimeClientSurfaceSchemaZ,
+      state: SessionRuntimePresenceStateSchemaZ,
+      connectedRevision: z47.number().int().positive(),
+      activityRevision: z47.number().int().nonnegative()
+    }).strict();
+    SessionRuntimeAuthoritySnapshotSchemaZ = z47.object({
+      generation: SessionRuntimeGenerationSchemaZ,
+      session: SessionRuntimeSessionNameSchemaZ,
+      revision: z47.number().int().nonnegative(),
+      owners: z47.object({
+        input: SessionRuntimeClientIdSchemaZ.nullable(),
+        focus: SessionRuntimeClientIdSchemaZ.nullable(),
+        geometry: SessionRuntimeClientIdSchemaZ.nullable()
+      }).strict(),
+      nativeGeometryYieldUntilMs: z47.number().nonnegative(),
+      clients: z47.array(SessionRuntimeClientPresenceSchemaZ)
     }).strict();
     TerminalReplicaRevisionSchemaZ = z47.number().int().nonnegative();
     TerminalReplicaFrameMetadataSchemaZ = z47.object({
@@ -30983,6 +31026,18 @@ var init_control2 = __esm({
 
 // packages/daemon/src/terminal/mirror/control-channel.ts
 import { spawn as spawn7 } from "node:child_process";
+function mirrorControlAttachArgs(options, pauseAfterSeconds = DEFAULT_PAUSE_AFTER_SECONDS) {
+  return [
+    ...options.socketPath ? ["-S", options.socketPath] : options.socketName ? ["-L", options.socketName] : [],
+    ...options.configFile ? ["-f", options.configFile] : [],
+    "-C",
+    "attach",
+    "-t",
+    options.session,
+    "-f",
+    `ignore-size,pause-after=${pauseAfterSeconds},active-pane`
+  ];
+}
 function waitForExit(proc, timeoutMs) {
   if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve(true);
   return new Promise((resolve35) => {
@@ -31112,18 +31167,8 @@ var init_control_channel = __esm({
         });
       }
       start() {
-        const { session, socketName, socketPath, configFile } = this.opts;
         const pauseAfter = this.opts.pauseAfterSeconds ?? DEFAULT_PAUSE_AFTER_SECONDS;
-        const args = [
-          ...socketPath ? ["-S", socketPath] : socketName ? ["-L", socketName] : [],
-          ...configFile ? ["-f", configFile] : [],
-          "-C",
-          "attach",
-          "-t",
-          session,
-          "-f",
-          `pause-after=${pauseAfter}`
-        ];
+        const args = mirrorControlAttachArgs(this.opts, pauseAfter);
         const proc = spawn7(this.opts.executable ?? "tmux", args, {
           stdio: ["pipe", "pipe", "pipe"],
           env: { ...process.env, TMUX: "" }
@@ -31981,6 +32026,7 @@ var init_session_channel = __esm({
       degraded = false;
       ageByRuntime = /* @__PURE__ */ new Map();
       maxAgeMs = 0;
+      geometryParticipating = false;
       cancelSync = null;
       disposed = false;
       /** Settles once the FIRST identity join lands (or is proven impossible), so
@@ -32120,6 +32166,13 @@ var init_session_channel = __esm({
         }
         this.input.flush();
         this.io.send(`refresh-client -C ${cols}x${rows}`);
+      }
+      /** Toggle whether the retained control client participates in tmux sizing. */
+      setGeometryParticipation(active2) {
+        if (this.geometryParticipating === active2) return;
+        this.geometryParticipating = active2;
+        this.input.flush();
+        this.io.send(`refresh-client -f ${active2 ? "!ignore-size" : "ignore-size"}`);
       }
       subscriberCount() {
         let count = 0;
@@ -32780,6 +32833,12 @@ var init_mirror_service = __esm({
         const entry = this.channels.get(session);
         if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
         entry.channel.fitViewport(cols, rows);
+      }
+      /** Keep the retained control client passive unless the arbiter elects it. */
+      setGeometryParticipation(session, active2) {
+        const entry = this.channels.get(session);
+        if (!entry || entry.retired) return;
+        entry.channel.setGeometryParticipation(active2);
       }
       /**
        * Keep one session channel alive independently of renderer subscriptions.
@@ -42894,6 +42953,209 @@ var init_runtime_trace_correlator = __esm({
   }
 });
 
+// packages/daemon/src/terminal/session-runtime/authority-arbiter.ts
+function clientSurface(surface) {
+  if (surface.startsWith("web")) return "web";
+  if (surface.startsWith("opentui")) return "opentui";
+  if (surface.startsWith("cli")) return "cli";
+  if (surface.startsWith("sdk")) return "sdk";
+  if (surface.startsWith("native-tmux")) return "native-tmux";
+  return "unknown";
+}
+var AUTHORITY_KINDS, SessionRuntimeAuthorityArbiter;
+var init_authority_arbiter = __esm({
+  "packages/daemon/src/terminal/session-runtime/authority-arbiter.ts"() {
+    "use strict";
+    init_src();
+    AUTHORITY_KINDS = ["input", "focus", "geometry"];
+    SessionRuntimeAuthorityArbiter = class {
+      generation;
+      session;
+      #scheduler;
+      #nativeGeometryHysteresisMs;
+      #onGeometryAuthorityChanged;
+      #clients = /* @__PURE__ */ new Map();
+      #owners = /* @__PURE__ */ new Map();
+      #revision = 0;
+      #nativeGeometryYieldUntilMs = 0;
+      #nativeYieldTimer = null;
+      #nativeYieldEpoch = 0;
+      #disposed = false;
+      constructor(options) {
+        this.generation = SessionRuntimeGenerationSchemaZ.parse(options.generation);
+        this.session = options.session;
+        this.#scheduler = options.scheduler;
+        this.#nativeGeometryHysteresisMs = options.nativeGeometryHysteresisMs ?? 180;
+        this.#onGeometryAuthorityChanged = options.onGeometryAuthorityChanged ?? (() => {
+        });
+      }
+      connect(clientIdInput, surface) {
+        this.#assertOpen();
+        const clientId = SessionRuntimeClientIdSchemaZ.parse(clientIdInput);
+        if (this.#clients.has(clientId))
+          throw new TypeError(`Authority client ${clientId} is connected`);
+        const revision = this.#advance();
+        this.#clients.set(clientId, {
+          clientId,
+          surface: clientSurface(surface),
+          connectedRevision: revision,
+          state: "background",
+          activityRevision: 0,
+          claims: /* @__PURE__ */ new Set()
+        });
+      }
+      updatePresence(clientId, state) {
+        const client = this.#client(clientId);
+        if (client.state === state) return;
+        client.state = state;
+        client.activityRevision = this.#advance();
+        for (const authority of AUTHORITY_KINDS) this.#elect(authority);
+      }
+      noteActivity(clientId, activity) {
+        const client = this.#client(clientId);
+        client.activityRevision = this.#advance();
+        const authority = activity === "heartbeat" ? null : activity;
+        if (authority && client.claims.has(authority)) this.#elect(authority, clientId);
+      }
+      claim(clientId, authority) {
+        const client = this.#client(clientId);
+        client.claims.add(authority);
+        client.activityRevision = this.#advance();
+        this.#elect(authority, clientId);
+        return this.leaseFor(clientId, authority);
+      }
+      release(clientId, authority) {
+        const client = this.#client(clientId);
+        if (!client.claims.delete(authority)) return;
+        this.#advance();
+        this.#elect(authority);
+      }
+      disconnect(clientId) {
+        if (!this.#clients.delete(clientId)) return;
+        this.#advance();
+        for (const authority of AUTHORITY_KINDS) this.#elect(authority);
+      }
+      /** Native terminal activity always wins by making tmux-ide size-passive. */
+      noteNativeGeometryActivity() {
+        this.#assertOpen();
+        const now = this.#scheduler.nowMs();
+        this.#nativeGeometryYieldUntilMs = Math.max(
+          this.#nativeGeometryYieldUntilMs,
+          now + this.#nativeGeometryHysteresisMs
+        );
+        this.#nativeYieldEpoch += 1;
+        const epoch = this.#nativeYieldEpoch;
+        this.#nativeYieldTimer?.cancel();
+        this.#setOwner("geometry", null);
+        this.#nativeYieldTimer = this.#scheduler.timer(() => {
+          if (this.#disposed || epoch !== this.#nativeYieldEpoch) return;
+          this.#nativeYieldTimer = null;
+          if (this.#scheduler.nowMs() < this.#nativeGeometryYieldUntilMs) return;
+          this.#elect("geometry");
+        }, this.#nativeGeometryHysteresisMs);
+      }
+      leaseFor(clientId, authority) {
+        const owner = this.#owners.get(authority);
+        if (!owner || owner.clientId !== clientId) return null;
+        return SessionRuntimeAuthorityLeaseSchemaZ.parse({
+          generation: this.generation,
+          session: this.session,
+          clientId,
+          authority,
+          token: owner.token,
+          revision: owner.revision
+        });
+      }
+      assertLease(leaseInput) {
+        const lease = SessionRuntimeAuthorityLeaseSchemaZ.parse(leaseInput);
+        const owner = this.#owners.get(lease.authority);
+        if (lease.generation !== this.generation || lease.session !== this.session || !owner || owner.clientId !== lease.clientId || owner.token !== lease.token || owner.revision !== lease.revision) {
+          throw new Error(`Stale ${lease.authority} authority lease`);
+        }
+        return lease;
+      }
+      snapshot() {
+        const owner = (authority) => this.#owners.get(authority)?.clientId ?? null;
+        return SessionRuntimeAuthoritySnapshotSchemaZ.parse({
+          generation: this.generation,
+          session: this.session,
+          revision: this.#revision,
+          owners: {
+            input: owner("input"),
+            focus: owner("focus"),
+            geometry: owner("geometry")
+          },
+          nativeGeometryYieldUntilMs: this.#nativeGeometryYieldUntilMs,
+          clients: [...this.#clients.values()].sort(
+            (a, b) => a.connectedRevision - b.connectedRevision || a.clientId.localeCompare(b.clientId)
+          ).map(({ clientId, surface, state, connectedRevision, activityRevision }) => ({
+            clientId,
+            surface,
+            state,
+            connectedRevision,
+            activityRevision
+          }))
+        });
+      }
+      dispose() {
+        if (this.#disposed) return;
+        this.#disposed = true;
+        this.#nativeYieldEpoch += 1;
+        this.#nativeYieldTimer?.cancel();
+        this.#nativeYieldTimer = null;
+        this.#clients.clear();
+        this.#owners.clear();
+        this.#advance();
+      }
+      #elect(authority, activeClientId) {
+        if (authority === "geometry" && this.#scheduler.nowMs() < this.#nativeGeometryYieldUntilMs) {
+          this.#setOwner(authority, null);
+          return;
+        }
+        const current = this.#owners.get(authority);
+        const currentClient = current ? this.#clients.get(current.clientId) : null;
+        const eligible = (client) => client.claims.has(authority) && (authority === "input" || client.state === "foreground");
+        if (authority === "geometry" && currentClient && eligible(currentClient)) return;
+        const candidates = [...this.#clients.values()].filter(eligible);
+        candidates.sort((a, b) => {
+          const aActive = a.clientId === activeClientId ? 1 : 0;
+          const bActive = b.clientId === activeClientId ? 1 : 0;
+          return bActive - aActive || Number(b.state === "foreground") - Number(a.state === "foreground") || b.activityRevision - a.activityRevision || b.connectedRevision - a.connectedRevision || a.clientId.localeCompare(b.clientId);
+        });
+        this.#setOwner(authority, candidates[0]?.clientId ?? null);
+      }
+      #setOwner(authority, clientId) {
+        const current = this.#owners.get(authority);
+        if (current?.clientId === clientId || !current && clientId === null) return;
+        const revision = this.#advance();
+        if (clientId === null) this.#owners.delete(authority);
+        else {
+          this.#owners.set(authority, {
+            clientId,
+            token: this.#scheduler.createId(),
+            revision
+          });
+        }
+        if (authority === "geometry") this.#onGeometryAuthorityChanged(clientId);
+      }
+      #client(clientIdInput) {
+        this.#assertOpen();
+        const clientId = SessionRuntimeClientIdSchemaZ.parse(clientIdInput);
+        const client = this.#clients.get(clientId);
+        if (!client) throw new Error(`Authority client ${clientId} is not connected`);
+        return client;
+      }
+      #advance() {
+        this.#revision += 1;
+        return this.#revision;
+      }
+      #assertOpen() {
+        if (this.#disposed) throw new Error(`Authority arbiter for ${this.session} is disposed`);
+      }
+    };
+  }
+});
+
 // packages/daemon/src/terminal/session-runtime/registry.ts
 import { randomUUID as randomUUID8 } from "node:crypto";
 import { z as z69 } from "zod";
@@ -42915,6 +43177,7 @@ var init_registry2 = __esm({
     init_runtime_scheduler();
     init_runtime_observability();
     init_runtime_trace_correlator();
+    init_authority_arbiter();
     SessionRuntimeControllerLeaseError = class extends Error {
       constructor(code, message) {
         super(message);
@@ -42928,6 +43191,7 @@ var init_registry2 = __esm({
       #semanticMutations;
       #resolveSession;
       #createControllerToken;
+      #nativeGeometryHysteresisMs;
       #scheduler;
       #observability;
       #createTraceCorrelator;
@@ -42949,6 +43213,7 @@ var init_registry2 = __esm({
         }) : null;
         this.#resolveSession = options.semanticMutations?.resolveSession ?? null;
         this.#createControllerToken = options.createControllerToken ?? randomUUID8;
+        this.#nativeGeometryHysteresisMs = options.nativeGeometryHysteresisMs;
         this.#stopExitObserver = this.#mirror.onSessionExit((session) => {
           this.#sessions.get(session)?.noteControlExit();
         });
@@ -43146,6 +43411,13 @@ var init_registry2 = __esm({
         }
         return count;
       }
+      authoritySnapshot(session) {
+        return this.#runtime(session).authoritySnapshot();
+      }
+      /** Native client activity makes an existing daemon runtime size-passive. */
+      noteNativeGeometryActivity(session) {
+        this.#sessions.get(session)?.noteNativeGeometryActivity();
+      }
       qualificationSnapshot() {
         return Object.freeze({
           generation: this.generation,
@@ -43183,6 +43455,7 @@ var init_registry2 = __esm({
           this.#scheduler,
           this.#observability,
           this.#createTraceCorrelator,
+          this.#nativeGeometryHysteresisMs,
           (owner, lease, operationId, intent, origin, authorizeBeforeEffect) => this.#submitAuthorizedIntent(
             owner,
             lease,
@@ -43198,7 +43471,7 @@ var init_registry2 = __esm({
       }
     };
     SessionRuntime = class {
-      constructor(generation, session, mirror, createControllerToken, scheduler, observability, createTraceCorrelator, submitAuthorized) {
+      constructor(generation, session, mirror, createControllerToken, scheduler, observability, createTraceCorrelator, nativeGeometryHysteresisMs, submitAuthorized) {
         this.generation = generation;
         this.session = session;
         this.#mirror = mirror;
@@ -43208,6 +43481,13 @@ var init_registry2 = __esm({
         this.#observability = observability;
         this.#createControllerToken = createControllerToken;
         this.#submitAuthorized = submitAuthorized;
+        this.#authority = new SessionRuntimeAuthorityArbiter({
+          generation,
+          session,
+          scheduler,
+          nativeGeometryHysteresisMs,
+          onGeometryAuthorityChanged: (clientId) => this.#mirror.setGeometryParticipation(this.session, clientId !== null)
+        });
         this.#terminalDeliveryHub = new SessionRuntimeTerminalDeliveryHub(
           generation,
           session,
@@ -43223,6 +43503,7 @@ var init_registry2 = __esm({
       #outputTraces;
       #createTraceCorrelator;
       #terminalDeliveryHub;
+      #authority;
       #scheduler;
       #observability;
       #createControllerToken;
@@ -43244,6 +43525,7 @@ var init_registry2 = __esm({
         const consumer = new SessionRuntimeConsumerImpl(this, surface, clientId);
         this.#consumers.add(consumer);
         this.#consumersByClientId.set(clientId, consumer);
+        this.#authority.connect(clientId, surface);
         return consumer;
       }
       controllerRole(clientId) {
@@ -43256,6 +43538,24 @@ var init_registry2 = __esm({
           controllerClientId: this.#controllerClientId,
           revision: this.#controllerRevision
         };
+      }
+      authoritySnapshot() {
+        return this.#authority.snapshot();
+      }
+      updatePresence(clientId, state) {
+        this.#authority.updatePresence(clientId, state);
+      }
+      noteActivity(clientId, activity) {
+        this.#authority.noteActivity(clientId, activity);
+      }
+      acquireAuthority(clientId, authority) {
+        return this.#authority.claim(clientId, authority);
+      }
+      releaseAuthority(clientId, authority) {
+        this.#authority.release(clientId, authority);
+      }
+      noteNativeGeometryActivity() {
+        this.#authority.noteNativeGeometryActivity();
       }
       ownsConsumer(candidate) {
         return this.#consumers.has(candidate);
@@ -43282,13 +43582,19 @@ var init_registry2 = __esm({
       }
       acquireController(clientId) {
         this.#assertConnected(clientId);
-        if (this.#controllerClientId === clientId) return this.#currentLease();
+        if (this.#controllerClientId === clientId) {
+          this.#authority.updatePresence(clientId, "foreground");
+          this.#authority.claim(clientId, "input");
+          return this.#currentLease();
+        }
         if (this.#controllerClientId !== null) {
           throw new SessionRuntimeControllerLeaseError(
             "controller-conflict",
             `Session ${this.session} already has a controller.`
           );
         }
+        this.#authority.updatePresence(clientId, "foreground");
+        this.#authority.claim(clientId, "input");
         return this.#assignController(clientId);
       }
       handoffController(callerClientId, lease, targetClientId) {
@@ -43313,6 +43619,11 @@ var init_registry2 = __esm({
           );
         }
         if (parsedTarget === this.#controllerClientId) return this.#currentLease();
+        this.#authority.release(callerClientId, "input");
+        this.#authority.release(callerClientId, "geometry");
+        this.#authority.updatePresence(callerClientId, "background");
+        this.#authority.updatePresence(parsedTarget, "foreground");
+        this.#authority.claim(parsedTarget, "input");
         const handedOff = this.#assignController(parsedTarget);
         this.#completedHandoffs.set(replayKey, handedOff);
         if (this.#completedHandoffs.size > 32) {
@@ -43330,6 +43641,8 @@ var init_registry2 = __esm({
           this.#releasedLeases.delete(this.#releasedLeases.values().next().value);
         }
         this.#clearController();
+        this.#authority.release(callerClientId, "input");
+        this.#authority.release(callerClientId, "geometry");
       }
       assertController(lease, callerClientId) {
         const parsedLease = this.#validatedLease(lease);
@@ -43359,6 +43672,13 @@ var init_registry2 = __esm({
       }
       sendInput(clientId, lease, semanticPaneId3, kind, data, performanceTraceId) {
         this.assertController(lease, clientId);
+        const inputLease = this.#authority.leaseFor(clientId, "input");
+        if (!inputLease) {
+          throw new SessionRuntimeControllerLeaseError(
+            "stale-controller-lease",
+            "The client no longer owns input authority."
+          );
+        }
         if (performanceTraceId !== void 0) performanceTraceId = z69.uuid().parse(performanceTraceId);
         const trace = performanceTraceId ? Object.freeze({
           traceId: performanceTraceId,
@@ -43394,6 +43714,14 @@ var init_registry2 = __esm({
       }
       fitViewport(clientId, lease, cols, rows) {
         this.assertController(lease, clientId);
+        const geometryLease = this.#authority.leaseFor(clientId, "geometry") ?? this.#authority.claim(clientId, "geometry");
+        if (!geometryLease) {
+          throw new SessionRuntimeControllerLeaseError(
+            "invalid-client-capability",
+            "The client is not the foreground geometry authority."
+          );
+        }
+        this.#mirror.setGeometryParticipation(this.session, true);
         this.#mirror.fitViewport(this.session, cols, rows);
       }
       async whenReady() {
@@ -43515,6 +43843,7 @@ var init_registry2 = __esm({
           this.#consumersByClientId.delete(consumer.clientId);
         }
         if (this.#controllerClientId === consumer.clientId) this.#clearController();
+        this.#authority.disconnect(consumer.clientId);
       }
       noteControlExit() {
         const retention = this.#retention;
@@ -43536,6 +43865,7 @@ var init_registry2 = __esm({
         const consumers = [...this.#consumers];
         await Promise.allSettled(consumers.map((consumer) => consumer.close()));
         this.#clearController();
+        this.#authority.dispose();
         this.#completedHandoffs.clear();
         this.#releasedLeases.clear();
         this.#outputTraces?.clear();
@@ -43627,6 +43957,26 @@ var init_registry2 = __esm({
       controllerSnapshot() {
         this.#assertOpen();
         return this.#runtime.controllerSnapshot();
+      }
+      authoritySnapshot() {
+        this.#assertOpen();
+        return this.#runtime.authoritySnapshot();
+      }
+      updatePresence(state) {
+        this.#assertOpen();
+        this.#runtime.updatePresence(this.clientId, state);
+      }
+      noteActivity(activity) {
+        this.#assertOpen();
+        this.#runtime.noteActivity(this.clientId, activity);
+      }
+      acquireAuthority(authority) {
+        this.#assertOpen();
+        return this.#runtime.acquireAuthority(this.clientId, authority);
+      }
+      releaseAuthority(authority) {
+        this.#assertOpen();
+        this.#runtime.releaseAuthority(this.clientId, authority);
       }
       acquireController() {
         this.#assertOpen();
@@ -54088,7 +54438,7 @@ var require_package = __commonJS({
         "pack:check": "npm pack --dry-run --cache /tmp/tmux-ide-npm-cache > /dev/null",
         "test:pack-installed": "node scripts/pack-check-run.mjs",
         "check:native-deps": "node packages/daemon/scripts/check-native-deps.mjs",
-        check: "pnpm run lint:workspace && pnpm run check:control-bytes && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:unit && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run test:workbench-dock-package && pnpm run test:pane-frame-package && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps && pnpm run smoke:desktop",
+        check: "pnpm run lint:workspace && pnpm run check:control-bytes && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:unit && pnpm run test:product-test-rig && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run test:workbench-dock-package && pnpm run test:pane-frame-package && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps && pnpm run smoke:desktop",
         postinstall: "node scripts/postinstall.js",
         docs: "turbo run dev --filter=@tmux-ide/docs",
         "test:tui-renderer": "bun test --preload @opentui/solid/preload --preload ./packages/daemon/test-support/opentui-renderer-preload.ts ./packages/daemon/src/tui/mirror/pane-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/widget-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/files-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/changes-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/missions-activity-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/dialogs-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/palette-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/rich-preview/feature.test.ts ./packages/daemon/src/tui/mirror/runtime/rich-preview-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-chrome-view.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-window-strip-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx",
@@ -54100,6 +54450,8 @@ var require_package = __commonJS({
         "test:performance-reference": "node scripts/performance-reference.mjs --require-complete",
         "test:tui-perf": "pnpm test:performance-qualification",
         "tui:testdrive": "node scripts/tui-testdrive.mjs",
+        "product:testdrive": "node scripts/product-test-rig.mjs",
+        "test:product-test-rig": "node --test scripts/product-test-rig.test.mjs",
         "smoke:desktop": "node apps/electron-shell/scripts/smoke-test.mjs",
         "e2e:app": "pnpm --filter @tmux-ide/desktop-renderer run e2e",
         "test:web-live": "pnpm --filter @tmux-ide/desktop-renderer run smoke:dev-web-host",

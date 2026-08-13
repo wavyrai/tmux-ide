@@ -110,12 +110,34 @@ describe("production OpenTUI data path", () => {
     expect(source).toContain("toolResources.markCatalogReady()");
   });
 
+  it("keeps the last drawable terminal projection through an atomic replacement handoff", () => {
+    expect(source).toContain("new TerminalSessionHandoff(");
+    expect(source).toContain("terminalSessionHandoff.observeInventory(");
+    expect(source).toContain("terminalSessionHandoff.observeCurrentLayout(");
+    expect(source).toContain("terminalSessionHandoff.observeFrameCommitted(");
+    expect(source).toContain("presentedTerminalWorkspaceAdapter");
+    expect(source).toContain("retireSessionRuntimeLane(Boolean(retiringTerminalWorkspaceAdapter))");
+
+    const attachStart = source.indexOf("const attach = (name: string) =>");
+    const attachEnd = source.indexOf("createEffect(() =>", attachStart);
+    const attachSource = source.slice(attachStart, attachEnd);
+    expect(attachSource).not.toContain("setPanes([])");
+    expect(attachSource).not.toContain("scrollOffsets.clear()");
+    expect(attachSource).not.toContain("setFocusedPaneId(null)");
+  });
+
   it("owns optional feature admission and metrics inside the application lifecycle", () => {
     expect(source).toContain("createApplicationOptionalFeatureRegistry()");
     expect(source).toContain('applicationLifecycle.registerCloser("optional-features"');
     expect(source).toContain('tuiPerfMark("optional-feature-metrics"');
     expect(source).toContain("optionalFeatures.dispose()");
-    expect(source.match(/optionalFeatures\.admit\(\)/gu)).toHaveLength(2);
+    // Terminal-frame and configless-catalog readiness converge on one
+    // idempotent lifecycle transition; call sites must not admit features
+    // independently as bootstrap/recovery branches multiply.
+    expect(source).toContain("const admitOptionalFeatures = () =>");
+    expect(source).toContain("new TerminalToolReadinessGate(");
+    expect(source).toContain("terminalToolReadiness.observeCatalogReady()");
+    expect(source.match(/optionalFeatures\.admit\(\)/gu)).toHaveLength(1);
   });
 
   it("builds actionable agent rows from generation-bound local tmux identity proof", () => {

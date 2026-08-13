@@ -72,6 +72,78 @@ export type SessionRuntimeControllerSnapshot = z.infer<
   typeof SessionRuntimeControllerSnapshotSchemaZ
 >;
 
+/**
+ * Independent client capabilities. A client being able to type must not make
+ * it the geometry or shared-focus owner as a side effect.
+ */
+export const SessionRuntimeAuthorityKindSchemaZ = z.enum(["input", "focus", "geometry"]);
+export type SessionRuntimeAuthorityKind = z.infer<typeof SessionRuntimeAuthorityKindSchemaZ>;
+
+export const SessionRuntimeClientSurfaceSchemaZ = z.enum([
+  "web",
+  "opentui",
+  "cli",
+  "sdk",
+  "native-tmux",
+  "unknown",
+]);
+export type SessionRuntimeClientSurface = z.infer<typeof SessionRuntimeClientSurfaceSchemaZ>;
+
+export const SessionRuntimePresenceStateSchemaZ = z.enum(["foreground", "background"]);
+export type SessionRuntimePresenceState = z.infer<typeof SessionRuntimePresenceStateSchemaZ>;
+
+export const SessionRuntimeActivityKindSchemaZ = z.enum([
+  "heartbeat",
+  "input",
+  "focus",
+  "geometry",
+]);
+export type SessionRuntimeActivityKind = z.infer<typeof SessionRuntimeActivityKindSchemaZ>;
+
+/** A generation-fenced capability for exactly one authority kind. */
+export const SessionRuntimeAuthorityLeaseSchemaZ = z
+  .object({
+    generation: SessionRuntimeGenerationSchemaZ,
+    session: SessionRuntimeSessionNameSchemaZ,
+    clientId: SessionRuntimeClientIdSchemaZ,
+    authority: SessionRuntimeAuthorityKindSchemaZ,
+    token: z.uuid(),
+    revision: z.number().int().positive(),
+  })
+  .strict();
+export type SessionRuntimeAuthorityLease = z.infer<typeof SessionRuntimeAuthorityLeaseSchemaZ>;
+
+export const SessionRuntimeClientPresenceSchemaZ = z
+  .object({
+    clientId: SessionRuntimeClientIdSchemaZ,
+    surface: SessionRuntimeClientSurfaceSchemaZ,
+    state: SessionRuntimePresenceStateSchemaZ,
+    connectedRevision: z.number().int().positive(),
+    activityRevision: z.number().int().nonnegative(),
+  })
+  .strict();
+export type SessionRuntimeClientPresence = z.infer<typeof SessionRuntimeClientPresenceSchemaZ>;
+
+export const SessionRuntimeAuthoritySnapshotSchemaZ = z
+  .object({
+    generation: SessionRuntimeGenerationSchemaZ,
+    session: SessionRuntimeSessionNameSchemaZ,
+    revision: z.number().int().nonnegative(),
+    owners: z
+      .object({
+        input: SessionRuntimeClientIdSchemaZ.nullable(),
+        focus: SessionRuntimeClientIdSchemaZ.nullable(),
+        geometry: SessionRuntimeClientIdSchemaZ.nullable(),
+      })
+      .strict(),
+    nativeGeometryYieldUntilMs: z.number().nonnegative(),
+    clients: z.array(SessionRuntimeClientPresenceSchemaZ),
+  })
+  .strict();
+export type SessionRuntimeAuthoritySnapshot = z.infer<
+  typeof SessionRuntimeAuthoritySnapshotSchemaZ
+>;
+
 export const TerminalReplicaRevisionSchemaZ = z.number().int().nonnegative();
 export type TerminalReplicaRevision = z.infer<typeof TerminalReplicaRevisionSchemaZ>;
 

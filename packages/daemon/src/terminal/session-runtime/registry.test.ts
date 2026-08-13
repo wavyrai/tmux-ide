@@ -596,6 +596,11 @@ describe("SessionRuntimeRegistry", () => {
       "viewer",
     ]);
     expect(registry.activeControllerLeaseCount()).toBe(1);
+    expect(registry.authoritySnapshot("alpha-session").owners).toEqual({
+      input: "client:tui",
+      focus: null,
+      geometry: null,
+    });
     expect(() => webOne.acquireController()).toThrowError(
       expect.objectContaining({ code: "controller-conflict" }),
     );
@@ -632,6 +637,7 @@ describe("SessionRuntimeRegistry", () => {
 
     expect(first.controllerRole()).toBe("viewer");
     expect(second.controllerRole()).toBe("controller");
+    expect(registry.authoritySnapshot("alpha-session").owners.input).toBe("client:second");
     expect(secondLease.revision).toBeGreaterThan(firstLease.revision);
     expect(sims).toHaveLength(1);
     expect(registry.activeControlChannelCount()).toBe(1);
@@ -641,6 +647,33 @@ describe("SessionRuntimeRegistry", () => {
     await second.submitIntent(secondLease, OP_B, resize());
     second.releaseController(secondLease);
     expect(() => second.releaseController(secondLease)).not.toThrow();
+    await registry.dispose();
+  });
+
+  it("retires v1 geometry on controller handoff before the target fits", async () => {
+    const { registry, sims } = controllerRig();
+    const first = registry.connect("alpha-session", "web", "client:first");
+    const second = registry.connect("alpha-session", "opentui", "client:second");
+    await first.subscribe("pane.alpha", () => {});
+    const firstLease = first.acquireController();
+    first.fitViewport(firstLease, 120, 40);
+
+    const secondLease = first.handoffController(firstLease, second.clientId);
+    expect(registry.authoritySnapshot("alpha-session").owners.geometry).toBeNull();
+    second.fitViewport(secondLease, 132, 44);
+
+    expect(registry.authoritySnapshot("alpha-session").owners).toEqual({
+      input: "client:second",
+      focus: null,
+      geometry: "client:second",
+    });
+    expect(sims[0]!.written.filter((command) => command.startsWith("refresh-client"))).toEqual([
+      "refresh-client -f !ignore-size",
+      "refresh-client -C 120x40",
+      "refresh-client -f ignore-size",
+      "refresh-client -f !ignore-size",
+      "refresh-client -C 132x44",
+    ]);
     await registry.dispose();
   });
 

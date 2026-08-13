@@ -180,6 +180,13 @@ export class MirrorService {
     entry.channel.fitViewport(cols, rows);
   }
 
+  /** Keep the retained control client passive unless the arbiter elects it. */
+  setGeometryParticipation(session: string, active: boolean): void {
+    const entry = this.channels.get(session);
+    if (!entry || entry.retired) return;
+    entry.channel.setGeometryParticipation(active);
+  }
+
   /**
    * Keep one session channel alive independently of renderer subscriptions.
    * The daemon SessionRuntime registry owns this retention; clients never do.
