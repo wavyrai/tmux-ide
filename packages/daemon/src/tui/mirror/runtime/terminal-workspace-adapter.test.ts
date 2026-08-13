@@ -132,7 +132,10 @@ describe("OpenTUI terminal workspace adapter", () => {
     const replacementGeneration = adapter.beginPaneGeneration();
     expect(adapter.publishPaneVersion(retiringGeneration, "pane.editor", 2)).toBe(false);
     expect(adapter.publishPaneVersion(replacementGeneration, "pane.editor", 1)).toBe(true);
-    expect(editor.mock.calls).toEqual([[1], [2]]);
+    expect(editor.mock.calls).toEqual([
+      [1, 0],
+      [2, 0],
+    ]);
     expect(tests).not.toHaveBeenCalled();
 
     await lifecycle.shutdown("host");

@@ -28,6 +28,7 @@ describe("PaneScopedTerminalSurface", () => {
     const adapter: PaneScopedTerminalAdapter = {
       renderSource,
       paneVersion: (paneId) => owner.version(paneId),
+      paneSourceEpoch: () => owner.sourceEpoch(),
       subscribePaneVersion: (paneId, listener) => owner.subscribe(paneId, listener),
     };
     const palette = createTerminalPaletteProjection(createSemanticThemeSnapshot({ mode: "dark" }));
@@ -81,6 +82,66 @@ describe("PaneScopedTerminalSurface", () => {
 
     expect(blits).toEqual(["editor"]);
     expect(setup.captureCharFrame()).toContain("stable shell");
+    setup.renderer.destroy();
+  });
+
+  it("repaints a resident blank surface when its retained source is adopted", async () => {
+    registerPaneSurface();
+    const owner = new PaneScopedTerminalOwner();
+    const generation = owner.beginGeneration();
+    let sourceReady = false;
+    const blits: string[] = [];
+    const renderSource: TerminalPaneRenderSource = {
+      scrollbackDepth: () => 0,
+      cursorState: () => null,
+      blitPane: (paneId, buffers, width, _height, _scroll, _fg, _bg, options) => {
+        if (!sourceReady) return null;
+        blits.push(paneId);
+        buffers.char[0] = "A".codePointAt(0)!;
+        buffers.attributes[0] = 0;
+        options.dirtyRows.push(0);
+        for (let column = 1; column < width; column += 1) buffers.char[column] = 32;
+        return null;
+      },
+    };
+    const adapter: PaneScopedTerminalAdapter = {
+      renderSource,
+      paneVersion: (paneId) => owner.version(paneId),
+      paneSourceEpoch: () => owner.sourceEpoch(),
+      subscribePaneVersion: (paneId, listener) => owner.subscribe(paneId, listener),
+    };
+    const palette = createTerminalPaletteProjection(createSemanticThemeSnapshot({ mode: "dark" }));
+    expect(owner.publish(generation, "editor", 1)).toBe(true);
+    const setup = await renderForTest(
+      () => (
+        <PaneScopedTerminalSurface
+          adapter={adapter}
+          paneId="editor"
+          width={4}
+          height={2}
+          defaultFg={palette.foreground}
+          defaultBg={palette.background}
+          terminalPalette={palette}
+          searchHl={palette.searchHighlight}
+          searchCur={palette.searchCurrent}
+          scrollOffset={0}
+          paneFocused={true}
+          sourceEpoch={1}
+          selRange={null}
+          search={null}
+        />
+      ),
+      { width: 4, height: 2 },
+    );
+    await setup.renderOnce();
+    expect(blits).toEqual([]);
+
+    sourceReady = true;
+    owner.replaceSource();
+    await setup.renderOnce();
+
+    expect(blits).toEqual(["editor"]);
+    expect(setup.captureCharFrame()).toContain("A");
     setup.renderer.destroy();
   });
 });

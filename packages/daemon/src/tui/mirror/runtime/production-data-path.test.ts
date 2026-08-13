@@ -170,6 +170,14 @@ describe("production OpenTUI data path", () => {
   });
 
   it("keeps retained handoff presentation passive until its live authority lane exists", () => {
+    const replicaProjection = source.slice(
+      source.indexOf("const semanticReplicaForRuntime ="),
+      source.indexOf("const retireSessionRuntimeLane ="),
+    );
+    expect(replicaProjection.indexOf("sessionRuntimeLane();")).toBeGreaterThanOrEqual(0);
+    expect(replicaProjection.indexOf("sessionRuntimeLane();")).toBeLessThan(
+      replicaProjection.indexOf("const lane = adapter.lane;"),
+    );
     expect(source).toContain("const lane = adapter.lane;");
     expect(source).toContain("if (!lane) return null;");
     expect(source).toContain("return { adapter, lane, semanticPaneId };");

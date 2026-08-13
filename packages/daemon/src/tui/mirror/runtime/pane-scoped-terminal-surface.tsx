@@ -8,7 +8,11 @@ import type { Cell } from "../selection.ts";
 export interface PaneScopedTerminalAdapter {
   readonly renderSource: import("../pane-surface.tsx").TerminalPaneRenderSource;
   paneVersion(paneId: string): number;
-  subscribePaneVersion(paneId: string, listener: (version: number) => void): () => void;
+  paneSourceEpoch(): number;
+  subscribePaneVersion(
+    paneId: string,
+    listener: (version: number, sourceEpoch: number) => void,
+  ): () => void;
 }
 
 export interface PaneScopedTerminalSurfaceProps {
@@ -31,12 +35,17 @@ export interface PaneScopedTerminalSurfaceProps {
 /** One Solid owner per terminal pane; terminal output never wakes the root shell. */
 export function PaneScopedTerminalSurface(props: PaneScopedTerminalSurfaceProps) {
   const [contentVersion, setContentVersion] = createSignal(0);
+  const [paneSourceEpoch, setPaneSourceEpoch] = createSignal(0);
 
   createEffect(() => {
     const adapter = props.adapter;
     const paneId = props.paneId;
     setContentVersion(adapter.paneVersion(paneId));
-    const unsubscribe = adapter.subscribePaneVersion(paneId, setContentVersion);
+    setPaneSourceEpoch(adapter.paneSourceEpoch());
+    const unsubscribe = adapter.subscribePaneVersion(paneId, (version, sourceEpoch) => {
+      setContentVersion(version);
+      setPaneSourceEpoch(sourceEpoch);
+    });
     onCleanup(unsubscribe);
   });
 
@@ -54,7 +63,7 @@ export function PaneScopedTerminalSurface(props: PaneScopedTerminalSurfaceProps)
       scrollOffset={props.scrollOffset}
       paneFocused={props.paneFocused}
       contentVersion={contentVersion()}
-      sourceEpoch={props.sourceEpoch}
+      sourceEpoch={props.sourceEpoch + paneSourceEpoch()}
       selRange={props.selRange}
       search={props.search}
     />

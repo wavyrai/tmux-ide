@@ -1,4 +1,4 @@
-export type PaneContentVersionListener = (version: number) => void;
+export type PaneContentVersionListener = (version: number, sourceEpoch: number) => void;
 
 /**
  * Pane-local publication owner for the terminal hot path.
@@ -11,6 +11,7 @@ export type PaneContentVersionListener = (version: number) => void;
 export class PaneScopedTerminalOwner {
   #generation = 0;
   #publication = 0;
+  #sourceEpoch = 0;
   #disposed = false;
   readonly #versions = new Map<string, number>();
   readonly #sourceVersions = new Map<string, number>();
@@ -28,6 +29,30 @@ export class PaneScopedTerminalOwner {
     return this.#versions.get(paneId) ?? 0;
   }
 
+  sourceEpoch(): number {
+    return this.#sourceEpoch;
+  }
+
+  /**
+   * Publish adoption or retirement of the retained terminal source.
+   *
+   * A semantic seed can arrive before the async runtime factory resolves. In
+   * that ordering a resident PaneSurface has already walked against the empty
+   * retained facade. Source replacement therefore needs its own pane-local
+   * invalidation so every resident surface performs one full blit after the
+   * backing replica becomes reachable, even when no later terminal bytes arrive.
+   */
+  replaceSource(): void {
+    if (this.#disposed) return;
+    this.#sourceEpoch += 1;
+    const paneIds = new Set([...this.#versions.keys(), ...this.#listeners.keys()]);
+    for (const paneId of paneIds) {
+      const version = this.version(paneId);
+      for (const listener of this.#listeners.get(paneId) ?? [])
+        listener(version, this.#sourceEpoch);
+    }
+  }
+
   publish(generation: number, paneId: string, version: number): boolean {
     if (this.#disposed || generation !== this.#generation) return false;
     const previous = this.#sourceVersions.get(paneId) ?? 0;
@@ -39,7 +64,8 @@ export class PaneScopedTerminalOwner {
     // also `1` still invalidates exactly the addressed pane.
     this.#publication += 1;
     this.#versions.set(paneId, this.#publication);
-    for (const listener of this.#listeners.get(paneId) ?? []) listener(this.#publication);
+    for (const listener of this.#listeners.get(paneId) ?? [])
+      listener(this.#publication, this.#sourceEpoch);
     return true;
   }
 

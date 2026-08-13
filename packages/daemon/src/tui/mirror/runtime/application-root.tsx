@@ -1665,6 +1665,12 @@ const mountTuiRoot = () => {
       semanticPaneId;
     const semanticReplicaForRuntime = (runtimePaneId: string) => {
       terminalPresentationEpoch();
+      // Presentation can commit after coherent layout but before the async
+      // pane-stream factory publishes its live lane. Track that publication
+      // explicitly: adapter.lane is intentionally imperative, so without this
+      // dependency a <Show> that first observed null never remounted the actual
+      // PaneSurface and the terminal bodies remained blank forever.
+      sessionRuntimeLane();
       const adapter = presentedTerminalWorkspaceAdapter ?? terminalWorkspaceAdapter;
       if (!adapter) return null;
       // The presented adapter intentionally outlives its backing lane during an
@@ -1844,6 +1850,12 @@ const mountTuiRoot = () => {
         });
         candidate.setSource(lane.source);
         setSessionRuntimeLane(lane);
+        // A current-window layout may commit presentation before the async
+        // pane-stream lane is mounted. Only arm coherent-frame readiness once
+        // the lane (and its accepted terminal seeds) is live; the next renderer
+        // frame is then the first frame capable of containing terminal cells.
+        terminalFrameHandoffGeneration = terminalHandoffGeneration;
+        terminalFramePublicationPending = true;
         setSessionAuthoritySnapshot(lane.authoritySnapshot);
         claimForegroundRuntime(lane);
         reconcileAuthoritativeAgents();
@@ -5558,7 +5570,6 @@ const mountTuiRoot = () => {
         ) {
           terminalFrameHandoffGeneration = terminalHandoffGeneration;
         }
-        if (raw.length > 0) terminalFramePublicationPending = true;
         if (FB_PANES) setPaneRuntime(livePaneRuntime(raw));
         // Size truth (M22.8, event-driven M23.5): the effective window size is
         // the layout ROOT's WxH pushed by %layout-change (the pane bounding

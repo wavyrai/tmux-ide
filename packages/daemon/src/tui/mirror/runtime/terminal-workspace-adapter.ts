@@ -114,7 +114,14 @@ export class OpenTuiTerminalWorkspaceAdapter {
     return this.#paneOwner.version(paneId);
   }
 
-  subscribePaneVersion(paneId: string, listener: (version: number) => void): () => void {
+  paneSourceEpoch(): number {
+    return this.#paneOwner.sourceEpoch();
+  }
+
+  subscribePaneVersion(
+    paneId: string,
+    listener: (version: number, sourceEpoch: number) => void,
+  ): () => void {
     return this.#paneOwner.subscribe(paneId, listener);
   }
 
@@ -149,6 +156,7 @@ export class OpenTuiTerminalWorkspaceAdapter {
       this.#lane = lane;
       this.#renderEpoch += 1;
       this.#retainedSource.setSource(lane.source);
+      this.#paneOwner.replaceSource();
       this.view.setSource(lane.source);
       resolveConnection(lane);
       return () => {
@@ -156,6 +164,7 @@ export class OpenTuiTerminalWorkspaceAdapter {
           this.#lane = null;
           this.#renderEpoch += 1;
           this.#retainedSource.setSource(null);
+          this.#paneOwner.replaceSource();
           this.view.setSource(this.#emptySource);
         }
         lane.close();
