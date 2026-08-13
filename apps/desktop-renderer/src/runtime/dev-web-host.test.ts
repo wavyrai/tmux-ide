@@ -371,6 +371,59 @@ describe("development web host route keying", () => {
     host.dispose();
   });
 
+  it("opens a project through the trusted gateway without exposing its path", async () => {
+    const gatewayConfig = {
+      daemonOrigin: "http://127.0.0.1:5173",
+      daemonWebSocketOrigin: "ws://127.0.0.1:5173",
+      ownerToken: null,
+      transport: "same-origin-gateway" as const,
+    };
+    const requests: Array<{ path: string; body: unknown; headers: Headers }> = [];
+    const workspaceResult = {
+      status: "ok" as const,
+      result: {
+        operationId: "22222222-2222-4222-8222-222222222222",
+        daemonInstanceId: IDENTITY.instanceId,
+        outcome: "created" as const,
+        resource: {
+          resourceVersion: 1 as const,
+          workspaceName: "project-00112233445566778899aabbccddeeff",
+          initialPaneId: "pane.workspace.00112233445566778899aabbccddeeff",
+        },
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const url = new URL(String(input), gatewayConfig.daemonOrigin);
+        requests.push({
+          path: url.pathname,
+          body: typeof init?.body === "string" ? JSON.parse(init.body) : null,
+          headers: new Headers(init?.headers),
+        });
+        return new Response(
+          JSON.stringify(
+            url.pathname === "/api/dev/host-session"
+              ? { token: "33333333-3333-4333-8333-333333333333" }
+              : workspaceResult,
+          ),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+
+    const host = createDevWebHostCapabilities(gatewayConfig);
+    await expect(host.workspace.openProjectDirectory()).resolves.toEqual(workspaceResult);
+    const open = requests.find(({ path }) => path === "/api/dev/open-project-directory");
+    expect(open?.body).toEqual({});
+    expect(open?.headers.get("X-Tmux-Ide-Dev-Host-Session")).toBe(
+      "33333333-3333-4333-8333-333333333333",
+    );
+    expect(open?.headers.has("Authorization")).toBe(false);
+    expect(JSON.stringify(requests)).not.toContain("projectDir");
+    host.dispose();
+  });
+
   it("uses one stable per-document host identity in legacy direct mode", async () => {
     const hostIds: Array<string | undefined> = [];
     vi.stubGlobal(

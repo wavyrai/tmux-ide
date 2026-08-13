@@ -9,6 +9,7 @@ import {
   webSocketOriginFor,
 } from "./src/runtime/dev-web-host-config.ts";
 import { DevelopmentHostSessionRegistry } from "./src/runtime/dev-host-session-registry.ts";
+import { openSelectedDevelopmentProject } from "./scripts/dev-native-folder-host.ts";
 
 /**
  * Legacy direct mode needs one tightly scoped daemon `connect-src`. Gateway
@@ -53,6 +54,7 @@ function activeDevelopmentHostSession(
 
 function developmentHostBootstrap(): Plugin {
   const hostSessionPath = "/api/dev/host-session";
+  const openProjectPath = "/api/dev/open-project-directory";
   return {
     name: "tmux-ide-dev-host-bootstrap",
     transformIndexHtml() {
@@ -70,6 +72,64 @@ function developmentHostBootstrap(): Plugin {
       server.middlewares.use((request, response, next) => {
         const pageOrigin = `http://127.0.0.1:${developmentServerPort()}`;
         const pathname = request.url?.split("?", 1)[0];
+        if (pathname === openProjectPath) {
+          const token = request.headers["x-tmux-ide-dev-host-session"];
+          const session = activeDevelopmentHostSession(
+            typeof token === "string" ? token : undefined,
+          );
+          if (
+            process.env.VITE_TMUX_IDE_DEV_GATEWAY !== "1" ||
+            request.method !== "POST" ||
+            !isExactDevelopmentPageOrigin(request.headers.origin, pageOrigin) ||
+            !session
+          ) {
+            response.statusCode = session ? 404 : 401;
+            response.setHeader("Content-Type", "application/json");
+            response.setHeader("Cache-Control", "no-store");
+            response.end(JSON.stringify({ code: "dev_host_session_invalid" }));
+            return;
+          }
+          const daemonOrigin = loopbackHttpOriginOrNull(process.env.TMUX_IDE_DEV_DAEMON_URL);
+          const ownerToken = process.env.TMUX_IDE_DEV_OWNER_TOKEN;
+          if (!daemonOrigin || !ownerToken) {
+            response.statusCode = 503;
+            response.setHeader("Content-Type", "application/json");
+            response.setHeader("Cache-Control", "no-store");
+            response.end(
+              JSON.stringify({
+                status: "error",
+                error: { code: "daemon-unavailable", reason: "The daemon is unavailable." },
+              }),
+            );
+            return;
+          }
+          void openSelectedDevelopmentProject({
+            daemonOrigin,
+            ownerToken,
+            hostClientId: session.hostClientId,
+          })
+            .then((result) => {
+              response.statusCode = 200;
+              response.setHeader("Content-Type", "application/json");
+              response.setHeader("Cache-Control", "no-store");
+              response.end(JSON.stringify(result));
+            })
+            .catch(() => {
+              response.statusCode = 200;
+              response.setHeader("Content-Type", "application/json");
+              response.setHeader("Cache-Control", "no-store");
+              response.end(
+                JSON.stringify({
+                  status: "error",
+                  error: {
+                    code: "request-failed",
+                    reason: "The native folder picker could not be opened.",
+                  },
+                }),
+              );
+            });
+          return;
+        }
         if (pathname !== hostSessionPath) {
           if (process.env.VITE_TMUX_IDE_DEV_GATEWAY === "1" && pathname?.startsWith("/api")) {
             const originalMethod = request.headers["x-tmux-ide-dev-original-method"];

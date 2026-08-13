@@ -45,6 +45,7 @@ import {
   WorkspaceFilePreviewEnvelopeV1SchemaZ,
   WorkspaceFilesCatalogEnvelopeV1SchemaZ,
   WorkspaceMissionsEnvelopeV1SchemaZ,
+  WorkspaceOpenHostResultSchemaZ,
   WorkspacePaneCreateMutationResultSchemaZ,
   WorkspacePromoteMutationResultSchemaZ,
   WorkspacePromotionFailureSchemaZ,
@@ -1673,9 +1674,19 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
       onStateChanged: () => () => undefined,
     },
     workspace: {
-      // A browser tab has no native directory picker with a real filesystem
-      // path, and the daemon will not accept a renderer-authored one.
-      openProjectDirectory: async () => null,
+      openProjectDirectory: async () => {
+        // Direct compatibility mode has no trusted server-side picker. In
+        // gateway mode Vite owns selection and mutation; no path crosses into
+        // this renderer or appears in a browser-authored request.
+        if (config.transport !== "same-origin-gateway") return null;
+        try {
+          return WorkspaceOpenHostResultSchemaZ.nullable().parse(
+            await request("/api/dev/open-project-directory", { method: "POST", body: {} }),
+          );
+        } catch (error) {
+          return { status: "error", error: failureOf(error) };
+        }
+      },
     },
     onboarding: {
       acknowledgeIntro: async () => undefined,
