@@ -57,8 +57,14 @@ export interface TerminalAttachmentWebSocketBoundary {
  */
 export function attachTerminalAttachmentWebSocket(
   server: Server,
-  coordinator: TerminalAttachmentAdmissionCoordinator,
+  coordinatorOrProvider:
+    | TerminalAttachmentAdmissionCoordinator
+    | ((create: boolean) => TerminalAttachmentAdmissionCoordinator | null),
 ): TerminalAttachmentWebSocketBoundary {
+  const coordinator = (create: boolean): TerminalAttachmentAdmissionCoordinator | null =>
+    typeof coordinatorOrProvider === "function"
+      ? coordinatorOrProvider(create)
+      : coordinatorOrProvider;
   const wss = new WebSocketServer({
     noServer: true,
     clientTracking: false,
@@ -104,7 +110,12 @@ export function attachTerminalAttachmentWebSocket(
       rejectUpgrade(socket, 403);
       return;
     }
-    const decision = coordinator.reserveUpgrade({
+    const authority = coordinator(true);
+    if (!authority) {
+      rejectUpgrade(socket, 503);
+      return;
+    }
+    const decision = authority.reserveUpgrade({
       path: rawPath,
       protocols: protocols(protocolHeaders[0]),
       origin: originHeaders[0],
@@ -135,7 +146,7 @@ export function attachTerminalAttachmentWebSocket(
   return {
     close: async () => {
       server.off("upgrade", upgrade);
-      await coordinator.shutdown();
+      await coordinator(false)?.shutdown();
       await new Promise<void>((resolve) => wss.close(() => resolve()));
     },
   };

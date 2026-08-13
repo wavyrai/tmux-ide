@@ -7268,12 +7268,13 @@ var init_workspace_multiplexer = __esm({
 
 // packages/contracts/src/fleet-lifecycle.ts
 import { z as z45 } from "zod";
-var SafeDisplayNameSchemaZ, OwnerPathSchemaZ, WorkspaceSessionCreateArgumentsSchemaZ, WorkspaceSessionCreateResultSchemaZ, FleetAgentMutateArgumentsSchemaZ, FleetAgentMutateResultSchemaZ;
+var SafeDisplayNameSchemaZ, OwnerPathSchemaZ, WorkspaceSessionCreateArgumentsSchemaZ, WorkspaceSessionCreateResultSchemaZ, FleetAgentMutateArgumentsSchemaZ, FleetAgentMutateResultSchemaZ, AgentCommandSchemaZ, ExistingFleetProvisionTargetSchemaZ, FreshFleetProvisionTargetSchemaZ, FleetAgentProvisionArgumentsSchemaZ, FleetAgentProvisionResultSchemaZ;
 var init_fleet_lifecycle = __esm({
   "packages/contracts/src/fleet-lifecycle.ts"() {
     "use strict";
     init_fleet_catalog();
     init_desktop_workspace_name();
+    init_semantic_identity();
     SafeDisplayNameSchemaZ = z45.string().trim().min(1).max(100).refine(
       (value) => [...value].every((character) => {
         const codePoint = character.codePointAt(0) ?? 0;
@@ -7306,6 +7307,50 @@ var init_fleet_lifecycle = __esm({
       agentId: FleetAgentIdSchemaZ,
       catalogRevision: FleetCatalogRevisionSchemaZ,
       mutation: z45.enum(["stop", "restart", "kill"])
+    }).strict();
+    AgentCommandSchemaZ = z45.string().trim().min(1).max(4096).refine(
+      (value) => [...value].every((character) => {
+        const codePoint = character.codePointAt(0) ?? 0;
+        return codePoint >= 32 && codePoint !== 127 && !(codePoint >= 128 && codePoint <= 159);
+      }),
+      "command contains control bytes"
+    );
+    ExistingFleetProvisionTargetSchemaZ = z45.object({
+      kind: z45.literal("existing-session"),
+      fleetSessionId: FleetSessionIdSchemaZ,
+      placement: z45.enum(["window", "split-h", "split-v"]),
+      targetSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ.nullable(),
+      cwd: OwnerPathSchemaZ.nullable(),
+      inheritTargetCwd: z45.boolean()
+    }).strict().superRefine((value, context) => {
+      if (value.placement !== "window" && value.targetSemanticPaneId === null)
+        context.addIssue({ code: "custom", message: "split placement requires a target pane" });
+      if (value.inheritTargetCwd && value.targetSemanticPaneId === null)
+        context.addIssue({ code: "custom", message: "target cwd requires a target pane" });
+    });
+    FreshFleetProvisionTargetSchemaZ = z45.object({
+      kind: z45.literal("new-session"),
+      displayName: SafeDisplayNameSchemaZ,
+      cwd: OwnerPathSchemaZ
+    }).strict();
+    FleetAgentProvisionArgumentsSchemaZ = z45.object({
+      expectedCatalogRevision: FleetCatalogRevisionSchemaZ,
+      command: AgentCommandSchemaZ,
+      harness: SafeDisplayNameSchemaZ,
+      displayTitle: SafeDisplayNameSchemaZ,
+      target: z45.discriminatedUnion("kind", [
+        ExistingFleetProvisionTargetSchemaZ,
+        FreshFleetProvisionTargetSchemaZ
+      ])
+    }).strict();
+    FleetAgentProvisionResultSchemaZ = z45.object({
+      operationId: z45.uuid(),
+      daemonInstanceId: z45.uuid(),
+      outcome: z45.enum(["created", "replayed"]),
+      fleetSessionId: FleetSessionIdSchemaZ,
+      agentId: FleetAgentIdSchemaZ,
+      catalogRevision: FleetCatalogRevisionSchemaZ,
+      workspaceName: DesktopWorkspaceNameSchemaZ
     }).strict();
   }
 });
@@ -7551,6 +7596,10 @@ var init_actions_contract = __esm({
       "fleet.agent.mutate": {
         input: FleetAgentMutateArgumentsSchemaZ,
         result: FleetAgentMutateResultSchemaZ
+      },
+      "fleet.agent.provision": {
+        input: FleetAgentProvisionArgumentsSchemaZ,
+        result: FleetAgentProvisionResultSchemaZ
       },
       "workspace.open": {
         input: WorkspaceOpenInputZ,
@@ -21094,10 +21143,10 @@ function getSessionCwd2(session) {
 function isVisibleFleetSession(name) {
   return !name.startsWith("_") && !name.startsWith("zz-");
 }
-function readAdoptedSessionNames() {
+function readAdoptedSessionNames(runTmux2 = _tmuxRunner) {
   let raw;
   try {
-    raw = _tmuxRunner(["list-sessions", "-F", `#{session_name}	#{${ADOPTED_OPTION}}`]);
+    raw = runTmux2(["list-sessions", "-F", `#{session_name}	#{${ADOPTED_OPTION}}`]);
   } catch {
     return null;
   }
@@ -21115,8 +21164,8 @@ function readAdoptedSessionNames() {
 function emptyToNull(value) {
   return value.length === 0 ? null : value;
 }
-function readAdoptedFleet(registry = getDefaultWorkspaceRegistry()) {
-  const adopted = readAdoptedSessionNames();
+function readAdoptedFleet(registry = getDefaultWorkspaceRegistry(), runTmux2 = _tmuxRunner) {
+  const adopted = readAdoptedSessionNames(runTmux2);
   if (adopted === null) return null;
   const adoptedSet = new Set(adopted);
   if (adoptedSet.size === 0) return [];
@@ -21124,7 +21173,7 @@ function readAdoptedFleet(registry = getDefaultWorkspaceRegistry()) {
   const panesBySession = /* @__PURE__ */ new Map();
   let panesRaw;
   try {
-    panesRaw = _tmuxRunner(["list-panes", "-a", "-F", FLEET_PANE_FORMAT]);
+    panesRaw = runTmux2(["list-panes", "-a", "-F", FLEET_PANE_FORMAT]);
   } catch {
     panesRaw = "";
   }
@@ -21787,7 +21836,7 @@ function paneIdentities(session) {
     };
   });
 }
-function legacyFallbackPaneId(pane) {
+function deprecatedStandaloneFallbackPaneId(pane) {
   return semanticResourceId(
     "pane.discovered",
     JSON.stringify({
@@ -21800,7 +21849,7 @@ function legacyFallbackPaneId(pane) {
     })
   );
 }
-function legacyPaneIdentities(panes) {
+function deprecatedStandalonePaneIdentities(panes) {
   const validCounts = /* @__PURE__ */ new Map();
   for (const pane of panes) {
     if (!SemanticProductIdSchemaZ.safeParse(pane.semanticPaneId).success) continue;
@@ -21813,7 +21862,7 @@ function legacyPaneIdentities(panes) {
       claimed.add(stamped);
       return stamped;
     }
-    const base = legacyFallbackPaneId(pane);
+    const base = deprecatedStandaloneFallbackPaneId(pane);
     let candidate = base;
     let suffix = 1;
     while (claimed.has(candidate)) candidate = `${base}.${suffix++}`;
@@ -22136,11 +22185,11 @@ function missionStatusForDock(status2) {
   if (status2 === "completed" || status2 === "failed" || status2 === "cancelled") return "done";
   return "idle";
 }
-function projectLegacyApplicationShellResourceV1(session) {
+function projectDeprecatedStandaloneApplicationShellResourceV1(session) {
   return deepFreeze5(
     projectApplicationShellResourceV1Core(
       session,
-      legacyPaneIdentities(session.panes),
+      deprecatedStandalonePaneIdentities(session.panes),
       Math.floor(Date.now() / 1e3)
     )
   );
@@ -28714,7 +28763,7 @@ var init_fleet_agent_lifecycle = __esm({
 });
 
 // packages/daemon/src/lib/fleet-lifecycle-authority.ts
-import { createHash as createHash10 } from "node:crypto";
+import { createHash as createHash10, randomUUID as randomUUID8 } from "node:crypto";
 import { isAbsolute as isAbsolute10, resolve as resolve31 } from "node:path";
 import { realpath, stat } from "node:fs/promises";
 var MAX_REPLAY_OPERATIONS, sleep, FleetLifecycleAuthorityError, FleetLifecycleAuthority;
@@ -28739,15 +28788,21 @@ var init_fleet_lifecycle_authority = __esm({
       #startedAt;
       #registry;
       #runTmux;
+      #readFleet;
       #operations = /* @__PURE__ */ new Map();
+      #tail = Promise.resolve();
       constructor(options) {
         this.#daemonInstanceId = options.daemonInstanceId;
         this.#productVersion = options.productVersion;
         this.#startedAt = options.startedAt;
         this.#registry = options.registry;
         this.#runTmux = options.runTmux;
+        this.#readFleet = options.readFleet ?? (() => readAdoptedFleet(this.#registry));
       }
-      async createSession(operationId, generation, input) {
+      createSession(operationId, generation, input) {
+        return this.#exclusive(() => this.#createSession(operationId, generation, input));
+      }
+      async #createSession(operationId, generation, input) {
         this.#assertGeneration(generation);
         const fingerprint2 = JSON.stringify(["create", input]);
         const replay = this.#replay(operationId, fingerprint2);
@@ -28827,12 +28882,15 @@ var init_fleet_lifecycle_authority = __esm({
         this.#remember(operationId, fingerprint2, result);
         return result;
       }
-      async mutateAgent(operationId, generation, input) {
+      mutateAgent(operationId, generation, input) {
+        return this.#exclusive(() => this.#mutateAgent(operationId, generation, input));
+      }
+      async #mutateAgent(operationId, generation, input) {
         this.#assertGeneration(generation);
         const fingerprint2 = JSON.stringify(["agent", input]);
         const replay = this.#replay(operationId, fingerprint2);
         if (replay) return { ...replay, outcome: "replayed" };
-        const facts = readAdoptedFleet(this.#registry) ?? [];
+        const facts = this.#requireFleet();
         const resource3 = projectFleetCatalog(
           facts,
           {
@@ -28878,9 +28936,164 @@ var init_fleet_lifecycle_authority = __esm({
         this.#remember(operationId, fingerprint2, result);
         return result;
       }
+      provisionAgent(operationId, generation, input) {
+        return this.#exclusive(() => this.#provisionAgent(operationId, generation, input));
+      }
+      async #provisionAgent(operationId, generation, input) {
+        this.#assertGeneration(generation);
+        const fingerprint2 = JSON.stringify(["provision", input]);
+        const replay = this.#replay(operationId, fingerprint2);
+        if (replay) return { ...replay, outcome: "replayed" };
+        const before = this.#requireFleet();
+        if (fleetCatalogRevisionForFacts(before) !== input.expectedCatalogRevision)
+          throw new FleetLifecycleAuthorityError(
+            "catalog_changed",
+            "Fleet catalog changed; refresh and retry."
+          );
+        let sessionName;
+        let workspaceName;
+        let cwd;
+        let paneId;
+        let createdSession = false;
+        if (input.target.kind === "new-session") {
+          cwd = await this.#canonicalDir(input.target.cwd);
+          const identity = this.#sessionIdentity(input.target.displayName, cwd);
+          sessionName = identity.sessionName;
+          workspaceName = identity.workspaceName;
+          if (this.#registry.list().some((workspace) => workspace.sessionName === sessionName))
+            throw new FleetLifecycleAuthorityError(
+              "workspace_conflict",
+              "The requested session already exists."
+            );
+          paneId = this.#runTmux([
+            "new-session",
+            "-d",
+            "-s",
+            sessionName,
+            "-P",
+            "-F",
+            "#{pane_id}",
+            "-c",
+            cwd,
+            input.command
+          ]).trim();
+          createdSession = true;
+          this.#runTmux(["set-environment", "-t", sessionName, "TMUX_IDE", "1"]);
+          this.#runTmux(adoptMarkArgv(sessionName));
+        } else {
+          const target = input.target;
+          const session = before.find(
+            (item) => fleetSessionIdForName(item.name) === target.fleetSessionId
+          );
+          if (!session)
+            throw new FleetLifecycleAuthorityError(
+              "session_not_found",
+              "Fleet session is no longer live."
+            );
+          sessionName = session.name;
+          workspaceName = this.#registry.list().find((workspace) => workspace.sessionName === sessionName)?.name ?? sessionName;
+          const targetPane = target.targetSemanticPaneId ? session.panes.find((pane) => pane.semanticPaneId === target.targetSemanticPaneId) : void 0;
+          if (target.placement !== "window" && !targetPane)
+            throw new FleetLifecycleAuthorityError("pane_not_found", "Target pane is no longer live.");
+          cwd = target.inheritTargetCwd ? targetPane.currentPath : await this.#canonicalDir(target.cwd ?? session.cwd);
+          const command2 = target.placement === "window" ? ["new-window", "-t", `${sessionName}:`, "-P", "-F", "#{pane_id}"] : [
+            "split-window",
+            target.placement === "split-h" ? "-h" : "-v",
+            "-t",
+            targetPane.runtimePaneId,
+            "-P",
+            "-F",
+            "#{pane_id}"
+          ];
+          paneId = this.#runTmux([...command2, "-c", cwd, input.command]).trim();
+          this.#runTmux(adoptMarkArgv(sessionName));
+        }
+        if (!/^%[0-9]+$/u.test(paneId)) {
+          if (createdSession) this.#tryTmux(["kill-session", "-t", sessionName]);
+          throw new FleetLifecycleAuthorityError(
+            "spawn_failed",
+            "tmux did not return a pane identity."
+          );
+        }
+        const semanticPaneId3 = `pane.agent.${randomUUID8()}`;
+        try {
+          this.#runTmux(["set-option", "-p", "-t", paneId, "@tmux_ide_pane_id", semanticPaneId3]);
+          this.#runTmux(["set-option", "-p", "-t", paneId, "@agent_launch", input.command]);
+          this.#runTmux(["set-option", "-p", "-t", paneId, "@agent_hint", input.harness]);
+          this.#runTmux(["select-pane", "-t", paneId, "-T", input.displayTitle]);
+          try {
+            this.#runTmux(updaterProbeArgv());
+          } catch {
+            this.#runTmux(updaterSpawnArgv());
+          }
+        } catch (error) {
+          if (createdSession) this.#tryTmux(["kill-session", "-t", sessionName]);
+          else this.#tryTmux(["kill-pane", "-t", paneId]);
+          throw error;
+        }
+        const after = this.#requireFleet();
+        const sessionFacts = after.find((item) => item.name === sessionName);
+        const paneFacts = sessionFacts?.panes.find((pane) => pane.semanticPaneId === semanticPaneId3);
+        if (!sessionFacts || !paneFacts) {
+          if (createdSession) this.#tryTmux(["kill-session", "-t", sessionName]);
+          else this.#tryTmux(["kill-pane", "-t", paneId]);
+          throw new FleetLifecycleAuthorityError(
+            "spawn_unconfirmed",
+            "Spawned pane was not confirmed."
+          );
+        }
+        if (createdSession)
+          try {
+            this.#registry.add({
+              name: workspaceName,
+              sessionName,
+              projectDir: cwd,
+              ideConfigPath: null,
+              configKind: "none",
+              configPath: null,
+              hasWorkspaceConfig: false
+            });
+          } catch (error) {
+            this.#tryTmux(["kill-session", "-t", sessionName]);
+            throw error;
+          }
+        const result = {
+          operationId,
+          daemonInstanceId: this.#daemonInstanceId,
+          outcome: "created",
+          fleetSessionId: fleetSessionIdForName(sessionName),
+          agentId: fleetAgentIdForPane(sessionName, paneFacts),
+          catalogRevision: fleetCatalogRevisionForFacts(after),
+          workspaceName
+        };
+        this.#remember(operationId, fingerprint2, result);
+        return result;
+      }
+      async #exclusive(run) {
+        const predecessor = this.#tail;
+        let release;
+        this.#tail = new Promise((resolve37) => {
+          release = resolve37;
+        });
+        await predecessor;
+        try {
+          return await run();
+        } finally {
+          release();
+        }
+      }
       #assertGeneration(generation) {
         if (generation !== this.#daemonInstanceId)
           throw new FleetLifecycleAuthorityError("generation_mismatch", "Daemon generation changed.");
+      }
+      #requireFleet() {
+        const fleet = this.#readFleet();
+        if (fleet === null)
+          throw new FleetLifecycleAuthorityError(
+            "fleet_unavailable",
+            "Fleet observation is unavailable; refresh and retry."
+          );
+        return fleet;
       }
       #replay(operationId, fingerprint2) {
         const prior = this.#operations.get(operationId);
@@ -33923,7 +34136,7 @@ var init_runtime_scheduler = __esm({
 });
 
 // packages/daemon/src/terminal/session-runtime/runtime-observability.ts
-import { randomUUID as randomUUID8 } from "node:crypto";
+import { randomUUID as randomUUID9 } from "node:crypto";
 import { z as z69 } from "zod";
 var EMPTY_SNAPSHOT, DISABLED_SESSION_RUNTIME_OBSERVABILITY;
 var init_runtime_observability = __esm({
@@ -43953,7 +44166,7 @@ var init_authority_arbiter = __esm({
 });
 
 // packages/daemon/src/terminal/session-runtime/registry.ts
-import { randomUUID as randomUUID9 } from "node:crypto";
+import { randomUUID as randomUUID10 } from "node:crypto";
 import { z as z71 } from "zod";
 function authoredOriginForSurface(surface) {
   if (surface === "opentui") return "tui";
@@ -44014,7 +44227,7 @@ var init_registry2 = __esm({
           observability: options.semanticMutations.observability ?? this.#observability
         }) : null;
         this.#resolveSession = options.semanticMutations?.resolveSession ?? null;
-        this.#createControllerToken = options.createControllerToken ?? randomUUID9;
+        this.#createControllerToken = options.createControllerToken ?? randomUUID10;
         this.#nativeGeometryHysteresisMs = options.nativeGeometryHysteresisMs;
         this.#stopExitObserver = this.#mirror.onSessionExit((session) => {
           this.#sessions.get(session)?.noteControlExit();
@@ -45206,7 +45419,7 @@ var init_grouped_tmux = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/lease-manager.ts
-import { createHash as createHash12, randomBytes as randomBytes5, randomUUID as randomUUID10, timingSafeEqual as timingSafeEqual3 } from "node:crypto";
+import { createHash as createHash12, randomBytes as randomBytes5, randomUUID as randomUUID11, timingSafeEqual as timingSafeEqual3 } from "node:crypto";
 import { z as z75 } from "zod";
 function positiveDuration(value, fallback, label2) {
   const resolved2 = value ?? fallback;
@@ -45279,7 +45492,7 @@ var init_lease_manager = __esm({
         this.#viewExecutor = options.viewExecutor;
         this.#now = options.now ?? Date.now;
         this.#randomBytes = options.randomBytes ?? randomBytes5;
-        this.#createId = options.createId ?? randomUUID10;
+        this.#createId = options.createId ?? randomUUID11;
         this.#ticketTtlMs = positiveDuration(options.ticketTtlMs, 15e3, "ticketTtlMs");
         this.#leaseTtlMs = positiveDuration(options.leaseTtlMs, 6e4, "leaseTtlMs");
         this.#maxLeaseTtlMs = positiveDuration(
@@ -46929,7 +47142,7 @@ var init_direct_websocket = __esm({
 });
 
 // packages/daemon/src/terminal/pane-stream/lease-manager.ts
-import { createHash as createHash13, randomBytes as randomBytes6, randomUUID as randomUUID12, timingSafeEqual as timingSafeEqual4 } from "node:crypto";
+import { createHash as createHash13, randomBytes as randomBytes6, randomUUID as randomUUID13, timingSafeEqual as timingSafeEqual4 } from "node:crypto";
 import { z as z79 } from "zod";
 function positiveDuration2(value, fallback, label2) {
   const resolved2 = value ?? fallback;
@@ -46982,7 +47195,7 @@ var init_lease_manager2 = __esm({
         this.#instanceId = BindingIdSchemaZ3.parse(options.daemonInstanceId);
         this.#now = options.now ?? Date.now;
         this.#randomBytes = options.randomBytes ?? randomBytes6;
-        this.#createId = options.createId ?? randomUUID12;
+        this.#createId = options.createId ?? randomUUID13;
         this.#ticketTtlMs = positiveDuration2(options.ticketTtlMs, 15e3, "ticketTtlMs");
         this.#redemptionProcessingTtlMs = positiveDuration2(
           options.redemptionProcessingTtlMs,
@@ -47996,82 +48209,93 @@ var init_pane_stream_websocket = __esm({
           this.close(1011, "stream-unavailable");
           return;
         }
-        if (this.#mirror.subscribeLayout) {
-          try {
-            const layoutSubscription = await this.#mirror.subscribeLayout(
+        const channels = [...this.#panes.values()].filter((channel) => {
+          if (known.has(channel.semanticPaneId)) return true;
+          this.#emitClosed(channel);
+          return false;
+        });
+        if (this.#closed || channels.length === 0) return;
+        const layoutChannel = channels[0];
+        try {
+          if (this.#mirror.subscribeLayout) {
+            const subscription = await this.#mirror.subscribeLayout(
               this.#descriptor.sessionName,
               (event) => this.#onLayout(event)
             );
             if (this.#closed) {
-              await layoutSubscription.close().catch(() => void 0);
+              await subscription.close().catch(() => void 0);
               return;
             }
-            this.#layoutSubscription = layoutSubscription;
-          } catch {
-            this.close(1011, "stream-unavailable");
-            return;
+            this.#layoutSubscription = subscription;
+          } else {
+            const subscription = await this.#mirror.subscribe({
+              session: this.#descriptor.sessionName,
+              semanticPaneId: layoutChannel.semanticPaneId,
+              onEvent: () => void 0,
+              onLayout: (event) => this.#onLayout(event)
+            });
+            if (this.#closed || layoutChannel.closed) {
+              await subscription.close().catch(() => void 0);
+              return;
+            }
+            layoutChannel.sub = subscription;
           }
+        } catch {
+          this.close(1011, "stream-unavailable");
+          return;
         }
-        let layoutAttached = this.#layoutSubscription !== null;
-        for (const channel of this.#panes.values()) {
-          if (this.#closed) return;
-          if (!known.has(channel.semanticPaneId)) {
-            this.#emitClosed(channel);
+        const openings = channels.map(async (channel) => {
+          const pending = [];
+          let ready = false;
+          const delivery = await binding.openTerminalDelivery(
+            channel.semanticPaneId,
+            offer,
+            (message) => {
+              if (!ready) pending.push(message);
+              else return this.#sendTerminalDelivery(channel.semanticPaneId, message);
+            }
+          );
+          return {
+            channel,
+            delivery,
+            pending,
+            markReady: () => {
+              ready = true;
+            }
+          };
+        });
+        const settled = await Promise.allSettled(openings);
+        const opened = settled.flatMap(
+          (result) => result.status === "fulfilled" ? [result.value] : []
+        );
+        if (this.#closed || settled.some(
+          (result) => result.status === "rejected" || !result.value.delivery.negotiation.accepted
+        )) {
+          await Promise.all(opened.map(({ delivery }) => delivery.close().catch(() => void 0)));
+          if (!this.#closed) this.close(1011, "stream-unavailable");
+          return;
+        }
+        for (const { channel, delivery, pending, markReady } of opened) {
+          if (this.#closed || channel.closed) {
+            await delivery.close();
             continue;
           }
-          try {
-            if (!layoutAttached) {
-              const layoutSub = await this.#mirror.subscribe({
-                session: this.#descriptor.sessionName,
-                semanticPaneId: channel.semanticPaneId,
-                onEvent: () => void 0,
-                onLayout: (event) => this.#onLayout(event)
-              });
-              if (this.#closed || channel.closed) {
-                await layoutSub.close().catch(() => void 0);
-                return;
-              }
-              channel.sub = layoutSub;
-              layoutAttached = true;
-            }
-            const pending = [];
-            let ready = false;
-            const delivery = await binding.openTerminalDelivery(
-              channel.semanticPaneId,
-              offer,
-              (message) => {
-                if (!ready) pending.push(message);
-                else return this.#sendTerminalDelivery(channel.semanticPaneId, message);
-              }
-            );
-            if (this.#closed || channel.closed) {
-              await delivery.close();
-              continue;
-            }
-            channel.delivery = delivery;
-            if (!delivery.negotiation.accepted) {
-              await delivery.close();
-              this.close(1008, "stream-unavailable");
-              return;
-            }
-            channel.deliveryAddress = {
-              workspaceName: this.#descriptor.workspaceName,
-              generation: delivery.negotiation.negotiated.generation,
-              incarnation: null,
-              deliveryNonce: delivery.negotiation.negotiated.deliveryNonce
-            };
-            this.#sendFrame(null, {
-              type: "terminal-delivery-ready",
-              pane: channel.semanticPaneId,
-              negotiation: delivery.negotiation
-            });
-            ready = true;
-            for (const message of pending)
-              await this.#sendTerminalDelivery(channel.semanticPaneId, message);
-          } catch {
-            this.close(1011, "stream-unavailable");
-            return;
-          }
+          if (!delivery.negotiation.accepted) continue;
+          channel.delivery = delivery;
+          channel.deliveryAddress = {
+            workspaceName: this.#descriptor.workspaceName,
+            generation: delivery.negotiation.negotiated.generation,
+            incarnation: null,
+            deliveryNonce: delivery.negotiation.negotiated.deliveryNonce
+          };
+          this.#sendFrame(null, {
+            type: "terminal-delivery-ready",
+            pane: channel.semanticPaneId,
+            negotiation: delivery.negotiation
+          });
+          markReady();
+          for (const message of pending)
+            await this.#sendTerminalDelivery(channel.semanticPaneId, message);
         }
         this.#closeIfAllPanesGone();
       }
@@ -49779,6 +50003,17 @@ async function fleetAgentMutateHandler(input, context) {
     () => context.fleetLifecycleBackend.mutateAgent(operation, generation, input)
   );
 }
+async function fleetAgentProvisionHandler(input, context) {
+  if (!context.fleetLifecycleBackend)
+    throw new ActionError({
+      code: "workspace_unavailable",
+      message: "Fleet lifecycle is unavailable."
+    });
+  const [operation, generation] = authorityContext(context);
+  return await mapAuthority(
+    () => context.fleetLifecycleBackend.provisionAgent(operation, generation, input)
+  );
+}
 var init_fleet_lifecycle2 = __esm({
   "packages/daemon/src/command-center/actions/handlers/fleet-lifecycle.ts"() {
     "use strict";
@@ -49964,6 +50199,12 @@ var init_registry3 = __esm({
         resultSchema: ActionContractsZ["fleet.agent.mutate"].result,
         handler: (input) => fleetAgentMutateHandler(input, {}),
         handlerWithContext: fleetAgentMutateHandler
+      },
+      "fleet.agent.provision": {
+        inputSchema: ActionContractsZ["fleet.agent.provision"].input,
+        resultSchema: ActionContractsZ["fleet.agent.provision"].result,
+        handler: (input) => fleetAgentProvisionHandler(input, {}),
+        handlerWithContext: fleetAgentProvisionHandler
       },
       "workspace.open": {
         inputSchema: ActionContractsZ["workspace.open"].input,
@@ -50225,6 +50466,7 @@ var init_command_definitions = __esm({
       "workspace.open.prepare": { label: "Prepare workspace handoff", category: "workspace" },
       "workspace.session.create": { label: "Create session", category: "workspace" },
       "fleet.agent.mutate": { label: "Manage fleet agent", category: "workspace" },
+      "fleet.agent.provision": { label: "Create fleet agent", category: "workspace" },
       "workspace.open.commit": { label: "Commit workspace handoff", category: "workspace" },
       "workspace.open.cancel": { label: "Cancel workspace handoff", category: "workspace" },
       "workspace.promote": { label: "Promote adopted session to workspace", category: "workspace" },
@@ -50282,6 +50524,22 @@ function resourceChangesForAction(actionName, result) {
     const mutation = FleetAgentMutateResultSchemaZ.safeParse(result);
     if (!mutation.success || mutation.data.outcome === "replayed") return [];
     return [
+      {
+        workspaceName: null,
+        resource: "fleet-catalog",
+        causeOperationId: mutation.data.operationId
+      }
+    ];
+  }
+  if (actionName === "fleet.agent.provision") {
+    const mutation = FleetAgentProvisionResultSchemaZ.safeParse(result);
+    if (!mutation.success || mutation.data.outcome === "replayed") return [];
+    return [
+      {
+        workspaceName: null,
+        resource: "workspace-catalog",
+        causeOperationId: mutation.data.operationId
+      },
       {
         workspaceName: null,
         resource: "fleet-catalog",
@@ -54015,7 +54273,7 @@ __export(widget_asset_store_exports, {
   publishWidgetAsset: () => publishWidgetAsset,
   readWidgetAsset: () => readWidgetAsset
 });
-import { createHash as createHash16, randomUUID as randomUUID15 } from "node:crypto";
+import { createHash as createHash16, randomUUID as randomUUID16 } from "node:crypto";
 import {
   chmodSync as chmodSync5,
   existsSync as existsSync34,
@@ -54116,11 +54374,11 @@ function publishWidgetAsset(bytes, options) {
     createdAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   if (!existsSync34(paths.data)) {
-    const temporary = join36(root, `.${assetId}.${randomUUID15()}.bin`);
+    const temporary = join36(root, `.${assetId}.${randomUUID16()}.bin`);
     writeFileSync22(temporary, bytes, { mode: 384, flag: "wx" });
     renameSync13(temporary, paths.data);
   }
-  const metadataTemporary = join36(root, `.${assetId}.${randomUUID15()}.json`);
+  const metadataTemporary = join36(root, `.${assetId}.${randomUUID16()}.json`);
   writeFileSync22(metadataTemporary, `${JSON.stringify(metadata)}
 `, { mode: 384, flag: "wx" });
   renameSync13(metadataTemporary, paths.metadata);
@@ -54174,6 +54432,7 @@ var server_exports = {};
 __export(server_exports, {
   attachWsEvents: () => attachWsEvents,
   createApp: () => createApp,
+  getCompatibilityMetrics: () => getCompatibilityMetrics,
   getSseMetrics: () => getSseMetrics
 });
 import { execFile as execFile6 } from "node:child_process";
@@ -54189,7 +54448,7 @@ import { z as z83 } from "zod";
 import { realpathSync as realpathSync15 } from "node:fs";
 import { homedir as homedir18 } from "node:os";
 import { isAbsolute as isAbsolute16, resolve as pathResolve } from "node:path";
-import { randomUUID as randomUUID16 } from "node:crypto";
+import { randomUUID as randomUUID17 } from "node:crypto";
 import { WebSocketServer as WebSocketServer3 } from "ws";
 function bearerToken(authHeader) {
   if (!authHeader?.startsWith("Bearer ")) return null;
@@ -54248,6 +54507,9 @@ function remoteAccessAuth(options) {
     token: loopback ? null : options.remoteAccess?.token ?? null,
     localBypassToken: options.remoteAccess?.localBypassToken ?? null
   };
+}
+function getCompatibilityMetrics() {
+  return { ...compatibilityMetrics };
 }
 function getSseMetrics() {
   return { ...sseMetrics };
@@ -54324,7 +54586,7 @@ function createApp(options = {}) {
   const authService = options.authService ?? new AuthService();
   const daemonIdentity = options.daemonIdentity ?? {
     productVersion: "0.0.0",
-    instanceId: randomUUID16(),
+    instanceId: randomUUID17(),
     startedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   const daemonInstanceIdentity = DaemonInstanceIdentitySchemaZ.parse({
@@ -54584,8 +54846,18 @@ function createApp(options = {}) {
   });
   app.get("/api/project/:name/application-shell", async (c) => {
     const name = c.req.param("name");
-    const requestedVersion = c.req.query("version");
-    if (requestedVersion !== void 0 && requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V1_VERSION) && requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V2_VERSION) && requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V3_VERSION)) {
+    const requestedVersion = c.req.query("version") ?? String(APPLICATION_SHELL_RESOURCE_V3_VERSION);
+    const markV1Compatibility = () => {
+      compatibilityMetrics.applicationShellV1Requests += 1;
+      c.header("Deprecation", "true");
+      c.header("Sunset", "Mon, 01 Feb 2027 00:00:00 GMT");
+      c.header(
+        "Link",
+        `</api/project/${encodeURIComponent(name)}/application-shell?version=3>; rel="successor-version"`
+      );
+      c.header("X-Tmux-Ide-Compatibility", "application-shell-v1");
+    };
+    if (requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V1_VERSION) && requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V2_VERSION) && requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V3_VERSION)) {
       return c.json({ error: "Unsupported application-shell resource version" }, 400);
     }
     if (requestedVersion === String(APPLICATION_SHELL_RESOURCE_V2_VERSION) || requestedVersion === String(APPLICATION_SHELL_RESOURCE_V3_VERSION)) {
@@ -54631,13 +54903,17 @@ function createApp(options = {}) {
     }
     const backend2 = options.applicationShellInventoryBackend;
     if (!backend2) {
-      const legacySession = discoverSessions().find((candidate) => candidate.name === name);
-      if (!legacySession) return c.json({ error: "Session not found" }, 404);
-      return c.json({
-        version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
-        daemon: daemonInstanceIdentity,
-        resource: projectLegacyApplicationShellResourceV1(legacySession)
-      });
+      if (requestedVersion === String(APPLICATION_SHELL_RESOURCE_V1_VERSION)) {
+        const standaloneSession = discoverSessions().find((candidate) => candidate.name === name);
+        if (!standaloneSession) return c.json({ error: "Session not found" }, 404);
+        markV1Compatibility();
+        return c.json({
+          version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
+          daemon: daemonInstanceIdentity,
+          resource: projectDeprecatedStandaloneApplicationShellResourceV1(standaloneSession)
+        });
+      }
+      return c.json({ error: "Session discovery unavailable" }, 503);
     }
     let session;
     try {
@@ -54654,6 +54930,7 @@ function createApp(options = {}) {
       focus: resource3.focus,
       connection: resource3.connection
     };
+    markV1Compatibility();
     return c.json({
       version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
       daemon: daemonInstanceIdentity,
@@ -54758,7 +55035,7 @@ function createApp(options = {}) {
         });
         scripted = true;
       }
-      if (!id) id = randomUUID16();
+      if (!id) id = randomUUID17();
       try {
         const upsertInput = {
           id,
@@ -55203,7 +55480,7 @@ function createApp(options = {}) {
     if (!existsSync35(parsed.data.dir)) {
       return c.json({ error: `Directory "${parsed.data.dir}" does not exist` }, 400);
     }
-    const jobId = randomUUID16();
+    const jobId = randomUUID17();
     const command2 = process.env.TMUX_IDE_INIT_COMMAND ?? "tmux-ide";
     void (async () => {
       try {
@@ -55372,7 +55649,7 @@ function attachWsEvents(server, daemonIdentity) {
     }
   };
 }
-var defaultApplicationShellAppWindowBackend, defaultApplicationShellMissionBackend, projectStreamConnections, GATED_ACTIONS, requireOwnerCapability, sseMetrics;
+var defaultApplicationShellAppWindowBackend, defaultApplicationShellMissionBackend, projectStreamConnections, GATED_ACTIONS, requireOwnerCapability, sseMetrics, compatibilityMetrics;
 var init_server = __esm({
   "packages/daemon/src/command-center/server.ts"() {
     "use strict";
@@ -55440,6 +55717,7 @@ var init_server = __esm({
       "workspace.pane.create": "owner-and-operation-id",
       "workspace.session.create": "owner-and-operation-id",
       "fleet.agent.mutate": "owner-and-operation-id",
+      "fleet.agent.provision": "owner-and-operation-id",
       "workspace.open": "owner-and-operation-id",
       "workspace.open.prepare": "owner-and-operation-id",
       "workspace.open.commit": "owner-and-operation-id",
@@ -55470,6 +55748,9 @@ var init_server = __esm({
     sseMetrics = {
       connections: 0,
       messagesSent: 0
+    };
+    compatibilityMetrics = {
+      applicationShellV1Requests: 0
     };
   }
 });
@@ -55546,7 +55827,7 @@ var require_package = __commonJS({
         "pack:check": "pnpm build:web && node scripts/pack-web-check.mjs",
         "test:pack-installed": "node scripts/pack-check-run.mjs",
         "check:native-deps": "node packages/daemon/scripts/check-native-deps.mjs",
-        check: "pnpm run lint:workspace && pnpm run check:control-bytes && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:unit && pnpm run test:product-test-rig && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run test:workbench-dock-package && pnpm run test:pane-frame-package && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps && pnpm run smoke:desktop",
+        check: "pnpm run lint:workspace && pnpm run check:control-bytes && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:portable-release-contract && pnpm run test:unit && pnpm run test:product-test-rig && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run test:workbench-dock-package && pnpm run test:pane-frame-package && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps && pnpm run smoke:desktop",
         postinstall: "node scripts/postinstall.js",
         docs: "turbo run dev --filter=@tmux-ide/docs",
         "test:tui-renderer": "bun test --preload @opentui/solid/preload --preload ./packages/daemon/test-support/opentui-renderer-preload.ts ./packages/daemon/src/tui/mirror/pane-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/widget-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/files-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/changes-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/missions-activity-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/dialogs-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/palette-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/rich-preview/feature.test.ts ./packages/daemon/src/tui/mirror/runtime/rich-preview-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-chrome-view.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-window-strip-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx",
@@ -55554,6 +55835,7 @@ var require_package = __commonJS({
         "test:tui-live": "node scripts/tui-testdrive.mjs smoke",
         "test:performance-qualification": "node scripts/performance-qualification.mjs",
         "measure:performance-portable": "node scripts/performance-portable-evidence.mjs",
+        "test:portable-release-contract": "pnpm exec vitest run scripts/lib/portable-performance-evidence.test.mjs",
         "measure:performance-reference": "node scripts/performance-reference.mjs",
         "test:performance-reference": "node scripts/performance-reference.mjs --require-complete",
         "test:tui-perf": "pnpm test:performance-qualification",
@@ -57123,7 +57405,7 @@ var init_dev_web_host_config = __esm({
 
 // apps/desktop-renderer/scripts/dev-native-folder-host.ts
 import { execFile as execFile8 } from "node:child_process";
-import { randomUUID as randomUUID18 } from "node:crypto";
+import { randomUUID as randomUUID19 } from "node:crypto";
 function executeFile(executable, args) {
   return new Promise((resolveOutput, reject) => {
     execFile8(executable, [...args], { encoding: "utf8", maxBuffer: 64 * 1024 }, (error, stdout) => {
@@ -57203,7 +57485,7 @@ var init_dev_native_folder_host = __esm({
     defaults = {
       selectDirectory: selectNativeProjectDirectory,
       request: fetch,
-      createOperationId: randomUUID18
+      createOperationId: randomUUID19
     };
     requestFailed = (reason) => ({
       status: "error",
@@ -57213,13 +57495,13 @@ var init_dev_native_folder_host = __esm({
 });
 
 // apps/desktop-renderer/scripts/generation-gateway.ts
-import { randomUUID as randomUUID19, timingSafeEqual as timingSafeEqual7 } from "node:crypto";
+import { randomUUID as randomUUID20, timingSafeEqual as timingSafeEqual7 } from "node:crypto";
 import { closeSync as closeSync4, constants as constants7, fstatSync as fstatSync2, lstatSync as lstatSync5, openSync as openSync4, readFileSync as readFileSync29 } from "node:fs";
 import { createServer as createServer3, request as httpRequest } from "node:http";
 import { connect as connectTcp } from "node:net";
 import { dirname as dirname36 } from "node:path";
 async function startGenerationGateway(daemonInfoPath, expected) {
-  const bearer = randomUUID19();
+  const bearer = randomUUID20();
   const server = createServer3((incoming, response3) => {
     if (!authorized(incoming.headers.authorization, bearer)) {
       response3.writeHead(401, { "Content-Type": "application/json", "Cache-Control": "no-store" });
@@ -57351,7 +57633,7 @@ var production_web_server_exports = {};
 __export(production_web_server_exports, {
   startProductionWebServer: () => startProductionWebServer
 });
-import { randomUUID as randomUUID20 } from "node:crypto";
+import { randomUUID as randomUUID21 } from "node:crypto";
 import { createReadStream, lstatSync as lstatSync6, readFileSync as readFileSync30, realpathSync as realpathSync16 } from "node:fs";
 import {
   createServer as createServer4,
@@ -57524,9 +57806,9 @@ async function startProductionWebServer(options) {
   };
   const mintSession = () => {
     expireSessions();
-    const token = randomUUID20();
+    const token = randomUUID21();
     sessions.set(token, {
-      hostClientId: `web:${randomUUID20()}`,
+      hostClientId: `web:${randomUUID21()}`,
       expiresAt: Date.now() + DOCUMENT_SESSION_TTL_MS
     });
     return token;
@@ -59008,7 +59290,7 @@ init_src();
 // packages/daemon/src/lib/daemon-embed.ts
 init_src();
 import { execFileSync as execFileSync16 } from "node:child_process";
-import { randomBytes as randomBytes8, randomUUID as randomUUID17 } from "node:crypto";
+import { randomBytes as randomBytes8, randomUUID as randomUUID18 } from "node:crypto";
 import { createServer } from "node:http";
 import { createRequire as createRequire3 } from "node:module";
 import { performance as performance2 } from "node:perf_hooks";
@@ -59729,7 +60011,7 @@ init_NodePtyAdapter();
 init_grouped_tmux();
 import { accessSync as accessSync4, constants as constants5, realpathSync as realpathSync10, statSync as statSync10 } from "node:fs";
 import { delimiter as delimiter3, isAbsolute as isAbsolute11, join as join31 } from "node:path";
-import { randomUUID as randomUUID11 } from "node:crypto";
+import { randomUUID as randomUUID12 } from "node:crypto";
 import { execFileSync as execFileSync15 } from "node:child_process";
 
 // packages/daemon/src/terminal/attachments/tmux-view-executor.ts
@@ -60631,7 +60913,7 @@ var PtyTmuxAttachmentLauncher = class {
     if (existing) this.#dispose(existing);
     this.#reservedAttachments.add(request.identity.attachmentId);
     const lifecycleEpoch = this.#lifecycleEpoch;
-    const attemptId = randomUUID11();
+    const attemptId = randomUUID12();
     let resolveOutcome;
     const outcome = new Promise((resolve37) => {
       resolveOutcome = resolve37;
@@ -61024,6 +61306,7 @@ var NativeTerminalAttachmentRuntimeError = class extends Error {
     this.code = code;
   }
 };
+var nativeTerminalAttachmentRuntimeConstructions = 0;
 function presentationEnvironment(source) {
   const environment = {
     TERM: SAFE_TERMINAL_VALUE2.test(source.TERM ?? "") ? source.TERM : "xterm-256color"
@@ -61425,6 +61708,211 @@ var NativeTerminalAttachmentGeometryResolver = class {
     return Object.freeze({ sourceGrid, clientViewport });
   }
 };
+var WorkspaceTerminalInventoryRuntime = class {
+  semanticPaneCatalog;
+  runner;
+  #registry;
+  #discoverTerminalInventory;
+  #agentStatusProbe;
+  #prewarmSessionRuntime;
+  #observeWorkspaceSession;
+  #stopWorkspaceAddedObserver;
+  #stopWorkspaceRemovedObserver;
+  #orphanBarrier;
+  #lifecycle = "initializing";
+  #disposed = false;
+  constructor(options) {
+    const authority = canonicalAuthority(options.tmuxAuthority);
+    const execute = options.commandExecutor ?? defaultCommandExecutor;
+    this.runner = pinnedRunner(authority, execute, {
+      allowUnavailableDefaultEnumeration: true
+    });
+    this.#registry = options.registry;
+    this.#discoverTerminalInventory = () => discoverWorkspaceRegistryTerminalInventory(options.registry, this.runner);
+    this.semanticPaneCatalog = options.semanticPaneCatalog ?? new SemanticPaneCatalog({
+      discover: async () => {
+        const inventory = await this.#discoverTerminalInventory();
+        return inventory.panes.map(
+          ({
+            sessionName: _sessionName,
+            index: _index,
+            title: _title,
+            currentCommand: _currentCommand,
+            active: _active,
+            role: _role,
+            name: _name,
+            type: _type,
+            missionStamp: _missionStamp,
+            dir: _dir,
+            ...row
+          }) => row
+        );
+      }
+    });
+    const orphanExecutor = new TmuxAttachmentViewExecutor({ runner: this.runner });
+    this.#orphanBarrier = orphanExecutor.enumerateMarkedViews(GROUPED_TMUX_VIEW_SESSION_PREFIX, GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT).then(async (candidates) => {
+      for (const candidate of candidates) {
+        const marker = candidate.markerValue?.match(
+          /^v1:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}):(0|[1-9][0-9]*)$/u
+        );
+        if (!marker || candidate.windowIds.length !== 1) continue;
+        const generation = Number(marker[2]);
+        if (!Number.isSafeInteger(generation) || generation > GROUPED_TMUX_MAX_GENERATION || groupedTmuxViewSessionName(marker[1], generation) !== candidate.viewSessionName) {
+          continue;
+        }
+        const result = await orphanExecutor.guardedCleanup({
+          exactViewSessionTarget: `=${candidate.viewSessionName}`,
+          markerEnvironment: GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
+          expectedMarkerValue: candidate.markerValue,
+          expectedWindowId: candidate.windowIds[0]
+        });
+        if (result !== "cleaned" && result !== "absent") {
+          throw new NativeTerminalAttachmentRuntimeError("orphan-reconciliation-failed");
+        }
+      }
+      if (!this.#disposed) this.#lifecycle = "ready";
+    }).catch((error) => {
+      if (!this.#disposed) this.#lifecycle = "failed";
+      if (error instanceof NativeTerminalAttachmentRuntimeError) throw error;
+      throw new NativeTerminalAttachmentRuntimeError("orphan-reconciliation-failed");
+    });
+    void this.#orphanBarrier.catch(() => void 0);
+    this.#agentStatusProbe = options.agentStatusProbe ?? (options.agentStatusProbeFactory ? options.agentStatusProbeFactory({
+      run: (argv) => {
+        const result = this.runner.run({ executable: "tmux", argv });
+        return result.status === "ok" ? result.stdout : null;
+      }
+    }) : null);
+    if (options.sessionRuntimeRegistry) {
+      const sessionRuntimeRegistry = options.sessionRuntimeRegistry;
+      const sessionsByWorkspace = new Map(
+        options.registry.list().map((workspace) => [workspace.name, workspace.sessionName])
+      );
+      this.#prewarmSessionRuntime = (sessionName) => {
+        void sessionRuntimeRegistry.prewarmSession(sessionName).catch(() => void 0);
+      };
+      this.#observeWorkspaceSession = (workspaceName, sessionName) => {
+        const previousSessionName = sessionsByWorkspace.get(workspaceName);
+        sessionsByWorkspace.set(workspaceName, sessionName);
+        if (previousSessionName && previousSessionName !== sessionName && ![...sessionsByWorkspace.values()].some((candidate) => candidate === previousSessionName)) {
+          void sessionRuntimeRegistry.retireSession(previousSessionName).catch(() => void 0);
+        }
+      };
+      this.#stopWorkspaceAddedObserver = options.registry.on("workspace.added", (workspace) => {
+        this.#observeWorkspaceSession?.(workspace.name, workspace.sessionName);
+      });
+      this.#stopWorkspaceRemovedObserver = options.registry.on("workspace.removed", (name) => {
+        const sessionName = sessionsByWorkspace.get(name);
+        sessionsByWorkspace.delete(name);
+        if (sessionName && ![...sessionsByWorkspace.values()].some((candidate) => candidate === sessionName)) {
+          void sessionRuntimeRegistry.retireSession(sessionName).catch(() => void 0);
+        }
+      });
+    } else {
+      this.#prewarmSessionRuntime = null;
+      this.#observeWorkspaceSession = null;
+      this.#stopWorkspaceAddedObserver = null;
+      this.#stopWorkspaceRemovedObserver = null;
+    }
+  }
+  discoverTerminalInventory() {
+    return this.#discoverTerminalInventory();
+  }
+  lifecycleState() {
+    return this.#disposed ? "disposed" : this.#lifecycle;
+  }
+  whenReady() {
+    return this.#orphanBarrier;
+  }
+  async discoverApplicationShellSession(requestedSessionName) {
+    const memberships = this.#registry.list().filter((workspace2) => workspace2.sessionName === requestedSessionName);
+    if (memberships.length === 0) return null;
+    if (memberships.length !== 1)
+      throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+    const workspace = memberships[0];
+    this.#observeWorkspaceSession?.(workspace.name, workspace.sessionName);
+    const inventory = await this.#discoverTerminalInventory();
+    const panes = inventory.panes.filter(
+      (pane) => pane.workspaceName === workspace.name && pane.sessionName === workspace.sessionName
+    );
+    if (panes.length === 0) return null;
+    const active2 = panes.find((pane) => pane.active) ?? panes[0];
+    const sessionCatalog = analyzeTrustedSemanticPaneCatalog(
+      panes.map(
+        ({
+          sessionName: _sessionName,
+          index: _index,
+          title: _title,
+          currentCommand: _currentCommand,
+          active: _active,
+          role: _role,
+          name: _name,
+          type: _type,
+          missionStamp: _missionStamp,
+          dir: _dir,
+          ...row
+        }) => row
+      )
+    );
+    const windowStamps = /* @__PURE__ */ new Map();
+    let windowIdentityReady = true;
+    for (const pane of sessionCatalog.rows) {
+      const stamp = pane.windowStamp ?? null;
+      const previous = windowStamps.get(pane.windowId);
+      if (stamp === null || previous !== void 0 && previous !== stamp) {
+        windowIdentityReady = false;
+        break;
+      }
+      windowStamps.set(pane.windowId, stamp);
+    }
+    if (new Set(windowStamps.values()).size !== windowStamps.size) windowIdentityReady = false;
+    if (!sessionCatalog.invalidRuntimeProof && !sessionCatalog.missingSemanticStamp && !sessionCatalog.duplicateSemanticStamp && !sessionCatalog.duplicateRuntimePaneBinding && windowIdentityReady) {
+      this.#prewarmSessionRuntime?.(workspace.sessionName);
+    }
+    const catalogIssue = inventory.catalog.invalidRuntimeProof ? "invalid-runtime-proof" : inventory.catalog.missingSemanticStamp ? "missing-semantic-stamp" : inventory.catalog.duplicateSemanticStamp ? "duplicate-semantic-stamp" : inventory.catalog.duplicateRuntimePaneBinding ? "duplicate-runtime-pane-binding" : null;
+    let agentFacts = /* @__PURE__ */ new Map();
+    if (this.#agentStatusProbe) {
+      try {
+        agentFacts = this.#agentStatusProbe.probe({
+          sessionId: active2.sessionId,
+          nowSec: Math.floor(Date.now() / 1e3),
+          panes: panes.map((pane) => ({
+            runtimePaneId: pane.runtimePaneId,
+            currentCommand: pane.currentCommand,
+            title: pane.title
+          }))
+        });
+      } catch {
+        agentFacts = /* @__PURE__ */ new Map();
+      }
+    }
+    return Object.freeze({
+      name: workspace.sessionName,
+      runtimeSessionId: active2.sessionId,
+      dir: workspace.projectDir,
+      catalogIssue,
+      panes: Object.freeze(
+        panes.map(
+          ({
+            workspaceName: _workspaceName,
+            sessionName: _sessionName,
+            sessionId: _sessionId,
+            sessionWindowCount: _sessionWindowCount,
+            dir: _dir,
+            ...pane
+          }) => Object.freeze({ ...pane, ...agentFacts.get(pane.runtimePaneId) ?? {} })
+        )
+      )
+    });
+  }
+  dispose() {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.#lifecycle = "disposed";
+    this.#stopWorkspaceAddedObserver?.();
+    this.#stopWorkspaceRemovedObserver?.();
+  }
+};
 var NativeTerminalAttachmentRuntime = class {
   admission;
   semanticPaneCatalog;
@@ -61432,6 +61920,7 @@ var NativeTerminalAttachmentRuntime = class {
   #startupBarrier;
   #serializer;
   #registry;
+  #inventoryRuntime;
   #discoverTerminalInventory;
   #agentStatusProbe;
   #prewarmSessionRuntime;
@@ -61441,15 +61930,16 @@ var NativeTerminalAttachmentRuntime = class {
   #lifecycle = "initializing";
   #disposePromise = null;
   constructor(options) {
+    nativeTerminalAttachmentRuntimeConstructions += 1;
     const authority = canonicalAuthority(options.tmuxAuthority);
     const execute = options.commandExecutor ?? defaultCommandExecutor;
     const startupPolicy = {
       allowUnavailableDefaultEnumeration: authority.socketSelector.kind === "name" && authority.socketSelector.name === "default"
     };
-    const runner = pinnedRunner(authority, execute, startupPolicy);
-    const discoverTerminalInventory = () => discoverWorkspaceRegistryTerminalInventory(options.registry, runner);
+    const runner = options.inventoryRuntime?.runner ?? pinnedRunner(authority, execute, startupPolicy);
+    const discoverTerminalInventory = () => options.inventoryRuntime?.discoverTerminalInventory() ?? discoverWorkspaceRegistryTerminalInventory(options.registry, runner);
     const serializer = new TmuxAttachmentOperationSerializer();
-    const catalog = options.semanticPaneCatalog ?? new SemanticPaneCatalog({
+    const catalog = options.inventoryRuntime?.semanticPaneCatalog ?? options.semanticPaneCatalog ?? new SemanticPaneCatalog({
       discover: async () => {
         const inventory = await discoverTerminalInventory();
         return inventory.panes.map(
@@ -61546,14 +62036,15 @@ var NativeTerminalAttachmentRuntime = class {
     this.semanticPaneCatalog = catalog;
     this.#serializer = serializer;
     this.#registry = options.registry;
+    this.#inventoryRuntime = options.inventoryRuntime ?? null;
     this.#discoverTerminalInventory = discoverTerminalInventory;
-    this.#agentStatusProbe = options.agentStatusProbe ?? (options.agentStatusProbeFactory ? options.agentStatusProbeFactory({
+    this.#agentStatusProbe = options.inventoryRuntime ? null : options.agentStatusProbe ?? (options.agentStatusProbeFactory ? options.agentStatusProbeFactory({
       run: (argv) => {
         const result = runner.run({ executable: "tmux", argv });
         return result.status === "ok" ? result.stdout : null;
       }
     }) : null);
-    if (options.sessionRuntimeRegistry) {
+    if (options.sessionRuntimeRegistry && !options.inventoryRuntime) {
       const sessionRuntimeRegistry = options.sessionRuntimeRegistry;
       const sessionsByWorkspace = new Map(
         options.registry.list().map((workspace) => [workspace.name, workspace.sessionName])
@@ -61591,6 +62082,9 @@ var NativeTerminalAttachmentRuntime = class {
    * global trust analyzer.
    */
   async discoverApplicationShellSession(requestedSessionName) {
+    if (this.#inventoryRuntime) {
+      return this.#inventoryRuntime.discoverApplicationShellSession(requestedSessionName);
+    }
     const memberships = this.#registry.list().filter((workspace2) => workspace2.sessionName === requestedSessionName);
     if (memberships.length === 0) return null;
     if (memberships.length !== 1) {
@@ -61926,7 +62420,8 @@ Content-Length: 0\r
     socket.destroy();
   }
 }
-function attachTerminalAttachmentWebSocket(server, coordinator) {
+function attachTerminalAttachmentWebSocket(server, coordinatorOrProvider) {
+  const coordinator = (create) => typeof coordinatorOrProvider === "function" ? coordinatorOrProvider(create) : coordinatorOrProvider;
   const wss = new WebSocketServer({
     noServer: true,
     clientTracking: false,
@@ -61965,7 +62460,12 @@ function attachTerminalAttachmentWebSocket(server, coordinator) {
       rejectUpgrade(socket, 403);
       return;
     }
-    const decision = coordinator.reserveUpgrade({
+    const authority = coordinator(true);
+    if (!authority) {
+      rejectUpgrade(socket, 503);
+      return;
+    }
+    const decision = authority.reserveUpgrade({
       path: rawPath,
       protocols: protocols(protocolHeaders[0]),
       origin: originHeaders[0],
@@ -61995,7 +62495,7 @@ function attachTerminalAttachmentWebSocket(server, coordinator) {
   return {
     close: async () => {
       server.off("upgrade", upgrade);
-      await coordinator.shutdown();
+      await coordinator(false)?.shutdown();
       await new Promise((resolve37) => wss.close(() => resolve37()));
     }
   };
@@ -62272,7 +62772,7 @@ init_active_projects();
 
 // packages/daemon/src/lib/environment-identity.ts
 init_state_home();
-import { randomUUID as randomUUID13 } from "node:crypto";
+import { randomUUID as randomUUID14 } from "node:crypto";
 import { linkSync as linkSync3, mkdirSync as mkdirSync22, readFileSync as readFileSync23, rmSync as rmSync3, writeFileSync as writeFileSync20 } from "node:fs";
 import { dirname as dirname29, join as join32 } from "node:path";
 var UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
@@ -62290,7 +62790,7 @@ function readPersistedEnvironmentId(path2) {
   }
 }
 function persistEnvironmentId(path2, environmentId) {
-  const temporary = `${path2}.${process.pid}.${randomUUID13()}.tmp`;
+  const temporary = `${path2}.${process.pid}.${randomUUID14()}.tmp`;
   try {
     mkdirSync22(dirname29(path2), { recursive: true });
     writeFileSync20(
@@ -62316,7 +62816,7 @@ function readOrMintEnvironmentId() {
     rmSync3(path2, { force: true });
   } catch {
   }
-  const minted = randomUUID13();
+  const minted = randomUUID14();
   persistEnvironmentId(path2, minted);
   return readPersistedEnvironmentId(path2) ?? minted;
 }
@@ -62402,7 +62902,7 @@ function paneStreamWebSocketUrl(bindHostname, port) {
 async function retireTerminalAttachmentTransport(runtime, boundary) {
   let runtimeDisposal;
   try {
-    runtimeDisposal = runtime.dispose();
+    runtimeDisposal = runtime?.dispose() ?? Promise.resolve();
   } catch (error) {
     runtimeDisposal = Promise.reject(error);
   }
@@ -62751,7 +63251,9 @@ async function startHttpServer({
   appWindowMutationBackend,
   workspaceMultiplexerBackend,
   workspaceRegistry,
-  terminalAttachmentRuntime,
+  terminalInventoryRuntime,
+  getTerminalAttachmentRuntime,
+  peekTerminalAttachmentRuntime,
   paneStreamRuntime,
   catalogLiveSessions
 }) {
@@ -62791,14 +63293,20 @@ async function startHttpServer({
     // handed the authority directly, ever reached it.
     workspaceMultiplexerBackend,
     workspaceRegistry,
-    terminalAttachmentIssueBackend: terminalAttachmentRuntime.admission,
+    terminalAttachmentIssueBackend: {
+      issue: (request, context) => getTerminalAttachmentRuntime().admission.issue(request, context)
+    },
     paneStreamIssueBackend: paneStreamRuntime.coordinator,
-    applicationShellInventoryBackend: terminalAttachmentRuntime,
-    startupReadinessAttachmentBackend: terminalAttachmentRuntime,
+    applicationShellInventoryBackend: terminalInventoryRuntime,
+    startupReadinessAttachmentBackend: terminalInventoryRuntime,
     catalogLiveSessions
   });
   app.get("/api/daemon/health", (c) => {
-    return c.json({ ok: true, session: sessionName });
+    return c.json({
+      ok: true,
+      session: sessionName,
+      compatibilityTerminalAttachmentRuntimeConstructed: peekTerminalAttachmentRuntime() !== null
+    });
   });
   const server = createServer(getRequestListener3(app.fetch));
   const sockets = /* @__PURE__ */ new Set();
@@ -62818,7 +63326,7 @@ async function startHttpServer({
   });
   const terminalAttachmentBoundary = attachTerminalAttachmentWebSocket(
     server,
-    terminalAttachmentRuntime.admission
+    (create) => (create ? getTerminalAttachmentRuntime() : peekTerminalAttachmentRuntime())?.admission ?? null
   );
   const paneStreamBoundary = attachPaneStreamWebSocket(server, paneStreamRuntime.coordinator);
   try {
@@ -62934,7 +63442,7 @@ async function startEmbeddedDaemon(opts) {
     validatePort(port);
     const dir = process.cwd();
     const productVersion = resolveDaemonProductVersion(opts.productVersion);
-    const instanceId = randomUUID17();
+    const instanceId = randomUUID18();
     const startedAt = (/* @__PURE__ */ new Date()).toISOString();
     const environmentId = readOrMintEnvironmentId();
     const workspaceRegistry = getDefaultWorkspaceRegistry();
@@ -62992,7 +63500,8 @@ async function startEmbeddedDaemon(opts) {
       productVersion,
       startedAt,
       registry: workspaceRegistry,
-      runTmux: catalogTmuxRunner
+      runTmux: catalogTmuxRunner,
+      readFleet: () => readAdoptedFleet(workspaceRegistry, catalogTmuxRunner)
     });
     const appWindowMutation = new AppWindowMutationAuthority({
       daemonInstanceId: instanceId,
@@ -63023,7 +63532,7 @@ async function startEmbeddedDaemon(opts) {
         try {
           broadcastInteractionReceipt(
             {
-              operationId: randomUUID17(),
+              operationId: randomUUID18(),
               origin: "external",
               workspaceName,
               target: { kind: "pane", semanticPaneId: semanticPaneId3 },
@@ -63040,6 +63549,7 @@ async function startEmbeddedDaemon(opts) {
         return false;
       }
     });
+    let terminalInventoryRuntime = null;
     let terminalAttachmentRuntime = null;
     let paneStreamRuntime = null;
     let startedServer;
@@ -63087,7 +63597,7 @@ async function startEmbeddedDaemon(opts) {
           const consumer = sessionRuntimeRegistry.connect(
             record.sessionName,
             "workspace-open-prepare",
-            `workspace-open-${randomUUID17()}`
+            `workspace-open-${randomUUID18()}`
           );
           try {
             const layout = await consumer.describe();
@@ -63122,9 +63632,7 @@ async function startEmbeddedDaemon(opts) {
           }
         }
       });
-      terminalAttachmentRuntime = createNativeTerminalAttachmentRuntime({
-        daemonInstanceId: instanceId,
-        webSocketUrl: terminalAttachmentWebSocketUrl(bindHostname, port),
+      const terminalRuntimeOptions = {
         registry: workspaceRegistry,
         sessionRuntimeRegistry,
         tmuxAuthority: {
@@ -63132,16 +63640,27 @@ async function startEmbeddedDaemon(opts) {
           socketSelector: tmuxAuthority.socketSelector,
           trustedCwd: dir
         },
-        // Ground-truth agent status: authority-first with a screen-scrape
-        // fallback. Option/capture IO rides the runtime's own pinned runner.
         agentStatusProbeFactory: ({ run }) => createTmuxAgentStatusProbe({ run })
-      });
-      void terminalAttachmentRuntime.whenReady().catch(() => void 0);
+      };
+      terminalInventoryRuntime = new WorkspaceTerminalInventoryRuntime(terminalRuntimeOptions);
+      await terminalInventoryRuntime.whenReady();
+      const getTerminalAttachmentRuntime = () => {
+        if (terminalAttachmentRuntime) return terminalAttachmentRuntime;
+        terminalAttachmentRuntime = createNativeTerminalAttachmentRuntime({
+          daemonInstanceId: instanceId,
+          webSocketUrl: terminalAttachmentWebSocketUrl(bindHostname, port),
+          ...terminalRuntimeOptions,
+          inventoryRuntime: terminalInventoryRuntime
+        });
+        void terminalAttachmentRuntime.whenReady().catch(() => void 0);
+        return terminalAttachmentRuntime;
+      };
+      const peekTerminalAttachmentRuntime = () => terminalAttachmentRuntime;
       paneStreamRuntime = createPaneStreamRuntime({
         daemonInstanceId: instanceId,
         webSocketUrl: paneStreamWebSocketUrl(bindHostname, port),
         sessionRuntimeRegistry,
-        semanticPaneCatalog: terminalAttachmentRuntime.semanticPaneCatalog
+        semanticPaneCatalog: terminalInventoryRuntime.semanticPaneCatalog
       });
       const orderedMultiplexerBackend = createSessionRuntimeMultiplexerBackend({
         registry: sessionRuntimeRegistry,
@@ -63166,13 +63685,16 @@ async function startEmbeddedDaemon(opts) {
         appWindowMutationBackend: appWindowMutation,
         workspaceMultiplexerBackend: orderedMultiplexerBackend,
         workspaceRegistry,
-        terminalAttachmentRuntime,
+        terminalInventoryRuntime,
+        getTerminalAttachmentRuntime,
+        peekTerminalAttachmentRuntime,
         paneStreamRuntime,
         catalogLiveSessions: () => discoverLiveSessionSummaries(catalogTmuxRunner)
       });
     } catch (error) {
       await Promise.allSettled([
-        terminalAttachmentRuntime?.dispose() ?? Promise.resolve(),
+        Promise.resolve().then(() => terminalAttachmentRuntime?.dispose()),
+        Promise.resolve().then(() => terminalInventoryRuntime?.dispose()),
         paneStreamRuntime?.dispose() ?? Promise.resolve(),
         workspacePaneCreation.dispose(),
         workspaceOpen.dispose(),
@@ -63214,6 +63736,7 @@ async function startEmbeddedDaemon(opts) {
         ),
         ...await retirePaneStreamTransport()
       ];
+      terminalInventoryRuntime.dispose();
       const paneDisposal = Promise.resolve().then(() => workspacePaneCreation.dispose());
       const workspaceOpenDisposal = Promise.resolve().then(() => workspaceOpen.dispose());
       const workspaceOpenHandoffDisposal = Promise.resolve().then(
@@ -63384,6 +63907,7 @@ async function startEmbeddedDaemon(opts) {
       apiBaseUrl,
       wsUrl,
       localBypassToken,
+      compatibilityTerminalAttachmentRuntimeConstructed: () => terminalAttachmentRuntime !== null,
       stop: async ({ gracefulMs = DEFAULT_GRACEFUL_MS } = {}) => {
         if (stopping) return stopping;
         if (stopped) return;
@@ -63408,6 +63932,7 @@ async function startEmbeddedDaemon(opts) {
               )
             );
             failures.push(...await retirePaneStreamTransport());
+            await capture(() => terminalInventoryRuntime.dispose());
             await capture(() => workspacePaneCreation.dispose());
             await capture(() => workspaceOpen.dispose());
             await capture(() => workspaceOpenHandoff?.dispose());

@@ -9,7 +9,11 @@ import type { MirrorPaneEvent, MirrorSessionDescription } from "../mirror/events
 import type { MirrorSubscribeRequest, MirrorSubscription } from "../mirror/mirror-service.ts";
 import type { DirectTerminalSocket } from "../attachments/direct-websocket.ts";
 import { PaneStreamLeaseManager } from "./lease-manager.ts";
-import { PaneStreamAdmissionCoordinator, type PaneStreamMirror } from "./pane-stream-websocket.ts";
+import {
+  PaneStreamAdmissionCoordinator,
+  type PaneStreamMirror,
+  type SessionRuntimePaneStreamTransportBinding,
+} from "./pane-stream-websocket.ts";
 
 const INSTANCE = "00000000-0000-4000-8000-000000000099";
 const ORIGIN = "tmux-ide://app";
@@ -211,6 +215,7 @@ function harness(
     bindSessionRuntime?: ConstructorParameters<
       typeof PaneStreamAdmissionCoordinator
     >[0]["bindSessionRuntime"];
+    openTerminalDelivery?: SessionRuntimePaneStreamTransportBinding["openTerminalDelivery"];
   } = {},
 ) {
   const mirror = new FakeMirror(options.panes ?? ["pane.editor", "pane.shell"]);
@@ -295,25 +300,27 @@ function harness(
           return authoritySnapshot();
         },
         assertController: () => undefined,
-        openTerminalDelivery: async (pane, _offer, onMessage) => {
-          deliveryListeners.set(pane, onMessage as (message: never) => void);
-          return {
-            negotiation: {
-              accepted: true as const,
-              negotiated: {
-                protocolVersion: 1 as const,
-                encoding: "semantic-v1" as const,
-                richPlacements: false,
-                generation: INSTANCE,
-                deliveryNonce: "00000000-0000-4000-8000-000000000098",
+        openTerminalDelivery:
+          options.openTerminalDelivery ??
+          (async (pane, _offer, onMessage) => {
+            deliveryListeners.set(pane, onMessage as (message: never) => void);
+            return {
+              negotiation: {
+                accepted: true as const,
+                negotiated: {
+                  protocolVersion: 1 as const,
+                  encoding: "semantic-v1" as const,
+                  richPlacements: false,
+                  generation: INSTANCE,
+                  deliveryNonce: "00000000-0000-4000-8000-000000000098",
+                },
               },
-            },
-            ack: deliveryAcks,
-            nack: deliveryNacks,
-            setVisibility: deliveryVisibility,
-            close: async () => undefined,
-          };
-        },
+              ack: deliveryAcks,
+              nack: deliveryNacks,
+              setVisibility: deliveryVisibility,
+              close: async () => undefined,
+            };
+          }),
         submitIntent,
         sendInput,
         fitViewport,
@@ -967,6 +974,93 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(socket.framesOfType("viewport-ack")).toEqual([
       { type: "viewport-ack", seq: 1, cols: 132, rows: 44 },
     ]);
+  });
+
+  it("opens pane deliveries concurrently but publishes readiness in descriptor order", async () => {
+    let releaseSlow!: () => void;
+    const slow = new Promise<void>((resolve) => {
+      releaseSlow = resolve;
+    });
+    const opened: string[] = [];
+    const closed: string[] = [];
+    const h = harness({
+      openTerminalDelivery: async (pane) => {
+        opened.push(pane);
+        if (pane === "pane.editor") await slow;
+        return {
+          negotiation: {
+            accepted: true,
+            negotiated: {
+              protocolVersion: 1,
+              encoding: "semantic-v1",
+              richPlacements: false,
+              generation: INSTANCE,
+              deliveryNonce: "00000000-0000-4000-8000-000000000098",
+            },
+          },
+          ack: () => undefined,
+          nack: () => undefined,
+          setVisibility: () => undefined,
+          close: async () => {
+            closed.push(pane);
+          },
+        };
+      },
+    });
+    const { socket } = await connect(h, {
+      viewerMode: "interactive",
+      semanticDelivery: true,
+    });
+    await vi.waitFor(() => expect(opened).toEqual(["pane.editor", "pane.shell"]));
+    // shell opened without waiting for editor, but the document cannot claim
+    // coherent readiness until every requested pane has an accepted delivery.
+    expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(0);
+    releaseSlow();
+    await vi.waitFor(() =>
+      expect(socket.framesOfType("terminal-delivery-ready").map(({ pane }) => pane)).toEqual([
+        "pane.editor",
+        "pane.shell",
+      ]),
+    );
+    socket.close();
+    await vi.waitFor(() => expect(closed.sort()).toEqual(["pane.editor", "pane.shell"]));
+  });
+
+  it("closes every partial delivery when one concurrent pane open fails", async () => {
+    const closeEditor = vi.fn(async () => undefined);
+    let rejectShell!: (error: Error) => void;
+    const shell = new Promise<never>((_resolve, reject) => {
+      rejectShell = reject;
+    });
+    const h = harness({
+      openTerminalDelivery: async (pane) => {
+        if (pane === "pane.shell") return await shell;
+        return {
+          negotiation: {
+            accepted: true,
+            negotiated: {
+              protocolVersion: 1,
+              encoding: "semantic-v1",
+              richPlacements: false,
+              generation: INSTANCE,
+              deliveryNonce: "00000000-0000-4000-8000-000000000098",
+            },
+          },
+          ack: () => undefined,
+          nack: () => undefined,
+          setVisibility: () => undefined,
+          close: closeEditor,
+        };
+      },
+    });
+    const { socket } = await connect(h, {
+      viewerMode: "interactive",
+      semanticDelivery: true,
+    });
+    rejectShell(new Error("shell unavailable"));
+    await vi.waitFor(() => expect(closeEditor).toHaveBeenCalledOnce());
+    expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(0);
+    expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" });
   });
 
   it("does not park a sibling source-close behind aggregate semantic output pressure", async () => {

@@ -180,10 +180,10 @@ export function isVisibleFleetSession(name: string): boolean {
  * (e.g. no server) so a caller — the fleet-composition watcher — can hold its
  * baseline across a transient hiccup instead of reporting the whole fleet gone.
  */
-export function readAdoptedSessionNames(): string[] | null {
+export function readAdoptedSessionNames(runTmux: TmuxRunner = _tmuxRunner): string[] | null {
   let raw: string;
   try {
-    raw = _tmuxRunner(["list-sessions", "-F", `#{session_name}\t#{${ADOPTED_OPTION}}`]);
+    raw = runTmux(["list-sessions", "-F", `#{session_name}\t#{${ADOPTED_OPTION}}`]);
   } catch {
     return null;
   }
@@ -264,8 +264,9 @@ function emptyToNull(value: string): string | null {
  */
 export function readAdoptedFleet(
   registry: { list(): { sessionName: string }[] } = getDefaultWorkspaceRegistry(),
+  runTmux: TmuxRunner = _tmuxRunner,
 ): FleetSessionFacts[] | null {
-  const adopted = readAdoptedSessionNames();
+  const adopted = readAdoptedSessionNames(runTmux);
   if (adopted === null) return null;
   const adoptedSet = new Set(adopted);
   if (adoptedSet.size === 0) return [];
@@ -275,7 +276,7 @@ export function readAdoptedFleet(
   const panesBySession = new Map<string, FleetPaneFacts[]>();
   let panesRaw: string;
   try {
-    panesRaw = _tmuxRunner(["list-panes", "-a", "-F", FLEET_PANE_FORMAT]);
+    panesRaw = runTmux(["list-panes", "-a", "-F", FLEET_PANE_FORMAT]);
   } catch {
     panesRaw = "";
   }

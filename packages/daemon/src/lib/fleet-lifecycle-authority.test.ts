@@ -3,6 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Workspace } from "@tmux-ide/contracts";
+import type { FleetSessionFacts } from "../command-center/discovery.ts";
+import {
+  fleetCatalogRevisionForFacts,
+  fleetSessionIdForName,
+} from "../command-center/resources/fleet-catalog.ts";
 
 import {
   FleetLifecycleAuthority,
@@ -146,5 +151,170 @@ describe("FleetLifecycleAuthority", () => {
       authority.createSession(OPERATION, GENERATION, { displayName: "Review", cwd: file }),
     ).rejects.toMatchObject({ code: "invalid_path" });
     expect(calls).toEqual([]);
+  });
+
+  it("fails closed when canonical fleet observation is unavailable", async () => {
+    const cwd = root();
+    const calls: string[][] = [];
+    const authority = new FleetLifecycleAuthority({
+      daemonInstanceId: GENERATION,
+      productVersion: "2.8.0",
+      startedAt: "2026-08-13T00:00:00.000Z",
+      registry: { list: () => [], add: () => undefined as never },
+      readFleet: () => null,
+      runTmux: (args) => {
+        calls.push([...args]);
+        return "";
+      },
+    });
+
+    await expect(
+      authority.provisionAgent(OPERATION, GENERATION, {
+        expectedCatalogRevision: fleetCatalogRevisionForFacts([]),
+        command: "claude",
+        harness: "claude",
+        displayTitle: "Claude",
+        target: { kind: "new-session", displayName: "Review", cwd },
+      }),
+    ).rejects.toMatchObject({ code: "fleet_unavailable" });
+    expect(calls).toEqual([]);
+  });
+
+  it("serializes revision-fenced provisioning and stamps only through its pinned runner", async () => {
+    const cwd = root();
+    const workspaces: Workspace[] = [
+      {
+        name: "demo",
+        sessionName: "demo",
+        projectDir: cwd,
+        ideConfigPath: null,
+        configKind: "none",
+        configPath: null,
+        hasWorkspaceConfig: false,
+        addedAt: "2026-08-13T00:00:00.000Z",
+      },
+    ];
+    const calls: string[][] = [];
+    const panes: FleetSessionFacts["panes"][number][] = [
+      {
+        runtimePaneId: "%1",
+        semanticPaneId: "pane.editor",
+        incarnation: 101,
+        active: true,
+        currentCommand: "zsh",
+        currentPath: cwd,
+        agentStateRaw: null,
+        agentStatusTextRaw: null,
+        agentDisplayNameRaw: null,
+        agentHintRaw: null,
+      },
+    ];
+    const facts = (): FleetSessionFacts[] => [
+      { name: "demo", appCreated: true, cwd, panes: [...panes] },
+    ];
+    let nextPane = 2;
+    let pendingPane: string | null = null;
+    const authority = new FleetLifecycleAuthority({
+      daemonInstanceId: GENERATION,
+      productVersion: "2.8.0",
+      startedAt: "2026-08-13T00:00:00.000Z",
+      registry: { list: () => [...workspaces], add: () => workspaces[0]! },
+      readFleet: facts,
+      runTmux: (args) => {
+        calls.push([...args]);
+        if (args[0] === "split-window" || args[0] === "new-window") {
+          pendingPane = `%${nextPane++}`;
+          panes.push({
+            ...panes[0]!,
+            runtimePaneId: pendingPane,
+            semanticPaneId: null,
+            incarnation: 100 + nextPane,
+            currentCommand: "claude",
+            active: false,
+          });
+          return pendingPane;
+        }
+        if (args[0] === "set-option" && args.at(-2) === "@tmux_ide_pane_id") {
+          const pane = panes.find((item) => item.runtimePaneId === args[3]);
+          if (pane) (pane as { semanticPaneId: string | null }).semanticPaneId = args.at(-1)!;
+        }
+        if (args[0] === "has-session" && args[2] === "=_tmux-ide-chrome") return "";
+        return "";
+      },
+    });
+    const revision = fleetCatalogRevisionForFacts(facts());
+    const input = {
+      expectedCatalogRevision: revision,
+      command: "claude",
+      harness: "claude",
+      displayTitle: "Claude",
+      target: {
+        kind: "existing-session" as const,
+        fleetSessionId: fleetSessionIdForName("demo"),
+        placement: "split-h" as const,
+        targetSemanticPaneId: "pane.editor",
+        cwd: null,
+        inheritTargetCwd: true,
+      },
+    };
+    const first = authority.provisionAgent(OPERATION, GENERATION, input);
+    const second = authority.provisionAgent(
+      "a2ff8da4-b66e-4684-8296-86e12d0e11b7",
+      GENERATION,
+      input,
+    );
+    await expect(first).resolves.toMatchObject({ outcome: "created" });
+    await expect(second).rejects.toMatchObject({ code: "catalog_changed" });
+    expect(calls).toContainEqual([
+      "split-window",
+      "-h",
+      "-t",
+      "%1",
+      "-P",
+      "-F",
+      "#{pane_id}",
+      "-c",
+      cwd,
+      "claude",
+    ]);
+    expect(calls.some((args) => args.includes("@tmux_ide_pane_id"))).toBe(true);
+    expect(panes).toHaveLength(2);
+  });
+
+  it("rolls back a fresh session without persisting registry intent when decoration fails", async () => {
+    const cwd = root();
+    const workspaces: Workspace[] = [];
+    const calls: string[][] = [];
+    const authority = new FleetLifecycleAuthority({
+      daemonInstanceId: GENERATION,
+      productVersion: "2.8.0",
+      startedAt: "2026-08-13T00:00:00.000Z",
+      registry: {
+        list: () => [...workspaces],
+        add: (input) => {
+          const workspace = { ...input, addedAt: "2026-08-13T00:00:00.000Z" } as Workspace;
+          workspaces.push(workspace);
+          return workspace;
+        },
+      },
+      readFleet: () => [],
+      runTmux: (args) => {
+        calls.push([...args]);
+        if (args[0] === "new-session" && args.includes("-P")) return "%9";
+        if (args.includes("@agent_launch")) throw new Error("decoration failed");
+        return "";
+      },
+    });
+    await expect(
+      authority.provisionAgent(OPERATION, GENERATION, {
+        expectedCatalogRevision: fleetCatalogRevisionForFacts([]),
+        command: "claude",
+        harness: "claude",
+        displayTitle: "Claude",
+        target: { kind: "new-session", displayName: "Review", cwd },
+      }),
+    ).rejects.toThrow("decoration failed");
+    expect(workspaces).toEqual([]);
+    expect(calls).toContainEqual(["kill-session", "-t", expect.stringMatching(/^review-/u)]);
   });
 });

@@ -18,6 +18,18 @@ const applicationRootSource = readFileSync(
 );
 
 describe("production OpenTUI data path", () => {
+  it("keeps tmux mutation behind daemon authority except host-local client and clipboard setup", () => {
+    const directTmuxCalls = applicationRootSource.match(/execFile\("tmux"/gu) ?? [];
+    expect(directTmuxCalls).toHaveLength(4);
+    expect(applicationRootSource).toContain('["switch-client", "-l"]');
+    expect(applicationRootSource).toContain('["detach-client"]');
+    expect(applicationRootSource).toContain('["set-option", "-gq", "set-clipboard", "on"]');
+    expect(applicationRootSource).toContain('["set-option", "-gq", "allow-passthrough", "on"]');
+    expect(applicationRootSource).not.toContain('"#{pane_current_path}"');
+    expect(applicationRootSource).not.toContain('"@agent_launch"');
+    expect(applicationRootSource).toContain("provisionFleetAgent({");
+  });
+
   it("contains no recurring catalog work or legacy direct observation path", () => {
     const forbiddenPaths: ReadonlyArray<{
       readonly text: string;

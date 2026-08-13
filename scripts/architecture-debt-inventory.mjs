@@ -3,11 +3,12 @@ import { extname, join, relative, resolve } from "node:path";
 
 const GROUPS = {
   "grouped-pty": {
-    description: "PTY/direct attachment stack to delete after pane-stream parity",
+    description: "Grouped-PTY dependency and authority constructor call sites in shipped source",
     patterns: [
-      /\bnode-pty\b/u,
-      /\bPtyTmuxAttachmentLauncher\b/u,
-      /\bTerminalAttachmentAdmissionCoordinator\b/u,
+      /(?:from\s+["']node-pty["']|import\s*\(\s*["']node-pty["']\s*\)|resolve\(\s*["']node-pty\/package\.json["']\s*\))/u,
+      /external\s*:\s*\[[^\]]*["']node-pty["']/u,
+      /\bnew\s+(?:NodePtyAdapter|PtyTmuxAttachmentLauncher|TerminalAttachmentAdmissionCoordinator)\s*\(/u,
+      /node_modules["'],\s*["']node-pty["']/u,
     ],
   },
   "direct-tmux": {
@@ -22,7 +23,18 @@ const GROUPS = {
     patterns: [
       /\bApplicationShellResourceV1\b/u,
       /\bApplicationShellResourceV1SchemaZ\b/u,
-      /\bversion\s*:\s*1\s+as\s+const\b/u,
+      /\bAPPLICATION_SHELL_RESOURCE_V1_VERSION\b/u,
+    ],
+  },
+  "v1-default-authority": {
+    description: "Removed implicit-V1 catalog aliases and default negotiation authority",
+    patterns: [/\bAPPLICATION_SHELL_RESOURCE_VERSION\b/u],
+  },
+  "v1-standalone-authority": {
+    description: "Explicit deprecated standalone command-center V1 discovery authority",
+    patterns: [
+      /(?:export\s+function|resource\s*:)\s*projectDeprecatedStandaloneApplicationShellResourceV1\b/u,
+      /export\s+interface\s+DeprecatedStandaloneApplicationShell(?:Pane|Session)Facts\b/u,
     ],
   },
 };

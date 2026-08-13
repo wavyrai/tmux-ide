@@ -1,5 +1,6 @@
 /* @jsxImportSource @opentui/solid */
 import { describe, expect, it } from "bun:test";
+import { useTerminalDimensions } from "@opentui/solid";
 import { createSignal } from "solid-js";
 import { TerminalDeliveryEnvelopeSchemaZ, TerminalDeliveryFaultSchemaZ } from "@tmux-ide/contracts";
 import {
@@ -18,7 +19,7 @@ import {
   type TerminalPaneRenderSource,
 } from "./pane-surface.tsx";
 import { createSemanticThemeSnapshot, createTerminalPaletteProjection } from "./theme.ts";
-import { renderForTest } from "./testing/renderer-harness.test.ts";
+import { expectFrameBounds, renderForTest } from "./testing/renderer-harness.test.ts";
 import {
   SemanticPaneReplica,
   SemanticTerminalRenderSource,
@@ -252,5 +253,73 @@ describe("PaneSurface OpenTUI renderer", () => {
     replaceSource();
     await setup.renderOnce();
     expect(fullBlits).toEqual([true]);
+  });
+
+  it("settles one logical root resize with one full walk per resident pane", async () => {
+    registerPaneSurface();
+    const blits = new Map<string, number>();
+    const mirror = {
+      scrollbackDepth: () => 0,
+      cursorState: () => null,
+      blitPane: (paneId: string) => {
+        blits.set(paneId, (blits.get(paneId) ?? 0) + 1);
+        return null;
+      },
+    } as unknown as TerminalPaneRenderSource;
+    const palette = createTerminalPaletteProjection(createSemanticThemeSnapshot({ mode: "dark" }));
+    const setup = await renderForTest(
+      () => {
+        const dimensions = useTerminalDimensions();
+        const paneWidth = () => Math.max(1, Math.floor(dimensions().width / 2));
+        return (
+          <box width={dimensions().width} height={dimensions().height} flexDirection="row">
+            <pane_surface
+              id="resize-pane-a"
+              width={paneWidth()}
+              height={dimensions().height}
+              mirror={mirror}
+              paneId="pane.a"
+              defaultFg={palette.foreground}
+              defaultBg={palette.background}
+              terminalPalette={palette}
+              searchHl={palette.searchHighlight}
+              searchCur={palette.searchCurrent}
+              contentVersion={1}
+            />
+            <pane_surface
+              id="resize-pane-b"
+              width={paneWidth()}
+              height={dimensions().height}
+              mirror={mirror}
+              paneId="pane.b"
+              defaultFg={palette.foreground}
+              defaultBg={palette.background}
+              terminalPalette={palette}
+              searchHl={palette.searchHighlight}
+              searchCur={palette.searchCurrent}
+              contentVersion={1}
+            />
+          </box>
+        );
+      },
+      { width: 20, height: 6 },
+    );
+    await setup.renderOnce();
+    blits.clear();
+    const framesBefore = Number(setup.getNativeStats().nativeFrameCount);
+
+    setup.resize(30, 8);
+    await setup.renderOnce();
+
+    expect(blits).toEqual(
+      new Map([
+        ["pane.a", 1],
+        ["pane.b", 1],
+      ]),
+    );
+    expect(Number(setup.getNativeStats().nativeFrameCount) - framesBefore).toBeLessThanOrEqual(2);
+    expect(setup.renderer.root.findDescendantById("resize-pane-a")?.width).toBe(15);
+    expect(setup.renderer.root.findDescendantById("resize-pane-b")?.width).toBe(15);
+    expectFrameBounds(setup.captureCharFrame(), 30, 8);
   });
 });

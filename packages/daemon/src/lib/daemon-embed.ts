@@ -47,7 +47,7 @@ import {
   resolveWorkspacePaneTmuxAuthority,
   WorkspacePaneCreationAuthority,
 } from "./workspace-pane-creation.ts";
-import { discoverLiveSessionSummaries } from "../command-center/discovery.ts";
+import { discoverLiveSessionSummaries, readAdoptedFleet } from "../command-center/discovery.ts";
 import { WorkspaceOpenAuthority } from "./workspace-open.ts";
 import { WorkspacePromotionAuthority } from "./workspace-promotion.ts";
 import { WorkspaceOpenHandoffCoordinator } from "./workspace-open-handoff.ts";
@@ -58,6 +58,7 @@ import { TmuxExternalInteractionObserver } from "./tmux-external-interaction-obs
 import {
   createNativeTerminalAttachmentRuntime,
   type NativeTerminalAttachmentRuntime,
+  WorkspaceTerminalInventoryRuntime,
 } from "../terminal/attachments/native-runtime.ts";
 import { createTmuxAgentStatusProbe } from "../terminal/attachments/agent-status-probe.ts";
 import {
@@ -151,6 +152,8 @@ export interface EmbeddedDaemonHandle {
   readonly apiBaseUrl: string;
   readonly wsUrl: string;
   readonly localBypassToken: string | null;
+  /** Diagnostic only: normal pane-stream startup must keep this false. */
+  compatibilityTerminalAttachmentRuntimeConstructed(): boolean;
   activateProject(
     projectName: string,
     options?: ProjectActivationOptions,
@@ -231,12 +234,12 @@ export function paneStreamWebSocketUrl(bindHostname: string, port: number): stri
  * retiring legacy transports, HTTP, and canonical publication.
  */
 export async function retireTerminalAttachmentTransport(
-  runtime: Pick<NativeTerminalAttachmentRuntime, "dispose">,
+  runtime: Pick<NativeTerminalAttachmentRuntime, "dispose"> | null,
   boundary: Pick<TerminalAttachmentWebSocketBoundary, "close">,
 ): Promise<readonly unknown[]> {
   let runtimeDisposal: Promise<void>;
   try {
-    runtimeDisposal = runtime.dispose();
+    runtimeDisposal = runtime?.dispose() ?? Promise.resolve();
   } catch (error) {
     runtimeDisposal = Promise.reject(error);
   }
@@ -699,7 +702,9 @@ async function startHttpServer({
   appWindowMutationBackend,
   workspaceMultiplexerBackend,
   workspaceRegistry,
-  terminalAttachmentRuntime,
+  terminalInventoryRuntime,
+  getTerminalAttachmentRuntime,
+  peekTerminalAttachmentRuntime,
   paneStreamRuntime,
   catalogLiveSessions,
 }: {
@@ -725,7 +730,9 @@ async function startHttpServer({
   appWindowMutationBackend: AppWindowMutationAuthority;
   workspaceMultiplexerBackend: WorkspaceMultiplexerBackend;
   workspaceRegistry: WorkspaceRegistry;
-  terminalAttachmentRuntime: NativeTerminalAttachmentRuntime;
+  terminalInventoryRuntime: WorkspaceTerminalInventoryRuntime;
+  getTerminalAttachmentRuntime: () => NativeTerminalAttachmentRuntime;
+  peekTerminalAttachmentRuntime: () => NativeTerminalAttachmentRuntime | null;
   paneStreamRuntime: PaneStreamRuntime;
   catalogLiveSessions: () => readonly {
     readonly sessionName: string;
@@ -779,14 +786,20 @@ async function startHttpServer({
     // handed the authority directly, ever reached it.
     workspaceMultiplexerBackend,
     workspaceRegistry,
-    terminalAttachmentIssueBackend: terminalAttachmentRuntime.admission,
+    terminalAttachmentIssueBackend: {
+      issue: (request, context) => getTerminalAttachmentRuntime().admission.issue(request, context),
+    },
     paneStreamIssueBackend: paneStreamRuntime.coordinator,
-    applicationShellInventoryBackend: terminalAttachmentRuntime,
-    startupReadinessAttachmentBackend: terminalAttachmentRuntime,
+    applicationShellInventoryBackend: terminalInventoryRuntime,
+    startupReadinessAttachmentBackend: terminalInventoryRuntime,
     catalogLiveSessions,
   });
   app.get("/api/daemon/health", (c: { json: (body: unknown, status?: number) => Response }) => {
-    return c.json({ ok: true, session: sessionName });
+    return c.json({
+      ok: true,
+      session: sessionName,
+      compatibilityTerminalAttachmentRuntimeConstructed: peekTerminalAttachmentRuntime() !== null,
+    });
   });
 
   const server = createServer(getRequestListener(app.fetch));
@@ -813,7 +826,9 @@ async function startHttpServer({
   });
   const terminalAttachmentBoundary = attachTerminalAttachmentWebSocket(
     server,
-    terminalAttachmentRuntime.admission,
+    (create) =>
+      (create ? getTerminalAttachmentRuntime() : peekTerminalAttachmentRuntime())?.admission ??
+      null,
   );
   const paneStreamBoundary = attachPaneStreamWebSocket(server, paneStreamRuntime.coordinator);
 
@@ -1025,6 +1040,7 @@ export async function startEmbeddedDaemon(
       startedAt,
       registry: workspaceRegistry,
       runTmux: catalogTmuxRunner,
+      readFleet: () => readAdoptedFleet(workspaceRegistry, catalogTmuxRunner),
     });
     const appWindowMutation = new AppWindowMutationAuthority({
       daemonInstanceId: instanceId,
@@ -1076,6 +1092,7 @@ export async function startEmbeddedDaemon(
         return false;
       },
     });
+    let terminalInventoryRuntime: WorkspaceTerminalInventoryRuntime | null = null;
     let terminalAttachmentRuntime: NativeTerminalAttachmentRuntime | null = null;
     let paneStreamRuntime: PaneStreamRuntime | null = null;
     let startedServer: Awaited<ReturnType<typeof startHttpServer>>;
@@ -1170,9 +1187,7 @@ export async function startEmbeddedDaemon(
           }
         },
       });
-      terminalAttachmentRuntime = createNativeTerminalAttachmentRuntime({
-        daemonInstanceId: instanceId,
-        webSocketUrl: terminalAttachmentWebSocketUrl(bindHostname, port),
+      const terminalRuntimeOptions = {
         registry: workspaceRegistry,
         sessionRuntimeRegistry,
         tmuxAuthority: {
@@ -1180,22 +1195,31 @@ export async function startEmbeddedDaemon(
           socketSelector: tmuxAuthority.socketSelector,
           trustedCwd: dir,
         },
-        // Ground-truth agent status: authority-first with a screen-scrape
-        // fallback. Option/capture IO rides the runtime's own pinned runner.
         agentStatusProbeFactory: ({ run }) => createTmuxAgentStatusProbe({ run }),
-      });
-      // Daemon readiness deliberately precedes tmux readiness. The attachment
-      // coordinator keeps its own startup barrier, so lease issue/redemption
-      // still fail closed until orphan reconciliation passes, while /health,
-      // /identity and the typed startup-readiness ladder remain available when
-      // tmux has no server yet. A persisted catalog is intent, not proof that a
-      // tmux server must already exist during process bootstrap.
-      void terminalAttachmentRuntime.whenReady().catch(() => undefined);
+      } satisfies ConstructorParameters<typeof WorkspaceTerminalInventoryRuntime>[0];
+      terminalInventoryRuntime = new WorkspaceTerminalInventoryRuntime(terminalRuntimeOptions);
+      // Reconcile only cryptographically marked legacy view sessions before
+      // publishing this daemon generation. This neutral cleanup does not
+      // construct PTYs, attachment leases, or admission.
+      await terminalInventoryRuntime.whenReady();
+      const getTerminalAttachmentRuntime = (): NativeTerminalAttachmentRuntime => {
+        if (terminalAttachmentRuntime) return terminalAttachmentRuntime;
+        terminalAttachmentRuntime = createNativeTerminalAttachmentRuntime({
+          daemonInstanceId: instanceId,
+          webSocketUrl: terminalAttachmentWebSocketUrl(bindHostname, port),
+          ...terminalRuntimeOptions,
+          inventoryRuntime: terminalInventoryRuntime!,
+        });
+        void terminalAttachmentRuntime.whenReady().catch(() => undefined);
+        return terminalAttachmentRuntime;
+      };
+      const peekTerminalAttachmentRuntime = (): NativeTerminalAttachmentRuntime | null =>
+        terminalAttachmentRuntime;
       paneStreamRuntime = createPaneStreamRuntime({
         daemonInstanceId: instanceId,
         webSocketUrl: paneStreamWebSocketUrl(bindHostname, port),
         sessionRuntimeRegistry,
-        semanticPaneCatalog: terminalAttachmentRuntime.semanticPaneCatalog,
+        semanticPaneCatalog: terminalInventoryRuntime.semanticPaneCatalog,
       });
       const orderedMultiplexerBackend = createSessionRuntimeMultiplexerBackend({
         registry: sessionRuntimeRegistry,
@@ -1222,13 +1246,16 @@ export async function startEmbeddedDaemon(
         appWindowMutationBackend: appWindowMutation,
         workspaceMultiplexerBackend: orderedMultiplexerBackend,
         workspaceRegistry,
-        terminalAttachmentRuntime,
+        terminalInventoryRuntime,
+        getTerminalAttachmentRuntime,
+        peekTerminalAttachmentRuntime,
         paneStreamRuntime,
         catalogLiveSessions: () => discoverLiveSessionSummaries(catalogTmuxRunner),
       });
     } catch (error) {
       await Promise.allSettled([
-        terminalAttachmentRuntime?.dispose() ?? Promise.resolve(),
+        Promise.resolve().then(() => terminalAttachmentRuntime?.dispose()),
+        Promise.resolve().then(() => terminalInventoryRuntime?.dispose()),
         paneStreamRuntime?.dispose() ?? Promise.resolve(),
         workspacePaneCreation.dispose(),
         workspaceOpen.dispose(),
@@ -1273,6 +1300,7 @@ export async function startEmbeddedDaemon(
         )),
         ...(await retirePaneStreamTransport()),
       ];
+      terminalInventoryRuntime.dispose();
       const paneDisposal = Promise.resolve().then(() => workspacePaneCreation.dispose());
       const workspaceOpenDisposal = Promise.resolve().then(() => workspaceOpen.dispose());
       const workspaceOpenHandoffDisposal = Promise.resolve().then(() =>
@@ -1467,6 +1495,7 @@ export async function startEmbeddedDaemon(
       apiBaseUrl,
       wsUrl,
       localBypassToken,
+      compatibilityTerminalAttachmentRuntimeConstructed: () => terminalAttachmentRuntime !== null,
       stop: async ({ gracefulMs = DEFAULT_GRACEFUL_MS } = {}) => {
         if (stopping) return stopping;
         if (stopped) return;
@@ -1494,6 +1523,7 @@ export async function startEmbeddedDaemon(
               )),
             );
             failures.push(...(await retirePaneStreamTransport()));
+            await capture(() => terminalInventoryRuntime.dispose());
             await capture(() => workspacePaneCreation.dispose());
             await capture(() => workspaceOpen.dispose());
             await capture(() => workspaceOpenHandoff?.dispose());

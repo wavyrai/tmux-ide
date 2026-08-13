@@ -196,6 +196,7 @@ import { parseArgs } from "node:util";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, readFileSync, openSync, writeSync, closeSync } from "node:fs";
 import { TUI_RENDERER_CADENCE } from "./renderer-cadence.ts";
+import { ViewportFitCoordinator } from "./viewport-fit-coordinator.ts";
 import { publishSemanticPaneChange } from "./semantic-pane-publication.ts";
 import { TerminalSessionHandoff } from "./terminal-session-handoff.ts";
 import { PaneScopedTerminalSurface } from "./pane-scoped-terminal-surface.tsx";
@@ -439,7 +440,11 @@ import {
 } from "../workspace-ui-state.ts";
 import { PALETTE_KEYCAPS } from "../application-keybindings.ts";
 import { DaemonAuthorityRebindCoordinator } from "./daemon-authority-rebind.ts";
-import { createFleetSession, mutateFleetAgent } from "./fleet-lifecycle-client.ts";
+import {
+  createFleetSession,
+  mutateFleetAgent,
+  provisionFleetAgent,
+} from "./fleet-lifecycle-client.ts";
 import type {
   DialogConfirmRequest,
   DialogFeatureSession,
@@ -492,22 +497,16 @@ import {
   compatiblePlacement,
   customRecentIndex,
   defaultSpawnPlacement,
-  labelPaneArgs,
-  labelWindowArgs,
   lastSpawnName,
   launchCommandFor,
   newAgentItems,
   placementActions,
   placementLabel,
   resolvePlacement,
-  spawnAgentArgs,
   spawnLabelFor,
-  spawnSessionArgs,
-  stampLaunchArgs,
   teamAgentIndex,
   teamItems,
   type LastSpawn,
-  type SpawnPlacement,
   type SpawnWhere,
 } from "../agent-lifecycle.ts";
 import { agentsByPane } from "../agent-chip.ts";
@@ -1646,6 +1645,7 @@ const mountTuiRoot = () => {
     let sessionRuntimeLaneKey: string | null = null;
     let sessionRuntimeLaneRequest = 0;
     let runtimeLaneFitKey: string | null = null;
+    const viewportFitCoordinator = new ViewportFitCoordinator();
     let pendingSemanticFocus: { session: string; paneId: string } | null = null;
     const semanticPaneCanonicalSize = new Map<string, { cols: number; rows: number }>();
     let observePendingResizeLayout: () => void = () => {};
@@ -1683,6 +1683,7 @@ const mountTuiRoot = () => {
       setSessionRuntimeLane(null);
       setSessionAuthoritySnapshot(null);
       runtimeLaneFitKey = null;
+      viewportFitCoordinator.retire();
       focusProjection?.dispose();
       focusProjection = null;
       focusProjectionGeneration = null;
@@ -1717,6 +1718,7 @@ const mountTuiRoot = () => {
       sessionRuntimeLane()?.close();
       setSessionRuntimeLane(null);
       runtimeLaneFitKey = null;
+      viewportFitCoordinator.retire();
       const candidateAdapter =
         terminalWorkspaceAdapter?.view === candidate ? terminalWorkspaceAdapter : null;
       const panePublicationGeneration = candidateAdapter?.beginPaneGeneration() ?? 0;
@@ -1785,6 +1787,7 @@ const mountTuiRoot = () => {
               sessionRuntimeLane()?.close();
               setSessionRuntimeLane(null);
               runtimeLaneFitKey = null;
+              viewportFitCoordinator.retire();
               terminalSessionHandoff.fault(terminalHandoffGeneration, error.message);
               markDirty();
               const retry = setTimeout(() => {
@@ -3666,16 +3669,20 @@ const mountTuiRoot = () => {
       if (lastPin) repinInFlight = { prev: lastPin, at: performance.now() };
       lastPin = next;
       if (runtimeLane && runtimeOwnsGeometry() && fitKey) {
-        const fit = terminalWorkspaceAdapter?.fitViewport(next.cols, next.rows);
-        if (!fit) return;
-        void fit.then(
-          () => {
+        const adapter = terminalWorkspaceAdapter;
+        if (!adapter) return;
+        viewportFitCoordinator.request({
+          key: fitKey,
+          execute: () =>
+            adapter.fitViewport(next.cols, next.rows) ??
+            Promise.reject(new Error("viewport fit authority unavailable")),
+          onSuccess: () => {
             if (sessionRuntimeLane() === runtimeLane) {
               runtimeLaneFitKey = fitKey;
               terminalToolReadiness.observeFitSuccess();
             }
           },
-          (error: unknown) => {
+          onFailure: (error: unknown) => {
             if (sessionRuntimeLane() === runtimeLane) {
               runtimeLaneFitKey = null;
               terminalToolReadiness.observeFitFailure(
@@ -3683,7 +3690,7 @@ const mountTuiRoot = () => {
               );
             }
           },
-        );
+        });
       }
     });
     /** Re-query the mirrored session's windows into `windowTabs` — used after a
@@ -4227,28 +4234,12 @@ const mountTuiRoot = () => {
       const key = spawnMemoryKey(ctx.dir, ctx.session ?? ctx.sessionName);
       return { key, last: key ? (lastSpawns()[key] ?? null) : null };
     };
-    /** ASYNC — a pane's `#{pane_current_path}`, or null when unreadable. */
-    const paneCurrentPath = (paneId: string) =>
-      new Promise<string | null>((resolve) =>
-        execFile("tmux", ["display", "-p", "-t", paneId, "#{pane_current_path}"], (err, stdout) =>
-          resolve(err ? null : stdout.trim() || null),
-        ),
-      );
-    /** Run ONE spawn: resolve the cwd policy (Terminal-surface spawns inherit
-     *  the FOCUSED pane's cwd under `app.newAgentCwd: "pane"`, the default),
-     *  build the argv (`-P -F` returns the new pane id), then — in the same
-     *  breath — auto-label the pane/window after the agent and stamp
-     *  `@agent_launch` with the exact command, and remember the spawn for the
-     *  again row / palette action / custom recents. */
+    /** Run one owner-gated, revision-fenced daemon provisioning transaction. */
     const runSpawn = async (
       ctx: NewAgentContext,
       choice: { kind: string; command: string; placement: SpawnWhere },
     ) => {
       const { kind, command, placement } = choice;
-      let dir = ctx.dir;
-      if (ctx.paneId && loadAppConfig().app.newAgentCwd === "pane") {
-        dir = (await paneCurrentPath(ctx.paneId)) ?? ctx.dir;
-      }
       const label = spawnLabelFor(kind, command);
       // Remember FIRST (fire-and-forget spawn callbacks shouldn't gate it):
       // the again memory is keyed per project/session-dir, custom argv joins
@@ -4257,84 +4248,60 @@ const mountTuiRoot = () => {
       if (key) setLastSpawns((m) => rememberSpawn(m, key, { kind, command, placement }));
       if (kind === CUSTOM_KIND_ID) setCustomCommands((l) => addCustomCommand(l, command));
 
-      // Registered workspace + built-in harness + new window is now the same
-      // semantic, daemon-owned mutation used by the GUI. A live daemon failure
-      // fails closed in the executor, so we cannot duplicate an ambiguously
-      // completed creation by falling through to raw tmux.
-      let home: ApplicationOptionalFeatures["home"] | undefined;
+      const catalog = latestFleetCatalog;
+      if (!catalog) {
+        setStatusNote("agent creation unavailable: fleet identity is not ready");
+        toolResources.session.refresh("fleet");
+        return;
+      }
+      const semanticPaneId =
+        ctx.paneId === undefined
+          ? null
+          : (semanticView
+              ?.paneDescriptors()
+              .find((descriptor) => descriptor.runtimePaneId === ctx.paneId)?.semanticPaneId ??
+            null);
+      const sessionId = ctx.session
+        ? (catalog.sessions.find((entry) => entry.label === ctx.session)?.sessionId ?? null)
+        : null;
+      if (placement !== "session" && !sessionId) {
+        setStatusNote("agent creation unavailable: session identity is not ready");
+        toolResources.session.refresh("fleet");
+        return;
+      }
+      const inheritTargetCwd =
+        ctx.paneId !== undefined && loadAppConfig().app.newAgentCwd === "pane";
       try {
-        home = homeFeature() ?? (await ensureHomeFeature());
-      } catch {
-        setStatusNote("agent creation unavailable: Home actions failed to load");
-        return;
-      }
-      if (!home) {
-        setStatusNote("agent creation unavailable: Home actions failed to load");
-        return;
-      }
-      const sharedCreation = await home.executeTuiAgentProvisioning({
-        sessionName: ctx.session ?? null,
-        kind,
-        command,
-        displayTitle: label,
-        placement,
-        targetSemanticPaneId:
-          ctx.paneId === undefined
-            ? null
-            : (semanticView
-                ?.paneDescriptors()
-                .find((descriptor) => descriptor.runtimePaneId === ctx.paneId)?.semanticPaneId ??
-              null),
-      });
-      if (sharedCreation.status === "daemon") {
-        setStatusNote(sharedCreation.message);
-        watchCreatedSession(ctx.session!);
-        toolResources.session.refresh("fleet");
-        return;
-      }
-      if (sharedCreation.status === "error") {
-        setStatusNote(sharedCreation.message);
-        toolResources.session.refresh("fleet");
-        return;
-      }
-
-      /** Post-spawn follow-ups against the printed pane id: title the pane
-       *  (or its window), stamp the launch argv. Best-effort, async. */
-      const decorate = (stdout: string) => {
-        const paneId = stdout.trim();
-        if (!paneId.startsWith("%")) return;
-        const labelArgs =
-          placement === "window" ? labelWindowArgs(paneId, label) : labelPaneArgs(paneId, label);
-        execFile("tmux", labelArgs, () => {});
-        execFile("tmux", stampLaunchArgs(paneId, command), () => {});
-      };
-      if (placement === "session" || !ctx.session) {
-        const base = ctx.sessionName ?? basename(ctx.dir ?? invokeCwd);
-        const name = sessionNameFor(base || "agents");
-        execFile("tmux", spawnSessionArgs(name, dir, command), (err, stdout) => {
-          setStatusNote(err ? `couldn't start ${command}` : `started ${command} in ${name}`);
-          if (!err) {
-            execFile("tmux", ["set-environment", "-t", name, "TMUX_IDE", "1"], () => {});
-            watchCreatedSession(name);
-            decorate(stdout);
-          }
-          toolResources.session.refresh("fleet");
+        const result = await provisionFleetAgent({
+          expectedCatalogRevision: catalog.catalogRevision,
+          command,
+          harness: kind,
+          displayTitle: label,
+          target:
+            placement === "session" || !ctx.session
+              ? {
+                  kind: "new-session",
+                  displayName:
+                    ctx.sessionName ?? sessionNameFor(basename(ctx.dir ?? invokeCwd) || "agents"),
+                  cwd: ctx.dir ?? invokeCwd,
+                }
+              : {
+                  kind: "existing-session",
+                  fleetSessionId: sessionId!,
+                  placement,
+                  targetSemanticPaneId: semanticPaneId,
+                  cwd: ctx.dir,
+                  inheritTargetCwd,
+                },
         });
-        return;
-      }
-      const target = { session: ctx.session, paneId: ctx.paneId };
-      const args = spawnAgentArgs(placement as SpawnPlacement, target, dir, command);
-      execFile("tmux", args, (err, stdout) => {
-        setStatusNote(err ? `couldn't start ${command}` : `started ${command} in ${ctx.session}`);
-        if (!err) {
-          decorate(stdout);
-          // The agent's session must be watched for its blocked/done pings to
-          // exist — front-door sessions were stamped at create, but a spawn
-          // can target a pre-existing, never-adopted session too.
-          watchCreatedSession(target.session);
-        }
+        if (!result) throw new Error("fleet provisioning authority is unavailable");
+        setStatusNote(`started ${command}`);
         toolResources.session.refresh("fleet");
-      });
+        toolResources.session.refresh("catalog");
+      } catch (error) {
+        setStatusNote(error instanceof Error ? error.message : `couldn't start ${command}`);
+        toolResources.session.refresh("fleet");
+      }
     };
     const newAgentFlow = async (ctx: NewAgentContext) => {
       setHoverIf(null); // the overlay owns the pointer, like the palette

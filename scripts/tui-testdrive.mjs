@@ -52,6 +52,7 @@ Usage:
   pnpm tui:testdrive mouse click <x> <y>
   pnpm tui:testdrive mouse <move|down|hold|up> <x> <y>
   pnpm tui:testdrive resize <cols> <rows>
+  pnpm tui:testdrive resize-sequence <cols> <rows> [...] [--json]
   pnpm tui:testdrive attach
   pnpm tui:testdrive logs
   pnpm tui:testdrive status [--json]
@@ -258,6 +259,40 @@ function liveHostSize() {
     return Number.isInteger(cols) && Number.isInteger(rows) ? { cols, rows } : null;
   } catch {
     return null;
+  }
+}
+
+function resizeSequence(args) {
+  const json = args.at(-1) === "--json";
+  const values = json ? args.slice(0, -1) : args;
+  if (values.length < 2 || values.length % 2 !== 0) {
+    fail("resize-sequence needs one or more <cols> <rows> pairs");
+  }
+  if (!sessionExists(hostSession)) fail("The test-drive TUI is not running");
+  const samples = [];
+  for (let index = 0; index < values.length; index += 2) {
+    const cols = numberOption("cols", values[index]);
+    const rows = numberOption("rows", values[index + 1]);
+    const startedAt = performance.now();
+    tmux(["resize-window", "-t", `=${hostSession}`, "-x", String(cols), "-y", String(rows)]);
+    const settled = liveHostSize();
+    const elapsedMs = Number((performance.now() - startedAt).toFixed(2));
+    if (settled?.cols !== cols || settled.rows !== rows) {
+      fail(`test-drive resize did not settle at ${cols}x${rows}`);
+    }
+    samples.push({
+      ordinal: index / 2,
+      cols,
+      rows,
+      elapsedMs,
+      measurementBoundary: "tmux resize-window through synchronous host-size acknowledgement",
+    });
+  }
+  if (json) process.stdout.write(`${JSON.stringify({ samples }, null, 2)}\n`);
+  else {
+    process.stdout.write(
+      `${samples.map(({ cols, rows, elapsedMs }) => `${cols}x${rows} ${elapsedMs.toFixed(2)}ms`).join("\n")}\n`,
+    );
   }
 }
 
@@ -553,6 +588,9 @@ async function main() {
       tmux(["resize-window", "-t", `=${hostSession}`, "-x", String(cols), "-y", String(rows)]);
       break;
     }
+    case "resize-sequence":
+      resizeSequence(args);
+      break;
     case "attach":
       if (!sessionExists(hostSession)) fail("The test-drive TUI is not running");
       tmux(

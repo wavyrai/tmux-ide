@@ -1111,84 +1111,108 @@ export class PaneStreamLiveConnection {
       this.close(1011, "stream-unavailable");
       return;
     }
-    if (this.#mirror.subscribeLayout) {
-      try {
-        const layoutSubscription = await this.#mirror.subscribeLayout(
+    const channels = [...this.#panes.values()].filter((channel) => {
+      if (known.has(channel.semanticPaneId)) return true;
+      this.#emitClosed(channel);
+      return false;
+    });
+    if (this.#closed || channels.length === 0) return;
+    const layoutChannel = channels[0]!;
+    // Establish the single session layout observer first. MirrorService owns
+    // this lifecycle and may share native control state with delivery setup;
+    // only the independent pane delivery opens below are parallelized.
+    try {
+      if (this.#mirror.subscribeLayout) {
+        const subscription = await this.#mirror.subscribeLayout(
           this.#descriptor.sessionName,
           (event) => this.#onLayout(event),
         );
         if (this.#closed) {
-          await layoutSubscription.close().catch(() => undefined);
+          await subscription.close().catch(() => undefined);
           return;
         }
-        this.#layoutSubscription = layoutSubscription;
-      } catch {
-        this.close(1011, "stream-unavailable");
-        return;
+        this.#layoutSubscription = subscription;
+      } else {
+        const subscription = await this.#mirror.subscribe({
+          session: this.#descriptor.sessionName,
+          semanticPaneId: layoutChannel.semanticPaneId,
+          onEvent: () => undefined,
+          onLayout: (event) => this.#onLayout(event),
+        });
+        if (this.#closed || layoutChannel.closed) {
+          await subscription.close().catch(() => undefined);
+          return;
+        }
+        layoutChannel.sub = subscription;
       }
+    } catch {
+      this.close(1011, "stream-unavailable");
+      return;
     }
-    let layoutAttached = this.#layoutSubscription !== null;
-    for (const channel of this.#panes.values()) {
-      if (this.#closed) return;
-      if (!known.has(channel.semanticPaneId)) {
-        this.#emitClosed(channel);
+
+    // Delivery owners are pane-scoped and independent. Open them concurrently,
+    // then publish in descriptor order only after every pane is coherent. This
+    // removes N x attachment latency without allowing a fast pane to make the
+    // session look ready while a sibling is still missing. allSettled is
+    // deliberate: partial success is always closed before the socket retires.
+    const openings = channels.map(async (channel) => {
+      const pending: TerminalDeliveryServerMessage[] = [];
+      let ready = false;
+      const delivery = await binding.openTerminalDelivery(
+        channel.semanticPaneId,
+        offer,
+        (message) => {
+          if (!ready) pending.push(message);
+          else return this.#sendTerminalDelivery(channel.semanticPaneId, message);
+        },
+      );
+      return {
+        channel,
+        delivery,
+        pending,
+        markReady: () => {
+          ready = true;
+        },
+      };
+    });
+    const settled = await Promise.allSettled(openings);
+    const opened = settled.flatMap((result) =>
+      result.status === "fulfilled" ? [result.value] : [],
+    );
+    if (
+      this.#closed ||
+      settled.some(
+        (result) => result.status === "rejected" || !result.value.delivery.negotiation.accepted,
+      )
+    ) {
+      await Promise.all(opened.map(({ delivery }) => delivery.close().catch(() => undefined)));
+      if (!this.#closed) this.close(1011, "stream-unavailable");
+      return;
+    }
+
+    for (const { channel, delivery, pending, markReady } of opened) {
+      if (this.#closed || channel.closed) {
+        await delivery.close();
         continue;
       }
-      try {
-        // Layout remains one session-scoped observation on this same socket;
-        // terminal content itself comes exclusively from TerminalDeliveryHub.
-        if (!layoutAttached) {
-          const layoutSub = await this.#mirror.subscribe({
-            session: this.#descriptor.sessionName,
-            semanticPaneId: channel.semanticPaneId,
-            onEvent: () => undefined,
-            onLayout: (event) => this.#onLayout(event),
-          });
-          if (this.#closed || channel.closed) {
-            await layoutSub.close().catch(() => undefined);
-            return;
-          }
-          channel.sub = layoutSub;
-          layoutAttached = true;
-        }
-        const pending: TerminalDeliveryServerMessage[] = [];
-        let ready = false;
-        const delivery = await binding.openTerminalDelivery(
-          channel.semanticPaneId,
-          offer,
-          (message) => {
-            if (!ready) pending.push(message);
-            else return this.#sendTerminalDelivery(channel.semanticPaneId, message);
-          },
-        );
-        if (this.#closed || channel.closed) {
-          await delivery.close();
-          continue;
-        }
-        channel.delivery = delivery;
-        if (!delivery.negotiation.accepted) {
-          await delivery.close();
-          this.close(1008, "stream-unavailable");
-          return;
-        }
-        channel.deliveryAddress = {
-          workspaceName: this.#descriptor.workspaceName,
-          generation: delivery.negotiation.negotiated.generation,
-          incarnation: null,
-          deliveryNonce: delivery.negotiation.negotiated.deliveryNonce,
-        };
-        this.#sendFrame(null, {
-          type: "terminal-delivery-ready",
-          pane: channel.semanticPaneId,
-          negotiation: delivery.negotiation,
-        });
-        ready = true;
-        for (const message of pending)
-          await this.#sendTerminalDelivery(channel.semanticPaneId, message);
-      } catch {
-        this.close(1011, "stream-unavailable");
-        return;
-      }
+      // The rejected case was eliminated above; retain this narrowing at the
+      // publication boundary so an invalid negotiation cannot leak a nonce.
+      if (!delivery.negotiation.accepted) continue;
+      channel.delivery = delivery;
+      channel.deliveryAddress = {
+        workspaceName: this.#descriptor.workspaceName,
+        generation: delivery.negotiation.negotiated.generation,
+        incarnation: null,
+        deliveryNonce: delivery.negotiation.negotiated.deliveryNonce,
+      };
+      this.#sendFrame(null, {
+        type: "terminal-delivery-ready",
+        pane: channel.semanticPaneId,
+        negotiation: delivery.negotiation,
+      });
+      markReady();
+      for (const message of pending)
+        await this.#sendTerminalDelivery(channel.semanticPaneId, message);
     }
     this.#closeIfAllPanesGone();
   }

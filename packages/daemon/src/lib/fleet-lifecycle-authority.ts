@@ -1,14 +1,17 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { realpath, stat } from "node:fs/promises";
 import type {
   FleetAgentMutateArguments,
   FleetAgentMutateResult,
+  FleetAgentProvisionArguments,
+  FleetAgentProvisionResult,
   WorkspaceSessionCreateArguments,
   WorkspaceSessionCreateResult,
 } from "@tmux-ide/contracts";
 import type { WorkspaceRegistry } from "./workspace-registry.ts";
 import { readAdoptedFleet } from "../command-center/discovery.ts";
+import type { FleetSessionFacts } from "../command-center/discovery.ts";
 import {
   fleetAgentIdForPane,
   fleetCatalogRevisionForFacts,
@@ -46,7 +49,9 @@ export class FleetLifecycleAuthority {
   readonly #startedAt: string;
   readonly #registry: Pick<WorkspaceRegistry, "list" | "add">;
   readonly #runTmux: (args: readonly string[]) => string;
+  readonly #readFleet: () => FleetSessionFacts[] | null;
   readonly #operations = new Map<string, { fingerprint: string; result: unknown }>();
+  #tail: Promise<void> = Promise.resolve();
 
   constructor(options: {
     daemonInstanceId: string;
@@ -54,15 +59,25 @@ export class FleetLifecycleAuthority {
     startedAt: string;
     registry: Pick<WorkspaceRegistry, "list" | "add">;
     runTmux: (args: readonly string[]) => string;
+    readFleet?: () => FleetSessionFacts[] | null;
   }) {
     this.#daemonInstanceId = options.daemonInstanceId;
     this.#productVersion = options.productVersion;
     this.#startedAt = options.startedAt;
     this.#registry = options.registry;
     this.#runTmux = options.runTmux;
+    this.#readFleet = options.readFleet ?? (() => readAdoptedFleet(this.#registry));
   }
 
-  async createSession(
+  createSession(
+    operationId: string,
+    generation: string,
+    input: WorkspaceSessionCreateArguments,
+  ): Promise<WorkspaceSessionCreateResult> {
+    return this.#exclusive(() => this.#createSession(operationId, generation, input));
+  }
+
+  async #createSession(
     operationId: string,
     generation: string,
     input: WorkspaceSessionCreateArguments,
@@ -153,7 +168,15 @@ export class FleetLifecycleAuthority {
     return result;
   }
 
-  async mutateAgent(
+  mutateAgent(
+    operationId: string,
+    generation: string,
+    input: FleetAgentMutateArguments,
+  ): Promise<FleetAgentMutateResult> {
+    return this.#exclusive(() => this.#mutateAgent(operationId, generation, input));
+  }
+
+  async #mutateAgent(
     operationId: string,
     generation: string,
     input: FleetAgentMutateArguments,
@@ -162,7 +185,7 @@ export class FleetLifecycleAuthority {
     const fingerprint = JSON.stringify(["agent", input]);
     const replay = this.#replay<FleetAgentMutateResult>(operationId, fingerprint);
     if (replay) return { ...replay, outcome: "replayed" };
-    const facts = readAdoptedFleet(this.#registry) ?? [];
+    const facts = this.#requireFleet();
     const resource = projectFleetCatalog(
       facts,
       {
@@ -209,9 +232,188 @@ export class FleetLifecycleAuthority {
     return result;
   }
 
+  provisionAgent(
+    operationId: string,
+    generation: string,
+    input: FleetAgentProvisionArguments,
+  ): Promise<FleetAgentProvisionResult> {
+    return this.#exclusive(() => this.#provisionAgent(operationId, generation, input));
+  }
+
+  async #provisionAgent(
+    operationId: string,
+    generation: string,
+    input: FleetAgentProvisionArguments,
+  ): Promise<FleetAgentProvisionResult> {
+    this.#assertGeneration(generation);
+    const fingerprint = JSON.stringify(["provision", input]);
+    const replay = this.#replay<FleetAgentProvisionResult>(operationId, fingerprint);
+    if (replay) return { ...replay, outcome: "replayed" };
+
+    const before = this.#requireFleet();
+    if (fleetCatalogRevisionForFacts(before) !== input.expectedCatalogRevision)
+      throw new FleetLifecycleAuthorityError(
+        "catalog_changed",
+        "Fleet catalog changed; refresh and retry.",
+      );
+
+    let sessionName: string;
+    let workspaceName: string;
+    let cwd: string;
+    let paneId: string;
+    let createdSession = false;
+    if (input.target.kind === "new-session") {
+      cwd = await this.#canonicalDir(input.target.cwd);
+      const identity = this.#sessionIdentity(input.target.displayName, cwd);
+      sessionName = identity.sessionName;
+      workspaceName = identity.workspaceName;
+      if (this.#registry.list().some((workspace) => workspace.sessionName === sessionName))
+        throw new FleetLifecycleAuthorityError(
+          "workspace_conflict",
+          "The requested session already exists.",
+        );
+      paneId = this.#runTmux([
+        "new-session",
+        "-d",
+        "-s",
+        sessionName,
+        "-P",
+        "-F",
+        "#{pane_id}",
+        "-c",
+        cwd,
+        input.command,
+      ]).trim();
+      createdSession = true;
+      this.#runTmux(["set-environment", "-t", sessionName, "TMUX_IDE", "1"]);
+      this.#runTmux(adoptMarkArgv(sessionName));
+    } else {
+      const target = input.target;
+      const session = before.find(
+        (item) => fleetSessionIdForName(item.name) === target.fleetSessionId,
+      );
+      if (!session)
+        throw new FleetLifecycleAuthorityError(
+          "session_not_found",
+          "Fleet session is no longer live.",
+        );
+      sessionName = session.name;
+      workspaceName =
+        this.#registry.list().find((workspace) => workspace.sessionName === sessionName)?.name ??
+        sessionName;
+      const targetPane = target.targetSemanticPaneId
+        ? session.panes.find((pane) => pane.semanticPaneId === target.targetSemanticPaneId)
+        : undefined;
+      if (target.placement !== "window" && !targetPane)
+        throw new FleetLifecycleAuthorityError("pane_not_found", "Target pane is no longer live.");
+      cwd = target.inheritTargetCwd
+        ? targetPane!.currentPath
+        : await this.#canonicalDir(target.cwd ?? session.cwd);
+      const command =
+        target.placement === "window"
+          ? ["new-window", "-t", `${sessionName}:`, "-P", "-F", "#{pane_id}"]
+          : [
+              "split-window",
+              target.placement === "split-h" ? "-h" : "-v",
+              "-t",
+              targetPane!.runtimePaneId,
+              "-P",
+              "-F",
+              "#{pane_id}",
+            ];
+      paneId = this.#runTmux([...command, "-c", cwd, input.command]).trim();
+      this.#runTmux(adoptMarkArgv(sessionName));
+    }
+
+    if (!/^%[0-9]+$/u.test(paneId)) {
+      if (createdSession) this.#tryTmux(["kill-session", "-t", sessionName]);
+      throw new FleetLifecycleAuthorityError(
+        "spawn_failed",
+        "tmux did not return a pane identity.",
+      );
+    }
+    const semanticPaneId = `pane.agent.${randomUUID()}`;
+    try {
+      this.#runTmux(["set-option", "-p", "-t", paneId, "@tmux_ide_pane_id", semanticPaneId]);
+      this.#runTmux(["set-option", "-p", "-t", paneId, "@agent_launch", input.command]);
+      this.#runTmux(["set-option", "-p", "-t", paneId, "@agent_hint", input.harness]);
+      this.#runTmux(["select-pane", "-t", paneId, "-T", input.displayTitle]);
+      try {
+        this.#runTmux(updaterProbeArgv());
+      } catch {
+        this.#runTmux(updaterSpawnArgv());
+      }
+    } catch (error) {
+      if (createdSession) this.#tryTmux(["kill-session", "-t", sessionName]);
+      else this.#tryTmux(["kill-pane", "-t", paneId]);
+      throw error;
+    }
+    const after = this.#requireFleet();
+    const sessionFacts = after.find((item) => item.name === sessionName);
+    const paneFacts = sessionFacts?.panes.find((pane) => pane.semanticPaneId === semanticPaneId);
+    if (!sessionFacts || !paneFacts) {
+      if (createdSession) this.#tryTmux(["kill-session", "-t", sessionName]);
+      else this.#tryTmux(["kill-pane", "-t", paneId]);
+      throw new FleetLifecycleAuthorityError(
+        "spawn_unconfirmed",
+        "Spawned pane was not confirmed.",
+      );
+    }
+    if (createdSession)
+      try {
+        this.#registry.add({
+          name: workspaceName,
+          sessionName,
+          projectDir: cwd,
+          ideConfigPath: null,
+          configKind: "none",
+          configPath: null,
+          hasWorkspaceConfig: false,
+        });
+      } catch (error) {
+        this.#tryTmux(["kill-session", "-t", sessionName]);
+        throw error;
+      }
+    const result: FleetAgentProvisionResult = {
+      operationId,
+      daemonInstanceId: this.#daemonInstanceId,
+      outcome: "created",
+      fleetSessionId: fleetSessionIdForName(sessionName),
+      agentId: fleetAgentIdForPane(sessionName, paneFacts),
+      catalogRevision: fleetCatalogRevisionForFacts(after),
+      workspaceName,
+    };
+    this.#remember(operationId, fingerprint, result);
+    return result;
+  }
+
+  async #exclusive<T>(run: () => Promise<T>): Promise<T> {
+    const predecessor = this.#tail;
+    let release!: () => void;
+    this.#tail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await predecessor;
+    try {
+      return await run();
+    } finally {
+      release();
+    }
+  }
+
   #assertGeneration(generation: string): void {
     if (generation !== this.#daemonInstanceId)
       throw new FleetLifecycleAuthorityError("generation_mismatch", "Daemon generation changed.");
+  }
+
+  #requireFleet(): FleetSessionFacts[] {
+    const fleet = this.#readFleet();
+    if (fleet === null)
+      throw new FleetLifecycleAuthorityError(
+        "fleet_unavailable",
+        "Fleet observation is unavailable; refresh and retry.",
+      );
+    return fleet;
   }
   #replay<T>(operationId: string, fingerprint: string): T | null {
     const prior = this.#operations.get(operationId);

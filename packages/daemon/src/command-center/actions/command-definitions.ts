@@ -42,6 +42,7 @@ const ACTION_COMMAND_METADATA: Record<ActionName, ActionCommandMetadata> = {
   "workspace.open.prepare": { label: "Prepare workspace handoff", category: "workspace" },
   "workspace.session.create": { label: "Create session", category: "workspace" },
   "fleet.agent.mutate": { label: "Manage fleet agent", category: "workspace" },
+  "fleet.agent.provision": { label: "Create fleet agent", category: "workspace" },
   "workspace.open.commit": { label: "Commit workspace handoff", category: "workspace" },
   "workspace.open.cancel": { label: "Cancel workspace handoff", category: "workspace" },
   "workspace.promote": { label: "Promote adopted session to workspace", category: "workspace" },

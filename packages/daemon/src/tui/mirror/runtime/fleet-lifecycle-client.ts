@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import type {
   FleetAgentMutateArguments,
   FleetAgentMutateResult,
+  FleetAgentProvisionArguments,
+  FleetAgentProvisionResult,
   WorkspaceSessionCreateArguments,
   WorkspaceSessionCreateResult,
 } from "@tmux-ide/contracts";
@@ -11,15 +13,21 @@ import { canonicalDaemonUrl, readCanonicalDaemonInfo } from "../../../lib/canoni
 
 const HOST_CLIENT_ID = `opentui:${process.pid}`;
 
-async function dispatch<Name extends "workspace.session.create" | "fleet.agent.mutate">(
+async function dispatch<
+  Name extends "workspace.session.create" | "fleet.agent.mutate" | "fleet.agent.provision",
+>(
   name: Name,
   input: Name extends "workspace.session.create"
     ? WorkspaceSessionCreateArguments
-    : FleetAgentMutateArguments,
+    : Name extends "fleet.agent.mutate"
+      ? FleetAgentMutateArguments
+      : FleetAgentProvisionArguments,
 ): Promise<
   Name extends "workspace.session.create"
     ? WorkspaceSessionCreateResult | null
-    : FleetAgentMutateResult | null
+    : Name extends "fleet.agent.mutate"
+      ? FleetAgentMutateResult | null
+      : FleetAgentProvisionResult | null
 > {
   const daemon = readCanonicalDaemonInfo();
   if (!daemon?.authToken) return null as never;
@@ -44,4 +52,10 @@ export function mutateFleetAgent(
   input: FleetAgentMutateArguments,
 ): Promise<FleetAgentMutateResult | null> {
   return dispatch("fleet.agent.mutate", input);
+}
+
+export function provisionFleetAgent(
+  input: FleetAgentProvisionArguments,
+): Promise<FleetAgentProvisionResult | null> {
+  return dispatch("fleet.agent.provision", input);
 }

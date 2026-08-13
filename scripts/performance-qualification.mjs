@@ -30,7 +30,7 @@ const portableEvidence = process.env.TMUX_IDE_PORTABLE_EVIDENCE_REPORT
   : null;
 if (referenceReport && referenceReport.status !== "passed")
   throw new Error(`Explicit reference qualification is ${referenceReport.status}, not passed`);
-if (portableEvidence && portableEvidence.status !== "passed")
+if (portableEvidence && !["passed", "passed-with-limitations"].includes(portableEvidence.status))
   throw new Error(
     `Explicit portable performance evidence is ${portableEvidence.status}, not passed`,
   );
@@ -232,6 +232,54 @@ const scenarioDefinitions = [
       : referenceReport
         ? `Reference memory measurement is ${referenceReport.measurements.memory.status}; portable CI does not infer it.`
         : "Portable tests prove bounded queues and caches, but do not claim deterministic RSS or heap slope.",
+  },
+  {
+    id: "coherent-terminal-frame",
+    coverage:
+      portableEvidence?.measurements.coherentTerminalFrame.status === "passed"
+        ? "measured-portable"
+        : "not-measured",
+    suites: [],
+    assertions: [],
+    reason: portableEvidence
+      ? `Portable coherent-terminal evidence is ${portableEvidence.measurements.coherentTerminalFrame.status}.`
+      : "No explicit ProductTestRig state was supplied to the portable evidence run.",
+  },
+  {
+    id: "portable-resize-and-drag-responsiveness",
+    coverage:
+      portableEvidence?.measurements.resizeResponsiveness.status === "passed"
+        ? "partially-measured-portable"
+        : "not-measured",
+    suites: ["opentui", "web"],
+    assertions: ["resize geometry settles within a portable command budget"],
+    reason: portableEvidence
+      ? `Resize is ${portableEvidence.measurements.resizeResponsiveness.status}; drag is ${portableEvidence.measurements.dragResponsiveness.status}.`
+      : "Contract tests cover coalescing, but no portable latency artifact was supplied.",
+  },
+  {
+    id: "deterministic-visual-captures",
+    coverage:
+      portableEvidence?.measurements.visualDeterminism.status === "passed"
+        ? "measured-portable"
+        : "not-measured",
+    suites: ["opentui"],
+    assertions: ["two idle captures of one mounted document have identical SHA-256 digests"],
+    reason: portableEvidence
+      ? `Portable capture determinism is ${portableEvidence.measurements.visualDeterminism.status}.`
+      : "Renderer snapshots are deterministic in tests, but no live capture digest artifact was supplied.",
+  },
+  {
+    id: "supported-tmux-capability-matrix",
+    coverage:
+      portableEvidence?.measurements.tmuxSupport.status === "passed"
+        ? "measured-portable"
+        : "not-measured",
+    suites: [],
+    assertions: [],
+    reason: portableEvidence
+      ? `Installed tmux capability matrix is ${portableEvidence.measurements.tmuxSupport.status}.`
+      : "No portable tmux capability observation was supplied.",
   },
 ];
 

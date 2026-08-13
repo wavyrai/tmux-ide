@@ -121,7 +121,7 @@ import { isAbsolute, resolve as pathResolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
 import {
-  projectLegacyApplicationShellResourceV1,
+  projectDeprecatedStandaloneApplicationShellResourceV1,
   projectApplicationShellResource,
   projectApplicationShellResourceV3,
   type ApplicationShellSessionFacts,
@@ -291,6 +291,7 @@ const GATED_ACTIONS: Readonly<Record<string, "owner" | "owner-and-operation-id">
   "workspace.pane.create": "owner-and-operation-id",
   "workspace.session.create": "owner-and-operation-id",
   "fleet.agent.mutate": "owner-and-operation-id",
+  "fleet.agent.provision": "owner-and-operation-id",
   "workspace.open": "owner-and-operation-id",
   "workspace.open.prepare": "owner-and-operation-id",
   "workspace.open.commit": "owner-and-operation-id",
@@ -369,6 +370,14 @@ const sseMetrics = {
   connections: 0,
   messagesSent: 0,
 };
+
+const compatibilityMetrics = {
+  applicationShellV1Requests: 0,
+};
+
+export function getCompatibilityMetrics(): { applicationShellV1Requests: number } {
+  return { ...compatibilityMetrics };
+}
 
 export function getSseMetrics(): { connections: number; messagesSent: number } {
   return { ...sseMetrics };
@@ -814,9 +823,23 @@ export function createApp(options: CreateAppOptions = {}): Hono {
 
   app.get("/api/project/:name/application-shell", async (c) => {
     const name = c.req.param("name");
-    const requestedVersion = c.req.query("version");
+    // The unversioned compatibility default used to mean V1. Every current
+    // product host requests V3 (with an Electron V2 fallback), so the default
+    // now follows the current contract. Explicit V1 remains for external peers
+    // during a measured deprecation window.
+    const requestedVersion =
+      c.req.query("version") ?? String(APPLICATION_SHELL_RESOURCE_V3_VERSION);
+    const markV1Compatibility = (): void => {
+      compatibilityMetrics.applicationShellV1Requests += 1;
+      c.header("Deprecation", "true");
+      c.header("Sunset", "Mon, 01 Feb 2027 00:00:00 GMT");
+      c.header(
+        "Link",
+        `</api/project/${encodeURIComponent(name)}/application-shell?version=3>; rel="successor-version"`,
+      );
+      c.header("X-Tmux-Ide-Compatibility", "application-shell-v1");
+    };
     if (
-      requestedVersion !== undefined &&
       requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V1_VERSION) &&
       requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V2_VERSION) &&
       requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V3_VERSION)
@@ -873,13 +896,17 @@ export function createApp(options: CreateAppOptions = {}): Hono {
 
     const backend = options.applicationShellInventoryBackend;
     if (!backend) {
-      const legacySession = discoverSessions().find((candidate) => candidate.name === name);
-      if (!legacySession) return c.json({ error: "Session not found" }, 404);
-      return c.json({
-        version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
-        daemon: daemonInstanceIdentity,
-        resource: projectLegacyApplicationShellResourceV1(legacySession),
-      } satisfies ApplicationShellResourceV1);
+      if (requestedVersion === String(APPLICATION_SHELL_RESOURCE_V1_VERSION)) {
+        const standaloneSession = discoverSessions().find((candidate) => candidate.name === name);
+        if (!standaloneSession) return c.json({ error: "Session not found" }, 404);
+        markV1Compatibility();
+        return c.json({
+          version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
+          daemon: daemonInstanceIdentity,
+          resource: projectDeprecatedStandaloneApplicationShellResourceV1(standaloneSession),
+        } satisfies ApplicationShellResourceV1);
+      }
+      return c.json({ error: "Session discovery unavailable" }, 503);
     }
 
     let session: ApplicationShellSessionFacts | null;
@@ -897,6 +924,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       focus: resource.focus,
       connection: resource.connection,
     };
+    markV1Compatibility();
     return c.json({
       version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
       daemon: daemonInstanceIdentity,

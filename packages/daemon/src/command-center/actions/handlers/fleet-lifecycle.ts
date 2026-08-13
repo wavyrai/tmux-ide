@@ -1,6 +1,8 @@
 import type {
   FleetAgentMutateArguments,
   FleetAgentMutateResult,
+  FleetAgentProvisionArguments,
+  FleetAgentProvisionResult,
   WorkspaceSessionCreateArguments,
   WorkspaceSessionCreateResult,
 } from "@tmux-ide/contracts";
@@ -20,6 +22,11 @@ export interface FleetLifecycleBackend {
     generation: string,
     input: FleetAgentMutateArguments,
   ): Promise<FleetAgentMutateResult>;
+  provisionAgent(
+    operationId: string,
+    generation: string,
+    input: FleetAgentProvisionArguments,
+  ): Promise<FleetAgentProvisionResult>;
 }
 
 function authorityContext(context: ActionExecutionContext): [string, string] {
@@ -78,5 +85,20 @@ export async function fleetAgentMutateHandler(
   const [operation, generation] = authorityContext(context);
   return await mapAuthority(() =>
     context.fleetLifecycleBackend!.mutateAgent(operation, generation, input),
+  );
+}
+
+export async function fleetAgentProvisionHandler(
+  input: FleetAgentProvisionArguments,
+  context: ActionExecutionContext,
+): Promise<FleetAgentProvisionResult> {
+  if (!context.fleetLifecycleBackend)
+    throw new ActionError({
+      code: "workspace_unavailable",
+      message: "Fleet lifecycle is unavailable.",
+    });
+  const [operation, generation] = authorityContext(context);
+  return await mapAuthority(() =>
+    context.fleetLifecycleBackend!.provisionAgent(operation, generation, input),
   );
 }

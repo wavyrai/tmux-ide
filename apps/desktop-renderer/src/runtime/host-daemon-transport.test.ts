@@ -1,5 +1,5 @@
 import {
-  APPLICATION_SHELL_RESOURCE_VERSION,
+  APPLICATION_SHELL_RESOURCE_V1_VERSION,
   APPLICATION_SHELL_RESOURCE_V3_VERSION,
   COHESION_FIXTURE_V1,
   type DesktopDaemonEvent,
@@ -48,7 +48,7 @@ function daemonHost(
             return {
               status: "ok",
               envelope: {
-                version: APPLICATION_SHELL_RESOURCE_VERSION,
+                version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
                 daemon: DAEMON,
                 resource: RESOURCE,
               },
@@ -90,7 +90,7 @@ describe("HostCapabilities-backed daemon transport", () => {
           fetchApplicationShell: async () => ({
             status: "ok",
             envelope: {
-              version: APPLICATION_SHELL_RESOURCE_VERSION,
+              version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
               daemon: { ...DAEMON, instanceId: "66ab67ed-18fe-431b-913b-70972b78c96f" },
               resource: RESOURCE,
             },

@@ -119,15 +119,20 @@ export interface ApplicationShellSessionFacts {
   readonly panes: readonly ApplicationShellPaneFacts[];
 }
 
-export interface LegacyApplicationShellPaneFacts extends ApplicationShellPanePresentationFacts {
+/**
+ * @deprecated Compatibility input for the standalone `command-center` V1
+ * endpoint. The embedded daemon uses `ApplicationShellSessionFacts` instead.
+ */
+export interface DeprecatedStandaloneApplicationShellPaneFacts extends ApplicationShellPanePresentationFacts {
   /** Legacy live identity. It is intentionally excluded from the V1 projection. */
   readonly id: string;
 }
 
-export interface LegacyApplicationShellSessionFacts {
+/** @deprecated See `DeprecatedStandaloneApplicationShellPaneFacts`. */
+export interface DeprecatedStandaloneApplicationShellSessionFacts {
   readonly name: string;
   readonly dir: string;
-  readonly panes: readonly LegacyApplicationShellPaneFacts[];
+  readonly panes: readonly DeprecatedStandaloneApplicationShellPaneFacts[];
 }
 
 /**
@@ -327,9 +332,9 @@ export function paneIdentities(session: ApplicationShellSessionFacts): readonly 
   });
 }
 
-function legacyFallbackPaneId(pane: LegacyApplicationShellPaneFacts): string {
-  // Preserve the original V1 identity projection. Runtime pane ids were not
-  // part of this legacy fallback and still never cross the resource wire.
+function deprecatedStandaloneFallbackPaneId(
+  pane: DeprecatedStandaloneApplicationShellPaneFacts,
+): string {
   return semanticId(
     "pane.discovered",
     JSON.stringify({
@@ -343,8 +348,8 @@ function legacyFallbackPaneId(pane: LegacyApplicationShellPaneFacts): string {
   );
 }
 
-function legacyPaneIdentities(
-  panes: readonly LegacyApplicationShellPaneFacts[],
+function deprecatedStandalonePaneIdentities(
+  panes: readonly DeprecatedStandaloneApplicationShellPaneFacts[],
 ): readonly string[] {
   const validCounts = new Map<string, number>();
   for (const pane of panes) {
@@ -363,7 +368,7 @@ function legacyPaneIdentities(
       claimed.add(stamped);
       return stamped;
     }
-    const base = legacyFallbackPaneId(pane);
+    const base = deprecatedStandaloneFallbackPaneId(pane);
     let candidate = base;
     let suffix = 1;
     while (claimed.has(candidate)) candidate = `${base}.${suffix++}`;
@@ -842,18 +847,18 @@ function missionStatusForDock(
 }
 
 /**
- * Preserve the pre-inventory V1 resource for standalone command-center
- * callers. This adapter deliberately cannot produce a V2 inventory: its
- * discovery input was not collected by the pinned attachment runtime and
- * therefore carries no attachability authority.
+ * @deprecated Explicit V1 compatibility for the public standalone
+ * `tmux-ide command-center` process. Remove after the advertised sunset once
+ * telemetry confirms no callers remain. It must never become the unversioned
+ * default or feed V2/V3 resources.
  */
-export function projectLegacyApplicationShellResourceV1(
-  session: LegacyApplicationShellSessionFacts,
+export function projectDeprecatedStandaloneApplicationShellResourceV1(
+  session: DeprecatedStandaloneApplicationShellSessionFacts,
 ): ApplicationShellProjectionInputV1 {
   return deepFreeze(
     projectApplicationShellResourceV1Core(
       session,
-      legacyPaneIdentities(session.panes),
+      deprecatedStandalonePaneIdentities(session.panes),
       Math.floor(Date.now() / 1000),
     ),
   );

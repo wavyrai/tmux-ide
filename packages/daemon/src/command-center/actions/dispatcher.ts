@@ -36,6 +36,7 @@ import {
 import {
   AppWindowMutationResultSchemaZ,
   FleetAgentMutateResultSchemaZ,
+  FleetAgentProvisionResultSchemaZ,
   WorkspaceSessionCreateResultSchemaZ,
   WorkspaceMultiplexerMutationResultSchemaZ,
   WorkspaceOpenMutationResultSchemaZ,
@@ -122,6 +123,22 @@ function resourceChangesForAction(
     const mutation = FleetAgentMutateResultSchemaZ.safeParse(result);
     if (!mutation.success || mutation.data.outcome === "replayed") return [];
     return [
+      {
+        workspaceName: null,
+        resource: "fleet-catalog",
+        causeOperationId: mutation.data.operationId,
+      },
+    ];
+  }
+  if (actionName === "fleet.agent.provision") {
+    const mutation = FleetAgentProvisionResultSchemaZ.safeParse(result);
+    if (!mutation.success || mutation.data.outcome === "replayed") return [];
+    return [
+      {
+        workspaceName: null,
+        resource: "workspace-catalog",
+        causeOperationId: mutation.data.operationId,
+      },
       {
         workspaceName: null,
         resource: "fleet-catalog",

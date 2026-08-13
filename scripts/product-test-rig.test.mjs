@@ -50,7 +50,13 @@ test("architecture inventory emits grouped, machine-readable deletion reports", 
   const report = sourceArchitectureInventory(repo);
   assert.equal(report.version, 1);
   assert.equal("generatedAt" in report, false);
-  assert.deepEqual(Object.keys(report.groups).sort(), ["direct-tmux", "grouped-pty", "v1-catalog"]);
+  assert.deepEqual(Object.keys(report.groups).sort(), [
+    "direct-tmux",
+    "grouped-pty",
+    "v1-catalog",
+    "v1-default-authority",
+    "v1-standalone-authority",
+  ]);
   for (const group of Object.values(report.groups)) {
     assert.equal(group.remainingUseCount, group.entries.length);
     assert.equal(group.remainingFileCount, group.uses.length);

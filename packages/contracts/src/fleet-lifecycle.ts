@@ -5,6 +5,7 @@ import {
   FleetSessionIdSchemaZ,
 } from "./fleet-catalog.ts";
 import { DesktopWorkspaceNameSchemaZ } from "./desktop-workspace-name.ts";
+import { TerminalAttachmentSemanticPaneIdSchemaZ } from "./semantic-identity.ts";
 
 const SafeDisplayNameSchemaZ = z
   .string()
@@ -67,3 +68,69 @@ export const FleetAgentMutateResultSchemaZ = z
   })
   .strict();
 export type FleetAgentMutateResult = z.infer<typeof FleetAgentMutateResultSchemaZ>;
+
+const AgentCommandSchemaZ = z
+  .string()
+  .trim()
+  .min(1)
+  .max(4_096)
+  .refine(
+    (value) =>
+      [...value].every((character) => {
+        const codePoint = character.codePointAt(0) ?? 0;
+        return codePoint >= 0x20 && codePoint !== 0x7f && !(codePoint >= 0x80 && codePoint <= 0x9f);
+      }),
+    "command contains control bytes",
+  );
+
+const ExistingFleetProvisionTargetSchemaZ = z
+  .object({
+    kind: z.literal("existing-session"),
+    fleetSessionId: FleetSessionIdSchemaZ,
+    placement: z.enum(["window", "split-h", "split-v"]),
+    targetSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ.nullable(),
+    cwd: OwnerPathSchemaZ.nullable(),
+    inheritTargetCwd: z.boolean(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.placement !== "window" && value.targetSemanticPaneId === null)
+      context.addIssue({ code: "custom", message: "split placement requires a target pane" });
+    if (value.inheritTargetCwd && value.targetSemanticPaneId === null)
+      context.addIssue({ code: "custom", message: "target cwd requires a target pane" });
+  });
+
+const FreshFleetProvisionTargetSchemaZ = z
+  .object({
+    kind: z.literal("new-session"),
+    displayName: SafeDisplayNameSchemaZ,
+    cwd: OwnerPathSchemaZ,
+  })
+  .strict();
+
+export const FleetAgentProvisionArgumentsSchemaZ = z
+  .object({
+    expectedCatalogRevision: FleetCatalogRevisionSchemaZ,
+    command: AgentCommandSchemaZ,
+    harness: SafeDisplayNameSchemaZ,
+    displayTitle: SafeDisplayNameSchemaZ,
+    target: z.discriminatedUnion("kind", [
+      ExistingFleetProvisionTargetSchemaZ,
+      FreshFleetProvisionTargetSchemaZ,
+    ]),
+  })
+  .strict();
+export type FleetAgentProvisionArguments = z.infer<typeof FleetAgentProvisionArgumentsSchemaZ>;
+
+export const FleetAgentProvisionResultSchemaZ = z
+  .object({
+    operationId: z.uuid(),
+    daemonInstanceId: z.uuid(),
+    outcome: z.enum(["created", "replayed"]),
+    fleetSessionId: FleetSessionIdSchemaZ,
+    agentId: FleetAgentIdSchemaZ,
+    catalogRevision: FleetCatalogRevisionSchemaZ,
+    workspaceName: DesktopWorkspaceNameSchemaZ,
+  })
+  .strict();
+export type FleetAgentProvisionResult = z.infer<typeof FleetAgentProvisionResultSchemaZ>;

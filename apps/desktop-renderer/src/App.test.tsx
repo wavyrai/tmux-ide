@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import {
-  APPLICATION_SHELL_RESOURCE_VERSION,
+  APPLICATION_SHELL_RESOURCE_V1_VERSION,
   ApplicationShellProjectionInputV1SchemaZ,
   DESKTOP_HOST_API_VERSION,
   buildStartupReadinessLadder,
@@ -289,7 +289,7 @@ function createHostHarness() {
       fetchApplicationShell: vi.fn(async ({ workspaceName }) => ({
         status: "ok" as const,
         envelope: {
-          version: APPLICATION_SHELL_RESOURCE_VERSION,
+          version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
           daemon: activeDaemon,
           resource: shellInputs.get(workspaceName) ?? shellInput(workspaceName),
         },
@@ -424,7 +424,7 @@ async function mountResourceIdentityMismatch(
   mismatched.resolve({
     status: "ok",
     envelope: {
-      version: APPLICATION_SHELL_RESOURCE_VERSION,
+      version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
       daemon: DAEMON_B,
       resource: shellInput("Rejected mismatched workspace"),
     },
@@ -1018,7 +1018,7 @@ describe("desktop App live composition", () => {
     mismatched.resolve({
       status: "ok",
       envelope: {
-        version: APPLICATION_SHELL_RESOURCE_VERSION,
+        version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
         daemon: DAEMON_B,
         resource: shellInput("Mismatched resource"),
       },

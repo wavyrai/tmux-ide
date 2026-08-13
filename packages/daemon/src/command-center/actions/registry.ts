@@ -56,6 +56,7 @@ import {
 import { workspacePromoteHandler } from "./handlers/workspace-promote.ts";
 import {
   fleetAgentMutateHandler,
+  fleetAgentProvisionHandler,
   workspaceSessionCreateHandler,
   type FleetLifecycleBackend,
 } from "./handlers/fleet-lifecycle.ts";
@@ -216,6 +217,12 @@ export const actionRegistry: RegistryShape = {
     resultSchema: ActionContractsZ["fleet.agent.mutate"].result,
     handler: (input) => fleetAgentMutateHandler(input, {}),
     handlerWithContext: fleetAgentMutateHandler,
+  },
+  "fleet.agent.provision": {
+    inputSchema: ActionContractsZ["fleet.agent.provision"].input,
+    resultSchema: ActionContractsZ["fleet.agent.provision"].result,
+    handler: (input) => fleetAgentProvisionHandler(input, {}),
+    handlerWithContext: fleetAgentProvisionHandler,
   },
   "workspace.open": {
     inputSchema: ActionContractsZ["workspace.open"].input,

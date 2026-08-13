@@ -12,9 +12,9 @@ import {
 describe("daemon action command definitions", () => {
   it("registers every existing action id exactly once in contract order", () => {
     expect(daemonActionCommandRegistry.descriptors().map((item) => item.id)).toEqual(ACTION_NAMES);
-    // Thirty-four: the prior catalog plus atomic handoff and the owner-fenced
-    // named-session / opaque fleet-agent lifecycle authorities.
-    expect(new Set(ACTION_NAMES).size).toBe(34);
+    // Thirty-five: the prior catalog plus atomic handoff and the owner-fenced
+    // named-session / opaque fleet-agent mutation + provisioning authorities.
+    expect(new Set(ACTION_NAMES).size).toBe(35);
   });
 
   it("reuses the exact action input/result schemas", () => {

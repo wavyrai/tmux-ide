@@ -66,6 +66,8 @@ import {
 import {
   FleetAgentMutateArgumentsSchemaZ,
   FleetAgentMutateResultSchemaZ,
+  FleetAgentProvisionArgumentsSchemaZ,
+  FleetAgentProvisionResultSchemaZ,
   WorkspaceSessionCreateArgumentsSchemaZ,
   WorkspaceSessionCreateResultSchemaZ,
 } from "./fleet-lifecycle.ts";
@@ -390,6 +392,10 @@ export const ActionContractsZ = {
   "fleet.agent.mutate": {
     input: FleetAgentMutateArgumentsSchemaZ,
     result: FleetAgentMutateResultSchemaZ,
+  },
+  "fleet.agent.provision": {
+    input: FleetAgentProvisionArgumentsSchemaZ,
+    result: FleetAgentProvisionResultSchemaZ,
   },
   "workspace.open": {
     input: WorkspaceOpenInputZ,
