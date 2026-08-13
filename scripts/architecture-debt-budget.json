@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "groups": {
+    "grouped-pty": { "maximumUses": 47, "targetUses": 0 },
+    "direct-tmux": { "maximumUses": 71, "targetUses": 0 },
+    "v1-catalog": { "maximumUses": 10, "targetUses": 0 }
+  }
+}

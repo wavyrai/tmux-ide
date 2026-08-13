@@ -2,6 +2,11 @@ import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 import type {
   PaneStreamServerFrame,
+  SessionRuntimeActivityKind,
+  SessionRuntimeAuthorityKind,
+  SessionRuntimeAuthorityLease,
+  SessionRuntimeAuthoritySnapshot,
+  SessionRuntimePresenceState,
   SessionRuntimeSemanticIntent,
   TerminalDeliveryAck,
   TerminalDeliveryNack,
@@ -85,6 +90,7 @@ export interface OpenTuiSessionRuntimeLane {
   readonly viewerMode: "interactive" | "read-only";
   readonly ownsInput: boolean;
   readonly ownsGeometry: boolean;
+  readonly authoritySnapshot: SessionRuntimeAuthoritySnapshot | null;
   readonly source: SemanticTerminalRenderSource;
   sendText(semanticPaneId: string, text: string, performanceTraceId?: string): void;
   sendKey(semanticPaneId: string, key: string, performanceTraceId?: string): void;
@@ -93,6 +99,12 @@ export interface OpenTuiSessionRuntimeLane {
     intent: SessionRuntimeSemanticIntent,
     operationId?: string,
   ): Promise<WorkspaceMultiplexerMutationResult | null>;
+  setPresence(state: SessionRuntimePresenceState): void;
+  noteActivity(activity: SessionRuntimeActivityKind): void;
+  requestAuthority(
+    authority: SessionRuntimeAuthorityKind,
+  ): Promise<SessionRuntimeAuthorityLease | null>;
+  releaseAuthority(authority: SessionRuntimeAuthorityKind): Promise<void>;
   close(): void;
 }
 
@@ -102,6 +114,7 @@ export interface ConnectOpenTuiSessionRuntimeOptions {
   readonly routing?: OpenTuiVerifiedRoutingContext | null;
   readonly onPaneChange: (paneId: string, change: SemanticPaneReplicaChange) => void;
   readonly onLayout?: (frame: Extract<PaneStreamServerFrame, { type: "layout" }>) => void;
+  readonly onAuthoritySnapshot?: (snapshot: SessionRuntimeAuthoritySnapshot) => void;
   readonly onFault?: (error: Error) => void;
 }
 
@@ -204,6 +217,7 @@ export async function connectOpenTuiSessionRuntime(
         if (replica) replica.accept(message);
         else pending.set(paneId, [...(pending.get(paneId) ?? []), message]);
       },
+      ...(options.onAuthoritySnapshot ? { onAuthoritySnapshot: options.onAuthoritySnapshot } : {}),
       ...(options.onLayout ? { onLayout: options.onLayout } : {}),
       ...(options.onFault
         ? {
@@ -240,6 +254,8 @@ export async function connectOpenTuiSessionRuntime(
       throw new Error("This OpenTUI connection is a passive viewer; another client owns input");
     }
   };
+  const owns = (authority: SessionRuntimeAuthorityKind): boolean =>
+    activeClient.authoritySnapshot?.owners[authority] === OPENTUI_HOST_CLIENT_ID;
 
   return {
     daemonInstanceId: activeClient.daemonInstanceId,
@@ -247,8 +263,15 @@ export async function connectOpenTuiSessionRuntime(
     generation: runtimeGeneration,
     connectionIdentity: `${activeClient.daemonInstanceId}:${activeClient.requestId}`,
     viewerMode,
-    ownsInput: viewerMode === "interactive",
-    ownsGeometry: viewerMode === "interactive",
+    get ownsInput() {
+      return viewerMode === "interactive" && owns("input");
+    },
+    get ownsGeometry() {
+      return viewerMode === "interactive" && owns("geometry");
+    },
+    get authoritySnapshot() {
+      return activeClient.authoritySnapshot;
+    },
     source,
     sendText: (semanticPaneId, text, performanceTraceId) => {
       requireInteractive();
@@ -266,6 +289,10 @@ export async function connectOpenTuiSessionRuntime(
       requireInteractive();
       return activeClient.submitIntent(operationId, intent);
     },
+    setPresence: (state) => activeClient.setPresence(state),
+    noteActivity: (activity) => activeClient.noteActivity(activity),
+    requestAuthority: (authority) => activeClient.requestAuthority(authority),
+    releaseAuthority: (authority) => activeClient.releaseAuthority(authority),
     close: () => activeClient.close(),
   };
 }

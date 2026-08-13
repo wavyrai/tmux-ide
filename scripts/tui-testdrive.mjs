@@ -10,15 +10,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import {
-  chmodSync,
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
@@ -39,6 +31,13 @@ const targetSocketName = process.env.TMUX_IDE_TESTDRIVE_TARGET_SOCKET_NAME?.trim
 const hostSocketPath = process.env.TMUX_IDE_TESTDRIVE_HOST_SOCKET_PATH?.trim() || null;
 const compiledTui = join(repoRoot, "packages", "daemon", "dist", "tui", "tmux-ide-tui");
 const sourceTui = join(repoRoot, "packages", "daemon", "src", "tui", "mirror", "app.tsx");
+
+function canonicalDaemonHome() {
+  return resolve(
+    process.env.TMUX_IDE_TESTDRIVE_CANONICAL_HOME?.trim() ||
+      join(process.env.HOME ?? "", ".tmux-ide"),
+  );
+}
 
 function usage() {
   return `OpenTUI test-drive harness
@@ -264,7 +263,12 @@ function liveHostSize() {
 
 function daemonStatus() {
   try {
-    const path = join(stateHome, "daemon.json");
+    const path = join(
+      process.env.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON === "1"
+        ? canonicalDaemonHome()
+        : stateHome,
+      "daemon.json",
+    );
     const daemon = JSON.parse(readFileSync(path, "utf8"));
     process.kill(daemon.pid, 0);
     return { running: true, pid: daemon.pid, port: daemon.port, instanceId: daemon.instanceId };
@@ -337,26 +341,9 @@ async function start(args) {
   // look absent and leave the TUI in its reconnecting state forever.
   chmodSync(stateHome, 0o700);
   if (process.env.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON === "1") {
-    const canonicalHome = resolve(
-      process.env.TMUX_IDE_TESTDRIVE_CANONICAL_HOME?.trim() ||
-        join(process.env.HOME ?? "", ".tmux-ide"),
-    );
+    const canonicalHome = canonicalDaemonHome();
     const daemonInfoPath = join(canonicalHome, "daemon.json");
     if (!existsSync(daemonInfoPath)) fail(`Canonical daemon info missing at ${daemonInfoPath}`);
-    const copiedDaemonInfoPath = join(stateHome, "daemon.json");
-    copyFileSync(daemonInfoPath, copiedDaemonInfoPath);
-    chmodSync(copiedDaemonInfoPath, 0o600);
-
-    // Keep the copied daemon generation and its durable environment identity
-    // coherent. Current OpenTUI routing only needs daemon.json, but carrying
-    // the authority bundle prevents future environment-aware clients from
-    // silently minting a second identity inside the isolated test home.
-    const environmentInfoPath = join(canonicalHome, "environment.json");
-    if (existsSync(environmentInfoPath)) {
-      const copiedEnvironmentInfoPath = join(stateHome, "environment.json");
-      copyFileSync(environmentInfoPath, copiedEnvironmentInfoPath);
-      chmodSync(copiedEnvironmentInfoPath, 0o600);
-    }
   }
   rmSync(logPath, { force: true });
   rmSync(perfLogPath, { force: true });
@@ -370,7 +357,7 @@ async function start(args) {
     `TMUX_IDE_CWD=${shQuote(repoRoot)}`,
     `TMUX_IDE_HOME=${shQuote(stateHome)}`,
     ...(process.env.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON === "1"
-      ? []
+      ? [`TMUX_IDE_DAEMON_INFO_DIR=${shQuote(canonicalDaemonHome())}`]
       : [
           "TMUX_IDE_RUNTIME_MODE=testdrive",
           `TMUX_IDE_REGISTRY_DIR=${shQuote(join(runtimeDir, "registry"))}`,

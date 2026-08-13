@@ -18,6 +18,7 @@ describe("owner action client", () => {
         "Content-Type": "application/json",
         Authorization: "Bearer owner-token",
         "X-Tmux-Ide-Operation-Id": operationId,
+        "X-Tmux-Ide-Host-Client-Id": "opentui:42",
       });
       return Response.json({
         ok: true,
@@ -42,6 +43,7 @@ describe("owner action client", () => {
           direction: "right",
         },
         operationId,
+        hostClientId: "opentui:42",
         fetch: request as typeof fetch,
       }),
     ).resolves.toMatchObject({ outcome: "applied", verb: "workspace.window.split" });

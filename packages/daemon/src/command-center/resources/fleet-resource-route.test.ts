@@ -30,6 +30,8 @@ function paneLine(
   return [
     sessionName,
     paneId,
+    `pane.test.${paneId.slice(1)}`,
+    "1700000000",
     active ? "1" : "0",
     command,
     path,

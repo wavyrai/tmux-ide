@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { listSessionPanes } from "../widgets/lib/pane-comms.ts";
 import type { PaneInfo } from "@tmux-ide/contracts";
 import { getDefaultWorkspaceRegistry } from "../lib/workspace-registry.ts";
-import { ADOPTED_OPTION } from "../tui/chrome/front-door.ts";
+import { ADOPTED_OPTION } from "../lib/chrome-front-door.ts";
 
 export interface SessionInfo {
   name: string;
@@ -202,6 +202,10 @@ export function readAdoptedSessionNames(): string[] | null {
 /** One live pane, with the raw agent-authority options gathered for the fleet. */
 export interface FleetPaneFacts {
   readonly runtimePaneId: string;
+  /** Durable semantic pane stamp owned by tmux-ide, when one has been assigned. */
+  readonly semanticPaneId: string | null;
+  /** tmux pane process id; fences runtime id reuse and pane reincarnation. */
+  readonly incarnation: number;
   readonly active: boolean;
   readonly currentCommand: string;
   readonly currentPath: string;
@@ -232,6 +236,8 @@ const FLEET_LINE_SENTINEL = "tmux-ide-fleet-v1";
 const FLEET_PANE_FORMAT = [
   "#{session_name}",
   "#{pane_id}",
+  "#{@tmux_ide_pane_id}",
+  "#{pane_pid}",
   "#{pane_active}",
   "#{pane_current_command}",
   "#{pane_current_path}",
@@ -276,12 +282,15 @@ export function readAdoptedFleet(
   for (const line of panesRaw.split("\n")) {
     if (!line) continue;
     const fields = line.split(FLEET_FIELD_SEPARATOR);
-    // session, pane, active, command, path, state, statusText, displayName, hint, sentinel
-    if (fields.length !== 10 || fields[9] !== FLEET_LINE_SENTINEL) continue;
+    // session, pane, semantic pane, incarnation pid, active, command, path, state,
+    // statusText, displayName, hint, sentinel
+    if (fields.length !== 12 || fields[11] !== FLEET_LINE_SENTINEL) continue;
     const sessionName = fields[0]!;
     if (!adoptedSet.has(sessionName)) continue;
     const runtimePaneId = fields[1]!;
     if (!/^%[0-9]+$/u.test(runtimePaneId)) continue;
+    const incarnation = Number.parseInt(fields[3]!, 10);
+    if (!Number.isSafeInteger(incarnation) || incarnation < 1) continue;
     let panes = panesBySession.get(sessionName);
     if (!panes) {
       panes = [];
@@ -289,13 +298,15 @@ export function readAdoptedFleet(
     }
     panes.push({
       runtimePaneId,
-      active: fields[2] === "1",
-      currentCommand: fields[3]!,
-      currentPath: fields[4]!,
-      agentStateRaw: emptyToNull(fields[5]!),
-      agentStatusTextRaw: emptyToNull(fields[6]!),
-      agentDisplayNameRaw: emptyToNull(fields[7]!),
-      agentHintRaw: emptyToNull(fields[8]!),
+      semanticPaneId: emptyToNull(fields[2]!),
+      incarnation,
+      active: fields[4] === "1",
+      currentCommand: fields[5]!,
+      currentPath: fields[6]!,
+      agentStateRaw: emptyToNull(fields[7]!),
+      agentStatusTextRaw: emptyToNull(fields[8]!),
+      agentDisplayNameRaw: emptyToNull(fields[9]!),
+      agentHintRaw: emptyToNull(fields[10]!),
     });
   }
 

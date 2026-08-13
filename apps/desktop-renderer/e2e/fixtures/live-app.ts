@@ -13,6 +13,7 @@
 import { test as base } from "@playwright/test";
 import { randomBytes } from "node:crypto";
 import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import {
   startDaemon,
@@ -122,7 +123,9 @@ export const test = base.extend<LiveAppOptions & { liveApp: LiveApp; pageWatch: 
       phase("promote");
       const readinessAtStart = await waitForReadinessLadder(daemon);
       phase("readiness-ladder");
-      devServer = await startDevServer(daemon);
+      devServer = await startDevServer(daemon, {
+        daemonInfoPath: join(fleet.daemonInfoDir, "daemon.json"),
+      });
       phase("vite-start");
       await use({
         fleet,

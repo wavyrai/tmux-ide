@@ -66,12 +66,12 @@ describe("deferred Changes feature boundary", () => {
     expect(source).toContain("const startupChangesIdentity = values.diff");
     expect(source).toContain("resolveDeferredChangesIdentity({");
     expect(source).toContain("startup: startupChangesIdentity");
-    const workspaceActivation = source.slice(
-      source.indexOf("const openWorkspace ="),
-      source.indexOf("const jumpToAgent ="),
+    const committedWorkspaceActivation = source.slice(
+      source.indexOf("const applyWorkspaceContext ="),
+      source.indexOf("let pendingWorkspaceSwitch", source.indexOf("const applyWorkspaceContext =")),
     );
-    expect(workspaceActivation).toContain("setContextDir(wd)");
-    expect(workspaceActivation).toContain("changesHydrationIntent.retire()");
+    expect(committedWorkspaceActivation).toContain("setContextDir(wd)");
+    expect(committedWorkspaceActivation).toContain("changesHydrationIntent.retire()");
   });
 
   it("deterministically rejects A hydration after a same-directory switch to B", () => {

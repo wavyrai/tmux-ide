@@ -34,6 +34,7 @@ import {
   readJson,
   writeJsonAtomic,
 } from "./product-test-rig-lib.mjs";
+import { sourceArchitectureInventory } from "./architecture-debt-inventory.mjs";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -51,7 +52,7 @@ const ownerLogPath = join(rigRoot, "owner.log");
 const artifactDir = join(rigRoot, "artifacts");
 
 function usage() {
-  return `Product test rig\n\nUsage:\n  pnpm product:testdrive start [--json]\n  pnpm product:testdrive status [--json]\n  pnpm product:testdrive capture [--json]\n  pnpm product:testdrive smoke [--json]\n  pnpm product:testdrive stop [--json]\n`;
+  return `Product test rig\n\nUsage:\n  pnpm product:testdrive start [--json]\n  pnpm product:testdrive status [--json]\n  pnpm product:testdrive capture [--json]\n  pnpm product:testdrive smoke [--json]\n  pnpm product:testdrive inventory [--json]\n  pnpm product:testdrive stop [--json]\n`;
 }
 
 function emit(value, json) {
@@ -181,6 +182,82 @@ async function waitForState(predicate, timeoutMs = 90_000) {
   throw new Error(`timed out waiting for product rig (${state?.status ?? "no state"})`);
 }
 
+async function firstAttachablePane(daemon, session) {
+  const response = await fetch(
+    `${daemon.baseUrl}/api/project/${encodeURIComponent(session)}/application-shell?version=3`,
+    { headers: { Authorization: `Bearer ${daemon.record.authToken}` } },
+  );
+  if (!response.ok) throw new Error(`application-shell answered ${response.status}`);
+  const body = await response.json();
+  const resources = body?.resource?.terminalInventory?.resources ?? [];
+  const available = resources.find(
+    (resource) =>
+      resource?.attachability?.status === "available" && resource?.attachability?.semanticPaneId,
+  );
+  if (!available) throw new Error("product rig found no attachable semantic pane");
+  return available.attachability.semanticPaneId;
+}
+
+async function fleetSessionId(daemon, label) {
+  const response = await fetch(`${daemon.baseUrl}/api/resources/fleet-catalog`, {
+    headers: { Authorization: `Bearer ${daemon.record.authToken}` },
+  });
+  if (!response.ok) throw new Error(`fleet-catalog answered ${response.status}`);
+  const body = await response.json();
+  const session = body?.sessions?.find((entry) => entry?.label === label);
+  if (!session?.sessionId) throw new Error(`fleet catalog has no canonical id for ${label}`);
+  return session.sessionId;
+}
+
+async function proveMultiClientConvergence(
+  state,
+  daemon,
+  { previousGeneration = null, allowRestartPending = false } = {},
+) {
+  const pane = await firstAttachablePane(daemon, state.session);
+  const sessionId = await fleetSessionId(daemon, state.session);
+  const startedAt = Date.now();
+  const { stdout } = await execFileAsync(
+    "bun",
+    [join(repoRoot, "scripts", "product-test-rig-multiclient.ts")],
+    {
+      cwd: repoRoot,
+      timeout: 30_000,
+      env: {
+        ...process.env,
+        TMUX_IDE_RIG_BASE_URL: daemon.baseUrl,
+        TMUX_IDE_RIG_OWNER_TOKEN: daemon.record.authToken,
+        TMUX_IDE_RIG_GENERATION: daemon.record.instanceId,
+        TMUX_IDE_RIG_WORKSPACE: state.workspace,
+        TMUX_IDE_RIG_PANE: pane,
+        TMUX_IDE_RIG_SESSION: state.session,
+        TMUX_IDE_RIG_SESSION_ID: sessionId,
+        TMUX_IDE_RIG_TMUX_SOCKET: state.runtimeNamespace.tmuxSocketPath,
+        TMUX_IDE_RIG_WEB_ORIGIN: new URL(state.web.pageUrl).origin,
+        ...(previousGeneration ? { TMUX_IDE_RIG_PREVIOUS_GENERATION: previousGeneration } : {}),
+      },
+    },
+  );
+  const report = JSON.parse(stdout.trim().split("\n").at(-1));
+  const incomplete = Object.entries(report.requirements ?? {}).filter(
+    ([name, result]) =>
+      (!allowRestartPending || name !== "daemonRestartRecovery") &&
+      (result?.passed !== true || result?.skipped !== false),
+  );
+  if (
+    report.status !== "passed" ||
+    report.generation !== daemon.record.instanceId ||
+    incomplete.length > 0
+  ) {
+    throw new Error(`multi-client convergence failed: ${stdout}`);
+  }
+  event("multi-client-convergence", {
+    elapsedMs: Date.now() - startedAt,
+    report,
+  });
+  return report;
+}
+
 async function start(json) {
   const existing = readJson(statePath);
   if (existing && processAlive(existing.ownerPid)) {
@@ -250,6 +327,11 @@ async function smoke(json) {
   await writeFile(reportPath, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
   if (!evidence.passed) throw new Error(`product smoke failed; see ${reportPath}`);
   emit(json ? { ...evidence, reportPath } : `Product smoke passed; ${reportPath}`, json);
+}
+
+function inventory(json) {
+  const report = sourceArchitectureInventory(repoRoot);
+  emit(json ? report : JSON.stringify(report, null, 2), json);
 }
 
 let ownerStartedAt = Date.now();
@@ -330,7 +412,9 @@ async function owner() {
     publish({ daemon: daemon.record, workspace });
     event("daemon-ready", { instanceId: daemon.record.instanceId, workspace });
 
-    devServer = await startDevServer(daemon);
+    devServer = await startDevServer(daemon, {
+      daemonInfoPath: join(fleet.daemonInfoDir, "daemon.json"),
+    });
     browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const page = await context.newPage();
@@ -371,6 +455,50 @@ async function owner() {
     });
     publish({ tui: { ...tui, readiness } });
     event("tui-coherent-terminal-frame", readiness);
+    const beforeRestart = await proveMultiClientConvergence(state, daemon, {
+      allowRestartPending: true,
+    });
+    const previousGeneration = daemon.record.instanceId;
+    const restartStartedAt = Date.now();
+    await daemon.stop();
+    await page
+      .locator(".terminal-surface:not([data-phase='connected'])")
+      .first()
+      .waitFor({ timeout: 10_000 })
+      .catch(() => undefined);
+    daemon = await startDaemon(fleet);
+    const restartedWorkspace = await daemon.promote(session);
+    await waitForReadinessLadder(daemon);
+    publish({ daemon: daemon.record, workspace: restartedWorkspace });
+    await page
+      .locator(".terminal-surface[data-phase='connected']")
+      .first()
+      .waitFor({ timeout: 30_000 });
+    let restartedTui = null;
+    const tuiRestartDeadline = Date.now() + 30_000;
+    while (Date.now() < tuiRestartDeadline) {
+      restartedTui = JSON.parse(tuiCommand(state, ["status", "--json"]));
+      if (restartedTui.daemon?.instanceId === daemon.record.instanceId) break;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    }
+    if (restartedTui?.daemon?.instanceId !== daemon.record.instanceId) {
+      throw new Error("hosted TUI did not recover onto the restarted daemon generation");
+    }
+    const afterRestart = await proveMultiClientConvergence(state, daemon, {
+      previousGeneration,
+    });
+    const convergence = {
+      ...afterRestart,
+      restart: {
+        previousGeneration,
+        generation: daemon.record.instanceId,
+        elapsedMs: Date.now() - restartStartedAt,
+        webRecovered: true,
+        tuiRecovered: true,
+      },
+      runs: [beforeRestart, afterRestart],
+    };
+    publish({ convergence });
     await captureArtifacts(state, "boot", page);
     publish({ status: "ready", readyAt: new Date().toISOString() });
     await new Promise(() => undefined);
@@ -396,6 +524,7 @@ try {
     );
   else if (command === "capture") await capture(json);
   else if (command === "smoke") await smoke(json);
+  else if (command === "inventory") inventory(json);
   else if (command === "stop") await stop(json);
   else if (["help", "--help", "-h"].includes(command)) process.stdout.write(usage());
   else throw new Error(`unknown command ${command}\n\n${usage()}`);

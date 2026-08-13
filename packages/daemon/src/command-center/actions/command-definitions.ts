@@ -40,6 +40,8 @@ const ACTION_COMMAND_METADATA: Record<ActionName, ActionCommandMetadata> = {
   "workspace.pane.create": { label: "Create workspace pane", category: "workspace" },
   "workspace.open": { label: "Open config-free workspace", category: "workspace" },
   "workspace.open.prepare": { label: "Prepare workspace handoff", category: "workspace" },
+  "workspace.session.create": { label: "Create session", category: "workspace" },
+  "fleet.agent.mutate": { label: "Manage fleet agent", category: "workspace" },
   "workspace.open.commit": { label: "Commit workspace handoff", category: "workspace" },
   "workspace.open.cancel": { label: "Cancel workspace handoff", category: "workspace" },
   "workspace.promote": { label: "Promote adopted session to workspace", category: "workspace" },

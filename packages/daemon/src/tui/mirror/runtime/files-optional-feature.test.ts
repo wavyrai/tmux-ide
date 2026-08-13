@@ -75,11 +75,11 @@ describe("deferred Files feature boundary", () => {
       source.indexOf("const activateCanvasPanel ="),
     );
     expect(canvasActivation).toContain("editorOpenIntent.retire()");
-    const workspaceActivation = source.slice(
-      source.indexOf("const openWorkspace ="),
-      source.indexOf("const jumpToAgent ="),
+    const committedWorkspaceActivation = source.slice(
+      source.indexOf("const applyWorkspaceContext ="),
+      source.indexOf("let pendingWorkspaceSwitch", source.indexOf("const applyWorkspaceContext =")),
     );
-    expect(workspaceActivation).toContain("editorOpenIntent.retire()");
+    expect(committedWorkspaceActivation).toContain("editorOpenIntent.retire()");
   });
 
   it("retains Files demand without starting its literal loader before admission", () => {

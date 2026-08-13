@@ -945,6 +945,47 @@ describe("development event authority barriers", () => {
     host.dispose();
   });
 
+  it("retires generation identity when an established event socket closes", async () => {
+    const nextIdentity = {
+      ...IDENTITY,
+      instanceId: "22222222-2222-4222-8222-222222222222",
+      startedAt: "2026-08-04T00:01:00.000Z",
+    } satisfies DaemonInstanceIdentity;
+    let capabilityReads = 0;
+    const { sockets, host } = eventHost();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        capabilityReads += 1;
+        return new Response(
+          JSON.stringify({
+            status: "ok",
+            daemon: capabilityReads === 1 ? IDENTITY : nextIdentity,
+            capabilities: { appWindowMutation: { available: true } },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+    const subscription = host.daemon.subscribe({ workspaceNames: ["alpha"] }, vi.fn());
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    sockets[0]!.emit("open");
+    sockets[0]!.message({ type: "hello", daemon: IDENTITY, sessions: [], eventSequence: 0 });
+    await expect(subscription).resolves.toMatchObject({ status: "subscribed" });
+    sockets[0]!.emit("close", { code: 1006, reason: "daemon restarted" });
+    await vi.waitFor(() => expect(sockets).toHaveLength(2), { timeout: 3_000 });
+    sockets[1]!.emit("open");
+    sockets[1]!.message({
+      type: "hello",
+      daemon: nextIdentity,
+      sessions: [],
+      eventSequence: 0,
+    });
+    await vi.waitFor(() => expect(capabilityReads).toBeGreaterThanOrEqual(2));
+    expect(sockets[1]!.close).not.toHaveBeenCalledWith(1008, "daemon generation mismatch");
+    host.dispose();
+  }, 5_000);
+
   it("does not forget an unavailable required interest across later revisions", async () => {
     const { sockets, host } = eventHost();
     const first = host.daemon.subscribe(

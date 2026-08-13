@@ -51,6 +51,7 @@ import { discoverLiveSessionSummaries } from "../command-center/discovery.ts";
 import { WorkspaceOpenAuthority } from "./workspace-open.ts";
 import { WorkspacePromotionAuthority } from "./workspace-promotion.ts";
 import { WorkspaceOpenHandoffCoordinator } from "./workspace-open-handoff.ts";
+import { FleetLifecycleAuthority } from "./fleet-lifecycle-authority.ts";
 import { AppWindowMutationAuthority } from "./app-window-mutation.ts";
 import { WorkspaceMultiplexerAuthority } from "./workspace-multiplexer-verbs.ts";
 import { TmuxExternalInteractionObserver } from "./tmux-external-interaction-observer.ts";
@@ -693,6 +694,7 @@ async function startHttpServer({
   workspacePaneCreationBackend,
   workspaceOpenBackend,
   workspaceOpenHandoffBackend,
+  fleetLifecycleBackend,
   workspacePromotionBackend,
   appWindowMutationBackend,
   workspaceMultiplexerBackend,
@@ -718,6 +720,7 @@ async function startHttpServer({
   workspacePaneCreationBackend: WorkspacePaneCreationAuthority;
   workspaceOpenBackend: WorkspaceOpenAuthority;
   workspaceOpenHandoffBackend: WorkspaceOpenHandoffCoordinator;
+  fleetLifecycleBackend: FleetLifecycleAuthority;
   workspacePromotionBackend: WorkspacePromotionAuthority;
   appWindowMutationBackend: AppWindowMutationAuthority;
   workspaceMultiplexerBackend: WorkspaceMultiplexerBackend;
@@ -767,6 +770,7 @@ async function startHttpServer({
     workspacePaneCreationBackend,
     workspaceOpenBackend,
     workspaceOpenHandoffBackend,
+    fleetLifecycleBackend,
     workspacePromotionBackend,
     appWindowMutationBackend,
     // Named in this function's parameter type since the verb routes shipped and
@@ -1015,6 +1019,13 @@ export async function startEmbeddedDaemon(
       registry: workspaceRegistry,
       tmuxAuthority,
     });
+    const fleetLifecycle = new FleetLifecycleAuthority({
+      daemonInstanceId: instanceId,
+      productVersion,
+      startedAt,
+      registry: workspaceRegistry,
+      runTmux: catalogTmuxRunner,
+    });
     const appWindowMutation = new AppWindowMutationAuthority({
       daemonInstanceId: instanceId,
       registry: workspaceRegistry,
@@ -1206,6 +1217,7 @@ export async function startEmbeddedDaemon(
         workspacePaneCreationBackend: workspacePaneCreation,
         workspaceOpenBackend: workspaceOpen,
         workspaceOpenHandoffBackend: workspaceOpenHandoff,
+        fleetLifecycleBackend: fleetLifecycle,
         workspacePromotionBackend: workspacePromotion,
         appWindowMutationBackend: appWindowMutation,
         workspaceMultiplexerBackend: orderedMultiplexerBackend,

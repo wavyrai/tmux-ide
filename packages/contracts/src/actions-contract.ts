@@ -63,6 +63,12 @@ import {
   WorkspaceWindowSplitArgumentsSchemaZ,
   WorkspaceWindowSplitResultSchemaZ,
 } from "./workspace-multiplexer.ts";
+import {
+  FleetAgentMutateArgumentsSchemaZ,
+  FleetAgentMutateResultSchemaZ,
+  WorkspaceSessionCreateArgumentsSchemaZ,
+  WorkspaceSessionCreateResultSchemaZ,
+} from "./fleet-lifecycle.ts";
 
 // ---------------------------------------------------------------------------
 // project.openTerminal
@@ -376,6 +382,14 @@ export const ActionContractsZ = {
   "workspace.pane.create": {
     input: WorkspacePaneCreateInputZ,
     result: WorkspacePaneCreateResultZ,
+  },
+  "workspace.session.create": {
+    input: WorkspaceSessionCreateArgumentsSchemaZ,
+    result: WorkspaceSessionCreateResultSchemaZ,
+  },
+  "fleet.agent.mutate": {
+    input: FleetAgentMutateArgumentsSchemaZ,
+    result: FleetAgentMutateResultSchemaZ,
   },
   "workspace.open": {
     input: WorkspaceOpenInputZ,

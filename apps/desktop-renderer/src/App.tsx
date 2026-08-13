@@ -30,7 +30,7 @@ import {
   recoveryForDaemonCapability,
   startupReadinessDiagnostics,
 } from "./runtime/connection-recovery.ts";
-import { createHostNativeTerminalTransport } from "./runtime/host-terminal-transport.ts";
+import { createHostPaneStreamNativeTerminalTransport } from "./runtime/host-pane-stream-native-terminal-transport.ts";
 import type { NativeTerminalTransport } from "./terminal/native-terminal-transport.ts";
 import type {
   PaneFrameActionIntent,
@@ -245,7 +245,7 @@ export function App(props: AppProps = {}) {
       identity.startedAt,
     ].join("\u0000");
     if (productionTerminalAuthority?.key === key) return productionTerminalAuthority.transport;
-    const transport = createHostNativeTerminalTransport(host, identity);
+    const transport = createHostPaneStreamNativeTerminalTransport(host, identity);
     productionTerminalAuthority = { key, transport };
     return transport;
   });

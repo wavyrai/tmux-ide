@@ -12,6 +12,10 @@ const source = productionGraph.files
     (path) => productionGraph.sourceByFile.get(path) ?? readFileSync(join(repoRoot, path), "utf8"),
   )
   .join("\n");
+const applicationRootSource = readFileSync(
+  join(repoRoot, "packages/daemon/src/tui/mirror/runtime/application-root.tsx"),
+  "utf8",
+);
 
 describe("production OpenTUI data path", () => {
   it("contains no recurring catalog work or legacy direct observation path", () => {
@@ -136,6 +140,23 @@ describe("production OpenTUI data path", () => {
     expect(source).not.toContain("pendingSemanticPaneVersions");
   });
 
+  it("uses explicit daemon authority and atomic workspace handoff in the production host", () => {
+    expect(source).toContain('appRenderer.on("focus", foregroundTerminalHost)');
+    expect(source).toContain('appRenderer.on("blur", backgroundTerminalHost)');
+    expect(source).toContain('lane.requestAuthority("input")');
+    expect(source).toContain('lane.releaseAuthority("geometry")');
+    expect(source).toContain("onAuthoritySnapshot: (snapshot)");
+    expect(source).toContain("runtimeOwnsInput()");
+    expect(source).toContain("dispatchTerminalInputWithAuthority({");
+    expect(source).toContain("workspaceOpenHandoff.prepare({");
+    expect(source).toMatch(/workspaceOpenHandoff\s*\.commit\(pending\.prepared\)/);
+    expect(source).toContain("workspaceOpenHandoff.cancelCurrent()");
+    expect(source).toContain("presentedTerminalWorkspaceAdapter = retired");
+    expect(source).not.toContain("if (!sessionId) {\n        switchTarget(session);");
+    expect(source).not.toContain('execFileChecked("tmux"');
+    expect(source).not.toContain("setCurTarget(intent.session)");
+  });
+
   it("owns optional feature admission and metrics inside the application lifecycle", () => {
     expect(source).toContain("createApplicationOptionalFeatureRegistry()");
     expect(source).toContain('applicationLifecycle.registerCloser("optional-features"');
@@ -150,17 +171,29 @@ describe("production OpenTUI data path", () => {
     expect(source.match(/optionalFeatures\.admit\(\)/gu)).toHaveLength(1);
   });
 
-  it("builds actionable agent rows from generation-bound local tmux identity proof", () => {
-    expect(source).toContain('"list-panes", "-s", "-t", `=${sessionName}`');
-    expect(source).toContain("SESSION_PANE_DESCRIPTOR_FORMAT");
-    expect(source).toContain("candidate.setRuntimeDescriptors(");
-    expect(source).toContain("candidate.setRuntimeAuthorityGeneration(authorityGeneration)");
+  it("uses daemon identity and presence instead of a parallel root tmux probe", () => {
+    expect(applicationRootSource).not.toContain('"list-panes", "-s", "-t", `=${sessionName}`');
+    expect(applicationRootSource).not.toContain("SESSION_PANE_DESCRIPTOR_FORMAT");
+    expect(applicationRootSource).not.toContain("candidate.setRuntimeDescriptors(");
+    expect(applicationRootSource).not.toContain("candidate.setRuntimeAuthorityGeneration(");
+    expect(applicationRootSource).not.toContain("refreshLocalRuntimeDescriptors(");
+    expect(applicationRootSource).not.toContain("parseSessionPaneDescriptors(");
+    expect(applicationRootSource).not.toContain("APP_FOCUS_OPTION");
+    expect(applicationRootSource).not.toContain("APP_JUMP_OPTION");
+    expect(applicationRootSource).not.toContain('"list-clients", "-t"');
+    expect(applicationRootSource.match(/switchTarget\(/gu)).toHaveLength(1);
+    expect(source).toContain('lane.setPresence("foreground")');
+    expect(source).toContain('lane.setPresence("background")');
     expect(source).toContain("candidate.retireRuntimeAuthority()");
-    expect(source).toContain(
-      "refreshLocalRuntimeDescriptors(sessionName, candidate, authorityGeneration)",
-    );
-    expect(source).toContain("parseSessionPaneDescriptors(stdout.trimEnd().split");
     expect(source).toContain("projectAuthoritativeAgentRows");
+  });
+
+  it("keeps named-session and existing-agent lifecycle off direct tmux", () => {
+    expect(source).not.toContain('execFile("tmux", ["new-session"');
+    expect(source).not.toContain('execFile("tmux", ["kill-pane"');
+    expect(source).not.toContain('execFile("tmux", interruptArgs');
+    expect(source).toContain("createFleetSession({");
+    expect(source).toContain("mutateFleetAgent({");
   });
 
   it("releases tools only when the dock collapses", () => {

@@ -52,11 +52,18 @@ const catalog = {
   liveSessions: [{ sessionName: "alpha", paneCount: 1 }],
 } as WorkspaceCatalogResourceV2;
 
-function runtimeClient(): PaneStreamRuntimeClient {
+function runtimeClient(
+  authoritySnapshot: PaneStreamRuntimeClient["authoritySnapshot"] = null,
+): PaneStreamRuntimeClient {
   return {
     daemonInstanceId: daemon.instanceId,
     requestId: "request",
     effectiveViewerMode: "interactive",
+    authoritySnapshot,
+    setPresence: vi.fn(),
+    noteActivity: vi.fn(),
+    requestAuthority: vi.fn(async () => null),
+    releaseAuthority: vi.fn(async () => undefined),
     sendText: vi.fn(),
     sendKey: vi.fn(),
     fitViewport: vi.fn(async () => undefined),
@@ -194,6 +201,33 @@ describe("OpenTUI pane-stream startup routing", () => {
     expect(fetchCanonicalWorkspaceRouting).toHaveBeenCalledOnce();
     expect(createRoutingContext).toHaveBeenCalledWith(daemon, "workspace.alpha", "alpha");
     expect(open).toHaveBeenCalledOnce();
+  });
+
+  it("projects live authority snapshots and explicit host lifecycle operations", async () => {
+    const clientId = `opentui:${process.pid}`;
+    const snapshot = {
+      generation: daemon.instanceId,
+      session: "alpha",
+      revision: 1,
+      owners: { input: clientId, focus: null, geometry: null },
+      nativeGeometryYieldUntilMs: 0,
+      clients: [],
+    } as const;
+    const client = runtimeClient(snapshot);
+    const open = vi.fn(async (_options: OpenPaneStreamClientOptions) => client);
+    const routing = createOpenTuiVerifiedRoutingContext(daemon, "workspace.alpha", "alpha", open)!;
+    const lane = await connectOpenTuiSessionRuntime({ ...runtimeOptions(), routing });
+
+    expect(lane?.ownsInput).toBe(true);
+    expect(lane?.ownsGeometry).toBe(false);
+    lane?.setPresence("background");
+    lane?.noteActivity("focus");
+    await lane?.requestAuthority("focus");
+    await lane?.releaseAuthority("input");
+    expect(client.setPresence).toHaveBeenCalledWith("background");
+    expect(client.noteActivity).toHaveBeenCalledWith("focus");
+    expect(client.requestAuthority).toHaveBeenCalledWith("focus");
+    expect(client.releaseAuthority).toHaveBeenCalledWith("input");
   });
 
   it("fails closed when the accepted authority is stale or belongs to another session", async () => {

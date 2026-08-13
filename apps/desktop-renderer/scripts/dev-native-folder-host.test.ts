@@ -30,18 +30,26 @@ describe("local development native folder host", () => {
         "X-Tmux-Ide-Host-Client-Id": "dev-web:document",
         "X-Tmux-Ide-Operation-Id": OPERATION_ID,
       });
-      expect(JSON.parse(String(init?.body))).toEqual({ projectDir: "/Users/test/project" });
+      expect(JSON.parse(String(init?.body))).toEqual({
+        source: { kind: "project", projectDir: "/Users/test/project" },
+      });
       return new Response(
         JSON.stringify({
           ok: true,
           result: {
             operationId: OPERATION_ID,
             daemonInstanceId: DAEMON_ID,
+            phase: "prepared",
+            prepareToken: "33333333-3333-4333-8333-333333333333",
+            preparedRevision: 1,
             outcome: "created",
-            resource: {
-              resourceVersion: 1,
-              workspaceName: "project-00112233445566778899aabbccddeeff",
-              initialPaneId: "pane.workspace.00112233445566778899aabbccddeeff",
+            workspaceName: "project-00112233445566778899aabbccddeeff",
+            previousWorkspaceName: null,
+            proof: {
+              semanticPaneId: "pane.workspace.00112233445566778899aabbccddeeff",
+              paneCount: 1,
+              terminalRevision: 0,
+              terminalStateHash: "0123456789abcdef",
             },
           },
         }),
@@ -65,11 +73,17 @@ describe("local development native folder host", () => {
         result: {
           operationId: "44444444-4444-4444-8444-444444444444",
           daemonInstanceId: DAEMON_ID,
+          phase: "prepared",
+          prepareToken: "33333333-3333-4333-8333-333333333333",
+          preparedRevision: 1,
           outcome: "created",
-          resource: {
-            resourceVersion: 1,
-            workspaceName: "project-00112233445566778899aabbccddeeff",
-            initialPaneId: "pane.workspace.00112233445566778899aabbccddeeff",
+          workspaceName: "project-00112233445566778899aabbccddeeff",
+          previousWorkspaceName: null,
+          proof: {
+            semanticPaneId: "pane.workspace.00112233445566778899aabbccddeeff",
+            paneCount: 1,
+            terminalRevision: 0,
+            terminalStateHash: "0123456789abcdef",
           },
         },
       }),

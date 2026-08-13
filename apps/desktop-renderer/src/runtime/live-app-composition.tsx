@@ -70,7 +70,6 @@ function runtimeStateGlyph(state: string) {
 import { deriveConnectionHealth } from "./connection-health.ts";
 import {
   reasonIndicatesMissingTmux,
-  recoveryForWorkspaceOpenError,
   startupReadinessDiagnostics,
   tmuxInstallCommand,
 } from "./connection-recovery.ts";
@@ -78,6 +77,7 @@ import type { DesktopApplicationShellResourceState } from "./connection-state.ts
 import { createSolidDesktopApplicationShellResourceStore } from "./desktop-resource-store.ts";
 import { createHostDaemonTransport } from "./host-daemon-transport.ts";
 import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
+import { AtomicWorkspaceOpenController } from "./atomic-workspace-open.ts";
 import {
   createSolidDesktopWorkspaceCatalogStore,
   type DesktopWorkspaceCatalogState,
@@ -1383,6 +1383,10 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
   const [openProjectCommand, setOpenProjectCommand] = createSignal<string | null>(null);
   const [pendingWorkspaceName, setPendingWorkspaceName] = createSignal<string | null>(null);
   let openProjectRequest = 0;
+  const atomicWorkspaceOpen = new AtomicWorkspaceOpenController(
+    props.host.workspace,
+    props.daemon.status === "connected" ? props.daemon.identity.instanceId : "unavailable",
+  );
   let discoveryTimer: ReturnType<typeof setTimeout> | null = null;
 
   const clearDiscoveryTimer = (): void => {
@@ -1412,20 +1416,21 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
     setOpenProjectCommand(null);
     setOpenProjectPhase("selecting");
     try {
-      const result = await props.host.workspace.openProjectDirectory();
+      const currentSelection = catalog.state().snapshot?.selection;
+      const result = await atomicWorkspaceOpen.open(
+        currentSelection?.view === "workspace" ? currentSelection.workspaceName : null,
+      );
       if (request !== openProjectRequest) return;
-      if (!result) {
+      if (result.status === "cancelled") {
         setOpenProjectPhase("idle");
         return;
       }
       if (result.status === "error") {
-        const recovery = recoveryForWorkspaceOpenError(result.error, props.platform);
-        setOpenProjectError(recovery.description);
-        setOpenProjectCommand(recovery.command);
+        setOpenProjectError(result.reason);
         setOpenProjectPhase("error");
         return;
       }
-      waitForOpenedWorkspace(result.result.resource.workspaceName);
+      waitForOpenedWorkspace(result.prepared.workspaceName);
     } catch {
       if (request !== openProjectRequest) return;
       setOpenProjectError("tmux-ide could not open that folder through the verified daemon.");
@@ -1444,6 +1449,7 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
   onCleanup(() => {
     openProjectRequest += 1;
     clearDiscoveryTimer();
+    atomicWorkspaceOpen.dispose();
   });
   // The constructor already owns the initial daemon. Only a genuinely new
   // capability generation should retire catalog work and start another read.

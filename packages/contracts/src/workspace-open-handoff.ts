@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { DesktopWorkspaceNameSchemaZ } from "./desktop-host.ts";
+import { DesktopDaemonCapabilityErrorSchemaZ } from "./desktop-host.ts";
 import { FleetSessionIdSchemaZ } from "./fleet-catalog.ts";
 import { TerminalAttachmentSemanticPaneIdSchemaZ } from "./terminal-attachments.ts";
 
@@ -65,3 +66,25 @@ export const WorkspaceOpenCancelledResultSchemaZ = DecisionBaseZ.extend({
 }).strict();
 export type WorkspaceOpenCommittedResult = z.infer<typeof WorkspaceOpenCommittedResultSchemaZ>;
 export type WorkspaceOpenCancelledResult = z.infer<typeof WorkspaceOpenCancelledResultSchemaZ>;
+
+export const WorkspaceOpenPreparedHostResultSchemaZ = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ok"), result: WorkspaceOpenPreparedResultSchemaZ }).strict(),
+  z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+export const WorkspaceOpenCommittedHostResultSchemaZ = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ok"), result: WorkspaceOpenCommittedResultSchemaZ }).strict(),
+  z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+export const WorkspaceOpenCancelledHostResultSchemaZ = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ok"), result: WorkspaceOpenCancelledResultSchemaZ }).strict(),
+  z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+export type WorkspaceOpenPreparedHostResult = z.infer<
+  typeof WorkspaceOpenPreparedHostResultSchemaZ
+>;
+export type WorkspaceOpenCommittedHostResult = z.infer<
+  typeof WorkspaceOpenCommittedHostResultSchemaZ
+>;
+export type WorkspaceOpenCancelledHostResult = z.infer<
+  typeof WorkspaceOpenCancelledHostResultSchemaZ
+>;

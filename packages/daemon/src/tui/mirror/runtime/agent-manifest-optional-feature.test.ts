@@ -18,10 +18,13 @@ describe("production agent manifest demand boundary", () => {
     expect(graph.files).not.toContain("packages/daemon/src/tui/detect/manifests.ts");
   });
 
-  it("loads definitions only for agent actions and fails without opening a stale flow", () => {
+  it("loads definitions only for provisioning and fails without opening a stale flow", () => {
     expect(source).toContain('await import("../../detect/manifest-loader.ts")');
     expect(source).not.toMatch(/import\s+\{\s*getManifests\s*\}\s+from/u);
-    expect(source.match(/await loadAgentManifests\(\)/gu)).toHaveLength(2);
-    expect(source.match(/if \(!manifests\) return;/gu)).toHaveLength(2);
+    // Existing-agent mutations are daemon-owned and consume the catalog's
+    // harness identity. Only the still-local provisioning picker needs the
+    // optional manifest bundle.
+    expect(source.match(/await loadAgentManifests\(\)/gu)).toHaveLength(1);
+    expect(source.match(/if \(!manifests\) return;/gu)).toHaveLength(1);
   });
 });

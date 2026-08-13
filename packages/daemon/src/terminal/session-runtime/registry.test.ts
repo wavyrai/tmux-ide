@@ -667,13 +667,23 @@ describe("SessionRuntimeRegistry", () => {
       focus: null,
       geometry: "client:second",
     });
-    expect(sims[0]!.written.filter((command) => command.startsWith("refresh-client"))).toEqual([
+    expect(
+      sims[0]!.written.filter(
+        (command) =>
+          command.startsWith("refresh-client -f") || command.startsWith("refresh-client -C"),
+      ),
+    ).toEqual([
       "refresh-client -f !ignore-size",
       "refresh-client -C 120x40",
       "refresh-client -f ignore-size",
       "refresh-client -f !ignore-size",
       "refresh-client -C 132x44",
     ]);
+    expect(
+      sims[0]!.written.filter(
+        (command) => command === "refresh-client -B 'tmux-ide-native-clients::#{session_attached}'",
+      ),
+    ).toHaveLength(1);
     await registry.dispose();
   });
 

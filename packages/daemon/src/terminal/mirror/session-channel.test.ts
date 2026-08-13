@@ -22,7 +22,7 @@ interface Rig {
   pendingSyncs: Array<() => void>;
 }
 
-async function startedRig(): Promise<Rig> {
+async function startedRig(options: { onNativeClientActivity?: () => void } = {}): Promise<Rig> {
   const state = fixtureState();
   const pendingSyncs: Array<() => void> = [];
   let sim: SimulatedChannel | null = null;
@@ -38,6 +38,7 @@ async function startedRig(): Promise<Rig> {
       pendingSyncs.push(callback);
       return () => {};
     },
+    onNativeClientActivity: options.onNativeClientActivity,
   });
   await channel.start();
   await vi.waitFor(() => {
@@ -45,6 +46,27 @@ async function startedRig(): Promise<Rig> {
   });
   return { channel, sim: sim!, state, pendingSyncs };
 }
+
+describe("native client activity", () => {
+  it("subscribes to attached-client changes and proves native presence from inventory", async () => {
+    const onNativeClientActivity = vi.fn();
+    const rig = await startedRig({ onNativeClientActivity });
+    expect(rig.sim.written).toContain(
+      "refresh-client -B 'tmux-ide-native-clients::#{session_attached}'",
+    );
+    rig.sim.feedLines(`%subscription-changed tmux-ide-native-clients $1 @1 0 %1 : 2`);
+    await vi.waitFor(() => {
+      expect(
+        rig.sim.written.some((command) =>
+          command.startsWith(`list-clients -t "${FIXTURE.session}"`),
+        ),
+      ).toBe(true);
+    });
+    rig.sim.reply(["0\t123"]);
+    await vi.waitFor(() => expect(onNativeClientActivity).toHaveBeenCalledTimes(1));
+    await rig.channel.dispose();
+  });
+});
 
 function collect(): { events: MirrorPaneEvent[]; onEvent: (e: MirrorPaneEvent) => void } {
   const events: MirrorPaneEvent[] = [];

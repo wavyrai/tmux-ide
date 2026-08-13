@@ -13,6 +13,9 @@ import {
   type PaneStreamServerFrame,
   type TerminalDeliveryAck,
   type TerminalDeliveryOffer,
+  type SessionRuntimeActivityKind,
+  type SessionRuntimePresenceState,
+  type SessionRuntimeAuthoritySnapshot,
 } from "@tmux-ide/contracts";
 import {
   TerminalDeliveryAssembler,
@@ -158,10 +161,15 @@ export interface PaneStreamSessionListeners {
   readonly onLayout?: (layout: PaneStreamLayoutEvent) => void;
   /** Terminal state of the whole session; null error is a clean end. */
   readonly onEnd: (error: PaneStreamTransportError | null) => void;
+  readonly onAuthoritySnapshot?: (snapshot: SessionRuntimeAuthoritySnapshot) => void;
 }
 
 export interface PaneStreamSessionHandle {
   dispose(): void;
+  updatePresence?(state: SessionRuntimePresenceState): void;
+  noteActivity?(activity: SessionRuntimeActivityKind): void;
+  write?(pane: string, text: string): Promise<boolean>;
+  resize?(cols: number, rows: number): Promise<boolean>;
 }
 
 export type PaneStreamConnectResult =
@@ -171,6 +179,7 @@ export type PaneStreamConnectResult =
 export interface PaneStreamRequest {
   readonly workspaceName: string;
   readonly panes: readonly string[];
+  readonly viewerMode?: "read-only" | "interactive";
 }
 
 export interface PaneStreamTransport {
@@ -280,6 +289,7 @@ interface SafeStreamDescriptor {
   readonly requestId: string;
   readonly expiresAt: number;
   readonly panes: readonly string[];
+  readonly effectiveViewerMode: "read-only" | "interactive";
   readonly redemptionFrame: string;
 }
 
@@ -322,6 +332,7 @@ function validateIssueDescriptor(
     requestId: descriptor.requestId,
     expiresAt: descriptor.expiresAt,
     panes: descriptor.panes,
+    effectiveViewerMode: descriptor.effectiveViewerMode,
     redemptionFrame,
   };
 }
@@ -370,6 +381,14 @@ class PaneStreamSession {
   #endNotified = false;
   #rateWindowStartedAt: number;
   #inboundFrames = 0;
+  #clientSequence = 0;
+  readonly #authorityWaiters = new Map<string, (granted: boolean) => void>();
+  readonly #inputWaiters = new Map<number, () => void>();
+  readonly #viewportWaiters = new Map<number, () => void>();
+  readonly #heldAuthorities = new Set<"input" | "focus" | "geometry">();
+  readonly #authorityClientIds = new Map<"input" | "focus" | "geometry", string>();
+  #writeTail: Promise<void> = Promise.resolve();
+  #queuedWrites = 0;
 
   constructor(options: {
     readonly descriptor: SafeStreamDescriptor;
@@ -435,8 +454,111 @@ class PaneStreamSession {
   }
 
   readonly dispose = (): void => {
+    // A Web document opens one pane-stream transport per visible pane, while
+    // the daemon deliberately ref-counts them under one host-client principal.
+    // Releasing shared authority from one socket would revoke live siblings.
+    // Closing the transport binding owns ref retirement; the daemon releases
+    // the principal only when its last same-host connection closes.
+    this.#heldAuthorities.clear();
+    this.#authorityClientIds.clear();
     this.#retire(null, 1000, "renderer-disposed");
   };
+
+  readonly updatePresence = (state: SessionRuntimePresenceState): void => {
+    this.#sendControl({ type: "presence", generation: this.#descriptor.daemonInstanceId, state });
+  };
+
+  readonly noteActivity = (activity: SessionRuntimeActivityKind): void => {
+    this.#sendControl({
+      type: "activity",
+      generation: this.#descriptor.daemonInstanceId,
+      activity,
+    });
+  };
+
+  readonly write = async (pane: string, text: string): Promise<boolean> => {
+    if (this.#queuedWrites >= 256) return false;
+    this.#queuedWrites += 1;
+    let resolveResult!: (accepted: boolean) => void;
+    const result = new Promise<boolean>((resolve) => {
+      resolveResult = resolve;
+    });
+    this.#writeTail = this.#writeTail
+      .then(async () => resolveResult(await this.#writeNow(pane, text)))
+      .catch(() => resolveResult(false))
+      .finally(() => {
+        this.#queuedWrites -= 1;
+      });
+    return await result;
+  };
+
+  async #writeNow(pane: string, text: string): Promise<boolean> {
+    if (!(await this.#ensureAuthority("input"))) return false;
+    const seq = ++this.#clientSequence;
+    const accepted = new Promise<boolean>((resolve) => {
+      const cancel = this.#schedule(() => {
+        this.#inputWaiters.delete(seq);
+        resolve(false);
+      }, 2_000);
+      this.#inputWaiters.set(seq, () => {
+        cancel();
+        resolve(true);
+      });
+    });
+    this.#sendControl({ type: "input", kind: "text", pane, seq, data: text });
+    this.noteActivity("input");
+    return await accepted;
+  }
+
+  readonly resize = async (cols: number, rows: number): Promise<boolean> => {
+    if (!(await this.#ensureAuthority("geometry"))) return false;
+    const seq = ++this.#clientSequence;
+    const accepted = new Promise<boolean>((resolve) => {
+      const cancel = this.#schedule(() => {
+        this.#viewportWaiters.delete(seq);
+        resolve(false);
+      }, 2_000);
+      this.#viewportWaiters.set(seq, () => {
+        cancel();
+        resolve(true);
+      });
+    });
+    this.#sendControl({ type: "viewport", seq, cols, rows });
+    this.noteActivity("geometry");
+    return await accepted;
+  };
+
+  async #ensureAuthority(authority: "input" | "geometry"): Promise<boolean> {
+    if (this.#phase !== "live" || this.#socket.readyState !== WS_OPEN) return false;
+    if (this.#heldAuthorities.has(authority)) return true;
+    const requestId = globalThis.crypto.randomUUID();
+    const granted = new Promise<boolean>((resolve) => {
+      const cancel = this.#schedule(() => {
+        this.#authorityWaiters.delete(requestId);
+        resolve(false);
+      }, 2_000);
+      this.#authorityWaiters.set(requestId, (ok) => {
+        cancel();
+        resolve(ok);
+      });
+    });
+    this.#sendControl({
+      type: "authority-request",
+      generation: this.#descriptor.daemonInstanceId,
+      requestId,
+      authority,
+    });
+    return await granted;
+  }
+
+  #sendControl(frame: object): void {
+    if (this.#phase !== "live" || this.#socket.readyState !== WS_OPEN) return;
+    try {
+      this.#socket.send(JSON.stringify(frame));
+    } catch {
+      /* transport retirement owns socket failure */
+    }
+  }
 
   readonly #onOpen = (): void => {
     if (this.#phase !== "opening") return;
@@ -587,7 +709,7 @@ class PaneStreamSession {
         this.#phase !== "redeeming" ||
         frame.daemonInstanceId !== this.#descriptor.daemonInstanceId ||
         frame.requestId !== this.#descriptor.requestId ||
-        frame.effectiveViewerMode !== "read-only" ||
+        frame.effectiveViewerMode !== this.#descriptor.effectiveViewerMode ||
         frame.panes.length !== this.#descriptor.panes.length ||
         frame.panes.some((pane, index) => pane !== this.#descriptor.panes[index])
       ) {
@@ -612,8 +734,15 @@ class PaneStreamSession {
       );
       this.#settleConnect({
         status: "connected",
-        session: Object.freeze({ dispose: this.dispose }),
+        session: Object.freeze({
+          dispose: this.dispose,
+          updatePresence: this.updatePresence,
+          noteActivity: this.noteActivity,
+          write: this.write,
+          resize: this.resize,
+        }),
       });
+      if (frame.authority) this.#applyAuthoritySnapshot(frame.authority);
       return;
     }
 
@@ -649,8 +778,41 @@ class PaneStreamSession {
     }
 
     if (frame.type === "input-ack") {
-      // Read-only card: no input frame was ever sent, so an ack is impossible.
-      this.#protocolFailure();
+      const settle = this.#inputWaiters.get(frame.seq);
+      if (!settle) {
+        this.#protocolFailure();
+        return;
+      }
+      this.#inputWaiters.delete(frame.seq);
+      settle();
+      return;
+    }
+    if (frame.type === "authority-snapshot") {
+      this.#applyAuthoritySnapshot(frame.snapshot);
+      return;
+    }
+    if (frame.type === "authority-receipt") {
+      if (frame.status === "granted" && frame.lease) {
+        this.#heldAuthorities.add(frame.authority);
+        this.#authorityClientIds.set(frame.authority, frame.lease.clientId);
+      } else {
+        this.#heldAuthorities.delete(frame.authority);
+        this.#authorityClientIds.delete(frame.authority);
+      }
+      this.#applyAuthoritySnapshot(frame.snapshot);
+      const settle = this.#authorityWaiters.get(frame.requestId);
+      this.#authorityWaiters.delete(frame.requestId);
+      settle?.(frame.status === "granted" && this.#heldAuthorities.has(frame.authority));
+      return;
+    }
+    if (frame.type === "viewport-ack") {
+      const settle = this.#viewportWaiters.get(frame.seq);
+      if (!settle) {
+        this.#protocolFailure();
+        return;
+      }
+      this.#viewportWaiters.delete(frame.seq);
+      settle();
       return;
     }
 
@@ -1002,6 +1164,17 @@ class PaneStreamSession {
     }
   }
 
+  #applyAuthoritySnapshot(snapshot: SessionRuntimeAuthoritySnapshot): void {
+    for (const authority of ["input", "focus", "geometry"] as const) {
+      const knownClientId = this.#authorityClientIds.get(authority);
+      if (!knownClientId || snapshot.owners[authority] !== knownClientId) {
+        this.#heldAuthorities.delete(authority);
+        this.#authorityClientIds.delete(authority);
+      }
+    }
+    this.#listeners.onAuthoritySnapshot?.(snapshot);
+  }
+
   #protocolFailure(): void {
     this.#retire(
       transportError("protocol-error", "The pane-stream WebSocket protocol was invalid.", false),
@@ -1126,7 +1299,7 @@ export function createPaneStreamTransport(
         protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
         workspaceName: request.workspaceName,
         panes: request.panes,
-        viewerMode: "read-only",
+        viewerMode: request.viewerMode ?? "read-only",
         ...(terminalDelivery ? { terminalDelivery } : {}),
       });
       if (

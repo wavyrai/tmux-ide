@@ -35,6 +35,8 @@ import {
 } from "../ws-events.ts";
 import {
   AppWindowMutationResultSchemaZ,
+  FleetAgentMutateResultSchemaZ,
+  WorkspaceSessionCreateResultSchemaZ,
   WorkspaceMultiplexerMutationResultSchemaZ,
   WorkspaceOpenMutationResultSchemaZ,
   WorkspacePaneCreateMutationResultSchemaZ,
@@ -44,6 +46,7 @@ import { daemonActionCommandRegistry } from "./command-definitions.ts";
 import type { WorkspacePaneCreationBackend } from "./handlers/workspace-pane-create.ts";
 import type { WorkspaceMultiplexerBackend } from "./handlers/workspace-multiplexer.ts";
 import type { WorkspaceOpenBackend } from "./handlers/workspace-open.ts";
+import type { FleetLifecycleBackend } from "./handlers/fleet-lifecycle.ts";
 import type { WorkspacePromotionBackend } from "./handlers/workspace-promote.ts";
 import type { AppWindowMutationBackend } from "./handlers/app-window-mutate.ts";
 import { isSemanticMultiplexerActionName } from "./semantic-multiplexer-actions.ts";
@@ -62,6 +65,7 @@ export interface DispatcherDeps {
   /** Instance-owned config-free admission authority; never renderer-authored. */
   workspaceOpenBackend?: WorkspaceOpenBackend;
   workspaceOpenHandoffBackend?: import("./handlers/workspace-open.ts").WorkspaceOpenHandoffBackend;
+  fleetLifecycleBackend?: FleetLifecycleBackend;
   /** Instance-owned session-promotion admission authority; never renderer-authored. */
   workspacePromotionBackend?: WorkspacePromotionBackend;
   /** Instance-owned AppWindow authority; renderer never supplies its envelope. */
@@ -98,6 +102,33 @@ function resourceChangesForAction(
   actionName: ActionName,
   result: unknown,
 ): readonly ResourceChangedBroadcast[] {
+  if (actionName === "workspace.session.create") {
+    const mutation = WorkspaceSessionCreateResultSchemaZ.safeParse(result);
+    if (!mutation.success || mutation.data.outcome === "replayed") return [];
+    return [
+      {
+        workspaceName: null,
+        resource: "workspace-catalog",
+        causeOperationId: mutation.data.operationId,
+      },
+      {
+        workspaceName: null,
+        resource: "fleet-catalog",
+        causeOperationId: mutation.data.operationId,
+      },
+    ];
+  }
+  if (actionName === "fleet.agent.mutate") {
+    const mutation = FleetAgentMutateResultSchemaZ.safeParse(result);
+    if (!mutation.success || mutation.data.outcome === "replayed") return [];
+    return [
+      {
+        workspaceName: null,
+        resource: "fleet-catalog",
+        causeOperationId: mutation.data.operationId,
+      },
+    ];
+  }
   if (actionName === "workspace.app-window.mutate") {
     const mutation = AppWindowMutationResultSchemaZ.safeParse(result);
     if (!mutation.success || mutation.data.outcome !== "applied") return [];
@@ -327,6 +358,7 @@ export function createActionDispatcher(deps: DispatcherDeps = {}) {
       workspacePaneCreationBackend: deps.workspacePaneCreationBackend,
       workspaceOpenBackend: deps.workspaceOpenBackend,
       workspaceOpenHandoffBackend: deps.workspaceOpenHandoffBackend,
+      fleetLifecycleBackend: deps.fleetLifecycleBackend,
       workspacePromotionBackend: deps.workspacePromotionBackend,
       appWindowMutationBackend: deps.appWindowMutationBackend,
       workspaceMultiplexerBackend: deps.workspaceMultiplexerBackend,

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
+    "build:web": "VITE_TMUX_IDE_PRODUCTION_WEB=1 vite build",
     "dev": "vite",
     "e2e": "playwright test --config e2e/playwright.config.ts",
     "lint": "eslint e2e src scripts vite.config.ts vitest.config.ts",

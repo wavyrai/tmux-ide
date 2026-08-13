@@ -81,7 +81,9 @@ const NATIVE_CLIENT_NOTIFICATIONS = new Set([
   "client-detached",
   "client-resized",
   "client-session-changed",
+  "subscription-changed",
 ]);
+const NATIVE_CLIENT_SUBSCRIPTION = "tmux-ide-native-clients";
 
 const DEFAULT_HISTORY_LINES = 2000;
 const SYNC_DEBOUNCE_MS = 40;
@@ -218,6 +220,13 @@ export class SessionChannel {
 
   async start(): Promise<void> {
     await this.io.start();
+    if (this.opts.onNativeClientActivity) {
+      // tmux does not guarantee `%client-attached` is broadcast to an
+      // existing control client. A format subscription is the documented,
+      // event-driven observation seam; its notification only schedules the
+      // coalesced list-clients proof below.
+      this.io.send(`refresh-client -B '${NATIVE_CLIENT_SUBSCRIPTION}::#{session_attached}'`);
+    }
     await this.syncNow();
     await this.firstJoin;
   }
@@ -516,7 +525,15 @@ export class SessionChannel {
   // ── Notifications (channel order is the invariant) ──────────────────────
 
   private onNotify(name: string, rest: string): void {
-    if (NATIVE_CLIENT_NOTIFICATIONS.has(name)) this.probeNativeClientActivity();
+    // Layout changes remain a second honest wake-up: a native resize can arrive
+    // before the once-per-second subscription notification. The inventory
+    // (not either notification) remains the proof.
+    if (
+      this.opts.onNativeClientActivity &&
+      (NATIVE_CLIENT_NOTIFICATIONS.has(name) || name === "layout-change")
+    ) {
+      this.probeNativeClientActivity();
+    }
     if (name === "pause") {
       const runtime = rest.trim().split(/\s+/)[0] ?? "";
       if (!runtime.startsWith("%")) return;

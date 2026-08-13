@@ -46,6 +46,14 @@ export function publicRigStatus(state) {
       : null,
     web: state.web ? { pageUrl: state.web.pageUrl } : null,
     tui: state.tui ?? null,
+    convergence: state.convergence
+      ? {
+          status: state.convergence.status,
+          generation: state.convergence.generation,
+          clientCount: state.convergence.clientCount,
+          timings: state.convergence.timings,
+        }
+      : null,
     artifactDir: state.artifactDir,
     timelinePath: state.timelinePath,
     failure: state.failure ?? null,

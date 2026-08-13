@@ -11,6 +11,7 @@ import { createServer } from "node:net";
 
 import { pollUntil, spawnHarnessChild } from "./harness-process.ts";
 import { rendererRoot, type RunningDaemon } from "./daemon.ts";
+import { startGenerationGateway } from "../../scripts/generation-gateway.ts";
 
 const VITE_READY_TIMEOUT_MS = 60_000;
 
@@ -38,8 +39,20 @@ export function reservePort(): Promise<number> {
   });
 }
 
-export async function startDevServer(daemon: RunningDaemon): Promise<RunningDevServer> {
+export async function startDevServer(
+  daemon: RunningDaemon,
+  options: { readonly daemonInfoPath?: string } = {},
+): Promise<RunningDevServer> {
   const port = await reservePort();
+  const gateway = options.daemonInfoPath
+    ? await startGenerationGateway(options.daemonInfoPath, {
+        protocolVersion: daemon.record.protocolVersion,
+        productVersion: daemon.record.productVersion,
+        ...(daemon.record.environmentId ? { environmentId: daemon.record.environmentId } : {}),
+      })
+    : null;
+  const daemonOrigin = gateway?.origin ?? daemon.baseUrl;
+  const ownerToken = gateway?.bearer ?? daemon.record.authToken;
   const harness = spawnHarnessChild({
     command: "npx",
     args: ["vite", "--host", "127.0.0.1"],
@@ -49,8 +62,8 @@ export async function startDevServer(daemon: RunningDaemon): Promise<RunningDevS
       TMUX_IDE_DEV_SERVER_PORT: String(port),
       VITE_TMUX_IDE_DEV_HOST: "1",
       VITE_TMUX_IDE_DEV_GATEWAY: "1",
-      TMUX_IDE_DEV_DAEMON_URL: daemon.baseUrl,
-      TMUX_IDE_DEV_OWNER_TOKEN: daemon.record.authToken,
+      TMUX_IDE_DEV_DAEMON_URL: daemonOrigin,
+      TMUX_IDE_DEV_OWNER_TOKEN: ownerToken,
     },
   });
 
@@ -81,6 +94,9 @@ export async function startDevServer(daemon: RunningDaemon): Promise<RunningDevS
     pageUrl: `${origin}/?devHost=1`,
     origin,
     output: harness.output,
-    stop: harness.stop,
+    stop: async () => {
+      await harness.stop();
+      await gateway?.stop();
+    },
   };
 }

@@ -161,6 +161,7 @@ const knownCommands = new Set([
   "update",
   "skill-sync",
   "widget",
+  "web",
   "serve",
   "command-center",
   "server",
@@ -232,6 +233,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide popup")} <widget>     ${dim("Open a widget as a floating panel (explorer/changes/config; ⌥e/⌥g/⌥,)")}
   ${cyan("tmux-ide widget")} <markdown|image|card> [file]  ${dim("Render rich live content in the current pane")}
   ${cyan("tmux-ide show")} <file>          ${dim("Show Markdown, images, GIFs, or cards by file type")}
+  ${cyan("tmux-ide web")} [--port N]       ${dim("Serve the packaged Web GUI on loopback (ephemeral port by default)")}
   ${cyan("tmux-ide sidebar-toggle")} [--session S]  ${dim("Toggle the app nav column (⌥b on adopted sessions)")}
   ${cyan("tmux-ide worktree create")} <branch> [--from <ref>] [--dir <path>] [--no-session]
                               ${dim("Add a git worktree (new branch) + open a session in it")}
@@ -1964,6 +1966,39 @@ try {
       process.on("SIGTERM", shutdown);
       process.on("SIGINT", shutdown);
       await new Promise(() => {}); // the server owns the process lifetime
+      break;
+    }
+
+    case "web": {
+      const rawPort = values.port;
+      const webPort = rawPort === undefined ? undefined : Number(rawPort);
+      if (
+        webPort !== undefined &&
+        (!Number.isInteger(webPort) || webPort < 0 || webPort > 65_535)
+      ) {
+        throw new IdeError(`Invalid Web GUI port: ${rawPort}`, {
+          code: "USAGE",
+          exitCode: 1,
+        });
+      }
+      const { startProductionWebServer } =
+        await import("../apps/desktop-renderer/scripts/production-web-server.ts");
+      const web = await startProductionWebServer({
+        staticRoot: resolve(__dirname, "../apps/desktop-renderer/dist"),
+        cliEntryPath: nodeCliPath,
+        cwd: process.cwd(),
+        ...(webPort === undefined ? {} : { port: webPort }),
+      });
+      process.stdout.write(`${web.url}\n`);
+      let closing = false;
+      const shutdown = (): void => {
+        if (closing) return;
+        closing = true;
+        void web.stop().then(() => process.exit(0));
+      };
+      process.once("SIGINT", shutdown);
+      process.once("SIGTERM", shutdown);
+      await new Promise(() => {});
       break;
     }
 

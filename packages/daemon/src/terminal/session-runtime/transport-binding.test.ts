@@ -43,6 +43,47 @@ function sendResult(operationId: string, intent: ReturnType<typeof sendIntent>) 
 }
 
 describe("SessionRuntimeTransportBinder", () => {
+  it("keeps a same-host pane authorized when its sibling pane stream closes", async () => {
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION,
+      createControllerToken: () => "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+    const binder = new SessionRuntimeTransportBinder(registry);
+    const paneA = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000071",
+      session: "alpha",
+      hostClientId: "web:document-a",
+      allowedSourcePaneIds: ["pane.a"],
+      interactive: true,
+      ownsGeometry: true,
+      explicitAuthority: true,
+    });
+    const paneB = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000072",
+      session: "alpha",
+      hostClientId: "web:document-a",
+      allowedSourcePaneIds: ["pane.b"],
+      interactive: true,
+      ownsGeometry: true,
+      explicitAuthority: true,
+    });
+
+    expect(paneB.requestAuthority("input")?.clientId).toBe("web:document-a");
+    expect(paneB.requestAuthority("geometry")?.clientId).toBe("web:document-a");
+    await paneA.close();
+
+    expect(paneB.authoritySnapshot().owners).toMatchObject({
+      input: "web:document-a",
+      geometry: "web:document-a",
+    });
+    paneB.assertController("pane.b");
+    expect(paneB.requestAuthority("geometry")?.clientId).toBe("web:document-a");
+    await paneB.close();
+    await registry.dispose();
+  });
+
   it("lets explicit multi-client authority hand off independently without admission conflicts", async () => {
     const tokens = [
       "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",

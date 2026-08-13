@@ -199,6 +199,8 @@ import { TUI_RENDERER_CADENCE } from "./renderer-cadence.ts";
 import { publishSemanticPaneChange } from "./semantic-pane-publication.ts";
 import { TerminalSessionHandoff } from "./terminal-session-handoff.ts";
 import { PaneScopedTerminalSurface } from "./pane-scoped-terminal-surface.tsx";
+import { OpenTuiWorkspaceHandoffClient } from "./workspace-open-handoff-client.ts";
+import { dispatchTerminalInputWithAuthority } from "./terminal-authority-input.ts";
 import { stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { Dynamic, render, useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
@@ -250,9 +252,11 @@ import {
   type CommandSource,
   type FleetCatalogResourceV1,
   type SemanticFocusTarget,
+  type SessionRuntimeAuthoritySnapshot,
   type WorkspaceChangesCatalogEnvelopeV1,
   type WorkspaceFilesCatalogEnvelopeV1,
   type WorkspaceMissionsEnvelopeV1,
+  type WorkspaceOpenPreparedResult,
 } from "@tmux-ide/contracts";
 import {
   ACCENT,
@@ -435,6 +439,7 @@ import {
 } from "../workspace-ui-state.ts";
 import { PALETTE_KEYCAPS } from "../application-keybindings.ts";
 import { DaemonAuthorityRebindCoordinator } from "./daemon-authority-rebind.ts";
+import { createFleetSession, mutateFleetAgent } from "./fleet-lifecycle-client.ts";
 import type {
   DialogConfirmRequest,
   DialogFeatureSession,
@@ -447,14 +452,7 @@ import { ModalAdmissionCoordinator } from "./modal-admission-coordinator.ts";
 import { OrderedAsyncIntentQueue, RetryableAsyncRequest } from "./deferred-intent-queue.ts";
 import { cancelModalPointerCapture } from "./modal-pointer-capture.ts";
 import { loadAppConfig, loadRawAppConfig, updateAppConfig } from "../../../lib/app-config.ts";
-import {
-  APP_FOCUS_OPTION,
-  APP_JUMP_OPTION,
-  buildAppFocusValue,
-  parseNotificationPrefs,
-} from "../../chrome/notify.ts";
-import { adoptMarkArgv, updaterProbeArgv, updaterSpawnArgv } from "../../chrome/front-door.ts";
-import { APP_HOST_SESSION } from "../hosted.ts";
+import { parseNotificationPrefs } from "../../chrome/notify.ts";
 import { publishTuiInputReady } from "../../readiness.ts";
 import {
   ATTENTION_FLASH_MS,
@@ -489,26 +487,19 @@ import { spans, spanHit, spansFromRight, type Span } from "../spans.ts";
 import {
   AGAIN_ID,
   CUSTOM_KIND_ID,
-  INTERRUPT_TAP_GAP_MS,
-  RESTART_GRACE_MS,
   TEAM_ACTIONS,
   TEAM_NEW_ID,
-  clearAuthorityArgs,
   compatiblePlacement,
   customRecentIndex,
   defaultSpawnPlacement,
-  interruptArgs,
   labelPaneArgs,
   labelWindowArgs,
   lastSpawnName,
   launchCommandFor,
   newAgentItems,
-  paneHostsShell,
   placementActions,
   placementLabel,
-  relaunchArgs,
   resolvePlacement,
-  respawnArgs,
   spawnAgentArgs,
   spawnLabelFor,
   spawnSessionArgs,
@@ -556,10 +547,6 @@ import {
   type Selection,
 } from "../selection.ts";
 import { readCanonicalDaemonInfo } from "../../../lib/canonical-daemon.ts";
-import {
-  parseSessionPaneDescriptors,
-  SESSION_PANE_DESCRIPTOR_FORMAT,
-} from "../../../terminal/protocol/session-descriptor-discovery.ts";
 import {
   createTuiToolResourceAdapter,
   createTuiToolResourceController,
@@ -1505,9 +1492,11 @@ const mountTuiRoot = () => {
       tuiPerfMark("optional-feature-metrics", { ...optionalFeatures.getMetrics() });
     });
     const toolResources = createTuiToolResourceController(createTuiToolResourceAdapter());
+    const workspaceOpenHandoff = new OpenTuiWorkspaceHandoffClient();
     applicationLifecycle.registerCloser("tool-resources", () => {
       tuiPerfMark("application-shell-metrics", { ...toolResources.getMetrics() });
       toolResources.dispose();
+      workspaceOpenHandoff.dispose();
     });
     const execFile = ((...args: unknown[]) => {
       toolResources.noteSubprocessLaunch();
@@ -1519,6 +1508,8 @@ const mountTuiRoot = () => {
     }) as typeof nodeSpawn;
     let terminalToolReadiness!: TerminalToolReadinessGate;
     let terminalSessionHandoff!: TerminalSessionHandoff;
+    let commitPreparedWorkspaceHandoff = (_target: string): boolean => false;
+    let cancelPreparedWorkspaceHandoff = (): void => undefined;
     let reconcileFleetResources = (): void => undefined;
     let latestAuthoritativeAgents: AgentRowInput[] = [];
     let latestApplicationShellAgents: readonly ApplicationShellAgentRowSource[] = [];
@@ -1577,54 +1568,30 @@ const mountTuiRoot = () => {
         : pane.scrollbackDepth;
     let semanticView: SemanticSessionView | null = null;
     reconcileAuthoritativeAgents = () => {
-      latestAuthoritativeAgents = projectAuthoritativeAgentRows({
+      const projected = projectAuthoritativeAgentRows({
         workspaceName: latestApplicationShellWorkspaceName,
         agents: latestApplicationShellAgents,
         paneDescriptors: semanticView?.paneDescriptors() ?? [],
       });
-      reconcileFleetResources();
-    };
-    let localDescriptorRequest = 0;
-    let localDescriptorSignature: string | null = null;
-    let localDescriptorAuthorityGeneration: string | null = null;
-    const refreshLocalRuntimeDescriptors = (
-      sessionName: string,
-      candidate: SemanticSessionView,
-      authorityGeneration: string,
-    ): void => {
-      const semanticIds = candidate
-        .paneDescriptors()
-        .map(({ semanticPaneId }) => semanticPaneId)
-        .filter((paneId): paneId is string => paneId !== null)
-        .sort();
-      const signature = `${authorityGeneration}\0${sessionName}\0${semanticIds.join("\0")}`;
-      if (semanticIds.length === 0 || signature === localDescriptorSignature) return;
-      localDescriptorSignature = signature;
-      const request = ++localDescriptorRequest;
-      execFile(
-        "tmux",
-        ["list-panes", "-s", "-t", `=${sessionName}`, "-F", SESSION_PANE_DESCRIPTOR_FORMAT],
-        { encoding: "utf8" },
-        (error, stdout) => {
-          if (
-            request !== localDescriptorRequest ||
-            semanticView !== candidate ||
-            localDescriptorAuthorityGeneration !== authorityGeneration ||
-            localDescriptorSignature !== signature
-          )
-            return;
-          if (error) {
-            localDescriptorSignature = null;
-            setStatusNote("local tmux identity discovery unavailable");
-            return;
-          }
-          candidate.setRuntimeDescriptors(
-            authorityGeneration,
-            parseSessionPaneDescriptors(stdout.trimEnd().split("\n")),
-          );
-          reconcileAuthoritativeAgents();
-        },
+      const catalogSession = latestFleetCatalog?.sessions.find(
+        (session) => session.label === latestApplicationShellWorkspaceName,
       );
+      latestAuthoritativeAgents = projected.map((agent) => {
+        const matches =
+          catalogSession?.agents.filter(
+            (candidate) =>
+              candidate.harness === agent.kind &&
+              candidate.name === (agent.displayName ?? agent.kind),
+          ) ?? [];
+        if (matches.length !== 1 || !latestFleetCatalog?.catalogRevision) return agent;
+        return {
+          ...agent,
+          fleetSessionId: catalogSession!.sessionId,
+          fleetAgentId: matches[0]!.agentId,
+          fleetCatalogRevision: latestFleetCatalog.catalogRevision,
+        };
+      });
+      reconcileFleetResources();
     };
     let terminalWorkspaceAdapter: OpenTuiTerminalWorkspaceAdapter | null = null;
     let presentedTerminalWorkspaceAdapter: OpenTuiTerminalWorkspaceAdapter | null = null;
@@ -1646,6 +1613,32 @@ const mountTuiRoot = () => {
     });
     const [sessionRuntimeLane, setSessionRuntimeLane] =
       createSignal<OpenTuiSessionRuntimeLane | null>(null);
+    const [sessionAuthoritySnapshot, setSessionAuthoritySnapshot] =
+      createSignal<SessionRuntimeAuthoritySnapshot | null>(null, { equals: false });
+    const runtimeOwnsInput = (): boolean => {
+      sessionAuthoritySnapshot();
+      return sessionRuntimeLane()?.ownsInput === true;
+    };
+    const runtimeOwnsGeometry = (): boolean => {
+      sessionAuthoritySnapshot();
+      return sessionRuntimeLane()?.ownsGeometry === true;
+    };
+    const claimForegroundRuntime = (lane: OpenTuiSessionRuntimeLane): void => {
+      lane.setPresence("foreground");
+      void Promise.all([
+        lane.requestAuthority("input"),
+        lane.requestAuthority("focus"),
+        lane.requestAuthority("geometry"),
+      ]).catch(() => undefined);
+    };
+    const yieldBackgroundRuntime = (lane: OpenTuiSessionRuntimeLane): void => {
+      void Promise.all([
+        lane.releaseAuthority("input"),
+        lane.releaseAuthority("focus"),
+        lane.releaseAuthority("geometry"),
+      ]).catch(() => undefined);
+      lane.setPresence("background");
+    };
     const terminalRenderSourceEpoch = (): number => {
       terminalPresentationEpoch();
       return presentedTerminalWorkspaceAdapter?.renderEpoch ?? 0;
@@ -1682,13 +1675,13 @@ const mountTuiRoot = () => {
     };
     const retireSessionRuntimeLane = () => {
       sessionRuntimeLaneRequest += 1;
-      localDescriptorRequest += 1;
-      localDescriptorSignature = null;
-      localDescriptorAuthorityGeneration = null;
       semanticView?.retireRuntimeAuthority();
       sessionRuntimeLaneKey = null;
-      sessionRuntimeLane()?.close();
+      const retiringLane = sessionRuntimeLane();
+      if (retiringLane) yieldBackgroundRuntime(retiringLane);
+      retiringLane?.close();
       setSessionRuntimeLane(null);
+      setSessionAuthoritySnapshot(null);
       runtimeLaneFitKey = null;
       focusProjection?.dispose();
       focusProjection = null;
@@ -1719,11 +1712,7 @@ const mountTuiRoot = () => {
       const key = `${sessionName}\0${semanticPaneIds.join("\0")}`;
       if (sessionRuntimeLaneKey === key) return;
       const request = ++sessionRuntimeLaneRequest;
-      const authorityGeneration = `${sessionName}\0runtime:${request}`;
       sessionRuntimeLaneKey = key;
-      localDescriptorRequest += 1;
-      localDescriptorSignature = null;
-      localDescriptorAuthorityGeneration = null;
       candidate.retireRuntimeAuthority();
       sessionRuntimeLane()?.close();
       setSessionRuntimeLane(null);
@@ -1750,6 +1739,10 @@ const mountTuiRoot = () => {
                 },
                 publishStructure: markDirty,
               });
+            },
+            onAuthoritySnapshot: (snapshot) => {
+              if (request !== sessionRuntimeLaneRequest) return;
+              setSessionAuthoritySnapshot(snapshot);
             },
             onLayout: (frame) => {
               if (request !== sessionRuntimeLaneRequest || semanticView !== candidate) return;
@@ -1787,9 +1780,6 @@ const mountTuiRoot = () => {
                 request,
                 error: error.message,
               });
-              localDescriptorRequest += 1;
-              localDescriptorSignature = null;
-              localDescriptorAuthorityGeneration = null;
               candidate.retireRuntimeAuthority();
               sessionRuntimeLaneKey = null;
               sessionRuntimeLane()?.close();
@@ -1836,11 +1826,10 @@ const mountTuiRoot = () => {
           ownsGeometry: lane.ownsGeometry,
           generation: lane.generation,
         });
-        localDescriptorAuthorityGeneration = authorityGeneration;
-        candidate.setRuntimeAuthorityGeneration(authorityGeneration);
-        refreshLocalRuntimeDescriptors(sessionName, candidate, authorityGeneration);
         candidate.setSource(lane.source);
         setSessionRuntimeLane(lane);
+        setSessionAuthoritySnapshot(lane.authoritySnapshot);
+        claimForegroundRuntime(lane);
         reconcileAuthoritativeAgents();
         if (!lane.ownsGeometry) terminalToolReadiness.observeGeometry();
         if (
@@ -1856,9 +1845,6 @@ const mountTuiRoot = () => {
           error: error instanceof Error ? error.message : String(error),
         });
         if (request === sessionRuntimeLaneRequest) {
-          localDescriptorRequest += 1;
-          localDescriptorSignature = null;
-          localDescriptorAuthorityGeneration = null;
           candidate.retireRuntimeAuthority();
           sessionRuntimeLaneKey = null;
         }
@@ -1994,13 +1980,6 @@ const mountTuiRoot = () => {
               sessionName,
               descriptorCount: semanticView.paneDescriptors().length,
             });
-            if (localDescriptorAuthorityGeneration) {
-              refreshLocalRuntimeDescriptors(
-                sessionName,
-                semanticView,
-                localDescriptorAuthorityGeneration,
-              );
-            }
             reconcileAuthoritativeAgents();
             void reconcileSessionRuntimeLane(sessionName, semanticView);
           }
@@ -2375,10 +2354,13 @@ const mountTuiRoot = () => {
       if (state.phase === "degraded") setStatusNote(`terminal fit degraded: ${state.reason}`);
     });
     terminalSessionHandoff = new TerminalSessionHandoff({
-      onReady: () => {
+      onReady: (state) => {
         const retired = retiringTerminalWorkspaceAdapter;
-        retiringTerminalWorkspaceAdapter = null;
-        if (retired && retired !== presentedTerminalWorkspaceAdapter) retired.dispose();
+        const ownsRetirement = commitPreparedWorkspaceHandoff(state.target);
+        if (!ownsRetirement) {
+          retiringTerminalWorkspaceAdapter = null;
+          if (retired && retired !== presentedTerminalWorkspaceAdapter) retired.dispose();
+        }
         setStatus("live");
       },
       onState: (state) => {
@@ -2387,6 +2369,7 @@ const mountTuiRoot = () => {
           target: "target" in state ? state.target : null,
           presentedTarget: state.presentedTarget,
         });
+        if (state.phase === "faulted") cancelPreparedWorkspaceHandoff();
       },
     });
     let terminalFramePublicationPending = false;
@@ -2411,7 +2394,21 @@ const mountTuiRoot = () => {
       }
     };
     appRenderer.on("frame", acknowledgeTerminalFramePublication);
-    onCleanup(() => appRenderer.off("frame", acknowledgeTerminalFramePublication));
+    const foregroundTerminalHost = () => {
+      const lane = sessionRuntimeLane();
+      if (lane) claimForegroundRuntime(lane);
+    };
+    const backgroundTerminalHost = () => {
+      const lane = sessionRuntimeLane();
+      if (lane) yieldBackgroundRuntime(lane);
+    };
+    appRenderer.on("focus", foregroundTerminalHost);
+    appRenderer.on("blur", backgroundTerminalHost);
+    onCleanup(() => {
+      appRenderer.off("frame", acknowledgeTerminalFramePublication);
+      appRenderer.off("focus", foregroundTerminalHost);
+      appRenderer.off("blur", backgroundTerminalHost);
+    });
     const clearSelection = () => {
       selecting = null;
       dragAutoScroll = null;
@@ -2476,7 +2473,6 @@ const mountTuiRoot = () => {
       setCanvasPanel(panel);
       touchedWorkspaceActiveView = true;
       hydrateWorkspaceView(view);
-      refreshFocusRecord();
       return true;
     };
     const activateCanvasPanel = (panel: "home" | "terminals"): boolean => {
@@ -2510,7 +2506,6 @@ const mountTuiRoot = () => {
       setWorkbenchFocusZone("canvas");
       touchedWorkspaceDock = true;
       hydrateWorkspaceView(canvasView);
-      refreshFocusRecord();
       return true;
     };
     const activateDockTabContent = (tabId: WorkbenchDockTabId): boolean => {
@@ -2949,7 +2944,7 @@ const mountTuiRoot = () => {
           attentionKind,
           chromeState: projectPaneChromeState({
             keyboardFocused: paneIsFocused(pane.id),
-            inputOwned: sessionRuntimeLane()?.ownsInput === true,
+            inputOwned: runtimeOwnsInput(),
             attention: attentionKind,
             interaction: visibleInteraction ?? null,
             paneLabel: interactionPaneLabel,
@@ -3299,60 +3294,9 @@ const mountTuiRoot = () => {
       attnFlashTimer = setTimeout(() => setAttnFlash(new Set()), ATTENTION_FLASH_MS);
     };
 
-    // ── FOCUS HANDSHAKE (M25.1) ──────────────────────────────────────────────
-    // The app publishes what it is showing — attached?, the mirrored session,
-    // the on-screen pane ids — as a tmux SERVER option the chrome updater's
-    // notify path reads (see notify.ts AppFocus for the option-vs-file
-    // rationale). Refreshed on every fleet poll and on tab switches; the
-    // record's `ts` plus the reader's staleness guard cover an app that died
-    // without cleanup. Hosted attachment is probed (the cockpit keeps running
-    // detached); a plain app IS the user's terminal, so it's attached while
-    // it runs.
-    const writeFocusRecord = (attached: boolean) => {
-      const value = buildAppFocusValue({
-        ts: Date.now(),
-        attached,
-        session: curTarget(),
-        panes: tab() === "terminal" ? panes().map((p) => p.id) : [],
-      });
-      execFile("tmux", ["set-option", "-s", APP_FOCUS_OPTION, value], () => {});
-    };
-    const refreshFocusRecord = () => {
-      if (!HOSTED) {
-        writeFocusRecord(true);
-        return;
-      }
-      execFile("tmux", ["list-clients", "-t", `=${APP_HOST_SESSION}`, "-F", "x"], (err, stdout) =>
-        writeFocusRecord(!err && stdout.trim().length > 0),
-      );
-    };
     onCleanup(() => {
       if (attnFlashTimer) clearTimeout(attnFlashTimer);
-      // Best-effort; the staleness guard is the real cleanup for a hard death.
-      execFile("tmux", ["set-option", "-s", "-u", APP_FOCUS_OPTION], () => {});
     });
-
-    // ── CLICK-TO-JUMP CONSUME (M25.1, hosted only) ───────────────────────────
-    // A macOS banner click stamps @tmux_ide_app_jump on the host session (see
-    // notify.ts notifierExecuteCommand) and switches the user's client to the
-    // cockpit. The fleet poll consumes the stamp: unset it FIRST (never loop),
-    // then open that session's workspace — which also serves the detached
-    // case, where the switch-client had nobody to move but the next attach
-    // should land on the session that needed input.
-    const consumeJumpRequest = () => {
-      if (!HOSTED) return;
-      execFile(
-        "tmux",
-        ["show-option", "-t", APP_HOST_SESSION, "-qv", APP_JUMP_OPTION],
-        (err, stdout) => {
-          const target = err ? "" : stdout.trim();
-          if (!target) return;
-          execFile("tmux", ["set-option", "-t", APP_HOST_SESSION, "-u", APP_JUMP_OPTION], () => {
-            openWorkspace(target, dirForSession(target));
-          });
-        },
-      );
-    };
     const homeItems = createMemo<HomeItem[]>(() => buildHomeItems(projectsData(), recentFolders()));
     /** Whether (gy, x) hits the welcome action row (only while first-run). */
     const welcomeActionHit = (gy: number, x: number): boolean => {
@@ -3676,13 +3620,6 @@ const mountTuiRoot = () => {
               sessionName: name,
               descriptorCount: semanticView.paneDescriptors().length,
             });
-            if (localDescriptorAuthorityGeneration) {
-              refreshLocalRuntimeDescriptors(
-                name,
-                semanticView,
-                localDescriptorAuthorityGeneration,
-              );
-            }
             reconcileAuthoritativeAgents();
           }
           setStatus(`preparing ${name} terminal…`);
@@ -3728,7 +3665,7 @@ const mountTuiRoot = () => {
         return;
       if (lastPin) repinInFlight = { prev: lastPin, at: performance.now() };
       lastPin = next;
-      if (runtimeLane?.ownsGeometry && fitKey) {
+      if (runtimeLane && runtimeOwnsGeometry() && fitKey) {
         const fit = terminalWorkspaceAdapter?.fitViewport(next.cols, next.rows);
         if (!fit) return;
         void fit.then(
@@ -3760,24 +3697,22 @@ const mountTuiRoot = () => {
      *  SAME session we're already mirroring must NOT re-create the control client
      *  — that would drop scrollback and blink the pane. So a same-target switch is
      *  a pure tab flip; only a DIFFERENT session (re)attaches. */
-    const switchTarget = (name: string) => {
+    const switchTarget = (name: string, preparedHandoff = false) => {
+      if (!preparedHandoff) cancelPreparedWorkspaceHandoff();
       clearSelection();
       if (name === curTarget() && semanticView) {
         selectPanel("terminals");
-        refreshFocusRecord();
         return;
       }
       setCurTarget(name);
       selectPanel("terminals");
       attach(name);
-      refreshFocusRecord();
     };
     /** ^g / F1 — show the HOME tab. The semanticView is KEPT ALIVE (it keeps streaming
      *  in the background so a back-switch is instant); the session is untouched. */
     const goHome = () => {
       clearSelection();
       setTab("home");
-      refreshFocusRecord();
     };
 
     // Deferred FilesFeatureSession is the sole Files state/IO/projection owner.
@@ -3961,45 +3896,25 @@ const mountTuiRoot = () => {
       }
     };
     hydrateActiveWorkspaceView = (options = {}) => hydrateWorkspaceView(activeView(), options);
-    const execFileChecked = (file: string, args: string[]): Promise<string> =>
-      new Promise((resolvePromise, rejectPromise) => {
-        execFile(file, args, (error, stdout) => {
-          if (error) rejectPromise(error);
-          else resolvePromise(stdout);
-        });
-      });
     executeMissionDeepLinkIntent = (intent) => {
       if (intent.kind === "terminal") {
-        void execFileChecked("tmux", ["has-session", "-t", `=${intent.session}`])
-          .then(async () => {
-            if (intent.paneId) {
-              const output = await execFileChecked("tmux", [
-                "display-message",
-                "-p",
-                "-t",
-                intent.paneId,
-                "#{session_name}\t#{pane_id}",
-              ]);
-              if (output.trimEnd() !== `${intent.session}\t${intent.paneId}`) {
-                throw new Error("pane does not belong to target session");
-              }
-            }
-          })
-          .then(() => {
-            snapshotActiveWorkspaceView();
-            setCurTarget(intent.session);
-            selectViewForPanel(intent.viewId, "terminals");
-            if (intent.paneId)
-              pendingSemanticFocus = { session: intent.session, paneId: intent.paneId };
-            attach(intent.session);
-          })
-          .catch(() => {
-            setStatusNote(
-              intent.paneId
-                ? `pane unavailable for session ${intent.session}: ${intent.paneId}`
-                : `session unavailable: ${intent.session}`,
-            );
-          });
+        const sessionId = latestFleetCatalog?.sessions.find(
+          (entry) => entry.label === intent.session,
+        )?.sessionId;
+        if (!sessionId) {
+          toolResources.session.refresh("fleet");
+          setStatusNote(`session unavailable from the live daemon: ${intent.session}`);
+          return;
+        }
+        snapshotActiveWorkspaceView();
+        selectViewForPanel(intent.viewId, "terminals");
+        if (intent.paneId)
+          pendingSemanticFocus = { session: intent.session, paneId: intent.paneId };
+        void prepareWorkspaceSwitch(
+          { kind: "live-session", sessionId },
+          intent.session,
+          dirForSession(intent.session),
+        );
         return;
       }
       if (intent.kind === "files") {
@@ -4047,10 +3962,9 @@ const mountTuiRoot = () => {
       return null;
     };
 
-    /** Adopt a session as the workspace context: point the terminal target, the
-     *  file list, and the diff panel at it, then show the Terminal tab. The dir is
-     *  the project dir from the fleet payload (falling back to the cwd). */
-    const openWorkspace = (session: string, dir: string | null) => {
+    /** Commit renderer-local workspace identity only after the daemon-prepared
+     * terminal has produced a coherent native frame. */
+    const applyWorkspaceContext = (session: string, dir: string | null) => {
       editorOpenIntent.retire();
       changesPrepareIntent.retire();
       changesHydrationIntent.retire();
@@ -4073,7 +3987,95 @@ const mountTuiRoot = () => {
         identityKey: `${session}\u0000${wd}`,
       });
       toolResources.session.refresh("files");
-      switchTarget(session);
+      setCurTarget(session);
+      selectPanel("terminals");
+    };
+    let pendingWorkspaceSwitch: {
+      readonly prepared: WorkspaceOpenPreparedResult;
+      readonly session: string;
+      readonly dir: string | null;
+    } | null = null;
+    cancelPreparedWorkspaceHandoff = () => {
+      if (!pendingWorkspaceSwitch) return;
+      pendingWorkspaceSwitch = null;
+      void workspaceOpenHandoff.cancelCurrent();
+    };
+    commitPreparedWorkspaceHandoff = (targetSession) => {
+      const pending = pendingWorkspaceSwitch;
+      if (!pending || pending.session !== targetSession) return false;
+      pendingWorkspaceSwitch = null;
+      const retired = retiringTerminalWorkspaceAdapter;
+      void workspaceOpenHandoff
+        .commit(pending.prepared)
+        .then((committed) => {
+          if (committed) {
+            applyWorkspaceContext(pending.session, pending.dir);
+            retiringTerminalWorkspaceAdapter = null;
+            if (retired && retired !== presentedTerminalWorkspaceAdapter) retired.dispose();
+            return;
+          }
+          // The daemon did not commit the selection. Restore the retained prior
+          // facade rather than exposing a locally-selected candidate.
+          if (retired) {
+            presentedTerminalWorkspaceAdapter = retired;
+            setTerminalPresentationEpoch((epoch) => epoch + 1);
+          }
+          setStatusNote("workspace switch was not committed");
+        })
+        .catch(() => {
+          if (retired) {
+            presentedTerminalWorkspaceAdapter = retired;
+            setTerminalPresentationEpoch((epoch) => epoch + 1);
+          }
+          setStatusNote("workspace switch failed; previous terminal retained");
+        });
+      return true;
+    };
+
+    const prepareWorkspaceSwitch = async (
+      source: Parameters<OpenTuiWorkspaceHandoffClient["prepare"]>[0]["source"],
+      session: string,
+      dir: string | null,
+    ): Promise<void> => {
+      cancelPreparedWorkspaceHandoff();
+      // Prevent deferred editor/diff work from the old workspace publishing
+      // while the daemon prepares its replacement. The prior terminal frame
+      // remains retained until the replacement commits coherently.
+      editorOpenIntent.retire();
+      changesPrepareIntent.retire();
+      changesHydrationIntent.retire();
+      try {
+        const prepared = await workspaceOpenHandoff.prepare({
+          source,
+          previousWorkspaceName: sessionRuntimeLane()?.workspaceName ?? null,
+        });
+        if (!prepared) return;
+        const routedSession =
+          latestWorkspaceCatalog?.workspaces.find(
+            (workspace) => workspace.workspaceName === prepared.workspaceName,
+          )?.sessionName ?? session;
+        pendingWorkspaceSwitch = { prepared, session: routedSession, dir };
+        switchTarget(routedSession, true);
+      } catch (error) {
+        setStatusNote(error instanceof Error ? error.message : "workspace preparation failed");
+      }
+    };
+
+    /** Adopt an existing live session through the daemon's latest-wins prepare
+     * protocol when its opaque fleet identity is available. */
+    const openWorkspace = (session: string, dir: string | null) => {
+      const sessionId = latestFleetCatalog?.sessions.find(
+        (entry) => entry.label === session,
+      )?.sessionId;
+      if (!sessionId) {
+        // Never bypass the daemon's two-phase authority when catalog identity
+        // is briefly stale. Keep the current framebuffer, refresh identity,
+        // and let the user retry once the opaque FleetSessionId is available.
+        toolResources.session.refresh("fleet");
+        setStatusNote(`session ${session} is not yet available from the live daemon`);
+        return;
+      }
+      void prepareWorkspaceSwitch({ kind: "live-session", sessionId }, session, dir);
     };
 
     /** Jump to a fleet agent after the target session's semantic lane is live. */
@@ -4082,49 +4084,26 @@ const mountTuiRoot = () => {
       openWorkspace(a.session, dirForSession(a.session));
     };
 
-    /** FRONT DOOR (M25.1): a session the app itself creates is WATCHED — the
-     *  adopted marker is stamped (inert re: chrome painting; none of adopt's
-     *  status-row/border options are set — see ../chrome/front-door.ts) and
-     *  the background updater is ensured up, probed the way adopt probes. So
-     *  pure app users get blocked/done notifications without ever running
-     *  `adopt`, with zero visible dock changes. Async execFile only (the
-     *  render-loop law); everything best-effort. */
-    const watchCreatedSession = (name: string) => {
-      execFile("tmux", adoptMarkArgv(name), () => {
-        execFile("tmux", updaterProbeArgv(), (probeErr) => {
-          if (probeErr) execFile("tmux", updaterSpawnArgv(), () => {});
-        });
-      });
-    };
-
-    /** Create a detached session named `name` in `dir` and open it as the
-     *  workspace (M21.9 — the home "launch project" / "new session" verbs).
-     *  ASYNC execFile only (the render-loop law); an already-existing session
-     *  simply opens. `TMUX_IDE=1` marks the session the way the cockpit's
-     *  launcher does, so agents inside can detect tmux-ide. */
+    /** Owner-fenced session creation. The daemon validates cwd, mints the
+     * canonical workspace/session route, registers it and owns updater setup. */
     const createSession = (name: string, dir: string | null) => {
-      const wd = dir ?? invokeCwd;
-      execFile("tmux", ["new-session", "-d", "-s", name, "-c", wd], (err) => {
-        if (err && !/duplicate session/.test(err.message)) {
-          setStatusNote(`launch failed: ${name}`);
-          return;
-        }
-        if (!err) {
-          execFile("tmux", ["set-environment", "-t", name, "TMUX_IDE", "1"], () => {});
-          watchCreatedSession(name);
-          setStatusNote(`launched ${name}`);
-        }
-        toolResources.session.refresh("fleet");
-        openWorkspace(name, dir);
-      });
+      void createFleetSession({ displayName: name, cwd: dir ?? invokeCwd })
+        .then((result) => {
+          if (!result) throw new Error("session authority is unavailable");
+          setStatusNote(`${result.outcome === "created" ? "launched" : "opened"} ${name}`);
+          toolResources.session.refresh("fleet");
+          toolResources.session.refresh("catalog");
+          openWorkspace(result.workspaceName, dir);
+        })
+        .catch((error) =>
+          setStatusNote(error instanceof Error ? error.message : `launch failed: ${name}`),
+        );
     };
 
     // ── AGENT LIFECYCLE (M23.1) — spawn / restart / stop / close ────────────
-    // The verbs go to tmux DIRECTLY (async execFile — the render-loop law, and
-    // the target agent may live in a session the semanticView isn't attached to).
-    // The kind list / launch commands / exact argv are pure in
-    // agent-lifecycle.ts; only the dialog flows and the io live here.
-    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+    // Existing pane mutations use opaque, generation/revision-fenced daemon
+    // authority. Spawn remains below until the fleet gains a typed provision
+    // contract; it must not be conflated with destructive lifecycle control.
     const loadAgentManifests = async () => {
       try {
         const { getManifests } = await import("../../detect/manifest-loader.ts");
@@ -4134,29 +4113,49 @@ const mountTuiRoot = () => {
         return null;
       }
     };
-    /** One awaited tmux call; errors are swallowed (a dead pane target is a
-     *  normal race — the fleet poll shows the truth moments later). */
-    const tmuxRun = (args: string[]) =>
-      new Promise<void>((resolve) => execFile("tmux", args, () => resolve()));
-
-    /** Out-of-band stop hygiene: killing an agent ourselves fires NO lifecycle
-     *  hook (a clean exit's SessionEnd stamps idle), so a working/blocked
-     *  authority stamp would keep lying until the 10-minute staleness guard.
-     *  Unset both pane options — the same "no authority" end state. */
-    const clearAgentAuthority = async (paneId: string) => {
-      for (const args of clearAuthorityArgs(paneId)) await tmuxRun(args);
+    type FleetMutationTarget = Pick<
+      AgentRowInput,
+      "paneId" | "kind" | "fleetSessionId" | "fleetAgentId" | "fleetCatalogRevision"
+    >;
+    const mutateAgentViaAuthority = async (
+      agent: FleetMutationTarget,
+      mutation: "stop" | "restart" | "kill",
+    ): Promise<boolean> => {
+      const resolved =
+        agent.fleetSessionId && agent.fleetAgentId && agent.fleetCatalogRevision
+          ? agent
+          : latestAuthoritativeAgents.find(
+              (candidate) =>
+                candidate.paneId === agent.paneId &&
+                candidate.fleetSessionId &&
+                candidate.fleetAgentId &&
+                candidate.fleetCatalogRevision,
+            );
+      if (!resolved?.fleetSessionId || !resolved.fleetAgentId || !resolved.fleetCatalogRevision) {
+        toolResources.session.refresh("fleet");
+        setStatusNote("agent identity is refreshing — retry in a moment");
+        return false;
+      }
+      const result = await mutateFleetAgent({
+        fleetSessionId: resolved.fleetSessionId,
+        agentId: resolved.fleetAgentId,
+        expectedCatalogRevision: resolved.fleetCatalogRevision,
+        mutation,
+      }).catch((error) => {
+        setStatusNote(error instanceof Error ? error.message : "agent mutation failed");
+        return null;
+      });
+      if (!result) return false;
+      toolResources.session.refresh("fleet");
+      return true;
     };
 
-    /** ctrl-c TWICE: TUI agents (claude, codex) treat a single ^c as "clear
-     *  input / cancel turn" and only a quick second one as exit; a plain
-     *  process ignores the repeat. */
-    const interruptAgent = async (paneId: string) => {
-      await tmuxRun(interruptArgs(paneId));
-      await sleep(INTERRUPT_TAP_GAP_MS);
-      await tmuxRun(interruptArgs(paneId));
-    };
-
-    const stopAgentFlow = async (a: Pick<AgentRowInput, "paneId" | "kind">) => {
+    const stopAgentFlow = async (
+      a: Pick<
+        AgentRowInput,
+        "paneId" | "kind" | "fleetSessionId" | "fleetAgentId" | "fleetCatalogRevision"
+      >,
+    ) => {
       const ok = await DialogConfirm.show({
         title: `Stop ${a.kind}?`,
         body: "Interrupts the agent (ctrl-c). The pane and its shell stay open.",
@@ -4165,87 +4164,38 @@ const mountTuiRoot = () => {
         defaultNo: true,
       });
       if (!ok) return;
-      await interruptAgent(a.paneId);
-      await clearAgentAuthority(a.paneId);
-      setStatusNote(`stopped ${a.kind}`);
-      toolResources.session.refresh("fleet");
+      if (await mutateAgentViaAuthority(a, "stop")) setStatusNote(`stopped ${a.kind}`);
     };
 
-    /** The pane's `pane_start_command` (its ROOT: "" = default shell) +
-     *  `pane_current_path` + our `@agent_launch` stamp (M24.1 — the exact argv
-     *  our spawn verb ran, the preferred relaunch source), or null when the
-     *  pane is gone. One async display call (tab-joined; the stamp rides LAST
-     *  and re-joins, so a command containing tabs survives). NOT
-     *  pane_current_command — that is the FOREGROUND process, so a user-typed
-     *  `claude` under zsh would read as `claude` too and be indistinguishable
-     *  from a pane-command agent (measured). */
-    const paneStartAndPath = (paneId: string) =>
-      new Promise<{ start: string; path: string; launch: string } | null>((resolve) =>
-        execFile(
-          "tmux",
-          [
-            "display",
-            "-p",
-            "-t",
-            paneId,
-            "#{pane_start_command}\t#{pane_current_path}\t#{@agent_launch}",
-          ],
-          (err, stdout) => {
-            if (err) return resolve(null);
-            const [start = "", path = "", ...rest] = stdout.trimEnd().split("\t");
-            resolve({ start, path, launch: rest.join("\t") });
-          },
-        ),
-      );
-
-    /** Two restart strategies, picked by what the pane's ROOT process is:
-     *  shell-hosted agents get ctrl-c + relaunch via send-keys (the shell
-     *  survives to type into); when the agent IS the pane's own process (our
-     *  spawn verb's panes), ctrl-c would end the pane — respawn it in place
-     *  instead (same pane id, cwd pinned explicitly). Both paths clear the
-     *  authority stamps. */
-    const restartAgentFlow = async (a: Pick<AgentRowInput, "paneId" | "kind">) => {
-      const manifests = await loadAgentManifests();
-      if (!manifests) return;
-      const live = await paneStartAndPath(a.paneId);
-      if (!live) {
-        setStatusNote("that pane is gone — refreshing");
-        toolResources.session.refresh("fleet");
-        return;
-      }
-      // The @agent_launch stamp (our own spawn's exact argv — flags included)
-      // beats the kind's generic launch command when present (M24.1).
-      const command = live.launch || launchCommandFor(a.kind, manifests);
-      const underShell = paneHostsShell(live.start, manifests);
+    const restartAgentFlow = async (
+      a: Pick<
+        AgentRowInput,
+        "paneId" | "kind" | "fleetSessionId" | "fleetAgentId" | "fleetCatalogRevision"
+      >,
+    ) => {
       const ok = await DialogConfirm.show({
         title: `Restart ${a.kind}?`,
-        body: underShell
-          ? `Stops it with ctrl-c, waits a moment, then runs "${command}" again in the same pane.`
-          : `The agent is this pane's own process, so the pane is relaunched in place running "${command}".`,
+        body: "Restarts the live agent in place through the daemon's fenced fleet authority.",
         yesLabel: "Restart it",
         noLabel: "Cancel",
         defaultNo: true,
       });
       if (!ok) return;
-      if (underShell) {
-        await interruptAgent(a.paneId);
-        await clearAgentAuthority(a.paneId);
-        await sleep(RESTART_GRACE_MS);
-        for (const args of relaunchArgs(a.paneId, command)) await tmuxRun(args);
-      } else {
-        await clearAgentAuthority(a.paneId);
-        await tmuxRun(respawnArgs(a.paneId, command, live.path || null));
-      }
-      setStatusNote(`restarted ${a.kind}`);
-      toolResources.session.refresh("fleet");
+      if (await mutateAgentViaAuthority(a, "restart")) setStatusNote(`restarted ${a.kind}`);
     };
 
     /** The destructive twin of stop: kill the agent's pane. Confirmation is the
      *  caller's job (the menu's armed "confirm: y" state). The pane's options
      *  die with it, so no authority cleanup is needed. */
-    const closeAgentPane = (a: Pick<AgentRowInput, "paneId" | "kind">) => {
-      execFile("tmux", ["kill-pane", "-t", a.paneId], () => toolResources.session.refresh("fleet"));
-      setStatusNote(`closed ${a.kind}'s pane`);
+    const closeAgentPane = (
+      a: Pick<
+        AgentRowInput,
+        "paneId" | "kind" | "fleetSessionId" | "fleetAgentId" | "fleetCatalogRevision"
+      >,
+    ) => {
+      void mutateAgentViaAuthority(a, "kill").then((applied) => {
+        if (applied) setStatusNote(`closed ${a.kind}'s pane`);
+      });
     };
 
     // ── THE SPAWN FLOW (M24.1 — one dialog, defaults everywhere) ─────────────
@@ -4536,7 +4486,8 @@ const mountTuiRoot = () => {
      *  recent. The quick path shared by a recents-row reopen and the picker. */
     const openFolderAt = (dir: string) => {
       recordRecentFolder(dir);
-      createSession(sessionNameFor(basename(dir) || dir), dir);
+      const fallbackSession = sessionNameFor(basename(dir) || dir);
+      void prepareWorkspaceSwitch({ kind: "project", projectDir: dir }, fallbackSession, dir);
     };
 
     /** Write a starter workspace config for `dir` via `tmux-ide detect --write` (async
@@ -4865,11 +4816,19 @@ const mountTuiRoot = () => {
         setStatusNote("terminal runtime is reconnecting");
         return true;
       }
-      if (!replica.lane.ownsInput) {
-        setStatusNote("view only · another client owns terminal input");
+      const result = dispatchTerminalInputWithAuthority({
+        lane: replica.lane,
+        isCurrent: () => semanticReplicaForRuntime(runtimePaneId)?.lane === replica.lane,
+        dispatch: () => {
+          replica.adapter.sendText(replica.semanticPaneId, text);
+        },
+        onRejected: () => setStatusNote("terminal input authority unavailable"),
+      });
+      if (result === "queued") {
+        setStatusNote("requesting terminal input…");
         return true;
       }
-      return replica.adapter.sendText(replica.semanticPaneId, text);
+      return true;
     };
     const sendSemanticTerminalKey = (runtimePaneId: string, key: string): boolean => {
       const replica = semanticReplicaForRuntime(runtimePaneId);
@@ -4878,17 +4837,25 @@ const mountTuiRoot = () => {
         setStatusNote("terminal runtime is reconnecting");
         return true;
       }
-      if (!replica.lane.ownsInput) {
-        setStatusNote("view only · another client owns terminal input");
+      const result = dispatchTerminalInputWithAuthority({
+        lane: replica.lane,
+        isCurrent: () => semanticReplicaForRuntime(runtimePaneId)?.lane === replica.lane,
+        dispatch: () => {
+          replica.adapter.sendKey(replica.semanticPaneId, key);
+        },
+        onRejected: () => setStatusNote("terminal input authority unavailable"),
+      });
+      if (result === "queued") {
+        setStatusNote("requesting terminal input…");
         return true;
       }
-      return replica.adapter.sendKey(replica.semanticPaneId, key);
+      return true;
     };
     const semanticViewportAcknowledged = (): boolean => {
       const lane = sessionRuntimeLane();
       const size = terminalCanvasProjection().tmuxSize;
       return Boolean(
-        lane?.ownsInput &&
+        runtimeOwnsInput() &&
         size &&
         runtimeLaneFitKey === `${lane.connectionIdentity}:${size.cols}x${size.rows}`,
       );
@@ -4902,9 +4869,20 @@ const mountTuiRoot = () => {
         return "unavailable";
       }
       if (!replica.lane.ownsInput) {
-        setStatusNote("view only · another client owns terminal input");
-        return "passive";
+        void Promise.all([
+          replica.lane.requestAuthority("input"),
+          replica.lane.requestAuthority("focus"),
+        ])
+          .then(([input, focus]) => {
+            if (!input || !focus || semanticReplicaForRuntime(runtimePaneId)?.lane !== replica.lane)
+              return;
+            submitSemanticPaneFocus(runtimePaneId);
+          })
+          .catch(() => setStatusNote("terminal focus authority unavailable"));
+        setStatusNote("requesting terminal focus…");
+        return "submitted";
       }
+      replica.lane.noteActivity("focus");
       if (focusProjectionGeneration !== replica.lane.connectionIdentity) {
         focusProjection?.dispose();
         focusProjectionGeneration = replica.lane.connectionIdentity;
@@ -7025,7 +7003,10 @@ const mountTuiRoot = () => {
     const runTabbarButton = (id: string) => {
       if (id === "tab-palette") {
         executePaletteCommand(true, { kind: "mouse", surface: "application-bar" });
-      } else if (id === "tab-context" && contextSession()) switchTarget(contextSession());
+      } else if (id === "tab-context" && contextSession()) {
+        const session = contextSession();
+        openWorkspace(session, dirForSession(session));
+      }
     };
     /** Which chip (if any) column `x` hits on the row for `it`. */
     const homeChipAt = (

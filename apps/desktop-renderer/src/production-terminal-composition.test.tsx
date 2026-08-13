@@ -47,8 +47,8 @@ const xtermHarness = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock("./runtime/host-terminal-transport.ts", () => ({
-  createHostNativeTerminalTransport: terminalHarness.create,
+vi.mock("./runtime/host-pane-stream-native-terminal-transport.ts", () => ({
+  createHostPaneStreamNativeTerminalTransport: terminalHarness.create,
 }));
 
 vi.mock("./terminal/xterm-renderer.ts", () => ({

@@ -55,6 +55,11 @@ import {
 } from "./handlers/workspace-open.ts";
 import { workspacePromoteHandler } from "./handlers/workspace-promote.ts";
 import {
+  fleetAgentMutateHandler,
+  workspaceSessionCreateHandler,
+  type FleetLifecycleBackend,
+} from "./handlers/fleet-lifecycle.ts";
+import {
   workspacePaneKillHandler,
   workspacePaneResizeHandler,
   workspacePaneSelectHandler,
@@ -77,6 +82,7 @@ export interface ActionExecutionContext {
     open(input: WorkspaceOpenMutationRequest): Promise<WorkspaceOpenMutationResult>;
   };
   readonly workspaceOpenHandoffBackend?: WorkspaceOpenHandoffBackend;
+  readonly fleetLifecycleBackend?: FleetLifecycleBackend;
   readonly workspacePromotionBackend?: {
     promote(input: WorkspacePromoteMutationRequest): Promise<WorkspacePromoteMutationResult>;
   };
@@ -198,6 +204,18 @@ export const actionRegistry: RegistryShape = {
     resultSchema: ActionContractsZ["workspace.pane.create"].result,
     handler: (input) => workspacePaneCreateHandler(input),
     handlerWithContext: workspacePaneCreateHandler,
+  },
+  "workspace.session.create": {
+    inputSchema: ActionContractsZ["workspace.session.create"].input,
+    resultSchema: ActionContractsZ["workspace.session.create"].result,
+    handler: (input) => workspaceSessionCreateHandler(input, {}),
+    handlerWithContext: workspaceSessionCreateHandler,
+  },
+  "fleet.agent.mutate": {
+    inputSchema: ActionContractsZ["fleet.agent.mutate"].input,
+    resultSchema: ActionContractsZ["fleet.agent.mutate"].result,
+    handler: (input) => fleetAgentMutateHandler(input, {}),
+    handlerWithContext: fleetAgentMutateHandler,
   },
   "workspace.open": {
     inputSchema: ActionContractsZ["workspace.open"].input,

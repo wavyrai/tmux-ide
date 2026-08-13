@@ -11,6 +11,7 @@ import {
   readJson,
   writeJsonAtomic,
 } from "./product-test-rig-lib.mjs";
+import { sourceArchitectureInventory } from "./architecture-debt-inventory.mjs";
 
 test("coherent readiness never aliases app chrome to terminal readiness", () => {
   assert.deepEqual(coherentReadiness({ chromeMs: 12.4, terminalMs: null }), {
@@ -41,5 +42,44 @@ test("state artifacts are atomic and public status redacts browser authority", (
     assert.doesNotMatch(readFileSync(path, "utf8"), /\.tmp/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("architecture inventory emits grouped, machine-readable deletion reports", () => {
+  const repo = new URL("../", import.meta.url).pathname;
+  const report = sourceArchitectureInventory(repo);
+  assert.equal(report.version, 1);
+  assert.equal("generatedAt" in report, false);
+  assert.deepEqual(Object.keys(report.groups).sort(), ["direct-tmux", "grouped-pty", "v1-catalog"]);
+  for (const group of Object.values(report.groups)) {
+    assert.equal(group.remainingUseCount, group.entries.length);
+    assert.equal(group.remainingFileCount, group.uses.length);
+    assert.equal(group.zeroUse, group.remainingUseCount === 0);
+    assert.deepEqual(
+      [...group.uses].sort((left, right) => left.localeCompare(right)),
+      group.uses,
+    );
+    for (const entry of group.entries) {
+      assert.ok(entry.line > 0);
+      assert.ok(group.uses.includes(entry.file));
+    }
+  }
+});
+
+test("architecture debt cannot grow beyond the checked-in deletion budget", () => {
+  const repo = new URL("../", import.meta.url).pathname;
+  const report = sourceArchitectureInventory(repo);
+  const budget = JSON.parse(
+    readFileSync(new URL("./architecture-debt-budget.json", import.meta.url), "utf8"),
+  );
+  assert.equal(budget.version, 1);
+  for (const [name, groupBudget] of Object.entries(budget.groups)) {
+    const group = report.groups[name];
+    assert.ok(group, `missing inventory group ${name}`);
+    assert.ok(
+      group.remainingUseCount <= groupBudget.maximumUses,
+      `${name} grew from budget ${groupBudget.maximumUses} to ${group.remainingUseCount}`,
+    );
+    assert.equal(groupBudget.targetUses, 0, `${name} must retain an explicit zero-use target`);
   }
 });

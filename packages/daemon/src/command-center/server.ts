@@ -167,6 +167,7 @@ export interface CreateAppOptions {
   workspacePaneCreationBackend?: import("./actions/handlers/workspace-pane-create.ts").WorkspacePaneCreationBackend;
   workspaceOpenBackend?: import("./actions/handlers/workspace-open.ts").WorkspaceOpenBackend;
   workspaceOpenHandoffBackend?: import("./actions/handlers/workspace-open.ts").WorkspaceOpenHandoffBackend;
+  fleetLifecycleBackend?: import("./actions/handlers/fleet-lifecycle.ts").FleetLifecycleBackend;
   workspacePromotionBackend?: import("./actions/handlers/workspace-promote.ts").WorkspacePromotionBackend;
   appWindowMutationBackend?: import("./actions/handlers/app-window-mutate.ts").AppWindowMutationBackend;
   workspaceMultiplexerBackend?: import("./actions/handlers/workspace-multiplexer.ts").WorkspaceMultiplexerBackend;
@@ -288,6 +289,8 @@ function requireAuth(token: string | null, localBypassToken: string | null): Mid
  */
 const GATED_ACTIONS: Readonly<Record<string, "owner" | "owner-and-operation-id">> = {
   "workspace.pane.create": "owner-and-operation-id",
+  "workspace.session.create": "owner-and-operation-id",
+  "fleet.agent.mutate": "owner-and-operation-id",
   "workspace.open": "owner-and-operation-id",
   "workspace.open.prepare": "owner-and-operation-id",
   "workspace.open.commit": "owner-and-operation-id",
@@ -593,6 +596,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       workspacePaneCreationBackend: options.workspacePaneCreationBackend,
       workspaceOpenBackend: options.workspaceOpenBackend,
       workspaceOpenHandoffBackend: options.workspaceOpenHandoffBackend,
+      fleetLifecycleBackend: options.fleetLifecycleBackend,
       workspacePromotionBackend: options.workspacePromotionBackend,
       appWindowMutationBackend: options.appWindowMutationBackend,
       workspaceMultiplexerBackend: options.workspaceMultiplexerBackend,

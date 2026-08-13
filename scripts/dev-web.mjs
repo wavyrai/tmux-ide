@@ -10,6 +10,8 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { ensureCanonicalDaemon } from "../packages/daemon/src/lib/canonical-daemon-bootstrap.ts";
+import { getCanonicalDaemonInfoPath } from "../packages/daemon/src/lib/canonical-daemon.ts";
+import { startGenerationGateway } from "../apps/desktop-renderer/scripts/generation-gateway.ts";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 
@@ -31,6 +33,11 @@ try {
 }
 if (!info.authToken) fail("canonical daemon did not publish an owner credential");
 const port = process.env.TMUX_IDE_DEV_SERVER_PORT || "5173";
+const gateway = await startGenerationGateway(getCanonicalDaemonInfoPath(), {
+  protocolVersion: info.protocolVersion,
+  productVersion: info.productVersion,
+  ...(info.environmentId ? { environmentId: info.environmentId } : {}),
+});
 const child = spawn("pnpm", ["--filter", "@tmux-ide/desktop-renderer", "dev"], {
   cwd: repoRoot,
   env: {
@@ -38,18 +45,22 @@ const child = spawn("pnpm", ["--filter", "@tmux-ide/desktop-renderer", "dev"], {
     TMUX_IDE_DEV_SERVER_PORT: port,
     VITE_TMUX_IDE_DEV_HOST: "1",
     VITE_TMUX_IDE_DEV_GATEWAY: "1",
-    TMUX_IDE_DEV_DAEMON_URL: `http://127.0.0.1:${info.port}`,
-    TMUX_IDE_DEV_OWNER_TOKEN: info.authToken,
+    TMUX_IDE_DEV_DAEMON_URL: gateway.origin,
+    TMUX_IDE_DEV_OWNER_TOKEN: gateway.bearer,
   },
   stdio: "inherit",
 });
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.once(signal, () => child.kill(signal));
+  process.once(signal, () => {
+    child.kill(signal);
+    void gateway.stop();
+  });
 }
 
 child.once("error", (error) => fail(`could not start Vite: ${error.message}`));
-child.once("exit", (code, signal) => {
+child.once("exit", async (code, signal) => {
+  await gateway.stop();
   if (signal) process.kill(process.pid, signal);
   process.exit(code ?? 1);
 });

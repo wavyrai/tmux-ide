@@ -9,8 +9,8 @@ import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
 import {
-  WorkspaceOpenMutationResultSchemaZ,
-  type WorkspaceOpenHostResult,
+  WorkspaceOpenPreparedResultSchemaZ,
+  type WorkspaceOpenPreparedHostResult,
 } from "@tmux-ide/contracts";
 
 function executeFile(executable: string, args: readonly string[]): Promise<string> {
@@ -80,7 +80,7 @@ const defaults: DevelopmentProjectHostDependencies = {
   createOperationId: randomUUID,
 };
 
-const requestFailed = (reason: string): WorkspaceOpenHostResult => ({
+const requestFailed = (reason: string): WorkspaceOpenPreparedHostResult => ({
   status: "error",
   error: { code: "request-failed", reason },
 });
@@ -88,14 +88,14 @@ const requestFailed = (reason: string): WorkspaceOpenHostResult => ({
 export async function openSelectedDevelopmentProject(
   options: DevelopmentProjectHostOptions,
   dependencies: Partial<DevelopmentProjectHostDependencies> = {},
-): Promise<WorkspaceOpenHostResult | null> {
+): Promise<WorkspaceOpenPreparedHostResult | null> {
   const deps = { ...defaults, ...dependencies };
   const projectDir = await deps.selectDirectory();
   if (!projectDir) return null;
 
   const operationId = deps.createOperationId();
   const daemonResponse = await deps.request(
-    `${options.daemonOrigin}/api/v2/action/workspace.open`,
+    `${options.daemonOrigin}/api/v2/action/workspace.open.prepare`,
     {
       method: "POST",
       headers: {
@@ -104,7 +104,7 @@ export async function openSelectedDevelopmentProject(
         "X-Tmux-Ide-Host-Client-Id": options.hostClientId,
         "X-Tmux-Ide-Operation-Id": operationId,
       },
-      body: JSON.stringify({ projectDir }),
+      body: JSON.stringify({ source: { kind: "project", projectDir } }),
     },
   );
   const payload = (await daemonResponse.json().catch(() => null)) as {
@@ -114,7 +114,7 @@ export async function openSelectedDevelopmentProject(
   if (!daemonResponse.ok || payload?.ok !== true) {
     return requestFailed("The selected project could not be opened.");
   }
-  const result = WorkspaceOpenMutationResultSchemaZ.safeParse(payload.result);
+  const result = WorkspaceOpenPreparedResultSchemaZ.safeParse(payload.result);
   if (!result.success || result.data.operationId !== operationId) {
     return requestFailed("The daemon returned an invalid workspace-open result.");
   }

@@ -45,6 +45,11 @@ import {
   WorkspaceFilePreviewEnvelopeV1SchemaZ,
   WorkspaceFilesCatalogEnvelopeV1SchemaZ,
   WorkspaceMissionsEnvelopeV1SchemaZ,
+  WorkspaceOpenCancelledHostResultSchemaZ,
+  WorkspaceOpenCancelledResultSchemaZ,
+  WorkspaceOpenCommittedHostResultSchemaZ,
+  WorkspaceOpenCommittedResultSchemaZ,
+  WorkspaceOpenPreparedHostResultSchemaZ,
   WorkspaceOpenHostResultSchemaZ,
   WorkspacePaneCreateMutationResultSchemaZ,
   WorkspacePromoteMutationResultSchemaZ,
@@ -1021,6 +1026,10 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
   }
 
   async function connectEventSocket(signal: AbortSignal): Promise<RuntimeConnection<true>> {
+    // Every physical socket is generation-bound. After a close the cached
+    // identity is retired, so bootstrap capabilities before minting the next
+    // WebSocket URL and comparing its hello.
+    await loadIdentity(signal);
     const eventHostSession = await loadDevHostSession(null, signal);
     if (signal.aborted || disposed) throw new DevHostFailure(DISPOSED);
     return new Promise((resolve, reject) => {
@@ -1271,6 +1280,13 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           eventCursorSent = false;
         }
         signal.removeEventListener("abort", dispose);
+        // A physical daemon socket closing retires every credential and
+        // generation-bound descriptor minted by that process. Preserve the UI
+        // stores' last coherent frames, but force the connection supervisor's
+        // next attempt through capabilities bootstrap before accepting a new
+        // hello. This fences stale tickets while allowing the stable host
+        // gateway to rebind to the replacement daemon.
+        if (connected) identity = null;
         const reason = new Error(event.reason || `daemon event socket closed (${event.code})`);
         if (connected) closedResolve(reason);
         else {
@@ -1683,6 +1699,56 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           return WorkspaceOpenHostResultSchemaZ.nullable().parse(
             await request("/api/dev/open-project-directory", { method: "POST", body: {} }),
           );
+        } catch (error) {
+          return { status: "error", error: failureOf(error) };
+        }
+      },
+      prepareProjectDirectory: async () => {
+        if (config.transport !== "same-origin-gateway") return null;
+        try {
+          return WorkspaceOpenPreparedHostResultSchemaZ.nullable().parse(
+            await request("/api/dev/open-project-directory", { method: "POST", body: {} }),
+          );
+        } catch (error) {
+          return { status: "error", error: failureOf(error) };
+        }
+      },
+      commitPreparedOpen: async (decision) => {
+        const operationId = crypto.randomUUID();
+        try {
+          const envelope = z
+            .object({ ok: z.literal(true), result: WorkspaceOpenCommittedResultSchemaZ })
+            .parse(
+              await request(
+                "/api/v2/action/workspace.open.commit",
+                { method: "POST", body: decision },
+                { "X-Tmux-Ide-Operation-Id": operationId },
+              ),
+            );
+          return WorkspaceOpenCommittedHostResultSchemaZ.parse({
+            status: "ok",
+            result: envelope.result,
+          });
+        } catch (error) {
+          return { status: "error", error: failureOf(error) };
+        }
+      },
+      cancelPreparedOpen: async (decision) => {
+        const operationId = crypto.randomUUID();
+        try {
+          const envelope = z
+            .object({ ok: z.literal(true), result: WorkspaceOpenCancelledResultSchemaZ })
+            .parse(
+              await request(
+                "/api/v2/action/workspace.open.cancel",
+                { method: "POST", body: decision },
+                { "X-Tmux-Ide-Operation-Id": operationId },
+              ),
+            );
+          return WorkspaceOpenCancelledHostResultSchemaZ.parse({
+            status: "ok",
+            result: envelope.result,
+          });
         } catch (error) {
           return { status: "error", error: failureOf(error) };
         }

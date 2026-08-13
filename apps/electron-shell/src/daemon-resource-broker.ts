@@ -56,6 +56,11 @@ import {
   WorkspaceOpenArgumentsSchemaZ,
   WorkspaceOpenMutationRequestSchemaZ,
   WorkspaceOpenMutationResultSchemaZ,
+  WorkspaceOpenPrepareArgumentsSchemaZ,
+  WorkspaceOpenPreparedResultSchemaZ,
+  WorkspaceOpenDecisionArgumentsSchemaZ,
+  WorkspaceOpenCommittedResultSchemaZ,
+  WorkspaceOpenCancelledResultSchemaZ,
   WorkspacePaneCreateArgumentsSchemaZ,
   WorkspacePaneCreateMutationRequestSchemaZ,
   WorkspacePaneCreateMutationResultSchemaZ,
@@ -83,6 +88,11 @@ import {
   type WorkspacePaneCreateMutationResult,
   type WorkspaceOpenMutationRequest,
   type WorkspaceOpenMutationResult,
+  type WorkspaceOpenPrepareArguments,
+  type WorkspaceOpenPreparedResult,
+  type WorkspaceOpenDecisionArguments,
+  type WorkspaceOpenCommittedResult,
+  type WorkspaceOpenCancelledResult,
   type WorkspacePromoteMutationRequest,
   type WorkspacePromoteMutationResult,
   type DesktopDaemonFetchFleetCatalogResult,
@@ -705,6 +715,53 @@ export class DaemonResourceBroker {
       }
     }
     throw lastError;
+  }
+
+  async prepareWorkspaceOpen(
+    operationId: string,
+    input: WorkspaceOpenPrepareArguments,
+  ): Promise<WorkspaceOpenPreparedResult> {
+    const parsed = WorkspaceOpenPrepareArgumentsSchemaZ.parse(input);
+    const raw = await this.#mutationJson("/api/v2/action/workspace.open.prepare", parsed, {
+      "X-Tmux-Ide-Operation-Id": operationId,
+      "X-Tmux-Ide-Host-Client-Id": this.#brokerHostClientId,
+    });
+    const envelope = z
+      .object({ ok: z.literal(true), result: WorkspaceOpenPreparedResultSchemaZ })
+      .parse(raw);
+    return envelope.result;
+  }
+
+  async commitWorkspaceOpen(
+    operationId: string,
+    input: WorkspaceOpenDecisionArguments,
+  ): Promise<WorkspaceOpenCommittedResult> {
+    const raw = await this.#mutationJson(
+      "/api/v2/action/workspace.open.commit",
+      WorkspaceOpenDecisionArgumentsSchemaZ.parse(input),
+      {
+        "X-Tmux-Ide-Operation-Id": operationId,
+        "X-Tmux-Ide-Host-Client-Id": this.#brokerHostClientId,
+      },
+    );
+    return z.object({ ok: z.literal(true), result: WorkspaceOpenCommittedResultSchemaZ }).parse(raw)
+      .result;
+  }
+
+  async cancelWorkspaceOpen(
+    operationId: string,
+    input: WorkspaceOpenDecisionArguments,
+  ): Promise<WorkspaceOpenCancelledResult> {
+    const raw = await this.#mutationJson(
+      "/api/v2/action/workspace.open.cancel",
+      WorkspaceOpenDecisionArgumentsSchemaZ.parse(input),
+      {
+        "X-Tmux-Ide-Operation-Id": operationId,
+        "X-Tmux-Ide-Host-Client-Id": this.#brokerHostClientId,
+      },
+    );
+    return z.object({ ok: z.literal(true), result: WorkspaceOpenCancelledResultSchemaZ }).parse(raw)
+      .result;
   }
 
   async promoteWorkspace(

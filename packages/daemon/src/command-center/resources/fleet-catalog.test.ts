@@ -6,7 +6,7 @@ import {
   FleetCatalogResourceV1SchemaZ,
   type DaemonInstanceIdentity,
 } from "@tmux-ide/contracts";
-import { projectFleetCatalog } from "./fleet-catalog.ts";
+import { fleetCatalogRevisionForFacts, projectFleetCatalog } from "./fleet-catalog.ts";
 import type { FleetPaneFacts, FleetSessionFacts } from "../discovery.ts";
 
 const DAEMON: DaemonInstanceIdentity = {
@@ -23,6 +23,8 @@ const AGENT_ID = /^agent\.[A-Za-z0-9_-]{16,64}$/u;
 function pane(overrides: Partial<FleetPaneFacts> = {}): FleetPaneFacts {
   return {
     runtimePaneId: "%1",
+    semanticPaneId: null,
+    incarnation: 42_000,
     active: true,
     currentCommand: "zsh",
     currentPath: "/home/dev/project",
@@ -265,6 +267,29 @@ describe("projectFleetCatalog", () => {
     const total = resource.sessions.reduce((sum, s) => sum + s.agents.length, 0);
     expect(total).toBe(FLEET_MAX_TOTAL_AGENTS);
     expect(FleetCatalogResourceV1SchemaZ.safeParse(resource).success).toBe(true);
+  });
+
+  it("revisions ignore enumeration order but fence pane reincarnation", () => {
+    const first = session({
+      name: "alpha",
+      panes: [
+        pane({ runtimePaneId: "%2", semanticPaneId: "pane.two", incarnation: 20 }),
+        pane({ runtimePaneId: "%1", semanticPaneId: "pane.one", incarnation: 10 }),
+      ],
+    });
+    const second = session({
+      name: "beta",
+      panes: [pane({ runtimePaneId: "%3", semanticPaneId: null, incarnation: 30 })],
+    });
+    expect(fleetCatalogRevisionForFacts([first, second])).toBe(
+      fleetCatalogRevisionForFacts([second, { ...first, panes: [...first.panes].reverse() }]),
+    );
+    expect(
+      fleetCatalogRevisionForFacts([
+        { ...first, panes: [{ ...first.panes[0]!, incarnation: 21 }, first.panes[1]!] },
+        second,
+      ]),
+    ).not.toBe(fleetCatalogRevisionForFacts([first, second]));
   });
 
   it("degrades an empty fleet to a valid empty resource", () => {
