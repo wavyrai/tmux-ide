@@ -128,6 +128,47 @@ Component-level OpenTUI snapshots remain the faster inner loop:
 pnpm test:tui-renderer
 ```
 
+## Diagnose a blank or stale TUI
+
+Use the causal diagnostic before debugging a blank terminal surface by eye:
+
+```bash
+pnpm tui:diagnose --target my-session
+```
+
+It starts the compiled TUI against the canonical daemon, waits for the first
+terminal-frame publication, captures the framebuffer, and checks the complete
+path in order:
+
+1. the canonical daemon record agrees with the live `/identity` endpoint;
+2. Catalog V2 pane counts agree with exact tmux session truth;
+3. Application Shell V3 exposes every pane as semantically attachable;
+4. the OpenTUI runtime applies inventory and a non-empty active-window layout;
+5. runtime connection precedes the first terminal-frame publication;
+6. stable text captured from tmux is present in the final OpenTUI framebuffer.
+
+The command prints the first broken boundary and writes a machine-readable
+bundle under `.tasks/tui-diagnostics/latest/`: `report.json`, the rendered
+`frame.txt`, runtime `timeline.jsonl`, `stderr.log`, exact `tmux-truth.json`,
+`catalog.json`, and `application-shell.json`. This distinguishes “the app
+painted chrome” from “terminal cells reached the renderer.”
+
+Use the current build while iterating, or keep the hidden host alive for manual
+inspection:
+
+```bash
+pnpm tui:diagnose --target my-session --no-build
+pnpm tui:diagnose --target my-session --keep
+pnpm tui:testdrive attach
+pnpm tui:testdrive stop
+```
+
+The focused analyzer contract runs without tmux or a daemon:
+
+```bash
+pnpm test:tui-diagnose
+```
+
 ## Optional black-box PTY drive with Pilotty
 
 [Pilotty](https://github.com/msmps/pilotty) is useful as an independent,

@@ -68,6 +68,8 @@
     "test:performance-reference": "node scripts/performance-reference.mjs --require-complete",
     "test:tui-perf": "pnpm test:performance-qualification",
     "tui:testdrive": "node scripts/tui-testdrive.mjs",
+    "tui:diagnose": "node scripts/tui-diagnose.mjs",
+    "test:tui-diagnose": "node --test scripts/tui-diagnose.test.mjs",
     "product:testdrive": "node scripts/product-test-rig.mjs",
     "test:product-test-rig": "node --test scripts/product-test-rig.test.mjs",
     "smoke:desktop": "node apps/electron-shell/scripts/smoke-test.mjs",
