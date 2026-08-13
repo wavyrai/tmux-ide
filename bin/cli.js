@@ -58148,6 +58148,7 @@ import { fileURLToPath as fileURLToPath12 } from "node:url";
 // packages/daemon/src/tui/team/entry.ts
 function resolveEntry(opts) {
   if (opts.teamFlag) return "cockpit";
+  if (opts.bareInvocation) return opts.frontDoor ? "app" : "cockpit";
   if (opts.configKind === "workspace" || opts.configKind === "legacy") return "project";
   if (opts.hasWorkspaceConfig || opts.hasIdeYml) return "project";
   return opts.frontDoor ? "app" : "cockpit";
@@ -64439,6 +64440,7 @@ function printHelp() {
 
 ${bold3("Usage:")}
   ${cyan2("tmux-ide")}                    ${dim3("Open the visual tmux app (workspace config is optional)")}
+  ${cyan2("tmux-ide start")} [path]       ${dim3("Explicitly launch the declarative project layout")}
   ${cyan2("tmux-ide --headless")}         ${dim3("Run the canonical daemon in this foreground process")}
   ${cyan2("tmux-ide <path>")}             ${dim3("Open a configured workspace, or visually manage tmux from that folder")}
   ${cyan2("tmux-ide setup")}              ${dim3("Interactive TUI setup wizard")}
@@ -64692,6 +64694,7 @@ try {
       }
       const configContext = await resolveProjectConfigContext(targetDir);
       const entry = resolveEntry({
+        bareInvocation: firstPositional === void 0,
         configKind: configContext.configKind,
         hasWorkspaceConfig: configContext.hasWorkspaceConfig,
         hasIdeYml: configContext.hasIdeYml,

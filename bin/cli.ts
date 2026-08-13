@@ -201,6 +201,7 @@ function printHelp() {
 
 ${bold("Usage:")}
   ${cyan("tmux-ide")}                    ${dim("Open the visual tmux app (workspace config is optional)")}
+  ${cyan("tmux-ide start")} [path]       ${dim("Explicitly launch the declarative project layout")}
   ${cyan("tmux-ide --headless")}         ${dim("Run the canonical daemon in this foreground process")}
   ${cyan("tmux-ide <path>")}             ${dim("Open a configured workspace, or visually manage tmux from that folder")}
   ${cyan("tmux-ide setup")}              ${dim("Interactive TUI setup wizard")}
@@ -540,6 +541,7 @@ try {
       // cockpit; a present project config still auto-launches the project; otherwise
       // `app.frontDoor` flips the default no-project entry to the unified app.
       const entry = resolveEntry({
+        bareInvocation: firstPositional === undefined,
         configKind: configContext.configKind,
         hasWorkspaceConfig: configContext.hasWorkspaceConfig,
         hasIdeYml: configContext.hasIdeYml,
