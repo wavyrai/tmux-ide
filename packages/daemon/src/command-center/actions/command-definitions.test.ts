@@ -12,9 +12,9 @@ import {
 describe("daemon action command definitions", () => {
   it("registers every existing action id exactly once in contract order", () => {
     expect(daemonActionCommandRegistry.descriptors().map((item) => item.id)).toEqual(ACTION_NAMES);
-    // Twenty-nine: ten multiplexer verbs (including semantic pane send), each its own route so
-    // the action name stays the verb and no request carries a second copy of it.
-    expect(new Set(ACTION_NAMES).size).toBe(29);
+    // Thirty-two: the prior twenty-nine actions plus the generation-fenced
+    // prepare / commit / cancel workspace handoff protocol.
+    expect(new Set(ACTION_NAMES).size).toBe(32);
   });
 
   it("reuses the exact action input/result schemas", () => {

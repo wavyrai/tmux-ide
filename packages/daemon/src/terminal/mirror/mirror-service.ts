@@ -40,6 +40,8 @@ export interface MirrorServiceOptions {
   generateWindowId?: () => string;
   /** Test seam; production uses the daemon-generation process registry. */
   controlModeOwnershipRegistry?: ControlModeOwnershipRegistry;
+  /** Emitted only after an event-triggered list-clients proof of a native client. */
+  onNativeClientActivity?: (session: string) => void;
 }
 
 export interface MirrorSubscribeRequest {
@@ -288,6 +290,7 @@ export class MirrorService {
               for (const listener of this.sessionExitListeners) listener(session);
             }
           },
+          onNativeClientActivity: () => this.opts.onNativeClientActivity?.(session),
         };
         channel = new SessionChannel(channelOptions);
       } catch (cause) {

@@ -76,6 +76,12 @@ const STRUCTURAL_NOTIFICATIONS = new Set([
   "window-renamed",
   "unlinked-window-close",
 ]);
+const NATIVE_CLIENT_NOTIFICATIONS = new Set([
+  "client-attached",
+  "client-detached",
+  "client-resized",
+  "client-session-changed",
+]);
 
 const DEFAULT_HISTORY_LINES = 2000;
 const SYNC_DEBOUNCE_MS = 40;
@@ -91,6 +97,8 @@ export interface SessionChannelOptions {
   scheduleSync?: (callback: () => void, delayMs: number) => () => void;
   /** The channel died underneath us (tmux exited or detached the client). */
   onExit?: () => void;
+  /** Event-driven proof that a non-control tmux client is actively attached. */
+  onNativeClientActivity?: () => void;
 }
 
 export interface PaneSubscriptionHandle {
@@ -160,6 +168,7 @@ export class SessionChannel {
   private geometryParticipating = false;
   private cancelSync: (() => void) | null = null;
   private disposed = false;
+  private nativeClientProbePending = false;
   /** Settles once the FIRST identity join lands (or is proven impossible), so
    *  `start()` returns a channel whose semantic ids are subscribable. */
   private resolveFirstJoin: (() => void) | null = null;
@@ -507,6 +516,7 @@ export class SessionChannel {
   // ── Notifications (channel order is the invariant) ──────────────────────
 
   private onNotify(name: string, rest: string): void {
+    if (NATIVE_CLIENT_NOTIFICATIONS.has(name)) this.probeNativeClientActivity();
     if (name === "pause") {
       const runtime = rest.trim().split(/\s+/)[0] ?? "";
       if (!runtime.startsWith("%")) return;
@@ -582,6 +592,27 @@ export class SessionChannel {
       return;
     }
     if (STRUCTURAL_NOTIFICATIONS.has(name)) this.scheduleSync();
+  }
+
+  private probeNativeClientActivity(): void {
+    if (this.nativeClientProbePending || this.disposed) return;
+    this.nativeClientProbePending = true;
+    void this.io
+      .request(
+        `list-clients -t "${this.opts.session}" -F "#{client_control_mode}\t#{client_activity}"`,
+      )
+      .then((lines) => {
+        // The daemon's own mirror is a control-mode client. Only a tmux-owned
+        // attached client (control mode = 0) is honest evidence for yielding
+        // geometry; notification names alone can include our own lifecycle.
+        if (lines.some((line) => /^0\t\d+$/u.test(line.trim()))) {
+          this.opts.onNativeClientActivity?.();
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        this.nativeClientProbePending = false;
+      });
   }
 
   private emitLayout(windowRuntimeId: string): void {

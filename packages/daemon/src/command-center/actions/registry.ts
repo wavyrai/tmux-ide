@@ -46,7 +46,13 @@ import {
 import { appSetRemoteAccessHandler } from "./handlers/app-set-remote-access.ts";
 import { daemonShutdownHandler } from "./handlers/daemon-shutdown.ts";
 import { workspacePaneCreateHandler } from "./handlers/workspace-pane-create.ts";
-import { workspaceOpenHandler } from "./handlers/workspace-open.ts";
+import {
+  workspaceOpenCancelHandler,
+  workspaceOpenCommitHandler,
+  workspaceOpenHandler,
+  workspaceOpenPrepareHandler,
+  type WorkspaceOpenHandoffBackend,
+} from "./handlers/workspace-open.ts";
 import { workspacePromoteHandler } from "./handlers/workspace-promote.ts";
 import {
   workspacePaneKillHandler,
@@ -70,6 +76,7 @@ export interface ActionExecutionContext {
   readonly workspaceOpenBackend?: {
     open(input: WorkspaceOpenMutationRequest): Promise<WorkspaceOpenMutationResult>;
   };
+  readonly workspaceOpenHandoffBackend?: WorkspaceOpenHandoffBackend;
   readonly workspacePromotionBackend?: {
     promote(input: WorkspacePromoteMutationRequest): Promise<WorkspacePromoteMutationResult>;
   };
@@ -197,6 +204,24 @@ export const actionRegistry: RegistryShape = {
     resultSchema: ActionContractsZ["workspace.open"].result,
     handler: (input) => workspaceOpenHandler(input),
     handlerWithContext: workspaceOpenHandler,
+  },
+  "workspace.open.prepare": {
+    inputSchema: ActionContractsZ["workspace.open.prepare"].input,
+    resultSchema: ActionContractsZ["workspace.open.prepare"].result,
+    handler: (input) => workspaceOpenPrepareHandler(input, {}),
+    handlerWithContext: workspaceOpenPrepareHandler,
+  },
+  "workspace.open.commit": {
+    inputSchema: ActionContractsZ["workspace.open.commit"].input,
+    resultSchema: ActionContractsZ["workspace.open.commit"].result,
+    handler: (input) => workspaceOpenCommitHandler(input, {}),
+    handlerWithContext: workspaceOpenCommitHandler,
+  },
+  "workspace.open.cancel": {
+    inputSchema: ActionContractsZ["workspace.open.cancel"].input,
+    resultSchema: ActionContractsZ["workspace.open.cancel"].result,
+    handler: (input) => workspaceOpenCancelHandler(input, {}),
+    handlerWithContext: workspaceOpenCancelHandler,
   },
   "workspace.promote": {
     inputSchema: ActionContractsZ["workspace.promote"].input,

@@ -61,6 +61,7 @@ export interface DispatcherDeps {
   workspacePaneCreationBackend?: WorkspacePaneCreationBackend;
   /** Instance-owned config-free admission authority; never renderer-authored. */
   workspaceOpenBackend?: WorkspaceOpenBackend;
+  workspaceOpenHandoffBackend?: import("./handlers/workspace-open.ts").WorkspaceOpenHandoffBackend;
   /** Instance-owned session-promotion admission authority; never renderer-authored. */
   workspacePromotionBackend?: WorkspacePromotionBackend;
   /** Instance-owned AppWindow authority; renderer never supplies its envelope. */
@@ -325,6 +326,7 @@ export function createActionDispatcher(deps: DispatcherDeps = {}) {
       ownerAuthorized: ownerAuthorizedContexts.has(c),
       workspacePaneCreationBackend: deps.workspacePaneCreationBackend,
       workspaceOpenBackend: deps.workspaceOpenBackend,
+      workspaceOpenHandoffBackend: deps.workspaceOpenHandoffBackend,
       workspacePromotionBackend: deps.workspacePromotionBackend,
       appWindowMutationBackend: deps.appWindowMutationBackend,
       workspaceMultiplexerBackend: deps.workspaceMultiplexerBackend,

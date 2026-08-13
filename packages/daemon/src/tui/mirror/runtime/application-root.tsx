@@ -198,6 +198,7 @@ import { appendFileSync, readFileSync, openSync, writeSync, closeSync } from "no
 import { TUI_RENDERER_CADENCE } from "./renderer-cadence.ts";
 import { publishSemanticPaneChange } from "./semantic-pane-publication.ts";
 import { TerminalSessionHandoff } from "./terminal-session-handoff.ts";
+import { PaneScopedTerminalSurface } from "./pane-scoped-terminal-surface.tsx";
 import { stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { Dynamic, render, useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
@@ -1629,7 +1630,6 @@ const mountTuiRoot = () => {
     let presentedTerminalWorkspaceAdapter: OpenTuiTerminalWorkspaceAdapter | null = null;
     let retiringTerminalWorkspaceAdapter: OpenTuiTerminalWorkspaceAdapter | null = null;
     let terminalHandoffGeneration = 0;
-    const pendingSemanticPaneVersions = new Map<string, number>();
     const [terminalPresentationEpoch, setTerminalPresentationEpoch] = createSignal(0);
     applicationLifecycle.registerCloser("terminal-workspace", () => {
       terminalWorkspaceAdapter?.dispose();
@@ -1650,9 +1650,6 @@ const mountTuiRoot = () => {
       terminalPresentationEpoch();
       return presentedTerminalWorkspaceAdapter?.renderEpoch ?? 0;
     };
-    const [semanticPaneVersions, setSemanticPaneVersions] = createSignal<
-      ReadonlyMap<string, number>
-    >(new Map(), { equals: false });
     let sessionRuntimeLaneKey: string | null = null;
     let sessionRuntimeLaneRequest = 0;
     let runtimeLaneFitKey: string | null = null;
@@ -1667,6 +1664,7 @@ const mountTuiRoot = () => {
         .find((descriptor) => descriptor.semanticPaneId === semanticPaneId)?.runtimePaneId ??
       semanticPaneId;
     const semanticReplicaForRuntime = (runtimePaneId: string) => {
+      terminalPresentationEpoch();
       const adapter = presentedTerminalWorkspaceAdapter ?? terminalWorkspaceAdapter;
       if (!adapter) return null;
       // SemanticSessionView panes are already keyed by durable ids; sidebar
@@ -1682,7 +1680,7 @@ const mountTuiRoot = () => {
           semanticPaneIdForRuntime(runtimePaneId));
       return { adapter, semanticPaneId };
     };
-    const retireSessionRuntimeLane = (preservePresentation = false) => {
+    const retireSessionRuntimeLane = () => {
       sessionRuntimeLaneRequest += 1;
       localDescriptorRequest += 1;
       localDescriptorSignature = null;
@@ -1697,7 +1695,6 @@ const mountTuiRoot = () => {
       focusProjectionGeneration = null;
       resizeTransaction?.retire();
       semanticPaneCanonicalSize.clear();
-      if (!preservePresentation) setSemanticPaneVersions(new Map());
     };
     const reconcileSessionRuntimeLane = async (
       sessionName: string,
@@ -1731,10 +1728,9 @@ const mountTuiRoot = () => {
       sessionRuntimeLane()?.close();
       setSessionRuntimeLane(null);
       runtimeLaneFitKey = null;
-      if (!presentedTerminalWorkspaceAdapter) setSemanticPaneVersions(new Map());
-      pendingSemanticPaneVersions.clear();
       const candidateAdapter =
         terminalWorkspaceAdapter?.view === candidate ? terminalWorkspaceAdapter : null;
+      const panePublicationGeneration = candidateAdapter?.beginPaneGeneration() ?? 0;
       try {
         tuiPerfMark("runtime-lane-connecting", {
           sessionName,
@@ -1750,15 +1746,7 @@ const mountTuiRoot = () => {
               if (request !== sessionRuntimeLaneRequest) return;
               publishSemanticPaneChange(change, {
                 publishContentVersion: (version) => {
-                  if (candidateAdapter !== presentedTerminalWorkspaceAdapter) {
-                    pendingSemanticPaneVersions.set(paneId, version);
-                    return;
-                  }
-                  setSemanticPaneVersions((current) => {
-                    const next = new Map(current);
-                    next.set(paneId, version);
-                    return next;
-                  });
+                  candidateAdapter?.publishPaneVersion(panePublicationGeneration, paneId, version);
                 },
                 publishStructure: markDirty,
               });
@@ -1808,7 +1796,6 @@ const mountTuiRoot = () => {
               setSessionRuntimeLane(null);
               runtimeLaneFitKey = null;
               terminalSessionHandoff.fault(terminalHandoffGeneration, error.message);
-              if (!presentedTerminalWorkspaceAdapter) setSemanticPaneVersions(new Map());
               markDirty();
               const retry = setTimeout(() => {
                 if (request === sessionRuntimeLaneRequest && semanticView === candidate) {
@@ -3616,7 +3603,7 @@ const mountTuiRoot = () => {
           : null;
       retiringTerminalWorkspaceAdapter =
         presentedTerminalWorkspaceAdapter ?? terminalWorkspaceAdapter;
-      retireSessionRuntimeLane(Boolean(retiringTerminalWorkspaceAdapter));
+      retireSessionRuntimeLane();
       semanticView = null;
       void previousSupervisor?.stop();
       supersededCandidate?.dispose();
@@ -3707,11 +3694,11 @@ const mountTuiRoot = () => {
             terminalHandoffGeneration,
             `connection attempt ${state.attempt}`,
           );
-          retireSessionRuntimeLane(true);
+          retireSessionRuntimeLane();
           setStatus(`reconnecting ${name} (attempt ${state.attempt})…`);
         } else if (state.phase === "failed") {
           terminalSessionHandoff.fault(terminalHandoffGeneration, "tmux connection failed");
-          retireSessionRuntimeLane(true);
+          retireSessionRuntimeLane();
           setStatus("tmux connection failed");
         }
       });
@@ -5617,8 +5604,6 @@ const mountTuiRoot = () => {
           setFocusedPaneId(null);
           presentedTerminalWorkspaceAdapter = terminalWorkspaceAdapter;
           setTerminalPresentationEpoch((epoch) => epoch + 1);
-          setSemanticPaneVersions(new Map(pendingSemanticPaneVersions));
-          pendingSemanticPaneVersions.clear();
           terminalFrameHandoffGeneration = terminalHandoffGeneration;
         } else if (
           handoff.phase === "awaiting-frame" &&
@@ -8563,10 +8548,10 @@ const mountTuiRoot = () => {
                                     backgroundColor={semanticTheme().roles.surfaces.terminal}
                                     overflow="hidden"
                                   >
-                                    <pane_surface
+                                    <PaneScopedTerminalSurface
+                                      adapter={semanticReplica()!.adapter}
                                       width={pane()!.width}
                                       height={pane()!.height}
-                                      mirror={semanticReplica()!.adapter.renderSource}
                                       paneId={semanticReplica()?.semanticPaneId ?? id}
                                       defaultFg={terminalPalette().foreground}
                                       defaultBg={terminalPalette().background}
@@ -8575,13 +8560,6 @@ const mountTuiRoot = () => {
                                       searchCur={terminalPalette().searchCurrent}
                                       scrollOffset={pane()!.snapshot.scrollOffset}
                                       paneFocused={paneIsFocused(id)}
-                                      contentVersion={
-                                        semanticPaneVersions().get(
-                                          semanticReplica()?.semanticPaneId ?? "",
-                                        ) ??
-                                        paneRuntimeFor(id)?.version ??
-                                        0
-                                      }
                                       sourceEpoch={terminalRenderSourceEpoch()}
                                       selRange={mirrorSelForPane(id)}
                                       search={mirrorSearchForPane(pane()!)}

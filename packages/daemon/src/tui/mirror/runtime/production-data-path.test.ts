@@ -116,7 +116,8 @@ describe("production OpenTUI data path", () => {
     expect(source).toContain("terminalSessionHandoff.observeCurrentLayout(");
     expect(source).toContain("terminalSessionHandoff.observeFrameCommitted(");
     expect(source).toContain("presentedTerminalWorkspaceAdapter");
-    expect(source).toContain("retireSessionRuntimeLane(Boolean(retiringTerminalWorkspaceAdapter))");
+    expect(source).toContain("retiringTerminalWorkspaceAdapter =");
+    expect(source).toContain("retireSessionRuntimeLane()");
 
     const attachStart = source.indexOf("const attach = (name: string) =>");
     const attachEnd = source.indexOf("createEffect(() =>", attachStart);
@@ -124,6 +125,15 @@ describe("production OpenTUI data path", () => {
     expect(attachSource).not.toContain("setPanes([])");
     expect(attachSource).not.toContain("scrollOffsets.clear()");
     expect(attachSource).not.toContain("setFocusedPaneId(null)");
+  });
+
+  it("publishes terminal content through pane-scoped owners instead of root map clones", () => {
+    expect(source).toContain("new PaneScopedTerminalOwner()");
+    expect(source).toContain("candidateAdapter?.publishPaneVersion(");
+    expect(source).toContain("<PaneScopedTerminalSurface");
+    expect(source).not.toContain("semanticPaneVersions");
+    expect(source).not.toContain("setSemanticPaneVersions");
+    expect(source).not.toContain("pendingSemanticPaneVersions");
   });
 
   it("owns optional feature admission and metrics inside the application lifecycle", () => {

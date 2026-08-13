@@ -15,6 +15,11 @@ import {
   type PaneStreamRedeemFrame,
   type PaneStreamViewerMode,
   type SessionRuntimeSemanticIntent,
+  type SessionRuntimeActivityKind,
+  type SessionRuntimeAuthorityKind,
+  type SessionRuntimeAuthorityLease,
+  type SessionRuntimeAuthoritySnapshot,
+  type SessionRuntimePresenceState,
   type TerminalDeliveryAck,
   type TerminalDeliveryNack,
   type TerminalDeliveryOffer,
@@ -199,6 +204,14 @@ export interface SessionRuntimePaneStreamTransportBinding {
   readonly generation: string;
   readonly session: string;
   readonly clientId: string;
+  /** Optional only for the bounded v1 transport adapter. New clients require these methods. */
+  authoritySnapshot?(): SessionRuntimeAuthoritySnapshot;
+  activateLegacyAuthority?(geometry: boolean): SessionRuntimeAuthoritySnapshot;
+  onAuthoritySnapshot?(listener: (snapshot: SessionRuntimeAuthoritySnapshot) => void): () => void;
+  updatePresence?(state: SessionRuntimePresenceState): SessionRuntimeAuthoritySnapshot;
+  noteActivity?(activity: SessionRuntimeActivityKind): SessionRuntimeAuthoritySnapshot;
+  requestAuthority?(authority: SessionRuntimeAuthorityKind): SessionRuntimeAuthorityLease | null;
+  releaseAuthority?(authority: SessionRuntimeAuthorityKind): SessionRuntimeAuthoritySnapshot;
   assertController(semanticPaneId?: string): void;
   openTerminalDelivery(
     semanticPaneId: string,
@@ -904,8 +917,13 @@ export class PaneStreamLiveConnection {
   #inputWindowFrames = 0;
   #inputWindowBytes = 0;
   #nextViewportSeq = 1;
+  readonly #requestedAuthorities = new Set<SessionRuntimeAuthorityKind>();
+  #usesExplicitAuthority = false;
+  #legacyInputActivated = false;
+  #legacyGeometryActivated = false;
   #closed = false;
   #releasePromise: Promise<unknown> | null = null;
+  #stopAuthoritySnapshots: (() => void) | null = null;
 
   constructor(options: LiveConnectionOptions) {
     this.#clientId = options.clientId;
@@ -971,6 +989,10 @@ export class PaneStreamLiveConnection {
       this.close(1011, "stream-unavailable");
       return;
     }
+    this.#stopAuthoritySnapshots =
+      this.#sessionRuntimeBinding?.onAuthoritySnapshot?.((snapshot) =>
+        this.#usesExplicitAuthority ? this.#sendAuthoritySnapshot(snapshot) : undefined,
+      ) ?? null;
     void this.#subscribeAll();
   }
 
@@ -988,6 +1010,8 @@ export class PaneStreamLiveConnection {
     this.#socket.off("message", this.#onMessage);
     this.#socket.off("close", this.#onSocketClose);
     this.#socket.off("error", this.#onSocketClose);
+    this.#stopAuthoritySnapshots?.();
+    this.#stopAuthoritySnapshots = null;
     const closures: Promise<unknown>[] = [];
     const layoutSubscription = this.#layoutSubscription;
     this.#layoutSubscription = null;
@@ -1505,6 +1529,59 @@ export class PaneStreamLiveConnection {
       this.#acceptConsumed(frame.pane, frame.seq);
       return;
     }
+    if (frame.type === "presence") {
+      if (!this.#acceptAuthorityGeneration(frame.generation)) return;
+      this.#usesExplicitAuthority = true;
+      if (!this.#sessionRuntimeBinding?.updatePresence) return this.#failProtocol("protocol-error");
+      const snapshot = this.#sessionRuntimeBinding.updatePresence(frame.state);
+      if (!this.#sessionRuntimeBinding.onAuthoritySnapshot) this.#sendAuthoritySnapshot(snapshot);
+      return;
+    }
+    if (frame.type === "activity") {
+      if (!this.#acceptAuthorityGeneration(frame.generation)) return;
+      this.#usesExplicitAuthority = true;
+      if (!this.#sessionRuntimeBinding?.noteActivity) return this.#failProtocol("protocol-error");
+      const snapshot = this.#sessionRuntimeBinding.noteActivity(frame.activity);
+      if (!this.#sessionRuntimeBinding.onAuthoritySnapshot) this.#sendAuthoritySnapshot(snapshot);
+      return;
+    }
+    if (frame.type === "authority-request") {
+      if (!this.#acceptAuthorityGeneration(frame.generation)) return;
+      this.#usesExplicitAuthority = true;
+      if (
+        !this.#sessionRuntimeBinding?.requestAuthority ||
+        !this.#sessionRuntimeBinding.authoritySnapshot
+      )
+        return this.#failProtocol("protocol-error");
+      const lease = this.#sessionRuntimeBinding.requestAuthority(frame.authority);
+      if (lease) this.#requestedAuthorities.add(frame.authority);
+      this.#sendFrame(null, {
+        type: "authority-receipt",
+        requestId: frame.requestId,
+        authority: frame.authority,
+        status: lease ? "granted" : "rejected",
+        lease,
+        snapshot: this.#sessionRuntimeBinding.authoritySnapshot(),
+      });
+      return;
+    }
+    if (frame.type === "authority-release") {
+      if (!this.#acceptAuthorityGeneration(frame.generation)) return;
+      this.#usesExplicitAuthority = true;
+      this.#requestedAuthorities.delete(frame.authority);
+      if (!this.#sessionRuntimeBinding?.releaseAuthority)
+        return this.#failProtocol("protocol-error");
+      const snapshot = this.#sessionRuntimeBinding.releaseAuthority(frame.authority);
+      this.#sendFrame(null, {
+        type: "authority-receipt",
+        requestId: frame.requestId,
+        authority: frame.authority,
+        status: "released",
+        lease: null,
+        snapshot,
+      });
+      return;
+    }
     if (frame.type === "terminal-delivery-ack") {
       const channel = this.#deliveryChannel(frame.ack);
       if (!channel) return;
@@ -1537,11 +1614,13 @@ export class PaneStreamLiveConnection {
       if (
         !this.#descriptor.terminalDelivery ||
         this.#descriptor.viewerMode !== "interactive" ||
-        frame.seq !== this.#nextViewportSeq
+        frame.seq !== this.#nextViewportSeq ||
+        (this.#usesExplicitAuthority && !this.#requestedAuthorities.has("geometry"))
       ) {
         this.#failProtocol("input-rejected");
         return;
       }
+      if (!this.#prepareInputAuthority(true)) return;
       this.#nextViewportSeq += 1;
       try {
         this.#sessionRuntimeBinding!.fitViewport(frame.cols, frame.rows);
@@ -1565,6 +1644,41 @@ export class PaneStreamLiveConnection {
       frame.performanceTraceId,
     );
   };
+
+  #acceptAuthorityGeneration(generation: string): boolean {
+    if (!this.#sessionRuntimeBinding || generation !== this.#sessionRuntimeBinding.generation) {
+      this.#failProtocol("protocol-error");
+      return false;
+    }
+    return true;
+  }
+
+  #sendAuthoritySnapshot(snapshot: SessionRuntimeAuthoritySnapshot): void {
+    this.#sendFrame(null, { type: "authority-snapshot", snapshot });
+  }
+
+  #prepareInputAuthority(geometry: boolean): boolean {
+    if (this.#usesExplicitAuthority) {
+      const required = geometry ? "geometry" : "input";
+      if (!this.#requestedAuthorities.has(required)) {
+        this.#failProtocol("input-rejected");
+        return false;
+      }
+      return true;
+    }
+    if (this.#legacyInputActivated && (!geometry || this.#legacyGeometryActivated)) return true;
+    try {
+      // A genuine old binding acquired at admission and has no adapter method.
+      // New deferred bindings activate only here, before explicit mode exists.
+      this.#sessionRuntimeBinding?.activateLegacyAuthority?.(geometry);
+      this.#legacyInputActivated = true;
+      if (geometry) this.#legacyGeometryActivated = true;
+      return true;
+    } catch {
+      this.#failProtocol("input-rejected");
+      return false;
+    }
+  }
 
   #deliveryChannel(address: {
     workspaceName: string;
@@ -1595,6 +1709,7 @@ export class PaneStreamLiveConnection {
       this.#failProtocol("input-rejected");
       return;
     }
+    if (!this.#prepareInputAuthority(false)) return;
     void this.#sessionRuntimeBinding!.submitIntent(operationId, intent)
       .then((result) => {
         this.#sendFrame(null, {
@@ -1691,6 +1806,7 @@ export class PaneStreamLiveConnection {
       this.#failProtocol("input-rejected");
       return;
     }
+    if (!this.#prepareInputAuthority(false)) return;
     this.#inputWindowFrames += 1;
     this.#inputWindowBytes += frameBytes;
     channel.nextInputSeq += 1;

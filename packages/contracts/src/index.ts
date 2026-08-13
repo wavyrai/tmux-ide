@@ -54,6 +54,7 @@ export * from "./workspace-changes-view.ts";
 export * from "./workspace-missions-resource.ts";
 export * from "./workspace-pane-creation.ts";
 export * from "./workspace-open.ts";
+export * from "./workspace-open-handoff.ts";
 export * from "./workspace-promotion.ts";
 export * from "./workspace-multiplexer.ts";
 export * from "./interaction-receipts.ts";

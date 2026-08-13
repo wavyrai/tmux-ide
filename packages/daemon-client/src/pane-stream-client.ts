@@ -9,6 +9,11 @@ import {
   type PaneStreamIssueDescriptor,
   type PaneStreamLeaseRequest,
   type PaneStreamServerFrame,
+  type SessionRuntimeActivityKind,
+  type SessionRuntimeAuthorityKind,
+  type SessionRuntimeAuthorityLease,
+  type SessionRuntimeAuthoritySnapshot,
+  type SessionRuntimePresenceState,
   type SessionRuntimeSemanticIntent,
   type TerminalDeliveryAck,
   type TerminalDeliveryNack,
@@ -49,6 +54,7 @@ export interface OpenPaneStreamClientOptions {
   readonly onTerminalDelivery: (pane: string, message: TerminalDeliveryServerMessage) => void;
   readonly onLayout?: (frame: Extract<PaneStreamServerFrame, { type: "layout" }>) => void;
   readonly onInputAck?: (pane: string, sequence: number) => void;
+  readonly onAuthoritySnapshot?: (snapshot: SessionRuntimeAuthoritySnapshot) => void;
   readonly onFault?: (error: Error) => void;
 }
 
@@ -61,6 +67,7 @@ export type ConnectIssuedPaneStreamRuntimeClientOptions = Pick<
   | "onTerminalDelivery"
   | "onLayout"
   | "onInputAck"
+  | "onAuthoritySnapshot"
   | "onFault"
 >;
 
@@ -68,6 +75,13 @@ export interface PaneStreamRuntimeClient {
   readonly daemonInstanceId: string;
   readonly requestId: string;
   readonly effectiveViewerMode: PaneStreamIssueDescriptor["effectiveViewerMode"];
+  readonly authoritySnapshot: SessionRuntimeAuthoritySnapshot | null;
+  setPresence(state: SessionRuntimePresenceState): void;
+  noteActivity(activity: SessionRuntimeActivityKind): void;
+  requestAuthority(
+    authority: SessionRuntimeAuthorityKind,
+  ): Promise<SessionRuntimeAuthorityLease | null>;
+  releaseAuthority(authority: SessionRuntimeAuthorityKind): Promise<void>;
   sendText(pane: string, text: string, performanceTraceId?: string): void;
   sendKey(pane: string, key: string, performanceTraceId?: string): void;
   fitViewport(cols: number, rows: number): Promise<void>;
@@ -168,6 +182,16 @@ export async function connectIssuedPaneStreamRuntimeClient(
     socket.send(JSON.stringify(PaneStreamClientFrameSchemaZ.parse(frame)));
   };
   const inputSequences = new Map<string, number>();
+  let authoritySnapshot: SessionRuntimeAuthoritySnapshot | null = null;
+  const pendingAuthorities = new Map<
+    string,
+    {
+      authority: SessionRuntimeAuthorityKind;
+      resolve(lease: SessionRuntimeAuthorityLease | null): void;
+      reject(error: Error): void;
+      timer: NodeJS.Timeout;
+    }
+  >();
   let viewportSequence = 0;
   const pendingViewports = new Map<
     number,
@@ -198,6 +222,74 @@ export async function connectIssuedPaneStreamRuntimeClient(
       pending.reject(error);
     }
     pendingIntents.clear();
+    for (const pending of pendingAuthorities.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    pendingAuthorities.clear();
+  };
+  const applyAuthoritySnapshot = (snapshot: SessionRuntimeAuthoritySnapshot): void => {
+    if (snapshot.generation !== descriptor.daemonInstanceId) {
+      fail("Pane-stream authority snapshot belonged to another daemon generation");
+      return;
+    }
+    authoritySnapshot = snapshot;
+    options.onAuthoritySnapshot?.(snapshot);
+  };
+  const requestAuthority = (
+    authority: SessionRuntimeAuthorityKind,
+  ): Promise<SessionRuntimeAuthorityLease | null> => {
+    const requestId = crypto.randomUUID();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pendingAuthorities.delete(requestId);
+        reject(
+          new PaneStreamOperationError("operation-timeout", `${authority} authority timed out`),
+        );
+      }, 2_000);
+      timer.unref?.();
+      pendingAuthorities.set(requestId, { authority, resolve, reject, timer });
+      try {
+        send({
+          type: "authority-request",
+          generation: descriptor.daemonInstanceId,
+          requestId,
+          authority,
+        });
+      } catch (error) {
+        clearTimeout(timer);
+        pendingAuthorities.delete(requestId);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  };
+  const releaseAuthority = (authority: SessionRuntimeAuthorityKind): Promise<void> => {
+    const requestId = crypto.randomUUID();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pendingAuthorities.delete(requestId);
+        reject(new PaneStreamOperationError("operation-timeout", `${authority} release timed out`));
+      }, 2_000);
+      timer.unref?.();
+      pendingAuthorities.set(requestId, {
+        authority,
+        resolve: () => resolve(),
+        reject,
+        timer,
+      });
+      try {
+        send({
+          type: "authority-release",
+          generation: descriptor.daemonInstanceId,
+          requestId,
+          authority,
+        });
+      } catch (error) {
+        clearTimeout(timer);
+        pendingAuthorities.delete(requestId);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
   };
   const sendInput = (
     pane: string,
@@ -252,8 +344,53 @@ export async function connectIssuedPaneStreamRuntimeClient(
         return fail("Pane-stream peer identity did not match the issued capability");
       }
       verified = true;
+      if (frame.authority) applyAuthoritySnapshot(frame.authority);
       clearTimeout(readyTimer);
+      send({
+        type: "presence",
+        generation: descriptor.daemonInstanceId,
+        state: "foreground",
+      });
+      if (descriptor.effectiveViewerMode === "interactive") {
+        void requestAuthority("input")
+          .then((lease) => {
+            if (!lease) {
+              throw new PaneStreamOperationError(
+                "authority-rejected",
+                "The pane-stream daemon rejected initial input authority",
+              );
+            }
+            resolveReady(client);
+          })
+          .catch((error: unknown) => {
+            if (closed) return;
+            closed = true;
+            const cause =
+              error instanceof Error
+                ? error
+                : new PaneStreamOperationError("authority-rejected", String(error));
+            rejectPending(cause);
+            rejectReady(cause);
+            options.onFault?.(cause);
+            socket.close(1008, "authority-rejected");
+          });
+        return;
+      }
       resolveReady(client);
+      return;
+    }
+    if (frame.type === "authority-snapshot") {
+      applyAuthoritySnapshot(frame.snapshot);
+      return;
+    }
+    if (frame.type === "authority-receipt") {
+      const pending = pendingAuthorities.get(frame.requestId);
+      if (!pending || pending.authority !== frame.authority)
+        return fail("Pane-stream authority receipt did not match a request");
+      clearTimeout(pending.timer);
+      pendingAuthorities.delete(frame.requestId);
+      applyAuthoritySnapshot(frame.snapshot);
+      pending.resolve(frame.status === "granted" ? frame.lease : null);
       return;
     }
     if (frame.type === "viewport-ack") {
@@ -294,12 +431,28 @@ export async function connectIssuedPaneStreamRuntimeClient(
     daemonInstanceId: descriptor.daemonInstanceId,
     requestId: descriptor.requestId,
     effectiveViewerMode: descriptor.effectiveViewerMode,
+    get authoritySnapshot() {
+      return authoritySnapshot;
+    },
+    setPresence: (state) =>
+      send({ type: "presence", generation: descriptor.daemonInstanceId, state }),
+    noteActivity: (activity) =>
+      send({ type: "activity", generation: descriptor.daemonInstanceId, activity }),
+    requestAuthority,
+    releaseAuthority,
     sendText: (pane, text, performanceTraceId) => sendInput(pane, "text", text, performanceTraceId),
     sendKey: (pane, key, performanceTraceId) => sendInput(pane, "key", key, performanceTraceId),
-    fitViewport: (cols, rows) => {
+    fitViewport: async (cols, rows) => {
+      const geometry = await requestAuthority("geometry");
+      if (!geometry) {
+        throw new PaneStreamOperationError(
+          "authority-rejected",
+          "Viewport fit requires foreground geometry authority",
+        );
+      }
       viewportSequence += 1;
       const seq = viewportSequence;
-      return new Promise<void>((resolve, reject) => {
+      await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
           pendingViewports.delete(seq);
           reject(new PaneStreamOperationError("operation-timeout", "Viewport fit timed out"));
@@ -375,6 +528,8 @@ function routeFrame(
       return;
     case "semantic-intent-ack":
     case "viewport-ack":
+    case "authority-snapshot":
+    case "authority-receipt":
       fail(`Pane-stream received an unhandled ${frame.type}`);
       return;
     case "input-ack":

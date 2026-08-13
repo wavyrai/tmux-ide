@@ -3,6 +3,11 @@ import {
   TerminalAttachmentSemanticPaneIdSchemaZ,
   SessionRuntimeSemanticIntentSchemaZ,
   type SessionRuntimeControllerLease,
+  type SessionRuntimeActivityKind,
+  type SessionRuntimeAuthorityKind,
+  type SessionRuntimeAuthorityLease,
+  type SessionRuntimeAuthoritySnapshot,
+  type SessionRuntimePresenceState,
   type SessionRuntimeSemanticIntent,
   type TerminalDeliveryOffer,
   type TerminalDeliveryServerMessage,
@@ -34,6 +39,8 @@ export interface SessionRuntimeTransportBindingRequest {
   readonly allowedSourcePaneIds: readonly string[];
   readonly interactive: boolean;
   readonly ownsGeometry?: boolean;
+  /** New authority protocol; skips implicit v1 controller acquisition. */
+  readonly explicitAuthority?: boolean;
 }
 
 interface SharedClient {
@@ -85,10 +92,12 @@ export class SessionRuntimeTransportBinding {
   readonly #allowedSourcePaneIds: ReadonlySet<string>;
   readonly #contributedSourcePaneIds: ReadonlySet<string>;
   readonly #interactive: boolean;
+  readonly #explicitAuthority: boolean;
   readonly #deliverySubscriberId: string;
   readonly #transportLeaseId: string;
   readonly #intentHandles = new Map<string, SessionRuntimeExecutionHandle>();
   #baseHandle: SessionRuntimeExecutionHandle | null;
+  #baseHandleLease: SessionRuntimeControllerLease | null;
   #closed = false;
 
   constructor(
@@ -99,19 +108,22 @@ export class SessionRuntimeTransportBinding {
     interactive: boolean,
     transportLeaseId: string,
     ownsGeometry: boolean,
+    explicitAuthority: boolean,
   ) {
     this.#binder = binder;
     this.#shared = shared;
     this.#allowedSourcePaneIds = new Set(allowedSourcePaneIds);
     this.#contributedSourcePaneIds = new Set(contributedSourcePaneIds);
     this.#interactive = interactive;
+    this.#explicitAuthority = explicitAuthority;
     // Host identity is the stable controller principal. Delivery identity is a
     // transport lifecycle: overlapping reconnects need independent ACK,
     // visibility and close namespaces even when they share controller power.
     this.#deliverySubscriberId = `${shared.consumer.clientId}:${transportLeaseId}`;
     this.#transportLeaseId = transportLeaseId;
     if (interactive && ownsGeometry) shared.geometryTransportLeaseIds.push(transportLeaseId);
-    if (interactive && shared.lease === null) shared.lease = shared.consumer.acquireController();
+    if (interactive && !explicitAuthority && shared.lease === null)
+      shared.lease = shared.consumer.acquireController();
     const lease = shared.lease;
     this.#baseHandle =
       interactive && lease
@@ -131,6 +143,7 @@ export class SessionRuntimeTransportBinding {
             },
           )
         : null;
+    this.#baseHandleLease = this.#baseHandle ? lease : null;
   }
 
   get generation(): string {
@@ -143,10 +156,78 @@ export class SessionRuntimeTransportBinding {
     return this.#shared.consumer.clientId;
   }
 
+  authoritySnapshot(): SessionRuntimeAuthoritySnapshot {
+    this.#assertOpen();
+    return this.#shared.consumer.authoritySnapshot();
+  }
+
+  /** One-way first-use adapter for clients that predate authority frames. */
+  activateLegacyAuthority(geometry: boolean): SessionRuntimeAuthoritySnapshot {
+    this.#assertOpen();
+    if (!this.#interactive) return this.#shared.consumer.authoritySnapshot();
+    this.#binder.activateController(this.#shared);
+    this.#shared.consumer.acquireAuthority("input");
+    if (geometry) this.#shared.consumer.acquireAuthority("geometry");
+    return this.#shared.consumer.authoritySnapshot();
+  }
+
+  onAuthoritySnapshot(listener: (snapshot: SessionRuntimeAuthoritySnapshot) => void): () => void {
+    this.#assertOpen();
+    return this.#shared.consumer.onAuthoritySnapshot(listener);
+  }
+
+  updatePresence(state: SessionRuntimePresenceState): SessionRuntimeAuthoritySnapshot {
+    this.#assertOpen();
+    this.#shared.consumer.updatePresence(state);
+    return this.#shared.consumer.authoritySnapshot();
+  }
+
+  noteActivity(activity: SessionRuntimeActivityKind): SessionRuntimeAuthoritySnapshot {
+    this.#assertOpen();
+    this.#shared.consumer.noteActivity(activity);
+    return this.#shared.consumer.authoritySnapshot();
+  }
+
+  requestAuthority(authority: SessionRuntimeAuthorityKind): SessionRuntimeAuthorityLease | null {
+    this.#assertOpen();
+    if (!this.#interactive && authority !== "focus") return null;
+    if (authority === "input" && this.#explicitAuthority) {
+      // Synchronize the historical execution controller first. Its internal
+      // handoff updates the arbiter without publishing; the explicit claim
+      // below then publishes one snapshot where UI owner and executor agree.
+      this.#binder.activateController(this.#shared);
+    }
+    const lease = this.#shared.consumer.acquireAuthority(authority);
+    return lease;
+  }
+
+  releaseAuthority(authority: SessionRuntimeAuthorityKind): SessionRuntimeAuthoritySnapshot {
+    this.#assertOpen();
+    if (authority === "input" && this.#explicitAuthority && this.#shared.lease) {
+      const controller = this.#shared.lease;
+      this.#shared.lease = null;
+      this.#baseHandle = null;
+      this.#baseHandleLease = null;
+      this.#intentHandles.clear();
+      this.#shared.consumer.releaseController(controller);
+      // releaseController uses the compatibility adapter directly; publish
+      // the now-empty input authority snapshot through the typed seam.
+      this.#shared.consumer.releaseAuthority("input");
+    } else {
+      this.#shared.consumer.releaseAuthority(authority);
+    }
+    return this.#shared.consumer.authoritySnapshot();
+  }
+
   assertController(semanticPaneId?: string): void {
     this.#assertOpen();
-    if (!this.#interactive || !this.#baseHandle)
-      throw new Error("Passive transport has no input authority");
+    if (!this.#interactive) throw new Error("Passive transport has no input authority");
+    this.#ensureBaseHandle();
+    if (!this.#baseHandle)
+      throw new SessionRuntimeControllerLeaseError(
+        "stale-controller-lease",
+        "The interactive transport does not own input authority.",
+      );
     this.#binder.registry.assertExecutionHandle(this.#baseHandle, semanticPaneId);
   }
 
@@ -262,6 +343,7 @@ export class SessionRuntimeTransportBinding {
     this.#shared.lease = null;
     target.#shared.lease = handedOff;
     this.#baseHandle = null;
+    this.#baseHandleLease = null;
     this.#intentHandles.clear();
     target.#intentHandles.clear();
     target.#baseHandle = target.#binder.registry.createExecutionHandle(
@@ -270,6 +352,7 @@ export class SessionRuntimeTransportBinding {
       [...target.#allowedSourcePaneIds],
       (semanticPaneId) => assertLiveScope(target.#shared, handedOff, semanticPaneId),
     );
+    target.#baseHandleLease = handedOff;
   }
 
   async close(): Promise<void> {
@@ -292,6 +375,33 @@ export class SessionRuntimeTransportBinding {
 
   #assertOpen(): void {
     if (this.#closed) throw new Error("SessionRuntime transport binding is closed");
+  }
+
+  #ensureBaseHandle(): void {
+    if (this.#baseHandle && this.#baseHandleLease === this.#shared.lease) return;
+    if (this.#baseHandle) {
+      this.#baseHandle = null;
+      this.#baseHandleLease = null;
+      this.#intentHandles.clear();
+    }
+    if (!this.#interactive || !this.#shared.lease) return;
+    const lease = this.#shared.lease;
+    this.#baseHandle = this.#binder.registry.createExecutionHandle(
+      this.#shared.consumer,
+      lease,
+      [...this.#allowedSourcePaneIds],
+      (semanticPaneId) => {
+        this.#assertIntentScopeOpen();
+        assertLiveScope(this.#shared, lease, semanticPaneId);
+        if (semanticPaneId !== undefined && !this.#allowedSourcePaneIds.has(semanticPaneId)) {
+          throw new SessionRuntimeControllerLeaseError(
+            "invalid-source-pane-binding",
+            "The pane is outside this transport binding's live grant.",
+          );
+        }
+      },
+    );
+    this.#baseHandleLease = lease;
   }
 
   #assertIntentScopeOpen(): void {
@@ -360,6 +470,7 @@ export class SessionRuntimeTransportBinder {
         request.interactive,
         request.transportLeaseId,
         request.ownsGeometry === true,
+        request.explicitAuthority === true,
       );
     } catch (error) {
       void this.release(shared, new Set(contributedSourcePaneIds), request.interactive);
@@ -394,6 +505,23 @@ export class SessionRuntimeTransportBinder {
     return sourceSemanticPaneId === undefined
       ? base
       : this.registry.bindExecutionSource(base, sourceSemanticPaneId);
+  }
+
+  activateController(target: SharedClient): void {
+    if (target.lease) return;
+    const current = [...this.#clients.values()].find(
+      (candidate) =>
+        candidate !== target &&
+        candidate.consumer.session === target.consumer.session &&
+        candidate.lease,
+    );
+    if (current?.lease) {
+      const previous = current.lease;
+      current.lease = null;
+      target.lease = current.consumer.handoffController(previous, target.consumer.clientId);
+      return;
+    }
+    target.lease = target.consumer.acquireController();
   }
 
   async release(

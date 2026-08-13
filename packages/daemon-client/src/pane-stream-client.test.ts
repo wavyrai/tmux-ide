@@ -95,6 +95,69 @@ function options(socket: FakeSocket, overrides: Record<string, unknown> = {}) {
 }
 
 describe("semantic pane-stream runtime client", () => {
+  it("does not expose an interactive client before initial input authority is granted", async () => {
+    const socket = new FakeSocket();
+    let authorityRequest: Record<string, unknown> | null = null;
+    socket.onSend = (frame) => {
+      if (frame.type === "redeem") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "ready",
+            protocolVersion: 1,
+            daemonInstanceId: INSTANCE,
+            requestId: REQUEST,
+            panes: ["pane.editor"],
+            effectiveViewerMode: "interactive",
+          }),
+        );
+      }
+      if (frame.type === "authority-request") authorityRequest = frame;
+    };
+    let resolved = false;
+    const opening = openPaneStreamRuntimeClient(options(socket)).then((client) => {
+      resolved = true;
+      return client;
+    });
+    await Bun.sleep(0);
+    expect(resolved).toBe(false);
+    expect(authorityRequest).toMatchObject({ type: "authority-request", authority: "input" });
+    socket.message({
+      type: "authority-receipt",
+      requestId: authorityRequest!.requestId,
+      authority: "input",
+      status: "granted",
+      lease: {
+        generation: INSTANCE,
+        session: "alpha",
+        clientId: "tui:one",
+        authority: "input",
+        token: "55555555-5555-4555-8555-555555555555",
+        revision: 2,
+      },
+      snapshot: {
+        generation: INSTANCE,
+        session: "alpha",
+        revision: 2,
+        nativeGeometryYieldUntilMs: 0,
+        owners: { input: "tui:one", focus: null, geometry: null },
+        clients: [
+          {
+            clientId: "tui:one",
+            surface: "opentui",
+            state: "foreground",
+            connectedRevision: 1,
+            activityRevision: 2,
+          },
+        ],
+      },
+    });
+    const client = await opening;
+    expect(client.authoritySnapshot?.owners.input).toBe("tui:one");
+    client.sendText("pane.editor", "immediate");
+    expect(socket.sent.at(-1)).toMatchObject({ type: "input", data: "immediate" });
+    client.close();
+  });
+
   it("resolves only after verified ready and decodes delivery chunks", async () => {
     const socket = new FakeSocket();
     socket.onSend = (frame) => {
@@ -119,6 +182,43 @@ describe("semantic pane-stream runtime client", () => {
             rows: frame.rows,
           }),
         );
+      } else if (frame.type === "authority-request") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "authority-receipt",
+            requestId: frame.requestId,
+            authority: frame.authority,
+            status: "granted",
+            lease: {
+              generation: INSTANCE,
+              session: "alpha",
+              clientId: "tui:one",
+              authority: frame.authority,
+              token: "55555555-5555-4555-8555-555555555555",
+              revision: 1,
+            },
+            snapshot: {
+              generation: INSTANCE,
+              session: "alpha",
+              revision: 1,
+              nativeGeometryYieldUntilMs: 0,
+              owners: {
+                input: "tui:one",
+                focus: null,
+                geometry: frame.authority === "geometry" ? "tui:one" : null,
+              },
+              clients: [
+                {
+                  clientId: "tui:one",
+                  surface: "opentui",
+                  state: "foreground",
+                  connectedRevision: 1,
+                  activityRevision: 1,
+                },
+              ],
+            },
+          }),
+        );
       } else if (frame.type === "semantic-intent") {
         queueMicrotask(() =>
           socket.message({
@@ -139,7 +239,14 @@ describe("semantic pane-stream runtime client", () => {
       workspaceName: "alpha",
       semanticPaneId: "pane.editor",
     });
-    expect(socket.sent.slice(-4)).toEqual([
+    await fitted;
+    expect(
+      socket.sent
+        .filter((frame) =>
+          ["input", "viewport", "semantic-intent"].includes((frame as { type: string }).type),
+        )
+        .slice(-4),
+    ).toEqual([
       {
         type: "input",
         kind: "text",
@@ -149,7 +256,6 @@ describe("semantic pane-stream runtime client", () => {
         performanceTraceId: "00000000-0000-4000-8000-000000000099",
       },
       { type: "input", kind: "key", pane: "pane.editor", seq: 2, data: "Enter" },
-      { type: "viewport", seq: 1, cols: 132, rows: 44 },
       {
         type: "semantic-intent",
         operationId: OPERATION,
@@ -159,6 +265,7 @@ describe("semantic pane-stream runtime client", () => {
           semanticPaneId: "pane.editor",
         },
       },
+      { type: "viewport", seq: 1, cols: 132, rows: 44 },
     ]);
     socket.message({
       type: "terminal-delivery-chunk",
@@ -171,7 +278,6 @@ describe("semantic pane-stream runtime client", () => {
       "pane.editor",
       expect.objectContaining({ bytes: new Uint8Array([104, 105]) }),
     );
-    await fitted;
     expect(await submitted).toBeNull();
     client.close();
   });
@@ -200,17 +306,51 @@ describe("semantic pane-stream runtime client", () => {
   it("fails closed when legacy raw-v1 output appears on a semantic lane", async () => {
     const socket = new FakeSocket();
     socket.onSend = (frame) => {
-      if (frame.type !== "redeem") return;
-      queueMicrotask(() =>
-        socket.message({
-          type: "ready",
-          protocolVersion: 1,
-          daemonInstanceId: INSTANCE,
-          requestId: REQUEST,
-          panes: ["pane.editor"],
-          effectiveViewerMode: "interactive",
-        }),
-      );
+      if (frame.type === "redeem") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "ready",
+            protocolVersion: 1,
+            daemonInstanceId: INSTANCE,
+            requestId: REQUEST,
+            panes: ["pane.editor"],
+            effectiveViewerMode: "interactive",
+          }),
+        );
+      } else if (frame.type === "authority-request") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "authority-receipt",
+            requestId: frame.requestId,
+            authority: "input",
+            status: "granted",
+            lease: {
+              generation: INSTANCE,
+              session: "alpha",
+              clientId: "tui:one",
+              authority: "input",
+              token: "55555555-5555-4555-8555-555555555555",
+              revision: 2,
+            },
+            snapshot: {
+              generation: INSTANCE,
+              session: "alpha",
+              revision: 2,
+              nativeGeometryYieldUntilMs: 0,
+              owners: { input: "tui:one", focus: null, geometry: null },
+              clients: [
+                {
+                  clientId: "tui:one",
+                  surface: "opentui",
+                  state: "foreground",
+                  connectedRevision: 1,
+                  activityRevision: 2,
+                },
+              ],
+            },
+          }),
+        );
+      }
     };
     const onFault = mock();
     await openPaneStreamRuntimeClient(options(socket, { onFault }));

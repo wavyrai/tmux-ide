@@ -53,6 +53,7 @@ export class PaneStreamRuntime {
           interactive: descriptor.viewerMode === "interactive",
           ownsGeometry:
             descriptor.viewerMode === "interactive" && descriptor.terminalDelivery !== null,
+          explicitAuthority: true,
         });
       },
     });

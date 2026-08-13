@@ -53,6 +53,7 @@ export class SessionRuntimeAuthorityArbiter {
   readonly #scheduler: SessionRuntimeScheduler;
   readonly #nativeGeometryHysteresisMs: number;
   readonly #onGeometryAuthorityChanged: (clientId: string | null) => void;
+  readonly #onNativeGeometryYieldExpired: () => void;
   readonly #clients = new Map<string, ClientState>();
   readonly #owners = new Map<SessionRuntimeAuthorityKind, OwnerState>();
   #revision = 0;
@@ -67,12 +68,14 @@ export class SessionRuntimeAuthorityArbiter {
     readonly scheduler: SessionRuntimeScheduler;
     readonly nativeGeometryHysteresisMs?: number;
     readonly onGeometryAuthorityChanged?: (clientId: string | null) => void;
+    readonly onNativeGeometryYieldExpired?: () => void;
   }) {
     this.generation = SessionRuntimeGenerationSchemaZ.parse(options.generation);
     this.session = options.session;
     this.#scheduler = options.scheduler;
     this.#nativeGeometryHysteresisMs = options.nativeGeometryHysteresisMs ?? 180;
     this.#onGeometryAuthorityChanged = options.onGeometryAuthorityChanged ?? (() => {});
+    this.#onNativeGeometryYieldExpired = options.onNativeGeometryYieldExpired ?? (() => {});
   }
 
   connect(clientIdInput: string, surface: string): void {
@@ -96,13 +99,18 @@ export class SessionRuntimeAuthorityArbiter {
     if (client.state === state) return;
     client.state = state;
     client.activityRevision = this.#advance();
-    for (const authority of AUTHORITY_KINDS) this.#elect(authority);
+    // Input is an execution capability, not ambient UI focus. It changes only
+    // through an explicit claim/release/handoff so the legacy execution lease
+    // can be synchronized atomically by SessionRuntimeTransportBinder.
+    for (const authority of AUTHORITY_KINDS) {
+      if (authority !== "input") this.#elect(authority);
+    }
   }
 
   noteActivity(clientId: string, activity: SessionRuntimeActivityKind): void {
     const client = this.#client(clientId);
     client.activityRevision = this.#advance();
-    const authority = activity === "heartbeat" ? null : activity;
+    const authority = activity === "heartbeat" || activity === "input" ? null : activity;
     if (authority && client.claims.has(authority)) this.#elect(authority, clientId);
   }
 
@@ -121,13 +129,21 @@ export class SessionRuntimeAuthorityArbiter {
     const client = this.#client(clientId);
     if (!client.claims.delete(authority)) return;
     this.#advance();
-    this.#elect(authority);
+    if (authority === "input") {
+      if (this.#owners.get("input")?.clientId === clientId) this.#setOwner("input", null);
+    } else {
+      this.#elect(authority);
+    }
   }
 
   disconnect(clientId: string): void {
+    const ownedInput = this.#owners.get("input")?.clientId === clientId;
     if (!this.#clients.delete(clientId)) return;
     this.#advance();
-    for (const authority of AUTHORITY_KINDS) this.#elect(authority);
+    if (ownedInput) this.#setOwner("input", null);
+    for (const authority of AUTHORITY_KINDS) {
+      if (authority !== "input") this.#elect(authority);
+    }
   }
 
   /** Native terminal activity always wins by making tmux-ide size-passive. */
@@ -147,6 +163,7 @@ export class SessionRuntimeAuthorityArbiter {
       this.#nativeYieldTimer = null;
       if (this.#scheduler.nowMs() < this.#nativeGeometryYieldUntilMs) return;
       this.#elect("geometry");
+      this.#onNativeGeometryYieldExpired();
     }, this.#nativeGeometryHysteresisMs);
   }
 

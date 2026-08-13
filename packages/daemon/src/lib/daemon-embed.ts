@@ -50,6 +50,7 @@ import {
 import { discoverLiveSessionSummaries } from "../command-center/discovery.ts";
 import { WorkspaceOpenAuthority } from "./workspace-open.ts";
 import { WorkspacePromotionAuthority } from "./workspace-promotion.ts";
+import { WorkspaceOpenHandoffCoordinator } from "./workspace-open-handoff.ts";
 import { AppWindowMutationAuthority } from "./app-window-mutation.ts";
 import { WorkspaceMultiplexerAuthority } from "./workspace-multiplexer-verbs.ts";
 import { TmuxExternalInteractionObserver } from "./tmux-external-interaction-observer.ts";
@@ -691,6 +692,7 @@ async function startHttpServer({
   daemonIdentity,
   workspacePaneCreationBackend,
   workspaceOpenBackend,
+  workspaceOpenHandoffBackend,
   workspacePromotionBackend,
   appWindowMutationBackend,
   workspaceMultiplexerBackend,
@@ -715,6 +717,7 @@ async function startHttpServer({
   };
   workspacePaneCreationBackend: WorkspacePaneCreationAuthority;
   workspaceOpenBackend: WorkspaceOpenAuthority;
+  workspaceOpenHandoffBackend: WorkspaceOpenHandoffCoordinator;
   workspacePromotionBackend: WorkspacePromotionAuthority;
   appWindowMutationBackend: AppWindowMutationAuthority;
   workspaceMultiplexerBackend: WorkspaceMultiplexerBackend;
@@ -763,6 +766,7 @@ async function startHttpServer({
     daemonIdentity,
     workspacePaneCreationBackend,
     workspaceOpenBackend,
+    workspaceOpenHandoffBackend,
     workspacePromotionBackend,
     appWindowMutationBackend,
     // Named in this function's parameter type since the verb routes shipped and
@@ -1021,6 +1025,7 @@ export async function startEmbeddedDaemon(
       tmuxAuthority,
     });
     let sessionRuntimeRegistry: SessionRuntimeRegistry | null = null;
+    let workspaceOpenHandoff: WorkspaceOpenHandoffCoordinator | null = null;
     const externalInteractionObserver = new TmuxExternalInteractionObserver({
       daemonInstanceId: instanceId,
       internalReadOwnerToken: localBypassToken,
@@ -1092,6 +1097,68 @@ export async function startEmbeddedDaemon(
             : {}),
         },
       });
+      workspaceOpenHandoff = new WorkspaceOpenHandoffCoordinator({
+        daemonInstanceId: instanceId,
+        openProject: (request) => workspaceOpen.open(request),
+        adoptLiveSession: (request) => workspacePromotion.promote(request),
+        prewarmPrevious: async (workspaceName) => {
+          const record = workspaceRegistry.get(workspaceName);
+          if (record) await sessionRuntimeRegistry!.prewarmSession(record.sessionName);
+        },
+        prepareRuntime: async (workspaceName, preferredPaneId) => {
+          const record = workspaceRegistry.get(workspaceName);
+          if (!record)
+            throw new Error(
+              `Prepared workspace ${workspaceName} is absent from the durable catalog.`,
+            );
+          await sessionRuntimeRegistry!.prewarmSession(record.sessionName);
+          const consumer = sessionRuntimeRegistry!.connect(
+            record.sessionName,
+            "workspace-open-prepare",
+            `workspace-open-${randomUUID()}`,
+          );
+          try {
+            const layout = await consumer.describe();
+            if (layout.degraded || layout.panes.length === 0) {
+              throw new Error(
+                `Prepared workspace ${workspaceName} has no coherent semantic layout.`,
+              );
+            }
+            const semanticPaneId =
+              layout.panes.find((pane) => pane.semanticPaneId === preferredPaneId)
+                ?.semanticPaneId ??
+              layout.panes.find((pane) => pane.active)?.semanticPaneId ??
+              layout.panes[0]!.semanticPaneId;
+            const seed = await new Promise<{
+              revision: number;
+              stateHash: string;
+            }>((resolve, reject) => {
+              const timeout = setTimeout(
+                () => reject(new Error("Timed out awaiting first coherent terminal seed.")),
+                5_000,
+              );
+              void consumer
+                .subscribeReplica(semanticPaneId, (update) => {
+                  if (update.type !== "terminal.seed") return;
+                  clearTimeout(timeout);
+                  resolve({ revision: update.revision, stateHash: update.stateHash });
+                })
+                .catch((error: unknown) => {
+                  clearTimeout(timeout);
+                  reject(error);
+                });
+            });
+            return {
+              semanticPaneId,
+              paneCount: layout.panes.length,
+              terminalRevision: seed.revision,
+              terminalStateHash: seed.stateHash,
+            };
+          } finally {
+            await consumer.close();
+          }
+        },
+      });
       terminalAttachmentRuntime = createNativeTerminalAttachmentRuntime({
         daemonInstanceId: instanceId,
         webSocketUrl: terminalAttachmentWebSocketUrl(bindHostname, port),
@@ -1138,6 +1205,7 @@ export async function startEmbeddedDaemon(
         daemonIdentity: { productVersion, instanceId, startedAt, environmentId },
         workspacePaneCreationBackend: workspacePaneCreation,
         workspaceOpenBackend: workspaceOpen,
+        workspaceOpenHandoffBackend: workspaceOpenHandoff,
         workspacePromotionBackend: workspacePromotion,
         appWindowMutationBackend: appWindowMutation,
         workspaceMultiplexerBackend: orderedMultiplexerBackend,
@@ -1152,6 +1220,7 @@ export async function startEmbeddedDaemon(
         paneStreamRuntime?.dispose() ?? Promise.resolve(),
         workspacePaneCreation.dispose(),
         workspaceOpen.dispose(),
+        Promise.resolve().then(() => workspaceOpenHandoff?.dispose()),
         workspacePromotion.dispose(),
         appWindowMutation.dispose(),
         workspaceMultiplexer.dispose(),
@@ -1194,6 +1263,9 @@ export async function startEmbeddedDaemon(
       ];
       const paneDisposal = Promise.resolve().then(() => workspacePaneCreation.dispose());
       const workspaceOpenDisposal = Promise.resolve().then(() => workspaceOpen.dispose());
+      const workspaceOpenHandoffDisposal = Promise.resolve().then(() =>
+        workspaceOpenHandoff?.dispose(),
+      );
       const workspacePromotionDisposal = Promise.resolve().then(() => workspacePromotion.dispose());
       const appWindowMutationDisposal = Promise.resolve().then(() => appWindowMutation.dispose());
       const workspaceMultiplexerDisposal = Promise.resolve().then(() =>
@@ -1208,6 +1280,7 @@ export async function startEmbeddedDaemon(
       await Promise.allSettled([
         paneDisposal,
         workspaceOpenDisposal,
+        workspaceOpenHandoffDisposal,
         workspacePromotionDisposal,
         appWindowMutationDisposal,
         workspaceMultiplexerDisposal,
@@ -1411,6 +1484,7 @@ export async function startEmbeddedDaemon(
             failures.push(...(await retirePaneStreamTransport()));
             await capture(() => workspacePaneCreation.dispose());
             await capture(() => workspaceOpen.dispose());
+            await capture(() => workspaceOpenHandoff?.dispose());
             await capture(() => workspacePromotion.dispose());
             await capture(() => appWindowMutation.dispose());
             await capture(() => workspaceMultiplexer.dispose());

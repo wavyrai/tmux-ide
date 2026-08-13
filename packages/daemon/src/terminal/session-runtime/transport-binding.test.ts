@@ -43,6 +43,78 @@ function sendResult(operationId: string, intent: ReturnType<typeof sendIntent>) 
 }
 
 describe("SessionRuntimeTransportBinder", () => {
+  it("lets explicit multi-client authority hand off independently without admission conflicts", async () => {
+    const tokens = [
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    ];
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION,
+      createControllerToken: () => tokens.shift()!,
+    });
+    const binder = new SessionRuntimeTransportBinder(registry);
+    const first = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000081",
+      session: "alpha",
+      hostClientId: "web:first",
+      allowedSourcePaneIds: ["pane.editor"],
+      interactive: true,
+      ownsGeometry: true,
+      explicitAuthority: true,
+    });
+    const second = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000082",
+      session: "alpha",
+      hostClientId: "opentui:second",
+      allowedSourcePaneIds: ["pane.editor"],
+      interactive: true,
+      ownsGeometry: true,
+      explicitAuthority: true,
+    });
+    const publishedOwners: Array<string | null> = [];
+    const stopSnapshots = first.onAuthoritySnapshot((snapshot) => {
+      publishedOwners.push(snapshot.owners.input);
+      if (snapshot.owners.input === "web:first") first.assertController("pane.editor");
+      if (snapshot.owners.input === "opentui:second") second.assertController("pane.editor");
+    });
+
+    second.updatePresence("foreground");
+    expect(second.requestAuthority("input")?.clientId).toBe("opentui:second");
+    first.updatePresence("foreground");
+    expect(first.requestAuthority("input")?.clientId).toBe("web:first");
+    expect(first.requestAuthority("geometry")?.clientId).toBe("web:first");
+
+    // Both clients retain claims, but ambient presence/activity is not allowed
+    // to move executable input authority behind the controller seam's back.
+    second.updatePresence("background");
+    second.updatePresence("foreground");
+    second.noteActivity("input");
+    expect(first.authoritySnapshot().owners.input).toBe("web:first");
+    first.assertController("pane.editor");
+
+    // An explicit acquire performs the controller handoff before publishing
+    // B as owner; from this point A's old execution proof is stale.
+    expect(second.requestAuthority("input")?.clientId).toBe("opentui:second");
+    expect(second.authoritySnapshot().owners).toMatchObject({ input: "opentui:second" });
+    expect(() => first.assertController("pane.editor")).toThrowError(
+      expect.objectContaining({ code: "stale-controller-lease" }),
+    );
+    second.assertController("pane.editor");
+
+    await second.close();
+    expect(first.requestAuthority("input")?.clientId).toBe("web:first");
+    first.assertController("pane.editor");
+    expect(publishedOwners).toContain("web:first");
+    expect(publishedOwners).toContain("opentui:second");
+    stopSnapshots();
+    await first.close();
+    await registry.dispose();
+  });
+
   it("never promotes a passive cross-transport pane into an authorship grant", async () => {
     const registry = new SessionRuntimeRegistry({
       generation: GENERATION,

@@ -19,7 +19,14 @@ import {
   TerminalDeliveryVisibilitySchemaZ,
   TERMINAL_DELIVERY_CHUNK_BYTES,
 } from "./terminal-delivery.ts";
-import { SessionRuntimeSemanticIntentSchemaZ } from "./session-runtime.ts";
+import {
+  SessionRuntimeActivityKindSchemaZ,
+  SessionRuntimeAuthorityKindSchemaZ,
+  SessionRuntimeAuthorityLeaseSchemaZ,
+  SessionRuntimeAuthoritySnapshotSchemaZ,
+  SessionRuntimePresenceStateSchemaZ,
+  SessionRuntimeSemanticIntentSchemaZ,
+} from "./session-runtime.ts";
 import { WorkspaceMultiplexerMutationResultSchemaZ } from "./workspace-multiplexer.ts";
 
 /**
@@ -271,6 +278,40 @@ export const PaneStreamViewportFrameSchemaZ = z
   })
   .strict();
 
+const PaneStreamAuthorityRequestIdSchemaZ = z.uuid();
+const PaneStreamAuthorityGenerationSchemaZ = DaemonInstanceIdentitySchemaZ.shape.instanceId;
+
+export const PaneStreamPresenceFrameSchemaZ = z
+  .object({
+    type: z.literal("presence"),
+    generation: PaneStreamAuthorityGenerationSchemaZ,
+    state: SessionRuntimePresenceStateSchemaZ,
+  })
+  .strict();
+export const PaneStreamActivityFrameSchemaZ = z
+  .object({
+    type: z.literal("activity"),
+    generation: PaneStreamAuthorityGenerationSchemaZ,
+    activity: SessionRuntimeActivityKindSchemaZ,
+  })
+  .strict();
+export const PaneStreamAuthorityRequestFrameSchemaZ = z
+  .object({
+    type: z.literal("authority-request"),
+    generation: PaneStreamAuthorityGenerationSchemaZ,
+    requestId: PaneStreamAuthorityRequestIdSchemaZ,
+    authority: SessionRuntimeAuthorityKindSchemaZ,
+  })
+  .strict();
+export const PaneStreamAuthorityReleaseFrameSchemaZ = z
+  .object({
+    type: z.literal("authority-release"),
+    generation: PaneStreamAuthorityGenerationSchemaZ,
+    requestId: PaneStreamAuthorityRequestIdSchemaZ,
+    authority: SessionRuntimeAuthorityKindSchemaZ,
+  })
+  .strict();
+
 export const PaneStreamClientFrameSchemaZ = z.union([
   PaneStreamInputFrameSchemaZ,
   PaneStreamConsumedFrameSchemaZ,
@@ -279,6 +320,10 @@ export const PaneStreamClientFrameSchemaZ = z.union([
   PaneStreamTerminalDeliveryVisibilityFrameSchemaZ,
   PaneStreamSemanticIntentFrameSchemaZ,
   PaneStreamViewportFrameSchemaZ,
+  PaneStreamPresenceFrameSchemaZ,
+  PaneStreamActivityFrameSchemaZ,
+  PaneStreamAuthorityRequestFrameSchemaZ,
+  PaneStreamAuthorityReleaseFrameSchemaZ,
 ]);
 export type PaneStreamClientFrame = z.infer<typeof PaneStreamClientFrameSchemaZ>;
 
@@ -302,6 +347,7 @@ export const PaneStreamReadyFrameSchemaZ = z
     requestId: z.uuid(),
     panes: PaneSetSchemaZ,
     effectiveViewerMode: PaneStreamViewerModeSchemaZ,
+    authority: SessionRuntimeAuthoritySnapshotSchemaZ.optional(),
   })
   .strict();
 
@@ -478,6 +524,23 @@ export const PaneStreamViewportAckFrameSchemaZ = z
   })
   .strict();
 
+export const PaneStreamAuthoritySnapshotFrameSchemaZ = z
+  .object({
+    type: z.literal("authority-snapshot"),
+    snapshot: SessionRuntimeAuthoritySnapshotSchemaZ,
+  })
+  .strict();
+export const PaneStreamAuthorityReceiptFrameSchemaZ = z
+  .object({
+    type: z.literal("authority-receipt"),
+    requestId: PaneStreamAuthorityRequestIdSchemaZ,
+    authority: SessionRuntimeAuthorityKindSchemaZ,
+    status: z.enum(["granted", "released", "rejected"]),
+    lease: SessionRuntimeAuthorityLeaseSchemaZ.nullable(),
+    snapshot: SessionRuntimeAuthoritySnapshotSchemaZ,
+  })
+  .strict();
+
 export const PaneStreamErrorFrameCodeSchemaZ = z.enum([
   "redemption-rejected",
   "ticket-expired",
@@ -512,6 +575,8 @@ export const PaneStreamServerFrameSchemaZ = z.discriminatedUnion("type", [
   PaneStreamTerminalDeliveryFaultFrameSchemaZ,
   PaneStreamSemanticIntentAckFrameSchemaZ,
   PaneStreamViewportAckFrameSchemaZ,
+  PaneStreamAuthoritySnapshotFrameSchemaZ,
+  PaneStreamAuthorityReceiptFrameSchemaZ,
   PaneStreamErrorFrameSchemaZ,
 ]);
 export type PaneStreamServerFrame = z.infer<typeof PaneStreamServerFrameSchemaZ>;

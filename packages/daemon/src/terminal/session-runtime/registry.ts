@@ -136,6 +136,7 @@ export interface SessionRuntimeConsumer {
   controllerRole(): SessionRuntimeControllerRole;
   controllerSnapshot(): SessionRuntimeControllerSnapshot;
   authoritySnapshot(): SessionRuntimeAuthoritySnapshot;
+  onAuthoritySnapshot(listener: (snapshot: SessionRuntimeAuthoritySnapshot) => void): () => void;
   updatePresence(state: SessionRuntimePresenceState): void;
   noteActivity(activity: SessionRuntimeActivityKind): void;
   acquireAuthority(authority: SessionRuntimeAuthorityKind): SessionRuntimeAuthorityLease | null;
@@ -226,7 +227,13 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
     this.#createTraceCorrelator =
       options.createTraceCorrelator ?? ((scheduler) => new RuntimeTraceCorrelator(scheduler));
-    this.#mirror = new MirrorService(options.mirror);
+    this.#mirror = new MirrorService({
+      ...options.mirror,
+      onNativeClientActivity: (session) => {
+        options.mirror?.onNativeClientActivity?.(session);
+        this.#sessions.get(session)?.noteNativeGeometryActivity();
+      },
+    });
     this.#semanticMutations = options.semanticMutations
       ? new SessionSemanticMutationExecutor({
           ...options.semanticMutations,
@@ -567,6 +574,7 @@ class SessionRuntime {
   readonly #createTraceCorrelator: (scheduler: SessionRuntimeScheduler) => RuntimeTraceCorrelator;
   readonly #terminalDeliveryHub: SessionRuntimeTerminalDeliveryHub;
   readonly #authority: SessionRuntimeAuthorityArbiter;
+  readonly #authorityListeners = new Set<(snapshot: SessionRuntimeAuthoritySnapshot) => void>();
   readonly #scheduler: SessionRuntimeScheduler;
   readonly #observability: SessionRuntimeObservability;
   readonly #createControllerToken: () => string;
@@ -620,6 +628,7 @@ class SessionRuntime {
       nativeGeometryHysteresisMs,
       onGeometryAuthorityChanged: (clientId) =>
         this.#mirror.setGeometryParticipation(this.session, clientId !== null),
+      onNativeGeometryYieldExpired: () => this.#publishAuthority(),
     });
     this.#terminalDeliveryHub = new SessionRuntimeTerminalDeliveryHub(
       generation,
@@ -660,25 +669,47 @@ class SessionRuntime {
 
   updatePresence(clientId: string, state: SessionRuntimePresenceState): void {
     this.#authority.updatePresence(clientId, state);
+    this.#publishAuthority();
   }
 
   noteActivity(clientId: string, activity: SessionRuntimeActivityKind): void {
     this.#authority.noteActivity(clientId, activity);
+    this.#publishAuthority();
   }
 
   acquireAuthority(
     clientId: string,
     authority: SessionRuntimeAuthorityKind,
   ): SessionRuntimeAuthorityLease | null {
-    return this.#authority.claim(clientId, authority);
+    if (authority === "input" && this.#controllerClientId !== clientId) {
+      // Input's executable proof is the compatibility controller lease. The
+      // transport synchronization seam must establish/handoff it first.
+      return null;
+    }
+    const lease = this.#authority.claim(clientId, authority);
+    this.#publishAuthority();
+    return lease;
   }
 
   releaseAuthority(clientId: string, authority: SessionRuntimeAuthorityKind): void {
+    if (authority === "input" && this.#controllerClientId === clientId) {
+      throw new SessionRuntimeControllerLeaseError(
+        "invalid-client-capability",
+        "Release the executable controller before releasing input authority.",
+      );
+    }
     this.#authority.release(clientId, authority);
+    this.#publishAuthority();
   }
 
   noteNativeGeometryActivity(): void {
     this.#authority.noteNativeGeometryActivity();
+    this.#publishAuthority();
+  }
+
+  onAuthoritySnapshot(listener: (snapshot: SessionRuntimeAuthoritySnapshot) => void): () => void {
+    this.#authorityListeners.add(listener);
+    return () => this.#authorityListeners.delete(listener);
   }
 
   ownsConsumer(candidate: SessionRuntimeConsumer): boolean {
@@ -1043,6 +1074,7 @@ class SessionRuntime {
     }
     if (this.#controllerClientId === consumer.clientId) this.#clearController();
     this.#authority.disconnect(consumer.clientId);
+    this.#publishAuthority();
   }
 
   noteControlExit(): void {
@@ -1067,6 +1099,7 @@ class SessionRuntime {
     await Promise.allSettled(consumers.map((consumer) => consumer.close()));
     this.#clearController();
     this.#authority.dispose();
+    this.#authorityListeners.clear();
     this.#completedHandoffs.clear();
     this.#releasedLeases.clear();
     this.#outputTraces?.clear();
@@ -1148,6 +1181,12 @@ class SessionRuntime {
     }
     return parsed.data;
   }
+
+  #publishAuthority(): void {
+    if (this.#disposed) return;
+    const snapshot = this.#authority.snapshot();
+    for (const listener of this.#authorityListeners) listener(snapshot);
+  }
 }
 
 class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
@@ -1184,6 +1223,11 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
   authoritySnapshot(): SessionRuntimeAuthoritySnapshot {
     this.#assertOpen();
     return this.#runtime.authoritySnapshot();
+  }
+
+  onAuthoritySnapshot(listener: (snapshot: SessionRuntimeAuthoritySnapshot) => void): () => void {
+    this.#assertOpen();
+    return this.#runtime.onAuthoritySnapshot(listener);
   }
 
   updatePresence(state: SessionRuntimePresenceState): void {

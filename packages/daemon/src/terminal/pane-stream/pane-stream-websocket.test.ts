@@ -228,6 +228,34 @@ function harness(
   const submitIntent = vi.fn(async () => undefined);
   const sendInput = vi.fn();
   const fitViewport = vi.fn();
+  let authorityRevision = 1;
+  const authorityOwners = { input: "test:interactive", focus: null, geometry: null } as {
+    input: string | null;
+    focus: string | null;
+    geometry: string | null;
+  };
+  const authoritySnapshot = () => ({
+    generation: INSTANCE,
+    session: SESSION,
+    revision: authorityRevision,
+    owners: { ...authorityOwners },
+    nativeGeometryYieldUntilMs: 0,
+    clients: [
+      {
+        clientId: "test:interactive",
+        surface: "unknown" as const,
+        state: "foreground" as const,
+        connectedRevision: 1,
+        activityRevision: authorityRevision,
+      },
+    ],
+  });
+  const activateLegacyAuthority = vi.fn((geometry: boolean) => {
+    authorityOwners.input = "test:interactive";
+    if (geometry) authorityOwners.geometry = "test:interactive";
+    authorityRevision += 1;
+    return authoritySnapshot();
+  });
   const coordinator = new PaneStreamAdmissionCoordinator({
     daemonInstanceId: INSTANCE,
     webSocketUrl: WS_URL,
@@ -239,6 +267,33 @@ function harness(
         generation: INSTANCE,
         session: SESSION,
         clientId: "test:interactive",
+        authoritySnapshot,
+        activateLegacyAuthority,
+        updatePresence: () => {
+          authorityRevision += 1;
+          return authoritySnapshot();
+        },
+        noteActivity: () => {
+          authorityRevision += 1;
+          return authoritySnapshot();
+        },
+        requestAuthority: (authority) => {
+          authorityOwners[authority] = "test:interactive";
+          authorityRevision += 1;
+          return {
+            generation: INSTANCE,
+            session: SESSION,
+            clientId: "test:interactive",
+            authority,
+            token: "00000000-0000-4000-8000-000000000095",
+            revision: authorityRevision,
+          };
+        },
+        releaseAuthority: (authority) => {
+          authorityOwners[authority] = null;
+          authorityRevision += 1;
+          return authoritySnapshot();
+        },
         assertController: () => undefined,
         openTerminalDelivery: async (pane, _offer, onMessage) => {
           deliveryListeners.set(pane, onMessage as (message: never) => void);
@@ -284,6 +339,7 @@ function harness(
     submitIntent,
     sendInput,
     fitViewport,
+    activateLegacyAuthority,
   };
 }
 
@@ -708,6 +764,8 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(h.mirror.subFor("pane.editor").keys).toEqual(["Enter"]);
     const acks = interactive.socket.framesOfType("input-ack");
     expect(acks.map((frame) => frame.seq)).toEqual([1, 2]);
+    expect(h.activateLegacyAuthority).toHaveBeenCalledTimes(1);
+    expect(h.activateLegacyAuthority).toHaveBeenCalledWith(false);
 
     // Out-of-order input closes the connection.
     interactive.socket.message({
@@ -930,6 +988,54 @@ describe("PaneStreamAdmissionCoordinator", () => {
     } as never) as unknown;
     await expect(Promise.resolve(close)).resolves.toBeUndefined();
     expect(socket.framesOfType("terminal-delivery-fault")).toHaveLength(1);
+  });
+
+  it("generation-fences explicit authority and requires geometry before viewport fit", async () => {
+    const h = harness();
+    const { socket } = await connect(h, {
+      viewerMode: "interactive",
+      semanticDelivery: true,
+    });
+    socket.message({ type: "presence", generation: INSTANCE, state: "foreground" });
+    expect(socket.framesOfType("authority-snapshot")).toHaveLength(1);
+    const requestId = "00000000-0000-4000-8000-000000000094";
+    socket.message({
+      type: "authority-request",
+      generation: INSTANCE,
+      requestId,
+      authority: "geometry",
+    });
+    expect(socket.framesOfType("authority-receipt")).toEqual([
+      expect.objectContaining({ requestId, authority: "geometry", status: "granted" }),
+    ]);
+    socket.message({ type: "viewport", seq: 1, cols: 111, rows: 33 });
+    expect(h.fitViewport).toHaveBeenCalledWith(111, 33);
+
+    const stale = harness();
+    const staleConnection = await connect(stale, {
+      viewerMode: "interactive",
+      semanticDelivery: true,
+    });
+    staleConnection.socket.message({
+      type: "authority-request",
+      generation: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      requestId: "00000000-0000-4000-8000-000000000093",
+      authority: "geometry",
+    });
+    expect(staleConnection.socket.framesOfType("error")[0]?.code).toBe("protocol-error");
+  });
+
+  it("permanently disables legacy escalation after the first explicit authority frame", async () => {
+    const h = harness();
+    const { socket } = await connect(h, {
+      viewerMode: "interactive",
+      semanticDelivery: true,
+    });
+    socket.message({ type: "presence", generation: INSTANCE, state: "foreground" });
+    socket.message({ type: "input", kind: "text", pane: "pane.editor", seq: 1, data: "x" });
+    expect(socket.framesOfType("error")[0]?.code).toBe("input-rejected");
+    expect(h.activateLegacyAuthority).not.toHaveBeenCalled();
+    expect(h.sendInput).not.toHaveBeenCalled();
   });
 
   it("meters renderer backlog for acking clients and thaws on consumed frames", async () => {
