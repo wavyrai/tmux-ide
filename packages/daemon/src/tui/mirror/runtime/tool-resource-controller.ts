@@ -110,6 +110,7 @@ function boundedEventText(value: unknown): string | null {
 export interface TuiToolResourceAdapterDependencies {
   readonly fetch?: typeof globalThis.fetch;
   readonly createSocket?: (url: string, ownerToken: string | null) => ToolEventSocket;
+  readonly diagnostic?: (phase: string, details?: Readonly<Record<string, unknown>>) => void;
 }
 
 const INTEREST_BY_KEY = {
@@ -193,6 +194,7 @@ export function createTuiToolResourceAdapter(
 > {
   const fetchImpl = dependencies.fetch ?? globalThis.fetch;
   const createSocket = dependencies.createSocket ?? defaultSocket;
+  const diagnostic = dependencies.diagnostic ?? (() => undefined);
 
   return {
     validateTarget(value) {
@@ -422,6 +424,7 @@ export function createTuiToolResourceAdapter(
         backoffMs: (attempt) => Math.min(4_000, 250 * 2 ** Math.max(0, attempt - 1)),
         async connect({ signal }) {
           if (signal.aborted || disposed) throw new Error("TUI resource session stopped.");
+          diagnostic("resource-socket-connecting");
           const socket = createSocket(socketUrl(target), target.daemon.authToken);
           activeSocket = socket;
           verifiedSocket = null;
@@ -451,6 +454,7 @@ export function createTuiToolResourceAdapter(
           const endTransport = (reason: string): void => {
             if (ended) return;
             ended = true;
+            diagnostic("resource-socket-retired", { reason, verified, live });
             rejectPendingAcks(reason);
             rejectSocketInterestWaiters(socket, reason);
             cleanupTransport();
@@ -490,9 +494,11 @@ export function createTuiToolResourceAdapter(
                 everVerified = true;
                 verified = true;
                 verifiedSocket = socket;
+                diagnostic("resource-socket-verified", { cursor });
                 void installDesired(socket).then(
                   () => {
                     live = true;
+                    diagnostic("resource-socket-live", { interestCount: desired.size });
                     settleOpen();
                   },
                   () => {
@@ -512,6 +518,10 @@ export function createTuiToolResourceAdapter(
             }
             if (frame.type === "resource.interests-ack") {
               cursor = Math.max(cursor, frame.sequence);
+              diagnostic("resource-interests-ack", {
+                interestRevision: frame.interestRevision,
+                unavailableCount: frame.unavailableInterests.length,
+              });
               const pending = pendingAcks.get(frame.interestRevision);
               if (!pending) return;
               pendingAcks.delete(frame.interestRevision);
@@ -550,7 +560,7 @@ export function createTuiToolResourceAdapter(
               verified ? "Daemon event socket failed." : "Daemon event socket failed before hello.",
             );
           };
-          const onOpen = (): void => undefined;
+          const onOpen = (): void => diagnostic("resource-socket-open");
           const onAbort = (): void => socket.close(1000, "TUI resource session stopped");
           signal.addEventListener("abort", onAbort, { once: true });
           socket.addEventListener("open", onOpen);
@@ -581,6 +591,12 @@ export function createTuiToolResourceAdapter(
         rejectFirstLive = reject;
       });
       const unsubscribe = supervisor.subscribe((state) => {
+        diagnostic("resource-supervisor-state", {
+          phase: state.phase,
+          ...(state.phase === "connecting" || state.phase === "reconnecting"
+            ? { attempt: state.attempt }
+            : {}),
+        });
         if (state.phase === "live") resolveFirstLive();
         if (state.phase === "failed") rejectFirstLive(state.error);
       });

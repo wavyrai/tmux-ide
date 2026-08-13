@@ -1490,7 +1490,9 @@ const mountTuiRoot = () => {
       optionalFeatures.dispose();
       tuiPerfMark("optional-feature-metrics", { ...optionalFeatures.getMetrics() });
     });
-    const toolResources = createTuiToolResourceController(createTuiToolResourceAdapter());
+    const toolResources = createTuiToolResourceController(
+      createTuiToolResourceAdapter({ diagnostic: tuiPerfMark }),
+    );
     const workspaceOpenHandoff = new OpenTuiWorkspaceHandoffClient();
     applicationLifecycle.registerCloser("tool-resources", () => {
       tuiPerfMark("application-shell-metrics", { ...toolResources.getMetrics() });
@@ -2135,8 +2137,11 @@ const mountTuiRoot = () => {
       requestedPanel,
       bareHome ? persistedPanel : null,
     )!;
-    const initialCanvasPanel: "home" | "terminals" =
-      bareHome && !persisted.contextSession && !requestedPanel ? "home" : "terminals";
+    // A bare launch must not project persisted terminal selection as live tmux
+    // truth. Start on Home while Catalog V2 reconciles, then the confirmed-live
+    // selection path below may switch to Terminals. This removes the blank
+    // "no active workspace" canvas during cold start and stale-state recovery.
+    const initialCanvasPanel: "home" | "terminals" = bareHome ? "home" : "terminals";
     const initialCanvasView = canvasViewForPanel(hostedViews(), initialCanvasPanel);
     const [activeViewId, setActiveViewId] = createSignal(initialCanvasView.id);
     const activeView = createMemo(

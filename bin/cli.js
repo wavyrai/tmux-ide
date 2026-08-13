@@ -21480,7 +21480,11 @@ var init_daemon_fleet_facts_observer = __esm({
         this.#running = this.#cycle(generation, demandEpochs, wantsSessions, wantsAgents).finally(
           () => {
             this.#running = null;
-            if (generation !== this.#generation || this.#refs.size === 0) return;
+            if (this.#refs.size === 0) return;
+            if (generation !== this.#generation) {
+              this.#queueStart();
+              return;
+            }
             if (demandVersion !== this.#demandVersion && this.#hasUnbaselinedDemand()) {
               void this.#runOnce(true);
               return;
@@ -55840,6 +55844,8 @@ var require_package = __commonJS({
         "test:performance-reference": "node scripts/performance-reference.mjs --require-complete",
         "test:tui-perf": "pnpm test:performance-qualification",
         "tui:testdrive": "node scripts/tui-testdrive.mjs",
+        "tui:diagnose": "node scripts/tui-diagnose.mjs",
+        "test:tui-diagnose": "node --test scripts/tui-diagnose.test.mjs",
         "product:testdrive": "node scripts/product-test-rig.mjs",
         "test:product-test-rig": "node --test scripts/product-test-rig.test.mjs",
         "smoke:desktop": "node apps/electron-shell/scripts/smoke-test.mjs",
@@ -58140,9 +58146,9 @@ var init_server3 = __esm({
 // bin/cli.ts
 init_launch();
 import { parseArgs } from "node:util";
-import { resolve as resolve36, dirname as dirname37 } from "node:path";
+import { resolve as resolve36, dirname as dirname37, join as join40 } from "node:path";
 import { execFileSync as execFileSync19 } from "node:child_process";
-import { existsSync as existsSync38 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync38, mkdirSync as mkdirSync26, writeFileSync as writeFileSync23 } from "node:fs";
 import { fileURLToPath as fileURLToPath12 } from "node:url";
 
 // packages/daemon/src/tui/team/entry.ts
@@ -64300,6 +64306,7 @@ async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies2) {
 
 // bin/cli.ts
 init_canonical_daemon_bootstrap();
+init_state_home();
 init_hosted();
 var __dirname5 = dirname37(fileURLToPath12(import.meta.url));
 var selfPath = fileURLToPath12(import.meta.url);
@@ -64544,25 +64551,92 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
       { code: "USAGE", exitCode: 1 }
     );
   }
+  const launchEpochMs = Date.now();
+  let automaticDiagnosticLog;
+  if (surface === "app" && !process.env.TMUX_IDE_TUI_PERF_LOG) {
+    try {
+      const logDirectory = join40(stateHome(), "logs");
+      mkdirSync26(logDirectory, { recursive: true, mode: 448 });
+      automaticDiagnosticLog = join40(logDirectory, "tui-latest.jsonl");
+      writeFileSync23(
+        automaticDiagnosticLog,
+        `${JSON.stringify({
+          phase: "launcher-start",
+          elapsedMs: 0,
+          at: new Date(launchEpochMs).toISOString(),
+          surface,
+          launchMode: launch2.mode
+        })}
+`,
+        { mode: 384 }
+      );
+    } catch {
+      automaticDiagnosticLog = void 0;
+    }
+  }
   const env = {
     ...process.env,
     TMUX_IDE_CWD: process.cwd(),
     TMUX_IDE_CLI: nodeCliPath,
+    ...automaticDiagnosticLog ? {
+      TMUX_IDE_TUI_PERF_LOG: automaticDiagnosticLog,
+      TMUX_IDE_TUI_LAUNCH_EPOCH_MS: String(launchEpochMs)
+    } : {},
     ...extraEnv
   };
-  if (launch2.mode === "bun") {
+  const markChildExited = () => {
+    if (!automaticDiagnosticLog) return;
+    try {
+      appendFileSync2(
+        automaticDiagnosticLog,
+        `${JSON.stringify({
+          phase: "launcher-child-exited",
+          elapsedMs: Date.now() - launchEpochMs,
+          at: (/* @__PURE__ */ new Date()).toISOString(),
+          status: 0,
+          signal: null
+        })}
+`
+      );
+    } catch {
+    }
+  };
+  try {
+    if (launch2.mode === "bun") {
+      execFileSync19(launch2.bin, launch2.argv, {
+        stdio: "inherit",
+        cwd: resolve36(__dirname5, ".."),
+        env
+      });
+      markChildExited();
+      return;
+    }
     execFileSync19(launch2.bin, launch2.argv, {
       stdio: "inherit",
-      cwd: resolve36(__dirname5, ".."),
+      cwd: ensureCompiledTuiRuntimeDir(),
       env
     });
-    return;
+    markChildExited();
+  } catch (error) {
+    if (automaticDiagnosticLog) {
+      try {
+        const childError = error;
+        appendFileSync2(
+          automaticDiagnosticLog,
+          `${JSON.stringify({
+            phase: "launcher-child-failed",
+            elapsedMs: Date.now() - launchEpochMs,
+            at: (/* @__PURE__ */ new Date()).toISOString(),
+            status: childError.status ?? null,
+            signal: childError.signal ?? null
+          })}
+`
+        );
+      } catch {
+      }
+    }
+    throw error;
   }
-  execFileSync19(launch2.bin, launch2.argv, {
-    stdio: "inherit",
-    cwd: ensureCompiledTuiRuntimeDir(),
-    env
-  });
 }
 function launchHostedApp(scriptPath, appArgs) {
   const launch2 = resolveTuiLaunch({

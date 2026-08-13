@@ -3,9 +3,9 @@
 // esbuild banner. Dev iteration uses `bun bin/cli.ts` directly, which
 // doesn't need a shebang.
 import { parseArgs } from "node:util";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -46,6 +46,7 @@ import { IdeError } from "../packages/daemon/src/lib/errors.ts";
 import { printCommandError } from "../packages/daemon/src/lib/output.ts";
 import { runHeadlessDaemon } from "../packages/daemon/src/lib/headless-daemon.ts";
 import { ensureCanonicalDaemon } from "../packages/daemon/src/lib/canonical-daemon-bootstrap.ts";
+import { stateHome } from "../packages/daemon/src/lib/state-home.ts";
 import {
   wantsHostedApp,
   hostedEnvVars,
@@ -319,34 +320,103 @@ function execBunWidget(
     );
   }
 
+  const launchEpochMs = Date.now();
+  let automaticDiagnosticLog: string | undefined;
+  if (surface === "app" && !process.env.TMUX_IDE_TUI_PERF_LOG) {
+    try {
+      const logDirectory = join(stateHome(), "logs");
+      mkdirSync(logDirectory, { recursive: true, mode: 0o700 });
+      automaticDiagnosticLog = join(logDirectory, "tui-latest.jsonl");
+      writeFileSync(
+        automaticDiagnosticLog,
+        `${JSON.stringify({
+          phase: "launcher-start",
+          elapsedMs: 0,
+          at: new Date(launchEpochMs).toISOString(),
+          surface,
+          launchMode: launch.mode,
+        })}\n`,
+        { mode: 0o600 },
+      );
+    } catch {
+      // Diagnostics must never prevent the product from launching.
+      automaticDiagnosticLog = undefined;
+    }
+  }
   const env = {
     ...process.env,
     TMUX_IDE_CWD: process.cwd(),
     TMUX_IDE_CLI: nodeCliPath,
+    ...(automaticDiagnosticLog
+      ? {
+          TMUX_IDE_TUI_PERF_LOG: automaticDiagnosticLog,
+          TMUX_IDE_TUI_LAUNCH_EPOCH_MS: String(launchEpochMs),
+        }
+      : {}),
     ...extraEnv,
   };
-  if (launch.mode === "bun") {
-    // Spawn from the repo root so bun finds `bunfig.toml` (the @opentui/solid
-    // JSX preload). Without this, running from any other cwd — e.g. bare
-    // `tmux-ide` in a project dir — falls back to the React JSX runtime and the
-    // widget fails to load. The real invocation dir rides in env so in-widget
-    // prompts (register / new session) still default to where the user is.
+  const markChildExited = () => {
+    if (!automaticDiagnosticLog) return;
+    try {
+      appendFileSync(
+        automaticDiagnosticLog,
+        `${JSON.stringify({
+          phase: "launcher-child-exited",
+          elapsedMs: Date.now() - launchEpochMs,
+          at: new Date().toISOString(),
+          status: 0,
+          signal: null,
+        })}\n`,
+      );
+    } catch {
+      // Diagnostics must never change successful process semantics.
+    }
+  };
+  try {
+    if (launch.mode === "bun") {
+      // Spawn from the repo root so bun finds `bunfig.toml` (the @opentui/solid
+      // JSX preload). Without this, running from any other cwd — e.g. bare
+      // `tmux-ide` in a project dir — falls back to the React JSX runtime and the
+      // widget fails to load. The real invocation dir rides in env so in-widget
+      // prompts (register / new session) still default to where the user is.
+      execFileSync(launch.bin, launch.argv, {
+        stdio: "inherit",
+        cwd: resolve(__dirname, ".."),
+        env,
+      });
+      markChildExited();
+      return;
+    }
+
+    // A compiled Bun executable still reads bunfig.toml from its cwd before the
+    // embedded app starts. Isolate it from the project checkout; TMUX_IDE_CWD
+    // preserves the user's real project directory for every app action.
     execFileSync(launch.bin, launch.argv, {
       stdio: "inherit",
-      cwd: resolve(__dirname, ".."),
+      cwd: ensureCompiledTuiRuntimeDir(),
       env,
     });
-    return;
+    markChildExited();
+  } catch (error) {
+    if (automaticDiagnosticLog) {
+      try {
+        const childError = error as { status?: unknown; signal?: unknown };
+        appendFileSync(
+          automaticDiagnosticLog,
+          `${JSON.stringify({
+            phase: "launcher-child-failed",
+            elapsedMs: Date.now() - launchEpochMs,
+            at: new Date().toISOString(),
+            status: childError.status ?? null,
+            signal: childError.signal ?? null,
+          })}\n`,
+        );
+      } catch {
+        // Preserve the original child failure.
+      }
+    }
+    throw error;
   }
-
-  // A compiled Bun executable still reads bunfig.toml from its cwd before the
-  // embedded app starts. Isolate it from the project checkout; TMUX_IDE_CWD
-  // preserves the user's real project directory for every app action.
-  execFileSync(launch.bin, launch.argv, {
-    stdio: "inherit",
-    cwd: ensureCompiledTuiRuntimeDir(),
-    env,
-  });
 }
 
 // The detachable cockpit (M23.2): instead of running the app in THIS terminal,

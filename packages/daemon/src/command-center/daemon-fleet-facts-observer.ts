@@ -129,7 +129,16 @@ export class DaemonFleetFactsObserver {
     this.#running = this.#cycle(generation, demandEpochs, wantsSessions, wantsAgents).finally(
       () => {
         this.#running = null;
-        if (generation !== this.#generation || this.#refs.size === 0) return;
+        if (this.#refs.size === 0) return;
+        // A connection can release the final demand and a replacement can
+        // acquire the same observer while the retired tmux read is still in
+        // flight. `stop()` generation-fences that read; once it settles, the
+        // replacement must get its own baseline cycle instead of inheriting a
+        // permanently pending readiness Promise.
+        if (generation !== this.#generation) {
+          this.#queueStart();
+          return;
+        }
         if (demandVersion !== this.#demandVersion && this.#hasUnbaselinedDemand()) {
           void this.#runOnce(true);
           return;

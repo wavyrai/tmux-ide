@@ -168,6 +168,40 @@ describe("DaemonFleetFactsObserver", () => {
     retained.release();
   });
 
+  it("baselines a replacement acquired while the final released read is retiring", async () => {
+    const first = deferred<SessionCompositionFacts | null>();
+    const second = deferred<SessionCompositionFacts | null>();
+    const readSessions = vi
+      .fn<() => Promise<SessionCompositionFacts | null>>()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+    const observer = new DaemonFleetFactsObserver({
+      readSessions,
+      readAgents: async () => new Map(),
+      ...callbacks(),
+      setTimer: vi.fn(() => 1 as unknown as ReturnType<typeof setTimeout>),
+      clearTimer: vi.fn(),
+    });
+
+    const retired = observer.acquire(["sessions"]);
+    await Promise.resolve();
+    retired.release();
+    const replacement = observer.acquire(["sessions"]);
+    let ready = false;
+    void replacement.ready.then(() => {
+      ready = true;
+    });
+
+    first.resolve({ sessions: ["stale"], adopted: [] });
+    expect(ready).toBe(false);
+    await vi.waitFor(() => expect(readSessions).toHaveBeenCalledTimes(2));
+
+    second.resolve({ sessions: ["current"], adopted: [] });
+    await replacement.ready;
+    expect(ready).toBe(true);
+    replacement.release();
+  });
+
   it.each([
     ["sessions", "adopted"],
     ["adopted", "sessions"],
