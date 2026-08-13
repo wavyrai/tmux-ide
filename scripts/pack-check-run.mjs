@@ -328,7 +328,6 @@ try {
   run("npx", ["tmux-ide", "--version"], { cwd: projectDir, stdio: "inherit" });
 
   const installedCli = join(projectDir, "node_modules", ".bin", "tmux-ide");
-  await runInstalledTuiGate(installedCli);
   const installedBundle = readFileSync(
     join(projectDir, "node_modules", "tmux-ide", "bin", "cli.js"),
     "utf8",
@@ -446,6 +445,12 @@ try {
       `Expected exactly owner PID ${owner.pid} alive; found ${liveChildren.map((child) => child.pid).join(", ")}`,
     );
   }
+
+  // Exercise the installed configless app only after the cold-start election.
+  // The app is now a thin client which intentionally ensures and reuses the
+  // persistent canonical daemon; running it before this section would make the
+  // election warm and leave an untracked detached owner outside `children`.
+  await runInstalledTuiGate(installedCli);
 } finally {
   for (const child of children) {
     if (child.exitCode !== null || child.signalCode !== null) continue;

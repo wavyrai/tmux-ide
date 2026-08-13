@@ -23,6 +23,19 @@ describe("RuntimeNamespace", () => {
     });
   });
 
+  it("inherits daemon publication from an explicit registry authority", () => {
+    expect(
+      resolveRuntimeNamespace({
+        env: {
+          TMUX_IDE_REGISTRY_DIR: "/tmp/tmux-ide-registry",
+          TMUX_IDE_DAEMON_INFO_DIR: "",
+        },
+        userHome,
+        cwd,
+      }).daemonInfoDir,
+    ).toBe("/tmp/tmux-ide-registry");
+  });
+
   it.each(["test", "smoke", "testdrive", "performance"])(
     "rejects canonical state in %s mode",
     (mode) => {

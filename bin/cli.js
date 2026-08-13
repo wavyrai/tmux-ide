@@ -12842,7 +12842,11 @@ function resolveRuntimeNamespace(options = {}) {
     REGISTRY_DIR_ENV
   );
   const daemonInfoDir = absolutePath(
-    nonEmpty(env, DAEMON_INFO_DIR_ENV) ?? stateHome2,
+    // Preserve the long-standing registry override as the compatibility
+    // authority for daemon publication when no dedicated directory is set.
+    // This also keeps an explicitly empty DAEMON_INFO_DIR equivalent to
+    // "unset" instead of silently escaping a caller's isolated registry.
+    nonEmpty(env, DAEMON_INFO_DIR_ENV) ?? registryDir2,
     cwd,
     DAEMON_INFO_DIR_ENV
   );
@@ -41306,6 +41310,29 @@ var init_performance_metrics2 = __esm({
   }
 });
 
+// packages/core/src/optimistic-projection.ts
+var init_optimistic_projection = __esm({
+  "packages/core/src/optimistic-projection.ts"() {
+    "use strict";
+  }
+});
+
+// packages/core/src/optimistic-projection-store.ts
+var init_optimistic_projection_store = __esm({
+  "packages/core/src/optimistic-projection-store.ts"() {
+    "use strict";
+    init_optimistic_projection();
+  }
+});
+
+// packages/core/src/optimistic-projection-conformance.ts
+var init_optimistic_projection_conformance = __esm({
+  "packages/core/src/optimistic-projection-conformance.ts"() {
+    "use strict";
+    init_optimistic_projection_store();
+  }
+});
+
 // packages/core/src/index.ts
 var init_src3 = __esm({
   "packages/core/src/index.ts"() {
@@ -41321,6 +41348,9 @@ var init_src3 = __esm({
     init_navigator();
     init_performance_qualification2();
     init_performance_metrics2();
+    init_optimistic_projection();
+    init_optimistic_projection_store();
+    init_optimistic_projection_conformance();
   }
 });
 
@@ -54052,6 +54082,7 @@ var require_package = __commonJS({
         "test:tui-smoke": "bun scripts/smoke-tui-missions.mjs",
         "test:tui-live": "node scripts/tui-testdrive.mjs smoke",
         "test:performance-qualification": "node scripts/performance-qualification.mjs",
+        "measure:performance-portable": "node scripts/performance-portable-evidence.mjs",
         "measure:performance-reference": "node scripts/performance-reference.mjs",
         "test:performance-reference": "node scripts/performance-reference.mjs --require-complete",
         "test:tui-perf": "pnpm test:performance-qualification",

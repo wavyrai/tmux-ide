@@ -106,7 +106,11 @@ export function resolveRuntimeNamespace(
     REGISTRY_DIR_ENV,
   );
   const daemonInfoDir = absolutePath(
-    nonEmpty(env, DAEMON_INFO_DIR_ENV) ?? stateHome,
+    // Preserve the long-standing registry override as the compatibility
+    // authority for daemon publication when no dedicated directory is set.
+    // This also keeps an explicitly empty DAEMON_INFO_DIR equivalent to
+    // "unset" instead of silently escaping a caller's isolated registry.
+    nonEmpty(env, DAEMON_INFO_DIR_ENV) ?? registryDir,
     cwd,
     DAEMON_INFO_DIR_ENV,
   );
