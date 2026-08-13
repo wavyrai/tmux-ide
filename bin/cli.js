@@ -48721,7 +48721,7 @@ var init_pane_stream_websocket = __esm({
       #deliveryChannel(address) {
         const channel = this.#panes.get(address.semanticPaneId);
         const expected = channel?.deliveryAddress;
-        if (!channel?.delivery || !expected || expected.workspaceName !== address.workspaceName || expected.generation !== address.generation || expected.deliveryNonce !== address.deliveryNonce || expected.incarnation === null || expected.incarnation !== address.incarnation) {
+        if (!channel?.delivery || !expected || expected.workspaceName !== address.workspaceName || expected.generation !== address.generation || expected.deliveryNonce !== address.deliveryNonce || expected.incarnation === null) {
           this.#failProtocol("protocol-error");
           return null;
         }

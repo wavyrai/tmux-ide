@@ -1552,7 +1552,14 @@ const mountTuiRoot = () => {
     const activeTerminalPaneId = createMemo(() => activeLivePaneId(panes(), focusedPaneId()));
     const activeTerminalInputPane = (): string | null => {
       const paneId = activeTerminalPaneId();
-      return paneId && semanticView?.pane(paneId) ? paneId : null;
+      if (!paneId) return null;
+      const isCurrentPane = semanticView
+        ?.paneDescriptors()
+        .some(
+          (descriptor) =>
+            descriptor.semanticPaneId === paneId || descriptor.runtimePaneId === paneId,
+        );
+      return isCurrentPane ? paneId : null;
     };
     const focusedPanes = createMemo(() => withLivePaneFocus(panes(), focusedPaneId()));
     const paneIsFocused = (paneId: string): boolean => activeTerminalPaneId() === paneId;
@@ -2129,9 +2136,12 @@ const mountTuiRoot = () => {
     const dockTabForPanel = (panel: HostedPanelKind): WorkbenchDockTabId | null => {
       if (panel === "files") return "files";
       if (panel === "diff") return "changes";
-      if (panel === "missions") return "missions";
       return null;
     };
+    const isCoreDockTab = (
+      tabId: WorkbenchDockTabId,
+    ): tabId is Extract<WorkbenchDockTabId, "files" | "changes"> =>
+      tabId === "files" || tabId === "changes";
     const panelForDockTab = (dockTab: WorkbenchDockTabId): HostedPanelKind | "activity" => {
       if (dockTab === "files") return "files";
       if (dockTab === "changes") return "diff";
@@ -2155,11 +2165,6 @@ const mountTuiRoot = () => {
     });
     createEffect(() => {
       if (dockMode() !== "collapsed" && activeDockTab() === "changes") void ensureChangesFeature();
-    });
-    createEffect(() => {
-      const dock = activeDockTab();
-      if (dockMode() !== "collapsed" && (dock === "missions" || dock === "activity"))
-        void ensureMissionsActivityFeature();
     });
     createEffect(() => {
       if (dockMode() === "collapsed") {
@@ -2244,7 +2249,13 @@ const mountTuiRoot = () => {
         focusZone: workbenchFocusZone(),
         hoveredDockTab: hoveredDockTab(),
         attentionDockTabs: new Set(),
-        dockTools: semanticApplicationShell().bottomDock.tools,
+        // Keep the product foundation deliberately small while terminal
+        // runtime convergence is being hardened. Mission and activity
+        // implementation remains dormant behind its feature boundary, but is
+        // not exposed or hydrated by the primary TUI.
+        dockTools: semanticApplicationShell().bottomDock.tools.filter((tool) =>
+          isCoreDockTab(tool.id as WorkbenchDockTabId),
+        ),
       }),
     );
     const dockSurfaceWidth = () => workbenchProjection().dockBodyContent.width;
@@ -2518,21 +2529,14 @@ const mountTuiRoot = () => {
       return true;
     };
     const activateDockTabContent = (tabId: WorkbenchDockTabId): boolean => {
+      if (!isCoreDockTab(tabId)) {
+        setStatusNote("missions and activity are temporarily outside the core product surface");
+        return false;
+      }
       if (tabId !== "files") editorOpenIntent.retire();
       if (tabId !== "changes") changesPrepareIntent.retire();
       if (tabId === "files") void ensureFilesFeature();
-      if (tabId === "activity") {
-        // Activity is dock-only, so it does not travel through `selectView` (the
-        // hosted-view activation path that normally snapshots the surface being
-        // left). Capture it explicitly before the active-tab effect replaces a
-        // pending debounced save with Activity's state.
-        snapshotActiveWorkspaceView();
-        setActiveDockTab("activity");
-        loadMissionsWorkspace("activation");
-        return true;
-      }
-      const panel: HostedPanelKind =
-        tabId === "files" ? "files" : tabId === "changes" ? "diff" : "missions";
+      const panel: HostedPanelKind = tabId === "files" ? "files" : "diff";
       const view = nativeHostedViewForPanel(hostedViews(), panel);
       snapshotActiveWorkspaceView();
       setActiveDockTab(tabId);
@@ -2737,24 +2741,15 @@ const mountTuiRoot = () => {
                   ? ("dock-body" as const)
                   : ("canvas" as const),
               };
-          const restoredActiveDockTab = explicitDockTab ?? restoredDock.activeTab;
+          const requestedDockTab = explicitDockTab ?? restoredDock.activeTab;
+          const restoredActiveDockTab = isCoreDockTab(requestedDockTab)
+            ? requestedDockTab
+            : "files";
           loadStage = "restore dock";
           setActiveDockTab(restoredActiveDockTab);
           setDockMode(explicitDockTab ? "open" : restoredDock.mode);
           setPreferredDockHeight(restoredDock.preferredHeight);
           setWorkbenchFocusZone(explicitDockTab ? "dock-body" : restoredDock.focusZone);
-          const activityScope = missionsActivityIdentityScope();
-          const activityIntent = activityHydrationIntent.issue(activityScope);
-          const hydrateActivity = () => {
-            if (
-              activityHydrationIntent.isCurrent(activityIntent, missionsActivityIdentityScope())
-            ) {
-              missionsActivitySession()?.hydrateActivity(loadedUi.state.surfaces.activity);
-            }
-          };
-          if (missionsActivitySession()) hydrateActivity();
-          else void ensureMissionsActivityFeature().then(hydrateActivity, () => undefined);
-          hydratedWorkspaceSurfaceIds.add("activity");
           loadStage = "hydrate active view";
           hydrateActiveWorkspaceView({ firstProjectLoad });
           const restoredDockPanel = panelForDockTab(restoredActiveDockTab);
@@ -6541,7 +6536,7 @@ const mountTuiRoot = () => {
         return;
       }
       const dockShortcut = workbenchDockTabForShortcut(evt);
-      if (dockShortcut) {
+      if (dockShortcut && isCoreDockTab(dockShortcut)) {
         executeSurfaceCommand(dockShortcut, { kind: "keyboard", surface: "workbench" });
         return;
       }

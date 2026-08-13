@@ -901,6 +901,48 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(h.deliveryAcks).toHaveBeenCalledWith(
       expect.objectContaining({ workspaceName: SESSION, transactionId }),
     );
+
+    // The server may publish a replacement incarnation before the client has
+    // applied and ACKed the preceding seed. The address cache contains only
+    // the latest incarnation; the delivery owner must remain the authority for
+    // ordered transaction validation instead of tearing down the whole stream.
+    await h.deliveryListeners.get("pane.shell")?.({
+      type: "terminal.delivery",
+      workspaceName: SESSION,
+      semanticPaneId: "pane.shell",
+      generation: INSTANCE,
+      incarnation: `${INSTANCE}:1`,
+      deliveryNonce: "00000000-0000-4000-8000-000000000098",
+      transactionId: "00000000-0000-4000-8000-000000000094",
+      protocolVersion: 1,
+      encoding: "semantic-v1",
+      frame: "seed",
+      baseRevision: null,
+      canonicalRevision: 0,
+      canonicalStateHash: "3333333333333333",
+      representationHash: "4444444444444444",
+      representationBytes: 1,
+      chunkCount: 1,
+      canonicalEquivalent: true,
+      history: "complete",
+      richPlacements: false,
+    } as never);
+    socket.message({
+      type: "terminal-delivery-ack",
+      ack: {
+        type: "terminal.delivery.ack",
+        workspaceName: "workspace.alpha",
+        semanticPaneId: "pane.shell",
+        generation: INSTANCE,
+        incarnation: `${INSTANCE}:0`,
+        deliveryNonce: "00000000-0000-4000-8000-000000000098",
+        transactionId,
+        canonicalRevision: 0,
+        canonicalStateHash: "1111111111111111",
+        representationHash: "2222222222222222",
+      },
+    });
+    expect(socket.closed).toBeNull();
     h.deliveryListeners.get("pane.editor")?.({
       type: "terminal.delivery.fault",
       reason: "source-closed",

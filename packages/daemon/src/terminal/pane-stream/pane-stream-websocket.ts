@@ -1719,12 +1719,17 @@ export class PaneStreamLiveConnection {
       expected.workspaceName !== address.workspaceName ||
       expected.generation !== address.generation ||
       expected.deliveryNonce !== address.deliveryNonce ||
-      expected.incarnation === null ||
-      expected.incarnation !== address.incarnation
+      expected.incarnation === null
     ) {
       this.#failProtocol("protocol-error");
       return null;
     }
+    // More than one canonical delivery can legitimately be in flight. The
+    // cached address records only the newest incarnation, so comparing an ACK
+    // against that single value rejects an earlier valid delivery during a
+    // reseed/reconnect burst. Generation + one-use delivery nonce identify the
+    // channel here; the retained delivery owner validates incarnation,
+    // transaction and revision ordering authoritatively below.
     return channel;
   }
 
