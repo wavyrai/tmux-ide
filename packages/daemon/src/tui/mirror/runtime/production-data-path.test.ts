@@ -169,6 +169,12 @@ describe("production OpenTUI data path", () => {
     expect(source).not.toContain("setCurTarget(intent.session)");
   });
 
+  it("keeps retained handoff presentation passive until its live authority lane exists", () => {
+    expect(source).toContain("const lane = adapter.lane;");
+    expect(source).toContain("if (!lane) return null;");
+    expect(source).toContain("return { adapter, lane, semanticPaneId };");
+  });
+
   it("owns optional feature admission and metrics inside the application lifecycle", () => {
     expect(source).toContain("createApplicationOptionalFeatureRegistry()");
     expect(source).toContain('applicationLifecycle.registerCloser("optional-features"');

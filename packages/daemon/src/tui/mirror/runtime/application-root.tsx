@@ -1660,6 +1660,12 @@ const mountTuiRoot = () => {
       terminalPresentationEpoch();
       const adapter = presentedTerminalWorkspaceAdapter ?? terminalWorkspaceAdapter;
       if (!adapter) return null;
+      // The presented adapter intentionally outlives its backing lane during an
+      // atomic workspace handoff so the last coherent framebuffer stays on
+      // screen. Presentation continuity is not interaction authority: pointer
+      // and keyboard actions must fail closed until a live lane is attached.
+      const lane = adapter.lane;
+      if (!lane) return null;
       // SemanticSessionView panes are already keyed by durable ids; sidebar
       // actions may still arrive with raw runtime ids. Resolve both without
       // synthesizing a second `pane.*` identity around an already-semantic id.
@@ -1671,7 +1677,7 @@ const mountTuiRoot = () => {
             .paneDescriptors()
             .find((descriptor) => descriptor.runtimePaneId === runtimePaneId)?.semanticPaneId ??
           semanticPaneIdForRuntime(runtimePaneId));
-      return { adapter, semanticPaneId };
+      return { adapter, lane, semanticPaneId };
     };
     const retireSessionRuntimeLane = () => {
       sessionRuntimeLaneRequest += 1;
