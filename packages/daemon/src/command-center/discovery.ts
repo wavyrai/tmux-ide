@@ -72,6 +72,40 @@ export function listTmuxSessions(): string[] {
   return raw.split("\n").filter(Boolean);
 }
 
+export interface LiveSessionSummary {
+  readonly sessionName: string;
+  readonly paneCount: number;
+}
+
+/**
+ * Enumerate observed tmux truth without consulting the workspace registry.
+ *
+ * The V2 workspace catalog deliberately separates durable workspace intent
+ * from live tmux sessions. Reusing {@link discoverSessions} here would erase
+ * every ordinary, not-yet-promoted tmux session as soon as the registry has
+ * loaded, making the configless app unable to discover its own front door.
+ * Production passes the daemon-generation-pinned runner; the default keeps
+ * the small command-center test seam backwards compatible.
+ */
+export function discoverLiveSessionSummaries(
+  runTmux: TmuxRunner = _tmuxRunner,
+): LiveSessionSummary[] {
+  let raw: string;
+  try {
+    raw = runTmux(["list-panes", "-a", "-F", "#{session_name}"]);
+  } catch {
+    return [];
+  }
+  if (!raw) return [];
+  const paneCounts = new Map<string, number>();
+  for (const line of raw.split("\n")) {
+    const sessionName = line.trim();
+    if (!sessionName || !isVisibleFleetSession(sessionName)) continue;
+    paneCounts.set(sessionName, (paneCounts.get(sessionName) ?? 0) + 1);
+  }
+  return [...paneCounts].map(([sessionName, paneCount]) => ({ sessionName, paneCount }));
+}
+
 const AGENT_STATE_LINE = /^([^\t]+)\t(%[0-9]+)\t([^\t]*)\t(.*)$/u;
 
 /** One pane's agent-authority reading: the raw state stamp plus the durable identity stamp. */

@@ -20835,6 +20835,22 @@ function listTmuxSessions() {
   if (!raw) return [];
   return raw.split("\n").filter(Boolean);
 }
+function discoverLiveSessionSummaries(runTmux2 = _tmuxRunner) {
+  let raw;
+  try {
+    raw = runTmux2(["list-panes", "-a", "-F", "#{session_name}"]);
+  } catch {
+    return [];
+  }
+  if (!raw) return [];
+  const paneCounts = /* @__PURE__ */ new Map();
+  for (const line of raw.split("\n")) {
+    const sessionName = line.trim();
+    if (!sessionName || !isVisibleFleetSession(sessionName)) continue;
+    paneCounts.set(sessionName, (paneCounts.get(sessionName) ?? 0) + 1);
+  }
+  return [...paneCounts].map(([sessionName, paneCount]) => ({ sessionName, paneCount }));
+}
 function getSessionCwd2(session) {
   return tmuxSilent(["display-message", "-t", session, "-p", "#{pane_current_path}"]);
 }
@@ -53045,10 +53061,7 @@ function createApp(options = {}) {
           }
         ]
       );
-      const liveSessions2 = options.catalogLiveSessions?.() ?? discoverSessions().map((session) => ({
-        sessionName: session.name,
-        paneCount: session.panes.length
-      }));
+      const liveSessions2 = options.catalogLiveSessions?.() ?? discoverLiveSessionSummaries();
       return c.json(
         projectWorkspaceCatalogV2(
           daemonInstanceIdentity,
@@ -57159,6 +57172,7 @@ init_daemon_shutdown();
 init_app_settings();
 init_workspace_registry();
 init_workspace_pane_creation2();
+init_discovery();
 init_workspace_open2();
 init_workspace_promotion2();
 init_app_window_mutation2();
@@ -60509,7 +60523,8 @@ async function startHttpServer({
   workspaceMultiplexerBackend,
   workspaceRegistry,
   terminalAttachmentRuntime,
-  paneStreamRuntime
+  paneStreamRuntime,
+  catalogLiveSessions
 }) {
   const { createApp: createApp3 } = await Promise.resolve().then(() => (init_server(), server_exports));
   const { getRequestListener: getRequestListener3 } = await import(requireFromHere2.resolve("@hono/node-server"));
@@ -60548,7 +60563,8 @@ async function startHttpServer({
     terminalAttachmentIssueBackend: terminalAttachmentRuntime.admission,
     paneStreamIssueBackend: paneStreamRuntime.coordinator,
     applicationShellInventoryBackend: terminalAttachmentRuntime,
-    startupReadinessAttachmentBackend: terminalAttachmentRuntime
+    startupReadinessAttachmentBackend: terminalAttachmentRuntime,
+    catalogLiveSessions
   });
   app.get("/api/daemon/health", (c) => {
     return c.json({ ok: true, session: sessionName });
@@ -60724,6 +60740,7 @@ async function startEmbeddedDaemon(opts) {
       }
     }
     const tmuxAuthority = resolveWorkspacePaneTmuxAuthority();
+    const catalogTmuxRunner = createPinnedWorkspaceTmuxRunner(tmuxAuthority);
     const workspacePaneCreation = new WorkspacePaneCreationAuthority({
       daemonInstanceId: instanceId,
       registry: workspaceRegistry,
@@ -60856,7 +60873,8 @@ async function startEmbeddedDaemon(opts) {
         workspaceMultiplexerBackend: orderedMultiplexerBackend,
         workspaceRegistry,
         terminalAttachmentRuntime,
-        paneStreamRuntime
+        paneStreamRuntime,
+        catalogLiveSessions: () => discoverLiveSessionSummaries(catalogTmuxRunner)
       });
     } catch (error) {
       await Promise.allSettled([

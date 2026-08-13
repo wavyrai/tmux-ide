@@ -8,6 +8,7 @@ import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
 import {
   discoverSessions,
+  discoverLiveSessionSummaries,
   buildOverviews,
   buildProjectDetail,
   type SessionOverview,
@@ -721,12 +722,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
               },
             ],
       );
-      const liveSessions =
-        options.catalogLiveSessions?.() ??
-        discoverSessions().map((session) => ({
-          sessionName: session.name,
-          paneCount: session.panes.length,
-        }));
+      const liveSessions = options.catalogLiveSessions?.() ?? discoverLiveSessionSummaries();
       return c.json(
         projectWorkspaceCatalogV2(
           daemonInstanceIdentity,

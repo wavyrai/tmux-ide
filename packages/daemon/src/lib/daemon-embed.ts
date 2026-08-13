@@ -43,9 +43,11 @@ import type { WorkspaceMultiplexerBackend } from "../command-center/actions/hand
 import { readAppSettings } from "./app-settings.ts";
 import { getDefaultWorkspaceRegistry, type WorkspaceRegistry } from "./workspace-registry.ts";
 import {
+  createPinnedWorkspaceTmuxRunner,
   resolveWorkspacePaneTmuxAuthority,
   WorkspacePaneCreationAuthority,
 } from "./workspace-pane-creation.ts";
+import { discoverLiveSessionSummaries } from "../command-center/discovery.ts";
 import { WorkspaceOpenAuthority } from "./workspace-open.ts";
 import { WorkspacePromotionAuthority } from "./workspace-promotion.ts";
 import { AppWindowMutationAuthority } from "./app-window-mutation.ts";
@@ -695,6 +697,7 @@ async function startHttpServer({
   workspaceRegistry,
   terminalAttachmentRuntime,
   paneStreamRuntime,
+  catalogLiveSessions,
 }: {
   sessionName: string;
   requestedPort: number;
@@ -718,6 +721,10 @@ async function startHttpServer({
   workspaceRegistry: WorkspaceRegistry;
   terminalAttachmentRuntime: NativeTerminalAttachmentRuntime;
   paneStreamRuntime: PaneStreamRuntime;
+  catalogLiveSessions: () => readonly {
+    readonly sessionName: string;
+    readonly paneCount: number;
+  }[];
 }): Promise<{
   server: Server;
   sockets: Set<Socket>;
@@ -768,6 +775,7 @@ async function startHttpServer({
     paneStreamIssueBackend: paneStreamRuntime.coordinator,
     applicationShellInventoryBackend: terminalAttachmentRuntime,
     startupReadinessAttachmentBackend: terminalAttachmentRuntime,
+    catalogLiveSessions,
   });
   app.get("/api/daemon/health", (c: { json: (body: unknown, status?: number) => Response }) => {
     return c.json({ ok: true, session: sessionName });
@@ -987,6 +995,7 @@ export async function startEmbeddedDaemon(
     // pane creation and direct attachment can never drift to different tmux
     // servers after startup.
     const tmuxAuthority = resolveWorkspacePaneTmuxAuthority();
+    const catalogTmuxRunner = createPinnedWorkspaceTmuxRunner(tmuxAuthority);
     const workspacePaneCreation = new WorkspacePaneCreationAuthority({
       daemonInstanceId: instanceId,
       registry: workspaceRegistry,
@@ -1135,6 +1144,7 @@ export async function startEmbeddedDaemon(
         workspaceRegistry,
         terminalAttachmentRuntime,
         paneStreamRuntime,
+        catalogLiveSessions: () => discoverLiveSessionSummaries(catalogTmuxRunner),
       });
     } catch (error) {
       await Promise.allSettled([

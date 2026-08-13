@@ -943,7 +943,14 @@ const mountTuiRoot = () => {
     const initialContextSession = bareHome
       ? ""
       : startupContextSession(target, false, persisted.contextSession);
-    let startupWorkspaceReconciled = !bareHome;
+    // Both bare and explicitly-targeted launches reconcile once against daemon
+    // live truth. An explicit target may disappear between CLI invocation and
+    // the first semantic catalog frame (especially after a daemon/tmux reset);
+    // mounting an endless empty canvas for that stale name is not a valid
+    // terminal state. The explicit target still begins attaching eagerly, then
+    // this one-shot reconciliation either confirms it or selects the first live
+    // managed workspace.
+    let startupWorkspaceReconciled = false;
     const [contextSession, setContextSession] = createSignal<string>(initialContextSession);
     const [contextDir, setContextDir] = createSignal<string>("");
     const editorOpenIntent = new LatestIntentFence<string>();
@@ -1895,7 +1902,25 @@ const mountTuiRoot = () => {
           authority?.dispose();
           return false;
         }
-        if (!authority) return false;
+        if (!authority) {
+          // A stale explicit target must not strand the app before the catalog
+          // demand gate. Ask for global live truth so startup reconciliation
+          // can recover to another managed session (or leave Home honestly
+          // empty). This target carries no workspace capability; workspace-
+          // scoped resources remain inactive until a real authority connects.
+          const daemon = readCanonicalDaemonInfo();
+          if (daemon) {
+            toolResources.setTarget({
+              daemon,
+              workspaceName: "__catalog__",
+              scopeKey: "__catalog__",
+            });
+            toolResources.markCatalogReady();
+            setTerminalFeaturesAdmitted(true);
+            optionalFeatures.admit();
+          }
+          return false;
+        }
         daemonApplicationShellAuthority = authority;
         const daemon = readCanonicalDaemonInfo();
         if (daemon?.instanceId === authority.target.daemon.instanceId) {
@@ -5344,6 +5369,7 @@ const mountTuiRoot = () => {
       startupWorkspaceReconciled = true;
       const selection = reconcileWorkspaceSelection({
         liveWorkspaceIds: liveSessions,
+        explicitWorkspaceId: bareHome ? undefined : target,
         persistedWorkspaceId: persisted.contextSession,
         fallback: "first-live",
       });
@@ -5362,10 +5388,15 @@ const mountTuiRoot = () => {
         workspaceName: restoredSession,
         directory: restoredDir,
       });
+      const replacesCurrentTarget = restoredSession !== curTarget();
       setCurTarget(restoredSession);
-      attach(restoredSession);
+      // A confirmed explicit target already has an in-flight/live attachment.
+      // Recreating it here would blink the terminal and discard scrollback.
+      if (replacesCurrentTarget || bareHome) attach(restoredSession);
       if (persisted.lastTab === "terminal") selectPanel("terminals");
-      if (selection.rejectedSource === "persisted") {
+      if (selection.rejectedSource === "explicit") {
+        setStatusNote(`session ${target} is unavailable · opened ${restoredSession}`);
+      } else if (selection.rejectedSource === "persisted") {
         setStatusNote(`restored live workspace ${restoredSession}`);
       }
     };
