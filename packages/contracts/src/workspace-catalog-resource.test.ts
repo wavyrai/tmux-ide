@@ -8,6 +8,7 @@ const daemon = {
   instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
   startedAt: "2026-07-21T00:00:00.000Z",
 };
+const alphaFleetSessionId = "session.aaaaaaaaaaaaaaaaaaaa";
 
 describe("projectWorkspaceCatalogV2", () => {
   it("keeps durable intent while publishing zero live sessions", () => {
@@ -39,9 +40,41 @@ describe("projectWorkspaceCatalogV2", () => {
         { workspaceName: "alpha", sessionName: "alpha-live", source: "workspace" },
         { workspaceName: "beta", sessionName: "beta", source: "project" },
       ],
-      [{ sessionName: "alpha-live", paneCount: 2 }],
+      [
+        {
+          sessionName: "alpha-live",
+          fleetSessionId: alphaFleetSessionId,
+          paneCount: 2,
+        },
+      ],
     );
     expect(result.intents.map(({ availability }) => availability)).toEqual(["live", "stopped"]);
-    expect(result.liveSessions).toEqual([{ sessionName: "alpha-live", paneCount: 2 }]);
+    expect(result.liveSessions).toEqual([
+      {
+        sessionName: "alpha-live",
+        fleetSessionId: alphaFleetSessionId,
+        paneCount: 2,
+      },
+    ]);
+  });
+
+  it("requires a daemon-minted opaque id for every exact live-session route", () => {
+    expect(() =>
+      projectWorkspaceCatalogV2(
+        daemon,
+        [],
+        [
+          // @ts-expect-error Proves the runtime schema rejects the legacy identity-less row.
+          { sessionName: "alpha-live", paneCount: 2 },
+        ],
+      ),
+    ).toThrow();
+    expect(() =>
+      projectWorkspaceCatalogV2(
+        daemon,
+        [],
+        [{ sessionName: "alpha-live", fleetSessionId: "$1", paneCount: 2 }],
+      ),
+    ).toThrow();
   });
 });

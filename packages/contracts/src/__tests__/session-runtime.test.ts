@@ -6,10 +6,34 @@ import {
   SessionRuntimeControllerLeaseSchemaZ,
   SessionRuntimeControllerSnapshotSchemaZ,
   SessionRuntimeSemanticIntentSchemaZ,
+  SessionRuntimeTerminalInputSchemaZ,
 } from "../session-runtime.ts";
 import { InteractionReceiptSchemaZ } from "../interaction-receipts.ts";
 
 describe("session runtime architecture contract", () => {
+  it("keeps terminal text and named keys as one closed canonical input union", () => {
+    expect(SessionRuntimeTerminalInputSchemaZ.parse({ kind: "text", data: "paste界" })).toEqual({
+      kind: "text",
+      data: "paste界",
+    });
+    for (const key of ["Up", "Enter", "C-c"]) {
+      expect(SessionRuntimeTerminalInputSchemaZ.parse({ kind: "key", data: key })).toEqual({
+        kind: "key",
+        data: key,
+      });
+    }
+    expect(
+      SessionRuntimeTerminalInputSchemaZ.safeParse({ kind: "text", data: "a\0b" }).success,
+    ).toBe(false);
+    expect(
+      SessionRuntimeTerminalInputSchemaZ.safeParse({ kind: "key", data: "Enter; kill-server" })
+        .success,
+    ).toBe(false);
+    expect(
+      SessionRuntimeTerminalInputSchemaZ.safeParse({ kind: "key", data: "\u001b[A" }).success,
+    ).toBe(false);
+  });
+
   it("pins controller capabilities to one client, session, revision, and daemon generation", () => {
     const lease = {
       generation: "11111111-1111-4111-8111-111111111111",

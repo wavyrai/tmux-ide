@@ -8,6 +8,7 @@ import {
   type ApplicationShellProjectionInputV3,
   type DesktopApplicationShellTarget,
   type InteractionReceipt,
+  type SessionRuntimeTerminalInput,
   type TerminalReplicaAddress,
   type TerminalReplicaUpdate,
 } from "@tmux-ide/contracts";
@@ -21,6 +22,7 @@ import { createWorkspaceClient } from "./workspace-client.ts";
 import { createWorkspaceClientConformanceAdapter } from "./workspace-client-conformance.ts";
 import type {
   WorkspaceClientOwnerActionPort,
+  WorkspaceClientRuntimeInventory,
   WorkspaceClientRuntimePort,
 } from "./workspace-client-types.ts";
 
@@ -37,7 +39,10 @@ function target(workspaceName: string, identity = ALPHA_DAEMON): DesktopApplicat
   return DesktopApplicationShellTargetSchemaZ.parse({ daemon: identity, workspaceName });
 }
 
-function shellResource(name: string): ApplicationShellProjectionInputV3 {
+function shellResource(
+  name: string,
+  semanticPaneIds: readonly string[] = [`pane.${name}`],
+): ApplicationShellProjectionInputV3 {
   return ApplicationShellProjectionInputV3SchemaZ.parse({
     project: { ...COHESION_FIXTURE_V1.project, name },
     workspace: {
@@ -55,7 +60,16 @@ function shellResource(name: string): ApplicationShellProjectionInputV3 {
     dock: COHESION_FIXTURE_V1.dock,
     focus: { ...COHESION_FIXTURE_V1.focus, overlays: [] },
     connection: COHESION_FIXTURE_V1.connection,
-    terminalInventory: { activeResourceId: null, resources: [] },
+    terminalInventory: {
+      activeResourceId: semanticPaneIds[0] ?? null,
+      resources: semanticPaneIds.map((semanticPaneId, index) => ({
+        id: semanticPaneId,
+        title: `Terminal ${index + 1}`,
+        kind: "terminal" as const,
+        active: index === 0,
+        attachability: { status: "available" as const, semanticPaneId },
+      })),
+    },
     appWindows: {
       version: 1,
       revision: 7,
@@ -149,6 +163,15 @@ class FakeRuntime implements WorkspaceClientRuntimePort<string, string> {
   readonly subscriptions = new Map<string, FakeTerminalSubscription>();
   closeCount = 0;
   submitCount = 0;
+  readonly inputs: Array<{
+    target: TerminalReplicaAddress;
+    input: SessionRuntimeTerminalInput;
+    traceId?: string;
+  }> = [];
+  inputResult: "ok" | "authority-lost" = "ok";
+  inputGate: Promise<void> | null = null;
+  readonly viewportFits: Array<{ cols: number; rows: number }> = [];
+  viewportGate: Promise<void> | null = null;
   constructor(readonly generation: string) {}
   async subscribeTerminal(address: TerminalReplicaAddress): Promise<FakeTerminalSubscription> {
     const subscription = new FakeTerminalSubscription(this.generation);
@@ -157,6 +180,19 @@ class FakeRuntime implements WorkspaceClientRuntimePort<string, string> {
   }
   async submitIntent(): Promise<void> {
     this.submitCount += 1;
+  }
+  async sendTerminalInput(
+    nextTarget: TerminalReplicaAddress,
+    input: SessionRuntimeTerminalInput,
+    traceId?: string,
+  ): Promise<"ok" | "authority-lost"> {
+    if (this.inputGate) await this.inputGate;
+    this.inputs.push({ target: nextTarget, input, ...(traceId ? { traceId } : {}) });
+    return this.inputResult;
+  }
+  async fitViewport(cols: number, rows: number): Promise<void> {
+    if (this.viewportGate) await this.viewportGate;
+    this.viewportFits.push({ cols, rows });
   }
   onReceipt(listener: (receipt: InteractionReceipt) => void): () => void {
     this.receipts.add(listener);
@@ -175,9 +211,15 @@ const actions: WorkspaceClientOwnerActionPort = {
 };
 
 async function settle(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((accept) => {
+    resolve = accept;
+  });
+  return { promise, resolve };
 }
 
 function receipt(operationId: string, phase: InteractionReceipt["phase"]): InteractionReceipt {
@@ -227,6 +269,221 @@ function terminalSeed(generation: string): TerminalReplicaUpdate<string, string>
 }
 
 describe("WorkspaceClient", () => {
+  it("waits for shell authority and connects with its exact immutable terminal inventory", async () => {
+    const shellAuthority = deferred<ApplicationShellProjectionInputV3>();
+    const shellConnections: ShellConnection[] = [];
+    const shellTransport: ApplicationShellTransport<ApplicationShellProjectionInputV3> = {
+      validateTarget: (value) => DesktopApplicationShellTargetSchemaZ.parse(value),
+      fetchApplicationShell: async () => shellAuthority.promise,
+      connectEvents: (current, handlers) => {
+        const connection = { target: current, handlers, closed: false };
+        shellConnections.push(connection);
+        return { close: () => (connection.closed = true) };
+      },
+    };
+    const runtime = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const inventories: WorkspaceClientRuntimeInventory[] = [];
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      ports: {
+        shell: shellTransport,
+        connectRuntime: async (_current, inventory) => {
+          inventories.push(inventory);
+          return runtime;
+        },
+        actions,
+      },
+    });
+
+    await settle();
+    expect(inventories).toHaveLength(0);
+    shellAuthority.resolve(shellResource("alpha", ["pane.z", "pane.a"]));
+    await settle();
+
+    expect(inventories).toHaveLength(1);
+    expect(inventories[0]).toEqual({
+      workspaceName: "alpha",
+      workspaceId: "workspace.alpha",
+      sessionId: COHESION_FIXTURE_V1.workspace.session.id,
+      daemonGeneration: ALPHA_DAEMON.instanceId,
+      shellGeneration: 1,
+      semanticPaneIds: ["pane.a", "pane.z"],
+    });
+    expect(Object.isFrozen(inventories[0])).toBe(true);
+    expect(Object.isFrozen(inventories[0]!.semanticPaneIds)).toBe(true);
+    client.dispose();
+    await settle();
+  });
+
+  it("does not reconnect when a shell refresh leaves runtime inventory unchanged", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha") });
+    const runtime = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    let connects = 0;
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async () => {
+          connects += 1;
+          return runtime;
+        },
+        actions,
+      },
+    });
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+    expect(connects).toBe(1);
+
+    shell.byWorkspace.set(
+      "alpha",
+      ApplicationShellProjectionInputV3SchemaZ.parse({
+        ...shellResource("alpha"),
+        project: { ...shellResource("alpha").project, rootLabel: "refreshed label" },
+      }),
+    );
+    shell.connections[0]!.handlers.onInvalidate();
+    await settle();
+    expect(connects).toBe(1);
+    expect(runtime.closeCount).toBe(0);
+    client.dispose();
+    await settle();
+  });
+
+  it("prepares a changed pane inventory and atomically swaps only after it is live", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha", ["pane.alpha"]) });
+    const first = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const second = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const next = deferred<FakeRuntime>();
+    const calls: WorkspaceClientRuntimeInventory[] = [];
+    const activated: FakeRuntime[] = [];
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async (_current, inventory) => {
+          calls.push(inventory);
+          return calls.length === 1 ? first : next.promise;
+        },
+        didActivateRuntime: (runtime) => activated.push(runtime as FakeRuntime),
+        actions,
+      },
+    });
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+    expect(calls).toHaveLength(1);
+    expect(activated).toEqual([first]);
+
+    shell.byWorkspace.set("alpha", shellResource("alpha", ["pane.beta", "pane.alpha"]));
+    shell.connections[0]!.handlers.onInvalidate();
+    await settle();
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.semanticPaneIds).toEqual(["pane.alpha", "pane.beta"]);
+    expect(first.closeCount).toBe(0);
+    expect(activated).toEqual([first]);
+    expect(
+      await client.sendTerminalInput(
+        { workspaceName: "alpha", semanticPaneId: "pane.alpha" },
+        { kind: "key", data: "Enter" },
+      ),
+    ).toBe("ok");
+    expect(first.inputs).toHaveLength(1);
+
+    next.resolve(second);
+    await settle();
+    expect(activated).toEqual([first, second]);
+    expect(first.closeCount).toBe(1);
+    expect(
+      await client.sendTerminalInput(
+        { workspaceName: "alpha", semanticPaneId: "pane.beta" },
+        { kind: "text", data: "ready" },
+      ),
+    ).toBe("ok");
+    expect(second.inputs).toHaveLength(1);
+    expect(calls).toHaveLength(2);
+    client.dispose();
+    await settle();
+  });
+
+  it("retires the runtime cleanly when authority publishes an empty inventory", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha") });
+    const runtime = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    let connects = 0;
+    let retirements = 0;
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async () => {
+          connects += 1;
+          return runtime;
+        },
+        didRetireRuntime: () => {
+          retirements += 1;
+        },
+        actions,
+      },
+    });
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+    shell.byWorkspace.set("alpha", shellResource("alpha", []));
+    shell.connections[0]!.handlers.onInvalidate();
+    await settle();
+
+    expect(connects).toBe(1);
+    expect(runtime.closeCount).toBe(1);
+    expect(retirements).toBe(1);
+    expect(
+      await client.sendTerminalInput(
+        { workspaceName: "alpha", semanticPaneId: "pane.alpha" },
+        { kind: "key", data: "Enter" },
+      ),
+    ).toBe("authority-lost");
+    client.dispose();
+    await settle();
+  });
+
+  it("fences a late runtime candidate after target replacement", async () => {
+    const shell = shellBroker({
+      alpha: shellResource("alpha"),
+      beta: shellResource("beta"),
+    });
+    const alpha = deferred<FakeRuntime>();
+    const staleAlpha = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const beta = new FakeRuntime(BETA_DAEMON.instanceId);
+    const calls: string[] = [];
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async (current) => {
+          calls.push(current.workspaceName);
+          return current.workspaceName === "alpha" ? alpha.promise : beta;
+        },
+        actions,
+      },
+    });
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+    expect(calls).toEqual(["alpha"]);
+
+    client.setTarget(target("beta", BETA_DAEMON));
+    alpha.resolve(staleAlpha);
+    shell.connections[1]!.handlers.onVerifiedOpen();
+    await settle();
+
+    expect(calls).toEqual(["alpha", "beta"]);
+    expect(staleAlpha.closeCount).toBe(1);
+    expect(
+      await client.sendTerminalInput(
+        { workspaceName: "beta", semanticPaneId: "pane.beta" },
+        { kind: "key", data: "Enter" },
+      ),
+    ).toBe("ok");
+    expect(beta.inputs).toHaveLength(1);
+    client.dispose();
+    await settle();
+  });
+
   it("produces byte-identical semantic traces for core, OpenTUI, Web, and SDK adapters", async () => {
     const labels = ["core", "opentui", "web", "sdk"] as const;
     const clients = labels.map((surface) => {
@@ -340,11 +597,94 @@ describe("WorkspaceClient", () => {
       target: { workspaceName: "beta" },
     });
     expect(Math.max(...generations)).toBe(2);
-    expect(staleAlphaRuntime.closeCount).toBe(1);
+    // Inventory authority never arrived for alpha, so no speculative runtime was opened.
+    expect(staleAlphaRuntime.closeCount).toBe(0);
     expect(client.getSnapshot().authorityShell?.project.name).toBe("beta");
     clock.advance(10_000);
     expect(client.getSnapshot().generation).toBe(2);
     client.dispose();
+  });
+
+  it("routes canonical terminal input through one runtime and fences late generation acks", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha"), beta: shellResource("beta") });
+    const alphaRuntime = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const betaRuntime = new FakeRuntime(BETA_DAEMON.instanceId);
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async (current) =>
+          current.workspaceName === "alpha" ? alphaRuntime : betaRuntime,
+        actions,
+      },
+    });
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+
+    expect(
+      await Promise.all([
+        client.sendTerminalInput(
+          { workspaceName: "alpha", semanticPaneId: "pane.alpha" },
+          { kind: "text", data: "hello" },
+        ),
+        client.sendTerminalInput(
+          { workspaceName: "alpha", semanticPaneId: "pane.alpha" },
+          { kind: "key", data: "Enter" },
+        ),
+      ]),
+    ).toEqual(["ok", "ok"]);
+    expect(alphaRuntime.inputs.map(({ input }) => input)).toEqual([
+      { kind: "text", data: "hello" },
+      { kind: "key", data: "Enter" },
+    ]);
+
+    const lateAck = deferred<void>();
+    alphaRuntime.inputGate = lateAck.promise;
+    const stale = client.sendTerminalInput(
+      { workspaceName: "alpha", semanticPaneId: "pane.alpha" },
+      { kind: "key", data: "C-c" },
+    );
+    client.setTarget(target("beta", BETA_DAEMON));
+    lateAck.resolve();
+    expect(await stale).toBe("authority-lost");
+    expect(
+      await client.sendTerminalInput(
+        { workspaceName: "alpha", semanticPaneId: "pane.alpha" },
+        { kind: "key", data: "Up" },
+      ),
+    ).toBe("authority-lost");
+    client.dispose();
+  });
+
+  it("fits the shared runtime viewport and fences a late retired generation", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha"), beta: shellResource("beta") });
+    const alphaRuntime = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const betaRuntime = new FakeRuntime(BETA_DAEMON.instanceId);
+    const lateFit = deferred<void>();
+    alphaRuntime.viewportGate = lateFit.promise;
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async (current) =>
+          current.workspaceName === "alpha" ? alphaRuntime : betaRuntime,
+        actions,
+      },
+    });
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+
+    const retiredFit = client.fitViewport(132, 44);
+    client.setTarget(target("beta", BETA_DAEMON));
+    lateFit.resolve();
+    shell.connections[1]!.handlers.onVerifiedOpen();
+    await settle();
+    expect(await retiredFit).toBe("authority-lost");
+    expect(alphaRuntime.viewportFits).toEqual([{ cols: 132, rows: 44 }]);
+    expect(await client.fitViewport(100, 30)).toBe("ok");
+    expect(betaRuntime.viewportFits).toEqual([{ cols: 100, rows: 30 }]);
+    client.dispose();
+    await settle();
   });
 
   it("settles duplicate and reordered receipts once without waking semantic subscribers", async () => {

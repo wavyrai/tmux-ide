@@ -503,15 +503,35 @@ async function owner() {
     const tuiRestartDeadline = Date.now() + 30_000;
     while (Date.now() < tuiRestartDeadline) {
       restartedTui = JSON.parse(tuiCommand(state, ["status", "--json"]));
-      if (restartedTui.daemon?.instanceId === daemon.record.instanceId) break;
+      if (
+        restartedTui.readiness?.activeGeneration === daemon.record.instanceId &&
+        restartedTui.readiness?.generationStatus === "live"
+      )
+        break;
       await new Promise((resolveWait) => setTimeout(resolveWait, 100));
     }
-    if (restartedTui?.daemon?.instanceId !== daemon.record.instanceId) {
+    if (
+      restartedTui?.readiness?.activeGeneration !== daemon.record.instanceId ||
+      restartedTui?.readiness?.generationStatus !== "live"
+    ) {
       throw new Error("hosted TUI did not recover onto the restarted daemon generation");
     }
     const afterRestart = await proveMultiClientConvergence(state, daemon, {
       previousGeneration,
     });
+    const hostedTuiMarker = `RIG_HOSTED_TUI_${randomBytes(4).toString("hex")}`;
+    tuiCommand(state, ["text", `printf '${hostedTuiMarker}\\n'`]);
+    tuiCommand(state, ["key", "Enter"]);
+    let hostedTuiFrame = "";
+    const hostedTuiInputDeadline = Date.now() + 5_000;
+    while (Date.now() < hostedTuiInputDeadline) {
+      hostedTuiFrame = tuiCommand(state, ["capture", "--history", "20"]);
+      if (hostedTuiFrame.includes(hostedTuiMarker)) break;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+    }
+    if (!hostedTuiFrame.includes(hostedTuiMarker)) {
+      throw new Error("hosted TUI input did not reach a painted terminal after daemon restart");
+    }
     const convergence = {
       ...afterRestart,
       restart: {
@@ -520,6 +540,7 @@ async function owner() {
         elapsedMs: Date.now() - restartStartedAt,
         webRecovered: true,
         tuiRecovered: true,
+        hostedTuiInputPainted: true,
       },
       runs: [beforeRestart, afterRestart],
     };

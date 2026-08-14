@@ -25,7 +25,11 @@ import type {
   ActionName,
   ApplicationShellProjectionInputV1,
   ApplicationShellReplayStateV1,
+  DesktopApplicationShellTarget,
   SessionRuntimeAuthorityKind,
+  SessionRuntimeTerminalInput,
+  SessionRuntimeTerminalInputResult,
+  TerminalReplicaDeliveryMetadata,
   TerminalReplicaAddress,
   TerminalReplicaUpdate,
   WorkspaceOpenPreparedResult,
@@ -43,6 +47,7 @@ import type {
   WorkspaceClientDispatchResult,
   WorkspaceClientOptions,
   WorkspaceClientPhase,
+  WorkspaceClientRuntimeInventory,
   WorkspaceClientRuntimePort,
   WorkspaceClientScope,
   WorkspaceClientScopeValue,
@@ -51,11 +56,16 @@ import type {
 
 const DEFAULT_OPERATION_TIMEOUT_MS = 2_000;
 
-interface TerminalInterest<Snapshot, Patch> {
+interface TerminalInterest<Snapshot, Patch, Tombstone> {
   readonly target: TerminalReplicaAddress;
-  readonly listeners: Set<(update: TerminalReplicaUpdate<Snapshot, Patch>) => void>;
+  readonly listeners: Set<
+    (
+      update: TerminalReplicaUpdate<Snapshot, Patch, Tombstone>,
+      metadata?: TerminalReplicaDeliveryMetadata,
+    ) => void
+  >;
   subscription: Awaited<
-    ReturnType<WorkspaceClientRuntimePort<Snapshot, Patch>["subscribeTerminal"]>
+    ReturnType<WorkspaceClientRuntimePort<Snapshot, Patch, Tombstone>["subscribeTerminal"]>
   > | null;
   unsubscribeUpdate: (() => void) | null;
   opening: boolean;
@@ -64,6 +74,17 @@ interface TerminalInterest<Snapshot, Patch> {
 interface PreparedOpen {
   readonly generation: number;
   readonly result: WorkspaceOpenPreparedResult;
+}
+
+interface RuntimeOwner<Snapshot, Patch, Tombstone> {
+  readonly key: string;
+  readonly inventory: WorkspaceClientRuntimeInventory;
+  readonly clientGeneration: number;
+  readonly target: DesktopApplicationShellTarget;
+  readonly supervisor: RuntimeConnectionSupervisor<
+    WorkspaceClientRuntimePort<Snapshot, Patch, Tombstone>
+  >;
+  unsubscribe: (() => void) | null;
 }
 
 function phaseOf<Shell extends ApplicationShellProjectionInputV1>(
@@ -83,6 +104,42 @@ function phaseOf<Shell extends ApplicationShellProjectionInputV1>(
 
 function terminalKey(target: TerminalReplicaAddress): string {
   return `${target.workspaceName}\u0000${target.semanticPaneId}`;
+}
+
+function runtimeInventoryOf<Shell extends ApplicationShellProjectionInputV1>(
+  shell: Shell,
+  target: DesktopApplicationShellTarget,
+  shellGeneration: number,
+): WorkspaceClientRuntimeInventory | null {
+  const semanticPaneIds = [
+    ...new Set(
+      (shell.terminalInventory?.resources ?? []).flatMap((resource) =>
+        resource.attachability.status === "available"
+          ? [resource.attachability.semanticPaneId]
+          : [],
+      ),
+    ),
+  ].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+  if (semanticPaneIds.length === 0) return null;
+  return Object.freeze({
+    workspaceName: target.workspaceName,
+    workspaceId: shell.workspace.id,
+    sessionId: shell.workspace.session.id,
+    daemonGeneration: target.daemon.instanceId,
+    shellGeneration,
+    semanticPaneIds: Object.freeze(semanticPaneIds),
+  });
+}
+
+function runtimeInventoryKey(inventory: WorkspaceClientRuntimeInventory): string {
+  return JSON.stringify([
+    inventory.workspaceName,
+    inventory.workspaceId,
+    inventory.sessionId,
+    inventory.daemonGeneration,
+    inventory.shellGeneration,
+    inventory.semanticPaneIds,
+  ]);
 }
 
 function scopeValue<
@@ -139,14 +196,18 @@ export function createWorkspaceClient<
   Shell extends ApplicationShellProjectionInputV1 = ApplicationShellProjectionInputV1,
   TerminalSnapshot = unknown,
   TerminalPatch = unknown,
+  TerminalTombstone = unknown,
 >(
-  options: WorkspaceClientOptions<Shell, TerminalSnapshot, TerminalPatch>,
-): WorkspaceClient<Shell, TerminalSnapshot, TerminalPatch> {
+  options: WorkspaceClientOptions<Shell, TerminalSnapshot, TerminalPatch, TerminalTombstone>,
+): WorkspaceClient<Shell, TerminalSnapshot, TerminalPatch, TerminalTombstone> {
   const clock: GenerationBoundClock = options.clock ?? defaultGenerationBoundClock;
   const operationId = options.operationId ?? (() => crypto.randomUUID());
   const operationTimeoutMs = options.operationTimeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS;
   const listeners = new Map<WorkspaceClientScope, Set<(value: unknown) => void>>();
-  const terminals = new Map<string, TerminalInterest<TerminalSnapshot, TerminalPatch>>();
+  const terminals = new Map<
+    string,
+    TerminalInterest<TerminalSnapshot, TerminalPatch, TerminalTombstone>
+  >();
 
   let disposed = false;
   let generation = 1;
@@ -159,16 +220,25 @@ export function createWorkspaceClient<
   let catalog: WorkspaceCatalogV2State = initialWorkspaceCatalogV2State();
   let authority: WorkspaceClientSnapshot<Shell>["authority"] = null;
   let snapshot!: WorkspaceClientSnapshot<Shell>;
-  let runtime: WorkspaceClientRuntimePort<TerminalSnapshot, TerminalPatch> | null = null;
-  let runtimeSupervisor: RuntimeConnectionSupervisor<
-    WorkspaceClientRuntimePort<TerminalSnapshot, TerminalPatch>
+  let runtime: WorkspaceClientRuntimePort<
+    TerminalSnapshot,
+    TerminalPatch,
+    TerminalTombstone
   > | null = null;
-  let runtimeSupervisorUnsubscribe: (() => void) | null = null;
+  let activeRuntimeOwner: RuntimeOwner<TerminalSnapshot, TerminalPatch, TerminalTombstone> | null =
+    null;
+  let candidateRuntimeOwner: RuntimeOwner<
+    TerminalSnapshot,
+    TerminalPatch,
+    TerminalTombstone
+  > | null = null;
+  let desiredRuntimeKey: string | null = null;
   let runtimeReceiptUnsubscribe: (() => void) | null = null;
   let runtimeAuthorityUnsubscribe: (() => void) | null = null;
   let catalogController: AbortController | null = null;
   let catalogConnection: { close(): void } | null = null;
   let preparedOpen: PreparedOpen | null = null;
+  let reconcileRuntimeInventory = (): void => undefined;
 
   const notify = (scope: WorkspaceClientScope): void => {
     const value = scopeValue(snapshot, scope);
@@ -212,6 +282,7 @@ export function createWorkspaceClient<
       authorityShell = nextInput;
       semantic = projectApplicationShellSession(nextInput, replay);
       rebuild(["lifecycle", "semantic"]);
+      reconcileRuntimeInventory();
       return;
     }
     if (next.status !== "stale" && next.status !== "degraded") {
@@ -220,6 +291,7 @@ export function createWorkspaceClient<
       semantic = null;
     }
     rebuild(["lifecycle", "semantic"]);
+    reconcileRuntimeInventory();
   };
 
   const shellSession: ApplicationShellSession<Shell> = createApplicationShellSession({
@@ -244,7 +316,9 @@ export function createWorkspaceClient<
   });
   const unsubscribeShell = shellSession.subscribe(applyShell);
 
-  const closeTerminal = (interest: TerminalInterest<TerminalSnapshot, TerminalPatch>): void => {
+  const closeTerminal = (
+    interest: TerminalInterest<TerminalSnapshot, TerminalPatch, TerminalTombstone>,
+  ): void => {
     interest.opening = false;
     interest.unsubscribeUpdate?.();
     interest.unsubscribeUpdate = null;
@@ -252,7 +326,9 @@ export function createWorkspaceClient<
     interest.subscription = null;
     void subscription?.close().catch(() => undefined);
   };
-  const openTerminal = (interest: TerminalInterest<TerminalSnapshot, TerminalPatch>): void => {
+  const openTerminal = (
+    interest: TerminalInterest<TerminalSnapshot, TerminalPatch, TerminalTombstone>,
+  ): void => {
     if (
       disposed ||
       runtime === null ||
@@ -280,7 +356,7 @@ export function createWorkspaceClient<
           return;
         }
         interest.subscription = subscription;
-        interest.unsubscribeUpdate = subscription.onUpdate((update) => {
+        interest.unsubscribeUpdate = subscription.onUpdate((update, metadata) => {
           if (
             disposed ||
             generation !== expectedGeneration ||
@@ -292,7 +368,13 @@ export function createWorkspaceClient<
             return;
           }
           // The terminal fast lane intentionally never rebuilds the semantic snapshot.
-          for (const listener of [...interest.listeners]) listener(update);
+          for (const listener of [...interest.listeners]) {
+            try {
+              listener(update, metadata);
+            } catch {
+              // One renderer observer cannot interrupt sibling terminal delivery.
+            }
+          }
         });
       })
       .catch(() => {
@@ -300,29 +382,91 @@ export function createWorkspaceClient<
       });
   };
 
-  const retireRuntime = (): void => {
-    runtimeSupervisorUnsubscribe?.();
-    runtimeSupervisorUnsubscribe = null;
-    const supervisor = runtimeSupervisor;
-    runtimeSupervisor = null;
+  const detachRuntimeValue = (): void => {
     runtimeReceiptUnsubscribe?.();
     runtimeReceiptUnsubscribe = null;
     runtimeAuthorityUnsubscribe?.();
     runtimeAuthorityUnsubscribe = null;
     for (const interest of terminals.values()) closeTerminal(interest);
     runtime = null;
-    void supervisor?.stop();
   };
-  const connectRuntime = (): void => {
-    retireRuntime();
+
+  const stopRuntimeOwner = (
+    owner: RuntimeOwner<TerminalSnapshot, TerminalPatch, TerminalTombstone> | null,
+  ): void => {
+    if (owner === null) return;
+    owner.unsubscribe?.();
+    owner.unsubscribe = null;
+    void owner.supervisor.stop();
+  };
+
+  const retireRuntime = (): void => {
+    const active = activeRuntimeOwner;
+    const candidate = candidateRuntimeOwner;
+    activeRuntimeOwner = null;
+    candidateRuntimeOwner = null;
+    desiredRuntimeKey = null;
+    detachRuntimeValue();
+    if (active !== null) options.ports.didRetireRuntime?.();
+    stopRuntimeOwner(candidate);
+    if (active !== candidate) stopRuntimeOwner(active);
+  };
+
+  const activateRuntime = (
+    owner: RuntimeOwner<TerminalSnapshot, TerminalPatch, TerminalTombstone>,
+    nextRuntime: WorkspaceClientRuntimePort<TerminalSnapshot, TerminalPatch, TerminalTombstone>,
+  ): void => {
+    const previousOwner = activeRuntimeOwner;
+    if (runtime !== nextRuntime) {
+      detachRuntimeValue();
+      runtime = nextRuntime;
+      activeRuntimeOwner = owner;
+      if (candidateRuntimeOwner === owner) candidateRuntimeOwner = null;
+      options.ports.didActivateRuntime?.(nextRuntime, owner.inventory);
+      runtimeReceiptUnsubscribe = nextRuntime.onReceipt((receipt) => {
+        if (
+          disposed ||
+          generation !== owner.clientGeneration ||
+          activeRuntimeOwner !== owner ||
+          runtime !== nextRuntime
+        ) {
+          return;
+        }
+        ledger.receipt(receipt, owner.clientGeneration);
+      });
+      runtimeAuthorityUnsubscribe =
+        nextRuntime.onAuthority?.((nextAuthority) => {
+          if (
+            disposed ||
+            generation !== owner.clientGeneration ||
+            activeRuntimeOwner !== owner ||
+            runtime !== nextRuntime ||
+            nextAuthority.generation !== owner.target.daemon.instanceId
+          ) {
+            return;
+          }
+          authority = nextAuthority;
+          rebuild(["authority"]);
+        }) ?? null;
+    }
+    activeRuntimeOwner = owner;
+    if (candidateRuntimeOwner === owner) candidateRuntimeOwner = null;
+    for (const interest of terminals.values()) openTerminal(interest);
+    if (previousOwner !== null && previousOwner !== owner) stopRuntimeOwner(previousOwner);
+  };
+
+  const createRuntimeOwner = (
+    inventory: WorkspaceClientRuntimeInventory,
+    key: string,
+  ): RuntimeOwner<TerminalSnapshot, TerminalPatch, TerminalTombstone> => {
     const expectedGeneration = generation;
     const expectedTarget = target;
     const supervisor = createRuntimeConnectionSupervisor<
-      WorkspaceClientRuntimePort<TerminalSnapshot, TerminalPatch>
+      WorkspaceClientRuntimePort<TerminalSnapshot, TerminalPatch, TerminalTombstone>
     >({
       wait: (delayMs, signal) => waitWithClock(clock, delayMs, signal),
       connect: async ({ signal }) => {
-        const nextRuntime = await options.ports.connectRuntime(expectedTarget, signal);
+        const nextRuntime = await options.ports.connectRuntime(expectedTarget, inventory, signal);
         if (nextRuntime.generation !== expectedTarget.daemon.instanceId) {
           void nextRuntime.close();
           throw new Error("session runtime connected to another daemon generation");
@@ -334,47 +478,57 @@ export function createWorkspaceClient<
         };
       },
     });
-    runtimeSupervisor = supervisor;
-    runtimeSupervisorUnsubscribe = supervisor.subscribe((state) => {
+    const owner: RuntimeOwner<TerminalSnapshot, TerminalPatch, TerminalTombstone> = {
+      key,
+      inventory,
+      clientGeneration: expectedGeneration,
+      target: expectedTarget,
+      supervisor,
+      unsubscribe: null,
+    };
+    owner.unsubscribe = supervisor.subscribe((state) => {
       if (
         disposed ||
         generation !== expectedGeneration ||
         target !== expectedTarget ||
-        runtimeSupervisor !== supervisor
+        desiredRuntimeKey !== key ||
+        (activeRuntimeOwner !== owner && candidateRuntimeOwner !== owner)
       ) {
         return;
       }
-      if (state.phase !== "live" || state.value === null) {
-        runtimeReceiptUnsubscribe?.();
-        runtimeReceiptUnsubscribe = null;
-        runtimeAuthorityUnsubscribe?.();
-        runtimeAuthorityUnsubscribe = null;
-        runtime = null;
-        for (const interest of terminals.values()) closeTerminal(interest);
-        return;
-      }
+      if (state.phase !== "live" || state.value === null) return;
       const nextRuntime = state.value;
       if (runtime === nextRuntime) return;
-      runtime = nextRuntime;
-      runtimeReceiptUnsubscribe = nextRuntime.onReceipt((receipt) => {
-        if (generation !== expectedGeneration || runtime !== nextRuntime) return;
-        ledger.receipt(receipt, expectedGeneration);
-      });
-      runtimeAuthorityUnsubscribe =
-        nextRuntime.onAuthority?.((nextAuthority) => {
-          if (
-            generation !== expectedGeneration ||
-            runtime !== nextRuntime ||
-            nextAuthority.generation !== expectedTarget.daemon.instanceId
-          ) {
-            return;
-          }
-          authority = nextAuthority;
-          rebuild(["authority"]);
-        }) ?? null;
-      for (const interest of terminals.values()) openTerminal(interest);
+      activateRuntime(owner, nextRuntime);
     });
-    supervisor.start();
+    return owner;
+  };
+
+  reconcileRuntimeInventory = (): void => {
+    if (disposed) return;
+    const inventory =
+      authorityShell === null
+        ? null
+        : runtimeInventoryOf(authorityShell, target, shellState.generation);
+    if (inventory === null) {
+      retireRuntime();
+      return;
+    }
+    const key = runtimeInventoryKey(inventory);
+    desiredRuntimeKey = key;
+    if (activeRuntimeOwner?.key === key) {
+      const retiredCandidate = candidateRuntimeOwner;
+      candidateRuntimeOwner = null;
+      stopRuntimeOwner(retiredCandidate);
+      return;
+    }
+    if (candidateRuntimeOwner?.key === key) return;
+
+    const retiredCandidate = candidateRuntimeOwner;
+    const candidate = createRuntimeOwner(inventory, key);
+    candidateRuntimeOwner = candidate;
+    stopRuntimeOwner(retiredCandidate);
+    candidate.supervisor.start();
   };
 
   const retireCatalog = (): void => {
@@ -428,7 +582,6 @@ export function createWorkspaceClient<
     readCatalog();
   };
 
-  connectRuntime();
   connectCatalog();
 
   const cancelPreparedOpenBestEffort = (): void => {
@@ -546,7 +699,6 @@ export function createWorkspaceClient<
       retireCatalog();
       shellSession.setTarget(nextTarget);
       rebuild(["lifecycle", "semantic", "catalog", "authority", "operations"]);
-      connectRuntime();
       connectCatalog();
     },
     refresh() {
@@ -599,7 +751,7 @@ export function createWorkspaceClient<
           subscription: null,
           unsubscribeUpdate: null,
           opening: false,
-        } satisfies TerminalInterest<TerminalSnapshot, TerminalPatch>);
+        } satisfies TerminalInterest<TerminalSnapshot, TerminalPatch, TerminalTombstone>);
       terminals.set(key, interest);
       interest.listeners.add(listener);
       openTerminal(interest);
@@ -609,6 +761,31 @@ export function createWorkspaceClient<
         terminals.delete(key);
         closeTerminal(interest);
       };
+    },
+    async sendTerminalInput(
+      nextTarget: TerminalReplicaAddress,
+      input: SessionRuntimeTerminalInput,
+      performanceTraceId?: string,
+    ): Promise<SessionRuntimeTerminalInputResult> {
+      if (disposed || nextTarget.workspaceName !== target.workspaceName) return "authority-lost";
+      const expectedGeneration = generation;
+      const expectedRuntime = runtime;
+      if (expectedRuntime === null) return "authority-lost";
+      const result = await expectedRuntime.sendTerminalInput(nextTarget, input, performanceTraceId);
+      if (disposed || generation !== expectedGeneration || runtime !== expectedRuntime) {
+        return "authority-lost";
+      }
+      return result;
+    },
+    async fitViewport(cols: number, rows: number): Promise<"ok" | "authority-lost"> {
+      const expectedGeneration = generation;
+      const expectedRuntime = runtime;
+      if (disposed || expectedRuntime === null) return "authority-lost";
+      await expectedRuntime.fitViewport(cols, rows);
+      if (disposed || generation !== expectedGeneration || runtime !== expectedRuntime) {
+        return "authority-lost";
+      }
+      return "ok";
     },
     setPresence(state) {
       runtime?.setPresence?.(state);

@@ -85,19 +85,18 @@ describe("PaneScopedTerminalSurface", () => {
     setup.renderer.destroy();
   });
 
-  it("repaints a resident blank surface when its retained source is adopted", async () => {
+  it("fully repaints generation B even when its pane version equals generation A", async () => {
     registerPaneSurface();
     const owner = new PaneScopedTerminalOwner();
     const generation = owner.beginGeneration();
-    let sourceReady = false;
+    let character = "A";
     const blits: string[] = [];
     const renderSource: TerminalPaneRenderSource = {
       scrollbackDepth: () => 0,
       cursorState: () => null,
       blitPane: (paneId, buffers, width, _height, _scroll, _fg, _bg, options) => {
-        if (!sourceReady) return null;
         blits.push(paneId);
-        buffers.char[0] = "A".codePointAt(0)!;
+        buffers.char[0] = character.codePointAt(0)!;
         buffers.attributes[0] = 0;
         options.dirtyRows.push(0);
         for (let column = 1; column < width; column += 1) buffers.char[column] = 32;
@@ -134,14 +133,17 @@ describe("PaneScopedTerminalSurface", () => {
       { width: 4, height: 2 },
     );
     await setup.renderOnce();
-    expect(blits).toEqual([]);
+    expect(blits).toEqual(["editor"]);
+    expect(setup.captureCharFrame()).toContain("A");
 
-    sourceReady = true;
+    blits.length = 0;
+    character = "B";
     owner.replaceSource();
     await setup.renderOnce();
 
     expect(blits).toEqual(["editor"]);
-    expect(setup.captureCharFrame()).toContain("A");
+    expect(setup.captureCharFrame()).toContain("B");
+    expect(setup.captureCharFrame()).not.toContain("A");
     setup.renderer.destroy();
   });
 });

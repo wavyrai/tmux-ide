@@ -9,6 +9,7 @@ import {
 import { handleWsEventsConnection } from "./ws-events.ts";
 import { createApp } from "./server.ts";
 import { _resetCacheForTests, registerProject } from "../lib/project-registry.ts";
+import { fleetSessionIdForName } from "./resources/fleet-catalog.ts";
 
 const TEST_DAEMON_IDENTITY = {
   protocolVersion: 1,
@@ -112,7 +113,13 @@ describe("REST /api/workspaces", () => {
           availability: "live",
         },
       ],
-      liveSessions: [{ sessionName: "alpha-live", paneCount: 3 }],
+      liveSessions: [
+        {
+          sessionName: "alpha-live",
+          fleetSessionId: fleetSessionIdForName("alpha-live"),
+          paneCount: 3,
+        },
+      ],
     });
   });
 

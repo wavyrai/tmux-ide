@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
+import { FleetSessionIdSchemaZ, type FleetSessionId } from "./fleet-catalog.ts";
 
 export const WORKSPACE_CATALOG_RESOURCE_VERSION = 1 as const;
 
@@ -42,10 +43,16 @@ export const WorkspaceCatalogIntentV2SchemaZ = z
   })
   .strict();
 
-/** Observed tmux truth. Nothing persisted is allowed to synthesize this row. */
+/**
+ * Observed tmux truth. Nothing persisted is allowed to synthesize this row.
+ * `sessionName` is the trusted routing fact; `fleetSessionId` is the daemon's
+ * opaque mutation identity for that exact same live session.
+ */
 export const WorkspaceCatalogLiveSessionV2SchemaZ = z
   .object({
     sessionName: z.string().min(1),
+    /** Daemon-minted promotion identity for this exact observed session. */
+    fleetSessionId: FleetSessionIdSchemaZ,
     paneCount: z.number().int().nonnegative(),
   })
   .strict();
@@ -71,6 +78,7 @@ export interface WorkspaceCatalogIntentInput {
 
 export interface WorkspaceCatalogLiveSessionInput {
   readonly sessionName: string;
+  readonly fleetSessionId: FleetSessionId;
   readonly paneCount: number;
 }
 

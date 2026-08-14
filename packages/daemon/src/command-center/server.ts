@@ -127,6 +127,7 @@ import {
   type ApplicationShellSessionFacts,
   type ApplicationShellWorkspaceDockSummary,
 } from "./resources/application-shell.ts";
+import { fleetSessionIdForName } from "./resources/fleet-catalog.ts";
 import { FilesAuthority } from "./resources/workspace-files-authority.ts";
 import { ChangesAuthority } from "./resources/workspace-changes-authority.ts";
 import { loadApplicationShellAppWindows } from "../lib/application-shell-app-windows.ts";
@@ -707,7 +708,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     return c.json({ workspaces: registry.list() } satisfies DaemonWorkspacesResponse);
   });
 
-  // OWNER POLICY: not owner-gated, deliberately. This is the name-only index
+  // OWNER POLICY: not owner-gated, deliberately. This is the path-free index
   // the host reads BEFORE it can address any owner-gated resource, and the
   // production broker fetches it with no Authorization header
   // (`daemon-resource-broker.ts` `#requestJson`, whose `authorize` argument
@@ -717,7 +718,9 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   // and it still sits behind the remote-access gate on a non-loopback bind.
   // Gating it on the owner bearer would break every desktop workspace read
   // without withholding a single fact the owner-gated routes do not already
-  // protect.
+  // protect. V2 live rows additionally carry the daemon-minted opaque Fleet
+  // session id so trusted clients never infer mutation identity from a display
+  // label.
   app.get("/api/resources/workspace-catalog", (c) => {
     const registry = getDefaultWorkspaceRegistry();
     if (c.req.query("version") === String(WORKSPACE_CATALOG_RESOURCE_V2_VERSION)) {
@@ -740,7 +743,12 @@ export function createApp(options: CreateAppOptions = {}): Hono {
               },
             ],
       );
-      const liveSessions = options.catalogLiveSessions?.() ?? discoverLiveSessionSummaries();
+      const liveSessions = (options.catalogLiveSessions?.() ?? discoverLiveSessionSummaries()).map(
+        (session) => ({
+          ...session,
+          fleetSessionId: fleetSessionIdForName(session.sessionName),
+        }),
+      );
       return c.json(
         projectWorkspaceCatalogV2(
           daemonInstanceIdentity,

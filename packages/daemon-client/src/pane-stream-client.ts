@@ -6,6 +6,7 @@ import {
   PaneStreamIssueResultSchemaZ,
   PaneStreamRedeemFrameSchemaZ,
   PaneStreamServerFrameSchemaZ,
+  SessionRuntimeTerminalInputSchemaZ,
   type PaneStreamIssueDescriptor,
   type PaneStreamLeaseRequest,
   type PaneStreamServerFrame,
@@ -15,6 +16,9 @@ import {
   type SessionRuntimeAuthoritySnapshot,
   type SessionRuntimePresenceState,
   type SessionRuntimeSemanticIntent,
+  type SessionRuntimeTerminalInput,
+  type SessionRuntimeTerminalInputResult,
+  type TerminalReplicaAddress,
   type TerminalDeliveryAck,
   type TerminalDeliveryNack,
   type TerminalDeliveryNegotiationResult,
@@ -26,6 +30,7 @@ import {
 
 type SocketEventType = "open" | "message" | "close" | "error";
 type SocketListener = (event: { readonly data?: unknown }) => void;
+const MAX_PENDING_TERMINAL_INPUTS = 256;
 
 export interface PaneStreamClientSocket {
   readonly readyState: number;
@@ -69,6 +74,7 @@ export type ConnectIssuedPaneStreamRuntimeClientOptions = Pick<
   | "onInputAck"
   | "onAuthoritySnapshot"
   | "onFault"
+  | "stream"
 >;
 
 export interface PaneStreamRuntimeClient {
@@ -82,6 +88,11 @@ export interface PaneStreamRuntimeClient {
     authority: SessionRuntimeAuthorityKind,
   ): Promise<SessionRuntimeAuthorityLease | null>;
   releaseAuthority(authority: SessionRuntimeAuthorityKind): Promise<void>;
+  sendTerminalInput(
+    target: TerminalReplicaAddress,
+    input: SessionRuntimeTerminalInput,
+    performanceTraceId?: string,
+  ): Promise<SessionRuntimeTerminalInputResult>;
   sendText(pane: string, text: string, performanceTraceId?: string): void;
   sendKey(pane: string, key: string, performanceTraceId?: string): void;
   fitViewport(cols: number, rows: number): Promise<void>;
@@ -182,6 +193,16 @@ export async function connectIssuedPaneStreamRuntimeClient(
     socket.send(JSON.stringify(PaneStreamClientFrameSchemaZ.parse(frame)));
   };
   const inputSequences = new Map<string, number>();
+  const pendingInputs = new Map<
+    string,
+    {
+      readonly pane: string;
+      readonly sequence: number;
+      resolve(result: SessionRuntimeTerminalInputResult): void;
+      reject(error: Error): void;
+      timer: NodeJS.Timeout;
+    }
+  >();
   let authoritySnapshot: SessionRuntimeAuthoritySnapshot | null = null;
   const pendingAuthorities = new Map<
     string,
@@ -212,6 +233,11 @@ export async function connectIssuedPaneStreamRuntimeClient(
     }
   >();
   const rejectPending = (error: Error): void => {
+    for (const pending of pendingInputs.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    pendingInputs.clear();
     for (const pending of pendingViewports.values()) {
       clearTimeout(pending.timer);
       pending.reject(error);
@@ -228,12 +254,23 @@ export async function connectIssuedPaneStreamRuntimeClient(
     }
     pendingAuthorities.clear();
   };
+  const retirePendingInputsForAuthorityLoss = (): void => {
+    for (const pending of pendingInputs.values()) {
+      clearTimeout(pending.timer);
+      pending.resolve("authority-lost");
+    }
+    pendingInputs.clear();
+  };
   const applyAuthoritySnapshot = (snapshot: SessionRuntimeAuthoritySnapshot): void => {
     if (snapshot.generation !== descriptor.daemonInstanceId) {
       fail("Pane-stream authority snapshot belonged to another daemon generation");
       return;
     }
+    const ownedInput = authoritySnapshot?.owners.input === options.hostClientId;
     authoritySnapshot = snapshot;
+    if (ownedInput && snapshot.owners.input !== options.hostClientId) {
+      retirePendingInputsForAuthorityLoss();
+    }
     options.onAuthoritySnapshot?.(snapshot);
   };
   const requestAuthority = (
@@ -291,21 +328,63 @@ export async function connectIssuedPaneStreamRuntimeClient(
       }
     });
   };
-  const sendInput = (
-    pane: string,
-    kind: "text" | "key",
-    data: string,
+  const sendTerminalInput = (
+    target: TerminalReplicaAddress,
+    rawInput: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
-  ): void => {
+  ): Promise<SessionRuntimeTerminalInputResult> => {
+    const input = SessionRuntimeTerminalInputSchemaZ.parse(rawInput);
+    const pane = target.semanticPaneId;
+    if (!descriptor.panes.includes(pane)) {
+      return Promise.reject(
+        new PaneStreamOperationError("invalid-pane", "Terminal input target is outside the lease"),
+      );
+    }
+    if (target.workspaceName !== options.stream.workspaceName) {
+      return Promise.reject(
+        new PaneStreamOperationError(
+          "invalid-workspace",
+          "Terminal input target belongs to another workspace",
+        ),
+      );
+    }
+    if (
+      descriptor.effectiveViewerMode !== "interactive" ||
+      authoritySnapshot?.owners.input !== options.hostClientId
+    ) {
+      return Promise.resolve("authority-lost");
+    }
+    if (pendingInputs.size >= MAX_PENDING_TERMINAL_INPUTS) {
+      return Promise.reject(
+        new PaneStreamOperationError(
+          "input-queue-full",
+          "Terminal input acknowledgement queue is full",
+        ),
+      );
+    }
     const sequence = (inputSequences.get(pane) ?? 0) + 1;
-    inputSequences.set(pane, sequence);
-    send({
-      type: "input",
-      kind,
-      pane,
-      seq: sequence,
-      data,
-      ...(performanceTraceId ? { performanceTraceId } : {}),
+    const pendingKey = `${pane}\0${sequence}`;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pendingInputs.delete(pendingKey);
+        reject(new PaneStreamOperationError("operation-timeout", "Terminal input ack timed out"));
+      }, 2_000);
+      timer.unref?.();
+      pendingInputs.set(pendingKey, { pane, sequence, resolve, reject, timer });
+      try {
+        send({
+          type: "input",
+          ...input,
+          pane,
+          seq: sequence,
+          ...(performanceTraceId ? { performanceTraceId } : {}),
+        });
+        inputSequences.set(pane, sequence);
+      } catch (error) {
+        clearTimeout(timer);
+        pendingInputs.delete(pendingKey);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   };
   const onOpen: SocketListener = () => {
@@ -411,6 +490,21 @@ export async function connectIssuedPaneStreamRuntimeClient(
       else pending.reject(new PaneStreamOperationError(frame.outcome.code, frame.outcome.message));
       return;
     }
+    if (frame.type === "input-ack") {
+      const pendingKey = `${frame.pane}\0${frame.seq}`;
+      const pending = pendingInputs.get(pendingKey);
+      // ACKs can race a timeout/retirement or be duplicated by a replaying
+      // transport. They carry no new authority and are safely idempotent.
+      if (!pending) return;
+      clearTimeout(pending.timer);
+      pendingInputs.delete(pendingKey);
+      pending.resolve("ok");
+      options.onInputAck?.(frame.pane, frame.seq);
+      return;
+    }
+    if (frame.type === "error" && frame.code === "input-rejected") {
+      retirePendingInputsForAuthorityLoss();
+    }
     routeFrame(options, frame, fail);
   };
   const onClose: SocketListener = () => {
@@ -440,8 +534,25 @@ export async function connectIssuedPaneStreamRuntimeClient(
       send({ type: "activity", generation: descriptor.daemonInstanceId, activity }),
     requestAuthority,
     releaseAuthority,
-    sendText: (pane, text, performanceTraceId) => sendInput(pane, "text", text, performanceTraceId),
-    sendKey: (pane, key, performanceTraceId) => sendInput(pane, "key", key, performanceTraceId),
+    sendTerminalInput,
+    sendText: (pane, text, performanceTraceId) => {
+      void sendTerminalInput(
+        { workspaceName: options.stream.workspaceName, semanticPaneId: pane },
+        { kind: "text", data: text },
+        performanceTraceId,
+      ).catch((error: unknown) =>
+        options.onFault?.(error instanceof Error ? error : new Error(String(error))),
+      );
+    },
+    sendKey: (pane, key, performanceTraceId) => {
+      void sendTerminalInput(
+        { workspaceName: options.stream.workspaceName, semanticPaneId: pane },
+        SessionRuntimeTerminalInputSchemaZ.parse({ kind: "key", data: key }),
+        performanceTraceId,
+      ).catch((error: unknown) =>
+        options.onFault?.(error instanceof Error ? error : new Error(String(error))),
+      );
+    },
     fitViewport: async (cols, rows) => {
       const geometry = await requestAuthority("geometry");
       if (!geometry) {
@@ -533,7 +644,7 @@ function routeFrame(
       fail(`Pane-stream received an unhandled ${frame.type}`);
       return;
     case "input-ack":
-      options.onInputAck?.(frame.pane, frame.seq);
+      fail("Pane-stream received an unhandled input acknowledgement");
       return;
     case "error":
       fail(`Pane-stream daemon rejected the connection: ${frame.code}`);

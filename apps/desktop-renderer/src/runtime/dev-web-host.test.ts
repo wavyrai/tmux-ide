@@ -217,7 +217,12 @@ describe("development web host route keying", () => {
                   source: "workspace",
                   availability: "live",
                 })),
-                liveSessions: CATALOG.map(({ sessionName }) => ({ sessionName, paneCount: 1 })),
+                liveSessions: CATALOG.map(({ sessionName }, index) => ({
+                  sessionName,
+                  fleetSessionId:
+                    index === 0 ? "session.aaaaaaaaaaaaaaaaaaaa" : "session.bbbbbbbbbbbbbbbbbbbb",
+                  paneCount: 1,
+                })),
               }
             : { unreadable: true };
       return {
@@ -279,7 +284,12 @@ describe("development web host route keying", () => {
                 source: "workspace",
                 availability: "live",
               })),
-              liveSessions: CATALOG.map(({ sessionName }) => ({ sessionName, paneCount: 1 })),
+              liveSessions: CATALOG.map(({ sessionName }, index) => ({
+                sessionName,
+                fleetSessionId:
+                  index === 0 ? "session.aaaaaaaaaaaaaaaaaaaa" : "session.bbbbbbbbbbbbbbbbbbbb",
+                paneCount: 1,
+              })),
             }),
             { status: 200, headers: { "Content-Type": "application/json" } },
           );

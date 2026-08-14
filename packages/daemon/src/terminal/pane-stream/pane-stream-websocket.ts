@@ -15,6 +15,7 @@ import {
   type PaneStreamRedeemFrame,
   type PaneStreamViewerMode,
   type SessionRuntimeSemanticIntent,
+  type SessionRuntimeTerminalInput,
   type SessionRuntimeActivityKind,
   type SessionRuntimeAuthorityKind,
   type SessionRuntimeAuthorityLease,
@@ -224,8 +225,7 @@ export interface SessionRuntimePaneStreamTransportBinding {
   ): Promise<WorkspaceMultiplexerMutationResult | void>;
   sendInput(
     semanticPaneId: string,
-    kind: "text" | "key",
-    data: string,
+    input: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
   ): void;
   fitViewport(cols: number, rows: number): void;
@@ -1842,7 +1842,7 @@ export class PaneStreamLiveConnection {
     try {
       this.#sessionRuntimeBinding!.assertController(pane);
       if (semanticDelivery)
-        this.#sessionRuntimeBinding!.sendInput(pane, kind, data, performanceTraceId);
+        this.#sessionRuntimeBinding!.sendInput(pane, { kind, data }, performanceTraceId);
       else if (kind === "text") channel.sub!.sendText(data);
       else channel.sub!.sendKey(data);
       sendControl(this.#socket, { type: "input-ack", pane, seq });

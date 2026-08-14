@@ -55,8 +55,16 @@ const WORKSPACE_CATALOG = {
     },
   ],
   liveSessions: [
-    { sessionName: "server/session:42", paneCount: 3 },
-    { sessionName: "durable-docs", paneCount: 1 },
+    {
+      sessionName: "server/session:42",
+      fleetSessionId: "session.aaaaaaaaaaaaaaaaaaaa",
+      paneCount: 3,
+    },
+    {
+      sessionName: "durable-docs",
+      fleetSessionId: "session.bbbbbbbbbbbbbbbbbbbb",
+      paneCount: 1,
+    },
   ],
 };
 

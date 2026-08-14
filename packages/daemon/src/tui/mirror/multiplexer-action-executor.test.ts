@@ -72,7 +72,13 @@ function catalog(instanceId = INSTANCE): Response {
         availability: "live",
       },
     ],
-    liveSessions: [{ sessionName: "renamed-session", paneCount: 2 }],
+    liveSessions: [
+      {
+        sessionName: "renamed-session",
+        fleetSessionId: "session.aaaaaaaaaaaaaaaaaaaa",
+        paneCount: 2,
+      },
+    ],
   });
 }
 

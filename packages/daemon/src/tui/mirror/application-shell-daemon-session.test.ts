@@ -41,7 +41,13 @@ const catalog = {
       availability: "live",
     },
   ],
-  liveSessions: [{ sessionName: "alpha", paneCount: 1 }],
+  liveSessions: [
+    {
+      sessionName: "alpha",
+      fleetSessionId: "session.aaaaaaaaaaaaaaaaaaaa",
+      paneCount: 1,
+    },
+  ],
 } as WorkspaceCatalogResourceV2;
 
 describe("OpenTUI canonical application-shell authority", () => {

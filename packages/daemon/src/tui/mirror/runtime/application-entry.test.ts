@@ -18,15 +18,16 @@ describe("production OpenTUI entry boundary", () => {
 
   it("loads the production root through a Bun-discoverable literal import", () => {
     const source = read("packages/daemon/src/tui/mirror/runtime/application-entry.ts");
-    expect(source).toContain('await import("./application-root.tsx")');
-    expect(source).not.toMatch(/from\s+["']\.\/application-root/u);
+    expect(source).toContain('await import("./application-root-v2.tsx")');
+    expect(source).not.toContain('import("./application-root.tsx")');
+    expect(source).not.toMatch(/from\s+["']\.\/application-root(?:-v2)?/u);
   });
 
   it("manifests every bootstrap boundary used to seed transitive architecture audits", () => {
     expect(OPENTUI_PRODUCTION_ROOT_SOURCES).toEqual([
       "packages/daemon/src/tui/mirror/app.tsx",
       "packages/daemon/src/tui/mirror/runtime/application-entry.ts",
-      "packages/daemon/src/tui/mirror/runtime/application-root.tsx",
+      "packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx",
     ]);
     for (const path of OPENTUI_PRODUCTION_ROOT_SOURCES)
       expect(read(path).length).toBeGreaterThan(0);

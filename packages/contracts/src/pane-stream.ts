@@ -20,12 +20,16 @@ import {
   TERMINAL_DELIVERY_CHUNK_BYTES,
 } from "./terminal-delivery.ts";
 import {
+  SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS,
   SessionRuntimeActivityKindSchemaZ,
   SessionRuntimeAuthorityKindSchemaZ,
   SessionRuntimeAuthorityLeaseSchemaZ,
   SessionRuntimeAuthoritySnapshotSchemaZ,
   SessionRuntimePresenceStateSchemaZ,
   SessionRuntimeSemanticIntentSchemaZ,
+  SessionRuntimeTerminalKeyInputSchemaZ,
+  SessionRuntimeTerminalKeyNameSchemaZ,
+  SessionRuntimeTerminalTextInputSchemaZ,
 } from "./session-runtime.ts";
 import { WorkspaceMultiplexerMutationResultSchemaZ } from "./workspace-multiplexer.ts";
 
@@ -65,7 +69,7 @@ export const PANE_STREAM_MAX_LAYOUT_PANES = 64;
 export const PANE_STREAM_MAX_GRID_CELLS = 4096;
 /** Every client-authored text frame (redeem, input, consumed) fits this. */
 export const PANE_STREAM_MAX_CLIENT_FRAME_BYTES = 4096;
-export const PANE_STREAM_MAX_INPUT_TEXT_CHARS = 1024;
+export const PANE_STREAM_MAX_INPUT_TEXT_CHARS = SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS;
 export const PANE_STREAM_MAX_INPUT_SEQUENCE = 0xffff_ffff;
 
 export const PaneStreamSemanticPaneIdSchemaZ = TerminalAttachmentSemanticPaneIdSchemaZ;
@@ -197,41 +201,20 @@ export type PaneStreamRedeemFrame = z.infer<typeof PaneStreamRedeemFrameSchemaZ>
  * tmux key names built from this list can reach the daemon, so no quoting,
  * separator, or expansion character survives to a tmux command line.
  */
-export const PaneStreamKeyNameSchemaZ = z
-  .string()
-  .regex(
-    /^(?:C-|M-|S-){0,3}(?:F1[0-2]|F[1-9]|Enter|Escape|Space|Tab|BTab|BSpace|Home|End|NPage|PPage|PgUp|PgDn|DC|IC|Up|Down|Left|Right|[A-Za-z0-9])$/u,
-  );
+/** @deprecated Import SessionRuntimeTerminalKeyNameSchemaZ for new code. */
+export const PaneStreamKeyNameSchemaZ = SessionRuntimeTerminalKeyNameSchemaZ;
 
-const InputTextSchemaZ = z
-  .string()
-  .min(1)
-  .max(PANE_STREAM_MAX_INPUT_TEXT_CHARS)
-  .refine((value) => !value.includes("\0"), "input text must not contain NUL");
+const PaneStreamInputFrameMetadataShape = {
+  type: z.literal("input"),
+  pane: PaneStreamSemanticPaneIdSchemaZ,
+  seq: z.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
+  /** Opt-in controlled next-output probe; not a general causal assertion. */
+  performanceTraceId: z.uuid().optional(),
+} as const;
 
 export const PaneStreamInputFrameSchemaZ = z.discriminatedUnion("kind", [
-  z
-    .object({
-      type: z.literal("input"),
-      kind: z.literal("text"),
-      pane: PaneStreamSemanticPaneIdSchemaZ,
-      seq: z.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
-      data: InputTextSchemaZ,
-      /** Opt-in controlled next-output probe; not a general causal assertion. */
-      performanceTraceId: z.uuid().optional(),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("input"),
-      kind: z.literal("key"),
-      pane: PaneStreamSemanticPaneIdSchemaZ,
-      seq: z.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
-      data: PaneStreamKeyNameSchemaZ,
-      /** Opt-in controlled next-output probe; not a general causal assertion. */
-      performanceTraceId: z.uuid().optional(),
-    })
-    .strict(),
+  SessionRuntimeTerminalTextInputSchemaZ.extend(PaneStreamInputFrameMetadataShape),
+  SessionRuntimeTerminalKeyInputSchemaZ.extend(PaneStreamInputFrameMetadataShape),
 ]);
 export type PaneStreamInputFrame = z.infer<typeof PaneStreamInputFrameSchemaZ>;
 

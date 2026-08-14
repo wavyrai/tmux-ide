@@ -7804,7 +7804,7 @@ var init_terminal_replica = __esm({
 
 // packages/contracts/src/session-runtime.ts
 import { z as z49 } from "zod";
-var SessionRuntimeGenerationSchemaZ, SessionRuntimeClientIdSchemaZ, SessionRuntimeSessionNameSchemaZ, SessionRuntimeControllerRoleSchemaZ, SessionRuntimeControllerLeaseSchemaZ, SessionRuntimeControllerSnapshotSchemaZ, SessionRuntimeAuthorityKindSchemaZ, SessionRuntimeClientSurfaceSchemaZ, SessionRuntimePresenceStateSchemaZ, SessionRuntimeActivityKindSchemaZ, SessionRuntimeAuthorityLeaseSchemaZ, SessionRuntimeClientPresenceSchemaZ, SessionRuntimeAuthoritySnapshotSchemaZ, TerminalReplicaRevisionSchemaZ, TerminalReplicaFrameMetadataSchemaZ, CanonicalTerminalReplicaSeedSchemaZ, CanonicalTerminalReplicaPatchSchemaZ, CanonicalTerminalReplicaTombstoneSchemaZ, CanonicalTerminalReplicaUpdateSchemaZ, SessionRuntimePaneReadIntentSchemaZ, SessionRuntimeSemanticIntentSchemaZ;
+var SessionRuntimeGenerationSchemaZ, SessionRuntimeClientIdSchemaZ, SessionRuntimeSessionNameSchemaZ, SessionRuntimeControllerRoleSchemaZ, SessionRuntimeControllerLeaseSchemaZ, SessionRuntimeControllerSnapshotSchemaZ, SessionRuntimeAuthorityKindSchemaZ, SessionRuntimeClientSurfaceSchemaZ, SessionRuntimePresenceStateSchemaZ, SessionRuntimeActivityKindSchemaZ, SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS, SessionRuntimeTerminalKeyNameSchemaZ, SessionRuntimeTerminalTextInputSchemaZ, SessionRuntimeTerminalKeyInputSchemaZ, SessionRuntimeTerminalInputSchemaZ, SessionRuntimeAuthorityLeaseSchemaZ, SessionRuntimeClientPresenceSchemaZ, SessionRuntimeAuthoritySnapshotSchemaZ, TerminalReplicaRevisionSchemaZ, TerminalReplicaFrameMetadataSchemaZ, CanonicalTerminalReplicaSeedSchemaZ, CanonicalTerminalReplicaPatchSchemaZ, CanonicalTerminalReplicaTombstoneSchemaZ, CanonicalTerminalReplicaUpdateSchemaZ, SessionRuntimePaneReadIntentSchemaZ, SessionRuntimeSemanticIntentSchemaZ;
 var init_session_runtime = __esm({
   "packages/contracts/src/session-runtime.ts"() {
     "use strict";
@@ -7846,6 +7846,22 @@ var init_session_runtime = __esm({
       "input",
       "focus",
       "geometry"
+    ]);
+    SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS = 1024;
+    SessionRuntimeTerminalKeyNameSchemaZ = z49.string().regex(
+      /^(?:C-|M-|S-){0,3}(?:F1[0-2]|F[1-9]|Enter|Escape|Space|Tab|BTab|BSpace|Home|End|NPage|PPage|PgUp|PgDn|DC|IC|Up|Down|Left|Right|[A-Za-z0-9])$/u
+    );
+    SessionRuntimeTerminalTextInputSchemaZ = z49.object({
+      kind: z49.literal("text"),
+      data: z49.string().min(1).max(SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS).refine((value) => !value.includes("\0"), "terminal input text must not contain NUL")
+    }).strict();
+    SessionRuntimeTerminalKeyInputSchemaZ = z49.object({
+      kind: z49.literal("key"),
+      data: SessionRuntimeTerminalKeyNameSchemaZ
+    }).strict();
+    SessionRuntimeTerminalInputSchemaZ = z49.discriminatedUnion("kind", [
+      SessionRuntimeTerminalTextInputSchemaZ,
+      SessionRuntimeTerminalKeyInputSchemaZ
     ]);
     SessionRuntimeAuthorityLeaseSchemaZ = z49.object({
       generation: SessionRuntimeGenerationSchemaZ,
@@ -8092,7 +8108,7 @@ var init_terminal_delivery = __esm({
 
 // packages/contracts/src/pane-stream.ts
 import { z as z51 } from "zod";
-var PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_TEXT_CHARS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PaneStreamKeyNameSchemaZ, InputTextSchemaZ, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
+var PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
 var init_pane_stream = __esm({
   "packages/contracts/src/pane-stream.ts"() {
     "use strict";
@@ -8116,7 +8132,6 @@ var init_pane_stream = __esm({
     PANE_STREAM_MAX_HELD_DELTAS = 256;
     PANE_STREAM_MAX_LAYOUT_PANES = 64;
     PANE_STREAM_MAX_GRID_CELLS = 4096;
-    PANE_STREAM_MAX_INPUT_TEXT_CHARS = 1024;
     PANE_STREAM_MAX_INPUT_SEQUENCE = 4294967295;
     PaneStreamSemanticPaneIdSchemaZ = TerminalAttachmentSemanticPaneIdSchemaZ;
     PaneStreamViewerModeSchemaZ = TerminalAttachmentViewerModeSchemaZ;
@@ -8169,29 +8184,16 @@ var init_pane_stream = __esm({
        */
       deliveryAcks: z51.boolean().optional()
     }).strict();
-    PaneStreamKeyNameSchemaZ = z51.string().regex(
-      /^(?:C-|M-|S-){0,3}(?:F1[0-2]|F[1-9]|Enter|Escape|Space|Tab|BTab|BSpace|Home|End|NPage|PPage|PgUp|PgDn|DC|IC|Up|Down|Left|Right|[A-Za-z0-9])$/u
-    );
-    InputTextSchemaZ = z51.string().min(1).max(PANE_STREAM_MAX_INPUT_TEXT_CHARS).refine((value) => !value.includes("\0"), "input text must not contain NUL");
+    PaneStreamInputFrameMetadataShape = {
+      type: z51.literal("input"),
+      pane: PaneStreamSemanticPaneIdSchemaZ,
+      seq: z51.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
+      /** Opt-in controlled next-output probe; not a general causal assertion. */
+      performanceTraceId: z51.uuid().optional()
+    };
     PaneStreamInputFrameSchemaZ = z51.discriminatedUnion("kind", [
-      z51.object({
-        type: z51.literal("input"),
-        kind: z51.literal("text"),
-        pane: PaneStreamSemanticPaneIdSchemaZ,
-        seq: z51.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
-        data: InputTextSchemaZ,
-        /** Opt-in controlled next-output probe; not a general causal assertion. */
-        performanceTraceId: z51.uuid().optional()
-      }).strict(),
-      z51.object({
-        type: z51.literal("input"),
-        kind: z51.literal("key"),
-        pane: PaneStreamSemanticPaneIdSchemaZ,
-        seq: z51.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
-        data: PaneStreamKeyNameSchemaZ,
-        /** Opt-in controlled next-output probe; not a general causal assertion. */
-        performanceTraceId: z51.uuid().optional()
-      }).strict()
+      SessionRuntimeTerminalTextInputSchemaZ.extend(PaneStreamInputFrameMetadataShape),
+      SessionRuntimeTerminalKeyInputSchemaZ.extend(PaneStreamInputFrameMetadataShape)
     ]);
     PaneStreamConsumedFrameSchemaZ = z51.object({
       type: z51.literal("consumed"),
@@ -8951,6 +8953,7 @@ var init_workspace_catalog_resource = __esm({
   "packages/contracts/src/workspace-catalog-resource.ts"() {
     "use strict";
     init_daemon_wire();
+    init_fleet_catalog();
     WORKSPACE_CATALOG_RESOURCE_VERSION = 1;
     WorkspaceCatalogEntryV1SchemaZ = z56.object({
       workspaceName: z56.string().min(1),
@@ -8970,6 +8973,8 @@ var init_workspace_catalog_resource = __esm({
     }).strict();
     WorkspaceCatalogLiveSessionV2SchemaZ = z56.object({
       sessionName: z56.string().min(1),
+      /** Daemon-minted promotion identity for this exact observed session. */
+      fleetSessionId: FleetSessionIdSchemaZ,
       paneCount: z56.number().int().nonnegative()
     }).strict();
     WorkspaceCatalogResourceV2SchemaZ = z56.object({
@@ -44710,7 +44715,7 @@ var init_registry2 = __esm({
           return Promise.reject(error);
         }
       }
-      sendInput(clientId, lease, semanticPaneId3, kind, data, performanceTraceId) {
+      sendInput(clientId, lease, semanticPaneId3, rawInput, performanceTraceId) {
         this.assertController(lease, clientId);
         const inputLease = this.#authority.leaseFor(clientId, "input");
         if (!inputLease) {
@@ -44719,6 +44724,7 @@ var init_registry2 = __esm({
             "The client no longer owns input authority."
           );
         }
+        const input = SessionRuntimeTerminalInputSchemaZ.parse(rawInput);
         if (performanceTraceId !== void 0) performanceTraceId = z71.uuid().parse(performanceTraceId);
         const trace = performanceTraceId ? Object.freeze({
           traceId: performanceTraceId,
@@ -44737,8 +44743,8 @@ var init_registry2 = __esm({
           this.#outputTraces.arm(semanticPaneId3, trace);
         }
         try {
-          if (kind === "text") this.#mirror.sendText(this.session, semanticPaneId3, data);
-          else this.#mirror.sendKey(this.session, semanticPaneId3, data);
+          if (input.kind === "text") this.#mirror.sendText(this.session, semanticPaneId3, input.data);
+          else this.#mirror.sendKey(this.session, semanticPaneId3, input.data);
         } catch (error) {
           if (trace && performanceTraceId) this.#outputTraces?.take(semanticPaneId3);
           throw error;
@@ -45045,9 +45051,9 @@ var init_registry2 = __esm({
         this.#assertOpen();
         return this.#runtime.submitIntent(this.clientId, lease, operationId, intent);
       }
-      sendInput(lease, semanticPaneId3, kind, data, performanceTraceId) {
+      sendInput(lease, semanticPaneId3, input, performanceTraceId) {
         this.#assertOpen();
-        this.#runtime.sendInput(this.clientId, lease, semanticPaneId3, kind, data, performanceTraceId);
+        this.#runtime.sendInput(this.clientId, lease, semanticPaneId3, input, performanceTraceId);
       }
       fitViewport(lease, cols, rows) {
         this.#assertOpen();
@@ -48805,7 +48811,7 @@ var init_pane_stream_websocket = __esm({
         try {
           this.#sessionRuntimeBinding.assertController(pane);
           if (semanticDelivery)
-            this.#sessionRuntimeBinding.sendInput(pane, kind, data, performanceTraceId);
+            this.#sessionRuntimeBinding.sendInput(pane, { kind, data }, performanceTraceId);
           else if (kind === "text") channel.sub.sendText(data);
           else channel.sub.sendKey(data);
           sendControl2(this.#socket, { type: "input-ack", pane, seq });
@@ -54777,7 +54783,12 @@ function createApp(options = {}) {
           }
         ]
       );
-      const liveSessions2 = options.catalogLiveSessions?.() ?? discoverLiveSessionSummaries();
+      const liveSessions2 = (options.catalogLiveSessions?.() ?? discoverLiveSessionSummaries()).map(
+        (session) => ({
+          ...session,
+          fleetSessionId: fleetSessionIdForName(session.sessionName)
+        })
+      );
       return c.json(
         projectWorkspaceCatalogV2(
           daemonInstanceIdentity,
@@ -55687,6 +55698,7 @@ var init_server = __esm({
     init_project_inspect();
     init_project_onboard();
     init_application_shell2();
+    init_fleet_catalog2();
     init_workspace_files_authority();
     init_workspace_changes_authority();
     init_application_shell_app_windows();
@@ -59791,7 +59803,7 @@ var SessionRuntimeTransportBinding = class {
     }
     return this.#binder.registry.submitAuthenticatedIntent(handle, operationId, intent);
   }
-  sendInput(semanticPaneId3, kind, data, performanceTraceId) {
+  sendInput(semanticPaneId3, input, performanceTraceId) {
     this.assertController(semanticPaneId3);
     const lease = this.#shared.lease;
     if (!lease) {
@@ -59800,7 +59812,7 @@ var SessionRuntimeTransportBinding = class {
         "The transport no longer owns controller authority."
       );
     }
-    this.#shared.consumer.sendInput(lease, semanticPaneId3, kind, data, performanceTraceId);
+    this.#shared.consumer.sendInput(lease, semanticPaneId3, input, performanceTraceId);
   }
   fitViewport(cols, rows) {
     this.assertController();

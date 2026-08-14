@@ -14,8 +14,10 @@ const CLIENT_ROOTS = [
 ] as const;
 
 const REQUIRED_SEMANTIC_RUNTIME_LANE = [
-  "packages/daemon/src/tui/mirror/application-shell-daemon-runtime.ts",
+  "packages/daemon/src/tui/mirror/open-tui-workspace-runtime-port.ts",
   "packages/daemon/src/tui/mirror/semantic-pane-render-source.ts",
+  "packages/daemon/src/tui/mirror/runtime/workspace-terminal-fast-lane.ts",
+  "packages/daemon/src/tui/mirror/runtime/terminal-fast-lane-renderer-adapter.ts",
 ] as const;
 
 const LEGACY_CONTROL_STACK = [

@@ -194,10 +194,10 @@ describe("real SessionRuntime qualification", () => {
     const lease = client.acquireController();
     const commandsBeforeInvalid = drivers[0]!.channel.written.length;
     expect(() =>
-      client.sendInput(lease, "pane.alpha", "text", "must-not-send", "not-a-uuid"),
+      client.sendInput(lease, "pane.alpha", { kind: "text", data: "must-not-send" }, "not-a-uuid"),
     ).toThrow();
     expect(drivers[0]!.channel.written).toHaveLength(commandsBeforeInvalid);
-    client.sendInput(lease, "pane.alpha", "text", "printf TRACE", traceId);
+    client.sendInput(lease, "pane.alpha", { kind: "text", data: "printf TRACE" }, traceId);
     // This is deliberately a controlled next-output probe, not general
     // causality: unrelated external output arriving first consumes it.
     drivers[0]!.output("%1", "TRACE");
@@ -266,7 +266,7 @@ describe("real SessionRuntime qualification", () => {
     const traceId = "00000000-0000-4000-8000-000000000098";
     const lease = client.acquireController();
     const priorRevision = latest(messages).canonicalRevision;
-    client.sendInput(lease, "pane.alpha", "text", "trace", traceId);
+    client.sendInput(lease, "pane.alpha", { kind: "text", data: "trace" }, traceId);
     drivers[0]!.output("%1", "TRACE");
     await drivers[0]!.settleUntil(
       () => latest(messages).canonicalRevision > priorRevision,
@@ -439,8 +439,8 @@ describe("real SessionRuntime qualification", () => {
     );
     const subscription = await opening;
     const lease = client.acquireController();
-    client.sendInput(lease, "pane.alpha", "text", "paste界");
-    client.sendInput(lease, "pane.alpha", "key", "Enter");
+    client.sendInput(lease, "pane.alpha", { kind: "text", data: "paste界" });
+    client.sendInput(lease, "pane.alpha", { kind: "key", data: "Enter" });
     await drivers[0]!.settleUntil(
       () =>
         drivers[0]!.channel.written.filter((command) => command.startsWith("send-keys")).length >=

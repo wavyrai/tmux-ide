@@ -100,6 +100,44 @@ export const SessionRuntimeActivityKindSchemaZ = z.enum([
 ]);
 export type SessionRuntimeActivityKind = z.infer<typeof SessionRuntimeActivityKindSchemaZ>;
 
+/**
+ * Canonical renderer-neutral terminal input. Text and named keys stay
+ * distinct all the way to the tmux adapter: control keys are never smuggled
+ * through an arbitrary byte/string lane.
+ */
+export const SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS = 1024;
+
+export const SessionRuntimeTerminalKeyNameSchemaZ = z
+  .string()
+  .regex(
+    /^(?:C-|M-|S-){0,3}(?:F1[0-2]|F[1-9]|Enter|Escape|Space|Tab|BTab|BSpace|Home|End|NPage|PPage|PgUp|PgDn|DC|IC|Up|Down|Left|Right|[A-Za-z0-9])$/u,
+  );
+
+export const SessionRuntimeTerminalTextInputSchemaZ = z
+  .object({
+    kind: z.literal("text"),
+    data: z
+      .string()
+      .min(1)
+      .max(SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS)
+      .refine((value) => !value.includes("\0"), "terminal input text must not contain NUL"),
+  })
+  .strict();
+
+export const SessionRuntimeTerminalKeyInputSchemaZ = z
+  .object({
+    kind: z.literal("key"),
+    data: SessionRuntimeTerminalKeyNameSchemaZ,
+  })
+  .strict();
+
+export const SessionRuntimeTerminalInputSchemaZ = z.discriminatedUnion("kind", [
+  SessionRuntimeTerminalTextInputSchemaZ,
+  SessionRuntimeTerminalKeyInputSchemaZ,
+]);
+export type SessionRuntimeTerminalInput = z.infer<typeof SessionRuntimeTerminalInputSchemaZ>;
+export type SessionRuntimeTerminalInputResult = "ok" | "authority-lost";
+
 /** A generation-fenced capability for exactly one authority kind. */
 export const SessionRuntimeAuthorityLeaseSchemaZ = z
   .object({
@@ -215,6 +253,15 @@ export type CanonicalTerminalReplicaUpdate =
   | CanonicalTerminalReplicaPatch
   | CanonicalTerminalReplicaTombstone;
 
+/**
+ * Observational delivery context that is intentionally excluded from replica
+ * identity and hashing. A renderer may consume the trace once when the
+ * corresponding canonical state first paints.
+ */
+export interface TerminalReplicaDeliveryMetadata {
+  readonly performanceTraceId?: string;
+}
+
 export const CanonicalTerminalReplicaSeedSchemaZ = TerminalReplicaFrameMetadataSchemaZ.extend({
   type: z.literal("terminal.seed"),
   revision: TerminalReplicaRevisionSchemaZ,
@@ -255,24 +302,39 @@ export const SessionRuntimeSemanticIntentSchemaZ = z.union([
 ]);
 export type SessionRuntimeSemanticIntent = z.infer<typeof SessionRuntimeSemanticIntentSchemaZ>;
 
-export interface SessionRuntimeTerminalSubscription<Snapshot = unknown, Patch = unknown> {
+export interface SessionRuntimeTerminalSubscription<
+  Snapshot = unknown,
+  Patch = unknown,
+  Tombstone = unknown,
+> {
   readonly generation: SessionRuntimeGeneration;
   close(): Promise<void>;
   freeze(): void;
   thaw(): void;
-  onUpdate(listener: (update: TerminalReplicaUpdate<Snapshot, Patch>) => void): () => void;
+  onUpdate(
+    listener: (
+      update: TerminalReplicaUpdate<Snapshot, Patch, Tombstone>,
+      metadata?: TerminalReplicaDeliveryMetadata,
+    ) => void,
+  ): () => void;
 }
 
 /** Client-facing port. Implementations live only in daemon runtime modules. */
-export interface SessionRuntimeClientPort<Snapshot = unknown, Patch = unknown> {
+export interface SessionRuntimeClientPort<Snapshot = unknown, Patch = unknown, Tombstone = unknown> {
   readonly generation: SessionRuntimeGeneration;
   subscribeTerminal(
     target: TerminalReplicaAddress,
-  ): Promise<SessionRuntimeTerminalSubscription<Snapshot, Patch>>;
+  ): Promise<SessionRuntimeTerminalSubscription<Snapshot, Patch, Tombstone>>;
   submitIntent(
     operationId: string,
     intent: SessionRuntimeSemanticIntent,
   ): Promise<WorkspaceMultiplexerMutationResult | void>;
+  /** One acknowledged, generation-bound write through the canonical input lane. */
+  sendTerminalInput(
+    target: TerminalReplicaAddress,
+    input: SessionRuntimeTerminalInput,
+    performanceTraceId?: string,
+  ): Promise<SessionRuntimeTerminalInputResult>;
   /** Reuses the one privacy-safe interaction spine; no parallel receipt bus. */
   onReceipt(listener: (receipt: InteractionReceipt) => void): () => void;
 }

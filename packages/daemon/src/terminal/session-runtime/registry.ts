@@ -3,6 +3,7 @@ import {
   SessionRuntimeControllerLeaseSchemaZ,
   SessionRuntimeGenerationSchemaZ,
   SessionRuntimeSemanticIntentSchemaZ,
+  SessionRuntimeTerminalInputSchemaZ,
   type AuthoredInteractionOrigin,
   type InteractionReceipt,
   type SessionRuntimeControllerLease,
@@ -15,6 +16,7 @@ import {
   type SessionRuntimePresenceState,
   type SessionRuntimeGeneration,
   type SessionRuntimeSemanticIntent,
+  type SessionRuntimeTerminalInput,
   type CanonicalTerminalReplicaUpdate,
   type TerminalDeliveryAck,
   type TerminalDeliveryNack,
@@ -155,8 +157,7 @@ export interface SessionRuntimeConsumer {
   sendInput(
     lease: SessionRuntimeControllerLease,
     semanticPaneId: string,
-    kind: "text" | "key",
-    data: string,
+    input: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
   ): void;
   fitViewport(lease: SessionRuntimeControllerLease, cols: number, rows: number): void;
@@ -856,8 +857,7 @@ class SessionRuntime {
     clientId: string,
     lease: SessionRuntimeControllerLease,
     semanticPaneId: string,
-    kind: "text" | "key",
-    data: string,
+    rawInput: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
   ): void {
     this.assertController(lease, clientId);
@@ -868,6 +868,7 @@ class SessionRuntime {
         "The client no longer owns input authority.",
       );
     }
+    const input = SessionRuntimeTerminalInputSchemaZ.parse(rawInput);
     if (performanceTraceId !== undefined) performanceTraceId = z.uuid().parse(performanceTraceId);
     const trace: SessionRuntimeTraceContext | null = performanceTraceId
       ? Object.freeze({
@@ -890,8 +891,8 @@ class SessionRuntime {
       this.#outputTraces.arm(semanticPaneId, trace);
     }
     try {
-      if (kind === "text") this.#mirror.sendText(this.session, semanticPaneId, data);
-      else this.#mirror.sendKey(this.session, semanticPaneId, data);
+      if (input.kind === "text") this.#mirror.sendText(this.session, semanticPaneId, input.data);
+      else this.#mirror.sendKey(this.session, semanticPaneId, input.data);
     } catch (error) {
       if (trace && performanceTraceId) this.#outputTraces?.take(semanticPaneId);
       throw error;
@@ -1280,12 +1281,11 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
   sendInput(
     lease: SessionRuntimeControllerLease,
     semanticPaneId: string,
-    kind: "text" | "key",
-    data: string,
+    input: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
   ): void {
     this.#assertOpen();
-    this.#runtime.sendInput(this.clientId, lease, semanticPaneId, kind, data, performanceTraceId);
+    this.#runtime.sendInput(this.clientId, lease, semanticPaneId, input, performanceTraceId);
   }
 
   fitViewport(lease: SessionRuntimeControllerLease, cols: number, rows: number): void {

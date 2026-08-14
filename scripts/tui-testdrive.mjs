@@ -237,9 +237,17 @@ function readLifecycleTimings(metadata = readMetadata()) {
     const mark = marks.find((candidate) => candidate?.phase === phase);
     return Number.isFinite(mark?.elapsedMs) ? Math.round(mark.elapsedMs) : null;
   };
+  const latestGeneration = marks
+    .filter((candidate) => candidate?.phase === "generation-status")
+    .at(-1);
   return {
     appChromeFrameMs: elapsed("first-frame") ?? metadata?.appChromeFrameMs ?? null,
     coherentTerminalFrameMs: elapsed("first-terminal-frame"),
+    activeGeneration:
+      latestGeneration?.status === "live" && typeof latestGeneration.daemonGeneration === "string"
+        ? latestGeneration.daemonGeneration
+        : null,
+    generationStatus: typeof latestGeneration?.status === "string" ? latestGeneration.status : null,
   };
 }
 

@@ -227,12 +227,23 @@ describe("semantic pane-stream runtime client", () => {
             outcome: { status: "applied", result: null },
           }),
         );
+      } else if (frame.type === "input") {
+        queueMicrotask(() =>
+          socket.message({ type: "input-ack", pane: frame.pane, seq: frame.seq }),
+        );
       }
     };
     const onTerminalDelivery = mock();
     const client = await openPaneStreamRuntimeClient(options(socket, { onTerminalDelivery }));
-    client.sendText("pane.editor", "echo hi", "00000000-0000-4000-8000-000000000099");
-    client.sendKey("pane.editor", "Enter");
+    const textSent = client.sendTerminalInput(
+      { workspaceName: "alpha", semanticPaneId: "pane.editor" },
+      { kind: "text", data: "echo hi" },
+      "00000000-0000-4000-8000-000000000099",
+    );
+    const keySent = client.sendTerminalInput(
+      { workspaceName: "alpha", semanticPaneId: "pane.editor" },
+      { kind: "key", data: "Enter" },
+    );
     const fitted = client.fitViewport(132, 44);
     const submitted = client.submitIntent(OPERATION, {
       verb: "workspace.pane.select",
@@ -240,6 +251,15 @@ describe("semantic pane-stream runtime client", () => {
       semanticPaneId: "pane.editor",
     });
     await fitted;
+    expect(await Promise.all([textSent, keySent])).toEqual(["ok", "ok"]);
+    socket.message({ type: "input-ack", pane: "pane.editor", seq: 1 });
+    expect(socket.closed).toBeNull();
+    await expect(
+      client.sendTerminalInput(
+        { workspaceName: "another", semanticPaneId: "pane.editor" },
+        { kind: "key", data: "Up" },
+      ),
+    ).rejects.toThrow("another workspace");
     expect(
       socket.sent
         .filter((frame) =>
@@ -278,8 +298,96 @@ describe("semantic pane-stream runtime client", () => {
       "pane.editor",
       expect.objectContaining({ bytes: new Uint8Array([104, 105]) }),
     );
+    socket.message({
+      type: "authority-snapshot",
+      snapshot: {
+        generation: INSTANCE,
+        session: "alpha",
+        revision: 3,
+        nativeGeometryYieldUntilMs: 0,
+        owners: { input: "another-client", focus: null, geometry: null },
+        clients: [],
+      },
+    });
+    const inputFrameCount = socket.sent.filter(
+      (frame) => (frame as { type?: string }).type === "input",
+    ).length;
+    expect(
+      await client.sendTerminalInput(
+        { workspaceName: "alpha", semanticPaneId: "pane.editor" },
+        { kind: "key", data: "C-c" },
+      ),
+    ).toBe("authority-lost");
+    expect(
+      socket.sent.filter((frame) => (frame as { type?: string }).type === "input"),
+    ).toHaveLength(inputFrameCount);
     expect(await submitted).toBeNull();
     client.close();
+  });
+
+  it("bounds unacknowledged input and retires every pending write exactly once", async () => {
+    const socket = new FakeSocket();
+    socket.onSend = (frame) => {
+      if (frame.type === "redeem") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "ready",
+            protocolVersion: 1,
+            daemonInstanceId: INSTANCE,
+            requestId: REQUEST,
+            panes: ["pane.editor"],
+            effectiveViewerMode: "interactive",
+          }),
+        );
+      } else if (frame.type === "authority-request") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "authority-receipt",
+            requestId: frame.requestId,
+            authority: "input",
+            status: "granted",
+            lease: {
+              generation: INSTANCE,
+              session: "alpha",
+              clientId: "tui:one",
+              authority: "input",
+              token: "55555555-5555-4555-8555-555555555555",
+              revision: 1,
+            },
+            snapshot: {
+              generation: INSTANCE,
+              session: "alpha",
+              revision: 1,
+              nativeGeometryYieldUntilMs: 0,
+              owners: { input: "tui:one", focus: null, geometry: null },
+              clients: [],
+            },
+          }),
+        );
+      }
+    };
+    const client = await openPaneStreamRuntimeClient(options(socket));
+    const pending = Array.from({ length: 256 }, (_, index) =>
+      client.sendTerminalInput(
+        { workspaceName: "alpha", semanticPaneId: "pane.editor" },
+        { kind: "text", data: `input-${index}` },
+      ),
+    );
+    await expect(
+      client.sendTerminalInput(
+        { workspaceName: "alpha", semanticPaneId: "pane.editor" },
+        { kind: "key", data: "Enter" },
+      ),
+    ).rejects.toThrow("queue is full");
+    expect(
+      socket.sent.filter((frame) => (frame as { type?: string }).type === "input"),
+    ).toHaveLength(256);
+
+    client.close();
+    const settled = await Promise.allSettled(pending);
+    expect(settled.every((result) => result.status === "rejected")).toBe(true);
+    socket.message({ type: "input-ack", pane: "pane.editor", seq: 256 });
+    expect(socket.closed).toEqual({ code: 1000, reason: "client-closed" });
   });
 
   it("rejects a ready frame from another generation or mode", async () => {

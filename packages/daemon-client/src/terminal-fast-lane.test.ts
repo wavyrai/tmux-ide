@@ -4,6 +4,7 @@ import type {
   CanonicalTerminalReplicaSeed,
   CanonicalTerminalReplicaUpdate,
   SessionRuntimeAuthorityKind,
+  SessionRuntimeTerminalInput,
   TerminalReplicaPatchPayload,
   TerminalReplicaSnapshot,
 } from "@tmux-ide/contracts";
@@ -121,7 +122,10 @@ class FakeSource implements TerminalFastLaneSourcePort {
 
 class FakeControl implements TerminalFastLaneControlPort {
   readonly owned = new Set<SessionRuntimeAuthorityKind>();
-  readonly writes: Array<{ address: TerminalFastLanePaneAddress; bytes: Uint8Array }> = [];
+  readonly writes: Array<{
+    address: TerminalFastLanePaneAddress;
+    input: SessionRuntimeTerminalInput;
+  }> = [];
   readonly resizes: Array<{
     address: TerminalFastLaneGenerationAddress;
     viewport: TerminalFastLaneViewport;
@@ -141,9 +145,9 @@ class FakeControl implements TerminalFastLaneControlPort {
     if (this.requestResult) this.owned.add(authority);
     return this.requestResult;
   }
-  async write(address: TerminalFastLanePaneAddress, bytes: Uint8Array) {
+  async write(address: TerminalFastLanePaneAddress, input: SessionRuntimeTerminalInput) {
     if (this.writeGate) await this.writeGate;
-    this.writes.push({ address, bytes: Uint8Array.from(bytes) });
+    this.writes.push({ address, input: { ...input } });
     return this.writeResult;
   }
   async resize(address: TerminalFastLaneGenerationAddress, viewport: TerminalFastLaneViewport) {
@@ -246,8 +250,8 @@ describe("terminal fast lane", () => {
     expect(lane.counters()).toMatchObject({ accepted: 10_000, published: 10_000 });
   });
 
-  it("preserves opaque input byte order with one authority request and visible overflow", async () => {
-    const { lane, control } = rig({ maxPendingInputs: 3, maxPendingInputBytes: 8 });
+  it("preserves text/key order with one authority request and UTF-8-bounded overflow", async () => {
+    const { lane, control } = rig({ maxPendingInputs: 3, maxPendingInputBytes: 10 });
     const authority = deferred<boolean>();
     control.request = async (kind) => {
       control.requests.push(kind);
@@ -255,10 +259,10 @@ describe("terminal fast lane", () => {
       if (granted) control.owned.add(kind);
       return granted;
     };
-    const first = lane.sendInput("pane-a", new Uint8Array([0xff, 0x00]));
-    const second = lane.sendInput("pane-a", new Uint8Array([0x1b, 0x5b, 0x41]));
-    const third = lane.sendInput("pane-b", new Uint8Array([0x80]));
-    const overflow = await lane.sendInput("pane-b", new Uint8Array([1]));
+    const first = lane.sendInput("pane-a", { kind: "text", data: "é" });
+    const second = lane.sendInput("pane-a", { kind: "key", data: "Enter" });
+    const third = lane.sendInput("pane-b", { kind: "text", data: "界" });
+    const overflow = await lane.sendInput("pane-b", { kind: "key", data: "Up" });
     expect(overflow).toEqual({ status: "rejected", reason: "queue-full" });
     expect(control.requests).toEqual(["input"]);
 
@@ -269,10 +273,10 @@ describe("terminal fast lane", () => {
       { status: "sent" },
       { status: "sent" },
     ]);
-    expect(control.writes.map((write) => [...write.bytes])).toEqual([
-      [0xff, 0x00],
-      [0x1b, 0x5b, 0x41],
-      [0x80],
+    expect(control.writes.map((write) => write.input)).toEqual([
+      { kind: "text", data: "é" },
+      { kind: "key", data: "Enter" },
+      { kind: "text", data: "界" },
     ]);
     expect(lane.counters()).toMatchObject({
       inputAccepted: 3,
@@ -289,7 +293,7 @@ describe("terminal fast lane", () => {
       control.requests.push(kind);
       return await authority.promise;
     };
-    const pendingGrant = lane.sendInput("pane-a", new Uint8Array([1]));
+    const pendingGrant = lane.sendInput("pane-a", { kind: "key", data: "a" });
     lane.replaceGeneration(address(GENERATION_B));
     expect(await pendingGrant).toEqual({ status: "rejected", reason: "retired" });
     control.request = async (kind) => {
@@ -297,10 +301,10 @@ describe("terminal fast lane", () => {
       control.owned.add(kind);
       return true;
     };
-    const replacement = lane.sendInput("pane-a", new Uint8Array([9]));
+    const replacement = lane.sendInput("pane-a", { kind: "key", data: "b" });
     await settle();
     expect(await replacement).toEqual({ status: "sent" });
-    expect(control.writes.map(({ bytes }) => [...bytes])).toEqual([[9]]);
+    expect(control.writes.map(({ input }) => input)).toEqual([{ kind: "key", data: "b" }]);
     authority.resolve(true);
     await settle();
     expect(control.writes).toHaveLength(1);
@@ -308,7 +312,7 @@ describe("terminal fast lane", () => {
     control.owned.add("input");
     const write = deferred<void>();
     control.writeGate = write.promise;
-    const pendingAck = lane.sendInput("pane-a", new Uint8Array([2]));
+    const pendingAck = lane.sendInput("pane-a", { kind: "key", data: "c" });
     await settle();
     lane.dispose();
     expect(await pendingAck).toEqual({ status: "rejected", reason: "disposed" });
@@ -387,12 +391,12 @@ describe("terminal fast-lane shared conformance", () => {
       source.emit(seed(snapshot, 2, GENERATION_A, "pane-a", `${GENERATION_A}:1`));
       control.owned.add("input");
       await Promise.all([
-        lane.sendInput("pane-a", new Uint8Array([1, 2])),
-        lane.sendInput("pane-a", new Uint8Array([3])),
+        lane.sendInput("pane-a", { kind: "text", data: "paste" }),
+        lane.sendInput("pane-a", { kind: "key", data: "Enter" }),
       ]);
       control.owned.delete("input");
       control.requestResult = false;
-      await lane.sendInput("pane-a", new Uint8Array([4]));
+      await lane.sendInput("pane-a", { kind: "key", data: "C-c" });
       control.owned.add("geometry");
       const gate = deferred<void>();
       control.resizeGates.push(gate.promise, Promise.resolve());

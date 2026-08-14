@@ -31,7 +31,7 @@ export async function startApplicationEntry(): Promise<void> {
     installReferencePerformanceTraceCollectorFromEnvironment();
   }
   try {
-    const { startApplicationRoot } = await import("./application-root.tsx");
+    const { startApplicationRoot } = await import("./application-root-v2.tsx");
     await startApplicationRoot();
     await mark("entry-ready");
   } catch (error) {

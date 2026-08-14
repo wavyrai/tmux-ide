@@ -1007,8 +1007,8 @@ describe("PaneStreamAdmissionCoordinator", () => {
     socket.message({ type: "input", kind: "text", pane: "pane.editor", seq: 1, data: "x" });
     socket.message({ type: "input", kind: "key", pane: "pane.editor", seq: 2, data: "Enter" });
     expect(h.sendInput.mock.calls).toEqual([
-      ["pane.editor", "text", "x", undefined],
-      ["pane.editor", "key", "Enter", undefined],
+      ["pane.editor", { kind: "text", data: "x" }, undefined],
+      ["pane.editor", { kind: "key", data: "Enter" }, undefined],
     ]);
     expect(socket.framesOfType("input-ack").map((frame) => frame.seq)).toEqual([1, 2]);
     socket.message({ type: "viewport", seq: 1, cols: 132, rows: 44 });

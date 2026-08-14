@@ -64,7 +64,13 @@ describe("TUI fleet resource projection", () => {
           availability: "live",
         },
       ],
-      liveSessions: [{ sessionName: "runtime-alpha", paneCount: 2 }],
+      liveSessions: [
+        {
+          sessionName: "runtime-alpha",
+          fleetSessionId: "session.aaaaaaaaaaaaaaaaaaaa",
+          paneCount: 2,
+        },
+      ],
     } satisfies WorkspaceCatalogV2State;
     const fleet = {
       version: 1,

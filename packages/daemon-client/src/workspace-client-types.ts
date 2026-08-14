@@ -14,6 +14,9 @@ import type {
   SessionRuntimeClientPort,
   SessionRuntimePresenceState,
   SessionRuntimeSemanticIntent,
+  SessionRuntimeTerminalInput,
+  SessionRuntimeTerminalInputResult,
+  TerminalReplicaDeliveryMetadata,
   TerminalReplicaAddress,
   TerminalReplicaUpdate,
   WorkspaceMultiplexerMutationResult,
@@ -112,10 +115,13 @@ export type WorkspaceClientDispatchResult =
 export interface WorkspaceClientRuntimePort<
   Snapshot = unknown,
   Patch = unknown,
-> extends SessionRuntimeClientPort<Snapshot, Patch> {
+  Tombstone = unknown,
+> extends SessionRuntimeClientPort<Snapshot, Patch, Tombstone> {
   /** Settles when the physical runtime lane can no longer carry traffic. */
   readonly closed: Promise<unknown>;
   close(): void | Promise<void>;
+  /** Fits the one shared physical terminal stream, never a renderer-local replica. */
+  fitViewport(cols: number, rows: number): Promise<void>;
   setPresence?(state: SessionRuntimePresenceState): void;
   noteActivity?(activity: SessionRuntimeActivityKind): void;
   requestAuthority?(
@@ -139,17 +145,40 @@ export interface WorkspaceClientOwnerActionPort {
   }): Promise<ActionResult<Name> | null>;
 }
 
+/**
+ * Immutable, validated terminal scope for one physical runtime connection.
+ * The application-shell authority is the only source of this inventory; hosts
+ * must not rediscover or guess panes while opening the runtime lane.
+ */
+export interface WorkspaceClientRuntimeInventory {
+  readonly workspaceName: string;
+  readonly workspaceId: string;
+  readonly sessionId: string;
+  readonly daemonGeneration: string;
+  readonly shellGeneration: number;
+  readonly semanticPaneIds: readonly string[];
+}
+
 export interface WorkspaceClientPorts<
   Shell extends ApplicationShellProjectionInputV1,
   TerminalSnapshot = unknown,
   TerminalPatch = unknown,
+  TerminalTombstone = unknown,
 > {
   readonly shell: ApplicationShellTransport<Shell>;
   readonly catalog?: WorkspaceClientCatalogPort;
   readonly connectRuntime: (
     target: DesktopApplicationShellTarget,
+    inventory: WorkspaceClientRuntimeInventory,
     signal: AbortSignal,
-  ) => Promise<WorkspaceClientRuntimePort<TerminalSnapshot, TerminalPatch>>;
+  ) => Promise<WorkspaceClientRuntimePort<TerminalSnapshot, TerminalPatch, TerminalTombstone>>;
+  /** Renderer-local adoption hook invoked only after a coherent candidate wins. */
+  readonly didActivateRuntime?: (
+    runtime: WorkspaceClientRuntimePort<TerminalSnapshot, TerminalPatch, TerminalTombstone>,
+    inventory: WorkspaceClientRuntimeInventory,
+  ) => void;
+  /** Called only when no active runtime remains (empty inventory/target retirement). */
+  readonly didRetireRuntime?: () => void;
   readonly actions: WorkspaceClientOwnerActionPort;
 }
 
@@ -157,9 +186,10 @@ export interface WorkspaceClientOptions<
   Shell extends ApplicationShellProjectionInputV1 = ApplicationShellProjectionInputV1,
   TerminalSnapshot = unknown,
   TerminalPatch = unknown,
+  TerminalTombstone = unknown,
 > {
   readonly target: DesktopApplicationShellTarget;
-  readonly ports: WorkspaceClientPorts<Shell, TerminalSnapshot, TerminalPatch>;
+  readonly ports: WorkspaceClientPorts<Shell, TerminalSnapshot, TerminalPatch, TerminalTombstone>;
   readonly clock?: GenerationBoundClock;
   readonly operationId?: () => string;
   readonly operationTimeoutMs?: number;
@@ -169,6 +199,7 @@ export interface WorkspaceClient<
   Shell extends ApplicationShellProjectionInputV1 = ApplicationShellProjectionInputV1,
   TerminalSnapshot = unknown,
   TerminalPatch = unknown,
+  TerminalTombstone = unknown,
 > {
   getSnapshot(): WorkspaceClientSnapshot<Shell>;
   subscribe<Scope extends WorkspaceClientScope>(
@@ -180,8 +211,17 @@ export interface WorkspaceClient<
   dispatch(command: WorkspaceClientDispatch): Promise<WorkspaceClientDispatchResult>;
   subscribeTerminal(
     target: TerminalReplicaAddress,
-    listener: (update: TerminalReplicaUpdate<TerminalSnapshot, TerminalPatch>) => void,
+    listener: (
+      update: TerminalReplicaUpdate<TerminalSnapshot, TerminalPatch, TerminalTombstone>,
+      metadata?: TerminalReplicaDeliveryMetadata,
+    ) => void,
   ): () => void;
+  sendTerminalInput(
+    target: TerminalReplicaAddress,
+    input: SessionRuntimeTerminalInput,
+    performanceTraceId?: string,
+  ): Promise<SessionRuntimeTerminalInputResult>;
+  fitViewport(cols: number, rows: number): Promise<"ok" | "authority-lost">;
   setPresence(state: SessionRuntimePresenceState): void;
   noteActivity(activity: SessionRuntimeActivityKind): void;
   requestAuthority(

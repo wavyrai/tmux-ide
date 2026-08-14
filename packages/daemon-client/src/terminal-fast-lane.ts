@@ -1,8 +1,11 @@
 import type {
   CanonicalTerminalReplicaUpdate,
   SessionRuntimeAuthorityKind,
+  SessionRuntimeTerminalInput,
+  TerminalReplicaDeliveryMetadata,
   TerminalReplicaAddress,
 } from "@tmux-ide/contracts";
+import { SessionRuntimeTerminalInputSchemaZ } from "@tmux-ide/contracts";
 import {
   applyTerminalReplicaUpdate,
   type TerminalReplicaApplyResult,
@@ -25,7 +28,10 @@ export type TerminalFastLaneRepairReason = "gap" | "conflict" | "wrong-address";
 export interface TerminalFastLaneSourcePort {
   subscribe(
     address: TerminalFastLanePaneAddress,
-    listener: (update: CanonicalTerminalReplicaUpdate) => void,
+    listener: (
+      update: CanonicalTerminalReplicaUpdate,
+      metadata?: TerminalReplicaDeliveryMetadata,
+    ) => void,
   ): () => void;
 }
 
@@ -33,7 +39,10 @@ export interface TerminalFastLaneSourcePort {
 export interface CanonicalTerminalSubscriptionPort {
   readonly subscribeTerminal: (
     target: TerminalReplicaAddress,
-    listener: (update: CanonicalTerminalReplicaUpdate) => void,
+    listener: (
+      update: CanonicalTerminalReplicaUpdate,
+      metadata?: TerminalReplicaDeliveryMetadata,
+    ) => void,
   ) => () => void;
 }
 
@@ -53,7 +62,7 @@ export interface TerminalFastLaneControlPort {
   request(authority: SessionRuntimeAuthorityKind, generation: string): Promise<boolean>;
   write(
     address: TerminalFastLanePaneAddress,
-    bytes: Uint8Array,
+    input: SessionRuntimeTerminalInput,
   ): Promise<TerminalFastLaneMutationResult>;
   resize(
     address: TerminalFastLaneGenerationAddress,
@@ -70,6 +79,11 @@ export interface TerminalFastLanePublication {
   readonly address: TerminalFastLanePaneAddress;
   readonly state: TerminalReplicaState;
   readonly update: CanonicalTerminalReplicaUpdate;
+  readonly paintTrace?: {
+    readonly traceId: string;
+    readonly generation: string;
+    readonly incarnation: string;
+  };
 }
 
 export type TerminalFastLaneInputOutcome =
@@ -122,7 +136,10 @@ export interface TerminalFastLane {
     listener: (publication: TerminalFastLanePublication) => void,
   ): () => void;
   paneState(semanticPaneId: string): TerminalReplicaState | null;
-  sendInput(semanticPaneId: string, bytes: Uint8Array): Promise<TerminalFastLaneInputOutcome>;
+  sendInput(
+    semanticPaneId: string,
+    input: SessionRuntimeTerminalInput,
+  ): Promise<TerminalFastLaneInputOutcome>;
   resize(viewport: TerminalFastLaneViewport): Promise<TerminalFastLaneResizeOutcome>;
   counters(): TerminalFastLaneCounters;
   dispose(): void;
@@ -139,12 +156,14 @@ interface PaneInterest {
 interface InputRequest {
   readonly generationEpoch: number;
   readonly semanticPaneId: string;
-  readonly bytes: Uint8Array;
+  readonly input: SessionRuntimeTerminalInput;
+  readonly byteLength: number;
   readonly resolve: (outcome: TerminalFastLaneInputOutcome) => void;
 }
 
 const DEFAULT_MAX_PENDING_INPUTS = 256;
 const DEFAULT_MAX_PENDING_INPUT_BYTES = 256 * 1024;
+const utf8 = new TextEncoder();
 
 function paneAddress(
   address: TerminalFastLaneGenerationAddress,
@@ -256,7 +275,11 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
     }
   };
 
-  const accept = (interest: PaneInterest, update: CanonicalTerminalReplicaUpdate): void => {
+  const accept = (
+    interest: PaneInterest,
+    update: CanonicalTerminalReplicaUpdate,
+    metadata?: TerminalReplicaDeliveryMetadata,
+  ): void => {
     if (disposed) return;
     const expected = paneAddress(generationAddress, interest.semanticPaneId);
     if (
@@ -293,7 +316,20 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
     interest.state = result.state;
     if (update.type === "terminal.seed") interest.repairPending = false;
     mutableCounters.published += 1;
-    const publication = Object.freeze({ address: expected, state: result.state, update });
+    const publication = Object.freeze({
+      address: expected,
+      state: result.state,
+      update,
+      ...(metadata?.performanceTraceId
+        ? {
+            paintTrace: Object.freeze({
+              traceId: metadata.performanceTraceId,
+              generation: update.generation,
+              incarnation: update.incarnation,
+            }),
+          }
+        : {}),
+    });
     for (const listener of [...interest.listeners]) {
       try {
         listener(publication);
@@ -308,8 +344,8 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
     const epoch = generationEpoch;
     interest.release = options.source.subscribe(
       paneAddress(generationAddress, interest.semanticPaneId),
-      (update) => {
-        if (!disposed && epoch === generationEpoch) accept(interest, update);
+      (update, metadata) => {
+        if (!disposed && epoch === generationEpoch) accept(interest, update, metadata);
       },
     );
   };
@@ -324,7 +360,7 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
         if (!granted) {
           while (inputQueue[0]?.generationEpoch === epoch) {
             const input = inputQueue.shift()!;
-            inputBytes -= input.bytes.byteLength;
+            inputBytes -= input.byteLength;
             rejectInput(input, "authority-denied");
           }
           return;
@@ -333,14 +369,14 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
           const input = inputQueue[0]!;
           if (input.generationEpoch !== epoch) {
             inputQueue.shift();
-            inputBytes -= input.bytes.byteLength;
+            inputBytes -= input.byteLength;
             rejectInput(input, "retired");
             continue;
           }
           if (!options.control.owns("input", generationAddress.generation)) {
             while (inputQueue[0]?.generationEpoch === epoch) {
               const retired = inputQueue.shift()!;
-              inputBytes -= retired.bytes.byteLength;
+              inputBytes -= retired.byteLength;
               rejectInput(retired, "authority-lost");
             }
             break;
@@ -349,11 +385,11 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
           try {
             outcome = await options.control.write(
               paneAddress(generationAddress, input.semanticPaneId),
-              input.bytes,
+              input.input,
             );
           } catch (error) {
             inputQueue.shift();
-            inputBytes -= input.bytes.byteLength;
+            inputBytes -= input.byteLength;
             input.resolve({ status: "failed", error });
             continue;
           }
@@ -361,13 +397,13 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
           if (outcome === "authority-lost") {
             while (inputQueue[0]?.generationEpoch === epoch) {
               const retired = inputQueue.shift()!;
-              inputBytes -= retired.bytes.byteLength;
+              inputBytes -= retired.byteLength;
               rejectInput(retired, "authority-lost");
             }
             break;
           }
           inputQueue.shift();
-          inputBytes -= input.bytes.byteLength;
+          inputBytes -= input.byteLength;
           mutableCounters.inputWrites += 1;
           input.resolve({ status: "sent" });
         }
@@ -442,26 +478,29 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
       };
     },
     paneState: (semanticPaneId) => panes.get(semanticPaneId)?.state ?? null,
-    sendInput(semanticPaneId, bytes) {
+    sendInput(semanticPaneId, rawInput) {
       if (disposed) return Promise.resolve({ status: "rejected", reason: "disposed" });
-      if (
-        bytes.byteLength === 0 ||
-        inputQueue.length >= maxPendingInputs ||
-        inputBytes + bytes.byteLength > maxPendingInputBytes
-      ) {
+      const parsed = SessionRuntimeTerminalInputSchemaZ.safeParse(rawInput);
+      if (!parsed.success) {
+        mutableCounters.inputRejected += 1;
+        return Promise.resolve({ status: "failed", error: parsed.error });
+      }
+      const input = Object.freeze({ ...parsed.data });
+      const byteLength = utf8.encode(input.data).byteLength;
+      if (inputQueue.length >= maxPendingInputs || inputBytes + byteLength > maxPendingInputBytes) {
         mutableCounters.inputRejected += 1;
         return Promise.resolve({ status: "rejected", reason: "queue-full" });
       }
-      const retained = Uint8Array.from(bytes);
       mutableCounters.inputAccepted += 1;
       return new Promise((resolve) => {
         inputQueue.push({
           generationEpoch,
           semanticPaneId,
-          bytes: retained,
+          input,
+          byteLength,
           resolve,
         });
-        inputBytes += retained.byteLength;
+        inputBytes += byteLength;
         drainInput();
       });
     },

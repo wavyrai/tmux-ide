@@ -9,6 +9,7 @@ import {
   type SessionRuntimeAuthoritySnapshot,
   type SessionRuntimePresenceState,
   type SessionRuntimeSemanticIntent,
+  type SessionRuntimeTerminalInput,
   type TerminalDeliveryOffer,
   type TerminalDeliveryServerMessage,
 } from "@tmux-ide/contracts";
@@ -288,8 +289,7 @@ export class SessionRuntimeTransportBinding {
 
   sendInput(
     semanticPaneId: string,
-    kind: "text" | "key",
-    data: string,
+    input: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
   ): void {
     this.assertController(semanticPaneId);
@@ -300,7 +300,7 @@ export class SessionRuntimeTransportBinding {
         "The transport no longer owns controller authority.",
       );
     }
-    this.#shared.consumer.sendInput(lease, semanticPaneId, kind, data, performanceTraceId);
+    this.#shared.consumer.sendInput(lease, semanticPaneId, input, performanceTraceId);
   }
 
   fitViewport(cols: number, rows: number): void {

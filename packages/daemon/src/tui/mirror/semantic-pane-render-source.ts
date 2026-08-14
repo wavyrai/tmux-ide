@@ -224,7 +224,7 @@ export class SemanticPaneReplica {
     const snapshot = this.#snapshot;
     if (!snapshot) return [];
     return Array.from({ length: snapshot.rows }, (_, row) =>
-      this.#textRow(visibleRowAt(snapshot, scrollOffset, row)),
+      this.#textRow(visibleTerminalRowAt(snapshot, scrollOffset, row)),
     );
   }
 
@@ -279,7 +279,7 @@ export class SemanticPaneReplica {
     for (let y = 0; y < height; y += 1) {
       if (!full && !this.#dirtyRows.has(y) && !forced?.has(y)) continue;
       blitSemanticRow(
-        visibleRowAt(this.#snapshot, scrollOffset, y),
+        visibleTerminalRowAt(this.#snapshot, scrollOffset, y),
         buffers,
         y,
         width,
@@ -400,7 +400,7 @@ export class SemanticPaneReplica {
       this.#notify({ kind: "closed", version: this.#version });
       return;
     }
-    const dirty = changedRows(previous, next, envelope.frame === "seed");
+    const dirty = changedTerminalRows(previous, next, envelope.frame === "seed");
     for (const row of dirty) this.#dirtyRows.add(row);
     if (envelope.frame === "seed") this.#lineTrim = 0;
     else if (payload.frame === "patch" && payload.patch.historyDelta)
@@ -514,7 +514,7 @@ export class SemanticTerminalRenderSource implements TerminalPaneRenderSource {
   }
 }
 
-function changedRows(
+export function changedTerminalRows(
   previous: TerminalReplicaSnapshot | null,
   next: TerminalReplicaSnapshot,
   seed: boolean,
@@ -533,7 +533,11 @@ function changedRows(
   return rows;
 }
 
-function visibleRowAt(snapshot: TerminalReplicaSnapshot | null, scrollOffset: number, row: number) {
+export function visibleTerminalRowAt(
+  snapshot: TerminalReplicaSnapshot | null,
+  scrollOffset: number,
+  row: number,
+) {
   if (!snapshot) return undefined;
   const depth = snapshot.history.length;
   const offset = Math.min(depth, Math.max(0, scrollOffset));
@@ -685,7 +689,7 @@ function resolveColor(
     : (palette?.ansiBackground[color.index] ?? null);
 }
 
-function blitSemanticRow(
+export function blitSemanticRow(
   row: TerminalReplicaSnapshot["grid"][number] | undefined,
   buffers: CellArrays,
   y: number,

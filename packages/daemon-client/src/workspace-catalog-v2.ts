@@ -34,13 +34,20 @@ export function replaceWorkspaceCatalogV2(
 ): WorkspaceCatalogV2State {
   const resource = WorkspaceCatalogResourceV2SchemaZ.parse(input);
   const liveByName = new Map<string, WorkspaceCatalogLiveSessionV2>();
+  const liveByFleetSessionId = new Map<string, WorkspaceCatalogLiveSessionV2>();
   for (const session of resource.liveSessions) {
     if (liveByName.has(session.sessionName)) {
       throw new TypeError(
         `workspace catalog contains duplicate live session ${session.sessionName}`,
       );
     }
+    if (liveByFleetSessionId.has(session.fleetSessionId)) {
+      throw new TypeError(
+        `workspace catalog contains duplicate fleet session ${session.fleetSessionId}`,
+      );
+    }
     liveByName.set(session.sessionName, session);
+    liveByFleetSessionId.set(session.fleetSessionId, session);
   }
 
   return {
