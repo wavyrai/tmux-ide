@@ -50,15 +50,38 @@ framebuffer and input lifecycle.
 ## Current implementation status
 
 The daemon-owned `SessionRuntime`, bounded seed/patch delivery, semantic intent
-contracts, authority leases, and generation fencing are implemented. OpenTUI
-and Web consume parts of that runtime, but their product composition is not yet
-one small shared client: the OpenTUI root remains 9,029 lines and contains four
-direct tmux command sites. M59 therefore treats m56 as component-landed, not
-product-qualified.
+contracts, authority leases, and generation fencing are implemented. M59.1
+landed one renderer-neutral `WorkspaceClient` for lifecycle and semantic truth.
+M59.2 landed a separate, renderer-neutral terminal fast lane over that client's
+pane subscriptions:
 
-The next migration boundary is deletion: compose one renderer-neutral client,
-cut OpenTUI over first, remove its superseded lifecycle paths, then cut Web over
-to the same client. There is no second runtime and no compatibility authority.
+```mermaid
+flowchart LR
+  daemon["daemon SessionRuntime"] --> semantic["WorkspaceClient semantic scopes"]
+  daemon --> terminal["generation-bound terminal subscriptions"]
+  semantic --> shell["small renderer shell"]
+  terminal --> lane["TerminalFastLane"]
+  lane --> paneA["pane A retained surface"]
+  lane --> paneB["pane B retained surface"]
+  input["opaque input bytes"] --> lane
+  resize["final viewport"] --> lane
+  lane --> authority["injected daemon authority port"]
+```
+
+The terminal lane uses the core `applyTerminalReplicaUpdate` reducer; it does
+not define another protocol or decode terminal cells. One pane update wakes
+only that pane. Input is one bounded FIFO of opaque bytes. Resize transport is
+first-plus-latest; renderer-local drag preview never enters shared truth. A gap
+or conflict requests one coalesced seed repair for that pane/generation.
+
+OpenTUI and Web still consume their older receiver/composition adapters in
+production. The OpenTUI viewport-fit path now reuses the shared first-plus-
+latest coordinator, but its direct pane-stream composition,
+`SemanticPaneReplica`, authority-input queue, and `PaneScopedTerminalOwner`
+remain the M59.3 cutover/deletion seam. Web's `pane-stream-transport` receiver,
+pane queue, and write/resize controls remain the M59.5 seam. Until those cuts,
+M59 treats m56 as component-landed, not product-qualified. There is no second
+runtime and no compatibility authority.
 
 ## Non-goals
 

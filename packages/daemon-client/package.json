@@ -18,7 +18,9 @@
     "./workspace-catalog-v2": "./src/workspace-catalog-v2.ts",
     "./workspace-client": "./src/workspace-client.ts",
     "./workspace-client-types": "./src/workspace-client-types.ts",
-    "./workspace-client-conformance": "./src/workspace-client-conformance.ts"
+    "./workspace-client-conformance": "./src/workspace-client-conformance.ts",
+    "./terminal-fast-lane": "./src/terminal-fast-lane.ts",
+    "./first-latest-coordinator": "./src/first-latest-coordinator.ts"
   },
   "main": "src/index.ts",
   "scripts": {

@@ -20,3 +20,5 @@ export * from "./workspace-catalog-v2.ts";
 export * from "./workspace-client-types.ts";
 export * from "./workspace-client.ts";
 export * from "./workspace-client-conformance.ts";
+export * from "./terminal-fast-lane.ts";
+export * from "./first-latest-coordinator.ts";
