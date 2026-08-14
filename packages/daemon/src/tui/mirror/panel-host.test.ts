@@ -32,9 +32,6 @@ describe("panel-host", () => {
     expect(views.map((view) => [view.id, view.order, view.title, view.panel])).toEqual([
       ["home", 0, "Home", "home"],
       ["terminals", 1, "Terminals", "terminals"],
-      ["files", 2, "Files", "files"],
-      ["diff", 3, "Diff", "diff"],
-      ["missions", 4, "Missions", "missions"],
     ]);
 
     views[0]!.title = "Changed";
@@ -173,17 +170,8 @@ describe("panel-host", () => {
     expect(viewsFromWorkspaceConfig({ version: 1 }).map((view) => view.id)).toEqual([
       "home",
       "terminals",
-      "files",
-      "diff",
-      "missions",
     ]);
-    expect(viewsFromResolvedConfig(null).map((view) => view.id)).toEqual([
-      "home",
-      "terminals",
-      "files",
-      "diff",
-      "missions",
-    ]);
+    expect(viewsFromResolvedConfig(null).map((view) => view.id)).toEqual(["home", "terminals"]);
   });
 
   it("builds composite hosted views and resolves panel lookups through leaves", () => {

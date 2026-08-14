@@ -89,3 +89,36 @@ test("architecture debt cannot grow beyond the checked-in deletion budget", () =
     assert.equal(groupBudget.targetUses, 0, `${name} must retain an explicit zero-use target`);
   }
 });
+
+test("checked-in product baseline is honest and safe to inventory", () => {
+  const baseline = JSON.parse(
+    readFileSync(new URL("../docs/product/product-baseline.json", import.meta.url), "utf8"),
+  );
+  assert.equal(baseline.qualification, "not-product-qualified");
+  assert.deepEqual(baseline.defaultProduct.primarySurfaces, ["home", "terminals"]);
+  assert.deepEqual(baseline.defaultProduct.quarantinedSurfaces, [
+    "files",
+    "changes",
+    "missions",
+    "activity",
+  ]);
+  assert.equal(baseline.portablePerformance.status, "passed-with-limitations");
+  assert.equal(baseline.portablePerformance.coherentTerminalFrame, "not-measured");
+  assert.equal(baseline.portablePerformance.inputToPaint, "not-measured");
+  assert.ok(baseline.knownDefects.every((defect) => defect.reproduce.length > 0));
+  assert.match(baseline.completionPolicy, /not Done/u);
+  const lineCount = (path) =>
+    readFileSync(new URL(path, import.meta.url), "utf8").split("\n").length;
+  assert.equal(
+    lineCount("../packages/daemon/src/tui/mirror/runtime/application-root.tsx"),
+    baseline.sourceMeasurements.openTuiApplicationRootLines + 1,
+  );
+  assert.equal(
+    lineCount("../apps/desktop-renderer/src/experience/application-shell.tsx"),
+    baseline.sourceMeasurements.webApplicationShellLines + 1,
+  );
+  assert.equal(
+    lineCount("../apps/desktop-renderer/src/experience/workspace-tiled-surface.tsx"),
+    baseline.sourceMeasurements.webWorkspaceTiledSurfaceLines + 1,
+  );
+});

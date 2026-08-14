@@ -1,6 +1,7 @@
 # ADR: one session runtime, many thin clients
 
-Status: accepted for m56 migration (2026-08-11)
+Status: current daemon authority; client consolidation remains in progress
+(updated for M59 on 2026-08-14)
 
 ## Decision
 
@@ -46,14 +47,18 @@ to an exact m56.4 deletion target. A separate assertion freezes direct
 mislabelled as control ownership. Both migrations retain the current OpenTUI
 framebuffer and input lifecycle.
 
-## Migration
+## Current implementation status
 
-1. m56.1 composes the existing daemon authorities behind one runtime lifecycle.
-2. m56.2 adds bounded seed/patch payloads and gap recovery to this type seam.
-3. A test harness may compare daemon replica fixtures against legacy TUI mirror
-   fixtures during cutover. This is not a production flag or client API.
-4. m56.4 switches OpenTUI to the daemon adapter and deletes its direct control
-   lane. Web then consumes the same runtime truth.
+The daemon-owned `SessionRuntime`, bounded seed/patch delivery, semantic intent
+contracts, authority leases, and generation fencing are implemented. OpenTUI
+and Web consume parts of that runtime, but their product composition is not yet
+one small shared client: the OpenTUI root remains 9,029 lines and contains four
+direct tmux command sites. M59 therefore treats m56 as component-landed, not
+product-qualified.
+
+The next migration boundary is deletion: compose one renderer-neutral client,
+cut OpenTUI over first, remove its superseded lifecycle paths, then cut Web over
+to the same client. There is no second runtime and no compatibility authority.
 
 ## Non-goals
 

@@ -12,7 +12,9 @@ describe("PaneScopedTerminalOwner", () => {
     owner.subscribe("tests", tests);
 
     expect(owner.publish(generation, "editor", 1)).toBe(true);
-    expect(editor).toHaveBeenCalledWith(1);
+    // Listeners receive both the pane-local publication token and the retained
+    // source epoch. The epoch is zero until replaceSource() adopts a new replica.
+    expect(editor).toHaveBeenCalledWith(1, 0);
     expect(tests).not.toHaveBeenCalled();
     expect(owner.version("tests")).toBe(0);
   });
@@ -27,7 +29,10 @@ describe("PaneScopedTerminalOwner", () => {
     const replacement = owner.beginGeneration();
     expect(owner.publish(oldGeneration, "editor", 2)).toBe(false);
     expect(owner.publish(replacement, "editor", 1)).toBe(true);
-    expect(listener.mock.calls).toEqual([[1], [2]]);
+    expect(listener.mock.calls).toEqual([
+      [1, 0],
+      [2, 0],
+    ]);
   });
 
   it("unsubscribes and disposes cleanly", () => {

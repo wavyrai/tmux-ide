@@ -53,8 +53,9 @@
  *
  * SURFACE VIEWS (M18.4, configured in C05): a persistent top row makes the app a
  * real IDE. `.tmux-ide/workspace.yml` `app.views` supplies configured view IDs,
- * order, titles, and panel kinds; absent/broken config falls back to Home,
- * Terminals, Files, Diff, Missions. F1..F4 then F6..F13 switch by configured
+ * order, titles, and panel kinds; absent/broken config falls back to the frozen
+ * M59 product surfaces, Home and Terminals. Quarantined optional surfaces do
+ * not enter default navigation or loading. F1..F4 then F6..F13 switch by configured
  * position (F5 remains the palette; later views remain mouse/palette selectable); the tab bar is also
  * clickable with fixed x-span math from the same rendered labels. The active
  * hosted view ID is the source of truth; `mode()` is derived from its panel kind
@@ -401,6 +402,10 @@ import {
   workbenchCanvasShortcutForPanel,
   workbenchDockTabForShortcut,
 } from "../workspace/workbench-controller.ts";
+import {
+  DEFAULT_PRODUCT_CANVAS_PANELS,
+  isDefaultProductDockTool,
+} from "./product-surface-policy.ts";
 import { clipTerminal } from "../terminal-text.ts";
 import type { HomeActionId } from "../home-surface-model.ts";
 import type {
@@ -2104,7 +2109,7 @@ const mountTuiRoot = () => {
       views.find((view) => !view.layout && view.panel === panel) ??
       fallbackHostedViews.find((view) => !view.layout && view.panel === panel)!;
     const canvasHostedViews = createMemo(() => {
-      return (["home", "terminals"] as const).map((panel) => ({
+      return DEFAULT_PRODUCT_CANVAS_PANELS.map((panel) => ({
         ...nativeHostedViewForPanel(hostedViews(), panel),
         // The top shell is a canonical product surface even when compatibility
         // app.views supplied different list-position shortcuts.
@@ -2155,10 +2160,6 @@ const mountTuiRoot = () => {
       if (panel === "diff") return "changes";
       return null;
     };
-    const isCoreDockTab = (
-      tabId: WorkbenchDockTabId,
-    ): tabId is Extract<WorkbenchDockTabId, "files" | "changes"> =>
-      tabId === "files" || tabId === "changes";
     const panelForDockTab = (dockTab: WorkbenchDockTabId): HostedPanelKind | "activity" => {
       if (dockTab === "files") return "files";
       if (dockTab === "changes") return "diff";
@@ -2171,17 +2172,27 @@ const mountTuiRoot = () => {
     // state for Card06 onboarding, but is never a composite/tile peer.
     const [canvasPanel, setCanvasPanel] = createSignal<"home" | "terminals">(initialCanvasPanel);
     const [activeDockTab, setActiveDockTab] = createSignal<WorkbenchDockTabId>(initialDockTab);
-    const [dockMode, setDockMode] = createSignal<WorkbenchDockMode>("open");
+    const [dockMode, setDockMode] = createSignal<WorkbenchDockMode>("collapsed");
     const [preferredDockHeight, setPreferredDockHeight] = createSignal<number | null>(null);
     const [workbenchFocusZone, setWorkbenchFocusZone] = createSignal<WorkbenchFocusZone>(
       dockTabForPanel(initialView.panel) ? "dock-body" : "canvas",
     );
     const [hoveredDockTab, setHoveredDockTab] = createSignal<WorkbenchDockTabId | null>(null);
     createEffect(() => {
-      if (dockMode() !== "collapsed" && activeDockTab() === "files") void ensureFilesFeature();
+      if (
+        dockMode() !== "collapsed" &&
+        isDefaultProductDockTool(activeDockTab()) &&
+        activeDockTab() === "files"
+      )
+        void ensureFilesFeature();
     });
     createEffect(() => {
-      if (dockMode() !== "collapsed" && activeDockTab() === "changes") void ensureChangesFeature();
+      if (
+        dockMode() !== "collapsed" &&
+        isDefaultProductDockTool(activeDockTab()) &&
+        activeDockTab() === "changes"
+      )
+        void ensureChangesFeature();
     });
     createEffect(() => {
       if (dockMode() === "collapsed") {
@@ -2189,6 +2200,10 @@ const mountTuiRoot = () => {
         return;
       }
       const dock = activeDockTab();
+      if (!isDefaultProductDockTool(dock)) {
+        toolResources.setOpenDock(null);
+        return;
+      }
       const resource: TuiDockResourceKey = dock === "activity" ? "missions" : dock;
       toolResources.setOpenDock(resource);
     });
@@ -2271,7 +2286,7 @@ const mountTuiRoot = () => {
         // implementation remains dormant behind its feature boundary, but is
         // not exposed or hydrated by the primary TUI.
         dockTools: semanticApplicationShell().bottomDock.tools.filter((tool) =>
-          isCoreDockTab(tool.id as WorkbenchDockTabId),
+          isDefaultProductDockTool(tool.id as WorkbenchDockTabId),
         ),
       }),
     );
@@ -2546,8 +2561,8 @@ const mountTuiRoot = () => {
       return true;
     };
     const activateDockTabContent = (tabId: WorkbenchDockTabId): boolean => {
-      if (!isCoreDockTab(tabId)) {
-        setStatusNote("missions and activity are temporarily outside the core product surface");
+      if (!isDefaultProductDockTool(tabId)) {
+        setStatusNote("optional tools are quarantined while the core product is stabilized");
         return false;
       }
       if (tabId !== "files") editorOpenIntent.retire();
@@ -2759,33 +2774,16 @@ const mountTuiRoot = () => {
                   : ("canvas" as const),
               };
           const requestedDockTab = explicitDockTab ?? restoredDock.activeTab;
-          const restoredActiveDockTab = isCoreDockTab(requestedDockTab)
+          const restoredActiveDockTab = isDefaultProductDockTool(requestedDockTab)
             ? requestedDockTab
             : "files";
           loadStage = "restore dock";
           setActiveDockTab(restoredActiveDockTab);
-          setDockMode(explicitDockTab ? "open" : restoredDock.mode);
+          setDockMode("collapsed");
           setPreferredDockHeight(restoredDock.preferredHeight);
-          setWorkbenchFocusZone(explicitDockTab ? "dock-body" : restoredDock.focusZone);
+          setWorkbenchFocusZone("canvas");
           loadStage = "hydrate active view";
           hydrateActiveWorkspaceView({ firstProjectLoad });
-          const restoredDockPanel = panelForDockTab(restoredActiveDockTab);
-          if (restoredDockPanel !== "activity") {
-            loadStage = "activate restored dock panel";
-            runPanelActivation(restoredDockPanel);
-            const restoredDockView = nativeHostedViewForPanel(nextViews, restoredDockPanel);
-            if (restoredDockView.id !== nextPlan.view?.id) {
-              loadStage = "hydrate restored dock panel";
-              hydrateWorkspaceView(restoredDockView, { firstProjectLoad });
-            }
-          }
-          if (
-            restoredActiveDockTab === "missions" ||
-            restoredActiveDockTab === "activity" ||
-            nextPlan.view?.panel === "missions"
-          ) {
-            loadMissionsWorkspace("project");
-          }
           panelHostResolved = true;
         })
         .catch((error) => {
@@ -6552,7 +6550,7 @@ const mountTuiRoot = () => {
         return;
       }
       const dockShortcut = workbenchDockTabForShortcut(evt);
-      if (dockShortcut && isCoreDockTab(dockShortcut)) {
+      if (dockShortcut && isDefaultProductDockTool(dockShortcut)) {
         executeSurfaceCommand(dockShortcut, { kind: "keyboard", surface: "workbench" });
         return;
       }

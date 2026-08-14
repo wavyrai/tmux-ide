@@ -54,12 +54,24 @@ Readiness deliberately names two separate boundaries:
 - `coherentTerminalFrameMs`: a non-empty semantic terminal layout has reached
   the OpenTUI renderer.
 
-The former is not counted as a usable terminal frame. `smoke` currently proves
-boot, shared daemon/session identity, a TUI viewport resize, evidence capture,
-and bounded cleanup. It does not yet prove concurrent input ownership, atomic
-session handoff, daemon/tmux death recovery, or operation-correlated drag/resize
-settlement; those remain product-roadmap acceptance journeys rather than claims
-made by this first rig slice.
+The former is not counted as a usable terminal frame. Rig startup now proves a
+real Web and OpenTUI coherent terminal frame, shared daemon/session identity,
+multi-client authority convergence, generation-fenced writes, atomic workspace
+handoff, and recovery of both clients across a daemon generation restart.
+`smoke` additionally proves viewport resize, evidence capture, tmux layout
+agreement, and bounded cleanup. The rig still does **not** qualify input to
+consumed paint, operation-correlated drag settlement, or packed-install first
+run; those remain explicitly unmeasured in the checked-in M59 baseline.
+
+Inspect the source/metric baseline without starting the rig:
+
+```bash
+pnpm product:testdrive inventory --json
+```
+
+Inventory is side-effect free. It includes the checked-in product scope, known
+defects, measured and unmeasured performance boundaries, rig capabilities, and
+architecture-debt counts.
 
 ## Test-drive the compiled TUI
 

@@ -330,7 +330,32 @@ async function smoke(json) {
 }
 
 function inventory(json) {
-  const report = sourceArchitectureInventory(repoRoot);
+  const productBaseline = JSON.parse(
+    readFileSync(join(repoRoot, "docs", "product", "product-baseline.json"), "utf8"),
+  );
+  const report = {
+    ...sourceArchitectureInventory(repoRoot),
+    productBaseline,
+    productTestRig: {
+      ownsPrivateTmuxSocket: true,
+      ownsEphemeralStateHome: true,
+      touchesCanonicalUserTmux: false,
+      capabilities: [
+        "real-opentui",
+        "real-web",
+        "tmux-layout-truth",
+        "coherent-terminal-readiness",
+        "multi-client-authority-convergence",
+        "daemon-generation-recovery",
+        "artifact-capture",
+      ],
+      unqualified: [
+        "input-to-consumed-paint-distribution",
+        "operation-correlated-drag-settlement",
+        "packed-install-first-run",
+      ],
+    },
+  };
   emit(json ? report : JSON.stringify(report, null, 2), json);
 }
 

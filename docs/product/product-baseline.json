@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "observedAt": "2026-08-14",
+  "baselineParentRevision": "d212607d",
+  "qualification": "not-product-qualified",
+  "defaultProduct": {
+    "primarySurfaces": ["home", "terminals"],
+    "quarantinedSurfaces": ["files", "changes", "missions", "activity"],
+    "preservedImplementation": "packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-view.tsx"
+  },
+  "authority": {
+    "tmuxOwner": "daemon SessionRuntime",
+    "clients": ["opentui", "web", "cli", "sdk"],
+    "clientContract": "semantic intents plus generation-bound seed/patch resources",
+    "knownClientBypassCount": 4
+  },
+  "sourceMeasurements": {
+    "openTuiApplicationRootLines": 9029,
+    "webApplicationShellLines": 2217,
+    "webWorkspaceTiledSurfaceLines": 2326
+  },
+  "portablePerformance": {
+    "command": "pnpm measure:performance-portable",
+    "isolation": "ephemeral state home and owned non-default tmux socket",
+    "status": "passed-with-limitations",
+    "processColdFirstUsableMs": 761,
+    "warmFirstUsableP95Ms": 605,
+    "resizeP95Ms": 220.05,
+    "resizeMaximumMs": 222.2,
+    "coherentTerminalFrame": "not-measured",
+    "inputToPaint": "not-measured",
+    "dragResponsiveness": "not-measured"
+  },
+  "knownDefects": [
+    {
+      "id": "tui-composition-root",
+      "severity": "P1",
+      "status": "open",
+      "description": "The production OpenTUI composition root is 9,029 lines and still contains quarantined feature state and handlers.",
+      "reproduce": "wc -l packages/daemon/src/tui/mirror/runtime/application-root.tsx"
+    },
+    {
+      "id": "tui-direct-tmux",
+      "severity": "P1",
+      "status": "open",
+      "description": "The product OpenTUI root still has four direct tmux command call sites outside SessionRuntime.",
+      "reproduce": "pnpm product:testdrive inventory --json"
+    },
+    {
+      "id": "coherent-frame-not-qualified",
+      "severity": "P1",
+      "status": "open",
+      "description": "Portable evidence cannot qualify a coherent terminal frame; app chrome is not terminal readiness.",
+      "reproduce": "pnpm measure:performance-portable"
+    },
+    {
+      "id": "input-paint-not-qualified",
+      "severity": "P1",
+      "status": "open",
+      "description": "No qualifying input-to-consumed-paint distribution is measured for the real TUI.",
+      "reproduce": "pnpm measure:performance-portable"
+    },
+    {
+      "id": "cross-client-journey-not-release-gated",
+      "severity": "P1",
+      "status": "open",
+      "description": "The ProductTestRig can drive TUI and Web convergence and restart, but those journeys are not yet a no-limitations release gate.",
+      "reproduce": "pnpm product:testdrive start --json"
+    }
+  ],
+  "safeEvidenceCommands": [
+    "pnpm product:testdrive inventory --json",
+    "pnpm measure:performance-portable",
+    "pnpm test:product-test-rig",
+    "pnpm test:tui-diagnose"
+  ],
+  "completionPolicy": "A card is not Done when a required metric is unmeasured, evidence is passed-with-limitations, or a known P0/P1 remains open. Unit counts alone never qualify product behavior."
+}

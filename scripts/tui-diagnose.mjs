@@ -22,8 +22,20 @@ const artifactDir = join(root, ".tasks", "tui-diagnostics", "latest");
 const daemonInfoPath = join(process.env.HOME ?? "", ".tmux-ide", "daemon.json");
 const testdrive = join(root, "scripts", "tui-testdrive.mjs");
 
+function usage() {
+  return `OpenTUI causal diagnostic\n\nUsage:\n  pnpm tui:diagnose [--target <session>] [--cols <n>] [--rows <n>] [--no-build] [--keep] [--json]\n\nThe command uses the canonical daemon and a hidden test-drive host. It never mutates or kills the target tmux session.\n`;
+}
+
 function parseOptions(argv) {
-  const options = { target: null, cols: 160, rows: 50, keep: false, build: true, json: false };
+  const options = {
+    target: null,
+    cols: 160,
+    rows: 50,
+    keep: false,
+    build: true,
+    json: false,
+    help: false,
+  };
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === "--target") options.target = argv[++index] ?? null;
@@ -33,6 +45,7 @@ function parseOptions(argv) {
     else if (value === "--keep") options.keep = true;
     else if (value === "--no-build") options.build = false;
     else if (value === "--json") options.json = true;
+    else if (value === "--help" || value === "-h") options.help = true;
     else throw new Error(`Unknown option: ${value}`);
   }
   if (!Number.isInteger(options.cols) || options.cols < 40) throw new Error("--cols must be >= 40");
@@ -139,6 +152,10 @@ function writeArtifact(name, value) {
 
 async function main() {
   const options = parseOptions(process.argv.slice(2));
+  if (options.help) {
+    process.stdout.write(usage());
+    return;
+  }
   const target = resolveTarget(options.target);
   if (!existsSync(daemonInfoPath)) throw new Error("Canonical daemon is not running");
   if (options.build) command("pnpm", ["build:tui"], { quiet: true });

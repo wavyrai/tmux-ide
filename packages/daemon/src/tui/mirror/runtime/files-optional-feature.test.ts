@@ -82,16 +82,16 @@ describe("deferred Files feature boundary", () => {
     expect(committedWorkspaceActivation).toContain("editorOpenIntent.retire()");
   });
 
-  it("retains Files demand without starting its literal loader before admission", () => {
+  it("rejects quarantined Files demand without retaining or loading it", async () => {
     const registry = createApplicationOptionalFeatureRegistry();
-    const request = registry.request("files");
+    await expect(registry.request("files")).resolves.toBeUndefined();
     expect(registry.getMetrics()).toMatchObject({
       requests: 1,
-      retainedIntents: 1,
+      retainedIntents: 0,
+      unavailableRequests: 1,
       loadsStarted: 0,
       publications: 0,
     });
     registry.dispose();
-    void request.catch(() => undefined);
   });
 });

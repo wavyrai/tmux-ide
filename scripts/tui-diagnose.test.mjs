@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import test from "node:test";
 
 import { analyzeTuiDiagnostic, diagnosticTokens } from "./lib/tui-diagnostics.mjs";
@@ -76,4 +77,17 @@ test("token extraction omits static shell chrome", () => {
   assert.deepEqual(diagnosticTokens("Terminal Files tmux-ide\nuseful-marker_123"), [
     "useful-marker_123",
   ]);
+});
+
+test("--help is side-effect free and documents the target contract", () => {
+  const output = execFileSync(
+    process.execPath,
+    [new URL("./tui-diagnose.mjs", import.meta.url).pathname, "--help"],
+    {
+      encoding: "utf8",
+    },
+  );
+  assert.match(output, /OpenTUI causal diagnostic/u);
+  assert.match(output, /--target <session>/u);
+  assert.match(output, /never mutates or kills the target tmux session/u);
 });
