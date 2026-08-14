@@ -15,7 +15,10 @@
     "./owner-action-client": "./src/owner-action-client.ts",
     "./workspace-pane-client": "./src/workspace-pane-client.ts",
     "./pane-stream-client": "./src/pane-stream-client.ts",
-    "./workspace-catalog-v2": "./src/workspace-catalog-v2.ts"
+    "./workspace-catalog-v2": "./src/workspace-catalog-v2.ts",
+    "./workspace-client": "./src/workspace-client.ts",
+    "./workspace-client-types": "./src/workspace-client-types.ts",
+    "./workspace-client-conformance": "./src/workspace-client-conformance.ts"
   },
   "main": "src/index.ts",
   "scripts": {
@@ -24,7 +27,8 @@
     "test": "bun test src"
   },
   "dependencies": {
-    "@tmux-ide/contracts": "workspace:*"
+    "@tmux-ide/contracts": "workspace:*",
+    "@tmux-ide/core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

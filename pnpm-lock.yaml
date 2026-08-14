@@ -381,6 +381,9 @@ importers:
       '@tmux-ide/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@tmux-ide/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       '@types/node':
         specifier: ^25.5.0

@@ -17,3 +17,6 @@ export * from "./owner-action-client.ts";
 export * from "./workspace-pane-client.ts";
 export * from "./pane-stream-client.ts";
 export * from "./workspace-catalog-v2.ts";
+export * from "./workspace-client-types.ts";
+export * from "./workspace-client.ts";
+export * from "./workspace-client-conformance.ts";

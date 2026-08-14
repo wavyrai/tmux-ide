@@ -45,6 +45,8 @@ export interface RuntimeConnectionSupervisorOptions<Value> {
   retryable?: (error: unknown) => boolean;
   /** Defaults to exponential 1s, 2s, 4s … capped at 30s. */
   backoffMs?: (attempt: number) => number;
+  /** Injectable wait seam for deterministic clients and tests. */
+  wait?: (delayMs: number, signal: AbortSignal) => Promise<void>;
 }
 
 export interface RuntimeConnectionSupervisor<Value> {
@@ -139,6 +141,7 @@ export function createRuntimeConnectionSupervisor<Value>(
         });
         if (signal.aborted) {
           await safelyDispose(connection);
+          connection = null;
           break;
         }
         attempt = 0;
@@ -159,7 +162,10 @@ export function createRuntimeConnectionSupervisor<Value>(
         }
         attempt += 1;
         publish({ phase: "reconnecting", attempt, value: current.value, error });
-        await wait((options.backoffMs ?? exponentialReconnectBackoff)(attempt), signal);
+        await (options.wait ?? wait)(
+          (options.backoffMs ?? exponentialReconnectBackoff)(attempt),
+          signal,
+        );
       } finally {
         if (connection) await safelyDispose(connection);
       }

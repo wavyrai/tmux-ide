@@ -65,11 +65,10 @@ export interface ApplicationShellEventConnection {
  * Renderer-neutral application-shell transport. GUI IPC, browser loopback and
  * OpenTUI daemon clients adapt their physical connection to this one boundary.
  */
-export interface ApplicationShellTransport {
-  fetchApplicationShell(
-    target: DesktopApplicationShellTarget,
-    signal: AbortSignal,
-  ): Promise<ApplicationShellProjectionInputV1>;
+export interface ApplicationShellTransport<
+  Shell extends ApplicationShellProjectionInputV1 = ApplicationShellProjectionInputV1,
+> {
+  fetchApplicationShell(target: DesktopApplicationShellTarget, signal: AbortSignal): Promise<Shell>;
   connectEvents(
     target: DesktopApplicationShellTarget,
     handlers: ApplicationShellEventHandlers,
@@ -83,11 +82,13 @@ interface ApplicationShellStateBase {
   readonly transport?: DesktopDaemonTransportState | null;
 }
 
-export type ApplicationShellSessionState =
+export type ApplicationShellSessionState<
+  Shell extends ApplicationShellProjectionInputV1 = ApplicationShellProjectionInputV1,
+> =
   | (ApplicationShellStateBase & { readonly status: "loading"; readonly data: null })
   | (ApplicationShellStateBase & {
       readonly status: "live";
-      readonly data: ApplicationShellProjectionInputV1;
+      readonly data: Shell;
       readonly updatedAt: number;
     })
   | (ApplicationShellStateBase & {
@@ -98,7 +99,7 @@ export type ApplicationShellSessionState =
     })
   | (ApplicationShellStateBase & {
       readonly status: "degraded";
-      readonly data: ApplicationShellProjectionInputV1 | null;
+      readonly data: Shell | null;
       readonly updatedAt: number | null;
       readonly code:
         | "descriptor-invalid"
@@ -115,7 +116,7 @@ export type ApplicationShellSessionState =
     })
   | (ApplicationShellStateBase & {
       readonly status: "stale";
-      readonly data: ApplicationShellProjectionInputV1;
+      readonly data: Shell;
       readonly updatedAt: number;
       readonly reason: string;
     })
@@ -125,9 +126,11 @@ export type ApplicationShellSessionState =
       readonly data: null;
     });
 
-export interface ApplicationShellSessionOptions {
+export interface ApplicationShellSessionOptions<
+  Shell extends ApplicationShellProjectionInputV1 = ApplicationShellProjectionInputV1,
+> {
   readonly target: unknown;
-  readonly transport: ApplicationShellTransport;
+  readonly transport: ApplicationShellTransport<Shell>;
   readonly clock?: GenerationBoundClock;
   readonly random?: () => number;
   readonly reconnect?: Partial<GenerationBoundRetryPolicy>;
@@ -135,9 +138,11 @@ export interface ApplicationShellSessionOptions {
   readonly onInteractionReceipt?: ApplicationShellEventHandlers["onInteractionReceipt"];
 }
 
-export interface ApplicationShellSession {
-  getState(): ApplicationShellSessionState;
-  subscribe(listener: (state: ApplicationShellSessionState) => void): () => void;
+export interface ApplicationShellSession<
+  Shell extends ApplicationShellProjectionInputV1 = ApplicationShellProjectionInputV1,
+> {
+  getState(): ApplicationShellSessionState<Shell>;
+  subscribe(listener: (state: ApplicationShellSessionState<Shell>) => void): () => void;
   setTarget(target: unknown): void;
   refresh(): void;
   getMetrics(): GenerationBoundStoreMetrics;
@@ -178,12 +183,6 @@ interface ShellFailure {
   readonly reason: string;
 }
 
-type ShellView = GenerationBoundView<
-  DesktopApplicationShellTarget,
-  ApplicationShellProjectionInputV1,
-  ShellFailure
->;
-
 function shellFailure(error: unknown, fallbackReason: string): ShellFailure {
   if (error instanceof ApplicationShellTransportError) {
     return { kind: error.kind, reason: error.message };
@@ -207,7 +206,7 @@ export function applicationShellSessionTargetKey(target: DesktopApplicationShell
 
 function validateTarget(
   value: unknown,
-  transport: ApplicationShellTransport,
+  transport: ApplicationShellTransport<ApplicationShellProjectionInputV1>,
 ): DesktopApplicationShellTarget {
   const parsed = DesktopApplicationShellTargetSchemaZ.safeParse(value);
   if (!parsed.success) {
@@ -225,7 +224,9 @@ function validateTarget(
   return transport.validateTarget(parsed.data);
 }
 
-function projectShell(view: ShellView): ApplicationShellSessionState {
+function projectShell<Shell extends ApplicationShellProjectionInputV1>(
+  view: GenerationBoundView<DesktopApplicationShellTarget, Shell, ShellFailure>,
+): ApplicationShellSessionState<Shell> {
   const { generation, target, phase, transport } = view;
   if (view.disposed) {
     return { status: "disposed", generation, target: null, data: null, transport: null };
@@ -322,15 +323,15 @@ function projectShell(view: ShellView): ApplicationShellSessionState {
  * One application-shell client session for every renderer. It owns generation
  * pinning, bounded retry, stale retention, resync, and observer isolation.
  */
-export function createApplicationShellSession(
-  options: ApplicationShellSessionOptions,
-): ApplicationShellSession {
+export function createApplicationShellSession<
+  Shell extends ApplicationShellProjectionInputV1 = ApplicationShellProjectionInputV1,
+>(options: ApplicationShellSessionOptions<Shell>): ApplicationShellSession<Shell> {
   const transport = options.transport;
   const adapter: GenerationBoundAdapter<
     DesktopApplicationShellTarget,
-    ApplicationShellProjectionInputV1,
+    Shell,
     ShellFailure,
-    ApplicationShellSessionState
+    ApplicationShellSessionState<Shell>
   > = {
     reassert: "ignore",
     validateTarget(value) {
