@@ -5,6 +5,7 @@ import {
   type GenerationBoundClock,
   type GenerationBoundRetryPolicy,
 } from "./generation-bound-store.ts";
+import { acquireRuntimeResource } from "./runtime-resource-ledger.ts";
 
 /**
  * A renderer-neutral, generation-pinned set of push-invalidated resources.
@@ -172,7 +173,7 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
   const interests = new Map<TKey, number>();
   const requests = new Map<TKey, RequestState>();
   const retryAttempts = new Map<TKey, number>();
-  const retryTimers = new Map<TKey, unknown>();
+  const retryTimers = new Map<TKey, { readonly handle: unknown; readonly release: () => void }>();
 
   let disposed = false;
   let generation = 0;
@@ -189,6 +190,7 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
     "idle";
   let subscriptionRetryAttempt = 0;
   let subscriptionRetryTimer: unknown | null = null;
+  let releaseSubscriptionRetryTimer: (() => void) | null = null;
   let state: PushResourceSessionState<TTarget, TKey, TResource, TFailure>;
   const metric = {
     fetchesStarted: 0,
@@ -235,14 +237,15 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
     [...values].sort().join("\u0000");
 
   const clearRetry = (key: TKey): void => {
-    const handle = retryTimers.get(key);
-    if (handle === undefined) return;
+    const entry = retryTimers.get(key);
+    if (entry === undefined) return;
     retryTimers.delete(key);
     try {
-      clock.clearTimeout(handle);
+      clock.clearTimeout(entry.handle);
     } catch {
       // Logical retirement does not depend on a host clock cooperating.
     }
+    entry.release();
   };
 
   const abortRequest = (key: TKey): void => {
@@ -293,6 +296,8 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
         // Retirement is still fenced by generation and interest revision.
       }
       subscriptionRetryTimer = null;
+      releaseSubscriptionRetryTimer?.();
+      releaseSubscriptionRetryTimer = null;
     }
     if (resetRetry) subscriptionRetryAttempt = 0;
     eventPhase = "idle";
@@ -371,16 +376,18 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
       const attempt = retryAttempts.get(key) ?? 0;
       if (attempt >= retry.maximumAttempts || retryTimers.has(key)) return;
       retryAttempts.set(key, attempt + 1);
-      retryTimers.set(
-        key,
-        clock.setTimeout(
+      const releaseTimer = acquireRuntimeResource("runtime-timer");
+      retryTimers.set(key, {
+        handle: clock.setTimeout(
           () => {
             retryTimers.delete(key);
+            releaseTimer();
             request(key, expectedGeneration);
           },
           boundedRetryDelay(attempt, retry, random),
         ),
-      );
+        release: releaseTimer,
+      });
     };
 
     void adapter
@@ -492,13 +499,20 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
       publish();
       if (result.status === "unavailable" && subscriptionRetryAttempt < retry.maximumAttempts) {
         const attempt = subscriptionRetryAttempt++;
-        subscriptionRetryTimer = clock.setTimeout(
+        const releaseTimer = acquireRuntimeResource("runtime-timer");
+        let handle: unknown;
+        handle = clock.setTimeout(
           () => {
+            releaseTimer();
+            if (subscriptionRetryTimer !== handle) return;
+            releaseSubscriptionRetryTimer = null;
             subscriptionRetryTimer = null;
             connectEvents(expectedGeneration, expectedInterestRevision);
           },
           boundedRetryDelay(attempt, retry, random),
         );
+        subscriptionRetryTimer = handle;
+        releaseSubscriptionRetryTimer = releaseTimer;
       }
     };
     let operation: PushResourceConnectResult | PromiseLike<PushResourceConnectResult>;
@@ -523,13 +537,20 @@ export function createPushResourceSession<TTarget, TKey extends string, TResourc
             publish();
             if (subscriptionRetryAttempt >= retry.maximumAttempts) return;
             const attempt = subscriptionRetryAttempt++;
-            subscriptionRetryTimer = clock.setTimeout(
+            const releaseTimer = acquireRuntimeResource("runtime-timer");
+            let handle: unknown;
+            handle = clock.setTimeout(
               () => {
+                releaseTimer();
+                if (subscriptionRetryTimer !== handle) return;
+                releaseSubscriptionRetryTimer = null;
                 subscriptionRetryTimer = null;
                 connectEvents(expectedGeneration, expectedInterestRevision);
               },
               boundedRetryDelay(attempt, retry, random),
             );
+            subscriptionRetryTimer = handle;
+            releaseSubscriptionRetryTimer = releaseTimer;
           },
         },
         controller.signal,

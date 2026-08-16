@@ -198,6 +198,7 @@ describe("real SessionRuntime qualification", () => {
     ).toThrow();
     expect(drivers[0]!.channel.written).toHaveLength(commandsBeforeInvalid);
     client.sendInput(lease, "pane.alpha", { kind: "text", data: "printf TRACE" }, traceId);
+    await Promise.resolve();
     // This is deliberately a controlled next-output probe, not general
     // causality: unrelated external output arriving first consumes it.
     drivers[0]!.output("%1", "TRACE");
@@ -210,17 +211,40 @@ describe("real SessionRuntime qualification", () => {
     const spans = registry
       .qualificationSnapshot()
       .observability.spans.filter(({ traceId }) => traceId === envelope.performanceTraceId);
-    expect(spans.map(({ stage }) => stage)).toEqual(["tmux", "parse", "reduce", "transport"]);
+    expect(spans.map(({ operation }) => operation)).toEqual([
+      "raw-input-command",
+      "control-write",
+      "control-queue-empty-at-send",
+      "first-output-observed",
+      "daemon-event-loop-turn",
+      "terminal-replica-write",
+      "terminal-replica-project-commit",
+      "terminal-delivery-encode-enqueue",
+    ]);
     expect(new Set(spans.map(({ processId }) => processId)).size).toBe(1);
     expect(new Set(spans.map(({ clockId }) => clockId)).size).toBe(1);
     expect(spans.every(({ clockKind }) => clockKind === "performance-now")).toBe(true);
     expect(spans.every(({ authority }) => authority?.generation === GENERATION)).toBe(true);
     expect(spans[0]!.authority?.incarnation).toBeNull();
     expect(
-      spans.slice(1).every(({ authority }) => authority?.incarnation === envelope.incarnation),
+      spans
+        .filter(({ operation }) =>
+          [
+            "terminal-replica-write",
+            "terminal-replica-project-commit",
+            "terminal-delivery-encode-enqueue",
+          ].includes(operation),
+        )
+        .every(({ authority }) => authority?.incarnation === envelope.incarnation),
     ).toBe(true);
-    for (let index = 1; index < spans.length; index += 1)
-      expect(spans[index - 1]!.endedAtMicros).toBeLessThanOrEqual(spans[index]!.startedAtMicros);
+    const orderedCausalSpans = spans.filter(
+      ({ operation }) =>
+        operation !== "daemon-event-loop-turn" && operation !== "control-queue-empty-at-send",
+    );
+    for (let index = 1; index < orderedCausalSpans.length; index += 1)
+      expect(orderedCausalSpans[index - 1]!.endedAtMicros).toBeLessThanOrEqual(
+        orderedCausalSpans[index]!.startedAtMicros,
+      );
     connection.ack(ack(envelope));
     drivers[0]!.output("%1", "INTENDED-LATER");
     await drivers[0]!.settleUntil(

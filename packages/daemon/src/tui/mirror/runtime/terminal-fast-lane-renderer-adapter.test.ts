@@ -7,10 +7,7 @@ import {
   createTerminalFastLane,
   type TerminalFastLaneSourcePort,
 } from "@tmux-ide/daemon-client/terminal-fast-lane";
-import {
-  blankTerminalReplicaSnapshot,
-  hashTerminalReplicaSnapshot,
-} from "@tmux-ide/core";
+import { blankTerminalReplicaSnapshot, hashTerminalReplicaSnapshot } from "@tmux-ide/core";
 
 import { TerminalFastLaneRendererAdapter } from "./terminal-fast-lane-renderer-adapter.ts";
 
@@ -20,10 +17,7 @@ const workspaceName = "workspace.test";
 class Source implements TerminalFastLaneSourcePort {
   readonly listeners = new Map<
     string,
-    (
-      update: CanonicalTerminalReplicaUpdate,
-      metadata?: TerminalReplicaDeliveryMetadata,
-    ) => void
+    (update: CanonicalTerminalReplicaUpdate, metadata?: TerminalReplicaDeliveryMetadata) => void
   >();
 
   subscribe(
@@ -58,10 +52,7 @@ function seed(
     grid: [
       {
         ...first,
-        cells: [
-          { ...first.cells[0]!, grapheme: text, width: 1 },
-          ...first.cells.slice(1),
-        ],
+        cells: [{ ...first.cells[0]!, grapheme: text, width: 1 }, ...first.cells.slice(1)],
       },
       blank.grid[1]!,
     ],
@@ -128,12 +119,15 @@ describe("TerminalFastLaneRendererAdapter", () => {
     source.emit("pane.editor", seed("pane.editor", "E"));
 
     expect(adapter.hasCanonicalSnapshot()).toBe(true);
+    expect(adapter.hasPaintedCanonicalSnapshot()).toBe(false);
     expect(editor).toEqual([[1, 7]]);
     expect(tests).toEqual([]);
     expect(adapter.paneVersion("pane.editor")).toBe(1);
     expect(adapter.paneVersion("pane.tests")).toBe(0);
     expect(adapter.renderSource.cursorState("pane.editor")).toMatchObject({ x: 0, y: 0 });
     expect(adapter.renderSource.scrollbackDepth("pane.editor")).toBe(0);
+    paint(adapter, "pane.editor");
+    expect(adapter.hasPaintedCanonicalSnapshot()).toBe(true);
 
     stopEditor();
     stopTests();
@@ -186,13 +180,17 @@ describe("TerminalFastLaneRendererAdapter", () => {
     adapter.subscribePaneVersion("pane.editor", () => undefined);
     adapter.subscribePaneVersion("pane.tests", () => undefined);
     const traceId = "22222222-2222-4222-8222-222222222222";
+    const initial = seed("pane.editor", "E");
 
-    source.emit("pane.editor", seed("pane.editor", "E"), { performanceTraceId: traceId });
+    source.emit("pane.editor", initial, { performanceTraceId: traceId });
 
     expect(paint(adapter, "pane.editor")).toEqual({
       traceId,
       generation,
       incarnation: `${generation}:0`,
+      semanticPaneId: "pane.editor",
+      revision: 0,
+      stateHash: initial.stateHash,
     });
     expect(paint(adapter, "pane.editor")).toBeNull();
     expect(paint(adapter, "pane.tests")).toBeNull();
@@ -204,6 +202,207 @@ describe("TerminalFastLaneRendererAdapter", () => {
     expect(paint(adapter, "pane.editor")).toBeNull();
 
     adapter.dispose();
+    lane.dispose();
+  });
+
+  it("never consumes a trace from duplicate, reordered, stale, or unchanged output", () => {
+    const source = new Source();
+    const lane = createTerminalFastLane({
+      address: { workspaceName, generation },
+      source,
+      repair: { request: () => undefined },
+      control: {
+        owns: () => true,
+        request: async () => true,
+        write: async () => "ok",
+        resize: async () => "ok",
+      },
+    });
+    const adapter = new TerminalFastLaneRendererAdapter(lane);
+    adapter.subscribePaneVersion("pane.editor", () => undefined);
+    const traceId = "44444444-4444-4444-8444-444444444444";
+    const initial = seed("pane.editor", "E");
+    source.emit("pane.editor", initial);
+    paint(adapter, "pane.editor");
+
+    // Identical and stale seeds are reducer no-ops; metadata cannot smuggle a
+    // trace through to a later unrelated framebuffer walk.
+    source.emit("pane.editor", initial, { performanceTraceId: traceId });
+    source.emit(
+      "pane.editor",
+      {
+        type: "terminal.patch",
+        workspaceName,
+        semanticPaneId: "pane.editor",
+        generation,
+        incarnation: `${generation}:0`,
+        baseRevision: 2,
+        revision: 3,
+        cols: 4,
+        rows: 2,
+        hashAlgorithm: "fnv1a64-v1",
+        stateHash: initial.stateHash,
+        patch: { rows: [] },
+      },
+      { performanceTraceId: traceId },
+    );
+    expect(paint(adapter, "pane.editor")).toBeNull();
+
+    // A valid patch whose cells are byte-for-byte unchanged advances canonical
+    // revision but still is not a changed-cell paint sample.
+    source.emit(
+      "pane.editor",
+      {
+        type: "terminal.patch",
+        workspaceName,
+        semanticPaneId: "pane.editor",
+        generation,
+        incarnation: `${generation}:0`,
+        baseRevision: 0,
+        revision: 1,
+        cols: 4,
+        rows: 2,
+        hashAlgorithm: "fnv1a64-v1",
+        stateHash: initial.stateHash,
+        patch: { rows: [] },
+      },
+      { performanceTraceId: traceId },
+    );
+    expect(paint(adapter, "pane.editor")).toBeNull();
+
+    adapter.dispose();
+    lane.dispose();
+  });
+
+  it("retains the earliest changed-cell trace across coalesced and no-op publications", () => {
+    const source = new Source();
+    const lane = createTerminalFastLane({
+      address: { workspaceName, generation },
+      source,
+      repair: { request: () => undefined },
+      control: {
+        owns: () => true,
+        request: async () => true,
+        write: async () => "ok",
+        resize: async () => "ok",
+      },
+    });
+    const adapter = new TerminalFastLaneRendererAdapter(lane);
+    adapter.subscribePaneVersion("pane.editor", () => undefined);
+    const earliest = "55555555-5555-4555-8555-555555555555";
+    const later = "66666666-6666-4666-8666-666666666666";
+    const initial = seed("pane.editor", "E");
+    source.emit("pane.editor", initial, { performanceTraceId: earliest });
+
+    // A coalesced later changed seed must not bias latency downward by
+    // replacing the leading trace that has already waited for this paint.
+    source.emit(
+      "pane.editor",
+      { ...seed("pane.editor", "U"), revision: 1 },
+      { performanceTraceId: later },
+    );
+    // An untraced no-op publication before render cannot erase the owner.
+    source.emit("pane.editor", {
+      type: "terminal.patch",
+      workspaceName,
+      semanticPaneId: "pane.editor",
+      generation,
+      incarnation: `${generation}:0`,
+      baseRevision: 1,
+      revision: 2,
+      cols: 4,
+      rows: 2,
+      hashAlgorithm: "fnv1a64-v1",
+      stateHash: seed("pane.editor", "U").stateHash,
+      patch: { rows: [] },
+    });
+
+    const latest = seed("pane.editor", "U");
+    expect(paint(adapter, "pane.editor")).toEqual({
+      traceId: earliest,
+      generation,
+      incarnation: `${generation}:0`,
+      semanticPaneId: "pane.editor",
+      revision: 2,
+      stateHash: latest.stateHash,
+    });
+    expect(paint(adapter, "pane.editor")).toBeNull();
+    adapter.dispose();
+    lane.dispose();
+  });
+
+  it("repaints retained canonical output after switching away and back", () => {
+    const source = new Source();
+    const lane = createTerminalFastLane({
+      address: { workspaceName, generation },
+      source,
+      repair: { request: () => undefined },
+      control: {
+        owns: () => true,
+        request: async () => true,
+        write: async () => "ok",
+        resize: async () => "ok",
+      },
+    });
+    const firstAdapter = new TerminalFastLaneRendererAdapter(lane);
+    const stop = firstAdapter.subscribePaneVersion("pane.editor", () => undefined);
+    const initial = seed("pane.editor", "E");
+    source.emit("pane.editor", initial);
+    paint(firstAdapter, "pane.editor");
+    stop();
+    firstAdapter.dispose();
+
+    const changedRow = {
+      ...initial.snapshot.grid[0]!,
+      cells: initial.snapshot.grid[0]!.cells.map((cell, index) =>
+        index === 0 ? { ...cell, grapheme: "R" } : cell,
+      ),
+    };
+    const nextSnapshot = {
+      ...initial.snapshot,
+      grid: [changedRow, initial.snapshot.grid[1]!],
+    };
+    source.emit("pane.editor", {
+      type: "terminal.patch",
+      workspaceName,
+      semanticPaneId: "pane.editor",
+      generation,
+      incarnation: `${generation}:0`,
+      baseRevision: 0,
+      revision: 1,
+      cols: 4,
+      rows: 2,
+      hashAlgorithm: "fnv1a64-v1",
+      stateHash: hashTerminalReplicaSnapshot(nextSnapshot),
+      patch: { rows: [{ index: 0, row: changedRow }] },
+    });
+
+    const remounted = new TerminalFastLaneRendererAdapter(lane, 2);
+    const versions: Array<[number, number]> = [];
+    remounted.subscribePaneVersion("pane.editor", (version, epoch) =>
+      versions.push([version, epoch]),
+    );
+    const cells = new Uint32Array(8);
+    remounted.renderSource.blitPane(
+      "pane.editor",
+      {
+        char: cells,
+        fg: new Uint16Array(32),
+        bg: new Uint16Array(32),
+        attributes: new Uint32Array(8),
+      },
+      4,
+      2,
+      0,
+      0xffffff,
+      0,
+      { full: true, dirtyRows: [] },
+    );
+    expect(versions).toEqual([[1, 2]]);
+    expect(String.fromCodePoint(cells[0]!)).toBe("R");
+    expect(remounted.hasPaintedCanonicalSnapshot()).toBe(true);
+
+    remounted.dispose();
     lane.dispose();
   });
 });

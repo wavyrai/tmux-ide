@@ -1,7 +1,4 @@
-import {
-  type DesktopApplicationShellTarget,
-  type InteractionReceipt,
-} from "@tmux-ide/contracts";
+import { type DesktopApplicationShellTarget, type InteractionReceipt } from "@tmux-ide/contracts";
 import {
   createApplicationShellSession,
   type ApplicationShellSession,
@@ -27,8 +24,7 @@ export interface OpenTuiApplicationShellAuthority {
   dispose(): void;
 }
 
-interface OpenTuiApplicationShellAuthorityDependencies
-  extends OpenTuiApplicationShellConnectionDependencies {
+interface OpenTuiApplicationShellAuthorityDependencies extends OpenTuiApplicationShellConnectionDependencies {
   readonly createSession: typeof createApplicationShellSession;
   readonly onInteractionReceipt?: (receipt: InteractionReceipt) => void;
 }
@@ -47,10 +43,7 @@ export async function connectOpenTuiApplicationShellAuthority(
   overrides: Partial<OpenTuiApplicationShellAuthorityDependencies> = {},
 ): Promise<OpenTuiApplicationShellAuthority | null> {
   const dependencies = { ...DEFAULT_SESSION_DEPENDENCIES, ...overrides };
-  const connection = await resolveOpenTuiApplicationShellConnection(
-    sessionName,
-    overrides,
-  );
+  const connection = await resolveOpenTuiApplicationShellConnection(sessionName, overrides);
   if (!connection) return null;
   let session: ApplicationShellSession;
   try {

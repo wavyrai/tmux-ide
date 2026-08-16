@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { projectOpenTuiPaneFrames, type OpenTuiTerminalLayout } from "./terminal-layout-projection.ts";
+import {
+  projectOpenTuiPaneFrames,
+  type OpenTuiTerminalLayout,
+} from "./terminal-layout-projection.ts";
 
 const layout: OpenTuiTerminalLayout = {
   type: "layout",

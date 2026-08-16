@@ -1,4 +1,5 @@
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
+import { execFile } from "node:child_process";
 import { isAbsolute } from "node:path";
 
 import {
@@ -123,6 +124,27 @@ export interface NativeTerminalAttachmentCommandExecutor {
   ): string | Buffer;
 }
 
+export interface NativeTerminalInventoryReadCommandExecutor {
+  (
+    executable: string,
+    argv: readonly string[],
+    options: {
+      readonly cwd: string;
+      readonly env: NodeJS.ProcessEnv;
+      readonly maxBuffer: number;
+      readonly timeoutMs: number;
+      readonly signal?: AbortSignal;
+    },
+  ): Promise<string | Buffer>;
+}
+
+export interface NativeTerminalInventoryReadRunner {
+  readonly run: (
+    command: TmuxArgvPlan,
+    signal?: AbortSignal,
+  ) => Promise<TmuxAttachmentCommandResult>;
+}
+
 interface CanonicalTmuxAuthority {
   readonly executablePath: string;
   readonly socketSelector: DaemonTmuxSocketSelector;
@@ -198,6 +220,29 @@ function defaultCommandExecutor(
   });
 }
 
+function defaultReadCommandExecutor(
+  executable: string,
+  argv: readonly string[],
+  options: Parameters<NativeTerminalInventoryReadCommandExecutor>[2],
+): Promise<string | Buffer> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      executable,
+      [...argv],
+      {
+        cwd: options.cwd,
+        env: options.env,
+        encoding: "utf8",
+        maxBuffer: options.maxBuffer,
+        timeout: options.timeoutMs,
+        signal: options.signal,
+        windowsHide: true,
+      },
+      (error, stdout) => (error ? reject(error) : resolve(stdout)),
+    );
+  });
+}
+
 function pinnedRunner(
   authority: CanonicalTmuxAuthority,
   execute: NativeTerminalAttachmentCommandExecutor,
@@ -246,6 +291,64 @@ function pinnedRunner(
         if (error instanceof TmuxError && error.code === "ENVIRONMENT_VARIABLE_NOT_FOUND") {
           return { status: "variable-not-found" };
         }
+        return { status: "failed" };
+      }
+    },
+  });
+}
+
+function readErrorCode(error: unknown): string {
+  if (error instanceof TmuxError) return error.code;
+  const raw = (error as { stderr?: string | Buffer })?.stderr;
+  const detail = (
+    Buffer.isBuffer(raw) ? raw.toString("utf8") : (raw ?? String(error))
+  ).toLowerCase();
+  if (
+    ["can't find session", "can't find window", "can't find pane", "unknown target"].some((v) =>
+      detail.includes(v),
+    )
+  )
+    return "SESSION_NOT_FOUND";
+  if (detail.includes("unknown variable:")) return "ENVIRONMENT_VARIABLE_NOT_FOUND";
+  if (
+    [
+      "failed to connect to server",
+      "no server running",
+      "error connecting to",
+      "connection refused",
+    ].some((v) => detail.includes(v))
+  )
+    return "TMUX_UNAVAILABLE";
+  return "TMUX_ERROR";
+}
+
+function pinnedReadRunner(
+  authority: CanonicalTmuxAuthority,
+  execute: NativeTerminalInventoryReadCommandExecutor,
+): NativeTerminalInventoryReadRunner {
+  return Object.freeze({
+    async run(command: TmuxArgvPlan, signal?: AbortSignal): Promise<TmuxAttachmentCommandResult> {
+      if (command.executable !== "tmux" || signal?.aborted) return { status: "failed" };
+      try {
+        const stdout = await execute(
+          authority.executablePath,
+          [...authority.socketArgv, ...command.argv],
+          {
+            cwd: authority.trustedCwd,
+            env: authority.environment,
+            maxBuffer: MAX_TMUX_OUTPUT_BYTES,
+            timeoutMs: TERMINAL_ATTACHMENT_TMUX_COMMAND_TIMEOUT_MS,
+            ...(signal ? { signal } : {}),
+          },
+        );
+        const value = String(stdout);
+        if (value.includes("\0") || Buffer.byteLength(value, "utf8") > MAX_TMUX_OUTPUT_BYTES)
+          return { status: "failed" };
+        return { status: "ok", stdout: value };
+      } catch (error) {
+        const code = readErrorCode(error);
+        if (code === "SESSION_NOT_FOUND") return { status: "not-found" };
+        if (code === "ENVIRONMENT_VARIABLE_NOT_FOUND") return { status: "variable-not-found" };
         return { status: "failed" };
       }
     },
@@ -370,11 +473,12 @@ const PANE_FORMAT = [
   PANE_WIRE_SENTINEL,
 ].join(WIRE_SEPARATOR);
 
-function requiredTmuxResult(
-  runner: TmuxAttachmentCommandRunner,
+async function requiredTmuxResult(
+  runner: NativeTerminalInventoryReadRunner,
   argv: readonly string[],
-): string | null {
-  const result = runner.run({ executable: "tmux", argv });
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const result = await runner.run({ executable: "tmux", argv }, signal);
   if (result.status === "not-found") return null;
   if (result.status !== "ok") {
     throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
@@ -387,10 +491,11 @@ interface LiveSessionIdentity {
   readonly id: string;
 }
 
-function liveSessionIdentities(
-  runner: TmuxAttachmentCommandRunner,
-): readonly LiveSessionIdentity[] {
-  const stdout = requiredTmuxResult(runner, ["list-sessions", "-F", SESSION_FORMAT]);
+async function liveSessionIdentities(
+  runner: NativeTerminalInventoryReadRunner,
+  signal?: AbortSignal,
+): Promise<readonly LiveSessionIdentity[]> {
+  const stdout = await requiredTmuxResult(runner, ["list-sessions", "-F", SESSION_FORMAT], signal);
   if (stdout === null) return [];
   const identities: LiveSessionIdentity[] = [];
   const names = new Set<string>();
@@ -526,7 +631,8 @@ function parsePaneSnapshot(
  */
 export async function discoverWorkspaceRegistryTerminalInventory(
   registry: WorkspaceRegistry,
-  runner: TmuxAttachmentCommandRunner,
+  runner: NativeTerminalInventoryReadRunner,
+  signal?: AbortSignal,
 ): Promise<NativeTerminalInventorySnapshot> {
   const workspaces = registry.list();
   if (workspaces.length > MAX_DISCOVERED_WORKSPACES) {
@@ -536,7 +642,7 @@ export async function discoverWorkspaceRegistryTerminalInventory(
     const catalog = analyzeTrustedSemanticPaneCatalog([]);
     return Object.freeze({ panes: Object.freeze([]), catalog });
   }
-  const liveSessions = liveSessionIdentities(runner);
+  const liveSessions = await liveSessionIdentities(runner, signal);
   const byName = new Map(liveSessions.map((session) => [session.name, session]));
   const uniqueSessionNames = new Set(workspaces.map((workspace) => workspace.sessionName));
   const bySessionName = new Map<string, readonly LivePaneFacts[]>();
@@ -544,10 +650,10 @@ export async function discoverWorkspaceRegistryTerminalInventory(
     const identity = byName.get(sessionName);
     if (!identity) continue;
     const argv = ["list-panes", "-s", "-t", identity.id, "-F", PANE_FORMAT] as const;
-    const before = requiredTmuxResult(runner, argv);
+    const before = await requiredTmuxResult(runner, argv, signal);
     if (before === null) continue;
     const panes = parsePaneSnapshot(before, identity);
-    const after = requiredTmuxResult(runner, argv);
+    const after = await requiredTmuxResult(runner, argv, signal);
     if (after === null || before !== after) {
       throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
     }
@@ -587,9 +693,10 @@ export async function discoverWorkspaceRegistryTerminalInventory(
 /** Internal raw-id discovery; callers expose only SemanticPaneCatalog resolution. */
 export async function discoverWorkspaceRegistrySemanticPanes(
   registry: WorkspaceRegistry,
-  runner: TmuxAttachmentCommandRunner,
+  runner: NativeTerminalInventoryReadRunner,
+  signal?: AbortSignal,
 ): Promise<readonly TrustedSemanticPaneSnapshot[]> {
-  const inventory = await discoverWorkspaceRegistryTerminalInventory(registry, runner);
+  const inventory = await discoverWorkspaceRegistryTerminalInventory(registry, runner, signal);
   return inventory.panes.map(
     ({
       sessionName: _sessionName,
@@ -788,10 +895,11 @@ export interface WorkspaceTerminalInventoryRuntimeOptions {
   readonly sessionRuntimeRegistry?: SessionRuntimeRegistry;
   readonly tmuxAuthority: NativeTerminalAttachmentTmuxAuthority;
   readonly commandExecutor?: NativeTerminalAttachmentCommandExecutor;
+  readonly readCommandExecutor?: NativeTerminalInventoryReadCommandExecutor;
   readonly semanticPaneCatalog?: SemanticPaneCatalog;
   readonly agentStatusProbe?: AgentStatusProbe;
   readonly agentStatusProbeFactory?: (deps: {
-    readonly run: (argv: readonly string[]) => string | null;
+    readonly run: (argv: readonly string[], signal?: AbortSignal) => Promise<string | null>;
   }) => AgentStatusProbe;
 }
 
@@ -804,6 +912,7 @@ export interface WorkspaceTerminalInventoryRuntimeOptions {
 export class WorkspaceTerminalInventoryRuntime {
   readonly semanticPaneCatalog: SemanticPaneCatalog;
   readonly runner: TmuxAttachmentCommandRunner;
+  readonly readRunner: NativeTerminalInventoryReadRunner;
   readonly #registry: WorkspaceRegistry;
   readonly #discoverTerminalInventory: () => Promise<NativeTerminalInventorySnapshot>;
   readonly #agentStatusProbe: AgentStatusProbe | null;
@@ -812,18 +921,33 @@ export class WorkspaceTerminalInventoryRuntime {
   readonly #stopWorkspaceAddedObserver: (() => void) | null;
   readonly #stopWorkspaceRemovedObserver: (() => void) | null;
   readonly #orphanBarrier: Promise<void>;
+  #inventoryEpoch = 0;
+  #inventoryRead: {
+    readonly epoch: number;
+    readonly abort: AbortController;
+    readonly promise: Promise<NativeTerminalInventorySnapshot>;
+  } | null = null;
+  readonly #applicationReads = new Map<
+    string,
+    {
+      readonly epoch: number;
+      readonly abort: AbortController;
+      readonly promise: Promise<NativeApplicationShellSessionSnapshot | null>;
+    }
+  >();
   #lifecycle: "initializing" | "ready" | "failed" | "disposed" = "initializing";
   #disposed = false;
 
   constructor(options: WorkspaceTerminalInventoryRuntimeOptions) {
     const authority = canonicalAuthority(options.tmuxAuthority);
     const execute = options.commandExecutor ?? defaultCommandExecutor;
+    const executeRead = options.readCommandExecutor ?? defaultReadCommandExecutor;
     this.runner = pinnedRunner(authority, execute, {
       allowUnavailableDefaultEnumeration: true,
     });
+    this.readRunner = pinnedReadRunner(authority, executeRead);
     this.#registry = options.registry;
-    this.#discoverTerminalInventory = () =>
-      discoverWorkspaceRegistryTerminalInventory(options.registry, this.runner);
+    this.#discoverTerminalInventory = () => this.#readInventory();
     this.semanticPaneCatalog =
       options.semanticPaneCatalog ??
       new SemanticPaneCatalog({
@@ -885,17 +1009,17 @@ export class WorkspaceTerminalInventoryRuntime {
       options.agentStatusProbe ??
       (options.agentStatusProbeFactory
         ? options.agentStatusProbeFactory({
-            run: (argv) => {
-              const result = this.runner.run({ executable: "tmux", argv });
+            run: async (argv, signal) => {
+              const result = await this.readRunner.run({ executable: "tmux", argv }, signal);
               return result.status === "ok" ? result.stdout : null;
             },
           })
         : null);
+    const sessionsByWorkspace = new Map(
+      options.registry.list().map((workspace) => [workspace.name, workspace.sessionName]),
+    );
     if (options.sessionRuntimeRegistry) {
       const sessionRuntimeRegistry = options.sessionRuntimeRegistry;
-      const sessionsByWorkspace = new Map(
-        options.registry.list().map((workspace) => [workspace.name, workspace.sessionName]),
-      );
       this.#prewarmSessionRuntime = (sessionName) => {
         void sessionRuntimeRegistry.prewarmSession(sessionName).catch(() => undefined);
       };
@@ -910,25 +1034,26 @@ export class WorkspaceTerminalInventoryRuntime {
           void sessionRuntimeRegistry.retireSession(previousSessionName).catch(() => undefined);
         }
       };
-      this.#stopWorkspaceAddedObserver = options.registry.on("workspace.added", (workspace) => {
-        this.#observeWorkspaceSession?.(workspace.name, workspace.sessionName);
-      });
-      this.#stopWorkspaceRemovedObserver = options.registry.on("workspace.removed", (name) => {
-        const sessionName = sessionsByWorkspace.get(name);
-        sessionsByWorkspace.delete(name);
-        if (
-          sessionName &&
-          ![...sessionsByWorkspace.values()].some((candidate) => candidate === sessionName)
-        ) {
-          void sessionRuntimeRegistry.retireSession(sessionName).catch(() => undefined);
-        }
-      });
     } else {
       this.#prewarmSessionRuntime = null;
       this.#observeWorkspaceSession = null;
-      this.#stopWorkspaceAddedObserver = null;
-      this.#stopWorkspaceRemovedObserver = null;
     }
+    this.#stopWorkspaceAddedObserver = options.registry.on("workspace.added", (workspace) => {
+      this.invalidate();
+      this.#observeWorkspaceSession?.(workspace.name, workspace.sessionName);
+    });
+    this.#stopWorkspaceRemovedObserver = options.registry.on("workspace.removed", (name) => {
+      this.invalidate();
+      if (!options.sessionRuntimeRegistry) return;
+      const sessionName = sessionsByWorkspace.get(name);
+      sessionsByWorkspace.delete(name);
+      if (
+        sessionName &&
+        ![...sessionsByWorkspace.values()].some((candidate) => candidate === sessionName)
+      ) {
+        void options.sessionRuntimeRegistry.retireSession(sessionName).catch(() => undefined);
+      }
+    });
   }
 
   discoverTerminalInventory(): Promise<NativeTerminalInventorySnapshot> {
@@ -943,9 +1068,79 @@ export class WorkspaceTerminalInventoryRuntime {
     return this.#orphanBarrier;
   }
 
-  async discoverApplicationShellSession(
+  /** Retires the exact read generation; concurrent readers share its replacement. */
+  invalidate(): void {
+    this.#inventoryEpoch += 1;
+    this.#inventoryRead?.abort.abort();
+    this.#inventoryRead = null;
+    for (const read of this.#applicationReads.values()) read.abort.abort();
+    this.#applicationReads.clear();
+  }
+
+  async #readInventory(): Promise<NativeTerminalInventorySnapshot> {
+    if (this.#disposed) throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
+    const epoch = this.#inventoryEpoch;
+    if (this.#inventoryRead?.epoch === epoch) return this.#inventoryRead.promise;
+    const abort = new AbortController();
+    const promise = discoverWorkspaceRegistryTerminalInventory(
+      this.#registry,
+      this.readRunner,
+      abort.signal,
+    )
+      .then((value) =>
+        abort.signal.aborted || this.#inventoryEpoch !== epoch ? this.#readInventory() : value,
+      )
+      .catch((error: unknown) => {
+        if (abort.signal.aborted || this.#inventoryEpoch !== epoch) return this.#readInventory();
+        throw error;
+      })
+      .finally(() => {
+        if (this.#inventoryRead?.promise === promise) this.#inventoryRead = null;
+      });
+    this.#inventoryRead = { epoch, abort, promise };
+    return promise;
+  }
+
+  discoverApplicationShellSession(
     requestedSessionName: string,
   ): Promise<NativeApplicationShellSessionSnapshot | null> {
+    if (this.#disposed)
+      return Promise.reject(new NativeTerminalAttachmentRuntimeError("runtime-disposed"));
+    const epoch = this.#inventoryEpoch;
+    const current = this.#applicationReads.get(requestedSessionName);
+    if (current?.epoch === epoch) return current.promise;
+    const abort = new AbortController();
+    const promise = this.#discoverApplicationShellSession(requestedSessionName, abort.signal)
+      .then((value) =>
+        abort.signal.aborted || this.#inventoryEpoch !== epoch
+          ? this.discoverApplicationShellSession(requestedSessionName)
+          : value,
+      )
+      .catch((error: unknown) => {
+        if (abort.signal.aborted || this.#inventoryEpoch !== epoch) {
+          return this.discoverApplicationShellSession(requestedSessionName);
+        }
+        throw error;
+      })
+      .finally(() => {
+        if (this.#applicationReads.get(requestedSessionName)?.promise === promise) {
+          this.#applicationReads.delete(requestedSessionName);
+        }
+      });
+    this.#applicationReads.set(requestedSessionName, { epoch, abort, promise });
+    return promise;
+  }
+
+  async #discoverApplicationShellSession(
+    requestedSessionName: string,
+    signal: AbortSignal,
+  ): Promise<NativeApplicationShellSessionSnapshot | null> {
+    const assertLive = (): void => {
+      if (signal.aborted || this.#disposed) {
+        throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
+      }
+    };
+    assertLive();
     const memberships = this.#registry
       .list()
       .filter((workspace) => workspace.sessionName === requestedSessionName);
@@ -955,6 +1150,7 @@ export class WorkspaceTerminalInventoryRuntime {
     const workspace = memberships[0]!;
     this.#observeWorkspaceSession?.(workspace.name, workspace.sessionName);
     const inventory = await this.#discoverTerminalInventory();
+    assertLive();
     const panes = inventory.panes.filter(
       (pane) => pane.workspaceName === workspace.name && pane.sessionName === workspace.sessionName,
     );
@@ -989,15 +1185,12 @@ export class WorkspaceTerminalInventoryRuntime {
       windowStamps.set(pane.windowId, stamp);
     }
     if (new Set(windowStamps.values()).size !== windowStamps.size) windowIdentityReady = false;
-    if (
+    const shouldPrewarm =
       !sessionCatalog.invalidRuntimeProof &&
       !sessionCatalog.missingSemanticStamp &&
       !sessionCatalog.duplicateSemanticStamp &&
       !sessionCatalog.duplicateRuntimePaneBinding &&
-      windowIdentityReady
-    ) {
-      this.#prewarmSessionRuntime?.(workspace.sessionName);
-    }
+      windowIdentityReady;
     const catalogIssue: NativeTerminalInventoryCatalogIssue | null = inventory.catalog
       .invalidRuntimeProof
       ? "invalid-runtime-proof"
@@ -1011,19 +1204,25 @@ export class WorkspaceTerminalInventoryRuntime {
     let agentFacts: ReadonlyMap<string, AgentStatusPaneFacts> = new Map();
     if (this.#agentStatusProbe) {
       try {
-        agentFacts = this.#agentStatusProbe.probe({
-          sessionId: active.sessionId,
-          nowSec: Math.floor(Date.now() / 1000),
-          panes: panes.map((pane) => ({
-            runtimePaneId: pane.runtimePaneId,
-            currentCommand: pane.currentCommand,
-            title: pane.title,
-          })),
-        });
+        agentFacts = await this.#agentStatusProbe.probe(
+          {
+            sessionId: active.sessionId,
+            nowSec: Math.floor(Date.now() / 1000),
+            panes: panes.map((pane) => ({
+              runtimePaneId: pane.runtimePaneId,
+              currentCommand: pane.currentCommand,
+              title: pane.title,
+            })),
+          },
+          signal,
+        );
       } catch {
+        assertLive();
         agentFacts = new Map();
       }
     }
+    assertLive();
+    if (shouldPrewarm) this.#prewarmSessionRuntime?.(workspace.sessionName);
     return Object.freeze({
       name: workspace.sessionName,
       runtimeSessionId: active.sessionId,
@@ -1048,6 +1247,7 @@ export class WorkspaceTerminalInventoryRuntime {
     if (this.#disposed) return;
     this.#disposed = true;
     this.#lifecycle = "disposed";
+    this.invalidate();
     this.#stopWorkspaceAddedObserver?.();
     this.#stopWorkspaceRemovedObserver?.();
   }
@@ -1064,6 +1264,7 @@ export interface NativeTerminalAttachmentRuntimeOptions {
   readonly tmuxAuthority: NativeTerminalAttachmentTmuxAuthority;
   readonly ptyAdapter?: PtyAdapter;
   readonly commandExecutor?: NativeTerminalAttachmentCommandExecutor;
+  readonly readCommandExecutor?: NativeTerminalInventoryReadCommandExecutor;
   /** Narrow deterministic seam; production omits it and uses registry-backed discovery. */
   readonly semanticPaneCatalog?: SemanticPaneCatalog;
   readonly lease?: LeaseRuntimeOptions;
@@ -1082,7 +1283,7 @@ export interface NativeTerminalAttachmentRuntimeOptions {
    * daemon-embed). Ignored when {@link agentStatusProbe} is provided directly.
    */
   readonly agentStatusProbeFactory?: (deps: {
-    readonly run: (argv: readonly string[]) => string | null;
+    readonly run: (argv: readonly string[], signal?: AbortSignal) => Promise<string | null>;
   }) => AgentStatusProbe;
 }
 
@@ -1096,11 +1297,26 @@ export class NativeTerminalAttachmentRuntime {
   readonly #registry: WorkspaceRegistry;
   readonly #inventoryRuntime: WorkspaceTerminalInventoryRuntime | null;
   readonly #discoverTerminalInventory: () => Promise<NativeTerminalInventorySnapshot>;
+  readonly #readRunner: NativeTerminalInventoryReadRunner;
   readonly #agentStatusProbe: AgentStatusProbe | null;
   readonly #prewarmSessionRuntime: ((sessionName: string) => void) | null;
   readonly #observeWorkspaceSession: ((workspaceName: string, sessionName: string) => void) | null;
   readonly #stopWorkspaceAddedObserver: (() => void) | null;
   readonly #stopWorkspaceRemovedObserver: (() => void) | null;
+  #inventoryEpoch = 0;
+  #inventoryRead: {
+    readonly epoch: number;
+    readonly abort: AbortController;
+    readonly promise: Promise<NativeTerminalInventorySnapshot>;
+  } | null = null;
+  readonly #applicationReads = new Map<
+    string,
+    {
+      readonly epoch: number;
+      readonly abort: AbortController;
+      readonly promise: Promise<NativeApplicationShellSessionSnapshot | null>;
+    }
+  >();
   #lifecycle: "initializing" | "ready" | "failed" | "disposing" | "disposed" = "initializing";
   #disposePromise: Promise<void> | null = null;
 
@@ -1108,15 +1324,17 @@ export class NativeTerminalAttachmentRuntime {
     nativeTerminalAttachmentRuntimeConstructions += 1;
     const authority = canonicalAuthority(options.tmuxAuthority);
     const execute = options.commandExecutor ?? defaultCommandExecutor;
+    const executeRead = options.readCommandExecutor ?? defaultReadCommandExecutor;
     const startupPolicy = {
       allowUnavailableDefaultEnumeration:
         authority.socketSelector.kind === "name" && authority.socketSelector.name === "default",
     };
     const runner =
       options.inventoryRuntime?.runner ?? pinnedRunner(authority, execute, startupPolicy);
+    const readRunner =
+      options.inventoryRuntime?.readRunner ?? pinnedReadRunner(authority, executeRead);
     const discoverTerminalInventory = () =>
-      options.inventoryRuntime?.discoverTerminalInventory() ??
-      discoverWorkspaceRegistryTerminalInventory(options.registry, runner);
+      options.inventoryRuntime?.discoverTerminalInventory() ?? this.#readInventory();
     const serializer = new TmuxAttachmentOperationSerializer();
     const catalog =
       options.inventoryRuntime?.semanticPaneCatalog ??
@@ -1229,23 +1447,24 @@ export class NativeTerminalAttachmentRuntime {
     this.#serializer = serializer;
     this.#registry = options.registry;
     this.#inventoryRuntime = options.inventoryRuntime ?? null;
+    this.#readRunner = readRunner;
     this.#discoverTerminalInventory = discoverTerminalInventory;
     this.#agentStatusProbe = options.inventoryRuntime
       ? null
       : (options.agentStatusProbe ??
         (options.agentStatusProbeFactory
           ? options.agentStatusProbeFactory({
-              run: (argv) => {
-                const result = runner.run({ executable: "tmux", argv });
+              run: async (argv, signal) => {
+                const result = await readRunner.run({ executable: "tmux", argv }, signal);
                 return result.status === "ok" ? result.stdout : null;
               },
             })
           : null));
+    const sessionsByWorkspace = new Map(
+      options.registry.list().map((workspace) => [workspace.name, workspace.sessionName]),
+    );
     if (options.sessionRuntimeRegistry && !options.inventoryRuntime) {
       const sessionRuntimeRegistry = options.sessionRuntimeRegistry;
-      const sessionsByWorkspace = new Map(
-        options.registry.list().map((workspace) => [workspace.name, workspace.sessionName]),
-      );
       this.#prewarmSessionRuntime = (sessionName) => {
         // Inventory must remain responsive even if tmux control-mode startup
         // fails. Admission will retry through the same runtime on demand.
@@ -1262,22 +1481,28 @@ export class NativeTerminalAttachmentRuntime {
           void sessionRuntimeRegistry.retireSession(previousSessionName).catch(() => undefined);
         }
       };
+    } else {
+      this.#prewarmSessionRuntime = null;
+      this.#observeWorkspaceSession = null;
+    }
+    if (!options.inventoryRuntime) {
       this.#stopWorkspaceAddedObserver = options.registry.on("workspace.added", (workspace) => {
+        this.#invalidateReads();
         this.#observeWorkspaceSession?.(workspace.name, workspace.sessionName);
       });
       this.#stopWorkspaceRemovedObserver = options.registry.on("workspace.removed", (name) => {
+        this.#invalidateReads();
+        if (!options.sessionRuntimeRegistry) return;
         const sessionName = sessionsByWorkspace.get(name);
         sessionsByWorkspace.delete(name);
         if (
           sessionName &&
           ![...sessionsByWorkspace.values()].some((candidate) => candidate === sessionName)
         ) {
-          void sessionRuntimeRegistry.retireSession(sessionName).catch(() => undefined);
+          void options.sessionRuntimeRegistry.retireSession(sessionName).catch(() => undefined);
         }
       });
     } else {
-      this.#prewarmSessionRuntime = null;
-      this.#observeWorkspaceSession = null;
       this.#stopWorkspaceAddedObserver = null;
       this.#stopWorkspaceRemovedObserver = null;
     }
@@ -1288,12 +1513,85 @@ export class NativeTerminalAttachmentRuntime {
    * attachment catalog intentionally share the same pinned runner, socket and
    * global trust analyzer.
    */
-  async discoverApplicationShellSession(
+  #readsClosed(): boolean {
+    return this.#lifecycle === "disposing" || this.#lifecycle === "disposed";
+  }
+
+  #invalidateReads(): void {
+    this.#inventoryEpoch += 1;
+    this.#inventoryRead?.abort.abort();
+    this.#inventoryRead = null;
+    for (const read of this.#applicationReads.values()) read.abort.abort();
+    this.#applicationReads.clear();
+  }
+
+  async #readInventory(): Promise<NativeTerminalInventorySnapshot> {
+    if (this.#readsClosed()) throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
+    const epoch = this.#inventoryEpoch;
+    if (this.#inventoryRead?.epoch === epoch) return this.#inventoryRead.promise;
+    const abort = new AbortController();
+    const promise = discoverWorkspaceRegistryTerminalInventory(
+      this.#registry,
+      this.#readRunner,
+      abort.signal,
+    )
+      .then((value) =>
+        abort.signal.aborted || this.#inventoryEpoch !== epoch ? this.#readInventory() : value,
+      )
+      .catch((error: unknown) => {
+        if (abort.signal.aborted || this.#inventoryEpoch !== epoch) return this.#readInventory();
+        throw error;
+      })
+      .finally(() => {
+        if (this.#inventoryRead?.promise === promise) this.#inventoryRead = null;
+      });
+    this.#inventoryRead = { epoch, abort, promise };
+    return promise;
+  }
+
+  discoverApplicationShellSession(
     requestedSessionName: string,
   ): Promise<NativeApplicationShellSessionSnapshot | null> {
     if (this.#inventoryRuntime) {
       return this.#inventoryRuntime.discoverApplicationShellSession(requestedSessionName);
     }
+    if (this.#readsClosed())
+      return Promise.reject(new NativeTerminalAttachmentRuntimeError("runtime-disposed"));
+    const epoch = this.#inventoryEpoch;
+    const current = this.#applicationReads.get(requestedSessionName);
+    if (current?.epoch === epoch) return current.promise;
+    const abort = new AbortController();
+    const promise = this.#discoverApplicationShellSession(requestedSessionName, abort.signal)
+      .then((value) =>
+        abort.signal.aborted || this.#inventoryEpoch !== epoch
+          ? this.discoverApplicationShellSession(requestedSessionName)
+          : value,
+      )
+      .catch((error: unknown) => {
+        if (abort.signal.aborted || this.#inventoryEpoch !== epoch) {
+          return this.discoverApplicationShellSession(requestedSessionName);
+        }
+        throw error;
+      })
+      .finally(() => {
+        if (this.#applicationReads.get(requestedSessionName)?.promise === promise) {
+          this.#applicationReads.delete(requestedSessionName);
+        }
+      });
+    this.#applicationReads.set(requestedSessionName, { epoch, abort, promise });
+    return promise;
+  }
+
+  async #discoverApplicationShellSession(
+    requestedSessionName: string,
+    signal: AbortSignal,
+  ): Promise<NativeApplicationShellSessionSnapshot | null> {
+    const assertLive = (): void => {
+      if (signal.aborted || this.#readsClosed()) {
+        throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
+      }
+    };
+    assertLive();
     const memberships = this.#registry
       .list()
       .filter((workspace) => workspace.sessionName === requestedSessionName);
@@ -1308,6 +1606,7 @@ export class NativeTerminalAttachmentRuntime {
     // ensuring the old prewarm cannot survive the next shell generation.
     this.#observeWorkspaceSession?.(workspace.name, workspace.sessionName);
     const inventory = await this.#discoverTerminalInventory();
+    assertLive();
     const panes = inventory.panes.filter(
       (pane) => pane.workspaceName === workspace.name && pane.sessionName === workspace.sessionName,
     );
@@ -1342,19 +1641,12 @@ export class NativeTerminalAttachmentRuntime {
       windowStamps.set(pane.windowId, stamp);
     }
     if (new Set(windowStamps.values()).size !== windowStamps.size) windowIdentityReady = false;
-    if (
+    const shouldPrewarm =
       !sessionCatalog.invalidRuntimeProof &&
       !sessionCatalog.missingSemanticStamp &&
       !sessionCatalog.duplicateSemanticStamp &&
       !sessionCatalog.duplicateRuntimePaneBinding &&
-      windowIdentityReady
-    ) {
-      // Only a fully stamped daemon-authored inventory may start MirrorService.
-      // Promotion owns first identity assignment; warming earlier would let the
-      // mirror race it and mint `window.mirror.*` instead of promoted identity.
-      // This remains detached so application-shell response latency is unchanged.
-      this.#prewarmSessionRuntime?.(workspace.sessionName);
-    }
+      windowIdentityReady;
     const catalogIssue: NativeTerminalInventoryCatalogIssue | null = inventory.catalog
       .invalidRuntimeProof
       ? "invalid-runtime-proof"
@@ -1371,19 +1663,29 @@ export class NativeTerminalAttachmentRuntime {
     let agentFacts: ReadonlyMap<string, AgentStatusPaneFacts> = new Map();
     if (this.#agentStatusProbe) {
       try {
-        agentFacts = this.#agentStatusProbe.probe({
-          sessionId: active.sessionId,
-          nowSec: Math.floor(Date.now() / 1000),
-          panes: panes.map((pane) => ({
-            runtimePaneId: pane.runtimePaneId,
-            currentCommand: pane.currentCommand,
-            title: pane.title,
-          })),
-        });
+        agentFacts = await this.#agentStatusProbe.probe(
+          {
+            sessionId: active.sessionId,
+            nowSec: Math.floor(Date.now() / 1000),
+            panes: panes.map((pane) => ({
+              runtimePaneId: pane.runtimePaneId,
+              currentCommand: pane.currentCommand,
+              title: pane.title,
+            })),
+          },
+          signal,
+        );
       } catch {
+        assertLive();
         agentFacts = new Map();
       }
     }
+    assertLive();
+    // Only a fully stamped daemon-authored inventory may start MirrorService.
+    // Promotion owns first identity assignment; warming earlier would let the
+    // mirror race it and mint `window.mirror.*` instead of promoted identity.
+    // Defer the side effect until enrichment commits the current read epoch.
+    if (shouldPrewarm) this.#prewarmSessionRuntime?.(workspace.sessionName);
     return Object.freeze({
       name: workspace.sessionName,
       runtimeSessionId: active.sessionId,
@@ -1442,12 +1744,17 @@ export class NativeTerminalAttachmentRuntime {
   dispose(): Promise<void> {
     if (!this.#disposePromise) {
       this.#lifecycle = "disposing";
-      this.#disposePromise = this.#finishDispose();
+      const readBarriers = [
+        ...(this.#inventoryRead ? [this.#inventoryRead.promise] : []),
+        ...[...this.#applicationReads.values()].map((read) => read.promise),
+      ];
+      this.#invalidateReads();
+      this.#disposePromise = this.#finishDispose(readBarriers);
     }
     return this.#disposePromise;
   }
 
-  async #finishDispose(): Promise<void> {
+  async #finishDispose(readBarriers: readonly Promise<unknown>[]): Promise<void> {
     try {
       this.#stopWorkspaceAddedObserver?.();
       this.#stopWorkspaceRemovedObserver?.();
@@ -1455,7 +1762,11 @@ export class NativeTerminalAttachmentRuntime {
       // Cancel an attach readiness wait immediately; the coordinator barrier
       // then retires the associated lease/view before this method resolves.
       this.#launcher.disposeAll();
-      await Promise.all([admissionBarrier, this.#startupBarrier.catch(() => undefined)]);
+      await Promise.all([
+        admissionBarrier,
+        this.#startupBarrier.catch(() => undefined),
+        ...readBarriers.map((read) => read.catch(() => undefined)),
+      ]);
       this.#launcher.disposeAll();
       await this.#serializer.barrier();
     } finally {

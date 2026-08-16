@@ -13,6 +13,7 @@ import type {
   SessionRuntimeObservability,
   SessionRuntimeTraceContext,
 } from "./runtime-observability.ts";
+import { DISABLED_SESSION_RUNTIME_OBSERVABILITY } from "./runtime-observability.ts";
 
 export interface TerminalReplicaSubscription {
   readonly generation: SessionRuntimeGeneration;
@@ -45,6 +46,7 @@ export class SessionRuntimeTerminalReplicaOwner {
   readonly #onClosed: (() => void) | undefined;
   readonly #onFault: ((error: unknown) => void) | undefined;
   readonly #scheduler: SessionRuntimeScheduler;
+  readonly #observability: SessionRuntimeObservability;
   #takeOutputTrace: (() => SessionRuntimeTraceContext | null) | undefined;
   readonly #start: Promise<void>;
   #upstream: MirrorSubscription | null = null;
@@ -78,6 +80,7 @@ export class SessionRuntimeTerminalReplicaOwner {
     this.#onClosed = options.onClosed;
     this.#onFault = options.onFault;
     this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
+    this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
     this.#takeOutputTrace = options.takeOutputTrace;
     this.#interpreter = new TerminalReplicaInterpreter({
       generation,
@@ -232,7 +235,7 @@ export class SessionRuntimeTerminalReplicaOwner {
         cols: event.cols,
         rows: event.rows,
         chunks: [],
-        trace: this.#takeOutputTrace?.() ?? null,
+        trace: this.#consumeOutputTrace(),
       };
     } else if (event.type === "seed" || event.type === "delta") {
       if (this.#reseed) this.#reseed.chunks.push(event.data.slice());
@@ -241,7 +244,7 @@ export class SessionRuntimeTerminalReplicaOwner {
           this.#interpreter.enqueue({
             type: "write",
             data: event.data,
-            trace: this.#takeOutputTrace?.() ?? null,
+            trace: this.#consumeOutputTrace(),
           }),
         );
     } else if (event.type === "cursor") {
@@ -293,5 +296,14 @@ export class SessionRuntimeTerminalReplicaOwner {
       this.#interpreter.abort(error);
       this.#onFault?.(error);
     });
+  }
+
+  #consumeOutputTrace(): SessionRuntimeTraceContext | null {
+    const trace = this.#takeOutputTrace?.() ?? null;
+    if (trace && this.#observability.enabled) {
+      const atMicros = this.#observability.nowMicros();
+      this.#observability.recordSpan("tmux", "first-output-observed", atMicros, atMicros, trace);
+    }
+    return trace;
   }
 }

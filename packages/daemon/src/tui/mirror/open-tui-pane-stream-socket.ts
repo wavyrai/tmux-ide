@@ -30,6 +30,7 @@ export function createOpenTuiPaneStreamSocket(
       headers: {
         Origin: headers.Origin!,
         "X-Tmux-Ide-Host-Client-Id": headers["X-Tmux-Ide-Host-Client-Id"]!,
+        "X-Tmux-Ide-Request-Id": headers["X-Tmux-Ide-Request-Id"]!,
       },
     });
   }
@@ -37,7 +38,10 @@ export function createOpenTuiPaneStreamSocket(
     dependencies.nodeWebSocket ?? (WebSocket as unknown as PaneStreamSocketConstructor);
   return new NodeWebSocket(descriptor.webSocketUrl, descriptor.subprotocol, {
     origin: headers.Origin,
-    headers: { "X-Tmux-Ide-Host-Client-Id": headers["X-Tmux-Ide-Host-Client-Id"]! },
+    headers: {
+      "X-Tmux-Ide-Host-Client-Id": headers["X-Tmux-Ide-Host-Client-Id"]!,
+      "X-Tmux-Ide-Request-Id": headers["X-Tmux-Ide-Request-Id"]!,
+    },
     perMessageDeflate: false,
   });
 }

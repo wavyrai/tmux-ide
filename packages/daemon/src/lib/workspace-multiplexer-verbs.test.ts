@@ -183,10 +183,38 @@ class FakeTmux {
           // a verb that drops the colon fails here as well as live.
           (args[3] === `=${this.sessionName}:` ? this.panes[0] : undefined);
         if (!pane) throw new Error(`no such target: ${args[3]}`);
-        return args[4]!
+        const before = args[4]!
           .split("\t")
           .map((field) => this.#format(field, pane))
           .join("\t");
+        if (args.length === 5) return before;
+        if (
+          args[5] !== ";" ||
+          args[6] !== "select-window" ||
+          args[7] !== "-t" ||
+          args[9] !== ";" ||
+          args[10] !== "select-pane" ||
+          args[11] !== "-t" ||
+          args[13] !== ";" ||
+          args[14] !== "display-message" ||
+          args[15] !== "-p" ||
+          args[16] !== "-t" ||
+          args[17] !== args[12] ||
+          args[18] !== args[4] ||
+          args.length !== 19
+        ) {
+          throw new Error(`unsupported atomic selection: ${args.join(" ")}`);
+        }
+        for (const window of this.windows) window.active = window.id === args[8];
+        const selected = this.#pane(args[12]!);
+        for (const other of this.panes) {
+          if (other.windowId === selected.windowId) other.active = other.id === selected.id;
+        }
+        const after = args[18]!
+          .split("\t")
+          .map((field) => this.#format(field, selected))
+          .join("\t");
+        return `${before}\n${after}`;
       }
       case "set-option": {
         if (args[1] !== "-p") throw new Error("unsupported set-option");
@@ -1080,8 +1108,9 @@ describe("the multiplexer authority", () => {
       );
       expect(result).toMatchObject({ outcome: "applied" });
       // Both halves ran, and in the order that leaves the pane active.
-      const verbs = tmux.calls.map((args) => args[0]);
-      expect(verbs.indexOf("select-window")).toBeLessThan(verbs.indexOf("select-pane"));
+      const selection = tmux.calls.find((args) => args.includes("select-window"));
+      expect(selection).toBeDefined();
+      expect(selection!.indexOf("select-window")).toBeLessThan(selection!.indexOf("select-pane"));
       expect(tmux.windows.find((window) => window.id === "@1")!.active).toBe(true);
       expect(tmux.panes.find((pane) => pane.id === "%1")!.active).toBe(true);
     });

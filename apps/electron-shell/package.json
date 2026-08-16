@@ -11,7 +11,7 @@
     "package": "pnpm build && node scripts/package.mjs",
     "package:smoke": "pnpm package && node scripts/smoke.mjs",
     "smoke": "pnpm build && electron . --smoke-test",
-    "test": "vitest run",
+    "test": "vitest run && vitest run --config vitest.live.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

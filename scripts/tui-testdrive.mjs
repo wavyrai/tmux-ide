@@ -10,10 +10,20 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { buildTuiHostPublicationEvidence } from "./lib/tui-host-publication.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const hostSession = process.env.TMUX_IDE_TESTDRIVE_HOST_SESSION?.trim() || "_tmux-ide-testdrive";
@@ -28,6 +38,7 @@ const metadataPath = join(runtimeDir, "state.json");
 const namespaceSocketName = `tmux-ide-testdrive-${process.getuid?.() ?? process.pid}`;
 const cleanupToken = `testdrive:cleanup:${process.getuid?.() ?? process.pid}`;
 const targetSocketName = process.env.TMUX_IDE_TESTDRIVE_TARGET_SOCKET_NAME?.trim() || null;
+const targetSocketPath = process.env.TMUX_IDE_TMUX_SOCKET_PATH?.trim() || null;
 const hostSocketPath = process.env.TMUX_IDE_TESTDRIVE_HOST_SOCKET_PATH?.trim() || null;
 const compiledTui = join(repoRoot, "packages", "daemon", "dist", "tui", "tmux-ide-tui");
 const sourceTui = join(repoRoot, "packages", "daemon", "src", "tui", "mirror", "app.tsx");
@@ -46,6 +57,7 @@ Usage:
   pnpm tui:testdrive start [--target NAME] [--cols N] [--rows N] [--source] [--debug]
   pnpm tui:testdrive restart [start options]
   pnpm tui:testdrive capture [--ansi] [--history N]
+  pnpm tui:testdrive publication <chrome|terminal> [--token TEXT] [--generation ID] [--json]
   pnpm tui:testdrive key <tmux-key> [...]
   pnpm tui:testdrive text <literal text>
   pnpm tui:testdrive mouse drag <from-x> <from-y> <to-x> <to-y>
@@ -99,12 +111,25 @@ function sessionExists(name) {
 
 function liveSessions() {
   try {
-    return tmux([
-      ...(targetSocketName ? ["-L", targetSocketName] : []),
-      "list-sessions",
-      "-F",
-      "#{session_name}",
-    ])
+    return execFileSync(
+      "tmux",
+      [
+        ...(targetSocketPath
+          ? ["-S", targetSocketPath]
+          : targetSocketName
+            ? ["-L", targetSocketName]
+            : []),
+        "list-sessions",
+        "-F",
+        "#{session_name}",
+      ],
+      {
+        cwd: repoRoot,
+        env: { ...process.env, TMUX: "", TMUX_TMPDIR: "" },
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    )
       .trim()
       .split("\n")
       .map((name) => name.trim())
@@ -242,13 +267,60 @@ function readLifecycleTimings(metadata = readMetadata()) {
     .at(-1);
   return {
     appChromeFrameMs: elapsed("first-frame") ?? metadata?.appChromeFrameMs ?? null,
-    coherentTerminalFrameMs: elapsed("first-terminal-frame"),
+    rendererTerminalFrameMs: elapsed("first-terminal-frame"),
+    hostChromeFrameMs: elapsed("host-chrome-publication"),
+    hostTerminalFrameMs: elapsed("host-terminal-publication"),
+    // Compatibility field: once an external host proof exists it becomes the
+    // authoritative readiness boundary. Before that, callers may still watch
+    // internal progress and then request the host proof explicitly.
+    coherentTerminalFrameMs:
+      elapsed("host-terminal-publication") ?? elapsed("first-terminal-frame"),
     activeGeneration:
       latestGeneration?.status === "live" && typeof latestGeneration.daemonGeneration === "string"
         ? latestGeneration.daemonGeneration
         : null,
     generationStatus: typeof latestGeneration?.status === "string" ? latestGeneration.status : null,
   };
+}
+
+function recordHostPublication({
+  kind,
+  frame = capture(),
+  token = null,
+  generation = null,
+  elapsedMs = null,
+} = {}) {
+  if (kind !== "chrome" && kind !== "terminal") {
+    fail("publication kind must be chrome or terminal");
+  }
+  const metadata = readMetadata();
+  const startedAtMs = Date.parse(metadata?.startedAt ?? "");
+  const evidence = buildTuiHostPublicationEvidence({
+    frame,
+    kind,
+    token,
+    generation,
+    processId: liveHostProcessPid(),
+    elapsedMs:
+      elapsedMs ?? (Number.isFinite(startedAtMs) ? Math.max(0, Date.now() - startedAtMs) : null),
+  });
+  if (!evidence.passed) {
+    fail(
+      `Host PTY did not publish ${kind} bytes` +
+        `${token ? ` containing ${JSON.stringify(token)}` : ""}`,
+    );
+  }
+  appendFileSync(
+    perfLogPath,
+    `${JSON.stringify({
+      ...evidence,
+      at: new Date().toISOString(),
+      monotonicMicros: Math.floor(performance.now() * 1_000),
+      processId: `host-pty:${evidence.processId ?? "unknown"}`,
+      clockId: "testdrive-host-observer",
+    })}\n`,
+  );
+  return evidence;
 }
 
 function liveHostSize() {
@@ -267,6 +339,28 @@ function liveHostSize() {
     return Number.isInteger(cols) && Number.isInteger(rows) ? { cols, rows } : null;
   } catch {
     return null;
+  }
+}
+
+function liveHostProcessPid() {
+  if (!sessionExists(hostSession)) return null;
+  try {
+    const value = Number(
+      tmux(["display-message", "-p", "-t", `=${hostSession}:0.0`, "#{pane_pid}"]).trim(),
+    );
+    return Number.isInteger(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function processIsAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -350,21 +444,44 @@ function frameHasLiveWorkspace(frame) {
 function stop({ quiet = false } = {}) {
   if (!sessionExists(hostSession)) {
     if (!quiet) process.stdout.write("OpenTUI test-drive is not running\n");
-    return;
+    return null;
   }
+  const ownedProcessPid = liveHostProcessPid();
   try {
     tmux(["send-keys", "-t", `=${hostSession}:0.0`, "C-q"]);
   } catch {
     // The renderer may already be exiting.
   }
+  return ownedProcessPid;
 }
 
 async function ensureStopped() {
-  stop({ quiet: true });
+  const ownedProcessPid = stop({ quiet: true });
   for (let attempt = 0; attempt < 20 && sessionExists(hostSession); attempt += 1) {
     await delay(50);
   }
   if (sessionExists(hostSession)) tmux(["kill-session", "-t", `=${hostSession}`]);
+  // Ctrl-Q is also the product's deliberate "put away" gesture. The
+  // test-drive, however, owns this exact pane process and repeated warm-host
+  // samples must not accumulate detached TUI clients. Retire only the PID
+  // captured from this owned host pane; never scan or broadly kill TUIs.
+  if (ownedProcessPid && processIsAlive(ownedProcessPid)) {
+    try {
+      process.kill(ownedProcessPid, "SIGTERM");
+    } catch {
+      // It may exit between the liveness check and signal.
+    }
+    for (let attempt = 0; attempt < 20 && processIsAlive(ownedProcessPid); attempt += 1) {
+      await delay(25);
+    }
+    if (processIsAlive(ownedProcessPid)) {
+      try {
+        process.kill(ownedProcessPid, "SIGKILL");
+      } catch {
+        // It may exit between the liveness check and signal.
+      }
+    }
+  }
 }
 
 async function start(args) {
@@ -396,6 +513,7 @@ async function start(args) {
     ? [sourceTui, `--target=${target}`]
     : ["app", `--target=${target}`];
   const launchEpochMs = Date.now();
+  const launchId = randomUUID();
   const environment = [
     `TMUX_IDE_CWD=${shQuote(repoRoot)}`,
     `TMUX_IDE_HOME=${shQuote(stateHome)}`,
@@ -416,6 +534,7 @@ async function start(args) {
           `TMUX_IDE_PERFORMANCE_TRACE_LOG=${shQuote(process.env.TMUX_IDE_PERFORMANCE_TRACE_LOG)}`,
           `TMUX_IDE_PERFORMANCE_TRACE_COMMIT=${shQuote(process.env.TMUX_IDE_PERFORMANCE_TRACE_COMMIT ?? "")}`,
           `TMUX_IDE_PERFORMANCE_TRACE_TREE=${shQuote(process.env.TMUX_IDE_PERFORMANCE_TRACE_TREE ?? "")}`,
+          `TMUX_IDE_PERFORMANCE_TRACE_DETAIL=${shQuote(process.env.TMUX_IDE_PERFORMANCE_TRACE_DETAIL ?? "1")}`,
         ]
       : []),
     ...(process.env.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON === "1"
@@ -456,6 +575,8 @@ async function start(args) {
   ]);
   const frame = await waitForFrame((value) => value.includes("tmux-ide"));
   const appChromeFrameMs = performance.now() - launchStartedAt;
+  const processId = liveHostProcessPid();
+  if (!processId) fail("OpenTUI host published chrome without an owned process id");
   const metadata = {
     hostSession,
     target,
@@ -464,6 +585,8 @@ async function start(args) {
     runtime,
     debug: options.debug,
     startedAt: new Date().toISOString(),
+    launchId,
+    processId,
     // Keep the two readiness boundaries honest. App chrome is useful but is
     // not evidence that a semantic terminal seed has reached the renderer.
     appChromeFrameMs: Math.round(appChromeFrameMs),
@@ -471,9 +594,14 @@ async function start(args) {
     firstFrameMs: Math.round(appChromeFrameMs),
   };
   writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+  const hostPublication = recordHostPublication({
+    kind: "chrome",
+    frame,
+    elapsedMs: appChromeFrameMs,
+  });
 
   process.stdout.write(
-    `OpenTUI test-drive chrome ready in ${appChromeFrameMs.toFixed(0)}ms (${runtime}, ${options.cols}x${options.rows}, target ${target})\n` +
+    `OpenTUI test-drive chrome ready in ${hostPublication.elapsedMs}ms (${runtime}, ${options.cols}x${options.rows}, target ${target})\n` +
       `Attach: tmux attach -t ${hostSession}\n` +
       `Logs:   ${logPath}\n\n${frame}\n`,
   );
@@ -577,6 +705,28 @@ async function main() {
         else fail(`Unknown capture option: ${args[index]}`);
       }
       process.stdout.write(`${capture({ ansi, history })}\n`);
+      break;
+    }
+    case "publication": {
+      const kind = args[0];
+      let token = null;
+      let generation = null;
+      let json = false;
+      let elapsedMs = null;
+      for (let index = 1; index < args.length; index += 1) {
+        if (args[index] === "--token") token = args[++index] ?? fail("--token needs a value");
+        else if (args[index] === "--generation") {
+          generation = args[++index] ?? fail("--generation needs a value");
+        } else if (args[index] === "--json") json = true;
+        else if (args[index] === "--elapsed-ms") {
+          const value = Number(args[++index]);
+          if (!Number.isFinite(value) || value < 0)
+            fail("--elapsed-ms needs a non-negative number");
+          elapsedMs = value;
+        } else fail(`Unknown publication option: ${args[index]}`);
+      }
+      const evidence = recordHostPublication({ kind, token, generation, elapsedMs });
+      process.stdout.write(json ? `${JSON.stringify(evidence)}\n` : `${evidence.phase}\n`);
       break;
     }
     case "key":

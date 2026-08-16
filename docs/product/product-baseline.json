@@ -12,10 +12,10 @@
     "tmuxOwner": "daemon SessionRuntime",
     "clients": ["opentui", "web", "cli", "sdk"],
     "clientContract": "semantic intents plus generation-bound seed/patch resources",
-    "knownClientBypassCount": 4
+    "knownClientBypassCount": 0
   },
   "sourceMeasurements": {
-    "openTuiApplicationRootLines": 9029,
+    "openTuiApplicationRootLines": 9027,
     "webApplicationShellLines": 2217,
     "webWorkspaceTiledSurfaceLines": 2326
   },
@@ -31,34 +31,59 @@
     "inputToPaint": "not-measured",
     "dragResponsiveness": "not-measured"
   },
+  "productDiagnostic": {
+    "observedAt": "2026-08-16",
+    "command": "pnpm product:testdrive diagnose --json",
+    "status": "failed",
+    "report": ".tasks/product-test-rig/artifacts/diagnostic-report.json",
+    "correctness": {
+      "tmuxTruth": "passed: 3 panes / 2 windows",
+      "workspaceClientCommit": "passed: 3 committed resources",
+      "terminalFastLane": "passed: 3/3 coherent pane seeds",
+      "framebufferContent": "passed: 2/2 active-window pane rectangles",
+      "webTuiAuthorityRestart": "passed",
+      "runtimeResourceRetirement": "passed: 20/20",
+      "idleFrameWork": "passed: 0 frames / 0 paints over 10323 ms"
+    },
+    "performance": {
+      "inputEnqueueToCorrelatedPaintP95Ms": 214.105,
+      "inputEnqueueToCorrelatedPaintP99Ms": 244.509,
+      "resizeGuidePreviewP95Ms": 0.527,
+      "warmWindowSwitchP95Ms": 44.276,
+      "warmConnectionToHostPublicationP95Ms": 1566,
+      "warmLaunchToHostPublicationP95Ms": 2955,
+      "boundedQueues": "passed: settled at zero",
+      "memory": "failed: heap growth 86030345 bytes across 16 endpoint samples"
+    }
+  },
   "knownDefects": [
     {
       "id": "tui-composition-root",
       "severity": "P1",
       "status": "open",
-      "description": "The production OpenTUI composition root is 9,029 lines and still contains quarantined feature state and handlers.",
+      "description": "The 9,027-line legacy OpenTUI root is outside the production boot graph but still contains quarantined feature state and handlers.",
       "reproduce": "wc -l packages/daemon/src/tui/mirror/runtime/application-root.tsx"
     },
     {
-      "id": "tui-direct-tmux",
+      "id": "warm-terminal-publication-over-budget",
       "severity": "P1",
       "status": "open",
-      "description": "The product OpenTUI root still has four direct tmux command call sites outside SessionRuntime.",
-      "reproduce": "pnpm product:testdrive inventory --json"
+      "description": "The real ProductRig measures coherent terminal publication, but warm connection-to-host p95 is 1566 ms and launch-to-host p95 is 2955 ms.",
+      "reproduce": "pnpm product:testdrive diagnose --json"
     },
     {
-      "id": "coherent-frame-not-qualified",
+      "id": "input-paint-over-budget",
       "severity": "P1",
       "status": "open",
-      "description": "Portable evidence cannot qualify a coherent terminal frame; app chrome is not terminal readiness.",
-      "reproduce": "pnpm measure:performance-portable"
+      "description": "The real TUI produced 30/30 correlated changed-cell paints, but p95 is 214.105 ms and p99 is 244.509 ms.",
+      "reproduce": "pnpm product:testdrive diagnose --json"
     },
     {
-      "id": "input-paint-not-qualified",
+      "id": "memory-retention-not-qualified",
       "severity": "P1",
       "status": "open",
-      "description": "No qualifying input-to-consumed-paint distribution is measured for the real TUI.",
-      "reproduce": "pnpm measure:performance-portable"
+      "description": "Queues and runtime resources retire to zero, but the bounded memory endpoint series reports 86030345 bytes of heap growth and remains red.",
+      "reproduce": "pnpm product:testdrive diagnose --json"
     },
     {
       "id": "cross-client-journey-not-release-gated",

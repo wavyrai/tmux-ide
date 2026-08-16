@@ -45,14 +45,16 @@ describe("TUI input readiness", () => {
     const source = OPENTUI_PRODUCTION_ROOT_SOURCES.map((path) =>
       readFileSync(join(repoRoot, path), "utf8"),
     ).join("\n");
-    const keyboard = source.indexOf("useKeyboard((evt) =>");
-    const paste = source.indexOf("usePaste((e) =>", keyboard);
-    const inputBarrier = source.indexOf("resolveInputReady()", paste);
+    const keyboard = source.indexOf("useKeyboard((event) =>");
+    const paste = source.indexOf("usePaste((event) =>", keyboard);
+    const mounted = source.indexOf("onMount(() =>", paste);
+    const inputBarrier = source.indexOf("resolveReady()", mounted);
     const ready = source.indexOf('publishTuiInputReady("app")', inputBarrier);
 
     expect(keyboard).toBeGreaterThan(-1);
     expect(paste).toBeGreaterThan(keyboard);
-    expect(inputBarrier).toBeGreaterThan(paste);
+    expect(mounted).toBeGreaterThan(paste);
+    expect(inputBarrier).toBeGreaterThan(mounted);
     expect(ready).toBeGreaterThan(inputBarrier);
   });
 });

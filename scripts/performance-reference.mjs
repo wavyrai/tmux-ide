@@ -315,10 +315,11 @@ async function measureStartup() {
       "44",
     ]);
     const marks = await waitForLifecycleMarks([
-      "module-loaded",
-      "renderer-created",
-      "first-frame",
+      "entry-start",
+      "root-import-end",
+      "renderer-create-end",
       "solid-mounted",
+      "first-frame",
       "first-terminal-frame",
     ]);
     rawSamples.push({

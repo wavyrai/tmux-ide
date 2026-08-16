@@ -274,6 +274,9 @@ describe("SemanticPaneReplica", () => {
       traceId,
       generation,
       incarnation: `${generation}:7`,
+      semanticPaneId: pane,
+      revision: 0,
+      stateHash: "a1d4bef4c2291a16",
     });
   });
 
@@ -299,6 +302,7 @@ describe("SemanticPaneReplica", () => {
     expect(sink.terminalDelivery.mock.calls[0]![0]).toMatchObject({
       queuePeak: 1,
       queueCapacity: 1,
+      settledQueueDepth: 0,
       revisionLagPeak: 1,
       reseed: false,
     });
@@ -338,6 +342,9 @@ describe("SemanticPaneReplica", () => {
       traceId,
       generation,
       incarnation: `${generation}:7`,
+      semanticPaneId: pane,
+      revision: 0,
+      stateHash: "a1d4bef4c2291a16",
     });
     expect(
       source.blitPane(pane, arrays(2, 1), 2, 1, 0, 0xffffff, 0, {

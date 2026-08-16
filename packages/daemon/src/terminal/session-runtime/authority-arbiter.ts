@@ -158,13 +158,24 @@ export class SessionRuntimeAuthorityArbiter {
     const epoch = this.#nativeYieldEpoch;
     this.#nativeYieldTimer?.cancel();
     this.#setOwner("geometry", null);
+    this.#scheduleNativeGeometryExpiry(epoch);
+  }
+
+  #scheduleNativeGeometryExpiry(epoch: number): void {
+    const remainingMs = Math.max(0, this.#nativeGeometryYieldUntilMs - this.#scheduler.nowMs());
     this.#nativeYieldTimer = this.#scheduler.timer(() => {
       if (this.#disposed || epoch !== this.#nativeYieldEpoch) return;
       this.#nativeYieldTimer = null;
-      if (this.#scheduler.nowMs() < this.#nativeGeometryYieldUntilMs) return;
+      // Real schedulers may wake a fractional millisecond before a monotonic
+      // deadline. Re-arm for the remainder instead of leaving geometry
+      // permanently ownerless after an early wake-up.
+      if (this.#scheduler.nowMs() < this.#nativeGeometryYieldUntilMs) {
+        this.#scheduleNativeGeometryExpiry(epoch);
+        return;
+      }
       this.#elect("geometry");
       this.#onNativeGeometryYieldExpired();
-    }, this.#nativeGeometryHysteresisMs);
+    }, remainingMs);
   }
 
   leaseFor(

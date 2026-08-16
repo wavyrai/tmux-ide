@@ -55,6 +55,9 @@ import type {
 } from "./workspace-client-types.ts";
 
 const DEFAULT_OPERATION_TIMEOUT_MS = 2_000;
+const MAX_PREPARED_TERMINAL_UPDATES = 256;
+const MAX_PREPARED_TERMINAL_BYTES = 8 * 1024 * 1024;
+const UTF8_ENCODER = new TextEncoder();
 
 interface TerminalInterest<Snapshot, Patch, Tombstone> {
   readonly target: TerminalReplicaAddress;
@@ -76,6 +79,27 @@ interface PreparedOpen {
   readonly result: WorkspaceOpenPreparedResult;
 }
 
+interface PreparedTerminalBinding<Snapshot, Patch, Tombstone> {
+  readonly interest: TerminalInterest<Snapshot, Patch, Tombstone>;
+  readonly subscription: Awaited<
+    ReturnType<WorkspaceClientRuntimePort<Snapshot, Patch, Tombstone>["subscribeTerminal"]>
+  >;
+  readonly unsubscribeUpdate: () => void;
+  readonly pending: Array<{
+    readonly update: TerminalReplicaUpdate<Snapshot, Patch, Tombstone>;
+    readonly metadata?: TerminalReplicaDeliveryMetadata;
+  }>;
+}
+
+interface PreparedRuntime<Snapshot, Patch, Tombstone> {
+  readonly runtime: WorkspaceClientRuntimePort<Snapshot, Patch, Tombstone>;
+  readonly bindings: Map<string, PreparedTerminalBinding<Snapshot, Patch, Tombstone>>;
+  activated: boolean;
+  closed: boolean;
+  bufferedUpdateCount: number;
+  bufferedBytes: number;
+}
+
 interface RuntimeOwner<Snapshot, Patch, Tombstone> {
   readonly key: string;
   readonly inventory: WorkspaceClientRuntimeInventory;
@@ -85,6 +109,9 @@ interface RuntimeOwner<Snapshot, Patch, Tombstone> {
     WorkspaceClientRuntimePort<Snapshot, Patch, Tombstone>
   >;
   unsubscribe: (() => void) | null;
+  stopPromise: Promise<void> | null;
+  prepared: PreparedRuntime<Snapshot, Patch, Tombstone> | null;
+  preparationError: Error | null;
 }
 
 function phaseOf<Shell extends ApplicationShellProjectionInputV1>(
@@ -210,6 +237,7 @@ export function createWorkspaceClient<
   >();
 
   let disposed = false;
+  let disposePromise: Promise<void> | null = null;
   let generation = 1;
   let target = options.target;
   let targetKey = applicationShellSessionTargetKey(target);
@@ -235,6 +263,9 @@ export function createWorkspaceClient<
   let desiredRuntimeKey: string | null = null;
   let runtimeReceiptUnsubscribe: (() => void) | null = null;
   let runtimeAuthorityUnsubscribe: (() => void) | null = null;
+  const pendingTerminalCloses = new Set<Promise<void>>();
+  const terminalClosePromises = new WeakMap<object, Promise<void>>();
+  const pendingTerminalOpens = new Map<Promise<void>, number>();
   let catalogController: AbortController | null = null;
   let catalogConnection: { close(): void } | null = null;
   let preparedOpen: PreparedOpen | null = null;
@@ -316,15 +347,75 @@ export function createWorkspaceClient<
   });
   const unsubscribeShell = shellSession.subscribe(applyShell);
 
+  const closeSubscription = (
+    subscription: Awaited<
+      ReturnType<
+        WorkspaceClientRuntimePort<
+          TerminalSnapshot,
+          TerminalPatch,
+          TerminalTombstone
+        >["subscribeTerminal"]
+      >
+    >,
+  ): Promise<void> => {
+    const identity = subscription as object;
+    const existing = terminalClosePromises.get(identity);
+    if (existing) return existing;
+    const closing = Promise.resolve()
+      .then(() => subscription.close())
+      .catch(() => undefined)
+      .finally(() => pendingTerminalCloses.delete(closing));
+    terminalClosePromises.set(identity, closing);
+    pendingTerminalCloses.add(closing);
+    return closing;
+  };
   const closeTerminal = (
     interest: TerminalInterest<TerminalSnapshot, TerminalPatch, TerminalTombstone>,
-  ): void => {
+  ): Promise<void> => {
     interest.opening = false;
     interest.unsubscribeUpdate?.();
     interest.unsubscribeUpdate = null;
     const subscription = interest.subscription;
     interest.subscription = null;
-    void subscription?.close().catch(() => undefined);
+    return subscription ? closeSubscription(subscription) : Promise.resolve();
+  };
+  const closePreparedRuntime = (
+    owner: RuntimeOwner<TerminalSnapshot, TerminalPatch, TerminalTombstone>,
+  ): Promise<void> => {
+    const prepared = owner.prepared;
+    if (prepared === null || prepared.closed) return Promise.resolve();
+    prepared.closed = true;
+    owner.prepared = null;
+    const closing: Promise<void>[] = [];
+    for (const binding of prepared.bindings.values()) {
+      binding.unsubscribeUpdate();
+      closing.push(closeSubscription(binding.subscription));
+    }
+    prepared.bindings.clear();
+    return Promise.all(closing).then(() => undefined);
+  };
+  const publishTerminalUpdate = (
+    interest: TerminalInterest<TerminalSnapshot, TerminalPatch, TerminalTombstone>,
+    expectedRuntime: WorkspaceClientRuntimePort<TerminalSnapshot, TerminalPatch, TerminalTombstone>,
+    update: TerminalReplicaUpdate<TerminalSnapshot, TerminalPatch, TerminalTombstone>,
+    metadata?: TerminalReplicaDeliveryMetadata,
+  ): void => {
+    if (
+      disposed ||
+      runtime !== expectedRuntime ||
+      update.generation !== target.daemon.instanceId ||
+      update.workspaceName !== interest.target.workspaceName ||
+      update.semanticPaneId !== interest.target.semanticPaneId
+    ) {
+      return;
+    }
+    for (const listener of [...interest.listeners]) {
+      try {
+        listener(update, metadata);
+      } catch {
+        // One renderer observer cannot interrupt sibling terminal delivery.
+      }
+    }
   };
   const openTerminal = (
     interest: TerminalInterest<TerminalSnapshot, TerminalPatch, TerminalTombstone>,
@@ -341,7 +432,7 @@ export function createWorkspaceClient<
     const expectedGeneration = generation;
     const expectedRuntime = runtime;
     interest.opening = true;
-    void expectedRuntime
+    const opening = expectedRuntime
       .subscribeTerminal(interest.target)
       .then((subscription) => {
         interest.opening = false;
@@ -352,64 +443,74 @@ export function createWorkspaceClient<
           interest.listeners.size === 0 ||
           subscription.generation !== target.daemon.instanceId
         ) {
-          void subscription.close().catch(() => undefined);
-          return;
+          return closeSubscription(subscription);
         }
         interest.subscription = subscription;
         interest.unsubscribeUpdate = subscription.onUpdate((update, metadata) => {
-          if (
-            disposed ||
-            generation !== expectedGeneration ||
-            runtime !== expectedRuntime ||
-            update.generation !== target.daemon.instanceId ||
-            update.workspaceName !== interest.target.workspaceName ||
-            update.semanticPaneId !== interest.target.semanticPaneId
-          ) {
-            return;
-          }
-          // The terminal fast lane intentionally never rebuilds the semantic snapshot.
-          for (const listener of [...interest.listeners]) {
-            try {
-              listener(update, metadata);
-            } catch {
-              // One renderer observer cannot interrupt sibling terminal delivery.
-            }
-          }
+          if (generation !== expectedGeneration) return;
+          publishTerminalUpdate(interest, expectedRuntime, update, metadata);
         });
       })
       .catch(() => {
         interest.opening = false;
       });
+    const tracked = opening.finally(() => pendingTerminalOpens.delete(tracked));
+    pendingTerminalOpens.set(tracked, expectedGeneration);
   };
 
-  const detachRuntimeValue = (): void => {
+  const detachRuntimeValue = (): Promise<void> => {
     runtimeReceiptUnsubscribe?.();
     runtimeReceiptUnsubscribe = null;
     runtimeAuthorityUnsubscribe?.();
     runtimeAuthorityUnsubscribe = null;
-    for (const interest of terminals.values()) closeTerminal(interest);
+    const closing = [...terminals.values()].map(closeTerminal);
     runtime = null;
+    return Promise.all(closing).then(() => undefined);
   };
 
+  const pendingRuntimeStops = new Set<Promise<void>>();
   const stopRuntimeOwner = (
     owner: RuntimeOwner<TerminalSnapshot, TerminalPatch, TerminalTombstone> | null,
-  ): void => {
-    if (owner === null) return;
+  ): Promise<void> => {
+    if (owner === null) return Promise.resolve();
     owner.unsubscribe?.();
     owner.unsubscribe = null;
-    void owner.supervisor.stop();
+    if (owner.stopPromise) return owner.stopPromise;
+    const stopping = Promise.all([closePreparedRuntime(owner), owner.supervisor.stop()])
+      .then(() => undefined)
+      .finally(() => pendingRuntimeStops.delete(stopping));
+    owner.stopPromise = stopping;
+    pendingRuntimeStops.add(stopping);
+    return stopping;
   };
 
-  const retireRuntime = (): void => {
+  const waitForTerminalRetirement = async (retiredGeneration: number): Promise<void> => {
+    for (;;) {
+      const pending = [
+        ...[...pendingTerminalOpens].flatMap(([promise, ownerGeneration]) =>
+          ownerGeneration <= retiredGeneration ? [promise] : [],
+        ),
+        ...pendingTerminalCloses,
+      ];
+      if (pending.length === 0) return;
+      await Promise.all(pending);
+    }
+  };
+
+  const retireRuntime = (): Promise<void> => {
+    const retiredGeneration = generation;
     const active = activeRuntimeOwner;
     const candidate = candidateRuntimeOwner;
     activeRuntimeOwner = null;
     candidateRuntimeOwner = null;
     desiredRuntimeKey = null;
-    detachRuntimeValue();
+    const detached = detachRuntimeValue();
     if (active !== null) options.ports.didRetireRuntime?.();
-    stopRuntimeOwner(candidate);
-    if (active !== candidate) stopRuntimeOwner(active);
+    const stopping = [stopRuntimeOwner(candidate)];
+    if (active !== candidate) stopping.push(stopRuntimeOwner(active));
+    return Promise.all([...stopping, detached])
+      .then(() => waitForTerminalRetirement(retiredGeneration))
+      .then(() => undefined);
   };
 
   const activateRuntime = (
@@ -418,7 +519,7 @@ export function createWorkspaceClient<
   ): void => {
     const previousOwner = activeRuntimeOwner;
     if (runtime !== nextRuntime) {
-      detachRuntimeValue();
+      void detachRuntimeValue();
       runtime = nextRuntime;
       activeRuntimeOwner = owner;
       if (candidateRuntimeOwner === owner) candidateRuntimeOwner = null;
@@ -448,11 +549,137 @@ export function createWorkspaceClient<
           authority = nextAuthority;
           rebuild(["authority"]);
         }) ?? null;
+      const prepared = owner.prepared?.runtime === nextRuntime ? owner.prepared : null;
+      if (prepared) {
+        const bindings = [...prepared.bindings.values()];
+        for (const binding of bindings) {
+          binding.interest.subscription = binding.subscription;
+          binding.interest.unsubscribeUpdate = binding.unsubscribeUpdate;
+          binding.interest.opening = false;
+        }
+        prepared.bindings.clear();
+        owner.prepared = null;
+        prepared.activated = true;
+        for (const binding of bindings) {
+          for (const delivery of binding.pending) {
+            publishTerminalUpdate(
+              binding.interest,
+              nextRuntime,
+              delivery.update,
+              delivery.metadata,
+            );
+          }
+          binding.pending.length = 0;
+        }
+      }
     }
     activeRuntimeOwner = owner;
     if (candidateRuntimeOwner === owner) candidateRuntimeOwner = null;
     for (const interest of terminals.values()) openTerminal(interest);
     if (previousOwner !== null && previousOwner !== owner) stopRuntimeOwner(previousOwner);
+  };
+
+  const prepareRuntimeForOwner = async (
+    owner: RuntimeOwner<TerminalSnapshot, TerminalPatch, TerminalTombstone>,
+    nextRuntime: WorkspaceClientRuntimePort<TerminalSnapshot, TerminalPatch, TerminalTombstone>,
+  ): Promise<void> => {
+    if (owner.preparationError) throw owner.preparationError;
+    if (
+      disposed ||
+      generation !== owner.clientGeneration ||
+      target !== owner.target ||
+      desiredRuntimeKey !== owner.key ||
+      (activeRuntimeOwner !== owner && candidateRuntimeOwner !== owner) ||
+      nextRuntime.generation !== owner.inventory.daemonGeneration
+    ) {
+      throw new Error("candidate terminal runtime does not match workspace authority");
+    }
+    if (owner.prepared?.runtime === nextRuntime && !owner.prepared.closed) return;
+    if (owner.prepared) await closePreparedRuntime(owner);
+    const prepared: PreparedRuntime<TerminalSnapshot, TerminalPatch, TerminalTombstone> = {
+      runtime: nextRuntime,
+      bindings: new Map(),
+      activated: false,
+      closed: false,
+      bufferedUpdateCount: 0,
+      bufferedBytes: 0,
+    };
+    owner.prepared = prepared;
+    const allowed = new Set(owner.inventory.semanticPaneIds);
+    try {
+      const subscriptions = [...terminals.entries()].flatMap(([key, interest]) => {
+        if (interest.listeners.size === 0 || !allowed.has(interest.target.semanticPaneId)) {
+          return [];
+        }
+        return [
+          nextRuntime.subscribeTerminal(interest.target).then(async (subscription) => {
+            if (
+              disposed ||
+              prepared.closed ||
+              owner.prepared !== prepared ||
+              generation !== owner.clientGeneration ||
+              (activeRuntimeOwner !== owner && candidateRuntimeOwner !== owner) ||
+              terminals.get(key) !== interest ||
+              interest.listeners.size === 0 ||
+              subscription.generation !== owner.inventory.daemonGeneration
+            ) {
+              await closeSubscription(subscription);
+              return;
+            }
+            const pending: PreparedTerminalBinding<
+              TerminalSnapshot,
+              TerminalPatch,
+              TerminalTombstone
+            >["pending"] = [];
+            const unsubscribeUpdate = subscription.onUpdate((update, metadata) => {
+              if (prepared.closed) return;
+              if (prepared.activated) {
+                publishTerminalUpdate(interest, nextRuntime, update, metadata);
+                return;
+              }
+              let encodedBytes = MAX_PREPARED_TERMINAL_BYTES + 1;
+              try {
+                encodedBytes = UTF8_ENCODER.encode(JSON.stringify({ update, metadata })).byteLength;
+              } catch {
+                // An unencodable canonical update cannot be admitted safely.
+              }
+              if (
+                prepared.bufferedUpdateCount + 1 > MAX_PREPARED_TERMINAL_UPDATES ||
+                prepared.bufferedBytes + encodedBytes > MAX_PREPARED_TERMINAL_BYTES
+              ) {
+                owner.preparationError ??= new Error(
+                  "candidate terminal preparation exceeded its bounded update buffer",
+                );
+                if (candidateRuntimeOwner === owner) candidateRuntimeOwner = null;
+                void stopRuntimeOwner(owner);
+                return;
+              }
+              prepared.bufferedUpdateCount += 1;
+              prepared.bufferedBytes += encodedBytes;
+              pending.push({ update, ...(metadata ? { metadata } : {}) });
+            });
+            if (prepared.closed || owner.prepared !== prepared) {
+              unsubscribeUpdate();
+              await closeSubscription(subscription);
+              return;
+            }
+            prepared.bindings.set(key, {
+              interest,
+              subscription,
+              unsubscribeUpdate,
+              pending,
+            });
+          }),
+        ];
+      });
+      if (subscriptions.length > 0) await Promise.all(subscriptions);
+      if (prepared.closed || owner.prepared !== prepared) {
+        throw new Error("candidate terminal runtime was retired during preparation");
+      }
+    } catch (error) {
+      await closePreparedRuntime(owner);
+      throw error;
+    }
   };
 
   const createRuntimeOwner = (
@@ -461,15 +688,34 @@ export function createWorkspaceClient<
   ): RuntimeOwner<TerminalSnapshot, TerminalPatch, TerminalTombstone> => {
     const expectedGeneration = generation;
     const expectedTarget = target;
+    let owner!: RuntimeOwner<TerminalSnapshot, TerminalPatch, TerminalTombstone>;
     const supervisor = createRuntimeConnectionSupervisor<
       WorkspaceClientRuntimePort<TerminalSnapshot, TerminalPatch, TerminalTombstone>
     >({
       wait: (delayMs, signal) => waitWithClock(clock, delayMs, signal),
       connect: async ({ signal }) => {
-        const nextRuntime = await options.ports.connectRuntime(expectedTarget, inventory, signal);
+        const prepare = (
+          nextRuntime: WorkspaceClientRuntimePort<
+            TerminalSnapshot,
+            TerminalPatch,
+            TerminalTombstone
+          >,
+        ) => prepareRuntimeForOwner(owner, nextRuntime);
+        const nextRuntime = await options.ports.connectRuntime(
+          expectedTarget,
+          inventory,
+          signal,
+          prepare,
+        );
         if (nextRuntime.generation !== expectedTarget.daemon.instanceId) {
           void nextRuntime.close();
           throw new Error("session runtime connected to another daemon generation");
+        }
+        try {
+          if (owner.prepared?.runtime !== nextRuntime) await prepare(nextRuntime);
+        } catch (error) {
+          await Promise.resolve(nextRuntime.close()).catch(() => undefined);
+          throw error;
         }
         return {
           value: nextRuntime,
@@ -478,13 +724,16 @@ export function createWorkspaceClient<
         };
       },
     });
-    const owner: RuntimeOwner<TerminalSnapshot, TerminalPatch, TerminalTombstone> = {
+    owner = {
       key,
       inventory,
       clientGeneration: expectedGeneration,
       target: expectedTarget,
       supervisor,
       unsubscribe: null,
+      stopPromise: null,
+      prepared: null,
+      preparationError: null,
     };
     owner.unsubscribe = supervisor.subscribe((state) => {
       if (
@@ -681,9 +930,9 @@ export function createWorkspaceClient<
       return () => bucket.delete(untyped);
     },
     setTarget(nextTarget) {
-      if (disposed) return;
+      if (disposed) return Promise.resolve();
       const nextKey = applicationShellSessionTargetKey(nextTarget);
-      if (nextKey === targetKey) return;
+      if (nextKey === targetKey) return Promise.resolve();
       cancelPreparedOpenBestEffort();
       generation += 1;
       target = nextTarget;
@@ -695,11 +944,12 @@ export function createWorkspaceClient<
       catalog = initialWorkspaceCatalogV2State();
       authority = null;
       ledger.replaceGeneration(generation);
-      retireRuntime();
+      const retirement = retireRuntime();
       retireCatalog();
       shellSession.setTarget(nextTarget);
       rebuild(["lifecycle", "semantic", "catalog", "authority", "operations"]);
       connectCatalog();
+      return retirement;
     },
     refresh() {
       if (disposed) return;
@@ -758,9 +1008,34 @@ export function createWorkspaceClient<
       return () => {
         interest.listeners.delete(listener);
         if (interest.listeners.size > 0) return;
+        for (const owner of [activeRuntimeOwner, candidateRuntimeOwner]) {
+          const prepared = owner?.prepared?.bindings.get(key);
+          if (!prepared) continue;
+          owner!.prepared!.bindings.delete(key);
+          prepared.unsubscribeUpdate();
+          void closeSubscription(prepared.subscription);
+        }
         terminals.delete(key);
-        closeTerminal(interest);
+        void closeTerminal(interest);
       };
+    },
+    requestTerminalRepair(nextTarget, expectedDaemonGeneration, reason) {
+      if (
+        disposed ||
+        target.daemon.instanceId !== expectedDaemonGeneration ||
+        nextTarget.workspaceName !== target.workspaceName
+      ) {
+        return;
+      }
+      const expectedRuntime = runtime;
+      if (
+        expectedRuntime === null ||
+        expectedRuntime.generation !== expectedDaemonGeneration ||
+        !expectedRuntime.requestTerminalRepair
+      ) {
+        return;
+      }
+      expectedRuntime.requestTerminalRepair(nextTarget, reason);
     },
     async sendTerminalInput(
       nextTarget: TerminalReplicaAddress,
@@ -800,10 +1075,10 @@ export function createWorkspaceClient<
       return runtime?.releaseAuthority?.(authorityKind) ?? Promise.resolve();
     },
     dispose() {
-      if (disposed) return;
+      if (disposePromise) return disposePromise;
       cancelPreparedOpenBestEffort();
       disposed = true;
-      retireRuntime();
+      const retirement = retireRuntime();
       retireCatalog();
       unsubscribeShell();
       shellSession.dispose();
@@ -823,6 +1098,10 @@ export function createWorkspaceClient<
       for (const scope of listeners.keys()) notify(scope);
       listeners.clear();
       terminals.clear();
+      disposePromise = Promise.all([retirement, ...pendingRuntimeStops])
+        .then(() => waitForTerminalRetirement(Number.POSITIVE_INFINITY))
+        .then(() => undefined);
+      return disposePromise;
     },
   };
 }

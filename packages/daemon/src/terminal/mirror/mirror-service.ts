@@ -14,9 +14,11 @@ import {
   MirrorControlChannel,
   type MirrorChannelHandlers,
   type MirrorChannelIo,
+  type MirrorOutputTiming,
 } from "./control-channel.ts";
 import type { MirrorLayoutEvent, MirrorPaneEvent, MirrorSessionDescription } from "./events.ts";
 import { SessionChannel, type SessionChannelOptions } from "./session-channel.ts";
+import type { InputAction } from "../protocol/input-coalescer.ts";
 import {
   controlModeAuthorityKey,
   processControlModeOwnershipRegistry,
@@ -42,6 +44,22 @@ export interface MirrorServiceOptions {
   controlModeOwnershipRegistry?: ControlModeOwnershipRegistry;
   /** Emitted only after an event-triggered list-clients proof of a native client. */
   onNativeClientActivity?: (session: string) => void;
+  onInputWrite?: (
+    session: string,
+    action: InputAction,
+    startedAtMicros: number,
+    endedAtMicros: number,
+    pendingBeforeSend: number,
+  ) => void;
+  onInputAccepted?: (session: string, action: InputAction, acceptedAtMicros: number) => void;
+  onOutputObserved?: (
+    session: string,
+    semanticPaneId: string,
+    ageMs: number | null,
+    timing?: MirrorOutputTiming,
+  ) => void;
+  /** Qualification-only clock; absent from production's disabled observer. */
+  nowMicros?: () => number;
 }
 
 export interface MirrorSubscribeRequest {
@@ -164,16 +182,21 @@ export class MirrorService {
   }
 
   /** Synchronous hot input on an already-retained SessionRuntime channel. */
-  sendText(session: string, semanticPaneId: string, text: string): void {
+  sendText(
+    session: string,
+    semanticPaneId: string,
+    text: string,
+    performanceTraceId?: string,
+  ): void {
     const entry = this.channels.get(session);
     if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
-    entry.channel.sendText(semanticPaneId, text);
+    entry.channel.sendText(semanticPaneId, text, performanceTraceId);
   }
 
-  sendKey(session: string, semanticPaneId: string, key: string): void {
+  sendKey(session: string, semanticPaneId: string, key: string, performanceTraceId?: string): void {
     const entry = this.channels.get(session);
     if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
-    entry.channel.sendKey(semanticPaneId, key);
+    entry.channel.sendKey(semanticPaneId, key, performanceTraceId);
   }
 
   fitViewport(session: string, cols: number, rows: number): void {
@@ -276,6 +299,7 @@ export class MirrorService {
               executable: this.opts.executable,
               configFile: this.opts.configFile,
               pauseAfterSeconds: this.opts.pauseAfterSeconds,
+              nowMicros: this.opts.nowMicros,
             }),
           historyLines: this.opts.historyLines,
           generatePaneId: this.opts.generatePaneId,
@@ -291,6 +315,18 @@ export class MirrorService {
             }
           },
           onNativeClientActivity: () => this.opts.onNativeClientActivity?.(session),
+          onInputWrite: (action, startedAtMicros, endedAtMicros, pendingBeforeSend) =>
+            this.opts.onInputWrite?.(
+              session,
+              action,
+              startedAtMicros,
+              endedAtMicros,
+              pendingBeforeSend,
+            ),
+          onInputAccepted: (action, acceptedAtMicros) =>
+            this.opts.onInputAccepted?.(session, action, acceptedAtMicros),
+          onOutputObserved: (semanticPaneId, ageMs, timing) =>
+            this.opts.onOutputObserved?.(session, semanticPaneId, ageMs, timing),
         };
         channel = new SessionChannel(channelOptions);
       } catch (cause) {

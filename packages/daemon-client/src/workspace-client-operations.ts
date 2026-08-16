@@ -1,6 +1,7 @@
 import type { InteractionReceipt } from "@tmux-ide/contracts";
 
 import type { GenerationBoundClock } from "./generation-bound-store.ts";
+import { acquireRuntimeResource } from "./runtime-resource-ledger.ts";
 
 export interface WorkspaceClientPendingOperation {
   readonly operationId: string;
@@ -42,7 +43,10 @@ export function createWorkspaceClientOperationLedger(options: {
   readonly initialGeneration: number;
   readonly onChange: () => void;
 }): WorkspaceClientOperationLedger {
-  const pending = new Map<string, { operation: WorkspaceClientPendingOperation; timer: unknown }>();
+  const pending = new Map<
+    string,
+    { operation: WorkspaceClientPendingOperation; timer: unknown; releaseTimer: () => void }
+  >();
   const terminal = new Set<string>();
   let terminalOrder: string[] = [];
   let lastReceipt: InteractionReceipt | null = null;
@@ -64,6 +68,7 @@ export function createWorkspaceClientOperationLedger(options: {
     const entry = pending.get(operationId);
     if (entry === undefined || entry.operation.generation !== expectedGeneration) return false;
     options.clock.clearTimeout(entry.timer);
+    entry.releaseTimer();
     pending.delete(operationId);
     rememberTerminal(operationId);
     publish();
@@ -96,11 +101,12 @@ export function createWorkspaceClientOperationLedger(options: {
         deadlineAt: acceptedAt + input.timeoutMs,
         phase: "pending",
       });
-      const timer = options.clock.setTimeout(
-        () => settle(input.operationId, input.generation),
-        input.timeoutMs,
-      );
-      pending.set(input.operationId, { operation, timer });
+      const releaseTimer = acquireRuntimeResource("runtime-timer");
+      const timer = options.clock.setTimeout(() => {
+        releaseTimer();
+        settle(input.operationId, input.generation);
+      }, input.timeoutMs);
+      pending.set(input.operationId, { operation, timer, releaseTimer });
       publish();
       return true;
     },
@@ -127,6 +133,7 @@ export function createWorkspaceClientOperationLedger(options: {
       const entry = pending.get(receipt.operationId);
       if (entry === undefined || entry.operation.generation !== expectedGeneration) return false;
       options.clock.clearTimeout(entry.timer);
+      entry.releaseTimer();
       pending.delete(receipt.operationId);
       rememberTerminal(receipt.operationId);
       lastReceipt = receipt;
@@ -137,7 +144,10 @@ export function createWorkspaceClientOperationLedger(options: {
     replaceGeneration(nextGeneration) {
       if (disposed || nextGeneration === generation) return;
       generation = nextGeneration;
-      for (const { timer } of pending.values()) options.clock.clearTimeout(timer);
+      for (const { timer, releaseTimer } of pending.values()) {
+        options.clock.clearTimeout(timer);
+        releaseTimer();
+      }
       pending.clear();
       terminal.clear();
       terminalOrder = [];
@@ -147,7 +157,10 @@ export function createWorkspaceClientOperationLedger(options: {
     dispose() {
       if (disposed) return;
       disposed = true;
-      for (const { timer } of pending.values()) options.clock.clearTimeout(timer);
+      for (const { timer, releaseTimer } of pending.values()) {
+        options.clock.clearTimeout(timer);
+        releaseTimer();
+      }
       pending.clear();
       terminal.clear();
       terminalOrder = [];

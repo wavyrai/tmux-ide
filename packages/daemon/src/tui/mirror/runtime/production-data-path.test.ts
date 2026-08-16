@@ -87,6 +87,35 @@ describe("production OpenTUI v2 data path", () => {
     expect(source).toContain("<PaneScopedTerminalSurface");
   });
 
+  it("stages candidate interests before prepare and trims only at atomic activation", () => {
+    const generationHost = productionGraph.sourceByFile.get(
+      "packages/daemon/src/tui/mirror/runtime/open-tui-generation-host.ts",
+    )!;
+    const productionBundleStart = generationHost.indexOf("function buildProductionBundle(");
+    const connectStart = generationHost.indexOf("connectRuntime:", productionBundleStart);
+    const connectBlock = generationHost.slice(
+      connectStart,
+      generationHost.indexOf("didActivateRuntime:", connectStart),
+    );
+    const activationStart = generationHost.indexOf(
+      "didActivateRuntime: (runtime, inventory)",
+      productionBundleStart,
+    );
+    const activationBlock = generationHost.slice(
+      activationStart,
+      generationHost.indexOf("didRetireRuntime:", activationStart),
+    );
+    expect(connectBlock).not.toContain("retainPanes(");
+    expect(connectBlock).toContain("stagePanes(inventory.semanticPaneIds)");
+    expect(connectBlock.indexOf("stagePanes(")).toBeLessThan(
+      connectBlock.indexOf("connectOpenTuiWorkspaceRuntimePort("),
+    );
+    expect(activationBlock).toContain("retainPanes(inventory.semanticPaneIds)");
+    expect(activationBlock.indexOf("retainPanes(")).toBeLessThan(
+      activationBlock.indexOf("releaseStage?.()"),
+    );
+  });
+
   it("does not couple viewport fitting to terminal layout publications", () => {
     expect(applicationRootSource).not.toContain("layoutSnapshot();");
     expect(applicationRootSource).toContain('active?.status === "live" ? active.fastLane : null');

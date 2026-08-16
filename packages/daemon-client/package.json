@@ -20,7 +20,8 @@
     "./workspace-client-types": "./src/workspace-client-types.ts",
     "./workspace-client-conformance": "./src/workspace-client-conformance.ts",
     "./terminal-fast-lane": "./src/terminal-fast-lane.ts",
-    "./first-latest-coordinator": "./src/first-latest-coordinator.ts"
+    "./first-latest-coordinator": "./src/first-latest-coordinator.ts",
+    "./runtime-resource-ledger": "./src/runtime-resource-ledger.ts"
   },
   "main": "src/index.ts",
   "scripts": {

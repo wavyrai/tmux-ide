@@ -1,7 +1,7 @@
 /* @jsxImportSource @opentui/solid */
-import { createEffect, createSignal, onCleanup } from "solid-js";
+import { createRenderEffect, onCleanup } from "solid-js";
 
-import type { PaneSearchHighlight } from "../pane-surface.tsx";
+import type { PaneSearchHighlight, PaneSurfaceRenderable } from "../pane-surface.tsx";
 import type { TerminalPaletteProjection } from "../theme.ts";
 import type { Cell } from "../selection.ts";
 
@@ -34,23 +34,35 @@ export interface PaneScopedTerminalSurfaceProps {
 
 /** One Solid owner per terminal pane; terminal output never wakes the root shell. */
 export function PaneScopedTerminalSurface(props: PaneScopedTerminalSurfaceProps) {
-  const [contentVersion, setContentVersion] = createSignal(0);
-  const [paneSourceEpoch, setPaneSourceEpoch] = createSignal(0);
+  let surface: PaneSurfaceRenderable | undefined;
 
-  createEffect(() => {
+  // This subscription is part of renderer ownership, so install it in the
+  // synchronous render phase. A deferred effect can miss publications between
+  // the initial blit and the first effect flush (and OpenTUI's deterministic
+  // renderer does not promise an extra idle frame just to flush effects).
+  createRenderEffect(() => {
     const adapter = props.adapter;
     const paneId = props.paneId;
-    setContentVersion(adapter.paneVersion(paneId));
-    setPaneSourceEpoch(adapter.paneSourceEpoch());
+    const rendererEpoch = props.sourceEpoch;
+    if (surface) {
+      surface.contentVersion = adapter.paneVersion(paneId);
+      surface.sourceEpoch = rendererEpoch + adapter.paneSourceEpoch();
+    }
     const unsubscribe = adapter.subscribePaneVersion(paneId, (version, sourceEpoch) => {
-      setContentVersion(version);
-      setPaneSourceEpoch(sourceEpoch);
+      if (!surface) return;
+      surface.contentVersion = version;
+      surface.sourceEpoch = rendererEpoch + sourceEpoch;
     });
     onCleanup(unsubscribe);
   });
 
   return (
     <pane_surface
+      ref={(renderable: PaneSurfaceRenderable) => {
+        surface = renderable;
+        renderable.contentVersion = props.adapter.paneVersion(props.paneId);
+        renderable.sourceEpoch = props.sourceEpoch + props.adapter.paneSourceEpoch();
+      }}
       width={props.width}
       height={props.height}
       mirror={props.adapter.renderSource}
@@ -62,8 +74,8 @@ export function PaneScopedTerminalSurface(props: PaneScopedTerminalSurfaceProps)
       searchCur={props.searchCur}
       scrollOffset={props.scrollOffset}
       paneFocused={props.paneFocused}
-      contentVersion={contentVersion()}
-      sourceEpoch={props.sourceEpoch + paneSourceEpoch()}
+      contentVersion={props.adapter.paneVersion(props.paneId)}
+      sourceEpoch={props.sourceEpoch + props.adapter.paneSourceEpoch()}
       selRange={props.selRange}
       search={props.search}
     />

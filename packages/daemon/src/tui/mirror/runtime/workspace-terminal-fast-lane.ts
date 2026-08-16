@@ -10,6 +10,7 @@ import {
   type TerminalFastLane,
 } from "@tmux-ide/daemon-client/terminal-fast-lane";
 import type { WorkspaceClient } from "@tmux-ide/daemon-client/workspace-client-types";
+import { currentTuiPerformanceEventSink } from "../performance-events.ts";
 
 export interface OpenTuiWorkspaceTerminalFastLane {
   readonly lane: TerminalFastLane;
@@ -32,14 +33,22 @@ export function createOpenTuiWorkspaceTerminalFastLane(
   const target = client.getSnapshot().target;
   if (target === null) throw new Error("terminal fast lane requires a live workspace target");
   const generation = target.daemon.instanceId;
+  const performanceSink = currentTuiPerformanceEventSink();
   const lane = createTerminalFastLane({
     address: { workspaceName: target.workspaceName, generation },
     source: createWorkspaceClientTerminalSource(client),
     repair: {
-      // Wire admission NACKs gaps before canonical updates are published. A
-      // reducer-level gap therefore only needs to wait for that subscription's
-      // replacement seed; no second repair protocol belongs in the renderer.
-      request: () => undefined,
+      request: ({ address, reason }) => {
+        // The wire ACK is transport-admission only. A canonical reducer
+        // rejection retires this exact generation so its supervisor reconnects
+        // and obtains fresh seeds. TerminalFastLane coalesces requests until a
+        // seed arrives, preventing corrupt bursts from reconnect-storming.
+        client.requestTerminalRepair(
+          { workspaceName: address.workspaceName, semanticPaneId: address.semanticPaneId },
+          address.generation,
+          reason,
+        );
+      },
     },
     control: {
       owns(authority, expectedGeneration) {
@@ -56,13 +65,14 @@ export function createOpenTuiWorkspaceTerminalFastLane(
         const lease = await client.requestAuthority(authority);
         return lease?.generation === expectedGeneration && lease.clientId === hostClientId;
       },
-      write(address, input) {
+      write(address, input, performanceTraceId) {
         return client.sendTerminalInput(
           {
             workspaceName: address.workspaceName,
             semanticPaneId: address.semanticPaneId,
           },
           input,
+          performanceTraceId,
         );
       },
       resize(address, viewport) {
@@ -72,6 +82,23 @@ export function createOpenTuiWorkspaceTerminalFastLane(
         return client.fitViewport(viewport.cols, viewport.rows);
       },
     },
+    ...(performanceSink?.terminalTraceStage
+      ? {
+          onTraceStage(event) {
+            const memory = process.memoryUsage();
+            performanceSink.terminalTraceStage?.({
+              ...event,
+              scenario: "terminal-input-to-paint",
+              stage: "client",
+              processId: `opentui:${process.pid}`,
+              clockId: "opentui-performance-now",
+              clockKind: "performance-now",
+              rssBytes: memory.rss,
+              heapUsedBytes: memory.heapUsed,
+            });
+          },
+        }
+      : {}),
   });
   return { lane, dispose: () => lane.dispose() };
 }

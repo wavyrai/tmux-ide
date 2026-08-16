@@ -33,6 +33,16 @@ describe("terminal conformance corpus", () => {
         expect(cell.row).toBeLessThan(fixture.rows);
         expect(cell.column).toBeLessThan(fixture.cols);
       }
+      for (const row of fixture.wrappedRows ?? []) {
+        expect(row, `${fixture.id} wrapped row`).toBeGreaterThanOrEqual(0);
+        expect(row, `${fixture.id} wrapped row`).toBeLessThan(fixture.rows);
+      }
+      if (fixture.cursor) {
+        expect(fixture.cursor.x, `${fixture.id} cursor x`).toBeLessThan(fixture.cols);
+        expect(fixture.cursor.y, `${fixture.id} cursor y`).toBeLessThan(fixture.rows);
+      }
+      if (fixture.historyRows !== undefined)
+        expect(fixture.historyRows, `${fixture.id} history`).toBeGreaterThanOrEqual(0);
     }
   });
 });

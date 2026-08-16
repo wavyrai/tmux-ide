@@ -35,6 +35,7 @@ import {
 } from "@tmux-ide/contracts";
 import { textToHexKeys } from "../protocol/control.ts";
 import { InputCoalescer } from "../protocol/input-coalescer.ts";
+import type { InputAction } from "../protocol/input-coalescer.ts";
 import {
   parseLayout,
   parseLayoutChange,
@@ -54,7 +55,11 @@ import {
   type WorkspaceTmuxPaneSnapshot,
   type WorkspaceTmuxStampOutcome,
 } from "../protocol/workspace-tmux-adapter.ts";
-import type { MirrorChannelHandlers, MirrorChannelIo } from "./control-channel.ts";
+import type {
+  MirrorChannelHandlers,
+  MirrorChannelIo,
+  MirrorOutputTiming,
+} from "./control-channel.ts";
 import type {
   MirrorDiagnostic,
   MirrorLayoutEvent,
@@ -101,6 +106,18 @@ export interface SessionChannelOptions {
   onExit?: () => void;
   /** Event-driven proof that a non-control tmux client is actively attached. */
   onNativeClientActivity?: () => void;
+  onInputWrite?: (
+    action: InputAction,
+    startedAtMicros: number,
+    endedAtMicros: number,
+    pendingBeforeSend: number,
+  ) => void;
+  onInputAccepted?: (action: InputAction, acceptedAtMicros: number) => void;
+  onOutputObserved?: (
+    semanticPaneId: string,
+    ageMs: number | null,
+    timing?: MirrorOutputTiming,
+  ) => void;
 }
 
 export interface PaneSubscriptionHandle {
@@ -179,11 +196,26 @@ export class SessionChannel {
   });
   private readonly input = new InputCoalescer(
     (action) => {
+      const startedAtMicros = action.traceIds?.length ? Math.floor(performance.now() * 1_000) : 0;
+      const pendingBeforeSend = action.traceIds?.length ? (this.io.pendingCount ?? 0) : 0;
+      const onReply = action.traceIds?.length
+        ? () => this.opts.onInputAccepted?.(action, Math.floor(performance.now() * 1_000))
+        : undefined;
       if (action.kind === "literal") {
-        this.io.send(`send-keys -t ${action.pane} -H ${textToHexKeys(action.text).join(" ")}`);
+        this.io.send(
+          `send-keys -t ${action.pane} -H ${textToHexKeys(action.text).join(" ")}`,
+          onReply,
+        );
       } else {
-        this.io.send(`send-keys -t ${action.pane} ${action.key}`);
+        this.io.send(`send-keys -t ${action.pane} ${action.key}`, onReply);
       }
+      if (action.traceIds?.length)
+        this.opts.onInputWrite?.(
+          action,
+          startedAtMicros,
+          Math.floor(performance.now() * 1_000),
+          pendingBeforeSend,
+        );
     },
     (flush) => queueMicrotask(flush),
   );
@@ -191,7 +223,7 @@ export class SessionChannel {
   constructor(opts: SessionChannelOptions) {
     this.opts = opts;
     this.io = opts.createIo({
-      onOutput: (pane, data, ageMs) => this.onOutput(pane, data, ageMs),
+      onOutput: (pane, data, ageMs, timing) => this.onOutput(pane, data, ageMs, timing),
       onNotify: (name, rest) => this.onNotify(name, rest),
       onExit: () => this.onChannelExit(),
     });
@@ -314,18 +346,18 @@ export class SessionChannel {
   /** Controller-authorized input fast path. It deliberately reuses the one
    * session InputCoalescer, so literal/key ordering and tmux application-mode
    * named-key semantics are identical for GUI, TUI and direct subscribers. */
-  sendText(semanticPaneId: string, text: string): void {
+  sendText(semanticPaneId: string, text: string, performanceTraceId?: string): void {
     const pane = this.panesBySemantic.get(semanticPaneId);
     if (!pane)
       throw new Error(`unknown semantic pane ${semanticPaneId} in session ${this.opts.session}`);
-    this.input.literal(pane.runtimeId, text);
+    this.input.literal(pane.runtimeId, text, performanceTraceId);
   }
 
-  sendKey(semanticPaneId: string, key: string): void {
+  sendKey(semanticPaneId: string, key: string, performanceTraceId?: string): void {
     const pane = this.panesBySemantic.get(semanticPaneId);
     if (!pane)
       throw new Error(`unknown semantic pane ${semanticPaneId} in session ${this.opts.session}`);
-    this.input.key(pane.runtimeId, key);
+    this.input.key(pane.runtimeId, key, performanceTraceId);
   }
 
   fitViewport(cols: number, rows: number): void {
@@ -393,13 +425,19 @@ export class SessionChannel {
 
   // ── Byte routing ─────────────────────────────────────────────────────────
 
-  private onOutput(runtimePane: string, data: Uint8Array, ageMs: number | null): void {
+  private onOutput(
+    runtimePane: string,
+    data: Uint8Array,
+    ageMs: number | null,
+    timing?: MirrorOutputTiming,
+  ): void {
     if (ageMs !== null) {
       this.ageByRuntime.set(runtimePane, ageMs);
       if (ageMs > this.maxAgeMs) this.maxAgeMs = ageMs;
     }
     const pane = this.panesByRuntime.get(runtimePane);
     if (!pane) return;
+    this.opts.onOutputObserved?.(pane.semanticId, ageMs, timing);
     for (const sub of pane.subs) {
       if (sub.frozen || sub.closed) continue;
       for (const event of sub.feed.delta(data)) sub.onEvent(event);

@@ -23,7 +23,9 @@ import type { OpenTuiVerifiedRoutingContext } from "./open-tui-verified-routing.
 import {
   OPEN_TUI_HOST_CLIENT_ID,
   connectOpenTuiWorkspaceRuntimePort,
+  type OpenTuiWorkspaceRuntimePort,
 } from "./open-tui-workspace-runtime-port.ts";
+import { installTuiPerformanceEventSink } from "./performance-events.ts";
 
 const GENERATION = "00000000-0000-4000-8000-000000000001";
 const NONCE = "00000000-0000-4000-8000-000000000002";
@@ -31,15 +33,18 @@ const WORKSPACE = "workspace.alpha";
 const SESSION = "alpha";
 const PANE_A = "pane.a";
 const PANE_B = "pane.b";
+const PANE_C = "pane.c";
 
-function inventory(): WorkspaceClientRuntimeInventory {
+function inventory(
+  semanticPaneIds: readonly string[] = [PANE_A, PANE_B],
+): WorkspaceClientRuntimeInventory {
   return Object.freeze({
     workspaceName: WORKSPACE,
     workspaceId: "workspace-id",
     sessionId: SESSION,
     daemonGeneration: GENERATION,
     shellGeneration: 3,
-    semanticPaneIds: Object.freeze([PANE_A, PANE_B]),
+    semanticPaneIds: Object.freeze([...semanticPaneIds]),
   });
 }
 
@@ -254,6 +259,32 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
     await port.close();
   });
 
+  it("primes every pane across the inventory before coherent publication", async () => {
+    const test = rig();
+    const paneIds = [PANE_A, PANE_B, PANE_C];
+    const subscriptions: Awaited<ReturnType<OpenTuiWorkspaceRuntimePort["subscribeTerminal"]>>[] =
+      [];
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(paneIds),
+      routing: test.routing,
+      prepareRuntime: async (candidate) => {
+        for (const subscription of await Promise.all(
+          paneIds.map((semanticPaneId) =>
+            candidate.subscribeTerminal({ workspaceName: WORKSPACE, semanticPaneId }),
+          ),
+        )) {
+          subscription.onUpdate(() => undefined);
+          subscriptions.push(subscription);
+        }
+      },
+    });
+
+    expect(subscriptions).toHaveLength(3);
+    expect(test.client.ack).toHaveBeenCalledTimes(3);
+    expect(test.client.ack.mock.calls.map(([ack]) => ack.semanticPaneId).sort()).toEqual(paneIds);
+    await port.close();
+  });
+
   it("flushes startup NACKs emitted before the physical client promise resolves", async () => {
     const test = rig(true, true);
     const port = await connectOpenTuiWorkspaceRuntimePort({
@@ -299,6 +330,26 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
     expect(test.client.close).toHaveBeenCalledOnce();
   });
 
+  it("preserves the daemon fault detail at the OpenTUI causal boundary", async () => {
+    const test = rig(false);
+    const opening = connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    test.options().onTerminalDelivery(PANE_B, {
+      type: "terminal.delivery.fault",
+      reason: "protocol-violation",
+      message: "ACK has no in-flight transaction",
+      deliveryNonce: NONCE,
+    });
+    await expect(opening).rejects.toThrow(
+      "Terminal delivery failed for pane.b: protocol-violation (ACK has no in-flight transaction)",
+    );
+    expect(test.client.close).toHaveBeenCalledOnce();
+  });
+
   it("opens one exact inventory stream and projects layout from that same connection", async () => {
     const test = rig();
     const port = await connectOpenTuiWorkspaceRuntimePort({
@@ -314,6 +365,7 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
       terminalDelivery: { encodings: ["semantic-v1"] },
     });
     expect(test.options().hostClientId).toBe(OPEN_TUI_HOST_CLIENT_ID);
+    expect(test.options()).not.toHaveProperty("onTerminalFrameArrival");
 
     const layouts: unknown[] = [];
     port.onLayout((layout) => layouts.push(layout));
@@ -399,6 +451,44 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
     expect(test.client.nack).not.toHaveBeenCalled();
   });
 
+  it("reports the bounded wire-delivery queue only while a performance sink is installed", async () => {
+    const test = rig();
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    subscription.onUpdate(() => undefined);
+    const terminalDelivery = vi.fn();
+    const uninstall = installTuiPerformanceEventSink({
+      frame: vi.fn(),
+      terminalPaint: vi.fn(),
+      terminalDelivery,
+    });
+    try {
+      const delivery = seedDelivery(PANE_A, blankTerminalReplicaSnapshot(4, 2), "109");
+      test.options().onTerminalDelivery(PANE_A, delivery.envelope);
+      for (const chunk of delivery.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+
+      expect(terminalDelivery).toHaveBeenCalledOnce();
+      expect(terminalDelivery).toHaveBeenCalledWith({
+        parseMs: expect.any(Number),
+        queuePeak: 1,
+        queueCapacity: 1,
+        settledQueueDepth: 0,
+        revisionLagPeak: 0,
+        reseed: true,
+      });
+    } finally {
+      uninstall();
+      await subscription.close();
+      await port.close();
+    }
+  });
+
   it("withholds ACK until a synchronous listener exists", async () => {
     const test = rig();
     const port = await connectOpenTuiWorkspaceRuntimePort({
@@ -437,6 +527,9 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
     expect(test.client.nack).toHaveBeenLastCalledWith(
       expect.objectContaining({ reason: "gap", appliedRevision: 0 }),
     );
+    const nacksAfterGap = test.client.nack.mock.calls.length;
+    for (const chunk of gap.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    expect(test.client.nack).toHaveBeenCalledTimes(nacksAfterGap);
 
     const bytes = new TextEncoder().encode("not-json");
     const transactionId = "00000000-0000-4000-8000-000000000105";
@@ -455,6 +548,40 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
     expect(test.client.nack).toHaveBeenLastCalledWith(
       expect.objectContaining({ reason: "decode-failed", transactionId }),
     );
+  });
+
+  it("reconnects for canonical patch rejection without ACKing the rejected delivery", async () => {
+    const test = rig();
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    subscription.onUpdate((update) => {
+      if (update.type === "terminal.patch") {
+        port.requestTerminalRepair?.(
+          { workspaceName: WORKSPACE, semanticPaneId: PANE_A },
+          "conflict",
+        );
+      }
+    });
+    test.client.ack.mockClear();
+    test.client.close.mockClear();
+
+    const previous = blankTerminalReplicaSnapshot(4, 2);
+    const corrupt = patchDelivery(PANE_A, previous, 0, 1, "190");
+    const corruptEnvelope = { ...corrupt.envelope, canonicalStateHash: "ffffffffffffffff" };
+    test.options().onTerminalDelivery(PANE_A, corruptEnvelope);
+    for (const chunk of corrupt.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+
+    expect(test.client.ack).not.toHaveBeenCalled();
+    expect(test.client.close).toHaveBeenCalledOnce();
+    port.requestTerminalRepair?.({ workspaceName: WORKSPACE, semanticPaneId: PANE_A }, "conflict");
+    expect(test.client.close).toHaveBeenCalledOnce();
+    await port.closed;
   });
 
   it("closes subscriptions, receipt forwarding and physical transport exactly once", async () => {
@@ -496,6 +623,29 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
       expect.any(Object),
     );
     await port.close();
+  });
+
+  it("installs the frame-arrival diagnostic callback only when the sink exists at connect", async () => {
+    const terminalTraceStage = vi.fn();
+    const uninstall = installTuiPerformanceEventSink({
+      frame: vi.fn(),
+      terminalPaint: vi.fn(),
+      terminalDelivery: vi.fn(),
+      terminalTraceStage,
+    });
+    const test = rig();
+    try {
+      const port = await connectOpenTuiWorkspaceRuntimePort({
+        inventory: inventory(),
+        routing: test.routing,
+      });
+      expect(test.options().onTerminalFrameArrival).toEqual(expect.any(Function));
+      test.options().onTerminalFrameArrival?.({ traceId: "trace.one", atMicros: 42 });
+      expect(terminalTraceStage).toHaveBeenCalledOnce();
+      await port.close();
+    } finally {
+      uninstall();
+    }
   });
 
   it("rejects unsorted or cross-route runtime inventories before opening", async () => {

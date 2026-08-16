@@ -78,7 +78,13 @@ try {
       ["scripts/tui-testdrive.mjs", "start", "--target", target, "--cols", "160", "--rows", "44"],
       testdriveEnv,
     );
-    const required = ["module-loaded", "renderer-created", "first-frame", "solid-mounted"];
+    const required = [
+      "entry-start",
+      "root-import-end",
+      "renderer-create-end",
+      "solid-mounted",
+      "first-frame",
+    ];
     const deadline = Date.now() + 10_000;
     let marks = readJsonLines(lifecyclePath);
     while (
@@ -332,14 +338,23 @@ async function readProductRigCoherentFrame() {
 
 function criticalPathFromLifecycle(path) {
   const interesting = new Set([
-    "module-loaded",
-    "renderer-created",
+    "entry-start",
+    "root-import-start",
+    "root-import-end",
+    "config-load-start",
+    "session-discovery-start",
+    "session-discovery-end",
+    "workspace-ensure-start",
+    "workspace-ensure-end",
+    "config-load-end",
+    "renderer-create-start",
+    "renderer-create-end",
+    "solid-root-evaluate",
     "solid-mounted",
     "first-frame",
-    "application-shell-state",
-    "runtime-lane-connecting",
-    "runtime-lane-layout",
-    "runtime-lane-connected",
+    "generation-shell-lifecycle",
+    "generation-runtime-progress",
+    "generation-status",
     "first-terminal-frame",
   ]);
   const marks = readJsonLines(path);
@@ -352,11 +367,14 @@ function criticalPathFromLifecycle(path) {
         interesting.has(phase) &&
         (!Number.isFinite(firstTerminalFrameMs) || elapsedMs <= firstTerminalFrameMs),
     )
-    .map(({ phase, elapsedMs, statePhase, request }) => ({
+    .map(({ phase, elapsedMs, statePhase, request, runtimePhase, status, clientPhase }) => ({
       phase,
       elapsedMs,
       ...(statePhase ? { statePhase } : {}),
       ...(request ? { request } : {}),
+      ...(runtimePhase ? { runtimePhase } : {}),
+      ...(status ? { status } : {}),
+      ...(clientPhase ? { clientPhase } : {}),
     }));
 }
 

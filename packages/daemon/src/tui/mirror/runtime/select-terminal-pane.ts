@@ -1,6 +1,7 @@
 import type { WorkspaceClientDispatch } from "@tmux-ide/daemon-client/workspace-client-types";
 
 interface PaneSelectionClient {
+  ownsInputAuthority?(): boolean;
   requestAuthority(authority: "input"): Promise<unknown | null>;
   dispatch(command: WorkspaceClientDispatch): Promise<unknown>;
 }
@@ -26,8 +27,12 @@ export async function selectTerminalPane(
     );
   };
   try {
-    const lease = await expected.client.requestAuthority("input");
-    if (!lease || !isCurrent()) return false;
+    const ownsInput = expected.client.ownsInputAuthority?.() === true;
+    if (!ownsInput) {
+      const lease = await expected.client.requestAuthority("input");
+      if (!lease || !isCurrent()) return false;
+    }
+    if (!isCurrent()) return false;
     await expected.client.dispatch({
       kind: "semantic-intent",
       intent: {

@@ -102,6 +102,46 @@ describe("SessionRuntimeAuthorityArbiter", () => {
     expect(authority.snapshot().owners.geometry).toBe("client:web");
   });
 
+  it("re-arms an early native quiet-period timer instead of losing geometry forever", () => {
+    let now = 0;
+    let task: (() => void) | null = null;
+    let scheduledDelay = -1;
+    const scheduler: SessionRuntimeScheduler = {
+      nowMs: () => now,
+      createId: () => "00000000-0000-4000-8000-000000000001",
+      microtask: (callback) => callback(),
+      timer: (callback, delayMs) => {
+        task = callback;
+        scheduledDelay = delayMs;
+        return { cancel: () => undefined };
+      },
+    };
+    const authority = new SessionRuntimeAuthorityArbiter({
+      generation: GENERATION_A,
+      session: "alpha",
+      scheduler,
+      nativeGeometryHysteresisMs: 180,
+    });
+    authority.connect("client:web", "web");
+    authority.updatePresence("client:web", "foreground");
+    authority.claim("client:web", "geometry");
+
+    authority.noteNativeGeometryActivity();
+    expect(scheduledDelay).toBe(180);
+    now = 179.75;
+    const earlyTask = task;
+    if (!earlyTask) throw new Error("native geometry expiry was not scheduled");
+    earlyTask();
+    expect(authority.snapshot().owners.geometry).toBeNull();
+    expect(scheduledDelay).toBeCloseTo(0.25, 5);
+
+    now = 180;
+    const finalTask = task;
+    if (!finalTask) throw new Error("native geometry expiry was not re-scheduled");
+    finalTask();
+    expect(authority.snapshot().owners.geometry).toBe("client:web");
+  });
+
   it("fences leases across daemon generation restart", () => {
     const firstRig = deterministicScheduler();
     const first = new SessionRuntimeAuthorityArbiter({

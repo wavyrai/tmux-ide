@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { widgetMarkerAnnouncement, type CanonicalTerminalReplicaUpdate } from "@tmux-ide/contracts";
 import { TERMINAL_CONFORMANCE_FIXTURES } from "@tmux-ide/core";
 import { TerminalReplicaInterpreter } from "./terminal-replica-interpreter.ts";
+import type {
+  TerminalInterpreterBackend,
+  TerminalInterpreterBackendFactory,
+} from "./terminal-interpreter-backend.ts";
 import type { SessionRuntimeTraceContext } from "./runtime-observability.ts";
+import { createXtermTerminalInterpreterBackend } from "./xterm-terminal-interpreter-backend.ts";
 
 const generation = "00000000-0000-4000-8000-000000000001";
 
@@ -19,6 +24,104 @@ function create(updates: CanonicalTerminalReplicaUpdate[], cols = 12, rows = 3) 
 }
 
 describe("TerminalReplicaInterpreter", () => {
+  it("keeps parser lifecycle behind the backend seam without moving canonical authority", async () => {
+    const created: TerminalInterpreterBackend[] = [];
+    let disposed = 0;
+    const backendFactory: TerminalInterpreterBackendFactory = (options) => {
+      const delegate = createXtermTerminalInterpreterBackend(options);
+      const backend: TerminalInterpreterBackend = {
+        kind: delegate.kind,
+        get cols() {
+          return delegate.cols;
+        },
+        get rows() {
+          return delegate.rows;
+        },
+        write: (data) => delegate.write(data),
+        resize: (cols, rows) => delegate.resize(cols, rows),
+        setAuthoritativeCursor: (x, y) => delegate.setAuthoritativeCursor(x, y),
+        modes: () => delegate.modes(),
+        dirtyRange: () => delegate.dirtyRange(),
+        project: (previous, dirty) => delegate.project(previous, dirty),
+        dispose: () => {
+          disposed += 1;
+          delegate.dispose();
+        },
+      };
+      created.push(backend);
+      return backend;
+    };
+    const updates: CanonicalTerminalReplicaUpdate[] = [];
+    const interpreter = new TerminalReplicaInterpreter({
+      generation,
+      workspaceName: "workspace",
+      semanticPaneId: "pane-a",
+      incarnation: `${generation}:0`,
+      cols: 8,
+      rows: 2,
+      backendFactory,
+      onUpdate: (update) => updates.push(update),
+    });
+    await interpreter.enqueue({
+      type: "reseed",
+      cols: 8,
+      rows: 2,
+      chunks: [new TextEncoder().encode("\u001b[31mA")],
+      cursor: { x: 1, y: 0 },
+      bootstrap: "authoritative-stream",
+    });
+    expect(created).toHaveLength(2);
+    expect(disposed).toBe(1);
+    expect(interpreter.currentSnapshot().grid[0]!.cells[0]).toMatchObject({
+      grapheme: "A",
+      foreground: { kind: "indexed", index: 1 },
+    });
+    expect(updates).toHaveLength(1);
+    await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+    expect(disposed).toBe(2);
+  });
+
+  it("keeps the injected xterm oracle differential-identical to the default path", async () => {
+    const defaultUpdates: CanonicalTerminalReplicaUpdate[] = [];
+    const injectedUpdates: CanonicalTerminalReplicaUpdate[] = [];
+    const options = {
+      generation,
+      workspaceName: "workspace",
+      semanticPaneId: "pane-a",
+      incarnation: `${generation}:0`,
+      cols: 10,
+      rows: 3,
+    } as const;
+    const defaultInterpreter = new TerminalReplicaInterpreter({
+      ...options,
+      onUpdate: (update) => defaultUpdates.push(update),
+    });
+    const injectedInterpreter = new TerminalReplicaInterpreter({
+      ...options,
+      backendFactory: createXtermTerminalInterpreterBackend,
+      onUpdate: (update) => injectedUpdates.push(update),
+    });
+    const operations = [
+      {
+        type: "reseed",
+        cols: 10,
+        rows: 3,
+        chunks: [new TextEncoder().encode("\u001b[31mA界\u001b[0m")],
+        cursor: { x: 3, y: 0 },
+        bootstrap: "authoritative-stream",
+      },
+      { type: "write", data: new TextEncoder().encode("\r\nB\u001b[?25l") },
+      { type: "resize", cols: 12, rows: 4 },
+      { type: "cursor", x: 2, y: 1 },
+    ] as const;
+    for (const operation of operations) {
+      await defaultInterpreter.enqueue(operation);
+      await injectedInterpreter.enqueue(operation);
+      expect(injectedInterpreter.currentSnapshot()).toEqual(defaultInterpreter.currentSnapshot());
+    }
+    expect(injectedUpdates).toEqual(defaultUpdates);
+  });
+
   it("does not coalesce external bytes across an authenticated trace boundary", async () => {
     const observed: Array<SessionRuntimeTraceContext | null> = [];
     const interpreter = new TerminalReplicaInterpreter({
@@ -164,8 +267,17 @@ describe("TerminalReplicaInterpreter", () => {
           width: expected.width,
           foreground: expected.foreground,
           background: expected.background,
+          attributes: attributeBits(expected.attributes ?? []),
         });
       }
+      expect(
+        snapshot.grid.flatMap((row, index) => (row.wrapped ? [index] : [])),
+        `${fixture.id} wrapped rows`,
+      ).toEqual(fixture.wrappedRows ?? []);
+      if (fixture.historyRows !== undefined)
+        expect(snapshot.history, `${fixture.id} history`).toHaveLength(fixture.historyRows);
+      if (fixture.cursor) expect(snapshot.cursor, `${fixture.id} cursor`).toEqual(fixture.cursor);
+      if (fixture.modes) expect(snapshot.modes, `${fixture.id} modes`).toMatchObject(fixture.modes);
     }
   });
 
@@ -190,6 +302,28 @@ describe("TerminalReplicaInterpreter", () => {
       ["terminal.tombstone", 2],
     ]);
     expect(Object.isFrozen(interpreter.currentSnapshot().grid)).toBe(true);
+  });
+
+  it("does not retain the prior backend history across an authoritative reseed", async () => {
+    const interpreter = create([], 6, 2);
+    await interpreter.enqueue({
+      type: "reseed",
+      cols: 6,
+      rows: 2,
+      chunks: [new TextEncoder().encode("one\r\ntwo\r\nthree\r\nfour")],
+      cursor: { x: 4, y: 1 },
+      bootstrap: "authoritative-stream",
+    });
+    expect(interpreter.currentSnapshot().history.length).toBeGreaterThan(0);
+    await interpreter.enqueue({
+      type: "reseed",
+      cols: 6,
+      rows: 2,
+      chunks: [new TextEncoder().encode("fresh")],
+      cursor: { x: 5, y: 0 },
+      bootstrap: "authoritative-stream",
+    });
+    expect(interpreter.currentSnapshot().history).toEqual([]);
   });
 
   it("withholds synchronized-output intermediates and publishes the final atomic frame", async () => {
@@ -260,3 +394,17 @@ describe("TerminalReplicaInterpreter", () => {
     expect(interpreter.currentSnapshot().placements[0]?.id).toBe("markdown");
   });
 });
+
+function attributeBits(attributes: readonly string[]): number {
+  const bits: Readonly<Record<string, number>> = {
+    bold: 1,
+    dim: 2,
+    italic: 4,
+    underline: 8,
+    blink: 16,
+    inverse: 32,
+    hidden: 64,
+    strikethrough: 128,
+  };
+  return attributes.reduce((value, attribute) => value | (bits[attribute] ?? 0), 0);
+}

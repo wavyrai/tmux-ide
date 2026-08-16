@@ -33,6 +33,7 @@ import {
   type OpenTuiVerifiedRoutingIdentity,
 } from "./open-tui-verified-routing.ts";
 import { createOpenTuiPaneStreamSocket } from "./open-tui-pane-stream-socket.ts";
+import { currentTuiPerformanceEventSink } from "./performance-events.ts";
 
 const OPENTUI_ORIGIN = "tmux-ide://opentui";
 /** Stable controller principal used by the daemon authority snapshot. */
@@ -60,9 +61,18 @@ export interface ConnectOpenTuiWorkspaceRuntimePortOptions {
   readonly inventory: WorkspaceClientRuntimeInventory;
   readonly routing: OpenTuiVerifiedRoutingContext;
   readonly signal?: AbortSignal;
+  /** Prime inventory-wide canonical consumers before coherence can settle. */
+  readonly prepareRuntime?: (runtime: OpenTuiWorkspaceRuntimePort) => void | Promise<void>;
   readonly onFault?: (error: Error) => void;
   readonly onDiagnostic?: (
-    phase: "layout" | "seed" | "physical-ready" | "coherent",
+    phase:
+      | "layout"
+      | "seed"
+      | "physical-ready"
+      | "coherent"
+      | "stream-open-start"
+      | "stream-open-resolved"
+      | `stream-${"issue-start" | "issue-response" | "socket-created" | "socket-open" | "ready-frame"}`,
     details: Readonly<Record<string, unknown>>,
   ) => void;
 }
@@ -175,6 +185,7 @@ class WireTerminalEndpoint {
   #reseedRequired = false;
   #subscription: WireTerminalSubscription | null = null;
   #pending: PendingDelivery | null = null;
+  #rejectedTransactionId: string | null = null;
   #closed = false;
   readonly #ready: Promise<boolean>;
   #resolveReady!: (ready: boolean) => void;
@@ -249,8 +260,11 @@ class WireTerminalEndpoint {
       return;
     }
     if (message.type === "terminal.delivery.fault") {
+      const detail = message.message.trim();
       this.#failConnection(
-        new Error(`Terminal delivery failed for ${this.#semanticPaneId}: ${message.reason}`),
+        new Error(
+          `Terminal delivery failed for ${this.#semanticPaneId}: ${message.reason}${detail ? ` (${detail})` : ""}`,
+        ),
       );
       return;
     }
@@ -305,18 +319,27 @@ class WireTerminalEndpoint {
       return;
     }
     this.#envelope = envelope;
+    this.#rejectedTransactionId = null;
     this.#assembler = new TerminalDeliveryAssembler(envelope);
   }
 
   #acceptChunk(
     chunk: Extract<TerminalDeliveryServerMessage, { type: "terminal.delivery.chunk" }>,
   ): void {
+    // A rejected envelope is still followed by its already-framed chunks.
+    // The first NACK retires the daemon flight, so rejecting those chunks
+    // again would accidentally target the next flight.
+    if (chunk.transactionId === this.#rejectedTransactionId) return;
     const assembler = this.#assembler;
     const envelope = this.#envelope;
     if (!assembler || !envelope) {
       this.#reject("protocol-violation", null, chunk.transactionId);
       return;
     }
+    // Keep the ordinary delivery path allocation/clock free. The reference
+    // collector is installed only by an explicit diagnostic journey.
+    const performanceSink = currentTuiPerformanceEventSink();
+    const parseStartedAt = performanceSink ? performance.now() : 0;
     try {
       assembler.write(chunk);
       if (chunk.index + 1 < envelope.chunkCount) return;
@@ -353,6 +376,11 @@ class WireTerminalEndpoint {
           ? Object.freeze({ performanceTraceId: envelope.performanceTraceId })
           : undefined,
       });
+      const revisionLagPeak = Math.max(
+        0,
+        envelope.canonicalRevision - Math.max(0, this.#appliedRevision + 1),
+      );
+      const reseed = payload.frame === "seed" && this.#hasCanonicalSeed;
       if (payload.frame === "seed" && !this.#hasCanonicalSeed) {
         this.#hasCanonicalSeed = true;
         this.#readySettled = true;
@@ -360,6 +388,16 @@ class WireTerminalEndpoint {
         this.#canonicalSeedReady();
       }
       this.#flush();
+      performanceSink?.terminalDelivery({
+        parseMs: performance.now() - parseStartedAt,
+        // WireTerminalEndpoint admits at most one assembled transaction and
+        // refuses another envelope until that transaction is delivered.
+        queuePeak: 1,
+        queueCapacity: 1,
+        settledQueueDepth: this.#pending === null ? 0 : 1,
+        revisionLagPeak,
+        reseed,
+      });
     } catch {
       this.#reject("decode-failed", envelope);
     }
@@ -371,6 +409,10 @@ class WireTerminalEndpoint {
     if (!delivery || !subscription || subscription.closed || subscription.frozen) return;
     try {
       if (!subscription.deliver(delivery.update, delivery.metadata)) return;
+      // Delivery is synchronous. Canonical consumers may reject an admitted
+      // update and request generation repair from inside the callback, which
+      // closes this endpoint. Never emit the admission ACK after that repair.
+      if (this.#closed || subscription.closed) return;
     } catch (error) {
       this.#failConnection(error instanceof Error ? error : new Error(String(error)));
       return;
@@ -430,6 +472,7 @@ class WireTerminalEndpoint {
     this.#assembler = null;
     this.#envelope = null;
     this.#pending = null;
+    this.#rejectedTransactionId = attempted?.transactionId ?? transactionId;
     this.#reseedRequired = true;
   }
 }
@@ -527,6 +570,7 @@ export async function connectOpenTuiWorkspaceRuntimePort(
   });
   let latestAuthority: SessionRuntimeAuthoritySnapshot | null = null;
   let closed = false;
+  let repairRequested = false;
   let physicalReady = false;
   let coherentSettled = false;
   const canonicalSeedPanes = new Set<string>();
@@ -639,12 +683,16 @@ export async function connectOpenTuiWorkspaceRuntimePort(
     );
   }
 
+  const performanceSink = currentTuiPerformanceEventSink();
   let opened: PaneStreamClientWithReceipts;
   try {
+    options.onDiagnostic?.("stream-open-start", { panes: panes.length });
     opened = (await routing.openPaneStream(expected, {
       origin: OPENTUI_ORIGIN,
       hostClientId: OPEN_TUI_HOST_CLIENT_ID,
       requestId: randomUUID(),
+      requestInitialInputAuthority: false,
+      signal: options.signal,
       stream: {
         protocolVersion: 1,
         workspaceName: inventory.workspaceName,
@@ -679,6 +727,25 @@ export async function connectOpenTuiWorkspaceRuntimePort(
         }
         endpoint.accept(message);
       },
+      ...(performanceSink?.terminalTraceStage
+        ? {
+            onTerminalFrameArrival: ({ traceId, atMicros }) => {
+              const memory = process.memoryUsage();
+              performanceSink.terminalTraceStage?.({
+                traceId,
+                scenario: "terminal-input-to-paint",
+                stage: "client",
+                operation: "socket-frame-arrival",
+                processId: `opentui:${process.pid}`,
+                clockId: "opentui-performance-now",
+                clockKind: "performance-now",
+                atMicros,
+                rssBytes: memory.rss,
+                heapUsedBytes: memory.heapUsed,
+              });
+            },
+          }
+        : {}),
       onLayout: (frame) => {
         if (closed) return;
         const retained = freezeLayout(frame);
@@ -710,7 +777,10 @@ export async function connectOpenTuiWorkspaceRuntimePort(
         }
       },
       onFault: failConnection,
+      onConnectionDiagnostic: (phase, details) =>
+        options.onDiagnostic?.(`stream-${phase}`, details),
     })) as PaneStreamClientWithReceipts;
+    options.onDiagnostic?.("stream-open-resolved", { panes: panes.length });
   } catch (cause) {
     const error = cause instanceof Error ? cause : new Error(String(cause));
     close(error);
@@ -753,12 +823,23 @@ export async function connectOpenTuiWorkspaceRuntimePort(
         }
       }
     }) ?? null;
-  settleCoherent();
-  await coherent;
-
-  return {
+  const runtimePort: OpenTuiWorkspaceRuntimePort = {
     generation: inventory.daemonGeneration,
     closed: closedPromise,
+    requestTerminalRepair: (target, reason) => {
+      if (
+        closed ||
+        repairRequested ||
+        target.workspaceName !== inventory.workspaceName ||
+        !panes.includes(target.semanticPaneId)
+      ) {
+        return;
+      }
+      repairRequested = true;
+      failConnection(
+        new Error(`Canonical terminal repair requested for ${target.semanticPaneId}: ${reason}`),
+      );
+    },
     getLayout: () => latestLayoutSnapshot.current,
     getLayoutSnapshot: () => latestLayoutSnapshot,
     onLayout(listener) {
@@ -800,4 +881,14 @@ export async function connectOpenTuiWorkspaceRuntimePort(
     fitViewport: (cols, rows) => opened.fitViewport(cols, rows),
     close: () => close(),
   };
+  try {
+    await options.prepareRuntime?.(runtimePort);
+  } catch (cause) {
+    const error = cause instanceof Error ? cause : new Error(String(cause));
+    close(error);
+    throw error;
+  }
+  settleCoherent();
+  await coherent;
+  return runtimePort;
 }

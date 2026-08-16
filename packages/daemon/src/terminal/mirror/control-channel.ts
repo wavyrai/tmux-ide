@@ -30,13 +30,32 @@ export interface ControlReply {
 export interface MirrorChannelHandlers {
   /** Live pane bytes, both framings decoded. `ageMs` is null for plain
    *  `%output` and the server-buffer age for `%extended-output`. */
-  onOutput: (pane: string, data: Uint8Array, ageMs: number | null) => void;
+  onOutput: (
+    pane: string,
+    data: Uint8Array,
+    ageMs: number | null,
+    timing?: MirrorOutputTiming,
+  ) => void;
   onNotify: (name: string, rest: string) => void;
   onExit: (reason: string | null) => void;
 }
 
+/**
+ * Daemon-local timing for one complete control-mode output line. This stays
+ * optional so production avoids clocks entirely when runtime observability is
+ * disabled. `receivedAtMicros` is the child stdout callback which supplied
+ * the beginning of the line; `parsedAtMicros` is immediately after protocol
+ * parsing and before the semantic pane feed is notified.
+ */
+export interface MirrorOutputTiming {
+  readonly receivedAtMicros: number;
+  readonly parsedAtMicros: number;
+}
+
 /** The io surface the session channel drives; tests inject a fake. */
 export interface MirrorChannelIo {
+  /** Outstanding control replies before a new command is written. */
+  readonly pendingCount?: number;
   start(): Promise<void>;
   /** Reply-matched command; resolution order follows the wire FIFO but the
    *  continuation is a microtask — use ONLY where output ordering is moot
@@ -55,7 +74,7 @@ export interface MirrorChannelIo {
   ): void;
   /** Fire-and-forget (input fast path): the reply block is consumed and
    *  dropped, errors counted. */
-  send(cmd: string): void;
+  send(cmd: string, onReply?: (reply: ControlReply) => void): void;
   dispose(): Promise<void>;
 }
 
@@ -67,7 +86,7 @@ type ReplySink =
       lines: string[];
     }
   | { kind: "inline"; onReply: (reply: ControlReply) => void; lines: string[] }
-  | { kind: "discard" };
+  | { kind: "discard"; onReply?: (reply: ControlReply) => void };
 
 /**
  * PURE protocol state for one control-mode byte stream. Feed it latin1
@@ -78,6 +97,7 @@ type ReplySink =
  */
 export class ControlChannelCore {
   private buffer = "";
+  private bufferReceivedAtMicros: number | null = null;
   private inReply = false;
   /** The greeting is the sole flags=0 block that belongs to pending work.
    *  Subsequent flags=0 blocks are tmux hook command results, emitted on the
@@ -88,7 +108,10 @@ export class ControlChannelCore {
   private discardedErrors = 0;
   private failed = false;
 
-  constructor(private readonly handlers: MirrorChannelHandlers) {}
+  constructor(
+    private readonly handlers: MirrorChannelHandlers,
+    private readonly nowMicros?: () => number,
+  ) {}
 
   push(sink: ReplySink): void {
     this.pending.push(sink);
@@ -102,14 +125,18 @@ export class ControlChannelCore {
     return this.pending.length;
   }
 
-  feed(chunk: string): void {
+  feed(chunk: string, receivedAtMicros?: number): void {
+    if (this.buffer.length === 0 && receivedAtMicros !== undefined)
+      this.bufferReceivedAtMicros = receivedAtMicros;
     this.buffer += chunk;
     let nl: number;
     while ((nl = this.buffer.indexOf("\n")) !== -1) {
       let line = this.buffer.slice(0, nl);
       if (line.endsWith("\r")) line = line.slice(0, -1);
       this.buffer = this.buffer.slice(nl + 1);
-      this.handleLine(line);
+      const lineReceivedAtMicros = this.bufferReceivedAtMicros;
+      this.bufferReceivedAtMicros = this.buffer.length > 0 ? (receivedAtMicros ?? null) : null;
+      this.handleLine(line, lineReceivedAtMicros);
     }
   }
 
@@ -123,8 +150,15 @@ export class ControlChannelCore {
     }
   }
 
-  private handleLine(line: string): void {
+  private handleLine(line: string, receivedAtMicros: number | null): void {
     const event = parseControlLine(line, this.inReply);
+    const timing =
+      receivedAtMicros !== null && this.nowMicros
+        ? Object.freeze({
+            receivedAtMicros,
+            parsedAtMicros: this.nowMicros(),
+          })
+        : undefined;
     switch (event.kind) {
       case "begin":
         this.inReply = true;
@@ -148,6 +182,7 @@ export class ControlChannelCore {
         if (!sink) break; // unsolicited block (greeting after a race)
         if (sink.kind === "discard") {
           if (event.kind === "error") this.discardedErrors++;
+          sink.onReply?.({ ok: event.kind === "end", lines: [] });
           break;
         }
         if (sink.kind === "inline") {
@@ -162,10 +197,10 @@ export class ControlChannelCore {
         break;
       }
       case "output":
-        this.handlers.onOutput(event.pane, event.data, null);
+        this.handlers.onOutput(event.pane, event.data, null, timing);
         break;
       case "extended-output":
-        this.handlers.onOutput(event.pane, event.data, event.ageMs);
+        this.handlers.onOutput(event.pane, event.data, event.ageMs, timing);
         break;
       case "exit":
         this.handlers.onExit(event.reason);
@@ -191,6 +226,8 @@ export interface MirrorControlChannelOptions {
   configFile?: string;
   /** `attach -f pause-after=<s>` — the verified flow-control policy. */
   pauseAfterSeconds?: number;
+  /** Qualification-only clock. Omitted in production's zero-observer path. */
+  nowMicros?: () => number;
 }
 
 export function mirrorControlAttachArgs(
@@ -228,10 +265,13 @@ export class MirrorControlChannel implements MirrorChannelIo {
 
   constructor(opts: MirrorControlChannelOptions) {
     this.opts = opts;
-    this.core = new ControlChannelCore({
-      ...opts.handlers,
-      onExit: (reason) => this.noteExit(reason),
-    });
+    this.core = new ControlChannelCore(
+      {
+        ...opts.handlers,
+        onExit: (reason) => this.noteExit(reason),
+      },
+      opts.nowMicros,
+    );
   }
 
   start(): Promise<void> {
@@ -252,7 +292,7 @@ export class MirrorControlChannel implements MirrorChannelIo {
     proc.stdout!.on("error", () => {});
     proc.stderr?.on("error", () => {});
     proc.stdout!.setEncoding("latin1");
-    proc.stdout!.on("data", (chunk: string) => this.core.feed(chunk));
+    proc.stdout!.on("data", (chunk: string) => this.core.feed(chunk, this.opts.nowMicros?.()));
     proc.on("exit", () => {
       this.core.fail("control channel exited");
       this.noteExit(null);
@@ -310,15 +350,19 @@ export class MirrorControlChannel implements MirrorChannelIo {
     proc.stdin.write(`${cmd}\n`);
   }
 
-  send(cmd: string): void {
+  send(cmd: string, onReply?: (reply: ControlReply) => void): void {
     const proc = this.proc;
     if (!proc?.stdin?.writable) return;
-    this.core.push({ kind: "discard" });
+    this.core.push({ kind: "discard", ...(onReply ? { onReply } : {}) });
     proc.stdin.write(`${cmd}\n`);
   }
 
   get inputErrorCount(): number {
     return this.core.inputErrorCount;
+  }
+
+  get pendingCount(): number {
+    return this.core.pendingCount;
   }
 
   /**

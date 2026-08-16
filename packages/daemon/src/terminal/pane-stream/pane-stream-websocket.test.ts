@@ -8,6 +8,10 @@ import {
 import type { MirrorPaneEvent, MirrorSessionDescription } from "../mirror/events.ts";
 import type { MirrorSubscribeRequest, MirrorSubscription } from "../mirror/mirror-service.ts";
 import type { DirectTerminalSocket } from "../attachments/direct-websocket.ts";
+import {
+  createSessionRuntimeObservability,
+  type SessionRuntimeObservability,
+} from "../session-runtime/runtime-observability.ts";
 import { PaneStreamLeaseManager } from "./lease-manager.ts";
 import {
   PaneStreamAdmissionCoordinator,
@@ -216,6 +220,7 @@ function harness(
       typeof PaneStreamAdmissionCoordinator
     >[0]["bindSessionRuntime"];
     openTerminalDelivery?: SessionRuntimePaneStreamTransportBinding["openTerminalDelivery"];
+    observability?: SessionRuntimeObservability;
   } = {},
 ) {
   const mirror = new FakeMirror(options.panes ?? ["pane.editor", "pane.shell"]);
@@ -266,6 +271,7 @@ function harness(
     webSocketUrl: WS_URL,
     leaseManager,
     mirror,
+    observability: options.observability,
     bindSessionRuntime:
       options.bindSessionRuntime ??
       (() => ({
@@ -846,7 +852,11 @@ describe("PaneStreamAdmissionCoordinator", () => {
   });
 
   it("uses one session socket and one runtime binding for semantic delivery, layout and intents", async () => {
-    const h = harness();
+    let nowMicros = 10_000;
+    const observability = createSessionRuntimeObservability({
+      nowMicros: () => (nowMicros += 5),
+    });
+    const h = harness({ observability });
     const { socket } = await connect(h, {
       viewerMode: "interactive",
       semanticDelivery: true,
@@ -879,10 +889,18 @@ describe("PaneStreamAdmissionCoordinator", () => {
       canonicalEquivalent: true,
       history: "complete",
       richPlacements: false,
+      performanceTraceId: "00000000-0000-4000-8000-000000000096",
     } as never);
     expect(socket.framesOfType("terminal-delivery-envelope")[0]).toMatchObject({
       envelope: { workspaceName: "workspace.alpha" },
     });
+    expect(observability.snapshot().spans).toContainEqual(
+      expect.objectContaining({
+        traceId: "00000000-0000-4000-8000-000000000096",
+        stage: "transport",
+        operation: "pane-stream-socket-send",
+      }),
+    );
     socket.message({
       type: "terminal-delivery-ack",
       ack: {

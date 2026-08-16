@@ -123,7 +123,7 @@ function bundle(
   },
 ): FakeBundle {
   const listeners = new Set<LifecycleListener>();
-  const disposeSpy = vi.fn();
+  const disposeSpy = vi.fn(async () => undefined);
   const revokeSpy = vi.fn();
   const client = {
     getSnapshot: () => ({ target: nextConnection.target }),
@@ -134,7 +134,7 @@ function bundle(
       }
       return () => listeners.delete(listener);
     },
-    dispose: vi.fn(),
+    dispose: vi.fn(async () => undefined),
   } as unknown as OpenTuiProductionWorkspaceClient;
   const fastLane = { lane: {}, dispose: vi.fn() } as unknown as OpenTuiWorkspaceTerminalFastLane;
   const adapter = { dispose: vi.fn() } as unknown as TerminalFastLaneRendererAdapter;
@@ -390,13 +390,13 @@ describe("OpenTUI generation host", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    host.dispose();
+    await host.dispose();
     expect(bundles[0]!.disposeSpy).toHaveBeenCalledOnce();
     expect(bundles[1]!.disposeSpy).toHaveBeenCalledOnce();
-    expect(view.dispose).toHaveBeenCalledOnce();
+    expect(view.dispose).not.toHaveBeenCalled();
     bundles[1]!.activate();
     expect(host.getSnapshot().status).toBe("disposed");
-    host.dispose();
+    await host.dispose();
     expect(bundles[0]!.disposeSpy).toHaveBeenCalledOnce();
     expect(bundles[1]!.disposeSpy).toHaveBeenCalledOnce();
   });
@@ -499,7 +499,7 @@ describe("OpenTUI generation host", () => {
     created.activate();
     await started;
 
-    host.dispose();
+    await host.dispose();
     expect(observer.stop).toHaveBeenCalledOnce();
     observer.emit("daemon-b");
     await flushHostStart();
@@ -526,7 +526,7 @@ describe("OpenTUI generation host", () => {
 
     const started = host.start();
     await Promise.resolve();
-    host.dispose();
+    await host.dispose();
     finishInstall(stop);
 
     expect(await started).toBe(false);

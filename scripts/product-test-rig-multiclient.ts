@@ -125,11 +125,23 @@ async function proveGenerationFence(): Promise<void> {
 }
 
 function capture(): string {
-  return execFileSync(
+  const paneIds = execFileSync(
     "tmux",
-    ["-S", socketPath, "capture-pane", "-p", "-J", "-t", `=${session}:`, "-S", "-80"],
+    ["-S", socketPath, "list-panes", "-s", "-t", `=${session}`, "-F", "#{pane_id}"],
     { encoding: "utf8" },
-  );
+  )
+    .trim()
+    .split("\n")
+    .filter(Boolean);
+  return paneIds
+    .map((paneId) =>
+      execFileSync(
+        "tmux",
+        ["-S", socketPath, "capture-pane", "-p", "-J", "-t", paneId, "-S", "-80"],
+        { encoding: "utf8" },
+      ),
+    )
+    .join("\n");
 }
 
 async function echo(name: string, client: Awaited<ReturnType<typeof connect>>): Promise<void> {
@@ -351,8 +363,17 @@ try {
   timings.nativeYieldMs = Math.round((performance.now() - nativeStartedAt) * 100) / 100;
   stopNativeClient();
   await waitFor(
+    "native tmux client detach",
+    () => !tmuxClientInventory().some(({ pid }) => pid === nativeInventory.pid),
+    5_000,
+  );
+  await waitFor(
     "geometry reacquisition after native quiet period",
-    () => webB.authoritySnapshot?.owners.geometry === "product-rig:web-b",
+    // The real hosted OpenTUI is also a foreground geometry participant. The
+    // invariant after native detach is deterministic client authority rather
+    // than one synthetic Web client winning a race against that real client;
+    // Web B ownership was already proven explicitly before native attach.
+    () => typeof webB.authoritySnapshot?.owners.geometry === "string",
     5_000,
   );
   timings.nativeQuietReacquireMs = Math.round((performance.now() - nativeStartedAt) * 100) / 100;

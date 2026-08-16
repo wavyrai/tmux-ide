@@ -27,10 +27,35 @@ import {
   type TerminalDeliveryVisibility,
   type WorkspaceMultiplexerMutationResult,
 } from "@tmux-ide/contracts";
+import { acquireRuntimeResource } from "./runtime-resource-ledger.ts";
 
 type SocketEventType = "open" | "message" | "close" | "error";
 type SocketListener = (event: { readonly data?: unknown }) => void;
 const MAX_PENDING_TERMINAL_INPUTS = 256;
+
+interface RuntimeTimer {
+  readonly handle: NodeJS.Timeout;
+  release(): void;
+}
+
+function createRuntimeTimer(callback: () => void, delayMs: number): RuntimeTimer {
+  const releaseResource = acquireRuntimeResource("runtime-timer");
+  let active = true;
+  const release = (): void => {
+    if (!active) return;
+    active = false;
+    clearTimeout(handle);
+    releaseResource();
+  };
+  const handle = setTimeout(() => {
+    if (!active) return;
+    active = false;
+    releaseResource();
+    callback();
+  }, delayMs);
+  handle.unref?.();
+  return { handle, release };
+}
 
 export interface PaneStreamClientSocket {
   readonly readyState: number;
@@ -54,26 +79,47 @@ export interface OpenPaneStreamClientOptions {
   readonly requestId: string;
   readonly stream: PaneStreamLeaseRequest & { readonly terminalDelivery: TerminalDeliveryOffer };
   readonly createSocket: PaneStreamClientSocketFactory;
+  /**
+   * Acquire input authority before reporting the stream ready. Defaults to
+   * true for direct/legacy consumers. Read-only shells may opt out and acquire
+   * authority lazily on their first mutation.
+   */
+  readonly requestInitialInputAuthority?: boolean;
+  /** Cancels capability issuance before a physical socket exists. */
+  readonly signal?: AbortSignal;
   readonly fetch?: typeof fetch;
   readonly onNegotiated: (pane: string, negotiation: TerminalDeliveryNegotiationResult) => void;
   readonly onTerminalDelivery: (pane: string, message: TerminalDeliveryServerMessage) => void;
+  /** Diagnostic-only arrival edge, sampled before JSON decode/validation work. */
+  readonly onTerminalFrameArrival?: (event: {
+    readonly pane: string;
+    readonly traceId: string;
+    readonly atMicros: number;
+  }) => void;
   readonly onLayout?: (frame: Extract<PaneStreamServerFrame, { type: "layout" }>) => void;
   readonly onInputAck?: (pane: string, sequence: number) => void;
   readonly onAuthoritySnapshot?: (snapshot: SessionRuntimeAuthoritySnapshot) => void;
   readonly onFault?: (error: Error) => void;
+  readonly onConnectionDiagnostic?: (
+    phase: "issue-start" | "issue-response" | "socket-created" | "socket-open" | "ready-frame",
+    details: Readonly<Record<string, unknown>>,
+  ) => void;
 }
 
 export type ConnectIssuedPaneStreamRuntimeClientOptions = Pick<
   OpenPaneStreamClientOptions,
   | "createSocket"
+  | "requestInitialInputAuthority"
   | "origin"
   | "hostClientId"
   | "onNegotiated"
   | "onTerminalDelivery"
+  | "onTerminalFrameArrival"
   | "onLayout"
   | "onInputAck"
   | "onAuthoritySnapshot"
   | "onFault"
+  | "onConnectionDiagnostic"
   | "stream"
 >;
 
@@ -128,6 +174,7 @@ export class PaneStreamOperationError extends Error {
 export async function openPaneStreamRuntimeClient(
   options: OpenPaneStreamClientOptions,
 ): Promise<PaneStreamRuntimeClient> {
+  options.onConnectionDiagnostic?.("issue-start", { requestId: options.requestId });
   const request = options.fetch ?? fetch;
   const mutation = PaneStreamIssueMutationRequestSchemaZ.parse({
     requestId: options.requestId,
@@ -147,8 +194,13 @@ export async function openPaneStreamRuntimeClient(
     body: JSON.stringify(mutation),
     redirect: "error",
     cache: "no-store",
+    signal: options.signal,
   });
   const issued = PaneStreamIssueResultSchemaZ.parse(await response.json());
+  options.onConnectionDiagnostic?.("issue-response", {
+    requestId: options.requestId,
+    status: issued.status,
+  });
   if (issued.status === "error") throw new Error(issued.error.reason);
   if (
     issued.descriptor.daemonInstanceId !== options.daemonInstanceId ||
@@ -166,7 +218,11 @@ export async function connectIssuedPaneStreamRuntimeClient(
   const socket = options.createSocket(descriptor, {
     Origin: options.origin,
     "X-Tmux-Ide-Host-Client-Id": options.hostClientId,
+    "X-Tmux-Ide-Request-Id": descriptor.requestId,
   });
+  options.onConnectionDiagnostic?.("socket-created", { requestId: descriptor.requestId });
+  const releaseSocketResource = acquireRuntimeResource("pane-stream-socket");
+  const releaseSocketListenerResources = acquireRuntimeResource("socket-listener", 4);
   let closed = false;
   let verified = false;
   let resolveReady!: (client: PaneStreamRuntimeClient) => void;
@@ -175,18 +231,40 @@ export async function connectIssuedPaneStreamRuntimeClient(
     resolveReady = resolve;
     rejectReady = reject;
   });
-  const readyTimer = setTimeout(() => fail("Pane-stream runtime handshake timed out"), 2_000);
-  readyTimer.unref?.();
+  const readyTimer = createRuntimeTimer(
+    () => fail("Pane-stream runtime handshake timed out"),
+    2_000,
+  );
+  const clearReadyTimer = (): void => readyTimer.release();
 
-  const fail = (message: string): void => {
+  let listenersAttached = false;
+  let socketCloseRequested = false;
+  const detachSocketListeners = (): void => {
+    if (!listenersAttached) return;
+    listenersAttached = false;
+    socket.removeEventListener?.("open", onOpen);
+    socket.removeEventListener?.("message", onMessage);
+    socket.removeEventListener?.("close", onClose);
+    socket.removeEventListener?.("error", onClose);
+    releaseSocketListenerResources();
+  };
+  const closeSocketOnce = (code: number, reason: string): void => {
+    if (socketCloseRequested) return;
+    socketCloseRequested = true;
+    releaseSocketResource();
+    socket.close(code, reason);
+  };
+
+  const fail = (failure: string | Error): void => {
     if (closed) return;
     closed = true;
-    const error = new Error(message);
-    clearTimeout(readyTimer);
+    const error = failure instanceof Error ? failure : new Error(failure);
+    clearReadyTimer();
+    detachSocketListeners();
     rejectPending(error);
     rejectReady(error);
     options.onFault?.(error);
-    socket.close(1008, "protocol-error");
+    closeSocketOnce(1008, "protocol-error");
   };
   const send = (frame: unknown): void => {
     if (closed || socket.readyState !== 1) throw new Error("Pane-stream runtime client is closed");
@@ -200,7 +278,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
       readonly sequence: number;
       resolve(result: SessionRuntimeTerminalInputResult): void;
       reject(error: Error): void;
-      timer: NodeJS.Timeout;
+      timer: RuntimeTimer;
     }
   >();
   let authoritySnapshot: SessionRuntimeAuthoritySnapshot | null = null;
@@ -210,7 +288,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
       authority: SessionRuntimeAuthorityKind;
       resolve(lease: SessionRuntimeAuthorityLease | null): void;
       reject(error: Error): void;
-      timer: NodeJS.Timeout;
+      timer: RuntimeTimer;
     }
   >();
   let viewportSequence = 0;
@@ -221,7 +299,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
       rows: number;
       resolve(): void;
       reject(error: Error): void;
-      timer: NodeJS.Timeout;
+      timer: RuntimeTimer;
     }
   >();
   const pendingIntents = new Map<
@@ -229,34 +307,34 @@ export async function connectIssuedPaneStreamRuntimeClient(
     {
       resolve(result: WorkspaceMultiplexerMutationResult | null): void;
       reject(error: Error): void;
-      timer: NodeJS.Timeout;
+      timer: RuntimeTimer;
     }
   >();
   const rejectPending = (error: Error): void => {
     for (const pending of pendingInputs.values()) {
-      clearTimeout(pending.timer);
+      pending.timer.release();
       pending.reject(error);
     }
     pendingInputs.clear();
     for (const pending of pendingViewports.values()) {
-      clearTimeout(pending.timer);
+      pending.timer.release();
       pending.reject(error);
     }
     pendingViewports.clear();
     for (const pending of pendingIntents.values()) {
-      clearTimeout(pending.timer);
+      pending.timer.release();
       pending.reject(error);
     }
     pendingIntents.clear();
     for (const pending of pendingAuthorities.values()) {
-      clearTimeout(pending.timer);
+      pending.timer.release();
       pending.reject(error);
     }
     pendingAuthorities.clear();
   };
   const retirePendingInputsForAuthorityLoss = (): void => {
     for (const pending of pendingInputs.values()) {
-      clearTimeout(pending.timer);
+      pending.timer.release();
       pending.resolve("authority-lost");
     }
     pendingInputs.clear();
@@ -278,13 +356,12 @@ export async function connectIssuedPaneStreamRuntimeClient(
   ): Promise<SessionRuntimeAuthorityLease | null> => {
     const requestId = crypto.randomUUID();
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timer = createRuntimeTimer(() => {
         pendingAuthorities.delete(requestId);
         reject(
           new PaneStreamOperationError("operation-timeout", `${authority} authority timed out`),
         );
       }, 2_000);
-      timer.unref?.();
       pendingAuthorities.set(requestId, { authority, resolve, reject, timer });
       try {
         send({
@@ -294,7 +371,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
           authority,
         });
       } catch (error) {
-        clearTimeout(timer);
+        timer.release();
         pendingAuthorities.delete(requestId);
         reject(error instanceof Error ? error : new Error(String(error)));
       }
@@ -303,11 +380,10 @@ export async function connectIssuedPaneStreamRuntimeClient(
   const releaseAuthority = (authority: SessionRuntimeAuthorityKind): Promise<void> => {
     const requestId = crypto.randomUUID();
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timer = createRuntimeTimer(() => {
         pendingAuthorities.delete(requestId);
         reject(new PaneStreamOperationError("operation-timeout", `${authority} release timed out`));
       }, 2_000);
-      timer.unref?.();
       pendingAuthorities.set(requestId, {
         authority,
         resolve: () => resolve(),
@@ -322,7 +398,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
           authority,
         });
       } catch (error) {
-        clearTimeout(timer);
+        timer.release();
         pendingAuthorities.delete(requestId);
         reject(error instanceof Error ? error : new Error(String(error)));
       }
@@ -365,11 +441,10 @@ export async function connectIssuedPaneStreamRuntimeClient(
     const sequence = (inputSequences.get(pane) ?? 0) + 1;
     const pendingKey = `${pane}\0${sequence}`;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timer = createRuntimeTimer(() => {
         pendingInputs.delete(pendingKey);
         reject(new PaneStreamOperationError("operation-timeout", "Terminal input ack timed out"));
       }, 2_000);
-      timer.unref?.();
       pendingInputs.set(pendingKey, { pane, sequence, resolve, reject, timer });
       try {
         send({
@@ -381,7 +456,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
         });
         inputSequences.set(pane, sequence);
       } catch (error) {
-        clearTimeout(timer);
+        timer.release();
         pendingInputs.delete(pendingKey);
         reject(error instanceof Error ? error : new Error(String(error)));
       }
@@ -389,6 +464,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
   };
   const onOpen: SocketListener = () => {
     if (closed) return;
+    options.onConnectionDiagnostic?.("socket-open", { requestId: descriptor.requestId });
     socket.send(
       JSON.stringify(
         PaneStreamRedeemFrameSchemaZ.parse({
@@ -403,6 +479,9 @@ export async function connectIssuedPaneStreamRuntimeClient(
   };
   const onMessage: SocketListener = (event) => {
     if (closed || typeof event.data !== "string") return fail("Pane-stream frame was not text");
+    const arrivedAtMicros = options.onTerminalFrameArrival
+      ? Math.floor(performance.now() * 1_000)
+      : 0;
     let raw: unknown;
     try {
       raw = JSON.parse(event.data);
@@ -412,6 +491,17 @@ export async function connectIssuedPaneStreamRuntimeClient(
     const parsed = PaneStreamServerFrameSchemaZ.safeParse(raw);
     if (!parsed.success) return fail("Pane-stream frame failed validation");
     const frame = parsed.data;
+    if (
+      frame.type === "terminal-delivery-envelope" &&
+      frame.envelope.performanceTraceId &&
+      options.onTerminalFrameArrival
+    ) {
+      options.onTerminalFrameArrival({
+        pane: frame.pane,
+        traceId: frame.envelope.performanceTraceId,
+        atMicros: arrivedAtMicros,
+      });
+    }
     if (!verified) {
       if (
         frame.type !== "ready" ||
@@ -423,39 +513,37 @@ export async function connectIssuedPaneStreamRuntimeClient(
         return fail("Pane-stream peer identity did not match the issued capability");
       }
       verified = true;
+      options.onConnectionDiagnostic?.("ready-frame", {
+        requestId: descriptor.requestId,
+        panes: frame.panes.length,
+        effectiveViewerMode: frame.effectiveViewerMode,
+      });
       if (frame.authority) applyAuthoritySnapshot(frame.authority);
-      clearTimeout(readyTimer);
+      clearReadyTimer();
       send({
         type: "presence",
         generation: descriptor.daemonInstanceId,
         state: "foreground",
       });
-      if (descriptor.effectiveViewerMode === "interactive") {
-        void requestAuthority("input")
+      if (options.requestInitialInputAuthority === false) {
+        // Verified stream readiness is a read/display boundary. Input authority
+        // is intentionally lazy and requested by TerminalFastLane on first
+        // mutation, so a contended controller can never delay coherent paint.
+        resolveReady(client);
+      } else {
+        void client
+          .requestAuthority("input")
           .then((lease) => {
-            if (!lease) {
-              throw new PaneStreamOperationError(
-                "authority-rejected",
-                "The pane-stream daemon rejected initial input authority",
-              );
+            if (lease === null || authoritySnapshot?.owners.input !== options.hostClientId) {
+              fail("Pane-stream input authority was denied during readiness");
+              return;
             }
             resolveReady(client);
           })
-          .catch((error: unknown) => {
-            if (closed) return;
-            closed = true;
-            const cause =
-              error instanceof Error
-                ? error
-                : new PaneStreamOperationError("authority-rejected", String(error));
-            rejectPending(cause);
-            rejectReady(cause);
-            options.onFault?.(cause);
-            socket.close(1008, "authority-rejected");
-          });
-        return;
+          .catch((error: unknown) =>
+            fail(error instanceof Error ? error : new Error(String(error))),
+          );
       }
-      resolveReady(client);
       return;
     }
     if (frame.type === "authority-snapshot") {
@@ -466,7 +554,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
       const pending = pendingAuthorities.get(frame.requestId);
       if (!pending || pending.authority !== frame.authority)
         return fail("Pane-stream authority receipt did not match a request");
-      clearTimeout(pending.timer);
+      pending.timer.release();
       pendingAuthorities.delete(frame.requestId);
       applyAuthoritySnapshot(frame.snapshot);
       pending.resolve(frame.status === "granted" ? frame.lease : null);
@@ -476,7 +564,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
       const pending = pendingViewports.get(frame.seq);
       if (!pending || pending.cols !== frame.cols || pending.rows !== frame.rows)
         return fail("Pane-stream viewport acknowledgement did not match a request");
-      clearTimeout(pending.timer);
+      pending.timer.release();
       pendingViewports.delete(frame.seq);
       pending.resolve();
       return;
@@ -484,7 +572,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
     if (frame.type === "semantic-intent-ack") {
       const pending = pendingIntents.get(frame.operationId);
       if (!pending) return fail("Pane-stream intent acknowledgement was not pending");
-      clearTimeout(pending.timer);
+      pending.timer.release();
       pendingIntents.delete(frame.operationId);
       if (frame.outcome.status === "applied") pending.resolve(frame.outcome.result);
       else pending.reject(new PaneStreamOperationError(frame.outcome.code, frame.outcome.message));
@@ -496,7 +584,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
       // ACKs can race a timeout/retirement or be duplicated by a replaying
       // transport. They carry no new authority and are safely idempotent.
       if (!pending) return;
-      clearTimeout(pending.timer);
+      pending.timer.release();
       pendingInputs.delete(pendingKey);
       pending.resolve("ok");
       options.onInputAck?.(frame.pane, frame.seq);
@@ -510,7 +598,9 @@ export async function connectIssuedPaneStreamRuntimeClient(
   const onClose: SocketListener = () => {
     if (closed) return;
     closed = true;
-    clearTimeout(readyTimer);
+    clearReadyTimer();
+    detachSocketListeners();
+    releaseSocketResource();
     const error = new Error("Pane-stream runtime connection closed");
     rejectPending(error);
     rejectReady(error);
@@ -520,6 +610,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
   socket.addEventListener("message", onMessage);
   socket.addEventListener("close", onClose);
   socket.addEventListener("error", onClose);
+  listenersAttached = true;
 
   const client: PaneStreamRuntimeClient = {
     daemonInstanceId: descriptor.daemonInstanceId,
@@ -554,26 +645,27 @@ export async function connectIssuedPaneStreamRuntimeClient(
       );
     },
     fitViewport: async (cols, rows) => {
-      const geometry = await requestAuthority("geometry");
-      if (!geometry) {
-        throw new PaneStreamOperationError(
-          "authority-rejected",
-          "Viewport fit requires foreground geometry authority",
-        );
+      if (authoritySnapshot?.owners.geometry !== options.hostClientId) {
+        const geometry = await requestAuthority("geometry");
+        if (!geometry) {
+          throw new PaneStreamOperationError(
+            "authority-rejected",
+            "Viewport fit requires foreground geometry authority",
+          );
+        }
       }
       viewportSequence += 1;
       const seq = viewportSequence;
       await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => {
+        const timer = createRuntimeTimer(() => {
           pendingViewports.delete(seq);
           reject(new PaneStreamOperationError("operation-timeout", "Viewport fit timed out"));
         }, 2_000);
-        timer.unref?.();
         pendingViewports.set(seq, { cols, rows, resolve, reject, timer });
         try {
           send({ type: "viewport", seq, cols, rows });
         } catch (error) {
-          clearTimeout(timer);
+          timer.release();
           pendingViewports.delete(seq);
           reject(error instanceof Error ? error : new Error(String(error)));
         }
@@ -585,16 +677,15 @@ export async function connectIssuedPaneStreamRuntimeClient(
       send({ type: "terminal-delivery-visibility", ...address, visibility }),
     submitIntent: (operationId, intent) =>
       new Promise<WorkspaceMultiplexerMutationResult | null>((resolve, reject) => {
-        const timer = setTimeout(() => {
+        const timer = createRuntimeTimer(() => {
           pendingIntents.delete(operationId);
           reject(new PaneStreamOperationError("operation-timeout", "Semantic intent timed out"));
         }, 12_000);
-        timer.unref?.();
         pendingIntents.set(operationId, { resolve, reject, timer });
         try {
           send({ type: "semantic-intent", operationId, intent });
         } catch (error) {
-          clearTimeout(timer);
+          timer.release();
           pendingIntents.delete(operationId);
           reject(error instanceof Error ? error : new Error(String(error)));
         }
@@ -602,8 +693,10 @@ export async function connectIssuedPaneStreamRuntimeClient(
     close: () => {
       if (closed) return;
       closed = true;
+      clearReadyTimer();
+      detachSocketListeners();
       rejectPending(new Error("Pane-stream runtime client closed"));
-      socket.close(1000, "client-closed");
+      closeSocketOnce(1000, "client-closed");
     },
   };
   return await ready;

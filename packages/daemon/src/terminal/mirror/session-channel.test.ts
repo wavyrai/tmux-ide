@@ -12,6 +12,7 @@ import {
 } from "./__tests__/simulated-channel.ts";
 import type { MirrorLayoutEvent, MirrorPaneEvent } from "./events.ts";
 import { SessionChannel } from "./session-channel.ts";
+import type { MirrorOutputTiming } from "./control-channel.ts";
 
 const dec = new TextDecoder();
 
@@ -22,7 +23,16 @@ interface Rig {
   pendingSyncs: Array<() => void>;
 }
 
-async function startedRig(options: { onNativeClientActivity?: () => void } = {}): Promise<Rig> {
+async function startedRig(
+  options: {
+    onNativeClientActivity?: () => void;
+    onOutputObserved?: (
+      semanticPaneId: string,
+      ageMs: number | null,
+      timing?: MirrorOutputTiming,
+    ) => void;
+  } = {},
+): Promise<Rig> {
   const state = fixtureState();
   const pendingSyncs: Array<() => void> = [];
   let sim: SimulatedChannel | null = null;
@@ -39,6 +49,7 @@ async function startedRig(options: { onNativeClientActivity?: () => void } = {})
       return () => {};
     },
     onNativeClientActivity: options.onNativeClientActivity,
+    onOutputObserved: options.onOutputObserved,
   });
   await channel.start();
   await vi.waitFor(() => {
@@ -499,7 +510,8 @@ describe("input path", () => {
 
 describe("age telemetry", () => {
   it("retains %extended-output ages keyed by semantic pane id", async () => {
-    const rig = await startedRig();
+    const onOutputObserved = vi.fn();
+    const rig = await startedRig({ onOutputObserved });
     const alpha = collect();
     rig.channel.subscribePane("pane.alpha", alpha.onEvent);
     rig.sim.reply(["s"]);
@@ -510,6 +522,7 @@ describe("age telemetry", () => {
       maxAgeMs: 750,
       byPane: { "pane.alpha": 750 },
     });
+    expect(onOutputObserved).toHaveBeenCalledWith("pane.alpha", 750, undefined);
     await rig.channel.dispose();
   });
 });

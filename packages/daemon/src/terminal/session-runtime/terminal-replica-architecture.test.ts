@@ -11,7 +11,7 @@ describe("terminal replica architecture", () => {
       .filter((file) => readFileSync(file, "utf8").includes('from "@xterm/headless"'))
       .map((file) => file.slice(daemonSrc.length + 1));
     expect(imports).toEqual([
-      "terminal/session-runtime/terminal-replica-interpreter.ts",
+      "terminal/session-runtime/xterm-terminal-interpreter-backend.ts",
       "tui/mirror/pane-mirror.ts",
     ]);
   });

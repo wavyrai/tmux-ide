@@ -1,8 +1,10 @@
 /* @jsxImportSource @opentui/solid */
 import { parseArgs } from "node:util";
-import { appendFileSync } from "node:fs";
+import { createWriteStream } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { createCliRenderer } from "@opentui/core";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { runtimeResourceSnapshot } from "@tmux-ide/daemon-client/runtime-resource-ledger";
 import { render, useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
 import { loadAppConfig, type AppConfig } from "../../../lib/app-config.ts";
 import { publishTuiInputReady } from "../../readiness.ts";
@@ -11,13 +13,21 @@ import {
   ensureOpenTuiSessionWorkspace,
 } from "../configless-session-bootstrap.ts";
 import { registerPaneSurface } from "../pane-surface.tsx";
+import { currentTuiPerformanceEventSink } from "../performance-events.ts";
 import { createSemanticThemeSnapshot, createTerminalPaletteProjection } from "../theme.ts";
-import type { OpenTuiWorkspaceLayout } from "../open-tui-workspace-runtime-port.ts";
+import {
+  OPEN_TUI_HOST_CLIENT_ID,
+  type OpenTuiWorkspaceLayout,
+} from "../open-tui-workspace-runtime-port.ts";
 import { startTuiApplication, observeTuiRootFailure } from "./application-bootstrap.ts";
 import { TuiApplicationLifecycle } from "./application-lifecycle.ts";
-import { ApplicationTerminalWorkspace } from "./application-terminal-workspace.tsx";
+import {
+  ApplicationTerminalWorkspace,
+  type ApplicationPaneResizePreview,
+} from "./application-terminal-workspace.tsx";
 import { createOpenTuiHostLocalTmuxAdapter } from "./host-local-tmux-adapter.ts";
 import { createOpenTuiGenerationHost } from "./open-tui-generation-host.ts";
+import { createOpenTuiSessionOwner, type OpenTuiSessionOwner } from "./open-tui-session-owner.ts";
 import { TUI_RENDERER_CADENCE } from "./renderer-cadence.ts";
 import { createOpenTuiRuntimeLayoutPresentation } from "./runtime-layout-presentation.ts";
 import { terminalInputForOpenTuiKey, terminalInputsForPaste } from "./terminal-input-adapter.ts";
@@ -48,37 +58,80 @@ const parseApplicationArgs = (argv: readonly string[]): ApplicationArgs => {
 };
 
 async function loadApplicationConfig(args: ApplicationArgs): Promise<ApplicationConfig> {
+  tuiPerfMark("config-load-start", { requestedTarget: args.target });
+  tuiPerfMark("session-discovery-start");
   const sessions = await discoverOpenTuiLiveSessions().catch(() => Object.freeze([]));
+  tuiPerfMark("session-discovery-end", { sessions: sessions.length });
   const candidate = args.target ?? (sessions.length === 1 ? sessions[0]! : null);
-  const target = candidate
-    ? (await ensureOpenTuiSessionWorkspace(candidate).catch(() => false))
-      ? candidate
-      : null
-    : null;
+  // Availability/promotion is generation work, not renderer bootstrap work.
+  // Mount chrome first, then let startGeneration perform the single guarded
+  // ensure before it creates the generation-bound client.
+  tuiPerfMark("config-load-end", { target: candidate, sessions: sessions.length });
   return Object.freeze({
     app: loadAppConfig(),
-    target,
+    target: candidate,
     sessions,
   });
 }
 
 const TUI_PERF_LOG = process.env.TMUX_IDE_TUI_PERF_LOG;
-const TUI_LAUNCH_EPOCH_MS = Number(process.env.TMUX_IDE_TUI_LAUNCH_EPOCH_MS ?? Date.now());
+const tuiPerfStream = TUI_PERF_LOG
+  ? createWriteStream(TUI_PERF_LOG, { flags: "a", highWaterMark: 64 * 1_024 })
+  : null;
+const TUI_LAUNCH_EPOCH_MS = tuiPerfStream
+  ? Number(process.env.TMUX_IDE_TUI_LAUNCH_EPOCH_MS ?? Date.now())
+  : 0;
+let tuiPerfStreamFailed = false;
+let tuiPerfStreamSaturated = false;
+let tuiPerfDroppedRecords = 0;
+const failTuiPerfStream = () => {
+  tuiPerfStreamFailed = true;
+};
+const drainTuiPerfStream = () => {
+  tuiPerfStreamSaturated = false;
+};
+tuiPerfStream?.on("error", failTuiPerfStream);
+tuiPerfStream?.on("drain", drainTuiPerfStream);
 function tuiPerfMark(phase: string, details?: Readonly<Record<string, unknown>>): void {
-  if (!TUI_PERF_LOG) return;
+  if (!tuiPerfStream || tuiPerfStreamFailed) return;
+  if (tuiPerfStreamSaturated) {
+    tuiPerfDroppedRecords += 1;
+    return;
+  }
   try {
-    appendFileSync(
-      TUI_PERF_LOG,
+    tuiPerfStreamSaturated = !tuiPerfStream.write(
       `${JSON.stringify({
         phase,
         elapsedMs: Date.now() - TUI_LAUNCH_EPOCH_MS,
         at: new Date().toISOString(),
         ...details,
+        monotonicMicros: Math.floor(performance.now() * 1_000),
+        processId: `opentui:${process.pid}`,
+        clockId: "opentui-performance-now",
       })}\n`,
     );
   } catch {
     // Opt-in diagnostics never own renderer lifecycle.
   }
+}
+
+async function flushTuiPerfMarks(): Promise<void> {
+  if (!tuiPerfStream || tuiPerfStreamFailed) return;
+  await new Promise<void>((resolveFlush) => {
+    try {
+      tuiPerfStream.write("", () => resolveFlush());
+    } catch {
+      resolveFlush();
+    }
+  });
+}
+
+async function closeTuiPerfMarks(): Promise<void> {
+  if (!tuiPerfStream) return;
+  await flushTuiPerfMarks();
+  await new Promise<void>((resolveClose) => tuiPerfStream.end(resolveClose));
+  tuiPerfStream.off("error", failTuiPerfStream);
+  tuiPerfStream.off("drain", drainTuiPerfStream);
 }
 
 function paneForWindow(layout: OpenTuiWorkspaceLayout): string | null {
@@ -104,6 +157,7 @@ export async function startApplicationRoot(): Promise<void> {
     parseArgs: parseApplicationArgs,
     loadConfig: loadApplicationConfig,
     async createRenderer({ config }) {
+      tuiPerfMark("renderer-create-start");
       renderer = await createCliRenderer({
         exitOnCtrlC: false,
         autoFocus: false,
@@ -112,6 +166,7 @@ export async function startApplicationRoot(): Promise<void> {
         consoleMode: process.env.TMUX_IDE_MIRROR_DEBUG ? "console-overlay" : "disabled",
         openConsoleOnError: Boolean(process.env.TMUX_IDE_MIRROR_DEBUG),
       });
+      tuiPerfMark("renderer-create-end");
       return renderer;
     },
     createLifecycle() {
@@ -122,11 +177,21 @@ export async function startApplicationRoot(): Promise<void> {
       const hostLocal = createOpenTuiHostLocalTmuxAdapter();
       hostLocal.configureClipboard();
       const presentation = createOpenTuiRuntimeLayoutPresentation();
-      let generationHost: ReturnType<typeof createOpenTuiGenerationHost> | null = null;
-      let stopGeneration: (() => void) | null = null;
+      let sessionOwner: OpenTuiSessionOwner | null = null;
+      let pendingWindowSwitch: {
+        readonly traceId: string;
+        readonly target: string;
+        readonly startedAtMicros: number;
+        layoutPublished: boolean;
+      } | null = null;
+      let pendingResizeGuide: {
+        readonly traceId: string;
+        readonly startedAtMicros: number;
+      } | null = null;
       const terminalHostFocus = new OpenTuiTerminalHostFocus(true);
 
       const root = render(() => {
+        tuiPerfMark("solid-root-evaluate");
         registerPaneSurface();
         const dimensions = useTerminalDimensions();
         const theme = createSemanticThemeSnapshot(config.app.theme, renderer.themeMode);
@@ -134,7 +199,26 @@ export async function startApplicationRoot(): Promise<void> {
         const [surface, setSurface] = createSignal<"home" | "terminals">(
           config.target ? "terminals" : "home",
         );
-        const [generation, setGeneration] = createSignal(generationHost?.getSnapshot() ?? null);
+        const [generation, setGeneration] = createSignal<ReturnType<
+          ReturnType<typeof createOpenTuiGenerationHost>["getSnapshot"]
+        > | null>(null);
+        sessionOwner = createOpenTuiSessionOwner({
+          ensureWorkspace: ensureOpenTuiSessionWorkspace,
+          createHost: (sessionName) =>
+            createOpenTuiGenerationHost(sessionName, presentation, {
+              onDiagnostic: (phase, details) => tuiPerfMark(`generation-${phase}`, details),
+            }),
+          onSnapshot: (snapshot) => {
+            setGeneration(snapshot);
+            terminalHostFocus.adopt(snapshot?.client ?? null);
+            if (snapshot) {
+              tuiPerfMark("generation-status", {
+                status: snapshot.status,
+                daemonGeneration: snapshot.daemonGeneration,
+              });
+            }
+          },
+        });
         const [layoutSnapshot, setLayoutSnapshot] = createSignal(presentation.getWindowSnapshot());
         const [focusedPane, setFocusedPane] = createSignal<string | null>(null);
         const [selectedSession, setSelectedSession] = createSignal(0);
@@ -143,6 +227,12 @@ export async function startApplicationRoot(): Promise<void> {
           width: Math.max(1, dimensions().width),
           height: Math.max(2, dimensions().height - 2),
         }));
+        const terminalRendererSource = createMemo(() => {
+          const active = generation();
+          return active?.status === "live" && active.adapter
+            ? Object.freeze({ adapter: active.adapter, rendererEpoch: active.rendererEpoch })
+            : null;
+        });
 
         const liveSelectionTarget = (): LivePaneSelectionTarget | null => {
           const active = generation();
@@ -150,20 +240,41 @@ export async function startApplicationRoot(): Promise<void> {
           return {
             status: "live",
             workspaceName: active.connection.workspaceName,
+            ownsInputAuthority: () => {
+              const snapshot = active.client!.getSnapshot();
+              return (
+                snapshot.target?.daemon.instanceId === active.daemonGeneration &&
+                snapshot.authority?.generation === active.daemonGeneration &&
+                snapshot.authority.owners.input === OPEN_TUI_HOST_CLIENT_ID
+              );
+            },
             client: active.client,
           };
         };
         const paneInput = new TerminalPaneInputRouter({
           select: async (paneId: string) => {
             const expected = liveSelectionTarget();
-            return expected
+            const selected = expected
               ? await selectTerminalPane(expected, liveSelectionTarget, paneId)
               : false;
+            const pending = pendingWindowSwitch;
+            if (pending)
+              tuiPerfMark("window-switch-receipt", {
+                traceId: pending.traceId,
+                target: pending.target,
+                selected,
+                durationMicros: Math.floor(performance.now() * 1_000) - pending.startedAtMicros,
+              });
+            return selected;
           },
           send: async (paneId, input) => {
             const active = generation();
             if (active?.status !== "live" || !active.fastLane) return;
-            await active.fastLane.lane.sendInput(paneId, input);
+            const trace = currentTuiPerformanceEventSink()?.beginTerminalInput?.();
+            const pending = active.fastLane.lane.sendInput(paneId, input, trace?.traceId);
+            trace?.finish();
+            const outcome = await pending;
+            if (outcome.status !== "sent") trace?.cancel();
           },
           onFocusedPane: setFocusedPane,
         });
@@ -175,38 +286,25 @@ export async function startApplicationRoot(): Promise<void> {
           });
           const active = snapshot.current ? paneForWindow(snapshot.current) : null;
           paneInput.adoptCanonicalPane(active);
+          const currentWindow = snapshot.current?.semanticWindowId ?? snapshot.current?.windowName;
+          if (pendingWindowSwitch && currentWindow === pendingWindowSwitch.target)
+            pendingWindowSwitch.layoutPublished = true;
         });
         const startGeneration = async (
           sessionName: string,
           workspacePrepared = false,
         ): Promise<void> => {
-          if (generationHost) return;
           setBootstrapNote(`opening ${sessionName}`);
-          if (
-            !workspacePrepared &&
-            !(await ensureOpenTuiSessionWorkspace(sessionName).catch(() => false))
-          ) {
-            setBootstrapNote(`${sessionName} is not available`);
-            return;
+          const started = await sessionOwner!.open(sessionName, workspacePrepared);
+          const snapshot = sessionOwner!.snapshot();
+          if (started && snapshot) {
+            setSurface("terminals");
+            setBootstrapNote(null);
+          } else {
+            setBootstrapNote(`${sessionName} could not attach`);
           }
-          const host = createOpenTuiGenerationHost(sessionName, presentation, {
-            onDiagnostic: (phase, details) => tuiPerfMark(`generation-${phase}`, details),
-          });
-          generationHost = host;
-          stopGeneration = host.subscribe((snapshot) => {
-            setGeneration(snapshot);
-            terminalHostFocus.adopt(snapshot.client);
-            tuiPerfMark("generation-status", {
-              status: snapshot.status,
-              daemonGeneration: snapshot.daemonGeneration,
-            });
-          });
-          setSurface("terminals");
-          const started = await host.start();
-          if (!started) setBootstrapNote(`${sessionName} could not attach`);
         };
         onCleanup(() => {
-          stopGeneration?.();
           stopLayout();
         });
 
@@ -221,13 +319,71 @@ export async function startApplicationRoot(): Promise<void> {
         const selectPane = (paneId: string): void => {
           paneInput.selectPane(paneId);
         };
+        const previewPaneResize = (_preview: ApplicationPaneResizePreview): void => {
+          if (!tuiPerfStream) return;
+          // Preserve the earliest pointer tick waiting for this frame. Later
+          // drag ticks coalesce into the same guide paint and must not replace
+          // it with an artificially shorter latency sample.
+          if (pendingResizeGuide) return;
+          pendingResizeGuide = {
+            traceId: randomUUID(),
+            startedAtMicros: Math.floor(performance.now() * 1_000),
+          };
+        };
+        const resizePane = (preview: ApplicationPaneResizePreview): void => {
+          const expected = generation();
+          if (expected?.status !== "live" || !expected.client || !expected.connection) return;
+          const expectedGeneration = expected.daemonGeneration;
+          const expectedClient = expected.client;
+          void (async () => {
+            const lease = await expectedClient.requestAuthority("geometry");
+            const current = generation();
+            if (
+              !lease ||
+              current?.status !== "live" ||
+              current.daemonGeneration !== expectedGeneration ||
+              current.client !== expectedClient
+            )
+              return;
+            await expectedClient.dispatch({
+              kind: "semantic-intent",
+              operationId: randomUUID(),
+              intent: {
+                verb: "workspace.pane.resize",
+                workspaceName: expected.connection!.workspaceName,
+                semanticPaneId: preview.semanticPaneId,
+                axis: preview.axis,
+                cells: preview.cells,
+              },
+            });
+          })().catch((error: unknown) => {
+            tuiPerfMark("pane-resize-rejected", {
+              message: error instanceof Error ? error.message : String(error),
+            });
+          });
+        };
         const cycleWindow = (): void => {
           const windows = layoutSnapshot().windows;
           if (windows.length < 2) return;
           const current = windows.findIndex((window) => window.currentWindow);
           const next = windows[(current + 1 + windows.length) % windows.length];
           const pane = next ? paneForWindow(next) : null;
-          if (pane) selectPane(pane);
+          const target = next?.semanticWindowId ?? next?.windowName;
+          if (pane && target) {
+            if (tuiPerfStream) {
+              pendingWindowSwitch = {
+                traceId: randomUUID(),
+                target,
+                startedAtMicros: Math.floor(performance.now() * 1_000),
+                layoutPublished: false,
+              };
+              tuiPerfMark("window-switch-start", {
+                traceId: pendingWindowSwitch.traceId,
+                target,
+              });
+            }
+            selectPane(pane);
+          }
         };
 
         useKeyboard((event) => {
@@ -281,7 +437,8 @@ export async function startApplicationRoot(): Promise<void> {
           }
         });
         onMount(() => {
-          if (config.target) void startGeneration(config.target, true);
+          tuiPerfMark("solid-mounted");
+          if (config.target) void startGeneration(config.target);
           resolveReady();
         });
 
@@ -363,17 +520,23 @@ export async function startApplicationRoot(): Promise<void> {
               </box>
             </Show>
             <Show when={surface() === "terminals"}>
-              <ApplicationTerminalWorkspace
-                layout={layoutSnapshot()}
-                adapter={generation()?.status === "live" ? (generation()?.adapter ?? null) : null}
-                rendererEpoch={generation()?.rendererEpoch ?? 0}
-                width={viewport().width}
-                height={viewport().height}
-                focusedPane={focusedPane()}
-                theme={theme}
-                palette={palette}
-                onSelectPane={selectPane}
-              />
+              <Show when={terminalRendererSource()} keyed>
+                {(source) => (
+                  <ApplicationTerminalWorkspace
+                    layout={layoutSnapshot()}
+                    adapter={source.adapter}
+                    rendererEpoch={source.rendererEpoch}
+                    width={viewport().width}
+                    height={viewport().height}
+                    focusedPane={focusedPane()}
+                    theme={theme}
+                    palette={palette}
+                    onSelectPane={selectPane}
+                    onResizePreview={previewPaneResize}
+                    onResizePane={resizePane}
+                  />
+                )}
+              </Show>
             </Show>
           </box>
         );
@@ -383,14 +546,63 @@ export async function startApplicationRoot(): Promise<void> {
         rejectReadiness: rejectReady,
         shutdown: () => lifecycle.shutdown("bootstrap-error"),
       });
-      let firstTerminalFrameMarked = false;
+      const paintedTerminalGenerations = new Set<string>();
       const observeTerminalFrame = () => {
-        if (firstTerminalFrameMarked) return;
-        if (!generationHost?.getSnapshot().adapter?.hasCanonicalSnapshot()) return;
-        firstTerminalFrameMarked = true;
-        tuiPerfMark("first-terminal-frame");
+        const snapshot = sessionOwner?.snapshot();
+        if (
+          !snapshot ||
+          snapshot.status !== "live" ||
+          !snapshot.daemonGeneration ||
+          !snapshot.adapter?.hasPaintedCanonicalSnapshot()
+        )
+          return;
+        const paintKey = `${snapshot.daemonGeneration}:${snapshot.rendererEpoch}`;
+        if (paintedTerminalGenerations.has(paintKey)) return;
+        paintedTerminalGenerations.add(paintKey);
+        tuiPerfMark("first-terminal-frame", {
+          daemonGeneration: snapshot.daemonGeneration,
+          rendererEpoch: snapshot.rendererEpoch,
+        });
       };
       renderer.on("frame", observeTerminalFrame);
+      let firstFrameMarked = false;
+      const observeFirstFrame = () => {
+        if (firstFrameMarked) return;
+        firstFrameMarked = true;
+        tuiPerfMark("first-frame");
+      };
+      if (tuiPerfStream) renderer.on("frame", observeFirstFrame);
+      const diagnosticFrameSink = currentTuiPerformanceEventSink();
+      let previousObservedFrameAt = diagnosticFrameSink ? performance.now() : 0;
+      const observeDiagnosticFrame = diagnosticFrameSink
+        ? () => {
+            const now = performance.now();
+            diagnosticFrameSink.frame(now - previousObservedFrameAt);
+            previousObservedFrameAt = now;
+          }
+        : null;
+      if (observeDiagnosticFrame) renderer.on("frame", observeDiagnosticFrame);
+      const observeWindowSwitchFrame = () => {
+        const pending = pendingWindowSwitch;
+        if (!pending?.layoutPublished) return;
+        pendingWindowSwitch = null;
+        tuiPerfMark("window-switch-settled", {
+          traceId: pending.traceId,
+          target: pending.target,
+          durationMicros: Math.floor(performance.now() * 1_000) - pending.startedAtMicros,
+        });
+      };
+      if (tuiPerfStream) renderer.on("frame", observeWindowSwitchFrame);
+      const observeResizeGuideFrame = () => {
+        const pending = pendingResizeGuide;
+        if (!pending) return;
+        pendingResizeGuide = null;
+        tuiPerfMark("resize-guide-settled", {
+          traceId: pending.traceId,
+          durationMicros: Math.floor(performance.now() * 1_000) - pending.startedAtMicros,
+        });
+      };
+      if (tuiPerfStream) renderer.on("frame", observeResizeGuideFrame);
       const foregroundTerminalHost = () => terminalHostFocus.focus();
       const backgroundTerminalHost = () => terminalHostFocus.blur();
       renderer.on("focus", foregroundTerminalHost);
@@ -399,12 +611,34 @@ export async function startApplicationRoot(): Promise<void> {
         root,
         ready,
         close: async () => {
+          tuiPerfMark("resource-snapshot", {
+            boundary: "pre-close",
+            resources: runtimeResourceSnapshot(),
+          });
           renderer.off("frame", observeTerminalFrame);
+          if (tuiPerfStream) renderer.off("frame", observeFirstFrame);
+          if (observeDiagnosticFrame) renderer.off("frame", observeDiagnosticFrame);
+          if (tuiPerfStream) renderer.off("frame", observeWindowSwitchFrame);
+          if (tuiPerfStream) renderer.off("frame", observeResizeGuideFrame);
           renderer.off("focus", foregroundTerminalHost);
           renderer.off("blur", backgroundTerminalHost);
           terminalHostFocus.dispose();
-          generationHost?.dispose();
-          if (!generationHost) presentation.dispose();
+          await sessionOwner?.dispose();
+          presentation.dispose();
+          tuiPerfMark("resource-snapshot", {
+            boundary: "post-close",
+            resources: runtimeResourceSnapshot(),
+            diagnostics: {
+              droppedRecords: tuiPerfDroppedRecords,
+              failed: tuiPerfStreamFailed,
+            },
+          });
+          if (process.env.TMUX_IDE_PERFORMANCE_TRACE_LOG) {
+            const { closeReferencePerformanceTraceCollector } =
+              await import("../reference-performance-trace.ts");
+            await closeReferencePerformanceTraceCollector();
+          }
+          await closeTuiPerfMarks();
         },
       };
     },

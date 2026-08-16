@@ -1,18 +1,41 @@
 /* @jsxImportSource @opentui/solid */
-import { For, Show } from "solid-js";
+import { For, Show, createMemo, createSignal } from "solid-js";
 
 import type { OpenTuiWorkspaceLayoutSnapshot } from "../open-tui-workspace-runtime-port.ts";
-import type {
-  SemanticThemeSnapshot,
-  TerminalPaletteProjection,
-} from "../theme.ts";
+import type { SemanticThemeSnapshot, TerminalPaletteProjection } from "../theme.ts";
 import type { PaneScopedTerminalAdapter } from "./pane-scoped-terminal-surface.tsx";
 import { PaneScopedTerminalSurface } from "./pane-scoped-terminal-surface.tsx";
 import { projectOpenTuiPaneFrames } from "./terminal-layout-projection.ts";
+import { MIN_PANE, type ResizeGuideRect } from "../resize-model.ts";
+
+type WorkspaceMouseEvent = {
+  readonly type: string;
+  readonly button?: number;
+  readonly x: number;
+  readonly y: number;
+  stopPropagation?: () => void;
+};
+
+export interface ApplicationPaneResizePreview {
+  readonly semanticPaneId: string;
+  readonly axis: "cols" | "rows";
+  readonly cells: number;
+  readonly guide: ResizeGuideRect;
+}
+
+interface ApplicationPaneSeparator {
+  readonly axis: "x" | "y";
+  readonly position: number;
+  readonly start: number;
+  readonly end: number;
+  readonly paneId: string;
+  readonly initialCells: number;
+  readonly siblingCells: number;
+}
 
 export interface ApplicationTerminalWorkspaceProps {
   readonly layout: OpenTuiWorkspaceLayoutSnapshot;
-  readonly adapter: PaneScopedTerminalAdapter | null;
+  readonly adapter: PaneScopedTerminalAdapter;
   readonly rendererEpoch: number;
   readonly width: number;
   readonly height: number;
@@ -20,20 +43,141 @@ export interface ApplicationTerminalWorkspaceProps {
   readonly theme: SemanticThemeSnapshot;
   readonly palette: TerminalPaletteProjection;
   readonly onSelectPane: (paneId: string) => void;
+  readonly onResizePreview?: (preview: ApplicationPaneResizePreview) => void;
+  readonly onResizePane?: (preview: ApplicationPaneResizePreview) => void;
 }
 
 function titleOf(layout: OpenTuiWorkspaceLayoutSnapshot["windows"][number]): string {
   return layout.windowName ?? layout.semanticWindowId ?? "window";
 }
 
-function paneForWindow(
-  layout: OpenTuiWorkspaceLayoutSnapshot["windows"][number],
-): string | null {
+function paneForWindow(layout: OpenTuiWorkspaceLayoutSnapshot["windows"][number]): string | null {
   return (
     layout.panes.find((pane) => pane.active && pane.pane)?.pane ??
     layout.panes.find((pane) => pane.pane)?.pane ??
     null
   );
+}
+
+function separatorAt(
+  frames: ReturnType<typeof projectOpenTuiPaneFrames>,
+  x: number,
+  y: number,
+): ApplicationPaneSeparator | null {
+  for (const before of frames) {
+    const after = frames.find(
+      (candidate) =>
+        candidate.left === before.left + before.width + 1 &&
+        y >= Math.max(before.top, candidate.top) &&
+        y < Math.min(before.top + before.height, candidate.top + candidate.height),
+    );
+    if (after && x === before.left + before.width) {
+      return Object.freeze({
+        axis: "x" as const,
+        position: before.left + before.width,
+        start: Math.max(before.top, after.top),
+        end: Math.min(before.top + before.height, after.top + after.height),
+        paneId: before.paneId,
+        initialCells: before.width,
+        siblingCells: after.width,
+      });
+    }
+  }
+  for (const before of frames) {
+    const after = frames.find(
+      (candidate) =>
+        candidate.top === before.top + before.height + 1 &&
+        x >= Math.max(before.left, candidate.left) &&
+        x < Math.min(before.left + before.width, candidate.left + candidate.width),
+    );
+    if (after && y === before.top + before.height) {
+      return Object.freeze({
+        axis: "y" as const,
+        position: before.top + before.height,
+        start: Math.max(before.left, after.left),
+        end: Math.min(before.left + before.width, after.left + after.width),
+        paneId: before.paneId,
+        initialCells: before.height,
+        siblingCells: after.height,
+      });
+    }
+  }
+  return null;
+}
+
+function separatorsFor(
+  frames: ReturnType<typeof projectOpenTuiPaneFrames>,
+): readonly ApplicationPaneSeparator[] {
+  const separators: ApplicationPaneSeparator[] = [];
+  for (const before of frames) {
+    const after = frames.find(
+      (candidate) =>
+        candidate.left === before.left + before.width + 1 &&
+        Math.max(before.top, candidate.top) <
+          Math.min(before.top + before.height, candidate.top + candidate.height),
+    );
+    if (after)
+      separators.push({
+        axis: "x",
+        position: before.left + before.width,
+        start: Math.max(before.top, after.top),
+        end: Math.min(before.top + before.height, after.top + after.height),
+        paneId: before.paneId,
+        initialCells: before.width,
+        siblingCells: after.width,
+      });
+  }
+  for (const before of frames) {
+    const after = frames.find(
+      (candidate) =>
+        candidate.top === before.top + before.height + 1 &&
+        Math.max(before.left, candidate.left) <
+          Math.min(before.left + before.width, candidate.left + candidate.width),
+    );
+    if (after)
+      separators.push({
+        axis: "y",
+        position: before.top + before.height,
+        start: Math.max(before.left, after.left),
+        end: Math.min(before.left + before.width, after.left + after.width),
+        paneId: before.paneId,
+        initialCells: before.height,
+        siblingCells: after.height,
+      });
+  }
+  return Object.freeze(separators);
+}
+
+function previewFor(
+  separator: ApplicationPaneSeparator,
+  pointer: number,
+  origin: number,
+): ApplicationPaneResizePreview {
+  const total = separator.initialCells + separator.siblingCells;
+  const cells = Math.max(
+    MIN_PANE,
+    Math.min(total - MIN_PANE, separator.initialCells + pointer - origin),
+  );
+  const delta = cells - separator.initialCells;
+  return Object.freeze({
+    semanticPaneId: separator.paneId,
+    axis: separator.axis === "x" ? "cols" : "rows",
+    cells,
+    guide:
+      separator.axis === "x"
+        ? Object.freeze({
+            x: separator.position + delta,
+            y: separator.start,
+            width: 1,
+            height: Math.max(1, separator.end - separator.start),
+          })
+        : Object.freeze({
+            x: separator.start,
+            y: separator.position + delta,
+            width: Math.max(1, separator.end - separator.start),
+            height: 1,
+          }),
+  });
 }
 
 /**
@@ -42,8 +186,87 @@ function paneForWindow(
  * replica reduction, authority queue, or optional tool surface.
  */
 export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspaceProps) {
+  const projectedFrames = () =>
+    projectOpenTuiPaneFrames(props.layout.current, {
+      width: props.width,
+      height: props.height,
+    });
+  const [hoveredSeparator, setHoveredSeparator] = createSignal<ApplicationPaneSeparator | null>(
+    null,
+  );
+  const [resizePreview, setResizePreview] = createSignal<ApplicationPaneResizePreview | null>(null);
+  let drag: {
+    readonly separator: ApplicationPaneSeparator;
+    readonly origin: number;
+    preview: ApplicationPaneResizePreview;
+  } | null = null;
+
+  const terminalPoint = (event: WorkspaceMouseEvent): { x: number; y: number } => ({
+    x: event.x,
+    y: event.y - 2,
+  });
+  const routePointer = (event: WorkspaceMouseEvent): void => {
+    event.stopPropagation?.();
+    const point = terminalPoint(event);
+    const isRelease = event.type === "up" || event.type === "drag-end" || event.type === "drop";
+    if (drag) {
+      if (event.type === "drag" || isRelease) {
+        const pointer = drag.separator.axis === "x" ? point.x : point.y;
+        const next = previewFor(drag.separator, pointer, drag.origin);
+        if (next.cells !== drag.preview.cells) {
+          drag.preview = next;
+          props.onResizePreview?.(next);
+          setResizePreview(next);
+        }
+        if (isRelease) {
+          const completed = drag.preview;
+          const changed = completed.cells !== drag.separator.initialCells;
+          drag = null;
+          setResizePreview(null);
+          setHoveredSeparator(null);
+          if (changed) props.onResizePane?.(completed);
+        }
+      }
+      return;
+    }
+    if (event.type === "move" || event.type === "over") {
+      setHoveredSeparator(separatorAt(projectedFrames(), point.x, point.y));
+      return;
+    }
+    if (event.type === "out") {
+      setHoveredSeparator(null);
+      return;
+    }
+    if (event.type !== "down" || event.button === 2) return;
+    const separator = separatorAt(projectedFrames(), point.x, point.y);
+    if (!separator) return;
+    const origin = separator.axis === "x" ? point.x : point.y;
+    const preview = previewFor(separator, origin, origin);
+    drag = { separator, origin, preview };
+    setHoveredSeparator(null);
+    setResizePreview(preview);
+  };
+  const guide = createMemo(() => {
+    const active = resizePreview();
+    if (active) return { rect: active.guide, active: true };
+    const hovered = hoveredSeparator();
+    return hovered
+      ? { rect: previewFor(hovered, hovered.position, hovered.position).guide, active: false }
+      : null;
+  });
+
   return (
     <>
+      <box
+        position="absolute"
+        left={0}
+        top={2}
+        width={props.width}
+        height={props.height}
+        onMouse={routePointer}
+        onMouseDown={routePointer}
+        onMouseUp={routePointer}
+      />
       <box
         position="absolute"
         left={0}
@@ -52,6 +275,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         height={1}
         backgroundColor={props.theme.roles.surfaces.panel}
         flexDirection="row"
+        onMouse={routePointer}
       >
         <Show
           when={props.layout.windows.length > 0}
@@ -77,74 +301,92 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           </For>
         </Show>
       </box>
-      <Show when={props.adapter}>
-        {(adapter) => (
-          <For
-            each={projectOpenTuiPaneFrames(props.layout.current, {
-              width: props.width,
-              height: props.height,
-            })}
+      <For each={projectedFrames()}>
+        {(frame) => (
+          <box
+            position="absolute"
+            left={frame.left}
+            top={frame.top + 2}
+            width={frame.width}
+            height={frame.height}
+            backgroundColor={props.theme.roles.surfaces.canvas}
+            onMouseDown={() => props.onSelectPane(frame.paneId)}
+            onMouse={routePointer}
           >
-            {(frame) => (
-              <box
-                position="absolute"
-                left={frame.left}
-                top={frame.top + 2}
-                width={frame.width}
-                height={frame.height}
-                backgroundColor={props.theme.roles.surfaces.canvas}
-                onMouseDown={() => props.onSelectPane(frame.paneId)}
+            <box
+              position="absolute"
+              left={0}
+              top={0}
+              width={frame.width}
+              height={1}
+              backgroundColor={props.theme.roles.surfaces.command}
+            >
+              <text
+                fg={
+                  props.focusedPane === frame.paneId
+                    ? props.theme.roles.text.link
+                    : props.theme.roles.text.secondary
+                }
               >
-                <box
-                  position="absolute"
-                  left={0}
-                  top={0}
-                  width={frame.width}
-                  height={1}
-                  backgroundColor={props.theme.roles.surfaces.command}
-                >
-                  <text
-                    fg={
-                      props.focusedPane === frame.paneId
-                        ? props.theme.roles.text.link
-                        : props.theme.roles.text.secondary
-                    }
-                  >
-                    {`${props.focusedPane === frame.paneId ? "●" : "○"} ${frame.paneId}`.slice(
-                      0,
-                      frame.width,
-                    )}
-                  </text>
-                </box>
-                <box
-                  position="absolute"
-                  left={0}
-                  top={1}
-                  width={frame.width}
-                  height={frame.contentHeight}
-                >
-                  <PaneScopedTerminalSurface
-                    adapter={adapter()}
-                    paneId={frame.paneId}
-                    width={frame.width}
-                    height={frame.contentHeight}
-                    defaultFg={props.palette.foreground}
-                    defaultBg={props.palette.background}
-                    terminalPalette={props.palette}
-                    searchHl={props.palette.searchHighlight}
-                    searchCur={props.palette.searchCurrent}
-                    scrollOffset={0}
-                    paneFocused={props.focusedPane === frame.paneId}
-                    sourceEpoch={props.rendererEpoch}
-                    selRange={null}
-                    search={null}
-                  />
-                </box>
-              </box>
-            )}
-          </For>
+                {`${props.focusedPane === frame.paneId ? "●" : "○"} ${frame.paneId}`.slice(
+                  0,
+                  frame.width,
+                )}
+              </text>
+            </box>
+            <box
+              position="absolute"
+              left={0}
+              top={1}
+              width={frame.width}
+              height={frame.contentHeight}
+            >
+              <PaneScopedTerminalSurface
+                adapter={props.adapter}
+                paneId={frame.paneId}
+                width={frame.width}
+                height={frame.contentHeight}
+                defaultFg={props.palette.foreground}
+                defaultBg={props.palette.background}
+                terminalPalette={props.palette}
+                searchHl={props.palette.searchHighlight}
+                searchCur={props.palette.searchCurrent}
+                scrollOffset={0}
+                paneFocused={props.focusedPane === frame.paneId}
+                sourceEpoch={props.rendererEpoch}
+                selRange={null}
+                search={null}
+              />
+            </box>
+          </box>
         )}
-      </Show>
+      </For>
+      <For each={separatorsFor(projectedFrames())}>
+        {(separator) => (
+          <box
+            position="absolute"
+            left={separator.axis === "x" ? separator.position : separator.start}
+            top={(separator.axis === "x" ? separator.start : separator.position) + 2}
+            width={separator.axis === "x" ? 1 : Math.max(1, separator.end - separator.start)}
+            height={separator.axis === "x" ? Math.max(1, separator.end - separator.start) : 1}
+            backgroundColor={props.theme.colors.accentMuted}
+            onMouse={routePointer}
+            onMouseDown={routePointer}
+            onMouseUp={routePointer}
+          />
+        )}
+      </For>
+      <box
+        position="absolute"
+        left={guide()?.rect.x ?? 0}
+        top={(guide()?.rect.y ?? 0) + 2}
+        width={guide()?.rect.width ?? 0}
+        height={guide()?.rect.height ?? 0}
+        backgroundColor={
+          guide()?.active ? props.theme.colors.accent : props.theme.colors.accentMuted
+        }
+        onMouse={routePointer}
+      />
     </>
   );
 }

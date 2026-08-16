@@ -1,6 +1,7 @@
 import { describe, expect, it, mock } from "bun:test";
 
 import { openPaneStreamRuntimeClient, type PaneStreamClientSocket } from "./pane-stream-client.ts";
+import { runtimeResourceSnapshot } from "./runtime-resource-ledger.ts";
 
 const INSTANCE = "11111111-1111-4111-8111-111111111111";
 const REQUEST = "22222222-2222-4222-8222-222222222222";
@@ -12,6 +13,7 @@ class FakeSocket implements PaneStreamClientSocket {
   readyState = 1;
   readonly sent: unknown[] = [];
   readonly listeners = new Map<string, Set<(event: { data?: unknown }) => void>>();
+  closeCalls = 0;
   closed: { code?: number; reason?: string } | null = null;
   onSend: ((frame: Record<string, unknown>) => void) | null = null;
 
@@ -20,12 +22,16 @@ class FakeSocket implements PaneStreamClientSocket {
     listeners.add(listener);
     this.listeners.set(type, listeners);
   }
+  removeEventListener(type: string, listener: (event: { data?: unknown }) => void): void {
+    this.listeners.get(type)?.delete(listener);
+  }
   send(data: string): void {
     const frame = JSON.parse(data) as Record<string, unknown>;
     this.sent.push(frame);
     this.onSend?.(frame);
   }
   close(code?: number, reason?: string): void {
+    this.closeCalls += 1;
     this.closed = { code, reason };
   }
   emit(type: string, data?: unknown): void {
@@ -73,6 +79,7 @@ function options(socket: FakeSocket, overrides: Record<string, unknown> = {}) {
       expect(headers).toEqual({
         Origin: "http://127.0.0.1:5173",
         "X-Tmux-Ide-Host-Client-Id": "tui:one",
+        "X-Tmux-Ide-Request-Id": REQUEST,
       });
       queueMicrotask(() => socket.emit("open"));
       return socket;
@@ -95,7 +102,81 @@ function options(socket: FakeSocket, overrides: Record<string, unknown> = {}) {
 }
 
 describe("semantic pane-stream runtime client", () => {
-  it("does not expose an interactive client before initial input authority is granted", async () => {
+  it("propagates AbortSignal through capability issuance", async () => {
+    const socket = new FakeSocket();
+    const controller = new AbortController();
+    let observedSignal: AbortSignal | null = null;
+    const fetch = mock(
+      async (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        observedSignal = init?.signal as AbortSignal;
+        return await new Promise<Response>((_resolve, reject) => {
+          observedSignal?.addEventListener(
+            "abort",
+            () => reject(observedSignal?.reason ?? new DOMException("aborted", "AbortError")),
+            { once: true },
+          );
+        });
+      },
+    ) as typeof globalThis.fetch;
+    const opening = openPaneStreamRuntimeClient(
+      options(socket, { signal: controller.signal, fetch }),
+    );
+    await Bun.sleep(0);
+    expect(observedSignal).toBe(controller.signal);
+    controller.abort(new Error("retired issue"));
+    await expect(opening).rejects.toThrow("retired issue");
+    expect(socket.closeCalls).toBe(0);
+  });
+
+  it("rejects direct readiness when initial input authority is denied", async () => {
+    const baseline = runtimeResourceSnapshot();
+    const socket = new FakeSocket();
+    socket.onSend = (frame) => {
+      if (frame.type === "redeem") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "ready",
+            protocolVersion: 1,
+            daemonInstanceId: INSTANCE,
+            requestId: REQUEST,
+            panes: ["pane.editor"],
+            effectiveViewerMode: "interactive",
+          }),
+        );
+      } else if (frame.type === "authority-request") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "authority-receipt",
+            requestId: frame.requestId,
+            authority: "input",
+            status: "rejected",
+            lease: null,
+            snapshot: {
+              generation: INSTANCE,
+              session: "alpha",
+              revision: 1,
+              nativeGeometryYieldUntilMs: 0,
+              owners: { input: "another-client", focus: null, geometry: null },
+              clients: [],
+            },
+          }),
+        );
+      }
+    };
+
+    await expect(openPaneStreamRuntimeClient(options(socket))).rejects.toThrow(
+      "input authority was denied",
+    );
+    expect(socket.closeCalls).toBe(1);
+    expect([...socket.listeners.values()].every((listeners) => listeners.size === 0)).toBe(true);
+    const settled = runtimeResourceSnapshot();
+    expect(settled["pane-stream-socket"].active).toBe(baseline["pane-stream-socket"].active);
+    expect(settled["socket-listener"].active).toBe(baseline["socket-listener"].active);
+    expect(settled["runtime-timer"].active).toBe(baseline["runtime-timer"].active);
+  });
+
+  it("exposes verified display readiness before lazily acquiring input authority", async () => {
+    const baseline = runtimeResourceSnapshot();
     const socket = new FakeSocket();
     let authorityRequest: Record<string, unknown> | null = null;
     socket.onSend = (frame) => {
@@ -113,13 +194,20 @@ describe("semantic pane-stream runtime client", () => {
       }
       if (frame.type === "authority-request") authorityRequest = frame;
     };
-    let resolved = false;
-    const opening = openPaneStreamRuntimeClient(options(socket)).then((client) => {
-      resolved = true;
-      return client;
-    });
+    const opening = openPaneStreamRuntimeClient(
+      options(socket, { requestInitialInputAuthority: false }),
+    );
     await Bun.sleep(0);
-    expect(resolved).toBe(false);
+    const client = await opening;
+    expect(authorityRequest).toBeNull();
+    expect(
+      await client.sendTerminalInput(
+        { workspaceName: "alpha", semanticPaneId: "pane.editor" },
+        { kind: "text", data: "blocked" },
+      ),
+    ).toBe("authority-lost");
+    const authority = client.requestAuthority("input");
+    await Bun.sleep(0);
     expect(authorityRequest).toMatchObject({ type: "authority-request", authority: "input" });
     socket.message({
       type: "authority-receipt",
@@ -151,11 +239,18 @@ describe("semantic pane-stream runtime client", () => {
         ],
       },
     });
-    const client = await opening;
+    await authority;
     expect(client.authoritySnapshot?.owners.input).toBe("tui:one");
     client.sendText("pane.editor", "immediate");
     expect(socket.sent.at(-1)).toMatchObject({ type: "input", data: "immediate" });
     client.close();
+    client.close();
+    expect(socket.closeCalls).toBe(1);
+    expect([...socket.listeners.values()].every((listeners) => listeners.size === 0)).toBe(true);
+    const settled = runtimeResourceSnapshot();
+    expect(settled["pane-stream-socket"].active).toBe(baseline["pane-stream-socket"].active);
+    expect(settled["socket-listener"].active).toBe(baseline["socket-listener"].active);
+    expect(settled["runtime-timer"].active).toBe(baseline["runtime-timer"].active);
   });
 
   it("resolves only after verified ready and decodes delivery chunks", async () => {
@@ -234,7 +329,43 @@ describe("semantic pane-stream runtime client", () => {
       }
     };
     const onTerminalDelivery = mock();
-    const client = await openPaneStreamRuntimeClient(options(socket, { onTerminalDelivery }));
+    const onTerminalFrameArrival = mock();
+    const client = await openPaneStreamRuntimeClient(
+      options(socket, { onTerminalDelivery, onTerminalFrameArrival }),
+    );
+    socket.message({
+      type: "terminal-delivery-envelope",
+      pane: "pane.editor",
+      envelope: {
+        type: "terminal.delivery",
+        workspaceName: "alpha",
+        semanticPaneId: "pane.editor",
+        generation: INSTANCE,
+        incarnation: `${INSTANCE}:0`,
+        deliveryNonce: "00000000-0000-4000-8000-000000000097",
+        transactionId: TRANSACTION,
+        performanceTraceId: "00000000-0000-4000-8000-000000000099",
+        protocolVersion: 1,
+        encoding: "semantic-v1",
+        frame: "seed",
+        baseRevision: null,
+        canonicalRevision: 0,
+        canonicalStateHash: "0000000000000000",
+        representationHash: "0000000000000000",
+        representationBytes: 0,
+        chunkCount: 1,
+        canonicalEquivalent: true,
+        history: "complete",
+        richPlacements: false,
+      },
+    });
+    expect(onTerminalFrameArrival).toHaveBeenCalledTimes(1);
+    expect(onTerminalFrameArrival.mock.calls[0]?.[0]).toMatchObject({
+      pane: "pane.editor",
+      traceId: "00000000-0000-4000-8000-000000000099",
+    });
+    expect(onTerminalFrameArrival.mock.calls[0]?.[0].atMicros).toBeGreaterThan(0);
+    expect(await client.requestAuthority("input")).not.toBeNull();
     const textSent = client.sendTerminalInput(
       { workspaceName: "alpha", semanticPaneId: "pane.editor" },
       { kind: "text", data: "echo hi" },
@@ -325,7 +456,50 @@ describe("semantic pane-stream runtime client", () => {
     client.close();
   });
 
+  it("does not reacquire geometry when the caller already owns it", async () => {
+    const socket = new FakeSocket();
+    socket.onSend = (frame) => {
+      if (frame.type === "redeem") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "ready",
+            protocolVersion: 1,
+            daemonInstanceId: INSTANCE,
+            requestId: REQUEST,
+            panes: ["pane.editor"],
+            effectiveViewerMode: "interactive",
+            authority: {
+              generation: INSTANCE,
+              session: "alpha",
+              revision: 2,
+              nativeGeometryYieldUntilMs: 0,
+              owners: { input: null, focus: null, geometry: "tui:one" },
+              clients: [],
+            },
+          }),
+        );
+      } else if (frame.type === "viewport") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "viewport-ack",
+            seq: frame.seq,
+            cols: frame.cols,
+            rows: frame.rows,
+          }),
+        );
+      }
+    };
+    const client = await openPaneStreamRuntimeClient(
+      options(socket, { requestInitialInputAuthority: false }),
+    );
+    await client.fitViewport(120, 40);
+    expect(socket.sent.filter((frame) => frame.type === "authority-request")).toHaveLength(0);
+    expect(socket.sent.filter((frame) => frame.type === "viewport")).toHaveLength(1);
+    client.close();
+  });
+
   it("bounds unacknowledged input and retires every pending write exactly once", async () => {
+    const baseline = runtimeResourceSnapshot();
     const socket = new FakeSocket();
     socket.onSend = (frame) => {
       if (frame.type === "redeem") {
@@ -367,6 +541,7 @@ describe("semantic pane-stream runtime client", () => {
       }
     };
     const client = await openPaneStreamRuntimeClient(options(socket));
+    expect(await client.requestAuthority("input")).not.toBeNull();
     const pending = Array.from({ length: 256 }, (_, index) =>
       client.sendTerminalInput(
         { workspaceName: "alpha", semanticPaneId: "pane.editor" },
@@ -382,12 +557,72 @@ describe("semantic pane-stream runtime client", () => {
     expect(
       socket.sent.filter((frame) => (frame as { type?: string }).type === "input"),
     ).toHaveLength(256);
+    expect(runtimeResourceSnapshot()["runtime-timer"].active).toBe(
+      baseline["runtime-timer"].active + 256,
+    );
 
     client.close();
     const settled = await Promise.allSettled(pending);
     expect(settled.every((result) => result.status === "rejected")).toBe(true);
     socket.message({ type: "input-ack", pane: "pane.editor", seq: 256 });
     expect(socket.closed).toEqual({ code: 1000, reason: "client-closed" });
+    expect(runtimeResourceSnapshot()["runtime-timer"].active).toBe(
+      baseline["runtime-timer"].active,
+    );
+  });
+
+  it("ledgers and retires every pending operation timer", async () => {
+    const baseline = runtimeResourceSnapshot();
+    const socket = new FakeSocket();
+    socket.onSend = (frame) => {
+      if (frame.type !== "redeem") return;
+      queueMicrotask(() =>
+        socket.message({
+          type: "ready",
+          protocolVersion: 1,
+          daemonInstanceId: INSTANCE,
+          requestId: REQUEST,
+          panes: ["pane.editor"],
+          effectiveViewerMode: "interactive",
+          authority: {
+            generation: INSTANCE,
+            session: "alpha",
+            revision: 1,
+            nativeGeometryYieldUntilMs: 0,
+            owners: { input: "tui:one", focus: null, geometry: "tui:one" },
+            clients: [],
+          },
+        }),
+      );
+    };
+    const client = await openPaneStreamRuntimeClient(
+      options(socket, { requestInitialInputAuthority: false }),
+    );
+    const pending = [
+      client.sendTerminalInput(
+        { workspaceName: "alpha", semanticPaneId: "pane.editor" },
+        { kind: "text", data: "pending" },
+      ),
+      client.fitViewport(120, 40),
+      client.submitIntent(OPERATION, {
+        verb: "workspace.pane.select",
+        workspaceName: "alpha",
+        semanticPaneId: "pane.editor",
+      }),
+      client.requestAuthority("focus"),
+      client.releaseAuthority("input"),
+    ];
+    await Bun.sleep(0);
+    expect(runtimeResourceSnapshot()["runtime-timer"].active).toBe(
+      baseline["runtime-timer"].active + 5,
+    );
+    client.close();
+    expect(
+      (await Promise.allSettled(pending)).every((result) => result.status === "rejected"),
+    ).toBe(true);
+    expect(runtimeResourceSnapshot()["runtime-timer"].active).toBe(
+      baseline["runtime-timer"].active,
+    );
   });
 
   it("rejects a ready frame from another generation or mode", async () => {

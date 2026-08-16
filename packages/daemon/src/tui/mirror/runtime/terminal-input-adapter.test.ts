@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  terminalInputForOpenTuiKey,
-  terminalInputsForPaste,
-} from "./terminal-input-adapter.ts";
+import { terminalInputForOpenTuiKey, terminalInputsForPaste } from "./terminal-input-adapter.ts";
 
-const key = (name: string, overrides: Partial<{ ctrl: boolean; meta: boolean; shift: boolean }> = {}) => ({
+const key = (
+  name: string,
+  overrides: Partial<{ ctrl: boolean; meta: boolean; shift: boolean }> = {},
+) => ({
   name,
   ctrl: false,
   meta: false,

@@ -49,6 +49,7 @@ import {
   strictJsonParse,
 } from "../attachments/admission-util.ts";
 import type { DirectTerminalSocket } from "../attachments/direct-websocket.ts";
+import type { SessionRuntimeObservability } from "../session-runtime/runtime-observability.ts";
 import {
   PaneStreamLeaseError,
   type IssuedPaneStreamLease,
@@ -199,6 +200,8 @@ export interface PaneStreamAdmissionCoordinatorOptions {
   readonly inputRateWindowMs?: number;
   readonly now?: () => number;
   readonly schedule?: (callback: () => void, delayMs: number) => () => void;
+  /** Opt-in daemon-local timing observer; disabled in normal production. */
+  readonly observability?: SessionRuntimeObservability;
 }
 
 export interface SessionRuntimePaneStreamTransportBinding {
@@ -315,6 +318,7 @@ export class PaneStreamAdmissionCoordinator {
   readonly #inputRateWindowMs: number;
   readonly #now: () => number;
   readonly #schedule: (callback: () => void, delayMs: number) => () => void;
+  readonly #observability: SessionRuntimeObservability | undefined;
   readonly #ledger: PaneStreamWireLedger;
   readonly #pending = new Map<string, PendingTicket>();
   readonly #preAuth = new Set<PreAuthAdmission>();
@@ -352,13 +356,29 @@ export class PaneStreamAdmissionCoordinator {
     this.#inputRateWindowMs = boundedInteger(options.inputRateWindowMs, 1_000, 60_000);
     this.#now = options.now ?? Date.now;
     this.#schedule = options.schedule ?? defaultSchedule;
+    this.#observability = options.observability;
   }
 
   issue(
     request: PaneStreamLeaseRequest,
     context: PaneStreamIssueContext,
   ): Promise<PaneStreamDescriptor> {
+    const trace = this.#observability?.beginTrace(
+      "pane-stream-connect",
+      { generation: this.#instanceId, incarnation: null },
+      context.requestId,
+    );
+    const queuedAtMicros = trace ? this.#observability!.nowMicros() : 0;
     return this.#exclusive(async () => {
+      const admittedAtMicros = trace ? this.#observability!.nowMicros() : 0;
+      if (trace)
+        this.#observability!.recordSpan(
+          "transport",
+          "pane-stream-issue-queue",
+          queuedAtMicros,
+          admittedAtMicros,
+          trace,
+        );
       if (this.#shuttingDown) {
         throw new PaneStreamAdmissionError(
           "daemon-shutting-down",
@@ -383,7 +403,16 @@ export class PaneStreamAdmissionCoordinator {
       // failure and never reads as absence.
       let described: MirrorSessionDescription;
       try {
+        const describeStartedAtMicros = trace ? this.#observability!.nowMicros() : 0;
         described = await this.#mirror.describeSession(context.sessionName);
+        if (trace)
+          this.#observability!.recordSpan(
+            "transport",
+            "pane-stream-describe-session",
+            describeStartedAtMicros,
+            this.#observability!.nowMicros(),
+            trace,
+          );
       } catch {
         throw new PaneStreamAdmissionError(
           "stream-unavailable",
@@ -450,6 +479,14 @@ export class PaneStreamAdmissionCoordinator {
         Math.max(1, descriptor.expiresAt - this.#now()),
       );
       this.#pending.set(pending.leaseId, pending);
+      if (trace)
+        this.#observability!.recordSpan(
+          "transport",
+          "pane-stream-issue-total",
+          admittedAtMicros,
+          this.#observability!.nowMicros(),
+          trace,
+        );
       return Object.freeze({
         protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
         webSocketUrl: this.#webSocketUrl,
@@ -468,6 +505,7 @@ export class PaneStreamAdmissionCoordinator {
     readonly protocols: readonly string[];
     readonly origin: string | null | undefined;
     readonly hostClientId?: string | undefined;
+    readonly requestId?: string | undefined;
   }): PaneStreamUpgradeDecision {
     if (this.#shuttingDown) {
       return { accepted: false, code: "daemon-shutting-down", httpStatus: 503 };
@@ -488,14 +526,34 @@ export class PaneStreamAdmissionCoordinator {
     if (input.hostClientId && !hostClientId) {
       return { accepted: false, code: "origin-rejected", httpStatus: 403 };
     }
+    const requestId = input.requestId ? z.uuid().safeParse(input.requestId).data : undefined;
+    if (input.requestId && !requestId) {
+      return { accepted: false, code: "origin-rejected", httpStatus: 403 };
+    }
     if (
       ![...this.#pending.values()].some(
         (pending) =>
           pending.origin === origin &&
+          (!requestId || pending.requestId === requestId) &&
           (!hostClientId || pending.descriptor.hostClientId === hostClientId),
       )
     ) {
       return { accepted: false, code: "origin-rejected", httpStatus: 403 };
+    }
+    if (requestId && this.#observability?.enabled) {
+      const trace = this.#observability.beginTrace(
+        "pane-stream-connect",
+        { generation: this.#instanceId, incarnation: null },
+        requestId,
+      );
+      const atMicros = this.#observability.nowMicros();
+      this.#observability.recordSpan(
+        "transport",
+        "pane-stream-upgrade-arrival",
+        atMicros,
+        atMicros,
+        trace,
+      );
     }
     if (this.#preAuth.size >= this.#maxPreAuth) {
       return { accepted: false, code: "preauth-capacity-exhausted", httpStatus: 503 };
@@ -644,6 +702,7 @@ export class PaneStreamAdmissionCoordinator {
             inputRateWindowMs: this.#inputRateWindowMs,
             now: this.#now,
             schedule: this.#schedule,
+            observability: this.#observability,
             onRetire: (connection) => this.#trackRetiringRelease(connection),
           });
         } catch (error) {
@@ -854,6 +913,7 @@ interface LiveConnectionOptions {
   readonly inputRateWindowMs: number;
   readonly now: () => number;
   readonly schedule: (callback: () => void, delayMs: number) => () => void;
+  readonly observability?: SessionRuntimeObservability;
   readonly onRetire: (connection: PaneStreamLiveConnection) => void;
 }
 
@@ -905,6 +965,7 @@ export class PaneStreamLiveConnection {
   readonly #inputRateWindowMs: number;
   readonly #now: () => number;
   readonly #schedule: (callback: () => void, delayMs: number) => () => void;
+  readonly #observability: SessionRuntimeObservability | undefined;
   readonly #onRetire: (connection: PaneStreamLiveConnection) => void;
   readonly #panes = new Map<string, PaneChannel>();
   readonly #sendQueue: QueuedSend[] = [];
@@ -946,6 +1007,7 @@ export class PaneStreamLiveConnection {
     this.#now = options.now;
     this.#inputWindowStartedAt = this.#now();
     this.#schedule = options.schedule;
+    this.#observability = options.observability;
     this.#onRetire = options.onRetire;
     for (const pane of options.descriptor.panes) {
       this.#panes.set(pane, {
@@ -1224,11 +1286,28 @@ export class PaneStreamLiveConnection {
       // SessionRuntime keys canonical replicas by the tmux session, while the
       // public pane-stream lease is keyed by its workspace identity. Translate
       // at this boundary so the renderer has one coherent address vocabulary.
+      const trace = message.performanceTraceId
+        ? this.#observability?.beginTrace(
+            "terminal-input-to-paint",
+            { generation: message.generation, incarnation: message.incarnation },
+            message.performanceTraceId,
+          )
+        : null;
+      const startedAtMicros = trace ? this.#observability!.nowMicros() : 0;
       this.#sendFrame(pane, {
         type: "terminal-delivery-envelope",
         pane,
         envelope: { ...message, workspaceName: this.#descriptor.workspaceName },
       });
+      if (trace) {
+        this.#observability!.recordSpan(
+          "transport",
+          "pane-stream-socket-send",
+          startedAtMicros,
+          this.#observability!.nowMicros(),
+          trace,
+        );
+      }
     } else if (message.type === "terminal.delivery.chunk") {
       this.#sendFrame(pane, {
         type: "terminal-delivery-chunk",

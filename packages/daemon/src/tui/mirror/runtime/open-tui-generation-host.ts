@@ -24,6 +24,7 @@ import { ensureOpenTuiSessionWorkspace } from "../configless-session-bootstrap.t
 import {
   OPEN_TUI_HOST_CLIENT_ID,
   connectOpenTuiWorkspaceRuntimePort,
+  type ConnectOpenTuiWorkspaceRuntimePortOptions,
   type OpenTuiWorkspaceRuntimePort,
 } from "../open-tui-workspace-runtime-port.ts";
 import {
@@ -52,7 +53,7 @@ export interface OpenTuiGenerationBundle {
   readonly adapter: TerminalFastLaneRendererAdapter;
   /** Revoke input, geometry and daemon routing while retaining the painted frame. */
   revoke(): void;
-  dispose(): void;
+  dispose(): Promise<void>;
 }
 
 export type OpenTuiGenerationHostStatus =
@@ -79,7 +80,7 @@ interface BundleCallbacks {
   readonly didRetireRuntime: () => void;
   readonly didFaultRuntime: (error: Error) => void;
   readonly didRuntimeDiagnostic: (
-    phase: "layout" | "seed" | "physical-ready" | "coherent",
+    phase: Parameters<NonNullable<ConnectOpenTuiWorkspaceRuntimePortOptions["onDiagnostic"]>>[0],
     details: Readonly<Record<string, unknown>>,
   ) => void;
 }
@@ -106,7 +107,7 @@ export interface OpenTuiGenerationHost {
   getSnapshot(): OpenTuiGenerationHostSnapshot;
   subscribe(listener: (snapshot: OpenTuiGenerationHostSnapshot) => void): () => void;
   start(): Promise<boolean>;
-  dispose(): void;
+  dispose(): Promise<void>;
 }
 
 function productionOwnerActions(): WorkspaceClientOwnerActionPort {
@@ -136,47 +137,85 @@ function buildProductionBundle(
   callbacks: BundleCallbacks,
 ): OpenTuiGenerationBundle {
   if (!connection.routing) throw new Error("OpenTUI generation requires verified runtime routing");
-  const client = createWorkspaceClient({
+  let fastLane: OpenTuiWorkspaceTerminalFastLane | null = null;
+  const candidateStages = new WeakMap<OpenTuiWorkspaceRuntimePort, () => void>();
+  let client!: OpenTuiProductionWorkspaceClient;
+  client = createWorkspaceClient({
     target: connection.target,
     ports: {
       shell: connection.transport,
-      connectRuntime: (_target, inventory, signal) =>
-        connectOpenTuiWorkspaceRuntimePort({
-          inventory,
-          routing: connection.routing!,
-          signal,
-          onFault: callbacks.didFaultRuntime,
-          onDiagnostic: callbacks.didRuntimeDiagnostic,
-        }),
-      didActivateRuntime: (runtime) =>
-        callbacks.didActivateRuntime(runtime as OpenTuiWorkspaceRuntimePort),
+      connectRuntime: async (_target, inventory, signal, prepare) => {
+        if (!fastLane) throw new Error("OpenTUI terminal fast lane is not initialized");
+        // Candidate interests must exist before WorkspaceClient asks the
+        // runtime to prepare. Staging is additive: the incumbent inventory and
+        // its exact retained frame remain intact until atomic activation.
+        const releaseStage = fastLane.lane.stagePanes(inventory.semanticPaneIds);
+        try {
+          const runtime = await connectOpenTuiWorkspaceRuntimePort({
+            inventory,
+            routing: connection.routing!,
+            signal,
+            prepareRuntime: prepare,
+            onFault: callbacks.didFaultRuntime,
+            onDiagnostic: callbacks.didRuntimeDiagnostic,
+          });
+          candidateStages.set(runtime, releaseStage);
+          void runtime.closed
+            .finally(() => {
+              if (candidateStages.get(runtime) !== releaseStage) return;
+              candidateStages.delete(runtime);
+              releaseStage();
+            })
+            .catch(() => undefined);
+          return runtime;
+        } catch (error) {
+          releaseStage();
+          throw error;
+        }
+      },
+      didActivateRuntime: (runtime, inventory) => {
+        // Commit before releasing the additive candidate stage. This is the
+        // sole point at which removed incumbent panes may be trimmed.
+        fastLane?.lane.retainPanes(inventory.semanticPaneIds);
+        const candidate = runtime as OpenTuiWorkspaceRuntimePort;
+        const releaseStage = candidateStages.get(candidate);
+        candidateStages.delete(candidate);
+        releaseStage?.();
+        callbacks.didActivateRuntime(runtime as OpenTuiWorkspaceRuntimePort);
+      },
       didRetireRuntime: callbacks.didRetireRuntime,
       actions: productionOwnerActions(),
     },
   });
-  const fastLane = createOpenTuiWorkspaceTerminalFastLane(client, OPEN_TUI_HOST_CLIENT_ID);
-  const adapter = new TerminalFastLaneRendererAdapter(fastLane.lane);
+  fastLane = createOpenTuiWorkspaceTerminalFastLane(client, OPEN_TUI_HOST_CLIENT_ID);
+  const activeFastLane = fastLane;
+  const adapter = new TerminalFastLaneRendererAdapter(activeFastLane.lane);
   let revoked = false;
   let disposed = false;
+  let revokePromise: Promise<void> | null = null;
   const revoke = (): void => {
     if (revoked) return;
     revoked = true;
-    fastLane.dispose();
-    client.dispose();
+    activeFastLane.dispose();
+    revokePromise = client.dispose();
     connection.dispose();
   };
   return {
     connection,
     client,
-    fastLane,
+    fastLane: activeFastLane,
     adapter,
     revoke,
-    dispose() {
-      if (disposed) return;
+    async dispose() {
+      if (disposed) {
+        await revokePromise;
+        return;
+      }
       disposed = true;
       // Renderer observers release before their source and authority.
       adapter.dispose();
       revoke();
+      await revokePromise;
     },
   };
 }
@@ -271,6 +310,7 @@ export function createOpenTuiGenerationHost(
   let canonicalObserverFlight: Promise<void> | null = null;
   let stopCanonicalObserver: (() => void | Promise<void>) | null = null;
   let requestedCanonicalGeneration: string | null = null;
+  const retirementPromises = new Set<Promise<void>>();
 
   const publish = (next: OpenTuiGenerationHostSnapshot): void => {
     if (disposed) return;
@@ -290,7 +330,8 @@ export function createOpenTuiGenerationHost(
     owner.settleReady(false);
     owner.stopLifecycle();
     owner.stopPresentation?.();
-    owner.bundle.dispose();
+    const retirement = owner.bundle.dispose().finally(() => retirementPromises.delete(retirement));
+    retirementPromises.add(retirement);
   };
 
   const activate = (owner: Candidate, runtime: OpenTuiWorkspaceRuntimePort | null): void => {
@@ -534,14 +575,17 @@ export function createOpenTuiGenerationHost(
       await ensureCanonicalObserver();
       return connectFresh();
     },
-    dispose() {
-      if (disposed) return;
+    async dispose() {
+      if (disposed) {
+        await Promise.all([...retirementPromises]);
+        return;
+      }
       disposed = true;
       epoch += 1;
       canonicalObserverEpoch += 1;
       const stopObserver = stopCanonicalObserver;
       stopCanonicalObserver = null;
-      void Promise.resolve(stopObserver?.());
+      const observerStopped = Promise.resolve(stopObserver?.());
       coordinator.dispose();
       const pending = candidate;
       const retained = active;
@@ -549,7 +593,10 @@ export function createOpenTuiGenerationHost(
       active = null;
       disposeCandidate(pending);
       if (retained !== pending) disposeCandidate(retained);
-      presentation.dispose();
+      // The application root owns the reusable presentation. A session target
+      // replacement may adopt a new host before this fixed-session host
+      // retires; disposing the shared presentation here would tear down the
+      // newly active session.
       snapshot = Object.freeze({ ...EMPTY_SNAPSHOT, status: "disposed" });
       for (const listener of [...listeners]) {
         try {
@@ -559,6 +606,8 @@ export function createOpenTuiGenerationHost(
         }
       }
       listeners.clear();
+      await observerStopped;
+      await Promise.all([...retirementPromises]);
     },
   };
 }

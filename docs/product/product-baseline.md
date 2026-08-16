@@ -1,7 +1,7 @@
 # M59 product baseline
 
-Status: **not product-qualified** (observed 2026-08-14 from parent revision
-`d212607d`). The
+Status: **not product-qualified** (observed 2026-08-16 from the current M59.4
+worktree). The
 machine-readable source is [`product-baseline.json`](./product-baseline.json)
 and is emitted by `pnpm product:testdrive inventory --json`.
 
@@ -43,10 +43,20 @@ socket. On 2026-08-14 it measured:
 | drag responsiveness             | not measured               |
 | whole portable report           | passed with limitations    |
 
-The source baseline is equally explicit: the OpenTUI root is 9,029 lines; the
-Web application shell is 2,217 lines; its tiled workspace is 2,326 lines; and
-the OpenTUI root has four remaining direct-tmux command sites. These are M59
-deletion targets, not accepted architecture.
+The real ProductRig now measures the previously missing product boundaries. Its
+latest complete journey passed 3/3 coherent pane seeds, 2/2 visible pane bodies,
+Web↔TUI authority and restart, 20/20 runtime-resource retirements, resize preview
+(0.527 ms p95), window switching (44.276 ms p95), and a 10.323 second idle period
+with zero frames or paints. It remains red on correlated input paint (214.105 ms
+p95), warm connection-to-host publication (1,566 ms p95), fresh-process
+launch-to-host publication (2,955 ms p95), and the bounded heap endpoint series
+(86,030,345 bytes growth).
+
+The source baseline is equally explicit: the 9,027-line legacy OpenTUI root is
+outside the production boot graph; the Web application shell is 2,217 lines;
+and its tiled workspace is 2,326 lines. The new production OpenTUI composition
+has no known client-side direct-tmux bypass. The legacy root and duplicate Web
+client remain M59 deletion targets, not accepted final architecture.
 
 ## Deterministic defect journeys
 
@@ -56,6 +66,9 @@ that an unmeasured boundary stays red:
 
 ```bash
 pnpm product:testdrive inventory --json
+pnpm product:testdrive start --json
+pnpm product:testdrive diagnose --json
+pnpm product:testdrive stop --json
 pnpm measure:performance-portable
 wc -l packages/daemon/src/tui/mirror/runtime/application-root.tsx
 ```

@@ -7,6 +7,7 @@
 
 import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
+import { createWriteStream } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { createRequire } from "node:module";
 import type { Socket } from "node:net";
@@ -74,6 +75,7 @@ import {
   type PaneStreamRuntime,
 } from "../terminal/pane-stream/runtime.ts";
 import { SessionRuntimeRegistry } from "../terminal/session-runtime/registry.ts";
+import { createSessionRuntimeObservability } from "../terminal/session-runtime/runtime-observability.ts";
 import { createSessionRuntimeMultiplexerBackend } from "../terminal/session-runtime/multiplexer-backend.ts";
 import { PaneSourceCredentialAuthority } from "./pane-source-credentials.ts";
 import { setActivationBackend, type ProjectActivationOptions } from "./active-projects.ts";
@@ -871,6 +873,7 @@ async function startHttpServer({
       Promise.resolve().then(() => paneStreamBoundary.close()),
       Promise.resolve().then(() => closeClients()),
       ...[...sockets].map((socket) => Promise.resolve().then(() => socket.destroy())),
+      ...(server.listening ? [waitForServerClose(server)] : []),
       Promise.resolve().then(() => closeWsServers()),
     ]);
     throw error;
@@ -1053,12 +1056,14 @@ export async function startEmbeddedDaemon(
     });
     let sessionRuntimeRegistry: SessionRuntimeRegistry | null = null;
     let workspaceOpenHandoff: WorkspaceOpenHandoffCoordinator | null = null;
+    let terminalInventoryRuntime: WorkspaceTerminalInventoryRuntime | null = null;
     const externalInteractionObserver = new TmuxExternalInteractionObserver({
       daemonInstanceId: instanceId,
       internalReadOwnerToken: localBypassToken,
       registry: workspaceRegistry,
       tmuxAuthority,
       onObserved: ({ workspaceName, semanticPaneId, operationKind, operationId }) => {
+        if (operationKind !== "workspace.pane.read") terminalInventoryRuntime?.invalidate();
         if (operationId) {
           const consumed =
             sessionRuntimeRegistry?.observeTmuxInteraction({
@@ -1092,9 +1097,15 @@ export async function startEmbeddedDaemon(
         return false;
       },
     });
-    let terminalInventoryRuntime: WorkspaceTerminalInventoryRuntime | null = null;
     let terminalAttachmentRuntime: NativeTerminalAttachmentRuntime | null = null;
     let paneStreamRuntime: PaneStreamRuntime | null = null;
+    let runtimeTraceStream: ReturnType<typeof createWriteStream> | null = null;
+    const closeRuntimeTraceStream = async (): Promise<void> => {
+      const stream = runtimeTraceStream;
+      runtimeTraceStream = null;
+      if (!stream || stream.closed || stream.destroyed) return;
+      await new Promise<void>((resolve) => stream.end(resolve));
+    };
     let startedServer: Awaited<ReturnType<typeof startHttpServer>>;
     try {
       const selector = tmuxAuthority.socketSelector;
@@ -1109,8 +1120,35 @@ export async function startEmbeddedDaemon(
           intent,
         });
       };
+      const runtimeTracePath = process.env.TMUX_IDE_SESSION_RUNTIME_TRACE_LOG;
+      runtimeTraceStream = runtimeTracePath
+        ? createWriteStream(runtimeTracePath, { flags: "a", highWaterMark: 64 * 1_024 })
+        : null;
+      let runtimeTraceSaturated = false;
+      runtimeTraceStream?.on("error", () => {
+        runtimeTraceSaturated = true;
+      });
+      runtimeTraceStream?.on("drain", () => {
+        runtimeTraceSaturated = false;
+      });
+      const runtimeObservability = runtimeTracePath
+        ? createSessionRuntimeObservability({
+            // The JSONL stream is the qualifying record. Keep only a small
+            // in-memory diagnostic tail so a sustained terminal flood cannot
+            // retain tens of thousands of frozen span objects or induce GC
+            // pauses on the daemon's input/output event loop.
+            capacity: 1_024,
+            onSpan: (span) => {
+              if (!runtimeTraceStream || runtimeTraceSaturated) return;
+              runtimeTraceSaturated = !runtimeTraceStream.write(
+                `${JSON.stringify({ version: 1, type: "performance.stage", ...span })}\n`,
+              );
+            },
+          })
+        : undefined;
       sessionRuntimeRegistry = new SessionRuntimeRegistry({
         generation: instanceId,
+        ...(runtimeObservability ? { observability: runtimeObservability } : {}),
         semanticMutations: {
           resolveSession: (workspaceName) =>
             workspaceRegistry.get(workspaceName)?.sessionName ?? null,
@@ -1220,6 +1258,7 @@ export async function startEmbeddedDaemon(
         webSocketUrl: paneStreamWebSocketUrl(bindHostname, port),
         sessionRuntimeRegistry,
         semanticPaneCatalog: terminalInventoryRuntime.semanticPaneCatalog,
+        ...(runtimeObservability ? { observability: runtimeObservability } : {}),
       });
       const orderedMultiplexerBackend = createSessionRuntimeMultiplexerBackend({
         registry: sessionRuntimeRegistry,
@@ -1264,6 +1303,7 @@ export async function startEmbeddedDaemon(
         appWindowMutation.dispose(),
         workspaceMultiplexer.dispose(),
         externalInteractionObserver.dispose(),
+        closeRuntimeTraceStream(),
       ]);
       // The pane-stream coordinator may still hold runtime consumers while it
       // drains. Preserve the normal shutdown order on startup rollback too:
@@ -1325,6 +1365,7 @@ export async function startEmbeddedDaemon(
         appWindowMutationDisposal,
         workspaceMultiplexerDisposal,
         externalInteractionDisposal,
+        closeRuntimeTraceStream(),
         Promise.resolve().then(() => closeClients()),
         ...[...sockets].map((socket) => Promise.resolve().then(() => socket.destroy())),
         Promise.race([closePromise, delay(100)]),
@@ -1554,6 +1595,7 @@ export async function startEmbeddedDaemon(
             await capture(() => Promise.race([closePromise, delay(100)]));
             await capture(() => closeWsServers());
             await capture(() => shutdownWsEventObservation());
+            await capture(() => closeRuntimeTraceStream());
             await capture(() => setRemoteAccessRestartBackend(null));
             await capture(() => setDaemonShutdownBackend(null));
 

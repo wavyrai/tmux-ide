@@ -337,17 +337,15 @@ describe("OpenTUI canonical application-shell controller", () => {
     expect(app).not.toContain("RENDERER_COMMAND_IDS.openPalette");
     expect(app).not.toContain("rendererInvocationForCanvas(");
     expect(app).not.toContain("rendererInvocationForDock(");
-    expect(app).toContain("submitSemanticPaneFocus(runtimePaneId)");
-    expect(app).toContain('verb: "workspace.pane.select"');
-    expect(app).toContain("<PaneScopedTerminalSurface");
-    expect(app).toContain("adapter={semanticReplica()!.adapter}");
-    expect(app).not.toContain("semanticView={semanticReplica()?.lane.source");
-    expect(app).toContain("semanticViewportAcknowledged()");
+    expect(app).toContain("createOpenTuiSessionOwner({");
+    expect(app).toContain("new TerminalPaneInputRouter({");
+    expect(app).toContain("selectTerminalPane(expected, liveSelectionTarget, paneId)");
+    expect(app).toContain("active.fastLane.lane.sendInput(paneId, input, trace?.traceId)");
+    expect(app).toContain("<ApplicationTerminalWorkspace");
     expect(app).not.toMatch(
       /semanticView\?*\.(?:command|commandList|switchWindow|sendTextTo|sendKey)\(/u,
     );
-    expect(app.match(/<ApplicationShell\b/gu)).toHaveLength(1);
-    expect(app.match(/<WorkbenchShell\b/gu)).toHaveLength(1);
+    expect(app).not.toMatch(/<(?:ApplicationShell|WorkbenchShell)\b/u);
     expect(app.match(/\buseKeyboard\(/gu)).toHaveLength(1);
     expect(app.match(/\busePaste\(/gu)).toHaveLength(1);
 

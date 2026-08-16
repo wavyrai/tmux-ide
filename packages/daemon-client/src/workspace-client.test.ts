@@ -14,11 +14,18 @@ import {
 } from "@tmux-ide/contracts";
 
 import type {
+  WorkspaceClient,
   ApplicationShellEventHandlers,
   ApplicationShellTransport,
 } from "./application-shell-session.ts";
 import type { GenerationBoundClock } from "./generation-bound-store.ts";
 import { createWorkspaceClient } from "./workspace-client.ts";
+import { runtimeResourceSnapshot } from "./runtime-resource-ledger.ts";
+import {
+  createTerminalFastLane,
+  createWorkspaceClientTerminalSource,
+  type TerminalFastLane,
+} from "./terminal-fast-lane.ts";
 import { createWorkspaceClientConformanceAdapter } from "./workspace-client-conformance.ts";
 import type {
   WorkspaceClientOwnerActionPort,
@@ -141,10 +148,11 @@ function shellBroker(resources: Readonly<Record<string, ApplicationShellProjecti
 class FakeTerminalSubscription {
   readonly listeners = new Set<(update: TerminalReplicaUpdate<string, string>) => void>();
   closeCount = 0;
+  closeGate: Promise<void> | null = null;
   constructor(readonly generation: string) {}
-  close(): Promise<void> {
+  async close(): Promise<void> {
     this.closeCount += 1;
-    return Promise.resolve();
+    if (this.closeGate) await this.closeGate;
   }
   freeze(): void {}
   thaw(): void {}
@@ -172,6 +180,11 @@ class FakeRuntime implements WorkspaceClientRuntimePort<string, string> {
   inputGate: Promise<void> | null = null;
   readonly viewportFits: Array<{ cols: number; rows: number }> = [];
   viewportGate: Promise<void> | null = null;
+  closeGate: Promise<void> | null = null;
+  readonly repairRequests: Array<{
+    target: TerminalReplicaAddress;
+    reason: "gap" | "conflict" | "wrong-address";
+  }> = [];
   constructor(readonly generation: string) {}
   async subscribeTerminal(address: TerminalReplicaAddress): Promise<FakeTerminalSubscription> {
     const subscription = new FakeTerminalSubscription(this.generation);
@@ -201,8 +214,15 @@ class FakeRuntime implements WorkspaceClientRuntimePort<string, string> {
   emitReceipt(receipt: InteractionReceipt): void {
     for (const listener of this.receipts) listener(receipt);
   }
-  close(): void {
+  requestTerminalRepair = (
+    nextTarget: TerminalReplicaAddress,
+    reason: "gap" | "conflict" | "wrong-address",
+  ): void => {
+    this.repairRequests.push({ target: nextTarget, reason });
+  };
+  async close(): Promise<void> {
     this.closeCount += 1;
+    if (this.closeGate) await this.closeGate;
   }
 }
 
@@ -211,7 +231,7 @@ const actions: WorkspaceClientOwnerActionPort = {
 };
 
 async function settle(): Promise<void> {
-  for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
+  for (let turn = 0; turn < 16; turn += 1) await Promise.resolve();
 }
 
 function deferred<T>() {
@@ -268,6 +288,13 @@ function terminalSeed(generation: string): TerminalReplicaUpdate<string, string>
   };
 }
 
+function terminalSeedFor(
+  semanticPaneId: string,
+  generation: string,
+): TerminalReplicaUpdate<string, string> {
+  return { ...terminalSeed(generation), semanticPaneId };
+}
+
 describe("WorkspaceClient", () => {
   it("waits for shell authority and connects with its exact immutable terminal inventory", async () => {
     const shellAuthority = deferred<ApplicationShellProjectionInputV3>();
@@ -315,6 +342,64 @@ describe("WorkspaceClient", () => {
     await settle();
   });
 
+  it("primes every inventory pane before coherence and adopts the retained candidate bindings", async () => {
+    const paneIds = ["pane.window-a.one", "pane.window-a.two", "pane.window-b.hidden"];
+    const shell = shellBroker({ alpha: shellResource("alpha", paneIds) });
+    const runtime = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const coherent = deferred<void>();
+    const updates = new Map<string, TerminalReplicaUpdate<string, string>[]>();
+    let client!: WorkspaceClient<string, string>;
+    let prepared = false;
+    client = createWorkspaceClient<string, string>({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async (_current, _runtimeInventory, _signal, prepare) => {
+          await prepare(runtime);
+          prepared = true;
+          await coherent.promise;
+          return runtime;
+        },
+        actions,
+      },
+    });
+    const unsubscribes = paneIds.map((semanticPaneId) =>
+      client.subscribeTerminal({ workspaceName: "alpha", semanticPaneId }, (update) => {
+        const seen = updates.get(semanticPaneId) ?? [];
+        seen.push(update);
+        updates.set(semanticPaneId, seen);
+      }),
+    );
+
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+    expect(prepared).toBe(true);
+    expect([...runtime.subscriptions.keys()].sort()).toEqual(paneIds);
+
+    for (const semanticPaneId of paneIds) {
+      runtime.subscriptions
+        .get(semanticPaneId)!
+        .emit(terminalSeedFor(semanticPaneId, ALPHA_DAEMON.instanceId));
+    }
+    expect(updates.get("pane.window-b.hidden")).toBeUndefined();
+
+    coherent.resolve();
+    await settle();
+    expect(updates.get("pane.window-b.hidden")).toHaveLength(1);
+    expect(client.getSnapshot().authorityShell).not.toBeNull();
+    expect([...runtime.subscriptions.keys()].sort()).toEqual(paneIds);
+    expect(
+      [...runtime.subscriptions.values()].every((subscription) => subscription.closeCount === 0),
+    ).toBe(true);
+
+    for (const unsubscribe of unsubscribes) unsubscribe();
+    client.dispose();
+    await settle();
+    expect(
+      [...runtime.subscriptions.values()].every((subscription) => subscription.closeCount === 1),
+    ).toBe(true);
+  });
+
   it("does not reconnect when a shell refresh leaves runtime inventory unchanged", async () => {
     const shell = shellBroker({ alpha: shellResource("alpha") });
     const runtime = new FakeRuntime(ALPHA_DAEMON.instanceId);
@@ -356,6 +441,7 @@ describe("WorkspaceClient", () => {
     const next = deferred<FakeRuntime>();
     const calls: WorkspaceClientRuntimeInventory[] = [];
     const activated: FakeRuntime[] = [];
+    const activatedInventories: string[][] = [];
     const client = createWorkspaceClient({
       target: target("alpha"),
       ports: {
@@ -364,7 +450,10 @@ describe("WorkspaceClient", () => {
           calls.push(inventory);
           return calls.length === 1 ? first : next.promise;
         },
-        didActivateRuntime: (runtime) => activated.push(runtime as FakeRuntime),
+        didActivateRuntime: (runtime, inventory) => {
+          activated.push(runtime as FakeRuntime);
+          activatedInventories.push([...inventory.semanticPaneIds]);
+        },
         actions,
       },
     });
@@ -380,6 +469,7 @@ describe("WorkspaceClient", () => {
     expect(calls[1]!.semanticPaneIds).toEqual(["pane.alpha", "pane.beta"]);
     expect(first.closeCount).toBe(0);
     expect(activated).toEqual([first]);
+    expect(activatedInventories).toEqual([["pane.alpha"]]);
     expect(
       await client.sendTerminalInput(
         { workspaceName: "alpha", semanticPaneId: "pane.alpha" },
@@ -391,6 +481,7 @@ describe("WorkspaceClient", () => {
     next.resolve(second);
     await settle();
     expect(activated).toEqual([first, second]);
+    expect(activatedInventories).toEqual([["pane.alpha"], ["pane.alpha", "pane.beta"]]);
     expect(first.closeCount).toBe(1);
     expect(
       await client.sendTerminalInput(
@@ -402,6 +493,219 @@ describe("WorkspaceClient", () => {
     expect(calls).toHaveLength(2);
     client.dispose();
     await settle();
+  });
+
+  it("isolates overlapping candidate preparation and publishes only the winning runtime", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha", ["pane.alpha"]) });
+    const active = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const candidateB = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const candidateC = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const coherentB = deferred<void>();
+    const coherentC = deferred<void>();
+    const preparedB = deferred<void>();
+    const preparedC = deferred<void>();
+    const publications: string[] = [];
+    const activated: FakeRuntime[] = [];
+    const client = createWorkspaceClient<string, string>({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async (_current, inventory, _signal, prepare) => {
+          if (inventory.semanticPaneIds.includes("pane.b")) {
+            await prepare(candidateB);
+            preparedB.resolve();
+            await coherentB.promise;
+            return candidateB;
+          }
+          if (inventory.semanticPaneIds.includes("pane.c")) {
+            await prepare(candidateC);
+            preparedC.resolve();
+            await coherentC.promise;
+            return candidateC;
+          }
+          return active;
+        },
+        didActivateRuntime: (runtime) => activated.push(runtime as FakeRuntime),
+        actions,
+      },
+    });
+    client.subscribeTerminal({ workspaceName: "alpha", semanticPaneId: "pane.alpha" }, (update) =>
+      publications.push(update.snapshot ?? update.patch ?? "tombstone"),
+    );
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+    expect(activated).toEqual([active]);
+    const activeSubscription = active.subscriptions.get("pane.alpha")!;
+    const activeClose = deferred<void>();
+    activeSubscription.closeGate = activeClose.promise;
+
+    shell.byWorkspace.set("alpha", shellResource("alpha", ["pane.alpha", "pane.b"]));
+    shell.connections[0]!.handlers.onInvalidate();
+    await preparedB.promise;
+    candidateB.subscriptions
+      .get("pane.alpha")!
+      .emit({ ...terminalSeed(ALPHA_DAEMON.instanceId), snapshot: "candidate-b" });
+    expect(publications).toEqual([]);
+
+    shell.byWorkspace.set("alpha", shellResource("alpha", ["pane.alpha", "pane.c"]));
+    shell.connections[0]!.handlers.onInvalidate();
+    await preparedC.promise;
+    candidateC.subscriptions
+      .get("pane.alpha")!
+      .emit({ ...terminalSeed(ALPHA_DAEMON.instanceId), snapshot: "candidate-c" });
+    expect(publications).toEqual([]);
+
+    coherentC.resolve();
+    await settle();
+    expect(activated).toEqual([active, candidateC]);
+    expect(publications).toEqual(["candidate-c"]);
+    expect(candidateB.subscriptions.get("pane.alpha")!.closeCount).toBe(1);
+    expect(activeSubscription.closeCount).toBe(1);
+    expect(activeSubscription.listeners.size).toBe(0);
+    activeSubscription.emit({
+      ...terminalSeed(ALPHA_DAEMON.instanceId),
+      snapshot: "retired-active",
+    });
+    expect(publications).toEqual(["candidate-c"]);
+    candidateC.subscriptions.get("pane.alpha")!.emit({
+      ...terminalSeed(ALPHA_DAEMON.instanceId),
+      snapshot: "candidate-c-live",
+    });
+    expect(publications).toEqual(["candidate-c", "candidate-c-live"]);
+    activeClose.resolve();
+
+    coherentB.resolve();
+    await settle();
+    expect(activated).toEqual([active, candidateC]);
+    expect(publications).toEqual(["candidate-c", "candidate-c-live"]);
+    expect(candidateB.closeCount).toBe(1);
+    await client.dispose();
+  });
+
+  it("stages the production fast-lane inventory before candidate coherence without trimming the incumbent", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha", ["pane.alpha"]) });
+    const active = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const candidate = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const candidateCoherent = deferred<void>();
+    const candidatePrepared = deferred<void>();
+    const staged = new WeakMap<FakeRuntime, () => void>();
+    let lane!: TerminalFastLane;
+    let client!: ReturnType<typeof createWorkspaceClient<string, string>>;
+    client = createWorkspaceClient<string, string>({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async (_current, inventory, _signal, prepare) => {
+          const runtime = inventory.semanticPaneIds.includes("pane.beta") ? candidate : active;
+          const release = lane.stagePanes(inventory.semanticPaneIds);
+          await prepare(runtime);
+          staged.set(runtime, release);
+          if (runtime === candidate) {
+            candidatePrepared.resolve();
+            await candidateCoherent.promise;
+          }
+          return runtime;
+        },
+        didActivateRuntime: (runtime, inventory) => {
+          lane.retainPanes(inventory.semanticPaneIds);
+          const release = staged.get(runtime as FakeRuntime);
+          staged.delete(runtime as FakeRuntime);
+          release?.();
+        },
+        actions,
+      },
+    });
+    lane = createTerminalFastLane({
+      address: { workspaceName: "alpha", generation: ALPHA_DAEMON.instanceId },
+      source: createWorkspaceClientTerminalSource(client as never),
+      repair: { request: () => undefined },
+      control: {
+        owns: () => true,
+        request: async () => true,
+        write: async () => "ok",
+        resize: async () => "ok",
+      },
+    });
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+    expect(active.subscriptions.has("pane.alpha")).toBe(true);
+
+    shell.byWorkspace.set("alpha", shellResource("alpha", ["pane.alpha", "pane.beta"]));
+    shell.connections[0]!.handlers.onInvalidate();
+    await candidatePrepared.promise;
+    // This is the production-order proof: prepare() saw the new fast-lane
+    // interest, while the incumbent remained subscribed and paint-capable.
+    expect(candidate.subscriptions.has("pane.alpha")).toBe(true);
+    expect(candidate.subscriptions.has("pane.beta")).toBe(true);
+    expect(active.subscriptions.get("pane.alpha")?.listeners.size).toBe(1);
+
+    candidateCoherent.resolve();
+    await settle();
+    expect(active.subscriptions.get("pane.alpha")?.listeners.size).toBe(0);
+    expect(candidate.subscriptions.get("pane.alpha")?.listeners.size).toBe(1);
+    expect(candidate.subscriptions.get("pane.beta")?.listeners.size).toBe(1);
+    lane.dispose();
+    await client.dispose();
+  });
+
+  it("retires a flooded candidate without dropping, reordering, or publishing partial state", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha", ["pane.alpha"]) });
+    const active = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const flooded = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const prepared = deferred<void>();
+    const coherent = deferred<void>();
+    const publications: string[] = [];
+    const activated: FakeRuntime[] = [];
+    const client = createWorkspaceClient<string, string>({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async (_current, inventory, _signal, prepare) => {
+          if (!inventory.semanticPaneIds.includes("pane.flood")) return active;
+          await prepare(flooded);
+          prepared.resolve();
+          await coherent.promise;
+          return flooded;
+        },
+        didActivateRuntime: (runtime) => activated.push(runtime as FakeRuntime),
+        actions,
+      },
+    });
+    client.subscribeTerminal({ workspaceName: "alpha", semanticPaneId: "pane.alpha" }, (update) =>
+      publications.push(update.snapshot ?? update.patch ?? "tombstone"),
+    );
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+    expect(activated).toEqual([active]);
+
+    shell.byWorkspace.set("alpha", shellResource("alpha", ["pane.alpha", "pane.flood"]));
+    shell.connections[0]!.handlers.onInvalidate();
+    await prepared.promise;
+    const subscription = flooded.subscriptions.get("pane.alpha")!;
+    for (let index = 0; index <= 256; index += 1) {
+      subscription.emit({
+        ...terminalSeed(ALPHA_DAEMON.instanceId),
+        snapshot: `flood-${index}`,
+      });
+    }
+    await settle();
+    expect(publications).toEqual([]);
+    expect(activated).toEqual([active]);
+    expect(subscription.closeCount).toBe(1);
+    expect(subscription.listeners.size).toBe(0);
+
+    coherent.resolve();
+    await settle();
+    expect(flooded.closeCount).toBe(1);
+    expect(activated).toEqual([active]);
+    expect(
+      await client.sendTerminalInput(
+        { workspaceName: "alpha", semanticPaneId: "pane.alpha" },
+        { kind: "text", data: "incumbent-still-live" },
+      ),
+    ).toBe("ok");
+    expect(active.inputs).toHaveLength(1);
+    await client.dispose();
   });
 
   it("retires the runtime cleanly when authority publishes an empty inventory", async () => {
@@ -482,6 +786,49 @@ describe("WorkspaceClient", () => {
     expect(beta.inputs).toHaveLength(1);
     client.dispose();
     await settle();
+  });
+
+  it("settles target replacement even when the retired connect adapter never resolves", async () => {
+    const shell = shellBroker({
+      alpha: shellResource("alpha"),
+      beta: shellResource("beta"),
+    });
+    const never = new Promise<FakeRuntime>(() => undefined);
+    const beta = new FakeRuntime(BETA_DAEMON.instanceId);
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        connectRuntime: (current) =>
+          current.workspaceName === "alpha" ? never : Promise.resolve(beta),
+        actions,
+      },
+    });
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+
+    await client.setTarget(target("beta", BETA_DAEMON));
+    shell.connections[1]!.handlers.onVerifiedOpen();
+    await settle();
+    expect(client.getSnapshot().target?.workspaceName).toBe("beta");
+    await client.dispose();
+  });
+
+  it("fences terminal repair to the active daemon generation", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha") });
+    const runtime = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      ports: { shell: shell.transport, connectRuntime: async () => runtime, actions },
+    });
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+    const pane = { workspaceName: "alpha", semanticPaneId: "pane.alpha" };
+
+    client.requestTerminalRepair(pane, BETA_DAEMON.instanceId, "conflict");
+    client.requestTerminalRepair(pane, ALPHA_DAEMON.instanceId, "conflict");
+    expect(runtime.repairRequests).toEqual([{ target: pane, reason: "conflict" }]);
+    await client.dispose();
   });
 
   it("produces byte-identical semantic traces for core, OpenTUI, Web, and SDK adapters", async () => {
@@ -815,6 +1162,7 @@ describe("WorkspaceClient", () => {
   });
 
   it("retires pane publications, receipts, and operation timers with a target generation", async () => {
+    const timerBaseline = runtimeResourceSnapshot()["runtime-timer"].active;
     const clock = new FakeClock();
     const shell = shellBroker({ alpha: shellResource("alpha"), beta: shellResource("beta") });
     const alphaRuntime = new FakeRuntime(ALPHA_DAEMON.instanceId);
@@ -849,6 +1197,7 @@ describe("WorkspaceClient", () => {
       },
     });
     const retiredSubscription = alphaRuntime.subscriptions.get("pane.alpha")!;
+    expect(runtimeResourceSnapshot()["runtime-timer"].active).toBeGreaterThan(timerBaseline);
 
     client.setTarget(target("beta", BETA_DAEMON));
     retiredSubscription.emit(terminalSeed(ALPHA_DAEMON.instanceId));
@@ -864,6 +1213,7 @@ describe("WorkspaceClient", () => {
       lastReceipt: null,
     });
     expect(retiredSubscription.closeCount).toBe(1);
+    expect(runtimeResourceSnapshot()["runtime-timer"].active).toBe(timerBaseline);
     client.dispose();
     await settle();
   });
@@ -1128,11 +1478,102 @@ describe("WorkspaceClient", () => {
       input: { source: { kind: "project", projectDir: "/project" } },
     });
 
-    client.dispose();
-    client.dispose();
+    await client.dispose();
+    await client.dispose();
     await settle();
     expect(calls).toEqual(["workspace.open.prepare", "workspace.open.cancel"]);
     expect(client.getSnapshot().phase).toBe("disposed");
     expect(runtime.closeCount).toBe(1);
+  });
+
+  it("does not settle disposal until the runtime supervisor closes its transport", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha") });
+    const runtime = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const closing = deferred<void>();
+    runtime.closeGate = closing.promise;
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async () => runtime,
+        actions,
+      },
+    });
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+
+    let settled = false;
+    const disposing = client.dispose().then(() => (settled = true));
+    await settle();
+    expect(runtime.closeCount).toBe(1);
+    expect(settled).toBe(false);
+    closing.resolve();
+    await disposing;
+    expect(settled).toBe(true);
+  });
+
+  it("does not settle target retirement until its terminal subscription closes", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha"), beta: shellResource("beta") });
+    const alpha = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const beta = new FakeRuntime(BETA_DAEMON.instanceId);
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async (current) => (current.workspaceName === "alpha" ? alpha : beta),
+        actions,
+      },
+    });
+    client.subscribeTerminal(
+      { workspaceName: "alpha", semanticPaneId: "pane.alpha" },
+      () => undefined,
+    );
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+    const subscription = alpha.subscriptions.get("pane.alpha")!;
+    const closeGate = deferred<void>();
+    subscription.closeGate = closeGate.promise;
+
+    let retired = false;
+    const retirement = client.setTarget(target("beta", BETA_DAEMON)).then(() => (retired = true));
+    await settle();
+    expect(subscription.closeCount).toBe(1);
+    expect(retired).toBe(false);
+    closeGate.resolve();
+    await retirement;
+    expect(retired).toBe(true);
+    await client.dispose();
+  });
+
+  it("fences and closes a terminal subscription that resolves after disposal settled", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha") });
+    const runtime = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const subscriptionReady = deferred<FakeTerminalSubscription>();
+    runtime.subscribeTerminal = async () => subscriptionReady.promise;
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      ports: { shell: shell.transport, connectRuntime: async () => runtime, actions },
+    });
+    client.subscribeTerminal(
+      { workspaceName: "alpha", semanticPaneId: "pane.alpha" },
+      () => undefined,
+    );
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+
+    let disposed = false;
+    const disposal = client.dispose().then(() => (disposed = true));
+    await settle();
+    expect(disposed).toBe(false);
+    const late = new FakeTerminalSubscription(ALPHA_DAEMON.instanceId);
+    const closeGate = deferred<void>();
+    late.closeGate = closeGate.promise;
+    subscriptionReady.resolve(late);
+    await settle();
+    expect(late.closeCount).toBe(1);
+    expect(disposed).toBe(true);
+    closeGate.resolve();
+    await disposal;
+    expect(disposed).toBe(true);
   });
 });

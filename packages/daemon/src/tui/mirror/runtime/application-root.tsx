@@ -419,6 +419,7 @@ import {
   createApplicationLifecycleInputExecutor,
 } from "./application-lifecycle.ts";
 import { observeTuiRootFailure, startTuiApplication } from "./application-bootstrap.ts";
+import { createOpenTuiHostLocalTmuxAdapter } from "./host-local-tmux-adapter.ts";
 import { OpenTuiLocalViewController } from "./local-view-controller.ts";
 import { tuiEscapeFocusTarget, tuiInteractionPresentation } from "../interaction-flow.ts";
 import {
@@ -4675,6 +4676,7 @@ const mountTuiRoot = () => {
       const identity = paletteWorkspaceIdentity();
       paletteController.switchWorkspace(identity);
     });
+    const hostLocalTmux = createOpenTuiHostLocalTmuxAdapter();
     const lifecycleExecutor = createApplicationLifecycleInputExecutor(applicationLifecycle, {
       // Renderer destruction disposes the Solid root first, so the shared
       // onCleanup path owns mirrors/buffers and the host-mode guard restores
@@ -4683,8 +4685,7 @@ const mountTuiRoot = () => {
       // came here via switch-client bounces BACK to its last session; a plain
       // terminal attach has no last session, so switch-client -l fails and the
       // fallback detaches.
-      switchClientBack: (callback) => execFile("tmux", ["switch-client", "-l"], callback),
-      detachClient: () => execFile("tmux", ["detach-client"], () => {}),
+      putAway: () => hostLocalTmux.putAway(),
     });
     const ensurePerformanceHud = async () => {
       const existing = performanceHudSession();
@@ -5506,10 +5507,7 @@ const mountTuiRoot = () => {
       // set-clipboard (so the sequence lands in tmux's paste buffer AND is
       // forwarded to the real terminal — through ssh) and allow-passthrough,
       // best-effort, once at launch so the first copy already works.
-      if (process.env.TMUX) {
-        execFile("tmux", ["set-option", "-gq", "set-clipboard", "on"], () => {});
-        execFile("tmux", ["set-option", "-gq", "allow-passthrough", "on"], () => {});
-      }
+      if (process.env.TMUX) hostLocalTmux.configureClipboard();
       // `--edit <file>` boots straight into the editor; otherwise a persisted
       // openFile restores the buffer WITHOUT stealing the restored tab (post-render
       // so the native EditBuffer FFI is loaded).

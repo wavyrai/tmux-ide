@@ -79,6 +79,7 @@ export function createSessionRuntimeObservability(
     readonly clockId?: string;
     readonly clockKind?: MonotonicClockKind;
     readonly createTraceId?: () => string;
+    readonly onSpan?: (span: SessionRuntimeStageSpan) => void;
   } = {},
 ): SessionRuntimeObservability {
   const capacity = options.capacity ?? 1_024;
@@ -127,6 +128,7 @@ export function createSessionRuntimeObservability(
         cursor = (cursor + 1) % capacity;
         droppedSpans += 1;
       }
+      options.onSpan?.(span);
     },
     snapshot() {
       const ordered =

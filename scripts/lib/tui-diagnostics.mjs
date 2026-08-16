@@ -1,11 +1,34 @@
 const TOKEN = /[A-Za-z0-9_./:@-]{5,}/gu;
 
 export const REQUIRED_TUI_PHASES = Object.freeze([
-  "application-shell-inventory-applied",
-  "runtime-lane-layout",
-  "runtime-lane-connected",
+  "generation-shell-lifecycle:live",
+  "generation-runtime-progress:physical-ready",
+  "generation-runtime-progress:coherent",
+  "generation-status:live",
   "first-terminal-frame",
 ]);
+
+export function normalizeTuiLifecycle(timeline) {
+  const first = (predicate) => timeline.find(predicate) ?? null;
+  const shellLive = first(
+    (entry) =>
+      entry?.phase === "generation-shell-lifecycle" &&
+      entry?.clientPhase === "live" &&
+      entry?.shellStatus === "live",
+  );
+  const physicalReady = first(
+    (entry) =>
+      entry?.phase === "generation-runtime-progress" && entry?.runtimePhase === "physical-ready",
+  );
+  const coherent = first(
+    (entry) => entry?.phase === "generation-runtime-progress" && entry?.runtimePhase === "coherent",
+  );
+  const generationLive = first(
+    (entry) => entry?.phase === "generation-status" && entry?.status === "live",
+  );
+  const firstTerminalFrame = first((entry) => entry?.phase === "first-terminal-frame");
+  return Object.freeze({ shellLive, physicalReady, coherent, generationLive, firstTerminalFrame });
+}
 
 export function diagnosticTokens(value) {
   const tokens = String(value ?? "").match(TOKEN) ?? [];
@@ -28,21 +51,22 @@ export function analyzeTuiDiagnostic({
   frame,
   timeline,
 }) {
-  const phase = (name) => timeline.find((entry) => entry?.phase === name) ?? null;
-  const inventory = phase("application-shell-inventory-applied");
-  const layouts = timeline.filter(
-    (entry) => entry?.phase === "runtime-lane-layout" && entry.currentWindow === true,
-  );
-  const layout = layouts.at(-1) ?? null;
-  const connected = phase("runtime-lane-connected");
-  const firstTerminalFrame = phase("first-terminal-frame");
+  const lifecycle = normalizeTuiLifecycle(timeline);
   const attachable =
     applicationShell?.resource?.terminalInventory?.resources?.filter(
       (resource) => resource?.attachability?.status === "available",
     ) ?? [];
   const live = catalog?.liveSessions?.find((session) => session?.sessionName === target) ?? null;
-  const truthTokens = diagnosticTokens(panes.map((pane) => pane.capture).join("\n"));
-  const matchedTokens = truthTokens.filter((token) => frame.includes(token));
+  const visiblePanes = panes.filter((pane) => pane.windowActive);
+  const visiblePaneEvidence = visiblePanes.map((pane) => {
+    const tokens = diagnosticTokens(pane.capture).filter((token) => token !== target);
+    return Object.freeze({
+      paneId: pane.paneId,
+      tokenCount: tokens.length,
+      matchedTokens: Object.freeze(tokens.filter((token) => frame.includes(token))),
+    });
+  });
+  const matchedTokens = visiblePaneEvidence.flatMap((pane) => pane.matchedTokens);
   const checks = [
     {
       id: "daemon",
@@ -73,31 +97,42 @@ export function analyzeTuiDiagnostic({
       detail: `${attachable.length} attachable semantic panes`,
     },
     {
-      id: "runtime-lane",
+      id: "workspace-client-commit",
       passed:
-        Number(inventory?.descriptorCount) === panes.length &&
-        Number(layout?.paneCount) > 0 &&
-        connected?.generation === daemon?.instanceId,
-      detail: `${inventory?.descriptorCount ?? 0} descriptors, ${layout?.paneCount ?? 0} current-window panes`,
+        lifecycle.shellLive?.inventoryResources === panes.length &&
+        lifecycle.shellLive?.inventoryAttachability?.every(
+          (resource) => resource?.status === "available" && resource?.semanticPaneId,
+        ),
+      detail: `${lifecycle.shellLive?.inventoryResources ?? 0} committed inventory resources`,
     },
     {
-      id: "terminal-frame",
+      id: "terminal-fast-lane",
       passed:
-        Number.isFinite(firstTerminalFrame?.elapsedMs) &&
-        Number.isFinite(connected?.elapsedMs) &&
-        firstTerminalFrame.elapsedMs >= connected.elapsedMs,
-      detail: `connected ${connected?.elapsedMs ?? "?"}ms → terminal frame ${firstTerminalFrame?.elapsedMs ?? "?"}ms`,
+        Number(lifecycle.physicalReady?.panes) === panes.length &&
+        Number(lifecycle.coherent?.seededPanes) === panes.length &&
+        lifecycle.generationLive?.daemonGeneration === daemon?.instanceId,
+      detail: `${lifecycle.physicalReady?.panes ?? 0} physical panes, ${lifecycle.coherent?.seededPanes ?? 0} seeded panes`,
+    },
+    {
+      id: "tui-painted-frame",
+      passed:
+        Number.isFinite(lifecycle.firstTerminalFrame?.elapsedMs) &&
+        Number.isFinite(lifecycle.coherent?.elapsedMs) &&
+        lifecycle.firstTerminalFrame.elapsedMs >= lifecycle.coherent.elapsedMs,
+      detail: `coherent ${lifecycle.coherent?.elapsedMs ?? "?"}ms → terminal frame ${lifecycle.firstTerminalFrame?.elapsedMs ?? "?"}ms`,
     },
     {
       id: "framebuffer-content",
       passed:
         frame.includes(target) &&
         frame.includes("Terminals") &&
-        (truthTokens.length === 0 || matchedTokens.length > 0),
+        visiblePaneEvidence.every(
+          ({ tokenCount, matchedTokens: matches }) => tokenCount === 0 || matches.length > 0,
+        ),
       detail:
-        truthTokens.length === 0
-          ? "tmux panes contain no stable text token"
-          : `${matchedTokens.length}/${truthTokens.length} tmux text tokens visible`,
+        visiblePaneEvidence.length === 0
+          ? "no visible tmux pane"
+          : `${visiblePaneEvidence.filter(({ matchedTokens: matches }) => matches.length > 0).length}/${visiblePaneEvidence.length} visible pane bodies matched`,
     },
   ];
   const firstFailure = checks.find((check) => !check.passed)?.id ?? null;
@@ -110,11 +145,15 @@ export function analyzeTuiDiagnostic({
       attachablePaneCount: attachable.length,
       matchedTokens: Object.freeze(matchedTokens.slice(0, 20)),
       lifecycle: Object.freeze(
-        REQUIRED_TUI_PHASES.map((name) => {
-          const entry = phase(name);
-          return Object.freeze({ phase: name, elapsedMs: entry?.elapsedMs ?? null });
-        }),
+        [
+          ["generation-shell-lifecycle:live", lifecycle.shellLive],
+          ["generation-runtime-progress:physical-ready", lifecycle.physicalReady],
+          ["generation-runtime-progress:coherent", lifecycle.coherent],
+          ["generation-status:live", lifecycle.generationLive],
+          ["first-terminal-frame", lifecycle.firstTerminalFrame],
+        ].map(([phase, entry]) => Object.freeze({ phase, elapsedMs: entry?.elapsedMs ?? null })),
       ),
+      visiblePaneEvidence: Object.freeze(visiblePaneEvidence),
     }),
   });
 }

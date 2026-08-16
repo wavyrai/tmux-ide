@@ -355,6 +355,9 @@ export class SemanticPaneReplica {
         traceId: envelope.performanceTraceId,
         generation: envelope.generation,
         incarnation: envelope.incarnation,
+        semanticPaneId: envelope.semanticPaneId,
+        revision: envelope.canonicalRevision,
+        stateHash: envelope.canonicalStateHash,
       });
     if (!committed.state.canonicalSnapshot) this.#pendingPaintTrace = null;
     // Publish trace authority before notifying the renderer. `#applySnapshot`
@@ -369,6 +372,7 @@ export class SemanticPaneReplica {
           parseMs: performance.now() - parseStartedAt,
           queuePeak: 1,
           queueCapacity: 1,
+          settledQueueDepth: 0,
           revisionLagPeak: Math.max(0, envelope.canonicalRevision - (envelope.baseRevision ?? -1)),
           reseed,
         });

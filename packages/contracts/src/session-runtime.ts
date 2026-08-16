@@ -320,7 +320,11 @@ export interface SessionRuntimeTerminalSubscription<
 }
 
 /** Client-facing port. Implementations live only in daemon runtime modules. */
-export interface SessionRuntimeClientPort<Snapshot = unknown, Patch = unknown, Tombstone = unknown> {
+export interface SessionRuntimeClientPort<
+  Snapshot = unknown,
+  Patch = unknown,
+  Tombstone = unknown,
+> {
   readonly generation: SessionRuntimeGeneration;
   subscribeTerminal(
     target: TerminalReplicaAddress,

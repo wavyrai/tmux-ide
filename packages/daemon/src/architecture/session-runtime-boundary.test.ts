@@ -146,3 +146,28 @@ describe("one SessionRuntime import DAG", () => {
     expect(await matches(DIRECT_TMUX_BRIDGE_IMPORT)).toEqual([...M56_6_DELETION_TARGET].sort());
   });
 });
+
+describe("terminal inventory read boundary", () => {
+  it("keeps async discovery separate from synchronous attachment proof and mutation", async () => {
+    const source = await readFile(
+      join(REPO, "packages/daemon/src/terminal/attachments/native-runtime.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain("this.runner = pinnedRunner(authority, execute");
+    expect(source).toContain("this.readRunner = pinnedReadRunner(authority, executeRead)");
+    expect(source).toContain(
+      "const executeRead = options.readCommandExecutor ?? defaultReadCommandExecutor",
+    );
+    expect(source).not.toContain("options.commandExecutor!(executable, argv, readOptions)");
+    expect(source).toContain("runner: this.runner");
+    expect(source).toContain("this.readRunner,\n      abort.signal");
+    const asyncExecutor = source.slice(
+      source.indexOf("function defaultReadCommandExecutor"),
+      source.indexOf("function pinnedRunner"),
+    );
+    expect(asyncExecutor).toMatch(/\bexecFile\s*\(/u);
+    expect(asyncExecutor).not.toMatch(/\bexecFileSync\s*\(/u);
+    expect(source).not.toContain("#inventorySnapshot");
+  });
+});

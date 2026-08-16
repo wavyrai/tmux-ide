@@ -119,6 +119,15 @@ export interface WorkspaceClientRuntimePort<
 > extends SessionRuntimeClientPort<Snapshot, Patch, Tombstone> {
   /** Settles when the physical runtime lane can no longer carry traffic. */
   readonly closed: Promise<unknown>;
+  /**
+   * Retire this generation after canonical ingress rejects an admitted update.
+   * The supervisor reconnects and obtains fresh seeds; implementations must
+   * coalesce repeated requests and fence them to this exact generation.
+   */
+  requestTerminalRepair?(
+    target: TerminalReplicaAddress,
+    reason: "gap" | "conflict" | "wrong-address",
+  ): void;
   close(): void | Promise<void>;
   /** Fits the one shared physical terminal stream, never a renderer-local replica. */
   fitViewport(cols: number, rows: number): Promise<void>;
@@ -171,6 +180,14 @@ export interface WorkspaceClientPorts<
     target: DesktopApplicationShellTarget,
     inventory: WorkspaceClientRuntimeInventory,
     signal: AbortSignal,
+    /**
+     * Owner-scoped preparation capability. Runtime adapters that require
+     * subscriptions in order to reach coherence must invoke this before they
+     * resolve. Candidate updates remain private until the runtime is activated.
+     */
+    prepare: (
+      runtime: WorkspaceClientRuntimePort<TerminalSnapshot, TerminalPatch, TerminalTombstone>,
+    ) => Promise<void>,
   ) => Promise<WorkspaceClientRuntimePort<TerminalSnapshot, TerminalPatch, TerminalTombstone>>;
   /** Renderer-local adoption hook invoked only after a coherent candidate wins. */
   readonly didActivateRuntime?: (
@@ -206,7 +223,8 @@ export interface WorkspaceClient<
     scope: Scope,
     listener: (value: WorkspaceClientScopeValue<Shell, Scope>) => void,
   ): () => void;
-  setTarget(target: DesktopApplicationShellTarget): void;
+  /** Retires the previous target completely before this promise settles. */
+  setTarget(target: DesktopApplicationShellTarget): Promise<void>;
   refresh(): void;
   dispatch(command: WorkspaceClientDispatch): Promise<WorkspaceClientDispatchResult>;
   subscribeTerminal(
@@ -216,6 +234,11 @@ export interface WorkspaceClient<
       metadata?: TerminalReplicaDeliveryMetadata,
     ) => void,
   ): () => void;
+  requestTerminalRepair(
+    target: TerminalReplicaAddress,
+    expectedDaemonGeneration: string,
+    reason: "gap" | "conflict" | "wrong-address",
+  ): void;
   sendTerminalInput(
     target: TerminalReplicaAddress,
     input: SessionRuntimeTerminalInput,
@@ -228,7 +251,8 @@ export interface WorkspaceClient<
     authority: SessionRuntimeAuthorityKind,
   ): Promise<SessionRuntimeAuthorityLease | null>;
   releaseAuthority(authority: SessionRuntimeAuthorityKind): Promise<void>;
-  dispose(): void;
+  /** Retires every runtime supervisor and settles physical transport cleanup. */
+  dispose(): Promise<void>;
 }
 
 export type WorkspaceOpenActionResult =

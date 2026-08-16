@@ -34,12 +34,10 @@ export function terminalInputForOpenTuiKey(
   event: OpenTuiKeyEvent,
 ): SessionRuntimeTerminalInput | null {
   if (event.meta) return null;
-  const bare = NAMED_KEY[event.name] ?? (/^f(?:[1-9]|1[0-2])$/iu.test(event.name)
-    ? event.name.toUpperCase()
-    : null);
-  const key = event.ctrl
-    ? `C-${bare ?? event.name}`
-    : bare;
+  const bare =
+    NAMED_KEY[event.name] ??
+    (/^f(?:[1-9]|1[0-2])$/iu.test(event.name) ? event.name.toUpperCase() : null);
+  const key = event.ctrl ? `C-${bare ?? event.name}` : bare;
   if (key !== null) {
     const parsed = SessionRuntimeTerminalInputSchemaZ.safeParse({ kind: "key", data: key });
     return parsed.success ? parsed.data : null;
@@ -55,7 +53,11 @@ export function terminalInputsForPaste(text: string): readonly SessionRuntimeTer
   if (text.includes("\0")) throw new TypeError("terminal paste must not contain NUL");
   const framed = `\u001b[200~${text}\u001b[201~`;
   const inputs: SessionRuntimeTerminalInput[] = [];
-  for (let offset = 0; offset < framed.length; offset += SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS) {
+  for (
+    let offset = 0;
+    offset < framed.length;
+    offset += SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS
+  ) {
     inputs.push(
       SessionRuntimeTerminalInputSchemaZ.parse({
         kind: "text",

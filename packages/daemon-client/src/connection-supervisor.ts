@@ -7,6 +7,7 @@
  * is down. DOM, OpenTUI, tmux and HTTP types intentionally do not cross this
  * boundary.
  */
+import { acquireRuntimeResource } from "./runtime-resource-ledger.ts";
 
 export type RuntimeConnectionPhase =
   | "idle"
@@ -122,6 +123,7 @@ export function createRuntimeConnectionSupervisor<Value>(
   };
   let controller: AbortController | null = null;
   let run: Promise<void> | null = null;
+  let releaseSupervisor: (() => void) | null = null;
 
   const publish = (next: RuntimeConnectionState<Value>): void => {
     current = next;
@@ -134,26 +136,24 @@ export function createRuntimeConnectionSupervisor<Value>(
     while (!signal.aborted) {
       let connection: RuntimeConnection<Value> | null = null;
       try {
-        connection = await options.connect({
+        const connecting = options.connect({
           signal,
           attempt,
           previousValue: current.value,
         });
-        if (signal.aborted) {
-          await safelyDispose(connection);
-          connection = null;
+        const connected = await raceWithAbort(connecting, signal);
+        if (connected === ABORTED) {
+          // A host adapter may ignore AbortSignal. Stop must still settle
+          // immediately, and any transport that resolves late must be retired.
+          void connecting.then(safelyDispose).catch(() => undefined);
           break;
         }
+        connection = connected;
         attempt = 0;
         publish({ phase: "live", attempt, value: connection.value, error: null });
-        const ended = await raceWithAbort(
-          connection.closed.then(
-            (reason) => Promise.reject(reason ?? CLOSED),
-            (error) => Promise.reject(error),
-          ),
-          signal,
-        );
+        const ended = await raceWithAbort(connection.closed, signal);
         if (ended === ABORTED) break;
+        throw ended ?? CLOSED;
       } catch (error) {
         if (signal.aborted) break;
         if (options.retryable?.(error) === false) {
@@ -162,10 +162,15 @@ export function createRuntimeConnectionSupervisor<Value>(
         }
         attempt += 1;
         publish({ phase: "reconnecting", attempt, value: current.value, error });
-        await (options.wait ?? wait)(
-          (options.backoffMs ?? exponentialReconnectBackoff)(attempt),
-          signal,
-        );
+        const releaseTimer = acquireRuntimeResource("runtime-timer");
+        try {
+          await (options.wait ?? wait)(
+            (options.backoffMs ?? exponentialReconnectBackoff)(attempt),
+            signal,
+          );
+        } finally {
+          releaseTimer();
+        }
       } finally {
         if (connection) await safelyDispose(connection);
       }
@@ -178,6 +183,7 @@ export function createRuntimeConnectionSupervisor<Value>(
     },
     start() {
       if (run) return;
+      releaseSupervisor = acquireRuntimeResource("runtime-supervisor");
       controller = new AbortController();
       const activeController = controller;
       run = drive(activeController.signal).finally(() => {
@@ -186,6 +192,8 @@ export function createRuntimeConnectionSupervisor<Value>(
         if (current.phase !== "failed") {
           publish({ phase: "stopped", attempt: 0, value: current.value, error: null });
         }
+        releaseSupervisor?.();
+        releaseSupervisor = null;
       });
     },
     async stop() {
@@ -193,9 +201,16 @@ export function createRuntimeConnectionSupervisor<Value>(
       await run;
     },
     subscribe(listener) {
+      const releaseSubscription = acquireRuntimeResource("runtime-subscription");
       listeners.add(listener);
       listener(current);
-      return () => listeners.delete(listener);
+      let subscribed = true;
+      return () => {
+        if (!subscribed) return;
+        subscribed = false;
+        listeners.delete(listener);
+        releaseSubscription();
+      };
     },
   };
 }

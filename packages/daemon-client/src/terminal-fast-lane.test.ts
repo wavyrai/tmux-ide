@@ -125,6 +125,7 @@ class FakeControl implements TerminalFastLaneControlPort {
   readonly writes: Array<{
     address: TerminalFastLanePaneAddress;
     input: SessionRuntimeTerminalInput;
+    performanceTraceId?: string;
   }> = [];
   readonly resizes: Array<{
     address: TerminalFastLaneGenerationAddress;
@@ -133,8 +134,10 @@ class FakeControl implements TerminalFastLaneControlPort {
   readonly requests: SessionRuntimeAuthorityKind[] = [];
   requestResult = true;
   writeResult: "ok" | "authority-lost" = "ok";
+  writeResults: Array<"ok" | "authority-lost"> = [];
   resizeResult: "ok" | "authority-lost" = "ok";
   writeGate: Promise<void> | null = null;
+  writeGates: Promise<void>[] = [];
   resizeGates: Promise<void>[] = [];
 
   owns(authority: SessionRuntimeAuthorityKind): boolean {
@@ -145,10 +148,20 @@ class FakeControl implements TerminalFastLaneControlPort {
     if (this.requestResult) this.owned.add(authority);
     return this.requestResult;
   }
-  async write(address: TerminalFastLanePaneAddress, input: SessionRuntimeTerminalInput) {
-    if (this.writeGate) await this.writeGate;
-    this.writes.push({ address, input: { ...input } });
-    return this.writeResult;
+  async write(
+    address: TerminalFastLanePaneAddress,
+    input: SessionRuntimeTerminalInput,
+    performanceTraceId?: string,
+  ) {
+    const result = this.writeResults.shift() ?? this.writeResult;
+    this.writes.push({
+      address,
+      input: { ...input },
+      ...(performanceTraceId ? { performanceTraceId } : {}),
+    });
+    const gate = this.writeGates.shift() ?? this.writeGate;
+    if (gate) await gate;
+    return result;
   }
   async resize(address: TerminalFastLaneGenerationAddress, viewport: TerminalFastLaneViewport) {
     const gate = this.resizeGates.shift();
@@ -158,7 +171,13 @@ class FakeControl implements TerminalFastLaneControlPort {
   }
 }
 
-function rig(overrides: { maxPendingInputs?: number; maxPendingInputBytes?: number } = {}) {
+function rig(
+  overrides: {
+    maxPendingInputs?: number;
+    maxPendingInputBytes?: number;
+    maxInFlightInputs?: number;
+  } = {},
+) {
   const source = new FakeSource();
   const control = new FakeControl();
   const repairs: unknown[] = [];
@@ -286,6 +305,110 @@ describe("terminal fast lane", () => {
     });
   });
 
+  it("forwards trace identity only for accepted ordered input and fences retired work", async () => {
+    const { lane, control } = rig({ maxPendingInputs: 2 });
+    const authority = deferred<boolean>();
+    control.request = async (kind) => {
+      control.requests.push(kind);
+      const granted = await authority.promise;
+      if (granted) control.owned.add(kind);
+      return granted;
+    };
+    const traceA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const traceB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const traceRejected = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const first = lane.sendInput("pane-a", { kind: "text", data: "a" }, traceA);
+    const second = lane.sendInput("pane-a", { kind: "text", data: "b" }, traceB);
+    expect(await lane.sendInput("pane-a", { kind: "text", data: "c" }, traceRejected)).toEqual({
+      status: "rejected",
+      reason: "queue-full",
+    });
+    authority.resolve(true);
+    expect(await Promise.all([first, second])).toEqual([{ status: "sent" }, { status: "sent" }]);
+    expect(control.writes.map(({ performanceTraceId }) => performanceTraceId)).toEqual([
+      traceA,
+      traceB,
+    ]);
+
+    const gate = deferred<boolean>();
+    control.owned.delete("input");
+    control.request = async () => await gate.promise;
+    const retired = lane.sendInput(
+      "pane-a",
+      { kind: "text", data: "old" },
+      "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    );
+    lane.replaceGeneration(address(GENERATION_B));
+    expect(await retired).toEqual({ status: "rejected", reason: "retired" });
+    gate.resolve(true);
+    await settle();
+    expect(control.writes).toHaveLength(2);
+  });
+
+  it("dispatches a bounded FIFO window without waiting for each acknowledgement", async () => {
+    const { lane, control } = rig({ maxInFlightInputs: 2 });
+    control.owned.add("input");
+    const firstGate = deferred<void>();
+    const secondGate = deferred<void>();
+    control.writeGates.push(firstGate.promise, secondGate.promise, Promise.resolve());
+    const first = lane.sendInput("pane-a", { kind: "text", data: "a" });
+    const second = lane.sendInput("pane-a", { kind: "text", data: "b" });
+    const third = lane.sendInput("pane-a", { kind: "text", data: "c" });
+    await settle();
+    expect(control.writes.map(({ input }) => input.data)).toEqual(["a", "b"]);
+
+    secondGate.resolve();
+    await settle();
+    expect(await second).toEqual({ status: "sent" });
+    expect(control.writes.map(({ input }) => input.data)).toEqual(["a", "b", "c"]);
+    expect(await third).toEqual({ status: "sent" });
+    firstGate.resolve();
+    expect(await first).toEqual({ status: "sent" });
+    expect(lane.counters()).toMatchObject({ inputAccepted: 3, inputWrites: 3 });
+  });
+
+  it("retires an out-of-order authority loss exactly once and releases every queue byte", async () => {
+    const { lane, control } = rig({
+      maxPendingInputs: 3,
+      maxPendingInputBytes: 3,
+      maxInFlightInputs: 3,
+    });
+    control.owned.add("input");
+    const firstGate = deferred<void>();
+    const lostGate = deferred<void>();
+    const thirdGate = deferred<void>();
+    control.writeGates.push(firstGate.promise, lostGate.promise, thirdGate.promise);
+    control.writeResults.push("ok", "authority-lost", "ok");
+    const first = lane.sendInput("pane-a", { kind: "text", data: "a" });
+    const lost = lane.sendInput("pane-a", { kind: "text", data: "b" });
+    const third = lane.sendInput("pane-a", { kind: "text", data: "c" });
+    await settle();
+    expect(control.writes.map(({ input }) => input.data)).toEqual(["a", "b", "c"]);
+
+    lostGate.resolve();
+    await expect(lost).resolves.toEqual({ status: "rejected", reason: "authority-lost" });
+    await expect(first).resolves.toEqual({ status: "rejected", reason: "authority-lost" });
+    await expect(third).resolves.toEqual({ status: "rejected", reason: "authority-lost" });
+    expect(lane.counters()).toMatchObject({
+      inputRejected: 3,
+      inputPending: 0,
+      inputInFlight: 0,
+      inputPendingBytes: 0,
+    });
+
+    firstGate.resolve();
+    thirdGate.resolve();
+    await settle();
+    expect(lane.counters()).toMatchObject({ inputRejected: 3, inputWrites: 0 });
+    control.owned.delete("input");
+    control.writeGates.length = 0;
+    control.writeResults.length = 0;
+    expect(await lane.sendInput("pane-a", { kind: "text", data: "z" })).toEqual({
+      status: "sent",
+    });
+    expect(lane.counters().inputPendingBytes).toBe(0);
+  });
+
   it("fences late authority grants and write acknowledgements on generation replacement", async () => {
     const { lane, control } = rig();
     const authority = deferred<boolean>();
@@ -359,6 +482,89 @@ describe("terminal fast lane", () => {
     oldListener(seed(snapshot, 1));
     source.emit(seed(snapshot, 0, GENERATION_B));
     expect(revisions).toEqual([`${GENERATION_A}:0`, `${GENERATION_B}:0`]);
+  });
+
+  it("retains canonical seed and patches while a pane has no renderer observer", () => {
+    const { lane, source } = rig();
+    const initial = blankTerminalReplicaSnapshot(2, 1);
+    const stop = lane.subscribePane("pane-a", () => undefined);
+    source.emit(seed(initial));
+    stop();
+
+    const changedRow = {
+      ...initial.grid[0]!,
+      cells: initial.grid[0]!.cells.map((cell, index) =>
+        index === 0 ? { ...cell, grapheme: "R" } : cell,
+      ),
+    };
+    source.emit(patch(initial, { rows: [{ index: 0, row: changedRow }] }, 1));
+
+    const retained = lane.paneState("pane-a");
+    expect(retained?.generation).toBe(GENERATION_A);
+    expect(retained?.revision).toBe(1);
+    expect(retained?.snapshot?.grid[0]?.cells[0]?.grapheme).toBe("R");
+    expect(source.listeners.get(`${GENERATION_A}:pane-a`)?.size).toBe(1);
+
+    const revisions: number[] = [];
+    lane.subscribePane("pane-a", ({ state }) => revisions.push(state.revision));
+    expect(revisions).toEqual([]);
+    lane.dispose();
+    expect(source.listeners.get(`${GENERATION_A}:pane-a`)?.size).toBe(0);
+  });
+
+  it("retains exactly the generation inventory without renderer observers", () => {
+    const { lane, source } = rig();
+    lane.retainPanes(["pane-a", "pane-b"]);
+    expect(source.listeners.get(`${GENERATION_A}:pane-a`)?.size).toBe(1);
+    expect(source.listeners.get(`${GENERATION_A}:pane-b`)?.size).toBe(1);
+
+    const outside: number[] = [];
+    lane.subscribePane("pane-outside", ({ state }) => outside.push(state.revision));
+    expect(source.listeners.has(`${GENERATION_A}:pane-outside`)).toBe(false);
+
+    const removed: number[] = [];
+    lane.subscribePane("pane-a", ({ state }) => removed.push(state.revision));
+
+    lane.retainPanes(["pane-b"]);
+    expect(source.listeners.get(`${GENERATION_A}:pane-a`)?.size ?? 0).toBe(0);
+    expect(source.listeners.get(`${GENERATION_A}:pane-b`)?.size).toBe(1);
+    source.emit(seed(blankTerminalReplicaSnapshot(2, 1), 0, GENERATION_A, "pane-a"));
+    expect(removed).toEqual([]);
+    expect(outside).toEqual([]);
+    lane.dispose();
+    expect(source.listeners.get(`${GENERATION_A}:pane-b`)?.size ?? 0).toBe(0);
+  });
+
+  it("stages candidate panes additively and trims only after commit", () => {
+    const { lane, source } = rig();
+    lane.retainPanes(["pane-incumbent"]);
+    const initial = blankTerminalReplicaSnapshot(2, 1);
+    source.emit(seed(initial, 0, GENERATION_A, "pane-incumbent"));
+    expect(lane.paneState("pane-incumbent")?.hash).toBe(hashTerminalReplicaSnapshot(initial));
+
+    const releaseCandidate = lane.stagePanes(["pane-candidate"]);
+    expect(source.listeners.get(`${GENERATION_A}:pane-incumbent`)?.size).toBe(1);
+    expect(source.listeners.get(`${GENERATION_A}:pane-candidate`)?.size).toBe(1);
+    expect(lane.paneState("pane-incumbent")?.hash).toBe(hashTerminalReplicaSnapshot(initial));
+
+    lane.retainPanes(["pane-candidate"]);
+    // The candidate stage overlaps the committed inventory, so releasing it
+    // cannot close the newly active source. The incumbent trims at commit.
+    releaseCandidate();
+    expect(source.listeners.get(`${GENERATION_A}:pane-incumbent`)?.size ?? 0).toBe(0);
+    expect(source.listeners.get(`${GENERATION_A}:pane-candidate`)?.size).toBe(1);
+    lane.dispose();
+  });
+
+  it("releases an abandoned candidate stage without disturbing the incumbent", () => {
+    const { lane, source } = rig();
+    lane.retainPanes(["pane-incumbent"]);
+    const releaseCandidate = lane.stagePanes(["pane-candidate"]);
+    releaseCandidate();
+    releaseCandidate();
+    expect(source.listeners.get(`${GENERATION_A}:pane-candidate`)?.size ?? 0).toBe(0);
+    expect(source.listeners.get(`${GENERATION_A}:pane-incumbent`)?.size).toBe(1);
+    lane.dispose();
   });
 });
 

@@ -19,6 +19,7 @@ import type { AttachmentLeaseDescriptor } from "../attachments/lease-manager.ts"
 import {
   NativeTerminalAttachmentGeometryResolver,
   NativeTerminalAttachmentRuntimeError,
+  WorkspaceTerminalInventoryRuntime,
   createNativeTerminalAttachmentRuntime,
   discoverWorkspaceRegistryTerminalInventory,
   discoverWorkspaceRegistrySemanticPanes,
@@ -39,6 +40,14 @@ const INSTANCE_ID = "daemon-instance-a1";
 const REQUEST_ID = "25f3e0c9-00eb-434a-9c90-d59f6f62facf";
 const LEASE_ID = "f3d8bc0b-460c-458c-b9c0-dbc2536d1486";
 const ATTEMPT_ID = "a45072f8-5a82-4930-8bed-0959c617e60b";
+
+function asyncRead(execute: NativeTerminalAttachmentCommandExecutor) {
+  return async (
+    executable: string,
+    argv: readonly string[],
+    options: Parameters<NativeTerminalAttachmentCommandExecutor>[2],
+  ) => execute(executable, argv, options);
+}
 const ORIGIN = "tmux-ide://app";
 const WS_URL = "ws://127.0.0.1:6070/v1/terminal/attachments/redeem";
 const INVENTORY_SEPARATOR = "|tmux-ide-field-v2|";
@@ -579,6 +588,260 @@ class StartupReconciliationTmuxModel {
   };
 }
 
+describe("async terminal inventory reads", () => {
+  const syncStartup = (_executable: string, rawArgv: readonly string[]) => {
+    const argv = rawArgv.slice(2);
+    return argv[0] === "list-sessions" ? "" : "";
+  };
+
+  function asyncInventory(
+    sessionName: string,
+    calls: Array<{
+      executable: string;
+      argv: readonly string[];
+      options: { timeoutMs: number; env: NodeJS.ProcessEnv; signal?: AbortSignal };
+    }>,
+  ) {
+    return async (
+      executable: string,
+      rawArgv: readonly string[],
+      options: { timeoutMs: number; env: NodeJS.ProcessEnv; signal?: AbortSignal },
+    ) => {
+      calls.push({ executable, argv: [...rawArgv], options });
+      const argv = rawArgv.slice(2);
+      if (argv[0] === "list-sessions")
+        return [sessionName, "$7", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR) + "\n";
+      if (argv[0] === "list-panes")
+        return `${applicationShellPaneWire(sessionName, { windowStamp: "window.promoted.abc123" })}\n`;
+      return "";
+    };
+  }
+
+  it("pins async reads and single-flights only concurrent callers", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    const calls: Array<{
+      executable: string;
+      argv: readonly string[];
+      options: { timeoutMs: number; env: NodeJS.ProcessEnv; signal?: AbortSignal };
+    }> = [];
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: asyncInventory("runtime:session", calls),
+    });
+    await runtime.whenReady();
+
+    const [first, second] = await Promise.all([
+      runtime.discoverTerminalInventory(),
+      runtime.discoverTerminalInventory(),
+    ]);
+    expect(first).toEqual(second);
+    expect(calls).toHaveLength(3);
+    expect(calls.every(({ argv }) => argv[0] === "-L" && argv[1] === "native-runtime-test")).toBe(
+      true,
+    );
+    expect(new Set(calls.map(({ executable }) => executable))).toEqual(
+      new Set([realpathSync(authority(root).executablePath)]),
+    );
+    expect(new Set(calls.map(({ options }) => options.timeoutMs))).toEqual(new Set([5_000]));
+    expect(calls[0]!.options.env).toEqual({ TERM: "screen-256color", LANG: "C" });
+
+    await runtime.discoverTerminalInventory();
+    expect(calls).toHaveLength(6);
+    runtime.dispose();
+  });
+
+  it("aborts and fences an invalidated flight, then retries at the current epoch", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    let calls = 0;
+    let releaseFirst!: () => void;
+    const firstStarted = new Promise<void>((resolve) => (releaseFirst = resolve));
+    const execute = async (
+      _executable: string,
+      rawArgv: readonly string[],
+      options: { signal?: AbortSignal },
+    ): Promise<string> => {
+      calls += 1;
+      if (calls === 1) {
+        releaseFirst();
+        await new Promise<void>((_resolve, reject) =>
+          options.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+            once: true,
+          }),
+        );
+      }
+      const argv = rawArgv.slice(2);
+      if (argv[0] === "list-sessions")
+        return ["runtime:session", "$7", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR) + "\n";
+      return `${applicationShellPaneWire("runtime:session", { windowStamp: "window.promoted.abc123" })}\n`;
+    };
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: execute,
+    });
+    await runtime.whenReady();
+    const first = runtime.discoverTerminalInventory();
+    const shared = runtime.discoverTerminalInventory();
+    await firstStarted;
+    runtime.invalidate();
+    const [a, b] = await Promise.all([first, shared]);
+    expect(a).toEqual(b);
+    expect(calls).toBe(4);
+    runtime.dispose();
+  });
+
+  it("fails closed on async read failure and does not respawn after dispose abort", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    let calls = 0;
+    let started!: () => void;
+    const didStart = new Promise<void>((resolve) => (started = resolve));
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: async (_executable, _argv, options) => {
+        calls += 1;
+        started();
+        await new Promise<void>((_resolve, reject) =>
+          options.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+            once: true,
+          }),
+        );
+        return "";
+      },
+    });
+    await runtime.whenReady();
+    const pending = runtime.discoverTerminalInventory();
+    await didStart;
+    runtime.dispose();
+    await expect(pending).rejects.toMatchObject({ code: "runtime-disposed" });
+    expect(calls).toBe(1);
+
+    const failed = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: async () => {
+        throw Object.assign(new Error("timed out"), { code: "ETIMEDOUT" });
+      },
+    });
+    await failed.whenReady();
+    await expect(failed.discoverTerminalInventory()).rejects.toMatchObject({
+      code: "discovery-failed",
+    });
+    failed.dispose();
+  });
+
+  it("single-flights same-session inventory plus agent enrichment", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    const calls: Array<{
+      executable: string;
+      argv: readonly string[];
+      options: { timeoutMs: number; env: NodeJS.ProcessEnv; signal?: AbortSignal };
+    }> = [];
+    let probes = 0;
+    let releaseProbe!: () => void;
+    const probeGate = new Promise<void>((resolve) => (releaseProbe = resolve));
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: asyncInventory("runtime:session", calls),
+      agentStatusProbe: {
+        async probe(_input, signal) {
+          probes += 1;
+          await Promise.race([
+            probeGate,
+            new Promise<never>((_resolve, reject) =>
+              signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+                once: true,
+              }),
+            ),
+          ]);
+          return new Map();
+        },
+      },
+    });
+    await runtime.whenReady();
+    const first = runtime.discoverApplicationShellSession("runtime:session");
+    const second = runtime.discoverApplicationShellSession("runtime:session");
+    await vi.waitFor(() => expect(probes).toBe(1));
+    expect(calls).toHaveLength(3);
+    releaseProbe();
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    expect(probes).toBe(1);
+    runtime.dispose();
+  });
+
+  it("retries full enrichment on invalidation and rejects dispose during enrichment", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    const calls: Array<{
+      executable: string;
+      argv: readonly string[];
+      options: { timeoutMs: number; env: NodeJS.ProcessEnv; signal?: AbortSignal };
+    }> = [];
+    let probes = 0;
+    let firstProbeStarted!: () => void;
+    const didStartFirstProbe = new Promise<void>((resolve) => (firstProbeStarted = resolve));
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: asyncInventory("runtime:session", calls),
+      agentStatusProbe: {
+        async probe(_input, signal) {
+          probes += 1;
+          if (probes === 1) {
+            firstProbeStarted();
+            await new Promise<never>((_resolve, reject) =>
+              signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+                once: true,
+              }),
+            );
+          }
+          return new Map();
+        },
+      },
+    });
+    await runtime.whenReady();
+    const pending = runtime.discoverApplicationShellSession("runtime:session");
+    await didStartFirstProbe;
+    runtime.invalidate();
+    await expect(pending).resolves.toMatchObject({ name: "runtime:session" });
+    expect(probes).toBe(2);
+    expect(calls).toHaveLength(6);
+
+    let disposeProbeStarted!: () => void;
+    const didStartDisposeProbe = new Promise<void>((resolve) => (disposeProbeStarted = resolve));
+    const disposingRuntime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: asyncInventory("runtime:session", []),
+      agentStatusProbe: {
+        async probe(_input, signal) {
+          disposeProbeStarted();
+          return new Promise((_resolve, reject) =>
+            signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true }),
+          );
+        },
+      },
+    });
+    await disposingRuntime.whenReady();
+    const disposedRead = disposingRuntime.discoverApplicationShellSession("runtime:session");
+    await didStartDisposeProbe;
+    disposingRuntime.dispose();
+    await expect(disposedRead).rejects.toMatchObject({ code: "runtime-disposed" });
+    await expect(
+      disposingRuntime.discoverApplicationShellSession("runtime:session"),
+    ).rejects.toMatchObject({ code: "runtime-disposed" });
+    runtime.dispose();
+  });
+});
+
 describe("native terminal attachment runtime lifecycle", () => {
   it("prewarms from authoritative inventory without blocking or failing the shell", async () => {
     const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
@@ -587,6 +850,19 @@ describe("native terminal attachment runtime lifecycle", () => {
       throw new Error("control channel unavailable");
     });
     const retireSession = vi.fn(async () => undefined);
+    const execute: NativeTerminalAttachmentCommandExecutor = (_executable, rawArgv) => {
+      const argv = rawArgv.slice(2);
+      if (argv[0] === "list-sessions" && argv.at(-1)?.includes("tmux-ide-session-v2")) {
+        return (
+          [discoveredSessionName, "$7", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR) + "\n"
+        );
+      }
+      if (argv[0] === "list-sessions") return "";
+      if (argv[0] === "list-panes") {
+        return `${applicationShellPaneWire(discoveredSessionName, { windowStamp: "window.promoted.abc123" })}\n`;
+      }
+      return "";
+    };
     const runtime = createNativeTerminalAttachmentRuntime({
       daemonInstanceId: INSTANCE_ID,
       webSocketUrl: WS_URL,
@@ -596,19 +872,8 @@ describe("native terminal attachment runtime lifecycle", () => {
         retireSession,
       } as unknown as SessionRuntimeRegistry,
       tmuxAuthority: authority(root),
-      commandExecutor: (_executable, rawArgv) => {
-        const argv = rawArgv.slice(2);
-        if (argv[0] === "list-sessions" && argv.at(-1)?.includes("tmux-ide-session-v2")) {
-          return (
-            [discoveredSessionName, "$7", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR) + "\n"
-          );
-        }
-        if (argv[0] === "list-sessions") return "";
-        if (argv[0] === "list-panes") {
-          return `${applicationShellPaneWire(discoveredSessionName, { windowStamp: "window.promoted.abc123" })}\n`;
-        }
-        return "";
-      },
+      commandExecutor: execute,
+      readCommandExecutor: asyncRead(execute),
     });
 
     await runtime.whenReady();
@@ -636,6 +901,20 @@ describe("native terminal attachment runtime lifecycle", () => {
     const prewarmSession = vi.fn(async () => undefined);
     let semanticPaneId = "";
     let semanticWindowId = "";
+    const execute: NativeTerminalAttachmentCommandExecutor = (_executable, rawArgv) => {
+      const argv = rawArgv.slice(2);
+      if (argv[0] === "list-sessions" && argv.at(-1)?.includes("tmux-ide-session-v2")) {
+        return ["runtime:session", "$7", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR) + "\n";
+      }
+      if (argv[0] === "list-sessions") return "";
+      if (argv[0] === "list-panes") {
+        return `${applicationShellPaneWire("runtime:session", {
+          stamp: semanticPaneId,
+          windowStamp: semanticWindowId,
+        })}\n`;
+      }
+      return "";
+    };
     const runtime = createNativeTerminalAttachmentRuntime({
       daemonInstanceId: INSTANCE_ID,
       webSocketUrl: WS_URL,
@@ -645,20 +924,8 @@ describe("native terminal attachment runtime lifecycle", () => {
         retireSession: vi.fn(async () => undefined),
       } as unknown as SessionRuntimeRegistry,
       tmuxAuthority: authority(root),
-      commandExecutor: (_executable, rawArgv) => {
-        const argv = rawArgv.slice(2);
-        if (argv[0] === "list-sessions" && argv.at(-1)?.includes("tmux-ide-session-v2")) {
-          return ["runtime:session", "$7", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR) + "\n";
-        }
-        if (argv[0] === "list-sessions") return "";
-        if (argv[0] === "list-panes") {
-          return `${applicationShellPaneWire("runtime:session", {
-            stamp: semanticPaneId,
-            windowStamp: semanticWindowId,
-          })}\n`;
-        }
-        return "";
-      },
+      commandExecutor: execute,
+      readCommandExecutor: asyncRead(execute),
     });
 
     await runtime.whenReady();
@@ -681,6 +948,19 @@ describe("native terminal attachment runtime lifecycle", () => {
     const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
     const calls: Array<{ executable: string; argv: readonly string[]; timeoutMs: number }> = [];
     let paneCwd = "/repo";
+    const execute: NativeTerminalAttachmentCommandExecutor = (executable, rawArgv, options) => {
+      calls.push({ executable, argv: [...rawArgv], timeoutMs: options.timeoutMs });
+      const argv = rawArgv.slice(2);
+      if (argv[0] === "list-sessions" && argv.at(-1)?.includes("tmux-ide-session-v2")) {
+        return ["runtime:session", "$7", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR) + "\n";
+      }
+      if (argv[0] === "list-sessions") return "";
+      if (argv[0] === "list-panes") {
+        expect(argv[argv.indexOf("-t") + 1]).toBe("$7");
+        return `${applicationShellPaneWire("runtime:session", { cwd: paneCwd })}\n`;
+      }
+      return "";
+    };
     const runtime = createNativeTerminalAttachmentRuntime({
       daemonInstanceId: INSTANCE_ID,
       webSocketUrl: WS_URL,
@@ -689,19 +969,8 @@ describe("native terminal attachment runtime lifecycle", () => {
         ...authority(root),
         socketSelector: { kind: "name", name: "inventory-socket" },
       },
-      commandExecutor: (executable, rawArgv, options) => {
-        calls.push({ executable, argv: [...rawArgv], timeoutMs: options.timeoutMs });
-        const argv = rawArgv.slice(2);
-        if (argv[0] === "list-sessions" && argv.at(-1)?.includes("tmux-ide-session-v2")) {
-          return ["runtime:session", "$7", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR) + "\n";
-        }
-        if (argv[0] === "list-sessions") return "";
-        if (argv[0] === "list-panes") {
-          expect(argv[argv.indexOf("-t") + 1]).toBe("$7");
-          return `${applicationShellPaneWire("runtime:session", { cwd: paneCwd })}\n`;
-        }
-        return "";
-      },
+      commandExecutor: execute,
+      readCommandExecutor: asyncRead(execute),
     });
 
     await runtime.whenReady();
@@ -749,22 +1018,24 @@ describe("native terminal attachment runtime lifecycle", () => {
   it("merges injected agent-status probe facts onto discovered panes", async () => {
     const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
     const probed: Array<{ sessionId: string; panes: readonly { runtimePaneId: string }[] }> = [];
+    const execute: NativeTerminalAttachmentCommandExecutor = (_executable, rawArgv) => {
+      const argv = rawArgv.slice(2);
+      if (argv[0] === "list-sessions" && argv.at(-1)?.includes("tmux-ide-session-v2")) {
+        return ["runtime:session", "$7", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR) + "\n";
+      }
+      if (argv[0] === "list-sessions") return "";
+      if (argv[0] === "list-panes") return `${applicationShellPaneWire("runtime:session")}\n`;
+      return "";
+    };
     const runtime = createNativeTerminalAttachmentRuntime({
       daemonInstanceId: INSTANCE_ID,
       webSocketUrl: WS_URL,
       registry,
       tmuxAuthority: authority(root),
-      commandExecutor: (_executable, rawArgv) => {
-        const argv = rawArgv.slice(2);
-        if (argv[0] === "list-sessions" && argv.at(-1)?.includes("tmux-ide-session-v2")) {
-          return ["runtime:session", "$7", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR) + "\n";
-        }
-        if (argv[0] === "list-sessions") return "";
-        if (argv[0] === "list-panes") return `${applicationShellPaneWire("runtime:session")}\n`;
-        return "";
-      },
+      commandExecutor: execute,
+      readCommandExecutor: asyncRead(execute),
       agentStatusProbe: {
-        probe(input) {
+        async probe(input) {
           probed.push({ sessionId: input.sessionId, panes: input.panes });
           return new Map(
             input.panes.map((pane) => [
@@ -1125,5 +1396,99 @@ describe("native terminal attachment runtime lifecycle", () => {
     for (const environment of model.environments) {
       expect(environment).toEqual({ TERM: "screen-256color", LANG: "C" });
     }
+  });
+
+  it("invalidates standalone reads on registry changes without a session runtime registry", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    let calls = 0;
+    let firstStarted!: () => void;
+    const didStart = new Promise<void>((resolve) => (firstStarted = resolve));
+    const runtime = createNativeTerminalAttachmentRuntime({
+      daemonInstanceId: INSTANCE_ID,
+      webSocketUrl: WS_URL,
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: () => "",
+      readCommandExecutor: async (_executable, rawArgv, options) => {
+        calls += 1;
+        if (calls === 1) {
+          firstStarted();
+          await new Promise<never>((_resolve, reject) =>
+            options.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+              once: true,
+            }),
+          );
+        }
+        const argv = rawArgv.slice(2);
+        if (argv[0] === "list-sessions") {
+          return registry
+            .list()
+            .map((workspace, index) =>
+              [workspace.sessionName, `$${index + 7}`, "tmux-ide-session-v2"].join(
+                INVENTORY_SEPARATOR,
+              ),
+            )
+            .join("\n");
+        }
+        const target = argv[argv.indexOf("-t") + 1];
+        const index = registry.list().findIndex((_entry, row) => `$${row + 7}` === target);
+        const workspace = registry.list()[index]!;
+        return `${applicationShellPaneWire(workspace.sessionName)
+          .replace("$7", target!)
+          .replace("@2", `@${index + 2}`)
+          .replace("%3", `%${index + 3}`)}\n`;
+      },
+    });
+    await runtime.whenReady();
+    const pending = runtime.discoverTerminalInventory();
+    await didStart;
+    registry.add({
+      name: "workspace.beta",
+      sessionName: "runtime:beta",
+      projectDir: root,
+      persistence: "volatile",
+    });
+    const inventory = await pending;
+    expect(inventory.panes.map((pane) => pane.sessionName).sort()).toEqual([
+      "runtime:beta",
+      "runtime:session",
+    ]);
+    expect(calls).toBe(6);
+    await runtime.dispose();
+  });
+
+  it("aborts and awaits standalone reads on dispose, then rejects post-dispose reads", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    let calls = 0;
+    let started!: () => void;
+    const didStart = new Promise<void>((resolve) => (started = resolve));
+    const runtime = createNativeTerminalAttachmentRuntime({
+      daemonInstanceId: INSTANCE_ID,
+      webSocketUrl: WS_URL,
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: () => "",
+      readCommandExecutor: async (_executable, _argv, options) => {
+        calls += 1;
+        started();
+        return new Promise((_resolve, reject) =>
+          options.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+            once: true,
+          }),
+        );
+      },
+    });
+    await runtime.whenReady();
+    const pending = runtime.discoverApplicationShellSession("runtime:session");
+    await didStart;
+    await runtime.dispose();
+    await expect(pending).rejects.toMatchObject({ code: "runtime-disposed" });
+    expect(calls).toBe(1);
+    await expect(runtime.discoverTerminalInventory()).rejects.toMatchObject({
+      code: "runtime-disposed",
+    });
+    await expect(runtime.discoverApplicationShellSession("runtime:session")).rejects.toMatchObject({
+      code: "runtime-disposed",
+    });
   });
 });

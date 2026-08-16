@@ -43,6 +43,7 @@ const SYSTEM_CLOCK: FrameCoalescerClock = {
 export class FrameCoalescer {
   private pending = false;
   private scheduled: unknown = null;
+  private releaseScheduled: (() => void) | null = null;
   private lastFlushAt = Number.NEGATIVE_INFINITY;
   private disposed = false;
 
@@ -59,6 +60,7 @@ export class FrameCoalescer {
     if (this.scheduled !== null) return;
     const elapsed = this.clock.now() - this.lastFlushAt;
     const delay = Number.isFinite(elapsed) ? Math.max(0, this.frameIntervalMs - elapsed) : 0;
+    this.releaseScheduled = acquireRuntimeResource("runtime-timer");
     this.scheduled = this.clock.schedule(() => this.run(), delay);
   }
 
@@ -67,10 +69,14 @@ export class FrameCoalescer {
     this.pending = false;
     if (this.scheduled !== null) this.clock.cancel(this.scheduled);
     this.scheduled = null;
+    this.releaseScheduled?.();
+    this.releaseScheduled = null;
   }
 
   private run(): void {
     this.scheduled = null;
+    this.releaseScheduled?.();
+    this.releaseScheduled = null;
     if (this.disposed || !this.pending) return;
     this.onWakeup?.();
     this.pending = false;
@@ -78,3 +84,4 @@ export class FrameCoalescer {
     this.flush();
   }
 }
+import { acquireRuntimeResource } from "@tmux-ide/daemon-client/runtime-resource-ledger";

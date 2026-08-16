@@ -98,6 +98,9 @@ export interface TerminalPaintTrace {
   readonly traceId: string;
   readonly generation: string;
   readonly incarnation: string;
+  readonly semanticPaneId: string;
+  readonly revision: number;
+  readonly stateHash: string;
 }
 
 const hardwareCursorOwner = new WeakMap<RenderContext, PaneSurfaceRenderable>();
@@ -410,6 +413,10 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
             endedAtMicros: Math.floor(paintEndedAt * 1_000),
             generation: paintTrace.generation,
             incarnation: paintTrace.incarnation,
+            semanticPaneId: paintTrace.semanticPaneId,
+            revision: paintTrace.revision,
+            stateHash: paintTrace.stateHash,
+            paintStateIdentity: "latest-canonical-state-blitted",
           });
       } catch {
         // Diagnostics are observational and can never break terminal paint.

@@ -36,6 +36,11 @@ export default defineConfig({
     exclude: [
       "**/node_modules/**",
       "**/dist/**",
+      // Real tmux/daemon integration owns shared process and PTY resources.
+      // The package test script runs these through vitest.live.config.ts with
+      // one worker after the hermetic suite has retired.
+      "src/**/*-live.test.ts",
+      "src/lib/__tests__/headless-cli-entrypoint.test.ts",
       // OpenTUI renderer suites require Bun plus the Solid/OpenTUI preloads.
       // The root `test:tui-renderer` gate owns every file with this suffix.
       "src/tui/**/*-renderer.test.tsx",
@@ -90,6 +95,9 @@ export default defineConfig({
       "src/server/ws-route.test.ts",
       "src/stop.test.ts",
       "src/tui/mirror/features/rich-preview/feature.test.ts",
+      "src/tui/mirror/runtime/runtime-layout-presentation.test.ts",
+      "src/tui/mirror/runtime/terminal-fast-lane-renderer-adapter.test.ts",
+      "src/tui/mirror/runtime/terminal-pane-input-router.test.ts",
       "src/tui/mirror/testing/renderer-harness.test.ts",
       "src/tui/mirror/workspace/terminal-pane-chrome-view.test.tsx",
       "src/ui/web/utils/color.test.ts",

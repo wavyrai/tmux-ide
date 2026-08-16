@@ -4,6 +4,7 @@ import {
   exponentialReconnectBackoff,
   type RuntimeConnection,
 } from "./connection-supervisor.ts";
+import { runtimeResourceSnapshot } from "./runtime-resource-ledger.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -19,6 +20,7 @@ const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 describe("runtime connection supervisor", () => {
   it("deduplicates start and retains the last value while reconnecting", async () => {
+    const baseline = runtimeResourceSnapshot();
     const firstClosed = deferred<unknown>();
     const secondClosed = deferred<unknown>();
     let connects = 0;
@@ -36,7 +38,9 @@ describe("runtime connection supervisor", () => {
         };
       },
     });
-    supervisor.subscribe((state) => states.push(`${state.phase}:${state.value ?? "-"}`));
+    const unsubscribe = supervisor.subscribe((state) =>
+      states.push(`${state.phase}:${state.value ?? "-"}`),
+    );
 
     supervisor.start();
     supervisor.start();
@@ -53,6 +57,11 @@ describe("runtime connection supervisor", () => {
     await supervisor.stop();
     expect(disposed).toEqual([1, 2]);
     expect(supervisor.state).toMatchObject({ phase: "stopped", value: 2 });
+    unsubscribe();
+    const settled = runtimeResourceSnapshot();
+    expect(settled["runtime-supervisor"].active).toBe(baseline["runtime-supervisor"].active);
+    expect(settled["runtime-subscription"].active).toBe(baseline["runtime-subscription"].active);
+    expect(settled["runtime-timer"].active).toBe(baseline["runtime-timer"].active);
   });
 
   it("stops retrying a terminal failure", async () => {
@@ -64,6 +73,30 @@ describe("runtime connection supervisor", () => {
     supervisor.start();
     await tick();
     expect(supervisor.state).toMatchObject({ phase: "failed", error: failure });
+  });
+
+  it("stops without waiting for a connect adapter that ignores abort and disposes its late result", async () => {
+    const opening = deferred<RuntimeConnection<number>>();
+    let disposeCount = 0;
+    const supervisor = createRuntimeConnectionSupervisor<number>({
+      connect: () => opening.promise,
+    });
+    supervisor.start();
+    await tick();
+
+    await supervisor.stop();
+    expect(supervisor.state.phase).toBe("stopped");
+    expect(disposeCount).toBe(0);
+
+    opening.resolve({
+      value: 1,
+      closed: new Promise<never>(() => undefined),
+      dispose: () => {
+        disposeCount += 1;
+      },
+    });
+    await tick();
+    expect(disposeCount).toBe(1);
   });
 });
 

@@ -67,6 +67,7 @@ import {
   type SessionRuntimeTraceContext,
 } from "./runtime-observability.ts";
 import { RuntimeTraceCorrelator } from "./runtime-trace-correlator.ts";
+import type { MirrorOutputTiming } from "../mirror/control-channel.ts";
 import { SessionRuntimeAuthorityArbiter } from "./authority-arbiter.ts";
 
 export interface SessionRuntimeRegistryOptions {
@@ -228,12 +229,73 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
     this.#createTraceCorrelator =
       options.createTraceCorrelator ?? ((scheduler) => new RuntimeTraceCorrelator(scheduler));
+    const diagnosticMirrorOptions: Partial<MirrorServiceOptions> = this.#observability.enabled
+      ? {
+          nowMicros: () => this.#observability.nowMicros(),
+          onInputWrite: (_session, action, startedAtMicros, endedAtMicros, pendingBeforeSend) => {
+            for (const traceId of action.traceIds ?? []) {
+              const trace = this.#observability.beginTrace(
+                "terminal-input-to-paint",
+                { generation: this.generation, incarnation: null },
+                traceId,
+              );
+              this.#observability.recordSpan(
+                "tmux",
+                "control-write",
+                startedAtMicros,
+                endedAtMicros,
+                trace,
+              );
+              this.#observability.recordSpan(
+                "tmux",
+                pendingBeforeSend === 0
+                  ? "control-queue-empty-at-send"
+                  : "control-queue-nonempty-at-send",
+                endedAtMicros,
+                endedAtMicros,
+                trace,
+              );
+            }
+          },
+          onInputAccepted: (_session, action, acceptedAtMicros) => {
+            for (const traceId of action.traceIds ?? []) {
+              const trace = this.#observability.beginTrace(
+                "terminal-input-to-paint",
+                { generation: this.generation, incarnation: null },
+                traceId,
+              );
+              this.#observability.recordSpan(
+                "tmux",
+                "control-command-accepted",
+                acceptedAtMicros,
+                acceptedAtMicros,
+                trace,
+              );
+            }
+          },
+        }
+      : {};
+    const observeOutput =
+      this.#observability.enabled || options.mirror?.onOutputObserved
+        ? (
+            session: string,
+            semanticPaneId: string,
+            ageMs: number | null,
+            timing?: MirrorOutputTiming,
+          ) => {
+            options.mirror?.onOutputObserved?.(session, semanticPaneId, ageMs, timing);
+            if (this.#observability.enabled)
+              this.#sessions.get(session)?.noteOutputObserved(semanticPaneId, ageMs, timing);
+          }
+        : undefined;
     this.#mirror = new MirrorService({
       ...options.mirror,
+      ...diagnosticMirrorOptions,
       onNativeClientActivity: (session) => {
         options.mirror?.onNativeClientActivity?.(session);
         this.#sessions.get(session)?.noteNativeGeometryActivity();
       },
+      ...(observeOutput ? { onOutputObserved: observeOutput } : {}),
     });
     this.#semanticMutations = options.semanticMutations
       ? new SessionSemanticMutationExecutor({
@@ -572,6 +634,10 @@ class SessionRuntime {
   readonly #terminalReplicas = new Map<string, SessionRuntimeTerminalReplicaOwner>();
   readonly #terminalReplicaClocks = new Map<string, { epoch: number; revision: number }>();
   #outputTraces: RuntimeTraceCorrelator | null;
+  readonly #outputObservations = new Map<
+    string,
+    { readonly ageMs: number | null; readonly timing?: MirrorOutputTiming }
+  >();
   readonly #createTraceCorrelator: (scheduler: SessionRuntimeScheduler) => RuntimeTraceCorrelator;
   readonly #terminalDeliveryHub: SessionRuntimeTerminalDeliveryHub;
   readonly #authority: SessionRuntimeAuthorityArbiter;
@@ -891,8 +957,9 @@ class SessionRuntime {
       this.#outputTraces.arm(semanticPaneId, trace);
     }
     try {
-      if (input.kind === "text") this.#mirror.sendText(this.session, semanticPaneId, input.data);
-      else this.#mirror.sendKey(this.session, semanticPaneId, input.data);
+      if (input.kind === "text")
+        this.#mirror.sendText(this.session, semanticPaneId, input.data, performanceTraceId);
+      else this.#mirror.sendKey(this.session, semanticPaneId, input.data, performanceTraceId);
     } catch (error) {
       if (trace && performanceTraceId) this.#outputTraces?.take(semanticPaneId);
       throw error;
@@ -905,6 +972,35 @@ class SessionRuntime {
         this.#observability.nowMicros(),
         trace,
       );
+    if (this.#observability.enabled && trace && performanceTraceId) {
+      const scheduledAt = this.#observability.nowMicros();
+      setImmediate(() => {
+        this.#observability.recordSpan(
+          "transport",
+          "daemon-event-loop-turn",
+          scheduledAt,
+          this.#observability.nowMicros(),
+          trace,
+        );
+      });
+    }
+  }
+
+  /**
+   * Synchronous control-reader seam. SessionChannel invokes this immediately
+   * before feeding the same output bytes to the terminal replica owner, so a
+   * subsequent trace take observes timing for that exact output publication.
+   */
+  noteOutputObserved(
+    semanticPaneId: string,
+    ageMs: number | null,
+    timing?: MirrorOutputTiming,
+  ): void {
+    if (!this.#observability.enabled) return;
+    this.#outputObservations.set(
+      semanticPaneId,
+      Object.freeze({ ageMs, ...(timing ? { timing } : {}) }),
+    );
   }
 
   fitViewport(
@@ -1063,9 +1159,39 @@ class SessionRuntime {
       .get(semanticPaneId)
       ?.qualificationSnapshot().incarnation;
     const authority = { generation: this.generation, incarnation: incarnation ?? null };
-    return this.#observability.enabled
-      ? this.#observability.beginTrace(pending.scenario, authority, pending.traceId)
-      : Object.freeze({ ...pending, authority });
+    if (!this.#observability.enabled) return Object.freeze({ ...pending, authority });
+    const trace = this.#observability.beginTrace(pending.scenario, authority, pending.traceId);
+    const observation = this.#outputObservations.get(semanticPaneId);
+    this.#outputObservations.delete(semanticPaneId);
+    if (trace && observation) {
+      const observedAtMicros = this.#observability.nowMicros();
+      if (observation.ageMs !== null) {
+        this.#observability.recordSpan(
+          "tmux",
+          "tmux-output-server-age",
+          observedAtMicros - observation.ageMs * 1_000,
+          observedAtMicros,
+          trace,
+        );
+      }
+      if (observation.timing) {
+        this.#observability.recordSpan(
+          "parse",
+          "control-stdout-parse",
+          observation.timing.receivedAtMicros,
+          observation.timing.parsedAtMicros,
+          trace,
+        );
+        this.#observability.recordSpan(
+          "reduce",
+          "control-output-to-replica",
+          observation.timing.parsedAtMicros,
+          observedAtMicros,
+          trace,
+        );
+      }
+    }
+    return trace;
   }
 
   release(consumer: SessionRuntimeConsumerImpl): void {
@@ -1083,6 +1209,7 @@ class SessionRuntime {
     this.#retention = null;
     this.#startPromise = null;
     this.#outputTraces?.clear();
+    this.#outputObservations.clear();
     const owners = [...this.#terminalReplicas.values()];
     this.#terminalReplicas.clear();
     this.#restartBarrier = this.#restartBarrier.then(async () => {

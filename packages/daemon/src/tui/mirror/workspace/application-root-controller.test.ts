@@ -224,15 +224,18 @@ describe("production application root controller", () => {
     ).toBe("consume");
   });
 
-  it("keeps active resize ownership before status and inactive starts after it in app.tsx", () => {
+  it("keeps resize preview local and commits through one semantic v2 callback", () => {
     const app = productionRootSource();
-    const active = app.indexOf(
-      'if (dragging?.kind === "sidebar" && routeSidebarResizePointer(e, true)) return;',
-    );
-    const status = app.indexOf('applicationChromeHit?.kind === "status-strip"');
-    const start = app.indexOf("if (routeSidebarResizePointer(e, false)) return;");
-    expect(active).toBeGreaterThan(-1);
-    expect(active).toBeLessThan(status);
-    expect(status).toBeLessThan(start);
+    const preview = app.indexOf("const previewPaneResize = (");
+    const commit = app.indexOf("const resizePane = (");
+    const verb = app.indexOf('verb: "workspace.pane.resize"', commit);
+    const previewBinding = app.indexOf("onResizePreview={previewPaneResize}", verb);
+    const commitBinding = app.indexOf("onResizePane={resizePane}", previewBinding);
+    expect(preview).toBeGreaterThan(-1);
+    expect(commit).toBeGreaterThan(preview);
+    expect(verb).toBeGreaterThan(commit);
+    expect(previewBinding).toBeGreaterThan(verb);
+    expect(commitBinding).toBeGreaterThan(previewBinding);
+    expect(app).not.toContain("routeSidebarResizePointer");
   });
 });

@@ -1,4 +1,5 @@
 import type { ApplicationShellSessionState } from "@tmux-ide/daemon-client/application-shell-session";
+import { acquireRuntimeResource } from "@tmux-ide/daemon-client/runtime-resource-ledger";
 
 export interface DaemonAuthorityRebindActions {
   /** Retire every capability minted by the rejected daemon before discovery. */
@@ -42,6 +43,7 @@ export class DaemonAuthorityRebindCoordinator {
   readonly #maxAttempts: number;
   readonly #attempts = new Map<string, number>();
   #pending: ReturnType<typeof setTimeout> | null = null;
+  #releasePending: (() => void) | null = null;
   #pendingKey: string | null = null;
   #inFlight: { readonly key: string; readonly epoch: number } | null = null;
   #queued: QueuedRebind | null = null;
@@ -81,6 +83,8 @@ export class DaemonAuthorityRebindCoordinator {
       // settles, preserving one physical reconnect at a time.
       this.#epoch += 1;
       if (this.#pending !== null) this.#cancel(this.#pending);
+      this.#releasePending?.();
+      this.#releasePending = null;
       this.#pending = null;
       this.#pendingKey = null;
       this.#queued = { key, actions };
@@ -95,8 +99,13 @@ export class DaemonAuthorityRebindCoordinator {
     const attempt = (this.#attempts.get(key) ?? 0) + 1;
     this.#attempts.set(key, attempt);
     this.#pendingKey = key;
-    this.#pending = this.#schedule(
+    const releaseTimer = acquireRuntimeResource("runtime-timer");
+    let handle: ReturnType<typeof setTimeout>;
+    handle = this.#schedule(
       () => {
+        releaseTimer();
+        if (this.#pending !== handle) return;
+        this.#releasePending = null;
         if (epoch !== this.#epoch) return;
         this.#pending = null;
         this.#pendingKey = null;
@@ -112,6 +121,8 @@ export class DaemonAuthorityRebindCoordinator {
       },
       Math.min(1_000, this.#delayMs * 2 ** (attempt - 1)),
     );
+    this.#pending = handle;
+    this.#releasePending = releaseTimer;
   }
 
   #finishAttempt(
@@ -138,6 +149,8 @@ export class DaemonAuthorityRebindCoordinator {
   cancelPending(): void {
     this.#epoch += 1;
     if (this.#pending !== null) this.#cancel(this.#pending);
+    this.#releasePending?.();
+    this.#releasePending = null;
     this.#pending = null;
     this.#pendingKey = null;
     this.#queued = null;

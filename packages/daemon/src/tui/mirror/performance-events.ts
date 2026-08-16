@@ -8,6 +8,7 @@ export interface TuiPerformanceEventSink {
   readonly terminalPaint: (dirtyRows: number, durationMs: number) => void;
   readonly terminalDelivery: (event: TuiTerminalDeliveryPerformanceEvent) => void;
   readonly terminalTraceSpan?: (event: TuiTerminalTraceSpanEvent) => void;
+  readonly terminalTraceStage?: (event: TuiTerminalTraceStageEvent) => void;
   readonly beginTerminalInput?: () => TuiTerminalInputTrace;
 }
 
@@ -28,12 +29,35 @@ export interface TuiTerminalTraceSpanEvent {
   readonly endedAtMicros: number;
   readonly generation: string;
   readonly incarnation: string;
+  /** Exact canonical pane/state consumed by this changed-cell paint. */
+  readonly semanticPaneId: string;
+  readonly revision: number;
+  readonly stateHash: string;
+  /** Coalescing contract: revision/hash/incarnation name the state actually blitted. */
+  readonly paintStateIdentity: "latest-canonical-state-blitted";
+}
+
+export interface TuiTerminalTraceStageEvent {
+  readonly traceId: string;
+  readonly scenario: "terminal-input-to-paint";
+  readonly stage: "client";
+  readonly operation: string;
+  readonly processId: string;
+  readonly clockId: "opentui-performance-now";
+  readonly clockKind: "performance-now";
+  readonly atMicros: number;
+  readonly inputPending?: number;
+  readonly inputInFlight?: number;
+  readonly inputPendingBytes?: number;
+  readonly rssBytes?: number;
+  readonly heapUsedBytes?: number;
 }
 
 export interface TuiTerminalDeliveryPerformanceEvent {
   readonly parseMs: number;
   readonly queuePeak: number;
   readonly queueCapacity: number | null;
+  readonly settledQueueDepth: number;
   readonly revisionLagPeak: number;
   readonly reseed: boolean;
 }

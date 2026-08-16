@@ -21,20 +21,21 @@ function runTmux(args: readonly string[]): Promise<void> {
  */
 export function createOpenTuiHostLocalTmuxAdapter(
   hosted = process.env.TMUX_IDE_HOSTED === "1",
+  run = runTmux,
 ): OpenTuiHostLocalTmuxAdapter {
   return {
     configureClipboard() {
       void Promise.all([
-        runTmux(["set-option", "-gq", "set-clipboard", "on"]),
-        runTmux(["set-option", "-gq", "allow-passthrough", "on"]),
+        run(["set-option", "-gq", "set-clipboard", "on"]),
+        run(["set-option", "-gq", "allow-passthrough", "on"]),
       ]).catch(() => undefined);
     },
     async putAway() {
       if (!hosted) return;
       try {
-        await runTmux(["switch-client", "-l"]);
+        await run(["switch-client", "-l"]);
       } catch {
-        await runTmux(["detach-client"]);
+        await run(["detach-client"]);
       }
     },
   };

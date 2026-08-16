@@ -4,6 +4,7 @@ import {
   type TuiLifecycleCommand,
   type TuiLifecycleExecutor,
 } from "../input-lifecycle.ts";
+import { acquireRuntimeResource } from "@tmux-ide/daemon-client/runtime-resource-ledger";
 
 export type TuiShutdownReason = TuiLifecycleCommand["source"] | "bootstrap-error" | "host";
 
@@ -253,8 +254,14 @@ export class TuiApplicationLifecycle {
   ): Promise<TuiShutdownReport> {
     const outstanding = new Set(awaited);
     let timer: ReturnType<typeof setTimeout> | null = null;
+    // The root's post-close snapshot occurs while this enclosing guard still
+    // owns the closer; it retires before the shared shutdown promise resolves.
+    const releaseTimer = acquireRuntimeResource("host-shutdown-timer");
     const deadline = new Promise<"timeout">((resolve) => {
-      timer = this.#setTimer(() => resolve("timeout"), this.#shutdownTimeoutMs);
+      timer = this.#setTimer(() => {
+        releaseTimer();
+        resolve("timeout");
+      }, this.#shutdownTimeoutMs);
     });
 
     // Drain to quiescence. A pending creator is allowed to finish by handing
@@ -291,6 +298,7 @@ export class TuiApplicationLifecycle {
       }
     }
     if (timer !== null) this.#clearTimer(timer);
+    releaseTimer();
 
     for (const entry of this.#retiringClosers) outstanding.add(entry);
     const timedOut = [...outstanding].map((entry) => entry.name);
@@ -307,8 +315,7 @@ export class TuiApplicationLifecycle {
 export function createApplicationLifecycleInputExecutor(
   lifecycle: TuiApplicationLifecycle,
   hosted: {
-    readonly switchClientBack: (callback: (error: unknown) => void) => void;
-    readonly detachClient: () => void;
+    readonly putAway: () => void | Promise<void>;
   },
 ): TuiLifecycleExecutor {
   let destroyReason: TuiShutdownReason = "keyboard";
@@ -316,8 +323,9 @@ export function createApplicationLifecycleInputExecutor(
     destroyRenderer: () => {
       void lifecycle.shutdown(destroyReason);
     },
-    switchClientBack: hosted.switchClientBack,
-    detachClient: hosted.detachClient,
+    putAway: () => {
+      void hosted.putAway();
+    },
   });
   return {
     run(command) {

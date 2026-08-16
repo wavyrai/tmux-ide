@@ -803,26 +803,32 @@ export class WorkspaceMultiplexerAuthority {
   ): WorkspaceMultiplexerMutationResult {
     const rows = this.#panes(sessionName);
     const pane = resolvePaneRow(rows, intent.semanticPaneId);
-    const wasActive =
-      this.#io.runTmux([
-        "display-message",
-        "-p",
-        "-t",
-        pane.paneId,
-        "#{?pane_active,1,0}\t#{?window_active,1,0}",
-      ]) === "1\t1";
-    // Both halves matter: select-pane alone moves the cursor inside a window
-    // that may not be the one on screen, so an attached client would see
-    // nothing move. This is the pair that makes GUI focus reach tmux.
-    this.#io.runTmux(["select-window", "-t", pane.windowId]);
-    this.#io.runTmux(["select-pane", "-t", pane.paneId]);
-    const observed = this.#io.runTmux([
+    const observations = this.#io.runTmux([
+      "display-message",
+      "-p",
+      "-t",
+      pane.paneId,
+      "#{?pane_active,1,0}\t#{?window_active,1,0}",
+      ";",
+      // Both halves matter: select-pane alone moves the cursor inside a window
+      // that may not be the one on screen. Keep selection plus both proofs in
+      // one tmux command queue: one server snapshot, one process boundary.
+      "select-window",
+      "-t",
+      pane.windowId,
+      ";",
+      "select-pane",
+      "-t",
+      pane.paneId,
+      ";",
       "display-message",
       "-p",
       "-t",
       pane.paneId,
       "#{?pane_active,1,0}\t#{?window_active,1,0}",
     ]);
+    const [before = "", observed = ""] = observations.split("\n");
+    const wasActive = before === "1\t1";
     if (observed !== "1\t1") {
       throw new WorkspaceMultiplexerError("mutation_unverified", {
         operationId: envelope.operationId,

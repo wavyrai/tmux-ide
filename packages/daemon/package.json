@@ -73,8 +73,8 @@
     "dev": "tsx --watch src/lib/daemon.ts",
     "start": "node dist/lib/daemon.js",
     "lint": "eslint src",
-    "test": "vitest run",
-    "test:vitest": "vitest run"
+    "test": "vitest run && vitest run --config vitest.live.config.ts",
+    "test:vitest": "vitest run && vitest run --config vitest.live.config.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.0",

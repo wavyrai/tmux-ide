@@ -1,3 +1,5 @@
+import { acquireRuntimeResource } from "./runtime-resource-ledger.ts";
+
 /** One host-neutral, single-flight daemon bootstrap state machine. */
 
 export type DaemonBootstrapPhase =
@@ -89,7 +91,13 @@ export class DaemonBootstrapError<Reason = unknown> extends Error {
 }
 
 const defaultSleep = (milliseconds: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, milliseconds));
+  new Promise((resolve) => {
+    const releaseTimer = acquireRuntimeResource("runtime-timer");
+    setTimeout(() => {
+      releaseTimer();
+      resolve();
+    }, milliseconds);
+  });
 const defaultPollMs = (poll: number): number => Math.min(25 * 2 ** poll, 200);
 
 /**
