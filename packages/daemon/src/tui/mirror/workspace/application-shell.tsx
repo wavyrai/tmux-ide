@@ -11,6 +11,7 @@ export interface ApplicationShellProps {
   interactionMode?: string | null;
   focusLabel?: string | null;
   note?: string | null;
+  showToolStatus?: boolean;
   sidebar?: JSX.Element;
   rightChips?: readonly {
     id: string;
@@ -90,11 +91,15 @@ export function ApplicationShell(props: ApplicationShellProps) {
             }
             inputMode={props.interactionMode}
             tool={
-              props.projection.semantic.bottomDock.tools.find(
-                (item) => item.id === props.projection.semantic.bottomDock.activeTool,
-              )?.label ?? props.projection.semantic.bottomDock.activeTool
+              props.showToolStatus === false
+                ? null
+                : (props.projection.semantic.bottomDock.tools.find(
+                    (item) => item.id === props.projection.semantic.bottomDock.activeTool,
+                  )?.label ?? props.projection.semantic.bottomDock.activeTool)
             }
-            dockMode={props.projection.semantic.bottomDock.mode}
+            dockMode={
+              props.showToolStatus === false ? null : props.projection.semantic.bottomDock.mode
+            }
             focus={props.focusLabel ?? applicationShellFocusLabel(props.projection)}
             notification={props.projection.semantic.statusStrip.message}
             help={props.help}

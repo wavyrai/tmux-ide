@@ -598,6 +598,41 @@ describe("async terminal inventory reads", () => {
     return argv[0] === "list-sessions" ? "" : "";
   };
 
+  it("retries one transient pre-publication orphan enumeration and remains fail closed", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    let enumerations = 0;
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: (_executable, rawArgv) => {
+        const argv = rawArgv.slice(2);
+        if (argv[0] !== "list-sessions") return "";
+        enumerations += 1;
+        if (enumerations === 1) throw new Error("transient cold contender timeout");
+        return "";
+      },
+    });
+
+    await expect(runtime.whenReady()).resolves.toBeUndefined();
+    expect(enumerations).toBe(2);
+    runtime.dispose();
+
+    let persistentEnumerations = 0;
+    const failed = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: () => {
+        persistentEnumerations += 1;
+        throw new Error("persistent enumeration failure");
+      },
+    });
+    await expect(failed.whenReady()).rejects.toMatchObject({
+      code: "orphan-reconciliation-failed",
+    });
+    expect(persistentEnumerations).toBe(2);
+    failed.dispose();
+  });
+
   it("records resource boundary instants only when daemon diagnostics are enabled", async () => {
     const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
     const operations: string[] = [];

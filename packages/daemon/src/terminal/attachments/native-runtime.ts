@@ -58,6 +58,7 @@ import type { AgentStatusPaneFacts, AgentStatusProbe } from "./agent-status-prob
 
 const MAX_TMUX_OUTPUT_BYTES = 128 * 1024;
 const TERMINAL_ATTACHMENT_TMUX_COMMAND_TIMEOUT_MS = 5_000;
+const STARTUP_ORPHAN_ENUMERATION_ATTEMPTS = 2;
 const MAX_DISCOVERED_WORKSPACES = 128;
 const MAX_DISCOVERED_PANES = 4_096;
 const MAX_GEOMETRY_CLIENTS = 32;
@@ -1026,6 +1027,29 @@ export interface WorkspaceTerminalInventoryRuntimeOptions {
 }
 
 /**
+ * Startup enumeration is read-only and safe to repeat. A cold contender fleet
+ * can exhaust the first synchronous tmux command's deadline while losing Node
+ * processes are still being scheduled; one fresh read avoids publishing a
+ * failed daemon generation without weakening the fail-closed cleanup policy.
+ */
+async function enumerateStartupMarkedViews(
+  executor: TmuxAttachmentViewExecutor,
+): Promise<Awaited<ReturnType<TmuxAttachmentViewExecutor["enumerateMarkedViews"]>>> {
+  let failure: unknown;
+  for (let attempt = 0; attempt < STARTUP_ORPHAN_ENUMERATION_ATTEMPTS; attempt += 1) {
+    try {
+      return await executor.enumerateMarkedViews(
+        GROUPED_TMUX_VIEW_SESSION_PREFIX,
+        GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT,
+      );
+    } catch (error) {
+      failure = error;
+    }
+  }
+  throw failure;
+}
+
+/**
  * Daemon-owned semantic inventory authority. It deliberately has no PTY,
  * grouped-view, attachment lease, or admission dependency, so Web/OpenTUI
  * startup can discover and mirror ordinary tmux without constructing the
@@ -1103,8 +1127,7 @@ export class WorkspaceTerminalInventoryRuntime {
         },
       });
     const orphanExecutor = new TmuxAttachmentViewExecutor({ runner: this.runner });
-    this.#orphanBarrier = orphanExecutor
-      .enumerateMarkedViews(GROUPED_TMUX_VIEW_SESSION_PREFIX, GROUPED_TMUX_VIEW_MARKER_ENVIRONMENT)
+    this.#orphanBarrier = enumerateStartupMarkedViews(orphanExecutor)
       .then(async (candidates) => {
         for (const candidate of candidates) {
           const marker = candidate.markerValue?.match(

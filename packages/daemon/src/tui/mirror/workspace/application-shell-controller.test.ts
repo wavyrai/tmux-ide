@@ -351,7 +351,9 @@ describe("OpenTUI canonical application-shell controller", () => {
     expect(app).not.toMatch(
       /semanticView\?*\.(?:command|commandList|switchWindow|sendTextTo|sendKey)\(/u,
     );
-    expect(app).not.toMatch(/<(?:ApplicationShell|WorkbenchShell)\b/u);
+    expect(app).not.toMatch(/<WorkbenchShell\b/u);
+    expect(app.match(/<ApplicationShellView\b/gu)).toHaveLength(1);
+    expect(app.match(/<ApplicationShell\b/gu)).toHaveLength(1);
     expect(app.match(/\buseKeyboard\(/gu)).toHaveLength(1);
     expect(app.match(/\busePaste\(/gu)).toHaveLength(1);
 

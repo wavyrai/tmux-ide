@@ -117,6 +117,12 @@ describe("production OpenTUI v2 data path", () => {
     expect(applicationRootSource).toContain('active?.status === "live" ? active.fastLane : null');
   });
 
+  it("keeps the coherent terminal renderer resident while authority rebinds", () => {
+    expect(applicationRootSource).toMatch(
+      /active\?\.adapter\s*&&\s*\(active\.status\s*===\s*["']live["']\s*\|\|\s*active\.status\s*===\s*["']rebinding["']\)/u,
+    );
+  });
+
   it("keeps renderer startup and shutdown behind the lifecycle bootstrap", () => {
     expect(source).toContain("await startTuiApplication");
     expect(source).toContain("new TuiApplicationLifecycle");
@@ -137,6 +143,23 @@ describe("production OpenTUI v2 data path", () => {
     expect(adapterSource).toContain('["set-option", "-gq", "set-clipboard", "on"]');
     expect(adapterSource).toContain('["set-option", "-gq", "allow-passthrough", "on"]');
     expect(adapterSource).not.toMatch(/(?:select|resize|new|kill)-(?:pane|window|session)/u);
+  });
+
+  it("keeps pure renderer composition free of host IO and authority owners", () => {
+    for (const path of [
+      "packages/daemon/src/tui/mirror/runtime/application-shell-view.tsx",
+      "packages/daemon/src/tui/mirror/runtime/application-terminal-workspace.tsx",
+      "packages/daemon/src/tui/mirror/runtime/pane-scoped-terminal-surface.tsx",
+      "packages/daemon/src/tui/mirror/workspace/application-shell.tsx",
+      "packages/daemon/src/tui/mirror/shell-chrome.tsx",
+    ]) {
+      const renderer = productionGraph.sourceByFile.get(path);
+      expect(renderer, `production graph is missing pure renderer ${path}`).toBeDefined();
+      expect(renderer).not.toMatch(
+        /(?:from\s+|import\s*\()["'](?:node:|[^"']*(?:canonical-daemon|daemon-transport|tmux-bridge))/u,
+      );
+      expect(renderer).not.toMatch(/\b(?:useKeyboard|usePaste|createCliRenderer)\b/u);
+    }
   });
 
   it("keeps the production root reviewable as a small renderer client", () => {

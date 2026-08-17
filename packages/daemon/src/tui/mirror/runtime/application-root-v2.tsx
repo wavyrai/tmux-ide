@@ -1,5 +1,6 @@
 /* @jsxImportSource @opentui/solid */
 import { createCliRenderer } from "@opentui/core";
+import type { CommandSource } from "@tmux-ide/contracts";
 import { createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { runtimeResourceSnapshot } from "@tmux-ide/daemon-client/runtime-resource-ledger";
 import { render, useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
@@ -9,13 +10,21 @@ import { registerPaneSurface } from "../pane-surface.tsx";
 import { currentTuiPerformanceEventSink } from "../performance-events.ts";
 import { createSemanticThemeSnapshot, createTerminalPaletteProjection } from "../theme.ts";
 import { startTuiApplication, observeTuiRootFailure } from "./application-bootstrap.ts";
+import {
+  createApplicationShellBinding,
+  type ApplicationShellBindingSnapshot,
+} from "./application-shell-binding.ts";
 import { TuiApplicationLifecycle } from "./application-lifecycle.ts";
 import {
   loadApplicationConfig,
   parseApplicationArgs,
   type StartApplicationRootOptions,
 } from "./application-root-configuration.ts";
-import { ApplicationShellView } from "./application-shell-view.tsx";
+import {
+  ApplicationShellView,
+  applicationShellKeyAction,
+  applicationShellViewport,
+} from "./application-shell-view.tsx";
 import {
   createApplicationTerminalInteractionController,
   type ApplicationTerminalInteractionController,
@@ -91,6 +100,11 @@ export async function startApplicationRoot(
         const [generation, setGeneration] = createSignal<ReturnType<
           ReturnType<typeof createOpenTuiGenerationHost>["getSnapshot"]
         > | null>(null);
+        const shellBinding = createApplicationShellBinding({ onDiagnostic: tuiPerfMark });
+        const [shell, setShell] = createSignal<ApplicationShellBindingSnapshot>(
+          shellBinding.getSnapshot(),
+        );
+        const stopShell = shellBinding.subscribe(setShell);
         sessionOwner = createOpenTuiSessionOwner({
           prepareConnection: (sessionName) => {
             if (initialPreparation?.sessionName !== sessionName)
@@ -114,6 +128,7 @@ export async function startApplicationRoot(
             }),
           onSnapshot: (snapshot) => {
             setGeneration(snapshot);
+            shellBinding.adoptGeneration(snapshot);
             terminalHostFocus.adopt(snapshot?.client ?? null);
             if (snapshot) {
               tuiPerfMark("generation-status", {
@@ -128,12 +143,14 @@ export async function startApplicationRoot(
         const [selectedSession, setSelectedSession] = createSignal(0);
         const [bootstrapNote, setBootstrapNote] = createSignal<string | null>(null);
         const viewport = createMemo(() => ({
-          width: Math.max(1, dimensions().width),
-          height: Math.max(2, dimensions().height - 2),
+          ...applicationShellViewport(dimensions(), shell().semantic !== null),
         }));
+        const activeSurface = createMemo<"home" | "terminals">(
+          () => shell().semantic?.workspaceCanvas.activeMode ?? surface(),
+        );
         const terminalRendererSource = createMemo(() => {
           const active = generation();
-          return active?.status === "live" && active.adapter
+          return active?.adapter && (active.status === "live" || active.status === "rebinding")
             ? Object.freeze({ adapter: active.adapter, rendererEpoch: active.rendererEpoch })
             : null;
         });
@@ -156,12 +173,17 @@ export async function startApplicationRoot(
         const startGeneration = async (
           sessionName: string,
           workspacePrepared = false,
+          source: "keyboard" | "mouse" = "keyboard",
         ): Promise<void> => {
           setBootstrapNote(`opening ${sessionName}`);
-          const started = await sessionOwner!.open(sessionName, workspacePrepared);
+          const result = await shellBinding.openSession(
+            sessionName,
+            commandSource(source, "application-bar"),
+            (name) => sessionOwner!.open(name, workspacePrepared),
+          );
           const snapshot = sessionOwner!.snapshot();
-          if (started && snapshot) {
-            setSurface("terminals");
+          if (result.opened && snapshot) {
+            if (!result.activated) setSurface("terminals");
             setBootstrapNote(null);
           } else {
             setBootstrapNote(`${sessionName} could not attach`);
@@ -169,7 +191,24 @@ export async function startApplicationRoot(
         };
         onCleanup(() => {
           stopLayout();
+          stopShell();
+          shellBinding.dispose();
         });
+
+        const commandSource = (
+          source: "keyboard" | "mouse",
+          surfaceName: "application-bar" | "command-palette",
+        ): CommandSource => ({ kind: source, surface: surfaceName });
+        const openSurface = (next: "home" | "terminals", source: "keyboard" | "mouse"): void => {
+          void shellBinding
+            .openSurface(next, commandSource(source, "application-bar"))
+            .then((dispatched) => {
+              if (!dispatched) setSurface(next);
+            });
+        };
+        const setCommandPaletteOpen = (open: boolean, source: "keyboard" | "mouse"): void => {
+          void shellBinding.setPaletteOpen(open, commandSource(source, "command-palette"));
+        };
 
         createEffect(() => {
           renderer.setBackgroundColor(theme.roles.surfaces.canvas);
@@ -185,15 +224,17 @@ export async function startApplicationRoot(
             void hostLocal.putAway().finally(() => lifecycle.shutdown("keyboard"));
             return;
           }
-          if (name === "f1") {
-            setSurface("home");
+          const chromeAction = applicationShellKeyAction(
+            event,
+            Boolean(shell().semantic?.focus.palette.open || shell().localPaletteOpen),
+          );
+          if (chromeAction) {
+            if (chromeAction === "home" || chromeAction === "terminals")
+              openSurface(chromeAction, "keyboard");
+            else setCommandPaletteOpen(chromeAction === "palette-open", "keyboard");
             return;
           }
-          if (name === "f2") {
-            setSurface("terminals");
-            return;
-          }
-          if (surface() === "home" && config.sessions.length > 0) {
+          if (activeSurface() === "home" && config.sessions.length > 0) {
             if (name === "up") {
               setSelectedSession(
                 (index) => (index - 1 + config.sessions.length) % config.sessions.length,
@@ -216,14 +257,14 @@ export async function startApplicationRoot(
           }
           const active = generation();
           const lane = active?.status === "live" ? active.fastLane : null;
-          if (surface() !== "terminals" || !lane || !focusedPane()) return;
+          if (activeSurface() !== "terminals" || !lane || !focusedPane()) return;
           const input = terminalInputForOpenTuiKey(event);
           if (input) void interaction.sendInput(input);
         });
         usePaste((event) => {
           const active = generation();
           const lane = active?.status === "live" ? active.fastLane : null;
-          if (surface() !== "terminals" || !lane || !focusedPane()) return;
+          if (activeSurface() !== "terminals" || !lane || !focusedPane()) return;
           const text = Buffer.from(event.bytes).toString("utf8");
           for (const input of terminalInputsForPaste(text)) {
             void interaction.sendInput(input);
@@ -238,18 +279,21 @@ export async function startApplicationRoot(
         return (
           <ApplicationShellView
             dimensions={dimensions}
-            surface={surface}
-            workspaceName={() => generation()?.connection?.workspaceName ?? "no active workspace"}
-            generationStatus={() => generation()?.status ?? "unavailable"}
+            surface={activeSurface}
+            semantic={() => shell().semantic}
+            generationStatus={() => shell().status}
             sessions={config.sessions}
             selectedSession={selectedSession}
             bootstrapNote={bootstrapNote}
+            paletteOpen={() => shell().semantic?.focus.palette.open ?? shell().localPaletteOpen}
             terminalRendererSource={terminalRendererSource}
             layout={layoutSnapshot}
-            viewport={viewport}
             focusedPane={focusedPane}
             theme={theme}
             palette={palette}
+            onOpenSurface={openSurface}
+            onOpenSession={(sessionName) => void startGeneration(sessionName, false, "mouse")}
+            onSetPaletteOpen={setCommandPaletteOpen}
             onSelectPane={interaction.selectPane}
             onResizePreview={interaction.previewPaneResize}
             onResizePane={interaction.resizePane}

@@ -1,10 +1,13 @@
-import { terminalDisplayWidth } from "./panel-host.ts";
+import stringWidth from "string-width";
+
+export function terminalDisplayWidth(text: string): number {
+  return stringWidth(text);
+}
 
 /**
  * Clip text to a terminal-cell budget without splitting a grapheme cluster.
  *
- * This utility deliberately has no dependency on any workspace feature so
- * shell and terminal surfaces can use it without eagerly loading Missions.
+ * This utility deliberately has no dependency on any workspace feature.
  */
 export function clipTerminal(text: string, width: number): string {
   if (width <= 0) return "";

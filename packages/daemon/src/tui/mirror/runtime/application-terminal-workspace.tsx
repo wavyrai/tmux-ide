@@ -39,6 +39,12 @@ export interface ApplicationTerminalWorkspaceProps {
   readonly rendererEpoch: number;
   readonly width: number;
   readonly height: number;
+  /** Rows owned by parent chrome before the terminal canvas. Defaults to the
+   * standalone app bar + window strip; nested shells use one window-strip row. */
+  readonly topOffset?: number;
+  /** Parent origin in renderer cells; OpenTUI mouse events are viewport-relative. */
+  readonly originX?: number;
+  readonly originY?: number;
   readonly focusedPane: string | null;
   readonly theme: SemanticThemeSnapshot;
   readonly palette: TerminalPaletteProjection;
@@ -186,6 +192,7 @@ function previewFor(
  * replica reduction, authority queue, or optional tool surface.
  */
 export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspaceProps) {
+  const topOffset = () => Math.max(1, Math.floor(props.topOffset ?? 2));
   const projectedFrames = () =>
     projectOpenTuiPaneFrames(props.layout.current, {
       width: props.width,
@@ -202,8 +209,8 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
   } | null = null;
 
   const terminalPoint = (event: WorkspaceMouseEvent): { x: number; y: number } => ({
-    x: event.x,
-    y: event.y - 2,
+    x: event.x - (props.originX ?? 0),
+    y: event.y - (props.originY ?? 0) - topOffset(),
   });
   const routePointer = (event: WorkspaceMouseEvent): void => {
     event.stopPropagation?.();
@@ -260,7 +267,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       <box
         position="absolute"
         left={0}
-        top={2}
+        top={topOffset()}
         width={props.width}
         height={props.height}
         onMouse={routePointer}
@@ -270,7 +277,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       <box
         position="absolute"
         left={0}
-        top={1}
+        top={topOffset() - 1}
         width={props.width}
         height={1}
         backgroundColor={props.theme.roles.surfaces.panel}
@@ -306,7 +313,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           <box
             position="absolute"
             left={frame.left}
-            top={frame.top + 2}
+            top={frame.top + topOffset()}
             width={frame.width}
             height={frame.height}
             backgroundColor={props.theme.roles.surfaces.canvas}
@@ -366,7 +373,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           <box
             position="absolute"
             left={separator.axis === "x" ? separator.position : separator.start}
-            top={(separator.axis === "x" ? separator.start : separator.position) + 2}
+            top={(separator.axis === "x" ? separator.start : separator.position) + topOffset()}
             width={separator.axis === "x" ? 1 : Math.max(1, separator.end - separator.start)}
             height={separator.axis === "x" ? Math.max(1, separator.end - separator.start) : 1}
             backgroundColor={props.theme.colors.accentMuted}
@@ -379,7 +386,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       <box
         position="absolute"
         left={guide()?.rect.x ?? 0}
-        top={(guide()?.rect.y ?? 0) + 2}
+        top={(guide()?.rect.y ?? 0) + topOffset()}
         width={guide()?.rect.width ?? 0}
         height={guide()?.rect.height ?? 0}
         backgroundColor={
