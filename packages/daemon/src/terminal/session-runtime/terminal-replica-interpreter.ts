@@ -4,6 +4,8 @@ import {
   type CanonicalTerminalReplicaSeed,
   type CanonicalTerminalReplicaTombstone,
   type CanonicalTerminalReplicaUpdate,
+  type CausalCellFailureReasonV1,
+  type CausalCellProbeV1,
   type SessionRuntimeGeneration,
   type TerminalReplicaRow,
   type TerminalReplicaSnapshot,
@@ -32,6 +34,11 @@ import type {
   TerminalInterpreterBackendFactory,
 } from "./terminal-interpreter-backend.ts";
 import { createXtermTerminalInterpreterBackend } from "./xterm-terminal-interpreter-backend.ts";
+import {
+  CAUSAL_CELL_OSC,
+  CausalCellLedger,
+  type CausalCellLedgerResult,
+} from "./causal-cell-ledger.ts";
 
 type CloseReason = "pane-closed" | "session-restarted" | "runtime-disposed";
 export type TerminalReplicaInterpreterOperation =
@@ -104,6 +111,9 @@ export class TerminalReplicaInterpreter {
   readonly #observability: SessionRuntimeObservability;
   readonly #backendFactory: TerminalInterpreterBackendFactory;
   #backend: TerminalInterpreterBackend;
+  #prioritizeNextWrite = false;
+  #causalCell: CausalCellLedger | null = null;
+  #releaseCausalOsc: (() => void) | null = null;
   #tail: Promise<void> = Promise.resolve();
   #revision = 0;
   #snapshot: TerminalReplicaSnapshot;
@@ -217,11 +227,60 @@ export class TerminalReplicaInterpreter {
     return this.#needsSeed ? null : this.#seed(this.#revision, this.#snapshot);
   }
 
+  /** Prioritize one future parser admission, independent of diagnostic tracing. */
+  prioritizeNextWrite(): void {
+    if (!this.#closed) this.#prioritizeNextWrite = true;
+  }
+
+  armCausalCellProbe(
+    probe: CausalCellProbeV1,
+    onResult: (result: CausalCellLedgerResult) => void,
+  ): void {
+    if (this.#closed) throw new Error("Terminal replica is closed");
+    if (this.#causalCell) throw new Error("A causal-cell probe is already active");
+    const seed = this.currentSeed();
+    if (
+      !seed ||
+      seed.revision !== probe.baselineRevision ||
+      seed.stateHash !== probe.baselineStateHash ||
+      seed.incarnation !== probe.incarnation ||
+      this.#snapshot.cols !== probe.geometry.cols ||
+      this.#snapshot.rows !== probe.geometry.rows ||
+      JSON.stringify(this.#snapshot.grid[probe.geometry.row]?.cells[probe.geometry.column]) !==
+        JSON.stringify(probe.before)
+    )
+      throw new Error("Causal-cell baseline drifted before admission");
+    const ledger = new CausalCellLedger({
+      probe,
+      baseline: this.#snapshot,
+      scheduler: this.#scheduler,
+      onResult: (result) => {
+        if (this.#causalCell === ledger) this.#clearCausalCell();
+        onResult(result);
+      },
+    });
+    this.#causalCell = ledger;
+    this.#releaseCausalOsc = this.#backend.registerOscHandler(CAUSAL_CELL_OSC, (data) =>
+      ledger.observeOsc(data),
+    );
+  }
+
+  noteCausalCellControlReply(traceId: string, ok: boolean): void {
+    if (this.#causalCell?.traceId === traceId) this.#causalCell.observeControlReply(ok);
+  }
+
+  failCausalCell(reason: CausalCellFailureReasonV1, traceId?: string): void {
+    if (traceId === undefined || this.#causalCell?.traceId === traceId) {
+      this.#causalCell?.fail(reason);
+    }
+  }
+
   whenSeeded(): Promise<void> {
     return this.#seedReady;
   }
 
   abort(error: unknown): void {
+    this.#causalCell?.fail("transport-closed");
     if (this.#needsSeed) this.#rejectSeedReady(error);
   }
 
@@ -246,6 +305,7 @@ export class TerminalReplicaInterpreter {
   ): Promise<void> {
     if (this.#closed) return;
     if (operation.type === "reseed") {
+      this.#causalCell?.fail("reseeded");
       const replacement = this.#backendFactory({
         cols: operation.cols,
         rows: operation.rows,
@@ -255,7 +315,7 @@ export class TerminalReplicaInterpreter {
         for (const chunk of operation.chunks) {
           this.#admitRaw(chunk);
           this.#observeMarkerBytes(chunk);
-          await replacement.write(chunk);
+          await this.#writeToBackend(replacement, chunk);
         }
       } catch (error) {
         replacement.dispose();
@@ -281,6 +341,7 @@ export class TerminalReplicaInterpreter {
       return;
     }
     if (operation.type === "resize") {
+      this.#causalCell?.fail("geometry-drift");
       if (this.#backend.modes().synchronizedOutput) {
         // Geometry is part of the admitted FIFO even while publication is
         // atomic. Later bytes must parse at the new size.
@@ -308,6 +369,7 @@ export class TerminalReplicaInterpreter {
     };
     this.#revision = revision;
     this.#closed = true;
+    this.#causalCell?.fail("transport-closed");
     this.#clearSyncRecovery();
     if (this.#needsSeed)
       this.#rejectSeedReady(new Error("Terminal replica closed before bootstrap"));
@@ -325,7 +387,7 @@ export class TerminalReplicaInterpreter {
     this.#stats.parseBatches += 1;
     this.#observeMarkerBytes(data);
     const parseStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
-    await this.#backend.write(data);
+    await this.#writeToBackend(this.#backend, data);
     if (this.#observability.enabled)
       this.#observability.recordSpan(
         "parse",
@@ -355,12 +417,23 @@ export class TerminalReplicaInterpreter {
       this.#syncRecovery = null;
       const run = this.#tail.then(async () => {
         if (this.#closed || !this.#backend.modes().synchronizedOutput) return;
+        // Recovery is synthetic parser maintenance, not pane output caused by
+        // the user's input. Preserve the one-shot for the next real stream or
+        // reseed byte instead of consuming it here.
         await this.#backend.write("\u001b[?2026l");
         this.#pendingResize = null;
         this.#commit(false);
       });
       this.#tail = run.catch(() => undefined);
     }, 250);
+  }
+
+  #writeToBackend(backend: TerminalInterpreterBackend, data: Uint8Array | string): Promise<void> {
+    if (this.#prioritizeNextWrite) {
+      this.#prioritizeNextWrite = false;
+      backend.prioritizeNextWrite();
+    }
+    return backend.write(data);
   }
 
   #clearSyncRecovery(): void {
@@ -398,6 +471,7 @@ export class TerminalReplicaInterpreter {
     const nextHash = hashTerminalReplicaSnapshot(next);
     const priorHash = hashTerminalReplicaSnapshot(previous);
     if (!forceSeed && nextHash === priorHash) {
+      this.#causalCell?.observeCommit(next, this.#revision, nextHash);
       this.#recordReduceSpan(reduceStarted, trace);
       return;
     }
@@ -409,6 +483,7 @@ export class TerminalReplicaInterpreter {
       this.#resolveSeedReady();
       this.#emitRaw(revision, revision);
       this.#emit(this.#seed(revision, next), trace);
+      this.#causalCell?.observeCommit(next, revision, nextHash);
       this.#recordReduceSpan(reduceStarted, trace);
       return;
     }
@@ -439,7 +514,14 @@ export class TerminalReplicaInterpreter {
     this.#snapshot = next;
     this.#emitRaw(baseRevision, revision);
     this.#emit(update, trace);
+    this.#causalCell?.observeCommit(next, revision, nextHash);
     this.#recordReduceSpan(reduceStarted, trace);
+  }
+
+  #clearCausalCell(): void {
+    this.#causalCell = null;
+    this.#releaseCausalOsc?.();
+    this.#releaseCausalOsc = null;
   }
 
   #recordReduceSpan(

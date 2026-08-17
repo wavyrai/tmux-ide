@@ -37,6 +37,7 @@ describe("TerminalReplicaInterpreter", () => {
         get rows() {
           return delegate.rows;
         },
+        prioritizeNextWrite: () => delegate.prioritizeNextWrite(),
         write: (data) => delegate.write(data),
         resize: (cols, rows) => delegate.resize(cols, rows),
         setAuthoritativeCursor: (x, y) => delegate.setAuthoritativeCursor(x, y),
@@ -79,6 +80,134 @@ describe("TerminalReplicaInterpreter", () => {
     expect(updates).toHaveLength(1);
     await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
     expect(disposed).toBe(2);
+  });
+
+  it("consumes one priority on the next actual write and arms a reseed replacement, not its predecessor", async () => {
+    const events: string[][] = [];
+    const backendFactory: TerminalInterpreterBackendFactory = (options) => {
+      const ownEvents: string[] = [];
+      events.push(ownEvents);
+      const delegate = createXtermTerminalInterpreterBackend(options);
+      return {
+        kind: delegate.kind,
+        get cols() {
+          return delegate.cols;
+        },
+        get rows() {
+          return delegate.rows;
+        },
+        prioritizeNextWrite: () => {
+          ownEvents.push("priority");
+          delegate.prioritizeNextWrite();
+        },
+        write: (data) => {
+          ownEvents.push(
+            `write:${typeof data === "string" ? data : new TextDecoder().decode(data)}`,
+          );
+          return delegate.write(data);
+        },
+        resize: (cols, rows) => delegate.resize(cols, rows),
+        setAuthoritativeCursor: (x, y) => delegate.setAuthoritativeCursor(x, y),
+        modes: () => delegate.modes(),
+        dirtyRange: () => delegate.dirtyRange(),
+        project: (previous, dirty) => delegate.project(previous, dirty),
+        dispose: () => delegate.dispose(),
+      };
+    };
+    const interpreter = new TerminalReplicaInterpreter({
+      generation,
+      workspaceName: "workspace",
+      semanticPaneId: "pane-a",
+      incarnation: `${generation}:0`,
+      cols: 8,
+      rows: 2,
+      backendFactory,
+    });
+    interpreter.prioritizeNextWrite();
+    interpreter.prioritizeNextWrite();
+    await interpreter.enqueue({
+      type: "reseed",
+      cols: 8,
+      rows: 2,
+      chunks: [new TextEncoder().encode("A"), new TextEncoder().encode("B")],
+      cursor: { x: 2, y: 0 },
+      bootstrap: "authoritative-stream",
+    });
+    expect(events[0]).toEqual([]);
+    expect(events[1]).toEqual(["priority", "write:A", "write:B"]);
+
+    interpreter.prioritizeNextWrite();
+    await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("C") });
+    await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("D") });
+    expect(events[1]).toEqual(["priority", "write:A", "write:B", "priority", "write:C", "write:D"]);
+    await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+  });
+
+  it("does not spend interactive priority on synthetic synchronized-output recovery", async () => {
+    const events: string[] = [];
+    let recover: (() => void) | null = null;
+    const backendFactory: TerminalInterpreterBackendFactory = (options) => {
+      const delegate = createXtermTerminalInterpreterBackend(options);
+      return {
+        kind: delegate.kind,
+        get cols() {
+          return delegate.cols;
+        },
+        get rows() {
+          return delegate.rows;
+        },
+        prioritizeNextWrite: () => {
+          events.push("priority");
+          delegate.prioritizeNextWrite();
+        },
+        write: (data) => {
+          events.push(`write:${typeof data === "string" ? data : new TextDecoder().decode(data)}`);
+          return delegate.write(data);
+        },
+        resize: (cols, rows) => delegate.resize(cols, rows),
+        setAuthoritativeCursor: (x, y) => delegate.setAuthoritativeCursor(x, y),
+        modes: () => delegate.modes(),
+        dirtyRange: () => delegate.dirtyRange(),
+        project: (previous, dirty) => delegate.project(previous, dirty),
+        dispose: () => delegate.dispose(),
+      };
+    };
+    const interpreter = new TerminalReplicaInterpreter({
+      generation,
+      workspaceName: "workspace",
+      semanticPaneId: "pane-a",
+      incarnation: `${generation}:0`,
+      cols: 8,
+      rows: 2,
+      backendFactory,
+      scheduler: {
+        nowMs: () => 0,
+        createId: () => "scheduler-id",
+        microtask: (task) => queueMicrotask(task),
+        timer: (task) => {
+          recover = task;
+          return { cancel: () => (recover = null) };
+        },
+      },
+    });
+    await interpreter.enqueue({
+      type: "write",
+      data: new TextEncoder().encode("\u001b[?2026hwaiting"),
+    });
+    interpreter.prioritizeNextWrite();
+    expect(recover).not.toBeNull();
+    (recover as () => void)();
+    await interpreter.whenIdle();
+    expect(events).toEqual(["write:\u001b[?2026hwaiting", "write:\u001b[?2026l"]);
+
+    await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("X") });
+    expect(events).toEqual([
+      "write:\u001b[?2026hwaiting",
+      "write:\u001b[?2026l",
+      "priority",
+      "write:X",
+    ]);
+    await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
   });
 
   it("keeps the injected xterm oracle differential-identical to the default path", async () => {

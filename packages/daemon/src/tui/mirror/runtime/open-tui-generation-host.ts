@@ -34,6 +34,8 @@ import {
 import { DaemonAuthorityRebindCoordinator } from "./daemon-authority-rebind.ts";
 import type { OpenTuiRuntimeLayoutPresentation } from "./runtime-layout-presentation.ts";
 import { TerminalFastLaneRendererAdapter } from "./terminal-fast-lane-renderer-adapter.ts";
+import { CausalCellClientLedger } from "./causal-cell-client-ledger.ts";
+import { currentTuiPerformanceEventSink } from "../performance-events.ts";
 import {
   createOpenTuiWorkspaceTerminalFastLane,
   type OpenTuiWorkspaceTerminalFastLane,
@@ -97,10 +99,20 @@ export interface OpenTuiGenerationHostDependencies {
   readonly observeCanonicalGeneration: (
     listener: (daemonGeneration: string) => void,
   ) => Promise<() => void | Promise<void>>;
-  readonly onDiagnostic: (
-    phase: "connection-resolved" | "shell-lifecycle" | "runtime-progress" | "runtime-fault",
+  readonly onDiagnostic?: (
+    phase:
+      | "connection-resolved"
+      | "shell-lifecycle"
+      | "runtime-progress"
+      | "runtime-fault"
+      | "host-internal-snapshot-publication",
     details: Readonly<Record<string, unknown>>,
   ) => void;
+}
+
+export interface OpenTuiGenerationHostOptions extends Partial<OpenTuiGenerationHostDependencies> {
+  /** One-use, generation-fenced connection prepared by the session owner. */
+  readonly initialConnection?: OpenTuiApplicationShellConnection | null;
 }
 
 export interface OpenTuiGenerationHost {
@@ -137,11 +149,54 @@ function buildProductionBundle(
   callbacks: BundleCallbacks,
 ): OpenTuiGenerationBundle {
   if (!connection.routing) throw new Error("OpenTUI generation requires verified runtime routing");
+  const performanceSink = currentTuiPerformanceEventSink();
+  const causalCellLedger = performanceSink?.terminalTraceStage
+    ? new CausalCellClientLedger({
+        onFinalized: (evidence) => {
+          for (const [operation, atMicros] of [
+            ["causal-cell-delivered", evidence.deliveredAtMicros],
+            ["causal-cell-painted", evidence.paintedAtMicros],
+          ] as const)
+            performanceSink.terminalTraceStage?.({
+              traceId: evidence.proof.traceId,
+              scenario: "terminal-input-to-paint",
+              stage: "client",
+              operation,
+              processId: `opentui:${process.pid}`,
+              clockId: "opentui-performance-now",
+              clockKind: "performance-now",
+              atMicros,
+              causalAttribution: true,
+              semanticPaneId: evidence.proof.semanticPaneId,
+              generation: evidence.proof.generation,
+              incarnation: evidence.proof.incarnation,
+              revision: evidence.proof.committedRevision,
+              stateHash: evidence.proof.committedStateHash,
+              row: evidence.proof.geometry.row,
+              column: evidence.proof.geometry.column,
+              beforeGrapheme: evidence.proof.before.grapheme,
+              afterGrapheme: evidence.proof.after.grapheme,
+            });
+        },
+        onFailure: (traceId, reason) =>
+          performanceSink.terminalTraceStage?.({
+            traceId,
+            scenario: "terminal-input-to-paint",
+            stage: "client",
+            operation: `causal-cell-failed:${reason}`,
+            processId: `opentui:${process.pid}`,
+            clockId: "opentui-performance-now",
+            clockKind: "performance-now",
+            atMicros: Math.floor(performance.now() * 1_000),
+          }),
+      })
+    : null;
   let fastLane: OpenTuiWorkspaceTerminalFastLane | null = null;
   const candidateStages = new WeakMap<OpenTuiWorkspaceRuntimePort, () => void>();
   let client!: OpenTuiProductionWorkspaceClient;
   client = createWorkspaceClient({
     target: connection.target,
+    deferApplicationShell: true,
     ports: {
       shell: connection.transport,
       connectRuntime: async (_target, inventory, signal, prepare) => {
@@ -155,6 +210,7 @@ function buildProductionBundle(
             inventory,
             routing: connection.routing!,
             signal,
+            ...(causalCellLedger ? { causalCellLedger } : {}),
             prepareRuntime: prepare,
             onFault: callbacks.didFaultRuntime,
             onDiagnostic: callbacks.didRuntimeDiagnostic,
@@ -184,15 +240,40 @@ function buildProductionBundle(
         callbacks.didActivateRuntime(runtime as OpenTuiWorkspaceRuntimePort);
       },
       didRetireRuntime: callbacks.didRetireRuntime,
+      requestTerminalRuntimeInventoryRefresh: () => {
+        connection.transport.refreshTerminalRuntimeInventory();
+      },
       actions: productionOwnerActions(),
     },
   });
-  fastLane = createOpenTuiWorkspaceTerminalFastLane(client, OPEN_TUI_HOST_CLIENT_ID);
+  fastLane = createOpenTuiWorkspaceTerminalFastLane(
+    client,
+    OPEN_TUI_HOST_CLIENT_ID,
+    causalCellLedger,
+  );
   const activeFastLane = fastLane;
-  const adapter = new TerminalFastLaneRendererAdapter(activeFastLane.lane);
+  const adapter = new TerminalFastLaneRendererAdapter(activeFastLane.lane, 1, causalCellLedger);
   let revoked = false;
   let disposed = false;
   let revokePromise: Promise<void> | null = null;
+  void connection.prepareTerminalRuntimeInventory().then((prepared) => {
+    if (revoked) {
+      prepared?.dispose();
+      return;
+    }
+    if (prepared === null) {
+      client.startApplicationShellFallback();
+      return;
+    }
+    const resource = connection.transport.adoptTerminalRuntimeInventory(prepared, (next) => {
+      if (!revoked) client.adoptTerminalRuntimeInventory(next);
+    });
+    if (resource === null || !client.adoptTerminalRuntimeInventory(resource)) {
+      prepared.dispose();
+      connection.transport.selectApplicationShellFallback("adoption-rejected");
+      client.startApplicationShellFallback();
+    }
+  });
   const revoke = (): void => {
     if (revoked) return;
     revoked = true;
@@ -214,6 +295,7 @@ function buildProductionBundle(
       disposed = true;
       // Renderer observers release before their source and authority.
       adapter.dispose();
+      causalCellLedger?.dispose();
       revoke();
       await revokePromise;
     },
@@ -261,7 +343,6 @@ const DEFAULT_DEPENDENCIES: OpenTuiGenerationHostDependencies = {
       watcher.close();
     };
   },
-  onDiagnostic: () => undefined,
 };
 
 interface Candidate {
@@ -294,9 +375,22 @@ const EMPTY_SNAPSHOT: OpenTuiGenerationHostSnapshot = Object.freeze({
 export function createOpenTuiGenerationHost(
   sessionName: string,
   presentation: OpenTuiRuntimeLayoutPresentation,
-  overrides: Partial<OpenTuiGenerationHostDependencies> = {},
+  overrides: OpenTuiGenerationHostOptions = {},
 ): OpenTuiGenerationHost {
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...overrides };
+  const diagnose = overrides.onDiagnostic
+    ? (
+        phase: Parameters<NonNullable<OpenTuiGenerationHostDependencies["onDiagnostic"]>>[0],
+        details: Readonly<Record<string, unknown>>,
+      ): void => {
+        try {
+          overrides.onDiagnostic?.(phase, details);
+        } catch {
+          // Diagnostics never own generation lifecycle.
+        }
+      }
+    : null;
+  let initialConnection = overrides.initialConnection ?? null;
   const coordinator = dependencies.createRebindCoordinator();
   const listeners = new Set<(snapshot: OpenTuiGenerationHostSnapshot) => void>();
   let snapshot = EMPTY_SNAPSHOT;
@@ -336,11 +430,21 @@ export function createOpenTuiGenerationHost(
 
   const activate = (owner: Candidate, runtime: OpenTuiWorkspaceRuntimePort | null): void => {
     if (disposed || owner.settled || candidate !== owner) return;
-    if (runtime) owner.stopPresentation = presentation.adopt(runtime);
+    if (runtime) {
+      owner.stopPresentation = presentation.adopt(runtime);
+      diagnose?.("host-internal-snapshot-publication", {
+        publicationPhase: "presentation-adopted",
+        daemonGeneration: owner.bundle.connection.target.daemon.instanceId,
+      });
+    }
     const previous = active;
     candidate = null;
     active = owner;
     owner.settleReady(true);
+    diagnose?.("host-internal-snapshot-publication", {
+      publicationPhase: "candidate-activation-admitted",
+      daemonGeneration: owner.bundle.connection.target.daemon.instanceId,
+    });
     publish({
       status: runtime ? "live" : "empty",
       rendererEpoch: ++rendererEpoch,
@@ -349,6 +453,11 @@ export function createOpenTuiGenerationHost(
       client: owner.bundle.client,
       fastLane: owner.bundle.fastLane,
       adapter: owner.bundle.adapter,
+    });
+    diagnose?.("host-internal-snapshot-publication", {
+      publicationPhase: "internal-snapshot-published",
+      daemonGeneration: owner.bundle.connection.target.daemon.instanceId,
+      rendererEpoch,
     });
     // Publication is the atomic cutover boundary. Only now may the retained
     // generation release its socket, reducer and renderer adapter.
@@ -366,8 +475,31 @@ export function createOpenTuiGenerationHost(
     if (disposed) return Promise.resolve(false);
     if (connectFlight) return connectFlight;
     const expectedEpoch = ++epoch;
-    connectFlight = dependencies
-      .resolveConnection(sessionName)
+    const preparedConnection = initialConnection;
+    initialConnection = null;
+    const resolveCurrentConnection =
+      async (): Promise<OpenTuiApplicationShellConnection | null> => {
+        const prepared = preparedConnection ?? (await dependencies.resolveConnection(sessionName));
+        const requestedGeneration = requestedCanonicalGeneration;
+        if (
+          !prepared ||
+          requestedGeneration === null ||
+          prepared.target.daemon.instanceId === requestedGeneration
+        ) {
+          return prepared;
+        }
+        // daemon.json may change after the session owner prepared this one-use
+        // route but before the host installs its observer. Never publish that
+        // stale generation; retire it and resolve once against current truth.
+        prepared.dispose();
+        const current = await dependencies.resolveConnection(sessionName);
+        if (current && current.target.daemon.instanceId !== requestedCanonicalGeneration) {
+          current.dispose();
+          return null;
+        }
+        return current;
+      };
+    connectFlight = resolveCurrentConnection()
       .then((connection) => {
         if (disposed || expectedEpoch !== epoch) {
           connection?.dispose();
@@ -377,7 +509,7 @@ export function createOpenTuiGenerationHost(
           if (!active) publish({ ...EMPTY_SNAPSHOT, status: "unavailable" });
           return false;
         }
-        dependencies.onDiagnostic("connection-resolved", {
+        diagnose?.("connection-resolved", {
           daemonGeneration: connection.target.daemon.instanceId,
           workspaceName: connection.workspaceName,
         });
@@ -416,10 +548,10 @@ export function createOpenTuiGenerationHost(
               }
             },
             didFaultRuntime(error) {
-              dependencies.onDiagnostic("runtime-fault", { message: error.message });
+              diagnose?.("runtime-fault", { message: error.message });
             },
             didRuntimeDiagnostic(phase, details) {
-              dependencies.onDiagnostic("runtime-progress", {
+              diagnose?.("runtime-progress", {
                 runtimePhase: phase,
                 ...details,
               });
@@ -445,7 +577,7 @@ export function createOpenTuiGenerationHost(
         if (replacedCandidate && replacedCandidate !== active) disposeCandidate(replacedCandidate);
         owned.stopLifecycle = bundle.client.subscribe("lifecycle", (lifecycle) => {
           if (disposed || owned.settled) return;
-          dependencies.onDiagnostic("shell-lifecycle", {
+          diagnose?.("shell-lifecycle", {
             clientPhase: lifecycle.phase,
             shellStatus: lifecycle.shell.status,
             shellGeneration: lifecycle.shell.generation,
@@ -589,10 +721,13 @@ export function createOpenTuiGenerationHost(
       coordinator.dispose();
       const pending = candidate;
       const retained = active;
+      const unconsumedInitialConnection = initialConnection;
+      initialConnection = null;
       candidate = null;
       active = null;
       disposeCandidate(pending);
       if (retained !== pending) disposeCandidate(retained);
+      unconsumedInitialConnection?.dispose();
       // The application root owns the reusable presentation. A session target
       // replacement may adopt a new host before this fixed-session host
       // retires; disposing the shared presentation here would tear down the

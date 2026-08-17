@@ -4,6 +4,7 @@ import { render } from "solid-js/web";
 import {
   APPLICATION_SHELL_RESOURCE_V1_VERSION,
   ApplicationShellProjectionInputV1SchemaZ,
+  DAEMON_WIRE_PROTOCOL_VERSION,
   DESKTOP_HOST_API_VERSION,
   buildStartupReadinessLadder,
   type ApplicationShellProjectionInputV1,
@@ -48,14 +49,14 @@ function deferred<T>(): Deferred<T> {
 }
 
 const DAEMON_A: DaemonInstanceIdentity = {
-  protocolVersion: 1,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "test-a",
   instanceId: "00000000-0000-4000-8000-000000000001",
   startedAt: "2026-07-22T00:00:00.000Z",
 };
 
 const DAEMON_B: DaemonInstanceIdentity = {
-  protocolVersion: 1,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "test-b",
   instanceId: "00000000-0000-4000-8000-000000000002",
   startedAt: "2026-07-22T00:01:00.000Z",

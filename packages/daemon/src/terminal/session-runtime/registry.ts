@@ -4,6 +4,7 @@ import {
   SessionRuntimeGenerationSchemaZ,
   SessionRuntimeSemanticIntentSchemaZ,
   SessionRuntimeTerminalInputSchemaZ,
+  CausalCellProbeV1SchemaZ,
   type AuthoredInteractionOrigin,
   type InteractionReceipt,
   type SessionRuntimeControllerLease,
@@ -18,6 +19,8 @@ import {
   type SessionRuntimeSemanticIntent,
   type SessionRuntimeTerminalInput,
   type CanonicalTerminalReplicaUpdate,
+  type CausalCellFailureReasonV1,
+  type CausalCellProbeV1,
   type TerminalDeliveryAck,
   type TerminalDeliveryNack,
   type TerminalDeliveryOffer,
@@ -68,7 +71,22 @@ import {
 } from "./runtime-observability.ts";
 import { RuntimeTraceCorrelator } from "./runtime-trace-correlator.ts";
 import type { MirrorOutputTiming } from "../mirror/control-channel.ts";
+import type { TrustedMirrorSessionInventory } from "../mirror/trusted-inventory.ts";
 import { SessionRuntimeAuthorityArbiter } from "./authority-arbiter.ts";
+import type { CausalCellLedgerResult } from "./causal-cell-ledger.ts";
+
+async function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  signal.throwIfAborted();
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    void promise.then(resolve, reject).then(
+      () => signal.removeEventListener("abort", onAbort),
+      () => signal.removeEventListener("abort", onAbort),
+    );
+  });
+}
 
 export interface SessionRuntimeRegistryOptions {
   readonly generation: string;
@@ -160,6 +178,13 @@ export interface SessionRuntimeConsumer {
     semanticPaneId: string,
     input: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
+    causalProbe?: CausalCellProbeV1,
+    onCausalResult?: (result: CausalCellLedgerResult) => void,
+  ): void;
+  failCausalCellProbe(
+    semanticPaneId: string,
+    traceId: string,
+    reason: CausalCellFailureReasonV1,
   ): void;
   fitViewport(lease: SessionRuntimeControllerLease, cols: number, rows: number): void;
   describe(): Promise<MirrorSessionDescription>;
@@ -218,6 +243,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   readonly #observability: SessionRuntimeObservability;
   readonly #createTraceCorrelator: (scheduler: SessionRuntimeScheduler) => RuntimeTraceCorrelator;
   readonly #sessions = new Map<string, SessionRuntime>();
+  readonly #proofPrewarmOwnership = new Map<SessionRuntime, { owned: boolean; claims: number }>();
   readonly #executionHandles = new WeakMap<object, ExecutionHandleState>();
   readonly #stopExitObserver: () => void;
   #disposed = false;
@@ -229,52 +255,56 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
     this.#createTraceCorrelator =
       options.createTraceCorrelator ?? ((scheduler) => new RuntimeTraceCorrelator(scheduler));
-    const diagnosticMirrorOptions: Partial<MirrorServiceOptions> = this.#observability.enabled
-      ? {
-          nowMicros: () => this.#observability.nowMicros(),
-          onInputWrite: (_session, action, startedAtMicros, endedAtMicros, pendingBeforeSend) => {
-            for (const traceId of action.traceIds ?? []) {
-              const trace = this.#observability.beginTrace(
-                "terminal-input-to-paint",
-                { generation: this.generation, incarnation: null },
-                traceId,
-              );
-              this.#observability.recordSpan(
-                "tmux",
-                "control-write",
-                startedAtMicros,
-                endedAtMicros,
-                trace,
-              );
-              this.#observability.recordSpan(
-                "tmux",
-                pendingBeforeSend === 0
-                  ? "control-queue-empty-at-send"
-                  : "control-queue-nonempty-at-send",
-                endedAtMicros,
-                endedAtMicros,
-                trace,
-              );
-            }
-          },
-          onInputAccepted: (_session, action, acceptedAtMicros) => {
-            for (const traceId of action.traceIds ?? []) {
-              const trace = this.#observability.beginTrace(
-                "terminal-input-to-paint",
-                { generation: this.generation, incarnation: null },
-                traceId,
-              );
-              this.#observability.recordSpan(
-                "tmux",
-                "control-command-accepted",
-                acceptedAtMicros,
-                acceptedAtMicros,
-                trace,
-              );
-            }
-          },
+    const diagnosticMirrorOptions: Partial<MirrorServiceOptions> = {
+      onInputAccepted: (session, action, acceptedAtMicros, ok) => {
+        for (const traceId of action.traceIds ?? []) {
+          this.#sessions.get(session)?.noteInputControlReply(traceId, ok);
+          if (!this.#observability.enabled) continue;
+          const trace = this.#observability.beginTrace(
+            "terminal-input-to-paint",
+            { generation: this.generation, incarnation: null },
+            traceId,
+          );
+          this.#observability.recordSpan(
+            "tmux",
+            ok ? "control-command-accepted" : "control-command-rejected",
+            acceptedAtMicros,
+            acceptedAtMicros,
+            trace,
+          );
         }
-      : {};
+      },
+      ...(this.#observability.enabled
+        ? {
+            nowMicros: () => this.#observability.nowMicros(),
+            onInputWrite: (_session, action, startedAtMicros, endedAtMicros, pendingBeforeSend) => {
+              for (const traceId of action.traceIds ?? []) {
+                const trace = this.#observability.beginTrace(
+                  "terminal-input-to-paint",
+                  { generation: this.generation, incarnation: null },
+                  traceId,
+                );
+                this.#observability.recordSpan(
+                  "tmux",
+                  "control-write",
+                  startedAtMicros,
+                  endedAtMicros,
+                  trace,
+                );
+                this.#observability.recordSpan(
+                  "tmux",
+                  pendingBeforeSend === 0
+                    ? "control-queue-empty-at-send"
+                    : "control-queue-nonempty-at-send",
+                  endedAtMicros,
+                  endedAtMicros,
+                  trace,
+                );
+              }
+            },
+          }
+        : {}),
+    };
     const observeOutput =
       this.#observability.enabled || options.mirror?.onOutputObserved
         ? (
@@ -322,12 +352,103 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
    * consumed by admission, so prewarming cannot weaken pane enumeration or
    * create a second control authority.
    */
-  async prewarmSession(session: string): Promise<void> {
+  async prewarmSession(session: string, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     const runtime = this.#runtime(session);
-    await runtime.whenReady();
+    await abortable(runtime.whenReady(), signal);
     if (this.#sessions.get(session) !== runtime) {
       throw new Error(`SessionRuntime ${session} was retired while prewarming`);
     }
+  }
+
+  /**
+   * Mark the exact retained runtime as eligible for daemon-private inventory.
+   * This is intentionally separate from ordinary renderer prewarming: only
+   * the native discovery path may call it after its parser and global catalog
+   * analyzer proved the session attachable.
+   */
+  async prewarmProofQualifiedSession(
+    session: string,
+    runtimeSessionId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    signal?.throwIfAborted();
+    if (!/^\$(?:0|[1-9][0-9]*)$/u.test(runtimeSessionId)) {
+      throw new Error(`SessionRuntime ${session} received an invalid runtime session identity`);
+    }
+    let runtime = this.#acquireProofPrewarmRuntime(session);
+    try {
+      await this.#observeTerminalAttempt(
+        "terminal-prewarm-readiness",
+        abortable(runtime.whenReady(), signal),
+      );
+      if (this.#sessions.get(session) !== runtime) {
+        throw new Error(`SessionRuntime ${session} was retired while qualifying inventory`);
+      }
+      let attachedIdentity = await this.#observeTerminalAttempt(
+        "terminal-attached-identity",
+        abortable(runtime.attachedSessionIdentity(), signal),
+      );
+      if (attachedIdentity?.runtimeSessionId !== runtimeSessionId) {
+        if (this.#sessions.get(session) === runtime) this.#sessions.delete(session);
+        await abortable(runtime.dispose(), signal);
+        this.#releaseProofPrewarmRuntime(runtime);
+        signal?.throwIfAborted();
+        runtime = this.#acquireProofPrewarmRuntime(session);
+        await this.#observeTerminalAttempt(
+          "terminal-prewarm-readiness",
+          abortable(runtime.whenReady(), signal),
+        );
+        if (this.#sessions.get(session) !== runtime) {
+          throw new Error(`SessionRuntime ${session} was retired while replacing inventory`);
+        }
+        attachedIdentity = await this.#observeTerminalAttempt(
+          "terminal-attached-identity",
+          abortable(runtime.attachedSessionIdentity(), signal),
+        );
+      }
+      if (
+        attachedIdentity?.sessionName !== session ||
+        attachedIdentity.runtimeSessionId !== runtimeSessionId
+      ) {
+        throw new Error(`SessionRuntime ${session} is attached to a different tmux identity`);
+      }
+      signal?.throwIfAborted();
+      runtime.qualifyTrustedInventory(runtimeSessionId);
+    } finally {
+      this.#releaseProofPrewarmRuntime(runtime);
+    }
+  }
+
+  /** Daemon-internal only. Runtime tmux ids in the result must never cross wire. */
+  async describeTrustedSessionInventory(
+    session: string,
+    signal?: AbortSignal,
+  ): Promise<TrustedMirrorSessionInventory> {
+    signal?.throwIfAborted();
+    if (this.#disposed) throw new Error("SessionRuntimeRegistry is disposed");
+    const runtime = this.#sessions.get(session);
+    if (!runtime?.trustedInventoryQualified()) {
+      throw new Error(`SessionRuntime ${session} has no proof-qualified inventory authority`);
+    }
+    const inventory = await this.#observeTerminalAttempt(
+      "terminal-trusted-inventory-attempt",
+      abortable(runtime.describeTrustedInventory(), signal),
+    );
+    if (this.#sessions.get(session) !== runtime || !runtime.trustedInventoryQualified()) {
+      throw new Error(`SessionRuntime ${session} changed during trusted inventory discovery`);
+    }
+    if (!inventory) {
+      throw new Error(`SessionRuntime ${session} lost its retained inventory authority`);
+    }
+    return inventory;
+  }
+
+  hasProofQualifiedInventory(session: string): boolean {
+    return (
+      (this.#sessions.get(session)?.trustedInventoryQualified() ?? false) &&
+      this.#mirror.hasRetainedSession(session)
+    );
   }
 
   /** Retire one no-longer-registered session without disturbing siblings. */
@@ -585,6 +706,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
         await this.#semanticMutations?.dispose();
         await Promise.allSettled([...this.#sessions.values()].map((runtime) => runtime.dispose()));
         this.#sessions.clear();
+        this.#proofPrewarmOwnership.clear();
         await this.#mirror.dispose();
       })();
     }
@@ -594,7 +716,11 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   #runtime(session: string): SessionRuntime {
     if (this.#disposed) throw new Error("SessionRuntimeRegistry is disposed");
     const existing = this.#sessions.get(session);
-    if (existing) return existing;
+    if (existing) {
+      const ownership = this.#proofPrewarmOwnership.get(existing);
+      if (ownership) ownership.owned = false;
+      return existing;
+    }
     const runtime: SessionRuntime = new SessionRuntime(
       this.generation,
       session,
@@ -624,6 +750,57 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     );
     this.#sessions.set(session, runtime);
     return runtime;
+  }
+
+  #acquireProofPrewarmRuntime(session: string): SessionRuntime {
+    const existing = this.#sessions.get(session);
+    const runtime = existing ?? this.#runtime(session);
+    const ownership = this.#proofPrewarmOwnership.get(runtime);
+    if (ownership) ownership.claims += 1;
+    else this.#proofPrewarmOwnership.set(runtime, { owned: existing === undefined, claims: 1 });
+    return runtime;
+  }
+
+  #releaseProofPrewarmRuntime(runtime: SessionRuntime): void {
+    const ownership = this.#proofPrewarmOwnership.get(runtime);
+    if (!ownership) return;
+    ownership.claims -= 1;
+    if (ownership.claims > 0) return;
+    this.#proofPrewarmOwnership.delete(runtime);
+    if (
+      !ownership.owned ||
+      this.#sessions.get(runtime.session) !== runtime ||
+      runtime.hasConsumers() ||
+      runtime.trustedInventoryQualified()
+    ) {
+      return;
+    }
+    this.#sessions.delete(runtime.session);
+    void runtime.dispose().catch(() => undefined);
+  }
+
+  async #observeTerminalAttempt<Value>(operation: string, promise: Promise<Value>): Promise<Value> {
+    if (!this.#observability.enabled) return promise;
+    let startedAtMicros: number;
+    try {
+      startedAtMicros = this.#observability.nowMicros();
+    } catch {
+      return promise;
+    }
+    try {
+      return await promise;
+    } finally {
+      try {
+        this.#observability.recordSpan(
+          "transport",
+          operation,
+          startedAtMicros,
+          this.#observability.nowMicros(),
+        );
+      } catch {
+        // Diagnostics never change qualification success or failure.
+      }
+    }
   }
 }
 
@@ -662,6 +839,8 @@ class SessionRuntime {
   readonly #completedHandoffs = new Map<string, SessionRuntimeControllerLease>();
   readonly #releasedLeases = new Set<string>();
   #disposed = false;
+  #trustedInventoryRuntimeSessionId: string | null = null;
+  #activeCausalCellProbes = 0;
 
   constructor(
     readonly generation: SessionRuntimeGeneration,
@@ -785,6 +964,10 @@ class SessionRuntime {
 
   hasController(): boolean {
     return this.#controllerClientId !== null;
+  }
+
+  hasConsumers(): boolean {
+    return this.#consumers.size > 0;
   }
 
   qualificationSnapshot(): SessionRuntimeQualificationSnapshot["sessions"][number] {
@@ -925,6 +1108,8 @@ class SessionRuntime {
     semanticPaneId: string,
     rawInput: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
+    rawCausalProbe?: CausalCellProbeV1,
+    onCausalResult?: (result: CausalCellLedgerResult) => void,
   ): void {
     this.assertController(lease, clientId);
     const inputLease = this.#authority.leaseFor(clientId, "input");
@@ -936,6 +1121,19 @@ class SessionRuntime {
     }
     const input = SessionRuntimeTerminalInputSchemaZ.parse(rawInput);
     if (performanceTraceId !== undefined) performanceTraceId = z.uuid().parse(performanceTraceId);
+    const causalProbe =
+      rawCausalProbe === undefined ? null : CausalCellProbeV1SchemaZ.parse(rawCausalProbe);
+    if (causalProbe) {
+      if (
+        causalProbe.traceId !== performanceTraceId ||
+        causalProbe.clientId !== clientId ||
+        causalProbe.semanticPaneId !== semanticPaneId ||
+        causalProbe.generation !== this.generation
+      )
+        throw new Error("Causal-cell authority binding mismatch");
+      if (!onCausalResult) throw new Error("Causal-cell result sink is required");
+      if (this.#activeCausalCellProbes >= 16) throw new Error("Causal-cell capacity exhausted");
+    }
     const trace: SessionRuntimeTraceContext | null = performanceTraceId
       ? Object.freeze({
           traceId: performanceTraceId,
@@ -949,18 +1147,44 @@ class SessionRuntime {
           })
         : null;
     const started = this.#observability.enabled ? this.#observability.nowMicros() : 0;
+    const replicaOwner = this.#terminalReplicaOwner(semanticPaneId);
+    if (causalProbe) {
+      this.#activeCausalCellProbes += 1;
+      let settled = false;
+      try {
+        replicaOwner.armCausalCellProbe(causalProbe, (result) => {
+          if (!settled) {
+            settled = true;
+            this.#activeCausalCellProbes -= 1;
+          }
+          onCausalResult!(result);
+        });
+      } catch (error) {
+        this.#activeCausalCellProbes -= 1;
+        throw error;
+      }
+    }
     if (trace && performanceTraceId) {
       this.#outputTraces ??= this.#createTraceCorrelator(this.#scheduler);
-      this.#terminalReplicaOwner(semanticPaneId).installOutputTraceReader(() =>
-        this.#takeOutputTrace(semanticPaneId),
-      );
+      replicaOwner.installOutputTraceReader(() => this.#takeOutputTrace(semanticPaneId));
       this.#outputTraces.arm(semanticPaneId, trace);
     }
     try {
       if (input.kind === "text")
-        this.#mirror.sendText(this.session, semanticPaneId, input.data, performanceTraceId);
+        this.#mirror.sendText(
+          this.session,
+          semanticPaneId,
+          input.data,
+          performanceTraceId,
+          causalProbe !== null,
+        );
       else this.#mirror.sendKey(this.session, semanticPaneId, input.data, performanceTraceId);
+      // Admission succeeded. Arm one product write independently of optional
+      // qualification traces; rejected control writes must never affect the
+      // parser's next unrelated output.
+      replicaOwner.prioritizeNextWrite();
     } catch (error) {
+      if (causalProbe) replicaOwner.failCausalCell("transport-closed");
       if (trace && performanceTraceId) this.#outputTraces?.take(semanticPaneId);
       throw error;
     }
@@ -984,6 +1208,19 @@ class SessionRuntime {
         );
       });
     }
+  }
+
+  failCausalCellProbe(
+    semanticPaneId: string,
+    traceId: string,
+    reason: CausalCellFailureReasonV1,
+  ): void {
+    this.#terminalReplicas.get(semanticPaneId)?.failCausalCell(reason, traceId);
+  }
+
+  noteInputControlReply(traceId: string, ok: boolean): void {
+    for (const owner of this.#terminalReplicas.values())
+      owner.noteCausalCellControlReply(traceId, ok);
   }
 
   /**
@@ -1045,6 +1282,48 @@ class SessionRuntime {
   async describe(): Promise<MirrorSessionDescription> {
     await this.whenReady();
     return await this.#mirror.describeSession(this.session);
+  }
+
+  qualifyTrustedInventory(runtimeSessionId: string): void {
+    if (this.#disposed || !this.#retention) {
+      throw new Error(`SessionRuntime ${this.session} is not retained`);
+    }
+    this.#trustedInventoryRuntimeSessionId = runtimeSessionId;
+  }
+
+  trustedInventoryQualified(): boolean {
+    return !this.#disposed && this.#trustedInventoryRuntimeSessionId !== null;
+  }
+
+  async describeTrustedInventory(): Promise<TrustedMirrorSessionInventory | null> {
+    if (!this.trustedInventoryQualified()) {
+      throw new Error(`SessionRuntime ${this.session} is not inventory-qualified`);
+    }
+    await this.whenReady();
+    const expectedRuntimeSessionId = this.#trustedInventoryRuntimeSessionId;
+    if (!expectedRuntimeSessionId) return null;
+    const inventory = await this.#mirror.describeTrustedInventory(
+      this.session,
+      expectedRuntimeSessionId,
+    );
+    if (
+      inventory !== null &&
+      inventory.runtimeSessionId !== this.#trustedInventoryRuntimeSessionId
+    ) {
+      return null;
+    }
+    if (!this.trustedInventoryQualified()) {
+      throw new Error(`SessionRuntime ${this.session} changed during trusted inventory discovery`);
+    }
+    return inventory;
+  }
+
+  async attachedSessionIdentity(): Promise<{
+    sessionName: string;
+    runtimeSessionId: string;
+  } | null> {
+    await this.whenReady();
+    return await this.#mirror.retainedSessionIdentity(this.session);
   }
 
   async subscribe(
@@ -1205,6 +1484,7 @@ class SessionRuntime {
   }
 
   noteControlExit(): void {
+    this.#trustedInventoryRuntimeSessionId = null;
     const retention = this.#retention;
     this.#retention = null;
     this.#startPromise = null;
@@ -1223,6 +1503,7 @@ class SessionRuntime {
   async dispose(): Promise<void> {
     if (this.#disposed) return;
     this.#disposed = true;
+    this.#trustedInventoryRuntimeSessionId = null;
     const consumers = [...this.#consumers];
     await Promise.allSettled(consumers.map((consumer) => consumer.close()));
     this.#clearController();
@@ -1410,9 +1691,27 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
     semanticPaneId: string,
     input: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
+    causalProbe?: CausalCellProbeV1,
+    onCausalResult?: (result: CausalCellLedgerResult) => void,
   ): void {
     this.#assertOpen();
-    this.#runtime.sendInput(this.clientId, lease, semanticPaneId, input, performanceTraceId);
+    this.#runtime.sendInput(
+      this.clientId,
+      lease,
+      semanticPaneId,
+      input,
+      performanceTraceId,
+      causalProbe,
+      onCausalResult,
+    );
+  }
+
+  failCausalCellProbe(
+    semanticPaneId: string,
+    traceId: string,
+    reason: CausalCellFailureReasonV1,
+  ): void {
+    this.#runtime.failCausalCellProbe(semanticPaneId, traceId, reason);
   }
 
   fitViewport(lease: SessionRuntimeControllerLease, cols: number, rows: number): void {

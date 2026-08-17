@@ -2,10 +2,16 @@ import type {
   OpenTuiGenerationHost,
   OpenTuiGenerationHostSnapshot,
 } from "./open-tui-generation-host.ts";
+import type { OpenTuiApplicationShellConnection } from "../application-shell-daemon-connection.ts";
 
 export interface OpenTuiSessionOwnerDependencies {
-  readonly ensureWorkspace: (sessionName: string) => Promise<boolean>;
-  readonly createHost: (sessionName: string) => OpenTuiGenerationHost;
+  readonly prepareConnection: (
+    sessionName: string,
+  ) => Promise<OpenTuiApplicationShellConnection | null>;
+  readonly createHost: (
+    sessionName: string,
+    initialConnection: OpenTuiApplicationShellConnection | null,
+  ) => OpenTuiGenerationHost;
   readonly onSnapshot: (snapshot: OpenTuiGenerationHostSnapshot | null) => void;
 }
 
@@ -24,6 +30,15 @@ interface OwnedHost {
   retirement: Promise<void> | null;
 }
 
+type ConnectionPreparationOutcome =
+  | {
+      readonly status: "prepared";
+      readonly connection: OpenTuiApplicationShellConnection | null;
+    }
+  | { readonly status: "rejected"; readonly error: unknown };
+
+const PREPARATION_DISPOSED = Symbol("open-tui-session-owner-preparation-disposed");
+
 /**
  * Serial, target-aware application owner for fixed-session generation hosts.
  * A replacement prepares while the active host retains its painted frame,
@@ -37,6 +52,7 @@ export function createOpenTuiSessionOwner(
   let disposed = false;
   let disposePromise: Promise<void> | null = null;
   let queue: Promise<void> = Promise.resolve();
+  const disposalController = new AbortController();
 
   const serial = <Value>(operation: () => Promise<Value>): Promise<Value> => {
     const result = queue.then(operation, operation);
@@ -54,6 +70,43 @@ export function createOpenTuiSessionOwner(
     return owner.retirement;
   };
 
+  const prepareConnection = async (
+    sessionName: string,
+  ): Promise<OpenTuiApplicationShellConnection | null | typeof PREPARATION_DISPOSED> => {
+    const preparation = dependencies.prepareConnection(sessionName);
+    const outcome: Promise<ConnectionPreparationOutcome> = preparation.then(
+      (connection) => ({ status: "prepared", connection }),
+      (error: unknown) => ({ status: "rejected", error }),
+    );
+    const signal = disposalController.signal;
+    if (signal.aborted) {
+      void outcome.then((late) => {
+        if (late.status === "prepared") late.connection?.dispose();
+      });
+      return PREPARATION_DISPOSED;
+    }
+
+    let stopListening = (): void => undefined;
+    const disposal = new Promise<typeof PREPARATION_DISPOSED>((resolve) => {
+      const aborted = (): void => resolve(PREPARATION_DISPOSED);
+      signal.addEventListener("abort", aborted, { once: true });
+      stopListening = () => signal.removeEventListener("abort", aborted);
+    });
+    const settled = await Promise.race([outcome, disposal]);
+    stopListening();
+    if (settled === PREPARATION_DISPOSED) {
+      // The owner no longer waits for an unowned routing request. Its handled
+      // outcome keeps late rejection process-safe and retires a late success
+      // exactly once without requiring a generation host to exist.
+      void outcome.then((late) => {
+        if (late.status === "prepared") late.connection?.dispose();
+      });
+      return PREPARATION_DISPOSED;
+    }
+    if (settled.status === "rejected") throw settled.error;
+    return settled.connection;
+  };
+
   return {
     sessionName: () => current?.sessionName ?? null,
     snapshot: () => current?.latest ?? null,
@@ -61,11 +114,22 @@ export function createOpenTuiSessionOwner(
       return serial(async () => {
         if (disposed) return false;
         if (current?.sessionName === sessionName) return true;
-        if (!workspacePrepared && !(await dependencies.ensureWorkspace(sessionName))) return false;
-        if (disposed) return false;
+        const initialConnection = workspacePrepared ? null : await prepareConnection(sessionName);
+        if (initialConnection === PREPARATION_DISPOSED) return false;
+        if (!workspacePrepared && !initialConnection) return false;
+        if (disposed) {
+          initialConnection?.dispose();
+          return false;
+        }
 
         const previous = current;
-        const host = dependencies.createHost(sessionName);
+        let host: OpenTuiGenerationHost;
+        try {
+          host = dependencies.createHost(sessionName, initialConnection);
+        } catch (error) {
+          initialConnection?.dispose();
+          throw error;
+        }
         const candidate: OwnedHost = {
           sessionName,
           host,
@@ -100,6 +164,7 @@ export function createOpenTuiSessionOwner(
     dispose() {
       if (disposePromise) return disposePromise;
       disposed = true;
+      disposalController.abort();
       const owners = [...new Set([current, preparing].filter((owner) => owner !== null))];
       current = null;
       preparing = null;

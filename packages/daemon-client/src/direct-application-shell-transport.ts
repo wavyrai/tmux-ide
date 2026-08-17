@@ -7,11 +7,14 @@ import {
   DaemonEventServerFrameSchemaZ,
   DesktopApplicationShellTargetSchemaZ,
   DesktopDaemonHostDescriptorSchemaZ,
+  TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION,
+  TerminalRuntimeInventoryResourceV1SchemaZ,
   isDaemonWireProtocolCompatible,
   type DaemonEventServerFrame,
   type DaemonInstanceIdentity,
   type DesktopApplicationShellTarget,
   type DesktopDaemonHostDescriptor,
+  type TerminalRuntimeInventoryProjectionV1,
 } from "@tmux-ide/contracts";
 import {
   advanceResourceReplica,
@@ -25,6 +28,12 @@ import {
   type ApplicationShellTransport,
   type ApplicationShellTransportErrorKind,
 } from "./application-shell-session.ts";
+import {
+  createWorkspaceEventSupervisor,
+  type PreparedTerminalRuntimeInventory,
+  type WorkspaceEventSupervisor,
+  type WorkspaceEventSocketOptions,
+} from "./workspace-event-supervisor.ts";
 
 export type DaemonTransportErrorKind = ApplicationShellTransportErrorKind;
 
@@ -49,7 +58,10 @@ export interface DaemonEventSocket {
   close(code?: number, reason?: string): void;
 }
 
-export type DaemonWebSocketFactory = (url: string) => DaemonEventSocket;
+export type DaemonWebSocketFactory = (
+  url: string,
+  options?: WorkspaceEventSocketOptions,
+) => DaemonEventSocket;
 
 export interface DaemonTransportDependencies {
   readonly descriptor: DesktopDaemonHostDescriptor;
@@ -67,11 +79,48 @@ export interface DaemonTransportDependencies {
     | typeof APPLICATION_SHELL_RESOURCE_V3_VERSION;
   readonly fetch?: DaemonFetch;
   readonly createWebSocket?: DaemonWebSocketFactory;
+  /** OpenTUI-only terminal-first authority; other hosts retain legacy transport ordering. */
+  readonly terminalRuntimeAuthority?: boolean;
+  readonly terminalRuntimeDiagnostic?: (
+    phase:
+      | "terminal-event-socket-create"
+      | "terminal-event-socket-open"
+      | "terminal-event-hello"
+      | "terminal-interest-send"
+      | "terminal-interest-ack"
+      | "terminal-http-start"
+      | "terminal-http-response"
+      | "terminal-capability-adopted"
+      | "terminal-fallback-selected",
+    details: Readonly<Record<string, unknown>>,
+  ) => void;
+  /** Injectable reconnect scheduler for deterministic lifecycle tests. */
+  readonly terminalReconnectClock?: {
+    setTimeout(callback: () => void, delayMs: number): unknown;
+    clearTimeout(handle: unknown): void;
+  };
 }
 
 export type DaemonEventHandlers = ApplicationShellEventHandlers;
 export type DaemonEventConnection = ApplicationShellEventConnection;
 export type DesktopDaemonTransport = ApplicationShellTransport;
+
+export interface TerminalFirstDaemonTransport extends DesktopDaemonTransport {
+  prepareTerminalRuntimeInventory(
+    target: DesktopApplicationShellTarget,
+    signal: AbortSignal,
+  ): Promise<PreparedTerminalRuntimeInventory>;
+  adoptTerminalRuntimeInventory(
+    prepared: PreparedTerminalRuntimeInventory,
+    onResource: (resource: TerminalRuntimeInventoryProjectionV1) => void,
+  ): TerminalRuntimeInventoryProjectionV1 | null;
+  disposeEventSupervisor(): void;
+  /** Fully release terminal-first state before selecting the old-daemon V2 authority. */
+  selectApplicationShellFallback(
+    reason?: "deadline" | "retired" | "preparation-rejected" | "adoption-rejected" | "unknown",
+  ): void;
+  refreshTerminalRuntimeInventory(): void;
+}
 
 function clientInitiatedWebSocketCloseCode(code: number | undefined): number | undefined {
   if (code === undefined || code === 1000 || (code >= 3000 && code <= 4999)) return code;
@@ -152,9 +201,22 @@ function applicationShellUrl(
   return url;
 }
 
-function eventSocketUrl(descriptor: DesktopDaemonHostDescriptor): string {
+function terminalRuntimeInventoryUrl(
+  descriptor: DesktopDaemonHostDescriptor,
+  sessionName: string,
+): URL {
+  const url = new URL(
+    `/api/project/${encodeURIComponent(sessionName)}/terminal-runtime-inventory`,
+    descriptor.apiBaseUrl,
+  );
+  url.searchParams.set("version", String(TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION));
+  return url;
+}
+
+function eventSocketUrl(descriptor: DesktopDaemonHostDescriptor, mode?: "semantic"): string {
   const url = new URL("/ws/events", descriptor.apiBaseUrl);
   url.protocol = "ws:";
+  if (mode) url.searchParams.set("mode", mode);
   return url.toString();
 }
 
@@ -239,7 +301,7 @@ function isRelevantFrame(
  */
 export function createDirectLoopbackDaemonTransport(
   dependencies: DaemonTransportDependencies,
-): DesktopDaemonTransport {
+): DesktopDaemonTransport | TerminalFirstDaemonTransport {
   const descriptor = validatedDescriptor(dependencies.descriptor);
   const resolveSessionName = dependencies.resolveSessionName;
   if (typeof resolveSessionName !== "function") {
@@ -247,21 +309,189 @@ export function createDirectLoopbackDaemonTransport(
   }
   const fetchImpl = dependencies.fetch ?? defaultFetch;
   const createWebSocket = dependencies.createWebSocket ?? defaultCreateWebSocket;
+  const diagnose = dependencies.terminalRuntimeDiagnostic
+    ? (
+        phase: Parameters<NonNullable<DaemonTransportDependencies["terminalRuntimeDiagnostic"]>>[0],
+        details: Readonly<Record<string, unknown>>,
+      ): void => {
+        try {
+          dependencies.terminalRuntimeDiagnostic?.(phase, details);
+        } catch {
+          // Diagnostics never own transport or authority lifecycle.
+        }
+      }
+    : null;
   const applicationShellResourceVersion =
     dependencies.applicationShellResourceVersion ?? APPLICATION_SHELL_RESOURCE_V3_VERSION;
   const eventReplicas = new Map<string, ResourceReplicaState<null>>();
+  let eventSupervisor: WorkspaceEventSupervisor | null = null;
+  let supervisorTargetKey: string | null = null;
+  let terminalRuntimeEnabled = dependencies.terminalRuntimeAuthority === true;
+  let terminalAuthoritySink: ((resource: TerminalRuntimeInventoryProjectionV1) => void) | null =
+    null;
+  let retainedApplicationShellHandlers: ApplicationShellEventHandlers | null = null;
+  let applicationShellSupervisorConnection: ApplicationShellEventConnection | null = null;
+  const terminalReconnectClock = dependencies.terminalReconnectClock ?? {
+    setTimeout(callback: () => void, delayMs: number): unknown {
+      const handle = setTimeout(callback, delayMs);
+      handle.unref?.();
+      return handle;
+    },
+    clearTimeout(handle: unknown): void {
+      clearTimeout(handle as ReturnType<typeof setTimeout>);
+    },
+  };
+  let terminalReconnectTimer: unknown | null = null;
+  let terminalReconnectController: AbortController | null = null;
+  const cancelTerminalReconnect = (): void => {
+    if (terminalReconnectTimer !== null)
+      terminalReconnectClock.clearTimeout(terminalReconnectTimer);
+    terminalReconnectTimer = null;
+    terminalReconnectController?.abort(
+      new DOMException("Terminal authority reconnect retired", "AbortError"),
+    );
+    terminalReconnectController = null;
+  };
   const validateBoundTarget = (value: unknown): DesktopApplicationShellTarget => {
     const safeTarget = validatedTarget(value);
     requireMatchingPeer(safeTarget.daemon, descriptor);
     return safeTarget;
   };
 
-  return {
+  const fetchTerminalRuntimeInventory = async (
+    safeTarget: DesktopApplicationShellTarget,
+    sessionName: string,
+    signal: AbortSignal,
+  ): Promise<TerminalRuntimeInventoryProjectionV1> => {
+    const responsePending = fetchImpl(terminalRuntimeInventoryUrl(descriptor, sessionName), {
+      method: "GET",
+      headers: {
+        accept: "application/json",
+        ...(dependencies.ownerToken ? { Authorization: `Bearer ${dependencies.ownerToken}` } : {}),
+      },
+      credentials: "omit",
+      cache: "no-store",
+      redirect: "error",
+      signal,
+    });
+    diagnose?.("terminal-http-start", {});
+    const response = await responsePending;
+    diagnose?.("terminal-http-response", { status: response.status });
+    if (!response.ok) {
+      throw new DaemonTransportError(
+        response.status === 404 ? "not-found" : "http-error",
+        `Daemon terminal-runtime inventory returned HTTP ${response.status}.`,
+        response.status,
+      );
+    }
+    const parsed = TerminalRuntimeInventoryResourceV1SchemaZ.safeParse(await response.json());
+    if (!parsed.success) {
+      throw new DaemonTransportError(
+        "schema-invalid",
+        "Daemon terminal-runtime inventory failed validation.",
+      );
+    }
+    requireMatchingPeer(safeTarget.daemon, parsed.data.daemon);
+    if (parsed.data.resource.workspaceName !== safeTarget.workspaceName) {
+      throw peerMismatch("Terminal-runtime inventory workspace did not match the target.");
+    }
+    return parsed.data.resource;
+  };
+  const ensureEventSupervisor = (
+    safeTarget: DesktopApplicationShellTarget,
+    sessionName: string,
+  ): WorkspaceEventSupervisor => {
+    const key = `${safeTarget.daemon.instanceId}\0${safeTarget.workspaceName}\0${sessionName}`;
+    if (eventSupervisor && supervisorTargetKey === key) return eventSupervisor;
+    eventSupervisor?.dispose();
+    const socket = createWebSocket(eventSocketUrl(descriptor, "semantic"), {
+      headers: dependencies.ownerToken
+        ? { Authorization: `Bearer ${dependencies.ownerToken}` }
+        : undefined,
+    });
+    diagnose?.("terminal-event-socket-create", {});
+    let supervisor!: WorkspaceEventSupervisor;
+    supervisor = createWorkspaceEventSupervisor({
+      socket,
+      daemon: safeTarget.daemon,
+      workspaceName: safeTarget.workspaceName,
+      sessionName,
+      fetchTerminalRuntimeInventory: (signal) =>
+        fetchTerminalRuntimeInventory(safeTarget, sessionName, signal),
+      onRetired: () => {
+        if (eventSupervisor !== supervisor) return;
+        cancelTerminalReconnect();
+        eventSupervisor = null;
+        supervisorTargetKey = null;
+        applicationShellSupervisorConnection = null;
+        supervisor.dispose();
+        if (!terminalRuntimeEnabled || terminalAuthoritySink === null) return;
+        const reconnect = (): void => {
+          if (!terminalRuntimeEnabled || terminalAuthoritySink === null) return;
+          const replacement = ensureEventSupervisor(safeTarget, sessionName);
+          const controller = new AbortController();
+          terminalReconnectController = controller;
+          void replacement
+            .prepareTerminalRuntimeInventory(controller.signal)
+            .then((prepared) => {
+              if (terminalReconnectController === controller) terminalReconnectController = null;
+              if (
+                !terminalRuntimeEnabled ||
+                terminalAuthoritySink === null ||
+                eventSupervisor !== replacement
+              ) {
+                prepared.dispose();
+                return;
+              }
+              const sink = terminalAuthoritySink;
+              const resource = replacement.adoptTerminalRuntimeInventory(prepared, sink);
+              if (resource !== null && terminalRuntimeEnabled && terminalAuthoritySink === sink) {
+                sink(resource);
+                if (retainedApplicationShellHandlers) {
+                  applicationShellSupervisorConnection = replacement.connectApplicationShell(
+                    retainedApplicationShellHandlers,
+                  );
+                }
+              }
+            })
+            .catch(() => {
+              if (terminalReconnectController === controller) terminalReconnectController = null;
+              if (
+                !terminalRuntimeEnabled ||
+                terminalAuthoritySink === null ||
+                eventSupervisor !== replacement
+              ) {
+                return;
+              }
+              replacement.dispose();
+              if (eventSupervisor !== replacement) return;
+              eventSupervisor = null;
+              supervisorTargetKey = null;
+              applicationShellSupervisorConnection = null;
+              terminalReconnectTimer = terminalReconnectClock.setTimeout(() => {
+                terminalReconnectTimer = null;
+                reconnect();
+              }, 1_000);
+            });
+        };
+        queueMicrotask(reconnect);
+      },
+      ...(diagnose ? { onDiagnostic: diagnose } : {}),
+    });
+    eventSupervisor = supervisor;
+    supervisorTargetKey = key;
+    return supervisor;
+  };
+
+  const transport: DesktopDaemonTransport & Partial<TerminalFirstDaemonTransport> = {
     validateTarget: validateBoundTarget,
 
     async fetchApplicationShell(target, signal) {
       const safeTarget = validateBoundTarget(target);
       const sessionName = resolvedSessionName(resolveSessionName, safeTarget.workspaceName);
+      if (terminalRuntimeEnabled) {
+        await ensureEventSupervisor(safeTarget, sessionName).awaitApplicationShellBarrier(signal);
+      }
       let response: Response;
       let negotiatedVersion = applicationShellResourceVersion as
         | typeof APPLICATION_SHELL_RESOURCE_V2_VERSION
@@ -337,6 +567,26 @@ export function createDirectLoopbackDaemonTransport(
     connectEvents(target, handlers) {
       const safeTarget = validateBoundTarget(target);
       const sessionName = resolvedSessionName(resolveSessionName, safeTarget.workspaceName);
+      if (terminalRuntimeEnabled) {
+        applicationShellSupervisorConnection?.close();
+        retainedApplicationShellHandlers = handlers;
+        applicationShellSupervisorConnection = ensureEventSupervisor(
+          safeTarget,
+          sessionName,
+        ).connectApplicationShell(handlers);
+        let closed = false;
+        return {
+          close() {
+            if (closed) return;
+            closed = true;
+            if (retainedApplicationShellHandlers === handlers) {
+              retainedApplicationShellHandlers = null;
+              applicationShellSupervisorConnection?.close();
+              applicationShellSupervisorConnection = null;
+            }
+          },
+        };
+      }
       let eventReplica =
         eventReplicas.get(safeTarget.workspaceName) ?? initialResourceReplica<null>();
       const socket = createWebSocket(eventSocketUrl(descriptor));
@@ -543,5 +793,56 @@ export function createDirectLoopbackDaemonTransport(
         },
       };
     },
+    ...(dependencies.terminalRuntimeAuthority
+      ? {
+          prepareTerminalRuntimeInventory: (
+            target: DesktopApplicationShellTarget,
+            signal: AbortSignal,
+          ) => {
+            const safeTarget = validateBoundTarget(target);
+            const sessionName = resolvedSessionName(resolveSessionName, safeTarget.workspaceName);
+            return ensureEventSupervisor(safeTarget, sessionName).prepareTerminalRuntimeInventory(
+              signal,
+            );
+          },
+          adoptTerminalRuntimeInventory: (
+            prepared: PreparedTerminalRuntimeInventory,
+            onResource: (resource: TerminalRuntimeInventoryProjectionV1) => void,
+          ) => {
+            const resource =
+              eventSupervisor?.adoptTerminalRuntimeInventory(prepared, onResource) ?? null;
+            if (resource !== null) terminalAuthoritySink = onResource;
+            if (resource !== null)
+              diagnose?.("terminal-capability-adopted", {
+                resourceRevision: resource.resourceRevision,
+              });
+            return resource;
+          },
+          disposeEventSupervisor: () => {
+            cancelTerminalReconnect();
+            retainedApplicationShellHandlers = null;
+            applicationShellSupervisorConnection?.close();
+            applicationShellSupervisorConnection = null;
+            eventSupervisor?.dispose();
+            eventSupervisor = null;
+            supervisorTargetKey = null;
+            terminalAuthoritySink = null;
+          },
+          selectApplicationShellFallback: (reason = "unknown") => {
+            terminalRuntimeEnabled = false;
+            cancelTerminalReconnect();
+            retainedApplicationShellHandlers = null;
+            applicationShellSupervisorConnection?.close();
+            applicationShellSupervisorConnection = null;
+            eventSupervisor?.dispose();
+            eventSupervisor = null;
+            supervisorTargetKey = null;
+            terminalAuthoritySink = null;
+            diagnose?.("terminal-fallback-selected", { reason });
+          },
+          refreshTerminalRuntimeInventory: () => eventSupervisor?.refreshTerminalRuntimeInventory(),
+        }
+      : {}),
   };
+  return transport as DesktopDaemonTransport | TerminalFirstDaemonTransport;
 }

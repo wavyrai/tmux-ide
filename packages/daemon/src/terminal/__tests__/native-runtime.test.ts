@@ -34,6 +34,10 @@ import {
   type TmuxAttachmentCommandRunner,
 } from "../attachments/tmux-view-executor.ts";
 import type { SessionRuntimeRegistry } from "../session-runtime/registry.ts";
+import {
+  DISABLED_SESSION_RUNTIME_OBSERVABILITY,
+  createSessionRuntimeObservability,
+} from "../session-runtime/runtime-observability.ts";
 import { MockPtyAdapter } from "./MockPtyAdapter.ts";
 
 const INSTANCE_ID = "daemon-instance-a1";
@@ -594,6 +598,45 @@ describe("async terminal inventory reads", () => {
     return argv[0] === "list-sessions" ? "" : "";
   };
 
+  it("records resource boundary instants only when daemon diagnostics are enabled", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    const operations: string[] = [];
+    const enabled = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      observability: createSessionRuntimeObservability({
+        nowMicros: (() => {
+          let now = 0;
+          return () => (now += 10);
+        })(),
+        onSpan: (span) => {
+          operations.push(span.operation);
+          throw new Error("diagnostic sink failed");
+        },
+      }),
+    });
+    enabled.recordTerminalRuntimeResourceMark("terminal-resource-handler-admitted");
+    enabled.recordTerminalRuntimeResourceMark("terminal-resource-response-projection");
+    expect(operations).toEqual([
+      "terminal-resource-handler-admitted",
+      "terminal-resource-response-projection",
+    ]);
+    enabled.dispose();
+
+    const nowMicros = vi.fn(() => 1);
+    const disabled = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      observability: { ...DISABLED_SESSION_RUNTIME_OBSERVABILITY, nowMicros },
+    });
+    disabled.recordTerminalRuntimeResourceMark("terminal-resource-handler-admitted");
+    disabled.recordTerminalRuntimeResourceMark("terminal-resource-response-projection");
+    expect(nowMicros).not.toHaveBeenCalled();
+    disabled.dispose();
+  });
+
   function asyncInventory(
     sessionName: string,
     calls: Array<{
@@ -773,6 +816,488 @@ describe("async terminal inventory reads", () => {
     releaseProbe();
     await expect(Promise.all([first, second])).resolves.toHaveLength(2);
     expect(probes).toBe(1);
+    runtime.dispose();
+  });
+
+  it("uses only proof-qualified retained inventory while preserving agent enrichment", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    const readCommandExecutor = vi.fn(async () => {
+      throw new Error("process inventory must not run");
+    });
+    const agentFacts = {
+      agentStateRaw: "working:1",
+      agentStatusTextRaw: "editing",
+      agentDisplayNameRaw: "Codex",
+      agentScrapeState: null,
+    } as const;
+    const probe = vi.fn(async () => new Map([["%3", agentFacts]]));
+    const describeTrustedSessionInventory = vi.fn(async () => ({
+      sessionName: "runtime:session",
+      runtimeSessionId: "$7",
+      panes: [
+        {
+          runtimeSessionId: "$7",
+          runtimeWindowId: "@2",
+          runtimePaneId: "%3",
+          semanticWindowId: "window.promoted.abc123",
+          semanticPaneId: "pane.agent",
+          windowPaneCount: 1,
+          sessionWindowCount: 1,
+          paneIndex: 0,
+          title: "Agent",
+          currentCommand: "codex",
+          active: true,
+          role: "teammate",
+          name: "Codex",
+          type: "agent",
+          missionStamp: null,
+          dir: "/repo",
+        },
+      ],
+    }));
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor,
+      sessionRuntimeRegistry: {
+        hasProofQualifiedInventory: () => true,
+        describeTrustedSessionInventory,
+        prewarmProofQualifiedSession: vi.fn(async () => undefined),
+        prewarmSession: vi.fn(async () => undefined),
+        retireSession: vi.fn(async () => undefined),
+      } as unknown as SessionRuntimeRegistry,
+      agentStatusProbe: { probe },
+    });
+    await runtime.whenReady();
+
+    const trustedSession = await runtime.discoverApplicationShellSession("runtime:session");
+    expect(trustedSession).toMatchObject({
+      name: "runtime:session",
+      runtimeSessionId: "$7",
+      catalogIssue: null,
+      panes: [expect.objectContaining({ semanticPaneId: "pane.agent", ...agentFacts })],
+    });
+    expect(describeTrustedSessionInventory).toHaveBeenCalledOnce();
+    expect(readCommandExecutor).not.toHaveBeenCalled();
+    expect(probe).toHaveBeenCalledOnce();
+    const legacy = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: asyncInventory("runtime:session", []),
+      agentStatusProbe: { probe: async () => new Map([["%3", agentFacts]]) },
+    });
+    await legacy.whenReady();
+    await expect(legacy.discoverApplicationShellSession("runtime:session")).resolves.toEqual(
+      trustedSession,
+    );
+    legacy.dispose();
+    runtime.dispose();
+  });
+
+  it("falls back to native discovery when a trusted provider snapshot is malformed", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    const calls: Array<{ argv: readonly string[] }> = [];
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: asyncInventory("runtime:session", calls),
+      sessionRuntimeRegistry: {
+        hasProofQualifiedInventory: () => true,
+        describeTrustedSessionInventory: vi.fn(async () => ({
+          sessionName: "wrong-session",
+          runtimeSessionId: "$7",
+          panes: [
+            {
+              runtimeSessionId: "$8",
+              runtimeWindowId: "@2",
+              runtimePaneId: "%3",
+              semanticWindowId: "window.promoted.abc123",
+              semanticPaneId: "pane.promoted.abc123",
+              windowPaneCount: "1",
+              sessionWindowCount: 1,
+              paneIndex: 0,
+              title: 42,
+              currentCommand: "zsh",
+              active: "true",
+              role: null,
+              name: null,
+              type: null,
+              missionStamp: null,
+              dir: "/repo",
+            },
+          ],
+        })),
+        prewarmProofQualifiedSession: vi.fn(async () => undefined),
+        prewarmSession: vi.fn(async () => undefined),
+        retireSession: vi.fn(async () => undefined),
+      } as unknown as SessionRuntimeRegistry,
+    });
+    await runtime.whenReady();
+
+    await expect(runtime.discoverApplicationShellSession("runtime:session")).resolves.toMatchObject(
+      {
+        name: "runtime:session",
+      },
+    );
+    expect(calls).toHaveLength(3);
+    runtime.dispose();
+  });
+
+  it("aborts a pending trusted provider read on disposal and discards its late result", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    let started!: () => void;
+    const didStart = new Promise<void>((resolve) => (started = resolve));
+    let release!: (value: unknown) => void;
+    const provider = new Promise<unknown>((resolve) => (release = resolve));
+    const readCommandExecutor = vi.fn(async () => "");
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor,
+      sessionRuntimeRegistry: {
+        hasProofQualifiedInventory: () => true,
+        describeTrustedSessionInventory: vi.fn(() => {
+          started();
+          return provider;
+        }),
+        prewarmProofQualifiedSession: vi.fn(async () => undefined),
+        prewarmSession: vi.fn(async () => undefined),
+        retireSession: vi.fn(async () => undefined),
+      } as unknown as SessionRuntimeRegistry,
+    });
+    await runtime.whenReady();
+    const pending = runtime.discoverApplicationShellSession("runtime:session");
+    await didStart;
+    runtime.dispose();
+    await expect(pending).rejects.toMatchObject({ code: "runtime-disposed" });
+    release({ sessionName: "runtime:session", runtimeSessionId: "$7", panes: [] });
+    await Promise.resolve();
+    expect(readCommandExecutor).not.toHaveBeenCalled();
+  });
+
+  it("aborts a pending trusted provider read from the external request signal", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    let started!: () => void;
+    const didStart = new Promise<void>((resolve) => (started = resolve));
+    let release!: (value: unknown) => void;
+    const provider = new Promise<unknown>((resolve) => (release = resolve));
+    const nativeRead = vi.fn(async () => "");
+    const prewarm = vi.fn(async () => undefined);
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: nativeRead,
+      sessionRuntimeRegistry: {
+        hasProofQualifiedInventory: () => true,
+        describeTrustedSessionInventory: vi.fn(() => {
+          started();
+          return provider;
+        }),
+        prewarmProofQualifiedSession: prewarm,
+        prewarmSession: vi.fn(async () => undefined),
+        retireSession: vi.fn(async () => undefined),
+      } as unknown as SessionRuntimeRegistry,
+    });
+    await runtime.whenReady();
+    const abort = new AbortController();
+    const pending = runtime.discoverTerminalRuntimeSession("runtime:session", abort.signal);
+    await didStart;
+    abort.abort();
+    await expect(pending).rejects.toMatchObject({ code: "runtime-disposed" });
+    release({ sessionName: "runtime:session", runtimeSessionId: "$7", panes: [] });
+    await Promise.resolve();
+    expect(nativeRead).not.toHaveBeenCalled();
+    expect(prewarm).not.toHaveBeenCalled();
+    runtime.dispose();
+  });
+
+  it("restarts an invalidated trusted provider epoch and ignores the late old snapshot", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    let firstStarted!: () => void;
+    const didStart = new Promise<void>((resolve) => (firstStarted = resolve));
+    let releaseFirst!: (value: unknown) => void;
+    const first = new Promise<unknown>((resolve) => (releaseFirst = resolve));
+    let calls = 0;
+    const valid = {
+      sessionName: "runtime:session",
+      runtimeSessionId: "$7",
+      panes: [
+        {
+          runtimeSessionId: "$7",
+          runtimeWindowId: "@2",
+          runtimePaneId: "%3",
+          semanticWindowId: "window.promoted.abc123",
+          semanticPaneId: "pane.agent",
+          windowPaneCount: 1,
+          sessionWindowCount: 1,
+          paneIndex: 0,
+          title: "Agent",
+          currentCommand: "codex",
+          active: true,
+          role: "teammate",
+          name: "Codex",
+          type: "agent",
+          missionStamp: null,
+          dir: "/repo",
+        },
+      ],
+    };
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: vi.fn(async () => ""),
+      sessionRuntimeRegistry: {
+        hasProofQualifiedInventory: () => true,
+        describeTrustedSessionInventory: vi.fn(() => {
+          calls += 1;
+          if (calls === 1) {
+            firstStarted();
+            return first;
+          }
+          return Promise.resolve(valid);
+        }),
+        prewarmProofQualifiedSession: vi.fn(async () => undefined),
+        prewarmSession: vi.fn(async () => undefined),
+        retireSession: vi.fn(async () => undefined),
+      } as unknown as SessionRuntimeRegistry,
+    });
+    await runtime.whenReady();
+    const pending = runtime.discoverApplicationShellSession("runtime:session");
+    await didStart;
+    runtime.invalidate();
+    await expect(pending).resolves.toMatchObject({ runtimeSessionId: "$7" });
+    releaseFirst({ ...valid, runtimeSessionId: "$9" });
+    await Promise.resolve();
+    expect(calls).toBe(2);
+    runtime.dispose();
+  });
+
+  it("records opt-in application-shell inventory and enrichment spans without tracing ordinary reads", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    const operations: string[] = [];
+    let now = 10;
+    const observability = createSessionRuntimeObservability({
+      nowMicros: () => (now += 10),
+      onSpan: (span) => operations.push(span.operation),
+    });
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: asyncInventory("runtime:session", []),
+      agentStatusProbe: { probe: async () => new Map() },
+      observability,
+    });
+    await runtime.whenReady();
+
+    await expect(runtime.discoverApplicationShellSession("runtime:session")).resolves.toMatchObject(
+      {
+        name: "runtime:session",
+      },
+    );
+    expect(operations).toEqual(["terminal-inventory-discovery", "terminal-agent-enrichment"]);
+    expect(observability.snapshot().spans).toEqual(
+      expect.arrayContaining([expect.objectContaining({ stage: "transport", traceId: null })]),
+    );
+    runtime.dispose();
+  });
+
+  it.each(["clock", "sink"] as const)(
+    "preserves successful inventory discovery and agent enrichment when the diagnostic %s throws",
+    async (failure) => {
+      const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+      let now = 0;
+      const nowMicros = vi.fn(() => {
+        if (failure === "clock") throw new Error("diagnostic clock failed");
+        return (now += 10);
+      });
+      const onSpan = vi.fn(() => {
+        if (failure === "sink") throw new Error("diagnostic sink failed");
+      });
+      const probe = vi.fn(async () => new Map());
+      const runtime = new WorkspaceTerminalInventoryRuntime({
+        registry,
+        tmuxAuthority: authority(root),
+        commandExecutor: syncStartup,
+        readCommandExecutor: asyncInventory("runtime:session", []),
+        agentStatusProbe: { probe },
+        observability: createSessionRuntimeObservability({ nowMicros, onSpan }),
+      });
+      await runtime.whenReady();
+
+      await expect(
+        runtime.discoverApplicationShellSession("runtime:session"),
+      ).resolves.toMatchObject({
+        name: "runtime:session",
+        runtimeSessionId: "$7",
+      });
+      expect(probe).toHaveBeenCalledOnce();
+      expect(nowMicros).toHaveBeenCalled();
+      if (failure === "sink") expect(onSpan).toHaveBeenCalled();
+      runtime.dispose();
+    },
+  );
+
+  it("projects terminal runtime topology without invoking agent enrichment", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    const probe = vi.fn(async () => new Map());
+    const operations: string[] = [];
+    const observability = createSessionRuntimeObservability({
+      nowMicros: (() => {
+        let now = 0;
+        return () => (now += 10);
+      })(),
+      onSpan: (span) => operations.push(span.operation),
+    });
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: asyncInventory("runtime:session", []),
+      agentStatusProbe: { probe },
+      observability,
+    });
+    await runtime.whenReady();
+
+    await expect(runtime.discoverTerminalRuntimeSession("runtime:session")).resolves.toMatchObject({
+      workspaceName: "workspace.alpha",
+      name: "runtime:session",
+      runtimeSessionId: "$7",
+    });
+    expect(probe).not.toHaveBeenCalled();
+    expect(operations).toEqual(["terminal-inventory-discovery"]);
+
+    await runtime.discoverApplicationShellSession("runtime:session");
+    expect(probe).toHaveBeenCalledOnce();
+    expect(operations).toContain("terminal-agent-enrichment");
+    runtime.dispose();
+  });
+
+  it("aborts an externally cancelled pending native inventory read and discards its late result", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    let started!: () => void;
+    const didStart = new Promise<void>((resolve) => (started = resolve));
+    let release!: (value: string) => void;
+    const firstRead = new Promise<string>((resolve) => (release = resolve));
+    const prewarm = vi.fn(async () => undefined);
+    let reads = 0;
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: async () => {
+        reads += 1;
+        if (reads === 1) {
+          started();
+          return firstRead;
+        }
+        return "";
+      },
+      sessionRuntimeRegistry: {
+        hasProofQualifiedInventory: () => false,
+        prewarmProofQualifiedSession: prewarm,
+        prewarmSession: vi.fn(async () => undefined),
+        retireSession: vi.fn(async () => undefined),
+      } as unknown as SessionRuntimeRegistry,
+    });
+    await runtime.whenReady();
+    const abort = new AbortController();
+    const pending = runtime.discoverTerminalRuntimeSession("runtime:session", abort.signal);
+    await didStart;
+    abort.abort();
+    await expect(pending).rejects.toMatchObject({ code: "runtime-disposed" });
+    release("");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(prewarm).not.toHaveBeenCalled();
+    runtime.dispose();
+  });
+
+  it("aborts a pending runtime prewarm and does not return a late terminal projection", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    let prewarmStarted!: () => void;
+    const didStartPrewarm = new Promise<void>((resolve) => (prewarmStarted = resolve));
+    let releasePrewarm!: () => void;
+    const prewarmBarrier = new Promise<void>((resolve) => (releasePrewarm = resolve));
+    const prewarm = vi.fn((_sessionName: string, _runtimeSessionId: string) => {
+      prewarmStarted();
+      return prewarmBarrier;
+    });
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: asyncInventory("runtime:session", []),
+      sessionRuntimeRegistry: {
+        hasProofQualifiedInventory: () => false,
+        prewarmProofQualifiedSession: prewarm,
+        prewarmSession: vi.fn(async () => undefined),
+        retireSession: vi.fn(async () => undefined),
+      } as unknown as SessionRuntimeRegistry,
+    });
+    await runtime.whenReady();
+    const abort = new AbortController();
+    const pending = runtime.discoverTerminalRuntimeSession("runtime:session", abort.signal);
+    await didStartPrewarm;
+    abort.abort();
+    await expect(pending).rejects.toMatchObject({ code: "runtime-disposed" });
+    releasePrewarm();
+    await Promise.resolve();
+    expect(prewarm).toHaveBeenCalledOnce();
+    runtime.dispose();
+  });
+
+  it("records invalidated inventory attempts as two non-overlapping spans", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    let calls = 0;
+    let firstStarted!: () => void;
+    const didStartFirst = new Promise<void>((resolve) => (firstStarted = resolve));
+    const points = [10, 20, 30, 40];
+    const observability = createSessionRuntimeObservability({
+      nowMicros: () => points.shift() ?? 50,
+    });
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: async (_executable, rawArgv, options) => {
+        calls += 1;
+        if (calls === 1) {
+          firstStarted();
+          await new Promise<never>((_resolve, reject) =>
+            options.signal?.addEventListener("abort", () => reject(new Error("aborted")), {
+              once: true,
+            }),
+          );
+        }
+        const argv = rawArgv.slice(2);
+        if (argv[0] === "list-sessions")
+          return ["runtime:session", "$7", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR) + "\n";
+        return `${applicationShellPaneWire("runtime:session", { windowStamp: "window.promoted.abc123" })}\n`;
+      },
+      observability,
+    });
+    await runtime.whenReady();
+
+    const pending = runtime.discoverTerminalInventory();
+    await didStartFirst;
+    runtime.invalidate();
+    await expect(pending).resolves.toMatchObject({ panes: expect.any(Array) });
+    expect(
+      observability
+        .snapshot()
+        .spans.filter((span) => span.operation === "terminal-inventory-discovery")
+        .map(({ startedAtMicros, endedAtMicros }) => [startedAtMicros, endedAtMicros]),
+    ).toEqual([
+      [10, 20],
+      [30, 40],
+    ]);
     runtime.dispose();
   });
 

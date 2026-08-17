@@ -351,15 +351,22 @@ export function commitTerminalDelivery(
   state: TerminalDeliveryClientState,
   staged: StagedTerminalDelivery,
   options: { readonly presentationApplied?: boolean } = {},
-): { readonly state: TerminalDeliveryClientState; readonly ack: TerminalDeliveryAck } {
+): {
+  readonly state: TerminalDeliveryClientState;
+  readonly ack: TerminalDeliveryAck;
+  /** The one authenticated semantic decode used to produce `state`. */
+  readonly semanticUpdate: TerminalSemanticDeliveryPayload | null;
+} {
   const envelope = state.inFlight;
   if (!envelope || !sameEnvelope(envelope, staged.envelope))
     throw new TypeError("Delivery was not staged from this state");
   if (hashTerminalDeliveryRepresentation(staged.bytes) !== envelope.representationHash)
     throw new TypeError("Terminal delivery representation hash mismatch");
   let canonicalSnapshot = state.canonicalSnapshot;
+  let semanticUpdate: TerminalSemanticDeliveryPayload | null = null;
   if (envelope.encoding === "semantic-v1") {
     const payload = decodeSemanticTerminalUpdate(staged.bytes);
+    semanticUpdate = payload;
     if (payload.frame !== envelope.frame || payload.revision !== envelope.canonicalRevision)
       throw new TypeError("Semantic frame or revision mismatch");
     if (
@@ -399,6 +406,7 @@ export function commitTerminalDelivery(
   });
   return {
     state: next,
+    semanticUpdate,
     ack: {
       type: "terminal.delivery.ack",
       workspaceName: envelope.workspaceName,

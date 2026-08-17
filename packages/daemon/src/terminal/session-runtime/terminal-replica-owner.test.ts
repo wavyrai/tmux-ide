@@ -1,12 +1,39 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CanonicalTerminalReplicaUpdate } from "@tmux-ide/contracts";
 import type { MirrorSubscribeRequest, MirrorSubscription } from "../mirror/mirror-service.ts";
+import { TerminalReplicaInterpreter } from "./terminal-replica-interpreter.ts";
 import { SessionRuntimeTerminalReplicaOwner } from "./terminal-replica-owner.ts";
 import type { SessionRuntimeTraceContext } from "./runtime-observability.ts";
 
 const generation = "00000000-0000-4000-8000-000000000001";
 
 describe("SessionRuntimeTerminalReplicaOwner", () => {
+  it("delegates interactive write priority synchronously", async () => {
+    const delegated = vi.spyOn(TerminalReplicaInterpreter.prototype, "prioritizeNextWrite");
+    const mirror = {
+      subscribe: async (candidate: MirrorSubscribeRequest): Promise<MirrorSubscription> => {
+        queueMicrotask(() => {
+          candidate.onEvent({ type: "reset", cols: 4, rows: 1 });
+          candidate.onEvent({ type: "seed", data: new TextEncoder().encode("BOOT") });
+          candidate.onEvent({ type: "cursor", x: 0, y: 0 });
+        });
+        return subscription(candidate);
+      },
+    };
+    const owner = new SessionRuntimeTerminalReplicaOwner(
+      generation,
+      "workspace",
+      "pane-a",
+      mirror as never,
+      { incarnation: `${generation}:0`, initialRevision: 0 },
+    );
+    owner.prioritizeNextWrite();
+    expect(delegated).toHaveBeenCalledTimes(1);
+    await owner.subscribe(() => undefined);
+    await owner.dispose();
+    delegated.mockRestore();
+  });
+
   it("captures a controlled probe once at reset and leaves the following delta anonymous", async () => {
     let request: MirrorSubscribeRequest | undefined;
     const trace: SessionRuntimeTraceContext = {

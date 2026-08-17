@@ -19,8 +19,23 @@ flowchart LR
   CANON --> CLIENTS["WorkspaceClient → Web and OpenTUI"]
 ```
 
-The default is the pinned xterm adapter. Backend injection exists for differential tests; it is
-not a second protocol, reducer, runtime authority, or UI-specific state model.
+The default is the immutable `@tmux-ide/xterm-headless@6.0.0-tmuxide.2` release asset. It is a
+source-reviewed fork of xterm.js `6.0.0` that exposes one public proposed API,
+`Terminal.prioritizeNextWrite()`. The exact release asset, SHA-256 and SRI digests, upstream and
+fork commits, annotated tag object, SBOM digest, and producing workflow run are pinned in
+`packages/daemon/src/terminal/session-runtime/xterm-headless-provenance.json`. The daemon consumes
+that public API through `TerminalInterpreterBackend`; the scheduling integration does not patch
+minified output or invent a private scheduling hook. The existing projection adapter still
+fail-closes on its pinned xterm buffer shape, and the fork does not expand that dependency. Backend
+injection exists for differential tests; it is not a second protocol, reducer, runtime authority,
+or UI-specific state model.
+
+Priority is a one-shot scheduling hint only. After a control write is successfully admitted, the
+replica owner arms the interpreter, and the interpreter delegates immediately before the next
+actual stream or reseed write. Admission failures do not arm it, repeated requests still cover
+only one write, backend replacement preserves the hint for the replacement, and synthetic
+DEC-synchronized-output recovery does not consume it. The hint changes neither terminal semantics
+nor controller, generation, incarnation, revision, hash, delivery, or UI authority.
 
 ## Native pin evaluated
 
@@ -44,8 +59,9 @@ green by doing less work.
 
 The official libghostty-vt C API can expose most of these concepts, but is explicitly unstable.
 The preferred route is an upstream extension of the existing Node-API binding with a packed,
-canonical-capable snapshot/delta API. tmux-ide does not implement another terminal emulator or
-fork private xterm APIs.
+canonical-capable snapshot/delta API. tmux-ide does not implement another terminal emulator or add
+private xterm scheduling APIs. The narrow xterm scheduling fork described above is an immutable,
+reviewed public-API delta and is not a terminal-semantics fork.
 
 ## Fail-closed rollout
 
@@ -58,6 +74,12 @@ Promotion requires all capability flags in the manifest, hash-identical snapshot
 ordering across the conformance corpus, exact mode/cursor/history/style coverage, clean 30-cycle
 retirement, packaged-install coverage for every advertised platform, and materially better
 ProductRig measurements without changing budgets.
+
+`@xterm/headless-stock@npm:@xterm/headless@6.0.0` remains test-only as the semantic differential
+oracle and rollback reference. Every conformance chunk plus deterministic UTF-8 split, resize,
+alternate-screen, history, and DEC-sync sequences must remain snapshot-identical after each
+acknowledged chunk. ProductRig is the acceptance gate for the scheduling improvement; its product
+deadline and semantic, authority, and delivery assertions are unchanged.
 
 ## Artifact and supply-chain policy
 

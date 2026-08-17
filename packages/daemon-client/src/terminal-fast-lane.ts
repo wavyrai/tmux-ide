@@ -1,5 +1,6 @@
 import type {
   CanonicalTerminalReplicaUpdate,
+  CausalCellProbeRequestV1,
   SessionRuntimeAuthorityKind,
   SessionRuntimeTerminalInput,
   TerminalReplicaDeliveryMetadata,
@@ -64,6 +65,7 @@ export interface TerminalFastLaneControlPort {
     address: TerminalFastLanePaneAddress,
     input: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
+    causalProbe?: CausalCellProbeRequestV1,
   ): Promise<TerminalFastLaneMutationResult>;
   resize(
     address: TerminalFastLaneGenerationAddress,
@@ -162,6 +164,7 @@ export interface TerminalFastLane {
     semanticPaneId: string,
     input: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
+    causalProbe?: CausalCellProbeRequestV1,
   ): Promise<TerminalFastLaneInputOutcome>;
   resize(viewport: TerminalFastLaneViewport): Promise<TerminalFastLaneResizeOutcome>;
   counters(): TerminalFastLaneCounters;
@@ -181,6 +184,7 @@ interface InputRequest {
   readonly semanticPaneId: string;
   readonly input: SessionRuntimeTerminalInput;
   readonly performanceTraceId?: string;
+  readonly causalProbe?: CausalCellProbeRequestV1;
   readonly byteLength: number;
   readonly resolve: (outcome: TerminalFastLaneInputOutcome) => void;
   settled: boolean;
@@ -466,6 +470,7 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
         paneAddress(generationAddress, input.semanticPaneId),
         input.input,
         input.performanceTraceId,
+        input.causalProbe,
       );
     } catch (error) {
       inFlightInputs.delete(input);
@@ -483,8 +488,11 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
           return;
         }
         mutableCounters.inputWrites += 1;
-        traceStage(input.performanceTraceId, "transport-ack");
         settleInput(input, { status: "sent" });
+        // The ACK stage is also the authoritative bounded-queue observation.
+        // Settle accounting first so the final acknowledgement cannot retain
+        // the just-accepted input's bytes in an otherwise empty lane.
+        traceStage(input.performanceTraceId, "transport-ack");
       })
       .catch((error) => {
         inFlightInputs.delete(input);
@@ -620,7 +628,7 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
       };
     },
     paneState: (semanticPaneId) => panes.get(semanticPaneId)?.state ?? null,
-    sendInput(semanticPaneId, rawInput, performanceTraceId) {
+    sendInput(semanticPaneId, rawInput, performanceTraceId, causalProbe) {
       if (disposed) return Promise.resolve({ status: "rejected", reason: "disposed" });
       const parsed = SessionRuntimeTerminalInputSchemaZ.safeParse(rawInput);
       if (!parsed.success) {
@@ -644,6 +652,7 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
           semanticPaneId,
           input,
           ...(performanceTraceId ? { performanceTraceId } : {}),
+          ...(causalProbe ? { causalProbe } : {}),
           byteLength,
           resolve,
           settled: false,

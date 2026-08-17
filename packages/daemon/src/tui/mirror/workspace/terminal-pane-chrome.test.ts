@@ -22,8 +22,13 @@ import {
 
 const canvas = projectAgentTerminalCanvas({ width: 120, height: 40, chromeRows: 2 });
 const repoRoot = fileURLToPath(new URL("../../../../../../", import.meta.url));
+const APPLICATION_ROOT_OWNER_SOURCES = [
+  ...OPENTUI_PRODUCTION_ROOT_SOURCES,
+  "packages/daemon/src/tui/mirror/runtime/application-terminal-interaction-controller.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-shell-view.tsx",
+] as const;
 const productionRootSource = () =>
-  OPENTUI_PRODUCTION_ROOT_SOURCES.map((path) => readFileSync(join(repoRoot, path), "utf8")).join(
+  APPLICATION_ROOT_OWNER_SOURCES.map((path) => readFileSync(join(repoRoot, path), "utf8")).join(
     "\n",
   );
 

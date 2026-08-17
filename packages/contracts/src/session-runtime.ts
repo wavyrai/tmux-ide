@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { CausalCellProbeRequestV1, CausalCellProofV1 } from "./causal-cell.ts";
 
 import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
 import {
@@ -260,6 +261,7 @@ export type CanonicalTerminalReplicaUpdate =
  */
 export interface TerminalReplicaDeliveryMetadata {
   readonly performanceTraceId?: string;
+  readonly causalCellProof?: CausalCellProofV1;
 }
 
 export const CanonicalTerminalReplicaSeedSchemaZ = TerminalReplicaFrameMetadataSchemaZ.extend({
@@ -338,6 +340,7 @@ export interface SessionRuntimeClientPort<
     target: TerminalReplicaAddress,
     input: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
+    causalProbe?: CausalCellProbeRequestV1,
   ): Promise<SessionRuntimeTerminalInputResult>;
   /** Reuses the one privacy-safe interaction spine; no parallel receipt bus. */
   onReceipt(listener: (receipt: InteractionReceipt) => void): () => void;

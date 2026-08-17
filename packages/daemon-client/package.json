@@ -12,6 +12,7 @@
     "./generation-bound-store": "./src/generation-bound-store.ts",
     "./application-shell-session": "./src/application-shell-session.ts",
     "./direct-application-shell-transport": "./src/direct-application-shell-transport.ts",
+    "./workspace-event-supervisor": "./src/workspace-event-supervisor.ts",
     "./owner-action-client": "./src/owner-action-client.ts",
     "./workspace-pane-client": "./src/workspace-pane-client.ts",
     "./pane-stream-client": "./src/pane-stream-client.ts",

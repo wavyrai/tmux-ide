@@ -25,6 +25,7 @@ function emptySessions(): SessionCompositionFacts {
 function callbacks() {
   return {
     onSessionsChanged: vi.fn(),
+    onTerminalTopologyChanged: vi.fn(),
     onAdoptedChanged: vi.fn(),
     onAgentSessionsChanged: vi.fn(),
     onAgentTurnCompleted: vi.fn(),
@@ -36,10 +37,39 @@ describe("DaemonFleetFactsObserver", () => {
     expect(parseSessionCompositionFacts("work\t0\nmanaged\t1\n__tmux_ide_preview\t1")).toEqual({
       sessions: ["__tmux_ide_preview", "managed", "work"],
       adopted: ["managed"],
+      terminalTopology: ["__tmux_ide_preview\t1", "managed\t1", "work\t0"],
     });
     expect(parseAgentStateFacts("work\t%1\tpane.editor\tworking:1").get("work")?.get("%1")).toEqual(
       { paneStamp: "pane.editor", state: "working:1" },
     );
+  });
+
+  it("invalidates agent-free topology when a pane or durable stamp changes", async () => {
+    const changed = callbacks();
+    let facts: SessionCompositionFacts = {
+      sessions: ["alpha"],
+      adopted: [],
+      terminalTopology: ["alpha\t0\t$1\t@1\t%1\t1\t1\tpane.a\t"],
+    };
+    const observer = new DaemonFleetFactsObserver({
+      readSessions: async () => facts,
+      readAgents: async () => new Map(),
+      ...changed,
+      setTimer: vi.fn(() => 1 as unknown as ReturnType<typeof setTimeout>),
+      clearTimer: vi.fn(),
+    });
+    const handle = observer.acquire(["sessions"]);
+    await handle.ready;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    facts = {
+      ...facts,
+      terminalTopology: ["alpha\t0\t$1\t@1\t%1\t1\t1\tpane.b\twindow.a"],
+    };
+    await observer.runOnce();
+    expect(changed.onTerminalTopologyChanged).toHaveBeenCalledOnce();
+    expect(changed.onSessionsChanged).not.toHaveBeenCalled();
+    expect(changed.onAgentSessionsChanged).not.toHaveBeenCalled();
+    handle.release();
   });
 
   it("unions demand and never overlaps observation cycles", async () => {

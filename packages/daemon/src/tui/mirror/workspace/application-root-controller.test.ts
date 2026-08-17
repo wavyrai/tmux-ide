@@ -17,8 +17,13 @@ import {
 import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../../../../test-support/opentui-production-root-manifest.ts";
 
 const repoRoot = fileURLToPath(new URL("../../../../../../", import.meta.url));
+const APPLICATION_ROOT_OWNER_SOURCES = [
+  ...OPENTUI_PRODUCTION_ROOT_SOURCES,
+  "packages/daemon/src/tui/mirror/runtime/application-terminal-interaction-controller.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-shell-view.tsx",
+] as const;
 const productionRootSource = () =>
-  OPENTUI_PRODUCTION_ROOT_SOURCES.map((path) => readFileSync(join(repoRoot, path), "utf8")).join(
+  APPLICATION_ROOT_OWNER_SOURCES.map((path) => readFileSync(join(repoRoot, path), "utf8")).join(
     "\n",
   );
 
@@ -226,16 +231,25 @@ describe("production application root controller", () => {
 
   it("keeps resize preview local and commits through one semantic v2 callback", () => {
     const app = productionRootSource();
-    const preview = app.indexOf("const previewPaneResize = (");
-    const commit = app.indexOf("const resizePane = (");
-    const verb = app.indexOf('verb: "workspace.pane.resize"', commit);
-    const previewBinding = app.indexOf("onResizePreview={previewPaneResize}", verb);
-    const commitBinding = app.indexOf("onResizePane={resizePane}", previewBinding);
+    const controller = readFileSync(
+      join(
+        repoRoot,
+        "packages/daemon/src/tui/mirror/runtime/application-terminal-interaction-controller.ts",
+      ),
+      "utf8",
+    );
+    const root = readFileSync(
+      join(repoRoot, "packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx"),
+      "utf8",
+    );
+    const preview = controller.indexOf("previewPaneResize()");
+    const commit = controller.indexOf("resizePane(preview)");
+    const verb = controller.indexOf('verb: "workspace.pane.resize"', commit);
     expect(preview).toBeGreaterThan(-1);
     expect(commit).toBeGreaterThan(preview);
     expect(verb).toBeGreaterThan(commit);
-    expect(previewBinding).toBeGreaterThan(verb);
-    expect(commitBinding).toBeGreaterThan(previewBinding);
+    expect(root).toContain("onResizePreview={interaction.previewPaneResize}");
+    expect(root).toContain("onResizePane={interaction.resizePane}");
     expect(app).not.toContain("routeSidebarResizePointer");
   });
 });

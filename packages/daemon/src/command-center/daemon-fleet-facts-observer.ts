@@ -13,12 +13,15 @@ export type FleetFactsDemand = "sessions" | "adopted" | "agents";
 export interface SessionCompositionFacts {
   readonly sessions: readonly string[];
   readonly adopted: readonly string[];
+  /** Agent-free topology/stamp proof used by terminal-runtime invalidation. */
+  readonly terminalTopology?: readonly string[];
 }
 
 export interface DaemonFleetFactsObserverOptions {
   readonly readSessions: () => Promise<SessionCompositionFacts | null>;
   readonly readAgents: () => Promise<AgentStateReading | null>;
   readonly onSessionsChanged: () => void;
+  readonly onTerminalTopologyChanged?: () => void;
   readonly onAdoptedChanged: () => void;
   readonly onAgentSessionsChanged: (sessions: readonly string[]) => void;
   readonly onAgentTurnCompleted: (completion: AgentTurnCompletion) => void;
@@ -44,6 +47,7 @@ export class DaemonFleetFactsObserver {
   readonly #waiters = new Set<ReadyWaiter>();
   #sessionNames: readonly string[] | null = null;
   #adoptedNames: readonly string[] | null = null;
+  #terminalTopology: readonly string[] | null = null;
   #agentFacts: AgentStateReading | null = null;
   #timer: ReturnType<typeof setTimeout> | null = null;
   #running: Promise<void> | null = null;
@@ -171,6 +175,7 @@ export class DaemonFleetFactsObserver {
     this.#baselined.clear();
     this.#sessionNames = null;
     this.#adoptedNames = null;
+    this.#terminalTopology = null;
     this.#agentFacts = null;
     for (const waiter of this.#waiters) waiter.resolve();
     this.#waiters.clear();
@@ -216,9 +221,17 @@ export class DaemonFleetFactsObserver {
   ): void {
     if (acceptSessions) {
       const previous = this.#sessionNames;
+      const previousTopology = this.#terminalTopology;
       this.#sessionNames = next.sessions;
+      this.#terminalTopology = next.terminalTopology ?? next.sessions;
       if (previous && JSON.stringify(previous) !== JSON.stringify(next.sessions))
         this.#options.onSessionsChanged();
+      if (
+        previousTopology &&
+        JSON.stringify(previousTopology) !== JSON.stringify(this.#terminalTopology)
+      ) {
+        this.#options.onTerminalTopologyChanged?.();
+      }
     }
     if (acceptAdopted) {
       const previous = this.#adoptedNames;
@@ -269,16 +282,22 @@ export class DaemonFleetFactsObserver {
 }
 
 export function parseSessionCompositionFacts(raw: string): SessionCompositionFacts {
-  const sessions: string[] = [];
-  const adopted: string[] = [];
+  const sessions = new Set<string>();
+  const adopted = new Set<string>();
+  const terminalTopology: string[] = [];
   for (const line of raw.split("\n")) {
     if (!line) continue;
     const [name = "", adoptedFlag = ""] = line.split("\t");
     if (!name) continue;
-    sessions.push(name);
-    if (adoptedFlag === "1" && isVisibleFleetSession(name)) adopted.push(name);
+    sessions.add(name);
+    if (adoptedFlag === "1" && isVisibleFleetSession(name)) adopted.add(name);
+    terminalTopology.push(line);
   }
-  return { sessions: sessions.sort(), adopted: adopted.sort() };
+  return {
+    sessions: [...sessions].sort(),
+    adopted: [...adopted].sort(),
+    terminalTopology: terminalTopology.sort(),
+  };
 }
 
 export function parseAgentStateFacts(raw: string): AgentStateReading {
@@ -305,9 +324,20 @@ function execTmux(args: readonly string[]): Promise<string | null> {
 }
 
 export const SESSION_COMPOSITION_TMUX_ARGS = [
-  "list-sessions",
+  "list-panes",
+  "-a",
   "-F",
-  "#{session_name}\t#{@tmux_ide_adopted}",
+  [
+    "#{session_name}",
+    "#{@tmux_ide_adopted}",
+    "#{session_id}",
+    "#{window_id}",
+    "#{pane_id}",
+    "#{window_panes}",
+    "#{session_windows}",
+    "#{@tmux_ide_pane_id}",
+    "#{@tmux_ide_window_id}",
+  ].join("\t"),
 ] as const;
 
 export async function readSessionCompositionFacts(): Promise<SessionCompositionFacts | null> {

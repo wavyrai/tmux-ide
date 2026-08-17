@@ -32,22 +32,43 @@ import {
   PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES,
   PRODUCT_RIG_STATE_VERSION,
   activeTmuxPaneFromRows,
+  appendBoundedWebDiagnostic,
+  awaitWebDiagnosticWithDeadline,
   boundedSourceTraceDiff,
   buildProductDiagnosticReport,
+  buildWebStartupEvidence,
+  causalFixtureBaselineReadiness,
+  causalInputSamples,
+  causalInputSampleHasIncarnation,
+  causalProbeEpochState,
   coherentGenerationPaint,
   coherentGenerationDuration,
   coherentReadiness,
   inputPaintSamples,
+  latestCausalFixtureCanonicalMode,
   paneBodyRegion,
   paneGeometryIdentity,
   processAlive,
+  productInputQueueObservation,
+  productInputQueuesSettled,
+  productResourceCycleCommands,
+  productResourceCyclePlan,
+  productResourceEndpointEpochState,
+  productResourceGeometryIdentity,
+  productResourceMeasuredEndpointTraceIds,
+  productResourceProbeCells,
   publicRigStatus,
   readJson,
   resolvePaneBodyRect,
+  runCausalFixtureTeardownGate,
+  selectProductResourceEndpoint,
   summarizeProductResources,
+  shouldCaptureWebConsoleMessage,
+  waitForLifecycleEntry,
   writeJsonAtomic,
 } from "./product-test-rig-lib.mjs";
 import { sourceArchitectureInventory } from "./architecture-debt-inventory.mjs";
+import { acquireProductRigSleepAssertion } from "./lib/product-rig-sleep-assertion.mjs";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -64,6 +85,15 @@ const timelinePath = join(rigRoot, "timeline.jsonl");
 const ownerLogPath = join(rigRoot, "owner.log");
 const artifactDir = join(rigRoot, "artifacts");
 const WARM_COHERENT_SAMPLE_COUNT = 20;
+
+function shellSingleQuote(value) {
+  return `'${String(value).replaceAll("'", `'\\''`)}'`;
+}
+
+function terminalCellAt(frame, row, column) {
+  const line = frame.split("\n")[row] ?? "";
+  return line[column] ?? " ";
+}
 
 function usage() {
   return `Product test rig\n\nUsage:\n  pnpm product:testdrive start [--json]\n  pnpm product:testdrive status [--json]\n  pnpm product:testdrive capture [--json]\n  pnpm product:testdrive smoke [--json]\n  pnpm product:testdrive diagnose [--json]\n  pnpm product:testdrive inventory [--json]\n  pnpm product:testdrive stop [--json]\n`;
@@ -105,6 +135,7 @@ function commandEnv(state) {
           TMUX_IDE_PERFORMANCE_TRACE_LOG: state.tui.performanceTracePath,
           TMUX_IDE_PERFORMANCE_TRACE_COMMIT: state.tui.performanceTraceCommit,
           TMUX_IDE_PERFORMANCE_TRACE_TREE: state.tui.performanceTraceTree,
+          TMUX_IDE_CAUSAL_CELL_FIXTURE: "1",
         }
       : {}),
   };
@@ -452,6 +483,164 @@ async function waitForState(predicate, timeoutMs = 90_000) {
   throw new Error(`timed out waiting for product rig (${state?.status ?? "no state"})`);
 }
 
+function installWebStartupDiagnostics(page) {
+  const diagnostics = {
+    pageErrors: [],
+    console: [],
+    requestFailures: [],
+    httpErrors: [],
+    webSockets: [],
+  };
+  const append = (entries, entry) => {
+    appendBoundedWebDiagnostic(entries, entry);
+  };
+  page.on("pageerror", (error) => append(diagnostics.pageErrors, error.stack ?? error.message));
+  page.on("console", (message) => {
+    if (shouldCaptureWebConsoleMessage(message.type(), message.text())) {
+      append(diagnostics.console, { type: message.type(), text: message.text() });
+    }
+  });
+  page.on("requestfailed", (request) =>
+    append(diagnostics.requestFailures, {
+      method: request.method(),
+      resourceType: request.resourceType(),
+      url: request.url(),
+      error: request.failure()?.errorText ?? null,
+    }),
+  );
+  page.on("response", (response) => {
+    if (response.status() >= 400) {
+      append(diagnostics.httpErrors, {
+        status: response.status(),
+        resourceType: response.request().resourceType(),
+        url: response.url(),
+      });
+    }
+  });
+  page.on("websocket", (socket) => {
+    append(diagnostics.webSockets, { event: "open", url: socket.url() });
+    socket.on("socketerror", (error) =>
+      append(diagnostics.webSockets, {
+        event: "frameerror",
+        source: "socketerror",
+        url: socket.url(),
+        error,
+      }),
+    );
+    socket.on("close", () => append(diagnostics.webSockets, { event: "close", url: socket.url() }));
+  });
+  return diagnostics;
+}
+
+async function captureWebStartupFailure({ page, diagnostics, navigation, devServer, daemon }) {
+  mkdirSync(artifactDir, { recursive: true, mode: 0o700 });
+  const suffix = `web-startup-failure-${Date.now()}`;
+  const screenshotPath = join(artifactDir, `${suffix}.png`);
+  const evidencePath = join(artifactDir, `${suffix}.json`);
+  let screenshotError = null;
+  try {
+    // Fixed viewport only: never let an unexpectedly tall page make failure evidence unbounded.
+    await page.screenshot({ path: screenshotPath, fullPage: false, timeout: 5_000 });
+  } catch (error) {
+    screenshotError = error instanceof Error ? error.message : String(error);
+  }
+  const pageSnapshot = await awaitWebDiagnosticWithDeadline(
+    page.evaluate(() => {
+      const document = globalThis.document;
+      const root = document.querySelector("#root");
+      const app = document.querySelector(".app");
+      let remaining = 160;
+      const serialize = (node, depth = 0) => {
+        if (!(node instanceof globalThis.Element) || remaining <= 0 || depth > 7) return null;
+        remaining -= 1;
+        const attributes = {};
+        for (const name of [
+          "id",
+          "class",
+          "role",
+          "aria-label",
+          "data-shell-source",
+          "data-phase",
+        ]) {
+          const value = node.getAttribute(name);
+          if (value !== null) attributes[name] = value.slice(0, 300);
+        }
+        return {
+          tag: node.tagName.toLowerCase(),
+          attributes,
+          text: [...node.childNodes]
+            .filter((child) => child.nodeType === globalThis.Node.TEXT_NODE)
+            .map((child) => child.textContent ?? "")
+            .join(" ")
+            .trim()
+            .slice(0, 300),
+          children: [...node.children].map((child) => serialize(child, depth + 1)).filter(Boolean),
+        };
+      };
+      const terminalPhases = [...document.querySelectorAll(".terminal-surface")].map((node) =>
+        node.getAttribute("data-phase"),
+      );
+      const host = globalThis.tmuxIdeHost;
+      return {
+        page: {
+          currentUrl: globalThis.location.href,
+          title: document.title,
+          readyState: document.readyState,
+          root: root
+            ? {
+                present: true,
+                childCount: root.childElementCount,
+                textLength: root.textContent?.length,
+              }
+            : { present: false, childCount: 0, textLength: 0 },
+          app: {
+            present: app !== null,
+            shellSource: app?.getAttribute("data-shell-source") ?? null,
+          },
+          hostActive: {
+            present: host !== undefined,
+            type: typeof host,
+            methods:
+              host && typeof host === "object"
+                ? Object.keys(host)
+                    .filter((key) => typeof host[key] === "function")
+                    .slice(0, 40)
+                : [],
+          },
+          terminalPhases,
+          bodyExcerpt: document.body?.innerText.slice(0, 4_000) ?? "",
+        },
+        dom: root ? serialize(root) : null,
+      };
+    }),
+    {
+      timeoutMs: 3_000,
+      onFailure: (error) => ({
+        page: {
+          currentUrl: page.url(),
+          evaluationError: error instanceof Error ? error.message : String(error),
+        },
+        dom: null,
+      }),
+    },
+  );
+  const evidence = buildWebStartupEvidence(
+    {
+      capturedAt: new Date().toISOString(),
+      navigation,
+      ...pageSnapshot,
+      ...diagnostics,
+      screenshotPath: screenshotError ? null : screenshotPath,
+      screenshotError,
+      viteOutput: devServer?.output() ?? "",
+      daemonOutput: daemon?.output() ?? "",
+    },
+    { secrets: [daemon?.record?.authToken] },
+  );
+  await writeFile(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
+  return { evidencePath, screenshotPath: screenshotError ? null : screenshotPath };
+}
+
 async function firstAttachablePane(daemon, session) {
   const response = await fetch(
     `${daemon.baseUrl}/api/project/${encodeURIComponent(session)}/application-shell?version=3`,
@@ -611,54 +800,12 @@ async function smoke(json) {
 
 async function waitForTuiLifecycleEntry(state, predicate, timeoutMs, timeoutMessage) {
   const lifecyclePath = join(state.tui.runtimeDir, "performance.jsonl");
-  const startedAt = performance.now();
   const findEntry = () => readJsonLines(lifecyclePath).findLast(predicate) ?? null;
-  const existing = findEntry();
-  if (existing) return existing;
-
-  return await new Promise((resolveWait, rejectWait) => {
-    let settled = false;
-    let checking = false;
-    let timer = null;
-    let watcher = null;
-    const finish = (error, entry = null) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      watcher?.close();
-      if (error) rejectWait(error);
-      else resolveWait(entry);
-    };
-    const armDeadline = () => {
-      const remainingMs = timeoutMs - (performance.now() - startedAt);
-      if (remainingMs <= 0) {
-        finish(new Error(timeoutMessage));
-        return;
-      }
-      timer = setTimeout(armDeadline, Math.ceil(remainingMs));
-    };
-    const check = () => {
-      if (checking || settled) return;
-      checking = true;
-      try {
-        const entry = findEntry();
-        if (entry) finish(null, entry);
-      } finally {
-        checking = false;
-      }
-    };
-    try {
-      // `tui-testdrive start` has already created this generation's lifecycle
-      // file before returning. Observe that inode directly instead of spawning
-      // a Node status process every 25 ms and perturbing the runtime under test.
-      watcher = watch(lifecyclePath, { persistent: false }, check);
-    } catch (error) {
-      finish(error instanceof Error ? error : new Error(String(error)));
-      return;
-    }
-    armDeadline();
-    // Close the subscribe/read race without a retry loop.
-    check();
+  return await waitForLifecycleEntry({
+    findEntry,
+    subscribe: (check) => watch(lifecyclePath, { persistent: false }, check),
+    timeoutMs,
+    timeoutMessage,
   });
 }
 
@@ -1072,71 +1219,479 @@ async function diagnose(json) {
     }
   }
   const qualifyingInputEvidence = [];
+  let causalProbeIncarnation = null;
+  let resourcePhaseReleased = !tracePath;
   if (tracePath) {
-    const samplesForCurrentProcess = () => {
-      const records = readJsonLines(tracePath);
-      const processId = records.findLast(
-        (record) => record?.type === "performance.trace.header",
-      )?.processId;
-      return inputPaintSamples(records).filter(
-        (sample) => sample.generation === state.daemon.instanceId && sample.processId === processId,
-      );
+    const fixturePane = activeTmuxPane(state);
+    const fixtureShellCommand = execFileSync(
+      "tmux",
+      [
+        "-S",
+        state.runtimeNamespace.tmuxSocketPath,
+        "display-message",
+        "-p",
+        "-t",
+        fixturePane.paneId,
+        "#{pane_current_command}",
+      ],
+      { encoding: "utf8" },
+    ).trim();
+    const fixtureCommand = `${shellSingleQuote(process.execPath)} ${shellSingleQuote(
+      join(repoRoot, "scripts", "lib", "product-rig-causal-cell-fixture.mjs"),
+    )}`;
+    execFileSync("tmux", [
+      "-S",
+      state.runtimeNamespace.tmuxSocketPath,
+      "send-keys",
+      "-l",
+      "-t",
+      fixturePane.paneId,
+      fixtureCommand,
+    ]);
+    execFileSync("tmux", [
+      "-S",
+      state.runtimeNamespace.tmuxSocketPath,
+      "send-keys",
+      "-t",
+      fixturePane.paneId,
+      "Enter",
+    ]);
+    const fixtureReadyDeadline = Date.now() + 2_000;
+    let fixtureReady = "";
+    while (Date.now() < fixtureReadyDeadline) {
+      fixtureReady = execFileSync(
+        "tmux",
+        [
+          "-S",
+          state.runtimeNamespace.tmuxSocketPath,
+          "show-options",
+          "-pqv",
+          "-t",
+          fixturePane.paneId,
+          "@tmux_ide_causal_fixture",
+        ],
+        { encoding: "utf8" },
+      ).trim();
+      if (fixtureReady === "ready-v1") break;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+    }
+    if (fixtureReady !== "ready-v1") throw new Error("causal-cell fixture did not fence readiness");
+    const fixtureProcess = execFileSync(
+      "tmux",
+      [
+        "-S",
+        state.runtimeNamespace.tmuxSocketPath,
+        "display-message",
+        "-p",
+        "-t",
+        fixturePane.paneId,
+        "#{pane_current_command}",
+      ],
+      { encoding: "utf8" },
+    ).trim();
+    if (fixtureProcess !== "node")
+      throw new Error(`causal-cell raw/noecho fixture did not start (${fixtureProcess})`);
+    const fixtureOption = () =>
+      execFileSync(
+        "tmux",
+        [
+          "-S",
+          state.runtimeNamespace.tmuxSocketPath,
+          "show-options",
+          "-pqv",
+          "-t",
+          fixturePane.paneId,
+          "@tmux_ide_causal_fixture",
+        ],
+        { encoding: "utf8" },
+      ).trim();
+    const paneCurrentCommand = () =>
+      execFileSync(
+        "tmux",
+        [
+          "-S",
+          state.runtimeNamespace.tmuxSocketPath,
+          "display-message",
+          "-p",
+          "-t",
+          fixturePane.paneId,
+          "#{pane_current_command}",
+        ],
+        { encoding: "utf8" },
+      ).trim();
+    const sendLiteralLine = (line) => {
+      execFileSync("tmux", [
+        "-S",
+        state.runtimeNamespace.tmuxSocketPath,
+        "send-keys",
+        "-l",
+        "-t",
+        fixturePane.paneId,
+        line,
+      ]);
+      execFileSync("tmux", [
+        "-S",
+        state.runtimeNamespace.tmuxSocketPath,
+        "send-keys",
+        "-t",
+        fixturePane.paneId,
+        "C-j",
+      ]);
     };
-    for (let ordinal = 0; ordinal < 30; ordinal += 1) {
-      const before = samplesForCurrentProcess().length;
-      const marker = `z${ordinal.toString(36).padStart(2, "0")}q`;
-      tuiCommand(state, ["text", marker]);
+    const resetFixtureBaseline = async (ordinal) => {
+      const token = `probe-${ordinal}`;
+      sendLiteralLine(`reset-v1;${token}`);
+      const expectedOption = `ready-v1:${token}`;
       const deadline = Date.now() + 2_000;
-      // Do not make the diagnostic owner contend with the measured daemon/TUI
-      // by reparsing a growing JSONL trace every 5ms during the causal path.
-      // The trace timestamps are process-local, so this observation delay does
-      // not enter the metric; it only keeps the observer from perturbing it.
-      await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+      let identity = null;
+      let stableSince = 0;
+      let maximumStableMs = 0;
+      let identityChanges = 0;
+      let lastDiagnostic = null;
       while (Date.now() < deadline) {
-        const samples = samplesForCurrentProcess();
-        const activePane = activeTmuxPane(state);
-        const activePaneId = activePane.paneId;
-        const nativeFrame = execFileSync(
+        const activeBefore = activeTmuxPane(state);
+        const native = execFileSync(
           "tmux",
-          ["-S", state.runtimeNamespace.tmuxSocketPath, "capture-pane", "-p", "-t", activePaneId],
+          [
+            "-S",
+            state.runtimeNamespace.tmuxSocketPath,
+            "capture-pane",
+            "-p",
+            "-t",
+            fixturePane.paneId,
+          ],
           { encoding: "utf8" },
         );
-        const tuiFrame = tuiCommand(state, ["capture"]);
-        const { left, top, width, height } = activePane;
-        const renderedBody = paneBodyRegion(tuiFrame, { left, top, width, height });
-        const candidate = samples
-          .slice(before)
-          .findLast(
+        const body = paneBodyRegion(tuiCommand(state, ["capture"]), activeBefore);
+        const activeAfter = activeTmuxPane(state);
+        const records = readJsonLines(tracePath);
+        const processId = records.findLast(
+          (record) => record?.type === "performance.trace.header",
+        )?.processId;
+        const queueObservation = productInputQueueObservation(records, processId);
+        const geometryBefore = paneGeometryIdentity([activeBefore]);
+        const geometryAfter = paneGeometryIdentity([activeAfter]);
+        const nativeHash = createHash("sha256").update(native).digest("hex");
+        const bodyHash = createHash("sha256").update(body).digest("hex");
+        const nativeCell = terminalCellAt(native, 0, activeBefore.width - 1);
+        const tuiCell = terminalCellAt(body, 0, activeBefore.width - 1);
+        const nextIdentity = [
+          geometryBefore,
+          nativeHash,
+          bodyHash,
+          queueObservation?.type ?? "missing",
+          queueObservation?.traceId ?? "no-trace",
+          queueObservation?.operation ?? "no-operation",
+          queueObservation?.atMicros ?? "no-clock",
+          queueObservation?.inputPending ?? "missing",
+          queueObservation?.inputInFlight ?? "missing",
+          queueObservation?.inputPendingBytes ?? "missing",
+        ].join(":");
+        const observedOption = fixtureOption();
+        const observedCommand = paneCurrentCommand();
+        const readiness = causalFixtureBaselineReadiness({
+          fixtureOption: observedOption,
+          expectedOption,
+          currentCommand: observedCommand,
+          queueObservation,
+          activePaneId: activeBefore.paneId,
+          fixturePaneId: fixturePane.paneId,
+          geometryBefore,
+          geometryAfter,
+          nativeCell,
+          tuiCell,
+        });
+        const stable = readiness.ready;
+        const now = Date.now();
+        if (stable && nextIdentity === identity) {
+          maximumStableMs = Math.max(maximumStableMs, now - stableSince);
+          if (now - stableSince >= 100)
+            return Object.freeze({ native, body, active: activeBefore });
+        } else {
+          if (identity !== null && nextIdentity !== identity) identityChanges += 1;
+          identity = stable ? nextIdentity : null;
+          stableSince = now;
+        }
+        lastDiagnostic = Object.freeze({
+          processId: processId ?? null,
+          predicates: readiness.predicates,
+          fixtureOption: observedOption,
+          expectedOption,
+          currentCommand: observedCommand,
+          queue: queueObservation
+            ? {
+                type: queueObservation.type,
+                operation: queueObservation.operation ?? null,
+                traceId: queueObservation.traceId ?? null,
+                inputPending: queueObservation.inputPending,
+                inputInFlight: queueObservation.inputInFlight,
+                inputPendingBytes: queueObservation.inputPendingBytes,
+              }
+            : null,
+          geometryBefore,
+          geometryAfter,
+          nativeCellBlank: nativeCell === " ",
+          tuiCellBlank: tuiCell === " ",
+          nativeHash,
+          bodyHash,
+          identityChanges,
+          maximumStableMs,
+          traceLength: records.length,
+        });
+        await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+      }
+      throw new Error(
+        `causal-cell fixture baseline did not settle for probe ${ordinal}: ${JSON.stringify(lastDiagnostic)}`,
+      );
+    };
+    let causalFailure = null;
+    try {
+      for (let ordinal = 0; ordinal < 30; ordinal += 1) {
+        const baseline = await resetFixtureBaseline(ordinal);
+        const marker = ordinal % 2 === 0 ? "x" : `p${ordinal.toString(36)}q`;
+        const activeBefore = baseline.active;
+        if (activeBefore.paneId !== fixturePane.paneId)
+          throw new Error("causal-cell fixture lost active pane identity before input");
+        const nativeBefore = baseline.native;
+        const bodyBefore = baseline.body;
+        const activePrepared = activeTmuxPane(state);
+        if (
+          activePrepared.paneId !== fixturePane.paneId ||
+          paneGeometryIdentity([activeBefore]) !== paneGeometryIdentity([activePrepared])
+        ) {
+          throw new Error("causal-cell fixture geometry changed while capturing the baseline");
+        }
+        const epochBaseline = readJsonLines(tracePath).length;
+        if (marker.length === 1) tuiCommand(state, ["text", marker]);
+        else
+          tuiCommand(state, ["input", JSON.stringify({ version: 1, kind: "paste", text: marker })]);
+        const deadline = Date.now() + 2_000;
+        // Do not make the diagnostic owner contend with the measured daemon/TUI
+        // by reparsing a growing JSONL trace every 5ms during the causal path.
+        // The trace timestamps are process-local, so this observation delay does
+        // not enter the metric; it only keeps the observer from perturbing it.
+        await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+        while (Date.now() < deadline) {
+          const records = readJsonLines(tracePath);
+          const processId = records.findLast(
+            (record) => record?.type === "performance.trace.header",
+          )?.processId;
+          const epoch = causalProbeEpochState(records, epochBaseline, processId);
+          if (epoch.status === "ambiguous" || epoch.status === "failed") {
+            throw new Error(
+              `causal-cell probe ${ordinal} ${epoch.status}: ${epoch.reason ?? "unknown"}`,
+            );
+          }
+          const samples = causalInputSamples(records).filter(
             (sample) =>
+              sample.generation === state.daemon.instanceId && sample.processId === processId,
+          );
+          const activePane = activeTmuxPane(state);
+          const activePaneId = activePane.paneId;
+          const nativeFrame = execFileSync(
+            "tmux",
+            ["-S", state.runtimeNamespace.tmuxSocketPath, "capture-pane", "-p", "-t", activePaneId],
+            { encoding: "utf8" },
+          );
+          const tuiFrame = tuiCommand(state, ["capture"]);
+          const activeAfter = activeTmuxPane(state);
+          // Keep the semantic identity attached to the rectangle: tmux's pane
+          // origin can drift from OpenTUI chrome while the semantic anchor stays
+          // authoritative for the exact body we must qualify.
+          const renderedBody = paneBodyRegion(tuiFrame, activePane);
+          const candidate = samples.find(
+            (sample) =>
+              sample.traceId === epoch.traceId &&
               sample.semanticPaneId === activePane.semanticPaneId &&
+              causalInputSampleHasIncarnation(sample) &&
               Number.isInteger(sample.revision) &&
               typeof sample.stateHash === "string",
           );
-        if (candidate && nativeFrame.includes(marker) && renderedBody.includes(marker)) {
-          qualifyingInputEvidence.push({
-            traceId: candidate.traceId,
-            paintStateIdentity: "latest-canonical-state-blitted",
-            marker,
-            markerHash: createHash("sha256").update(marker).digest("hex"),
-            semanticPaneId: candidate.semanticPaneId,
-            revision: candidate.revision,
-            stateHash: candidate.stateHash,
-            markerVisibleInNative: true,
-            markerVisibleInPaneRect: true,
-            renderedBodyHash: createHash("sha256").update(renderedBody).digest("hex"),
-          });
-          break;
+          const expectedCell = marker.at(-1);
+          const causalPainted = candidate?.clientStages?.find(
+            (stage) => stage.operation === "causal-cell-painted",
+          );
+          const geometryStable =
+            activeAfter.paneId === fixturePane.paneId &&
+            paneGeometryIdentity([activeBefore]) === paneGeometryIdentity([activePane]) &&
+            paneGeometryIdentity([activePane]) === paneGeometryIdentity([activeAfter]);
+          const exactProof =
+            causalPainted?.causalAttribution === true &&
+            causalPainted.semanticPaneId === activePane.semanticPaneId &&
+            causalPainted.generation === state.daemon.instanceId &&
+            causalPainted.incarnation === candidate?.incarnation &&
+            Number.isInteger(causalPainted.row) &&
+            Number.isInteger(causalPainted.column) &&
+            causalPainted.revision === candidate?.revision &&
+            causalPainted.stateHash === candidate?.stateHash;
+          const beforeNativeCell = exactProof
+            ? terminalCellAt(nativeBefore, causalPainted.row, causalPainted.column)
+            : null;
+          const beforeTuiCell = exactProof
+            ? terminalCellAt(bodyBefore, causalPainted.row, causalPainted.column)
+            : null;
+          const afterNativeCell = exactProof
+            ? terminalCellAt(nativeFrame, causalPainted.row, causalPainted.column)
+            : null;
+          const afterTuiCell = exactProof
+            ? terminalCellAt(renderedBody, causalPainted.row, causalPainted.column)
+            : null;
+          if (
+            candidate &&
+            geometryStable &&
+            exactProof &&
+            beforeNativeCell === causalPainted.beforeGrapheme &&
+            beforeTuiCell === causalPainted.beforeGrapheme &&
+            afterNativeCell === expectedCell &&
+            afterTuiCell === expectedCell &&
+            causalPainted.afterGrapheme === expectedCell
+          ) {
+            if (causalProbeIncarnation !== null && causalProbeIncarnation !== candidate.incarnation)
+              throw new Error("causal-cell probes crossed terminal incarnations");
+            causalProbeIncarnation = candidate.incarnation;
+            qualifyingInputEvidence.push({
+              traceId: candidate.traceId,
+              paintStateIdentity: "latest-canonical-state-blitted",
+              marker,
+              markerHash: createHash("sha256").update(marker).digest("hex"),
+              semanticPaneId: candidate.semanticPaneId,
+              incarnation: candidate.incarnation,
+              revision: causalPainted.revision,
+              stateHash: causalPainted.stateHash,
+              row: causalPainted.row,
+              column: causalPainted.column,
+              beforeGrapheme: causalPainted.beforeGrapheme,
+              afterGrapheme: causalPainted.afterGrapheme,
+              markerVisibleInNative: true,
+              markerVisibleInPaneRect: true,
+              causalAttribution: true,
+              fixtureKind: marker.length === 1 ? "single-key" : "paste",
+              renderedBodyHash: createHash("sha256").update(renderedBody).digest("hex"),
+            });
+            break;
+          }
+          await new Promise((resolveWait) => setTimeout(resolveWait, 25));
         }
-        await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+        if (qualifyingInputEvidence.length !== ordinal + 1)
+          throw new Error(`causal-cell probe ${ordinal} did not close with exact paint evidence`);
       }
-      tuiCommand(state, ["key", "C-u"]);
-      await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+    } catch (error) {
+      causalFailure = error;
     }
-    if (qualifyingInputEvidence.length < 30)
-      event("diagnostic-input-samples-incomplete", {
-        measured: qualifyingInputEvidence.length,
-        required: 30,
+    const shellMarkerSuffix = randomBytes(8).toString("hex");
+    const shellMarker = `tmux-ide-shell-ready-${shellMarkerSuffix}`;
+    const teardownTraceBaseline = readJsonLines(tracePath).length;
+    try {
+      await runCausalFixtureTeardownGate({
+        interrupt: () =>
+          execFileSync("tmux", [
+            "-S",
+            state.runtimeNamespace.tmuxSocketPath,
+            "send-keys",
+            "-t",
+            fixturePane.paneId,
+            "C-c",
+          ]),
+        sendShellMarker: () =>
+          sendLiteralLine(`printf '%s%s\\n' 'tmux-ide-shell-ready-' '${shellMarkerSuffix}'`),
+        observe: () => {
+          const activeBefore = activeTmuxPane(state);
+          const native = execFileSync(
+            "tmux",
+            [
+              "-S",
+              state.runtimeNamespace.tmuxSocketPath,
+              "capture-pane",
+              "-p",
+              "-t",
+              fixturePane.paneId,
+            ],
+            { encoding: "utf8" },
+          );
+          const body = paneBodyRegion(tuiCommand(state, ["capture"]), activeBefore);
+          const activeAfter = activeTmuxPane(state);
+          const records = readJsonLines(tracePath);
+          const processId = records.findLast(
+            (record) => record?.type === "performance.trace.header",
+          )?.processId;
+          const canonicalExpected = {
+            processId,
+            semanticPaneId: fixturePane.semanticPaneId,
+            generation: state.daemon.instanceId,
+            incarnation: causalProbeIncarnation,
+          };
+          const canonical =
+            causalProbeIncarnation === null
+              ? null
+              : latestCausalFixtureCanonicalMode(records, teardownTraceBaseline, canonicalExpected);
+          const canonicalWraparound = canonical?.wraparound === true;
+          const inputQueues = productInputQueueObservation(records, processId);
+          const geometryBefore = paneGeometryIdentity([activeBefore]);
+          const geometryAfter = paneGeometryIdentity([activeAfter]);
+          const nativeHash = createHash("sha256").update(native).digest("hex");
+          const bodyHash = createHash("sha256").update(body).digest("hex");
+          const markerNativeIndex = native.indexOf(shellMarker);
+          const markerTuiIndex = body.indexOf(shellMarker);
+          const stabilityParts = Object.freeze({
+            geometry: geometryBefore,
+            nativeHash,
+            bodyHash,
+            queueType: inputQueues?.type ?? "missing",
+            queueTraceId: inputQueues?.traceId ?? "no-trace",
+            queueOperation: inputQueues?.operation ?? "no-operation",
+            queueAtMicros: inputQueues?.atMicros ?? "no-clock",
+            inputPending: inputQueues?.inputPending ?? "missing",
+            inputInFlight: inputQueues?.inputInFlight ?? "missing",
+            inputPendingBytes: inputQueues?.inputPendingBytes ?? "missing",
+          });
+          return {
+            fixtureOption: fixtureOption(),
+            currentCommand: paneCurrentCommand(),
+            expectedCommand: fixtureShellCommand,
+            marker: shellMarker,
+            nativeFrame: native,
+            tuiBody: body,
+            markerNativeIndex: markerNativeIndex >= 0 ? markerNativeIndex : null,
+            markerTuiIndex: markerTuiIndex >= 0 ? markerTuiIndex : null,
+            canonicalWraparound,
+            canonical,
+            queueType: inputQueues?.type,
+            queueOperation: inputQueues?.operation,
+            queueTraceId: inputQueues?.traceId,
+            queueAtMicros: inputQueues?.atMicros,
+            inputPending: inputQueues?.inputPending,
+            inputInFlight: inputQueues?.inputInFlight,
+            inputPendingBytes: inputQueues?.inputPendingBytes,
+            geometryStable: geometryBefore === geometryAfter,
+            geometryBefore,
+            geometryAfter,
+            nativeHash,
+            bodyHash,
+            stabilityParts,
+            stabilityIdentity: Object.values(stabilityParts).join(":"),
+          };
+        },
+        releaseResource: () => {
+          resourcePhaseReleased = true;
+        },
       });
+    } catch (teardownFailure) {
+      if (causalFailure)
+        throw new AggregateError(
+          [causalFailure, teardownFailure],
+          "Causal input qualification and fixture teardown both failed",
+          { cause: teardownFailure },
+        );
+      throw teardownFailure;
+    }
+    if (causalFailure) throw causalFailure;
+    if (qualifyingInputEvidence.length !== 30)
+      throw new Error(`diagnostic input samples incomplete (${qualifyingInputEvidence.length}/30)`);
+    if (
+      causalProbeIncarnation === null ||
+      qualifyingInputEvidence.some(({ incarnation }) => incarnation !== causalProbeIncarnation)
+    )
+      throw new Error("diagnostic input samples did not retain one terminal incarnation");
   }
   let resourceObservation = null;
   let idleObservation = null;
@@ -1153,44 +1708,157 @@ async function diagnose(json) {
       }
       throw new Error(`TUI did not paint resource-cycle marker ${marker}`);
     };
-    // Four same-process load→clear→settle cycles distinguish retained product
-    // state from allocator high-water without requiring or faking GC. Cycle
-    // endpoints, not 16 probes in one retained-history epoch, form the memory
-    // distribution.
-    const resourceEndpointTraceIds = [];
-    for (let cycle = 0; cycle < 4; cycle += 1) {
+    // Eight fixed, unmeasured cycles condition xterm/allocator high-water
+    // state before sixteen measured cycles. Every cycle still closes the same
+    // load→clear→settle→single-probe epoch. All twenty-four cycles stay
+    // in workload peak and queue evidence; only the final sixteen endpoint ids
+    // enter retained-memory growth and slope calculations. No GC is forced.
+    const resourceCycleEndpoints = [];
+    for (const { cycle, phase, loadLines, cycleMarker, probe } of productResourceCyclePlan()) {
+      if (!resourcePhaseReleased)
+        throw new Error("Resource workload dispatched before causal fixture teardown");
       const flooded = `tmux-ide-flood-${cycle}`;
-      tuiCommand(state, [
-        "text",
-        `i=0; while [ $i -lt 300 ]; do echo tmux-ide-load-$i; i=$((i+1)); done; echo ${flooded}`,
-      ]);
+      const commands = productResourceCycleCommands({ cycle, loadLines });
+      tuiCommand(state, ["text", commands.floodCommand]);
       tuiCommand(state, ["key", "Enter"]);
       await waitForTuiMarker(flooded);
-      const settled = `tmux-ide-settled-${cycle}`;
-      tuiCommand(state, ["text", `printf '\\033[2J\\033[3J\\033[H${settled}\\n'`]);
+      tuiCommand(state, ["text", commands.settleCommand]);
       tuiCommand(state, ["key", "Enter"]);
-      await waitForTuiMarker(settled);
-      for (let probe = 0; probe < 4; probe += 1) {
-        const beforeSamples = inputPaintSamples(readJsonLines(tracePath)).filter(
-          (sample) => sample.processId === activeProcessId,
-        );
-        tuiCommand(state, ["text", String.fromCharCode(97 + cycle * 4 + probe)]);
-        const deadline = Date.now() + 2_000;
-        while (Date.now() < deadline) {
-          const samples = inputPaintSamples(readJsonLines(tracePath)).filter(
-            (sample) => sample.processId === activeProcessId,
-          );
-          const endpoint = samples.slice(beforeSamples.length).at(-1);
-          if (endpoint) {
-            resourceEndpointTraceIds.push(endpoint.traceId);
+      await waitForTuiMarker(cycleMarker);
+
+      // The marker command is outside the measured endpoint: its many input
+      // characters repeatedly supersede the latest-only trace slot. Establish
+      // a quiet, empty input lane before admitting exactly one probe byte.
+      const settleDeadline = Date.now() + 2_000;
+      let stableTraceIds = null;
+      let stableSince = 0;
+      let inputQuiet = false;
+      while (Date.now() < settleDeadline) {
+        const records = readJsonLines(tracePath);
+        const traceIds = inputPaintSamples(records)
+          .filter((sample) => sample.processId === activeProcessId)
+          .map(({ traceId }) => traceId)
+          .sort()
+          .join("\n");
+        const now = Date.now();
+        if (productInputQueuesSettled(records, activeProcessId) && traceIds === stableTraceIds) {
+          if (now - stableSince >= 100) {
+            inputQuiet = true;
             break;
           }
-          await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+        } else {
+          stableTraceIds = traceIds;
+          stableSince = now;
         }
+        await new Promise((resolveWait) => setTimeout(resolveWait, 25));
       }
+      if (!inputQuiet)
+        throw new Error(`TUI input queues did not settle for resource cycle ${cycle}`);
+
+      const beforeSamples = inputPaintSamples(readJsonLines(tracePath)).filter(
+        (sample) => sample.processId === activeProcessId,
+      );
+      const activePane = activeTmuxPane(state);
+      const paneIdentity = paneGeometryIdentity([activePane]);
+      const captureProbeObservation = () => {
+        const paneBefore = activeTmuxPane(state);
+        const native = execFileSync(
+          "tmux",
+          [
+            "-S",
+            state.runtimeNamespace.tmuxSocketPath,
+            "capture-pane",
+            "-p",
+            "-t",
+            paneBefore.paneId,
+          ],
+          { encoding: "utf8" },
+        );
+        const tuiFrame = tuiCommand(state, ["capture"]);
+        const paneAfter = activeTmuxPane(state);
+        const geometryIdentity = productResourceGeometryIdentity(tuiFrame, paneBefore);
+        const stable =
+          paneGeometryIdentity([paneBefore]) === paneIdentity &&
+          paneGeometryIdentity([paneAfter]) === paneIdentity &&
+          geometryIdentity !== null;
+        return Object.freeze({
+          stable,
+          native,
+          tui: paneBodyRegion(tuiFrame, paneBefore),
+          geometryIdentity,
+        });
+      };
+      const beforeProbe = captureProbeObservation();
+      if (!beforeProbe.stable)
+        throw new Error(`Resource probe geometry was not stable before cycle ${cycle}`);
+      tuiCommand(state, ["text", probe]);
+      const deadline = Date.now() + 2_000;
+      let endpoint = null;
+      let endpointCells = [];
+      let lastSamples = beforeSamples;
+      let postTraceIds = null;
+      let postTraceStableSince = 0;
+      while (Date.now() < deadline) {
+        const records = readJsonLines(tracePath);
+        lastSamples = inputPaintSamples(records).filter(
+          (sample) => sample.processId === activeProcessId,
+        );
+        const afterProbe = captureProbeObservation();
+        endpointCells = productResourceProbeCells({
+          beforeNative: beforeProbe.native,
+          afterNative: afterProbe.native,
+          beforeTui: beforeProbe.tui,
+          afterTui: afterProbe.tui,
+          probe,
+        });
+        const traceIds = lastSamples
+          .map(({ traceId }) => traceId)
+          .sort()
+          .join("\n");
+        const now = Date.now();
+        const traceQuiet = traceIds === postTraceIds && now - postTraceStableSince >= 100;
+        if (traceIds !== postTraceIds) {
+          postTraceIds = traceIds;
+          postTraceStableSince = now;
+        }
+        const epoch = productResourceEndpointEpochState({
+          beforeSamples,
+          afterSamples: lastSamples,
+          expected: {
+            cycle,
+            processId: activeProcessId,
+            generation: state.daemon.instanceId,
+            semanticPaneId: activePane.semanticPaneId,
+          },
+          inputSettled: productInputQueuesSettled(records, activeProcessId),
+          traceQuiet,
+          probeCellCount: endpointCells.length,
+          geometryStable:
+            afterProbe.stable && afterProbe.geometryIdentity === beforeProbe.geometryIdentity,
+        });
+        if (epoch.status === "ready") {
+          endpoint = epoch.endpoint;
+          break;
+        }
+        await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+      }
+      if (!endpoint) {
+        selectProductResourceEndpoint(beforeSamples, lastSamples, {
+          cycle,
+          processId: activeProcessId,
+          generation: state.daemon.instanceId,
+          semanticPaneId: activePane.semanticPaneId,
+        });
+        throw new Error(`Resource probe endpoint did not settle for cycle ${cycle}`);
+      }
+      if (endpointCells.length !== 1)
+        throw new Error(`TUI did not paint the resource probe cell for cycle ${cycle}`);
+      resourceCycleEndpoints.push({ cycle, phase, traceId: endpoint.traceId });
       tuiCommand(state, ["key", "C-u"]);
       await new Promise((resolveWait) => setTimeout(resolveWait, 250));
     }
+    const resourceEndpointTraceIds =
+      productResourceMeasuredEndpointTraceIds(resourceCycleEndpoints);
     const loadRecords = readJsonLines(tracePath)
       .slice(loadBaseline)
       .filter((record) => record?.processId === activeProcessId);
@@ -1323,11 +1991,15 @@ let ownerStartedAt = Date.now();
 async function owner() {
   ownerStartedAt = Date.now();
   const slug = randomBytes(3).toString("hex");
+  let sleepAssertion = null;
   let fleet = null;
   let daemon = null;
   let devServer = null;
   let browser = null;
   let closing = false;
+  let cleanupPromise = null;
+  let sleepAssertionAcquisition = null;
+  const ownerAbort = new AbortController();
   let state = {
     version: PRODUCT_RIG_STATE_VERSION,
     status: "starting",
@@ -1339,25 +2011,32 @@ async function owner() {
     state = { ...state, ...patch };
     writeJsonAtomic(statePath, state);
   };
-  const cleanup = async () => {
-    if (closing) return;
-    closing = true;
-    event("cleanup-start");
-    try {
-      if (state.tui) tuiCommand(state, ["stop"], { ignore: true });
-    } catch {
-      // The hosted TUI may already have stopped independently.
-    }
-    await browser?.close().catch(() => undefined);
-    await devServer?.stop().catch(() => undefined);
-    await daemon?.stop().catch(() => undefined);
-    await fleet?.dispose().catch(() => undefined);
-    publish({
-      status: state.status === "failed" ? "failed" : "stopped",
-      stoppedAt: new Date().toISOString(),
-      web: null,
-    });
-    event("cleanup-complete");
+  const cleanup = () => {
+    if (cleanupPromise) return cleanupPromise;
+    cleanupPromise = (async () => {
+      closing = true;
+      ownerAbort.abort();
+      event("cleanup-start");
+      try {
+        if (state.tui) tuiCommand(state, ["stop"], { ignore: true });
+      } catch {
+        // The hosted TUI may already have stopped independently.
+      }
+      await browser?.close().catch(() => undefined);
+      await devServer?.stop().catch(() => undefined);
+      await daemon?.stop().catch(() => undefined);
+      await fleet?.dispose().catch(() => undefined);
+      const acquiredAssertion =
+        sleepAssertion ?? (await sleepAssertionAcquisition?.catch(() => null));
+      await acquiredAssertion?.release().catch(() => undefined);
+      publish({
+        status: state.status === "failed" ? "failed" : "stopped",
+        stoppedAt: new Date().toISOString(),
+        web: null,
+      });
+      event("cleanup-complete");
+    })();
+    return cleanupPromise;
   };
   for (const signal of ["SIGINT", "SIGTERM"]) {
     process.once(signal, () => void cleanup().finally(() => process.exit(0)));
@@ -1365,6 +2044,20 @@ async function owner() {
 
   try {
     rmSync(timelinePath, { force: true });
+    sleepAssertionAcquisition = acquireProductRigSleepAssertion({ signal: ownerAbort.signal });
+    sleepAssertion = await sleepAssertionAcquisition;
+    void sleepAssertion.failure.catch((error) => {
+      if (closing) return;
+      publish({ status: "failed", failure: error.stack ?? error.message });
+      event("failed", { failure: error.message });
+      void cleanup().finally(() => process.exit(1));
+    });
+    event("host-sleep-assertion-ready", {
+      kind: sleepAssertion.kind,
+      pid: sleepAssertion.pid,
+    });
+    if (!sleepAssertion.active())
+      throw new Error("ProductRig host sleep assertion was not active before orchestration");
     event("namespace-start");
     const scratchFleet = await createScratchFleet({ sessions: 1, slug });
     const cleanupToken = `product-test-rig:${slug}`;
@@ -1422,13 +2115,43 @@ async function owner() {
     browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const page = await context.newPage();
+    // Register before navigation: module-load failures often happen before any
+    // selector can exist, and closing Chromium would otherwise destroy them.
+    const webDiagnostics = installWebStartupDiagnostics(page);
     const webStartedAt = Date.now();
-    await page.goto(devServer.pageUrl, { waitUntil: "domcontentloaded" });
-    await page.locator(".app[data-shell-source='runtime']").waitFor({ timeout: 60_000 });
-    await page
-      .locator(".terminal-surface[data-phase='connected']")
-      .first()
-      .waitFor({ timeout: 60_000 });
+    const navigation = {
+      requestedUrl: devServer.pageUrl,
+      url: null,
+      status: null,
+    };
+    try {
+      const response = await page.goto(devServer.pageUrl, { waitUntil: "domcontentloaded" });
+      navigation.url = response?.url() ?? page.url();
+      navigation.status = response?.status() ?? null;
+      await page.locator(".app[data-shell-source='runtime']").waitFor({ timeout: 60_000 });
+      await page
+        .locator(".terminal-surface[data-phase='connected']")
+        .first()
+        .waitFor({ timeout: 60_000 });
+    } catch (error) {
+      navigation.url ??= page.url();
+      try {
+        const failureArtifacts = await captureWebStartupFailure({
+          page,
+          diagnostics: webDiagnostics,
+          navigation,
+          devServer,
+          daemon,
+        });
+        publish({ webStartupFailureArtifact: failureArtifacts.evidencePath });
+        event("web-startup-failure-evidence", failureArtifacts);
+      } catch (evidenceError) {
+        event("web-startup-failure-evidence-error", {
+          failure: evidenceError instanceof Error ? evidenceError.message : String(evidenceError),
+        });
+      }
+      throw error;
+    }
     const webCoherentTerminalFrameMs = Date.now() - webStartedAt;
     publish({
       web: {

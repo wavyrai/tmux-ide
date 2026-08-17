@@ -190,6 +190,7 @@ describe("terminal replica reducer", () => {
     expect(Object.isFrozen(next.grid)).toBe(true);
     expect(Object.isFrozen(next.history)).toBe(true);
     expect(Object.isFrozen(next.placements)).toBe(true);
+    expect(next.history).toBe(initial.history);
     expect(next.grid[0]).toBe(initial.grid[0]);
     expect(() => ((next.grid as TerminalReplicaSnapshot["grid"])[0] = next.grid[1]!)).toThrow();
   });

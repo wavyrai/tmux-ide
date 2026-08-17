@@ -1,4 +1,9 @@
-import type { CanonicalTerminalReplicaUpdate, SessionRuntimeGeneration } from "@tmux-ide/contracts";
+import type {
+  CanonicalTerminalReplicaUpdate,
+  CausalCellFailureReasonV1,
+  CausalCellProbeV1,
+  SessionRuntimeGeneration,
+} from "@tmux-ide/contracts";
 import type { MirrorLayoutEvent, MirrorPaneEvent } from "../mirror/events.ts";
 import type { MirrorService, MirrorSubscription } from "../mirror/mirror-service.ts";
 import {
@@ -14,6 +19,7 @@ import type {
   SessionRuntimeTraceContext,
 } from "./runtime-observability.ts";
 import { DISABLED_SESSION_RUNTIME_OBSERVABILITY } from "./runtime-observability.ts";
+import type { CausalCellLedgerResult } from "./causal-cell-ledger.ts";
 
 export interface TerminalReplicaSubscription {
   readonly generation: SessionRuntimeGeneration;
@@ -144,6 +150,25 @@ export class SessionRuntimeTerminalReplicaOwner {
 
   installOutputTraceReader(reader: () => SessionRuntimeTraceContext | null): void {
     this.#takeOutputTrace ??= reader;
+  }
+
+  prioritizeNextWrite(): void {
+    this.#interpreter.prioritizeNextWrite();
+  }
+
+  armCausalCellProbe(
+    probe: CausalCellProbeV1,
+    onResult: (result: CausalCellLedgerResult) => void,
+  ): void {
+    this.#interpreter.armCausalCellProbe(probe, onResult);
+  }
+
+  noteCausalCellControlReply(traceId: string, ok: boolean): void {
+    this.#interpreter.noteCausalCellControlReply(traceId, ok);
+  }
+
+  failCausalCell(reason: CausalCellFailureReasonV1, traceId?: string): void {
+    this.#interpreter.failCausalCell(reason, traceId);
   }
 
   qualificationSnapshot(): TerminalReplicaQualificationSnapshot {

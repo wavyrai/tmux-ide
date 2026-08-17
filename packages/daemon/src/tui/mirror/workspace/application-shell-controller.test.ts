@@ -25,8 +25,13 @@ import {
 import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../../../../test-support/opentui-production-root-manifest.ts";
 
 const repoRoot = fileURLToPath(new URL("../../../../../../", import.meta.url));
+const APPLICATION_ROOT_OWNER_SOURCES = [
+  ...OPENTUI_PRODUCTION_ROOT_SOURCES,
+  "packages/daemon/src/tui/mirror/runtime/application-terminal-interaction-controller.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-shell-view.tsx",
+] as const;
 const productionRootSource = () =>
-  OPENTUI_PRODUCTION_ROOT_SOURCES.map((path) => readFileSync(join(repoRoot, path), "utf8")).join(
+  APPLICATION_ROOT_OWNER_SOURCES.map((path) => readFileSync(join(repoRoot, path), "utf8")).join(
     "\n",
   );
 
@@ -338,9 +343,10 @@ describe("OpenTUI canonical application-shell controller", () => {
     expect(app).not.toContain("rendererInvocationForCanvas(");
     expect(app).not.toContain("rendererInvocationForDock(");
     expect(app).toContain("createOpenTuiSessionOwner({");
-    expect(app).toContain("new TerminalPaneInputRouter({");
+    expect(app).toContain("new TerminalPaneInputRouter<SessionRuntimeTerminalInput>({");
     expect(app).toContain("selectTerminalPane(expected, liveSelectionTarget, paneId)");
-    expect(app).toContain("active.fastLane.lane.sendInput(paneId, input, trace?.traceId)");
+    expect(app).toContain("active.fastLane.lane.sendInput(");
+    expect(app).toContain("fixture?.probe");
     expect(app).toContain("<ApplicationTerminalWorkspace");
     expect(app).not.toMatch(
       /semanticView\?*\.(?:command|commandList|switchWindow|sendTextTo|sendKey)\(/u,

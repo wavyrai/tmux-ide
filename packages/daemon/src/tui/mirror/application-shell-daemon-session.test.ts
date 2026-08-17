@@ -4,10 +4,8 @@ import {
   type CanonicalDaemonInfo,
   type WorkspaceCatalogResourceV2,
 } from "@tmux-ide/contracts";
-import type {
-  ApplicationShellSession,
-  ApplicationShellTransport,
-} from "@tmux-ide/daemon-client/application-shell-session";
+import type { ApplicationShellSession } from "@tmux-ide/daemon-client/application-shell-session";
+import type { TerminalFirstDaemonTransport } from "@tmux-ide/daemon-client/direct-application-shell-transport";
 
 import {
   connectOpenTuiApplicationShellAuthority,
@@ -62,7 +60,16 @@ describe("OpenTUI canonical application-shell authority", () => {
   });
 
   it("maps the runtime session through the catalog and creates the shared client session", async () => {
-    const transport = {} as ApplicationShellTransport;
+    const transport = {
+      validateTarget: (value: unknown) => value,
+      fetchApplicationShell: vi.fn(),
+      connectEvents: vi.fn(),
+      prepareTerminalRuntimeInventory: vi.fn(),
+      adoptTerminalRuntimeInventory: vi.fn(),
+      disposeEventSupervisor: vi.fn(),
+      selectApplicationShellFallback: vi.fn(),
+      refreshTerminalRuntimeInventory: vi.fn(),
+    } as unknown as TerminalFirstDaemonTransport;
     const dispose = vi.fn();
     const session = { dispose } as unknown as ApplicationShellSession;
     const createTransport = vi.fn(() => transport);
@@ -89,7 +96,14 @@ describe("OpenTUI canonical application-shell authority", () => {
         applicationShellResourceVersion: APPLICATION_SHELL_RESOURCE_V2_VERSION,
       }),
     );
-    expect(createSession).toHaveBeenCalledWith({ target: authority?.target, transport });
+    expect(createSession).toHaveBeenCalledWith({
+      target: authority?.target,
+      transport: expect.objectContaining({
+        validateTarget: expect.any(Function),
+        fetchApplicationShell: expect.any(Function),
+        connectEvents: expect.any(Function),
+      }),
+    });
     authority?.dispose();
     expect(dispose).toHaveBeenCalledOnce();
     expect(() =>

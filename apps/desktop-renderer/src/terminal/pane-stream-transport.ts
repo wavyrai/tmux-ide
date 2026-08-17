@@ -24,7 +24,6 @@ import {
   commitTerminalDelivery,
   completeTerminalDelivery,
   createTerminalDeliveryClientState,
-  decodeSemanticTerminalUpdate,
   encodeAnsiTerminalPatchRepresentation,
   encodeAnsiTerminalRepresentation,
   type TerminalDeliveryClientState,
@@ -899,10 +898,10 @@ class PaneStreamSession {
           channel.semanticDelivery,
           channel.semanticAssembler,
         );
-        // Decode before commit so malformed semantic payloads retire the lane.
-        const semanticUpdate = decodeSemanticTerminalUpdate(staged.bytes);
         const previousSnapshot = channel.semanticDelivery.canonicalSnapshot;
         const committed = commitTerminalDelivery(channel.semanticDelivery, staged);
+        const semanticUpdate = committed.semanticUpdate;
+        if (!semanticUpdate) throw new TypeError("Semantic delivery did not produce an update");
         channel.semanticDelivery = committed.state;
         if (this.#performanceTelemetry?.enabled) this.#performanceTelemetry.recordRevisionLag(0);
         channel.semanticAssembler = null;

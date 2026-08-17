@@ -114,6 +114,35 @@ pnpm tui:testdrive status --json
 pnpm tui:testdrive stop
 ```
 
+Protocol-sensitive input uses one strict versioned JSON command. It injects
+exact bytes through the host pane PTY with `load-buffer`/`paste-buffer`, not
+tmux key-name translation:
+
+```bash
+pnpm tui:testdrive input '{"version":1,"kind":"paste","text":"first line\nsecond line"}'
+pnpm tui:testdrive input '{"version":1,"kind":"focus","state":"blur"}'
+pnpm tui:testdrive input '{"version":1,"kind":"focus","state":"focus"}'
+pnpm tui:testdrive input '{"version":1,"kind":"application-mouse","action":"click","x":42,"y":8}'
+pnpm tui:testdrive input '{"version":1,"kind":"selection-drag","from":{"x":42,"y":8},"to":{"x":55,"y":8},"contentRect":{"x":40,"y":6,"width":80,"height":24}}'
+pnpm tui:testdrive input '{"version":1,"kind":"copy-capture","timeoutMs":2000}'
+```
+
+`paste` sends an explicit bracketed-paste sequence to OpenTUI. Application
+mouse input is intentionally separate from the legacy divider-drag helper.
+Coordinates are zero-based and must fit the immutable host pane's current
+geometry. Paste is capped at 64 KiB, clipboard evidence at 1 MiB, and one
+monotonic timeout covers the complete operation. `selection-drag` first enters
+and validates OpenTUI's pane-local select mode, proves the highlight, then
+captures the release-triggered copy. Its required `contentRect` is the exact
+projected pane-content rectangle; multi-row selection wraps inside that box and
+never treats sidebar or chrome columns as terminal content. `copy-capture`
+sends Ctrl-C through the same PTY path. Both clipboard operations use an
+operation-scoped, pane-scoped tmux hook tied to the exact pane and operation
+nonce. It remains armed through a bounded quiet window so missing, unrelated,
+multiple, or callback-overflow events fail.
+Successful JSON reports only clipboard byte count and SHA-256—no clipboard
+plaintext or base64.
+
 For gesture assertions, the low-level mouse phases let a test inspect the
 renderer while capture is still active:
 

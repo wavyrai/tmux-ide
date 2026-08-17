@@ -6,6 +6,8 @@ import {
   installTuiPerformanceEventSink,
   type TuiPerformanceEventSink,
   type TuiTerminalDeliveryPerformanceEvent,
+  type TuiTerminalCanonicalModeEvent,
+  type TuiTerminalInputQueueStateEvent,
   type TuiTerminalTraceStageEvent,
   type TuiTerminalTraceSpanEvent,
 } from "./performance-events.ts";
@@ -17,14 +19,26 @@ const DETAILED_TRACE = process.env.TMUX_IDE_PERFORMANCE_TRACE_DETAIL === "1";
 const MAX_PENDING_INPUTS = 256;
 const INPUT_EXPIRY_MICROS = 5_000_000;
 const MAX_TRACE_RECORD_BYTES = 64 * 1_024;
+const MAX_PENDING_TRACE_BYTES = 1 * 1_024 * 1_024;
+
+export interface ReferenceTraceDroppedRecordKind {
+  readonly type: string | null;
+  readonly stage: string | null;
+  readonly operation: string | null;
+}
 
 export interface ReferenceTraceWriterSnapshot {
   readonly acceptedRecords: number;
   readonly droppedRecords: number;
   readonly oversizedRecords: number;
   readonly writableLength: number;
+  readonly pendingBytes: number;
+  readonly pendingRecords: number;
+  readonly pendingStorageSlots: number;
+  readonly peakPendingBytes: number;
   readonly saturated: boolean;
   readonly failed: boolean;
+  readonly firstDroppedRecord: ReferenceTraceDroppedRecordKind | null;
 }
 
 export interface ReferenceTraceCollectorReport extends ReferenceTraceWriterSnapshot {
@@ -93,7 +107,10 @@ export function closeReferencePerformanceTraceCollector(): Promise<ReferenceTrac
 }
 
 /** Bounded streaming writer exported only so backpressure can be proven. */
-export function createReferenceTraceWriter(stream: ReferenceTraceWritable): {
+export function createReferenceTraceWriter(
+  stream: ReferenceTraceWritable,
+  options: { readonly maxPendingBytes?: number } = {},
+): {
   readonly append: (value: Readonly<Record<string, unknown>>) => void;
   readonly snapshot: () => ReferenceTraceWriterSnapshot;
   readonly close: (sink: {
@@ -108,12 +125,70 @@ export function createReferenceTraceWriter(stream: ReferenceTraceWritable): {
   let failed = false;
   let closed = false;
   let closePromise: Promise<ReferenceTraceCollectorReport> | null = null;
+  let pendingBytes = 0;
+  let peakPendingBytes = 0;
+  let firstDroppedRecord: ReferenceTraceDroppedRecordKind | null = null;
+  const maxPendingBytes = options.maxPendingBytes ?? MAX_PENDING_TRACE_BYTES;
+  if (!Number.isSafeInteger(maxPendingBytes) || maxPendingBytes <= 0)
+    throw new TypeError("Reference trace pending-byte limit must be a positive safe integer");
+  type PendingRecord = {
+    readonly line: string;
+    readonly bytes: number;
+    readonly kind: ReferenceTraceDroppedRecordKind;
+  };
+  const pending: Array<PendingRecord | undefined> = [];
+  let pendingIndex = 0;
+  const pendingCount = () => pending.length - pendingIndex;
+  const flushWaiters = new Set<() => void>();
+  const settleFlushWaiters = () => {
+    if (!failed && (saturated || pendingCount() > 0)) return;
+    for (const resolve of flushWaiters) resolve();
+    flushWaiters.clear();
+  };
+  const discardPending = () => {
+    firstDroppedRecord ??= pending[pendingIndex]?.kind ?? null;
+    droppedRecords += pendingCount();
+    pending.length = 0;
+    pendingIndex = 0;
+    pendingBytes = 0;
+  };
   const onError = () => {
     failed = true;
+    discardPending();
+    settleFlushWaiters();
   };
-  const onDrain = () => {
+  const writeLine = (line: string): boolean => {
+    saturated = !stream.write(line);
+    acceptedRecords += 1;
+    return !saturated;
+  };
+  const flushPending = () => {
+    if (failed) return;
     saturated = false;
+    while (pendingIndex < pending.length) {
+      const next = pending[pendingIndex++]!;
+      pending[pendingIndex - 1] = undefined;
+      pendingBytes -= next.bytes;
+      try {
+        if (!writeLine(next.line)) break;
+      } catch {
+        failed = true;
+        droppedRecords += 1;
+        firstDroppedRecord ??= next.kind;
+        discardPending();
+        break;
+      }
+    }
+    if (pendingIndex === pending.length) {
+      pending.length = 0;
+      pendingIndex = 0;
+    } else if (pendingIndex >= 1_024 || pendingIndex * 2 >= pending.length) {
+      pending.splice(0, pendingIndex);
+      pendingIndex = 0;
+    }
+    settleFlushWaiters();
   };
+  const onDrain = () => flushPending();
   stream.on("error", onError);
   stream.on("drain", onDrain);
 
@@ -123,25 +198,45 @@ export function createReferenceTraceWriter(stream: ReferenceTraceWritable): {
       droppedRecords,
       oversizedRecords,
       writableLength: stream.writableLength,
+      pendingBytes,
+      pendingRecords: pendingCount(),
+      pendingStorageSlots: pending.length,
+      peakPendingBytes,
       saturated,
       failed,
+      firstDroppedRecord,
     });
   const append = (value: Readonly<Record<string, unknown>>): void => {
-    if (closed || failed || saturated) {
+    if (closed || failed) {
       droppedRecords += 1;
+      firstDroppedRecord ??= droppedRecordKind(value);
       return;
     }
     const line = `${JSON.stringify(value)}\n`;
-    if (Buffer.byteLength(line) > MAX_TRACE_RECORD_BYTES) {
+    const bytes = Buffer.byteLength(line);
+    if (bytes > MAX_TRACE_RECORD_BYTES) {
       oversizedRecords += 1;
       return;
     }
     try {
-      saturated = !stream.write(line);
-      acceptedRecords += 1;
+      if (!saturated && pendingCount() === 0) {
+        writeLine(line);
+        return;
+      }
+      if (pendingBytes + bytes > maxPendingBytes) {
+        droppedRecords += 1;
+        firstDroppedRecord ??= droppedRecordKind(value);
+        return;
+      }
+      pending.push({ line, bytes, kind: droppedRecordKind(value) });
+      pendingBytes += bytes;
+      peakPendingBytes = Math.max(peakPendingBytes, pendingBytes);
     } catch {
       failed = true;
       droppedRecords += 1;
+      firstDroppedRecord ??= droppedRecordKind(value);
+      discardPending();
+      settleFlushWaiters();
     }
   };
   const close = (sink: {
@@ -151,17 +246,9 @@ export function createReferenceTraceWriter(stream: ReferenceTraceWritable): {
     if (closePromise) return closePromise;
     closed = true;
     closePromise = (async () => {
-      if (saturated && !failed)
-        await new Promise<void>((resolve) => {
-          const finish = () => {
-            stream.off("drain", finish);
-            stream.off("error", finish);
-            resolve();
-          };
-          stream.once("drain", finish);
-          stream.once("error", finish);
-        });
-      const report = Object.freeze({ ...snapshot(), ...sink });
+      if (!failed && (saturated || pendingCount() > 0))
+        await new Promise<void>((resolve) => flushWaiters.add(resolve));
+      let report = Object.freeze({ ...snapshot(), ...sink });
       if (!failed) {
         const summary = `${JSON.stringify({
           version: 1,
@@ -169,9 +256,24 @@ export function createReferenceTraceWriter(stream: ReferenceTraceWritable): {
           ...report,
         })}\n`;
         await new Promise<void>((resolve) => {
-          stream.end(summary, resolve);
+          let settled = false;
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            stream.off("error", finish);
+            resolve();
+          };
+          stream.once("error", finish);
+          try {
+            stream.end(summary, finish);
+          } catch {
+            failed = true;
+            finish();
+          }
         });
-      } else if (!stream.destroyed) {
+        report = Object.freeze({ ...snapshot(), ...sink });
+      }
+      if (failed && !stream.destroyed) {
         stream.destroy();
       }
       stream.off("error", onError);
@@ -181,6 +283,18 @@ export function createReferenceTraceWriter(stream: ReferenceTraceWritable): {
     return closePromise;
   };
   return Object.freeze({ append, snapshot, close });
+}
+
+function droppedRecordKind(
+  value: Readonly<Record<string, unknown>>,
+): ReferenceTraceDroppedRecordKind {
+  const field = (key: "type" | "stage" | "operation") =>
+    typeof value[key] === "string" ? value[key].slice(0, 64) : null;
+  return Object.freeze({
+    type: field("type"),
+    stage: field("stage"),
+    operation: field("operation"),
+  });
 }
 
 export function createReferencePerformanceTraceSink(options: {
@@ -254,6 +368,18 @@ export function createReferencePerformanceTraceSink(options: {
         ...event,
       });
     },
+    ...(detailed
+      ? {
+          terminalInputQueueState: (event: TuiTerminalInputQueueStateEvent) => {
+            if (!closed)
+              options.append({ version: 1, type: "performance.input-queue-state", ...event });
+          },
+          terminalCanonicalMode: (event: TuiTerminalCanonicalModeEvent) => {
+            if (!closed)
+              options.append({ version: 1, type: "performance.terminal-canonical-mode", ...event });
+          },
+        }
+      : {}),
     beginTerminalInput: () => {
       const startedAtMicros = nowMicros();
       expireInputs(inputs, startedAtMicros);

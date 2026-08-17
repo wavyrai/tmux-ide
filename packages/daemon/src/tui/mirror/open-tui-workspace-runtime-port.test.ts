@@ -366,6 +366,7 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
     });
     expect(test.options().hostClientId).toBe(OPEN_TUI_HOST_CLIENT_ID);
     expect(test.options()).not.toHaveProperty("onTerminalFrameArrival");
+    expect(test.options()).not.toHaveProperty("onInputTransportStage");
 
     const layouts: unknown[] = [];
     port.onLayout((layout) => layouts.push(layout));
@@ -625,7 +626,7 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
     await port.close();
   });
 
-  it("installs the frame-arrival diagnostic callback only when the sink exists at connect", async () => {
+  it("installs transport diagnostic callbacks only when the sink exists at connect", async () => {
     const terminalTraceStage = vi.fn();
     const uninstall = installTuiPerformanceEventSink({
       frame: vi.fn(),
@@ -639,9 +640,34 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
         inventory: inventory(),
         routing: test.routing,
       });
+      expect(test.options().onInputTransportStage).toEqual(expect.any(Function));
       expect(test.options().onTerminalFrameArrival).toEqual(expect.any(Function));
+      test.options().onInputTransportStage?.({
+        traceId: "trace.one",
+        operation: "pane-stream-socket-send-return",
+        atMicros: 41,
+        pane: PANE_A,
+        sequence: 1,
+      });
       test.options().onTerminalFrameArrival?.({ traceId: "trace.one", atMicros: 42 });
-      expect(terminalTraceStage).toHaveBeenCalledOnce();
+      expect(terminalTraceStage).toHaveBeenCalledTimes(2);
+      expect(terminalTraceStage.mock.calls[0]?.[0]).toMatchObject({
+        traceId: "trace.one",
+        operation: "pane-stream-socket-send-return",
+        atMicros: 41,
+      });
+      terminalTraceStage.mockImplementation(() => {
+        throw new Error("diagnostic sink failed");
+      });
+      expect(() =>
+        test.options().onInputTransportStage?.({
+          traceId: "trace.two",
+          operation: "pane-stream-next-event-loop-turn",
+          atMicros: 43,
+          pane: PANE_A,
+          sequence: 2,
+        }),
+      ).not.toThrow();
       await port.close();
     } finally {
       uninstall();

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,23 +8,189 @@ import test from "node:test";
 import {
   PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES,
   PRODUCT_RIG_STATE_VERSION,
+  PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS,
+  PRODUCT_RESOURCE_CONDITIONING_CYCLE_COUNT,
+  PRODUCT_RESOURCE_MEASURED_CYCLE_COUNT,
   activeTmuxPaneFromRows,
+  appendBoundedWebDiagnostic,
+  awaitWebDiagnosticWithDeadline,
   boundedSourceTraceDiff,
   buildProductDiagnosticReport,
+  buildWebStartupEvidence,
+  causalFixtureBaselineReadiness,
+  causalFixtureTeardownDiagnostic,
   causalInputSamples,
+  causalInputSampleHasIncarnation,
+  causalFixtureShellReady,
+  runCausalFixtureTeardownGate,
+  causalProbeEpochState,
+  latestCausalFixtureCanonicalWraparound,
   coherentReadiness,
   coherentGenerationDuration,
   inputPaintSamples,
   paneBodyRegion,
   paneGeometryIdentity,
+  productInputQueuesSettled,
+  productResourceCycleCommands,
+  productResourceCyclePlan,
+  productResourceEndpointEpochState,
+  productResourceGeometryIdentity,
+  productResourceMeasuredEndpointTraceIds,
+  productResourceProbeCells,
   publicRigStatus,
   readJson,
+  redactWebDiagnosticText,
   resolvePaneBodyRect,
+  selectProductResourceEndpoint,
   summarizeProductResources,
+  shouldCaptureWebConsoleMessage,
+  waitForLifecycleEntry,
   writeJsonAtomic,
 } from "./product-test-rig-lib.mjs";
 import { sourceArchitectureInventory } from "./architecture-debt-inventory.mjs";
 import { buildTuiHostPublicationEvidence } from "./lib/tui-host-publication.mjs";
+import { acquireProductRigSleepAssertion } from "./lib/product-rig-sleep-assertion.mjs";
+
+function fakeSleepAssertionChild({ pid = 1234, exitBeforeReady = false } = {}) {
+  const child = new EventEmitter();
+  child.pid = pid;
+  child.exitCode = null;
+  child.signalCode = null;
+  child.kills = [];
+  child.kill = (signal) => {
+    child.kills.push(signal);
+    child.signalCode = signal;
+    queueMicrotask(() => child.emit("close", null, signal));
+    return true;
+  };
+  queueMicrotask(() => {
+    child.emit("spawn");
+    if (exitBeforeReady) {
+      child.exitCode = 1;
+      child.emit("close", 1, null);
+    }
+  });
+  return child;
+}
+
+test("ProductRig owns one macOS idle-sleep assertion until exact cleanup", async () => {
+  const child = fakeSleepAssertionChild();
+  const calls = [];
+  const assertion = await acquireProductRigSleepAssertion({
+    platform: "darwin",
+    ownerPid: 99,
+    spawnProcess: (command, args, options) => {
+      calls.push({ command, args, options });
+      return child;
+    },
+  });
+  assert.deepEqual(calls, [
+    {
+      command: "/usr/bin/caffeinate",
+      args: ["-i", "-w", "99"],
+      options: { stdio: "ignore" },
+    },
+  ]);
+  assert.equal(assertion.active(), true);
+  assert.equal(assertion.pid, child.pid);
+  assert.equal(assertion.failure instanceof Promise, true);
+  await assertion.release();
+  await assertion.release();
+  assert.deepEqual(child.kills, ["SIGTERM"]);
+  assert.equal(assertion.active(), false);
+});
+
+test("lifecycle wait recovers when the filesystem watcher drops the publication", async () => {
+  let entry = null;
+  let closed = 0;
+  const pending = waitForLifecycleEntry({
+    findEntry: () => entry,
+    subscribe: () => ({
+      close: () => {
+        closed += 1;
+      },
+    }),
+    timeoutMs: 250,
+    timeoutMessage: "missed lifecycle entry",
+    pollIntervalMs: 1,
+  });
+  setTimeout(() => {
+    entry = { phase: "first-terminal-frame", processId: "opentui:42" };
+  }, 5);
+
+  assert.deepEqual(await pending, entry);
+  assert.equal(closed, 1);
+});
+
+test("ProductRig sleep assertion is a non-macOS no-op", async () => {
+  let spawned = false;
+  const assertion = await acquireProductRigSleepAssertion({
+    platform: "linux",
+    spawnProcess: () => {
+      spawned = true;
+    },
+  });
+  assert.equal(spawned, false);
+  assert.equal(assertion.kind, "not-required");
+  assert.equal(assertion.active(), true);
+  await assertion.release();
+});
+
+test("ProductRig fails closed when the macOS sleep assertion exits during acquisition", async () => {
+  await assert.rejects(
+    acquireProductRigSleepAssertion({
+      platform: "darwin",
+      ownerPid: 99,
+      spawnProcess: () => fakeSleepAssertionChild({ exitBeforeReady: true }),
+    }),
+    /exited before acquisition completed/u,
+  );
+});
+
+test("ProductRig fails closed when caffeinate cannot spawn", async () => {
+  const child = new EventEmitter();
+  child.pid = undefined;
+  child.exitCode = null;
+  child.signalCode = null;
+  queueMicrotask(() => child.emit("error", new Error("missing caffeinate")));
+  await assert.rejects(
+    acquireProductRigSleepAssertion({
+      platform: "darwin",
+      ownerPid: 99,
+      spawnProcess: () => child,
+    }),
+    /missing caffeinate/u,
+  );
+});
+
+test("ProductRig aborts and reaps a sleep assertion acquisition in flight", async () => {
+  const child = fakeSleepAssertionChild();
+  const controller = new AbortController();
+  const acquisition = acquireProductRigSleepAssertion({
+    platform: "darwin",
+    ownerPid: 99,
+    spawnProcess: () => child,
+    settle: () => new Promise(() => undefined),
+    signal: controller.signal,
+  });
+  await new Promise((resolve) => child.once("spawn", resolve));
+  controller.abort();
+  await assert.rejects(acquisition, /acquisition aborted/u);
+  assert.deepEqual(child.kills, ["SIGTERM"]);
+});
+
+test("ProductRig reports an acquired sleep assertion that dies unexpectedly", async () => {
+  const child = fakeSleepAssertionChild();
+  const assertion = await acquireProductRigSleepAssertion({
+    platform: "darwin",
+    ownerPid: 99,
+    spawnProcess: () => child,
+  });
+  child.exitCode = 9;
+  child.emit("close", 9, null);
+  await assert.rejects(assertion.failure, /exited unexpectedly \(9\)/u);
+  assert.equal(assertion.active(), false);
+});
 
 test("source provenance accepts patches above Node's default buffer and enforces a hard ceiling", () => {
   const aboveNodeDefault = "x".repeat(1024 * 1024 + 1);
@@ -32,6 +199,150 @@ test("source provenance accepts patches above Node's default buffer and enforces
     () => boundedSourceTraceDiff("x".repeat(PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES + 1)),
     /hard ceiling/u,
   );
+});
+
+test("Web startup evidence redacts browser authority recursively", () => {
+  const secret = "owner-secret-value";
+  const evidence = buildWebStartupEvidence(
+    {
+      capturedAt: "2026-08-16T00:00:00.000Z",
+      navigation: {
+        requestedUrl: `http://localhost/?token=${secret}`,
+        url: `ws://localhost/events?__tmux_ide_dev_host_session=${secret}`,
+        status: 503,
+      },
+      page: { authorization: `Bearer ${secret}`, bodyExcerpt: `token=${secret}` },
+      dom: { tag: "meta", attributes: { capability: secret }, children: [] },
+      console: [{ type: "error", text: `Bearer ${secret}` }],
+      webSockets: [{ event: "open", url: `ws://localhost/?__tmux_ide_dev_host_session=${secret}` }],
+      screenshotPath: "/tmp/evidence.png",
+      screenshotError: null,
+      viteOutput: `ownerToken=${secret}`,
+      daemonOutput: secret,
+    },
+    { secrets: [secret] },
+  );
+  const serialized = JSON.stringify(evidence);
+  assert.doesNotMatch(serialized, new RegExp(secret, "u"));
+  assert.match(serialized, /\[REDACTED\]/u);
+  assert.equal(evidence.page.authorization, "[REDACTED]");
+  assert.equal(evidence.dom, null);
+  assert.match(redactWebDiagnosticText("Authorization: Bearer abc"), /\[REDACTED\]/u);
+  assert.doesNotMatch(
+    redactWebDiagnosticText(`/?__tmux_ide_dev_host_session=${secret}`),
+    new RegExp(secret, "u"),
+  );
+});
+
+test("Web startup evidence has a deterministic bounded shape", () => {
+  const events = Array.from(
+    { length: PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.eventCount + 9 },
+    (_, id) => ({
+      id,
+      text: "x".repeat(PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.textChars + 20),
+    }),
+  );
+  const evidence = buildWebStartupEvidence({
+    capturedAt: "now",
+    console: events,
+    webSockets: events.map(({ id }) => ({ event: "open", id, url: `ws://localhost/${id}` })),
+    viteOutput: "v".repeat(PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.processOutputChars + 20),
+    daemonOutput: "d".repeat(PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.processOutputChars + 20),
+  });
+  assert.deepEqual(Object.keys(evidence), [
+    "version",
+    "kind",
+    "capturedAt",
+    "navigation",
+    "page",
+    "dom",
+    "pageErrors",
+    "console",
+    "requestFailures",
+    "httpErrors",
+    "webSockets",
+    "screenshotPath",
+    "screenshotError",
+    "viteOutput",
+    "daemonOutput",
+  ]);
+  assert.equal(evidence.console.length, PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.eventCount);
+  assert.equal(evidence.console[0].id, 9);
+  assert.equal(evidence.console[0].text.length, PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.textChars);
+  assert.equal(evidence.webSockets.length, PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.eventCount);
+  assert.equal(evidence.webSockets[0].id, 9);
+  assert.equal(evidence.viteOutput.length, PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.processOutputChars);
+  assert.equal(evidence.daemonOutput.length, PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.processOutputChars);
+  assert.equal(evidence.screenshotPath, null);
+  assert.equal(evidence.screenshotError, null);
+});
+
+test("Web startup collectors bound at capture time and retain the host-active info line", () => {
+  const captured = [];
+  for (let id = 0; id < PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.eventCount + 3; id += 1) {
+    appendBoundedWebDiagnostic(captured, { id });
+  }
+  assert.equal(captured.length, PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.eventCount);
+  assert.equal(captured[0].id, 3);
+  assert.equal(shouldCaptureWebConsoleMessage("warning", "ordinary warning"), true);
+  assert.equal(
+    shouldCaptureWebConsoleMessage("info", "[tmux-ide] development web host active via gateway"),
+    true,
+  );
+  assert.equal(shouldCaptureWebConsoleMessage("info", "ordinary info"), false);
+});
+
+test("Web startup collectors sanitize oversized raw events before retaining them", () => {
+  const secret = "raw-host-session-secret";
+  const captured = [];
+  appendBoundedWebDiagnostic(
+    captured,
+    {
+      url: `ws://localhost/?__tmux_ide_dev_host_session=${secret}`,
+      text: "t".repeat(PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.textChars + 100),
+      error: `Bearer ${secret}`,
+      nested: Array.from({ length: PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.eventCount + 5 }, (_, id) => ({
+        id,
+        detail: "d".repeat(PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.textChars + 100),
+      })),
+      [`${"x".repeat(PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.fieldNameChars)}token`]: secret,
+      ...Object.fromEntries(
+        Array.from({ length: PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.eventCount + 5 }, (_, id) => [
+          `field-${id}`,
+          id,
+        ]),
+      ),
+    },
+    { secrets: [secret] },
+  );
+  const [event] = captured;
+  assert.notEqual(event.text.length, PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.textChars + 100);
+  assert.equal(event.text.length, PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.textChars);
+  assert.equal(event.nested.length, PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.eventCount);
+  assert.ok(Object.keys(event).length <= PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.eventCount);
+  assert.ok(Object.values(event).includes("[REDACTED]"));
+  assert.doesNotMatch(JSON.stringify(event), new RegExp(secret, "u"));
+});
+
+test("Web diagnostic evaluation has a fixed deadline and consumes a late rejection", async () => {
+  const never = new Promise(() => undefined);
+  const timedOut = await awaitWebDiagnosticWithDeadline(never, {
+    timeoutMs: 1,
+    onFailure: (error) => error.message,
+  });
+  assert.match(timedOut, /evaluation exceeded 1ms/u);
+
+  let rejectLate;
+  const late = new Promise((resolve, reject) => {
+    rejectLate = reject;
+  });
+  const lateResult = await awaitWebDiagnosticWithDeadline(late, {
+    timeoutMs: 0,
+    onFailure: (error) => error.message,
+  });
+  rejectLate(new Error("late renderer rejection"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(lateResult, /evaluation exceeded 0ms/u);
 });
 
 test("host publication proof requires chrome and generation-local terminal bytes", () => {
@@ -130,15 +441,13 @@ test("anchors a two-pane framebuffer body to semantic chrome when tmux origin dr
     "left seed".padEnd(50) + " " + "__right_unique_marker__".padEnd(50),
     "".padEnd(50) + " " + "right row two".padEnd(50),
   ].join("\n");
-  const pane = {
-    semanticPaneId: "pane.promoted.right",
-    // Deliberately stale/impossible origin: this is the failure mode the live
-    // evidence previously hashed as an almost-empty rectangle.
-    left: 7,
-    top: 28,
-    width: 50,
-    height: 3,
-  };
+  const pane = activeTmuxPaneFromRows(
+    // Deliberately stale/impossible tmux origin: this is the failure mode the
+    // live evidence previously hashed as an almost-empty rectangle. Keeping
+    // the full active-pane sample supplies the semantic chrome anchor.
+    "%2|1|1|pane.promoted.right|7|28|50|3",
+  );
+  assert.ok(pane);
   assert.deepEqual(resolvePaneBodyRect(frame, pane), {
     left: 51,
     firstBodyRow: 3,
@@ -150,6 +459,11 @@ test("anchors a two-pane framebuffer body to semantic chrome when tmux origin dr
   });
   assert.match(paneBodyRegion(frame, pane), /__right_unique_marker__/u);
   assert.doesNotMatch(paneBodyRegion(frame, pane), /left seed/u);
+});
+
+test("causal qualification passes the full active pane into its after-capture body", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  assert.match(source, /const renderedBody = paneBodyRegion\(tuiFrame, activePane\);/u);
 });
 
 test("fails closed when duplicate semantic chrome could map a marker to the wrong pane", () => {
@@ -279,7 +593,10 @@ test("correlates same-client stages and daemon-local spans without subtracting c
       },
     ],
   );
-  assert.deepEqual(samples[0]?.clientStages, [{ operation: "lane-enqueue", offsetMs: 1 }]);
+  assert.deepEqual(
+    samples[0]?.clientStages.map(({ operation, offsetMs }) => ({ operation, offsetMs })),
+    [{ operation: "lane-enqueue", offsetMs: 1 }],
+  );
   assert.deepEqual(samples[0]?.daemonSpans, [
     {
       stage: "tmux",
@@ -308,7 +625,7 @@ test("correlates same-client stages and daemon-local spans without subtracting c
   ]);
 });
 
-test("labels latest-input next-output evidence as diagnostic rather than causal", () => {
+test("fails closed when causal-cell-v1 has no finalized proofs", () => {
   const report = buildProductDiagnosticReport({
     state: { status: "ready", daemon: { instanceId: "generation" }, convergence: null },
     truth: { session: "alpha", windows: [], panes: [] },
@@ -318,13 +635,374 @@ test("labels latest-input next-output evidence as diagnostic rather than causal"
     stderr: "",
   });
   assert.equal(report.inputCausalSummary.causalAttribution, false);
-  assert.equal(report.inputCausalSummary.correlation, "latest-input-to-next-output-probe");
-  assert.equal(report.firstBrokenInputBoundary, null);
+  assert.equal(report.inputCausalSummary.correlation, "causal-cell-v1");
+  assert.equal(report.inputCausalSummary.finalizedProofs, 0);
+  assert.equal(report.firstBrokenInputBoundary, "input-or-paint-pair");
   assert.ok(
     report.boundaries.some(
       (boundary) => boundary.id === "input-enqueue-to-correlated-changed-cell-paint",
     ),
   );
+});
+
+test("causal probe epochs admit one input and close on one terminal result", () => {
+  const processId = "opentui:1";
+  const traceId = "00000000-0000-4000-8000-000000000001";
+  const input = { type: "performance.stage", stage: "input", processId, traceId };
+  assert.deepEqual(causalProbeEpochState([input], 0, processId), {
+    status: "pending",
+    traceId,
+    reason: null,
+  });
+  assert.deepEqual(
+    causalProbeEpochState(
+      [
+        input,
+        {
+          type: "performance.stage",
+          stage: "client",
+          processId,
+          traceId,
+          operation: "causal-cell-painted",
+        },
+      ],
+      0,
+      processId,
+    ),
+    { status: "proved", traceId, reason: null },
+  );
+  assert.deepEqual(
+    causalProbeEpochState(
+      [
+        input,
+        {
+          type: "performance.stage",
+          stage: "client",
+          processId,
+          traceId,
+          operation: "causal-cell-failed:baseline-drift",
+        },
+      ],
+      0,
+      processId,
+    ),
+    { status: "failed", traceId, reason: "baseline-drift" },
+  );
+});
+
+test("causal probe epochs fail closed instead of pseudoreplicating concurrent inputs", () => {
+  const processId = "opentui:1";
+  assert.deepEqual(
+    causalProbeEpochState(
+      [
+        { type: "performance.stage", stage: "input", processId, traceId: "trace-a" },
+        { type: "performance.stage", stage: "input", processId, traceId: "trace-b" },
+      ],
+      0,
+      processId,
+    ),
+    { status: "ambiguous", traceId: null, reason: "multiple-inputs" },
+  );
+});
+
+test("causal fixture teardown requires the restored shell, marker, queues and geometry", () => {
+  const ready = {
+    fixtureOption: "",
+    currentCommand: "zsh",
+    expectedCommand: "zsh",
+    marker: "tmux-ide-shell-ready-token",
+    nativeFrame: "tmux-ide-shell-ready-token",
+    tuiBody: "tmux-ide-shell-ready-token",
+    inputPending: 0,
+    inputInFlight: 0,
+    inputPendingBytes: 0,
+    geometryStable: true,
+    canonicalWraparound: true,
+  };
+  assert.equal(causalFixtureShellReady(ready), true);
+  for (const [field, value] of [
+    ["fixtureOption", "ready-v1"],
+    ["currentCommand", "node"],
+    ["nativeFrame", ""],
+    ["tuiBody", ""],
+    ["inputPending", 1],
+    ["inputInFlight", 1],
+    ["inputPendingBytes", 1],
+    ["geometryStable", false],
+    ["canonicalWraparound", false],
+  ]) {
+    assert.equal(causalFixtureShellReady({ ...ready, [field]: value }), false, field);
+  }
+});
+
+test("causal fixture gate orders teardown and releases resource only after direct canonical proof", async () => {
+  let clock = 0;
+  const calls = [];
+  const observations = [
+    { fixtureOption: "ready-v1", currentCommand: "node" },
+    { fixtureOption: "", currentCommand: "zsh" },
+    {
+      fixtureOption: "",
+      currentCommand: "zsh",
+      expectedCommand: "zsh",
+      marker: "shell-ready",
+      nativeFrame: "shell-ready",
+      tuiBody: "shell-ready",
+      canonicalWraparound: true,
+      inputPending: 0,
+      inputInFlight: 0,
+      inputPendingBytes: 0,
+      geometryStable: true,
+      stabilityIdentity: "stable",
+    },
+  ];
+  let index = 0;
+  const result = await runCausalFixtureTeardownGate({
+    interrupt: () => calls.push("interrupt"),
+    observe: () => {
+      calls.push(`observe:${index}`);
+      return { expectedCommand: "zsh", marker: "shell-ready", ...observations[index++] };
+    },
+    sendShellMarker: () => calls.push("marker"),
+    releaseResource: () => calls.push("resource"),
+    now: () => clock,
+    wait: (ms) => {
+      clock += ms;
+      if (index >= observations.length) index = observations.length - 1;
+    },
+    stableMs: 25,
+    timeoutMs: 200,
+    pollMs: 25,
+  });
+  assert.deepEqual(result, { canDispatchResource: true });
+  assert.deepEqual(calls, [
+    "interrupt",
+    "observe:0",
+    "observe:1",
+    "marker",
+    "observe:2",
+    "observe:2",
+    "resource",
+  ]);
+});
+
+test("causal fixture canonical proof uses the latest exact-incarnation transition", () => {
+  const expected = {
+    processId: "opentui:1",
+    semanticPaneId: "pane.alpha",
+    generation: "generation",
+    incarnation: "incarnation:1",
+  };
+  const record = (wraparound, incarnation = expected.incarnation) => ({
+    type: "performance.terminal-canonical-mode",
+    ...expected,
+    incarnation,
+    wraparound,
+  });
+  assert.equal(latestCausalFixtureCanonicalWraparound([record(true)], 0, expected), true);
+  assert.equal(
+    latestCausalFixtureCanonicalWraparound([record(true), record(false)], 0, expected),
+    false,
+  );
+  assert.equal(
+    latestCausalFixtureCanonicalWraparound([record(true, "incarnation:other")], 0, expected),
+    false,
+  );
+});
+
+test("causal teardown never releases on rolled-back or wrong-incarnation mode proof", async () => {
+  const expected = {
+    processId: "opentui:1",
+    semanticPaneId: "pane.alpha",
+    generation: "generation",
+    incarnation: "incarnation:1",
+  };
+  const mode = (wraparound, incarnation = expected.incarnation) => ({
+    type: "performance.terminal-canonical-mode",
+    ...expected,
+    incarnation,
+    wraparound,
+  });
+  for (const records of [[mode(true), mode(false)], [mode(true, "incarnation:other")]]) {
+    let clock = 0;
+    let released = 0;
+    await assert.rejects(
+      runCausalFixtureTeardownGate({
+        interrupt: () => undefined,
+        sendShellMarker: () => undefined,
+        observe: () => ({
+          fixtureOption: "",
+          currentCommand: "zsh",
+          expectedCommand: "zsh",
+          marker: "shell-ready",
+          nativeFrame: "shell-ready",
+          tuiBody: "shell-ready",
+          canonicalWraparound: latestCausalFixtureCanonicalWraparound(records, 0, expected),
+          inputPending: 0,
+          inputInFlight: 0,
+          inputPendingBytes: 0,
+          geometryStable: true,
+          stabilityIdentity: "stable",
+        }),
+        releaseResource: () => {
+          released += 1;
+        },
+        now: () => clock,
+        wait: (ms) => {
+          clock += ms;
+        },
+        timeoutMs: 50,
+        pollMs: 25,
+      }),
+    );
+    assert.equal(released, 0);
+  }
+});
+
+test("causal fixture gate fails closed with zero resource dispatch on timeout and observation error", async () => {
+  for (const failure of ["timeout", "error"]) {
+    let clock = 0;
+    let resources = 0;
+    await assert.rejects(
+      runCausalFixtureTeardownGate({
+        interrupt: () => undefined,
+        observe: () => {
+          if (failure === "error") throw new Error("capture failed");
+          return { fixtureOption: "ready-v1", currentCommand: "node" };
+        },
+        sendShellMarker: () => undefined,
+        releaseResource: () => {
+          resources += 1;
+        },
+        now: () => clock,
+        wait: (ms) => {
+          clock += ms;
+        },
+        timeoutMs: 50,
+        pollMs: 25,
+      }),
+    );
+    assert.equal(resources, 0, failure);
+  }
+});
+
+test("causal teardown timeout identifies each failed predicate without retaining terminal content", async () => {
+  const ready = {
+    fixtureOption: "",
+    currentCommand: "zsh",
+    expectedCommand: "zsh",
+    marker: "private-marker",
+    nativeFrame: "private-marker secret-native",
+    tuiBody: "private-marker secret-tui",
+    markerNativeIndex: 0,
+    markerTuiIndex: 0,
+    canonicalWraparound: true,
+    canonical: {
+      revision: 5,
+      stateHash: "hash",
+      incarnation: "incarnation",
+      wraparound: true,
+    },
+    inputPending: 0,
+    inputInFlight: 0,
+    inputPendingBytes: 0,
+    geometryStable: true,
+    geometryBefore: "%1:80x24",
+    geometryAfter: "%1:80x24",
+    nativeHash: "native-hash",
+    bodyHash: "body-hash",
+    stabilityIdentity: "stable",
+    stabilityParts: { nativeHash: "native-hash", bodyHash: "body-hash" },
+  };
+  assert.doesNotMatch(JSON.stringify(causalFixtureTeardownDiagnostic(ready)), /secret-|private-/u);
+  for (const [field, value, failure] of [
+    ["fixtureOption", "ready-v1", "option-empty"],
+    ["currentCommand", "node", "command-matches"],
+    ["markerNativeIndex", null, "marker-native"],
+    ["markerTuiIndex", null, "marker-tui"],
+    ["canonicalWraparound", false, "canonical-wraparound"],
+    ["inputPending", 1, "queue-zero"],
+    ["geometryStable", false, "geometry-stable"],
+  ]) {
+    let clock = 0;
+    await assert.rejects(
+      runCausalFixtureTeardownGate({
+        interrupt: () => undefined,
+        sendShellMarker: () => undefined,
+        observe: () => ({ ...ready, [field]: value }),
+        releaseResource: () => assert.fail("must not release"),
+        now: () => clock,
+        wait: (ms) => {
+          clock += ms;
+        },
+        timeoutMs: 25,
+        stableMs: 100,
+        pollMs: 25,
+      }),
+      (error) => {
+        assert.match(error.message, /"failureKind":"predicate-failed"/u);
+        assert.match(error.message, new RegExp(`"${failure}"`, "u"));
+        return true;
+      },
+    );
+  }
+});
+
+test("causal teardown distinguishes identity churn from an incomplete stability window", async () => {
+  const observation = (identity) => ({
+    fixtureOption: "",
+    currentCommand: "zsh",
+    expectedCommand: "zsh",
+    marker: "marker",
+    nativeFrame: "marker",
+    tuiBody: "marker",
+    markerNativeIndex: 0,
+    markerTuiIndex: 0,
+    canonicalWraparound: true,
+    inputPending: 0,
+    inputInFlight: 0,
+    inputPendingBytes: 0,
+    geometryStable: true,
+    stabilityIdentity: identity,
+    stabilityParts: { nativeHash: identity },
+  });
+  for (const [identities, failureKind] of [
+    [["a", "b", "a"], "stability-identity-churn"],
+    [["a"], "stability-window-incomplete"],
+  ]) {
+    let clock = 0;
+    let index = 0;
+    await assert.rejects(
+      runCausalFixtureTeardownGate({
+        interrupt: () => undefined,
+        sendShellMarker: () => undefined,
+        observe: () => observation(identities[Math.min(index++, identities.length - 1)]),
+        releaseResource: () => assert.fail("must not release"),
+        now: () => clock,
+        wait: (ms) => {
+          clock += ms;
+        },
+        timeoutMs: identities.length * 25,
+        stableMs: 100,
+        pollMs: 25,
+      }),
+      (error) => {
+        assert.match(error.message, new RegExp(`"failureKind":"${failureKind}"`, "u"));
+        return true;
+      },
+    );
+  }
+});
+
+test("causal helper restores DECAWM and resets probes onto the visible first row", () => {
+  const source = readFileSync(
+    new URL("./lib/product-rig-causal-cell-fixture.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /writeSync\(1, "\\x1b\[\?7h/u);
+  assert.match(source, /if \(restored\) return;/u);
+  assert.match(source, /reset-v1;/u);
+  assert.match(source, /\\x1b\[1;\$\{columns\}H/u);
 });
 
 test("requires a closed zero-drop reference trace summary", () => {
@@ -378,6 +1056,7 @@ test("pairs only same-clock input and changed-cell paint traces", () => {
       clockId: "clock",
       endedAtMicros: 9_000,
       generation: "generation",
+      incarnation: "generation:0",
       semanticPaneId: "%1",
       revision: 4,
       stateHash: "abcd1234",
@@ -405,6 +1084,7 @@ test("pairs only same-clock input and changed-cell paint traces", () => {
       traceId: "one",
       durationMs: 8,
       generation: "generation",
+      incarnation: "generation:0",
       processId: "tui:1",
       clockId: "clock",
       semanticPaneId: "%1",
@@ -413,6 +1093,9 @@ test("pairs only same-clock input and changed-cell paint traces", () => {
       paintStateIdentity: "latest-canonical-state-blitted",
     },
   ]);
+  assert.equal(causalInputSampleHasIncarnation(samples[0]), true);
+  assert.equal(causalInputSampleHasIncarnation({ ...samples[0], incarnation: null }), false);
+  assert.equal(causalInputSampleHasIncarnation({ ...samples[0], incarnation: "" }), false);
 });
 
 test("qualifies paint evidence only when it names the latest canonical state blitted", () => {
@@ -455,6 +1138,11 @@ test("qualifies paint evidence only when it names the latest canonical state bli
     markerVisibleInNative: true,
     markerVisibleInPaneRect: true,
     paintStateIdentity: "latest-canonical-state-blitted",
+    causalAttribution: true,
+    row: 0,
+    column: 1,
+    beforeGrapheme: " ",
+    afterGrapheme: "x",
   };
   assert.equal(
     buildProductDiagnosticReport({ ...base, qualifyingInputEvidence: [evidence] }).inputSamples
@@ -521,12 +1209,287 @@ test("resource evidence requires a distribution and proves queues settle", () =>
   assert.equal(observation.heapRobustSlopeBytesPerSample, 1);
 });
 
-test("resource retention uses only exact acknowledged endpoint traces", () => {
+test("resource retention samples independent load-clear-settle cycles", () => {
+  const plan = productResourceCyclePlan();
+  assert.equal(PRODUCT_RESOURCE_CONDITIONING_CYCLE_COUNT, 8);
+  assert.equal(PRODUCT_RESOURCE_MEASURED_CYCLE_COUNT, 16);
+  assert.equal(plan.length, 24);
+  assert.deepEqual(
+    plan.map(({ phase }) => phase),
+    [
+      ...Array.from({ length: 8 }, () => "conditioning"),
+      ...Array.from({ length: 16 }, () => "measured"),
+    ],
+  );
+  assert.deepEqual(
+    plan.map(({ measuredIndex }) => measuredIndex),
+    [...Array.from({ length: 8 }, () => null), ...Array.from({ length: 16 }, (_, index) => index)],
+  );
+  assert.equal(new Set(plan.map(({ cycle }) => cycle)).size, plan.length);
+  assert.equal(new Set(plan.map(({ cycleMarker }) => cycleMarker)).size, plan.length);
+  assert.equal(new Set(plan.map(({ probe }) => probe)).size, plan.length);
+  assert.ok(plan.every(({ probe }) => typeof probe === "string" && probe.length === 1));
+  assert.ok(plan.every(({ loadLines }) => loadLines === 300));
+  for (const cycle of plan) {
+    const commands = productResourceCycleCommands(cycle);
+    assert.equal(commands.floodCommand.includes(`tmux-ide-flood-${cycle.cycle}`), false);
+    assert.equal(commands.settleCommand.includes(cycle.cycleMarker), false);
+  }
+  assert.throws(() => productResourceCyclePlan(16), /fixed and cannot be configured/u);
+});
+
+test("resource conditioning endpoints are fenced but excluded from measured endpoint ids", () => {
+  const plan = productResourceCyclePlan();
+  const endpoints = plan.map(({ cycle, phase }) => ({
+    cycle,
+    phase,
+    traceId: `${phase}-${cycle}`,
+  }));
+  assert.deepEqual(
+    productResourceMeasuredEndpointTraceIds(endpoints),
+    Array.from({ length: 16 }, (_, index) => `measured-${index + 8}`),
+  );
+  assert.throws(
+    () => productResourceMeasuredEndpointTraceIds(endpoints.slice(1)),
+    /exactly 24 cycle endpoints/u,
+  );
+  assert.throws(
+    () =>
+      productResourceMeasuredEndpointTraceIds([
+        endpoints[0],
+        { ...endpoints[1], phase: "measured" },
+        ...endpoints.slice(2),
+      ]),
+    /identity mismatch at cycle 1/u,
+  );
+  assert.throws(
+    () =>
+      productResourceMeasuredEndpointTraceIds([
+        endpoints[0],
+        { ...endpoints[1], traceId: endpoints[0].traceId },
+        ...endpoints.slice(2),
+      ]),
+    /trace id is duplicated at cycle 1/u,
+  );
+});
+
+test("resource endpoint closes only one new exact same-process paired trace", () => {
+  const expected = {
+    cycle: 2,
+    processId: "tui:1",
+    generation: "generation",
+    semanticPaneId: "%1",
+  };
+  const endpoint = (traceId) => ({
+    traceId,
+    processId: "tui:1",
+    generation: "generation",
+    semanticPaneId: "%1",
+    revision: 4,
+    stateHash: "hash",
+    paintStateIdentity: "latest-canonical-state-blitted",
+  });
+  assert.equal(
+    selectProductResourceEndpoint([endpoint("old")], [endpoint("old"), endpoint("new")], expected)
+      .traceId,
+    "new",
+  );
+  assert.throws(
+    () => selectProductResourceEndpoint([endpoint("old")], [endpoint("old")], expected),
+    /Missing paired resource endpoint/u,
+  );
+  assert.throws(
+    () =>
+      selectProductResourceEndpoint(
+        [endpoint("old")],
+        [endpoint("old"), endpoint("new-a"), endpoint("new-b")],
+        expected,
+      ),
+    /Ambiguous paired resource endpoint/u,
+  );
+
+  const pending = productResourceEndpointEpochState({
+    beforeSamples: [endpoint("old")],
+    afterSamples: [endpoint("old"), endpoint("new")],
+    expected,
+    inputSettled: true,
+    traceQuiet: false,
+    probeCellCount: 1,
+    geometryStable: true,
+  });
+  assert.equal(pending.status, "pending");
+  assert.equal(
+    productResourceEndpointEpochState({
+      beforeSamples: [endpoint("old")],
+      afterSamples: [endpoint("old"), endpoint("new")],
+      expected,
+      inputSettled: true,
+      traceQuiet: true,
+      probeCellCount: 1,
+      geometryStable: true,
+    }).status,
+    "ready",
+  );
+  assert.throws(
+    () =>
+      productResourceEndpointEpochState({
+        beforeSamples: [endpoint("old")],
+        afterSamples: [endpoint("old"), endpoint("new"), endpoint("late")],
+        expected,
+        inputSettled: true,
+        traceQuiet: true,
+        probeCellCount: 1,
+        geometryStable: true,
+      }),
+    /Ambiguous paired resource endpoint/u,
+  );
+  assert.throws(
+    () =>
+      productResourceEndpointEpochState({
+        beforeSamples: [endpoint("old")],
+        afterSamples: [endpoint("old"), endpoint("new")],
+        expected,
+        inputSettled: true,
+        traceQuiet: true,
+        probeCellCount: 1,
+        geometryStable: false,
+      }),
+    /geometry changed/u,
+  );
+  assert.throws(
+    () =>
+      productResourceEndpointEpochState({
+        beforeSamples: [endpoint("old")],
+        afterSamples: [endpoint("old"), endpoint("new")],
+        expected,
+        inputSettled: true,
+        traceQuiet: true,
+        probeCellCount: 2,
+        geometryStable: true,
+      }),
+    /Ambiguous visible resource probe/u,
+  );
+});
+
+test("resource probe requires one shared newly-visible native and TUI cell", () => {
+  assert.deepEqual(
+    productResourceProbeCells({
+      beforeNative: "prompt ",
+      afterNative: "prompt a",
+      beforeTui: "prompt ",
+      afterTui: "prompt a",
+      probe: "a",
+    }),
+    [{ row: 0, col: 7 }],
+  );
+  assert.deepEqual(
+    productResourceProbeCells({
+      beforeNative: "prompt ",
+      afterNative: "prompt a",
+      beforeTui: "prompt ",
+      afterTui: "prompt ",
+      probe: "a",
+    }),
+    [],
+  );
+
+  const pane = {
+    paneId: "%1",
+    semanticPaneId: "pane.one",
+    left: 0,
+    top: 0,
+    width: 20,
+    height: 4,
+  };
+  const frame = "● pane.one         \nprompt             \n                   ";
+  assert.equal(
+    productResourceGeometryIdentity(frame, pane),
+    productResourceGeometryIdentity(frame.replace("prompt", "prompt a"), pane),
+  );
+  assert.notEqual(
+    productResourceGeometryIdentity(frame, pane),
+    productResourceGeometryIdentity(frame, { ...pane, width: 21 }),
+  );
+});
+
+test("resource queue settlement reads the latest bounded input counters", () => {
+  const stage = (inputPending, inputInFlight, inputPendingBytes) => ({
+    type: "performance.stage",
+    stage: "client",
+    processId: "tui:1",
+    inputPending,
+    inputInFlight,
+    inputPendingBytes,
+  });
+  assert.equal(productInputQueuesSettled([stage(1, 0, 1), stage(0, 0, 0)], "tui:1"), true);
+  assert.equal(productInputQueuesSettled([stage(0, 0, 0), stage(0, 1, 0)], "tui:1"), false);
+  assert.equal(
+    productInputQueuesSettled(
+      [
+        {
+          type: "performance.input-queue-state",
+          processId: "tui:2",
+          operation: "initialized",
+          inputPending: 0,
+          inputInFlight: 0,
+          inputPendingBytes: 0,
+        },
+      ],
+      "tui:2",
+    ),
+    true,
+  );
+  assert.equal(productInputQueuesSettled([], "tui:3"), false);
+});
+
+test("causal baseline names every fail-closed readiness predicate", () => {
+  const ready = {
+    fixtureOption: "ready-v1:probe-0",
+    expectedOption: "ready-v1:probe-0",
+    currentCommand: "node",
+    queueObservation: { inputPending: 0, inputInFlight: 0, inputPendingBytes: 0 },
+    activePaneId: "%1",
+    fixturePaneId: "%1",
+    geometryBefore: "%1:80x24",
+    geometryAfter: "%1:80x24",
+    nativeCell: " ",
+    tuiCell: " ",
+  };
+  assert.equal(causalFixtureBaselineReadiness(ready).ready, true);
+  for (const [field, value, predicate] of [
+    ["fixtureOption", "ready-v1:other", "optionReady"],
+    ["currentCommand", "zsh", "helperCommandReady"],
+    ["queueObservation", null, "queueObserved"],
+    ["queueObservation", { inputPending: 1, inputInFlight: 0, inputPendingBytes: 1 }, "queueZero"],
+    ["activePaneId", "%2", "paneIdentityReady"],
+    ["geometryAfter", "%1:81x24", "geometryStable"],
+    ["nativeCell", "x", "nativeCellBlank"],
+    ["tuiCell", "x", "tuiCellBlank"],
+  ]) {
+    const result = causalFixtureBaselineReadiness({ ...ready, [field]: value });
+    assert.equal(result.ready, false, predicate);
+    assert.equal(result.predicates[predicate], false, predicate);
+  }
+});
+
+test("causal baseline stability ignores unrelated trace growth", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("const resetFixtureBaseline");
+  const baseline = source.slice(start, source.indexOf("let causalFailure", start));
+  const identity = baseline.match(/const nextIdentity = \[[\s\S]*?\]\.join/)?.[0] ?? "";
+  assert.doesNotMatch(identity, /records\.length/u);
+  assert.match(identity, /queueObservation\?\.atMicros/u);
+});
+
+test("resource conditioning remains in peak and queue evidence but not memory slopes", () => {
   const stages = [
-    ...Array.from({ length: 16 }, (_, index) => ({
-      traceId: `noise-${index}`,
+    ...Array.from({ length: 8 }, (_, index) => ({
+      traceId: `conditioning-${index}`,
       rssBytes: 900_000 + index * 10_000,
       heapUsedBytes: 800_000 + index * 10_000,
+      inputPending: index === 3 ? 7 : 0,
+      inputInFlight: index === 3 ? 3 : 0,
+      inputPendingBytes: index === 3 ? 777 : 0,
     })),
     ...Array.from({ length: 16 }, (_, index) => ({
       traceId: `endpoint-${index}`,
@@ -534,16 +1497,40 @@ test("resource retention uses only exact acknowledged endpoint traces", () => {
       heapUsedBytes: 50_000 + index,
       inputPending: 0,
       inputInFlight: 0,
+      inputPendingBytes: 0,
     })),
   ];
   const observation = summarizeProductResources(
     stages,
-    [],
+    [
+      {
+        queuePeak: 9,
+        queueCapacity: 10,
+        settledQueueDepth: 0,
+        revisionLagPeak: 4,
+      },
+    ],
     Array.from({ length: 16 }, (_, index) => `endpoint-${index}`),
   );
   assert.equal(observation.memorySampleCount, 16);
+  assert.equal(observation.workloadMemorySampleCount, 24);
+  assert.equal(observation.rssWorkloadPeakBytes, 970_000);
+  assert.equal(observation.heapWorkloadPeakBytes, 870_000);
   assert.equal(observation.rssPeakBytes, 100_015);
+  assert.equal(observation.heapPeakBytes, 50_015);
+  assert.equal(observation.rssGrowthBytes, 15);
   assert.equal(observation.heapGrowthBytes, 15);
+  assert.equal(observation.rssRobustSlopeBytesPerSample, 1);
+  assert.equal(observation.heapRobustSlopeBytesPerSample, 1);
+  assert.equal(observation.inputPendingPeak, 7);
+  assert.equal(observation.inputInFlightPeak, 3);
+  assert.equal(observation.inputPendingBytesPeak, 777);
+  assert.equal(observation.settledInputPending, 0);
+  assert.equal(observation.settledInputInFlight, 0);
+  assert.equal(observation.deliveryQueuePeak, 9);
+  assert.equal(observation.deliveryQueueCapacity, 10);
+  assert.equal(observation.settledDeliveryQueueDepth, 0);
+  assert.equal(observation.revisionLagPeak, 4);
 });
 
 test("resource growth uses ordered quiescent endpoints, not a GC max-min range", () => {

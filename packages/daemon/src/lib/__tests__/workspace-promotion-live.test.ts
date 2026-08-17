@@ -80,14 +80,15 @@ describe.skipIf(!hasTmux).sequential("workspace promotion isolated tmux integrat
     rmSync(root, { recursive: true, force: true });
   });
 
-  it("promotes an adopted multi-window session and exposes honest per-pane attachability", async () => {
+  it("promotes an ordinary multi-window session and exposes honest per-pane attachability", async () => {
     handle = await startEmbeddedDaemon({
       authToken: "remote-token-is-not-owner",
       localBypassToken: ownerToken,
       silent: true,
     });
 
-    // A real, arbitrary-topology adopted session the app did NOT create:
+    // A real, arbitrary-topology ordinary session the app did NOT create or
+    // pre-adopt:
     // window 1 is a single-pane self-reporting agent; window 2 is a two-pane
     // split of plain shells.
     const agentPaneId = run([
@@ -122,8 +123,6 @@ describe.skipIf(!hasTmux).sequential("workspace promotion isolated tmux integrat
       "exec sleep 300",
     ]);
     run(["split-window", "-d", "-t", workPaneId, "-c", projectDir, "exec sleep 300"]);
-    run(["set-option", "-t", targetSession, "@tmux_ide_adopted", "1"]);
-
     // A live /ws/events client observing the typed promotion receipts the
     // dispatcher emits alongside action.complete (m42/receipts).
     const receiptSocket = new WebSocket(`${handle.apiBaseUrl.replace(/^http/u, "ws")}/ws/events`, {
@@ -204,12 +203,12 @@ describe.skipIf(!hasTmux).sequential("workspace promotion isolated tmux integrat
     const sessionStamps = run([
       "list-sessions",
       "-F",
-      "#{session_name}\t#{@tmux_ide_workspace_name}\t#{@tmux_ide_workspace_promoted_v1}\t#{@tmux_ide_workspace_open_v1}",
+      "#{session_name}\t#{@tmux_ide_workspace_name}\t#{@tmux_ide_workspace_promoted_v1}\t#{@tmux_ide_workspace_open_v1}\t#{@tmux_ide_adopted}",
     ])
       .split("\n")
       .map((line) => line.split("\t"))
       .find((fields) => fields[0] === targetSession);
-    expect(sessionStamps).toEqual([targetSession, workspaceName, "1", ""]);
+    expect(sessionStamps).toEqual([targetSession, workspaceName, "1", "", "1"]);
 
     // Every pane is stamped and every window carries a durable window id.
     const paneStamps = run([
@@ -346,7 +345,6 @@ describe.skipIf(!hasTmux).sequential("workspace promotion isolated tmux integrat
       "exec sleep 300",
     ]);
     run(["split-window", "-d", "-t", `${revivedSession}:work`, "-c", revivedDir, "exec sleep 300"]);
-    run(["set-option", "-t", revivedSession, "@tmux_ide_adopted", "1"]);
     const revivedWorkspace = registry.add({
       name: `revived-${randomUUID().replace(/-/gu, "")}`,
       sessionName: revivedSession,
@@ -356,6 +354,15 @@ describe.skipIf(!hasTmux).sequential("workspace promotion isolated tmux integrat
       configPath: null,
       hasWorkspaceConfig: false,
     });
+    expect(
+      run([
+        "list-sessions",
+        "-f",
+        `#{==:#{session_name},${revivedSession}}`,
+        "-F",
+        "#{@tmux_ide_adopted}",
+      ]),
+    ).toBe("");
 
     const stampsOf = (sessionName: string): string[][] =>
       run([
@@ -413,6 +420,15 @@ describe.skipIf(!hasTmux).sequential("workspace promotion isolated tmux integrat
     expect(
       registry.list().filter((workspace) => workspace.sessionName === revivedSession),
     ).toHaveLength(1);
+    expect(
+      run([
+        "list-sessions",
+        "-f",
+        `#{==:#{session_name},${revivedSession}}`,
+        "-F",
+        "#{@tmux_ide_adopted}",
+      ]),
+    ).toBe("1");
 
     // After: every pane carries a durable pane stamp and every window a durable
     // window stamp — the two-pane split window shares one.

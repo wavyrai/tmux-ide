@@ -34,6 +34,7 @@ import {
 } from "./open-tui-verified-routing.ts";
 import { createOpenTuiPaneStreamSocket } from "./open-tui-pane-stream-socket.ts";
 import { currentTuiPerformanceEventSink } from "./performance-events.ts";
+import type { CausalCellClientLedger } from "./runtime/causal-cell-client-ledger.ts";
 
 const OPENTUI_ORIGIN = "tmux-ide://opentui";
 /** Stable controller principal used by the daemon authority snapshot. */
@@ -61,6 +62,7 @@ export interface ConnectOpenTuiWorkspaceRuntimePortOptions {
   readonly inventory: WorkspaceClientRuntimeInventory;
   readonly routing: OpenTuiVerifiedRoutingContext;
   readonly signal?: AbortSignal;
+  readonly causalCellLedger?: CausalCellClientLedger;
   /** Prime inventory-wide canonical consumers before coherence can settle. */
   readonly prepareRuntime?: (runtime: OpenTuiWorkspaceRuntimePort) => void | Promise<void>;
   readonly onFault?: (error: Error) => void;
@@ -692,6 +694,15 @@ export async function connectOpenTuiWorkspaceRuntimePort(
       hostClientId: OPEN_TUI_HOST_CLIENT_ID,
       requestId: randomUUID(),
       requestInitialInputAuthority: false,
+      ...(options.causalCellLedger
+        ? {
+            diagnosticCapabilities: ["causal-cell-v1" as const],
+            onCausalCellProof: (proof: import("@tmux-ide/contracts").CausalCellProofV1) =>
+              options.causalCellLedger?.noteProof(proof),
+            onCausalCellFailure: (failure: import("@tmux-ide/contracts").CausalCellFailureV1) =>
+              options.causalCellLedger?.fail(failure.traceId, failure.reason),
+          }
+        : {}),
       signal: options.signal,
       stream: {
         protocolVersion: 1,
@@ -729,6 +740,25 @@ export async function connectOpenTuiWorkspaceRuntimePort(
       },
       ...(performanceSink?.terminalTraceStage
         ? {
+            onInputTransportStage: ({ traceId, operation, atMicros }) => {
+              try {
+                const memory = process.memoryUsage();
+                performanceSink.terminalTraceStage?.({
+                  traceId,
+                  scenario: "terminal-input-to-paint",
+                  stage: "client",
+                  operation,
+                  processId: `opentui:${process.pid}`,
+                  clockId: "opentui-performance-now",
+                  clockKind: "performance-now",
+                  atMicros,
+                  rssBytes: memory.rss,
+                  heapUsedBytes: memory.heapUsed,
+                });
+              } catch {
+                // Diagnostics cannot alter input transport truth.
+              }
+            },
             onTerminalFrameArrival: ({ traceId, atMicros }) => {
               const memory = process.memoryUsage();
               performanceSink.terminalTraceStage?.({
@@ -859,8 +889,8 @@ export async function connectOpenTuiWorkspaceRuntimePort(
     },
     submitIntent: async (operationId, intent) =>
       (await opened.submitIntent(operationId, intent)) ?? undefined,
-    sendTerminalInput: (target, input, performanceTraceId) =>
-      opened.sendTerminalInput(target, input, performanceTraceId),
+    sendTerminalInput: (target, input, performanceTraceId, causalProbe) =>
+      opened.sendTerminalInput(target, input, performanceTraceId, causalProbe),
     onReceipt(listener) {
       if (closed) return () => undefined;
       receiptListeners.add(listener);

@@ -159,14 +159,105 @@ function bundle(
 }
 
 describe("OpenTUI generation host", () => {
+  it("consumes a prepared connection once, then resolves fresh generations", async () => {
+    const view = presentation();
+    const prepared = connection("daemon-a");
+    const resolveConnection = vi.fn(async () => connection("daemon-b"));
+    const bundles: FakeBundle[] = [];
+    const scheduled: Array<() => void> = [];
+    const host = createOpenTuiGenerationHost("alpha", view.value, {
+      initialConnection: prepared,
+      observeCanonicalGeneration: inertCanonicalObserver,
+      resolveConnection,
+      buildBundle: (resolved, callbacks) => {
+        const created = bundle(resolved, callbacks);
+        bundles.push(created);
+        return created;
+      },
+      createRebindCoordinator: () =>
+        new DaemonAuthorityRebindCoordinator({
+          schedule: (callback) => {
+            scheduled.push(callback);
+            return scheduled.length as unknown as ReturnType<typeof setTimeout>;
+          },
+          cancel: vi.fn(),
+        }),
+    });
+
+    const started = host.start();
+    await flushHostStart();
+    expect(resolveConnection).not.toHaveBeenCalled();
+    expect(bundles[0]?.connection).toBe(prepared);
+    bundles[0]!.activate();
+    await started;
+
+    bundles[0]!.emitLifecycle(mismatch("daemon-a"));
+    scheduled.shift()?.();
+    await flushHostStart();
+    expect(resolveConnection).toHaveBeenCalledOnce();
+    expect(bundles[1]?.connection.target.daemon.instanceId).toBe("daemon-b");
+    await host.dispose();
+  });
+
+  it("disposes an unconsumed prepared connection when the host retires before start", async () => {
+    const view = presentation();
+    const disposeConnection = vi.fn();
+    const host = createOpenTuiGenerationHost("alpha", view.value, {
+      initialConnection: connection("daemon-a", disposeConnection),
+      observeCanonicalGeneration: inertCanonicalObserver,
+      resolveConnection: vi.fn(async () => connection("daemon-b")),
+      buildBundle: (resolved, callbacks) => bundle(resolved, callbacks),
+    });
+
+    await host.dispose();
+    expect(disposeConnection).toHaveBeenCalledOnce();
+  });
+
+  it("retires a prepared stale generation before first publication", async () => {
+    const view = presentation();
+    const disposePrepared = vi.fn();
+    const current = connection("daemon-b");
+    const resolveConnection = vi.fn(async () => current);
+    let created!: FakeBundle;
+    const host = createOpenTuiGenerationHost("alpha", view.value, {
+      initialConnection: connection("daemon-a", disposePrepared),
+      observeCanonicalGeneration: async (listener) => {
+        listener("daemon-b");
+        return () => undefined;
+      },
+      resolveConnection,
+      buildBundle: (resolved, callbacks) => (created = bundle(resolved, callbacks)),
+    });
+
+    const started = host.start();
+    await flushHostStart();
+    expect(disposePrepared).toHaveBeenCalledOnce();
+    expect(resolveConnection).toHaveBeenCalledOnce();
+    expect(created.connection).toBe(current);
+    created.activate();
+    await expect(started).resolves.toBe(true);
+    expect(host.getSnapshot().daemonGeneration).toBe("daemon-b");
+    await host.dispose();
+  });
+
   it("publishes only after coherent runtime activation", async () => {
     const view = presentation();
     const firstConnection = connection("daemon-a");
     let created!: FakeBundle;
-    const host = createOpenTuiGenerationHost("alpha", view.value, {
+    const diagnosticStates: string[] = [];
+    let host!: ReturnType<typeof createOpenTuiGenerationHost>;
+    host = createOpenTuiGenerationHost("alpha", view.value, {
       observeCanonicalGeneration: inertCanonicalObserver,
       resolveConnection: vi.fn(async () => firstConnection),
       buildBundle: (resolved, callbacks) => (created = bundle(resolved, callbacks)),
+      onDiagnostic: (phase, details) => {
+        if (phase === "host-internal-snapshot-publication") {
+          diagnosticStates.push(
+            `${String(details.publicationPhase)}:${host.getSnapshot().status}:${view.adopt.mock.calls.length}`,
+          );
+        }
+        throw new Error("diagnostic sink failed");
+      },
     });
     const states: string[] = [];
     host.subscribe((snapshot) => states.push(snapshot.status));
@@ -187,6 +278,11 @@ describe("OpenTUI generation host", () => {
     });
     expect(states).toEqual(["unavailable", "connecting", "live"]);
     expect(view.adopt).toHaveBeenCalledOnce();
+    expect(diagnosticStates).toEqual([
+      "presentation-adopted:connecting:1",
+      "candidate-activation-admitted:connecting:1",
+      "internal-snapshot-published:live:1",
+    ]);
   });
 
   it("retains the old bundle until an event-driven identity rebind activates", async () => {
@@ -353,7 +449,7 @@ describe("OpenTUI generation host", () => {
     await Promise.resolve();
 
     bundles[1]!.emitLifecycle(mismatch("daemon-b"));
-    for (let index = 0; index < 6; index += 1) await Promise.resolve();
+    await flushHostStart();
     expect(bundles[1]!.disposeSpy).toHaveBeenCalledOnce();
     expect(host.getSnapshot()).toMatchObject({ status: "rebinding", daemonGeneration: "daemon-a" });
     expect(scheduled).toHaveLength(1);

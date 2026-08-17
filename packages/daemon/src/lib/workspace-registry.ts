@@ -29,6 +29,18 @@ type RegistryFile = z.infer<typeof RegistryFileSchemaZ>;
 
 export type ListSessionsFn = () => readonly string[];
 
+export const WORKSPACE_REGISTRY_TMUX_TIMEOUT_MS = 2_000;
+
+type WorkspaceRegistryExecFileSync = (
+  file: string,
+  args: readonly string[],
+  options: {
+    readonly encoding: "utf-8";
+    readonly stdio: readonly ["ignore", "pipe", "pipe"];
+    readonly timeout: number;
+  },
+) => string;
+
 export interface WorkspaceRegistryOptions {
   /** Override registry dir for tests. Defaults to ~/.tmux-ide. */
   dir?: string;
@@ -263,18 +275,31 @@ export function _setDefaultWorkspaceRegistryForTests(registry: WorkspaceRegistry
   _defaultNamespaceKey = registry ? resolveRuntimeNamespace().registryDir : null;
 }
 
+export function listTmuxSessionsForWorkspaceRegistry(run: WorkspaceRegistryExecFileSync): string[] {
+  try {
+    const raw = run("tmux", ["list-sessions", "-F", "#{session_name}"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: WORKSPACE_REGISTRY_TMUX_TIMEOUT_MS,
+    });
+    return raw.split("\n").filter(Boolean);
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "ETIMEDOUT"
+    ) {
+      throw error;
+    }
+    return [];
+  }
+}
+
 function defaultListSessions(): string[] {
   // Lazy import keeps tmux-bridge optional for test environments that
   // don't have tmux available; tests inject a stub instead.
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
-  try {
-    const raw = execFileSync("tmux", ["list-sessions", "-F", "#{session_name}"], {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "pipe"],
-    }) as string;
-    return raw.split("\n").filter(Boolean);
-  } catch {
-    return [];
-  }
+  return listTmuxSessionsForWorkspaceRegistry(execFileSync as WorkspaceRegistryExecFileSync);
 }

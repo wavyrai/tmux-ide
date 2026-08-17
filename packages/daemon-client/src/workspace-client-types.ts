@@ -5,6 +5,7 @@ import type {
   ApplicationShellCommandInvocation,
   ApplicationShellProjectionInputV1,
   ApplicationShellProjectionV1,
+  CausalCellProbeRequestV1,
   DesktopApplicationShellTarget,
   InteractionReceipt,
   SessionRuntimeActivityKind,
@@ -23,6 +24,7 @@ import type {
   WorkspaceOpenCancelledResult,
   WorkspaceOpenCommittedResult,
   WorkspaceOpenPreparedResult,
+  TerminalRuntimeInventoryProjectionV1,
 } from "@tmux-ide/contracts";
 
 import type {
@@ -165,6 +167,8 @@ export interface WorkspaceClientRuntimeInventory {
   readonly sessionId: string;
   readonly daemonGeneration: string;
   readonly shellGeneration: number;
+  /** Present when the dedicated terminal resource, not V2, owns topology. */
+  readonly terminalResourceRevision?: number;
   readonly semanticPaneIds: readonly string[];
 }
 
@@ -196,6 +200,8 @@ export interface WorkspaceClientPorts<
   ) => void;
   /** Called only when no active runtime remains (empty inventory/target retirement). */
   readonly didRetireRuntime?: () => void;
+  /** Presentation inventory disagreed with the newer terminal authority. */
+  readonly requestTerminalRuntimeInventoryRefresh?: () => void;
   readonly actions: WorkspaceClientOwnerActionPort;
 }
 
@@ -210,6 +216,8 @@ export interface WorkspaceClientOptions<
   readonly clock?: GenerationBoundClock;
   readonly operationId?: () => string;
   readonly operationTimeoutMs?: number;
+  /** OpenTUI starts V2 only after terminal adoption or an explicit fallback decision. */
+  readonly deferApplicationShell?: boolean;
 }
 
 export interface WorkspaceClient<
@@ -226,6 +234,10 @@ export interface WorkspaceClient<
   /** Retires the previous target completely before this promise settles. */
   setTarget(target: DesktopApplicationShellTarget): Promise<void>;
   refresh(): void;
+  /** Adopt/update the dedicated ongoing topology authority for this local generation. */
+  adoptTerminalRuntimeInventory(resource: TerminalRuntimeInventoryProjectionV1): boolean;
+  /** Old-daemon fallback: V2 resumes its historical topology authority. */
+  startApplicationShellFallback(): void;
   dispatch(command: WorkspaceClientDispatch): Promise<WorkspaceClientDispatchResult>;
   subscribeTerminal(
     target: TerminalReplicaAddress,
@@ -243,6 +255,7 @@ export interface WorkspaceClient<
     target: TerminalReplicaAddress,
     input: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
+    causalProbe?: CausalCellProbeRequestV1,
   ): Promise<SessionRuntimeTerminalInputResult>;
   fitViewport(cols: number, rows: number): Promise<"ok" | "authority-lost">;
   setPresence(state: SessionRuntimePresenceState): void;

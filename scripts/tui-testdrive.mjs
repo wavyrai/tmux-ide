@@ -16,14 +16,27 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
+  renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { buildTuiHostPublicationEvidence } from "./lib/tui-host-publication.mjs";
+import {
+  MAX_CLIPBOARD_BYTES,
+  MAX_CLIPBOARD_CALLBACK_ARTIFACTS,
+  deliverExactHostBytes,
+  enforceClipboardCallbackCap,
+  executeTestdriveInputOperation,
+  fullTerminalCapabilities,
+  parseTestdriveInputDocument,
+  waitForClipboardObservation,
+} from "./lib/tui-testdrive-input.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const hostSession = process.env.TMUX_IDE_TESTDRIVE_HOST_SESSION?.trim() || "_tmux-ide-testdrive";
@@ -35,6 +48,7 @@ const launcherPath = join(runtimeDir, "launch.sh");
 const logPath = join(runtimeDir, "stderr.log");
 const perfLogPath = join(runtimeDir, "performance.jsonl");
 const metadataPath = join(runtimeDir, "state.json");
+const clipboardObservationDir = join(runtimeDir, "clipboard-observations");
 const namespaceSocketName = `tmux-ide-testdrive-${process.getuid?.() ?? process.pid}`;
 const cleanupToken = `testdrive:cleanup:${process.getuid?.() ?? process.pid}`;
 const targetSocketName = process.env.TMUX_IDE_TESTDRIVE_TARGET_SOCKET_NAME?.trim() || null;
@@ -60,6 +74,7 @@ Usage:
   pnpm tui:testdrive publication <chrome|terminal> [--token TEXT] [--generation ID] [--json]
   pnpm tui:testdrive key <tmux-key> [...]
   pnpm tui:testdrive text <literal text>
+  pnpm tui:testdrive input '<strict v1 JSON document>'
   pnpm tui:testdrive mouse drag <from-x> <from-y> <to-x> <to-y>
   pnpm tui:testdrive mouse click <x> <y>
   pnpm tui:testdrive mouse <move|down|hold|up> <x> <y>
@@ -76,6 +91,11 @@ Examples:
   pnpm tui:testdrive capture
   pnpm tui:testdrive key F2
   pnpm tui:testdrive text "echo hello"
+  pnpm tui:testdrive input '{"version":1,"kind":"paste","text":"echo hello"}'
+  pnpm tui:testdrive input '{"version":1,"kind":"focus","state":"blur"}'
+  pnpm tui:testdrive input '{"version":1,"kind":"application-mouse","action":"click","x":42,"y":8}'
+  pnpm tui:testdrive input '{"version":1,"kind":"selection-drag","from":{"x":42,"y":8},"to":{"x":55,"y":8},"contentRect":{"x":40,"y":6,"width":80,"height":24}}'
+  pnpm tui:testdrive input '{"version":1,"kind":"copy-capture"}'
   pnpm tui:testdrive key Enter
   pnpm tui:testdrive mouse drag 94 12 104 12
   pnpm tui:testdrive resize 100 30
@@ -95,14 +115,19 @@ function tmux(args, options = {}) {
   return execFileSync("tmux", [...(hostSocketPath ? ["-S", hostSocketPath] : []), ...args], {
     cwd: repoRoot,
     env: { ...process.env, TMUX: "", TMUX_TMPDIR: "" },
-    encoding: "utf8",
-    stdio: options.inherit ? "inherit" : ["ignore", "pipe", "pipe"],
+    encoding: options.encoding ?? "utf8",
+    input: options.input,
+    timeout: options.timeout,
+    maxBuffer: options.maxBuffer,
+    stdio: options.inherit
+      ? "inherit"
+      : [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
   });
 }
 
-function sessionExists(name) {
+function sessionExists(name, timeout) {
   try {
-    tmux(["has-session", "-t", `=${name}`]);
+    tmux(["has-session", "-t", `=${name}`], { timeout });
     return true;
   } catch {
     return false;
@@ -172,14 +197,94 @@ function coordinateOption(name, raw) {
   return value;
 }
 
+function injectHostBytes(identity, bytes, timeoutMs = 2_000) {
+  const bufferName = `testdrive-input-${process.pid}-${randomUUID()}`;
+  // load-buffer/paste-buffer writes the exact byte string to the hosted pane
+  // PTY. Unlike send-keys it does not translate key names or reinterpret the
+  // payload, so OpenTUI's own parser sees paste/focus/mouse protocols.
+  deliverExactHostBytes({
+    identity,
+    bytes,
+    timeoutMs,
+    bufferName,
+    runTmux: tmux,
+    clock: performance,
+  });
+}
+
+function parseHostPaneIdentity(output) {
+  const [paneId, sessionId, rawCols, rawRows] = output.trim().split("\t");
+  const cols = Number(rawCols);
+  const rows = Number(rawRows);
+  if (!/^%[0-9]+$/u.test(paneId ?? "") || !/^\$[0-9]+$/u.test(sessionId ?? "")) {
+    fail("tmux did not resolve an immutable host pane/session identity");
+  }
+  if (!Number.isInteger(cols) || cols < 1 || !Number.isInteger(rows) || rows < 1) {
+    fail("tmux did not resolve valid host pane geometry");
+  }
+  return { paneId, sessionId, cols, rows };
+}
+
+function resolveHostPaneIdentity(timeoutMs) {
+  const deadline = performance.now() + timeoutMs;
+  const remaining = () => {
+    const value = Math.floor(deadline - performance.now());
+    if (value < 1) fail("host pane identity resolution exceeded its absolute deadline");
+    return value;
+  };
+  if (!sessionExists(hostSession, remaining())) fail("The test-drive TUI is not running");
+  return parseHostPaneIdentity(
+    tmux(
+      [
+        "display-message",
+        "-p",
+        "-t",
+        `=${hostSession}:0.0`,
+        "#{pane_id}\t#{session_id}\t#{pane_width}\t#{pane_height}",
+      ],
+      { timeout: remaining() },
+    ),
+  );
+}
+
+function verifyHostPaneIdentity(identity, timeoutMs) {
+  const current = parseHostPaneIdentity(
+    tmux(
+      [
+        "display-message",
+        "-p",
+        "-t",
+        identity.paneId,
+        "#{pane_id}\t#{session_id}\t#{pane_width}\t#{pane_height}",
+      ],
+      { timeout: timeoutMs },
+    ),
+  );
+  if (
+    current.paneId !== identity.paneId ||
+    current.sessionId !== identity.sessionId ||
+    current.cols !== identity.cols ||
+    current.rows !== identity.rows
+  ) {
+    fail("test-drive host pane identity or geometry changed during input delivery");
+  }
+}
+
 function sendMouse(type, x, y) {
-  if (!sessionExists(hostSession)) fail("The test-drive TUI is not running");
+  const identity = resolveHostPaneIdentity(2_000);
+  const geometry = { cols: identity.cols, rows: identity.rows };
+  if (!geometry || x >= geometry.cols || y >= geometry.rows) {
+    fail(
+      `mouse coordinate ${x},${y} is outside host geometry ${geometry?.cols ?? "?"}x${geometry?.rows ?? "?"}`,
+    );
+  }
   // SGR mouse coordinates are one-based. OpenTUI receives these directly on
   // the hosted pane PTY, exactly as it would from a mouse-capable terminal.
   const suffix = type === "up" ? "m" : "M";
   const buttonCode = type === "drag" ? 32 : type === "move" ? 35 : 0;
   const sequence = `\u001b[<${buttonCode};${x + 1};${y + 1}${suffix}`;
-  tmux(["send-keys", "-t", `=${hostSession}:0.0`, "-l", sequence]);
+  injectHostBytes(identity, sequence);
+  verifyHostPaneIdentity(identity, 2_000);
 }
 
 async function mouse(args) {
@@ -340,6 +445,215 @@ function liveHostSize() {
   } catch {
     return null;
   }
+}
+
+function rawClipboardArtifactIds(operationDir) {
+  if (!existsSync(operationDir)) return [];
+  return [
+    ...new Set(
+      readdirSync(operationDir)
+        .filter((name) => /^(?:buffer[0-9]+|overflow)\.(?:bin|tmp|json)$/u.test(name))
+        .map((name) => name.slice(0, name.lastIndexOf("."))),
+    ),
+  ].sort();
+}
+
+function clipboardEventArtifacts(nonce) {
+  const operationDir = join(clipboardObservationDir, nonce);
+  const artifacts = rawClipboardArtifactIds(operationDir);
+  if (artifacts.length > MAX_CLIPBOARD_CALLBACK_ARTIFACTS + 1) {
+    fail("clipboard callback artifacts exceeded their hard overflow bound");
+  }
+  return artifacts;
+}
+
+function clipboardHookName(nonce) {
+  const index = Number.parseInt(nonce.replaceAll("-", "").slice(0, 8), 16) % 1_000_000_000;
+  return `pane-set-clipboard[${index}]`;
+}
+
+function clipboardObserverShell(identity, nonce, hookName) {
+  const script = fileURLToPath(import.meta.url);
+  return [
+    "env",
+    ...(hostSocketPath ? [`TMUX_IDE_TESTDRIVE_HOST_SOCKET_PATH=${shQuote(hostSocketPath)}`] : []),
+    `TMUX_IDE_TESTDRIVE_RUNTIME_DIR=${shQuote(runtimeDir)}`,
+    shQuote(process.execPath),
+    shQuote(script),
+    "clipboard-observe",
+    shQuote(nonce),
+    shQuote(identity.paneId),
+    // q: asks tmux to shell-quote values after format expansion.
+    "#{q:pane_id}",
+    "#{q:buffer_name}",
+    shQuote(hookName),
+  ].join(" ");
+}
+
+async function armClipboardObservation(identity, nonce, timeoutMs) {
+  const deadline = performance.now() + timeoutMs;
+  const remaining = () => {
+    const value = Math.floor(deadline - performance.now());
+    if (value < 1) fail("clipboard preflight exceeded its absolute deadline");
+    return value;
+  };
+  mkdirSync(clipboardObservationDir, { recursive: true, mode: 0o700 });
+  chmodSync(clipboardObservationDir, 0o700);
+  const operationDir = join(clipboardObservationDir, nonce);
+  mkdirSync(operationDir, { recursive: false, mode: 0o700 });
+  const hookName = clipboardHookName(nonce);
+  let existingHook = "";
+  try {
+    existingHook = tmux(["show-hooks", "-p", "-t", identity.paneId, hookName], {
+      timeout: remaining(),
+    });
+  } catch {
+    // An unset indexed hook has no value to show.
+  }
+  if (existingHook.trim()) {
+    rmSync(operationDir, { recursive: true, force: true });
+    fail(`clipboard hook slot ${hookName} is already occupied`);
+  }
+  const hookCommand = [
+    `save-buffer -b #{q:buffer_name} ${shQuote(join(operationDir, "#{buffer_name}.bin"))}`,
+    `run-shell ${shQuote(clipboardObserverShell(identity, nonce, hookName))}`,
+  ].join(" ; ");
+  try {
+    tmux(["set-hook", "-p", "-t", identity.paneId, hookName, hookCommand], {
+      timeout: remaining(),
+    });
+  } catch (error) {
+    rmSync(operationDir, { recursive: true, force: true });
+    throw error;
+  }
+  let disposed = false;
+  return {
+    async wait(waitTimeoutMs) {
+      return waitForClipboardObservation({
+        listArtifacts: () => clipboardEventArtifacts(nonce),
+        readEvent: (artifactId) => {
+          const path = join(operationDir, `${artifactId}.json`);
+          return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
+        },
+        expected: { nonce, paneId: identity.paneId },
+        clock: performance,
+        sleep: delay,
+        timeoutMs: waitTimeoutMs,
+      });
+    },
+    async dispose(cleanupTimeoutMs) {
+      if (disposed) return;
+      disposed = true;
+      try {
+        tmux(["set-hook", "-pu", "-t", identity.paneId, hookName], {
+          timeout: cleanupTimeoutMs,
+        });
+      } catch {
+        // The pane may have retired; artifact validation below still fails closed.
+      }
+      if (clipboardEventArtifacts(nonce).length > 1) {
+        rmSync(operationDir, { recursive: true, force: true });
+        fail("multiple clipboard events arrived before observation disposal");
+      }
+      // Removing the operation directory fences a queued helper that has not
+      // atomically renamed its result yet; it cannot publish after disposal.
+      rmSync(operationDir, { recursive: true, force: true });
+    },
+  };
+}
+
+function captureHostPane(identity, ansi, timeoutMs) {
+  return tmux(["capture-pane", "-p", ...(ansi ? ["-e"] : []), "-t", identity.paneId], {
+    timeout: timeoutMs,
+  }).replace(/\n+$/u, "");
+}
+
+async function executeInputDocument(source) {
+  const command = parseTestdriveInputDocument(source);
+  return executeTestdriveInputOperation(command, {
+    clock: performance,
+    sleep: delay,
+    nonce: randomUUID,
+    resolveIdentity: async (timeoutMs) => resolveHostPaneIdentity(timeoutMs),
+    verifyIdentity: async (identity, timeoutMs) => verifyHostPaneIdentity(identity, timeoutMs),
+    capabilities: async (_identity, timeoutMs) => ({
+      ...fullTerminalCapabilities(),
+      clipboardCapture:
+        tmux(["show-options", "-gqv", "set-clipboard"], { timeout: timeoutMs }).trim() === "on",
+    }),
+    inject: async (identity, bytes, timeoutMs) => injectHostBytes(identity, bytes, timeoutMs),
+    captureAnsi: async (identity, timeoutMs) => captureHostPane(identity, true, timeoutMs),
+    waitForFrame: async (identity, predicate, timeoutMs) => {
+      const deadline = performance.now() + timeoutMs;
+      while (performance.now() < deadline) {
+        const frame = captureHostPane(
+          identity,
+          false,
+          Math.max(1, Math.floor(deadline - performance.now())),
+        );
+        if (predicate(frame)) return frame;
+        await delay(Math.min(10, Math.max(1, deadline - performance.now())));
+      }
+      fail("Timed out waiting for OpenTUI local select mode evidence");
+    },
+    armClipboard: armClipboardObservation,
+  });
+}
+
+function captureClipboardObservation(args) {
+  const [nonce, expectedPaneId, observedPaneId, bufferName, hookName] = args;
+  if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u.test(nonce ?? "")) {
+    fail("invalid clipboard operation nonce");
+  }
+  if (!/^%[0-9]+$/u.test(expectedPaneId ?? "") || observedPaneId !== expectedPaneId) {
+    fail("clipboard hook pane identity mismatch");
+  }
+  if (!/^buffer[0-9]+$/u.test(bufferName ?? "")) fail("clipboard hook buffer is not tmux-owned");
+  if (!/^pane-set-clipboard\[[0-9]+\]$/u.test(hookName ?? "")) {
+    fail("clipboard hook name is malformed");
+  }
+  mkdirSync(clipboardObservationDir, { recursive: true, mode: 0o700 });
+  chmodSync(clipboardObservationDir, 0o700);
+  const operationDir = join(clipboardObservationDir, nonce);
+  if (!existsSync(operationDir)) fail("clipboard observation lease is no longer active");
+  const capturedPayload = join(operationDir, `${bufferName}.bin`);
+  const callbackCount = rawClipboardArtifactIds(operationDir).length;
+  if (callbackCount > MAX_CLIPBOARD_CALLBACK_ARTIFACTS) {
+    rmSync(capturedPayload, { force: true });
+    const overflow = join(operationDir, "overflow.json");
+    if (!existsSync(overflow)) {
+      writeFileSync(
+        overflow,
+        `${JSON.stringify({ version: 1, nonce, paneId: observedPaneId, overflow: callbackCount })}\n`,
+        { flag: "wx", mode: 0o600 },
+      );
+    }
+    try {
+      tmux(["set-hook", "-pu", "-t", expectedPaneId, hookName], { timeout: 250 });
+    } catch {
+      // The parent disposer will retry bounded cleanup.
+    }
+    return;
+  }
+  enforceClipboardCallbackCap(rawClipboardArtifactIds(operationDir));
+  const declaredBytes = statSync(capturedPayload).size;
+  if (declaredBytes < 1 || declaredBytes > MAX_CLIPBOARD_BYTES)
+    fail("clipboard hook payload is empty or over cap");
+  const content = readFileSync(capturedPayload);
+  rmSync(capturedPayload, { force: true });
+  if (content.byteLength !== declaredBytes) fail("clipboard payload changed during hashing");
+  const event = {
+    version: 1,
+    nonce,
+    paneId: observedPaneId,
+    bytes: declaredBytes,
+    sha256: createHash("sha256").update(content).digest("hex"),
+  };
+  const temporary = join(operationDir, `${bufferName}.tmp`);
+  const complete = join(operationDir, `${bufferName}.json`);
+  writeFileSync(temporary, `${JSON.stringify(event)}\n`, { flag: "wx", mode: 0o600 });
+  if (!existsSync(operationDir)) fail("clipboard observation lease retired before publication");
+  renameSync(temporary, complete);
 }
 
 function liveHostProcessPid() {
@@ -736,6 +1050,16 @@ async function main() {
     case "text":
       if (args.length === 0) fail("text needs literal text to send");
       tmux(["send-keys", "-t", `=${hostSession}:0.0`, "-l", args.join(" ")]);
+      break;
+    case "input": {
+      if (args.length !== 1) fail("input needs exactly one strict v1 JSON document");
+      const evidence = await executeInputDocument(args[0]);
+      process.stdout.write(`${JSON.stringify(evidence)}\n`);
+      break;
+    }
+    case "clipboard-observe":
+      if (args.length !== 5) fail("clipboard-observe received malformed hook arguments");
+      captureClipboardObservation(args);
       break;
     case "mouse":
       await mouse(args);

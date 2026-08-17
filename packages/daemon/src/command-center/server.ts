@@ -53,6 +53,7 @@ import {
   type DesktopMissionWorkspaceResource,
   type WorkspaceCatalogResourceV1,
   type WorkspaceCatalogResourceV2,
+  TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION,
   type DaemonInstanceIdentity,
   type DaemonPanesResponse,
   type DaemonProjectResponse,
@@ -127,6 +128,8 @@ import {
   type ApplicationShellSessionFacts,
   type ApplicationShellWorkspaceDockSummary,
 } from "./resources/application-shell.ts";
+import { terminalRuntimeInventoryEnvelope } from "./resources/terminal-runtime-inventory.ts";
+import { currentResourceRevision } from "./ws-events.ts";
 import { fleetSessionIdForName } from "./resources/fleet-catalog.ts";
 import { FilesAuthority } from "./resources/workspace-files-authority.ts";
 import { ChangesAuthority } from "./resources/workspace-changes-authority.ts";
@@ -181,6 +184,16 @@ export interface CreateAppOptions {
     discoverApplicationShellSession(
       requestedSessionName: string,
     ): Promise<ApplicationShellSessionFacts | null>;
+    discoverTerminalRuntimeSession?(
+      requestedSessionName: string,
+      signal?: AbortSignal,
+    ): Promise<
+      | import("../terminal/attachments/native-runtime.ts").NativeTerminalRuntimeSessionSnapshot
+      | null
+    >;
+    recordTerminalRuntimeResourceMark?(
+      operation: "terminal-resource-handler-admitted" | "terminal-resource-response-projection",
+    ): void;
   } | null;
   /** Injectable live tmux projection for catalog tests and alternate hosts. */
   catalogLiveSessions?: () => readonly {
@@ -314,6 +327,7 @@ const GATED_ACTIONS: Readonly<Record<string, "owner" | "owner-and-operation-id">
   "project.restart": "owner",
   "project.activate": "owner",
   "project.openTerminal": "owner",
+  "daemon.shutdown": "owner",
 };
 
 function requireHostCapability(ownerToken: string | null): MiddlewareHandler {
@@ -827,6 +841,56 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     }
     const detail = buildProjectDetail(session);
     return c.json({ ...detail } satisfies DaemonProjectResponse);
+  });
+
+  const terminalRuntimeInventoryOwnerGate = ownerAuthorityGate(
+    options.remoteAccess?.ownerToken ?? null,
+    {
+      whenOwnerless: "unavailable",
+      unavailableMessage: "Terminal runtime inventory capability is unavailable",
+      mismatchMessage: "Terminal runtime inventory requires owner authority",
+    },
+  );
+  app.get("/api/project/:name/terminal-runtime-inventory", async (c) => {
+    const denied = terminalRuntimeInventoryOwnerGate(c);
+    if (denied) return denied;
+    if (
+      (c.req.query("version") ?? String(TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION)) !==
+      String(TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION)
+    ) {
+      return c.json({ error: "Unsupported terminal-runtime inventory resource version" }, 400);
+    }
+    const backend = options.applicationShellInventoryBackend;
+    if (!backend?.discoverTerminalRuntimeSession) {
+      return c.json({ error: "Terminal runtime inventory unavailable" }, 503);
+    }
+    try {
+      backend.recordTerminalRuntimeResourceMark?.("terminal-resource-handler-admitted");
+    } catch {
+      // Diagnostics never own the authenticated request lifecycle.
+    }
+    const requestedSessionName = c.req.param("name");
+    let session: Awaited<ReturnType<NonNullable<typeof backend.discoverTerminalRuntimeSession>>>;
+    try {
+      session = await backend.discoverTerminalRuntimeSession(
+        requestedSessionName,
+        c.req.raw.signal,
+      );
+    } catch {
+      return c.json({ error: "Terminal runtime inventory unavailable" }, 503);
+    }
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const projection = terminalRuntimeInventoryEnvelope(
+      daemonInstanceIdentity,
+      session,
+      currentResourceRevision(session.workspaceName, "terminal-runtime-inventory"),
+    );
+    try {
+      backend.recordTerminalRuntimeResourceMark?.("terminal-resource-response-projection");
+    } catch {
+      // Diagnostics never own response projection.
+    }
+    return c.json(projection);
   });
 
   app.get("/api/project/:name/application-shell", async (c) => {

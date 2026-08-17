@@ -15,6 +15,7 @@ import {
 } from "../semantic-pane-render-source.ts";
 import type { PaneScopedTerminalAdapter } from "./pane-scoped-terminal-surface.tsx";
 import { currentTuiPerformanceEventSink } from "../performance-events.ts";
+import type { CausalCellClientLedger } from "./causal-cell-client-ledger.ts";
 
 interface PaneRendererInterest {
   readonly paneId: string;
@@ -38,6 +39,7 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
   readonly #lane: TerminalFastLane;
   readonly #panes = new Map<string, PaneRendererInterest>();
   readonly #sourceEpoch: number;
+  readonly #causalCellLedger: CausalCellClientLedger | null;
   #disposed = false;
   #paintedCanonicalSnapshot = false;
 
@@ -51,9 +53,14 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
       this.#blit(paneId, buffers, width, height, scrollOffset, defaultFg, defaultBg, options),
   };
 
-  constructor(lane: TerminalFastLane, sourceEpoch = 1) {
+  constructor(
+    lane: TerminalFastLane,
+    sourceEpoch = 1,
+    causalCellLedger: CausalCellClientLedger | null = null,
+  ) {
     this.#lane = lane;
     this.#sourceEpoch = sourceEpoch;
+    this.#causalCellLedger = causalCellLedger;
   }
 
   paneVersion(paneId: string): number {
@@ -138,6 +145,32 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     const previous = interest.state?.snapshot ?? null;
     const next = publication.state.snapshot;
     interest.state = publication.state;
+    const canonicalModeSink = currentTuiPerformanceEventSink()?.terminalCanonicalMode;
+    if (canonicalModeSink && next && previous?.modes.wraparound !== next.modes.wraparound) {
+      canonicalModeSink({
+        processId: `opentui:${process.pid}`,
+        clockId: "opentui-performance-now",
+        clockKind: "performance-now",
+        atMicros: Math.floor(performance.now() * 1_000),
+        semanticPaneId: publication.address.semanticPaneId,
+        generation: publication.state.generation,
+        incarnation: publication.state.incarnation,
+        revision: publication.state.revision,
+        stateHash: publication.state.hash,
+        wraparound: next.modes.wraparound,
+      });
+    }
+    if (this.#causalCellLedger && publication.state.snapshot) {
+      this.#causalCellLedger.noteDelivery({
+        semanticPaneId: publication.address.semanticPaneId,
+        generation: publication.state.generation,
+        incarnation: publication.state.incarnation,
+        revision: publication.state.revision,
+        stateHash: publication.state.hash,
+        snapshot: publication.state.snapshot,
+        atMicros: Math.floor(performance.now() * 1_000),
+      });
+    }
     let changed = false;
     if (next) {
       for (const row of changedTerminalRows(
@@ -210,8 +243,10 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     const forced = options.forceRows ? new Set(options.forceRows) : null;
     const full = options.full || scrollOffset > 0 || snapshot === null;
     let paintedCanonicalChange = false;
+    const writtenRows = this.#causalCellLedger ? new Set<number>() : null;
     for (let row = 0; row < height; row += 1) {
       if (!full && !interest?.dirtyRows.has(row) && !forced?.has(row)) continue;
+      writtenRows?.add(row);
       if (interest?.dirtyRows.has(row)) paintedCanonicalChange = true;
       blitSemanticRow(
         visibleTerminalRowAt(snapshot, scrollOffset, row),
@@ -242,6 +277,21 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     if (interest && paintedCanonicalChange) {
       this.#paintedCanonicalSnapshot = true;
       interest.pendingTrace = null;
+      if (this.#causalCellLedger && snapshot && writtenRows) {
+        this.#causalCellLedger.notePaint({
+          semanticPaneId: paneId,
+          generation: interest.state!.generation,
+          incarnation: interest.state!.incarnation,
+          revision: interest.state!.revision,
+          stateHash: interest.state!.hash,
+          snapshot,
+          viewport: { cols: width, rows: height },
+          activePaneRect: { x: 0, y: 0, width, height },
+          writtenRows,
+          scrollOffset,
+          atMicros: Math.floor(performance.now() * 1_000),
+        });
+      }
     }
     return trace;
   }

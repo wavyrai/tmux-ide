@@ -10,6 +10,7 @@ import {
 import { blankTerminalReplicaSnapshot, hashTerminalReplicaSnapshot } from "@tmux-ide/core";
 
 import { TerminalFastLaneRendererAdapter } from "./terminal-fast-lane-renderer-adapter.ts";
+import { installTuiPerformanceEventSink } from "../performance-events.ts";
 
 const generation = "11111111-1111-4111-8111-111111111111";
 const workspaceName = "workspace.test";
@@ -92,6 +93,75 @@ function paint(adapter: TerminalFastLaneRendererAdapter, paneId: string) {
 }
 
 describe("TerminalFastLaneRendererAdapter", () => {
+  it("reports exact canonical wraparound transitions only through the optional diagnostic sink", () => {
+    const events: Array<{ wraparound: boolean; revision: number; stateHash: string }> = [];
+    const uninstall = installTuiPerformanceEventSink({
+      frame: () => undefined,
+      terminalPaint: () => undefined,
+      terminalDelivery: () => undefined,
+      terminalCanonicalMode: ({ wraparound, revision, stateHash }) =>
+        events.push({ wraparound, revision, stateHash }),
+    });
+    const source = new Source();
+    const lane = createTerminalFastLane({
+      address: { workspaceName, generation },
+      source,
+      repair: { request: () => undefined },
+      control: {
+        owns: () => true,
+        request: async () => true,
+        write: async () => "ok",
+        resize: async () => "ok",
+      },
+    });
+    const adapter = new TerminalFastLaneRendererAdapter(lane);
+    adapter.subscribePaneVersion("pane.editor", () => undefined);
+    try {
+      const initial = seed("pane.editor", "E");
+      source.emit("pane.editor", initial);
+      let snapshot = {
+        ...initial.snapshot,
+        modes: { ...initial.snapshot.modes, wraparound: false },
+      };
+      source.emit("pane.editor", {
+        ...initial,
+        type: "terminal.patch",
+        baseRevision: 0,
+        revision: 1,
+        stateHash: hashTerminalReplicaSnapshot(snapshot),
+        patch: { rows: [], modes: snapshot.modes },
+      });
+      snapshot = { ...snapshot, modes: { ...snapshot.modes, wraparound: true } };
+      source.emit("pane.editor", {
+        ...initial,
+        type: "terminal.patch",
+        baseRevision: 1,
+        revision: 2,
+        stateHash: hashTerminalReplicaSnapshot(snapshot),
+        patch: { rows: [], modes: snapshot.modes },
+      });
+      expect(events).toEqual([
+        {
+          wraparound: true,
+          revision: 0,
+          stateHash: initial.stateHash,
+        },
+        {
+          wraparound: false,
+          revision: 1,
+          stateHash: hashTerminalReplicaSnapshot({
+            ...initial.snapshot,
+            modes: { ...initial.snapshot.modes, wraparound: false },
+          }),
+        },
+        { wraparound: true, revision: 2, stateHash: hashTerminalReplicaSnapshot(snapshot) },
+      ]);
+    } finally {
+      adapter.dispose();
+      lane.dispose();
+      uninstall();
+    }
+  });
   it("invalidates only the addressed pane and retains no second replica reducer", () => {
     const source = new Source();
     const lane = createTerminalFastLane({

@@ -3,6 +3,7 @@ import {
   APPLICATION_SHELL_COMMAND_IDS,
   ApplicationShellProjectionInputV3SchemaZ,
   COHESION_FIXTURE_V1,
+  DAEMON_WIRE_PROTOCOL_VERSION,
   DesktopApplicationShellTargetSchemaZ,
   applicationShellCommandInvocation,
   type ApplicationShellProjectionInputV3,
@@ -34,7 +35,7 @@ import type {
 } from "./workspace-client-types.ts";
 
 const daemon = (instanceId: string) => ({
-  protocolVersion: 1,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "2.8.0",
   instanceId,
   startedAt: "2026-08-14T10:00:00.000Z",
@@ -296,6 +297,220 @@ function terminalSeedFor(
 }
 
 describe("WorkspaceClient", () => {
+  it("defers application-shell until terminal authority adopts through runtime staging", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha") });
+    const runtime = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const inventories: WorkspaceClientRuntimeInventory[] = [];
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      deferApplicationShell: true,
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async (_current, inventory) => {
+          inventories.push(inventory);
+          return runtime;
+        },
+        actions,
+      },
+    });
+    await settle();
+    expect(shell.connections).toHaveLength(0);
+    expect(inventories).toHaveLength(0);
+
+    expect(
+      client.adoptTerminalRuntimeInventory({
+        workspaceName: "alpha",
+        workspaceId: "workspace.alpha",
+        sessionId: COHESION_FIXTURE_V1.workspace.session.id,
+        resourceRevision: 7,
+        semanticPaneIds: ["pane.alpha"],
+      }),
+    ).toBe(true);
+    await settle();
+    expect(inventories).toHaveLength(1);
+    expect(inventories[0]).toMatchObject({
+      terminalResourceRevision: 7,
+      shellGeneration: 1,
+      semanticPaneIds: ["pane.alpha"],
+    });
+    expect(shell.connections).toHaveLength(1);
+    await client.dispose();
+  });
+
+  it("never lets late V2 topology roll back a newer terminal revision", async () => {
+    const lateV2 = deferred<ApplicationShellProjectionInputV3>();
+    const shellConnections: ShellConnection[] = [];
+    const shellTransport: ApplicationShellTransport<ApplicationShellProjectionInputV3> = {
+      validateTarget: (value) => DesktopApplicationShellTargetSchemaZ.parse(value),
+      fetchApplicationShell: () => lateV2.promise,
+      connectEvents: (current, handlers) => {
+        shellConnections.push({ target: current, handlers, closed: false });
+        return { close: () => undefined };
+      },
+    };
+    const inventories: WorkspaceClientRuntimeInventory[] = [];
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      deferApplicationShell: true,
+      ports: {
+        shell: shellTransport,
+        connectRuntime: async (_current, inventory) => {
+          inventories.push(inventory);
+          return new FakeRuntime(ALPHA_DAEMON.instanceId);
+        },
+        actions,
+      },
+    });
+    const base = {
+      workspaceName: "alpha",
+      workspaceId: "workspace.alpha",
+      sessionId: COHESION_FIXTURE_V1.workspace.session.id,
+    };
+    client.adoptTerminalRuntimeInventory({
+      ...base,
+      resourceRevision: 1,
+      semanticPaneIds: ["pane.a"],
+    });
+    client.adoptTerminalRuntimeInventory({
+      ...base,
+      resourceRevision: 2,
+      semanticPaneIds: ["pane.b"],
+    });
+    lateV2.resolve(shellResource("alpha", ["pane.a"]));
+    await settle();
+    expect(inventories.map((inventory) => inventory.semanticPaneIds)).toEqual([
+      ["pane.a"],
+      ["pane.b"],
+    ]);
+    expect(
+      client.adoptTerminalRuntimeInventory({
+        ...base,
+        resourceRevision: 1,
+        semanticPaneIds: ["pane.a"],
+      }),
+    ).toBe(false);
+    await client.dispose();
+  });
+
+  it("treats V2 mismatch as a terminal-authority refresh request only", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha", ["pane.b"]) });
+    let refreshes = 0;
+    const inventories: WorkspaceClientRuntimeInventory[] = [];
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      deferApplicationShell: true,
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async (_current, inventory) => {
+          inventories.push(inventory);
+          return new FakeRuntime(ALPHA_DAEMON.instanceId);
+        },
+        requestTerminalRuntimeInventoryRefresh: () => {
+          refreshes += 1;
+        },
+        actions,
+      },
+    });
+    client.adoptTerminalRuntimeInventory({
+      workspaceName: "alpha",
+      workspaceId: "workspace.alpha",
+      sessionId: COHESION_FIXTURE_V1.workspace.session.id,
+      resourceRevision: 1,
+      semanticPaneIds: ["pane.a"],
+    });
+    await settle();
+    expect(inventories.map((inventory) => inventory.semanticPaneIds)).toEqual([["pane.a"]]);
+    expect(refreshes).toBeGreaterThan(0);
+    await client.dispose();
+  });
+
+  it("fails closed when one terminal revision carries conflicting authority", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha", ["pane.a"]) });
+    const inventories: WorkspaceClientRuntimeInventory[] = [];
+    let refreshes = 0;
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      deferApplicationShell: true,
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async (_current, inventory) => {
+          inventories.push(inventory);
+          return new FakeRuntime(ALPHA_DAEMON.instanceId);
+        },
+        requestTerminalRuntimeInventoryRefresh: () => {
+          refreshes += 1;
+        },
+        actions,
+      },
+    });
+    const base = {
+      workspaceName: "alpha",
+      workspaceId: "workspace.alpha",
+      sessionId: COHESION_FIXTURE_V1.workspace.session.id,
+      resourceRevision: 7,
+    };
+    expect(client.adoptTerminalRuntimeInventory({ ...base, semanticPaneIds: ["pane.a"] })).toBe(
+      true,
+    );
+    await settle();
+    expect(client.adoptTerminalRuntimeInventory({ ...base, semanticPaneIds: ["pane.b"] })).toBe(
+      false,
+    );
+    await settle();
+    expect(inventories.map((inventory) => inventory.semanticPaneIds)).toEqual([["pane.a"]]);
+    expect(refreshes).toBeGreaterThan(0);
+    await client.dispose();
+  });
+
+  it("treats empty inventory and same-name session replacement as terminal revisions", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha", []) });
+    const inventories: WorkspaceClientRuntimeInventory[] = [];
+    let retirements = 0;
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      deferApplicationShell: true,
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async (_current, inventory) => {
+          inventories.push(inventory);
+          return new FakeRuntime(ALPHA_DAEMON.instanceId);
+        },
+        didRetireRuntime: () => {
+          retirements += 1;
+        },
+        actions,
+      },
+    });
+    const base = { workspaceName: "alpha", workspaceId: "workspace.alpha" };
+    client.adoptTerminalRuntimeInventory({
+      ...base,
+      sessionId: "session.aaaaaaaaaaaaaaaaaaaa",
+      resourceRevision: 1,
+      semanticPaneIds: ["pane.a"],
+    });
+    await settle();
+    client.adoptTerminalRuntimeInventory({
+      ...base,
+      sessionId: "session.bbbbbbbbbbbbbbbbbbbb",
+      resourceRevision: 2,
+      semanticPaneIds: ["pane.a"],
+    });
+    await settle();
+    expect(inventories.map(({ sessionId }) => sessionId)).toEqual([
+      "session.aaaaaaaaaaaaaaaaaaaa",
+      "session.bbbbbbbbbbbbbbbbbbbb",
+    ]);
+    client.adoptTerminalRuntimeInventory({
+      ...base,
+      sessionId: "session.bbbbbbbbbbbbbbbbbbbb",
+      resourceRevision: 3,
+      semanticPaneIds: [],
+    });
+    await settle();
+    expect(retirements).toBeGreaterThan(0);
+    await client.dispose();
+  });
+
   it("waits for shell authority and connects with its exact immutable terminal inventory", async () => {
     const shellAuthority = deferred<ApplicationShellProjectionInputV3>();
     const shellConnections: ShellConnection[] = [];

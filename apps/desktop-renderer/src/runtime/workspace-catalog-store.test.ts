@@ -1,5 +1,6 @@
 import { createRoot } from "solid-js";
 import {
+  DAEMON_WIRE_PROTOCOL_VERSION,
   DESKTOP_HOST_API_VERSION,
   type DaemonInstanceIdentity,
   type DesktopDaemonCapabilityState,
@@ -18,7 +19,7 @@ import {
 } from "./workspace-catalog-store.ts";
 
 const DAEMON: DaemonInstanceIdentity = {
-  protocolVersion: 1,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "2.8.0",
   instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
   startedAt: "2026-07-21T00:00:00.000Z",

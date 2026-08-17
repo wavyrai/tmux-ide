@@ -797,6 +797,69 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(readOnly.socket.closed).not.toBeNull();
   });
 
+  it("does not sample the observability clock for input when diagnostics are disabled", async () => {
+    const nowMicros = vi.fn(() => {
+      throw new Error("disabled observability clock was sampled");
+    });
+    const observability: SessionRuntimeObservability = {
+      enabled: false,
+      nowMicros,
+      beginTrace: vi.fn(() => null),
+      recordSpan: vi.fn(),
+      snapshot: () => ({ spans: [], droppedSpans: 0 }),
+    };
+    const h = harness({ observability });
+    const { socket } = await connect(h, { viewerMode: "interactive" });
+    const beginTraceCallsBeforeInput = vi.mocked(observability.beginTrace).mock.calls.length;
+    const recordSpanCallsBeforeInput = vi.mocked(observability.recordSpan).mock.calls.length;
+    socket.message({
+      type: "input",
+      kind: "key",
+      pane: "pane.editor",
+      seq: 1,
+      data: "Enter",
+      performanceTraceId: "00000000-0000-4000-8000-000000000093",
+    });
+    expect(socket.framesOfType("input-ack").map((frame) => frame.seq)).toEqual([1]);
+    expect(nowMicros).not.toHaveBeenCalled();
+    expect(vi.mocked(observability.beginTrace).mock.calls).toHaveLength(beginTraceCallsBeforeInput);
+    expect(vi.mocked(observability.recordSpan).mock.calls).toHaveLength(recordSpanCallsBeforeInput);
+  });
+
+  it("keeps daemon input and ACK fail-open when ingress or ACK observation throws", async () => {
+    for (const failure of ["clock", "ingress-span", "ack-span"] as const) {
+      let now = 0;
+      let records = 0;
+      let armed = false;
+      const observability = createSessionRuntimeObservability({
+        nowMicros: () => {
+          if (armed && failure === "clock") throw new Error("clock failed");
+          return (now += 5);
+        },
+        onSpan: () => {
+          if (!armed) return;
+          records += 1;
+          if (failure === "ingress-span" && records === 1) throw new Error("ingress failed");
+          if (failure === "ack-span" && records === 2) throw new Error("ack failed");
+        },
+      });
+      const h = harness({ observability });
+      const { socket } = await connect(h, { viewerMode: "interactive" });
+      armed = true;
+      socket.message({
+        type: "input",
+        kind: "key",
+        pane: "pane.editor",
+        seq: 1,
+        data: "Enter",
+        performanceTraceId: `00000000-0000-4000-8000-00000000009${failure === "clock" ? 4 : failure === "ingress-span" ? 5 : 6}`,
+      });
+      expect(h.mirror.subFor("pane.editor").keys).toEqual(["Enter"]);
+      expect(socket.framesOfType("input-ack").map((frame) => frame.seq)).toEqual([1]);
+      expect(socket.closed).toBeNull();
+    }
+  });
+
   it("keeps healthy long-lived input live across rate windows while bounding a flood", async () => {
     let now = 1_000;
     const healthy = harness({
@@ -1019,16 +1082,50 @@ describe("PaneStreamAdmissionCoordinator", () => {
     });
     expect(socket.closed).toBeNull();
 
-    // Terminal typing stays on the controller-authorized fast path. Named keys
-    // are not flattened into bytes, preserving tmux application-mode behavior,
-    // and their sequence cannot overtake the preceding literal.
-    socket.message({ type: "input", kind: "text", pane: "pane.editor", seq: 1, data: "x" });
-    socket.message({ type: "input", kind: "key", pane: "pane.editor", seq: 2, data: "Enter" });
+    // Terminal input stays FIFO and byte-exact across named keys and bracketed
+    // paste while both daemon transport edges retain the originating trace.
+    const keyTrace = "00000000-0000-4000-8000-000000000091";
+    const pasteTrace = "00000000-0000-4000-8000-000000000092";
+    const bracketedPaste = "\u001b[200~alpha\nbeta\u001b[201~";
+    socket.message({
+      type: "input",
+      kind: "key",
+      pane: "pane.editor",
+      seq: 1,
+      data: "Enter",
+      performanceTraceId: keyTrace,
+    });
+    socket.message({
+      type: "input",
+      kind: "text",
+      pane: "pane.editor",
+      seq: 2,
+      data: bracketedPaste,
+      performanceTraceId: pasteTrace,
+    });
     expect(h.sendInput.mock.calls).toEqual([
-      ["pane.editor", { kind: "text", data: "x" }, undefined],
-      ["pane.editor", { kind: "key", data: "Enter" }, undefined],
+      ["pane.editor", { kind: "key", data: "Enter" }, keyTrace, undefined, undefined],
+      ["pane.editor", { kind: "text", data: bracketedPaste }, pasteTrace, undefined, undefined],
     ]);
     expect(socket.framesOfType("input-ack").map((frame) => frame.seq)).toEqual([1, 2]);
+    for (const traceId of [keyTrace, pasteTrace]) {
+      const transportSpans = observability
+        .snapshot()
+        .spans.filter(
+          (span) =>
+            span.traceId === traceId &&
+            ["pane-stream-input-frame-ingress", "pane-stream-input-ack-socket-send"].includes(
+              span.operation,
+            ),
+        );
+      expect(transportSpans.map(({ operation }) => operation)).toEqual([
+        "pane-stream-input-frame-ingress",
+        "pane-stream-input-ack-socket-send",
+      ]);
+      expect(transportSpans[0]!.startedAtMicros).toBeLessThanOrEqual(
+        transportSpans[1]!.startedAtMicros,
+      );
+    }
     socket.message({ type: "viewport", seq: 1, cols: 132, rows: 44 });
     expect(h.fitViewport).toHaveBeenCalledWith(132, 44);
     expect(socket.framesOfType("viewport-ack")).toEqual([

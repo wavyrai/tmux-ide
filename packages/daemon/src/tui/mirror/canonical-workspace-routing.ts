@@ -6,6 +6,13 @@ import {
 
 import { canonicalDaemonUrl } from "../../lib/canonical-daemon.ts";
 
+const WORKSPACE_CATALOG_ATTEMPTS = 3;
+const WORKSPACE_CATALOG_ATTEMPT_TIMEOUT_MS = 1_000;
+
+function isTimeout(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "TimeoutError";
+}
+
 /**
  * Read the generation-stamped workspace catalog used by trusted TUI adapters.
  *
@@ -19,9 +26,18 @@ export async function fetchCanonicalWorkspaceRouting(
   request: typeof fetch = fetch,
 ): Promise<WorkspaceCatalogResourceV2> {
   const baseUrl = canonicalDaemonUrl("http", daemon.bindHostname, daemon.port);
-  const response = await request(`${baseUrl}/api/resources/workspace-catalog?version=2`, {
-    signal: AbortSignal.timeout(1_000),
-  });
+  let response: Response | null = null;
+  for (let attempt = 0; attempt < WORKSPACE_CATALOG_ATTEMPTS; attempt += 1) {
+    try {
+      response = await request(`${baseUrl}/api/resources/workspace-catalog?version=2`, {
+        signal: AbortSignal.timeout(WORKSPACE_CATALOG_ATTEMPT_TIMEOUT_MS),
+      });
+      break;
+    } catch (error) {
+      if (!isTimeout(error) || attempt === WORKSPACE_CATALOG_ATTEMPTS - 1) throw error;
+    }
+  }
+  if (!response) throw new Error("workspace catalog did not return a response");
   if (!response.ok) throw new Error(`workspace catalog returned HTTP ${response.status}`);
 
   const catalog = WorkspaceCatalogResourceV2SchemaZ.parse(await response.json());

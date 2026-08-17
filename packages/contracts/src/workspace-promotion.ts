@@ -7,10 +7,10 @@ import {
 import { FleetSessionIdSchemaZ } from "./fleet-catalog.ts";
 
 /**
- * Owner-host promotion request. The target is the OPAQUE fleet session id minted
- * by the fleet catalog (`session.<digest>`) — never a raw tmux session name or
- * path. The daemon resolves the id back to a live session name on its own side;
- * the wire only ever carries the catalog-visible identity.
+ * Owner-host promotion request. The target is the OPAQUE session id minted by
+ * the workspace or fleet catalog (`session.<digest>`) — never a raw tmux
+ * session name or path. The daemon resolves the id back to a live session name
+ * on its own side; the wire only ever carries the catalog-visible identity.
  */
 export const WorkspacePromoteArgumentsSchemaZ = z
   .object({
@@ -89,8 +89,8 @@ export type WorkspacePromotionFailure = z.infer<typeof WorkspacePromotionFailure
 
 /**
  * Renderer-safe host result. Electron authors the operation and daemon-generation
- * envelope from an explicit, owner-initiated promotion; no filesystem path or
- * tmux identity crosses to the renderer. A failure is EITHER a typed promotion
+ * envelope from an explicit, owner-initiated promotion of an ordinary live session;
+ * no filesystem path or tmux identity crosses to the renderer. A failure is EITHER a typed promotion
  * outcome (the daemon reached a verdict) OR a generic capability error (the
  * request never got a typed verdict — a transport, timeout, or identity failure).
  * The `kind` discriminant on the promotion variant keeps the union unambiguous

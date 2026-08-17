@@ -17,6 +17,11 @@ import {
   type SessionRuntimePresenceState,
   type SessionRuntimeSemanticIntent,
   type SessionRuntimeTerminalInput,
+  type CausalCellCapability,
+  type CausalCellProbeV1,
+  type CausalCellProbeRequestV1,
+  type CausalCellProofV1,
+  type CausalCellFailureV1,
   type SessionRuntimeTerminalInputResult,
   type TerminalReplicaAddress,
   type TerminalDeliveryAck,
@@ -32,6 +37,28 @@ import { acquireRuntimeResource } from "./runtime-resource-ledger.ts";
 type SocketEventType = "open" | "message" | "close" | "error";
 type SocketListener = (event: { readonly data?: unknown }) => void;
 const MAX_PENDING_TERMINAL_INPUTS = 256;
+
+function performanceNowMicros(): number {
+  return Math.floor(performance.now() * 1_000);
+}
+
+function scheduleNextEventLoopTurn(callback: () => void): () => void {
+  const releaseResource = acquireRuntimeResource("runtime-timer");
+  let active = true;
+  const handle = setImmediate(() => {
+    if (!active) return;
+    active = false;
+    releaseResource();
+    callback();
+  });
+  handle.unref?.();
+  return () => {
+    if (!active) return;
+    active = false;
+    clearImmediate(handle);
+    releaseResource();
+  };
+}
 
 interface RuntimeTimer {
   readonly handle: NodeJS.Timeout;
@@ -65,6 +92,54 @@ export interface PaneStreamClientSocket {
   close(code?: number, reason?: string): void;
 }
 
+export interface PaneStreamInputTransportStageEvent {
+  readonly traceId: string;
+  readonly operation:
+    | "pane-stream-frame-enqueued"
+    | "pane-stream-socket-send-return"
+    | "pane-stream-next-event-loop-turn";
+  readonly atMicros: number;
+  readonly pane: string;
+  readonly sequence: number;
+}
+
+export function classifyPaneStreamInputTransportDelay(
+  stages: readonly PaneStreamInputTransportStageEvent[],
+  stallThresholdMicros: number,
+):
+  | "incomplete"
+  | "socket-send-return-stall"
+  | "client-event-loop-stall"
+  | "no-client-transport-stall" {
+  if (!Number.isFinite(stallThresholdMicros) || stallThresholdMicros <= 0)
+    throw new TypeError("Input transport stall threshold must be positive");
+  if (
+    stages.length !== 3 ||
+    stages[0]?.operation !== "pane-stream-frame-enqueued" ||
+    stages[1]?.operation !== "pane-stream-socket-send-return" ||
+    stages[2]?.operation !== "pane-stream-next-event-loop-turn"
+  )
+    return "incomplete";
+  const [enqueued, sent, nextTurn] = stages;
+  if (
+    !enqueued ||
+    !sent ||
+    !nextTurn ||
+    enqueued.traceId !== sent.traceId ||
+    sent.traceId !== nextTurn.traceId ||
+    enqueued.pane !== sent.pane ||
+    sent.pane !== nextTurn.pane ||
+    enqueued.sequence !== sent.sequence ||
+    sent.sequence !== nextTurn.sequence ||
+    sent.atMicros < enqueued.atMicros ||
+    nextTurn.atMicros < sent.atMicros
+  )
+    return "incomplete";
+  if (sent.atMicros - enqueued.atMicros >= stallThresholdMicros) return "socket-send-return-stall";
+  if (nextTurn.atMicros - sent.atMicros >= stallThresholdMicros) return "client-event-loop-stall";
+  return "no-client-transport-stall";
+}
+
 export type PaneStreamClientSocketFactory = (
   descriptor: PaneStreamIssueDescriptor,
   headers: Readonly<Record<string, string>>,
@@ -85,6 +160,7 @@ export interface OpenPaneStreamClientOptions {
    * authority lazily on their first mutation.
    */
   readonly requestInitialInputAuthority?: boolean;
+  readonly diagnosticCapabilities?: readonly CausalCellCapability[];
   /** Cancels capability issuance before a physical socket exists. */
   readonly signal?: AbortSignal;
   readonly fetch?: typeof fetch;
@@ -96,8 +172,15 @@ export interface OpenPaneStreamClientOptions {
     readonly traceId: string;
     readonly atMicros: number;
   }) => void;
+  /** Diagnostic-only outbound edges for one trace-correlated input frame. */
+  readonly onInputTransportStage?: (event: PaneStreamInputTransportStageEvent) => void;
+  /** Test seams are consulted only when `onInputTransportStage` is installed. */
+  readonly diagnosticNowMicros?: () => number;
+  readonly diagnosticNextTurn?: (callback: () => void) => () => void;
   readonly onLayout?: (frame: Extract<PaneStreamServerFrame, { type: "layout" }>) => void;
   readonly onInputAck?: (pane: string, sequence: number) => void;
+  readonly onCausalCellProof?: (proof: CausalCellProofV1) => void;
+  readonly onCausalCellFailure?: (failure: CausalCellFailureV1) => void;
   readonly onAuthoritySnapshot?: (snapshot: SessionRuntimeAuthoritySnapshot) => void;
   readonly onFault?: (error: Error) => void;
   readonly onConnectionDiagnostic?: (
@@ -115,8 +198,14 @@ export type ConnectIssuedPaneStreamRuntimeClientOptions = Pick<
   | "onNegotiated"
   | "onTerminalDelivery"
   | "onTerminalFrameArrival"
+  | "onInputTransportStage"
+  | "diagnosticNowMicros"
+  | "diagnosticNextTurn"
   | "onLayout"
   | "onInputAck"
+  | "onCausalCellProof"
+  | "onCausalCellFailure"
+  | "diagnosticCapabilities"
   | "onAuthoritySnapshot"
   | "onFault"
   | "onConnectionDiagnostic"
@@ -138,6 +227,7 @@ export interface PaneStreamRuntimeClient {
     target: TerminalReplicaAddress,
     input: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
+    causalProbe?: CausalCellProbeRequestV1,
   ): Promise<SessionRuntimeTerminalInputResult>;
   sendText(pane: string, text: string, performanceTraceId?: string): void;
   sendKey(pane: string, key: string, performanceTraceId?: string): void;
@@ -223,6 +313,19 @@ export async function connectIssuedPaneStreamRuntimeClient(
   options.onConnectionDiagnostic?.("socket-created", { requestId: descriptor.requestId });
   const releaseSocketResource = acquireRuntimeResource("pane-stream-socket");
   const releaseSocketListenerResources = acquireRuntimeResource("socket-listener", 4);
+  let pendingDiagnosticTurns: Set<() => void> | null = null;
+  const cancelDiagnosticTurns = (): void => {
+    if (!pendingDiagnosticTurns) return;
+    for (const cancel of pendingDiagnosticTurns) {
+      try {
+        cancel();
+      } catch {
+        // Diagnostics cannot alter connection teardown.
+      }
+    }
+    pendingDiagnosticTurns.clear();
+    pendingDiagnosticTurns = null;
+  };
   let closed = false;
   let verified = false;
   let resolveReady!: (client: PaneStreamRuntimeClient) => void;
@@ -260,6 +363,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
     closed = true;
     const error = failure instanceof Error ? failure : new Error(failure);
     clearReadyTimer();
+    cancelDiagnosticTurns();
     detachSocketListeners();
     rejectPending(error);
     rejectReady(error);
@@ -271,6 +375,10 @@ export async function connectIssuedPaneStreamRuntimeClient(
     socket.send(JSON.stringify(PaneStreamClientFrameSchemaZ.parse(frame)));
   };
   const inputSequences = new Map<string, number>();
+  const negotiatedDeliveries = new Map<
+    string,
+    { readonly generation: string; readonly deliveryNonce: string }
+  >();
   const pendingInputs = new Map<
     string,
     {
@@ -408,6 +516,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
     target: TerminalReplicaAddress,
     rawInput: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
+    causalProbeRequest?: CausalCellProbeRequestV1,
   ): Promise<SessionRuntimeTerminalInputResult> => {
     const input = SessionRuntimeTerminalInputSchemaZ.parse(rawInput);
     const pane = target.semanticPaneId;
@@ -439,6 +548,38 @@ export async function connectIssuedPaneStreamRuntimeClient(
       );
     }
     const sequence = (inputSequences.get(pane) ?? 0) + 1;
+    let causalProbe: CausalCellProbeV1 | undefined;
+    if (causalProbeRequest) {
+      if (causalProbeRequest.semanticPaneId !== pane) {
+        return Promise.reject(
+          new PaneStreamOperationError("invalid-pane", "Causal-cell probe target did not match"),
+        );
+      }
+      if (!options.diagnosticCapabilities?.includes("causal-cell-v1")) {
+        return Promise.reject(
+          new PaneStreamOperationError(
+            "capability-unavailable",
+            "Causal-cell input requires a negotiated diagnostic capability",
+          ),
+        );
+      }
+      const delivery = negotiatedDeliveries.get(pane);
+      if (!delivery || delivery.generation !== causalProbeRequest.generation) {
+        return Promise.reject(
+          new PaneStreamOperationError(
+            "delivery-unavailable",
+            "Causal-cell input requires the current negotiated terminal delivery",
+          ),
+        );
+      }
+      causalProbe = {
+        ...causalProbeRequest,
+        clientId: options.hostClientId,
+        transportNonce: descriptor.requestId,
+        deliveryNonce: delivery.deliveryNonce,
+        inputSequence: sequence,
+      };
+    }
     const pendingKey = `${pane}\0${sequence}`;
     return new Promise((resolve, reject) => {
       const timer = createRuntimeTimer(() => {
@@ -447,14 +588,83 @@ export async function connectIssuedPaneStreamRuntimeClient(
       }, 2_000);
       pendingInputs.set(pendingKey, { pane, sequence, resolve, reject, timer });
       try {
+        const transportStage = performanceTraceId ? options.onInputTransportStage : undefined;
+        const diagnosticNowMicros = transportStage
+          ? (options.diagnosticNowMicros ?? performanceNowMicros)
+          : undefined;
+        let enqueuedAtMicros: number | null = null;
+        if (diagnosticNowMicros) {
+          try {
+            enqueuedAtMicros = diagnosticNowMicros();
+          } catch {
+            // Diagnostics cannot alter input transport truth.
+          }
+        }
         send({
           type: "input",
           ...input,
           pane,
           seq: sequence,
           ...(performanceTraceId ? { performanceTraceId } : {}),
+          ...(causalProbe ? { causalProbe } : {}),
         });
+        // Socket admission is authoritative. Commit FIFO identity before any
+        // diagnostic callback can re-enter `sendTerminalInput`.
         inputSequences.set(pane, sequence);
+        let sentAtMicros: number | null = null;
+        if (diagnosticNowMicros) {
+          try {
+            sentAtMicros = diagnosticNowMicros();
+          } catch {
+            // Diagnostics cannot alter input transport truth.
+          }
+        }
+        if (
+          transportStage &&
+          diagnosticNowMicros &&
+          enqueuedAtMicros !== null &&
+          sentAtMicros !== null
+        ) {
+          const nextTurn = options.diagnosticNextTurn ?? scheduleNextEventLoopTurn;
+          let completed = false;
+          let cancel: () => void = () => undefined;
+          try {
+            cancel = nextTurn(() => {
+              let atMicros: number | null = null;
+              try {
+                atMicros = diagnosticNowMicros();
+              } catch {
+                // Diagnostics cannot alter input transport truth.
+              }
+              completed = true;
+              const turns = pendingDiagnosticTurns;
+              turns?.delete(cancel);
+              if (turns?.size === 0 && pendingDiagnosticTurns === turns)
+                pendingDiagnosticTurns = null;
+              if (closed || atMicros === null) return;
+              for (const [operation, observedAtMicros] of [
+                ["pane-stream-frame-enqueued", enqueuedAtMicros],
+                ["pane-stream-socket-send-return", sentAtMicros],
+                ["pane-stream-next-event-loop-turn", atMicros],
+              ] as const) {
+                try {
+                  transportStage({
+                    traceId: performanceTraceId!,
+                    operation,
+                    atMicros: observedAtMicros,
+                    pane,
+                    sequence,
+                  });
+                } catch {
+                  // Diagnostics cannot alter input transport truth.
+                }
+              }
+            });
+            if (!completed) (pendingDiagnosticTurns ??= new Set()).add(cancel);
+          } catch {
+            // Diagnostics cannot alter input transport truth.
+          }
+        }
       } catch (error) {
         timer.release();
         pendingInputs.delete(pendingKey);
@@ -473,6 +683,9 @@ export async function connectIssuedPaneStreamRuntimeClient(
           ticket: descriptor.redemptionTicket,
           requestId: descriptor.requestId,
           daemonInstanceId: descriptor.daemonInstanceId,
+          ...(options.diagnosticCapabilities?.length
+            ? { diagnosticCapabilities: [...options.diagnosticCapabilities] }
+            : {}),
         }),
       ),
     );
@@ -508,7 +721,9 @@ export async function connectIssuedPaneStreamRuntimeClient(
         frame.daemonInstanceId !== descriptor.daemonInstanceId ||
         frame.requestId !== descriptor.requestId ||
         JSON.stringify(frame.panes) !== JSON.stringify(descriptor.panes) ||
-        frame.effectiveViewerMode !== descriptor.effectiveViewerMode
+        frame.effectiveViewerMode !== descriptor.effectiveViewerMode ||
+        JSON.stringify(frame.diagnosticCapabilities ?? []) !==
+          JSON.stringify(options.diagnosticCapabilities ?? [])
       ) {
         return fail("Pane-stream peer identity did not match the issued capability");
       }
@@ -545,6 +760,24 @@ export async function connectIssuedPaneStreamRuntimeClient(
           );
       }
       return;
+    }
+    if (frame.type === "causal-cell-proof") {
+      options.onCausalCellProof?.(frame.proof);
+      return;
+    }
+    if (frame.type === "causal-cell-failure") {
+      options.onCausalCellFailure?.(frame.failure);
+      return;
+    }
+    if (frame.type === "terminal-delivery-ready") {
+      if (frame.negotiation.accepted) {
+        negotiatedDeliveries.set(frame.pane, {
+          generation: frame.negotiation.negotiated.generation,
+          deliveryNonce: frame.negotiation.negotiated.deliveryNonce,
+        });
+      } else {
+        negotiatedDeliveries.delete(frame.pane);
+      }
     }
     if (frame.type === "authority-snapshot") {
       applyAuthoritySnapshot(frame.snapshot);
@@ -599,6 +832,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
     if (closed) return;
     closed = true;
     clearReadyTimer();
+    cancelDiagnosticTurns();
     detachSocketListeners();
     releaseSocketResource();
     const error = new Error("Pane-stream runtime connection closed");
@@ -694,6 +928,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
       if (closed) return;
       closed = true;
       clearReadyTimer();
+      cancelDiagnosticTurns();
       detachSocketListeners();
       rejectPending(new Error("Pane-stream runtime client closed"));
       closeSocketOnce(1000, "client-closed");

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { CausalCellProbeV1 } from "@tmux-ide/contracts";
 import type { SessionRuntimeConsumer } from "./registry.ts";
 import { SessionRuntimeRegistry } from "./registry.ts";
 import { SessionRuntimeTransportBinder } from "./transport-binding.ts";
@@ -376,6 +377,55 @@ describe("SessionRuntimeTransportBinder", () => {
     await newDelivery.close();
     await replacement.close();
     expect(deliveryCloses.get(subscriberIds[1]!)).toHaveBeenCalledOnce();
+  });
+
+  it("fails only the closing transport binding's active causal probe immediately", async () => {
+    const failCausalCellProbe = vi.fn();
+    const consumer = {
+      generation: GENERATION,
+      session: "alpha",
+      surface: "pane-stream",
+      clientId: "web:document-a",
+      acquireController: vi.fn(() => LEASE),
+      releaseController: vi.fn(),
+      sendInput: vi.fn(),
+      failCausalCellProbe,
+      close: vi.fn(async () => undefined),
+    } as unknown as SessionRuntimeConsumer;
+    const handle = Object.freeze(Object.create(null)) as object;
+    const registry = {
+      generation: GENERATION,
+      connect: vi.fn(() => consumer),
+      createExecutionHandle: vi.fn(() => handle),
+      bindExecutionSource: vi.fn(() => handle),
+      assertExecutionHandle: vi.fn(),
+      submitAuthenticatedIntent: vi.fn(),
+    };
+    const binder = new SessionRuntimeTransportBinder(registry);
+    const owner = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000001",
+      session: "alpha",
+      hostClientId: "web:document-a",
+      allowedSourcePaneIds: ["pane.editor"],
+      interactive: true,
+    });
+    const sibling = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000002",
+      session: "alpha",
+      hostClientId: "web:document-a",
+      allowedSourcePaneIds: ["pane.editor"],
+      interactive: true,
+    });
+    const probe = { traceId: OP_A } as unknown as CausalCellProbeV1;
+    owner.sendInput("pane.editor", { kind: "text", data: "x" }, OP_A, probe, vi.fn());
+
+    await sibling.close();
+    expect(failCausalCellProbe).not.toHaveBeenCalled();
+    await owner.close();
+    expect(failCausalCellProbe).toHaveBeenCalledOnce();
+    expect(failCausalCellProbe).toHaveBeenCalledWith("pane.editor", OP_A, "transport-closed");
   });
 
   it("restores geometry authority to an older live same-host transport when its replacement closes", async () => {

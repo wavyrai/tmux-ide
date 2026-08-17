@@ -1,4 +1,10 @@
 import { z } from "zod";
+import {
+  CausalCellCapabilitySchemaZ,
+  CausalCellFailureV1SchemaZ,
+  CausalCellProbeV1SchemaZ,
+  CausalCellProofV1SchemaZ,
+} from "./causal-cell.ts";
 import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
 import {
   TerminalIssueErrorCodeCompatSchemaZ,
@@ -192,6 +198,7 @@ export const PaneStreamRedeemFrameSchemaZ = z
      * renderer sets this; simple transcript clients omit it.
      */
     deliveryAcks: z.boolean().optional(),
+    diagnosticCapabilities: z.array(CausalCellCapabilitySchemaZ).max(1).optional(),
   })
   .strict();
 export type PaneStreamRedeemFrame = z.infer<typeof PaneStreamRedeemFrameSchemaZ>;
@@ -210,12 +217,23 @@ const PaneStreamInputFrameMetadataShape = {
   seq: z.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
   /** Opt-in controlled next-output probe; not a general causal assertion. */
   performanceTraceId: z.uuid().optional(),
+  causalProbe: CausalCellProbeV1SchemaZ.optional(),
 } as const;
 
-export const PaneStreamInputFrameSchemaZ = z.discriminatedUnion("kind", [
-  SessionRuntimeTerminalTextInputSchemaZ.extend(PaneStreamInputFrameMetadataShape),
-  SessionRuntimeTerminalKeyInputSchemaZ.extend(PaneStreamInputFrameMetadataShape),
-]);
+export const PaneStreamInputFrameSchemaZ = z
+  .discriminatedUnion("kind", [
+    SessionRuntimeTerminalTextInputSchemaZ.extend(PaneStreamInputFrameMetadataShape),
+    SessionRuntimeTerminalKeyInputSchemaZ.extend(PaneStreamInputFrameMetadataShape),
+  ])
+  .superRefine((value, context) => {
+    if (!value.causalProbe) return;
+    if (value.performanceTraceId !== value.causalProbe.traceId)
+      context.addIssue({ code: "custom", message: "causal probe id must equal trace id" });
+    if (value.seq !== value.causalProbe.inputSequence)
+      context.addIssue({ code: "custom", message: "causal probe input sequence mismatch" });
+    if (value.pane !== value.causalProbe.semanticPaneId)
+      context.addIssue({ code: "custom", message: "causal probe pane mismatch" });
+  });
 export type PaneStreamInputFrame = z.infer<typeof PaneStreamInputFrameSchemaZ>;
 
 /** Cumulative renderer consumption ack: the highest applied server seq. */
@@ -331,6 +349,7 @@ export const PaneStreamReadyFrameSchemaZ = z
     panes: PaneSetSchemaZ,
     effectiveViewerMode: PaneStreamViewerModeSchemaZ,
     authority: SessionRuntimeAuthoritySnapshotSchemaZ.optional(),
+    diagnosticCapabilities: z.array(CausalCellCapabilitySchemaZ).max(1).optional(),
   })
   .strict();
 
@@ -434,6 +453,13 @@ export const PaneStreamInputAckFrameSchemaZ = z
     pane: PaneStreamSemanticPaneIdSchemaZ,
     seq: z.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
   })
+  .strict();
+
+export const PaneStreamCausalCellProofFrameSchemaZ = z
+  .object({ type: z.literal("causal-cell-proof"), proof: CausalCellProofV1SchemaZ })
+  .strict();
+export const PaneStreamCausalCellFailureFrameSchemaZ = z
+  .object({ type: z.literal("causal-cell-failure"), failure: CausalCellFailureV1SchemaZ })
   .strict();
 
 export const PaneStreamTerminalDeliveryReadyFrameSchemaZ = z
@@ -552,6 +578,8 @@ export const PaneStreamServerFrameSchemaZ = z.discriminatedUnion("type", [
   PaneStreamFlowFrameSchemaZ,
   PaneStreamClosedFrameSchemaZ,
   PaneStreamInputAckFrameSchemaZ,
+  PaneStreamCausalCellProofFrameSchemaZ,
+  PaneStreamCausalCellFailureFrameSchemaZ,
   PaneStreamTerminalDeliveryReadyFrameSchemaZ,
   PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ,
   PaneStreamTerminalDeliveryChunkFrameSchemaZ,

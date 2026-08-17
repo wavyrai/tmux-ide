@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { resolve } from "node:path";
 
 import {
+  DaemonBootstrapError,
   DaemonBootstrapCoordinator,
   type DaemonBootstrapResult,
   type DaemonBootstrapSnapshot,
@@ -10,6 +11,7 @@ import {
 import { DAEMON_WIRE_PROTOCOL_VERSION } from "@tmux-ide/contracts";
 
 import {
+  canonicalDaemonUrl,
   inspectCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
   isCanonicalDaemonRecordOwnerProvenDead,
@@ -43,6 +45,9 @@ export interface CanonicalDaemonBootstrapDependencies {
   readonly identity: typeof probeCanonicalDaemonIdentity;
   readonly health: typeof probeCanonicalDaemonHealth;
   readonly spawnOwner: (entryPath: string, cwd: string) => Promise<void>;
+  readonly shutdownOlderOwner: (info: CanonicalDaemonInfo) => Promise<void>;
+  readonly now: () => number;
+  readonly sleep: (milliseconds: number) => Promise<void>;
 }
 
 function spawnOwner(entryPath: string, cwd: string): Promise<void> {
@@ -68,6 +73,43 @@ function spawnOwner(entryPath: string, cwd: string): Promise<void> {
   });
 }
 
+async function shutdownOlderOwner(info: CanonicalDaemonInfo): Promise<void> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (info.authToken) headers.authorization = `Bearer ${info.authToken}`;
+  const response = await fetch(
+    canonicalDaemonUrl("http", info.bindHostname, info.port, "/api/v2/action/daemon.shutdown"),
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        reason: "wire-protocol-upgrade",
+        expectedInstanceId: info.instanceId,
+      }),
+      signal: AbortSignal.timeout(2_000),
+    },
+  );
+  const envelope = (await response.json().catch(() => null)) as {
+    ok?: unknown;
+    result?: { stopping?: unknown };
+  } | null;
+  if (!response.ok || envelope?.ok !== true || envelope.result?.stopping !== true) {
+    throw new DaemonBootstrapError(
+      "incompatible",
+      `The older canonical daemon refused a wire-protocol upgrade (HTTP ${response.status}).`,
+      { reason: "protocol-mismatch" },
+    );
+  }
+}
+
+function sameCanonicalInstance(left: CanonicalDaemonInfo, right: CanonicalDaemonInfo): boolean {
+  return (
+    left.pid === right.pid &&
+    left.port === right.port &&
+    left.instanceId === right.instanceId &&
+    left.startedAt === right.startedAt
+  );
+}
+
 const defaultDependencies: CanonicalDaemonBootstrapDependencies = {
   inspect: inspectCanonicalDaemonInfo,
   ownerProvenDead: isCanonicalDaemonRecordOwnerProvenDead,
@@ -75,7 +117,57 @@ const defaultDependencies: CanonicalDaemonBootstrapDependencies = {
   identity: probeCanonicalDaemonIdentity,
   health: probeCanonicalDaemonHealth,
   spawnOwner,
+  shutdownOlderOwner,
+  now: Date.now,
+  sleep: (milliseconds) =>
+    new Promise((resolveSleep) => {
+      setTimeout(resolveSleep, milliseconds);
+    }),
 };
+
+async function replaceOlderCanonicalDaemon(
+  deps: CanonicalDaemonBootstrapDependencies,
+  info: CanonicalDaemonInfo,
+  timeoutMs: number,
+): Promise<void> {
+  if (info.protocolVersion >= DAEMON_WIRE_PROTOCOL_VERSION) {
+    throw new DaemonBootstrapError(
+      "incompatible",
+      `Canonical daemon protocol ${info.protocolVersion} cannot be replaced by older protocol ${DAEMON_WIRE_PROTOCOL_VERSION}.`,
+      { reason: "protocol-mismatch" },
+    );
+  }
+  const [identity, health] = await Promise.all([deps.identity(info), deps.health(info)]);
+  if (
+    !identity ||
+    !health ||
+    identity.pid !== info.pid ||
+    identity.instanceId !== info.instanceId ||
+    identity.startedAt !== info.startedAt ||
+    identity.protocolVersion !== info.protocolVersion ||
+    health.protocolVersion !== info.protocolVersion
+  ) {
+    throw new DaemonBootstrapError(
+      "incompatible",
+      "The older canonical daemon changed identity before the protocol upgrade.",
+      { reason: "identity-mismatch" },
+    );
+  }
+  await deps.shutdownOlderOwner(info);
+  const deadline = deps.now() + timeoutMs;
+  while (deps.now() < deadline) {
+    const state = deps.inspect();
+    if (state.status === "missing") return;
+    if (state.status === "valid" && !sameCanonicalInstance(state.info, info)) return;
+    if (!(await deps.alive(info))) return;
+    await deps.sleep(25);
+  }
+  throw new DaemonBootstrapError(
+    "control-timeout",
+    "The older canonical daemon did not retire after accepting the protocol upgrade.",
+    { reason: "protocol-mismatch" },
+  );
+}
 
 async function probeCanonical(
   deps: CanonicalDaemonBootstrapDependencies,
@@ -131,5 +223,44 @@ export function ensureCanonicalDaemon(
   options: CanonicalDaemonBootstrapOptions,
   dependencies: Partial<CanonicalDaemonBootstrapDependencies> = {},
 ): Promise<DaemonBootstrapResult<CanonicalDaemonInfo, never>> {
-  return createCanonicalDaemonBootstrapCoordinator(options, dependencies).ensure();
+  const deps = { ...defaultDependencies, ...dependencies };
+  const ensure = () => createCanonicalDaemonBootstrapCoordinator(options, deps).ensure();
+  return ensure().catch(async (error: unknown) => {
+    if (
+      !(error instanceof DaemonBootstrapError) ||
+      error.code !== "incompatible" ||
+      error.reason !== "protocol-mismatch"
+    ) {
+      throw error;
+    }
+    const state = deps.inspect();
+    // Another launcher may have won the upgrade between our incompatible
+    // probe and this recovery inspection. Converge on its missing/current
+    // state instead of rethrowing the stale mismatch observed above.
+    if (state.status === "missing") return ensure();
+    if (state.status === "valid" && state.info.protocolVersion === DAEMON_WIRE_PROTOCOL_VERSION) {
+      return ensure();
+    }
+    if (state.status !== "valid" || state.info.protocolVersion > DAEMON_WIRE_PROTOCOL_VERSION) {
+      throw error;
+    }
+    const replacing = state.info;
+    try {
+      await replaceOlderCanonicalDaemon(deps, replacing, options.timeoutMs ?? 15_000);
+    } catch (replacementError) {
+      // A duplicate upgrader can retire the exact owner while this caller is
+      // proving or shutting it down. Only adopt after inspection proves that
+      // the old identity is gone; a failure against the same owner remains a
+      // real replacement failure.
+      const after = deps.inspect();
+      if (
+        after.status === "missing" ||
+        (after.status === "valid" && !sameCanonicalInstance(after.info, replacing))
+      ) {
+        return ensure();
+      }
+      throw replacementError;
+    }
+    return ensure();
+  });
 }

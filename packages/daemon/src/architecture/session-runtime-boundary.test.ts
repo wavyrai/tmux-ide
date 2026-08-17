@@ -161,7 +161,9 @@ describe("terminal inventory read boundary", () => {
     );
     expect(source).not.toContain("options.commandExecutor!(executable, argv, readOptions)");
     expect(source).toContain("runner: this.runner");
-    expect(source).toContain("this.readRunner,\n      abort.signal");
+    expect(source).toContain(
+      "discoverWorkspaceRegistryTerminalInventory(this.#registry, this.readRunner, signal)",
+    );
     const asyncExecutor = source.slice(
       source.indexOf("function defaultReadCommandExecutor"),
       source.indexOf("function pinnedRunner"),

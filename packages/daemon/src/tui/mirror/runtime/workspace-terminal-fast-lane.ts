@@ -11,9 +11,11 @@ import {
 } from "@tmux-ide/daemon-client/terminal-fast-lane";
 import type { WorkspaceClient } from "@tmux-ide/daemon-client/workspace-client-types";
 import { currentTuiPerformanceEventSink } from "../performance-events.ts";
+import type { CausalCellClientLedger } from "./causal-cell-client-ledger.ts";
 
 export interface OpenTuiWorkspaceTerminalFastLane {
   readonly lane: TerminalFastLane;
+  readonly causalCellLedger: CausalCellClientLedger | null;
   dispose(): void;
 }
 
@@ -29,6 +31,7 @@ export function createOpenTuiWorkspaceTerminalFastLane(
     TerminalReplicaTombstonePayload
   >,
   hostClientId: string,
+  causalCellLedger: CausalCellClientLedger | null = null,
 ): OpenTuiWorkspaceTerminalFastLane {
   const target = client.getSnapshot().target;
   if (target === null) throw new Error("terminal fast lane requires a live workspace target");
@@ -65,7 +68,7 @@ export function createOpenTuiWorkspaceTerminalFastLane(
         const lease = await client.requestAuthority(authority);
         return lease?.generation === expectedGeneration && lease.clientId === hostClientId;
       },
-      write(address, input, performanceTraceId) {
+      write(address, input, performanceTraceId, causalProbe) {
         return client.sendTerminalInput(
           {
             workspaceName: address.workspaceName,
@@ -73,6 +76,7 @@ export function createOpenTuiWorkspaceTerminalFastLane(
           },
           input,
           performanceTraceId,
+          causalProbe,
         );
       },
       resize(address, viewport) {
@@ -100,5 +104,21 @@ export function createOpenTuiWorkspaceTerminalFastLane(
         }
       : {}),
   });
-  return { lane, dispose: () => lane.dispose() };
+  if (performanceSink?.terminalInputQueueState) {
+    const counters = lane.counters();
+    const memory = process.memoryUsage();
+    performanceSink.terminalInputQueueState({
+      operation: "initialized",
+      processId: `opentui:${process.pid}`,
+      clockId: "opentui-performance-now",
+      clockKind: "performance-now",
+      atMicros: Math.floor(performance.now() * 1_000),
+      inputPending: counters.inputPending,
+      inputInFlight: counters.inputInFlight,
+      inputPendingBytes: counters.inputPendingBytes,
+      rssBytes: memory.rss,
+      heapUsedBytes: memory.heapUsed,
+    });
+  }
+  return { lane, causalCellLedger, dispose: () => lane.dispose() };
 }

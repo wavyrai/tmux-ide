@@ -16,6 +16,7 @@ import {
   type PaneStreamViewerMode,
   type SessionRuntimeSemanticIntent,
   type SessionRuntimeTerminalInput,
+  type CausalCellProbeV1,
   type SessionRuntimeActivityKind,
   type SessionRuntimeAuthorityKind,
   type SessionRuntimeAuthorityLease,
@@ -39,6 +40,7 @@ import type {
   MirrorSubscribeRequest,
   MirrorSubscription,
 } from "../mirror/mirror-service.ts";
+import type { CausalCellLedgerResult } from "../session-runtime/causal-cell-ledger.ts";
 import {
   canonicalOriginOrNull,
   digestSecret,
@@ -230,6 +232,8 @@ export interface SessionRuntimePaneStreamTransportBinding {
     semanticPaneId: string,
     input: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
+    causalProbe?: CausalCellProbeV1,
+    onCausalResult?: (result: CausalCellLedgerResult) => void,
   ): void;
   fitViewport(cols: number, rows: number): void;
   close(): Promise<void>;
@@ -692,6 +696,10 @@ export class PaneStreamAdmissionCoordinator {
             sessionRuntimeBinding,
             binding,
             deliveryAcks: frame.deliveryAcks === true,
+            causalCellCapability:
+              descriptor.terminalDelivery !== null &&
+              descriptor.viewerMode === "interactive" &&
+              frame.diagnosticCapabilities?.includes("causal-cell-v1") === true,
             mirror: this.#mirror,
             leaseManager: this.#leaseManager,
             ledger: this.#ledger,
@@ -903,6 +911,7 @@ interface LiveConnectionOptions {
   readonly sessionRuntimeBinding: SessionRuntimePaneStreamTransportBinding | null;
   readonly binding: PaneStreamLeaseBinding;
   readonly deliveryAcks: boolean;
+  readonly causalCellCapability: boolean;
   readonly mirror: PaneStreamMirror;
   readonly leaseManager: PaneStreamLeaseAuthority;
   readonly ledger: PaneStreamWireLedger;
@@ -955,6 +964,7 @@ export class PaneStreamLiveConnection {
   readonly #binding: PaneStreamLeaseBinding;
   readonly #sessionRuntimeBinding: SessionRuntimePaneStreamTransportBinding | null;
   readonly #deliveryAcks: boolean;
+  readonly #causalCellCapability: boolean;
   readonly #mirror: PaneStreamMirror;
   readonly #leaseManager: PaneStreamLeaseAuthority;
   readonly #ledger: PaneStreamWireLedger;
@@ -996,6 +1006,7 @@ export class PaneStreamLiveConnection {
       throw new Error("Interactive pane stream requires SessionRuntime authority");
     }
     this.#deliveryAcks = options.deliveryAcks;
+    this.#causalCellCapability = options.causalCellCapability;
     this.#mirror = options.mirror;
     this.#leaseManager = options.leaseManager;
     this.#ledger = options.ledger;
@@ -1046,6 +1057,9 @@ export class PaneStreamLiveConnection {
         requestId: this.#binding.requestId,
         panes: [...this.#descriptor.panes],
         effectiveViewerMode: this.#descriptor.viewerMode,
+        ...(this.#causalCellCapability
+          ? { diagnosticCapabilities: ["causal-cell-v1" as const] }
+          : {}),
       });
     } catch {
       this.close(1011, "stream-unavailable");
@@ -1616,6 +1630,14 @@ export class PaneStreamLiveConnection {
     isBinary: boolean,
   ): void => {
     if (this.#closed) return;
+    let ingressAtMicros: number | null = null;
+    if (this.#observability?.enabled) {
+      try {
+        ingressAtMicros = this.#observability.nowMicros();
+      } catch {
+        // Diagnostics cannot alter protocol truth.
+      }
+    }
     const byteLength = rawDataByteLength(data, PANE_STREAM_MAX_CONTROL_BYTES);
     if (isBinary || byteLength === 0 || byteLength > PANE_STREAM_MAX_CONTROL_BYTES) {
       this.#failProtocol("protocol-error");
@@ -1745,6 +1767,8 @@ export class PaneStreamLiveConnection {
       frame.data,
       byteLength,
       frame.performanceTraceId,
+      frame.causalProbe,
+      ingressAtMicros,
     );
   };
 
@@ -1882,6 +1906,8 @@ export class PaneStreamLiveConnection {
     data: string,
     frameBytes: number,
     performanceTraceId?: string,
+    causalProbe?: CausalCellProbeV1,
+    ingressAtMicros: number | null = null,
   ): void {
     if (this.#descriptor.viewerMode !== "interactive") {
       this.#failProtocol("input-rejected");
@@ -1897,6 +1923,23 @@ export class PaneStreamLiveConnection {
     ) {
       this.#failProtocol("input-rejected");
       return;
+    }
+    if (causalProbe) {
+      const address = channel.deliveryAddress;
+      if (
+        !this.#causalCellCapability ||
+        !address ||
+        causalProbe.clientId !== this.#sessionRuntimeBinding?.clientId ||
+        causalProbe.transportNonce !== this.#binding.requestId ||
+        causalProbe.deliveryNonce !== address.deliveryNonce ||
+        causalProbe.inputSequence !== seq ||
+        causalProbe.semanticPaneId !== pane ||
+        causalProbe.generation !== address.generation ||
+        causalProbe.incarnation !== address.incarnation
+      ) {
+        this.#failProtocol("input-rejected");
+        return;
+      }
     }
     const now = this.#now();
     if (
@@ -1915,16 +1958,85 @@ export class PaneStreamLiveConnection {
       return;
     }
     if (!this.#prepareInputAuthority(false)) return;
+    let trace: ReturnType<SessionRuntimeObservability["beginTrace"]> = null;
+    if (performanceTraceId && this.#observability?.enabled) {
+      try {
+        trace = this.#observability.beginTrace(
+          "terminal-input-to-paint",
+          {
+            generation: this.#sessionRuntimeBinding!.generation,
+            incarnation: causalProbe?.incarnation ?? channel.deliveryAddress?.incarnation ?? null,
+          },
+          performanceTraceId,
+        );
+        if (trace && ingressAtMicros !== null) {
+          this.#observability.recordSpan(
+            "transport",
+            "pane-stream-input-frame-ingress",
+            ingressAtMicros,
+            ingressAtMicros,
+            trace,
+          );
+        }
+      } catch {
+        trace = null;
+      }
+    }
     this.#inputWindowFrames += 1;
     this.#inputWindowBytes += frameBytes;
     channel.nextInputSeq += 1;
     try {
       this.#sessionRuntimeBinding!.assertController(pane);
       if (semanticDelivery)
-        this.#sessionRuntimeBinding!.sendInput(pane, { kind, data }, performanceTraceId);
+        this.#sessionRuntimeBinding!.sendInput(
+          pane,
+          { kind, data },
+          performanceTraceId,
+          causalProbe,
+          causalProbe
+            ? (result) => {
+                if (this.#closed) return;
+                if (result.status === "proved") {
+                  this.#sendFrame(null, { type: "causal-cell-proof", proof: result.proof });
+                } else {
+                  this.#sendFrame(null, {
+                    type: "causal-cell-failure",
+                    failure: {
+                      version: 1,
+                      capability: "causal-cell-v1",
+                      traceId: result.traceId,
+                      reason: result.reason,
+                    },
+                  });
+                }
+              }
+            : undefined,
+        );
       else if (kind === "text") channel.sub!.sendText(data);
       else channel.sub!.sendKey(data);
+      let ackStartedAtMicros: number | null = null;
+      if (trace) {
+        try {
+          ackStartedAtMicros = this.#observability!.nowMicros();
+        } catch {
+          // Diagnostics cannot alter protocol truth.
+        }
+      }
       sendControl(this.#socket, { type: "input-ack", pane, seq });
+      if (trace && ackStartedAtMicros !== null) {
+        try {
+          const ackEndedAtMicros = this.#observability!.nowMicros();
+          this.#observability!.recordSpan(
+            "transport",
+            "pane-stream-input-ack-socket-send",
+            ackStartedAtMicros,
+            ackEndedAtMicros,
+            trace,
+          );
+        } catch {
+          // Diagnostics cannot alter protocol truth.
+        }
+      }
     } catch {
       this.close(1011, "stream-unavailable");
     }

@@ -53,10 +53,6 @@ function occurrences(pattern: RegExp): number {
   return source.match(pattern)?.length ?? 0;
 }
 
-function nonBlankLines(value: string): number {
-  return value.split("\n").filter((line) => line.trim().length > 0).length;
-}
-
 describe("production OpenTUI v2 data path", () => {
   it("boots the v2 root and never reaches the retired production stack", () => {
     for (const required of OPENTUI_REQUIRED_PRODUCTION_MODULES) {
@@ -144,7 +140,7 @@ describe("production OpenTUI v2 data path", () => {
   });
 
   it("keeps the production root reviewable as a small renderer client", () => {
-    expect(nonBlankLines(applicationRootSource)).toBeLessThanOrEqual(1_800);
+    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(500);
     expect(productionGraph.files.length).toBeLessThan(100);
   });
 });

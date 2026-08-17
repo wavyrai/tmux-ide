@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import type {
-  DesktopDaemonFetchWorkspaceFilePreviewResult,
-  DesktopDaemonFetchWorkspaceFilesResult,
-  DaemonInstanceIdentity,
-  HostCapabilities,
+import {
+  DAEMON_WIRE_PROTOCOL_VERSION,
+  type DesktopDaemonFetchWorkspaceFilePreviewResult,
+  type DesktopDaemonFetchWorkspaceFilesResult,
+  type DaemonInstanceIdentity,
+  type HostCapabilities,
 } from "@tmux-ide/contracts";
 
 import {
@@ -12,7 +13,7 @@ import {
 } from "./workspace-files-store.ts";
 
 const DAEMON: DaemonInstanceIdentity = {
-  protocolVersion: 1,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "2.8.0",
   instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
   startedAt: "2026-07-21T00:00:00.000Z",

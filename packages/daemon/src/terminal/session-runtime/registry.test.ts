@@ -9,6 +9,7 @@ import {
   fixtureState,
 } from "../mirror/__tests__/simulated-channel.ts";
 import { SessionRuntimeRegistry } from "./registry.ts";
+import { createSessionRuntimeObservability } from "./runtime-observability.ts";
 
 const GENERATION_A = "11111111-1111-4111-8111-111111111111";
 const GENERATION_B = "22222222-2222-4222-8222-222222222222";
@@ -121,6 +122,34 @@ function rig(generation = GENERATION_A): {
   return { registry: new SessionRuntimeRegistry({ generation, mirror }), sims, mirror };
 }
 
+function delayedStartRig(): {
+  registry: SessionRuntimeRegistry;
+  sims: SimulatedChannel[];
+  releaseStart: () => void;
+} {
+  const sims: SimulatedChannel[] = [];
+  let releaseStart!: () => void;
+  const startBarrier = new Promise<void>((resolve) => (releaseStart = resolve));
+  const registry = new SessionRuntimeRegistry({
+    generation: GENERATION_A,
+    mirror: {
+      createIo: (_session, handlers) => {
+        const sim = new SimulatedChannel(handlers, fixtureAutoReply(fixtureState()));
+        const start = sim.start.bind(sim);
+        sim.start = async () => {
+          await startBarrier;
+          return start();
+        };
+        sims.push(sim);
+        return sim;
+      },
+      generatePaneId: () => "pane.mirror.generated",
+      controlModeOwnershipRegistry: new ControlModeOwnershipRegistry(),
+    },
+  });
+  return { registry, sims, releaseStart };
+}
+
 function finishSeed(sim: SimulatedChannel): void {
   sim.reply(["seed"]);
   sim.reply(["0 0 100 50"]);
@@ -147,6 +176,107 @@ describe("SessionRuntimeRegistry", () => {
     await registry.dispose();
   });
 
+  it("does not grant trusted inventory to ordinary prewarm and binds native proof to $session_id", async () => {
+    const state = fixtureState();
+    const sims: SimulatedChannel[] = [];
+    const operations: string[] = [];
+    const observability = createSessionRuntimeObservability({
+      nowMicros: (() => {
+        let now = 0;
+        return () => (now += 10);
+      })(),
+      onSpan: (span) => {
+        operations.push(span.operation);
+        if (span.operation.startsWith("terminal-")) {
+          throw new Error("diagnostic sink failed");
+        }
+      },
+    });
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION_A,
+      observability,
+      mirror: {
+        createIo: (_session, handlers) => {
+          const sim = new SimulatedChannel(handlers, fixtureAutoReply(state));
+          sims.push(sim);
+          return sim;
+        },
+        generatePaneId: () => "pane.mirror.generated",
+        controlModeOwnershipRegistry: new ControlModeOwnershipRegistry(),
+      },
+    });
+    await registry.prewarmSession(FIXTURE.session);
+    expect(registry.hasProofQualifiedInventory(FIXTURE.session)).toBe(false);
+    await expect(registry.describeTrustedSessionInventory(FIXTURE.session)).rejects.toThrow(
+      "no proof-qualified",
+    );
+
+    state.descriptorRows[2] = state.descriptorRows[2]!.replace(
+      "%3\t\t",
+      "%3\tpane.mirror.generated\t",
+    ).replace("\t\tzz-sim", "\twindow.test.two\tzz-sim");
+    await registry.prewarmProofQualifiedSession(FIXTURE.session, "$1");
+    await expect(registry.describeTrustedSessionInventory(FIXTURE.session)).resolves.toMatchObject({
+      runtimeSessionId: "$1",
+      panes: expect.any(Array),
+    });
+    expect(operations).toEqual([
+      "terminal-prewarm-readiness",
+      "terminal-attached-identity",
+      "terminal-trusted-inventory-attempt",
+    ]);
+    expect(sims).toHaveLength(1);
+
+    await registry.retireSession(FIXTURE.session);
+    expect(registry.hasProofQualifiedInventory(FIXTURE.session)).toBe(false);
+    await registry.dispose();
+  });
+
+  it("retires old authority before qualifying a same-name replacement session", async () => {
+    const states = [fixtureState(), fixtureState()];
+    for (const state of states) {
+      state.descriptorRows[2] = state.descriptorRows[2]!.replace(
+        "%3\t\t",
+        "%3\tpane.mirror.generated\t",
+      ).replace("\t\tzz-sim", "\twindow.test.two\tzz-sim");
+    }
+    states[1]!.descriptorRows = states[1]!.descriptorRows.map((row) =>
+      row.replace("\t$1\t", "\t$2\t"),
+    );
+    const sims: SimulatedChannel[] = [];
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION_A,
+      mirror: {
+        createIo: (_session, handlers) => {
+          const index = sims.length;
+          const state = states[index]!;
+          const baseReply = fixtureAutoReply(state);
+          const sim = new SimulatedChannel(handlers, (command) =>
+            command.startsWith('display-message -p "#{qa:session_name}')
+              ? [`zz-sim\t$${index + 1}`]
+              : baseReply(command),
+          );
+          sims.push(sim);
+          return sim;
+        },
+        generatePaneId: () => "pane.mirror.generated",
+        controlModeOwnershipRegistry: new ControlModeOwnershipRegistry(),
+      },
+    });
+    await registry.prewarmProofQualifiedSession(FIXTURE.session, "$1");
+    const oldWrites = sims[0]!.written.length;
+
+    await registry.prewarmProofQualifiedSession(FIXTURE.session, "$2");
+
+    expect(sims).toHaveLength(2);
+    expect(sims[0]!.disposed).toBe(true);
+    expect(sims[0]!.written).toHaveLength(oldWrites);
+    await expect(registry.describeTrustedSessionInventory(FIXTURE.session)).resolves.toMatchObject({
+      runtimeSessionId: "$2",
+    });
+    await registry.dispose();
+  });
+
   it("retires an in-flight prewarm without leaking its control channel", async () => {
     const { registry, sims } = rig();
     const warming = registry.prewarmSession(FIXTURE.session);
@@ -158,6 +288,41 @@ describe("SessionRuntimeRegistry", () => {
     expect(registry.sessionCount()).toBe(0);
     expect(registry.activeControlChannelCount()).toBe(0);
     expect(sims[0]!.disposed).toBe(true);
+    await registry.dispose();
+  });
+
+  it("retires only a proof-prewarm-owned runtime when abort wins delayed readiness", async () => {
+    const { registry, sims, releaseStart } = delayedStartRig();
+    const abort = new AbortController();
+    const warming = registry.prewarmProofQualifiedSession(FIXTURE.session, "$1", abort.signal);
+    await vi.waitFor(() => expect(sims).toHaveLength(1));
+    abort.abort();
+    await expect(warming).rejects.toMatchObject({ name: "AbortError" });
+
+    releaseStart();
+    await vi.waitFor(() => expect(sims[0]!.disposed).toBe(true));
+    expect(registry.sessionCount()).toBe(0);
+    expect(registry.activeControlChannelCount()).toBe(0);
+    expect(registry.hasProofQualifiedInventory(FIXTURE.session)).toBe(false);
+    await registry.dispose();
+  });
+
+  it("preserves a pre-existing shared runtime when proof prewarm is aborted", async () => {
+    const { registry, sims, releaseStart } = delayedStartRig();
+    const sharedPrewarm = registry.prewarmSession(FIXTURE.session);
+    await vi.waitFor(() => expect(sims).toHaveLength(1));
+    const abort = new AbortController();
+    const proofPrewarm = registry.prewarmProofQualifiedSession(FIXTURE.session, "$1", abort.signal);
+    abort.abort();
+    await expect(proofPrewarm).rejects.toMatchObject({ name: "AbortError" });
+
+    releaseStart();
+    await sharedPrewarm;
+    expect(registry.sessionCount()).toBe(1);
+    expect(registry.activeControlChannelCount()).toBe(1);
+    expect(sims[0]!.disposed).toBe(false);
+    expect(registry.hasProofQualifiedInventory(FIXTURE.session)).toBe(false);
+    await registry.retireSession(FIXTURE.session);
     await registry.dispose();
   });
 

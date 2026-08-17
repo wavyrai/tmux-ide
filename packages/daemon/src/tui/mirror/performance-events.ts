@@ -9,7 +9,24 @@ export interface TuiPerformanceEventSink {
   readonly terminalDelivery: (event: TuiTerminalDeliveryPerformanceEvent) => void;
   readonly terminalTraceSpan?: (event: TuiTerminalTraceSpanEvent) => void;
   readonly terminalTraceStage?: (event: TuiTerminalTraceStageEvent) => void;
+  /** Explicit fresh-lane state for fail-closed queue fences before the first input. */
+  readonly terminalInputQueueState?: (event: TuiTerminalInputQueueStateEvent) => void;
+  /** Diagnostic-only proof of a canonical DEC-mode transition. */
+  readonly terminalCanonicalMode?: (event: TuiTerminalCanonicalModeEvent) => void;
   readonly beginTerminalInput?: () => TuiTerminalInputTrace;
+}
+
+export interface TuiTerminalCanonicalModeEvent {
+  readonly processId: string;
+  readonly clockId: "opentui-performance-now";
+  readonly clockKind: "performance-now";
+  readonly atMicros: number;
+  readonly semanticPaneId: string;
+  readonly generation: string;
+  readonly incarnation: string;
+  readonly revision: number;
+  readonly stateHash: string;
+  readonly wraparound: boolean;
 }
 
 export interface TuiTerminalInputTrace {
@@ -51,6 +68,29 @@ export interface TuiTerminalTraceStageEvent {
   readonly inputPendingBytes?: number;
   readonly rssBytes?: number;
   readonly heapUsedBytes?: number;
+  readonly causalAttribution?: true;
+  readonly semanticPaneId?: string;
+  readonly generation?: string;
+  readonly incarnation?: string;
+  readonly revision?: number;
+  readonly stateHash?: string;
+  readonly row?: number;
+  readonly column?: number;
+  readonly beforeGrapheme?: string;
+  readonly afterGrapheme?: string;
+}
+
+export interface TuiTerminalInputQueueStateEvent {
+  readonly operation: "initialized";
+  readonly processId: string;
+  readonly clockId: "opentui-performance-now";
+  readonly clockKind: "performance-now";
+  readonly atMicros: number;
+  readonly inputPending: number;
+  readonly inputInFlight: number;
+  readonly inputPendingBytes: number;
+  readonly rssBytes: number;
+  readonly heapUsedBytes: number;
 }
 
 export interface TuiTerminalDeliveryPerformanceEvent {

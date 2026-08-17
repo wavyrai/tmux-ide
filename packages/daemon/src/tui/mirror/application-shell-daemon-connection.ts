@@ -6,8 +6,11 @@ import {
 } from "@tmux-ide/contracts";
 import {
   createDirectLoopbackDaemonTransport,
-  type DesktopDaemonTransport,
+  type DaemonTransportDependencies,
+  type TerminalFirstDaemonTransport,
 } from "@tmux-ide/daemon-client/direct-application-shell-transport";
+import type { PreparedTerminalRuntimeInventory } from "@tmux-ide/daemon-client/workspace-event-supervisor";
+import { WebSocket } from "ws";
 
 import {
   canonicalDaemonUrl,
@@ -18,6 +21,7 @@ import {
   fetchCanonicalWorkspaceRouting,
   workspaceNameForLiveSession,
 } from "./canonical-workspace-routing.ts";
+import { ensureOpenTuiSessionWorkspace } from "./configless-session-bootstrap.ts";
 import {
   createOpenTuiVerifiedRoutingContext,
   type OpenTuiVerifiedRoutingContext,
@@ -33,8 +37,10 @@ import {
 export interface OpenTuiApplicationShellConnection {
   readonly workspaceName: string;
   readonly target: DesktopApplicationShellTarget;
-  readonly transport: DesktopDaemonTransport;
+  readonly transport: TerminalFirstDaemonTransport;
   readonly routing: OpenTuiVerifiedRoutingContext | null;
+  /** Terminal-first observer barrier/read. Settled state is one-shot and generation-fenced. */
+  prepareTerminalRuntimeInventory(): Promise<PreparedTerminalRuntimeInventory | null>;
   dispose(): void;
 }
 
@@ -48,7 +54,11 @@ export interface OpenTuiApplicationShellConnectionDependencies {
     readonly sessionName: string;
     readonly ownerToken?: string;
     readonly applicationShellResourceVersion: typeof APPLICATION_SHELL_RESOURCE_V2_VERSION;
-  }) => DesktopDaemonTransport;
+    readonly terminalRuntimeDiagnostic?: DaemonTransportDependencies["terminalRuntimeDiagnostic"];
+  }) => TerminalFirstDaemonTransport;
+  readonly ensureSessionWorkspace: (sessionName: string) => Promise<boolean>;
+  /** Opt-in lifecycle evidence. Ordinary product connections leave this absent. */
+  readonly onDiagnostic?: (phase: string, details: Readonly<Record<string, unknown>>) => void;
 }
 
 const DEFAULT_DEPENDENCIES: OpenTuiApplicationShellConnectionDependencies = {
@@ -61,10 +71,16 @@ const DEFAULT_DEPENDENCIES: OpenTuiApplicationShellConnectionDependencies = {
     sessionName,
     ownerToken,
     applicationShellResourceVersion,
+    terminalRuntimeDiagnostic,
   }) =>
     createDirectLoopbackDaemonTransport({
       descriptor,
       ownerToken,
+      terminalRuntimeAuthority: true,
+      createWebSocket: (url, options) =>
+        new WebSocket(url, {
+          headers: options?.headers ? { ...options.headers } : undefined,
+        }) as unknown as import("@tmux-ide/daemon-client/workspace-event-supervisor").WorkspaceEventSocket,
       applicationShellResourceVersion,
       resolveSessionName: (candidate) => {
         if (candidate !== workspaceName) {
@@ -72,7 +88,9 @@ const DEFAULT_DEPENDENCIES: OpenTuiApplicationShellConnectionDependencies = {
         }
         return sessionName;
       },
-    }),
+      ...(terminalRuntimeDiagnostic ? { terminalRuntimeDiagnostic } : {}),
+    }) as TerminalFirstDaemonTransport,
+  ensureSessionWorkspace: ensureOpenTuiSessionWorkspace,
 };
 
 export function openTuiDaemonDescriptor(daemon: CanonicalDaemonInfo): DesktopDaemonHostDescriptor {
@@ -92,10 +110,23 @@ export async function resolveOpenTuiApplicationShellConnection(
   overrides: Partial<OpenTuiApplicationShellConnectionDependencies> = {},
 ): Promise<OpenTuiApplicationShellConnection | null> {
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...overrides };
+  const diagnose = dependencies.onDiagnostic
+    ? (
+        phase: Parameters<NonNullable<typeof dependencies.onDiagnostic>>[0],
+        details: Readonly<Record<string, unknown>>,
+      ): void => {
+        try {
+          dependencies.onDiagnostic?.(phase, details);
+        } catch {
+          // Qualification evidence never owns connection lifecycle.
+        }
+      }
+    : null;
   const daemon = dependencies.readCanonicalDaemonInfo();
   if (!daemon || !(await dependencies.isCanonicalDaemonAlive(daemon))) return null;
 
   const catalog = await dependencies.fetchCanonicalWorkspaceRouting(daemon);
+  if (catalog.daemon.instanceId !== daemon.instanceId) return null;
   const workspaceName = workspaceNameForLiveSession(catalog, sessionName);
   if (!workspaceName) return null;
 
@@ -109,7 +140,7 @@ export async function resolveOpenTuiApplicationShellConnection(
     },
     workspaceName,
   };
-  const transport = dependencies.createTransport({
+  const baseTransport = dependencies.createTransport({
     descriptor: openTuiDaemonDescriptor(daemon),
     workspaceName,
     sessionName,
@@ -118,19 +149,135 @@ export async function resolveOpenTuiApplicationShellConnection(
     // consumes V3 appWindows. V2 still carries the authenticated,
     // attachability-bearing inventory used to admit that lane.
     applicationShellResourceVersion: APPLICATION_SHELL_RESOURCE_V2_VERSION,
+    ...(diagnose ? { terminalRuntimeDiagnostic: diagnose } : {}),
   });
   const routing = createOpenTuiVerifiedRoutingContext(daemon, workspaceName, sessionName);
   let disposed = false;
+  let diagnosticClientFetchOrdinal = 0;
+  let diagnosticPrewarmOrdinal = 0;
+  let terminalPreparation: {
+    readonly controller: AbortController;
+    readonly promise: Promise<PreparedTerminalRuntimeInventory | null>;
+  } | null = null;
+  const transport: TerminalFirstDaemonTransport = {
+    validateTarget: (value) => baseTransport.validateTarget(value),
+    connectEvents: (value, handlers) => baseTransport.connectEvents(value, handlers),
+    fetchApplicationShell: (value, signal) => {
+      baseTransport.validateTarget(value);
+      if (signal.aborted) return Promise.reject(signal.reason);
+      const request = baseTransport.fetchApplicationShell(value, signal);
+      if (diagnose)
+        diagnose("application-shell-client-fetch", {
+          ordinal: diagnosticClientFetchOrdinal++,
+          disposition: "post-resource-barrier",
+          daemonGeneration: target.daemon.instanceId,
+        });
+      return request;
+    },
+    prepareTerminalRuntimeInventory: (value, signal) =>
+      baseTransport.prepareTerminalRuntimeInventory(value, signal),
+    adoptTerminalRuntimeInventory: (prepared, onResource) =>
+      baseTransport.adoptTerminalRuntimeInventory(prepared, onResource),
+    disposeEventSupervisor: () => baseTransport.disposeEventSupervisor(),
+    selectApplicationShellFallback: (reason) =>
+      baseTransport.selectApplicationShellFallback(reason),
+    refreshTerminalRuntimeInventory: () => baseTransport.refreshTerminalRuntimeInventory(),
+  };
+  const prepareTerminalRuntimeInventory = (): Promise<PreparedTerminalRuntimeInventory | null> => {
+    if (disposed) return Promise.resolve(null);
+    if (terminalPreparation) return terminalPreparation.promise;
+    const controller = new AbortController();
+    const deadline = setTimeout(() => {
+      controller.abort(new DOMException("Terminal runtime preparation timed out", "TimeoutError"));
+    }, 1_000);
+    deadline.unref?.();
+    const diagnosticOrdinal = diagnose ? diagnosticPrewarmOrdinal++ : null;
+    const request = Promise.resolve().then(() => {
+      const preparation = baseTransport.prepareTerminalRuntimeInventory(target, controller.signal);
+      diagnose?.("application-shell-prewarm-start", {
+        ordinal: diagnosticOrdinal,
+        daemonGeneration: target.daemon.instanceId,
+      });
+      return preparation;
+    });
+    const promise = request
+      .then(
+        (value) => {
+          diagnose?.("application-shell-prewarm-settled", {
+            ordinal: diagnosticOrdinal,
+            outcome: "fulfilled",
+            resource: "terminal-runtime-inventory",
+            daemonGeneration: target.daemon.instanceId,
+          });
+          return value;
+        },
+        (error: unknown) => {
+          const reason =
+            controller.signal.aborted && controller.signal.reason instanceof DOMException
+              ? controller.signal.reason.name === "TimeoutError"
+                ? "deadline"
+                : "retired"
+              : error instanceof Error
+                ? "preparation-rejected"
+                : "unknown";
+          // Every failed terminal-first attempt, including the bounded
+          // deadline, retires its supervisor before legacy V2 can start.
+          baseTransport.selectApplicationShellFallback(reason);
+          diagnose?.("application-shell-prewarm-settled", {
+            ordinal: diagnosticOrdinal,
+            outcome: controller.signal.aborted ? "aborted" : "rejected",
+            resource: "terminal-runtime-inventory",
+            daemonGeneration: target.daemon.instanceId,
+            fallbackReason: reason,
+          });
+          return null;
+        },
+      )
+      .finally(() => clearTimeout(deadline));
+    terminalPreparation = { controller, promise };
+    return promise;
+  };
 
   return {
     workspaceName,
     target,
     transport,
     routing,
+    prepareTerminalRuntimeInventory,
     dispose: () => {
       if (disposed) return;
       disposed = true;
+      terminalPreparation?.controller.abort(
+        new DOMException("OpenTUI prepared connection was disposed", "AbortError"),
+      );
+      terminalPreparation?.promise.then((prepared) => prepared?.dispose()).catch(() => undefined);
+      terminalPreparation = null;
+      transport.disposeEventSupervisor();
       routing?.retire();
     },
   };
+}
+
+/**
+ * Prepare the first generation connection once at the session-owner boundary.
+ *
+ * The common warm path performs one daemon liveness check and one catalog
+ * lookup. Ordinary, not-yet-promoted tmux sessions retain the old guarded
+ * fallback: promote through the owner action, then resolve the newly-created
+ * workspace route before constructing any client transport.
+ */
+export async function prepareOpenTuiApplicationShellConnection(
+  sessionName: string,
+  overrides: Partial<OpenTuiApplicationShellConnectionDependencies> = {},
+): Promise<OpenTuiApplicationShellConnection | null> {
+  const dependencies = { ...DEFAULT_DEPENDENCIES, ...overrides };
+  const routed = await resolveOpenTuiApplicationShellConnection(sessionName, dependencies);
+  if (routed) {
+    void routed.prepareTerminalRuntimeInventory();
+    return routed;
+  }
+  if (!(await dependencies.ensureSessionWorkspace(sessionName))) return null;
+  const promoted = await resolveOpenTuiApplicationShellConnection(sessionName, dependencies);
+  if (promoted) void promoted.prepareTerminalRuntimeInventory();
+  return promoted;
 }

@@ -22,6 +22,8 @@ const homeDir = join(tmpRoot, "home");
 // a long /var/folders path there, so keep this one disposable socket root under
 // the deliberately short /tmp spelling.
 const tmuxTmpDir = mkdtempSync("/tmp/tip-");
+const installedTmuxSocketPath = join(tmuxTmpDir, "pack.sock");
+const installedTargetSession = "ordinary-isolated";
 mkdirSync(tarballDir, { recursive: true });
 mkdirSync(projectDir, { recursive: true });
 mkdirSync(homeDir, { recursive: true });
@@ -57,6 +59,10 @@ function tmuxEnv(runtimePath) {
   return {
     HOME: homeDir,
     TMUX_TMPDIR: tmuxTmpDir,
+    // The contributor shell may itself be inside tmux. Never let that ambient
+    // socket override this gate's isolated TMUX_TMPDIR/default server.
+    TMUX: "",
+    TMUX_IDE_TMUX_SOCKET_PATH: installedTmuxSocketPath,
     TMUX_IDE_HOME: join(homeDir, ".tmux-ide"),
     NODE_PATH: "",
     BUN_INSTALL: "",
@@ -101,7 +107,14 @@ let cleanupError = null;
 function spawnInstalledCli(installedCli) {
   const child = spawn(installedCli, ["--headless", "--json"], {
     cwd: projectDir,
-    env: { ...process.env, HOME: homeDir, npm_config_cache: join(tmpRoot, "npm-cache") },
+    // The elected daemon and the later installed TUI must observe the same
+    // isolated tmux server. Otherwise the daemon can be healthy while its
+    // workspace catalog is reading the developer's default tmux socket.
+    env: {
+      ...process.env,
+      ...tmuxEnv(dirname(installedCli)),
+      npm_config_cache: join(tmpRoot, "npm-cache"),
+    },
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
   });
@@ -167,15 +180,16 @@ async function runInstalledTuiGate(installedCli) {
     );
   }
 
-  const socketName = `p${process.pid}`;
-  const targetSession = "ordinary-isolated";
+  const targetSession = installedTargetSession;
   const hostSession = "installed-tui-gate";
   const statusPath = join(tmpRoot, "installed-tui.status");
   const readyPath = join(tmpRoot, "installed-tui.ready.json");
+  const performancePath = join(tmpRoot, "installed-tui.performance.jsonl");
   const stderrPath = join(tmpRoot, "installed-tui.stderr");
   const launcherPath = join(tmpRoot, "launch-installed-tui.sh");
+  const inputMarker = `M59_PACKED_INPUT_${process.pid}`;
   const runtimeEnv = tmuxEnv(dirname(installedCli));
-  const tmuxArgs = (...args) => ["-L", socketName, ...args];
+  const tmuxArgs = (...args) => ["-S", installedTmuxSocketPath, ...args];
   const tmuxResult = (args, stdio = "pipe") =>
     spawnSync("tmux", tmuxArgs(...args), {
       cwd: launchDir,
@@ -193,13 +207,60 @@ async function runInstalledTuiGate(installedCli) {
       "pid=#{pane_pid} dead=#{pane_dead} status=#{pane_dead_status} command=#{pane_current_command}",
     ]);
     const readiness = existsSync(readyPath) ? readFileSync(readyPath, "utf8").trim() : "missing";
+    const performance = existsSync(performancePath)
+      ? readFileSync(performancePath, "utf8").trim().split("\n").slice(-20).join("\n")
+      : "missing";
     const stderr = existsSync(stderrPath) ? readFileSync(stderrPath, "utf8").trim() : "";
     return [
       `readiness: ${readiness}`,
+      `performance tail:\n${performance}`,
       `pane: ${pane.status === 0 ? pane.stdout.trim() : pane.stderr.trim()}`,
       `frame:\n${frame.status === 0 ? frame.stdout : frame.stderr}`,
       `stderr:\n${stderr || "(empty)"}`,
     ].join("\n");
+  };
+  const processIdentity = (pid) => {
+    const observed = spawnSync("ps", ["-p", String(pid), "-o", "lstart=", "-o", "command="], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const identity = observed.status === 0 ? observed.stdout.trim() : "";
+    return identity && identity.includes(downloadedTui) ? identity : null;
+  };
+  const terminateLaunchedTui = async () => {
+    if (!existsSync(readyPath)) return;
+    let readiness;
+    try {
+      readiness = JSON.parse(readFileSync(readyPath, "utf8"));
+    } catch {
+      return;
+    }
+    if (
+      readiness?.version !== 1 ||
+      readiness.phase !== "input-ready" ||
+      readiness.surface !== "app"
+    )
+      return;
+    const pid = readiness.pid;
+    if (!Number.isSafeInteger(pid) || pid <= 1) return;
+    const identity = processIdentity(pid);
+    if (!identity) return;
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      return;
+    }
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+      const currentIdentity = processIdentity(pid);
+      if (!currentIdentity || currentIdentity !== identity) return;
+    }
+    if (processIdentity(pid) !== identity) return;
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // The exact hosted TUI exited between the final probe and escalation.
+    }
   };
 
   for (const forbidden of ["bunfig.toml", "node_modules", join(".tmux-ide", "workspace.yml")]) {
@@ -226,6 +287,7 @@ async function runInstalledTuiGate(installedCli) {
     [
       "#!/bin/sh",
       `export TMUX_IDE_TUI_READY_FILE=${shQuote(readyPath)}`,
+      `export TMUX_IDE_TUI_PERF_LOG=${shQuote(performancePath)}`,
       `${shQuote(installedCli)} app ${shQuote(targetSession)} 2>${shQuote(stderrPath)}`,
       "status=$?",
       `printf '%s\\n' "$status" > ${shQuote(statusPath)}`,
@@ -238,21 +300,6 @@ async function runInstalledTuiGate(installedCli) {
 
   let captured = "";
   try {
-    const target = tmuxResult([
-      "new-session",
-      "-d",
-      "-s",
-      targetSession,
-      "-x",
-      "100",
-      "-y",
-      "30",
-      "-c",
-      launchDir,
-    ]);
-    if (target.status !== 0) {
-      throw new Error(`Could not create isolated target session: ${target.stderr}`);
-    }
     const host = tmuxResult([
       "new-session",
       "-d",
@@ -270,7 +317,12 @@ async function runInstalledTuiGate(installedCli) {
 
     await waitUntil(
       () => {
-        if (existsSync(statusPath)) return true;
+        if (existsSync(statusPath)) {
+          const earlyStatus = readFileSync(statusPath, "utf8").trim();
+          throw new Error(
+            `Installed configless TUI exited ${earlyStatus} before terminal readiness`,
+          );
+        }
         const frame = tmuxResult(["capture-pane", "-p", "-t", `=${hostSession}:0.0`]);
         if (frame.status === 0) captured = frame.stdout;
         return existsSync(readyPath) && captured.includes("tmux-ide");
@@ -280,7 +332,9 @@ async function runInstalledTuiGate(installedCli) {
       gateDiagnostics,
     );
 
-    if (!existsSync(statusPath)) {
+    // Once the host is ready, every remaining milestone is mandatory. An early
+    // clean exit above is a failure, never a shortcut around these assertions.
+    {
       const readiness = JSON.parse(readFileSync(readyPath, "utf8"));
       if (
         readiness.version !== 1 ||
@@ -288,6 +342,63 @@ async function runInstalledTuiGate(installedCli) {
         readiness.surface !== "app"
       ) {
         throw new Error(`Installed TUI published invalid readiness: ${JSON.stringify(readiness)}`);
+      }
+
+      await waitUntil(
+        () => {
+          if (!existsSync(performancePath)) return false;
+          return readFileSync(performancePath, "utf8")
+            .split("\n")
+            .some((line) => {
+              if (!line) return false;
+              try {
+                return JSON.parse(line).phase === "first-terminal-frame";
+              } catch {
+                return false;
+              }
+            });
+        },
+        20_000,
+        "the installed TUI's first coherent terminal frame",
+        gateDiagnostics,
+      );
+
+      const input = tmuxResult([
+        "send-keys",
+        "-l",
+        "-t",
+        `=${hostSession}:0.0`,
+        `printf '${inputMarker}\\n'`,
+      ]);
+      if (input.status !== 0) throw new Error(`Could not type into installed TUI: ${input.stderr}`);
+      const enter = tmuxResult(["send-keys", "-t", `=${hostSession}:0.0`, "Enter"]);
+      if (enter.status !== 0)
+        throw new Error(`Could not submit installed TUI input: ${enter.stderr}`);
+
+      await waitUntil(
+        () => {
+          const native = tmuxResult(["capture-pane", "-p", "-t", `=${targetSession}:0.0`]);
+          const hostFrame = tmuxResult(["capture-pane", "-p", "-t", `=${hostSession}:0.0`]);
+          if (hostFrame.status === 0) captured = hostFrame.stdout;
+          return (
+            native.status === 0 &&
+            native.stdout.includes(inputMarker) &&
+            hostFrame.status === 0 &&
+            hostFrame.stdout.includes(inputMarker)
+          );
+        },
+        10_000,
+        "the installed TUI input to reach both the canonical frame and native pane",
+        gateDiagnostics,
+      );
+
+      for (const option of ["@tmux_ide_adopted", "@tmux_ide_workspace_promoted_v1"]) {
+        const observed = tmuxResult(["show-options", "-v", "-t", targetSession, option]);
+        if (observed.status !== 0 || observed.stdout.trim() !== "1") {
+          throw new Error(
+            `Installed configless TUI did not publish ${option}=1: ${observed.stderr || observed.stdout}`,
+          );
+        }
       }
       const quit = tmuxResult(["send-keys", "-t", `=${hostSession}:0.0`, "C-q"]);
       if (quit.status !== 0) throw new Error(`Could not ask installed TUI to exit: ${quit.stderr}`);
@@ -309,6 +420,7 @@ async function runInstalledTuiGate(installedCli) {
       throw new Error(`Installed configless TUI attempted a checkout preload:\n${transcript}`);
     }
   } finally {
+    await terminateLaunchedTui();
     tmuxResult(["kill-server"]);
   }
 }
@@ -328,6 +440,31 @@ try {
   run("npx", ["tmux-ide", "--version"], { cwd: projectDir, stdio: "inherit" });
 
   const installedCli = join(projectDir, "node_modules", ".bin", "tmux-ide");
+  const target = spawnSync(
+    "tmux",
+    [
+      "-S",
+      installedTmuxSocketPath,
+      "new-session",
+      "-d",
+      "-s",
+      installedTargetSession,
+      "-x",
+      "100",
+      "-y",
+      "30",
+      "-c",
+      launchDir,
+    ],
+    {
+      cwd: launchDir,
+      env: { ...process.env, ...tmuxEnv(dirname(installedCli)) },
+      encoding: "utf8",
+    },
+  );
+  if (target.status !== 0) {
+    throw new Error(`Could not create isolated target session: ${target.stderr}`);
+  }
   const installedBundle = readFileSync(
     join(projectDir, "node_modules", "tmux-ide", "bin", "cli.js"),
     "utf8",
@@ -452,6 +589,10 @@ try {
   // election warm and leave an untracked detached owner outside `children`.
   await runInstalledTuiGate(installedCli);
 } finally {
+  spawnSync("tmux", ["-S", installedTmuxSocketPath, "kill-server"], {
+    env: { ...process.env, TMUX: "" },
+    stdio: "ignore",
+  });
   for (const child of children) {
     if (child.exitCode !== null || child.signalCode !== null) continue;
     try {

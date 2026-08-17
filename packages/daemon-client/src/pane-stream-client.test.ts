@@ -1,6 +1,11 @@
 import { describe, expect, it, mock } from "bun:test";
 
-import { openPaneStreamRuntimeClient, type PaneStreamClientSocket } from "./pane-stream-client.ts";
+import {
+  classifyPaneStreamInputTransportDelay,
+  openPaneStreamRuntimeClient,
+  type PaneStreamClientSocket,
+  type PaneStreamInputTransportStageEvent,
+} from "./pane-stream-client.ts";
 import { runtimeResourceSnapshot } from "./runtime-resource-ledger.ts";
 
 const INSTANCE = "11111111-1111-4111-8111-111111111111";
@@ -101,7 +106,318 @@ function options(socket: FakeSocket, overrides: Record<string, unknown> = {}) {
   };
 }
 
+function acceptInteractiveHandshake(socket: FakeSocket): void {
+  socket.onSend = (frame) => {
+    if (frame.type === "redeem") {
+      queueMicrotask(() =>
+        socket.message({
+          type: "ready",
+          protocolVersion: 1,
+          daemonInstanceId: INSTANCE,
+          requestId: REQUEST,
+          panes: ["pane.editor"],
+          effectiveViewerMode: "interactive",
+        }),
+      );
+      return;
+    }
+    if (frame.type === "authority-request") {
+      queueMicrotask(() =>
+        socket.message({
+          type: "authority-receipt",
+          requestId: frame.requestId,
+          authority: frame.authority,
+          status: "granted",
+          lease: {
+            generation: INSTANCE,
+            session: "alpha",
+            clientId: "tui:one",
+            authority: frame.authority,
+            token: "55555555-5555-4555-8555-555555555555",
+            revision: 1,
+          },
+          snapshot: {
+            generation: INSTANCE,
+            session: "alpha",
+            revision: 1,
+            nativeGeometryYieldUntilMs: 0,
+            owners: { input: "tui:one", focus: null, geometry: null },
+            clients: [],
+          },
+        }),
+      );
+      return;
+    }
+    if (frame.type === "input") {
+      queueMicrotask(() => socket.message({ type: "input-ack", pane: frame.pane, seq: frame.seq }));
+    }
+  };
+}
+
 describe("semantic pane-stream runtime client", () => {
+  it("preserves key/paste FIFO while diagnostic edges isolate a delayed next turn", async () => {
+    const socket = new FakeSocket();
+    acceptInteractiveHandshake(socket);
+    let nowMicros = 1_000;
+    const nextTurns: Array<{ run: () => void; cancelled: boolean }> = [];
+    const stages: PaneStreamInputTransportStageEvent[] = [];
+    const client = await openPaneStreamRuntimeClient(
+      options(socket, {
+        onInputTransportStage: (event: PaneStreamInputTransportStageEvent) => {
+          expect(
+            socket.sent.some(
+              (frame) =>
+                (frame as { type?: string; seq?: number }).type === "input" &&
+                (frame as { seq?: number }).seq === event.sequence,
+            ),
+          ).toBe(true);
+          stages.push(event);
+        },
+        diagnosticNowMicros: () => (nowMicros += 10),
+        diagnosticNextTurn: (callback: () => void) => {
+          const turn = { run: callback, cancelled: false };
+          nextTurns.push(turn);
+          return () => {
+            turn.cancelled = true;
+          };
+        },
+      }),
+    );
+    const keyTrace = "00000000-0000-4000-8000-000000000081";
+    const pasteTrace = "00000000-0000-4000-8000-000000000082";
+    const bracketedPaste = "\u001b[200~alpha\nbeta\u001b[201~";
+    const key = client.sendTerminalInput(
+      { workspaceName: "alpha", semanticPaneId: "pane.editor" },
+      { kind: "key", data: "Enter" },
+      keyTrace,
+    );
+    const paste = client.sendTerminalInput(
+      { workspaceName: "alpha", semanticPaneId: "pane.editor" },
+      { kind: "text", data: bracketedPaste },
+      pasteTrace,
+    );
+
+    expect(socket.sent.filter((frame) => (frame as { type?: string }).type === "input")).toEqual([
+      {
+        type: "input",
+        kind: "key",
+        pane: "pane.editor",
+        seq: 1,
+        data: "Enter",
+        performanceTraceId: keyTrace,
+      },
+      {
+        type: "input",
+        kind: "text",
+        pane: "pane.editor",
+        seq: 2,
+        data: bracketedPaste,
+        performanceTraceId: pasteTrace,
+      },
+    ]);
+    expect(stages).toEqual([]);
+
+    nowMicros += 50_000;
+    for (const turn of nextTurns) if (!turn.cancelled) turn.run();
+    expect(stages.map(({ traceId, operation }) => `${traceId}:${operation}`)).toEqual([
+      `${keyTrace}:pane-stream-frame-enqueued`,
+      `${keyTrace}:pane-stream-socket-send-return`,
+      `${keyTrace}:pane-stream-next-event-loop-turn`,
+      `${pasteTrace}:pane-stream-frame-enqueued`,
+      `${pasteTrace}:pane-stream-socket-send-return`,
+      `${pasteTrace}:pane-stream-next-event-loop-turn`,
+    ]);
+    expect(
+      stages.filter(({ operation }) => operation === "pane-stream-next-event-loop-turn"),
+    ).toEqual([
+      expect.objectContaining({ traceId: keyTrace, sequence: 1 }),
+      expect.objectContaining({ traceId: pasteTrace, sequence: 2 }),
+    ]);
+    for (const traceId of [keyTrace, pasteTrace]) {
+      const traceStages = stages.filter((stage) => stage.traceId === traceId);
+      const sent = stages.find(
+        (stage) =>
+          stage.traceId === traceId && stage.operation === "pane-stream-socket-send-return",
+      )!;
+      const next = stages.find(
+        (stage) =>
+          stage.traceId === traceId && stage.operation === "pane-stream-next-event-loop-turn",
+      )!;
+      expect(next.atMicros - sent.atMicros).toBeGreaterThan(50_000);
+      expect(classifyPaneStreamInputTransportDelay(traceStages, 10_000)).toBe(
+        "client-event-loop-stall",
+      );
+      expect(traceStages.map(({ operation }) => operation)).toEqual([
+        "pane-stream-frame-enqueued",
+        "pane-stream-socket-send-return",
+        "pane-stream-next-event-loop-turn",
+      ]);
+    }
+    const keyStages = stages.filter((stage) => stage.traceId === keyTrace);
+    expect(classifyPaneStreamInputTransportDelay([...keyStages, keyStages[2]!], 10_000)).toBe(
+      "incomplete",
+    );
+    expect(
+      classifyPaneStreamInputTransportDelay([keyStages[1]!, keyStages[0]!, keyStages[2]!], 10_000),
+    ).toBe("incomplete");
+    expect(
+      classifyPaneStreamInputTransportDelay(
+        [keyStages[0]!, keyStages[1]!, { ...keyStages[2]!, traceId: pasteTrace }],
+        10_000,
+      ),
+    ).toBe("incomplete");
+    await expect(Promise.all([key, paste])).resolves.toEqual(["ok", "ok"]);
+    client.close();
+  });
+
+  it("commits FIFO identity before a reentrant transport observer can send", async () => {
+    const socket = new FakeSocket();
+    acceptInteractiveHandshake(socket);
+    const turns: Array<() => void> = [];
+    let reentrant: Promise<unknown> | null = null;
+    let client!: Awaited<ReturnType<typeof openPaneStreamRuntimeClient>>;
+    client = await openPaneStreamRuntimeClient(
+      options(socket, {
+        onInputTransportStage: (event: PaneStreamInputTransportStageEvent) => {
+          if (event.traceId.endsWith("088") && event.operation === "pane-stream-frame-enqueued") {
+            reentrant = client.sendTerminalInput(
+              { workspaceName: "alpha", semanticPaneId: "pane.editor" },
+              { kind: "key", data: "Tab" },
+              "00000000-0000-4000-8000-000000000089",
+            );
+          }
+        },
+        diagnosticNowMicros: (() => {
+          let now = 0;
+          return () => (now += 1);
+        })(),
+        diagnosticNextTurn: (callback: () => void) => {
+          turns.push(callback);
+          return () => undefined;
+        },
+      }),
+    );
+    const first = client.sendTerminalInput(
+      { workspaceName: "alpha", semanticPaneId: "pane.editor" },
+      { kind: "key", data: "Enter" },
+      "00000000-0000-4000-8000-000000000088",
+    );
+    for (let index = 0; index < turns.length; index += 1) turns[index]!();
+    expect(
+      socket.sent
+        .filter((frame) => (frame as { type?: string }).type === "input")
+        .map((frame) => (frame as { seq: number; data: string }).seq),
+    ).toEqual([1, 2]);
+    await expect(first).resolves.toBe("ok");
+    await expect(reentrant).resolves.toBe("ok");
+    client.close();
+  });
+
+  it("captures next-turn time before slow observer publication", async () => {
+    const socket = new FakeSocket();
+    acceptInteractiveHandshake(socket);
+    let nowMicros = 0;
+    let runTurn: (() => void) | null = null;
+    const stages: PaneStreamInputTransportStageEvent[] = [];
+    const client = await openPaneStreamRuntimeClient(
+      options(socket, {
+        diagnosticNowMicros: () => (nowMicros += 10),
+        onInputTransportStage: (event: PaneStreamInputTransportStageEvent) => {
+          stages.push(event);
+          nowMicros += 100_000;
+        },
+        diagnosticNextTurn: (callback: () => void) => {
+          runTurn = callback;
+          return () => undefined;
+        },
+      }),
+    );
+    const input = client.sendTerminalInput(
+      { workspaceName: "alpha", semanticPaneId: "pane.editor" },
+      { kind: "key", data: "Enter" },
+      "00000000-0000-4000-8000-000000000090",
+    );
+    expect(stages).toEqual([]);
+    runTurn!();
+    expect(stages.map(({ atMicros }) => atMicros)).toEqual([10, 20, 30]);
+    expect(classifyPaneStreamInputTransportDelay(stages, 1_000)).toBe("no-client-transport-stall");
+    await expect(input).resolves.toBe("ok");
+    client.close();
+  });
+
+  it("does no diagnostic clock or next-turn work without a transport observer", async () => {
+    const socket = new FakeSocket();
+    acceptInteractiveHandshake(socket);
+    const diagnosticNowMicros = mock(() => 1);
+    const diagnosticNextTurn = mock((_callback: () => void) => () => undefined);
+    const client = await openPaneStreamRuntimeClient(
+      options(socket, { diagnosticNowMicros, diagnosticNextTurn }),
+    );
+    await client.sendTerminalInput(
+      { workspaceName: "alpha", semanticPaneId: "pane.editor" },
+      { kind: "key", data: "Enter" },
+      "00000000-0000-4000-8000-000000000083",
+    );
+    expect(diagnosticNowMicros).not.toHaveBeenCalled();
+    expect(diagnosticNextTurn).not.toHaveBeenCalled();
+    client.close();
+  });
+
+  it("keeps input live when diagnostic clocks, observers, or schedulers throw", async () => {
+    for (const failure of ["clock", "observer", "scheduler"] as const) {
+      const socket = new FakeSocket();
+      acceptInteractiveHandshake(socket);
+      const client = await openPaneStreamRuntimeClient(
+        options(socket, {
+          onInputTransportStage: () => {
+            if (failure === "observer") throw new Error("observer failed");
+          },
+          diagnosticNowMicros: () => {
+            if (failure === "clock") throw new Error("clock failed");
+            return 1;
+          },
+          diagnosticNextTurn: (callback: () => void) => {
+            if (failure === "scheduler") throw new Error("scheduler failed");
+            callback();
+            return () => undefined;
+          },
+        }),
+      );
+      await expect(
+        client.sendTerminalInput(
+          { workspaceName: "alpha", semanticPaneId: "pane.editor" },
+          { kind: "key", data: "Enter" },
+          `00000000-0000-4000-8000-00000000008${failure === "clock" ? 4 : failure === "observer" ? 5 : 6}`,
+        ),
+      ).resolves.toBe("ok");
+      expect(
+        socket.sent.filter((frame) => (frame as { type?: string }).type === "input"),
+      ).toHaveLength(1);
+      expect(socket.closed).toBeNull();
+      client.close();
+    }
+  });
+
+  it("cancels and releases a pending diagnostic next turn on close", async () => {
+    const socket = new FakeSocket();
+    acceptInteractiveHandshake(socket);
+    const before = runtimeResourceSnapshot()["runtime-timer"].active;
+    const stages: PaneStreamInputTransportStageEvent[] = [];
+    const client = await openPaneStreamRuntimeClient(
+      options(socket, { onInputTransportStage: (event) => stages.push(event) }),
+    );
+    const input = client.sendTerminalInput(
+      { workspaceName: "alpha", semanticPaneId: "pane.editor" },
+      { kind: "key", data: "Enter" },
+      "00000000-0000-4000-8000-000000000087",
+    );
+    client.close();
+    await expect(input).rejects.toThrow("client closed");
+    await Bun.sleep(0);
+    expect(stages).toEqual([]);
+    expect(runtimeResourceSnapshot()["runtime-timer"].active).toBe(before);
+  });
+
   it("propagates AbortSignal through capability issuance", async () => {
     const socket = new FakeSocket();
     const controller = new AbortController();
@@ -702,5 +1018,112 @@ describe("semantic pane-stream runtime client", () => {
       expect.objectContaining({ message: expect.stringContaining("legacy output") }),
     );
     expect(socket.closed).toEqual({ code: 1008, reason: "protocol-error" });
+  });
+
+  it("enriches a causal probe with exact authenticated transport facts", async () => {
+    const socket = new FakeSocket();
+    socket.onSend = (frame) => {
+      if (frame.type === "redeem") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "ready",
+            protocolVersion: 1,
+            daemonInstanceId: INSTANCE,
+            requestId: REQUEST,
+            panes: ["pane.editor"],
+            effectiveViewerMode: "interactive",
+            diagnosticCapabilities: ["causal-cell-v1"],
+          }),
+        );
+      } else if (frame.type === "authority-request") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "authority-receipt",
+            requestId: frame.requestId,
+            authority: "input",
+            status: "granted",
+            lease: {
+              generation: INSTANCE,
+              session: "alpha",
+              clientId: "tui:one",
+              authority: "input",
+              token: "55555555-5555-4555-8555-555555555555",
+              revision: 2,
+            },
+            snapshot: {
+              generation: INSTANCE,
+              session: "alpha",
+              revision: 2,
+              nativeGeometryYieldUntilMs: 0,
+              owners: { input: "tui:one", focus: null, geometry: null },
+              clients: [],
+            },
+          }),
+        );
+      } else if (frame.type === "input") {
+        queueMicrotask(() =>
+          socket.message({ type: "input-ack", pane: "pane.editor", seq: frame.seq }),
+        );
+      }
+    };
+    const client = await openPaneStreamRuntimeClient(
+      options(socket, {
+        requestInitialInputAuthority: false,
+        diagnosticCapabilities: ["causal-cell-v1"],
+      }),
+    );
+    socket.message({
+      type: "terminal-delivery-ready",
+      pane: "pane.editor",
+      negotiation: {
+        accepted: true,
+        negotiated: {
+          protocolVersion: 1,
+          encoding: "semantic-v1",
+          richPlacements: false,
+          generation: INSTANCE,
+          deliveryNonce: "00000000-0000-4000-8000-000000000097",
+        },
+      },
+    });
+    await client.requestAuthority("input");
+    const cell = {
+      grapheme: " ",
+      width: 1,
+      foreground: { kind: "default" },
+      background: { kind: "default" },
+      attributes: 0,
+    } as const;
+    await client.sendTerminalInput(
+      { workspaceName: "alpha", semanticPaneId: "pane.editor" },
+      { kind: "text", data: "probe" },
+      "00000000-0000-4000-8000-000000000099",
+      {
+        version: 1,
+        capability: "causal-cell-v1",
+        traceId: "00000000-0000-4000-8000-000000000099",
+        semanticPaneId: "pane.editor",
+        generation: INSTANCE,
+        incarnation: `${INSTANCE}:0`,
+        baselineRevision: 7,
+        baselineStateHash: "0000000000000000",
+        geometry: { cols: 2, rows: 1, row: 0, column: 1 },
+        before: cell,
+        after: { ...cell, grapheme: "X" },
+      },
+    );
+    expect(
+      socket.sent.findLast((frame) => (frame as { type: string }).type === "input"),
+    ).toMatchObject({
+      seq: 1,
+      pane: "pane.editor",
+      causalProbe: {
+        clientId: "tui:one",
+        transportNonce: REQUEST,
+        deliveryNonce: "00000000-0000-4000-8000-000000000097",
+        inputSequence: 1,
+        semanticPaneId: "pane.editor",
+      },
+    });
   });
 });

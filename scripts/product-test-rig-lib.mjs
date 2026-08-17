@@ -9,6 +9,152 @@ export const PRODUCT_RIG_STATE_VERSION = 1;
  * large that one diagnostic launch could exhaust the owner process.
  */
 export const PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES = 8 * 1024 * 1024;
+export const PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS = Object.freeze({
+  eventCount: 50,
+  fieldCount: 2_000,
+  fieldNameChars: 128,
+  textChars: 4_000,
+  processOutputChars: 16_384,
+});
+
+const SECRET_KEY = /(?:authorization|bearer|capability|cookie|password|secret|token)/iu;
+const SECRET_QUERY =
+  /([?&](?:__tmux_ide_dev_host_session|[^=&]*(?:authorization|capability|credential|password|secret|token)[^=&]*)=)[^&#]*/giu;
+const BEARER_VALUE = /\bBearer\s+[^\s,;]+/giu;
+
+export function appendBoundedWebDiagnostic(entries, entry, { secrets = [] } = {}) {
+  entries.push(sanitizeWebDiagnosticValue(entry, secrets));
+  if (entries.length > PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.eventCount) entries.shift();
+  return entries;
+}
+
+export function shouldCaptureWebConsoleMessage(type, message) {
+  return (
+    ["warning", "error"].includes(type) ||
+    String(message).includes("[tmux-ide] development web host active")
+  );
+}
+
+/** Remove browser authority from evidence before it is serialized. */
+export function redactWebDiagnosticText(value, secrets = []) {
+  let text = String(value ?? "");
+  for (const secret of secrets) {
+    if (typeof secret === "string" && secret.length > 0)
+      text = text.split(secret).join("[REDACTED]");
+  }
+  return text
+    .replace(BEARER_VALUE, "Bearer [REDACTED]")
+    .replace(SECRET_QUERY, "$1[REDACTED]")
+    .replace(
+      /((?:authorization|capability|password|secret|token)\s*[:=]\s*)[^\s,;"'}]+/giu,
+      "$1[REDACTED]",
+    );
+}
+
+function boundedWebDiagnosticValue(
+  value,
+  secrets,
+  depth = 0,
+  budget = { remaining: PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.fieldCount },
+) {
+  const { eventCount, fieldNameChars, textChars } = PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS;
+  if (budget.remaining <= 0) return "[FIELD-LIMIT]";
+  budget.remaining -= 1;
+  if (depth > 24) return "[DEPTH-LIMIT]";
+  if (typeof value === "string") return redactWebDiagnosticText(value, secrets).slice(0, textChars);
+  if (value === null || typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) {
+    return value
+      .slice(-eventCount)
+      .map((entry) => boundedWebDiagnosticValue(entry, secrets, depth + 1, budget));
+  }
+  if (typeof value !== "object") return String(value).slice(0, textChars);
+  const result = {};
+  let fields = 0;
+  for (const rawKey in value) {
+    if (!Object.hasOwn(value, rawKey)) continue;
+    if (fields >= eventCount) break;
+    fields += 1;
+    const key = rawKey.slice(0, fieldNameChars);
+    if (SECRET_KEY.test(rawKey)) {
+      result[key] = "[REDACTED]";
+      continue;
+    }
+    try {
+      result[key] = boundedWebDiagnosticValue(value[rawKey], secrets, depth + 1, budget);
+    } catch (error) {
+      result[key] = redactWebDiagnosticText(
+        error instanceof Error ? error.message : String(error),
+        secrets,
+      ).slice(0, textChars);
+    }
+  }
+  return result;
+}
+
+export function sanitizeWebDiagnosticValue(value, secrets = []) {
+  return boundedWebDiagnosticValue(value, secrets);
+}
+
+export async function awaitWebDiagnosticWithDeadline(promise, { timeoutMs = 3_000, onFailure }) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0)
+    throw new TypeError("Web diagnostic deadline must be a non-negative finite number");
+  const observed = Promise.resolve(promise).then(
+    (value) => ({ value }),
+    (error) => ({ error }),
+  );
+  let timeout;
+  const expired = new Promise((resolve) => {
+    timeout = setTimeout(
+      () => resolve({ error: new Error(`Web diagnostic evaluation exceeded ${timeoutMs}ms`) }),
+      timeoutMs,
+    );
+  });
+  const outcome = await Promise.race([observed, expired]);
+  clearTimeout(timeout);
+  return Object.hasOwn(outcome, "value") ? outcome.value : onFailure(outcome.error);
+}
+
+function sanitizedStructuredDom(node) {
+  if (!node || typeof node !== "object" || node.tag === "meta") return null;
+  const attributes = Object.fromEntries(
+    Object.entries(node.attributes ?? {}).filter(([name]) => !SECRET_KEY.test(name)),
+  );
+  return {
+    tag: node.tag ?? null,
+    attributes,
+    text: node.text ?? "",
+    children: (node.children ?? []).map(sanitizedStructuredDom).filter(Boolean),
+  };
+}
+
+/** Stable, bounded JSON shape for a Web startup failure artifact. */
+export function buildWebStartupEvidence(input, { secrets = [] } = {}) {
+  const safe = sanitizeWebDiagnosticValue(input, secrets);
+  return Object.freeze({
+    version: 1,
+    kind: "web-startup-failure",
+    capturedAt: safe.capturedAt ?? null,
+    navigation: safe.navigation ?? { requestedUrl: null, url: null, status: null },
+    page: safe.page ?? null,
+    // The browser serializer starts at #root, and this second boundary makes
+    // it impossible for a future caller to persist a capability-bearing meta.
+    dom: sanitizedStructuredDom(safe.dom),
+    pageErrors: safe.pageErrors ?? [],
+    console: safe.console ?? [],
+    requestFailures: safe.requestFailures ?? [],
+    httpErrors: safe.httpErrors ?? [],
+    webSockets: safe.webSockets ?? [],
+    screenshotPath: safe.screenshotPath ?? null,
+    screenshotError: safe.screenshotError ?? null,
+    viteOutput: redactWebDiagnosticText(input.viteOutput ?? "", secrets).slice(
+      -PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.processOutputChars,
+    ),
+    daemonOutput: redactWebDiagnosticText(input.daemonOutput ?? "", secrets).slice(
+      -PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS.processOutputChars,
+    ),
+  });
+}
 
 export function boundedSourceTraceDiff(diff, maxBytes = PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES) {
   const bytes = Buffer.byteLength(diff);
@@ -21,6 +167,226 @@ const WARM_COHERENT_SAMPLE_COUNT = 20;
 const MEMORY_BUDGET = JSON.parse(
   readFileSync(new URL("../performance/reference-budgets.json", import.meta.url), "utf8"),
 ).memory;
+const PRODUCT_RESOURCE_LOAD_LINES = 300;
+export const PRODUCT_RESOURCE_CONDITIONING_CYCLE_COUNT = 8;
+export const PRODUCT_RESOURCE_MEASURED_CYCLE_COUNT = 16;
+const PRODUCT_RESOURCE_PROBES = "abcdefghijklmnopqrstuvwx";
+
+/**
+ * Every conditioning and measured cycle closes a distinct
+ * load→clear→settle→probe epoch. The first eight cycles condition fixed
+ * allocator/xterm high-water state; only the following sixteen are retained
+ * as independent memory endpoints.
+ */
+export function productResourceCyclePlan(...configuration) {
+  if (configuration.length !== 0)
+    throw new TypeError("Product resource conditioning plan is fixed and cannot be configured");
+  if (MEMORY_BUDGET.minimumSamples !== PRODUCT_RESOURCE_MEASURED_CYCLE_COUNT)
+    throw new Error("Product resource measured-cycle count must match the memory budget");
+  const cycleCount =
+    PRODUCT_RESOURCE_CONDITIONING_CYCLE_COUNT + PRODUCT_RESOURCE_MEASURED_CYCLE_COUNT;
+  if (PRODUCT_RESOURCE_PROBES.length !== cycleCount)
+    throw new Error("Product resource probe alphabet must match the fixed cycle count");
+  return Object.freeze(
+    Array.from({ length: cycleCount }, (_, cycle) => {
+      const measured = cycle >= PRODUCT_RESOURCE_CONDITIONING_CYCLE_COUNT;
+      return Object.freeze({
+        cycle,
+        phase: measured ? "measured" : "conditioning",
+        measured,
+        measuredIndex: measured ? cycle - PRODUCT_RESOURCE_CONDITIONING_CYCLE_COUNT : null,
+        loadLines: PRODUCT_RESOURCE_LOAD_LINES,
+        cycleMarker: `tmux-ide-settled-${cycle}`,
+        probe: PRODUCT_RESOURCE_PROBES[cycle],
+      });
+    }),
+  );
+}
+
+export function productResourceMeasuredEndpointTraceIds(cycleEndpoints) {
+  const plan = productResourceCyclePlan();
+  if (!Array.isArray(cycleEndpoints) || cycleEndpoints.length !== plan.length)
+    throw new Error(`Product resource run must close exactly ${plan.length} cycle endpoints`);
+  const traceIds = new Set();
+  const measuredTraceIds = [];
+  for (const [index, expected] of plan.entries()) {
+    const endpoint = cycleEndpoints[index];
+    if (
+      endpoint?.cycle !== expected.cycle ||
+      endpoint?.phase !== expected.phase ||
+      typeof endpoint?.traceId !== "string" ||
+      endpoint.traceId.length === 0
+    )
+      throw new Error(`Product resource endpoint identity mismatch at cycle ${expected.cycle}`);
+    if (traceIds.has(endpoint.traceId))
+      throw new Error(
+        `Product resource endpoint trace id is duplicated at cycle ${expected.cycle}`,
+      );
+    traceIds.add(endpoint.traceId);
+    if (expected.measured) measuredTraceIds.push(endpoint.traceId);
+  }
+  return Object.freeze(measuredTraceIds);
+}
+
+export function productResourceCycleCommands({ cycle, loadLines }) {
+  if (
+    !Number.isSafeInteger(cycle) ||
+    cycle < 0 ||
+    !Number.isSafeInteger(loadLines) ||
+    loadLines < 1
+  )
+    throw new TypeError("Product resource cycle command requires bounded integer inputs");
+  return Object.freeze({
+    floodCommand: `i=0; while [ $i -lt ${loadLines} ]; do echo tmux-ide-load-$i; i=$((i+1)); done; printf 'tmux-ide-flood-%s\\n' '${cycle}'`,
+    settleCommand: `printf '\\033[2J\\033[3J\\033[Htmux-ide-settled-%s\\n' '${cycle}'`,
+  });
+}
+
+export function productInputQueueObservation(records, processId) {
+  return (
+    records.findLast(
+      (record) =>
+        ((record?.type === "performance.stage" && record.stage === "client") ||
+          record?.type === "performance.input-queue-state") &&
+        record.processId === processId &&
+        Number.isFinite(record.inputPending) &&
+        Number.isFinite(record.inputInFlight) &&
+        Number.isFinite(record.inputPendingBytes),
+    ) ?? null
+  );
+}
+
+export function causalFixtureBaselineReadiness(observation) {
+  const queueObservation = observation?.queueObservation ?? null;
+  const predicates = Object.freeze({
+    optionReady: observation?.fixtureOption === observation?.expectedOption,
+    helperCommandReady: observation?.currentCommand === "node",
+    queueObserved: queueObservation !== null,
+    queueZero:
+      queueObservation?.inputPending === 0 &&
+      queueObservation.inputInFlight === 0 &&
+      queueObservation.inputPendingBytes === 0,
+    paneIdentityReady: observation?.activePaneId === observation?.fixturePaneId,
+    geometryStable: observation?.geometryBefore === observation?.geometryAfter,
+    nativeCellBlank: observation?.nativeCell === " ",
+    tuiCellBlank: observation?.tuiCell === " ",
+  });
+  return Object.freeze({
+    ready: Object.values(predicates).every(Boolean),
+    predicates,
+  });
+}
+
+export function productInputQueuesSettled(records, processId) {
+  const observation = productInputQueueObservation(records, processId);
+  return (
+    observation?.inputPending === 0 &&
+    observation.inputInFlight === 0 &&
+    observation.inputPendingBytes === 0
+  );
+}
+
+export function productResourceEndpointCandidates(beforeSamples, afterSamples, expected) {
+  const baseline = new Set(beforeSamples.map(({ traceId }) => traceId));
+  return Object.freeze(
+    afterSamples.filter(
+      (sample) =>
+        !baseline.has(sample.traceId) &&
+        sample.processId === expected.processId &&
+        sample.generation === expected.generation &&
+        sample.semanticPaneId === expected.semanticPaneId &&
+        sample.paintStateIdentity === "latest-canonical-state-blitted" &&
+        Number.isInteger(sample.revision) &&
+        typeof sample.stateHash === "string",
+    ),
+  );
+}
+
+export function selectProductResourceEndpoint(beforeSamples, afterSamples, expected) {
+  const candidates = productResourceEndpointCandidates(beforeSamples, afterSamples, expected);
+  if (candidates.length === 0)
+    throw new Error(`Missing paired resource endpoint for cycle ${expected.cycle}`);
+  if (candidates.length !== 1)
+    throw new Error(
+      `Ambiguous paired resource endpoint for cycle ${expected.cycle}: ${candidates.length} candidates`,
+    );
+  return candidates[0];
+}
+
+export function productResourceEndpointEpochState({
+  beforeSamples,
+  afterSamples,
+  expected,
+  inputSettled,
+  traceQuiet,
+  probeCellCount,
+  geometryStable,
+}) {
+  if (!geometryStable)
+    throw new Error(`Resource probe geometry changed during cycle ${expected.cycle}`);
+  if (probeCellCount > 1)
+    throw new Error(
+      `Ambiguous visible resource probe for cycle ${expected.cycle}: ${probeCellCount} cells`,
+    );
+  const candidates = productResourceEndpointCandidates(beforeSamples, afterSamples, expected);
+  if (candidates.length > 1) selectProductResourceEndpoint(beforeSamples, afterSamples, expected);
+  if (
+    candidates.length !== 1 ||
+    probeCellCount !== 1 ||
+    inputSettled !== true ||
+    traceQuiet !== true
+  )
+    return Object.freeze({ status: "pending", endpoint: null });
+  return Object.freeze({ status: "ready", endpoint: candidates[0] });
+}
+
+function newlyVisibleProbeCells(before, after, probe) {
+  const beforeLines = String(before).split("\n");
+  return String(after)
+    .split("\n")
+    .flatMap((line, row) =>
+      Array.from(line).flatMap((cell, col) =>
+        cell === probe && Array.from(beforeLines[row] ?? "")[col] !== probe
+          ? [`${row}:${col}`]
+          : [],
+      ),
+    );
+}
+
+export function productResourceProbeCells({
+  beforeNative,
+  afterNative,
+  beforeTui,
+  afterTui,
+  probe,
+}) {
+  if (typeof probe !== "string" || !/^[\x21-\x7e]$/u.test(probe))
+    throw new TypeError("Product resource probe must be exactly one printable ASCII character");
+  const native = new Set(newlyVisibleProbeCells(beforeNative, afterNative, probe));
+  return Object.freeze(
+    newlyVisibleProbeCells(beforeTui, afterTui, probe)
+      .filter((coordinate) => native.has(coordinate))
+      .map((coordinate) => {
+        const [row, col] = coordinate.split(":").map(Number);
+        return Object.freeze({ row, col });
+      }),
+  );
+}
+
+export function productResourceGeometryIdentity(frame, pane) {
+  const rect = resolvePaneBodyRect(frame, pane);
+  if (!rect.valid) return null;
+  return JSON.stringify({
+    pane: paneGeometryIdentity([pane]),
+    body: {
+      left: rect.left,
+      firstBodyRow: rect.firstBodyRow,
+      width: rect.width,
+      bodyRows: rect.bodyRows,
+      origin: rect.origin,
+    },
+  });
+}
 
 export function processAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -39,6 +405,57 @@ export function readJson(path) {
   } catch {
     return null;
   }
+}
+
+export async function waitForLifecycleEntry({
+  findEntry,
+  subscribe,
+  timeoutMs,
+  timeoutMessage,
+  pollIntervalMs = 25,
+}) {
+  const existing = findEntry();
+  if (existing) return existing;
+
+  return await new Promise((resolveWait, rejectWait) => {
+    let settled = false;
+    let checking = false;
+    let deadline = null;
+    let poller = null;
+    let watcher = null;
+    const finish = (error, entry = null) => {
+      if (settled) return;
+      settled = true;
+      if (deadline) clearTimeout(deadline);
+      if (poller) clearInterval(poller);
+      watcher?.close();
+      if (error) rejectWait(error);
+      else resolveWait(entry);
+    };
+    const check = () => {
+      if (checking || settled) return;
+      checking = true;
+      try {
+        const entry = findEntry();
+        if (entry) finish(null, entry);
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error(String(error)));
+      } finally {
+        checking = false;
+      }
+    };
+    try {
+      watcher = subscribe(check);
+    } catch (error) {
+      finish(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+    deadline = setTimeout(() => finish(new Error(timeoutMessage)), timeoutMs);
+    poller = setInterval(check, pollIntervalMs);
+    // Close the subscribe/read race. The bounded poll also covers dropped or
+    // inode-stale filesystem notifications without spawning another process.
+    check();
+  });
 }
 
 export function writeJsonAtomic(path, value) {
@@ -76,6 +493,7 @@ export function publicRigStatus(state) {
       : null,
     artifactDir: state.artifactDir,
     timelinePath: state.timelinePath,
+    webStartupFailureArtifact: state.webStartupFailureArtifact ?? null,
     failure: state.failure ?? null,
   };
 }
@@ -259,6 +677,7 @@ export function inputPaintSamples(records) {
         // stages carry the generation directly. Accept both shapes so the
         // report does not discard real same-process samples as unowned.
         generation: paint.authority?.generation ?? paint.generation ?? null,
+        incarnation: paint.authority?.incarnation ?? paint.incarnation ?? null,
         processId: paint.processId,
         clockId: paint.clockId,
         semanticPaneId: paint.semanticPaneId ?? null,
@@ -294,6 +713,16 @@ export function causalInputSamples(traceRecords, daemonTraceRecords = []) {
         offsetMs: Number.isFinite(input?.startedAtMicros)
           ? (record.atMicros - input.startedAtMicros) / 1_000
           : null,
+        causalAttribution: record.causalAttribution === true,
+        semanticPaneId: record.semanticPaneId ?? null,
+        generation: record.generation ?? null,
+        incarnation: record.incarnation ?? null,
+        revision: Number.isInteger(record.revision) ? record.revision : null,
+        stateHash: typeof record.stateHash === "string" ? record.stateHash : null,
+        row: Number.isInteger(record.row) ? record.row : null,
+        column: Number.isInteger(record.column) ? record.column : null,
+        beforeGrapheme: record.beforeGrapheme ?? null,
+        afterGrapheme: record.afterGrapheme ?? null,
       }));
     const matchingDaemonRecords = daemonTraceRecords.filter(
       (record) =>
@@ -325,6 +754,268 @@ export function causalInputSamples(traceRecords, daemonTraceRecords = []) {
       }));
     return Object.freeze({ ...sample, clientStages, daemonSpans });
   });
+}
+
+export function causalInputSampleHasIncarnation(sample) {
+  return typeof sample?.incarnation === "string" && sample.incarnation.length > 0;
+}
+
+/** Close one diagnostic input epoch without admitting a second logical probe. */
+export function causalProbeEpochState(records, baseline, processId) {
+  const epoch = records.slice(baseline);
+  const inputs = epoch.filter(
+    (record) =>
+      record?.type === "performance.stage" &&
+      record.stage === "input" &&
+      record.processId === processId &&
+      typeof record.traceId === "string",
+  );
+  const traceIds = [...new Set(inputs.map(({ traceId }) => traceId))];
+  if (traceIds.length > 1 || inputs.length > 1)
+    return Object.freeze({ status: "ambiguous", traceId: null, reason: "multiple-inputs" });
+  const traceId = traceIds[0];
+  if (!traceId) return Object.freeze({ status: "pending", traceId: null, reason: null });
+  const terminal = epoch.filter(
+    (record) =>
+      record?.type === "performance.stage" &&
+      record.stage === "client" &&
+      record.processId === processId &&
+      record.traceId === traceId &&
+      (record.operation === "causal-cell-painted" ||
+        String(record.operation).startsWith("causal-cell-failed:")),
+  );
+  if (terminal.length > 1)
+    return Object.freeze({ status: "ambiguous", traceId, reason: "multiple-terminals" });
+  if (terminal.length === 0) return Object.freeze({ status: "pending", traceId, reason: null });
+  const operation = terminal[0].operation;
+  return Object.freeze(
+    operation === "causal-cell-painted"
+      ? { status: "proved", traceId, reason: null }
+      : { status: "failed", traceId, reason: operation.slice("causal-cell-failed:".length) },
+  );
+}
+
+export function causalFixtureShellReady(observation) {
+  return (
+    observation?.fixtureOption === "" &&
+    typeof observation?.expectedCommand === "string" &&
+    observation.expectedCommand.length > 0 &&
+    observation.currentCommand === observation.expectedCommand &&
+    typeof observation?.marker === "string" &&
+    observation.marker.length > 0 &&
+    String(observation.nativeFrame).includes(observation.marker) &&
+    String(observation.tuiBody).includes(observation.marker) &&
+    observation.canonicalWraparound === true &&
+    observation.inputPending === 0 &&
+    observation.inputInFlight === 0 &&
+    observation.inputPendingBytes === 0 &&
+    observation.geometryStable === true
+  );
+}
+
+export function latestCausalFixtureCanonicalMode(records, baseline, expected) {
+  return (
+    records
+      .slice(baseline)
+      .findLast(
+        (record) =>
+          record?.type === "performance.terminal-canonical-mode" &&
+          record.processId === expected.processId &&
+          record.semanticPaneId === expected.semanticPaneId &&
+          record.generation === expected.generation &&
+          record.incarnation === expected.incarnation,
+      ) ?? null
+  );
+}
+
+export function latestCausalFixtureCanonicalWraparound(records, baseline, expected) {
+  return latestCausalFixtureCanonicalMode(records, baseline, expected)?.wraparound === true;
+}
+
+export function causalFixtureTeardownDiagnostic(observation) {
+  const queueZero =
+    observation?.inputPending === 0 &&
+    observation.inputInFlight === 0 &&
+    observation.inputPendingBytes === 0;
+  return Object.freeze({
+    optionEmpty: observation?.fixtureOption === "",
+    commandMatches:
+      typeof observation?.expectedCommand === "string" &&
+      observation.expectedCommand.length > 0 &&
+      observation.currentCommand === observation.expectedCommand,
+    markerNative: Number.isInteger(observation?.markerNativeIndex),
+    markerNativeIndex: Number.isInteger(observation?.markerNativeIndex)
+      ? observation.markerNativeIndex
+      : null,
+    markerTui: Number.isInteger(observation?.markerTuiIndex),
+    markerTuiIndex: Number.isInteger(observation?.markerTuiIndex)
+      ? observation.markerTuiIndex
+      : null,
+    canonicalWraparound: observation?.canonicalWraparound === true,
+    canonical:
+      observation?.canonical && typeof observation.canonical === "object"
+        ? Object.freeze({
+            revision: Number.isInteger(observation.canonical.revision)
+              ? observation.canonical.revision
+              : null,
+            stateHash:
+              typeof observation.canonical.stateHash === "string"
+                ? observation.canonical.stateHash.slice(0, 128)
+                : null,
+            incarnation:
+              typeof observation.canonical.incarnation === "string"
+                ? observation.canonical.incarnation.slice(0, 128)
+                : null,
+            wraparound: observation.canonical.wraparound === true,
+          })
+        : null,
+    queueZero,
+    queue: Object.freeze({
+      type: typeof observation?.queueType === "string" ? observation.queueType.slice(0, 64) : null,
+      operation:
+        typeof observation?.queueOperation === "string"
+          ? observation.queueOperation.slice(0, 64)
+          : null,
+      traceId:
+        typeof observation?.queueTraceId === "string"
+          ? observation.queueTraceId.slice(0, 128)
+          : null,
+      atMicros: Number.isFinite(observation?.queueAtMicros) ? observation.queueAtMicros : null,
+      inputPending: Number.isFinite(observation?.inputPending) ? observation.inputPending : null,
+      inputInFlight: Number.isFinite(observation?.inputInFlight) ? observation.inputInFlight : null,
+      inputPendingBytes: Number.isFinite(observation?.inputPendingBytes)
+        ? observation.inputPendingBytes
+        : null,
+    }),
+    geometryStable: observation?.geometryStable === true,
+    geometryBefore:
+      typeof observation?.geometryBefore === "string"
+        ? observation.geometryBefore.slice(0, 256)
+        : null,
+    geometryAfter:
+      typeof observation?.geometryAfter === "string"
+        ? observation.geometryAfter.slice(0, 256)
+        : null,
+    nativeHash:
+      typeof observation?.nativeHash === "string" ? observation.nativeHash.slice(0, 128) : null,
+    bodyHash: typeof observation?.bodyHash === "string" ? observation.bodyHash.slice(0, 128) : null,
+  });
+}
+
+/**
+ * Ordered diagnostic→resource phase boundary. The release callback is the
+ * only authority to dispatch resource workload and is never called on an
+ * observation error or deadline. Dependencies are injected so the complete
+ * ordering is deterministic under test rather than inferred from source.
+ */
+export async function runCausalFixtureTeardownGate(options) {
+  const now = options.now ?? Date.now;
+  const wait = options.wait ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const timeoutMs = options.timeoutMs ?? 5_000;
+  const stableMs = options.stableMs ?? 100;
+  const pollMs = options.pollMs ?? 25;
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0)
+    throw new TypeError("Causal fixture teardown timeout must be positive");
+  const deadline = now() + timeoutMs;
+  let markerSent = false;
+  let markerSentAt = null;
+  let stableIdentity = null;
+  let stableSince = 0;
+  let firstReadyAt = null;
+  let maximumStableMs = 0;
+  let observationCount = 0;
+  let readyObservationCount = 0;
+  let identityChanges = 0;
+  const identityDeltaFields = new Set();
+  let previousStabilityParts = null;
+  let lastDiagnostic = null;
+  await options.interrupt();
+  while (now() <= deadline) {
+    let observation;
+    try {
+      observation = await options.observe();
+    } catch (cause) {
+      throw new Error(
+        `causal-cell fixture teardown observation failed: ${JSON.stringify({ observationCount, last: lastDiagnostic })}`,
+        { cause },
+      );
+    }
+    observationCount += 1;
+    lastDiagnostic = causalFixtureTeardownDiagnostic(observation);
+    if (
+      !markerSent &&
+      observation.fixtureOption === "" &&
+      observation.currentCommand === observation.expectedCommand
+    ) {
+      await options.sendShellMarker();
+      markerSent = true;
+      markerSentAt = now();
+      stableIdentity = null;
+      stableSince = now();
+    }
+    const ready = markerSent && causalFixtureShellReady(observation);
+    const identity = ready ? observation.stabilityIdentity : null;
+    const sampledAt = now();
+    if (ready) {
+      readyObservationCount += 1;
+      firstReadyAt ??= sampledAt;
+    }
+    if (ready && typeof identity === "string" && identity === stableIdentity) {
+      maximumStableMs = Math.max(maximumStableMs, sampledAt - stableSince);
+      if (sampledAt - stableSince >= stableMs) {
+        await options.releaseResource();
+        return Object.freeze({ canDispatchResource: true });
+      }
+    } else {
+      if (ready && stableIdentity !== null && identity !== stableIdentity) identityChanges += 1;
+      if (ready && previousStabilityParts && observation.stabilityParts) {
+        for (const key of new Set([
+          ...Object.keys(previousStabilityParts),
+          ...Object.keys(observation.stabilityParts),
+        ])) {
+          if (previousStabilityParts[key] !== observation.stabilityParts[key])
+            identityDeltaFields.add(key);
+        }
+      }
+      stableIdentity = identity;
+      stableSince = sampledAt;
+    }
+    previousStabilityParts = ready ? (observation.stabilityParts ?? null) : null;
+    await wait(pollMs);
+  }
+  const failedPredicates = lastDiagnostic
+    ? [
+        ["option-empty", lastDiagnostic.optionEmpty],
+        ["command-matches", lastDiagnostic.commandMatches],
+        ["marker-native", lastDiagnostic.markerNative],
+        ["marker-tui", lastDiagnostic.markerTui],
+        ["canonical-wraparound", lastDiagnostic.canonicalWraparound],
+        ["queue-zero", lastDiagnostic.queueZero],
+        ["geometry-stable", lastDiagnostic.geometryStable],
+      ]
+        .filter(([, passed]) => !passed)
+        .map(([name]) => name)
+    : ["no-observation"];
+  const failureKind =
+    failedPredicates.length > 0
+      ? "predicate-failed"
+      : identityChanges > 0
+        ? "stability-identity-churn"
+        : "stability-window-incomplete";
+  throw new Error(
+    `causal-cell fixture did not restore a quiet interactive shell: ${JSON.stringify({
+      failureKind,
+      failedPredicates,
+      observationCount,
+      readyObservationCount,
+      markerSentAt,
+      firstReadyAt,
+      maximumStableMs,
+      identityChanges,
+      identityDeltaFields: [...identityDeltaFields].sort().slice(0, 32),
+      last: lastDiagnostic,
+    })}`,
+  );
 }
 
 export function summarizeProductResources(clientStages, deliveries, endpointTraceIds = null) {
@@ -394,6 +1085,19 @@ export function summarizeProductResources(clientStages, deliveries, endpointTrac
 }
 
 function causalInputSummary(samples) {
+  const expectedClientOperations = [
+    "lane-enqueue",
+    "transport-send-start",
+    "transport-ack",
+    "socket-frame-arrival",
+    "delivery-received",
+    "lane-published",
+    "causal-cell-delivered",
+    "causal-cell-painted",
+  ];
+  const finalized = samples.filter((sample) =>
+    sample.clientStages.some((stage) => stage.operation === "causal-cell-painted"),
+  );
   const summarizeOffsets = (side, operations) =>
     Object.freeze(
       Object.fromEntries(
@@ -420,11 +1124,17 @@ function causalInputSummary(samples) {
     return Object.freeze({ samples: values.length, p95Ms: percentile(values, 0.95) });
   };
   return Object.freeze({
-    // The daemon currently carries a bounded, latest-only next-output probe.
-    // It is useful for ordering diagnostics but cannot establish causality:
-    // unrelated output may consume it and coalesced input may supersede it.
-    correlation: "latest-input-to-next-output-probe",
-    causalAttribution: false,
+    correlation: "causal-cell-v1",
+    causalAttribution: finalized.length >= 30 && finalized.length === samples.length,
+    finalizedProofs: finalized.length,
+    firstBrokenStage:
+      samples.length < 30
+        ? "input-or-paint-pair"
+        : (expectedClientOperations.find((operation) =>
+            samples.some(
+              (sample) => !sample.clientStages.some((stage) => stage.operation === operation),
+            ),
+          ) ?? null),
     clientOperationOffsets: summarizeOffsets("clientStages", [
       "lane-enqueue",
       "transport-send-start",
@@ -510,6 +1220,11 @@ export function buildProductDiagnosticReport({
       const evidence = qualifyingTraceEvidence.get(sample.traceId);
       return (
         evidence?.paintStateIdentity === "latest-canonical-state-blitted" &&
+        evidence.causalAttribution === true &&
+        Number.isInteger(evidence.row) &&
+        Number.isInteger(evidence.column) &&
+        typeof evidence.beforeGrapheme === "string" &&
+        typeof evidence.afterGrapheme === "string" &&
         evidence.markerVisibleInNative === true &&
         evidence?.markerVisibleInPaneRect === true &&
         evidence.semanticPaneId === sample.semanticPaneId &&
@@ -521,7 +1236,7 @@ export function buildProductDiagnosticReport({
   const causalSamples = causalInputSamples(traceRecords, daemonTraceRecords).filter(qualifies);
   const inputCausalSummary = causalInputSummary(causalSamples);
   const outputTransition = inputCausalSummary.daemonTransitions.controlWriteToFirstOutput;
-  const firstBrokenInputBoundary = null;
+  const firstBrokenInputBoundary = inputCausalSummary.firstBrokenStage;
   const inputDurations = inputSamples.map(({ durationMs }) => durationMs);
   const inputP95 = percentile(inputDurations, 0.95);
   const inputP99 = percentile(inputDurations, 0.99);
@@ -604,8 +1319,10 @@ export function buildProductDiagnosticReport({
     ),
     classify(
       "input-enqueue-to-correlated-changed-cell-paint",
-      inputSamples.length < 30 ? null : inputP95 <= 16.67 && inputP99 <= 33,
-      `${inputSamples.length}/30 renderer-correlated samples; p95 ${inputP95 ?? "?"}ms; p99 ${inputP99 ?? "?"}ms; causal attribution false${outputTransition.samples > 0 ? `; non-causal next-output probe p95 ${outputTransition.p95Ms}ms` : ""}`,
+      inputSamples.length < 30
+        ? null
+        : inputCausalSummary.causalAttribution && inputP95 <= 16.67 && inputP99 <= 33,
+      `${inputSamples.length}/30 renderer-correlated samples; p95 ${inputP95 ?? "?"}ms; p99 ${inputP99 ?? "?"}ms; causal attribution ${inputCausalSummary.causalAttribution}${firstBrokenInputBoundary ? `; first broken ${firstBrokenInputBoundary}` : ""}${outputTransition.samples > 0 ? `; output transition p95 ${outputTransition.p95Ms}ms` : ""}`,
     ),
     classify(
       "resize-guide-preview",

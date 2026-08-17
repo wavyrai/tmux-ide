@@ -33,6 +33,7 @@ import type {
   TerminalReplicaAddress,
   TerminalReplicaUpdate,
   WorkspaceOpenPreparedResult,
+  TerminalRuntimeInventoryProjectionV1,
 } from "@tmux-ide/contracts";
 import {
   createApplicationShellReplayState,
@@ -165,8 +166,61 @@ function runtimeInventoryKey(inventory: WorkspaceClientRuntimeInventory): string
     inventory.sessionId,
     inventory.daemonGeneration,
     inventory.shellGeneration,
+    inventory.terminalResourceRevision ?? null,
     inventory.semanticPaneIds,
   ]);
+}
+
+function terminalRuntimeInventoryOf(
+  resource: TerminalRuntimeInventoryProjectionV1,
+  target: DesktopApplicationShellTarget,
+  localGeneration: number,
+): WorkspaceClientRuntimeInventory | null {
+  if (resource.workspaceName !== target.workspaceName || resource.semanticPaneIds.length === 0) {
+    return null;
+  }
+  return Object.freeze({
+    workspaceName: resource.workspaceName,
+    workspaceId: resource.workspaceId,
+    sessionId: resource.sessionId,
+    daemonGeneration: target.daemon.instanceId,
+    shellGeneration: localGeneration,
+    terminalResourceRevision: resource.resourceRevision,
+    semanticPaneIds: Object.freeze([...resource.semanticPaneIds]),
+  });
+}
+
+function shellMatchesTerminalAuthority<Shell extends ApplicationShellProjectionInputV1>(
+  shell: Shell,
+  terminal: TerminalRuntimeInventoryProjectionV1,
+): boolean {
+  const paneIds = [
+    ...new Set(
+      (shell.terminalInventory?.resources ?? []).flatMap((resource) =>
+        resource.attachability.status === "available"
+          ? [resource.attachability.semanticPaneId]
+          : [],
+      ),
+    ),
+  ].sort();
+  return (
+    shell.workspace.id === terminal.workspaceId &&
+    shell.workspace.session.id === terminal.sessionId &&
+    JSON.stringify(paneIds) === JSON.stringify(terminal.semanticPaneIds)
+  );
+}
+
+function sameTerminalAuthority(
+  left: TerminalRuntimeInventoryProjectionV1,
+  right: TerminalRuntimeInventoryProjectionV1,
+): boolean {
+  return (
+    left.workspaceName === right.workspaceName &&
+    left.workspaceId === right.workspaceId &&
+    left.sessionId === right.sessionId &&
+    left.resourceRevision === right.resourceRevision &&
+    JSON.stringify(left.semanticPaneIds) === JSON.stringify(right.semanticPaneIds)
+  );
 }
 
 function scopeValue<
@@ -241,7 +295,16 @@ export function createWorkspaceClient<
   let generation = 1;
   let target = options.target;
   let targetKey = applicationShellSessionTargetKey(target);
-  let shellState!: ApplicationShellSessionState<Shell>;
+  let shellState: ApplicationShellSessionState<Shell> = {
+    status: "loading",
+    generation: 1,
+    target,
+    data: null,
+    transport: null,
+  };
+  let shellSession: ApplicationShellSession<Shell> | null = null;
+  let unsubscribeShell: () => void = () => undefined;
+  let terminalAuthority: TerminalRuntimeInventoryProjectionV1 | null = null;
   let authorityShell: Shell | null = null;
   let replay: ApplicationShellReplayStateV1 | null = null;
   let semantic: WorkspaceClientSnapshot<Shell>["semantic"] = null;
@@ -313,7 +376,10 @@ export function createWorkspaceClient<
       authorityShell = nextInput;
       semantic = projectApplicationShellSession(nextInput, replay);
       rebuild(["lifecycle", "semantic"]);
-      reconcileRuntimeInventory();
+      if (terminalAuthority === null) reconcileRuntimeInventory();
+      else if (!shellMatchesTerminalAuthority(nextInput, terminalAuthority)) {
+        options.ports.requestTerminalRuntimeInventoryRefresh?.();
+      }
       return;
     }
     if (next.status !== "stale" && next.status !== "degraded") {
@@ -322,18 +388,25 @@ export function createWorkspaceClient<
       semantic = null;
     }
     rebuild(["lifecycle", "semantic"]);
-    reconcileRuntimeInventory();
+    if (terminalAuthority === null) reconcileRuntimeInventory();
   };
 
-  const shellSession: ApplicationShellSession<Shell> = createApplicationShellSession({
-    target,
-    transport: options.ports.shell,
-    clock,
-    onInteractionReceipt: (receipt) => {
-      ledger.receipt(receipt, generation);
-    },
-  });
-  shellState = shellSession.getState();
+  const startApplicationShell = (): void => {
+    if (disposed || shellSession !== null) return;
+    const session = createApplicationShellSession({
+      target,
+      transport: options.ports.shell,
+      clock,
+      onInteractionReceipt: (receipt) => {
+        ledger.receipt(receipt, generation);
+      },
+    });
+    shellSession = session;
+    shellState = session.getState();
+    unsubscribeShell = session.subscribe(applyShell);
+    rebuild(["lifecycle", "semantic"]);
+  };
+  if (!options.deferApplicationShell) startApplicationShell();
   snapshot = Object.freeze({
     generation,
     target,
@@ -345,7 +418,6 @@ export function createWorkspaceClient<
     authority,
     operations: ledger.getSnapshot(),
   });
-  const unsubscribeShell = shellSession.subscribe(applyShell);
 
   const closeSubscription = (
     subscription: Awaited<
@@ -755,8 +827,9 @@ export function createWorkspaceClient<
 
   reconcileRuntimeInventory = (): void => {
     if (disposed) return;
-    const inventory =
-      authorityShell === null
+    const inventory = terminalAuthority
+      ? terminalRuntimeInventoryOf(terminalAuthority, target, generation)
+      : authorityShell === null
         ? null
         : runtimeInventoryOf(authorityShell, target, shellState.generation);
     if (inventory === null) {
@@ -938,6 +1011,7 @@ export function createWorkspaceClient<
       target = nextTarget;
       targetKey = nextKey;
       preparedOpen = null;
+      terminalAuthority = null;
       authorityShell = null;
       replay = null;
       semantic = null;
@@ -946,15 +1020,59 @@ export function createWorkspaceClient<
       ledger.replaceGeneration(generation);
       const retirement = retireRuntime();
       retireCatalog();
-      shellSession.setTarget(nextTarget);
+      if (options.deferApplicationShell) {
+        unsubscribeShell();
+        unsubscribeShell = () => undefined;
+        shellSession?.dispose();
+        shellSession = null;
+        shellState = {
+          status: "loading",
+          generation,
+          target,
+          data: null,
+          transport: null,
+        };
+      } else {
+        shellSession?.setTarget(nextTarget);
+      }
       rebuild(["lifecycle", "semantic", "catalog", "authority", "operations"]);
       connectCatalog();
       return retirement;
     },
     refresh() {
       if (disposed) return;
-      shellSession.refresh();
+      shellSession?.refresh();
       readCatalog();
+    },
+    adoptTerminalRuntimeInventory(resource) {
+      if (
+        disposed ||
+        resource.workspaceName !== target.workspaceName ||
+        (terminalAuthority !== null &&
+          resource.resourceRevision < terminalAuthority.resourceRevision)
+      ) {
+        return false;
+      }
+      if (
+        terminalAuthority !== null &&
+        resource.resourceRevision === terminalAuthority.resourceRevision
+      ) {
+        if (!sameTerminalAuthority(resource, terminalAuthority)) {
+          options.ports.requestTerminalRuntimeInventoryRefresh?.();
+          return false;
+        }
+        return true;
+      }
+      terminalAuthority = resource;
+      reconcileRuntimeInventory();
+      startApplicationShell();
+      return true;
+    },
+    startApplicationShellFallback() {
+      if (disposed) return;
+      terminalAuthority = null;
+      reconcileRuntimeInventory();
+      startApplicationShell();
     },
     async dispatch(command) {
       if (disposed) throw new Error("workspace client is disposed");
@@ -1041,12 +1159,18 @@ export function createWorkspaceClient<
       nextTarget: TerminalReplicaAddress,
       input: SessionRuntimeTerminalInput,
       performanceTraceId?: string,
+      causalProbe?: import("@tmux-ide/contracts").CausalCellProbeRequestV1,
     ): Promise<SessionRuntimeTerminalInputResult> {
       if (disposed || nextTarget.workspaceName !== target.workspaceName) return "authority-lost";
       const expectedGeneration = generation;
       const expectedRuntime = runtime;
       if (expectedRuntime === null) return "authority-lost";
-      const result = await expectedRuntime.sendTerminalInput(nextTarget, input, performanceTraceId);
+      const result = await expectedRuntime.sendTerminalInput(
+        nextTarget,
+        input,
+        performanceTraceId,
+        causalProbe,
+      );
       if (disposed || generation !== expectedGeneration || runtime !== expectedRuntime) {
         return "authority-lost";
       }
@@ -1081,9 +1205,15 @@ export function createWorkspaceClient<
       const retirement = retireRuntime();
       retireCatalog();
       unsubscribeShell();
-      shellSession.dispose();
+      shellSession?.dispose();
       ledger.dispose();
-      shellState = shellSession.getState();
+      shellState = shellSession?.getState() ?? {
+        status: "disposed",
+        generation,
+        target: null,
+        data: null,
+        transport: null,
+      };
       snapshot = Object.freeze({
         generation,
         target: null,

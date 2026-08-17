@@ -18,6 +18,10 @@ export interface TerminalInterpreterBackend {
   readonly cols: number;
   readonly rows: number;
 
+  /** Admit exactly the next idle-buffer write without xterm's timer deferral. */
+  prioritizeNextWrite(): void;
+  /** Public-parser diagnostic OSC seam; installed only for an active probe. */
+  registerOscHandler(identifier: number, handler: (data: string) => boolean): () => void;
   write(data: Uint8Array | string): Promise<void>;
   resize(cols: number, rows: number): void;
   setAuthoritativeCursor(x: number, y: number): void;

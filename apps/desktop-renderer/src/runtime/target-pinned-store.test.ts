@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import type {
-  DesktopDaemonEvent,
-  DesktopDaemonHostSubscriptionResult,
-  HostCapabilities,
+import {
+  DAEMON_WIRE_PROTOCOL_VERSION,
+  type DesktopDaemonEvent,
+  type DesktopDaemonHostSubscriptionResult,
+  type HostCapabilities,
 } from "@tmux-ide/contracts";
 
 import {
@@ -20,7 +21,7 @@ import {
  */
 
 const DAEMON = {
-  protocolVersion: 1,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "2.8.0",
   instanceId: "8f2a1c74-0f0f-4d0b-9d6d-3b1a0c9b7e21",
   startedAt: "2026-07-21T00:00:00.000Z",

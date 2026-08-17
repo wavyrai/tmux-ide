@@ -345,6 +345,44 @@ describe("terminal fast lane", () => {
     expect(control.writes).toHaveLength(2);
   });
 
+  it("reports settled queue bytes on the final transport acknowledgement", async () => {
+    const source = new FakeSource();
+    const control = new FakeControl();
+    control.owned.add("input");
+    const stages: Array<{
+      operation: string;
+      inputPending: number;
+      inputInFlight: number;
+      inputPendingBytes: number;
+    }> = [];
+    const lane = createTerminalFastLane({
+      address: address(),
+      source,
+      control,
+      repair: { request: () => undefined },
+      onTraceStage: (stage) => stages.push(stage),
+    });
+
+    await expect(
+      lane.sendInput(
+        "pane-a",
+        { kind: "key", data: "Enter" },
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      ),
+    ).resolves.toEqual({ status: "sent" });
+    expect(stages.at(-1)).toMatchObject({
+      operation: "transport-ack",
+      inputPending: 0,
+      inputInFlight: 0,
+      inputPendingBytes: 0,
+    });
+    expect(lane.counters()).toMatchObject({
+      inputPending: 0,
+      inputInFlight: 0,
+      inputPendingBytes: 0,
+    });
+  });
+
   it("dispatches a bounded FIFO window without waiting for each acknowledgement", async () => {
     const { lane, control } = rig({ maxInFlightInputs: 2 });
     control.owned.add("input");

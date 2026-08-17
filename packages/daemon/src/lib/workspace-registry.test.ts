@@ -6,7 +6,9 @@ import {
   WorkspaceAlreadyExistsError,
   WorkspaceNotFoundError,
   WorkspaceRegistry,
+  WORKSPACE_REGISTRY_TMUX_TIMEOUT_MS,
   _setDefaultWorkspaceRegistryForTests,
+  listTmuxSessionsForWorkspaceRegistry,
 } from "./workspace-registry.ts";
 
 let dir: string;
@@ -120,6 +122,28 @@ describe("WorkspaceRegistry — add/list/get/remove round-trip", () => {
 });
 
 describe("WorkspaceRegistry — reconcile against tmux list-sessions", () => {
+  it("bounds default tmux discovery and preserves durable rows on timeout", async () => {
+    const seed = new WorkspaceRegistry({ dir, listSessions: () => ["alpha"] });
+    await seed.load();
+    seed.add({ name: "alpha", projectDir: "/tmp/alpha", now });
+
+    const timedOut = Object.assign(new Error("tmux timed out"), { code: "ETIMEDOUT" });
+    let observedTimeout = 0;
+    const reg = new WorkspaceRegistry({
+      dir,
+      listSessions: () =>
+        listTmuxSessionsForWorkspaceRegistry((_file, _args, options) => {
+          observedTimeout = options.timeout;
+          throw timedOut;
+        }),
+    });
+
+    await reg.load();
+
+    expect(observedTimeout).toBe(WORKSPACE_REGISTRY_TMUX_TIMEOUT_MS);
+    expect(reg.list().map((workspace) => workspace.name)).toEqual(["alpha"]);
+  });
+
   it("drops workspaces whose tmux session disappeared", async () => {
     // Seed the disk with two workspaces; tmux only reports one alive.
     const seed = new WorkspaceRegistry({ dir, listSessions: () => ["alpha", "beta"] });

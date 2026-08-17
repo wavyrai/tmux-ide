@@ -11,7 +11,12 @@ import { z } from "zod";
 
 import type { WorkspaceRegistry } from "../../lib/workspace-registry.ts";
 import type { PtyAdapter } from "../PtyAdapter.ts";
+import type { TrustedMirrorSessionInventory } from "../mirror/trusted-inventory.ts";
 import type { SessionRuntimeRegistry } from "../session-runtime/registry.ts";
+import {
+  DISABLED_SESSION_RUNTIME_OBSERVABILITY,
+  type SessionRuntimeObservability,
+} from "../session-runtime/runtime-observability.ts";
 import { SessionRuntimeTransportBinder } from "../session-runtime/transport-binding.ts";
 import {
   TerminalAttachmentAdmissionCoordinator,
@@ -443,6 +448,121 @@ export interface NativeApplicationShellSessionSnapshot {
     "workspaceName" | "sessionName" | "sessionId" | "sessionWindowCount" | "dir"
   > &
     Partial<AgentStatusPaneFacts>)[];
+}
+
+/** Agent-free topology facts used by the terminal-runtime inventory resource. */
+export interface NativeTerminalRuntimeSessionSnapshot extends NativeApplicationShellSessionSnapshot {
+  readonly workspaceName: string;
+}
+
+function projectTrustedMirrorInventory(
+  trusted: TrustedMirrorSessionInventory,
+  workspaceName: string,
+  expectedSessionName: string,
+): readonly NativeTerminalInventoryPaneSnapshot[] {
+  if (
+    typeof trusted !== "object" ||
+    trusted === null ||
+    typeof trusted.sessionName !== "string" ||
+    typeof trusted.runtimeSessionId !== "string" ||
+    !Array.isArray(trusted.panes) ||
+    trusted.sessionName !== expectedSessionName ||
+    !RUNTIME_SESSION_ID.test(trusted.runtimeSessionId) ||
+    trusted.panes.length === 0 ||
+    trusted.panes.length > MAX_DISCOVERED_PANES ||
+    Buffer.byteLength(JSON.stringify(trusted), "utf8") > MAX_TMUX_OUTPUT_BYTES
+  ) {
+    throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+  }
+  const runtimePaneIds = new Set<string>();
+  const windowCounts = new Map<string, number>();
+  let activeCount = 0;
+  const panes = trusted.panes.map((pane) => {
+    if (
+      typeof pane !== "object" ||
+      pane === null ||
+      typeof pane.runtimeSessionId !== "string" ||
+      typeof pane.runtimeWindowId !== "string" ||
+      typeof pane.runtimePaneId !== "string" ||
+      typeof pane.semanticWindowId !== "string" ||
+      typeof pane.semanticPaneId !== "string" ||
+      typeof pane.title !== "string" ||
+      typeof pane.currentCommand !== "string" ||
+      typeof pane.dir !== "string" ||
+      typeof pane.active !== "boolean" ||
+      (pane.role !== null && typeof pane.role !== "string") ||
+      (pane.name !== null && typeof pane.name !== "string") ||
+      (pane.type !== null && typeof pane.type !== "string") ||
+      (pane.missionStamp !== null && typeof pane.missionStamp !== "string") ||
+      pane.runtimeSessionId !== trusted.runtimeSessionId ||
+      !RUNTIME_WINDOW_ID.test(pane.runtimeWindowId) ||
+      !RUNTIME_PANE_ID.test(pane.runtimePaneId) ||
+      runtimePaneIds.has(pane.runtimePaneId) ||
+      !Number.isSafeInteger(pane.windowPaneCount) ||
+      pane.windowPaneCount < 1 ||
+      !Number.isSafeInteger(pane.sessionWindowCount) ||
+      pane.sessionWindowCount < 1 ||
+      !Number.isSafeInteger(pane.paneIndex) ||
+      pane.paneIndex < 0
+    ) {
+      throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+    }
+    runtimePaneIds.add(pane.runtimePaneId);
+    windowCounts.set(pane.runtimeWindowId, (windowCounts.get(pane.runtimeWindowId) ?? 0) + 1);
+    if (pane.active) activeCount += 1;
+    const nullable = (value: string | null): string | null =>
+      value === null ? null : boundedWireValue(value, 256);
+    return Object.freeze({
+      workspaceName,
+      semanticPaneId: nullable(pane.semanticPaneId),
+      windowStamp: nullable(pane.semanticWindowId),
+      sessionId: pane.runtimeSessionId,
+      windowId: pane.runtimeWindowId,
+      runtimePaneId: pane.runtimePaneId,
+      windowPaneCount: pane.windowPaneCount,
+      sessionWindowCount: pane.sessionWindowCount,
+      sessionName: boundedWireValue(trusted.sessionName, 160, false),
+      index: pane.paneIndex,
+      title: boundedWireValue(pane.title, 1_024),
+      currentCommand: boundedWireValue(pane.currentCommand, 512),
+      active: pane.active,
+      role: nullable(pane.role),
+      name: nullable(pane.name),
+      type: nullable(pane.type),
+      missionStamp: nullable(pane.missionStamp),
+      dir: boundedWireValue(pane.dir, 4_096),
+    });
+  });
+  if (
+    activeCount !== 1 ||
+    panes.some(
+      (pane) =>
+        pane.windowPaneCount !== windowCounts.get(pane.windowId) ||
+        pane.sessionWindowCount !== windowCounts.size,
+    )
+  ) {
+    throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+  }
+  return Object.freeze(panes);
+}
+
+async function awaitInventoryUnlessAborted<T>(
+  promise: Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  if (signal.aborted) throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
+  let rejectAbort!: (cause: unknown) => void;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = reject;
+  });
+  const onAbort = (): void =>
+    rejectAbort(new NativeTerminalAttachmentRuntimeError("runtime-disposed"));
+  signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    return await Promise.race([promise, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
 }
 
 const SESSION_FORMAT = ["#{session_name}", "#{session_id}", SESSION_WIRE_SENTINEL].join(
@@ -901,6 +1021,8 @@ export interface WorkspaceTerminalInventoryRuntimeOptions {
   readonly agentStatusProbeFactory?: (deps: {
     readonly run: (argv: readonly string[], signal?: AbortSignal) => Promise<string | null>;
   }) => AgentStatusProbe;
+  /** Opt-in bounded daemon qualification spans; production normally uses the disabled singleton. */
+  readonly observability?: SessionRuntimeObservability;
 }
 
 /**
@@ -914,9 +1036,18 @@ export class WorkspaceTerminalInventoryRuntime {
   readonly runner: TmuxAttachmentCommandRunner;
   readonly readRunner: NativeTerminalInventoryReadRunner;
   readonly #registry: WorkspaceRegistry;
-  readonly #discoverTerminalInventory: () => Promise<NativeTerminalInventorySnapshot>;
+  readonly #discoverTerminalInventory: (
+    signal?: AbortSignal,
+  ) => Promise<NativeTerminalInventorySnapshot>;
   readonly #agentStatusProbe: AgentStatusProbe | null;
-  readonly #prewarmSessionRuntime: ((sessionName: string) => void) | null;
+  readonly #observability: SessionRuntimeObservability;
+  readonly #prewarmSessionRuntime:
+    | ((sessionName: string, runtimeSessionId: string, signal: AbortSignal) => Promise<void>)
+    | null;
+  readonly #discoverTrustedSessionInventory:
+    | ((sessionName: string, signal: AbortSignal) => Promise<TrustedMirrorSessionInventory>)
+    | null;
+  readonly #trustedSessionInventoryReady: ((sessionName: string) => boolean) | null;
   readonly #observeWorkspaceSession: ((workspaceName: string, sessionName: string) => void) | null;
   readonly #stopWorkspaceAddedObserver: (() => void) | null;
   readonly #stopWorkspaceRemovedObserver: (() => void) | null;
@@ -947,7 +1078,8 @@ export class WorkspaceTerminalInventoryRuntime {
     });
     this.readRunner = pinnedReadRunner(authority, executeRead);
     this.#registry = options.registry;
-    this.#discoverTerminalInventory = () => this.#readInventory();
+    this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
+    this.#discoverTerminalInventory = (signal) => this.#readInventory(signal);
     this.semanticPaneCatalog =
       options.semanticPaneCatalog ??
       new SemanticPaneCatalog({
@@ -1020,9 +1152,23 @@ export class WorkspaceTerminalInventoryRuntime {
     );
     if (options.sessionRuntimeRegistry) {
       const sessionRuntimeRegistry = options.sessionRuntimeRegistry;
-      this.#prewarmSessionRuntime = (sessionName) => {
-        void sessionRuntimeRegistry.prewarmSession(sessionName).catch(() => undefined);
+      this.#prewarmSessionRuntime = (sessionName, runtimeSessionId, signal) => {
+        const qualify = sessionRuntimeRegistry.prewarmProofQualifiedSession;
+        return (
+          typeof qualify === "function"
+            ? qualify.call(sessionRuntimeRegistry, sessionName, runtimeSessionId, signal)
+            : sessionRuntimeRegistry.prewarmSession(sessionName, signal)
+        ).then(() => undefined);
       };
+      this.#discoverTrustedSessionInventory =
+        typeof sessionRuntimeRegistry.describeTrustedSessionInventory === "function"
+          ? (sessionName, signal) =>
+              sessionRuntimeRegistry.describeTrustedSessionInventory(sessionName, signal)
+          : null;
+      this.#trustedSessionInventoryReady =
+        typeof sessionRuntimeRegistry.hasProofQualifiedInventory === "function"
+          ? (sessionName) => sessionRuntimeRegistry.hasProofQualifiedInventory(sessionName)
+          : null;
       this.#observeWorkspaceSession = (workspaceName, sessionName) => {
         const previousSessionName = sessionsByWorkspace.get(workspaceName);
         sessionsByWorkspace.set(workspaceName, sessionName);
@@ -1036,6 +1182,8 @@ export class WorkspaceTerminalInventoryRuntime {
       };
     } else {
       this.#prewarmSessionRuntime = null;
+      this.#discoverTrustedSessionInventory = null;
+      this.#trustedSessionInventoryReady = null;
       this.#observeWorkspaceSession = null;
     }
     this.#stopWorkspaceAddedObserver = options.registry.on("workspace.added", (workspace) => {
@@ -1068,6 +1216,46 @@ export class WorkspaceTerminalInventoryRuntime {
     return this.#orphanBarrier;
   }
 
+  recordTerminalRuntimeResourceMark(
+    operation: "terminal-resource-handler-admitted" | "terminal-resource-response-projection",
+  ): void {
+    if (!this.#observability.enabled) return;
+    try {
+      const atMicros = this.#observability.nowMicros();
+      this.#observability.recordSpan("transport", operation, atMicros, atMicros);
+    } catch {
+      // Diagnostics never own native runtime lifecycle.
+    }
+  }
+
+  #observeAttempt<Value>(operation: string, run: () => Promise<Value>): Promise<Value> {
+    if (!this.#observability.enabled) return run();
+    let startedAtMicros: number;
+    try {
+      startedAtMicros = this.#observability.nowMicros();
+    } catch {
+      return run();
+    }
+    const finish = (): void => {
+      try {
+        this.#observability.recordSpan(
+          "transport",
+          operation,
+          startedAtMicros,
+          this.#observability.nowMicros(),
+        );
+      } catch {
+        // Diagnostics never change discovery or enrichment results.
+      }
+    };
+    try {
+      return run().finally(finish);
+    } catch (error) {
+      finish();
+      throw error;
+    }
+  }
+
   /** Retires the exact read generation; concurrent readers share its replacement. */
   invalidate(): void {
     this.#inventoryEpoch += 1;
@@ -1077,16 +1265,23 @@ export class WorkspaceTerminalInventoryRuntime {
     this.#applicationReads.clear();
   }
 
-  async #readInventory(): Promise<NativeTerminalInventorySnapshot> {
+  #readInventoryAttempt(signal: AbortSignal): Promise<NativeTerminalInventorySnapshot> {
+    return this.#observeAttempt("terminal-inventory-discovery", () =>
+      discoverWorkspaceRegistryTerminalInventory(this.#registry, this.readRunner, signal),
+    );
+  }
+
+  async #readInventory(signal?: AbortSignal): Promise<NativeTerminalInventorySnapshot> {
     if (this.#disposed) throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
+    if (signal) {
+      if (signal.aborted) throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
+      return this.#readInventoryAttempt(signal);
+    }
     const epoch = this.#inventoryEpoch;
     if (this.#inventoryRead?.epoch === epoch) return this.#inventoryRead.promise;
     const abort = new AbortController();
-    const promise = discoverWorkspaceRegistryTerminalInventory(
-      this.#registry,
-      this.readRunner,
-      abort.signal,
-    )
+    const observedAttempt = this.#readInventoryAttempt(abort.signal);
+    const promise = observedAttempt
       .then((value) =>
         abort.signal.aborted || this.#inventoryEpoch !== epoch ? this.#readInventory() : value,
       )
@@ -1131,10 +1326,23 @@ export class WorkspaceTerminalInventoryRuntime {
     return promise;
   }
 
-  async #discoverApplicationShellSession(
+  /**
+   * Fresh agent-free session projection for the terminal runtime authority.
+   * This deliberately does not join the application-shell enrichment flight.
+   */
+  discoverTerminalRuntimeSession(
+    requestedSessionName: string,
+    signal: AbortSignal = new AbortController().signal,
+  ): Promise<NativeTerminalRuntimeSessionSnapshot | null> {
+    if (this.#disposed)
+      return Promise.reject(new NativeTerminalAttachmentRuntimeError("runtime-disposed"));
+    return this.#discoverTerminalRuntimeSession(requestedSessionName, signal);
+  }
+
+  async #discoverTerminalRuntimeSession(
     requestedSessionName: string,
     signal: AbortSignal,
-  ): Promise<NativeApplicationShellSessionSnapshot | null> {
+  ): Promise<NativeTerminalRuntimeSessionSnapshot | null> {
     const assertLive = (): void => {
       if (signal.aborted || this.#disposed) {
         throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
@@ -1148,8 +1356,68 @@ export class WorkspaceTerminalInventoryRuntime {
     if (memberships.length !== 1)
       throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
     const workspace = memberships[0]!;
-    this.#observeWorkspaceSession?.(workspace.name, workspace.sessionName);
-    const inventory = await this.#discoverTerminalInventory();
+    let inventory: NativeTerminalInventorySnapshot;
+    if (
+      this.#discoverTrustedSessionInventory &&
+      this.#trustedSessionInventoryReady?.(workspace.sessionName)
+    ) {
+      const trusted = await awaitInventoryUnlessAborted(
+        this.#discoverTrustedSessionInventory(workspace.sessionName, signal),
+        signal,
+      ).catch(() => null);
+      assertLive();
+      if (trusted) {
+        try {
+          const panes = projectTrustedMirrorInventory(
+            trusted,
+            workspace.name,
+            workspace.sessionName,
+          );
+          const catalog = analyzeTrustedSemanticPaneCatalog(
+            panes.map(
+              ({
+                sessionName: _sessionName,
+                index: _index,
+                title: _title,
+                currentCommand: _currentCommand,
+                active: _active,
+                role: _role,
+                name: _name,
+                type: _type,
+                missionStamp: _missionStamp,
+                dir: _dir,
+                ...row
+              }) => row,
+            ),
+          );
+          if (
+            catalog.invalidRuntimeProof ||
+            catalog.missingSemanticStamp ||
+            catalog.duplicateSemanticStamp ||
+            catalog.duplicateRuntimePaneBinding
+          ) {
+            throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+          }
+          inventory = Object.freeze({ panes, catalog });
+        } catch {
+          assertLive();
+          inventory = await awaitInventoryUnlessAborted(
+            this.#discoverTerminalInventory(signal),
+            signal,
+          );
+        }
+      } else {
+        inventory = await awaitInventoryUnlessAborted(
+          this.#discoverTerminalInventory(signal),
+          signal,
+        );
+      }
+    } else {
+      inventory = await awaitInventoryUnlessAborted(
+        this.#discoverTerminalInventory(signal),
+        signal,
+      );
+    }
     assertLive();
     const panes = inventory.panes.filter(
       (pane) => pane.workspaceName === workspace.name && pane.sessionName === workspace.sessionName,
@@ -1201,29 +1469,17 @@ export class WorkspaceTerminalInventoryRuntime {
           : inventory.catalog.duplicateRuntimePaneBinding
             ? "duplicate-runtime-pane-binding"
             : null;
-    let agentFacts: ReadonlyMap<string, AgentStatusPaneFacts> = new Map();
-    if (this.#agentStatusProbe) {
-      try {
-        agentFacts = await this.#agentStatusProbe.probe(
-          {
-            sessionId: active.sessionId,
-            nowSec: Math.floor(Date.now() / 1000),
-            panes: panes.map((pane) => ({
-              runtimePaneId: pane.runtimePaneId,
-              currentCommand: pane.currentCommand,
-              title: pane.title,
-            })),
-          },
-          signal,
-        );
-      } catch {
-        assertLive();
-        agentFacts = new Map();
-      }
+    if (shouldPrewarm && this.#prewarmSessionRuntime) {
+      await awaitInventoryUnlessAborted(
+        this.#prewarmSessionRuntime(workspace.sessionName, active.sessionId, signal),
+        signal,
+      ).catch(() => undefined);
+      assertLive();
     }
     assertLive();
-    if (shouldPrewarm) this.#prewarmSessionRuntime?.(workspace.sessionName);
+    this.#observeWorkspaceSession?.(workspace.name, workspace.sessionName);
     return Object.freeze({
+      workspaceName: workspace.name,
       name: workspace.sessionName,
       runtimeSessionId: active.sessionId,
       dir: workspace.projectDir,
@@ -1237,7 +1493,51 @@ export class WorkspaceTerminalInventoryRuntime {
             sessionWindowCount: _sessionWindowCount,
             dir: _dir,
             ...pane
-          }) => Object.freeze({ ...pane, ...(agentFacts.get(pane.runtimePaneId) ?? {}) }),
+          }) => Object.freeze({ ...pane }),
+        ),
+      ),
+    });
+  }
+
+  async #discoverApplicationShellSession(
+    requestedSessionName: string,
+    signal: AbortSignal,
+  ): Promise<NativeApplicationShellSessionSnapshot | null> {
+    const session = await this.#discoverTerminalRuntimeSession(requestedSessionName, signal);
+    if (session === null) return null;
+    const assertLive = (): void => {
+      if (signal.aborted || this.#disposed) {
+        throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
+      }
+    };
+    let agentFacts: ReadonlyMap<string, AgentStatusPaneFacts> = new Map();
+    if (this.#agentStatusProbe) {
+      try {
+        agentFacts = await this.#observeAttempt("terminal-agent-enrichment", () =>
+          this.#agentStatusProbe!.probe(
+            {
+              sessionId: session.runtimeSessionId,
+              nowSec: Math.floor(Date.now() / 1000),
+              panes: session.panes.map((pane) => ({
+                runtimePaneId: pane.runtimePaneId,
+                currentCommand: pane.currentCommand,
+                title: pane.title,
+              })),
+            },
+            signal,
+          ),
+        );
+      } catch {
+        assertLive();
+        agentFacts = new Map();
+      }
+    }
+    assertLive();
+    return Object.freeze({
+      ...session,
+      panes: Object.freeze(
+        session.panes.map((pane) =>
+          Object.freeze({ ...pane, ...(agentFacts.get(pane.runtimePaneId) ?? {}) }),
         ),
       ),
     });

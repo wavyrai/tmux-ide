@@ -2326,7 +2326,7 @@ var DAEMON_WIRE_PROTOCOL_VERSION, DaemonWireProtocolVersionSchema, DaemonInstanc
 var init_daemon_wire = __esm({
   "packages/contracts/src/daemon-wire.ts"() {
     "use strict";
-    DAEMON_WIRE_PROTOCOL_VERSION = 1;
+    DAEMON_WIRE_PROTOCOL_VERSION = 2;
     DaemonWireProtocolVersionSchema = z18.number().int().positive();
     DaemonInstanceIdSchema = z18.uuid();
     EnvironmentIdSchema = z18.uuid();
@@ -5957,6 +5957,7 @@ var init_daemon_events = __esm({
       z36.object({
         resource: z36.enum([
           "application-shell",
+          "terminal-runtime-inventory",
           "workspace-files",
           "workspace-changes",
           "workspace-missions"
@@ -6045,6 +6046,7 @@ var init_daemon_events = __esm({
       "workspace-catalog",
       "fleet-catalog",
       "application-shell",
+      "terminal-runtime-inventory",
       "workspace-files",
       "workspace-changes",
       "workspace-missions"
@@ -7936,12 +7938,117 @@ var init_session_runtime = __esm({
   }
 });
 
-// packages/contracts/src/terminal-delivery.ts
+// packages/contracts/src/causal-cell.ts
 import { z as z50 } from "zod";
+var CAUSAL_CELL_CAPABILITY_V1, CausalCellCapabilitySchemaZ, CanonicalStateHashSchemaZ, CanonicalRevisionSchemaZ, GridExtentSchemaZ, GridCoordinateSchemaZ, CausalCellGeometryV1SchemaZ, CausalCellBindingShape, CausalCellProbeV1SchemaZ, CausalCellProofV1SchemaZ, CausalCellFailureReasonV1SchemaZ, CausalCellFailureV1SchemaZ;
+var init_causal_cell = __esm({
+  "packages/contracts/src/causal-cell.ts"() {
+    "use strict";
+    init_session_runtime();
+    init_semantic_identity();
+    init_terminal_replica();
+    CAUSAL_CELL_CAPABILITY_V1 = "causal-cell-v1";
+    CausalCellCapabilitySchemaZ = z50.literal(CAUSAL_CELL_CAPABILITY_V1);
+    CanonicalStateHashSchemaZ = z50.string().regex(/^[0-9a-f]{16}$/u);
+    CanonicalRevisionSchemaZ = z50.number().int().nonnegative().safe();
+    GridExtentSchemaZ = z50.number().int().positive().max(65536);
+    GridCoordinateSchemaZ = z50.number().int().nonnegative().max(65535);
+    CausalCellGeometryV1SchemaZ = z50.object({
+      cols: GridExtentSchemaZ,
+      rows: GridExtentSchemaZ,
+      row: GridCoordinateSchemaZ,
+      column: GridCoordinateSchemaZ
+    }).strict().superRefine((value, context) => {
+      if (value.row >= value.rows)
+        context.addIssue({ code: "custom", path: ["row"], message: "row is outside geometry" });
+      if (value.column >= value.cols)
+        context.addIssue({
+          code: "custom",
+          path: ["column"],
+          message: "column is outside geometry"
+        });
+    });
+    CausalCellBindingShape = {
+      version: z50.literal(1),
+      capability: CausalCellCapabilitySchemaZ,
+      /** Probe identity is deliberately the performance trace identity. */
+      traceId: z50.uuid(),
+      clientId: SessionRuntimeClientIdSchemaZ,
+      /** Pane-stream request id; binds the proof to one authenticated transport. */
+      transportNonce: z50.uuid(),
+      /** Negotiated terminal-delivery nonce; prevents replay across reopen. */
+      deliveryNonce: z50.uuid(),
+      inputSequence: z50.number().int().positive().max(2147483647),
+      semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+      generation: SessionRuntimeGenerationSchemaZ,
+      incarnation: z50.string().min(1).max(256),
+      baselineRevision: CanonicalRevisionSchemaZ,
+      baselineStateHash: CanonicalStateHashSchemaZ,
+      geometry: CausalCellGeometryV1SchemaZ,
+      before: TerminalReplicaCellSchemaZ,
+      after: TerminalReplicaCellSchemaZ
+    };
+    CausalCellProbeV1SchemaZ = z50.object(CausalCellBindingShape).strict().superRefine((value, context) => {
+      if (value.before.width !== 1 || value.after.width !== 1)
+        context.addIssue({
+          code: "custom",
+          path: [value.before.width !== 1 ? "before" : "after", "width"],
+          message: "causal probe cells must be canonical width-1 cells"
+        });
+      if (JSON.stringify(value.before) === JSON.stringify(value.after))
+        context.addIssue({ code: "custom", path: ["after"], message: "probe must change one cell" });
+    });
+    CausalCellProofV1SchemaZ = z50.object({
+      ...CausalCellBindingShape,
+      committedRevision: CanonicalRevisionSchemaZ,
+      committedStateHash: CanonicalStateHashSchemaZ
+    }).strict().superRefine((value, context) => {
+      if (value.before.width !== 1 || value.after.width !== 1)
+        context.addIssue({
+          code: "custom",
+          path: [value.before.width !== 1 ? "before" : "after", "width"],
+          message: "causal proof cells must be canonical width-1 cells"
+        });
+      if (value.committedRevision <= value.baselineRevision)
+        context.addIssue({
+          code: "custom",
+          path: ["committedRevision"],
+          message: "causal proof revision must advance"
+        });
+      if (JSON.stringify(value.before) === JSON.stringify(value.after))
+        context.addIssue({ code: "custom", path: ["after"], message: "proof must change one cell" });
+    });
+    CausalCellFailureReasonV1SchemaZ = z50.enum([
+      "busy",
+      "baseline-drift",
+      "control-rejected",
+      "marker-order",
+      "marker-mismatch",
+      "ambiguous-delta",
+      "no-op",
+      "geometry-drift",
+      "reseeded",
+      "timeout",
+      "capacity-exhausted",
+      "authority-lost",
+      "transport-closed"
+    ]);
+    CausalCellFailureV1SchemaZ = z50.object({
+      version: z50.literal(1),
+      capability: CausalCellCapabilitySchemaZ,
+      traceId: z50.uuid(),
+      reason: CausalCellFailureReasonV1SchemaZ
+    }).strict();
+  }
+});
+
+// packages/contracts/src/terminal-delivery.ts
+import { z as z51 } from "zod";
 var TERMINAL_DELIVERY_PROTOCOL_VERSION, TERMINAL_DELIVERY_CHUNK_BYTES, TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES, TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES, TerminalDeliveryEncodingSchemaZ, TerminalDeliveryOfferSchemaZ, TerminalDeliveryNegotiatedSchemaZ, TerminalDeliveryNegotiationResultSchemaZ, DeliveryAddressSchemaZ, TerminalDeliveryEnvelopeSchemaZ, TerminalDeliveryChunkSchemaZ, TerminalDeliveryFaultSchemaZ, TerminalDeliveryAckSchemaZ, TerminalDeliveryNackSchemaZ, TerminalDeliveryVisibilitySchemaZ, TerminalSemanticDeliveryPayloadSchemaZ;
 var init_terminal_delivery = __esm({
   "packages/contracts/src/terminal-delivery.ts"() {
     "use strict";
+    init_causal_cell();
     init_semantic_identity();
     init_session_runtime();
     init_workspace_state();
@@ -7950,70 +8057,72 @@ var init_terminal_delivery = __esm({
     TERMINAL_DELIVERY_CHUNK_BYTES = 256 * 1024;
     TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES = 512 * 1024;
     TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES = 16 * 1024 * 1024;
-    TerminalDeliveryEncodingSchemaZ = z50.enum([
+    TerminalDeliveryEncodingSchemaZ = z51.enum([
       "semantic-v1",
       "ansi-diff-v1",
       "ansi-raw-v1"
     ]);
-    TerminalDeliveryOfferSchemaZ = z50.object({
-      protocolVersions: z50.array(z50.number().int().positive()).min(1).max(8),
-      encodings: z50.array(TerminalDeliveryEncodingSchemaZ).min(1).max(3),
-      richPlacements: z50.boolean()
+    TerminalDeliveryOfferSchemaZ = z51.object({
+      protocolVersions: z51.array(z51.number().int().positive()).min(1).max(8),
+      encodings: z51.array(TerminalDeliveryEncodingSchemaZ).min(1).max(3),
+      richPlacements: z51.boolean()
     }).strict().superRefine((value, context) => {
       if (new Set(value.protocolVersions).size !== value.protocolVersions.length)
         context.addIssue({ code: "custom", message: "protocolVersions must be unique" });
       if (new Set(value.encodings).size !== value.encodings.length)
         context.addIssue({ code: "custom", message: "encodings must be unique" });
     });
-    TerminalDeliveryNegotiatedSchemaZ = z50.object({
-      protocolVersion: z50.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
+    TerminalDeliveryNegotiatedSchemaZ = z51.object({
+      protocolVersion: z51.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
       encoding: TerminalDeliveryEncodingSchemaZ,
-      richPlacements: z50.boolean(),
+      richPlacements: z51.boolean(),
       generation: SessionRuntimeGenerationSchemaZ,
-      deliveryNonce: z50.uuid()
+      deliveryNonce: z51.uuid()
     }).strict().superRefine((value, context) => {
       if (value.richPlacements && value.encoding !== "semantic-v1")
         context.addIssue({ code: "custom", message: "rich placements require semantic delivery" });
     });
-    TerminalDeliveryNegotiationResultSchemaZ = z50.discriminatedUnion("accepted", [
-      z50.object({ accepted: z50.literal(true), negotiated: TerminalDeliveryNegotiatedSchemaZ }).strict(),
-      z50.object({
-        accepted: z50.literal(false),
-        reason: z50.enum([
+    TerminalDeliveryNegotiationResultSchemaZ = z51.discriminatedUnion("accepted", [
+      z51.object({ accepted: z51.literal(true), negotiated: TerminalDeliveryNegotiatedSchemaZ }).strict(),
+      z51.object({
+        accepted: z51.literal(false),
+        reason: z51.enum([
           "protocol-version-mismatch",
           "encoding-mismatch",
           "unsupported-capability-combination"
         ])
       }).strict()
     ]);
-    DeliveryAddressSchemaZ = z50.object({
+    DeliveryAddressSchemaZ = z51.object({
       workspaceName: WorkspaceIdSchemaZ,
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
       generation: SessionRuntimeGenerationSchemaZ,
-      incarnation: z50.string().min(1).max(256),
-      deliveryNonce: z50.uuid()
+      incarnation: z51.string().min(1).max(256),
+      deliveryNonce: z51.uuid()
     });
     TerminalDeliveryEnvelopeSchemaZ = DeliveryAddressSchemaZ.extend({
-      type: z50.literal("terminal.delivery"),
-      transactionId: z50.uuid(),
+      type: z51.literal("terminal.delivery"),
+      transactionId: z51.uuid(),
       /**
        * Optional diagnostics-only controlled next-output probe id. It never grants
        * authority, is absent while tracing is disabled, and must not be interpreted
        * as general causality: unrelated external tmux output may consume the probe.
        */
-      performanceTraceId: z50.uuid().optional(),
-      protocolVersion: z50.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
+      performanceTraceId: z51.uuid().optional(),
+      /** Finalized diagnostic proof for this exact canonical revision/hash. */
+      causalCellProof: CausalCellProofV1SchemaZ.optional(),
+      protocolVersion: z51.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
       encoding: TerminalDeliveryEncodingSchemaZ,
-      frame: z50.enum(["seed", "patch", "tombstone"]),
-      baseRevision: z50.number().int().min(-1).nullable(),
-      canonicalRevision: z50.number().int().nonnegative(),
-      canonicalStateHash: z50.string().regex(/^[0-9a-f]{16}$/u),
-      representationHash: z50.string().regex(/^[0-9a-f]{16}$/u),
-      representationBytes: z50.number().int().nonnegative().max(TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES),
-      chunkCount: z50.number().int().positive().max(256),
-      canonicalEquivalent: z50.boolean(),
-      history: z50.enum(["complete", "truncated", "not-applicable"]),
-      richPlacements: z50.boolean()
+      frame: z51.enum(["seed", "patch", "tombstone"]),
+      baseRevision: z51.number().int().min(-1).nullable(),
+      canonicalRevision: z51.number().int().nonnegative(),
+      canonicalStateHash: z51.string().regex(/^[0-9a-f]{16}$/u),
+      representationHash: z51.string().regex(/^[0-9a-f]{16}$/u),
+      representationBytes: z51.number().int().nonnegative().max(TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES),
+      chunkCount: z51.number().int().positive().max(256),
+      canonicalEquivalent: z51.boolean(),
+      history: z51.enum(["complete", "truncated", "not-applicable"]),
+      richPlacements: z51.boolean()
     }).strict().superRefine((value, context) => {
       const expectedChunks = Math.max(
         1,
@@ -8046,29 +8155,29 @@ var init_terminal_delivery = __esm({
       if (value.encoding !== "semantic-v1" && value.richPlacements)
         context.addIssue({ code: "custom", message: "ANSI cannot carry rich placements" });
     });
-    TerminalDeliveryChunkSchemaZ = z50.object({
-      type: z50.literal("terminal.delivery.chunk"),
-      transactionId: z50.uuid(),
-      index: z50.number().int().nonnegative().max(255),
-      bytes: z50.instanceof(Uint8Array).refine((value) => value.byteLength <= TERMINAL_DELIVERY_CHUNK_BYTES)
+    TerminalDeliveryChunkSchemaZ = z51.object({
+      type: z51.literal("terminal.delivery.chunk"),
+      transactionId: z51.uuid(),
+      index: z51.number().int().nonnegative().max(255),
+      bytes: z51.instanceof(Uint8Array).refine((value) => value.byteLength <= TERMINAL_DELIVERY_CHUNK_BYTES)
     }).strict();
-    TerminalDeliveryFaultSchemaZ = z50.object({
-      type: z50.literal("terminal.delivery.fault"),
-      reason: z50.enum(["state-too-large", "source-closed", "protocol-violation"]),
-      message: z50.string().min(1).max(1024),
-      deliveryNonce: z50.uuid()
+    TerminalDeliveryFaultSchemaZ = z51.object({
+      type: z51.literal("terminal.delivery.fault"),
+      reason: z51.enum(["state-too-large", "source-closed", "protocol-violation"]),
+      message: z51.string().min(1).max(1024),
+      deliveryNonce: z51.uuid()
     }).strict();
     TerminalDeliveryAckSchemaZ = DeliveryAddressSchemaZ.extend({
-      type: z50.literal("terminal.delivery.ack"),
-      transactionId: z50.uuid(),
-      canonicalRevision: z50.number().int().nonnegative(),
-      canonicalStateHash: z50.string().regex(/^[0-9a-f]{16}$/u),
-      representationHash: z50.string().regex(/^[0-9a-f]{16}$/u)
+      type: z51.literal("terminal.delivery.ack"),
+      transactionId: z51.uuid(),
+      canonicalRevision: z51.number().int().nonnegative(),
+      canonicalStateHash: z51.string().regex(/^[0-9a-f]{16}$/u),
+      representationHash: z51.string().regex(/^[0-9a-f]{16}$/u)
     }).strict();
     TerminalDeliveryNackSchemaZ = DeliveryAddressSchemaZ.extend({
-      type: z50.literal("terminal.delivery.nack"),
-      transactionId: z50.uuid().nullable(),
-      reason: z50.enum([
+      type: z51.literal("terminal.delivery.nack"),
+      transactionId: z51.uuid().nullable(),
+      reason: z51.enum([
         "gap",
         "hash-mismatch",
         "decode-failed",
@@ -8076,30 +8185,30 @@ var init_terminal_delivery = __esm({
         "stale-generation",
         "protocol-violation"
       ]),
-      appliedRevision: z50.number().int().min(-1)
+      appliedRevision: z51.number().int().min(-1)
     }).strict();
-    TerminalDeliveryVisibilitySchemaZ = z50.enum([
+    TerminalDeliveryVisibilitySchemaZ = z51.enum([
       "visible",
       "background",
       "hidden",
       "frozen"
     ]);
-    TerminalSemanticDeliveryPayloadSchemaZ = z50.discriminatedUnion("frame", [
-      z50.object({
-        frame: z50.literal("seed"),
-        revision: z50.number().int().nonnegative(),
+    TerminalSemanticDeliveryPayloadSchemaZ = z51.discriminatedUnion("frame", [
+      z51.object({
+        frame: z51.literal("seed"),
+        revision: z51.number().int().nonnegative(),
         snapshot: TerminalReplicaSnapshotSchemaZ
       }).strict(),
-      z50.object({
-        frame: z50.literal("patch"),
-        baseRevision: z50.number().int().nonnegative(),
-        revision: z50.number().int().nonnegative(),
+      z51.object({
+        frame: z51.literal("patch"),
+        baseRevision: z51.number().int().nonnegative(),
+        revision: z51.number().int().nonnegative(),
         patch: TerminalReplicaPatchPayloadSchemaZ
       }).strict().refine((value) => value.revision > value.baseRevision, "patch revision must advance"),
-      z50.object({
-        frame: z50.literal("tombstone"),
-        baseRevision: z50.number().int().nonnegative(),
-        revision: z50.number().int().nonnegative(),
+      z51.object({
+        frame: z51.literal("tombstone"),
+        baseRevision: z51.number().int().nonnegative(),
+        revision: z51.number().int().nonnegative(),
         tombstone: TerminalReplicaTombstonePayloadSchemaZ
       }).strict().refine((value) => value.revision > value.baseRevision, "tombstone revision must advance")
     ]);
@@ -8107,11 +8216,12 @@ var init_terminal_delivery = __esm({
 });
 
 // packages/contracts/src/pane-stream.ts
-import { z as z51 } from "zod";
-var PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
+import { z as z52 } from "zod";
+var PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
 var init_pane_stream = __esm({
   "packages/contracts/src/pane-stream.ts"() {
     "use strict";
+    init_causal_cell();
     init_daemon_wire();
     init_issue_error();
     init_semantic_identity();
@@ -8135,75 +8245,85 @@ var init_pane_stream = __esm({
     PANE_STREAM_MAX_INPUT_SEQUENCE = 4294967295;
     PaneStreamSemanticPaneIdSchemaZ = TerminalAttachmentSemanticPaneIdSchemaZ;
     PaneStreamViewerModeSchemaZ = TerminalAttachmentViewerModeSchemaZ;
-    PaneSetSchemaZ = z51.array(PaneStreamSemanticPaneIdSchemaZ).min(1).max(PANE_STREAM_MAX_PANES).refine((panes) => new Set(panes).size === panes.length, "pane set must not repeat a pane");
-    PaneStreamLeaseRequestSchemaZ = z51.object({
-      protocolVersion: z51.literal(PANE_STREAM_PROTOCOL_VERSION),
+    PaneSetSchemaZ = z52.array(PaneStreamSemanticPaneIdSchemaZ).min(1).max(PANE_STREAM_MAX_PANES).refine((panes) => new Set(panes).size === panes.length, "pane set must not repeat a pane");
+    PaneStreamLeaseRequestSchemaZ = z52.object({
+      protocolVersion: z52.literal(PANE_STREAM_PROTOCOL_VERSION),
       workspaceName: WorkspaceIdSchemaZ,
       panes: PaneSetSchemaZ,
       viewerMode: PaneStreamViewerModeSchemaZ,
       /** Explicit semantic-v2 content/authority mode. Omission retains raw v1. */
       terminalDelivery: TerminalDeliveryOfferSchemaZ.optional()
     }).strict();
-    PaneStreamRedemptionTicketSchemaZ = z51.string().regex(/^ps1_[A-Za-z0-9_-]{43}$/u);
-    PaneStreamLoopbackWebSocketUrlSchemaZ = z51.url().max(2048).refine((value) => {
+    PaneStreamRedemptionTicketSchemaZ = z52.string().regex(/^ps1_[A-Za-z0-9_-]{43}$/u);
+    PaneStreamLoopbackWebSocketUrlSchemaZ = z52.url().max(2048).refine((value) => {
       const url = new URL(value);
       return url.protocol === "ws:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) && url.port.length > 0 && url.username.length === 0 && url.password.length === 0 && url.pathname === PANE_STREAM_REDEEM_PATH && url.search.length === 0 && url.hash.length === 0 && url.toString() === value;
     }, "pane-stream URL must be the canonical uncredentialed loopback redemption endpoint");
-    PaneStreamIssueDescriptorSchemaZ = z51.object({
-      protocolVersion: z51.literal(PANE_STREAM_PROTOCOL_VERSION),
+    PaneStreamIssueDescriptorSchemaZ = z52.object({
+      protocolVersion: z52.literal(PANE_STREAM_PROTOCOL_VERSION),
       webSocketUrl: PaneStreamLoopbackWebSocketUrlSchemaZ,
-      subprotocol: z51.literal(PANE_STREAM_WEBSOCKET_SUBPROTOCOL),
+      subprotocol: z52.literal(PANE_STREAM_WEBSOCKET_SUBPROTOCOL),
       redemptionTicket: PaneStreamRedemptionTicketSchemaZ,
       daemonInstanceId: DaemonInstanceIdentitySchemaZ.shape.instanceId,
-      requestId: z51.uuid(),
-      expiresAt: z51.number().int().positive(),
+      requestId: z52.uuid(),
+      expiresAt: z52.number().int().positive(),
       panes: PaneSetSchemaZ,
       effectiveViewerMode: PaneStreamViewerModeSchemaZ
     }).strict();
     PaneStreamIssueErrorSchemaZ = TerminalIssueErrorCompatSchemaZ;
-    PaneStreamIssueResultSchemaZ = z51.discriminatedUnion("status", [
-      z51.object({ status: z51.literal("issued"), descriptor: PaneStreamIssueDescriptorSchemaZ }).strict(),
-      z51.object({ status: z51.literal("error"), error: PaneStreamIssueErrorSchemaZ }).strict()
+    PaneStreamIssueResultSchemaZ = z52.discriminatedUnion("status", [
+      z52.object({ status: z52.literal("issued"), descriptor: PaneStreamIssueDescriptorSchemaZ }).strict(),
+      z52.object({ status: z52.literal("error"), error: PaneStreamIssueErrorSchemaZ }).strict()
     ]);
-    PaneStreamIssueMutationRequestSchemaZ = z51.object({
-      requestId: z51.uuid(),
+    PaneStreamIssueMutationRequestSchemaZ = z52.object({
+      requestId: z52.uuid(),
       expectedDaemonInstanceId: DaemonInstanceIdentitySchemaZ.shape.instanceId,
       stream: PaneStreamLeaseRequestSchemaZ
     }).strict();
-    BoundedIdentitySchemaZ = z51.string().min(1).max(4096).refine((value) => !value.includes("\0"));
-    PaneStreamRedeemFrameSchemaZ = z51.object({
-      type: z51.literal("redeem"),
-      protocolVersion: z51.literal(PANE_STREAM_PROTOCOL_VERSION),
+    BoundedIdentitySchemaZ = z52.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    PaneStreamRedeemFrameSchemaZ = z52.object({
+      type: z52.literal("redeem"),
+      protocolVersion: z52.literal(PANE_STREAM_PROTOCOL_VERSION),
       ticket: PaneStreamRedemptionTicketSchemaZ,
-      requestId: z51.uuid(),
+      requestId: z52.uuid(),
       daemonInstanceId: BoundedIdentitySchemaZ,
       /**
        * The client commits to sending `consumed` frames, activating the
        * renderer-backlog flow owner from the first delivered frame. Card 3's
        * renderer sets this; simple transcript clients omit it.
        */
-      deliveryAcks: z51.boolean().optional()
+      deliveryAcks: z52.boolean().optional(),
+      diagnosticCapabilities: z52.array(CausalCellCapabilitySchemaZ).max(1).optional()
     }).strict();
     PaneStreamInputFrameMetadataShape = {
-      type: z51.literal("input"),
+      type: z52.literal("input"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
-      seq: z51.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
+      seq: z52.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
       /** Opt-in controlled next-output probe; not a general causal assertion. */
-      performanceTraceId: z51.uuid().optional()
+      performanceTraceId: z52.uuid().optional(),
+      causalProbe: CausalCellProbeV1SchemaZ.optional()
     };
-    PaneStreamInputFrameSchemaZ = z51.discriminatedUnion("kind", [
+    PaneStreamInputFrameSchemaZ = z52.discriminatedUnion("kind", [
       SessionRuntimeTerminalTextInputSchemaZ.extend(PaneStreamInputFrameMetadataShape),
       SessionRuntimeTerminalKeyInputSchemaZ.extend(PaneStreamInputFrameMetadataShape)
-    ]);
-    PaneStreamConsumedFrameSchemaZ = z51.object({
-      type: z51.literal("consumed"),
+    ]).superRefine((value, context) => {
+      if (!value.causalProbe) return;
+      if (value.performanceTraceId !== value.causalProbe.traceId)
+        context.addIssue({ code: "custom", message: "causal probe id must equal trace id" });
+      if (value.seq !== value.causalProbe.inputSequence)
+        context.addIssue({ code: "custom", message: "causal probe input sequence mismatch" });
+      if (value.pane !== value.causalProbe.semanticPaneId)
+        context.addIssue({ code: "custom", message: "causal probe pane mismatch" });
+    });
+    PaneStreamConsumedFrameSchemaZ = z52.object({
+      type: z52.literal("consumed"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
-      seq: z51.number().int().positive()
+      seq: z52.number().int().positive()
     }).strict();
-    PaneStreamTerminalDeliveryAckFrameSchemaZ = z51.object({ type: z51.literal("terminal-delivery-ack"), ack: TerminalDeliveryAckSchemaZ }).strict();
-    PaneStreamTerminalDeliveryNackFrameSchemaZ = z51.object({ type: z51.literal("terminal-delivery-nack"), nack: TerminalDeliveryNackSchemaZ }).strict();
-    PaneStreamTerminalDeliveryVisibilityFrameSchemaZ = z51.object({
-      type: z51.literal("terminal-delivery-visibility"),
+    PaneStreamTerminalDeliveryAckFrameSchemaZ = z52.object({ type: z52.literal("terminal-delivery-ack"), ack: TerminalDeliveryAckSchemaZ }).strict();
+    PaneStreamTerminalDeliveryNackFrameSchemaZ = z52.object({ type: z52.literal("terminal-delivery-nack"), nack: TerminalDeliveryNackSchemaZ }).strict();
+    PaneStreamTerminalDeliveryVisibilityFrameSchemaZ = z52.object({
+      type: z52.literal("terminal-delivery-visibility"),
       workspaceName: TerminalDeliveryAckSchemaZ.shape.workspaceName,
       pane: PaneStreamSemanticPaneIdSchemaZ,
       generation: TerminalDeliveryAckSchemaZ.shape.generation,
@@ -8211,42 +8331,42 @@ var init_pane_stream = __esm({
       deliveryNonce: TerminalDeliveryAckSchemaZ.shape.deliveryNonce,
       visibility: TerminalDeliveryVisibilitySchemaZ
     }).strict();
-    PaneStreamSemanticIntentFrameSchemaZ = z51.object({
-      type: z51.literal("semantic-intent"),
-      operationId: z51.uuid(),
+    PaneStreamSemanticIntentFrameSchemaZ = z52.object({
+      type: z52.literal("semantic-intent"),
+      operationId: z52.uuid(),
       intent: SessionRuntimeSemanticIntentSchemaZ
     }).strict();
-    PaneStreamViewportFrameSchemaZ = z51.object({
-      type: z51.literal("viewport"),
-      seq: z51.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
-      cols: z51.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
-      rows: z51.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS)
+    PaneStreamViewportFrameSchemaZ = z52.object({
+      type: z52.literal("viewport"),
+      seq: z52.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
+      cols: z52.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
+      rows: z52.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS)
     }).strict();
-    PaneStreamAuthorityRequestIdSchemaZ = z51.uuid();
+    PaneStreamAuthorityRequestIdSchemaZ = z52.uuid();
     PaneStreamAuthorityGenerationSchemaZ = DaemonInstanceIdentitySchemaZ.shape.instanceId;
-    PaneStreamPresenceFrameSchemaZ = z51.object({
-      type: z51.literal("presence"),
+    PaneStreamPresenceFrameSchemaZ = z52.object({
+      type: z52.literal("presence"),
       generation: PaneStreamAuthorityGenerationSchemaZ,
       state: SessionRuntimePresenceStateSchemaZ
     }).strict();
-    PaneStreamActivityFrameSchemaZ = z51.object({
-      type: z51.literal("activity"),
+    PaneStreamActivityFrameSchemaZ = z52.object({
+      type: z52.literal("activity"),
       generation: PaneStreamAuthorityGenerationSchemaZ,
       activity: SessionRuntimeActivityKindSchemaZ
     }).strict();
-    PaneStreamAuthorityRequestFrameSchemaZ = z51.object({
-      type: z51.literal("authority-request"),
+    PaneStreamAuthorityRequestFrameSchemaZ = z52.object({
+      type: z52.literal("authority-request"),
       generation: PaneStreamAuthorityGenerationSchemaZ,
       requestId: PaneStreamAuthorityRequestIdSchemaZ,
       authority: SessionRuntimeAuthorityKindSchemaZ
     }).strict();
-    PaneStreamAuthorityReleaseFrameSchemaZ = z51.object({
-      type: z51.literal("authority-release"),
+    PaneStreamAuthorityReleaseFrameSchemaZ = z52.object({
+      type: z52.literal("authority-release"),
       generation: PaneStreamAuthorityGenerationSchemaZ,
       requestId: PaneStreamAuthorityRequestIdSchemaZ,
       authority: SessionRuntimeAuthorityKindSchemaZ
     }).strict();
-    PaneStreamClientFrameSchemaZ = z51.union([
+    PaneStreamClientFrameSchemaZ = z52.union([
       PaneStreamInputFrameSchemaZ,
       PaneStreamConsumedFrameSchemaZ,
       PaneStreamTerminalDeliveryAckFrameSchemaZ,
@@ -8259,115 +8379,118 @@ var init_pane_stream = __esm({
       PaneStreamAuthorityRequestFrameSchemaZ,
       PaneStreamAuthorityReleaseFrameSchemaZ
     ]);
-    Base64SchemaZ = (maxChars) => z51.string().max(maxChars).regex(/^[A-Za-z0-9+/]*={0,2}$/u, "payload must be standard base64");
-    ServerSeqSchemaZ = z51.number().int().positive();
-    GridCellSchemaZ = z51.number().int().min(1).max(PANE_STREAM_MAX_GRID_CELLS);
-    CellCoordinateSchemaZ = z51.number().int().min(0).max(PANE_STREAM_MAX_GRID_CELLS);
-    PaneStreamReadyFrameSchemaZ = z51.object({
-      type: z51.literal("ready"),
-      protocolVersion: z51.literal(PANE_STREAM_PROTOCOL_VERSION),
+    Base64SchemaZ = (maxChars) => z52.string().max(maxChars).regex(/^[A-Za-z0-9+/]*={0,2}$/u, "payload must be standard base64");
+    ServerSeqSchemaZ = z52.number().int().positive();
+    GridCellSchemaZ = z52.number().int().min(1).max(PANE_STREAM_MAX_GRID_CELLS);
+    CellCoordinateSchemaZ = z52.number().int().min(0).max(PANE_STREAM_MAX_GRID_CELLS);
+    PaneStreamReadyFrameSchemaZ = z52.object({
+      type: z52.literal("ready"),
+      protocolVersion: z52.literal(PANE_STREAM_PROTOCOL_VERSION),
       daemonInstanceId: BoundedIdentitySchemaZ,
-      requestId: z51.uuid(),
+      requestId: z52.uuid(),
       panes: PaneSetSchemaZ,
       effectiveViewerMode: PaneStreamViewerModeSchemaZ,
-      authority: SessionRuntimeAuthoritySnapshotSchemaZ.optional()
+      authority: SessionRuntimeAuthoritySnapshotSchemaZ.optional(),
+      diagnosticCapabilities: z52.array(CausalCellCapabilitySchemaZ).max(1).optional()
     }).strict();
-    PaneStreamSeedBatchFrameSchemaZ = z51.object({
-      type: z51.literal("seed-batch"),
+    PaneStreamSeedBatchFrameSchemaZ = z52.object({
+      type: z52.literal("seed-batch"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ,
-      reset: z51.object({ cols: GridCellSchemaZ, rows: GridCellSchemaZ }).strict().nullable(),
+      reset: z52.object({ cols: GridCellSchemaZ, rows: GridCellSchemaZ }).strict().nullable(),
       seed: Base64SchemaZ(PANE_STREAM_MAX_SEED_BASE64_CHARS),
-      held: z51.array(Base64SchemaZ(PANE_STREAM_MAX_OUTPUT_BASE64_CHARS)).max(PANE_STREAM_MAX_HELD_DELTAS),
-      cursor: z51.object({ x: CellCoordinateSchemaZ, y: CellCoordinateSchemaZ }).strict().nullable()
+      held: z52.array(Base64SchemaZ(PANE_STREAM_MAX_OUTPUT_BASE64_CHARS)).max(PANE_STREAM_MAX_HELD_DELTAS),
+      cursor: z52.object({ x: CellCoordinateSchemaZ, y: CellCoordinateSchemaZ }).strict().nullable()
     }).strict();
-    PaneStreamOutputFrameSchemaZ = z51.object({
-      type: z51.literal("output"),
+    PaneStreamOutputFrameSchemaZ = z52.object({
+      type: z52.literal("output"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ,
       data: Base64SchemaZ(PANE_STREAM_MAX_OUTPUT_BASE64_CHARS)
     }).strict();
-    PaneStreamCursorFrameSchemaZ = z51.object({
-      type: z51.literal("cursor"),
+    PaneStreamCursorFrameSchemaZ = z52.object({
+      type: z52.literal("cursor"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ,
       x: CellCoordinateSchemaZ,
       y: CellCoordinateSchemaZ
     }).strict();
-    BoundedDisplayNameSchemaZ = z51.string().max(256).refine((value) => !/[\0\r\n]/u.test(value));
-    PaneStreamLayoutFrameSchemaZ = z51.object({
-      type: z51.literal("layout"),
+    BoundedDisplayNameSchemaZ = z52.string().max(256).refine((value) => !/[\0\r\n]/u.test(value));
+    PaneStreamLayoutFrameSchemaZ = z52.object({
+      type: z52.literal("layout"),
       /** Durable `@tmux_ide_window_id` stamp; null while the join is unverified. */
       semanticWindowId: WorkspaceIdSchemaZ.nullable(),
       windowName: BoundedDisplayNameSchemaZ.nullable(),
-      currentWindow: z51.boolean(),
+      currentWindow: z52.boolean(),
       cols: GridCellSchemaZ,
       rows: GridCellSchemaZ,
-      zoomed: z51.boolean(),
+      zoomed: z52.boolean(),
       /** Backward-compatible while older daemons are still in the reconnect window. */
-      paneBorderStatus: z51.enum(["top", "bottom", "off"]).default("off"),
-      panes: z51.array(
-        z51.object({
+      paneBorderStatus: z52.enum(["top", "bottom", "off"]).default("off"),
+      panes: z52.array(
+        z52.object({
           /** Null while the pane's semantic identity join is unverified. */
           pane: PaneStreamSemanticPaneIdSchemaZ.nullable(),
           left: CellCoordinateSchemaZ,
           top: CellCoordinateSchemaZ,
           width: GridCellSchemaZ,
           height: GridCellSchemaZ,
-          active: z51.boolean()
+          active: z52.boolean()
         }).strict()
       ).max(PANE_STREAM_MAX_LAYOUT_PANES)
     }).strict();
-    PaneStreamFlowFrameSchemaZ = z51.object({
-      type: z51.literal("flow"),
+    PaneStreamFlowFrameSchemaZ = z52.object({
+      type: z52.literal("flow"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ,
-      state: z51.enum(["paused", "resumed"]),
-      reason: z51.enum(["backpressure", "requested"])
+      state: z52.enum(["paused", "resumed"]),
+      reason: z52.enum(["backpressure", "requested"])
     }).strict();
-    PaneStreamClosedFrameSchemaZ = z51.object({
-      type: z51.literal("closed"),
+    PaneStreamClosedFrameSchemaZ = z52.object({
+      type: z52.literal("closed"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ
     }).strict();
-    PaneStreamInputAckFrameSchemaZ = z51.object({
-      type: z51.literal("input-ack"),
+    PaneStreamInputAckFrameSchemaZ = z52.object({
+      type: z52.literal("input-ack"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
-      seq: z51.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE)
+      seq: z52.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE)
     }).strict();
-    PaneStreamTerminalDeliveryReadyFrameSchemaZ = z51.object({
-      type: z51.literal("terminal-delivery-ready"),
+    PaneStreamCausalCellProofFrameSchemaZ = z52.object({ type: z52.literal("causal-cell-proof"), proof: CausalCellProofV1SchemaZ }).strict();
+    PaneStreamCausalCellFailureFrameSchemaZ = z52.object({ type: z52.literal("causal-cell-failure"), failure: CausalCellFailureV1SchemaZ }).strict();
+    PaneStreamTerminalDeliveryReadyFrameSchemaZ = z52.object({
+      type: z52.literal("terminal-delivery-ready"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       negotiation: TerminalDeliveryNegotiationResultSchemaZ
     }).strict();
-    PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ = z51.object({
-      type: z51.literal("terminal-delivery-envelope"),
+    PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ = z52.object({
+      type: z52.literal("terminal-delivery-envelope"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       envelope: TerminalDeliveryEnvelopeSchemaZ
     }).strict();
-    PaneStreamTerminalDeliveryChunkFrameSchemaZ = z51.object({
-      type: z51.literal("terminal-delivery-chunk"),
+    PaneStreamTerminalDeliveryChunkFrameSchemaZ = z52.object({
+      type: z52.literal("terminal-delivery-chunk"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
-      transactionId: z51.uuid(),
-      index: z51.number().int().nonnegative().max(255),
+      transactionId: z52.uuid(),
+      index: z52.number().int().nonnegative().max(255),
       data: Base64SchemaZ(Math.ceil(TERMINAL_DELIVERY_CHUNK_BYTES / 3) * 4)
     }).strict();
-    PaneStreamTerminalDeliveryFaultFrameSchemaZ = z51.object({
-      type: z51.literal("terminal-delivery-fault"),
+    PaneStreamTerminalDeliveryFaultFrameSchemaZ = z52.object({
+      type: z52.literal("terminal-delivery-fault"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       fault: TerminalDeliveryFaultSchemaZ
     }).strict();
-    PaneStreamSemanticIntentAckFrameSchemaZ = z51.object({
-      type: z51.literal("semantic-intent-ack"),
-      operationId: z51.uuid(),
-      outcome: z51.discriminatedUnion("status", [
-        z51.object({
-          status: z51.literal("applied"),
+    PaneStreamSemanticIntentAckFrameSchemaZ = z52.object({
+      type: z52.literal("semantic-intent-ack"),
+      operationId: z52.uuid(),
+      outcome: z52.discriminatedUnion("status", [
+        z52.object({
+          status: z52.literal("applied"),
           result: WorkspaceMultiplexerMutationResultSchemaZ.nullable()
         }).strict(),
-        z51.object({
-          status: z51.literal("rejected"),
-          code: z51.enum([
+        z52.object({
+          status: z52.literal("rejected"),
+          code: z52.enum([
             "controller-conflict",
             "controller-target-unavailable",
             "stale-controller-lease",
@@ -8378,29 +8501,29 @@ var init_pane_stream = __esm({
             "intent-timed-out",
             "stream-unavailable"
           ]),
-          message: z51.string().min(1).max(512)
+          message: z52.string().min(1).max(512)
         }).strict()
       ])
     }).strict();
-    PaneStreamViewportAckFrameSchemaZ = z51.object({
-      type: z51.literal("viewport-ack"),
-      seq: z51.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
-      cols: z51.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
-      rows: z51.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS)
+    PaneStreamViewportAckFrameSchemaZ = z52.object({
+      type: z52.literal("viewport-ack"),
+      seq: z52.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
+      cols: z52.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
+      rows: z52.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS)
     }).strict();
-    PaneStreamAuthoritySnapshotFrameSchemaZ = z51.object({
-      type: z51.literal("authority-snapshot"),
+    PaneStreamAuthoritySnapshotFrameSchemaZ = z52.object({
+      type: z52.literal("authority-snapshot"),
       snapshot: SessionRuntimeAuthoritySnapshotSchemaZ
     }).strict();
-    PaneStreamAuthorityReceiptFrameSchemaZ = z51.object({
-      type: z51.literal("authority-receipt"),
+    PaneStreamAuthorityReceiptFrameSchemaZ = z52.object({
+      type: z52.literal("authority-receipt"),
       requestId: PaneStreamAuthorityRequestIdSchemaZ,
       authority: SessionRuntimeAuthorityKindSchemaZ,
-      status: z51.enum(["granted", "released", "rejected"]),
+      status: z52.enum(["granted", "released", "rejected"]),
       lease: SessionRuntimeAuthorityLeaseSchemaZ.nullable(),
       snapshot: SessionRuntimeAuthoritySnapshotSchemaZ
     }).strict();
-    PaneStreamErrorFrameCodeSchemaZ = z51.enum([
+    PaneStreamErrorFrameCodeSchemaZ = z52.enum([
       "redemption-rejected",
       "ticket-expired",
       "live-capacity-exhausted",
@@ -8408,13 +8531,13 @@ var init_pane_stream = __esm({
       "input-rejected",
       "protocol-error"
     ]);
-    PaneStreamErrorFrameSchemaZ = z51.object({
-      type: z51.literal("error"),
-      protocolVersion: z51.literal(PANE_STREAM_PROTOCOL_VERSION),
+    PaneStreamErrorFrameSchemaZ = z52.object({
+      type: z52.literal("error"),
+      protocolVersion: z52.literal(PANE_STREAM_PROTOCOL_VERSION),
       code: PaneStreamErrorFrameCodeSchemaZ,
-      retryable: z51.boolean()
+      retryable: z52.boolean()
     }).strict();
-    PaneStreamServerFrameSchemaZ = z51.discriminatedUnion("type", [
+    PaneStreamServerFrameSchemaZ = z52.discriminatedUnion("type", [
       PaneStreamReadyFrameSchemaZ,
       PaneStreamSeedBatchFrameSchemaZ,
       PaneStreamOutputFrameSchemaZ,
@@ -8423,6 +8546,8 @@ var init_pane_stream = __esm({
       PaneStreamFlowFrameSchemaZ,
       PaneStreamClosedFrameSchemaZ,
       PaneStreamInputAckFrameSchemaZ,
+      PaneStreamCausalCellProofFrameSchemaZ,
+      PaneStreamCausalCellFailureFrameSchemaZ,
       PaneStreamTerminalDeliveryReadyFrameSchemaZ,
       PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ,
       PaneStreamTerminalDeliveryChunkFrameSchemaZ,
@@ -8437,84 +8562,84 @@ var init_pane_stream = __esm({
 });
 
 // packages/contracts/src/control.ts
-import { z as z52 } from "zod";
+import { z as z53 } from "zod";
 var CONTROL_PROTOCOL_VERSION, controlIdSchema, agentStatusSchema, controlRequestSchema, controlErrorSchema, controlResponseSchema, controlEventSchema, agentStatusEventSchema, agentsParamsSchema, sendParamsSchema, CONTROL_WAIT_MAX_TIMEOUT_MS, waitTimeoutSchema, waitParamsSchema, spawnPlacementSchema, spawnParamsSchema, restartAgentParamsSchema, stopAgentParamsSchema, explainParamsSchema, subscribeParamsSchema;
 var init_control = __esm({
   "packages/contracts/src/control.ts"() {
     "use strict";
     CONTROL_PROTOCOL_VERSION = 1;
-    controlIdSchema = z52.union([z52.string(), z52.number()]);
-    agentStatusSchema = z52.enum(["blocked", "working", "done", "idle", "unknown"]);
-    controlRequestSchema = z52.object({
-      v: z52.literal(CONTROL_PROTOCOL_VERSION),
+    controlIdSchema = z53.union([z53.string(), z53.number()]);
+    agentStatusSchema = z53.enum(["blocked", "working", "done", "idle", "unknown"]);
+    controlRequestSchema = z53.object({
+      v: z53.literal(CONTROL_PROTOCOL_VERSION),
       id: controlIdSchema,
-      verb: z52.string().min(1),
-      params: z52.record(z52.string(), z52.unknown()).optional()
+      verb: z53.string().min(1),
+      params: z53.record(z53.string(), z53.unknown()).optional()
     });
-    controlErrorSchema = z52.object({
-      code: z52.string(),
-      message: z52.string()
+    controlErrorSchema = z53.object({
+      code: z53.string(),
+      message: z53.string()
     });
-    controlResponseSchema = z52.discriminatedUnion("ok", [
-      z52.object({
-        v: z52.literal(CONTROL_PROTOCOL_VERSION),
+    controlResponseSchema = z53.discriminatedUnion("ok", [
+      z53.object({
+        v: z53.literal(CONTROL_PROTOCOL_VERSION),
         id: controlIdSchema.nullable(),
-        ok: z52.literal(true),
-        data: z52.unknown()
+        ok: z53.literal(true),
+        data: z53.unknown()
       }),
-      z52.object({
-        v: z52.literal(CONTROL_PROTOCOL_VERSION),
+      z53.object({
+        v: z53.literal(CONTROL_PROTOCOL_VERSION),
         id: controlIdSchema.nullable(),
-        ok: z52.literal(false),
+        ok: z53.literal(false),
         error: controlErrorSchema
       })
     ]);
-    controlEventSchema = z52.object({
-      v: z52.literal(CONTROL_PROTOCOL_VERSION),
-      event: z52.string().min(1),
-      data: z52.unknown()
+    controlEventSchema = z53.object({
+      v: z53.literal(CONTROL_PROTOCOL_VERSION),
+      event: z53.string().min(1),
+      data: z53.unknown()
     });
-    agentStatusEventSchema = z52.object({
-      ts: z52.string(),
-      session: z52.string(),
+    agentStatusEventSchema = z53.object({
+      ts: z53.string(),
+      session: z53.string(),
       from: agentStatusSchema.nullable(),
       to: agentStatusSchema
     });
-    agentsParamsSchema = z52.object({
-      session: z52.string().optional()
+    agentsParamsSchema = z53.object({
+      session: z53.string().optional()
     });
-    sendParamsSchema = z52.object({
-      session: z52.string().min(1),
-      target: z52.string().min(1),
-      message: z52.string().min(1),
-      noEnter: z52.boolean().optional(),
-      dir: z52.string().optional()
+    sendParamsSchema = z53.object({
+      session: z53.string().min(1),
+      target: z53.string().min(1),
+      message: z53.string().min(1),
+      noEnter: z53.boolean().optional(),
+      dir: z53.string().optional()
     });
     CONTROL_WAIT_MAX_TIMEOUT_MS = 6e5;
-    waitTimeoutSchema = z52.number().int().positive().max(CONTROL_WAIT_MAX_TIMEOUT_MS).optional();
-    waitParamsSchema = z52.discriminatedUnion("kind", [
-      z52.object({
-        kind: z52.literal("agent-status"),
-        session: z52.string().min(1),
+    waitTimeoutSchema = z53.number().int().positive().max(CONTROL_WAIT_MAX_TIMEOUT_MS).optional();
+    waitParamsSchema = z53.discriminatedUnion("kind", [
+      z53.object({
+        kind: z53.literal("agent-status"),
+        session: z53.string().min(1),
         status: agentStatusSchema,
         timeoutMs: waitTimeoutSchema
       }),
-      z52.object({
-        kind: z52.literal("output"),
-        target: z52.string().min(1),
-        match: z52.string().min(1),
+      z53.object({
+        kind: z53.literal("output"),
+        target: z53.string().min(1),
+        match: z53.string().min(1),
         timeoutMs: waitTimeoutSchema
       })
     ]);
-    spawnPlacementSchema = z52.enum(["window", "split-h", "split-v"]);
-    spawnParamsSchema = z52.object({
-      kind: z52.string().min(1).optional(),
-      command: z52.string().min(1).optional(),
-      session: z52.string().min(1).optional(),
-      sessionName: z52.string().min(1).optional(),
-      dir: z52.string().optional(),
+    spawnPlacementSchema = z53.enum(["window", "split-h", "split-v"]);
+    spawnParamsSchema = z53.object({
+      kind: z53.string().min(1).optional(),
+      command: z53.string().min(1).optional(),
+      session: z53.string().min(1).optional(),
+      sessionName: z53.string().min(1).optional(),
+      dir: z53.string().optional(),
       placement: spawnPlacementSchema.optional(),
-      paneId: z52.string().optional()
+      paneId: z53.string().optional()
     }).refine((p) => Boolean(p.kind) !== Boolean(p.command), {
       message: "exactly one of `kind` or `command` is required"
     }).refine((p) => Boolean(p.session) || Boolean(p.sessionName), {
@@ -8522,25 +8647,25 @@ var init_control = __esm({
     }).refine((p) => !(p.placement && p.placement !== "window") || Boolean(p.paneId), {
       message: "split placements need `paneId`"
     });
-    restartAgentParamsSchema = z52.object({
-      paneId: z52.string().min(1),
-      kind: z52.string().min(1).optional(),
-      command: z52.string().min(1).optional()
+    restartAgentParamsSchema = z53.object({
+      paneId: z53.string().min(1),
+      kind: z53.string().min(1).optional(),
+      command: z53.string().min(1).optional()
     }).refine((p) => Boolean(p.kind) || Boolean(p.command), {
       message: "`kind` or `command` is required"
     });
-    stopAgentParamsSchema = z52.object({
-      paneId: z52.string().min(1)
+    stopAgentParamsSchema = z53.object({
+      paneId: z53.string().min(1)
     });
-    explainParamsSchema = z52.object({
-      target: z52.string().min(1)
+    explainParamsSchema = z53.object({
+      target: z53.string().min(1)
     });
-    subscribeParamsSchema = z52.object({}).loose();
+    subscribeParamsSchema = z53.object({}).loose();
   }
 });
 
 // packages/contracts/src/multiplexer-verbs.ts
-import { z as z53 } from "zod";
+import { z as z54 } from "zod";
 function deepFreeze4(value) {
   if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
     Object.freeze(value);
@@ -8556,20 +8681,20 @@ var init_multiplexer_verbs = __esm({
     init_app_window_mutation();
     init_workspace_multiplexer();
     MULTIPLEXER_VERB_TABLE_VERSION = 1;
-    MultiplexerVerbIdSchemaZ = z53.string().min(3).max(64).regex(/^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$/u, "verb id must be a dot-namespaced identifier");
-    MultiplexerVerbScopeSchemaZ = z53.enum(["session", "window", "pane"]);
-    ActionNameSchemaZ = z53.enum(
+    MultiplexerVerbIdSchemaZ = z54.string().min(3).max(64).regex(/^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$/u, "verb id must be a dot-namespaced identifier");
+    MultiplexerVerbScopeSchemaZ = z54.enum(["session", "window", "pane"]);
+    ActionNameSchemaZ = z54.enum(
       Object.keys(ActionContractsZ)
     );
-    AppWindowCommandTypeSchemaZ = z53.enum(
+    AppWindowCommandTypeSchemaZ = z54.enum(
       AppWindowMutationCommandSchemaZ.options.map((option) => option.shape.type.value)
     );
-    MultiplexerVerbExecutionSchemaZ = z53.discriminatedUnion("kind", [
-      z53.object({ kind: z53.literal("daemon-action"), action: ActionNameSchemaZ }).strict(),
-      z53.object({ kind: z53.literal("app-window"), command: AppWindowCommandTypeSchemaZ }).strict(),
-      z53.object({ kind: z53.literal("renderer") }).strict()
+    MultiplexerVerbExecutionSchemaZ = z54.discriminatedUnion("kind", [
+      z54.object({ kind: z54.literal("daemon-action"), action: ActionNameSchemaZ }).strict(),
+      z54.object({ kind: z54.literal("app-window"), command: AppWindowCommandTypeSchemaZ }).strict(),
+      z54.object({ kind: z54.literal("renderer") }).strict()
     ]);
-    MultiplexerVerbAvailabilityInputSchemaZ = z53.enum([
+    MultiplexerVerbAvailabilityInputSchemaZ = z54.enum([
       "workspaceConnected",
       "sessionWindowCount",
       "windowPaneCount",
@@ -8577,21 +8702,21 @@ var init_multiplexer_verbs = __esm({
       "targetIsActivePane",
       "targetIsDockedStackMember"
     ]);
-    MultiplexerVerbEntrySchemaZ = z53.object({
-      version: z53.literal(MULTIPLEXER_VERB_TABLE_VERSION),
+    MultiplexerVerbEntrySchemaZ = z54.object({
+      version: z54.literal(MULTIPLEXER_VERB_TABLE_VERSION),
       id: MultiplexerVerbIdSchemaZ,
-      label: z53.string().min(1).max(80),
-      description: z53.string().min(1).max(240),
+      label: z54.string().min(1).max(80),
+      description: z54.string().min(1).max(240),
       scope: MultiplexerVerbScopeSchemaZ,
       execution: MultiplexerVerbExecutionSchemaZ,
-      availabilityInputs: z53.array(MultiplexerVerbAvailabilityInputSchemaZ).readonly(),
+      availabilityInputs: z54.array(MultiplexerVerbAvailabilityInputSchemaZ).readonly(),
       /** Destructive verbs must be confirmed before dispatch; no surface may skip it. */
-      destructive: z53.boolean(),
+      destructive: z54.boolean(),
       /**
        * The user's real tmux binding, when the keybinding bridge can read it.
        * Null everywhere today — see the module comment on why a guess is worse.
        */
-      tmuxKeyHint: z53.string().min(1).max(40).nullable()
+      tmuxKeyHint: z54.string().min(1).max(40).nullable()
     }).strict();
     ENTRIES = [
       {
@@ -8774,7 +8899,7 @@ var init_multiplexer_verbs = __esm({
       MULTIPLEXER_VERB_TABLE.map((entry) => entry.id)
     );
     AVAILABLE = Object.freeze({ available: true });
-    MultiplexerVerbInvocationSchemaZ = z53.object({
+    MultiplexerVerbInvocationSchemaZ = z54.object({
       verbId: MultiplexerVerbIdSchemaZ,
       intent: WorkspaceMultiplexerIntentSchemaZ
     }).strict().superRefine((value, context) => {
@@ -8798,13 +8923,13 @@ var init_multiplexer_verbs = __esm({
 });
 
 // packages/contracts/src/widget-asset.ts
-import { z as z54 } from "zod";
+import { z as z55 } from "zod";
 var WidgetAssetIdSchemaZ, WIDGET_ASSET_MEDIA_TYPES, WidgetAssetMediaTypeSchemaZ, WidgetAssetRequestSchemaZ, WidgetAssetSchemaZ, WidgetAssetResultSchemaZ;
 var init_widget_asset = __esm({
   "packages/contracts/src/widget-asset.ts"() {
     "use strict";
     init_desktop_host();
-    WidgetAssetIdSchemaZ = z54.string().regex(/^[0-9a-f]{64}$/u);
+    WidgetAssetIdSchemaZ = z55.string().regex(/^[0-9a-f]{64}$/u);
     WIDGET_ASSET_MEDIA_TYPES = [
       "text/markdown",
       "image/png",
@@ -8813,24 +8938,24 @@ var init_widget_asset = __esm({
       "image/webp",
       "image/avif"
     ];
-    WidgetAssetMediaTypeSchemaZ = z54.enum(WIDGET_ASSET_MEDIA_TYPES);
-    WidgetAssetRequestSchemaZ = z54.object({ assetId: WidgetAssetIdSchemaZ }).strict();
-    WidgetAssetSchemaZ = z54.object({
+    WidgetAssetMediaTypeSchemaZ = z55.enum(WIDGET_ASSET_MEDIA_TYPES);
+    WidgetAssetRequestSchemaZ = z55.object({ assetId: WidgetAssetIdSchemaZ }).strict();
+    WidgetAssetSchemaZ = z55.object({
       assetId: WidgetAssetIdSchemaZ,
       media: WidgetAssetMediaTypeSchemaZ,
-      name: z54.string().min(1).max(200),
+      name: z55.string().min(1).max(200),
       /** Standard base64. The renderer builds a data URL only after validation. */
-      data: z54.string().min(1).max(24 * 1024 * 1024).regex(/^[A-Za-z0-9+/]+={0,2}$/u)
+      data: z55.string().min(1).max(24 * 1024 * 1024).regex(/^[A-Za-z0-9+/]+={0,2}$/u)
     }).strict();
-    WidgetAssetResultSchemaZ = z54.discriminatedUnion("status", [
-      z54.object({ status: z54.literal("ok"), asset: WidgetAssetSchemaZ }).strict(),
-      z54.object({ status: z54.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    WidgetAssetResultSchemaZ = z55.discriminatedUnion("status", [
+      z55.object({ status: z55.literal("ok"), asset: WidgetAssetSchemaZ }).strict(),
+      z55.object({ status: z55.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
   }
 });
 
 // packages/contracts/src/daemon-resource-request.ts
-import { z as z55 } from "zod";
+import { z as z56 } from "zod";
 var DaemonResourceRequestSchemaZ, DAEMON_RESOURCE_RESULT_SCHEMAS, DAEMON_RESOURCE_KINDS, DAEMON_RESOURCE_KIND_SET, CANCELLABLE_DAEMON_RESOURCE_KINDS, CANCELLABLE_DAEMON_RESOURCE_KIND_SET;
 var init_daemon_resource_request = __esm({
   "packages/contracts/src/daemon-resource-request.ts"() {
@@ -8844,52 +8969,52 @@ var init_daemon_resource_request = __esm({
     init_workspace_multiplexer();
     init_pane_stream();
     init_widget_asset();
-    DaemonResourceRequestSchemaZ = z55.discriminatedUnion("resource", [
-      z55.object({ resource: z55.literal("capabilities") }).strict(),
-      z55.object({ resource: z55.literal("refreshConnection") }).strict(),
-      z55.object({ resource: z55.literal("listWorkspaces") }).strict(),
-      z55.object({ resource: z55.literal("fetchFleetCatalog") }).strict(),
-      z55.object({ resource: z55.literal("startupReadiness") }).strict(),
-      z55.object({
-        resource: z55.literal("fetchApplicationShell"),
+    DaemonResourceRequestSchemaZ = z56.discriminatedUnion("resource", [
+      z56.object({ resource: z56.literal("capabilities") }).strict(),
+      z56.object({ resource: z56.literal("refreshConnection") }).strict(),
+      z56.object({ resource: z56.literal("listWorkspaces") }).strict(),
+      z56.object({ resource: z56.literal("fetchFleetCatalog") }).strict(),
+      z56.object({ resource: z56.literal("startupReadiness") }).strict(),
+      z56.object({
+        resource: z56.literal("fetchApplicationShell"),
         request: DesktopDaemonFetchApplicationShellRequestSchemaZ
       }).strict(),
-      z55.object({
-        resource: z55.literal("fetchWorkspaceFiles"),
+      z56.object({
+        resource: z56.literal("fetchWorkspaceFiles"),
         request: DesktopDaemonFetchWorkspaceFilesRequestSchemaZ
       }).strict(),
-      z55.object({
-        resource: z55.literal("fetchWorkspaceFilePreview"),
+      z56.object({
+        resource: z56.literal("fetchWorkspaceFilePreview"),
         request: DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ
       }).strict(),
-      z55.object({
-        resource: z55.literal("fetchWorkspaceChanges"),
+      z56.object({
+        resource: z56.literal("fetchWorkspaceChanges"),
         request: DesktopDaemonFetchWorkspaceChangesRequestSchemaZ
       }).strict(),
-      z55.object({
-        resource: z55.literal("fetchWorkspaceMissions"),
+      z56.object({
+        resource: z56.literal("fetchWorkspaceMissions"),
         request: DesktopDaemonFetchWorkspaceMissionsRequestSchemaZ
       }).strict(),
-      z55.object({
-        resource: z55.literal("fetchWorkspaceChangeDiff"),
+      z56.object({
+        resource: z56.literal("fetchWorkspaceChangeDiff"),
         request: DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ
       }).strict(),
-      z55.object({ resource: z55.literal("promoteWorkspace"), request: WorkspacePromoteArgumentsSchemaZ }).strict(),
-      z55.object({
-        resource: z55.literal("createWorkspacePane"),
+      z56.object({ resource: z56.literal("promoteWorkspace"), request: WorkspacePromoteArgumentsSchemaZ }).strict(),
+      z56.object({
+        resource: z56.literal("createWorkspacePane"),
         request: WorkspacePaneCreateInvocationSchemaZ
       }).strict(),
-      z55.object({ resource: z55.literal("mutateAppWindow"), request: AppWindowMutationArgumentsSchemaZ }).strict(),
+      z56.object({ resource: z56.literal("mutateAppWindow"), request: AppWindowMutationArgumentsSchemaZ }).strict(),
       // One resource for every tmux verb rather than one per route: see
       // MultiplexerVerbInvocation for why the invocation carries both the verb the
       // user clicked and the intent the daemon executes.
-      z55.object({ resource: z55.literal("invokeVerb"), request: MultiplexerVerbInvocationSchemaZ }).strict(),
-      z55.object({
-        resource: z55.literal("issueTerminalAttachment"),
+      z56.object({ resource: z56.literal("invokeVerb"), request: MultiplexerVerbInvocationSchemaZ }).strict(),
+      z56.object({
+        resource: z56.literal("issueTerminalAttachment"),
         request: TerminalAttachRequestSchemaZ
       }).strict(),
-      z55.object({ resource: z55.literal("issuePaneStream"), request: PaneStreamLeaseRequestSchemaZ }).strict(),
-      z55.object({ resource: z55.literal("fetchWidgetAsset"), request: WidgetAssetRequestSchemaZ }).strict()
+      z56.object({ resource: z56.literal("issuePaneStream"), request: PaneStreamLeaseRequestSchemaZ }).strict(),
+      z56.object({ resource: z56.literal("fetchWidgetAsset"), request: WidgetAssetRequestSchemaZ }).strict()
     ]);
     DAEMON_RESOURCE_RESULT_SCHEMAS = {
       capabilities: DesktopDaemonCapabilitiesResultSchemaZ,
@@ -8934,8 +9059,39 @@ var init_daemon_resource_request = __esm({
   }
 });
 
+// packages/contracts/src/terminal-runtime-inventory.ts
+import { z as z57 } from "zod";
+var TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION, TerminalRuntimeInventoryProjectionV1SchemaZ, TerminalRuntimeInventoryResourceV1SchemaZ;
+var init_terminal_runtime_inventory = __esm({
+  "packages/contracts/src/terminal-runtime-inventory.ts"() {
+    "use strict";
+    init_daemon_wire();
+    init_desktop_workspace_name();
+    init_terminal_attachments();
+    init_fleet_catalog();
+    init_pane_appearance();
+    TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION = 1;
+    TerminalRuntimeInventoryProjectionV1SchemaZ = z57.object({
+      workspaceName: DesktopWorkspaceNameSchemaZ,
+      workspaceId: SemanticProductIdSchemaZ,
+      sessionId: FleetSessionIdSchemaZ,
+      /** Daemon-scoped revision observed by the terminal-runtime event lane. */
+      resourceRevision: z57.number().int().nonnegative(),
+      semanticPaneIds: z57.array(TerminalAttachmentSemanticPaneIdSchemaZ).max(256).refine((values2) => new Set(values2).size === values2.length, "pane ids must be unique").refine(
+        (values2) => values2.every((value, index) => index === 0 || values2[index - 1] < value),
+        "pane ids must be sorted"
+      )
+    }).strict();
+    TerminalRuntimeInventoryResourceV1SchemaZ = z57.object({
+      version: z57.literal(TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION),
+      daemon: DaemonInstanceIdentitySchemaZ,
+      resource: TerminalRuntimeInventoryProjectionV1SchemaZ
+    }).strict();
+  }
+});
+
 // packages/contracts/src/workspace-catalog-resource.ts
-import { z as z56 } from "zod";
+import { z as z58 } from "zod";
 function projectWorkspaceCatalogV2(daemon, intents, liveSessions2) {
   const observed = new Set(liveSessions2.map(({ sessionName }) => sessionName));
   return WorkspaceCatalogResourceV2SchemaZ.parse({
@@ -8955,33 +9111,33 @@ var init_workspace_catalog_resource = __esm({
     init_daemon_wire();
     init_fleet_catalog();
     WORKSPACE_CATALOG_RESOURCE_VERSION = 1;
-    WorkspaceCatalogEntryV1SchemaZ = z56.object({
-      workspaceName: z56.string().min(1),
-      sessionName: z56.string().min(1)
+    WorkspaceCatalogEntryV1SchemaZ = z58.object({
+      workspaceName: z58.string().min(1),
+      sessionName: z58.string().min(1)
     }).strict();
-    WorkspaceCatalogResourceV1SchemaZ = z56.object({
-      version: z56.literal(WORKSPACE_CATALOG_RESOURCE_VERSION),
+    WorkspaceCatalogResourceV1SchemaZ = z58.object({
+      version: z58.literal(WORKSPACE_CATALOG_RESOURCE_VERSION),
       daemon: DaemonInstanceIdentitySchemaZ,
-      workspaces: z56.array(WorkspaceCatalogEntryV1SchemaZ)
+      workspaces: z58.array(WorkspaceCatalogEntryV1SchemaZ)
     }).strict();
     WORKSPACE_CATALOG_RESOURCE_V2_VERSION = 2;
-    WorkspaceCatalogIntentV2SchemaZ = z56.object({
-      workspaceName: z56.string().min(1),
-      sessionName: z56.string().min(1),
-      source: z56.enum(["project", "workspace"]),
-      availability: z56.enum(["live", "stopped"])
+    WorkspaceCatalogIntentV2SchemaZ = z58.object({
+      workspaceName: z58.string().min(1),
+      sessionName: z58.string().min(1),
+      source: z58.enum(["project", "workspace"]),
+      availability: z58.enum(["live", "stopped"])
     }).strict();
-    WorkspaceCatalogLiveSessionV2SchemaZ = z56.object({
-      sessionName: z56.string().min(1),
+    WorkspaceCatalogLiveSessionV2SchemaZ = z58.object({
+      sessionName: z58.string().min(1),
       /** Daemon-minted promotion identity for this exact observed session. */
       fleetSessionId: FleetSessionIdSchemaZ,
-      paneCount: z56.number().int().nonnegative()
+      paneCount: z58.number().int().nonnegative()
     }).strict();
-    WorkspaceCatalogResourceV2SchemaZ = z56.object({
-      version: z56.literal(WORKSPACE_CATALOG_RESOURCE_V2_VERSION),
+    WorkspaceCatalogResourceV2SchemaZ = z58.object({
+      version: z58.literal(WORKSPACE_CATALOG_RESOURCE_V2_VERSION),
       daemon: DaemonInstanceIdentitySchemaZ,
-      intents: z56.array(WorkspaceCatalogIntentV2SchemaZ),
-      liveSessions: z56.array(WorkspaceCatalogLiveSessionV2SchemaZ)
+      intents: z58.array(WorkspaceCatalogIntentV2SchemaZ),
+      liveSessions: z58.array(WorkspaceCatalogLiveSessionV2SchemaZ)
     }).strict();
   }
 });
@@ -9122,27 +9278,27 @@ var init_fleet_agent_graph = __esm({
 });
 
 // packages/contracts/src/desktop-update.ts
-import { z as z57 } from "zod";
+import { z as z59 } from "zod";
 var DesktopUpdatePhaseSchemaZ, DesktopUpdateStatusSchemaZ;
 var init_desktop_update = __esm({
   "packages/contracts/src/desktop-update.ts"() {
     "use strict";
-    DesktopUpdatePhaseSchemaZ = z57.enum([
+    DesktopUpdatePhaseSchemaZ = z59.enum([
       "idle",
       "checking",
       "downloading",
       "ready",
       "applying"
     ]);
-    DesktopUpdateStatusSchemaZ = z57.object({
+    DesktopUpdateStatusSchemaZ = z59.object({
       phase: DesktopUpdatePhaseSchemaZ,
       /** The running version — always known. */
-      currentVersion: z57.string().min(1),
+      currentVersion: z59.string().min(1),
       /**
        * The newer version being downloaded or staged, or null when there is
        * nothing pending. Present from `downloading` through `applying`.
        */
-      availableVersion: z57.string().min(1).nullable()
+      availableVersion: z59.string().min(1).nullable()
     }).strict();
   }
 });
@@ -9260,48 +9416,48 @@ var init_pane_widget_marker = __esm({
 });
 
 // packages/contracts/src/rich-card-widget.ts
-import { z as z58 } from "zod";
+import { z as z60 } from "zod";
 var RichCardToneSchemaZ, RichCardItemSchemaZ, RichCardWidgetArgsSchemaZ;
 var init_rich_card_widget = __esm({
   "packages/contracts/src/rich-card-widget.ts"() {
     "use strict";
-    RichCardToneSchemaZ = z58.enum(["neutral", "info", "success", "warning", "danger"]);
-    RichCardItemSchemaZ = z58.discriminatedUnion("type", [
-      z58.object({ type: z58.literal("text"), text: z58.string().max(8e3) }).strict(),
-      z58.object({
-        type: z58.literal("badge"),
-        text: z58.string().min(1).max(120),
+    RichCardToneSchemaZ = z60.enum(["neutral", "info", "success", "warning", "danger"]);
+    RichCardItemSchemaZ = z60.discriminatedUnion("type", [
+      z60.object({ type: z60.literal("text"), text: z60.string().max(8e3) }).strict(),
+      z60.object({
+        type: z60.literal("badge"),
+        text: z60.string().min(1).max(120),
         tone: RichCardToneSchemaZ.default("neutral")
       }).strict(),
-      z58.object({
-        type: z58.literal("progress"),
-        label: z58.string().max(160).optional(),
-        value: z58.number().min(0).max(100)
+      z60.object({
+        type: z60.literal("progress"),
+        label: z60.string().max(160).optional(),
+        value: z60.number().min(0).max(100)
       }).strict(),
-      z58.object({
-        type: z58.literal("code"),
-        code: z58.string().max(32e3),
-        language: z58.string().max(40).optional()
+      z60.object({
+        type: z60.literal("code"),
+        code: z60.string().max(32e3),
+        language: z60.string().max(40).optional()
       }).strict(),
-      z58.object({
-        type: z58.literal("button"),
-        label: z58.string().min(1).max(120),
+      z60.object({
+        type: z60.literal("button"),
+        label: z60.string().min(1).max(120),
         /** Bytes written to the owning pane after an explicit user click. */
-        input: z58.string().min(1).max(2e3),
-        submit: z58.boolean().default(true),
+        input: z60.string().min(1).max(2e3),
+        submit: z60.boolean().default(true),
         tone: RichCardToneSchemaZ.default("neutral")
       }).strict()
     ]);
-    RichCardWidgetArgsSchemaZ = z58.object({
-      title: z58.string().min(1).max(200),
-      subtitle: z58.string().max(500).optional(),
-      items: z58.array(RichCardItemSchemaZ).max(128)
+    RichCardWidgetArgsSchemaZ = z60.object({
+      title: z60.string().min(1).max(200),
+      subtitle: z60.string().max(500).optional(),
+      items: z60.array(RichCardItemSchemaZ).max(128)
     }).strict();
   }
 });
 
 // packages/contracts/src/pane-widget-descriptor.ts
-import { z as z59 } from "zod";
+import { z as z61 } from "zod";
 var PANE_MARKDOWN_WIDGET_ID, PANE_IMAGE_WIDGET_ID, PANE_CARD_WIDGET_ID, InlinePaneMarkdownWidgetArgsSchemaZ, AssetPaneMarkdownWidgetArgsSchemaZ, PaneMarkdownWidgetArgsSchemaZ, PANE_IMAGE_WIDGET_MEDIA_TYPES, InlinePaneImageWidgetArgsSchemaZ, AssetPaneImageWidgetArgsSchemaZ, PaneImageWidgetArgsSchemaZ, PaneWidgetDescriptorSchemaZ;
 var init_pane_widget_descriptor = __esm({
   "packages/contracts/src/pane-widget-descriptor.ts"() {
@@ -9311,15 +9467,15 @@ var init_pane_widget_descriptor = __esm({
     PANE_MARKDOWN_WIDGET_ID = "markdown";
     PANE_IMAGE_WIDGET_ID = "image";
     PANE_CARD_WIDGET_ID = "card";
-    InlinePaneMarkdownWidgetArgsSchemaZ = z59.strictObject({
-      text: z59.string().max(512 * 1024),
-      title: z59.string().max(200).optional()
+    InlinePaneMarkdownWidgetArgsSchemaZ = z61.strictObject({
+      text: z61.string().max(512 * 1024),
+      title: z61.string().max(200).optional()
     });
-    AssetPaneMarkdownWidgetArgsSchemaZ = z59.strictObject({
+    AssetPaneMarkdownWidgetArgsSchemaZ = z61.strictObject({
       assetId: WidgetAssetIdSchemaZ,
-      title: z59.string().max(200).optional()
+      title: z61.string().max(200).optional()
     });
-    PaneMarkdownWidgetArgsSchemaZ = z59.union([
+    PaneMarkdownWidgetArgsSchemaZ = z61.union([
       InlinePaneMarkdownWidgetArgsSchemaZ,
       AssetPaneMarkdownWidgetArgsSchemaZ
     ]);
@@ -9330,31 +9486,31 @@ var init_pane_widget_descriptor = __esm({
       "image/webp",
       "image/avif"
     ];
-    InlinePaneImageWidgetArgsSchemaZ = z59.strictObject({
-      media: z59.enum(PANE_IMAGE_WIDGET_MEDIA_TYPES),
-      data: z59.string().min(1).max(512 * 1024).regex(/^[A-Za-z0-9+/]+={0,2}$/u, "The image payload is not base64."),
-      name: z59.string().max(200).optional(),
-      alt: z59.string().max(500).optional()
+    InlinePaneImageWidgetArgsSchemaZ = z61.strictObject({
+      media: z61.enum(PANE_IMAGE_WIDGET_MEDIA_TYPES),
+      data: z61.string().min(1).max(512 * 1024).regex(/^[A-Za-z0-9+/]+={0,2}$/u, "The image payload is not base64."),
+      name: z61.string().max(200).optional(),
+      alt: z61.string().max(500).optional()
     });
-    AssetPaneImageWidgetArgsSchemaZ = z59.strictObject({
+    AssetPaneImageWidgetArgsSchemaZ = z61.strictObject({
       assetId: WidgetAssetIdSchemaZ,
-      name: z59.string().max(200).optional(),
-      alt: z59.string().max(500).optional()
+      name: z61.string().max(200).optional(),
+      alt: z61.string().max(500).optional()
     });
-    PaneImageWidgetArgsSchemaZ = z59.union([
+    PaneImageWidgetArgsSchemaZ = z61.union([
       InlinePaneImageWidgetArgsSchemaZ,
       AssetPaneImageWidgetArgsSchemaZ
     ]);
-    PaneWidgetDescriptorSchemaZ = z59.discriminatedUnion("id", [
-      z59.object({ id: z59.literal(PANE_MARKDOWN_WIDGET_ID), args: PaneMarkdownWidgetArgsSchemaZ }).strict(),
-      z59.object({ id: z59.literal(PANE_IMAGE_WIDGET_ID), args: PaneImageWidgetArgsSchemaZ }).strict(),
-      z59.object({ id: z59.literal(PANE_CARD_WIDGET_ID), args: RichCardWidgetArgsSchemaZ }).strict()
+    PaneWidgetDescriptorSchemaZ = z61.discriminatedUnion("id", [
+      z61.object({ id: z61.literal(PANE_MARKDOWN_WIDGET_ID), args: PaneMarkdownWidgetArgsSchemaZ }).strict(),
+      z61.object({ id: z61.literal(PANE_IMAGE_WIDGET_ID), args: PaneImageWidgetArgsSchemaZ }).strict(),
+      z61.object({ id: z61.literal(PANE_CARD_WIDGET_ID), args: RichCardWidgetArgsSchemaZ }).strict()
     ]);
   }
 });
 
 // packages/contracts/src/performance-qualification.ts
-import { z as z60 } from "zod";
+import { z as z62 } from "zod";
 var PERFORMANCE_QUALIFICATION_CONTRACT_VERSION, PERFORMANCE_QUALIFICATION_MAX_QUEUE_ITEMS, PERFORMANCE_QUALIFICATION_MAX_QUEUE_BYTES, PerformanceStageSchemaZ, PERFORMANCE_STAGE_ORDER, MonotonicClockKindSchemaZ, BoundedIdentitySchemaZ2, MonotonicMicrosSchemaZ, ProcessMonotonicSpanV1SchemaZ, PerformanceStageSpanV1SchemaZ, PerformanceTraceV1SchemaZ, StateConvergenceIdentityV1SchemaZ, QualifiedClientDispositionSchemaZ, ClientConvergenceObservationV1SchemaZ, QualifiedQueueKindSchemaZ, ClientQueueMetricV1SchemaZ, ClientQueueSeriesV1SchemaZ, MutationQualificationAcceptanceV1SchemaZ, MutationTerminalStatusSchemaZ, MutationTerminalOutcomeV1SchemaZ;
 var init_performance_qualification = __esm({
   "packages/contracts/src/performance-qualification.ts"() {
@@ -9363,7 +9519,7 @@ var init_performance_qualification = __esm({
     PERFORMANCE_QUALIFICATION_CONTRACT_VERSION = 1;
     PERFORMANCE_QUALIFICATION_MAX_QUEUE_ITEMS = 65536;
     PERFORMANCE_QUALIFICATION_MAX_QUEUE_BYTES = 64 * 1024 * 1024;
-    PerformanceStageSchemaZ = z60.enum([
+    PerformanceStageSchemaZ = z62.enum([
       "input",
       "tmux",
       "parse",
@@ -9379,11 +9535,11 @@ var init_performance_qualification = __esm({
       "transport",
       "paint"
     ]);
-    MonotonicClockKindSchemaZ = z60.enum(["performance-now", "hrtime", "monotonic-raw"]);
-    BoundedIdentitySchemaZ2 = z60.string().min(1).max(256).refine((value) => !/[\0\r\n]/u.test(value));
-    MonotonicMicrosSchemaZ = z60.number().int().nonnegative().safe();
-    ProcessMonotonicSpanV1SchemaZ = z60.object({
-      version: z60.literal(PERFORMANCE_QUALIFICATION_CONTRACT_VERSION),
+    MonotonicClockKindSchemaZ = z62.enum(["performance-now", "hrtime", "monotonic-raw"]);
+    BoundedIdentitySchemaZ2 = z62.string().min(1).max(256).refine((value) => !/[\0\r\n]/u.test(value));
+    MonotonicMicrosSchemaZ = z62.number().int().nonnegative().safe();
+    ProcessMonotonicSpanV1SchemaZ = z62.object({
+      version: z62.literal(PERFORMANCE_QUALIFICATION_CONTRACT_VERSION),
       processId: BoundedIdentitySchemaZ2,
       clockId: BoundedIdentitySchemaZ2,
       clockKind: MonotonicClockKindSchemaZ,
@@ -9393,8 +9549,8 @@ var init_performance_qualification = __esm({
       if (value.endedAtMicros < value.startedAtMicros)
         context.addIssue({ code: "custom", message: "monotonic span ends before it starts" });
     }).readonly();
-    PerformanceStageSpanV1SchemaZ = z60.object({
-      version: z60.literal(PERFORMANCE_QUALIFICATION_CONTRACT_VERSION),
+    PerformanceStageSpanV1SchemaZ = z62.object({
+      version: z62.literal(PERFORMANCE_QUALIFICATION_CONTRACT_VERSION),
       stage: PerformanceStageSchemaZ,
       processId: BoundedIdentitySchemaZ2,
       clockId: BoundedIdentitySchemaZ2,
@@ -9405,11 +9561,11 @@ var init_performance_qualification = __esm({
       if (value.endedAtMicros < value.startedAtMicros)
         context.addIssue({ code: "custom", message: "monotonic span ends before it starts" });
     }).readonly();
-    PerformanceTraceV1SchemaZ = z60.object({
-      version: z60.literal(PERFORMANCE_QUALIFICATION_CONTRACT_VERSION),
-      traceId: z60.uuid(),
+    PerformanceTraceV1SchemaZ = z62.object({
+      version: z62.literal(PERFORMANCE_QUALIFICATION_CONTRACT_VERSION),
+      traceId: z62.uuid(),
       scenario: BoundedIdentitySchemaZ2,
-      stages: z60.array(PerformanceStageSpanV1SchemaZ).length(PERFORMANCE_STAGE_ORDER.length).readonly(),
+      stages: z62.array(PerformanceStageSpanV1SchemaZ).length(PERFORMANCE_STAGE_ORDER.length).readonly(),
       /** Full leading-edge input-to-paint latency, measured on one client clock. */
       localInputToPaint: ProcessMonotonicSpanV1SchemaZ
     }).strict().superRefine((value, context) => {
@@ -9445,41 +9601,41 @@ var init_performance_qualification = __esm({
           message: "localInputToPaint must contain the local input and paint spans"
         });
     }).readonly();
-    StateConvergenceIdentityV1SchemaZ = z60.object({
-      version: z60.literal(PERFORMANCE_QUALIFICATION_CONTRACT_VERSION),
+    StateConvergenceIdentityV1SchemaZ = z62.object({
+      version: z62.literal(PERFORMANCE_QUALIFICATION_CONTRACT_VERSION),
       generation: SessionRuntimeGenerationSchemaZ,
       incarnation: BoundedIdentitySchemaZ2,
-      revision: z60.number().int().nonnegative(),
-      stateHash: z60.string().regex(/^[0-9a-f]{16}$/u),
-      hashAlgorithm: z60.literal("fnv1a64-v1")
+      revision: z62.number().int().nonnegative(),
+      stateHash: z62.string().regex(/^[0-9a-f]{16}$/u),
+      hashAlgorithm: z62.literal("fnv1a64-v1")
     }).strict().readonly();
-    QualifiedClientDispositionSchemaZ = z60.enum(["healthy", "slow", "hidden"]);
-    ClientConvergenceObservationV1SchemaZ = z60.object({
-      version: z60.literal(PERFORMANCE_QUALIFICATION_CONTRACT_VERSION),
+    QualifiedClientDispositionSchemaZ = z62.enum(["healthy", "slow", "hidden"]);
+    ClientConvergenceObservationV1SchemaZ = z62.object({
+      version: z62.literal(PERFORMANCE_QUALIFICATION_CONTRACT_VERSION),
       clientId: SessionRuntimeClientIdSchemaZ,
       disposition: QualifiedClientDispositionSchemaZ,
       identity: StateConvergenceIdentityV1SchemaZ
     }).strict().readonly();
-    QualifiedQueueKindSchemaZ = z60.enum(["terminal", "control", "resource"]);
-    ClientQueueMetricV1SchemaZ = z60.object({
-      version: z60.literal(PERFORMANCE_QUALIFICATION_CONTRACT_VERSION),
+    QualifiedQueueKindSchemaZ = z62.enum(["terminal", "control", "resource"]);
+    ClientQueueMetricV1SchemaZ = z62.object({
+      version: z62.literal(PERFORMANCE_QUALIFICATION_CONTRACT_VERSION),
       clientId: SessionRuntimeClientIdSchemaZ,
       disposition: QualifiedClientDispositionSchemaZ,
       queue: QualifiedQueueKindSchemaZ,
-      sampleOrdinal: z60.number().int().nonnegative(),
-      depthItems: z60.number().int().nonnegative(),
-      capacityItems: z60.number().int().positive().max(PERFORMANCE_QUALIFICATION_MAX_QUEUE_ITEMS),
-      bytes: z60.number().int().nonnegative(),
-      capacityBytes: z60.number().int().positive().max(PERFORMANCE_QUALIFICATION_MAX_QUEUE_BYTES),
-      coalesced: z60.number().int().nonnegative(),
-      dropped: z60.number().int().nonnegative()
+      sampleOrdinal: z62.number().int().nonnegative(),
+      depthItems: z62.number().int().nonnegative(),
+      capacityItems: z62.number().int().positive().max(PERFORMANCE_QUALIFICATION_MAX_QUEUE_ITEMS),
+      bytes: z62.number().int().nonnegative(),
+      capacityBytes: z62.number().int().positive().max(PERFORMANCE_QUALIFICATION_MAX_QUEUE_BYTES),
+      coalesced: z62.number().int().nonnegative(),
+      dropped: z62.number().int().nonnegative()
     }).strict().superRefine((value, context) => {
       if (value.depthItems > value.capacityItems)
         context.addIssue({ code: "custom", path: ["depthItems"], message: "queue exceeds capacity" });
       if (value.bytes > value.capacityBytes)
         context.addIssue({ code: "custom", path: ["bytes"], message: "queue bytes exceed capacity" });
     }).readonly();
-    ClientQueueSeriesV1SchemaZ = z60.array(ClientQueueMetricV1SchemaZ).min(4).max(1e4).superRefine((samples, context) => {
+    ClientQueueSeriesV1SchemaZ = z62.array(ClientQueueMetricV1SchemaZ).min(4).max(1e4).superRefine((samples, context) => {
       const first = samples[0];
       for (let index = 1; index < samples.length; index += 1) {
         const sample = samples[index];
@@ -9497,9 +9653,9 @@ var init_performance_qualification = __esm({
           });
       }
     }).readonly();
-    MutationQualificationAcceptanceV1SchemaZ = z60.object({
-      version: z60.literal(PERFORMANCE_QUALIFICATION_CONTRACT_VERSION),
-      mutationId: z60.uuid(),
+    MutationQualificationAcceptanceV1SchemaZ = z62.object({
+      version: z62.literal(PERFORMANCE_QUALIFICATION_CONTRACT_VERSION),
+      mutationId: z62.uuid(),
       processId: BoundedIdentitySchemaZ2,
       clockId: BoundedIdentitySchemaZ2,
       clockKind: MonotonicClockKindSchemaZ,
@@ -9509,16 +9665,16 @@ var init_performance_qualification = __esm({
       if (value.deadlineAtMicros <= value.acceptedAtMicros)
         context.addIssue({ code: "custom", message: "mutation deadline must follow acceptance" });
     }).readonly();
-    MutationTerminalStatusSchemaZ = z60.enum(["observed", "rejected", "timed-out"]);
-    MutationTerminalOutcomeV1SchemaZ = z60.object({
-      version: z60.literal(PERFORMANCE_QUALIFICATION_CONTRACT_VERSION),
-      mutationId: z60.uuid(),
+    MutationTerminalStatusSchemaZ = z62.enum(["observed", "rejected", "timed-out"]);
+    MutationTerminalOutcomeV1SchemaZ = z62.object({
+      version: z62.literal(PERFORMANCE_QUALIFICATION_CONTRACT_VERSION),
+      mutationId: z62.uuid(),
       processId: BoundedIdentitySchemaZ2,
       clockId: BoundedIdentitySchemaZ2,
       clockKind: MonotonicClockKindSchemaZ,
       occurredAtMicros: MonotonicMicrosSchemaZ,
       status: MutationTerminalStatusSchemaZ,
-      reason: z60.string().min(1).max(512).optional(),
+      reason: z62.string().min(1).max(512).optional(),
       identity: StateConvergenceIdentityV1SchemaZ.optional()
     }).strict().superRefine((value, context) => {
       if (value.status === "observed" && value.identity === void 0)
@@ -9538,7 +9694,7 @@ var init_performance_qualification = __esm({
 });
 
 // packages/contracts/src/performance-metrics.ts
-import { z as z61 } from "zod";
+import { z as z63 } from "zod";
 var LOCAL_PERFORMANCE_SNAPSHOT_VERSION, FiniteNonNegativeSchemaZ, SafeNonNegativeIntegerSchemaZ, RuntimeIncarnationSchemaZ, LocalPerformanceSourceSchemaZ, LocalPerformanceAuthorityV1SchemaZ, LocalPerformanceDistributionV1SchemaZ, LocalPerformanceQueueDepthV1SchemaZ, LocalPerformanceRevisionLagV1SchemaZ, LocalPerformanceSnapshotV1SchemaZ;
 var init_performance_metrics = __esm({
   "packages/contracts/src/performance-metrics.ts"() {
@@ -9547,17 +9703,17 @@ var init_performance_metrics = __esm({
     init_session_runtime();
     init_workspace_state();
     LOCAL_PERFORMANCE_SNAPSHOT_VERSION = 1;
-    FiniteNonNegativeSchemaZ = z61.number().finite().nonnegative();
-    SafeNonNegativeIntegerSchemaZ = z61.number().int().nonnegative().safe();
-    RuntimeIncarnationSchemaZ = z61.string().min(1).max(256).refine((value) => !/[\0\r\n]/u.test(value));
-    LocalPerformanceSourceSchemaZ = z61.enum(["opentui", "web"]);
-    LocalPerformanceAuthorityV1SchemaZ = z61.object({
+    FiniteNonNegativeSchemaZ = z63.number().finite().nonnegative();
+    SafeNonNegativeIntegerSchemaZ = z63.number().int().nonnegative().safe();
+    RuntimeIncarnationSchemaZ = z63.string().min(1).max(256).refine((value) => !/[\0\r\n]/u.test(value));
+    LocalPerformanceSourceSchemaZ = z63.enum(["opentui", "web"]);
+    LocalPerformanceAuthorityV1SchemaZ = z63.object({
       daemonInstanceId: DaemonInstanceIdSchema.nullable(),
       workspaceName: WorkspaceIdSchemaZ.nullable(),
       generation: SessionRuntimeGenerationSchemaZ.nullable(),
       incarnation: RuntimeIncarnationSchemaZ.nullable()
     }).strict().readonly();
-    LocalPerformanceDistributionV1SchemaZ = z61.object({
+    LocalPerformanceDistributionV1SchemaZ = z63.object({
       count: SafeNonNegativeIntegerSchemaZ,
       latest: FiniteNonNegativeSchemaZ.nullable(),
       p50: FiniteNonNegativeSchemaZ.nullable(),
@@ -9574,10 +9730,10 @@ var init_performance_metrics = __esm({
       if (value.latest !== null && value.max !== null && value.latest > value.max)
         context.addIssue({ code: "custom", message: "latest sample cannot exceed maximum" });
     }).readonly();
-    LocalPerformanceQueueDepthV1SchemaZ = z61.object({
+    LocalPerformanceQueueDepthV1SchemaZ = z63.object({
       current: SafeNonNegativeIntegerSchemaZ,
       peak: SafeNonNegativeIntegerSchemaZ,
-      capacity: z61.object({
+      capacity: z63.object({
         current: SafeNonNegativeIntegerSchemaZ.nullable(),
         peak: SafeNonNegativeIntegerSchemaZ.nullable()
       }).strict().readonly()
@@ -9597,7 +9753,7 @@ var init_performance_metrics = __esm({
           message: "queue peak exceeds known capacity"
         });
     }).readonly();
-    LocalPerformanceRevisionLagV1SchemaZ = z61.object({
+    LocalPerformanceRevisionLagV1SchemaZ = z63.object({
       current: SafeNonNegativeIntegerSchemaZ.nullable(),
       peak: SafeNonNegativeIntegerSchemaZ.nullable()
     }).strict().superRefine((value, context) => {
@@ -9606,8 +9762,8 @@ var init_performance_metrics = __esm({
       if (value.current !== null && value.peak !== null && value.current > value.peak)
         context.addIssue({ code: "custom", path: ["current"], message: "lag exceeds peak" });
     }).readonly();
-    LocalPerformanceSnapshotV1SchemaZ = z61.object({
-      version: z61.literal(LOCAL_PERFORMANCE_SNAPSHOT_VERSION),
+    LocalPerformanceSnapshotV1SchemaZ = z63.object({
+      version: z63.literal(LOCAL_PERFORMANCE_SNAPSHOT_VERSION),
       source: LocalPerformanceSourceSchemaZ,
       sampleSequence: SafeNonNegativeIntegerSchemaZ,
       authority: LocalPerformanceAuthorityV1SchemaZ,
@@ -9655,6 +9811,7 @@ var init_src = __esm({
     init_session_runtime();
     init_terminal_replica();
     init_terminal_delivery();
+    init_terminal_runtime_inventory();
     init_experience_shell();
     init_application_shell();
     init_application_shell_resource();
@@ -9692,6 +9849,7 @@ var init_src = __esm({
     init_widget_asset();
     init_performance_qualification();
     init_performance_metrics();
+    init_causal_cell();
   }
 });
 
@@ -11904,10 +12062,10 @@ function validateConfig(config2) {
     if (focusCount > 1) {
       errors.push(`Row ${i} has ${focusCount} panes with focus: true (max 1)`);
     }
-    for (let j = 0; j < row.panes.length; j++) {
-      const pane = row.panes[j];
+    for (let j2 = 0; j2 < row.panes.length; j2++) {
+      const pane = row.panes[j2];
       if (pane.type !== void 0 && pane.command !== void 0) {
-        errors.push(`rows[${i}].panes[${j}] cannot have both 'type' and 'command'`);
+        errors.push(`rows[${i}].panes[${j2}] cannot have both 'type' and 'command'`);
       }
     }
   }
@@ -12076,8 +12234,8 @@ function matchMatcher(snapshot, matcher) {
     return haystack.includes(matcher.contains);
   }
   if (matcher.regex !== void 0) {
-    const re = safeRegex(matcher.regex, matcher.caseInsensitive);
-    return re ? re.test(haystack) : false;
+    const re2 = safeRegex(matcher.regex, matcher.caseInsensitive);
+    return re2 ? re2.test(haystack) : false;
   }
   return false;
 }
@@ -14566,8 +14724,8 @@ function parseSemver(version) {
   const pre = dash === -1 ? "" : core.slice(dash + 1);
   const parts = main.split(".");
   const num = (i) => {
-    const n = Number.parseInt(parts[i] ?? "", 10);
-    return Number.isFinite(n) && n >= 0 ? n : 0;
+    const n10 = Number.parseInt(parts[i] ?? "", 10);
+    return Number.isFinite(n10) && n10 >= 0 ? n10 : 0;
   };
   return { nums: [num(0), num(1), num(2)], pre };
 }
@@ -14933,9 +15091,9 @@ function resolveSidebarConfig(raw) {
   return { enabled: true, width };
 }
 function parseSidebarWidth(value) {
-  const n = typeof value === "number" ? value : typeof value === "string" ? parseInt(value, 10) : NaN;
-  if (!Number.isFinite(n) || n <= 0) return DEFAULT_SIDEBAR_WIDTH;
-  return Math.max(10, Math.floor(n));
+  const n10 = typeof value === "number" ? value : typeof value === "string" ? parseInt(value, 10) : NaN;
+  if (!Number.isFinite(n10) || n10 <= 0) return DEFAULT_SIDEBAR_WIDTH;
+  return Math.max(10, Math.floor(n10));
 }
 function sidebarToggleBindCommand(cli = "tmux-ide sidebar-toggle", key = SIDEBAR_KEY) {
   return ["bind-key", "-n", key, "run-shell", `${cli} --session '#{session_name}'`];
@@ -15207,8 +15365,8 @@ __export(cheatsheet_exports, {
 function tokenCode(token) {
   const m = /^colou?r(\d+)$/.exec(token);
   if (!m) return null;
-  const n = Number(m[1]);
-  return Number.isInteger(n) && n >= 0 && n <= 255 ? n : null;
+  const n10 = Number(m[1]);
+  return Number.isInteger(n10) && n10 >= 0 && n10 <= 255 ? n10 : null;
 }
 function legendMark(token, glyph) {
   const code = tokenCode(token);
@@ -15471,8 +15629,8 @@ function menuPositionArgs(x, y) {
 }
 function parseCoord(value) {
   if (typeof value !== "string" || !/^\d+$/.test(value)) return null;
-  const n = Number(value);
-  return Number.isInteger(n) ? n : null;
+  const n10 = Number(value);
+  return Number.isInteger(n10) ? n10 : null;
 }
 function menuBindCommand(menuCmd = "tmux-ide menu", key = MENU_KEY) {
   return ["bind-key", "-n", key, ...menuRunShellArgs(menuCmd)];
@@ -15753,13 +15911,13 @@ function parseCodexRolloutName(name) {
     name
   );
   if (!match) return null;
-  const [, y, mo, d, h, mi, s, id] = match;
+  const [, y, mo, d, h, mi2, s, id] = match;
   const tsMs = new Date(
     Number(y),
     Number(mo) - 1,
     Number(d),
     Number(h),
-    Number(mi),
+    Number(mi2),
     Number(s)
   ).getTime();
   return Number.isFinite(tsMs) && id ? { tsMs, id } : null;
@@ -15959,21 +16117,21 @@ var init_session_id = __esm({
 });
 
 // packages/daemon/src/schemas/registry.ts
-import { z as z62 } from "zod";
+import { z as z64 } from "zod";
 var RegisteredProjectSchemaZ, RegisterProjectRequestSchemaZ, InitProjectRequestSchemaZ;
 var init_registry = __esm({
   "packages/daemon/src/schemas/registry.ts"() {
     "use strict";
     init_src();
     RegisteredProjectSchemaZ = DaemonRegisteredProjectSchemaZ;
-    RegisterProjectRequestSchemaZ = z62.object({
-      dir: z62.string().min(1),
-      name: z62.string().min(1).optional(),
-      persistence: z62.enum(["durable", "volatile"]).optional()
+    RegisterProjectRequestSchemaZ = z64.object({
+      dir: z64.string().min(1),
+      name: z64.string().min(1).optional(),
+      persistence: z64.enum(["durable", "volatile"]).optional()
     });
-    InitProjectRequestSchemaZ = z62.object({
-      dir: z62.string().min(1),
-      template: z62.string().min(1).optional()
+    InitProjectRequestSchemaZ = z64.object({
+      dir: z64.string().min(1),
+      template: z64.string().min(1).optional()
     });
   }
 });
@@ -16034,7 +16192,7 @@ var init_project_probe = __esm({
 import { EventEmitter } from "node:events";
 import { existsSync as existsSync17, mkdirSync as mkdirSync12, readFileSync as readFileSync13, renameSync as renameSync6, writeFileSync as writeFileSync11 } from "node:fs";
 import { dirname as dirname18, isAbsolute as isAbsolute4, join as join18, resolve as resolve12 } from "node:path";
-import { z as z63 } from "zod";
+import { z as z65 } from "zod";
 function applyAction(state, action) {
   switch (action.type) {
     case "register":
@@ -16193,9 +16351,9 @@ var init_project_registry = __esm({
     init_registry();
     init_project_probe();
     init_runtime_namespace();
-    RegistryFileSchemaZ = z63.object({
-      version: z63.literal(1),
-      projects: z63.array(RegisteredProjectSchemaZ)
+    RegistryFileSchemaZ = z65.object({
+      version: z65.literal(1),
+      projects: z65.array(RegisteredProjectSchemaZ)
     });
     ProjectRegistryError = class extends Error {
       code;
@@ -16447,7 +16605,7 @@ function hostedEnvVars(base) {
   return env;
 }
 function hostedCommandLine(bin, argv, env) {
-  const assigns = Object.entries(env).map(([k, v]) => `${k}=${shellQuote(v)}`);
+  const assigns = Object.entries(env).map(([k2, v]) => `${k2}=${shellQuote(v)}`);
   return ["exec", "env", ...assigns, shellQuote(bin), ...argv.map(shellQuote)].join(" ");
 }
 function hostExistsArgv() {
@@ -16578,11 +16736,11 @@ function parseClients(lines) {
   for (const line of lines) {
     const [client = "", session = "", win = "", tty = "", termname = ""] = line.split("	");
     if (!client || !session) continue;
-    const n = Number.parseInt(win, 10);
+    const n10 = Number.parseInt(win, 10);
     out.push({
       client,
       session,
-      windowIndex: Number.isInteger(n) ? n : null,
+      windowIndex: Number.isInteger(n10) ? n10 : null,
       tty: tty || null,
       termname: termname || null
     });
@@ -16656,20 +16814,20 @@ function soundEligible(state, sound) {
 function belEligible(state, sound) {
   return state === "blocked" && sound !== "none";
 }
-function decideTtyWrites(n, clients, prefs) {
+function decideTtyWrites(n10, clients, prefs) {
   const asEvent = {
-    session: n.session,
+    session: n10.session,
     from: null,
-    to: n.state,
-    paneId: n.paneId,
-    windowIndex: n.windowIndex
+    to: n10.state,
+    paneId: n10.paneId,
+    windowIndex: n10.windowIndex
   };
-  const bel = belEligible(n.state, prefs.sound) ? "\x07" : "";
+  const bel = belEligible(n10.state, prefs.sound) ? "\x07" : "";
   const out = [];
   for (const c of clients) {
     if (!c.tty) continue;
     if (suppressToastFor(c, asEvent)) continue;
-    const escape = prefs.terminal ? terminalNotifyEscape(c.termname, n.message, n.state === "blocked") : "";
+    const escape = prefs.terminal ? terminalNotifyEscape(c.termname, n10.message, n10.state === "blocked") : "";
     const data = escape + bel;
     if (data) out.push({ tty: c.tty, data });
   }
@@ -16753,7 +16911,7 @@ function parseTmuxSocketPath(value) {
   const path2 = (/^(.*),\d+,\d+$/.exec(normalized)?.[1] ?? normalized).trim();
   return path2.startsWith("/") ? path2 : null;
 }
-function nativeMacosNotifierArgs(appPath, n, tmuxPath, socketPath) {
+function nativeMacosNotifierArgs(appPath, n10, tmuxPath, socketPath) {
   const args = [
     "-g",
     "-n",
@@ -16762,9 +16920,9 @@ function nativeMacosNotifierArgs(appPath, n, tmuxPath, socketPath) {
     "--title",
     "tmux-ide",
     "--message",
-    n.message,
+    n10.message,
     "--session",
-    n.session,
+    n10.session,
     "--host-session",
     APP_HOST_SESSION,
     "--jump-option",
@@ -16774,23 +16932,23 @@ function nativeMacosNotifierArgs(appPath, n, tmuxPath, socketPath) {
   if (socketPath) args.push("--socket-path", socketPath);
   return args;
 }
-function terminalNotifierArgs(n) {
+function terminalNotifierArgs(n10) {
   return [
     "-title",
     "tmux-ide",
     "-message",
-    n.message,
+    n10.message,
     "-execute",
-    notifierExecuteCommand(n.session)
+    notifierExecuteCommand(n10.session)
   ];
 }
-function notifySendArgs(n) {
+function notifySendArgs(n10) {
   const args = ["--app-name=tmux-ide"];
-  if (n.state === "blocked") args.push("--urgency=critical");
-  args.push("tmux-ide", n.message);
+  if (n10.state === "blocked") args.push("--urgency=critical");
+  args.push("tmux-ide", n10.message);
   return args;
 }
-function sendSystemNotification(n, io = {}) {
+function sendSystemNotification(n10, io = {}) {
   const platform = io.platform ?? process.platform;
   const exec = io.exec ?? ((cmd, args) => execFileSync8(cmd, args, { stdio: "ignore" }));
   const has = io.hasBinary ?? hasBinary;
@@ -16803,17 +16961,17 @@ function sendSystemNotification(n, io = {}) {
         try {
           exec(
             "/usr/bin/open",
-            nativeMacosNotifierArgs(appPath, n, tmuxPath, parseTmuxSocketPath(env.TMUX))
+            nativeMacosNotifierArgs(appPath, n10, tmuxPath, parseTmuxSocketPath(env.TMUX))
           );
           return;
         } catch {
         }
       }
       if (has("terminal-notifier")) {
-        exec("terminal-notifier", terminalNotifierArgs(n));
+        exec("terminal-notifier", terminalNotifierArgs(n10));
         return;
       }
-      const escaped = n.message.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      const escaped = n10.message.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
       exec("osascript", ["-e", `display notification "${escaped}" with title "tmux-ide"`]);
       return;
     }
@@ -16821,7 +16979,7 @@ function sendSystemNotification(n, io = {}) {
       const env = io.env ?? process.env;
       if (!env.DISPLAY && !env.WAYLAND_DISPLAY) return;
       if (!has("notify-send")) return;
-      exec("notify-send", notifySendArgs(n));
+      exec("notify-send", notifySendArgs(n10));
     }
   } catch {
   }
@@ -16850,17 +17008,17 @@ function parseQuietHours(value) {
 }
 function parseNotificationPrefs(rawConfig) {
   const base = parseAppConfig(rawConfig).notifications;
-  const n = asObject2(asObject2(rawConfig).notifications);
+  const n10 = asObject2(asObject2(rawConfig).notifications);
   return {
-    enabled: pickBool2(n.enabled, DEFAULT_NOTIFICATION_PREFS.enabled),
+    enabled: pickBool2(n10.enabled, DEFAULT_NOTIFICATION_PREFS.enabled),
     toast: base.toast,
     macos: base.macos,
     terminal: base.terminal,
     delaySeconds: base.delaySeconds,
     sound: base.sound,
-    onBlocked: pickBool2(n.onBlocked, DEFAULT_NOTIFICATION_PREFS.onBlocked),
-    onDone: pickBool2(n.onDone, DEFAULT_NOTIFICATION_PREFS.onDone),
-    quietHours: parseQuietHours(n.quietHours)
+    onBlocked: pickBool2(n10.onBlocked, DEFAULT_NOTIFICATION_PREFS.onBlocked),
+    onDone: pickBool2(n10.onDone, DEFAULT_NOTIFICATION_PREFS.onDone),
+    quietHours: parseQuietHours(n10.quietHours)
   };
 }
 function applyKillSwitch(prefs, envValue) {
@@ -16968,7 +17126,7 @@ var init_notify_state = __esm({
 import { existsSync as existsSync21, mkdirSync as mkdirSync15, readFileSync as readFileSync16, renameSync as renameSync8, writeFileSync as writeFileSync13 } from "node:fs";
 import { homedir as homedir13 } from "node:os";
 import { dirname as dirname20, join as join21 } from "node:path";
-import { z as z64 } from "zod";
+import { z as z66 } from "zod";
 function isBareShell(cmd) {
   return /^-?(zsh|bash|sh|fish|dash|ksh|tcsh|csh|nu)$/.test(cmd.trim());
 }
@@ -17140,32 +17298,32 @@ var init_snapshot2 = __esm({
     init_src2();
     init_process_tree();
     init_sessions2();
-    PaneSnapshotSchemaZ = z64.object({
-      index: z64.number(),
-      cwd: z64.string(),
-      command: z64.string().nullable(),
-      agent: z64.string().nullable(),
-      agentSessionId: z64.string().nullable(),
-      agentState: z64.string().nullable(),
-      title: z64.string()
+    PaneSnapshotSchemaZ = z66.object({
+      index: z66.number(),
+      cwd: z66.string(),
+      command: z66.string().nullable(),
+      agent: z66.string().nullable(),
+      agentSessionId: z66.string().nullable(),
+      agentState: z66.string().nullable(),
+      title: z66.string()
     });
-    WindowSnapshotSchemaZ = z64.object({
-      index: z64.number(),
-      name: z64.string(),
-      active: z64.boolean(),
-      layout: z64.string(),
-      panes: z64.array(PaneSnapshotSchemaZ)
+    WindowSnapshotSchemaZ = z66.object({
+      index: z66.number(),
+      name: z66.string(),
+      active: z66.boolean(),
+      layout: z66.string(),
+      panes: z66.array(PaneSnapshotSchemaZ)
     });
-    SessionSnapshotSchemaZ = z64.object({
-      name: z64.string(),
-      cwd: z64.string(),
-      adopted: z64.boolean(),
-      windows: z64.array(WindowSnapshotSchemaZ)
+    SessionSnapshotSchemaZ = z66.object({
+      name: z66.string(),
+      cwd: z66.string(),
+      adopted: z66.boolean(),
+      windows: z66.array(WindowSnapshotSchemaZ)
     });
-    FleetSnapshotSchemaZ = z64.object({
-      version: z64.literal(1),
-      savedAt: z64.string(),
-      sessions: z64.array(SessionSnapshotSchemaZ)
+    FleetSnapshotSchemaZ = z66.object({
+      version: z66.literal(1),
+      savedAt: z66.string(),
+      sessions: z66.array(SessionSnapshotSchemaZ)
     });
     SNAPSHOT_PANE_FORMAT = [
       "#{session_name}",
@@ -17393,7 +17551,7 @@ function dispatchNotifications(deps2, events) {
   if (decision.system.length === 0) return;
   const delayMs = prefs.delaySeconds * 1e3;
   if (delayMs > 0 && deps2.pendingPings) {
-    for (const n of decision.system) deps2.pendingPings.push({ ...n, dueAtMs: nowMs + delayMs });
+    for (const n10 of decision.system) deps2.pendingPings.push({ ...n10, dueAtMs: nowMs + delayMs });
   } else {
     fireOsChannels(deps2, prefs, decision.system, nowMs);
   }
@@ -17422,14 +17580,14 @@ function fireOsChannels(deps2, prefs, entries, nowMs) {
   if (entries.length === 0) return;
   if (inQuietHours(new Date(nowMs), prefs.quietHours)) return;
   if (prefs.macos && deps2.sendSystem) {
-    for (const n of entries) deps2.sendSystem(n);
+    for (const n10 of entries) deps2.sendSystem(n10);
   }
   if ((prefs.terminal || prefs.sound !== "none") && deps2.sendTerminal && deps2.listClients) {
     const clients = deps2.listClients();
-    const writes = entries.flatMap((n) => decideTtyWrites(n, clients, prefs));
+    const writes = entries.flatMap((n10) => decideTtyWrites(n10, clients, prefs));
     if (writes.length > 0) deps2.sendTerminal(writes);
   }
-  if (deps2.playSound && entries.some((n) => soundEligible(n.state, prefs.sound))) {
+  if (deps2.playSound && entries.some((n10) => soundEligible(n10.state, prefs.sound))) {
     deps2.playSound();
   }
 }
@@ -18451,11 +18609,11 @@ function setByPath(obj, path2, value) {
   const keys = path2.split(".");
   const last = keys.pop();
   let i = 0;
-  const target = keys.reduce((o, k) => {
+  const target = keys.reduce((o, k2) => {
     const nextKey = keys[i + 1] ?? last;
-    if (o[k] === void 0) o[k] = /^\d+$/.test(nextKey) ? [] : {};
+    if (o[k2] === void 0) o[k2] = /^\d+$/.test(nextKey) ? [] : {};
     i++;
-    return o[k];
+    return o[k2];
   }, obj);
   target[last] = value;
 }
@@ -18723,6 +18881,64 @@ function spawnOwner(entryPath, cwd) {
     });
   });
 }
+async function shutdownOlderOwner(info) {
+  const headers = { "content-type": "application/json" };
+  if (info.authToken) headers.authorization = `Bearer ${info.authToken}`;
+  const response3 = await fetch(
+    canonicalDaemonUrl("http", info.bindHostname, info.port, "/api/v2/action/daemon.shutdown"),
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        reason: "wire-protocol-upgrade",
+        expectedInstanceId: info.instanceId
+      }),
+      signal: AbortSignal.timeout(2e3)
+    }
+  );
+  const envelope = await response3.json().catch(() => null);
+  if (!response3.ok || envelope?.ok !== true || envelope.result?.stopping !== true) {
+    throw new DaemonBootstrapError(
+      "incompatible",
+      `The older canonical daemon refused a wire-protocol upgrade (HTTP ${response3.status}).`,
+      { reason: "protocol-mismatch" }
+    );
+  }
+}
+function sameCanonicalInstance(left, right) {
+  return left.pid === right.pid && left.port === right.port && left.instanceId === right.instanceId && left.startedAt === right.startedAt;
+}
+async function replaceOlderCanonicalDaemon(deps2, info, timeoutMs) {
+  if (info.protocolVersion >= DAEMON_WIRE_PROTOCOL_VERSION) {
+    throw new DaemonBootstrapError(
+      "incompatible",
+      `Canonical daemon protocol ${info.protocolVersion} cannot be replaced by older protocol ${DAEMON_WIRE_PROTOCOL_VERSION}.`,
+      { reason: "protocol-mismatch" }
+    );
+  }
+  const [identity, health] = await Promise.all([deps2.identity(info), deps2.health(info)]);
+  if (!identity || !health || identity.pid !== info.pid || identity.instanceId !== info.instanceId || identity.startedAt !== info.startedAt || identity.protocolVersion !== info.protocolVersion || health.protocolVersion !== info.protocolVersion) {
+    throw new DaemonBootstrapError(
+      "incompatible",
+      "The older canonical daemon changed identity before the protocol upgrade.",
+      { reason: "identity-mismatch" }
+    );
+  }
+  await deps2.shutdownOlderOwner(info);
+  const deadline = deps2.now() + timeoutMs;
+  while (deps2.now() < deadline) {
+    const state = deps2.inspect();
+    if (state.status === "missing") return;
+    if (state.status === "valid" && !sameCanonicalInstance(state.info, info)) return;
+    if (!await deps2.alive(info)) return;
+    await deps2.sleep(25);
+  }
+  throw new DaemonBootstrapError(
+    "control-timeout",
+    "The older canonical daemon did not retire after accepting the protocol upgrade.",
+    { reason: "protocol-mismatch" }
+  );
+}
 async function probeCanonical(deps2) {
   const state = deps2.inspect();
   if (state.status === "missing") return { status: "absent-or-stale" };
@@ -18753,7 +18969,32 @@ function createCanonicalDaemonBootstrapCoordinator(options, dependencies = {}) {
   });
 }
 function ensureCanonicalDaemon(options, dependencies = {}) {
-  return createCanonicalDaemonBootstrapCoordinator(options, dependencies).ensure();
+  const deps2 = { ...defaultDependencies, ...dependencies };
+  const ensure = () => createCanonicalDaemonBootstrapCoordinator(options, deps2).ensure();
+  return ensure().catch(async (error) => {
+    if (!(error instanceof DaemonBootstrapError) || error.code !== "incompatible" || error.reason !== "protocol-mismatch") {
+      throw error;
+    }
+    const state = deps2.inspect();
+    if (state.status === "missing") return ensure();
+    if (state.status === "valid" && state.info.protocolVersion === DAEMON_WIRE_PROTOCOL_VERSION) {
+      return ensure();
+    }
+    if (state.status !== "valid" || state.info.protocolVersion > DAEMON_WIRE_PROTOCOL_VERSION) {
+      throw error;
+    }
+    const replacing = state.info;
+    try {
+      await replaceOlderCanonicalDaemon(deps2, replacing, options.timeoutMs ?? 15e3);
+    } catch (replacementError) {
+      const after = deps2.inspect();
+      if (after.status === "missing" || after.status === "valid" && !sameCanonicalInstance(after.info, replacing)) {
+        return ensure();
+      }
+      throw replacementError;
+    }
+    return ensure();
+  });
 }
 var defaultDependencies;
 var init_canonical_daemon_bootstrap = __esm({
@@ -18768,19 +19009,43 @@ var init_canonical_daemon_bootstrap = __esm({
       alive: isCanonicalDaemonAlive,
       identity: probeCanonicalDaemonIdentity,
       health: probeCanonicalDaemonHealth,
-      spawnOwner
+      spawnOwner,
+      shutdownOlderOwner,
+      now: Date.now,
+      sleep: (milliseconds) => new Promise((resolveSleep) => {
+        setTimeout(resolveSleep, milliseconds);
+      })
     };
   }
 });
 
 // packages/daemon/src/lib/pane-source-credentials.ts
 import { randomBytes as randomBytes2 } from "node:crypto";
-var PANE_SOURCE_CREDENTIAL_OPTION, PANE_SOURCE_CREDENTIAL_HEADER, PaneSourceCredentialAuthority;
+async function reconcilePaneSourceCredentialsAtStartup(authority, sessions, timeoutMs = STARTUP_PANE_CREDENTIAL_TIMEOUT_MS) {
+  const uniqueSessions = [...new Set(sessions)];
+  if (uniqueSessions.length === 0) return "complete";
+  const controller = new AbortController();
+  let timeout;
+  const reconciliation = Promise.allSettled(
+    uniqueSessions.map((session) => authority.reconcileSessionAsync(session, controller.signal))
+  );
+  const deadline = new Promise((resolve37) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      resolve37("timed-out");
+    }, timeoutMs);
+  });
+  const result = await Promise.race([reconciliation.then(() => "complete"), deadline]);
+  if (timeout !== void 0) clearTimeout(timeout);
+  return result;
+}
+var PANE_SOURCE_CREDENTIAL_OPTION, PANE_SOURCE_CREDENTIAL_HEADER, STARTUP_PANE_CREDENTIAL_TIMEOUT_MS, PaneSourceCredentialAuthority;
 var init_pane_source_credentials = __esm({
   "packages/daemon/src/lib/pane-source-credentials.ts"() {
     "use strict";
     PANE_SOURCE_CREDENTIAL_OPTION = "@tmux_ide_source_credential_v1";
     PANE_SOURCE_CREDENTIAL_HEADER = "X-Tmux-Ide-Pane-Source-Credential";
+    STARTUP_PANE_CREDENTIAL_TIMEOUT_MS = 2e3;
     PaneSourceCredentialAuthority = class {
       #tmux;
       #grants = /* @__PURE__ */ new Map();
@@ -18849,6 +19114,7 @@ var init_pane_source_credentials = __esm({
           return;
         }
         for (let attempt = 0; attempt < 3; attempt += 1) {
+          signal?.throwIfAborted();
           const revision = this.#sessionRevisions.get(session) ?? 0;
           const rows = await runAsync(
             [
@@ -18861,6 +19127,7 @@ var init_pane_source_credentials = __esm({
             ],
             signal
           );
+          signal?.throwIfAborted();
           if ((this.#sessionRevisions.get(session) ?? 0) !== revision) continue;
           const live = /* @__PURE__ */ new Set();
           let raced = false;
@@ -18878,6 +19145,7 @@ var init_pane_source_credentials = __esm({
               ["set-option", "-p", "-t", runtimePaneId, PANE_SOURCE_CREDENTIAL_OPTION, token],
               signal
             );
+            signal?.throwIfAborted();
             if ((this.#sessionRevisions.get(session) ?? 0) !== revision) {
               raced = true;
               break;
@@ -18923,7 +19191,7 @@ import { createRequire } from "node:module";
 import { randomUUID as randomUUID3 } from "node:crypto";
 import { basename as basename9, dirname as dirname24, resolve as resolve23 } from "node:path";
 import { fileURLToPath as fileURLToPath10 } from "node:url";
-import { z as z65 } from "zod";
+import { z as z67 } from "zod";
 function defaultCliEntryPath() {
   if (process.env.TMUX_IDE_CLI) return resolve23(process.env.TMUX_IDE_CLI);
   const current = fileURLToPath10(import.meta.url);
@@ -19018,7 +19286,7 @@ async function tryDispatchAction(name, input, options = {}) {
         details: failure.data.error.details
       });
     }
-    const success = z65.object({ ok: z65.literal(true), result: contract.result }).safeParse(body);
+    const success = z67.object({ ok: z67.literal(true), result: contract.result }).safeParse(body);
     if (success.success) return success.data.result;
   }
   return null;
@@ -19031,12 +19299,12 @@ var init_cli_action_bridge = __esm({
     init_canonical_daemon();
     init_canonical_daemon_bootstrap();
     init_pane_source_credentials();
-    FailureEnvelopeZ = z65.object({
-      ok: z65.literal(false),
-      error: z65.object({
-        code: z65.string(),
-        message: z65.string(),
-        details: z65.unknown().optional()
+    FailureEnvelopeZ = z67.object({
+      ok: z67.literal(false),
+      error: z67.object({
+        code: z67.string(),
+        message: z67.string(),
+        details: z67.unknown().optional()
       })
     });
     RETRY_SAFE_OWNER_ACTIONS = /* @__PURE__ */ new Set([
@@ -19500,10 +19768,10 @@ function disableTeam(dir, { json: json3 }) {
 function summarizeRoles(cfg) {
   const roles = [];
   for (let i = 0; i < (cfg.rows ?? []).length; i++) {
-    for (let j = 0; j < (cfg.rows[i].panes ?? []).length; j++) {
-      const p = cfg.rows[i].panes[j];
+    for (let j2 = 0; j2 < (cfg.rows[i].panes ?? []).length; j2++) {
+      const p = cfg.rows[i].panes[j2];
       if (p.role) {
-        roles.push({ row: i, pane: j, title: p.title ?? null, role: p.role });
+        roles.push({ row: i, pane: j2, title: p.title ?? null, role: p.role });
       }
     }
   }
@@ -19661,7 +19929,7 @@ var init_pane_comms = __esm({
 import { EventEmitter as EventEmitter2 } from "node:events";
 import { existsSync as existsSync26, mkdirSync as mkdirSync18, readFileSync as readFileSync20, renameSync as renameSync9, writeFileSync as writeFileSync16 } from "node:fs";
 import { dirname as dirname26, join as join24 } from "node:path";
-import { z as z66 } from "zod";
+import { z as z68 } from "zod";
 function getDefaultWorkspaceRegistry() {
   const namespaceKey = resolveRuntimeNamespace().registryDir;
   if (!_default || _defaultNamespaceKey !== namespaceKey) {
@@ -19670,28 +19938,36 @@ function getDefaultWorkspaceRegistry() {
   }
   return _default;
 }
-function defaultListSessions() {
-  const { execFileSync: execFileSync20 } = __require("node:child_process");
+function listTmuxSessionsForWorkspaceRegistry(run) {
   try {
-    const raw = execFileSync20("tmux", ["list-sessions", "-F", "#{session_name}"], {
+    const raw = run("tmux", ["list-sessions", "-F", "#{session_name}"], {
       encoding: "utf-8",
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: WORKSPACE_REGISTRY_TMUX_TIMEOUT_MS
     });
     return raw.split("\n").filter(Boolean);
-  } catch {
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ETIMEDOUT") {
+      throw error;
+    }
     return [];
   }
 }
-var RegistryFileSchemaZ2, WorkspaceAlreadyExistsError, WorkspaceNotFoundError, WorkspaceRegistry, _default, _defaultNamespaceKey;
+function defaultListSessions() {
+  const { execFileSync: execFileSync20 } = __require("node:child_process");
+  return listTmuxSessionsForWorkspaceRegistry(execFileSync20);
+}
+var RegistryFileSchemaZ2, WORKSPACE_REGISTRY_TMUX_TIMEOUT_MS, WorkspaceAlreadyExistsError, WorkspaceNotFoundError, WorkspaceRegistry, _default, _defaultNamespaceKey;
 var init_workspace_registry = __esm({
   "packages/daemon/src/lib/workspace-registry.ts"() {
     "use strict";
     init_src();
     init_runtime_namespace();
-    RegistryFileSchemaZ2 = z66.object({
-      version: z66.literal(1),
-      workspaces: z66.array(WorkspaceSchemaZ)
+    RegistryFileSchemaZ2 = z68.object({
+      version: z68.literal(1),
+      workspaces: z68.array(WorkspaceSchemaZ)
     });
+    WORKSPACE_REGISTRY_TMUX_TIMEOUT_MS = 2e3;
     WorkspaceAlreadyExistsError = class extends Error {
       code = "ALREADY_EXISTS";
       constructor(name) {
@@ -20078,6 +20354,45 @@ var init_send = __esm({
     init_canonical_daemon();
     init_workspace_registry();
     LONG_MESSAGE_THRESHOLD = 150;
+  }
+});
+
+// packages/daemon/src/command-center/owner-authority.ts
+import { timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+function ownerBearerMatches(header, ownerToken) {
+  if (!header || !ownerToken) return false;
+  const supplied = Buffer.from(header, "utf8");
+  const expected = Buffer.from(`Bearer ${ownerToken}`, "utf8");
+  return supplied.byteLength === expected.byteLength && timingSafeEqual2(supplied, expected);
+}
+function decideOwnerAuthority(header, ownerToken, whenOwnerless) {
+  if (!ownerToken) {
+    if (whenOwnerless === "serve-open") return { kind: "serve-open" };
+    return { kind: "denied", reason: "no-owner-capability" };
+  }
+  return ownerBearerMatches(header, ownerToken) ? { kind: "authorized" } : { kind: "denied", reason: "credential-mismatch" };
+}
+function ownerAuthorityGate(ownerToken, policy) {
+  return (c) => {
+    const decision = decideOwnerAuthority(
+      c.req.header("Authorization"),
+      ownerToken,
+      policy.whenOwnerless
+    );
+    if (decision.kind !== "denied") return null;
+    if (decision.reason === "no-owner-capability" && policy.whenOwnerless === "unavailable") {
+      return c.json({ error: policy.unavailableMessage }, 503);
+    }
+    return c.json({ error: policy.mismatchMessage }, 401);
+  };
+}
+function requireOwnerAuthority(ownerToken, policy) {
+  const gate = ownerAuthorityGate(ownerToken, policy);
+  return async (c, next) => gate(c) ?? next();
+}
+var init_owner_authority = __esm({
+  "packages/daemon/src/command-center/owner-authority.ts"() {
+    "use strict";
   }
 });
 
@@ -21404,16 +21719,22 @@ var init_agent_status_watch = __esm({
 // packages/daemon/src/command-center/daemon-fleet-facts-observer.ts
 import { execFile as execFile4 } from "node:child_process";
 function parseSessionCompositionFacts(raw) {
-  const sessions = [];
-  const adopted = [];
+  const sessions = /* @__PURE__ */ new Set();
+  const adopted = /* @__PURE__ */ new Set();
+  const terminalTopology = [];
   for (const line of raw.split("\n")) {
     if (!line) continue;
     const [name = "", adoptedFlag = ""] = line.split("	");
     if (!name) continue;
-    sessions.push(name);
-    if (adoptedFlag === "1" && isVisibleFleetSession(name)) adopted.push(name);
+    sessions.add(name);
+    if (adoptedFlag === "1" && isVisibleFleetSession(name)) adopted.add(name);
+    terminalTopology.push(line);
   }
-  return { sessions: sessions.sort(), adopted: adopted.sort() };
+  return {
+    sessions: [...sessions].sort(),
+    adopted: [...adopted].sort(),
+    terminalTopology: terminalTopology.sort()
+  };
 }
 function parseAgentStateFacts(raw) {
   const result = /* @__PURE__ */ new Map();
@@ -21469,6 +21790,7 @@ var init_daemon_fleet_facts_observer = __esm({
       #waiters = /* @__PURE__ */ new Set();
       #sessionNames = null;
       #adoptedNames = null;
+      #terminalTopology = null;
       #agentFacts = null;
       #timer = null;
       #running = null;
@@ -21580,6 +21902,7 @@ var init_daemon_fleet_facts_observer = __esm({
         this.#baselined.clear();
         this.#sessionNames = null;
         this.#adoptedNames = null;
+        this.#terminalTopology = null;
         this.#agentFacts = null;
         for (const waiter of this.#waiters) waiter.resolve();
         this.#waiters.clear();
@@ -21613,9 +21936,14 @@ var init_daemon_fleet_facts_observer = __esm({
       #acceptSessions(next, acceptSessions, acceptAdopted) {
         if (acceptSessions) {
           const previous = this.#sessionNames;
+          const previousTopology = this.#terminalTopology;
           this.#sessionNames = next.sessions;
+          this.#terminalTopology = next.terminalTopology ?? next.sessions;
           if (previous && JSON.stringify(previous) !== JSON.stringify(next.sessions))
             this.#options.onSessionsChanged();
+          if (previousTopology && JSON.stringify(previousTopology) !== JSON.stringify(this.#terminalTopology)) {
+            this.#options.onTerminalTopologyChanged?.();
+          }
         }
         if (acceptAdopted) {
           const previous = this.#adoptedNames;
@@ -21654,9 +21982,20 @@ var init_daemon_fleet_facts_observer = __esm({
       }
     };
     SESSION_COMPOSITION_TMUX_ARGS = [
-      "list-sessions",
+      "list-panes",
+      "-a",
       "-F",
-      "#{session_name}	#{@tmux_ide_adopted}"
+      [
+        "#{session_name}",
+        "#{@tmux_ide_adopted}",
+        "#{session_id}",
+        "#{window_id}",
+        "#{pane_id}",
+        "#{window_panes}",
+        "#{session_windows}",
+        "#{@tmux_ide_pane_id}",
+        "#{@tmux_ide_window_id}"
+      ].join("	")
     ];
   }
 });
@@ -23693,7 +24032,8 @@ function resourceInterestKey(interest) {
 function broadcastResourceChanged(change, daemonInstanceId2) {
   useResourceEventGeneration(daemonInstanceId2);
   const key = resourceRevisionKey(change.workspaceName, change.resource);
-  const previousRevision = resourceRevisions.get(key) ?? 0;
+  const revisionKey = change.resource === "terminal-runtime-inventory" ? resourceRevisionKey(null, change.resource) : key;
+  const previousRevision = resourceRevisions.get(revisionKey) ?? 0;
   const revision = Math.max(previousRevision + 1, change.revision ?? 0);
   const frame = DaemonEventResourceChangedFrameSchemaZ.parse({
     type: "resource.changed",
@@ -23704,13 +24044,19 @@ function broadcastResourceChanged(change, daemonInstanceId2) {
     causeOperationId: change.causeOperationId ?? null
   });
   resourceEventSequence = frame.sequence;
-  resourceRevisions.set(key, revision);
+  resourceRevisions.set(revisionKey, revision);
   resourceEventJournal.push(frame);
   if (resourceEventJournal.length > RESOURCE_EVENT_JOURNAL_LIMIT) {
     resourceEventJournal.splice(0, resourceEventJournal.length - RESOURCE_EVENT_JOURNAL_LIMIT);
   }
   for (const client of allClients) client.broadcastResourceChanged(frame);
   return frame;
+}
+function currentResourceRevision(workspaceName, resource3) {
+  return Math.max(
+    resourceRevisions.get(resourceRevisionKey(workspaceName, resource3)) ?? 0,
+    resourceRevisions.get(resourceRevisionKey(null, resource3)) ?? 0
+  );
 }
 function broadcastInteractionReceipt(receipt, daemonInstanceId2) {
   useResourceEventGeneration(daemonInstanceId2);
@@ -23761,7 +24107,18 @@ function broadcastSessionCompositionChanged() {
       { workspaceName: null, resource: "fleet-catalog" },
       resourceEventGeneration
     );
+    broadcastResourceChanged(
+      { workspaceName: null, resource: "terminal-runtime-inventory" },
+      resourceEventGeneration
+    );
   }
+}
+function broadcastTerminalTopologyChanged() {
+  if (!resourceEventGeneration) return;
+  broadcastResourceChanged(
+    { workspaceName: null, resource: "terminal-runtime-inventory" },
+    resourceEventGeneration
+  );
 }
 function ensureProjectRegistryListener() {
   if (projectRegistryListener) return;
@@ -23770,6 +24127,10 @@ function ensureProjectRegistryListener() {
     if (resourceEventGeneration) {
       broadcastResourceChanged(
         { workspaceName: null, resource: "workspace-catalog" },
+        resourceEventGeneration
+      );
+      broadcastResourceChanged(
+        { workspaceName: null, resource: "terminal-runtime-inventory" },
         resourceEventGeneration
       );
     }
@@ -23839,6 +24200,7 @@ function ensureFleetFactsObserver() {
   fleetFactsObserver ??= new DaemonFleetFactsObserver({
     ...readers,
     onSessionsChanged: broadcastSessionCompositionChanged,
+    onTerminalTopologyChanged: broadcastTerminalTopologyChanged,
     onAdoptedChanged: broadcastAdoptedCompositionChanged,
     onAgentSessionsChanged: broadcastAgentSessionsChanged,
     onAgentTurnCompleted: (completion) => {
@@ -23911,6 +24273,9 @@ function acquireResourceObservation(interest, daemonInstanceId2) {
   if (interest.resource === "application-shell") {
     return acquireGlobalObserver("agents");
   }
+  if (interest.resource === "terminal-runtime-inventory") {
+    return acquireGlobalObserver("sessions");
+  }
   if (isObservableWorkspaceResource(interest.resource) && interest.workspaceName !== null) {
     return ensureWorkspaceResourceObserver(daemonInstanceId2).acquire(
       interest.workspaceName,
@@ -23951,6 +24316,14 @@ function broadcastWorkspacePromotionCompleted(workspaceName, outcome) {
 }
 function broadcastTerminalsChanged(sessionName) {
   for (const client of allClients) client.broadcastTerminalsChanged(sessionName);
+  if (!resourceEventGeneration) return;
+  const workspaceName = workspaceNameForSession(sessionName);
+  if (workspaceName) {
+    broadcastResourceChanged(
+      { workspaceName, resource: "terminal-runtime-inventory" },
+      resourceEventGeneration
+    );
+  }
 }
 function rawDataToText2(data) {
   if (typeof data === "string") return data;
@@ -24028,7 +24401,7 @@ function handleWsEventsConnection(socket, daemonIdentity, options = {}) {
     send2({ type: "fleet.changed" });
   };
   const broadcastResourceChangedForClient = (frame) => {
-    if (legacyDeliveryEnabled || explicitInterestKeys.has(resourceRevisionKey(frame.workspaceName, frame.resource))) {
+    if (legacyDeliveryEnabled || explicitInterestKeys.has(resourceRevisionKey(frame.workspaceName, frame.resource)) || frame.workspaceName === null && [...explicitInterestKeys].some((key) => key.endsWith(`\0${frame.resource}`))) {
       send2(frame);
       return;
     }
@@ -24085,6 +24458,12 @@ function handleWsEventsConnection(socket, daemonIdentity, options = {}) {
     subscriptions.delete(sessionName);
   };
   const subscribeInterest = (interest) => {
+    if (interest.resource === "terminal-runtime-inventory" && !options.ownerAuthorized) {
+      return {
+        ready: Promise.resolve({ status: "unavailable" }),
+        release: () => void 0
+      };
+    }
     const key = resourceInterestKey(interest);
     const existing = interestHandles.get(key);
     if (existing && existing.status !== "unavailable") return existing.handle;
@@ -26887,7 +27266,7 @@ var init_workspace_pane_creation2 = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/semantic-pane-catalog.ts
-import { z as z67 } from "zod";
+import { z as z69 } from "zod";
 function analyzeTrustedSemanticPaneCatalog(candidates) {
   const rows = [];
   let invalidRuntimeProof = false;
@@ -26936,18 +27315,18 @@ var init_semantic_pane_catalog = __esm({
   "packages/daemon/src/terminal/attachments/semantic-pane-catalog.ts"() {
     "use strict";
     init_src();
-    RuntimeSessionIdSchemaZ = z67.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u);
-    RuntimeWindowIdSchemaZ = z67.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u);
-    RuntimePaneIdSchemaZ = z67.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u);
-    TrustedSemanticPaneSnapshotSchemaZ = z67.object({
+    RuntimeSessionIdSchemaZ = z69.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u);
+    RuntimeWindowIdSchemaZ = z69.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u);
+    RuntimePaneIdSchemaZ = z69.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u);
+    TrustedSemanticPaneSnapshotSchemaZ = z69.object({
       workspaceName: WorkspaceIdSchemaZ,
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ.nullable(),
       windowStamp: TerminalAttachmentSemanticWindowIdSchemaZ.nullable().optional(),
       sessionId: RuntimeSessionIdSchemaZ,
       windowId: RuntimeWindowIdSchemaZ,
       runtimePaneId: RuntimePaneIdSchemaZ,
-      windowPaneCount: z67.number().int().positive(),
-      sessionWindowCount: z67.number().int().positive()
+      windowPaneCount: z69.number().int().positive(),
+      sessionWindowCount: z69.number().int().positive()
     }).strict();
     SemanticPaneCatalogError = class extends Error {
       code;
@@ -26970,7 +27349,7 @@ var init_semantic_pane_catalog = __esm({
       }
       /** Resolves a pane set from one trusted discovery snapshot. */
       async resolveMany(targets) {
-        const parsedTargets = z67.array(TerminalAttachmentSemanticTargetSchemaZ).min(1).max(4096).parse(targets);
+        const parsedTargets = z69.array(TerminalAttachmentSemanticTargetSchemaZ).min(1).max(4096).parse(targets);
         const diagnosticTarget = parsedTargets[0];
         let discovered;
         try {
@@ -28034,7 +28413,7 @@ var init_workspace_promotion2 = __esm({
     ].join(FIELD);
     ERROR_MESSAGES3 = {
       daemon_instance_mismatch: "The daemon generation changed before the session was promoted.",
-      session_not_found: "No adopted fleet session matches the requested session identity.",
+      session_not_found: "No live fleet session matches the requested session identity.",
       session_not_adopted: "The requested session is not adopted and cannot be promoted.",
       session_internal: "Internal tmux-ide sessions cannot be promoted.",
       workspace_conflict: "The derived workspace identity is already owned by another session.",
@@ -28148,6 +28527,7 @@ var init_workspace_promotion2 = __esm({
             this.#stampPaneInventory(request, session, registeredIdentity);
             this.#assertActive(request.operationId);
             this.#verifyPromotedInventory(session.sessionId, registeredIdentity);
+            this.#publishFleetEnrollment(request, session, registeredIdentity);
             return this.#succeed(request, fingerprint2, alreadyRegistered.name, session.sessionName, {
               replayed: true
             });
@@ -28157,6 +28537,7 @@ var init_workspace_promotion2 = __esm({
           const canonicalRoot = this.#stampSession(request, session, identity);
           this.#assertActive(request.operationId);
           this.#verifyPromotedInventory(session.sessionId, identity);
+          this.#publishFleetEnrollment(request, session, identity);
           let registered;
           try {
             registered = this.#registry.add({
@@ -28202,9 +28583,6 @@ var init_workspace_promotion2 = __esm({
         if (isInternalSession(match.sessionName)) {
           throw new WorkspacePromotionError("session_internal", { sessionId });
         }
-        if (!match.adopted) {
-          throw new WorkspacePromotionError("session_not_adopted", { sessionId });
-        }
         return match;
       }
       #listSessions() {
@@ -28222,6 +28600,24 @@ var init_workspace_promotion2 = __esm({
               workspaceName: identity.workspaceName
             });
           }
+        }
+      }
+      /**
+       * Publish fleet enrollment only after the complete terminal inventory has
+       * passed promotion verification. A pre-existing enrollment is byte-identical;
+       * a newly published marker makes the soon-to-be registered workspace visible
+       * to the shared FleetCatalog in the same mutation transaction.
+       */
+      #publishFleetEnrollment(request, session, identity) {
+        if (session.adopted) return;
+        try {
+          this.#io.runTmux(["set-option", "-t", session.sessionId, ADOPTED_OPTION2, "1"]);
+        } catch (error) {
+          throw new WorkspacePromotionError(
+            "stamp_failed",
+            { operationId: request.operationId, workspaceName: identity.workspaceName },
+            error
+          );
         }
       }
       /**
@@ -28839,6 +29235,7 @@ var MAX_REPLAY_OPERATIONS, sleep, FleetLifecycleAuthorityError, FleetLifecycleAu
 var init_fleet_lifecycle_authority = __esm({
   "packages/daemon/src/lib/fleet-lifecycle-authority.ts"() {
     "use strict";
+    init_src();
     init_discovery();
     init_fleet_catalog2();
     init_chrome_front_door();
@@ -28963,7 +29360,7 @@ var init_fleet_lifecycle_authority = __esm({
         const resource3 = projectFleetCatalog(
           facts,
           {
-            protocolVersion: 1,
+            protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
             productVersion: this.#productVersion,
             instanceId: this.#daemonInstanceId,
             startedAt: this.#startedAt
@@ -29680,41 +30077,41 @@ var init_app_window_state2 = __esm({
 // packages/daemon/src/lib/app-window-kernel.ts
 function applyAppWindowCommand(document, command2, timestamp) {
   const current = requireDocument(document);
-  const at = requireTimestamp(current.updatedAt, timestamp);
+  const at2 = requireTimestamp(current.updatedAt, timestamp);
   switch (command2.type) {
     case "window.focus":
       if (command2.windowId !== null) requireWindowId(current, command2.windowId);
       try {
-        return focusAppWindow(current, command2.windowId, at);
+        return focusAppWindow(current, command2.windowId, at2);
       } catch (error) {
         throw translateStateError(error, command2.windowId ? `$.windows.${command2.windowId}` : "$");
       }
     case "window.float":
-      return floatWindow(current, command2, at);
+      return floatWindow(current, command2, at2);
     case "window.dock":
-      return dockWindow(current, command2, at);
+      return dockWindow(current, command2, at2);
     case "window.move":
-      return moveFloatingWindow(current, command2, at);
+      return moveFloatingWindow(current, command2, at2);
     case "window.resize":
-      return resizeFloatingWindow(current, command2, at);
+      return resizeFloatingWindow(current, command2, at2);
     case "stack.activate":
-      return activateStackWindow(current, command2, at);
+      return activateStackWindow(current, command2, at2);
     case "stack.reorder":
-      return reorderStackWindow(current, command2, at);
+      return reorderStackWindow(current, command2, at2);
     case "layout.save":
       try {
         return saveAppWindowNamedLayout(current, {
           id: command2.layoutId,
           name: command2.name,
           description: command2.description,
-          updatedAt: at
+          updatedAt: at2
         });
       } catch (error) {
         throw translateStateError(error, `$.layouts.${command2.layoutId}`);
       }
     case "layout.restore":
       try {
-        return restoreAppWindowNamedLayout(current, command2.layoutId, at);
+        return restoreAppWindowNamedLayout(current, command2.layoutId, at2);
       } catch (error) {
         if (error.message.includes("unknown app window layout")) {
           throw new AppWindowKernelError(
@@ -29726,9 +30123,9 @@ function applyAppWindowCommand(document, command2, timestamp) {
         throw translateStateError(error, `$.layouts.${command2.layoutId}`);
       }
     case "layout.rename":
-      return renameLayout(current, command2.layoutId, command2.name, at);
+      return renameLayout(current, command2.layoutId, command2.name, at2);
     case "layout.delete":
-      return deleteLayout(current, command2.layoutId, at);
+      return deleteLayout(current, command2.layoutId, at2);
   }
 }
 function isAppWindowCommandSatisfied(document, command2) {
@@ -30840,7 +31237,7 @@ var init_app_window_mutation2 = __esm({
 
 // packages/daemon/src/lib/tmux-external-interaction-observer.ts
 import { execFile as execFile6 } from "node:child_process";
-import { z as z68 } from "zod";
+import { z as z70 } from "zod";
 function socketArguments(authority) {
   return authority.socketSelector.kind === "path" ? ["-S", authority.socketSelector.path] : ["-L", authority.socketSelector.name];
 }
@@ -31051,7 +31448,7 @@ var init_tmux_external_interaction_observer = __esm({
         }
         const ownPrefix = `${this.#daemonInstanceId}:`;
         const authoredOperationId = record.operationMarker?.startsWith(ownPrefix) ? record.operationMarker.slice(ownPrefix.length) : null;
-        const operationId = z68.uuid().safeParse(authoredOperationId);
+        const operationId = z70.uuid().safeParse(authoredOperationId);
         let identity;
         try {
           identity = this.#io.runTmux([
@@ -31987,21 +32384,91 @@ var init_workspace_multiplexer_verbs = __esm({
   }
 });
 
+// packages/daemon/src/terminal/session-runtime/runtime-observability.ts
+import { randomUUID as randomUUID9 } from "node:crypto";
+import { z as z71 } from "zod";
+function createSessionRuntimeObservability(options = {}) {
+  const capacity = options.capacity ?? 1024;
+  if (!Number.isInteger(capacity) || capacity < 1 || capacity > 65536)
+    throw new TypeError("Runtime observability capacity must be in [1, 65536]");
+  const nowMicros = options.nowMicros ?? (() => Math.floor(performance.now() * 1e3));
+  const processId = options.processId ?? `daemon:${process.pid}`;
+  const clockId = options.clockId ?? "node-performance-now";
+  const clockKind = options.clockKind ?? "performance-now";
+  const createTraceId = options.createTraceId ?? randomUUID9;
+  const spans = [];
+  let cursor = 0;
+  let droppedSpans = 0;
+  return Object.freeze({
+    enabled: true,
+    nowMicros,
+    beginTrace(scenario, authority, traceId) {
+      return Object.freeze({
+        traceId: z71.uuid().parse(traceId ?? createTraceId()),
+        scenario,
+        authority
+      });
+    },
+    recordSpan(stage, operation, startedAtMicros, endedAtMicros, trace = null) {
+      const span = Object.freeze({
+        traceId: trace?.traceId ?? null,
+        scenario: trace?.scenario ?? null,
+        authority: trace?.authority ?? null,
+        stage,
+        processId,
+        clockId,
+        clockKind,
+        operation,
+        startedAtMicros,
+        endedAtMicros
+      });
+      if (spans.length < capacity) spans.push(span);
+      else {
+        spans[cursor] = span;
+        cursor = (cursor + 1) % capacity;
+        droppedSpans += 1;
+      }
+      options.onSpan?.(span);
+    },
+    snapshot() {
+      const ordered = spans.length < capacity || cursor === 0 ? [...spans] : [...spans.slice(cursor), ...spans.slice(0, cursor)];
+      return Object.freeze({ spans: Object.freeze(ordered), droppedSpans });
+    }
+  });
+}
+var EMPTY_SNAPSHOT, DISABLED_SESSION_RUNTIME_OBSERVABILITY;
+var init_runtime_observability = __esm({
+  "packages/daemon/src/terminal/session-runtime/runtime-observability.ts"() {
+    "use strict";
+    EMPTY_SNAPSHOT = Object.freeze({
+      spans: Object.freeze([]),
+      droppedSpans: 0
+    });
+    DISABLED_SESSION_RUNTIME_OBSERVABILITY = Object.freeze({
+      enabled: false,
+      nowMicros: () => 0,
+      beginTrace: () => null,
+      recordSpan: () => void 0,
+      snapshot: () => EMPTY_SNAPSHOT
+    });
+  }
+});
+
 // packages/daemon/src/terminal/protocol/control.ts
 function decodeControlBytes(escaped) {
   const out = new Uint8Array(escaped.length);
-  let n = 0;
+  let n10 = 0;
   for (let i = 0; i < escaped.length; i++) {
     const ch = escaped.charCodeAt(i);
     if (ch === 92 && // backslash
     i + 3 < escaped.length + 1 && isOctal(escaped.charCodeAt(i + 1)) && isOctal(escaped.charCodeAt(i + 2)) && isOctal(escaped.charCodeAt(i + 3))) {
-      out[n++] = parseInt(escaped.slice(i + 1, i + 4), 8) & 255;
+      out[n10++] = parseInt(escaped.slice(i + 1, i + 4), 8) & 255;
       i += 3;
     } else {
-      out[n++] = ch & 255;
+      out[n10++] = ch & 255;
     }
   }
-  return out.subarray(0, n);
+  return out.subarray(0, n10);
 }
 function isOctal(code) {
   return code !== void 0 && code >= 48 && code <= 55;
@@ -32551,6 +33018,9 @@ function decodeTmuxArgument(value) {
 function parseSessionPaneDescriptorReply(lines) {
   const descriptors = [];
   let malformedUtf8Records = 0;
+  if (lines.length > 4096 || lines.reduce((bytes, line) => bytes + Buffer.byteLength(line, "latin1") + 1, 0) > 128 * 1024) {
+    return { descriptors, malformedUtf8Records };
+  }
   for (const line of lines) {
     const utf8Line = decodeControlReplyUtf8(line);
     if (utf8Line === null) {
@@ -32558,7 +33028,7 @@ function parseSessionPaneDescriptorReply(lines) {
       continue;
     }
     const encoded = utf8Line.split("	");
-    if (encoded.length !== 10) continue;
+    if (encoded.length !== 20) continue;
     const [
       runtimePaneId = "",
       semanticPaneId3 = "",
@@ -32569,13 +33039,37 @@ function parseSessionPaneDescriptorReply(lines) {
       windowIndexRaw = "",
       windowName = "",
       windowId = "",
-      title = ""
+      title = "",
+      runtimeSessionId = "",
+      paneIndexRaw = "",
+      name = "",
+      missionStamp = "",
+      paneActiveRaw = "",
+      windowActiveRaw = "",
+      semanticWindowId = "",
+      sessionName = "",
+      windowPaneCountRaw = "",
+      sessionWindowCountRaw = ""
     ] = encoded.map(decodeTmuxArgument);
-    if (!/^%[0-9]+$/u.test(runtimePaneId)) continue;
+    if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtimePaneId) || runtimePaneId.length > 32) continue;
+    if (!/^\$(?:0|[1-9][0-9]*)$/u.test(runtimeSessionId) || runtimeSessionId.length > 32) continue;
     const parsedWindowIndex = Number(windowIndexRaw);
     const windowIndex = Number.isSafeInteger(parsedWindowIndex) && parsedWindowIndex >= 0 ? parsedWindowIndex : null;
+    const paneIndex = Number(paneIndexRaw);
+    const windowPaneCount = Number(windowPaneCountRaw);
+    const sessionWindowCount = Number(sessionWindowCountRaw);
+    if (!/^(?:0|[1-9][0-9]*)$/u.test(paneIndexRaw) || !Number.isSafeInteger(paneIndex)) continue;
+    if (!/^[1-9][0-9]*$/u.test(windowPaneCountRaw) || !Number.isSafeInteger(windowPaneCount) || !/^[1-9][0-9]*$/u.test(sessionWindowCountRaw) || !Number.isSafeInteger(sessionWindowCount) || windowPaneCount < 1 || sessionWindowCount < 1)
+      continue;
+    if (!["0", "1"].includes(paneActiveRaw) || !["0", "1"].includes(windowActiveRaw)) continue;
+    const bounded2 = (value, maximum) => value.length <= maximum && !/[\0\r\n\t]/u.test(value);
+    if (!bounded2(semanticPaneId3, 256) || !bounded2(role, 256) || !bounded2(type, 256) || !bounded2(currentCommand, 512) || !bounded2(cwd, 4096) || !bounded2(title, 1024) || !bounded2(windowName, 1024) || !bounded2(name, 256) || !bounded2(missionStamp, 256) || !bounded2(semanticWindowId, 256) || !bounded2(sessionName, 160) || sessionName.length === 0 || windowId.length > 32) {
+      continue;
+    }
     descriptors.push({
+      sessionName,
       runtimePaneId,
+      runtimeSessionId,
       semanticPaneId: nonempty(semanticPaneId3),
       role: nonempty(role),
       type: nonempty(type),
@@ -32584,7 +33078,15 @@ function parseSessionPaneDescriptorReply(lines) {
       title: nonempty(title),
       windowIndex,
       windowName: nonempty(windowName),
-      windowId: /^@[0-9]+$/u.test(windowId) ? windowId : null
+      windowId: /^@(?:0|[1-9][0-9]*)$/u.test(windowId) ? windowId : null,
+      semanticWindowId: nonempty(semanticWindowId),
+      paneIndex,
+      name: nonempty(name),
+      missionStamp: nonempty(missionStamp),
+      paneActive: paneActiveRaw === "1",
+      windowActive: windowActiveRaw === "1",
+      windowPaneCount,
+      sessionWindowCount
     });
   }
   return { descriptors, malformedUtf8Records };
@@ -32616,7 +33118,17 @@ var init_session_descriptor_discovery = __esm({
       "#{window_index}",
       "#{qa:window_name}",
       "#{window_id}",
-      "#{qa:pane_title}"
+      "#{qa:pane_title}",
+      "#{session_id}",
+      "#{pane_index}",
+      "#{qa:@ide_name}",
+      "#{qa:@tmux_ide_mission}",
+      "#{pane_active}",
+      "#{?window_active,1,0}",
+      "#{qa:@tmux_ide_window_id}",
+      "#{qa:session_name}",
+      "#{window_panes}",
+      "#{session_windows}"
     ].join("	");
     SessionDescriptorDiscovery = class {
       options;
@@ -32972,7 +33484,7 @@ var init_flow_ledger = __esm({
 // packages/daemon/src/terminal/mirror/pane-feed.ts
 function parseCursorProbe(line) {
   const [x, y, cols, rows] = line.trim().split(/\s+/).map(Number);
-  if (![x, y, cols, rows].every((n) => Number.isInteger(n) && n !== void 0 && n >= 0) || !cols || !rows) {
+  if (![x, y, cols, rows].every((n10) => Number.isInteger(n10) && n10 !== void 0 && n10 >= 0) || !cols || !rows) {
     return null;
   }
   return { x, y, cols, rows };
@@ -33111,6 +33623,9 @@ var init_session_channel = __esm({
       cancelSync = null;
       disposed = false;
       nativeClientProbePending = false;
+      trustedInventoryFlight = null;
+      trustedInventoryFlightSessionId = null;
+      attachedIdentity = null;
       /** Settles once the FIRST identity join lands (or is proven impossible), so
        *  `start()` returns a channel whose semantic ids are subscribable. */
       resolveFirstJoin = null;
@@ -33121,7 +33636,7 @@ var init_session_channel = __esm({
         (action) => {
           const startedAtMicros = action.traceIds?.length ? Math.floor(performance.now() * 1e3) : 0;
           const pendingBeforeSend = action.traceIds?.length ? this.io.pendingCount ?? 0 : 0;
-          const onReply = action.traceIds?.length ? () => this.opts.onInputAccepted?.(action, Math.floor(performance.now() * 1e3)) : void 0;
+          const onReply = action.traceIds?.length ? (reply) => this.opts.onInputAccepted?.(action, Math.floor(performance.now() * 1e3), reply.ok) : void 0;
           if (action.kind === "literal") {
             this.io.send(
               `send-keys -t ${action.pane} -H ${textToHexKeys(action.text).join(" ")}`,
@@ -33169,6 +33684,7 @@ var init_session_channel = __esm({
       }
       async start() {
         await this.io.start();
+        await this.captureAttachedSessionIdentity();
         if (this.opts.onNativeClientActivity) {
           this.io.send(`refresh-client -B '${NATIVE_CLIENT_SUBSCRIPTION}::#{session_attached}'`);
         }
@@ -33194,6 +33710,50 @@ var init_session_channel = __esm({
           diagnostics: [...this.diagnostics],
           degraded: this.degraded
         };
+      }
+      /**
+       * Strict daemon-internal inventory from this channel's current tmux truth.
+       * Unlike the background discovery path, this query awaits descriptor
+       * reconciliation before projecting and rejects incomplete identity rather
+       * than returning the previous descriptor snapshot.
+       */
+      describeTrustedInventory(expectedRuntimeSessionId) {
+        if (this.disposed) {
+          return Promise.reject(new Error(`mirror session ${this.opts.session} is disposed`));
+        }
+        if (this.trustedInventoryFlight) {
+          return this.trustedInventoryFlightSessionId === expectedRuntimeSessionId ? this.trustedInventoryFlight : Promise.reject(new Error(`trusted inventory identity changed for ${this.opts.session}`));
+        }
+        const flight = this.refreshTrustedInventory(expectedRuntimeSessionId).finally(() => {
+          if (this.trustedInventoryFlight === flight) {
+            this.trustedInventoryFlight = null;
+            this.trustedInventoryFlightSessionId = null;
+          }
+        });
+        this.trustedInventoryFlight = flight;
+        this.trustedInventoryFlightSessionId = expectedRuntimeSessionId;
+        return flight;
+      }
+      /** Read-only proof of the session this control client is actually attached to. */
+      async attachedSessionIdentity() {
+        if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
+        if (!this.attachedIdentity)
+          throw new Error(`mirror session ${this.opts.session} identity is absent`);
+        return this.attachedIdentity;
+      }
+      async captureAttachedSessionIdentity() {
+        const lines = await this.io.request(`display-message -p "#{qa:session_name}	#{session_id}"`);
+        if (lines.length !== 1)
+          throw new Error(`mirror session ${this.opts.session} identity is absent`);
+        const decodedLine = decodeControlReplyUtf8(lines[0]);
+        if (decodedLine === null)
+          throw new Error(`mirror session ${this.opts.session} identity is malformed`);
+        const [encodedName = "", runtimeSessionId = ""] = decodedLine.split("	");
+        const sessionName = decodeTmuxArgument(encodedName);
+        if (sessionName.length === 0 || sessionName.length > 160 || !/^\$(?:0|[1-9][0-9]*)$/u.test(runtimeSessionId) || runtimeSessionId.length > 32) {
+          throw new Error(`mirror session ${this.opts.session} identity is malformed`);
+        }
+        this.attachedIdentity = Object.freeze({ sessionName, runtimeSessionId });
       }
       subscribePane(semanticPaneId3, onEvent, onLayout) {
         const pane = this.panesBySemantic.get(semanticPaneId3);
@@ -33246,11 +33806,13 @@ var init_session_channel = __esm({
       /** Controller-authorized input fast path. It deliberately reuses the one
        * session InputCoalescer, so literal/key ordering and tmux application-mode
        * named-key semantics are identical for GUI, TUI and direct subscribers. */
-      sendText(semanticPaneId3, text, performanceTraceId) {
+      sendText(semanticPaneId3, text, performanceTraceId, isolated = false) {
         const pane = this.panesBySemantic.get(semanticPaneId3);
         if (!pane)
           throw new Error(`unknown semantic pane ${semanticPaneId3} in session ${this.opts.session}`);
+        if (isolated) this.input.flush();
         this.input.literal(pane.runtimeId, text, performanceTraceId);
+        if (isolated) this.input.flush();
       }
       sendKey(semanticPaneId3, key, performanceTraceId) {
         const pane = this.panesBySemantic.get(semanticPaneId3);
@@ -33576,16 +34138,30 @@ var init_session_channel = __esm({
         const lines = await this.io.request(
           `list-panes -s -t "${this.opts.session}" -F "#{pane_id}	#{pane_active}	#{window_id}	#{?window_active,1,0}"`
         );
-        const listed = /* @__PURE__ */ new Set();
-        this.truthActive.clear();
-        this.truthWindow.clear();
+        const truth = [];
         for (const line of lines) {
           const [runtime = "", active2 = "", windowId = "", windowActive = ""] = line.split("	");
           if (!/^%[0-9]+$/u.test(runtime)) continue;
-          listed.add(runtime);
-          this.truthActive.set(runtime, active2 === "1");
-          this.truthWindow.set(runtime, windowId);
-          if (windowActive === "1" && windowId.startsWith("@")) this.currentWindow = windowId;
+          truth.push({
+            runtimePaneId: runtime,
+            active: active2 === "1",
+            runtimeWindowId: windowId,
+            windowActive: windowActive === "1"
+          });
+        }
+        const listed = this.applyPaneTruth(truth);
+        await this.syncWindows();
+        this.discovery.discover(listed);
+      }
+      applyPaneTruth(truth) {
+        const listed = /* @__PURE__ */ new Set();
+        this.truthActive.clear();
+        this.truthWindow.clear();
+        for (const row of truth) {
+          listed.add(row.runtimePaneId);
+          this.truthActive.set(row.runtimePaneId, row.active);
+          this.truthWindow.set(row.runtimePaneId, row.runtimeWindowId);
+          if (row.windowActive) this.currentWindow = row.runtimeWindowId;
         }
         for (const [runtime, pane] of [...this.panesByRuntime]) {
           if (listed.has(runtime)) {
@@ -33605,12 +34181,102 @@ var init_session_channel = __esm({
           }
           pane.subs.clear();
         }
-        await this.syncWindows();
-        this.discovery.discover(listed);
+        return listed;
       }
-      async syncWindows() {
+      async refreshTrustedInventory(expectedRuntimeSessionId, attempt = 0) {
+        const beforeLines = await this.io.request(
+          `list-panes -s -t "${expectedRuntimeSessionId}" -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`
+        );
+        if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
+        const parsed = parseSessionPaneDescriptorReply(beforeLines);
+        if (parsed.malformedUtf8Records !== 0 || parsed.descriptors.length === 0 || parsed.descriptors.length !== beforeLines.length) {
+          throw new Error(`trusted inventory for ${this.opts.session} is malformed`);
+        }
+        const descriptors = parsed.descriptors;
+        const runtimePaneIds = new Set(descriptors.map((pane) => pane.runtimePaneId));
+        const runtimeSessionIds = new Set(descriptors.map((pane) => pane.runtimeSessionId));
+        const activeWindowIds = new Set(
+          descriptors.filter((pane) => pane.windowActive).map((pane) => pane.windowId)
+        );
+        const globallyActivePanes = descriptors.filter((pane) => pane.paneActive && pane.windowActive);
+        if (runtimePaneIds.size !== descriptors.length || runtimeSessionIds.size !== 1 || runtimeSessionIds.values().next().value !== expectedRuntimeSessionId || descriptors.some((pane) => pane.sessionName !== this.opts.session) || descriptors.some((pane) => pane.windowId === null) || activeWindowIds.size !== 1 || globallyActivePanes.length !== 1) {
+          throw new Error(`trusted inventory for ${this.opts.session} is inconsistent`);
+        }
+        const computedWindowCounts = /* @__PURE__ */ new Map();
+        for (const descriptor2 of descriptors) {
+          const runtimeWindowId = descriptor2.windowId;
+          computedWindowCounts.set(
+            runtimeWindowId,
+            (computedWindowCounts.get(runtimeWindowId) ?? 0) + 1
+          );
+        }
+        if (descriptors.some(
+          (pane) => pane.windowPaneCount !== computedWindowCounts.get(pane.windowId) || pane.sessionWindowCount !== computedWindowCounts.size
+        )) {
+          throw new Error(`trusted inventory for ${this.opts.session} has incomplete counts`);
+        }
+        const listed = this.applyPaneTruth(
+          descriptors.map((pane) => ({
+            runtimePaneId: pane.runtimePaneId,
+            active: pane.paneActive,
+            runtimeWindowId: pane.windowId,
+            windowActive: pane.windowActive
+          }))
+        );
+        const repairedWindows = await this.syncWindows(expectedRuntimeSessionId);
+        const repairedPanes = await this.reconcileIdentity(descriptors, listed);
+        const afterLines = await this.io.request(
+          `list-panes -s -t "${expectedRuntimeSessionId}" -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`
+        );
+        const coherent = beforeLines.length === afterLines.length && beforeLines.every((line, index) => line === afterLines[index]);
+        if (repairedWindows || repairedPanes || !coherent) {
+          if (attempt >= 1)
+            throw new Error(`trusted inventory for ${this.opts.session} did not settle`);
+          return await this.refreshTrustedInventory(expectedRuntimeSessionId, attempt + 1);
+        }
+        if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
+        if (this.degraded || this.panesByRuntime.size !== descriptors.length || this.windowsByRuntime.size !== computedWindowCounts.size || [...computedWindowCounts.keys()].some(
+          (runtimeWindowId) => !this.windowsByRuntime.has(runtimeWindowId)
+        )) {
+          throw new Error(`trusted inventory for ${this.opts.session} is degraded`);
+        }
+        const windowCounts = computedWindowCounts;
+        const sessionWindowCount = computedWindowCounts.size;
+        const panes = descriptors.map((descriptor2) => {
+          const record = this.panesByRuntime.get(descriptor2.runtimePaneId);
+          const runtimeWindowId = descriptor2.windowId;
+          const window2 = this.windowsByRuntime.get(runtimeWindowId);
+          if (!record || record.windowRuntimeId !== descriptor2.windowId || !window2?.semanticId || descriptor2.semanticPaneId !== record.semanticId || descriptor2.semanticWindowId !== window2.semanticId || !WorkspaceIdSchemaZ.safeParse(record.semanticId).success || !WorkspaceIdSchemaZ.safeParse(window2.semanticId).success) {
+            throw new Error(`trusted inventory for ${this.opts.session} lacks verified identity`);
+          }
+          return Object.freeze({
+            runtimeSessionId: descriptor2.runtimeSessionId,
+            runtimeWindowId,
+            runtimePaneId: descriptor2.runtimePaneId,
+            semanticWindowId: window2.semanticId,
+            semanticPaneId: record.semanticId,
+            windowPaneCount: windowCounts.get(runtimeWindowId),
+            sessionWindowCount,
+            paneIndex: descriptor2.paneIndex,
+            title: descriptor2.title ?? "",
+            currentCommand: descriptor2.currentCommand ?? "",
+            active: descriptor2.paneActive && descriptor2.windowActive,
+            role: descriptor2.role,
+            name: descriptor2.name,
+            type: descriptor2.type,
+            missionStamp: descriptor2.missionStamp,
+            dir: descriptor2.cwd ?? ""
+          });
+        });
+        return Object.freeze({
+          sessionName: this.opts.session,
+          runtimeSessionId: descriptors[0].runtimeSessionId,
+          panes: Object.freeze(panes)
+        });
+      }
+      async syncWindows(target = this.opts.session) {
         const lines = await this.io.request(
-          `list-windows -t "${this.opts.session}" -F "#{window_id}	#{qa:@tmux_ide_window_id}	#{qa:window_name}	#{window_active}	#{window_visible_layout}	#{?window_zoomed_flag,1,0}	#{pane-border-status}"`
+          `list-windows -t "${target}" -F "#{window_id}	#{qa:@tmux_ide_window_id}	#{qa:window_name}	#{window_active}	#{window_visible_layout}	#{?window_zoomed_flag,1,0}	#{pane-border-status}"`
         );
         const rows = [];
         for (const raw of lines) {
@@ -33647,6 +34313,7 @@ var init_session_channel = __esm({
         }
         const claimed = new Set(stampCounts.keys());
         const generateWindowId = this.opts.generateWindowId ?? defaultMirrorWindowId;
+        let repairedIdentity = false;
         const next = /* @__PURE__ */ new Map();
         for (const row of rows) {
           if (row.active) this.currentWindow = row.runtimeId;
@@ -33656,6 +34323,7 @@ var init_session_channel = __esm({
           if (row.stamp && stampCounts.get(row.stamp) === 1) {
             semanticId = row.stamp;
           } else {
+            repairedIdentity = true;
             let candidate = null;
             for (let attempt = 0; attempt < 32 && !candidate; attempt += 1) {
               const generated = generateWindowId();
@@ -33695,9 +34363,10 @@ var init_session_channel = __esm({
         this.windowsByRuntime.clear();
         for (const [key, value] of next) this.windowsByRuntime.set(key, value);
         if (changed) for (const runtimeId of next.keys()) this.emitLayout(runtimeId);
+        return repairedIdentity;
       }
       async reconcileIdentity(descriptors, listed) {
-        if (this.disposed) return;
+        if (this.disposed) return false;
         const snapshots = descriptors.filter((descriptor2) => listed.has(descriptor2.runtimePaneId)).map((descriptor2) => ({
           runtimePaneId: descriptor2.runtimePaneId,
           semanticPaneId: descriptor2.semanticPaneId,
@@ -33727,7 +34396,7 @@ var init_session_channel = __esm({
             )
           )
         );
-        if (this.disposed) return;
+        if (this.disposed) return plan.stampEffects.length > 0;
         const reconciliation = finalizeWorkspaceTmuxReconciliation(plan, outcomes);
         const descriptorByRuntime = new Map(descriptors.map((d) => [d.runtimePaneId, d]));
         for (const verified of reconciliation.panes) {
@@ -33789,6 +34458,7 @@ var init_session_channel = __esm({
         this.degraded = reconciliation.degraded;
         for (const runtimeId of this.layoutByWindow.keys()) this.emitLayout(runtimeId);
         this.settleFirstJoin();
+        return plan.stampEffects.length > 0;
       }
       settleFirstJoin() {
         this.resolveFirstJoin?.();
@@ -33881,6 +34551,32 @@ var init_mirror_service = __esm({
           this.release(session, entry);
         }
       }
+      /**
+       * Daemon-private raw inventory from an already-retained channel. This seam
+       * never creates or starts authority; a retirement race returns null.
+       */
+      async describeTrustedInventory(session, expectedRuntimeSessionId) {
+        const entry = this.channels.get(session);
+        if (!entry || entry.retired) return null;
+        await entry.started;
+        if (this.channels.get(session) !== entry || entry.retired) return null;
+        const inventory = await entry.channel.describeTrustedInventory(expectedRuntimeSessionId);
+        if (this.channels.get(session) !== entry || entry.retired) return null;
+        return inventory;
+      }
+      hasRetainedSession(session) {
+        const entry = this.channels.get(session);
+        return entry !== void 0 && !entry.retired;
+      }
+      async retainedSessionIdentity(session) {
+        const entry = this.channels.get(session);
+        if (!entry || entry.retired) return null;
+        await entry.started;
+        if (this.channels.get(session) !== entry || entry.retired) return null;
+        const identity = await entry.channel.attachedSessionIdentity();
+        if (this.channels.get(session) !== entry || entry.retired) return null;
+        return identity;
+      }
       async subscribe(request) {
         const entry = await this.acquire(request.session);
         let handle;
@@ -33934,10 +34630,10 @@ var init_mirror_service = __esm({
         };
       }
       /** Synchronous hot input on an already-retained SessionRuntime channel. */
-      sendText(session, semanticPaneId3, text, performanceTraceId) {
+      sendText(session, semanticPaneId3, text, performanceTraceId, isolated = false) {
         const entry = this.channels.get(session);
         if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
-        entry.channel.sendText(semanticPaneId3, text, performanceTraceId);
+        entry.channel.sendText(semanticPaneId3, text, performanceTraceId, isolated);
       }
       sendKey(session, semanticPaneId3, key, performanceTraceId) {
         const entry = this.channels.get(session);
@@ -34052,7 +34748,7 @@ var init_mirror_service = __esm({
                 endedAtMicros,
                 pendingBeforeSend
               ),
-              onInputAccepted: (action, acceptedAtMicros) => this.opts.onInputAccepted?.(session, action, acceptedAtMicros),
+              onInputAccepted: (action, acceptedAtMicros, ok2) => this.opts.onInputAccepted?.(session, action, acceptedAtMicros, ok2),
               onOutputObserved: (semanticPaneId3, ageMs, timing) => this.opts.onOutputObserved?.(session, semanticPaneId3, ageMs, timing)
             };
             channel = new SessionChannel(channelOptions);
@@ -34266,78 +34962,8 @@ var init_runtime_scheduler = __esm({
   }
 });
 
-// packages/daemon/src/terminal/session-runtime/runtime-observability.ts
-import { randomUUID as randomUUID9 } from "node:crypto";
-import { z as z69 } from "zod";
-function createSessionRuntimeObservability(options = {}) {
-  const capacity = options.capacity ?? 1024;
-  if (!Number.isInteger(capacity) || capacity < 1 || capacity > 65536)
-    throw new TypeError("Runtime observability capacity must be in [1, 65536]");
-  const nowMicros = options.nowMicros ?? (() => Math.floor(performance.now() * 1e3));
-  const processId = options.processId ?? `daemon:${process.pid}`;
-  const clockId = options.clockId ?? "node-performance-now";
-  const clockKind = options.clockKind ?? "performance-now";
-  const createTraceId = options.createTraceId ?? randomUUID9;
-  const spans = [];
-  let cursor = 0;
-  let droppedSpans = 0;
-  return Object.freeze({
-    enabled: true,
-    nowMicros,
-    beginTrace(scenario, authority, traceId) {
-      return Object.freeze({
-        traceId: z69.uuid().parse(traceId ?? createTraceId()),
-        scenario,
-        authority
-      });
-    },
-    recordSpan(stage, operation, startedAtMicros, endedAtMicros, trace = null) {
-      const span = Object.freeze({
-        traceId: trace?.traceId ?? null,
-        scenario: trace?.scenario ?? null,
-        authority: trace?.authority ?? null,
-        stage,
-        processId,
-        clockId,
-        clockKind,
-        operation,
-        startedAtMicros,
-        endedAtMicros
-      });
-      if (spans.length < capacity) spans.push(span);
-      else {
-        spans[cursor] = span;
-        cursor = (cursor + 1) % capacity;
-        droppedSpans += 1;
-      }
-      options.onSpan?.(span);
-    },
-    snapshot() {
-      const ordered = spans.length < capacity || cursor === 0 ? [...spans] : [...spans.slice(cursor), ...spans.slice(0, cursor)];
-      return Object.freeze({ spans: Object.freeze(ordered), droppedSpans });
-    }
-  });
-}
-var EMPTY_SNAPSHOT, DISABLED_SESSION_RUNTIME_OBSERVABILITY;
-var init_runtime_observability = __esm({
-  "packages/daemon/src/terminal/session-runtime/runtime-observability.ts"() {
-    "use strict";
-    EMPTY_SNAPSHOT = Object.freeze({
-      spans: Object.freeze([]),
-      droppedSpans: 0
-    });
-    DISABLED_SESSION_RUNTIME_OBSERVABILITY = Object.freeze({
-      enabled: false,
-      nowMicros: () => 0,
-      beginTrace: () => null,
-      recordSpan: () => void 0,
-      snapshot: () => EMPTY_SNAPSHOT
-    });
-  }
-});
-
 // packages/daemon/src/terminal/session-runtime/semantic-mutation-executor.ts
-import { z as z70 } from "zod";
+import { z as z72 } from "zod";
 function replayedResult(result) {
   return result === void 0 ? void 0 : { ...result, outcome: "replayed" };
 }
@@ -34397,7 +35023,7 @@ var init_semantic_mutation_executor = __esm({
             new SessionRuntimeIntentError("rejected", "Session semantic mutation executor is disposed")
           );
         }
-        const operationId = z70.uuid().parse(rawOperationId);
+        const operationId = z72.uuid().parse(rawOperationId);
         let intent = SessionRuntimeSemanticIntentSchemaZ.parse(rawIntent);
         if (intent.verb === "workspace.pane.send" || intent.verb === "workspace.pane.read") {
           intent = { ...intent, origin: authority.origin };
@@ -35750,5049 +36376,4423 @@ var init_src3 = __esm({
   }
 });
 
-// node_modules/.pnpm/@xterm+headless@6.0.0/node_modules/@xterm/headless/lib-headless/xterm-headless.js
-var require_xterm_headless = __commonJS({
-  "node_modules/.pnpm/@xterm+headless@6.0.0/node_modules/@xterm/headless/lib-headless/xterm-headless.js"(exports) {
-    (() => {
-      "use strict";
-      var e = { 5639: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.CircularList = void 0;
-        const i2 = s2(7150), r2 = s2(802);
-        class n2 extends i2.Disposable {
-          constructor(e3) {
-            super(), this._maxLength = e3, this.onDeleteEmitter = this._register(new r2.Emitter()), this.onDelete = this.onDeleteEmitter.event, this.onInsertEmitter = this._register(new r2.Emitter()), this.onInsert = this.onInsertEmitter.event, this.onTrimEmitter = this._register(new r2.Emitter()), this.onTrim = this.onTrimEmitter.event, this._array = new Array(this._maxLength), this._startIndex = 0, this._length = 0;
-          }
-          get maxLength() {
-            return this._maxLength;
-          }
-          set maxLength(e3) {
-            if (this._maxLength === e3) return;
-            const t3 = new Array(e3);
-            for (let s3 = 0; s3 < Math.min(e3, this.length); s3++) t3[s3] = this._array[this._getCyclicIndex(s3)];
-            this._array = t3, this._maxLength = e3, this._startIndex = 0;
-          }
-          get length() {
-            return this._length;
-          }
-          set length(e3) {
-            if (e3 > this._length) for (let t3 = this._length; t3 < e3; t3++) this._array[t3] = void 0;
-            this._length = e3;
-          }
-          get(e3) {
-            return this._array[this._getCyclicIndex(e3)];
-          }
-          set(e3, t3) {
-            this._array[this._getCyclicIndex(e3)] = t3;
-          }
-          push(e3) {
-            this._array[this._getCyclicIndex(this._length)] = e3, this._length === this._maxLength ? (this._startIndex = ++this._startIndex % this._maxLength, this.onTrimEmitter.fire(1)) : this._length++;
-          }
-          recycle() {
-            if (this._length !== this._maxLength) throw new Error("Can only recycle when the buffer is full");
-            return this._startIndex = ++this._startIndex % this._maxLength, this.onTrimEmitter.fire(1), this._array[this._getCyclicIndex(this._length - 1)];
-          }
-          get isFull() {
-            return this._length === this._maxLength;
-          }
-          pop() {
-            return this._array[this._getCyclicIndex(this._length-- - 1)];
-          }
-          splice(e3, t3, ...s3) {
-            if (t3) {
-              for (let s4 = e3; s4 < this._length - t3; s4++) this._array[this._getCyclicIndex(s4)] = this._array[this._getCyclicIndex(s4 + t3)];
-              this._length -= t3, this.onDeleteEmitter.fire({ index: e3, amount: t3 });
-            }
-            for (let t4 = this._length - 1; t4 >= e3; t4--) this._array[this._getCyclicIndex(t4 + s3.length)] = this._array[this._getCyclicIndex(t4)];
-            for (let t4 = 0; t4 < s3.length; t4++) this._array[this._getCyclicIndex(e3 + t4)] = s3[t4];
-            if (s3.length && this.onInsertEmitter.fire({ index: e3, amount: s3.length }), this._length + s3.length > this._maxLength) {
-              const e4 = this._length + s3.length - this._maxLength;
-              this._startIndex += e4, this._length = this._maxLength, this.onTrimEmitter.fire(e4);
-            } else this._length += s3.length;
-          }
-          trimStart(e3) {
-            e3 > this._length && (e3 = this._length), this._startIndex += e3, this._length -= e3, this.onTrimEmitter.fire(e3);
-          }
-          shiftElements(e3, t3, s3) {
-            if (!(t3 <= 0)) {
-              if (e3 < 0 || e3 >= this._length) throw new Error("start argument out of range");
-              if (e3 + s3 < 0) throw new Error("Cannot shift elements in list beyond index 0");
-              if (s3 > 0) {
-                for (let i4 = t3 - 1; i4 >= 0; i4--) this.set(e3 + i4 + s3, this.get(e3 + i4));
-                const i3 = e3 + t3 + s3 - this._length;
-                if (i3 > 0) for (this._length += i3; this._length > this._maxLength; ) this._length--, this._startIndex++, this.onTrimEmitter.fire(1);
-              } else for (let i3 = 0; i3 < t3; i3++) this.set(e3 + i3 + s3, this.get(e3 + i3));
-            }
-          }
-          _getCyclicIndex(e3) {
-            return (this._startIndex + e3) % this._maxLength;
-          }
+// node_modules/.pnpm/@tmux-ide+xterm-headless@https+++github.com+wavyrai+xterm.js+releases+download+v6.0.0-t_ba1269a173959f9237b0bac99cb787a8/node_modules/@tmux-ide/xterm-headless/lib-headless/xterm-headless.mjs
+function $(n10) {
+  return n10 > 65535 ? (n10 -= 65536, String.fromCharCode((n10 >> 10) + 55296) + String.fromCharCode(n10 % 1024 + 56320)) : String.fromCharCode(n10);
+}
+function le(n10, t = 0, e = n10.length) {
+  let r = "";
+  for (let i = t; i < e; ++i) {
+    let s = n10[i];
+    s > 65535 ? (s -= 65536, r += String.fromCharCode((s >> 10) + 55296) + String.fromCharCode(s % 1024 + 56320)) : r += String.fromCharCode(s);
+  }
+  return r;
+}
+function Xe(n10) {
+  oi(n10) || ni.onUnexpectedError(n10);
+}
+function oi(n10) {
+  return n10 instanceof $e ? true : n10 instanceof Error && n10.name === Bt && n10.message === Bt;
+}
+function ai(n10, t, e = 0, r = n10.length) {
+  let i = e, s = r;
+  for (; i < s; ) {
+    let a = Math.floor((i + s) / 2);
+    t(n10[a]) ? i = a + 1 : s = a;
+  }
+  return i - 1;
+}
+function pr(n10, t) {
+  return (e, r) => t(n10(e), n10(r));
+}
+function gr(n10, t) {
+  let e = /* @__PURE__ */ Object.create(null);
+  for (let r of n10) {
+    let i = t(r), s = e[i];
+    s || (s = e[i] = []), s.push(r);
+  }
+  return e;
+}
+function Lt(n10, t) {
+  let e = this, r = false, i;
+  return function() {
+    if (r) return i;
+    if (r = true, t) try {
+      i = n10.apply(e, arguments);
+    } finally {
+      t();
+    }
+    else i = n10.apply(e, arguments);
+    return i;
+  };
+}
+function ci(n10) {
+  de = n10;
+}
+function tt(n10) {
+  return de?.trackDisposable(n10), n10;
+}
+function rt(n10) {
+  de?.markAsDisposed(n10);
+}
+function Ae(n10, t) {
+  de?.setParent(n10, t);
+}
+function ui(n10, t) {
+  if (de) for (let e of n10) de.setParent(e, t);
+}
+function it(n10) {
+  if (Mt.is(n10)) {
+    let t = [];
+    for (let e of n10) if (e) try {
+      e.dispose();
+    } catch (r) {
+      t.push(r);
+    }
+    if (t.length === 1) throw t[0];
+    if (t.length > 1) throw new AggregateError(t, "Encountered errors while disposing of store");
+    return Array.isArray(n10) ? [] : n10;
+  } else if (n10) return n10.dispose(), n10;
+}
+function xr(...n10) {
+  let t = J(() => it(n10));
+  return ui(n10, t), t;
+}
+function J(n10) {
+  let t = tt({ dispose: Lt(() => {
+    rt(t), n10();
+  }) });
+  return t;
+}
+function Cr(n10) {
+  return n10[Vt] || [];
+}
+function j(n10) {
+  if (Kt.has(n10)) return Kt.get(n10);
+  let t = function(e, r, i) {
+    if (arguments.length !== 3) throw new Error("@IServiceName-decorator can only be used to decorate a parameter");
+    mi(t, e, i);
+  };
+  return t._id = n10, Kt.set(n10, t), t;
+}
+function mi(n10, t, e) {
+  t[yr] === t ? t[Vt].push({ id: n10, index: e }) : (t[Vt] = [{ id: n10, index: e }], t[yr] = t);
+}
+function Lr(n10, t, e, r, i, s) {
+  let a = [];
+  for (let l = 0; l < n10.length - 1; l++) {
+    let c = l, u = n10.get(++c);
+    if (!u.isWrapped) continue;
+    let m = [n10.get(l)];
+    for (; c < n10.length && u.isWrapped; ) m.push(u), u = n10.get(++c);
+    if (!s && r >= l && r < c) {
+      l += m.length - 1;
+      continue;
+    }
+    let o = 0, h = me(m, o, t), x = 1, v = 0;
+    for (; x < m.length; ) {
+      let d = me(m, x, t), R = d - v, w = e - h, L = Math.min(R, w);
+      m[o].copyCellsFrom(m[x], v, h, L, false), h += L, h === e && (o++, h = 0), v += L, v === d && (x++, v = 0), h === 0 && o !== 0 && m[o - 1].getWidth(e - 1) === 2 && (m[o].copyCellsFrom(m[o - 1], e - 1, h++, 1, false), m[o - 1].setCell(e - 1, i));
+    }
+    m[o].replaceCells(h, e, i);
+    let _ = 0;
+    for (let d = m.length - 1; d > 0 && (d > o || m[d].getTrimmedLength() === 0); d--) _++;
+    _ > 0 && (a.push(l + m.length - _), a.push(_)), l += m.length - 1;
+  }
+  return a;
+}
+function Mr(n10, t) {
+  let e = [], r = 0, i = t[r], s = 0;
+  for (let a = 0; a < n10.length; a++) if (i === a) {
+    let l = t[++r];
+    n10.onDeleteEmitter.fire({ index: a - s, amount: l }), a += l - 1, s += l, i = t[++r];
+  } else e.push(a);
+  return { layout: e, countRemoved: s };
+}
+function Nr(n10, t) {
+  let e = [];
+  for (let r = 0; r < t.length; r++) e.push(n10.get(t[r]));
+  for (let r = 0; r < e.length; r++) n10.set(r, e[r]);
+  n10.length = t.length;
+}
+function Hr(n10, t, e) {
+  let r = [], i = n10.map((c, u) => me(n10, u, t)).reduce((c, u) => c + u), s = 0, a = 0, l = 0;
+  for (; l < i; ) {
+    if (i - l < e) {
+      r.push(i - l);
+      break;
+    }
+    s += e;
+    let c = me(n10, a, t);
+    s > c && (s -= c, a++);
+    let u = n10[a].getWidth(s - 1) === 2;
+    u && s--;
+    let m = u ? e - 1 : e;
+    r.push(m), l += m;
+  }
+  return r;
+}
+function me(n10, t, e) {
+  if (t === n10.length - 1) return n10[t].getTrimmedLength();
+  let r = !n10[t].hasContent(e - 1) && n10[t].getWidth(e - 1) === 1, i = n10[t + 1].getWidth(0) === 2;
+  return r && i ? e - 1 : e;
+}
+function Si(n10) {
+  return n10 === "block" || n10 === "underline" || n10 === "bar";
+}
+function Ie(n10, t = 5) {
+  if (typeof n10 != "object") return n10;
+  let e = Array.isArray(n10) ? [] : {};
+  for (let r in n10) e[r] = t <= 1 ? n10[r] : n10[r] && Ie(n10[r], t - 1);
+  return e;
+}
+function Jt(n10, t) {
+  let e = (n10.ctrl ? 16 : 0) | (n10.shift ? 4 : 0) | (n10.alt ? 8 : 0);
+  return n10.button === 4 ? (e |= 64, e |= n10.action) : (e |= n10.button & 3, n10.button & 4 && (e |= 64), n10.button & 8 && (e |= 128), n10.action === 32 ? e |= 32 : n10.action === 0 && !t && (e |= 3)), e;
+}
+function yi(n10, t) {
+  let e = 0, r = t.length - 1, i;
+  if (n10 < t[0][0] || n10 > t[r][1]) return false;
+  for (; r >= e; ) if (i = e + r >> 1, n10 > t[i][1]) e = i + 1;
+  else if (n10 < t[i][0]) r = i - 1;
+  else return true;
+  return false;
+}
+function tr(n10) {
+  let e = n10.buffer.lines.get(n10.buffer.ybase + n10.buffer.y - 1)?.get(n10.cols - 1), r = n10.buffer.lines.get(n10.buffer.ybase + n10.buffer.y);
+  r && e && (r.isWrapped = e[3] !== 0 && e[3] !== 32);
+}
+function sr(n10) {
+  if (!n10) return;
+  let t = n10.toLowerCase();
+  if (t.indexOf("rgb:") === 0) {
+    t = t.slice(4);
+    let e = Oi.exec(t);
+    if (e) {
+      let r = e[1] ? 15 : e[4] ? 255 : e[7] ? 4095 : 65535;
+      return [Math.round(parseInt(e[1] || e[4] || e[7] || e[10], 16) / r * 255), Math.round(parseInt(e[2] || e[5] || e[8] || e[11], 16) / r * 255), Math.round(parseInt(e[3] || e[6] || e[9] || e[12], 16) / r * 255)];
+    }
+  } else if (t.indexOf("#") === 0 && (t = t.slice(1), Ri.exec(t) && [3, 6, 9, 12].includes(t.length))) {
+    let e = t.length / 3, r = [0, 0, 0];
+    for (let i = 0; i < 3; ++i) {
+      let s = parseInt(t.slice(e * i, e * i + e), 16);
+      r[i] = e === 1 ? s << 4 : e === 2 ? s : e === 3 ? s >> 4 : s >> 8;
+    }
+    return r;
+  }
+}
+function qr(n10, t) {
+  if (n10 > 24) return t.setWinLines || false;
+  switch (n10) {
+    case 1:
+      return !!t.restoreWin;
+    case 2:
+      return !!t.minimizeWin;
+    case 3:
+      return !!t.setWinPosition;
+    case 4:
+      return !!t.setWinSizePixels;
+    case 5:
+      return !!t.raiseWin;
+    case 6:
+      return !!t.lowerWin;
+    case 7:
+      return !!t.refreshWin;
+    case 8:
+      return !!t.setWinSizeChars;
+    case 9:
+      return !!t.maximizeWin;
+    case 10:
+      return !!t.fullscreenWin;
+    case 11:
+      return !!t.getWinState;
+    case 13:
+      return !!t.getWinPosition;
+    case 14:
+      return !!t.getWinSizePixels;
+    case 15:
+      return !!t.getScreenSizePixels;
+    case 16:
+      return !!t.getCellSizePixels;
+    case 18:
+      return !!t.getWinSizeChars;
+    case 19:
+      return !!t.getScreenSizeChars;
+    case 20:
+      return !!t.getIconTitle;
+    case 21:
+      return !!t.getWinTitle;
+    case 22:
+      return !!t.pushTitle;
+    case 23:
+      return !!t.popTitle;
+    case 24:
+      return !!t.setWinLines;
+  }
+  return false;
+}
+function Xr(n10) {
+  return 0 <= n10 && n10 < 256;
+}
+var ti, ri, K, F, Ge, Ke, Ve, ze, te, re, G, qe, De, kt, ni, Bt, $e, je, Ye, fr, br, ue, mr, vr, _r, Qe, Mt, li, de, Ze, et, he, A, Je, fe, di, st, hi, Sr, fi, V, pe, Nt, Er, ot, Ht, Oe, Ft, Ut, pi, be, bi, _i, nt, S, Wt, at, lt, ct, C, k, ut, Gt, Z, yr, Vt, Kt, X, Dr, dt, Ar, Or, ht, Y, Rr, wr, Ns, zt, ft, vi, gi, _e, Ii, we, pt, bt, qt, Qs, Js, Zs, kr, en, tn, rn, _t, $t, jt, Br, vt, mt, B, ee, Fr, Pe, gt, Yt, Qt, ve, ge, Ti, It, Ur, Wr, xe, Gr, Zt, Kr, Te, er, Ei, M, xt, z73, Tt, P, ke, Ci, Be, Di, Se, Le, St, U, Me, Et, Ne, He, ir, q, Ai, yt, Oi, Ri, wi, ie, zr, $r, jr, Ct, Fe, Pi, Yr, ki, Dt, Ee, Qr, At, Ot, Rt, Bi, Jr;
+var init_xterm_headless = __esm({
+  "node_modules/.pnpm/@tmux-ide+xterm-headless@https+++github.com+wavyrai+xterm.js+releases+download+v6.0.0-t_ba1269a173959f9237b0bac99cb787a8/node_modules/@tmux-ide/xterm-headless/lib-headless/xterm-headless.mjs"() {
+    ti = Object.defineProperty;
+    ri = Object.getOwnPropertyDescriptor;
+    K = (n10, t, e, r) => {
+      for (var i = r > 1 ? void 0 : r ? ri(t, e) : t, s = n10.length - 1, a; s >= 0; s--) (a = n10[s]) && (i = (r ? a(t, e, i) : a(i)) || i);
+      return r && i && ti(t, e, i), i;
+    };
+    F = (n10, t) => (e, r) => t(e, r, n10);
+    Ge = class {
+      constructor() {
+        this._interim = 0;
+      }
+      clear() {
+        this._interim = 0;
+      }
+      decode(t, e) {
+        let r = t.length;
+        if (!r) return 0;
+        let i = 0, s = 0;
+        if (this._interim) {
+          let a = t.charCodeAt(s++);
+          56320 <= a && a <= 57343 ? e[i++] = (this._interim - 55296) * 1024 + a - 56320 + 65536 : (e[i++] = this._interim, e[i++] = a), this._interim = 0;
         }
-        t2.CircularList = n2;
-      }, 7453: (e2, t2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.clone = function e3(t3, s2 = 5) {
-          if ("object" != typeof t3) return t3;
-          const i2 = Array.isArray(t3) ? [] : {};
-          for (const r2 in t3) i2[r2] = s2 <= 1 ? t3[r2] : t3[r2] && e3(t3[r2], s2 - 1);
-          return i2;
-        };
-      }, 5777: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.CoreTerminal = void 0;
-        const i2 = s2(6501), r2 = s2(6025), n2 = s2(7276), o = s2(9640), a = s2(56), h = s2(4071), c = s2(7792), l = s2(6415), u = s2(5746), d = s2(5882), f = s2(2486), _ = s2(3562), p = s2(8811), g = s2(802), v = s2(7150);
-        let m = false;
-        class b extends v.Disposable {
-          get onScroll() {
-            return this._onScrollApi || (this._onScrollApi = this._register(new g.Emitter()), this._onScroll.event(((e3) => {
-              this._onScrollApi?.fire(e3.position);
-            }))), this._onScrollApi.event;
+        for (let a = s; a < r; ++a) {
+          let l = t.charCodeAt(a);
+          if (55296 <= l && l <= 56319) {
+            if (++a >= r) return this._interim = l, i;
+            let c = t.charCodeAt(a);
+            56320 <= c && c <= 57343 ? e[i++] = (l - 55296) * 1024 + c - 56320 + 65536 : (e[i++] = l, e[i++] = c);
+            continue;
           }
-          get cols() {
-            return this._bufferService.cols;
-          }
-          get rows() {
-            return this._bufferService.rows;
-          }
-          get buffers() {
-            return this._bufferService.buffers;
-          }
-          get options() {
-            return this.optionsService.options;
-          }
-          set options(e3) {
-            for (const t3 in e3) this.optionsService.options[t3] = e3[t3];
-          }
-          constructor(e3) {
-            super(), this._windowsWrappingHeuristics = this._register(new v.MutableDisposable()), this._onBinary = this._register(new g.Emitter()), this.onBinary = this._onBinary.event, this._onData = this._register(new g.Emitter()), this.onData = this._onData.event, this._onLineFeed = this._register(new g.Emitter()), this.onLineFeed = this._onLineFeed.event, this._onResize = this._register(new g.Emitter()), this.onResize = this._onResize.event, this._onWriteParsed = this._register(new g.Emitter()), this.onWriteParsed = this._onWriteParsed.event, this._onScroll = this._register(new g.Emitter()), this._instantiationService = new r2.InstantiationService(), this.optionsService = this._register(new a.OptionsService(e3)), this._instantiationService.setService(i2.IOptionsService, this.optionsService), this._bufferService = this._register(this._instantiationService.createInstance(o.BufferService)), this._instantiationService.setService(i2.IBufferService, this._bufferService), this._logService = this._register(this._instantiationService.createInstance(n2.LogService)), this._instantiationService.setService(i2.ILogService, this._logService), this.coreService = this._register(this._instantiationService.createInstance(h.CoreService)), this._instantiationService.setService(i2.ICoreService, this.coreService), this.coreMouseService = this._register(this._instantiationService.createInstance(c.CoreMouseService)), this._instantiationService.setService(i2.ICoreMouseService, this.coreMouseService), this.unicodeService = this._register(this._instantiationService.createInstance(l.UnicodeService)), this._instantiationService.setService(i2.IUnicodeService, this.unicodeService), this._charsetService = this._instantiationService.createInstance(u.CharsetService), this._instantiationService.setService(i2.ICharsetService, this._charsetService), this._oscLinkService = this._instantiationService.createInstance(p.OscLinkService), this._instantiationService.setService(i2.IOscLinkService, this._oscLinkService), this._inputHandler = this._register(new f.InputHandler(this._bufferService, this._charsetService, this.coreService, this._logService, this.optionsService, this._oscLinkService, this.coreMouseService, this.unicodeService)), this._register(g.Event.forward(this._inputHandler.onLineFeed, this._onLineFeed)), this._register(this._inputHandler), this._register(g.Event.forward(this._bufferService.onResize, this._onResize)), this._register(g.Event.forward(this.coreService.onData, this._onData)), this._register(g.Event.forward(this.coreService.onBinary, this._onBinary)), this._register(this.coreService.onRequestScrollToBottom((() => this.scrollToBottom(true)))), this._register(this.coreService.onUserInput((() => this._writeBuffer.handleUserInput()))), this._register(this.optionsService.onMultipleOptionChange(["windowsMode", "windowsPty"], (() => this._handleWindowsPtyOptionChange()))), this._register(this._bufferService.onScroll((() => {
-              this._onScroll.fire({ position: this._bufferService.buffer.ydisp }), this._inputHandler.markRangeDirty(this._bufferService.buffer.scrollTop, this._bufferService.buffer.scrollBottom);
-            }))), this._writeBuffer = this._register(new _.WriteBuffer(((e4, t3) => this._inputHandler.parse(e4, t3)))), this._register(g.Event.forward(this._writeBuffer.onWriteParsed, this._onWriteParsed));
-          }
-          write(e3, t3) {
-            this._writeBuffer.write(e3, t3);
-          }
-          writeSync(e3, t3) {
-            this._logService.logLevel <= i2.LogLevelEnum.WARN && !m && (this._logService.warn("writeSync is unreliable and will be removed soon."), m = true), this._writeBuffer.writeSync(e3, t3);
-          }
-          input(e3, t3 = true) {
-            this.coreService.triggerDataEvent(e3, t3);
-          }
-          resize(e3, t3) {
-            isNaN(e3) || isNaN(t3) || (e3 = Math.max(e3, o.MINIMUM_COLS), t3 = Math.max(t3, o.MINIMUM_ROWS), this._bufferService.resize(e3, t3));
-          }
-          scroll(e3, t3 = false) {
-            this._bufferService.scroll(e3, t3);
-          }
-          scrollLines(e3, t3) {
-            this._bufferService.scrollLines(e3, t3);
-          }
-          scrollPages(e3) {
-            this.scrollLines(e3 * (this.rows - 1));
-          }
-          scrollToTop() {
-            this.scrollLines(-this._bufferService.buffer.ydisp);
-          }
-          scrollToBottom(e3) {
-            this.scrollLines(this._bufferService.buffer.ybase - this._bufferService.buffer.ydisp);
-          }
-          scrollToLine(e3) {
-            const t3 = e3 - this._bufferService.buffer.ydisp;
-            0 !== t3 && this.scrollLines(t3);
-          }
-          registerEscHandler(e3, t3) {
-            return this._inputHandler.registerEscHandler(e3, t3);
-          }
-          registerDcsHandler(e3, t3) {
-            return this._inputHandler.registerDcsHandler(e3, t3);
-          }
-          registerCsiHandler(e3, t3) {
-            return this._inputHandler.registerCsiHandler(e3, t3);
-          }
-          registerOscHandler(e3, t3) {
-            return this._inputHandler.registerOscHandler(e3, t3);
-          }
-          _setup() {
-            this._handleWindowsPtyOptionChange();
-          }
-          reset() {
-            this._inputHandler.reset(), this._bufferService.reset(), this._charsetService.reset(), this.coreService.reset(), this.coreMouseService.reset();
-          }
-          _handleWindowsPtyOptionChange() {
-            let e3 = false;
-            const t3 = this.optionsService.rawOptions.windowsPty;
-            t3 && void 0 !== t3.buildNumber && void 0 !== t3.buildNumber ? e3 = !!("conpty" === t3.backend && t3.buildNumber < 21376) : this.optionsService.rawOptions.windowsMode && (e3 = true), e3 ? this._enableWindowsWrappingHeuristics() : this._windowsWrappingHeuristics.clear();
-          }
-          _enableWindowsWrappingHeuristics() {
-            if (!this._windowsWrappingHeuristics.value) {
-              const e3 = [];
-              e3.push(this.onLineFeed(d.updateWindowsModeWrappedState.bind(null, this._bufferService))), e3.push(this.registerCsiHandler({ final: "H" }, (() => ((0, d.updateWindowsModeWrappedState)(this._bufferService), false)))), this._windowsWrappingHeuristics.value = (0, v.toDisposable)((() => {
-                for (const t3 of e3) t3.dispose();
-              }));
-            }
-          }
+          l !== 65279 && (e[i++] = l);
         }
-        t2.CoreTerminal = b;
-      }, 2486: function(e2, t2, s2) {
-        var i2 = this && this.__decorate || function(e3, t3, s3, i3) {
-          var r3, n3 = arguments.length, o2 = n3 < 3 ? t3 : null === i3 ? i3 = Object.getOwnPropertyDescriptor(t3, s3) : i3;
-          if ("object" == typeof Reflect && "function" == typeof Reflect.decorate) o2 = Reflect.decorate(e3, t3, s3, i3);
-          else for (var a2 = e3.length - 1; a2 >= 0; a2--) (r3 = e3[a2]) && (o2 = (n3 < 3 ? r3(o2) : n3 > 3 ? r3(t3, s3, o2) : r3(t3, s3)) || o2);
-          return n3 > 3 && o2 && Object.defineProperty(t3, s3, o2), o2;
-        }, r2 = this && this.__param || function(e3, t3) {
-          return function(s3, i3) {
-            t3(s3, i3, e3);
-          };
-        };
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.InputHandler = t2.WindowsOptionsReportType = void 0, t2.isValidColorIndex = k;
-        const n2 = s2(3534), o = s2(6760), a = s2(6717), h = s2(7150), c = s2(726), l = s2(6107), u = s2(8938), d = s2(3055), f = s2(5451), _ = s2(6501), p = s2(6415), g = s2(1346), v = s2(9823), m = s2(8693), b = s2(802), S = { "(": 0, ")": 1, "*": 2, "+": 3, "-": 1, ".": 2 }, y = 131072;
-        function C(e3, t3) {
-          if (e3 > 24) return t3.setWinLines || false;
-          switch (e3) {
-            case 1:
-              return !!t3.restoreWin;
-            case 2:
-              return !!t3.minimizeWin;
-            case 3:
-              return !!t3.setWinPosition;
-            case 4:
-              return !!t3.setWinSizePixels;
-            case 5:
-              return !!t3.raiseWin;
-            case 6:
-              return !!t3.lowerWin;
-            case 7:
-              return !!t3.refreshWin;
-            case 8:
-              return !!t3.setWinSizeChars;
-            case 9:
-              return !!t3.maximizeWin;
-            case 10:
-              return !!t3.fullscreenWin;
-            case 11:
-              return !!t3.getWinState;
-            case 13:
-              return !!t3.getWinPosition;
-            case 14:
-              return !!t3.getWinSizePixels;
-            case 15:
-              return !!t3.getScreenSizePixels;
-            case 16:
-              return !!t3.getCellSizePixels;
-            case 18:
-              return !!t3.getWinSizeChars;
-            case 19:
-              return !!t3.getScreenSizeChars;
-            case 20:
-              return !!t3.getIconTitle;
-            case 21:
-              return !!t3.getWinTitle;
-            case 22:
-              return !!t3.pushTitle;
-            case 23:
-              return !!t3.popTitle;
-            case 24:
-              return !!t3.setWinLines;
+        return i;
+      }
+    };
+    Ke = class {
+      constructor() {
+        this.interim = new Uint8Array(3);
+      }
+      clear() {
+        this.interim.fill(0);
+      }
+      decode(t, e) {
+        let r = t.length;
+        if (!r) return 0;
+        let i = 0, s, a, l, c, u = 0, m = 0;
+        if (this.interim[0]) {
+          let x = false, v = this.interim[0];
+          v &= (v & 224) === 192 ? 31 : (v & 240) === 224 ? 15 : 7;
+          let _ = 0, d;
+          for (; (d = this.interim[++_] & 63) && _ < 4; ) v <<= 6, v |= d;
+          let R = (this.interim[0] & 224) === 192 ? 2 : (this.interim[0] & 240) === 224 ? 3 : 4, w = R - _;
+          for (; m < w; ) {
+            if (m >= r) return 0;
+            if (d = t[m++], (d & 192) !== 128) {
+              m--, x = true;
+              break;
+            } else this.interim[_++] = d, v <<= 6, v |= d & 63;
           }
-          return false;
+          x || (R === 2 ? v < 128 ? m-- : e[i++] = v : R === 3 ? v < 2048 || v >= 55296 && v <= 57343 || v === 65279 || (e[i++] = v) : v < 65536 || v > 1114111 || (e[i++] = v)), this.interim.fill(0);
         }
-        var w;
-        !(function(e3) {
-          e3[e3.GET_WIN_SIZE_PIXELS = 0] = "GET_WIN_SIZE_PIXELS", e3[e3.GET_CELL_SIZE_PIXELS = 1] = "GET_CELL_SIZE_PIXELS";
-        })(w || (t2.WindowsOptionsReportType = w = {}));
-        let E = 0;
-        class A extends h.Disposable {
-          getAttrData() {
-            return this._curAttrData;
-          }
-          constructor(e3, t3, s3, i3, r3, h2, u2, d2, f2 = new a.EscapeSequenceParser()) {
-            super(), this._bufferService = e3, this._charsetService = t3, this._coreService = s3, this._logService = i3, this._optionsService = r3, this._oscLinkService = h2, this._coreMouseService = u2, this._unicodeService = d2, this._parser = f2, this._parseBuffer = new Uint32Array(4096), this._stringDecoder = new c.StringToUtf32(), this._utf8Decoder = new c.Utf8ToUtf32(), this._windowTitle = "", this._iconName = "", this._windowTitleStack = [], this._iconNameStack = [], this._curAttrData = l.DEFAULT_ATTR_DATA.clone(), this._eraseAttrDataInternal = l.DEFAULT_ATTR_DATA.clone(), this._onRequestBell = this._register(new b.Emitter()), this.onRequestBell = this._onRequestBell.event, this._onRequestRefreshRows = this._register(new b.Emitter()), this.onRequestRefreshRows = this._onRequestRefreshRows.event, this._onRequestReset = this._register(new b.Emitter()), this.onRequestReset = this._onRequestReset.event, this._onRequestSendFocus = this._register(new b.Emitter()), this.onRequestSendFocus = this._onRequestSendFocus.event, this._onRequestSyncScrollBar = this._register(new b.Emitter()), this.onRequestSyncScrollBar = this._onRequestSyncScrollBar.event, this._onRequestWindowsOptionsReport = this._register(new b.Emitter()), this.onRequestWindowsOptionsReport = this._onRequestWindowsOptionsReport.event, this._onA11yChar = this._register(new b.Emitter()), this.onA11yChar = this._onA11yChar.event, this._onA11yTab = this._register(new b.Emitter()), this.onA11yTab = this._onA11yTab.event, this._onCursorMove = this._register(new b.Emitter()), this.onCursorMove = this._onCursorMove.event, this._onLineFeed = this._register(new b.Emitter()), this.onLineFeed = this._onLineFeed.event, this._onScroll = this._register(new b.Emitter()), this.onScroll = this._onScroll.event, this._onTitleChange = this._register(new b.Emitter()), this.onTitleChange = this._onTitleChange.event, this._onColor = this._register(new b.Emitter()), this.onColor = this._onColor.event, this._parseStack = { paused: false, cursorStartX: 0, cursorStartY: 0, decodedLength: 0, position: 0 }, this._specialColors = [256, 257, 258], this._register(this._parser), this._dirtyRowTracker = new L(this._bufferService), this._activeBuffer = this._bufferService.buffer, this._register(this._bufferService.buffers.onBufferActivate(((e4) => this._activeBuffer = e4.activeBuffer))), this._parser.setCsiHandlerFallback(((e4, t4) => {
-              this._logService.debug("Unknown CSI code: ", { identifier: this._parser.identToString(e4), params: t4.toArray() });
-            })), this._parser.setEscHandlerFallback(((e4) => {
-              this._logService.debug("Unknown ESC code: ", { identifier: this._parser.identToString(e4) });
-            })), this._parser.setExecuteHandlerFallback(((e4) => {
-              this._logService.debug("Unknown EXECUTE code: ", { code: e4 });
-            })), this._parser.setOscHandlerFallback(((e4, t4, s4) => {
-              this._logService.debug("Unknown OSC code: ", { identifier: e4, action: t4, data: s4 });
-            })), this._parser.setDcsHandlerFallback(((e4, t4, s4) => {
-              "HOOK" === t4 && (s4 = s4.toArray()), this._logService.debug("Unknown DCS code: ", { identifier: this._parser.identToString(e4), action: t4, payload: s4 });
-            })), this._parser.setPrintHandler(((e4, t4, s4) => this.print(e4, t4, s4))), this._parser.registerCsiHandler({ final: "@" }, ((e4) => this.insertChars(e4))), this._parser.registerCsiHandler({ intermediates: " ", final: "@" }, ((e4) => this.scrollLeft(e4))), this._parser.registerCsiHandler({ final: "A" }, ((e4) => this.cursorUp(e4))), this._parser.registerCsiHandler({ intermediates: " ", final: "A" }, ((e4) => this.scrollRight(e4))), this._parser.registerCsiHandler({ final: "B" }, ((e4) => this.cursorDown(e4))), this._parser.registerCsiHandler({ final: "C" }, ((e4) => this.cursorForward(e4))), this._parser.registerCsiHandler({ final: "D" }, ((e4) => this.cursorBackward(e4))), this._parser.registerCsiHandler({ final: "E" }, ((e4) => this.cursorNextLine(e4))), this._parser.registerCsiHandler({ final: "F" }, ((e4) => this.cursorPrecedingLine(e4))), this._parser.registerCsiHandler({ final: "G" }, ((e4) => this.cursorCharAbsolute(e4))), this._parser.registerCsiHandler({ final: "H" }, ((e4) => this.cursorPosition(e4))), this._parser.registerCsiHandler({ final: "I" }, ((e4) => this.cursorForwardTab(e4))), this._parser.registerCsiHandler({ final: "J" }, ((e4) => this.eraseInDisplay(e4, false))), this._parser.registerCsiHandler({ prefix: "?", final: "J" }, ((e4) => this.eraseInDisplay(e4, true))), this._parser.registerCsiHandler({ final: "K" }, ((e4) => this.eraseInLine(e4, false))), this._parser.registerCsiHandler({ prefix: "?", final: "K" }, ((e4) => this.eraseInLine(e4, true))), this._parser.registerCsiHandler({ final: "L" }, ((e4) => this.insertLines(e4))), this._parser.registerCsiHandler({ final: "M" }, ((e4) => this.deleteLines(e4))), this._parser.registerCsiHandler({ final: "P" }, ((e4) => this.deleteChars(e4))), this._parser.registerCsiHandler({ final: "S" }, ((e4) => this.scrollUp(e4))), this._parser.registerCsiHandler({ final: "T" }, ((e4) => this.scrollDown(e4))), this._parser.registerCsiHandler({ final: "X" }, ((e4) => this.eraseChars(e4))), this._parser.registerCsiHandler({ final: "Z" }, ((e4) => this.cursorBackwardTab(e4))), this._parser.registerCsiHandler({ final: "`" }, ((e4) => this.charPosAbsolute(e4))), this._parser.registerCsiHandler({ final: "a" }, ((e4) => this.hPositionRelative(e4))), this._parser.registerCsiHandler({ final: "b" }, ((e4) => this.repeatPrecedingCharacter(e4))), this._parser.registerCsiHandler({ final: "c" }, ((e4) => this.sendDeviceAttributesPrimary(e4))), this._parser.registerCsiHandler({ prefix: ">", final: "c" }, ((e4) => this.sendDeviceAttributesSecondary(e4))), this._parser.registerCsiHandler({ final: "d" }, ((e4) => this.linePosAbsolute(e4))), this._parser.registerCsiHandler({ final: "e" }, ((e4) => this.vPositionRelative(e4))), this._parser.registerCsiHandler({ final: "f" }, ((e4) => this.hVPosition(e4))), this._parser.registerCsiHandler({ final: "g" }, ((e4) => this.tabClear(e4))), this._parser.registerCsiHandler({ final: "h" }, ((e4) => this.setMode(e4))), this._parser.registerCsiHandler({ prefix: "?", final: "h" }, ((e4) => this.setModePrivate(e4))), this._parser.registerCsiHandler({ final: "l" }, ((e4) => this.resetMode(e4))), this._parser.registerCsiHandler({ prefix: "?", final: "l" }, ((e4) => this.resetModePrivate(e4))), this._parser.registerCsiHandler({ final: "m" }, ((e4) => this.charAttributes(e4))), this._parser.registerCsiHandler({ final: "n" }, ((e4) => this.deviceStatus(e4))), this._parser.registerCsiHandler({ prefix: "?", final: "n" }, ((e4) => this.deviceStatusPrivate(e4))), this._parser.registerCsiHandler({ intermediates: "!", final: "p" }, ((e4) => this.softReset(e4))), this._parser.registerCsiHandler({ intermediates: " ", final: "q" }, ((e4) => this.setCursorStyle(e4))), this._parser.registerCsiHandler({ final: "r" }, ((e4) => this.setScrollRegion(e4))), this._parser.registerCsiHandler({ final: "s" }, ((e4) => this.saveCursor(e4))), this._parser.registerCsiHandler({ final: "t" }, ((e4) => this.windowOptions(e4))), this._parser.registerCsiHandler({ final: "u" }, ((e4) => this.restoreCursor(e4))), this._parser.registerCsiHandler({ intermediates: "'", final: "}" }, ((e4) => this.insertColumns(e4))), this._parser.registerCsiHandler({ intermediates: "'", final: "~" }, ((e4) => this.deleteColumns(e4))), this._parser.registerCsiHandler({ intermediates: '"', final: "q" }, ((e4) => this.selectProtected(e4))), this._parser.registerCsiHandler({ intermediates: "$", final: "p" }, ((e4) => this.requestMode(e4, true))), this._parser.registerCsiHandler({ prefix: "?", intermediates: "$", final: "p" }, ((e4) => this.requestMode(e4, false))), this._parser.setExecuteHandler(n2.C0.BEL, (() => this.bell())), this._parser.setExecuteHandler(n2.C0.LF, (() => this.lineFeed())), this._parser.setExecuteHandler(n2.C0.VT, (() => this.lineFeed())), this._parser.setExecuteHandler(n2.C0.FF, (() => this.lineFeed())), this._parser.setExecuteHandler(n2.C0.CR, (() => this.carriageReturn())), this._parser.setExecuteHandler(n2.C0.BS, (() => this.backspace())), this._parser.setExecuteHandler(n2.C0.HT, (() => this.tab())), this._parser.setExecuteHandler(n2.C0.SO, (() => this.shiftOut())), this._parser.setExecuteHandler(n2.C0.SI, (() => this.shiftIn())), this._parser.setExecuteHandler(n2.C1.IND, (() => this.index())), this._parser.setExecuteHandler(n2.C1.NEL, (() => this.nextLine())), this._parser.setExecuteHandler(n2.C1.HTS, (() => this.tabSet())), this._parser.registerOscHandler(0, new g.OscHandler(((e4) => (this.setTitle(e4), this.setIconName(e4), true)))), this._parser.registerOscHandler(1, new g.OscHandler(((e4) => this.setIconName(e4)))), this._parser.registerOscHandler(2, new g.OscHandler(((e4) => this.setTitle(e4)))), this._parser.registerOscHandler(4, new g.OscHandler(((e4) => this.setOrReportIndexedColor(e4)))), this._parser.registerOscHandler(8, new g.OscHandler(((e4) => this.setHyperlink(e4)))), this._parser.registerOscHandler(10, new g.OscHandler(((e4) => this.setOrReportFgColor(e4)))), this._parser.registerOscHandler(11, new g.OscHandler(((e4) => this.setOrReportBgColor(e4)))), this._parser.registerOscHandler(12, new g.OscHandler(((e4) => this.setOrReportCursorColor(e4)))), this._parser.registerOscHandler(104, new g.OscHandler(((e4) => this.restoreIndexedColor(e4)))), this._parser.registerOscHandler(110, new g.OscHandler(((e4) => this.restoreFgColor(e4)))), this._parser.registerOscHandler(111, new g.OscHandler(((e4) => this.restoreBgColor(e4)))), this._parser.registerOscHandler(112, new g.OscHandler(((e4) => this.restoreCursorColor(e4)))), this._parser.registerEscHandler({ final: "7" }, (() => this.saveCursor())), this._parser.registerEscHandler({ final: "8" }, (() => this.restoreCursor())), this._parser.registerEscHandler({ final: "D" }, (() => this.index())), this._parser.registerEscHandler({ final: "E" }, (() => this.nextLine())), this._parser.registerEscHandler({ final: "H" }, (() => this.tabSet())), this._parser.registerEscHandler({ final: "M" }, (() => this.reverseIndex())), this._parser.registerEscHandler({ final: "=" }, (() => this.keypadApplicationMode())), this._parser.registerEscHandler({ final: ">" }, (() => this.keypadNumericMode())), this._parser.registerEscHandler({ final: "c" }, (() => this.fullReset())), this._parser.registerEscHandler({ final: "n" }, (() => this.setgLevel(2))), this._parser.registerEscHandler({ final: "o" }, (() => this.setgLevel(3))), this._parser.registerEscHandler({ final: "|" }, (() => this.setgLevel(3))), this._parser.registerEscHandler({ final: "}" }, (() => this.setgLevel(2))), this._parser.registerEscHandler({ final: "~" }, (() => this.setgLevel(1))), this._parser.registerEscHandler({ intermediates: "%", final: "@" }, (() => this.selectDefaultCharset())), this._parser.registerEscHandler({ intermediates: "%", final: "G" }, (() => this.selectDefaultCharset()));
-            for (const e4 in o.CHARSETS) this._parser.registerEscHandler({ intermediates: "(", final: e4 }, (() => this.selectCharset("(" + e4))), this._parser.registerEscHandler({ intermediates: ")", final: e4 }, (() => this.selectCharset(")" + e4))), this._parser.registerEscHandler({ intermediates: "*", final: e4 }, (() => this.selectCharset("*" + e4))), this._parser.registerEscHandler({ intermediates: "+", final: e4 }, (() => this.selectCharset("+" + e4))), this._parser.registerEscHandler({ intermediates: "-", final: e4 }, (() => this.selectCharset("-" + e4))), this._parser.registerEscHandler({ intermediates: ".", final: e4 }, (() => this.selectCharset("." + e4))), this._parser.registerEscHandler({ intermediates: "/", final: e4 }, (() => this.selectCharset("/" + e4)));
-            this._parser.registerEscHandler({ intermediates: "#", final: "8" }, (() => this.screenAlignmentPattern())), this._parser.setErrorHandler(((e4) => (this._logService.error("Parsing error: ", e4), e4))), this._parser.registerDcsHandler({ intermediates: "$", final: "q" }, new v.DcsHandler(((e4, t4) => this.requestStatusString(e4, t4))));
-          }
-          _preserveStack(e3, t3, s3, i3) {
-            this._parseStack.paused = true, this._parseStack.cursorStartX = e3, this._parseStack.cursorStartY = t3, this._parseStack.decodedLength = s3, this._parseStack.position = i3;
-          }
-          _logSlowResolvingAsync(e3) {
-            this._logService.logLevel <= _.LogLevelEnum.WARN && Promise.race([e3, new Promise(((e4, t3) => setTimeout((() => t3("#SLOW_TIMEOUT")), 5e3)))]).catch(((e4) => {
-              if ("#SLOW_TIMEOUT" !== e4) throw e4;
-              console.warn("async parser handler taking longer than 5000 ms");
-            }));
-          }
-          _getCurrentLinkId() {
-            return this._curAttrData.extended.urlId;
-          }
-          parse(e3, t3) {
-            let s3, i3 = this._activeBuffer.x, r3 = this._activeBuffer.y, n3 = 0;
-            const o2 = this._parseStack.paused;
-            if (o2) {
-              if (s3 = this._parser.parse(this._parseBuffer, this._parseStack.decodedLength, t3)) return this._logSlowResolvingAsync(s3), s3;
-              i3 = this._parseStack.cursorStartX, r3 = this._parseStack.cursorStartY, this._parseStack.paused = false, e3.length > y && (n3 = this._parseStack.position + y);
-            }
-            if (this._logService.logLevel <= _.LogLevelEnum.DEBUG && this._logService.debug("parsing data " + ("string" == typeof e3 ? ` "${e3}"` : ` "${Array.prototype.map.call(e3, ((e4) => String.fromCharCode(e4))).join("")}"`)), this._logService.logLevel === _.LogLevelEnum.TRACE && this._logService.trace("parsing data (codes)", "string" == typeof e3 ? e3.split("").map(((e4) => e4.charCodeAt(0))) : e3), this._parseBuffer.length < e3.length && this._parseBuffer.length < y && (this._parseBuffer = new Uint32Array(Math.min(e3.length, y))), o2 || this._dirtyRowTracker.clearRange(), e3.length > y) for (let t4 = n3; t4 < e3.length; t4 += y) {
-              const n4 = t4 + y < e3.length ? t4 + y : e3.length, o3 = "string" == typeof e3 ? this._stringDecoder.decode(e3.substring(t4, n4), this._parseBuffer) : this._utf8Decoder.decode(e3.subarray(t4, n4), this._parseBuffer);
-              if (s3 = this._parser.parse(this._parseBuffer, o3)) return this._preserveStack(i3, r3, o3, t4), this._logSlowResolvingAsync(s3), s3;
-            }
-            else if (!o2) {
-              const t4 = "string" == typeof e3 ? this._stringDecoder.decode(e3, this._parseBuffer) : this._utf8Decoder.decode(e3, this._parseBuffer);
-              if (s3 = this._parser.parse(this._parseBuffer, t4)) return this._preserveStack(i3, r3, t4, 0), this._logSlowResolvingAsync(s3), s3;
-            }
-            this._activeBuffer.x === i3 && this._activeBuffer.y === r3 || this._onCursorMove.fire();
-            const a2 = this._dirtyRowTracker.end + (this._bufferService.buffer.ybase - this._bufferService.buffer.ydisp), h2 = this._dirtyRowTracker.start + (this._bufferService.buffer.ybase - this._bufferService.buffer.ydisp);
-            h2 < this._bufferService.rows && this._onRequestRefreshRows.fire({ start: Math.min(h2, this._bufferService.rows - 1), end: Math.min(a2, this._bufferService.rows - 1) });
-          }
-          print(e3, t3, s3) {
-            let i3, r3;
-            const n3 = this._charsetService.charset, o2 = this._optionsService.rawOptions.screenReaderMode, a2 = this._bufferService.cols, h2 = this._coreService.decPrivateModes.wraparound, d2 = this._coreService.modes.insertMode, f2 = this._curAttrData;
-            let _2 = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y);
-            this._dirtyRowTracker.markDirty(this._activeBuffer.y), this._activeBuffer.x && s3 - t3 > 0 && 2 === _2.getWidth(this._activeBuffer.x - 1) && _2.setCellFromCodepoint(this._activeBuffer.x - 1, 0, 1, f2);
-            let g2 = this._parser.precedingJoinState;
-            for (let v2 = t3; v2 < s3; ++v2) {
-              if (i3 = e3[v2], i3 < 127 && n3) {
-                const e4 = n3[String.fromCharCode(i3)];
-                e4 && (i3 = e4.charCodeAt(0));
-              }
-              const t4 = this._unicodeService.charProperties(i3, g2);
-              r3 = p.UnicodeService.extractWidth(t4);
-              const s4 = p.UnicodeService.extractShouldJoin(t4), m2 = s4 ? p.UnicodeService.extractWidth(g2) : 0;
-              if (g2 = t4, o2 && this._onA11yChar.fire((0, c.stringFromCodePoint)(i3)), this._getCurrentLinkId() && this._oscLinkService.addLineToLink(this._getCurrentLinkId(), this._activeBuffer.ybase + this._activeBuffer.y), this._activeBuffer.x + r3 - m2 > a2) {
-                if (h2) {
-                  const e4 = _2;
-                  let t5 = this._activeBuffer.x - m2;
-                  for (this._activeBuffer.x = m2, this._activeBuffer.y++, this._activeBuffer.y === this._activeBuffer.scrollBottom + 1 ? (this._activeBuffer.y--, this._bufferService.scroll(this._eraseAttrData(), true)) : (this._activeBuffer.y >= this._bufferService.rows && (this._activeBuffer.y = this._bufferService.rows - 1), this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y).isWrapped = true), _2 = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y), m2 > 0 && _2 instanceof l.BufferLine && _2.copyCellsFrom(e4, t5, 0, m2, false); t5 < a2; ) e4.setCellFromCodepoint(t5++, 0, 1, f2);
-                } else if (this._activeBuffer.x = a2 - 1, 2 === r3) continue;
-              }
-              if (s4 && this._activeBuffer.x) {
-                const e4 = _2.getWidth(this._activeBuffer.x - 1) ? 1 : 2;
-                _2.addCodepointToCell(this._activeBuffer.x - e4, i3, r3);
-                for (let e5 = r3 - m2; --e5 >= 0; ) _2.setCellFromCodepoint(this._activeBuffer.x++, 0, 0, f2);
-              } else if (d2 && (_2.insertCells(this._activeBuffer.x, r3 - m2, this._activeBuffer.getNullCell(f2)), 2 === _2.getWidth(a2 - 1) && _2.setCellFromCodepoint(a2 - 1, u.NULL_CELL_CODE, u.NULL_CELL_WIDTH, f2)), _2.setCellFromCodepoint(this._activeBuffer.x++, i3, r3, f2), r3 > 0) for (; --r3; ) _2.setCellFromCodepoint(this._activeBuffer.x++, 0, 0, f2);
-            }
-            this._parser.precedingJoinState = g2, this._activeBuffer.x < a2 && s3 - t3 > 0 && 0 === _2.getWidth(this._activeBuffer.x) && !_2.hasContent(this._activeBuffer.x) && _2.setCellFromCodepoint(this._activeBuffer.x, 0, 1, f2), this._dirtyRowTracker.markDirty(this._activeBuffer.y);
-          }
-          registerCsiHandler(e3, t3) {
-            return "t" !== e3.final || e3.prefix || e3.intermediates ? this._parser.registerCsiHandler(e3, t3) : this._parser.registerCsiHandler(e3, ((e4) => !C(e4.params[0], this._optionsService.rawOptions.windowOptions) || t3(e4)));
-          }
-          registerDcsHandler(e3, t3) {
-            return this._parser.registerDcsHandler(e3, new v.DcsHandler(t3));
-          }
-          registerEscHandler(e3, t3) {
-            return this._parser.registerEscHandler(e3, t3);
-          }
-          registerOscHandler(e3, t3) {
-            return this._parser.registerOscHandler(e3, new g.OscHandler(t3));
-          }
-          bell() {
-            return this._onRequestBell.fire(), true;
-          }
-          lineFeed() {
-            return this._dirtyRowTracker.markDirty(this._activeBuffer.y), this._optionsService.rawOptions.convertEol && (this._activeBuffer.x = 0), this._activeBuffer.y++, this._activeBuffer.y === this._activeBuffer.scrollBottom + 1 ? (this._activeBuffer.y--, this._bufferService.scroll(this._eraseAttrData())) : this._activeBuffer.y >= this._bufferService.rows ? this._activeBuffer.y = this._bufferService.rows - 1 : this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y).isWrapped = false, this._activeBuffer.x >= this._bufferService.cols && this._activeBuffer.x--, this._dirtyRowTracker.markDirty(this._activeBuffer.y), this._onLineFeed.fire(), true;
-          }
-          carriageReturn() {
-            return this._activeBuffer.x = 0, true;
-          }
-          backspace() {
-            if (!this._coreService.decPrivateModes.reverseWraparound) return this._restrictCursor(), this._activeBuffer.x > 0 && this._activeBuffer.x--, true;
-            if (this._restrictCursor(this._bufferService.cols), this._activeBuffer.x > 0) this._activeBuffer.x--;
-            else if (0 === this._activeBuffer.x && this._activeBuffer.y > this._activeBuffer.scrollTop && this._activeBuffer.y <= this._activeBuffer.scrollBottom && this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y)?.isWrapped) {
-              this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y).isWrapped = false, this._activeBuffer.y--, this._activeBuffer.x = this._bufferService.cols - 1;
-              const e3 = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y);
-              e3.hasWidth(this._activeBuffer.x) && !e3.hasContent(this._activeBuffer.x) && this._activeBuffer.x--;
-            }
-            return this._restrictCursor(), true;
-          }
-          tab() {
-            if (this._activeBuffer.x >= this._bufferService.cols) return true;
-            const e3 = this._activeBuffer.x;
-            return this._activeBuffer.x = this._activeBuffer.nextStop(), this._optionsService.rawOptions.screenReaderMode && this._onA11yTab.fire(this._activeBuffer.x - e3), true;
-          }
-          shiftOut() {
-            return this._charsetService.setgLevel(1), true;
-          }
-          shiftIn() {
-            return this._charsetService.setgLevel(0), true;
-          }
-          _restrictCursor(e3 = this._bufferService.cols - 1) {
-            this._activeBuffer.x = Math.min(e3, Math.max(0, this._activeBuffer.x)), this._activeBuffer.y = this._coreService.decPrivateModes.origin ? Math.min(this._activeBuffer.scrollBottom, Math.max(this._activeBuffer.scrollTop, this._activeBuffer.y)) : Math.min(this._bufferService.rows - 1, Math.max(0, this._activeBuffer.y)), this._dirtyRowTracker.markDirty(this._activeBuffer.y);
-          }
-          _setCursor(e3, t3) {
-            this._dirtyRowTracker.markDirty(this._activeBuffer.y), this._coreService.decPrivateModes.origin ? (this._activeBuffer.x = e3, this._activeBuffer.y = this._activeBuffer.scrollTop + t3) : (this._activeBuffer.x = e3, this._activeBuffer.y = t3), this._restrictCursor(), this._dirtyRowTracker.markDirty(this._activeBuffer.y);
-          }
-          _moveCursor(e3, t3) {
-            this._restrictCursor(), this._setCursor(this._activeBuffer.x + e3, this._activeBuffer.y + t3);
-          }
-          cursorUp(e3) {
-            const t3 = this._activeBuffer.y - this._activeBuffer.scrollTop;
-            return t3 >= 0 ? this._moveCursor(0, -Math.min(t3, e3.params[0] || 1)) : this._moveCursor(0, -(e3.params[0] || 1)), true;
-          }
-          cursorDown(e3) {
-            const t3 = this._activeBuffer.scrollBottom - this._activeBuffer.y;
-            return t3 >= 0 ? this._moveCursor(0, Math.min(t3, e3.params[0] || 1)) : this._moveCursor(0, e3.params[0] || 1), true;
-          }
-          cursorForward(e3) {
-            return this._moveCursor(e3.params[0] || 1, 0), true;
-          }
-          cursorBackward(e3) {
-            return this._moveCursor(-(e3.params[0] || 1), 0), true;
-          }
-          cursorNextLine(e3) {
-            return this.cursorDown(e3), this._activeBuffer.x = 0, true;
-          }
-          cursorPrecedingLine(e3) {
-            return this.cursorUp(e3), this._activeBuffer.x = 0, true;
-          }
-          cursorCharAbsolute(e3) {
-            return this._setCursor((e3.params[0] || 1) - 1, this._activeBuffer.y), true;
-          }
-          cursorPosition(e3) {
-            return this._setCursor(e3.length >= 2 ? (e3.params[1] || 1) - 1 : 0, (e3.params[0] || 1) - 1), true;
-          }
-          charPosAbsolute(e3) {
-            return this._setCursor((e3.params[0] || 1) - 1, this._activeBuffer.y), true;
-          }
-          hPositionRelative(e3) {
-            return this._moveCursor(e3.params[0] || 1, 0), true;
-          }
-          linePosAbsolute(e3) {
-            return this._setCursor(this._activeBuffer.x, (e3.params[0] || 1) - 1), true;
-          }
-          vPositionRelative(e3) {
-            return this._moveCursor(0, e3.params[0] || 1), true;
-          }
-          hVPosition(e3) {
-            return this.cursorPosition(e3), true;
-          }
-          tabClear(e3) {
-            const t3 = e3.params[0];
-            return 0 === t3 ? delete this._activeBuffer.tabs[this._activeBuffer.x] : 3 === t3 && (this._activeBuffer.tabs = {}), true;
-          }
-          cursorForwardTab(e3) {
-            if (this._activeBuffer.x >= this._bufferService.cols) return true;
-            let t3 = e3.params[0] || 1;
-            for (; t3--; ) this._activeBuffer.x = this._activeBuffer.nextStop();
-            return true;
-          }
-          cursorBackwardTab(e3) {
-            if (this._activeBuffer.x >= this._bufferService.cols) return true;
-            let t3 = e3.params[0] || 1;
-            for (; t3--; ) this._activeBuffer.x = this._activeBuffer.prevStop();
-            return true;
-          }
-          selectProtected(e3) {
-            const t3 = e3.params[0];
-            return 1 === t3 && (this._curAttrData.bg |= 536870912), 2 !== t3 && 0 !== t3 || (this._curAttrData.bg &= -536870913), true;
-          }
-          _eraseInBufferLine(e3, t3, s3, i3 = false, r3 = false) {
-            const n3 = this._activeBuffer.lines.get(this._activeBuffer.ybase + e3);
-            n3.replaceCells(t3, s3, this._activeBuffer.getNullCell(this._eraseAttrData()), r3), i3 && (n3.isWrapped = false);
-          }
-          _resetBufferLine(e3, t3 = false) {
-            const s3 = this._activeBuffer.lines.get(this._activeBuffer.ybase + e3);
-            s3 && (s3.fill(this._activeBuffer.getNullCell(this._eraseAttrData()), t3), this._bufferService.buffer.clearMarkers(this._activeBuffer.ybase + e3), s3.isWrapped = false);
-          }
-          eraseInDisplay(e3, t3 = false) {
-            let s3;
-            switch (this._restrictCursor(this._bufferService.cols), e3.params[0]) {
-              case 0:
-                for (s3 = this._activeBuffer.y, this._dirtyRowTracker.markDirty(s3), this._eraseInBufferLine(s3++, this._activeBuffer.x, this._bufferService.cols, 0 === this._activeBuffer.x, t3); s3 < this._bufferService.rows; s3++) this._resetBufferLine(s3, t3);
-                this._dirtyRowTracker.markDirty(s3);
-                break;
-              case 1:
-                for (s3 = this._activeBuffer.y, this._dirtyRowTracker.markDirty(s3), this._eraseInBufferLine(s3, 0, this._activeBuffer.x + 1, true, t3), this._activeBuffer.x + 1 >= this._bufferService.cols && (this._activeBuffer.lines.get(s3 + 1).isWrapped = false); s3--; ) this._resetBufferLine(s3, t3);
-                this._dirtyRowTracker.markDirty(0);
-                break;
-              case 2:
-                if (this._optionsService.rawOptions.scrollOnEraseInDisplay) {
-                  for (s3 = this._bufferService.rows, this._dirtyRowTracker.markRangeDirty(0, s3 - 1); s3--; ) {
-                    const e5 = this._activeBuffer.lines.get(this._activeBuffer.ybase + s3);
-                    if (e5?.getTrimmedLength()) break;
-                  }
-                  for (; s3 >= 0; s3--) this._bufferService.scroll(this._eraseAttrData());
-                } else {
-                  for (s3 = this._bufferService.rows, this._dirtyRowTracker.markDirty(s3 - 1); s3--; ) this._resetBufferLine(s3, t3);
-                  this._dirtyRowTracker.markDirty(0);
-                }
-                break;
-              case 3:
-                const e4 = this._activeBuffer.lines.length - this._bufferService.rows;
-                e4 > 0 && (this._activeBuffer.lines.trimStart(e4), this._activeBuffer.ybase = Math.max(this._activeBuffer.ybase - e4, 0), this._activeBuffer.ydisp = Math.max(this._activeBuffer.ydisp - e4, 0), this._onScroll.fire(0));
-            }
-            return true;
-          }
-          eraseInLine(e3, t3 = false) {
-            switch (this._restrictCursor(this._bufferService.cols), e3.params[0]) {
-              case 0:
-                this._eraseInBufferLine(this._activeBuffer.y, this._activeBuffer.x, this._bufferService.cols, 0 === this._activeBuffer.x, t3);
-                break;
-              case 1:
-                this._eraseInBufferLine(this._activeBuffer.y, 0, this._activeBuffer.x + 1, false, t3);
-                break;
-              case 2:
-                this._eraseInBufferLine(this._activeBuffer.y, 0, this._bufferService.cols, true, t3);
-            }
-            return this._dirtyRowTracker.markDirty(this._activeBuffer.y), true;
-          }
-          insertLines(e3) {
-            this._restrictCursor();
-            let t3 = e3.params[0] || 1;
-            if (this._activeBuffer.y > this._activeBuffer.scrollBottom || this._activeBuffer.y < this._activeBuffer.scrollTop) return true;
-            const s3 = this._activeBuffer.ybase + this._activeBuffer.y, i3 = this._bufferService.rows - 1 - this._activeBuffer.scrollBottom, r3 = this._bufferService.rows - 1 + this._activeBuffer.ybase - i3 + 1;
-            for (; t3--; ) this._activeBuffer.lines.splice(r3 - 1, 1), this._activeBuffer.lines.splice(s3, 0, this._activeBuffer.getBlankLine(this._eraseAttrData()));
-            return this._dirtyRowTracker.markRangeDirty(this._activeBuffer.y, this._activeBuffer.scrollBottom), this._activeBuffer.x = 0, true;
-          }
-          deleteLines(e3) {
-            this._restrictCursor();
-            let t3 = e3.params[0] || 1;
-            if (this._activeBuffer.y > this._activeBuffer.scrollBottom || this._activeBuffer.y < this._activeBuffer.scrollTop) return true;
-            const s3 = this._activeBuffer.ybase + this._activeBuffer.y;
-            let i3;
-            for (i3 = this._bufferService.rows - 1 - this._activeBuffer.scrollBottom, i3 = this._bufferService.rows - 1 + this._activeBuffer.ybase - i3; t3--; ) this._activeBuffer.lines.splice(s3, 1), this._activeBuffer.lines.splice(i3, 0, this._activeBuffer.getBlankLine(this._eraseAttrData()));
-            return this._dirtyRowTracker.markRangeDirty(this._activeBuffer.y, this._activeBuffer.scrollBottom), this._activeBuffer.x = 0, true;
-          }
-          insertChars(e3) {
-            this._restrictCursor();
-            const t3 = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y);
-            return t3 && (t3.insertCells(this._activeBuffer.x, e3.params[0] || 1, this._activeBuffer.getNullCell(this._eraseAttrData())), this._dirtyRowTracker.markDirty(this._activeBuffer.y)), true;
-          }
-          deleteChars(e3) {
-            this._restrictCursor();
-            const t3 = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y);
-            return t3 && (t3.deleteCells(this._activeBuffer.x, e3.params[0] || 1, this._activeBuffer.getNullCell(this._eraseAttrData())), this._dirtyRowTracker.markDirty(this._activeBuffer.y)), true;
-          }
-          scrollUp(e3) {
-            let t3 = e3.params[0] || 1;
-            for (; t3--; ) this._activeBuffer.lines.splice(this._activeBuffer.ybase + this._activeBuffer.scrollTop, 1), this._activeBuffer.lines.splice(this._activeBuffer.ybase + this._activeBuffer.scrollBottom, 0, this._activeBuffer.getBlankLine(this._eraseAttrData()));
-            return this._dirtyRowTracker.markRangeDirty(this._activeBuffer.scrollTop, this._activeBuffer.scrollBottom), true;
-          }
-          scrollDown(e3) {
-            let t3 = e3.params[0] || 1;
-            for (; t3--; ) this._activeBuffer.lines.splice(this._activeBuffer.ybase + this._activeBuffer.scrollBottom, 1), this._activeBuffer.lines.splice(this._activeBuffer.ybase + this._activeBuffer.scrollTop, 0, this._activeBuffer.getBlankLine(l.DEFAULT_ATTR_DATA));
-            return this._dirtyRowTracker.markRangeDirty(this._activeBuffer.scrollTop, this._activeBuffer.scrollBottom), true;
-          }
-          scrollLeft(e3) {
-            if (this._activeBuffer.y > this._activeBuffer.scrollBottom || this._activeBuffer.y < this._activeBuffer.scrollTop) return true;
-            const t3 = e3.params[0] || 1;
-            for (let e4 = this._activeBuffer.scrollTop; e4 <= this._activeBuffer.scrollBottom; ++e4) {
-              const s3 = this._activeBuffer.lines.get(this._activeBuffer.ybase + e4);
-              s3.deleteCells(0, t3, this._activeBuffer.getNullCell(this._eraseAttrData())), s3.isWrapped = false;
-            }
-            return this._dirtyRowTracker.markRangeDirty(this._activeBuffer.scrollTop, this._activeBuffer.scrollBottom), true;
-          }
-          scrollRight(e3) {
-            if (this._activeBuffer.y > this._activeBuffer.scrollBottom || this._activeBuffer.y < this._activeBuffer.scrollTop) return true;
-            const t3 = e3.params[0] || 1;
-            for (let e4 = this._activeBuffer.scrollTop; e4 <= this._activeBuffer.scrollBottom; ++e4) {
-              const s3 = this._activeBuffer.lines.get(this._activeBuffer.ybase + e4);
-              s3.insertCells(0, t3, this._activeBuffer.getNullCell(this._eraseAttrData())), s3.isWrapped = false;
-            }
-            return this._dirtyRowTracker.markRangeDirty(this._activeBuffer.scrollTop, this._activeBuffer.scrollBottom), true;
-          }
-          insertColumns(e3) {
-            if (this._activeBuffer.y > this._activeBuffer.scrollBottom || this._activeBuffer.y < this._activeBuffer.scrollTop) return true;
-            const t3 = e3.params[0] || 1;
-            for (let e4 = this._activeBuffer.scrollTop; e4 <= this._activeBuffer.scrollBottom; ++e4) {
-              const s3 = this._activeBuffer.lines.get(this._activeBuffer.ybase + e4);
-              s3.insertCells(this._activeBuffer.x, t3, this._activeBuffer.getNullCell(this._eraseAttrData())), s3.isWrapped = false;
-            }
-            return this._dirtyRowTracker.markRangeDirty(this._activeBuffer.scrollTop, this._activeBuffer.scrollBottom), true;
-          }
-          deleteColumns(e3) {
-            if (this._activeBuffer.y > this._activeBuffer.scrollBottom || this._activeBuffer.y < this._activeBuffer.scrollTop) return true;
-            const t3 = e3.params[0] || 1;
-            for (let e4 = this._activeBuffer.scrollTop; e4 <= this._activeBuffer.scrollBottom; ++e4) {
-              const s3 = this._activeBuffer.lines.get(this._activeBuffer.ybase + e4);
-              s3.deleteCells(this._activeBuffer.x, t3, this._activeBuffer.getNullCell(this._eraseAttrData())), s3.isWrapped = false;
-            }
-            return this._dirtyRowTracker.markRangeDirty(this._activeBuffer.scrollTop, this._activeBuffer.scrollBottom), true;
-          }
-          eraseChars(e3) {
-            this._restrictCursor();
-            const t3 = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y);
-            return t3 && (t3.replaceCells(this._activeBuffer.x, this._activeBuffer.x + (e3.params[0] || 1), this._activeBuffer.getNullCell(this._eraseAttrData())), this._dirtyRowTracker.markDirty(this._activeBuffer.y)), true;
-          }
-          repeatPrecedingCharacter(e3) {
-            const t3 = this._parser.precedingJoinState;
-            if (!t3) return true;
-            const s3 = e3.params[0] || 1, i3 = p.UnicodeService.extractWidth(t3), r3 = this._activeBuffer.x - i3, n3 = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y).getString(r3), o2 = new Uint32Array(n3.length * s3);
-            let a2 = 0;
-            for (let e4 = 0; e4 < n3.length; ) {
-              const t4 = n3.codePointAt(e4) || 0;
-              o2[a2++] = t4, e4 += t4 > 65535 ? 2 : 1;
-            }
-            let h2 = a2;
-            for (let e4 = 1; e4 < s3; ++e4) o2.copyWithin(h2, 0, a2), h2 += a2;
-            return this.print(o2, 0, h2), true;
-          }
-          sendDeviceAttributesPrimary(e3) {
-            return e3.params[0] > 0 || (this._is("xterm") || this._is("rxvt-unicode") || this._is("screen") ? this._coreService.triggerDataEvent(n2.C0.ESC + "[?1;2c") : this._is("linux") && this._coreService.triggerDataEvent(n2.C0.ESC + "[?6c")), true;
-          }
-          sendDeviceAttributesSecondary(e3) {
-            return e3.params[0] > 0 || (this._is("xterm") ? this._coreService.triggerDataEvent(n2.C0.ESC + "[>0;276;0c") : this._is("rxvt-unicode") ? this._coreService.triggerDataEvent(n2.C0.ESC + "[>85;95;0c") : this._is("linux") ? this._coreService.triggerDataEvent(e3.params[0] + "c") : this._is("screen") && this._coreService.triggerDataEvent(n2.C0.ESC + "[>83;40003;0c")), true;
-          }
-          _is(e3) {
-            return 0 === (this._optionsService.rawOptions.termName + "").indexOf(e3);
-          }
-          setMode(e3) {
-            for (let t3 = 0; t3 < e3.length; t3++) switch (e3.params[t3]) {
-              case 4:
-                this._coreService.modes.insertMode = true;
-                break;
-              case 20:
-                this._optionsService.options.convertEol = true;
-            }
-            return true;
-          }
-          setModePrivate(e3) {
-            for (let t3 = 0; t3 < e3.length; t3++) switch (e3.params[t3]) {
-              case 1:
-                this._coreService.decPrivateModes.applicationCursorKeys = true;
-                break;
-              case 2:
-                this._charsetService.setgCharset(0, o.DEFAULT_CHARSET), this._charsetService.setgCharset(1, o.DEFAULT_CHARSET), this._charsetService.setgCharset(2, o.DEFAULT_CHARSET), this._charsetService.setgCharset(3, o.DEFAULT_CHARSET);
-                break;
-              case 3:
-                this._optionsService.rawOptions.windowOptions.setWinLines && (this._bufferService.resize(132, this._bufferService.rows), this._onRequestReset.fire());
-                break;
-              case 6:
-                this._coreService.decPrivateModes.origin = true, this._setCursor(0, 0);
-                break;
-              case 7:
-                this._coreService.decPrivateModes.wraparound = true;
-                break;
-              case 12:
-                this._optionsService.options.cursorBlink = true;
-                break;
-              case 45:
-                this._coreService.decPrivateModes.reverseWraparound = true;
-                break;
-              case 66:
-                this._logService.debug("Serial port requested application keypad."), this._coreService.decPrivateModes.applicationKeypad = true, this._onRequestSyncScrollBar.fire();
-                break;
-              case 9:
-                this._coreMouseService.activeProtocol = "X10";
-                break;
-              case 1e3:
-                this._coreMouseService.activeProtocol = "VT200";
-                break;
-              case 1002:
-                this._coreMouseService.activeProtocol = "DRAG";
-                break;
-              case 1003:
-                this._coreMouseService.activeProtocol = "ANY";
-                break;
-              case 1004:
-                this._coreService.decPrivateModes.sendFocus = true, this._onRequestSendFocus.fire();
-                break;
-              case 1005:
-                this._logService.debug("DECSET 1005 not supported (see #2507)");
-                break;
-              case 1006:
-                this._coreMouseService.activeEncoding = "SGR";
-                break;
-              case 1015:
-                this._logService.debug("DECSET 1015 not supported (see #2507)");
-                break;
-              case 1016:
-                this._coreMouseService.activeEncoding = "SGR_PIXELS";
-                break;
-              case 25:
-                this._coreService.isCursorHidden = false;
-                break;
-              case 1048:
-                this.saveCursor();
-                break;
-              case 1049:
-                this.saveCursor();
-              case 47:
-              case 1047:
-                this._bufferService.buffers.activateAltBuffer(this._eraseAttrData()), this._coreService.isCursorInitialized = true, this._onRequestRefreshRows.fire(void 0), this._onRequestSyncScrollBar.fire();
-                break;
-              case 2004:
-                this._coreService.decPrivateModes.bracketedPasteMode = true;
-                break;
-              case 2026:
-                this._coreService.decPrivateModes.synchronizedOutput = true;
-            }
-            return true;
-          }
-          resetMode(e3) {
-            for (let t3 = 0; t3 < e3.length; t3++) switch (e3.params[t3]) {
-              case 4:
-                this._coreService.modes.insertMode = false;
-                break;
-              case 20:
-                this._optionsService.options.convertEol = false;
-            }
-            return true;
-          }
-          resetModePrivate(e3) {
-            for (let t3 = 0; t3 < e3.length; t3++) switch (e3.params[t3]) {
-              case 1:
-                this._coreService.decPrivateModes.applicationCursorKeys = false;
-                break;
-              case 3:
-                this._optionsService.rawOptions.windowOptions.setWinLines && (this._bufferService.resize(80, this._bufferService.rows), this._onRequestReset.fire());
-                break;
-              case 6:
-                this._coreService.decPrivateModes.origin = false, this._setCursor(0, 0);
-                break;
-              case 7:
-                this._coreService.decPrivateModes.wraparound = false;
-                break;
-              case 12:
-                this._optionsService.options.cursorBlink = false;
-                break;
-              case 45:
-                this._coreService.decPrivateModes.reverseWraparound = false;
-                break;
-              case 66:
-                this._logService.debug("Switching back to normal keypad."), this._coreService.decPrivateModes.applicationKeypad = false, this._onRequestSyncScrollBar.fire();
-                break;
-              case 9:
-              case 1e3:
-              case 1002:
-              case 1003:
-                this._coreMouseService.activeProtocol = "NONE";
-                break;
-              case 1004:
-                this._coreService.decPrivateModes.sendFocus = false;
-                break;
-              case 1005:
-                this._logService.debug("DECRST 1005 not supported (see #2507)");
-                break;
-              case 1006:
-              case 1016:
-                this._coreMouseService.activeEncoding = "DEFAULT";
-                break;
-              case 1015:
-                this._logService.debug("DECRST 1015 not supported (see #2507)");
-                break;
-              case 25:
-                this._coreService.isCursorHidden = true;
-                break;
-              case 1048:
-                this.restoreCursor();
-                break;
-              case 1049:
-              case 47:
-              case 1047:
-                this._bufferService.buffers.activateNormalBuffer(), 1049 === e3.params[t3] && this.restoreCursor(), this._coreService.isCursorInitialized = true, this._onRequestRefreshRows.fire(void 0), this._onRequestSyncScrollBar.fire();
-                break;
-              case 2004:
-                this._coreService.decPrivateModes.bracketedPasteMode = false;
-                break;
-              case 2026:
-                this._coreService.decPrivateModes.synchronizedOutput = false, this._onRequestRefreshRows.fire(void 0);
-            }
-            return true;
-          }
-          requestMode(e3, t3) {
-            const s3 = this._coreService.decPrivateModes, { activeProtocol: i3, activeEncoding: r3 } = this._coreMouseService, o2 = this._coreService, { buffers: a2, cols: h2 } = this._bufferService, { active: c2, alt: l2 } = a2, u2 = this._optionsService.rawOptions, d2 = (e4) => e4 ? 1 : 2, f2 = e3.params[0];
-            return _2 = f2, p2 = t3 ? 2 === f2 ? 4 : 4 === f2 ? d2(o2.modes.insertMode) : 12 === f2 ? 3 : 20 === f2 ? d2(u2.convertEol) : 0 : 1 === f2 ? d2(s3.applicationCursorKeys) : 3 === f2 ? u2.windowOptions.setWinLines ? 80 === h2 ? 2 : 132 === h2 ? 1 : 0 : 0 : 6 === f2 ? d2(s3.origin) : 7 === f2 ? d2(s3.wraparound) : 8 === f2 ? 3 : 9 === f2 ? d2("X10" === i3) : 12 === f2 ? d2(u2.cursorBlink) : 25 === f2 ? d2(!o2.isCursorHidden) : 45 === f2 ? d2(s3.reverseWraparound) : 66 === f2 ? d2(s3.applicationKeypad) : 67 === f2 ? 4 : 1e3 === f2 ? d2("VT200" === i3) : 1002 === f2 ? d2("DRAG" === i3) : 1003 === f2 ? d2("ANY" === i3) : 1004 === f2 ? d2(s3.sendFocus) : 1005 === f2 ? 4 : 1006 === f2 ? d2("SGR" === r3) : 1015 === f2 ? 4 : 1016 === f2 ? d2("SGR_PIXELS" === r3) : 1048 === f2 ? 1 : 47 === f2 || 1047 === f2 || 1049 === f2 ? d2(c2 === l2) : 2004 === f2 ? d2(s3.bracketedPasteMode) : 2026 === f2 ? d2(s3.synchronizedOutput) : 0, o2.triggerDataEvent(`${n2.C0.ESC}[${t3 ? "" : "?"}${_2};${p2}$y`), true;
-            var _2, p2;
-          }
-          _updateAttrColor(e3, t3, s3, i3, r3) {
-            return 2 === t3 ? (e3 |= 50331648, e3 &= -16777216, e3 |= f.AttributeData.fromColorRGB([s3, i3, r3])) : 5 === t3 && (e3 &= -50331904, e3 |= 33554432 | 255 & s3), e3;
-          }
-          _extractColor(e3, t3, s3) {
-            const i3 = [0, 0, -1, 0, 0, 0];
-            let r3 = 0, n3 = 0;
-            do {
-              if (i3[n3 + r3] = e3.params[t3 + n3], e3.hasSubParams(t3 + n3)) {
-                const s4 = e3.getSubParams(t3 + n3);
-                let o2 = 0;
-                do {
-                  5 === i3[1] && (r3 = 1), i3[n3 + o2 + 1 + r3] = s4[o2];
-                } while (++o2 < s4.length && o2 + n3 + 1 + r3 < i3.length);
-                break;
-              }
-              if (5 === i3[1] && n3 + r3 >= 2 || 2 === i3[1] && n3 + r3 >= 5) break;
-              i3[1] && (r3 = 1);
-            } while (++n3 + t3 < e3.length && n3 + r3 < i3.length);
-            for (let e4 = 2; e4 < i3.length; ++e4) -1 === i3[e4] && (i3[e4] = 0);
-            switch (i3[0]) {
-              case 38:
-                s3.fg = this._updateAttrColor(s3.fg, i3[1], i3[3], i3[4], i3[5]);
-                break;
-              case 48:
-                s3.bg = this._updateAttrColor(s3.bg, i3[1], i3[3], i3[4], i3[5]);
-                break;
-              case 58:
-                s3.extended = s3.extended.clone(), s3.extended.underlineColor = this._updateAttrColor(s3.extended.underlineColor, i3[1], i3[3], i3[4], i3[5]);
-            }
-            return n3;
-          }
-          _processUnderline(e3, t3) {
-            t3.extended = t3.extended.clone(), (!~e3 || e3 > 5) && (e3 = 1), t3.extended.underlineStyle = e3, t3.fg |= 268435456, 0 === e3 && (t3.fg &= -268435457), t3.updateExtended();
-          }
-          _processSGR0(e3) {
-            e3.fg = l.DEFAULT_ATTR_DATA.fg, e3.bg = l.DEFAULT_ATTR_DATA.bg, e3.extended = e3.extended.clone(), e3.extended.underlineStyle = 0, e3.extended.underlineColor &= -67108864, e3.updateExtended();
-          }
-          charAttributes(e3) {
-            if (1 === e3.length && 0 === e3.params[0]) return this._processSGR0(this._curAttrData), true;
-            const t3 = e3.length;
-            let s3;
-            const i3 = this._curAttrData;
-            for (let r3 = 0; r3 < t3; r3++) s3 = e3.params[r3], s3 >= 30 && s3 <= 37 ? (i3.fg &= -50331904, i3.fg |= 16777216 | s3 - 30) : s3 >= 40 && s3 <= 47 ? (i3.bg &= -50331904, i3.bg |= 16777216 | s3 - 40) : s3 >= 90 && s3 <= 97 ? (i3.fg &= -50331904, i3.fg |= 16777224 | s3 - 90) : s3 >= 100 && s3 <= 107 ? (i3.bg &= -50331904, i3.bg |= 16777224 | s3 - 100) : 0 === s3 ? this._processSGR0(i3) : 1 === s3 ? i3.fg |= 134217728 : 3 === s3 ? i3.bg |= 67108864 : 4 === s3 ? (i3.fg |= 268435456, this._processUnderline(e3.hasSubParams(r3) ? e3.getSubParams(r3)[0] : 1, i3)) : 5 === s3 ? i3.fg |= 536870912 : 7 === s3 ? i3.fg |= 67108864 : 8 === s3 ? i3.fg |= 1073741824 : 9 === s3 ? i3.fg |= 2147483648 : 2 === s3 ? i3.bg |= 134217728 : 21 === s3 ? this._processUnderline(2, i3) : 22 === s3 ? (i3.fg &= -134217729, i3.bg &= -134217729) : 23 === s3 ? i3.bg &= -67108865 : 24 === s3 ? (i3.fg &= -268435457, this._processUnderline(0, i3)) : 25 === s3 ? i3.fg &= -536870913 : 27 === s3 ? i3.fg &= -67108865 : 28 === s3 ? i3.fg &= -1073741825 : 29 === s3 ? i3.fg &= 2147483647 : 39 === s3 ? (i3.fg &= -67108864, i3.fg |= 16777215 & l.DEFAULT_ATTR_DATA.fg) : 49 === s3 ? (i3.bg &= -67108864, i3.bg |= 16777215 & l.DEFAULT_ATTR_DATA.bg) : 38 === s3 || 48 === s3 || 58 === s3 ? r3 += this._extractColor(e3, r3, i3) : 53 === s3 ? i3.bg |= 1073741824 : 55 === s3 ? i3.bg &= -1073741825 : 59 === s3 ? (i3.extended = i3.extended.clone(), i3.extended.underlineColor = -1, i3.updateExtended()) : 100 === s3 ? (i3.fg &= -67108864, i3.fg |= 16777215 & l.DEFAULT_ATTR_DATA.fg, i3.bg &= -67108864, i3.bg |= 16777215 & l.DEFAULT_ATTR_DATA.bg) : this._logService.debug("Unknown SGR attribute: %d.", s3);
-            return true;
-          }
-          deviceStatus(e3) {
-            switch (e3.params[0]) {
-              case 5:
-                this._coreService.triggerDataEvent(`${n2.C0.ESC}[0n`);
-                break;
-              case 6:
-                const e4 = this._activeBuffer.y + 1, t3 = this._activeBuffer.x + 1;
-                this._coreService.triggerDataEvent(`${n2.C0.ESC}[${e4};${t3}R`);
-            }
-            return true;
-          }
-          deviceStatusPrivate(e3) {
-            if (6 === e3.params[0]) {
-              const e4 = this._activeBuffer.y + 1, t3 = this._activeBuffer.x + 1;
-              this._coreService.triggerDataEvent(`${n2.C0.ESC}[?${e4};${t3}R`);
-            }
-            return true;
-          }
-          softReset(e3) {
-            return this._coreService.isCursorHidden = false, this._onRequestSyncScrollBar.fire(), this._activeBuffer.scrollTop = 0, this._activeBuffer.scrollBottom = this._bufferService.rows - 1, this._curAttrData = l.DEFAULT_ATTR_DATA.clone(), this._coreService.reset(), this._charsetService.reset(), this._activeBuffer.savedX = 0, this._activeBuffer.savedY = this._activeBuffer.ybase, this._activeBuffer.savedCurAttrData.fg = this._curAttrData.fg, this._activeBuffer.savedCurAttrData.bg = this._curAttrData.bg, this._activeBuffer.savedCharset = this._charsetService.charset, this._coreService.decPrivateModes.origin = false, true;
-          }
-          setCursorStyle(e3) {
-            const t3 = 0 === e3.length ? 1 : e3.params[0];
-            if (0 === t3) this._coreService.decPrivateModes.cursorStyle = void 0, this._coreService.decPrivateModes.cursorBlink = void 0;
-            else {
-              switch (t3) {
-                case 1:
-                case 2:
-                  this._coreService.decPrivateModes.cursorStyle = "block";
-                  break;
-                case 3:
-                case 4:
-                  this._coreService.decPrivateModes.cursorStyle = "underline";
-                  break;
-                case 5:
-                case 6:
-                  this._coreService.decPrivateModes.cursorStyle = "bar";
-              }
-              const e4 = t3 % 2 == 1;
-              this._coreService.decPrivateModes.cursorBlink = e4;
-            }
-            return true;
-          }
-          setScrollRegion(e3) {
-            const t3 = e3.params[0] || 1;
-            let s3;
-            return (e3.length < 2 || (s3 = e3.params[1]) > this._bufferService.rows || 0 === s3) && (s3 = this._bufferService.rows), s3 > t3 && (this._activeBuffer.scrollTop = t3 - 1, this._activeBuffer.scrollBottom = s3 - 1, this._setCursor(0, 0)), true;
-          }
-          windowOptions(e3) {
-            if (!C(e3.params[0], this._optionsService.rawOptions.windowOptions)) return true;
-            const t3 = e3.length > 1 ? e3.params[1] : 0;
-            switch (e3.params[0]) {
-              case 14:
-                2 !== t3 && this._onRequestWindowsOptionsReport.fire(w.GET_WIN_SIZE_PIXELS);
-                break;
-              case 16:
-                this._onRequestWindowsOptionsReport.fire(w.GET_CELL_SIZE_PIXELS);
-                break;
-              case 18:
-                this._bufferService && this._coreService.triggerDataEvent(`${n2.C0.ESC}[8;${this._bufferService.rows};${this._bufferService.cols}t`);
-                break;
-              case 22:
-                0 !== t3 && 2 !== t3 || (this._windowTitleStack.push(this._windowTitle), this._windowTitleStack.length > 10 && this._windowTitleStack.shift()), 0 !== t3 && 1 !== t3 || (this._iconNameStack.push(this._iconName), this._iconNameStack.length > 10 && this._iconNameStack.shift());
-                break;
-              case 23:
-                0 !== t3 && 2 !== t3 || this._windowTitleStack.length && this.setTitle(this._windowTitleStack.pop()), 0 !== t3 && 1 !== t3 || this._iconNameStack.length && this.setIconName(this._iconNameStack.pop());
-            }
-            return true;
-          }
-          saveCursor(e3) {
-            return this._activeBuffer.savedX = this._activeBuffer.x, this._activeBuffer.savedY = this._activeBuffer.ybase + this._activeBuffer.y, this._activeBuffer.savedCurAttrData.fg = this._curAttrData.fg, this._activeBuffer.savedCurAttrData.bg = this._curAttrData.bg, this._activeBuffer.savedCharset = this._charsetService.charset, true;
-          }
-          restoreCursor(e3) {
-            return this._activeBuffer.x = this._activeBuffer.savedX || 0, this._activeBuffer.y = Math.max(this._activeBuffer.savedY - this._activeBuffer.ybase, 0), this._curAttrData.fg = this._activeBuffer.savedCurAttrData.fg, this._curAttrData.bg = this._activeBuffer.savedCurAttrData.bg, this._charsetService.charset = this._savedCharset, this._activeBuffer.savedCharset && (this._charsetService.charset = this._activeBuffer.savedCharset), this._restrictCursor(), true;
-          }
-          setTitle(e3) {
-            return this._windowTitle = e3, this._onTitleChange.fire(e3), true;
-          }
-          setIconName(e3) {
-            return this._iconName = e3, true;
-          }
-          setOrReportIndexedColor(e3) {
-            const t3 = [], s3 = e3.split(";");
-            for (; s3.length > 1; ) {
-              const e4 = s3.shift(), i3 = s3.shift();
-              if (/^\d+$/.exec(e4)) {
-                const s4 = parseInt(e4);
-                if (k(s4)) if ("?" === i3) t3.push({ type: 0, index: s4 });
-                else {
-                  const e5 = (0, m.parseColor)(i3);
-                  e5 && t3.push({ type: 1, index: s4, color: e5 });
-                }
-              }
-            }
-            return t3.length && this._onColor.fire(t3), true;
-          }
-          setHyperlink(e3) {
-            const t3 = e3.indexOf(";");
-            if (-1 === t3) return true;
-            const s3 = e3.slice(0, t3).trim(), i3 = e3.slice(t3 + 1);
-            return i3 ? this._createHyperlink(s3, i3) : !s3.trim() && this._finishHyperlink();
-          }
-          _createHyperlink(e3, t3) {
-            this._getCurrentLinkId() && this._finishHyperlink();
-            const s3 = e3.split(":");
-            let i3;
-            const r3 = s3.findIndex(((e4) => e4.startsWith("id=")));
-            return -1 !== r3 && (i3 = s3[r3].slice(3) || void 0), this._curAttrData.extended = this._curAttrData.extended.clone(), this._curAttrData.extended.urlId = this._oscLinkService.registerLink({ id: i3, uri: t3 }), this._curAttrData.updateExtended(), true;
-          }
-          _finishHyperlink() {
-            return this._curAttrData.extended = this._curAttrData.extended.clone(), this._curAttrData.extended.urlId = 0, this._curAttrData.updateExtended(), true;
-          }
-          _setOrReportSpecialColor(e3, t3) {
-            const s3 = e3.split(";");
-            for (let e4 = 0; e4 < s3.length && !(t3 >= this._specialColors.length); ++e4, ++t3) if ("?" === s3[e4]) this._onColor.fire([{ type: 0, index: this._specialColors[t3] }]);
-            else {
-              const i3 = (0, m.parseColor)(s3[e4]);
-              i3 && this._onColor.fire([{ type: 1, index: this._specialColors[t3], color: i3 }]);
-            }
-            return true;
-          }
-          setOrReportFgColor(e3) {
-            return this._setOrReportSpecialColor(e3, 0);
-          }
-          setOrReportBgColor(e3) {
-            return this._setOrReportSpecialColor(e3, 1);
-          }
-          setOrReportCursorColor(e3) {
-            return this._setOrReportSpecialColor(e3, 2);
-          }
-          restoreIndexedColor(e3) {
-            if (!e3) return this._onColor.fire([{ type: 2 }]), true;
-            const t3 = [], s3 = e3.split(";");
-            for (let e4 = 0; e4 < s3.length; ++e4) if (/^\d+$/.exec(s3[e4])) {
-              const i3 = parseInt(s3[e4]);
-              k(i3) && t3.push({ type: 2, index: i3 });
-            }
-            return t3.length && this._onColor.fire(t3), true;
-          }
-          restoreFgColor(e3) {
-            return this._onColor.fire([{ type: 2, index: 256 }]), true;
-          }
-          restoreBgColor(e3) {
-            return this._onColor.fire([{ type: 2, index: 257 }]), true;
-          }
-          restoreCursorColor(e3) {
-            return this._onColor.fire([{ type: 2, index: 258 }]), true;
-          }
-          nextLine() {
-            return this._activeBuffer.x = 0, this.index(), true;
-          }
-          keypadApplicationMode() {
-            return this._logService.debug("Serial port requested application keypad."), this._coreService.decPrivateModes.applicationKeypad = true, this._onRequestSyncScrollBar.fire(), true;
-          }
-          keypadNumericMode() {
-            return this._logService.debug("Switching back to normal keypad."), this._coreService.decPrivateModes.applicationKeypad = false, this._onRequestSyncScrollBar.fire(), true;
-          }
-          selectDefaultCharset() {
-            return this._charsetService.setgLevel(0), this._charsetService.setgCharset(0, o.DEFAULT_CHARSET), true;
-          }
-          selectCharset(e3) {
-            return 2 !== e3.length ? (this.selectDefaultCharset(), true) : ("/" === e3[0] || this._charsetService.setgCharset(S[e3[0]], o.CHARSETS[e3[1]] || o.DEFAULT_CHARSET), true);
-          }
-          index() {
-            return this._restrictCursor(), this._activeBuffer.y++, this._activeBuffer.y === this._activeBuffer.scrollBottom + 1 ? (this._activeBuffer.y--, this._bufferService.scroll(this._eraseAttrData())) : this._activeBuffer.y >= this._bufferService.rows && (this._activeBuffer.y = this._bufferService.rows - 1), this._restrictCursor(), true;
-          }
-          tabSet() {
-            return this._activeBuffer.tabs[this._activeBuffer.x] = true, true;
-          }
-          reverseIndex() {
-            if (this._restrictCursor(), this._activeBuffer.y === this._activeBuffer.scrollTop) {
-              const e3 = this._activeBuffer.scrollBottom - this._activeBuffer.scrollTop;
-              this._activeBuffer.lines.shiftElements(this._activeBuffer.ybase + this._activeBuffer.y, e3, 1), this._activeBuffer.lines.set(this._activeBuffer.ybase + this._activeBuffer.y, this._activeBuffer.getBlankLine(this._eraseAttrData())), this._dirtyRowTracker.markRangeDirty(this._activeBuffer.scrollTop, this._activeBuffer.scrollBottom);
-            } else this._activeBuffer.y--, this._restrictCursor();
-            return true;
-          }
-          fullReset() {
-            return this._parser.reset(), this._onRequestReset.fire(), true;
-          }
-          reset() {
-            this._curAttrData = l.DEFAULT_ATTR_DATA.clone(), this._eraseAttrDataInternal = l.DEFAULT_ATTR_DATA.clone();
-          }
-          _eraseAttrData() {
-            return this._eraseAttrDataInternal.bg &= -67108864, this._eraseAttrDataInternal.bg |= 67108863 & this._curAttrData.bg, this._eraseAttrDataInternal;
-          }
-          setgLevel(e3) {
-            return this._charsetService.setgLevel(e3), true;
-          }
-          screenAlignmentPattern() {
-            const e3 = new d.CellData();
-            e3.content = 1 << 22 | "E".charCodeAt(0), e3.fg = this._curAttrData.fg, e3.bg = this._curAttrData.bg, this._setCursor(0, 0);
-            for (let t3 = 0; t3 < this._bufferService.rows; ++t3) {
-              const s3 = this._activeBuffer.ybase + this._activeBuffer.y + t3, i3 = this._activeBuffer.lines.get(s3);
-              i3 && (i3.fill(e3), i3.isWrapped = false);
-            }
-            return this._dirtyRowTracker.markAllDirty(), this._setCursor(0, 0), true;
-          }
-          requestStatusString(e3, t3) {
-            const s3 = this._bufferService.buffer, i3 = this._optionsService.rawOptions;
-            return ((e4) => (this._coreService.triggerDataEvent(`${n2.C0.ESC}${e4}${n2.C0.ESC}\\`), true))('"q' === e3 ? `P1$r${this._curAttrData.isProtected() ? 1 : 0}"q` : '"p' === e3 ? 'P1$r61;1"p' : "r" === e3 ? `P1$r${s3.scrollTop + 1};${s3.scrollBottom + 1}r` : "m" === e3 ? "P1$r0m" : " q" === e3 ? `P1$r${{ block: 2, underline: 4, bar: 6 }[i3.cursorStyle] - (i3.cursorBlink ? 1 : 0)} q` : "P0$r");
-          }
-          markRangeDirty(e3, t3) {
-            this._dirtyRowTracker.markRangeDirty(e3, t3);
-          }
-        }
-        t2.InputHandler = A;
-        let L = class {
-          constructor(e3) {
-            this._bufferService = e3, this.clearRange();
-          }
-          clearRange() {
-            this.start = this._bufferService.buffer.y, this.end = this._bufferService.buffer.y;
-          }
-          markDirty(e3) {
-            e3 < this.start ? this.start = e3 : e3 > this.end && (this.end = e3);
-          }
-          markRangeDirty(e3, t3) {
-            e3 > t3 && (E = e3, e3 = t3, t3 = E), e3 < this.start && (this.start = e3), t3 > this.end && (this.end = t3);
-          }
-          markAllDirty() {
-            this.markRangeDirty(0, this._bufferService.rows - 1);
-          }
-        };
-        function k(e3) {
-          return 0 <= e3 && e3 < 256;
-        }
-        L = i2([r2(0, _.IBufferService)], L);
-      }, 701: (e2, t2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.isChromeOS = t2.isLinux = t2.isWindows = t2.isIphone = t2.isIpad = t2.isMac = t2.isSafari = t2.isLegacyEdge = t2.isFirefox = t2.isNode = void 0, t2.getSafariVersion = function() {
-          if (!t2.isSafari) return 0;
-          const e3 = s2.match(/Version\/(\d+)/);
-          return null === e3 || e3.length < 2 ? 0 : parseInt(e3[1]);
-        }, t2.isNode = "undefined" != typeof process && "title" in process;
-        const s2 = t2.isNode ? "node" : navigator.userAgent, i2 = t2.isNode ? "node" : navigator.platform;
-        t2.isFirefox = s2.includes("Firefox"), t2.isLegacyEdge = s2.includes("Edge"), t2.isSafari = /^((?!chrome|android).)*safari/i.test(s2), t2.isMac = ["Macintosh", "MacIntel", "MacPPC", "Mac68K"].includes(i2), t2.isIpad = "iPad" === i2, t2.isIphone = "iPhone" === i2, t2.isWindows = ["Windows", "Win16", "Win32", "WinCE"].includes(i2), t2.isLinux = i2.indexOf("Linux") >= 0, t2.isChromeOS = /\bCrOS\b/.test(s2);
-      }, 6168: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.DebouncedIdleTask = t2.IdleTaskQueue = t2.PriorityTaskQueue = void 0;
-        const i2 = s2(701);
-        class r2 {
-          constructor() {
-            this._tasks = [], this._i = 0;
-          }
-          enqueue(e3) {
-            this._tasks.push(e3), this._start();
-          }
-          flush() {
-            for (; this._i < this._tasks.length; ) this._tasks[this._i]() || this._i++;
-            this.clear();
-          }
-          clear() {
-            this._idleCallback && (this._cancelCallback(this._idleCallback), this._idleCallback = void 0), this._i = 0, this._tasks.length = 0;
-          }
-          _start() {
-            this._idleCallback || (this._idleCallback = this._requestCallback(this._process.bind(this)));
-          }
-          _process(e3) {
-            this._idleCallback = void 0;
-            let t3 = 0, s3 = 0, i3 = e3.timeRemaining(), r3 = 0;
-            for (; this._i < this._tasks.length; ) {
-              if (t3 = performance.now(), this._tasks[this._i]() || this._i++, t3 = Math.max(1, performance.now() - t3), s3 = Math.max(t3, s3), r3 = e3.timeRemaining(), 1.5 * s3 > r3) return i3 - t3 < -20 && console.warn(`task queue exceeded allotted deadline by ${Math.abs(Math.round(i3 - t3))}ms`), void this._start();
-              i3 = r3;
-            }
-            this.clear();
-          }
-        }
-        class n2 extends r2 {
-          _requestCallback(e3) {
-            return setTimeout((() => e3(this._createDeadline(16))));
-          }
-          _cancelCallback(e3) {
-            clearTimeout(e3);
-          }
-          _createDeadline(e3) {
-            const t3 = performance.now() + e3;
-            return { timeRemaining: () => Math.max(0, t3 - performance.now()) };
-          }
-        }
-        t2.PriorityTaskQueue = n2, t2.IdleTaskQueue = !i2.isNode && "requestIdleCallback" in window ? class extends r2 {
-          _requestCallback(e3) {
-            return requestIdleCallback(e3);
-          }
-          _cancelCallback(e3) {
-            cancelIdleCallback(e3);
-          }
-        } : n2, t2.DebouncedIdleTask = class {
-          constructor() {
-            this._queue = new t2.IdleTaskQueue();
-          }
-          set(e3) {
-            this._queue.clear(), this._queue.enqueue(e3);
-          }
-          flush() {
-            this._queue.flush();
-          }
-        };
-      }, 5882: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.updateWindowsModeWrappedState = function(e3) {
-          const t3 = e3.buffer.lines.get(e3.buffer.ybase + e3.buffer.y - 1), s3 = t3?.get(e3.cols - 1), r2 = e3.buffer.lines.get(e3.buffer.ybase + e3.buffer.y);
-          r2 && s3 && (r2.isWrapped = s3[i2.CHAR_DATA_CODE_INDEX] !== i2.NULL_CELL_CODE && s3[i2.CHAR_DATA_CODE_INDEX] !== i2.WHITESPACE_CELL_CODE);
-        };
-        const i2 = s2(8938);
-      }, 5451: (e2, t2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.ExtendedAttrs = t2.AttributeData = void 0;
-        class s2 {
-          constructor() {
-            this.fg = 0, this.bg = 0, this.extended = new i2();
-          }
-          static toColorRGB(e3) {
-            return [e3 >>> 16 & 255, e3 >>> 8 & 255, 255 & e3];
-          }
-          static fromColorRGB(e3) {
-            return (255 & e3[0]) << 16 | (255 & e3[1]) << 8 | 255 & e3[2];
-          }
-          clone() {
-            const e3 = new s2();
-            return e3.fg = this.fg, e3.bg = this.bg, e3.extended = this.extended.clone(), e3;
-          }
-          isInverse() {
-            return 67108864 & this.fg;
-          }
-          isBold() {
-            return 134217728 & this.fg;
-          }
-          isUnderline() {
-            return this.hasExtendedAttrs() && 0 !== this.extended.underlineStyle ? 1 : 268435456 & this.fg;
-          }
-          isBlink() {
-            return 536870912 & this.fg;
-          }
-          isInvisible() {
-            return 1073741824 & this.fg;
-          }
-          isItalic() {
-            return 67108864 & this.bg;
-          }
-          isDim() {
-            return 134217728 & this.bg;
-          }
-          isStrikethrough() {
-            return 2147483648 & this.fg;
-          }
-          isProtected() {
-            return 536870912 & this.bg;
-          }
-          isOverline() {
-            return 1073741824 & this.bg;
-          }
-          getFgColorMode() {
-            return 50331648 & this.fg;
-          }
-          getBgColorMode() {
-            return 50331648 & this.bg;
-          }
-          isFgRGB() {
-            return !(50331648 & ~this.fg);
-          }
-          isBgRGB() {
-            return !(50331648 & ~this.bg);
-          }
-          isFgPalette() {
-            return 16777216 == (50331648 & this.fg) || 33554432 == (50331648 & this.fg);
-          }
-          isBgPalette() {
-            return 16777216 == (50331648 & this.bg) || 33554432 == (50331648 & this.bg);
-          }
-          isFgDefault() {
-            return !(50331648 & this.fg);
-          }
-          isBgDefault() {
-            return !(50331648 & this.bg);
-          }
-          isAttributeDefault() {
-            return 0 === this.fg && 0 === this.bg;
-          }
-          getFgColor() {
-            switch (50331648 & this.fg) {
-              case 16777216:
-              case 33554432:
-                return 255 & this.fg;
-              case 50331648:
-                return 16777215 & this.fg;
-              default:
-                return -1;
-            }
-          }
-          getBgColor() {
-            switch (50331648 & this.bg) {
-              case 16777216:
-              case 33554432:
-                return 255 & this.bg;
-              case 50331648:
-                return 16777215 & this.bg;
-              default:
-                return -1;
-            }
-          }
-          hasExtendedAttrs() {
-            return 268435456 & this.bg;
-          }
-          updateExtended() {
-            this.extended.isEmpty() ? this.bg &= -268435457 : this.bg |= 268435456;
-          }
-          getUnderlineColor() {
-            if (268435456 & this.bg && ~this.extended.underlineColor) switch (50331648 & this.extended.underlineColor) {
-              case 16777216:
-              case 33554432:
-                return 255 & this.extended.underlineColor;
-              case 50331648:
-                return 16777215 & this.extended.underlineColor;
-              default:
-                return this.getFgColor();
-            }
-            return this.getFgColor();
-          }
-          getUnderlineColorMode() {
-            return 268435456 & this.bg && ~this.extended.underlineColor ? 50331648 & this.extended.underlineColor : this.getFgColorMode();
-          }
-          isUnderlineColorRGB() {
-            return 268435456 & this.bg && ~this.extended.underlineColor ? !(50331648 & ~this.extended.underlineColor) : this.isFgRGB();
-          }
-          isUnderlineColorPalette() {
-            return 268435456 & this.bg && ~this.extended.underlineColor ? 16777216 == (50331648 & this.extended.underlineColor) || 33554432 == (50331648 & this.extended.underlineColor) : this.isFgPalette();
-          }
-          isUnderlineColorDefault() {
-            return 268435456 & this.bg && ~this.extended.underlineColor ? !(50331648 & this.extended.underlineColor) : this.isFgDefault();
-          }
-          getUnderlineStyle() {
-            return 268435456 & this.fg ? 268435456 & this.bg ? this.extended.underlineStyle : 1 : 0;
-          }
-          getUnderlineVariantOffset() {
-            return this.extended.underlineVariantOffset;
-          }
-        }
-        t2.AttributeData = s2;
-        class i2 {
-          get ext() {
-            return this._urlId ? -469762049 & this._ext | this.underlineStyle << 26 : this._ext;
-          }
-          set ext(e3) {
-            this._ext = e3;
-          }
-          get underlineStyle() {
-            return this._urlId ? 5 : (469762048 & this._ext) >> 26;
-          }
-          set underlineStyle(e3) {
-            this._ext &= -469762049, this._ext |= e3 << 26 & 469762048;
-          }
-          get underlineColor() {
-            return 67108863 & this._ext;
-          }
-          set underlineColor(e3) {
-            this._ext &= -67108864, this._ext |= 67108863 & e3;
-          }
-          get urlId() {
-            return this._urlId;
-          }
-          set urlId(e3) {
-            this._urlId = e3;
-          }
-          get underlineVariantOffset() {
-            const e3 = (3758096384 & this._ext) >> 29;
-            return e3 < 0 ? 4294967288 ^ e3 : e3;
-          }
-          set underlineVariantOffset(e3) {
-            this._ext &= 536870911, this._ext |= e3 << 29 & 3758096384;
-          }
-          constructor(e3 = 0, t3 = 0) {
-            this._ext = 0, this._urlId = 0, this._ext = e3, this._urlId = t3;
-          }
-          clone() {
-            return new i2(this._ext, this._urlId);
-          }
-          isEmpty() {
-            return 0 === this.underlineStyle && 0 === this._urlId;
-          }
-        }
-        t2.ExtendedAttrs = i2;
-      }, 1073: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.Buffer = t2.MAX_BUFFER_SIZE = void 0;
-        const i2 = s2(5639), r2 = s2(6168), n2 = s2(5451), o = s2(6107), a = s2(732), h = s2(3055), c = s2(8938), l = s2(8158), u = s2(6760);
-        t2.MAX_BUFFER_SIZE = 4294967295, t2.Buffer = class {
-          constructor(e3, t3, s3) {
-            this._hasScrollback = e3, this._optionsService = t3, this._bufferService = s3, this.ydisp = 0, this.ybase = 0, this.y = 0, this.x = 0, this.tabs = {}, this.savedY = 0, this.savedX = 0, this.savedCurAttrData = o.DEFAULT_ATTR_DATA.clone(), this.savedCharset = u.DEFAULT_CHARSET, this.markers = [], this._nullCell = h.CellData.fromCharData([0, c.NULL_CELL_CHAR, c.NULL_CELL_WIDTH, c.NULL_CELL_CODE]), this._whitespaceCell = h.CellData.fromCharData([0, c.WHITESPACE_CELL_CHAR, c.WHITESPACE_CELL_WIDTH, c.WHITESPACE_CELL_CODE]), this._isClearing = false, this._memoryCleanupQueue = new r2.IdleTaskQueue(), this._memoryCleanupPosition = 0, this._cols = this._bufferService.cols, this._rows = this._bufferService.rows, this.lines = new i2.CircularList(this._getCorrectBufferLength(this._rows)), this.scrollTop = 0, this.scrollBottom = this._rows - 1, this.setupTabStops();
-          }
-          getNullCell(e3) {
-            return e3 ? (this._nullCell.fg = e3.fg, this._nullCell.bg = e3.bg, this._nullCell.extended = e3.extended) : (this._nullCell.fg = 0, this._nullCell.bg = 0, this._nullCell.extended = new n2.ExtendedAttrs()), this._nullCell;
-          }
-          getWhitespaceCell(e3) {
-            return e3 ? (this._whitespaceCell.fg = e3.fg, this._whitespaceCell.bg = e3.bg, this._whitespaceCell.extended = e3.extended) : (this._whitespaceCell.fg = 0, this._whitespaceCell.bg = 0, this._whitespaceCell.extended = new n2.ExtendedAttrs()), this._whitespaceCell;
-          }
-          getBlankLine(e3, t3) {
-            return new o.BufferLine(this._bufferService.cols, this.getNullCell(e3), t3);
-          }
-          get hasScrollback() {
-            return this._hasScrollback && this.lines.maxLength > this._rows;
-          }
-          get isCursorInViewport() {
-            const e3 = this.ybase + this.y - this.ydisp;
-            return e3 >= 0 && e3 < this._rows;
-          }
-          _getCorrectBufferLength(e3) {
-            if (!this._hasScrollback) return e3;
-            const s3 = e3 + this._optionsService.rawOptions.scrollback;
-            return s3 > t2.MAX_BUFFER_SIZE ? t2.MAX_BUFFER_SIZE : s3;
-          }
-          fillViewportRows(e3) {
-            if (0 === this.lines.length) {
-              void 0 === e3 && (e3 = o.DEFAULT_ATTR_DATA);
-              let t3 = this._rows;
-              for (; t3--; ) this.lines.push(this.getBlankLine(e3));
-            }
-          }
-          clear() {
-            this.ydisp = 0, this.ybase = 0, this.y = 0, this.x = 0, this.lines = new i2.CircularList(this._getCorrectBufferLength(this._rows)), this.scrollTop = 0, this.scrollBottom = this._rows - 1, this.setupTabStops();
-          }
-          resize(e3, t3) {
-            const s3 = this.getNullCell(o.DEFAULT_ATTR_DATA);
-            let i3 = 0;
-            const r3 = this._getCorrectBufferLength(t3);
-            if (r3 > this.lines.maxLength && (this.lines.maxLength = r3), this.lines.length > 0) {
-              if (this._cols < e3) for (let t4 = 0; t4 < this.lines.length; t4++) i3 += +this.lines.get(t4).resize(e3, s3);
-              let n3 = 0;
-              if (this._rows < t3) for (let i4 = this._rows; i4 < t3; i4++) this.lines.length < t3 + this.ybase && (this._optionsService.rawOptions.windowsMode || void 0 !== this._optionsService.rawOptions.windowsPty.backend || void 0 !== this._optionsService.rawOptions.windowsPty.buildNumber ? this.lines.push(new o.BufferLine(e3, s3)) : this.ybase > 0 && this.lines.length <= this.ybase + this.y + n3 + 1 ? (this.ybase--, n3++, this.ydisp > 0 && this.ydisp--) : this.lines.push(new o.BufferLine(e3, s3)));
-              else for (let e4 = this._rows; e4 > t3; e4--) this.lines.length > t3 + this.ybase && (this.lines.length > this.ybase + this.y + 1 ? this.lines.pop() : (this.ybase++, this.ydisp++));
-              if (r3 < this.lines.maxLength) {
-                const e4 = this.lines.length - r3;
-                e4 > 0 && (this.lines.trimStart(e4), this.ybase = Math.max(this.ybase - e4, 0), this.ydisp = Math.max(this.ydisp - e4, 0), this.savedY = Math.max(this.savedY - e4, 0)), this.lines.maxLength = r3;
-              }
-              this.x = Math.min(this.x, e3 - 1), this.y = Math.min(this.y, t3 - 1), n3 && (this.y += n3), this.savedX = Math.min(this.savedX, e3 - 1), this.scrollTop = 0;
-            }
-            if (this.scrollBottom = t3 - 1, this._isReflowEnabled && (this._reflow(e3, t3), this._cols > e3)) for (let t4 = 0; t4 < this.lines.length; t4++) i3 += +this.lines.get(t4).resize(e3, s3);
-            this._cols = e3, this._rows = t3, this._memoryCleanupQueue.clear(), i3 > 0.1 * this.lines.length && (this._memoryCleanupPosition = 0, this._memoryCleanupQueue.enqueue((() => this._batchedMemoryCleanup())));
-          }
-          _batchedMemoryCleanup() {
-            let e3 = true;
-            this._memoryCleanupPosition >= this.lines.length && (this._memoryCleanupPosition = 0, e3 = false);
-            let t3 = 0;
-            for (; this._memoryCleanupPosition < this.lines.length; ) if (t3 += this.lines.get(this._memoryCleanupPosition++).cleanupMemory(), t3 > 100) return true;
-            return e3;
-          }
-          get _isReflowEnabled() {
-            const e3 = this._optionsService.rawOptions.windowsPty;
-            return e3 && e3.buildNumber ? this._hasScrollback && "conpty" === e3.backend && e3.buildNumber >= 21376 : this._hasScrollback && !this._optionsService.rawOptions.windowsMode;
-          }
-          _reflow(e3, t3) {
-            this._cols !== e3 && (e3 > this._cols ? this._reflowLarger(e3, t3) : this._reflowSmaller(e3, t3));
-          }
-          _reflowLarger(e3, t3) {
-            const s3 = this._optionsService.rawOptions.reflowCursorLine, i3 = (0, a.reflowLargerGetLinesToRemove)(this.lines, this._cols, e3, this.ybase + this.y, this.getNullCell(o.DEFAULT_ATTR_DATA), s3);
-            if (i3.length > 0) {
-              const s4 = (0, a.reflowLargerCreateNewLayout)(this.lines, i3);
-              (0, a.reflowLargerApplyNewLayout)(this.lines, s4.layout), this._reflowLargerAdjustViewport(e3, t3, s4.countRemoved);
-            }
-          }
-          _reflowLargerAdjustViewport(e3, t3, s3) {
-            const i3 = this.getNullCell(o.DEFAULT_ATTR_DATA);
-            let r3 = s3;
-            for (; r3-- > 0; ) 0 === this.ybase ? (this.y > 0 && this.y--, this.lines.length < t3 && this.lines.push(new o.BufferLine(e3, i3))) : (this.ydisp === this.ybase && this.ydisp--, this.ybase--);
-            this.savedY = Math.max(this.savedY - s3, 0);
-          }
-          _reflowSmaller(e3, t3) {
-            const s3 = this._optionsService.rawOptions.reflowCursorLine, i3 = this.getNullCell(o.DEFAULT_ATTR_DATA), r3 = [];
-            let n3 = 0;
-            for (let h2 = this.lines.length - 1; h2 >= 0; h2--) {
-              let c2 = this.lines.get(h2);
-              if (!c2 || !c2.isWrapped && c2.getTrimmedLength() <= e3) continue;
-              const l2 = [c2];
-              for (; c2.isWrapped && h2 > 0; ) c2 = this.lines.get(--h2), l2.unshift(c2);
-              if (!s3) {
-                const e4 = this.ybase + this.y;
-                if (e4 >= h2 && e4 < h2 + l2.length) continue;
-              }
-              const u2 = l2[l2.length - 1].getTrimmedLength(), d = (0, a.reflowSmallerGetNewLineLengths)(l2, this._cols, e3), f = d.length - l2.length;
-              let _;
-              _ = 0 === this.ybase && this.y !== this.lines.length - 1 ? Math.max(0, this.y - this.lines.maxLength + f) : Math.max(0, this.lines.length - this.lines.maxLength + f);
-              const p = [];
-              for (let e4 = 0; e4 < f; e4++) {
-                const e5 = this.getBlankLine(o.DEFAULT_ATTR_DATA, true);
-                p.push(e5);
-              }
-              p.length > 0 && (r3.push({ start: h2 + l2.length + n3, newLines: p }), n3 += p.length), l2.push(...p);
-              let g = d.length - 1, v = d[g];
-              0 === v && (g--, v = d[g]);
-              let m = l2.length - f - 1, b = u2;
-              for (; m >= 0; ) {
-                const e4 = Math.min(b, v);
-                if (void 0 === l2[g]) break;
-                if (l2[g].copyCellsFrom(l2[m], b - e4, v - e4, e4, true), v -= e4, 0 === v && (g--, v = d[g]), b -= e4, 0 === b) {
-                  m--;
-                  const e5 = Math.max(m, 0);
-                  b = (0, a.getWrappedLineTrimmedLength)(l2, e5, this._cols);
-                }
-              }
-              for (let t4 = 0; t4 < l2.length; t4++) d[t4] < e3 && l2[t4].setCell(d[t4], i3);
-              let S = f - _;
-              for (; S-- > 0; ) 0 === this.ybase ? this.y < t3 - 1 ? (this.y++, this.lines.pop()) : (this.ybase++, this.ydisp++) : this.ybase < Math.min(this.lines.maxLength, this.lines.length + n3) - t3 && (this.ybase === this.ydisp && this.ydisp++, this.ybase++);
-              this.savedY = Math.min(this.savedY + f, this.ybase + t3 - 1);
-            }
-            if (r3.length > 0) {
-              const e4 = [], t4 = [];
-              for (let e5 = 0; e5 < this.lines.length; e5++) t4.push(this.lines.get(e5));
-              const s4 = this.lines.length;
-              let i4 = s4 - 1, o2 = 0, a2 = r3[o2];
-              this.lines.length = Math.min(this.lines.maxLength, this.lines.length + n3);
-              let h2 = 0;
-              for (let c3 = Math.min(this.lines.maxLength - 1, s4 + n3 - 1); c3 >= 0; c3--) if (a2 && a2.start > i4 + h2) {
-                for (let e5 = a2.newLines.length - 1; e5 >= 0; e5--) this.lines.set(c3--, a2.newLines[e5]);
-                c3++, e4.push({ index: i4 + 1, amount: a2.newLines.length }), h2 += a2.newLines.length, a2 = r3[++o2];
-              } else this.lines.set(c3, t4[i4--]);
-              let c2 = 0;
-              for (let t5 = e4.length - 1; t5 >= 0; t5--) e4[t5].index += c2, this.lines.onInsertEmitter.fire(e4[t5]), c2 += e4[t5].amount;
-              const l2 = Math.max(0, s4 + n3 - this.lines.maxLength);
-              l2 > 0 && this.lines.onTrimEmitter.fire(l2);
-            }
-          }
-          translateBufferLineToString(e3, t3, s3 = 0, i3) {
-            const r3 = this.lines.get(e3);
-            return r3 ? r3.translateToString(t3, s3, i3) : "";
-          }
-          getWrappedRangeForLine(e3) {
-            let t3 = e3, s3 = e3;
-            for (; t3 > 0 && this.lines.get(t3).isWrapped; ) t3--;
-            for (; s3 + 1 < this.lines.length && this.lines.get(s3 + 1).isWrapped; ) s3++;
-            return { first: t3, last: s3 };
-          }
-          setupTabStops(e3) {
-            for (null != e3 ? this.tabs[e3] || (e3 = this.prevStop(e3)) : (this.tabs = {}, e3 = 0); e3 < this._cols; e3 += this._optionsService.rawOptions.tabStopWidth) this.tabs[e3] = true;
-          }
-          prevStop(e3) {
-            for (null == e3 && (e3 = this.x); !this.tabs[--e3] && e3 > 0; ) ;
-            return e3 >= this._cols ? this._cols - 1 : e3 < 0 ? 0 : e3;
-          }
-          nextStop(e3) {
-            for (null == e3 && (e3 = this.x); !this.tabs[++e3] && e3 < this._cols; ) ;
-            return e3 >= this._cols ? this._cols - 1 : e3 < 0 ? 0 : e3;
-          }
-          clearMarkers(e3) {
-            this._isClearing = true;
-            for (let t3 = 0; t3 < this.markers.length; t3++) this.markers[t3].line === e3 && (this.markers[t3].dispose(), this.markers.splice(t3--, 1));
-            this._isClearing = false;
-          }
-          clearAllMarkers() {
-            this._isClearing = true;
-            for (let e3 = 0; e3 < this.markers.length; e3++) this.markers[e3].dispose();
-            this.markers.length = 0, this._isClearing = false;
-          }
-          addMarker(e3) {
-            const t3 = new l.Marker(e3);
-            return this.markers.push(t3), t3.register(this.lines.onTrim(((e4) => {
-              t3.line -= e4, t3.line < 0 && t3.dispose();
-            }))), t3.register(this.lines.onInsert(((e4) => {
-              t3.line >= e4.index && (t3.line += e4.amount);
-            }))), t3.register(this.lines.onDelete(((e4) => {
-              t3.line >= e4.index && t3.line < e4.index + e4.amount && t3.dispose(), t3.line > e4.index && (t3.line -= e4.amount);
-            }))), t3.register(t3.onDispose((() => this._removeMarker(t3)))), t3;
-          }
-          _removeMarker(e3) {
-            this._isClearing || this.markers.splice(this.markers.indexOf(e3), 1);
-          }
-        };
-      }, 6107: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.BufferLine = t2.DEFAULT_ATTR_DATA = void 0;
-        const i2 = s2(5451), r2 = s2(3055), n2 = s2(8938), o = s2(726);
-        t2.DEFAULT_ATTR_DATA = Object.freeze(new i2.AttributeData());
-        let a = 0;
-        class h {
-          constructor(e3, t3, s3 = false) {
-            this.isWrapped = s3, this._combined = {}, this._extendedAttrs = {}, this._data = new Uint32Array(3 * e3);
-            const i3 = t3 || r2.CellData.fromCharData([0, n2.NULL_CELL_CHAR, n2.NULL_CELL_WIDTH, n2.NULL_CELL_CODE]);
-            for (let t4 = 0; t4 < e3; ++t4) this.setCell(t4, i3);
-            this.length = e3;
-          }
-          get(e3) {
-            const t3 = this._data[3 * e3 + 0], s3 = 2097151 & t3;
-            return [this._data[3 * e3 + 1], 2097152 & t3 ? this._combined[e3] : s3 ? (0, o.stringFromCodePoint)(s3) : "", t3 >> 22, 2097152 & t3 ? this._combined[e3].charCodeAt(this._combined[e3].length - 1) : s3];
-          }
-          set(e3, t3) {
-            this._data[3 * e3 + 1] = t3[n2.CHAR_DATA_ATTR_INDEX], t3[n2.CHAR_DATA_CHAR_INDEX].length > 1 ? (this._combined[e3] = t3[1], this._data[3 * e3 + 0] = 2097152 | e3 | t3[n2.CHAR_DATA_WIDTH_INDEX] << 22) : this._data[3 * e3 + 0] = t3[n2.CHAR_DATA_CHAR_INDEX].charCodeAt(0) | t3[n2.CHAR_DATA_WIDTH_INDEX] << 22;
-          }
-          getWidth(e3) {
-            return this._data[3 * e3 + 0] >> 22;
-          }
-          hasWidth(e3) {
-            return 12582912 & this._data[3 * e3 + 0];
-          }
-          getFg(e3) {
-            return this._data[3 * e3 + 1];
-          }
-          getBg(e3) {
-            return this._data[3 * e3 + 2];
-          }
-          hasContent(e3) {
-            return 4194303 & this._data[3 * e3 + 0];
-          }
-          getCodePoint(e3) {
-            const t3 = this._data[3 * e3 + 0];
-            return 2097152 & t3 ? this._combined[e3].charCodeAt(this._combined[e3].length - 1) : 2097151 & t3;
-          }
-          isCombined(e3) {
-            return 2097152 & this._data[3 * e3 + 0];
-          }
-          getString(e3) {
-            const t3 = this._data[3 * e3 + 0];
-            return 2097152 & t3 ? this._combined[e3] : 2097151 & t3 ? (0, o.stringFromCodePoint)(2097151 & t3) : "";
-          }
-          isProtected(e3) {
-            return 536870912 & this._data[3 * e3 + 2];
-          }
-          loadCell(e3, t3) {
-            return a = 3 * e3, t3.content = this._data[a + 0], t3.fg = this._data[a + 1], t3.bg = this._data[a + 2], 2097152 & t3.content && (t3.combinedData = this._combined[e3]), 268435456 & t3.bg && (t3.extended = this._extendedAttrs[e3]), t3;
-          }
-          setCell(e3, t3) {
-            2097152 & t3.content && (this._combined[e3] = t3.combinedData), 268435456 & t3.bg && (this._extendedAttrs[e3] = t3.extended), this._data[3 * e3 + 0] = t3.content, this._data[3 * e3 + 1] = t3.fg, this._data[3 * e3 + 2] = t3.bg;
-          }
-          setCellFromCodepoint(e3, t3, s3, i3) {
-            268435456 & i3.bg && (this._extendedAttrs[e3] = i3.extended), this._data[3 * e3 + 0] = t3 | s3 << 22, this._data[3 * e3 + 1] = i3.fg, this._data[3 * e3 + 2] = i3.bg;
-          }
-          addCodepointToCell(e3, t3, s3) {
-            let i3 = this._data[3 * e3 + 0];
-            2097152 & i3 ? this._combined[e3] += (0, o.stringFromCodePoint)(t3) : 2097151 & i3 ? (this._combined[e3] = (0, o.stringFromCodePoint)(2097151 & i3) + (0, o.stringFromCodePoint)(t3), i3 &= -2097152, i3 |= 2097152) : i3 = t3 | 1 << 22, s3 && (i3 &= -12582913, i3 |= s3 << 22), this._data[3 * e3 + 0] = i3;
-          }
-          insertCells(e3, t3, s3) {
-            if ((e3 %= this.length) && 2 === this.getWidth(e3 - 1) && this.setCellFromCodepoint(e3 - 1, 0, 1, s3), t3 < this.length - e3) {
-              const i3 = new r2.CellData();
-              for (let s4 = this.length - e3 - t3 - 1; s4 >= 0; --s4) this.setCell(e3 + t3 + s4, this.loadCell(e3 + s4, i3));
-              for (let i4 = 0; i4 < t3; ++i4) this.setCell(e3 + i4, s3);
-            } else for (let t4 = e3; t4 < this.length; ++t4) this.setCell(t4, s3);
-            2 === this.getWidth(this.length - 1) && this.setCellFromCodepoint(this.length - 1, 0, 1, s3);
-          }
-          deleteCells(e3, t3, s3) {
-            if (e3 %= this.length, t3 < this.length - e3) {
-              const i3 = new r2.CellData();
-              for (let s4 = 0; s4 < this.length - e3 - t3; ++s4) this.setCell(e3 + s4, this.loadCell(e3 + t3 + s4, i3));
-              for (let e4 = this.length - t3; e4 < this.length; ++e4) this.setCell(e4, s3);
-            } else for (let t4 = e3; t4 < this.length; ++t4) this.setCell(t4, s3);
-            e3 && 2 === this.getWidth(e3 - 1) && this.setCellFromCodepoint(e3 - 1, 0, 1, s3), 0 !== this.getWidth(e3) || this.hasContent(e3) || this.setCellFromCodepoint(e3, 0, 1, s3);
-          }
-          replaceCells(e3, t3, s3, i3 = false) {
-            if (i3) for (e3 && 2 === this.getWidth(e3 - 1) && !this.isProtected(e3 - 1) && this.setCellFromCodepoint(e3 - 1, 0, 1, s3), t3 < this.length && 2 === this.getWidth(t3 - 1) && !this.isProtected(t3) && this.setCellFromCodepoint(t3, 0, 1, s3); e3 < t3 && e3 < this.length; ) this.isProtected(e3) || this.setCell(e3, s3), e3++;
-            else for (e3 && 2 === this.getWidth(e3 - 1) && this.setCellFromCodepoint(e3 - 1, 0, 1, s3), t3 < this.length && 2 === this.getWidth(t3 - 1) && this.setCellFromCodepoint(t3, 0, 1, s3); e3 < t3 && e3 < this.length; ) this.setCell(e3++, s3);
-          }
-          resize(e3, t3) {
-            if (e3 === this.length) return 4 * this._data.length * 2 < this._data.buffer.byteLength;
-            const s3 = 3 * e3;
-            if (e3 > this.length) {
-              if (this._data.buffer.byteLength >= 4 * s3) this._data = new Uint32Array(this._data.buffer, 0, s3);
-              else {
-                const e4 = new Uint32Array(s3);
-                e4.set(this._data), this._data = e4;
-              }
-              for (let s4 = this.length; s4 < e3; ++s4) this.setCell(s4, t3);
-            } else {
-              this._data = this._data.subarray(0, s3);
-              const t4 = Object.keys(this._combined);
-              for (let s4 = 0; s4 < t4.length; s4++) {
-                const i4 = parseInt(t4[s4], 10);
-                i4 >= e3 && delete this._combined[i4];
-              }
-              const i3 = Object.keys(this._extendedAttrs);
-              for (let t5 = 0; t5 < i3.length; t5++) {
-                const s4 = parseInt(i3[t5], 10);
-                s4 >= e3 && delete this._extendedAttrs[s4];
-              }
-            }
-            return this.length = e3, 4 * s3 * 2 < this._data.buffer.byteLength;
-          }
-          cleanupMemory() {
-            if (4 * this._data.length * 2 < this._data.buffer.byteLength) {
-              const e3 = new Uint32Array(this._data.length);
-              return e3.set(this._data), this._data = e3, 1;
-            }
-            return 0;
-          }
-          fill(e3, t3 = false) {
-            if (t3) for (let t4 = 0; t4 < this.length; ++t4) this.isProtected(t4) || this.setCell(t4, e3);
-            else {
-              this._combined = {}, this._extendedAttrs = {};
-              for (let t4 = 0; t4 < this.length; ++t4) this.setCell(t4, e3);
-            }
-          }
-          copyFrom(e3) {
-            this.length !== e3.length ? this._data = new Uint32Array(e3._data) : this._data.set(e3._data), this.length = e3.length, this._combined = {};
-            for (const t3 in e3._combined) this._combined[t3] = e3._combined[t3];
-            this._extendedAttrs = {};
-            for (const t3 in e3._extendedAttrs) this._extendedAttrs[t3] = e3._extendedAttrs[t3];
-            this.isWrapped = e3.isWrapped;
-          }
-          clone() {
-            const e3 = new h(0);
-            e3._data = new Uint32Array(this._data), e3.length = this.length;
-            for (const t3 in this._combined) e3._combined[t3] = this._combined[t3];
-            for (const t3 in this._extendedAttrs) e3._extendedAttrs[t3] = this._extendedAttrs[t3];
-            return e3.isWrapped = this.isWrapped, e3;
-          }
-          getTrimmedLength() {
-            for (let e3 = this.length - 1; e3 >= 0; --e3) if (4194303 & this._data[3 * e3 + 0]) return e3 + (this._data[3 * e3 + 0] >> 22);
-            return 0;
-          }
-          getNoBgTrimmedLength() {
-            for (let e3 = this.length - 1; e3 >= 0; --e3) if (4194303 & this._data[3 * e3 + 0] || 50331648 & this._data[3 * e3 + 2]) return e3 + (this._data[3 * e3 + 0] >> 22);
-            return 0;
-          }
-          copyCellsFrom(e3, t3, s3, i3, r3) {
-            const n3 = e3._data;
-            if (r3) for (let r4 = i3 - 1; r4 >= 0; r4--) {
-              for (let e4 = 0; e4 < 3; e4++) this._data[3 * (s3 + r4) + e4] = n3[3 * (t3 + r4) + e4];
-              268435456 & n3[3 * (t3 + r4) + 2] && (this._extendedAttrs[s3 + r4] = e3._extendedAttrs[t3 + r4]);
-            }
-            else for (let r4 = 0; r4 < i3; r4++) {
-              for (let e4 = 0; e4 < 3; e4++) this._data[3 * (s3 + r4) + e4] = n3[3 * (t3 + r4) + e4];
-              268435456 & n3[3 * (t3 + r4) + 2] && (this._extendedAttrs[s3 + r4] = e3._extendedAttrs[t3 + r4]);
-            }
-            const o2 = Object.keys(e3._combined);
-            for (let i4 = 0; i4 < o2.length; i4++) {
-              const r4 = parseInt(o2[i4], 10);
-              r4 >= t3 && (this._combined[r4 - t3 + s3] = e3._combined[r4]);
-            }
-          }
-          translateToString(e3, t3, s3, i3) {
-            t3 = t3 ?? 0, s3 = s3 ?? this.length, e3 && (s3 = Math.min(s3, this.getTrimmedLength())), i3 && (i3.length = 0);
-            let r3 = "";
-            for (; t3 < s3; ) {
-              const e4 = this._data[3 * t3 + 0], s4 = 2097151 & e4, a2 = 2097152 & e4 ? this._combined[t3] : s4 ? (0, o.stringFromCodePoint)(s4) : n2.WHITESPACE_CELL_CHAR;
-              if (r3 += a2, i3) for (let e5 = 0; e5 < a2.length; ++e5) i3.push(t3);
-              t3 += e4 >> 22 || 1;
-            }
-            return i3 && i3.push(t3), r3;
-          }
-        }
-        t2.BufferLine = h;
-      }, 732: (e2, t2) => {
-        function s2(e3, t3, s3) {
-          if (t3 === e3.length - 1) return e3[t3].getTrimmedLength();
-          const i2 = !e3[t3].hasContent(s3 - 1) && 1 === e3[t3].getWidth(s3 - 1), r2 = 2 === e3[t3 + 1].getWidth(0);
-          return i2 && r2 ? s3 - 1 : s3;
-        }
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.reflowLargerGetLinesToRemove = function(e3, t3, i2, r2, n2, o) {
-          const a = [];
-          for (let h = 0; h < e3.length - 1; h++) {
-            let c = h, l = e3.get(++c);
-            if (!l.isWrapped) continue;
-            const u = [e3.get(h)];
-            for (; c < e3.length && l.isWrapped; ) u.push(l), l = e3.get(++c);
-            if (!o && r2 >= h && r2 < c) {
-              h += u.length - 1;
+        let o = r - 4, h = m;
+        for (; h < r; ) {
+          for (; h < o && !((s = t[h]) & 128) && !((a = t[h + 1]) & 128) && !((l = t[h + 2]) & 128) && !((c = t[h + 3]) & 128); ) e[i++] = s, e[i++] = a, e[i++] = l, e[i++] = c, h += 4;
+          if (s = t[h++], s < 128) e[i++] = s;
+          else if ((s & 224) === 192) {
+            if (h >= r) return this.interim[0] = s, i;
+            if (a = t[h++], (a & 192) !== 128) {
+              h--;
               continue;
             }
-            let d = 0, f = s2(u, d, t3), _ = 1, p = 0;
-            for (; _ < u.length; ) {
-              const e4 = s2(u, _, t3), r3 = e4 - p, o2 = i2 - f, a2 = Math.min(r3, o2);
-              u[d].copyCellsFrom(u[_], p, f, a2, false), f += a2, f === i2 && (d++, f = 0), p += a2, p === e4 && (_++, p = 0), 0 === f && 0 !== d && 2 === u[d - 1].getWidth(i2 - 1) && (u[d].copyCellsFrom(u[d - 1], i2 - 1, f++, 1, false), u[d - 1].setCell(i2 - 1, n2));
+            if (u = (s & 31) << 6 | a & 63, u < 128) {
+              h--;
+              continue;
             }
-            u[d].replaceCells(f, i2, n2);
-            let g = 0;
-            for (let e4 = u.length - 1; e4 > 0 && (e4 > d || 0 === u[e4].getTrimmedLength()); e4--) g++;
-            g > 0 && (a.push(h + u.length - g), a.push(g)), h += u.length - 1;
-          }
-          return a;
-        }, t2.reflowLargerCreateNewLayout = function(e3, t3) {
-          const s3 = [];
-          let i2 = 0, r2 = t3[i2], n2 = 0;
-          for (let o = 0; o < e3.length; o++) if (r2 === o) {
-            const s4 = t3[++i2];
-            e3.onDeleteEmitter.fire({ index: o - n2, amount: s4 }), o += s4 - 1, n2 += s4, r2 = t3[++i2];
-          } else s3.push(o);
-          return { layout: s3, countRemoved: n2 };
-        }, t2.reflowLargerApplyNewLayout = function(e3, t3) {
-          const s3 = [];
-          for (let i2 = 0; i2 < t3.length; i2++) s3.push(e3.get(t3[i2]));
-          for (let t4 = 0; t4 < s3.length; t4++) e3.set(t4, s3[t4]);
-          e3.length = t3.length;
-        }, t2.reflowSmallerGetNewLineLengths = function(e3, t3, i2) {
-          const r2 = [], n2 = e3.map(((i3, r3) => s2(e3, r3, t3))).reduce(((e4, t4) => e4 + t4));
-          let o = 0, a = 0, h = 0;
-          for (; h < n2; ) {
-            if (n2 - h < i2) {
-              r2.push(n2 - h);
-              break;
+            e[i++] = u;
+          } else if ((s & 240) === 224) {
+            if (h >= r) return this.interim[0] = s, i;
+            if (a = t[h++], (a & 192) !== 128) {
+              h--;
+              continue;
             }
-            o += i2;
-            const c = s2(e3, a, t3);
-            o > c && (o -= c, a++);
-            const l = 2 === e3[a].getWidth(o - 1);
-            l && o--;
-            const u = l ? i2 - 1 : i2;
-            r2.push(u), h += u;
-          }
-          return r2;
-        }, t2.getWrappedLineTrimmedLength = s2;
-      }, 4097: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.BufferSet = void 0;
-        const i2 = s2(7150), r2 = s2(1073), n2 = s2(802);
-        class o extends i2.Disposable {
-          constructor(e3, t3) {
-            super(), this._optionsService = e3, this._bufferService = t3, this._onBufferActivate = this._register(new n2.Emitter()), this.onBufferActivate = this._onBufferActivate.event, this.reset(), this._register(this._optionsService.onSpecificOptionChange("scrollback", (() => this.resize(this._bufferService.cols, this._bufferService.rows)))), this._register(this._optionsService.onSpecificOptionChange("tabStopWidth", (() => this.setupTabStops())));
-          }
-          reset() {
-            this._normal = new r2.Buffer(true, this._optionsService, this._bufferService), this._normal.fillViewportRows(), this._alt = new r2.Buffer(false, this._optionsService, this._bufferService), this._activeBuffer = this._normal, this._onBufferActivate.fire({ activeBuffer: this._normal, inactiveBuffer: this._alt }), this.setupTabStops();
-          }
-          get alt() {
-            return this._alt;
-          }
-          get active() {
-            return this._activeBuffer;
-          }
-          get normal() {
-            return this._normal;
-          }
-          activateNormalBuffer() {
-            this._activeBuffer !== this._normal && (this._normal.x = this._alt.x, this._normal.y = this._alt.y, this._alt.clearAllMarkers(), this._alt.clear(), this._activeBuffer = this._normal, this._onBufferActivate.fire({ activeBuffer: this._normal, inactiveBuffer: this._alt }));
-          }
-          activateAltBuffer(e3) {
-            this._activeBuffer !== this._alt && (this._alt.fillViewportRows(e3), this._alt.x = this._normal.x, this._alt.y = this._normal.y, this._activeBuffer = this._alt, this._onBufferActivate.fire({ activeBuffer: this._alt, inactiveBuffer: this._normal }));
-          }
-          resize(e3, t3) {
-            this._normal.resize(e3, t3), this._alt.resize(e3, t3), this.setupTabStops(e3);
-          }
-          setupTabStops(e3) {
-            this._normal.setupTabStops(e3), this._alt.setupTabStops(e3);
+            if (h >= r) return this.interim[0] = s, this.interim[1] = a, i;
+            if (l = t[h++], (l & 192) !== 128) {
+              h--;
+              continue;
+            }
+            if (u = (s & 15) << 12 | (a & 63) << 6 | l & 63, u < 2048 || u >= 55296 && u <= 57343 || u === 65279) continue;
+            e[i++] = u;
+          } else if ((s & 248) === 240) {
+            if (h >= r) return this.interim[0] = s, i;
+            if (a = t[h++], (a & 192) !== 128) {
+              h--;
+              continue;
+            }
+            if (h >= r) return this.interim[0] = s, this.interim[1] = a, i;
+            if (l = t[h++], (l & 192) !== 128) {
+              h--;
+              continue;
+            }
+            if (h >= r) return this.interim[0] = s, this.interim[1] = a, this.interim[2] = l, i;
+            if (c = t[h++], (c & 192) !== 128) {
+              h--;
+              continue;
+            }
+            if (u = (s & 7) << 18 | (a & 63) << 12 | (l & 63) << 6 | c & 63, u < 65536 || u > 1114111) continue;
+            e[i++] = u;
           }
         }
-        t2.BufferSet = o;
-      }, 3055: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.CellData = void 0;
-        const i2 = s2(726), r2 = s2(8938), n2 = s2(5451);
-        class o extends n2.AttributeData {
-          constructor() {
-            super(...arguments), this.content = 0, this.fg = 0, this.bg = 0, this.extended = new n2.ExtendedAttrs(), this.combinedData = "";
-          }
-          static fromCharData(e3) {
-            const t3 = new o();
-            return t3.setFromCharData(e3), t3;
-          }
-          isCombined() {
-            return 2097152 & this.content;
-          }
-          getWidth() {
-            return this.content >> 22;
-          }
-          getChars() {
-            return 2097152 & this.content ? this.combinedData : 2097151 & this.content ? (0, i2.stringFromCodePoint)(2097151 & this.content) : "";
-          }
-          getCode() {
-            return this.isCombined() ? this.combinedData.charCodeAt(this.combinedData.length - 1) : 2097151 & this.content;
-          }
-          setFromCharData(e3) {
-            this.fg = e3[r2.CHAR_DATA_ATTR_INDEX], this.bg = 0;
-            let t3 = false;
-            if (e3[r2.CHAR_DATA_CHAR_INDEX].length > 2) t3 = true;
-            else if (2 === e3[r2.CHAR_DATA_CHAR_INDEX].length) {
-              const s3 = e3[r2.CHAR_DATA_CHAR_INDEX].charCodeAt(0);
-              if (55296 <= s3 && s3 <= 56319) {
-                const i3 = e3[r2.CHAR_DATA_CHAR_INDEX].charCodeAt(1);
-                56320 <= i3 && i3 <= 57343 ? this.content = 1024 * (s3 - 55296) + i3 - 56320 + 65536 | e3[r2.CHAR_DATA_WIDTH_INDEX] << 22 : t3 = true;
-              } else t3 = true;
-            } else this.content = e3[r2.CHAR_DATA_CHAR_INDEX].charCodeAt(0) | e3[r2.CHAR_DATA_WIDTH_INDEX] << 22;
-            t3 && (this.combinedData = e3[r2.CHAR_DATA_CHAR_INDEX], this.content = 2097152 | e3[r2.CHAR_DATA_WIDTH_INDEX] << 22);
-          }
-          getAsCharData() {
-            return [this.fg, this.getChars(), this.getWidth(), this.getCode()];
-          }
+        return i;
+      }
+    };
+    Ve = "";
+    ze = " ";
+    te = class n {
+      constructor() {
+        this.fg = 0;
+        this.bg = 0;
+        this.extended = new re();
+      }
+      static toColorRGB(t) {
+        return [t >>> 16 & 255, t >>> 8 & 255, t & 255];
+      }
+      static fromColorRGB(t) {
+        return (t[0] & 255) << 16 | (t[1] & 255) << 8 | t[2] & 255;
+      }
+      clone() {
+        let t = new n();
+        return t.fg = this.fg, t.bg = this.bg, t.extended = this.extended.clone(), t;
+      }
+      isInverse() {
+        return this.fg & 67108864;
+      }
+      isBold() {
+        return this.fg & 134217728;
+      }
+      isUnderline() {
+        return this.hasExtendedAttrs() && this.extended.underlineStyle !== 0 ? 1 : this.fg & 268435456;
+      }
+      isBlink() {
+        return this.fg & 536870912;
+      }
+      isInvisible() {
+        return this.fg & 1073741824;
+      }
+      isItalic() {
+        return this.bg & 67108864;
+      }
+      isDim() {
+        return this.bg & 134217728;
+      }
+      isStrikethrough() {
+        return this.fg & 2147483648;
+      }
+      isProtected() {
+        return this.bg & 536870912;
+      }
+      isOverline() {
+        return this.bg & 1073741824;
+      }
+      getFgColorMode() {
+        return this.fg & 50331648;
+      }
+      getBgColorMode() {
+        return this.bg & 50331648;
+      }
+      isFgRGB() {
+        return (this.fg & 50331648) === 50331648;
+      }
+      isBgRGB() {
+        return (this.bg & 50331648) === 50331648;
+      }
+      isFgPalette() {
+        return (this.fg & 50331648) === 16777216 || (this.fg & 50331648) === 33554432;
+      }
+      isBgPalette() {
+        return (this.bg & 50331648) === 16777216 || (this.bg & 50331648) === 33554432;
+      }
+      isFgDefault() {
+        return (this.fg & 50331648) === 0;
+      }
+      isBgDefault() {
+        return (this.bg & 50331648) === 0;
+      }
+      isAttributeDefault() {
+        return this.fg === 0 && this.bg === 0;
+      }
+      getFgColor() {
+        switch (this.fg & 50331648) {
+          case 16777216:
+          case 33554432:
+            return this.fg & 255;
+          case 50331648:
+            return this.fg & 16777215;
+          default:
+            return -1;
         }
-        t2.CellData = o;
-      }, 8938: (e2, t2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.WHITESPACE_CELL_CODE = t2.WHITESPACE_CELL_WIDTH = t2.WHITESPACE_CELL_CHAR = t2.NULL_CELL_CODE = t2.NULL_CELL_WIDTH = t2.NULL_CELL_CHAR = t2.CHAR_DATA_CODE_INDEX = t2.CHAR_DATA_WIDTH_INDEX = t2.CHAR_DATA_CHAR_INDEX = t2.CHAR_DATA_ATTR_INDEX = t2.DEFAULT_EXT = t2.DEFAULT_ATTR = t2.DEFAULT_COLOR = void 0, t2.DEFAULT_COLOR = 0, t2.DEFAULT_ATTR = t2.DEFAULT_COLOR << 9 | 256, t2.DEFAULT_EXT = 0, t2.CHAR_DATA_ATTR_INDEX = 0, t2.CHAR_DATA_CHAR_INDEX = 1, t2.CHAR_DATA_WIDTH_INDEX = 2, t2.CHAR_DATA_CODE_INDEX = 3, t2.NULL_CELL_CHAR = "", t2.NULL_CELL_WIDTH = 1, t2.NULL_CELL_CODE = 0, t2.WHITESPACE_CELL_CHAR = " ", t2.WHITESPACE_CELL_WIDTH = 1, t2.WHITESPACE_CELL_CODE = 32;
-      }, 8158: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.Marker = void 0;
-        const i2 = s2(802), r2 = s2(7150);
-        class n2 {
-          get id() {
-            return this._id;
-          }
-          constructor(e3) {
-            this.line = e3, this.isDisposed = false, this._disposables = [], this._id = n2._nextId++, this._onDispose = this.register(new i2.Emitter()), this.onDispose = this._onDispose.event;
-          }
-          dispose() {
-            this.isDisposed || (this.isDisposed = true, this.line = -1, this._onDispose.fire(), (0, r2.dispose)(this._disposables), this._disposables.length = 0);
-          }
-          register(e3) {
-            return this._disposables.push(e3), e3;
-          }
+      }
+      getBgColor() {
+        switch (this.bg & 50331648) {
+          case 16777216:
+          case 33554432:
+            return this.bg & 255;
+          case 50331648:
+            return this.bg & 16777215;
+          default:
+            return -1;
         }
-        t2.Marker = n2, n2._nextId = 1;
-      }, 6760: (e2, t2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.DEFAULT_CHARSET = t2.CHARSETS = void 0, t2.CHARSETS = {}, t2.DEFAULT_CHARSET = t2.CHARSETS.B, t2.CHARSETS[0] = { "`": "\u25C6", a: "\u2592", b: "\u2409", c: "\u240C", d: "\u240D", e: "\u240A", f: "\xB0", g: "\xB1", h: "\u2424", i: "\u240B", j: "\u2518", k: "\u2510", l: "\u250C", m: "\u2514", n: "\u253C", o: "\u23BA", p: "\u23BB", q: "\u2500", r: "\u23BC", s: "\u23BD", t: "\u251C", u: "\u2524", v: "\u2534", w: "\u252C", x: "\u2502", y: "\u2264", z: "\u2265", "{": "\u03C0", "|": "\u2260", "}": "\xA3", "~": "\xB7" }, t2.CHARSETS.A = { "#": "\xA3" }, t2.CHARSETS.B = void 0, t2.CHARSETS[4] = { "#": "\xA3", "@": "\xBE", "[": "ij", "\\": "\xBD", "]": "|", "{": "\xA8", "|": "f", "}": "\xBC", "~": "\xB4" }, t2.CHARSETS.C = t2.CHARSETS[5] = { "[": "\xC4", "\\": "\xD6", "]": "\xC5", "^": "\xDC", "`": "\xE9", "{": "\xE4", "|": "\xF6", "}": "\xE5", "~": "\xFC" }, t2.CHARSETS.R = { "#": "\xA3", "@": "\xE0", "[": "\xB0", "\\": "\xE7", "]": "\xA7", "{": "\xE9", "|": "\xF9", "}": "\xE8", "~": "\xA8" }, t2.CHARSETS.Q = { "@": "\xE0", "[": "\xE2", "\\": "\xE7", "]": "\xEA", "^": "\xEE", "`": "\xF4", "{": "\xE9", "|": "\xF9", "}": "\xE8", "~": "\xFB" }, t2.CHARSETS.K = { "@": "\xA7", "[": "\xC4", "\\": "\xD6", "]": "\xDC", "{": "\xE4", "|": "\xF6", "}": "\xFC", "~": "\xDF" }, t2.CHARSETS.Y = { "#": "\xA3", "@": "\xA7", "[": "\xB0", "\\": "\xE7", "]": "\xE9", "`": "\xF9", "{": "\xE0", "|": "\xF2", "}": "\xE8", "~": "\xEC" }, t2.CHARSETS.E = t2.CHARSETS[6] = { "@": "\xC4", "[": "\xC6", "\\": "\xD8", "]": "\xC5", "^": "\xDC", "`": "\xE4", "{": "\xE6", "|": "\xF8", "}": "\xE5", "~": "\xFC" }, t2.CHARSETS.Z = { "#": "\xA3", "@": "\xA7", "[": "\xA1", "\\": "\xD1", "]": "\xBF", "{": "\xB0", "|": "\xF1", "}": "\xE7" }, t2.CHARSETS.H = t2.CHARSETS[7] = { "@": "\xC9", "[": "\xC4", "\\": "\xD6", "]": "\xC5", "^": "\xDC", "`": "\xE9", "{": "\xE4", "|": "\xF6", "}": "\xE5", "~": "\xFC" }, t2.CHARSETS["="] = { "#": "\xF9", "@": "\xE0", "[": "\xE9", "\\": "\xE7", "]": "\xEA", "^": "\xEE", _: "\xE8", "`": "\xF4", "{": "\xE4", "|": "\xF6", "}": "\xFC", "~": "\xFB" };
-      }, 3534: (e2, t2) => {
-        var s2, i2, r2;
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.C1_ESCAPED = t2.C1 = t2.C0 = void 0, (function(e3) {
-          e3.NUL = "\0", e3.SOH = "\x01", e3.STX = "\x02", e3.ETX = "\x03", e3.EOT = "\x04", e3.ENQ = "\x05", e3.ACK = "\x06", e3.BEL = "\x07", e3.BS = "\b", e3.HT = "	", e3.LF = "\n", e3.VT = "\v", e3.FF = "\f", e3.CR = "\r", e3.SO = "\x0e", e3.SI = "\x0f", e3.DLE = "\x10", e3.DC1 = "\x11", e3.DC2 = "\x12", e3.DC3 = "\x13", e3.DC4 = "\x14", e3.NAK = "\x15", e3.SYN = "\x16", e3.ETB = "\x17", e3.CAN = "\x18", e3.EM = "\x19", e3.SUB = "\x1a", e3.ESC = "\x1B", e3.FS = "\x1c", e3.GS = "\x1d", e3.RS = "\x1e", e3.US = "\x1f", e3.SP = " ", e3.DEL = "\x7F";
-        })(s2 || (t2.C0 = s2 = {})), (function(e3) {
-          e3.PAD = "\x80", e3.HOP = "\x81", e3.BPH = "\x82", e3.NBH = "\x83", e3.IND = "\x84", e3.NEL = "\x85", e3.SSA = "\x86", e3.ESA = "\x87", e3.HTS = "\x88", e3.HTJ = "\x89", e3.VTS = "\x8A", e3.PLD = "\x8B", e3.PLU = "\x8C", e3.RI = "\x8D", e3.SS2 = "\x8E", e3.SS3 = "\x8F", e3.DCS = "\x90", e3.PU1 = "\x91", e3.PU2 = "\x92", e3.STS = "\x93", e3.CCH = "\x94", e3.MW = "\x95", e3.SPA = "\x96", e3.EPA = "\x97", e3.SOS = "\x98", e3.SGCI = "\x99", e3.SCI = "\x9A", e3.CSI = "\x9B", e3.ST = "\x9C", e3.OSC = "\x9D", e3.PM = "\x9E", e3.APC = "\x9F";
-        })(i2 || (t2.C1 = i2 = {})), (function(e3) {
-          e3.ST = `${s2.ESC}\\`;
-        })(r2 || (t2.C1_ESCAPED = r2 = {}));
-      }, 726: (e2, t2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.Utf8ToUtf32 = t2.StringToUtf32 = void 0, t2.stringFromCodePoint = function(e3) {
-          return e3 > 65535 ? (e3 -= 65536, String.fromCharCode(55296 + (e3 >> 10)) + String.fromCharCode(e3 % 1024 + 56320)) : String.fromCharCode(e3);
-        }, t2.utf32ToString = function(e3, t3 = 0, s2 = e3.length) {
-          let i2 = "";
-          for (let r2 = t3; r2 < s2; ++r2) {
-            let t4 = e3[r2];
-            t4 > 65535 ? (t4 -= 65536, i2 += String.fromCharCode(55296 + (t4 >> 10)) + String.fromCharCode(t4 % 1024 + 56320)) : i2 += String.fromCharCode(t4);
-          }
-          return i2;
-        }, t2.StringToUtf32 = class {
-          constructor() {
-            this._interim = 0;
-          }
-          clear() {
-            this._interim = 0;
-          }
-          decode(e3, t3) {
-            const s2 = e3.length;
-            if (!s2) return 0;
-            let i2 = 0, r2 = 0;
-            if (this._interim) {
-              const s3 = e3.charCodeAt(r2++);
-              56320 <= s3 && s3 <= 57343 ? t3[i2++] = 1024 * (this._interim - 55296) + s3 - 56320 + 65536 : (t3[i2++] = this._interim, t3[i2++] = s3), this._interim = 0;
-            }
-            for (let n2 = r2; n2 < s2; ++n2) {
-              const r3 = e3.charCodeAt(n2);
-              if (55296 <= r3 && r3 <= 56319) {
-                if (++n2 >= s2) return this._interim = r3, i2;
-                const o = e3.charCodeAt(n2);
-                56320 <= o && o <= 57343 ? t3[i2++] = 1024 * (r3 - 55296) + o - 56320 + 65536 : (t3[i2++] = r3, t3[i2++] = o);
-              } else 65279 !== r3 && (t3[i2++] = r3);
-            }
-            return i2;
-          }
-        }, t2.Utf8ToUtf32 = class {
-          constructor() {
-            this.interim = new Uint8Array(3);
-          }
-          clear() {
-            this.interim.fill(0);
-          }
-          decode(e3, t3) {
-            const s2 = e3.length;
-            if (!s2) return 0;
-            let i2, r2, n2, o, a = 0, h = 0, c = 0;
-            if (this.interim[0]) {
-              let i3 = false, r3 = this.interim[0];
-              r3 &= 192 == (224 & r3) ? 31 : 224 == (240 & r3) ? 15 : 7;
-              let n3, o2 = 0;
-              for (; (n3 = 63 & this.interim[++o2]) && o2 < 4; ) r3 <<= 6, r3 |= n3;
-              const h2 = 192 == (224 & this.interim[0]) ? 2 : 224 == (240 & this.interim[0]) ? 3 : 4, l2 = h2 - o2;
-              for (; c < l2; ) {
-                if (c >= s2) return 0;
-                if (n3 = e3[c++], 128 != (192 & n3)) {
-                  c--, i3 = true;
-                  break;
-                }
-                this.interim[o2++] = n3, r3 <<= 6, r3 |= 63 & n3;
-              }
-              i3 || (2 === h2 ? r3 < 128 ? c-- : t3[a++] = r3 : 3 === h2 ? r3 < 2048 || r3 >= 55296 && r3 <= 57343 || 65279 === r3 || (t3[a++] = r3) : r3 < 65536 || r3 > 1114111 || (t3[a++] = r3)), this.interim.fill(0);
-            }
-            const l = s2 - 4;
-            let u = c;
-            for (; u < s2; ) {
-              for (; !(!(u < l) || 128 & (i2 = e3[u]) || 128 & (r2 = e3[u + 1]) || 128 & (n2 = e3[u + 2]) || 128 & (o = e3[u + 3])); ) t3[a++] = i2, t3[a++] = r2, t3[a++] = n2, t3[a++] = o, u += 4;
-              if (i2 = e3[u++], i2 < 128) t3[a++] = i2;
-              else if (192 == (224 & i2)) {
-                if (u >= s2) return this.interim[0] = i2, a;
-                if (r2 = e3[u++], 128 != (192 & r2)) {
-                  u--;
-                  continue;
-                }
-                if (h = (31 & i2) << 6 | 63 & r2, h < 128) {
-                  u--;
-                  continue;
-                }
-                t3[a++] = h;
-              } else if (224 == (240 & i2)) {
-                if (u >= s2) return this.interim[0] = i2, a;
-                if (r2 = e3[u++], 128 != (192 & r2)) {
-                  u--;
-                  continue;
-                }
-                if (u >= s2) return this.interim[0] = i2, this.interim[1] = r2, a;
-                if (n2 = e3[u++], 128 != (192 & n2)) {
-                  u--;
-                  continue;
-                }
-                if (h = (15 & i2) << 12 | (63 & r2) << 6 | 63 & n2, h < 2048 || h >= 55296 && h <= 57343 || 65279 === h) continue;
-                t3[a++] = h;
-              } else if (240 == (248 & i2)) {
-                if (u >= s2) return this.interim[0] = i2, a;
-                if (r2 = e3[u++], 128 != (192 & r2)) {
-                  u--;
-                  continue;
-                }
-                if (u >= s2) return this.interim[0] = i2, this.interim[1] = r2, a;
-                if (n2 = e3[u++], 128 != (192 & n2)) {
-                  u--;
-                  continue;
-                }
-                if (u >= s2) return this.interim[0] = i2, this.interim[1] = r2, this.interim[2] = n2, a;
-                if (o = e3[u++], 128 != (192 & o)) {
-                  u--;
-                  continue;
-                }
-                if (h = (7 & i2) << 18 | (63 & r2) << 12 | (63 & n2) << 6 | 63 & o, h < 65536 || h > 1114111) continue;
-                t3[a++] = h;
-              }
-            }
-            return a;
-          }
+      }
+      hasExtendedAttrs() {
+        return this.bg & 268435456;
+      }
+      updateExtended() {
+        this.extended.isEmpty() ? this.bg &= -268435457 : this.bg |= 268435456;
+      }
+      getUnderlineColor() {
+        if (this.bg & 268435456 && ~this.extended.underlineColor) switch (this.extended.underlineColor & 50331648) {
+          case 16777216:
+          case 33554432:
+            return this.extended.underlineColor & 255;
+          case 50331648:
+            return this.extended.underlineColor & 16777215;
+          default:
+            return this.getFgColor();
+        }
+        return this.getFgColor();
+      }
+      getUnderlineColorMode() {
+        return this.bg & 268435456 && ~this.extended.underlineColor ? this.extended.underlineColor & 50331648 : this.getFgColorMode();
+      }
+      isUnderlineColorRGB() {
+        return this.bg & 268435456 && ~this.extended.underlineColor ? (this.extended.underlineColor & 50331648) === 50331648 : this.isFgRGB();
+      }
+      isUnderlineColorPalette() {
+        return this.bg & 268435456 && ~this.extended.underlineColor ? (this.extended.underlineColor & 50331648) === 16777216 || (this.extended.underlineColor & 50331648) === 33554432 : this.isFgPalette();
+      }
+      isUnderlineColorDefault() {
+        return this.bg & 268435456 && ~this.extended.underlineColor ? (this.extended.underlineColor & 50331648) === 0 : this.isFgDefault();
+      }
+      getUnderlineStyle() {
+        return this.fg & 268435456 ? this.bg & 268435456 ? this.extended.underlineStyle : 1 : 0;
+      }
+      getUnderlineVariantOffset() {
+        return this.extended.underlineVariantOffset;
+      }
+    };
+    re = class n2 {
+      constructor(t = 0, e = 0) {
+        this._ext = 0;
+        this._urlId = 0;
+        this._ext = t, this._urlId = e;
+      }
+      get ext() {
+        return this._urlId ? this._ext & -469762049 | this.underlineStyle << 26 : this._ext;
+      }
+      set ext(t) {
+        this._ext = t;
+      }
+      get underlineStyle() {
+        return this._urlId ? 5 : (this._ext & 469762048) >> 26;
+      }
+      set underlineStyle(t) {
+        this._ext &= -469762049, this._ext |= t << 26 & 469762048;
+      }
+      get underlineColor() {
+        return this._ext & 67108863;
+      }
+      set underlineColor(t) {
+        this._ext &= -67108864, this._ext |= t & 67108863;
+      }
+      get urlId() {
+        return this._urlId;
+      }
+      set urlId(t) {
+        this._urlId = t;
+      }
+      get underlineVariantOffset() {
+        let t = (this._ext & 3758096384) >> 29;
+        return t < 0 ? t ^ 4294967288 : t;
+      }
+      set underlineVariantOffset(t) {
+        this._ext &= 536870911, this._ext |= t << 29 & 3758096384;
+      }
+      clone() {
+        return new n2(this._ext, this._urlId);
+      }
+      isEmpty() {
+        return this.underlineStyle === 0 && this._urlId === 0;
+      }
+    };
+    G = class n3 extends te {
+      constructor() {
+        super(...arguments);
+        this.content = 0;
+        this.fg = 0;
+        this.bg = 0;
+        this.extended = new re();
+        this.combinedData = "";
+      }
+      static fromCharData(e) {
+        let r = new n3();
+        return r.setFromCharData(e), r;
+      }
+      isCombined() {
+        return this.content & 2097152;
+      }
+      getWidth() {
+        return this.content >> 22;
+      }
+      getChars() {
+        return this.content & 2097152 ? this.combinedData : this.content & 2097151 ? $(this.content & 2097151) : "";
+      }
+      getCode() {
+        return this.isCombined() ? this.combinedData.charCodeAt(this.combinedData.length - 1) : this.content & 2097151;
+      }
+      setFromCharData(e) {
+        this.fg = e[0], this.bg = 0;
+        let r = false;
+        if (e[1].length > 2) r = true;
+        else if (e[1].length === 2) {
+          let i = e[1].charCodeAt(0);
+          if (55296 <= i && i <= 56319) {
+            let s = e[1].charCodeAt(1);
+            56320 <= s && s <= 57343 ? this.content = (i - 55296) * 1024 + s - 56320 + 65536 | e[2] << 22 : r = true;
+          } else r = true;
+        } else this.content = e[1].charCodeAt(0) | e[2] << 22;
+        r && (this.combinedData = e[1], this.content = 2097152 | e[2] << 22);
+      }
+      getAsCharData() {
+        return [this.fg, this.getChars(), this.getWidth(), this.getCode()];
+      }
+    };
+    qe = class {
+      constructor(t) {
+        this._line = t;
+      }
+      get isWrapped() {
+        return this._line.isWrapped;
+      }
+      get length() {
+        return this._line.length;
+      }
+      getCell(t, e) {
+        if (!(t < 0 || t >= this._line.length)) return e ? (this._line.loadCell(t, e), e) : this._line.loadCell(t, new G());
+      }
+      translateToString(t, e, r) {
+        return this._line.translateToString(t, e, r);
+      }
+    };
+    De = class {
+      constructor(t, e) {
+        this._buffer = t;
+        this.type = e;
+      }
+      init(t) {
+        return this._buffer = t, this;
+      }
+      get cursorY() {
+        return this._buffer.y;
+      }
+      get cursorX() {
+        return this._buffer.x;
+      }
+      get viewportY() {
+        return this._buffer.ydisp;
+      }
+      get baseY() {
+        return this._buffer.ybase;
+      }
+      get length() {
+        return this._buffer.lines.length;
+      }
+      getLine(t) {
+        let e = this._buffer.lines.get(t);
+        if (e) return new qe(e);
+      }
+      getNullCell() {
+        return new G();
+      }
+    };
+    kt = class {
+      constructor() {
+        this.listeners = [], this.unexpectedErrorHandler = function(t) {
+          setTimeout(() => {
+            throw t.stack ? je.isErrorNoTelemetry(t) ? new je(t.message + `
+
+` + t.stack) : new Error(t.message + `
+
+` + t.stack) : t;
+          }, 0);
         };
-      }, 7428: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.UnicodeV6 = void 0;
-        const i2 = s2(6415), r2 = [[768, 879], [1155, 1158], [1160, 1161], [1425, 1469], [1471, 1471], [1473, 1474], [1476, 1477], [1479, 1479], [1536, 1539], [1552, 1557], [1611, 1630], [1648, 1648], [1750, 1764], [1767, 1768], [1770, 1773], [1807, 1807], [1809, 1809], [1840, 1866], [1958, 1968], [2027, 2035], [2305, 2306], [2364, 2364], [2369, 2376], [2381, 2381], [2385, 2388], [2402, 2403], [2433, 2433], [2492, 2492], [2497, 2500], [2509, 2509], [2530, 2531], [2561, 2562], [2620, 2620], [2625, 2626], [2631, 2632], [2635, 2637], [2672, 2673], [2689, 2690], [2748, 2748], [2753, 2757], [2759, 2760], [2765, 2765], [2786, 2787], [2817, 2817], [2876, 2876], [2879, 2879], [2881, 2883], [2893, 2893], [2902, 2902], [2946, 2946], [3008, 3008], [3021, 3021], [3134, 3136], [3142, 3144], [3146, 3149], [3157, 3158], [3260, 3260], [3263, 3263], [3270, 3270], [3276, 3277], [3298, 3299], [3393, 3395], [3405, 3405], [3530, 3530], [3538, 3540], [3542, 3542], [3633, 3633], [3636, 3642], [3655, 3662], [3761, 3761], [3764, 3769], [3771, 3772], [3784, 3789], [3864, 3865], [3893, 3893], [3895, 3895], [3897, 3897], [3953, 3966], [3968, 3972], [3974, 3975], [3984, 3991], [3993, 4028], [4038, 4038], [4141, 4144], [4146, 4146], [4150, 4151], [4153, 4153], [4184, 4185], [4448, 4607], [4959, 4959], [5906, 5908], [5938, 5940], [5970, 5971], [6002, 6003], [6068, 6069], [6071, 6077], [6086, 6086], [6089, 6099], [6109, 6109], [6155, 6157], [6313, 6313], [6432, 6434], [6439, 6440], [6450, 6450], [6457, 6459], [6679, 6680], [6912, 6915], [6964, 6964], [6966, 6970], [6972, 6972], [6978, 6978], [7019, 7027], [7616, 7626], [7678, 7679], [8203, 8207], [8234, 8238], [8288, 8291], [8298, 8303], [8400, 8431], [12330, 12335], [12441, 12442], [43014, 43014], [43019, 43019], [43045, 43046], [64286, 64286], [65024, 65039], [65056, 65059], [65279, 65279], [65529, 65531]], n2 = [[68097, 68099], [68101, 68102], [68108, 68111], [68152, 68154], [68159, 68159], [119143, 119145], [119155, 119170], [119173, 119179], [119210, 119213], [119362, 119364], [917505, 917505], [917536, 917631], [917760, 917999]];
-        let o;
-        t2.UnicodeV6 = class {
-          constructor() {
-            if (this.version = "6", !o) {
-              o = new Uint8Array(65536), o.fill(1), o[0] = 0, o.fill(0, 1, 32), o.fill(0, 127, 160), o.fill(2, 4352, 4448), o[9001] = 2, o[9002] = 2, o.fill(2, 11904, 42192), o[12351] = 1, o.fill(2, 44032, 55204), o.fill(2, 63744, 64256), o.fill(2, 65040, 65050), o.fill(2, 65072, 65136), o.fill(2, 65280, 65377), o.fill(2, 65504, 65511);
-              for (let e3 = 0; e3 < r2.length; ++e3) o.fill(0, r2[e3][0], r2[e3][1] + 1);
-            }
-          }
-          wcwidth(e3) {
-            return e3 < 32 ? 0 : e3 < 127 ? 1 : e3 < 65536 ? o[e3] : (function(e4, t3) {
-              let s3, i3 = 0, r3 = t3.length - 1;
-              if (e4 < t3[0][0] || e4 > t3[r3][1]) return false;
-              for (; r3 >= i3; ) if (s3 = i3 + r3 >> 1, e4 > t3[s3][1]) i3 = s3 + 1;
-              else {
-                if (!(e4 < t3[s3][0])) return true;
-                r3 = s3 - 1;
-              }
-              return false;
-            })(e3, n2) ? 0 : e3 >= 131072 && e3 <= 196605 || e3 >= 196608 && e3 <= 262141 ? 2 : 1;
-          }
-          charProperties(e3, t3) {
-            let s3 = this.wcwidth(e3), r3 = 0 === s3 && 0 !== t3;
-            if (r3) {
-              const e4 = i2.UnicodeService.extractWidth(t3);
-              0 === e4 ? r3 = false : e4 > s3 && (s3 = e4);
-            }
-            return i2.UnicodeService.createPropertyValue(0, s3, r3);
-          }
+      }
+      addListener(t) {
+        return this.listeners.push(t), () => {
+          this._removeListener(t);
         };
-      }, 3562: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.WriteBuffer = void 0;
-        const i2 = s2(7150), r2 = s2(802);
-        class n2 extends i2.Disposable {
-          constructor(e3) {
-            super(), this._action = e3, this._writeBuffer = [], this._callbacks = [], this._pendingData = 0, this._bufferOffset = 0, this._isSyncWriting = false, this._syncCalls = 0, this._didUserInput = false, this._onWriteParsed = this._register(new r2.Emitter()), this.onWriteParsed = this._onWriteParsed.event;
+      }
+      emit(t) {
+        this.listeners.forEach((e) => {
+          e(t);
+        });
+      }
+      _removeListener(t) {
+        this.listeners.splice(this.listeners.indexOf(t), 1);
+      }
+      setUnexpectedErrorHandler(t) {
+        this.unexpectedErrorHandler = t;
+      }
+      getUnexpectedErrorHandler() {
+        return this.unexpectedErrorHandler;
+      }
+      onUnexpectedError(t) {
+        this.unexpectedErrorHandler(t), this.emit(t);
+      }
+      onUnexpectedExternalError(t) {
+        this.unexpectedErrorHandler(t);
+      }
+    };
+    ni = new kt();
+    Bt = "Canceled";
+    $e = class extends Error {
+      constructor() {
+        super(Bt), this.name = this.message;
+      }
+    };
+    je = class n4 extends Error {
+      constructor(t) {
+        super(t), this.name = "CodeExpectedError";
+      }
+      static fromError(t) {
+        if (t instanceof n4) return t;
+        let e = new n4();
+        return e.message = t.message, e.stack = t.stack, e;
+      }
+      static isErrorNoTelemetry(t) {
+        return t.name === "CodeExpectedError";
+      }
+    };
+    Ye = class Ye2 {
+      constructor(t) {
+        this._array = t;
+        this._findLastMonotonousLastIdx = 0;
+      }
+      findLastMonotonous(t) {
+        if (Ye2.assertInvariants) {
+          if (this._prevFindLastPredicate) {
+            for (let r of this._array) if (this._prevFindLastPredicate(r) && !t(r)) throw new Error("MonotonousArray: current predicate must be weaker than (or equal to) the previous predicate.");
           }
-          handleUserInput() {
-            this._didUserInput = true;
-          }
-          writeSync(e3, t3) {
-            if (void 0 !== t3 && this._syncCalls > t3) return void (this._syncCalls = 0);
-            if (this._pendingData += e3.length, this._writeBuffer.push(e3), this._callbacks.push(void 0), this._syncCalls++, this._isSyncWriting) return;
-            let s3;
-            for (this._isSyncWriting = true; s3 = this._writeBuffer.shift(); ) {
-              this._action(s3);
-              const e4 = this._callbacks.shift();
-              e4 && e4();
-            }
-            this._pendingData = 0, this._bufferOffset = 2147483647, this._isSyncWriting = false, this._syncCalls = 0;
-          }
-          write(e3, t3) {
-            if (this._pendingData > 5e7) throw new Error("write data discarded, use flow control to avoid losing data");
-            if (!this._writeBuffer.length) {
-              if (this._bufferOffset = 0, this._didUserInput) return this._didUserInput = false, this._pendingData += e3.length, this._writeBuffer.push(e3), this._callbacks.push(t3), void this._innerWrite();
-              setTimeout((() => this._innerWrite()));
-            }
-            this._pendingData += e3.length, this._writeBuffer.push(e3), this._callbacks.push(t3);
-          }
-          _innerWrite(e3 = 0, t3 = true) {
-            const s3 = e3 || performance.now();
-            for (; this._writeBuffer.length > this._bufferOffset; ) {
-              const e4 = this._writeBuffer[this._bufferOffset], i3 = this._action(e4, t3);
-              if (i3) {
-                const e5 = (e6) => performance.now() - s3 >= 12 ? setTimeout((() => this._innerWrite(0, e6))) : this._innerWrite(s3, e6);
-                return void i3.catch(((e6) => (queueMicrotask((() => {
-                  throw e6;
-                })), Promise.resolve(false)))).then(e5);
-              }
-              const r3 = this._callbacks[this._bufferOffset];
-              if (r3 && r3(), this._bufferOffset++, this._pendingData -= e4.length, performance.now() - s3 >= 12) break;
-            }
-            this._writeBuffer.length > this._bufferOffset ? (this._bufferOffset > 50 && (this._writeBuffer = this._writeBuffer.slice(this._bufferOffset), this._callbacks = this._callbacks.slice(this._bufferOffset), this._bufferOffset = 0), setTimeout((() => this._innerWrite()))) : (this._writeBuffer.length = 0, this._callbacks.length = 0, this._pendingData = 0, this._bufferOffset = 0), this._onWriteParsed.fire();
-          }
+          this._prevFindLastPredicate = t;
         }
-        t2.WriteBuffer = n2;
-      }, 8693: (e2, t2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.parseColor = function(e3) {
-          if (!e3) return;
-          let t3 = e3.toLowerCase();
-          if (0 === t3.indexOf("rgb:")) {
-            t3 = t3.slice(4);
-            const e4 = s2.exec(t3);
-            if (e4) {
-              const t4 = e4[1] ? 15 : e4[4] ? 255 : e4[7] ? 4095 : 65535;
-              return [Math.round(parseInt(e4[1] || e4[4] || e4[7] || e4[10], 16) / t4 * 255), Math.round(parseInt(e4[2] || e4[5] || e4[8] || e4[11], 16) / t4 * 255), Math.round(parseInt(e4[3] || e4[6] || e4[9] || e4[12], 16) / t4 * 255)];
-            }
-          } else if (0 === t3.indexOf("#") && (t3 = t3.slice(1), i2.exec(t3) && [3, 6, 9, 12].includes(t3.length))) {
-            const e4 = t3.length / 3, s3 = [0, 0, 0];
-            for (let i3 = 0; i3 < 3; ++i3) {
-              const r3 = parseInt(t3.slice(e4 * i3, e4 * i3 + e4), 16);
-              s3[i3] = 1 === e4 ? r3 << 4 : 2 === e4 ? r3 : 3 === e4 ? r3 >> 4 : r3 >> 8;
-            }
-            return s3;
-          }
-        }, t2.toRgbString = function(e3, t3 = 16) {
-          const [s3, i3, n2] = e3;
-          return `rgb:${r2(s3, t3)}/${r2(i3, t3)}/${r2(n2, t3)}`;
-        };
-        const s2 = /^([\da-f])\/([\da-f])\/([\da-f])$|^([\da-f]{2})\/([\da-f]{2})\/([\da-f]{2})$|^([\da-f]{3})\/([\da-f]{3})\/([\da-f]{3})$|^([\da-f]{4})\/([\da-f]{4})\/([\da-f]{4})$/, i2 = /^[\da-f]+$/;
-        function r2(e3, t3) {
-          const s3 = e3.toString(16), i3 = s3.length < 2 ? "0" + s3 : s3;
-          switch (t3) {
-            case 4:
-              return s3[0];
-            case 8:
-              return i3;
-            case 12:
-              return (i3 + i3).slice(0, 3);
-            default:
-              return i3 + i3;
-          }
+        let e = ai(this._array, t, this._findLastMonotonousLastIdx);
+        return this._findLastMonotonousLastIdx = e + 1, e === -1 ? void 0 : this._array[e];
+      }
+    };
+    Ye.assertInvariants = false;
+    ((l) => {
+      function n10(c) {
+        return c < 0;
+      }
+      l.isLessThan = n10;
+      function t(c) {
+        return c <= 0;
+      }
+      l.isLessThanOrEqual = t;
+      function e(c) {
+        return c > 0;
+      }
+      l.isGreaterThan = e;
+      function r(c) {
+        return c === 0;
+      }
+      l.isNeitherLessOrGreaterThan = r, l.greaterThan = 1, l.lessThan = -1, l.neitherLessOrGreaterThan = 0;
+    })(fr ||= {});
+    br = (n10, t) => n10 - t;
+    ue = class ue2 {
+      constructor(t) {
+        this.iterate = t;
+      }
+      forEach(t) {
+        this.iterate((e) => (t(e), true));
+      }
+      toArray() {
+        let t = [];
+        return this.iterate((e) => (t.push(e), true)), t;
+      }
+      filter(t) {
+        return new ue2((e) => this.iterate((r) => t(r) ? e(r) : true));
+      }
+      map(t) {
+        return new ue2((e) => this.iterate((r) => e(t(r))));
+      }
+      some(t) {
+        let e = false;
+        return this.iterate((r) => (e = t(r), !e)), e;
+      }
+      findFirst(t) {
+        let e;
+        return this.iterate((r) => t(r) ? (e = r, false) : true), e;
+      }
+      findLast(t) {
+        let e;
+        return this.iterate((r) => (t(r) && (e = r), true)), e;
+      }
+      findLastMaxBy(t) {
+        let e, r = true;
+        return this.iterate((i) => ((r || fr.isGreaterThan(t(i, e))) && (r = false, e = i), true)), e;
+      }
+    };
+    ue.empty = new ue((t) => {
+    });
+    _r = class {
+      constructor(t, e) {
+        this.toKey = e;
+        this._map = /* @__PURE__ */ new Map();
+        this[mr] = "SetWithKey";
+        for (let r of t) this.add(r);
+      }
+      get size() {
+        return this._map.size;
+      }
+      add(t) {
+        let e = this.toKey(t);
+        return this._map.set(e, t), this;
+      }
+      delete(t) {
+        return this._map.delete(this.toKey(t));
+      }
+      has(t) {
+        return this._map.has(this.toKey(t));
+      }
+      *entries() {
+        for (let t of this._map.values()) yield [t, t];
+      }
+      keys() {
+        return this.values();
+      }
+      *values() {
+        for (let t of this._map.values()) yield t;
+      }
+      clear() {
+        this._map.clear();
+      }
+      forEach(t, e) {
+        this._map.forEach((r) => t.call(e, r, r, this));
+      }
+      [(vr = Symbol.iterator, mr = Symbol.toStringTag, vr)]() {
+        return this.values();
+      }
+    };
+    Qe = class {
+      constructor() {
+        this.map = /* @__PURE__ */ new Map();
+      }
+      add(t, e) {
+        let r = this.map.get(t);
+        r || (r = /* @__PURE__ */ new Set(), this.map.set(t, r)), r.add(e);
+      }
+      delete(t, e) {
+        let r = this.map.get(t);
+        r && (r.delete(e), r.size === 0 && this.map.delete(t));
+      }
+      forEach(t, e) {
+        let r = this.map.get(t);
+        r && r.forEach(e);
+      }
+      get(t) {
+        let e = this.map.get(t);
+        return e || /* @__PURE__ */ new Set();
+      }
+    };
+    ((L) => {
+      function n10(g) {
+        return g && typeof g == "object" && typeof g[Symbol.iterator] == "function";
+      }
+      L.is = n10;
+      let t = Object.freeze([]);
+      function e() {
+        return t;
+      }
+      L.empty = e;
+      function* r(g) {
+        yield g;
+      }
+      L.single = r;
+      function i(g) {
+        return n10(g) ? g : r(g);
+      }
+      L.wrap = i;
+      function s(g) {
+        return g || t;
+      }
+      L.from = s;
+      function* a(g) {
+        for (let D = g.length - 1; D >= 0; D--) yield g[D];
+      }
+      L.reverse = a;
+      function l(g) {
+        return !g || g[Symbol.iterator]().next().done === true;
+      }
+      L.isEmpty = l;
+      function c(g) {
+        return g[Symbol.iterator]().next().value;
+      }
+      L.first = c;
+      function u(g, D) {
+        let E = 0;
+        for (let W of g) if (D(W, E++)) return true;
+        return false;
+      }
+      L.some = u;
+      function m(g, D) {
+        for (let E of g) if (D(E)) return E;
+      }
+      L.find = m;
+      function* o(g, D) {
+        for (let E of g) D(E) && (yield E);
+      }
+      L.filter = o;
+      function* h(g, D) {
+        let E = 0;
+        for (let W of g) yield D(W, E++);
+      }
+      L.map = h;
+      function* x(g, D) {
+        let E = 0;
+        for (let W of g) yield* D(W, E++);
+      }
+      L.flatMap = x;
+      function* v(...g) {
+        for (let D of g) yield* D;
+      }
+      L.concat = v;
+      function _(g, D, E) {
+        let W = E;
+        for (let se of g) W = D(W, se);
+        return W;
+      }
+      L.reduce = _;
+      function* d(g, D, E = g.length) {
+        for (D < 0 && (D += g.length), E < 0 ? E += g.length : E > g.length && (E = g.length); D < E; D++) yield g[D];
+      }
+      L.slice = d;
+      function R(g, D = Number.POSITIVE_INFINITY) {
+        let E = [];
+        if (D === 0) return [E, g];
+        let W = g[Symbol.iterator]();
+        for (let se = 0; se < D; se++) {
+          let ye = W.next();
+          if (ye.done) return [E, L.empty()];
+          E.push(ye.value);
         }
-      }, 1263: (e2, t2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.PAYLOAD_LIMIT = void 0, t2.PAYLOAD_LIMIT = 1e7;
-      }, 9823: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.DcsHandler = t2.DcsParser = void 0;
-        const i2 = s2(726), r2 = s2(7262), n2 = s2(1263), o = [];
-        t2.DcsParser = class {
-          constructor() {
-            this._handlers = /* @__PURE__ */ Object.create(null), this._active = o, this._ident = 0, this._handlerFb = () => {
-            }, this._stack = { paused: false, loopPosition: 0, fallThrough: false };
-          }
-          dispose() {
-            this._handlers = /* @__PURE__ */ Object.create(null), this._handlerFb = () => {
-            }, this._active = o;
-          }
-          registerHandler(e3, t3) {
-            void 0 === this._handlers[e3] && (this._handlers[e3] = []);
-            const s3 = this._handlers[e3];
-            return s3.push(t3), { dispose: () => {
-              const e4 = s3.indexOf(t3);
-              -1 !== e4 && s3.splice(e4, 1);
-            } };
-          }
-          clearHandler(e3) {
-            this._handlers[e3] && delete this._handlers[e3];
-          }
-          setHandlerFallback(e3) {
-            this._handlerFb = e3;
-          }
-          reset() {
-            if (this._active.length) for (let e3 = this._stack.paused ? this._stack.loopPosition - 1 : this._active.length - 1; e3 >= 0; --e3) this._active[e3].unhook(false);
-            this._stack.paused = false, this._active = o, this._ident = 0;
-          }
-          hook(e3, t3) {
-            if (this.reset(), this._ident = e3, this._active = this._handlers[e3] || o, this._active.length) for (let e4 = this._active.length - 1; e4 >= 0; e4--) this._active[e4].hook(t3);
-            else this._handlerFb(this._ident, "HOOK", t3);
-          }
-          put(e3, t3, s3) {
-            if (this._active.length) for (let i3 = this._active.length - 1; i3 >= 0; i3--) this._active[i3].put(e3, t3, s3);
-            else this._handlerFb(this._ident, "PUT", (0, i2.utf32ToString)(e3, t3, s3));
-          }
-          unhook(e3, t3 = true) {
-            if (this._active.length) {
-              let s3 = false, i3 = this._active.length - 1, r3 = false;
-              if (this._stack.paused && (i3 = this._stack.loopPosition - 1, s3 = t3, r3 = this._stack.fallThrough, this._stack.paused = false), !r3 && false === s3) {
-                for (; i3 >= 0 && (s3 = this._active[i3].unhook(e3), true !== s3); i3--) if (s3 instanceof Promise) return this._stack.paused = true, this._stack.loopPosition = i3, this._stack.fallThrough = false, s3;
-                i3--;
-              }
-              for (; i3 >= 0; i3--) if (s3 = this._active[i3].unhook(false), s3 instanceof Promise) return this._stack.paused = true, this._stack.loopPosition = i3, this._stack.fallThrough = true, s3;
-            } else this._handlerFb(this._ident, "UNHOOK", e3);
-            this._active = o, this._ident = 0;
-          }
-        };
-        const a = new r2.Params();
-        a.addParam(0), t2.DcsHandler = class {
-          constructor(e3) {
-            this._handler = e3, this._data = "", this._params = a, this._hitLimit = false;
-          }
-          hook(e3) {
-            this._params = e3.length > 1 || e3.params[0] ? e3.clone() : a, this._data = "", this._hitLimit = false;
-          }
-          put(e3, t3, s3) {
-            this._hitLimit || (this._data += (0, i2.utf32ToString)(e3, t3, s3), this._data.length > n2.PAYLOAD_LIMIT && (this._data = "", this._hitLimit = true));
-          }
-          unhook(e3) {
-            let t3 = false;
-            if (this._hitLimit) t3 = false;
-            else if (e3 && (t3 = this._handler(this._data, this._params), t3 instanceof Promise)) return t3.then(((e4) => (this._params = a, this._data = "", this._hitLimit = false, e4)));
-            return this._params = a, this._data = "", this._hitLimit = false, t3;
-          }
-        };
-      }, 6717: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.EscapeSequenceParser = t2.VT500_TRANSITION_TABLE = t2.TransitionTable = void 0;
-        const i2 = s2(7150), r2 = s2(7262), n2 = s2(1346), o = s2(9823);
-        class a {
-          constructor(e3) {
-            this.table = new Uint8Array(e3);
-          }
-          setDefault(e3, t3) {
-            this.table.fill(e3 << 4 | t3);
-          }
-          add(e3, t3, s3, i3) {
-            this.table[t3 << 8 | e3] = s3 << 4 | i3;
-          }
-          addMany(e3, t3, s3, i3) {
-            for (let r3 = 0; r3 < e3.length; r3++) this.table[t3 << 8 | e3[r3]] = s3 << 4 | i3;
-          }
+        return [E, { [Symbol.iterator]() {
+          return W;
+        } }];
+      }
+      L.consume = R;
+      async function w(g) {
+        let D = [];
+        for await (let E of g) D.push(E);
+        return Promise.resolve(D);
+      }
+      L.asyncToArray = w;
+    })(Mt ||= {});
+    li = false;
+    de = null;
+    Ze = class Ze2 {
+      constructor() {
+        this.livingDisposables = /* @__PURE__ */ new Map();
+      }
+      getDisposableData(t) {
+        let e = this.livingDisposables.get(t);
+        return e || (e = { parent: null, source: null, isSingleton: false, value: t, idx: Ze2.idx++ }, this.livingDisposables.set(t, e)), e;
+      }
+      trackDisposable(t) {
+        let e = this.getDisposableData(t);
+        e.source || (e.source = new Error().stack);
+      }
+      setParent(t, e) {
+        let r = this.getDisposableData(t);
+        r.parent = e;
+      }
+      markAsDisposed(t) {
+        this.livingDisposables.delete(t);
+      }
+      markAsSingleton(t) {
+        this.getDisposableData(t).isSingleton = true;
+      }
+      getRootParent(t, e) {
+        let r = e.get(t);
+        if (r) return r;
+        let i = t.parent ? this.getRootParent(this.getDisposableData(t.parent), e) : t;
+        return e.set(t, i), i;
+      }
+      getTrackedDisposables() {
+        let t = /* @__PURE__ */ new Map();
+        return [...this.livingDisposables.entries()].filter(([, r]) => r.source !== null && !this.getRootParent(r, t).isSingleton).flatMap(([r]) => r);
+      }
+      computeLeakingDisposables(t = 10, e) {
+        let r;
+        if (e) r = e;
+        else {
+          let c = /* @__PURE__ */ new Map(), u = [...this.livingDisposables.values()].filter((o) => o.source !== null && !this.getRootParent(o, c).isSingleton);
+          if (u.length === 0) return;
+          let m = new Set(u.map((o) => o.value));
+          if (r = u.filter((o) => !(o.parent && m.has(o.parent))), r.length === 0) throw new Error("There are cyclic diposable chains!");
         }
-        t2.TransitionTable = a;
-        const h = 160;
-        t2.VT500_TRANSITION_TABLE = (function() {
-          const e3 = new a(4095), t3 = Array.apply(null, Array(256)).map(((e4, t4) => t4)), s3 = (e4, s4) => t3.slice(e4, s4), i3 = s3(32, 127), r3 = s3(0, 24);
-          r3.push(25), r3.push.apply(r3, s3(28, 32));
-          const n3 = s3(0, 14);
-          let o2;
-          for (o2 in e3.setDefault(1, 0), e3.addMany(i3, 0, 2, 0), n3) e3.addMany([24, 26, 153, 154], o2, 3, 0), e3.addMany(s3(128, 144), o2, 3, 0), e3.addMany(s3(144, 152), o2, 3, 0), e3.add(156, o2, 0, 0), e3.add(27, o2, 11, 1), e3.add(157, o2, 4, 8), e3.addMany([152, 158, 159], o2, 0, 7), e3.add(155, o2, 11, 3), e3.add(144, o2, 11, 9);
-          return e3.addMany(r3, 0, 3, 0), e3.addMany(r3, 1, 3, 1), e3.add(127, 1, 0, 1), e3.addMany(r3, 8, 0, 8), e3.addMany(r3, 3, 3, 3), e3.add(127, 3, 0, 3), e3.addMany(r3, 4, 3, 4), e3.add(127, 4, 0, 4), e3.addMany(r3, 6, 3, 6), e3.addMany(r3, 5, 3, 5), e3.add(127, 5, 0, 5), e3.addMany(r3, 2, 3, 2), e3.add(127, 2, 0, 2), e3.add(93, 1, 4, 8), e3.addMany(i3, 8, 5, 8), e3.add(127, 8, 5, 8), e3.addMany([156, 27, 24, 26, 7], 8, 6, 0), e3.addMany(s3(28, 32), 8, 0, 8), e3.addMany([88, 94, 95], 1, 0, 7), e3.addMany(i3, 7, 0, 7), e3.addMany(r3, 7, 0, 7), e3.add(156, 7, 0, 0), e3.add(127, 7, 0, 7), e3.add(91, 1, 11, 3), e3.addMany(s3(64, 127), 3, 7, 0), e3.addMany(s3(48, 60), 3, 8, 4), e3.addMany([60, 61, 62, 63], 3, 9, 4), e3.addMany(s3(48, 60), 4, 8, 4), e3.addMany(s3(64, 127), 4, 7, 0), e3.addMany([60, 61, 62, 63], 4, 0, 6), e3.addMany(s3(32, 64), 6, 0, 6), e3.add(127, 6, 0, 6), e3.addMany(s3(64, 127), 6, 0, 0), e3.addMany(s3(32, 48), 3, 9, 5), e3.addMany(s3(32, 48), 5, 9, 5), e3.addMany(s3(48, 64), 5, 0, 6), e3.addMany(s3(64, 127), 5, 7, 0), e3.addMany(s3(32, 48), 4, 9, 5), e3.addMany(s3(32, 48), 1, 9, 2), e3.addMany(s3(32, 48), 2, 9, 2), e3.addMany(s3(48, 127), 2, 10, 0), e3.addMany(s3(48, 80), 1, 10, 0), e3.addMany(s3(81, 88), 1, 10, 0), e3.addMany([89, 90, 92], 1, 10, 0), e3.addMany(s3(96, 127), 1, 10, 0), e3.add(80, 1, 11, 9), e3.addMany(r3, 9, 0, 9), e3.add(127, 9, 0, 9), e3.addMany(s3(28, 32), 9, 0, 9), e3.addMany(s3(32, 48), 9, 9, 12), e3.addMany(s3(48, 60), 9, 8, 10), e3.addMany([60, 61, 62, 63], 9, 9, 10), e3.addMany(r3, 11, 0, 11), e3.addMany(s3(32, 128), 11, 0, 11), e3.addMany(s3(28, 32), 11, 0, 11), e3.addMany(r3, 10, 0, 10), e3.add(127, 10, 0, 10), e3.addMany(s3(28, 32), 10, 0, 10), e3.addMany(s3(48, 60), 10, 8, 10), e3.addMany([60, 61, 62, 63], 10, 0, 11), e3.addMany(s3(32, 48), 10, 9, 12), e3.addMany(r3, 12, 0, 12), e3.add(127, 12, 0, 12), e3.addMany(s3(28, 32), 12, 0, 12), e3.addMany(s3(32, 48), 12, 9, 12), e3.addMany(s3(48, 64), 12, 0, 11), e3.addMany(s3(64, 127), 12, 12, 13), e3.addMany(s3(64, 127), 10, 12, 13), e3.addMany(s3(64, 127), 9, 12, 13), e3.addMany(r3, 13, 13, 13), e3.addMany(i3, 13, 13, 13), e3.add(127, 13, 0, 13), e3.addMany([27, 156, 24, 26], 13, 14, 0), e3.add(h, 0, 2, 0), e3.add(h, 8, 5, 8), e3.add(h, 6, 0, 6), e3.add(h, 11, 0, 11), e3.add(h, 13, 13, 13), e3;
-        })();
-        class c extends i2.Disposable {
-          constructor(e3 = t2.VT500_TRANSITION_TABLE) {
-            super(), this._transitions = e3, this._parseStack = { state: 0, handlers: [], handlerPos: 0, transition: 0, chunkPos: 0 }, this.initialState = 0, this.currentState = this.initialState, this._params = new r2.Params(), this._params.addParam(0), this._collect = 0, this.precedingJoinState = 0, this._printHandlerFb = (e4, t3, s3) => {
-            }, this._executeHandlerFb = (e4) => {
-            }, this._csiHandlerFb = (e4, t3) => {
-            }, this._escHandlerFb = (e4) => {
-            }, this._errorHandlerFb = (e4) => e4, this._printHandler = this._printHandlerFb, this._executeHandlers = /* @__PURE__ */ Object.create(null), this._csiHandlers = /* @__PURE__ */ Object.create(null), this._escHandlers = /* @__PURE__ */ Object.create(null), this._register((0, i2.toDisposable)((() => {
-              this._csiHandlers = /* @__PURE__ */ Object.create(null), this._executeHandlers = /* @__PURE__ */ Object.create(null), this._escHandlers = /* @__PURE__ */ Object.create(null);
-            }))), this._oscParser = this._register(new n2.OscParser()), this._dcsParser = this._register(new o.DcsParser()), this._errorHandler = this._errorHandlerFb, this.registerEscHandler({ final: "\\" }, (() => true));
+        if (!r) return;
+        function i(c) {
+          function u(o, h) {
+            for (; o.length > 0 && h.some((x) => typeof x == "string" ? x === o[0] : o[0].match(x)); ) o.shift();
           }
-          _identifier(e3, t3 = [64, 126]) {
-            let s3 = 0;
-            if (e3.prefix) {
-              if (e3.prefix.length > 1) throw new Error("only one byte as prefix supported");
-              if (s3 = e3.prefix.charCodeAt(0), s3 && 60 > s3 || s3 > 63) throw new Error("prefix must be in range 0x3c .. 0x3f");
-            }
-            if (e3.intermediates) {
-              if (e3.intermediates.length > 2) throw new Error("only two bytes as intermediates are supported");
-              for (let t4 = 0; t4 < e3.intermediates.length; ++t4) {
-                const i4 = e3.intermediates.charCodeAt(t4);
-                if (32 > i4 || i4 > 47) throw new Error("intermediate must be in range 0x20 .. 0x2f");
-                s3 <<= 8, s3 |= i4;
-              }
-            }
-            if (1 !== e3.final.length) throw new Error("final must be a single byte");
-            const i3 = e3.final.charCodeAt(0);
-            if (t3[0] > i3 || i3 > t3[1]) throw new Error(`final must be in range ${t3[0]} .. ${t3[1]}`);
-            return s3 <<= 8, s3 |= i3, s3;
-          }
-          identToString(e3) {
-            const t3 = [];
-            for (; e3; ) t3.push(String.fromCharCode(255 & e3)), e3 >>= 8;
-            return t3.reverse().join("");
-          }
-          setPrintHandler(e3) {
-            this._printHandler = e3;
-          }
-          clearPrintHandler() {
-            this._printHandler = this._printHandlerFb;
-          }
-          registerEscHandler(e3, t3) {
-            const s3 = this._identifier(e3, [48, 126]);
-            void 0 === this._escHandlers[s3] && (this._escHandlers[s3] = []);
-            const i3 = this._escHandlers[s3];
-            return i3.push(t3), { dispose: () => {
-              const e4 = i3.indexOf(t3);
-              -1 !== e4 && i3.splice(e4, 1);
-            } };
-          }
-          clearEscHandler(e3) {
-            this._escHandlers[this._identifier(e3, [48, 126])] && delete this._escHandlers[this._identifier(e3, [48, 126])];
-          }
-          setEscHandlerFallback(e3) {
-            this._escHandlerFb = e3;
-          }
-          setExecuteHandler(e3, t3) {
-            this._executeHandlers[e3.charCodeAt(0)] = t3;
-          }
-          clearExecuteHandler(e3) {
-            this._executeHandlers[e3.charCodeAt(0)] && delete this._executeHandlers[e3.charCodeAt(0)];
-          }
-          setExecuteHandlerFallback(e3) {
-            this._executeHandlerFb = e3;
-          }
-          registerCsiHandler(e3, t3) {
-            const s3 = this._identifier(e3);
-            void 0 === this._csiHandlers[s3] && (this._csiHandlers[s3] = []);
-            const i3 = this._csiHandlers[s3];
-            return i3.push(t3), { dispose: () => {
-              const e4 = i3.indexOf(t3);
-              -1 !== e4 && i3.splice(e4, 1);
-            } };
-          }
-          clearCsiHandler(e3) {
-            this._csiHandlers[this._identifier(e3)] && delete this._csiHandlers[this._identifier(e3)];
-          }
-          setCsiHandlerFallback(e3) {
-            this._csiHandlerFb = e3;
-          }
-          registerDcsHandler(e3, t3) {
-            return this._dcsParser.registerHandler(this._identifier(e3), t3);
-          }
-          clearDcsHandler(e3) {
-            this._dcsParser.clearHandler(this._identifier(e3));
-          }
-          setDcsHandlerFallback(e3) {
-            this._dcsParser.setHandlerFallback(e3);
-          }
-          registerOscHandler(e3, t3) {
-            return this._oscParser.registerHandler(e3, t3);
-          }
-          clearOscHandler(e3) {
-            this._oscParser.clearHandler(e3);
-          }
-          setOscHandlerFallback(e3) {
-            this._oscParser.setHandlerFallback(e3);
-          }
-          setErrorHandler(e3) {
-            this._errorHandler = e3;
-          }
-          clearErrorHandler() {
-            this._errorHandler = this._errorHandlerFb;
-          }
-          reset() {
-            this.currentState = this.initialState, this._oscParser.reset(), this._dcsParser.reset(), this._params.reset(), this._params.addParam(0), this._collect = 0, this.precedingJoinState = 0, 0 !== this._parseStack.state && (this._parseStack.state = 2, this._parseStack.handlers = []);
-          }
-          _preserveStack(e3, t3, s3, i3, r3) {
-            this._parseStack.state = e3, this._parseStack.handlers = t3, this._parseStack.handlerPos = s3, this._parseStack.transition = i3, this._parseStack.chunkPos = r3;
-          }
-          parse(e3, t3, s3) {
-            let i3, r3 = 0, n3 = 0, o2 = 0;
-            if (this._parseStack.state) if (2 === this._parseStack.state) this._parseStack.state = 0, o2 = this._parseStack.chunkPos + 1;
-            else {
-              if (void 0 === s3 || 1 === this._parseStack.state) throw this._parseStack.state = 1, new Error("improper continuation due to previous async handler, giving up parsing");
-              const t4 = this._parseStack.handlers;
-              let n4 = this._parseStack.handlerPos - 1;
-              switch (this._parseStack.state) {
-                case 3:
-                  if (false === s3 && n4 > -1) {
-                    for (; n4 >= 0 && (i3 = t4[n4](this._params), true !== i3); n4--) if (i3 instanceof Promise) return this._parseStack.handlerPos = n4, i3;
-                  }
-                  this._parseStack.handlers = [];
-                  break;
-                case 4:
-                  if (false === s3 && n4 > -1) {
-                    for (; n4 >= 0 && (i3 = t4[n4](), true !== i3); n4--) if (i3 instanceof Promise) return this._parseStack.handlerPos = n4, i3;
-                  }
-                  this._parseStack.handlers = [];
-                  break;
-                case 6:
-                  if (r3 = e3[this._parseStack.chunkPos], i3 = this._dcsParser.unhook(24 !== r3 && 26 !== r3, s3), i3) return i3;
-                  27 === r3 && (this._parseStack.transition |= 1), this._params.reset(), this._params.addParam(0), this._collect = 0;
-                  break;
-                case 5:
-                  if (r3 = e3[this._parseStack.chunkPos], i3 = this._oscParser.end(24 !== r3 && 26 !== r3, s3), i3) return i3;
-                  27 === r3 && (this._parseStack.transition |= 1), this._params.reset(), this._params.addParam(0), this._collect = 0;
-              }
-              this._parseStack.state = 0, o2 = this._parseStack.chunkPos + 1, this.precedingJoinState = 0, this.currentState = 15 & this._parseStack.transition;
-            }
-            for (let s4 = o2; s4 < t3; ++s4) {
-              switch (r3 = e3[s4], n3 = this._transitions.table[this.currentState << 8 | (r3 < 160 ? r3 : h)], n3 >> 4) {
-                case 2:
-                  for (let i4 = s4 + 1; ; ++i4) {
-                    if (i4 >= t3 || (r3 = e3[i4]) < 32 || r3 > 126 && r3 < h) {
-                      this._printHandler(e3, s4, i4), s4 = i4 - 1;
-                      break;
-                    }
-                    if (++i4 >= t3 || (r3 = e3[i4]) < 32 || r3 > 126 && r3 < h) {
-                      this._printHandler(e3, s4, i4), s4 = i4 - 1;
-                      break;
-                    }
-                    if (++i4 >= t3 || (r3 = e3[i4]) < 32 || r3 > 126 && r3 < h) {
-                      this._printHandler(e3, s4, i4), s4 = i4 - 1;
-                      break;
-                    }
-                    if (++i4 >= t3 || (r3 = e3[i4]) < 32 || r3 > 126 && r3 < h) {
-                      this._printHandler(e3, s4, i4), s4 = i4 - 1;
-                      break;
-                    }
-                  }
-                  break;
-                case 3:
-                  this._executeHandlers[r3] ? this._executeHandlers[r3]() : this._executeHandlerFb(r3), this.precedingJoinState = 0;
-                  break;
-                case 0:
-                  break;
-                case 1:
-                  if (this._errorHandler({ position: s4, code: r3, currentState: this.currentState, collect: this._collect, params: this._params, abort: false }).abort) return;
-                  break;
-                case 7:
-                  const o3 = this._csiHandlers[this._collect << 8 | r3];
-                  let a2 = o3 ? o3.length - 1 : -1;
-                  for (; a2 >= 0 && (i3 = o3[a2](this._params), true !== i3); a2--) if (i3 instanceof Promise) return this._preserveStack(3, o3, a2, n3, s4), i3;
-                  a2 < 0 && this._csiHandlerFb(this._collect << 8 | r3, this._params), this.precedingJoinState = 0;
-                  break;
-                case 8:
-                  do {
-                    switch (r3) {
-                      case 59:
-                        this._params.addParam(0);
-                        break;
-                      case 58:
-                        this._params.addSubParam(-1);
-                        break;
-                      default:
-                        this._params.addDigit(r3 - 48);
-                    }
-                  } while (++s4 < t3 && (r3 = e3[s4]) > 47 && r3 < 60);
-                  s4--;
-                  break;
-                case 9:
-                  this._collect <<= 8, this._collect |= r3;
-                  break;
-                case 10:
-                  const c2 = this._escHandlers[this._collect << 8 | r3];
-                  let l = c2 ? c2.length - 1 : -1;
-                  for (; l >= 0 && (i3 = c2[l](), true !== i3); l--) if (i3 instanceof Promise) return this._preserveStack(4, c2, l, n3, s4), i3;
-                  l < 0 && this._escHandlerFb(this._collect << 8 | r3), this.precedingJoinState = 0;
-                  break;
-                case 11:
-                  this._params.reset(), this._params.addParam(0), this._collect = 0;
-                  break;
-                case 12:
-                  this._dcsParser.hook(this._collect << 8 | r3, this._params);
-                  break;
-                case 13:
-                  for (let i4 = s4 + 1; ; ++i4) if (i4 >= t3 || 24 === (r3 = e3[i4]) || 26 === r3 || 27 === r3 || r3 > 127 && r3 < h) {
-                    this._dcsParser.put(e3, s4, i4), s4 = i4 - 1;
-                    break;
-                  }
-                  break;
-                case 14:
-                  if (i3 = this._dcsParser.unhook(24 !== r3 && 26 !== r3), i3) return this._preserveStack(6, [], 0, n3, s4), i3;
-                  27 === r3 && (n3 |= 1), this._params.reset(), this._params.addParam(0), this._collect = 0, this.precedingJoinState = 0;
-                  break;
-                case 4:
-                  this._oscParser.start();
-                  break;
-                case 5:
-                  for (let i4 = s4 + 1; ; i4++) if (i4 >= t3 || (r3 = e3[i4]) < 32 || r3 > 127 && r3 < h) {
-                    this._oscParser.put(e3, s4, i4), s4 = i4 - 1;
-                    break;
-                  }
-                  break;
-                case 6:
-                  if (i3 = this._oscParser.end(24 !== r3 && 26 !== r3), i3) return this._preserveStack(5, [], 0, n3, s4), i3;
-                  27 === r3 && (n3 |= 1), this._params.reset(), this._params.addParam(0), this._collect = 0, this.precedingJoinState = 0;
-              }
-              this.currentState = 15 & n3;
-            }
-          }
+          let m = c.source.split(`
+`).map((o) => o.trim().replace("at ", "")).filter((o) => o !== "");
+          return u(m, ["Error", /^trackDisposable \(.*\)$/, /^DisposableTracker.trackDisposable \(.*\)$/]), m.reverse();
         }
-        t2.EscapeSequenceParser = c;
-      }, 1346: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.OscHandler = t2.OscParser = void 0;
-        const i2 = s2(1263), r2 = s2(726), n2 = [];
-        t2.OscParser = class {
-          constructor() {
-            this._state = 0, this._active = n2, this._id = -1, this._handlers = /* @__PURE__ */ Object.create(null), this._handlerFb = () => {
-            }, this._stack = { paused: false, loopPosition: 0, fallThrough: false };
-          }
-          registerHandler(e3, t3) {
-            void 0 === this._handlers[e3] && (this._handlers[e3] = []);
-            const s3 = this._handlers[e3];
-            return s3.push(t3), { dispose: () => {
-              const e4 = s3.indexOf(t3);
-              -1 !== e4 && s3.splice(e4, 1);
-            } };
-          }
-          clearHandler(e3) {
-            this._handlers[e3] && delete this._handlers[e3];
-          }
-          setHandlerFallback(e3) {
-            this._handlerFb = e3;
-          }
-          dispose() {
-            this._handlers = /* @__PURE__ */ Object.create(null), this._handlerFb = () => {
-            }, this._active = n2;
-          }
-          reset() {
-            if (2 === this._state) for (let e3 = this._stack.paused ? this._stack.loopPosition - 1 : this._active.length - 1; e3 >= 0; --e3) this._active[e3].end(false);
-            this._stack.paused = false, this._active = n2, this._id = -1, this._state = 0;
-          }
-          _start() {
-            if (this._active = this._handlers[this._id] || n2, this._active.length) for (let e3 = this._active.length - 1; e3 >= 0; e3--) this._active[e3].start();
-            else this._handlerFb(this._id, "START");
-          }
-          _put(e3, t3, s3) {
-            if (this._active.length) for (let i3 = this._active.length - 1; i3 >= 0; i3--) this._active[i3].put(e3, t3, s3);
-            else this._handlerFb(this._id, "PUT", (0, r2.utf32ToString)(e3, t3, s3));
-          }
-          start() {
-            this.reset(), this._state = 1;
-          }
-          put(e3, t3, s3) {
-            if (3 !== this._state) {
-              if (1 === this._state) for (; t3 < s3; ) {
-                const s4 = e3[t3++];
-                if (59 === s4) {
-                  this._state = 2, this._start();
-                  break;
-                }
-                if (s4 < 48 || 57 < s4) return void (this._state = 3);
-                -1 === this._id && (this._id = 0), this._id = 10 * this._id + s4 - 48;
-              }
-              2 === this._state && s3 - t3 > 0 && this._put(e3, t3, s3);
-            }
-          }
-          end(e3, t3 = true) {
-            if (0 !== this._state) {
-              if (3 !== this._state) if (1 === this._state && this._start(), this._active.length) {
-                let s3 = false, i3 = this._active.length - 1, r3 = false;
-                if (this._stack.paused && (i3 = this._stack.loopPosition - 1, s3 = t3, r3 = this._stack.fallThrough, this._stack.paused = false), !r3 && false === s3) {
-                  for (; i3 >= 0 && (s3 = this._active[i3].end(e3), true !== s3); i3--) if (s3 instanceof Promise) return this._stack.paused = true, this._stack.loopPosition = i3, this._stack.fallThrough = false, s3;
-                  i3--;
-                }
-                for (; i3 >= 0; i3--) if (s3 = this._active[i3].end(false), s3 instanceof Promise) return this._stack.paused = true, this._stack.loopPosition = i3, this._stack.fallThrough = true, s3;
-              } else this._handlerFb(this._id, "END", e3);
-              this._active = n2, this._id = -1, this._state = 0;
-            }
-          }
-        }, t2.OscHandler = class {
-          constructor(e3) {
-            this._handler = e3, this._data = "", this._hitLimit = false;
-          }
-          start() {
-            this._data = "", this._hitLimit = false;
-          }
-          put(e3, t3, s3) {
-            this._hitLimit || (this._data += (0, r2.utf32ToString)(e3, t3, s3), this._data.length > i2.PAYLOAD_LIMIT && (this._data = "", this._hitLimit = true));
-          }
-          end(e3) {
-            let t3 = false;
-            if (this._hitLimit) t3 = false;
-            else if (e3 && (t3 = this._handler(this._data), t3 instanceof Promise)) return t3.then(((e4) => (this._data = "", this._hitLimit = false, e4)));
-            return this._data = "", this._hitLimit = false, t3;
-          }
-        };
-      }, 7262: (e2, t2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.Params = void 0;
-        const s2 = 2147483647;
-        class i2 {
-          static fromArray(e3) {
-            const t3 = new i2();
-            if (!e3.length) return t3;
-            for (let s3 = Array.isArray(e3[0]) ? 1 : 0; s3 < e3.length; ++s3) {
-              const i3 = e3[s3];
-              if (Array.isArray(i3)) for (let e4 = 0; e4 < i3.length; ++e4) t3.addSubParam(i3[e4]);
-              else t3.addParam(i3);
-            }
-            return t3;
-          }
-          constructor(e3 = 32, t3 = 32) {
-            if (this.maxLength = e3, this.maxSubParamsLength = t3, t3 > 256) throw new Error("maxSubParamsLength must not be greater than 256");
-            this.params = new Int32Array(e3), this.length = 0, this._subParams = new Int32Array(t3), this._subParamsLength = 0, this._subParamsIdx = new Uint16Array(e3), this._rejectDigits = false, this._rejectSubDigits = false, this._digitIsSub = false;
-          }
-          clone() {
-            const e3 = new i2(this.maxLength, this.maxSubParamsLength);
-            return e3.params.set(this.params), e3.length = this.length, e3._subParams.set(this._subParams), e3._subParamsLength = this._subParamsLength, e3._subParamsIdx.set(this._subParamsIdx), e3._rejectDigits = this._rejectDigits, e3._rejectSubDigits = this._rejectSubDigits, e3._digitIsSub = this._digitIsSub, e3;
-          }
-          toArray() {
-            const e3 = [];
-            for (let t3 = 0; t3 < this.length; ++t3) {
-              e3.push(this.params[t3]);
-              const s3 = this._subParamsIdx[t3] >> 8, i3 = 255 & this._subParamsIdx[t3];
-              i3 - s3 > 0 && e3.push(Array.prototype.slice.call(this._subParams, s3, i3));
-            }
-            return e3;
-          }
-          reset() {
-            this.length = 0, this._subParamsLength = 0, this._rejectDigits = false, this._rejectSubDigits = false, this._digitIsSub = false;
-          }
-          addParam(e3) {
-            if (this._digitIsSub = false, this.length >= this.maxLength) this._rejectDigits = true;
-            else {
-              if (e3 < -1) throw new Error("values lesser than -1 are not allowed");
-              this._subParamsIdx[this.length] = this._subParamsLength << 8 | this._subParamsLength, this.params[this.length++] = e3 > s2 ? s2 : e3;
-            }
-          }
-          addSubParam(e3) {
-            if (this._digitIsSub = true, this.length) if (this._rejectDigits || this._subParamsLength >= this.maxSubParamsLength) this._rejectSubDigits = true;
-            else {
-              if (e3 < -1) throw new Error("values lesser than -1 are not allowed");
-              this._subParams[this._subParamsLength++] = e3 > s2 ? s2 : e3, this._subParamsIdx[this.length - 1]++;
-            }
-          }
-          hasSubParams(e3) {
-            return (255 & this._subParamsIdx[e3]) - (this._subParamsIdx[e3] >> 8) > 0;
-          }
-          getSubParams(e3) {
-            const t3 = this._subParamsIdx[e3] >> 8, s3 = 255 & this._subParamsIdx[e3];
-            return s3 - t3 > 0 ? this._subParams.subarray(t3, s3) : null;
-          }
-          getSubParamsAll() {
-            const e3 = {};
-            for (let t3 = 0; t3 < this.length; ++t3) {
-              const s3 = this._subParamsIdx[t3] >> 8, i3 = 255 & this._subParamsIdx[t3];
-              i3 - s3 > 0 && (e3[t3] = this._subParams.slice(s3, i3));
-            }
-            return e3;
-          }
-          addDigit(e3) {
-            let t3;
-            if (this._rejectDigits || !(t3 = this._digitIsSub ? this._subParamsLength : this.length) || this._digitIsSub && this._rejectSubDigits) return;
-            const i3 = this._digitIsSub ? this._subParams : this.params, r2 = i3[t3 - 1];
-            i3[t3 - 1] = ~r2 ? Math.min(10 * r2 + e3, s2) : e3;
-          }
+        let s = new Qe();
+        for (let c of r) {
+          let u = i(c);
+          for (let m = 0; m <= u.length; m++) s.add(u.slice(0, m).join(`
+`), c);
         }
-        t2.Params = i2;
-      }, 3027: (e2, t2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.AddonManager = void 0, t2.AddonManager = class {
-          constructor() {
-            this._addons = [];
-          }
-          dispose() {
-            for (let e3 = this._addons.length - 1; e3 >= 0; e3--) this._addons[e3].instance.dispose();
-          }
-          loadAddon(e3, t3) {
-            const s2 = { instance: t3, dispose: t3.dispose, isDisposed: false };
-            this._addons.push(s2), t3.dispose = () => this._wrappedAddonDispose(s2), t3.activate(e3);
-          }
-          _wrappedAddonDispose(e3) {
-            if (e3.isDisposed) return;
-            let t3 = -1;
-            for (let s2 = 0; s2 < this._addons.length; s2++) if (this._addons[s2] === e3) {
-              t3 = s2;
-              break;
-            }
-            if (-1 === t3) throw new Error("Could not dispose an addon that has not been loaded");
-            e3.isDisposed = true, e3.dispose.apply(e3.instance), this._addons.splice(t3, 1);
-          }
-        };
-      }, 3235: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.BufferApiView = void 0;
-        const i2 = s2(793), r2 = s2(3055);
-        t2.BufferApiView = class {
-          constructor(e3, t3) {
-            this._buffer = e3, this.type = t3;
-          }
-          init(e3) {
-            return this._buffer = e3, this;
-          }
-          get cursorY() {
-            return this._buffer.y;
-          }
-          get cursorX() {
-            return this._buffer.x;
-          }
-          get viewportY() {
-            return this._buffer.ydisp;
-          }
-          get baseY() {
-            return this._buffer.ybase;
-          }
-          get length() {
-            return this._buffer.lines.length;
-          }
-          getLine(e3) {
-            const t3 = this._buffer.lines.get(e3);
-            if (t3) return new i2.BufferLineApiView(t3);
-          }
-          getNullCell() {
-            return new r2.CellData();
-          }
-        };
-      }, 793: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.BufferLineApiView = void 0;
-        const i2 = s2(3055);
-        t2.BufferLineApiView = class {
-          constructor(e3) {
-            this._line = e3;
-          }
-          get isWrapped() {
-            return this._line.isWrapped;
-          }
-          get length() {
-            return this._line.length;
-          }
-          getCell(e3, t3) {
-            if (!(e3 < 0 || e3 >= this._line.length)) return t3 ? (this._line.loadCell(e3, t3), t3) : this._line.loadCell(e3, new i2.CellData());
-          }
-          translateToString(e3, t3, s3) {
-            return this._line.translateToString(e3, t3, s3);
-          }
-        };
-      }, 5101: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.BufferNamespaceApi = void 0;
-        const i2 = s2(3235), r2 = s2(7150), n2 = s2(802);
-        class o extends r2.Disposable {
-          constructor(e3) {
-            super(), this._core = e3, this._onBufferChange = this._register(new n2.Emitter()), this.onBufferChange = this._onBufferChange.event, this._normal = new i2.BufferApiView(this._core.buffers.normal, "normal"), this._alternate = new i2.BufferApiView(this._core.buffers.alt, "alternate"), this._core.buffers.onBufferActivate((() => this._onBufferChange.fire(this.active)));
-          }
-          get active() {
-            if (this._core.buffers.active === this._core.buffers.normal) return this.normal;
-            if (this._core.buffers.active === this._core.buffers.alt) return this.alternate;
-            throw new Error("Active buffer is neither normal nor alternate");
-          }
-          get normal() {
-            return this._normal.init(this._core.buffers.normal);
-          }
-          get alternate() {
-            return this._alternate.init(this._core.buffers.alt);
-          }
-        }
-        t2.BufferNamespaceApi = o;
-      }, 6097: (e2, t2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.ParserApi = void 0, t2.ParserApi = class {
-          constructor(e3) {
-            this._core = e3;
-          }
-          registerCsiHandler(e3, t3) {
-            return this._core.registerCsiHandler(e3, ((e4) => t3(e4.toArray())));
-          }
-          addCsiHandler(e3, t3) {
-            return this.registerCsiHandler(e3, t3);
-          }
-          registerDcsHandler(e3, t3) {
-            return this._core.registerDcsHandler(e3, ((e4, s2) => t3(e4, s2.toArray())));
-          }
-          addDcsHandler(e3, t3) {
-            return this.registerDcsHandler(e3, t3);
-          }
-          registerEscHandler(e3, t3) {
-            return this._core.registerEscHandler(e3, t3);
-          }
-          addEscHandler(e3, t3) {
-            return this.registerEscHandler(e3, t3);
-          }
-          registerOscHandler(e3, t3) {
-            return this._core.registerOscHandler(e3, t3);
-          }
-          addOscHandler(e3, t3) {
-            return this.registerOscHandler(e3, t3);
-          }
-        };
-      }, 4335: (e2, t2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.UnicodeApi = void 0, t2.UnicodeApi = class {
-          constructor(e3) {
-            this._core = e3;
-          }
-          register(e3) {
-            this._core.unicodeService.register(e3);
-          }
-          get versions() {
-            return this._core.unicodeService.versions;
-          }
-          get activeVersion() {
-            return this._core.unicodeService.activeVersion;
-          }
-          set activeVersion(e3) {
-            this._core.unicodeService.activeVersion = e3;
-          }
-        };
-      }, 9640: function(e2, t2, s2) {
-        var i2 = this && this.__decorate || function(e3, t3, s3, i3) {
-          var r3, n3 = arguments.length, o2 = n3 < 3 ? t3 : null === i3 ? i3 = Object.getOwnPropertyDescriptor(t3, s3) : i3;
-          if ("object" == typeof Reflect && "function" == typeof Reflect.decorate) o2 = Reflect.decorate(e3, t3, s3, i3);
-          else for (var a2 = e3.length - 1; a2 >= 0; a2--) (r3 = e3[a2]) && (o2 = (n3 < 3 ? r3(o2) : n3 > 3 ? r3(t3, s3, o2) : r3(t3, s3)) || o2);
-          return n3 > 3 && o2 && Object.defineProperty(t3, s3, o2), o2;
-        }, r2 = this && this.__param || function(e3, t3) {
-          return function(s3, i3) {
-            t3(s3, i3, e3);
-          };
-        };
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.BufferService = t2.MINIMUM_ROWS = t2.MINIMUM_COLS = void 0;
-        const n2 = s2(7150), o = s2(4097), a = s2(6501), h = s2(802);
-        t2.MINIMUM_COLS = 2, t2.MINIMUM_ROWS = 1;
-        let c = class extends n2.Disposable {
-          get buffer() {
-            return this.buffers.active;
-          }
-          constructor(e3) {
-            super(), this.isUserScrolling = false, this._onResize = this._register(new h.Emitter()), this.onResize = this._onResize.event, this._onScroll = this._register(new h.Emitter()), this.onScroll = this._onScroll.event, this.cols = Math.max(e3.rawOptions.cols || 0, t2.MINIMUM_COLS), this.rows = Math.max(e3.rawOptions.rows || 0, t2.MINIMUM_ROWS), this.buffers = this._register(new o.BufferSet(e3, this)), this._register(this.buffers.onBufferActivate(((e4) => {
-              this._onScroll.fire(e4.activeBuffer.ydisp);
-            })));
-          }
-          resize(e3, t3) {
-            const s3 = this.cols !== e3, i3 = this.rows !== t3;
-            this.cols = e3, this.rows = t3, this.buffers.resize(e3, t3), this._onResize.fire({ cols: e3, rows: t3, colsChanged: s3, rowsChanged: i3 });
-          }
-          reset() {
-            this.buffers.reset(), this.isUserScrolling = false;
-          }
-          scroll(e3, t3 = false) {
-            const s3 = this.buffer;
-            let i3;
-            i3 = this._cachedBlankLine, i3 && i3.length === this.cols && i3.getFg(0) === e3.fg && i3.getBg(0) === e3.bg || (i3 = s3.getBlankLine(e3, t3), this._cachedBlankLine = i3), i3.isWrapped = t3;
-            const r3 = s3.ybase + s3.scrollTop, n3 = s3.ybase + s3.scrollBottom;
-            if (0 === s3.scrollTop) {
-              const e4 = s3.lines.isFull;
-              n3 === s3.lines.length - 1 ? e4 ? s3.lines.recycle().copyFrom(i3) : s3.lines.push(i3.clone()) : s3.lines.splice(n3 + 1, 0, i3.clone()), e4 ? this.isUserScrolling && (s3.ydisp = Math.max(s3.ydisp - 1, 0)) : (s3.ybase++, this.isUserScrolling || s3.ydisp++);
-            } else {
-              const e4 = n3 - r3 + 1;
-              s3.lines.shiftElements(r3 + 1, e4 - 1, -1), s3.lines.set(n3, i3.clone());
-            }
-            this.isUserScrolling || (s3.ydisp = s3.ybase), this._onScroll.fire(s3.ydisp);
-          }
-          scrollLines(e3, t3) {
-            const s3 = this.buffer;
-            if (e3 < 0) {
-              if (0 === s3.ydisp) return;
-              this.isUserScrolling = true;
-            } else e3 + s3.ydisp >= s3.ybase && (this.isUserScrolling = false);
-            const i3 = s3.ydisp;
-            s3.ydisp = Math.max(Math.min(s3.ydisp + e3, s3.ybase), 0), i3 !== s3.ydisp && (t3 || this._onScroll.fire(s3.ydisp));
-          }
-        };
-        t2.BufferService = c, t2.BufferService = c = i2([r2(0, a.IOptionsService)], c);
-      }, 5746: (e2, t2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.CharsetService = void 0, t2.CharsetService = class {
-          constructor() {
-            this.glevel = 0, this._charsets = [];
-          }
-          reset() {
-            this.charset = void 0, this._charsets = [], this.glevel = 0;
-          }
-          setgLevel(e3) {
-            this.glevel = e3, this.charset = this._charsets[e3];
-          }
-          setgCharset(e3, t3) {
-            this._charsets[e3] = t3, this.glevel === e3 && (this.charset = t3);
-          }
-        };
-      }, 7792: function(e2, t2, s2) {
-        var i2 = this && this.__decorate || function(e3, t3, s3, i3) {
-          var r3, n3 = arguments.length, o2 = n3 < 3 ? t3 : null === i3 ? i3 = Object.getOwnPropertyDescriptor(t3, s3) : i3;
-          if ("object" == typeof Reflect && "function" == typeof Reflect.decorate) o2 = Reflect.decorate(e3, t3, s3, i3);
-          else for (var a2 = e3.length - 1; a2 >= 0; a2--) (r3 = e3[a2]) && (o2 = (n3 < 3 ? r3(o2) : n3 > 3 ? r3(t3, s3, o2) : r3(t3, s3)) || o2);
-          return n3 > 3 && o2 && Object.defineProperty(t3, s3, o2), o2;
-        }, r2 = this && this.__param || function(e3, t3) {
-          return function(s3, i3) {
-            t3(s3, i3, e3);
-          };
-        };
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.CoreMouseService = void 0;
-        const n2 = s2(6501), o = s2(7150), a = s2(802), h = { NONE: { events: 0, restrict: () => false }, X10: { events: 1, restrict: (e3) => 4 !== e3.button && 1 === e3.action && (e3.ctrl = false, e3.alt = false, e3.shift = false, true) }, VT200: { events: 19, restrict: (e3) => 32 !== e3.action }, DRAG: { events: 23, restrict: (e3) => 32 !== e3.action || 3 !== e3.button }, ANY: { events: 31, restrict: (e3) => true } };
-        function c(e3, t3) {
-          let s3 = (e3.ctrl ? 16 : 0) | (e3.shift ? 4 : 0) | (e3.alt ? 8 : 0);
-          return 4 === e3.button ? (s3 |= 64, s3 |= e3.action) : (s3 |= 3 & e3.button, 4 & e3.button && (s3 |= 64), 8 & e3.button && (s3 |= 128), 32 === e3.action ? s3 |= 32 : 0 !== e3.action || t3 || (s3 |= 3)), s3;
-        }
-        const l = String.fromCharCode, u = { DEFAULT: (e3) => {
-          const t3 = [c(e3, false) + 32, e3.col + 32, e3.row + 32];
-          return t3[0] > 255 || t3[1] > 255 || t3[2] > 255 ? "" : `\x1B[M${l(t3[0])}${l(t3[1])}${l(t3[2])}`;
-        }, SGR: (e3) => {
-          const t3 = 0 === e3.action && 4 !== e3.button ? "m" : "M";
-          return `\x1B[<${c(e3, true)};${e3.col};${e3.row}${t3}`;
-        }, SGR_PIXELS: (e3) => {
-          const t3 = 0 === e3.action && 4 !== e3.button ? "m" : "M";
-          return `\x1B[<${c(e3, true)};${e3.x};${e3.y}${t3}`;
-        } };
-        let d = class extends o.Disposable {
-          constructor(e3, t3, s3) {
-            super(), this._bufferService = e3, this._coreService = t3, this._optionsService = s3, this._protocols = {}, this._encodings = {}, this._activeProtocol = "", this._activeEncoding = "", this._lastEvent = null, this._wheelPartialScroll = 0, this._onProtocolChange = this._register(new a.Emitter()), this.onProtocolChange = this._onProtocolChange.event;
-            for (const e4 of Object.keys(h)) this.addProtocol(e4, h[e4]);
-            for (const e4 of Object.keys(u)) this.addEncoding(e4, u[e4]);
-            this.reset();
-          }
-          addProtocol(e3, t3) {
-            this._protocols[e3] = t3;
-          }
-          addEncoding(e3, t3) {
-            this._encodings[e3] = t3;
-          }
-          get activeProtocol() {
-            return this._activeProtocol;
-          }
-          get areMouseEventsActive() {
-            return 0 !== this._protocols[this._activeProtocol].events;
-          }
-          set activeProtocol(e3) {
-            if (!this._protocols[e3]) throw new Error(`unknown protocol "${e3}"`);
-            this._activeProtocol = e3, this._onProtocolChange.fire(this._protocols[e3].events);
-          }
-          get activeEncoding() {
-            return this._activeEncoding;
-          }
-          set activeEncoding(e3) {
-            if (!this._encodings[e3]) throw new Error(`unknown encoding "${e3}"`);
-            this._activeEncoding = e3;
-          }
-          reset() {
-            this.activeProtocol = "NONE", this.activeEncoding = "DEFAULT", this._lastEvent = null, this._wheelPartialScroll = 0;
-          }
-          consumeWheelEvent(e3, t3, s3) {
-            if (0 === e3.deltaY || e3.shiftKey) return 0;
-            if (void 0 === t3 || void 0 === s3) return 0;
-            const i3 = t3 / s3;
-            let r3 = this._applyScrollModifier(e3.deltaY, e3);
-            return e3.deltaMode === WheelEvent.DOM_DELTA_PIXEL ? (r3 /= i3 + 0, Math.abs(e3.deltaY) < 50 && (r3 *= 0.3), this._wheelPartialScroll += r3, r3 = Math.floor(Math.abs(this._wheelPartialScroll)) * (this._wheelPartialScroll > 0 ? 1 : -1), this._wheelPartialScroll %= 1) : e3.deltaMode === WheelEvent.DOM_DELTA_PAGE && (r3 *= this._bufferService.rows), r3;
-          }
-          _applyScrollModifier(e3, t3) {
-            return t3.altKey || t3.ctrlKey || t3.shiftKey ? e3 * this._optionsService.rawOptions.fastScrollSensitivity * this._optionsService.rawOptions.scrollSensitivity : e3 * this._optionsService.rawOptions.scrollSensitivity;
-          }
-          triggerMouseEvent(e3) {
-            if (e3.col < 0 || e3.col >= this._bufferService.cols || e3.row < 0 || e3.row >= this._bufferService.rows) return false;
-            if (4 === e3.button && 32 === e3.action) return false;
-            if (3 === e3.button && 32 !== e3.action) return false;
-            if (4 !== e3.button && (2 === e3.action || 3 === e3.action)) return false;
-            if (e3.col++, e3.row++, 32 === e3.action && this._lastEvent && this._equalEvents(this._lastEvent, e3, "SGR_PIXELS" === this._activeEncoding)) return false;
-            if (!this._protocols[this._activeProtocol].restrict(e3)) return false;
-            const t3 = this._encodings[this._activeEncoding](e3);
-            return t3 && ("DEFAULT" === this._activeEncoding ? this._coreService.triggerBinaryEvent(t3) : this._coreService.triggerDataEvent(t3, true)), this._lastEvent = e3, true;
-          }
-          explainEvents(e3) {
-            return { down: !!(1 & e3), up: !!(2 & e3), drag: !!(4 & e3), move: !!(8 & e3), wheel: !!(16 & e3) };
-          }
-          _equalEvents(e3, t3, s3) {
-            if (s3) {
-              if (e3.x !== t3.x) return false;
-              if (e3.y !== t3.y) return false;
-            } else {
-              if (e3.col !== t3.col) return false;
-              if (e3.row !== t3.row) return false;
-            }
-            return e3.button === t3.button && e3.action === t3.action && e3.ctrl === t3.ctrl && e3.alt === t3.alt && e3.shift === t3.shift;
-          }
-        };
-        t2.CoreMouseService = d, t2.CoreMouseService = d = i2([r2(0, n2.IBufferService), r2(1, n2.ICoreService), r2(2, n2.IOptionsService)], d);
-      }, 4071: function(e2, t2, s2) {
-        var i2 = this && this.__decorate || function(e3, t3, s3, i3) {
-          var r3, n3 = arguments.length, o2 = n3 < 3 ? t3 : null === i3 ? i3 = Object.getOwnPropertyDescriptor(t3, s3) : i3;
-          if ("object" == typeof Reflect && "function" == typeof Reflect.decorate) o2 = Reflect.decorate(e3, t3, s3, i3);
-          else for (var a2 = e3.length - 1; a2 >= 0; a2--) (r3 = e3[a2]) && (o2 = (n3 < 3 ? r3(o2) : n3 > 3 ? r3(t3, s3, o2) : r3(t3, s3)) || o2);
-          return n3 > 3 && o2 && Object.defineProperty(t3, s3, o2), o2;
-        }, r2 = this && this.__param || function(e3, t3) {
-          return function(s3, i3) {
-            t3(s3, i3, e3);
-          };
-        };
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.CoreService = void 0;
-        const n2 = s2(7453), o = s2(7150), a = s2(6501), h = s2(802), c = Object.freeze({ insertMode: false }), l = Object.freeze({ applicationCursorKeys: false, applicationKeypad: false, bracketedPasteMode: false, cursorBlink: void 0, cursorStyle: void 0, origin: false, reverseWraparound: false, sendFocus: false, synchronizedOutput: false, wraparound: true });
-        let u = class extends o.Disposable {
-          constructor(e3, t3, s3) {
-            super(), this._bufferService = e3, this._logService = t3, this._optionsService = s3, this.isCursorInitialized = false, this.isCursorHidden = false, this._onData = this._register(new h.Emitter()), this.onData = this._onData.event, this._onUserInput = this._register(new h.Emitter()), this.onUserInput = this._onUserInput.event, this._onBinary = this._register(new h.Emitter()), this.onBinary = this._onBinary.event, this._onRequestScrollToBottom = this._register(new h.Emitter()), this.onRequestScrollToBottom = this._onRequestScrollToBottom.event, this.modes = (0, n2.clone)(c), this.decPrivateModes = (0, n2.clone)(l);
-          }
-          reset() {
-            this.modes = (0, n2.clone)(c), this.decPrivateModes = (0, n2.clone)(l);
-          }
-          triggerDataEvent(e3, t3 = false) {
-            if (this._optionsService.rawOptions.disableStdin) return;
-            const s3 = this._bufferService.buffer;
-            t3 && this._optionsService.rawOptions.scrollOnUserInput && s3.ybase !== s3.ydisp && this._onRequestScrollToBottom.fire(), t3 && this._onUserInput.fire(), this._logService.debug(`sending data "${e3}"`), this._logService.trace("sending data (codes)", (() => e3.split("").map(((e4) => e4.charCodeAt(0))))), this._onData.fire(e3);
-          }
-          triggerBinaryEvent(e3) {
-            this._optionsService.rawOptions.disableStdin || (this._logService.debug(`sending binary "${e3}"`), this._logService.trace("sending binary (codes)", (() => e3.split("").map(((e4) => e4.charCodeAt(0))))), this._onBinary.fire(e3));
-          }
-        };
-        t2.CoreService = u, t2.CoreService = u = i2([r2(0, a.IBufferService), r2(1, a.ILogService), r2(2, a.IOptionsService)], u);
-      }, 6025: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.InstantiationService = t2.ServiceCollection = void 0;
-        const i2 = s2(6501), r2 = s2(6201);
-        class n2 {
-          constructor(...e3) {
-            this._entries = /* @__PURE__ */ new Map();
-            for (const [t3, s3] of e3) this.set(t3, s3);
-          }
-          set(e3, t3) {
-            const s3 = this._entries.get(e3);
-            return this._entries.set(e3, t3), s3;
-          }
-          forEach(e3) {
-            for (const [t3, s3] of this._entries.entries()) e3(t3, s3);
-          }
-          has(e3) {
-            return this._entries.has(e3);
-          }
-          get(e3) {
-            return this._entries.get(e3);
-          }
-        }
-        t2.ServiceCollection = n2, t2.InstantiationService = class {
-          constructor() {
-            this._services = new n2(), this._services.set(i2.IInstantiationService, this);
-          }
-          setService(e3, t3) {
-            this._services.set(e3, t3);
-          }
-          getService(e3) {
-            return this._services.get(e3);
-          }
-          createInstance(e3, ...t3) {
-            const s3 = (0, r2.getServiceDependencies)(e3).sort(((e4, t4) => e4.index - t4.index)), i3 = [];
-            for (const t4 of s3) {
-              const s4 = this._services.get(t4.id);
-              if (!s4) throw new Error(`[createInstance] ${e3.name} depends on UNKNOWN service ${t4.id._id}.`);
-              i3.push(s4);
-            }
-            const n3 = s3.length > 0 ? s3[0].index : t3.length;
-            if (t3.length !== n3) throw new Error(`[createInstance] First service dependency of ${e3.name} at position ${n3 + 1} conflicts with ${t3.length} static arguments`);
-            return new e3(...[...t3, ...i3]);
-          }
-        };
-      }, 7276: function(e2, t2, s2) {
-        var i2 = this && this.__decorate || function(e3, t3, s3, i3) {
-          var r3, n3 = arguments.length, o2 = n3 < 3 ? t3 : null === i3 ? i3 = Object.getOwnPropertyDescriptor(t3, s3) : i3;
-          if ("object" == typeof Reflect && "function" == typeof Reflect.decorate) o2 = Reflect.decorate(e3, t3, s3, i3);
-          else for (var a2 = e3.length - 1; a2 >= 0; a2--) (r3 = e3[a2]) && (o2 = (n3 < 3 ? r3(o2) : n3 > 3 ? r3(t3, s3, o2) : r3(t3, s3)) || o2);
-          return n3 > 3 && o2 && Object.defineProperty(t3, s3, o2), o2;
-        }, r2 = this && this.__param || function(e3, t3) {
-          return function(s3, i3) {
-            t3(s3, i3, e3);
-          };
-        };
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.LogService = void 0, t2.setTraceLogger = function(e3) {
-          h = e3;
-        }, t2.traceCall = function(e3, t3, s3) {
-          if ("function" != typeof s3.value) throw new Error("not supported");
-          const i3 = s3.value;
-          s3.value = function(...e4) {
-            if (h.logLevel !== o.LogLevelEnum.TRACE) return i3.apply(this, e4);
-            h.trace(`GlyphRenderer#${i3.name}(${e4.map(((e5) => JSON.stringify(e5))).join(", ")})`);
-            const t4 = i3.apply(this, e4);
-            return h.trace(`GlyphRenderer#${i3.name} return`, t4), t4;
-          };
-        };
-        const n2 = s2(7150), o = s2(6501), a = { trace: o.LogLevelEnum.TRACE, debug: o.LogLevelEnum.DEBUG, info: o.LogLevelEnum.INFO, warn: o.LogLevelEnum.WARN, error: o.LogLevelEnum.ERROR, off: o.LogLevelEnum.OFF };
-        let h, c = class extends n2.Disposable {
-          get logLevel() {
-            return this._logLevel;
-          }
-          constructor(e3) {
-            super(), this._optionsService = e3, this._logLevel = o.LogLevelEnum.OFF, this._updateLogLevel(), this._register(this._optionsService.onSpecificOptionChange("logLevel", (() => this._updateLogLevel()))), h = this;
-          }
-          _updateLogLevel() {
-            this._logLevel = a[this._optionsService.rawOptions.logLevel];
-          }
-          _evalLazyOptionalParams(e3) {
-            for (let t3 = 0; t3 < e3.length; t3++) "function" == typeof e3[t3] && (e3[t3] = e3[t3]());
-          }
-          _log(e3, t3, s3) {
-            this._evalLazyOptionalParams(s3), e3.call(console, (this._optionsService.options.logger ? "" : "xterm.js: ") + t3, ...s3);
-          }
-          trace(e3, ...t3) {
-            this._logLevel <= o.LogLevelEnum.TRACE && this._log(this._optionsService.options.logger?.trace.bind(this._optionsService.options.logger) ?? console.log, e3, t3);
-          }
-          debug(e3, ...t3) {
-            this._logLevel <= o.LogLevelEnum.DEBUG && this._log(this._optionsService.options.logger?.debug.bind(this._optionsService.options.logger) ?? console.log, e3, t3);
-          }
-          info(e3, ...t3) {
-            this._logLevel <= o.LogLevelEnum.INFO && this._log(this._optionsService.options.logger?.info.bind(this._optionsService.options.logger) ?? console.info, e3, t3);
-          }
-          warn(e3, ...t3) {
-            this._logLevel <= o.LogLevelEnum.WARN && this._log(this._optionsService.options.logger?.warn.bind(this._optionsService.options.logger) ?? console.warn, e3, t3);
-          }
-          error(e3, ...t3) {
-            this._logLevel <= o.LogLevelEnum.ERROR && this._log(this._optionsService.options.logger?.error.bind(this._optionsService.options.logger) ?? console.error, e3, t3);
-          }
-        };
-        t2.LogService = c, t2.LogService = c = i2([r2(0, o.IOptionsService)], c);
-      }, 56: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.OptionsService = t2.DEFAULT_OPTIONS = void 0;
-        const i2 = s2(7150), r2 = s2(701), n2 = s2(802);
-        t2.DEFAULT_OPTIONS = { cols: 80, rows: 24, cursorBlink: false, cursorStyle: "block", cursorWidth: 1, cursorInactiveStyle: "outline", customGlyphs: true, drawBoldTextInBrightColors: true, documentOverride: null, fastScrollModifier: "alt", fastScrollSensitivity: 5, fontFamily: "monospace", fontSize: 15, fontWeight: "normal", fontWeightBold: "bold", ignoreBracketedPasteMode: false, lineHeight: 1, letterSpacing: 0, linkHandler: null, logLevel: "info", logger: null, scrollback: 1e3, scrollOnEraseInDisplay: false, scrollOnUserInput: true, scrollSensitivity: 1, screenReaderMode: false, smoothScrollDuration: 0, macOptionIsMeta: false, macOptionClickForcesSelection: false, minimumContrastRatio: 1, disableStdin: false, allowProposedApi: false, allowTransparency: false, tabStopWidth: 8, theme: {}, reflowCursorLine: false, rescaleOverlappingGlyphs: false, rightClickSelectsWord: r2.isMac, windowOptions: {}, windowsMode: false, windowsPty: {}, wordSeparator: " ()[]{}',\"`", altClickMovesCursor: true, convertEol: false, termName: "xterm", cancelEvents: false, overviewRuler: {} };
-        const o = ["normal", "bold", "100", "200", "300", "400", "500", "600", "700", "800", "900"];
-        class a extends i2.Disposable {
-          constructor(e3) {
-            super(), this._onOptionChange = this._register(new n2.Emitter()), this.onOptionChange = this._onOptionChange.event;
-            const s3 = { ...t2.DEFAULT_OPTIONS };
-            for (const t3 in e3) if (t3 in s3) try {
-              const i3 = e3[t3];
-              s3[t3] = this._sanitizeAndValidateOption(t3, i3);
-            } catch (e4) {
-              console.error(e4);
-            }
-            this.rawOptions = s3, this.options = { ...s3 }, this._setupOptions(), this._register((0, i2.toDisposable)((() => {
-              this.rawOptions.linkHandler = null, this.rawOptions.documentOverride = null;
-            })));
-          }
-          onSpecificOptionChange(e3, t3) {
-            return this.onOptionChange(((s3) => {
-              s3 === e3 && t3(this.rawOptions[e3]);
-            }));
-          }
-          onMultipleOptionChange(e3, t3) {
-            return this.onOptionChange(((s3) => {
-              -1 !== e3.indexOf(s3) && t3();
-            }));
-          }
-          _setupOptions() {
-            const e3 = (e4) => {
-              if (!(e4 in t2.DEFAULT_OPTIONS)) throw new Error(`No option with key "${e4}"`);
-              return this.rawOptions[e4];
-            }, s3 = (e4, s4) => {
-              if (!(e4 in t2.DEFAULT_OPTIONS)) throw new Error(`No option with key "${e4}"`);
-              s4 = this._sanitizeAndValidateOption(e4, s4), this.rawOptions[e4] !== s4 && (this.rawOptions[e4] = s4, this._onOptionChange.fire(e4));
-            };
-            for (const t3 in this.rawOptions) {
-              const i3 = { get: e3.bind(this, t3), set: s3.bind(this, t3) };
-              Object.defineProperty(this.options, t3, i3);
-            }
-          }
-          _sanitizeAndValidateOption(e3, s3) {
-            switch (e3) {
-              case "cursorStyle":
-                if (s3 || (s3 = t2.DEFAULT_OPTIONS[e3]), !/* @__PURE__ */ (function(e4) {
-                  return "block" === e4 || "underline" === e4 || "bar" === e4;
-                })(s3)) throw new Error(`"${s3}" is not a valid value for ${e3}`);
-                break;
-              case "wordSeparator":
-                s3 || (s3 = t2.DEFAULT_OPTIONS[e3]);
-                break;
-              case "fontWeight":
-              case "fontWeightBold":
-                if ("number" == typeof s3 && 1 <= s3 && s3 <= 1e3) break;
-                s3 = o.includes(s3) ? s3 : t2.DEFAULT_OPTIONS[e3];
-                break;
-              case "cursorWidth":
-                s3 = Math.floor(s3);
-              case "lineHeight":
-              case "tabStopWidth":
-                if (s3 < 1) throw new Error(`${e3} cannot be less than 1, value: ${s3}`);
-                break;
-              case "minimumContrastRatio":
-                s3 = Math.max(1, Math.min(21, Math.round(10 * s3) / 10));
-                break;
-              case "scrollback":
-                if ((s3 = Math.min(s3, 4294967295)) < 0) throw new Error(`${e3} cannot be less than 0, value: ${s3}`);
-                break;
-              case "fastScrollSensitivity":
-              case "scrollSensitivity":
-                if (s3 <= 0) throw new Error(`${e3} cannot be less than or equal to 0, value: ${s3}`);
-                break;
-              case "rows":
-              case "cols":
-                if (!s3 && 0 !== s3) throw new Error(`${e3} must be numeric, value: ${s3}`);
-                break;
-              case "windowsPty":
-                s3 = s3 ?? {};
-            }
-            return s3;
-          }
-        }
-        t2.OptionsService = a;
-      }, 8811: function(e2, t2, s2) {
-        var i2 = this && this.__decorate || function(e3, t3, s3, i3) {
-          var r3, n3 = arguments.length, o2 = n3 < 3 ? t3 : null === i3 ? i3 = Object.getOwnPropertyDescriptor(t3, s3) : i3;
-          if ("object" == typeof Reflect && "function" == typeof Reflect.decorate) o2 = Reflect.decorate(e3, t3, s3, i3);
-          else for (var a = e3.length - 1; a >= 0; a--) (r3 = e3[a]) && (o2 = (n3 < 3 ? r3(o2) : n3 > 3 ? r3(t3, s3, o2) : r3(t3, s3)) || o2);
-          return n3 > 3 && o2 && Object.defineProperty(t3, s3, o2), o2;
-        }, r2 = this && this.__param || function(e3, t3) {
-          return function(s3, i3) {
-            t3(s3, i3, e3);
-          };
-        };
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.OscLinkService = void 0;
-        const n2 = s2(6501);
-        let o = class {
-          constructor(e3) {
-            this._bufferService = e3, this._nextId = 1, this._entriesWithId = /* @__PURE__ */ new Map(), this._dataByLinkId = /* @__PURE__ */ new Map();
-          }
-          registerLink(e3) {
-            const t3 = this._bufferService.buffer;
-            if (void 0 === e3.id) {
-              const s4 = t3.addMarker(t3.ybase + t3.y), i4 = { data: e3, id: this._nextId++, lines: [s4] };
-              return s4.onDispose((() => this._removeMarkerFromLink(i4, s4))), this._dataByLinkId.set(i4.id, i4), i4.id;
-            }
-            const s3 = e3, i3 = this._getEntryIdKey(s3), r3 = this._entriesWithId.get(i3);
-            if (r3) return this.addLineToLink(r3.id, t3.ybase + t3.y), r3.id;
-            const n3 = t3.addMarker(t3.ybase + t3.y), o2 = { id: this._nextId++, key: this._getEntryIdKey(s3), data: s3, lines: [n3] };
-            return n3.onDispose((() => this._removeMarkerFromLink(o2, n3))), this._entriesWithId.set(o2.key, o2), this._dataByLinkId.set(o2.id, o2), o2.id;
-          }
-          addLineToLink(e3, t3) {
-            const s3 = this._dataByLinkId.get(e3);
-            if (s3 && s3.lines.every(((e4) => e4.line !== t3))) {
-              const e4 = this._bufferService.buffer.addMarker(t3);
-              s3.lines.push(e4), e4.onDispose((() => this._removeMarkerFromLink(s3, e4)));
-            }
-          }
-          getLinkData(e3) {
-            return this._dataByLinkId.get(e3)?.data;
-          }
-          _getEntryIdKey(e3) {
-            return `${e3.id};;${e3.uri}`;
-          }
-          _removeMarkerFromLink(e3, t3) {
-            const s3 = e3.lines.indexOf(t3);
-            -1 !== s3 && (e3.lines.splice(s3, 1), 0 === e3.lines.length && (void 0 !== e3.data.id && this._entriesWithId.delete(e3.key), this._dataByLinkId.delete(e3.id)));
-          }
-        };
-        t2.OscLinkService = o, t2.OscLinkService = o = i2([r2(0, n2.IBufferService)], o);
-      }, 6201: (e2, t2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.serviceRegistry = void 0, t2.getServiceDependencies = function(e3) {
-          return e3[i2] || [];
-        }, t2.createDecorator = function(e3) {
-          if (t2.serviceRegistry.has(e3)) return t2.serviceRegistry.get(e3);
-          const r2 = function(e4, t3, n2) {
-            if (3 !== arguments.length) throw new Error("@IServiceName-decorator can only be used to decorate a parameter");
-            !(function(e5, t4, r3) {
-              t4[s2] === t4 ? t4[i2].push({ id: e5, index: r3 }) : (t4[i2] = [{ id: e5, index: r3 }], t4[s2] = t4);
-            })(r2, e4, n2);
-          };
-          return r2._id = e3, t2.serviceRegistry.set(e3, r2), r2;
-        };
-        const s2 = "di$target", i2 = "di$dependencies";
-        t2.serviceRegistry = /* @__PURE__ */ new Map();
-      }, 6501: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.IDecorationService = t2.IUnicodeService = t2.IOscLinkService = t2.IOptionsService = t2.ILogService = t2.LogLevelEnum = t2.IInstantiationService = t2.ICharsetService = t2.ICoreService = t2.ICoreMouseService = t2.IBufferService = void 0;
-        const i2 = s2(6201);
-        var r2;
-        t2.IBufferService = (0, i2.createDecorator)("BufferService"), t2.ICoreMouseService = (0, i2.createDecorator)("CoreMouseService"), t2.ICoreService = (0, i2.createDecorator)("CoreService"), t2.ICharsetService = (0, i2.createDecorator)("CharsetService"), t2.IInstantiationService = (0, i2.createDecorator)("InstantiationService"), (function(e3) {
-          e3[e3.TRACE = 0] = "TRACE", e3[e3.DEBUG = 1] = "DEBUG", e3[e3.INFO = 2] = "INFO", e3[e3.WARN = 3] = "WARN", e3[e3.ERROR = 4] = "ERROR", e3[e3.OFF = 5] = "OFF";
-        })(r2 || (t2.LogLevelEnum = r2 = {})), t2.ILogService = (0, i2.createDecorator)("LogService"), t2.IOptionsService = (0, i2.createDecorator)("OptionsService"), t2.IOscLinkService = (0, i2.createDecorator)("OscLinkService"), t2.IUnicodeService = (0, i2.createDecorator)("UnicodeService"), t2.IDecorationService = (0, i2.createDecorator)("DecorationService");
-      }, 6415: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.UnicodeService = void 0;
-        const i2 = s2(7428), r2 = s2(802);
-        class n2 {
-          static extractShouldJoin(e3) {
-            return !!(1 & e3);
-          }
-          static extractWidth(e3) {
-            return e3 >> 1 & 3;
-          }
-          static extractCharKind(e3) {
-            return e3 >> 3;
-          }
-          static createPropertyValue(e3, t3, s3 = false) {
-            return (16777215 & e3) << 3 | (3 & t3) << 1 | (s3 ? 1 : 0);
-          }
-          constructor() {
-            this._providers = /* @__PURE__ */ Object.create(null), this._active = "", this._onChange = new r2.Emitter(), this.onChange = this._onChange.event;
-            const e3 = new i2.UnicodeV6();
-            this.register(e3), this._active = e3.version, this._activeProvider = e3;
-          }
-          dispose() {
-            this._onChange.dispose();
-          }
-          get versions() {
-            return Object.keys(this._providers);
-          }
-          get activeVersion() {
-            return this._active;
-          }
-          set activeVersion(e3) {
-            if (!this._providers[e3]) throw new Error(`unknown Unicode version "${e3}"`);
-            this._active = e3, this._activeProvider = this._providers[e3], this._onChange.fire(e3);
-          }
-          register(e3) {
-            this._providers[e3.version] = e3;
-          }
-          wcwidth(e3) {
-            return this._activeProvider.wcwidth(e3);
-          }
-          getStringCellWidth(e3) {
-            let t3 = 0, s3 = 0;
-            const i3 = e3.length;
-            for (let r3 = 0; r3 < i3; ++r3) {
-              let o = e3.charCodeAt(r3);
-              if (55296 <= o && o <= 56319) {
-                if (++r3 >= i3) return t3 + this.wcwidth(o);
-                const s4 = e3.charCodeAt(r3);
-                56320 <= s4 && s4 <= 57343 ? o = 1024 * (o - 55296) + s4 - 56320 + 65536 : t3 += this.wcwidth(s4);
-              }
-              const a = this.charProperties(o, s3);
-              let h = n2.extractWidth(a);
-              n2.extractShouldJoin(a) && (h -= n2.extractWidth(s3)), t3 += h, s3 = a;
-            }
-            return t3;
-          }
-          charProperties(e3, t3) {
-            return this._activeProvider.charProperties(e3, t3);
-          }
-        }
-        t2.UnicodeService = n2;
-      }, 5856: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.Terminal = void 0;
-        const i2 = s2(6107), r2 = s2(5777), n2 = s2(802);
-        class o extends r2.CoreTerminal {
-          constructor(e3 = {}) {
-            super(e3), this._onBell = this._register(new n2.Emitter()), this.onBell = this._onBell.event, this._onCursorMove = this._register(new n2.Emitter()), this.onCursorMove = this._onCursorMove.event, this._onTitleChange = this._register(new n2.Emitter()), this.onTitleChange = this._onTitleChange.event, this._onA11yCharEmitter = this._register(new n2.Emitter()), this.onA11yChar = this._onA11yCharEmitter.event, this._onA11yTabEmitter = this._register(new n2.Emitter()), this.onA11yTab = this._onA11yTabEmitter.event, this._setup(), this._register(this._inputHandler.onRequestBell((() => this.bell()))), this._register(this._inputHandler.onRequestReset((() => this.reset()))), this._register(n2.Event.forward(this._inputHandler.onCursorMove, this._onCursorMove)), this._register(n2.Event.forward(this._inputHandler.onTitleChange, this._onTitleChange)), this._register(n2.Event.forward(this._inputHandler.onA11yChar, this._onA11yCharEmitter)), this._register(n2.Event.forward(this._inputHandler.onA11yTab, this._onA11yTabEmitter));
-          }
-          get buffer() {
-            return this.buffers.active;
-          }
-          get markers() {
-            return this.buffer.markers;
-          }
-          addMarker(e3) {
-            if (this.buffer === this.buffers.normal) return this.buffer.addMarker(this.buffer.ybase + this.buffer.y + e3);
-          }
-          bell() {
-            this._onBell.fire();
-          }
-          input(e3, t3 = true) {
-            this.coreService.triggerDataEvent(e3, t3);
-          }
-          resize(e3, t3) {
-            e3 === this.cols && t3 === this.rows || super.resize(e3, t3);
-          }
-          clear() {
-            if (0 !== this.buffer.ybase || 0 !== this.buffer.y) {
-              this.buffer.lines.set(0, this.buffer.lines.get(this.buffer.ybase + this.buffer.y)), this.buffer.lines.length = 1, this.buffer.ydisp = 0, this.buffer.ybase = 0, this.buffer.y = 0;
-              for (let e3 = 1; e3 < this.rows; e3++) this.buffer.lines.push(this.buffer.getBlankLine(i2.DEFAULT_ATTR_DATA));
-              this._onScroll.fire({ position: this.buffer.ydisp });
-            }
-          }
-          reset() {
-            this.options.rows = this.rows, this.options.cols = this.cols, this._setup(), super.reset();
-          }
-        }
-        t2.Terminal = o;
-      }, 3058: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.Permutation = t2.CallbackIterable = t2.ArrayQueue = t2.booleanComparator = t2.numberComparator = t2.CompareResult = void 0, t2.tail = function(e3, t3 = 0) {
-          return e3[e3.length - (1 + t3)];
-        }, t2.tail2 = function(e3) {
-          if (0 === e3.length) throw new Error("Invalid tail call");
-          return [e3.slice(0, e3.length - 1), e3[e3.length - 1]];
-        }, t2.equals = function(e3, t3, s3 = (e4, t4) => e4 === t4) {
-          if (e3 === t3) return true;
-          if (!e3 || !t3) return false;
-          if (e3.length !== t3.length) return false;
-          for (let i3 = 0, r3 = e3.length; i3 < r3; i3++) if (!s3(e3[i3], t3[i3])) return false;
-          return true;
-        }, t2.removeFastWithoutKeepingOrder = function(e3, t3) {
-          const s3 = e3.length - 1;
-          t3 < s3 && (e3[t3] = e3[s3]), e3.pop();
-        }, t2.binarySearch = function(e3, t3, s3) {
-          return n2(e3.length, ((i3) => s3(e3[i3], t3)));
-        }, t2.binarySearch2 = n2, t2.quickSelect = function e3(t3, s3, i3) {
-          if ((t3 |= 0) >= s3.length) throw new TypeError("invalid index");
-          const r3 = s3[Math.floor(s3.length * Math.random())], n3 = [], o2 = [], a2 = [];
-          for (const e4 of s3) {
-            const t4 = i3(e4, r3);
-            t4 < 0 ? n3.push(e4) : t4 > 0 ? o2.push(e4) : a2.push(e4);
-          }
-          return t3 < n3.length ? e3(t3, n3, i3) : t3 < n3.length + a2.length ? a2[0] : e3(t3 - (n3.length + a2.length), o2, i3);
-        }, t2.groupBy = function(e3, t3) {
-          const s3 = [];
-          let i3;
-          for (const r3 of e3.slice(0).sort(t3)) i3 && 0 === t3(i3[0], r3) ? i3.push(r3) : (i3 = [r3], s3.push(i3));
-          return s3;
-        }, t2.groupAdjacentBy = function* (e3, t3) {
-          let s3, i3;
-          for (const r3 of e3) void 0 !== i3 && t3(i3, r3) ? s3.push(r3) : (s3 && (yield s3), s3 = [r3]), i3 = r3;
-          s3 && (yield s3);
-        }, t2.forEachAdjacent = function(e3, t3) {
-          for (let s3 = 0; s3 <= e3.length; s3++) t3(0 === s3 ? void 0 : e3[s3 - 1], s3 === e3.length ? void 0 : e3[s3]);
-        }, t2.forEachWithNeighbors = function(e3, t3) {
-          for (let s3 = 0; s3 < e3.length; s3++) t3(0 === s3 ? void 0 : e3[s3 - 1], e3[s3], s3 + 1 === e3.length ? void 0 : e3[s3 + 1]);
-        }, t2.sortedDiff = o, t2.delta = function(e3, t3, s3) {
-          const i3 = o(e3, t3, s3), r3 = [], n3 = [];
-          for (const t4 of i3) r3.push(...e3.slice(t4.start, t4.start + t4.deleteCount)), n3.push(...t4.toInsert);
-          return { removed: r3, added: n3 };
-        }, t2.top = function(e3, t3, s3) {
-          if (0 === s3) return [];
-          const i3 = e3.slice(0, s3).sort(t3);
-          return a(e3, t3, i3, s3, e3.length), i3;
-        }, t2.topAsync = function(e3, t3, s3, r3, n3) {
-          return 0 === s3 ? Promise.resolve([]) : new Promise(((o2, h2) => {
-            (async () => {
-              const o3 = e3.length, h3 = e3.slice(0, s3).sort(t3);
-              for (let c2 = s3, l2 = Math.min(s3 + r3, o3); c2 < o3; c2 = l2, l2 = Math.min(l2 + r3, o3)) {
-                if (c2 > s3 && await new Promise(((e4) => setTimeout(e4))), n3 && n3.isCancellationRequested) throw new i2.CancellationError();
-                a(e3, t3, h3, c2, l2);
-              }
-              return h3;
-            })().then(o2, h2);
-          }));
-        }, t2.coalesce = function(e3) {
-          return e3.filter(((e4) => !!e4));
-        }, t2.coalesceInPlace = function(e3) {
-          let t3 = 0;
-          for (let s3 = 0; s3 < e3.length; s3++) e3[s3] && (e3[t3] = e3[s3], t3 += 1);
-          e3.length = t3;
-        }, t2.move = function(e3, t3, s3) {
-          e3.splice(s3, 0, e3.splice(t3, 1)[0]);
-        }, t2.isFalsyOrEmpty = function(e3) {
-          return !Array.isArray(e3) || 0 === e3.length;
-        }, t2.isNonEmptyArray = function(e3) {
-          return Array.isArray(e3) && e3.length > 0;
-        }, t2.distinct = function(e3, t3 = (e4) => e4) {
-          const s3 = /* @__PURE__ */ new Set();
-          return e3.filter(((e4) => {
-            const i3 = t3(e4);
-            return !s3.has(i3) && (s3.add(i3), true);
-          }));
-        }, t2.uniqueFilter = function(e3) {
-          const t3 = /* @__PURE__ */ new Set();
-          return (s3) => {
-            const i3 = e3(s3);
-            return !t3.has(i3) && (t3.add(i3), true);
-          };
-        }, t2.firstOrDefault = function(e3, t3) {
-          return e3.length > 0 ? e3[0] : t3;
-        }, t2.lastOrDefault = function(e3, t3) {
-          return e3.length > 0 ? e3[e3.length - 1] : t3;
-        }, t2.commonPrefixLength = function(e3, t3, s3 = (e4, t4) => e4 === t4) {
-          let i3 = 0;
-          for (let r3 = 0, n3 = Math.min(e3.length, t3.length); r3 < n3 && s3(e3[r3], t3[r3]); r3++) i3++;
-          return i3;
-        }, t2.range = function(e3, t3) {
-          let s3 = "number" == typeof t3 ? e3 : 0;
-          "number" == typeof t3 ? s3 = e3 : (s3 = 0, t3 = e3);
-          const i3 = [];
-          if (s3 <= t3) for (let e4 = s3; e4 < t3; e4++) i3.push(e4);
-          else for (let e4 = s3; e4 > t3; e4--) i3.push(e4);
-          return i3;
-        }, t2.index = function(e3, t3, s3) {
-          return e3.reduce(((e4, i3) => (e4[t3(i3)] = s3 ? s3(i3) : i3, e4)), /* @__PURE__ */ Object.create(null));
-        }, t2.insert = function(e3, t3) {
-          return e3.push(t3), () => h(e3, t3);
-        }, t2.remove = h, t2.arrayInsert = function(e3, t3, s3) {
-          const i3 = e3.slice(0, t3), r3 = e3.slice(t3);
-          return i3.concat(s3, r3);
-        }, t2.shuffle = function(e3, t3) {
-          let s3;
-          if ("number" == typeof t3) {
-            let e4 = t3;
-            s3 = () => {
-              const t4 = 179426549 * Math.sin(e4++);
-              return t4 - Math.floor(t4);
-            };
-          } else s3 = Math.random;
-          for (let t4 = e3.length - 1; t4 > 0; t4 -= 1) {
-            const i3 = Math.floor(s3() * (t4 + 1)), r3 = e3[t4];
-            e3[t4] = e3[i3], e3[i3] = r3;
-          }
-        }, t2.pushToStart = function(e3, t3) {
-          const s3 = e3.indexOf(t3);
-          s3 > -1 && (e3.splice(s3, 1), e3.unshift(t3));
-        }, t2.pushToEnd = function(e3, t3) {
-          const s3 = e3.indexOf(t3);
-          s3 > -1 && (e3.splice(s3, 1), e3.push(t3));
-        }, t2.pushMany = function(e3, t3) {
-          for (const s3 of t3) e3.push(s3);
-        }, t2.mapArrayOrNot = function(e3, t3) {
-          return Array.isArray(e3) ? e3.map(t3) : t3(e3);
-        }, t2.asArray = function(e3) {
-          return Array.isArray(e3) ? e3 : [e3];
-        }, t2.getRandomElement = function(e3) {
-          return e3[Math.floor(Math.random() * e3.length)];
-        }, t2.insertInto = c, t2.splice = function(e3, t3, s3, i3) {
-          const r3 = l(e3, t3);
-          let n3 = e3.splice(r3, s3);
-          return void 0 === n3 && (n3 = []), c(e3, r3, i3), n3;
-        }, t2.compareBy = function(e3, t3) {
-          return (s3, i3) => t3(e3(s3), e3(i3));
-        }, t2.tieBreakComparators = function(...e3) {
-          return (t3, s3) => {
-            for (const i3 of e3) {
-              const e4 = i3(t3, s3);
-              if (!u.isNeitherLessOrGreaterThan(e4)) return e4;
-            }
-            return u.neitherLessOrGreaterThan;
-          };
-        }, t2.reverseOrder = function(e3) {
-          return (t3, s3) => -e3(t3, s3);
-        };
-        const i2 = s2(9807), r2 = s2(8297);
-        function n2(e3, t3) {
-          let s3 = 0, i3 = e3 - 1;
-          for (; s3 <= i3; ) {
-            const e4 = (s3 + i3) / 2 | 0, r3 = t3(e4);
-            if (r3 < 0) s3 = e4 + 1;
-            else {
-              if (!(r3 > 0)) return e4;
-              i3 = e4 - 1;
-            }
-          }
-          return -(s3 + 1);
-        }
-        function o(e3, t3, s3) {
-          const i3 = [];
-          function r3(e4, t4, s4) {
-            if (0 === t4 && 0 === s4.length) return;
-            const r4 = i3[i3.length - 1];
-            r4 && r4.start + r4.deleteCount === e4 ? (r4.deleteCount += t4, r4.toInsert.push(...s4)) : i3.push({ start: e4, deleteCount: t4, toInsert: s4 });
-          }
-          let n3 = 0, o2 = 0;
-          for (; ; ) {
-            if (n3 === e3.length) {
-              r3(n3, 0, t3.slice(o2));
-              break;
-            }
-            if (o2 === t3.length) {
-              r3(n3, e3.length - n3, []);
-              break;
-            }
-            const i4 = e3[n3], a2 = t3[o2], h2 = s3(i4, a2);
-            0 === h2 ? (n3 += 1, o2 += 1) : h2 < 0 ? (r3(n3, 1, []), n3 += 1) : h2 > 0 && (r3(n3, 0, [a2]), o2 += 1);
-          }
-          return i3;
-        }
-        function a(e3, t3, s3, i3, n3) {
-          for (const o2 = s3.length; i3 < n3; i3++) {
-            const n4 = e3[i3];
-            if (t3(n4, s3[o2 - 1]) < 0) {
-              s3.pop();
-              const e4 = (0, r2.findFirstIdxMonotonousOrArrLen)(s3, ((e5) => t3(n4, e5) < 0));
-              s3.splice(e4, 0, n4);
-            }
-          }
-        }
-        function h(e3, t3) {
-          const s3 = e3.indexOf(t3);
-          if (s3 > -1) return e3.splice(s3, 1), t3;
-        }
-        function c(e3, t3, s3) {
-          const i3 = l(e3, t3), r3 = e3.length, n3 = s3.length;
-          e3.length = r3 + n3;
-          for (let t4 = r3 - 1; t4 >= i3; t4--) e3[t4 + n3] = e3[t4];
-          for (let t4 = 0; t4 < n3; t4++) e3[t4 + i3] = s3[t4];
-        }
-        function l(e3, t3) {
-          return t3 < 0 ? Math.max(t3 + e3.length, 0) : Math.min(t3, e3.length);
-        }
-        var u;
-        !(function(e3) {
-          e3.isLessThan = function(e4) {
-            return e4 < 0;
-          }, e3.isLessThanOrEqual = function(e4) {
-            return e4 <= 0;
-          }, e3.isGreaterThan = function(e4) {
-            return e4 > 0;
-          }, e3.isNeitherLessOrGreaterThan = function(e4) {
-            return 0 === e4;
-          }, e3.greaterThan = 1, e3.lessThan = -1, e3.neitherLessOrGreaterThan = 0;
-        })(u || (t2.CompareResult = u = {})), t2.numberComparator = (e3, t3) => e3 - t3, t2.booleanComparator = (e3, s3) => (0, t2.numberComparator)(e3 ? 1 : 0, s3 ? 1 : 0), t2.ArrayQueue = class {
-          constructor(e3) {
-            this.items = e3, this.firstIdx = 0, this.lastIdx = this.items.length - 1;
-          }
-          get length() {
-            return this.lastIdx - this.firstIdx + 1;
-          }
-          takeWhile(e3) {
-            let t3 = this.firstIdx;
-            for (; t3 < this.items.length && e3(this.items[t3]); ) t3++;
-            const s3 = t3 === this.firstIdx ? null : this.items.slice(this.firstIdx, t3);
-            return this.firstIdx = t3, s3;
-          }
-          takeFromEndWhile(e3) {
-            let t3 = this.lastIdx;
-            for (; t3 >= 0 && e3(this.items[t3]); ) t3--;
-            const s3 = t3 === this.lastIdx ? null : this.items.slice(t3 + 1, this.lastIdx + 1);
-            return this.lastIdx = t3, s3;
-          }
-          peek() {
-            if (0 !== this.length) return this.items[this.firstIdx];
-          }
-          peekLast() {
-            if (0 !== this.length) return this.items[this.lastIdx];
-          }
-          dequeue() {
-            const e3 = this.items[this.firstIdx];
-            return this.firstIdx++, e3;
-          }
-          removeLast() {
-            const e3 = this.items[this.lastIdx];
-            return this.lastIdx--, e3;
-          }
-          takeCount(e3) {
-            const t3 = this.items.slice(this.firstIdx, this.firstIdx + e3);
-            return this.firstIdx += e3, t3;
-          }
-        };
-        class d {
-          static {
-            this.empty = new d(((e3) => {
-            }));
-          }
-          constructor(e3) {
-            this.iterate = e3;
-          }
-          forEach(e3) {
-            this.iterate(((t3) => (e3(t3), true)));
-          }
-          toArray() {
-            const e3 = [];
-            return this.iterate(((t3) => (e3.push(t3), true))), e3;
-          }
-          filter(e3) {
-            return new d(((t3) => this.iterate(((s3) => !e3(s3) || t3(s3)))));
-          }
-          map(e3) {
-            return new d(((t3) => this.iterate(((s3) => t3(e3(s3))))));
-          }
-          some(e3) {
-            let t3 = false;
-            return this.iterate(((s3) => (t3 = e3(s3), !t3))), t3;
-          }
-          findFirst(e3) {
-            let t3;
-            return this.iterate(((s3) => !e3(s3) || (t3 = s3, false))), t3;
-          }
-          findLast(e3) {
-            let t3;
-            return this.iterate(((s3) => (e3(s3) && (t3 = s3), true))), t3;
-          }
-          findLastMaxBy(e3) {
-            let t3, s3 = true;
-            return this.iterate(((i3) => ((s3 || u.isGreaterThan(e3(i3, t3))) && (s3 = false, t3 = i3), true))), t3;
-          }
-        }
-        t2.CallbackIterable = d;
-        class f {
-          constructor(e3) {
-            this._indexMap = e3;
-          }
-          static createSortPermutation(e3, t3) {
-            const s3 = Array.from(e3.keys()).sort(((s4, i3) => t3(e3[s4], e3[i3])));
-            return new f(s3);
-          }
-          apply(e3) {
-            return e3.map(((t3, s3) => e3[this._indexMap[s3]]));
-          }
-          inverse() {
-            const e3 = this._indexMap.slice();
-            for (let t3 = 0; t3 < this._indexMap.length; t3++) e3[this._indexMap[t3]] = t3;
-            return new f(e3);
-          }
-        }
-        t2.Permutation = f;
-      }, 8297: (e2, t2) => {
-        function s2(e3, t3, s3 = e3.length - 1) {
-          for (let i3 = s3; i3 >= 0; i3--) if (t3(e3[i3])) return i3;
-          return -1;
-        }
-        function i2(e3, t3, s3 = 0, i3 = e3.length) {
-          let r3 = s3, n3 = i3;
-          for (; r3 < n3; ) {
-            const s4 = Math.floor((r3 + n3) / 2);
-            t3(e3[s4]) ? r3 = s4 + 1 : n3 = s4;
-          }
-          return r3 - 1;
-        }
-        function r2(e3, t3, s3 = 0, i3 = e3.length) {
-          let r3 = s3, n3 = i3;
-          for (; r3 < n3; ) {
-            const s4 = Math.floor((r3 + n3) / 2);
-            t3(e3[s4]) ? n3 = s4 : r3 = s4 + 1;
-          }
-          return r3;
-        }
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.MonotonousArray = void 0, t2.findLast = function(e3, t3) {
-          const i3 = s2(e3, t3);
-          if (-1 !== i3) return e3[i3];
-        }, t2.findLastIdx = s2, t2.findLastMonotonous = function(e3, t3) {
-          const s3 = i2(e3, t3);
-          return -1 === s3 ? void 0 : e3[s3];
-        }, t2.findLastIdxMonotonous = i2, t2.findFirstMonotonous = function(e3, t3) {
-          const s3 = r2(e3, t3);
-          return s3 === e3.length ? void 0 : e3[s3];
-        }, t2.findFirstIdxMonotonousOrArrLen = r2, t2.findFirstIdxMonotonous = function(e3, t3, s3 = 0, i3 = e3.length) {
-          const n3 = r2(e3, t3, s3, i3);
-          return n3 === e3.length ? -1 : n3;
-        }, t2.findFirstMax = o, t2.findLastMax = function(e3, t3) {
-          if (0 === e3.length) return;
-          let s3 = e3[0];
-          for (let i3 = 1; i3 < e3.length; i3++) {
-            const r3 = e3[i3];
-            t3(r3, s3) >= 0 && (s3 = r3);
-          }
-          return s3;
-        }, t2.findFirstMin = function(e3, t3) {
-          return o(e3, ((e4, s3) => -t3(e4, s3)));
-        }, t2.findMaxIdx = function(e3, t3) {
-          if (0 === e3.length) return -1;
-          let s3 = 0;
-          for (let i3 = 1; i3 < e3.length; i3++) t3(e3[i3], e3[s3]) > 0 && (s3 = i3);
-          return s3;
-        }, t2.mapFindFirst = function(e3, t3) {
-          for (const s3 of e3) {
-            const e4 = t3(s3);
-            if (void 0 !== e4) return e4;
-          }
-        };
-        class n2 {
-          static {
-            this.assertInvariants = false;
-          }
-          constructor(e3) {
-            this._array = e3, this._findLastMonotonousLastIdx = 0;
-          }
-          findLastMonotonous(e3) {
-            if (n2.assertInvariants) {
-              if (this._prevFindLastPredicate) {
-                for (const t4 of this._array) if (this._prevFindLastPredicate(t4) && !e3(t4)) throw new Error("MonotonousArray: current predicate must be weaker than (or equal to) the previous predicate.");
-              }
-              this._prevFindLastPredicate = e3;
-            }
-            const t3 = i2(this._array, e3, this._findLastMonotonousLastIdx);
-            return this._findLastMonotonousLastIdx = t3 + 1, -1 === t3 ? void 0 : this._array[t3];
-          }
-        }
-        function o(e3, t3) {
-          if (0 === e3.length) return;
-          let s3 = e3[0];
-          for (let i3 = 1; i3 < e3.length; i3++) {
-            const r3 = e3[i3];
-            t3(r3, s3) > 0 && (s3 = r3);
-          }
-          return s3;
-        }
-        t2.MonotonousArray = n2;
-      }, 9087: (e2, t2) => {
-        var s2;
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.SetWithKey = void 0, t2.groupBy = function(e3, t3) {
-          const s3 = /* @__PURE__ */ Object.create(null);
-          for (const i3 of e3) {
-            const e4 = t3(i3);
-            let r2 = s3[e4];
-            r2 || (r2 = s3[e4] = []), r2.push(i3);
-          }
-          return s3;
-        }, t2.diffSets = function(e3, t3) {
-          const s3 = [], i3 = [];
-          for (const i4 of e3) t3.has(i4) || s3.push(i4);
-          for (const s4 of t3) e3.has(s4) || i3.push(s4);
-          return { removed: s3, added: i3 };
-        }, t2.diffMaps = function(e3, t3) {
-          const s3 = [], i3 = [];
-          for (const [i4, r2] of e3) t3.has(i4) || s3.push(r2);
-          for (const [s4, r2] of t3) e3.has(s4) || i3.push(r2);
-          return { removed: s3, added: i3 };
-        }, t2.intersection = function(e3, t3) {
-          const s3 = /* @__PURE__ */ new Set();
-          for (const i3 of t3) e3.has(i3) && s3.add(i3);
-          return s3;
-        };
-        class i2 {
-          static {
-            s2 = Symbol.toStringTag;
-          }
-          constructor(e3, t3) {
-            this.toKey = t3, this._map = /* @__PURE__ */ new Map(), this[s2] = "SetWithKey";
-            for (const t4 of e3) this.add(t4);
-          }
-          get size() {
-            return this._map.size;
-          }
-          add(e3) {
-            const t3 = this.toKey(e3);
-            return this._map.set(t3, e3), this;
-          }
-          delete(e3) {
-            return this._map.delete(this.toKey(e3));
-          }
-          has(e3) {
-            return this._map.has(this.toKey(e3));
-          }
-          *entries() {
-            for (const e3 of this._map.values()) yield [e3, e3];
-          }
-          keys() {
-            return this.values();
-          }
-          *values() {
-            for (const e3 of this._map.values()) yield e3;
-          }
-          clear() {
-            this._map.clear();
-          }
-          forEach(e3, t3) {
-            this._map.forEach(((s3) => e3.call(t3, s3, s3, this)));
-          }
-          [Symbol.iterator]() {
-            return this.values();
-          }
-        }
-        t2.SetWithKey = i2;
-      }, 9807: (e2, t2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.BugIndicatingError = t2.ErrorNoTelemetry = t2.ExpectedError = t2.NotSupportedError = t2.NotImplementedError = t2.ReadonlyError = t2.CancellationError = t2.errorHandler = t2.ErrorHandler = void 0, t2.setUnexpectedErrorHandler = function(e3) {
-          t2.errorHandler.setUnexpectedErrorHandler(e3);
-        }, t2.isSigPipeError = function(e3) {
-          if (!e3 || "object" != typeof e3) return false;
-          const t3 = e3;
-          return "EPIPE" === t3.code && "WRITE" === t3.syscall?.toUpperCase();
-        }, t2.onUnexpectedError = function(e3) {
-          r2(e3) || t2.errorHandler.onUnexpectedError(e3);
-        }, t2.onUnexpectedExternalError = function(e3) {
-          r2(e3) || t2.errorHandler.onUnexpectedExternalError(e3);
-        }, t2.transformErrorForSerialization = function(e3) {
-          if (e3 instanceof Error) {
-            const { name: t3, message: s3 } = e3;
-            return { $isError: true, name: t3, message: s3, stack: e3.stacktrace || e3.stack, noTelemetry: l.isErrorNoTelemetry(e3) };
-          }
-          return e3;
-        }, t2.transformErrorFromSerialization = function(e3) {
-          let t3;
-          return e3.noTelemetry ? t3 = new l() : (t3 = new Error(), t3.name = e3.name), t3.message = e3.message, t3.stack = e3.stack, t3;
-        }, t2.isCancellationError = r2, t2.canceled = function() {
-          const e3 = new Error(i2);
-          return e3.name = e3.message, e3;
-        }, t2.illegalArgument = function(e3) {
-          return e3 ? new Error(`Illegal argument: ${e3}`) : new Error("Illegal argument");
-        }, t2.illegalState = function(e3) {
-          return e3 ? new Error(`Illegal state: ${e3}`) : new Error("Illegal state");
-        }, t2.getErrorMessage = function(e3) {
-          return e3 ? e3.message ? e3.message : e3.stack ? e3.stack.split("\n")[0] : String(e3) : "Error";
-        };
-        class s2 {
-          constructor() {
-            this.listeners = [], this.unexpectedErrorHandler = function(e3) {
-              setTimeout((() => {
-                if (e3.stack) {
-                  if (l.isErrorNoTelemetry(e3)) throw new l(e3.message + "\n\n" + e3.stack);
-                  throw new Error(e3.message + "\n\n" + e3.stack);
-                }
-                throw e3;
-              }), 0);
-            };
-          }
-          addListener(e3) {
-            return this.listeners.push(e3), () => {
-              this._removeListener(e3);
-            };
-          }
-          emit(e3) {
-            this.listeners.forEach(((t3) => {
-              t3(e3);
-            }));
-          }
-          _removeListener(e3) {
-            this.listeners.splice(this.listeners.indexOf(e3), 1);
-          }
-          setUnexpectedErrorHandler(e3) {
-            this.unexpectedErrorHandler = e3;
-          }
-          getUnexpectedErrorHandler() {
-            return this.unexpectedErrorHandler;
-          }
-          onUnexpectedError(e3) {
-            this.unexpectedErrorHandler(e3), this.emit(e3);
-          }
-          onUnexpectedExternalError(e3) {
-            this.unexpectedErrorHandler(e3);
-          }
-        }
-        t2.ErrorHandler = s2, t2.errorHandler = new s2();
-        const i2 = "Canceled";
-        function r2(e3) {
-          return e3 instanceof n2 || e3 instanceof Error && e3.name === i2 && e3.message === i2;
-        }
-        class n2 extends Error {
-          constructor() {
-            super(i2), this.name = this.message;
-          }
-        }
-        t2.CancellationError = n2;
-        class o extends TypeError {
-          constructor(e3) {
-            super(e3 ? `${e3} is read-only and cannot be changed` : "Cannot change read-only property");
-          }
-        }
-        t2.ReadonlyError = o;
-        class a extends Error {
-          constructor(e3) {
-            super("NotImplemented"), e3 && (this.message = e3);
-          }
-        }
-        t2.NotImplementedError = a;
-        class h extends Error {
-          constructor(e3) {
-            super("NotSupported"), e3 && (this.message = e3);
-          }
-        }
-        t2.NotSupportedError = h;
-        class c extends Error {
-          constructor() {
-            super(...arguments), this.isExpected = true;
-          }
-        }
-        t2.ExpectedError = c;
-        class l extends Error {
-          constructor(e3) {
-            super(e3), this.name = "CodeExpectedError";
-          }
-          static fromError(e3) {
-            if (e3 instanceof l) return e3;
-            const t3 = new l();
-            return t3.message = e3.message, t3.stack = e3.stack, t3;
-          }
-          static isErrorNoTelemetry(e3) {
-            return "CodeExpectedError" === e3.name;
-          }
-        }
-        t2.ErrorNoTelemetry = l;
-        class u extends Error {
-          constructor(e3) {
-            super(e3 || "An unexpected bug occurred."), Object.setPrototypeOf(this, u.prototype);
-          }
-        }
-        t2.BugIndicatingError = u;
-      }, 802: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.ValueWithChangeEvent = t2.Relay = t2.EventBufferer = t2.DynamicListEventMultiplexer = t2.EventMultiplexer = t2.MicrotaskEmitter = t2.DebounceEmitter = t2.PauseableEmitter = t2.AsyncEmitter = t2.createEventDeliveryQueue = t2.Emitter = t2.ListenerRefusalError = t2.ListenerLeakError = t2.EventProfiling = t2.Event = void 0, t2.setGlobalLeakWarningThreshold = function(e3) {
-          const t3 = l;
-          return l = e3, { dispose() {
-            l = t3;
-          } };
-        };
-        const i2 = s2(9807), r2 = s2(8841), n2 = s2(7150), o = s2(6317), a = s2(9725);
-        var h;
-        !(function(e3) {
-          function t3(e4) {
-            return (t4, s4 = null, i4) => {
-              let r4, n3 = false;
-              return r4 = e4(((e5) => {
-                if (!n3) return r4 ? r4.dispose() : n3 = true, t4.call(s4, e5);
-              }), null, i4), n3 && r4.dispose(), r4;
-            };
-          }
-          function s3(e4, t4, s4) {
-            return r3(((s5, i4 = null, r4) => e4(((e5) => s5.call(i4, t4(e5))), null, r4)), s4);
-          }
-          function i3(e4, t4, s4) {
-            return r3(((s5, i4 = null, r4) => e4(((e5) => t4(e5) && s5.call(i4, e5)), null, r4)), s4);
-          }
-          function r3(e4, t4) {
-            let s4;
-            const i4 = new v({ onWillAddFirstListener() {
-              s4 = e4(i4.fire, i4);
-            }, onDidRemoveLastListener() {
-              s4?.dispose();
-            } });
-            return t4?.add(i4), i4.event;
-          }
-          function o2(e4, t4, s4 = 100, i4 = false, r4 = false, n3, o3) {
-            let a3, h3, c3, l2, u2 = 0;
-            const d2 = new v({ leakWarningThreshold: n3, onWillAddFirstListener() {
-              a3 = e4(((e5) => {
-                u2++, h3 = t4(h3, e5), i4 && !c3 && (d2.fire(h3), h3 = void 0), l2 = () => {
-                  const e6 = h3;
-                  h3 = void 0, c3 = void 0, (!i4 || u2 > 1) && d2.fire(e6), u2 = 0;
-                }, "number" == typeof s4 ? (clearTimeout(c3), c3 = setTimeout(l2, s4)) : void 0 === c3 && (c3 = 0, queueMicrotask(l2));
-              }));
-            }, onWillRemoveListener() {
-              r4 && u2 > 0 && l2?.();
-            }, onDidRemoveLastListener() {
-              l2 = void 0, a3.dispose();
-            } });
-            return o3?.add(d2), d2.event;
-          }
-          e3.None = () => n2.Disposable.None, e3.defer = function(e4, t4) {
-            return o2(e4, (() => {
-            }), 0, void 0, true, void 0, t4);
-          }, e3.once = t3, e3.map = s3, e3.forEach = function(e4, t4, s4) {
-            return r3(((s5, i4 = null, r4) => e4(((e5) => {
-              t4(e5), s5.call(i4, e5);
-            }), null, r4)), s4);
-          }, e3.filter = i3, e3.signal = function(e4) {
-            return e4;
-          }, e3.any = function(...e4) {
-            return (t4, s4 = null, i4) => {
-              return r4 = (0, n2.combinedDisposable)(...e4.map(((e5) => e5(((e6) => t4.call(s4, e6)))))), (o3 = i4) instanceof Array ? o3.push(r4) : o3 && o3.add(r4), r4;
-              var r4, o3;
-            };
-          }, e3.reduce = function(e4, t4, i4, r4) {
-            let n3 = i4;
-            return s3(e4, ((e5) => (n3 = t4(n3, e5), n3)), r4);
-          }, e3.debounce = o2, e3.accumulate = function(t4, s4 = 0, i4) {
-            return e3.debounce(t4, ((e4, t5) => e4 ? (e4.push(t5), e4) : [t5]), s4, void 0, true, void 0, i4);
-          }, e3.latch = function(e4, t4 = (e5, t5) => e5 === t5, s4) {
-            let r4, n3 = true;
-            return i3(e4, ((e5) => {
-              const s5 = n3 || !t4(e5, r4);
-              return n3 = false, r4 = e5, s5;
-            }), s4);
-          }, e3.split = function(t4, s4, i4) {
-            return [e3.filter(t4, s4, i4), e3.filter(t4, ((e4) => !s4(e4)), i4)];
-          }, e3.buffer = function(e4, t4 = false, s4 = [], i4) {
-            let r4 = s4.slice(), n3 = e4(((e5) => {
-              r4 ? r4.push(e5) : a3.fire(e5);
-            }));
-            i4 && i4.add(n3);
-            const o3 = () => {
-              r4?.forEach(((e5) => a3.fire(e5))), r4 = null;
-            }, a3 = new v({ onWillAddFirstListener() {
-              n3 || (n3 = e4(((e5) => a3.fire(e5))), i4 && i4.add(n3));
-            }, onDidAddFirstListener() {
-              r4 && (t4 ? setTimeout(o3) : o3());
-            }, onDidRemoveLastListener() {
-              n3 && n3.dispose(), n3 = null;
-            } });
-            return i4 && i4.add(a3), a3.event;
-          }, e3.chain = function(e4, t4) {
-            return (s4, i4, r4) => {
-              const n3 = t4(new h2());
-              return e4((function(e5) {
-                const t5 = n3.evaluate(e5);
-                t5 !== a2 && s4.call(i4, t5);
-              }), void 0, r4);
-            };
-          };
-          const a2 = /* @__PURE__ */ Symbol("HaltChainable");
-          class h2 {
-            constructor() {
-              this.steps = [];
-            }
-            map(e4) {
-              return this.steps.push(e4), this;
-            }
-            forEach(e4) {
-              return this.steps.push(((t4) => (e4(t4), t4))), this;
-            }
-            filter(e4) {
-              return this.steps.push(((t4) => e4(t4) ? t4 : a2)), this;
-            }
-            reduce(e4, t4) {
-              let s4 = t4;
-              return this.steps.push(((t5) => (s4 = e4(s4, t5), s4))), this;
-            }
-            latch(e4 = (e5, t4) => e5 === t4) {
-              let t4, s4 = true;
-              return this.steps.push(((i4) => {
-                const r4 = s4 || !e4(i4, t4);
-                return s4 = false, t4 = i4, r4 ? i4 : a2;
-              })), this;
-            }
-            evaluate(e4) {
-              for (const t4 of this.steps) if ((e4 = t4(e4)) === a2) break;
-              return e4;
-            }
-          }
-          e3.fromNodeEventEmitter = function(e4, t4, s4 = (e5) => e5) {
-            const i4 = (...e5) => r4.fire(s4(...e5)), r4 = new v({ onWillAddFirstListener: () => e4.on(t4, i4), onDidRemoveLastListener: () => e4.removeListener(t4, i4) });
-            return r4.event;
-          }, e3.fromDOMEventEmitter = function(e4, t4, s4 = (e5) => e5) {
-            const i4 = (...e5) => r4.fire(s4(...e5)), r4 = new v({ onWillAddFirstListener: () => e4.addEventListener(t4, i4), onDidRemoveLastListener: () => e4.removeEventListener(t4, i4) });
-            return r4.event;
-          }, e3.toPromise = function(e4) {
-            return new Promise(((s4) => t3(e4)(s4)));
-          }, e3.fromPromise = function(e4) {
-            const t4 = new v();
-            return e4.then(((e5) => {
-              t4.fire(e5);
-            }), (() => {
-              t4.fire(void 0);
-            })).finally((() => {
-              t4.dispose();
-            })), t4.event;
-          }, e3.forward = function(e4, t4) {
-            return e4(((e5) => t4.fire(e5)));
-          }, e3.runAndSubscribe = function(e4, t4, s4) {
-            return t4(s4), e4(((e5) => t4(e5)));
-          };
-          class c2 {
-            constructor(e4, t4) {
-              this._observable = e4, this._counter = 0, this._hasChanged = false;
-              const s4 = { onWillAddFirstListener: () => {
-                e4.addObserver(this);
-              }, onDidRemoveLastListener: () => {
-                e4.removeObserver(this);
-              } };
-              this.emitter = new v(s4), t4 && t4.add(this.emitter);
-            }
-            beginUpdate(e4) {
-              this._counter++;
-            }
-            handlePossibleChange(e4) {
-            }
-            handleChange(e4, t4) {
-              this._hasChanged = true;
-            }
-            endUpdate(e4) {
-              this._counter--, 0 === this._counter && (this._observable.reportChanges(), this._hasChanged && (this._hasChanged = false, this.emitter.fire(this._observable.get())));
-            }
-          }
-          e3.fromObservable = function(e4, t4) {
-            return new c2(e4, t4).emitter.event;
-          }, e3.fromObservableLight = function(e4) {
-            return (t4, s4, i4) => {
-              let r4 = 0, o3 = false;
-              const a3 = { beginUpdate() {
-                r4++;
-              }, endUpdate() {
-                r4--, 0 === r4 && (e4.reportChanges(), o3 && (o3 = false, t4.call(s4)));
-              }, handlePossibleChange() {
-              }, handleChange() {
-                o3 = true;
-              } };
-              e4.addObserver(a3), e4.reportChanges();
-              const h3 = { dispose() {
-                e4.removeObserver(a3);
-              } };
-              return i4 instanceof n2.DisposableStore ? i4.add(h3) : Array.isArray(i4) && i4.push(h3), h3;
-            };
-          };
-        })(h || (t2.Event = h = {}));
-        class c {
-          static {
-            this.all = /* @__PURE__ */ new Set();
-          }
-          static {
-            this._idPool = 0;
-          }
-          constructor(e3) {
-            this.listenerCount = 0, this.invocationCount = 0, this.elapsedOverall = 0, this.durations = [], this.name = `${e3}_${c._idPool++}`, c.all.add(this);
-          }
-          start(e3) {
-            this._stopWatch = new a.StopWatch(), this.listenerCount = e3;
-          }
-          stop() {
-            if (this._stopWatch) {
-              const e3 = this._stopWatch.elapsed();
-              this.durations.push(e3), this.elapsedOverall += e3, this.invocationCount += 1, this._stopWatch = void 0;
-            }
-          }
-        }
-        t2.EventProfiling = c;
-        let l = -1;
-        class u {
-          static {
-            this._idPool = 1;
-          }
-          constructor(e3, t3, s3 = (u._idPool++).toString(16).padStart(3, "0")) {
-            this._errorHandler = e3, this.threshold = t3, this.name = s3, this._warnCountdown = 0;
-          }
-          dispose() {
-            this._stacks?.clear();
-          }
-          check(e3, t3) {
-            const s3 = this.threshold;
-            if (s3 <= 0 || t3 < s3) return;
-            this._stacks || (this._stacks = /* @__PURE__ */ new Map());
-            const i3 = this._stacks.get(e3.value) || 0;
-            if (this._stacks.set(e3.value, i3 + 1), this._warnCountdown -= 1, this._warnCountdown <= 0) {
-              this._warnCountdown = 0.5 * s3;
-              const [e4, i4] = this.getMostFrequentStack(), r3 = `[${this.name}] potential listener LEAK detected, having ${t3} listeners already. MOST frequent listener (${i4}):`;
-              console.warn(r3), console.warn(e4);
-              const n3 = new f(r3, e4);
-              this._errorHandler(n3);
-            }
-            return () => {
-              const t4 = this._stacks.get(e3.value) || 0;
-              this._stacks.set(e3.value, t4 - 1);
-            };
-          }
-          getMostFrequentStack() {
-            if (!this._stacks) return;
-            let e3, t3 = 0;
-            for (const [s3, i3] of this._stacks) (!e3 || t3 < i3) && (e3 = [s3, i3], t3 = i3);
-            return e3;
-          }
-        }
-        class d {
-          static create() {
-            const e3 = new Error();
-            return new d(e3.stack ?? "");
-          }
-          constructor(e3) {
-            this.value = e3;
-          }
-          print() {
-            console.warn(this.value.split("\n").slice(2).join("\n"));
-          }
-        }
-        class f extends Error {
-          constructor(e3, t3) {
-            super(e3), this.name = "ListenerLeakError", this.stack = t3;
-          }
-        }
-        t2.ListenerLeakError = f;
-        class _ extends Error {
-          constructor(e3, t3) {
-            super(e3), this.name = "ListenerRefusalError", this.stack = t3;
-          }
-        }
-        t2.ListenerRefusalError = _;
-        let p = 0;
-        class g {
-          constructor(e3) {
-            this.value = e3, this.id = p++;
-          }
-        }
-        class v {
-          constructor(e3) {
-            this._size = 0, this._options = e3, this._leakageMon = l > 0 || this._options?.leakWarningThreshold ? new u(e3?.onListenerError ?? i2.onUnexpectedError, this._options?.leakWarningThreshold ?? l) : void 0, this._perfMon = this._options?._profName ? new c(this._options._profName) : void 0, this._deliveryQueue = this._options?.deliveryQueue;
-          }
-          dispose() {
-            this._disposed || (this._disposed = true, this._deliveryQueue?.current === this && this._deliveryQueue.reset(), this._listeners && (this._listeners = void 0, this._size = 0), this._options?.onDidRemoveLastListener?.(), this._leakageMon?.dispose());
-          }
-          get event() {
-            return this._event ??= (e3, t3, s3) => {
-              if (this._leakageMon && this._size > this._leakageMon.threshold ** 2) {
-                const e4 = `[${this._leakageMon.name}] REFUSES to accept new listeners because it exceeded its threshold by far (${this._size} vs ${this._leakageMon.threshold})`;
-                console.warn(e4);
-                const t4 = this._leakageMon.getMostFrequentStack() ?? ["UNKNOWN stack", -1], s4 = new _(`${e4}. HINT: Stack shows most frequent listener (${t4[1]}-times)`, t4[0]);
-                return (this._options?.onListenerError || i2.onUnexpectedError)(s4), n2.Disposable.None;
-              }
-              if (this._disposed) return n2.Disposable.None;
-              t3 && (e3 = e3.bind(t3));
-              const r3 = new g(e3);
-              let o2;
-              this._leakageMon && this._size >= Math.ceil(0.2 * this._leakageMon.threshold) && (r3.stack = d.create(), o2 = this._leakageMon.check(r3.stack, this._size + 1)), this._listeners ? this._listeners instanceof g ? (this._deliveryQueue ??= new m(), this._listeners = [this._listeners, r3]) : this._listeners.push(r3) : (this._options?.onWillAddFirstListener?.(this), this._listeners = r3, this._options?.onDidAddFirstListener?.(this)), this._size++;
-              const a2 = (0, n2.toDisposable)((() => {
-                o2?.(), this._removeListener(r3);
-              }));
-              return s3 instanceof n2.DisposableStore ? s3.add(a2) : Array.isArray(s3) && s3.push(a2), a2;
-            }, this._event;
-          }
-          _removeListener(e3) {
-            if (this._options?.onWillRemoveListener?.(this), !this._listeners) return;
-            if (1 === this._size) return this._listeners = void 0, this._options?.onDidRemoveLastListener?.(this), void (this._size = 0);
-            const t3 = this._listeners, s3 = t3.indexOf(e3);
-            if (-1 === s3) throw console.log("disposed?", this._disposed), console.log("size?", this._size), console.log("arr?", JSON.stringify(this._listeners)), new Error("Attempted to dispose unknown listener");
-            this._size--, t3[s3] = void 0;
-            const i3 = this._deliveryQueue.current === this;
-            if (2 * this._size <= t3.length) {
-              let e4 = 0;
-              for (let s4 = 0; s4 < t3.length; s4++) t3[s4] ? t3[e4++] = t3[s4] : i3 && (this._deliveryQueue.end--, e4 < this._deliveryQueue.i && this._deliveryQueue.i--);
-              t3.length = e4;
-            }
-          }
-          _deliver(e3, t3) {
-            if (!e3) return;
-            const s3 = this._options?.onListenerError || i2.onUnexpectedError;
-            if (s3) try {
-              e3.value(t3);
-            } catch (e4) {
-              s3(e4);
-            }
-            else e3.value(t3);
-          }
-          _deliverQueue(e3) {
-            const t3 = e3.current._listeners;
-            for (; e3.i < e3.end; ) this._deliver(t3[e3.i++], e3.value);
-            e3.reset();
-          }
-          fire(e3) {
-            if (this._deliveryQueue?.current && (this._deliverQueue(this._deliveryQueue), this._perfMon?.stop()), this._perfMon?.start(this._size), this._listeners) if (this._listeners instanceof g) this._deliver(this._listeners, e3);
-            else {
-              const t3 = this._deliveryQueue;
-              t3.enqueue(this, e3, this._listeners.length), this._deliverQueue(t3);
-            }
-            this._perfMon?.stop();
-          }
-          hasListeners() {
-            return this._size > 0;
-          }
-        }
-        t2.Emitter = v, t2.createEventDeliveryQueue = () => new m();
-        class m {
-          constructor() {
-            this.i = -1, this.end = 0;
-          }
-          enqueue(e3, t3, s3) {
-            this.i = 0, this.end = s3, this.current = e3, this.value = t3;
-          }
-          reset() {
-            this.i = this.end, this.current = void 0, this.value = void 0;
-          }
-        }
-        t2.AsyncEmitter = class extends v {
-          async fireAsync(e3, t3, s3) {
-            if (this._listeners) for (this._asyncDeliveryQueue || (this._asyncDeliveryQueue = new o.LinkedList()), ((e4, t4) => {
-              if (e4 instanceof g) t4(e4);
-              else for (let s4 = 0; s4 < e4.length; s4++) {
-                const i3 = e4[s4];
-                i3 && t4(i3);
-              }
-            })(this._listeners, ((t4) => this._asyncDeliveryQueue.push([t4.value, e3]))); this._asyncDeliveryQueue.size > 0 && !t3.isCancellationRequested; ) {
-              const [e4, r3] = this._asyncDeliveryQueue.shift(), n3 = [], o2 = { ...r3, token: t3, waitUntil: (t4) => {
-                if (Object.isFrozen(n3)) throw new Error("waitUntil can NOT be called asynchronous");
-                s3 && (t4 = s3(t4, e4)), n3.push(t4);
-              } };
-              try {
-                e4(o2);
-              } catch (e5) {
-                (0, i2.onUnexpectedError)(e5);
-                continue;
-              }
-              Object.freeze(n3), await Promise.allSettled(n3).then(((e5) => {
-                for (const t4 of e5) "rejected" === t4.status && (0, i2.onUnexpectedError)(t4.reason);
-              }));
-            }
-          }
-        };
-        class b extends v {
-          get isPaused() {
-            return 0 !== this._isPaused;
-          }
-          constructor(e3) {
-            super(e3), this._isPaused = 0, this._eventQueue = new o.LinkedList(), this._mergeFn = e3?.merge;
-          }
-          pause() {
-            this._isPaused++;
-          }
-          resume() {
-            if (0 !== this._isPaused && 0 == --this._isPaused) if (this._mergeFn) {
-              if (this._eventQueue.size > 0) {
-                const e3 = Array.from(this._eventQueue);
-                this._eventQueue.clear(), super.fire(this._mergeFn(e3));
-              }
-            } else for (; !this._isPaused && 0 !== this._eventQueue.size; ) super.fire(this._eventQueue.shift());
-          }
-          fire(e3) {
-            this._size && (0 !== this._isPaused ? this._eventQueue.push(e3) : super.fire(e3));
-          }
-        }
-        t2.PauseableEmitter = b, t2.DebounceEmitter = class extends b {
-          constructor(e3) {
-            super(e3), this._delay = e3.delay ?? 100;
-          }
-          fire(e3) {
-            this._handle || (this.pause(), this._handle = setTimeout((() => {
-              this._handle = void 0, this.resume();
-            }), this._delay)), super.fire(e3);
-          }
-        }, t2.MicrotaskEmitter = class extends v {
-          constructor(e3) {
-            super(e3), this._queuedEvents = [], this._mergeFn = e3?.merge;
-          }
-          fire(e3) {
-            this.hasListeners() && (this._queuedEvents.push(e3), 1 === this._queuedEvents.length && queueMicrotask((() => {
-              this._mergeFn ? super.fire(this._mergeFn(this._queuedEvents)) : this._queuedEvents.forEach(((e4) => super.fire(e4))), this._queuedEvents = [];
-            })));
-          }
-        };
-        class S {
-          constructor() {
-            this.hasListeners = false, this.events = [], this.emitter = new v({ onWillAddFirstListener: () => this.onFirstListenerAdd(), onDidRemoveLastListener: () => this.onLastListenerRemove() });
-          }
-          get event() {
-            return this.emitter.event;
-          }
-          add(e3) {
-            const t3 = { event: e3, listener: null };
-            return this.events.push(t3), this.hasListeners && this.hook(t3), (0, n2.toDisposable)((0, r2.createSingleCallFunction)((() => {
-              this.hasListeners && this.unhook(t3);
-              const e4 = this.events.indexOf(t3);
-              this.events.splice(e4, 1);
-            })));
-          }
-          onFirstListenerAdd() {
-            this.hasListeners = true, this.events.forEach(((e3) => this.hook(e3)));
-          }
-          onLastListenerRemove() {
-            this.hasListeners = false, this.events.forEach(((e3) => this.unhook(e3)));
-          }
-          hook(e3) {
-            e3.listener = e3.event(((e4) => this.emitter.fire(e4)));
-          }
-          unhook(e3) {
-            e3.listener?.dispose(), e3.listener = null;
-          }
-          dispose() {
-            this.emitter.dispose();
-            for (const e3 of this.events) e3.listener?.dispose();
-            this.events = [];
-          }
-        }
-        t2.EventMultiplexer = S, t2.DynamicListEventMultiplexer = class {
-          constructor(e3, t3, s3, i3) {
-            this._store = new n2.DisposableStore();
-            const r3 = this._store.add(new S()), o2 = this._store.add(new n2.DisposableMap());
-            function a2(e4) {
-              o2.set(e4, r3.add(i3(e4)));
-            }
-            for (const t4 of e3) a2(t4);
-            this._store.add(t3(((e4) => {
-              a2(e4);
-            }))), this._store.add(s3(((e4) => {
-              o2.deleteAndDispose(e4);
-            }))), this.event = r3.event;
-          }
-          dispose() {
-            this._store.dispose();
-          }
-        }, t2.EventBufferer = class {
-          constructor() {
-            this.data = [];
-          }
-          wrapEvent(e3, t3, s3) {
-            return (i3, r3, n3) => e3(((e4) => {
-              const n4 = this.data[this.data.length - 1];
-              if (!t3) return void (n4 ? n4.buffers.push((() => i3.call(r3, e4))) : i3.call(r3, e4));
-              const o2 = n4;
-              o2 ? (o2.items ??= [], o2.items.push(e4), 0 === o2.buffers.length && n4.buffers.push((() => {
-                o2.reducedResult ??= s3 ? o2.items.reduce(t3, s3) : o2.items.reduce(t3), i3.call(r3, o2.reducedResult);
-              }))) : i3.call(r3, t3(s3, e4));
-            }), void 0, n3);
-          }
-          bufferEvents(e3) {
-            const t3 = { buffers: new Array() };
-            this.data.push(t3);
-            const s3 = e3();
-            return this.data.pop(), t3.buffers.forEach(((e4) => e4())), s3;
-          }
-        }, t2.Relay = class {
-          constructor() {
-            this.listening = false, this.inputEvent = h.None, this.inputEventListener = n2.Disposable.None, this.emitter = new v({ onDidAddFirstListener: () => {
-              this.listening = true, this.inputEventListener = this.inputEvent(this.emitter.fire, this.emitter);
-            }, onDidRemoveLastListener: () => {
-              this.listening = false, this.inputEventListener.dispose();
-            } }), this.event = this.emitter.event;
-          }
-          set input(e3) {
-            this.inputEvent = e3, this.listening && (this.inputEventListener.dispose(), this.inputEventListener = e3(this.emitter.fire, this.emitter));
-          }
-          dispose() {
-            this.inputEventListener.dispose(), this.emitter.dispose();
-          }
-        }, t2.ValueWithChangeEvent = class {
-          static const(e3) {
-            return new y(e3);
-          }
-          constructor(e3) {
-            this._value = e3, this._onDidChange = new v(), this.onDidChange = this._onDidChange.event;
-          }
-          get value() {
-            return this._value;
-          }
-          set value(e3) {
-            e3 !== this._value && (this._value = e3, this._onDidChange.fire(void 0));
-          }
-        };
-        class y {
-          constructor(e3) {
-            this.value = e3, this.onDidChange = h.None;
-          }
-        }
-      }, 8841: (e2, t2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.createSingleCallFunction = function(e3, t3) {
-          const s2 = this;
-          let i2, r2 = false;
-          return function() {
-            if (r2) return i2;
-            if (r2 = true, t3) try {
-              i2 = e3.apply(s2, arguments);
-            } finally {
-              t3();
-            }
-            else i2 = e3.apply(s2, arguments);
-            return i2;
-          };
-        };
-      }, 4218: (e2, t2) => {
-        var s2;
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.Iterable = void 0, (function(e3) {
-          function t3(e4) {
-            return e4 && "object" == typeof e4 && "function" == typeof e4[Symbol.iterator];
-          }
-          e3.is = t3;
-          const s3 = Object.freeze([]);
-          function* i2(e4) {
-            yield e4;
-          }
-          e3.empty = function() {
-            return s3;
-          }, e3.single = i2, e3.wrap = function(e4) {
-            return t3(e4) ? e4 : i2(e4);
-          }, e3.from = function(e4) {
-            return e4 || s3;
-          }, e3.reverse = function* (e4) {
-            for (let t4 = e4.length - 1; t4 >= 0; t4--) yield e4[t4];
-          }, e3.isEmpty = function(e4) {
-            return !e4 || true === e4[Symbol.iterator]().next().done;
-          }, e3.first = function(e4) {
-            return e4[Symbol.iterator]().next().value;
-          }, e3.some = function(e4, t4) {
-            let s4 = 0;
-            for (const i3 of e4) if (t4(i3, s4++)) return true;
-            return false;
-          }, e3.find = function(e4, t4) {
-            for (const s4 of e4) if (t4(s4)) return s4;
-          }, e3.filter = function* (e4, t4) {
-            for (const s4 of e4) t4(s4) && (yield s4);
-          }, e3.map = function* (e4, t4) {
-            let s4 = 0;
-            for (const i3 of e4) yield t4(i3, s4++);
-          }, e3.flatMap = function* (e4, t4) {
-            let s4 = 0;
-            for (const i3 of e4) yield* t4(i3, s4++);
-          }, e3.concat = function* (...e4) {
-            for (const t4 of e4) yield* t4;
-          }, e3.reduce = function(e4, t4, s4) {
-            let i3 = s4;
-            for (const s5 of e4) i3 = t4(i3, s5);
-            return i3;
-          }, e3.slice = function* (e4, t4, s4 = e4.length) {
-            for (t4 < 0 && (t4 += e4.length), s4 < 0 ? s4 += e4.length : s4 > e4.length && (s4 = e4.length); t4 < s4; t4++) yield e4[t4];
-          }, e3.consume = function(t4, s4 = Number.POSITIVE_INFINITY) {
-            const i3 = [];
-            if (0 === s4) return [i3, t4];
-            const r2 = t4[Symbol.iterator]();
-            for (let t5 = 0; t5 < s4; t5++) {
-              const t6 = r2.next();
-              if (t6.done) return [i3, e3.empty()];
-              i3.push(t6.value);
-            }
-            return [i3, { [Symbol.iterator]: () => r2 }];
-          }, e3.asyncToArray = async function(e4) {
-            const t4 = [];
-            for await (const s4 of e4) t4.push(s4);
-            return Promise.resolve(t4);
-          };
-        })(s2 || (t2.Iterable = s2 = {}));
-      }, 7150: (e2, t2, s2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.DisposableMap = t2.ImmortalReference = t2.AsyncReferenceCollection = t2.ReferenceCollection = t2.SafeDisposable = t2.RefCountedDisposable = t2.MandatoryMutableDisposable = t2.MutableDisposable = t2.Disposable = t2.DisposableStore = t2.DisposableTracker = void 0, t2.setDisposableTracker = function(e3) {
-          h = e3;
-        }, t2.trackDisposable = l, t2.markAsDisposed = u, t2.markAsSingleton = function(e3) {
-          return h?.markAsSingleton(e3), e3;
-        }, t2.isDisposable = f, t2.dispose = _, t2.disposeIfDisposable = function(e3) {
-          for (const t3 of e3) f(t3) && t3.dispose();
-          return [];
-        }, t2.combinedDisposable = function(...e3) {
-          const t3 = p((() => _(e3)));
-          return (function(e4, t4) {
-            if (h) for (const s3 of e4) h.setParent(s3, t4);
-          })(e3, t3), t3;
-        }, t2.toDisposable = p, t2.disposeOnReturn = function(e3) {
-          const t3 = new g();
-          try {
-            e3(t3);
-          } finally {
-            t3.dispose();
-          }
-        };
-        const i2 = s2(3058), r2 = s2(9087), n2 = s2(2608), o = s2(8841), a = s2(4218);
-        let h = null;
-        class c {
-          constructor() {
-            this.livingDisposables = /* @__PURE__ */ new Map();
-          }
-          static {
-            this.idx = 0;
-          }
-          getDisposableData(e3) {
-            let t3 = this.livingDisposables.get(e3);
-            return t3 || (t3 = { parent: null, source: null, isSingleton: false, value: e3, idx: c.idx++ }, this.livingDisposables.set(e3, t3)), t3;
-          }
-          trackDisposable(e3) {
-            const t3 = this.getDisposableData(e3);
-            t3.source || (t3.source = new Error().stack);
-          }
-          setParent(e3, t3) {
-            this.getDisposableData(e3).parent = t3;
-          }
-          markAsDisposed(e3) {
-            this.livingDisposables.delete(e3);
-          }
-          markAsSingleton(e3) {
-            this.getDisposableData(e3).isSingleton = true;
-          }
-          getRootParent(e3, t3) {
-            const s3 = t3.get(e3);
-            if (s3) return s3;
-            const i3 = e3.parent ? this.getRootParent(this.getDisposableData(e3.parent), t3) : e3;
-            return t3.set(e3, i3), i3;
-          }
-          getTrackedDisposables() {
-            const e3 = /* @__PURE__ */ new Map();
-            return [...this.livingDisposables.entries()].filter((([, t3]) => null !== t3.source && !this.getRootParent(t3, e3).isSingleton)).flatMap((([e4]) => e4));
-          }
-          computeLeakingDisposables(e3 = 10, t3) {
-            let s3;
-            if (t3) s3 = t3;
-            else {
-              const e4 = /* @__PURE__ */ new Map(), t4 = [...this.livingDisposables.values()].filter(((t5) => null !== t5.source && !this.getRootParent(t5, e4).isSingleton));
-              if (0 === t4.length) return;
-              const i3 = new Set(t4.map(((e5) => e5.value)));
-              if (s3 = t4.filter(((e5) => !(e5.parent && i3.has(e5.parent)))), 0 === s3.length) throw new Error("There are cyclic diposable chains!");
-            }
-            if (!s3) return;
-            function o2(e4) {
-              const t4 = e4.source.split("\n").map(((e5) => e5.trim().replace("at ", ""))).filter(((e5) => "" !== e5));
-              return (function(e5, t5) {
-                for (; e5.length > 0 && t5.some(((t6) => "string" == typeof t6 ? t6 === e5[0] : e5[0].match(t6))); ) e5.shift();
-              })(t4, ["Error", /^trackDisposable \(.*\)$/, /^DisposableTracker.trackDisposable \(.*\)$/]), t4.reverse();
-            }
-            const a2 = new n2.SetMap();
-            for (const e4 of s3) {
-              const t4 = o2(e4);
-              for (let s4 = 0; s4 <= t4.length; s4++) a2.add(t4.slice(0, s4).join("\n"), e4);
-            }
-            s3.sort((0, i2.compareBy)(((e4) => e4.idx), i2.numberComparator));
-            let h2 = "", c2 = 0;
-            for (const t4 of s3.slice(0, e3)) {
-              c2++;
-              const e4 = o2(t4), i3 = [];
-              for (let t5 = 0; t5 < e4.length; t5++) {
-                let n3 = e4[t5];
-                n3 = `(shared with ${a2.get(e4.slice(0, t5 + 1).join("\n")).size}/${s3.length} leaks) at ${n3}`;
-                const h3 = a2.get(e4.slice(0, t5).join("\n")), c3 = (0, r2.groupBy)([...h3].map(((e5) => o2(e5)[t5])), ((e5) => e5));
-                delete c3[e4[t5]];
-                for (const [e5, t6] of Object.entries(c3)) i3.unshift(`    - stacktraces of ${t6.length} other leaks continue with ${e5}`);
-                i3.unshift(n3);
-              }
-              h2 += `
+        r.sort(pr((c) => c.idx, br));
+        let a = "", l = 0;
+        for (let c of r.slice(0, t)) {
+          l++;
+          let u = i(c), m = [];
+          for (let o = 0; o < u.length; o++) {
+            let h = u[o];
+            h = `(shared with ${s.get(u.slice(0, o + 1).join(`
+`)).size}/${r.length} leaks) at ${h}`;
+            let v = s.get(u.slice(0, o).join(`
+`)), _ = gr([...v].map((d) => i(d)[o]), (d) => d);
+            delete _[u[o]];
+            for (let [d, R] of Object.entries(_)) m.unshift(`    - stacktraces of ${R.length} other leaks continue with ${d}`);
+            m.unshift(h);
+          }
+          a += `
 
 
-==================== Leaking disposable ${c2}/${s3.length}: ${t4.value.constructor.name} ====================
-${i3.join("\n")}
+==================== Leaking disposable ${l}/${r.length}: ${c.value.constructor.name} ====================
+${m.join(`
+`)}
 ============================================================
 
 `;
-            }
-            return s3.length > e3 && (h2 += `
+        }
+        return r.length > t && (a += `
 
 
-... and ${s3.length - e3} more leaking disposables
+... and ${r.length - t} more leaking disposables
 
-`), { leaks: s3, details: h2 };
-          }
-        }
-        function l(e3) {
-          return h?.trackDisposable(e3), e3;
-        }
-        function u(e3) {
-          h?.markAsDisposed(e3);
-        }
-        function d(e3, t3) {
-          h?.setParent(e3, t3);
-        }
-        function f(e3) {
-          return "object" == typeof e3 && null !== e3 && "function" == typeof e3.dispose && 0 === e3.dispose.length;
-        }
-        function _(e3) {
-          if (a.Iterable.is(e3)) {
-            const t3 = [];
-            for (const s3 of e3) if (s3) try {
-              s3.dispose();
-            } catch (e4) {
-              t3.push(e4);
-            }
-            if (1 === t3.length) throw t3[0];
-            if (t3.length > 1) throw new AggregateError(t3, "Encountered errors while disposing of store");
-            return Array.isArray(e3) ? [] : e3;
-          }
-          if (e3) return e3.dispose(), e3;
-        }
-        function p(e3) {
-          const t3 = l({ dispose: (0, o.createSingleCallFunction)((() => {
-            u(t3), e3();
-          })) });
-          return t3;
-        }
-        t2.DisposableTracker = c;
-        class g {
-          static {
-            this.DISABLE_DISPOSED_WARNING = false;
-          }
-          constructor() {
-            this._toDispose = /* @__PURE__ */ new Set(), this._isDisposed = false, l(this);
-          }
-          dispose() {
-            this._isDisposed || (u(this), this._isDisposed = true, this.clear());
-          }
-          get isDisposed() {
-            return this._isDisposed;
-          }
-          clear() {
-            if (0 !== this._toDispose.size) try {
-              _(this._toDispose);
-            } finally {
-              this._toDispose.clear();
-            }
-          }
-          add(e3) {
-            if (!e3) return e3;
-            if (e3 === this) throw new Error("Cannot register a disposable on itself!");
-            return d(e3, this), this._isDisposed ? g.DISABLE_DISPOSED_WARNING || console.warn(new Error("Trying to add a disposable to a DisposableStore that has already been disposed of. The added object will be leaked!").stack) : this._toDispose.add(e3), e3;
-          }
-          delete(e3) {
-            if (e3) {
-              if (e3 === this) throw new Error("Cannot dispose a disposable on itself!");
-              this._toDispose.delete(e3), e3.dispose();
-            }
-          }
-          deleteAndLeak(e3) {
-            e3 && this._toDispose.has(e3) && (this._toDispose.delete(e3), d(e3, null));
-          }
-        }
-        t2.DisposableStore = g;
-        class v {
-          static {
-            this.None = Object.freeze({ dispose() {
-            } });
-          }
-          constructor() {
-            this._store = new g(), l(this), d(this._store, this);
-          }
-          dispose() {
-            u(this), this._store.dispose();
-          }
-          _register(e3) {
-            if (e3 === this) throw new Error("Cannot register a disposable on itself!");
-            return this._store.add(e3);
-          }
-        }
-        t2.Disposable = v;
-        class m {
-          constructor() {
-            this._isDisposed = false, l(this);
-          }
-          get value() {
-            return this._isDisposed ? void 0 : this._value;
-          }
-          set value(e3) {
-            this._isDisposed || e3 === this._value || (this._value?.dispose(), e3 && d(e3, this), this._value = e3);
-          }
-          clear() {
-            this.value = void 0;
-          }
-          dispose() {
-            this._isDisposed = true, u(this), this._value?.dispose(), this._value = void 0;
-          }
-          clearAndLeak() {
-            const e3 = this._value;
-            return this._value = void 0, e3 && d(e3, null), e3;
-          }
-        }
-        t2.MutableDisposable = m, t2.MandatoryMutableDisposable = class {
-          constructor(e3) {
-            this._disposable = new m(), this._isDisposed = false, this._disposable.value = e3;
-          }
-          get value() {
-            return this._disposable.value;
-          }
-          set value(e3) {
-            this._isDisposed || e3 === this._disposable.value || (this._disposable.value = e3);
-          }
-          dispose() {
-            this._isDisposed = true, this._disposable.dispose();
-          }
-        }, t2.RefCountedDisposable = class {
-          constructor(e3) {
-            this._disposable = e3, this._counter = 1;
-          }
-          acquire() {
-            return this._counter++, this;
-          }
-          release() {
-            return 0 == --this._counter && this._disposable.dispose(), this;
-          }
-        }, t2.SafeDisposable = class {
-          constructor() {
-            this.dispose = () => {
-            }, this.unset = () => {
-            }, this.isset = () => false, l(this);
-          }
-          set(e3) {
-            let t3 = e3;
-            return this.unset = () => t3 = void 0, this.isset = () => void 0 !== t3, this.dispose = () => {
-              t3 && (t3(), t3 = void 0, u(this));
-            }, this;
-          }
-        }, t2.ReferenceCollection = class {
-          constructor() {
-            this.references = /* @__PURE__ */ new Map();
-          }
-          acquire(e3, ...t3) {
-            let s3 = this.references.get(e3);
-            s3 || (s3 = { counter: 0, object: this.createReferencedObject(e3, ...t3) }, this.references.set(e3, s3));
-            const { object: i3 } = s3, r3 = (0, o.createSingleCallFunction)((() => {
-              0 == --s3.counter && (this.destroyReferencedObject(e3, s3.object), this.references.delete(e3));
-            }));
-            return s3.counter++, { object: i3, dispose: r3 };
-          }
-        }, t2.AsyncReferenceCollection = class {
-          constructor(e3) {
-            this.referenceCollection = e3;
-          }
-          async acquire(e3, ...t3) {
-            const s3 = this.referenceCollection.acquire(e3, ...t3);
-            try {
-              return { object: await s3.object, dispose: () => s3.dispose() };
-            } catch (e4) {
-              throw s3.dispose(), e4;
-            }
-          }
-        }, t2.ImmortalReference = class {
-          constructor(e3) {
-            this.object = e3;
-          }
-          dispose() {
-          }
-        };
-        class b {
-          constructor() {
-            this._store = /* @__PURE__ */ new Map(), this._isDisposed = false, l(this);
-          }
-          dispose() {
-            u(this), this._isDisposed = true, this.clearAndDisposeAll();
-          }
-          clearAndDisposeAll() {
-            if (this._store.size) try {
-              _(this._store.values());
-            } finally {
-              this._store.clear();
-            }
-          }
-          has(e3) {
-            return this._store.has(e3);
-          }
-          get size() {
-            return this._store.size;
-          }
-          get(e3) {
-            return this._store.get(e3);
-          }
-          set(e3, t3, s3 = false) {
-            this._isDisposed && console.warn(new Error("Trying to add a disposable to a DisposableMap that has already been disposed of. The added object will be leaked!").stack), s3 || this._store.get(e3)?.dispose(), this._store.set(e3, t3);
-          }
-          deleteAndDispose(e3) {
-            this._store.get(e3)?.dispose(), this._store.delete(e3);
-          }
-          deleteAndLeak(e3) {
-            const t3 = this._store.get(e3);
-            return this._store.delete(e3), t3;
-          }
-          keys() {
-            return this._store.keys();
-          }
-          values() {
-            return this._store.values();
-          }
-          [Symbol.iterator]() {
-            return this._store[Symbol.iterator]();
-          }
-        }
-        t2.DisposableMap = b;
-      }, 6317: (e2, t2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.LinkedList = void 0;
-        class s2 {
-          static {
-            this.Undefined = new s2(void 0);
-          }
-          constructor(e3) {
-            this.element = e3, this.next = s2.Undefined, this.prev = s2.Undefined;
-          }
-        }
-        class i2 {
-          constructor() {
-            this._first = s2.Undefined, this._last = s2.Undefined, this._size = 0;
-          }
-          get size() {
-            return this._size;
-          }
-          isEmpty() {
-            return this._first === s2.Undefined;
-          }
-          clear() {
-            let e3 = this._first;
-            for (; e3 !== s2.Undefined; ) {
-              const t3 = e3.next;
-              e3.prev = s2.Undefined, e3.next = s2.Undefined, e3 = t3;
-            }
-            this._first = s2.Undefined, this._last = s2.Undefined, this._size = 0;
-          }
-          unshift(e3) {
-            return this._insert(e3, false);
-          }
-          push(e3) {
-            return this._insert(e3, true);
-          }
-          _insert(e3, t3) {
-            const i3 = new s2(e3);
-            if (this._first === s2.Undefined) this._first = i3, this._last = i3;
-            else if (t3) {
-              const e4 = this._last;
-              this._last = i3, i3.prev = e4, e4.next = i3;
-            } else {
-              const e4 = this._first;
-              this._first = i3, i3.next = e4, e4.prev = i3;
-            }
-            this._size += 1;
-            let r2 = false;
-            return () => {
-              r2 || (r2 = true, this._remove(i3));
-            };
-          }
-          shift() {
-            if (this._first !== s2.Undefined) {
-              const e3 = this._first.element;
-              return this._remove(this._first), e3;
-            }
-          }
-          pop() {
-            if (this._last !== s2.Undefined) {
-              const e3 = this._last.element;
-              return this._remove(this._last), e3;
-            }
-          }
-          _remove(e3) {
-            if (e3.prev !== s2.Undefined && e3.next !== s2.Undefined) {
-              const t3 = e3.prev;
-              t3.next = e3.next, e3.next.prev = t3;
-            } else e3.prev === s2.Undefined && e3.next === s2.Undefined ? (this._first = s2.Undefined, this._last = s2.Undefined) : e3.next === s2.Undefined ? (this._last = this._last.prev, this._last.next = s2.Undefined) : e3.prev === s2.Undefined && (this._first = this._first.next, this._first.prev = s2.Undefined);
-            this._size -= 1;
-          }
-          *[Symbol.iterator]() {
-            let e3 = this._first;
-            for (; e3 !== s2.Undefined; ) yield e3.element, e3 = e3.next;
-          }
-        }
-        t2.LinkedList = i2;
-      }, 2608: (e2, t2) => {
-        var s2;
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.SetMap = t2.BidirectionalMap = t2.CounterSet = t2.Touch = void 0, t2.getOrSet = function(e3, t3, s3) {
-          let i2 = e3.get(t3);
-          return void 0 === i2 && (i2 = s3, e3.set(t3, i2)), i2;
-        }, t2.mapToString = function(e3) {
-          const t3 = [];
-          return e3.forEach(((e4, s3) => {
-            t3.push(`${s3} => ${e4}`);
-          })), `Map(${e3.size}) {${t3.join(", ")}}`;
-        }, t2.setToString = function(e3) {
-          const t3 = [];
-          return e3.forEach(((e4) => {
-            t3.push(e4);
-          })), `Set(${e3.size}) {${t3.join(", ")}}`;
-        }, t2.mapsStrictEqualIgnoreOrder = function(e3, t3) {
-          if (e3 === t3) return true;
-          if (e3.size !== t3.size) return false;
-          for (const [s3, i2] of e3) if (!t3.has(s3) || t3.get(s3) !== i2) return false;
-          for (const [s3] of t3) if (!e3.has(s3)) return false;
-          return true;
-        }, (function(e3) {
-          e3[e3.None = 0] = "None", e3[e3.AsOld = 1] = "AsOld", e3[e3.AsNew = 2] = "AsNew";
-        })(s2 || (t2.Touch = s2 = {})), t2.CounterSet = class {
-          constructor() {
-            this.map = /* @__PURE__ */ new Map();
-          }
-          add(e3) {
-            return this.map.set(e3, (this.map.get(e3) || 0) + 1), this;
-          }
-          delete(e3) {
-            let t3 = this.map.get(e3) || 0;
-            return 0 !== t3 && (t3--, 0 === t3 ? this.map.delete(e3) : this.map.set(e3, t3), true);
-          }
-          has(e3) {
-            return this.map.has(e3);
-          }
-        }, t2.BidirectionalMap = class {
-          constructor(e3) {
-            if (this._m1 = /* @__PURE__ */ new Map(), this._m2 = /* @__PURE__ */ new Map(), e3) for (const [t3, s3] of e3) this.set(t3, s3);
-          }
-          clear() {
-            this._m1.clear(), this._m2.clear();
-          }
-          set(e3, t3) {
-            this._m1.set(e3, t3), this._m2.set(t3, e3);
-          }
-          get(e3) {
-            return this._m1.get(e3);
-          }
-          getKey(e3) {
-            return this._m2.get(e3);
-          }
-          delete(e3) {
-            const t3 = this._m1.get(e3);
-            return void 0 !== t3 && (this._m1.delete(e3), this._m2.delete(t3), true);
-          }
-          forEach(e3, t3) {
-            this._m1.forEach(((s3, i2) => {
-              e3.call(t3, s3, i2, this);
-            }));
-          }
-          keys() {
-            return this._m1.keys();
-          }
-          values() {
-            return this._m1.values();
-          }
-        }, t2.SetMap = class {
-          constructor() {
-            this.map = /* @__PURE__ */ new Map();
-          }
-          add(e3, t3) {
-            let s3 = this.map.get(e3);
-            s3 || (s3 = /* @__PURE__ */ new Set(), this.map.set(e3, s3)), s3.add(t3);
-          }
-          delete(e3, t3) {
-            const s3 = this.map.get(e3);
-            s3 && (s3.delete(t3), 0 === s3.size && this.map.delete(e3));
-          }
-          forEach(e3, t3) {
-            const s3 = this.map.get(e3);
-            s3 && s3.forEach(t3);
-          }
-          get(e3) {
-            return this.map.get(e3) || /* @__PURE__ */ new Set();
-          }
-        };
-      }, 9725: (e2, t2) => {
-        Object.defineProperty(t2, "__esModule", { value: true }), t2.StopWatch = void 0;
-        const s2 = globalThis.performance && "function" == typeof globalThis.performance.now;
-        class i2 {
-          static create(e3) {
-            return new i2(e3);
-          }
-          constructor(e3) {
-            this._now = s2 && false === e3 ? Date.now : globalThis.performance.now.bind(globalThis.performance), this._startTime = this._now(), this._stopTime = -1;
-          }
-          stop() {
-            this._stopTime = this._now();
-          }
-          reset() {
-            this._startTime = this._now(), this._stopTime = -1;
-          }
-          elapsed() {
-            return -1 !== this._stopTime ? this._stopTime - this._startTime : this._now() - this._startTime;
-          }
-        }
-        t2.StopWatch = i2;
-      } }, t = {};
-      function s(i2) {
-        var r2 = t[i2];
-        if (void 0 !== r2) return r2.exports;
-        var n2 = t[i2] = { exports: {} };
-        return e[i2].call(n2.exports, n2, n2.exports, s), n2.exports;
+`), { leaks: r, details: a };
       }
-      var i = {};
-      (() => {
-        var e2 = i;
-        Object.defineProperty(e2, "__esModule", { value: true }), e2.Terminal = void 0;
-        const t2 = s(5101), r2 = s(6097), n2 = s(4335), o = s(5856), a = s(3027), h = s(7150), c = ["cols", "rows"];
-        class l extends h.Disposable {
-          constructor(e3) {
-            super(), this._core = this._register(new o.Terminal(e3)), this._addonManager = this._register(new a.AddonManager()), this._publicOptions = { ...this._core.options };
-            const t3 = (e4) => this._core.options[e4], s2 = (e4, t4) => {
-              this._checkReadonlyOptions(e4), this._core.options[e4] = t4;
-            };
-            for (const e4 in this._core.options) {
-              Object.defineProperty(this._publicOptions, e4, { get: () => this._core.options[e4], set: (t4) => {
-                this._checkReadonlyOptions(e4), this._core.options[e4] = t4;
-              } });
-              const i2 = { get: t3.bind(this, e4), set: s2.bind(this, e4) };
-              Object.defineProperty(this._publicOptions, e4, i2);
-            }
-          }
-          _checkReadonlyOptions(e3) {
-            if (c.includes(e3)) throw new Error(`Option "${e3}" can only be set in the constructor`);
-          }
-          _checkProposedApi() {
-            if (!this._core.optionsService.options.allowProposedApi) throw new Error("You must set the allowProposedApi option to true to use proposed API");
-          }
-          get onBell() {
-            return this._core.onBell;
-          }
-          get onBinary() {
-            return this._core.onBinary;
-          }
-          get onCursorMove() {
-            return this._core.onCursorMove;
-          }
-          get onData() {
-            return this._core.onData;
-          }
-          get onLineFeed() {
-            return this._core.onLineFeed;
-          }
-          get onResize() {
-            return this._core.onResize;
-          }
-          get onScroll() {
-            return this._core.onScroll;
-          }
-          get onTitleChange() {
-            return this._core.onTitleChange;
-          }
-          get onWriteParsed() {
-            return this._core.onWriteParsed;
-          }
-          get parser() {
-            return this._checkProposedApi(), this._parser || (this._parser = new r2.ParserApi(this._core)), this._parser;
-          }
-          get unicode() {
-            return this._checkProposedApi(), new n2.UnicodeApi(this._core);
-          }
-          get rows() {
-            return this._core.rows;
-          }
-          get cols() {
-            return this._core.cols;
-          }
-          get buffer() {
-            return this._checkProposedApi(), this._buffer || (this._buffer = this._register(new t2.BufferNamespaceApi(this._core))), this._buffer;
-          }
-          get markers() {
-            return this._checkProposedApi(), this._core.markers;
-          }
-          get modes() {
-            const e3 = this._core.coreService.decPrivateModes;
-            let t3 = "none";
-            switch (this._core.coreMouseService.activeProtocol) {
-              case "X10":
-                t3 = "x10";
-                break;
-              case "VT200":
-                t3 = "vt200";
-                break;
-              case "DRAG":
-                t3 = "drag";
-                break;
-              case "ANY":
-                t3 = "any";
-            }
-            return { applicationCursorKeysMode: e3.applicationCursorKeys, applicationKeypadMode: e3.applicationKeypad, bracketedPasteMode: e3.bracketedPasteMode, insertMode: this._core.coreService.modes.insertMode, mouseTrackingMode: t3, originMode: e3.origin, reverseWraparoundMode: e3.reverseWraparound, sendFocusMode: e3.sendFocus, synchronizedOutputMode: e3.synchronizedOutput, wraparoundMode: e3.wraparound };
-          }
-          get options() {
-            return this._publicOptions;
-          }
-          set options(e3) {
-            for (const t3 in e3) this._publicOptions[t3] = e3[t3];
-          }
-          input(e3, t3 = true) {
-            this._core.input(e3, t3);
-          }
-          resize(e3, t3) {
-            this._verifyIntegers(e3, t3), this._core.resize(e3, t3);
-          }
-          registerMarker(e3 = 0) {
-            return this._checkProposedApi(), this._verifyIntegers(e3), this._core.addMarker(e3);
-          }
-          addMarker(e3) {
-            return this.registerMarker(e3);
-          }
-          dispose() {
-            super.dispose();
-          }
-          scrollLines(e3) {
-            this._verifyIntegers(e3), this._core.scrollLines(e3);
-          }
-          scrollPages(e3) {
-            this._verifyIntegers(e3), this._core.scrollPages(e3);
-          }
-          scrollToTop() {
-            this._core.scrollToTop();
-          }
-          scrollToBottom() {
-            this._core.scrollToBottom();
-          }
-          scrollToLine(e3) {
-            this._verifyIntegers(e3), this._core.scrollToLine(e3);
-          }
-          clear() {
-            this._core.clear();
-          }
-          write(e3, t3) {
-            this._core.write(e3, t3);
-          }
-          writeln(e3, t3) {
-            this._core.write(e3), this._core.write("\r\n", t3);
-          }
-          reset() {
-            this._core.reset();
-          }
-          loadAddon(e3) {
-            this._addonManager.loadAddon(this, e3);
-          }
-          _verifyIntegers(...e3) {
-            for (const t3 of e3) if (t3 === 1 / 0 || isNaN(t3) || t3 % 1 != 0) throw new Error("This API only accepts integers");
+    };
+    Ze.idx = 0;
+    if (li) {
+      let n10 = "__is_disposable_tracked__";
+      ci(new class {
+        trackDisposable(t) {
+          let e = new Error("Potentially leaked disposable").stack;
+          setTimeout(() => {
+            t[n10] || console.log(e);
+          }, 3e3);
+        }
+        setParent(t, e) {
+          if (t && t !== A.None) try {
+            t[n10] = true;
+          } catch {
           }
         }
-        e2.Terminal = l;
-      })();
-      var r = exports;
-      for (var n in i) r[n] = i[n];
-      i.__esModule && Object.defineProperty(r, "__esModule", { value: true });
+        markAsDisposed(t) {
+          if (t && t !== A.None) try {
+            t[n10] = true;
+          } catch {
+          }
+        }
+        markAsSingleton(t) {
+        }
+      }());
+    }
+    et = class et2 {
+      constructor() {
+        this._toDispose = /* @__PURE__ */ new Set();
+        this._isDisposed = false;
+        tt(this);
+      }
+      dispose() {
+        this._isDisposed || (rt(this), this._isDisposed = true, this.clear());
+      }
+      get isDisposed() {
+        return this._isDisposed;
+      }
+      clear() {
+        if (this._toDispose.size !== 0) try {
+          it(this._toDispose);
+        } finally {
+          this._toDispose.clear();
+        }
+      }
+      add(t) {
+        if (!t) return t;
+        if (t === this) throw new Error("Cannot register a disposable on itself!");
+        return Ae(t, this), this._isDisposed ? et2.DISABLE_DISPOSED_WARNING || console.warn(new Error("Trying to add a disposable to a DisposableStore that has already been disposed of. The added object will be leaked!").stack) : this._toDispose.add(t), t;
+      }
+      delete(t) {
+        if (t) {
+          if (t === this) throw new Error("Cannot dispose a disposable on itself!");
+          this._toDispose.delete(t), t.dispose();
+        }
+      }
+      deleteAndLeak(t) {
+        t && this._toDispose.has(t) && (this._toDispose.delete(t), Ae(t, null));
+      }
+    };
+    et.DISABLE_DISPOSED_WARNING = false;
+    he = et;
+    A = class {
+      constructor() {
+        this._store = new he();
+        tt(this), Ae(this._store, this);
+      }
+      dispose() {
+        rt(this), this._store.dispose();
+      }
+      _register(t) {
+        if (t === this) throw new Error("Cannot register a disposable on itself!");
+        return this._store.add(t);
+      }
+    };
+    A.None = Object.freeze({ dispose() {
+    } });
+    Je = class {
+      constructor() {
+        this._isDisposed = false;
+        tt(this);
+      }
+      get value() {
+        return this._isDisposed ? void 0 : this._value;
+      }
+      set value(t) {
+        this._isDisposed || t === this._value || (this._value?.dispose(), t && Ae(t, this), this._value = t);
+      }
+      clear() {
+        this.value = void 0;
+      }
+      dispose() {
+        this._isDisposed = true, rt(this), this._value?.dispose(), this._value = void 0;
+      }
+      clearAndLeak() {
+        let t = this._value;
+        return this._value = void 0, t && Ae(t, null), t;
+      }
+    };
+    fe = class fe2 {
+      constructor(t) {
+        this.element = t, this.next = fe2.Undefined, this.prev = fe2.Undefined;
+      }
+    };
+    fe.Undefined = new fe(void 0);
+    di = globalThis.performance && typeof globalThis.performance.now == "function";
+    st = class n5 {
+      static create(t) {
+        return new n5(t);
+      }
+      constructor(t) {
+        this._now = di && t === false ? Date.now : globalThis.performance.now.bind(globalThis.performance), this._startTime = this._now(), this._stopTime = -1;
+      }
+      stop() {
+        this._stopTime = this._now();
+      }
+      reset() {
+        this._startTime = this._now(), this._stopTime = -1;
+      }
+      elapsed() {
+        return this._stopTime !== -1 ? this._stopTime - this._startTime : this._now() - this._startTime;
+      }
+    };
+    hi = false;
+    Sr = false;
+    fi = false;
+    ((oe) => {
+      oe.None = () => A.None;
+      function t(T) {
+        if (fi) {
+          let { onDidAddListener: b } = T, f = Oe.create(), I = 0;
+          T.onDidAddListener = () => {
+            ++I === 2 && (console.warn("snapshotted emitter LIKELY used public and SHOULD HAVE BEEN created with DisposableStore. snapshotted here"), f.print()), b?.();
+          };
+        }
+      }
+      function e(T, b) {
+        return h(T, () => {
+        }, 0, void 0, true, void 0, b);
+      }
+      oe.defer = e;
+      function r(T) {
+        return (b, f = null, I) => {
+          let p = false, y;
+          return y = T((O) => {
+            if (!p) return y ? y.dispose() : p = true, b.call(f, O);
+          }, null, I), p && y.dispose(), y;
+        };
+      }
+      oe.once = r;
+      function i(T, b, f) {
+        return m((I, p = null, y) => T((O) => I.call(p, b(O)), null, y), f);
+      }
+      oe.map = i;
+      function s(T, b, f) {
+        return m((I, p = null, y) => T((O) => {
+          b(O), I.call(p, O);
+        }, null, y), f);
+      }
+      oe.forEach = s;
+      function a(T, b, f) {
+        return m((I, p = null, y) => T((O) => b(O) && I.call(p, O), null, y), f);
+      }
+      oe.filter = a;
+      function l(T) {
+        return T;
+      }
+      oe.signal = l;
+      function c(...T) {
+        return (b, f = null, I) => {
+          let p = xr(...T.map((y) => y((O) => b.call(f, O))));
+          return o(p, I);
+        };
+      }
+      oe.any = c;
+      function u(T, b, f, I) {
+        let p = f;
+        return i(T, (y) => (p = b(p, y), p), I);
+      }
+      oe.reduce = u;
+      function m(T, b) {
+        let f, I = { onWillAddFirstListener() {
+          f = T(p.fire, p);
+        }, onDidRemoveLastListener() {
+          f?.dispose();
+        } };
+        b || t(I);
+        let p = new S(I);
+        return b?.add(p), p.event;
+      }
+      function o(T, b) {
+        return b instanceof Array ? b.push(T) : b && b.add(T), T;
+      }
+      function h(T, b, f = 100, I = false, p = false, y, O) {
+        let N, H, ae, Ue = 0, Ce, ar = { leakWarningThreshold: y, onWillAddFirstListener() {
+          N = T((Zr) => {
+            Ue++, H = b(H, Zr), I && !ae && (We.fire(H), H = void 0), Ce = () => {
+              let ei = H;
+              H = void 0, ae = void 0, (!I || Ue > 1) && We.fire(ei), Ue = 0;
+            }, typeof f == "number" ? (clearTimeout(ae), ae = setTimeout(Ce, f)) : ae === void 0 && (ae = 0, queueMicrotask(Ce));
+          });
+        }, onWillRemoveListener() {
+          p && Ue > 0 && Ce?.();
+        }, onDidRemoveLastListener() {
+          Ce = void 0, N.dispose();
+        } };
+        O || t(ar);
+        let We = new S(ar);
+        return O?.add(We), We.event;
+      }
+      oe.debounce = h;
+      function x(T, b = 0, f) {
+        return oe.debounce(T, (I, p) => I ? (I.push(p), I) : [p], b, void 0, true, void 0, f);
+      }
+      oe.accumulate = x;
+      function v(T, b = (I, p) => I === p, f) {
+        let I = true, p;
+        return a(T, (y) => {
+          let O = I || !b(y, p);
+          return I = false, p = y, O;
+        }, f);
+      }
+      oe.latch = v;
+      function _(T, b, f) {
+        return [oe.filter(T, b, f), oe.filter(T, (I) => !b(I), f)];
+      }
+      oe.split = _;
+      function d(T, b = false, f = [], I) {
+        let p = f.slice(), y = T((H) => {
+          p ? p.push(H) : N.fire(H);
+        });
+        I && I.add(y);
+        let O = () => {
+          p?.forEach((H) => N.fire(H)), p = null;
+        }, N = new S({ onWillAddFirstListener() {
+          y || (y = T((H) => N.fire(H)), I && I.add(y));
+        }, onDidAddFirstListener() {
+          p && (b ? setTimeout(O) : O());
+        }, onDidRemoveLastListener() {
+          y && y.dispose(), y = null;
+        } });
+        return I && I.add(N), N.event;
+      }
+      oe.buffer = d;
+      function R(T, b) {
+        return (I, p, y) => {
+          let O = b(new L());
+          return T(function(N) {
+            let H = O.evaluate(N);
+            H !== w && I.call(p, H);
+          }, void 0, y);
+        };
+      }
+      oe.chain = R;
+      let w = /* @__PURE__ */ Symbol("HaltChainable");
+      class L {
+        constructor() {
+          this.steps = [];
+        }
+        map(b) {
+          return this.steps.push(b), this;
+        }
+        forEach(b) {
+          return this.steps.push((f) => (b(f), f)), this;
+        }
+        filter(b) {
+          return this.steps.push((f) => b(f) ? f : w), this;
+        }
+        reduce(b, f) {
+          let I = f;
+          return this.steps.push((p) => (I = b(I, p), I)), this;
+        }
+        latch(b = (f, I) => f === I) {
+          let f = true, I;
+          return this.steps.push((p) => {
+            let y = f || !b(p, I);
+            return f = false, I = p, y ? p : w;
+          }), this;
+        }
+        evaluate(b) {
+          for (let f of this.steps) if (b = f(b), b === w) break;
+          return b;
+        }
+      }
+      function g(T, b, f = (I) => I) {
+        let I = (...N) => O.fire(f(...N)), p = () => T.on(b, I), y = () => T.removeListener(b, I), O = new S({ onWillAddFirstListener: p, onDidRemoveLastListener: y });
+        return O.event;
+      }
+      oe.fromNodeEventEmitter = g;
+      function D(T, b, f = (I) => I) {
+        let I = (...N) => O.fire(f(...N)), p = () => T.addEventListener(b, I), y = () => T.removeEventListener(b, I), O = new S({ onWillAddFirstListener: p, onDidRemoveLastListener: y });
+        return O.event;
+      }
+      oe.fromDOMEventEmitter = D;
+      function E(T) {
+        return new Promise((b) => r(T)(b));
+      }
+      oe.toPromise = E;
+      function W(T) {
+        let b = new S();
+        return T.then((f) => {
+          b.fire(f);
+        }, () => {
+          b.fire(void 0);
+        }).finally(() => {
+          b.dispose();
+        }), b.event;
+      }
+      oe.fromPromise = W;
+      function se(T, b) {
+        return T((f) => b.fire(f));
+      }
+      oe.forward = se;
+      function ye(T, b, f) {
+        return b(f), T((I) => b(I));
+      }
+      oe.runAndSubscribe = ye;
+      class wt {
+        constructor(b, f) {
+          this._observable = b;
+          this._counter = 0;
+          this._hasChanged = false;
+          let I = { onWillAddFirstListener: () => {
+            b.addObserver(this);
+          }, onDidRemoveLastListener: () => {
+            b.removeObserver(this);
+          } };
+          f || t(I), this.emitter = new S(I), f && f.add(this.emitter);
+        }
+        beginUpdate(b) {
+          this._counter++;
+        }
+        handlePossibleChange(b) {
+        }
+        handleChange(b, f) {
+          this._hasChanged = true;
+        }
+        endUpdate(b) {
+          this._counter--, this._counter === 0 && (this._observable.reportChanges(), this._hasChanged && (this._hasChanged = false, this.emitter.fire(this._observable.get())));
+        }
+      }
+      function nr(T, b) {
+        return new wt(T, b).emitter.event;
+      }
+      oe.fromObservable = nr;
+      function or(T) {
+        return (b, f, I) => {
+          let p = 0, y = false, O = { beginUpdate() {
+            p++;
+          }, endUpdate() {
+            p--, p === 0 && (T.reportChanges(), y && (y = false, b.call(f)));
+          }, handlePossibleChange() {
+          }, handleChange() {
+            y = true;
+          } };
+          T.addObserver(O), T.reportChanges();
+          let N = { dispose() {
+            T.removeObserver(O);
+          } };
+          return I instanceof he ? I.add(N) : Array.isArray(I) && I.push(N), N;
+        };
+      }
+      oe.fromObservableLight = or;
+    })(V ||= {});
+    pe = class pe2 {
+      constructor(t) {
+        this.listenerCount = 0;
+        this.invocationCount = 0;
+        this.elapsedOverall = 0;
+        this.durations = [];
+        this.name = `${t}_${pe2._idPool++}`, pe2.all.add(this);
+      }
+      start(t) {
+        this._stopWatch = new st(), this.listenerCount = t;
+      }
+      stop() {
+        if (this._stopWatch) {
+          let t = this._stopWatch.elapsed();
+          this.durations.push(t), this.elapsedOverall += t, this.invocationCount += 1, this._stopWatch = void 0;
+        }
+      }
+    };
+    pe.all = /* @__PURE__ */ new Set(), pe._idPool = 0;
+    Nt = pe;
+    Er = -1;
+    ot = class ot2 {
+      constructor(t, e, r = (ot2._idPool++).toString(16).padStart(3, "0")) {
+        this._errorHandler = t;
+        this.threshold = e;
+        this.name = r;
+        this._warnCountdown = 0;
+      }
+      dispose() {
+        this._stacks?.clear();
+      }
+      check(t, e) {
+        let r = this.threshold;
+        if (r <= 0 || e < r) return;
+        this._stacks || (this._stacks = /* @__PURE__ */ new Map());
+        let i = this._stacks.get(t.value) || 0;
+        if (this._stacks.set(t.value, i + 1), this._warnCountdown -= 1, this._warnCountdown <= 0) {
+          this._warnCountdown = r * 0.5;
+          let [s, a] = this.getMostFrequentStack(), l = `[${this.name}] potential listener LEAK detected, having ${e} listeners already. MOST frequent listener (${a}):`;
+          console.warn(l), console.warn(s);
+          let c = new Ft(l, s);
+          this._errorHandler(c);
+        }
+        return () => {
+          let s = this._stacks.get(t.value) || 0;
+          this._stacks.set(t.value, s - 1);
+        };
+      }
+      getMostFrequentStack() {
+        if (!this._stacks) return;
+        let t, e = 0;
+        for (let [r, i] of this._stacks) (!t || e < i) && (t = [r, i], e = i);
+        return t;
+      }
+    };
+    ot._idPool = 1;
+    Ht = ot;
+    Oe = class n6 {
+      constructor(t) {
+        this.value = t;
+      }
+      static create() {
+        let t = new Error();
+        return new n6(t.stack ?? "");
+      }
+      print() {
+        console.warn(this.value.split(`
+`).slice(2).join(`
+`));
+      }
+    };
+    Ft = class extends Error {
+      constructor(t, e) {
+        super(t), this.name = "ListenerLeakError", this.stack = e;
+      }
+    };
+    Ut = class extends Error {
+      constructor(t, e) {
+        super(t), this.name = "ListenerRefusalError", this.stack = e;
+      }
+    };
+    pi = 0;
+    be = class {
+      constructor(t) {
+        this.value = t;
+        this.id = pi++;
+      }
+    };
+    bi = 2;
+    _i = (n10, t) => {
+      if (n10 instanceof be) t(n10);
+      else for (let e = 0; e < n10.length; e++) {
+        let r = n10[e];
+        r && t(r);
+      }
+    };
+    if (hi) {
+      let n10 = [];
+      setInterval(() => {
+        n10.length !== 0 && (console.warn("[LEAKING LISTENERS] GC'ed these listeners that were NOT yet disposed:"), console.warn(n10.join(`
+`)), n10.length = 0);
+      }, 3e3), nt = new FinalizationRegistry((t) => {
+        typeof t == "string" && n10.push(t);
+      });
+    }
+    S = class {
+      constructor(t) {
+        this._size = 0;
+        this._options = t, this._leakageMon = Er > 0 || this._options?.leakWarningThreshold ? new Ht(t?.onListenerError ?? Xe, this._options?.leakWarningThreshold ?? Er) : void 0, this._perfMon = this._options?._profName ? new Nt(this._options._profName) : void 0, this._deliveryQueue = this._options?.deliveryQueue;
+      }
+      dispose() {
+        if (!this._disposed) {
+          if (this._disposed = true, this._deliveryQueue?.current === this && this._deliveryQueue.reset(), this._listeners) {
+            if (Sr) {
+              let t = this._listeners;
+              queueMicrotask(() => {
+                _i(t, (e) => e.stack?.print());
+              });
+            }
+            this._listeners = void 0, this._size = 0;
+          }
+          this._options?.onDidRemoveLastListener?.(), this._leakageMon?.dispose();
+        }
+      }
+      get event() {
+        return this._event ??= (t, e, r) => {
+          if (this._leakageMon && this._size > this._leakageMon.threshold ** 2) {
+            let c = `[${this._leakageMon.name}] REFUSES to accept new listeners because it exceeded its threshold by far (${this._size} vs ${this._leakageMon.threshold})`;
+            console.warn(c);
+            let u = this._leakageMon.getMostFrequentStack() ?? ["UNKNOWN stack", -1], m = new Ut(`${c}. HINT: Stack shows most frequent listener (${u[1]}-times)`, u[0]);
+            return (this._options?.onListenerError || Xe)(m), A.None;
+          }
+          if (this._disposed) return A.None;
+          e && (t = t.bind(e));
+          let i = new be(t), s, a;
+          this._leakageMon && this._size >= Math.ceil(this._leakageMon.threshold * 0.2) && (i.stack = Oe.create(), s = this._leakageMon.check(i.stack, this._size + 1)), Sr && (i.stack = a ?? Oe.create()), this._listeners ? this._listeners instanceof be ? (this._deliveryQueue ??= new Wt(), this._listeners = [this._listeners, i]) : this._listeners.push(i) : (this._options?.onWillAddFirstListener?.(this), this._listeners = i, this._options?.onDidAddFirstListener?.(this)), this._size++;
+          let l = J(() => {
+            nt?.unregister(l), s?.(), this._removeListener(i);
+          });
+          if (r instanceof he ? r.add(l) : Array.isArray(r) && r.push(l), nt) {
+            let c = new Error().stack.split(`
+`).slice(2, 3).join(`
+`).trim(), u = /(file:|vscode-file:\/\/vscode-app)?(\/[^:]*:\d+:\d+)/.exec(c);
+            nt.register(l, u?.[2] ?? c, l);
+          }
+          return l;
+        }, this._event;
+      }
+      _removeListener(t) {
+        if (this._options?.onWillRemoveListener?.(this), !this._listeners) return;
+        if (this._size === 1) {
+          this._listeners = void 0, this._options?.onDidRemoveLastListener?.(this), this._size = 0;
+          return;
+        }
+        let e = this._listeners, r = e.indexOf(t);
+        if (r === -1) throw console.log("disposed?", this._disposed), console.log("size?", this._size), console.log("arr?", JSON.stringify(this._listeners)), new Error("Attempted to dispose unknown listener");
+        this._size--, e[r] = void 0;
+        let i = this._deliveryQueue.current === this;
+        if (this._size * bi <= e.length) {
+          let s = 0;
+          for (let a = 0; a < e.length; a++) e[a] ? e[s++] = e[a] : i && (this._deliveryQueue.end--, s < this._deliveryQueue.i && this._deliveryQueue.i--);
+          e.length = s;
+        }
+      }
+      _deliver(t, e) {
+        if (!t) return;
+        let r = this._options?.onListenerError || Xe;
+        if (!r) {
+          t.value(e);
+          return;
+        }
+        try {
+          t.value(e);
+        } catch (i) {
+          r(i);
+        }
+      }
+      _deliverQueue(t) {
+        let e = t.current._listeners;
+        for (; t.i < t.end; ) this._deliver(e[t.i++], t.value);
+        t.reset();
+      }
+      fire(t) {
+        if (this._deliveryQueue?.current && (this._deliverQueue(this._deliveryQueue), this._perfMon?.stop()), this._perfMon?.start(this._size), this._listeners) if (this._listeners instanceof be) this._deliver(this._listeners, t);
+        else {
+          let e = this._deliveryQueue;
+          e.enqueue(this, t, this._listeners.length), this._deliverQueue(e);
+        }
+        this._perfMon?.stop();
+      }
+      hasListeners() {
+        return this._size > 0;
+      }
+    };
+    Wt = class {
+      constructor() {
+        this.i = -1;
+        this.end = 0;
+      }
+      enqueue(t, e, r) {
+        this.i = 0, this.end = r, this.current = t, this.value = e;
+      }
+      reset() {
+        this.i = this.end, this.current = void 0, this.value = void 0;
+      }
+    };
+    at = class extends A {
+      constructor(e) {
+        super();
+        this._core = e;
+        this._onBufferChange = this._register(new S());
+        this.onBufferChange = this._onBufferChange.event;
+        this._normal = new De(this._core.buffers.normal, "normal"), this._alternate = new De(this._core.buffers.alt, "alternate"), this._core.buffers.onBufferActivate(() => this._onBufferChange.fire(this.active));
+      }
+      get active() {
+        if (this._core.buffers.active === this._core.buffers.normal) return this.normal;
+        if (this._core.buffers.active === this._core.buffers.alt) return this.alternate;
+        throw new Error("Active buffer is neither normal nor alternate");
+      }
+      get normal() {
+        return this._normal.init(this._core.buffers.normal);
+      }
+      get alternate() {
+        return this._alternate.init(this._core.buffers.alt);
+      }
+    };
+    lt = class {
+      constructor(t) {
+        this._core = t;
+      }
+      registerCsiHandler(t, e) {
+        return this._core.registerCsiHandler(t, (r) => e(r.toArray()));
+      }
+      addCsiHandler(t, e) {
+        return this.registerCsiHandler(t, e);
+      }
+      registerDcsHandler(t, e) {
+        return this._core.registerDcsHandler(t, (r, i) => e(r, i.toArray()));
+      }
+      addDcsHandler(t, e) {
+        return this.registerDcsHandler(t, e);
+      }
+      registerEscHandler(t, e) {
+        return this._core.registerEscHandler(t, e);
+      }
+      addEscHandler(t, e) {
+        return this.registerEscHandler(t, e);
+      }
+      registerOscHandler(t, e) {
+        return this._core.registerOscHandler(t, e);
+      }
+      addOscHandler(t, e) {
+        return this.registerOscHandler(t, e);
+      }
+    };
+    ct = class {
+      constructor(t) {
+        this._core = t;
+      }
+      register(t) {
+        this._core.unicodeService.register(t);
+      }
+      get versions() {
+        return this._core.unicodeService.versions;
+      }
+      get activeVersion() {
+        return this._core.unicodeService.activeVersion;
+      }
+      set activeVersion(t) {
+        this._core.unicodeService.activeVersion = t;
+      }
+    };
+    C = 3;
+    k = Object.freeze(new te());
+    ut = 0;
+    Gt = 2;
+    Z = class n7 {
+      constructor(t, e, r = false) {
+        this.isWrapped = r;
+        this._combined = {};
+        this._extendedAttrs = {};
+        this._data = new Uint32Array(t * C);
+        let i = e || G.fromCharData([0, Ve, 1, 0]);
+        for (let s = 0; s < t; ++s) this.setCell(s, i);
+        this.length = t;
+      }
+      get(t) {
+        let e = this._data[t * C + 0], r = e & 2097151;
+        return [this._data[t * C + 1], e & 2097152 ? this._combined[t] : r ? $(r) : "", e >> 22, e & 2097152 ? this._combined[t].charCodeAt(this._combined[t].length - 1) : r];
+      }
+      set(t, e) {
+        this._data[t * C + 1] = e[0], e[1].length > 1 ? (this._combined[t] = e[1], this._data[t * C + 0] = t | 2097152 | e[2] << 22) : this._data[t * C + 0] = e[1].charCodeAt(0) | e[2] << 22;
+      }
+      getWidth(t) {
+        return this._data[t * C + 0] >> 22;
+      }
+      hasWidth(t) {
+        return this._data[t * C + 0] & 12582912;
+      }
+      getFg(t) {
+        return this._data[t * C + 1];
+      }
+      getBg(t) {
+        return this._data[t * C + 2];
+      }
+      hasContent(t) {
+        return this._data[t * C + 0] & 4194303;
+      }
+      getCodePoint(t) {
+        let e = this._data[t * C + 0];
+        return e & 2097152 ? this._combined[t].charCodeAt(this._combined[t].length - 1) : e & 2097151;
+      }
+      isCombined(t) {
+        return this._data[t * C + 0] & 2097152;
+      }
+      getString(t) {
+        let e = this._data[t * C + 0];
+        return e & 2097152 ? this._combined[t] : e & 2097151 ? $(e & 2097151) : "";
+      }
+      isProtected(t) {
+        return this._data[t * C + 2] & 536870912;
+      }
+      loadCell(t, e) {
+        return ut = t * C, e.content = this._data[ut + 0], e.fg = this._data[ut + 1], e.bg = this._data[ut + 2], e.content & 2097152 && (e.combinedData = this._combined[t]), e.bg & 268435456 && (e.extended = this._extendedAttrs[t]), e;
+      }
+      setCell(t, e) {
+        e.content & 2097152 && (this._combined[t] = e.combinedData), e.bg & 268435456 && (this._extendedAttrs[t] = e.extended), this._data[t * C + 0] = e.content, this._data[t * C + 1] = e.fg, this._data[t * C + 2] = e.bg;
+      }
+      setCellFromCodepoint(t, e, r, i) {
+        i.bg & 268435456 && (this._extendedAttrs[t] = i.extended), this._data[t * C + 0] = e | r << 22, this._data[t * C + 1] = i.fg, this._data[t * C + 2] = i.bg;
+      }
+      addCodepointToCell(t, e, r) {
+        let i = this._data[t * C + 0];
+        i & 2097152 ? this._combined[t] += $(e) : i & 2097151 ? (this._combined[t] = $(i & 2097151) + $(e), i &= -2097152, i |= 2097152) : i = e | 1 << 22, r && (i &= -12582913, i |= r << 22), this._data[t * C + 0] = i;
+      }
+      insertCells(t, e, r) {
+        if (t %= this.length, t && this.getWidth(t - 1) === 2 && this.setCellFromCodepoint(t - 1, 0, 1, r), e < this.length - t) {
+          let i = new G();
+          for (let s = this.length - t - e - 1; s >= 0; --s) this.setCell(t + e + s, this.loadCell(t + s, i));
+          for (let s = 0; s < e; ++s) this.setCell(t + s, r);
+        } else for (let i = t; i < this.length; ++i) this.setCell(i, r);
+        this.getWidth(this.length - 1) === 2 && this.setCellFromCodepoint(this.length - 1, 0, 1, r);
+      }
+      deleteCells(t, e, r) {
+        if (t %= this.length, e < this.length - t) {
+          let i = new G();
+          for (let s = 0; s < this.length - t - e; ++s) this.setCell(t + s, this.loadCell(t + e + s, i));
+          for (let s = this.length - e; s < this.length; ++s) this.setCell(s, r);
+        } else for (let i = t; i < this.length; ++i) this.setCell(i, r);
+        t && this.getWidth(t - 1) === 2 && this.setCellFromCodepoint(t - 1, 0, 1, r), this.getWidth(t) === 0 && !this.hasContent(t) && this.setCellFromCodepoint(t, 0, 1, r);
+      }
+      replaceCells(t, e, r, i = false) {
+        if (i) {
+          for (t && this.getWidth(t - 1) === 2 && !this.isProtected(t - 1) && this.setCellFromCodepoint(t - 1, 0, 1, r), e < this.length && this.getWidth(e - 1) === 2 && !this.isProtected(e) && this.setCellFromCodepoint(e, 0, 1, r); t < e && t < this.length; ) this.isProtected(t) || this.setCell(t, r), t++;
+          return;
+        }
+        for (t && this.getWidth(t - 1) === 2 && this.setCellFromCodepoint(t - 1, 0, 1, r), e < this.length && this.getWidth(e - 1) === 2 && this.setCellFromCodepoint(e, 0, 1, r); t < e && t < this.length; ) this.setCell(t++, r);
+      }
+      resize(t, e) {
+        if (t === this.length) return this._data.length * 4 * Gt < this._data.buffer.byteLength;
+        let r = t * C;
+        if (t > this.length) {
+          if (this._data.buffer.byteLength >= r * 4) this._data = new Uint32Array(this._data.buffer, 0, r);
+          else {
+            let i = new Uint32Array(r);
+            i.set(this._data), this._data = i;
+          }
+          for (let i = this.length; i < t; ++i) this.setCell(i, e);
+        } else {
+          this._data = this._data.subarray(0, r);
+          let i = Object.keys(this._combined);
+          for (let a = 0; a < i.length; a++) {
+            let l = parseInt(i[a], 10);
+            l >= t && delete this._combined[l];
+          }
+          let s = Object.keys(this._extendedAttrs);
+          for (let a = 0; a < s.length; a++) {
+            let l = parseInt(s[a], 10);
+            l >= t && delete this._extendedAttrs[l];
+          }
+        }
+        return this.length = t, r * 4 * Gt < this._data.buffer.byteLength;
+      }
+      cleanupMemory() {
+        if (this._data.length * 4 * Gt < this._data.buffer.byteLength) {
+          let t = new Uint32Array(this._data.length);
+          return t.set(this._data), this._data = t, 1;
+        }
+        return 0;
+      }
+      fill(t, e = false) {
+        if (e) {
+          for (let r = 0; r < this.length; ++r) this.isProtected(r) || this.setCell(r, t);
+          return;
+        }
+        this._combined = {}, this._extendedAttrs = {};
+        for (let r = 0; r < this.length; ++r) this.setCell(r, t);
+      }
+      copyFrom(t) {
+        this.length !== t.length ? this._data = new Uint32Array(t._data) : this._data.set(t._data), this.length = t.length, this._combined = {};
+        for (let e in t._combined) this._combined[e] = t._combined[e];
+        this._extendedAttrs = {};
+        for (let e in t._extendedAttrs) this._extendedAttrs[e] = t._extendedAttrs[e];
+        this.isWrapped = t.isWrapped;
+      }
+      clone() {
+        let t = new n7(0);
+        t._data = new Uint32Array(this._data), t.length = this.length;
+        for (let e in this._combined) t._combined[e] = this._combined[e];
+        for (let e in this._extendedAttrs) t._extendedAttrs[e] = this._extendedAttrs[e];
+        return t.isWrapped = this.isWrapped, t;
+      }
+      getTrimmedLength() {
+        for (let t = this.length - 1; t >= 0; --t) if (this._data[t * C + 0] & 4194303) return t + (this._data[t * C + 0] >> 22);
+        return 0;
+      }
+      getNoBgTrimmedLength() {
+        for (let t = this.length - 1; t >= 0; --t) if (this._data[t * C + 0] & 4194303 || this._data[t * C + 2] & 50331648) return t + (this._data[t * C + 0] >> 22);
+        return 0;
+      }
+      copyCellsFrom(t, e, r, i, s) {
+        let a = t._data;
+        if (s) for (let c = i - 1; c >= 0; c--) {
+          for (let u = 0; u < C; u++) this._data[(r + c) * C + u] = a[(e + c) * C + u];
+          a[(e + c) * C + 2] & 268435456 && (this._extendedAttrs[r + c] = t._extendedAttrs[e + c]);
+        }
+        else for (let c = 0; c < i; c++) {
+          for (let u = 0; u < C; u++) this._data[(r + c) * C + u] = a[(e + c) * C + u];
+          a[(e + c) * C + 2] & 268435456 && (this._extendedAttrs[r + c] = t._extendedAttrs[e + c]);
+        }
+        let l = Object.keys(t._combined);
+        for (let c = 0; c < l.length; c++) {
+          let u = parseInt(l[c], 10);
+          u >= e && (this._combined[u - e + r] = t._combined[u]);
+        }
+      }
+      translateToString(t, e, r, i) {
+        e = e ?? 0, r = r ?? this.length, t && (r = Math.min(r, this.getTrimmedLength())), i && (i.length = 0);
+        let s = "";
+        for (; e < r; ) {
+          let a = this._data[e * C + 0], l = a & 2097151, c = a & 2097152 ? this._combined[e] : l ? $(l) : ze;
+          if (s += c, i) for (let u = 0; u < c.length; ++u) i.push(e);
+          e += a >> 22 || 1;
+        }
+        return i && i.push(e), s;
+      }
+    };
+    yr = "di$target";
+    Vt = "di$dependencies";
+    Kt = /* @__PURE__ */ new Map();
+    X = j("BufferService");
+    Dr = j("CoreMouseService");
+    dt = j("CoreService");
+    Ar = j("CharsetService");
+    Or = j("InstantiationService");
+    ht = j("LogService");
+    Y = j("OptionsService");
+    Rr = j("OscLinkService");
+    wr = j("UnicodeService");
+    Ns = j("DecorationService");
+    zt = class {
+      constructor(...t) {
+        this._entries = /* @__PURE__ */ new Map();
+        for (let [e, r] of t) this.set(e, r);
+      }
+      set(t, e) {
+        let r = this._entries.get(t);
+        return this._entries.set(t, e), r;
+      }
+      forEach(t) {
+        for (let [e, r] of this._entries.entries()) t(e, r);
+      }
+      has(t) {
+        return this._entries.has(t);
+      }
+      get(t) {
+        return this._entries.get(t);
+      }
+    };
+    ft = class {
+      constructor() {
+        this._services = new zt();
+        this._services.set(Or, this);
+      }
+      setService(t, e) {
+        this._services.set(t, e);
+      }
+      getService(t) {
+        return this._services.get(t);
+      }
+      createInstance(t, ...e) {
+        let r = Cr(t).sort((a, l) => a.index - l.index), i = [];
+        for (let a of r) {
+          let l = this._services.get(a.id);
+          if (!l) throw new Error(`[createInstance] ${t.name} depends on UNKNOWN service ${a.id._id}.`);
+          i.push(l);
+        }
+        let s = r.length > 0 ? r[0].index : e.length;
+        if (e.length !== s) throw new Error(`[createInstance] First service dependency of ${t.name} at position ${s + 1} conflicts with ${e.length} static arguments`);
+        return new t(...e, ...i);
+      }
+    };
+    vi = { trace: 0, debug: 1, info: 2, warn: 3, error: 4, off: 5 };
+    gi = "xterm.js: ";
+    _e = class extends A {
+      constructor(e) {
+        super();
+        this._optionsService = e;
+        this._logLevel = 5;
+        this._updateLogLevel(), this._register(this._optionsService.onSpecificOptionChange("logLevel", () => this._updateLogLevel())), Ii = this;
+      }
+      get logLevel() {
+        return this._logLevel;
+      }
+      _updateLogLevel() {
+        this._logLevel = vi[this._optionsService.rawOptions.logLevel];
+      }
+      _evalLazyOptionalParams(e) {
+        for (let r = 0; r < e.length; r++) typeof e[r] == "function" && (e[r] = e[r]());
+      }
+      _log(e, r, i) {
+        this._evalLazyOptionalParams(i), e.call(console, (this._optionsService.options.logger ? "" : gi) + r, ...i);
+      }
+      trace(e, ...r) {
+        this._logLevel <= 0 && this._log(this._optionsService.options.logger?.trace.bind(this._optionsService.options.logger) ?? console.log, e, r);
+      }
+      debug(e, ...r) {
+        this._logLevel <= 1 && this._log(this._optionsService.options.logger?.debug.bind(this._optionsService.options.logger) ?? console.log, e, r);
+      }
+      info(e, ...r) {
+        this._logLevel <= 2 && this._log(this._optionsService.options.logger?.info.bind(this._optionsService.options.logger) ?? console.info, e, r);
+      }
+      warn(e, ...r) {
+        this._logLevel <= 3 && this._log(this._optionsService.options.logger?.warn.bind(this._optionsService.options.logger) ?? console.warn, e, r);
+      }
+      error(e, ...r) {
+        this._logLevel <= 4 && this._log(this._optionsService.options.logger?.error.bind(this._optionsService.options.logger) ?? console.error, e, r);
+      }
+    };
+    _e = K([F(0, Y)], _e);
+    we = class extends A {
+      constructor(e) {
+        super();
+        this._maxLength = e;
+        this.onDeleteEmitter = this._register(new S());
+        this.onDelete = this.onDeleteEmitter.event;
+        this.onInsertEmitter = this._register(new S());
+        this.onInsert = this.onInsertEmitter.event;
+        this.onTrimEmitter = this._register(new S());
+        this.onTrim = this.onTrimEmitter.event;
+        this._array = new Array(this._maxLength), this._startIndex = 0, this._length = 0;
+      }
+      get maxLength() {
+        return this._maxLength;
+      }
+      set maxLength(e) {
+        if (this._maxLength === e) return;
+        let r = new Array(e);
+        for (let i = 0; i < Math.min(e, this.length); i++) r[i] = this._array[this._getCyclicIndex(i)];
+        this._array = r, this._maxLength = e, this._startIndex = 0;
+      }
+      get length() {
+        return this._length;
+      }
+      set length(e) {
+        if (e > this._length) for (let r = this._length; r < e; r++) this._array[r] = void 0;
+        this._length = e;
+      }
+      get(e) {
+        return this._array[this._getCyclicIndex(e)];
+      }
+      set(e, r) {
+        this._array[this._getCyclicIndex(e)] = r;
+      }
+      push(e) {
+        this._array[this._getCyclicIndex(this._length)] = e, this._length === this._maxLength ? (this._startIndex = ++this._startIndex % this._maxLength, this.onTrimEmitter.fire(1)) : this._length++;
+      }
+      recycle() {
+        if (this._length !== this._maxLength) throw new Error("Can only recycle when the buffer is full");
+        return this._startIndex = ++this._startIndex % this._maxLength, this.onTrimEmitter.fire(1), this._array[this._getCyclicIndex(this._length - 1)];
+      }
+      get isFull() {
+        return this._length === this._maxLength;
+      }
+      pop() {
+        return this._array[this._getCyclicIndex(this._length-- - 1)];
+      }
+      splice(e, r, ...i) {
+        if (r) {
+          for (let s = e; s < this._length - r; s++) this._array[this._getCyclicIndex(s)] = this._array[this._getCyclicIndex(s + r)];
+          this._length -= r, this.onDeleteEmitter.fire({ index: e, amount: r });
+        }
+        for (let s = this._length - 1; s >= e; s--) this._array[this._getCyclicIndex(s + i.length)] = this._array[this._getCyclicIndex(s)];
+        for (let s = 0; s < i.length; s++) this._array[this._getCyclicIndex(e + s)] = i[s];
+        if (i.length && this.onInsertEmitter.fire({ index: e, amount: i.length }), this._length + i.length > this._maxLength) {
+          let s = this._length + i.length - this._maxLength;
+          this._startIndex += s, this._length = this._maxLength, this.onTrimEmitter.fire(s);
+        } else this._length += i.length;
+      }
+      trimStart(e) {
+        e > this._length && (e = this._length), this._startIndex += e, this._length -= e, this.onTrimEmitter.fire(e);
+      }
+      shiftElements(e, r, i) {
+        if (!(r <= 0)) {
+          if (e < 0 || e >= this._length) throw new Error("start argument out of range");
+          if (e + i < 0) throw new Error("Cannot shift elements in list beyond index 0");
+          if (i > 0) {
+            for (let a = r - 1; a >= 0; a--) this.set(e + a + i, this.get(e + a));
+            let s = e + r + i - this._length;
+            if (s > 0) for (this._length += s; this._length > this._maxLength; ) this._length--, this._startIndex++, this.onTrimEmitter.fire(1);
+          } else for (let s = 0; s < r; s++) this.set(e + s + i, this.get(e + s));
+        }
+      }
+      _getCyclicIndex(e) {
+        return (this._startIndex + e) % this._maxLength;
+      }
+    };
+    pt = typeof process < "u" && "title" in process;
+    bt = pt ? "node" : navigator.userAgent;
+    qt = pt ? "node" : navigator.platform;
+    Qs = bt.includes("Firefox");
+    Js = bt.includes("Edge");
+    Zs = /^((?!chrome|android).)*safari/i.test(bt);
+    kr = ["Macintosh", "MacIntel", "MacPPC", "Mac68K"].includes(qt);
+    en = ["Windows", "Win16", "Win32", "WinCE"].includes(qt);
+    tn = qt.indexOf("Linux") >= 0;
+    rn = /\bCrOS\b/.test(bt);
+    _t = class {
+      constructor() {
+        this._tasks = [];
+        this._i = 0;
+      }
+      enqueue(t) {
+        this._tasks.push(t), this._start();
+      }
+      flush() {
+        for (; this._i < this._tasks.length; ) this._tasks[this._i]() || this._i++;
+        this.clear();
+      }
+      clear() {
+        this._idleCallback && (this._cancelCallback(this._idleCallback), this._idleCallback = void 0), this._i = 0, this._tasks.length = 0;
+      }
+      _start() {
+        this._idleCallback || (this._idleCallback = this._requestCallback(this._process.bind(this)));
+      }
+      _process(t) {
+        this._idleCallback = void 0;
+        let e = 0, r = 0, i = t.timeRemaining(), s = 0;
+        for (; this._i < this._tasks.length; ) {
+          if (e = performance.now(), this._tasks[this._i]() || this._i++, e = Math.max(1, performance.now() - e), r = Math.max(e, r), s = t.timeRemaining(), r * 1.5 > s) {
+            i - e < -20 && console.warn(`task queue exceeded allotted deadline by ${Math.abs(Math.round(i - e))}ms`), this._start();
+            return;
+          }
+          i = s;
+        }
+        this.clear();
+      }
+    };
+    $t = class extends _t {
+      _requestCallback(t) {
+        return setTimeout(() => t(this._createDeadline(16)));
+      }
+      _cancelCallback(t) {
+        clearTimeout(t);
+      }
+      _createDeadline(t) {
+        let e = performance.now() + t;
+        return { timeRemaining: () => Math.max(0, e - performance.now()) };
+      }
+    };
+    jt = class extends _t {
+      _requestCallback(t) {
+        return requestIdleCallback(t);
+      }
+      _cancelCallback(t) {
+        cancelIdleCallback(t);
+      }
+    };
+    Br = !pt && "requestIdleCallback" in window ? jt : $t;
+    vt = class vt2 {
+      constructor(t) {
+        this.line = t;
+        this.isDisposed = false;
+        this._disposables = [];
+        this._id = vt2._nextId++;
+        this._onDispose = this.register(new S());
+        this.onDispose = this._onDispose.event;
+      }
+      get id() {
+        return this._id;
+      }
+      dispose() {
+        this.isDisposed || (this.isDisposed = true, this.line = -1, this._onDispose.fire(), it(this._disposables), this._disposables.length = 0);
+      }
+      register(t) {
+        return this._disposables.push(t), t;
+      }
+    };
+    vt._nextId = 1;
+    mt = vt;
+    B = {};
+    ee = B.B;
+    B[0] = { "`": "\u25C6", a: "\u2592", b: "\u2409", c: "\u240C", d: "\u240D", e: "\u240A", f: "\xB0", g: "\xB1", h: "\u2424", i: "\u240B", j: "\u2518", k: "\u2510", l: "\u250C", m: "\u2514", n: "\u253C", o: "\u23BA", p: "\u23BB", q: "\u2500", r: "\u23BC", s: "\u23BD", t: "\u251C", u: "\u2524", v: "\u2534", w: "\u252C", x: "\u2502", y: "\u2264", z: "\u2265", "{": "\u03C0", "|": "\u2260", "}": "\xA3", "~": "\xB7" };
+    B.A = { "#": "\xA3" };
+    B.B = void 0;
+    B[4] = { "#": "\xA3", "@": "\xBE", "[": "ij", "\\": "\xBD", "]": "|", "{": "\xA8", "|": "f", "}": "\xBC", "~": "\xB4" };
+    B.C = B[5] = { "[": "\xC4", "\\": "\xD6", "]": "\xC5", "^": "\xDC", "`": "\xE9", "{": "\xE4", "|": "\xF6", "}": "\xE5", "~": "\xFC" };
+    B.R = { "#": "\xA3", "@": "\xE0", "[": "\xB0", "\\": "\xE7", "]": "\xA7", "{": "\xE9", "|": "\xF9", "}": "\xE8", "~": "\xA8" };
+    B.Q = { "@": "\xE0", "[": "\xE2", "\\": "\xE7", "]": "\xEA", "^": "\xEE", "`": "\xF4", "{": "\xE9", "|": "\xF9", "}": "\xE8", "~": "\xFB" };
+    B.K = { "@": "\xA7", "[": "\xC4", "\\": "\xD6", "]": "\xDC", "{": "\xE4", "|": "\xF6", "}": "\xFC", "~": "\xDF" };
+    B.Y = { "#": "\xA3", "@": "\xA7", "[": "\xB0", "\\": "\xE7", "]": "\xE9", "`": "\xF9", "{": "\xE0", "|": "\xF2", "}": "\xE8", "~": "\xEC" };
+    B.E = B[6] = { "@": "\xC4", "[": "\xC6", "\\": "\xD8", "]": "\xC5", "^": "\xDC", "`": "\xE4", "{": "\xE6", "|": "\xF8", "}": "\xE5", "~": "\xFC" };
+    B.Z = { "#": "\xA3", "@": "\xA7", "[": "\xA1", "\\": "\xD1", "]": "\xBF", "{": "\xB0", "|": "\xF1", "}": "\xE7" };
+    B.H = B[7] = { "@": "\xC9", "[": "\xC4", "\\": "\xD6", "]": "\xC5", "^": "\xDC", "`": "\xE9", "{": "\xE4", "|": "\xF6", "}": "\xE5", "~": "\xFC" };
+    B["="] = { "#": "\xF9", "@": "\xE0", "[": "\xE9", "\\": "\xE7", "]": "\xEA", "^": "\xEE", _: "\xE8", "`": "\xF4", "{": "\xE4", "|": "\xF6", "}": "\xFC", "~": "\xFB" };
+    Fr = 4294967295;
+    Pe = class {
+      constructor(t, e, r) {
+        this._hasScrollback = t;
+        this._optionsService = e;
+        this._bufferService = r;
+        this.ydisp = 0;
+        this.ybase = 0;
+        this.y = 0;
+        this.x = 0;
+        this.tabs = {};
+        this.savedY = 0;
+        this.savedX = 0;
+        this.savedCurAttrData = k.clone();
+        this.savedCharset = ee;
+        this.markers = [];
+        this._nullCell = G.fromCharData([0, Ve, 1, 0]);
+        this._whitespaceCell = G.fromCharData([0, ze, 1, 32]);
+        this._isClearing = false;
+        this._memoryCleanupQueue = new Br();
+        this._memoryCleanupPosition = 0;
+        this._cols = this._bufferService.cols, this._rows = this._bufferService.rows, this.lines = new we(this._getCorrectBufferLength(this._rows)), this.scrollTop = 0, this.scrollBottom = this._rows - 1, this.setupTabStops();
+      }
+      getNullCell(t) {
+        return t ? (this._nullCell.fg = t.fg, this._nullCell.bg = t.bg, this._nullCell.extended = t.extended) : (this._nullCell.fg = 0, this._nullCell.bg = 0, this._nullCell.extended = new re()), this._nullCell;
+      }
+      getWhitespaceCell(t) {
+        return t ? (this._whitespaceCell.fg = t.fg, this._whitespaceCell.bg = t.bg, this._whitespaceCell.extended = t.extended) : (this._whitespaceCell.fg = 0, this._whitespaceCell.bg = 0, this._whitespaceCell.extended = new re()), this._whitespaceCell;
+      }
+      getBlankLine(t, e) {
+        return new Z(this._bufferService.cols, this.getNullCell(t), e);
+      }
+      get hasScrollback() {
+        return this._hasScrollback && this.lines.maxLength > this._rows;
+      }
+      get isCursorInViewport() {
+        let e = this.ybase + this.y - this.ydisp;
+        return e >= 0 && e < this._rows;
+      }
+      _getCorrectBufferLength(t) {
+        if (!this._hasScrollback) return t;
+        let e = t + this._optionsService.rawOptions.scrollback;
+        return e > Fr ? Fr : e;
+      }
+      fillViewportRows(t) {
+        if (this.lines.length === 0) {
+          t === void 0 && (t = k);
+          let e = this._rows;
+          for (; e--; ) this.lines.push(this.getBlankLine(t));
+        }
+      }
+      clear() {
+        this.ydisp = 0, this.ybase = 0, this.y = 0, this.x = 0, this.lines = new we(this._getCorrectBufferLength(this._rows)), this.scrollTop = 0, this.scrollBottom = this._rows - 1, this.setupTabStops();
+      }
+      resize(t, e) {
+        let r = this.getNullCell(k), i = 0, s = this._getCorrectBufferLength(e);
+        if (s > this.lines.maxLength && (this.lines.maxLength = s), this.lines.length > 0) {
+          if (this._cols < t) for (let l = 0; l < this.lines.length; l++) i += +this.lines.get(l).resize(t, r);
+          let a = 0;
+          if (this._rows < e) for (let l = this._rows; l < e; l++) this.lines.length < e + this.ybase && (this._optionsService.rawOptions.windowsMode || this._optionsService.rawOptions.windowsPty.backend !== void 0 || this._optionsService.rawOptions.windowsPty.buildNumber !== void 0 ? this.lines.push(new Z(t, r)) : this.ybase > 0 && this.lines.length <= this.ybase + this.y + a + 1 ? (this.ybase--, a++, this.ydisp > 0 && this.ydisp--) : this.lines.push(new Z(t, r)));
+          else for (let l = this._rows; l > e; l--) this.lines.length > e + this.ybase && (this.lines.length > this.ybase + this.y + 1 ? this.lines.pop() : (this.ybase++, this.ydisp++));
+          if (s < this.lines.maxLength) {
+            let l = this.lines.length - s;
+            l > 0 && (this.lines.trimStart(l), this.ybase = Math.max(this.ybase - l, 0), this.ydisp = Math.max(this.ydisp - l, 0), this.savedY = Math.max(this.savedY - l, 0)), this.lines.maxLength = s;
+          }
+          this.x = Math.min(this.x, t - 1), this.y = Math.min(this.y, e - 1), a && (this.y += a), this.savedX = Math.min(this.savedX, t - 1), this.scrollTop = 0;
+        }
+        if (this.scrollBottom = e - 1, this._isReflowEnabled && (this._reflow(t, e), this._cols > t)) for (let a = 0; a < this.lines.length; a++) i += +this.lines.get(a).resize(t, r);
+        this._cols = t, this._rows = e, this._memoryCleanupQueue.clear(), i > 0.1 * this.lines.length && (this._memoryCleanupPosition = 0, this._memoryCleanupQueue.enqueue(() => this._batchedMemoryCleanup()));
+      }
+      _batchedMemoryCleanup() {
+        let t = true;
+        this._memoryCleanupPosition >= this.lines.length && (this._memoryCleanupPosition = 0, t = false);
+        let e = 0;
+        for (; this._memoryCleanupPosition < this.lines.length; ) if (e += this.lines.get(this._memoryCleanupPosition++).cleanupMemory(), e > 100) return true;
+        return t;
+      }
+      get _isReflowEnabled() {
+        let t = this._optionsService.rawOptions.windowsPty;
+        return t && t.buildNumber ? this._hasScrollback && t.backend === "conpty" && t.buildNumber >= 21376 : this._hasScrollback && !this._optionsService.rawOptions.windowsMode;
+      }
+      _reflow(t, e) {
+        this._cols !== t && (t > this._cols ? this._reflowLarger(t, e) : this._reflowSmaller(t, e));
+      }
+      _reflowLarger(t, e) {
+        let r = this._optionsService.rawOptions.reflowCursorLine, i = Lr(this.lines, this._cols, t, this.ybase + this.y, this.getNullCell(k), r);
+        if (i.length > 0) {
+          let s = Mr(this.lines, i);
+          Nr(this.lines, s.layout), this._reflowLargerAdjustViewport(t, e, s.countRemoved);
+        }
+      }
+      _reflowLargerAdjustViewport(t, e, r) {
+        let i = this.getNullCell(k), s = r;
+        for (; s-- > 0; ) this.ybase === 0 ? (this.y > 0 && this.y--, this.lines.length < e && this.lines.push(new Z(t, i))) : (this.ydisp === this.ybase && this.ydisp--, this.ybase--);
+        this.savedY = Math.max(this.savedY - r, 0);
+      }
+      _reflowSmaller(t, e) {
+        let r = this._optionsService.rawOptions.reflowCursorLine, i = this.getNullCell(k), s = [], a = 0;
+        for (let l = this.lines.length - 1; l >= 0; l--) {
+          let c = this.lines.get(l);
+          if (!c || !c.isWrapped && c.getTrimmedLength() <= t) continue;
+          let u = [c];
+          for (; c.isWrapped && l > 0; ) c = this.lines.get(--l), u.unshift(c);
+          if (!r) {
+            let g = this.ybase + this.y;
+            if (g >= l && g < l + u.length) continue;
+          }
+          let m = u[u.length - 1].getTrimmedLength(), o = Hr(u, this._cols, t), h = o.length - u.length, x;
+          this.ybase === 0 && this.y !== this.lines.length - 1 ? x = Math.max(0, this.y - this.lines.maxLength + h) : x = Math.max(0, this.lines.length - this.lines.maxLength + h);
+          let v = [];
+          for (let g = 0; g < h; g++) {
+            let D = this.getBlankLine(k, true);
+            v.push(D);
+          }
+          v.length > 0 && (s.push({ start: l + u.length + a, newLines: v }), a += v.length), u.push(...v);
+          let _ = o.length - 1, d = o[_];
+          d === 0 && (_--, d = o[_]);
+          let R = u.length - h - 1, w = m;
+          for (; R >= 0; ) {
+            let g = Math.min(w, d);
+            if (u[_] === void 0) break;
+            if (u[_].copyCellsFrom(u[R], w - g, d - g, g, true), d -= g, d === 0 && (_--, d = o[_]), w -= g, w === 0) {
+              R--;
+              let D = Math.max(R, 0);
+              w = me(u, D, this._cols);
+            }
+          }
+          for (let g = 0; g < u.length; g++) o[g] < t && u[g].setCell(o[g], i);
+          let L = h - x;
+          for (; L-- > 0; ) this.ybase === 0 ? this.y < e - 1 ? (this.y++, this.lines.pop()) : (this.ybase++, this.ydisp++) : this.ybase < Math.min(this.lines.maxLength, this.lines.length + a) - e && (this.ybase === this.ydisp && this.ydisp++, this.ybase++);
+          this.savedY = Math.min(this.savedY + h, this.ybase + e - 1);
+        }
+        if (s.length > 0) {
+          let l = [], c = [];
+          for (let d = 0; d < this.lines.length; d++) c.push(this.lines.get(d));
+          let u = this.lines.length, m = u - 1, o = 0, h = s[o];
+          this.lines.length = Math.min(this.lines.maxLength, this.lines.length + a);
+          let x = 0;
+          for (let d = Math.min(this.lines.maxLength - 1, u + a - 1); d >= 0; d--) if (h && h.start > m + x) {
+            for (let R = h.newLines.length - 1; R >= 0; R--) this.lines.set(d--, h.newLines[R]);
+            d++, l.push({ index: m + 1, amount: h.newLines.length }), x += h.newLines.length, h = s[++o];
+          } else this.lines.set(d, c[m--]);
+          let v = 0;
+          for (let d = l.length - 1; d >= 0; d--) l[d].index += v, this.lines.onInsertEmitter.fire(l[d]), v += l[d].amount;
+          let _ = Math.max(0, u + a - this.lines.maxLength);
+          _ > 0 && this.lines.onTrimEmitter.fire(_);
+        }
+      }
+      translateBufferLineToString(t, e, r = 0, i) {
+        let s = this.lines.get(t);
+        return s ? s.translateToString(e, r, i) : "";
+      }
+      getWrappedRangeForLine(t) {
+        let e = t, r = t;
+        for (; e > 0 && this.lines.get(e).isWrapped; ) e--;
+        for (; r + 1 < this.lines.length && this.lines.get(r + 1).isWrapped; ) r++;
+        return { first: e, last: r };
+      }
+      setupTabStops(t) {
+        for (t != null ? this.tabs[t] || (t = this.prevStop(t)) : (this.tabs = {}, t = 0); t < this._cols; t += this._optionsService.rawOptions.tabStopWidth) this.tabs[t] = true;
+      }
+      prevStop(t) {
+        for (t == null && (t = this.x); !this.tabs[--t] && t > 0; ) ;
+        return t >= this._cols ? this._cols - 1 : t < 0 ? 0 : t;
+      }
+      nextStop(t) {
+        for (t == null && (t = this.x); !this.tabs[++t] && t < this._cols; ) ;
+        return t >= this._cols ? this._cols - 1 : t < 0 ? 0 : t;
+      }
+      clearMarkers(t) {
+        this._isClearing = true;
+        for (let e = 0; e < this.markers.length; e++) this.markers[e].line === t && (this.markers[e].dispose(), this.markers.splice(e--, 1));
+        this._isClearing = false;
+      }
+      clearAllMarkers() {
+        this._isClearing = true;
+        for (let t = 0; t < this.markers.length; t++) this.markers[t].dispose();
+        this.markers.length = 0, this._isClearing = false;
+      }
+      addMarker(t) {
+        let e = new mt(t);
+        return this.markers.push(e), e.register(this.lines.onTrim((r) => {
+          e.line -= r, e.line < 0 && e.dispose();
+        })), e.register(this.lines.onInsert((r) => {
+          e.line >= r.index && (e.line += r.amount);
+        })), e.register(this.lines.onDelete((r) => {
+          e.line >= r.index && e.line < r.index + r.amount && e.dispose(), e.line > r.index && (e.line -= r.amount);
+        })), e.register(e.onDispose(() => this._removeMarker(e))), e;
+      }
+      _removeMarker(t) {
+        this._isClearing || this.markers.splice(this.markers.indexOf(t), 1);
+      }
+    };
+    gt = class extends A {
+      constructor(e, r) {
+        super();
+        this._optionsService = e;
+        this._bufferService = r;
+        this._onBufferActivate = this._register(new S());
+        this.onBufferActivate = this._onBufferActivate.event;
+        this.reset(), this._register(this._optionsService.onSpecificOptionChange("scrollback", () => this.resize(this._bufferService.cols, this._bufferService.rows))), this._register(this._optionsService.onSpecificOptionChange("tabStopWidth", () => this.setupTabStops()));
+      }
+      reset() {
+        this._normal = new Pe(true, this._optionsService, this._bufferService), this._normal.fillViewportRows(), this._alt = new Pe(false, this._optionsService, this._bufferService), this._activeBuffer = this._normal, this._onBufferActivate.fire({ activeBuffer: this._normal, inactiveBuffer: this._alt }), this.setupTabStops();
+      }
+      get alt() {
+        return this._alt;
+      }
+      get active() {
+        return this._activeBuffer;
+      }
+      get normal() {
+        return this._normal;
+      }
+      activateNormalBuffer() {
+        this._activeBuffer !== this._normal && (this._normal.x = this._alt.x, this._normal.y = this._alt.y, this._alt.clearAllMarkers(), this._alt.clear(), this._activeBuffer = this._normal, this._onBufferActivate.fire({ activeBuffer: this._normal, inactiveBuffer: this._alt }));
+      }
+      activateAltBuffer(e) {
+        this._activeBuffer !== this._alt && (this._alt.fillViewportRows(e), this._alt.x = this._normal.x, this._alt.y = this._normal.y, this._activeBuffer = this._alt, this._onBufferActivate.fire({ activeBuffer: this._alt, inactiveBuffer: this._normal }));
+      }
+      resize(e, r) {
+        this._normal.resize(e, r), this._alt.resize(e, r), this.setupTabStops(e);
+      }
+      setupTabStops(e) {
+        this._normal.setupTabStops(e), this._alt.setupTabStops(e);
+      }
+    };
+    Yt = 2;
+    Qt = 1;
+    ve = class extends A {
+      constructor(e) {
+        super();
+        this.isUserScrolling = false;
+        this._onResize = this._register(new S());
+        this.onResize = this._onResize.event;
+        this._onScroll = this._register(new S());
+        this.onScroll = this._onScroll.event;
+        this.cols = Math.max(e.rawOptions.cols || 0, Yt), this.rows = Math.max(e.rawOptions.rows || 0, Qt), this.buffers = this._register(new gt(e, this)), this._register(this.buffers.onBufferActivate((r) => {
+          this._onScroll.fire(r.activeBuffer.ydisp);
+        }));
+      }
+      get buffer() {
+        return this.buffers.active;
+      }
+      resize(e, r) {
+        let i = this.cols !== e, s = this.rows !== r;
+        this.cols = e, this.rows = r, this.buffers.resize(e, r), this._onResize.fire({ cols: e, rows: r, colsChanged: i, rowsChanged: s });
+      }
+      reset() {
+        this.buffers.reset(), this.isUserScrolling = false;
+      }
+      scroll(e, r = false) {
+        let i = this.buffer, s;
+        s = this._cachedBlankLine, (!s || s.length !== this.cols || s.getFg(0) !== e.fg || s.getBg(0) !== e.bg) && (s = i.getBlankLine(e, r), this._cachedBlankLine = s), s.isWrapped = r;
+        let a = i.ybase + i.scrollTop, l = i.ybase + i.scrollBottom;
+        if (i.scrollTop === 0) {
+          let c = i.lines.isFull;
+          l === i.lines.length - 1 ? c ? i.lines.recycle().copyFrom(s) : i.lines.push(s.clone()) : i.lines.splice(l + 1, 0, s.clone()), c ? this.isUserScrolling && (i.ydisp = Math.max(i.ydisp - 1, 0)) : (i.ybase++, this.isUserScrolling || i.ydisp++);
+        } else {
+          let c = l - a + 1;
+          i.lines.shiftElements(a + 1, c - 1, -1), i.lines.set(l, s.clone());
+        }
+        this.isUserScrolling || (i.ydisp = i.ybase), this._onScroll.fire(i.ydisp);
+      }
+      scrollLines(e, r) {
+        let i = this.buffer;
+        if (e < 0) {
+          if (i.ydisp === 0) return;
+          this.isUserScrolling = true;
+        } else e + i.ydisp >= i.ybase && (this.isUserScrolling = false);
+        let s = i.ydisp;
+        i.ydisp = Math.max(Math.min(i.ydisp + e, i.ybase), 0), s !== i.ydisp && (r || this._onScroll.fire(i.ydisp));
+      }
+    };
+    ve = K([F(0, Y)], ve);
+    ge = { cols: 80, rows: 24, cursorBlink: false, cursorStyle: "block", cursorWidth: 1, cursorInactiveStyle: "outline", customGlyphs: true, drawBoldTextInBrightColors: true, documentOverride: null, fastScrollModifier: "alt", fastScrollSensitivity: 5, fontFamily: "monospace", fontSize: 15, fontWeight: "normal", fontWeightBold: "bold", ignoreBracketedPasteMode: false, lineHeight: 1, letterSpacing: 0, linkHandler: null, logLevel: "info", logger: null, scrollback: 1e3, scrollOnEraseInDisplay: false, scrollOnUserInput: true, scrollSensitivity: 1, screenReaderMode: false, smoothScrollDuration: 0, macOptionIsMeta: false, macOptionClickForcesSelection: false, minimumContrastRatio: 1, disableStdin: false, allowProposedApi: false, allowTransparency: false, tabStopWidth: 8, theme: {}, reflowCursorLine: false, rescaleOverlappingGlyphs: false, rightClickSelectsWord: kr, windowOptions: {}, windowsMode: false, windowsPty: {}, wordSeparator: " ()[]{}',\"`", altClickMovesCursor: true, convertEol: false, termName: "xterm", cancelEvents: false, overviewRuler: {} };
+    Ti = ["normal", "bold", "100", "200", "300", "400", "500", "600", "700", "800", "900"];
+    It = class extends A {
+      constructor(e) {
+        super();
+        this._onOptionChange = this._register(new S());
+        this.onOptionChange = this._onOptionChange.event;
+        let r = { ...ge };
+        for (let i in e) if (i in r) try {
+          let s = e[i];
+          r[i] = this._sanitizeAndValidateOption(i, s);
+        } catch (s) {
+          console.error(s);
+        }
+        this.rawOptions = r, this.options = { ...r }, this._setupOptions(), this._register(J(() => {
+          this.rawOptions.linkHandler = null, this.rawOptions.documentOverride = null;
+        }));
+      }
+      onSpecificOptionChange(e, r) {
+        return this.onOptionChange((i) => {
+          i === e && r(this.rawOptions[e]);
+        });
+      }
+      onMultipleOptionChange(e, r) {
+        return this.onOptionChange((i) => {
+          e.indexOf(i) !== -1 && r();
+        });
+      }
+      _setupOptions() {
+        let e = (i) => {
+          if (!(i in ge)) throw new Error(`No option with key "${i}"`);
+          return this.rawOptions[i];
+        }, r = (i, s) => {
+          if (!(i in ge)) throw new Error(`No option with key "${i}"`);
+          s = this._sanitizeAndValidateOption(i, s), this.rawOptions[i] !== s && (this.rawOptions[i] = s, this._onOptionChange.fire(i));
+        };
+        for (let i in this.rawOptions) {
+          let s = { get: e.bind(this, i), set: r.bind(this, i) };
+          Object.defineProperty(this.options, i, s);
+        }
+      }
+      _sanitizeAndValidateOption(e, r) {
+        switch (e) {
+          case "cursorStyle":
+            if (r || (r = ge[e]), !Si(r)) throw new Error(`"${r}" is not a valid value for ${e}`);
+            break;
+          case "wordSeparator":
+            r || (r = ge[e]);
+            break;
+          case "fontWeight":
+          case "fontWeightBold":
+            if (typeof r == "number" && 1 <= r && r <= 1e3) break;
+            r = Ti.includes(r) ? r : ge[e];
+            break;
+          case "cursorWidth":
+            r = Math.floor(r);
+          case "lineHeight":
+          case "tabStopWidth":
+            if (r < 1) throw new Error(`${e} cannot be less than 1, value: ${r}`);
+            break;
+          case "minimumContrastRatio":
+            r = Math.max(1, Math.min(21, Math.round(r * 10) / 10));
+            break;
+          case "scrollback":
+            if (r = Math.min(r, 4294967295), r < 0) throw new Error(`${e} cannot be less than 0, value: ${r}`);
+            break;
+          case "fastScrollSensitivity":
+          case "scrollSensitivity":
+            if (r <= 0) throw new Error(`${e} cannot be less than or equal to 0, value: ${r}`);
+            break;
+          case "rows":
+          case "cols":
+            if (!r && r !== 0) throw new Error(`${e} must be numeric, value: ${r}`);
+            break;
+          case "windowsPty":
+            r = r ?? {};
+            break;
+        }
+        return r;
+      }
+    };
+    Ur = Object.freeze({ insertMode: false });
+    Wr = Object.freeze({ applicationCursorKeys: false, applicationKeypad: false, bracketedPasteMode: false, cursorBlink: void 0, cursorStyle: void 0, origin: false, reverseWraparound: false, sendFocus: false, synchronizedOutput: false, wraparound: true });
+    xe = class extends A {
+      constructor(e, r, i) {
+        super();
+        this._bufferService = e;
+        this._logService = r;
+        this._optionsService = i;
+        this.isCursorInitialized = false;
+        this.isCursorHidden = false;
+        this._onData = this._register(new S());
+        this.onData = this._onData.event;
+        this._onUserInput = this._register(new S());
+        this.onUserInput = this._onUserInput.event;
+        this._onBinary = this._register(new S());
+        this.onBinary = this._onBinary.event;
+        this._onRequestScrollToBottom = this._register(new S());
+        this.onRequestScrollToBottom = this._onRequestScrollToBottom.event;
+        this.modes = Ie(Ur), this.decPrivateModes = Ie(Wr);
+      }
+      reset() {
+        this.modes = Ie(Ur), this.decPrivateModes = Ie(Wr);
+      }
+      triggerDataEvent(e, r = false) {
+        if (this._optionsService.rawOptions.disableStdin) return;
+        let i = this._bufferService.buffer;
+        r && this._optionsService.rawOptions.scrollOnUserInput && i.ybase !== i.ydisp && this._onRequestScrollToBottom.fire(), r && this._onUserInput.fire(), this._logService.debug(`sending data "${e}"`), this._logService.trace("sending data (codes)", () => e.split("").map((s) => s.charCodeAt(0))), this._onData.fire(e);
+      }
+      triggerBinaryEvent(e) {
+        this._optionsService.rawOptions.disableStdin || (this._logService.debug(`sending binary "${e}"`), this._logService.trace("sending binary (codes)", () => e.split("").map((r) => r.charCodeAt(0))), this._onBinary.fire(e));
+      }
+    };
+    xe = K([F(0, X), F(1, ht), F(2, Y)], xe);
+    Gr = { NONE: { events: 0, restrict: () => false }, X10: { events: 1, restrict: (n10) => n10.button === 4 || n10.action !== 1 ? false : (n10.ctrl = false, n10.alt = false, n10.shift = false, true) }, VT200: { events: 19, restrict: (n10) => n10.action !== 32 }, DRAG: { events: 23, restrict: (n10) => !(n10.action === 32 && n10.button === 3) }, ANY: { events: 31, restrict: (n10) => true } };
+    Zt = String.fromCharCode;
+    Kr = { DEFAULT: (n10) => {
+      let t = [Jt(n10, false) + 32, n10.col + 32, n10.row + 32];
+      return t[0] > 255 || t[1] > 255 || t[2] > 255 ? "" : `\x1B[M${Zt(t[0])}${Zt(t[1])}${Zt(t[2])}`;
+    }, SGR: (n10) => {
+      let t = n10.action === 0 && n10.button !== 4 ? "m" : "M";
+      return `\x1B[<${Jt(n10, true)};${n10.col};${n10.row}${t}`;
+    }, SGR_PIXELS: (n10) => {
+      let t = n10.action === 0 && n10.button !== 4 ? "m" : "M";
+      return `\x1B[<${Jt(n10, true)};${n10.x};${n10.y}${t}`;
+    } };
+    Te = class extends A {
+      constructor(e, r, i) {
+        super();
+        this._bufferService = e;
+        this._coreService = r;
+        this._optionsService = i;
+        this._protocols = {};
+        this._encodings = {};
+        this._activeProtocol = "";
+        this._activeEncoding = "";
+        this._lastEvent = null;
+        this._wheelPartialScroll = 0;
+        this._onProtocolChange = this._register(new S());
+        this.onProtocolChange = this._onProtocolChange.event;
+        for (let s of Object.keys(Gr)) this.addProtocol(s, Gr[s]);
+        for (let s of Object.keys(Kr)) this.addEncoding(s, Kr[s]);
+        this.reset();
+      }
+      addProtocol(e, r) {
+        this._protocols[e] = r;
+      }
+      addEncoding(e, r) {
+        this._encodings[e] = r;
+      }
+      get activeProtocol() {
+        return this._activeProtocol;
+      }
+      get areMouseEventsActive() {
+        return this._protocols[this._activeProtocol].events !== 0;
+      }
+      set activeProtocol(e) {
+        if (!this._protocols[e]) throw new Error(`unknown protocol "${e}"`);
+        this._activeProtocol = e, this._onProtocolChange.fire(this._protocols[e].events);
+      }
+      get activeEncoding() {
+        return this._activeEncoding;
+      }
+      set activeEncoding(e) {
+        if (!this._encodings[e]) throw new Error(`unknown encoding "${e}"`);
+        this._activeEncoding = e;
+      }
+      reset() {
+        this.activeProtocol = "NONE", this.activeEncoding = "DEFAULT", this._lastEvent = null, this._wheelPartialScroll = 0;
+      }
+      consumeWheelEvent(e, r, i) {
+        if (e.deltaY === 0 || e.shiftKey || r === void 0 || i === void 0) return 0;
+        let s = r / i, a = this._applyScrollModifier(e.deltaY, e);
+        return e.deltaMode === WheelEvent.DOM_DELTA_PIXEL ? (a /= s + 0, Math.abs(e.deltaY) < 50 && (a *= 0.3), this._wheelPartialScroll += a, a = Math.floor(Math.abs(this._wheelPartialScroll)) * (this._wheelPartialScroll > 0 ? 1 : -1), this._wheelPartialScroll %= 1) : e.deltaMode === WheelEvent.DOM_DELTA_PAGE && (a *= this._bufferService.rows), a;
+      }
+      _applyScrollModifier(e, r) {
+        return r.altKey || r.ctrlKey || r.shiftKey ? e * this._optionsService.rawOptions.fastScrollSensitivity * this._optionsService.rawOptions.scrollSensitivity : e * this._optionsService.rawOptions.scrollSensitivity;
+      }
+      triggerMouseEvent(e) {
+        if (e.col < 0 || e.col >= this._bufferService.cols || e.row < 0 || e.row >= this._bufferService.rows || e.button === 4 && e.action === 32 || e.button === 3 && e.action !== 32 || e.button !== 4 && (e.action === 2 || e.action === 3) || (e.col++, e.row++, e.action === 32 && this._lastEvent && this._equalEvents(this._lastEvent, e, this._activeEncoding === "SGR_PIXELS")) || !this._protocols[this._activeProtocol].restrict(e)) return false;
+        let r = this._encodings[this._activeEncoding](e);
+        return r && (this._activeEncoding === "DEFAULT" ? this._coreService.triggerBinaryEvent(r) : this._coreService.triggerDataEvent(r, true)), this._lastEvent = e, true;
+      }
+      explainEvents(e) {
+        return { down: !!(e & 1), up: !!(e & 2), drag: !!(e & 4), move: !!(e & 8), wheel: !!(e & 16) };
+      }
+      _equalEvents(e, r, i) {
+        if (i) {
+          if (e.x !== r.x || e.y !== r.y) return false;
+        } else if (e.col !== r.col || e.row !== r.row) return false;
+        return !(e.button !== r.button || e.action !== r.action || e.ctrl !== r.ctrl || e.alt !== r.alt || e.shift !== r.shift);
+      }
+    };
+    Te = K([F(0, X), F(1, dt), F(2, Y)], Te);
+    er = [[768, 879], [1155, 1158], [1160, 1161], [1425, 1469], [1471, 1471], [1473, 1474], [1476, 1477], [1479, 1479], [1536, 1539], [1552, 1557], [1611, 1630], [1648, 1648], [1750, 1764], [1767, 1768], [1770, 1773], [1807, 1807], [1809, 1809], [1840, 1866], [1958, 1968], [2027, 2035], [2305, 2306], [2364, 2364], [2369, 2376], [2381, 2381], [2385, 2388], [2402, 2403], [2433, 2433], [2492, 2492], [2497, 2500], [2509, 2509], [2530, 2531], [2561, 2562], [2620, 2620], [2625, 2626], [2631, 2632], [2635, 2637], [2672, 2673], [2689, 2690], [2748, 2748], [2753, 2757], [2759, 2760], [2765, 2765], [2786, 2787], [2817, 2817], [2876, 2876], [2879, 2879], [2881, 2883], [2893, 2893], [2902, 2902], [2946, 2946], [3008, 3008], [3021, 3021], [3134, 3136], [3142, 3144], [3146, 3149], [3157, 3158], [3260, 3260], [3263, 3263], [3270, 3270], [3276, 3277], [3298, 3299], [3393, 3395], [3405, 3405], [3530, 3530], [3538, 3540], [3542, 3542], [3633, 3633], [3636, 3642], [3655, 3662], [3761, 3761], [3764, 3769], [3771, 3772], [3784, 3789], [3864, 3865], [3893, 3893], [3895, 3895], [3897, 3897], [3953, 3966], [3968, 3972], [3974, 3975], [3984, 3991], [3993, 4028], [4038, 4038], [4141, 4144], [4146, 4146], [4150, 4151], [4153, 4153], [4184, 4185], [4448, 4607], [4959, 4959], [5906, 5908], [5938, 5940], [5970, 5971], [6002, 6003], [6068, 6069], [6071, 6077], [6086, 6086], [6089, 6099], [6109, 6109], [6155, 6157], [6313, 6313], [6432, 6434], [6439, 6440], [6450, 6450], [6457, 6459], [6679, 6680], [6912, 6915], [6964, 6964], [6966, 6970], [6972, 6972], [6978, 6978], [7019, 7027], [7616, 7626], [7678, 7679], [8203, 8207], [8234, 8238], [8288, 8291], [8298, 8303], [8400, 8431], [12330, 12335], [12441, 12442], [43014, 43014], [43019, 43019], [43045, 43046], [64286, 64286], [65024, 65039], [65056, 65059], [65279, 65279], [65529, 65531]];
+    Ei = [[68097, 68099], [68101, 68102], [68108, 68111], [68152, 68154], [68159, 68159], [119143, 119145], [119155, 119170], [119173, 119179], [119210, 119213], [119362, 119364], [917505, 917505], [917536, 917631], [917760, 917999]];
+    xt = class {
+      constructor() {
+        this.version = "6";
+        if (!M) {
+          M = new Uint8Array(65536), M.fill(1), M[0] = 0, M.fill(0, 1, 32), M.fill(0, 127, 160), M.fill(2, 4352, 4448), M[9001] = 2, M[9002] = 2, M.fill(2, 11904, 42192), M[12351] = 1, M.fill(2, 44032, 55204), M.fill(2, 63744, 64256), M.fill(2, 65040, 65050), M.fill(2, 65072, 65136), M.fill(2, 65280, 65377), M.fill(2, 65504, 65511);
+          for (let t = 0; t < er.length; ++t) M.fill(0, er[t][0], er[t][1] + 1);
+        }
+      }
+      wcwidth(t) {
+        return t < 32 ? 0 : t < 127 ? 1 : t < 65536 ? M[t] : yi(t, Ei) ? 0 : t >= 131072 && t <= 196605 || t >= 196608 && t <= 262141 ? 2 : 1;
+      }
+      charProperties(t, e) {
+        let r = this.wcwidth(t), i = r === 0 && e !== 0;
+        if (i) {
+          let s = z73.extractWidth(e);
+          s === 0 ? i = false : s > r && (r = s);
+        }
+        return z73.createPropertyValue(0, r, i);
+      }
+    };
+    z73 = class n8 {
+      constructor() {
+        this._providers = /* @__PURE__ */ Object.create(null);
+        this._active = "";
+        this._onChange = new S();
+        this.onChange = this._onChange.event;
+        let t = new xt();
+        this.register(t), this._active = t.version, this._activeProvider = t;
+      }
+      static extractShouldJoin(t) {
+        return (t & 1) !== 0;
+      }
+      static extractWidth(t) {
+        return t >> 1 & 3;
+      }
+      static extractCharKind(t) {
+        return t >> 3;
+      }
+      static createPropertyValue(t, e, r = false) {
+        return (t & 16777215) << 3 | (e & 3) << 1 | (r ? 1 : 0);
+      }
+      dispose() {
+        this._onChange.dispose();
+      }
+      get versions() {
+        return Object.keys(this._providers);
+      }
+      get activeVersion() {
+        return this._active;
+      }
+      set activeVersion(t) {
+        if (!this._providers[t]) throw new Error(`unknown Unicode version "${t}"`);
+        this._active = t, this._activeProvider = this._providers[t], this._onChange.fire(t);
+      }
+      register(t) {
+        this._providers[t.version] = t;
+      }
+      wcwidth(t) {
+        return this._activeProvider.wcwidth(t);
+      }
+      getStringCellWidth(t) {
+        let e = 0, r = 0, i = t.length;
+        for (let s = 0; s < i; ++s) {
+          let a = t.charCodeAt(s);
+          if (55296 <= a && a <= 56319) {
+            if (++s >= i) return e + this.wcwidth(a);
+            let u = t.charCodeAt(s);
+            56320 <= u && u <= 57343 ? a = (a - 55296) * 1024 + u - 56320 + 65536 : e += this.wcwidth(u);
+          }
+          let l = this.charProperties(a, r), c = n8.extractWidth(l);
+          n8.extractShouldJoin(l) && (c -= n8.extractWidth(r)), e += c, r = l;
+        }
+        return e;
+      }
+      charProperties(t, e) {
+        return this._activeProvider.charProperties(t, e);
+      }
+    };
+    Tt = class {
+      constructor() {
+        this.glevel = 0;
+        this._charsets = [];
+      }
+      reset() {
+        this.charset = void 0, this._charsets = [], this.glevel = 0;
+      }
+      setgLevel(t) {
+        this.glevel = t, this.charset = this._charsets[t];
+      }
+      setgCharset(t, e) {
+        this._charsets[t] = e, this.glevel === t && (this.charset = e);
+      }
+    };
+    ((p) => (p.NUL = "\0", p.SOH = "\x01", p.STX = "\x02", p.ETX = "\x03", p.EOT = "\x04", p.ENQ = "\x05", p.ACK = "\x06", p.BEL = "\x07", p.BS = "\b", p.HT = "	", p.LF = `
+`, p.VT = "\v", p.FF = "\f", p.CR = "\r", p.SO = "\x0e", p.SI = "\x0f", p.DLE = "\x10", p.DC1 = "\x11", p.DC2 = "\x12", p.DC3 = "\x13", p.DC4 = "\x14", p.NAK = "\x15", p.SYN = "\x16", p.ETB = "\x17", p.CAN = "\x18", p.EM = "\x19", p.SUB = "\x1a", p.ESC = "\x1B", p.FS = "\x1c", p.GS = "\x1d", p.RS = "\x1e", p.US = "\x1f", p.SP = " ", p.DEL = "\x7F"))(P ||= {});
+    ((f) => (f.PAD = "\x80", f.HOP = "\x81", f.BPH = "\x82", f.NBH = "\x83", f.IND = "\x84", f.NEL = "\x85", f.SSA = "\x86", f.ESA = "\x87", f.HTS = "\x88", f.HTJ = "\x89", f.VTS = "\x8A", f.PLD = "\x8B", f.PLU = "\x8C", f.RI = "\x8D", f.SS2 = "\x8E", f.SS3 = "\x8F", f.DCS = "\x90", f.PU1 = "\x91", f.PU2 = "\x92", f.STS = "\x93", f.CCH = "\x94", f.MW = "\x95", f.SPA = "\x96", f.EPA = "\x97", f.SOS = "\x98", f.SGCI = "\x99", f.SCI = "\x9A", f.CSI = "\x9B", f.ST = "\x9C", f.OSC = "\x9D", f.PM = "\x9E", f.APC = "\x9F"))(ke ||= {});
+    ((t) => t.ST = `${P.ESC}\\`)(Ci ||= {});
+    Be = 2147483647;
+    Di = 256;
+    Se = class n9 {
+      constructor(t = 32, e = 32) {
+        this.maxLength = t;
+        this.maxSubParamsLength = e;
+        if (e > Di) throw new Error("maxSubParamsLength must not be greater than 256");
+        this.params = new Int32Array(t), this.length = 0, this._subParams = new Int32Array(e), this._subParamsLength = 0, this._subParamsIdx = new Uint16Array(t), this._rejectDigits = false, this._rejectSubDigits = false, this._digitIsSub = false;
+      }
+      static fromArray(t) {
+        let e = new n9();
+        if (!t.length) return e;
+        for (let r = Array.isArray(t[0]) ? 1 : 0; r < t.length; ++r) {
+          let i = t[r];
+          if (Array.isArray(i)) for (let s = 0; s < i.length; ++s) e.addSubParam(i[s]);
+          else e.addParam(i);
+        }
+        return e;
+      }
+      clone() {
+        let t = new n9(this.maxLength, this.maxSubParamsLength);
+        return t.params.set(this.params), t.length = this.length, t._subParams.set(this._subParams), t._subParamsLength = this._subParamsLength, t._subParamsIdx.set(this._subParamsIdx), t._rejectDigits = this._rejectDigits, t._rejectSubDigits = this._rejectSubDigits, t._digitIsSub = this._digitIsSub, t;
+      }
+      toArray() {
+        let t = [];
+        for (let e = 0; e < this.length; ++e) {
+          t.push(this.params[e]);
+          let r = this._subParamsIdx[e] >> 8, i = this._subParamsIdx[e] & 255;
+          i - r > 0 && t.push(Array.prototype.slice.call(this._subParams, r, i));
+        }
+        return t;
+      }
+      reset() {
+        this.length = 0, this._subParamsLength = 0, this._rejectDigits = false, this._rejectSubDigits = false, this._digitIsSub = false;
+      }
+      addParam(t) {
+        if (this._digitIsSub = false, this.length >= this.maxLength) {
+          this._rejectDigits = true;
+          return;
+        }
+        if (t < -1) throw new Error("values lesser than -1 are not allowed");
+        this._subParamsIdx[this.length] = this._subParamsLength << 8 | this._subParamsLength, this.params[this.length++] = t > Be ? Be : t;
+      }
+      addSubParam(t) {
+        if (this._digitIsSub = true, !!this.length) {
+          if (this._rejectDigits || this._subParamsLength >= this.maxSubParamsLength) {
+            this._rejectSubDigits = true;
+            return;
+          }
+          if (t < -1) throw new Error("values lesser than -1 are not allowed");
+          this._subParams[this._subParamsLength++] = t > Be ? Be : t, this._subParamsIdx[this.length - 1]++;
+        }
+      }
+      hasSubParams(t) {
+        return (this._subParamsIdx[t] & 255) - (this._subParamsIdx[t] >> 8) > 0;
+      }
+      getSubParams(t) {
+        let e = this._subParamsIdx[t] >> 8, r = this._subParamsIdx[t] & 255;
+        return r - e > 0 ? this._subParams.subarray(e, r) : null;
+      }
+      getSubParamsAll() {
+        let t = {};
+        for (let e = 0; e < this.length; ++e) {
+          let r = this._subParamsIdx[e] >> 8, i = this._subParamsIdx[e] & 255;
+          i - r > 0 && (t[e] = this._subParams.slice(r, i));
+        }
+        return t;
+      }
+      addDigit(t) {
+        let e;
+        if (this._rejectDigits || !(e = this._digitIsSub ? this._subParamsLength : this.length) || this._digitIsSub && this._rejectSubDigits) return;
+        let r = this._digitIsSub ? this._subParams : this.params, i = r[e - 1];
+        r[e - 1] = ~i ? Math.min(i * 10 + t, Be) : t;
+      }
+    };
+    Le = [];
+    St = class {
+      constructor() {
+        this._state = 0;
+        this._active = Le;
+        this._id = -1;
+        this._handlers = /* @__PURE__ */ Object.create(null);
+        this._handlerFb = () => {
+        };
+        this._stack = { paused: false, loopPosition: 0, fallThrough: false };
+      }
+      registerHandler(t, e) {
+        this._handlers[t] === void 0 && (this._handlers[t] = []);
+        let r = this._handlers[t];
+        return r.push(e), { dispose: () => {
+          let i = r.indexOf(e);
+          i !== -1 && r.splice(i, 1);
+        } };
+      }
+      clearHandler(t) {
+        this._handlers[t] && delete this._handlers[t];
+      }
+      setHandlerFallback(t) {
+        this._handlerFb = t;
+      }
+      dispose() {
+        this._handlers = /* @__PURE__ */ Object.create(null), this._handlerFb = () => {
+        }, this._active = Le;
+      }
+      reset() {
+        if (this._state === 2) for (let t = this._stack.paused ? this._stack.loopPosition - 1 : this._active.length - 1; t >= 0; --t) this._active[t].end(false);
+        this._stack.paused = false, this._active = Le, this._id = -1, this._state = 0;
+      }
+      _start() {
+        if (this._active = this._handlers[this._id] || Le, !this._active.length) this._handlerFb(this._id, "START");
+        else for (let t = this._active.length - 1; t >= 0; t--) this._active[t].start();
+      }
+      _put(t, e, r) {
+        if (!this._active.length) this._handlerFb(this._id, "PUT", le(t, e, r));
+        else for (let i = this._active.length - 1; i >= 0; i--) this._active[i].put(t, e, r);
+      }
+      start() {
+        this.reset(), this._state = 1;
+      }
+      put(t, e, r) {
+        if (this._state !== 3) {
+          if (this._state === 1) for (; e < r; ) {
+            let i = t[e++];
+            if (i === 59) {
+              this._state = 2, this._start();
+              break;
+            }
+            if (i < 48 || 57 < i) {
+              this._state = 3;
+              return;
+            }
+            this._id === -1 && (this._id = 0), this._id = this._id * 10 + i - 48;
+          }
+          this._state === 2 && r - e > 0 && this._put(t, e, r);
+        }
+      }
+      end(t, e = true) {
+        if (this._state !== 0) {
+          if (this._state !== 3) if (this._state === 1 && this._start(), !this._active.length) this._handlerFb(this._id, "END", t);
+          else {
+            let r = false, i = this._active.length - 1, s = false;
+            if (this._stack.paused && (i = this._stack.loopPosition - 1, r = e, s = this._stack.fallThrough, this._stack.paused = false), !s && r === false) {
+              for (; i >= 0 && (r = this._active[i].end(t), r !== true); i--) if (r instanceof Promise) return this._stack.paused = true, this._stack.loopPosition = i, this._stack.fallThrough = false, r;
+              i--;
+            }
+            for (; i >= 0; i--) if (r = this._active[i].end(false), r instanceof Promise) return this._stack.paused = true, this._stack.loopPosition = i, this._stack.fallThrough = true, r;
+          }
+          this._active = Le, this._id = -1, this._state = 0;
+        }
+      }
+    };
+    U = class {
+      constructor(t) {
+        this._handler = t;
+        this._data = "";
+        this._hitLimit = false;
+      }
+      start() {
+        this._data = "", this._hitLimit = false;
+      }
+      put(t, e, r) {
+        this._hitLimit || (this._data += le(t, e, r), this._data.length > 1e7 && (this._data = "", this._hitLimit = true));
+      }
+      end(t) {
+        let e = false;
+        if (this._hitLimit) e = false;
+        else if (t && (e = this._handler(this._data), e instanceof Promise)) return e.then((r) => (this._data = "", this._hitLimit = false, r));
+        return this._data = "", this._hitLimit = false, e;
+      }
+    };
+    Me = [];
+    Et = class {
+      constructor() {
+        this._handlers = /* @__PURE__ */ Object.create(null);
+        this._active = Me;
+        this._ident = 0;
+        this._handlerFb = () => {
+        };
+        this._stack = { paused: false, loopPosition: 0, fallThrough: false };
+      }
+      dispose() {
+        this._handlers = /* @__PURE__ */ Object.create(null), this._handlerFb = () => {
+        }, this._active = Me;
+      }
+      registerHandler(t, e) {
+        this._handlers[t] === void 0 && (this._handlers[t] = []);
+        let r = this._handlers[t];
+        return r.push(e), { dispose: () => {
+          let i = r.indexOf(e);
+          i !== -1 && r.splice(i, 1);
+        } };
+      }
+      clearHandler(t) {
+        this._handlers[t] && delete this._handlers[t];
+      }
+      setHandlerFallback(t) {
+        this._handlerFb = t;
+      }
+      reset() {
+        if (this._active.length) for (let t = this._stack.paused ? this._stack.loopPosition - 1 : this._active.length - 1; t >= 0; --t) this._active[t].unhook(false);
+        this._stack.paused = false, this._active = Me, this._ident = 0;
+      }
+      hook(t, e) {
+        if (this.reset(), this._ident = t, this._active = this._handlers[t] || Me, !this._active.length) this._handlerFb(this._ident, "HOOK", e);
+        else for (let r = this._active.length - 1; r >= 0; r--) this._active[r].hook(e);
+      }
+      put(t, e, r) {
+        if (!this._active.length) this._handlerFb(this._ident, "PUT", le(t, e, r));
+        else for (let i = this._active.length - 1; i >= 0; i--) this._active[i].put(t, e, r);
+      }
+      unhook(t, e = true) {
+        if (!this._active.length) this._handlerFb(this._ident, "UNHOOK", t);
+        else {
+          let r = false, i = this._active.length - 1, s = false;
+          if (this._stack.paused && (i = this._stack.loopPosition - 1, r = e, s = this._stack.fallThrough, this._stack.paused = false), !s && r === false) {
+            for (; i >= 0 && (r = this._active[i].unhook(t), r !== true); i--) if (r instanceof Promise) return this._stack.paused = true, this._stack.loopPosition = i, this._stack.fallThrough = false, r;
+            i--;
+          }
+          for (; i >= 0; i--) if (r = this._active[i].unhook(false), r instanceof Promise) return this._stack.paused = true, this._stack.loopPosition = i, this._stack.fallThrough = true, r;
+        }
+        this._active = Me, this._ident = 0;
+      }
+    };
+    Ne = new Se();
+    Ne.addParam(0);
+    He = class {
+      constructor(t) {
+        this._handler = t;
+        this._data = "";
+        this._params = Ne;
+        this._hitLimit = false;
+      }
+      hook(t) {
+        this._params = t.length > 1 || t.params[0] ? t.clone() : Ne, this._data = "", this._hitLimit = false;
+      }
+      put(t, e, r) {
+        this._hitLimit || (this._data += le(t, e, r), this._data.length > 1e7 && (this._data = "", this._hitLimit = true));
+      }
+      unhook(t) {
+        let e = false;
+        if (this._hitLimit) e = false;
+        else if (t && (e = this._handler(this._data, this._params), e instanceof Promise)) return e.then((r) => (this._params = Ne, this._data = "", this._hitLimit = false, r));
+        return this._params = Ne, this._data = "", this._hitLimit = false, e;
+      }
+    };
+    ir = class {
+      constructor(t) {
+        this.table = new Uint8Array(t);
+      }
+      setDefault(t, e) {
+        this.table.fill(t << 4 | e);
+      }
+      add(t, e, r, i) {
+        this.table[e << 8 | t] = r << 4 | i;
+      }
+      addMany(t, e, r, i) {
+        for (let s = 0; s < t.length; s++) this.table[e << 8 | t[s]] = r << 4 | i;
+      }
+    };
+    q = 160;
+    Ai = (function() {
+      let n10 = new ir(4095), e = Array.apply(null, Array(256)).map((c, u) => u), r = (c, u) => e.slice(c, u), i = r(32, 127), s = r(0, 24);
+      s.push(25), s.push.apply(s, r(28, 32));
+      let a = r(0, 14), l;
+      n10.setDefault(1, 0), n10.addMany(i, 0, 2, 0);
+      for (l in a) n10.addMany([24, 26, 153, 154], l, 3, 0), n10.addMany(r(128, 144), l, 3, 0), n10.addMany(r(144, 152), l, 3, 0), n10.add(156, l, 0, 0), n10.add(27, l, 11, 1), n10.add(157, l, 4, 8), n10.addMany([152, 158, 159], l, 0, 7), n10.add(155, l, 11, 3), n10.add(144, l, 11, 9);
+      return n10.addMany(s, 0, 3, 0), n10.addMany(s, 1, 3, 1), n10.add(127, 1, 0, 1), n10.addMany(s, 8, 0, 8), n10.addMany(s, 3, 3, 3), n10.add(127, 3, 0, 3), n10.addMany(s, 4, 3, 4), n10.add(127, 4, 0, 4), n10.addMany(s, 6, 3, 6), n10.addMany(s, 5, 3, 5), n10.add(127, 5, 0, 5), n10.addMany(s, 2, 3, 2), n10.add(127, 2, 0, 2), n10.add(93, 1, 4, 8), n10.addMany(i, 8, 5, 8), n10.add(127, 8, 5, 8), n10.addMany([156, 27, 24, 26, 7], 8, 6, 0), n10.addMany(r(28, 32), 8, 0, 8), n10.addMany([88, 94, 95], 1, 0, 7), n10.addMany(i, 7, 0, 7), n10.addMany(s, 7, 0, 7), n10.add(156, 7, 0, 0), n10.add(127, 7, 0, 7), n10.add(91, 1, 11, 3), n10.addMany(r(64, 127), 3, 7, 0), n10.addMany(r(48, 60), 3, 8, 4), n10.addMany([60, 61, 62, 63], 3, 9, 4), n10.addMany(r(48, 60), 4, 8, 4), n10.addMany(r(64, 127), 4, 7, 0), n10.addMany([60, 61, 62, 63], 4, 0, 6), n10.addMany(r(32, 64), 6, 0, 6), n10.add(127, 6, 0, 6), n10.addMany(r(64, 127), 6, 0, 0), n10.addMany(r(32, 48), 3, 9, 5), n10.addMany(r(32, 48), 5, 9, 5), n10.addMany(r(48, 64), 5, 0, 6), n10.addMany(r(64, 127), 5, 7, 0), n10.addMany(r(32, 48), 4, 9, 5), n10.addMany(r(32, 48), 1, 9, 2), n10.addMany(r(32, 48), 2, 9, 2), n10.addMany(r(48, 127), 2, 10, 0), n10.addMany(r(48, 80), 1, 10, 0), n10.addMany(r(81, 88), 1, 10, 0), n10.addMany([89, 90, 92], 1, 10, 0), n10.addMany(r(96, 127), 1, 10, 0), n10.add(80, 1, 11, 9), n10.addMany(s, 9, 0, 9), n10.add(127, 9, 0, 9), n10.addMany(r(28, 32), 9, 0, 9), n10.addMany(r(32, 48), 9, 9, 12), n10.addMany(r(48, 60), 9, 8, 10), n10.addMany([60, 61, 62, 63], 9, 9, 10), n10.addMany(s, 11, 0, 11), n10.addMany(r(32, 128), 11, 0, 11), n10.addMany(r(28, 32), 11, 0, 11), n10.addMany(s, 10, 0, 10), n10.add(127, 10, 0, 10), n10.addMany(r(28, 32), 10, 0, 10), n10.addMany(r(48, 60), 10, 8, 10), n10.addMany([60, 61, 62, 63], 10, 0, 11), n10.addMany(r(32, 48), 10, 9, 12), n10.addMany(s, 12, 0, 12), n10.add(127, 12, 0, 12), n10.addMany(r(28, 32), 12, 0, 12), n10.addMany(r(32, 48), 12, 9, 12), n10.addMany(r(48, 64), 12, 0, 11), n10.addMany(r(64, 127), 12, 12, 13), n10.addMany(r(64, 127), 10, 12, 13), n10.addMany(r(64, 127), 9, 12, 13), n10.addMany(s, 13, 13, 13), n10.addMany(i, 13, 13, 13), n10.add(127, 13, 0, 13), n10.addMany([27, 156, 24, 26], 13, 14, 0), n10.add(q, 0, 2, 0), n10.add(q, 8, 5, 8), n10.add(q, 6, 0, 6), n10.add(q, 11, 0, 11), n10.add(q, 13, 13, 13), n10;
     })();
+    yt = class extends A {
+      constructor(e = Ai) {
+        super();
+        this._transitions = e;
+        this._parseStack = { state: 0, handlers: [], handlerPos: 0, transition: 0, chunkPos: 0 };
+        this.initialState = 0, this.currentState = this.initialState, this._params = new Se(), this._params.addParam(0), this._collect = 0, this.precedingJoinState = 0, this._printHandlerFb = (r, i, s) => {
+        }, this._executeHandlerFb = (r) => {
+        }, this._csiHandlerFb = (r, i) => {
+        }, this._escHandlerFb = (r) => {
+        }, this._errorHandlerFb = (r) => r, this._printHandler = this._printHandlerFb, this._executeHandlers = /* @__PURE__ */ Object.create(null), this._csiHandlers = /* @__PURE__ */ Object.create(null), this._escHandlers = /* @__PURE__ */ Object.create(null), this._register(J(() => {
+          this._csiHandlers = /* @__PURE__ */ Object.create(null), this._executeHandlers = /* @__PURE__ */ Object.create(null), this._escHandlers = /* @__PURE__ */ Object.create(null);
+        })), this._oscParser = this._register(new St()), this._dcsParser = this._register(new Et()), this._errorHandler = this._errorHandlerFb, this.registerEscHandler({ final: "\\" }, () => true);
+      }
+      _identifier(e, r = [64, 126]) {
+        let i = 0;
+        if (e.prefix) {
+          if (e.prefix.length > 1) throw new Error("only one byte as prefix supported");
+          if (i = e.prefix.charCodeAt(0), i && 60 > i || i > 63) throw new Error("prefix must be in range 0x3c .. 0x3f");
+        }
+        if (e.intermediates) {
+          if (e.intermediates.length > 2) throw new Error("only two bytes as intermediates are supported");
+          for (let a = 0; a < e.intermediates.length; ++a) {
+            let l = e.intermediates.charCodeAt(a);
+            if (32 > l || l > 47) throw new Error("intermediate must be in range 0x20 .. 0x2f");
+            i <<= 8, i |= l;
+          }
+        }
+        if (e.final.length !== 1) throw new Error("final must be a single byte");
+        let s = e.final.charCodeAt(0);
+        if (r[0] > s || s > r[1]) throw new Error(`final must be in range ${r[0]} .. ${r[1]}`);
+        return i <<= 8, i |= s, i;
+      }
+      identToString(e) {
+        let r = [];
+        for (; e; ) r.push(String.fromCharCode(e & 255)), e >>= 8;
+        return r.reverse().join("");
+      }
+      setPrintHandler(e) {
+        this._printHandler = e;
+      }
+      clearPrintHandler() {
+        this._printHandler = this._printHandlerFb;
+      }
+      registerEscHandler(e, r) {
+        let i = this._identifier(e, [48, 126]);
+        this._escHandlers[i] === void 0 && (this._escHandlers[i] = []);
+        let s = this._escHandlers[i];
+        return s.push(r), { dispose: () => {
+          let a = s.indexOf(r);
+          a !== -1 && s.splice(a, 1);
+        } };
+      }
+      clearEscHandler(e) {
+        this._escHandlers[this._identifier(e, [48, 126])] && delete this._escHandlers[this._identifier(e, [48, 126])];
+      }
+      setEscHandlerFallback(e) {
+        this._escHandlerFb = e;
+      }
+      setExecuteHandler(e, r) {
+        this._executeHandlers[e.charCodeAt(0)] = r;
+      }
+      clearExecuteHandler(e) {
+        this._executeHandlers[e.charCodeAt(0)] && delete this._executeHandlers[e.charCodeAt(0)];
+      }
+      setExecuteHandlerFallback(e) {
+        this._executeHandlerFb = e;
+      }
+      registerCsiHandler(e, r) {
+        let i = this._identifier(e);
+        this._csiHandlers[i] === void 0 && (this._csiHandlers[i] = []);
+        let s = this._csiHandlers[i];
+        return s.push(r), { dispose: () => {
+          let a = s.indexOf(r);
+          a !== -1 && s.splice(a, 1);
+        } };
+      }
+      clearCsiHandler(e) {
+        this._csiHandlers[this._identifier(e)] && delete this._csiHandlers[this._identifier(e)];
+      }
+      setCsiHandlerFallback(e) {
+        this._csiHandlerFb = e;
+      }
+      registerDcsHandler(e, r) {
+        return this._dcsParser.registerHandler(this._identifier(e), r);
+      }
+      clearDcsHandler(e) {
+        this._dcsParser.clearHandler(this._identifier(e));
+      }
+      setDcsHandlerFallback(e) {
+        this._dcsParser.setHandlerFallback(e);
+      }
+      registerOscHandler(e, r) {
+        return this._oscParser.registerHandler(e, r);
+      }
+      clearOscHandler(e) {
+        this._oscParser.clearHandler(e);
+      }
+      setOscHandlerFallback(e) {
+        this._oscParser.setHandlerFallback(e);
+      }
+      setErrorHandler(e) {
+        this._errorHandler = e;
+      }
+      clearErrorHandler() {
+        this._errorHandler = this._errorHandlerFb;
+      }
+      reset() {
+        this.currentState = this.initialState, this._oscParser.reset(), this._dcsParser.reset(), this._params.reset(), this._params.addParam(0), this._collect = 0, this.precedingJoinState = 0, this._parseStack.state !== 0 && (this._parseStack.state = 2, this._parseStack.handlers = []);
+      }
+      _preserveStack(e, r, i, s, a) {
+        this._parseStack.state = e, this._parseStack.handlers = r, this._parseStack.handlerPos = i, this._parseStack.transition = s, this._parseStack.chunkPos = a;
+      }
+      parse(e, r, i) {
+        let s = 0, a = 0, l = 0, c;
+        if (this._parseStack.state) if (this._parseStack.state === 2) this._parseStack.state = 0, l = this._parseStack.chunkPos + 1;
+        else {
+          if (i === void 0 || this._parseStack.state === 1) throw this._parseStack.state = 1, new Error("improper continuation due to previous async handler, giving up parsing");
+          let u = this._parseStack.handlers, m = this._parseStack.handlerPos - 1;
+          switch (this._parseStack.state) {
+            case 3:
+              if (i === false && m > -1) {
+                for (; m >= 0 && (c = u[m](this._params), c !== true); m--) if (c instanceof Promise) return this._parseStack.handlerPos = m, c;
+              }
+              this._parseStack.handlers = [];
+              break;
+            case 4:
+              if (i === false && m > -1) {
+                for (; m >= 0 && (c = u[m](), c !== true); m--) if (c instanceof Promise) return this._parseStack.handlerPos = m, c;
+              }
+              this._parseStack.handlers = [];
+              break;
+            case 6:
+              if (s = e[this._parseStack.chunkPos], c = this._dcsParser.unhook(s !== 24 && s !== 26, i), c) return c;
+              s === 27 && (this._parseStack.transition |= 1), this._params.reset(), this._params.addParam(0), this._collect = 0;
+              break;
+            case 5:
+              if (s = e[this._parseStack.chunkPos], c = this._oscParser.end(s !== 24 && s !== 26, i), c) return c;
+              s === 27 && (this._parseStack.transition |= 1), this._params.reset(), this._params.addParam(0), this._collect = 0;
+              break;
+          }
+          this._parseStack.state = 0, l = this._parseStack.chunkPos + 1, this.precedingJoinState = 0, this.currentState = this._parseStack.transition & 15;
+        }
+        for (let u = l; u < r; ++u) {
+          switch (s = e[u], a = this._transitions.table[this.currentState << 8 | (s < 160 ? s : q)], a >> 4) {
+            case 2:
+              for (let _ = u + 1; ; ++_) {
+                if (_ >= r || (s = e[_]) < 32 || s > 126 && s < q) {
+                  this._printHandler(e, u, _), u = _ - 1;
+                  break;
+                }
+                if (++_ >= r || (s = e[_]) < 32 || s > 126 && s < q) {
+                  this._printHandler(e, u, _), u = _ - 1;
+                  break;
+                }
+                if (++_ >= r || (s = e[_]) < 32 || s > 126 && s < q) {
+                  this._printHandler(e, u, _), u = _ - 1;
+                  break;
+                }
+                if (++_ >= r || (s = e[_]) < 32 || s > 126 && s < q) {
+                  this._printHandler(e, u, _), u = _ - 1;
+                  break;
+                }
+              }
+              break;
+            case 3:
+              this._executeHandlers[s] ? this._executeHandlers[s]() : this._executeHandlerFb(s), this.precedingJoinState = 0;
+              break;
+            case 0:
+              break;
+            case 1:
+              if (this._errorHandler({ position: u, code: s, currentState: this.currentState, collect: this._collect, params: this._params, abort: false }).abort) return;
+              break;
+            case 7:
+              let o = this._csiHandlers[this._collect << 8 | s], h = o ? o.length - 1 : -1;
+              for (; h >= 0 && (c = o[h](this._params), c !== true); h--) if (c instanceof Promise) return this._preserveStack(3, o, h, a, u), c;
+              h < 0 && this._csiHandlerFb(this._collect << 8 | s, this._params), this.precedingJoinState = 0;
+              break;
+            case 8:
+              do
+                switch (s) {
+                  case 59:
+                    this._params.addParam(0);
+                    break;
+                  case 58:
+                    this._params.addSubParam(-1);
+                    break;
+                  default:
+                    this._params.addDigit(s - 48);
+                }
+              while (++u < r && (s = e[u]) > 47 && s < 60);
+              u--;
+              break;
+            case 9:
+              this._collect <<= 8, this._collect |= s;
+              break;
+            case 10:
+              let x = this._escHandlers[this._collect << 8 | s], v = x ? x.length - 1 : -1;
+              for (; v >= 0 && (c = x[v](), c !== true); v--) if (c instanceof Promise) return this._preserveStack(4, x, v, a, u), c;
+              v < 0 && this._escHandlerFb(this._collect << 8 | s), this.precedingJoinState = 0;
+              break;
+            case 11:
+              this._params.reset(), this._params.addParam(0), this._collect = 0;
+              break;
+            case 12:
+              this._dcsParser.hook(this._collect << 8 | s, this._params);
+              break;
+            case 13:
+              for (let _ = u + 1; ; ++_) if (_ >= r || (s = e[_]) === 24 || s === 26 || s === 27 || s > 127 && s < q) {
+                this._dcsParser.put(e, u, _), u = _ - 1;
+                break;
+              }
+              break;
+            case 14:
+              if (c = this._dcsParser.unhook(s !== 24 && s !== 26), c) return this._preserveStack(6, [], 0, a, u), c;
+              s === 27 && (a |= 1), this._params.reset(), this._params.addParam(0), this._collect = 0, this.precedingJoinState = 0;
+              break;
+            case 4:
+              this._oscParser.start();
+              break;
+            case 5:
+              for (let _ = u + 1; ; _++) if (_ >= r || (s = e[_]) < 32 || s > 127 && s < q) {
+                this._oscParser.put(e, u, _), u = _ - 1;
+                break;
+              }
+              break;
+            case 6:
+              if (c = this._oscParser.end(s !== 24 && s !== 26), c) return this._preserveStack(5, [], 0, a, u), c;
+              s === 27 && (a |= 1), this._params.reset(), this._params.addParam(0), this._collect = 0, this.precedingJoinState = 0;
+              break;
+          }
+          this.currentState = a & 15;
+        }
+      }
+    };
+    Oi = /^([\da-f])\/([\da-f])\/([\da-f])$|^([\da-f]{2})\/([\da-f]{2})\/([\da-f]{2})$|^([\da-f]{3})\/([\da-f]{3})\/([\da-f]{3})$|^([\da-f]{4})\/([\da-f]{4})\/([\da-f]{4})$/;
+    Ri = /^[\da-f]+$/;
+    wi = { "(": 0, ")": 1, "*": 2, "+": 3, "-": 1, ".": 2 };
+    ie = 131072;
+    zr = 10;
+    $r = 5e3;
+    jr = 0;
+    Ct = class extends A {
+      constructor(e, r, i, s, a, l, c, u, m = new yt()) {
+        super();
+        this._bufferService = e;
+        this._charsetService = r;
+        this._coreService = i;
+        this._logService = s;
+        this._optionsService = a;
+        this._oscLinkService = l;
+        this._coreMouseService = c;
+        this._unicodeService = u;
+        this._parser = m;
+        this._parseBuffer = new Uint32Array(4096);
+        this._stringDecoder = new Ge();
+        this._utf8Decoder = new Ke();
+        this._windowTitle = "";
+        this._iconName = "";
+        this._windowTitleStack = [];
+        this._iconNameStack = [];
+        this._curAttrData = k.clone();
+        this._eraseAttrDataInternal = k.clone();
+        this._onRequestBell = this._register(new S());
+        this.onRequestBell = this._onRequestBell.event;
+        this._onRequestRefreshRows = this._register(new S());
+        this.onRequestRefreshRows = this._onRequestRefreshRows.event;
+        this._onRequestReset = this._register(new S());
+        this.onRequestReset = this._onRequestReset.event;
+        this._onRequestSendFocus = this._register(new S());
+        this.onRequestSendFocus = this._onRequestSendFocus.event;
+        this._onRequestSyncScrollBar = this._register(new S());
+        this.onRequestSyncScrollBar = this._onRequestSyncScrollBar.event;
+        this._onRequestWindowsOptionsReport = this._register(new S());
+        this.onRequestWindowsOptionsReport = this._onRequestWindowsOptionsReport.event;
+        this._onA11yChar = this._register(new S());
+        this.onA11yChar = this._onA11yChar.event;
+        this._onA11yTab = this._register(new S());
+        this.onA11yTab = this._onA11yTab.event;
+        this._onCursorMove = this._register(new S());
+        this.onCursorMove = this._onCursorMove.event;
+        this._onLineFeed = this._register(new S());
+        this.onLineFeed = this._onLineFeed.event;
+        this._onScroll = this._register(new S());
+        this.onScroll = this._onScroll.event;
+        this._onTitleChange = this._register(new S());
+        this.onTitleChange = this._onTitleChange.event;
+        this._onColor = this._register(new S());
+        this.onColor = this._onColor.event;
+        this._parseStack = { paused: false, cursorStartX: 0, cursorStartY: 0, decodedLength: 0, position: 0 };
+        this._specialColors = [256, 257, 258];
+        this._register(this._parser), this._dirtyRowTracker = new Fe(this._bufferService), this._activeBuffer = this._bufferService.buffer, this._register(this._bufferService.buffers.onBufferActivate((o) => this._activeBuffer = o.activeBuffer)), this._parser.setCsiHandlerFallback((o, h) => {
+          this._logService.debug("Unknown CSI code: ", { identifier: this._parser.identToString(o), params: h.toArray() });
+        }), this._parser.setEscHandlerFallback((o) => {
+          this._logService.debug("Unknown ESC code: ", { identifier: this._parser.identToString(o) });
+        }), this._parser.setExecuteHandlerFallback((o) => {
+          this._logService.debug("Unknown EXECUTE code: ", { code: o });
+        }), this._parser.setOscHandlerFallback((o, h, x) => {
+          this._logService.debug("Unknown OSC code: ", { identifier: o, action: h, data: x });
+        }), this._parser.setDcsHandlerFallback((o, h, x) => {
+          h === "HOOK" && (x = x.toArray()), this._logService.debug("Unknown DCS code: ", { identifier: this._parser.identToString(o), action: h, payload: x });
+        }), this._parser.setPrintHandler((o, h, x) => this.print(o, h, x)), this._parser.registerCsiHandler({ final: "@" }, (o) => this.insertChars(o)), this._parser.registerCsiHandler({ intermediates: " ", final: "@" }, (o) => this.scrollLeft(o)), this._parser.registerCsiHandler({ final: "A" }, (o) => this.cursorUp(o)), this._parser.registerCsiHandler({ intermediates: " ", final: "A" }, (o) => this.scrollRight(o)), this._parser.registerCsiHandler({ final: "B" }, (o) => this.cursorDown(o)), this._parser.registerCsiHandler({ final: "C" }, (o) => this.cursorForward(o)), this._parser.registerCsiHandler({ final: "D" }, (o) => this.cursorBackward(o)), this._parser.registerCsiHandler({ final: "E" }, (o) => this.cursorNextLine(o)), this._parser.registerCsiHandler({ final: "F" }, (o) => this.cursorPrecedingLine(o)), this._parser.registerCsiHandler({ final: "G" }, (o) => this.cursorCharAbsolute(o)), this._parser.registerCsiHandler({ final: "H" }, (o) => this.cursorPosition(o)), this._parser.registerCsiHandler({ final: "I" }, (o) => this.cursorForwardTab(o)), this._parser.registerCsiHandler({ final: "J" }, (o) => this.eraseInDisplay(o, false)), this._parser.registerCsiHandler({ prefix: "?", final: "J" }, (o) => this.eraseInDisplay(o, true)), this._parser.registerCsiHandler({ final: "K" }, (o) => this.eraseInLine(o, false)), this._parser.registerCsiHandler({ prefix: "?", final: "K" }, (o) => this.eraseInLine(o, true)), this._parser.registerCsiHandler({ final: "L" }, (o) => this.insertLines(o)), this._parser.registerCsiHandler({ final: "M" }, (o) => this.deleteLines(o)), this._parser.registerCsiHandler({ final: "P" }, (o) => this.deleteChars(o)), this._parser.registerCsiHandler({ final: "S" }, (o) => this.scrollUp(o)), this._parser.registerCsiHandler({ final: "T" }, (o) => this.scrollDown(o)), this._parser.registerCsiHandler({ final: "X" }, (o) => this.eraseChars(o)), this._parser.registerCsiHandler({ final: "Z" }, (o) => this.cursorBackwardTab(o)), this._parser.registerCsiHandler({ final: "`" }, (o) => this.charPosAbsolute(o)), this._parser.registerCsiHandler({ final: "a" }, (o) => this.hPositionRelative(o)), this._parser.registerCsiHandler({ final: "b" }, (o) => this.repeatPrecedingCharacter(o)), this._parser.registerCsiHandler({ final: "c" }, (o) => this.sendDeviceAttributesPrimary(o)), this._parser.registerCsiHandler({ prefix: ">", final: "c" }, (o) => this.sendDeviceAttributesSecondary(o)), this._parser.registerCsiHandler({ final: "d" }, (o) => this.linePosAbsolute(o)), this._parser.registerCsiHandler({ final: "e" }, (o) => this.vPositionRelative(o)), this._parser.registerCsiHandler({ final: "f" }, (o) => this.hVPosition(o)), this._parser.registerCsiHandler({ final: "g" }, (o) => this.tabClear(o)), this._parser.registerCsiHandler({ final: "h" }, (o) => this.setMode(o)), this._parser.registerCsiHandler({ prefix: "?", final: "h" }, (o) => this.setModePrivate(o)), this._parser.registerCsiHandler({ final: "l" }, (o) => this.resetMode(o)), this._parser.registerCsiHandler({ prefix: "?", final: "l" }, (o) => this.resetModePrivate(o)), this._parser.registerCsiHandler({ final: "m" }, (o) => this.charAttributes(o)), this._parser.registerCsiHandler({ final: "n" }, (o) => this.deviceStatus(o)), this._parser.registerCsiHandler({ prefix: "?", final: "n" }, (o) => this.deviceStatusPrivate(o)), this._parser.registerCsiHandler({ intermediates: "!", final: "p" }, (o) => this.softReset(o)), this._parser.registerCsiHandler({ intermediates: " ", final: "q" }, (o) => this.setCursorStyle(o)), this._parser.registerCsiHandler({ final: "r" }, (o) => this.setScrollRegion(o)), this._parser.registerCsiHandler({ final: "s" }, (o) => this.saveCursor(o)), this._parser.registerCsiHandler({ final: "t" }, (o) => this.windowOptions(o)), this._parser.registerCsiHandler({ final: "u" }, (o) => this.restoreCursor(o)), this._parser.registerCsiHandler({ intermediates: "'", final: "}" }, (o) => this.insertColumns(o)), this._parser.registerCsiHandler({ intermediates: "'", final: "~" }, (o) => this.deleteColumns(o)), this._parser.registerCsiHandler({ intermediates: '"', final: "q" }, (o) => this.selectProtected(o)), this._parser.registerCsiHandler({ intermediates: "$", final: "p" }, (o) => this.requestMode(o, true)), this._parser.registerCsiHandler({ prefix: "?", intermediates: "$", final: "p" }, (o) => this.requestMode(o, false)), this._parser.setExecuteHandler(P.BEL, () => this.bell()), this._parser.setExecuteHandler(P.LF, () => this.lineFeed()), this._parser.setExecuteHandler(P.VT, () => this.lineFeed()), this._parser.setExecuteHandler(P.FF, () => this.lineFeed()), this._parser.setExecuteHandler(P.CR, () => this.carriageReturn()), this._parser.setExecuteHandler(P.BS, () => this.backspace()), this._parser.setExecuteHandler(P.HT, () => this.tab()), this._parser.setExecuteHandler(P.SO, () => this.shiftOut()), this._parser.setExecuteHandler(P.SI, () => this.shiftIn()), this._parser.setExecuteHandler(ke.IND, () => this.index()), this._parser.setExecuteHandler(ke.NEL, () => this.nextLine()), this._parser.setExecuteHandler(ke.HTS, () => this.tabSet()), this._parser.registerOscHandler(0, new U((o) => (this.setTitle(o), this.setIconName(o), true))), this._parser.registerOscHandler(1, new U((o) => this.setIconName(o))), this._parser.registerOscHandler(2, new U((o) => this.setTitle(o))), this._parser.registerOscHandler(4, new U((o) => this.setOrReportIndexedColor(o))), this._parser.registerOscHandler(8, new U((o) => this.setHyperlink(o))), this._parser.registerOscHandler(10, new U((o) => this.setOrReportFgColor(o))), this._parser.registerOscHandler(11, new U((o) => this.setOrReportBgColor(o))), this._parser.registerOscHandler(12, new U((o) => this.setOrReportCursorColor(o))), this._parser.registerOscHandler(104, new U((o) => this.restoreIndexedColor(o))), this._parser.registerOscHandler(110, new U((o) => this.restoreFgColor(o))), this._parser.registerOscHandler(111, new U((o) => this.restoreBgColor(o))), this._parser.registerOscHandler(112, new U((o) => this.restoreCursorColor(o))), this._parser.registerEscHandler({ final: "7" }, () => this.saveCursor()), this._parser.registerEscHandler({ final: "8" }, () => this.restoreCursor()), this._parser.registerEscHandler({ final: "D" }, () => this.index()), this._parser.registerEscHandler({ final: "E" }, () => this.nextLine()), this._parser.registerEscHandler({ final: "H" }, () => this.tabSet()), this._parser.registerEscHandler({ final: "M" }, () => this.reverseIndex()), this._parser.registerEscHandler({ final: "=" }, () => this.keypadApplicationMode()), this._parser.registerEscHandler({ final: ">" }, () => this.keypadNumericMode()), this._parser.registerEscHandler({ final: "c" }, () => this.fullReset()), this._parser.registerEscHandler({ final: "n" }, () => this.setgLevel(2)), this._parser.registerEscHandler({ final: "o" }, () => this.setgLevel(3)), this._parser.registerEscHandler({ final: "|" }, () => this.setgLevel(3)), this._parser.registerEscHandler({ final: "}" }, () => this.setgLevel(2)), this._parser.registerEscHandler({ final: "~" }, () => this.setgLevel(1)), this._parser.registerEscHandler({ intermediates: "%", final: "@" }, () => this.selectDefaultCharset()), this._parser.registerEscHandler({ intermediates: "%", final: "G" }, () => this.selectDefaultCharset());
+        for (let o in B) this._parser.registerEscHandler({ intermediates: "(", final: o }, () => this.selectCharset("(" + o)), this._parser.registerEscHandler({ intermediates: ")", final: o }, () => this.selectCharset(")" + o)), this._parser.registerEscHandler({ intermediates: "*", final: o }, () => this.selectCharset("*" + o)), this._parser.registerEscHandler({ intermediates: "+", final: o }, () => this.selectCharset("+" + o)), this._parser.registerEscHandler({ intermediates: "-", final: o }, () => this.selectCharset("-" + o)), this._parser.registerEscHandler({ intermediates: ".", final: o }, () => this.selectCharset("." + o)), this._parser.registerEscHandler({ intermediates: "/", final: o }, () => this.selectCharset("/" + o));
+        this._parser.registerEscHandler({ intermediates: "#", final: "8" }, () => this.screenAlignmentPattern()), this._parser.setErrorHandler((o) => (this._logService.error("Parsing error: ", o), o)), this._parser.registerDcsHandler({ intermediates: "$", final: "q" }, new He((o, h) => this.requestStatusString(o, h)));
+      }
+      getAttrData() {
+        return this._curAttrData;
+      }
+      _preserveStack(e, r, i, s) {
+        this._parseStack.paused = true, this._parseStack.cursorStartX = e, this._parseStack.cursorStartY = r, this._parseStack.decodedLength = i, this._parseStack.position = s;
+      }
+      _logSlowResolvingAsync(e) {
+        this._logService.logLevel <= 3 && Promise.race([e, new Promise((r, i) => setTimeout(() => i("#SLOW_TIMEOUT"), $r))]).catch((r) => {
+          if (r !== "#SLOW_TIMEOUT") throw r;
+          console.warn(`async parser handler taking longer than ${$r} ms`);
+        });
+      }
+      _getCurrentLinkId() {
+        return this._curAttrData.extended.urlId;
+      }
+      parse(e, r) {
+        let i, s = this._activeBuffer.x, a = this._activeBuffer.y, l = 0, c = this._parseStack.paused;
+        if (c) {
+          if (i = this._parser.parse(this._parseBuffer, this._parseStack.decodedLength, r)) return this._logSlowResolvingAsync(i), i;
+          s = this._parseStack.cursorStartX, a = this._parseStack.cursorStartY, this._parseStack.paused = false, e.length > ie && (l = this._parseStack.position + ie);
+        }
+        if (this._logService.logLevel <= 1 && this._logService.debug(`parsing data ${typeof e == "string" ? ` "${e}"` : ` "${Array.prototype.map.call(e, (o) => String.fromCharCode(o)).join("")}"`}`), this._logService.logLevel === 0 && this._logService.trace("parsing data (codes)", typeof e == "string" ? e.split("").map((o) => o.charCodeAt(0)) : e), this._parseBuffer.length < e.length && this._parseBuffer.length < ie && (this._parseBuffer = new Uint32Array(Math.min(e.length, ie))), c || this._dirtyRowTracker.clearRange(), e.length > ie) for (let o = l; o < e.length; o += ie) {
+          let h = o + ie < e.length ? o + ie : e.length, x = typeof e == "string" ? this._stringDecoder.decode(e.substring(o, h), this._parseBuffer) : this._utf8Decoder.decode(e.subarray(o, h), this._parseBuffer);
+          if (i = this._parser.parse(this._parseBuffer, x)) return this._preserveStack(s, a, x, o), this._logSlowResolvingAsync(i), i;
+        }
+        else if (!c) {
+          let o = typeof e == "string" ? this._stringDecoder.decode(e, this._parseBuffer) : this._utf8Decoder.decode(e, this._parseBuffer);
+          if (i = this._parser.parse(this._parseBuffer, o)) return this._preserveStack(s, a, o, 0), this._logSlowResolvingAsync(i), i;
+        }
+        (this._activeBuffer.x !== s || this._activeBuffer.y !== a) && this._onCursorMove.fire();
+        let u = this._dirtyRowTracker.end + (this._bufferService.buffer.ybase - this._bufferService.buffer.ydisp), m = this._dirtyRowTracker.start + (this._bufferService.buffer.ybase - this._bufferService.buffer.ydisp);
+        m < this._bufferService.rows && this._onRequestRefreshRows.fire({ start: Math.min(m, this._bufferService.rows - 1), end: Math.min(u, this._bufferService.rows - 1) });
+      }
+      print(e, r, i) {
+        let s, a, l = this._charsetService.charset, c = this._optionsService.rawOptions.screenReaderMode, u = this._bufferService.cols, m = this._coreService.decPrivateModes.wraparound, o = this._coreService.modes.insertMode, h = this._curAttrData, x = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y);
+        this._dirtyRowTracker.markDirty(this._activeBuffer.y), this._activeBuffer.x && i - r > 0 && x.getWidth(this._activeBuffer.x - 1) === 2 && x.setCellFromCodepoint(this._activeBuffer.x - 1, 0, 1, h);
+        let v = this._parser.precedingJoinState;
+        for (let _ = r; _ < i; ++_) {
+          if (s = e[_], s < 127 && l) {
+            let L = l[String.fromCharCode(s)];
+            L && (s = L.charCodeAt(0));
+          }
+          let d = this._unicodeService.charProperties(s, v);
+          a = z73.extractWidth(d);
+          let R = z73.extractShouldJoin(d), w = R ? z73.extractWidth(v) : 0;
+          if (v = d, c && this._onA11yChar.fire($(s)), this._getCurrentLinkId() && this._oscLinkService.addLineToLink(this._getCurrentLinkId(), this._activeBuffer.ybase + this._activeBuffer.y), this._activeBuffer.x + a - w > u) {
+            if (m) {
+              let L = x, g = this._activeBuffer.x - w;
+              for (this._activeBuffer.x = w, this._activeBuffer.y++, this._activeBuffer.y === this._activeBuffer.scrollBottom + 1 ? (this._activeBuffer.y--, this._bufferService.scroll(this._eraseAttrData(), true)) : (this._activeBuffer.y >= this._bufferService.rows && (this._activeBuffer.y = this._bufferService.rows - 1), this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y).isWrapped = true), x = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y), w > 0 && x instanceof Z && x.copyCellsFrom(L, g, 0, w, false); g < u; ) L.setCellFromCodepoint(g++, 0, 1, h);
+            } else if (this._activeBuffer.x = u - 1, a === 2) continue;
+          }
+          if (R && this._activeBuffer.x) {
+            let L = x.getWidth(this._activeBuffer.x - 1) ? 1 : 2;
+            x.addCodepointToCell(this._activeBuffer.x - L, s, a);
+            for (let g = a - w; --g >= 0; ) x.setCellFromCodepoint(this._activeBuffer.x++, 0, 0, h);
+            continue;
+          }
+          if (o && (x.insertCells(this._activeBuffer.x, a - w, this._activeBuffer.getNullCell(h)), x.getWidth(u - 1) === 2 && x.setCellFromCodepoint(u - 1, 0, 1, h)), x.setCellFromCodepoint(this._activeBuffer.x++, s, a, h), a > 0) for (; --a; ) x.setCellFromCodepoint(this._activeBuffer.x++, 0, 0, h);
+        }
+        this._parser.precedingJoinState = v, this._activeBuffer.x < u && i - r > 0 && x.getWidth(this._activeBuffer.x) === 0 && !x.hasContent(this._activeBuffer.x) && x.setCellFromCodepoint(this._activeBuffer.x, 0, 1, h), this._dirtyRowTracker.markDirty(this._activeBuffer.y);
+      }
+      registerCsiHandler(e, r) {
+        return e.final === "t" && !e.prefix && !e.intermediates ? this._parser.registerCsiHandler(e, (i) => qr(i.params[0], this._optionsService.rawOptions.windowOptions) ? r(i) : true) : this._parser.registerCsiHandler(e, r);
+      }
+      registerDcsHandler(e, r) {
+        return this._parser.registerDcsHandler(e, new He(r));
+      }
+      registerEscHandler(e, r) {
+        return this._parser.registerEscHandler(e, r);
+      }
+      registerOscHandler(e, r) {
+        return this._parser.registerOscHandler(e, new U(r));
+      }
+      bell() {
+        return this._onRequestBell.fire(), true;
+      }
+      lineFeed() {
+        return this._dirtyRowTracker.markDirty(this._activeBuffer.y), this._optionsService.rawOptions.convertEol && (this._activeBuffer.x = 0), this._activeBuffer.y++, this._activeBuffer.y === this._activeBuffer.scrollBottom + 1 ? (this._activeBuffer.y--, this._bufferService.scroll(this._eraseAttrData())) : this._activeBuffer.y >= this._bufferService.rows ? this._activeBuffer.y = this._bufferService.rows - 1 : this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y).isWrapped = false, this._activeBuffer.x >= this._bufferService.cols && this._activeBuffer.x--, this._dirtyRowTracker.markDirty(this._activeBuffer.y), this._onLineFeed.fire(), true;
+      }
+      carriageReturn() {
+        return this._activeBuffer.x = 0, true;
+      }
+      backspace() {
+        if (!this._coreService.decPrivateModes.reverseWraparound) return this._restrictCursor(), this._activeBuffer.x > 0 && this._activeBuffer.x--, true;
+        if (this._restrictCursor(this._bufferService.cols), this._activeBuffer.x > 0) this._activeBuffer.x--;
+        else if (this._activeBuffer.x === 0 && this._activeBuffer.y > this._activeBuffer.scrollTop && this._activeBuffer.y <= this._activeBuffer.scrollBottom && this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y)?.isWrapped) {
+          this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y).isWrapped = false, this._activeBuffer.y--, this._activeBuffer.x = this._bufferService.cols - 1;
+          let e = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y);
+          e.hasWidth(this._activeBuffer.x) && !e.hasContent(this._activeBuffer.x) && this._activeBuffer.x--;
+        }
+        return this._restrictCursor(), true;
+      }
+      tab() {
+        if (this._activeBuffer.x >= this._bufferService.cols) return true;
+        let e = this._activeBuffer.x;
+        return this._activeBuffer.x = this._activeBuffer.nextStop(), this._optionsService.rawOptions.screenReaderMode && this._onA11yTab.fire(this._activeBuffer.x - e), true;
+      }
+      shiftOut() {
+        return this._charsetService.setgLevel(1), true;
+      }
+      shiftIn() {
+        return this._charsetService.setgLevel(0), true;
+      }
+      _restrictCursor(e = this._bufferService.cols - 1) {
+        this._activeBuffer.x = Math.min(e, Math.max(0, this._activeBuffer.x)), this._activeBuffer.y = this._coreService.decPrivateModes.origin ? Math.min(this._activeBuffer.scrollBottom, Math.max(this._activeBuffer.scrollTop, this._activeBuffer.y)) : Math.min(this._bufferService.rows - 1, Math.max(0, this._activeBuffer.y)), this._dirtyRowTracker.markDirty(this._activeBuffer.y);
+      }
+      _setCursor(e, r) {
+        this._dirtyRowTracker.markDirty(this._activeBuffer.y), this._coreService.decPrivateModes.origin ? (this._activeBuffer.x = e, this._activeBuffer.y = this._activeBuffer.scrollTop + r) : (this._activeBuffer.x = e, this._activeBuffer.y = r), this._restrictCursor(), this._dirtyRowTracker.markDirty(this._activeBuffer.y);
+      }
+      _moveCursor(e, r) {
+        this._restrictCursor(), this._setCursor(this._activeBuffer.x + e, this._activeBuffer.y + r);
+      }
+      cursorUp(e) {
+        let r = this._activeBuffer.y - this._activeBuffer.scrollTop;
+        return r >= 0 ? this._moveCursor(0, -Math.min(r, e.params[0] || 1)) : this._moveCursor(0, -(e.params[0] || 1)), true;
+      }
+      cursorDown(e) {
+        let r = this._activeBuffer.scrollBottom - this._activeBuffer.y;
+        return r >= 0 ? this._moveCursor(0, Math.min(r, e.params[0] || 1)) : this._moveCursor(0, e.params[0] || 1), true;
+      }
+      cursorForward(e) {
+        return this._moveCursor(e.params[0] || 1, 0), true;
+      }
+      cursorBackward(e) {
+        return this._moveCursor(-(e.params[0] || 1), 0), true;
+      }
+      cursorNextLine(e) {
+        return this.cursorDown(e), this._activeBuffer.x = 0, true;
+      }
+      cursorPrecedingLine(e) {
+        return this.cursorUp(e), this._activeBuffer.x = 0, true;
+      }
+      cursorCharAbsolute(e) {
+        return this._setCursor((e.params[0] || 1) - 1, this._activeBuffer.y), true;
+      }
+      cursorPosition(e) {
+        return this._setCursor(e.length >= 2 ? (e.params[1] || 1) - 1 : 0, (e.params[0] || 1) - 1), true;
+      }
+      charPosAbsolute(e) {
+        return this._setCursor((e.params[0] || 1) - 1, this._activeBuffer.y), true;
+      }
+      hPositionRelative(e) {
+        return this._moveCursor(e.params[0] || 1, 0), true;
+      }
+      linePosAbsolute(e) {
+        return this._setCursor(this._activeBuffer.x, (e.params[0] || 1) - 1), true;
+      }
+      vPositionRelative(e) {
+        return this._moveCursor(0, e.params[0] || 1), true;
+      }
+      hVPosition(e) {
+        return this.cursorPosition(e), true;
+      }
+      tabClear(e) {
+        let r = e.params[0];
+        return r === 0 ? delete this._activeBuffer.tabs[this._activeBuffer.x] : r === 3 && (this._activeBuffer.tabs = {}), true;
+      }
+      cursorForwardTab(e) {
+        if (this._activeBuffer.x >= this._bufferService.cols) return true;
+        let r = e.params[0] || 1;
+        for (; r--; ) this._activeBuffer.x = this._activeBuffer.nextStop();
+        return true;
+      }
+      cursorBackwardTab(e) {
+        if (this._activeBuffer.x >= this._bufferService.cols) return true;
+        let r = e.params[0] || 1;
+        for (; r--; ) this._activeBuffer.x = this._activeBuffer.prevStop();
+        return true;
+      }
+      selectProtected(e) {
+        let r = e.params[0];
+        return r === 1 && (this._curAttrData.bg |= 536870912), (r === 2 || r === 0) && (this._curAttrData.bg &= -536870913), true;
+      }
+      _eraseInBufferLine(e, r, i, s = false, a = false) {
+        let l = this._activeBuffer.lines.get(this._activeBuffer.ybase + e);
+        l.replaceCells(r, i, this._activeBuffer.getNullCell(this._eraseAttrData()), a), s && (l.isWrapped = false);
+      }
+      _resetBufferLine(e, r = false) {
+        let i = this._activeBuffer.lines.get(this._activeBuffer.ybase + e);
+        i && (i.fill(this._activeBuffer.getNullCell(this._eraseAttrData()), r), this._bufferService.buffer.clearMarkers(this._activeBuffer.ybase + e), i.isWrapped = false);
+      }
+      eraseInDisplay(e, r = false) {
+        this._restrictCursor(this._bufferService.cols);
+        let i;
+        switch (e.params[0]) {
+          case 0:
+            for (i = this._activeBuffer.y, this._dirtyRowTracker.markDirty(i), this._eraseInBufferLine(i++, this._activeBuffer.x, this._bufferService.cols, this._activeBuffer.x === 0, r); i < this._bufferService.rows; i++) this._resetBufferLine(i, r);
+            this._dirtyRowTracker.markDirty(i);
+            break;
+          case 1:
+            for (i = this._activeBuffer.y, this._dirtyRowTracker.markDirty(i), this._eraseInBufferLine(i, 0, this._activeBuffer.x + 1, true, r), this._activeBuffer.x + 1 >= this._bufferService.cols && (this._activeBuffer.lines.get(i + 1).isWrapped = false); i--; ) this._resetBufferLine(i, r);
+            this._dirtyRowTracker.markDirty(0);
+            break;
+          case 2:
+            if (this._optionsService.rawOptions.scrollOnEraseInDisplay) {
+              for (i = this._bufferService.rows, this._dirtyRowTracker.markRangeDirty(0, i - 1); i-- && !this._activeBuffer.lines.get(this._activeBuffer.ybase + i)?.getTrimmedLength(); ) ;
+              for (; i >= 0; i--) this._bufferService.scroll(this._eraseAttrData());
+            } else {
+              for (i = this._bufferService.rows, this._dirtyRowTracker.markDirty(i - 1); i--; ) this._resetBufferLine(i, r);
+              this._dirtyRowTracker.markDirty(0);
+            }
+            break;
+          case 3:
+            let s = this._activeBuffer.lines.length - this._bufferService.rows;
+            s > 0 && (this._activeBuffer.lines.trimStart(s), this._activeBuffer.ybase = Math.max(this._activeBuffer.ybase - s, 0), this._activeBuffer.ydisp = Math.max(this._activeBuffer.ydisp - s, 0), this._onScroll.fire(0));
+            break;
+        }
+        return true;
+      }
+      eraseInLine(e, r = false) {
+        switch (this._restrictCursor(this._bufferService.cols), e.params[0]) {
+          case 0:
+            this._eraseInBufferLine(this._activeBuffer.y, this._activeBuffer.x, this._bufferService.cols, this._activeBuffer.x === 0, r);
+            break;
+          case 1:
+            this._eraseInBufferLine(this._activeBuffer.y, 0, this._activeBuffer.x + 1, false, r);
+            break;
+          case 2:
+            this._eraseInBufferLine(this._activeBuffer.y, 0, this._bufferService.cols, true, r);
+            break;
+        }
+        return this._dirtyRowTracker.markDirty(this._activeBuffer.y), true;
+      }
+      insertLines(e) {
+        this._restrictCursor();
+        let r = e.params[0] || 1;
+        if (this._activeBuffer.y > this._activeBuffer.scrollBottom || this._activeBuffer.y < this._activeBuffer.scrollTop) return true;
+        let i = this._activeBuffer.ybase + this._activeBuffer.y, s = this._bufferService.rows - 1 - this._activeBuffer.scrollBottom, a = this._bufferService.rows - 1 + this._activeBuffer.ybase - s + 1;
+        for (; r--; ) this._activeBuffer.lines.splice(a - 1, 1), this._activeBuffer.lines.splice(i, 0, this._activeBuffer.getBlankLine(this._eraseAttrData()));
+        return this._dirtyRowTracker.markRangeDirty(this._activeBuffer.y, this._activeBuffer.scrollBottom), this._activeBuffer.x = 0, true;
+      }
+      deleteLines(e) {
+        this._restrictCursor();
+        let r = e.params[0] || 1;
+        if (this._activeBuffer.y > this._activeBuffer.scrollBottom || this._activeBuffer.y < this._activeBuffer.scrollTop) return true;
+        let i = this._activeBuffer.ybase + this._activeBuffer.y, s;
+        for (s = this._bufferService.rows - 1 - this._activeBuffer.scrollBottom, s = this._bufferService.rows - 1 + this._activeBuffer.ybase - s; r--; ) this._activeBuffer.lines.splice(i, 1), this._activeBuffer.lines.splice(s, 0, this._activeBuffer.getBlankLine(this._eraseAttrData()));
+        return this._dirtyRowTracker.markRangeDirty(this._activeBuffer.y, this._activeBuffer.scrollBottom), this._activeBuffer.x = 0, true;
+      }
+      insertChars(e) {
+        this._restrictCursor();
+        let r = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y);
+        return r && (r.insertCells(this._activeBuffer.x, e.params[0] || 1, this._activeBuffer.getNullCell(this._eraseAttrData())), this._dirtyRowTracker.markDirty(this._activeBuffer.y)), true;
+      }
+      deleteChars(e) {
+        this._restrictCursor();
+        let r = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y);
+        return r && (r.deleteCells(this._activeBuffer.x, e.params[0] || 1, this._activeBuffer.getNullCell(this._eraseAttrData())), this._dirtyRowTracker.markDirty(this._activeBuffer.y)), true;
+      }
+      scrollUp(e) {
+        let r = e.params[0] || 1;
+        for (; r--; ) this._activeBuffer.lines.splice(this._activeBuffer.ybase + this._activeBuffer.scrollTop, 1), this._activeBuffer.lines.splice(this._activeBuffer.ybase + this._activeBuffer.scrollBottom, 0, this._activeBuffer.getBlankLine(this._eraseAttrData()));
+        return this._dirtyRowTracker.markRangeDirty(this._activeBuffer.scrollTop, this._activeBuffer.scrollBottom), true;
+      }
+      scrollDown(e) {
+        let r = e.params[0] || 1;
+        for (; r--; ) this._activeBuffer.lines.splice(this._activeBuffer.ybase + this._activeBuffer.scrollBottom, 1), this._activeBuffer.lines.splice(this._activeBuffer.ybase + this._activeBuffer.scrollTop, 0, this._activeBuffer.getBlankLine(k));
+        return this._dirtyRowTracker.markRangeDirty(this._activeBuffer.scrollTop, this._activeBuffer.scrollBottom), true;
+      }
+      scrollLeft(e) {
+        if (this._activeBuffer.y > this._activeBuffer.scrollBottom || this._activeBuffer.y < this._activeBuffer.scrollTop) return true;
+        let r = e.params[0] || 1;
+        for (let i = this._activeBuffer.scrollTop; i <= this._activeBuffer.scrollBottom; ++i) {
+          let s = this._activeBuffer.lines.get(this._activeBuffer.ybase + i);
+          s.deleteCells(0, r, this._activeBuffer.getNullCell(this._eraseAttrData())), s.isWrapped = false;
+        }
+        return this._dirtyRowTracker.markRangeDirty(this._activeBuffer.scrollTop, this._activeBuffer.scrollBottom), true;
+      }
+      scrollRight(e) {
+        if (this._activeBuffer.y > this._activeBuffer.scrollBottom || this._activeBuffer.y < this._activeBuffer.scrollTop) return true;
+        let r = e.params[0] || 1;
+        for (let i = this._activeBuffer.scrollTop; i <= this._activeBuffer.scrollBottom; ++i) {
+          let s = this._activeBuffer.lines.get(this._activeBuffer.ybase + i);
+          s.insertCells(0, r, this._activeBuffer.getNullCell(this._eraseAttrData())), s.isWrapped = false;
+        }
+        return this._dirtyRowTracker.markRangeDirty(this._activeBuffer.scrollTop, this._activeBuffer.scrollBottom), true;
+      }
+      insertColumns(e) {
+        if (this._activeBuffer.y > this._activeBuffer.scrollBottom || this._activeBuffer.y < this._activeBuffer.scrollTop) return true;
+        let r = e.params[0] || 1;
+        for (let i = this._activeBuffer.scrollTop; i <= this._activeBuffer.scrollBottom; ++i) {
+          let s = this._activeBuffer.lines.get(this._activeBuffer.ybase + i);
+          s.insertCells(this._activeBuffer.x, r, this._activeBuffer.getNullCell(this._eraseAttrData())), s.isWrapped = false;
+        }
+        return this._dirtyRowTracker.markRangeDirty(this._activeBuffer.scrollTop, this._activeBuffer.scrollBottom), true;
+      }
+      deleteColumns(e) {
+        if (this._activeBuffer.y > this._activeBuffer.scrollBottom || this._activeBuffer.y < this._activeBuffer.scrollTop) return true;
+        let r = e.params[0] || 1;
+        for (let i = this._activeBuffer.scrollTop; i <= this._activeBuffer.scrollBottom; ++i) {
+          let s = this._activeBuffer.lines.get(this._activeBuffer.ybase + i);
+          s.deleteCells(this._activeBuffer.x, r, this._activeBuffer.getNullCell(this._eraseAttrData())), s.isWrapped = false;
+        }
+        return this._dirtyRowTracker.markRangeDirty(this._activeBuffer.scrollTop, this._activeBuffer.scrollBottom), true;
+      }
+      eraseChars(e) {
+        this._restrictCursor();
+        let r = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y);
+        return r && (r.replaceCells(this._activeBuffer.x, this._activeBuffer.x + (e.params[0] || 1), this._activeBuffer.getNullCell(this._eraseAttrData())), this._dirtyRowTracker.markDirty(this._activeBuffer.y)), true;
+      }
+      repeatPrecedingCharacter(e) {
+        let r = this._parser.precedingJoinState;
+        if (!r) return true;
+        let i = e.params[0] || 1, s = z73.extractWidth(r), a = this._activeBuffer.x - s, c = this._activeBuffer.lines.get(this._activeBuffer.ybase + this._activeBuffer.y).getString(a), u = new Uint32Array(c.length * i), m = 0;
+        for (let h = 0; h < c.length; ) {
+          let x = c.codePointAt(h) || 0;
+          u[m++] = x, h += x > 65535 ? 2 : 1;
+        }
+        let o = m;
+        for (let h = 1; h < i; ++h) u.copyWithin(o, 0, m), o += m;
+        return this.print(u, 0, o), true;
+      }
+      sendDeviceAttributesPrimary(e) {
+        return e.params[0] > 0 || (this._is("xterm") || this._is("rxvt-unicode") || this._is("screen") ? this._coreService.triggerDataEvent(P.ESC + "[?1;2c") : this._is("linux") && this._coreService.triggerDataEvent(P.ESC + "[?6c")), true;
+      }
+      sendDeviceAttributesSecondary(e) {
+        return e.params[0] > 0 || (this._is("xterm") ? this._coreService.triggerDataEvent(P.ESC + "[>0;276;0c") : this._is("rxvt-unicode") ? this._coreService.triggerDataEvent(P.ESC + "[>85;95;0c") : this._is("linux") ? this._coreService.triggerDataEvent(e.params[0] + "c") : this._is("screen") && this._coreService.triggerDataEvent(P.ESC + "[>83;40003;0c")), true;
+      }
+      _is(e) {
+        return (this._optionsService.rawOptions.termName + "").indexOf(e) === 0;
+      }
+      setMode(e) {
+        for (let r = 0; r < e.length; r++) switch (e.params[r]) {
+          case 4:
+            this._coreService.modes.insertMode = true;
+            break;
+          case 20:
+            this._optionsService.options.convertEol = true;
+            break;
+        }
+        return true;
+      }
+      setModePrivate(e) {
+        for (let r = 0; r < e.length; r++) switch (e.params[r]) {
+          case 1:
+            this._coreService.decPrivateModes.applicationCursorKeys = true;
+            break;
+          case 2:
+            this._charsetService.setgCharset(0, ee), this._charsetService.setgCharset(1, ee), this._charsetService.setgCharset(2, ee), this._charsetService.setgCharset(3, ee);
+            break;
+          case 3:
+            this._optionsService.rawOptions.windowOptions.setWinLines && (this._bufferService.resize(132, this._bufferService.rows), this._onRequestReset.fire());
+            break;
+          case 6:
+            this._coreService.decPrivateModes.origin = true, this._setCursor(0, 0);
+            break;
+          case 7:
+            this._coreService.decPrivateModes.wraparound = true;
+            break;
+          case 12:
+            this._optionsService.options.cursorBlink = true;
+            break;
+          case 45:
+            this._coreService.decPrivateModes.reverseWraparound = true;
+            break;
+          case 66:
+            this._logService.debug("Serial port requested application keypad."), this._coreService.decPrivateModes.applicationKeypad = true, this._onRequestSyncScrollBar.fire();
+            break;
+          case 9:
+            this._coreMouseService.activeProtocol = "X10";
+            break;
+          case 1e3:
+            this._coreMouseService.activeProtocol = "VT200";
+            break;
+          case 1002:
+            this._coreMouseService.activeProtocol = "DRAG";
+            break;
+          case 1003:
+            this._coreMouseService.activeProtocol = "ANY";
+            break;
+          case 1004:
+            this._coreService.decPrivateModes.sendFocus = true, this._onRequestSendFocus.fire();
+            break;
+          case 1005:
+            this._logService.debug("DECSET 1005 not supported (see #2507)");
+            break;
+          case 1006:
+            this._coreMouseService.activeEncoding = "SGR";
+            break;
+          case 1015:
+            this._logService.debug("DECSET 1015 not supported (see #2507)");
+            break;
+          case 1016:
+            this._coreMouseService.activeEncoding = "SGR_PIXELS";
+            break;
+          case 25:
+            this._coreService.isCursorHidden = false;
+            break;
+          case 1048:
+            this.saveCursor();
+            break;
+          case 1049:
+            this.saveCursor();
+          case 47:
+          case 1047:
+            this._bufferService.buffers.activateAltBuffer(this._eraseAttrData()), this._coreService.isCursorInitialized = true, this._onRequestRefreshRows.fire(void 0), this._onRequestSyncScrollBar.fire();
+            break;
+          case 2004:
+            this._coreService.decPrivateModes.bracketedPasteMode = true;
+            break;
+          case 2026:
+            this._coreService.decPrivateModes.synchronizedOutput = true;
+            break;
+        }
+        return true;
+      }
+      resetMode(e) {
+        for (let r = 0; r < e.length; r++) switch (e.params[r]) {
+          case 4:
+            this._coreService.modes.insertMode = false;
+            break;
+          case 20:
+            this._optionsService.options.convertEol = false;
+            break;
+        }
+        return true;
+      }
+      resetModePrivate(e) {
+        for (let r = 0; r < e.length; r++) switch (e.params[r]) {
+          case 1:
+            this._coreService.decPrivateModes.applicationCursorKeys = false;
+            break;
+          case 3:
+            this._optionsService.rawOptions.windowOptions.setWinLines && (this._bufferService.resize(80, this._bufferService.rows), this._onRequestReset.fire());
+            break;
+          case 6:
+            this._coreService.decPrivateModes.origin = false, this._setCursor(0, 0);
+            break;
+          case 7:
+            this._coreService.decPrivateModes.wraparound = false;
+            break;
+          case 12:
+            this._optionsService.options.cursorBlink = false;
+            break;
+          case 45:
+            this._coreService.decPrivateModes.reverseWraparound = false;
+            break;
+          case 66:
+            this._logService.debug("Switching back to normal keypad."), this._coreService.decPrivateModes.applicationKeypad = false, this._onRequestSyncScrollBar.fire();
+            break;
+          case 9:
+          case 1e3:
+          case 1002:
+          case 1003:
+            this._coreMouseService.activeProtocol = "NONE";
+            break;
+          case 1004:
+            this._coreService.decPrivateModes.sendFocus = false;
+            break;
+          case 1005:
+            this._logService.debug("DECRST 1005 not supported (see #2507)");
+            break;
+          case 1006:
+            this._coreMouseService.activeEncoding = "DEFAULT";
+            break;
+          case 1015:
+            this._logService.debug("DECRST 1015 not supported (see #2507)");
+            break;
+          case 1016:
+            this._coreMouseService.activeEncoding = "DEFAULT";
+            break;
+          case 25:
+            this._coreService.isCursorHidden = true;
+            break;
+          case 1048:
+            this.restoreCursor();
+            break;
+          case 1049:
+          case 47:
+          case 1047:
+            this._bufferService.buffers.activateNormalBuffer(), e.params[r] === 1049 && this.restoreCursor(), this._coreService.isCursorInitialized = true, this._onRequestRefreshRows.fire(void 0), this._onRequestSyncScrollBar.fire();
+            break;
+          case 2004:
+            this._coreService.decPrivateModes.bracketedPasteMode = false;
+            break;
+          case 2026:
+            this._coreService.decPrivateModes.synchronizedOutput = false, this._onRequestRefreshRows.fire(void 0);
+            break;
+        }
+        return true;
+      }
+      requestMode(e, r) {
+        let i;
+        ((E) => (E[E.NOT_RECOGNIZED = 0] = "NOT_RECOGNIZED", E[E.SET = 1] = "SET", E[E.RESET = 2] = "RESET", E[E.PERMANENTLY_SET = 3] = "PERMANENTLY_SET", E[E.PERMANENTLY_RESET = 4] = "PERMANENTLY_RESET"))(i ||= {});
+        let s = this._coreService.decPrivateModes, { activeProtocol: a, activeEncoding: l } = this._coreMouseService, c = this._coreService, { buffers: u, cols: m } = this._bufferService, { active: o, alt: h } = u, x = this._optionsService.rawOptions, v = (R, w) => (c.triggerDataEvent(`${P.ESC}[${r ? "" : "?"}${R};${w}$y`), true), _ = (R) => R ? 1 : 2, d = e.params[0];
+        return r ? d === 2 ? v(d, 4) : d === 4 ? v(d, _(c.modes.insertMode)) : d === 12 ? v(d, 3) : d === 20 ? v(d, _(x.convertEol)) : v(d, 0) : d === 1 ? v(d, _(s.applicationCursorKeys)) : d === 3 ? v(d, x.windowOptions.setWinLines ? m === 80 ? 2 : m === 132 ? 1 : 0 : 0) : d === 6 ? v(d, _(s.origin)) : d === 7 ? v(d, _(s.wraparound)) : d === 8 ? v(d, 3) : d === 9 ? v(d, _(a === "X10")) : d === 12 ? v(d, _(x.cursorBlink)) : d === 25 ? v(d, _(!c.isCursorHidden)) : d === 45 ? v(d, _(s.reverseWraparound)) : d === 66 ? v(d, _(s.applicationKeypad)) : d === 67 ? v(d, 4) : d === 1e3 ? v(d, _(a === "VT200")) : d === 1002 ? v(d, _(a === "DRAG")) : d === 1003 ? v(d, _(a === "ANY")) : d === 1004 ? v(d, _(s.sendFocus)) : d === 1005 ? v(d, 4) : d === 1006 ? v(d, _(l === "SGR")) : d === 1015 ? v(d, 4) : d === 1016 ? v(d, _(l === "SGR_PIXELS")) : d === 1048 ? v(d, 1) : d === 47 || d === 1047 || d === 1049 ? v(d, _(o === h)) : d === 2004 ? v(d, _(s.bracketedPasteMode)) : d === 2026 ? v(d, _(s.synchronizedOutput)) : v(d, 0);
+      }
+      _updateAttrColor(e, r, i, s, a) {
+        return r === 2 ? (e |= 50331648, e &= -16777216, e |= te.fromColorRGB([i, s, a])) : r === 5 && (e &= -50331904, e |= 33554432 | i & 255), e;
+      }
+      _extractColor(e, r, i) {
+        let s = [0, 0, -1, 0, 0, 0], a = 0, l = 0;
+        do {
+          if (s[l + a] = e.params[r + l], e.hasSubParams(r + l)) {
+            let c = e.getSubParams(r + l), u = 0;
+            do
+              s[1] === 5 && (a = 1), s[l + u + 1 + a] = c[u];
+            while (++u < c.length && u + l + 1 + a < s.length);
+            break;
+          }
+          if (s[1] === 5 && l + a >= 2 || s[1] === 2 && l + a >= 5) break;
+          s[1] && (a = 1);
+        } while (++l + r < e.length && l + a < s.length);
+        for (let c = 2; c < s.length; ++c) s[c] === -1 && (s[c] = 0);
+        switch (s[0]) {
+          case 38:
+            i.fg = this._updateAttrColor(i.fg, s[1], s[3], s[4], s[5]);
+            break;
+          case 48:
+            i.bg = this._updateAttrColor(i.bg, s[1], s[3], s[4], s[5]);
+            break;
+          case 58:
+            i.extended = i.extended.clone(), i.extended.underlineColor = this._updateAttrColor(i.extended.underlineColor, s[1], s[3], s[4], s[5]);
+        }
+        return l;
+      }
+      _processUnderline(e, r) {
+        r.extended = r.extended.clone(), (!~e || e > 5) && (e = 1), r.extended.underlineStyle = e, r.fg |= 268435456, e === 0 && (r.fg &= -268435457), r.updateExtended();
+      }
+      _processSGR0(e) {
+        e.fg = k.fg, e.bg = k.bg, e.extended = e.extended.clone(), e.extended.underlineStyle = 0, e.extended.underlineColor &= -67108864, e.updateExtended();
+      }
+      charAttributes(e) {
+        if (e.length === 1 && e.params[0] === 0) return this._processSGR0(this._curAttrData), true;
+        let r = e.length, i, s = this._curAttrData;
+        for (let a = 0; a < r; a++) i = e.params[a], i >= 30 && i <= 37 ? (s.fg &= -50331904, s.fg |= 16777216 | i - 30) : i >= 40 && i <= 47 ? (s.bg &= -50331904, s.bg |= 16777216 | i - 40) : i >= 90 && i <= 97 ? (s.fg &= -50331904, s.fg |= 16777216 | i - 90 | 8) : i >= 100 && i <= 107 ? (s.bg &= -50331904, s.bg |= 16777216 | i - 100 | 8) : i === 0 ? this._processSGR0(s) : i === 1 ? s.fg |= 134217728 : i === 3 ? s.bg |= 67108864 : i === 4 ? (s.fg |= 268435456, this._processUnderline(e.hasSubParams(a) ? e.getSubParams(a)[0] : 1, s)) : i === 5 ? s.fg |= 536870912 : i === 7 ? s.fg |= 67108864 : i === 8 ? s.fg |= 1073741824 : i === 9 ? s.fg |= 2147483648 : i === 2 ? s.bg |= 134217728 : i === 21 ? this._processUnderline(2, s) : i === 22 ? (s.fg &= -134217729, s.bg &= -134217729) : i === 23 ? s.bg &= -67108865 : i === 24 ? (s.fg &= -268435457, this._processUnderline(0, s)) : i === 25 ? s.fg &= -536870913 : i === 27 ? s.fg &= -67108865 : i === 28 ? s.fg &= -1073741825 : i === 29 ? s.fg &= 2147483647 : i === 39 ? (s.fg &= -67108864, s.fg |= k.fg & 16777215) : i === 49 ? (s.bg &= -67108864, s.bg |= k.bg & 16777215) : i === 38 || i === 48 || i === 58 ? a += this._extractColor(e, a, s) : i === 53 ? s.bg |= 1073741824 : i === 55 ? s.bg &= -1073741825 : i === 59 ? (s.extended = s.extended.clone(), s.extended.underlineColor = -1, s.updateExtended()) : i === 100 ? (s.fg &= -67108864, s.fg |= k.fg & 16777215, s.bg &= -67108864, s.bg |= k.bg & 16777215) : this._logService.debug("Unknown SGR attribute: %d.", i);
+        return true;
+      }
+      deviceStatus(e) {
+        switch (e.params[0]) {
+          case 5:
+            this._coreService.triggerDataEvent(`${P.ESC}[0n`);
+            break;
+          case 6:
+            let r = this._activeBuffer.y + 1, i = this._activeBuffer.x + 1;
+            this._coreService.triggerDataEvent(`${P.ESC}[${r};${i}R`);
+            break;
+        }
+        return true;
+      }
+      deviceStatusPrivate(e) {
+        switch (e.params[0]) {
+          case 6:
+            let r = this._activeBuffer.y + 1, i = this._activeBuffer.x + 1;
+            this._coreService.triggerDataEvent(`${P.ESC}[?${r};${i}R`);
+            break;
+          case 15:
+            break;
+          case 25:
+            break;
+          case 26:
+            break;
+          case 53:
+            break;
+        }
+        return true;
+      }
+      softReset(e) {
+        return this._coreService.isCursorHidden = false, this._onRequestSyncScrollBar.fire(), this._activeBuffer.scrollTop = 0, this._activeBuffer.scrollBottom = this._bufferService.rows - 1, this._curAttrData = k.clone(), this._coreService.reset(), this._charsetService.reset(), this._activeBuffer.savedX = 0, this._activeBuffer.savedY = this._activeBuffer.ybase, this._activeBuffer.savedCurAttrData.fg = this._curAttrData.fg, this._activeBuffer.savedCurAttrData.bg = this._curAttrData.bg, this._activeBuffer.savedCharset = this._charsetService.charset, this._coreService.decPrivateModes.origin = false, true;
+      }
+      setCursorStyle(e) {
+        let r = e.length === 0 ? 1 : e.params[0];
+        if (r === 0) this._coreService.decPrivateModes.cursorStyle = void 0, this._coreService.decPrivateModes.cursorBlink = void 0;
+        else {
+          switch (r) {
+            case 1:
+            case 2:
+              this._coreService.decPrivateModes.cursorStyle = "block";
+              break;
+            case 3:
+            case 4:
+              this._coreService.decPrivateModes.cursorStyle = "underline";
+              break;
+            case 5:
+            case 6:
+              this._coreService.decPrivateModes.cursorStyle = "bar";
+              break;
+          }
+          let i = r % 2 === 1;
+          this._coreService.decPrivateModes.cursorBlink = i;
+        }
+        return true;
+      }
+      setScrollRegion(e) {
+        let r = e.params[0] || 1, i;
+        return (e.length < 2 || (i = e.params[1]) > this._bufferService.rows || i === 0) && (i = this._bufferService.rows), i > r && (this._activeBuffer.scrollTop = r - 1, this._activeBuffer.scrollBottom = i - 1, this._setCursor(0, 0)), true;
+      }
+      windowOptions(e) {
+        if (!qr(e.params[0], this._optionsService.rawOptions.windowOptions)) return true;
+        let r = e.length > 1 ? e.params[1] : 0;
+        switch (e.params[0]) {
+          case 14:
+            r !== 2 && this._onRequestWindowsOptionsReport.fire(0);
+            break;
+          case 16:
+            this._onRequestWindowsOptionsReport.fire(1);
+            break;
+          case 18:
+            this._bufferService && this._coreService.triggerDataEvent(`${P.ESC}[8;${this._bufferService.rows};${this._bufferService.cols}t`);
+            break;
+          case 22:
+            (r === 0 || r === 2) && (this._windowTitleStack.push(this._windowTitle), this._windowTitleStack.length > zr && this._windowTitleStack.shift()), (r === 0 || r === 1) && (this._iconNameStack.push(this._iconName), this._iconNameStack.length > zr && this._iconNameStack.shift());
+            break;
+          case 23:
+            (r === 0 || r === 2) && this._windowTitleStack.length && this.setTitle(this._windowTitleStack.pop()), (r === 0 || r === 1) && this._iconNameStack.length && this.setIconName(this._iconNameStack.pop());
+            break;
+        }
+        return true;
+      }
+      saveCursor(e) {
+        return this._activeBuffer.savedX = this._activeBuffer.x, this._activeBuffer.savedY = this._activeBuffer.ybase + this._activeBuffer.y, this._activeBuffer.savedCurAttrData.fg = this._curAttrData.fg, this._activeBuffer.savedCurAttrData.bg = this._curAttrData.bg, this._activeBuffer.savedCharset = this._charsetService.charset, true;
+      }
+      restoreCursor(e) {
+        return this._activeBuffer.x = this._activeBuffer.savedX || 0, this._activeBuffer.y = Math.max(this._activeBuffer.savedY - this._activeBuffer.ybase, 0), this._curAttrData.fg = this._activeBuffer.savedCurAttrData.fg, this._curAttrData.bg = this._activeBuffer.savedCurAttrData.bg, this._charsetService.charset = this._savedCharset, this._activeBuffer.savedCharset && (this._charsetService.charset = this._activeBuffer.savedCharset), this._restrictCursor(), true;
+      }
+      setTitle(e) {
+        return this._windowTitle = e, this._onTitleChange.fire(e), true;
+      }
+      setIconName(e) {
+        return this._iconName = e, true;
+      }
+      setOrReportIndexedColor(e) {
+        let r = [], i = e.split(";");
+        for (; i.length > 1; ) {
+          let s = i.shift(), a = i.shift();
+          if (/^\d+$/.exec(s)) {
+            let l = parseInt(s);
+            if (Xr(l)) if (a === "?") r.push({ type: 0, index: l });
+            else {
+              let c = sr(a);
+              c && r.push({ type: 1, index: l, color: c });
+            }
+          }
+        }
+        return r.length && this._onColor.fire(r), true;
+      }
+      setHyperlink(e) {
+        let r = e.indexOf(";");
+        if (r === -1) return true;
+        let i = e.slice(0, r).trim(), s = e.slice(r + 1);
+        return s ? this._createHyperlink(i, s) : i.trim() ? false : this._finishHyperlink();
+      }
+      _createHyperlink(e, r) {
+        this._getCurrentLinkId() && this._finishHyperlink();
+        let i = e.split(":"), s, a = i.findIndex((l) => l.startsWith("id="));
+        return a !== -1 && (s = i[a].slice(3) || void 0), this._curAttrData.extended = this._curAttrData.extended.clone(), this._curAttrData.extended.urlId = this._oscLinkService.registerLink({ id: s, uri: r }), this._curAttrData.updateExtended(), true;
+      }
+      _finishHyperlink() {
+        return this._curAttrData.extended = this._curAttrData.extended.clone(), this._curAttrData.extended.urlId = 0, this._curAttrData.updateExtended(), true;
+      }
+      _setOrReportSpecialColor(e, r) {
+        let i = e.split(";");
+        for (let s = 0; s < i.length && !(r >= this._specialColors.length); ++s, ++r) if (i[s] === "?") this._onColor.fire([{ type: 0, index: this._specialColors[r] }]);
+        else {
+          let a = sr(i[s]);
+          a && this._onColor.fire([{ type: 1, index: this._specialColors[r], color: a }]);
+        }
+        return true;
+      }
+      setOrReportFgColor(e) {
+        return this._setOrReportSpecialColor(e, 0);
+      }
+      setOrReportBgColor(e) {
+        return this._setOrReportSpecialColor(e, 1);
+      }
+      setOrReportCursorColor(e) {
+        return this._setOrReportSpecialColor(e, 2);
+      }
+      restoreIndexedColor(e) {
+        if (!e) return this._onColor.fire([{ type: 2 }]), true;
+        let r = [], i = e.split(";");
+        for (let s = 0; s < i.length; ++s) if (/^\d+$/.exec(i[s])) {
+          let a = parseInt(i[s]);
+          Xr(a) && r.push({ type: 2, index: a });
+        }
+        return r.length && this._onColor.fire(r), true;
+      }
+      restoreFgColor(e) {
+        return this._onColor.fire([{ type: 2, index: 256 }]), true;
+      }
+      restoreBgColor(e) {
+        return this._onColor.fire([{ type: 2, index: 257 }]), true;
+      }
+      restoreCursorColor(e) {
+        return this._onColor.fire([{ type: 2, index: 258 }]), true;
+      }
+      nextLine() {
+        return this._activeBuffer.x = 0, this.index(), true;
+      }
+      keypadApplicationMode() {
+        return this._logService.debug("Serial port requested application keypad."), this._coreService.decPrivateModes.applicationKeypad = true, this._onRequestSyncScrollBar.fire(), true;
+      }
+      keypadNumericMode() {
+        return this._logService.debug("Switching back to normal keypad."), this._coreService.decPrivateModes.applicationKeypad = false, this._onRequestSyncScrollBar.fire(), true;
+      }
+      selectDefaultCharset() {
+        return this._charsetService.setgLevel(0), this._charsetService.setgCharset(0, ee), true;
+      }
+      selectCharset(e) {
+        return e.length !== 2 ? (this.selectDefaultCharset(), true) : (e[0] === "/" || this._charsetService.setgCharset(wi[e[0]], B[e[1]] || ee), true);
+      }
+      index() {
+        return this._restrictCursor(), this._activeBuffer.y++, this._activeBuffer.y === this._activeBuffer.scrollBottom + 1 ? (this._activeBuffer.y--, this._bufferService.scroll(this._eraseAttrData())) : this._activeBuffer.y >= this._bufferService.rows && (this._activeBuffer.y = this._bufferService.rows - 1), this._restrictCursor(), true;
+      }
+      tabSet() {
+        return this._activeBuffer.tabs[this._activeBuffer.x] = true, true;
+      }
+      reverseIndex() {
+        if (this._restrictCursor(), this._activeBuffer.y === this._activeBuffer.scrollTop) {
+          let e = this._activeBuffer.scrollBottom - this._activeBuffer.scrollTop;
+          this._activeBuffer.lines.shiftElements(this._activeBuffer.ybase + this._activeBuffer.y, e, 1), this._activeBuffer.lines.set(this._activeBuffer.ybase + this._activeBuffer.y, this._activeBuffer.getBlankLine(this._eraseAttrData())), this._dirtyRowTracker.markRangeDirty(this._activeBuffer.scrollTop, this._activeBuffer.scrollBottom);
+        } else this._activeBuffer.y--, this._restrictCursor();
+        return true;
+      }
+      fullReset() {
+        return this._parser.reset(), this._onRequestReset.fire(), true;
+      }
+      reset() {
+        this._curAttrData = k.clone(), this._eraseAttrDataInternal = k.clone();
+      }
+      _eraseAttrData() {
+        return this._eraseAttrDataInternal.bg &= -67108864, this._eraseAttrDataInternal.bg |= this._curAttrData.bg & 67108863, this._eraseAttrDataInternal;
+      }
+      setgLevel(e) {
+        return this._charsetService.setgLevel(e), true;
+      }
+      screenAlignmentPattern() {
+        let e = new G();
+        e.content = 1 << 22 | 69, e.fg = this._curAttrData.fg, e.bg = this._curAttrData.bg, this._setCursor(0, 0);
+        for (let r = 0; r < this._bufferService.rows; ++r) {
+          let i = this._activeBuffer.ybase + this._activeBuffer.y + r, s = this._activeBuffer.lines.get(i);
+          s && (s.fill(e), s.isWrapped = false);
+        }
+        return this._dirtyRowTracker.markAllDirty(), this._setCursor(0, 0), true;
+      }
+      requestStatusString(e, r) {
+        let i = (c) => (this._coreService.triggerDataEvent(`${P.ESC}${c}${P.ESC}\\`), true), s = this._bufferService.buffer, a = this._optionsService.rawOptions, l = { block: 2, underline: 4, bar: 6 };
+        return i(e === '"q' ? `P1$r${this._curAttrData.isProtected() ? 1 : 0}"q` : e === '"p' ? 'P1$r61;1"p' : e === "r" ? `P1$r${s.scrollTop + 1};${s.scrollBottom + 1}r` : e === "m" ? "P1$r0m" : e === " q" ? `P1$r${l[a.cursorStyle] - (a.cursorBlink ? 1 : 0)} q` : "P0$r");
+      }
+      markRangeDirty(e, r) {
+        this._dirtyRowTracker.markRangeDirty(e, r);
+      }
+    };
+    Fe = class {
+      constructor(t) {
+        this._bufferService = t;
+        this.clearRange();
+      }
+      clearRange() {
+        this.start = this._bufferService.buffer.y, this.end = this._bufferService.buffer.y;
+      }
+      markDirty(t) {
+        t < this.start ? this.start = t : t > this.end && (this.end = t);
+      }
+      markRangeDirty(t, e) {
+        t > e && (jr = t, t = e, e = jr), t < this.start && (this.start = t), e > this.end && (this.end = e);
+      }
+      markAllDirty() {
+        this.markRangeDirty(0, this._bufferService.rows - 1);
+      }
+    };
+    Fe = K([F(0, X)], Fe);
+    Pi = 5e7;
+    Yr = 12;
+    ki = 50;
+    Dt = class extends A {
+      constructor(e) {
+        super();
+        this._action = e;
+        this._writeBuffer = [];
+        this._callbacks = [];
+        this._pendingData = 0;
+        this._bufferOffset = 0;
+        this._isSyncWriting = false;
+        this._syncCalls = 0;
+        this._didUserInput = false;
+        this._prioritizeNextWrite = false;
+        this._onWriteParsed = this._register(new S());
+        this.onWriteParsed = this._onWriteParsed.event;
+      }
+      handleUserInput() {
+        this._didUserInput = true;
+      }
+      prioritizeNextWrite() {
+        this._writeBuffer.length === 0 && (this._prioritizeNextWrite = true);
+      }
+      writeSync(e, r) {
+        if (r !== void 0 && this._syncCalls > r) {
+          this._syncCalls = 0;
+          return;
+        }
+        if (this._pendingData += e.length, this._writeBuffer.push(e), this._callbacks.push(void 0), this._syncCalls++, this._isSyncWriting) return;
+        this._isSyncWriting = true;
+        let i;
+        for (; i = this._writeBuffer.shift(); ) {
+          this._action(i);
+          let s = this._callbacks.shift();
+          s && s();
+        }
+        this._pendingData = 0, this._bufferOffset = 2147483647, this._isSyncWriting = false, this._syncCalls = 0;
+      }
+      write(e, r) {
+        if (this._pendingData > Pi) throw new Error("write data discarded, use flow control to avoid losing data");
+        if (!this._writeBuffer.length) {
+          if (this._bufferOffset = 0, this._didUserInput || this._prioritizeNextWrite) {
+            this._didUserInput = false, this._prioritizeNextWrite = false, this._pendingData += e.length, this._writeBuffer.push(e), this._callbacks.push(r), this._innerWrite();
+            return;
+          }
+          setTimeout(() => this._innerWrite());
+        }
+        this._pendingData += e.length, this._writeBuffer.push(e), this._callbacks.push(r);
+      }
+      _innerWrite(e = 0, r = true) {
+        let i = e || performance.now();
+        for (; this._writeBuffer.length > this._bufferOffset; ) {
+          let s = this._writeBuffer[this._bufferOffset], a = this._action(s, r);
+          if (a) {
+            let c = (u) => performance.now() - i >= Yr ? setTimeout(() => this._innerWrite(0, u)) : this._innerWrite(i, u);
+            a.catch((u) => (queueMicrotask(() => {
+              throw u;
+            }), Promise.resolve(false))).then(c);
+            return;
+          }
+          let l = this._callbacks[this._bufferOffset];
+          if (l && l(), this._bufferOffset++, this._pendingData -= s.length, performance.now() - i >= Yr) break;
+        }
+        this._writeBuffer.length > this._bufferOffset ? (this._bufferOffset > ki && (this._writeBuffer = this._writeBuffer.slice(this._bufferOffset), this._callbacks = this._callbacks.slice(this._bufferOffset), this._bufferOffset = 0), setTimeout(() => this._innerWrite())) : (this._writeBuffer.length = 0, this._callbacks.length = 0, this._pendingData = 0, this._bufferOffset = 0), this._onWriteParsed.fire();
+      }
+    };
+    Ee = class {
+      constructor(t) {
+        this._bufferService = t;
+        this._nextId = 1;
+        this._entriesWithId = /* @__PURE__ */ new Map();
+        this._dataByLinkId = /* @__PURE__ */ new Map();
+      }
+      registerLink(t) {
+        let e = this._bufferService.buffer;
+        if (t.id === void 0) {
+          let c = e.addMarker(e.ybase + e.y), u = { data: t, id: this._nextId++, lines: [c] };
+          return c.onDispose(() => this._removeMarkerFromLink(u, c)), this._dataByLinkId.set(u.id, u), u.id;
+        }
+        let r = t, i = this._getEntryIdKey(r), s = this._entriesWithId.get(i);
+        if (s) return this.addLineToLink(s.id, e.ybase + e.y), s.id;
+        let a = e.addMarker(e.ybase + e.y), l = { id: this._nextId++, key: this._getEntryIdKey(r), data: r, lines: [a] };
+        return a.onDispose(() => this._removeMarkerFromLink(l, a)), this._entriesWithId.set(l.key, l), this._dataByLinkId.set(l.id, l), l.id;
+      }
+      addLineToLink(t, e) {
+        let r = this._dataByLinkId.get(t);
+        if (r && r.lines.every((i) => i.line !== e)) {
+          let i = this._bufferService.buffer.addMarker(e);
+          r.lines.push(i), i.onDispose(() => this._removeMarkerFromLink(r, i));
+        }
+      }
+      getLinkData(t) {
+        return this._dataByLinkId.get(t)?.data;
+      }
+      _getEntryIdKey(t) {
+        return `${t.id};;${t.uri}`;
+      }
+      _removeMarkerFromLink(t, e) {
+        let r = t.lines.indexOf(e);
+        r !== -1 && (t.lines.splice(r, 1), t.lines.length === 0 && (t.data.id !== void 0 && this._entriesWithId.delete(t.key), this._dataByLinkId.delete(t.id)));
+      }
+    };
+    Ee = K([F(0, X)], Ee);
+    Qr = false;
+    At = class extends A {
+      constructor(e) {
+        super();
+        this._windowsWrappingHeuristics = this._register(new Je());
+        this._onBinary = this._register(new S());
+        this.onBinary = this._onBinary.event;
+        this._onData = this._register(new S());
+        this.onData = this._onData.event;
+        this._onLineFeed = this._register(new S());
+        this.onLineFeed = this._onLineFeed.event;
+        this._onResize = this._register(new S());
+        this.onResize = this._onResize.event;
+        this._onWriteParsed = this._register(new S());
+        this.onWriteParsed = this._onWriteParsed.event;
+        this._onScroll = this._register(new S());
+        this._instantiationService = new ft(), this.optionsService = this._register(new It(e)), this._instantiationService.setService(Y, this.optionsService), this._bufferService = this._register(this._instantiationService.createInstance(ve)), this._instantiationService.setService(X, this._bufferService), this._logService = this._register(this._instantiationService.createInstance(_e)), this._instantiationService.setService(ht, this._logService), this.coreService = this._register(this._instantiationService.createInstance(xe)), this._instantiationService.setService(dt, this.coreService), this.coreMouseService = this._register(this._instantiationService.createInstance(Te)), this._instantiationService.setService(Dr, this.coreMouseService), this.unicodeService = this._register(this._instantiationService.createInstance(z73)), this._instantiationService.setService(wr, this.unicodeService), this._charsetService = this._instantiationService.createInstance(Tt), this._instantiationService.setService(Ar, this._charsetService), this._oscLinkService = this._instantiationService.createInstance(Ee), this._instantiationService.setService(Rr, this._oscLinkService), this._inputHandler = this._register(new Ct(this._bufferService, this._charsetService, this.coreService, this._logService, this.optionsService, this._oscLinkService, this.coreMouseService, this.unicodeService)), this._register(V.forward(this._inputHandler.onLineFeed, this._onLineFeed)), this._register(this._inputHandler), this._register(V.forward(this._bufferService.onResize, this._onResize)), this._register(V.forward(this.coreService.onData, this._onData)), this._register(V.forward(this.coreService.onBinary, this._onBinary)), this._register(this.coreService.onRequestScrollToBottom(() => this.scrollToBottom(true))), this._register(this.coreService.onUserInput(() => this._writeBuffer.handleUserInput())), this._register(this.optionsService.onMultipleOptionChange(["windowsMode", "windowsPty"], () => this._handleWindowsPtyOptionChange())), this._register(this._bufferService.onScroll(() => {
+          this._onScroll.fire({ position: this._bufferService.buffer.ydisp }), this._inputHandler.markRangeDirty(this._bufferService.buffer.scrollTop, this._bufferService.buffer.scrollBottom);
+        })), this._writeBuffer = this._register(new Dt((r, i) => this._inputHandler.parse(r, i))), this._register(V.forward(this._writeBuffer.onWriteParsed, this._onWriteParsed));
+      }
+      get onScroll() {
+        return this._onScrollApi || (this._onScrollApi = this._register(new S()), this._onScroll.event((e) => {
+          this._onScrollApi?.fire(e.position);
+        })), this._onScrollApi.event;
+      }
+      get cols() {
+        return this._bufferService.cols;
+      }
+      get rows() {
+        return this._bufferService.rows;
+      }
+      get buffers() {
+        return this._bufferService.buffers;
+      }
+      get options() {
+        return this.optionsService.options;
+      }
+      set options(e) {
+        for (let r in e) this.optionsService.options[r] = e[r];
+      }
+      write(e, r) {
+        this._writeBuffer.write(e, r);
+      }
+      prioritizeNextWrite() {
+        this._writeBuffer.prioritizeNextWrite();
+      }
+      writeSync(e, r) {
+        this._logService.logLevel <= 3 && !Qr && (this._logService.warn("writeSync is unreliable and will be removed soon."), Qr = true), this._writeBuffer.writeSync(e, r);
+      }
+      input(e, r = true) {
+        this.coreService.triggerDataEvent(e, r);
+      }
+      resize(e, r) {
+        isNaN(e) || isNaN(r) || (e = Math.max(e, Yt), r = Math.max(r, Qt), this._bufferService.resize(e, r));
+      }
+      scroll(e, r = false) {
+        this._bufferService.scroll(e, r);
+      }
+      scrollLines(e, r) {
+        this._bufferService.scrollLines(e, r);
+      }
+      scrollPages(e) {
+        this.scrollLines(e * (this.rows - 1));
+      }
+      scrollToTop() {
+        this.scrollLines(-this._bufferService.buffer.ydisp);
+      }
+      scrollToBottom(e) {
+        this.scrollLines(this._bufferService.buffer.ybase - this._bufferService.buffer.ydisp);
+      }
+      scrollToLine(e) {
+        let r = e - this._bufferService.buffer.ydisp;
+        r !== 0 && this.scrollLines(r);
+      }
+      registerEscHandler(e, r) {
+        return this._inputHandler.registerEscHandler(e, r);
+      }
+      registerDcsHandler(e, r) {
+        return this._inputHandler.registerDcsHandler(e, r);
+      }
+      registerCsiHandler(e, r) {
+        return this._inputHandler.registerCsiHandler(e, r);
+      }
+      registerOscHandler(e, r) {
+        return this._inputHandler.registerOscHandler(e, r);
+      }
+      _setup() {
+        this._handleWindowsPtyOptionChange();
+      }
+      reset() {
+        this._inputHandler.reset(), this._bufferService.reset(), this._charsetService.reset(), this.coreService.reset(), this.coreMouseService.reset();
+      }
+      _handleWindowsPtyOptionChange() {
+        let e = false, r = this.optionsService.rawOptions.windowsPty;
+        r && r.buildNumber !== void 0 && r.buildNumber !== void 0 ? e = r.backend === "conpty" && r.buildNumber < 21376 : this.optionsService.rawOptions.windowsMode && (e = true), e ? this._enableWindowsWrappingHeuristics() : this._windowsWrappingHeuristics.clear();
+      }
+      _enableWindowsWrappingHeuristics() {
+        if (!this._windowsWrappingHeuristics.value) {
+          let e = [];
+          e.push(this.onLineFeed(tr.bind(null, this._bufferService))), e.push(this.registerCsiHandler({ final: "H" }, () => (tr(this._bufferService), false))), this._windowsWrappingHeuristics.value = J(() => {
+            for (let r of e) r.dispose();
+          });
+        }
+      }
+    };
+    Ot = class extends At {
+      constructor(e = {}) {
+        super(e);
+        this._onBell = this._register(new S());
+        this.onBell = this._onBell.event;
+        this._onCursorMove = this._register(new S());
+        this.onCursorMove = this._onCursorMove.event;
+        this._onTitleChange = this._register(new S());
+        this.onTitleChange = this._onTitleChange.event;
+        this._onA11yCharEmitter = this._register(new S());
+        this.onA11yChar = this._onA11yCharEmitter.event;
+        this._onA11yTabEmitter = this._register(new S());
+        this.onA11yTab = this._onA11yTabEmitter.event;
+        this._setup(), this._register(this._inputHandler.onRequestBell(() => this.bell())), this._register(this._inputHandler.onRequestReset(() => this.reset())), this._register(V.forward(this._inputHandler.onCursorMove, this._onCursorMove)), this._register(V.forward(this._inputHandler.onTitleChange, this._onTitleChange)), this._register(V.forward(this._inputHandler.onA11yChar, this._onA11yCharEmitter)), this._register(V.forward(this._inputHandler.onA11yTab, this._onA11yTabEmitter));
+      }
+      get buffer() {
+        return this.buffers.active;
+      }
+      get markers() {
+        return this.buffer.markers;
+      }
+      addMarker(e) {
+        if (this.buffer === this.buffers.normal) return this.buffer.addMarker(this.buffer.ybase + this.buffer.y + e);
+      }
+      bell() {
+        this._onBell.fire();
+      }
+      input(e, r = true) {
+        this.coreService.triggerDataEvent(e, r);
+      }
+      prioritizeNextWrite() {
+        super.prioritizeNextWrite();
+      }
+      resize(e, r) {
+        e === this.cols && r === this.rows || super.resize(e, r);
+      }
+      clear() {
+        if (!(this.buffer.ybase === 0 && this.buffer.y === 0)) {
+          this.buffer.lines.set(0, this.buffer.lines.get(this.buffer.ybase + this.buffer.y)), this.buffer.lines.length = 1, this.buffer.ydisp = 0, this.buffer.ybase = 0, this.buffer.y = 0;
+          for (let e = 1; e < this.rows; e++) this.buffer.lines.push(this.buffer.getBlankLine(k));
+          this._onScroll.fire({ position: this.buffer.ydisp });
+        }
+      }
+      reset() {
+        this.options.rows = this.rows, this.options.cols = this.cols, this._setup(), super.reset();
+      }
+    };
+    Rt = class {
+      constructor() {
+        this._addons = [];
+      }
+      dispose() {
+        for (let t = this._addons.length - 1; t >= 0; t--) this._addons[t].instance.dispose();
+      }
+      loadAddon(t, e) {
+        let r = { instance: e, dispose: e.dispose, isDisposed: false };
+        this._addons.push(r), e.dispose = () => this._wrappedAddonDispose(r), e.activate(t);
+      }
+      _wrappedAddonDispose(t) {
+        if (t.isDisposed) return;
+        let e = -1;
+        for (let r = 0; r < this._addons.length; r++) if (this._addons[r] === t) {
+          e = r;
+          break;
+        }
+        if (e === -1) throw new Error("Could not dispose an addon that has not been loaded");
+        t.isDisposed = true, t.dispose.apply(t.instance), this._addons.splice(e, 1);
+      }
+    };
+    Bi = ["cols", "rows"];
+    Jr = class extends A {
+      constructor(t) {
+        super(), this._core = this._register(new Ot(t)), this._addonManager = this._register(new Rt()), this._publicOptions = { ...this._core.options };
+        let e = (i) => this._core.options[i], r = (i, s) => {
+          this._checkReadonlyOptions(i), this._core.options[i] = s;
+        };
+        for (let i in this._core.options) {
+          Object.defineProperty(this._publicOptions, i, { get: () => this._core.options[i], set: (a) => {
+            this._checkReadonlyOptions(i), this._core.options[i] = a;
+          } });
+          let s = { get: e.bind(this, i), set: r.bind(this, i) };
+          Object.defineProperty(this._publicOptions, i, s);
+        }
+      }
+      _checkReadonlyOptions(t) {
+        if (Bi.includes(t)) throw new Error(`Option "${t}" can only be set in the constructor`);
+      }
+      _checkProposedApi() {
+        if (!this._core.optionsService.options.allowProposedApi) throw new Error("You must set the allowProposedApi option to true to use proposed API");
+      }
+      get onBell() {
+        return this._core.onBell;
+      }
+      get onBinary() {
+        return this._core.onBinary;
+      }
+      get onCursorMove() {
+        return this._core.onCursorMove;
+      }
+      get onData() {
+        return this._core.onData;
+      }
+      get onLineFeed() {
+        return this._core.onLineFeed;
+      }
+      get onResize() {
+        return this._core.onResize;
+      }
+      get onScroll() {
+        return this._core.onScroll;
+      }
+      get onTitleChange() {
+        return this._core.onTitleChange;
+      }
+      get onWriteParsed() {
+        return this._core.onWriteParsed;
+      }
+      get parser() {
+        return this._checkProposedApi(), this._parser || (this._parser = new lt(this._core)), this._parser;
+      }
+      get unicode() {
+        return this._checkProposedApi(), new ct(this._core);
+      }
+      get rows() {
+        return this._core.rows;
+      }
+      get cols() {
+        return this._core.cols;
+      }
+      get buffer() {
+        return this._checkProposedApi(), this._buffer || (this._buffer = this._register(new at(this._core))), this._buffer;
+      }
+      get markers() {
+        return this._checkProposedApi(), this._core.markers;
+      }
+      get modes() {
+        let t = this._core.coreService.decPrivateModes, e = "none";
+        switch (this._core.coreMouseService.activeProtocol) {
+          case "X10":
+            e = "x10";
+            break;
+          case "VT200":
+            e = "vt200";
+            break;
+          case "DRAG":
+            e = "drag";
+            break;
+          case "ANY":
+            e = "any";
+            break;
+        }
+        return { applicationCursorKeysMode: t.applicationCursorKeys, applicationKeypadMode: t.applicationKeypad, bracketedPasteMode: t.bracketedPasteMode, insertMode: this._core.coreService.modes.insertMode, mouseTrackingMode: e, originMode: t.origin, reverseWraparoundMode: t.reverseWraparound, sendFocusMode: t.sendFocus, synchronizedOutputMode: t.synchronizedOutput, wraparoundMode: t.wraparound };
+      }
+      get options() {
+        return this._publicOptions;
+      }
+      set options(t) {
+        for (let e in t) this._publicOptions[e] = t[e];
+      }
+      input(t, e = true) {
+        this._core.input(t, e);
+      }
+      prioritizeNextWrite() {
+        this._checkProposedApi(), this._core.prioritizeNextWrite();
+      }
+      resize(t, e) {
+        this._verifyIntegers(t, e), this._core.resize(t, e);
+      }
+      registerMarker(t = 0) {
+        return this._checkProposedApi(), this._verifyIntegers(t), this._core.addMarker(t);
+      }
+      addMarker(t) {
+        return this.registerMarker(t);
+      }
+      dispose() {
+        super.dispose();
+      }
+      scrollLines(t) {
+        this._verifyIntegers(t), this._core.scrollLines(t);
+      }
+      scrollPages(t) {
+        this._verifyIntegers(t), this._core.scrollPages(t);
+      }
+      scrollToTop() {
+        this._core.scrollToTop();
+      }
+      scrollToBottom() {
+        this._core.scrollToBottom();
+      }
+      scrollToLine(t) {
+        this._verifyIntegers(t), this._core.scrollToLine(t);
+      }
+      clear() {
+        this._core.clear();
+      }
+      write(t, e) {
+        this._core.write(t, e);
+      }
+      writeln(t, e) {
+        this._core.write(t), this._core.write(`\r
+`, e);
+      }
+      reset() {
+        this._core.reset();
+      }
+      loadAddon(t) {
+        this._addonManager.loadAddon(this, t);
+      }
+      _verifyIntegers(...t) {
+        for (let e of t) if (e === 1 / 0 || isNaN(e) || e % 1 !== 0) throw new Error("This API only accepts integers");
+      }
+    };
   }
 });
 
@@ -40805,15 +40805,15 @@ var require_addon_unicode11 = __commonJS({
       "use strict";
       var e = { 384: (e2, t2, s2) => {
         Object.defineProperty(t2, "__esModule", { value: true }), t2.UnicodeV11 = void 0;
-        const r2 = s2(765), n = [[768, 879], [1155, 1161], [1425, 1469], [1471, 1471], [1473, 1474], [1476, 1477], [1479, 1479], [1536, 1541], [1552, 1562], [1564, 1564], [1611, 1631], [1648, 1648], [1750, 1757], [1759, 1764], [1767, 1768], [1770, 1773], [1807, 1807], [1809, 1809], [1840, 1866], [1958, 1968], [2027, 2035], [2045, 2045], [2070, 2073], [2075, 2083], [2085, 2087], [2089, 2093], [2137, 2139], [2259, 2306], [2362, 2362], [2364, 2364], [2369, 2376], [2381, 2381], [2385, 2391], [2402, 2403], [2433, 2433], [2492, 2492], [2497, 2500], [2509, 2509], [2530, 2531], [2558, 2558], [2561, 2562], [2620, 2620], [2625, 2626], [2631, 2632], [2635, 2637], [2641, 2641], [2672, 2673], [2677, 2677], [2689, 2690], [2748, 2748], [2753, 2757], [2759, 2760], [2765, 2765], [2786, 2787], [2810, 2815], [2817, 2817], [2876, 2876], [2879, 2879], [2881, 2884], [2893, 2893], [2902, 2902], [2914, 2915], [2946, 2946], [3008, 3008], [3021, 3021], [3072, 3072], [3076, 3076], [3134, 3136], [3142, 3144], [3146, 3149], [3157, 3158], [3170, 3171], [3201, 3201], [3260, 3260], [3263, 3263], [3270, 3270], [3276, 3277], [3298, 3299], [3328, 3329], [3387, 3388], [3393, 3396], [3405, 3405], [3426, 3427], [3530, 3530], [3538, 3540], [3542, 3542], [3633, 3633], [3636, 3642], [3655, 3662], [3761, 3761], [3764, 3772], [3784, 3789], [3864, 3865], [3893, 3893], [3895, 3895], [3897, 3897], [3953, 3966], [3968, 3972], [3974, 3975], [3981, 3991], [3993, 4028], [4038, 4038], [4141, 4144], [4146, 4151], [4153, 4154], [4157, 4158], [4184, 4185], [4190, 4192], [4209, 4212], [4226, 4226], [4229, 4230], [4237, 4237], [4253, 4253], [4448, 4607], [4957, 4959], [5906, 5908], [5938, 5940], [5970, 5971], [6002, 6003], [6068, 6069], [6071, 6077], [6086, 6086], [6089, 6099], [6109, 6109], [6155, 6158], [6277, 6278], [6313, 6313], [6432, 6434], [6439, 6440], [6450, 6450], [6457, 6459], [6679, 6680], [6683, 6683], [6742, 6742], [6744, 6750], [6752, 6752], [6754, 6754], [6757, 6764], [6771, 6780], [6783, 6783], [6832, 6846], [6912, 6915], [6964, 6964], [6966, 6970], [6972, 6972], [6978, 6978], [7019, 7027], [7040, 7041], [7074, 7077], [7080, 7081], [7083, 7085], [7142, 7142], [7144, 7145], [7149, 7149], [7151, 7153], [7212, 7219], [7222, 7223], [7376, 7378], [7380, 7392], [7394, 7400], [7405, 7405], [7412, 7412], [7416, 7417], [7616, 7673], [7675, 7679], [8203, 8207], [8234, 8238], [8288, 8292], [8294, 8303], [8400, 8432], [11503, 11505], [11647, 11647], [11744, 11775], [12330, 12333], [12441, 12442], [42607, 42610], [42612, 42621], [42654, 42655], [42736, 42737], [43010, 43010], [43014, 43014], [43019, 43019], [43045, 43046], [43204, 43205], [43232, 43249], [43263, 43263], [43302, 43309], [43335, 43345], [43392, 43394], [43443, 43443], [43446, 43449], [43452, 43453], [43493, 43493], [43561, 43566], [43569, 43570], [43573, 43574], [43587, 43587], [43596, 43596], [43644, 43644], [43696, 43696], [43698, 43700], [43703, 43704], [43710, 43711], [43713, 43713], [43756, 43757], [43766, 43766], [44005, 44005], [44008, 44008], [44013, 44013], [64286, 64286], [65024, 65039], [65056, 65071], [65279, 65279], [65529, 65531]], i = [[66045, 66045], [66272, 66272], [66422, 66426], [68097, 68099], [68101, 68102], [68108, 68111], [68152, 68154], [68159, 68159], [68325, 68326], [68900, 68903], [69446, 69456], [69633, 69633], [69688, 69702], [69759, 69761], [69811, 69814], [69817, 69818], [69821, 69821], [69837, 69837], [69888, 69890], [69927, 69931], [69933, 69940], [70003, 70003], [70016, 70017], [70070, 70078], [70089, 70092], [70191, 70193], [70196, 70196], [70198, 70199], [70206, 70206], [70367, 70367], [70371, 70378], [70400, 70401], [70459, 70460], [70464, 70464], [70502, 70508], [70512, 70516], [70712, 70719], [70722, 70724], [70726, 70726], [70750, 70750], [70835, 70840], [70842, 70842], [70847, 70848], [70850, 70851], [71090, 71093], [71100, 71101], [71103, 71104], [71132, 71133], [71219, 71226], [71229, 71229], [71231, 71232], [71339, 71339], [71341, 71341], [71344, 71349], [71351, 71351], [71453, 71455], [71458, 71461], [71463, 71467], [71727, 71735], [71737, 71738], [72148, 72151], [72154, 72155], [72160, 72160], [72193, 72202], [72243, 72248], [72251, 72254], [72263, 72263], [72273, 72278], [72281, 72283], [72330, 72342], [72344, 72345], [72752, 72758], [72760, 72765], [72767, 72767], [72850, 72871], [72874, 72880], [72882, 72883], [72885, 72886], [73009, 73014], [73018, 73018], [73020, 73021], [73023, 73029], [73031, 73031], [73104, 73105], [73109, 73109], [73111, 73111], [73459, 73460], [78896, 78904], [92912, 92916], [92976, 92982], [94031, 94031], [94095, 94098], [113821, 113822], [113824, 113827], [119143, 119145], [119155, 119170], [119173, 119179], [119210, 119213], [119362, 119364], [121344, 121398], [121403, 121452], [121461, 121461], [121476, 121476], [121499, 121503], [121505, 121519], [122880, 122886], [122888, 122904], [122907, 122913], [122915, 122916], [122918, 122922], [123184, 123190], [123628, 123631], [125136, 125142], [125252, 125258], [917505, 917505], [917536, 917631], [917760, 917999]], o = [[4352, 4447], [8986, 8987], [9001, 9002], [9193, 9196], [9200, 9200], [9203, 9203], [9725, 9726], [9748, 9749], [9800, 9811], [9855, 9855], [9875, 9875], [9889, 9889], [9898, 9899], [9917, 9918], [9924, 9925], [9934, 9934], [9940, 9940], [9962, 9962], [9970, 9971], [9973, 9973], [9978, 9978], [9981, 9981], [9989, 9989], [9994, 9995], [10024, 10024], [10060, 10060], [10062, 10062], [10067, 10069], [10071, 10071], [10133, 10135], [10160, 10160], [10175, 10175], [11035, 11036], [11088, 11088], [11093, 11093], [11904, 11929], [11931, 12019], [12032, 12245], [12272, 12283], [12288, 12329], [12334, 12350], [12353, 12438], [12443, 12543], [12549, 12591], [12593, 12686], [12688, 12730], [12736, 12771], [12784, 12830], [12832, 12871], [12880, 19903], [19968, 42124], [42128, 42182], [43360, 43388], [44032, 55203], [63744, 64255], [65040, 65049], [65072, 65106], [65108, 65126], [65128, 65131], [65281, 65376], [65504, 65510]], a = [[94176, 94179], [94208, 100343], [100352, 101106], [110592, 110878], [110928, 110930], [110948, 110951], [110960, 111355], [126980, 126980], [127183, 127183], [127374, 127374], [127377, 127386], [127488, 127490], [127504, 127547], [127552, 127560], [127568, 127569], [127584, 127589], [127744, 127776], [127789, 127797], [127799, 127868], [127870, 127891], [127904, 127946], [127951, 127955], [127968, 127984], [127988, 127988], [127992, 128062], [128064, 128064], [128066, 128252], [128255, 128317], [128331, 128334], [128336, 128359], [128378, 128378], [128405, 128406], [128420, 128420], [128507, 128591], [128640, 128709], [128716, 128716], [128720, 128722], [128725, 128725], [128747, 128748], [128756, 128762], [128992, 129003], [129293, 129393], [129395, 129398], [129402, 129442], [129445, 129450], [129454, 129482], [129485, 129535], [129648, 129651], [129656, 129658], [129664, 129666], [129680, 129685], [131072, 196605], [196608, 262141]];
+        const r2 = s2(765), n10 = [[768, 879], [1155, 1161], [1425, 1469], [1471, 1471], [1473, 1474], [1476, 1477], [1479, 1479], [1536, 1541], [1552, 1562], [1564, 1564], [1611, 1631], [1648, 1648], [1750, 1757], [1759, 1764], [1767, 1768], [1770, 1773], [1807, 1807], [1809, 1809], [1840, 1866], [1958, 1968], [2027, 2035], [2045, 2045], [2070, 2073], [2075, 2083], [2085, 2087], [2089, 2093], [2137, 2139], [2259, 2306], [2362, 2362], [2364, 2364], [2369, 2376], [2381, 2381], [2385, 2391], [2402, 2403], [2433, 2433], [2492, 2492], [2497, 2500], [2509, 2509], [2530, 2531], [2558, 2558], [2561, 2562], [2620, 2620], [2625, 2626], [2631, 2632], [2635, 2637], [2641, 2641], [2672, 2673], [2677, 2677], [2689, 2690], [2748, 2748], [2753, 2757], [2759, 2760], [2765, 2765], [2786, 2787], [2810, 2815], [2817, 2817], [2876, 2876], [2879, 2879], [2881, 2884], [2893, 2893], [2902, 2902], [2914, 2915], [2946, 2946], [3008, 3008], [3021, 3021], [3072, 3072], [3076, 3076], [3134, 3136], [3142, 3144], [3146, 3149], [3157, 3158], [3170, 3171], [3201, 3201], [3260, 3260], [3263, 3263], [3270, 3270], [3276, 3277], [3298, 3299], [3328, 3329], [3387, 3388], [3393, 3396], [3405, 3405], [3426, 3427], [3530, 3530], [3538, 3540], [3542, 3542], [3633, 3633], [3636, 3642], [3655, 3662], [3761, 3761], [3764, 3772], [3784, 3789], [3864, 3865], [3893, 3893], [3895, 3895], [3897, 3897], [3953, 3966], [3968, 3972], [3974, 3975], [3981, 3991], [3993, 4028], [4038, 4038], [4141, 4144], [4146, 4151], [4153, 4154], [4157, 4158], [4184, 4185], [4190, 4192], [4209, 4212], [4226, 4226], [4229, 4230], [4237, 4237], [4253, 4253], [4448, 4607], [4957, 4959], [5906, 5908], [5938, 5940], [5970, 5971], [6002, 6003], [6068, 6069], [6071, 6077], [6086, 6086], [6089, 6099], [6109, 6109], [6155, 6158], [6277, 6278], [6313, 6313], [6432, 6434], [6439, 6440], [6450, 6450], [6457, 6459], [6679, 6680], [6683, 6683], [6742, 6742], [6744, 6750], [6752, 6752], [6754, 6754], [6757, 6764], [6771, 6780], [6783, 6783], [6832, 6846], [6912, 6915], [6964, 6964], [6966, 6970], [6972, 6972], [6978, 6978], [7019, 7027], [7040, 7041], [7074, 7077], [7080, 7081], [7083, 7085], [7142, 7142], [7144, 7145], [7149, 7149], [7151, 7153], [7212, 7219], [7222, 7223], [7376, 7378], [7380, 7392], [7394, 7400], [7405, 7405], [7412, 7412], [7416, 7417], [7616, 7673], [7675, 7679], [8203, 8207], [8234, 8238], [8288, 8292], [8294, 8303], [8400, 8432], [11503, 11505], [11647, 11647], [11744, 11775], [12330, 12333], [12441, 12442], [42607, 42610], [42612, 42621], [42654, 42655], [42736, 42737], [43010, 43010], [43014, 43014], [43019, 43019], [43045, 43046], [43204, 43205], [43232, 43249], [43263, 43263], [43302, 43309], [43335, 43345], [43392, 43394], [43443, 43443], [43446, 43449], [43452, 43453], [43493, 43493], [43561, 43566], [43569, 43570], [43573, 43574], [43587, 43587], [43596, 43596], [43644, 43644], [43696, 43696], [43698, 43700], [43703, 43704], [43710, 43711], [43713, 43713], [43756, 43757], [43766, 43766], [44005, 44005], [44008, 44008], [44013, 44013], [64286, 64286], [65024, 65039], [65056, 65071], [65279, 65279], [65529, 65531]], i = [[66045, 66045], [66272, 66272], [66422, 66426], [68097, 68099], [68101, 68102], [68108, 68111], [68152, 68154], [68159, 68159], [68325, 68326], [68900, 68903], [69446, 69456], [69633, 69633], [69688, 69702], [69759, 69761], [69811, 69814], [69817, 69818], [69821, 69821], [69837, 69837], [69888, 69890], [69927, 69931], [69933, 69940], [70003, 70003], [70016, 70017], [70070, 70078], [70089, 70092], [70191, 70193], [70196, 70196], [70198, 70199], [70206, 70206], [70367, 70367], [70371, 70378], [70400, 70401], [70459, 70460], [70464, 70464], [70502, 70508], [70512, 70516], [70712, 70719], [70722, 70724], [70726, 70726], [70750, 70750], [70835, 70840], [70842, 70842], [70847, 70848], [70850, 70851], [71090, 71093], [71100, 71101], [71103, 71104], [71132, 71133], [71219, 71226], [71229, 71229], [71231, 71232], [71339, 71339], [71341, 71341], [71344, 71349], [71351, 71351], [71453, 71455], [71458, 71461], [71463, 71467], [71727, 71735], [71737, 71738], [72148, 72151], [72154, 72155], [72160, 72160], [72193, 72202], [72243, 72248], [72251, 72254], [72263, 72263], [72273, 72278], [72281, 72283], [72330, 72342], [72344, 72345], [72752, 72758], [72760, 72765], [72767, 72767], [72850, 72871], [72874, 72880], [72882, 72883], [72885, 72886], [73009, 73014], [73018, 73018], [73020, 73021], [73023, 73029], [73031, 73031], [73104, 73105], [73109, 73109], [73111, 73111], [73459, 73460], [78896, 78904], [92912, 92916], [92976, 92982], [94031, 94031], [94095, 94098], [113821, 113822], [113824, 113827], [119143, 119145], [119155, 119170], [119173, 119179], [119210, 119213], [119362, 119364], [121344, 121398], [121403, 121452], [121461, 121461], [121476, 121476], [121499, 121503], [121505, 121519], [122880, 122886], [122888, 122904], [122907, 122913], [122915, 122916], [122918, 122922], [123184, 123190], [123628, 123631], [125136, 125142], [125252, 125258], [917505, 917505], [917536, 917631], [917760, 917999]], o = [[4352, 4447], [8986, 8987], [9001, 9002], [9193, 9196], [9200, 9200], [9203, 9203], [9725, 9726], [9748, 9749], [9800, 9811], [9855, 9855], [9875, 9875], [9889, 9889], [9898, 9899], [9917, 9918], [9924, 9925], [9934, 9934], [9940, 9940], [9962, 9962], [9970, 9971], [9973, 9973], [9978, 9978], [9981, 9981], [9989, 9989], [9994, 9995], [10024, 10024], [10060, 10060], [10062, 10062], [10067, 10069], [10071, 10071], [10133, 10135], [10160, 10160], [10175, 10175], [11035, 11036], [11088, 11088], [11093, 11093], [11904, 11929], [11931, 12019], [12032, 12245], [12272, 12283], [12288, 12329], [12334, 12350], [12353, 12438], [12443, 12543], [12549, 12591], [12593, 12686], [12688, 12730], [12736, 12771], [12784, 12830], [12832, 12871], [12880, 19903], [19968, 42124], [42128, 42182], [43360, 43388], [44032, 55203], [63744, 64255], [65040, 65049], [65072, 65106], [65108, 65126], [65128, 65131], [65281, 65376], [65504, 65510]], a = [[94176, 94179], [94208, 100343], [100352, 101106], [110592, 110878], [110928, 110930], [110948, 110951], [110960, 111355], [126980, 126980], [127183, 127183], [127374, 127374], [127377, 127386], [127488, 127490], [127504, 127547], [127552, 127560], [127568, 127569], [127584, 127589], [127744, 127776], [127789, 127797], [127799, 127868], [127870, 127891], [127904, 127946], [127951, 127955], [127968, 127984], [127988, 127988], [127992, 128062], [128064, 128064], [128066, 128252], [128255, 128317], [128331, 128334], [128336, 128359], [128378, 128378], [128405, 128406], [128420, 128420], [128507, 128591], [128640, 128709], [128716, 128716], [128720, 128722], [128725, 128725], [128747, 128748], [128756, 128762], [128992, 129003], [129293, 129393], [129395, 129398], [129402, 129442], [129445, 129450], [129454, 129482], [129485, 129535], [129648, 129651], [129656, 129658], [129664, 129666], [129680, 129685], [131072, 196605], [196608, 262141]];
         let l;
         function c(e3, t3) {
-          let s3, r3 = 0, n2 = t3.length - 1;
-          if (e3 < t3[0][0] || e3 > t3[n2][1]) return false;
-          for (; n2 >= r3; ) if (s3 = r3 + n2 >> 1, e3 > t3[s3][1]) r3 = s3 + 1;
+          let s3, r3 = 0, n11 = t3.length - 1;
+          if (e3 < t3[0][0] || e3 > t3[n11][1]) return false;
+          for (; n11 >= r3; ) if (s3 = r3 + n11 >> 1, e3 > t3[s3][1]) r3 = s3 + 1;
           else {
             if (!(e3 < t3[s3][0])) return true;
-            n2 = s3 - 1;
+            n11 = s3 - 1;
           }
           return false;
         }
@@ -40821,7 +40821,7 @@ var require_addon_unicode11 = __commonJS({
           constructor() {
             if (this.version = "11", !l) {
               l = new Uint8Array(65536), l.fill(1), l[0] = 0, l.fill(0, 1, 32), l.fill(0, 127, 160);
-              for (let e3 = 0; e3 < n.length; ++e3) l.fill(0, n[e3][0], n[e3][1] + 1);
+              for (let e3 = 0; e3 < n10.length; ++e3) l.fill(0, n10[e3][0], n10[e3][1] + 1);
               for (let e3 = 0; e3 < o.length; ++e3) l.fill(2, o[e3][0], o[e3][1] + 1);
             }
           }
@@ -40829,49 +40829,49 @@ var require_addon_unicode11 = __commonJS({
             return e3 < 32 ? 0 : e3 < 127 ? 1 : e3 < 65536 ? l[e3] : c(e3, i) ? 0 : c(e3, a) ? 2 : 1;
           }
           charProperties(e3, t3) {
-            let s3 = this.wcwidth(e3), n2 = 0 === s3 && 0 !== t3;
-            if (n2) {
+            let s3 = this.wcwidth(e3), n11 = 0 === s3 && 0 !== t3;
+            if (n11) {
               const e4 = r2.UnicodeService.extractWidth(t3);
-              0 === e4 ? n2 = false : e4 > s3 && (s3 = e4);
+              0 === e4 ? n11 = false : e4 > s3 && (s3 = e4);
             }
-            return r2.UnicodeService.createPropertyValue(0, s3, n2);
+            return r2.UnicodeService.createPropertyValue(0, s3, n11);
           }
         };
       }, 546: (e2, t2, s2) => {
         Object.defineProperty(t2, "__esModule", { value: true }), t2.UnicodeV6 = void 0;
-        const r2 = s2(765), n = [[768, 879], [1155, 1158], [1160, 1161], [1425, 1469], [1471, 1471], [1473, 1474], [1476, 1477], [1479, 1479], [1536, 1539], [1552, 1557], [1611, 1630], [1648, 1648], [1750, 1764], [1767, 1768], [1770, 1773], [1807, 1807], [1809, 1809], [1840, 1866], [1958, 1968], [2027, 2035], [2305, 2306], [2364, 2364], [2369, 2376], [2381, 2381], [2385, 2388], [2402, 2403], [2433, 2433], [2492, 2492], [2497, 2500], [2509, 2509], [2530, 2531], [2561, 2562], [2620, 2620], [2625, 2626], [2631, 2632], [2635, 2637], [2672, 2673], [2689, 2690], [2748, 2748], [2753, 2757], [2759, 2760], [2765, 2765], [2786, 2787], [2817, 2817], [2876, 2876], [2879, 2879], [2881, 2883], [2893, 2893], [2902, 2902], [2946, 2946], [3008, 3008], [3021, 3021], [3134, 3136], [3142, 3144], [3146, 3149], [3157, 3158], [3260, 3260], [3263, 3263], [3270, 3270], [3276, 3277], [3298, 3299], [3393, 3395], [3405, 3405], [3530, 3530], [3538, 3540], [3542, 3542], [3633, 3633], [3636, 3642], [3655, 3662], [3761, 3761], [3764, 3769], [3771, 3772], [3784, 3789], [3864, 3865], [3893, 3893], [3895, 3895], [3897, 3897], [3953, 3966], [3968, 3972], [3974, 3975], [3984, 3991], [3993, 4028], [4038, 4038], [4141, 4144], [4146, 4146], [4150, 4151], [4153, 4153], [4184, 4185], [4448, 4607], [4959, 4959], [5906, 5908], [5938, 5940], [5970, 5971], [6002, 6003], [6068, 6069], [6071, 6077], [6086, 6086], [6089, 6099], [6109, 6109], [6155, 6157], [6313, 6313], [6432, 6434], [6439, 6440], [6450, 6450], [6457, 6459], [6679, 6680], [6912, 6915], [6964, 6964], [6966, 6970], [6972, 6972], [6978, 6978], [7019, 7027], [7616, 7626], [7678, 7679], [8203, 8207], [8234, 8238], [8288, 8291], [8298, 8303], [8400, 8431], [12330, 12335], [12441, 12442], [43014, 43014], [43019, 43019], [43045, 43046], [64286, 64286], [65024, 65039], [65056, 65059], [65279, 65279], [65529, 65531]], i = [[68097, 68099], [68101, 68102], [68108, 68111], [68152, 68154], [68159, 68159], [119143, 119145], [119155, 119170], [119173, 119179], [119210, 119213], [119362, 119364], [917505, 917505], [917536, 917631], [917760, 917999]];
+        const r2 = s2(765), n10 = [[768, 879], [1155, 1158], [1160, 1161], [1425, 1469], [1471, 1471], [1473, 1474], [1476, 1477], [1479, 1479], [1536, 1539], [1552, 1557], [1611, 1630], [1648, 1648], [1750, 1764], [1767, 1768], [1770, 1773], [1807, 1807], [1809, 1809], [1840, 1866], [1958, 1968], [2027, 2035], [2305, 2306], [2364, 2364], [2369, 2376], [2381, 2381], [2385, 2388], [2402, 2403], [2433, 2433], [2492, 2492], [2497, 2500], [2509, 2509], [2530, 2531], [2561, 2562], [2620, 2620], [2625, 2626], [2631, 2632], [2635, 2637], [2672, 2673], [2689, 2690], [2748, 2748], [2753, 2757], [2759, 2760], [2765, 2765], [2786, 2787], [2817, 2817], [2876, 2876], [2879, 2879], [2881, 2883], [2893, 2893], [2902, 2902], [2946, 2946], [3008, 3008], [3021, 3021], [3134, 3136], [3142, 3144], [3146, 3149], [3157, 3158], [3260, 3260], [3263, 3263], [3270, 3270], [3276, 3277], [3298, 3299], [3393, 3395], [3405, 3405], [3530, 3530], [3538, 3540], [3542, 3542], [3633, 3633], [3636, 3642], [3655, 3662], [3761, 3761], [3764, 3769], [3771, 3772], [3784, 3789], [3864, 3865], [3893, 3893], [3895, 3895], [3897, 3897], [3953, 3966], [3968, 3972], [3974, 3975], [3984, 3991], [3993, 4028], [4038, 4038], [4141, 4144], [4146, 4146], [4150, 4151], [4153, 4153], [4184, 4185], [4448, 4607], [4959, 4959], [5906, 5908], [5938, 5940], [5970, 5971], [6002, 6003], [6068, 6069], [6071, 6077], [6086, 6086], [6089, 6099], [6109, 6109], [6155, 6157], [6313, 6313], [6432, 6434], [6439, 6440], [6450, 6450], [6457, 6459], [6679, 6680], [6912, 6915], [6964, 6964], [6966, 6970], [6972, 6972], [6978, 6978], [7019, 7027], [7616, 7626], [7678, 7679], [8203, 8207], [8234, 8238], [8288, 8291], [8298, 8303], [8400, 8431], [12330, 12335], [12441, 12442], [43014, 43014], [43019, 43019], [43045, 43046], [64286, 64286], [65024, 65039], [65056, 65059], [65279, 65279], [65529, 65531]], i = [[68097, 68099], [68101, 68102], [68108, 68111], [68152, 68154], [68159, 68159], [119143, 119145], [119155, 119170], [119173, 119179], [119210, 119213], [119362, 119364], [917505, 917505], [917536, 917631], [917760, 917999]];
         let o;
         t2.UnicodeV6 = class {
           constructor() {
             if (this.version = "6", !o) {
               o = new Uint8Array(65536), o.fill(1), o[0] = 0, o.fill(0, 1, 32), o.fill(0, 127, 160), o.fill(2, 4352, 4448), o[9001] = 2, o[9002] = 2, o.fill(2, 11904, 42192), o[12351] = 1, o.fill(2, 44032, 55204), o.fill(2, 63744, 64256), o.fill(2, 65040, 65050), o.fill(2, 65072, 65136), o.fill(2, 65280, 65377), o.fill(2, 65504, 65511);
-              for (let e3 = 0; e3 < n.length; ++e3) o.fill(0, n[e3][0], n[e3][1] + 1);
+              for (let e3 = 0; e3 < n10.length; ++e3) o.fill(0, n10[e3][0], n10[e3][1] + 1);
             }
           }
           wcwidth(e3) {
             return e3 < 32 ? 0 : e3 < 127 ? 1 : e3 < 65536 ? o[e3] : (function(e4, t3) {
-              let s3, r3 = 0, n2 = t3.length - 1;
-              if (e4 < t3[0][0] || e4 > t3[n2][1]) return false;
-              for (; n2 >= r3; ) if (s3 = r3 + n2 >> 1, e4 > t3[s3][1]) r3 = s3 + 1;
+              let s3, r3 = 0, n11 = t3.length - 1;
+              if (e4 < t3[0][0] || e4 > t3[n11][1]) return false;
+              for (; n11 >= r3; ) if (s3 = r3 + n11 >> 1, e4 > t3[s3][1]) r3 = s3 + 1;
               else {
                 if (!(e4 < t3[s3][0])) return true;
-                n2 = s3 - 1;
+                n11 = s3 - 1;
               }
               return false;
             })(e3, i) ? 0 : e3 >= 131072 && e3 <= 196605 || e3 >= 196608 && e3 <= 262141 ? 2 : 1;
           }
           charProperties(e3, t3) {
-            let s3 = this.wcwidth(e3), n2 = 0 === s3 && 0 !== t3;
-            if (n2) {
+            let s3 = this.wcwidth(e3), n11 = 0 === s3 && 0 !== t3;
+            if (n11) {
               const e4 = r2.UnicodeService.extractWidth(t3);
-              0 === e4 ? n2 = false : e4 > s3 && (s3 = e4);
+              0 === e4 ? n11 = false : e4 > s3 && (s3 = e4);
             }
-            return r2.UnicodeService.createPropertyValue(0, s3, n2);
+            return r2.UnicodeService.createPropertyValue(0, s3, n11);
           }
         };
       }, 765: (e2, t2, s2) => {
         Object.defineProperty(t2, "__esModule", { value: true }), t2.UnicodeService = void 0;
-        const r2 = s2(546), n = s2(276);
+        const r2 = s2(546), n10 = s2(276);
         class i {
           static extractShouldJoin(e3) {
             return !!(1 & e3);
@@ -40886,7 +40886,7 @@ var require_addon_unicode11 = __commonJS({
             return (16777215 & e3) << 3 | (3 & t3) << 1 | (s3 ? 1 : 0);
           }
           constructor() {
-            this._providers = /* @__PURE__ */ Object.create(null), this._active = "", this._onChange = new n.Emitter(), this.onChange = this._onChange.event;
+            this._providers = /* @__PURE__ */ Object.create(null), this._active = "", this._onChange = new n10.Emitter(), this.onChange = this._onChange.event;
             const e3 = new r2.UnicodeV6();
             this.register(e3), this._active = e3.version, this._activeProvider = e3;
           }
@@ -40912,11 +40912,11 @@ var require_addon_unicode11 = __commonJS({
           getStringCellWidth(e3) {
             let t3 = 0, s3 = 0;
             const r3 = e3.length;
-            for (let n2 = 0; n2 < r3; ++n2) {
-              let o = e3.charCodeAt(n2);
+            for (let n11 = 0; n11 < r3; ++n11) {
+              let o = e3.charCodeAt(n11);
               if (55296 <= o && o <= 56319) {
-                if (++n2 >= r3) return t3 + this.wcwidth(o);
-                const s4 = e3.charCodeAt(n2);
+                if (++n11 >= r3) return t3 + this.wcwidth(o);
+                const s4 = e3.charCodeAt(n11);
                 56320 <= s4 && s4 <= 57343 ? o = 1024 * (o - 55296) + s4 - 56320 + 65536 : t3 += this.wcwidth(s4);
               }
               const a = this.charProperties(o, s3);
@@ -40940,7 +40940,7 @@ var require_addon_unicode11 = __commonJS({
           if (e3 === t3) return true;
           if (!e3 || !t3) return false;
           if (e3.length !== t3.length) return false;
-          for (let r3 = 0, n2 = e3.length; r3 < n2; r3++) if (!s3(e3[r3], t3[r3])) return false;
+          for (let r3 = 0, n11 = e3.length; r3 < n11; r3++) if (!s3(e3[r3], t3[r3])) return false;
           return true;
         }, t2.removeFastWithoutKeepingOrder = function(e3, t3) {
           const s3 = e3.length - 1;
@@ -40949,38 +40949,38 @@ var require_addon_unicode11 = __commonJS({
           return i(e3.length, ((r3) => s3(e3[r3], t3)));
         }, t2.binarySearch2 = i, t2.quickSelect = function e3(t3, s3, r3) {
           if ((t3 |= 0) >= s3.length) throw new TypeError("invalid index");
-          const n2 = s3[Math.floor(s3.length * Math.random())], i2 = [], o2 = [], a2 = [];
+          const n11 = s3[Math.floor(s3.length * Math.random())], i2 = [], o2 = [], a2 = [];
           for (const e4 of s3) {
-            const t4 = r3(e4, n2);
+            const t4 = r3(e4, n11);
             t4 < 0 ? i2.push(e4) : t4 > 0 ? o2.push(e4) : a2.push(e4);
           }
           return t3 < i2.length ? e3(t3, i2, r3) : t3 < i2.length + a2.length ? a2[0] : e3(t3 - (i2.length + a2.length), o2, r3);
         }, t2.groupBy = function(e3, t3) {
           const s3 = [];
           let r3;
-          for (const n2 of e3.slice(0).sort(t3)) r3 && 0 === t3(r3[0], n2) ? r3.push(n2) : (r3 = [n2], s3.push(r3));
+          for (const n11 of e3.slice(0).sort(t3)) r3 && 0 === t3(r3[0], n11) ? r3.push(n11) : (r3 = [n11], s3.push(r3));
           return s3;
         }, t2.groupAdjacentBy = function* (e3, t3) {
           let s3, r3;
-          for (const n2 of e3) void 0 !== r3 && t3(r3, n2) ? s3.push(n2) : (s3 && (yield s3), s3 = [n2]), r3 = n2;
+          for (const n11 of e3) void 0 !== r3 && t3(r3, n11) ? s3.push(n11) : (s3 && (yield s3), s3 = [n11]), r3 = n11;
           s3 && (yield s3);
         }, t2.forEachAdjacent = function(e3, t3) {
           for (let s3 = 0; s3 <= e3.length; s3++) t3(0 === s3 ? void 0 : e3[s3 - 1], s3 === e3.length ? void 0 : e3[s3]);
         }, t2.forEachWithNeighbors = function(e3, t3) {
           for (let s3 = 0; s3 < e3.length; s3++) t3(0 === s3 ? void 0 : e3[s3 - 1], e3[s3], s3 + 1 === e3.length ? void 0 : e3[s3 + 1]);
         }, t2.sortedDiff = o, t2.delta = function(e3, t3, s3) {
-          const r3 = o(e3, t3, s3), n2 = [], i2 = [];
-          for (const t4 of r3) n2.push(...e3.slice(t4.start, t4.start + t4.deleteCount)), i2.push(...t4.toInsert);
-          return { removed: n2, added: i2 };
+          const r3 = o(e3, t3, s3), n11 = [], i2 = [];
+          for (const t4 of r3) n11.push(...e3.slice(t4.start, t4.start + t4.deleteCount)), i2.push(...t4.toInsert);
+          return { removed: n11, added: i2 };
         }, t2.top = function(e3, t3, s3) {
           if (0 === s3) return [];
           const r3 = e3.slice(0, s3).sort(t3);
           return a(e3, t3, r3, s3, e3.length), r3;
-        }, t2.topAsync = function(e3, t3, s3, n2, i2) {
+        }, t2.topAsync = function(e3, t3, s3, n11, i2) {
           return 0 === s3 ? Promise.resolve([]) : new Promise(((o2, l2) => {
             (async () => {
               const o3 = e3.length, l3 = e3.slice(0, s3).sort(t3);
-              for (let c2 = s3, h2 = Math.min(s3 + n2, o3); c2 < o3; c2 = h2, h2 = Math.min(h2 + n2, o3)) {
+              for (let c2 = s3, h2 = Math.min(s3 + n11, o3); c2 < o3; c2 = h2, h2 = Math.min(h2 + n11, o3)) {
                 if (c2 > s3 && await new Promise(((e4) => setTimeout(e4))), i2 && i2.isCancellationRequested) throw new r2.CancellationError();
                 a(e3, t3, l3, c2, h2);
               }
@@ -41017,7 +41017,7 @@ var require_addon_unicode11 = __commonJS({
           return e3.length > 0 ? e3[e3.length - 1] : t3;
         }, t2.commonPrefixLength = function(e3, t3, s3 = (e4, t4) => e4 === t4) {
           let r3 = 0;
-          for (let n2 = 0, i2 = Math.min(e3.length, t3.length); n2 < i2 && s3(e3[n2], t3[n2]); n2++) r3++;
+          for (let n11 = 0, i2 = Math.min(e3.length, t3.length); n11 < i2 && s3(e3[n11], t3[n11]); n11++) r3++;
           return r3;
         }, t2.range = function(e3, t3) {
           let s3 = "number" == typeof t3 ? e3 : 0;
@@ -41031,8 +41031,8 @@ var require_addon_unicode11 = __commonJS({
         }, t2.insert = function(e3, t3) {
           return e3.push(t3), () => l(e3, t3);
         }, t2.remove = l, t2.arrayInsert = function(e3, t3, s3) {
-          const r3 = e3.slice(0, t3), n2 = e3.slice(t3);
-          return r3.concat(s3, n2);
+          const r3 = e3.slice(0, t3), n11 = e3.slice(t3);
+          return r3.concat(s3, n11);
         }, t2.shuffle = function(e3, t3) {
           let s3;
           if ("number" == typeof t3) {
@@ -41043,8 +41043,8 @@ var require_addon_unicode11 = __commonJS({
             };
           } else s3 = Math.random;
           for (let t4 = e3.length - 1; t4 > 0; t4 -= 1) {
-            const r3 = Math.floor(s3() * (t4 + 1)), n2 = e3[t4];
-            e3[t4] = e3[r3], e3[r3] = n2;
+            const r3 = Math.floor(s3() * (t4 + 1)), n11 = e3[t4];
+            e3[t4] = e3[r3], e3[r3] = n11;
           }
         }, t2.pushToStart = function(e3, t3) {
           const s3 = e3.indexOf(t3);
@@ -41061,9 +41061,9 @@ var require_addon_unicode11 = __commonJS({
         }, t2.getRandomElement = function(e3) {
           return e3[Math.floor(Math.random() * e3.length)];
         }, t2.insertInto = c, t2.splice = function(e3, t3, s3, r3) {
-          const n2 = h(e3, t3);
-          let i2 = e3.splice(n2, s3);
-          return void 0 === i2 && (i2 = []), c(e3, n2, r3), i2;
+          const n11 = h(e3, t3);
+          let i2 = e3.splice(n11, s3);
+          return void 0 === i2 && (i2 = []), c(e3, n11, r3), i2;
         }, t2.compareBy = function(e3, t3) {
           return (s3, r3) => t3(e3(s3), e3(r3));
         }, t2.tieBreakComparators = function(...e3) {
@@ -41077,14 +41077,14 @@ var require_addon_unicode11 = __commonJS({
         }, t2.reverseOrder = function(e3) {
           return (t3, s3) => -e3(t3, s3);
         };
-        const r2 = s2(577), n = s2(411);
+        const r2 = s2(577), n10 = s2(411);
         function i(e3, t3) {
           let s3 = 0, r3 = e3 - 1;
           for (; s3 <= r3; ) {
-            const e4 = (s3 + r3) / 2 | 0, n2 = t3(e4);
-            if (n2 < 0) s3 = e4 + 1;
+            const e4 = (s3 + r3) / 2 | 0, n11 = t3(e4);
+            if (n11 < 0) s3 = e4 + 1;
             else {
-              if (!(n2 > 0)) return e4;
+              if (!(n11 > 0)) return e4;
               r3 = e4 - 1;
             }
           }
@@ -41092,23 +41092,23 @@ var require_addon_unicode11 = __commonJS({
         }
         function o(e3, t3, s3) {
           const r3 = [];
-          function n2(e4, t4, s4) {
+          function n11(e4, t4, s4) {
             if (0 === t4 && 0 === s4.length) return;
-            const n3 = r3[r3.length - 1];
-            n3 && n3.start + n3.deleteCount === e4 ? (n3.deleteCount += t4, n3.toInsert.push(...s4)) : r3.push({ start: e4, deleteCount: t4, toInsert: s4 });
+            const n12 = r3[r3.length - 1];
+            n12 && n12.start + n12.deleteCount === e4 ? (n12.deleteCount += t4, n12.toInsert.push(...s4)) : r3.push({ start: e4, deleteCount: t4, toInsert: s4 });
           }
           let i2 = 0, o2 = 0;
           for (; ; ) {
             if (i2 === e3.length) {
-              n2(i2, 0, t3.slice(o2));
+              n11(i2, 0, t3.slice(o2));
               break;
             }
             if (o2 === t3.length) {
-              n2(i2, e3.length - i2, []);
+              n11(i2, e3.length - i2, []);
               break;
             }
             const r4 = e3[i2], a2 = t3[o2], l2 = s3(r4, a2);
-            0 === l2 ? (i2 += 1, o2 += 1) : l2 < 0 ? (n2(i2, 1, []), i2 += 1) : l2 > 0 && (n2(i2, 0, [a2]), o2 += 1);
+            0 === l2 ? (i2 += 1, o2 += 1) : l2 < 0 ? (n11(i2, 1, []), i2 += 1) : l2 > 0 && (n11(i2, 0, [a2]), o2 += 1);
           }
           return r3;
         }
@@ -41117,7 +41117,7 @@ var require_addon_unicode11 = __commonJS({
             const i3 = e3[r3];
             if (t3(i3, s3[o2 - 1]) < 0) {
               s3.pop();
-              const e4 = (0, n.findFirstIdxMonotonousOrArrLen)(s3, ((e5) => t3(i3, e5) < 0));
+              const e4 = (0, n10.findFirstIdxMonotonousOrArrLen)(s3, ((e5) => t3(i3, e5) < 0));
               s3.splice(e4, 0, i3);
             }
           }
@@ -41127,9 +41127,9 @@ var require_addon_unicode11 = __commonJS({
           if (s3 > -1) return e3.splice(s3, 1), t3;
         }
         function c(e3, t3, s3) {
-          const r3 = h(e3, t3), n2 = e3.length, i2 = s3.length;
-          e3.length = n2 + i2;
-          for (let t4 = n2 - 1; t4 >= r3; t4--) e3[t4 + i2] = e3[t4];
+          const r3 = h(e3, t3), n11 = e3.length, i2 = s3.length;
+          e3.length = n11 + i2;
+          for (let t4 = n11 - 1; t4 >= r3; t4--) e3[t4 + i2] = e3[t4];
           for (let t4 = 0; t4 < i2; t4++) e3[t4 + r3] = s3[t4];
         }
         function h(e3, t3) {
@@ -41247,20 +41247,20 @@ var require_addon_unicode11 = __commonJS({
           return -1;
         }
         function r2(e3, t3, s3 = 0, r3 = e3.length) {
-          let n2 = s3, i2 = r3;
-          for (; n2 < i2; ) {
-            const s4 = Math.floor((n2 + i2) / 2);
-            t3(e3[s4]) ? n2 = s4 + 1 : i2 = s4;
+          let n11 = s3, i2 = r3;
+          for (; n11 < i2; ) {
+            const s4 = Math.floor((n11 + i2) / 2);
+            t3(e3[s4]) ? n11 = s4 + 1 : i2 = s4;
           }
-          return n2 - 1;
+          return n11 - 1;
         }
-        function n(e3, t3, s3 = 0, r3 = e3.length) {
-          let n2 = s3, i2 = r3;
-          for (; n2 < i2; ) {
-            const s4 = Math.floor((n2 + i2) / 2);
-            t3(e3[s4]) ? i2 = s4 : n2 = s4 + 1;
+        function n10(e3, t3, s3 = 0, r3 = e3.length) {
+          let n11 = s3, i2 = r3;
+          for (; n11 < i2; ) {
+            const s4 = Math.floor((n11 + i2) / 2);
+            t3(e3[s4]) ? i2 = s4 : n11 = s4 + 1;
           }
-          return n2;
+          return n11;
         }
         Object.defineProperty(t2, "__esModule", { value: true }), t2.MonotonousArray = void 0, t2.findLast = function(e3, t3) {
           const r3 = s2(e3, t3);
@@ -41269,17 +41269,17 @@ var require_addon_unicode11 = __commonJS({
           const s3 = r2(e3, t3);
           return -1 === s3 ? void 0 : e3[s3];
         }, t2.findLastIdxMonotonous = r2, t2.findFirstMonotonous = function(e3, t3) {
-          const s3 = n(e3, t3);
+          const s3 = n10(e3, t3);
           return s3 === e3.length ? void 0 : e3[s3];
-        }, t2.findFirstIdxMonotonousOrArrLen = n, t2.findFirstIdxMonotonous = function(e3, t3, s3 = 0, r3 = e3.length) {
-          const i2 = n(e3, t3, s3, r3);
+        }, t2.findFirstIdxMonotonousOrArrLen = n10, t2.findFirstIdxMonotonous = function(e3, t3, s3 = 0, r3 = e3.length) {
+          const i2 = n10(e3, t3, s3, r3);
           return i2 === e3.length ? -1 : i2;
         }, t2.findFirstMax = o, t2.findLastMax = function(e3, t3) {
           if (0 === e3.length) return;
           let s3 = e3[0];
           for (let r3 = 1; r3 < e3.length; r3++) {
-            const n2 = e3[r3];
-            t3(n2, s3) >= 0 && (s3 = n2);
+            const n11 = e3[r3];
+            t3(n11, s3) >= 0 && (s3 = n11);
           }
           return s3;
         }, t2.findFirstMin = function(e3, t3) {
@@ -41317,8 +41317,8 @@ var require_addon_unicode11 = __commonJS({
           if (0 === e3.length) return;
           let s3 = e3[0];
           for (let r3 = 1; r3 < e3.length; r3++) {
-            const n2 = e3[r3];
-            t3(n2, s3) > 0 && (s3 = n2);
+            const n11 = e3[r3];
+            t3(n11, s3) > 0 && (s3 = n11);
           }
           return s3;
         }
@@ -41329,8 +41329,8 @@ var require_addon_unicode11 = __commonJS({
           const s3 = /* @__PURE__ */ Object.create(null);
           for (const r3 of e3) {
             const e4 = t3(r3);
-            let n = s3[e4];
-            n || (n = s3[e4] = []), n.push(r3);
+            let n10 = s3[e4];
+            n10 || (n10 = s3[e4] = []), n10.push(r3);
           }
           return s3;
         }, t2.diffSets = function(e3, t3) {
@@ -41340,8 +41340,8 @@ var require_addon_unicode11 = __commonJS({
           return { removed: s3, added: r3 };
         }, t2.diffMaps = function(e3, t3) {
           const s3 = [], r3 = [];
-          for (const [r4, n] of e3) t3.has(r4) || s3.push(n);
-          for (const [s4, n] of t3) e3.has(s4) || r3.push(n);
+          for (const [r4, n10] of e3) t3.has(r4) || s3.push(n10);
+          for (const [s4, n10] of t3) e3.has(s4) || r3.push(n10);
           return { removed: s3, added: r3 };
         }, t2.intersection = function(e3, t3) {
           const s3 = /* @__PURE__ */ new Set();
@@ -41397,9 +41397,9 @@ var require_addon_unicode11 = __commonJS({
           const t3 = e3;
           return "EPIPE" === t3.code && "WRITE" === t3.syscall?.toUpperCase();
         }, t2.onUnexpectedError = function(e3) {
-          n(e3) || t2.errorHandler.onUnexpectedError(e3);
+          n10(e3) || t2.errorHandler.onUnexpectedError(e3);
         }, t2.onUnexpectedExternalError = function(e3) {
-          n(e3) || t2.errorHandler.onUnexpectedExternalError(e3);
+          n10(e3) || t2.errorHandler.onUnexpectedExternalError(e3);
         }, t2.transformErrorForSerialization = function(e3) {
           if (e3 instanceof Error) {
             const { name: t3, message: s3 } = e3;
@@ -41409,7 +41409,7 @@ var require_addon_unicode11 = __commonJS({
         }, t2.transformErrorFromSerialization = function(e3) {
           let t3;
           return e3.noTelemetry ? t3 = new h() : (t3 = new Error(), t3.name = e3.name), t3.message = e3.message, t3.stack = e3.stack, t3;
-        }, t2.isCancellationError = n, t2.canceled = function() {
+        }, t2.isCancellationError = n10, t2.canceled = function() {
           const e3 = new Error(r2);
           return e3.name = e3.message, e3;
         }, t2.illegalArgument = function(e3) {
@@ -41459,7 +41459,7 @@ var require_addon_unicode11 = __commonJS({
         }
         t2.ErrorHandler = s2, t2.errorHandler = new s2();
         const r2 = "Canceled";
-        function n(e3) {
+        function n10(e3) {
           return e3 instanceof i || e3 instanceof Error && e3.name === r2 && e3.message === r2;
         }
         class i extends Error {
@@ -41519,24 +41519,24 @@ var require_addon_unicode11 = __commonJS({
             h = t3;
           } };
         };
-        const r2 = s2(577), n = s2(355), i = s2(540), o = s2(711), a = s2(79);
+        const r2 = s2(577), n10 = s2(355), i = s2(540), o = s2(711), a = s2(79);
         var l;
         !(function(e3) {
           function t3(e4) {
             return (t4, s4 = null, r4) => {
-              let n3, i2 = false;
-              return n3 = e4(((e5) => {
-                if (!i2) return n3 ? n3.dispose() : i2 = true, t4.call(s4, e5);
-              }), null, r4), i2 && n3.dispose(), n3;
+              let n12, i2 = false;
+              return n12 = e4(((e5) => {
+                if (!i2) return n12 ? n12.dispose() : i2 = true, t4.call(s4, e5);
+              }), null, r4), i2 && n12.dispose(), n12;
             };
           }
           function s3(e4, t4, s4) {
-            return n2(((s5, r4 = null, n3) => e4(((e5) => s5.call(r4, t4(e5))), null, n3)), s4);
+            return n11(((s5, r4 = null, n12) => e4(((e5) => s5.call(r4, t4(e5))), null, n12)), s4);
           }
           function r3(e4, t4, s4) {
-            return n2(((s5, r4 = null, n3) => e4(((e5) => t4(e5) && s5.call(r4, e5)), null, n3)), s4);
+            return n11(((s5, r4 = null, n12) => e4(((e5) => t4(e5) && s5.call(r4, e5)), null, n12)), s4);
           }
-          function n2(e4, t4) {
+          function n11(e4, t4) {
             let s4;
             const r4 = new m({ onWillAddFirstListener() {
               s4 = e4(r4.fire, r4);
@@ -41545,7 +41545,7 @@ var require_addon_unicode11 = __commonJS({
             } });
             return t4?.add(r4), r4.event;
           }
-          function o2(e4, t4, s4 = 100, r4 = false, n3 = false, i2, o3) {
+          function o2(e4, t4, s4 = 100, r4 = false, n12 = false, i2, o3) {
             let a3, l3, c3, h2, u2 = 0;
             const d2 = new m({ leakWarningThreshold: i2, onWillAddFirstListener() {
               a3 = e4(((e5) => {
@@ -41555,7 +41555,7 @@ var require_addon_unicode11 = __commonJS({
                 }, "number" == typeof s4 ? (clearTimeout(c3), c3 = setTimeout(h2, s4)) : void 0 === c3 && (c3 = 0, queueMicrotask(h2));
               }));
             }, onWillRemoveListener() {
-              n3 && u2 > 0 && h2?.();
+              n12 && u2 > 0 && h2?.();
             }, onDidRemoveLastListener() {
               h2 = void 0, a3.dispose();
             } });
@@ -41565,51 +41565,51 @@ var require_addon_unicode11 = __commonJS({
             return o2(e4, (() => {
             }), 0, void 0, true, void 0, t4);
           }, e3.once = t3, e3.map = s3, e3.forEach = function(e4, t4, s4) {
-            return n2(((s5, r4 = null, n3) => e4(((e5) => {
+            return n11(((s5, r4 = null, n12) => e4(((e5) => {
               t4(e5), s5.call(r4, e5);
-            }), null, n3)), s4);
+            }), null, n12)), s4);
           }, e3.filter = r3, e3.signal = function(e4) {
             return e4;
           }, e3.any = function(...e4) {
             return (t4, s4 = null, r4) => {
-              return n3 = (0, i.combinedDisposable)(...e4.map(((e5) => e5(((e6) => t4.call(s4, e6)))))), (o3 = r4) instanceof Array ? o3.push(n3) : o3 && o3.add(n3), n3;
-              var n3, o3;
+              return n12 = (0, i.combinedDisposable)(...e4.map(((e5) => e5(((e6) => t4.call(s4, e6)))))), (o3 = r4) instanceof Array ? o3.push(n12) : o3 && o3.add(n12), n12;
+              var n12, o3;
             };
-          }, e3.reduce = function(e4, t4, r4, n3) {
+          }, e3.reduce = function(e4, t4, r4, n12) {
             let i2 = r4;
-            return s3(e4, ((e5) => (i2 = t4(i2, e5), i2)), n3);
+            return s3(e4, ((e5) => (i2 = t4(i2, e5), i2)), n12);
           }, e3.debounce = o2, e3.accumulate = function(t4, s4 = 0, r4) {
             return e3.debounce(t4, ((e4, t5) => e4 ? (e4.push(t5), e4) : [t5]), s4, void 0, true, void 0, r4);
           }, e3.latch = function(e4, t4 = (e5, t5) => e5 === t5, s4) {
-            let n3, i2 = true;
+            let n12, i2 = true;
             return r3(e4, ((e5) => {
-              const s5 = i2 || !t4(e5, n3);
-              return i2 = false, n3 = e5, s5;
+              const s5 = i2 || !t4(e5, n12);
+              return i2 = false, n12 = e5, s5;
             }), s4);
           }, e3.split = function(t4, s4, r4) {
             return [e3.filter(t4, s4, r4), e3.filter(t4, ((e4) => !s4(e4)), r4)];
           }, e3.buffer = function(e4, t4 = false, s4 = [], r4) {
-            let n3 = s4.slice(), i2 = e4(((e5) => {
-              n3 ? n3.push(e5) : a3.fire(e5);
+            let n12 = s4.slice(), i2 = e4(((e5) => {
+              n12 ? n12.push(e5) : a3.fire(e5);
             }));
             r4 && r4.add(i2);
             const o3 = () => {
-              n3?.forEach(((e5) => a3.fire(e5))), n3 = null;
+              n12?.forEach(((e5) => a3.fire(e5))), n12 = null;
             }, a3 = new m({ onWillAddFirstListener() {
               i2 || (i2 = e4(((e5) => a3.fire(e5))), r4 && r4.add(i2));
             }, onDidAddFirstListener() {
-              n3 && (t4 ? setTimeout(o3) : o3());
+              n12 && (t4 ? setTimeout(o3) : o3());
             }, onDidRemoveLastListener() {
               i2 && i2.dispose(), i2 = null;
             } });
             return r4 && r4.add(a3), a3.event;
           }, e3.chain = function(e4, t4) {
-            return (s4, r4, n3) => {
+            return (s4, r4, n12) => {
               const i2 = t4(new l2());
               return e4((function(e5) {
                 const t5 = i2.evaluate(e5);
                 t5 !== a2 && s4.call(r4, t5);
-              }), void 0, n3);
+              }), void 0, n12);
             };
           };
           const a2 = /* @__PURE__ */ Symbol("HaltChainable");
@@ -41633,8 +41633,8 @@ var require_addon_unicode11 = __commonJS({
             latch(e4 = (e5, t4) => e5 === t4) {
               let t4, s4 = true;
               return this.steps.push(((r4) => {
-                const n3 = s4 || !e4(r4, t4);
-                return s4 = false, t4 = r4, n3 ? r4 : a2;
+                const n12 = s4 || !e4(r4, t4);
+                return s4 = false, t4 = r4, n12 ? r4 : a2;
               })), this;
             }
             evaluate(e4) {
@@ -41643,11 +41643,11 @@ var require_addon_unicode11 = __commonJS({
             }
           }
           e3.fromNodeEventEmitter = function(e4, t4, s4 = (e5) => e5) {
-            const r4 = (...e5) => n3.fire(s4(...e5)), n3 = new m({ onWillAddFirstListener: () => e4.on(t4, r4), onDidRemoveLastListener: () => e4.removeListener(t4, r4) });
-            return n3.event;
+            const r4 = (...e5) => n12.fire(s4(...e5)), n12 = new m({ onWillAddFirstListener: () => e4.on(t4, r4), onDidRemoveLastListener: () => e4.removeListener(t4, r4) });
+            return n12.event;
           }, e3.fromDOMEventEmitter = function(e4, t4, s4 = (e5) => e5) {
-            const r4 = (...e5) => n3.fire(s4(...e5)), n3 = new m({ onWillAddFirstListener: () => e4.addEventListener(t4, r4), onDidRemoveLastListener: () => e4.removeEventListener(t4, r4) });
-            return n3.event;
+            const r4 = (...e5) => n12.fire(s4(...e5)), n12 = new m({ onWillAddFirstListener: () => e4.addEventListener(t4, r4), onDidRemoveLastListener: () => e4.removeEventListener(t4, r4) });
+            return n12.event;
           }, e3.toPromise = function(e4) {
             return new Promise(((s4) => t3(e4)(s4)));
           }, e3.fromPromise = function(e4) {
@@ -41690,11 +41690,11 @@ var require_addon_unicode11 = __commonJS({
             return new c2(e4, t4).emitter.event;
           }, e3.fromObservableLight = function(e4) {
             return (t4, s4, r4) => {
-              let n3 = 0, o3 = false;
+              let n12 = 0, o3 = false;
               const a3 = { beginUpdate() {
-                n3++;
+                n12++;
               }, endUpdate() {
-                n3--, 0 === n3 && (e4.reportChanges(), o3 && (o3 = false, t4.call(s4)));
+                n12--, 0 === n12 && (e4.reportChanges(), o3 && (o3 = false, t4.call(s4)));
               }, handlePossibleChange() {
               }, handleChange() {
                 o3 = true;
@@ -41746,9 +41746,9 @@ var require_addon_unicode11 = __commonJS({
             const r3 = this._stacks.get(e3.value) || 0;
             if (this._stacks.set(e3.value, r3 + 1), this._warnCountdown -= 1, this._warnCountdown <= 0) {
               this._warnCountdown = 0.5 * s3;
-              const [e4, r4] = this.getMostFrequentStack(), n2 = `[${this.name}] potential listener LEAK detected, having ${t3} listeners already. MOST frequent listener (${r4}):`;
-              console.warn(n2), console.warn(e4);
-              const i2 = new f(n2, e4);
+              const [e4, r4] = this.getMostFrequentStack(), n11 = `[${this.name}] potential listener LEAK detected, having ${t3} listeners already. MOST frequent listener (${r4}):`;
+              console.warn(n11), console.warn(e4);
+              const i2 = new f(n11, e4);
               this._errorHandler(i2);
             }
             return () => {
@@ -41810,11 +41810,11 @@ var require_addon_unicode11 = __commonJS({
               }
               if (this._disposed) return i.Disposable.None;
               t3 && (e3 = e3.bind(t3));
-              const n2 = new v(e3);
+              const n11 = new v(e3);
               let o2;
-              this._leakageMon && this._size >= Math.ceil(0.2 * this._leakageMon.threshold) && (n2.stack = d.create(), o2 = this._leakageMon.check(n2.stack, this._size + 1)), this._listeners ? this._listeners instanceof v ? (this._deliveryQueue ??= new g(), this._listeners = [this._listeners, n2]) : this._listeners.push(n2) : (this._options?.onWillAddFirstListener?.(this), this._listeners = n2, this._options?.onDidAddFirstListener?.(this)), this._size++;
+              this._leakageMon && this._size >= Math.ceil(0.2 * this._leakageMon.threshold) && (n11.stack = d.create(), o2 = this._leakageMon.check(n11.stack, this._size + 1)), this._listeners ? this._listeners instanceof v ? (this._deliveryQueue ??= new g(), this._listeners = [this._listeners, n11]) : this._listeners.push(n11) : (this._options?.onWillAddFirstListener?.(this), this._listeners = n11, this._options?.onDidAddFirstListener?.(this)), this._size++;
               const a2 = (0, i.toDisposable)((() => {
-                o2?.(), this._removeListener(n2);
+                o2?.(), this._removeListener(n11);
               }));
               return s3 instanceof i.DisposableStore ? s3.add(a2) : Array.isArray(s3) && s3.push(a2), a2;
             }, this._event;
@@ -41880,7 +41880,7 @@ var require_addon_unicode11 = __commonJS({
                 r3 && t4(r3);
               }
             })(this._listeners, ((t4) => this._asyncDeliveryQueue.push([t4.value, e3]))); this._asyncDeliveryQueue.size > 0 && !t3.isCancellationRequested; ) {
-              const [e4, n2] = this._asyncDeliveryQueue.shift(), i2 = [], o2 = { ...n2, token: t3, waitUntil: (t4) => {
+              const [e4, n11] = this._asyncDeliveryQueue.shift(), i2 = [], o2 = { ...n11, token: t3, waitUntil: (t4) => {
                 if (Object.isFrozen(i2)) throw new Error("waitUntil can NOT be called asynchronous");
                 s3 && (t4 = s3(t4, e4)), i2.push(t4);
               } };
@@ -41946,7 +41946,7 @@ var require_addon_unicode11 = __commonJS({
           }
           add(e3) {
             const t3 = { event: e3, listener: null };
-            return this.events.push(t3), this.hasListeners && this.hook(t3), (0, i.toDisposable)((0, n.createSingleCallFunction)((() => {
+            return this.events.push(t3), this.hasListeners && this.hook(t3), (0, i.toDisposable)((0, n10.createSingleCallFunction)((() => {
               this.hasListeners && this.unhook(t3);
               const e4 = this.events.indexOf(t3);
               this.events.splice(e4, 1);
@@ -41973,16 +41973,16 @@ var require_addon_unicode11 = __commonJS({
         t2.EventMultiplexer = b, t2.DynamicListEventMultiplexer = class {
           constructor(e3, t3, s3, r3) {
             this._store = new i.DisposableStore();
-            const n2 = this._store.add(new b()), o2 = this._store.add(new i.DisposableMap());
+            const n11 = this._store.add(new b()), o2 = this._store.add(new i.DisposableMap());
             function a2(e4) {
-              o2.set(e4, n2.add(r3(e4)));
+              o2.set(e4, n11.add(r3(e4)));
             }
             for (const t4 of e3) a2(t4);
             this._store.add(t3(((e4) => {
               a2(e4);
             }))), this._store.add(s3(((e4) => {
               o2.deleteAndDispose(e4);
-            }))), this.event = n2.event;
+            }))), this.event = n11.event;
           }
           dispose() {
             this._store.dispose();
@@ -41992,13 +41992,13 @@ var require_addon_unicode11 = __commonJS({
             this.data = [];
           }
           wrapEvent(e3, t3, s3) {
-            return (r3, n2, i2) => e3(((e4) => {
+            return (r3, n11, i2) => e3(((e4) => {
               const i3 = this.data[this.data.length - 1];
-              if (!t3) return void (i3 ? i3.buffers.push((() => r3.call(n2, e4))) : r3.call(n2, e4));
+              if (!t3) return void (i3 ? i3.buffers.push((() => r3.call(n11, e4))) : r3.call(n11, e4));
               const o2 = i3;
               o2 ? (o2.items ??= [], o2.items.push(e4), 0 === o2.buffers.length && i3.buffers.push((() => {
-                o2.reducedResult ??= s3 ? o2.items.reduce(t3, s3) : o2.items.reduce(t3), r3.call(n2, o2.reducedResult);
-              }))) : r3.call(n2, t3(s3, e4));
+                o2.reducedResult ??= s3 ? o2.items.reduce(t3, s3) : o2.items.reduce(t3), r3.call(n11, o2.reducedResult);
+              }))) : r3.call(n11, t3(s3, e4));
             }), void 0, i2);
           }
           bufferEvents(e3) {
@@ -42043,10 +42043,10 @@ var require_addon_unicode11 = __commonJS({
       }, 355: (e2, t2) => {
         Object.defineProperty(t2, "__esModule", { value: true }), t2.createSingleCallFunction = function(e3, t3) {
           const s2 = this;
-          let r2, n = false;
+          let r2, n10 = false;
           return function() {
-            if (n) return r2;
-            if (n = true, t3) try {
+            if (n10) return r2;
+            if (n10 = true, t3) try {
               r2 = e3.apply(s2, arguments);
             } finally {
               t3();
@@ -42103,13 +42103,13 @@ var require_addon_unicode11 = __commonJS({
           }, e3.consume = function(t4, s4 = Number.POSITIVE_INFINITY) {
             const r3 = [];
             if (0 === s4) return [r3, t4];
-            const n = t4[Symbol.iterator]();
+            const n10 = t4[Symbol.iterator]();
             for (let t5 = 0; t5 < s4; t5++) {
-              const t6 = n.next();
+              const t6 = n10.next();
               if (t6.done) return [r3, e3.empty()];
               r3.push(t6.value);
             }
-            return [r3, { [Symbol.iterator]: () => n }];
+            return [r3, { [Symbol.iterator]: () => n10 }];
           }, e3.asyncToArray = async function(e4) {
             const t4 = [];
             for await (const s4 of e4) t4.push(s4);
@@ -42137,7 +42137,7 @@ var require_addon_unicode11 = __commonJS({
             t3.dispose();
           }
         };
-        const r2 = s2(732), n = s2(33), i = s2(714), o = s2(355), a = s2(956);
+        const r2 = s2(732), n10 = s2(33), i = s2(714), o = s2(355), a = s2(956);
         let l = null;
         class c {
           constructor() {
@@ -42202,7 +42202,7 @@ var require_addon_unicode11 = __commonJS({
               for (let t5 = 0; t5 < e4.length; t5++) {
                 let i2 = e4[t5];
                 i2 = `(shared with ${a2.get(e4.slice(0, t5 + 1).join("\n")).size}/${s3.length} leaks) at ${i2}`;
-                const l3 = a2.get(e4.slice(0, t5).join("\n")), c3 = (0, n.groupBy)([...l3].map(((e5) => o2(e5)[t5])), ((e5) => e5));
+                const l3 = a2.get(e4.slice(0, t5).join("\n")), c3 = (0, n10.groupBy)([...l3].map(((e5) => o2(e5)[t5])), ((e5) => e5));
                 delete c3[e4[t5]];
                 for (const [e5, t6] of Object.entries(c3)) r3.unshift(`    - stacktraces of ${t6.length} other leaks continue with ${e5}`);
                 r3.unshift(i2);
@@ -42373,10 +42373,10 @@ ${r3.join("\n")}
           acquire(e3, ...t3) {
             let s3 = this.references.get(e3);
             s3 || (s3 = { counter: 0, object: this.createReferencedObject(e3, ...t3) }, this.references.set(e3, s3));
-            const { object: r3 } = s3, n2 = (0, o.createSingleCallFunction)((() => {
+            const { object: r3 } = s3, n11 = (0, o.createSingleCallFunction)((() => {
               0 == --s3.counter && (this.destroyReferencedObject(e3, s3.object), this.references.delete(e3));
             }));
-            return s3.counter++, { object: r3, dispose: n2 };
+            return s3.counter++, { object: r3, dispose: n11 };
           }
         }, t2.AsyncReferenceCollection = class {
           constructor(e3) {
@@ -42486,9 +42486,9 @@ ${r3.join("\n")}
               this._first = r3, r3.next = e4, e4.prev = r3;
             }
             this._size += 1;
-            let n = false;
+            let n10 = false;
             return () => {
-              n || (n = true, this._remove(r3));
+              n10 || (n10 = true, this._remove(r3));
             };
           }
           shift() {
@@ -42627,8 +42627,8 @@ ${r3.join("\n")}
         t2.StopWatch = r2;
       } }, t = {};
       function s(r2) {
-        var n = t[r2];
-        if (void 0 !== n) return n.exports;
+        var n10 = t[r2];
+        if (void 0 !== n10) return n10.exports;
         var i = t[r2] = { exports: {} };
         return e[r2](i, i.exports, s), i.exports;
       }
@@ -42719,11 +42719,11 @@ function cellColor(cell, channel) {
 function cellAttributes(cell) {
   return (cell.isBold() ? 1 : 0) | (cell.isDim() ? 2 : 0) | (cell.isItalic() ? 4 : 0) | (cell.isUnderline() ? 8 : 0) | (cell.isBlink() ? 16 : 0) | (cell.isInverse() ? 32 : 0) | (cell.isInvisible() ? 64 : 0) | (cell.isStrikethrough() ? 128 : 0);
 }
-var import_headless, import_addon_unicode11, XtermTerminalInterpreterBackend;
+var import_addon_unicode11, XtermTerminalInterpreterBackend;
 var init_xterm_terminal_interpreter_backend = __esm({
   "packages/daemon/src/terminal/session-runtime/xterm-terminal-interpreter-backend.ts"() {
     "use strict";
-    import_headless = __toESM(require_xterm_headless(), 1);
+    init_xterm_headless();
     import_addon_unicode11 = __toESM(require_addon_unicode11(), 1);
     init_src3();
     XtermTerminalInterpreterBackend = class {
@@ -42736,7 +42736,7 @@ var init_xterm_terminal_interpreter_backend = __esm({
       #lastBufferType = "normal";
       #hasProjected = false;
       constructor(options) {
-        this.#terminal = new import_headless.Terminal({
+        this.#terminal = new Jr({
           cols: options.cols,
           rows: options.rows,
           scrollback: options.scrollback,
@@ -42750,7 +42750,7 @@ var init_xterm_terminal_interpreter_backend = __esm({
         const core = this.#terminal._core;
         if (!core?.coreService) {
           this.#terminal.dispose();
-          throw new Error("Unsupported @xterm/headless private API shape");
+          throw new Error("Unsupported @tmux-ide/xterm-headless private API shape");
         }
       }
       get cols() {
@@ -42762,6 +42762,13 @@ var init_xterm_terminal_interpreter_backend = __esm({
       write(data) {
         return new Promise((resolve37) => this.#terminal.write(data, resolve37));
       }
+      prioritizeNextWrite() {
+        this.#terminal.prioritizeNextWrite();
+      }
+      registerOscHandler(identifier, handler) {
+        const disposable = this.#terminal.parser.registerOscHandler(identifier, handler);
+        return () => disposable.dispose();
+      }
       resize(cols, rows) {
         this.#terminal.resize(cols, rows);
       }
@@ -42769,7 +42776,7 @@ var init_xterm_terminal_interpreter_backend = __esm({
         const active2 = this.#terminal.buffer.active;
         const buffer = active2._buffer;
         if (!buffer || typeof buffer.x !== "number" || typeof buffer.y !== "number" || buffer._cols !== this.#terminal.cols || buffer._rows !== this.#terminal.rows)
-          throw new Error("Unsupported @xterm/headless 6.0.0 cursor adapter shape");
+          throw new Error("Unsupported @tmux-ide/xterm-headless 6.0.0 cursor adapter shape");
         buffer.x = Math.max(0, Math.min(x, this.#terminal.cols - 1));
         buffer.y = Math.max(0, Math.min(y, this.#terminal.rows - 1));
       }
@@ -42869,6 +42876,136 @@ var init_xterm_terminal_interpreter_backend = __esm({
   }
 });
 
+// packages/daemon/src/terminal/session-runtime/causal-cell-ledger.ts
+function snapshotsMatchExceptDeclaredCell(baseline, candidate, probe) {
+  const { row, column, cols, rows } = probe.geometry;
+  if (baseline.cols !== cols || baseline.rows !== rows) return false;
+  if (candidate.cols !== cols || candidate.rows !== rows) return false;
+  if (JSON.stringify(baseline.grid[row]?.cells[column]) !== JSON.stringify(probe.before))
+    return false;
+  if (JSON.stringify(candidate.grid[row]?.cells[column]) !== JSON.stringify(probe.after))
+    return false;
+  const expected = {
+    ...baseline,
+    grid: baseline.grid.map(
+      (entry, rowIndex) => rowIndex === row ? {
+        ...entry,
+        cells: entry.cells.map(
+          (cell, columnIndex) => columnIndex === column ? probe.after : cell
+        )
+      } : entry
+    )
+  };
+  return JSON.stringify(expected) === JSON.stringify(candidate);
+}
+var CAUSAL_CELL_OSC, CAUSAL_CELL_OSC_PREFIX, MAX_CAUSAL_CELL_COMMITS, MAX_CAUSAL_CELL_REVISION_ADVANCE, MAX_CAUSAL_CELL_MARKER_BYTES, CausalCellLedger;
+var init_causal_cell_ledger = __esm({
+  "packages/daemon/src/terminal/session-runtime/causal-cell-ledger.ts"() {
+    "use strict";
+    CAUSAL_CELL_OSC = 6973;
+    CAUSAL_CELL_OSC_PREFIX = "tmux-ide-causal-cell-v1";
+    MAX_CAUSAL_CELL_COMMITS = 64;
+    MAX_CAUSAL_CELL_REVISION_ADVANCE = 64;
+    MAX_CAUSAL_CELL_MARKER_BYTES = 128;
+    CausalCellLedger = class {
+      #probe;
+      #baseline;
+      #onResult;
+      #expiry;
+      #state = "armed";
+      #controlAccepted = null;
+      #candidate = null;
+      #observedCommits = 0;
+      constructor(options) {
+        this.#probe = options.probe;
+        this.#baseline = options.baseline;
+        this.#onResult = options.onResult;
+        this.#expiry = options.scheduler.timer(() => this.#fail("timeout"), options.timeoutMs ?? 2e3);
+      }
+      get traceId() {
+        return this.#probe.traceId;
+      }
+      observeControlReply(ok2) {
+        if (this.#state === "settled") return;
+        if (this.#controlAccepted !== null) return this.#fail("control-rejected");
+        this.#controlAccepted = ok2;
+        if (!ok2) return this.#fail("control-rejected");
+        this.#finalize();
+      }
+      observeOsc(data) {
+        if (Buffer.byteLength(data, "utf8") > MAX_CAUSAL_CELL_MARKER_BYTES) {
+          this.#fail("capacity-exhausted");
+          return true;
+        }
+        const [prefix, phase, traceId, extra] = data.split(";");
+        if (prefix !== CAUSAL_CELL_OSC_PREFIX) return false;
+        if (extra !== void 0 || traceId !== this.#probe.traceId) {
+          this.#fail("marker-mismatch");
+          return true;
+        }
+        if (phase === "start" && this.#state === "armed") {
+          this.#state = "open";
+          return true;
+        }
+        if (phase === "end" && this.#state === "open") {
+          this.#state = "closed";
+          this.#finalize();
+          return true;
+        }
+        this.#fail("marker-order");
+        return true;
+      }
+      observeCommit(snapshot, revision, stateHash) {
+        if (this.#state === "settled") return;
+        this.#observedCommits += 1;
+        if (this.#observedCommits > MAX_CAUSAL_CELL_COMMITS) return this.#fail("capacity-exhausted");
+        if (revision - this.#probe.baselineRevision > MAX_CAUSAL_CELL_REVISION_ADVANCE)
+          return this.#fail("ambiguous-delta");
+        if (this.#state === "armed") {
+          if (JSON.stringify(snapshot) !== JSON.stringify(this.#baseline)) this.#fail("baseline-drift");
+          return;
+        }
+        const unchanged = JSON.stringify(snapshot) === JSON.stringify(this.#baseline);
+        if (unchanged && this.#state === "open") return;
+        if (!snapshotsMatchExceptDeclaredCell(this.#baseline, snapshot, this.#probe)) {
+          this.#fail(unchanged ? "no-op" : "ambiguous-delta");
+          return;
+        }
+        if (this.#candidate && (this.#candidate.revision !== revision || this.#candidate.stateHash !== stateHash)) {
+          this.#fail("ambiguous-delta");
+          return;
+        }
+        this.#candidate = { revision, stateHash };
+        this.#finalize();
+      }
+      fail(reason) {
+        this.#fail(reason);
+      }
+      #finalize() {
+        if (this.#state !== "closed" || this.#controlAccepted !== true || this.#candidate === null)
+          return;
+        const candidate = this.#candidate;
+        this.#state = "settled";
+        this.#expiry.cancel();
+        this.#onResult({
+          status: "proved",
+          proof: {
+            ...this.#probe,
+            committedRevision: candidate.revision,
+            committedStateHash: candidate.stateHash
+          }
+        });
+      }
+      #fail(reason) {
+        if (this.#state === "settled") return;
+        this.#state = "settled";
+        this.#expiry.cancel();
+        this.#onResult({ status: "failed", traceId: this.#probe.traceId, reason });
+      }
+    };
+  }
+});
+
 // packages/daemon/src/terminal/session-runtime/terminal-replica-interpreter.ts
 function projectPlacements(rows, viewportRows, cols) {
   const marker = detectWidgetMarkerFromReplicaRows(rows);
@@ -42898,6 +43035,7 @@ var init_terminal_replica_interpreter = __esm({
     init_runtime_scheduler();
     init_runtime_observability();
     init_xterm_terminal_interpreter_backend();
+    init_causal_cell_ledger();
     TerminalReplicaInterpreter = class {
       #generation;
       #workspaceName;
@@ -42910,6 +43048,9 @@ var init_terminal_replica_interpreter = __esm({
       #observability;
       #backendFactory;
       #backend;
+      #prioritizeNextWrite = false;
+      #causalCell = null;
+      #releaseCausalOsc = null;
       #tail = Promise.resolve();
       #revision = 0;
       #snapshot;
@@ -43000,10 +43141,44 @@ var init_terminal_replica_interpreter = __esm({
       currentSeed() {
         return this.#needsSeed ? null : this.#seed(this.#revision, this.#snapshot);
       }
+      /** Prioritize one future parser admission, independent of diagnostic tracing. */
+      prioritizeNextWrite() {
+        if (!this.#closed) this.#prioritizeNextWrite = true;
+      }
+      armCausalCellProbe(probe, onResult) {
+        if (this.#closed) throw new Error("Terminal replica is closed");
+        if (this.#causalCell) throw new Error("A causal-cell probe is already active");
+        const seed = this.currentSeed();
+        if (!seed || seed.revision !== probe.baselineRevision || seed.stateHash !== probe.baselineStateHash || seed.incarnation !== probe.incarnation || this.#snapshot.cols !== probe.geometry.cols || this.#snapshot.rows !== probe.geometry.rows || JSON.stringify(this.#snapshot.grid[probe.geometry.row]?.cells[probe.geometry.column]) !== JSON.stringify(probe.before))
+          throw new Error("Causal-cell baseline drifted before admission");
+        const ledger2 = new CausalCellLedger({
+          probe,
+          baseline: this.#snapshot,
+          scheduler: this.#scheduler,
+          onResult: (result) => {
+            if (this.#causalCell === ledger2) this.#clearCausalCell();
+            onResult(result);
+          }
+        });
+        this.#causalCell = ledger2;
+        this.#releaseCausalOsc = this.#backend.registerOscHandler(
+          CAUSAL_CELL_OSC,
+          (data) => ledger2.observeOsc(data)
+        );
+      }
+      noteCausalCellControlReply(traceId, ok2) {
+        if (this.#causalCell?.traceId === traceId) this.#causalCell.observeControlReply(ok2);
+      }
+      failCausalCell(reason, traceId) {
+        if (traceId === void 0 || this.#causalCell?.traceId === traceId) {
+          this.#causalCell?.fail(reason);
+        }
+      }
       whenSeeded() {
         return this.#seedReady;
       }
       abort(error) {
+        this.#causalCell?.fail("transport-closed");
         if (this.#needsSeed) this.#rejectSeedReady(error);
       }
       gridWalkCount() {
@@ -43020,6 +43195,7 @@ var init_terminal_replica_interpreter = __esm({
       async #apply(operation) {
         if (this.#closed) return;
         if (operation.type === "reseed") {
+          this.#causalCell?.fail("reseeded");
           const replacement = this.#backendFactory({
             cols: operation.cols,
             rows: operation.rows,
@@ -43029,7 +43205,7 @@ var init_terminal_replica_interpreter = __esm({
             for (const chunk of operation.chunks) {
               this.#admitRaw(chunk);
               this.#observeMarkerBytes(chunk);
-              await replacement.write(chunk);
+              await this.#writeToBackend(replacement, chunk);
             }
           } catch (error) {
             replacement.dispose();
@@ -43052,6 +43228,7 @@ var init_terminal_replica_interpreter = __esm({
           return;
         }
         if (operation.type === "resize") {
+          this.#causalCell?.fail("geometry-drift");
           if (this.#backend.modes().synchronizedOutput) {
             this.#backend.resize(operation.cols, operation.rows);
             this.#pendingResize = { cols: operation.cols, rows: operation.rows };
@@ -43077,6 +43254,7 @@ var init_terminal_replica_interpreter = __esm({
         };
         this.#revision = revision;
         this.#closed = true;
+        this.#causalCell?.fail("transport-closed");
         this.#clearSyncRecovery();
         if (this.#needsSeed)
           this.#rejectSeedReady(new Error("Terminal replica closed before bootstrap"));
@@ -43090,7 +43268,7 @@ var init_terminal_replica_interpreter = __esm({
         this.#stats.parseBatches += 1;
         this.#observeMarkerBytes(data);
         const parseStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
-        await this.#backend.write(data);
+        await this.#writeToBackend(this.#backend, data);
         if (this.#observability.enabled)
           this.#observability.recordSpan(
             "parse",
@@ -43125,6 +43303,13 @@ var init_terminal_replica_interpreter = __esm({
           this.#tail = run.catch(() => void 0);
         }, 250);
       }
+      #writeToBackend(backend2, data) {
+        if (this.#prioritizeNextWrite) {
+          this.#prioritizeNextWrite = false;
+          backend2.prioritizeNextWrite();
+        }
+        return backend2.write(data);
+      }
       #clearSyncRecovery() {
         if (!this.#syncRecovery) return;
         this.#syncRecovery.cancel();
@@ -43153,6 +43338,7 @@ var init_terminal_replica_interpreter = __esm({
         const nextHash = hashTerminalReplicaSnapshot(next);
         const priorHash = hashTerminalReplicaSnapshot(previous);
         if (!forceSeed && nextHash === priorHash) {
+          this.#causalCell?.observeCommit(next, this.#revision, nextHash);
           this.#recordReduceSpan(reduceStarted, trace);
           return;
         }
@@ -43164,6 +43350,7 @@ var init_terminal_replica_interpreter = __esm({
           this.#resolveSeedReady();
           this.#emitRaw(revision2, revision2);
           this.#emit(this.#seed(revision2, next), trace);
+          this.#causalCell?.observeCommit(next, revision2, nextHash);
           this.#recordReduceSpan(reduceStarted, trace);
           return;
         }
@@ -43192,7 +43379,13 @@ var init_terminal_replica_interpreter = __esm({
         this.#snapshot = next;
         this.#emitRaw(baseRevision, revision);
         this.#emit(update, trace);
+        this.#causalCell?.observeCommit(next, revision, nextHash);
         this.#recordReduceSpan(reduceStarted, trace);
+      }
+      #clearCausalCell() {
+        this.#causalCell = null;
+        this.#releaseCausalOsc?.();
+        this.#releaseCausalOsc = null;
       }
       #recordReduceSpan(startedAtMicros, trace = null) {
         if (!this.#observability.enabled) return;
@@ -43390,6 +43583,18 @@ var init_terminal_replica_owner = __esm({
       #bootstrapped = false;
       installOutputTraceReader(reader) {
         this.#takeOutputTrace ??= reader;
+      }
+      prioritizeNextWrite() {
+        this.#interpreter.prioritizeNextWrite();
+      }
+      armCausalCellProbe(probe, onResult) {
+        this.#interpreter.armCausalCellProbe(probe, onResult);
+      }
+      noteCausalCellControlReply(traceId, ok2) {
+        this.#interpreter.noteCausalCellControlReply(traceId, ok2);
+      }
+      failCausalCell(reason, traceId) {
+        this.#interpreter.failCausalCell(reason, traceId);
       }
       qualificationSnapshot() {
         const seed = this.#interpreter.currentSeed();
@@ -44477,7 +44682,19 @@ var init_authority_arbiter = __esm({
 
 // packages/daemon/src/terminal/session-runtime/registry.ts
 import { randomUUID as randomUUID10 } from "node:crypto";
-import { z as z71 } from "zod";
+import { z as z74 } from "zod";
+async function abortable(promise, signal) {
+  if (!signal) return promise;
+  signal.throwIfAborted();
+  return new Promise((resolve37, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    void promise.then(resolve37, reject).then(
+      () => signal.removeEventListener("abort", onAbort),
+      () => signal.removeEventListener("abort", onAbort)
+    );
+  });
+}
 function authoredOriginForSurface(surface) {
   if (surface === "opentui") return "tui";
   if (surface === "command-center") return "sdk";
@@ -44515,6 +44732,7 @@ var init_registry2 = __esm({
       #observability;
       #createTraceCorrelator;
       #sessions = /* @__PURE__ */ new Map();
+      #proofPrewarmOwnership = /* @__PURE__ */ new Map();
       #executionHandles = /* @__PURE__ */ new WeakMap();
       #stopExitObserver;
       #disposed = false;
@@ -44524,10 +44742,11 @@ var init_registry2 = __esm({
         this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
         this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
         this.#createTraceCorrelator = options.createTraceCorrelator ?? ((scheduler) => new RuntimeTraceCorrelator(scheduler));
-        const diagnosticMirrorOptions = this.#observability.enabled ? {
-          nowMicros: () => this.#observability.nowMicros(),
-          onInputWrite: (_session, action, startedAtMicros, endedAtMicros, pendingBeforeSend) => {
+        const diagnosticMirrorOptions = {
+          onInputAccepted: (session, action, acceptedAtMicros, ok2) => {
             for (const traceId of action.traceIds ?? []) {
+              this.#sessions.get(session)?.noteInputControlReply(traceId, ok2);
+              if (!this.#observability.enabled) continue;
               const trace = this.#observability.beginTrace(
                 "terminal-input-to-paint",
                 { generation: this.generation, incarnation: null },
@@ -44535,37 +44754,40 @@ var init_registry2 = __esm({
               );
               this.#observability.recordSpan(
                 "tmux",
-                "control-write",
-                startedAtMicros,
-                endedAtMicros,
-                trace
-              );
-              this.#observability.recordSpan(
-                "tmux",
-                pendingBeforeSend === 0 ? "control-queue-empty-at-send" : "control-queue-nonempty-at-send",
-                endedAtMicros,
-                endedAtMicros,
+                ok2 ? "control-command-accepted" : "control-command-rejected",
+                acceptedAtMicros,
+                acceptedAtMicros,
                 trace
               );
             }
           },
-          onInputAccepted: (_session, action, acceptedAtMicros) => {
-            for (const traceId of action.traceIds ?? []) {
-              const trace = this.#observability.beginTrace(
-                "terminal-input-to-paint",
-                { generation: this.generation, incarnation: null },
-                traceId
-              );
-              this.#observability.recordSpan(
-                "tmux",
-                "control-command-accepted",
-                acceptedAtMicros,
-                acceptedAtMicros,
-                trace
-              );
+          ...this.#observability.enabled ? {
+            nowMicros: () => this.#observability.nowMicros(),
+            onInputWrite: (_session, action, startedAtMicros, endedAtMicros, pendingBeforeSend) => {
+              for (const traceId of action.traceIds ?? []) {
+                const trace = this.#observability.beginTrace(
+                  "terminal-input-to-paint",
+                  { generation: this.generation, incarnation: null },
+                  traceId
+                );
+                this.#observability.recordSpan(
+                  "tmux",
+                  "control-write",
+                  startedAtMicros,
+                  endedAtMicros,
+                  trace
+                );
+                this.#observability.recordSpan(
+                  "tmux",
+                  pendingBeforeSend === 0 ? "control-queue-empty-at-send" : "control-queue-nonempty-at-send",
+                  endedAtMicros,
+                  endedAtMicros,
+                  trace
+                );
+              }
             }
-          }
-        } : {};
+          } : {}
+        };
         const observeOutput = this.#observability.enabled || options.mirror?.onOutputObserved ? (session, semanticPaneId3, ageMs, timing) => {
           options.mirror?.onOutputObserved?.(session, semanticPaneId3, ageMs, timing);
           if (this.#observability.enabled)
@@ -44601,12 +44823,87 @@ var init_registry2 = __esm({
        * consumed by admission, so prewarming cannot weaken pane enumeration or
        * create a second control authority.
        */
-      async prewarmSession(session) {
+      async prewarmSession(session, signal) {
+        signal?.throwIfAborted();
         const runtime = this.#runtime(session);
-        await runtime.whenReady();
+        await abortable(runtime.whenReady(), signal);
         if (this.#sessions.get(session) !== runtime) {
           throw new Error(`SessionRuntime ${session} was retired while prewarming`);
         }
+      }
+      /**
+       * Mark the exact retained runtime as eligible for daemon-private inventory.
+       * This is intentionally separate from ordinary renderer prewarming: only
+       * the native discovery path may call it after its parser and global catalog
+       * analyzer proved the session attachable.
+       */
+      async prewarmProofQualifiedSession(session, runtimeSessionId, signal) {
+        signal?.throwIfAborted();
+        if (!/^\$(?:0|[1-9][0-9]*)$/u.test(runtimeSessionId)) {
+          throw new Error(`SessionRuntime ${session} received an invalid runtime session identity`);
+        }
+        let runtime = this.#acquireProofPrewarmRuntime(session);
+        try {
+          await this.#observeTerminalAttempt(
+            "terminal-prewarm-readiness",
+            abortable(runtime.whenReady(), signal)
+          );
+          if (this.#sessions.get(session) !== runtime) {
+            throw new Error(`SessionRuntime ${session} was retired while qualifying inventory`);
+          }
+          let attachedIdentity = await this.#observeTerminalAttempt(
+            "terminal-attached-identity",
+            abortable(runtime.attachedSessionIdentity(), signal)
+          );
+          if (attachedIdentity?.runtimeSessionId !== runtimeSessionId) {
+            if (this.#sessions.get(session) === runtime) this.#sessions.delete(session);
+            await abortable(runtime.dispose(), signal);
+            this.#releaseProofPrewarmRuntime(runtime);
+            signal?.throwIfAborted();
+            runtime = this.#acquireProofPrewarmRuntime(session);
+            await this.#observeTerminalAttempt(
+              "terminal-prewarm-readiness",
+              abortable(runtime.whenReady(), signal)
+            );
+            if (this.#sessions.get(session) !== runtime) {
+              throw new Error(`SessionRuntime ${session} was retired while replacing inventory`);
+            }
+            attachedIdentity = await this.#observeTerminalAttempt(
+              "terminal-attached-identity",
+              abortable(runtime.attachedSessionIdentity(), signal)
+            );
+          }
+          if (attachedIdentity?.sessionName !== session || attachedIdentity.runtimeSessionId !== runtimeSessionId) {
+            throw new Error(`SessionRuntime ${session} is attached to a different tmux identity`);
+          }
+          signal?.throwIfAborted();
+          runtime.qualifyTrustedInventory(runtimeSessionId);
+        } finally {
+          this.#releaseProofPrewarmRuntime(runtime);
+        }
+      }
+      /** Daemon-internal only. Runtime tmux ids in the result must never cross wire. */
+      async describeTrustedSessionInventory(session, signal) {
+        signal?.throwIfAborted();
+        if (this.#disposed) throw new Error("SessionRuntimeRegistry is disposed");
+        const runtime = this.#sessions.get(session);
+        if (!runtime?.trustedInventoryQualified()) {
+          throw new Error(`SessionRuntime ${session} has no proof-qualified inventory authority`);
+        }
+        const inventory = await this.#observeTerminalAttempt(
+          "terminal-trusted-inventory-attempt",
+          abortable(runtime.describeTrustedInventory(), signal)
+        );
+        if (this.#sessions.get(session) !== runtime || !runtime.trustedInventoryQualified()) {
+          throw new Error(`SessionRuntime ${session} changed during trusted inventory discovery`);
+        }
+        if (!inventory) {
+          throw new Error(`SessionRuntime ${session} lost its retained inventory authority`);
+        }
+        return inventory;
+      }
+      hasProofQualifiedInventory(session) {
+        return (this.#sessions.get(session)?.trustedInventoryQualified() ?? false) && this.#mirror.hasRetainedSession(session);
       }
       /** Retire one no-longer-registered session without disturbing siblings. */
       async retireSession(session) {
@@ -44812,6 +45109,7 @@ var init_registry2 = __esm({
             await this.#semanticMutations?.dispose();
             await Promise.allSettled([...this.#sessions.values()].map((runtime) => runtime.dispose()));
             this.#sessions.clear();
+            this.#proofPrewarmOwnership.clear();
             await this.#mirror.dispose();
           })();
         }
@@ -44820,7 +45118,11 @@ var init_registry2 = __esm({
       #runtime(session) {
         if (this.#disposed) throw new Error("SessionRuntimeRegistry is disposed");
         const existing = this.#sessions.get(session);
-        if (existing) return existing;
+        if (existing) {
+          const ownership = this.#proofPrewarmOwnership.get(existing);
+          if (ownership) ownership.owned = false;
+          return existing;
+        }
         const runtime = new SessionRuntime(
           this.generation,
           session,
@@ -44842,6 +45144,48 @@ var init_registry2 = __esm({
         );
         this.#sessions.set(session, runtime);
         return runtime;
+      }
+      #acquireProofPrewarmRuntime(session) {
+        const existing = this.#sessions.get(session);
+        const runtime = existing ?? this.#runtime(session);
+        const ownership = this.#proofPrewarmOwnership.get(runtime);
+        if (ownership) ownership.claims += 1;
+        else this.#proofPrewarmOwnership.set(runtime, { owned: existing === void 0, claims: 1 });
+        return runtime;
+      }
+      #releaseProofPrewarmRuntime(runtime) {
+        const ownership = this.#proofPrewarmOwnership.get(runtime);
+        if (!ownership) return;
+        ownership.claims -= 1;
+        if (ownership.claims > 0) return;
+        this.#proofPrewarmOwnership.delete(runtime);
+        if (!ownership.owned || this.#sessions.get(runtime.session) !== runtime || runtime.hasConsumers() || runtime.trustedInventoryQualified()) {
+          return;
+        }
+        this.#sessions.delete(runtime.session);
+        void runtime.dispose().catch(() => void 0);
+      }
+      async #observeTerminalAttempt(operation, promise) {
+        if (!this.#observability.enabled) return promise;
+        let startedAtMicros;
+        try {
+          startedAtMicros = this.#observability.nowMicros();
+        } catch {
+          return promise;
+        }
+        try {
+          return await promise;
+        } finally {
+          try {
+            this.#observability.recordSpan(
+              "transport",
+              operation,
+              startedAtMicros,
+              this.#observability.nowMicros()
+            );
+          } catch {
+          }
+        }
       }
     };
     SessionRuntime = class {
@@ -44894,6 +45238,8 @@ var init_registry2 = __esm({
       #completedHandoffs = /* @__PURE__ */ new Map();
       #releasedLeases = /* @__PURE__ */ new Set();
       #disposed = false;
+      #trustedInventoryRuntimeSessionId = null;
+      #activeCausalCellProbes = 0;
       connect(surface, clientId) {
         if (this.#disposed) throw new Error(`SessionRuntime ${this.session} is disposed`);
         if (this.#consumersByClientId.has(clientId)) {
@@ -44958,6 +45304,9 @@ var init_registry2 = __esm({
       }
       hasController() {
         return this.#controllerClientId !== null;
+      }
+      hasConsumers() {
+        return this.#consumers.size > 0;
       }
       qualificationSnapshot() {
         return Object.freeze({
@@ -45066,7 +45415,7 @@ var init_registry2 = __esm({
           return Promise.reject(error);
         }
       }
-      sendInput(clientId, lease, semanticPaneId3, rawInput, performanceTraceId) {
+      sendInput(clientId, lease, semanticPaneId3, rawInput, performanceTraceId, rawCausalProbe, onCausalResult) {
         this.assertController(lease, clientId);
         const inputLease = this.#authority.leaseFor(clientId, "input");
         if (!inputLease) {
@@ -45076,7 +45425,14 @@ var init_registry2 = __esm({
           );
         }
         const input = SessionRuntimeTerminalInputSchemaZ.parse(rawInput);
-        if (performanceTraceId !== void 0) performanceTraceId = z71.uuid().parse(performanceTraceId);
+        if (performanceTraceId !== void 0) performanceTraceId = z74.uuid().parse(performanceTraceId);
+        const causalProbe = rawCausalProbe === void 0 ? null : CausalCellProbeV1SchemaZ.parse(rawCausalProbe);
+        if (causalProbe) {
+          if (causalProbe.traceId !== performanceTraceId || causalProbe.clientId !== clientId || causalProbe.semanticPaneId !== semanticPaneId3 || causalProbe.generation !== this.generation)
+            throw new Error("Causal-cell authority binding mismatch");
+          if (!onCausalResult) throw new Error("Causal-cell result sink is required");
+          if (this.#activeCausalCellProbes >= 16) throw new Error("Causal-cell capacity exhausted");
+        }
         const trace = performanceTraceId ? Object.freeze({
           traceId: performanceTraceId,
           scenario: "terminal-input-to-paint",
@@ -45086,18 +45442,41 @@ var init_registry2 = __esm({
           incarnation: null
         }) : null;
         const started = this.#observability.enabled ? this.#observability.nowMicros() : 0;
+        const replicaOwner = this.#terminalReplicaOwner(semanticPaneId3);
+        if (causalProbe) {
+          this.#activeCausalCellProbes += 1;
+          let settled = false;
+          try {
+            replicaOwner.armCausalCellProbe(causalProbe, (result) => {
+              if (!settled) {
+                settled = true;
+                this.#activeCausalCellProbes -= 1;
+              }
+              onCausalResult(result);
+            });
+          } catch (error) {
+            this.#activeCausalCellProbes -= 1;
+            throw error;
+          }
+        }
         if (trace && performanceTraceId) {
           this.#outputTraces ??= this.#createTraceCorrelator(this.#scheduler);
-          this.#terminalReplicaOwner(semanticPaneId3).installOutputTraceReader(
-            () => this.#takeOutputTrace(semanticPaneId3)
-          );
+          replicaOwner.installOutputTraceReader(() => this.#takeOutputTrace(semanticPaneId3));
           this.#outputTraces.arm(semanticPaneId3, trace);
         }
         try {
           if (input.kind === "text")
-            this.#mirror.sendText(this.session, semanticPaneId3, input.data, performanceTraceId);
+            this.#mirror.sendText(
+              this.session,
+              semanticPaneId3,
+              input.data,
+              performanceTraceId,
+              causalProbe !== null
+            );
           else this.#mirror.sendKey(this.session, semanticPaneId3, input.data, performanceTraceId);
+          replicaOwner.prioritizeNextWrite();
         } catch (error) {
+          if (causalProbe) replicaOwner.failCausalCell("transport-closed");
           if (trace && performanceTraceId) this.#outputTraces?.take(semanticPaneId3);
           throw error;
         }
@@ -45121,6 +45500,13 @@ var init_registry2 = __esm({
             );
           });
         }
+      }
+      failCausalCellProbe(semanticPaneId3, traceId, reason) {
+        this.#terminalReplicas.get(semanticPaneId3)?.failCausalCell(reason, traceId);
+      }
+      noteInputControlReply(traceId, ok2) {
+        for (const owner of this.#terminalReplicas.values())
+          owner.noteCausalCellControlReply(traceId, ok2);
       }
       /**
        * Synchronous control-reader seam. SessionChannel invokes this immediately
@@ -45168,6 +45554,38 @@ var init_registry2 = __esm({
       async describe() {
         await this.whenReady();
         return await this.#mirror.describeSession(this.session);
+      }
+      qualifyTrustedInventory(runtimeSessionId) {
+        if (this.#disposed || !this.#retention) {
+          throw new Error(`SessionRuntime ${this.session} is not retained`);
+        }
+        this.#trustedInventoryRuntimeSessionId = runtimeSessionId;
+      }
+      trustedInventoryQualified() {
+        return !this.#disposed && this.#trustedInventoryRuntimeSessionId !== null;
+      }
+      async describeTrustedInventory() {
+        if (!this.trustedInventoryQualified()) {
+          throw new Error(`SessionRuntime ${this.session} is not inventory-qualified`);
+        }
+        await this.whenReady();
+        const expectedRuntimeSessionId = this.#trustedInventoryRuntimeSessionId;
+        if (!expectedRuntimeSessionId) return null;
+        const inventory = await this.#mirror.describeTrustedInventory(
+          this.session,
+          expectedRuntimeSessionId
+        );
+        if (inventory !== null && inventory.runtimeSessionId !== this.#trustedInventoryRuntimeSessionId) {
+          return null;
+        }
+        if (!this.trustedInventoryQualified()) {
+          throw new Error(`SessionRuntime ${this.session} changed during trusted inventory discovery`);
+        }
+        return inventory;
+      }
+      async attachedSessionIdentity() {
+        await this.whenReady();
+        return await this.#mirror.retainedSessionIdentity(this.session);
       }
       async subscribe(semanticPaneId3, onEvent, onLayout) {
         await this.whenReady();
@@ -45301,6 +45719,7 @@ var init_registry2 = __esm({
         this.#publishAuthority();
       }
       noteControlExit() {
+        this.#trustedInventoryRuntimeSessionId = null;
         const retention = this.#retention;
         this.#retention = null;
         this.#startPromise = null;
@@ -45318,6 +45737,7 @@ var init_registry2 = __esm({
       async dispose() {
         if (this.#disposed) return;
         this.#disposed = true;
+        this.#trustedInventoryRuntimeSessionId = null;
         const consumers = [...this.#consumers];
         await Promise.allSettled(consumers.map((consumer) => consumer.close()));
         this.#clearController();
@@ -45347,7 +45767,7 @@ var init_registry2 = __esm({
       #assignController(clientId) {
         this.#controllerRevision += 1;
         this.#controllerClientId = clientId;
-        this.#controllerToken = z71.uuid().parse(this.#createControllerToken());
+        this.#controllerToken = z74.uuid().parse(this.#createControllerToken());
         return this.#currentLease();
       }
       #clearController() {
@@ -45460,9 +45880,20 @@ var init_registry2 = __esm({
         this.#assertOpen();
         return this.#runtime.submitIntent(this.clientId, lease, operationId, intent);
       }
-      sendInput(lease, semanticPaneId3, input, performanceTraceId) {
+      sendInput(lease, semanticPaneId3, input, performanceTraceId, causalProbe, onCausalResult) {
         this.#assertOpen();
-        this.#runtime.sendInput(this.clientId, lease, semanticPaneId3, input, performanceTraceId);
+        this.#runtime.sendInput(
+          this.clientId,
+          lease,
+          semanticPaneId3,
+          input,
+          performanceTraceId,
+          causalProbe,
+          onCausalResult
+        );
+      }
+      failCausalCellProbe(semanticPaneId3, traceId, reason) {
+        this.#runtime.failCausalCellProbe(semanticPaneId3, traceId, reason);
       }
       fitViewport(lease, cols, rows) {
         this.#assertOpen();
@@ -45563,7 +45994,7 @@ var init_registry2 = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/admission-util.ts
-import { createHash as createHash11, timingSafeEqual as timingSafeEqual2 } from "node:crypto";
+import { createHash as createHash11, timingSafeEqual as timingSafeEqual3 } from "node:crypto";
 function canonicalOriginOrNull(value) {
   if (typeof value !== "string" || value.length < 4 || value.length > 2048 || value === "null" || value === "*" || /[\0\r\n\t ]/u.test(value)) {
     return null;
@@ -45614,7 +46045,7 @@ function digestSecret(secret) {
   return createHash11("sha256").update(secret, "utf8").digest();
 }
 function digestsEqual(left, right) {
-  return left.byteLength === right.byteLength && timingSafeEqual2(left, right);
+  return left.byteLength === right.byteLength && timingSafeEqual3(left, right);
 }
 var WS_OPEN3;
 var init_admission_util = __esm({
@@ -45625,7 +46056,7 @@ var init_admission_util = __esm({
 });
 
 // packages/contracts/src/terminal-attachment-stream.ts
-import { z as z73 } from "zod";
+import { z as z76 } from "zod";
 function decodeTerminalAttachmentInputFrame(frame) {
   if (!(frame instanceof Uint8Array) || frame.byteLength <= TERMINAL_ATTACHMENT_INPUT_FRAME_HEADER_BYTES || frame.byteLength > TERMINAL_ATTACHMENT_MAX_INPUT_WIRE_BYTES || frame[0] !== TERMINAL_ATTACHMENT_INPUT_FRAME_KIND) {
     return null;
@@ -45650,43 +46081,43 @@ var init_terminal_attachment_stream = __esm({
     TERMINAL_ATTACHMENT_MAX_INPUT_SEQUENCE = 4294967295;
     TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES = 64 * 1024;
     TERMINAL_ATTACHMENT_MAX_INPUT_WIRE_BYTES = TERMINAL_ATTACHMENT_INPUT_FRAME_HEADER_BYTES + TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES;
-    TerminalAttachmentInputLimitsSchemaZ = z73.object({
-      maxFrameBytes: z73.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES),
-      maxAcceptedBytes: z73.number().int().positive().max(4 * 1024 * 1024),
-      maxAcceptedFrames: z73.number().int().positive().max(16384)
+    TerminalAttachmentInputLimitsSchemaZ = z76.object({
+      maxFrameBytes: z76.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES),
+      maxAcceptedBytes: z76.number().int().positive().max(4 * 1024 * 1024),
+      maxAcceptedFrames: z76.number().int().positive().max(16384)
     }).strict().refine((limits) => limits.maxFrameBytes <= limits.maxAcceptedBytes, {
       message: "terminal input frame limit cannot exceed its lifetime byte limit"
     });
-    TerminalAttachmentInputCapabilitySchemaZ = z73.union([
-      z73.literal("unavailable"),
-      z73.object({
-        mode: z73.literal("bounded"),
+    TerminalAttachmentInputCapabilitySchemaZ = z76.union([
+      z76.literal("unavailable"),
+      z76.object({
+        mode: z76.literal("bounded"),
         limits: TerminalAttachmentInputLimitsSchemaZ
       }).strict()
     ]);
-    TerminalAttachmentInputAckFrameSchemaZ = z73.object({
-      type: z73.literal("input-ack"),
-      protocolVersion: z73.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
-      generation: z73.number().int().nonnegative(),
-      sequence: z73.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_SEQUENCE),
-      byteLength: z73.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES),
-      state: z73.enum(["open", "exhausted"]),
-      acceptedBytes: z73.number().int().positive().max(4 * 1024 * 1024),
-      acceptedFrames: z73.number().int().positive().max(16384),
-      remainingBytes: z73.number().int().nonnegative().max(4 * 1024 * 1024),
-      remainingFrames: z73.number().int().nonnegative().max(16384)
+    TerminalAttachmentInputAckFrameSchemaZ = z76.object({
+      type: z76.literal("input-ack"),
+      protocolVersion: z76.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
+      generation: z76.number().int().nonnegative(),
+      sequence: z76.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_SEQUENCE),
+      byteLength: z76.number().int().positive().max(TERMINAL_ATTACHMENT_MAX_INPUT_FRAME_BYTES),
+      state: z76.enum(["open", "exhausted"]),
+      acceptedBytes: z76.number().int().positive().max(4 * 1024 * 1024),
+      acceptedFrames: z76.number().int().positive().max(16384),
+      remainingBytes: z76.number().int().nonnegative().max(4 * 1024 * 1024),
+      remainingFrames: z76.number().int().nonnegative().max(16384)
     }).strict();
   }
 });
 
 // packages/daemon/src/terminal/attachments/grouped-tmux.ts
-import { z as z74 } from "zod";
+import { z as z77 } from "zod";
 function tmux3(argv) {
   return { executable: "tmux", argv };
 }
 function groupedTmuxViewSessionName(attachmentId, generation) {
   const parsed = GroupedTmuxAttachmentPlanInputSchemaZ.shape.attachmentId.parse(attachmentId);
-  const parsedGeneration = z74.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION).parse(generation);
+  const parsedGeneration = z77.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION).parse(generation);
   return `${GROUPED_TMUX_VIEW_SESSION_PREFIX}${parsed.replaceAll("-", "").toLowerCase()}-${parsedGeneration.toString(36)}`;
 }
 function markerValue(attachmentId, generation) {
@@ -45811,17 +46242,17 @@ var init_grouped_tmux = __esm({
     GROUPED_TMUX_MAX_GENERATION = 65535;
     GROUPED_TMUX_PLACEHOLDER_WINDOW = "__tmux_ide_attachment_placeholder";
     GROUPED_TMUX_PLACEHOLDER_COMMAND = "exec sleep 2147483647";
-    RuntimeSessionIdSchemaZ2 = z74.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u, "source session id must be a tmux runtime id");
-    RuntimeWindowIdSchemaZ2 = z74.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u, "source window id must be a tmux runtime id");
-    RuntimePaneIdSchemaZ2 = z74.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u, "source pane id must be a tmux runtime id");
-    GroupedTmuxAttachmentPlanInputSchemaZ = z74.object({
-      attachmentId: z74.uuid(),
-      generation: z74.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
+    RuntimeSessionIdSchemaZ2 = z77.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u, "source session id must be a tmux runtime id");
+    RuntimeWindowIdSchemaZ2 = z77.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u, "source window id must be a tmux runtime id");
+    RuntimePaneIdSchemaZ2 = z77.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u, "source pane id must be a tmux runtime id");
+    GroupedTmuxAttachmentPlanInputSchemaZ = z77.object({
+      attachmentId: z77.uuid(),
+      generation: z77.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
       target: TerminalAttachmentSemanticTargetSchemaZ,
       viewerMode: TerminalAttachmentViewerModeSchemaZ,
       geometryOwnership: TerminalAttachmentGeometryOwnershipSchemaZ.default("passive"),
       viewport: TerminalAttachmentViewportSchemaZ,
-      source: z74.object({
+      source: z77.object({
         sessionId: RuntimeSessionIdSchemaZ2,
         windowId: RuntimeWindowIdSchemaZ2,
         runtimePaneId: RuntimePaneIdSchemaZ2,
@@ -45831,15 +46262,15 @@ var init_grouped_tmux = __esm({
          * gate: any positive count is valid. Single-pane windows keep passing
          * `1`, so their plans stay byte-identical.
          */
-        windowPaneCount: z74.number().int().positive()
+        windowPaneCount: z77.number().int().positive()
       }).strict()
     }).strict().superRefine(refuseReadOnlyGeometryOwner);
   }
 });
 
 // packages/daemon/src/terminal/attachments/lease-manager.ts
-import { createHash as createHash12, randomBytes as randomBytes5, randomUUID as randomUUID11, timingSafeEqual as timingSafeEqual3 } from "node:crypto";
-import { z as z75 } from "zod";
+import { createHash as createHash12, randomBytes as randomBytes5, randomUUID as randomUUID11, timingSafeEqual as timingSafeEqual4 } from "node:crypto";
+import { z as z78 } from "zod";
 function positiveDuration(value, fallback, label2) {
   const resolved2 = value ?? fallback;
   if (!Number.isSafeInteger(resolved2) || resolved2 <= 0) {
@@ -45851,7 +46282,7 @@ function hashTicket(ticket) {
   return createHash12("sha256").update(ticket, "utf8").digest();
 }
 function constantTimeDigestMatch(left, right) {
-  return left.byteLength === right.byteLength && timingSafeEqual3(left, right);
+  return left.byteLength === right.byteLength && timingSafeEqual4(left, right);
 }
 function validateBinding(binding) {
   return {
@@ -45875,10 +46306,10 @@ var init_lease_manager = __esm({
     "use strict";
     init_src();
     init_grouped_tmux();
-    BindingIdSchemaZ = z75.string().min(1).max(4096).refine((value) => !value.includes("\0"));
-    RequestIdSchemaZ = z75.uuid();
+    BindingIdSchemaZ = z78.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    RequestIdSchemaZ = z78.uuid();
     RuntimeWindowId = /^@(?:0|[1-9][0-9]*)$/u;
-    AttachmentViewOperationSchemaZ = z75.enum(["create", "attach", "recover"]);
+    AttachmentViewOperationSchemaZ = z78.enum(["create", "attach", "recover"]);
     RedemptionTicketPattern = /^ta1_[A-Za-z0-9_-]{43}$/u;
     MarkerPattern = /^v1:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}):(0|[1-9][0-9]*)$/iu;
     AttachmentLeaseError = class extends Error {
@@ -46169,7 +46600,7 @@ var init_lease_manager = __esm({
             throw new AttachmentLeaseError("lease-expired", "The attachment lease has expired.");
           }
           const clientClaim = typeof executionResult === "object" && executionResult.status === "executed" ? executionResult.clientClaim : null;
-          if (clientClaim && (!z75.uuid().safeParse(clientClaim.attemptId).success || clientClaim.attachmentId !== state.plan.identity.attachmentId || clientClaim.generation !== state.plan.identity.generation || parsedOperation === "create")) {
+          if (clientClaim && (!z78.uuid().safeParse(clientClaim.attemptId).success || clientClaim.attachmentId !== state.plan.identity.attachmentId || clientClaim.generation !== state.plan.identity.generation || parsedOperation === "create")) {
             this.#removeState(state);
             await this.#cleanupPlan(state);
             throw new AttachmentLeaseError(
@@ -46328,7 +46759,7 @@ var init_lease_manager = __esm({
       #freshId() {
         for (let attempt = 0; attempt < 16; attempt += 1) {
           const candidate = this.#createId();
-          if (z75.uuid().safeParse(candidate).success && !this.#leases.has(candidate)) return candidate;
+          if (z78.uuid().safeParse(candidate).success && !this.#leases.has(candidate)) return candidate;
         }
         throw new AttachmentLeaseError(
           "identity-generation-failed",
@@ -46492,14 +46923,14 @@ var init_lease_manager = __esm({
           viewGeneration: state.viewGeneration
         };
       }
-      #audit(type, state, at, reason) {
+      #audit(type, state, at2, reason) {
         this.#emitAudit({
           type,
           leaseId: state.leaseId,
           requestId: state.requestId,
           target: { ...state.request.target },
           viewerMode: state.request.viewerMode,
-          at,
+          at: at2,
           ...reason === void 0 ? {} : { reason }
         });
       }
@@ -46514,7 +46945,7 @@ var init_lease_manager = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/direct-websocket.ts
-import { z as z76 } from "zod";
+import { z as z79 } from "zod";
 function defaultSchedule(callback, delayMs) {
   const timer = setTimeout(callback, delayMs);
   timer.unref?.();
@@ -46565,7 +46996,7 @@ function sameTarget(left, right) {
   return left.workspaceName === right.workspaceName && left.semanticPaneId === right.semanticPaneId;
 }
 function validDescriptorIdentity(descriptor2) {
-  return z76.uuid().safeParse(descriptor2.leaseId).success && z76.uuid().safeParse(descriptor2.requestId).success && Number.isSafeInteger(descriptor2.issuedAt) && Number.isSafeInteger(descriptor2.expiresAt) && Number.isSafeInteger(descriptor2.bindingGeneration) && descriptor2.bindingGeneration >= 0 && Number.isSafeInteger(descriptor2.viewGeneration) && descriptor2.viewGeneration >= 0;
+  return z79.uuid().safeParse(descriptor2.leaseId).success && z79.uuid().safeParse(descriptor2.requestId).success && Number.isSafeInteger(descriptor2.issuedAt) && Number.isSafeInteger(descriptor2.expiresAt) && Number.isSafeInteger(descriptor2.bindingGeneration) && descriptor2.bindingGeneration >= 0 && Number.isSafeInteger(descriptor2.viewGeneration) && descriptor2.viewGeneration >= 0;
 }
 function boundedInputCapability(client, viewerMode) {
   const input = viewerMode === "interactive" ? client.boundedInput : null;
@@ -46606,18 +47037,18 @@ var init_direct_websocket = __esm({
     TERMINAL_ATTACHMENT_MAX_LIVE_CONTROL_FRAMES = 1024;
     WS_OPEN4 = 1;
     TicketPattern = /^ta1_[A-Za-z0-9_-]{43}$/u;
-    BindingIdSchemaZ2 = z76.string().min(1).max(4096).refine((value) => !value.includes("\0"));
-    RedemptionFrameSchemaZ = z76.object({
-      type: z76.literal("redeem"),
-      protocolVersion: z76.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
-      ticket: z76.string().regex(TicketPattern),
-      requestId: z76.uuid(),
+    BindingIdSchemaZ2 = z79.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    RedemptionFrameSchemaZ = z79.object({
+      type: z79.literal("redeem"),
+      protocolVersion: z79.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
+      ticket: z79.string().regex(TicketPattern),
+      requestId: z79.uuid(),
       daemonInstanceId: BindingIdSchemaZ2
     }).strict();
-    ResizeFrameSchemaZ = z76.object({
-      type: z76.literal("resize"),
-      protocolVersion: z76.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
-      generation: z76.number().int().nonnegative(),
+    ResizeFrameSchemaZ = z79.object({
+      type: z79.literal("resize"),
+      protocolVersion: z79.literal(TERMINAL_ATTACHMENT_PROTOCOL_VERSION),
+      generation: z79.number().int().nonnegative(),
       viewport: TerminalAttachmentViewportSchemaZ
     }).strict();
     GridSchemaZ = TerminalAttachmentViewportSchemaZ;
@@ -46737,7 +47168,7 @@ var init_direct_websocket = __esm({
           }
           const parsedRequest = TerminalAttachRequestSchemaZ.parse(request);
           const origin = canonicalRendererOrigin(context.rendererOrigin);
-          const requestId = z76.uuid().parse(context.requestId);
+          const requestId = z79.uuid().parse(context.requestId);
           const projectIdentity = BindingIdSchemaZ2.parse(context.projectIdentity);
           if (this.#pending.size + this.#pendingReservations >= this.#maxPending) {
             throw new TerminalAttachmentAdmissionError(
@@ -47561,8 +47992,8 @@ var init_direct_websocket = __esm({
 });
 
 // packages/daemon/src/terminal/pane-stream/lease-manager.ts
-import { createHash as createHash13, randomBytes as randomBytes6, randomUUID as randomUUID13, timingSafeEqual as timingSafeEqual4 } from "node:crypto";
-import { z as z79 } from "zod";
+import { createHash as createHash13, randomBytes as randomBytes6, randomUUID as randomUUID13, timingSafeEqual as timingSafeEqual5 } from "node:crypto";
+import { z as z82 } from "zod";
 function positiveDuration2(value, fallback, label2) {
   const resolved2 = value ?? fallback;
   if (!Number.isSafeInteger(resolved2) || resolved2 <= 0) {
@@ -47574,7 +48005,7 @@ function hashTicket2(ticket) {
   return createHash13("sha256").update(ticket, "utf8").digest();
 }
 function digestsMatch(left, right) {
-  return left.byteLength === right.byteLength && timingSafeEqual4(left, right);
+  return left.byteLength === right.byteLength && timingSafeEqual5(left, right);
 }
 function validateBinding2(binding) {
   return {
@@ -47588,9 +48019,9 @@ var init_lease_manager2 = __esm({
   "packages/daemon/src/terminal/pane-stream/lease-manager.ts"() {
     "use strict";
     init_src();
-    BindingIdSchemaZ3 = z79.string().min(1).max(4096).refine((value) => !value.includes("\0"));
-    RequestIdSchemaZ2 = z79.uuid();
-    SessionNameSchemaZ = z79.string().min(1).max(256).refine((value) => !/[\0\r\n]/u.test(value));
+    BindingIdSchemaZ3 = z82.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    RequestIdSchemaZ2 = z82.uuid();
+    SessionNameSchemaZ = z82.string().min(1).max(256).refine((value) => !/[\0\r\n]/u.test(value));
     TicketPattern2 = /^ps1_[A-Za-z0-9_-]{43}$/u;
     PaneStreamLeaseError = class extends Error {
       code;
@@ -47745,7 +48176,7 @@ var init_lease_manager2 = __esm({
       #freshId() {
         for (let attempt = 0; attempt < 16; attempt += 1) {
           const candidate = this.#createId();
-          if (z79.uuid().safeParse(candidate).success && !this.#leases.has(candidate)) return candidate;
+          if (z82.uuid().safeParse(candidate).success && !this.#leases.has(candidate)) return candidate;
         }
         throw new PaneStreamLeaseError(
           "identity-generation-failed",
@@ -47884,7 +48315,7 @@ var init_wire_ledger = __esm({
 });
 
 // packages/daemon/src/terminal/pane-stream/pane-stream-websocket.ts
-import { z as z80 } from "zod";
+import { z as z83 } from "zod";
 function defaultSchedule3(callback, delayMs) {
   const timer = setTimeout(callback, delayMs);
   timer.unref?.();
@@ -47957,7 +48388,7 @@ var init_pane_stream_websocket = __esm({
     PANE_STREAM_MAX_REDEMPTION_MS = 1e3;
     WS_OPEN5 = 1;
     TicketPattern3 = /^ps1_[A-Za-z0-9_-]{43}$/u;
-    BindingIdSchemaZ4 = z80.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    BindingIdSchemaZ4 = z83.string().min(1).max(4096).refine((value) => !value.includes("\0"));
     PaneStreamAdmissionError = class extends Error {
       code;
       constructor(code, message) {
@@ -48050,7 +48481,7 @@ var init_pane_stream_websocket = __esm({
           if (origin === null) {
             throw new PaneStreamAdmissionError("invalid-origin", "Renderer Origin is invalid.");
           }
-          const requestId = z80.uuid().parse(context.requestId);
+          const requestId = z83.uuid().parse(context.requestId);
           const projectIdentity = BindingIdSchemaZ4.parse(context.projectIdentity);
           if (this.#pending.size >= this.#maxPending) {
             throw new PaneStreamAdmissionError(
@@ -48093,7 +48524,7 @@ var init_pane_stream_websocket = __esm({
           });
           const descriptor2 = issued.descriptor;
           const ticket = issued.redemptionTicket;
-          const valid = TicketPattern3.test(ticket) && z80.uuid().safeParse(descriptor2.leaseId).success && descriptor2.requestId === requestId && descriptor2.status === "awaiting-redemption" && descriptor2.viewerMode === request.viewerMode && descriptor2.workspaceName === request.workspaceName && descriptor2.panes.length === request.panes.length && descriptor2.panes.every((pane, index) => pane === request.panes[index]) && descriptor2.expiresAt > this.#now();
+          const valid = TicketPattern3.test(ticket) && z83.uuid().safeParse(descriptor2.leaseId).success && descriptor2.requestId === requestId && descriptor2.status === "awaiting-redemption" && descriptor2.viewerMode === request.viewerMode && descriptor2.workspaceName === request.workspaceName && descriptor2.panes.length === request.panes.length && descriptor2.panes.every((pane, index) => pane === request.panes[index]) && descriptor2.expiresAt > this.#now();
           const ticketDigest = digestSecret(ticket);
           const duplicate = [...this.#pending.values()].some(
             (pending2) => digestsEqual(pending2.ticketDigest, ticketDigest)
@@ -48164,7 +48595,7 @@ var init_pane_stream_websocket = __esm({
         if (input.hostClientId && !hostClientId) {
           return { accepted: false, code: "origin-rejected", httpStatus: 403 };
         }
-        const requestId = input.requestId ? z80.uuid().safeParse(input.requestId).data : void 0;
+        const requestId = input.requestId ? z83.uuid().safeParse(input.requestId).data : void 0;
         if (input.requestId && !requestId) {
           return { accepted: false, code: "origin-rejected", httpStatus: 403 };
         }
@@ -48302,6 +48733,7 @@ var init_pane_stream_websocket = __esm({
                 sessionRuntimeBinding,
                 binding,
                 deliveryAcks: frame.deliveryAcks === true,
+                causalCellCapability: descriptor2.terminalDelivery !== null && descriptor2.viewerMode === "interactive" && frame.diagnosticCapabilities?.includes("causal-cell-v1") === true,
                 mirror: this.#mirror,
                 leaseManager: this.#leaseManager,
                 ledger: this.#ledger,
@@ -48479,6 +48911,7 @@ var init_pane_stream_websocket = __esm({
       #binding;
       #sessionRuntimeBinding;
       #deliveryAcks;
+      #causalCellCapability;
       #mirror;
       #leaseManager;
       #ledger;
@@ -48519,6 +48952,7 @@ var init_pane_stream_websocket = __esm({
           throw new Error("Interactive pane stream requires SessionRuntime authority");
         }
         this.#deliveryAcks = options.deliveryAcks;
+        this.#causalCellCapability = options.causalCellCapability;
         this.#mirror = options.mirror;
         this.#leaseManager = options.leaseManager;
         this.#ledger = options.ledger;
@@ -48566,7 +49000,8 @@ var init_pane_stream_websocket = __esm({
             daemonInstanceId: this.#binding.daemonInstanceId,
             requestId: this.#binding.requestId,
             panes: [...this.#descriptor.panes],
-            effectiveViewerMode: this.#descriptor.viewerMode
+            effectiveViewerMode: this.#descriptor.viewerMode,
+            ...this.#causalCellCapability ? { diagnosticCapabilities: ["causal-cell-v1"] } : {}
           });
         } catch {
           this.close(1011, "stream-unavailable");
@@ -49055,6 +49490,13 @@ var init_pane_stream_websocket = __esm({
       // ── Client frames ─────────────────────────────────────────────────────────
       #onMessage = (data, isBinary) => {
         if (this.#closed) return;
+        let ingressAtMicros = null;
+        if (this.#observability?.enabled) {
+          try {
+            ingressAtMicros = this.#observability.nowMicros();
+          } catch {
+          }
+        }
         const byteLength = rawDataByteLength(data, PANE_STREAM_MAX_CONTROL_BYTES);
         if (isBinary || byteLength === 0 || byteLength > PANE_STREAM_MAX_CONTROL_BYTES) {
           this.#failProtocol("protocol-error");
@@ -49175,7 +49617,9 @@ var init_pane_stream_websocket = __esm({
           frame.kind,
           frame.data,
           byteLength,
-          frame.performanceTraceId
+          frame.performanceTraceId,
+          frame.causalProbe,
+          ingressAtMicros
         );
       };
       #acceptAuthorityGeneration(generation) {
@@ -49263,7 +49707,7 @@ var init_pane_stream_websocket = __esm({
         this.#ledger.give(this.#clientId, pane, "renderer-backlog", returned);
         this.#evaluateResume(pane);
       }
-      #acceptInput(pane, seq, kind, data, frameBytes, performanceTraceId) {
+      #acceptInput(pane, seq, kind, data, frameBytes, performanceTraceId, causalProbe, ingressAtMicros = null) {
         if (this.#descriptor.viewerMode !== "interactive") {
           this.#failProtocol("input-rejected");
           return;
@@ -49273,6 +49717,13 @@ var init_pane_stream_websocket = __esm({
         if (!channel || channel.closed || (semanticDelivery ? !channel.delivery : !channel.sub) || seq !== channel.nextInputSeq) {
           this.#failProtocol("input-rejected");
           return;
+        }
+        if (causalProbe) {
+          const address = channel.deliveryAddress;
+          if (!this.#causalCellCapability || !address || causalProbe.clientId !== this.#sessionRuntimeBinding?.clientId || causalProbe.transportNonce !== this.#binding.requestId || causalProbe.deliveryNonce !== address.deliveryNonce || causalProbe.inputSequence !== seq || causalProbe.semanticPaneId !== pane || causalProbe.generation !== address.generation || causalProbe.incarnation !== address.incarnation) {
+            this.#failProtocol("input-rejected");
+            return;
+          }
         }
         const now = this.#now();
         if (now < this.#inputWindowStartedAt || now - this.#inputWindowStartedAt >= this.#inputRateWindowMs) {
@@ -49285,16 +49736,81 @@ var init_pane_stream_websocket = __esm({
           return;
         }
         if (!this.#prepareInputAuthority(false)) return;
+        let trace = null;
+        if (performanceTraceId && this.#observability?.enabled) {
+          try {
+            trace = this.#observability.beginTrace(
+              "terminal-input-to-paint",
+              {
+                generation: this.#sessionRuntimeBinding.generation,
+                incarnation: causalProbe?.incarnation ?? channel.deliveryAddress?.incarnation ?? null
+              },
+              performanceTraceId
+            );
+            if (trace && ingressAtMicros !== null) {
+              this.#observability.recordSpan(
+                "transport",
+                "pane-stream-input-frame-ingress",
+                ingressAtMicros,
+                ingressAtMicros,
+                trace
+              );
+            }
+          } catch {
+            trace = null;
+          }
+        }
         this.#inputWindowFrames += 1;
         this.#inputWindowBytes += frameBytes;
         channel.nextInputSeq += 1;
         try {
           this.#sessionRuntimeBinding.assertController(pane);
           if (semanticDelivery)
-            this.#sessionRuntimeBinding.sendInput(pane, { kind, data }, performanceTraceId);
+            this.#sessionRuntimeBinding.sendInput(
+              pane,
+              { kind, data },
+              performanceTraceId,
+              causalProbe,
+              causalProbe ? (result) => {
+                if (this.#closed) return;
+                if (result.status === "proved") {
+                  this.#sendFrame(null, { type: "causal-cell-proof", proof: result.proof });
+                } else {
+                  this.#sendFrame(null, {
+                    type: "causal-cell-failure",
+                    failure: {
+                      version: 1,
+                      capability: "causal-cell-v1",
+                      traceId: result.traceId,
+                      reason: result.reason
+                    }
+                  });
+                }
+              } : void 0
+            );
           else if (kind === "text") channel.sub.sendText(data);
           else channel.sub.sendKey(data);
+          let ackStartedAtMicros = null;
+          if (trace) {
+            try {
+              ackStartedAtMicros = this.#observability.nowMicros();
+            } catch {
+            }
+          }
           sendControl2(this.#socket, { type: "input-ack", pane, seq });
+          if (trace && ackStartedAtMicros !== null) {
+            try {
+              const ackEndedAtMicros = this.#observability.nowMicros();
+              this.#observability.recordSpan(
+                "transport",
+                "pane-stream-input-ack-socket-send",
+                ackStartedAtMicros,
+                ackEndedAtMicros,
+                trace
+              );
+            } catch {
+            }
+          }
         } catch {
           this.close(1011, "stream-unavailable");
         }
@@ -49433,74 +49949,74 @@ var init_semantic_multiplexer_actions = __esm({
 });
 
 // packages/daemon/src/command-center/schemas.ts
-import { z as z81 } from "zod";
+import { z as z84 } from "zod";
 var updateTaskSchema, createTaskSchema, savePlanSchema, savePlanContentSchema, sendCommandSchema, createMilestoneSchema, updateMilestoneSchema, updateAssertionSchema, triggerResearchSchema, launchSchema, stopSchema, skillNameRegex, createSkillSchema, updateSkillSchema;
 var init_schemas = __esm({
   "packages/daemon/src/command-center/schemas.ts"() {
     "use strict";
-    updateTaskSchema = z81.object({
-      status: z81.enum(["todo", "in-progress", "review", "done"]).optional(),
-      assignee: z81.string().optional(),
-      title: z81.string().optional(),
-      description: z81.string().optional(),
-      priority: z81.number().optional()
+    updateTaskSchema = z84.object({
+      status: z84.enum(["todo", "in-progress", "review", "done"]).optional(),
+      assignee: z84.string().optional(),
+      title: z84.string().optional(),
+      description: z84.string().optional(),
+      priority: z84.number().optional()
     });
-    createTaskSchema = z81.object({
-      title: z81.string().trim().min(1, "Title is required"),
-      description: z81.string().optional(),
-      priority: z81.number().optional(),
-      goal: z81.string().optional(),
-      tags: z81.array(z81.string()).optional()
+    createTaskSchema = z84.object({
+      title: z84.string().trim().min(1, "Title is required"),
+      description: z84.string().optional(),
+      priority: z84.number().optional(),
+      goal: z84.string().optional(),
+      tags: z84.array(z84.string()).optional()
     });
-    savePlanSchema = z81.object({
-      content: z81.string().max(1e6, "Plan content is too large")
+    savePlanSchema = z84.object({
+      content: z84.string().max(1e6, "Plan content is too large")
     });
-    savePlanContentSchema = z81.object({
-      content: z81.string().max(1e6, "Plan content is too large")
+    savePlanContentSchema = z84.object({
+      content: z84.string().max(1e6, "Plan content is too large")
     });
-    sendCommandSchema = z81.object({
-      target: z81.string().min(1, "Target pane is required"),
-      message: z81.string().min(1, "Message is required"),
-      noEnter: z81.boolean().optional()
+    sendCommandSchema = z84.object({
+      target: z84.string().min(1, "Target pane is required"),
+      message: z84.string().min(1, "Message is required"),
+      noEnter: z84.boolean().optional()
     });
-    createMilestoneSchema = z81.object({
-      title: z81.string().trim().min(1, "Title is required"),
-      sequence: z81.number().int().positive(),
-      description: z81.string().optional()
+    createMilestoneSchema = z84.object({
+      title: z84.string().trim().min(1, "Title is required"),
+      sequence: z84.number().int().positive(),
+      description: z84.string().optional()
     });
-    updateMilestoneSchema = z81.object({
-      status: z81.enum(["locked", "active", "done", "validating"]).optional(),
-      title: z81.string().optional(),
-      description: z81.string().optional()
+    updateMilestoneSchema = z84.object({
+      status: z84.enum(["locked", "active", "done", "validating"]).optional(),
+      title: z84.string().optional(),
+      description: z84.string().optional()
     });
-    updateAssertionSchema = z81.object({
-      status: z81.enum(["pending", "passing", "failing", "blocked"]),
-      evidence: z81.string().optional(),
-      verifiedBy: z81.string().optional()
+    updateAssertionSchema = z84.object({
+      status: z84.enum(["pending", "passing", "failing", "blocked"]),
+      evidence: z84.string().optional(),
+      verifiedBy: z84.string().optional()
     });
-    triggerResearchSchema = z81.object({
-      type: z81.string().trim().min(1, "Research type is required")
+    triggerResearchSchema = z84.object({
+      type: z84.string().trim().min(1, "Research type is required")
     });
-    launchSchema = z81.object({
-      attach: z81.boolean().optional()
+    launchSchema = z84.object({
+      attach: z84.boolean().optional()
     }).optional();
-    stopSchema = z81.object({}).optional();
+    stopSchema = z84.object({}).optional();
     skillNameRegex = /^[A-Za-z0-9._ -]+$/;
-    createSkillSchema = z81.object({
-      name: z81.string().trim().min(1, "Skill name is required").regex(
+    createSkillSchema = z84.object({
+      name: z84.string().trim().min(1, "Skill name is required").regex(
         skillNameRegex,
         "Skill name may only contain letters, digits, dot, dash, underscore, or space"
       ),
-      role: z81.string().trim().optional(),
-      description: z81.string().optional(),
-      specialties: z81.array(z81.string()).optional(),
-      body: z81.string().optional()
+      role: z84.string().trim().optional(),
+      description: z84.string().optional(),
+      specialties: z84.array(z84.string()).optional(),
+      body: z84.string().optional()
     });
-    updateSkillSchema = z81.object({
-      role: z81.string().trim().optional(),
-      description: z81.string().optional(),
-      specialties: z81.array(z81.string()).optional(),
-      body: z81.string().optional()
+    updateSkillSchema = z84.object({
+      role: z84.string().trim().optional(),
+      description: z84.string().optional(),
+      specialties: z84.array(z84.string()).optional(),
+      body: z84.string().optional()
     });
   }
 });
@@ -50959,7 +51475,7 @@ var init_command_definitions = __esm({
       "fleet.agent.provision": { label: "Create fleet agent", category: "workspace" },
       "workspace.open.commit": { label: "Commit workspace handoff", category: "workspace" },
       "workspace.open.cancel": { label: "Cancel workspace handoff", category: "workspace" },
-      "workspace.promote": { label: "Promote adopted session to workspace", category: "workspace" },
+      "workspace.promote": { label: "Promote live session to workspace", category: "workspace" },
       "workspace.app-window.mutate": { label: "Mutate application window", category: "workspace" },
       "workspace.window.split": { label: "Split pane", category: "workspace" },
       "workspace.window.kill": { label: "Close window", category: "workspace", dangerous: true },
@@ -51406,64 +51922,64 @@ var init_project_init_runner = __esm({
 });
 
 // packages/daemon/src/schemas/inspect.ts
-import { z as z82 } from "zod";
+import { z as z85 } from "zod";
 var ProjectInspectDetectedSchemaZ, ProjectInspectSchemaZ, InspectFilesystemRequestSchemaZ, OnboardProjectRequestSchemaZ;
 var init_inspect = __esm({
   "packages/daemon/src/schemas/inspect.ts"() {
     "use strict";
-    ProjectInspectDetectedSchemaZ = z82.object({
+    ProjectInspectDetectedSchemaZ = z85.object({
       /** Detected package manager from lockfile, or `null`. */
-      packageManager: z82.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
+      packageManager: z85.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
       /** Detected frameworks (e.g. `["next", "convex"]`). Empty array when none. */
-      frameworks: z82.array(z82.string()),
+      frameworks: z85.array(z85.string()),
       /** Suggested dev command (e.g. `pnpm dev`). `null` if no dev script found. */
-      devCommand: z82.string().nullable(),
+      devCommand: z85.string().nullable(),
       /** Suggested test command (e.g. `pnpm test`). `null` if no test script found. */
-      testCommand: z82.string().nullable()
+      testCommand: z85.string().nullable()
     });
-    ProjectInspectSchemaZ = z82.object({
+    ProjectInspectSchemaZ = z85.object({
       /** Sanitized basename of the directory — safe to use as a tmux session name. */
-      name: z82.string(),
+      name: z85.string(),
       /** Absolute, canonical path to the directory. */
-      dir: z82.string(),
+      dir: z85.string(),
       /** Whether `<dir>/ide.yml` exists. Legacy compatibility fact. */
-      hasIdeYml: z82.boolean(),
+      hasIdeYml: z85.boolean(),
       /** Whether `.tmux-ide/workspace.yml` exists or wins discovery. */
-      hasWorkspaceConfig: z82.boolean().optional(),
+      hasWorkspaceConfig: z85.boolean().optional(),
       /** Generalized winning config kind. Added without replacing `hasIdeYml`. */
-      configKind: z82.enum(["workspace", "legacy", "none"]).optional(),
+      configKind: z85.enum(["workspace", "legacy", "none"]).optional(),
       /** Generalized winning config path. Added without replacing legacy path facts. */
-      configPath: z82.string().nullable().optional(),
+      configPath: z85.string().nullable().optional(),
       /** Legacy config path when an `ide.yml` is present. */
-      ideConfigPath: z82.string().nullable().optional(),
+      ideConfigPath: z85.string().nullable().optional(),
       /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
-      gitOrigin: z82.string().nullable(),
+      gitOrigin: z85.string().nullable(),
       /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */
-      gitBranch: z82.string().nullable(),
+      gitBranch: z85.string().nullable(),
       /** Detected stack signals (reuses `tmux-ide detect` logic). */
       detected: ProjectInspectDetectedSchemaZ
     });
-    InspectFilesystemRequestSchemaZ = z82.object({
-      dir: z82.string().min(1)
+    InspectFilesystemRequestSchemaZ = z85.object({
+      dir: z85.string().min(1)
     });
-    OnboardProjectRequestSchemaZ = z82.object({
-      dir: z82.string().min(1),
+    OnboardProjectRequestSchemaZ = z85.object({
+      dir: z85.string().min(1),
       /** Optional override for the project name — defaults to inspect.name. */
-      name: z82.string().min(1).optional(),
+      name: z85.string().min(1).optional(),
       /** 1, 2, or 3 — how many Claude panes to scaffold in the top row. */
-      agents: z82.number().int().min(1).max(3),
+      agents: z85.number().int().min(1).max(3),
       /**
        * Optional per-agent pane titles. When provided, length must equal
        * `agents`; the server uses these as `title:` for the Claude panes
        * instead of the canonical `Lead`/`Teammate N`/`Claude N` defaults.
        */
-      agentNames: z82.array(z82.string().min(1)).optional(),
+      agentNames: z85.array(z85.string().min(1)).optional(),
       /** Dev server command (e.g. `pnpm dev`). Omit / null to skip the dev pane. */
-      devCommand: z82.string().min(1).nullable().optional(),
+      devCommand: z85.string().min(1).nullable().optional(),
       /** Test command (e.g. `pnpm test`). Currently informational; stored for later. */
-      testCommand: z82.string().min(1).nullable().optional(),
+      testCommand: z85.string().min(1).nullable().optional(),
       /** Lint command (e.g. `pnpm lint`). Currently informational; stored for later. */
-      lintCommand: z82.string().min(1).nullable().optional()
+      lintCommand: z85.string().min(1).nullable().optional()
     });
   }
 });
@@ -51636,6 +52152,38 @@ var init_project_onboard = __esm({
         this.name = "OnboardInvalidInputError";
       }
     };
+  }
+});
+
+// packages/daemon/src/command-center/resources/terminal-runtime-inventory.ts
+function projectTerminalRuntimeInventory(session, resourceRevision) {
+  const shell = projectApplicationShellResource(session);
+  return TerminalRuntimeInventoryProjectionV1SchemaZ.parse({
+    workspaceName: session.workspaceName,
+    workspaceId: shell.workspace.id,
+    sessionId: shell.workspace.session.id,
+    resourceRevision,
+    semanticPaneIds: [
+      ...new Set(
+        shell.terminalInventory.resources.flatMap(
+          (resource3) => resource3.attachability.status === "available" ? [resource3.attachability.semanticPaneId] : []
+        )
+      )
+    ].sort()
+  });
+}
+function terminalRuntimeInventoryEnvelope(daemon, session, resourceRevision) {
+  return {
+    version: TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION,
+    daemon,
+    resource: projectTerminalRuntimeInventory(session, resourceRevision)
+  };
+}
+var init_terminal_runtime_inventory2 = __esm({
+  "packages/daemon/src/command-center/resources/terminal-runtime-inventory.ts"() {
+    "use strict";
+    init_src();
+    init_application_shell2();
   }
 });
 
@@ -53703,45 +54251,6 @@ var init_desktop_missions2 = __esm({
   }
 });
 
-// packages/daemon/src/command-center/owner-authority.ts
-import { timingSafeEqual as timingSafeEqual6 } from "node:crypto";
-function ownerBearerMatches(header, ownerToken) {
-  if (!header || !ownerToken) return false;
-  const supplied = Buffer.from(header, "utf8");
-  const expected = Buffer.from(`Bearer ${ownerToken}`, "utf8");
-  return supplied.byteLength === expected.byteLength && timingSafeEqual6(supplied, expected);
-}
-function decideOwnerAuthority(header, ownerToken, whenOwnerless) {
-  if (!ownerToken) {
-    if (whenOwnerless === "serve-open") return { kind: "serve-open" };
-    return { kind: "denied", reason: "no-owner-capability" };
-  }
-  return ownerBearerMatches(header, ownerToken) ? { kind: "authorized" } : { kind: "denied", reason: "credential-mismatch" };
-}
-function ownerAuthorityGate(ownerToken, policy) {
-  return (c) => {
-    const decision = decideOwnerAuthority(
-      c.req.header("Authorization"),
-      ownerToken,
-      policy.whenOwnerless
-    );
-    if (decision.kind !== "denied") return null;
-    if (decision.reason === "no-owner-capability" && policy.whenOwnerless === "unavailable") {
-      return c.json({ error: policy.unavailableMessage }, 503);
-    }
-    return c.json({ error: policy.mismatchMessage }, 401);
-  };
-}
-function requireOwnerAuthority(ownerToken, policy) {
-  const gate = ownerAuthorityGate(ownerToken, policy);
-  return async (c, next) => gate(c) ?? next();
-}
-var init_owner_authority = __esm({
-  "packages/daemon/src/command-center/owner-authority.ts"() {
-    "use strict";
-  }
-});
-
 // packages/daemon/src/command-center/terminal-attachment-issue.ts
 function issueError(code, reason, retryable = false) {
   return TerminalAttachmentIssueResultSchemaZ.parse({
@@ -54934,7 +55443,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
 import { zValidator } from "@hono/zod-validator";
-import { z as z83 } from "zod";
+import { z as z86 } from "zod";
 import { realpathSync as realpathSync15 } from "node:fs";
 import { homedir as homedir18 } from "node:os";
 import { isAbsolute as isAbsolute16, resolve as pathResolve } from "node:path";
@@ -54984,7 +55493,7 @@ function requireHostCapability(ownerToken) {
       if (denied) return denied;
       markActionOwnerAuthorized(c);
     }
-    if (requirement === "owner-and-operation-id" && !z83.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success) {
+    if (requirement === "owner-and-operation-id" && !z86.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success) {
       return c.json({ error: "A stable host operation id is required" }, 400);
     }
     return next();
@@ -55142,7 +55651,7 @@ function createApp(options = {}) {
       } catch {
         return c.json({ error: "Invalid capability request" }, 400);
       }
-      if (!z83.object({}).strict().safeParse(body).success) {
+      if (!z86.object({}).strict().safeParse(body).success) {
         return c.json({ error: "Invalid capability request" }, 400);
       }
       const appWindowCommandRegistered = daemonActionCommandRegistry.descriptors().some(({ id }) => id === "workspace.app-window.mutate");
@@ -55338,6 +55847,50 @@ function createApp(options = {}) {
     }
     const detail = buildProjectDetail(session);
     return c.json({ ...detail });
+  });
+  const terminalRuntimeInventoryOwnerGate = ownerAuthorityGate(
+    options.remoteAccess?.ownerToken ?? null,
+    {
+      whenOwnerless: "unavailable",
+      unavailableMessage: "Terminal runtime inventory capability is unavailable",
+      mismatchMessage: "Terminal runtime inventory requires owner authority"
+    }
+  );
+  app.get("/api/project/:name/terminal-runtime-inventory", async (c) => {
+    const denied = terminalRuntimeInventoryOwnerGate(c);
+    if (denied) return denied;
+    if ((c.req.query("version") ?? String(TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION)) !== String(TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION)) {
+      return c.json({ error: "Unsupported terminal-runtime inventory resource version" }, 400);
+    }
+    const backend2 = options.applicationShellInventoryBackend;
+    if (!backend2?.discoverTerminalRuntimeSession) {
+      return c.json({ error: "Terminal runtime inventory unavailable" }, 503);
+    }
+    try {
+      backend2.recordTerminalRuntimeResourceMark?.("terminal-resource-handler-admitted");
+    } catch {
+    }
+    const requestedSessionName = c.req.param("name");
+    let session;
+    try {
+      session = await backend2.discoverTerminalRuntimeSession(
+        requestedSessionName,
+        c.req.raw.signal
+      );
+    } catch {
+      return c.json({ error: "Terminal runtime inventory unavailable" }, 503);
+    }
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const projection = terminalRuntimeInventoryEnvelope(
+      daemonInstanceIdentity,
+      session,
+      currentResourceRevision(session.workspaceName, "terminal-runtime-inventory")
+    );
+    try {
+      backend2.recordTerminalRuntimeResourceMark?.("terminal-resource-response-projection");
+    } catch {
+    }
+    return c.json(projection);
   });
   app.get("/api/project/:name/application-shell", async (c) => {
     const name = c.req.param("name");
@@ -56178,6 +56731,8 @@ var init_server = __esm({
     init_project_inspect();
     init_project_onboard();
     init_application_shell2();
+    init_terminal_runtime_inventory2();
+    init_ws_events();
     init_fleet_catalog2();
     init_workspace_files_authority();
     init_workspace_changes_authority();
@@ -56234,7 +56789,8 @@ var init_server = __esm({
       "project.stop": "owner",
       "project.restart": "owner",
       "project.activate": "owner",
-      "project.openTerminal": "owner"
+      "project.openTerminal": "owner",
+      "daemon.shutdown": "owner"
     };
     requireOwnerCapability = (ownerToken) => requireOwnerAuthority(ownerToken, {
       whenOwnerless: "unavailable",
@@ -56323,12 +56879,13 @@ var require_package = __commonJS({
         "pack:check": "pnpm build:web && node scripts/pack-web-check.mjs",
         "test:pack-installed": "node scripts/pack-check-run.mjs",
         "check:native-deps": "node packages/daemon/scripts/check-native-deps.mjs",
-        check: "pnpm run lint:workspace && pnpm run check:control-bytes && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:portable-release-contract && pnpm run test:unit && pnpm run test:product-test-rig && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run test:workbench-dock-package && pnpm run test:pane-frame-package && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps && pnpm run smoke:desktop",
+        check: "pnpm run lint:workspace && pnpm run check:control-bytes && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:portable-release-contract && pnpm run test:unit && pnpm run test:tui-testdrive && pnpm run test:product-test-rig && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run test:workbench-dock-package && pnpm run test:pane-frame-package && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps && pnpm run smoke:desktop",
         postinstall: "node scripts/postinstall.js",
         docs: "turbo run dev --filter=@tmux-ide/docs",
         "test:tui-renderer": "bun test --preload @opentui/solid/preload --preload ./packages/daemon/test-support/opentui-renderer-preload.ts ./packages/daemon/src/tui/mirror/pane-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/widget-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/files/session-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-terminal-workspace-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/files-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/changes-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/missions-activity-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/dialogs-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/optional-feature-registry-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/palette-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/pane-scoped-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/rich-preview/feature.test.ts ./packages/daemon/src/tui/mirror/runtime/rich-preview-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-chrome-view.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-window-strip-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx",
         "test:tui-smoke": "bun scripts/smoke-tui-missions.mjs",
         "test:tui-live": "node scripts/tui-testdrive.mjs smoke",
+        "test:tui-testdrive": "node --test scripts/lib/tui-testdrive-input.test.mjs",
         "test:performance-qualification": "node scripts/performance-qualification.mjs",
         "measure:performance-portable": "node scripts/performance-portable-evidence.mjs",
         "test:portable-release-contract": "pnpm exec vitest run scripts/lib/portable-performance-evidence.test.mjs",
@@ -57047,8 +57604,8 @@ function parse(schema, params) {
   const result = schema.safeParse(params);
   if (!result.success) {
     const issue = result.error.issues[0];
-    const at = issue?.path?.length ? ` at ${issue.path.join(".")}` : "";
-    throw new ControlVerbError("bad-request", `invalid params${at}: ${issue?.message ?? "?"}`);
+    const at2 = issue?.path?.length ? ` at ${issue.path.join(".")}` : "";
+    throw new ControlVerbError("bad-request", `invalid params${at2}: ${issue?.message ?? "?"}`);
   }
   return result.data;
 }
@@ -59528,13 +60085,13 @@ function paneResumeCommand(pane, opts) {
   return resume(id);
 }
 function countResumableAgents(session, resumeAgents) {
-  let n = 0;
+  let n10 = 0;
   for (const window2 of session.windows) {
     for (const pane of window2.panes) {
-      if (paneResumeCommand(pane, { resumeAgents })) n++;
+      if (paneResumeCommand(pane, { resumeAgents })) n10++;
     }
   }
-  return n;
+  return n10;
 }
 function readRestorePrefs() {
   return loadAppConfig().restore;
@@ -59725,7 +60282,7 @@ function reportPlan(plan, snapshot, { json: json3, dryRun, restored, launched, r
   const skipped = plan.actions.filter((a) => a.kind === "skip").map((a) => a.session);
   const willLaunch = plan.actions.filter((a) => a.kind === "launch").map((a) => a.session);
   const willRebuild = plan.actions.filter((a) => a.kind === "rebuild").map((a) => a.session.name);
-  const resumedPanes = resumed.reduce((n, r) => n + r.panes.length, 0);
+  const resumedPanes = resumed.reduce((n10, r) => n10 + r.panes.length, 0);
   if (json3) {
     console.log(
       JSON.stringify(
@@ -59755,7 +60312,7 @@ function reportPlan(plan, snapshot, { json: json3, dryRun, restored, launched, r
         console.log(`  launch   ${action.session} (project config at ${action.dir})`);
       } else {
         const w = action.session.windows.length;
-        const p = action.session.windows.reduce((n, win) => n + win.panes.length, 0);
+        const p = action.session.windows.reduce((n10, win) => n10 + win.panes.length, 0);
         const wouldResume = countResumableAgents(action.session, resumeAgents);
         const resumeNote = wouldResume ? `, would resume ${wouldResume} agent${wouldResume === 1 ? "" : "s"}` : "";
         console.log(
@@ -59767,8 +60324,8 @@ function reportPlan(plan, snapshot, { json: json3, dryRun, restored, launched, r
   }
   const resumedBySession = new Map(resumed.map((r) => [r.session, r.panes.length]));
   const resumeSuffix = (name) => {
-    const n = resumedBySession.get(name) ?? 0;
-    return n ? ` (resumed ${n} agent${n === 1 ? "" : "s"})` : "";
+    const n10 = resumedBySession.get(name) ?? 0;
+    return n10 ? ` (resumed ${n10} agent${n10 === 1 ? "" : "s"})` : "";
   };
   const parts = [];
   if (restored.length)
@@ -59788,6 +60345,7 @@ init_canonical_daemon();
 init_src();
 
 // packages/daemon/src/lib/daemon-embed.ts
+init_owner_authority();
 init_src();
 import { execFileSync as execFileSync16 } from "node:child_process";
 import { randomBytes as randomBytes8, randomUUID as randomUUID18 } from "node:crypto";
@@ -60088,18 +60646,19 @@ init_tmux_external_interaction_observer();
 // packages/daemon/src/terminal/attachments/native-runtime.ts
 init_src();
 init_src2();
+init_runtime_observability();
 import { accessSync as accessSync5, constants as constants6, realpathSync as realpathSync11, statSync as statSync11 } from "node:fs";
 import { execFile as execFile7 } from "node:child_process";
 import { isAbsolute as isAbsolute12 } from "node:path";
-import { z as z78 } from "zod";
+import { z as z81 } from "zod";
 
 // packages/daemon/src/terminal/session-runtime/transport-binding.ts
 init_src();
 init_registry2();
-import { z as z72 } from "zod";
-var TransportSchemaZ = z72.enum(["terminal-attachment", "pane-stream"]);
-var LeaseIdSchemaZ = z72.uuid();
-var HostClientIdSchemaZ = z72.string().min(1).max(4096).refine((v) => !/[\0\r\n]/u.test(v));
+import { z as z75 } from "zod";
+var TransportSchemaZ = z75.enum(["terminal-attachment", "pane-stream"]);
+var LeaseIdSchemaZ = z75.uuid();
+var HostClientIdSchemaZ = z75.string().min(1).max(4096).refine((v) => !/[\0\r\n]/u.test(v));
 function assertLiveScope(shared, lease, semanticPaneId3) {
   if (shared.interactiveRefs <= 0 || shared.lease !== lease) {
     throw new SessionRuntimeControllerLeaseError(
@@ -60133,6 +60692,7 @@ var SessionRuntimeTransportBinding = class {
   #deliverySubscriberId;
   #transportLeaseId;
   #intentHandles = /* @__PURE__ */ new Map();
+  #causalCellProbes = /* @__PURE__ */ new Map();
   #baseHandle;
   #baseHandleLease;
   #closed = false;
@@ -60286,7 +60846,7 @@ var SessionRuntimeTransportBinding = class {
     }
     return this.#binder.registry.submitAuthenticatedIntent(handle, operationId, intent);
   }
-  sendInput(semanticPaneId3, input, performanceTraceId) {
+  sendInput(semanticPaneId3, input, performanceTraceId, causalProbe, onCausalResult) {
     this.assertController(semanticPaneId3);
     const lease = this.#shared.lease;
     if (!lease) {
@@ -60295,7 +60855,23 @@ var SessionRuntimeTransportBinding = class {
         "The transport no longer owns controller authority."
       );
     }
-    this.#shared.consumer.sendInput(lease, semanticPaneId3, input, performanceTraceId);
+    if (causalProbe) this.#causalCellProbes.set(causalProbe.traceId, semanticPaneId3);
+    try {
+      this.#shared.consumer.sendInput(
+        lease,
+        semanticPaneId3,
+        input,
+        performanceTraceId,
+        causalProbe,
+        causalProbe ? (result) => {
+          this.#causalCellProbes.delete(causalProbe.traceId);
+          onCausalResult?.(result);
+        } : onCausalResult
+      );
+    } catch (error) {
+      if (causalProbe) this.#causalCellProbes.delete(causalProbe.traceId);
+      throw error;
+    }
   }
   fitViewport(cols, rows) {
     this.assertController();
@@ -60345,6 +60921,10 @@ var SessionRuntimeTransportBinding = class {
   async close() {
     if (this.#closed) return;
     this.#closed = true;
+    for (const [traceId, semanticPaneId3] of [...this.#causalCellProbes]) {
+      this.#shared.consumer.failCausalCellProbe(semanticPaneId3, traceId, "transport-closed");
+    }
+    this.#causalCellProbes.clear();
     const geometryIndex = this.#shared.geometryTransportLeaseIds.indexOf(this.#transportLeaseId);
     if (geometryIndex >= 0) this.#shared.geometryTransportLeaseIds.splice(geometryIndex, 1);
     this.#intentHandles.clear();
@@ -60521,7 +61101,7 @@ init_src2();
 init_src();
 init_grouped_tmux();
 import { isDeepStrictEqual } from "node:util";
-import { z as z77 } from "zod";
+import { z as z80 } from "zod";
 var MAX_TMUX_OUTPUT_BYTES3 = 128 * 1024;
 var MAX_ENUMERATED_VIEWS = 256;
 var MAX_ENUMERATED_WINDOWS_PER_VIEW = 16;
@@ -60529,9 +61109,9 @@ var MAX_WINDOW_PANES = 256;
 var MAX_MARKER_OUTPUT_ROWS = 1;
 var SOURCE_PROOF_MISMATCH_SENTINEL = "__tmux_ide_source_proof_mismatch_v1__";
 var VIEW_PROOF_MISMATCH_SENTINEL = "__tmux_ide_view_proof_mismatch_v1__";
-var RuntimeSessionIdSchemaZ3 = z77.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u);
-var RuntimeWindowIdSchemaZ3 = z77.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u);
-var RuntimePaneIdSchemaZ3 = z77.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u);
+var RuntimeSessionIdSchemaZ3 = z80.string().max(32).regex(/^\$(?:0|[1-9][0-9]*)$/u);
+var RuntimeWindowIdSchemaZ3 = z80.string().max(32).regex(/^@(?:0|[1-9][0-9]*)$/u);
+var RuntimePaneIdSchemaZ3 = z80.string().max(32).regex(/^%(?:0|[1-9][0-9]*)$/u);
 var MarkerPattern2 = /^v1:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}):(0|[1-9][0-9]*)$/u;
 var ViewNamePattern = /^_tmux-ide-view-v1-([0-9a-f]{32})-([0-9a-z]+)$/u;
 var TmuxAttachmentClientTransportError = class extends Error {
@@ -60618,18 +61198,18 @@ function sourceProofFormat(operation) {
   const source = operation.source;
   return `#{&&:#{==:#{session_id},${source.sessionId}},#{&&:#{==:#{window_id},${source.windowId}},#{==:#{window_panes},${source.windowPaneCount}}}}`;
 }
-var TmuxAttachmentClientTransportInputSchemaZ = z77.object({
-  operation: z77.enum(["attach", "recover"]),
-  identity: z77.object({
-    attachmentId: z77.uuid(),
-    generation: z77.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
-    viewSessionName: z77.string(),
-    markerValue: z77.string(),
+var TmuxAttachmentClientTransportInputSchemaZ = z80.object({
+  operation: z80.enum(["attach", "recover"]),
+  identity: z80.object({
+    attachmentId: z80.uuid(),
+    generation: z80.number().int().min(0).max(GROUPED_TMUX_MAX_GENERATION),
+    viewSessionName: z80.string(),
+    markerValue: z80.string(),
     expectedSourceSessionId: RuntimeSessionIdSchemaZ3,
     expectedViewSessionId: RuntimeSessionIdSchemaZ3,
     expectedWindowId: RuntimeWindowIdSchemaZ3,
     expectedPaneId: RuntimePaneIdSchemaZ3,
-    expectedWindowPaneCount: z77.number().int().positive()
+    expectedWindowPaneCount: z80.number().int().positive()
   }).strict(),
   viewport: TerminalAttachmentViewportSchemaZ,
   viewerMode: TerminalAttachmentViewerModeSchemaZ,
@@ -60700,7 +61280,7 @@ function parseViewSessionName(value) {
   const match = ViewNamePattern.exec(value);
   if (!match) return null;
   const attachmentId = uuidFromCompactHex(match[1]);
-  if (!z77.uuid().safeParse(attachmentId).success) return null;
+  if (!z80.uuid().safeParse(attachmentId).success) return null;
   const generation = Number.parseInt(match[2], 36);
   if (!Number.isSafeInteger(generation) || generation < 0 || generation > GROUPED_TMUX_MAX_GENERATION || generation.toString(36) !== match[2]) {
     return null;
@@ -60817,7 +61397,7 @@ var TmuxAttachmentViewExecutor = class {
         throw new TmuxAttachmentViewExecutorError("invalid-request");
       }
       const result = this.#clientTransport.beginGuardedAttach(input);
-      if (result.status !== "claimed" || !z77.uuid().safeParse(result.attemptId).success || result.attachmentId !== plan.identity.attachmentId || result.generation !== plan.identity.generation || !(result.outcome instanceof Promise)) {
+      if (result.status !== "claimed" || !z80.uuid().safeParse(result.attemptId).success || result.attachmentId !== plan.identity.attachmentId || result.generation !== plan.identity.generation || !(result.outcome instanceof Promise)) {
         throw new TmuxAttachmentViewExecutorError("mutation-outcome-uncertain");
       }
       return result;
@@ -62008,6 +62588,63 @@ function viewport(cols, rows) {
     throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
   }
 }
+function projectTrustedMirrorInventory(trusted, workspaceName, expectedSessionName) {
+  if (typeof trusted !== "object" || trusted === null || typeof trusted.sessionName !== "string" || typeof trusted.runtimeSessionId !== "string" || !Array.isArray(trusted.panes) || trusted.sessionName !== expectedSessionName || !RUNTIME_SESSION_ID.test(trusted.runtimeSessionId) || trusted.panes.length === 0 || trusted.panes.length > MAX_DISCOVERED_PANES || Buffer.byteLength(JSON.stringify(trusted), "utf8") > MAX_TMUX_OUTPUT_BYTES4) {
+    throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+  }
+  const runtimePaneIds = /* @__PURE__ */ new Set();
+  const windowCounts = /* @__PURE__ */ new Map();
+  let activeCount = 0;
+  const panes = trusted.panes.map((pane) => {
+    if (typeof pane !== "object" || pane === null || typeof pane.runtimeSessionId !== "string" || typeof pane.runtimeWindowId !== "string" || typeof pane.runtimePaneId !== "string" || typeof pane.semanticWindowId !== "string" || typeof pane.semanticPaneId !== "string" || typeof pane.title !== "string" || typeof pane.currentCommand !== "string" || typeof pane.dir !== "string" || typeof pane.active !== "boolean" || pane.role !== null && typeof pane.role !== "string" || pane.name !== null && typeof pane.name !== "string" || pane.type !== null && typeof pane.type !== "string" || pane.missionStamp !== null && typeof pane.missionStamp !== "string" || pane.runtimeSessionId !== trusted.runtimeSessionId || !RUNTIME_WINDOW_ID.test(pane.runtimeWindowId) || !RUNTIME_PANE_ID2.test(pane.runtimePaneId) || runtimePaneIds.has(pane.runtimePaneId) || !Number.isSafeInteger(pane.windowPaneCount) || pane.windowPaneCount < 1 || !Number.isSafeInteger(pane.sessionWindowCount) || pane.sessionWindowCount < 1 || !Number.isSafeInteger(pane.paneIndex) || pane.paneIndex < 0) {
+      throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+    }
+    runtimePaneIds.add(pane.runtimePaneId);
+    windowCounts.set(pane.runtimeWindowId, (windowCounts.get(pane.runtimeWindowId) ?? 0) + 1);
+    if (pane.active) activeCount += 1;
+    const nullable2 = (value) => value === null ? null : boundedWireValue(value, 256);
+    return Object.freeze({
+      workspaceName,
+      semanticPaneId: nullable2(pane.semanticPaneId),
+      windowStamp: nullable2(pane.semanticWindowId),
+      sessionId: pane.runtimeSessionId,
+      windowId: pane.runtimeWindowId,
+      runtimePaneId: pane.runtimePaneId,
+      windowPaneCount: pane.windowPaneCount,
+      sessionWindowCount: pane.sessionWindowCount,
+      sessionName: boundedWireValue(trusted.sessionName, 160, false),
+      index: pane.paneIndex,
+      title: boundedWireValue(pane.title, 1024),
+      currentCommand: boundedWireValue(pane.currentCommand, 512),
+      active: pane.active,
+      role: nullable2(pane.role),
+      name: nullable2(pane.name),
+      type: nullable2(pane.type),
+      missionStamp: nullable2(pane.missionStamp),
+      dir: boundedWireValue(pane.dir, 4096)
+    });
+  });
+  if (activeCount !== 1 || panes.some(
+    (pane) => pane.windowPaneCount !== windowCounts.get(pane.windowId) || pane.sessionWindowCount !== windowCounts.size
+  )) {
+    throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+  }
+  return Object.freeze(panes);
+}
+async function awaitInventoryUnlessAborted(promise, signal) {
+  if (signal.aborted) throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
+  let rejectAbort;
+  const aborted = new Promise((_resolve, reject) => {
+    rejectAbort = reject;
+  });
+  const onAbort = () => rejectAbort(new NativeTerminalAttachmentRuntimeError("runtime-disposed"));
+  signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    return await Promise.race([promise, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
 var SESSION_FORMAT3 = ["#{session_name}", "#{session_id}", SESSION_WIRE_SENTINEL].join(
   WIRE_SEPARATOR
 );
@@ -62197,7 +62834,7 @@ function commandString(argv) {
   return argv.map((value) => value === ";" ? ";" : quoteArgument(value)).join(" ");
 }
 function geometryDescriptorIsValid(descriptor2, client) {
-  return z78.uuid().safeParse(descriptor2.leaseId).success && z78.uuid().safeParse(descriptor2.requestId).success && TerminalAttachmentSemanticTargetSchemaZ.safeParse(descriptor2.target).success && descriptor2.status === "active" && Number.isSafeInteger(descriptor2.bindingGeneration) && descriptor2.bindingGeneration >= 0 && Number.isSafeInteger(descriptor2.viewGeneration) && descriptor2.viewGeneration >= 0 && descriptor2.viewGeneration <= GROUPED_TMUX_MAX_GENERATION && z78.uuid().safeParse(client.attemptId).success && client.attachmentId === descriptor2.leaseId && client.generation === descriptor2.viewGeneration && Number.isSafeInteger(client.pid) && client.pid > 0;
+  return z81.uuid().safeParse(descriptor2.leaseId).success && z81.uuid().safeParse(descriptor2.requestId).success && TerminalAttachmentSemanticTargetSchemaZ.safeParse(descriptor2.target).success && descriptor2.status === "active" && Number.isSafeInteger(descriptor2.bindingGeneration) && descriptor2.bindingGeneration >= 0 && Number.isSafeInteger(descriptor2.viewGeneration) && descriptor2.viewGeneration >= 0 && descriptor2.viewGeneration <= GROUPED_TMUX_MAX_GENERATION && z81.uuid().safeParse(client.attemptId).success && client.attachmentId === descriptor2.leaseId && client.generation === descriptor2.viewGeneration && Number.isSafeInteger(client.pid) && client.pid > 0;
 }
 var NativeTerminalAttachmentGeometryResolver = class {
   #catalog;
@@ -62282,7 +62919,10 @@ var WorkspaceTerminalInventoryRuntime = class {
   #registry;
   #discoverTerminalInventory;
   #agentStatusProbe;
+  #observability;
   #prewarmSessionRuntime;
+  #discoverTrustedSessionInventory;
+  #trustedSessionInventoryReady;
   #observeWorkspaceSession;
   #stopWorkspaceAddedObserver;
   #stopWorkspaceRemovedObserver;
@@ -62301,7 +62941,8 @@ var WorkspaceTerminalInventoryRuntime = class {
     });
     this.readRunner = pinnedReadRunner(authority, executeRead);
     this.#registry = options.registry;
-    this.#discoverTerminalInventory = () => this.#readInventory();
+    this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
+    this.#discoverTerminalInventory = (signal) => this.#readInventory(signal);
     this.semanticPaneCatalog = options.semanticPaneCatalog ?? new SemanticPaneCatalog({
       discover: async () => {
         const inventory = await this.#discoverTerminalInventory();
@@ -62361,9 +63002,12 @@ var WorkspaceTerminalInventoryRuntime = class {
     );
     if (options.sessionRuntimeRegistry) {
       const sessionRuntimeRegistry = options.sessionRuntimeRegistry;
-      this.#prewarmSessionRuntime = (sessionName) => {
-        void sessionRuntimeRegistry.prewarmSession(sessionName).catch(() => void 0);
+      this.#prewarmSessionRuntime = (sessionName, runtimeSessionId, signal) => {
+        const qualify = sessionRuntimeRegistry.prewarmProofQualifiedSession;
+        return (typeof qualify === "function" ? qualify.call(sessionRuntimeRegistry, sessionName, runtimeSessionId, signal) : sessionRuntimeRegistry.prewarmSession(sessionName, signal)).then(() => void 0);
       };
+      this.#discoverTrustedSessionInventory = typeof sessionRuntimeRegistry.describeTrustedSessionInventory === "function" ? (sessionName, signal) => sessionRuntimeRegistry.describeTrustedSessionInventory(sessionName, signal) : null;
+      this.#trustedSessionInventoryReady = typeof sessionRuntimeRegistry.hasProofQualifiedInventory === "function" ? (sessionName) => sessionRuntimeRegistry.hasProofQualifiedInventory(sessionName) : null;
       this.#observeWorkspaceSession = (workspaceName, sessionName) => {
         const previousSessionName = sessionsByWorkspace.get(workspaceName);
         sessionsByWorkspace.set(workspaceName, sessionName);
@@ -62373,6 +63017,8 @@ var WorkspaceTerminalInventoryRuntime = class {
       };
     } else {
       this.#prewarmSessionRuntime = null;
+      this.#discoverTrustedSessionInventory = null;
+      this.#trustedSessionInventoryReady = null;
       this.#observeWorkspaceSession = null;
     }
     this.#stopWorkspaceAddedObserver = options.registry.on("workspace.added", (workspace) => {
@@ -62398,6 +63044,40 @@ var WorkspaceTerminalInventoryRuntime = class {
   whenReady() {
     return this.#orphanBarrier;
   }
+  recordTerminalRuntimeResourceMark(operation) {
+    if (!this.#observability.enabled) return;
+    try {
+      const atMicros = this.#observability.nowMicros();
+      this.#observability.recordSpan("transport", operation, atMicros, atMicros);
+    } catch {
+    }
+  }
+  #observeAttempt(operation, run) {
+    if (!this.#observability.enabled) return run();
+    let startedAtMicros;
+    try {
+      startedAtMicros = this.#observability.nowMicros();
+    } catch {
+      return run();
+    }
+    const finish = () => {
+      try {
+        this.#observability.recordSpan(
+          "transport",
+          operation,
+          startedAtMicros,
+          this.#observability.nowMicros()
+        );
+      } catch {
+      }
+    };
+    try {
+      return run().finally(finish);
+    } catch (error) {
+      finish();
+      throw error;
+    }
+  }
   /** Retires the exact read generation; concurrent readers share its replacement. */
   invalidate() {
     this.#inventoryEpoch += 1;
@@ -62406,16 +63086,23 @@ var WorkspaceTerminalInventoryRuntime = class {
     for (const read of this.#applicationReads.values()) read.abort.abort();
     this.#applicationReads.clear();
   }
-  async #readInventory() {
+  #readInventoryAttempt(signal) {
+    return this.#observeAttempt(
+      "terminal-inventory-discovery",
+      () => discoverWorkspaceRegistryTerminalInventory(this.#registry, this.readRunner, signal)
+    );
+  }
+  async #readInventory(signal) {
     if (this.#disposed) throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
+    if (signal) {
+      if (signal.aborted) throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
+      return this.#readInventoryAttempt(signal);
+    }
     const epoch = this.#inventoryEpoch;
     if (this.#inventoryRead?.epoch === epoch) return this.#inventoryRead.promise;
     const abort = new AbortController();
-    const promise = discoverWorkspaceRegistryTerminalInventory(
-      this.#registry,
-      this.readRunner,
-      abort.signal
-    ).then(
+    const observedAttempt = this.#readInventoryAttempt(abort.signal);
+    const promise = observedAttempt.then(
       (value) => abort.signal.aborted || this.#inventoryEpoch !== epoch ? this.#readInventory() : value
     ).catch((error) => {
       if (abort.signal.aborted || this.#inventoryEpoch !== epoch) return this.#readInventory();
@@ -62448,7 +63135,16 @@ var WorkspaceTerminalInventoryRuntime = class {
     this.#applicationReads.set(requestedSessionName, { epoch, abort, promise });
     return promise;
   }
-  async #discoverApplicationShellSession(requestedSessionName, signal) {
+  /**
+   * Fresh agent-free session projection for the terminal runtime authority.
+   * This deliberately does not join the application-shell enrichment flight.
+   */
+  discoverTerminalRuntimeSession(requestedSessionName, signal = new AbortController().signal) {
+    if (this.#disposed)
+      return Promise.reject(new NativeTerminalAttachmentRuntimeError("runtime-disposed"));
+    return this.#discoverTerminalRuntimeSession(requestedSessionName, signal);
+  }
+  async #discoverTerminalRuntimeSession(requestedSessionName, signal) {
     const assertLive = () => {
       if (signal.aborted || this.#disposed) {
         throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
@@ -62460,8 +63156,60 @@ var WorkspaceTerminalInventoryRuntime = class {
     if (memberships.length !== 1)
       throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
     const workspace = memberships[0];
-    this.#observeWorkspaceSession?.(workspace.name, workspace.sessionName);
-    const inventory = await this.#discoverTerminalInventory();
+    let inventory;
+    if (this.#discoverTrustedSessionInventory && this.#trustedSessionInventoryReady?.(workspace.sessionName)) {
+      const trusted = await awaitInventoryUnlessAborted(
+        this.#discoverTrustedSessionInventory(workspace.sessionName, signal),
+        signal
+      ).catch(() => null);
+      assertLive();
+      if (trusted) {
+        try {
+          const panes2 = projectTrustedMirrorInventory(
+            trusted,
+            workspace.name,
+            workspace.sessionName
+          );
+          const catalog = analyzeTrustedSemanticPaneCatalog(
+            panes2.map(
+              ({
+                sessionName: _sessionName,
+                index: _index,
+                title: _title,
+                currentCommand: _currentCommand,
+                active: _active,
+                role: _role,
+                name: _name,
+                type: _type,
+                missionStamp: _missionStamp,
+                dir: _dir,
+                ...row
+              }) => row
+            )
+          );
+          if (catalog.invalidRuntimeProof || catalog.missingSemanticStamp || catalog.duplicateSemanticStamp || catalog.duplicateRuntimePaneBinding) {
+            throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
+          }
+          inventory = Object.freeze({ panes: panes2, catalog });
+        } catch {
+          assertLive();
+          inventory = await awaitInventoryUnlessAborted(
+            this.#discoverTerminalInventory(signal),
+            signal
+          );
+        }
+      } else {
+        inventory = await awaitInventoryUnlessAborted(
+          this.#discoverTerminalInventory(signal),
+          signal
+        );
+      }
+    } else {
+      inventory = await awaitInventoryUnlessAborted(
+        this.#discoverTerminalInventory(signal),
+        signal
+      );
+    }
     assertLive();
     const panes = inventory.panes.filter(
       (pane) => pane.workspaceName === workspace.name && pane.sessionName === workspace.sessionName
@@ -62499,29 +63247,17 @@ var WorkspaceTerminalInventoryRuntime = class {
     if (new Set(windowStamps.values()).size !== windowStamps.size) windowIdentityReady = false;
     const shouldPrewarm = !sessionCatalog.invalidRuntimeProof && !sessionCatalog.missingSemanticStamp && !sessionCatalog.duplicateSemanticStamp && !sessionCatalog.duplicateRuntimePaneBinding && windowIdentityReady;
     const catalogIssue = inventory.catalog.invalidRuntimeProof ? "invalid-runtime-proof" : inventory.catalog.missingSemanticStamp ? "missing-semantic-stamp" : inventory.catalog.duplicateSemanticStamp ? "duplicate-semantic-stamp" : inventory.catalog.duplicateRuntimePaneBinding ? "duplicate-runtime-pane-binding" : null;
-    let agentFacts = /* @__PURE__ */ new Map();
-    if (this.#agentStatusProbe) {
-      try {
-        agentFacts = await this.#agentStatusProbe.probe(
-          {
-            sessionId: active2.sessionId,
-            nowSec: Math.floor(Date.now() / 1e3),
-            panes: panes.map((pane) => ({
-              runtimePaneId: pane.runtimePaneId,
-              currentCommand: pane.currentCommand,
-              title: pane.title
-            }))
-          },
-          signal
-        );
-      } catch {
-        assertLive();
-        agentFacts = /* @__PURE__ */ new Map();
-      }
+    if (shouldPrewarm && this.#prewarmSessionRuntime) {
+      await awaitInventoryUnlessAborted(
+        this.#prewarmSessionRuntime(workspace.sessionName, active2.sessionId, signal),
+        signal
+      ).catch(() => void 0);
+      assertLive();
     }
     assertLive();
-    if (shouldPrewarm) this.#prewarmSessionRuntime?.(workspace.sessionName);
+    this.#observeWorkspaceSession?.(workspace.name, workspace.sessionName);
     return Object.freeze({
+      workspaceName: workspace.name,
       name: workspace.sessionName,
       runtimeSessionId: active2.sessionId,
       dir: workspace.projectDir,
@@ -62535,7 +63271,48 @@ var WorkspaceTerminalInventoryRuntime = class {
             sessionWindowCount: _sessionWindowCount,
             dir: _dir,
             ...pane
-          }) => Object.freeze({ ...pane, ...agentFacts.get(pane.runtimePaneId) ?? {} })
+          }) => Object.freeze({ ...pane })
+        )
+      )
+    });
+  }
+  async #discoverApplicationShellSession(requestedSessionName, signal) {
+    const session = await this.#discoverTerminalRuntimeSession(requestedSessionName, signal);
+    if (session === null) return null;
+    const assertLive = () => {
+      if (signal.aborted || this.#disposed) {
+        throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
+      }
+    };
+    let agentFacts = /* @__PURE__ */ new Map();
+    if (this.#agentStatusProbe) {
+      try {
+        agentFacts = await this.#observeAttempt(
+          "terminal-agent-enrichment",
+          () => this.#agentStatusProbe.probe(
+            {
+              sessionId: session.runtimeSessionId,
+              nowSec: Math.floor(Date.now() / 1e3),
+              panes: session.panes.map((pane) => ({
+                runtimePaneId: pane.runtimePaneId,
+                currentCommand: pane.currentCommand,
+                title: pane.title
+              }))
+            },
+            signal
+          )
+        );
+      } catch {
+        assertLive();
+        agentFacts = /* @__PURE__ */ new Map();
+      }
+    }
+    assertLive();
+    return Object.freeze({
+      ...session,
+      panes: Object.freeze(
+        session.panes.map(
+          (pane) => Object.freeze({ ...pane, ...agentFacts.get(pane.runtimePaneId) ?? {} })
         )
       )
     });
@@ -63626,7 +64403,8 @@ function tmux5(...args) {
     // launchd, etc.) the controlling terminal's fds can be invalid, and the
     // child spawn fails with EBADF. The visible symptom is sessionExists()
     // returning false → stopSelf → ghost daemon.
-    stdio: ["ignore", "pipe", "pipe"]
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 2e3
   }).trim();
 }
 function tmuxSilent2(...args) {
@@ -63753,7 +64531,8 @@ function attachWebSockets(server, opts) {
         track(ws);
         const requestUrl = new URL(req.url ?? "/ws/events", "http://daemon.local");
         handleWsEventsConnection(ws, opts.daemonIdentity, {
-          mode: requestUrl.searchParams.get("mode") === "semantic" ? "semantic" : "legacy"
+          mode: requestUrl.searchParams.get("mode") === "semantic" ? "semantic" : "legacy",
+          ownerAuthorized: ownerBearerMatches(req.headers.authorization, opts.ownerToken ?? null)
         });
       });
       return;
@@ -63843,7 +64622,7 @@ async function waitForTakeoverPoll(deadline) {
   });
   assertTakeoverDeadline(deadline, "Canonical daemon did not quiesce before the takeover deadline");
 }
-function sameCanonicalInstance(left, right) {
+function sameCanonicalInstance2(left, right) {
   return left.pid === right.pid && left.port === right.port && left.protocolVersion === right.protocolVersion && left.instanceId === right.instanceId && left.startedAt === right.startedAt && left.bindHostname === right.bindHostname;
 }
 async function requestValidatedDaemonShutdown(info, deadline) {
@@ -63870,7 +64649,7 @@ async function requestValidatedDaemonShutdown(info, deadline) {
     );
   }
   const current = inspectCanonicalDaemonInfo();
-  if (current.status !== "valid" || !sameCanonicalInstance(current.info, info)) {
+  if (current.status !== "valid" || !sameCanonicalInstance2(current.info, info)) {
     throw new DaemonStartupError(
       "Canonical daemon generation changed before takeover",
       "canonical_takeover_identity_mismatch"
@@ -63924,7 +64703,7 @@ async function requestValidatedDaemonShutdown(info, deadline) {
 async function waitForTakeoverQuiescence(info, deadline) {
   while (!deadline.signal.aborted) {
     const current = inspectCanonicalDaemonInfo();
-    if (current.status === "valid" && !sameCanonicalInstance(current.info, info)) {
+    if (current.status === "valid" && !sameCanonicalInstance2(current.info, info)) {
       throw new DaemonStartupError(
         "Another daemon generation won the takeover race",
         "canonical_already_running"
@@ -63947,7 +64726,7 @@ async function waitForTakeoverQuiescence(info, deadline) {
 async function acquireCanonicalDaemonClaimAfterTakeover(info, deadline) {
   while (!deadline.signal.aborted) {
     const current = inspectCanonicalDaemonInfo();
-    if (current.status === "valid" && !sameCanonicalInstance(current.info, info)) {
+    if (current.status === "valid" && !sameCanonicalInstance2(current.info, info)) {
       throw new DaemonStartupError(
         "Another daemon generation won the takeover race",
         "canonical_already_running"
@@ -64093,7 +64872,8 @@ async function startHttpServer({
     daemonIdentity: DaemonInstanceIdentitySchemaZ.parse({
       protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
       ...daemonIdentity
-    })
+    }),
+    ownerToken: localBypassToken
   });
   const terminalAttachmentBoundary = attachTerminalAttachmentWebSocket(
     server,
@@ -64244,12 +65024,10 @@ async function startEmbeddedDaemon(opts) {
       } catch {
       }
     }
-    for (const workspace of workspaceRegistry.list()) {
-      try {
-        paneSourceCredentials.rotateSession(workspace.sessionName);
-      } catch {
-      }
-    }
+    await reconcilePaneSourceCredentialsAtStartup(
+      paneSourceCredentials,
+      workspaceRegistry.list().map((workspace) => workspace.sessionName)
+    );
     const tmuxAuthority = resolveWorkspacePaneTmuxAuthority();
     const catalogTmuxRunner = createPinnedWorkspaceTmuxRunner(tmuxAuthority);
     const workspacePaneCreation = new WorkspacePaneCreationAuthority({
@@ -64444,7 +65222,8 @@ async function startEmbeddedDaemon(opts) {
           socketSelector: tmuxAuthority.socketSelector,
           trustedCwd: dir
         },
-        agentStatusProbeFactory: ({ run }) => createTmuxAgentStatusProbe({ run })
+        agentStatusProbeFactory: ({ run }) => createTmuxAgentStatusProbe({ run }),
+        ...runtimeObservability ? { observability: runtimeObservability } : {}
       };
       terminalInventoryRuntime = new WorkspaceTerminalInventoryRuntime(terminalRuntimeOptions);
       await terminalInventoryRuntime.whenReady();
@@ -66741,3 +67520,19 @@ Run "tmux-ide help" for usage.`, {
   }
 }
 var printSwitchHint2;
+/*! Bundled license information:
+
+@tmux-ide/xterm-headless/lib-headless/xterm-headless.mjs:
+  (**
+   * Copyright (c) 2014-2024 The xterm.js authors. All rights reserved.
+   * @license MIT
+   *
+   * Copyright (c) 2012-2013, Christopher Jeffrey (MIT License)
+   * @license MIT
+   *
+   * Originally forked from (with the author's permission):
+   *   Fabrice Bellard's javascript vt100 for jslinux:
+   *   http://bellard.org/jslinux/
+   *   Copyright (c) 2011 Fabrice Bellard
+   *)
+*/

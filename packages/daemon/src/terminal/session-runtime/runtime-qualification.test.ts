@@ -5,10 +5,12 @@ import type {
   TerminalDeliveryServerMessage,
 } from "@tmux-ide/contracts";
 import { ControlModeOwnershipRegistry } from "../mirror/control-mode-ownership.ts";
+import { MirrorService } from "../mirror/mirror-service.ts";
 import { ScriptedChannelDriver } from "../mirror/__tests__/scripted-channel.ts";
 import { SessionRuntimeRegistry } from "./registry.ts";
 import { createSessionRuntimeObservability } from "./runtime-observability.ts";
 import { RuntimeTraceCorrelator } from "./runtime-trace-correlator.ts";
+import { SessionRuntimeTerminalReplicaOwner } from "./terminal-replica-owner.ts";
 
 const GENERATION = "11111111-1111-4111-8111-111111111111";
 const OFFER = {
@@ -193,11 +195,28 @@ describe("real SessionRuntime qualification", () => {
     const traceId = "00000000-0000-4000-8000-000000000099";
     const lease = client.acquireController();
     const commandsBeforeInvalid = drivers[0]!.channel.written.length;
+    const prioritize = vi.spyOn(
+      SessionRuntimeTerminalReplicaOwner.prototype,
+      "prioritizeNextWrite",
+    );
     expect(() =>
       client.sendInput(lease, "pane.alpha", { kind: "text", data: "must-not-send" }, "not-a-uuid"),
     ).toThrow();
     expect(drivers[0]!.channel.written).toHaveLength(commandsBeforeInvalid);
+    expect(prioritize).not.toHaveBeenCalled();
+    const rejectedAdmission = vi
+      .spyOn(MirrorService.prototype, "sendText")
+      .mockImplementationOnce(() => {
+        throw new Error("qualification admission rejected");
+      });
+    expect(() =>
+      client.sendInput(lease, "pane.alpha", { kind: "text", data: "must-not-admit" }, traceId),
+    ).toThrow("qualification admission rejected");
+    expect(prioritize).not.toHaveBeenCalled();
+    rejectedAdmission.mockRestore();
     client.sendInput(lease, "pane.alpha", { kind: "text", data: "printf TRACE" }, traceId);
+    expect(prioritize).toHaveBeenCalledTimes(1);
+    prioritize.mockRestore();
     await Promise.resolve();
     // This is deliberately a controlled next-output probe, not general
     // causality: unrelated external output arriving first consumes it.
@@ -211,16 +230,18 @@ describe("real SessionRuntime qualification", () => {
     const spans = registry
       .qualificationSnapshot()
       .observability.spans.filter(({ traceId }) => traceId === envelope.performanceTraceId);
-    expect(spans.map(({ operation }) => operation)).toEqual([
-      "raw-input-command",
-      "control-write",
-      "control-queue-empty-at-send",
-      "first-output-observed",
-      "daemon-event-loop-turn",
-      "terminal-replica-write",
-      "terminal-replica-project-commit",
-      "terminal-delivery-encode-enqueue",
-    ]);
+    expect(spans.map(({ operation }) => operation).sort()).toEqual(
+      [
+        "raw-input-command",
+        "control-write",
+        "control-queue-empty-at-send",
+        "first-output-observed",
+        "daemon-event-loop-turn",
+        "terminal-replica-write",
+        "terminal-replica-project-commit",
+        "terminal-delivery-encode-enqueue",
+      ].sort(),
+    );
     expect(new Set(spans.map(({ processId }) => processId)).size).toBe(1);
     expect(new Set(spans.map(({ clockId }) => clockId)).size).toBe(1);
     expect(spans.every(({ clockKind }) => clockKind === "performance-now")).toBe(true);
@@ -237,13 +258,25 @@ describe("real SessionRuntime qualification", () => {
         )
         .every(({ authority }) => authority?.incarnation === envelope.incarnation),
     ).toBe(true);
-    const orderedCausalSpans = spans.filter(
-      ({ operation }) =>
-        operation !== "daemon-event-loop-turn" && operation !== "control-queue-empty-at-send",
+    const stableCausalChain = [
+      "raw-input-command",
+      "control-write",
+      "first-output-observed",
+      "terminal-replica-write",
+      "terminal-replica-project-commit",
+      "terminal-delivery-encode-enqueue",
+    ] as const;
+    const stableCausalIndices = stableCausalChain.map((operation) =>
+      spans.findIndex((span) => span.operation === operation),
     );
-    for (let index = 1; index < orderedCausalSpans.length; index += 1)
-      expect(orderedCausalSpans[index - 1]!.endedAtMicros).toBeLessThanOrEqual(
-        orderedCausalSpans[index]!.startedAtMicros,
+    expect(stableCausalIndices.every((index) => index >= 0)).toBe(true);
+    expect(stableCausalIndices).toEqual(
+      [...stableCausalIndices].sort((left, right) => left - right),
+    );
+    const stableCausalSpans = stableCausalIndices.map((index) => spans[index]!);
+    for (let index = 1; index < stableCausalSpans.length; index += 1)
+      expect(stableCausalSpans[index - 1]!.endedAtMicros).toBeLessThanOrEqual(
+        stableCausalSpans[index]!.startedAtMicros,
       );
     connection.ack(ack(envelope));
     drivers[0]!.output("%1", "INTENDED-LATER");

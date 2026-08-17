@@ -8,6 +8,7 @@ import type {
   TerminalReplicaColor,
   TerminalReplicaRow,
   TerminalReplicaSnapshot,
+  TerminalSemanticDeliveryPayload,
 } from "@tmux-ide/contracts";
 import {
   TerminalDeliveryAssembler,
@@ -16,7 +17,6 @@ import {
   commitTerminalDelivery,
   completeTerminalDelivery,
   createTerminalDeliveryClientState,
-  decodeSemanticTerminalUpdate,
   nackTerminalDelivery,
   type TerminalDeliveryClientState,
 } from "@tmux-ide/core";
@@ -168,6 +168,19 @@ export class SemanticPaneReplica {
 
   get snapshot(): TerminalReplicaSnapshot | null {
     return this.#snapshot;
+  }
+
+  /** Bounded ownership facts for deterministic resource-lifecycle tests. */
+  resourceOwnership(): {
+    readonly activeAssemblers: 0 | 1;
+    readonly retainedGridRows: number;
+    readonly retainedHistoryRows: number;
+  } {
+    return Object.freeze({
+      activeAssemblers: this.#assembler ? 1 : 0,
+      retainedGridRows: this.#snapshot?.grid.length ?? 0,
+      retainedHistoryRows: this.#snapshot?.history.length ?? 0,
+    });
   }
 
   canonicalSnapshot(): SemanticPaneCanonicalSnapshot | null {
@@ -322,7 +335,7 @@ export class SemanticPaneReplica {
       return;
     }
     let committed: ReturnType<typeof commitTerminalDelivery>;
-    let payload: ReturnType<typeof decodeSemanticTerminalUpdate>;
+    let payload: TerminalSemanticDeliveryPayload;
     let envelope: TerminalDeliveryEnvelope;
     const performanceSink = currentTuiPerformanceEventSink();
     let parseStartedAt = 0;
@@ -336,8 +349,10 @@ export class SemanticPaneReplica {
       envelope = admittedEnvelope;
       if (performanceSink) parseStartedAt = performance.now();
       const staged = completeTerminalDelivery(this.#delivery, assembler);
-      payload = decodeSemanticTerminalUpdate(staged.bytes);
       committed = commitTerminalDelivery(this.#delivery, staged);
+      if (!committed.semanticUpdate)
+        throw new TypeError("Semantic delivery did not produce an update");
+      payload = committed.semanticUpdate;
     } catch {
       this.#fail("decode-failed", message.transactionId);
       return;
@@ -394,7 +409,7 @@ export class SemanticPaneReplica {
     previous: TerminalReplicaSnapshot | null,
     next: TerminalReplicaSnapshot | null,
     envelope: TerminalDeliveryEnvelope,
-    payload: ReturnType<typeof decodeSemanticTerminalUpdate>,
+    payload: TerminalSemanticDeliveryPayload,
   ): void {
     const previousKey = this.#renderKey;
     this.#snapshot = next;

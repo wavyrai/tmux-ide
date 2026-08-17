@@ -18,6 +18,7 @@ import {
 } from "./control-channel.ts";
 import type { MirrorLayoutEvent, MirrorPaneEvent, MirrorSessionDescription } from "./events.ts";
 import { SessionChannel, type SessionChannelOptions } from "./session-channel.ts";
+import type { TrustedMirrorSessionInventory } from "./trusted-inventory.ts";
 import type { InputAction } from "../protocol/input-coalescer.ts";
 import {
   controlModeAuthorityKey,
@@ -51,7 +52,12 @@ export interface MirrorServiceOptions {
     endedAtMicros: number,
     pendingBeforeSend: number,
   ) => void;
-  onInputAccepted?: (session: string, action: InputAction, acceptedAtMicros: number) => void;
+  onInputAccepted?: (
+    session: string,
+    action: InputAction,
+    acceptedAtMicros: number,
+    ok: boolean,
+  ) => void;
   onOutputObserved?: (
     session: string,
     semanticPaneId: string,
@@ -124,6 +130,40 @@ export class MirrorService {
     }
   }
 
+  /**
+   * Daemon-private raw inventory from an already-retained channel. This seam
+   * never creates or starts authority; a retirement race returns null.
+   */
+  async describeTrustedInventory(
+    session: string,
+    expectedRuntimeSessionId: string,
+  ): Promise<TrustedMirrorSessionInventory | null> {
+    const entry = this.channels.get(session);
+    if (!entry || entry.retired) return null;
+    await entry.started;
+    if (this.channels.get(session) !== entry || entry.retired) return null;
+    const inventory = await entry.channel.describeTrustedInventory(expectedRuntimeSessionId);
+    if (this.channels.get(session) !== entry || entry.retired) return null;
+    return inventory;
+  }
+
+  hasRetainedSession(session: string): boolean {
+    const entry = this.channels.get(session);
+    return entry !== undefined && !entry.retired;
+  }
+
+  async retainedSessionIdentity(
+    session: string,
+  ): Promise<{ sessionName: string; runtimeSessionId: string } | null> {
+    const entry = this.channels.get(session);
+    if (!entry || entry.retired) return null;
+    await entry.started;
+    if (this.channels.get(session) !== entry || entry.retired) return null;
+    const identity = await entry.channel.attachedSessionIdentity();
+    if (this.channels.get(session) !== entry || entry.retired) return null;
+    return identity;
+  }
+
   async subscribe(request: MirrorSubscribeRequest): Promise<MirrorSubscription> {
     const entry = await this.acquire(request.session);
     let handle;
@@ -187,10 +227,11 @@ export class MirrorService {
     semanticPaneId: string,
     text: string,
     performanceTraceId?: string,
+    isolated = false,
   ): void {
     const entry = this.channels.get(session);
     if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
-    entry.channel.sendText(semanticPaneId, text, performanceTraceId);
+    entry.channel.sendText(semanticPaneId, text, performanceTraceId, isolated);
   }
 
   sendKey(session: string, semanticPaneId: string, key: string, performanceTraceId?: string): void {
@@ -323,8 +364,8 @@ export class MirrorService {
               endedAtMicros,
               pendingBeforeSend,
             ),
-          onInputAccepted: (action, acceptedAtMicros) =>
-            this.opts.onInputAccepted?.(session, action, acceptedAtMicros),
+          onInputAccepted: (action, acceptedAtMicros, ok) =>
+            this.opts.onInputAccepted?.(session, action, acceptedAtMicros, ok),
           onOutputObserved: (semanticPaneId, ageMs, timing) =>
             this.opts.onOutputObserved?.(session, semanticPaneId, ageMs, timing),
         };

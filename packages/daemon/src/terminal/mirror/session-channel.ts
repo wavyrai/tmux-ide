@@ -46,7 +46,9 @@ import {
 import {
   SESSION_PANE_DESCRIPTOR_FORMAT,
   SessionDescriptorDiscovery,
+  decodeControlReplyUtf8,
   decodeTmuxArgument,
+  parseSessionPaneDescriptorReply,
   type SessionPaneDescriptor,
 } from "../protocol/session-descriptor-discovery.ts";
 import {
@@ -68,6 +70,10 @@ import type {
 } from "./events.ts";
 import { FlowLedger } from "./flow-ledger.ts";
 import { PaneFeed } from "./pane-feed.ts";
+import type {
+  TrustedMirrorPaneInventory,
+  TrustedMirrorSessionInventory,
+} from "./trusted-inventory.ts";
 import {
   INTERNAL_READ_OPERATION_OPTION,
   registerInternalReadOperation,
@@ -112,7 +118,7 @@ export interface SessionChannelOptions {
     endedAtMicros: number,
     pendingBeforeSend: number,
   ) => void;
-  onInputAccepted?: (action: InputAction, acceptedAtMicros: number) => void;
+  onInputAccepted?: (action: InputAction, acceptedAtMicros: number, ok: boolean) => void;
   onOutputObserved?: (
     semanticPaneId: string,
     ageMs: number | null,
@@ -188,6 +194,9 @@ export class SessionChannel {
   private cancelSync: (() => void) | null = null;
   private disposed = false;
   private nativeClientProbePending = false;
+  private trustedInventoryFlight: Promise<TrustedMirrorSessionInventory> | null = null;
+  private trustedInventoryFlightSessionId: string | null = null;
+  private attachedIdentity: { sessionName: string; runtimeSessionId: string } | null = null;
   /** Settles once the FIRST identity join lands (or is proven impossible), so
    *  `start()` returns a channel whose semantic ids are subscribable. */
   private resolveFirstJoin: (() => void) | null = null;
@@ -199,7 +208,8 @@ export class SessionChannel {
       const startedAtMicros = action.traceIds?.length ? Math.floor(performance.now() * 1_000) : 0;
       const pendingBeforeSend = action.traceIds?.length ? (this.io.pendingCount ?? 0) : 0;
       const onReply = action.traceIds?.length
-        ? () => this.opts.onInputAccepted?.(action, Math.floor(performance.now() * 1_000))
+        ? (reply: { ok: boolean }) =>
+            this.opts.onInputAccepted?.(action, Math.floor(performance.now() * 1_000), reply.ok)
         : undefined;
       if (action.kind === "literal") {
         this.io.send(
@@ -252,6 +262,7 @@ export class SessionChannel {
 
   async start(): Promise<void> {
     await this.io.start();
+    await this.captureAttachedSessionIdentity();
     if (this.opts.onNativeClientActivity) {
       // tmux does not guarantee `%client-attached` is broadcast to an
       // existing control client. A format subscription is the documented,
@@ -285,6 +296,62 @@ export class SessionChannel {
       diagnostics: [...this.diagnostics],
       degraded: this.degraded,
     };
+  }
+
+  /**
+   * Strict daemon-internal inventory from this channel's current tmux truth.
+   * Unlike the background discovery path, this query awaits descriptor
+   * reconciliation before projecting and rejects incomplete identity rather
+   * than returning the previous descriptor snapshot.
+   */
+  describeTrustedInventory(
+    expectedRuntimeSessionId: string,
+  ): Promise<TrustedMirrorSessionInventory> {
+    if (this.disposed) {
+      return Promise.reject(new Error(`mirror session ${this.opts.session} is disposed`));
+    }
+    if (this.trustedInventoryFlight) {
+      return this.trustedInventoryFlightSessionId === expectedRuntimeSessionId
+        ? this.trustedInventoryFlight
+        : Promise.reject(new Error(`trusted inventory identity changed for ${this.opts.session}`));
+    }
+    const flight = this.refreshTrustedInventory(expectedRuntimeSessionId).finally(() => {
+      if (this.trustedInventoryFlight === flight) {
+        this.trustedInventoryFlight = null;
+        this.trustedInventoryFlightSessionId = null;
+      }
+    });
+    this.trustedInventoryFlight = flight;
+    this.trustedInventoryFlightSessionId = expectedRuntimeSessionId;
+    return flight;
+  }
+
+  /** Read-only proof of the session this control client is actually attached to. */
+  async attachedSessionIdentity(): Promise<{ sessionName: string; runtimeSessionId: string }> {
+    if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
+    if (!this.attachedIdentity)
+      throw new Error(`mirror session ${this.opts.session} identity is absent`);
+    return this.attachedIdentity;
+  }
+
+  private async captureAttachedSessionIdentity(): Promise<void> {
+    const lines = await this.io.request(`display-message -p "#{qa:session_name}\t#{session_id}"`);
+    if (lines.length !== 1)
+      throw new Error(`mirror session ${this.opts.session} identity is absent`);
+    const decodedLine = decodeControlReplyUtf8(lines[0]!);
+    if (decodedLine === null)
+      throw new Error(`mirror session ${this.opts.session} identity is malformed`);
+    const [encodedName = "", runtimeSessionId = ""] = decodedLine.split("\t");
+    const sessionName = decodeTmuxArgument(encodedName);
+    if (
+      sessionName.length === 0 ||
+      sessionName.length > 160 ||
+      !/^\$(?:0|[1-9][0-9]*)$/u.test(runtimeSessionId) ||
+      runtimeSessionId.length > 32
+    ) {
+      throw new Error(`mirror session ${this.opts.session} identity is malformed`);
+    }
+    this.attachedIdentity = Object.freeze({ sessionName, runtimeSessionId });
   }
 
   subscribePane(
@@ -346,11 +413,18 @@ export class SessionChannel {
   /** Controller-authorized input fast path. It deliberately reuses the one
    * session InputCoalescer, so literal/key ordering and tmux application-mode
    * named-key semantics are identical for GUI, TUI and direct subscribers. */
-  sendText(semanticPaneId: string, text: string, performanceTraceId?: string): void {
+  sendText(
+    semanticPaneId: string,
+    text: string,
+    performanceTraceId?: string,
+    isolated = false,
+  ): void {
     const pane = this.panesBySemantic.get(semanticPaneId);
     if (!pane)
       throw new Error(`unknown semantic pane ${semanticPaneId} in session ${this.opts.session}`);
+    if (isolated) this.input.flush();
     this.input.literal(pane.runtimeId, text, performanceTraceId);
+    if (isolated) this.input.flush();
   }
 
   sendKey(semanticPaneId: string, key: string, performanceTraceId?: string): void {
@@ -745,16 +819,43 @@ export class SessionChannel {
     const lines = await this.io.request(
       `list-panes -s -t "${this.opts.session}" -F "#{pane_id}\t#{pane_active}\t#{window_id}\t#{?window_active,1,0}"`,
     );
-    const listed = new Set<string>();
-    this.truthActive.clear();
-    this.truthWindow.clear();
+    const truth: Array<{
+      runtimePaneId: string;
+      active: boolean;
+      runtimeWindowId: string;
+      windowActive: boolean;
+    }> = [];
     for (const line of lines) {
       const [runtime = "", active = "", windowId = "", windowActive = ""] = line.split("\t");
       if (!/^%[0-9]+$/u.test(runtime)) continue;
-      listed.add(runtime);
-      this.truthActive.set(runtime, active === "1");
-      this.truthWindow.set(runtime, windowId);
-      if (windowActive === "1" && windowId.startsWith("@")) this.currentWindow = windowId;
+      truth.push({
+        runtimePaneId: runtime,
+        active: active === "1",
+        runtimeWindowId: windowId,
+        windowActive: windowActive === "1",
+      });
+    }
+    const listed = this.applyPaneTruth(truth);
+    await this.syncWindows();
+    this.discovery.discover(listed);
+  }
+
+  private applyPaneTruth(
+    truth: readonly {
+      runtimePaneId: string;
+      active: boolean;
+      runtimeWindowId: string;
+      windowActive: boolean;
+    }[],
+  ): Set<string> {
+    const listed = new Set<string>();
+    this.truthActive.clear();
+    this.truthWindow.clear();
+    for (const row of truth) {
+      listed.add(row.runtimePaneId);
+      this.truthActive.set(row.runtimePaneId, row.active);
+      this.truthWindow.set(row.runtimePaneId, row.runtimeWindowId);
+      if (row.windowActive) this.currentWindow = row.runtimeWindowId;
     }
     // Closure is decided ONLY by a successful truth reply that omits the pane
     // (probe failure never reads as absence — a thrown request skips all this).
@@ -776,13 +877,138 @@ export class SessionChannel {
       }
       pane.subs.clear();
     }
-    await this.syncWindows();
-    this.discovery.discover(listed);
+    return listed;
   }
 
-  private async syncWindows(): Promise<void> {
+  private async refreshTrustedInventory(
+    expectedRuntimeSessionId: string,
+    attempt = 0,
+  ): Promise<TrustedMirrorSessionInventory> {
+    const beforeLines = await this.io.request(
+      `list-panes -s -t "${expectedRuntimeSessionId}" -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`,
+    );
+    if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
+    const parsed = parseSessionPaneDescriptorReply(beforeLines);
+    if (
+      parsed.malformedUtf8Records !== 0 ||
+      parsed.descriptors.length === 0 ||
+      parsed.descriptors.length !== beforeLines.length
+    ) {
+      throw new Error(`trusted inventory for ${this.opts.session} is malformed`);
+    }
+    const descriptors = parsed.descriptors;
+    const runtimePaneIds = new Set(descriptors.map((pane) => pane.runtimePaneId));
+    const runtimeSessionIds = new Set(descriptors.map((pane) => pane.runtimeSessionId));
+    const activeWindowIds = new Set(
+      descriptors.filter((pane) => pane.windowActive).map((pane) => pane.windowId),
+    );
+    const globallyActivePanes = descriptors.filter((pane) => pane.paneActive && pane.windowActive);
+    if (
+      runtimePaneIds.size !== descriptors.length ||
+      runtimeSessionIds.size !== 1 ||
+      runtimeSessionIds.values().next().value !== expectedRuntimeSessionId ||
+      descriptors.some((pane) => pane.sessionName !== this.opts.session) ||
+      descriptors.some((pane) => pane.windowId === null) ||
+      activeWindowIds.size !== 1 ||
+      globallyActivePanes.length !== 1
+    ) {
+      throw new Error(`trusted inventory for ${this.opts.session} is inconsistent`);
+    }
+    const computedWindowCounts = new Map<string, number>();
+    for (const descriptor of descriptors) {
+      const runtimeWindowId = descriptor.windowId!;
+      computedWindowCounts.set(
+        runtimeWindowId,
+        (computedWindowCounts.get(runtimeWindowId) ?? 0) + 1,
+      );
+    }
+    if (
+      descriptors.some(
+        (pane) =>
+          pane.windowPaneCount !== computedWindowCounts.get(pane.windowId!) ||
+          pane.sessionWindowCount !== computedWindowCounts.size,
+      )
+    ) {
+      throw new Error(`trusted inventory for ${this.opts.session} has incomplete counts`);
+    }
+    const listed = this.applyPaneTruth(
+      descriptors.map((pane) => ({
+        runtimePaneId: pane.runtimePaneId,
+        active: pane.paneActive,
+        runtimeWindowId: pane.windowId!,
+        windowActive: pane.windowActive,
+      })),
+    );
+    const repairedWindows = await this.syncWindows(expectedRuntimeSessionId);
+    const repairedPanes = await this.reconcileIdentity(descriptors, listed);
+    const afterLines = await this.io.request(
+      `list-panes -s -t "${expectedRuntimeSessionId}" -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`,
+    );
+    const coherent =
+      beforeLines.length === afterLines.length &&
+      beforeLines.every((line, index) => line === afterLines[index]);
+    if (repairedWindows || repairedPanes || !coherent) {
+      if (attempt >= 1)
+        throw new Error(`trusted inventory for ${this.opts.session} did not settle`);
+      return await this.refreshTrustedInventory(expectedRuntimeSessionId, attempt + 1);
+    }
+    if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
+    if (
+      this.degraded ||
+      this.panesByRuntime.size !== descriptors.length ||
+      this.windowsByRuntime.size !== computedWindowCounts.size ||
+      [...computedWindowCounts.keys()].some(
+        (runtimeWindowId) => !this.windowsByRuntime.has(runtimeWindowId),
+      )
+    ) {
+      throw new Error(`trusted inventory for ${this.opts.session} is degraded`);
+    }
+    const windowCounts = computedWindowCounts;
+    const sessionWindowCount = computedWindowCounts.size;
+    const panes: TrustedMirrorPaneInventory[] = descriptors.map((descriptor) => {
+      const record = this.panesByRuntime.get(descriptor.runtimePaneId);
+      const runtimeWindowId = descriptor.windowId!;
+      const window = this.windowsByRuntime.get(runtimeWindowId);
+      if (
+        !record ||
+        record.windowRuntimeId !== descriptor.windowId ||
+        !window?.semanticId ||
+        descriptor.semanticPaneId !== record.semanticId ||
+        descriptor.semanticWindowId !== window.semanticId ||
+        !WorkspaceIdSchemaZ.safeParse(record.semanticId).success ||
+        !WorkspaceIdSchemaZ.safeParse(window.semanticId).success
+      ) {
+        throw new Error(`trusted inventory for ${this.opts.session} lacks verified identity`);
+      }
+      return Object.freeze({
+        runtimeSessionId: descriptor.runtimeSessionId,
+        runtimeWindowId,
+        runtimePaneId: descriptor.runtimePaneId,
+        semanticWindowId: window.semanticId,
+        semanticPaneId: record.semanticId,
+        windowPaneCount: windowCounts.get(runtimeWindowId)!,
+        sessionWindowCount,
+        paneIndex: descriptor.paneIndex,
+        title: descriptor.title ?? "",
+        currentCommand: descriptor.currentCommand ?? "",
+        active: descriptor.paneActive && descriptor.windowActive,
+        role: descriptor.role,
+        name: descriptor.name,
+        type: descriptor.type,
+        missionStamp: descriptor.missionStamp,
+        dir: descriptor.cwd ?? "",
+      });
+    });
+    return Object.freeze({
+      sessionName: this.opts.session,
+      runtimeSessionId: descriptors[0]!.runtimeSessionId,
+      panes: Object.freeze(panes),
+    });
+  }
+
+  private async syncWindows(target = this.opts.session): Promise<boolean> {
     const lines = await this.io.request(
-      `list-windows -t "${this.opts.session}" -F "#{window_id}\t#{qa:@tmux_ide_window_id}\t#{qa:window_name}\t#{window_active}\t#{window_visible_layout}\t#{?window_zoomed_flag,1,0}\t#{pane-border-status}"`,
+      `list-windows -t "${target}" -F "#{window_id}\t#{qa:@tmux_ide_window_id}\t#{qa:window_name}\t#{window_active}\t#{window_visible_layout}\t#{?window_zoomed_flag,1,0}\t#{pane-border-status}"`,
     );
     interface Row {
       runtimeId: string;
@@ -832,6 +1058,7 @@ export class SessionChannel {
     }
     const claimed = new Set(stampCounts.keys());
     const generateWindowId = this.opts.generateWindowId ?? defaultMirrorWindowId;
+    let repairedIdentity = false;
     const next = new Map<string, WindowRecord>();
     for (const row of rows) {
       if (row.active) this.currentWindow = row.runtimeId;
@@ -841,6 +1068,7 @@ export class SessionChannel {
       if (row.stamp && stampCounts.get(row.stamp) === 1) {
         semanticId = row.stamp;
       } else {
+        repairedIdentity = true;
         let candidate: string | null = null;
         for (let attempt = 0; attempt < 32 && !candidate; attempt += 1) {
           const generated = generateWindowId();
@@ -894,13 +1122,14 @@ export class SessionChannel {
      * rename it just performed reached tmux.
      */
     if (changed) for (const runtimeId of next.keys()) this.emitLayout(runtimeId);
+    return repairedIdentity;
   }
 
   private async reconcileIdentity(
     descriptors: readonly SessionPaneDescriptor[],
     listed: ReadonlySet<string>,
-  ): Promise<void> {
-    if (this.disposed) return;
+  ): Promise<boolean> {
+    if (this.disposed) return false;
     const snapshots: WorkspaceTmuxPaneSnapshot[] = descriptors
       .filter((descriptor) => listed.has(descriptor.runtimePaneId))
       .map((descriptor) => ({
@@ -934,7 +1163,7 @@ export class SessionChannel {
           ),
       ),
     );
-    if (this.disposed) return;
+    if (this.disposed) return plan.stampEffects.length > 0;
     const reconciliation = finalizeWorkspaceTmuxReconciliation(plan, outcomes);
     const descriptorByRuntime = new Map(descriptors.map((d) => [d.runtimePaneId, d]));
     for (const verified of reconciliation.panes) {
@@ -1015,6 +1244,7 @@ export class SessionChannel {
      */
     for (const runtimeId of this.layoutByWindow.keys()) this.emitLayout(runtimeId);
     this.settleFirstJoin();
+    return plan.stampEffects.length > 0;
   }
 
   private settleFirstJoin(): void {

@@ -6,6 +6,7 @@ import {
   APPLICATION_SHELL_RESOURCE_V3_VERSION,
   ApplicationShellProjectionInputV2SchemaZ,
   ApplicationShellProjectionInputV3SchemaZ,
+  DAEMON_WIRE_PROTOCOL_VERSION,
   DESKTOP_HOST_API_VERSION,
   type ApplicationShellProjectionInputV2,
   type ApplicationShellProjectionInputV3,
@@ -59,14 +60,14 @@ import { App } from "./App.tsx";
 import { createDefaultDomShellInput } from "./experience/dom-shell.ts";
 
 const DAEMON_A: DaemonInstanceIdentity = {
-  protocolVersion: 1,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "test-a",
   instanceId: "00000000-0000-4000-8000-000000000001",
   startedAt: "2026-07-22T00:00:00.000Z",
 };
 
 const DAEMON_B: DaemonInstanceIdentity = {
-  protocolVersion: 1,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "test-b",
   instanceId: "00000000-0000-4000-8000-000000000002",
   startedAt: "2026-07-22T00:01:00.000Z",
@@ -453,7 +454,7 @@ describe("production terminal composition", () => {
   });
 
   it.each([
-    ["protocolVersion", { protocolVersion: 2 }],
+    ["protocolVersion", { protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION + 1 }],
     ["productVersion", { productVersion: "different-product" }],
     ["instanceId", { instanceId: "00000000-0000-4000-8000-000000000099" }],
     ["startedAt", { startedAt: "2026-07-22T00:00:01.000Z" }],

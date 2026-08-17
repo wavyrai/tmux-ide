@@ -10,6 +10,7 @@ import {
   type SessionRuntimePresenceState,
   type SessionRuntimeSemanticIntent,
   type SessionRuntimeTerminalInput,
+  type CausalCellProbeV1,
   type TerminalDeliveryOffer,
   type TerminalDeliveryServerMessage,
 } from "@tmux-ide/contracts";
@@ -19,6 +20,7 @@ import type {
   SessionRuntimeRegistry,
 } from "./registry.ts";
 import { SessionRuntimeControllerLeaseError } from "./registry.ts";
+import type { CausalCellLedgerResult } from "./causal-cell-ledger.ts";
 
 const TransportSchemaZ = z.enum(["terminal-attachment", "pane-stream"]);
 const LeaseIdSchemaZ = z.uuid();
@@ -97,6 +99,7 @@ export class SessionRuntimeTransportBinding {
   readonly #deliverySubscriberId: string;
   readonly #transportLeaseId: string;
   readonly #intentHandles = new Map<string, SessionRuntimeExecutionHandle>();
+  readonly #causalCellProbes = new Map<string, string>();
   #baseHandle: SessionRuntimeExecutionHandle | null;
   #baseHandleLease: SessionRuntimeControllerLease | null;
   #closed = false;
@@ -291,6 +294,8 @@ export class SessionRuntimeTransportBinding {
     semanticPaneId: string,
     input: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
+    causalProbe?: CausalCellProbeV1,
+    onCausalResult?: (result: CausalCellLedgerResult) => void,
   ): void {
     this.assertController(semanticPaneId);
     const lease = this.#shared.lease;
@@ -300,7 +305,25 @@ export class SessionRuntimeTransportBinding {
         "The transport no longer owns controller authority.",
       );
     }
-    this.#shared.consumer.sendInput(lease, semanticPaneId, input, performanceTraceId);
+    if (causalProbe) this.#causalCellProbes.set(causalProbe.traceId, semanticPaneId);
+    try {
+      this.#shared.consumer.sendInput(
+        lease,
+        semanticPaneId,
+        input,
+        performanceTraceId,
+        causalProbe,
+        causalProbe
+          ? (result) => {
+              this.#causalCellProbes.delete(causalProbe.traceId);
+              onCausalResult?.(result);
+            }
+          : onCausalResult,
+      );
+    } catch (error) {
+      if (causalProbe) this.#causalCellProbes.delete(causalProbe.traceId);
+      throw error;
+    }
   }
 
   fitViewport(cols: number, rows: number): void {
@@ -358,6 +381,10 @@ export class SessionRuntimeTransportBinding {
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
+    for (const [traceId, semanticPaneId] of [...this.#causalCellProbes]) {
+      this.#shared.consumer.failCausalCellProbe(semanticPaneId, traceId, "transport-closed");
+    }
+    this.#causalCellProbes.clear();
     const geometryIndex = this.#shared.geometryTransportLeaseIds.indexOf(this.#transportLeaseId);
     if (geometryIndex >= 0) this.#shared.geometryTransportLeaseIds.splice(geometryIndex, 1);
     this.#intentHandles.clear();

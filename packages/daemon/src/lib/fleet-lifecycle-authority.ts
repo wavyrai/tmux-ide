@@ -1,13 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { realpath, stat } from "node:fs/promises";
-import type {
-  FleetAgentMutateArguments,
-  FleetAgentMutateResult,
-  FleetAgentProvisionArguments,
-  FleetAgentProvisionResult,
-  WorkspaceSessionCreateArguments,
-  WorkspaceSessionCreateResult,
+import {
+  DAEMON_WIRE_PROTOCOL_VERSION,
+  type FleetAgentMutateArguments,
+  type FleetAgentMutateResult,
+  type FleetAgentProvisionArguments,
+  type FleetAgentProvisionResult,
+  type WorkspaceSessionCreateArguments,
+  type WorkspaceSessionCreateResult,
 } from "@tmux-ide/contracts";
 import type { WorkspaceRegistry } from "./workspace-registry.ts";
 import { readAdoptedFleet } from "../command-center/discovery.ts";
@@ -189,7 +190,7 @@ export class FleetLifecycleAuthority {
     const resource = projectFleetCatalog(
       facts,
       {
-        protocolVersion: 1,
+        protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
         productVersion: this.#productVersion,
         instanceId: this.#daemonInstanceId,
         startedAt: this.#startedAt,

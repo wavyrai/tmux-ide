@@ -121,9 +121,9 @@ export const FIXTURE = {
     `@2\twindow.test.two\taux\t0\t${layoutW2}\t0`,
   ],
   descriptorRows: [
-    "%1\tpane.alpha\t\t\tzsh\t/tmp/a\t0\tmain\t@1\tAlpha",
-    "%2\tpane.beta\t\t\tzsh\t/tmp/b\t0\tmain\t@1\tBeta",
-    "%3\t\t\t\tzsh\t/tmp/c\t1\taux\t@2\tGamma",
+    "%1\tpane.alpha\t\t\tzsh\t/tmp/a\t0\tmain\t@1\tAlpha\t$1\t0\tAlpha IDE\tmission-a\t1\t1\twindow.test.one\tzz-sim\t2\t2",
+    "%2\tpane.beta\t\t\tzsh\t/tmp/b\t0\tmain\t@1\tBeta\t$1\t1\tBeta IDE\t\t0\t1\twindow.test.one\tzz-sim\t2\t2",
+    "%3\t\t\t\tzsh\t/tmp/c\t1\taux\t@2\tGamma\t$1\t0\tGamma IDE\t\t1\t0\t\tzz-sim\t1\t2",
   ],
 };
 
@@ -137,6 +137,7 @@ export interface FixtureState {
  *  commands, leaves capture/cursor probes (and anything unrecognized) manual. */
 export function fixtureAutoReply(state: FixtureState): AutoReply {
   return (cmd) => {
+    if (cmd.startsWith('display-message -p "#{qa:session_name}')) return ["zz-sim\t$1"];
     if (cmd.includes("qa:@tmux_ide_pane_id")) return state.descriptorRows;
     if (cmd.startsWith("list-panes -s")) return state.truthRows;
     if (cmd.startsWith("list-windows")) return state.windowRows;

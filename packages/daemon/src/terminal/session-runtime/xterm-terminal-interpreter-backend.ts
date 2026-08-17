@@ -1,4 +1,4 @@
-import { Terminal } from "@xterm/headless";
+import { Terminal } from "@tmux-ide/xterm-headless";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import type {
   TerminalReplicaCell,
@@ -44,7 +44,7 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     )._core;
     if (!core?.coreService) {
       this.#terminal.dispose();
-      throw new Error("Unsupported @xterm/headless private API shape");
+      throw new Error("Unsupported @tmux-ide/xterm-headless private API shape");
     }
   }
 
@@ -58,6 +58,15 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
 
   write(data: Uint8Array | string): Promise<void> {
     return new Promise((resolve) => this.#terminal.write(data, resolve));
+  }
+
+  prioritizeNextWrite(): void {
+    this.#terminal.prioritizeNextWrite();
+  }
+
+  registerOscHandler(identifier: number, handler: (data: string) => boolean): () => void {
+    const disposable = this.#terminal.parser.registerOscHandler(identifier, handler);
+    return () => disposable.dispose();
   }
 
   resize(cols: number, rows: number): void {
@@ -76,7 +85,7 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
       buffer._cols !== this.#terminal.cols ||
       buffer._rows !== this.#terminal.rows
     )
-      throw new Error("Unsupported @xterm/headless 6.0.0 cursor adapter shape");
+      throw new Error("Unsupported @tmux-ide/xterm-headless 6.0.0 cursor adapter shape");
     buffer.x = Math.max(0, Math.min(x, this.#terminal.cols - 1));
     buffer.y = Math.max(0, Math.min(y, this.#terminal.rows - 1));
   }

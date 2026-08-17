@@ -13,6 +13,7 @@ import { createRequire } from "node:module";
 import type { Socket } from "node:net";
 import { performance } from "node:perf_hooks";
 import { WebSocket, WebSocketServer } from "ws";
+import { ownerBearerMatches } from "../command-center/owner-authority.ts";
 import {
   DAEMON_WIRE_PROTOCOL_VERSION,
   DaemonInstanceIdentitySchemaZ,
@@ -77,7 +78,10 @@ import {
 import { SessionRuntimeRegistry } from "../terminal/session-runtime/registry.ts";
 import { createSessionRuntimeObservability } from "../terminal/session-runtime/runtime-observability.ts";
 import { createSessionRuntimeMultiplexerBackend } from "../terminal/session-runtime/multiplexer-backend.ts";
-import { PaneSourceCredentialAuthority } from "./pane-source-credentials.ts";
+import {
+  PaneSourceCredentialAuthority,
+  reconcilePaneSourceCredentialsAtStartup,
+} from "./pane-source-credentials.ts";
 import { setActivationBackend, type ProjectActivationOptions } from "./active-projects.ts";
 import { readOrMintEnvironmentId } from "./environment-identity.ts";
 import {
@@ -172,6 +176,7 @@ function tmux(...args: string[]): string {
     // child spawn fails with EBADF. The visible symptom is sessionExists()
     // returning false → stopSelf → ghost daemon.
     stdio: ["ignore", "pipe", "pipe"],
+    timeout: 2_000,
   }).trim();
 }
 
@@ -340,6 +345,7 @@ function attachWebSockets(
     localBypassToken?: string | null;
     bindHostname?: string | null;
     daemonIdentity: DaemonInstanceIdentity;
+    ownerToken?: string | null;
   },
 ): {
   closeClients: () => void;
@@ -375,6 +381,7 @@ function attachWebSockets(
         const requestUrl = new URL(req.url ?? "/ws/events", "http://daemon.local");
         handleWsEventsConnection(ws, opts.daemonIdentity, {
           mode: requestUrl.searchParams.get("mode") === "semantic" ? "semantic" : "legacy",
+          ownerAuthorized: ownerBearerMatches(req.headers.authorization, opts.ownerToken ?? null),
         });
       });
       return;
@@ -825,6 +832,7 @@ async function startHttpServer({
       protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
       ...daemonIdentity,
     }),
+    ownerToken: localBypassToken,
   });
   const terminalAttachmentBoundary = attachTerminalAttachmentWebSocket(
     server,
@@ -1010,13 +1018,10 @@ export async function startEmbeddedDaemon(
         // Already added or persistence failed; non-fatal.
       }
     }
-    for (const workspace of workspaceRegistry.list()) {
-      try {
-        paneSourceCredentials.rotateSession(workspace.sessionName);
-      } catch {
-        // A concurrently disappearing external session simply has no grants.
-      }
-    }
+    await reconcilePaneSourceCredentialsAtStartup(
+      paneSourceCredentials,
+      workspaceRegistry.list().map((workspace) => workspace.sessionName),
+    );
     // Resolve the executable/socket authority once per daemon generation so
     // pane creation and direct attachment can never drift to different tmux
     // servers after startup.
@@ -1234,6 +1239,7 @@ export async function startEmbeddedDaemon(
           trustedCwd: dir,
         },
         agentStatusProbeFactory: ({ run }) => createTmuxAgentStatusProbe({ run }),
+        ...(runtimeObservability ? { observability: runtimeObservability } : {}),
       } satisfies ConstructorParameters<typeof WorkspaceTerminalInventoryRuntime>[0];
       terminalInventoryRuntime = new WorkspaceTerminalInventoryRuntime(terminalRuntimeOptions);
       // Reconcile only cryptographically marked legacy view sessions before
