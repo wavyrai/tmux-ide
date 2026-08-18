@@ -141,7 +141,14 @@ export interface TerminalFastLaneOptions {
     readonly inputPending: number;
     readonly inputInFlight: number;
     readonly inputPendingBytes: number;
+    readonly semanticPaneId?: string;
+    readonly generation?: string;
+    readonly incarnation?: string;
+    readonly revision?: number;
+    readonly stateHash?: string;
   }) => void;
+  /** Test-only clock seam, consulted only while the trace observer is installed. */
+  readonly diagnosticNowMicros?: () => number;
 }
 
 export interface TerminalFastLane {
@@ -255,16 +262,40 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
     resizeTransports: 0,
     resizeSuperseded: 0,
   };
-  const traceStage = (traceId: string | undefined, operation: string): void => {
+  const traceStage = (
+    traceId: string | undefined,
+    operation: string,
+    atMicros?: number,
+    identity?: {
+      readonly semanticPaneId: string;
+      readonly generation: string;
+      readonly incarnation: string;
+      readonly revision: number;
+      readonly stateHash: string;
+    },
+  ): void => {
     if (!traceId || !options.onTraceStage) return;
-    options.onTraceStage({
-      traceId,
-      operation,
-      atMicros: Math.floor(performance.now() * 1_000),
-      inputPending: inputQueue.length,
-      inputInFlight: inFlightInputs.size,
-      inputPendingBytes: inputBytes,
-    });
+    try {
+      options.onTraceStage({
+        traceId,
+        operation,
+        atMicros:
+          atMicros ?? options.diagnosticNowMicros?.() ?? Math.floor(performance.now() * 1_000),
+        inputPending: inputQueue.length,
+        inputInFlight: inFlightInputs.size,
+        inputPendingBytes: inputBytes,
+        ...identity,
+      });
+    } catch {
+      // Diagnostic observers never own canonical delivery or input dispatch.
+    }
+  };
+  const diagnosticNowMicros = (): number | undefined => {
+    try {
+      return options.diagnosticNowMicros?.() ?? Math.floor(performance.now() * 1_000);
+    } catch {
+      return undefined;
+    }
   };
 
   const requestAuthority = (
@@ -340,7 +371,18 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
     metadata?: TerminalReplicaDeliveryMetadata,
   ): void => {
     if (disposed) return;
-    traceStage(metadata?.performanceTraceId, "delivery-received");
+    const traceEnabled = Boolean(metadata?.performanceTraceId && options.onTraceStage);
+    const identity = traceEnabled
+      ? {
+          semanticPaneId: update.semanticPaneId,
+          generation: update.generation,
+          incarnation: update.incarnation,
+          revision: update.revision,
+          stateHash: update.stateHash,
+        }
+      : undefined;
+    traceStage(metadata?.performanceTraceId, "delivery-received", undefined, identity);
+    const observerReturnedAtMicros = traceEnabled ? diagnosticNowMicros() : undefined;
     const expected = paneAddress(generationAddress, interest.semanticPaneId);
     if (
       update.generation !== expected.generation ||
@@ -362,7 +404,26 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
       return;
     }
     mutableCounters.accepted += 1;
-    const result = applyTerminalReplicaUpdate(interest.state, update);
+    const applyStartedAtMicros = traceEnabled ? diagnosticNowMicros() : undefined;
+    const result = applyTerminalReplicaUpdate(interest.state, update, {
+      ...(metadata?.representationHash
+        ? { authenticatedFrameHash: metadata.representationHash }
+        : {}),
+    });
+    const applyEndedAtMicros = traceEnabled ? diagnosticNowMicros() : undefined;
+    traceStage(
+      metadata?.performanceTraceId,
+      "delivery-observer-returned",
+      observerReturnedAtMicros,
+      identity,
+    );
+    traceStage(
+      metadata?.performanceTraceId,
+      "canonical-apply-begin",
+      applyStartedAtMicros,
+      identity,
+    );
+    traceStage(metadata?.performanceTraceId, "canonical-apply-end", applyEndedAtMicros, identity);
     if (result.status === "idempotent" || result.status === "stale") {
       mutableCounters.duplicateOrStale += 1;
       // A reconnect can legitimately replay the same canonical seed. It is
@@ -383,7 +444,7 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
     interest.lastAcceptedUpdateType = update.type;
     if (update.type === "terminal.seed") interest.repairPending = false;
     mutableCounters.published += 1;
-    traceStage(metadata?.performanceTraceId, "lane-published");
+    traceStage(metadata?.performanceTraceId, "lane-published", undefined, identity);
     const publication = Object.freeze({
       address: expected,
       state: result.state,

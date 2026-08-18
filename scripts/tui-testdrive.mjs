@@ -893,6 +893,8 @@ async function start(args) {
           `TMUX_IDE_PERFORMANCE_TRACE_COMMIT=${shQuote(process.env.TMUX_IDE_PERFORMANCE_TRACE_COMMIT ?? "")}`,
           `TMUX_IDE_PERFORMANCE_TRACE_TREE=${shQuote(process.env.TMUX_IDE_PERFORMANCE_TRACE_TREE ?? "")}`,
           `TMUX_IDE_PERFORMANCE_TRACE_DETAIL=${shQuote(process.env.TMUX_IDE_PERFORMANCE_TRACE_DETAIL ?? "1")}`,
+          `TMUX_IDE_PERFORMANCE_TRACE_INPUT_ORIGIN=${shQuote(process.env.TMUX_IDE_PERFORMANCE_TRACE_INPUT_ORIGIN ?? "0")}`,
+          `TMUX_IDE_PERFORMANCE_TRACE_INPUT_DETAIL=${shQuote(process.env.TMUX_IDE_PERFORMANCE_TRACE_INPUT_DETAIL ?? "0")}`,
         ]
       : []),
     ...(process.env.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON === "1"
@@ -918,6 +920,10 @@ async function start(args) {
               TMUX_IDE_PERFORMANCE_TRACE_TREE: process.env.TMUX_IDE_PERFORMANCE_TRACE_TREE ?? "",
               TMUX_IDE_PERFORMANCE_TRACE_DETAIL:
                 process.env.TMUX_IDE_PERFORMANCE_TRACE_DETAIL ?? "1",
+              TMUX_IDE_PERFORMANCE_TRACE_INPUT_ORIGIN:
+                process.env.TMUX_IDE_PERFORMANCE_TRACE_INPUT_ORIGIN ?? "0",
+              TMUX_IDE_PERFORMANCE_TRACE_INPUT_DETAIL:
+                process.env.TMUX_IDE_PERFORMANCE_TRACE_INPUT_DETAIL ?? "0",
             }
           : {}),
         ...(options.debug ? { TMUX_IDE_MIRROR_DEBUG: "1" } : {}),
@@ -955,6 +961,12 @@ async function start(args) {
     String(options.rows),
     "-c",
     launch.cwd,
+    ...(process.env.TMUX_IDE_PERFORMANCE_TRACE_INPUT_FINGERPRINT_KEY
+      ? [
+          "-e",
+          `TMUX_IDE_PERFORMANCE_TRACE_INPUT_FINGERPRINT_KEY=${process.env.TMUX_IDE_PERFORMANCE_TRACE_INPUT_FINGERPRINT_KEY}`,
+        ]
+      : []),
     launcherPath,
   ]);
   const frame = await waitForFrame((value) => value.includes("tmux-ide"));

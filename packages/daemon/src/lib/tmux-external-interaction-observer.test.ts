@@ -55,7 +55,7 @@ function harness(
   }[] = [];
   let buffer = raw;
   const io: ExternalTmuxInteractionObserverIo = {
-    runTmux: (args) => {
+    runTmux: async (args) => {
       calls.push([...args]);
       if (args[0] === "show-hooks") {
         return args[2] === "after-capture-pane"
@@ -103,7 +103,7 @@ function statefulHookHarness(): {
   const calls: (readonly string[])[] = [];
   const hooks = new Map<string, string>();
   const io: ExternalTmuxInteractionObserverIo = {
-    runTmux: (args) => {
+    runTmux: async (args) => {
       calls.push([...args]);
       if (args[0] === "show-hooks") return hooks.get(args[2]!) ?? String(args[2]);
       if (args[0] === "list-buffers") return "";
@@ -147,9 +147,9 @@ describe("tmux external interaction observer", () => {
     ]);
   });
 
-  it("preserves user hooks while replacing stale product hooks", () => {
+  it("preserves user hooks while replacing stale product hooks", async () => {
     const { observer, calls } = harness("");
-    observer.install();
+    await observer.install();
 
     expect(calls).toContainEqual(["set-hook", "-gu", "after-send-keys[7]"]);
     expect(calls).toContainEqual(["set-hook", "-gu", "after-capture-pane[5]"]);
@@ -166,27 +166,27 @@ describe("tmux external interaction observer", () => {
     expect(installs.every((install) => !install[3]?.includes("pane_input"))).toBe(true);
   });
 
-  it("self-heals both hooks after an external tmux config reload removes them", () => {
+  it("self-heals both hooks after an external tmux config reload removes them", async () => {
     const { observer, calls, removeHooks } = statefulHookHarness();
-    observer.install();
+    await observer.install();
     const firstInstalls = calls.filter((args) => args[0] === "set-hook" && args[1] === "-ag");
     expect(firstInstalls).toHaveLength(2);
 
-    observer.reconcileHooks();
+    await observer.reconcileHooks({ allowInactive: true });
     expect(calls.filter((args) => args[0] === "set-hook" && args[1] === "-ag")).toHaveLength(2);
 
     removeHooks();
-    observer.reconcileHooks();
+    await observer.reconcileHooks({ allowInactive: true });
     expect(calls.filter((args) => args[0] === "set-hook" && args[1] === "-ag")).toHaveLength(4);
   });
 
-  it("projects external observations and propagates whether the live executor consumed one", () => {
+  it("projects external observations and propagates whether the live executor consumed one", async () => {
     const own = internalInteractionOperationMarker(DAEMON, OPERATION);
     const { observer, observed } = harness(
       `%9${FIELD}${FIELD}${SEND}${EVENT}%9${FIELD}${own}${FIELD}${SEND}${EVENT}%9${FIELD}another-daemon:${OPERATION}${FIELD}${READ}${EVENT}`,
       OPERATION,
     );
-    expect(observer.drain()).toBe(true);
+    expect(await observer.drain()).toBe(true);
 
     expect(observed).toEqual([
       {
@@ -210,11 +210,11 @@ describe("tmux external interaction observer", () => {
     ]);
   });
 
-  it("does not trust a forgeable internal-looking read marker", () => {
+  it("does not trust a forgeable internal-looking read marker", async () => {
     const { observer, observed } = harness(
       `%9${FIELD}${FORGED_INTERNAL_READ}${FIELD}${READ}${EVENT}%9${FIELD}${FIELD}${READ}${EVENT}`,
     );
-    expect(observer.drain()).toBe(false);
+    expect(await observer.drain()).toBe(false);
     expect(observed).toEqual([
       {
         workspaceName: "workspace.project",
@@ -231,25 +231,25 @@ describe("tmux external interaction observer", () => {
     ]);
   });
 
-  it("consumes a registered internal read exactly once for its exact pane", () => {
+  it("consumes a registered internal read exactly once for its exact pane", async () => {
     const marker = registerInternalReadOperation("%9");
     const first = harness(`%9${FIELD}${marker}${FIELD}${READ}${EVENT}`);
-    expect(first.observer.drain()).toBe(true);
+    expect(await first.observer.drain()).toBe(true);
     expect(first.observed).toEqual([]);
 
     const replay = harness(`%9${FIELD}${marker}${FIELD}${READ}${EVENT}`);
-    expect(replay.observer.drain()).toBe(false);
+    expect(await replay.observer.drain()).toBe(false);
     expect(replay.observed).toHaveLength(1);
   });
 
-  it("suppresses a cross-process product read only with daemon-owner proof", () => {
+  it("suppresses a cross-process product read only with daemon-owner proof", async () => {
     const token = "owner-token-with-enough-entropy-for-the-test";
     const marker = createAuthenticatedInternalReadOperation("%9", {
       daemonInstanceId: DAEMON,
       ownerToken: token,
     });
     const trusted = harness(`%9${FIELD}${marker}${FIELD}${READ}${EVENT}`, null, token);
-    expect(trusted.observer.drain()).toBe(true);
+    expect(await trusted.observer.drain()).toBe(true);
     expect(trusted.observed).toEqual([]);
 
     const untrusted = harness(
@@ -257,33 +257,185 @@ describe("tmux external interaction observer", () => {
       null,
       "different-owner-token",
     );
-    expect(untrusted.observer.drain()).toBe(false);
+    expect(await untrusted.observer.drain()).toBe(false);
     expect(untrusted.observed).toHaveLength(1);
   });
 
-  it("externalizes a registered marker used for the wrong pane or operation kind", () => {
+  it("externalizes a registered marker used for the wrong pane or operation kind", async () => {
     const wrongPane = registerInternalReadOperation("%8");
     const pane = harness(`%9${FIELD}${wrongPane}${FIELD}${READ}${EVENT}`);
-    expect(pane.observer.drain()).toBe(false);
+    expect(await pane.observer.drain()).toBe(false);
     expect(pane.observed).toHaveLength(1);
 
     const wrongKind = registerInternalReadOperation("%9");
     const kind = harness(`%9${FIELD}${wrongKind}${FIELD}${SEND}${EVENT}`);
-    expect(kind.observer.drain()).toBe(false);
+    expect(await kind.observer.drain()).toBe(false);
     expect(kind.observed).toHaveLength(1);
   });
 
-  it("externalizes a stale internal-read registration", () => {
+  it("externalizes a stale internal-read registration", async () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date("2026-08-11T10:00:00.000Z"));
       const marker = registerInternalReadOperation("%9");
       vi.setSystemTime(new Date("2026-08-11T10:00:11.000Z"));
       const stale = harness(`%9${FIELD}${marker}${FIELD}${READ}${EVENT}`);
-      expect(stale.observer.drain()).toBe(false);
+      expect(await stale.observer.drain()).toBe(false);
       expect(stale.observed).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("serializes healthcheck and drain work without interval-style backlog", async () => {
+    let releaseFirst!: () => void;
+    const first = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let firstCall = true;
+    let active = 0;
+    let maximumActive = 0;
+    const calls: string[] = [];
+    const diagnostics: unknown[] = [];
+    let now = 100;
+    const observer = new TmuxExternalInteractionObserver({
+      daemonInstanceId: DAEMON,
+      tmuxAuthority: {
+        executablePath: "/usr/bin/tmux",
+        socketSelector: { kind: "name", name: "default" },
+      },
+      registry: registry(),
+      io: {
+        runTmux: async (args) => {
+          active += 1;
+          maximumActive = Math.max(maximumActive, active);
+          calls.push(String(args[0]));
+          if (firstCall) {
+            firstCall = false;
+            await first;
+          }
+          active -= 1;
+          if (args[0] === "show-hooks") return `owned tmux-ide-interaction-v2-${DAEMON}`;
+          if (args[0] === "show-buffer") return "";
+          return "";
+        },
+        waitForSignal: async () => undefined,
+        delay: async () => undefined,
+      },
+      diagnostics: {
+        nowMicros: () => now++,
+        createTraceId: () => "11111111-1111-4111-8111-111111111111",
+        publish: (event) => diagnostics.push(event),
+        queueMicrotask: (callback) => callback(),
+      },
+      onObserved: () => false,
+    });
+
+    const healthcheck = observer.reconcileHooks({ allowInactive: true });
+    const duplicateHealthcheck = observer.reconcileHooks({ allowInactive: true });
+    const drain = observer.drain();
+    releaseFirst();
+    await Promise.all([healthcheck, duplicateHealthcheck, drain]);
+
+    expect(maximumActive).toBe(1);
+    expect(calls.filter((operation) => operation === "show-hooks")).toHaveLength(2);
+    expect(diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ operation: "healthcheck", phase: "begin", activeOperations: 1 }),
+        expect.objectContaining({ operation: "healthcheck", phase: "end", succeeded: true }),
+        expect.objectContaining({ operation: "drain", phase: "begin", activeOperations: 1 }),
+        expect.objectContaining({ operation: "drain", phase: "end", succeeded: true }),
+      ]),
+    );
+  });
+
+  it("keeps async observer authority live when diagnostics throw", async () => {
+    const { observer, observed } = harness(`%9${FIELD}${FIELD}${SEND}${EVENT}`);
+    observer.setDiagnostics({
+      nowMicros: () => 1,
+      createTraceId: () => "11111111-1111-4111-8111-111111111111",
+      publish: () => {
+        throw new Error("diagnostic failure");
+      },
+    });
+    expect(await observer.drain()).toBe(false);
+    expect(observed).toHaveLength(1);
+  });
+
+  it("retires a partially installed hook when async startup fails", async () => {
+    const hooks = new Map<string, string>();
+    const observer = new TmuxExternalInteractionObserver({
+      daemonInstanceId: DAEMON,
+      tmuxAuthority: {
+        executablePath: "/usr/bin/tmux",
+        socketSelector: { kind: "name", name: "default" },
+      },
+      registry: registry(),
+      io: {
+        runTmux: async (args) => {
+          if (args[0] === "show-hooks") return hooks.get(args[2]!) ?? String(args[2]);
+          if (args[0] === "list-buffers") return "";
+          if (args[0] === "set-hook" && args[1] === "-ag") {
+            if (args[2] === "after-capture-pane") throw new Error("install failed");
+            hooks.set(args[2]!, `${args[2]}[0] ${args[3]}`);
+          }
+          if (args[0] === "set-hook" && args[1] === "-gu") {
+            hooks.delete(args[2]!.replace(/\[[0-9]+\]$/u, ""));
+          }
+          return "";
+        },
+        waitForSignal: async () => undefined,
+        delay: async () => undefined,
+      },
+      onObserved: () => false,
+    });
+
+    await expect(observer.start()).rejects.toThrow("install failed");
+    expect(hooks.size).toBe(0);
+    await observer.dispose();
+  });
+
+  it("aborts a pending async install before disposal and never starts late work", async () => {
+    const calls: string[] = [];
+    let installEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      installEntered = resolve;
+    });
+    let first = true;
+    const observer = new TmuxExternalInteractionObserver({
+      daemonInstanceId: DAEMON,
+      tmuxAuthority: {
+        executablePath: "/usr/bin/tmux",
+        socketSelector: { kind: "name", name: "default" },
+      },
+      registry: registry(),
+      io: {
+        runTmux: async (args, signal) => {
+          calls.push(String(args[0]));
+          if (first && signal) {
+            first = false;
+            installEntered();
+            await new Promise<void>((_resolve, reject) => {
+              signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+            });
+          }
+          return "";
+        },
+        waitForSignal: async () => undefined,
+        delay: async () => undefined,
+      },
+      onObserved: () => false,
+    });
+
+    const starting = observer.start();
+    await entered;
+    await observer.dispose();
+    await expect(starting).rejects.toThrow(/aborted|disposed during startup/u);
+    const settledCalls = calls.length;
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(calls).toHaveLength(settledCalls);
+    await observer.reconcileHooks();
+    expect(calls).toHaveLength(settledCalls);
   });
 });

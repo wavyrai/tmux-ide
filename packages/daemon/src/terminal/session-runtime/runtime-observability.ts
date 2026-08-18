@@ -27,6 +27,8 @@ export interface SessionRuntimeStageSpan {
   readonly clockKind: MonotonicClockKind;
   readonly startedAtMicros: number;
   readonly endedAtMicros: number;
+  readonly sharedStartedAtMicros?: number;
+  readonly sharedEndedAtMicros?: number;
   readonly operation: string;
 }
 
@@ -54,6 +56,7 @@ export interface SessionRuntimeObservability {
     startedAtMicros: number,
     endedAtMicros: number,
     trace?: SessionRuntimeTraceContext | null,
+    shared?: { readonly startedAtMicros: number; readonly endedAtMicros: number },
   ): void;
   snapshot(): SessionRuntimeObservabilitySnapshot;
 }
@@ -109,6 +112,7 @@ export function createSessionRuntimeObservability(
       startedAtMicros: number,
       endedAtMicros: number,
       trace: SessionRuntimeTraceContext | null = null,
+      shared?: { readonly startedAtMicros: number; readonly endedAtMicros: number },
     ) {
       const span = Object.freeze({
         traceId: trace?.traceId ?? null,
@@ -121,6 +125,12 @@ export function createSessionRuntimeObservability(
         operation,
         startedAtMicros,
         endedAtMicros,
+        ...(shared
+          ? {
+              sharedStartedAtMicros: shared.startedAtMicros,
+              sharedEndedAtMicros: shared.endedAtMicros,
+            }
+          : {}),
       });
       if (spans.length < capacity) spans.push(span);
       else {

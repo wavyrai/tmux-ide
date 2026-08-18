@@ -9,6 +9,9 @@ export const PRODUCT_RIG_STATE_VERSION = 1;
  * large that one diagnostic launch could exhaust the owner process.
  */
 export const PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES = 8 * 1024 * 1024;
+export const PRODUCT_RIG_SOURCE_INVENTORY_MAX_BYTES = 1024 * 1024;
+export const PRODUCT_RIG_SOURCE_INVENTORY_MAX_PATHS = 10_000;
+export const PRODUCT_RIG_SOURCE_PATH_MAX_BYTES = 4_096;
 export const PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS = Object.freeze({
   eventCount: 50,
   fieldCount: 2_000,
@@ -162,6 +165,141 @@ export function boundedSourceTraceDiff(diff, maxBytes = PRODUCT_RIG_SOURCE_DIFF_
     throw new Error(`Product rig source diff is ${bytes} bytes; hard ceiling is ${maxBytes} bytes`);
   }
   return diff;
+}
+
+export function buildSourceTracePayload(
+  trackedDiff,
+  untrackedFiles,
+  maxBytes = PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES,
+) {
+  const diffLength = Buffer.isBuffer(trackedDiff)
+    ? trackedDiff.length
+    : Buffer.byteLength(trackedDiff ?? "");
+  const header = Buffer.from(`tmux-ide-source-v2\ntracked ${diffLength}\n`);
+  let totalBytes = header.length + diffLength;
+  if (!Number.isSafeInteger(totalBytes) || totalBytes > maxBytes)
+    throw new Error(`Product rig source snapshot exceeded the ${maxBytes}-byte hard ceiling`);
+  const diff = Buffer.isBuffer(trackedDiff) ? trackedDiff : Buffer.from(trackedDiff ?? "");
+  const sourceFiles = untrackedFiles ?? [];
+  if (!Array.isArray(sourceFiles) || sourceFiles.length > PRODUCT_RIG_SOURCE_INVENTORY_MAX_PATHS)
+    throw new Error("Product rig untracked source inventory exceeded its path-count ceiling");
+  const files = [...sourceFiles]
+    .map(({ path, content }) => ({ path, content }))
+    .sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
+  const seen = new Set();
+  const chunks = [header, diff];
+  for (const file of files) {
+    if (
+      typeof file.path !== "string" ||
+      file.path.length === 0 ||
+      file.path.startsWith("/") ||
+      file.path.split("/").includes("..") ||
+      /[\0\r\n]/u.test(file.path) ||
+      Buffer.byteLength(file.path) > PRODUCT_RIG_SOURCE_PATH_MAX_BYTES ||
+      seen.has(file.path)
+    )
+      throw new Error("Product rig untracked source inventory is malformed");
+    seen.add(file.path);
+    const path = Buffer.from(file.path);
+    const contentLength = Buffer.isBuffer(file.content)
+      ? file.content.length
+      : Buffer.byteLength(file.content ?? "");
+    const fileHeader = Buffer.from(`\nfile ${path.length} ${contentLength}\n`);
+    totalBytes += fileHeader.length + path.length + contentLength;
+    if (!Number.isSafeInteger(totalBytes) || totalBytes > maxBytes) {
+      throw new Error(`Product rig source snapshot exceeded the ${maxBytes}-byte hard ceiling`);
+    }
+    const content = Buffer.isBuffer(file.content) ? file.content : Buffer.from(file.content ?? "");
+    chunks.push(fileHeader, path, content);
+  }
+  if (totalBytes > maxBytes) {
+    throw new Error(`Product rig source snapshot exceeded the ${maxBytes}-byte hard ceiling`);
+  }
+  return Buffer.concat(chunks, totalBytes);
+}
+
+export function readBoundedSourceTraceFiles(
+  trackedDiff,
+  paths,
+  { openFile, statFile, readFile, closeFile },
+  maxBytes = PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES,
+) {
+  if (!Array.isArray(paths) || paths.length > PRODUCT_RIG_SOURCE_INVENTORY_MAX_PATHS)
+    throw new Error("Product rig untracked source inventory exceeded its path-count ceiling");
+  const diffLength = Buffer.byteLength(trackedDiff);
+  let totalBytes = Buffer.byteLength(`tmux-ide-source-v2\ntracked ${diffLength}\n`) + diffLength;
+  const files = [];
+  for (const path of paths) {
+    const pathBytes = Buffer.byteLength(path);
+    if (pathBytes === 0 || pathBytes > PRODUCT_RIG_SOURCE_PATH_MAX_BYTES)
+      throw new Error("Product rig untracked source path exceeded its byte ceiling");
+    const descriptor = openFile(path);
+    try {
+      const stat = statFile(descriptor);
+      if (!stat?.isFile?.() || !Number.isSafeInteger(stat.size) || stat.size < 0)
+        throw new Error(`Product rig untracked source is not a regular file: ${path}`);
+      const headerBytes = Buffer.byteLength(`\nfile ${pathBytes} ${stat.size}\n`);
+      const nextTotal = totalBytes + headerBytes + pathBytes + stat.size;
+      if (!Number.isSafeInteger(nextTotal) || nextTotal > maxBytes)
+        throw new Error(`Product rig source snapshot exceeded the ${maxBytes}-byte hard ceiling`);
+      const content = readFile(descriptor, stat.size);
+      if (!Buffer.isBuffer(content) || content.length !== stat.size)
+        throw new Error(`Product rig untracked source changed while hashing: ${path}`);
+      const after = statFile(descriptor);
+      if (
+        !after?.isFile?.() ||
+        after.size !== stat.size ||
+        after.dev !== stat.dev ||
+        after.ino !== stat.ino
+      )
+        throw new Error(`Product rig untracked source changed while hashing: ${path}`);
+      totalBytes = nextTotal;
+      files.push({ path, content });
+    } finally {
+      closeFile(descriptor);
+    }
+  }
+  return files;
+}
+
+export function productRigSourceTraceDiffArgs() {
+  return ["diff", "--binary", "HEAD", "--", ".", ":(exclude)packages/daemon/native/**"];
+}
+
+export function productRigSourceTraceUntrackedArgs() {
+  return [
+    "ls-files",
+    "--others",
+    "--exclude-standard",
+    "-z",
+    "--",
+    ".",
+    ":(exclude)packages/daemon/native/**",
+  ];
+}
+
+export function productRigSourceTraceIncludesPath(path) {
+  return typeof path === "string" && !path.startsWith("packages/daemon/native/");
+}
+
+export function createProductRigAttemptTimelineClock(
+  now = () => performance.timeOrigin + performance.now(),
+  origin = now(),
+) {
+  if (!Number.isFinite(origin)) throw new Error("Product rig timeline origin is unavailable");
+  let previous = 0;
+  return Object.freeze({
+    elapsedMs() {
+      const current = now();
+      if (!Number.isFinite(current) || current < origin)
+        throw new Error("Product rig timeline clock regressed");
+      const elapsed = Math.floor(current - origin);
+      if (!Number.isSafeInteger(elapsed) || elapsed < previous)
+        throw new Error("Product rig timeline elapsed time is invalid");
+      previous = elapsed;
+      return elapsed;
+    },
+  });
 }
 const WARM_COHERENT_SAMPLE_COUNT = 20;
 const MEMORY_BUDGET = JSON.parse(
@@ -618,10 +756,25 @@ export function activeTmuxPaneFromRows(rows) {
         height: Number(height),
       };
     });
-  const pane = panes.find((candidate) => candidate.windowActive && candidate.paneActive);
+  const active = panes.filter((candidate) => candidate.windowActive && candidate.paneActive);
+  if (active.length !== 1) return null;
+  const pane = active[0];
   if (!pane?.paneId || !pane.semanticPaneId) return null;
   if (![pane.left, pane.top, pane.width, pane.height].every(Number.isFinite)) return null;
   return Object.freeze(pane);
+}
+
+export function bindPromotedInitialPane(initialPane, promotedPane) {
+  if (
+    !initialPane ||
+    !promotedPane ||
+    !/^%[0-9]+$/u.test(initialPane.paneId ?? "") ||
+    promotedPane.paneId !== initialPane.paneId ||
+    typeof promotedPane.semanticPaneId !== "string" ||
+    promotedPane.semanticPaneId.length === 0
+  )
+    throw new Error("promoted active pane did not match the exact initial raw pane");
+  return Object.freeze({ ...promotedPane, initialGeometry: Object.freeze({ ...initialPane }) });
 }
 
 export function coherentGenerationPaint(lifecycle) {
@@ -710,6 +863,7 @@ export function causalInputSamples(traceRecords, daemonTraceRecords = []) {
       )
       .map((record) => ({
         operation: record.operation,
+        atMicros: record.atMicros,
         offsetMs: Number.isFinite(input?.startedAtMicros)
           ? (record.atMicros - input.startedAtMicros) / 1_000
           : null,
@@ -723,6 +877,32 @@ export function causalInputSamples(traceRecords, daemonTraceRecords = []) {
         column: Number.isInteger(record.column) ? record.column : null,
         beforeGrapheme: record.beforeGrapheme ?? null,
         afterGrapheme: record.afterGrapheme ?? null,
+        dirtyRowProved: record.dirtyRowProved === true,
+        inputPending: Number.isFinite(record.inputPending) ? record.inputPending : null,
+        inputInFlight: Number.isFinite(record.inputInFlight) ? record.inputInFlight : null,
+        inputPendingBytes: Number.isFinite(record.inputPendingBytes)
+          ? record.inputPendingBytes
+          : null,
+        bufferedAmount: Number.isSafeInteger(record.bufferedAmount) ? record.bufferedAmount : null,
+        frameBytes: Number.isSafeInteger(record.frameBytes) ? record.frameBytes : null,
+        drained: typeof record.drained === "boolean" ? record.drained : null,
+        sharedMicros: Number.isSafeInteger(record.sharedMicros) ? record.sharedMicros : null,
+        clockOffsetLowerMicros: Number.isSafeInteger(record.clockOffsetLowerMicros)
+          ? record.clockOffsetLowerMicros
+          : null,
+        clockOffsetUpperMicros: Number.isSafeInteger(record.clockOffsetUpperMicros)
+          ? record.clockOffsetUpperMicros
+          : null,
+        clockUncertaintyMicros: Number.isSafeInteger(record.clockUncertaintyMicros)
+          ? record.clockUncertaintyMicros
+          : null,
+        clockCalibratedAtMicros: Number.isSafeInteger(record.clockCalibratedAtMicros)
+          ? record.clockCalibratedAtMicros
+          : null,
+        clockCalibrationRequestId:
+          typeof record.clockCalibrationRequestId === "string"
+            ? record.clockCalibrationRequestId
+            : null,
       }));
     const matchingDaemonRecords = daemonTraceRecords.filter(
       (record) =>
@@ -743,6 +923,8 @@ export function causalInputSamples(traceRecords, daemonTraceRecords = []) {
       .map((record) => ({
         stage: record.stage,
         operation: record.operation,
+        startedAtMicros: record.startedAtMicros,
+        endedAtMicros: record.endedAtMicros,
         // These offsets are daemon-local. They intentionally never subtract
         // an OpenTUI timestamp from a daemon timestamp.
         offsetMs: daemonOrigin
@@ -751,6 +933,12 @@ export function causalInputSamples(traceRecords, daemonTraceRecords = []) {
         durationMs: (record.endedAtMicros - record.startedAtMicros) / 1_000,
         processId: record.processId,
         clockId: record.clockId,
+        ...(Number.isSafeInteger(record.sharedStartedAtMicros)
+          ? { sharedStartedAtMicros: record.sharedStartedAtMicros }
+          : {}),
+        ...(Number.isSafeInteger(record.sharedEndedAtMicros)
+          ? { sharedEndedAtMicros: record.sharedEndedAtMicros }
+          : {}),
       }));
     return Object.freeze({ ...sample, clientStages, daemonSpans });
   });

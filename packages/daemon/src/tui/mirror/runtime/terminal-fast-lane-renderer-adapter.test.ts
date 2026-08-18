@@ -102,6 +102,86 @@ function paintViewport(
 }
 
 describe("TerminalFastLaneRendererAdapter", () => {
+  it("keeps dirty-row invalidation and paint live when the trace sink throws", () => {
+    const source = new Source();
+    const lane = createTerminalFastLane({
+      address: { workspaceName, generation },
+      source,
+      repair: { request: () => undefined },
+      control: {
+        owns: () => true,
+        request: async () => true,
+        write: async () => "ok",
+        resize: async () => "ok",
+      },
+    });
+    const adapter = new TerminalFastLaneRendererAdapter(lane);
+    let version = 0;
+    const unsubscribe = adapter.subscribePaneVersion("pane.editor", (next) => (version = next));
+    const uninstall = installTuiPerformanceEventSink({
+      frame: () => undefined,
+      terminalPaint: () => undefined,
+      terminalDelivery: () => undefined,
+      terminalTraceStage: () => {
+        throw new Error("trace sink failed");
+      },
+    });
+    const traceId = "11111111-1111-4111-8111-111111111111";
+    try {
+      expect(() =>
+        source.emit("pane.editor", seed("pane.editor", "S"), {
+          performanceTraceId: traceId,
+        }),
+      ).not.toThrow();
+      expect(version).toBe(1);
+      expect(paint(adapter, "pane.editor")).toMatchObject({ traceId });
+      expect(adapter.hasPaintedCanonicalSnapshot()).toBe(true);
+    } finally {
+      uninstall();
+      unsubscribe();
+      adapter.dispose();
+      lane.dispose();
+    }
+  });
+
+  it("keeps canonical paint live when the causal diagnostic ledger throws", () => {
+    const source = new Source();
+    const lane = createTerminalFastLane({
+      address: { workspaceName, generation },
+      source,
+      repair: { request: () => undefined },
+      control: {
+        owns: () => true,
+        request: async () => true,
+        write: async () => "ok",
+        resize: async () => "ok",
+      },
+    });
+    const adapter = new TerminalFastLaneRendererAdapter(lane, 1, {
+      noteDelivery: () => undefined,
+      notePaint: () => {
+        throw new Error("diagnostic paint");
+      },
+    } as never);
+    const uninstall = installTuiPerformanceEventSink({
+      frame: () => undefined,
+      terminalPaint: () => undefined,
+      terminalDelivery: () => undefined,
+      terminalCanonicalPaint: () => undefined,
+    });
+    const unsubscribe = adapter.subscribePaneVersion("pane.editor", () => undefined);
+    try {
+      source.emit("pane.editor", seed("pane.editor", "S"));
+      expect(() => paint(adapter, "pane.editor")).not.toThrow();
+      expect(adapter.hasPaintedCanonicalSnapshot()).toBe(true);
+    } finally {
+      uninstall();
+      unsubscribe();
+      adapter.dispose();
+      lane.dispose();
+    }
+  });
+
   it("publishes only final same-frame identity and dedupes across-frame A-B-A", () => {
     const source = new Source();
     const lane = createTerminalFastLane({
@@ -130,7 +210,9 @@ describe("TerminalFastLaneRendererAdapter", () => {
       const first = seed("pane.editor", "S");
       source.emit("pane.editor", first);
       paint(adapter, "pane.editor");
+      expect(adapter.hasPendingCanonicalHostFrameDiagnostics()).toBe(true);
       expect(adapter.drainCanonicalHostFrameIdentities().identities).toHaveLength(1);
+      expect(adapter.hasPendingCanonicalHostFrameDiagnostics()).toBe(false);
       unsubscribe();
       unsubscribe = adapter.subscribePaneVersion("pane.editor", () => undefined);
       paintViewport(adapter, "pane.editor", 3, 2);

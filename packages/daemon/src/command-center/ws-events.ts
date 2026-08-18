@@ -19,6 +19,7 @@ import {
   readAgentStateFacts,
   readSessionCompositionFacts,
   type DaemonFleetFactsObserverOptions,
+  type DaemonFleetFactsObserverDiagnostic,
 } from "./daemon-fleet-facts-observer.ts";
 import { agentIdForPaneStamp } from "./resources/application-shell.ts";
 import { projectRegistryEmitter } from "../lib/project-registry.ts";
@@ -216,6 +217,7 @@ export function broadcastInteractionReceipt(
 let projectRegistryListener: (() => void) | null = null;
 let workspaceRegistryListenerReleases: readonly (() => void)[] = [];
 let fleetFactsObserver: DaemonFleetFactsObserver | null = null;
+let fleetFactsDiagnostics: DaemonFleetFactsObserverOptions["diagnostics"] | undefined;
 let fleetFactsReaderOverride: Pick<
   DaemonFleetFactsObserverOptions,
   "readSessions" | "readAgents"
@@ -379,6 +381,7 @@ function ensureFleetFactsObserver(): DaemonFleetFactsObserver {
   };
   fleetFactsObserver ??= new DaemonFleetFactsObserver({
     ...readers,
+    ...(fleetFactsDiagnostics ? { diagnostics: fleetFactsDiagnostics } : {}),
     onSessionsChanged: broadcastSessionCompositionChanged,
     onTerminalTopologyChanged: broadcastTerminalTopologyChanged,
     onAdoptedChanged: broadcastAdoptedCompositionChanged,
@@ -389,6 +392,16 @@ function ensureFleetFactsObserver(): DaemonFleetFactsObserver {
     },
   });
   return fleetFactsObserver;
+}
+
+export function setFleetFactsObserverDiagnostics(
+  diagnostics: {
+    readonly nowMicros: () => number;
+    readonly createTraceId: () => string;
+    readonly publish: (event: DaemonFleetFactsObserverDiagnostic) => void;
+  } | null,
+): void {
+  fleetFactsDiagnostics = diagnostics ?? undefined;
 }
 
 interface ResourceObservationHandle {

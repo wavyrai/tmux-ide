@@ -10,10 +10,12 @@ import {
   PaneStreamLoopbackWebSocketUrlSchemaZ,
   PaneStreamRedeemFrameSchemaZ,
   PaneStreamServerFrameSchemaZ,
+  sharedMonotonicMicros,
   type PaneStreamErrorFrameCode,
   type PaneStreamLeaseRequest,
   type PaneStreamRedeemFrame,
   type PaneStreamViewerMode,
+  type PaneStreamDiagnosticCapability,
   type SessionRuntimeSemanticIntent,
   type SessionRuntimeTerminalInput,
   type CausalCellProbeV1,
@@ -84,6 +86,23 @@ export const PANE_STREAM_MAX_CONTROL_BYTES = 4 * 1024;
 export const PANE_STREAM_MAX_REDEMPTION_MS = 1_000;
 
 const WS_OPEN = 1;
+const CANONICAL_KEY_INPUT_FRAME_PREFIX = Buffer.from('{"kind":"key",', "utf8");
+const CANONICAL_TEXT_INPUT_FRAME_PREFIX = Buffer.from('{"kind":"text",', "utf8");
+const TYPE_FIRST_INPUT_FRAME_PREFIX = Buffer.from('{"type":"input",', "utf8");
+
+function startsWithBuffer(raw: Buffer, prefix: Buffer): boolean {
+  return (
+    raw.length >= prefix.length && raw.compare(prefix, 0, prefix.length, 0, prefix.length) === 0
+  );
+}
+
+function hasCanonicalInputFramePrefix(raw: Buffer): boolean {
+  return (
+    startsWithBuffer(raw, CANONICAL_KEY_INPUT_FRAME_PREFIX) ||
+    startsWithBuffer(raw, CANONICAL_TEXT_INPUT_FRAME_PREFIX) ||
+    startsWithBuffer(raw, TYPE_FIRST_INPUT_FRAME_PREFIX)
+  );
+}
 const TicketPattern = /^ps1_[A-Za-z0-9_-]{43}$/u;
 const BindingIdSchemaZ = z
   .string()
@@ -204,6 +223,10 @@ export interface PaneStreamAdmissionCoordinatorOptions {
   readonly schedule?: (callback: () => void, delayMs: number) => () => void;
   /** Opt-in daemon-local timing observer; disabled in normal production. */
   readonly observability?: SessionRuntimeObservability;
+  /** Test seam consulted only for a negotiated clock-bounds capability. */
+  readonly diagnosticSharedNowMicros?: () => number;
+  /** Test-only parse-delay seam; consulted only with clock diagnostics. */
+  readonly diagnosticAfterFrameParse?: () => void;
 }
 
 export interface SessionRuntimePaneStreamTransportBinding {
@@ -323,6 +346,8 @@ export class PaneStreamAdmissionCoordinator {
   readonly #now: () => number;
   readonly #schedule: (callback: () => void, delayMs: number) => () => void;
   readonly #observability: SessionRuntimeObservability | undefined;
+  readonly #diagnosticSharedNowMicros: (() => number) | undefined;
+  readonly #diagnosticAfterFrameParse: (() => void) | undefined;
   readonly #ledger: PaneStreamWireLedger;
   readonly #pending = new Map<string, PendingTicket>();
   readonly #preAuth = new Set<PreAuthAdmission>();
@@ -361,6 +386,8 @@ export class PaneStreamAdmissionCoordinator {
     this.#now = options.now ?? Date.now;
     this.#schedule = options.schedule ?? defaultSchedule;
     this.#observability = options.observability;
+    this.#diagnosticSharedNowMicros = options.diagnosticSharedNowMicros;
+    this.#diagnosticAfterFrameParse = options.diagnosticAfterFrameParse;
   }
 
   issue(
@@ -696,6 +723,7 @@ export class PaneStreamAdmissionCoordinator {
             sessionRuntimeBinding,
             binding,
             deliveryAcks: frame.deliveryAcks === true,
+            diagnosticCapabilities: frame.diagnosticCapabilities ?? [],
             causalCellCapability:
               descriptor.terminalDelivery !== null &&
               descriptor.viewerMode === "interactive" &&
@@ -711,6 +739,8 @@ export class PaneStreamAdmissionCoordinator {
             now: this.#now,
             schedule: this.#schedule,
             observability: this.#observability,
+            diagnosticSharedNowMicros: this.#diagnosticSharedNowMicros,
+            diagnosticAfterFrameParse: this.#diagnosticAfterFrameParse,
             onRetire: (connection) => this.#trackRetiringRelease(connection),
           });
         } catch (error) {
@@ -912,6 +942,7 @@ interface LiveConnectionOptions {
   readonly binding: PaneStreamLeaseBinding;
   readonly deliveryAcks: boolean;
   readonly causalCellCapability: boolean;
+  readonly diagnosticCapabilities: readonly PaneStreamDiagnosticCapability[];
   readonly mirror: PaneStreamMirror;
   readonly leaseManager: PaneStreamLeaseAuthority;
   readonly ledger: PaneStreamWireLedger;
@@ -923,6 +954,8 @@ interface LiveConnectionOptions {
   readonly now: () => number;
   readonly schedule: (callback: () => void, delayMs: number) => () => void;
   readonly observability?: SessionRuntimeObservability;
+  readonly diagnosticSharedNowMicros?: () => number;
+  readonly diagnosticAfterFrameParse?: () => void;
   readonly onRetire: (connection: PaneStreamLiveConnection) => void;
 }
 
@@ -965,6 +998,7 @@ export class PaneStreamLiveConnection {
   readonly #sessionRuntimeBinding: SessionRuntimePaneStreamTransportBinding | null;
   readonly #deliveryAcks: boolean;
   readonly #causalCellCapability: boolean;
+  readonly #diagnosticCapabilities: readonly PaneStreamDiagnosticCapability[];
   readonly #mirror: PaneStreamMirror;
   readonly #leaseManager: PaneStreamLeaseAuthority;
   readonly #ledger: PaneStreamWireLedger;
@@ -976,6 +1010,8 @@ export class PaneStreamLiveConnection {
   readonly #now: () => number;
   readonly #schedule: (callback: () => void, delayMs: number) => () => void;
   readonly #observability: SessionRuntimeObservability | undefined;
+  readonly #diagnosticSharedRawMicros: (() => number) | undefined;
+  readonly #diagnosticAfterFrameParse: (() => void) | undefined;
   readonly #onRetire: (connection: PaneStreamLiveConnection) => void;
   readonly #panes = new Map<string, PaneChannel>();
   readonly #sendQueue: QueuedSend[] = [];
@@ -988,6 +1024,7 @@ export class PaneStreamLiveConnection {
   #inputWindowFrames = 0;
   #inputWindowBytes = 0;
   #nextViewportSeq = 1;
+  #nextClockProbe = 1;
   readonly #requestedAuthorities = new Set<SessionRuntimeAuthorityKind>();
   #usesExplicitAuthority = false;
   #legacyInputActivated = false;
@@ -995,6 +1032,16 @@ export class PaneStreamLiveConnection {
   #closed = false;
   #releasePromise: Promise<unknown> | null = null;
   #stopAuthoritySnapshots: (() => void) | null = null;
+  #sharedClockOriginMicros: number | null = null;
+
+  #sharedMicros(): number {
+    const raw = this.#diagnosticSharedRawMicros!();
+    this.#sharedClockOriginMicros ??= raw;
+    const elapsed = raw - this.#sharedClockOriginMicros;
+    if (!Number.isSafeInteger(elapsed) || elapsed < 0)
+      throw new Error("Daemon shared monotonic clock regressed");
+    return elapsed;
+  }
 
   constructor(options: LiveConnectionOptions) {
     this.#clientId = options.clientId;
@@ -1007,6 +1054,7 @@ export class PaneStreamLiveConnection {
     }
     this.#deliveryAcks = options.deliveryAcks;
     this.#causalCellCapability = options.causalCellCapability;
+    this.#diagnosticCapabilities = options.diagnosticCapabilities;
     this.#mirror = options.mirror;
     this.#leaseManager = options.leaseManager;
     this.#ledger = options.ledger;
@@ -1019,6 +1067,10 @@ export class PaneStreamLiveConnection {
     this.#inputWindowStartedAt = this.#now();
     this.#schedule = options.schedule;
     this.#observability = options.observability;
+    this.#diagnosticSharedRawMicros = this.#diagnosticCapabilities.includes("clock-bounds-v1")
+      ? (options.diagnosticSharedNowMicros ?? sharedMonotonicMicros)
+      : undefined;
+    this.#diagnosticAfterFrameParse = options.diagnosticAfterFrameParse;
     this.#onRetire = options.onRetire;
     for (const pane of options.descriptor.panes) {
       this.#panes.set(pane, {
@@ -1057,8 +1109,8 @@ export class PaneStreamLiveConnection {
         requestId: this.#binding.requestId,
         panes: [...this.#descriptor.panes],
         effectiveViewerMode: this.#descriptor.viewerMode,
-        ...(this.#causalCellCapability
-          ? { diagnosticCapabilities: ["causal-cell-v1" as const] }
+        ...(this.#diagnosticCapabilities.length > 0
+          ? { diagnosticCapabilities: [...this.#diagnosticCapabilities] }
           : {}),
       });
     } catch {
@@ -1308,19 +1360,51 @@ export class PaneStreamLiveConnection {
           )
         : null;
       const startedAtMicros = trace ? this.#observability!.nowMicros() : 0;
+      let startedAtSharedMicros: number | null = null;
+      if (trace && this.#diagnosticSharedRawMicros) {
+        try {
+          startedAtSharedMicros = this.#sharedMicros();
+        } catch {
+          // Shared-clock diagnostics cannot alter terminal delivery.
+        }
+      }
       this.#sendFrame(pane, {
         type: "terminal-delivery-envelope",
         pane,
         envelope: { ...message, workspaceName: this.#descriptor.workspaceName },
       });
       if (trace) {
-        this.#observability!.recordSpan(
-          "transport",
-          "pane-stream-socket-send",
-          startedAtMicros,
-          this.#observability!.nowMicros(),
-          trace,
-        );
+        let endedAtMicros: number;
+        try {
+          endedAtMicros = this.#observability!.nowMicros();
+        } catch {
+          return;
+        }
+        let endedAtSharedMicros: number | null = null;
+        if (startedAtSharedMicros !== null) {
+          try {
+            endedAtSharedMicros = this.#sharedMicros();
+          } catch {
+            // Preserve the process-local span when shared sampling fails.
+          }
+        }
+        try {
+          this.#observability!.recordSpan(
+            "transport",
+            "pane-stream-socket-send",
+            startedAtMicros,
+            endedAtMicros,
+            trace,
+            startedAtSharedMicros === null || endedAtSharedMicros === null
+              ? undefined
+              : {
+                  startedAtMicros: startedAtSharedMicros,
+                  endedAtMicros: endedAtSharedMicros,
+                },
+          );
+        } catch {
+          // Diagnostics cannot alter terminal delivery.
+        }
       }
     } else if (message.type === "terminal.delivery.chunk") {
       this.#sendFrame(pane, {
@@ -1630,6 +1714,8 @@ export class PaneStreamLiveConnection {
     isBinary: boolean,
   ): void => {
     if (this.#closed) return;
+    let callbackAtSharedMicros: number | null = null;
+    let ingressAtSharedMicros: number | null = null;
     let ingressAtMicros: number | null = null;
     if (this.#observability?.enabled) {
       try {
@@ -1643,11 +1729,62 @@ export class PaneStreamLiveConnection {
       this.#failProtocol("protocol-error");
       return;
     }
+    const raw = rawDataToBuffer(data);
+    if (this.#diagnosticSharedRawMicros && hasCanonicalInputFramePrefix(raw)) {
+      try {
+        callbackAtSharedMicros = this.#sharedMicros();
+      } catch {
+        // Preserve the process-local callback timestamp and product traffic.
+      }
+    }
     let frame: z.infer<typeof PaneStreamClientFrameSchemaZ>;
     try {
-      frame = PaneStreamClientFrameSchemaZ.parse(strictJsonParse(rawDataToBuffer(data)));
+      frame = PaneStreamClientFrameSchemaZ.parse(strictJsonParse(raw));
     } catch {
       this.#failProtocol("protocol-error");
+      return;
+    }
+    if (this.#diagnosticSharedRawMicros) {
+      try {
+        this.#diagnosticAfterFrameParse?.();
+      } catch {
+        // Test-only diagnostics cannot alter protocol truth.
+      }
+      if (frame.type === "input") {
+        try {
+          ingressAtSharedMicros = this.#sharedMicros();
+        } catch {
+          // Preserve callback timing and product traffic without a parse-complete sample.
+        }
+      }
+    }
+    if (frame.type === "clock-probe") {
+      if (
+        !this.#diagnosticCapabilities.includes("clock-bounds-v1") ||
+        frame.requestId !== this.#binding.requestId ||
+        frame.probe !== this.#nextClockProbe
+      )
+        return this.#failProtocol("protocol-error");
+      this.#nextClockProbe += 1;
+      try {
+        ingressAtSharedMicros = this.#sharedMicros();
+      } catch {
+        return;
+      }
+      try {
+        const daemonSendMicros = this.#sharedMicros();
+        this.#sendFrame(null, {
+          type: "clock-probe-ack",
+          requestId: this.#binding.requestId,
+          daemonInstanceId: this.#binding.daemonInstanceId,
+          probe: frame.probe,
+          clientSendMicros: frame.clientSendMicros,
+          daemonReceiveMicros: ingressAtSharedMicros,
+          daemonSendMicros,
+        });
+      } catch {
+        // Client timeout reports calibration unavailable; product traffic continues.
+      }
       return;
     }
     if (frame.type === "consumed") {
@@ -1769,6 +1906,8 @@ export class PaneStreamLiveConnection {
       frame.performanceTraceId,
       frame.causalProbe,
       ingressAtMicros,
+      callbackAtSharedMicros,
+      ingressAtSharedMicros,
     );
   };
 
@@ -1908,6 +2047,8 @@ export class PaneStreamLiveConnection {
     performanceTraceId?: string,
     causalProbe?: CausalCellProbeV1,
     ingressAtMicros: number | null = null,
+    callbackAtSharedMicros: number | null = null,
+    ingressAtSharedMicros: number | null = null,
   ): void {
     if (this.#descriptor.viewerMode !== "interactive") {
       this.#failProtocol("input-rejected");
@@ -1972,10 +2113,26 @@ export class PaneStreamLiveConnection {
         if (trace && ingressAtMicros !== null) {
           this.#observability.recordSpan(
             "transport",
+            "pane-stream-socket-message-callback-entry",
+            ingressAtMicros,
+            ingressAtMicros,
+            trace,
+            callbackAtSharedMicros === null
+              ? undefined
+              : {
+                  startedAtMicros: callbackAtSharedMicros,
+                  endedAtMicros: callbackAtSharedMicros,
+                },
+          );
+          this.#observability.recordSpan(
+            "transport",
             "pane-stream-input-frame-ingress",
             ingressAtMicros,
             ingressAtMicros,
             trace,
+            ingressAtSharedMicros === null
+              ? undefined
+              : { startedAtMicros: ingressAtSharedMicros, endedAtMicros: ingressAtSharedMicros },
           );
         }
       } catch {
@@ -2006,6 +2163,7 @@ export class PaneStreamLiveConnection {
                       capability: "causal-cell-v1",
                       traceId: result.traceId,
                       reason: result.reason,
+                      ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}),
                     },
                   });
                 }
@@ -2015,26 +2173,55 @@ export class PaneStreamLiveConnection {
       else if (kind === "text") channel.sub!.sendText(data);
       else channel.sub!.sendKey(data);
       let ackStartedAtMicros: number | null = null;
+      let ackStartedAtSharedMicros: number | null = null;
       if (trace) {
         try {
           ackStartedAtMicros = this.#observability!.nowMicros();
         } catch {
           // Diagnostics cannot alter protocol truth.
         }
+        if (this.#diagnosticSharedRawMicros) {
+          try {
+            ackStartedAtSharedMicros = this.#sharedMicros();
+          } catch {
+            // Preserve process-local ACK diagnostics.
+          }
+        }
       }
       sendControl(this.#socket, { type: "input-ack", pane, seq });
       if (trace && ackStartedAtMicros !== null) {
+        let ackEndedAtMicros: number | null = null;
         try {
-          const ackEndedAtMicros = this.#observability!.nowMicros();
-          this.#observability!.recordSpan(
-            "transport",
-            "pane-stream-input-ack-socket-send",
-            ackStartedAtMicros,
-            ackEndedAtMicros,
-            trace,
-          );
+          ackEndedAtMicros = this.#observability!.nowMicros();
         } catch {
           // Diagnostics cannot alter protocol truth.
+        }
+        let ackEndedAtSharedMicros: number | null = null;
+        if (ackStartedAtSharedMicros !== null) {
+          try {
+            ackEndedAtSharedMicros = this.#sharedMicros();
+          } catch {
+            // Preserve process-local ACK diagnostics.
+          }
+        }
+        if (ackEndedAtMicros !== null) {
+          try {
+            this.#observability!.recordSpan(
+              "transport",
+              "pane-stream-input-ack-socket-send",
+              ackStartedAtMicros,
+              ackEndedAtMicros,
+              trace,
+              ackStartedAtSharedMicros === null || ackEndedAtSharedMicros === null
+                ? undefined
+                : {
+                    startedAtMicros: ackStartedAtSharedMicros,
+                    endedAtMicros: ackEndedAtSharedMicros,
+                  },
+            );
+          } catch {
+            // Diagnostics cannot alter protocol truth.
+          }
         }
       }
     } catch {

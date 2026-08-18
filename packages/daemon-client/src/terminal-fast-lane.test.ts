@@ -5,6 +5,7 @@ import type {
   CanonicalTerminalReplicaUpdate,
   SessionRuntimeAuthorityKind,
   SessionRuntimeTerminalInput,
+  TerminalReplicaDeliveryMetadata,
   TerminalReplicaPatchPayload,
   TerminalReplicaSnapshot,
 } from "@tmux-ide/contracts";
@@ -96,7 +97,12 @@ async function settle(): Promise<void> {
 }
 
 class FakeSource implements TerminalFastLaneSourcePort {
-  readonly listeners = new Map<string, Set<(update: CanonicalTerminalReplicaUpdate) => void>>();
+  readonly listeners = new Map<
+    string,
+    Set<
+      (update: CanonicalTerminalReplicaUpdate, metadata?: TerminalReplicaDeliveryMetadata) => void
+    >
+  >();
   subscribe(
     pane: TerminalFastLanePaneAddress,
     listener: (update: CanonicalTerminalReplicaUpdate) => void,
@@ -111,9 +117,10 @@ class FakeSource implements TerminalFastLaneSourcePort {
     update: CanonicalTerminalReplicaUpdate,
     generation = update.generation,
     pane = update.semanticPaneId,
+    metadata?: TerminalReplicaDeliveryMetadata,
   ): void {
     for (const listener of [...(this.listeners.get(`${generation}:${pane}`) ?? [])])
-      listener(update);
+      listener(update, metadata);
   }
   capture(generation: string, pane: string): (update: CanonicalTerminalReplicaUpdate) => void {
     return [...(this.listeners.get(`${generation}:${pane}`) ?? [])][0]!;
@@ -192,6 +199,121 @@ function rig(
 }
 
 describe("terminal fast lane", () => {
+  it("separates slow or throwing observers from exact canonical apply timing", () => {
+    const source = new FakeSource();
+    const control = new FakeControl();
+    let nowMicros = 1_000;
+    const stages: Array<{
+      operation: string;
+      atMicros: number;
+      semanticPaneId?: string;
+      generation?: string;
+      incarnation?: string;
+      revision?: number;
+      stateHash?: string;
+    }> = [];
+    const lane = createTerminalFastLane({
+      address: address(),
+      source,
+      control,
+      repair: { request: () => undefined },
+      diagnosticNowMicros: () => nowMicros,
+      onTraceStage: (stage) => {
+        stages.push(stage);
+        if (stage.operation === "delivery-received") nowMicros += 40_000;
+        if (stage.operation === "canonical-apply-begin") throw new Error("observer failed");
+      },
+    });
+    const snapshot = blankTerminalReplicaSnapshot(132, 41);
+    let publications = 0;
+    lane.subscribePane("pane-a", () => (publications += 1));
+    source.emit(seed(snapshot, 0));
+    const changedRow = {
+      ...snapshot.grid[0]!,
+      cells: [
+        { ...snapshot.grid[0]!.cells[0]!, grapheme: "x" },
+        ...snapshot.grid[0]!.cells.slice(1),
+      ],
+    };
+    const update = patch(snapshot, { rows: [{ index: 0, row: changedRow }] }, 1);
+
+    expect(() =>
+      source.emit(update, update.generation, update.semanticPaneId, {
+        performanceTraceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      }),
+    ).not.toThrow();
+    expect(publications).toBe(2);
+    expect(stages.map(({ operation }) => operation)).toEqual([
+      "delivery-received",
+      "delivery-observer-returned",
+      "canonical-apply-begin",
+      "canonical-apply-end",
+      "lane-published",
+    ]);
+    expect(stages.find(({ operation }) => operation === "delivery-received")?.atMicros).toBe(1_000);
+    expect(
+      stages.find(({ operation }) => operation === "delivery-observer-returned")?.atMicros,
+    ).toBe(41_000);
+    expect(stages.find(({ operation }) => operation === "canonical-apply-begin")?.atMicros).toBe(
+      41_000,
+    );
+    expect(stages.find(({ operation }) => operation === "canonical-apply-end")?.atMicros).toBe(
+      41_000,
+    );
+    for (const stage of stages) {
+      expect(stage).toMatchObject({
+        semanticPaneId: "pane-a",
+        generation: GENERATION_A,
+        incarnation: `${GENERATION_A}:0`,
+        revision: 1,
+        stateHash: update.stateHash,
+      });
+    }
+  });
+
+  it("does no diagnostic clock work when canonical tracing is disabled", () => {
+    const source = new FakeSource();
+    const lane = createTerminalFastLane({
+      address: address(),
+      source,
+      control: new FakeControl(),
+      repair: { request: () => undefined },
+      diagnosticNowMicros: () => {
+        throw new Error("disabled clock must not run");
+      },
+    });
+    lane.subscribePane("pane-a", () => undefined);
+    const update = seed(blankTerminalReplicaSnapshot(2, 1));
+    expect(() =>
+      source.emit(update, update.generation, update.semanticPaneId, {
+        performanceTraceId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      }),
+    ).not.toThrow();
+    expect(lane.paneState("pane-a")?.revision).toBe(0);
+  });
+
+  it("keeps canonical apply live when the enabled diagnostic clock throws", () => {
+    const source = new FakeSource();
+    const lane = createTerminalFastLane({
+      address: address(),
+      source,
+      control: new FakeControl(),
+      repair: { request: () => undefined },
+      onTraceStage: () => undefined,
+      diagnosticNowMicros: () => {
+        throw new Error("diagnostic clock failed");
+      },
+    });
+    lane.subscribePane("pane-a", () => undefined);
+    const update = seed(blankTerminalReplicaSnapshot(2, 1));
+    expect(() =>
+      source.emit(update, update.generation, update.semanticPaneId, {
+        performanceTraceId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      }),
+    ).not.toThrow();
+    expect(lane.paneState("pane-a")?.revision).toBe(0);
+  });
+
   it("publishes ordered pane-local state once and coalesces repair until a valid seed", () => {
     const { lane, source, repairs } = rig();
     const snapshot = blankTerminalReplicaSnapshot(4, 2);

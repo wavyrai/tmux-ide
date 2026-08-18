@@ -99,6 +99,47 @@ describe("terminal replica reducer", () => {
     ).toBe("conflict");
   });
 
+  it("uses only authenticated representation identity for strict wire replay", () => {
+    const initial = blankTerminalReplicaSnapshot(2, 2);
+    const boot = applyTerminalReplicaUpdate(null, seed(initial), {
+      authenticatedFrameHash: "1111111111111111",
+    });
+    expect(boot.state?.frameHash).toBe("1111111111111111");
+    const valid = patch(initial, { rows: [] });
+    const once = applyTerminalReplicaUpdate(boot.state, valid, {
+      authenticatedFrameHash: "2222222222222222",
+    });
+    expect(once.status).toBe("applied");
+    expect(once.state?.frameHash).toBe("2222222222222222");
+    expect(
+      applyTerminalReplicaUpdate(once.state, valid, {
+        authenticatedFrameHash: "2222222222222222",
+      }).status,
+    ).toBe("idempotent");
+    expect(
+      applyTerminalReplicaUpdate(once.state, valid, {
+        authenticatedFrameHash: "3333333333333333",
+      }).status,
+    ).toBe("conflict");
+  });
+
+  it("keeps reducer semantics independent from absent or throwing profiling", () => {
+    const initial = blankTerminalReplicaSnapshot(2, 2);
+    const boot = applyTerminalReplicaUpdate(null, seed(initial));
+    const valid = patch(initial, { rows: [] });
+    const applied = applyTerminalReplicaUpdate(boot.state, valid, {
+      instrumentation: {
+        nowMicros: () => {
+          throw new Error("clock unavailable");
+        },
+        onComplete: () => {
+          throw new Error("observer unavailable");
+        },
+      },
+    });
+    expect(applied.status).toBe("applied");
+  });
+
   it("pins opaque daemon generations so delayed seeds cannot roll state backward", () => {
     const initial = blankTerminalReplicaSnapshot(2, 2);
     const boot = applyTerminalReplicaUpdate(null, seed(initial));

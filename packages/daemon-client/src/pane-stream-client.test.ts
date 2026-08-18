@@ -16,6 +16,7 @@ const TICKET = `ps1_${"a".repeat(43)}`;
 
 class FakeSocket implements PaneStreamClientSocket {
   readyState = 1;
+  bufferedAmount: number | undefined;
   readonly sent: unknown[] = [];
   readonly listeners = new Map<string, Set<(event: { data?: unknown }) => void>>();
   closeCalls = 0;
@@ -155,6 +156,591 @@ function acceptInteractiveHandshake(socket: FakeSocket): void {
 }
 
 describe("semantic pane-stream runtime client", () => {
+  it("calibrates five bounded clock probes before readiness and never exposes raw origins", async () => {
+    const socket = new FakeSocket();
+    const calibrations: unknown[] = [];
+    const outcomes: unknown[] = [];
+    let raw = 8_000_000_000_000;
+    socket.onSend = (frame) => {
+      if (frame.type === "redeem") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "ready",
+            protocolVersion: 1,
+            daemonInstanceId: INSTANCE,
+            requestId: REQUEST,
+            panes: ["pane.editor"],
+            effectiveViewerMode: "interactive",
+            diagnosticCapabilities: ["clock-bounds-v1"],
+          }),
+        );
+      } else if (frame.type === "clock-probe") {
+        const clientSendMicros = frame.clientSendMicros as number;
+        queueMicrotask(() =>
+          socket.message({
+            type: "clock-probe-ack",
+            requestId: REQUEST,
+            daemonInstanceId: INSTANCE,
+            probe: frame.probe,
+            clientSendMicros,
+            daemonReceiveMicros: clientSendMicros + 100,
+            daemonSendMicros: clientSendMicros + 101,
+          }),
+        );
+      }
+    };
+    await openPaneStreamRuntimeClient(
+      options(socket, {
+        requestInitialInputAuthority: false,
+        diagnosticCapabilities: ["clock-bounds-v1"],
+        diagnosticSharedNowMicros: () => (raw += 10),
+        onClockCalibration: (value: unknown) => calibrations.push(value),
+        onClockCalibrationOutcome: (value: unknown) => outcomes.push(value),
+      }),
+    );
+    const probes = socket.sent.filter(
+      (frame) => (frame as { type?: string }).type === "clock-probe",
+    ) as Array<{ clientSendMicros: number }>;
+    expect(probes).toHaveLength(5);
+    expect(probes.every(({ clientSendMicros }) => clientSendMicros < 1_000)).toBe(true);
+    expect(JSON.stringify(socket.sent)).not.toContain("8000000000000");
+    expect(calibrations).toHaveLength(1);
+    expect(calibrations[0]).toMatchObject({
+      requestId: REQUEST,
+      daemonInstanceId: INSTANCE,
+      uncertaintyMicros: 9,
+    });
+    expect(outcomes).toEqual([
+      expect.objectContaining({
+        reason: "calibrated",
+        attemptedProbes: 5,
+        receivedProbes: 5,
+        validProbes: 5,
+        selectedProbes: 1,
+      }),
+    ]);
+    const finalProbe = socket.sent.findLast(
+      (frame) => (frame as { type?: string }).type === "clock-probe",
+    ) as { probe: number; clientSendMicros: number };
+    socket.message({
+      type: "clock-probe-ack",
+      requestId: REQUEST,
+      daemonInstanceId: INSTANCE,
+      probe: finalProbe.probe,
+      clientSendMicros: finalProbe.clientSendMicros,
+      daemonReceiveMicros: finalProbe.clientSendMicros + 100,
+      daemonSendMicros: finalProbe.clientSendMicros + 101,
+    });
+    expect(calibrations).toHaveLength(1);
+  });
+
+  it("does no clock work when the capability is absent", async () => {
+    const socket = new FakeSocket();
+    acceptInteractiveHandshake(socket);
+    const shared = mock(() => {
+      throw new Error("must not run");
+    });
+    await openPaneStreamRuntimeClient(
+      options(socket, {
+        requestInitialInputAuthority: false,
+        diagnosticClockProbeCount: 99,
+        diagnosticSharedNowMicros: shared,
+      }),
+    );
+    expect(shared).not.toHaveBeenCalled();
+    expect(socket.sent.some((frame) => (frame as { type?: string }).type === "clock-probe")).toBe(
+      false,
+    );
+  });
+
+  it("settles a timed-out calibration once and ignores a late reply", async () => {
+    const socket = new FakeSocket();
+    const calibrations: unknown[] = [];
+    const outcomes: unknown[] = [];
+    let probe: { probe: number; clientSendMicros: number } | undefined;
+    socket.onSend = (frame) => {
+      if (frame.type === "redeem") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "ready",
+            protocolVersion: 1,
+            daemonInstanceId: INSTANCE,
+            requestId: REQUEST,
+            panes: ["pane.editor"],
+            effectiveViewerMode: "interactive",
+            diagnosticCapabilities: ["clock-bounds-v1"],
+          }),
+        );
+      } else if (frame.type === "clock-probe") probe = frame as typeof probe;
+    };
+    await openPaneStreamRuntimeClient(
+      options(socket, {
+        requestInitialInputAuthority: false,
+        diagnosticCapabilities: ["clock-bounds-v1"],
+        diagnosticSharedNowMicros: (() => {
+          let now = 1_000;
+          return () => (now += 10);
+        })(),
+        onClockCalibration: (value: unknown) => calibrations.push(value),
+        onClockCalibrationOutcome: (value: unknown) => outcomes.push(value),
+      }),
+    );
+    expect(calibrations).toEqual([null]);
+    expect(outcomes).toEqual([
+      expect.objectContaining({
+        reason: "timeout-no-sample",
+        attemptedProbes: 1,
+        receivedProbes: 0,
+        validProbes: 0,
+        selectedProbes: 0,
+      }),
+    ]);
+    socket.message({
+      type: "clock-probe-ack",
+      requestId: REQUEST,
+      daemonInstanceId: INSTANCE,
+      probe: probe!.probe,
+      clientSendMicros: probe!.clientSendMicros,
+      daemonReceiveMicros: 100,
+      daemonSendMicros: 101,
+    });
+    expect(calibrations).toEqual([null]);
+    expect(outcomes).toHaveLength(1);
+  });
+
+  it("settles a retired pending calibration immediately and releases its timer", async () => {
+    for (const retirement of ["socket-close", "protocol-failure"] as const) {
+      const socket = new FakeSocket();
+      const outcomes: unknown[] = [];
+      let probe: Record<string, unknown> | null = null;
+      const before = runtimeResourceSnapshot()["runtime-timer"].active;
+      socket.onSend = (frame) => {
+        if (frame.type === "redeem") {
+          queueMicrotask(() =>
+            socket.message({
+              type: "ready",
+              protocolVersion: 1,
+              daemonInstanceId: INSTANCE,
+              requestId: REQUEST,
+              panes: ["pane.editor"],
+              effectiveViewerMode: "interactive",
+              diagnosticCapabilities: ["clock-bounds-v1"],
+            }),
+          );
+        } else if (frame.type === "clock-probe") {
+          probe = frame;
+          queueMicrotask(() => {
+            if (retirement === "socket-close") socket.emit("close");
+            else socket.message({ type: "not-a-pane-stream-frame" });
+          });
+        }
+      };
+      await expect(
+        openPaneStreamRuntimeClient(
+          options(socket, {
+            requestInitialInputAuthority: false,
+            diagnosticCapabilities: ["clock-bounds-v1"],
+            diagnosticSharedNowMicros: (() => {
+              let now = 1_000;
+              return () => (now += 10);
+            })(),
+            onClockCalibration: () => undefined,
+            onClockCalibrationOutcome: (value: unknown) => outcomes.push(value),
+          }),
+        ),
+      ).rejects.toThrow();
+      expect(outcomes).toEqual([
+        expect.objectContaining({
+          reason: "connection-closed",
+          attemptedProbes: 1,
+          receivedProbes: 0,
+          validProbes: 0,
+          selectedProbes: 0,
+        }),
+      ]);
+      expect(runtimeResourceSnapshot()["runtime-timer"].active).toBe(before);
+      socket.message({
+        type: "clock-probe-ack",
+        requestId: REQUEST,
+        daemonInstanceId: INSTANCE,
+        probe: probe!.probe,
+        clientSendMicros: probe!.clientSendMicros,
+        daemonReceiveMicros: 5,
+        daemonSendMicros: 6,
+      });
+      expect(outcomes).toHaveLength(1);
+    }
+  });
+
+  it("aborts a pending calibration immediately without adopting the provisional client", async () => {
+    const socket = new FakeSocket();
+    const controller = new AbortController();
+    const outcomes: unknown[] = [];
+    const onNegotiated = mock();
+    const before = runtimeResourceSnapshot()["runtime-timer"].active;
+    socket.onSend = (frame) => {
+      if (frame.type === "redeem") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "ready",
+            protocolVersion: 1,
+            daemonInstanceId: INSTANCE,
+            requestId: REQUEST,
+            panes: ["pane.editor"],
+            effectiveViewerMode: "interactive",
+            diagnosticCapabilities: ["clock-bounds-v1"],
+          }),
+        );
+      } else if (frame.type === "clock-probe") {
+        queueMicrotask(() => controller.abort(new Error("retired generation")));
+      }
+    };
+    await expect(
+      openPaneStreamRuntimeClient(
+        options(socket, {
+          signal: controller.signal,
+          onNegotiated,
+          requestInitialInputAuthority: false,
+          diagnosticCapabilities: ["clock-bounds-v1"],
+          diagnosticSharedNowMicros: () => 1_000,
+          onClockCalibration: () => undefined,
+          onClockCalibrationOutcome: (value: unknown) => outcomes.push(value),
+        }),
+      ),
+    ).rejects.toThrow("retired generation");
+    expect(outcomes).toEqual([
+      expect.objectContaining({
+        reason: "connection-closed",
+        attemptedProbes: 1,
+        receivedProbes: 0,
+        validProbes: 0,
+        selectedProbes: 0,
+      }),
+    ]);
+    expect(onNegotiated).not.toHaveBeenCalled();
+    expect(runtimeResourceSnapshot()["runtime-timer"].active).toBe(before);
+  });
+
+  it("admits a 300ms cold first probe and calibrates before readiness", async () => {
+    const socket = new FakeSocket();
+    const outcomes: unknown[] = [];
+    let now = 1_000;
+    socket.onSend = (frame) => {
+      if (frame.type === "redeem") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "ready",
+            protocolVersion: 1,
+            daemonInstanceId: INSTANCE,
+            requestId: REQUEST,
+            panes: ["pane.editor"],
+            effectiveViewerMode: "interactive",
+            diagnosticCapabilities: ["clock-bounds-v1"],
+          }),
+        );
+      } else if (frame.type === "clock-probe") {
+        const reply = () => {
+          now += frame.probe === 1 ? 300_000 : 10;
+          socket.message({
+            type: "clock-probe-ack",
+            requestId: REQUEST,
+            daemonInstanceId: INSTANCE,
+            probe: frame.probe,
+            clientSendMicros: frame.clientSendMicros,
+            daemonReceiveMicros: (frame.clientSendMicros as number) + 20,
+            daemonSendMicros: (frame.clientSendMicros as number) + 21,
+          });
+        };
+        if (frame.probe === 1) setTimeout(reply, 300);
+        else queueMicrotask(reply);
+      }
+    };
+    await openPaneStreamRuntimeClient(
+      options(socket, {
+        requestInitialInputAuthority: false,
+        diagnosticCapabilities: ["clock-bounds-v1"],
+        diagnosticSharedNowMicros: () => now,
+        onClockCalibration: () => undefined,
+        onClockCalibrationOutcome: (value: unknown) => outcomes.push(value),
+      }),
+    );
+    expect(outcomes).toEqual([
+      expect.objectContaining({ reason: "calibrated", attemptedProbes: 5, receivedProbes: 5 }),
+    ]);
+  });
+
+  it("retains a valid sample when a later probe times out", async () => {
+    const socket = new FakeSocket();
+    const calibrations: unknown[] = [];
+    const outcomes: unknown[] = [];
+    let now = 1_000;
+    socket.onSend = (frame) => {
+      if (frame.type === "redeem") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "ready",
+            protocolVersion: 1,
+            daemonInstanceId: INSTANCE,
+            requestId: REQUEST,
+            panes: ["pane.editor"],
+            effectiveViewerMode: "interactive",
+            diagnosticCapabilities: ["clock-bounds-v1"],
+          }),
+        );
+      } else if (frame.type === "clock-probe" && frame.probe === 1) {
+        now += 20;
+        queueMicrotask(() =>
+          socket.message({
+            type: "clock-probe-ack",
+            requestId: REQUEST,
+            daemonInstanceId: INSTANCE,
+            probe: 1,
+            clientSendMicros: frame.clientSendMicros,
+            daemonReceiveMicros: (frame.clientSendMicros as number) + 5,
+            daemonSendMicros: (frame.clientSendMicros as number) + 6,
+          }),
+        );
+      }
+    };
+    await openPaneStreamRuntimeClient(
+      options(socket, {
+        requestInitialInputAuthority: false,
+        diagnosticCapabilities: ["clock-bounds-v1"],
+        diagnosticSharedNowMicros: () => now,
+        onClockCalibration: (value: unknown) => calibrations.push(value),
+        onClockCalibrationOutcome: (value: unknown) => outcomes.push(value),
+      }),
+    );
+    expect(calibrations[0]).toMatchObject({ probe: 1 });
+    expect(outcomes).toEqual([
+      expect.objectContaining({
+        reason: "timeout-retained-sample",
+        attemptedProbes: 2,
+        receivedProbes: 1,
+        validProbes: 1,
+        selectedProbes: 1,
+        selectedProbe: 1,
+      }),
+    ]);
+
+    const failOpenSocket = new FakeSocket();
+    let failOpenNow = 1_000;
+    failOpenSocket.onSend = (frame) => {
+      if (frame.type === "redeem") {
+        queueMicrotask(() =>
+          failOpenSocket.message({
+            type: "ready",
+            protocolVersion: 1,
+            daemonInstanceId: INSTANCE,
+            requestId: REQUEST,
+            panes: ["pane.editor"],
+            effectiveViewerMode: "interactive",
+            diagnosticCapabilities: ["clock-bounds-v1"],
+          }),
+        );
+      } else if (frame.type === "clock-probe") {
+        failOpenNow += 10;
+        queueMicrotask(() =>
+          failOpenSocket.message({
+            type: "clock-probe-ack",
+            requestId: REQUEST,
+            daemonInstanceId: INSTANCE,
+            probe: frame.probe,
+            clientSendMicros: frame.clientSendMicros,
+            daemonReceiveMicros: (frame.clientSendMicros as number) + 2,
+            daemonSendMicros: (frame.clientSendMicros as number) + 3,
+          }),
+        );
+      }
+    };
+    await expect(
+      openPaneStreamRuntimeClient(
+        options(failOpenSocket, {
+          requestInitialInputAuthority: false,
+          diagnosticCapabilities: ["clock-bounds-v1"],
+          diagnosticSharedNowMicros: () => failOpenNow,
+          onClockCalibration: () => {
+            throw new Error("calibration sink failed");
+          },
+          onClockCalibrationOutcome: () => {
+            throw new Error("outcome sink failed");
+          },
+          onConnectionDiagnostic: (phase: string) => {
+            if (phase === "clock-calibration") throw new Error("connection sink failed");
+          },
+        }),
+      ),
+    ).resolves.toBeDefined();
+  });
+
+  it("names malformed, duplicate, and unavailable calibration replies exactly once", async () => {
+    const cases = [
+      {
+        reason: "ack-request-mismatch",
+        mutate: (frame: Record<string, unknown>) => ({
+          ...frame,
+          requestId: "99999999-9999-4999-8999-999999999999",
+        }),
+      },
+      {
+        reason: "ack-generation-mismatch",
+        mutate: (frame: Record<string, unknown>) => ({
+          ...frame,
+          daemonInstanceId: "99999999-9999-4999-8999-999999999999",
+        }),
+      },
+      {
+        reason: "ack-probe-mismatch",
+        mutate: (frame: Record<string, unknown>) => ({ ...frame, probe: 2 }),
+      },
+      {
+        reason: "ack-client-send-mismatch",
+        mutate: (frame: Record<string, unknown>) => ({
+          ...frame,
+          clientSendMicros: (frame.clientSendMicros as number) + 1,
+        }),
+      },
+    ] as const;
+    for (const fixture of cases) {
+      const socket = new FakeSocket();
+      const outcomes: unknown[] = [];
+      socket.onSend = (frame) => {
+        if (frame.type === "redeem") {
+          queueMicrotask(() =>
+            socket.message({
+              type: "ready",
+              protocolVersion: 1,
+              daemonInstanceId: INSTANCE,
+              requestId: REQUEST,
+              panes: ["pane.editor"],
+              effectiveViewerMode: "interactive",
+              diagnosticCapabilities: ["clock-bounds-v1"],
+            }),
+          );
+        } else if (frame.type === "clock-probe") {
+          const ack = {
+            type: "clock-probe-ack",
+            requestId: REQUEST,
+            daemonInstanceId: INSTANCE,
+            probe: frame.probe,
+            clientSendMicros: frame.clientSendMicros,
+            daemonReceiveMicros: (frame.clientSendMicros as number) + 5,
+            daemonSendMicros: (frame.clientSendMicros as number) + 6,
+          };
+          queueMicrotask(() => socket.message(fixture.mutate(ack)));
+        }
+      };
+      await openPaneStreamRuntimeClient(
+        options(socket, {
+          requestInitialInputAuthority: false,
+          diagnosticCapabilities: ["clock-bounds-v1"],
+          diagnosticSharedNowMicros: () => 1_020,
+          onClockCalibration: () => undefined,
+          onClockCalibrationOutcome: (value: unknown) => outcomes.push(value),
+        }),
+      );
+      expect(outcomes).toEqual([
+        expect.objectContaining({
+          reason: fixture.reason,
+          attemptedProbes: 1,
+          receivedProbes: 1,
+          validProbes: 0,
+          selectedProbes: 0,
+        }),
+      ]);
+    }
+
+    const duplicateSocket = new FakeSocket();
+    const duplicateOutcomes: unknown[] = [];
+    let firstAck: Record<string, unknown> | null = null;
+    duplicateSocket.onSend = (frame) => {
+      if (frame.type === "redeem") {
+        queueMicrotask(() =>
+          duplicateSocket.message({
+            type: "ready",
+            protocolVersion: 1,
+            daemonInstanceId: INSTANCE,
+            requestId: REQUEST,
+            panes: ["pane.editor"],
+            effectiveViewerMode: "interactive",
+            diagnosticCapabilities: ["clock-bounds-v1"],
+          }),
+        );
+      } else if (frame.type === "clock-probe" && frame.probe === 1) {
+        firstAck = {
+          type: "clock-probe-ack",
+          requestId: REQUEST,
+          daemonInstanceId: INSTANCE,
+          probe: 1,
+          clientSendMicros: frame.clientSendMicros,
+          daemonReceiveMicros: (frame.clientSendMicros as number) + 5,
+          daemonSendMicros: (frame.clientSendMicros as number) + 6,
+        };
+        queueMicrotask(() => duplicateSocket.message(firstAck));
+      } else if (frame.type === "clock-probe" && frame.probe === 2) {
+        queueMicrotask(() => duplicateSocket.message(firstAck));
+      }
+    };
+    await openPaneStreamRuntimeClient(
+      options(duplicateSocket, {
+        requestInitialInputAuthority: false,
+        diagnosticCapabilities: ["clock-bounds-v1"],
+        diagnosticSharedNowMicros: (() => {
+          let now = 1_000;
+          return () => (now += 10);
+        })(),
+        onClockCalibration: () => undefined,
+        onClockCalibrationOutcome: (value: unknown) => duplicateOutcomes.push(value),
+      }),
+    );
+    expect(duplicateOutcomes).toEqual([
+      expect.objectContaining({
+        reason: "ack-probe-mismatch",
+        attemptedProbes: 2,
+        receivedProbes: 2,
+        validProbes: 1,
+        selectedProbes: 0,
+      }),
+    ]);
+
+    const clockSocket = new FakeSocket();
+    const clockOutcomes: unknown[] = [];
+    clockSocket.onSend = (frame) => {
+      if (frame.type === "redeem")
+        queueMicrotask(() =>
+          clockSocket.message({
+            type: "ready",
+            protocolVersion: 1,
+            daemonInstanceId: INSTANCE,
+            requestId: REQUEST,
+            panes: ["pane.editor"],
+            effectiveViewerMode: "interactive",
+            diagnosticCapabilities: ["clock-bounds-v1"],
+          }),
+        );
+    };
+    await openPaneStreamRuntimeClient(
+      options(clockSocket, {
+        requestInitialInputAuthority: false,
+        diagnosticCapabilities: ["clock-bounds-v1"],
+        diagnosticSharedNowMicros: () => {
+          throw new Error("clock unavailable");
+        },
+        onClockCalibration: () => undefined,
+        onClockCalibrationOutcome: (value: unknown) => clockOutcomes.push(value),
+      }),
+    );
+    expect(clockOutcomes).toEqual([
+      expect.objectContaining({
+        reason: "clock-unavailable",
+        attemptedProbes: 1,
+        receivedProbes: 0,
+        validProbes: 0,
+        selectedProbes: 0,
+      }),
+    ]);
+  });
+
   it("preserves key/paste FIFO while diagnostic edges isolate a delayed next turn", async () => {
     const socket = new FakeSocket();
     acceptInteractiveHandshake(socket);
@@ -223,9 +809,11 @@ describe("semantic pane-stream runtime client", () => {
       `${keyTrace}:pane-stream-frame-enqueued`,
       `${keyTrace}:pane-stream-socket-send-return`,
       `${keyTrace}:pane-stream-next-event-loop-turn`,
+      `${keyTrace}:pane-stream-observer-returned`,
       `${pasteTrace}:pane-stream-frame-enqueued`,
       `${pasteTrace}:pane-stream-socket-send-return`,
       `${pasteTrace}:pane-stream-next-event-loop-turn`,
+      `${pasteTrace}:pane-stream-observer-returned`,
     ]);
     expect(
       stages.filter(({ operation }) => operation === "pane-stream-next-event-loop-turn"),
@@ -251,6 +839,7 @@ describe("semantic pane-stream runtime client", () => {
         "pane-stream-frame-enqueued",
         "pane-stream-socket-send-return",
         "pane-stream-next-event-loop-turn",
+        "pane-stream-observer-returned",
       ]);
     }
     const keyStages = stages.filter((stage) => stage.traceId === keyTrace);
@@ -268,6 +857,68 @@ describe("semantic pane-stream runtime client", () => {
     ).toBe("incomplete");
     await expect(Promise.all([key, paste])).resolves.toEqual(["ok", "ok"]);
     client.close();
+  });
+
+  it("records bounded socket buffer admission and a next-turn drain watermark", async () => {
+    const socket = new FakeSocket();
+    socket.bufferedAmount = 0;
+    acceptInteractiveHandshake(socket);
+    const priorOnSend = socket.onSend;
+    socket.onSend = (frame) => {
+      priorOnSend?.(frame);
+      if (frame.type === "input") socket.bufferedAmount = 384;
+    };
+    const turns: Array<() => void> = [];
+    const stages: PaneStreamInputTransportStageEvent[] = [];
+    const client = await openPaneStreamRuntimeClient(
+      options(socket, {
+        onInputTransportStage: (event: PaneStreamInputTransportStageEvent) => stages.push(event),
+        diagnosticNowMicros: () => 1_000,
+        diagnosticNextTurn: (callback: () => void) => {
+          turns.push(callback);
+          return () => undefined;
+        },
+      }),
+    );
+    const pending = client.sendTerminalInput(
+      { workspaceName: "alpha", semanticPaneId: "pane.editor" },
+      { kind: "key", data: "x" },
+      "00000000-0000-4000-8000-000000000099",
+    );
+    socket.bufferedAmount = 0;
+    turns.forEach((turn) => turn());
+    await pending;
+    expect(
+      stages
+        .filter(({ operation }) => operation.includes("buffer"))
+        .map(({ operation, bufferedAmount, drained }) => ({
+          operation,
+          bufferedAmount,
+          drained,
+        })),
+    ).toEqual([
+      {
+        operation: "pane-stream-buffer-before-send",
+        bufferedAmount: 0,
+        drained: undefined,
+      },
+      {
+        operation: "pane-stream-buffer-after-send",
+        bufferedAmount: 384,
+        drained: undefined,
+      },
+      {
+        operation: "pane-stream-buffer-next-turn",
+        bufferedAmount: 0,
+        drained: undefined,
+      },
+      {
+        operation: "pane-stream-buffer-drain-watermark",
+        bufferedAmount: 0,
+        drained: true,
+      },
+    ]);
+    expect(classifyPaneStreamInputTransportDelay(stages, 10_000)).toBe("no-client-transport-stall");
   });
 
   it("commits FIFO identity before a reentrant transport observer can send", async () => {
@@ -339,8 +990,9 @@ describe("semantic pane-stream runtime client", () => {
     );
     expect(stages).toEqual([]);
     runTurn!();
-    expect(stages.map(({ atMicros }) => atMicros)).toEqual([10, 20, 30]);
-    expect(classifyPaneStreamInputTransportDelay(stages, 1_000)).toBe("no-client-transport-stall");
+    expect(stages.map(({ atMicros }) => atMicros)).toEqual([10, 20, 30, 300_040]);
+    expect(stages.at(-1)?.operation).toBe("pane-stream-observer-returned");
+    expect(classifyPaneStreamInputTransportDelay(stages, 1_000)).toBe("observer-callback-stall");
     await expect(input).resolves.toBe("ok");
     client.close();
   });

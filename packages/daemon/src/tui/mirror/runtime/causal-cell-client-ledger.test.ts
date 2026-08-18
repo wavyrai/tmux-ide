@@ -169,6 +169,34 @@ describe("CausalCellClientLedger", () => {
     expect(input.failures).toEqual([[traceId, "timeout"]]);
   });
 
+  it("preserves a bounded daemon structural diagnostic on failure", () => {
+    const input = rig();
+    const diagnostic = {
+      version: 1 as const,
+      baselineRevision: 7,
+      baselineStateHash: input.request.baselineStateHash,
+      candidateRevision: 8,
+      candidateStateHash: input.proof.committedStateHash,
+      dimensionsChanged: false,
+      changedCellCount: 2,
+      changedRowCount: 1,
+      changedCoordinates: [
+        { row: 0, column: 0 },
+        { row: 0, column: 1 },
+      ],
+      coordinatesTruncated: false,
+      targetMatched: true,
+      cursorChanged: false,
+      modesChanged: false,
+      historyChanged: false,
+      placementsChanged: false,
+      bootstrapChanged: false,
+    };
+    input.ledger.arm(input.request, 10);
+    input.ledger.fail(traceId, "ambiguous-delta", diagnostic);
+    expect(input.failures).toEqual([[traceId, "ambiguous-delta", diagnostic]]);
+  });
+
   it("rejects a scrolled paint even when the target row was dirty", () => {
     const input = rig();
     input.ledger.arm(input.request, 10);

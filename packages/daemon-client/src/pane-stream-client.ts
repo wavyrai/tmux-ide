@@ -7,6 +7,7 @@ import {
   PaneStreamRedeemFrameSchemaZ,
   PaneStreamServerFrameSchemaZ,
   SessionRuntimeTerminalInputSchemaZ,
+  sharedMonotonicMicros,
   type PaneStreamIssueDescriptor,
   type PaneStreamLeaseRequest,
   type PaneStreamServerFrame,
@@ -17,7 +18,7 @@ import {
   type SessionRuntimePresenceState,
   type SessionRuntimeSemanticIntent,
   type SessionRuntimeTerminalInput,
-  type CausalCellCapability,
+  type PaneStreamDiagnosticCapability,
   type CausalCellProbeV1,
   type CausalCellProbeRequestV1,
   type CausalCellProofV1,
@@ -32,6 +33,13 @@ import {
   type TerminalDeliveryVisibility,
   type WorkspaceMultiplexerMutationResult,
 } from "@tmux-ide/contracts";
+import {
+  calibratePaneStreamClocks,
+  type PaneStreamClockCalibration,
+  type PaneStreamClockCalibrationOutcome,
+  type PaneStreamClockCalibrationReason,
+  type PaneStreamClockProbeSample,
+} from "./pane-stream-clock-calibration.ts";
 import { acquireRuntimeResource } from "./runtime-resource-ledger.ts";
 
 type SocketEventType = "open" | "message" | "close" | "error";
@@ -86,10 +94,40 @@ function createRuntimeTimer(callback: () => void, delayMs: number): RuntimeTimer
 
 export interface PaneStreamClientSocket {
   readonly readyState: number;
+  /** Optional native/socket queue watermark in bytes. */
+  readonly bufferedAmount?: number;
   addEventListener(type: SocketEventType, listener: SocketListener): void;
   removeEventListener?(type: SocketEventType, listener: SocketListener): void;
   send(data: string): void;
   close(code?: number, reason?: string): void;
+}
+
+function readSocketBufferedAmount(socket: PaneStreamClientSocket): number | null {
+  try {
+    const value = socket.bufferedAmount;
+    return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function utf8ByteLength(value: string): number {
+  let bytes = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (
+      code >= 0xd800 &&
+      code <= 0xdbff &&
+      value.charCodeAt(index + 1) >= 0xdc00 &&
+      value.charCodeAt(index + 1) <= 0xdfff
+    ) {
+      bytes += 4;
+      index += 1;
+    } else bytes += 3;
+  }
+  return bytes;
 }
 
 export interface PaneStreamInputTransportStageEvent {
@@ -97,10 +135,19 @@ export interface PaneStreamInputTransportStageEvent {
   readonly operation:
     | "pane-stream-frame-enqueued"
     | "pane-stream-socket-send-return"
-    | "pane-stream-next-event-loop-turn";
+    | "pane-stream-next-event-loop-turn"
+    | "pane-stream-buffer-before-send"
+    | "pane-stream-buffer-after-send"
+    | "pane-stream-buffer-next-turn"
+    | "pane-stream-buffer-drain-watermark"
+    | "pane-stream-observer-returned";
   readonly atMicros: number;
+  readonly sharedMicros?: number;
   readonly pane: string;
   readonly sequence: number;
+  readonly bufferedAmount?: number;
+  readonly frameBytes?: number;
+  readonly drained?: boolean;
 }
 
 export function classifyPaneStreamInputTransportDelay(
@@ -110,17 +157,26 @@ export function classifyPaneStreamInputTransportDelay(
   | "incomplete"
   | "socket-send-return-stall"
   | "client-event-loop-stall"
+  | "observer-callback-stall"
   | "no-client-transport-stall" {
   if (!Number.isFinite(stallThresholdMicros) || stallThresholdMicros <= 0)
     throw new TypeError("Input transport stall threshold must be positive");
+  const causalStages = stages.filter(
+    ({ operation }) =>
+      operation === "pane-stream-frame-enqueued" ||
+      operation === "pane-stream-socket-send-return" ||
+      operation === "pane-stream-next-event-loop-turn" ||
+      operation === "pane-stream-observer-returned",
+  );
   if (
-    stages.length !== 3 ||
-    stages[0]?.operation !== "pane-stream-frame-enqueued" ||
-    stages[1]?.operation !== "pane-stream-socket-send-return" ||
-    stages[2]?.operation !== "pane-stream-next-event-loop-turn"
+    (causalStages.length !== 3 && causalStages.length !== 4) ||
+    causalStages[0]?.operation !== "pane-stream-frame-enqueued" ||
+    causalStages[1]?.operation !== "pane-stream-socket-send-return" ||
+    causalStages[2]?.operation !== "pane-stream-next-event-loop-turn"
   )
     return "incomplete";
-  const [enqueued, sent, nextTurn] = stages;
+  const [enqueued, sent, nextTurn] = causalStages;
+  const observerReturned = causalStages[3];
   if (
     !enqueued ||
     !sent ||
@@ -131,12 +187,20 @@ export function classifyPaneStreamInputTransportDelay(
     sent.pane !== nextTurn.pane ||
     enqueued.sequence !== sent.sequence ||
     sent.sequence !== nextTurn.sequence ||
+    (observerReturned !== undefined &&
+      (observerReturned.operation !== "pane-stream-observer-returned" ||
+        observerReturned.traceId !== nextTurn.traceId ||
+        observerReturned.pane !== nextTurn.pane ||
+        observerReturned.sequence !== nextTurn.sequence ||
+        observerReturned.atMicros < nextTurn.atMicros)) ||
     sent.atMicros < enqueued.atMicros ||
     nextTurn.atMicros < sent.atMicros
   )
     return "incomplete";
   if (sent.atMicros - enqueued.atMicros >= stallThresholdMicros) return "socket-send-return-stall";
   if (nextTurn.atMicros - sent.atMicros >= stallThresholdMicros) return "client-event-loop-stall";
+  if (observerReturned && observerReturned.atMicros - nextTurn.atMicros >= stallThresholdMicros)
+    return "observer-callback-stall";
   return "no-client-transport-stall";
 }
 
@@ -160,7 +224,7 @@ export interface OpenPaneStreamClientOptions {
    * authority lazily on their first mutation.
    */
   readonly requestInitialInputAuthority?: boolean;
-  readonly diagnosticCapabilities?: readonly CausalCellCapability[];
+  readonly diagnosticCapabilities?: readonly PaneStreamDiagnosticCapability[];
   /** Cancels capability issuance before a physical socket exists. */
   readonly signal?: AbortSignal;
   readonly fetch?: typeof fetch;
@@ -171,26 +235,44 @@ export interface OpenPaneStreamClientOptions {
     readonly pane: string;
     readonly traceId: string;
     readonly atMicros: number;
+    readonly sharedMicros?: number;
   }) => void;
   /** Diagnostic-only outbound edges for one trace-correlated input frame. */
   readonly onInputTransportStage?: (event: PaneStreamInputTransportStageEvent) => void;
   /** Test seams are consulted only when `onInputTransportStage` is installed. */
   readonly diagnosticNowMicros?: () => number;
+  /** Read only while clock-bounds-v1 is negotiated. */
+  readonly diagnosticSharedNowMicros?: () => number;
+  readonly diagnosticClockProbeCount?: number;
+  readonly onClockCalibration?: (calibration: PaneStreamClockCalibration | null) => void;
+  readonly onClockCalibrationOutcome?: (outcome: PaneStreamClockCalibrationOutcome) => void;
   readonly diagnosticNextTurn?: (callback: () => void) => () => void;
   readonly onLayout?: (frame: Extract<PaneStreamServerFrame, { type: "layout" }>) => void;
-  readonly onInputAck?: (pane: string, sequence: number) => void;
+  readonly onInputAck?: (event: {
+    readonly pane: string;
+    readonly sequence: number;
+    readonly traceId?: string;
+    readonly sharedMicros?: number;
+  }) => void;
   readonly onCausalCellProof?: (proof: CausalCellProofV1) => void;
   readonly onCausalCellFailure?: (failure: CausalCellFailureV1) => void;
   readonly onAuthoritySnapshot?: (snapshot: SessionRuntimeAuthoritySnapshot) => void;
   readonly onFault?: (error: Error) => void;
   readonly onConnectionDiagnostic?: (
-    phase: "issue-start" | "issue-response" | "socket-created" | "socket-open" | "ready-frame",
+    phase:
+      | "issue-start"
+      | "issue-response"
+      | "socket-created"
+      | "socket-open"
+      | "ready-frame"
+      | "clock-calibration",
     details: Readonly<Record<string, unknown>>,
   ) => void;
 }
 
 export type ConnectIssuedPaneStreamRuntimeClientOptions = Pick<
   OpenPaneStreamClientOptions,
+  | "signal"
   | "createSocket"
   | "requestInitialInputAuthority"
   | "origin"
@@ -200,6 +282,10 @@ export type ConnectIssuedPaneStreamRuntimeClientOptions = Pick<
   | "onTerminalFrameArrival"
   | "onInputTransportStage"
   | "diagnosticNowMicros"
+  | "diagnosticSharedNowMicros"
+  | "diagnosticClockProbeCount"
+  | "onClockCalibration"
+  | "onClockCalibrationOutcome"
   | "diagnosticNextTurn"
   | "onLayout"
   | "onInputAck"
@@ -343,7 +429,13 @@ export async function connectIssuedPaneStreamRuntimeClient(
   const clearReadyTimer = (): void => readyTimer.release();
 
   let listenersAttached = false;
+  let abortListenerAttached = false;
   let socketCloseRequested = false;
+  const detachAbortListener = (): void => {
+    if (!abortListenerAttached) return;
+    abortListenerAttached = false;
+    options.signal?.removeEventListener("abort", onAbort);
+  };
   const detachSocketListeners = (): void => {
     if (!listenersAttached) return;
     listenersAttached = false;
@@ -366,15 +458,157 @@ export async function connectIssuedPaneStreamRuntimeClient(
     const error = failure instanceof Error ? failure : new Error(failure);
     clearReadyTimer();
     cancelDiagnosticTurns();
+    detachAbortListener();
     detachSocketListeners();
     rejectPending(error);
     rejectReady(error);
     options.onFault?.(error);
     closeSocketOnce(1008, "protocol-error");
   };
-  const send = (frame: unknown): void => {
+  const send = (
+    frame: unknown,
+    measureBuffer = false,
+  ): {
+    readonly before: number | null;
+    readonly after: number | null;
+    readonly frameBytes: number;
+  } | null => {
     if (closed || socket.readyState !== 1) throw new Error("Pane-stream runtime client is closed");
-    socket.send(JSON.stringify(PaneStreamClientFrameSchemaZ.parse(frame)));
+    const serialized = JSON.stringify(PaneStreamClientFrameSchemaZ.parse(frame));
+    const before = measureBuffer ? readSocketBufferedAmount(socket) : null;
+    socket.send(serialized);
+    if (!measureBuffer) return null;
+    return {
+      before,
+      after: readSocketBufferedAmount(socket),
+      frameBytes: utf8ByteLength(serialized),
+    };
+  };
+  const clockCalibrationEnabled =
+    options.diagnosticCapabilities?.includes("clock-bounds-v1") === true &&
+    options.onClockCalibration !== undefined;
+  const diagnosticSharedRawMicros = clockCalibrationEnabled
+    ? (options.diagnosticSharedNowMicros ?? sharedMonotonicMicros)
+    : undefined;
+  let diagnosticSharedOriginMicros: number | undefined;
+  const diagnosticSharedNowMicros = diagnosticSharedRawMicros
+    ? () => {
+        const raw = diagnosticSharedRawMicros();
+        diagnosticSharedOriginMicros ??= raw;
+        const elapsed = raw - diagnosticSharedOriginMicros;
+        if (!Number.isSafeInteger(elapsed) || elapsed < 0)
+          throw new Error("Client shared monotonic clock regressed");
+        return elapsed;
+      }
+    : undefined;
+  const clockProbeCount = clockCalibrationEnabled ? (options.diagnosticClockProbeCount ?? 5) : 0;
+  if (
+    clockCalibrationEnabled &&
+    (!Number.isInteger(clockProbeCount) || clockProbeCount < 1 || clockProbeCount > 5)
+  )
+    throw new TypeError("Pane-stream clock probe count must be in [1, 5]");
+  const clockSamples: PaneStreamClockProbeSample[] = [];
+  let pendingClockProbe:
+    | {
+        readonly probe: number;
+        readonly clientSendMicros: number;
+        readonly timer: RuntimeTimer;
+      }
+    | undefined;
+  let finishClockCalibration: (() => void) | undefined;
+  let clockCalibrationSettled = false;
+  let attemptedClockProbes = 0;
+  let receivedClockProbes = 0;
+  let validClockProbes = 0;
+  const publishClockCalibration = (calibration: PaneStreamClockCalibration | null): void => {
+    try {
+      options.onClockCalibration?.(calibration);
+    } catch {
+      // Diagnostics cannot alter authenticated stream readiness.
+    }
+  };
+  const completeClockCalibration = (
+    calibration: PaneStreamClockCalibration | null,
+    reason: PaneStreamClockCalibrationReason,
+    settleReadiness = true,
+  ): void => {
+    if (clockCalibrationSettled) return;
+    clockCalibrationSettled = true;
+    pendingClockProbe?.timer.release();
+    pendingClockProbe = undefined;
+    const outcome: PaneStreamClockCalibrationOutcome = Object.freeze({
+      version: 1,
+      requestId: descriptor.requestId,
+      daemonInstanceId: descriptor.daemonInstanceId,
+      reason,
+      attemptedProbes: attemptedClockProbes,
+      receivedProbes: receivedClockProbes,
+      validProbes: validClockProbes,
+      selectedProbes: calibration ? 1 : 0,
+      selectedProbe: calibration?.probe ?? null,
+    });
+    publishClockCalibration(calibration);
+    try {
+      options.onClockCalibrationOutcome?.(outcome);
+    } catch {
+      // Diagnostics cannot alter authenticated stream readiness.
+    }
+    try {
+      options.onConnectionDiagnostic?.("clock-calibration", {
+        version: outcome.version,
+        requestId: outcome.requestId,
+        daemonInstanceId: outcome.daemonInstanceId,
+        reason: outcome.reason,
+        attemptedProbes: outcome.attemptedProbes,
+        receivedProbes: outcome.receivedProbes,
+        validProbes: outcome.validProbes,
+        selectedProbes: outcome.selectedProbes,
+        selectedProbe: outcome.selectedProbe,
+      });
+    } catch {
+      // Diagnostics cannot alter authenticated stream readiness.
+    }
+    const finish = finishClockCalibration;
+    finishClockCalibration = undefined;
+    if (settleReadiness) finish?.();
+  };
+  const sendClockProbe = (probe: number): void => {
+    attemptedClockProbes += 1;
+    if (!diagnosticSharedNowMicros) return completeClockCalibration(null, "clock-unavailable");
+    let clientSendMicros: number;
+    try {
+      clientSendMicros = diagnosticSharedNowMicros();
+    } catch {
+      completeClockCalibration(null, "clock-unavailable");
+      return;
+    }
+    const timer = createRuntimeTimer(() => {
+      const retained = calibratePaneStreamClocks(
+        descriptor.requestId,
+        descriptor.daemonInstanceId,
+        clockSamples,
+      );
+      completeClockCalibration(
+        retained,
+        retained ? "timeout-retained-sample" : "timeout-no-sample",
+      );
+    }, 1_000);
+    pendingClockProbe = { probe, clientSendMicros, timer };
+    try {
+      send({
+        type: "clock-probe",
+        requestId: descriptor.requestId,
+        probe,
+        clientSendMicros,
+      });
+    } catch {
+      completeClockCalibration(null, "send-failed");
+    }
+  };
+  const calibrateBeforeReady = (done: () => void): void => {
+    if (!clockCalibrationEnabled) return done();
+    finishClockCalibration = done;
+    sendClockProbe(1);
   };
   const inputSequences = new Map<string, number>();
   const negotiatedDeliveries = new Map<
@@ -386,6 +620,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
     {
       readonly pane: string;
       readonly sequence: number;
+      readonly traceId?: string;
       resolve(result: SessionRuntimeTerminalInputResult): void;
       reject(error: Error): void;
       timer: RuntimeTimer;
@@ -424,6 +659,8 @@ export async function connectIssuedPaneStreamRuntimeClient(
     }
   >();
   const rejectPending = (error: Error): void => {
+    if (!clockCalibrationSettled && (pendingClockProbe || finishClockCalibration))
+      completeClockCalibration(null, "connection-closed", false);
     for (const pending of pendingInputs.values()) {
       pending.timer.release();
       pending.reject(error);
@@ -598,7 +835,14 @@ export async function connectIssuedPaneStreamRuntimeClient(
         pendingInputs.delete(pendingKey);
         reject(new PaneStreamOperationError("operation-timeout", "Terminal input ack timed out"));
       }, 2_000);
-      pendingInputs.set(pendingKey, { pane, sequence, resolve, reject, timer });
+      pendingInputs.set(pendingKey, {
+        pane,
+        sequence,
+        ...(performanceTraceId ? { traceId: performanceTraceId } : {}),
+        resolve,
+        reject,
+        timer,
+      });
       try {
         const transportStage = performanceTraceId ? options.onInputTransportStage : undefined;
         const diagnosticNowMicros = transportStage
@@ -612,18 +856,22 @@ export async function connectIssuedPaneStreamRuntimeClient(
             // Diagnostics cannot alter input transport truth.
           }
         }
-        send({
-          type: "input",
-          ...input,
-          pane,
-          seq: sequence,
-          ...(performanceTraceId ? { performanceTraceId } : {}),
-          ...(causalProbe ? { causalProbe } : {}),
-        });
+        const bufferMeasurement = send(
+          {
+            type: "input",
+            ...input,
+            pane,
+            seq: sequence,
+            ...(performanceTraceId ? { performanceTraceId } : {}),
+            ...(causalProbe ? { causalProbe } : {}),
+          },
+          Boolean(transportStage),
+        );
         // Socket admission is authoritative. Commit FIFO identity before any
         // diagnostic callback can re-enter `sendTerminalInput`.
         inputSequences.set(pane, sequence);
         let sentAtMicros: number | null = null;
+        let sentAtSharedMicros: number | undefined;
         if (diagnosticNowMicros) {
           try {
             sentAtMicros = diagnosticNowMicros();
@@ -631,8 +879,16 @@ export async function connectIssuedPaneStreamRuntimeClient(
             // Diagnostics cannot alter input transport truth.
           }
         }
+        if (diagnosticSharedNowMicros) {
+          try {
+            sentAtSharedMicros = diagnosticSharedNowMicros();
+          } catch {
+            // Shared-clock diagnostics cannot alter input transport truth.
+          }
+        }
         if (
           transportStage &&
+          bufferMeasurement &&
           diagnosticNowMicros &&
           enqueuedAtMicros !== null &&
           sentAtMicros !== null
@@ -664,12 +920,64 @@ export async function connectIssuedPaneStreamRuntimeClient(
                     traceId: performanceTraceId!,
                     operation,
                     atMicros: observedAtMicros,
+                    ...(operation === "pane-stream-socket-send-return" &&
+                    sentAtSharedMicros !== undefined
+                      ? { sharedMicros: sentAtSharedMicros }
+                      : {}),
                     pane,
                     sequence,
                   });
                 } catch {
                   // Diagnostics cannot alter input transport truth.
                 }
+              }
+              const nextTurnBufferedAmount = readSocketBufferedAmount(socket);
+              for (const [operation, bufferedAmount, sampledAtMicros] of [
+                ["pane-stream-buffer-before-send", bufferMeasurement.before, enqueuedAtMicros],
+                ["pane-stream-buffer-after-send", bufferMeasurement.after, sentAtMicros],
+                ["pane-stream-buffer-next-turn", nextTurnBufferedAmount, atMicros],
+              ] as const) {
+                if (bufferedAmount === null) continue;
+                try {
+                  transportStage({
+                    traceId: performanceTraceId!,
+                    operation,
+                    atMicros: sampledAtMicros,
+                    pane,
+                    sequence,
+                    bufferedAmount,
+                    frameBytes: bufferMeasurement.frameBytes,
+                  });
+                } catch {
+                  // Diagnostics cannot alter input transport truth.
+                }
+              }
+              if (bufferMeasurement.before !== null && nextTurnBufferedAmount !== null) {
+                try {
+                  transportStage({
+                    traceId: performanceTraceId!,
+                    operation: "pane-stream-buffer-drain-watermark",
+                    atMicros,
+                    pane,
+                    sequence,
+                    bufferedAmount: nextTurnBufferedAmount,
+                    frameBytes: bufferMeasurement.frameBytes,
+                    drained: nextTurnBufferedAmount <= bufferMeasurement.before,
+                  });
+                } catch {
+                  // Diagnostics cannot alter input transport truth.
+                }
+              }
+              try {
+                transportStage({
+                  traceId: performanceTraceId!,
+                  operation: "pane-stream-observer-returned",
+                  atMicros: diagnosticNowMicros(),
+                  pane,
+                  sequence,
+                });
+              } catch {
+                // Diagnostics cannot alter input transport truth.
               }
             });
             if (!completed) (pendingDiagnosticTurns ??= new Set()).add(cancel);
@@ -707,6 +1015,14 @@ export async function connectIssuedPaneStreamRuntimeClient(
     const arrivedAtMicros = options.onTerminalFrameArrival
       ? Math.floor(performance.now() * 1_000)
       : 0;
+    let arrivedAtSharedMicros: number | undefined;
+    if (diagnosticSharedNowMicros) {
+      try {
+        arrivedAtSharedMicros = diagnosticSharedNowMicros();
+      } catch {
+        // Shared-clock diagnostics are fail-open.
+      }
+    }
     let raw: unknown;
     try {
       raw = JSON.parse(event.data);
@@ -725,6 +1041,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
         pane: frame.pane,
         traceId: frame.envelope.performanceTraceId,
         atMicros: arrivedAtMicros,
+        ...(arrivedAtSharedMicros === undefined ? {} : { sharedMicros: arrivedAtSharedMicros }),
       });
     }
     if (!verified) {
@@ -756,7 +1073,10 @@ export async function connectIssuedPaneStreamRuntimeClient(
         // Verified stream readiness is a read/display boundary. Input authority
         // is intentionally lazy and requested by TerminalFastLane on first
         // mutation, so a contended controller can never delay coherent paint.
-        resolveReady(client);
+        calibrateBeforeReady(() => {
+          detachAbortListener();
+          resolveReady(client);
+        });
       } else {
         void client
           .requestAuthority("input")
@@ -765,11 +1085,51 @@ export async function connectIssuedPaneStreamRuntimeClient(
               fail("Pane-stream input authority was denied during readiness");
               return;
             }
-            resolveReady(client);
+            calibrateBeforeReady(() => {
+              detachAbortListener();
+              resolveReady(client);
+            });
           })
           .catch((error: unknown) =>
             fail(error instanceof Error ? error : new Error(String(error))),
           );
+      }
+      return;
+    }
+    if (frame.type === "clock-probe-ack") {
+      if (clockCalibrationSettled) return;
+      receivedClockProbes += 1;
+      const pending = pendingClockProbe;
+      if (frame.requestId !== descriptor.requestId)
+        return completeClockCalibration(null, "ack-request-mismatch");
+      if (frame.daemonInstanceId !== descriptor.daemonInstanceId)
+        return completeClockCalibration(null, "ack-generation-mismatch");
+      if (!pending || frame.probe !== pending.probe)
+        return completeClockCalibration(null, "ack-probe-mismatch");
+      if (frame.clientSendMicros !== pending.clientSendMicros)
+        return completeClockCalibration(null, "ack-client-send-mismatch");
+      if (arrivedAtSharedMicros === undefined)
+        return completeClockCalibration(null, "ack-clock-unavailable");
+      pending.timer.release();
+      pendingClockProbe = undefined;
+      const sample = {
+        probe: frame.probe,
+        clientSendMicros: frame.clientSendMicros,
+        daemonReceiveMicros: frame.daemonReceiveMicros,
+        daemonSendMicros: frame.daemonSendMicros,
+        clientReceiveMicros: arrivedAtSharedMicros,
+      };
+      clockSamples.push(sample);
+      if (calibratePaneStreamClocks(descriptor.requestId, descriptor.daemonInstanceId, [sample]))
+        validClockProbes += 1;
+      if (frame.probe < clockProbeCount) sendClockProbe(frame.probe + 1);
+      else {
+        const calibration = calibratePaneStreamClocks(
+          descriptor.requestId,
+          descriptor.daemonInstanceId,
+          clockSamples,
+        );
+        completeClockCalibration(calibration, calibration ? "calibrated" : "invalid-samples");
       }
       return;
     }
@@ -832,7 +1192,12 @@ export async function connectIssuedPaneStreamRuntimeClient(
       pending.timer.release();
       pendingInputs.delete(pendingKey);
       pending.resolve("ok");
-      options.onInputAck?.(frame.pane, frame.seq);
+      options.onInputAck?.({
+        pane: frame.pane,
+        sequence: frame.seq,
+        ...(pending.traceId ? { traceId: pending.traceId } : {}),
+        ...(arrivedAtSharedMicros === undefined ? {} : { sharedMicros: arrivedAtSharedMicros }),
+      });
       return;
     }
     if (frame.type === "error" && frame.code === "input-rejected") {
@@ -845,6 +1210,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
     closed = true;
     clearReadyTimer();
     cancelDiagnosticTurns();
+    detachAbortListener();
     detachSocketListeners();
     releaseSocketResource();
     const error = new Error("Pane-stream runtime connection closed");
@@ -852,11 +1218,20 @@ export async function connectIssuedPaneStreamRuntimeClient(
     rejectReady(error);
     options.onFault?.(error);
   };
+  const onAbort = (): void => {
+    const reason = options.signal?.reason;
+    fail(reason instanceof Error ? reason : new Error("Pane-stream runtime connection aborted"));
+  };
   socket.addEventListener("open", onOpen);
   socket.addEventListener("message", onMessage);
   socket.addEventListener("close", onClose);
   socket.addEventListener("error", onClose);
   listenersAttached = true;
+  if (options.signal) {
+    abortListenerAttached = true;
+    options.signal.addEventListener("abort", onAbort, { once: true });
+    if (options.signal.aborted) onAbort();
+  }
 
   const client: PaneStreamRuntimeClient = {
     daemonInstanceId: descriptor.daemonInstanceId,
@@ -941,6 +1316,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
       closed = true;
       clearReadyTimer();
       cancelDiagnosticTurns();
+      detachAbortListener();
       detachSocketListeners();
       rejectPending(new Error("Pane-stream runtime client closed"));
       closeSocketOnce(1000, "client-closed");

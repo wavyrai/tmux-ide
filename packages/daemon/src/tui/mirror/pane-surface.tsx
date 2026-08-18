@@ -401,7 +401,7 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
       try {
         const paintEndedAt = performance.now();
         performanceSink.terminalPaint(this._dirtyRows.length, paintEndedAt - paintStartedAt);
-        if (paintTrace && performanceSink.terminalTraceSpan)
+        if (paintTrace && performanceSink.terminalTraceSpan) {
           performanceSink.terminalTraceSpan({
             traceId: paintTrace.traceId,
             scenario: "terminal-input-to-paint",
@@ -418,6 +418,19 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
             stateHash: paintTrace.stateHash,
             paintStateIdentity: "latest-canonical-state-blitted",
           });
+          performanceSink.terminalInputFence?.({
+            traceId: paintTrace.traceId,
+            processId: `opentui:${process.pid}`,
+            clockId: "opentui-performance-now",
+            clockKind: "performance-now",
+            atMicros: Math.floor(performance.now() * 1_000),
+            generation: paintTrace.generation,
+            incarnation: paintTrace.incarnation,
+            semanticPaneId: paintTrace.semanticPaneId,
+            revision: paintTrace.revision,
+            stateHash: paintTrace.stateHash,
+          });
+        }
       } catch {
         // Diagnostics are observational and can never break terminal paint.
       }

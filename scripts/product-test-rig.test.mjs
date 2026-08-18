@@ -1,20 +1,26 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
   PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES,
+  PRODUCT_RIG_SOURCE_INVENTORY_MAX_PATHS,
+  PRODUCT_RIG_SOURCE_PATH_MAX_BYTES,
   PRODUCT_RIG_STATE_VERSION,
   PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS,
   PRODUCT_RESOURCE_CONDITIONING_CYCLE_COUNT,
   PRODUCT_RESOURCE_MEASURED_CYCLE_COUNT,
   activeTmuxPaneFromRows,
+  bindPromotedInitialPane,
   appendBoundedWebDiagnostic,
   awaitWebDiagnosticWithDeadline,
   boundedSourceTraceDiff,
+  buildSourceTracePayload,
   buildProductDiagnosticReport,
   buildWebStartupEvidence,
   causalFixtureBaselineReadiness,
@@ -27,10 +33,15 @@ import {
   latestCausalFixtureCanonicalWraparound,
   coherentReadiness,
   coherentGenerationDuration,
+  createProductRigAttemptTimelineClock,
   inputPaintSamples,
   paneBodyRegion,
   paneGeometryIdentity,
   productInputQueuesSettled,
+  productRigSourceTraceIncludesPath,
+  productRigSourceTraceDiffArgs,
+  productRigSourceTraceUntrackedArgs,
+  readBoundedSourceTraceFiles,
   productResourceCycleCommands,
   productResourceCyclePlan,
   productResourceEndpointEpochState,
@@ -198,6 +209,201 @@ test("source provenance accepts patches above Node's default buffer and enforces
   assert.throws(
     () => boundedSourceTraceDiff("x".repeat(PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES + 1)),
     /hard ceiling/u,
+  );
+});
+
+test("source provenance deterministically binds sorted untracked paths and bytes", () => {
+  const tracked = Buffer.from("tracked-diff\0bytes");
+  const files = [
+    { path: "scripts/z-new.mjs", content: Buffer.from("z\0content") },
+    { path: "packages/core/src/a-new.ts", content: Buffer.from("alpha") },
+  ];
+  const payload = buildSourceTracePayload(tracked, files);
+  const reversed = buildSourceTracePayload(tracked, files.toReversed());
+  const digest = (value) => createHash("sha256").update(value).digest("hex");
+  assert.deepEqual(payload, reversed);
+  assert.notEqual(
+    digest(payload),
+    digest(
+      buildSourceTracePayload(tracked, [
+        files[0],
+        { ...files[1], content: Buffer.from("changed") },
+      ]),
+    ),
+  );
+  assert.notEqual(
+    digest(payload),
+    digest(
+      buildSourceTracePayload(tracked, [
+        files[0],
+        { ...files[1], path: "packages/core/src/renamed.ts" },
+      ]),
+    ),
+  );
+  assert.throws(() => buildSourceTracePayload(tracked, [...files, files[0]]), /malformed/u);
+  assert.throws(
+    () => buildSourceTracePayload(tracked, [{ path: "../outside", content: "x" }]),
+    /malformed/u,
+  );
+  assert.throws(
+    () =>
+      buildSourceTracePayload("", [
+        { path: "scripts/new.mjs", content: "x".repeat(PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES) },
+      ]),
+    /hard ceiling/u,
+  );
+  assert.equal(productRigSourceTraceIncludesPath("scripts/lib/product-first-input.mjs"), true);
+  assert.equal(
+    productRigSourceTraceIncludesPath("packages/daemon/native/target/debug/artifact"),
+    false,
+  );
+});
+
+test("source provenance rejects oversized untracked input before reading content", () => {
+  let reads = 0;
+  let closes = 0;
+  assert.throws(
+    () =>
+      readBoundedSourceTraceFiles(
+        "tracked",
+        ["scripts/huge-new.mjs"],
+        {
+          openFile: () => 17,
+          statFile: () => ({ isFile: () => true, size: PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES }),
+          readFile: () => {
+            reads += 1;
+            return Buffer.alloc(0);
+          },
+          closeFile: () => {
+            closes += 1;
+          },
+        },
+        1_024,
+      ),
+    /hard ceiling/u,
+  );
+  assert.equal(reads, 0);
+  assert.equal(closes, 1);
+  let statCalls = 0;
+  assert.throws(
+    () =>
+      readBoundedSourceTraceFiles("", ["scripts/raced.mjs"], {
+        openFile: () => 18,
+        statFile: () => {
+          statCalls += 1;
+          return {
+            isFile: () => true,
+            size: statCalls === 1 ? 1 : 2,
+            dev: 4,
+            ino: 9,
+          };
+        },
+        readFile: () => Buffer.from("x"),
+        closeFile: () => undefined,
+      }),
+    /changed while hashing/u,
+  );
+  assert.throws(
+    () =>
+      readBoundedSourceTraceFiles(
+        "",
+        Array.from(
+          { length: PRODUCT_RIG_SOURCE_INVENTORY_MAX_PATHS + 1 },
+          (_, index) => `scripts/${index}.mjs`,
+        ),
+        {
+          openFile: () => assert.fail("oversized inventory must not open files"),
+          statFile: () => assert.fail("oversized inventory must not stat files"),
+          readFile: () => assert.fail("oversized inventory must not read files"),
+          closeFile: () => assert.fail("oversized inventory must not close unopened files"),
+        },
+      ),
+    /path-count ceiling/u,
+  );
+  assert.throws(
+    () =>
+      buildSourceTracePayload("", [
+        { path: "x".repeat(PRODUCT_RIG_SOURCE_PATH_MAX_BYTES + 1), content: "" },
+      ]),
+    /malformed/u,
+  );
+});
+
+test("source provenance excludes tracked native changes but binds tracked source changes", () => {
+  const root = mkdtempSync(join(tmpdir(), "tmux-ide-source-trace-"));
+  try {
+    execFileSync("git", ["init", "-q"], { cwd: root });
+    mkdirSync(join(root, "scripts"), { recursive: true });
+    mkdirSync(join(root, "packages", "daemon", "native"), { recursive: true });
+    writeFileSync(join(root, "scripts", "tracked.mjs"), "export const value = 1;\n");
+    writeFileSync(join(root, "packages", "daemon", "native", "tracked.bin"), "native-1\n");
+    execFileSync("git", ["add", "."], { cwd: root });
+    execFileSync(
+      "git",
+      ["-c", "user.name=ProductRig", "-c", "user.email=rig@example.test", "commit", "-qm", "base"],
+      { cwd: root },
+    );
+    writeFileSync(join(root, "packages", "daemon", "native", "tracked.bin"), "native-2\n");
+    assert.equal(
+      execFileSync("git", productRigSourceTraceDiffArgs(), { cwd: root, encoding: "utf8" }),
+      "",
+    );
+    writeFileSync(join(root, "scripts", "tracked.mjs"), "export const value = 2;\n");
+    const diff = execFileSync("git", productRigSourceTraceDiffArgs(), {
+      cwd: root,
+      encoding: "utf8",
+    });
+    assert.match(diff, /scripts\/tracked\.mjs/u);
+    assert.doesNotMatch(diff, /packages\/daemon\/native/u);
+    writeFileSync(join(root, "packages", "daemon", "native", "untracked.bin"), "native-new\n");
+    writeFileSync(join(root, "scripts", "untracked.mjs"), "export const fresh = true;\n");
+    const untracked = execFileSync("git", productRigSourceTraceUntrackedArgs(), {
+      cwd: root,
+      encoding: "utf8",
+    })
+      .split("\0")
+      .filter(Boolean);
+    assert.deepEqual(untracked, ["scripts/untracked.mjs"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("key and paste timelines use distinct attempt-local origins shared with their owners", () => {
+  let parentNow = 10_000;
+  const keyParent = createProductRigAttemptTimelineClock(() => parentNow, 10_000);
+  assert.equal(keyParent.elapsedMs(), 0);
+  parentNow = 10_250;
+  assert.equal(keyParent.elapsedMs(), 250);
+
+  let ownerNow = 10_400;
+  const keyOwner = createProductRigAttemptTimelineClock(() => ownerNow, 10_000);
+  assert.equal(keyOwner.elapsedMs(), 400);
+  ownerNow = 34_000;
+  assert.equal(keyOwner.elapsedMs(), 24_000);
+
+  let pasteNow = 63_000;
+  const pasteParent = createProductRigAttemptTimelineClock(() => pasteNow, 63_000);
+  assert.equal(pasteParent.elapsedMs(), 0);
+  pasteNow = 88_400;
+  assert.equal(pasteParent.elapsedMs(), 25_400);
+  assert.notEqual(pasteParent.elapsedMs(), 53_026);
+
+  let pasteOwnerNow = 63_180;
+  const pasteOwner = createProductRigAttemptTimelineClock(() => pasteOwnerNow, 63_000);
+  assert.equal(pasteOwner.elapsedMs(), 180);
+  pasteOwnerNow = 63_179;
+  assert.throws(() => pasteOwner.elapsedMs(), /invalid/u);
+
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  assert.match(
+    source,
+    /async function executeDiagnosticAttempt\(entry\) \{\s*resetAttemptTimelineClock\(\);/u,
+  );
+  assert.match(source, /TMUX_IDE_PRODUCT_TIMELINE_ORIGIN_MS: String\(attemptTimelineOriginMs\)/u);
+  assert.match(
+    source,
+    /resetAttemptTimelineClock\(\s*Number\.isFinite\(inheritedTimelineOrigin\)/u,
   );
 });
 
@@ -431,6 +637,18 @@ test("resolves active tmux runtime and semantic pane identities together", () =>
     height: 30,
   });
   assert.equal(activeTmuxPaneFromRows("%1|1|1||0|0|50|30"), null);
+  assert.equal(
+    activeTmuxPaneFromRows("%1|1|1|pane.one|0|0|50|30\n%2|1|1|pane.two|50|0|50|30"),
+    null,
+  );
+  assert.equal(
+    bindPromotedInitialPane({ paneId: "%2", width: 80, height: 24 }, pane).semanticPaneId,
+    "pane.promoted.right",
+  );
+  assert.throws(
+    () => bindPromotedInitialPane({ paneId: "%1", width: 80, height: 24 }, pane),
+    /did not match/u,
+  );
 });
 
 test("anchors a two-pane framebuffer body to semantic chrome when tmux origin drifted", () => {
@@ -629,6 +847,8 @@ test("correlates same-client stages and daemon-local spans without subtracting c
     {
       stage: "tmux",
       operation: "raw-input-command",
+      startedAtMicros: 50_000,
+      endedAtMicros: 53_000,
       offsetMs: 0,
       durationMs: 3,
       processId: "daemon:2",
@@ -637,6 +857,8 @@ test("correlates same-client stages and daemon-local spans without subtracting c
     {
       stage: "tmux",
       operation: "control-write",
+      startedAtMicros: 53_100,
+      endedAtMicros: 53_200,
       offsetMs: 3.1,
       durationMs: 0.1,
       processId: "daemon:2",
@@ -645,6 +867,8 @@ test("correlates same-client stages and daemon-local spans without subtracting c
     {
       stage: "tmux",
       operation: "first-output-observed",
+      startedAtMicros: 70_000,
+      endedAtMicros: 70_100,
       offsetMs: 20,
       durationMs: 0.1,
       processId: "daemon:2",
@@ -1030,7 +1254,7 @@ test("causal helper restores DECAWM and resets probes onto the visible first row
   assert.match(source, /writeSync\(1, "\\x1b\[\?7h/u);
   assert.match(source, /if \(restored\) return;/u);
   assert.match(source, /reset-v1;/u);
-  assert.match(source, /\\x1b\[1;\$\{columns\}H/u);
+  assert.match(source, /createCausalFixtureGeometry/u);
 });
 
 test("requires a closed zero-drop reference trace summary", () => {

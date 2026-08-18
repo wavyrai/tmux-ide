@@ -28,6 +28,26 @@ export interface DaemonFleetFactsObserverOptions {
   readonly intervalMs?: number;
   readonly setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   readonly clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
+  readonly diagnostics?: {
+    readonly nowMicros: () => number;
+    readonly createTraceId: () => string;
+    readonly publish: (event: DaemonFleetFactsObserverDiagnostic) => void;
+    readonly queueMicrotask?: (callback: () => void) => void;
+  };
+}
+
+export interface DaemonFleetFactsObserverDiagnostic {
+  readonly operation: "fleet-cycle";
+  readonly phase: "begin" | "event-loop-sentinel" | "end";
+  readonly traceId: string;
+  readonly processId: string;
+  readonly clockId: "node-performance-now";
+  readonly clockKind: "performance-now";
+  readonly atMicros: number;
+  readonly activeOperations: number;
+  readonly sessions: boolean;
+  readonly agents: boolean;
+  readonly succeeded?: boolean;
 }
 
 interface ReadyWaiter {
@@ -54,6 +74,7 @@ export class DaemonFleetFactsObserver {
   #startQueued = false;
   #generation = 0;
   #demandVersion = 0;
+  #diagnosticActiveOperations = 0;
 
   constructor(options: DaemonFleetFactsObserverOptions) {
     this.#options = options;
@@ -195,23 +216,102 @@ export class DaemonFleetFactsObserver {
     wantsSessions: boolean,
     wantsAgents: boolean,
   ): Promise<void> {
-    const [sessions, agents] = await Promise.all([
-      wantsSessions ? this.#options.readSessions() : Promise.resolve(null),
-      wantsAgents ? this.#options.readAgents() : Promise.resolve(null),
-    ]);
-    if (generation !== this.#generation) return;
-    if (wantsSessions && sessions) {
-      const acceptSessions = this.#sameDemandEpoch("sessions", demandEpochs);
-      const acceptAdopted = this.#sameDemandEpoch("adopted", demandEpochs);
-      if (acceptSessions) this.#baselined.add("sessions");
-      if (acceptAdopted) this.#baselined.add("adopted");
-      this.#acceptSessions(sessions, acceptSessions, acceptAdopted);
+    const finish = this.#beginDiagnostic(wantsSessions, wantsAgents);
+    let sessions: SessionCompositionFacts | null;
+    let agents: AgentStateReading | null;
+    try {
+      [sessions, agents] = await Promise.all([
+        wantsSessions ? this.#options.readSessions() : Promise.resolve(null),
+        wantsAgents ? this.#options.readAgents() : Promise.resolve(null),
+      ]);
+    } catch (error) {
+      finish(false);
+      throw error;
     }
-    if (wantsAgents && agents && this.#sameDemandEpoch("agents", demandEpochs)) {
-      this.#baselined.add("agents");
-      this.#acceptAgents(agents);
+    try {
+      if (generation !== this.#generation) {
+        finish(true);
+        return;
+      }
+      if (wantsSessions && sessions) {
+        const acceptSessions = this.#sameDemandEpoch("sessions", demandEpochs);
+        const acceptAdopted = this.#sameDemandEpoch("adopted", demandEpochs);
+        if (acceptSessions) this.#baselined.add("sessions");
+        if (acceptAdopted) this.#baselined.add("adopted");
+        this.#acceptSessions(sessions, acceptSessions, acceptAdopted);
+      }
+      if (wantsAgents && agents && this.#sameDemandEpoch("agents", demandEpochs)) {
+        this.#baselined.add("agents");
+        this.#acceptAgents(agents);
+      }
+      this.#settleWaiters();
+      finish(true);
+    } catch (error) {
+      finish(false);
+      throw error;
     }
-    this.#settleWaiters();
+  }
+
+  #beginDiagnostic(wantsSessions: boolean, wantsAgents: boolean): (succeeded: boolean) => void {
+    const diagnostics = this.#options.diagnostics;
+    if (!diagnostics) return () => undefined;
+    let traceId: string;
+    let startedAtMicros: number;
+    try {
+      traceId = diagnostics.createTraceId();
+      startedAtMicros = diagnostics.nowMicros();
+    } catch {
+      return () => undefined;
+    }
+    this.#diagnosticActiveOperations += 1;
+    const publish = (
+      phase: DaemonFleetFactsObserverDiagnostic["phase"],
+      atMicros: number,
+      succeeded?: boolean,
+    ): void => {
+      try {
+        diagnostics.publish({
+          operation: "fleet-cycle",
+          phase,
+          traceId,
+          processId: `daemon:${process.pid}`,
+          clockId: "node-performance-now",
+          clockKind: "performance-now",
+          atMicros,
+          activeOperations: this.#diagnosticActiveOperations,
+          sessions: wantsSessions,
+          agents: wantsAgents,
+          ...(succeeded === undefined ? {} : { succeeded }),
+        });
+      } catch {
+        // Fleet observation remains authoritative when diagnostics fail.
+      }
+    };
+    publish("begin", startedAtMicros);
+    try {
+      (diagnostics.queueMicrotask ?? queueMicrotask)(() => {
+        try {
+          publish("event-loop-sentinel", diagnostics.nowMicros());
+        } catch {
+          // Diagnostics are fail-open.
+        }
+      });
+    } catch {
+      // Diagnostics are fail-open.
+    }
+    let finished = false;
+    return (succeeded) => {
+      if (finished) return;
+      finished = true;
+      let atMicros = startedAtMicros;
+      try {
+        atMicros = diagnostics.nowMicros();
+      } catch {
+        // The operation still settles if the optional clock fails.
+      }
+      publish("end", atMicros, succeeded);
+      this.#diagnosticActiveOperations = Math.max(0, this.#diagnosticActiveOperations - 1);
+    };
   }
 
   #acceptSessions(

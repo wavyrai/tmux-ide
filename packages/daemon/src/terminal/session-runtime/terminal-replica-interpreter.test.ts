@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { widgetMarkerAnnouncement, type CanonicalTerminalReplicaUpdate } from "@tmux-ide/contracts";
-import { TERMINAL_CONFORMANCE_FIXTURES } from "@tmux-ide/core";
+import type { CausalCellProbeV1 } from "@tmux-ide/contracts";
+import { hashTerminalReplicaSnapshot, TERMINAL_CONFORMANCE_FIXTURES } from "@tmux-ide/core";
 import { TerminalReplicaInterpreter } from "./terminal-replica-interpreter.ts";
 import type {
   TerminalInterpreterBackend,
@@ -24,6 +25,100 @@ function create(updates: CanonicalTerminalReplicaUpdate[], cols = 12, rows = 3) 
 }
 
 describe("TerminalReplicaInterpreter", () => {
+  it.each([
+    ["key", "x"],
+    ["multi-byte paste", "PASTE0Q"],
+  ])(
+    "proves exactly one default-rendition cell after the production 160x42 to 132x41 %s lifecycle",
+    async (_label, text) => {
+      const interpreter = new TerminalReplicaInterpreter({
+        generation,
+        workspaceName: "workspace",
+        semanticPaneId: "pane-a",
+        incarnation: `${generation}:0`,
+        cols: 160,
+        rows: 42,
+        backendFactory: createXtermTerminalInterpreterBackend,
+      });
+      await interpreter.enqueue({
+        type: "reseed",
+        cols: 160,
+        rows: 42,
+        chunks: [
+          new TextEncoder().encode(
+            "\u001b[31mold\u001b[0m\u001b[2J\u001b[3J\u001b[?7l\u001b[1;160H\u001b[2K\u001b[1;160H \u001b[1;160H",
+          ),
+        ],
+        cursor: { x: 159, y: 0 },
+        bootstrap: "authoritative-stream",
+      });
+      await interpreter.enqueue({ type: "resize", cols: 132, rows: 41 });
+      await interpreter.enqueue({
+        type: "write",
+        data: new TextEncoder().encode(
+          "\u001b[0m\u001b[2J\u001b[3J\u001b[?7l\u001b[1;132H\u001b[2K\u001b[1;132H \u001b[1;132H",
+        ),
+      });
+      const seed = interpreter.currentSeed()!;
+      expect(seed.snapshot).toMatchObject({ cols: 132, rows: 41 });
+      expect(seed.stateHash).toBe(hashTerminalReplicaSnapshot(seed.snapshot));
+      expect(seed.snapshot.grid[0]!.wrapped).toBe(false);
+      const before = seed.snapshot.grid[0]!.cells[131]!;
+      const probe: CausalCellProbeV1 = {
+        version: 1,
+        capability: "causal-cell-v1",
+        traceId: "00000000-0000-4000-8000-000000000099",
+        clientId: "client:test",
+        transportNonce: "00000000-0000-4000-8000-000000000010",
+        deliveryNonce: "00000000-0000-4000-8000-000000000011",
+        inputSequence: 1,
+        semanticPaneId: "pane-a",
+        generation,
+        incarnation: `${generation}:0`,
+        baselineRevision: seed.revision,
+        baselineStateHash: seed.stateHash,
+        geometry: { cols: 132, rows: 41, row: 0, column: 131 },
+        before,
+        after: { ...before, grapheme: text.at(-1)! },
+      };
+      const results: unknown[] = [];
+      interpreter.armCausalCellProbe(probe, (result) => results.push(result));
+      interpreter.noteCausalCellControlReply(probe.traceId, true);
+      await interpreter.enqueue({
+        type: "write",
+        data: new TextEncoder().encode(
+          `\u001b]6973;tmux-ide-causal-cell-v1;start;${probe.traceId}\u0007${text}\u001b]6973;tmux-ide-causal-cell-v1;end;${probe.traceId}\u0007`,
+        ),
+      });
+      expect(results).toEqual([
+        expect.objectContaining({
+          status: "proved",
+          proof: expect.objectContaining({ committedRevision: seed.revision + 1 }),
+        }),
+      ]);
+      const next = interpreter.currentSnapshot();
+      expect(hashTerminalReplicaSnapshot(next)).toBe(
+        (results[0] as { proof: { committedStateHash: string } }).proof.committedStateHash,
+      );
+      expect(next.cursor).toEqual(seed.snapshot.cursor);
+      expect(next.modes).toEqual(seed.snapshot.modes);
+      expect(next.history).toEqual(seed.snapshot.history);
+      expect(next.grid.map((row) => row.wrapped)).toEqual(
+        seed.snapshot.grid.map((row) => row.wrapped),
+      );
+      expect(
+        next.grid.flatMap((row, rowIndex) =>
+          row.cells.flatMap((cell, column) =>
+            JSON.stringify(cell) === JSON.stringify(seed.snapshot.grid[rowIndex]!.cells[column])
+              ? []
+              : [{ row: rowIndex, column }],
+          ),
+        ),
+      ).toEqual([{ row: 0, column: 131 }]);
+      await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+    },
+  );
+
   it("keeps parser lifecycle behind the backend seam without moving canonical authority", async () => {
     const created: TerminalInterpreterBackend[] = [];
     let disposed = 0;

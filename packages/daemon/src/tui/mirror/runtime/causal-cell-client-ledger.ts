@@ -2,6 +2,7 @@ import type {
   CausalCellFailureReasonV1,
   CausalCellProbeRequestV1,
   CausalCellProofV1,
+  CausalCellStructuralDiffV1,
   TerminalReplicaSnapshot,
 } from "@tmux-ide/contracts";
 
@@ -79,13 +80,21 @@ export class CausalCellClientLedger {
   readonly #deliveries = new Map<string, DeliveryEvidence>();
   readonly #paints = new Map<string, CausalCellPaintEvidenceV1>();
   readonly #onFinalized: (evidence: FinalizedCausalCellEvidenceV1) => void;
-  readonly #onFailure: (traceId: string, reason: CausalCellFailureReasonV1) => void;
+  readonly #onFailure: (
+    traceId: string,
+    reason: CausalCellFailureReasonV1,
+    diagnostic?: CausalCellStructuralDiffV1,
+  ) => void;
   readonly #scheduleTimeout: (task: () => void, delayMs: number) => () => void;
   #disposed = false;
 
   constructor(options: {
     readonly onFinalized: (evidence: FinalizedCausalCellEvidenceV1) => void;
-    readonly onFailure: (traceId: string, reason: CausalCellFailureReasonV1) => void;
+    readonly onFailure: (
+      traceId: string,
+      reason: CausalCellFailureReasonV1,
+      diagnostic?: CausalCellStructuralDiffV1,
+    ) => void;
     readonly scheduleTimeout?: (task: () => void, delayMs: number) => () => void;
   }) {
     this.#onFinalized = options.onFinalized;
@@ -149,13 +158,18 @@ export class CausalCellClientLedger {
       if (proofStateKey(proof) === stateKey(input)) this.#tryFinalize(traceId);
   }
 
-  fail(traceId: string, reason: CausalCellFailureReasonV1): void {
+  fail(
+    traceId: string,
+    reason: CausalCellFailureReasonV1,
+    diagnostic?: CausalCellStructuralDiffV1,
+  ): void {
     const armed = this.#armed.get(traceId);
     if (!armed && !this.#proofs.has(traceId)) return;
     armed?.cancelTimeout();
     this.#armed.delete(traceId);
     this.#proofs.delete(traceId);
-    this.#onFailure(traceId, reason);
+    if (diagnostic) this.#onFailure(traceId, reason, diagnostic);
+    else this.#onFailure(traceId, reason);
   }
 
   dispose(): void {

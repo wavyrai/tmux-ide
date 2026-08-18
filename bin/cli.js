@@ -7940,7 +7940,7 @@ var init_session_runtime = __esm({
 
 // packages/contracts/src/causal-cell.ts
 import { z as z50 } from "zod";
-var CAUSAL_CELL_CAPABILITY_V1, CausalCellCapabilitySchemaZ, CanonicalStateHashSchemaZ, CanonicalRevisionSchemaZ, GridExtentSchemaZ, GridCoordinateSchemaZ, CausalCellGeometryV1SchemaZ, CausalCellBindingShape, CausalCellProbeV1SchemaZ, CausalCellProofV1SchemaZ, CausalCellFailureReasonV1SchemaZ, CausalCellFailureV1SchemaZ;
+var CAUSAL_CELL_CAPABILITY_V1, CausalCellCapabilitySchemaZ, CanonicalStateHashSchemaZ, CanonicalRevisionSchemaZ, GridExtentSchemaZ, GridCoordinateSchemaZ, CausalCellGeometryV1SchemaZ, CausalCellBindingShape, CausalCellProbeV1SchemaZ, CausalCellProofV1SchemaZ, CausalCellFailureReasonV1SchemaZ, CausalCellChangedCoordinateV1SchemaZ, CausalCellStructuralDiffV1SchemaZ, CausalCellFailureV1SchemaZ;
 var init_causal_cell = __esm({
   "packages/contracts/src/causal-cell.ts"() {
     "use strict";
@@ -8033,11 +8033,36 @@ var init_causal_cell = __esm({
       "authority-lost",
       "transport-closed"
     ]);
+    CausalCellChangedCoordinateV1SchemaZ = z50.object({ row: GridCoordinateSchemaZ, column: GridCoordinateSchemaZ }).strict();
+    CausalCellStructuralDiffV1SchemaZ = z50.object({
+      version: z50.literal(1),
+      baselineRevision: CanonicalRevisionSchemaZ,
+      baselineStateHash: CanonicalStateHashSchemaZ,
+      candidateRevision: CanonicalRevisionSchemaZ,
+      candidateStateHash: CanonicalStateHashSchemaZ,
+      dimensionsChanged: z50.boolean(),
+      changedCellCount: z50.number().int().nonnegative().safe(),
+      changedRowCount: z50.number().int().nonnegative().safe(),
+      changedCoordinates: z50.array(CausalCellChangedCoordinateV1SchemaZ).max(8),
+      coordinatesTruncated: z50.boolean(),
+      changedWrappedRowCount: z50.number().int().nonnegative().safe(),
+      changedWrappedRows: z50.array(GridCoordinateSchemaZ).max(8),
+      wrappedRowsTruncated: z50.boolean(),
+      targetMatched: z50.boolean(),
+      cursorChanged: z50.boolean(),
+      modesChanged: z50.boolean(),
+      historyChanged: z50.boolean(),
+      placementsChanged: z50.boolean(),
+      bootstrapChanged: z50.boolean(),
+      semanticSnapshotMatched: z50.boolean(),
+      serializationOrderOnly: z50.boolean()
+    }).strict();
     CausalCellFailureV1SchemaZ = z50.object({
       version: z50.literal(1),
       capability: CausalCellCapabilitySchemaZ,
       traceId: z50.uuid(),
-      reason: CausalCellFailureReasonV1SchemaZ
+      reason: CausalCellFailureReasonV1SchemaZ,
+      diagnostic: CausalCellStructuralDiffV1SchemaZ.optional()
     }).strict();
   }
 });
@@ -8217,7 +8242,7 @@ var init_terminal_delivery = __esm({
 
 // packages/contracts/src/pane-stream.ts
 import { z as z52 } from "zod";
-var PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
+var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
 var init_pane_stream = __esm({
   "packages/contracts/src/pane-stream.ts"() {
     "use strict";
@@ -8230,6 +8255,11 @@ var init_pane_stream = __esm({
     init_terminal_delivery();
     init_session_runtime();
     init_workspace_multiplexer();
+    PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1 = "clock-bounds-v1";
+    PaneStreamDiagnosticCapabilitySchemaZ = z52.union([
+      CausalCellCapabilitySchemaZ,
+      z52.literal(PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1)
+    ]);
     PANE_STREAM_PROTOCOL_VERSION = 1;
     PANE_STREAM_ISSUE_PATH = "/api/v1/terminal/pane-streams/issue";
     PANE_STREAM_REDEEM_PATH = "/v1/terminal/pane-streams/redeem";
@@ -8293,7 +8323,7 @@ var init_pane_stream = __esm({
        * renderer sets this; simple transcript clients omit it.
        */
       deliveryAcks: z52.boolean().optional(),
-      diagnosticCapabilities: z52.array(CausalCellCapabilitySchemaZ).max(1).optional()
+      diagnosticCapabilities: z52.array(PaneStreamDiagnosticCapabilitySchemaZ).max(2).optional()
     }).strict();
     PaneStreamInputFrameMetadataShape = {
       type: z52.literal("input"),
@@ -8366,6 +8396,13 @@ var init_pane_stream = __esm({
       requestId: PaneStreamAuthorityRequestIdSchemaZ,
       authority: SessionRuntimeAuthorityKindSchemaZ
     }).strict();
+    SharedMonotonicMicrosSchemaZ = z52.number().int().nonnegative().safe();
+    PaneStreamClockProbeFrameSchemaZ = z52.object({
+      type: z52.literal("clock-probe"),
+      requestId: z52.uuid(),
+      probe: z52.number().int().min(1).max(5),
+      clientSendMicros: SharedMonotonicMicrosSchemaZ
+    }).strict();
     PaneStreamClientFrameSchemaZ = z52.union([
       PaneStreamInputFrameSchemaZ,
       PaneStreamConsumedFrameSchemaZ,
@@ -8377,7 +8414,8 @@ var init_pane_stream = __esm({
       PaneStreamPresenceFrameSchemaZ,
       PaneStreamActivityFrameSchemaZ,
       PaneStreamAuthorityRequestFrameSchemaZ,
-      PaneStreamAuthorityReleaseFrameSchemaZ
+      PaneStreamAuthorityReleaseFrameSchemaZ,
+      PaneStreamClockProbeFrameSchemaZ
     ]);
     Base64SchemaZ = (maxChars) => z52.string().max(maxChars).regex(/^[A-Za-z0-9+/]*={0,2}$/u, "payload must be standard base64");
     ServerSeqSchemaZ = z52.number().int().positive();
@@ -8391,7 +8429,7 @@ var init_pane_stream = __esm({
       panes: PaneSetSchemaZ,
       effectiveViewerMode: PaneStreamViewerModeSchemaZ,
       authority: SessionRuntimeAuthoritySnapshotSchemaZ.optional(),
-      diagnosticCapabilities: z52.array(CausalCellCapabilitySchemaZ).max(1).optional()
+      diagnosticCapabilities: z52.array(PaneStreamDiagnosticCapabilitySchemaZ).max(2).optional()
     }).strict();
     PaneStreamSeedBatchFrameSchemaZ = z52.object({
       type: z52.literal("seed-batch"),
@@ -8455,6 +8493,15 @@ var init_pane_stream = __esm({
       type: z52.literal("input-ack"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: z52.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE)
+    }).strict();
+    PaneStreamClockProbeAckFrameSchemaZ = z52.object({
+      type: z52.literal("clock-probe-ack"),
+      requestId: z52.uuid(),
+      daemonInstanceId: DaemonInstanceIdentitySchemaZ.shape.instanceId,
+      probe: z52.number().int().min(1).max(5),
+      clientSendMicros: SharedMonotonicMicrosSchemaZ,
+      daemonReceiveMicros: SharedMonotonicMicrosSchemaZ,
+      daemonSendMicros: SharedMonotonicMicrosSchemaZ
     }).strict();
     PaneStreamCausalCellProofFrameSchemaZ = z52.object({ type: z52.literal("causal-cell-proof"), proof: CausalCellProofV1SchemaZ }).strict();
     PaneStreamCausalCellFailureFrameSchemaZ = z52.object({ type: z52.literal("causal-cell-failure"), failure: CausalCellFailureV1SchemaZ }).strict();
@@ -8546,6 +8593,7 @@ var init_pane_stream = __esm({
       PaneStreamFlowFrameSchemaZ,
       PaneStreamClosedFrameSchemaZ,
       PaneStreamInputAckFrameSchemaZ,
+      PaneStreamClockProbeAckFrameSchemaZ,
       PaneStreamCausalCellProofFrameSchemaZ,
       PaneStreamCausalCellFailureFrameSchemaZ,
       PaneStreamTerminalDeliveryReadyFrameSchemaZ,
@@ -9778,6 +9826,22 @@ var init_performance_metrics = __esm({
   }
 });
 
+// packages/contracts/src/shared-monotonic-clock.ts
+function sharedMonotonicMicros() {
+  const processLike = globalThis.process;
+  const now = processLike?.hrtime?.bigint?.();
+  if (typeof now !== "bigint") throw new Error("A monotonic bigint clock is unavailable");
+  const micros = Number(now / 1000n);
+  if (!Number.isSafeInteger(micros) || micros < 0)
+    throw new Error("The monotonic clock exceeded the supported range");
+  return micros;
+}
+var init_shared_monotonic_clock = __esm({
+  "packages/contracts/src/shared-monotonic-clock.ts"() {
+    "use strict";
+  }
+});
+
 // packages/contracts/src/index.ts
 var init_src = __esm({
   "packages/contracts/src/index.ts"() {
@@ -9850,6 +9914,7 @@ var init_src = __esm({
     init_performance_qualification();
     init_performance_metrics();
     init_causal_cell();
+    init_shared_monotonic_clock();
   }
 });
 
@@ -21797,6 +21862,7 @@ var init_daemon_fleet_facts_observer = __esm({
       #startQueued = false;
       #generation = 0;
       #demandVersion = 0;
+      #diagnosticActiveOperations = 0;
       constructor(options) {
         this.#options = options;
         this.#intervalMs = options.intervalMs ?? 2e3;
@@ -21915,23 +21981,93 @@ var init_daemon_fleet_facts_observer = __esm({
         };
       }
       async #cycle(generation, demandEpochs, wantsSessions, wantsAgents) {
-        const [sessions, agents] = await Promise.all([
-          wantsSessions ? this.#options.readSessions() : Promise.resolve(null),
-          wantsAgents ? this.#options.readAgents() : Promise.resolve(null)
-        ]);
-        if (generation !== this.#generation) return;
-        if (wantsSessions && sessions) {
-          const acceptSessions = this.#sameDemandEpoch("sessions", demandEpochs);
-          const acceptAdopted = this.#sameDemandEpoch("adopted", demandEpochs);
-          if (acceptSessions) this.#baselined.add("sessions");
-          if (acceptAdopted) this.#baselined.add("adopted");
-          this.#acceptSessions(sessions, acceptSessions, acceptAdopted);
+        const finish = this.#beginDiagnostic(wantsSessions, wantsAgents);
+        let sessions;
+        let agents;
+        try {
+          [sessions, agents] = await Promise.all([
+            wantsSessions ? this.#options.readSessions() : Promise.resolve(null),
+            wantsAgents ? this.#options.readAgents() : Promise.resolve(null)
+          ]);
+        } catch (error) {
+          finish(false);
+          throw error;
         }
-        if (wantsAgents && agents && this.#sameDemandEpoch("agents", demandEpochs)) {
-          this.#baselined.add("agents");
-          this.#acceptAgents(agents);
+        try {
+          if (generation !== this.#generation) {
+            finish(true);
+            return;
+          }
+          if (wantsSessions && sessions) {
+            const acceptSessions = this.#sameDemandEpoch("sessions", demandEpochs);
+            const acceptAdopted = this.#sameDemandEpoch("adopted", demandEpochs);
+            if (acceptSessions) this.#baselined.add("sessions");
+            if (acceptAdopted) this.#baselined.add("adopted");
+            this.#acceptSessions(sessions, acceptSessions, acceptAdopted);
+          }
+          if (wantsAgents && agents && this.#sameDemandEpoch("agents", demandEpochs)) {
+            this.#baselined.add("agents");
+            this.#acceptAgents(agents);
+          }
+          this.#settleWaiters();
+          finish(true);
+        } catch (error) {
+          finish(false);
+          throw error;
         }
-        this.#settleWaiters();
+      }
+      #beginDiagnostic(wantsSessions, wantsAgents) {
+        const diagnostics = this.#options.diagnostics;
+        if (!diagnostics) return () => void 0;
+        let traceId;
+        let startedAtMicros;
+        try {
+          traceId = diagnostics.createTraceId();
+          startedAtMicros = diagnostics.nowMicros();
+        } catch {
+          return () => void 0;
+        }
+        this.#diagnosticActiveOperations += 1;
+        const publish = (phase, atMicros, succeeded) => {
+          try {
+            diagnostics.publish({
+              operation: "fleet-cycle",
+              phase,
+              traceId,
+              processId: `daemon:${process.pid}`,
+              clockId: "node-performance-now",
+              clockKind: "performance-now",
+              atMicros,
+              activeOperations: this.#diagnosticActiveOperations,
+              sessions: wantsSessions,
+              agents: wantsAgents,
+              ...succeeded === void 0 ? {} : { succeeded }
+            });
+          } catch {
+          }
+        };
+        publish("begin", startedAtMicros);
+        try {
+          (diagnostics.queueMicrotask ?? queueMicrotask)(() => {
+            try {
+              publish("event-loop-sentinel", diagnostics.nowMicros());
+            } catch {
+            }
+          });
+        } catch {
+        }
+        let finished = false;
+        return (succeeded) => {
+          if (finished) return;
+          finished = true;
+          let atMicros = startedAtMicros;
+          try {
+            atMicros = diagnostics.nowMicros();
+          } catch {
+          }
+          publish("end", atMicros, succeeded);
+          this.#diagnosticActiveOperations = Math.max(0, this.#diagnosticActiveOperations - 1);
+        };
       }
       #acceptSessions(next, acceptSessions, acceptAdopted) {
         if (acceptSessions) {
@@ -24199,6 +24335,7 @@ function ensureFleetFactsObserver() {
   };
   fleetFactsObserver ??= new DaemonFleetFactsObserver({
     ...readers,
+    ...fleetFactsDiagnostics ? { diagnostics: fleetFactsDiagnostics } : {},
     onSessionsChanged: broadcastSessionCompositionChanged,
     onTerminalTopologyChanged: broadcastTerminalTopologyChanged,
     onAdoptedChanged: broadcastAdoptedCompositionChanged,
@@ -24209,6 +24346,9 @@ function ensureFleetFactsObserver() {
     }
   });
   return fleetFactsObserver;
+}
+function setFleetFactsObserverDiagnostics(diagnostics) {
+  fleetFactsDiagnostics = diagnostics ?? void 0;
 }
 function acquireGlobalObserver(kind) {
   let releaseAuthority;
@@ -24672,7 +24812,7 @@ async function shutdownWsEventObservation() {
   workspaceResourceObserver = null;
   await observer?.dispose();
 }
-var WS_OPEN2, KEEPALIVE_INTERVAL_MS, allClients, RESOURCE_EVENT_JOURNAL_LIMIT, resourceEventGeneration, resourceEventSequence, resourceEventJournal, resourceRevisions, projectRegistryListener, workspaceRegistryListenerReleases, fleetFactsObserver, fleetFactsReaderOverride, sessionsObserverRefs, projectRegistryObserverRefs, agentStatusObserverRefs, fleetObserverRefs, workspaceResourceObserver, resourceObservationOverride;
+var WS_OPEN2, KEEPALIVE_INTERVAL_MS, allClients, RESOURCE_EVENT_JOURNAL_LIMIT, resourceEventGeneration, resourceEventSequence, resourceEventJournal, resourceRevisions, projectRegistryListener, workspaceRegistryListenerReleases, fleetFactsObserver, fleetFactsDiagnostics, fleetFactsReaderOverride, sessionsObserverRefs, projectRegistryObserverRefs, agentStatusObserverRefs, fleetObserverRefs, workspaceResourceObserver, resourceObservationOverride;
 var init_ws_events = __esm({
   "packages/daemon/src/command-center/ws-events.ts"() {
     "use strict";
@@ -26273,6 +26413,7 @@ var init_mission_repository = __esm({
 });
 
 // packages/daemon/src/lib/workspace-pane-creation.ts
+import { execFile as execFile6 } from "node:child_process";
 import { accessSync as accessSync3, constants as constants4, realpathSync as realpathSync6, statSync as statSync6 } from "node:fs";
 import { delimiter as delimiter2, isAbsolute as isAbsolute8, join as join30, relative as relative4, sep as sep6 } from "node:path";
 function canonicalProjectDir(path2) {
@@ -26396,6 +26537,41 @@ function createPinnedWorkspaceTmuxRunner(authority) {
       stdio: ["ignore", "pipe", "pipe"]
     })
   ).replace(/(?:\r?\n)+$/u, "");
+}
+function createPinnedWorkspaceTmuxAsyncRunner(authority) {
+  const executablePath = realpathSync6(authority.executablePath);
+  accessSync3(executablePath, constants4.X_OK);
+  if (!isAbsolute8(executablePath) || !statSync6(executablePath).isFile()) {
+    throw new TypeError("Pinned tmux executable is invalid.");
+  }
+  const socketArgv = authority.socketSelector.kind === "path" ? (() => {
+    const path2 = realpathSync6(authority.socketSelector.path);
+    if (!isAbsolute8(path2) || !statSync6(path2).isSocket()) {
+      throw new TypeError("Pinned tmux socket is invalid.");
+    }
+    return ["-S", path2];
+  })() : /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(authority.socketSelector.name) ? ["-L", authority.socketSelector.name] : (() => {
+    throw new TypeError("Pinned tmux socket is invalid.");
+  })();
+  const environment = Object.freeze(tmuxClientEnvironment(process.env));
+  return (args, signal) => new Promise((resolve37, reject) => {
+    execFile6(
+      executablePath,
+      [...socketArgv, ...args],
+      {
+        encoding: "utf8",
+        env: environment,
+        maxBuffer: TMUX_OUTPUT_BYTES,
+        timeout: 5e3,
+        ...signal ? { signal } : {},
+        windowsHide: true
+      },
+      (error, stdout) => {
+        if (error) reject(error);
+        else resolve37(stdout.replace(/(?:\r?\n)+$/u, ""));
+      }
+    );
+  });
 }
 function profileCommand(profile) {
   return Array.isArray(profile.command) ? [...profile.command] : ["/bin/sh", "-lc", profile.command];
@@ -31236,7 +31412,7 @@ var init_app_window_mutation2 = __esm({
 });
 
 // packages/daemon/src/lib/tmux-external-interaction-observer.ts
-import { execFile as execFile6 } from "node:child_process";
+import { execFile as execFile7 } from "node:child_process";
 import { z as z70 } from "zod";
 function socketArguments(authority) {
   return authority.socketSelector.kind === "path" ? ["-S", authority.socketSelector.path] : ["-L", authority.socketSelector.name];
@@ -31244,7 +31420,7 @@ function socketArguments(authority) {
 function defaultWaiter(authority) {
   const prefix = socketArguments(authority);
   return (channel, signal) => new Promise((resolve37, reject) => {
-    execFile6(
+    execFile7(
       authority.executablePath,
       [...prefix, "wait-for", channel],
       { signal, encoding: "utf8", windowsHide: true },
@@ -31326,8 +31502,13 @@ var init_tmux_external_interaction_observer = __esm({
       #active = false;
       #installed = false;
       #loop = null;
+      #starting = null;
       #hookHealthcheck = null;
       #drainSequence = 0;
+      #tmuxWork = Promise.resolve();
+      #reconcile = null;
+      #diagnostics;
+      #diagnosticActiveOperations = 0;
       #authenticatedInternalReads;
       constructor(options) {
         this.#daemonInstanceId = options.daemonInstanceId;
@@ -31339,52 +31520,97 @@ var init_tmux_external_interaction_observer = __esm({
         });
         this.#bufferName = `${HOOK_MARKER}-${options.daemonInstanceId}`;
         this.#signalChannel = `${this.#bufferName}-ready`;
+        this.#diagnostics = options.diagnostics ?? null;
         this.#io = {
-          runTmux: options.io?.runTmux ?? createPinnedWorkspaceTmuxRunner(options.tmuxAuthority),
+          runTmux: options.io?.runTmux ?? createPinnedWorkspaceTmuxAsyncRunner(options.tmuxAuthority),
           waitForSignal: options.io?.waitForSignal ?? defaultWaiter(options.tmuxAuthority),
           delay: options.io?.delay ?? abortableDelay
         };
       }
       start() {
-        if (this.#active) return;
+        if (this.#starting) return this.#starting;
+        if (this.#active) return Promise.resolve();
+        const work = this.#start();
+        const settled = work.finally(() => {
+          if (this.#starting === settled) this.#starting = null;
+        });
+        this.#starting = settled;
+        return settled;
+      }
+      async #start() {
         this.#active = true;
+        try {
+          await this.install();
+        } catch (error) {
+          this.#active = false;
+          await this.#serializeTmux(async () => {
+            await this.#removeOwnedHooks();
+            await this.#deleteBuffer(this.#bufferName);
+          });
+          throw error;
+        }
+        if (!this.#active || this.#abort.signal.aborted) {
+          await this.#serializeTmux(async () => {
+            await this.#removeOwnedHooks();
+            await this.#deleteBuffer(this.#bufferName);
+          });
+          throw new Error("tmux external interaction observer was disposed during startup");
+        }
         this.#loop = this.#run();
-        this.#hookHealthcheck = setInterval(() => this.reconcileHooks(), HOOK_HEALTHCHECK_MS);
+        this.#hookHealthcheck = setInterval(() => void this.reconcileHooks(), HOOK_HEALTHCHECK_MS);
         this.#hookHealthcheck.unref?.();
       }
+      setDiagnostics(diagnostics) {
+        this.#diagnostics = diagnostics;
+      }
       async dispose() {
-        if (!this.#active && !this.#loop) return;
+        if (!this.#active && !this.#loop && !this.#starting) return;
+        const starting = this.#starting;
         this.#active = false;
         this.#abort.abort();
         if (this.#hookHealthcheck) clearInterval(this.#hookHealthcheck);
         this.#hookHealthcheck = null;
-        await this.#loop;
+        await Promise.allSettled([starting, this.#loop]);
         this.#loop = null;
-        this.#removeOwnedHooks();
-        this.#deleteBuffer(this.#bufferName);
+        await this.#serializeTmux(async () => {
+          await this.#removeOwnedHooks();
+          await this.#deleteBuffer(this.#bufferName);
+        });
       }
       /** Install the hook once. Public for hermetic lifecycle tests. */
       install() {
-        this.#removeOwnedHooks();
-        this.#deleteOwnedBuffers();
+        return this.#serializeTmux(() => this.#install(this.#abort.signal));
+      }
+      async #install(signal) {
+        await this.#removeOwnedHooks(signal);
+        await this.#deleteOwnedBuffers(signal);
+        signal?.throwIfAborted();
         const hook = (operationKind, markerOption, consumeMarker) => {
           const data = `#{pane_id}${FIELD_SEPARATOR}#{q:${markerOption}}${FIELD_SEPARATOR}${operationKind}${EVENT_SEPARATOR}`;
           const publish = `run-shell -b -C "set-buffer -a -b '${this.#bufferName}' '${data}' ; wait-for -S '${this.#signalChannel}'"`;
           const consume = consumeMarker ? ` ; set-option -pu '${markerOption}'` : "";
           return `${publish}${consume}`;
         };
-        this.#io.runTmux([
-          "set-hook",
-          "-ag",
-          "after-send-keys",
-          hook("workspace.pane.send", INTERNAL_SEND_OPERATION_OPTION, true)
-        ]);
-        this.#io.runTmux([
-          "set-hook",
-          "-ag",
-          "after-capture-pane",
-          hook("workspace.pane.read", INTERNAL_READ_OPERATION_OPTION, true)
-        ]);
+        await this.#io.runTmux(
+          [
+            "set-hook",
+            "-ag",
+            "after-send-keys",
+            hook("workspace.pane.send", INTERNAL_SEND_OPERATION_OPTION, true)
+          ],
+          signal
+        );
+        signal?.throwIfAborted();
+        await this.#io.runTmux(
+          [
+            "set-hook",
+            "-ag",
+            "after-capture-pane",
+            hook("workspace.pane.read", INTERNAL_READ_OPERATION_OPTION, true)
+          ],
+          signal
+        );
+        signal?.throwIfAborted();
         this.#installed = true;
       }
       /**
@@ -31392,49 +31618,85 @@ var init_tmux_external_interaction_observer = __esm({
        * Public only so the lifecycle is hermetically testable; the production
        * observer invokes it from a cheap one-second health check.
        */
-      reconcileHooks() {
-        if (this.#ownedHooksPresent()) return;
-        this.#installed = false;
-        try {
-          this.install();
-        } catch {
-          this.#installed = false;
-        }
+      reconcileHooks(options = {}) {
+        if (!this.#active && options.allowInactive !== true) return Promise.resolve();
+        if (this.#reconcile) return this.#reconcile;
+        const work = this.#serializeTmux(async () => {
+          const finish = this.#beginDiagnostic("healthcheck");
+          try {
+            if (await this.#ownedHooksPresent(this.#abort.signal)) {
+              finish(true);
+              return;
+            }
+            this.#installed = false;
+            try {
+              await this.#install(this.#abort.signal);
+            } catch {
+              this.#installed = false;
+            }
+            finish(this.#installed);
+          } catch (error) {
+            finish(false);
+            throw error;
+          }
+        });
+        const settled = work.finally(() => {
+          if (this.#reconcile === settled) this.#reconcile = null;
+        });
+        this.#reconcile = settled;
+        return settled;
       }
       /** Atomically detach and drain the current event buffer. */
       drain() {
+        return this.#serializeTmux(() => this.#drain());
+      }
+      async #drain() {
+        const finish = this.#beginDiagnostic("drain");
         const drainName = `${this.#bufferName}-drain-${++this.#drainSequence}`;
         try {
-          this.#io.runTmux(["set-buffer", "-b", this.#bufferName, "-n", drainName]);
+          await this.#io.runTmux(
+            ["set-buffer", "-b", this.#bufferName, "-n", drainName],
+            this.#abort.signal
+          );
         } catch {
+          finish(false);
           return false;
         }
         let raw;
         try {
-          raw = this.#io.runTmux(["show-buffer", "-b", drainName]);
+          raw = await this.#io.runTmux(["show-buffer", "-b", drainName], this.#abort.signal);
+        } catch {
+          finish(false);
+          return false;
         } finally {
-          this.#deleteBuffer(drainName);
+          await this.#deleteBuffer(drainName);
         }
         let consumed = false;
-        for (const record of parseTmuxInputHookRecords(raw)) {
-          consumed = this.#project(record) || consumed;
+        try {
+          for (const record of parseTmuxInputHookRecords(raw)) {
+            consumed = await this.#project(record) || consumed;
+          }
+        } catch (error) {
+          finish(false);
+          throw error;
         }
+        finish(true);
         return consumed;
       }
       async #run() {
         while (this.#active && !this.#abort.signal.aborted) {
           try {
-            if (!this.#installed) this.install();
+            if (!this.#installed) await this.install();
             await this.#io.waitForSignal(this.#signalChannel, this.#abort.signal);
             if (!this.#active || this.#abort.signal.aborted) break;
-            this.drain();
+            await this.drain();
           } catch {
             this.#installed = false;
             await this.#io.delay(RETRY_MS, this.#abort.signal);
           }
         }
       }
-      #project(record) {
+      async #project(record) {
         if (consumeInternalReadOperation(
           record.operationMarker,
           record.runtimePaneId,
@@ -31451,13 +31713,16 @@ var init_tmux_external_interaction_observer = __esm({
         const operationId = z70.uuid().safeParse(authoredOperationId);
         let identity;
         try {
-          identity = this.#io.runTmux([
-            "display-message",
-            "-p",
-            "-t",
-            record.runtimePaneId,
-            `#{session_name}	#{${"@tmux_ide_pane_id"}}`
-          ]);
+          identity = await this.#io.runTmux(
+            [
+              "display-message",
+              "-p",
+              "-t",
+              record.runtimePaneId,
+              `#{session_name}	#{${"@tmux_ide_pane_id"}}`
+            ],
+            this.#abort.signal
+          );
         } catch {
           return false;
         }
@@ -31475,28 +31740,28 @@ var init_tmux_external_interaction_observer = __esm({
           operationId: operationId.success ? operationId.data : null
         });
       }
-      #removeOwnedHooks() {
+      async #removeOwnedHooks(signal) {
         for (const hookName of ["after-send-keys", "after-capture-pane"]) {
           let output;
           try {
-            output = this.#io.runTmux(["show-hooks", "-g", hookName]);
+            output = await this.#io.runTmux(["show-hooks", "-g", hookName], signal);
           } catch {
             continue;
           }
           for (const index of hookIndexes(output, hookName)) {
             try {
-              this.#io.runTmux(["set-hook", "-gu", `${hookName}[${index}]`]);
+              await this.#io.runTmux(["set-hook", "-gu", `${hookName}[${index}]`], signal);
             } catch {
             }
           }
         }
         this.#installed = false;
       }
-      #ownedHooksPresent() {
+      async #ownedHooksPresent(signal) {
         for (const hookName of ["after-send-keys", "after-capture-pane"]) {
           let output;
           try {
-            output = this.#io.runTmux(["show-hooks", "-g", hookName]);
+            output = await this.#io.runTmux(["show-hooks", "-g", hookName], signal);
           } catch {
             return false;
           }
@@ -31504,22 +31769,81 @@ var init_tmux_external_interaction_observer = __esm({
         }
         return true;
       }
-      #deleteOwnedBuffers() {
+      async #deleteOwnedBuffers(signal) {
         let output;
         try {
-          output = this.#io.runTmux(["list-buffers", "-F", "#{buffer_name}"]);
+          output = await this.#io.runTmux(["list-buffers", "-F", "#{buffer_name}"], signal);
         } catch {
           return;
         }
         for (const name of output.split("\n")) {
-          if (name.startsWith(OWNED_HOOK_MARKER)) this.#deleteBuffer(name);
+          if (name.startsWith(OWNED_HOOK_MARKER)) await this.#deleteBuffer(name, signal);
         }
       }
-      #deleteBuffer(name) {
+      async #deleteBuffer(name, signal) {
         try {
-          this.#io.runTmux(["delete-buffer", "-b", name]);
+          await this.#io.runTmux(["delete-buffer", "-b", name], signal);
         } catch {
         }
+      }
+      #serializeTmux(operation) {
+        const next = this.#tmuxWork.then(operation, operation);
+        this.#tmuxWork = next.then(
+          () => void 0,
+          () => void 0
+        );
+        return next;
+      }
+      #beginDiagnostic(operation) {
+        const diagnostics = this.#diagnostics;
+        if (!diagnostics) return () => void 0;
+        let traceId;
+        let startedAtMicros;
+        try {
+          traceId = diagnostics.createTraceId();
+          startedAtMicros = diagnostics.nowMicros();
+        } catch {
+          return () => void 0;
+        }
+        this.#diagnosticActiveOperations += 1;
+        const publish = (phase, atMicros, succeeded) => {
+          try {
+            diagnostics.publish({
+              operation,
+              phase,
+              traceId,
+              processId: `daemon:${process.pid}`,
+              clockId: "node-performance-now",
+              clockKind: "performance-now",
+              atMicros,
+              activeOperations: this.#diagnosticActiveOperations,
+              ...succeeded === void 0 ? {} : { succeeded }
+            });
+          } catch {
+          }
+        };
+        publish("begin", startedAtMicros);
+        try {
+          (diagnostics.queueMicrotask ?? queueMicrotask)(() => {
+            try {
+              publish("event-loop-sentinel", diagnostics.nowMicros());
+            } catch {
+            }
+          });
+        } catch {
+        }
+        let finished = false;
+        return (succeeded) => {
+          if (finished) return;
+          finished = true;
+          let atMicros = startedAtMicros;
+          try {
+            atMicros = diagnostics.nowMicros();
+          } catch {
+          }
+          publish("end", atMicros, succeeded);
+          this.#diagnosticActiveOperations = Math.max(0, this.#diagnosticActiveOperations - 1);
+        };
       }
     };
   }
@@ -32409,7 +32733,7 @@ function createSessionRuntimeObservability(options = {}) {
         authority
       });
     },
-    recordSpan(stage, operation, startedAtMicros, endedAtMicros, trace = null) {
+    recordSpan(stage, operation, startedAtMicros, endedAtMicros, trace = null, shared) {
       const span = Object.freeze({
         traceId: trace?.traceId ?? null,
         scenario: trace?.scenario ?? null,
@@ -32420,7 +32744,11 @@ function createSessionRuntimeObservability(options = {}) {
         clockKind,
         operation,
         startedAtMicros,
-        endedAtMicros
+        endedAtMicros,
+        ...shared ? {
+          sharedStartedAtMicros: shared.startedAtMicros,
+          sharedEndedAtMicros: shared.endedAtMicros
+        } : {}
       });
       if (spans.length < capacity) spans.push(span);
       else {
@@ -35707,48 +36035,61 @@ function blankTerminalReplicaSnapshot(cols, rows) {
     bootstrap: { kind: "painted-capture", hiddenState: "unknown" }
   });
 }
-function applyTerminalReplicaUpdate(current, update) {
-  const receivedFrameHash = hashStable(update);
+function applyTerminalReplicaUpdate(current, update, options = {}) {
+  const profile = options.instrumentation ? createApplyProfile() : void 0;
+  const receivedFrameHash = resolveFrameHash(update, options, profile);
+  const complete = (result) => {
+    if (profile && options.instrumentation) {
+      try {
+        options.instrumentation.onComplete(freezeProfile(profile));
+      } catch {
+      }
+    }
+    return result;
+  };
   if (update.type === "terminal.seed") {
     if (update.hashAlgorithm !== "fnv1a64-v1" || !terminalReplicaSnapshotIsValid(update.snapshot)) {
-      return current ? protocolConflict(current, update.revision) : {
-        status: "conflict",
-        state: null,
-        expectedRevision: 0,
-        receivedRevision: update.revision
-      };
+      return complete(
+        current ? protocolConflict(current, update.revision) : {
+          status: "conflict",
+          state: null,
+          expectedRevision: 0,
+          receivedRevision: update.revision
+        }
+      );
     }
-    const hash2 = hashTerminalReplicaSnapshot(update.snapshot);
+    const frozenSnapshot = freezeSnapshot(update.snapshot);
+    const hash2 = hashTerminalReplicaSnapshot(frozenSnapshot);
     if (current && (current.workspaceName !== update.workspaceName || current.semanticPaneId !== update.semanticPaneId)) {
-      return protocolConflict(current, update.revision);
+      return complete(protocolConflict(current, update.revision));
     }
     if (current && current.generation !== update.generation) {
-      return protocolConflict(current, update.revision);
+      return complete(protocolConflict(current, update.revision));
     }
     if (current && current.incarnation !== update.incarnation && (!isNewerIncarnation(current.incarnation, update.incarnation) || update.revision <= current.revision)) {
-      return protocolConflict(current, update.revision);
+      return complete(protocolConflict(current, update.revision));
     }
     if (current?.generation === update.generation && current.revision === update.revision && current.hash === hash2 && update.stateHash === hash2 && current.incarnation === update.incarnation && current.frameHash === receivedFrameHash) {
-      return { status: "idempotent", state: current };
+      return complete({ status: "idempotent", state: current });
     }
     if (current?.generation === update.generation && current.revision === update.revision && current.hash !== update.stateHash) {
-      return {
+      return complete({
         status: "conflict",
         state: current,
         expectedRevision: current.revision,
         receivedRevision: update.revision
-      };
+      });
     }
     if (hash2 !== update.stateHash || update.cols !== update.snapshot.cols || update.rows !== update.snapshot.rows) {
-      return {
+      return complete({
         status: "conflict",
         state: current,
         expectedRevision: current?.revision ?? 0,
         receivedRevision: update.revision
-      };
+      });
     }
     if (current?.generation === update.generation && current.incarnation === update.incarnation && update.revision < current.revision) {
-      return { status: "stale", state: current };
+      return complete({ status: "stale", state: current });
     }
     const state2 = Object.freeze({
       workspaceName: update.workspaceName,
@@ -35756,59 +36097,64 @@ function applyTerminalReplicaUpdate(current, update) {
       generation: update.generation,
       revision: update.revision,
       incarnation: update.incarnation,
-      snapshot: freezeSnapshot(update.snapshot),
+      snapshot: frozenSnapshot,
       tombstone: null,
       hash: hash2,
       frameHash: receivedFrameHash
     });
-    return { status: "applied", state: state2 };
+    return complete({ status: "applied", state: state2 });
   }
   if (current === null || current.generation !== update.generation) {
-    return {
+    return complete({
       status: "gap",
       state: current,
       expectedRevision: current === null ? 0 : current.revision + 1,
       receivedRevision: update.revision
-    };
+    });
   }
-  if (update.hashAlgorithm !== "fnv1a64-v1") return protocolConflict(current, update.revision);
+  if (update.hashAlgorithm !== "fnv1a64-v1")
+    return complete(protocolConflict(current, update.revision));
   if (current.workspaceName !== update.workspaceName || current.semanticPaneId !== update.semanticPaneId) {
-    return protocolConflict(current, update.revision);
+    return complete(protocolConflict(current, update.revision));
   }
   if (current.incarnation !== update.incarnation) {
-    return {
+    return complete({
       status: "gap",
       state: current,
       expectedRevision: current.revision + 1,
       receivedRevision: update.revision
-    };
+    });
   }
   if (update.revision <= current.revision) {
     if (update.type === "terminal.tombstone") {
-      return update.revision === current.revision && update.baseRevision === current.revision - 1 && update.stateHash === current.hash && current.tombstone?.reason === update.tombstone.reason && current.frameHash === receivedFrameHash ? { status: "idempotent", state: current } : update.revision === current.revision ? protocolConflict(current, update.revision) : { status: "stale", state: current };
+      return complete(
+        update.revision === current.revision && update.baseRevision === current.revision - 1 && update.stateHash === current.hash && current.tombstone?.reason === update.tombstone.reason && current.frameHash === receivedFrameHash ? { status: "idempotent", state: current } : update.revision === current.revision ? protocolConflict(current, update.revision) : { status: "stale", state: current }
+      );
     }
-    return update.revision === current.revision && update.baseRevision === current.revision - 1 && update.stateHash === current.hash && update.cols === current.snapshot?.cols && update.rows === current.snapshot?.rows && current.frameHash === receivedFrameHash ? { status: "idempotent", state: current } : update.revision === current.revision ? protocolConflict(current, update.revision) : { status: "stale", state: current };
+    return complete(
+      update.revision === current.revision && update.baseRevision === current.revision - 1 && update.stateHash === current.hash && update.cols === current.snapshot?.cols && update.rows === current.snapshot?.rows && current.frameHash === receivedFrameHash ? { status: "idempotent", state: current } : update.revision === current.revision ? protocolConflict(current, update.revision) : { status: "stale", state: current }
+    );
   }
   if (update.baseRevision !== current.revision || update.revision !== current.revision + 1) {
-    return {
+    return complete({
       status: "gap",
       state: current,
       expectedRevision: current.revision + 1,
       receivedRevision: update.revision
-    };
+    });
   }
   if (update.type === "terminal.tombstone") {
     if (current.snapshot && (update.cols !== current.snapshot.cols || update.rows !== current.snapshot.rows)) {
-      return protocolConflict(current, update.revision);
+      return complete(protocolConflict(current, update.revision));
     }
     const hash2 = hashStable(["tombstone", update.tombstone.reason]);
     if (hash2 !== update.stateHash) {
-      return {
+      return complete({
         status: "conflict",
         state: current,
         expectedRevision: current.revision + 1,
         receivedRevision: update.revision
-      };
+      });
     }
     const state2 = Object.freeze({
       ...current,
@@ -35818,30 +36164,35 @@ function applyTerminalReplicaUpdate(current, update) {
       hash: hash2,
       frameHash: receivedFrameHash
     });
-    return { status: "applied", state: state2 };
+    return complete({ status: "applied", state: state2 });
   }
   if (current.snapshot === null) {
-    return {
+    return complete({
       status: "conflict",
       state: current,
       expectedRevision: current.revision + 1,
       receivedRevision: update.revision
-    };
+    });
   }
   let snapshot;
   try {
-    snapshot = applyTerminalReplicaPatch(current.snapshot, update.patch);
+    snapshot = applyTerminalReplicaPatchProfiled(
+      current.snapshot,
+      update.patch,
+      profile,
+      options.instrumentation
+    );
   } catch {
-    return protocolConflict(current, update.revision);
+    return complete(protocolConflict(current, update.revision));
   }
-  const hash = hashTerminalReplicaSnapshot(snapshot);
+  const hash = hashTerminalReplicaSnapshotProfiled(snapshot, profile, options.instrumentation);
   if (hash !== update.stateHash || snapshot.cols !== update.cols || snapshot.rows !== update.rows) {
-    return {
+    return complete({
       status: "conflict",
       state: current,
       expectedRevision: current.revision + 1,
       receivedRevision: update.revision
-    };
+    });
   }
   const state = Object.freeze({
     ...current,
@@ -35851,18 +36202,26 @@ function applyTerminalReplicaUpdate(current, update) {
     hash,
     frameHash: receivedFrameHash
   });
-  return { status: "applied", state };
+  return complete({ status: "applied", state });
 }
 function applyTerminalReplicaPatch(current, patch) {
+  return applyTerminalReplicaPatchProfiled(current, patch);
+}
+function applyTerminalReplicaPatchProfiled(current, patch, profile, instrumentation) {
   const cols = patch.dimensions?.cols ?? current.cols;
   const rows = patch.dimensions?.rows ?? current.rows;
   const seen = /* @__PURE__ */ new Set();
+  const preparedRows = [];
+  const prepareStarted = readProfileClock(instrumentation);
   for (const change of patch.rows) {
-    if (change.index >= rows || change.row.cells.length !== cols || !terminalReplicaRowIsValid(change.row) || seen.has(change.index)) {
+    if (change.index >= rows || change.row.cells.length !== cols || seen.has(change.index)) {
       throw new TypeError("Malformed terminal replica row patch");
     }
     seen.add(change.index);
+    preparedRows.push({ index: change.index, row: validateAndFreezeRow(change.row, profile) });
   }
+  addProfileDuration(profile, "rowValidationFreeze", prepareStarted, instrumentation);
+  if (profile) profile.counts.patchedRows += preparedRows.length;
   const cursor = patch.cursor ?? current.cursor;
   if (cursor.x >= cols || cursor.y >= rows) throw new TypeError("Terminal cursor is out of bounds");
   if (patch.history?.some((row) => row.cells.length !== cols || !terminalReplicaRowIsValid(row)))
@@ -35894,13 +36253,15 @@ function applyTerminalReplicaPatch(current, patch) {
   } else {
     grid = current.grid;
   }
-  if (patch.rows.length > 0) {
+  if (preparedRows.length > 0) {
     const next = [...grid];
     let changed = false;
-    for (const change of patch.rows) {
-      const row = freezeRow(change.row);
-      if (!terminalReplicaRowsEqual(next[change.index], row)) {
-        next[change.index] = row;
+    for (const change of preparedRows) {
+      const equalityStarted = readProfileClock(instrumentation);
+      const equal = terminalReplicaRowsEqualProfiled(next[change.index], change.row, profile);
+      addProfileDuration(profile, "rowEquality", equalityStarted, instrumentation);
+      if (!equal) {
+        next[change.index] = change.row;
         changed = true;
       }
     }
@@ -35933,9 +36294,13 @@ function applyTerminalReplicaPatch(current, patch) {
   return Object.freeze(candidate);
 }
 function terminalReplicaRowsEqual(left, right) {
+  return terminalReplicaRowsEqualProfiled(left, right);
+}
+function terminalReplicaRowsEqualProfiled(left, right, profile) {
   if (!left || left === right || left.wrapped !== right.wrapped || left.cells.length !== right.cells.length)
     return left === right;
   for (let index = 0; index < left.cells.length; index += 1) {
+    if (profile) profile.counts.comparedCells += 1;
     const a = left.cells[index];
     const b = right.cells[index];
     if (a.grapheme !== b.grapheme || a.width !== b.width || a.attributes !== b.attributes || !colorsEqual(a.foreground, b.foreground) || !colorsEqual(a.background, b.background))
@@ -35944,17 +36309,23 @@ function terminalReplicaRowsEqual(left, right) {
   return true;
 }
 function hashTerminalReplicaSnapshot(snapshot) {
-  return hashStable([
+  return hashTerminalReplicaSnapshotProfiled(snapshot);
+}
+function hashTerminalReplicaSnapshotProfiled(snapshot, profile, instrumentation) {
+  const started = readProfileClock(instrumentation);
+  const hash = hashStable([
     "terminal-replica-v1",
     snapshot.cols,
     snapshot.rows,
-    hashTerminalReplicaRows(snapshot.grid),
-    hashTerminalReplicaRows(snapshot.history),
+    hashTerminalReplicaRows(snapshot.grid, profile, instrumentation),
+    hashTerminalReplicaRows(snapshot.history, profile, instrumentation),
     snapshot.cursor,
     snapshot.modes,
     snapshot.placements,
     snapshot.bootstrap
   ]);
+  addProfileDuration(profile, "snapshotHash", started, instrumentation);
+  return hash;
 }
 function hashTerminalReplicaTombstone(reason) {
   return hashStable(["tombstone", reason]);
@@ -35991,6 +36362,27 @@ function freezeRow(row) {
         })
       )
     )
+  });
+}
+function validateAndFreezeRow(row, profile) {
+  const cells = new Array(row.cells.length);
+  for (let index = 0; index < row.cells.length; index += 1) {
+    const cell = row.cells[index];
+    if (profile) profile.counts.validatedCells += 1;
+    if (cell.width === 2 && row.cells[index + 1]?.width !== 0)
+      throw new TypeError("Malformed terminal replica row");
+    if (cell.width === 0 && (index === 0 || row.cells[index - 1]?.width !== 2))
+      throw new TypeError("Malformed terminal replica row");
+    cells[index] = Object.freeze({
+      ...cell,
+      foreground: Object.freeze({ ...cell.foreground }),
+      background: Object.freeze({ ...cell.background })
+    });
+    if (profile) profile.counts.frozenCells += 1;
+  }
+  return Object.freeze({
+    wrapped: row.wrapped,
+    cells: Object.freeze(cells)
   });
 }
 function freezeTerminalReplicaRow(row) {
@@ -36050,6 +36442,58 @@ function canonicalEncode(value) {
   const keys = Object.keys(record).sort();
   return `o${keys.length}:${keys.map((key) => `${canonicalEncode(key)}${canonicalEncode(record[key])}`).join("")};`;
 }
+function createApplyProfile() {
+  return {
+    reusedAuthenticatedFrameHash: false,
+    phaseMicros: {
+      updateHash: 0,
+      rowValidationFreeze: 0,
+      rowEquality: 0,
+      rowHash: 0,
+      snapshotHash: 0
+    },
+    counts: {
+      patchedRows: 0,
+      validatedCells: 0,
+      frozenCells: 0,
+      comparedCells: 0,
+      rowHashMisses: 0
+    }
+  };
+}
+function freezeProfile(profile) {
+  return Object.freeze({
+    reusedAuthenticatedFrameHash: profile.reusedAuthenticatedFrameHash,
+    phaseMicros: Object.freeze({ ...profile.phaseMicros }),
+    counts: Object.freeze({ ...profile.counts })
+  });
+}
+function resolveFrameHash(update, options, profile) {
+  const authenticated = options.authenticatedFrameHash;
+  if (authenticated && /^[0-9a-f]{16}$/u.test(authenticated)) {
+    if (profile) profile.reusedAuthenticatedFrameHash = true;
+    return authenticated;
+  }
+  const started = readProfileClock(options.instrumentation);
+  const hash = hashStable(update);
+  addProfileDuration(profile, "updateHash", started, options.instrumentation);
+  return hash;
+}
+function readProfileClock(instrumentation) {
+  if (!instrumentation) return void 0;
+  try {
+    const value = instrumentation.nowMicros();
+    return Number.isFinite(value) ? value : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function addProfileDuration(profile, phase, startedAtMicros, instrumentation) {
+  if (!profile || startedAtMicros === void 0) return;
+  const endedAtMicros = readProfileClock(instrumentation);
+  if (endedAtMicros === void 0 || endedAtMicros < startedAtMicros) return;
+  profile.phaseMicros[phase] += endedAtMicros - startedAtMicros;
+}
 function protocolConflict(current, receivedRevision) {
   return {
     status: "conflict",
@@ -36063,9 +36507,11 @@ function isNewerIncarnation(current, candidate) {
   const candidateEpoch = /:([0-9]+)$/u.exec(candidate)?.[1];
   return currentEpoch !== void 0 && candidateEpoch !== void 0 && Number(candidateEpoch) > Number(currentEpoch);
 }
-function hashTerminalReplicaRow(row) {
+function hashTerminalReplicaRow(row, profile, instrumentation) {
   const cached2 = ROW_HASH_CACHE.get(row);
   if (cached2) return cached2;
+  if (profile) profile.counts.rowHashMisses += 1;
+  const started = readProfileClock(instrumentation);
   const hash = hashStable([
     row.wrapped,
     row.cells.map((cell) => [
@@ -36076,17 +36522,18 @@ function hashTerminalReplicaRow(row) {
       cell.attributes
     ])
   ]);
+  addProfileDuration(profile, "rowHash", started, instrumentation);
   if (Object.isFrozen(row)) ROW_HASH_CACHE.set(row, hash);
   return hash;
 }
-function hashTerminalReplicaRows(rows) {
+function hashTerminalReplicaRows(rows, profile, instrumentation) {
   const cached2 = ROW_ARRAY_HASH_CACHE.get(rows);
   if (cached2) return cached2.hash.toString(16).padStart(16, "0");
   let hash = 0n;
   for (const row of rows)
     hash = BigInt.asUintN(
       64,
-      hash * ROW_SEQUENCE_BASE + BigInt(`0x${hashTerminalReplicaRow(row)}`)
+      hash * ROW_SEQUENCE_BASE + BigInt(`0x${hashTerminalReplicaRow(row, profile, instrumentation)}`)
     );
   if (Object.isFrozen(rows)) ROW_ARRAY_HASH_CACHE.set(rows, { hash, length: rows.length });
   return hash.toString(16).padStart(16, "0");
@@ -42877,15 +43324,9 @@ var init_xterm_terminal_interpreter_backend = __esm({
 });
 
 // packages/daemon/src/terminal/session-runtime/causal-cell-ledger.ts
-function snapshotsMatchExceptDeclaredCell(baseline, candidate, probe) {
-  const { row, column, cols, rows } = probe.geometry;
-  if (baseline.cols !== cols || baseline.rows !== rows) return false;
-  if (candidate.cols !== cols || candidate.rows !== rows) return false;
-  if (JSON.stringify(baseline.grid[row]?.cells[column]) !== JSON.stringify(probe.before))
-    return false;
-  if (JSON.stringify(candidate.grid[row]?.cells[column]) !== JSON.stringify(probe.after))
-    return false;
-  const expected = {
+function expectedSnapshot(baseline, probe) {
+  const { row, column } = probe.geometry;
+  return {
     ...baseline,
     grid: baseline.grid.map(
       (entry, rowIndex) => rowIndex === row ? {
@@ -42896,12 +43337,136 @@ function snapshotsMatchExceptDeclaredCell(baseline, candidate, probe) {
       } : entry
     )
   };
-  return JSON.stringify(expected) === JSON.stringify(candidate);
+}
+function recordEquals(left, right, keys) {
+  return keys.every((key) => left[key] === right[key]);
+}
+function colorsEqual2(left, right) {
+  return left.kind === right.kind && (left.kind === "default" || left.kind === "indexed" && right.kind === "indexed" && left.index === right.index || left.kind === "rgb" && right.kind === "rgb" && left.value === right.value);
+}
+function cellsEqual(left, right) {
+  return left === right || left !== void 0 && right !== void 0 && left.grapheme === right.grapheme && left.width === right.width && left.attributes === right.attributes && colorsEqual2(left.foreground, right.foreground) && colorsEqual2(left.background, right.background);
+}
+function snapshotsSemanticallyEqual(left, right) {
+  if (left.cols !== right.cols || left.rows !== right.rows || left.grid.length !== right.grid.length || left.history.length !== right.history.length || !left.grid.every((row, index) => terminalReplicaRowsEqual(row, right.grid[index])) || !left.history.every((row, index) => terminalReplicaRowsEqual(row, right.history[index])) || !recordEquals(left.cursor, right.cursor, ["x", "y", "hidden", "style", "blink"]) || !recordEquals(left.modes, right.modes, [
+    "alternateScreen",
+    "applicationCursor",
+    "applicationKeypad",
+    "bracketedPaste",
+    "insert",
+    "origin",
+    "wraparound",
+    "mouseTracking",
+    "synchronizedOutput"
+  ]) || left.placements.length !== right.placements.length || !left.placements.every(
+    (placement, index) => recordEquals(placement, right.placements[index], [
+      "id",
+      "kind",
+      "row",
+      "column",
+      "columns",
+      "rows",
+      "contentDigest"
+    ])
+  ) || !recordEquals(left.bootstrap, right.bootstrap, ["kind", "hiddenState"]))
+    return false;
+  return true;
+}
+function snapshotsMatchExceptDeclaredCell(baseline, candidate, probe) {
+  const { row, column, cols, rows } = probe.geometry;
+  if (baseline.cols !== cols || baseline.rows !== rows) return false;
+  if (candidate.cols !== cols || candidate.rows !== rows) return false;
+  if (!cellsEqual(baseline.grid[row]?.cells[column], probe.before)) return false;
+  if (!cellsEqual(candidate.grid[row]?.cells[column], probe.after)) return false;
+  return snapshotsSemanticallyEqual(expectedSnapshot(baseline, probe), candidate);
+}
+function structuralDiff(baseline, candidate, probe, revision, stateHash) {
+  const changedCoordinates = [];
+  const changedRows = /* @__PURE__ */ new Set();
+  const changedWrappedRows = [];
+  let changedWrappedRowCount = 0;
+  let changedCellCount = 0;
+  const rows = Math.max(baseline.grid.length, candidate.grid.length);
+  for (let row = 0; row < rows; row += 1) {
+    const before = baseline.grid[row]?.cells ?? [];
+    const after = candidate.grid[row]?.cells ?? [];
+    const columns = Math.max(before.length, after.length);
+    if (baseline.grid[row]?.wrapped !== candidate.grid[row]?.wrapped) {
+      changedWrappedRowCount += 1;
+      if (changedWrappedRows.length < 8) changedWrappedRows.push(row);
+    }
+    for (let column = 0; column < columns; column += 1) {
+      if (cellsEqual(before[column], after[column])) continue;
+      changedCellCount += 1;
+      changedRows.add(row);
+      if (changedCoordinates.length < 8) changedCoordinates.push({ row, column });
+    }
+  }
+  const expected = expectedSnapshot(baseline, probe);
+  const semanticSnapshotMatched = snapshotsSemanticallyEqual(expected, candidate);
+  return Object.freeze({
+    version: 1,
+    baselineRevision: probe.baselineRevision,
+    baselineStateHash: probe.baselineStateHash,
+    candidateRevision: revision,
+    candidateStateHash: stateHash,
+    dimensionsChanged: baseline.cols !== candidate.cols || baseline.rows !== candidate.rows,
+    changedCellCount,
+    changedRowCount: changedRows.size,
+    changedCoordinates,
+    coordinatesTruncated: changedCellCount > changedCoordinates.length,
+    changedWrappedRowCount,
+    changedWrappedRows,
+    wrappedRowsTruncated: changedWrappedRowCount > changedWrappedRows.length,
+    targetMatched: cellsEqual(
+      candidate.grid[probe.geometry.row]?.cells[probe.geometry.column],
+      probe.after
+    ),
+    cursorChanged: !recordEquals(baseline.cursor, candidate.cursor, [
+      "x",
+      "y",
+      "hidden",
+      "style",
+      "blink"
+    ]),
+    modesChanged: !recordEquals(baseline.modes, candidate.modes, [
+      "alternateScreen",
+      "applicationCursor",
+      "applicationKeypad",
+      "bracketedPaste",
+      "insert",
+      "origin",
+      "wraparound",
+      "mouseTracking",
+      "synchronizedOutput"
+    ]),
+    historyChanged: baseline.history.length !== candidate.history.length || !baseline.history.every(
+      (row, index) => terminalReplicaRowsEqual(row, candidate.history[index])
+    ),
+    placementsChanged: baseline.placements.length !== candidate.placements.length || !baseline.placements.every(
+      (placement, index) => recordEquals(placement, candidate.placements[index], [
+        "id",
+        "kind",
+        "row",
+        "column",
+        "columns",
+        "rows",
+        "contentDigest"
+      ])
+    ),
+    bootstrapChanged: !recordEquals(baseline.bootstrap, candidate.bootstrap, [
+      "kind",
+      "hiddenState"
+    ]),
+    semanticSnapshotMatched,
+    serializationOrderOnly: semanticSnapshotMatched && JSON.stringify(expected) !== JSON.stringify(candidate)
+  });
 }
 var CAUSAL_CELL_OSC, CAUSAL_CELL_OSC_PREFIX, MAX_CAUSAL_CELL_COMMITS, MAX_CAUSAL_CELL_REVISION_ADVANCE, MAX_CAUSAL_CELL_MARKER_BYTES, CausalCellLedger;
 var init_causal_cell_ledger = __esm({
   "packages/daemon/src/terminal/session-runtime/causal-cell-ledger.ts"() {
     "use strict";
+    init_src3();
     CAUSAL_CELL_OSC = 6973;
     CAUSAL_CELL_OSC_PREFIX = "tmux-ide-causal-cell-v1";
     MAX_CAUSAL_CELL_COMMITS = 64;
@@ -42962,13 +43527,20 @@ var init_causal_cell_ledger = __esm({
         if (revision - this.#probe.baselineRevision > MAX_CAUSAL_CELL_REVISION_ADVANCE)
           return this.#fail("ambiguous-delta");
         if (this.#state === "armed") {
-          if (JSON.stringify(snapshot) !== JSON.stringify(this.#baseline)) this.#fail("baseline-drift");
+          if (!snapshotsSemanticallyEqual(snapshot, this.#baseline))
+            this.#fail(
+              "baseline-drift",
+              structuralDiff(this.#baseline, snapshot, this.#probe, revision, stateHash)
+            );
           return;
         }
-        const unchanged = JSON.stringify(snapshot) === JSON.stringify(this.#baseline);
+        const unchanged = snapshotsSemanticallyEqual(snapshot, this.#baseline);
         if (unchanged && this.#state === "open") return;
         if (!snapshotsMatchExceptDeclaredCell(this.#baseline, snapshot, this.#probe)) {
-          this.#fail(unchanged ? "no-op" : "ambiguous-delta");
+          this.#fail(
+            unchanged ? "no-op" : "ambiguous-delta",
+            structuralDiff(this.#baseline, snapshot, this.#probe, revision, stateHash)
+          );
           return;
         }
         if (this.#candidate && (this.#candidate.revision !== revision || this.#candidate.stateHash !== stateHash)) {
@@ -42996,11 +43568,16 @@ var init_causal_cell_ledger = __esm({
           }
         });
       }
-      #fail(reason) {
+      #fail(reason, diagnostic4) {
         if (this.#state === "settled") return;
         this.#state = "settled";
         this.#expiry.cancel();
-        this.#onResult({ status: "failed", traceId: this.#probe.traceId, reason });
+        this.#onResult({
+          status: "failed",
+          traceId: this.#probe.traceId,
+          reason,
+          ...diagnostic4 ? { diagnostic: diagnostic4 } : {}
+        });
       }
     };
   }
@@ -48316,6 +48893,12 @@ var init_wire_ledger = __esm({
 
 // packages/daemon/src/terminal/pane-stream/pane-stream-websocket.ts
 import { z as z83 } from "zod";
+function startsWithBuffer(raw, prefix) {
+  return raw.length >= prefix.length && raw.compare(prefix, 0, prefix.length, 0, prefix.length) === 0;
+}
+function hasCanonicalInputFramePrefix(raw) {
+  return startsWithBuffer(raw, CANONICAL_KEY_INPUT_FRAME_PREFIX) || startsWithBuffer(raw, CANONICAL_TEXT_INPUT_FRAME_PREFIX) || startsWithBuffer(raw, TYPE_FIRST_INPUT_FRAME_PREFIX);
+}
 function defaultSchedule3(callback, delayMs) {
   const timer = setTimeout(callback, delayMs);
   timer.unref?.();
@@ -48375,7 +48958,7 @@ function chunkBytes(data, maxChunk) {
   }
   return chunks;
 }
-var PANE_STREAM_MAX_REDEMPTION_BYTES, PANE_STREAM_MAX_CONTROL_BYTES, PANE_STREAM_MAX_REDEMPTION_MS, WS_OPEN5, TicketPattern3, BindingIdSchemaZ4, PaneStreamAdmissionError, PaneStreamAdmissionCoordinator, PreAuthAdmission2, PaneStreamLiveConnection;
+var PANE_STREAM_MAX_REDEMPTION_BYTES, PANE_STREAM_MAX_CONTROL_BYTES, PANE_STREAM_MAX_REDEMPTION_MS, WS_OPEN5, CANONICAL_KEY_INPUT_FRAME_PREFIX, CANONICAL_TEXT_INPUT_FRAME_PREFIX, TYPE_FIRST_INPUT_FRAME_PREFIX, TicketPattern3, BindingIdSchemaZ4, PaneStreamAdmissionError, PaneStreamAdmissionCoordinator, PreAuthAdmission2, PaneStreamLiveConnection;
 var init_pane_stream_websocket = __esm({
   "packages/daemon/src/terminal/pane-stream/pane-stream-websocket.ts"() {
     "use strict";
@@ -48387,6 +48970,9 @@ var init_pane_stream_websocket = __esm({
     PANE_STREAM_MAX_CONTROL_BYTES = 4 * 1024;
     PANE_STREAM_MAX_REDEMPTION_MS = 1e3;
     WS_OPEN5 = 1;
+    CANONICAL_KEY_INPUT_FRAME_PREFIX = Buffer.from('{"kind":"key",', "utf8");
+    CANONICAL_TEXT_INPUT_FRAME_PREFIX = Buffer.from('{"kind":"text",', "utf8");
+    TYPE_FIRST_INPUT_FRAME_PREFIX = Buffer.from('{"type":"input",', "utf8");
     TicketPattern3 = /^ps1_[A-Za-z0-9_-]{43}$/u;
     BindingIdSchemaZ4 = z83.string().min(1).max(4096).refine((value) => !value.includes("\0"));
     PaneStreamAdmissionError = class extends Error {
@@ -48416,6 +49002,8 @@ var init_pane_stream_websocket = __esm({
       #now;
       #schedule;
       #observability;
+      #diagnosticSharedNowMicros;
+      #diagnosticAfterFrameParse;
       #ledger;
       #pending = /* @__PURE__ */ new Map();
       #preAuth = /* @__PURE__ */ new Set();
@@ -48453,6 +49041,8 @@ var init_pane_stream_websocket = __esm({
         this.#now = options.now ?? Date.now;
         this.#schedule = options.schedule ?? defaultSchedule3;
         this.#observability = options.observability;
+        this.#diagnosticSharedNowMicros = options.diagnosticSharedNowMicros;
+        this.#diagnosticAfterFrameParse = options.diagnosticAfterFrameParse;
       }
       issue(request, context) {
         const trace = this.#observability?.beginTrace(
@@ -48733,6 +49323,7 @@ var init_pane_stream_websocket = __esm({
                 sessionRuntimeBinding,
                 binding,
                 deliveryAcks: frame.deliveryAcks === true,
+                diagnosticCapabilities: frame.diagnosticCapabilities ?? [],
                 causalCellCapability: descriptor2.terminalDelivery !== null && descriptor2.viewerMode === "interactive" && frame.diagnosticCapabilities?.includes("causal-cell-v1") === true,
                 mirror: this.#mirror,
                 leaseManager: this.#leaseManager,
@@ -48745,6 +49336,8 @@ var init_pane_stream_websocket = __esm({
                 now: this.#now,
                 schedule: this.#schedule,
                 observability: this.#observability,
+                diagnosticSharedNowMicros: this.#diagnosticSharedNowMicros,
+                diagnosticAfterFrameParse: this.#diagnosticAfterFrameParse,
                 onRetire: (connection) => this.#trackRetiringRelease(connection)
               });
             } catch (error) {
@@ -48912,6 +49505,7 @@ var init_pane_stream_websocket = __esm({
       #sessionRuntimeBinding;
       #deliveryAcks;
       #causalCellCapability;
+      #diagnosticCapabilities;
       #mirror;
       #leaseManager;
       #ledger;
@@ -48923,6 +49517,8 @@ var init_pane_stream_websocket = __esm({
       #now;
       #schedule;
       #observability;
+      #diagnosticSharedRawMicros;
+      #diagnosticAfterFrameParse;
       #onRetire;
       #panes = /* @__PURE__ */ new Map();
       #sendQueue = [];
@@ -48935,6 +49531,7 @@ var init_pane_stream_websocket = __esm({
       #inputWindowFrames = 0;
       #inputWindowBytes = 0;
       #nextViewportSeq = 1;
+      #nextClockProbe = 1;
       #requestedAuthorities = /* @__PURE__ */ new Set();
       #usesExplicitAuthority = false;
       #legacyInputActivated = false;
@@ -48942,6 +49539,15 @@ var init_pane_stream_websocket = __esm({
       #closed = false;
       #releasePromise = null;
       #stopAuthoritySnapshots = null;
+      #sharedClockOriginMicros = null;
+      #sharedMicros() {
+        const raw = this.#diagnosticSharedRawMicros();
+        this.#sharedClockOriginMicros ??= raw;
+        const elapsed = raw - this.#sharedClockOriginMicros;
+        if (!Number.isSafeInteger(elapsed) || elapsed < 0)
+          throw new Error("Daemon shared monotonic clock regressed");
+        return elapsed;
+      }
       constructor(options) {
         this.#clientId = options.clientId;
         this.#socket = options.socket;
@@ -48953,6 +49559,7 @@ var init_pane_stream_websocket = __esm({
         }
         this.#deliveryAcks = options.deliveryAcks;
         this.#causalCellCapability = options.causalCellCapability;
+        this.#diagnosticCapabilities = options.diagnosticCapabilities;
         this.#mirror = options.mirror;
         this.#leaseManager = options.leaseManager;
         this.#ledger = options.ledger;
@@ -48965,6 +49572,8 @@ var init_pane_stream_websocket = __esm({
         this.#inputWindowStartedAt = this.#now();
         this.#schedule = options.schedule;
         this.#observability = options.observability;
+        this.#diagnosticSharedRawMicros = this.#diagnosticCapabilities.includes("clock-bounds-v1") ? options.diagnosticSharedNowMicros ?? sharedMonotonicMicros : void 0;
+        this.#diagnosticAfterFrameParse = options.diagnosticAfterFrameParse;
         this.#onRetire = options.onRetire;
         for (const pane of options.descriptor.panes) {
           this.#panes.set(pane, {
@@ -49001,7 +49610,7 @@ var init_pane_stream_websocket = __esm({
             requestId: this.#binding.requestId,
             panes: [...this.#descriptor.panes],
             effectiveViewerMode: this.#descriptor.viewerMode,
-            ...this.#causalCellCapability ? { diagnosticCapabilities: ["causal-cell-v1"] } : {}
+            ...this.#diagnosticCapabilities.length > 0 ? { diagnosticCapabilities: [...this.#diagnosticCapabilities] } : {}
           });
         } catch {
           this.close(1011, "stream-unavailable");
@@ -49219,19 +49828,46 @@ var init_pane_stream_websocket = __esm({
             message.performanceTraceId
           ) : null;
           const startedAtMicros = trace ? this.#observability.nowMicros() : 0;
+          let startedAtSharedMicros = null;
+          if (trace && this.#diagnosticSharedRawMicros) {
+            try {
+              startedAtSharedMicros = this.#sharedMicros();
+            } catch {
+            }
+          }
           this.#sendFrame(pane, {
             type: "terminal-delivery-envelope",
             pane,
             envelope: { ...message, workspaceName: this.#descriptor.workspaceName }
           });
           if (trace) {
-            this.#observability.recordSpan(
-              "transport",
-              "pane-stream-socket-send",
-              startedAtMicros,
-              this.#observability.nowMicros(),
-              trace
-            );
+            let endedAtMicros;
+            try {
+              endedAtMicros = this.#observability.nowMicros();
+            } catch {
+              return;
+            }
+            let endedAtSharedMicros = null;
+            if (startedAtSharedMicros !== null) {
+              try {
+                endedAtSharedMicros = this.#sharedMicros();
+              } catch {
+              }
+            }
+            try {
+              this.#observability.recordSpan(
+                "transport",
+                "pane-stream-socket-send",
+                startedAtMicros,
+                endedAtMicros,
+                trace,
+                startedAtSharedMicros === null || endedAtSharedMicros === null ? void 0 : {
+                  startedAtMicros: startedAtSharedMicros,
+                  endedAtMicros: endedAtSharedMicros
+                }
+              );
+            } catch {
+            }
           }
         } else if (message.type === "terminal.delivery.chunk") {
           this.#sendFrame(pane, {
@@ -49490,6 +50126,8 @@ var init_pane_stream_websocket = __esm({
       // ── Client frames ─────────────────────────────────────────────────────────
       #onMessage = (data, isBinary) => {
         if (this.#closed) return;
+        let callbackAtSharedMicros = null;
+        let ingressAtSharedMicros = null;
         let ingressAtMicros = null;
         if (this.#observability?.enabled) {
           try {
@@ -49502,11 +50140,54 @@ var init_pane_stream_websocket = __esm({
           this.#failProtocol("protocol-error");
           return;
         }
+        const raw = rawDataToBuffer2(data);
+        if (this.#diagnosticSharedRawMicros && hasCanonicalInputFramePrefix(raw)) {
+          try {
+            callbackAtSharedMicros = this.#sharedMicros();
+          } catch {
+          }
+        }
         let frame;
         try {
-          frame = PaneStreamClientFrameSchemaZ.parse(strictJsonParse(rawDataToBuffer2(data)));
+          frame = PaneStreamClientFrameSchemaZ.parse(strictJsonParse(raw));
         } catch {
           this.#failProtocol("protocol-error");
+          return;
+        }
+        if (this.#diagnosticSharedRawMicros) {
+          try {
+            this.#diagnosticAfterFrameParse?.();
+          } catch {
+          }
+          if (frame.type === "input") {
+            try {
+              ingressAtSharedMicros = this.#sharedMicros();
+            } catch {
+            }
+          }
+        }
+        if (frame.type === "clock-probe") {
+          if (!this.#diagnosticCapabilities.includes("clock-bounds-v1") || frame.requestId !== this.#binding.requestId || frame.probe !== this.#nextClockProbe)
+            return this.#failProtocol("protocol-error");
+          this.#nextClockProbe += 1;
+          try {
+            ingressAtSharedMicros = this.#sharedMicros();
+          } catch {
+            return;
+          }
+          try {
+            const daemonSendMicros = this.#sharedMicros();
+            this.#sendFrame(null, {
+              type: "clock-probe-ack",
+              requestId: this.#binding.requestId,
+              daemonInstanceId: this.#binding.daemonInstanceId,
+              probe: frame.probe,
+              clientSendMicros: frame.clientSendMicros,
+              daemonReceiveMicros: ingressAtSharedMicros,
+              daemonSendMicros
+            });
+          } catch {
+          }
           return;
         }
         if (frame.type === "consumed") {
@@ -49619,7 +50300,9 @@ var init_pane_stream_websocket = __esm({
           byteLength,
           frame.performanceTraceId,
           frame.causalProbe,
-          ingressAtMicros
+          ingressAtMicros,
+          callbackAtSharedMicros,
+          ingressAtSharedMicros
         );
       };
       #acceptAuthorityGeneration(generation) {
@@ -49707,7 +50390,7 @@ var init_pane_stream_websocket = __esm({
         this.#ledger.give(this.#clientId, pane, "renderer-backlog", returned);
         this.#evaluateResume(pane);
       }
-      #acceptInput(pane, seq, kind, data, frameBytes, performanceTraceId, causalProbe, ingressAtMicros = null) {
+      #acceptInput(pane, seq, kind, data, frameBytes, performanceTraceId, causalProbe, ingressAtMicros = null, callbackAtSharedMicros = null, ingressAtSharedMicros = null) {
         if (this.#descriptor.viewerMode !== "interactive") {
           this.#failProtocol("input-rejected");
           return;
@@ -49750,10 +50433,22 @@ var init_pane_stream_websocket = __esm({
             if (trace && ingressAtMicros !== null) {
               this.#observability.recordSpan(
                 "transport",
+                "pane-stream-socket-message-callback-entry",
+                ingressAtMicros,
+                ingressAtMicros,
+                trace,
+                callbackAtSharedMicros === null ? void 0 : {
+                  startedAtMicros: callbackAtSharedMicros,
+                  endedAtMicros: callbackAtSharedMicros
+                }
+              );
+              this.#observability.recordSpan(
+                "transport",
                 "pane-stream-input-frame-ingress",
                 ingressAtMicros,
                 ingressAtMicros,
-                trace
+                trace,
+                ingressAtSharedMicros === null ? void 0 : { startedAtMicros: ingressAtSharedMicros, endedAtMicros: ingressAtSharedMicros }
               );
             }
           } catch {
@@ -49782,7 +50477,8 @@ var init_pane_stream_websocket = __esm({
                       version: 1,
                       capability: "causal-cell-v1",
                       traceId: result.traceId,
-                      reason: result.reason
+                      reason: result.reason,
+                      ...result.diagnostic ? { diagnostic: result.diagnostic } : {}
                     }
                   });
                 }
@@ -49791,24 +50487,48 @@ var init_pane_stream_websocket = __esm({
           else if (kind === "text") channel.sub.sendText(data);
           else channel.sub.sendKey(data);
           let ackStartedAtMicros = null;
+          let ackStartedAtSharedMicros = null;
           if (trace) {
             try {
               ackStartedAtMicros = this.#observability.nowMicros();
             } catch {
             }
+            if (this.#diagnosticSharedRawMicros) {
+              try {
+                ackStartedAtSharedMicros = this.#sharedMicros();
+              } catch {
+              }
+            }
           }
           sendControl2(this.#socket, { type: "input-ack", pane, seq });
           if (trace && ackStartedAtMicros !== null) {
+            let ackEndedAtMicros = null;
             try {
-              const ackEndedAtMicros = this.#observability.nowMicros();
-              this.#observability.recordSpan(
-                "transport",
-                "pane-stream-input-ack-socket-send",
-                ackStartedAtMicros,
-                ackEndedAtMicros,
-                trace
-              );
+              ackEndedAtMicros = this.#observability.nowMicros();
             } catch {
+            }
+            let ackEndedAtSharedMicros = null;
+            if (ackStartedAtSharedMicros !== null) {
+              try {
+                ackEndedAtSharedMicros = this.#sharedMicros();
+              } catch {
+              }
+            }
+            if (ackEndedAtMicros !== null) {
+              try {
+                this.#observability.recordSpan(
+                  "transport",
+                  "pane-stream-input-ack-socket-send",
+                  ackStartedAtMicros,
+                  ackEndedAtMicros,
+                  trace,
+                  ackStartedAtSharedMicros === null || ackEndedAtSharedMicros === null ? void 0 : {
+                    startedAtMicros: ackStartedAtSharedMicros,
+                    endedAtMicros: ackEndedAtSharedMicros
+                  }
+                );
+              } catch {
+              }
             }
           }
         } catch {
@@ -55434,7 +56154,7 @@ __export(server_exports, {
   getCompatibilityMetrics: () => getCompatibilityMetrics,
   getSseMetrics: () => getSseMetrics
 });
-import { execFile as execFile8 } from "node:child_process";
+import { execFile as execFile9 } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync as existsSync35, readdirSync as readdirSync7 } from "node:fs";
 import { join as join37, dirname as dirname32, basename as basename16 } from "node:path";
@@ -56321,7 +57041,7 @@ function createApp(options = {}) {
       return c.json({ error: "Failed to write workspace config", detail: message }, 500);
     }
   });
-  const execFileAsync = promisify(execFile8);
+  const execFileAsync = promisify(execFile9);
   app.post("/api/project/:name/restart", async (c) => {
     const name = c.req.param("name");
     const sessions = discoverSessions();
@@ -57516,10 +58236,10 @@ var init_agent_lifecycle = __esm({
 });
 
 // packages/daemon/src/control/lifecycle.ts
-import { execFile as execFile9 } from "node:child_process";
+import { execFile as execFile10 } from "node:child_process";
 function tmuxRun(args) {
   return new Promise((resolve37, reject) => {
-    execFile9("tmux", args, (err, stdout) => err ? reject(err) : resolve37(stdout.trimEnd()));
+    execFile10("tmux", args, (err, stdout) => err ? reject(err) : resolve37(stdout.trimEnd()));
   });
 }
 async function tmuxTry(args) {
@@ -58461,11 +59181,11 @@ var init_dev_web_host_config = __esm({
 });
 
 // apps/desktop-renderer/scripts/dev-native-folder-host.ts
-import { execFile as execFile10 } from "node:child_process";
+import { execFile as execFile11 } from "node:child_process";
 import { randomUUID as randomUUID19 } from "node:crypto";
 function executeFile(executable, args) {
   return new Promise((resolveOutput, reject) => {
-    execFile10(executable, [...args], { encoding: "utf8", maxBuffer: 64 * 1024 }, (error, stdout) => {
+    execFile11(executable, [...args], { encoding: "utf8", maxBuffer: 64 * 1024 }, (error, stdout) => {
       if (error) {
         reject(error);
         return;
@@ -60649,7 +61369,7 @@ init_src();
 init_src2();
 init_runtime_observability();
 import { accessSync as accessSync5, constants as constants6, realpathSync as realpathSync11, statSync as statSync11 } from "node:fs";
-import { execFile as execFile7 } from "node:child_process";
+import { execFile as execFile8 } from "node:child_process";
 import { isAbsolute as isAbsolute12 } from "node:path";
 import { z as z81 } from "zod";
 
@@ -62448,7 +63168,7 @@ function defaultCommandExecutor(executable, argv, options) {
 }
 function defaultReadCommandExecutor(executable, argv, options) {
   return new Promise((resolve37, reject) => {
-    execFile7(
+    execFile8(
       executable,
       [...argv],
       {
@@ -65123,6 +65843,8 @@ async function startEmbeddedDaemon(opts) {
     let paneStreamRuntime = null;
     let runtimeTraceStream = null;
     const closeRuntimeTraceStream = async () => {
+      externalInteractionObserver.setDiagnostics(null);
+      setFleetFactsObserverDiagnostics(null);
       const stream = runtimeTraceStream;
       runtimeTraceStream = null;
       if (!stream || stream.closed || stream.destroyed) return;
@@ -65165,6 +65887,30 @@ async function startEmbeddedDaemon(opts) {
           );
         }
       }) : void 0;
+      if (runtimeTracePath) {
+        const publishObserverDiagnostic = (event) => {
+          try {
+            if (!runtimeTraceStream || runtimeTraceSaturated) return;
+            runtimeTraceSaturated = !runtimeTraceStream.write(
+              `${JSON.stringify({
+                version: 1,
+                type: "performance.daemon-observer",
+                ...event,
+                generation: instanceId
+              })}
+`
+            );
+          } catch {
+          }
+        };
+        const diagnostics = {
+          nowMicros: () => Math.floor(performance2.now() * 1e3),
+          createTraceId: randomUUID18,
+          publish: publishObserverDiagnostic
+        };
+        externalInteractionObserver.setDiagnostics(diagnostics);
+        setFleetFactsObserverDiagnostics(diagnostics);
+      }
       sessionRuntimeRegistry = new SessionRuntimeRegistry({
         generation: instanceId,
         ...runtimeObservability ? { observability: runtimeObservability } : {},
@@ -65269,6 +66015,7 @@ async function startEmbeddedDaemon(opts) {
         resolveSession: (workspaceName) => workspaceRegistry.get(workspaceName)?.sessionName ?? null,
         resolvePaneSourceCredential: (credential, resolvedSession, claimedSource) => paneSourceCredentials.resolve(credential, resolvedSession, claimedSource)
       });
+      await externalInteractionObserver.start();
       startedServer = await startHttpServer({
         sessionName,
         requestedPort: port,
@@ -65319,7 +66066,6 @@ async function startEmbeddedDaemon(opts) {
       terminalAttachmentBoundary,
       paneStreamBoundary
     } = startedServer;
-    externalInteractionObserver.start();
     const retirePaneStreamTransport = async () => {
       const transportResults = await Promise.allSettled([
         Promise.resolve().then(() => paneStreamRuntime.dispose()),

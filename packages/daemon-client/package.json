@@ -16,6 +16,7 @@
     "./owner-action-client": "./src/owner-action-client.ts",
     "./workspace-pane-client": "./src/workspace-pane-client.ts",
     "./pane-stream-client": "./src/pane-stream-client.ts",
+    "./pane-stream-clock-calibration": "./src/pane-stream-clock-calibration.ts",
     "./workspace-catalog-v2": "./src/workspace-catalog-v2.ts",
     "./workspace-client": "./src/workspace-client.ts",
     "./workspace-client-types": "./src/workspace-client-types.ts",

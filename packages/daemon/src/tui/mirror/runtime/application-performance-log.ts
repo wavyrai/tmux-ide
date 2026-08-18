@@ -1,4 +1,5 @@
 import { createWriteStream } from "node:fs";
+import { BoundedPerformanceRecordWriter } from "./bounded-performance-record-writer.ts";
 
 const TUI_PERF_LOG = process.env.TMUX_IDE_TUI_PERF_LOG;
 const stream = TUI_PERF_LOG
@@ -8,15 +9,13 @@ const TUI_LAUNCH_EPOCH_MS = stream
   ? Number(process.env.TMUX_IDE_TUI_LAUNCH_EPOCH_MS ?? Date.now())
   : 0;
 
-let failed = false;
-let saturated = false;
-let droppedRecords = 0;
+const writer = stream ? new BoundedPerformanceRecordWriter(stream) : null;
 
 const fail = (): void => {
-  failed = true;
+  writer?.fail();
 };
 const drain = (): void => {
-  saturated = false;
+  writer?.drain();
 };
 
 stream?.on("error", fail);
@@ -29,38 +28,50 @@ stream?.on("drain", drain);
  */
 export const tuiPerfStream = stream ? Object.freeze({ enabled: true as const }) : null;
 
-export function tuiPerfMark(phase: string, details?: Readonly<Record<string, unknown>>): void {
-  if (!stream || failed) return;
-  if (saturated) {
-    droppedRecords += 1;
-    return;
-  }
+function serializeMark(phase: string, details?: Readonly<Record<string, unknown>>): string | null {
+  if (!stream) return null;
   try {
-    saturated = !stream.write(
-      `${JSON.stringify({
-        phase,
-        elapsedMs: Date.now() - TUI_LAUNCH_EPOCH_MS,
-        at: new Date().toISOString(),
-        ...details,
-        monotonicMicros: Math.floor(performance.now() * 1_000),
-        processId: `opentui:${process.pid}`,
-        clockId: "opentui-performance-now",
-      })}\n`,
-    );
+    return `${JSON.stringify({
+      phase,
+      elapsedMs: Date.now() - TUI_LAUNCH_EPOCH_MS,
+      at: new Date().toISOString(),
+      ...details,
+      monotonicMicros: Math.floor(performance.now() * 1_000),
+      processId: `opentui:${process.pid}`,
+      clockId: "opentui-performance-now",
+    })}\n`;
   } catch {
-    // Opt-in diagnostics never own renderer lifecycle.
+    return null;
   }
+}
+
+export function tuiPerfMark(phase: string, details?: Readonly<Record<string, unknown>>): void {
+  const record = serializeMark(phase, details);
+  if (record) writer?.write(record);
+}
+
+export function tuiPerfCriticalMark(
+  key: string,
+  phase: string,
+  details?: Readonly<Record<string, unknown>>,
+): boolean {
+  const record = serializeMark(phase, details);
+  return record !== null && writer !== null && writer.writeCritical(key, record);
 }
 
 export function tuiPerfDiagnostics(): Readonly<{
   droppedRecords: number;
   failed: boolean;
+  pendingCriticalRecords: number;
 }> {
-  return Object.freeze({ droppedRecords, failed });
+  return (
+    writer?.diagnostics() ??
+    Object.freeze({ droppedRecords: 0, failed: false, pendingCriticalRecords: 0 })
+  );
 }
 
 async function flushTuiPerfMarks(): Promise<void> {
-  if (!stream || failed) return;
+  if (!stream || writer?.diagnostics().failed) return;
   await new Promise<void>((resolveFlush) => {
     try {
       stream.write("", () => resolveFlush());

@@ -126,6 +126,16 @@ describe("production OpenTUI entry boundary", () => {
     expect(host).toContain('diagnose?.("host-internal-snapshot-publication"');
   });
 
+  it("installs frame readiness only for an explicit lifecycle or detailed diagnostic sink", () => {
+    const root = read("packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx");
+    expect(root).toMatch(
+      /terminalFrameReadiness\s*=\s*tuiPerfStream\s*\|\|\s*frameDiagnosticSink[\s\S]*createTerminalFrameReadiness/u,
+    );
+    expect(root).toContain(
+      'if (terminalFrameReadiness) renderer.on("frame", observeTerminalFrame)',
+    );
+  });
+
   it("manifests every bootstrap boundary used to seed transitive architecture audits", () => {
     expect(OPENTUI_PRODUCTION_ROOT_SOURCES).toEqual([
       "packages/daemon/src/tui/mirror/app.tsx",

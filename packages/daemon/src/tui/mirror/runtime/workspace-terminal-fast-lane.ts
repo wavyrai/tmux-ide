@@ -89,36 +89,41 @@ export function createOpenTuiWorkspaceTerminalFastLane(
     ...(performanceSink?.terminalTraceStage
       ? {
           onTraceStage(event) {
-            const memory = process.memoryUsage();
-            performanceSink.terminalTraceStage?.({
-              ...event,
-              scenario: "terminal-input-to-paint",
-              stage: "client",
-              processId: `opentui:${process.pid}`,
-              clockId: "opentui-performance-now",
-              clockKind: "performance-now",
-              rssBytes: memory.rss,
-              heapUsedBytes: memory.heapUsed,
-            });
+            try {
+              performanceSink.terminalTraceStage?.({
+                ...event,
+                scenario: "terminal-input-to-paint",
+                stage: "client",
+                processId: `opentui:${process.pid}`,
+                clockId: "opentui-performance-now",
+                clockKind: "performance-now",
+              });
+            } catch {
+              // Diagnostics cannot alter canonical delivery or input dispatch.
+            }
           },
         }
       : {}),
   });
   if (performanceSink?.terminalInputQueueState) {
-    const counters = lane.counters();
-    const memory = process.memoryUsage();
-    performanceSink.terminalInputQueueState({
-      operation: "initialized",
-      processId: `opentui:${process.pid}`,
-      clockId: "opentui-performance-now",
-      clockKind: "performance-now",
-      atMicros: Math.floor(performance.now() * 1_000),
-      inputPending: counters.inputPending,
-      inputInFlight: counters.inputInFlight,
-      inputPendingBytes: counters.inputPendingBytes,
-      rssBytes: memory.rss,
-      heapUsedBytes: memory.heapUsed,
-    });
+    try {
+      const counters = lane.counters();
+      const memory = process.memoryUsage();
+      performanceSink.terminalInputQueueState({
+        operation: "initialized",
+        processId: `opentui:${process.pid}`,
+        clockId: "opentui-performance-now",
+        clockKind: "performance-now",
+        atMicros: Math.floor(performance.now() * 1_000),
+        inputPending: counters.inputPending,
+        inputInFlight: counters.inputInFlight,
+        inputPendingBytes: counters.inputPendingBytes,
+        rssBytes: memory.rss,
+        heapUsedBytes: memory.heapUsed,
+      });
+    } catch {
+      // Lifecycle diagnostics cannot prevent creation of the fresh lane.
+    }
   }
   return { lane, causalCellLedger, dispose: () => lane.dispose() };
 }

@@ -25,6 +25,15 @@ export interface ScratchFleet {
   readonly environment: Readonly<Record<string, string>>;
   /** Session names in creation order, in the order the daemon will see them. */
   readonly sessionNames: readonly string[];
+  /** Exact first pane identity captured before daemon adoption/promotion. */
+  readonly initialPanes: readonly Readonly<{
+    sessionName: string;
+    paneId: string;
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  }>[];
   /** Create one more adopted session; returns its name. */
   readonly createSession: (name: string) => string;
   /** Kill a session. The tmux server survives; only this session goes. */
@@ -61,6 +70,15 @@ export interface CreateScratchFleetOptions {
   readonly adoptSessions?: boolean;
   /** Safe setup-only marker printed once before the first interactive shell. */
   readonly initialPaneMarker?: string;
+  /** Exact setup command for the first pane; argv is shell-quoted by this fixture. */
+  readonly initialPaneCommand?: Readonly<{
+    readonly executable: string;
+    readonly args?: readonly string[];
+  }>;
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 /**
@@ -77,6 +95,18 @@ export async function createScratchFleet(
 ): Promise<ScratchFleet> {
   if (options.initialPaneMarker && !/^RIG_[A-Z0-9_]{8,96}$/u.test(options.initialPaneMarker))
     throw new Error("scratch initial pane marker must be a bounded safe ProductRig token");
+  if (options.initialPaneMarker && options.initialPaneCommand)
+    throw new Error("scratch first pane may have either a marker or an exact command");
+  if (
+    options.initialPaneCommand &&
+    (!options.initialPaneCommand.executable ||
+      options.initialPaneCommand.executable.length > 4_096 ||
+      /[\0\r\n]/u.test(options.initialPaneCommand.executable) ||
+      (options.initialPaneCommand.args ?? []).some(
+        (value) => value.length > 4_096 || /[\0\r\n]/u.test(value),
+      ))
+  )
+    throw new Error("scratch initial pane command must contain bounded argv");
   // /tmp, not os.tmpdir(): on macOS the per-user temp dir realpaths to a long
   // prefix that pushes the tmux socket past the sun_path limit.
   const root = await mkdtemp(`/tmp/tmi-e2e-${options.slug}-`);
@@ -123,13 +153,28 @@ export async function createScratchFleet(
     }).replace(/(?:\r?\n)+$/u, "");
 
   const names: string[] = [];
+  const initialPanes: Array<{
+    sessionName: string;
+    paneId: string;
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  }> = [];
   let serverPid: number | null = null;
 
   const createSession = (name: string): string => {
     const firstPaneCommand =
-      serverPid === null && options.initialPaneMarker
-        ? `printf '${options.initialPaneMarker}\\n'; exec sh -i`
-        : "exec sh -i";
+      serverPid === null && options.initialPaneCommand
+        ? `exec ${[
+            options.initialPaneCommand.executable,
+            ...(options.initialPaneCommand.args ?? []),
+          ]
+            .map(shellSingleQuote)
+            .join(" ")}`
+        : serverPid === null && options.initialPaneMarker
+          ? `printf '${options.initialPaneMarker}\\n'; exec sh -i`
+          : "exec sh -i";
     if (serverPid === null) {
       runTmux([
         "-f",
@@ -149,6 +194,26 @@ export async function createScratchFleet(
       runTmux(["new-session", "-d", "-s", name, "-c", projectDir, "-n", "one", "exec sh -i"]);
     }
     runTmux(["new-window", "-d", "-t", `=${name}:`, "-c", projectDir, "-n", "two", "exec sh -i"]);
+    const [paneId, left, top, width, height] = runTmux([
+      "display-message",
+      "-p",
+      "-t",
+      `=${name}:=one`,
+      "#{pane_id}|#{pane_left}|#{pane_top}|#{pane_width}|#{pane_height}",
+    ]).split("|");
+    if (
+      !/^%[0-9]+$/u.test(paneId ?? "") ||
+      ![left, top, width, height].every((value) => Number.isFinite(Number(value)))
+    )
+      throw new Error("scratch fleet could not capture its exact initial pane identity");
+    initialPanes.push({
+      sessionName: name,
+      paneId: paneId!,
+      left: Number(left),
+      top: Number(top),
+      width: Number(width),
+      height: Number(height),
+    });
     // Most tests start with an adopted fleet. Cold public-entry journeys leave
     // this absent so adoption is product behavior rather than harness setup.
     if (options.adoptSessions !== false)
@@ -184,6 +249,7 @@ export async function createScratchFleet(
     socketPath,
     daemonInfoDir,
     sessionNames: names,
+    initialPanes: Object.freeze(initialPanes.map((pane) => Object.freeze({ ...pane }))),
     createSession,
     killSession: (name) => {
       runTmux(["kill-session", "-t", `=${name}`]);

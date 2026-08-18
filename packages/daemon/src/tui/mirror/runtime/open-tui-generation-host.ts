@@ -35,7 +35,10 @@ import { DaemonAuthorityRebindCoordinator } from "./daemon-authority-rebind.ts";
 import type { OpenTuiRuntimeLayoutPresentation } from "./runtime-layout-presentation.ts";
 import { TerminalFastLaneRendererAdapter } from "./terminal-fast-lane-renderer-adapter.ts";
 import { CausalCellClientLedger } from "./causal-cell-client-ledger.ts";
-import { currentTuiPerformanceEventSink } from "../performance-events.ts";
+import {
+  currentTuiPerformanceEventSink,
+  type TuiTerminalTraceStageEvent,
+} from "../performance-events.ts";
 import {
   createOpenTuiWorkspaceTerminalFastLane,
   type OpenTuiWorkspaceTerminalFastLane,
@@ -47,6 +50,17 @@ export type OpenTuiProductionWorkspaceClient = WorkspaceClient<
   TerminalReplicaPatchPayload,
   TerminalReplicaTombstonePayload
 >;
+
+export function emitTerminalTraceStageFailOpen(
+  sink: ((event: TuiTerminalTraceStageEvent) => void) | undefined,
+  event: TuiTerminalTraceStageEvent,
+): void {
+  try {
+    sink?.(event);
+  } catch {
+    // Opt-in diagnostics never own terminal delivery, paint, or failure handling.
+  }
+}
 
 export interface OpenTuiGenerationBundle {
   readonly connection: OpenTuiApplicationShellConnection;
@@ -159,7 +173,7 @@ function buildProductionBundle(
             ["causal-cell-delivered", evidence.deliveredAtMicros],
             ["causal-cell-painted", evidence.paintedAtMicros],
           ] as const)
-            performanceSink.terminalTraceStage?.({
+            emitTerminalTraceStageFailOpen(performanceSink.terminalTraceStage, {
               traceId: evidence.proof.traceId,
               scenario: "terminal-input-to-paint",
               stage: "client",
@@ -178,10 +192,11 @@ function buildProductionBundle(
               column: evidence.proof.geometry.column,
               beforeGrapheme: evidence.proof.before.grapheme,
               afterGrapheme: evidence.proof.after.grapheme,
+              ...(operation === "causal-cell-painted" ? { dirtyRowProved: true } : {}),
             });
         },
-        onFailure: (traceId, reason) =>
-          performanceSink.terminalTraceStage?.({
+        onFailure: (traceId, reason, diagnostic) => {
+          emitTerminalTraceStageFailOpen(performanceSink.terminalTraceStage, {
             traceId,
             scenario: "terminal-input-to-paint",
             stage: "client",
@@ -190,7 +205,9 @@ function buildProductionBundle(
             clockId: "opentui-performance-now",
             clockKind: "performance-now",
             atMicros: Math.floor(performance.now() * 1_000),
-          }),
+            ...(diagnostic ? { causalDiagnostic: diagnostic } : {}),
+          });
+        },
       })
     : null;
   let fastLane: OpenTuiWorkspaceTerminalFastLane | null = null;

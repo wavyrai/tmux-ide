@@ -90,6 +90,14 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     return this.#paintedCanonicalSnapshot;
   }
 
+  /** True only while detailed identities await the renderer's next frame. */
+  hasPendingCanonicalHostFrameDiagnostics(): boolean {
+    return Boolean(
+      (this.#pendingCanonicalHostFrames && this.#pendingCanonicalHostFrames.size > 0) ||
+      this.#droppedCanonicalHostFrames > 0,
+    );
+  }
+
   /** Detailed-only identities consumed by the next renderer frame. */
   drainCanonicalHostFrameIdentities(): Readonly<{
     identities: readonly TuiTerminalCanonicalPaintIdentity[];
@@ -234,15 +242,19 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
       });
     }
     if (this.#causalCellLedger && publication.state.snapshot) {
-      this.#causalCellLedger.noteDelivery({
-        semanticPaneId: publication.address.semanticPaneId,
-        generation: publication.state.generation,
-        incarnation: publication.state.incarnation,
-        revision: publication.state.revision,
-        stateHash: publication.state.hash,
-        snapshot: publication.state.snapshot,
-        atMicros: Math.floor(performance.now() * 1_000),
-      });
+      try {
+        this.#causalCellLedger.noteDelivery({
+          semanticPaneId: publication.address.semanticPaneId,
+          generation: publication.state.generation,
+          incarnation: publication.state.incarnation,
+          revision: publication.state.revision,
+          stateHash: publication.state.hash,
+          snapshot: publication.state.snapshot,
+          atMicros: Math.floor(performance.now() * 1_000),
+        });
+      } catch {
+        // Opt-in causal diagnostics never own canonical delivery.
+      }
     }
     let changed = false;
     if (next) {
@@ -276,16 +288,20 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
         revision: publication.state.revision,
         stateHash: publication.state.hash,
       });
-      currentTuiPerformanceEventSink()?.terminalTraceStage?.({
-        traceId: publication.paintTrace.traceId,
-        scenario: "terminal-input-to-paint",
-        stage: "client",
-        operation: "render-invalidated",
-        processId: `opentui:${process.pid}`,
-        clockId: "opentui-performance-now",
-        clockKind: "performance-now",
-        atMicros: Math.floor(performance.now() * 1_000),
-      });
+      try {
+        currentTuiPerformanceEventSink()?.terminalTraceStage?.({
+          traceId: publication.paintTrace.traceId,
+          scenario: "terminal-input-to-paint",
+          stage: "client",
+          operation: "render-invalidated",
+          processId: `opentui:${process.pid}`,
+          clockId: "opentui-performance-now",
+          clockKind: "performance-now",
+          atMicros: Math.floor(performance.now() * 1_000),
+        });
+      } catch {
+        // Diagnostics cannot interrupt renderer invalidation.
+      }
     }
     interest.version += 1;
     for (const listener of [...interest.listeners]) {
@@ -446,19 +462,23 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
         }
       }
       if (this.#causalCellLedger && snapshot && writtenRows) {
-        this.#causalCellLedger.notePaint({
-          semanticPaneId: paneId,
-          generation: interest.state!.generation,
-          incarnation: interest.state!.incarnation,
-          revision: interest.state!.revision,
-          stateHash: interest.state!.hash,
-          snapshot,
-          viewport: { cols: width, rows: height },
-          activePaneRect: { x: 0, y: 0, width, height },
-          writtenRows,
-          scrollOffset,
-          atMicros: Math.floor(performance.now() * 1_000),
-        });
+        try {
+          this.#causalCellLedger.notePaint({
+            semanticPaneId: paneId,
+            generation: interest.state!.generation,
+            incarnation: interest.state!.incarnation,
+            revision: interest.state!.revision,
+            stateHash: interest.state!.hash,
+            snapshot,
+            viewport: { cols: width, rows: height },
+            activePaneRect: { x: 0, y: 0, width, height },
+            writtenRows,
+            scrollOffset,
+            atMicros: Math.floor(performance.now() * 1_000),
+          });
+        } catch {
+          // Opt-in causal diagnostics never own canonical paint.
+        }
       }
     }
     return trace;

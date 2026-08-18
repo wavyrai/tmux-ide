@@ -12,6 +12,16 @@ import {
   createSessionRuntimeObservability,
   type SessionRuntimeObservability,
 } from "../session-runtime/runtime-observability.ts";
+import {
+  connectIssuedPaneStreamRuntimeClient,
+  type PaneStreamClientSocket,
+  type PaneStreamInputTransportStageEvent,
+} from "@tmux-ide/daemon-client/pane-stream-client";
+import {
+  crossProcessOneWayBounds,
+  daemonToClientOneWayBounds,
+  type PaneStreamClockCalibration,
+} from "@tmux-ide/daemon-client/pane-stream-clock-calibration";
 import { PaneStreamLeaseManager } from "./lease-manager.ts";
 import {
   PaneStreamAdmissionCoordinator,
@@ -35,6 +45,7 @@ class FakeSocket implements DirectTerminalSocket {
   sentBytes = 0;
   drainedBytes = 0;
   readonly frames: unknown[] = [];
+  onTransmit: ((text: string) => void) | null = null;
   closed: { code?: number; reason?: string } | null = null;
   readonly #listeners = new Map<string, Set<(...args: never[]) => void>>();
 
@@ -46,6 +57,7 @@ class FakeSocket implements DirectTerminalSocket {
     const text = typeof data === "string" ? data : data.toString("utf8");
     this.sentBytes += Buffer.byteLength(text, "utf8");
     this.frames.push(JSON.parse(text));
+    this.onTransmit?.(text);
   }
 
   close(code?: number, reason?: string): void {
@@ -87,6 +99,56 @@ class FakeSocket implements DirectTerminalSocket {
       (frame): frame is Record<string, unknown> =>
         typeof frame === "object" && frame !== null && (frame as { type?: unknown }).type === type,
     );
+  }
+}
+
+class LoopbackClientSocket implements PaneStreamClientSocket {
+  readyState = 0;
+  readonly #listeners = new Map<string, Set<(event: { data?: unknown }) => void>>();
+  readonly #server: FakeSocket;
+  readonly #forward: (frame: Record<string, unknown>) => void;
+
+  constructor(server: FakeSocket, forward: (frame: Record<string, unknown>) => void) {
+    this.#server = server;
+    this.#forward = forward;
+  }
+
+  addEventListener(type: string, listener: (event: { data?: unknown }) => void): void {
+    const listeners = this.#listeners.get(type) ?? new Set();
+    listeners.add(listener);
+    this.#listeners.set(type, listeners);
+  }
+
+  removeEventListener(type: string, listener: (event: { data?: unknown }) => void): void {
+    this.#listeners.get(type)?.delete(listener);
+  }
+
+  send(data: string): void {
+    const frame = JSON.parse(data) as Record<string, unknown>;
+    queueMicrotask(() => {
+      this.#forward(frame);
+      this.#server.emit("message", Buffer.from(data, "utf8"), false);
+    });
+  }
+
+  close(): void {
+    if (this.readyState === 3) return;
+    this.readyState = 3;
+    this.#server.close();
+    this.#emit("close");
+  }
+
+  open(): void {
+    this.readyState = 1;
+    this.#emit("open");
+  }
+
+  message(data: string): void {
+    this.#emit("message", data);
+  }
+
+  #emit(type: string, data?: unknown): void {
+    for (const listener of this.#listeners.get(type) ?? []) listener({ data });
   }
 }
 
@@ -221,6 +283,8 @@ function harness(
     >[0]["bindSessionRuntime"];
     openTerminalDelivery?: SessionRuntimePaneStreamTransportBinding["openTerminalDelivery"];
     observability?: SessionRuntimeObservability;
+    diagnosticSharedNowMicros?: () => number;
+    diagnosticAfterFrameParse?: () => void;
   } = {},
 ) {
   const mirror = new FakeMirror(options.panes ?? ["pane.editor", "pane.shell"]);
@@ -272,6 +336,8 @@ function harness(
     leaseManager,
     mirror,
     observability: options.observability,
+    diagnosticSharedNowMicros: options.diagnosticSharedNowMicros,
+    diagnosticAfterFrameParse: options.diagnosticAfterFrameParse,
     bindSessionRuntime:
       options.bindSessionRuntime ??
       (() => ({
@@ -364,6 +430,7 @@ async function connect(
     deliveryAcks?: boolean;
     hostClientId?: string;
     semanticDelivery?: boolean;
+    diagnosticCapabilities?: readonly ("causal-cell-v1" | "clock-bounds-v1")[];
   } = {},
 ): Promise<{ socket: FakeSocket; requestId: string }> {
   const requestId = freshRequestId();
@@ -406,6 +473,9 @@ async function connect(
     requestId,
     daemonInstanceId: INSTANCE,
     ...(options.deliveryAcks ? { deliveryAcks: true } : {}),
+    ...(options.diagnosticCapabilities
+      ? { diagnosticCapabilities: options.diagnosticCapabilities }
+      : {}),
   });
   await vi.waitFor(() => {
     expect({ ready: socket.framesOfType("ready").length, closed: socket.closed }).toEqual({
@@ -421,6 +491,247 @@ async function settled(): Promise<void> {
 }
 
 describe("PaneStreamAdmissionCoordinator", () => {
+  it("answers normalized clock probes only on the negotiated authenticated connection", async () => {
+    let raw = 7_000_000_000_000;
+    const shared = vi.fn(() => (raw += 10));
+    const h = harness({ diagnosticSharedNowMicros: shared });
+    const { socket, requestId } = await connect(h, {
+      diagnosticCapabilities: ["clock-bounds-v1"],
+    });
+    for (let probe = 1; probe <= 5; probe += 1)
+      socket.message({ type: "clock-probe", requestId, probe, clientSendMicros: probe - 1 });
+    expect(socket.framesOfType("clock-probe-ack")).toHaveLength(5);
+    expect(socket.framesOfType("clock-probe-ack")[0]).toEqual({
+      type: "clock-probe-ack",
+      requestId,
+      daemonInstanceId: INSTANCE,
+      probe: 1,
+      clientSendMicros: 0,
+      daemonReceiveMicros: 0,
+      daemonSendMicros: 10,
+    });
+    expect(JSON.stringify(socket.frames)).not.toContain("7000000000000");
+    const calls = shared.mock.calls.length;
+    socket.message({ type: "clock-probe", requestId, probe: 5, clientSendMicros: 5 });
+    expect(shared).toHaveBeenCalledTimes(calls);
+    expect(socket.framesOfType("clock-probe-ack")).toHaveLength(5);
+    expect(socket.closed?.reason).toBe("protocol-error");
+  });
+
+  it("handles escaped clock-probe spellings in the parsed bounded handler without a clock read", async () => {
+    let raw = 7_000_000_000_000;
+    const shared = vi.fn(() => (raw += 10));
+    const h = harness({ diagnosticSharedNowMicros: shared });
+    const { socket, requestId } = await connect(h, {
+      diagnosticCapabilities: ["clock-bounds-v1"],
+    });
+    const calls = shared.mock.calls.length;
+    socket.message(
+      `{"ty\\u0070e":"clock\\u002dprobe","requestId":"${requestId}","probe":2,"clientSendMicros":0}`,
+    );
+    expect(shared).toHaveBeenCalledTimes(calls);
+    expect(socket.framesOfType("clock-probe-ack")).toEqual([]);
+    expect(socket.closed?.reason).toBe("protocol-error");
+  });
+
+  it("does no shared-clock work without negotiated clock bounds", async () => {
+    const shared = vi.fn(() => {
+      throw new Error("must not run");
+    });
+    const h = harness({ diagnosticSharedNowMicros: shared });
+    const { socket, requestId } = await connect(h);
+    socket.message({ type: "clock-probe", requestId, probe: 1, clientSendMicros: 0 });
+    expect(shared).not.toHaveBeenCalled();
+    expect(socket.framesOfType("clock-probe-ack")).toEqual([]);
+    expect(socket.closed?.reason).toBe("protocol-error");
+  });
+
+  it("samples shared callback entry before induced frame parsing work", async () => {
+    let sharedRawMicros = 9_000_000_000_000;
+    const observability = createSessionRuntimeObservability({ nowMicros: () => 1_000 });
+    const h = harness({
+      observability,
+      diagnosticSharedNowMicros: () => sharedRawMicros,
+      diagnosticAfterFrameParse: () => {
+        sharedRawMicros += 40_000;
+      },
+    });
+    const { socket } = await connect(h, {
+      viewerMode: "interactive",
+      panes: ["pane.editor"],
+      diagnosticCapabilities: ["clock-bounds-v1"],
+    });
+    await vi.waitFor(() => expect(h.mirror.subs).toHaveLength(1));
+    const traceId = "00000000-0000-4000-8000-000000000091";
+    socket.message({
+      type: "input",
+      kind: "key",
+      pane: "pane.editor",
+      seq: 1,
+      data: "x",
+      performanceTraceId: traceId,
+    });
+
+    expect(h.mirror.subFor("pane.editor").keys).toEqual(["x"]);
+    const spans = observability
+      .snapshot()
+      .spans.filter((span) => span.traceId === traceId && span.sharedStartedAtMicros !== undefined);
+    expect(
+      spans.find((span) => span.operation === "pane-stream-socket-message-callback-entry"),
+    ).toMatchObject({ sharedStartedAtMicros: 0, sharedEndedAtMicros: 0 });
+    expect(
+      spans.find((span) => span.operation === "pane-stream-input-frame-ingress"),
+    ).toMatchObject({ sharedStartedAtMicros: 40_000, sharedEndedAtMicros: 40_000 });
+  });
+
+  it("keeps shared parse diagnostics fail-open for product input", async () => {
+    const h = harness({
+      diagnosticSharedNowMicros: () => 1,
+      diagnosticAfterFrameParse: () => {
+        throw new Error("diagnostic parse observer failed");
+      },
+    });
+    const { socket } = await connect(h, {
+      viewerMode: "interactive",
+      panes: ["pane.editor"],
+      diagnosticCapabilities: ["clock-bounds-v1"],
+    });
+    await vi.waitFor(() => expect(h.mirror.subs).toHaveLength(1));
+    socket.message({ type: "input", kind: "key", pane: "pane.editor", seq: 1, data: "x" });
+    expect(h.mirror.subFor("pane.editor").keys).toEqual(["x"]);
+    expect(socket.framesOfType("input-ack")).toHaveLength(1);
+    expect(socket.closed).toBeNull();
+  });
+
+  it("bounds induced outbound and inbound delay through the production client/server seams", async () => {
+    let worldMicros = 0;
+    const observability = createSessionRuntimeObservability({ nowMicros: () => worldMicros });
+    const h = harness({
+      observability,
+      diagnosticSharedNowMicros: () => 9_000_000_000_000 + worldMicros,
+    });
+    const requestId = freshRequestId();
+    const stream = {
+      protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+      workspaceName: "workspace.alpha",
+      panes: ["pane.editor"],
+      viewerMode: "interactive" as const,
+      terminalDelivery: {
+        protocolVersions: [1],
+        encodings: ["semantic-v1" as const],
+        richPlacements: false,
+      },
+    };
+    const issued = await h.coordinator.issue(stream, {
+      requestId,
+      projectIdentity: "workspace.alpha",
+      sessionName: SESSION,
+      rendererOrigin: ORIGIN,
+      hostClientId: "test:interactive",
+    });
+    const decision = h.coordinator.reserveUpgrade({
+      path: PANE_STREAM_REDEEM_PATH,
+      protocols: [PANE_STREAM_WEBSOCKET_SUBPROTOCOL],
+      origin: ORIGIN,
+    });
+    if (!decision.accepted) throw new Error(`upgrade rejected: ${decision.code}`);
+    const serverSocket = new FakeSocket();
+    decision.admission.bind(serverSocket);
+    const clientSocket = new LoopbackClientSocket(serverSocket, (frame) => {
+      worldMicros += frame.type === "input" ? 40_000 : 10;
+    });
+    serverSocket.onTransmit = (text) => {
+      const frame = JSON.parse(text) as { type?: string };
+      queueMicrotask(() => {
+        worldMicros += frame.type === "input-ack" ? 70_000 : 10;
+        clientSocket.message(text);
+      });
+    };
+    const calibrations: Array<PaneStreamClockCalibration | null> = [];
+    const stages: PaneStreamInputTransportStageEvent[] = [];
+    const acknowledgements: Array<{ sharedMicros?: number }> = [];
+    const opening = connectIssuedPaneStreamRuntimeClient(
+      {
+        createSocket: () => {
+          queueMicrotask(() => clientSocket.open());
+          return clientSocket;
+        },
+        origin: ORIGIN,
+        hostClientId: "test:interactive",
+        stream,
+        onNegotiated: () => undefined,
+        onTerminalDelivery: () => undefined,
+        onInputTransportStage: (event) => stages.push(event),
+        diagnosticNowMicros: () => worldMicros,
+        diagnosticSharedNowMicros: () => 8_000_000_000_000 + worldMicros,
+        diagnosticNextTurn: (callback) => {
+          queueMicrotask(callback);
+          return () => undefined;
+        },
+        diagnosticCapabilities: ["clock-bounds-v1"],
+        onClockCalibration: (calibration) => calibrations.push(calibration),
+        onInputAck: (event) => acknowledgements.push(event),
+        onFault: (error) => {
+          throw error;
+        },
+      },
+      issued,
+    );
+    const client = await opening;
+    const traceId = "00000000-0000-4000-8000-000000000091";
+    await expect(
+      client.sendTerminalInput(
+        { workspaceName: "workspace.alpha", semanticPaneId: "pane.editor" },
+        { kind: "key", data: "x" },
+        traceId,
+      ),
+    ).resolves.toBe("ok");
+    await vi.waitFor(() =>
+      expect(stages.some((stage) => stage.operation === "pane-stream-socket-send-return")).toBe(
+        true,
+      ),
+    );
+
+    const calibration = calibrations[0];
+    expect(calibration).not.toBeNull();
+    const clientSend = stages.find(
+      (stage) => stage.operation === "pane-stream-socket-send-return",
+    )!;
+    const daemonSpans = observability.snapshot().spans.filter((span) => span.traceId === traceId);
+    const callback = daemonSpans.find(
+      (span) => span.operation === "pane-stream-socket-message-callback-entry",
+    )!;
+    const daemonAck = daemonSpans.find(
+      (span) => span.operation === "pane-stream-input-ack-socket-send",
+    )!;
+    const clientAck = acknowledgements[0]!;
+    const outbound = crossProcessOneWayBounds(
+      calibration!,
+      clientSend.sharedMicros!,
+      callback.sharedStartedAtMicros!,
+    )!;
+    const inbound = daemonToClientOneWayBounds(
+      calibration!,
+      daemonAck.sharedEndedAtMicros!,
+      clientAck.sharedMicros!,
+    )!;
+    expect(
+      outbound,
+      JSON.stringify({ calibration, clientSend, callback, daemonAck, clientAck }),
+    ).not.toBeNull();
+    expect(outbound.lowerMicros).toBeLessThanOrEqual(40_000);
+    expect(outbound.upperMicros).toBeGreaterThanOrEqual(40_000);
+    expect(inbound.lowerMicros).toBeLessThanOrEqual(70_000);
+    expect(inbound.upperMicros).toBeGreaterThanOrEqual(70_000);
+    expect(
+      JSON.stringify({ server: serverSocket.frames, stages, daemonSpans, calibrations }),
+    ).not.toContain("8000000000000");
+    expect(
+      JSON.stringify({ server: serverSocket.frames, stages, daemonSpans, calibrations }),
+    ).not.toContain("9000000000000");
+    client.close();
+  });
+
   it("binds redeemed transport identity to SessionRuntime and closes it with the socket", async () => {
     const close = vi.fn(async () => undefined);
     const bindSessionRuntime = vi.fn((descriptor: { sessionName: string; leaseId: string }) => ({
@@ -1114,11 +1425,14 @@ describe("PaneStreamAdmissionCoordinator", () => {
         .spans.filter(
           (span) =>
             span.traceId === traceId &&
-            ["pane-stream-input-frame-ingress", "pane-stream-input-ack-socket-send"].includes(
-              span.operation,
-            ),
+            [
+              "pane-stream-socket-message-callback-entry",
+              "pane-stream-input-frame-ingress",
+              "pane-stream-input-ack-socket-send",
+            ].includes(span.operation),
         );
       expect(transportSpans.map(({ operation }) => operation)).toEqual([
+        "pane-stream-socket-message-callback-entry",
         "pane-stream-input-frame-ingress",
         "pane-stream-input-ack-socket-send",
       ]);

@@ -94,6 +94,53 @@ describe("DaemonFleetFactsObserver", () => {
     handle.release();
   });
 
+  it("emits bounded cycle and event-loop diagnostics without overlapping reads", async () => {
+    const sessions = deferred<SessionCompositionFacts | null>();
+    const events: unknown[] = [];
+    let now = 10;
+    let activeReads = 0;
+    let maximumReads = 0;
+    const observer = new DaemonFleetFactsObserver({
+      readSessions: async () => {
+        activeReads += 1;
+        maximumReads = Math.max(maximumReads, activeReads);
+        const result = await sessions.promise;
+        activeReads -= 1;
+        return result;
+      },
+      readAgents: async () => new Map(),
+      ...callbacks(),
+      diagnostics: {
+        nowMicros: () => now++,
+        createTraceId: () => "11111111-1111-4111-8111-111111111111",
+        publish: (event) => events.push(event),
+        queueMicrotask: (callback) => callback(),
+      },
+      setTimer: vi.fn(() => 1 as unknown as ReturnType<typeof setTimeout>),
+      clearTimer: vi.fn(),
+    });
+    const handle = observer.acquire(["sessions"]);
+    const duplicate = observer.runOnce();
+    sessions.resolve(emptySessions());
+    await Promise.all([handle.ready, duplicate]);
+    expect(maximumReads).toBe(1);
+    expect(events).toEqual([
+      expect.objectContaining({ operation: "fleet-cycle", phase: "begin", activeOperations: 1 }),
+      expect.objectContaining({
+        operation: "fleet-cycle",
+        phase: "event-loop-sentinel",
+        activeOperations: 1,
+      }),
+      expect.objectContaining({
+        operation: "fleet-cycle",
+        phase: "end",
+        activeOperations: 1,
+        succeeded: true,
+      }),
+    ]);
+    handle.release();
+  });
+
   it("immediately baselines demand acquired during an in-flight cycle", async () => {
     const firstSessions = deferred<SessionCompositionFacts | null>();
     const readSessions = vi.fn(() => firstSessions.promise);

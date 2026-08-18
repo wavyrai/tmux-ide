@@ -124,12 +124,45 @@ export const CausalCellFailureReasonV1SchemaZ = z.enum([
 ]);
 export type CausalCellFailureReasonV1 = z.infer<typeof CausalCellFailureReasonV1SchemaZ>;
 
+const CausalCellChangedCoordinateV1SchemaZ = z
+  .object({ row: GridCoordinateSchemaZ, column: GridCoordinateSchemaZ })
+  .strict();
+
+/** Bounded, content-free explanation of a failed exact-one-cell proof. */
+export const CausalCellStructuralDiffV1SchemaZ = z
+  .object({
+    version: z.literal(1),
+    baselineRevision: CanonicalRevisionSchemaZ,
+    baselineStateHash: CanonicalStateHashSchemaZ,
+    candidateRevision: CanonicalRevisionSchemaZ,
+    candidateStateHash: CanonicalStateHashSchemaZ,
+    dimensionsChanged: z.boolean(),
+    changedCellCount: z.number().int().nonnegative().safe(),
+    changedRowCount: z.number().int().nonnegative().safe(),
+    changedCoordinates: z.array(CausalCellChangedCoordinateV1SchemaZ).max(8),
+    coordinatesTruncated: z.boolean(),
+    changedWrappedRowCount: z.number().int().nonnegative().safe(),
+    changedWrappedRows: z.array(GridCoordinateSchemaZ).max(8),
+    wrappedRowsTruncated: z.boolean(),
+    targetMatched: z.boolean(),
+    cursorChanged: z.boolean(),
+    modesChanged: z.boolean(),
+    historyChanged: z.boolean(),
+    placementsChanged: z.boolean(),
+    bootstrapChanged: z.boolean(),
+    semanticSnapshotMatched: z.boolean(),
+    serializationOrderOnly: z.boolean(),
+  })
+  .strict();
+export type CausalCellStructuralDiffV1 = z.infer<typeof CausalCellStructuralDiffV1SchemaZ>;
+
 export const CausalCellFailureV1SchemaZ = z
   .object({
     version: z.literal(1),
     capability: CausalCellCapabilitySchemaZ,
     traceId: z.uuid(),
     reason: CausalCellFailureReasonV1SchemaZ,
+    diagnostic: CausalCellStructuralDiffV1SchemaZ.optional(),
   })
   .strict();
 export type CausalCellFailureV1 = z.infer<typeof CausalCellFailureV1SchemaZ>;

@@ -1,3 +1,6 @@
+import type { CausalCellStructuralDiffV1 } from "@tmux-ide/contracts";
+import type { PaneStreamClockCalibrationOutcome } from "@tmux-ide/daemon-client/pane-stream-clock-calibration";
+
 /**
  * Allocation-free hot-path bridge into the demand-loaded local performance HUD.
  * The optional feature installs one sink only while visible; producers must
@@ -9,6 +12,7 @@ export interface TuiPerformanceEventSink {
   readonly terminalDelivery: (event: TuiTerminalDeliveryPerformanceEvent) => void;
   readonly terminalTraceSpan?: (event: TuiTerminalTraceSpanEvent) => void;
   readonly terminalTraceStage?: (event: TuiTerminalTraceStageEvent) => void;
+  readonly terminalClockCalibration?: (event: TuiTerminalClockCalibrationEvent) => void;
   /** Explicit fresh-lane state for fail-closed queue fences before the first input. */
   readonly terminalInputQueueState?: (event: TuiTerminalInputQueueStateEvent) => void;
   /** Diagnostic-only proof of a canonical DEC-mode transition. */
@@ -21,7 +25,57 @@ export interface TuiPerformanceEventSink {
   readonly terminalCanonicalHostFrame?: (event: TuiTerminalCanonicalHostFrameEvent) => void;
   /** Same-stream watermark emitted after the renderer's first coherent frame. */
   readonly terminalFrameFence?: (event: TuiTerminalFrameFenceEvent) => void;
-  readonly beginTerminalInput?: () => TuiTerminalInputTrace;
+  /** Detailed-only proof of the real OpenTUI parser boundary that admitted input. */
+  readonly terminalInputOrigin?: true;
+  readonly terminalInputFence?: (event: TuiTerminalInputFenceEvent) => void;
+  readonly beginTerminalInput?: (origin?: TuiTerminalInputOrigin) => TuiTerminalInputTrace;
+}
+
+export interface TuiTerminalClockCalibrationEvent extends PaneStreamClockCalibrationOutcome {
+  readonly processId: string;
+  readonly clockId: "opentui-performance-now";
+  readonly clockKind: "performance-now";
+  readonly atMicros: number;
+}
+
+export interface TuiTerminalInputFenceEvent {
+  readonly traceId: string;
+  readonly processId: string;
+  readonly clockId: "opentui-performance-now";
+  readonly clockKind: "performance-now";
+  readonly atMicros: number;
+  readonly semanticPaneId: string;
+  readonly generation: string;
+  readonly incarnation: string;
+  readonly revision: number;
+  readonly stateHash: string;
+}
+
+export interface TuiTerminalInputOrigin {
+  readonly origin: "keyboard" | "bracketed-paste";
+  readonly payload: Uint8Array;
+  readonly semanticPaneId: string;
+  readonly generation: string;
+  readonly incarnation: string;
+  readonly revision: number;
+  readonly stateHash: string;
+}
+
+export interface TuiTerminalInputOriginEvent {
+  readonly processId: string;
+  readonly clockId: "opentui-performance-now";
+  readonly clockKind: "performance-now";
+  readonly atMicros: number;
+  readonly origin: "keyboard" | "bracketed-paste";
+  readonly payloadByteCount: number;
+  readonly payloadFingerprint: string;
+  readonly parserConsumption: "keyboard-event" | "paste-event";
+  readonly traceId: string;
+  readonly semanticPaneId: string;
+  readonly generation: string;
+  readonly incarnation: string;
+  readonly revision: number;
+  readonly stateHash: string;
 }
 
 export interface TuiTerminalCanonicalPublicationEvent {
@@ -143,9 +197,18 @@ export interface TuiTerminalTraceStageEvent {
   readonly clockId: "opentui-performance-now";
   readonly clockKind: "performance-now";
   readonly atMicros: number;
+  readonly sharedMicros?: number;
+  readonly clockOffsetLowerMicros?: number;
+  readonly clockOffsetUpperMicros?: number;
+  readonly clockUncertaintyMicros?: number;
+  readonly clockCalibratedAtMicros?: number;
+  readonly clockCalibrationRequestId?: string;
   readonly inputPending?: number;
   readonly inputInFlight?: number;
   readonly inputPendingBytes?: number;
+  readonly bufferedAmount?: number;
+  readonly frameBytes?: number;
+  readonly drained?: boolean;
   readonly rssBytes?: number;
   readonly heapUsedBytes?: number;
   readonly causalAttribution?: true;
@@ -158,6 +221,8 @@ export interface TuiTerminalTraceStageEvent {
   readonly column?: number;
   readonly beforeGrapheme?: string;
   readonly afterGrapheme?: string;
+  readonly dirtyRowProved?: true;
+  readonly causalDiagnostic?: CausalCellStructuralDiffV1;
 }
 
 export interface TuiTerminalInputQueueStateEvent {

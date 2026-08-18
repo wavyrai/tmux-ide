@@ -70,7 +70,9 @@ const GOLDEN_JOURNEYS = Object.freeze(
       coverage: Object.freeze(coverage),
       executor: id,
       variants: Object.freeze(id === "first-key-paste" ? ["key", "paste"] : [null]),
-      implementation: ["configless-cold-start", "coherent-first-pane"].includes(id)
+      implementation: ["configless-cold-start", "coherent-first-pane", "first-key-paste"].includes(
+        id,
+      )
         ? "implemented"
         : "pending",
     }),
@@ -312,6 +314,61 @@ export async function runCoherentFirstPaneOwnerBoot(operations) {
   return Object.freeze({ namespace, identity, targetedProcess, coherent, web });
 }
 
+/** Dedicated first-input journey: one detailed first input, then a fresh timing host. */
+export async function runFirstKeyPasteOwnerBoot(operations) {
+  const atBoundary = async (boundary, operation) => {
+    try {
+      return await operation();
+    } catch (error) {
+      if (error && typeof error === "object" && error.boundary) throw error;
+      const bounded = new Error(error instanceof Error ? error.message : String(error), {
+        cause: error,
+      });
+      bounded.boundary = boundary;
+      if (error?.observation) bounded.observation = error.observation;
+      throw bounded;
+    }
+  };
+  const namespace = await atBoundary("first-input-namespace-ready", () =>
+    operations.createInputNamespace(),
+  );
+  const daemon = await atBoundary("first-input-daemon-ready", () =>
+    operations.startCanonicalDaemon(namespace),
+  );
+  const identity = await atBoundary("first-input-daemon-ready", () =>
+    operations.openCanonicalWorkspace(namespace, daemon),
+  );
+  await atBoundary("first-input-tui-coherent", () => operations.buildBeforeMeasurement(namespace));
+  await atBoundary("first-input-tui-coherent", () => operations.prepareFirstTui(namespace));
+  const firstProcess = await atBoundary("first-input-tui-coherent", () =>
+    operations.launchFirstTui(namespace, daemon, identity),
+  );
+  const baseline = await atBoundary("first-input-no-prior-hosted-input", () =>
+    operations.proveNoPriorHostedInput(namespace, daemon, identity, firstProcess),
+  );
+  const firstInput = await atBoundary("first-input-causal-paint", () =>
+    operations.driveFirstInput(namespace, daemon, identity, firstProcess, baseline),
+  );
+  const distributionProcess = await atBoundary("distribution-lane-fresh", () =>
+    operations.rehostDistributionTui(namespace, daemon, identity, firstProcess, firstInput),
+  );
+  const distribution = await atBoundary("distribution-samples", () =>
+    operations.driveDistribution(namespace, daemon, identity, distributionProcess, firstInput),
+  );
+  const web = await atBoundary("first-input-web-correlation", () =>
+    operations.startWebAfterInput(namespace, daemon, identity, distribution),
+  );
+  return Object.freeze({
+    namespace,
+    identity,
+    firstProcess,
+    firstInput,
+    distributionProcess,
+    distribution,
+    web,
+  });
+}
+
 function exactTargetedTuiCwd(runtimeDir, { createMissing, hooks = {} }) {
   const fail = (reason, cause = undefined) => {
     const error = new Error(`targeted TUI isolated cwd preparation failed: ${reason}`, { cause });
@@ -524,7 +581,10 @@ export function createProductRigCleanupReceipt(entry, state, attempt) {
     namespace?.tmuxSocketPath,
     namespace?.hostTmuxSocketPath,
     namespace?.daemonInfoDir,
+    ...(state?.ownedTuiRuntimeDirs ?? []),
   ];
+  const hasDaemon = Object.prototype.hasOwnProperty.call(state ?? {}, "daemon");
+  const daemonStarted = hasDaemon && state.daemon !== undefined && state.daemon !== null;
   if (
     !entry ||
     typeof entry.runId !== "string" ||
@@ -536,8 +596,11 @@ export function createProductRigCleanupReceipt(entry, state, attempt) {
     attempt < 1 ||
     attempt > 2 ||
     !Number.isSafeInteger(state?.ownerPid) ||
-    !Number.isSafeInteger(state?.daemon?.pid) ||
-    typeof state.daemon.instanceId !== "string" ||
+    (!daemonStarted && (hasDaemon || state?.daemonLifecycle !== "not-started")) ||
+    (daemonStarted &&
+      (state.daemonLifecycle !== "started" ||
+        !Number.isSafeInteger(state.daemon.pid) ||
+        typeof state.daemon.instanceId !== "string")) ||
     ownedPaths.some((path) => typeof path !== "string")
   )
     throw new Error("ProductRig cleanup receipt source is incomplete");
@@ -550,13 +613,14 @@ export function createProductRigCleanupReceipt(entry, state, attempt) {
     }
   };
   const ownerDead = dead(state.ownerPid);
-  const daemonDead = dead(state.daemon.pid);
+  const daemonDead = daemonStarted ? dead(state.daemon.pid) : true;
   const pathsAbsent = ownedPaths.every((path) => !existsSync(path));
   const pathAbsence = {
     runtimeRoot: !existsSync(ownedPaths[0]),
     tmuxSocket: !existsSync(ownedPaths[1]),
     hostTmuxSocket: !existsSync(ownedPaths[2]),
     daemonInfo: !existsSync(ownedPaths[3]),
+    tuiRuntime: ownedPaths.slice(4).every((path) => !existsSync(path)),
   };
   const receipt = {
     version: 1,
@@ -566,7 +630,9 @@ export function createProductRigCleanupReceipt(entry, state, attempt) {
     passed: true,
     completedAt: cleanup.completedAt,
     ownerPid: state.ownerPid,
-    daemon: { instanceId: state.daemon.instanceId, pid: state.daemon.pid },
+    daemon: daemonStarted
+      ? { status: "started", instanceId: state.daemon.instanceId, pid: state.daemon.pid }
+      : { status: "not-started" },
     namespaceDigest: createHash("sha256").update(JSON.stringify(ownedPaths)).digest("hex"),
     ownerDead,
     daemonDead,
@@ -578,6 +644,16 @@ export function createProductRigCleanupReceipt(entry, state, attempt) {
 }
 
 export function validateProductRigCleanupReceipt(receipt, runId) {
+  const daemonValid =
+    (receipt?.daemon?.status === "started" &&
+      typeof receipt.daemon.instanceId === "string" &&
+      receipt.daemon.instanceId.length > 0 &&
+      receipt.daemon.instanceId.length <= 128 &&
+      Number.isSafeInteger(receipt.daemon.pid) &&
+      receipt.daemon.pid > 0) ||
+    (receipt?.daemon?.status === "not-started" &&
+      !Object.prototype.hasOwnProperty.call(receipt.daemon, "instanceId") &&
+      !Object.prototype.hasOwnProperty.call(receipt.daemon, "pid"));
   const valid =
     receipt?.version === 1 &&
     receipt.runId === runId &&
@@ -590,11 +666,7 @@ export function validateProductRigCleanupReceipt(receipt, runId) {
     Number.isFinite(Date.parse(receipt.completedAt)) &&
     Number.isSafeInteger(receipt.ownerPid) &&
     receipt.ownerPid > 0 &&
-    typeof receipt.daemon?.instanceId === "string" &&
-    receipt.daemon.instanceId.length > 0 &&
-    receipt.daemon.instanceId.length <= 128 &&
-    Number.isSafeInteger(receipt.daemon.pid) &&
-    receipt.daemon.pid > 0 &&
+    daemonValid &&
     /^[0-9a-f]{64}$/u.test(receipt.namespaceDigest ?? "") &&
     receipt.ownerDead === true &&
     receipt.daemonDead === true &&
@@ -603,6 +675,7 @@ export function validateProductRigCleanupReceipt(receipt, runId) {
     receipt.pathAbsence?.tmuxSocket === true &&
     receipt.pathAbsence?.hostTmuxSocket === true &&
     receipt.pathAbsence?.daemonInfo === true &&
+    receipt.pathAbsence?.tuiRuntime === true &&
     receipt.failureCount === 0;
   if (!valid) throw new Error("ProductRig cleanup receipt is missing, mismatched, or not passed");
   return Object.freeze({
@@ -613,7 +686,14 @@ export function validateProductRigCleanupReceipt(receipt, runId) {
     passed: true,
     completedAt: receipt.completedAt,
     ownerPid: receipt.ownerPid,
-    daemon: Object.freeze({ instanceId: receipt.daemon.instanceId, pid: receipt.daemon.pid }),
+    daemon:
+      receipt.daemon.status === "started"
+        ? Object.freeze({
+            status: "started",
+            instanceId: receipt.daemon.instanceId,
+            pid: receipt.daemon.pid,
+          })
+        : Object.freeze({ status: "not-started" }),
     namespaceDigest: receipt.namespaceDigest,
     ownerDead: true,
     daemonDead: true,
@@ -623,6 +703,7 @@ export function validateProductRigCleanupReceipt(receipt, runId) {
       tmuxSocket: true,
       hostTmuxSocket: true,
       daemonInfo: true,
+      tuiRuntime: true,
     }),
     failureCount: 0,
   });
@@ -652,6 +733,7 @@ export function productRigCleanupBarrierFailures(
     ["tmux-socket", state.runtimeNamespace?.tmuxSocketPath],
     ["host-tmux-socket", state.runtimeNamespace?.hostTmuxSocketPath],
     ["daemon-info", state.runtimeNamespace?.daemonInfoDir],
+    ...(state.ownedTuiRuntimeDirs ?? []).map((path) => ["tui-runtime", path]),
   ])
     if (typeof path === "string" && pathExists(path)) failures.push(`${name}-present`);
   return Object.freeze(failures);
@@ -749,6 +831,75 @@ export async function collectProductRigCleanupFailures(steps, { detailLimit = 4_
     }
   }
   return Object.freeze(failures);
+}
+
+export function bufferOwnedTuiRuntimeEvidence({
+  ownedRuntimeDirs,
+  activeTui,
+  artifactDir,
+  pathExists,
+  ensureArtifactDir,
+  moveRuntimeDir,
+  onActiveTuiRelocated = () => undefined,
+}) {
+  let bufferedTui = activeTui;
+  ensureArtifactDir(artifactDir);
+  const relocateActiveTui = (runtimeDir, bufferedRuntimeDir) => {
+    if (bufferedTui?.runtimeDir !== runtimeDir) return;
+    const relocate = (path) =>
+      typeof path === "string" && path.startsWith(`${runtimeDir}${sep}`)
+        ? join(bufferedRuntimeDir, path.slice(runtimeDir.length + 1))
+        : path;
+    bufferedTui = Object.freeze({
+      ...bufferedTui,
+      runtimeDir: bufferedRuntimeDir,
+      performanceTracePath: relocate(bufferedTui.performanceTracePath),
+    });
+    onActiveTuiRelocated(bufferedTui);
+  };
+  for (const [index, runtimeDir] of ownedRuntimeDirs.entries()) {
+    const bufferedRuntimeDir = join(artifactDir, `tui-runtime-${index + 1}`);
+    const sourceExists = pathExists(runtimeDir);
+    const destinationExists = pathExists(bufferedRuntimeDir);
+    if (!sourceExists && destinationExists) {
+      relocateActiveTui(runtimeDir, bufferedRuntimeDir);
+      continue;
+    }
+    if (!sourceExists) continue;
+    if (destinationExists) throw new Error("buffered TUI evidence destination already exists");
+    moveRuntimeDir(runtimeDir, bufferedRuntimeDir);
+    relocateActiveTui(runtimeDir, bufferedRuntimeDir);
+  }
+  return bufferedTui;
+}
+
+export function prepareOwnedTuiRuntime({
+  ownership,
+  intendedTui,
+  ownedTuiRuntimeDirs = [],
+  publish,
+  resolveProvenance,
+  createRuntimeDir,
+}) {
+  const ownedRuntimeDirs = [...new Set([...ownedTuiRuntimeDirs, intendedTui.runtimeDir])];
+  publish({ ...ownership, tui: intendedTui, ownedTuiRuntimeDirs: ownedRuntimeDirs });
+  const provenance = resolveProvenance();
+  const tui = Object.freeze({
+    ...intendedTui,
+    performanceTraceCommit: provenance.commit,
+    performanceTraceTree: provenance.tree,
+  });
+  publish({ tui });
+  createRuntimeDir(tui.runtimeDir);
+  return tui;
+}
+
+export async function startOwnedProductRigDaemon({ start, publish, waitUntilReady }) {
+  publish({ daemonLifecycle: "starting" });
+  const daemon = await start();
+  publish({ daemonLifecycle: "started", daemon: daemon.record });
+  await waitUntilReady(daemon);
+  return daemon;
 }
 
 /**

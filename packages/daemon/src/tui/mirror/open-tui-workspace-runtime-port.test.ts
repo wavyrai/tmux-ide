@@ -439,7 +439,10 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
         semanticPaneId: PANE_A,
         generation: GENERATION,
       }),
-      { performanceTraceId: traceId },
+      {
+        performanceTraceId: traceId,
+        representationHash: delivery.envelope.representationHash,
+      },
     ]);
     expect(siblingListener).not.toHaveBeenCalled();
     expect(ordering).toEqual(["listener", "ack"]);
@@ -628,11 +631,13 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
 
   it("installs transport diagnostic callbacks only when the sink exists at connect", async () => {
     const terminalTraceStage = vi.fn();
+    const terminalClockCalibration = vi.fn();
     const uninstall = installTuiPerformanceEventSink({
       frame: vi.fn(),
       terminalPaint: vi.fn(),
       terminalDelivery: vi.fn(),
       terminalTraceStage,
+      terminalClockCalibration,
     });
     const test = rig();
     try {
@@ -640,22 +645,99 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
         inventory: inventory(),
         routing: test.routing,
       });
+      const memoryUsage = vi.spyOn(process, "memoryUsage");
       expect(test.options().onInputTransportStage).toEqual(expect.any(Function));
       expect(test.options().onTerminalFrameArrival).toEqual(expect.any(Function));
+      expect(test.options().onClockCalibration).toEqual(expect.any(Function));
+      expect(test.options().onClockCalibrationOutcome).toEqual(expect.any(Function));
+      test.options().onClockCalibration?.({
+        version: 1,
+        requestId: "00000000-0000-4000-8000-000000000077",
+        daemonInstanceId: GENERATION,
+        probe: 1,
+        calibratedAtMicros: 10,
+        offsetLowerMicros: 90,
+        offsetUpperMicros: 110,
+        uncertaintyMicros: 20,
+        roundTripMicros: 21,
+        daemonWorkMicros: 1,
+      });
+      test.options().onClockCalibrationOutcome?.({
+        version: 1,
+        requestId: "00000000-0000-4000-8000-000000000077",
+        daemonInstanceId: GENERATION,
+        reason: "calibrated",
+        attemptedProbes: 5,
+        receivedProbes: 5,
+        validProbes: 5,
+        selectedProbes: 1,
+        selectedProbe: 1,
+      });
       test.options().onInputTransportStage?.({
         traceId: "trace.one",
         operation: "pane-stream-socket-send-return",
         atMicros: 41,
         pane: PANE_A,
         sequence: 1,
+        sharedMicros: 20,
       });
-      test.options().onTerminalFrameArrival?.({ traceId: "trace.one", atMicros: 42 });
-      expect(terminalTraceStage).toHaveBeenCalledTimes(2);
+      test.options().onInputAck?.({
+        traceId: "trace.one",
+        pane: PANE_A,
+        sequence: 1,
+        sharedMicros: 30,
+      });
+      test.options().onTerminalFrameArrival?.({
+        traceId: "trace.one",
+        pane: PANE_A,
+        atMicros: 42,
+        sharedMicros: 40,
+      });
+      expect(terminalTraceStage).toHaveBeenCalledTimes(3);
       expect(terminalTraceStage.mock.calls[0]?.[0]).toMatchObject({
         traceId: "trace.one",
         operation: "pane-stream-socket-send-return",
         atMicros: 41,
+        sharedMicros: 20,
+        generation: GENERATION,
+        clockUncertaintyMicros: 20,
       });
+      expect(terminalTraceStage.mock.calls.map(([event]) => event.generation)).toEqual([
+        GENERATION,
+        GENERATION,
+        GENERATION,
+      ]);
+      expect(
+        terminalTraceStage.mock.calls.map(([event]) => event.clockCalibrationRequestId),
+      ).toEqual(Array.from({ length: 3 }, () => "00000000-0000-4000-8000-000000000077"));
+      expect(terminalClockCalibration).toHaveBeenCalledWith(
+        expect.objectContaining({
+          daemonInstanceId: GENERATION,
+          reason: "calibrated",
+          attemptedProbes: 5,
+          receivedProbes: 5,
+          validProbes: 5,
+          selectedProbes: 1,
+        }),
+      );
+      terminalClockCalibration.mockImplementation(() => {
+        throw new Error("calibration diagnostic failed");
+      });
+      expect(() =>
+        test.options().onClockCalibrationOutcome?.({
+          version: 1,
+          requestId: "00000000-0000-4000-8000-000000000077",
+          daemonInstanceId: GENERATION,
+          reason: "timeout-no-sample",
+          attemptedProbes: 1,
+          receivedProbes: 0,
+          validProbes: 0,
+          selectedProbes: 0,
+          selectedProbe: null,
+        }),
+      ).not.toThrow();
+      expect(terminalTraceStage.mock.calls[0]?.[0]).not.toHaveProperty("rssBytes");
+      expect(terminalTraceStage.mock.calls[0]?.[0]).not.toHaveProperty("heapUsedBytes");
       terminalTraceStage.mockImplementation(() => {
         throw new Error("diagnostic sink failed");
       });
@@ -668,6 +750,15 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
           sequence: 2,
         }),
       ).not.toThrow();
+      expect(() =>
+        test.options().onTerminalFrameArrival?.({
+          traceId: "trace.two",
+          pane: PANE_A,
+          atMicros: 44,
+        }),
+      ).not.toThrow();
+      expect(memoryUsage).not.toHaveBeenCalled();
+      memoryUsage.mockRestore();
       await port.close();
     } finally {
       uninstall();

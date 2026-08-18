@@ -6,9 +6,30 @@ import type { OpenTuiWorkspaceRuntimePort } from "../open-tui-workspace-runtime-
 import { DaemonAuthorityRebindCoordinator } from "./daemon-authority-rebind.ts";
 import {
   createOpenTuiGenerationHost,
+  emitTerminalTraceStageFailOpen,
   type OpenTuiGenerationBundle,
   type OpenTuiProductionWorkspaceClient,
 } from "./open-tui-generation-host.ts";
+
+it("keeps delivery and paint authoritative when trace-stage diagnostics throw", () => {
+  expect(() =>
+    emitTerminalTraceStageFailOpen(
+      () => {
+        throw new Error("diagnostic sink");
+      },
+      {
+        traceId: "trace-a",
+        scenario: "terminal-input-to-paint",
+        stage: "client",
+        operation: "causal-cell-painted",
+        processId: "opentui:1",
+        clockId: "opentui-performance-now",
+        clockKind: "performance-now",
+        atMicros: 1,
+      },
+    ),
+  ).not.toThrow();
+});
 import type { OpenTuiRuntimeLayoutPresentation } from "./runtime-layout-presentation.ts";
 import type { TerminalFastLaneRendererAdapter } from "./terminal-fast-lane-renderer-adapter.ts";
 import type { OpenTuiWorkspaceTerminalFastLane } from "./workspace-terminal-fast-lane.ts";

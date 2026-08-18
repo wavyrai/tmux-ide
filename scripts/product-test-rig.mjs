@@ -9,11 +9,15 @@ import { createHash, randomBytes } from "node:crypto";
 import {
   chmodSync,
   closeSync,
+  constants as fsConstants,
   existsSync,
+  fstatSync,
   mkdirSync,
   openSync,
   readFileSync,
+  readSync,
   readdirSync,
+  renameSync,
   rmSync,
   watch,
   writeFileSync,
@@ -31,17 +35,25 @@ import { startDevServer } from "../apps/desktop-renderer/e2e/fixtures/dev-server
 import { createScratchFleet } from "../apps/desktop-renderer/e2e/fixtures/scratch-fleet.ts";
 import {
   PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES,
+  PRODUCT_RIG_SOURCE_INVENTORY_MAX_BYTES,
+  PRODUCT_RIG_SOURCE_INVENTORY_MAX_PATHS,
   PRODUCT_RIG_STATE_VERSION,
   activeTmuxPaneFromRows,
+  bindPromotedInitialPane,
   appendBoundedWebDiagnostic,
   awaitWebDiagnosticWithDeadline,
-  boundedSourceTraceDiff,
+  buildSourceTracePayload,
   buildProductDiagnosticReport,
   buildWebStartupEvidence,
   causalFixtureBaselineReadiness,
   causalInputSamples,
   causalInputSampleHasIncarnation,
   causalProbeEpochState,
+  createProductRigAttemptTimelineClock,
+  productRigSourceTraceIncludesPath,
+  productRigSourceTraceDiffArgs,
+  productRigSourceTraceUntrackedArgs,
+  readBoundedSourceTraceFiles,
   coherentGenerationPaint,
   coherentGenerationDuration,
   coherentReadiness,
@@ -88,6 +100,7 @@ import {
   PRODUCT_DIAGNOSTIC_BUNDLE_FILES,
   PRODUCT_JOURNEY_REGISTRY,
   auditProductJourneyScope,
+  bufferOwnedTuiRuntimeEvidence,
   collectProductRigCleanupFailures,
   createProductRigCleanupReceipt,
   createProductDiagnosticBundle,
@@ -95,6 +108,7 @@ import {
   dispatchProductJourneyExecutor,
   parseProductDiagnoseOptions,
   prepareIsolatedTargetedTuiCwd,
+  prepareOwnedTuiRuntime,
   productDiagnosticRunId,
   productRigTerminalFailureError,
   productRigTerminalFailureState,
@@ -105,10 +119,27 @@ import {
   resolveProductJourneyPlan,
   runConfiglessProductJourneyOwnerBoot,
   runCoherentFirstPaneOwnerBoot,
+  runFirstKeyPasteOwnerBoot,
   runIsolatedProductJourneyAttempt,
   runProductJourneyPlan,
   settleInternalProductRigCleanup,
+  startOwnedProductRigDaemon,
 } from "./product-test-rig-journeys.mjs";
+import {
+  assessFirstKeyPasteBoundaries,
+  assessProductFirstInput,
+  assessProductInputDistribution,
+  productFirstInputDocument,
+  productCoherentFrameTimeoutObservation,
+  launchAndWaitForExactProductTui,
+  productInputOutlierEvidence,
+  qualifyProductFirstInput,
+  qualifyProductInputDistribution,
+  settleProductFirstInputFixtureReset,
+  summarizeProductInputDistribution,
+  waitForProductInputQualification,
+  waitForProductInputPersistenceFence,
+} from "./lib/product-first-input.mjs";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -130,6 +161,7 @@ const diagnosticRoot = resolve(
 );
 const diagnosticCaptures = new Map();
 const diagnosticAttemptPhases = new Map();
+const productInputFingerprintKeys = new Map();
 const UNAVAILABLE_WEB_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64",
@@ -154,6 +186,7 @@ function productDiagnosticCorrelation(state, captureEvidence) {
   const webAvailable = Boolean(captureEvidence?.webPath && existsSync(captureEvidence.webPath));
   const configless = state?.journeyEvidence?.configlessColdStart ?? null;
   const coherent = state?.journeyEvidence?.coherentFirstPane ?? null;
+  const firstInput = state?.journeyEvidence?.firstKeyPaste ?? null;
   const exact = configless
     ? {
         fleetSessionId: configless.adopted?.fleetSessionId,
@@ -166,7 +199,13 @@ function productDiagnosticCorrelation(state, captureEvidence) {
           catalogRevision: coherent.identity?.catalogRevision,
           semanticPaneId: coherent.coherent?.semanticPaneId,
         }
-      : null;
+      : firstInput
+        ? {
+            fleetSessionId: firstInput.identity?.fleetSessionId,
+            catalogRevision: firstInput.identity?.catalogRevision,
+            semanticPaneId: firstInput.distribution?.semanticPaneId,
+          }
+        : null;
   return buildProductDiagnosticCorrelation({
     state,
     tuiAvailable,
@@ -216,12 +255,21 @@ function emit(value, json) {
   process.stdout.write(json ? `${JSON.stringify(value, null, 2)}\n` : `${value}\n`);
 }
 
+let attemptTimelineOriginMs = performance.timeOrigin + performance.now();
+let attemptTimelineClock = createProductRigAttemptTimelineClock(undefined, attemptTimelineOriginMs);
+
+function resetAttemptTimelineClock(origin = performance.timeOrigin + performance.now()) {
+  if (!Number.isFinite(origin)) throw new Error("Product rig timeline origin is unavailable");
+  attemptTimelineOriginMs = origin;
+  attemptTimelineClock = createProductRigAttemptTimelineClock(undefined, origin);
+}
+
 function event(phase, detail = {}) {
   const entry = {
     at: new Date().toISOString(),
-    elapsedMs: Date.now() - ownerStartedAt,
     phase,
     ...detail,
+    elapsedMs: attemptTimelineClock.elapsedMs(),
   };
   writeFileSync(timelinePath, `${JSON.stringify(entry)}\n`, { flag: "a", mode: 0o600 });
   return entry;
@@ -263,6 +311,11 @@ function commandEnv(state) {
           TMUX_IDE_PERFORMANCE_TRACE_COMMIT: state.tui.performanceTraceCommit,
           TMUX_IDE_PERFORMANCE_TRACE_TREE: state.tui.performanceTraceTree,
           TMUX_IDE_CAUSAL_CELL_FIXTURE: "1",
+          TMUX_IDE_PERFORMANCE_TRACE_DETAIL: state.tui.performanceTraceDetail ?? "1",
+          TMUX_IDE_PERFORMANCE_TRACE_INPUT_ORIGIN: state.tui.performanceTraceInputOrigin ?? "0",
+          TMUX_IDE_PERFORMANCE_TRACE_INPUT_DETAIL: state.tui.performanceTraceInputDetail ?? "0",
+          TMUX_IDE_PERFORMANCE_TRACE_INPUT_FINGERPRINT_KEY:
+            productInputFingerprintKeys.get(state.tui.runtimeDir) ?? "",
         }
       : {}),
   };
@@ -300,7 +353,7 @@ function sourceTraceProvenance() {
   }).trim();
   let diff;
   try {
-    diff = execFileSync("git", ["diff", "--binary", "HEAD"], {
+    diff = execFileSync("git", productRigSourceTraceDiffArgs(), {
       cwd: repoRoot,
       encoding: "utf8",
       // Leave a small decode/error margin above the explicit product ceiling.
@@ -315,10 +368,51 @@ function sourceTraceProvenance() {
     }
     throw error;
   }
-  boundedSourceTraceDiff(diff);
+  let untrackedOutput;
+  try {
+    untrackedOutput = execFileSync("git", productRigSourceTraceUntrackedArgs(), {
+      cwd: repoRoot,
+      maxBuffer: PRODUCT_RIG_SOURCE_INVENTORY_MAX_BYTES,
+    });
+  } catch (error) {
+    if (error?.code === "ENOBUFS")
+      throw new Error("Product rig untracked source inventory exceeded its byte ceiling", {
+        cause: error,
+      });
+    throw error;
+  }
+  const untracked = untrackedOutput.toString("utf8").split("\0").filter(Boolean).sort();
+  if (untracked.length > PRODUCT_RIG_SOURCE_INVENTORY_MAX_PATHS)
+    throw new Error("Product rig untracked source inventory exceeded its path-count ceiling");
+  const includedUntracked = untracked.filter(productRigSourceTraceIncludesPath);
+  for (const path of includedUntracked) {
+    if (path.startsWith("/") || path.split("/").includes("..") || /[\0\r\n]/u.test(path)) {
+      throw new Error(`Product rig untracked source path is malformed: ${path}`);
+    }
+  }
+  const untrackedFiles = readBoundedSourceTraceFiles(diff, includedUntracked, {
+    openFile: (path) =>
+      openSync(resolve(repoRoot, path), fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0)),
+    statFile: fstatSync,
+    readFile: (descriptor, size) => {
+      const content = Buffer.allocUnsafe(size);
+      let offset = 0;
+      while (offset < size) {
+        const bytesRead = readSync(descriptor, content, offset, size - offset, offset);
+        if (bytesRead === 0) break;
+        offset += bytesRead;
+      }
+      const grew = readSync(descriptor, Buffer.allocUnsafe(1), 0, 1, size) !== 0;
+      if (offset !== size || grew)
+        throw new Error("Product rig untracked source changed while hashing");
+      return content;
+    },
+    closeFile: closeSync,
+  });
+  const payload = buildSourceTracePayload(diff, untrackedFiles);
   const tree = execFileSync("git", ["hash-object", "--stdin"], {
     cwd: repoRoot,
-    input: diff,
+    input: payload,
     encoding: "utf8",
   }).trim();
   return { commit, tree };
@@ -943,6 +1037,7 @@ async function start(json, quiet = false, planEntry = null) {
             ...(planEntry.variant ? { TMUX_IDE_PRODUCT_JOURNEY_VARIANT: planEntry.variant } : {}),
           }
         : {}),
+      TMUX_IDE_PRODUCT_TIMELINE_ORIGIN_MS: String(attemptTimelineOriginMs),
     },
     detached: true,
     stdio: ["ignore", log, log],
@@ -1110,15 +1205,26 @@ async function waitForTuiLifecycleEntry(state, predicate, timeoutMs, timeoutMess
 }
 
 async function waitForCoherentTui(state, timeoutMs = 30_000, expectedProcessId = null) {
-  await waitForTuiLifecycleEntry(
-    state,
-    (entry) =>
-      entry?.phase === "first-terminal-frame" &&
-      entry?.daemonGeneration === state.daemon.instanceId &&
-      (expectedProcessId === null || entry?.processId === `opentui:${expectedProcessId}`),
-    timeoutMs,
-    "diagnostic TUI did not reach a coherent terminal frame",
-  );
+  try {
+    await waitForTuiLifecycleEntry(
+      state,
+      (entry) =>
+        entry?.phase === "first-terminal-frame" &&
+        entry?.daemonGeneration === state.daemon.instanceId &&
+        (expectedProcessId === null || entry?.processId === `opentui:${expectedProcessId}`),
+      timeoutMs,
+      "diagnostic TUI did not reach a coherent terminal frame",
+    );
+  } catch (error) {
+    error.observation = productCoherentFrameTimeoutObservation({
+      lifecycleRecords: readJsonLines(join(state.tui.runtimeDir, "performance.jsonl")),
+      traceRecords: readJsonLines(state.tui.performanceTracePath),
+      processId: expectedProcessId === null ? null : `opentui:${expectedProcessId}`,
+      daemonGeneration: state.daemon.instanceId,
+      detailMode: state.tui.performanceTraceDetail,
+    });
+    throw error;
+  }
   return JSON.parse(tuiCommand(state, ["status", "--json"]));
 }
 
@@ -2554,17 +2660,97 @@ async function diagnoseCoherentFirstPane(planEntry) {
   };
 }
 
+async function diagnoseFirstKeyPaste(planEntry) {
+  diagnosticAttemptPhases.set(planEntry.runId, "product-rig-startup");
+  await start(false, true, planEntry);
+  const state = await waitForState((candidate) => candidate?.status === "ready");
+  diagnosticAttemptPhases.set(planEntry.runId, "evidence-capture");
+  const captureEvidence = await captureArtifacts(
+    state,
+    `diagnose-${planEntry.journey.id}-${planEntry.variant}-r${planEntry.repetition}`,
+  );
+  diagnosticCaptures.set(planEntry.runId, captureEvidence);
+  tuiCommand(state, ["stop"]);
+  const timeline = readJsonLines(timelinePath);
+  const correlation = productDiagnosticCorrelation(state, captureEvidence);
+  const journeyEvidence = state.journeyEvidence?.firstKeyPaste ?? null;
+  const assessment = assessFirstKeyPasteBoundaries({
+    timeline,
+    evidence: journeyEvidence,
+    correlationComplete: correlation.complete,
+  });
+  const report = {
+    version: 1,
+    status: assessment.status,
+    journey: planEntry.journey.id,
+    variant: planEntry.variant,
+    repetition: planEntry.repetition,
+    repeat: planEntry.repeat,
+    runId: planEntry.runId,
+    firstBrokenBoundary: assessment.firstBrokenBoundary,
+    firstUnmeasuredBoundary: assessment.firstUnmeasuredBoundary,
+    boundaries: assessment.boundaries,
+    firstInput: journeyEvidence?.firstInput ?? null,
+    distribution: journeyEvidence?.distribution ?? null,
+    diagnosticCorrelation: { complete: correlation.complete, missing: correlation.missing },
+    sourceProvenance: {
+      commit: state.tui?.performanceTraceCommit ?? null,
+      tree: state.tui?.performanceTraceTree ?? null,
+    },
+  };
+  const stderr = readDiagnosticText(join(state.tui.runtimeDir, "stderr.log"));
+  return {
+    report,
+    reportPath: null,
+    evidence: {
+      report,
+      alignment: {
+        version: 1,
+        journey: planEntry.journey.id,
+        variant: planEntry.variant,
+        firstBrokenBoundary: assessment.firstBrokenBoundary,
+        firstUnmeasuredBoundary: assessment.firstUnmeasuredBoundary,
+        boundaries: assessment.boundaries,
+        correlation: { complete: correlation.complete, missing: correlation.missing },
+        availability: correlation.availability,
+      },
+      timeline: readDiagnosticText(timelinePath),
+      tmuxTruth: captureEvidence.truth,
+      daemonState: correlation.daemonState,
+      clientState: correlation.clientState,
+      tuiAnsi: readDiagnosticText(captureEvidence.tuiPath),
+      webPngPath: captureEvidence.webPath,
+      stderr: boundedDiagnosticText(stderr),
+      reproduction: diagnosticReproduction(planEntry.journey.id, planEntry.variant),
+    },
+  };
+}
+
 function executeProductJourney(planEntry) {
   return dispatchProductJourneyExecutor(planEntry, {
     "configless-cold-start": diagnoseConfiglessColdStart,
     "coherent-first-pane": diagnoseCoherentFirstPane,
+    "first-key-paste": diagnoseFirstKeyPaste,
     "runtime-qualification": diagnoseRuntimeQualification,
   });
 }
 
 async function prepareDiagnosticFailure(planEntry, error, firstBrokenBoundary) {
   const state = readJson(statePath);
-  const failureObservation = error?.observation ?? state?.failureObservation ?? null;
+  let failureObservation = error?.observation ?? state?.failureObservation ?? null;
+  if (
+    failureObservation?.operation === "wait-for-coherent-terminal-frame" &&
+    state?.tui?.runtimeDir &&
+    state?.tui?.performanceTracePath
+  ) {
+    failureObservation = productCoherentFrameTimeoutObservation({
+      lifecycleRecords: readJsonLines(join(state.tui.runtimeDir, "performance.jsonl")),
+      traceRecords: readJsonLines(state.tui.performanceTracePath),
+      processId: failureObservation.processId,
+      daemonGeneration: failureObservation.daemonGeneration,
+      detailMode: state.tui.performanceTraceDetail,
+    });
+  }
   let captureEvidence = diagnosticCaptures.get(planEntry.runId) ?? null;
   if (!captureEvidence && state?.status === "ready") {
     try {
@@ -2646,6 +2832,7 @@ async function prepareDiagnosticFailure(planEntry, error, firstBrokenBoundary) {
 }
 
 async function executeDiagnosticAttempt(entry) {
+  resetAttemptTimelineClock();
   try {
     return await runIsolatedProductJourneyAttempt(entry, {
       onPhase: (phase) => diagnosticAttemptPhases.set(entry.runId, phase),
@@ -2896,9 +3083,83 @@ async function observeTargetedCanonicalIdentity(daemon, sessionName, workspaceNa
   throw new Error("targeted canonical workspace identity did not settle before deadline");
 }
 
-let ownerStartedAt = Date.now();
+function causalFixtureOption(state, paneId) {
+  return execFileSync(
+    "tmux",
+    [
+      "-S",
+      state.runtimeNamespace.tmuxSocketPath,
+      "show-options",
+      "-pqv",
+      "-t",
+      paneId,
+      "@tmux_ide_causal_fixture",
+    ],
+    { encoding: "utf8" },
+  ).trim();
+}
+
+async function waitForDirectCausalFixture(state, paneId) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const command = execFileSync(
+      "tmux",
+      [
+        "-S",
+        state.runtimeNamespace.tmuxSocketPath,
+        "display-message",
+        "-p",
+        "-t",
+        paneId,
+        "#{pane_current_command}",
+      ],
+      { encoding: "utf8" },
+    ).trim();
+    if (command === "node" && causalFixtureOption(state, paneId) === "ready-v1") return;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  }
+  throw new Error("direct causal fixture did not become ready before TUI input");
+}
+
+function activeCanonicalIdentity(records, expected) {
+  const paint = records.findLast(
+    (record) =>
+      record?.type === "performance.terminal-canonical-paint" &&
+      record.processId === expected.processId &&
+      record.semanticPaneId === expected.semanticPaneId &&
+      record.generation === expected.generation,
+  );
+  if (
+    !paint ||
+    typeof paint.incarnation !== "string" ||
+    !Number.isSafeInteger(paint.revision) ||
+    typeof paint.stateHash !== "string"
+  )
+    throw new Error("first-input lane has no exact canonical paint identity");
+  return Object.freeze({
+    ...expected,
+    clockId: paint.clockId,
+    incarnation: paint.incarnation,
+    revision: paint.revision,
+    stateHash: paint.stateHash,
+  });
+}
+
+async function waitForInputEpoch(tracePath, baseline, processId) {
+  return waitForProductInputPersistenceFence({
+    readRecords: () => readJsonLines(tracePath),
+    baseline,
+    processId,
+  });
+}
+
 async function owner() {
-  ownerStartedAt = Date.now();
+  const inheritedTimelineOrigin = Number(process.env.TMUX_IDE_PRODUCT_TIMELINE_ORIGIN_MS);
+  resetAttemptTimelineClock(
+    Number.isFinite(inheritedTimelineOrigin)
+      ? inheritedTimelineOrigin
+      : performance.timeOrigin + performance.now(),
+  );
   const journeyId = process.env.TMUX_IDE_PRODUCT_JOURNEY ?? "runtime-qualification";
   const slug = randomBytes(3).toString("hex");
   const ownerToken = randomBytes(24).toString("hex");
@@ -2916,6 +3177,7 @@ async function owner() {
     status: "starting",
     ownerPid: process.pid,
     ownerToken,
+    daemonLifecycle: "not-started",
     artifactDir,
     timelinePath,
   };
@@ -2939,6 +3201,22 @@ async function owner() {
               if (state.tui) tuiCommand(state, ["stop"]);
             },
           },
+          {
+            subsystem: "tui-evidence",
+            run: async () => {
+              const ownedRuntimeDirs = state.ownedTuiRuntimeDirs ?? [];
+              const bufferedTui = bufferOwnedTuiRuntimeEvidence({
+                ownedRuntimeDirs,
+                activeTui: state.tui,
+                artifactDir,
+                pathExists: existsSync,
+                ensureArtifactDir: (path) => mkdirSync(path, { recursive: true, mode: 0o700 }),
+                moveRuntimeDir: renameSync,
+                onActiveTuiRelocated: (tui) => publish({ tui }),
+              });
+              if (bufferedTui !== state.tui) publish({ tui: bufferedTui });
+            },
+          },
           { subsystem: "browser", run: async () => browser?.close() },
           { subsystem: "dev-server", run: async () => devServer?.stop() },
           { subsystem: "daemon", run: async () => daemon?.stop() },
@@ -2960,6 +3238,7 @@ async function owner() {
         ["tmux-socket", state.runtimeNamespace?.tmuxSocketPath],
         ["host-tmux-socket", state.runtimeNamespace?.hostTmuxSocketPath],
         ["daemon-info", state.runtimeNamespace?.daemonInfoDir],
+        ...(state.ownedTuiRuntimeDirs ?? []).map((path) => ["tui-runtime", path]),
       ])
         if (typeof path === "string" && existsSync(path))
           failures.push({ subsystem, detail: `owned path remained: ${path}` });
@@ -3050,6 +3329,601 @@ async function owner() {
     if (!sleepAssertion.active())
       throw new Error("ProductRig host sleep assertion was not active before orchestration");
     event("namespace-start");
+    if (journeyId === "first-key-paste") {
+      const variant = process.env.TMUX_IDE_PRODUCT_JOURNEY_VARIANT;
+      if (variant !== "key" && variant !== "paste")
+        throw new Error("first-key-paste owner requires an exact key or paste variant");
+      const inputBoot = await runFirstKeyPasteOwnerBoot({
+        createInputNamespace: async () => {
+          const fixturePath = join(
+            repoRoot,
+            "scripts",
+            "lib",
+            "product-rig-causal-cell-fixture.mjs",
+          );
+          const daemonPerformanceTracePath = join(rigRoot, "first-input-daemon-performance.jsonl");
+          const scratchFleet = await createScratchFleet({
+            sessions: 1,
+            slug,
+            initialPaneCommand: { executable: process.execPath, args: [fixturePath] },
+          });
+          const cleanupToken = `product-test-rig:${slug}`;
+          fleet = {
+            ...scratchFleet,
+            environment: {
+              ...scratchFleet.environment,
+              TMUX_IDE_RUNTIME_MODE: "testdrive",
+              TMUX_IDE_CLEANUP_TOKEN: cleanupToken,
+              TMUX_IDE_TMUX_SOCKET_PATH: scratchFleet.socketPath,
+              TMUX_IDE_SESSION_RUNTIME_TRACE_LOG: daemonPerformanceTracePath,
+            },
+          };
+          const session = fleet.sessionNames[0];
+          const initialPane = fleet.initialPanes.find((pane) => pane.sessionName === session);
+          if (!initialPane)
+            throw new Error("first-input namespace did not retain its exact initial raw pane");
+          const runtimeNamespace = {
+            root: fleet.root,
+            home: fleet.environment.HOME,
+            projectDir: fleet.projectDir,
+            registryDir: fleet.environment.TMUX_IDE_REGISTRY_DIR,
+            settingsDir: fleet.environment.TMUX_IDE_SETTINGS_DIR,
+            stateDir: fleet.environment.TMUX_IDE_HOME,
+            tmuxSocketPath: fleet.socketPath,
+            hostTmuxSocketPath: join(fleet.root, "product-rig-host-tmux.sock"),
+            daemonInfoDir: fleet.daemonInfoDir,
+            cleanupToken,
+          };
+          const intendedTui = {
+            hostSession: `_tmux-ide-product-rig-${slug}`,
+            runtimeDir: join(rigRoot, "tui-first-input"),
+            performanceTracePath: join(rigRoot, "tui-first-input", "performance-trace.jsonl"),
+            daemonPerformanceTracePath,
+          };
+          const inputFingerprintKey = randomBytes(32).toString("hex");
+          productInputFingerprintKeys.set(intendedTui.runtimeDir, inputFingerprintKey);
+          const tui = prepareOwnedTuiRuntime({
+            ownership: { session, runtimeNamespace },
+            intendedTui: {
+              ...intendedTui,
+              performanceTraceDetail: "1",
+              performanceTraceInputOrigin: "1",
+              performanceTraceInputDetail: "1",
+            },
+            publish,
+            resolveProvenance: sourceTraceProvenance,
+            createRuntimeDir: createIsolatedTargetedTuiCwd,
+          });
+          await waitForDirectCausalFixture(state, initialPane.paneId);
+          event("first-input-namespace-ready", {
+            variant,
+            paneId: initialPane.paneId,
+            geometry: initialPane,
+            fixtureStartedBeforeDaemon: true,
+          });
+          return {
+            session,
+            runtimeNamespace,
+            tui,
+            paneId: initialPane.paneId,
+            initialPane,
+            inputFingerprintKey,
+          };
+        },
+        startCanonicalDaemon: async () => {
+          daemon = await startOwnedProductRigDaemon({
+            start: () => startDaemon(fleet),
+            publish,
+            waitUntilReady: waitForReadinessLadder,
+          });
+          return daemon;
+        },
+        openCanonicalWorkspace: async (namespace, runningDaemon) => {
+          const workspace = await runningDaemon.promote(namespace.session);
+          const identity = await observeTargetedCanonicalIdentity(
+            runningDaemon,
+            namespace.session,
+            workspace,
+          );
+          publish({
+            workspace,
+            daemon: {
+              ...runningDaemon.record,
+              revision: identity.catalogRevision,
+              revisionKind: "fleet-catalog",
+            },
+          });
+          event("first-input-daemon-ready", identity);
+          return identity;
+        },
+        buildBeforeMeasurement: async () => {
+          await execFileAsync("bun", [join(repoRoot, "scripts", "build-tui.mjs")], {
+            cwd: repoRoot,
+            timeout: 120_000,
+          });
+        },
+        prepareFirstTui: async (namespace) =>
+          prepareIsolatedTargetedTuiCwd(namespace.tui.runtimeDir),
+        launchFirstTui: async (namespace) => {
+          const status = await launchAndWaitForExactProductTui({
+            start: () =>
+              tuiCommand(state, [
+                "start",
+                "--target",
+                namespace.session,
+                "--cols",
+                "160",
+                "--rows",
+                "44",
+              ]),
+            status: () => JSON.parse(tuiCommand(state, ["status", "--json"])),
+            waitForCoherent: (processId) => waitForCoherentTui(state, 30_000, processId),
+          });
+          return Object.freeze({ processId: status.processId, launchId: status.launchId });
+        },
+        proveNoPriorHostedInput: async (namespace, runningDaemon) => {
+          await waitForDirectCausalFixture(state, namespace.paneId);
+          const active = activeTmuxPane(state);
+          bindPromotedInitialPane(namespace.initialPane, active);
+          const records = readJsonLines(namespace.tui.performanceTracePath);
+          const processId = records.findLast(
+            (record) => record?.type === "performance.trace.header",
+          )?.processId;
+          if (!processId) throw new Error("first-input trace header is unavailable");
+          if (
+            records.some(
+              (record) =>
+                record.processId === processId &&
+                (record.type === "performance.input-origin" ||
+                  (record.type === "performance.stage" && record.stage === "input")),
+            )
+          )
+            throw new Error("first-input lane observed hosted input before the tested input");
+          if (!productInputQueuesSettled(records, processId))
+            throw new Error("first-input lane queue was not empty before tested input");
+          const token = `first-${variant}-${randomBytes(6).toString("hex")}`;
+          const sendReset = () => {
+            execFileSync("tmux", [
+              "-S",
+              state.runtimeNamespace.tmuxSocketPath,
+              "send-keys",
+              "-l",
+              "-t",
+              namespace.paneId,
+              `reset-v1;${token}`,
+            ]);
+            execFileSync("tmux", [
+              "-S",
+              state.runtimeNamespace.tmuxSocketPath,
+              "send-keys",
+              "-t",
+              namespace.paneId,
+              "C-j",
+            ]);
+          };
+          const settled = await settleProductFirstInputFixtureReset({
+            token,
+            sendReset,
+            expected: {
+              paneId: namespace.paneId,
+              semanticPaneId: active.semanticPaneId,
+              generation: runningDaemon.record.instanceId,
+            },
+            observe: () => {
+              const activeBefore = activeTmuxPane(state);
+              const native = execFileSync(
+                "tmux",
+                [
+                  "-S",
+                  state.runtimeNamespace.tmuxSocketPath,
+                  "capture-pane",
+                  "-p",
+                  "-t",
+                  namespace.paneId,
+                ],
+                { encoding: "utf8" },
+              );
+              const tuiFrame = tuiCommand(state, ["capture"]);
+              const activeAfter = activeTmuxPane(state);
+              const currentRecords = readJsonLines(namespace.tui.performanceTracePath);
+              const canonical = activeCanonicalIdentity(currentRecords, {
+                processId,
+                semanticPaneId: activeBefore.semanticPaneId,
+                generation: runningDaemon.record.instanceId,
+              });
+              const body = paneBodyRegion(tuiFrame, activeBefore);
+              return Object.freeze({
+                fixtureOption: causalFixtureOption(state, namespace.paneId),
+                currentCommand: execFileSync(
+                  "tmux",
+                  [
+                    "-S",
+                    state.runtimeNamespace.tmuxSocketPath,
+                    "display-message",
+                    "-p",
+                    "-t",
+                    namespace.paneId,
+                    "#{pane_current_command}",
+                  ],
+                  { encoding: "utf8" },
+                ).trim(),
+                paneId: activeBefore.paneId,
+                semanticPaneId: activeBefore.semanticPaneId,
+                generation: canonical.generation,
+                incarnation: canonical.incarnation,
+                revision: canonical.revision,
+                stateHash: canonical.stateHash,
+                geometry: paneGeometryIdentity([activeBefore]),
+                geometryStable:
+                  paneGeometryIdentity([activeBefore]) === paneGeometryIdentity([activeAfter]),
+                nativeCellBlank: terminalCellAt(native, 0, activeBefore.width - 1) === " ",
+                tuiCellBlank: terminalCellAt(body, 0, activeBefore.width - 1) === " ",
+                queueSettled: productInputQueuesSettled(currentRecords, processId),
+                nativeHash: createHash("sha256").update(native).digest("hex"),
+                tuiHash: createHash("sha256").update(body).digest("hex"),
+              });
+            },
+          });
+          const finalRecords = readJsonLines(namespace.tui.performanceTracePath);
+          if (
+            finalRecords.some(
+              (record) =>
+                record.processId === processId &&
+                (record.type === "performance.input-origin" ||
+                  (record.type === "performance.stage" && record.stage === "input")),
+            )
+          )
+            throw new Error("fixture reset introduced hosted input before the tested input");
+          event("first-input-no-prior-hosted-input", {
+            processId,
+            semanticPaneId: active.semanticPaneId,
+            baselineRevision: settled.revision,
+            baselineStateHash: settled.stateHash,
+          });
+          return Object.freeze({
+            active,
+            expected: Object.freeze({
+              processId,
+              clockId: "opentui-performance-now",
+              semanticPaneId: settled.semanticPaneId,
+              generation: settled.generation,
+              incarnation: settled.incarnation,
+              revision: settled.revision,
+              stateHash: settled.stateHash,
+              inputFingerprintKey: namespace.inputFingerprintKey,
+            }),
+            traceBaseline: finalRecords.length,
+          });
+        },
+        driveFirstInput: async (namespace, _runningDaemon, _identity, _process, baseline) => {
+          const document = productFirstInputDocument(variant, 0);
+          const nativeBefore = execFileSync(
+            "tmux",
+            [
+              "-S",
+              state.runtimeNamespace.tmuxSocketPath,
+              "capture-pane",
+              "-p",
+              "-t",
+              namespace.paneId,
+            ],
+            { encoding: "utf8" },
+          );
+          const bodyBefore = paneBodyRegion(tuiCommand(state, ["capture"]), baseline.active);
+          const delivery = JSON.parse(tuiCommand(state, ["input", JSON.stringify(document)]));
+          await waitForInputEpoch(
+            namespace.tui.performanceTracePath,
+            baseline.traceBaseline,
+            baseline.expected.processId,
+          );
+          const qualified = await waitForProductInputQualification({
+            baseline: baseline.traceBaseline,
+            processId: baseline.expected.processId,
+            readTuiRecords: () => readJsonLines(namespace.tui.performanceTracePath),
+            readDaemonRecords: () => readJsonLines(namespace.tui.daemonPerformanceTracePath),
+            assess: (tuiRecords, daemonTraceRecords) =>
+              assessProductFirstInput(tuiRecords, {
+                ...baseline.expected,
+                variant,
+                document,
+                daemonTraceRecords,
+                requireDaemonEvidence: true,
+                requireSharedClockEvidence: true,
+              }),
+            qualify: (tuiRecords, daemonTraceRecords) =>
+              qualifyProductFirstInput(tuiRecords, {
+                ...baseline.expected,
+                variant,
+                document,
+                daemonTraceRecords,
+                requireDaemonEvidence: true,
+                requireSharedClockEvidence: true,
+              }),
+          });
+          if (!qualified)
+            throw new Error("first input did not close its exact parser-to-paint chain");
+          const activeAfter = activeTmuxPane(state);
+          const nativeAfter = execFileSync(
+            "tmux",
+            [
+              "-S",
+              state.runtimeNamespace.tmuxSocketPath,
+              "capture-pane",
+              "-p",
+              "-t",
+              namespace.paneId,
+            ],
+            { encoding: "utf8" },
+          );
+          const bodyAfter = paneBodyRegion(tuiCommand(state, ["capture"]), activeAfter);
+          const { row, column, beforeGrapheme, afterGrapheme } = qualified.painted;
+          if (
+            activeAfter.paneId !== namespace.paneId ||
+            paneGeometryIdentity([baseline.active]) !== paneGeometryIdentity([activeAfter]) ||
+            terminalCellAt(nativeBefore, row, column) !== beforeGrapheme ||
+            terminalCellAt(bodyBefore, row, column) !== beforeGrapheme ||
+            terminalCellAt(nativeAfter, row, column) !== afterGrapheme ||
+            terminalCellAt(bodyAfter, row, column) !== afterGrapheme
+          )
+            throw new Error("first input changed-cell evidence disagreed with native/TUI cells");
+          const evidence = Object.freeze({
+            variant,
+            passed: true,
+            documentKind: document.kind,
+            delivery,
+            traceId: qualified.origin.traceId,
+            parserOrigin: Object.freeze({
+              origin: qualified.origin.origin,
+              parserConsumption: qualified.origin.parserConsumption,
+              payloadByteCount: qualified.origin.payloadByteCount,
+              processId: qualified.origin.processId,
+              clockId: qualified.origin.clockId,
+              semanticPaneId: qualified.origin.semanticPaneId,
+              generation: qualified.origin.generation,
+              incarnation: qualified.origin.incarnation,
+              revision: qualified.origin.revision,
+              stateHash: qualified.origin.stateHash,
+            }),
+            sample: Object.freeze({
+              traceId: qualified.sample.traceId,
+              durationMs: qualified.sample.durationMs,
+              processId: qualified.sample.processId,
+              clockId: qualified.sample.clockId,
+              semanticPaneId: qualified.sample.semanticPaneId,
+              generation: qualified.sample.generation,
+              incarnation: qualified.sample.incarnation,
+              revision: qualified.sample.revision,
+              stateHash: qualified.sample.stateHash,
+              clientReceipts: qualified.sample.clientStages.map(({ operation, offsetMs }) => ({
+                operation,
+                offsetMs,
+              })),
+              daemonReceipts: qualified.sample.daemonSpans,
+            }),
+            cell: { row, column, changed: true, nativeTuiMatched: true },
+            queueBefore: qualified.queueBefore,
+            queueAfter: qualified.queueAfter,
+            fence: qualified.fence,
+            noPriorHostedInput: true,
+          });
+          event("first-input-causal-paint", evidence);
+          return evidence;
+        },
+        rehostDistributionTui: async (namespace, _daemon, _identity, firstProcess) => {
+          tuiCommand(state, ["stop"]);
+          const distributionRuntimeDir = join(rigRoot, "tui-input-distribution");
+          const tui = prepareOwnedTuiRuntime({
+            ownership: {},
+            intendedTui: {
+              ...namespace.tui,
+              runtimeDir: distributionRuntimeDir,
+              performanceTracePath: join(distributionRuntimeDir, "performance-trace.jsonl"),
+              performanceTraceDetail: "0",
+              performanceTraceInputOrigin: "1",
+              performanceTraceInputDetail: "1",
+            },
+            ownedTuiRuntimeDirs: state.ownedTuiRuntimeDirs ?? [],
+            publish,
+            resolveProvenance: sourceTraceProvenance,
+            createRuntimeDir: createIsolatedTargetedTuiCwd,
+          });
+          const inputFingerprintKey = randomBytes(32).toString("hex");
+          productInputFingerprintKeys.set(tui.runtimeDir, inputFingerprintKey);
+          prepareIsolatedTargetedTuiCwd(tui.runtimeDir);
+          const status = await launchAndWaitForExactProductTui({
+            start: () =>
+              tuiCommand(state, [
+                "start",
+                "--target",
+                namespace.session,
+                "--cols",
+                "160",
+                "--rows",
+                "44",
+              ]),
+            status: () => JSON.parse(tuiCommand(state, ["status", "--json"])),
+            waitForCoherent: (processId) => waitForCoherentTui(state, 30_000, processId),
+          });
+          if (status.processId === firstProcess.processId)
+            throw new Error("distribution lane reused the first-input TUI process");
+          const records = readJsonLines(tui.performanceTracePath);
+          const processId = records.findLast(
+            (record) => record?.type === "performance.trace.header",
+          )?.processId;
+          if (!processId || !productInputQueuesSettled(records, processId))
+            throw new Error("distribution lane did not start with an empty exact queue");
+          const active = activeTmuxPane(state);
+          if (active.paneId !== namespace.paneId)
+            throw new Error("distribution lane targeted a different physical pane");
+          const expected = activeCanonicalIdentity(records, {
+            processId,
+            semanticPaneId: active.semanticPaneId,
+            generation: state.daemon.instanceId,
+          });
+          if (
+            records.some(
+              (record) =>
+                record.processId === processId &&
+                (record.type === "performance.input-origin" ||
+                  (record.type === "performance.stage" && record.stage === "input")),
+            )
+          )
+            throw new Error("distribution lane observed input before its first timing sample");
+          event("distribution-lane-fresh", {
+            processId,
+            previousProcessId: firstProcess.processId,
+          });
+          return Object.freeze({
+            processId,
+            launchId: status.launchId,
+            tui,
+            active,
+            expected,
+            inputFingerprintKey,
+          });
+        },
+        driveDistribution: async (_namespace, runningDaemon, identity, process) => {
+          const startOrdinal = 1;
+          for (let ordinal = 0; ordinal < 30; ordinal += 1) {
+            const baseline = readJsonLines(process.tui.performanceTracePath).length;
+            tuiCommand(state, [
+              "input",
+              JSON.stringify(productFirstInputDocument(variant, startOrdinal + ordinal)),
+            ]);
+            await waitForInputEpoch(process.tui.performanceTracePath, baseline, process.processId);
+          }
+          const expected = {
+            variant,
+            ...process.expected,
+            inputFingerprintKey: process.inputFingerprintKey,
+            revision: undefined,
+            stateHash: undefined,
+            requireDaemonEvidence: true,
+            requireSharedClockEvidence: true,
+            startOrdinal,
+          };
+          const distribution = await waitForProductInputQualification({
+            boundary: "distribution-samples",
+            baseline: 0,
+            processId: process.expected.processId,
+            readTuiRecords: () => readJsonLines(process.tui.performanceTracePath),
+            readDaemonRecords: () => readJsonLines(process.tui.daemonPerformanceTracePath),
+            assess: (tuiRecords, daemonTraceRecords) =>
+              assessProductInputDistribution(tuiRecords, {
+                ...expected,
+                daemonTraceRecords,
+              }),
+            qualify: (tuiRecords, daemonTraceRecords) => {
+              return qualifyProductInputDistribution(tuiRecords, {
+                ...expected,
+                daemonTraceRecords,
+              });
+            },
+          });
+          if (!distribution.passed)
+            throw new Error(
+              `first-input distribution failed: ${JSON.stringify({ sampleCount: distribution?.sampleCount ?? 0, p95Ms: distribution?.p95Ms ?? null, p99Ms: distribution?.p99Ms ?? null })}`,
+            );
+          if (
+            distribution.samples[0]?.origin.revision !== process.expected.revision ||
+            distribution.samples[0]?.origin.stateHash !== process.expected.stateHash
+          )
+            throw new Error("distribution first parser origin did not match its pre-input anchor");
+          const workspaceClient = await waitForQualifiedWorkspaceClientState(
+            () => readJsonLines(join(process.tui.runtimeDir, "performance.jsonl")),
+            {
+              processId: process.processId,
+              daemonGeneration: runningDaemon.record.instanceId,
+              workspaceName: state.workspace,
+              sessionName: state.session,
+              fleetSessionId: identity.fleetSessionId,
+              semanticPaneId: process.expected.semanticPaneId,
+              canonicalGeneration: runningDaemon.record.instanceId,
+            },
+          );
+          publish({ convergence: { workspaceClient } });
+          const evidence = Object.freeze({
+            variant,
+            passed: true,
+            sampleCount: distribution.sampleCount,
+            startOrdinal,
+            p95Ms: distribution.p95Ms,
+            p99Ms: distribution.p99Ms,
+            processId: process.processId,
+            semanticPaneId: expected.semanticPaneId,
+            generation: expected.generation,
+            incarnation: expected.incarnation,
+            topOutliers: productInputOutlierEvidence({
+              samples: distribution.samples,
+              startOrdinal,
+              daemonObserverRecords: readJsonLines(process.tui.daemonPerformanceTracePath),
+            }),
+            samples: Object.freeze(
+              distribution.samples.map(
+                ({ origin, sample, painted, queueBefore, queueAfter, fence }) =>
+                  Object.freeze({
+                    traceId: sample.traceId,
+                    durationMs: sample.durationMs,
+                    processId: sample.processId,
+                    clockId: sample.clockId,
+                    semanticPaneId: sample.semanticPaneId,
+                    generation: sample.generation,
+                    incarnation: sample.incarnation,
+                    revision: sample.revision,
+                    stateHash: sample.stateHash,
+                    parserOrigin: origin.origin,
+                    parserConsumption: origin.parserConsumption,
+                    payloadByteCount: origin.payloadByteCount,
+                    queueBefore: {
+                      inputPending: queueBefore.inputPending,
+                      inputInFlight: queueBefore.inputInFlight,
+                      inputPendingBytes: queueBefore.inputPendingBytes,
+                    },
+                    queueAfter: {
+                      inputPending: queueAfter.inputPending,
+                      inputInFlight: queueAfter.inputInFlight,
+                      inputPendingBytes: queueAfter.inputPendingBytes,
+                    },
+                    dirtyRowProved: painted.dirtyRowProved === true,
+                    fenceHealth: fence.writerHealth,
+                    clientReceipts: sample.clientStages.map(({ operation, offsetMs }) => ({
+                      operation,
+                      offsetMs,
+                    })),
+                    daemonReceipts: sample.daemonSpans,
+                  }),
+              ),
+            ),
+          });
+          event("distribution-samples", summarizeProductInputDistribution(evidence));
+          return evidence;
+        },
+        startWebAfterInput: async () => {
+          devServer = await startDevServer(daemon, {
+            daemonInfoPath: join(fleet.daemonInfoDir, "daemon.json"),
+          });
+          browser = await chromium.launch({ headless: true });
+          const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+          const page = await context.newPage();
+          await page.goto(devServer.pageUrl, { waitUntil: "domcontentloaded" });
+          await page.locator(".app[data-shell-source='runtime']").waitFor({ timeout: 60_000 });
+          await page
+            .locator(".terminal-surface[data-phase='connected']")
+            .first()
+            .waitFor({ timeout: 60_000 });
+          publish({ web: { pageUrl: devServer.pageUrl, startedAfterInputBoundary: true } });
+          event("first-input-web-correlation", { pageUrl: devServer.pageUrl });
+          return Object.freeze({ pageUrl: devServer.pageUrl });
+        },
+      });
+      publish({
+        journeyEvidence: { firstKeyPaste: inputBoot },
+        status: "ready",
+        readyAt: new Date().toISOString(),
+      });
+      await new Promise(() => undefined);
+      return;
+    }
     if (journeyId === "coherent-first-pane") {
       const coherentBoot = await runCoherentFirstPaneOwnerBoot({
         createTargetedNamespace: async () => {
@@ -3107,8 +3981,11 @@ async function owner() {
           return { session, marker, runtimeNamespace, seed, tui };
         },
         startCanonicalDaemon: async () => {
-          daemon = await startDaemon(fleet);
-          await waitForReadinessLadder(daemon);
+          daemon = await startOwnedProductRigDaemon({
+            start: () => startDaemon(fleet),
+            publish,
+            waitUntilReady: waitForReadinessLadder,
+          });
           return daemon;
         },
         openCanonicalWorkspace: async (namespace, runningDaemon) => {
@@ -3324,6 +4201,7 @@ async function owner() {
             event("premeasurement-build-complete");
           },
           launchPublicEntry: async (launch) => {
+            publish({ daemonLifecycle: "starting" });
             const actualEnvironment = commandEnv(state);
             for (const [key, value] of Object.entries(launch.environment))
               if (actualEnvironment[key] !== value)
@@ -3357,7 +4235,7 @@ async function owner() {
               namespace.runtimeNamespace.daemonInfoDir,
             );
             daemon = attachPublicElectedDaemon(record);
-            publish({ daemon: record });
+            publish({ daemonLifecycle: "started", daemon: record });
             event("daemon-election", { instanceId: record.instanceId, pid: record.pid });
             return daemon;
           },
@@ -3499,7 +4377,9 @@ async function owner() {
     publish({ session, runtimeNamespace, tui });
     event("tmux-ready", { session, socketPath: fleet.socketPath });
 
+    publish({ daemonLifecycle: "starting" });
     daemon = await startDaemon(fleet);
+    publish({ daemonLifecycle: "started", daemon: daemon.record });
     const workspace = await daemon.promote(session);
     await waitForReadinessLadder(daemon);
     publish({ daemon: daemon.record, workspace });
@@ -3583,7 +4463,9 @@ async function owner() {
       .first()
       .waitFor({ timeout: 10_000 })
       .catch(() => undefined);
+    publish({ daemonLifecycle: "starting" });
     daemon = await startDaemon(fleet);
+    publish({ daemonLifecycle: "started", daemon: daemon.record });
     const restartedWorkspace = await daemon.promote(session);
     await waitForReadinessLadder(daemon);
     publish({ daemon: daemon.record, workspace: restartedWorkspace });

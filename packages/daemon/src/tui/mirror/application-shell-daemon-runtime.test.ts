@@ -20,6 +20,7 @@ const descriptor = {
 const headers = {
   Origin: "tmux-ide://opentui",
   "X-Tmux-Ide-Host-Client-Id": "opentui:42",
+  "X-Tmux-Ide-Request-Id": "00000000-0000-4000-8000-000000000042",
 };
 
 const daemon: CanonicalDaemonInfo = {
@@ -129,6 +130,7 @@ describe("OpenTUI pane-stream socket construction", () => {
           origin: headers.Origin,
           headers: {
             "X-Tmux-Ide-Host-Client-Id": headers["X-Tmux-Ide-Host-Client-Id"],
+            "X-Tmux-Ide-Request-Id": headers["X-Tmux-Ide-Request-Id"],
           },
           perMessageDeflate: false,
         },

@@ -81,3 +81,4 @@ export * from "./widget-asset.ts";
 export * from "./performance-qualification.ts";
 export * from "./performance-metrics.ts";
 export * from "./causal-cell.ts";
+export * from "./shared-monotonic-clock.ts";

@@ -148,7 +148,7 @@ describe.skipIf(!hasTmux).sequential("semantic mutation production cutover, live
               operationKind: observation.operationKind,
             }),
     });
-    observer.start();
+    await observer.start();
 
     const consumer = registry.connect(session, "command-center", `live:${randomUUID()}`);
     const lease = consumer.acquireController();

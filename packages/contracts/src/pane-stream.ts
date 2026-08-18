@@ -39,6 +39,13 @@ import {
 } from "./session-runtime.ts";
 import { WorkspaceMultiplexerMutationResultSchemaZ } from "./workspace-multiplexer.ts";
 
+export const PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1 = "clock-bounds-v1" as const;
+export const PaneStreamDiagnosticCapabilitySchemaZ = z.union([
+  CausalCellCapabilitySchemaZ,
+  z.literal(PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1),
+]);
+export type PaneStreamDiagnosticCapability = z.infer<typeof PaneStreamDiagnosticCapabilitySchemaZ>;
+
 /**
  * Pane-stream wire contract (m43 card 2): the lease family and frame grammar
  * that carry MirrorService pane streams from the daemon to renderers.
@@ -198,7 +205,7 @@ export const PaneStreamRedeemFrameSchemaZ = z
      * renderer sets this; simple transcript clients omit it.
      */
     deliveryAcks: z.boolean().optional(),
-    diagnosticCapabilities: z.array(CausalCellCapabilitySchemaZ).max(1).optional(),
+    diagnosticCapabilities: z.array(PaneStreamDiagnosticCapabilitySchemaZ).max(2).optional(),
   })
   .strict();
 export type PaneStreamRedeemFrame = z.infer<typeof PaneStreamRedeemFrameSchemaZ>;
@@ -313,6 +320,16 @@ export const PaneStreamAuthorityReleaseFrameSchemaZ = z
   })
   .strict();
 
+const SharedMonotonicMicrosSchemaZ = z.number().int().nonnegative().safe();
+export const PaneStreamClockProbeFrameSchemaZ = z
+  .object({
+    type: z.literal("clock-probe"),
+    requestId: z.uuid(),
+    probe: z.number().int().min(1).max(5),
+    clientSendMicros: SharedMonotonicMicrosSchemaZ,
+  })
+  .strict();
+
 export const PaneStreamClientFrameSchemaZ = z.union([
   PaneStreamInputFrameSchemaZ,
   PaneStreamConsumedFrameSchemaZ,
@@ -325,6 +342,7 @@ export const PaneStreamClientFrameSchemaZ = z.union([
   PaneStreamActivityFrameSchemaZ,
   PaneStreamAuthorityRequestFrameSchemaZ,
   PaneStreamAuthorityReleaseFrameSchemaZ,
+  PaneStreamClockProbeFrameSchemaZ,
 ]);
 export type PaneStreamClientFrame = z.infer<typeof PaneStreamClientFrameSchemaZ>;
 
@@ -349,7 +367,7 @@ export const PaneStreamReadyFrameSchemaZ = z
     panes: PaneSetSchemaZ,
     effectiveViewerMode: PaneStreamViewerModeSchemaZ,
     authority: SessionRuntimeAuthoritySnapshotSchemaZ.optional(),
-    diagnosticCapabilities: z.array(CausalCellCapabilitySchemaZ).max(1).optional(),
+    diagnosticCapabilities: z.array(PaneStreamDiagnosticCapabilitySchemaZ).max(2).optional(),
   })
   .strict();
 
@@ -452,6 +470,18 @@ export const PaneStreamInputAckFrameSchemaZ = z
     type: z.literal("input-ack"),
     pane: PaneStreamSemanticPaneIdSchemaZ,
     seq: z.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
+  })
+  .strict();
+
+export const PaneStreamClockProbeAckFrameSchemaZ = z
+  .object({
+    type: z.literal("clock-probe-ack"),
+    requestId: z.uuid(),
+    daemonInstanceId: DaemonInstanceIdentitySchemaZ.shape.instanceId,
+    probe: z.number().int().min(1).max(5),
+    clientSendMicros: SharedMonotonicMicrosSchemaZ,
+    daemonReceiveMicros: SharedMonotonicMicrosSchemaZ,
+    daemonSendMicros: SharedMonotonicMicrosSchemaZ,
   })
   .strict();
 
@@ -578,6 +608,7 @@ export const PaneStreamServerFrameSchemaZ = z.discriminatedUnion("type", [
   PaneStreamFlowFrameSchemaZ,
   PaneStreamClosedFrameSchemaZ,
   PaneStreamInputAckFrameSchemaZ,
+  PaneStreamClockProbeAckFrameSchemaZ,
   PaneStreamCausalCellProofFrameSchemaZ,
   PaneStreamCausalCellFailureFrameSchemaZ,
   PaneStreamTerminalDeliveryReadyFrameSchemaZ,

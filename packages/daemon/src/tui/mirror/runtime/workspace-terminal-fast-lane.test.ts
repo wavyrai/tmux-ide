@@ -11,6 +11,127 @@ import { createOpenTuiWorkspaceTerminalFastLane } from "./workspace-terminal-fas
 const GENERATION = "11111111-1111-4111-8111-111111111111";
 
 describe("OpenTUI workspace terminal fast lane", () => {
+  it("keeps lane construction live when initial queue diagnostics throw", () => {
+    const terminalInputQueueState = vi.fn(() => {
+      throw new Error("queue diagnostic failed");
+    });
+    const uninstall = installTuiPerformanceEventSink({
+      frame: vi.fn(),
+      terminalPaint: vi.fn(),
+      terminalDelivery: vi.fn(),
+      terminalInputQueueState,
+    });
+    const client = {
+      getSnapshot: () => ({
+        target: { workspaceName: "workspace", daemon: { instanceId: GENERATION } },
+        authority: null,
+      }),
+      subscribeTerminal: vi.fn(() => vi.fn()),
+      requestTerminalRepair: vi.fn(),
+      requestAuthority: vi.fn(async () => null),
+      sendTerminalInput: vi.fn(async () => "authority-lost" as const),
+      fitViewport: vi.fn(async () => "authority-lost" as const),
+    } as unknown as OpenTuiProductionWorkspaceClient;
+    try {
+      let fastLane: ReturnType<typeof createOpenTuiWorkspaceTerminalFastLane> | null = null;
+      expect(() => {
+        fastLane = createOpenTuiWorkspaceTerminalFastLane(client, "opentui:test");
+      }).not.toThrow();
+      expect(terminalInputQueueState).toHaveBeenCalledOnce();
+      fastLane?.dispose();
+      const memoryUsage = vi.spyOn(process, "memoryUsage").mockImplementation(() => {
+        throw new Error("memory sampler failed");
+      });
+      try {
+        expect(() => {
+          fastLane = createOpenTuiWorkspaceTerminalFastLane(client, "opentui:test");
+        }).not.toThrow();
+        fastLane?.dispose();
+      } finally {
+        memoryUsage.mockRestore();
+      }
+    } finally {
+      uninstall();
+    }
+  });
+
+  it("keeps hot canonical trace stages memory-free and fail-open", () => {
+    const stages: Array<Record<string, unknown>> = [];
+    const terminalTraceStage = vi.fn((event: Record<string, unknown>) => {
+      stages.push(event);
+      if (event.operation === "canonical-apply-begin") throw new Error("trace sink failed");
+    });
+    const uninstall = installTuiPerformanceEventSink({
+      frame: vi.fn(),
+      terminalPaint: vi.fn(),
+      terminalDelivery: vi.fn(),
+      terminalTraceStage,
+    });
+    let listener:
+      | ((
+          update: CanonicalTerminalReplicaUpdate,
+          metadata?: TerminalReplicaDeliveryMetadata,
+        ) => void)
+      | null = null;
+    const client = {
+      getSnapshot: () => ({
+        target: { workspaceName: "workspace", daemon: { instanceId: GENERATION } },
+        authority: null,
+      }),
+      subscribeTerminal: (_target, next) => {
+        listener = next;
+        return () => {
+          listener = null;
+        };
+      },
+      requestTerminalRepair: vi.fn(),
+      requestAuthority: vi.fn(async () => null),
+      sendTerminalInput: vi.fn(async () => "authority-lost" as const),
+      fitViewport: vi.fn(async () => "authority-lost" as const),
+    } as unknown as OpenTuiProductionWorkspaceClient;
+    try {
+      const fastLane = createOpenTuiWorkspaceTerminalFastLane(client, "opentui:test");
+      fastLane.lane.retainPanes(["pane.a"]);
+      const memoryUsage = vi.spyOn(process, "memoryUsage");
+      const snapshot = blankTerminalReplicaSnapshot(2, 1);
+      const update = {
+        type: "terminal.seed",
+        workspaceName: "workspace",
+        semanticPaneId: "pane.a",
+        generation: GENERATION,
+        incarnation: `${GENERATION}:0`,
+        revision: 0,
+        cols: 2,
+        rows: 1,
+        stateHash: hashTerminalReplicaSnapshot(snapshot),
+        hashAlgorithm: "fnv1a64-v1",
+        snapshot,
+      } satisfies CanonicalTerminalReplicaUpdate;
+      expect(() =>
+        listener?.(update, {
+          performanceTraceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        }),
+      ).not.toThrow();
+      expect(fastLane.lane.paneState("pane.a")?.revision).toBe(0);
+      expect(memoryUsage).not.toHaveBeenCalled();
+      expect(stages.map(({ operation }) => operation)).toEqual([
+        "delivery-received",
+        "delivery-observer-returned",
+        "canonical-apply-begin",
+        "canonical-apply-end",
+        "lane-published",
+      ]);
+      for (const stage of stages) {
+        expect(stage).not.toHaveProperty("rssBytes");
+        expect(stage).not.toHaveProperty("heapUsedBytes");
+      }
+      fastLane.dispose();
+      memoryUsage.mockRestore();
+    } finally {
+      uninstall();
+    }
+  });
+
   it("publishes an explicit zero queue snapshot before the fresh lane can accept input", () => {
     const terminalInputQueueState = vi.fn();
     const uninstall = installTuiPerformanceEventSink({

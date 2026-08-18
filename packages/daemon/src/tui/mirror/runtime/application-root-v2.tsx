@@ -31,6 +31,7 @@ import {
 } from "./application-terminal-interaction-controller.ts";
 import {
   closeTuiPerfMarks,
+  tuiPerfCriticalMark,
   tuiPerfDiagnostics,
   tuiPerfMark,
   tuiPerfStream,
@@ -43,6 +44,7 @@ import { createOpenTuiRuntimeLayoutPresentation } from "./runtime-layout-present
 import { terminalInputForOpenTuiKey, terminalInputsForPaste } from "./terminal-input-adapter.ts";
 import { OpenTuiTerminalHostFocus } from "./terminal-host-focus.ts";
 import { publishCanonicalHostFrameDiagnostics } from "./terminal-host-frame-diagnostics.ts";
+import { createTerminalFrameReadiness } from "./terminal-frame-readiness.ts";
 
 export type { StartApplicationRootOptions } from "./application-root-configuration.ts";
 
@@ -86,6 +88,32 @@ export async function startApplicationRoot(
       const presentation = createOpenTuiRuntimeLayoutPresentation();
       let initialPreparation = options.initialPreparation ?? null;
       let sessionOwner: OpenTuiSessionOwner | null = null;
+      const frameDiagnosticSink = currentTuiPerformanceEventSink();
+      const terminalFrameReadiness =
+        tuiPerfStream || frameDiagnosticSink
+          ? createTerminalFrameReadiness({
+              requestRender: () => renderer.requestRender(),
+              markReady: (key, snapshot) =>
+                tuiPerfCriticalMark(`first-terminal-frame:${key}`, "first-terminal-frame", {
+                  daemonGeneration: snapshot.daemonGeneration,
+                  rendererEpoch: snapshot.rendererEpoch,
+                }),
+              drainDetailed: (snapshot) =>
+                publishCanonicalHostFrameDiagnostics(
+                  snapshot.adapter!,
+                  snapshot.daemonGeneration!,
+                  snapshot.rendererEpoch,
+                  frameDiagnosticSink,
+                ),
+              ...(frameDiagnosticSink?.terminalCanonicalHostFrame &&
+              frameDiagnosticSink.terminalFrameFence
+                ? {
+                    needsDetailedDrain: (snapshot) =>
+                      snapshot.adapter!.hasPendingCanonicalHostFrameDiagnostics(),
+                  }
+                : {}),
+            })
+          : null;
       let interaction!: ApplicationTerminalInteractionController;
       const terminalHostFocus = new OpenTuiTerminalHostFocus(
         true,
@@ -131,6 +159,7 @@ export async function startApplicationRoot(
                 : {}),
             }),
           onSnapshot: (snapshot) => {
+            terminalFrameReadiness?.adopt(snapshot);
             setGeneration(snapshot);
             shellBinding.adoptGeneration(snapshot);
             terminalHostFocus.adopt(snapshot?.client ?? null);
@@ -263,15 +292,25 @@ export async function startApplicationRoot(
           const lane = active?.status === "live" ? active.fastLane : null;
           if (activeSurface() !== "terminals" || !lane || !focusedPane()) return;
           const input = terminalInputForOpenTuiKey(event);
-          if (input) void interaction.sendInput(input);
+          if (input) {
+            const parserOrigin = currentTuiPerformanceEventSink()?.terminalInputOrigin
+              ? { origin: "keyboard" as const, payload: Buffer.from(input.data, "utf8") }
+              : undefined;
+            void interaction.sendInput(input, parserOrigin);
+          }
         });
         usePaste((event) => {
           const active = generation();
           const lane = active?.status === "live" ? active.fastLane : null;
           if (activeSurface() !== "terminals" || !lane || !focusedPane()) return;
           const text = Buffer.from(event.bytes).toString("utf8");
-          for (const input of terminalInputsForPaste(text)) {
-            void interaction.sendInput(input);
+          const inputs = terminalInputsForPaste(text);
+          for (let index = 0; index < inputs.length; index += 1) {
+            const parserOrigin =
+              index === 0 && currentTuiPerformanceEventSink()?.terminalInputOrigin
+                ? { origin: "bracketed-paste" as const, payload: Buffer.from(event.bytes) }
+                : undefined;
+            void interaction.sendInput(inputs[index]!, parserOrigin);
           }
         });
         onMount(() => {
@@ -309,30 +348,8 @@ export async function startApplicationRoot(
         rejectReadiness: rejectReady,
         shutdown: () => lifecycle.shutdown("bootstrap-error"),
       });
-      const paintedTerminalGenerations = new Set<string>();
-      const frameDiagnosticSink = currentTuiPerformanceEventSink();
-      const observeTerminalFrame = () => {
-        const snapshot = sessionOwner?.snapshot();
-        if (!snapshot || snapshot.status !== "live" || !snapshot.daemonGeneration) return;
-        if (snapshot.adapter?.hasPaintedCanonicalSnapshot()) {
-          const paintKey = `${snapshot.daemonGeneration}:${snapshot.rendererEpoch}`;
-          if (!paintedTerminalGenerations.has(paintKey)) {
-            paintedTerminalGenerations.add(paintKey);
-            tuiPerfMark("first-terminal-frame", {
-              daemonGeneration: snapshot.daemonGeneration,
-              rendererEpoch: snapshot.rendererEpoch,
-            });
-          }
-        }
-        if (snapshot.adapter)
-          publishCanonicalHostFrameDiagnostics(
-            snapshot.adapter,
-            snapshot.daemonGeneration,
-            snapshot.rendererEpoch,
-            frameDiagnosticSink,
-          );
-      };
-      renderer.on("frame", observeTerminalFrame);
+      const observeTerminalFrame = () => terminalFrameReadiness?.observeFrame();
+      if (terminalFrameReadiness) renderer.on("frame", observeTerminalFrame);
       let firstFrameMarked = false;
       const observeFirstFrame = () => {
         if (firstFrameMarked) return;
@@ -370,7 +387,8 @@ export async function startApplicationRoot(
             boundary: "pre-close",
             resources: runtimeResourceSnapshot(),
           });
-          renderer.off("frame", observeTerminalFrame);
+          if (terminalFrameReadiness) renderer.off("frame", observeTerminalFrame);
+          terminalFrameReadiness?.dispose();
           if (tuiPerfStream) renderer.off("frame", observeFirstFrame);
           if (observeDiagnosticFrame) renderer.off("frame", observeDiagnosticFrame);
           if (tuiPerfStream) renderer.off("frame", observeWindowSwitchFrame);

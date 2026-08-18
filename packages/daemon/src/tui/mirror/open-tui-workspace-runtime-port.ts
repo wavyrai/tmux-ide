@@ -74,7 +74,14 @@ export interface ConnectOpenTuiWorkspaceRuntimePortOptions {
       | "coherent"
       | "stream-open-start"
       | "stream-open-resolved"
-      | `stream-${"issue-start" | "issue-response" | "socket-created" | "socket-open" | "ready-frame"}`,
+      | "clock-calibration"
+      | `stream-${
+          | "issue-start"
+          | "issue-response"
+          | "socket-created"
+          | "socket-open"
+          | "ready-frame"
+          | "clock-calibration"}`,
     details: Readonly<Record<string, unknown>>,
   ) => void;
 }
@@ -374,9 +381,12 @@ class WireTerminalEndpoint {
         update: updateFromDelivery(envelope, payload, dimensions.cols, dimensions.rows),
         nextCols: dimensions.cols,
         nextRows: dimensions.rows,
-        metadata: envelope.performanceTraceId
-          ? Object.freeze({ performanceTraceId: envelope.performanceTraceId })
-          : undefined,
+        metadata: Object.freeze({
+          representationHash: envelope.representationHash,
+          ...(envelope.performanceTraceId
+            ? { performanceTraceId: envelope.performanceTraceId }
+            : {}),
+        }),
       });
       const revisionLagPeak = Math.max(
         0,
@@ -686,6 +696,19 @@ export async function connectOpenTuiWorkspaceRuntimePort(
   }
 
   const performanceSink = currentTuiPerformanceEventSink();
+  let clockCalibration:
+    | import("@tmux-ide/daemon-client/pane-stream-clock-calibration").PaneStreamClockCalibration
+    | null = null;
+  const clockFields = () =>
+    clockCalibration
+      ? {
+          clockOffsetLowerMicros: clockCalibration.offsetLowerMicros,
+          clockOffsetUpperMicros: clockCalibration.offsetUpperMicros,
+          clockUncertaintyMicros: clockCalibration.uncertaintyMicros,
+          clockCalibratedAtMicros: clockCalibration.calibratedAtMicros,
+          clockCalibrationRequestId: clockCalibration.requestId,
+        }
+      : {};
   let opened: PaneStreamClientWithReceipts;
   try {
     options.onDiagnostic?.("stream-open-start", { panes: panes.length });
@@ -694,13 +717,54 @@ export async function connectOpenTuiWorkspaceRuntimePort(
       hostClientId: OPEN_TUI_HOST_CLIENT_ID,
       requestId: randomUUID(),
       requestInitialInputAuthority: false,
-      ...(options.causalCellLedger
+      ...(options.causalCellLedger || performanceSink?.terminalTraceStage
         ? {
-            diagnosticCapabilities: ["causal-cell-v1" as const],
+            diagnosticCapabilities: [
+              ...(options.causalCellLedger ? (["causal-cell-v1"] as const) : []),
+              ...(performanceSink?.terminalTraceStage ? (["clock-bounds-v1"] as const) : []),
+            ],
+            ...(performanceSink?.terminalTraceStage
+              ? {
+                  onClockCalibration: (
+                    calibration:
+                      | import("@tmux-ide/daemon-client/pane-stream-clock-calibration").PaneStreamClockCalibration
+                      | null,
+                  ) => {
+                    clockCalibration = calibration;
+                  },
+                  onClockCalibrationOutcome: (
+                    outcome: import("@tmux-ide/daemon-client/pane-stream-clock-calibration").PaneStreamClockCalibrationOutcome,
+                  ) => {
+                    try {
+                      performanceSink.terminalClockCalibration?.({
+                        ...outcome,
+                        processId: `opentui:${process.pid}`,
+                        clockId: "opentui-performance-now",
+                        clockKind: "performance-now",
+                        atMicros: Math.floor(performance.now() * 1_000),
+                      });
+                    } catch {
+                      // Diagnostics cannot alter stream readiness.
+                    }
+                    try {
+                      options.onDiagnostic?.("clock-calibration", {
+                        reason: outcome.reason,
+                        attemptedProbes: outcome.attemptedProbes,
+                        receivedProbes: outcome.receivedProbes,
+                        validProbes: outcome.validProbes,
+                        selectedProbes: outcome.selectedProbes,
+                        selectedProbe: outcome.selectedProbe,
+                      });
+                    } catch {
+                      // Diagnostics cannot alter stream readiness.
+                    }
+                  },
+                }
+              : {}),
             onCausalCellProof: (proof: import("@tmux-ide/contracts").CausalCellProofV1) =>
               options.causalCellLedger?.noteProof(proof),
             onCausalCellFailure: (failure: import("@tmux-ide/contracts").CausalCellFailureV1) =>
-              options.causalCellLedger?.fail(failure.traceId, failure.reason),
+              options.causalCellLedger?.fail(failure.traceId, failure.reason, failure.diagnostic),
           }
         : {}),
       signal: options.signal,
@@ -740,9 +804,17 @@ export async function connectOpenTuiWorkspaceRuntimePort(
       },
       ...(performanceSink?.terminalTraceStage
         ? {
-            onInputTransportStage: ({ traceId, operation, atMicros }) => {
+            onInputTransportStage: ({
+              traceId,
+              operation,
+              atMicros,
+              pane,
+              bufferedAmount,
+              frameBytes,
+              drained,
+              sharedMicros,
+            }) => {
               try {
-                const memory = process.memoryUsage();
                 performanceSink.terminalTraceStage?.({
                   traceId,
                   scenario: "terminal-input-to-paint",
@@ -752,27 +824,56 @@ export async function connectOpenTuiWorkspaceRuntimePort(
                   clockId: "opentui-performance-now",
                   clockKind: "performance-now",
                   atMicros,
-                  rssBytes: memory.rss,
-                  heapUsedBytes: memory.heapUsed,
+                  ...(sharedMicros === undefined ? {} : { sharedMicros }),
+                  ...clockFields(),
+                  semanticPaneId: pane,
+                  generation: expected.daemonInstanceId,
+                  ...(bufferedAmount === undefined ? {} : { bufferedAmount }),
+                  ...(frameBytes === undefined ? {} : { frameBytes }),
+                  ...(drained === undefined ? {} : { drained }),
                 });
               } catch {
                 // Diagnostics cannot alter input transport truth.
               }
             },
-            onTerminalFrameArrival: ({ traceId, atMicros }) => {
-              const memory = process.memoryUsage();
-              performanceSink.terminalTraceStage?.({
-                traceId,
-                scenario: "terminal-input-to-paint",
-                stage: "client",
-                operation: "socket-frame-arrival",
-                processId: `opentui:${process.pid}`,
-                clockId: "opentui-performance-now",
-                clockKind: "performance-now",
-                atMicros,
-                rssBytes: memory.rss,
-                heapUsedBytes: memory.heapUsed,
-              });
+            onTerminalFrameArrival: ({ traceId, atMicros, sharedMicros }) => {
+              try {
+                performanceSink.terminalTraceStage?.({
+                  traceId,
+                  scenario: "terminal-input-to-paint",
+                  stage: "client",
+                  operation: "socket-frame-arrival",
+                  processId: `opentui:${process.pid}`,
+                  clockId: "opentui-performance-now",
+                  clockKind: "performance-now",
+                  atMicros,
+                  generation: expected.daemonInstanceId,
+                  ...(sharedMicros === undefined ? {} : { sharedMicros }),
+                  ...clockFields(),
+                });
+              } catch {
+                // Diagnostics cannot alter terminal frame delivery.
+              }
+            },
+            onInputAck: ({ traceId, sharedMicros }) => {
+              if (!traceId || sharedMicros === undefined) return;
+              try {
+                performanceSink.terminalTraceStage?.({
+                  traceId,
+                  scenario: "terminal-input-to-paint",
+                  stage: "client",
+                  operation: "pane-stream-input-ack-callback",
+                  processId: `opentui:${process.pid}`,
+                  clockId: "opentui-performance-now",
+                  clockKind: "performance-now",
+                  atMicros: Math.floor(performance.now() * 1_000),
+                  generation: expected.daemonInstanceId,
+                  sharedMicros,
+                  ...clockFields(),
+                });
+              } catch {
+                // Diagnostics cannot alter input acknowledgement.
+              }
             },
           }
         : {}),

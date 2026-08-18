@@ -20,12 +20,17 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createScratchFleet } from "../apps/desktop-renderer/e2e/fixtures/scratch-fleet.ts";
+import {
+  productCoherentFrameTimeoutObservation,
+  summarizeProductInputDistribution,
+} from "./lib/product-first-input.mjs";
 
 import {
   PRODUCT_DIAGNOSTIC_BUNDLE_FILES,
   PRODUCT_JOURNEY_REGISTRY,
   ProductJourneyAttemptError,
   auditProductJourneyScope,
+  bufferOwnedTuiRuntimeEvidence,
   collectProductRigCleanupFailures,
   createProductRigCleanupReceipt,
   createProductDiagnosticBundle,
@@ -35,6 +40,7 @@ import {
   isCleanLegacyStoppedProductRigState,
   parseProductDiagnoseOptions,
   prepareIsolatedTargetedTuiCwd,
+  prepareOwnedTuiRuntime,
   prepareProductDiagnosticBundlePublication,
   productDiagnosticRunId,
   productRigCleanupAcknowledgesRequest,
@@ -45,8 +51,10 @@ import {
   runIsolatedProductJourneyAttempt,
   runConfiglessProductJourneyOwnerBoot,
   runCoherentFirstPaneOwnerBoot,
+  runFirstKeyPasteOwnerBoot,
   runProductJourneyPlan,
   settleInternalProductRigCleanup,
+  startOwnedProductRigDaemon,
 } from "./product-test-rig-journeys.mjs";
 
 const unavailableWebPng = Buffer.from(
@@ -99,7 +107,7 @@ function cleanupReceipt(runId, overrides = {}) {
     passed: true,
     completedAt: "2026-08-18T10:30:11.842Z",
     ownerPid: 1001,
-    daemon: { instanceId: "daemon-generation-1", pid: 1002 },
+    daemon: { status: "started", instanceId: "daemon-generation-1", pid: 1002 },
     namespaceDigest: "a".repeat(64),
     ownerDead: true,
     daemonDead: true,
@@ -109,13 +117,14 @@ function cleanupReceipt(runId, overrides = {}) {
       tmuxSocket: true,
       hostTmuxSocket: true,
       daemonInfo: true,
+      tuiRuntime: true,
     },
     failureCount: 0,
     ...overrides,
   };
 }
 
-test("golden registry enables only accepted configless evidence", () => {
+test("golden registry enables only accepted direct journey executors", () => {
   const expected = [
     "configless-cold-start",
     "coherent-first-pane",
@@ -134,21 +143,21 @@ test("golden registry enables only accepted configless evidence", () => {
     golden.map(({ id }) => id),
     expected,
   );
-  assert.ok(golden.slice(0, 2).every(({ implementation }) => implementation === "implemented"));
-  assert.ok(golden.slice(2).every(({ implementation }) => implementation === "pending"));
+  assert.ok(golden.slice(0, 3).every(({ implementation }) => implementation === "implemented"));
+  assert.ok(golden.slice(3).every(({ implementation }) => implementation === "pending"));
   assert.deepEqual(auditProductJourneyScope(), {
     complete: false,
     declarationComplete: true,
     executableComplete: false,
     missing: [],
-    pendingJourneyIds: expected.slice(2),
+    pendingJourneyIds: expected.slice(3),
   });
   assert.deepEqual(auditProductJourneyScope(golden.slice(1)), {
     complete: false,
     declarationComplete: false,
     executableComplete: false,
     missing: ["configless", "cold-start"],
-    pendingJourneyIds: expected.slice(2),
+    pendingJourneyIds: expected.slice(3),
   });
 });
 
@@ -160,6 +169,41 @@ test("scratch fleet rejects unsafe preseed markers before creating any namespace
     /bounded safe ProductRig token/u,
   );
   assert.deepEqual(new Set(readdirSync("/tmp").filter((entry) => entry.includes(slug))), before);
+});
+
+test("scratch fleet starts an exact argv command in the initial pane before orchestration", async () => {
+  const fleet = await createScratchFleet({
+    sessions: 1,
+    slug: `initial-command-${process.pid}`,
+    initialPaneCommand: {
+      executable: "sh",
+      args: ["-c", "printf 'DIRECT_FIXTURE_READY\\n'; exec sh -i"],
+    },
+  });
+  try {
+    assert.match(fleet.capturePane(fleet.sessionNames[0]), /DIRECT_FIXTURE_READY/u);
+    assert.equal(fleet.initialPanes.length, 1);
+    assert.equal(fleet.initialPanes[0].sessionName, fleet.sessionNames[0]);
+    assert.match(fleet.initialPanes[0].paneId, /^%[0-9]+$/u);
+    assert.ok(fleet.initialPanes[0].width > 0 && fleet.initialPanes[0].height > 0);
+    const semanticStamp = spawnSync(
+      "tmux",
+      [
+        "-S",
+        fleet.socketPath,
+        "display-message",
+        "-p",
+        "-t",
+        fleet.initialPanes[0].paneId,
+        "#{@tmux_ide_pane_id}",
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(semanticStamp.status, 0);
+    assert.equal(semanticStamp.stdout.trim(), "");
+  } finally {
+    await fleet.dispose();
+  }
 });
 
 test("diagnose options select and repeat the executable journey deterministically", () => {
@@ -505,6 +549,91 @@ test("coherent proof boundary survives strict cleanup into its sealed failure bu
   }
 });
 
+test("clock calibration failure observation stays bounded and path-free in the sealed bundle", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "clock-calibration-bundle-"));
+  const runId = "20260818174500000-first-key-paste-key-r1-clock";
+  const failureObservation = {
+    firstFailedPredicate: "clock-calibration",
+    predicates: [
+      {
+        id: "clock-calibration",
+        status: "failed",
+        reason: "timeout-no-sample",
+        attemptedProbes: 1,
+        receivedProbes: 0,
+        validProbes: 0,
+        selectedProbes: 0,
+        selectedProbe: null,
+      },
+    ],
+  };
+  const evidence = failureEvidence("input-clock-calibration", "clock calibration unavailable");
+  evidence.report.failureObservation = failureObservation;
+  evidence.alignment.failureObservation = failureObservation;
+  evidence.clientState.failureObservation = failureObservation;
+  try {
+    const bundle = createProductDiagnosticBundle({ root: temporary, runId, evidence });
+    const report = JSON.parse(readFileSync(join(bundle.runDir, "report.json"), "utf8"));
+    const alignment = JSON.parse(readFileSync(join(bundle.runDir, "alignment.json"), "utf8"));
+    const client = JSON.parse(readFileSync(join(bundle.runDir, "client-state.json"), "utf8"));
+    assert.deepEqual(report.failureObservation, failureObservation);
+    assert.deepEqual(alignment.failureObservation, failureObservation);
+    assert.deepEqual(client.failureObservation, failureObservation);
+    const serialized = JSON.stringify(failureObservation);
+    assert.ok(serialized.length < 2_048);
+    assert.doesNotMatch(serialized, /[\\/]/u);
+  } finally {
+    removeTestTree(temporary);
+  }
+});
+
+test("coherent timeout observation is preserved in report and alignment after cleanup", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "coherent-timeout-bundle-"));
+  const runId = "20260818174500000-first-key-paste-key-r1-frame";
+  const generation = "226826d4-5f72-4b59-be54-9f75e85640d4";
+  const failureObservation = productCoherentFrameTimeoutObservation({
+    processId: "opentui:4934",
+    daemonGeneration: generation,
+    detailMode: "0",
+    lifecycleRecords: [
+      {
+        phase: "generation-host-internal-snapshot-publication",
+        publicationPhase: "internal-snapshot-published",
+        processId: "opentui:4934",
+        clockId: "opentui-performance-now",
+        daemonGeneration: generation,
+        rendererEpoch: 1,
+        monotonicMicros: 100,
+      },
+    ],
+    traceRecords: [
+      {
+        type: "performance.terminal-canonical-paint",
+        processId: "opentui:4934",
+        clockId: "opentui-performance-now",
+        generation,
+        atMicros: 200,
+      },
+    ],
+  });
+  const evidence = failureEvidence("distribution-lane-fresh", "coherent frame unavailable");
+  evidence.report.failureObservation = failureObservation;
+  evidence.alignment.failureObservation = failureObservation;
+  evidence.clientState.failureObservation = failureObservation;
+  try {
+    const bundle = createProductDiagnosticBundle({ root: temporary, runId, evidence });
+    for (const file of ["report.json", "alignment.json", "client-state.json"]) {
+      const sealed = JSON.parse(readFileSync(join(bundle.runDir, file), "utf8"));
+      assert.deepEqual(sealed.failureObservation, failureObservation);
+    }
+    const serialized = JSON.stringify(failureObservation);
+    assert.ok(serialized.length < 2_048);
+    assert.doesNotMatch(serialized, /[\\/]/u);
+  } finally {
+    removeTestTree(temporary);
+  }
+});
+
 test("first-key-paste expands each repetition into separately isolated key and paste attempts", () => {
   const journey = {
     id: "first-key-paste",
@@ -527,6 +656,23 @@ test("first-key-paste expands each repetition into separately isolated key and p
     parseProductDiagnoseOptions(["--journey", "first-key-paste", "--variant", "paste"]).variant,
     "paste",
   );
+  const selected = resolveProductJourneyPlan(
+    parseProductDiagnoseOptions([
+      "--journey",
+      "first-key-paste",
+      "--variant",
+      "paste",
+      "--repeat",
+      "2",
+    ]),
+  );
+  assert.deepEqual(
+    selected.map(({ repetition, variant }) => [repetition, variant]),
+    [
+      [1, "paste"],
+      [2, "paste"],
+    ],
+  );
   assert.throws(
     () =>
       resolveProductJourneyPlan(
@@ -534,6 +680,57 @@ test("first-key-paste expands each repetition into separately isolated key and p
       ),
     /only valid with --journey first-key-paste/u,
   );
+});
+
+test("first-key-paste owner preserves direct phase order and named failures", async () => {
+  const calls = [];
+  const operations = {
+    createInputNamespace: async () => (calls.push("namespace"), {}),
+    startCanonicalDaemon: async () => (calls.push("daemon"), {}),
+    openCanonicalWorkspace: async () => (calls.push("workspace"), {}),
+    buildBeforeMeasurement: async () => calls.push("build"),
+    prepareFirstTui: async () => calls.push("prepare"),
+    launchFirstTui: async () => (calls.push("first-tui"), {}),
+    proveNoPriorHostedInput: async () => (calls.push("baseline"), {}),
+    driveFirstInput: async () => (calls.push("first-input"), {}),
+    rehostDistributionTui: async () => (calls.push("rehost"), {}),
+    driveDistribution: async () => (calls.push("distribution"), {}),
+    startWebAfterInput: async () => (calls.push("web"), {}),
+  };
+  await runFirstKeyPasteOwnerBoot(operations);
+  assert.deepEqual(calls, [
+    "namespace",
+    "daemon",
+    "workspace",
+    "build",
+    "prepare",
+    "first-tui",
+    "baseline",
+    "first-input",
+    "rehost",
+    "distribution",
+    "web",
+  ]);
+  for (const [method, boundary] of [
+    ["createInputNamespace", "first-input-namespace-ready"],
+    ["startCanonicalDaemon", "first-input-daemon-ready"],
+    ["launchFirstTui", "first-input-tui-coherent"],
+    ["proveNoPriorHostedInput", "first-input-no-prior-hosted-input"],
+    ["driveFirstInput", "first-input-causal-paint"],
+    ["rehostDistributionTui", "distribution-lane-fresh"],
+    ["driveDistribution", "distribution-samples"],
+    ["startWebAfterInput", "first-input-web-correlation"],
+  ]) {
+    await assert.rejects(
+      runFirstKeyPasteOwnerBoot({
+        ...operations,
+        [method]: async () => {
+          throw new Error(`failed ${method}`);
+        },
+      }),
+      (error) => error.boundary === boundary,
+    );
+  }
 });
 
 test("journey dispatcher invokes the exact registry executor instead of the runtime monolith", async () => {
@@ -640,7 +837,7 @@ test("pending, all, unknown, and invalid repetition selections fail before orche
   );
   assert.throws(
     () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "all"])),
-    /not implemented: first-key-paste/u,
+    /not implemented: focus/u,
   );
   assert.throws(
     () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "imaginary"])),
@@ -721,10 +918,42 @@ test("bundle writer creates the exact immutable M59.4 evidence set", () => {
     writeFileSync(webPngPath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
     const root = join(temporary, "bundles");
     const runId = "20260817143012345-runtime-qualification-r1-a1b2";
+    const distribution = {
+      sampleCount: 30,
+      samples: Array.from({ length: 30 }, (_, index) => ({
+        traceId: `trace-${index}`,
+        durationMs: index + 1,
+        parserOrigin: "keyboard",
+        queueBefore: { inputPending: 0, inputInFlight: 0, inputPendingBytes: 0 },
+        queueAfter: { inputPending: 0, inputInFlight: 0, inputPendingBytes: 0 },
+        dirtyRowProved: true,
+        fenceHealth: { droppedRecords: 0, oversizedRecords: 0, failed: false },
+      })),
+    };
     const evidence = {
-      report: { status: "failed" },
+      report: {
+        status: "failed",
+        distribution,
+      },
       alignment: { firstBrokenBoundary: "release-to-receipt" },
-      timeline: '{"phase":"start"}\n',
+      timeline:
+        [
+          "first-input-namespace-ready",
+          "first-input-daemon-ready",
+          "first-input-no-prior-hosted-input",
+          "first-input-causal-paint",
+          "distribution-lane-fresh",
+          "distribution-samples",
+          "first-input-web-correlation",
+        ]
+          .map((phase) =>
+            JSON.stringify(
+              phase === "distribution-samples"
+                ? { phase, ...summarizeProductInputDistribution(distribution) }
+                : { phase },
+            ),
+          )
+          .join("\n") + "\n",
       tmuxTruth: { panes: [] },
       daemonState: { generation: "daemon-1" },
       clientState: { committed: {}, pending: {} },
@@ -743,6 +972,27 @@ test("bundle writer creates the exact immutable M59.4 evidence set", () => {
       JSON.parse(readFileSync(join(bundle.runDir, "report.json"), "utf8")).status,
       "failed",
     );
+    const sealedReport = JSON.parse(readFileSync(join(bundle.runDir, "report.json"), "utf8"));
+    assert.equal(sealedReport.distribution.samples.length, 30);
+    assert.equal(sealedReport.distribution.samples[29].fenceHealth.failed, false);
+    const sealedTimeline = readFileSync(join(bundle.runDir, "timeline.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.deepEqual(
+      sealedTimeline.map(({ phase }) => phase),
+      [
+        "first-input-namespace-ready",
+        "first-input-daemon-ready",
+        "first-input-no-prior-hosted-input",
+        "first-input-causal-paint",
+        "distribution-lane-fresh",
+        "distribution-samples",
+        "first-input-web-correlation",
+      ],
+    );
+    assert.equal(sealedTimeline[5].sampleCount, 30);
+    assert.equal("samples" in sealedTimeline[5], false);
     assert.equal(statSync(bundle.runDir).mode & 0o777, 0o500);
     assert.equal(statSync(join(bundle.runDir, "report.json")).mode & 0o777, 0o400);
     assert.equal(statSync(join(bundle.runDir, "reproduction.sh")).mode & 0o777, 0o500);
@@ -828,6 +1078,7 @@ test("attempt startup failure cleans up before publishing immutable placeholder 
   const events = [];
   const cause = new Error("owner never became ready");
   const entry = attemptEntry("20260817143012345-runtime-qualification-r1-startup");
+  const receipt = cleanupReceipt(entry.runId, { daemon: { status: "not-started" } });
   try {
     let caught = null;
     try {
@@ -838,20 +1089,30 @@ test("attempt startup failure cleans up before publishing immutable placeholder 
           events.push("drive");
           throw cause;
         },
-        currentBoundary: () => "product-rig-startup",
-        postCleanup: async () => events.push("cleanup:after"),
+        currentBoundary: () => "first-input-namespace-ready",
+        postCleanup: async () => {
+          events.push("cleanup:after");
+          return receipt;
+        },
         retryCleanup: () => assert.fail("successful cleanup cannot retry"),
         prepareFailure: async (error, boundary) => {
           events.push(`prepare:${boundary}`);
           return { evidence: failureEvidence(boundary, error.message) };
         },
         appendCleanupFailure: () => assert.fail("unexpected secondary cleanup failure"),
-        publishFailure: async ({ evidence }) => {
+        publishFailure: async ({ evidence }, cleanupReceiptValue) => {
           events.push("publish:failure");
+          const prepared = prepareProductDiagnosticBundlePublication({
+            root: temporary,
+            runId: entry.runId,
+            report: evidence.report,
+            evidence,
+            cleanupReceipt: cleanupReceiptValue,
+          });
           return createProductDiagnosticBundle({
             root: temporary,
             runId: entry.runId,
-            evidence,
+            evidence: prepared.evidence,
           });
         },
         publishSuccess: () => assert.fail("startup failure cannot publish success"),
@@ -861,7 +1122,7 @@ test("attempt startup failure cleans up before publishing immutable placeholder 
     }
     assert.ok(caught instanceof ProductJourneyAttemptError);
     assert.equal(caught.originalCause, cause);
-    assert.equal(caught.boundary, "product-rig-startup");
+    assert.equal(caught.boundary, "first-input-namespace-ready");
     assert.deepEqual(events, [
       "phase:pre-attempt-cleanup",
       "cleanup:before",
@@ -869,7 +1130,7 @@ test("attempt startup failure cleans up before publishing immutable placeholder 
       "drive",
       "phase:attempt-cleanup",
       "cleanup:after",
-      "prepare:product-rig-startup",
+      "prepare:first-input-namespace-ready",
       "phase:failure-bundle-publication",
       "publish:failure",
     ]);
@@ -878,7 +1139,8 @@ test("attempt startup failure cleans up before publishing immutable placeholder 
       [...PRODUCT_DIAGNOSTIC_BUNDLE_FILES].sort(),
     );
     const report = JSON.parse(readFileSync(join(caught.bundle.runDir, "report.json"), "utf8"));
-    assert.equal(report.firstBrokenBoundary, "product-rig-startup");
+    assert.equal(report.firstBrokenBoundary, "first-input-namespace-ready");
+    assert.deepEqual(report.cleanupReceipt.daemon, { status: "not-started" });
     assert.equal(report.failure, cause.message);
     assert.equal(
       readFileSync(join(caught.bundle.runDir, "web.png")).equals(unavailableWebPng),
@@ -998,6 +1260,17 @@ test("bundle preparation requires an exact passed immutable cleanup receipt", ()
     cleanupReceipt(runId, { ownerDead: false }),
     cleanupReceipt(runId, { pathsAbsent: false }),
     cleanupReceipt(runId, { failureCount: 1 }),
+    cleanupReceipt(runId, { daemon: { status: "started", instanceId: "generation" } }),
+    cleanupReceipt(runId, { daemon: { status: "not-started", pid: 1002 } }),
+    cleanupReceipt(runId, {
+      pathAbsence: {
+        runtimeRoot: true,
+        tmuxSocket: true,
+        hostTmuxSocket: true,
+        daemonInfo: true,
+        tuiRuntime: false,
+      },
+    }),
   ])
     assert.throws(
       () => prepareProductDiagnosticBundlePublication({ ...input, cleanupReceipt: receipt }),
@@ -1009,6 +1282,7 @@ test("bundle preparation requires an exact passed immutable cleanup receipt", ()
       ownerToken: "must-not-seal",
       runtimeRoot: "/must/not/seal",
       daemon: {
+        status: "started",
         instanceId: "daemon-generation-1",
         pid: 1002,
         authToken: "must-not-seal",
@@ -1090,6 +1364,7 @@ test("cleanup receipt builder rejects live identity or namespace residue", () =>
   const entry = attemptEntry("20260818060000000-configless-cold-start-r1-builder");
   const state = {
     ownerPid: 2_000_000_001,
+    daemonLifecycle: "started",
     daemon: { pid: 2_000_000_002, instanceId: "daemon-generation" },
     runtimeNamespace: {
       root: join(temporary, "absent"),
@@ -1109,6 +1384,7 @@ test("cleanup receipt builder rejects live identity or namespace residue", () =>
     assert.equal(receipt.ownerDead, true);
     assert.equal(receipt.daemonDead, true);
     assert.equal(receipt.pathsAbsent, true);
+    assert.equal(receipt.daemon.status, "started");
     assert.doesNotMatch(JSON.stringify(receipt), /cleanupToken|ownerToken|\/tmp\//u);
     mkdirSync(state.runtimeNamespace.root);
     assert.throws(() => createProductRigCleanupReceipt(entry, state, 1), /cleanup receipt/u);
@@ -1116,9 +1392,245 @@ test("cleanup receipt builder rejects live identity or namespace residue", () =>
       () => createProductRigCleanupReceipt(entry, { ...state, ownerPid: process.pid }, 1),
       /cleanup receipt/u,
     );
+    rmSync(state.runtimeNamespace.root, { recursive: true, force: true });
+    const stateWithoutDaemon = { ...state };
+    delete stateWithoutDaemon.daemon;
+    const notStarted = createProductRigCleanupReceipt(
+      entry,
+      {
+        ...stateWithoutDaemon,
+        daemonLifecycle: "not-started",
+        ownedTuiRuntimeDirs: [join(temporary, "absent-tui")],
+      },
+      1,
+    );
+    assert.deepEqual(notStarted.daemon, { status: "not-started" });
+    assert.equal(notStarted.pathAbsence.tuiRuntime, true);
+    assert.throws(
+      () =>
+        createProductRigCleanupReceipt(
+          entry,
+          {
+            ...state,
+            daemon: { pid: 2_000_000_002 },
+          },
+          1,
+        ),
+      /source is incomplete/u,
+    );
+    for (const invalidDaemonState of [
+      { ...state, daemonLifecycle: "not-started" },
+      { ...state, daemonLifecycle: "starting" },
+      { ...state, daemon: null, daemonLifecycle: "not-started" },
+      { ...state, daemon: undefined, daemonLifecycle: "not-started" },
+      { ...state, daemonLifecycle: "started", daemon: undefined },
+    ])
+      assert.throws(
+        () => createProductRigCleanupReceipt(entry, invalidDaemonState, 1),
+        /source is incomplete/u,
+      );
+    const tuiResidue = join(temporary, "tui-residue");
+    mkdirSync(tuiResidue);
+    assert.throws(
+      () =>
+        createProductRigCleanupReceipt(
+          entry,
+          {
+            ...stateWithoutDaemon,
+            daemonLifecycle: "not-started",
+            ownedTuiRuntimeDirs: [tuiResidue],
+          },
+          1,
+        ),
+      /cleanup receipt/u,
+    );
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
+});
+
+test("TUI cleanup buffers active evidence and removes every owned runtime path", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "product-rig-tui-buffer-"));
+  const first = join(temporary, "first");
+  const active = join(temporary, "active");
+  const artifacts = join(temporary, "artifacts");
+  mkdirSync(first);
+  mkdirSync(active);
+  writeFileSync(join(first, "stderr.log"), "first stderr\n");
+  writeFileSync(join(active, "stderr.log"), "active stderr\n");
+  writeFileSync(join(active, "trace.jsonl"), '{"type":"trace"}\n');
+  try {
+    const buffered = bufferOwnedTuiRuntimeEvidence({
+      ownedRuntimeDirs: [first, active],
+      activeTui: { runtimeDir: active, performanceTracePath: join(active, "trace.jsonl") },
+      artifactDir: artifacts,
+      pathExists: existsSync,
+      ensureArtifactDir: (path) => mkdirSync(path, { recursive: true }),
+      moveRuntimeDir: renameSync,
+    });
+    assert.equal(existsSync(first), false);
+    assert.equal(existsSync(active), false);
+    assert.equal(
+      readFileSync(join(artifacts, "tui-runtime-1", "stderr.log"), "utf8"),
+      "first stderr\n",
+    );
+    assert.equal(readFileSync(join(buffered.runtimeDir, "stderr.log"), "utf8"), "active stderr\n");
+    assert.equal(readFileSync(buffered.performanceTracePath, "utf8"), '{"type":"trace"}\n');
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("TUI evidence relocation recovers after a later move fails", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "product-rig-tui-buffer-retry-"));
+  const first = join(temporary, "first");
+  const second = join(temporary, "second");
+  const artifacts = join(temporary, "artifacts");
+  mkdirSync(first);
+  mkdirSync(second);
+  writeFileSync(join(first, "stderr.log"), "retained stderr\n");
+  writeFileSync(join(first, "trace.jsonl"), '{"retained":true}\n');
+  let activeTui = { runtimeDir: first, performanceTracePath: join(first, "trace.jsonl") };
+  let failSecond = true;
+  const operations = {
+    ownedRuntimeDirs: [first, second],
+    artifactDir: artifacts,
+    pathExists: existsSync,
+    ensureArtifactDir: (path) => mkdirSync(path, { recursive: true }),
+    moveRuntimeDir: (source, destination) => {
+      if (source === second && failSecond) {
+        failSecond = false;
+        throw new Error("injected second move failure");
+      }
+      renameSync(source, destination);
+    },
+    onActiveTuiRelocated: (tui) => {
+      activeTui = tui;
+    },
+  };
+  try {
+    assert.throws(
+      () => bufferOwnedTuiRuntimeEvidence({ ...operations, activeTui }),
+      /second move failure/u,
+    );
+    assert.equal(activeTui.runtimeDir, join(artifacts, "tui-runtime-1"));
+    assert.equal(readFileSync(activeTui.performanceTracePath, "utf8"), '{"retained":true}\n');
+    activeTui = bufferOwnedTuiRuntimeEvidence({ ...operations, activeTui });
+    assert.equal(existsSync(first), false);
+    assert.equal(existsSync(second), false);
+    assert.equal(
+      readFileSync(join(activeTui.runtimeDir, "stderr.log"), "utf8"),
+      "retained stderr\n",
+    );
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("namespace ownership is published before provenance and runtime setup failures", () => {
+  for (const failure of ["provenance", "runtime"]) {
+    const publications = [];
+    assert.throws(
+      () =>
+        prepareOwnedTuiRuntime({
+          ownership: { session: "session-a", runtimeNamespace: { root: "/tmp/owned" } },
+          intendedTui: {
+            runtimeDir: "/tmp/owned-tui",
+            performanceTracePath: "/tmp/owned-tui/trace.jsonl",
+          },
+          publish: (value) => publications.push(value),
+          resolveProvenance: () => {
+            if (failure === "provenance") throw new Error("provenance failed");
+            return { commit: "a".repeat(40), tree: "b".repeat(40) };
+          },
+          createRuntimeDir: () => {
+            if (failure === "runtime") throw new Error("runtime failed");
+          },
+        }),
+      new RegExp(`${failure} failed`, "u"),
+    );
+    assert.deepEqual(publications[0], {
+      session: "session-a",
+      runtimeNamespace: { root: "/tmp/owned" },
+      tui: {
+        runtimeDir: "/tmp/owned-tui",
+        performanceTracePath: "/tmp/owned-tui/trace.jsonl",
+      },
+      ownedTuiRuntimeDirs: ["/tmp/owned-tui"],
+    });
+    if (failure === "runtime") {
+      assert.equal(publications.length, 2);
+      assert.equal(publications[1].tui.performanceTraceCommit, "a".repeat(40));
+    }
+  }
+});
+
+test("a partially-created distribution runtime is owned before failure and remains cleanable", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "product-rig-distribution-ownership-"));
+  const firstRuntime = join(temporary, "tui-first-input");
+  const distributionRuntime = join(temporary, "tui-input-distribution");
+  const artifacts = join(temporary, "artifacts");
+  mkdirSync(firstRuntime, { recursive: true });
+  writeFileSync(join(firstRuntime, "first.log"), "first\n");
+  const state = { ownedTuiRuntimeDirs: [firstRuntime] };
+  const publish = (value) => Object.assign(state, value);
+  try {
+    assert.throws(
+      () =>
+        prepareOwnedTuiRuntime({
+          ownership: {},
+          intendedTui: {
+            runtimeDir: distributionRuntime,
+            performanceTracePath: join(distributionRuntime, "performance-trace.jsonl"),
+          },
+          ownedTuiRuntimeDirs: state.ownedTuiRuntimeDirs,
+          publish,
+          resolveProvenance: () => ({ commit: "a".repeat(40), tree: "b".repeat(40) }),
+          createRuntimeDir: (runtimeDir) => {
+            mkdirSync(runtimeDir, { recursive: true });
+            writeFileSync(join(runtimeDir, "partial.log"), "retained partial evidence\n");
+            throw new Error("partial distribution creation failed");
+          },
+        }),
+      /partial distribution creation failed/u,
+    );
+    assert.deepEqual(state.ownedTuiRuntimeDirs, [firstRuntime, distributionRuntime]);
+    bufferOwnedTuiRuntimeEvidence({
+      ownedRuntimeDirs: state.ownedTuiRuntimeDirs,
+      activeTui: state.tui,
+      artifactDir: artifacts,
+      pathExists: existsSync,
+      ensureArtifactDir: (path) => mkdirSync(path, { recursive: true }),
+      moveRuntimeDir: renameSync,
+    });
+    assert.equal(existsSync(firstRuntime), false);
+    assert.equal(existsSync(distributionRuntime), false);
+    assert.equal(
+      readFileSync(join(artifacts, "tui-runtime-2", "partial.log"), "utf8"),
+      "retained partial evidence\n",
+    );
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("daemon identity is published before readiness can fail", async () => {
+  const record = { instanceId: "generation-a", pid: 2_000_000_002 };
+  const publications = [];
+  await assert.rejects(
+    startOwnedProductRigDaemon({
+      start: async () => ({ record }),
+      publish: (value) => publications.push(value),
+      waitUntilReady: async () => {
+        throw new Error("readiness failed");
+      },
+    }),
+    /readiness failed/u,
+  );
+  assert.deepEqual(publications, [
+    { daemonLifecycle: "starting" },
+    { daemonLifecycle: "started", daemon: record },
+  ]);
 });
 
 test("attempt cleanup failure is bundled at its exact boundary", async () => {
@@ -1258,11 +1770,14 @@ test("internal owner cleanup preserves its retry actor until an exact attempt pa
 test("cleanup barrier rejects stopped publication before exact owner death and owned path removal", () => {
   const temporary = mkdtempSync(join(tmpdir(), "product-rig-cleanup-barrier-"));
   const socket = join(temporary, "main.sock");
+  const tuiRuntime = join(temporary, "tui-runtime");
   writeFileSync(socket, "owned");
+  mkdirSync(tuiRuntime);
   const state = {
     status: "stopped",
     ownerPid: process.pid,
     daemon: { pid: 987_654_321 },
+    ownedTuiRuntimeDirs: [tuiRuntime],
     runtimeNamespace: {
       root: temporary,
       tmuxSocketPath: socket,
@@ -1285,6 +1800,7 @@ test("cleanup barrier rejects stopped publication before exact owner death and o
     assert.ok(premature.includes("owner-process-live"));
     assert.ok(premature.includes("runtime-root-present"));
     assert.ok(premature.includes("tmux-socket-present"));
+    assert.ok(premature.includes("tui-runtime-present"));
   } finally {
     removeTestTree(temporary);
   }

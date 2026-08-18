@@ -119,6 +119,112 @@ describe("reference performance trace", () => {
     ]);
   });
 
+  it("keys a detailed parser-origin record to the exact input trace and canonical state", () => {
+    const records: Readonly<Record<string, unknown>>[] = [];
+    const traceId = "00000000-0000-4000-8000-000000000005";
+    const sink = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      detailed: true,
+      inputFingerprintKey: "f".repeat(64),
+      processId: "opentui:51",
+      createTraceId: () => traceId,
+      nowMicros: () => 10,
+      append: (record) => records.push(record),
+    });
+    sink.beginTerminalInput!({
+      origin: "keyboard",
+      payload: Buffer.from("x"),
+      semanticPaneId: "pane-a",
+      generation: "generation-a",
+      incarnation: "incarnation-a",
+      revision: 7,
+      stateHash: "hash-a",
+    });
+    expect(records[1]).toMatchObject({
+      type: "performance.input-origin",
+      traceId,
+      origin: "keyboard",
+      parserConsumption: "keyboard-event",
+      payloadByteCount: 1,
+      semanticPaneId: "pane-a",
+      generation: "generation-a",
+      incarnation: "incarnation-a",
+      revision: 7,
+      stateHash: "hash-a",
+    });
+    expect(records[1]).not.toHaveProperty("payloadSha256");
+    expect(records[1]?.payloadFingerprint).toMatch(/^[0-9a-f]{64}$/u);
+    expect(JSON.stringify(records[1])).not.toContain('"payload"');
+  });
+
+  it("records only bounded parser metadata and omits origin work from minimal traces", () => {
+    const detailedRecords: Readonly<Record<string, unknown>>[] = [];
+    let ordinal = 0;
+    const detailed = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      detailed: true,
+      inputFingerprintKey: "f".repeat(64),
+      createTraceId: () => `00000000-0000-4000-8000-${String(++ordinal).padStart(12, "0")}`,
+      nowMicros: () => ordinal,
+      append: (record) => detailedRecords.push(record),
+    });
+    const origin = {
+      origin: "keyboard" as const,
+      payload: Buffer.from("x"),
+      semanticPaneId: "pane-a",
+      generation: "generation-a",
+      incarnation: "incarnation-a",
+      revision: 1,
+      stateHash: "hash-a",
+    };
+    detailed.beginTerminalInput!(origin);
+    detailed.beginTerminalInput!(origin);
+    const origins = detailedRecords.filter(({ type }) => type === "performance.input-origin");
+    expect(origins).toHaveLength(2);
+    expect(
+      origins.every(
+        (record) =>
+          !("payload" in record) &&
+          !("payloadSha256" in record) &&
+          typeof record.payloadFingerprint === "string",
+      ),
+    ).toBe(true);
+
+    const minimalRecords: Readonly<Record<string, unknown>>[] = [];
+    const minimal = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      append: (record) => minimalRecords.push(record),
+    });
+    expect(minimal.terminalInputOrigin).toBeUndefined();
+    minimal.beginTerminalInput!(origin);
+    expect(minimalRecords).toHaveLength(1);
+  });
+
+  it("keeps the input-detail lane selective while retaining canonical anchor and fence", () => {
+    const records: Readonly<Record<string, unknown>>[] = [];
+    const sink = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      inputDetail: true,
+      inputOrigin: true,
+      inputFingerprintKey: "f".repeat(64),
+      health: () => ({ droppedRecords: 0, oversizedRecords: 0, failed: false }),
+      append: (record) => records.push(record),
+    });
+    expect(sink.terminalCanonicalPublication).toBeTypeOf("function");
+    expect(sink.terminalCanonicalPaint).toBeTypeOf("function");
+    expect(sink.terminalInputQueueState).toBeTypeOf("function");
+    expect(sink.terminalInputFence).toBeTypeOf("function");
+    expect(sink.terminalCanonicalHostFrame).toBeUndefined();
+    expect(sink.terminalFrameFence).toBeUndefined();
+    sink.frame(16);
+    sink.terminalPaint(1, 1);
+    expect(records.map(({ type }) => type)).toEqual(["performance.trace.header"]);
+  });
+
   it("bounds no-output probes and expires an old completed probe without timers", () => {
     const records: Readonly<Record<string, unknown>>[] = [];
     let clock = 1_000;
@@ -214,6 +320,7 @@ describe("reference performance trace", () => {
     expect(quiet.terminalCanonicalHostFrame).toBeUndefined();
     expect(quiet.terminalFrameFence).toBeUndefined();
     expect(quiet.terminalInputQueueState).toBeUndefined();
+    expect(quiet.terminalClockCalibration).toBeUndefined();
 
     const records: Array<Readonly<Record<string, unknown>>> = [];
     const detailed = createReferencePerformanceTraceSink({
@@ -222,6 +329,30 @@ describe("reference performance trace", () => {
       detailed: true,
       health: () => ({ droppedRecords: 0, oversizedRecords: 0, failed: false }),
       append: (record) => records.push(record),
+    });
+    detailed.terminalClockCalibration?.({
+      version: 1,
+      processId: "opentui:1",
+      clockId: "opentui-performance-now",
+      clockKind: "performance-now",
+      atMicros: 11,
+      requestId: "00000000-0000-4000-8000-000000000077",
+      daemonInstanceId: "11111111-1111-4111-8111-111111111111",
+      reason: "timeout-retained-sample",
+      attemptedProbes: 2,
+      receivedProbes: 1,
+      validProbes: 1,
+      selectedProbes: 1,
+      selectedProbe: 1,
+    });
+    expect(records.at(-1)).toMatchObject({
+      type: "performance.clock-calibration",
+      reason: "timeout-retained-sample",
+      attemptedProbes: 2,
+      receivedProbes: 1,
+      validProbes: 1,
+      selectedProbes: 1,
+      selectedProbe: 1,
     });
     detailed.terminalCanonicalMode?.({
       processId: "opentui:1",

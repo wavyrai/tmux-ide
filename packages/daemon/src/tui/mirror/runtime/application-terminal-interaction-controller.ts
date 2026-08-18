@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { Accessor, Setter } from "solid-js";
 import type { SessionRuntimeTerminalInput } from "@tmux-ide/contracts";
-import { currentTuiPerformanceEventSink } from "../performance-events.ts";
+import {
+  currentTuiPerformanceEventSink,
+  type TuiTerminalInputOrigin,
+  type TuiTerminalInputTrace,
+} from "../performance-events.ts";
 import {
   type OpenTuiWorkspaceLayout,
   type OpenTuiWorkspaceLayoutSnapshot,
@@ -28,7 +32,10 @@ export interface ApplicationTerminalInteractionControllerOptions {
 export interface ApplicationTerminalInteractionController {
   adoptLayout(snapshot: OpenTuiWorkspaceLayoutSnapshot): void;
   selectPane(paneId: string): void;
-  sendInput(input: SessionRuntimeTerminalInput): Promise<void>;
+  sendInput(
+    input: SessionRuntimeTerminalInput,
+    parserOrigin?: Pick<TuiTerminalInputOrigin, "origin" | "payload">,
+  ): Promise<void>;
   previewPaneResize(preview: ApplicationPaneResizePreview): void;
   resizePane(preview: ApplicationPaneResizePreview): void;
   cycleWindow(): void;
@@ -71,7 +78,10 @@ export function createApplicationTerminalInteractionController(
     };
   };
 
-  const paneInput = new TerminalPaneInputRouter<SessionRuntimeTerminalInput>({
+  const paneInput = new TerminalPaneInputRouter<{
+    readonly input: SessionRuntimeTerminalInput;
+    readonly parserOrigin?: Pick<TuiTerminalInputOrigin, "origin" | "payload">;
+  }>({
     select: async (paneId) => {
       const expected = liveSelectionTarget();
       const selected = expected
@@ -86,19 +96,56 @@ export function createApplicationTerminalInteractionController(
         });
       return selected;
     },
-    send: async (paneId, input) => {
+    send: async (paneId, routed) => {
+      const { input, parserOrigin } = routed;
       const active = options.generation();
       if (active?.status !== "live" || !active.fastLane) return;
-      const trace = currentTuiPerformanceEventSink()?.beginTerminalInput?.();
-      const fixture =
-        trace && causalCellFixtureEnabled()
-          ? prepareCausalCellFixtureV1(active.fastLane.lane.paneState(paneId), input, trace.traceId)
+      let fixtureEnabled: boolean;
+      let canonical: ReturnType<typeof active.fastLane.lane.paneState> = null;
+      let trace: TuiTerminalInputTrace | undefined;
+      try {
+        const performanceSink = currentTuiPerformanceEventSink();
+        fixtureEnabled = Boolean(performanceSink?.beginTerminalInput && causalCellFixtureEnabled());
+        if (performanceSink?.beginTerminalInput && (parserOrigin || fixtureEnabled))
+          canonical = active.fastLane.lane.paneState(paneId);
+        trace = performanceSink?.beginTerminalInput?.(
+          parserOrigin && canonical && active.daemonGeneration
+            ? {
+                ...parserOrigin,
+                semanticPaneId: paneId,
+                generation: active.daemonGeneration,
+                incarnation: canonical.incarnation,
+                revision: canonical.revision,
+                stateHash: canonical.hash,
+              }
+            : undefined,
+        );
+      } catch {
+        // Diagnostics are opt-in and must never block the product input path.
+        fixtureEnabled = false;
+        canonical = null;
+        trace = undefined;
+      }
+      let fixture =
+        trace && fixtureEnabled
+          ? prepareCausalCellFixtureV1(canonical, input, trace.traceId)
           : null;
       if (fixture) {
-        const armed = active.fastLane.causalCellLedger?.arm(fixture.probe, nowMicros());
+        let armed: boolean | undefined;
+        try {
+          armed = active.fastLane.causalCellLedger?.arm(fixture.probe, nowMicros());
+        } catch {
+          fixture = null;
+          armed = true;
+        }
         if (armed !== true) {
-          trace?.cancel();
-          return;
+          try {
+            trace?.cancel();
+          } catch {
+            // Diagnostics fail open while declining this diagnostic probe.
+          }
+          trace = undefined;
+          fixture = null;
         }
       }
       const pending = active.fastLane.lane.sendInput(
@@ -107,12 +154,24 @@ export function createApplicationTerminalInteractionController(
         trace?.traceId,
         fixture?.probe,
       );
-      trace?.finish();
+      try {
+        trace?.finish();
+      } catch {
+        // The real input has already been dispatched; diagnostics fail open.
+      }
       const outcome = await pending;
       if (outcome.status !== "sent") {
-        trace?.cancel();
+        try {
+          trace?.cancel();
+        } catch {
+          // Diagnostics fail open after the product transport outcome.
+        }
         if (fixture)
-          active.fastLane.causalCellLedger?.fail(fixture.probe.traceId, "authority-lost");
+          try {
+            active.fastLane.causalCellLedger?.fail(fixture.probe.traceId, "authority-lost");
+          } catch {
+            // Diagnostics fail open after the product transport outcome.
+          }
       }
     },
     onFocusedPane: options.setFocusedPane,
@@ -126,8 +185,8 @@ export function createApplicationTerminalInteractionController(
         pendingWindowSwitch.layoutPublished = true;
     },
     selectPane: (paneId) => paneInput.selectPane(paneId),
-    sendInput: async (input) => {
-      await paneInput.sendInput(input);
+    sendInput: async (input, parserOrigin) => {
+      await paneInput.sendInput({ input, parserOrigin });
     },
     previewPaneResize() {
       if (!options.diagnosticsEnabled || pendingResizeGuide) return;

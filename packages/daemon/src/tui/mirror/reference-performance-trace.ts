@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { createWriteStream, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -13,7 +13,11 @@ import {
   type TuiTerminalFrameFenceEvent,
   type TuiTerminalCanonicalModeEvent,
   type TuiTerminalInputQueueStateEvent,
+  type TuiTerminalInputOriginEvent,
+  type TuiTerminalInputOrigin,
+  type TuiTerminalInputFenceEvent,
   type TuiTerminalTraceStageEvent,
+  type TuiTerminalClockCalibrationEvent,
   type TuiTerminalTraceSpanEvent,
 } from "./performance-events.ts";
 
@@ -21,6 +25,9 @@ const TRACE_PATH = process.env.TMUX_IDE_PERFORMANCE_TRACE_LOG;
 const SOURCE_COMMIT = process.env.TMUX_IDE_PERFORMANCE_TRACE_COMMIT;
 const SOURCE_TREE = process.env.TMUX_IDE_PERFORMANCE_TRACE_TREE;
 const DETAILED_TRACE = process.env.TMUX_IDE_PERFORMANCE_TRACE_DETAIL === "1";
+const INPUT_ORIGIN_TRACE = process.env.TMUX_IDE_PERFORMANCE_TRACE_INPUT_ORIGIN === "1";
+const INPUT_DETAIL_TRACE = process.env.TMUX_IDE_PERFORMANCE_TRACE_INPUT_DETAIL === "1";
+const INPUT_FINGERPRINT_KEY = process.env.TMUX_IDE_PERFORMANCE_TRACE_INPUT_FINGERPRINT_KEY;
 const MAX_PENDING_INPUTS = 256;
 const INPUT_EXPIRY_MICROS = 5_000_000;
 const MAX_TRACE_RECORD_BYTES = 64 * 1_024;
@@ -92,6 +99,9 @@ export function installReferencePerformanceTraceCollectorFromEnvironment(): void
     commit: SOURCE_COMMIT,
     tree: SOURCE_TREE,
     detailed: DETAILED_TRACE,
+    inputOrigin: INPUT_ORIGIN_TRACE,
+    inputDetail: INPUT_DETAIL_TRACE,
+    inputFingerprintKey: INPUT_FINGERPRINT_KEY,
     append: writer.append,
     health: writer.snapshot,
   });
@@ -317,6 +327,9 @@ export function createReferencePerformanceTraceSink(options: {
   readonly startedAt?: string;
   /** Keep false for the unperturbed input→changed-cell qualification path. */
   readonly detailed?: boolean;
+  readonly inputOrigin?: boolean;
+  readonly inputDetail?: boolean;
+  readonly inputFingerprintKey?: string;
 }): ReferencePerformanceTraceSink {
   const nowMicros = options.nowMicros ?? (() => Math.floor(performance.now() * 1_000));
   const createTraceId = options.createTraceId ?? randomUUID;
@@ -433,17 +446,58 @@ export function createReferencePerformanceTraceSink(options: {
               });
             }
           },
-          terminalInputQueueState: (event: TuiTerminalInputQueueStateEvent) => {
-            if (!closed)
-              options.append({ version: 1, type: "performance.input-queue-state", ...event });
-          },
           terminalCanonicalMode: (event: TuiTerminalCanonicalModeEvent) => {
             if (!closed)
               options.append({ version: 1, type: "performance.terminal-canonical-mode", ...event });
           },
         }
       : {}),
-    beginTerminalInput: () => {
+    ...(!detailed && options.inputDetail
+      ? {
+          terminalCanonicalPublication: (event: TuiTerminalCanonicalPublicationEvent) => {
+            if (!closed)
+              options.append({
+                version: 1,
+                type: "performance.terminal-canonical-publication",
+                ...event,
+              });
+          },
+          terminalCanonicalPaint: (event: TuiTerminalCanonicalPaintEvent) => {
+            if (!closed)
+              options.append({
+                version: 1,
+                type: "performance.terminal-canonical-paint",
+                ...event,
+              });
+          },
+        }
+      : {}),
+    ...(detailed || options.inputOrigin ? { terminalInputOrigin: true as const } : {}),
+    ...(detailed || options.inputDetail
+      ? {
+          terminalInputQueueState: (event: TuiTerminalInputQueueStateEvent) => {
+            if (!closed)
+              options.append({ version: 1, type: "performance.input-queue-state", ...event });
+          },
+          terminalInputFence: (event: TuiTerminalInputFenceEvent) => {
+            if (closed) return;
+            const health = options.health?.() ?? null;
+            options.append({
+              version: 1,
+              type: "performance.input-fence",
+              ...event,
+              writerHealth: health
+                ? {
+                    droppedRecords: health.droppedRecords,
+                    oversizedRecords: health.oversizedRecords,
+                    failed: health.failed,
+                  }
+                : null,
+            });
+          },
+        }
+      : {}),
+    beginTerminalInput: (origin?: TuiTerminalInputOrigin) => {
       const startedAtMicros = nowMicros();
       expireInputs(inputs, startedAtMicros);
       // The transport carries one latest-only performance trace id. Once a
@@ -456,6 +510,36 @@ export function createReferencePerformanceTraceSink(options: {
         droppedInputs += 1;
       }
       const traceId = createTraceId();
+      if (
+        (detailed || options.inputOrigin) &&
+        origin &&
+        !closed &&
+        typeof options.inputFingerprintKey === "string" &&
+        options.inputFingerprintKey.length >= 32
+      ) {
+        const payload = Buffer.from(origin.payload);
+        const event: TuiTerminalInputOriginEvent = {
+          processId,
+          clockId: "opentui-performance-now",
+          clockKind: "performance-now",
+          atMicros: startedAtMicros,
+          origin: origin.origin,
+          payloadByteCount: payload.byteLength,
+          payloadFingerprint: createHmac("sha256", options.inputFingerprintKey)
+            .update(traceId)
+            .update("\0")
+            .update(payload)
+            .digest("hex"),
+          parserConsumption: origin.origin === "keyboard" ? "keyboard-event" : "paste-event",
+          traceId,
+          semanticPaneId: origin.semanticPaneId,
+          generation: origin.generation,
+          incarnation: origin.incarnation,
+          revision: origin.revision,
+          stateHash: origin.stateHash,
+        };
+        options.append({ version: 1, type: "performance.input-origin", ...event });
+      }
       inputs.set(traceId, {
         startedAtMicros,
         expiresAtMicros: startedAtMicros + INPUT_EXPIRY_MICROS,
@@ -476,8 +560,16 @@ export function createReferencePerformanceTraceSink(options: {
     terminalTraceSpan: (paint: TuiTerminalTraceSpanEvent) =>
       recordCompletedTrace(inputs, paint, options.append),
     terminalTraceStage: (event: TuiTerminalTraceStageEvent) => {
-      if (detailed && !closed) options.append({ version: 1, type: "performance.stage", ...event });
+      if ((detailed || options.inputDetail) && !closed)
+        options.append({ version: 1, type: "performance.stage", ...event });
     },
+    ...(detailed || options.inputDetail
+      ? {
+          terminalClockCalibration: (event: TuiTerminalClockCalibrationEvent) => {
+            if (!closed) options.append({ type: "performance.clock-calibration", ...event });
+          },
+        }
+      : {}),
     snapshot,
     close: () => {
       if (closed) return snapshot();

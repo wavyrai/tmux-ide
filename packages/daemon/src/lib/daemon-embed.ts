@@ -37,6 +37,7 @@ import { handlePtyWebSocket, shutdownPtyBridges } from "../server/ws-route.ts";
 import {
   broadcastInteractionReceipt,
   handleWsEventsConnection,
+  setFleetFactsObserverDiagnostics,
   shutdownWsEventObservation,
 } from "../command-center/ws-events.ts";
 import { setRemoteAccessRestartBackend } from "../command-center/actions/handlers/app-set-remote-access.ts";
@@ -1109,6 +1110,8 @@ export async function startEmbeddedDaemon(
     let paneStreamRuntime: PaneStreamRuntime | null = null;
     let runtimeTraceStream: ReturnType<typeof createWriteStream> | null = null;
     const closeRuntimeTraceStream = async (): Promise<void> => {
+      externalInteractionObserver.setDiagnostics(null);
+      setFleetFactsObserverDiagnostics(null);
       const stream = runtimeTraceStream;
       runtimeTraceStream = null;
       if (!stream || stream.closed || stream.destroyed) return;
@@ -1154,6 +1157,30 @@ export async function startEmbeddedDaemon(
             },
           })
         : undefined;
+      if (runtimeTracePath) {
+        const publishObserverDiagnostic = (event: object): void => {
+          try {
+            if (!runtimeTraceStream || runtimeTraceSaturated) return;
+            runtimeTraceSaturated = !runtimeTraceStream.write(
+              `${JSON.stringify({
+                version: 1,
+                type: "performance.daemon-observer",
+                ...event,
+                generation: instanceId,
+              })}\n`,
+            );
+          } catch {
+            // Qualification diagnostics never alter daemon observation.
+          }
+        };
+        const diagnostics = {
+          nowMicros: () => Math.floor(performance.now() * 1_000),
+          createTraceId: randomUUID,
+          publish: publishObserverDiagnostic,
+        };
+        externalInteractionObserver.setDiagnostics(diagnostics);
+        setFleetFactsObserverDiagnostics(diagnostics);
+      }
       sessionRuntimeRegistry = new SessionRuntimeRegistry({
         generation: instanceId,
         ...(runtimeObservability ? { observability: runtimeObservability } : {}),
@@ -1276,6 +1303,7 @@ export async function startEmbeddedDaemon(
         resolvePaneSourceCredential: (credential, resolvedSession, claimedSource) =>
           paneSourceCredentials.resolve(credential, resolvedSession, claimedSource),
       });
+      await externalInteractionObserver.start();
       startedServer = await startHttpServer({
         sessionName,
         requestedPort: port,
@@ -1329,7 +1357,6 @@ export async function startEmbeddedDaemon(
       terminalAttachmentBoundary,
       paneStreamBoundary,
     } = startedServer;
-    externalInteractionObserver.start();
     const retirePaneStreamTransport = async (): Promise<readonly unknown[]> => {
       const transportResults = await Promise.allSettled([
         Promise.resolve().then(() => paneStreamRuntime!.dispose()),

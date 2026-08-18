@@ -2,10 +2,13 @@
 import { execFileSync } from "node:child_process";
 import { writeSync } from "node:fs";
 
+import { createCausalFixtureGeometry } from "./product-rig-causal-fixture-geometry.mjs";
+
 const OSC = "tmux-ide-causal-cell-v1";
 const paneId = process.env.TMUX_PANE;
 let buffer = "";
 let restored = false;
+let geometry;
 
 const markReady = (value) => {
   if (!paneId) return;
@@ -17,6 +20,7 @@ const markReady = (value) => {
 const restore = () => {
   if (restored) return;
   restored = true;
+  geometry?.dispose();
   if (paneId) {
     try {
       execFileSync("tmux", ["set-option", "-pu", "-t", paneId, "@tmux_ide_causal_fixture"], {
@@ -49,10 +53,16 @@ process.once("SIGINT", stop);
 process.once("SIGTERM", stop);
 process.once("exit", restore);
 execFileSync("stty", ["raw", "-echo"], { stdio: ["inherit", "ignore", "ignore"] });
-const columns = Math.max(2, process.stdout.columns ?? 80);
-process.stdout.write(`\x1b[2J\x1b[?7l\x1b[1;${columns}H`, () => {
-  markReady("ready-v1");
+geometry = createCausalFixtureGeometry({
+  readColumns: () => process.stdout.columns,
+  write: (value, callback) => process.stdout.write(value, callback),
+  markReady,
+  subscribeResize: (listener) => {
+    process.on("SIGWINCH", listener);
+    return () => process.off("SIGWINCH", listener);
+  },
 });
+geometry.start();
 
 process.stdin.setEncoding("ascii");
 process.stdin.on("data", (chunk) => {
@@ -65,9 +75,7 @@ process.stdin.on("data", (chunk) => {
     buffer = buffer.slice(boundary + 1);
     const reset = /^reset-v1;([A-Za-z0-9_-]{1,64})$/u.exec(line);
     if (reset) {
-      process.stdout.write(`\x1b[2J\x1b[3J\x1b[?7l\x1b[1;${columns}H`, () => {
-        markReady(`ready-v1:${reset[1]}`);
-      });
+      geometry.reset(reset[1]);
       continue;
     }
     const separator = line.indexOf(";");
