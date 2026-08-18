@@ -5,16 +5,21 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  lstatSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+
+import { createScratchFleet } from "../apps/desktop-renderer/e2e/fixtures/scratch-fleet.ts";
 
 import {
   PRODUCT_DIAGNOSTIC_BUNDLE_FILES,
@@ -24,10 +29,12 @@ import {
   collectProductRigCleanupFailures,
   createProductRigCleanupReceipt,
   createProductDiagnosticBundle,
+  createIsolatedTargetedTuiCwd,
   dispatchProductJourneyExecutor,
   expandProductJourneyEntries,
   isCleanLegacyStoppedProductRigState,
   parseProductDiagnoseOptions,
+  prepareIsolatedTargetedTuiCwd,
   prepareProductDiagnosticBundlePublication,
   productDiagnosticRunId,
   productRigCleanupAcknowledgesRequest,
@@ -37,6 +44,7 @@ import {
   resolveProductJourneyPlan,
   runIsolatedProductJourneyAttempt,
   runConfiglessProductJourneyOwnerBoot,
+  runCoherentFirstPaneOwnerBoot,
   runProductJourneyPlan,
   settleInternalProductRigCleanup,
 } from "./product-test-rig-journeys.mjs";
@@ -126,22 +134,32 @@ test("golden registry enables only accepted configless evidence", () => {
     golden.map(({ id }) => id),
     expected,
   );
-  assert.equal(golden[0]?.implementation, "implemented");
-  assert.ok(golden.slice(1).every(({ implementation }) => implementation === "pending"));
+  assert.ok(golden.slice(0, 2).every(({ implementation }) => implementation === "implemented"));
+  assert.ok(golden.slice(2).every(({ implementation }) => implementation === "pending"));
   assert.deepEqual(auditProductJourneyScope(), {
     complete: false,
     declarationComplete: true,
     executableComplete: false,
     missing: [],
-    pendingJourneyIds: expected.slice(1),
+    pendingJourneyIds: expected.slice(2),
   });
   assert.deepEqual(auditProductJourneyScope(golden.slice(1)), {
     complete: false,
     declarationComplete: false,
     executableComplete: false,
     missing: ["configless", "cold-start"],
-    pendingJourneyIds: expected.slice(1),
+    pendingJourneyIds: expected.slice(2),
   });
+});
+
+test("scratch fleet rejects unsafe preseed markers before creating any namespace", async () => {
+  const slug = `unsafe-marker-${process.pid}`;
+  const before = new Set(readdirSync("/tmp").filter((entry) => entry.includes(slug)));
+  await assert.rejects(
+    createScratchFleet({ sessions: 1, slug, initialPaneMarker: "RIG_SAFE'; touch /tmp/pwned; '" }),
+    /bounded safe ProductRig token/u,
+  );
+  assert.deepEqual(new Set(readdirSync("/tmp").filter((entry) => entry.includes(slug))), before);
 });
 
 test("diagnose options select and repeat the executable journey deterministically", () => {
@@ -173,6 +191,318 @@ test("diagnose options select and repeat the executable journey deterministicall
     ).map(({ journey, repetition, variant }) => [journey.id, repetition, variant]),
     [["configless-cold-start", 1, null]],
   );
+  assert.deepEqual(
+    resolveProductJourneyPlan(
+      parseProductDiagnoseOptions(["--journey", "coherent-first-pane", "--repeat", "1", "--json"]),
+    ).map(({ journey, repetition, variant }) => [journey.id, repetition, variant]),
+    [["coherent-first-pane", 1, null]],
+  );
+});
+
+test("coherent-first-pane owner preserves targeted preseed-to-Web ordering", async () => {
+  const calls = [];
+  const operation = (name, result) => async () => {
+    calls.push(name);
+    return result;
+  };
+  const result = await runCoherentFirstPaneOwnerBoot({
+    createTargetedNamespace: operation("preseed", { seed: "before-start" }),
+    startCanonicalDaemon: operation("daemon", { generation: "generation" }),
+    openCanonicalWorkspace: operation("workspace", { workspaceName: "workspace" }),
+    buildBeforeMeasurement: operation("build"),
+    prepareTargetedTuiCwd: operation("cwd", "/isolated/tui/home"),
+    launchTargetedTui: operation("targeted-tui", { processId: "opentui:1" }),
+    proveCoherentPublication: operation("coherent", { semanticPaneId: "pane.one" }),
+    startWebAfterCoherentBoundary: operation("web", { connected: true }),
+  });
+  assert.deepEqual(calls, [
+    "preseed",
+    "daemon",
+    "workspace",
+    "build",
+    "cwd",
+    "targeted-tui",
+    "coherent",
+    "web",
+  ]);
+  assert.equal(result.namespace.seed, "before-start");
+  assert.equal(result.coherent.semanticPaneId, "pane.one");
+});
+
+test("coherent production owner prepares the exact isolated TUI cwd before launch", async () => {
+  const temporary = mkdtempSync(join(tmpdir(), "coherent-targeted-cwd-"));
+  const runtimeDir = join(temporary, "tui");
+  const calls = [];
+  try {
+    await runCoherentFirstPaneOwnerBoot({
+      createTargetedNamespace: async () => {
+        const cwd = createIsolatedTargetedTuiCwd(runtimeDir);
+        assert.equal(cwd, join(runtimeDir, "home"));
+        return { tui: { runtimeDir } };
+      },
+      startCanonicalDaemon: async () => ({}),
+      openCanonicalWorkspace: async () => ({}),
+      buildBeforeMeasurement: async () => calls.push("build"),
+      prepareTargetedTuiCwd: async (namespace) => {
+        calls.push("prepare");
+        return prepareIsolatedTargetedTuiCwd(namespace.tui.runtimeDir);
+      },
+      launchTargetedTui: async () => {
+        calls.push("launch");
+        const cwd = join(runtimeDir, "home");
+        assert.equal(statSync(cwd).isDirectory(), true);
+        assert.equal(lstatSync(cwd).isSymbolicLink(), false);
+        assert.equal(statSync(cwd).mode & 0o777, 0o700);
+        return {};
+      },
+      proveCoherentPublication: async () => ({}),
+      startWebAfterCoherentBoundary: async () => ({}),
+    });
+    assert.deepEqual(calls, ["build", "prepare", "launch"]);
+
+    const blockedRuntime = join(temporary, "blocked");
+    writeFileSync(blockedRuntime, "not a directory");
+    await assert.rejects(
+      runCoherentFirstPaneOwnerBoot({
+        createTargetedNamespace: async () => ({ tui: { runtimeDir: blockedRuntime } }),
+        startCanonicalDaemon: async () => ({}),
+        openCanonicalWorkspace: async () => ({}),
+        buildBeforeMeasurement: async () => undefined,
+        prepareTargetedTuiCwd: async (namespace) =>
+          prepareIsolatedTargetedTuiCwd(namespace.tui.runtimeDir),
+        launchTargetedTui: () => assert.fail("launch must not follow cwd failure"),
+        proveCoherentPublication: async () => ({}),
+        startWebAfterCoherentBoundary: async () => ({}),
+      }),
+      (error) => {
+        assert.equal(error.boundary, "targeted-tui-connect");
+        assert.deepEqual(error.observation, {
+          operation: "prepare-isolated-tui-cwd",
+          reason: "runtime-not-exact-directory",
+          runtimeKind: "product-rig-testdrive",
+        });
+        const state = productRigTerminalFailureState(error, "product-rig-startup");
+        assert.equal(state.firstBrokenBoundary, "targeted-tui-connect");
+        assert.equal(state.failureObservation, error.observation);
+        return true;
+      },
+    );
+  } finally {
+    removeTestTree(temporary);
+  }
+});
+
+test("targeted launch validation rejects a missing home without external mutation", async () => {
+  const temporary = mkdtempSync(join(tmpdir(), "coherent-targeted-missing-home-"));
+  const runtimeDir = join(temporary, "runtime");
+  const external = join(temporary, "external");
+  try {
+    mkdirSync(runtimeDir, { mode: 0o700 });
+    mkdirSync(external, { mode: 0o755 });
+    chmodSync(external, 0o755);
+    writeFileSync(join(external, "sentinel"), "unchanged");
+    await assert.rejects(
+      runCoherentFirstPaneOwnerBoot({
+        createTargetedNamespace: async () => ({ tui: { runtimeDir } }),
+        startCanonicalDaemon: async () => ({}),
+        openCanonicalWorkspace: async () => ({}),
+        buildBeforeMeasurement: async () => undefined,
+        prepareTargetedTuiCwd: async (namespace) =>
+          prepareIsolatedTargetedTuiCwd(namespace.tui.runtimeDir),
+        launchTargetedTui: () => assert.fail("launch must not follow missing cwd"),
+        proveCoherentPublication: async () => ({}),
+        startWebAfterCoherentBoundary: async () => ({}),
+      }),
+      (error) =>
+        error.boundary === "targeted-tui-connect" && error.observation?.reason === "home-missing",
+    );
+    assert.equal(statSync(external).mode & 0o777, 0o755);
+    assert.equal(readFileSync(join(external, "sentinel"), "utf8"), "unchanged");
+    assert.equal(existsSync(join(runtimeDir, "home")), false);
+  } finally {
+    removeTestTree(temporary);
+  }
+});
+
+test("targeted launch validation rejects permission mismatches without repair", () => {
+  for (const mismatched of ["runtime", "home"]) {
+    const temporary = mkdtempSync(join(tmpdir(), `coherent-targeted-mode-${mismatched}-`));
+    const runtimeDir = join(temporary, "runtime");
+    const home = join(runtimeDir, "home");
+    try {
+      createIsolatedTargetedTuiCwd(runtimeDir);
+      writeFileSync(join(home, "sentinel"), "unchanged");
+      chmodSync(mismatched === "runtime" ? runtimeDir : home, 0o755);
+      assert.throws(
+        () => prepareIsolatedTargetedTuiCwd(runtimeDir),
+        (error) =>
+          error.boundary === "targeted-tui-connect" &&
+          error.observation?.reason === `${mismatched}-permission-mismatch`,
+      );
+      assert.equal(statSync(mismatched === "runtime" ? runtimeDir : home).mode & 0o777, 0o755);
+      assert.equal(readFileSync(join(home, "sentinel"), "utf8"), "unchanged");
+    } finally {
+      removeTestTree(temporary);
+    }
+  }
+});
+
+test("targeted TUI cwd preparation never follows runtime or home symlinks", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "coherent-targeted-symlink-"));
+  try {
+    const external = join(temporary, "external");
+    mkdirSync(external, { mode: 0o755 });
+    chmodSync(external, 0o755);
+    const runtimeDir = join(temporary, "runtime");
+    mkdirSync(runtimeDir, { mode: 0o700 });
+    symlinkSync(external, join(runtimeDir, "home"), "dir");
+    assert.throws(
+      () => prepareIsolatedTargetedTuiCwd(runtimeDir),
+      (error) =>
+        error.boundary === "targeted-tui-connect" &&
+        error.observation?.reason === "home-not-exact-directory",
+    );
+    assert.equal(statSync(external).mode & 0o777, 0o755);
+
+    const runtimeLink = join(temporary, "runtime-link");
+    symlinkSync(external, runtimeLink, "dir");
+    assert.throws(
+      () => prepareIsolatedTargetedTuiCwd(runtimeLink),
+      (error) =>
+        error.boundary === "targeted-tui-connect" &&
+        error.observation?.reason === "runtime-not-exact-directory",
+    );
+    assert.equal(statSync(external).mode & 0o777, 0o755);
+  } finally {
+    for (const link of [join(temporary, "runtime", "home"), join(temporary, "runtime-link")]) {
+      try {
+        unlinkSync(link);
+      } catch {
+        // The assertion may have failed before a given symlink was created.
+      }
+    }
+    removeTestTree(temporary);
+  }
+});
+
+test("targeted TUI cwd preparation retains its runtime inode across child preparation", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "coherent-targeted-parent-swap-"));
+  const runtimeDir = join(temporary, "runtime");
+  const retainedRuntime = join(temporary, "runtime-retained");
+  const external = join(temporary, "external");
+  const externalHome = join(external, "home");
+  try {
+    mkdirSync(runtimeDir, { mode: 0o700 });
+    mkdirSync(external, { mode: 0o755 });
+    mkdirSync(externalHome, { mode: 0o755 });
+    chmodSync(external, 0o755);
+    chmodSync(externalHome, 0o755);
+    writeFileSync(join(externalHome, "sentinel"), "unchanged");
+    assert.throws(
+      () =>
+        prepareIsolatedTargetedTuiCwd(runtimeDir, {
+          afterRuntimeValidated: () => {
+            renameSync(runtimeDir, retainedRuntime);
+            symlinkSync(external, runtimeDir, "dir");
+          },
+        }),
+      (error) =>
+        error.boundary === "targeted-tui-connect" &&
+        error.observation?.reason === "runtime-identity-changed",
+    );
+    assert.equal(statSync(external).mode & 0o777, 0o755);
+    assert.equal(statSync(externalHome).mode & 0o777, 0o755);
+    assert.equal(readFileSync(join(externalHome, "sentinel"), "utf8"), "unchanged");
+  } finally {
+    try {
+      unlinkSync(runtimeDir);
+    } catch {
+      // The swap may not have completed.
+    }
+    if (existsSync(retainedRuntime)) renameSync(retainedRuntime, runtimeDir);
+    removeTestTree(temporary);
+  }
+});
+
+test("coherent-first-pane owner decorates every raw phase failure with its first boundary", async () => {
+  const cases = [
+    ["createTargetedNamespace", "targeted-namespace-preseeded"],
+    ["startCanonicalDaemon", "targeted-daemon-ready"],
+    ["openCanonicalWorkspace", "targeted-daemon-ready"],
+    ["buildBeforeMeasurement", "targeted-tui-connect"],
+    ["prepareTargetedTuiCwd", "targeted-tui-connect"],
+    ["launchTargetedTui", "targeted-tui-connect"],
+    ["proveCoherentPublication", "coherent-terminal-publication"],
+    ["startWebAfterCoherentBoundary", "web-started-after-coherent-boundary"],
+  ];
+  for (const [failedOperation, expectedBoundary] of cases) {
+    const operations = Object.fromEntries(
+      cases.map(([name]) => [
+        name,
+        async () => {
+          if (name === failedOperation) throw new Error(`failed ${name}`);
+          return Object.freeze({ name });
+        },
+      ]),
+    );
+    await assert.rejects(runCoherentFirstPaneOwnerBoot(operations), (error) => {
+      assert.equal(error.boundary, expectedBoundary);
+      assert.match(error.message, new RegExp(`failed ${failedOperation}`, "u"));
+      return true;
+    });
+  }
+});
+
+test("coherent proof boundary survives strict cleanup into its sealed failure bundle", async () => {
+  const temporary = mkdtempSync(join(tmpdir(), "coherent-boundary-bundle-"));
+  const entry = {
+    ...attemptEntry("20260818131500000-coherent-first-pane-r1-proof"),
+    journey: { id: "coherent-first-pane" },
+  };
+  let cleaned = false;
+  try {
+    await assert.rejects(
+      runIsolatedProductJourneyAttempt(entry, {
+        preCleanup: async () => undefined,
+        drive: () =>
+          runCoherentFirstPaneOwnerBoot({
+            createTargetedNamespace: async () => ({}),
+            startCanonicalDaemon: async () => ({}),
+            openCanonicalWorkspace: async () => ({}),
+            buildBeforeMeasurement: async () => undefined,
+            prepareTargetedTuiCwd: async () => undefined,
+            launchTargetedTui: async () => ({}),
+            proveCoherentPublication: async () => {
+              throw new Error("target frame never published");
+            },
+            startWebAfterCoherentBoundary: async () => ({}),
+          }),
+        currentBoundary: () => "product-rig-startup",
+        postCleanup: async () => {
+          cleaned = true;
+        },
+        retryCleanup: () => assert.fail("cleanup succeeded"),
+        prepareFailure: async (error, boundary) => ({
+          evidence: failureEvidence(boundary, error.message),
+        }),
+        appendCleanupFailure: () => assert.fail("no cleanup failure"),
+        publishFailure: async ({ evidence }) => {
+          assert.equal(cleaned, true);
+          return createProductDiagnosticBundle({ root: temporary, runId: entry.runId, evidence });
+        },
+        publishSuccess: () => assert.fail("proof failure cannot publish success"),
+      }),
+      (error) => {
+        assert.ok(error instanceof ProductJourneyAttemptError);
+        assert.equal(error.boundary, "coherent-terminal-publication");
+        const report = JSON.parse(readFileSync(join(error.bundle.runDir, "report.json"), "utf8"));
+        assert.equal(report.firstBrokenBoundary, "coherent-terminal-publication");
+        return true;
+      },
+    );
+  } finally {
+    removeTestTree(temporary);
+  }
 });
 
 test("first-key-paste expands each repetition into separately isolated key and paste attempts", () => {
@@ -310,7 +640,7 @@ test("pending, all, unknown, and invalid repetition selections fail before orche
   );
   assert.throws(
     () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "all"])),
-    /not implemented: coherent-first-pane/u,
+    /not implemented: first-key-paste/u,
   );
   assert.throws(
     () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "imaginary"])),

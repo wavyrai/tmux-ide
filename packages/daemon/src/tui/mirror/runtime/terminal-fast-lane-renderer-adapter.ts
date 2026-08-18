@@ -16,6 +16,7 @@ import {
 import type { PaneScopedTerminalAdapter } from "./pane-scoped-terminal-surface.tsx";
 import { currentTuiPerformanceEventSink } from "../performance-events.ts";
 import type { TuiTerminalCanonicalPublicationEvent } from "../performance-events.ts";
+import type { TuiTerminalCanonicalPaintIdentity } from "../performance-events.ts";
 import type { CausalCellClientLedger } from "./causal-cell-client-ledger.ts";
 
 interface PaneRendererInterest {
@@ -44,6 +45,9 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
   readonly #causalCellLedger: CausalCellClientLedger | null;
   #disposed = false;
   #paintedCanonicalSnapshot = false;
+  #pendingCanonicalHostFrames: Map<string, TuiTerminalCanonicalPaintIdentity> | null = null;
+  #seenCanonicalHostFrameKeys: Set<string> | null = null;
+  #droppedCanonicalHostFrames = 0;
 
   readonly renderSource: TerminalPaneRenderSource = {
     scrollbackDepth: (paneId) => this.#snapshot(paneId)?.history.length ?? 0,
@@ -86,6 +90,40 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     return this.#paintedCanonicalSnapshot;
   }
 
+  /** Detailed-only identities consumed by the next renderer frame. */
+  drainCanonicalHostFrameIdentities(): Readonly<{
+    identities: readonly TuiTerminalCanonicalPaintIdentity[];
+    dropped: number;
+  }> {
+    const pending = this.#pendingCanonicalHostFrames;
+    this.#pendingCanonicalHostFrames = null;
+    const identities: TuiTerminalCanonicalPaintIdentity[] = [];
+    const seen = (this.#seenCanonicalHostFrameKeys ??= new Set());
+    for (const identity of pending?.values() ?? []) {
+      const key = JSON.stringify([
+        identity.generation,
+        identity.incarnation,
+        identity.semanticPaneId,
+        identity.revision,
+        identity.stateHash,
+        identity.cols,
+        identity.rows,
+        identity.sourceEpoch,
+        identity.viewportCols,
+        identity.viewportRows,
+      ]);
+      if (seen.has(key)) continue;
+      if (seen.size >= 256) this.#droppedCanonicalHostFrames += 1;
+      else {
+        seen.add(key);
+        identities.push(identity);
+      }
+    }
+    const dropped = this.#droppedCanonicalHostFrames;
+    this.#droppedCanonicalHostFrames = 0;
+    return Object.freeze({ identities, dropped });
+  }
+
   subscribePaneVersion(
     paneId: string,
     listener: (version: number, sourceEpoch: number) => void,
@@ -121,6 +159,9 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     this.#disposed = true;
     for (const interest of this.#panes.values()) interest.release?.();
     this.#panes.clear();
+    this.#pendingCanonicalHostFrames = null;
+    this.#seenCanonicalHostFrameKeys = null;
+    this.#droppedCanonicalHostFrames = 0;
   }
 
   #interest(paneId: string): PaneRendererInterest {
@@ -155,6 +196,28 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     else if (next)
       this.#noteSeedDiagnostic(interest, publication.state, publication.address.semanticPaneId);
     interest.state = publication.state;
+    const canonicalUpdateSink = currentTuiPerformanceEventSink()?.terminalCanonicalUpdate;
+    if (canonicalUpdateSink && publication.update.type === "terminal.patch" && next) {
+      try {
+        canonicalUpdateSink({
+          processId: `opentui:${process.pid}`,
+          clockId: "opentui-performance-now",
+          clockKind: "performance-now",
+          atMicros: Math.floor(performance.now() * 1_000),
+          updateType: "terminal.patch",
+          semanticPaneId: publication.address.semanticPaneId,
+          generation: publication.state.generation,
+          incarnation: publication.state.incarnation,
+          revision: publication.state.revision,
+          stateHash: publication.state.hash,
+          cols: next.cols,
+          rows: next.rows,
+          sourceEpoch: this.#sourceEpoch,
+        });
+      } catch {
+        // Opt-in diagnostics never own canonical publication.
+      }
+    }
     const canonicalModeSink = currentTuiPerformanceEventSink()?.terminalCanonicalMode;
     if (canonicalModeSink && next && previous?.modes.wraparound !== next.modes.wraparound) {
       canonicalModeSink({
@@ -322,6 +385,33 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     if (interest && paintedCanonicalChange) {
       this.#paintedCanonicalSnapshot = true;
       interest.pendingTrace = null;
+      const frameSink = currentTuiPerformanceEventSink();
+      if (
+        frameSink?.terminalCanonicalHostFrame &&
+        frameSink.terminalFrameFence &&
+        snapshot &&
+        interest.state
+      ) {
+        const identity = Object.freeze({
+          processId: `opentui:${process.pid}`,
+          clockId: "opentui-performance-now" as const,
+          clockKind: "performance-now" as const,
+          semanticPaneId: interest.paneId,
+          generation: interest.state.generation,
+          incarnation: interest.state.incarnation,
+          revision: interest.state.revision,
+          stateHash: interest.state.hash,
+          cols: snapshot.cols,
+          rows: snapshot.rows,
+          sourceEpoch: this.#sourceEpoch,
+          viewportCols: width,
+          viewportRows: height,
+        });
+        const pending = (this.#pendingCanonicalHostFrames ??= new Map());
+        if (pending.has(identity.semanticPaneId) || pending.size < 256)
+          pending.set(identity.semanticPaneId, identity);
+        else this.#droppedCanonicalHostFrames += 1;
+      }
       const seed = interest.pendingSeedDiagnostic;
       interest.pendingSeedDiagnostic = null;
       if (

@@ -15,6 +15,12 @@ export interface TuiPerformanceEventSink {
   readonly terminalCanonicalMode?: (event: TuiTerminalCanonicalModeEvent) => void;
   readonly terminalCanonicalPublication?: (event: TuiTerminalCanonicalPublicationEvent) => void;
   readonly terminalCanonicalPaint?: (event: TuiTerminalCanonicalPaintEvent) => void;
+  /** Bounded detailed-only proof that canonical state progressed after a seed paint. */
+  readonly terminalCanonicalUpdate?: (event: TuiTerminalCanonicalUpdateEvent) => void;
+  /** Detailed-only host publication of one exact canonical identity on a renderer frame. */
+  readonly terminalCanonicalHostFrame?: (event: TuiTerminalCanonicalHostFrameEvent) => void;
+  /** Same-stream watermark emitted after the renderer's first coherent frame. */
+  readonly terminalFrameFence?: (event: TuiTerminalFrameFenceEvent) => void;
   readonly beginTerminalInput?: () => TuiTerminalInputTrace;
 }
 
@@ -41,6 +47,53 @@ export interface TuiTerminalCanonicalPaintEvent extends Omit<
   readonly viewportCols: number;
   readonly viewportRows: number;
   readonly writtenRows: readonly number[];
+}
+
+export interface TuiTerminalCanonicalUpdateEvent extends Omit<
+  TuiTerminalCanonicalPublicationEvent,
+  "updateType"
+> {
+  readonly updateType: "terminal.patch";
+}
+
+export type TuiTerminalCanonicalPaintIdentity = Omit<
+  TuiTerminalCanonicalPaintEvent,
+  "atMicros" | "writtenRows"
+>;
+
+export interface TuiTerminalCanonicalHostFrameEvent extends TuiTerminalCanonicalPaintIdentity {
+  readonly atMicros: number;
+  readonly rendererEpoch: number;
+}
+
+export interface TuiTerminalFrameFenceEvent extends Partial<TuiTerminalCanonicalPaintIdentity> {
+  readonly daemonGeneration: string;
+  readonly rendererEpoch: number;
+  readonly identityDrops?: number;
+}
+
+export function emitTuiTerminalCanonicalHostFrameFailOpen(
+  sink: ((event: TuiTerminalCanonicalHostFrameEvent) => void) | undefined,
+  event: TuiTerminalCanonicalHostFrameEvent,
+): void {
+  if (!sink) return;
+  try {
+    sink(event);
+  } catch {
+    // Opt-in diagnostics never own renderer frame publication.
+  }
+}
+
+export function emitTuiTerminalFrameFenceFailOpen(
+  sink: ((event: TuiTerminalFrameFenceEvent) => void) | undefined,
+  event: TuiTerminalFrameFenceEvent,
+): void {
+  if (!sink) return;
+  try {
+    sink(event);
+  } catch {
+    // Opt-in diagnostics never own renderer frame publication.
+  }
 }
 
 export interface TuiTerminalCanonicalModeEvent {

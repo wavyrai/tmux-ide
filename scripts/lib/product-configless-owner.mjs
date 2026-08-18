@@ -434,6 +434,350 @@ export function qualifyCanonicalSeedPaint(records, expected) {
   }
 }
 
+export function qualifyPreseededPaneEvidence(sample, { throwOnFailure = false } = {}) {
+  const passed = Boolean(
+    sample?.geometryStable &&
+    sample?.bodyRect?.valid &&
+    sample.bodyRect.bodyRows === sample?.geometry?.height &&
+    sample.nativeTargetOccurrences === 1 &&
+    sample.nativeOtherOccurrences === 0 &&
+    sample.renderedTargetOccurrences === 1 &&
+    sample.renderedOutsideOccurrences === 0,
+  );
+  if (!passed && throwOnFailure) {
+    const error = new Error(`preseeded coherent pane proof failed: ${JSON.stringify(sample)}`);
+    error.boundary = "coherent-terminal-publication";
+    error.observation = Object.freeze({
+      paneId: sample?.paneId ?? null,
+      semanticPaneId: sample?.semanticPaneId ?? null,
+      geometryStable: sample?.geometryStable === true,
+      bodyRectValid: sample?.bodyRect?.valid === true,
+      nativeTargetOccurrences: sample?.nativeTargetOccurrences ?? null,
+      nativeOtherOccurrences: sample?.nativeOtherOccurrences ?? null,
+      renderedTargetOccurrences: sample?.renderedTargetOccurrences ?? null,
+      renderedOutsideOccurrences: sample?.renderedOutsideOccurrences ?? null,
+    });
+    throw error;
+  }
+  return passed;
+}
+
+export async function waitForCanonicalFrameFence(
+  readRecords,
+  expected,
+  {
+    timeoutMs = 5_000,
+    now = () => performance.now(),
+    sleep = (delay) => new Promise((resolve) => setTimeout(resolve, delay)),
+  } = {},
+) {
+  let samples = 0;
+  let matchingFences = 0;
+  let reason = "timeout";
+  try {
+    let deadline;
+    try {
+      deadline = now() + timeoutMs;
+    } catch (error) {
+      reason = "clock-failed";
+      throw error;
+    }
+    let waiting = true;
+    while (waiting) {
+      let records;
+      try {
+        records = readRecords();
+      } catch (error) {
+        reason = "read-failed";
+        throw error;
+      }
+      samples += 1;
+      if (!Array.isArray(records)) {
+        reason = "malformed-records";
+        throw new Error("trace reader returned malformed records");
+      }
+      const fences = records.filter(
+        (record) =>
+          record?.type === "performance.terminal-frame-fence" &&
+          record.processId === expected.processId &&
+          record.clockId === expected.clockId &&
+          record.clockKind === "performance-now" &&
+          record.daemonGeneration === expected.daemonGeneration &&
+          record.rendererEpoch === expected.rendererEpoch &&
+          (expected.semanticPaneId === undefined ||
+            record.semanticPaneId === expected.semanticPaneId) &&
+          (expected.sourceEpoch === undefined || record.sourceEpoch === expected.sourceEpoch) &&
+          (expected.canonicalCols === undefined || record.cols === expected.canonicalCols) &&
+          (expected.canonicalRows === undefined || record.rows === expected.canonicalRows) &&
+          (expected.viewportCols === undefined || record.viewportCols === expected.viewportCols) &&
+          (expected.viewportRows === undefined || record.viewportRows === expected.viewportRows),
+      );
+      matchingFences = fences.length;
+      if (fences.length > 1) {
+        reason = "duplicate";
+        throw new Error("duplicate exact fences");
+      }
+      if (fences.length === 1) {
+        const health = fences[0].writerHealth;
+        if (
+          health?.droppedRecords !== 0 ||
+          health?.oversizedRecords !== 0 ||
+          health?.failed !== false
+        ) {
+          reason = "unhealthy";
+          throw new Error("unhealthy writer state");
+        }
+        return Object.freeze({ records, fence: fences[0] });
+      }
+      try {
+        await sleep(10);
+      } catch (error) {
+        reason = "wait-failed";
+        throw error;
+      }
+      let observedAt;
+      try {
+        observedAt = now();
+      } catch (error) {
+        reason = "clock-failed";
+        throw error;
+      }
+      if (observedAt >= deadline) waiting = false;
+    }
+    throw new Error("fence deadline elapsed");
+  } catch (cause) {
+    const error = new Error(`coherent frame trace fence failed: ${reason}`, { cause });
+    error.boundary = "coherent-terminal-publication";
+    error.observation = Object.freeze({
+      reason,
+      samples,
+      matchingFences,
+      processId: typeof expected.processId === "string" ? expected.processId.slice(0, 128) : null,
+      clockId: typeof expected.clockId === "string" ? expected.clockId.slice(0, 128) : null,
+      daemonGeneration:
+        typeof expected.daemonGeneration === "string"
+          ? expected.daemonGeneration.slice(0, 128)
+          : null,
+      rendererEpoch:
+        Number.isSafeInteger(expected.rendererEpoch) && expected.rendererEpoch >= 0
+          ? expected.rendererEpoch
+          : null,
+    });
+    throw error;
+  }
+}
+
+export function qualifyCoherentFrameCausality(
+  lifecycle,
+  canonicalSeedPaint,
+  generation,
+  canonicalRecords = [],
+) {
+  const starts = lifecycle.filter(
+    (record) =>
+      record?.phase === "generation-connection-start" && record.daemonGeneration === generation,
+  );
+  const connections = lifecycle.filter(
+    (record) =>
+      record?.phase === "generation-connection-resolved" && record.daemonGeneration === generation,
+  );
+  const publications = lifecycle.filter(
+    (record) =>
+      record?.phase === "generation-host-internal-snapshot-publication" &&
+      record.publicationPhase === "internal-snapshot-published" &&
+      record.daemonGeneration === generation,
+  );
+  const frames = lifecycle.filter(
+    (record) => record?.phase === "first-terminal-frame" && record.daemonGeneration === generation,
+  );
+  const paint = canonicalSeedPaint?.paint;
+  const exactPaintIdentity = (record) =>
+    Boolean(paint) &&
+    record?.processId === paint.processId &&
+    record.clockId === paint.clockId &&
+    record.clockKind === "performance-now" &&
+    record.semanticPaneId === paint.semanticPaneId &&
+    record.generation === paint.generation &&
+    record.incarnation === paint.incarnation &&
+    record.revision === paint.revision &&
+    record.stateHash === paint.stateHash &&
+    record.cols === paint.cols &&
+    record.rows === paint.rows &&
+    record.sourceEpoch === paint.sourceEpoch &&
+    record.viewportCols === paint.viewportCols &&
+    record.viewportRows === paint.viewportRows;
+  const canonicalHostFrames = canonicalRecords.filter(
+    (record) =>
+      record?.type === "performance.terminal-canonical-host-frame" && exactPaintIdentity(record),
+  );
+  const fences = canonicalRecords.filter(
+    (record) =>
+      record?.type === "performance.terminal-frame-fence" &&
+      record.daemonGeneration === generation &&
+      exactPaintIdentity(record),
+  );
+  let failureReason = "unknown";
+  let predicates = Object.freeze({});
+  try {
+    if (
+      starts.length !== 1 ||
+      connections.length !== 1 ||
+      publications.length !== 1 ||
+      frames.length !== 1
+    ) {
+      failureReason = "lifecycle-cardinality";
+      throw new Error(
+        "coherent frame causality requires one exact connection start/resolution/publication/frame",
+      );
+    }
+    const start = starts[0];
+    const connection = connections[0];
+    const internalPublication = publications[0];
+    const firstTerminalFrame = frames[0];
+    if (canonicalHostFrames.length !== 1 || fences.length !== 1) {
+      failureReason = "keyed-frame-or-fence-cardinality";
+      throw new Error("coherent frame requires one exact keyed host frame and fence");
+    }
+    const hostFrame = canonicalHostFrames[0];
+    const fence = fences[0];
+    const sameClock = [start, connection, internalPublication, hostFrame].every(
+      (record) =>
+        record.processId === paint?.processId &&
+        record.clockId === paint?.clockId &&
+        (record === hostFrame
+          ? Number.isFinite(record.atMicros)
+          : Number.isFinite(record.monotonicMicros) && Number.isFinite(record.elapsedMs)),
+    );
+    const sameEpoch =
+      Number.isSafeInteger(internalPublication.rendererEpoch) &&
+      internalPublication.rendererEpoch >= 0 &&
+      internalPublication.rendererEpoch === firstTerminalFrame.rendererEpoch &&
+      internalPublication.rendererEpoch === hostFrame.rendererEpoch &&
+      internalPublication.rendererEpoch === fence.rendererEpoch;
+    predicates = Object.freeze({
+      sameClock,
+      sameEpoch,
+      paintIdentity: paint?.generation === generation && exactPaintIdentity(hostFrame),
+      startBeforeConnection: start.monotonicMicros <= connection.monotonicMicros,
+      connectionBeforePublication:
+        connection.monotonicMicros <= internalPublication.monotonicMicros,
+      publicationBeforeFirstFrame:
+        internalPublication.monotonicMicros <= firstTerminalFrame.monotonicMicros,
+      publicationBeforePaint: internalPublication.monotonicMicros <= paint?.atMicros,
+      paintBeforeHostFrame: paint?.atMicros <= hostFrame.atMicros,
+      hostFrameBeforeFence: hostFrame.atMicros <= fence.atMicros,
+    });
+    if (Object.values(predicates).some((passed) => passed !== true)) {
+      failureReason = "identity-or-order";
+      throw new Error("coherent frame causality identity or ordering mismatch");
+    }
+    const paintIndex = canonicalRecords.indexOf(paint);
+    if (paintIndex < 0) {
+      failureReason = "paint-absent";
+      throw new Error("coherent target paint is absent from the exact trace");
+    }
+    const hostFrameIndex = canonicalRecords.indexOf(hostFrame);
+    const fenceIndex = canonicalRecords.indexOf(fence);
+    predicates = Object.freeze({
+      ...predicates,
+      hostFrameAfterPaintRecord: hostFrameIndex > paintIndex,
+      fenceAfterHostFrameRecord: fenceIndex > hostFrameIndex,
+      fenceClock: fence.clockKind === "performance-now" && Number.isFinite(fence.atMicros),
+      fenceWriterHealthy:
+        fence.writerHealth?.droppedRecords === 0 &&
+        fence.writerHealth?.oversizedRecords === 0 &&
+        fence.writerHealth?.failed === false,
+      identityDropsZero: fence.identityDrops === 0,
+    });
+    if (Object.values(predicates).some((passed) => passed !== true)) {
+      failureReason = "fence-unhealthy-or-out-of-order";
+      throw new Error("coherent frame trace fence is missing, unhealthy, or out of order");
+    }
+    const progressedBeforeFrame = canonicalRecords
+      .slice(paintIndex + 1, fenceIndex)
+      .some(
+        (record) =>
+          record?.type === "performance.terminal-canonical-update" &&
+          record.updateType === "terminal.patch" &&
+          record.processId === paint.processId &&
+          record.clockId === paint.clockId &&
+          record.generation === generation &&
+          record.semanticPaneId === paint.semanticPaneId &&
+          record.sourceEpoch === paint.sourceEpoch &&
+          Number.isFinite(record.atMicros) &&
+          record.atMicros >= paint.atMicros,
+      );
+    predicates = Object.freeze({
+      ...predicates,
+      noCanonicalUpdateBeforeHostFrame: !progressedBeforeFrame,
+    });
+    if (progressedBeforeFrame) {
+      failureReason = "canonical-update-before-host-frame";
+      throw new Error("coherent frame followed a later canonical update before host publication");
+    }
+    const connectToCoherentMs = (hostFrame.atMicros - start.monotonicMicros) / 1_000;
+    predicates = Object.freeze({
+      ...predicates,
+      connectDurationValid: Number.isFinite(connectToCoherentMs) && connectToCoherentMs >= 0,
+    });
+    if (!Number.isFinite(connectToCoherentMs) || connectToCoherentMs < 0) {
+      failureReason = "duration-invalid";
+      throw new Error("coherent frame duration is invalid");
+    }
+    return Object.freeze({
+      start,
+      connection,
+      internalPublication,
+      firstTerminalFrame,
+      hostFrame,
+      connectToCoherentMs,
+    });
+  } catch (error) {
+    if (error instanceof Error) {
+      error.boundary = "coherent-terminal-publication";
+      error.observation = Object.freeze({
+        daemonGeneration: generation,
+        reason: failureReason,
+        starts: starts.length,
+        connections: connections.length,
+        internalPublications: publications.length,
+        hostFrames: frames.length,
+        canonicalHostFrames: canonicalHostFrames.length,
+        fences: fences.length,
+        predicates,
+        timestamps: Object.freeze({
+          start: starts[0]?.monotonicMicros ?? null,
+          connection: connections[0]?.monotonicMicros ?? null,
+          internalPublication: publications[0]?.monotonicMicros ?? null,
+          firstTerminalFrame: frames[0]?.monotonicMicros ?? null,
+          paint: paint?.atMicros ?? null,
+          hostFrame: canonicalHostFrames[0]?.atMicros ?? null,
+          fence: fences[0]?.atMicros ?? null,
+        }),
+        identity: Object.freeze({
+          processId: typeof paint?.processId === "string" ? paint.processId.slice(0, 128) : null,
+          clockId: typeof paint?.clockId === "string" ? paint.clockId.slice(0, 128) : null,
+          semanticPaneId:
+            typeof paint?.semanticPaneId === "string" ? paint.semanticPaneId.slice(0, 128) : null,
+          generation: typeof paint?.generation === "string" ? paint.generation.slice(0, 128) : null,
+          revision: Number.isSafeInteger(paint?.revision) ? paint.revision : null,
+          incarnation:
+            typeof paint?.incarnation === "string" ? paint.incarnation.slice(0, 128) : null,
+          stateHash: typeof paint?.stateHash === "string" ? paint.stateHash.slice(0, 32) : null,
+          sourceEpoch: Number.isSafeInteger(paint?.sourceEpoch) ? paint.sourceEpoch : null,
+          canonicalGeometry: Object.freeze({
+            cols: Number.isSafeInteger(paint?.cols) ? paint.cols : null,
+            rows: Number.isSafeInteger(paint?.rows) ? paint.rows : null,
+            viewportCols: Number.isSafeInteger(paint?.viewportCols) ? paint.viewportCols : null,
+            viewportRows: Number.isSafeInteger(paint?.viewportRows) ? paint.viewportRows : null,
+          }),
+        }),
+      });
+    }
+    throw error;
+  }
+}
+
 export function qualifyAutomaticConfiglessSelection(records, sessionName) {
   const phases = ["session-discovery-start", "session-discovery-end", "config-load-end"];
   let previous = -1;
@@ -790,6 +1134,53 @@ export function assessConfiglessJourneyBoundaries({
       detail: canonicalSeedPaintComplete
         ? "exact retained seed publication and first canonical paint correlated"
         : "exact retained seed publication and first canonical paint were unavailable",
+    }),
+  );
+  const firstBrokenBoundary = boundaries.find(({ status }) => status === "failed")?.id ?? null;
+  const firstUnmeasuredBoundary =
+    boundaries.find(({ status }) => status === "unmeasured")?.id ?? null;
+  return Object.freeze({
+    boundaries: Object.freeze(boundaries),
+    firstBrokenBoundary,
+    firstUnmeasuredBoundary,
+    status: firstBrokenBoundary ? "failed" : firstUnmeasuredBoundary ? "incomplete" : "passed",
+  });
+}
+
+export function assessCoherentFirstPaneBoundaries({ timeline, correlationComplete }) {
+  const required = [
+    "targeted-namespace-preseeded",
+    "targeted-daemon-ready",
+    "targeted-tui-cwd-ready",
+    "targeted-tui-connect",
+    "canonical-seed-paint-correlation",
+    "coherent-terminal-publication",
+    "web-started-after-coherent-boundary",
+  ];
+  let previousIndex = -1;
+  const boundaries = required.map((id) => {
+    const indices = timeline.flatMap((entry, index) => (entry.phase === id ? [index] : []));
+    const passed = indices.length === 1 && indices[0] > previousIndex;
+    if (passed) previousIndex = indices[0];
+    return Object.freeze({
+      id,
+      status: passed ? "passed" : "failed",
+      detail: passed
+        ? `observed ${id} in order`
+        : indices.length === 0
+          ? `missing ${id}`
+          : indices.length > 1
+            ? `duplicate ${id}`
+            : `out-of-order ${id}`,
+    });
+  });
+  boundaries.push(
+    Object.freeze({
+      id: "diagnostic-correlation",
+      status: correlationComplete ? "passed" : "unmeasured",
+      detail: correlationComplete
+        ? "daemon, WorkspaceClient, tmux, TUI and Web state correlated"
+        : "required cross-client correlation unavailable",
     }),
   );
   const firstBrokenBoundary = boundaries.find(({ status }) => status === "failed")?.id ?? null;

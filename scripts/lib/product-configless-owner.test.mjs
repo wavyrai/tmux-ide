@@ -10,6 +10,7 @@ import {
   runConfiglessProductJourneyOwnerBoot,
 } from "../product-test-rig-journeys.mjs";
 import {
+  assessCoherentFirstPaneBoundaries,
   assessConfiglessJourneyBoundaries,
   buildProductDiagnosticCorrelation,
   canonicalPromotionPredicateSignature,
@@ -22,10 +23,506 @@ import {
   qualifyAutomaticConfiglessSelection,
   qualifyCanonicalPromotionAdoption,
   qualifyCanonicalSeedPaint,
+  qualifyCoherentFrameCausality,
+  qualifyPreseededPaneEvidence,
   qualifySelectedWindowWebSemantic,
   qualifyWorkspaceClientState,
+  waitForCanonicalFrameFence,
   waitForQualifiedWorkspaceClientState,
 } from "./product-configless-owner.mjs";
+
+test("coherent journey assessment requires unique causal boundary order", () => {
+  const phases = [
+    "targeted-namespace-preseeded",
+    "targeted-daemon-ready",
+    "targeted-tui-cwd-ready",
+    "targeted-tui-connect",
+    "canonical-seed-paint-correlation",
+    "coherent-terminal-publication",
+    "web-started-after-coherent-boundary",
+  ];
+  const assess = (values) =>
+    assessCoherentFirstPaneBoundaries({
+      timeline: values.map((phase) => ({ phase })),
+      correlationComplete: true,
+    });
+  const passed = assess(phases);
+  assert.equal(passed.status, "passed");
+  assert.ok(passed.boundaries.every(({ status }) => status === "passed"));
+  assert.match(passed.boundaries[0].detail, /in order/u);
+  assert.equal(assess([phases[1], phases[0], ...phases.slice(2)]).status, "failed");
+  assert.equal(assess([...phases, phases[2]]).status, "failed");
+});
+
+test("coherent frame causality rejects stale frames, mixed epochs, and observer delay", () => {
+  const start = {
+    phase: "generation-connection-start",
+    daemonGeneration: "generation",
+    processId: "opentui:1",
+    clockId: "clock",
+    monotonicMicros: 50,
+    elapsedMs: 5,
+  };
+  const connection = {
+    phase: "generation-connection-resolved",
+    daemonGeneration: "generation",
+    processId: "opentui:1",
+    clockId: "clock",
+    monotonicMicros: 100,
+    elapsedMs: 10,
+  };
+  const publication = {
+    phase: "generation-host-internal-snapshot-publication",
+    publicationPhase: "internal-snapshot-published",
+    daemonGeneration: "generation",
+    processId: "opentui:1",
+    clockId: "clock",
+    rendererEpoch: 2,
+    monotonicMicros: 200,
+    elapsedMs: 20,
+  };
+  const frame = {
+    phase: "first-terminal-frame",
+    daemonGeneration: "generation",
+    processId: "opentui:1",
+    clockId: "clock",
+    rendererEpoch: 2,
+    monotonicMicros: 400,
+    elapsedMs: 40,
+  };
+  const seedPaint = {
+    publication: { semanticPaneId: "pane.one", sourceEpoch: 1 },
+    paint: {
+      processId: "opentui:1",
+      clockId: "clock",
+      clockKind: "performance-now",
+      generation: "generation",
+      semanticPaneId: "pane.one",
+      incarnation: "generation:0",
+      revision: 3,
+      stateHash: "0123456789abcdef",
+      cols: 132,
+      rows: 41,
+      sourceEpoch: 1,
+      viewportCols: 132,
+      viewportRows: 40,
+      atMicros: 300,
+    },
+  };
+  const keyedFrame = {
+    ...seedPaint.paint,
+    type: "performance.terminal-canonical-host-frame",
+    rendererEpoch: 2,
+    atMicros: 400,
+  };
+  const fence = {
+    ...seedPaint.paint,
+    type: "performance.terminal-frame-fence",
+    daemonGeneration: "generation",
+    rendererEpoch: 2,
+    atMicros: 410,
+    identityDrops: 0,
+    writerHealth: { droppedRecords: 0, oversizedRecords: 0, failed: false },
+  };
+  const exact = qualifyCoherentFrameCausality(
+    [start, connection, publication, frame, { phase: "observer-finished", elapsedMs: 9_999 }],
+    seedPaint,
+    "generation",
+    [seedPaint.paint, keyedFrame, fence],
+  );
+  assert.equal(exact.connectToCoherentMs, 0.35);
+  assert.throws(
+    () =>
+      qualifyCoherentFrameCausality(
+        [start, connection, publication, { ...frame, monotonicMicros: 150 }],
+        seedPaint,
+        "generation",
+        [seedPaint.paint, { ...keyedFrame, atMicros: 400 }, fence],
+      ),
+    /ordering mismatch/u,
+  );
+  assert.throws(
+    () =>
+      qualifyCoherentFrameCausality(
+        [start, connection, publication, { ...frame, rendererEpoch: 3 }],
+        seedPaint,
+        "generation",
+        [seedPaint.paint, { ...keyedFrame, rendererEpoch: 3 }, { ...fence, rendererEpoch: 3 }],
+      ),
+    /identity or ordering mismatch/u,
+  );
+  assert.throws(
+    () =>
+      qualifyCoherentFrameCausality(
+        [start, connection, publication, frame],
+        seedPaint,
+        "generation",
+        [
+          seedPaint.paint,
+          {
+            type: "performance.terminal-canonical-update",
+            updateType: "terminal.patch",
+            processId: "opentui:1",
+            clockId: "clock",
+            generation: "generation",
+            semanticPaneId: "pane.one",
+            sourceEpoch: 1,
+            atMicros: 350,
+          },
+          keyedFrame,
+          fence,
+        ],
+      ),
+    /later canonical update/u,
+  );
+  assert.throws(
+    () =>
+      qualifyCoherentFrameCausality([start, connection, publication], seedPaint, "generation", [
+        seedPaint.paint,
+        keyedFrame,
+        fence,
+      ]),
+    (error) => {
+      assert.equal(error.boundary, "coherent-terminal-publication");
+      assert.deepEqual(error.observation, {
+        daemonGeneration: "generation",
+        reason: "lifecycle-cardinality",
+        starts: 1,
+        connections: 1,
+        internalPublications: 1,
+        hostFrames: 0,
+        canonicalHostFrames: 1,
+        fences: 1,
+        predicates: {},
+        timestamps: {
+          start: 50,
+          connection: 100,
+          internalPublication: 200,
+          firstTerminalFrame: null,
+          paint: 300,
+          hostFrame: 400,
+          fence: 410,
+        },
+        identity: {
+          processId: "opentui:1",
+          clockId: "clock",
+          semanticPaneId: "pane.one",
+          generation: "generation",
+          revision: 3,
+          incarnation: "generation:0",
+          stateHash: "0123456789abcdef",
+          sourceEpoch: 1,
+          canonicalGeometry: {
+            cols: 132,
+            rows: 41,
+            viewportCols: 132,
+            viewportRows: 40,
+          },
+        },
+      });
+      return true;
+    },
+  );
+  assert.throws(
+    () =>
+      qualifyCoherentFrameCausality(
+        [start, connection, publication, frame],
+        seedPaint,
+        "generation",
+        [seedPaint.paint, keyedFrame, { ...fence, atMicros: 390 }],
+      ),
+    /identity or ordering mismatch/u,
+  );
+});
+
+test("coherent causality ignores a transient first geometry and qualifies the exact stable frame", () => {
+  const lifecycle = [
+    {
+      phase: "generation-connection-start",
+      daemonGeneration: "generation",
+      processId: "opentui:1",
+      clockId: "clock",
+      monotonicMicros: 100,
+      elapsedMs: 1,
+    },
+    {
+      phase: "generation-connection-resolved",
+      daemonGeneration: "generation",
+      processId: "opentui:1",
+      clockId: "clock",
+      monotonicMicros: 110,
+      elapsedMs: 2,
+    },
+    {
+      phase: "generation-host-internal-snapshot-publication",
+      publicationPhase: "internal-snapshot-published",
+      daemonGeneration: "generation",
+      processId: "opentui:1",
+      clockId: "clock",
+      rendererEpoch: 1,
+      monotonicMicros: 200,
+      elapsedMs: 3,
+    },
+    {
+      phase: "first-terminal-frame",
+      daemonGeneration: "generation",
+      processId: "opentui:1",
+      clockId: "clock",
+      rendererEpoch: 1,
+      monotonicMicros: 320,
+      elapsedMs: 4,
+    },
+  ];
+  const identity = {
+    processId: "opentui:1",
+    clockId: "clock",
+    clockKind: "performance-now",
+    semanticPaneId: "pane.one",
+    generation: "generation",
+    incarnation: "generation:0",
+    revision: 2,
+    stateHash: "0123456789abcdef",
+    cols: 132,
+    rows: 41,
+    sourceEpoch: 1,
+    viewportCols: 132,
+    viewportRows: 40,
+  };
+  const paint = { ...identity, type: "performance.terminal-canonical-paint", atMicros: 500 };
+  const records = [
+    {
+      ...identity,
+      revision: 1,
+      stateHash: "fedcba9876543210",
+      cols: 160,
+      rows: 42,
+      type: "performance.terminal-canonical-host-frame",
+      rendererEpoch: 1,
+      atMicros: 310,
+    },
+    paint,
+    {
+      ...identity,
+      type: "performance.terminal-canonical-host-frame",
+      rendererEpoch: 1,
+      atMicros: 510,
+    },
+    {
+      ...identity,
+      type: "performance.terminal-frame-fence",
+      daemonGeneration: "generation",
+      rendererEpoch: 1,
+      atMicros: 520,
+      identityDrops: 0,
+      writerHealth: { droppedRecords: 0, oversizedRecords: 0, failed: false },
+    },
+  ];
+  const result = qualifyCoherentFrameCausality(lifecycle, { paint }, "generation", records);
+  assert.equal(result.hostFrame.atMicros, 510);
+  assert.equal(result.connectToCoherentMs, 0.41);
+  assert.throws(
+    () =>
+      qualifyCoherentFrameCausality(lifecycle, { paint }, "generation", [
+        ...records,
+        { ...records[2], atMicros: 511 },
+      ]),
+    /one exact keyed host frame/u,
+  );
+});
+
+test("coherent fence polling waits for the queued canonical tail", async () => {
+  const paint = {
+    type: "performance.terminal-canonical-paint",
+    processId: "opentui:1",
+    clockId: "clock",
+    clockKind: "performance-now",
+    generation: "generation",
+    semanticPaneId: "pane.one",
+    incarnation: "generation:0",
+    revision: 3,
+    stateHash: "0123456789abcdef",
+    cols: 132,
+    rows: 41,
+    sourceEpoch: 1,
+    viewportCols: 132,
+    viewportRows: 40,
+    atMicros: 300,
+  };
+  const patch = {
+    type: "performance.terminal-canonical-update",
+    updateType: "terminal.patch",
+    processId: "opentui:1",
+    clockId: "clock",
+    generation: "generation",
+    semanticPaneId: "pane.one",
+    sourceEpoch: 1,
+    atMicros: 350,
+  };
+  const fence = {
+    ...paint,
+    type: "performance.terminal-frame-fence",
+    daemonGeneration: "generation",
+    rendererEpoch: 2,
+    atMicros: 410,
+    identityDrops: 0,
+    writerHealth: { droppedRecords: 0, oversizedRecords: 0, failed: false },
+  };
+  const keyedFrame = {
+    ...paint,
+    type: "performance.terminal-canonical-host-frame",
+    rendererEpoch: 2,
+    atMicros: 400,
+  };
+  let reads = 0;
+  const result = await waitForCanonicalFrameFence(
+    () => (++reads === 1 ? [paint] : [paint, patch, keyedFrame, fence]),
+    {
+      processId: "opentui:1",
+      clockId: "clock",
+      daemonGeneration: "generation",
+      rendererEpoch: 2,
+    },
+    { timeoutMs: 2, now: () => reads, sleep: async () => undefined },
+  );
+  assert.equal(reads, 2);
+  assert.deepEqual(result.records, [paint, patch, keyedFrame, fence]);
+  assert.throws(
+    () =>
+      qualifyCoherentFrameCausality(
+        [
+          {
+            phase: "generation-connection-start",
+            daemonGeneration: "generation",
+            processId: "opentui:1",
+            clockId: "clock",
+            monotonicMicros: 50,
+            elapsedMs: 5,
+          },
+          {
+            phase: "generation-connection-resolved",
+            daemonGeneration: "generation",
+            processId: "opentui:1",
+            clockId: "clock",
+            monotonicMicros: 100,
+            elapsedMs: 10,
+          },
+          {
+            phase: "generation-host-internal-snapshot-publication",
+            publicationPhase: "internal-snapshot-published",
+            daemonGeneration: "generation",
+            processId: "opentui:1",
+            clockId: "clock",
+            rendererEpoch: 2,
+            monotonicMicros: 200,
+            elapsedMs: 20,
+          },
+          {
+            phase: "first-terminal-frame",
+            daemonGeneration: "generation",
+            processId: "opentui:1",
+            clockId: "clock",
+            rendererEpoch: 2,
+            monotonicMicros: 400,
+            elapsedMs: 40,
+          },
+        ],
+        { paint },
+        "generation",
+        result.records,
+      ),
+    /later canonical update/u,
+  );
+});
+
+test("every coherent fence polling failure preserves bounded boundary truth", async () => {
+  const expected = {
+    processId: "opentui:1",
+    clockId: "clock",
+    daemonGeneration: "generation",
+    rendererEpoch: 2,
+  };
+  const fence = (writerHealth) => ({
+    type: "performance.terminal-frame-fence",
+    processId: expected.processId,
+    clockId: expected.clockId,
+    clockKind: "performance-now",
+    daemonGeneration: expected.daemonGeneration,
+    rendererEpoch: expected.rendererEpoch,
+    writerHealth,
+  });
+  const cases = [
+    {
+      reason: "timeout",
+      read: () => [],
+      options: {
+        timeoutMs: 1,
+        now: (() => {
+          let value = 0;
+          return () => value++;
+        })(),
+        sleep: async () => undefined,
+      },
+    },
+    {
+      reason: "duplicate",
+      read: () => [
+        fence({ droppedRecords: 0, oversizedRecords: 0, failed: false }),
+        fence({ droppedRecords: 0, oversizedRecords: 0, failed: false }),
+      ],
+      options: {},
+    },
+    {
+      reason: "unhealthy",
+      read: () => [fence({ droppedRecords: 1, oversizedRecords: 0, failed: false })],
+      options: {},
+    },
+    {
+      reason: "read-failed",
+      read: () => {
+        throw new Error("private trace path must not escape");
+      },
+      options: {},
+    },
+  ];
+  for (const testCase of cases) {
+    await assert.rejects(
+      waitForCanonicalFrameFence(testCase.read, expected, testCase.options),
+      (error) => {
+        assert.equal(error.boundary, "coherent-terminal-publication");
+        assert.equal(error.observation.reason, testCase.reason);
+        assert.equal(JSON.stringify(error.observation).includes("private trace path"), false);
+        const state = productRigTerminalFailureState(error, "product-rig-startup");
+        assert.equal(state.firstBrokenBoundary, "coherent-terminal-publication");
+        assert.equal(state.failureObservation, error.observation);
+        return true;
+      },
+    );
+  }
+});
+
+test("preseeded pane evidence rejects inactive-window native duplicates", () => {
+  const sample = {
+    paneId: "%1",
+    semanticPaneId: "pane.one",
+    geometryStable: true,
+    geometry: { height: 40 },
+    bodyRect: { valid: true, bodyRows: 40 },
+    nativeTargetOccurrences: 1,
+    nativeOtherOccurrences: 0,
+    renderedTargetOccurrences: 1,
+    renderedOutsideOccurrences: 0,
+  };
+  assert.equal(qualifyPreseededPaneEvidence(sample), true);
+  assert.equal(qualifyPreseededPaneEvidence({ ...sample, nativeOtherOccurrences: 1 }), false);
+  assert.throws(
+    () =>
+      qualifyPreseededPaneEvidence(
+        { ...sample, nativeOtherOccurrences: 1 },
+        { throwOnFailure: true },
+      ),
+    /preseeded coherent pane proof failed/u,
+  );
+});
 
 function configlessSessionRow({
   sessionName = "ordinary",

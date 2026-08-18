@@ -1,17 +1,22 @@
 import {
+  constants as fsConstants,
   closeSync,
   chmodSync,
   existsSync,
+  fchmodSync,
+  fstatSync,
   fsyncSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeSync,
 } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 
 export const PRODUCT_DIAGNOSTIC_BUNDLE_VERSION = 1;
 export const PRODUCT_DIAGNOSTIC_BUNDLE_FILES = Object.freeze([
@@ -65,7 +70,9 @@ const GOLDEN_JOURNEYS = Object.freeze(
       coverage: Object.freeze(coverage),
       executor: id,
       variants: Object.freeze(id === "first-key-paste" ? ["key", "paste"] : [null]),
-      implementation: id === "configless-cold-start" ? "implemented" : "pending",
+      implementation: ["configless-cold-start", "coherent-first-pane"].includes(id)
+        ? "implemented"
+        : "pending",
     }),
   ),
 );
@@ -265,6 +272,150 @@ export async function runConfiglessProductJourneyOwnerBoot(operations) {
   const coherent = await operations.proveCoherentPublication(namespace, daemon, adopted);
   const web = await operations.startWebAfterColdBoundary(namespace, daemon, coherent);
   return Object.freeze({ namespace, publicProcess, daemon, discovered, adopted, coherent, web });
+}
+
+/** Targeted coherent boot: preseed namespace → daemon/workspace → TUI → proof → Web. */
+export async function runCoherentFirstPaneOwnerBoot(operations) {
+  const atBoundary = async (boundary, operation) => {
+    try {
+      return await operation();
+    } catch (error) {
+      if (error && typeof error === "object" && error.boundary) throw error;
+      const bounded = new Error(error instanceof Error ? error.message : String(error), {
+        cause: error,
+      });
+      bounded.boundary = boundary;
+      if (error?.observation) bounded.observation = error.observation;
+      throw bounded;
+    }
+  };
+  const namespace = await atBoundary("targeted-namespace-preseeded", () =>
+    operations.createTargetedNamespace(),
+  );
+  const daemon = await atBoundary("targeted-daemon-ready", () =>
+    operations.startCanonicalDaemon(namespace),
+  );
+  const identity = await atBoundary("targeted-daemon-ready", () =>
+    operations.openCanonicalWorkspace(namespace, daemon),
+  );
+  await atBoundary("targeted-tui-connect", () => operations.buildBeforeMeasurement(namespace));
+  await atBoundary("targeted-tui-connect", () => operations.prepareTargetedTuiCwd(namespace));
+  const targetedProcess = await atBoundary("targeted-tui-connect", () =>
+    operations.launchTargetedTui(namespace, daemon, identity),
+  );
+  const coherent = await atBoundary("coherent-terminal-publication", () =>
+    operations.proveCoherentPublication(namespace, daemon, identity, targetedProcess),
+  );
+  const web = await atBoundary("web-started-after-coherent-boundary", () =>
+    operations.startWebAfterCoherentBoundary(namespace, daemon, identity, coherent),
+  );
+  return Object.freeze({ namespace, identity, targetedProcess, coherent, web });
+}
+
+function exactTargetedTuiCwd(runtimeDir, { createMissing, hooks = {} }) {
+  const fail = (reason, cause = undefined) => {
+    const error = new Error(`targeted TUI isolated cwd preparation failed: ${reason}`, { cause });
+    error.boundary = createMissing ? "targeted-namespace-preseeded" : "targeted-tui-connect";
+    error.observation = Object.freeze({
+      operation: createMissing ? "create-isolated-tui-cwd" : "prepare-isolated-tui-cwd",
+      reason,
+      runtimeKind: "product-rig-testdrive",
+    });
+    throw error;
+  };
+  if (
+    typeof runtimeDir !== "string" ||
+    !isAbsolute(runtimeDir) ||
+    runtimeDir.length === 0 ||
+    runtimeDir.length > 4_096 ||
+    /[\0\r\n]/u.test(runtimeDir)
+  )
+    fail("malformed-runtime-directory");
+  const exactRuntimeDir = resolve(runtimeDir);
+  const cwd = join(exactRuntimeDir, "home");
+  const assertDirectoryIdentity = (path, label, opened) => {
+    let current;
+    try {
+      current = lstatSync(path);
+    } catch (error) {
+      fail(`${label}-identity-read-failed`, error);
+    }
+    if (
+      current.isSymbolicLink() ||
+      !current.isDirectory() ||
+      current.dev !== opened.dev ||
+      current.ino !== opened.ino
+    )
+      fail(`${label}-identity-changed`);
+    try {
+      const expectedRealPath = join(realpathSync(dirname(path)), basename(path));
+      if (realpathSync(path) !== expectedRealPath) fail(`${label}-resolved-path-mismatch`);
+    } catch (error) {
+      if (error?.boundary) throw error;
+      fail(`${label}-resolved-path-read-failed`, error);
+    }
+  };
+  const prepareDirectory = (path, label, parent = null) => {
+    if (parent) assertDirectoryIdentity(parent.path, parent.label, parent.opened);
+    let metadata;
+    try {
+      metadata = lstatSync(path);
+    } catch (error) {
+      if (error?.code !== "ENOENT") fail(`${label}-metadata-read-failed`, error);
+      if (!createMissing) fail(`${label}-missing`);
+      try {
+        mkdirSync(path, { recursive: false, mode: 0o700 });
+        metadata = lstatSync(path);
+      } catch (createError) {
+        fail(`${label}-create-failed`, createError);
+      }
+    }
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) fail(`${label}-not-exact-directory`);
+    let descriptor;
+    try {
+      descriptor = openSync(
+        path,
+        fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW,
+      );
+      const opened = fstatSync(descriptor);
+      if (!opened.isDirectory()) fail(`${label}-opened-resource-not-directory`);
+      if (parent) assertDirectoryIdentity(parent.path, parent.label, parent.opened);
+      if (createMissing) fchmodSync(descriptor, 0o700);
+      else if ((opened.mode & 0o777) !== 0o700) fail(`${label}-permission-mismatch`);
+      assertDirectoryIdentity(path, label, opened);
+      if (parent) assertDirectoryIdentity(parent.path, parent.label, parent.opened);
+      return { descriptor, opened, path, label };
+    } catch (error) {
+      if (descriptor !== undefined) closeSync(descriptor);
+      if (error?.boundary) throw error;
+      fail(`${label}-open-or-permission-failed`, error);
+    }
+  };
+  let runtime;
+  let home;
+  try {
+    runtime = prepareDirectory(exactRuntimeDir, "runtime");
+    try {
+      hooks.afterRuntimeValidated?.();
+    } catch (error) {
+      fail("runtime-validation-hook-failed", error);
+    }
+    assertDirectoryIdentity(runtime.path, runtime.label, runtime.opened);
+    home = prepareDirectory(cwd, "home", runtime);
+    assertDirectoryIdentity(runtime.path, runtime.label, runtime.opened);
+    return cwd;
+  } finally {
+    if (home?.descriptor !== undefined) closeSync(home.descriptor);
+    if (runtime?.descriptor !== undefined) closeSync(runtime.descriptor);
+  }
+}
+
+export function createIsolatedTargetedTuiCwd(runtimeDir) {
+  return exactTargetedTuiCwd(runtimeDir, { createMissing: true });
+}
+
+export function prepareIsolatedTargetedTuiCwd(runtimeDir, hooks = {}) {
+  return exactTargetedTuiCwd(runtimeDir, { createMissing: false, hooks });
 }
 
 export class ProductJourneyAttemptError extends Error {

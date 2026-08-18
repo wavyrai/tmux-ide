@@ -71,6 +71,7 @@ import {
 import { sourceArchitectureInventory } from "./architecture-debt-inventory.mjs";
 import { acquireProductRigSleepAssertion } from "./lib/product-rig-sleep-assertion.mjs";
 import {
+  assessCoherentFirstPaneBoundaries,
   assessConfiglessJourneyBoundaries,
   buildProductDiagnosticCorrelation,
   CONFIGLESS_TMUX_SESSION_FORMAT,
@@ -78,6 +79,9 @@ import {
   createFreshFleetCatalogReader,
   parseConfiglessTmuxSessionInventory,
   qualifyCanonicalSeedPaint,
+  qualifyCoherentFrameCausality,
+  qualifyPreseededPaneEvidence,
+  waitForCanonicalFrameFence,
   waitForQualifiedWorkspaceClientState,
 } from "./lib/product-configless-owner.mjs";
 import {
@@ -87,8 +91,10 @@ import {
   collectProductRigCleanupFailures,
   createProductRigCleanupReceipt,
   createProductDiagnosticBundle,
+  createIsolatedTargetedTuiCwd,
   dispatchProductJourneyExecutor,
   parseProductDiagnoseOptions,
+  prepareIsolatedTargetedTuiCwd,
   productDiagnosticRunId,
   productRigTerminalFailureError,
   productRigTerminalFailureState,
@@ -98,6 +104,7 @@ import {
   isCleanLegacyStoppedProductRigState,
   resolveProductJourneyPlan,
   runConfiglessProductJourneyOwnerBoot,
+  runCoherentFirstPaneOwnerBoot,
   runIsolatedProductJourneyAttempt,
   runProductJourneyPlan,
   settleInternalProductRigCleanup,
@@ -146,19 +153,33 @@ function productDiagnosticCorrelation(state, captureEvidence) {
   const tuiAvailable = Boolean(captureEvidence?.tuiPath && existsSync(captureEvidence.tuiPath));
   const webAvailable = Boolean(captureEvidence?.webPath && existsSync(captureEvidence.webPath));
   const configless = state?.journeyEvidence?.configlessColdStart ?? null;
+  const coherent = state?.journeyEvidence?.coherentFirstPane ?? null;
+  const exact = configless
+    ? {
+        fleetSessionId: configless.adopted?.fleetSessionId,
+        catalogRevision: configless.adopted?.catalogRevision,
+        semanticPaneId: configless.coherent?.semanticPaneId,
+      }
+    : coherent
+      ? {
+          fleetSessionId: coherent.identity?.fleetSessionId,
+          catalogRevision: coherent.identity?.catalogRevision,
+          semanticPaneId: coherent.coherent?.semanticPaneId,
+        }
+      : null;
   return buildProductDiagnosticCorrelation({
     state,
     tuiAvailable,
     webAvailable,
     web: captureEvidence?.web ?? null,
-    expected: configless
+    expected: exact
       ? {
           daemonGeneration: state?.daemon?.instanceId ?? null,
           workspaceName: state?.workspace ?? null,
           sessionName: state?.session ?? null,
-          fleetSessionId: configless.adopted?.fleetSessionId ?? null,
-          catalogRevision: configless.adopted?.catalogRevision ?? null,
-          semanticPaneId: configless.coherent?.semanticPaneId ?? null,
+          fleetSessionId: exact.fleetSessionId ?? null,
+          catalogRevision: exact.catalogRevision ?? null,
+          semanticPaneId: exact.semanticPaneId ?? null,
         }
       : null,
   });
@@ -420,7 +441,7 @@ function activeVerticalResizeSeparator(state) {
   return null;
 }
 
-function activeWindowPaneGeometry(state) {
+function sessionPaneGeometry(state) {
   return execFileSync(
     "tmux",
     [
@@ -450,7 +471,11 @@ function activeWindowPaneGeometry(state) {
         height: Number(height),
       };
     })
-    .filter(({ paneId, windowActive }) => Boolean(paneId) && windowActive);
+    .filter(({ paneId }) => Boolean(paneId));
+}
+
+function activeWindowPaneGeometry(state) {
+  return sessionPaneGeometry(state).filter(({ windowActive }) => windowActive);
 }
 
 async function activePaneBodyEvidence(state) {
@@ -1223,7 +1248,7 @@ async function provePreseededPanePublication(state, seed, timeoutMs = 5_000) {
     const target = geometryBefore.find(({ paneId }) => paneId === seed.paneId);
     if (!target?.semanticPaneId) throw new Error("preseed pane lost its canonical semantic id");
     const nativeByPane = new Map(
-      geometryBefore.map(({ paneId }) => [
+      sessionPaneGeometry(state).map(({ paneId }) => [
         paneId,
         execFileSync(
           "tmux",
@@ -1252,60 +1277,65 @@ async function provePreseededPanePublication(state, seed, timeoutMs = 5_000) {
       renderedOutsideOccurrences: count(frame, seed.marker) - count(targetBody, seed.marker),
       frameHash: createHash("sha256").update(frame).digest("hex"),
     };
-    if (
-      sample.geometryStable &&
-      sample.bodyRect.valid &&
-      sample.bodyRect.bodyRows === sample.geometry.height &&
-      sample.nativeTargetOccurrences === 1 &&
-      sample.nativeOtherOccurrences === 0 &&
-      sample.renderedTargetOccurrences === 1 &&
-      sample.renderedOutsideOccurrences === 0
-    )
-      break;
+    if (qualifyPreseededPaneEvidence(sample)) break;
     await new Promise((resolveWait) => setTimeout(resolveWait, 25));
   }
-  if (
-    !sample?.geometryStable ||
-    !sample.bodyRect.valid ||
-    sample.bodyRect.bodyRows !== sample.geometry.height ||
-    sample.nativeTargetOccurrences !== 1 ||
-    sample.nativeOtherOccurrences !== 0 ||
-    sample.renderedTargetOccurrences !== 1 ||
-    sample.renderedOutsideOccurrences !== 0
-  )
-    throw new Error(`preseeded coherent pane proof failed: ${JSON.stringify(sample)}`);
+  qualifyPreseededPaneEvidence(sample, { throwOnFailure: true });
   const lifecycle = readJsonLines(join(state.tui.runtimeDir, "performance.jsonl"));
-  const internalPublication = lifecycle.findLast(
-    ({ phase, publicationPhase, daemonGeneration }) =>
-      phase === "generation-host-internal-snapshot-publication" &&
-      publicationPhase === "internal-snapshot-published" &&
-      daemonGeneration === state.daemon.instanceId,
-  );
   const hostFrame = lifecycle.findLast(
     ({ phase, daemonGeneration }) =>
       phase === "first-terminal-frame" && daemonGeneration === state.daemon.instanceId,
   );
-  if (
-    !Number.isFinite(internalPublication?.monotonicMicros) ||
-    !Number.isFinite(hostFrame?.monotonicMicros) ||
-    hostFrame.monotonicMicros < internalPublication.monotonicMicros
-  )
-    throw new Error("preseed pane has no ordered generation-fenced host publication evidence");
-  const canonicalSeedPaint = qualifyCanonicalSeedPaint(
-    readJsonLines(state.tui.performanceTracePath),
+  if (!hostFrame) {
+    const error = new Error("coherent frame causality is missing the target host frame");
+    error.boundary = "coherent-terminal-publication";
+    error.observation = Object.freeze({
+      daemonGeneration: state.daemon.instanceId,
+      firstTerminalFrames: 0,
+    });
+    throw error;
+  }
+  const fencedTrace = await waitForCanonicalFrameFence(
+    () => readJsonLines(state.tui.performanceTracePath),
     {
+      processId: hostFrame.processId,
+      clockId: hostFrame.clockId,
+      daemonGeneration: state.daemon.instanceId,
+      rendererEpoch: hostFrame.rendererEpoch,
       semanticPaneId: sample.semanticPaneId,
-      generation: state.daemon.instanceId,
+      sourceEpoch: 1,
       canonicalCols: sample.geometry.width,
       canonicalRows: sample.geometry.height + 1,
       viewportCols: sample.bodyRect.width,
       viewportRows: sample.geometry.height,
-      processId: hostFrame.processId,
-      clockId: hostFrame.clockId,
-      sourceEpoch: 1,
     },
   );
-  return Object.freeze({ ...sample, internalPublication, hostFrame, canonicalSeedPaint });
+  const performanceRecords = fencedTrace.records;
+  const canonicalSeedPaint = qualifyCanonicalSeedPaint(performanceRecords, {
+    semanticPaneId: sample.semanticPaneId,
+    generation: state.daemon.instanceId,
+    canonicalCols: sample.geometry.width,
+    canonicalRows: sample.geometry.height + 1,
+    viewportCols: sample.bodyRect.width,
+    viewportRows: sample.geometry.height,
+    processId: hostFrame.processId,
+    clockId: hostFrame.clockId,
+    sourceEpoch: 1,
+  });
+  const frameCausality = qualifyCoherentFrameCausality(
+    lifecycle,
+    canonicalSeedPaint,
+    state.daemon.instanceId,
+    performanceRecords,
+  );
+  return Object.freeze({
+    ...sample,
+    internalPublication: frameCausality.internalPublication,
+    hostFrame: frameCausality.hostFrame,
+    canonicalSeedPaint,
+    frameCausality,
+    connectToCoherentMs: frameCausality.connectToCoherentMs,
+  });
 }
 
 async function preserveWarmRehostFailure(state, ordinal, error) {
@@ -2462,9 +2492,72 @@ async function diagnoseConfiglessColdStart(planEntry) {
   };
 }
 
+async function diagnoseCoherentFirstPane(planEntry) {
+  diagnosticAttemptPhases.set(planEntry.runId, "product-rig-startup");
+  await start(false, true, planEntry);
+  const state = await waitForState((candidate) => candidate?.status === "ready");
+  diagnosticAttemptPhases.set(planEntry.runId, "evidence-capture");
+  const captureEvidence = await captureArtifacts(
+    state,
+    `diagnose-${planEntry.journey.id}-r${planEntry.repetition}`,
+  );
+  diagnosticCaptures.set(planEntry.runId, captureEvidence);
+  tuiCommand(state, ["stop"]);
+  const timeline = readJsonLines(timelinePath);
+  const correlation = productDiagnosticCorrelation(state, captureEvidence);
+  const assessment = assessCoherentFirstPaneBoundaries({
+    timeline,
+    correlationComplete: correlation.complete,
+  });
+  const report = {
+    version: 1,
+    status: assessment.status,
+    journey: planEntry.journey.id,
+    variant: planEntry.variant,
+    repetition: planEntry.repetition,
+    repeat: planEntry.repeat,
+    runId: planEntry.runId,
+    firstBrokenBoundary: assessment.firstBrokenBoundary,
+    firstUnmeasuredBoundary: assessment.firstUnmeasuredBoundary,
+    boundaries: assessment.boundaries,
+    journeyEvidence: state.journeyEvidence?.coherentFirstPane ?? null,
+    diagnosticCorrelation: { complete: correlation.complete, missing: correlation.missing },
+    sourceProvenance: {
+      commit: state.tui?.performanceTraceCommit ?? null,
+      tree: state.tui?.performanceTraceTree ?? null,
+    },
+  };
+  const stderr = readDiagnosticText(join(state.tui.runtimeDir, "stderr.log"));
+  return {
+    report,
+    reportPath: null,
+    evidence: {
+      report,
+      alignment: {
+        version: 1,
+        journey: planEntry.journey.id,
+        firstBrokenBoundary: assessment.firstBrokenBoundary,
+        firstUnmeasuredBoundary: assessment.firstUnmeasuredBoundary,
+        boundaries: assessment.boundaries,
+        correlation: { complete: correlation.complete, missing: correlation.missing },
+        availability: correlation.availability,
+      },
+      timeline: readDiagnosticText(timelinePath),
+      tmuxTruth: captureEvidence.truth,
+      daemonState: correlation.daemonState,
+      clientState: correlation.clientState,
+      tuiAnsi: readDiagnosticText(captureEvidence.tuiPath),
+      webPngPath: captureEvidence.webPath,
+      stderr: boundedDiagnosticText(stderr),
+      reproduction: diagnosticReproduction(planEntry.journey.id, planEntry.variant),
+    },
+  };
+}
+
 function executeProductJourney(planEntry) {
   return dispatchProductJourneyExecutor(planEntry, {
     "configless-cold-start": diagnoseConfiglessColdStart,
+    "coherent-first-pane": diagnoseCoherentFirstPane,
     "runtime-qualification": diagnoseRuntimeQualification,
   });
 }
@@ -2763,6 +2856,46 @@ function attachPublicElectedDaemon(record) {
   };
 }
 
+async function observeTargetedCanonicalIdentity(daemon, sessionName, workspaceName) {
+  const headers = { Authorization: `Bearer ${daemon.record.authToken}` };
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const [catalogResponse, fleetResponse] = await Promise.all([
+      fetch(`${daemon.baseUrl}/api/resources/workspace-catalog?version=2`, { headers }),
+      fetch(`${daemon.baseUrl}/api/resources/fleet-catalog`, { headers }),
+    ]);
+    if (catalogResponse.ok && fleetResponse.ok) {
+      const catalog = await catalogResponse.json();
+      const fleetCatalog = await fleetResponse.json();
+      const intents = catalog.intents?.filter(
+        (entry) =>
+          entry.workspaceName === workspaceName &&
+          entry.sessionName === sessionName &&
+          entry.availability === "live",
+      );
+      const live = catalog.liveSessions?.filter(({ sessionName: name }) => name === sessionName);
+      const fleetRows = fleetCatalog.sessions?.filter(({ label }) => label === sessionName);
+      if (
+        catalog.daemon?.instanceId === daemon.record.instanceId &&
+        fleetCatalog.daemon?.instanceId === daemon.record.instanceId &&
+        intents?.length === 1 &&
+        live?.length === 1 &&
+        fleetRows?.length === 1 &&
+        live[0].fleetSessionId === fleetRows[0].sessionId &&
+        /^[0-9a-f]{20}$/u.test(fleetCatalog.catalogRevision ?? "")
+      )
+        return Object.freeze({
+          workspaceName,
+          sessionName,
+          fleetSessionId: live[0].fleetSessionId,
+          catalogRevision: fleetCatalog.catalogRevision,
+        });
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+  }
+  throw new Error("targeted canonical workspace identity did not settle before deadline");
+}
+
 let ownerStartedAt = Date.now();
 async function owner() {
   ownerStartedAt = Date.now();
@@ -2917,6 +3050,176 @@ async function owner() {
     if (!sleepAssertion.active())
       throw new Error("ProductRig host sleep assertion was not active before orchestration");
     event("namespace-start");
+    if (journeyId === "coherent-first-pane") {
+      const coherentBoot = await runCoherentFirstPaneOwnerBoot({
+        createTargetedNamespace: async () => {
+          const marker = `RIG_COHERENT_${randomBytes(6).toString("hex").toUpperCase()}`;
+          const scratchFleet = await createScratchFleet({
+            sessions: 1,
+            slug,
+            initialPaneMarker: marker,
+          });
+          const cleanupToken = `product-test-rig:${slug}`;
+          fleet = {
+            ...scratchFleet,
+            environment: {
+              ...scratchFleet.environment,
+              TMUX_IDE_RUNTIME_MODE: "testdrive",
+              TMUX_IDE_CLEANUP_TOKEN: cleanupToken,
+              TMUX_IDE_TMUX_SOCKET_PATH: scratchFleet.socketPath,
+            },
+          };
+          const session = fleet.sessionNames[0];
+          const runtimeNamespace = {
+            root: fleet.root,
+            home: fleet.environment.HOME,
+            projectDir: fleet.projectDir,
+            registryDir: fleet.environment.TMUX_IDE_REGISTRY_DIR,
+            settingsDir: fleet.environment.TMUX_IDE_SETTINGS_DIR,
+            stateDir: fleet.environment.TMUX_IDE_HOME,
+            tmuxSocketPath: fleet.socketPath,
+            hostTmuxSocketPath: join(fleet.root, "product-rig-host-tmux.sock"),
+            daemonInfoDir: fleet.daemonInfoDir,
+            cleanupToken,
+          };
+          const traceProvenance = sourceTraceProvenance();
+          const tui = {
+            hostSession: `_tmux-ide-product-rig-${slug}`,
+            runtimeDir: join(rigRoot, "tui"),
+            performanceTracePath: join(rigRoot, "tui", "performance-trace.jsonl"),
+            performanceTraceCommit: traceProvenance.commit,
+            performanceTraceTree: traceProvenance.tree,
+            daemonPerformanceTracePath: null,
+          };
+          createIsolatedTargetedTuiCwd(tui.runtimeDir);
+          publish({ session, runtimeNamespace, tui });
+          const seedPane = activeWindowPaneGeometry(state).filter(
+            ({ windowActive }) => windowActive,
+          );
+          if (seedPane.length !== 1)
+            throw new Error("coherent journey requires one exact preseeded active pane");
+          const seed = { marker, paneId: seedPane[0].paneId, geometry: seedPane[0] };
+          event("targeted-namespace-preseeded", {
+            paneId: seed.paneId,
+            geometry: seed.geometry,
+            markerHash: createHash("sha256").update(marker).digest("hex"),
+          });
+          return { session, marker, runtimeNamespace, seed, tui };
+        },
+        startCanonicalDaemon: async () => {
+          daemon = await startDaemon(fleet);
+          await waitForReadinessLadder(daemon);
+          return daemon;
+        },
+        openCanonicalWorkspace: async (namespace, runningDaemon) => {
+          const workspace = await runningDaemon.promote(namespace.session);
+          const identity = await observeTargetedCanonicalIdentity(
+            runningDaemon,
+            namespace.session,
+            workspace,
+          );
+          publish({
+            workspace,
+            daemon: {
+              ...runningDaemon.record,
+              revision: identity.catalogRevision,
+              revisionKind: "fleet-catalog",
+            },
+          });
+          event("targeted-daemon-ready", identity);
+          return identity;
+        },
+        buildBeforeMeasurement: async () => {
+          await execFileAsync("bun", [join(repoRoot, "scripts", "build-tui.mjs")], {
+            cwd: repoRoot,
+            timeout: 120_000,
+          });
+        },
+        prepareTargetedTuiCwd: async (namespace) => {
+          const cwd = prepareIsolatedTargetedTuiCwd(namespace.tui.runtimeDir);
+          event("targeted-tui-cwd-ready", {
+            runtimeKind: "isolated-testdrive-home",
+            mode: "0700",
+          });
+          return cwd;
+        },
+        launchTargetedTui: async (namespace) => {
+          event("targeted-tui-connect", { session: namespace.session });
+          tuiCommand(state, [
+            "start",
+            "--target",
+            namespace.session,
+            "--cols",
+            "160",
+            "--rows",
+            "44",
+          ]);
+          const status = JSON.parse(tuiCommand(state, ["status", "--json"]));
+          if (status.target !== namespace.session)
+            throw new Error("coherent journey TUI did not retain its exact canonical target");
+          return Object.freeze({
+            target: status.target,
+            processId: Number.isInteger(status.processId) ? status.processId : null,
+            launchId: typeof status.launchId === "string" ? status.launchId : null,
+          });
+        },
+        proveCoherentPublication: async (namespace, runningDaemon, identity, _targetedProcess) => {
+          await waitForCoherentTui(state);
+          const publication = await provePreseededPanePublication(state, namespace.seed);
+          const workspaceClient = await waitForQualifiedWorkspaceClientState(
+            () => readJsonLines(join(namespace.tui.runtimeDir, "performance.jsonl")),
+            {
+              processId: publication.hostFrame.processId,
+              daemonGeneration: runningDaemon.record.instanceId,
+              workspaceName: identity.workspaceName,
+              sessionName: identity.sessionName,
+              fleetSessionId: identity.fleetSessionId,
+              semanticPaneId: publication.semanticPaneId,
+              canonicalGeneration: publication.canonicalSeedPaint.publication.generation,
+            },
+          );
+          publish({ convergence: { workspaceClient } });
+          event("canonical-seed-paint-correlation", publication.canonicalSeedPaint);
+          event("coherent-terminal-publication", {
+            markerHash: createHash("sha256").update(namespace.marker).digest("hex"),
+            connectToCoherentMs: publication.connectToCoherentMs,
+            publication,
+          });
+          return publication;
+        },
+        startWebAfterCoherentBoundary: async () => {
+          devServer = await startDevServer(daemon, {
+            daemonInfoPath: join(fleet.daemonInfoDir, "daemon.json"),
+          });
+          browser = await chromium.launch({ headless: true });
+          const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+          const page = await context.newPage();
+          await page.goto(devServer.pageUrl, { waitUntil: "domcontentloaded" });
+          await page.locator(".app[data-shell-source='runtime']").waitFor({ timeout: 60_000 });
+          await page
+            .locator(".terminal-surface[data-phase='connected']")
+            .first()
+            .waitFor({ timeout: 60_000 });
+          publish({ web: { pageUrl: devServer.pageUrl, startedAfterCoherentBoundary: true } });
+          event("web-started-after-coherent-boundary", { pageUrl: devServer.pageUrl });
+          return Object.freeze({ pageUrl: devServer.pageUrl, semanticConnected: true });
+        },
+      });
+      publish({
+        journeyEvidence: {
+          coherentFirstPane: {
+            identity: coherentBoot.identity,
+            targetedProcess: coherentBoot.targetedProcess,
+            coherent: coherentBoot.coherent,
+            web: coherentBoot.web,
+          },
+        },
+        status: "ready",
+        readyAt: new Date().toISOString(),
+      });
+      await new Promise(() => undefined);
+      return;
+    }
     if (journeyId === "configless-cold-start") {
       const coldBoot = await runConfiglessProductJourneyOwnerBoot(
         createConfiglessProductJourneyOwnerOperations({

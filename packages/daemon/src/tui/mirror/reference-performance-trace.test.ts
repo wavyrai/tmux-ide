@@ -5,6 +5,7 @@ import {
   createReferencePerformanceTraceSink,
   createReferenceTraceWriter,
 } from "./reference-performance-trace.ts";
+import { emitTuiTerminalFrameFenceFailOpen } from "./performance-events.ts";
 
 describe("reference performance trace", () => {
   it("pairs local input and consumed framebuffer paint on one OpenTUI clock", () => {
@@ -209,6 +210,9 @@ describe("reference performance trace", () => {
     expect(quiet.terminalCanonicalMode).toBeUndefined();
     expect(quiet.terminalCanonicalPublication).toBeUndefined();
     expect(quiet.terminalCanonicalPaint).toBeUndefined();
+    expect(quiet.terminalCanonicalUpdate).toBeUndefined();
+    expect(quiet.terminalCanonicalHostFrame).toBeUndefined();
+    expect(quiet.terminalFrameFence).toBeUndefined();
     expect(quiet.terminalInputQueueState).toBeUndefined();
 
     const records: Array<Readonly<Record<string, unknown>>> = [];
@@ -216,6 +220,7 @@ describe("reference performance trace", () => {
       commit: "a".repeat(40),
       tree: "b".repeat(40),
       detailed: true,
+      health: () => ({ droppedRecords: 0, oversizedRecords: 0, failed: false }),
       append: (record) => records.push(record),
     });
     detailed.terminalCanonicalMode?.({
@@ -236,6 +241,61 @@ describe("reference performance trace", () => {
       revision: 3,
       wraparound: true,
     });
+    detailed.terminalCanonicalUpdate?.({
+      processId: "opentui:1",
+      clockId: "opentui-performance-now",
+      clockKind: "performance-now",
+      atMicros: 12,
+      updateType: "terminal.patch",
+      semanticPaneId: "pane.alpha",
+      generation: "11111111-1111-4111-8111-111111111111",
+      incarnation: "incarnation",
+      revision: 4,
+      stateHash: "next-hash",
+      cols: 80,
+      rows: 24,
+      sourceEpoch: 2,
+    });
+    expect(records.at(-1)).toMatchObject({
+      type: "performance.terminal-canonical-update",
+      updateType: "terminal.patch",
+      semanticPaneId: "pane.alpha",
+      revision: 4,
+      sourceEpoch: 2,
+    });
+    detailed.terminalCanonicalHostFrame?.({
+      processId: "opentui:1",
+      clockId: "opentui-performance-now",
+      clockKind: "performance-now",
+      atMicros: 13,
+      semanticPaneId: "pane.alpha",
+      generation: "11111111-1111-4111-8111-111111111111",
+      incarnation: "incarnation",
+      revision: 4,
+      stateHash: "next-hash",
+      cols: 80,
+      rows: 24,
+      sourceEpoch: 2,
+      viewportCols: 80,
+      viewportRows: 23,
+      rendererEpoch: 4,
+    });
+    expect(records.at(-1)).toMatchObject({
+      type: "performance.terminal-canonical-host-frame",
+      semanticPaneId: "pane.alpha",
+      revision: 4,
+      rendererEpoch: 4,
+    });
+    detailed.terminalFrameFence?.({
+      daemonGeneration: "11111111-1111-4111-8111-111111111111",
+      rendererEpoch: 4,
+    });
+    expect(records.at(-1)).toMatchObject({
+      type: "performance.terminal-frame-fence",
+      daemonGeneration: "11111111-1111-4111-8111-111111111111",
+      rendererEpoch: 4,
+      writerHealth: { droppedRecords: 0, oversizedRecords: 0, failed: false },
+    });
     detailed.terminalInputQueueState?.({
       operation: "initialized",
       processId: "opentui:1",
@@ -255,6 +315,29 @@ describe("reference performance trace", () => {
       inputInFlight: 0,
       inputPendingBytes: 0,
     });
+  });
+
+  it("cannot certify a frame fence without writer health and keeps throwing sinks fail-open", () => {
+    const records: Readonly<Record<string, unknown>>[] = [];
+    const sink = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      detailed: true,
+      append: (record) => records.push(record),
+    });
+    sink.terminalFrameFence?.({ daemonGeneration: "generation", rendererEpoch: 1 });
+    expect(records.at(-1)).toMatchObject({
+      type: "performance.terminal-frame-fence",
+      writerHealth: null,
+    });
+    expect(() =>
+      emitTuiTerminalFrameFenceFailOpen(
+        () => {
+          throw new Error("sink failed");
+        },
+        { daemonGeneration: "generation", rendererEpoch: 1 },
+      ),
+    ).not.toThrow();
   });
 
   it("queues and closes a saturated 256-input diagnostic burst in exact order", async () => {

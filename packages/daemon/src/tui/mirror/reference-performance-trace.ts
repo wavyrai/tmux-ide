@@ -8,6 +8,9 @@ import {
   type TuiTerminalDeliveryPerformanceEvent,
   type TuiTerminalCanonicalPaintEvent,
   type TuiTerminalCanonicalPublicationEvent,
+  type TuiTerminalCanonicalUpdateEvent,
+  type TuiTerminalCanonicalHostFrameEvent,
+  type TuiTerminalFrameFenceEvent,
   type TuiTerminalCanonicalModeEvent,
   type TuiTerminalInputQueueStateEvent,
   type TuiTerminalTraceStageEvent,
@@ -90,6 +93,7 @@ export function installReferencePerformanceTraceCollectorFromEnvironment(): void
     tree: SOURCE_TREE,
     detailed: DETAILED_TRACE,
     append: writer.append,
+    health: writer.snapshot,
   });
   const uninstall = installTuiPerformanceEventSink(sink);
   activeCollector = { sink, writer, uninstall, closePromise: null };
@@ -303,6 +307,10 @@ export function createReferencePerformanceTraceSink(options: {
   readonly commit: string;
   readonly tree: string;
   readonly append: (value: Readonly<Record<string, unknown>>) => void;
+  readonly health?: () => Pick<
+    ReferenceTraceWriterSnapshot,
+    "droppedRecords" | "oversizedRecords" | "failed"
+  >;
   readonly nowMicros?: () => number;
   readonly createTraceId?: () => string;
   readonly processId?: string;
@@ -387,6 +395,43 @@ export function createReferencePerformanceTraceSink(options: {
                 type: "performance.terminal-canonical-paint",
                 ...event,
               });
+          },
+          terminalCanonicalUpdate: (event: TuiTerminalCanonicalUpdateEvent) => {
+            if (!closed)
+              options.append({
+                version: 1,
+                type: "performance.terminal-canonical-update",
+                ...event,
+              });
+          },
+          terminalCanonicalHostFrame: (event: TuiTerminalCanonicalHostFrameEvent) => {
+            if (!closed)
+              options.append({
+                version: 1,
+                type: "performance.terminal-canonical-host-frame",
+                ...event,
+              });
+          },
+          terminalFrameFence: (event: TuiTerminalFrameFenceEvent) => {
+            if (!closed) {
+              const health = options.health?.() ?? null;
+              options.append({
+                version: 1,
+                type: "performance.terminal-frame-fence",
+                processId,
+                clockId: "opentui-performance-now",
+                clockKind: "performance-now",
+                atMicros: nowMicros(),
+                ...event,
+                writerHealth: health
+                  ? Object.freeze({
+                      droppedRecords: health.droppedRecords,
+                      oversizedRecords: health.oversizedRecords,
+                      failed: health.failed,
+                    })
+                  : null,
+              });
+            }
           },
           terminalInputQueueState: (event: TuiTerminalInputQueueStateEvent) => {
             if (!closed)

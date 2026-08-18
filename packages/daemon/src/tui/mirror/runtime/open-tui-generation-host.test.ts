@@ -179,6 +179,29 @@ function bundle(
 }
 
 describe("OpenTUI generation host", () => {
+  it("marks the exact prepared generation before resolving its connection", async () => {
+    const view = presentation();
+    const phases: string[] = [];
+    let created!: FakeBundle;
+    const host = createOpenTuiGenerationHost("alpha", view.value, {
+      initialConnection: connection("daemon-a"),
+      observeCanonicalGeneration: inertCanonicalObserver,
+      resolveConnection: vi.fn(async () => connection("daemon-b")),
+      buildBundle: (resolved, callbacks) => (created = bundle(resolved, callbacks)),
+      onDiagnostic: (phase, details) => phases.push(`${phase}:${String(details.daemonGeneration)}`),
+    });
+
+    const started = host.start();
+    await flushHostStart();
+    created.activate();
+    await started;
+    expect(phases.indexOf("connection-start:daemon-a")).toBeGreaterThanOrEqual(0);
+    expect(phases.indexOf("connection-start:daemon-a")).toBeLessThan(
+      phases.indexOf("connection-resolved:daemon-a"),
+    );
+    await host.dispose();
+  });
+
   it("consumes a prepared connection once, then resolves fresh generations", async () => {
     const view = presentation();
     const prepared = connection("daemon-a");

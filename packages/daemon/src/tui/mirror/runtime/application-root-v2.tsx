@@ -42,6 +42,7 @@ import { TUI_RENDERER_CADENCE } from "./renderer-cadence.ts";
 import { createOpenTuiRuntimeLayoutPresentation } from "./runtime-layout-presentation.ts";
 import { terminalInputForOpenTuiKey, terminalInputsForPaste } from "./terminal-input-adapter.ts";
 import { OpenTuiTerminalHostFocus } from "./terminal-host-focus.ts";
+import { publishCanonicalHostFrameDiagnostics } from "./terminal-host-frame-diagnostics.ts";
 
 export type { StartApplicationRootOptions } from "./application-root-configuration.ts";
 
@@ -309,22 +310,27 @@ export async function startApplicationRoot(
         shutdown: () => lifecycle.shutdown("bootstrap-error"),
       });
       const paintedTerminalGenerations = new Set<string>();
+      const frameDiagnosticSink = currentTuiPerformanceEventSink();
       const observeTerminalFrame = () => {
         const snapshot = sessionOwner?.snapshot();
-        if (
-          !snapshot ||
-          snapshot.status !== "live" ||
-          !snapshot.daemonGeneration ||
-          !snapshot.adapter?.hasPaintedCanonicalSnapshot()
-        )
-          return;
-        const paintKey = `${snapshot.daemonGeneration}:${snapshot.rendererEpoch}`;
-        if (paintedTerminalGenerations.has(paintKey)) return;
-        paintedTerminalGenerations.add(paintKey);
-        tuiPerfMark("first-terminal-frame", {
-          daemonGeneration: snapshot.daemonGeneration,
-          rendererEpoch: snapshot.rendererEpoch,
-        });
+        if (!snapshot || snapshot.status !== "live" || !snapshot.daemonGeneration) return;
+        if (snapshot.adapter?.hasPaintedCanonicalSnapshot()) {
+          const paintKey = `${snapshot.daemonGeneration}:${snapshot.rendererEpoch}`;
+          if (!paintedTerminalGenerations.has(paintKey)) {
+            paintedTerminalGenerations.add(paintKey);
+            tuiPerfMark("first-terminal-frame", {
+              daemonGeneration: snapshot.daemonGeneration,
+              rendererEpoch: snapshot.rendererEpoch,
+            });
+          }
+        }
+        if (snapshot.adapter)
+          publishCanonicalHostFrameDiagnostics(
+            snapshot.adapter,
+            snapshot.daemonGeneration,
+            snapshot.rendererEpoch,
+            frameDiagnosticSink,
+          );
       };
       renderer.on("frame", observeTerminalFrame);
       let firstFrameMarked = false;

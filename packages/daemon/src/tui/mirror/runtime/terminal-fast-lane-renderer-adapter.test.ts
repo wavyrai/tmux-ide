@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import type {
   CanonicalTerminalReplicaUpdate,
   TerminalReplicaDeliveryMetadata,
@@ -74,7 +74,16 @@ function seed(
 }
 
 function paint(adapter: TerminalFastLaneRendererAdapter, paneId: string) {
-  const cells = 8;
+  return paintViewport(adapter, paneId, 4, 2);
+}
+
+function paintViewport(
+  adapter: TerminalFastLaneRendererAdapter,
+  paneId: string,
+  width: number,
+  height: number,
+) {
+  const cells = width * height;
   return adapter.renderSource.blitPane(
     paneId,
     {
@@ -83,8 +92,8 @@ function paint(adapter: TerminalFastLaneRendererAdapter, paneId: string) {
       bg: new Uint16Array(cells * 4),
       attributes: new Uint32Array(cells),
     },
-    4,
-    2,
+    width,
+    height,
     0,
     0xffffff,
     0,
@@ -93,6 +102,162 @@ function paint(adapter: TerminalFastLaneRendererAdapter, paneId: string) {
 }
 
 describe("TerminalFastLaneRendererAdapter", () => {
+  it("publishes only final same-frame identity and dedupes across-frame A-B-A", () => {
+    const source = new Source();
+    const lane = createTerminalFastLane({
+      address: { workspaceName, generation },
+      source,
+      repair: { request: () => undefined },
+      control: {
+        owns: () => true,
+        request: async () => true,
+        write: async () => "ok",
+        resize: async () => "ok",
+      },
+    });
+    const adapter = new TerminalFastLaneRendererAdapter(lane, 7);
+    const install = () =>
+      installTuiPerformanceEventSink({
+        frame: () => undefined,
+        terminalPaint: () => undefined,
+        terminalDelivery: () => undefined,
+        terminalCanonicalHostFrame: () => undefined,
+        terminalFrameFence: () => undefined,
+      });
+    let unsubscribe = adapter.subscribePaneVersion("pane.editor", () => undefined);
+    try {
+      const uninstall = install();
+      const first = seed("pane.editor", "S");
+      source.emit("pane.editor", first);
+      paint(adapter, "pane.editor");
+      expect(adapter.drainCanonicalHostFrameIdentities().identities).toHaveLength(1);
+      unsubscribe();
+      unsubscribe = adapter.subscribePaneVersion("pane.editor", () => undefined);
+      paintViewport(adapter, "pane.editor", 3, 2);
+      expect(adapter.drainCanonicalHostFrameIdentities().identities).toMatchObject([
+        { viewportCols: 3, viewportRows: 2 },
+      ]);
+      unsubscribe();
+      unsubscribe = adapter.subscribePaneVersion("pane.editor", () => undefined);
+      paint(adapter, "pane.editor");
+      expect(adapter.drainCanonicalHostFrameIdentities()).toEqual({ identities: [], dropped: 0 });
+      let unsubscribeSecond = adapter.subscribePaneVersion("pane.second", () => undefined);
+      const second = seed("pane.second", "T");
+      source.emit("pane.second", second);
+      paint(adapter, "pane.second");
+      unsubscribeSecond();
+      unsubscribeSecond = adapter.subscribePaneVersion("pane.second", () => undefined);
+      paintViewport(adapter, "pane.second", 3, 2);
+      expect(adapter.drainCanonicalHostFrameIdentities().identities).toMatchObject([
+        { semanticPaneId: "pane.second", viewportCols: 3, viewportRows: 2 },
+      ]);
+      unsubscribeSecond();
+      uninstall();
+      source.emit("pane.editor", {
+        ...first,
+        type: "terminal.patch",
+        baseRevision: 0,
+        revision: 1,
+        patch: { rows: [], modes: first.snapshot.modes },
+      });
+      paint(adapter, "pane.editor");
+      expect(adapter.drainCanonicalHostFrameIdentities()).toEqual({ identities: [], dropped: 0 });
+    } finally {
+      unsubscribe();
+      adapter.dispose();
+      lane.dispose();
+    }
+  });
+
+  it("bounds exact seen identities at 256 and reports then resets the 257th drop", () => {
+    const source = new Source();
+    const lane = createTerminalFastLane({
+      address: { workspaceName, generation },
+      source,
+      repair: { request: () => undefined },
+      control: {
+        owns: () => true,
+        request: async () => true,
+        write: async () => "ok",
+        resize: async () => "ok",
+      },
+    });
+    const adapter = new TerminalFastLaneRendererAdapter(lane, 7);
+    const uninstall = installTuiPerformanceEventSink({
+      frame: () => undefined,
+      terminalPaint: () => undefined,
+      terminalDelivery: () => undefined,
+      terminalCanonicalHostFrame: () => undefined,
+      terminalFrameFence: () => undefined,
+    });
+    const first = seed("pane.editor", "S");
+    let unsubscribe = adapter.subscribePaneVersion("pane.editor", () => undefined);
+    try {
+      source.emit("pane.editor", first);
+      for (let ordinal = 0; ordinal < 257; ordinal += 1) {
+        if (ordinal > 0) {
+          unsubscribe();
+          unsubscribe = adapter.subscribePaneVersion("pane.editor", () => undefined);
+        }
+        paintViewport(adapter, "pane.editor", ordinal + 1, 2);
+        const drained = adapter.drainCanonicalHostFrameIdentities();
+        if (ordinal < 256) {
+          expect(drained.identities).toHaveLength(1);
+          expect(drained.dropped).toBe(0);
+        } else {
+          expect(drained).toEqual({ identities: [], dropped: 1 });
+        }
+      }
+      expect(adapter.drainCanonicalHostFrameIdentities()).toEqual({ identities: [], dropped: 0 });
+    } finally {
+      unsubscribe();
+      adapter.dispose();
+      lane.dispose();
+      uninstall();
+    }
+  });
+
+  it("does not queue host identities for either partial sink configuration", () => {
+    for (const partialSink of [
+      { terminalCanonicalHostFrame: () => undefined },
+      { terminalFrameFence: () => undefined },
+    ]) {
+      const source = new Source();
+      const lane = createTerminalFastLane({
+        address: { workspaceName, generation },
+        source,
+        repair: { request: () => undefined },
+        control: {
+          owns: () => true,
+          request: async () => true,
+          write: async () => "ok",
+          resize: async () => "ok",
+        },
+      });
+      const adapter = new TerminalFastLaneRendererAdapter(lane, 7);
+      const uninstall = installTuiPerformanceEventSink({
+        frame: () => undefined,
+        terminalPaint: () => undefined,
+        terminalDelivery: () => undefined,
+        ...partialSink,
+      });
+      const unsubscribe = adapter.subscribePaneVersion("pane.editor", () => undefined);
+      try {
+        source.emit("pane.editor", seed("pane.editor", "S"));
+        paint(adapter, "pane.editor");
+        expect(adapter.drainCanonicalHostFrameIdentities()).toEqual({
+          identities: [],
+          dropped: 0,
+        });
+      } finally {
+        unsubscribe();
+        adapter.dispose();
+        lane.dispose();
+        uninstall();
+      }
+    }
+  });
+
   it("qualifies a retained seed accepted before the renderer mounts", () => {
     const publications: Array<Record<string, unknown>> = [];
     const paints: Array<Record<string, unknown>> = [];
@@ -184,12 +349,14 @@ describe("TerminalFastLaneRendererAdapter", () => {
   it("emits one exact seed-to-first-paint identity and clears it on an intervening patch", () => {
     const publications: Array<Record<string, unknown>> = [];
     const paints: Array<Record<string, unknown>> = [];
+    const updates: Array<Record<string, unknown>> = [];
     const uninstall = installTuiPerformanceEventSink({
       frame: () => undefined,
       terminalPaint: () => undefined,
       terminalDelivery: () => undefined,
       terminalCanonicalPublication: (event) => publications.push(event),
       terminalCanonicalPaint: (event) => paints.push(event),
+      terminalCanonicalUpdate: (event) => updates.push(event),
     });
     const source = new Source();
     const lane = createTerminalFastLane({
@@ -222,6 +389,21 @@ describe("TerminalFastLaneRendererAdapter", () => {
         viewportCols: 4,
         viewportRows: 2,
         writtenRows: [0, 1],
+        sourceEpoch: 7,
+      });
+      source.emit("pane.editor", {
+        ...first,
+        type: "terminal.patch",
+        baseRevision: 0,
+        revision: 1,
+        patch: { rows: [], modes: first.snapshot.modes },
+      });
+      expect(updates).toHaveLength(1);
+      expect(updates[0]).toMatchObject({
+        updateType: "terminal.patch",
+        semanticPaneId: "pane.editor",
+        generation,
+        revision: 1,
         sourceEpoch: 7,
       });
 
@@ -311,6 +493,57 @@ describe("TerminalFastLaneRendererAdapter", () => {
       adapter.dispose();
       lane.dispose();
       uninstall();
+    }
+  });
+
+  it("does no patch diagnostic clock work when disabled and keeps throwing observers fail-open", () => {
+    const source = new Source();
+    const lane = createTerminalFastLane({
+      address: { workspaceName, generation },
+      source,
+      repair: { request: () => undefined },
+      control: {
+        owns: () => true,
+        request: async () => true,
+        write: async () => "ok",
+        resize: async () => "ok",
+      },
+    });
+    const adapter = new TerminalFastLaneRendererAdapter(lane, 9);
+    adapter.subscribePaneVersion("pane.editor", () => undefined);
+    const first = seed("pane.editor", "E");
+    source.emit("pane.editor", first);
+    paint(adapter, "pane.editor");
+    const now = spyOn(performance, "now");
+    const patch = {
+      ...first,
+      type: "terminal.patch" as const,
+      baseRevision: 0,
+      revision: 1,
+      patch: { rows: [], modes: first.snapshot.modes },
+    };
+    try {
+      source.emit("pane.editor", patch);
+      expect(now).not.toHaveBeenCalled();
+      const uninstall = installTuiPerformanceEventSink({
+        frame: () => undefined,
+        terminalPaint: () => undefined,
+        terminalDelivery: () => undefined,
+        terminalCanonicalUpdate: () => {
+          throw new Error("diagnostic failed");
+        },
+      });
+      try {
+        expect(() =>
+          source.emit("pane.editor", { ...patch, baseRevision: 1, revision: 2 }),
+        ).not.toThrow();
+      } finally {
+        uninstall();
+      }
+    } finally {
+      now.mockRestore();
+      adapter.dispose();
+      lane.dispose();
     }
   });
   it("invalidates only the addressed pane and retains no second replica reducer", () => {

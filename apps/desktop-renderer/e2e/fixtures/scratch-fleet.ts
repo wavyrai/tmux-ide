@@ -75,6 +75,8 @@ function sessionName(slug: string, index: number): string {
 export async function createScratchFleet(
   options: CreateScratchFleetOptions,
 ): Promise<ScratchFleet> {
+  if (options.initialPaneMarker && !/^RIG_[A-Z0-9_]{8,96}$/u.test(options.initialPaneMarker))
+    throw new Error("scratch initial pane marker must be a bounded safe ProductRig token");
   // /tmp, not os.tmpdir(): on macOS the per-user temp dir realpaths to a long
   // prefix that pushes the tmux socket past the sun_path limit.
   const root = await mkdtemp(`/tmp/tmi-e2e-${options.slug}-`);
@@ -154,9 +156,6 @@ export async function createScratchFleet(
     if (!names.includes(name)) names.push(name);
     return name;
   };
-
-  if (options.initialPaneMarker && !/^RIG_[A-Z0-9_]{8,96}$/u.test(options.initialPaneMarker))
-    throw new Error("scratch initial pane marker must be a bounded safe ProductRig token");
 
   for (let index = 0; index < options.sessions; index += 1) {
     createSession(sessionName(options.slug, index));

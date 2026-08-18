@@ -101,6 +101,7 @@ export interface OpenTuiGenerationHostDependencies {
   ) => Promise<() => void | Promise<void>>;
   readonly onDiagnostic?: (
     phase:
+      | "connection-start"
       | "connection-resolved"
       | "shell-lifecycle"
       | "runtime-progress"
@@ -479,6 +480,10 @@ export function createOpenTuiGenerationHost(
     const expectedEpoch = ++epoch;
     const preparedConnection = initialConnection;
     initialConnection = null;
+    const connectionStartGeneration =
+      preparedConnection?.target.daemon.instanceId ?? requestedCanonicalGeneration;
+    if (diagnose && connectionStartGeneration)
+      diagnose("connection-start", { daemonGeneration: connectionStartGeneration });
     const resolveCurrentConnection =
       async (): Promise<OpenTuiApplicationShellConnection | null> => {
         const prepared = preparedConnection ?? (await dependencies.resolveConnection(sessionName));
