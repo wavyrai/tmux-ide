@@ -69,6 +69,21 @@ import {
 } from "./product-test-rig-lib.mjs";
 import { sourceArchitectureInventory } from "./architecture-debt-inventory.mjs";
 import { acquireProductRigSleepAssertion } from "./lib/product-rig-sleep-assertion.mjs";
+import {
+  PRODUCT_DIAGNOSTIC_BUNDLE_FILES,
+  PRODUCT_JOURNEY_REGISTRY,
+  auditProductJourneyScope,
+  collectProductRigCleanupFailures,
+  createProductDiagnosticBundle,
+  parseProductDiagnoseOptions,
+  productDiagnosticRunId,
+  productRigCleanupAcknowledgesRequest,
+  productRigCleanupBarrierFailures,
+  resolveProductJourneyPlan,
+  runIsolatedProductJourneyAttempt,
+  runProductJourneyPlan,
+  settleInternalProductRigCleanup,
+} from "./product-test-rig-journeys.mjs";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -83,11 +98,97 @@ const rigRoot = resolve(
 const statePath = join(rigRoot, "state.json");
 const timelinePath = join(rigRoot, "timeline.jsonl");
 const ownerLogPath = join(rigRoot, "owner.log");
+const shutdownRequestPath = join(rigRoot, "shutdown-request.json");
 const artifactDir = join(rigRoot, "artifacts");
+const diagnosticRoot = resolve(
+  process.env.TMUX_IDE_PRODUCT_DIAGNOSTIC_DIR || join(repoRoot, ".tasks", "product-diagnostics"),
+);
+const diagnosticCaptures = new Map();
+const diagnosticAttemptPhases = new Map();
+const UNAVAILABLE_WEB_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64",
+);
+const DIAGNOSTIC_TEXT_LIMIT = 64 * 1024;
+
+function boundedDiagnosticText(value) {
+  const text = String(value ?? "");
+  return text.length <= DIAGNOSTIC_TEXT_LIMIT ? text : text.slice(-DIAGNOSTIC_TEXT_LIMIT);
+}
+
+function readDiagnosticText(path, fallback = "") {
+  try {
+    return boundedDiagnosticText(readFileSync(path, "utf8"));
+  } catch {
+    return fallback;
+  }
+}
+
+function productDiagnosticCorrelation(state, captureEvidence) {
+  const committed = state?.convergence?.workspaceClient?.committed ?? null;
+  const pending = state?.convergence?.workspaceClient?.pending ?? null;
+  const derived = state?.convergence?.workspaceClient?.derived ?? null;
+  const daemonRevision = state?.daemon?.revision ?? state?.workspace?.revision ?? null;
+  const tuiAvailable = Boolean(captureEvidence?.tuiPath && existsSync(captureEvidence.tuiPath));
+  const webAvailable = Boolean(captureEvidence?.webPath && existsSync(captureEvidence.webPath));
+  const webSemantic =
+    webAvailable && captureEvidence?.web
+      ? {
+          shellSource: captureEvidence.web.shellSource ?? null,
+          terminalPhases: captureEvidence.web.terminalPhases ?? [],
+        }
+      : null;
+  const webSemanticComplete = Boolean(
+    webSemantic?.shellSource && webSemantic.terminalPhases.length > 0,
+  );
+  const missing = [
+    ...(daemonRevision === null ? ["daemon.revision"] : []),
+    ...(committed === null ? ["workspaceClient.committed"] : []),
+    ...(pending === null ? ["workspaceClient.pending"] : []),
+    ...(derived === null ? ["workspaceClient.derived"] : []),
+    ...(!tuiAvailable ? ["tui.frame"] : []),
+    ...(!webAvailable ? ["web.png"] : []),
+    ...(!webSemanticComplete ? ["web.semantic"] : []),
+  ];
+  return {
+    complete: missing.length === 0,
+    missing,
+    daemonState: {
+      instanceId: state?.daemon?.instanceId ?? null,
+      revision: daemonRevision,
+      pid: state?.daemon?.pid ?? null,
+      port: state?.daemon?.port ?? null,
+      status: state?.status ?? "unavailable",
+      correlationComplete: daemonRevision !== null,
+    },
+    clientState: {
+      committed,
+      pending,
+      derived,
+      webSemantic,
+      correlationComplete: missing.length === 0,
+      missing,
+    },
+    availability: { tui: tuiAvailable, web: webAvailable },
+  };
+}
 const WARM_COHERENT_SAMPLE_COUNT = 20;
 
 function shellSingleQuote(value) {
   return `'${String(value).replaceAll("'", `'\\''`)}'`;
+}
+
+function diagnosticReproduction(journeyId) {
+  return `#!/bin/sh
+set -eu
+SOURCE_ROOT=\${TMUX_IDE_SOURCE_ROOT:-"$PWD"}
+if [ ! -f "$SOURCE_ROOT/package.json" ] || [ ! -f "$SOURCE_ROOT/scripts/product-test-rig.mjs" ]; then
+  printf '%s\n' 'Set TMUX_IDE_SOURCE_ROOT to a tmux-ide source tree.' >&2
+  exit 2
+fi
+cd "$SOURCE_ROOT"
+exec pnpm product:testdrive diagnose --journey ${journeyId} --repeat 1 --json
+`;
 }
 
 function terminalCellAt(frame, row, column) {
@@ -96,7 +197,7 @@ function terminalCellAt(frame, row, column) {
 }
 
 function usage() {
-  return `Product test rig\n\nUsage:\n  pnpm product:testdrive start [--json]\n  pnpm product:testdrive status [--json]\n  pnpm product:testdrive capture [--json]\n  pnpm product:testdrive smoke [--json]\n  pnpm product:testdrive diagnose [--json]\n  pnpm product:testdrive inventory [--json]\n  pnpm product:testdrive stop [--json]\n`;
+  return `Product test rig\n\nUsage:\n  pnpm product:testdrive start [--json]\n  pnpm product:testdrive status [--json]\n  pnpm product:testdrive capture [--json]\n  pnpm product:testdrive smoke [--json]\n  pnpm product:testdrive diagnose [--journey <id>] [--repeat <1-10>] [--json]\n  pnpm product:testdrive inventory [--json]\n  pnpm product:testdrive stop [--json]\n`;
 }
 
 function emit(value, json) {
@@ -471,12 +572,13 @@ async function captureArtifacts(state, label = "capture", existingPage = null) {
   }
 }
 
-async function waitForState(predicate, timeoutMs = 90_000) {
+async function waitForState(predicate, timeoutMs = 90_000, { allowTerminalFailure = false } = {}) {
   const deadline = Date.now() + timeoutMs;
   let state = null;
   while (Date.now() < deadline) {
     state = readJson(statePath);
-    if (state?.status === "failed") throw new Error(state.failure || "product rig failed");
+    if (!allowTerminalFailure && ["failed", "cleanup-failed"].includes(state?.status))
+      throw new Error(state.failure || "product rig failed");
     if (predicate(state)) return state;
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
@@ -752,14 +854,99 @@ async function start(json, quiet = false) {
     );
 }
 
-async function stop(json) {
-  const state = readJson(statePath);
-  if (state && processAlive(state.ownerPid)) process.kill(state.ownerPid, "SIGTERM");
-  await waitForState((candidate) => !candidate || candidate.status === "stopped", 15_000).catch(
-    () => undefined,
-  );
-  const finalState = readJson(statePath);
-  emit(json ? publicRigStatus(finalState) : "Product rig stopped", json);
+async function stop(json, { quiet = false, strict = false, maxAttempts = 2 } = {}) {
+  let state = readJson(statePath);
+  if (!state) {
+    if (!quiet) emit(json ? publicRigStatus(state) : "Product rig stopped", json);
+    return;
+  }
+  if (!processAlive(state.ownerPid)) {
+    if (strict) {
+      const priorRequest = state.cleanup?.requestId ?? "missing-cleanup-request";
+      const failures = productRigCleanupBarrierFailures(state, priorRequest, {
+        processAlive,
+        pathExists: existsSync,
+      });
+      if (failures.length > 0)
+        throw new Error(`ProductRig stale owner residue: ${failures.join(", ")}`);
+    }
+    if (!quiet) emit(json ? publicRigStatus(state) : "Product rig stopped", json);
+    return;
+  }
+  if (
+    state.cleanup?.status === "passed" &&
+    ["stopped", "failed"].includes(state.status) &&
+    typeof state.cleanup.requestId === "string"
+  ) {
+    const deathDeadline = Date.now() + 5_000;
+    while (processAlive(state.ownerPid) && Date.now() < deathDeadline)
+      await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+    state = readJson(statePath) ?? state;
+    if (!processAlive(state.ownerPid)) {
+      if (strict) {
+        const failures = productRigCleanupBarrierFailures(state, state.cleanup.requestId, {
+          processAlive,
+          pathExists: existsSync,
+        });
+        if (failures.length > 0)
+          throw new Error(`ProductRig cleanup barrier failed: ${failures.join(", ")}`);
+      }
+      if (!quiet) emit(json ? publicRigStatus(state) : "Product rig stopped", json);
+      return;
+    }
+  }
+  if (typeof state.ownerToken !== "string" || state.ownerToken.length < 32)
+    throw new Error("ProductRig live owner has no exact shutdown token");
+
+  let finalState = state;
+  let requestId = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    requestId = `${Date.now()}-${randomBytes(6).toString("hex")}`;
+    writeJsonAtomic(shutdownRequestPath, {
+      version: 1,
+      requestId,
+      attempt,
+      ownerPid: state.ownerPid,
+      ownerToken: state.ownerToken,
+      cleanupToken: state.runtimeNamespace?.cleanupToken ?? null,
+    });
+    try {
+      finalState = await waitForState(
+        (candidate) =>
+          productRigCleanupAcknowledgesRequest(candidate, requestId) &&
+          candidate.cleanup?.status &&
+          ["cleanup-failed", "stopped", "failed"].includes(candidate.status),
+        15_000,
+        { allowTerminalFailure: true },
+      );
+    } catch (error) {
+      if (attempt === maxAttempts || !strict) throw error;
+      continue;
+    }
+    if (finalState.cleanup?.status === "passed") {
+      requestId = finalState.cleanup.requestId;
+      break;
+    }
+    if (attempt === maxAttempts)
+      throw new Error(
+        `ProductRig cleanup failed after bounded retry: ${(finalState.cleanup?.failures ?? [])
+          .map(({ subsystem, detail }) => `${subsystem}:${detail}`)
+          .join(", ")}`,
+      );
+  }
+
+  const deathDeadline = Date.now() + 5_000;
+  while (processAlive(finalState.ownerPid) && Date.now() < deathDeadline)
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  if (strict) {
+    const failures = productRigCleanupBarrierFailures(finalState, requestId, {
+      processAlive,
+      pathExists: existsSync,
+    });
+    if (failures.length > 0)
+      throw new Error(`ProductRig cleanup barrier failed: ${failures.join(", ")}`);
+  }
+  if (!quiet) emit(json ? publicRigStatus(finalState) : "Product rig stopped", json);
 }
 
 async function capture(json, label = "manual") {
@@ -1102,9 +1289,11 @@ function runtimeResourceRetirement(lifecycle, ordinal) {
   });
 }
 
-async function diagnose(json) {
+async function diagnoseOnce(planEntry) {
+  diagnosticAttemptPhases.set(planEntry.runId, "product-rig-startup");
   await start(false, true);
   let state = await waitForState((candidate) => candidate?.status === "ready");
+  diagnosticAttemptPhases.set(planEntry.runId, "journey-drive");
   const tracePath = state.tui.performanceTracePath;
   const warmCoherentSamples = [];
   const warmCoherentJourneys = [];
@@ -1911,7 +2100,13 @@ async function diagnose(json) {
   }
   state = await waitForState((candidate) => candidate?.status === "ready", 5_000);
   const framebufferEvidence = await activePaneBodyEvidence(state);
-  await captureArtifacts(state, "diagnose");
+  diagnosticAttemptPhases.set(planEntry.runId, "evidence-capture");
+  const captureEvidence = await captureArtifacts(
+    state,
+    `diagnose-${planEntry.journey.id}-r${planEntry.repetition}`,
+  );
+  diagnosticCaptures.set(planEntry.runId, captureEvidence);
+  diagnosticAttemptPhases.set(planEntry.runId, "report-correlation");
   // A closed collector summary is the only truthful proof that trace
   // backpressure did not drop or oversize records. Stop the hosted TUI after
   // all visual journeys, then build the report from its final streams.
@@ -1928,7 +2123,7 @@ async function diagnose(json) {
   } catch {
     // Absence is represented honestly as an empty diagnostic stream.
   }
-  const report = {
+  const baseReport = {
     ...buildProductDiagnosticReport({
       state,
       truth: tmuxTruth(state),
@@ -1946,15 +2141,231 @@ async function diagnose(json) {
       resourceObservation,
       qualifyingInputEvidence,
     }),
+    journey: planEntry.journey.id,
+    repetition: planEntry.repetition,
+    repeat: planEntry.repeat,
+    runId: planEntry.runId,
+    sourceProvenance: {
+      commit: state.tui?.performanceTraceCommit ?? null,
+      tree: state.tui?.performanceTraceTree ?? null,
+    },
     warmHostPublications: Object.freeze([...warmHostPublications]),
+  };
+  const correlation = productDiagnosticCorrelation(state, captureEvidence);
+  const correlationBoundary = {
+    id: "diagnostic-correlation",
+    status: correlation.complete ? "passed" : "unmeasured",
+    detail: correlation.complete
+      ? "daemon revision, WorkspaceClient state and Web semantic state aligned"
+      : `missing ${correlation.missing.join(", ")}`,
+  };
+  const report = {
+    ...baseReport,
+    status:
+      baseReport.status === "failed"
+        ? "failed"
+        : correlation.complete
+          ? baseReport.status
+          : "incomplete",
+    firstUnmeasuredBoundary:
+      baseReport.firstUnmeasuredBoundary ??
+      (correlation.complete ? null : "diagnostic-correlation"),
+    boundaries: Object.freeze([...baseReport.boundaries, Object.freeze(correlationBoundary)]),
+    diagnosticCorrelation: {
+      complete: correlation.complete,
+      missing: correlation.missing,
+    },
   };
   const reportPath = join(artifactDir, "diagnostic-report.json");
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-  emit(
-    json ? { ...report, reportPath } : `Product diagnosis ${report.status}; ${reportPath}`,
-    json,
+  return {
+    report,
+    reportPath,
+    evidence: {
+      report,
+      alignment: {
+        version: 1,
+        journey: planEntry.journey.id,
+        firstBrokenBoundary: report.firstBrokenBoundary,
+        firstBrokenInputBoundary: report.firstBrokenInputBoundary,
+        firstUnmeasuredBoundary: report.firstUnmeasuredBoundary,
+        boundaries: report.boundaries,
+        correlation: { complete: correlation.complete, missing: correlation.missing },
+        availability: correlation.availability,
+      },
+      timeline: readDiagnosticText(timelinePath),
+      tmuxTruth: captureEvidence.truth,
+      daemonState: correlation.daemonState,
+      clientState: correlation.clientState,
+      tuiAnsi: readDiagnosticText(
+        captureEvidence.tuiPath,
+        "[unavailable: captured TUI artifact could not be read]\n",
+      ),
+      webPngPath: captureEvidence.webPath,
+      stderr: boundedDiagnosticText(stderr),
+      reproduction: diagnosticReproduction(planEntry.journey.id),
+    },
+  };
+}
+
+async function prepareDiagnosticFailure(planEntry, error, firstBrokenBoundary) {
+  const state = readJson(statePath);
+  let captureEvidence = diagnosticCaptures.get(planEntry.runId) ?? null;
+  if (!captureEvidence && state?.status === "ready") {
+    try {
+      captureEvidence = await captureArtifacts(
+        state,
+        `diagnose-failure-${planEntry.journey.id}-r${planEntry.repetition}`,
+      );
+    } catch {
+      // The bundle below records bounded unavailable artifacts without
+      // replacing the original failure or pretending visual correlation.
+    }
+  }
+  const failure = boundedDiagnosticText(
+    error instanceof Error ? error.stack || error.message : String(error),
   );
-  if (report.status !== "passed") process.exitCode = 1;
+  const stderrPath = state?.tui?.runtimeDir ? join(state.tui.runtimeDir, "stderr.log") : null;
+  const stderr = stderrPath ? readDiagnosticText(stderrPath) : "";
+  let truth = captureEvidence?.truth ?? null;
+  if (!truth && state?.session) {
+    try {
+      truth = tmuxTruth(state);
+    } catch {
+      // Truth remains explicitly unavailable below.
+    }
+  }
+  const tuiAvailable = Boolean(captureEvidence?.tuiPath && existsSync(captureEvidence.tuiPath));
+  const webAvailable = Boolean(captureEvidence?.webPath && existsSync(captureEvidence.webPath));
+  const correlation = productDiagnosticCorrelation(state, captureEvidence);
+  const report = {
+    version: 1,
+    status: "failed",
+    journey: planEntry.journey.id,
+    repetition: planEntry.repetition,
+    repeat: planEntry.repeat,
+    runId: planEntry.runId,
+    firstBrokenBoundary,
+    firstUnmeasuredBoundary: null,
+    failure,
+    sourceProvenance: {
+      commit: state?.tui?.performanceTraceCommit ?? null,
+      tree: state?.tui?.performanceTraceTree ?? null,
+    },
+  };
+  return {
+    report,
+    reportPath: null,
+    evidence: {
+      report,
+      alignment: {
+        version: 1,
+        journey: planEntry.journey.id,
+        firstBrokenBoundary,
+        failure,
+        correlation: { complete: false, missing: correlation.missing },
+        availability: {
+          tmuxTruth: truth !== null,
+          tui: tuiAvailable,
+          web: webAvailable,
+        },
+      },
+      timeline: readDiagnosticText(timelinePath),
+      tmuxTruth: truth ?? {
+        status: "unavailable",
+        reason: `not captured before ${firstBrokenBoundary}`,
+      },
+      daemonState: correlation.daemonState,
+      clientState: correlation.clientState,
+      tuiAnsi: tuiAvailable
+        ? readDiagnosticText(captureEvidence.tuiPath)
+        : `[unavailable: TUI frame not captured before ${firstBrokenBoundary}]\n`,
+      ...(webAvailable ? { webPngPath: captureEvidence.webPath } : { webPng: UNAVAILABLE_WEB_PNG }),
+      stderr,
+      reproduction: diagnosticReproduction(planEntry.journey.id),
+    },
+  };
+}
+
+async function executeDiagnosticAttempt(entry) {
+  try {
+    return await runIsolatedProductJourneyAttempt(entry, {
+      onPhase: (phase) => diagnosticAttemptPhases.set(entry.runId, phase),
+      currentBoundary: () => diagnosticAttemptPhases.get(entry.runId) ?? "journey-drive",
+      preCleanup: () => stop(false, { quiet: true, strict: true }),
+      drive: () => diagnoseOnce(entry),
+      prepareFailure: (error, boundary) => prepareDiagnosticFailure(entry, error, boundary),
+      postCleanup: () => stop(false, { quiet: true, strict: true, maxAttempts: 1 }),
+      retryCleanup: () => stop(false, { quiet: true, strict: true, maxAttempts: 1 }),
+      appendCleanupFailure: (failedResult, cleanupError) => {
+        const cleanupFailure = boundedDiagnosticText(
+          cleanupError instanceof Error
+            ? cleanupError.stack || cleanupError.message
+            : String(cleanupError),
+        );
+        failedResult.report.cleanupFailure = cleanupFailure;
+        failedResult.evidence.alignment.cleanupFailure = cleanupFailure;
+      },
+      publishFailure: (failedResult) =>
+        createProductDiagnosticBundle({
+          root: diagnosticRoot,
+          runId: entry.runId,
+          evidence: failedResult.evidence,
+        }),
+      publishSuccess: (completed) => {
+        const bundle = createProductDiagnosticBundle({
+          root: diagnosticRoot,
+          runId: entry.runId,
+          evidence: completed.evidence,
+        });
+        return {
+          report: completed.report,
+          reportPath: join(bundle.runDir, "report.json"),
+          bundle,
+        };
+      },
+    });
+  } finally {
+    diagnosticCaptures.delete(entry.runId);
+    diagnosticAttemptPhases.delete(entry.runId);
+  }
+}
+
+async function diagnose(options) {
+  const plan = resolveProductJourneyPlan(options).map((entry) => ({
+    ...entry,
+    runId: productDiagnosticRunId({
+      journeyId: entry.journey.id,
+      repetition: entry.repetition,
+      now: Date.now(),
+      nonce: randomBytes(4).toString("hex"),
+    }),
+  }));
+  const runs = await runProductJourneyPlan(plan, executeDiagnosticAttempt);
+  const failed = runs.some(({ report }) => report.status !== "passed");
+  const result =
+    runs.length === 1
+      ? { ...runs[0].report, reportPath: runs[0].reportPath, bundle: runs[0].bundle }
+      : {
+          version: 1,
+          status: failed ? "failed" : "passed",
+          runs: runs.map(({ report, reportPath, bundle }) => ({
+            journey: report.journey,
+            repetition: report.repetition,
+            status: report.status,
+            firstBrokenBoundary: report.firstBrokenBoundary,
+            firstUnmeasuredBoundary: report.firstUnmeasuredBoundary,
+            reportPath,
+            bundle,
+          })),
+        };
+  emit(
+    options.json
+      ? result
+      : `Product diagnosis ${result.status}; ${runs.map(({ bundle }) => bundle.runDir).join(", ")}`,
+    options.json,
+  );
+  if (failed) process.exitCode = 1;
 }
 
 function inventory(json) {
@@ -1982,6 +2393,13 @@ function inventory(json) {
         "operation-correlated-drag-settlement",
         "packed-install-first-run",
       ],
+      journeyRegistry: PRODUCT_JOURNEY_REGISTRY,
+      journeyScope: auditProductJourneyScope(),
+      diagnosticBundle: {
+        root: ".tasks/product-diagnostics/<run-id>",
+        files: PRODUCT_DIAGNOSTIC_BUNDLE_FILES,
+        publication: "validated-fsynced-permission-sealed-atomic-rename",
+      },
     },
   };
   emit(json ? report : JSON.stringify(report, null, 2), json);
@@ -1991,6 +2409,7 @@ let ownerStartedAt = Date.now();
 async function owner() {
   ownerStartedAt = Date.now();
   const slug = randomBytes(3).toString("hex");
+  const ownerToken = randomBytes(24).toString("hex");
   let sleepAssertion = null;
   let fleet = null;
   let daemon = null;
@@ -2004,6 +2423,7 @@ async function owner() {
     version: PRODUCT_RIG_STATE_VERSION,
     status: "starting",
     ownerPid: process.pid,
+    ownerToken,
     artifactDir,
     timelinePath,
   };
@@ -2011,46 +2431,125 @@ async function owner() {
     state = { ...state, ...patch };
     writeJsonAtomic(statePath, state);
   };
-  const cleanup = () => {
+  const cleanup = (request = {}) => {
     if (cleanupPromise) return cleanupPromise;
     cleanupPromise = (async () => {
       closing = true;
       ownerAbort.abort();
-      event("cleanup-start");
-      try {
-        if (state.tui) tuiCommand(state, ["stop"], { ignore: true });
-      } catch {
-        // The hosted TUI may already have stopped independently.
-      }
-      await browser?.close().catch(() => undefined);
-      await devServer?.stop().catch(() => undefined);
-      await daemon?.stop().catch(() => undefined);
-      await fleet?.dispose().catch(() => undefined);
-      const acquiredAssertion =
-        sleepAssertion ?? (await sleepAssertionAcquisition?.catch(() => null));
-      await acquiredAssertion?.release().catch(() => undefined);
+      const attempt = Number.isInteger(request.attempt) ? request.attempt : 1;
+      const requestId = request.requestId ?? `internal-${Date.now()}`;
+      event("cleanup-start", { requestId, attempt });
+      const failures = [
+        ...(await collectProductRigCleanupFailures([
+          {
+            subsystem: "tui",
+            run: async () => {
+              if (state.tui) tuiCommand(state, ["stop"]);
+            },
+          },
+          { subsystem: "browser", run: async () => browser?.close() },
+          { subsystem: "dev-server", run: async () => devServer?.stop() },
+          { subsystem: "daemon", run: async () => daemon?.stop() },
+          { subsystem: "fleet", run: async () => fleet?.dispose() },
+          {
+            subsystem: "sleep-assertion",
+            run: async () => {
+              const acquiredAssertion =
+                sleepAssertion ?? (await sleepAssertionAcquisition?.catch(() => null));
+              await acquiredAssertion?.release();
+            },
+          },
+        ])),
+      ];
+      if (Number.isInteger(state.daemon?.pid) && processAlive(state.daemon.pid))
+        failures.push({ subsystem: "daemon", detail: `pid ${state.daemon.pid} remained live` });
+      for (const [subsystem, path] of [
+        ["runtime-root", state.runtimeNamespace?.root],
+        ["tmux-socket", state.runtimeNamespace?.tmuxSocketPath],
+        ["host-tmux-socket", state.runtimeNamespace?.hostTmuxSocketPath],
+        ["daemon-info", state.runtimeNamespace?.daemonInfoDir],
+      ])
+        if (typeof path === "string" && existsSync(path))
+          failures.push({ subsystem, detail: `owned path remained: ${path}` });
+      const passed = failures.length === 0;
+      const ownerFailed = state.status === "failed" || typeof state.failure === "string";
       publish({
-        status: state.status === "failed" ? "failed" : "stopped",
-        stoppedAt: new Date().toISOString(),
+        status: passed ? (ownerFailed ? "failed" : "stopped") : "cleanup-failed",
+        ...(passed ? { stoppedAt: new Date().toISOString() } : {}),
+        cleanup: {
+          version: 1,
+          requestId,
+          attempt,
+          status: passed ? "passed" : "failed",
+          cleanupToken: state.runtimeNamespace?.cleanupToken ?? null,
+          failures,
+          completedAt: new Date().toISOString(),
+        },
         web: null,
       });
-      event("cleanup-complete");
-    })();
+      event(passed ? "cleanup-complete" : "cleanup-failed", { requestId, attempt, failures });
+      return { passed, failures };
+    })().finally(() => {
+      cleanupPromise = null;
+    });
     return cleanupPromise;
   };
   for (const signal of ["SIGINT", "SIGTERM"]) {
-    process.once(signal, () => void cleanup().finally(() => process.exit(0)));
+    process.once(
+      signal,
+      () =>
+        void cleanup({ requestId: `signal-${signal}-${Date.now()}`, attempt: 1 }).then((result) =>
+          process.exit(result.passed ? 0 : 1),
+        ),
+    );
   }
+  let handlingShutdownRequest = false;
+  const shutdownPoller = setInterval(() => {
+    if (handlingShutdownRequest) return;
+    const request = readJson(shutdownRequestPath);
+    if (
+      !request ||
+      request.ownerPid !== process.pid ||
+      request.ownerToken !== ownerToken ||
+      (state.runtimeNamespace?.cleanupToken &&
+        request.cleanupToken !== state.runtimeNamespace.cleanupToken) ||
+      request.requestId === state.cleanup?.requestId
+    )
+      return;
+    handlingShutdownRequest = true;
+    void cleanup(request)
+      .then((result) => {
+        if (result.passed) {
+          clearInterval(shutdownPoller);
+          rmSync(shutdownRequestPath, { force: true });
+          process.exit(typeof state.failure === "string" ? 1 : 0);
+        }
+      })
+      .finally(() => {
+        handlingShutdownRequest = false;
+      });
+  }, 50);
 
   try {
     rmSync(timelinePath, { force: true });
     sleepAssertionAcquisition = acquireProductRigSleepAssertion({ signal: ownerAbort.signal });
     sleepAssertion = await sleepAssertionAcquisition;
-    void sleepAssertion.failure.catch((error) => {
+    void sleepAssertion.failure.catch(async (error) => {
       if (closing) return;
       publish({ status: "failed", failure: error.stack ?? error.message });
       event("failed", { failure: error.message });
-      void cleanup().finally(() => process.exit(1));
+      await settleInternalProductRigCleanup({
+        maxImmediateAttempts: 1,
+        cleanup: (attempt) =>
+          cleanup({ requestId: `sleep-assertion-failure-${Date.now()}`, attempt }),
+        onTerminal: async () => {
+          clearInterval(shutdownPoller);
+          process.exit(1);
+        },
+        onRetryable: async () => {
+          // Keep the token-valid shutdown poller alive for strict cleanup.
+        },
+      });
     });
     event("host-sleep-assertion-ready", {
       kind: sleepAssertion.kind,
@@ -2251,8 +2750,20 @@ async function owner() {
       failure: error instanceof Error ? error.message : String(error),
       ...(daemonOutput ? { daemonOutput } : {}),
     });
-    await cleanup();
-    process.exitCode = 1;
+    await settleInternalProductRigCleanup({
+      maxImmediateAttempts: 2,
+      cleanup: (attempt) =>
+        cleanup({ requestId: `owner-failure-${attempt}-${Date.now()}`, attempt }),
+      onTerminal: async () => {
+        clearInterval(shutdownPoller);
+        process.exitCode = 1;
+      },
+      onRetryable: async () => {
+        // The exact owner must remain alive to accept the controller's final
+        // tokened retry. No later journey can start while this poller survives.
+        process.exitCode = 2;
+      },
+    });
   }
 }
 
@@ -2270,7 +2781,7 @@ try {
     );
   else if (command === "capture") await capture(json);
   else if (command === "smoke") await smoke(json);
-  else if (command === "diagnose") await diagnose(json);
+  else if (command === "diagnose") await diagnose(parseProductDiagnoseOptions(args));
   else if (command === "inventory") inventory(json);
   else if (command === "stop") await stop(json);
   else if (["help", "--help", "-h"].includes(command)) process.stdout.write(usage());

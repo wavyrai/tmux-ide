@@ -40,6 +40,23 @@ pnpm product:testdrive smoke --json
 pnpm product:testdrive stop
 ```
 
+`diagnose` defaults to the historical `runtime-qualification` compatibility
+journey and can repeat that journey in fresh private runtime namespaces:
+
+```bash
+pnpm product:testdrive diagnose --journey runtime-qualification --repeat 3 --json
+```
+
+`--repeat` accepts 1–10 attempts. `inventory --json` lists every required M59.4
+golden journey and its implementation status. Selecting a pending journey (or
+`all` while any journey remains pending) fails before a rig owner starts;
+missing evidence never falls back to the compatibility journey. Every attempted
+executable journey publishes the exact ten-file evidence set once under
+`.tasks/product-diagnostics/<run-id>`. Unavailable visual/state correlations
+are explicit bounded placeholders and keep the report incomplete or failed.
+Published files are owner-read-only, the reproduction script remains
+owner-executable, and the run directory is sealed against later entry changes.
+
 The rig owns exactly one disposable runtime namespace under `/tmp`: one
 non-default tmux socket and target session, one daemon generation, one real
 OpenTUI process hosted in a PTY, and one real Chromium page behind the reviewed
