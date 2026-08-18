@@ -11,6 +11,7 @@ import {
   discoverLiveSessionSummaries,
   buildOverviews,
   buildProjectDetail,
+  type FleetSessionFacts,
   type SessionOverview,
 } from "./discovery.ts";
 import {
@@ -200,6 +201,8 @@ export interface CreateAppOptions {
     readonly sessionName: string;
     readonly paneCount: number;
   }[];
+  /** Injectable daemon-generation-pinned adopted fleet projection. */
+  catalogFleet?: () => FleetSessionFacts[] | null;
   applicationShellAppWindowBackend?: {
     load(
       projectDir: string,
@@ -1040,6 +1043,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     daemon: daemonInstanceIdentity,
     ownerToken: options.remoteAccess?.ownerToken ?? null,
     registry: options.workspaceRegistry ?? getDefaultWorkspaceRegistry(),
+    readFleet: options.catalogFleet,
   });
 
   // The startup readiness ladder: the ordered, typed answer to "what is this

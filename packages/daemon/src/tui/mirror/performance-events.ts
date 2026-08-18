@@ -13,7 +13,34 @@ export interface TuiPerformanceEventSink {
   readonly terminalInputQueueState?: (event: TuiTerminalInputQueueStateEvent) => void;
   /** Diagnostic-only proof of a canonical DEC-mode transition. */
   readonly terminalCanonicalMode?: (event: TuiTerminalCanonicalModeEvent) => void;
+  readonly terminalCanonicalPublication?: (event: TuiTerminalCanonicalPublicationEvent) => void;
+  readonly terminalCanonicalPaint?: (event: TuiTerminalCanonicalPaintEvent) => void;
   readonly beginTerminalInput?: () => TuiTerminalInputTrace;
+}
+
+export interface TuiTerminalCanonicalPublicationEvent {
+  readonly processId: string;
+  readonly clockId: "opentui-performance-now";
+  readonly clockKind: "performance-now";
+  readonly atMicros: number;
+  readonly updateType: "terminal.seed";
+  readonly semanticPaneId: string;
+  readonly generation: string;
+  readonly incarnation: string;
+  readonly revision: number;
+  readonly stateHash: string;
+  readonly cols: number;
+  readonly rows: number;
+  readonly sourceEpoch: number;
+}
+
+export interface TuiTerminalCanonicalPaintEvent extends Omit<
+  TuiTerminalCanonicalPublicationEvent,
+  "updateType"
+> {
+  readonly viewportCols: number;
+  readonly viewportRows: number;
+  readonly writtenRows: readonly number[];
 }
 
 export interface TuiTerminalCanonicalModeEvent {

@@ -569,6 +569,52 @@ describe("semantic pane-stream runtime client", () => {
     expect(settled["runtime-timer"].active).toBe(baseline["runtime-timer"].active);
   });
 
+  it("returns the exact authority snapshot carried by a release receipt", async () => {
+    const socket = new FakeSocket();
+    socket.onSend = (frame) => {
+      if (frame.type === "redeem") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "ready",
+            protocolVersion: 1,
+            daemonInstanceId: INSTANCE,
+            requestId: REQUEST,
+            panes: ["pane.editor"],
+            effectiveViewerMode: "interactive",
+          }),
+        );
+      } else if (frame.type === "authority-release") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "authority-receipt",
+            requestId: frame.requestId,
+            authority: frame.authority,
+            status: "released",
+            lease: null,
+            snapshot: {
+              generation: INSTANCE,
+              session: "alpha",
+              revision: 17,
+              nativeGeometryYieldUntilMs: 0,
+              owners: { input: null, focus: "web:one", geometry: null },
+              clients: [],
+            },
+          }),
+        );
+      }
+    };
+    const client = await openPaneStreamRuntimeClient(
+      options(socket, { requestInitialInputAuthority: false }),
+    );
+
+    await expect(client.releaseAuthority("input")).resolves.toMatchObject({
+      generation: INSTANCE,
+      revision: 17,
+      owners: { input: null, focus: "web:one", geometry: null },
+    });
+    client.close();
+  });
+
   it("resolves only after verified ready and decodes delivery chunks", async () => {
     const socket = new FakeSocket();
     socket.onSend = (frame) => {

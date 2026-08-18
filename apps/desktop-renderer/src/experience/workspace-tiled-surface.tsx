@@ -3,28 +3,17 @@
  *
  * The shape of this surface is the whole scope call. There is ONE layout truth —
  * tmux's — and this renders it rather than keeping a second one beside it.
- *
- * How it is faithful by construction, which is the part worth understanding
- * before changing anything here:
- *
  *  - A desktop interactive attachment is a real `tmux attach-session` client
  *    pinned to ONE window, and tmux paints that whole window into it, pane
  *    borders and all. So the tiling on screen is not this view's arithmetic; it
- *    is tmux's, arriving as bytes. Nothing here can put a pane in the wrong
- *    place, because nothing here places a pane.
+ *    is tmux's, arriving as bytes; this view never places a pane.
  *  - Interactive attachment ownership is WINDOW-keyed in the daemon's lease
- *    manager, so a second interactive attachment to another pane of the same
- *    window is refused. That is not a limitation this view works around — it is
- *    the reason the single-attachment shape is the right one.
- *  - What this view does own is the CHROME: which pane a click belongs to, where
+ *    manager, so a second attachment in one window is refused; that makes the
+ *    single-attachment shape the right one.
+ *  - What this view owns is the CHROME: which pane a click belongs to, where
  *    a context menu opens, where a border can be dragged. All of it is derived
- *    from the pane-stream layout frame by the pure functions in
- *    `workspace-layout-tiles.ts`, and all of it is positioned over the grid the
+ *    from `workspace-layout-tiles.ts`, and all of it is positioned over the grid the
  *    terminal actually rendered — measured from the DOM, never assumed.
- *
- * The overlay covers no output. tmux spends exactly one cell on the border
- * between two panes, and the drag handles plus persistent panel header sit on
- * those reserved cells; a tile's output region stays transparent.
  */
 import {
   For,
@@ -439,16 +428,24 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
       }));
     }
     return (props.fallbackWindows ?? []).map((window) => ({
-      semanticWindowId: null,
+      semanticWindowId: window.key,
       label: window.label,
       active: optimisticProjection().focusPane
         ? window.panes.includes(optimisticProjection().focusPane!)
         : window.active,
       paneCount: window.panes.length,
+      semanticPaneIds: [...window.panes].sort(),
       zoomed: false,
       addressPane: window.panes[0] ?? null,
     }));
   });
+  const diagnosticWindowResourceId = (tab: WindowTab): string | null => {
+    const paneIdentity = JSON.stringify([...tab.semanticPaneIds].sort());
+    const matches = (props.fallbackWindows ?? []).filter(
+      (window) => JSON.stringify([...window.panes].sort()) === paneIdentity,
+    );
+    return matches.length === 1 ? matches[0]!.key : null;
+  };
   const currentFrame = createMemo<LayoutFrame | null>(() => {
     const selected = optimisticProjection().focusPane;
     return (
@@ -1582,6 +1579,9 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
               role="tab"
               class="window-tabs__tab"
               data-window-tab={tab().semanticWindowId ?? ""}
+              data-window-resource-id={diagnosticWindowResourceId(tab()) ?? ""}
+              data-semantic-pane-ids={JSON.stringify(tab().semanticPaneIds)}
+              data-pane-count={tab().paneCount}
               data-active={tab().active}
               data-identity-icon={tab().addressPane ? iconIdFor(tab().addressPane!) : "terminals"}
               aria-selected={tab().active}

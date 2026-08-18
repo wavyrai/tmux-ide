@@ -174,6 +174,208 @@ describe("WorkspaceEventSupervisor", () => {
     expect(socket.close).toHaveBeenCalledTimes(1);
   });
 
+  it("serializes the full terminal, shell, and catalog interest union on one socket", async () => {
+    const socket = new FakeSocket();
+    const supervisor = createWorkspaceEventSupervisor({
+      socket,
+      daemon,
+      workspaceName: "alpha",
+      sessionName: "tmux-alpha",
+      fetchTerminalRuntimeInventory: async () => resource(0),
+    });
+    const catalogInvalidated = vi.fn();
+    const catalog = supervisor.connectWorkspaceCatalog(catalogInvalidated);
+    const shellVerified = vi.fn();
+    supervisor.connectApplicationShell({
+      onVerifiedOpen: shellVerified,
+      onInvalidate: vi.fn(),
+      onMalformedFrame: vi.fn(),
+      onPeerMismatch: vi.fn(),
+      onProtocolError: vi.fn(),
+      onClose: vi.fn(),
+      onError: vi.fn(),
+    });
+    socket.emit("open");
+    socket.frame({ type: "hello", daemon, sessions: [], eventSequence: 0 });
+    await tick();
+    expect(socket.sent).toHaveLength(1);
+    expect(socket.sent[0]).toMatchObject({
+      interests: [{ resource: "terminal-runtime-inventory", workspaceName: "alpha" }],
+      interestRevision: 1,
+    });
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    await tick();
+    expect(socket.sent).toHaveLength(2);
+    expect(socket.sent[1]).toMatchObject({
+      interests: [
+        { resource: "terminal-runtime-inventory", workspaceName: "alpha" },
+        { resource: "application-shell", workspaceName: "alpha" },
+        { resource: "workspace-catalog", workspaceName: null },
+      ],
+      interestRevision: 2,
+    });
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 2,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    await catalog.ready;
+    await tick();
+    expect(shellVerified).toHaveBeenCalledTimes(1);
+
+    socket.frame({
+      type: "resource.changed",
+      sequence: 1,
+      workspaceName: null,
+      resource: "workspace-catalog",
+      revision: 1,
+      causeOperationId: null,
+    });
+    expect(catalogInvalidated).toHaveBeenCalledTimes(1);
+    socket.frame({
+      type: "snapshot-required",
+      afterSequence: 1,
+      oldestAvailableSequence: 2,
+      currentSequence: 2,
+      reason: "journal-gap",
+    });
+    expect(catalogInvalidated).toHaveBeenCalledTimes(2);
+    socket.frame({
+      type: "resource.changed",
+      sequence: 4,
+      workspaceName: "alpha",
+      resource: "terminal-runtime-inventory",
+      revision: 4,
+      causeOperationId: null,
+    });
+    expect(catalogInvalidated).toHaveBeenCalledTimes(3);
+    catalog.close();
+    socket.frame({
+      type: "resource.changed",
+      sequence: 5,
+      workspaceName: null,
+      resource: "workspace-catalog",
+      revision: 5,
+      causeOperationId: null,
+    });
+    expect(catalogInvalidated).toHaveBeenCalledTimes(3);
+    supervisor.dispose();
+  });
+
+  it("reduces an active semantic supervisor to catalog-only authority", async () => {
+    const socket = new FakeSocket();
+    const supervisor = createWorkspaceEventSupervisor({
+      socket,
+      daemon,
+      workspaceName: "alpha",
+      sessionName: "tmux-alpha",
+      fetchTerminalRuntimeInventory: async () => resource(0),
+    });
+    const invalidated = vi.fn();
+    const catalog = supervisor.connectWorkspaceCatalog(invalidated);
+    supervisor.connectApplicationShell({
+      onVerifiedOpen: vi.fn(),
+      onInvalidate: vi.fn(),
+      onMalformedFrame: vi.fn(),
+      onPeerMismatch: vi.fn(),
+      onProtocolError: vi.fn(),
+      onClose: vi.fn(),
+      onError: vi.fn(),
+    });
+    socket.emit("open");
+    socket.frame({ type: "hello", daemon, sessions: [], eventSequence: 0 });
+    await tick();
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    await tick();
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 2,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    await catalog.ready;
+
+    const selected = supervisor.selectWorkspaceCatalogOnly();
+    await tick();
+    expect(socket.sent[2]).toMatchObject({
+      type: "subscribe",
+      interestRevision: 3,
+      interests: [{ resource: "workspace-catalog", workspaceName: null }],
+    });
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 3,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    await selected;
+    socket.frame({
+      type: "resource.changed",
+      sequence: 1,
+      workspaceName: null,
+      resource: "workspace-catalog",
+      revision: 1,
+      causeOperationId: null,
+    });
+    expect(invalidated).toHaveBeenCalledOnce();
+    supervisor.dispose();
+  });
+
+  it("fences a pending terminal install before settling catalog-only fallback", async () => {
+    const socket = new FakeSocket();
+    const supervisor = createWorkspaceEventSupervisor({
+      socket,
+      daemon,
+      workspaceName: "alpha",
+      sessionName: "tmux-alpha",
+      fetchTerminalRuntimeInventory: async () => resource(0),
+    });
+    const catalog = supervisor.connectWorkspaceCatalog(vi.fn());
+    socket.emit("open");
+    socket.frame({ type: "hello", daemon, sessions: [], eventSequence: 0 });
+    await tick();
+    expect(socket.sent).toHaveLength(1);
+    expect(socket.sent[0]).toMatchObject({
+      interestRevision: 1,
+      interests: [{ resource: "terminal-runtime-inventory" }],
+    });
+    const selected = supervisor.selectWorkspaceCatalogOnly();
+    await tick();
+    expect(socket.sent).toHaveLength(1);
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    await tick();
+    expect(socket.sent).toHaveLength(2);
+    expect(socket.sent[1]).toMatchObject({
+      interestRevision: 2,
+      interests: [{ resource: "workspace-catalog", workspaceName: null }],
+    });
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 2,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    await Promise.all([catalog.ready, selected]);
+    expect(socket.sent).toHaveLength(2);
+    supervisor.dispose();
+  });
+
   it("rejects adoption when topology changes after clean completion", async () => {
     const socket = new FakeSocket();
     const supervisor = createWorkspaceEventSupervisor({

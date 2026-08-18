@@ -176,6 +176,9 @@ export function sameIdentity(
 export interface DevWorkspaceCatalogEntry {
   readonly workspaceName: string;
   readonly sessionName: string;
+  readonly source: "project" | "workspace";
+  readonly availability: "live" | "stopped";
+  readonly paneCount: number;
 }
 
 function shellEventsForSession(
@@ -183,17 +186,19 @@ function shellEventsForSession(
   sessionName: string,
 ): DesktopDaemonEvent[] {
   return catalog
-    .filter((entry) => entry.sessionName === sessionName)
+    .filter((entry) => entry.availability === "live" && entry.sessionName === sessionName)
     .map((entry) => ({ type: "application-shell.changed", workspaceName: entry.workspaceName }));
 }
 
 function shellEventsForEveryWorkspace(
   catalog: readonly DevWorkspaceCatalogEntry[],
 ): DesktopDaemonEvent[] {
-  return catalog.map((entry) => ({
-    type: "application-shell.changed",
-    workspaceName: entry.workspaceName,
-  }));
+  return catalog
+    .filter((entry) => entry.availability === "live")
+    .map((entry) => ({
+      type: "application-shell.changed",
+      workspaceName: entry.workspaceName,
+    }));
 }
 
 /**
@@ -739,9 +744,18 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         capabilityError("daemon-identity-mismatch", "The daemon generation changed."),
       );
     }
-    catalogCache = parsed.data.intents
-      .filter(({ availability }) => availability === "live")
-      .map(({ workspaceName, sessionName }) => ({ workspaceName, sessionName }));
+    const liveBySession = new Map(
+      parsed.data.liveSessions.map((session) => [session.sessionName, session] as const),
+    );
+    catalogCache = parsed.data.intents.map(
+      ({ workspaceName, sessionName, source, availability }) => ({
+        workspaceName,
+        sessionName,
+        source,
+        availability,
+        paneCount: liveBySession.get(sessionName)?.paneCount ?? 0,
+      }),
+    );
     sendEventSubscriptionDelta();
     return catalogCache;
   }
@@ -751,7 +765,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     signal?: AbortSignal,
   ): Promise<DevWorkspaceCatalogEntry> {
     const entry = (await workspaceCatalog(signal)).find(
-      (candidate) => candidate.workspaceName === workspaceName,
+      (candidate) => candidate.workspaceName === workspaceName && candidate.availability === "live",
     );
     if (!entry) {
       throw new DevHostFailure(
@@ -827,7 +841,10 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     );
     return new Set(
       catalogCache
-        .filter(({ workspaceName }) => workspaces.has(workspaceName))
+        .filter(
+          ({ workspaceName, availability }) =>
+            availability === "live" && workspaces.has(workspaceName),
+        )
         .map(({ sessionName }) => sessionName),
     );
   }
@@ -1393,9 +1410,15 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
       case "listWorkspaces":
         try {
           await loadIdentity(signal);
-          const workspaces = (await workspaceCatalog(signal)).map(({ workspaceName }) => ({
-            workspaceName,
-          }));
+          const workspaces = (await workspaceCatalog(signal)).map(
+            ({ workspaceName, sessionName, source, availability, paneCount }) => ({
+              workspaceName,
+              sessionName,
+              source,
+              availability,
+              paneCount,
+            }),
+          );
           return { status: "ok", daemon: requireIdentity(), workspaces };
         } catch (error) {
           return { status: "error", error: failureOf(error) };

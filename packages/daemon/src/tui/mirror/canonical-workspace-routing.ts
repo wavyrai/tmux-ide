@@ -24,17 +24,21 @@ function isTimeout(error: unknown): boolean {
 export async function fetchCanonicalWorkspaceRouting(
   daemon: CanonicalDaemonInfo,
   request: typeof fetch = fetch,
+  signal?: AbortSignal,
 ): Promise<WorkspaceCatalogResourceV2> {
   const baseUrl = canonicalDaemonUrl("http", daemon.bindHostname, daemon.port);
   let response: Response | null = null;
   for (let attempt = 0; attempt < WORKSPACE_CATALOG_ATTEMPTS; attempt += 1) {
     try {
+      const timeout = AbortSignal.timeout(WORKSPACE_CATALOG_ATTEMPT_TIMEOUT_MS);
       response = await request(`${baseUrl}/api/resources/workspace-catalog?version=2`, {
-        signal: AbortSignal.timeout(WORKSPACE_CATALOG_ATTEMPT_TIMEOUT_MS),
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+        cache: "no-store",
       });
       break;
     } catch (error) {
-      if (!isTimeout(error) || attempt === WORKSPACE_CATALOG_ATTEMPTS - 1) throw error;
+      if (signal?.aborted || !isTimeout(error) || attempt === WORKSPACE_CATALOG_ATTEMPTS - 1)
+        throw error;
     }
   }
   if (!response) throw new Error("workspace catalog did not return a response");

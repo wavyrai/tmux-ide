@@ -10,6 +10,7 @@ import {
   type TerminalFirstDaemonTransport,
 } from "@tmux-ide/daemon-client/direct-application-shell-transport";
 import type { PreparedTerminalRuntimeInventory } from "@tmux-ide/daemon-client/workspace-event-supervisor";
+import type { WorkspaceClientCatalogPort } from "@tmux-ide/daemon-client/workspace-client-types";
 import { WebSocket } from "ws";
 
 import {
@@ -38,6 +39,7 @@ export interface OpenTuiApplicationShellConnection {
   readonly workspaceName: string;
   readonly target: DesktopApplicationShellTarget;
   readonly transport: TerminalFirstDaemonTransport;
+  readonly catalog: WorkspaceClientCatalogPort;
   readonly routing: OpenTuiVerifiedRoutingContext | null;
   /** Terminal-first observer barrier/read. Settled state is one-shot and generation-fenced. */
   prepareTerminalRuntimeInventory(): Promise<PreparedTerminalRuntimeInventory | null>;
@@ -182,6 +184,65 @@ export async function resolveOpenTuiApplicationShellConnection(
     selectApplicationShellFallback: (reason) =>
       baseTransport.selectApplicationShellFallback(reason),
     refreshTerminalRuntimeInventory: () => baseTransport.refreshTerminalRuntimeInventory(),
+    connectWorkspaceCatalog: (value, invalidate) =>
+      baseTransport.connectWorkspaceCatalog(value, invalidate),
+  };
+  let catalogEventConnection: ReturnType<
+    TerminalFirstDaemonTransport["connectWorkspaceCatalog"]
+  > | null = null;
+  const awaitCatalogBarrier = (ready: Promise<void>, signal: AbortSignal): Promise<void> =>
+    new Promise((resolve, reject) => {
+      const aborted = (): void => reject(signal.reason);
+      if (signal.aborted) {
+        reject(signal.reason);
+        return;
+      }
+      signal.addEventListener("abort", aborted, { once: true });
+      void ready.then(
+        () => {
+          signal.removeEventListener("abort", aborted);
+          resolve();
+        },
+        (error: unknown) => {
+          signal.removeEventListener("abort", aborted);
+          reject(error);
+        },
+      );
+    });
+  const catalogPort: WorkspaceClientCatalogPort = {
+    async read(value, signal) {
+      const safeTarget = transport.validateTarget(value);
+      if (
+        safeTarget.daemon.instanceId !== target.daemon.instanceId ||
+        safeTarget.workspaceName !== target.workspaceName
+      )
+        throw new Error("WorkspaceClient catalog read escaped its generation target");
+      const connection = catalogEventConnection;
+      if (!connection) throw new Error("WorkspaceClient catalog read has no event barrier");
+      await awaitCatalogBarrier(connection.ready, signal);
+      if (signal.aborted) throw signal.reason;
+      return dependencies.fetchCanonicalWorkspaceRouting(daemon, fetch, signal);
+    },
+    subscribe(value, invalidate) {
+      const safeTarget = transport.validateTarget(value);
+      if (
+        safeTarget.daemon.instanceId !== target.daemon.instanceId ||
+        safeTarget.workspaceName !== target.workspaceName
+      )
+        throw new Error("WorkspaceClient catalog subscription escaped its generation target");
+      catalogEventConnection?.close();
+      const connection = transport.connectWorkspaceCatalog(safeTarget, invalidate);
+      catalogEventConnection = connection;
+      let closed = false;
+      return {
+        close() {
+          if (closed) return;
+          closed = true;
+          if (catalogEventConnection === connection) catalogEventConnection = null;
+          connection.close();
+        },
+      };
+    },
   };
   const prepareTerminalRuntimeInventory = (): Promise<PreparedTerminalRuntimeInventory | null> => {
     if (disposed) return Promise.resolve(null);
@@ -242,6 +303,7 @@ export async function resolveOpenTuiApplicationShellConnection(
     workspaceName,
     target,
     transport,
+    catalog: catalogPort,
     routing,
     prepareTerminalRuntimeInventory,
     dispose: () => {
@@ -252,6 +314,8 @@ export async function resolveOpenTuiApplicationShellConnection(
       );
       terminalPreparation?.promise.then((prepared) => prepared?.dispose()).catch(() => undefined);
       terminalPreparation = null;
+      catalogEventConnection?.close();
+      catalogEventConnection = null;
       transport.disposeEventSupervisor();
       routing?.retire();
     },

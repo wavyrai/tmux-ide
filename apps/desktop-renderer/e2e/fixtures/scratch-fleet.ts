@@ -19,6 +19,7 @@ const MAX_UNIX_SOCKET_PATH = 103;
 
 export interface ScratchFleet {
   readonly root: string;
+  readonly projectDir: string;
   readonly socketPath: string;
   readonly daemonInfoDir: string;
   readonly environment: Readonly<Record<string, string>>;
@@ -56,6 +57,10 @@ export interface CreateScratchFleetOptions {
   readonly sessions: number;
   /** Distinguishes concurrent fleets in tmux session names and temp paths. */
   readonly slug: string;
+  /** Leave sessions ordinary until the public app adopts them. Defaults true. */
+  readonly adoptSessions?: boolean;
+  /** Safe setup-only marker printed once before the first interactive shell. */
+  readonly initialPaneMarker?: string;
 }
 
 /**
@@ -119,6 +124,10 @@ export async function createScratchFleet(
   let serverPid: number | null = null;
 
   const createSession = (name: string): string => {
+    const firstPaneCommand =
+      serverPid === null && options.initialPaneMarker
+        ? `printf '${options.initialPaneMarker}\\n'; exec sh -i`
+        : "exec sh -i";
     if (serverPid === null) {
       runTmux([
         "-f",
@@ -131,18 +140,23 @@ export async function createScratchFleet(
         projectDir,
         "-n",
         "one",
-        "exec sh -i",
+        firstPaneCommand,
       ]);
       serverPid = Number(runTmux(["display-message", "-p", "-t", name, "#{pid}"]));
     } else {
       runTmux(["new-session", "-d", "-s", name, "-c", projectDir, "-n", "one", "exec sh -i"]);
     }
     runTmux(["new-window", "-d", "-t", `=${name}:`, "-c", projectDir, "-n", "two", "exec sh -i"]);
-    // The durable adopt stamp: the fleet catalog enumerates adopted sessions only.
-    runTmux(["set-option", "-t", name, "@tmux_ide_adopted", "1"]);
+    // Most tests start with an adopted fleet. Cold public-entry journeys leave
+    // this absent so adoption is product behavior rather than harness setup.
+    if (options.adoptSessions !== false)
+      runTmux(["set-option", "-t", name, "@tmux_ide_adopted", "1"]);
     if (!names.includes(name)) names.push(name);
     return name;
   };
+
+  if (options.initialPaneMarker && !/^RIG_[A-Z0-9_]{8,96}$/u.test(options.initialPaneMarker))
+    throw new Error("scratch initial pane marker must be a bounded safe ProductRig token");
 
   for (let index = 0; index < options.sessions; index += 1) {
     createSession(sessionName(options.slug, index));
@@ -167,6 +181,7 @@ export async function createScratchFleet(
 
   return {
     root,
+    projectDir,
     socketPath,
     daemonInfoDir,
     sessionNames: names,

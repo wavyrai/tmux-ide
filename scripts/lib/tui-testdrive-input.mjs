@@ -8,6 +8,7 @@ export const MAX_INPUT_TIMEOUT_MS = 5_000;
 const ESC = "\u001b";
 const DOCUMENT_KEYS = new Set(["version", "kind", "timeoutMs"]);
 const KEYS_BY_KIND = {
+  key: new Set([...DOCUMENT_KEYS, "key"]),
   paste: new Set([...DOCUMENT_KEYS, "text"]),
   focus: new Set([...DOCUMENT_KEYS, "state"]),
   "application-mouse": new Set([...DOCUMENT_KEYS, "action", "x", "y", "button", "modifiers"]),
@@ -103,6 +104,11 @@ export function parseTestdriveInputDocument(source) {
   const common = { version: 1, kind: object.kind, timeoutMs: timeout(object.timeoutMs) };
 
   switch (object.kind) {
+    case "key": {
+      if (typeof object.key !== "string" || !/^[\x20-\x7e]$/u.test(object.key))
+        inputError("key must be one printable ASCII character");
+      return { ...common, kind: "key", key: object.key };
+    }
     case "paste": {
       if (typeof object.text !== "string") inputError("paste text must be a string");
       if (object.text.includes(`${ESC}[201~`)) {
@@ -248,6 +254,8 @@ export function selectionInputPhases(from, to) {
 
 export function translateTestdriveInput(command, { capabilities, geometry } = {}) {
   switch (command.kind) {
+    case "key":
+      return { phases: [{ bytes: command.key, delayMs: 0 }] };
     case "paste":
       requireCapability(capabilities, "bracketedPaste", "bracketed paste");
       return { phases: [{ bytes: `${ESC}[200~${command.text}${ESC}[201~`, delayMs: 0 }] };

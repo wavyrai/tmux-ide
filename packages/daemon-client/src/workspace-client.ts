@@ -1196,7 +1196,7 @@ export function createWorkspaceClient<
       return runtime?.requestAuthority?.(authorityKind) ?? Promise.resolve(null);
     },
     releaseAuthority(authorityKind: SessionRuntimeAuthorityKind) {
-      return runtime?.releaseAuthority?.(authorityKind) ?? Promise.resolve();
+      return runtime?.releaseAuthority?.(authorityKind) ?? Promise.resolve(null);
     },
     dispose() {
       if (disposePromise) return disposePromise;

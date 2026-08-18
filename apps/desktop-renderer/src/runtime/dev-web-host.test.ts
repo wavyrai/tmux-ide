@@ -15,8 +15,20 @@ afterEach(() => {
 });
 
 const CATALOG: readonly DevWorkspaceCatalogEntry[] = [
-  { workspaceName: "alpha", sessionName: "alpha-session" },
-  { workspaceName: "beta", sessionName: "beta-session" },
+  {
+    workspaceName: "alpha",
+    sessionName: "alpha-session",
+    source: "workspace",
+    availability: "live",
+    paneCount: 1,
+  },
+  {
+    workspaceName: "beta",
+    sessionName: "beta-session",
+    source: "workspace",
+    availability: "live",
+    paneCount: 1,
+  },
 ];
 
 const IDENTITY: DaemonInstanceIdentity = {
@@ -196,7 +208,7 @@ describe("development web host route keying", () => {
    * wrong route key is a silent 404 rather than a typed refusal — exactly the
    * failure this proves cannot be chosen per call site any more.
    */
-  function recordingHost() {
+  function recordingHost(catalog: readonly DevWorkspaceCatalogEntry[] = CATALOG) {
     const paths: string[] = [];
     const fetchImpl = vi.fn(async (input: string | URL) => {
       const url = new URL(String(input));
@@ -212,17 +224,20 @@ describe("development web host route keying", () => {
             ? {
                 version: 2,
                 daemon: IDENTITY,
-                intents: CATALOG.map((entry) => ({
-                  ...entry,
-                  source: "workspace",
-                  availability: "live",
-                })),
-                liveSessions: CATALOG.map(({ sessionName }, index) => ({
+                intents: catalog.map(({ workspaceName, sessionName, source, availability }) => ({
+                  workspaceName,
                   sessionName,
-                  fleetSessionId:
-                    index === 0 ? "session.aaaaaaaaaaaaaaaaaaaa" : "session.bbbbbbbbbbbbbbbbbbbb",
-                  paneCount: 1,
+                  source,
+                  availability,
                 })),
+                liveSessions: catalog
+                  .filter(({ availability }) => availability === "live")
+                  .map(({ sessionName }, index) => ({
+                    sessionName,
+                    fleetSessionId:
+                      index === 0 ? "session.aaaaaaaaaaaaaaaaaaaa" : "session.bbbbbbbbbbbbbbbbbbbb",
+                    paneCount: 1,
+                  })),
               }
             : { unreadable: true };
       return {
@@ -244,6 +259,33 @@ describe("development web host route keying", () => {
     expect(paths.some((path) => path.startsWith("/api/project/alpha/application-shell"))).toBe(
       false,
     );
+    host.dispose();
+  });
+
+  it("preserves the complete generation-fenced V2 workspace summary", async () => {
+    const summaries = [
+      CATALOG[0]!,
+      {
+        ...CATALOG[1]!,
+        source: "project" as const,
+        availability: "stopped" as const,
+        paneCount: 0,
+      },
+    ];
+    const { host } = recordingHost(summaries);
+    await expect(host.daemon.listWorkspaces()).resolves.toEqual({
+      status: "ok",
+      daemon: IDENTITY,
+      workspaces: summaries.map(
+        ({ workspaceName, sessionName, source, availability, paneCount }) => ({
+          workspaceName,
+          sessionName,
+          source,
+          availability,
+          paneCount,
+        }),
+      ),
+    });
     host.dispose();
   });
 
@@ -279,10 +321,11 @@ describe("development web host route keying", () => {
             JSON.stringify({
               version: 2,
               daemon: IDENTITY,
-              intents: CATALOG.map((entry) => ({
-                ...entry,
-                source: "workspace",
-                availability: "live",
+              intents: CATALOG.map(({ workspaceName, sessionName, source, availability }) => ({
+                workspaceName,
+                sessionName,
+                source,
+                availability,
               })),
               liveSessions: CATALOG.map(({ sessionName }, index) => ({
                 sessionName,

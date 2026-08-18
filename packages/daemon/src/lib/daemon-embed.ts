@@ -716,6 +716,7 @@ async function startHttpServer({
   peekTerminalAttachmentRuntime,
   paneStreamRuntime,
   catalogLiveSessions,
+  catalogFleet,
 }: {
   sessionName: string;
   requestedPort: number;
@@ -747,6 +748,7 @@ async function startHttpServer({
     readonly sessionName: string;
     readonly paneCount: number;
   }[];
+  catalogFleet: () => ReturnType<typeof readAdoptedFleet>;
 }): Promise<{
   server: Server;
   sockets: Set<Socket>;
@@ -802,6 +804,7 @@ async function startHttpServer({
     applicationShellInventoryBackend: terminalInventoryRuntime,
     startupReadinessAttachmentBackend: terminalInventoryRuntime,
     catalogLiveSessions,
+    catalogFleet,
   });
   app.get("/api/daemon/health", (c: { json: (body: unknown, status?: number) => Response }) => {
     return c.json({
@@ -1296,6 +1299,7 @@ export async function startEmbeddedDaemon(
         peekTerminalAttachmentRuntime,
         paneStreamRuntime,
         catalogLiveSessions: () => discoverLiveSessionSummaries(catalogTmuxRunner),
+        catalogFleet: () => readAdoptedFleet(workspaceRegistry, catalogTmuxRunner),
       });
     } catch (error) {
       await Promise.allSettled([

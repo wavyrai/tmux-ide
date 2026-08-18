@@ -104,7 +104,9 @@ export interface OpenTuiSessionRuntimeLane {
   requestAuthority(
     authority: SessionRuntimeAuthorityKind,
   ): Promise<SessionRuntimeAuthorityLease | null>;
-  releaseAuthority(authority: SessionRuntimeAuthorityKind): Promise<void>;
+  releaseAuthority(
+    authority: SessionRuntimeAuthorityKind,
+  ): Promise<SessionRuntimeAuthoritySnapshot>;
   close(): void;
 }
 

@@ -586,6 +586,28 @@ describe("production terminal composition", () => {
     );
     expect(tabLabels.length).toBeGreaterThanOrEqual(2);
     expect(tabLabels.join(" ")).toContain("Logs shell");
+    const diagnosticWindows = [...root.querySelectorAll<HTMLElement>(".window-tabs__tab")].map(
+      (tab) => ({
+        windowResourceId: tab.dataset.windowResourceId,
+        semanticPaneIds: JSON.parse(tab.dataset.semanticPaneIds ?? "null"),
+        paneCount: tab.dataset.paneCount,
+        active: tab.dataset.active,
+      }),
+    );
+    expect(diagnosticWindows).toEqual([
+      {
+        windowResourceId: "pane.shell",
+        semanticPaneIds: ["pane.shell"],
+        paneCount: "1",
+        active: "true",
+      },
+      {
+        windowResourceId: "pane.logs",
+        semanticPaneIds: ["pane.logs"],
+        paneCount: "1",
+        active: "false",
+      },
+    ]);
     // Bug this catches: an unattachable pane is offered as though it were a
     // window a click could reach, and the click can only fail.
     expect(tabLabels.join(" ")).not.toContain("Unavailable shell");

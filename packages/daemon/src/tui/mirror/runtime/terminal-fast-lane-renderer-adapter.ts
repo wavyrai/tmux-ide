@@ -15,6 +15,7 @@ import {
 } from "../semantic-pane-render-source.ts";
 import type { PaneScopedTerminalAdapter } from "./pane-scoped-terminal-surface.tsx";
 import { currentTuiPerformanceEventSink } from "../performance-events.ts";
+import type { TuiTerminalCanonicalPublicationEvent } from "../performance-events.ts";
 import type { CausalCellClientLedger } from "./causal-cell-client-ledger.ts";
 
 interface PaneRendererInterest {
@@ -25,6 +26,7 @@ interface PaneRendererInterest {
   state: TerminalReplicaState | null;
   version: number;
   pendingTrace: TerminalPaintTrace | null;
+  pendingSeedDiagnostic: TuiTerminalCanonicalPublicationEvent | null;
 }
 
 /**
@@ -125,6 +127,7 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     const retained = this.#panes.get(paneId);
     if (retained) return retained;
     const state = this.#lane.paneState(paneId);
+    const lastAcceptedUpdateType = this.#lane.paneLastAcceptedUpdateType(paneId);
     const dirtyRows = new Set<number>();
     for (let row = 0; row < (state?.snapshot?.rows ?? 0); row += 1) dirtyRows.add(row);
     const interest: PaneRendererInterest = {
@@ -135,7 +138,11 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
       state,
       version: state ? 1 : 0,
       pendingTrace: null,
+      pendingSeedDiagnostic: null,
     };
+    if (lastAcceptedUpdateType === "terminal.seed" && state?.snapshot) {
+      this.#noteSeedDiagnostic(interest, state, paneId);
+    }
     this.#panes.set(paneId, interest);
     return interest;
   }
@@ -144,6 +151,9 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     if (this.#disposed || publication.address.semanticPaneId !== interest.paneId) return;
     const previous = interest.state?.snapshot ?? null;
     const next = publication.state.snapshot;
+    if (publication.update.type !== "terminal.seed") interest.pendingSeedDiagnostic = null;
+    else if (next)
+      this.#noteSeedDiagnostic(interest, publication.state, publication.address.semanticPaneId);
     interest.state = publication.state;
     const canonicalModeSink = currentTuiPerformanceEventSink()?.terminalCanonicalMode;
     if (canonicalModeSink && next && previous?.modes.wraparound !== next.modes.wraparound) {
@@ -224,6 +234,37 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     }
   }
 
+  #noteSeedDiagnostic(
+    interest: PaneRendererInterest,
+    state: TerminalReplicaState,
+    semanticPaneId: string,
+  ): void {
+    const sink = currentTuiPerformanceEventSink()?.terminalCanonicalPublication;
+    const snapshot = state.snapshot;
+    if (!sink || !snapshot) return;
+    const event = Object.freeze({
+      processId: `opentui:${process.pid}`,
+      clockId: "opentui-performance-now" as const,
+      clockKind: "performance-now" as const,
+      atMicros: Math.floor(performance.now() * 1_000),
+      updateType: "terminal.seed" as const,
+      semanticPaneId,
+      generation: state.generation,
+      incarnation: state.incarnation,
+      revision: state.revision,
+      stateHash: state.hash,
+      cols: snapshot.cols,
+      rows: snapshot.rows,
+      sourceEpoch: this.#sourceEpoch,
+    });
+    interest.pendingSeedDiagnostic = event;
+    try {
+      sink(event);
+    } catch {
+      // Opt-in diagnostics never own canonical publication.
+    }
+  }
+
   #snapshot(paneId: string): TerminalReplicaSnapshot | null {
     return this.#panes.get(paneId)?.state?.snapshot ?? null;
   }
@@ -240,10 +281,14 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
   ): TerminalPaintTrace | null {
     const interest = this.#panes.get(paneId);
     const snapshot = interest?.state?.snapshot ?? null;
+    const seedPaintDiagnostic = currentTuiPerformanceEventSink()?.terminalCanonicalPaint;
     const forced = options.forceRows ? new Set(options.forceRows) : null;
     const full = options.full || scrollOffset > 0 || snapshot === null;
     let paintedCanonicalChange = false;
-    const writtenRows = this.#causalCellLedger ? new Set<number>() : null;
+    const writtenRows =
+      this.#causalCellLedger || (seedPaintDiagnostic && interest?.pendingSeedDiagnostic)
+        ? new Set<number>()
+        : null;
     for (let row = 0; row < height; row += 1) {
       if (!full && !interest?.dirtyRows.has(row) && !forced?.has(row)) continue;
       writtenRows?.add(row);
@@ -277,6 +322,39 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     if (interest && paintedCanonicalChange) {
       this.#paintedCanonicalSnapshot = true;
       interest.pendingTrace = null;
+      const seed = interest.pendingSeedDiagnostic;
+      interest.pendingSeedDiagnostic = null;
+      if (
+        seedPaintDiagnostic &&
+        seed &&
+        writtenRows &&
+        seed.generation === interest.state?.generation &&
+        seed.incarnation === interest.state.incarnation &&
+        seed.revision === interest.state.revision &&
+        seed.stateHash === interest.state.hash
+      ) {
+        try {
+          seedPaintDiagnostic({
+            processId: seed.processId,
+            clockId: seed.clockId,
+            clockKind: seed.clockKind,
+            atMicros: Math.floor(performance.now() * 1_000),
+            semanticPaneId: seed.semanticPaneId,
+            generation: seed.generation,
+            incarnation: seed.incarnation,
+            revision: seed.revision,
+            stateHash: seed.stateHash,
+            cols: seed.cols,
+            rows: seed.rows,
+            sourceEpoch: seed.sourceEpoch,
+            viewportCols: width,
+            viewportRows: height,
+            writtenRows: Object.freeze([...writtenRows]),
+          });
+        } catch {
+          // Opt-in diagnostics never own canonical paint.
+        }
+      }
       if (this.#causalCellLedger && snapshot && writtenRows) {
         this.#causalCellLedger.notePaint({
           semanticPaneId: paneId,

@@ -93,6 +93,157 @@ function paint(adapter: TerminalFastLaneRendererAdapter, paneId: string) {
 }
 
 describe("TerminalFastLaneRendererAdapter", () => {
+  it("qualifies a retained seed accepted before the renderer mounts", () => {
+    const publications: Array<Record<string, unknown>> = [];
+    const paints: Array<Record<string, unknown>> = [];
+    const uninstall = installTuiPerformanceEventSink({
+      frame: () => undefined,
+      terminalPaint: () => undefined,
+      terminalDelivery: () => undefined,
+      terminalCanonicalPublication: (event) => publications.push(event),
+      terminalCanonicalPaint: (event) => paints.push(event),
+    });
+    const source = new Source();
+    const lane = createTerminalFastLane({
+      address: { workspaceName, generation },
+      source,
+      repair: { request: () => undefined },
+      control: {
+        owns: () => true,
+        request: async () => true,
+        write: async () => "ok",
+        resize: async () => "ok",
+      },
+    });
+    lane.retainPanes(["pane.editor"]);
+    const first = seed("pane.editor", "S");
+    source.emit("pane.editor", first);
+    const adapter = new TerminalFastLaneRendererAdapter(lane, 7);
+    try {
+      adapter.subscribePaneVersion("pane.editor", () => undefined);
+      paint(adapter, "pane.editor");
+      expect(publications).toHaveLength(1);
+      expect(paints).toHaveLength(1);
+      expect(paints[0]).toMatchObject({
+        semanticPaneId: "pane.editor",
+        revision: first.revision,
+        stateHash: first.stateHash,
+      });
+    } finally {
+      adapter.dispose();
+      lane.dispose();
+      uninstall();
+    }
+  });
+
+  it("does not qualify a retained seed after a patch accepted before renderer mount", () => {
+    const publications: Array<Record<string, unknown>> = [];
+    const paints: Array<Record<string, unknown>> = [];
+    const uninstall = installTuiPerformanceEventSink({
+      frame: () => undefined,
+      terminalPaint: () => undefined,
+      terminalDelivery: () => undefined,
+      terminalCanonicalPublication: (event) => publications.push(event),
+      terminalCanonicalPaint: (event) => paints.push(event),
+    });
+    const source = new Source();
+    const lane = createTerminalFastLane({
+      address: { workspaceName, generation },
+      source,
+      repair: { request: () => undefined },
+      control: {
+        owns: () => true,
+        request: async () => true,
+        write: async () => "ok",
+        resize: async () => "ok",
+      },
+    });
+    lane.retainPanes(["pane.editor"]);
+    const first = seed("pane.editor", "S");
+    source.emit("pane.editor", first);
+    source.emit("pane.editor", {
+      ...first,
+      type: "terminal.patch",
+      baseRevision: 0,
+      revision: 1,
+      patch: { rows: [], modes: first.snapshot.modes },
+    });
+    const adapter = new TerminalFastLaneRendererAdapter(lane, 7);
+    try {
+      adapter.subscribePaneVersion("pane.editor", () => undefined);
+      paint(adapter, "pane.editor");
+      expect(publications).toHaveLength(0);
+      expect(paints).toHaveLength(0);
+    } finally {
+      adapter.dispose();
+      lane.dispose();
+      uninstall();
+    }
+  });
+
+  it("emits one exact seed-to-first-paint identity and clears it on an intervening patch", () => {
+    const publications: Array<Record<string, unknown>> = [];
+    const paints: Array<Record<string, unknown>> = [];
+    const uninstall = installTuiPerformanceEventSink({
+      frame: () => undefined,
+      terminalPaint: () => undefined,
+      terminalDelivery: () => undefined,
+      terminalCanonicalPublication: (event) => publications.push(event),
+      terminalCanonicalPaint: (event) => paints.push(event),
+    });
+    const source = new Source();
+    const lane = createTerminalFastLane({
+      address: { workspaceName, generation },
+      source,
+      repair: { request: () => undefined },
+      control: {
+        owns: () => true,
+        request: async () => true,
+        write: async () => "ok",
+        resize: async () => "ok",
+      },
+    });
+    const adapter = new TerminalFastLaneRendererAdapter(lane, 7);
+    adapter.subscribePaneVersion("pane.editor", () => undefined);
+    try {
+      const first = seed("pane.editor", "S");
+      source.emit("pane.editor", first);
+      paint(adapter, "pane.editor");
+      expect(publications).toHaveLength(1);
+      expect(paints).toHaveLength(1);
+      expect(paints[0]).toMatchObject({
+        semanticPaneId: "pane.editor",
+        generation,
+        incarnation: first.incarnation,
+        revision: first.revision,
+        stateHash: first.stateHash,
+        cols: 4,
+        rows: 2,
+        viewportCols: 4,
+        viewportRows: 2,
+        writtenRows: [0, 1],
+        sourceEpoch: 7,
+      });
+
+      adapter.subscribePaneVersion("pane.second", () => undefined);
+      const second = seed("pane.second", "T");
+      source.emit("pane.second", second);
+      source.emit("pane.second", {
+        ...second,
+        type: "terminal.patch",
+        baseRevision: 0,
+        revision: 1,
+        patch: { rows: [], modes: second.snapshot.modes },
+      });
+      paint(adapter, "pane.second");
+      expect(publications).toHaveLength(2);
+      expect(paints).toHaveLength(1);
+    } finally {
+      adapter.dispose();
+      uninstall();
+    }
+  });
+
   it("reports exact canonical wraparound transitions only through the optional diagnostic sink", () => {
     const events: Array<{ wraparound: boolean; revision: number; stateHash: string }> = [];
     const uninstall = installTuiPerformanceEventSink({

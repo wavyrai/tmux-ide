@@ -440,6 +440,7 @@ test("anchors a two-pane framebuffer body to semantic chrome when tmux origin dr
     "● pane.promoted.left".padEnd(50) + " " + "○ pane.promoted.right".padEnd(50),
     "left seed".padEnd(50) + " " + "__right_unique_marker__".padEnd(50),
     "".padEnd(50) + " " + "right row two".padEnd(50),
+    "".padEnd(50) + " " + "right row three".padEnd(50),
   ].join("\n");
   const pane = activeTmuxPaneFromRows(
     // Deliberately stale/impossible tmux origin: this is the failure mode the
@@ -452,13 +453,40 @@ test("anchors a two-pane framebuffer body to semantic chrome when tmux origin dr
     left: 51,
     firstBodyRow: 3,
     width: 50,
-    bodyRows: 2,
+    bodyRows: 3,
     origin: "semantic-pane-chrome",
     valid: true,
     semanticChromeMatches: 1,
   });
   assert.match(paneBodyRegion(frame, pane), /__right_unique_marker__/u);
   assert.doesNotMatch(paneBodyRegion(frame, pane), /left seed/u);
+});
+
+test("root-v2 projects all 40 tmux content rows below separate semantic chrome", () => {
+  const frame = [
+    " tmux-ide",
+    " ordinary",
+    "● pane.run".padEnd(132),
+    ...Array.from({ length: 40 }, (_unused, row) => `body-${row}`.padEnd(132)),
+  ].join("\n");
+  const pane = {
+    semanticPaneId: "pane.run",
+    left: 0,
+    top: 0,
+    width: 132,
+    height: 40,
+  };
+  assert.deepEqual(resolvePaneBodyRect(frame, pane), {
+    left: 0,
+    firstBodyRow: 3,
+    width: 132,
+    bodyRows: 40,
+    origin: "semantic-pane-chrome",
+    valid: true,
+    semanticChromeMatches: 1,
+  });
+  assert.equal(paneBodyRegion(frame, pane).split("\n").length, 40);
+  assert.match(paneBodyRegion(frame, pane), /body-39/u);
 });
 
 test("causal qualification passes the full active pane into its after-capture body", () => {
@@ -1176,10 +1204,17 @@ test("rejects duplicate trace endpoints instead of silently choosing the last sa
 });
 
 test("extracts proof only from the pane body rectangle", () => {
-  const frame = ["header", "tabs", "chrome A", "left-marker   sibling", "chrome B marker"].join(
-    "\n",
+  const frame = [
+    "header",
+    "tabs",
+    "chrome A",
+    "left-marker   sibling",
+    "left-second   sibling-clean",
+  ].join("\n");
+  assert.equal(
+    paneBodyRegion(frame, { left: 0, top: 0, width: 12, height: 2 }),
+    "left-marker \nleft-second ",
   );
-  assert.equal(paneBodyRegion(frame, { left: 0, top: 0, width: 12, height: 2 }), "left-marker ");
   assert.doesNotMatch(paneBodyRegion(frame, { left: 13, top: 0, width: 7, height: 2 }), /marker/u);
 });
 

@@ -160,6 +160,7 @@ export interface TerminalFastLane {
     listener: (publication: TerminalFastLanePublication) => void,
   ): () => void;
   paneState(semanticPaneId: string): TerminalReplicaState | null;
+  paneLastAcceptedUpdateType(semanticPaneId: string): CanonicalTerminalReplicaUpdate["type"] | null;
   sendInput(
     semanticPaneId: string,
     input: SessionRuntimeTerminalInput,
@@ -175,6 +176,7 @@ interface PaneInterest {
   readonly semanticPaneId: string;
   readonly listeners: Set<(publication: TerminalFastLanePublication) => void>;
   state: TerminalReplicaState | null;
+  lastAcceptedUpdateType: CanonicalTerminalReplicaUpdate["type"] | null;
   repairPending: boolean;
   release: (() => void) | null;
 }
@@ -378,6 +380,7 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
     }
     if (result.status !== "applied") return;
     interest.state = result.state;
+    interest.lastAcceptedUpdateType = update.type;
     if (update.type === "terminal.seed") interest.repairPending = false;
     mutableCounters.published += 1;
     traceStage(metadata?.performanceTraceId, "lane-published");
@@ -426,6 +429,7 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
     interest.release?.();
     interest.release = null;
     interest.state = null;
+    interest.lastAcceptedUpdateType = null;
     interest.repairPending = false;
     panes.delete(semanticPaneId);
   };
@@ -437,6 +441,7 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
         semanticPaneId,
         listeners: new Set(),
         state: null,
+        lastAcceptedUpdateType: null,
         repairPending: false,
         release: null,
       } satisfies PaneInterest);
@@ -565,6 +570,7 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
         interest.release?.();
         interest.release = null;
         interest.state = null;
+        interest.lastAcceptedUpdateType = null;
         interest.repairPending = false;
         open(interest);
       }
@@ -607,6 +613,7 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
           semanticPaneId,
           listeners: new Set(),
           state: null,
+          lastAcceptedUpdateType: null,
           repairPending: false,
           release: null,
         } satisfies PaneInterest);
@@ -628,6 +635,8 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
       };
     },
     paneState: (semanticPaneId) => panes.get(semanticPaneId)?.state ?? null,
+    paneLastAcceptedUpdateType: (semanticPaneId) =>
+      panes.get(semanticPaneId)?.lastAcceptedUpdateType ?? null,
     sendInput(semanticPaneId, rawInput, performanceTraceId, causalProbe) {
       if (disposed) return Promise.resolve({ status: "rejected", reason: "disposed" });
       const parsed = SessionRuntimeTerminalInputSchemaZ.safeParse(rawInput);

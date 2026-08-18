@@ -54731,7 +54731,7 @@ function mountFleetResourceRoute(app, options) {
     if (gate) return gate;
     let sessions;
     try {
-      sessions = readAdoptedFleet(options.registry);
+      sessions = options.readFleet ? options.readFleet() : readAdoptedFleet(options.registry);
     } catch {
       sessions = null;
     }
@@ -56001,7 +56001,8 @@ function createApp(options = {}) {
   mountFleetResourceRoute(app, {
     daemon: daemonInstanceIdentity,
     ownerToken: options.remoteAccess?.ownerToken ?? null,
-    registry: options.workspaceRegistry ?? getDefaultWorkspaceRegistry()
+    registry: options.workspaceRegistry ?? getDefaultWorkspaceRegistry(),
+    readFleet: options.catalogFleet
   });
   mountStartupReadinessRoute(app, {
     daemon: daemonInstanceIdentity,
@@ -64820,7 +64821,8 @@ async function startHttpServer({
   getTerminalAttachmentRuntime,
   peekTerminalAttachmentRuntime,
   paneStreamRuntime,
-  catalogLiveSessions
+  catalogLiveSessions,
+  catalogFleet
 }) {
   const { createApp: createApp3 } = await Promise.resolve().then(() => (init_server(), server_exports));
   const { getRequestListener: getRequestListener3 } = await import(requireFromHere2.resolve("@hono/node-server"));
@@ -64864,7 +64866,8 @@ async function startHttpServer({
     paneStreamIssueBackend: paneStreamRuntime.coordinator,
     applicationShellInventoryBackend: terminalInventoryRuntime,
     startupReadinessAttachmentBackend: terminalInventoryRuntime,
-    catalogLiveSessions
+    catalogLiveSessions,
+    catalogFleet
   });
   app.get("/api/daemon/health", (c) => {
     return c.json({
@@ -65288,7 +65291,8 @@ async function startEmbeddedDaemon(opts) {
         getTerminalAttachmentRuntime,
         peekTerminalAttachmentRuntime,
         paneStreamRuntime,
-        catalogLiveSessions: () => discoverLiveSessionSummaries(catalogTmuxRunner)
+        catalogLiveSessions: () => discoverLiveSessionSummaries(catalogTmuxRunner),
+        catalogFleet: () => readAdoptedFleet(workspaceRegistry, catalogTmuxRunner)
       });
     } catch (error) {
       await Promise.allSettled([

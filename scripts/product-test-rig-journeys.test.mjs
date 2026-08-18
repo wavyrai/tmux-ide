@@ -22,13 +22,21 @@ import {
   ProductJourneyAttemptError,
   auditProductJourneyScope,
   collectProductRigCleanupFailures,
+  createProductRigCleanupReceipt,
   createProductDiagnosticBundle,
+  dispatchProductJourneyExecutor,
+  expandProductJourneyEntries,
+  isCleanLegacyStoppedProductRigState,
   parseProductDiagnoseOptions,
+  prepareProductDiagnosticBundlePublication,
   productDiagnosticRunId,
   productRigCleanupAcknowledgesRequest,
   productRigCleanupBarrierFailures,
+  productRigTerminalFailureError,
+  productRigTerminalFailureState,
   resolveProductJourneyPlan,
   runIsolatedProductJourneyAttempt,
+  runConfiglessProductJourneyOwnerBoot,
   runProductJourneyPlan,
   settleInternalProductRigCleanup,
 } from "./product-test-rig-journeys.mjs";
@@ -74,7 +82,32 @@ function attemptEntry(runId, repetition = 1) {
   };
 }
 
-test("golden registry names every M59.4 journey without claiming pending evidence", () => {
+function cleanupReceipt(runId, overrides = {}) {
+  return {
+    version: 1,
+    runId,
+    requestId: "cleanup-request-1",
+    attempt: 1,
+    passed: true,
+    completedAt: "2026-08-18T10:30:11.842Z",
+    ownerPid: 1001,
+    daemon: { instanceId: "daemon-generation-1", pid: 1002 },
+    namespaceDigest: "a".repeat(64),
+    ownerDead: true,
+    daemonDead: true,
+    pathsAbsent: true,
+    pathAbsence: {
+      runtimeRoot: true,
+      tmuxSocket: true,
+      hostTmuxSocket: true,
+      daemonInfo: true,
+    },
+    failureCount: 0,
+    ...overrides,
+  };
+}
+
+test("golden registry enables only accepted configless evidence", () => {
   const expected = [
     "configless-cold-start",
     "coherent-first-pane",
@@ -93,11 +126,21 @@ test("golden registry names every M59.4 journey without claiming pending evidenc
     golden.map(({ id }) => id),
     expected,
   );
-  assert.ok(golden.every(({ implementation }) => implementation === "pending"));
-  assert.deepEqual(auditProductJourneyScope(), { complete: true, missing: [] });
+  assert.equal(golden[0]?.implementation, "implemented");
+  assert.ok(golden.slice(1).every(({ implementation }) => implementation === "pending"));
+  assert.deepEqual(auditProductJourneyScope(), {
+    complete: false,
+    declarationComplete: true,
+    executableComplete: false,
+    missing: [],
+    pendingJourneyIds: expected.slice(1),
+  });
   assert.deepEqual(auditProductJourneyScope(golden.slice(1)), {
     complete: false,
+    declarationComplete: false,
+    executableComplete: false,
     missing: ["configless", "cold-start"],
+    pendingJourneyIds: expected.slice(1),
   });
 });
 
@@ -118,6 +161,123 @@ test("diagnose options select and repeat the executable journey deterministicall
       ["runtime-qualification", 3],
     ],
   );
+  assert.deepEqual(
+    resolveProductJourneyPlan(
+      parseProductDiagnoseOptions([
+        "--journey",
+        "configless-cold-start",
+        "--repeat",
+        "1",
+        "--json",
+      ]),
+    ).map(({ journey, repetition, variant }) => [journey.id, repetition, variant]),
+    [["configless-cold-start", 1, null]],
+  );
+});
+
+test("first-key-paste expands each repetition into separately isolated key and paste attempts", () => {
+  const journey = {
+    id: "first-key-paste",
+    variants: Object.freeze(["key", "paste"]),
+    implementation: "implemented",
+  };
+  assert.deepEqual(
+    expandProductJourneyEntries([journey], 2).map(({ repetition, variant }) => [
+      repetition,
+      variant,
+    ]),
+    [
+      [1, "key"],
+      [1, "paste"],
+      [2, "key"],
+      [2, "paste"],
+    ],
+  );
+  assert.equal(
+    parseProductDiagnoseOptions(["--journey", "first-key-paste", "--variant", "paste"]).variant,
+    "paste",
+  );
+  assert.throws(
+    () =>
+      resolveProductJourneyPlan(
+        parseProductDiagnoseOptions(["--journey", "runtime-qualification", "--variant", "paste"]),
+      ),
+    /only valid with --journey first-key-paste/u,
+  );
+});
+
+test("journey dispatcher invokes the exact registry executor instead of the runtime monolith", async () => {
+  const calls = [];
+  const entry = { journey: { id: "configless-cold-start", executor: "configless-cold-start" } };
+  const result = await dispatchProductJourneyExecutor(entry, {
+    "configless-cold-start": async () => {
+      calls.push("configless");
+      return "direct";
+    },
+    "runtime-qualification": async () => {
+      calls.push("runtime");
+      return "monolith";
+    },
+  });
+  assert.equal(result, "direct");
+  assert.deepEqual(calls, ["configless"]);
+});
+
+test("configless owner launches public entry before election/adoption/coherence and Web", async () => {
+  const calls = [];
+  const operation = (name, result) => async () => {
+    calls.push(name);
+    return result;
+  };
+  const result = await runConfiglessProductJourneyOwnerBoot({
+    createOrdinaryNamespace: operation("ordinary-namespace", { id: "namespace" }),
+    assertNamespaceClean: operation("namespace-clean"),
+    buildBeforeMeasurement: operation("build"),
+    launchPublicNoArgumentEntry: operation("public-no-arg", { pid: 41 }),
+    observeElectedDaemon: operation("daemon-election", { instanceId: "daemon" }),
+    observeOrdinarySessionDiscovery: operation("ordinary-discovery", { sessionId: "session" }),
+    adoptThroughPublicApp: operation("public-adoption", { workspace: "workspace" }),
+    proveCoherentPublication: operation("coherent-publication", { frame: "frame" }),
+    startWebAfterColdBoundary: operation("web-after-cold", { page: "web" }),
+  });
+  assert.deepEqual(calls, [
+    "ordinary-namespace",
+    "namespace-clean",
+    "build",
+    "public-no-arg",
+    "daemon-election",
+    "ordinary-discovery",
+    "public-adoption",
+    "coherent-publication",
+    "web-after-cold",
+  ]);
+  assert.equal(result.publicProcess.pid, 41);
+
+  calls.length = 0;
+  await assert.rejects(
+    runConfiglessProductJourneyOwnerBoot({
+      createOrdinaryNamespace: operation("ordinary-namespace", {}),
+      assertNamespaceClean: operation("namespace-clean"),
+      buildBeforeMeasurement: operation("build"),
+      launchPublicNoArgumentEntry: operation("public-no-arg", {}),
+      observeElectedDaemon: async () => {
+        calls.push("daemon-election");
+        throw new Error("election failed");
+      },
+      observeOrdinarySessionDiscovery: operation("ordinary-discovery"),
+      adoptThroughPublicApp: operation("public-adoption"),
+      proveCoherentPublication: operation("coherent-publication"),
+      startWebAfterColdBoundary: operation("web-after-cold"),
+    }),
+    /election failed/u,
+  );
+  assert.deepEqual(calls, [
+    "ordinary-namespace",
+    "namespace-clean",
+    "build",
+    "public-no-arg",
+    "daemon-election",
+  ]);
 });
 
 test("repeat runner drives every planned journey sequentially and stops at the first failure", async () => {
@@ -150,7 +310,7 @@ test("pending, all, unknown, and invalid repetition selections fail before orche
   );
   assert.throws(
     () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "all"])),
-    /not implemented: configless-cold-start/u,
+    /not implemented: coherent-first-pane/u,
   );
   assert.throws(
     () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "imaginary"])),
@@ -211,6 +371,16 @@ test("run ids are deterministic, bounded, and path safe", () => {
       nonce: "A1-B2_C3",
     }),
     "20260817143012345-runtime-qualification-r2-a1b2c3",
+  );
+  assert.equal(
+    productDiagnosticRunId({
+      journeyId: "first-key-paste",
+      variant: "paste",
+      repetition: 10,
+      now: "2026-08-17T14:30:12.345Z",
+      nonce: "C0FFEE",
+    }),
+    "20260817143012345-first-key-paste-paste-r10-c0ffee",
   );
 });
 
@@ -386,6 +556,238 @@ test("attempt startup failure cleans up before publishing immutable placeholder 
     );
   } finally {
     removeTestTree(temporary);
+  }
+});
+
+test("structured product boundary survives startup wrapping and cleanup", async () => {
+  const boundaryError = new Error("promotion timed out");
+  boundaryError.boundary = "canonical-promotion-adoption";
+  boundaryError.observation = { predicates: [{ id: "fleet-row-session", status: "failed" }] };
+  const terminalState = productRigTerminalFailureState(boundaryError, "product-rig-startup");
+  assert.equal(terminalState.firstBrokenBoundary, "canonical-promotion-adoption");
+  assert.equal(terminalState.failureObservation, boundaryError.observation);
+  const restored = productRigTerminalFailureError(terminalState);
+  assert.equal(restored.boundary, "canonical-promotion-adoption");
+  assert.equal(restored.observation, boundaryError.observation);
+  let preparedBoundary = null;
+  await assert.rejects(
+    runIsolatedProductJourneyAttempt(attemptEntry("structured-boundary"), {
+      preCleanup: async () => undefined,
+      drive: async () => {
+        throw boundaryError;
+      },
+      currentBoundary: () => "product-rig-startup",
+      postCleanup: async () => undefined,
+      retryCleanup: () => assert.fail("cleanup succeeded"),
+      prepareFailure: async (_error, boundary) => {
+        preparedBoundary = boundary;
+        return { evidence: failureEvidence(boundary, "promotion timed out") };
+      },
+      appendCleanupFailure: () => assert.fail("no cleanup failure"),
+      publishFailure: async () => ({ runDir: "/immutable/structured-boundary" }),
+      publishSuccess: () => assert.fail("failure cannot publish success"),
+    }),
+    (error) =>
+      error instanceof ProductJourneyAttemptError &&
+      error.boundary === "canonical-promotion-adoption" &&
+      error.originalCause === boundaryError,
+  );
+  assert.equal(preparedBoundary, "canonical-promotion-adoption");
+});
+
+test("bundle publication embeds and verifies its final immutable report path", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "product-rig-report-path-"));
+  const root = join(temporary, "bundles");
+  const runId = "20260818060000000-configless-cold-start-r1-path";
+  try {
+    const prepared = prepareProductDiagnosticBundlePublication({
+      root,
+      runId,
+      report: { status: "failed", reportPath: null },
+      evidence: {
+        ...failureEvidence("canonical-promotion-adoption", "timed out"),
+        report: { status: "failed", reportPath: null },
+      },
+      cleanupReceipt: cleanupReceipt(runId),
+    });
+    const bundle = createProductDiagnosticBundle({ root, runId, evidence: prepared.evidence });
+    const expected = join(bundle.runDir, "report.json");
+    assert.equal(prepared.reportPath, expected);
+    assert.equal(JSON.parse(readFileSync(expected, "utf8")).reportPath, expected);
+    assert.equal(JSON.parse(readFileSync(expected, "utf8")).cleanupReceipt.passed, true);
+    assert.equal(
+      JSON.parse(readFileSync(join(bundle.runDir, "alignment.json"), "utf8")).reportPath,
+      expected,
+    );
+    assert.equal(
+      JSON.parse(readFileSync(join(bundle.runDir, "alignment.json"), "utf8")).cleanupReceipt.runId,
+      runId,
+    );
+    assert.throws(
+      () =>
+        createProductDiagnosticBundle({
+          root,
+          runId: `${runId}-tampered`,
+          evidence: {
+            ...prepared.evidence,
+            report: { ...prepared.evidence.report, runId: `${runId}-tampered` },
+            alignment: { ...prepared.evidence.alignment, cleanupReceipt: null },
+          },
+        }),
+      /cleanup receipt/u,
+    );
+    assert.throws(
+      () =>
+        prepareProductDiagnosticBundlePublication({
+          root,
+          runId: `${runId}-other`,
+          report: { status: "failed", reportPath: "/wrong/report.json" },
+          evidence: failureEvidence("product-rig-startup", "failed"),
+          cleanupReceipt: cleanupReceipt(`${runId}-other`),
+        }),
+      /does not match/u,
+    );
+  } finally {
+    removeTestTree(temporary);
+  }
+});
+
+test("bundle preparation requires an exact passed immutable cleanup receipt", () => {
+  const root = "/tmp/product-diagnostic-cleanup-contract";
+  const runId = "20260818060000000-configless-cold-start-r1-cleanup";
+  const input = {
+    root,
+    runId,
+    report: { status: "passed", reportPath: null },
+    evidence: failureEvidence(null, ""),
+  };
+  assert.throws(() => prepareProductDiagnosticBundlePublication(input), /cleanup receipt/u);
+  for (const receipt of [
+    cleanupReceipt("wrong-run"),
+    cleanupReceipt(runId, { passed: false }),
+    cleanupReceipt(runId, { ownerDead: false }),
+    cleanupReceipt(runId, { pathsAbsent: false }),
+    cleanupReceipt(runId, { failureCount: 1 }),
+  ])
+    assert.throws(
+      () => prepareProductDiagnosticBundlePublication({ ...input, cleanupReceipt: receipt }),
+      /cleanup receipt/u,
+    );
+  const canonical = prepareProductDiagnosticBundlePublication({
+    ...input,
+    cleanupReceipt: cleanupReceipt(runId, {
+      ownerToken: "must-not-seal",
+      runtimeRoot: "/must/not/seal",
+      daemon: {
+        instanceId: "daemon-generation-1",
+        pid: 1002,
+        authToken: "must-not-seal",
+      },
+    }),
+  });
+  assert.doesNotMatch(
+    JSON.stringify(canonical.evidence),
+    /ownerToken|authToken|must-not-seal|\/must\/not\/seal/u,
+  );
+  assert.deepEqual(Object.keys(canonical.report.cleanupReceipt).sort(), [
+    "attempt",
+    "completedAt",
+    "daemon",
+    "daemonDead",
+    "failureCount",
+    "namespaceDigest",
+    "ownerDead",
+    "ownerPid",
+    "passed",
+    "pathAbsence",
+    "pathsAbsent",
+    "requestId",
+    "runId",
+    "version",
+  ]);
+});
+
+test("isolated attempts thread first-pass and retry cleanup receipts into every publication", async () => {
+  const successEntry = attemptEntry("20260818060000000-configless-cold-start-r1-receipt-success");
+  const firstReceipt = cleanupReceipt(successEntry.runId);
+  const success = await runIsolatedProductJourneyAttempt(successEntry, {
+    preCleanup: async () => undefined,
+    drive: async () => ({ report: { status: "passed" } }),
+    currentBoundary: () => "journey-drive",
+    postCleanup: async () => firstReceipt,
+    retryCleanup: () => assert.fail("first cleanup passed"),
+    prepareFailure: () => assert.fail("success cannot prepare failure"),
+    appendCleanupFailure: () => assert.fail("success has no cleanup failure"),
+    publishFailure: () => assert.fail("success cannot publish failure"),
+    publishSuccess: async (_completed, receipt) => receipt,
+  });
+  assert.equal(success, firstReceipt);
+
+  const failureEntry = attemptEntry("20260818060000000-configless-cold-start-r1-receipt-retry");
+  const secondReceipt = cleanupReceipt(failureEntry.runId, { attempt: 2 });
+  const journeyFailure = new Error("journey failed before cleanup");
+  const cleanupFailure = new Error("first cleanup failed");
+  await assert.rejects(
+    runIsolatedProductJourneyAttempt(failureEntry, {
+      preCleanup: async () => undefined,
+      drive: async () => {
+        throw journeyFailure;
+      },
+      currentBoundary: () => "diagnostic-correlation",
+      postCleanup: async () => {
+        throw cleanupFailure;
+      },
+      retryCleanup: async (error) => {
+        assert.equal(error, cleanupFailure);
+        return secondReceipt;
+      },
+      prepareFailure: async (_error, _boundary, receipt) => ({ receipt }),
+      appendCleanupFailure: (_prepared, error) => assert.equal(error, cleanupFailure),
+      publishFailure: async (prepared, receipt) => {
+        assert.equal(prepared.receipt, secondReceipt);
+        assert.equal(receipt, secondReceipt);
+        return { runDir: "/immutable/retry-receipt" };
+      },
+      publishSuccess: () => assert.fail("journey failure cannot publish success"),
+    }),
+    (error) =>
+      error instanceof ProductJourneyAttemptError && error.originalCause === journeyFailure,
+  );
+});
+
+test("cleanup receipt builder rejects live identity or namespace residue", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "product-rig-cleanup-receipt-"));
+  const entry = attemptEntry("20260818060000000-configless-cold-start-r1-builder");
+  const state = {
+    ownerPid: 2_000_000_001,
+    daemon: { pid: 2_000_000_002, instanceId: "daemon-generation" },
+    runtimeNamespace: {
+      root: join(temporary, "absent"),
+      tmuxSocketPath: join(temporary, "absent", "tmux.sock"),
+      hostTmuxSocketPath: join(temporary, "absent", "host.sock"),
+      daemonInfoDir: join(temporary, "absent", "daemon"),
+    },
+    cleanup: {
+      requestId: "request",
+      status: "passed",
+      completedAt: "2026-08-18T10:30:11.842Z",
+      failures: [],
+    },
+  };
+  try {
+    const receipt = createProductRigCleanupReceipt(entry, state, 1);
+    assert.equal(receipt.ownerDead, true);
+    assert.equal(receipt.daemonDead, true);
+    assert.equal(receipt.pathsAbsent, true);
+    assert.doesNotMatch(JSON.stringify(receipt), /cleanupToken|ownerToken|\/tmp\//u);
+    mkdirSync(state.runtimeNamespace.root);
+    assert.throws(() => createProductRigCleanupReceipt(entry, state, 1), /cleanup receipt/u);
+    assert.throws(
+      () => createProductRigCleanupReceipt(entry, { ...state, ownerPid: process.pid }, 1),
+      /cleanup receipt/u,
+    );
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
   }
 });
 
@@ -574,6 +976,132 @@ test("cleanup barrier rejects stopped publication before exact owner death and o
     ),
     [],
   );
+});
+
+test("legacy stopped preclean admits only the exact dead and residue-free v1 shape", () => {
+  const root = join(tmpdir(), "tmi-e2e-legacy-clean-shape");
+  const state = {
+    version: 1,
+    status: "stopped",
+    ownerPid: 98_875,
+    daemon: { pid: 1_387, instanceId: "legacy-generation" },
+    runtimeNamespace: {
+      root,
+      tmuxSocketPath: join(root, "t.sock"),
+      hostTmuxSocketPath: join(root, "product-rig-host-tmux.sock"),
+      daemonInfoDir: join(root, "daemon"),
+      cleanupToken: "product-test-rig:legacy",
+    },
+  };
+  const deadAndAbsent = { processAlive: () => false, pathExists: () => false };
+  assert.equal(isCleanLegacyStoppedProductRigState(state, deadAndAbsent), true);
+
+  for (const contaminated of [
+    (({ version: _version, ...withoutVersion }) => withoutVersion)(state),
+    { ...state, version: 2 },
+    { ...state, cleanup: null },
+    { ...state, cleanup: undefined },
+    { ...state, cleanup: { status: "passed" } },
+    { ...state, status: "failed" },
+    { ...state, status: "cleanup-failed" },
+    { ...state, ownerToken: null },
+    { ...state, ownerToken: undefined },
+    { ...state, ownerToken: "current-owner-token" },
+    { ...state, ownerPid: 0 },
+    { ...state, daemon: { ...state.daemon, pid: null } },
+    { ...state, daemon: { ...state.daemon, instanceId: "" } },
+    {
+      ...state,
+      runtimeNamespace: { ...state.runtimeNamespace, tmuxSocketPath: "/tmp/outside.sock" },
+    },
+    {
+      ...state,
+      runtimeNamespace: { ...state.runtimeNamespace, tmuxSocketPath: root },
+    },
+    {
+      ...state,
+      runtimeNamespace: { ...state.runtimeNamespace, hostTmuxSocketPath: root },
+    },
+    {
+      ...state,
+      runtimeNamespace: { ...state.runtimeNamespace, daemonInfoDir: root },
+    },
+    {
+      ...state,
+      runtimeNamespace: { ...state.runtimeNamespace, cleanupToken: null },
+    },
+  ])
+    assert.equal(isCleanLegacyStoppedProductRigState(contaminated, deadAndAbsent), false);
+
+  assert.equal(
+    isCleanLegacyStoppedProductRigState(state, {
+      processAlive: (pid) => pid === state.ownerPid,
+      pathExists: () => false,
+    }),
+    false,
+  );
+  assert.equal(
+    isCleanLegacyStoppedProductRigState(state, {
+      processAlive: (pid) => pid === state.daemon.pid,
+      pathExists: () => false,
+    }),
+    false,
+  );
+  for (const ownedPath of [
+    state.runtimeNamespace.root,
+    state.runtimeNamespace.tmuxSocketPath,
+    state.runtimeNamespace.hostTmuxSocketPath,
+    state.runtimeNamespace.daemonInfoDir,
+  ])
+    assert.equal(
+      isCleanLegacyStoppedProductRigState(state, {
+        processAlive: () => false,
+        pathExists: (candidate) => candidate === ownedPath,
+      }),
+      false,
+    );
+});
+
+test("public-elected daemon cleanup is an exact barrier before the next repeat", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "product-rig-public-repeat-"));
+  const daemonInfoDir = join(temporary, "daemon-info");
+  mkdirSync(daemonInfoDir);
+  const state = {
+    status: "stopped",
+    ownerPid: 111,
+    daemon: { pid: 222, instanceId: "public-generation-1" },
+    runtimeNamespace: {
+      root: temporary,
+      tmuxSocketPath: join(temporary, "tmux.sock"),
+      hostTmuxSocketPath: join(temporary, "host.sock"),
+      daemonInfoDir,
+      cleanupToken: "public-repeat-token",
+    },
+    cleanup: {
+      requestId: "public-repeat-cleanup",
+      status: "passed",
+      cleanupToken: "public-repeat-token",
+      failures: [],
+    },
+  };
+  try {
+    const blocked = productRigCleanupBarrierFailures(state, "public-repeat-cleanup", {
+      processAlive: (pid) => pid === 222,
+      pathExists: existsSync,
+    });
+    assert.ok(blocked.includes("daemon-process-live"));
+    assert.ok(blocked.includes("runtime-root-present"));
+    removeTestTree(temporary);
+    assert.deepEqual(
+      productRigCleanupBarrierFailures(state, "public-repeat-cleanup", {
+        processAlive: () => false,
+        pathExists: existsSync,
+      }),
+      [],
+    );
+  } finally {
+    removeTestTree(temporary);
+  }
 });
 
 test("controller adopts an overlapping internal cleanup only after its exact terminal pass", () => {

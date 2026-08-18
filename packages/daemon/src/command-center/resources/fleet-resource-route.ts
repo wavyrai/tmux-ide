@@ -13,6 +13,8 @@ export interface FleetResourceRouteOptions {
   readonly ownerToken: string | null;
   /** Source of truth for which sessions the app created (`appCreated`). */
   readonly registry: Pick<WorkspaceRegistry, "list">;
+  /** Daemon-generation-pinned tmux fleet read. Defaults only for legacy/test callers. */
+  readonly readFleet?: () => ReturnType<typeof readAdoptedFleet>;
 }
 
 /**
@@ -42,7 +44,7 @@ export function mountFleetResourceRoute(app: Hono, options: FleetResourceRouteOp
     // empty, still-stamped resource — never a 500 exposing daemon internals.
     let sessions: ReturnType<typeof readAdoptedFleet>;
     try {
-      sessions = readAdoptedFleet(options.registry);
+      sessions = options.readFleet ? options.readFleet() : readAdoptedFleet(options.registry);
     } catch {
       sessions = null;
     }

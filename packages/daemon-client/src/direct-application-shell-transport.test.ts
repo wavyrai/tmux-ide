@@ -276,14 +276,202 @@ describe("direct application-shell transport version selection", () => {
     ]);
   });
 
+  it("fences a pending terminal install before production fallback settles catalog-only", async () => {
+    const socket = new FakeSocket();
+    const clock = new FakeReconnectClock();
+    const transport = createDirectLoopbackDaemonTransport({
+      descriptor,
+      ownerToken: "owner-secret",
+      resolveSessionName: () => "alpha",
+      terminalRuntimeAuthority: true,
+      terminalReconnectClock: clock,
+      createWebSocket: () => socket,
+      fetch: async () =>
+        json({
+          version: 1,
+          daemon,
+          resource: {
+            workspaceName: "workspace.alpha",
+            workspaceId: "workspace.0123456789abcdefabcd",
+            sessionId: "session.0123456789abcdefabcd",
+            resourceRevision: 1,
+            semanticPaneIds: ["pane.alpha"],
+          },
+        }),
+    }) as TerminalFirstDaemonTransport;
+    const preparing = transport.prepareTerminalRuntimeInventory(
+      target,
+      new AbortController().signal,
+    );
+    const catalog = transport.connectWorkspaceCatalog(target, () => undefined);
+    socket.emit("open");
+    socket.frame({ type: "hello", daemon, sessions: [], eventSequence: 0 });
+    await tick();
+    expect(socket.sent[0]).toMatchObject({
+      interestRevision: 1,
+      interests: [{ resource: "terminal-runtime-inventory" }],
+    });
+    transport.selectApplicationShellFallback("deadline");
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    await tick();
+    expect(socket.sent[1]).toMatchObject({
+      interestRevision: 2,
+      interests: [{ resource: "workspace-catalog", workspaceName: null }],
+    });
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 2,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    await catalog.ready;
+    const replacementInvalidated: string[] = [];
+    const replacementCatalog = transport.connectWorkspaceCatalog(target, () =>
+      replacementInvalidated.push("changed"),
+    );
+    await replacementCatalog.ready;
+    const catalogOnlySubscriptions = socket.sent.length;
+    catalog.close();
+    socket.frame({
+      type: "resource.changed",
+      sequence: 1,
+      workspaceName: null,
+      resource: "workspace-catalog",
+      revision: 1,
+      causeOperationId: null,
+    });
+    expect(replacementInvalidated).toEqual(["changed"]);
+    expect(socket.sent).toHaveLength(catalogOnlySubscriptions);
+    const prepared = await preparing;
+    expect(transport.adoptTerminalRuntimeInventory(prepared, () => undefined)).toBeNull();
+    socket.emit("close");
+    expect(clock.callbacks.size).toBe(1);
+    transport.disposeEventSupervisor();
+    expect(clock.callbacks.size).toBe(0);
+  });
+
+  it("recovers catalog-only when the semantic socket retires before terminal preparation settles", async () => {
+    const sockets: FakeSocket[] = [];
+    const clock = new FakeReconnectClock();
+    const transport = createDirectLoopbackDaemonTransport({
+      descriptor,
+      ownerToken: "owner-secret",
+      resolveSessionName: () => "alpha",
+      terminalRuntimeAuthority: true,
+      terminalReconnectClock: clock,
+      createWebSocket: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      fetch: async () => json({}),
+    }) as TerminalFirstDaemonTransport;
+    const preparing = transport.prepareTerminalRuntimeInventory(
+      target,
+      new AbortController().signal,
+    );
+    const invalidated: string[] = [];
+    const catalog = transport.connectWorkspaceCatalog(target, () => invalidated.push("fresh"));
+    sockets[0]!.emit("open");
+    sockets[0]!.frame({ type: "hello", daemon, sessions: [], eventSequence: 0 });
+    await tick();
+    expect(sockets[0]!.sent[0]).toMatchObject({
+      interests: [{ resource: "terminal-runtime-inventory" }],
+    });
+    sockets[0]!.emit("close");
+    await expect(preparing).rejects.toThrow("disconnected");
+    expect(clock.callbacks.size).toBe(0);
+
+    transport.selectApplicationShellFallback("preparation-rejected");
+    expect(clock.callbacks.size).toBe(1);
+    clock.runNext();
+    await tick();
+    sockets[1]!.emit("open");
+    sockets[1]!.frame({ type: "hello", daemon, sessions: [], eventSequence: 0 });
+    await tick();
+    expect(sockets[1]!.sent[0]).toMatchObject({
+      interestRevision: 1,
+      interests: [{ resource: "workspace-catalog", workspaceName: null }],
+    });
+    sockets[1]!.frame({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    await catalog.ready;
+    expect(invalidated).toEqual(["fresh"]);
+    transport.disposeEventSupervisor();
+  });
+
+  it("does not resolve post-fallback readiness from an ACK on a retired supervisor", async () => {
+    const sockets: FakeSocket[] = [];
+    const clock = new FakeReconnectClock();
+    const transport = createDirectLoopbackDaemonTransport({
+      descriptor,
+      ownerToken: "owner-secret",
+      resolveSessionName: () => "alpha",
+      terminalRuntimeAuthority: true,
+      terminalReconnectClock: clock,
+      createWebSocket: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      fetch: async () => json({}),
+    }) as TerminalFirstDaemonTransport;
+    transport.selectApplicationShellFallback("deadline");
+    const catalog = transport.connectWorkspaceCatalog(target, () => undefined);
+    let ready = false;
+    void catalog.ready.then(() => (ready = true));
+    sockets[0]!.emit("open");
+    sockets[0]!.frame({ type: "hello", daemon, sessions: [], eventSequence: 0 });
+    await tick();
+    expect(sockets[0]!.sent[0]).toMatchObject({
+      interests: [{ resource: "workspace-catalog", workspaceName: null }],
+    });
+    sockets[0]!.frame({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    sockets[0]!.emit("close");
+    await tick();
+    expect(ready).toBe(false);
+    expect(clock.callbacks.size).toBe(1);
+
+    clock.runNext();
+    await tick();
+    sockets[1]!.emit("open");
+    sockets[1]!.frame({ type: "hello", daemon, sessions: [], eventSequence: 0 });
+    await tick();
+    sockets[1]!.frame({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    await catalog.ready;
+    expect(ready).toBe(true);
+    transport.disposeEventSupervisor();
+  });
+
   it("replaces a retired supervisor and publishes its clean terminal authority", async () => {
     const sockets: FakeSocket[] = [];
+    const clock = new FakeReconnectClock();
     let revision = 1;
     const transport = createDirectLoopbackDaemonTransport({
       descriptor,
       ownerToken: "owner-secret",
       resolveSessionName: () => "alpha",
       terminalRuntimeAuthority: true,
+      terminalReconnectClock: clock,
       createWebSocket: () => {
         const socket = new FakeSocket();
         sockets.push(socket);
@@ -332,6 +520,10 @@ describe("direct application-shell transport version selection", () => {
       onClose: () => undefined,
       onError: () => undefined,
     });
+    const catalogInvalidated: string[] = [];
+    const catalogConnection = transport.connectWorkspaceCatalog(target, () =>
+      catalogInvalidated.push("invalidated"),
+    );
     await tick();
     sockets[0]!.frame({
       type: "resource.interests-ack",
@@ -339,12 +531,15 @@ describe("direct application-shell transport version selection", () => {
       sequence: 0,
       unavailableInterests: [],
     });
+    await catalogConnection.ready;
     await tick();
     expect(verified).toBe(1);
+    expect(catalogInvalidated).toEqual([]);
 
     revision = 2;
     sockets[0]!.emit("close");
     await tick();
+    expect(catalogInvalidated).toEqual([]);
     expect(sockets).toHaveLength(2);
     expect(sockets[0]!.listeners.get("message")?.size ?? 0).toBe(0);
     sockets[1]!.emit("open");
@@ -357,24 +552,94 @@ describe("direct application-shell transport version selection", () => {
       unavailableInterests: [],
     });
     await tick();
-    expect(published).toEqual([["pane.2"]]);
+    expect(published).toEqual([]);
     expect(sockets).toHaveLength(2);
     expect(sockets[1]!.sent).toHaveLength(2);
     expect(sockets[1]!.sent[1]).toMatchObject({
       type: "subscribe",
       interestRevision: 2,
-      interests: [{ resource: "terminal-runtime-inventory" }, { resource: "application-shell" }],
+      interests: [
+        { resource: "terminal-runtime-inventory" },
+        { resource: "application-shell" },
+        { resource: "workspace-catalog", workspaceName: null },
+      ],
     });
     expect(verified).toBe(1);
     sockets[1]!.frame({
       type: "resource.interests-ack",
       interestRevision: 2,
       sequence: 0,
+      unavailableInterests: [{ resource: "workspace-catalog", workspaceName: null }],
+    });
+    for (let attempt = 0; attempt < 3 && sockets[1]!.sent.length < 3; attempt += 1) await tick();
+    expect(sockets[1]!.sent[2]).toMatchObject({
+      interestRevision: 3,
+      interests: [
+        { resource: "terminal-runtime-inventory" },
+        { resource: "application-shell" },
+        { resource: "workspace-catalog", workspaceName: null },
+      ],
+    });
+    sockets[1]!.frame({
+      type: "resource.interests-ack",
+      interestRevision: 3,
+      sequence: 0,
+      unavailableInterests: [{ resource: "workspace-catalog", workspaceName: null }],
+    });
+    for (let attempt = 0; attempt < 3 && clock.callbacks.size === 0; attempt += 1) await tick();
+    expect(published).toEqual([]);
+    expect(clock.callbacks.size).toBe(1);
+
+    revision = 3;
+    clock.runNext();
+    await tick();
+    expect(sockets).toHaveLength(3);
+    sockets[2]!.emit("open");
+    sockets[2]!.frame({ type: "hello", daemon, sessions: [], eventSequence: 0 });
+    await tick();
+    sockets[2]!.frame({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
       unavailableInterests: [],
     });
     await tick();
+    expect(sockets[2]!.sent[1]).toMatchObject({
+      interests: [
+        { resource: "terminal-runtime-inventory" },
+        { resource: "application-shell" },
+        { resource: "workspace-catalog", workspaceName: null },
+      ],
+    });
+    sockets[2]!.frame({
+      type: "resource.interests-ack",
+      interestRevision: 2,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    await tick();
+    expect(published).toEqual([["pane.3"]]);
     expect(verified).toBe(2);
+    expect(catalogInvalidated).toEqual(["invalidated"]);
+    sockets[2]!.frame({
+      type: "resource.changed",
+      sequence: 1,
+      workspaceName: null,
+      resource: "workspace-catalog",
+      revision: 1,
+      causeOperationId: null,
+    });
+    expect(catalogInvalidated).toEqual(["invalidated", "invalidated"]);
     transport.disposeEventSupervisor();
+    sockets[2]!.frame({
+      type: "resource.changed",
+      sequence: 2,
+      workspaceName: null,
+      resource: "workspace-catalog",
+      revision: 2,
+      causeOperationId: null,
+    });
+    expect(catalogInvalidated).toEqual(["invalidated", "invalidated"]);
   });
 
   it("retires each failed replacement and reconnects terminal then application-shell on a fresh socket", async () => {

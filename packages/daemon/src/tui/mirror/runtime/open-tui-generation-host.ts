@@ -105,6 +105,7 @@ export interface OpenTuiGenerationHostDependencies {
       | "shell-lifecycle"
       | "runtime-progress"
       | "runtime-fault"
+      | "workspace-client-state"
       | "host-internal-snapshot-publication",
     details: Readonly<Record<string, unknown>>,
   ) => void;
@@ -199,6 +200,7 @@ function buildProductionBundle(
     deferApplicationShell: true,
     ports: {
       shell: connection.transport,
+      catalog: connection.catalog,
       connectRuntime: async (_target, inventory, signal, prepare) => {
         if (!fastLane) throw new Error("OpenTUI terminal fast lane is not initialized");
         // Candidate interests must exist before WorkspaceClient asks the
@@ -575,7 +577,45 @@ export function createOpenTuiGenerationHost(
         const replacedCandidate = candidate;
         candidate = owned;
         if (replacedCandidate && replacedCandidate !== active) disposeCandidate(replacedCandidate);
-        owned.stopLifecycle = bundle.client.subscribe("lifecycle", (lifecycle) => {
+        const emitWorkspaceClientState = diagnose
+          ? (): void => {
+              try {
+                const snapshot = bundle.client.getSnapshot();
+                if (snapshot.phase !== "live") return;
+                const terminalResources =
+                  snapshot.authorityShell?.terminalInventory?.resources.map((resource) => ({
+                    resourceId: resource.id,
+                    windowResourceId: resource.windowResourceId ?? resource.id,
+                    active: resource.active,
+                    semanticPaneId:
+                      resource.attachability.status === "available"
+                        ? resource.attachability.semanticPaneId
+                        : null,
+                  })) ?? [];
+                diagnose("workspace-client-state", {
+                  daemonGeneration: owned.bundle.connection.target.daemon.instanceId,
+                  workspaceClient: {
+                    committed: {
+                      generation: snapshot.generation,
+                      target: snapshot.target,
+                      phase: snapshot.phase,
+                      authorityWorkspaceId: snapshot.authorityShell?.workspace.id ?? null,
+                      authorityWorkspaceName: snapshot.authorityShell?.workspace.name ?? null,
+                      catalog: snapshot.catalog,
+                      authority: snapshot.authority,
+                      terminalResources,
+                      lastReceipt: snapshot.operations.lastReceipt,
+                    },
+                    pending: snapshot.operations.pending,
+                    derived: snapshot.semantic,
+                  },
+                });
+              } catch {
+                // Diagnostics and snapshot inspection never own generation lifecycle.
+              }
+            }
+          : null;
+        const stopLifecycle = bundle.client.subscribe("lifecycle", (lifecycle) => {
           if (disposed || owned.settled) return;
           diagnose?.("shell-lifecycle", {
             clientPhase: lifecycle.phase,
@@ -596,6 +636,7 @@ export function createOpenTuiGenerationHost(
                   })) ?? [])
                 : [],
           });
+          emitWorkspaceClientState?.();
           const requested = coordinator.request(sessionName, lifecycle.shell, {
             // Coordinator requires immediate logical retirement. Physical
             // authority is revoked immediately; only the inert painted frame
@@ -634,6 +675,15 @@ export function createOpenTuiGenerationHost(
             if (!active) publish({ ...EMPTY_SNAPSHOT, status: "unavailable" });
           }
         });
+        const diagnosticStops = emitWorkspaceClientState
+          ? (["authority", "semantic", "operations", "catalog"] as const).map((scope) =>
+              bundle.client.subscribe(scope, emitWorkspaceClientState),
+            )
+          : [];
+        owned.stopLifecycle = () => {
+          stopLifecycle();
+          for (const stop of diagnosticStops) stop();
+        };
         if (pendingRuntime) activate(owned, pendingRuntime);
         else if (pendingEmpty) activate(owned, null);
         return owned.ready;

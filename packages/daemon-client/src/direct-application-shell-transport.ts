@@ -120,6 +120,14 @@ export interface TerminalFirstDaemonTransport extends DesktopDaemonTransport {
     reason?: "deadline" | "retired" | "preparation-rejected" | "adoption-rejected" | "unknown",
   ): void;
   refreshTerminalRuntimeInventory(): void;
+  connectWorkspaceCatalog(
+    target: DesktopApplicationShellTarget,
+    invalidate: () => void,
+    options?: { readonly terminalFirst?: boolean },
+  ): {
+    readonly ready: Promise<void>;
+    close(): void;
+  };
 }
 
 function clientInitiatedWebSocketCloseCode(code: number | undefined): number | undefined {
@@ -331,6 +339,22 @@ export function createDirectLoopbackDaemonTransport(
     null;
   let retainedApplicationShellHandlers: ApplicationShellEventHandlers | null = null;
   let applicationShellSupervisorConnection: ApplicationShellEventConnection | null = null;
+  let retainedWorkspaceCatalogInvalidate: (() => void) | null = null;
+  let retainedWorkspaceCatalogSubscriber: object | null = null;
+  let retainedWorkspaceCatalogReady: {
+    readonly subscriber: object;
+    readonly promise: Promise<void>;
+    readonly resolve: () => void;
+    settled: boolean;
+  } | null = null;
+  let retainedWorkspaceCatalogRoute: {
+    readonly target: DesktopApplicationShellTarget;
+    readonly sessionName: string;
+  } | null = null;
+  let workspaceCatalogSupervisorConnection: {
+    readonly ready: Promise<void>;
+    close(): void;
+  } | null = null;
   const terminalReconnectClock = dependencies.terminalReconnectClock ?? {
     setTimeout(callback: () => void, delayMs: number): unknown {
       const handle = setTimeout(callback, delayMs);
@@ -343,6 +367,9 @@ export function createDirectLoopbackDaemonTransport(
   };
   let terminalReconnectTimer: unknown | null = null;
   let terminalReconnectController: AbortController | null = null;
+  let catalogReconnectTimer: unknown | null = null;
+  let catalogReconnectAttempt = 0;
+  let scheduleCatalogOnlyReconnect = (): void => undefined;
   const cancelTerminalReconnect = (): void => {
     if (terminalReconnectTimer !== null)
       terminalReconnectClock.clearTimeout(terminalReconnectTimer);
@@ -351,6 +378,32 @@ export function createDirectLoopbackDaemonTransport(
       new DOMException("Terminal authority reconnect retired", "AbortError"),
     );
     terminalReconnectController = null;
+  };
+  const cancelCatalogReconnect = (): void => {
+    if (catalogReconnectTimer !== null) terminalReconnectClock.clearTimeout(catalogReconnectTimer);
+    catalogReconnectTimer = null;
+    catalogReconnectAttempt = 0;
+  };
+  const createCatalogReadiness = (subscriber: object) => {
+    let accept = (): void => undefined;
+    const readiness = {
+      subscriber,
+      promise: new Promise<void>((resolve) => {
+        accept = resolve;
+      }),
+      resolve: () => {
+        if (readiness.settled) return;
+        readiness.settled = true;
+        accept();
+      },
+      settled: false,
+    };
+    return readiness;
+  };
+  const resetCatalogReadiness = (): void => {
+    const readiness = retainedWorkspaceCatalogReady;
+    if (!readiness?.settled) return;
+    retainedWorkspaceCatalogReady = createCatalogReadiness(readiness.subscriber);
   };
   const validateBoundTarget = (value: unknown): DesktopApplicationShellTarget => {
     const safeTarget = validatedTarget(value);
@@ -421,10 +474,20 @@ export function createDirectLoopbackDaemonTransport(
       onRetired: () => {
         if (eventSupervisor !== supervisor) return;
         cancelTerminalReconnect();
+        resetCatalogReadiness();
         eventSupervisor = null;
         supervisorTargetKey = null;
         applicationShellSupervisorConnection = null;
+        workspaceCatalogSupervisorConnection = null;
         supervisor.dispose();
+        if (
+          retainedWorkspaceCatalogInvalidate &&
+          retainedWorkspaceCatalogRoute &&
+          (!terminalRuntimeEnabled || terminalAuthoritySink === null)
+        ) {
+          scheduleCatalogOnlyReconnect();
+          return;
+        }
         if (!terminalRuntimeEnabled || terminalAuthoritySink === null) return;
         const reconnect = (): void => {
           if (!terminalRuntimeEnabled || terminalAuthoritySink === null) return;
@@ -444,15 +507,68 @@ export function createDirectLoopbackDaemonTransport(
                 return;
               }
               const sink = terminalAuthoritySink;
-              const resource = replacement.adoptTerminalRuntimeInventory(prepared, sink);
-              if (resource !== null && terminalRuntimeEnabled && terminalAuthoritySink === sink) {
-                sink(resource);
-                if (retainedApplicationShellHandlers) {
-                  applicationShellSupervisorConnection = replacement.connectApplicationShell(
-                    retainedApplicationShellHandlers,
-                  );
+              const shellHandlers = retainedApplicationShellHandlers;
+              const shellConnection = shellHandlers
+                ? replacement.connectApplicationShell(shellHandlers)
+                : null;
+              if (shellConnection) applicationShellSupervisorConnection = shellConnection;
+              const catalogInvalidate = retainedWorkspaceCatalogInvalidate;
+              const catalogSubscriber = retainedWorkspaceCatalogSubscriber;
+              const catalogConnection = catalogInvalidate
+                ? replacement.connectWorkspaceCatalog(catalogInvalidate)
+                : null;
+              if (catalogConnection) workspaceCatalogSupervisorConnection = catalogConnection;
+              const retryReplacement = (): void => {
+                prepared.dispose();
+                if (
+                  !terminalRuntimeEnabled ||
+                  terminalAuthoritySink !== sink ||
+                  eventSupervisor !== replacement ||
+                  (catalogConnection !== null &&
+                    workspaceCatalogSupervisorConnection !== catalogConnection) ||
+                  retainedWorkspaceCatalogSubscriber !== catalogSubscriber
+                )
+                  return;
+                catalogConnection?.close();
+                if (workspaceCatalogSupervisorConnection === catalogConnection)
+                  workspaceCatalogSupervisorConnection = null;
+                shellConnection?.close();
+                if (applicationShellSupervisorConnection === shellConnection)
+                  applicationShellSupervisorConnection = null;
+                replacement.dispose();
+                eventSupervisor = null;
+                supervisorTargetKey = null;
+                if (terminalReconnectTimer === null)
+                  terminalReconnectTimer = terminalReconnectClock.setTimeout(() => {
+                    terminalReconnectTimer = null;
+                    reconnect();
+                  }, 1_000);
+              };
+              const commitReplacement = (): void => {
+                if (
+                  !terminalRuntimeEnabled ||
+                  terminalAuthoritySink !== sink ||
+                  eventSupervisor !== replacement ||
+                  (catalogConnection !== null &&
+                    workspaceCatalogSupervisorConnection !== catalogConnection) ||
+                  retainedWorkspaceCatalogSubscriber !== catalogSubscriber
+                ) {
+                  prepared.dispose();
+                  return;
                 }
-              }
+                const resource = replacement.adoptTerminalRuntimeInventory(prepared, sink);
+                if (resource === null) {
+                  retryReplacement();
+                  return;
+                }
+                sink(resource);
+                if (retainedWorkspaceCatalogReady?.subscriber === catalogSubscriber)
+                  retainedWorkspaceCatalogReady.resolve();
+                catalogInvalidate?.();
+              };
+              if (catalogConnection)
+                void catalogConnection.ready.then(commitReplacement, retryReplacement);
+              else commitReplacement();
             })
             .catch(() => {
               if (terminalReconnectController === controller) terminalReconnectController = null;
@@ -481,6 +597,65 @@ export function createDirectLoopbackDaemonTransport(
     eventSupervisor = supervisor;
     supervisorTargetKey = key;
     return supervisor;
+  };
+
+  const startCatalogOnlyReconnect = (): void => {
+    if (terminalRuntimeEnabled || eventSupervisor !== null) return;
+    const invalidate = retainedWorkspaceCatalogInvalidate;
+    const route = retainedWorkspaceCatalogRoute;
+    const subscriber = retainedWorkspaceCatalogSubscriber;
+    if (!invalidate || !route || !subscriber) return;
+    const replacement = ensureEventSupervisor(route.target, route.sessionName);
+    const connection = replacement.connectWorkspaceCatalog(invalidate, {
+      terminalFirst: false,
+    });
+    workspaceCatalogSupervisorConnection = connection;
+    void connection.ready.then(
+      () => {
+        if (
+          eventSupervisor !== replacement ||
+          workspaceCatalogSupervisorConnection !== connection ||
+          retainedWorkspaceCatalogSubscriber !== subscriber
+        )
+          return;
+        catalogReconnectAttempt = 0;
+        if (retainedWorkspaceCatalogReady?.subscriber === subscriber)
+          retainedWorkspaceCatalogReady.resolve();
+        invalidate();
+      },
+      () => {
+        if (
+          workspaceCatalogSupervisorConnection !== connection ||
+          retainedWorkspaceCatalogSubscriber !== subscriber
+        )
+          return;
+        connection.close();
+        workspaceCatalogSupervisorConnection = null;
+        if (eventSupervisor === replacement) {
+          replacement.dispose();
+          eventSupervisor = null;
+          supervisorTargetKey = null;
+        }
+        scheduleCatalogOnlyReconnect();
+      },
+    );
+  };
+  scheduleCatalogOnlyReconnect = (): void => {
+    if (
+      terminalRuntimeEnabled ||
+      eventSupervisor !== null ||
+      catalogReconnectTimer !== null ||
+      !retainedWorkspaceCatalogInvalidate ||
+      !retainedWorkspaceCatalogRoute ||
+      !retainedWorkspaceCatalogSubscriber
+    )
+      return;
+    const delayMs = Math.min(1_000 * 2 ** catalogReconnectAttempt, 30_000);
+    catalogReconnectAttempt += 1;
+    catalogReconnectTimer = terminalReconnectClock.setTimeout(() => {
+      catalogReconnectTimer = null;
+      startCatalogOnlyReconnect();
+    }, delayMs);
   };
 
   const transport: DesktopDaemonTransport & Partial<TerminalFirstDaemonTransport> = {
@@ -809,6 +984,10 @@ export function createDirectLoopbackDaemonTransport(
             prepared: PreparedTerminalRuntimeInventory,
             onResource: (resource: TerminalRuntimeInventoryProjectionV1) => void,
           ) => {
+            if (!terminalRuntimeEnabled) {
+              prepared.dispose();
+              return null;
+            }
             const resource =
               eventSupervisor?.adoptTerminalRuntimeInventory(prepared, onResource) ?? null;
             if (resource !== null) terminalAuthoritySink = onResource;
@@ -820,9 +999,16 @@ export function createDirectLoopbackDaemonTransport(
           },
           disposeEventSupervisor: () => {
             cancelTerminalReconnect();
+            cancelCatalogReconnect();
             retainedApplicationShellHandlers = null;
             applicationShellSupervisorConnection?.close();
             applicationShellSupervisorConnection = null;
+            retainedWorkspaceCatalogInvalidate = null;
+            retainedWorkspaceCatalogSubscriber = null;
+            retainedWorkspaceCatalogReady = null;
+            retainedWorkspaceCatalogRoute = null;
+            workspaceCatalogSupervisorConnection?.close();
+            workspaceCatalogSupervisorConnection = null;
             eventSupervisor?.dispose();
             eventSupervisor = null;
             supervisorTargetKey = null;
@@ -834,13 +1020,114 @@ export function createDirectLoopbackDaemonTransport(
             retainedApplicationShellHandlers = null;
             applicationShellSupervisorConnection?.close();
             applicationShellSupervisorConnection = null;
-            eventSupervisor?.dispose();
-            eventSupervisor = null;
-            supervisorTargetKey = null;
             terminalAuthoritySink = null;
+            if (
+              retainedWorkspaceCatalogInvalidate &&
+              retainedWorkspaceCatalogSubscriber &&
+              retainedWorkspaceCatalogRoute
+            ) {
+              const selectedSupervisor = eventSupervisor;
+              const selectedSubscriber = retainedWorkspaceCatalogSubscriber;
+              if (selectedSupervisor)
+                void selectedSupervisor.selectWorkspaceCatalogOnly().catch(() => {
+                  if (
+                    eventSupervisor !== selectedSupervisor ||
+                    retainedWorkspaceCatalogSubscriber !== selectedSubscriber
+                  )
+                    return;
+                  selectedSupervisor.dispose();
+                  eventSupervisor = null;
+                  supervisorTargetKey = null;
+                  workspaceCatalogSupervisorConnection = null;
+                  scheduleCatalogOnlyReconnect();
+                });
+              else scheduleCatalogOnlyReconnect();
+            } else {
+              cancelCatalogReconnect();
+              retainedWorkspaceCatalogInvalidate = null;
+              retainedWorkspaceCatalogSubscriber = null;
+              retainedWorkspaceCatalogReady = null;
+              retainedWorkspaceCatalogRoute = null;
+              workspaceCatalogSupervisorConnection?.close();
+              workspaceCatalogSupervisorConnection = null;
+              eventSupervisor?.dispose();
+              eventSupervisor = null;
+              supervisorTargetKey = null;
+            }
             diagnose?.("terminal-fallback-selected", { reason });
           },
           refreshTerminalRuntimeInventory: () => eventSupervisor?.refreshTerminalRuntimeInventory(),
+          connectWorkspaceCatalog: (
+            target: DesktopApplicationShellTarget,
+            invalidate: () => void,
+            connectionOptions?: { readonly terminalFirst?: boolean },
+          ) => {
+            const safeTarget = validateBoundTarget(target);
+            const sessionName = resolvedSessionName(resolveSessionName, safeTarget.workspaceName);
+            cancelCatalogReconnect();
+            const subscriber = Object.freeze({});
+            workspaceCatalogSupervisorConnection?.close();
+            retainedWorkspaceCatalogInvalidate = invalidate;
+            retainedWorkspaceCatalogSubscriber = subscriber;
+            retainedWorkspaceCatalogRoute = { target: safeTarget, sessionName };
+            const terminalFirst = connectionOptions?.terminalFirst ?? terminalRuntimeEnabled;
+            const catalogSupervisor = ensureEventSupervisor(safeTarget, sessionName);
+            const connection = catalogSupervisor.connectWorkspaceCatalog(invalidate, {
+              terminalFirst,
+            });
+            workspaceCatalogSupervisorConnection = connection;
+            retainedWorkspaceCatalogReady = createCatalogReadiness(subscriber);
+            void connection.ready.then(
+              () => {
+                if (
+                  retainedWorkspaceCatalogSubscriber !== subscriber ||
+                  eventSupervisor !== catalogSupervisor ||
+                  workspaceCatalogSupervisorConnection !== connection
+                )
+                  return;
+                catalogReconnectAttempt = 0;
+                retainedWorkspaceCatalogReady?.resolve();
+              },
+              () => {
+                if (
+                  retainedWorkspaceCatalogSubscriber !== subscriber ||
+                  workspaceCatalogSupervisorConnection !== connection
+                )
+                  return;
+                connection.close();
+                workspaceCatalogSupervisorConnection = null;
+                if (eventSupervisor === catalogSupervisor) {
+                  catalogSupervisor.dispose();
+                  eventSupervisor = null;
+                  supervisorTargetKey = null;
+                }
+                if (!terminalRuntimeEnabled) scheduleCatalogOnlyReconnect();
+              },
+            );
+            let closed = false;
+            return {
+              get ready() {
+                if (retainedWorkspaceCatalogSubscriber !== subscriber)
+                  return Promise.reject(new Error("workspace catalog subscriber retired"));
+                return (
+                  retainedWorkspaceCatalogReady?.promise ??
+                  Promise.reject(new Error("workspace catalog readiness unavailable"))
+                );
+              },
+              close() {
+                if (closed) return;
+                closed = true;
+                if (retainedWorkspaceCatalogSubscriber !== subscriber) return;
+                cancelCatalogReconnect();
+                retainedWorkspaceCatalogInvalidate = null;
+                retainedWorkspaceCatalogSubscriber = null;
+                retainedWorkspaceCatalogReady = null;
+                retainedWorkspaceCatalogRoute = null;
+                workspaceCatalogSupervisorConnection?.close();
+                workspaceCatalogSupervisorConnection = null;
+              },
+            };
+          },
         }
       : {}),
   };

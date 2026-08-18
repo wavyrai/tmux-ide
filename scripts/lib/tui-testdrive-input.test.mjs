@@ -19,6 +19,19 @@ const context = {
   geometry: { cols: 80, rows: 24 },
 };
 
+test("translates one key through the exact host PTY without paste framing", () => {
+  const command = parseTestdriveInputDocument(
+    JSON.stringify({ version: 1, kind: "key", key: "x" }),
+  );
+  assert.deepEqual(translateTestdriveInput(command, context), {
+    phases: [{ bytes: "x", delayMs: 0 }],
+  });
+  assert.throws(
+    () => parseTestdriveInputDocument(JSON.stringify({ version: 1, kind: "key", key: "xx" })),
+    /one printable ASCII/u,
+  );
+});
+
 test("translates bracketed paste through one exact OpenTUI input sequence", () => {
   const command = parseTestdriveInputDocument(
     JSON.stringify({ version: 1, kind: "paste", text: "alpha\nbeta" }),

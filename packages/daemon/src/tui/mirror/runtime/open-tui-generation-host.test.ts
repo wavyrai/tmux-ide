@@ -109,6 +109,9 @@ function canonicalObserver() {
 
 interface FakeBundle extends OpenTuiGenerationBundle {
   readonly emitLifecycle: (state: ApplicationShellSessionState) => void;
+  readonly emitScope: (scope: string) => void;
+  readonly setClientSnapshot: (snapshot: unknown) => void;
+  readonly getSnapshotSpy: ReturnType<typeof vi.fn>;
   readonly activate: () => void;
   readonly retireRuntime: () => void;
   readonly revokeSpy: ReturnType<typeof vi.fn>;
@@ -123,16 +126,26 @@ function bundle(
   },
 ): FakeBundle {
   const listeners = new Set<LifecycleListener>();
+  const scopeListeners = new Map<string, Set<() => void>>();
   const disposeSpy = vi.fn(async () => undefined);
   const revokeSpy = vi.fn();
+  let clientSnapshot: unknown = { target: nextConnection.target };
+  const getSnapshotSpy = vi.fn(() => clientSnapshot);
   const client = {
-    getSnapshot: () => ({ target: nextConnection.target }),
-    subscribe(scope: string, listener: LifecycleListener) {
+    getSnapshot: getSnapshotSpy,
+    subscribe(scope: string, listener: LifecycleListener | (() => void)) {
       if (scope === "lifecycle") {
-        listeners.add(listener);
-        listener({ shell: loading(nextConnection.target.daemon.instanceId) });
+        const lifecycleListener = listener as LifecycleListener;
+        listeners.add(lifecycleListener);
+        lifecycleListener({ shell: loading(nextConnection.target.daemon.instanceId) });
+        return () => listeners.delete(lifecycleListener);
       }
-      return () => listeners.delete(listener);
+      const scoped = listener as () => void;
+      const subscribers = scopeListeners.get(scope) ?? new Set<() => void>();
+      subscribers.add(scoped);
+      scopeListeners.set(scope, subscribers);
+      scoped();
+      return () => subscribers.delete(scoped);
     },
     dispose: vi.fn(async () => undefined),
   } as unknown as OpenTuiProductionWorkspaceClient;
@@ -146,10 +159,17 @@ function bundle(
     client,
     fastLane,
     adapter,
+    getSnapshotSpy,
     revokeSpy,
     disposeSpy,
     emitLifecycle: (state) => {
       for (const listener of [...listeners]) listener({ shell: state });
+    },
+    emitScope: (scope) => {
+      for (const listener of [...(scopeListeners.get(scope) ?? [])]) listener();
+    },
+    setClientSnapshot: (snapshot) => {
+      clientSnapshot = snapshot;
     },
     activate: () => callbacks.didActivateRuntime(runtime),
     retireRuntime: callbacks.didRetireRuntime,
@@ -283,6 +303,164 @@ describe("OpenTUI generation host", () => {
       "candidate-activation-admitted:connecting:1",
       "internal-snapshot-published:live:1",
     ]);
+  });
+
+  it("emits a later exact WorkspaceClient diagnostic when authority settles after shell live", async () => {
+    const view = presentation();
+    let created!: FakeBundle;
+    const diagnostics: Array<Record<string, unknown>> = [];
+    const host = createOpenTuiGenerationHost("alpha", view.value, {
+      observeCanonicalGeneration: inertCanonicalObserver,
+      resolveConnection: vi.fn(async () => connection("daemon-a")),
+      buildBundle: (resolved, callbacks) => (created = bundle(resolved, callbacks)),
+      onDiagnostic: (phase, details) => {
+        if (phase === "workspace-client-state") diagnostics.push(details);
+      },
+    });
+    const started = host.start();
+    await flushHostStart();
+    const target = connection("daemon-a").target;
+    const base = {
+      phase: "live",
+      generation: 2,
+      target,
+      catalog: { daemonInstanceId: "daemon-a", intents: [], liveSessions: [] },
+      authorityShell: {
+        workspace: { id: "workspace.id", name: "alpha workspace" },
+        terminalInventory: { resources: [] },
+      },
+      authority: null,
+      operations: { pending: [], lastReceipt: null },
+      semantic: { workspace: { id: "workspace.id", name: "alpha workspace" } },
+    };
+    created.setClientSnapshot(base);
+    created.emitLifecycle(liveEmpty("daemon-a"));
+    expect(diagnostics.at(-1)?.workspaceClient).toMatchObject({
+      committed: { authority: null },
+    });
+    created.setClientSnapshot({
+      ...base,
+      authority: {
+        generation: "daemon-a",
+        session: "alpha",
+        revision: 4,
+        owners: { input: "tui", focus: "tui", geometry: "tui" },
+      },
+    });
+    created.emitScope("authority");
+    expect(diagnostics.at(-1)?.workspaceClient).toMatchObject({
+      committed: {
+        authorityWorkspaceId: "workspace.id",
+        authorityWorkspaceName: "alpha workspace",
+        authority: { generation: "daemon-a", revision: 4 },
+      },
+    });
+    created.setClientSnapshot({
+      ...base,
+      catalog: {
+        daemonInstanceId: "daemon-a",
+        intents: [
+          {
+            workspaceName: "alpha",
+            sessionName: "alpha",
+            availability: "live",
+          },
+        ],
+        liveSessions: [{ sessionName: "alpha", fleetSessionId: "session.alpha" }],
+      },
+      authority: {
+        generation: "daemon-a",
+        session: "alpha",
+        revision: 4,
+        owners: { input: "tui", focus: "tui", geometry: "tui" },
+      },
+    });
+    created.emitScope("catalog");
+    expect(diagnostics.at(-1)?.workspaceClient).toMatchObject({
+      committed: {
+        catalog: {
+          daemonInstanceId: "daemon-a",
+          intents: [{ workspaceName: "alpha", availability: "live" }],
+        },
+      },
+    });
+    created.activate();
+    await started;
+    await host.dispose();
+  });
+
+  it("does no WorkspaceClient snapshot work when generation diagnostics are absent", async () => {
+    const view = presentation();
+    let created!: FakeBundle;
+    const host = createOpenTuiGenerationHost("alpha", view.value, {
+      observeCanonicalGeneration: inertCanonicalObserver,
+      resolveConnection: vi.fn(async () => connection("daemon-a")),
+      buildBundle: (resolved, callbacks) => (created = bundle(resolved, callbacks)),
+    });
+    const started = host.start();
+    await flushHostStart();
+    created.emitLifecycle(liveEmpty("daemon-a"));
+    created.emitScope("authority");
+    expect(created.getSnapshotSpy).not.toHaveBeenCalled();
+    created.activate();
+    await started;
+    await host.dispose();
+  });
+
+  it("keeps synchronous diagnostic snapshot failures fail-open", async () => {
+    const view = presentation();
+    let created!: FakeBundle;
+    const host = createOpenTuiGenerationHost("alpha", view.value, {
+      observeCanonicalGeneration: inertCanonicalObserver,
+      resolveConnection: vi.fn(async () => connection("daemon-a")),
+      buildBundle: (resolved, callbacks) => {
+        created = bundle(resolved, callbacks);
+        created.getSnapshotSpy.mockImplementation(() => {
+          throw new Error("snapshot diagnostic failed");
+        });
+        return created;
+      },
+      onDiagnostic: vi.fn(),
+    });
+    const started = host.start();
+    await flushHostStart();
+    created.emitLifecycle(liveEmpty("daemon-a"));
+    created.emitScope("catalog");
+    created.activate();
+    await expect(started).resolves.toBe(true);
+    await host.dispose();
+  });
+
+  it("keeps synchronous diagnostic sink failures fail-open after snapshot capture", async () => {
+    const view = presentation();
+    let created!: FakeBundle;
+    const sink = vi.fn(() => {
+      throw new Error("sink failed");
+    });
+    const host = createOpenTuiGenerationHost("alpha", view.value, {
+      observeCanonicalGeneration: inertCanonicalObserver,
+      resolveConnection: vi.fn(async () => connection("daemon-a")),
+      buildBundle: (resolved, callbacks) => (created = bundle(resolved, callbacks)),
+      onDiagnostic: sink,
+    });
+    const started = host.start();
+    await flushHostStart();
+    created.setClientSnapshot({
+      phase: "live",
+      generation: 1,
+      target: connection("daemon-a").target,
+      catalog: { daemonInstanceId: "daemon-a", intents: [], liveSessions: [] },
+      authorityShell: null,
+      authority: null,
+      operations: { pending: [], lastReceipt: null },
+      semantic: null,
+    });
+    created.emitScope("authority");
+    expect(created.getSnapshotSpy).toHaveBeenCalled();
+    expect(sink).toHaveBeenCalledWith("workspace-client-state", expect.any(Object));
+    created.activate();
+    await expect(started).resolves.toBe(true);
+    await host.dispose();
   });
 
   it("retains the old bundle until an event-driven identity rebind activates", async () => {

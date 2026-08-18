@@ -28,6 +28,11 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { buildTuiHostPublicationEvidence } from "./lib/tui-host-publication.mjs";
 import {
+  buildTestdriveExecCommand,
+  resolvePublicTestdriveEnvironment,
+  resolveTestdriveLaunch,
+} from "./lib/tui-testdrive-launch.mjs";
+import {
   MAX_CLIPBOARD_BYTES,
   MAX_CLIPBOARD_CALLBACK_ARTIFACTS,
   deliverExactHostBytes,
@@ -49,6 +54,9 @@ const logPath = join(runtimeDir, "stderr.log");
 const perfLogPath = join(runtimeDir, "performance.jsonl");
 const metadataPath = join(runtimeDir, "state.json");
 const clipboardObservationDir = join(runtimeDir, "clipboard-observations");
+const testdriveDaemonInfoDir = resolve(
+  process.env.TMUX_IDE_TESTDRIVE_DAEMON_INFO_DIR?.trim() || stateHome,
+);
 const namespaceSocketName = `tmux-ide-testdrive-${process.getuid?.() ?? process.pid}`;
 const cleanupToken = `testdrive:cleanup:${process.getuid?.() ?? process.pid}`;
 const targetSocketName = process.env.TMUX_IDE_TESTDRIVE_TARGET_SOCKET_NAME?.trim() || null;
@@ -69,6 +77,7 @@ function usage() {
 
 Usage:
   pnpm tui:testdrive start [--target NAME] [--cols N] [--rows N] [--source] [--debug]
+  pnpm tui:testdrive start --public-entry --cwd PATH [--cols N] [--rows N]
   pnpm tui:testdrive restart [start options]
   pnpm tui:testdrive capture [--ansi] [--history N]
   pnpm tui:testdrive publication <chrome|terminal> [--token TEXT] [--generation ID] [--json]
@@ -165,12 +174,23 @@ function liveSessions() {
 }
 
 function parseOptions(args) {
-  const options = { target: null, cols: 160, rows: 44, source: false, debug: false };
+  const options = {
+    target: null,
+    cols: 160,
+    rows: 44,
+    source: false,
+    debug: false,
+    publicEntry: false,
+    cwd: null,
+  };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--") continue;
     if (arg === "--source") options.source = true;
     else if (arg === "--debug") options.debug = true;
+    else if (arg === "--public-entry") options.publicEntry = true;
+    else if (arg === "--cwd") options.cwd = args[++index] ?? fail("--cwd needs a value");
+    else if (arg.startsWith("--cwd=")) options.cwd = arg.slice("--cwd=".length);
     else if (arg === "--target") options.target = args[++index] ?? fail("--target needs a value");
     else if (arg.startsWith("--target=")) options.target = arg.slice("--target=".length);
     else if (arg === "--cols") options.cols = numberOption("--cols", args[++index]);
@@ -800,12 +820,34 @@ async function ensureStopped() {
 
 async function start(args) {
   const options = parseOptions(args);
-  const target = resolveTarget(options.target);
-  const runtime = options.source ? "source" : "compiled";
-  if (!options.source && !existsSync(compiledTui)) {
+  if (options.publicEntry && options.target)
+    fail("--public-entry cannot be combined with --target");
+  const target = options.publicEntry ? null : resolveTarget(options.target);
+  const runtime = options.publicEntry ? "public-cli" : options.source ? "source" : "compiled";
+  if (!options.publicEntry && !options.source && !existsSync(compiledTui)) {
     fail(`Compiled TUI missing at ${compiledTui}; run pnpm build:tui or pass --source`);
   }
   if (options.source && !existsSync(sourceTui)) fail(`OpenTUI source missing at ${sourceTui}`);
+  const launch = resolveTestdriveLaunch({
+    publicEntry: options.publicEntry,
+    source: options.source,
+    target,
+    cwd: options.publicEntry ? options.cwd : options.source ? repoRoot : stateHome,
+    repoRoot,
+    nodeBinary: process.execPath,
+    compiledTui,
+    sourceTui,
+    publicCli: join(repoRoot, "bin", "cli.js"),
+  });
+  const publicEnvironment = options.publicEntry
+    ? resolvePublicTestdriveEnvironment(process.env)
+    : null;
+  if (!existsSync(launch.cwd)) fail(`test-drive cwd does not exist: ${launch.cwd}`);
+  if (
+    options.publicEntry &&
+    [join(launch.cwd, ".tmux-ide", "workspace.yml"), join(launch.cwd, "ide.yml")].some(existsSync)
+  )
+    fail("--public-entry cwd must not contain workspace.yml or legacy ide.yml");
 
   await ensureStopped();
   mkdirSync(stateHome, { recursive: true });
@@ -817,30 +859,32 @@ async function start(args) {
   if (process.env.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON === "1") {
     const canonicalHome = canonicalDaemonHome();
     const daemonInfoPath = join(canonicalHome, "daemon.json");
-    if (!existsSync(daemonInfoPath)) fail(`Canonical daemon info missing at ${daemonInfoPath}`);
+    if (!options.publicEntry && !existsSync(daemonInfoPath))
+      fail(`Canonical daemon info missing at ${daemonInfoPath}`);
   }
   rmSync(logPath, { force: true });
   rmSync(perfLogPath, { force: true });
 
-  const binary = options.source ? "bun" : compiledTui;
-  const binaryArgs = options.source
-    ? [sourceTui, `--target=${target}`]
-    : ["app", `--target=${target}`];
   const launchEpochMs = Date.now();
   const launchId = randomUUID();
   const environment = [
-    `TMUX_IDE_CWD=${shQuote(repoRoot)}`,
-    `TMUX_IDE_HOME=${shQuote(stateHome)}`,
-    ...(process.env.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON === "1"
+    `TMUX_IDE_CWD=${shQuote(launch.cwd)}`,
+    ...(publicEnvironment
+      ? Object.entries(publicEnvironment).map(([key, value]) => `${key}=${shQuote(value)}`)
+      : [`TMUX_IDE_HOME=${shQuote(stateHome)}`]),
+    ...(!publicEnvironment && process.env.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON === "1"
       ? [`TMUX_IDE_DAEMON_INFO_DIR=${shQuote(canonicalDaemonHome())}`]
-      : [
-          "TMUX_IDE_RUNTIME_MODE=testdrive",
-          `TMUX_IDE_REGISTRY_DIR=${shQuote(join(runtimeDir, "registry"))}`,
-          `TMUX_IDE_DAEMON_INFO_DIR=${shQuote(stateHome)}`,
-          `TMUX_IDE_TMUX_SOCKET_NAME=${shQuote(targetSocketName ?? namespaceSocketName)}`,
-          `TMUX_IDE_CLEANUP_TOKEN=${shQuote(cleanupToken)}`,
-        ]),
+      : !publicEnvironment
+        ? [
+            "TMUX_IDE_RUNTIME_MODE=testdrive",
+            `TMUX_IDE_REGISTRY_DIR=${shQuote(join(runtimeDir, "registry"))}`,
+            `TMUX_IDE_DAEMON_INFO_DIR=${shQuote(testdriveDaemonInfoDir)}`,
+            `TMUX_IDE_TMUX_SOCKET_NAME=${shQuote(targetSocketName ?? namespaceSocketName)}`,
+            `TMUX_IDE_CLEANUP_TOKEN=${shQuote(cleanupToken)}`,
+          ]
+        : []),
     `TMUX_IDE_CLI=${shQuote(join(repoRoot, "bin", "cli.js"))}`,
+    ...(!publicEnvironment ? ["TMUX="] : []),
     `TMUX_IDE_TUI_PERF_LOG=${shQuote(perfLogPath)}`,
     `TMUX_IDE_TUI_LAUNCH_EPOCH_MS=${launchEpochMs}`,
     ...(process.env.TMUX_IDE_PERFORMANCE_TRACE_LOG
@@ -859,15 +903,41 @@ async function start(args) {
       : []),
     ...(options.debug ? ["TMUX_IDE_MIRROR_DEBUG=1"] : []),
   ];
+  const publicExecEnvironment = publicEnvironment
+    ? {
+        ...publicEnvironment,
+        TMUX_IDE_CWD: launch.cwd,
+        TMUX_IDE_CLI: join(repoRoot, "bin", "cli.js"),
+        TMUX_IDE_TUI_PERF_LOG: perfLogPath,
+        TMUX_IDE_TUI_LAUNCH_EPOCH_MS: String(launchEpochMs),
+        ...(process.env.TMUX_IDE_PERFORMANCE_TRACE_LOG
+          ? {
+              TMUX_IDE_PERFORMANCE_TRACE_LOG: process.env.TMUX_IDE_PERFORMANCE_TRACE_LOG,
+              TMUX_IDE_PERFORMANCE_TRACE_COMMIT:
+                process.env.TMUX_IDE_PERFORMANCE_TRACE_COMMIT ?? "",
+              TMUX_IDE_PERFORMANCE_TRACE_TREE: process.env.TMUX_IDE_PERFORMANCE_TRACE_TREE ?? "",
+              TMUX_IDE_PERFORMANCE_TRACE_DETAIL:
+                process.env.TMUX_IDE_PERFORMANCE_TRACE_DETAIL ?? "1",
+            }
+          : {}),
+        ...(options.debug ? { TMUX_IDE_MIRROR_DEBUG: "1" } : {}),
+      }
+    : null;
   writeFileSync(
     launcherPath,
     [
       "#!/bin/sh",
       // Bun source mode needs the checkout bunfig preload. The standalone
       // binary must run outside that tree or Bun tries to preload Solid again.
-      `cd ${shQuote(options.source ? repoRoot : stateHome)}`,
-      `export ${environment.join(" ")}`,
-      `exec ${shQuote(binary)} ${binaryArgs.map(shQuote).join(" ")} 2>>${shQuote(logPath)}`,
+      `cd ${shQuote(launch.cwd)}`,
+      ...(publicEnvironment ? [] : [`export ${environment.join(" ")}`]),
+      buildTestdriveExecCommand({
+        clean: Boolean(publicEnvironment),
+        environment: publicExecEnvironment ?? {},
+        binary: launch.binary,
+        binaryArgs: launch.binaryArgs,
+        stderrPath: logPath,
+      }),
       "",
     ].join("\n"),
   );
@@ -884,7 +954,7 @@ async function start(args) {
     "-y",
     String(options.rows),
     "-c",
-    repoRoot,
+    launch.cwd,
     launcherPath,
   ]);
   const frame = await waitForFrame((value) => value.includes("tmux-ide"));
@@ -894,6 +964,7 @@ async function start(args) {
   const metadata = {
     hostSession,
     target,
+    entry: launch.entry,
     cols: options.cols,
     rows: options.rows,
     runtime,
@@ -915,7 +986,7 @@ async function start(args) {
   });
 
   process.stdout.write(
-    `OpenTUI test-drive chrome ready in ${hostPublication.elapsedMs}ms (${runtime}, ${options.cols}x${options.rows}, target ${target})\n` +
+    `OpenTUI test-drive chrome ready in ${hostPublication.elapsedMs}ms (${runtime}, ${options.cols}x${options.rows}${target ? `, target ${target}` : ""})\n` +
       `Attach: tmux attach -t ${hostSession}\n` +
       `Logs:   ${logPath}\n\n${frame}\n`,
   );

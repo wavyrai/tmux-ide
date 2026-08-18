@@ -138,7 +138,9 @@ export interface WorkspaceClientRuntimePort<
   requestAuthority?(
     authority: SessionRuntimeAuthorityKind,
   ): Promise<SessionRuntimeAuthorityLease | null>;
-  releaseAuthority?(authority: SessionRuntimeAuthorityKind): Promise<void>;
+  releaseAuthority?(
+    authority: SessionRuntimeAuthorityKind,
+  ): Promise<SessionRuntimeAuthoritySnapshot>;
   onAuthority?(listener: (snapshot: SessionRuntimeAuthoritySnapshot) => void): () => void;
 }
 
@@ -263,7 +265,9 @@ export interface WorkspaceClient<
   requestAuthority(
     authority: SessionRuntimeAuthorityKind,
   ): Promise<SessionRuntimeAuthorityLease | null>;
-  releaseAuthority(authority: SessionRuntimeAuthorityKind): Promise<void>;
+  releaseAuthority(
+    authority: SessionRuntimeAuthorityKind,
+  ): Promise<SessionRuntimeAuthoritySnapshot | null>;
   /** Retires every runtime supervisor and settles physical transport cleanup. */
   dispose(): Promise<void>;
 }

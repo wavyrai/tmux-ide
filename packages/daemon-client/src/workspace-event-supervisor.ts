@@ -76,6 +76,15 @@ export interface WorkspaceEventSupervisor {
   /** Barrier awaited by application-shell fetches; verified-open is app-shell specific. */
   awaitApplicationShellBarrier(signal: AbortSignal): Promise<void>;
   connectApplicationShell(handlers: ApplicationShellEventHandlers): ApplicationShellEventConnection;
+  connectWorkspaceCatalog(
+    invalidate: () => void,
+    options?: { readonly terminalFirst?: boolean },
+  ): {
+    readonly ready: Promise<void>;
+    close(): void;
+  };
+  /** Releases terminal/app-shell authority while preserving a catalog-only subscription. */
+  selectWorkspaceCatalogOnly(): Promise<void>;
   refreshTerminalRuntimeInventory(): void;
   dispose(): void;
 }
@@ -156,6 +165,10 @@ export function createWorkspaceEventSupervisor(
     resource: "application-shell",
     workspaceName: options.workspaceName,
   } as const;
+  const workspaceCatalogInterest = {
+    resource: "workspace-catalog",
+    workspaceName: null,
+  } as const;
   const maximumInitialAttempts = options.maxInitialReadAttempts ?? 2;
   const hello = deferred();
   let disposed = false;
@@ -166,14 +179,20 @@ export function createWorkspaceEventSupervisor(
   let terminalEpoch = 0;
   let terminalRevision = 0;
   let snapshotRequired = false;
+  let terminalDesired = true;
   let terminalInstalled = false;
   let applicationShellInstalled = false;
+  let applicationShellDesired = false;
+  let workspaceCatalogDesired = false;
   let terminalInstallFlight: Promise<void> | null = null;
   let applicationShellInstallFlight: Promise<void> | null = null;
+  let interestMutationTail = Promise.resolve();
+  let installedInterestSignature = "";
   let terminalSink: ((resource: TerminalRuntimeInventoryProjectionV1) => void) | null = null;
   let terminalRefreshQueued = false;
   let terminalRefreshRunning = false;
   let applicationShellHandlers: ApplicationShellEventHandlers | null = null;
+  let workspaceCatalogInvalidate: (() => void) | null = null;
   let retirementNotified = false;
   let failureReported = false;
   const ackWaiters = new Map<number, AckWaiter>();
@@ -243,8 +262,9 @@ export function createWorkspaceEventSupervisor(
   const installApplicationShell = (): Promise<void> => {
     if (applicationShellInstalled) return Promise.resolve();
     if (applicationShellInstallFlight) return applicationShellInstallFlight;
+    applicationShellDesired = true;
     applicationShellInstallFlight = installTerminal()
-      .then(() => mutateInterests([terminalInterest, applicationShellInterest]))
+      .then(() => reconcileDesiredInterests())
       .then(() => {
         applicationShellInstalled = true;
       })
@@ -252,6 +272,23 @@ export function createWorkspaceEventSupervisor(
         applicationShellInstallFlight = null;
       });
     return applicationShellInstallFlight;
+  };
+
+  const desiredInterests = (): readonly DaemonEventResourceInterest[] => [
+    ...(terminalDesired ? [terminalInterest] : []),
+    ...(applicationShellDesired ? [applicationShellInterest] : []),
+    ...(workspaceCatalogDesired ? [workspaceCatalogInterest] : []),
+  ];
+  const reconcileDesiredInterests = (): Promise<void> => {
+    const reconcile = interestMutationTail.then(async () => {
+      const requested = desiredInterests();
+      const signature = JSON.stringify(requested);
+      if (signature === installedInterestSignature) return;
+      await mutateInterests(requested);
+      installedInterestSignature = signature;
+    });
+    interestMutationTail = reconcile.catch(() => undefined);
+    return reconcile;
   };
 
   const isApplicationShellChange = (frame: DaemonEventServerFrame): boolean =>
@@ -370,6 +407,7 @@ export function createWorkspaceEventSupervisor(
         terminalEpoch += 1;
         applicationShellHandlers?.onInvalidate();
         refreshTerminalAuthority();
+        workspaceCatalogInvalidate?.();
       }
       const waiter = ackWaiters.get(frame.interestRevision);
       if (!waiter) return;
@@ -401,6 +439,7 @@ export function createWorkspaceEventSupervisor(
       terminalEpoch += 1;
       applicationShellHandlers?.onInvalidate();
       refreshTerminalAuthority();
+      workspaceCatalogInvalidate?.();
       return;
     }
     if (frame.type === "resource.changed" || frame.type === "resource.observed") {
@@ -408,6 +447,7 @@ export function createWorkspaceEventSupervisor(
         terminalEpoch += 1;
         applicationShellHandlers?.onInvalidate();
         refreshTerminalAuthority();
+        workspaceCatalogInvalidate?.();
       }
     }
     if (
@@ -420,6 +460,12 @@ export function createWorkspaceEventSupervisor(
       refreshTerminalAuthority();
     }
     if (isApplicationShellChange(frame)) applicationShellHandlers?.onInvalidate();
+    if (
+      frame.type === "resource.changed" &&
+      frame.resource === "workspace-catalog" &&
+      frame.workspaceName === null
+    )
+      workspaceCatalogInvalidate?.();
     if (frame.type === "interaction.receipt" && frame.workspaceName === options.workspaceName) {
       observeSequence(frame.sequence);
       applicationShellHandlers?.onInteractionReceipt?.(frame);
@@ -495,6 +541,39 @@ export function createWorkspaceEventSupervisor(
         },
       };
     },
+    connectWorkspaceCatalog(invalidate, connectionOptions = {}) {
+      if (disposed) throw new Error("workspace event supervisor disposed");
+      workspaceCatalogInvalidate = invalidate;
+      workspaceCatalogDesired = true;
+      if (connectionOptions.terminalFirst === false) terminalDesired = false;
+      const ready =
+        connectionOptions.terminalFirst === false
+          ? reconcileDesiredInterests()
+          : installTerminal().then(() => reconcileDesiredInterests());
+      let closed = false;
+      return {
+        ready,
+        close() {
+          if (closed) return;
+          closed = true;
+          if (workspaceCatalogInvalidate === invalidate) workspaceCatalogInvalidate = null;
+        },
+      };
+    },
+    selectWorkspaceCatalogOnly() {
+      if (disposed) return Promise.reject(new Error("workspace event supervisor disposed"));
+      if (!workspaceCatalogDesired)
+        return Promise.reject(new Error("workspace event supervisor has no catalog subscriber"));
+      terminalDesired = false;
+      terminalInstalled = false;
+      applicationShellDesired = false;
+      applicationShellInstalled = false;
+      terminalSink = null;
+      terminalRefreshQueued = false;
+      applicationShellHandlers = null;
+      const terminalBarrier = terminalInstallFlight ?? Promise.resolve();
+      return terminalBarrier.catch(() => undefined).then(() => reconcileDesiredInterests());
+    },
     refreshTerminalRuntimeInventory() {
       refreshTerminalAuthority();
     },
@@ -503,6 +582,7 @@ export function createWorkspaceEventSupervisor(
       disposed = true;
       terminalSink = null;
       applicationShellHandlers = null;
+      workspaceCatalogInvalidate = null;
       socket.removeEventListener?.("open", onOpen);
       socket.removeEventListener?.("message", onMessage);
       socket.removeEventListener?.("close", onClose);

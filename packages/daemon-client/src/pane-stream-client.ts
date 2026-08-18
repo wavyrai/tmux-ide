@@ -222,7 +222,9 @@ export interface PaneStreamRuntimeClient {
   requestAuthority(
     authority: SessionRuntimeAuthorityKind,
   ): Promise<SessionRuntimeAuthorityLease | null>;
-  releaseAuthority(authority: SessionRuntimeAuthorityKind): Promise<void>;
+  releaseAuthority(
+    authority: SessionRuntimeAuthorityKind,
+  ): Promise<SessionRuntimeAuthoritySnapshot>;
   sendTerminalInput(
     target: TerminalReplicaAddress,
     input: SessionRuntimeTerminalInput,
@@ -394,7 +396,10 @@ export async function connectIssuedPaneStreamRuntimeClient(
     string,
     {
       authority: SessionRuntimeAuthorityKind;
-      resolve(lease: SessionRuntimeAuthorityLease | null): void;
+      resolve(
+        lease: SessionRuntimeAuthorityLease | null,
+        snapshot: SessionRuntimeAuthoritySnapshot,
+      ): void;
       reject(error: Error): void;
       timer: RuntimeTimer;
     }
@@ -470,7 +475,12 @@ export async function connectIssuedPaneStreamRuntimeClient(
           new PaneStreamOperationError("operation-timeout", `${authority} authority timed out`),
         );
       }, 2_000);
-      pendingAuthorities.set(requestId, { authority, resolve, reject, timer });
+      pendingAuthorities.set(requestId, {
+        authority,
+        resolve: (lease) => resolve(lease),
+        reject,
+        timer,
+      });
       try {
         send({
           type: "authority-request",
@@ -485,7 +495,9 @@ export async function connectIssuedPaneStreamRuntimeClient(
       }
     });
   };
-  const releaseAuthority = (authority: SessionRuntimeAuthorityKind): Promise<void> => {
+  const releaseAuthority = (
+    authority: SessionRuntimeAuthorityKind,
+  ): Promise<SessionRuntimeAuthoritySnapshot> => {
     const requestId = crypto.randomUUID();
     return new Promise((resolve, reject) => {
       const timer = createRuntimeTimer(() => {
@@ -494,7 +506,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
       }, 2_000);
       pendingAuthorities.set(requestId, {
         authority,
-        resolve: () => resolve(),
+        resolve: (_lease, snapshot) => resolve(snapshot),
         reject,
         timer,
       });
@@ -790,7 +802,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
       pending.timer.release();
       pendingAuthorities.delete(frame.requestId);
       applyAuthoritySnapshot(frame.snapshot);
-      pending.resolve(frame.status === "granted" ? frame.lease : null);
+      pending.resolve(frame.status === "granted" ? frame.lease : null, frame.snapshot);
       return;
     }
     if (frame.type === "viewport-ack") {

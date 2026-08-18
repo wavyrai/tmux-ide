@@ -13,6 +13,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
   rmSync,
   watch,
   writeFileSync,
@@ -70,16 +71,33 @@ import {
 import { sourceArchitectureInventory } from "./architecture-debt-inventory.mjs";
 import { acquireProductRigSleepAssertion } from "./lib/product-rig-sleep-assertion.mjs";
 import {
+  assessConfiglessJourneyBoundaries,
+  buildProductDiagnosticCorrelation,
+  CONFIGLESS_TMUX_SESSION_FORMAT,
+  createConfiglessProductJourneyOwnerOperations,
+  createFreshFleetCatalogReader,
+  parseConfiglessTmuxSessionInventory,
+  qualifyCanonicalSeedPaint,
+  waitForQualifiedWorkspaceClientState,
+} from "./lib/product-configless-owner.mjs";
+import {
   PRODUCT_DIAGNOSTIC_BUNDLE_FILES,
   PRODUCT_JOURNEY_REGISTRY,
   auditProductJourneyScope,
   collectProductRigCleanupFailures,
+  createProductRigCleanupReceipt,
   createProductDiagnosticBundle,
+  dispatchProductJourneyExecutor,
   parseProductDiagnoseOptions,
   productDiagnosticRunId,
+  productRigTerminalFailureError,
+  productRigTerminalFailureState,
+  prepareProductDiagnosticBundlePublication,
   productRigCleanupAcknowledgesRequest,
   productRigCleanupBarrierFailures,
+  isCleanLegacyStoppedProductRigState,
   resolveProductJourneyPlan,
+  runConfiglessProductJourneyOwnerBoot,
   runIsolatedProductJourneyAttempt,
   runProductJourneyPlan,
   settleInternalProductRigCleanup,
@@ -125,52 +143,25 @@ function readDiagnosticText(path, fallback = "") {
 }
 
 function productDiagnosticCorrelation(state, captureEvidence) {
-  const committed = state?.convergence?.workspaceClient?.committed ?? null;
-  const pending = state?.convergence?.workspaceClient?.pending ?? null;
-  const derived = state?.convergence?.workspaceClient?.derived ?? null;
-  const daemonRevision = state?.daemon?.revision ?? state?.workspace?.revision ?? null;
   const tuiAvailable = Boolean(captureEvidence?.tuiPath && existsSync(captureEvidence.tuiPath));
   const webAvailable = Boolean(captureEvidence?.webPath && existsSync(captureEvidence.webPath));
-  const webSemantic =
-    webAvailable && captureEvidence?.web
+  const configless = state?.journeyEvidence?.configlessColdStart ?? null;
+  return buildProductDiagnosticCorrelation({
+    state,
+    tuiAvailable,
+    webAvailable,
+    web: captureEvidence?.web ?? null,
+    expected: configless
       ? {
-          shellSource: captureEvidence.web.shellSource ?? null,
-          terminalPhases: captureEvidence.web.terminalPhases ?? [],
+          daemonGeneration: state?.daemon?.instanceId ?? null,
+          workspaceName: state?.workspace ?? null,
+          sessionName: state?.session ?? null,
+          fleetSessionId: configless.adopted?.fleetSessionId ?? null,
+          catalogRevision: configless.adopted?.catalogRevision ?? null,
+          semanticPaneId: configless.coherent?.semanticPaneId ?? null,
         }
-      : null;
-  const webSemanticComplete = Boolean(
-    webSemantic?.shellSource && webSemantic.terminalPhases.length > 0,
-  );
-  const missing = [
-    ...(daemonRevision === null ? ["daemon.revision"] : []),
-    ...(committed === null ? ["workspaceClient.committed"] : []),
-    ...(pending === null ? ["workspaceClient.pending"] : []),
-    ...(derived === null ? ["workspaceClient.derived"] : []),
-    ...(!tuiAvailable ? ["tui.frame"] : []),
-    ...(!webAvailable ? ["web.png"] : []),
-    ...(!webSemanticComplete ? ["web.semantic"] : []),
-  ];
-  return {
-    complete: missing.length === 0,
-    missing,
-    daemonState: {
-      instanceId: state?.daemon?.instanceId ?? null,
-      revision: daemonRevision,
-      pid: state?.daemon?.pid ?? null,
-      port: state?.daemon?.port ?? null,
-      status: state?.status ?? "unavailable",
-      correlationComplete: daemonRevision !== null,
-    },
-    clientState: {
-      committed,
-      pending,
-      derived,
-      webSemantic,
-      correlationComplete: missing.length === 0,
-      missing,
-    },
-    availability: { tui: tuiAvailable, web: webAvailable },
-  };
+      : null,
+  });
 }
 const WARM_COHERENT_SAMPLE_COUNT = 20;
 
@@ -178,7 +169,7 @@ function shellSingleQuote(value) {
   return `'${String(value).replaceAll("'", `'\\''`)}'`;
 }
 
-function diagnosticReproduction(journeyId) {
+function diagnosticReproduction(journeyId, variant = null) {
   return `#!/bin/sh
 set -eu
 SOURCE_ROOT=\${TMUX_IDE_SOURCE_ROOT:-"$PWD"}
@@ -187,7 +178,7 @@ if [ ! -f "$SOURCE_ROOT/package.json" ] || [ ! -f "$SOURCE_ROOT/scripts/product-
   exit 2
 fi
 cd "$SOURCE_ROOT"
-exec pnpm product:testdrive diagnose --journey ${journeyId} --repeat 1 --json
+exec pnpm product:testdrive diagnose --journey ${journeyId}${variant ? ` --variant ${variant}` : ""} --repeat 1 --json
 `;
 }
 
@@ -197,7 +188,7 @@ function terminalCellAt(frame, row, column) {
 }
 
 function usage() {
-  return `Product test rig\n\nUsage:\n  pnpm product:testdrive start [--json]\n  pnpm product:testdrive status [--json]\n  pnpm product:testdrive capture [--json]\n  pnpm product:testdrive smoke [--json]\n  pnpm product:testdrive diagnose [--journey <id>] [--repeat <1-10>] [--json]\n  pnpm product:testdrive inventory [--json]\n  pnpm product:testdrive stop [--json]\n`;
+  return `Product test rig\n\nUsage:\n  pnpm product:testdrive start [--json]\n  pnpm product:testdrive status [--json]\n  pnpm product:testdrive capture [--json]\n  pnpm product:testdrive smoke [--json]\n  pnpm product:testdrive diagnose [--journey <id>] [--variant <key|paste>] [--repeat <1-10>] [--json]\n  pnpm product:testdrive inventory [--json]\n  pnpm product:testdrive stop [--json]\n`;
 }
 
 function emit(value, json) {
@@ -216,7 +207,7 @@ function event(phase, detail = {}) {
 }
 
 function commandEnv(state) {
-  return {
+  const environment = {
     ...process.env,
     TMUX_IDE_TESTDRIVE_RUNTIME_DIR: state.tui.runtimeDir,
     TMUX_IDE_TESTDRIVE_HOST_SESSION: state.tui.hostSession,
@@ -229,8 +220,22 @@ function commandEnv(state) {
     // tmux through that exact socket instead of silently discovering the
     // user's default server.
     TMUX_IDE_TMUX_SOCKET_PATH: state.runtimeNamespace.tmuxSocketPath,
-    TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON: "1",
-    TMUX_IDE_TESTDRIVE_CANONICAL_HOME: state.runtimeNamespace.daemonInfoDir,
+    ...(state.tui.publicEntry
+      ? {
+          HOME: state.runtimeNamespace.home,
+          XDG_CONFIG_HOME: join(state.runtimeNamespace.home, ".config"),
+          TMUX: "",
+          TMUX_IDE_HOME: state.runtimeNamespace.stateDir,
+          TMUX_IDE_CONFIG: join(state.runtimeNamespace.stateDir, "config.json"),
+          TMUX_IDE_DAEMON_INFO_DIR: state.runtimeNamespace.daemonInfoDir,
+          TMUX_IDE_REGISTRY_DIR: state.runtimeNamespace.registryDir,
+          TMUX_IDE_SETTINGS_DIR: state.runtimeNamespace.settingsDir,
+          TMUX_IDE_TESTDRIVE_DAEMON_INFO_DIR: state.runtimeNamespace.daemonInfoDir,
+        }
+      : {
+          TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON: "1",
+          TMUX_IDE_TESTDRIVE_CANONICAL_HOME: state.runtimeNamespace.daemonInfoDir,
+        }),
     ...(state.tui.performanceTracePath
       ? {
           TMUX_IDE_PERFORMANCE_TRACE_LOG: state.tui.performanceTracePath,
@@ -240,6 +245,14 @@ function commandEnv(state) {
         }
       : {}),
   };
+  if (state.tui.publicEntry) {
+    delete environment.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON;
+    delete environment.TMUX_IDE_TESTDRIVE_CANONICAL_HOME;
+    delete environment.TMUX_IDE_RUNTIME_MODE;
+    delete environment.TMUX_IDE_CLEANUP_TOKEN;
+    delete environment.TMUX_IDE_TMUX_SOCKET_NAME;
+  }
+  return environment;
 }
 
 function readJsonLines(path) {
@@ -554,15 +567,71 @@ async function captureArtifacts(state, label = "capture", existingPage = null) {
     }
     const webPath = join(artifactDir, `${suffix}-web.png`);
     await page.screenshot({ path: webPath, fullPage: true });
-    const web = await page.evaluate(() => ({
-      title: globalThis.document.title,
-      shellSource:
-        globalThis.document.querySelector(".app")?.getAttribute("data-shell-source") ?? null,
-      terminalPhases: [...globalThis.document.querySelectorAll(".terminal-surface")].map((node) =>
-        node.getAttribute("data-phase"),
-      ),
-      text: globalThis.document.body.innerText.slice(0, 4_000),
-    }));
+    const web = await page.evaluate(
+      async ({ workspaceName }) => {
+        const host = globalThis.tmuxIdeHost;
+        const [bootstrap, workspaces, shell] = await Promise.all([
+          host.bootstrap(),
+          host.daemon.listWorkspaces(),
+          host.daemon.fetchApplicationShell({ workspaceName, resourceVersion: 3 }),
+        ]);
+        const shellResource = shell.status === "ok" ? shell.envelope.resource : null;
+        const workspaceRows =
+          workspaces.status === "ok"
+            ? workspaces.workspaces.filter((workspace) => workspace.workspaceName === workspaceName)
+            : [];
+        const workspaceRow = workspaceRows.length === 1 ? workspaceRows[0] : null;
+        return {
+          title: globalThis.document.title,
+          shellSource:
+            globalThis.document.querySelector(".app")?.getAttribute("data-shell-source") ?? null,
+          terminalPhases: [...globalThis.document.querySelectorAll(".terminal-surface")].map(
+            (node) => node.getAttribute("data-phase"),
+          ),
+          terminals: [...globalThis.document.querySelectorAll(".terminal-surface")].map((node) => ({
+            phase: node.getAttribute("data-phase"),
+            workspaceName: node.getAttribute("data-workspace-name"),
+            semanticPaneId: node.getAttribute("data-semantic-pane-id"),
+          })),
+          windowContainerCount: globalThis.document.querySelectorAll(".tiled-workspace").length,
+          windows: [...globalThis.document.querySelectorAll(".window-tabs__tab")].map((node) => ({
+            windowResourceId: node.getAttribute("data-window-resource-id"),
+            semanticPaneIds: node.getAttribute("data-semantic-pane-ids"),
+            paneCount: node.getAttribute("data-pane-count"),
+            active: node.getAttribute("data-active"),
+          })),
+          hostCorrelation: {
+            domDaemonGeneration:
+              globalThis.document.querySelector(".app")?.getAttribute("data-daemon-generation") ??
+              null,
+            bootstrapDaemon:
+              bootstrap.daemon.status === "connected" ? bootstrap.daemon.identity.instanceId : null,
+            listDaemon: workspaces.status === "ok" ? workspaces.daemon.instanceId : null,
+            workspaceNames:
+              workspaces.status === "ok"
+                ? workspaces.workspaces.map((workspace) => workspace.workspaceName)
+                : [],
+            workspaceRow,
+            shellDaemon: shell.status === "ok" ? shell.envelope.daemon.instanceId : null,
+            shellWorkspaceName: shellResource?.workspace?.name ?? null,
+            shellWorkspaceId: shellResource?.workspace?.id ?? null,
+            shellFleetSessionId: shellResource?.fleetSessionId ?? null,
+            terminalResources:
+              shellResource?.terminalInventory?.resources.map((resource) => ({
+                resourceId: resource.id,
+                windowResourceId: resource.windowResourceId ?? resource.id,
+                active: resource.active,
+                semanticPaneId:
+                  resource.attachability.status === "available"
+                    ? resource.attachability.semanticPaneId
+                    : null,
+              })) ?? [],
+          },
+          text: globalThis.document.body.innerText.slice(0, 4_000),
+        };
+      },
+      { workspaceName: state.workspace },
+    );
     const webStatePath = join(artifactDir, `${suffix}-web.json`);
     await writeFile(webStatePath, `${JSON.stringify(web, null, 2)}\n`, "utf8");
     event("capture", { label, tuiPath, tmuxPath, webPath, webStatePath });
@@ -577,8 +646,9 @@ async function waitForState(predicate, timeoutMs = 90_000, { allowTerminalFailur
   let state = null;
   while (Date.now() < deadline) {
     state = readJson(statePath);
-    if (!allowTerminalFailure && ["failed", "cleanup-failed"].includes(state?.status))
-      throw new Error(state.failure || "product rig failed");
+    if (!allowTerminalFailure && ["failed", "cleanup-failed"].includes(state?.status)) {
+      throw productRigTerminalFailureError(state);
+    }
     if (predicate(state)) return state;
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
@@ -827,7 +897,7 @@ async function proveMultiClientConvergence(
   return report;
 }
 
-async function start(json, quiet = false) {
+async function start(json, quiet = false, planEntry = null) {
   const existing = readJson(statePath);
   if (existing && processAlive(existing.ownerPid)) {
     if (!quiet)
@@ -840,7 +910,15 @@ async function start(json, quiet = false) {
   const log = openSync(ownerLogPath, "a", 0o600);
   const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "__owner"], {
     cwd: repoRoot,
-    env: process.env,
+    env: {
+      ...process.env,
+      ...(planEntry
+        ? {
+            TMUX_IDE_PRODUCT_JOURNEY: planEntry.journey.id,
+            ...(planEntry.variant ? { TMUX_IDE_PRODUCT_JOURNEY_VARIANT: planEntry.variant } : {}),
+          }
+        : {}),
+    },
     detached: true,
     stdio: ["ignore", log, log],
   });
@@ -858,10 +936,19 @@ async function stop(json, { quiet = false, strict = false, maxAttempts = 2 } = {
   let state = readJson(statePath);
   if (!state) {
     if (!quiet) emit(json ? publicRigStatus(state) : "Product rig stopped", json);
-    return;
+    return null;
   }
   if (!processAlive(state.ownerPid)) {
     if (strict) {
+      if (
+        isCleanLegacyStoppedProductRigState(state, {
+          processAlive,
+          pathExists: existsSync,
+        })
+      ) {
+        if (!quiet) emit(json ? publicRigStatus(state) : "Product rig stopped", json);
+        return state;
+      }
       const priorRequest = state.cleanup?.requestId ?? "missing-cleanup-request";
       const failures = productRigCleanupBarrierFailures(state, priorRequest, {
         processAlive,
@@ -871,7 +958,7 @@ async function stop(json, { quiet = false, strict = false, maxAttempts = 2 } = {
         throw new Error(`ProductRig stale owner residue: ${failures.join(", ")}`);
     }
     if (!quiet) emit(json ? publicRigStatus(state) : "Product rig stopped", json);
-    return;
+    return state;
   }
   if (
     state.cleanup?.status === "passed" &&
@@ -892,7 +979,7 @@ async function stop(json, { quiet = false, strict = false, maxAttempts = 2 } = {
           throw new Error(`ProductRig cleanup barrier failed: ${failures.join(", ")}`);
       }
       if (!quiet) emit(json ? publicRigStatus(state) : "Product rig stopped", json);
-      return;
+      return state;
     }
   }
   if (typeof state.ownerToken !== "string" || state.ownerToken.length < 32)
@@ -947,6 +1034,7 @@ async function stop(json, { quiet = false, strict = false, maxAttempts = 2 } = {
       throw new Error(`ProductRig cleanup barrier failed: ${failures.join(", ")}`);
   }
   if (!quiet) emit(json ? publicRigStatus(finalState) : "Product rig stopped", json);
+  return finalState;
 }
 
 async function capture(json, label = "manual") {
@@ -1126,6 +1214,100 @@ async function proveHostTerminalPublication(state, label, timeoutMs = 5_000) {
   }
 }
 
+async function provePreseededPanePublication(state, seed, timeoutMs = 5_000) {
+  const count = (value, token) => value.split(token).length - 1;
+  const deadline = performance.now() + timeoutMs;
+  let sample = null;
+  while (performance.now() < deadline) {
+    const geometryBefore = activeWindowPaneGeometry(state);
+    const target = geometryBefore.find(({ paneId }) => paneId === seed.paneId);
+    if (!target?.semanticPaneId) throw new Error("preseed pane lost its canonical semantic id");
+    const nativeByPane = new Map(
+      geometryBefore.map(({ paneId }) => [
+        paneId,
+        execFileSync(
+          "tmux",
+          ["-S", state.runtimeNamespace.tmuxSocketPath, "capture-pane", "-p", "-J", "-t", paneId],
+          { encoding: "utf8" },
+        ),
+      ]),
+    );
+    const frame = tuiCommand(state, ["capture"]);
+    const geometryAfter = activeWindowPaneGeometry(state);
+    const bodyRect = resolvePaneBodyRect(frame, target);
+    const targetBody = paneBodyRegion(frame, target);
+    sample = {
+      daemonGeneration: state.daemon.instanceId,
+      paneId: target.paneId,
+      semanticPaneId: target.semanticPaneId,
+      geometry: target,
+      bodyRect,
+      geometryStable: paneGeometryIdentity(geometryBefore) === paneGeometryIdentity(geometryAfter),
+      markerHash: createHash("sha256").update(seed.marker).digest("hex"),
+      nativeTargetOccurrences: count(nativeByPane.get(target.paneId) ?? "", seed.marker),
+      nativeOtherOccurrences: [...nativeByPane.entries()]
+        .filter(([paneId]) => paneId !== target.paneId)
+        .reduce((total, [, body]) => total + count(body, seed.marker), 0),
+      renderedTargetOccurrences: count(targetBody, seed.marker),
+      renderedOutsideOccurrences: count(frame, seed.marker) - count(targetBody, seed.marker),
+      frameHash: createHash("sha256").update(frame).digest("hex"),
+    };
+    if (
+      sample.geometryStable &&
+      sample.bodyRect.valid &&
+      sample.bodyRect.bodyRows === sample.geometry.height &&
+      sample.nativeTargetOccurrences === 1 &&
+      sample.nativeOtherOccurrences === 0 &&
+      sample.renderedTargetOccurrences === 1 &&
+      sample.renderedOutsideOccurrences === 0
+    )
+      break;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+  if (
+    !sample?.geometryStable ||
+    !sample.bodyRect.valid ||
+    sample.bodyRect.bodyRows !== sample.geometry.height ||
+    sample.nativeTargetOccurrences !== 1 ||
+    sample.nativeOtherOccurrences !== 0 ||
+    sample.renderedTargetOccurrences !== 1 ||
+    sample.renderedOutsideOccurrences !== 0
+  )
+    throw new Error(`preseeded coherent pane proof failed: ${JSON.stringify(sample)}`);
+  const lifecycle = readJsonLines(join(state.tui.runtimeDir, "performance.jsonl"));
+  const internalPublication = lifecycle.findLast(
+    ({ phase, publicationPhase, daemonGeneration }) =>
+      phase === "generation-host-internal-snapshot-publication" &&
+      publicationPhase === "internal-snapshot-published" &&
+      daemonGeneration === state.daemon.instanceId,
+  );
+  const hostFrame = lifecycle.findLast(
+    ({ phase, daemonGeneration }) =>
+      phase === "first-terminal-frame" && daemonGeneration === state.daemon.instanceId,
+  );
+  if (
+    !Number.isFinite(internalPublication?.monotonicMicros) ||
+    !Number.isFinite(hostFrame?.monotonicMicros) ||
+    hostFrame.monotonicMicros < internalPublication.monotonicMicros
+  )
+    throw new Error("preseed pane has no ordered generation-fenced host publication evidence");
+  const canonicalSeedPaint = qualifyCanonicalSeedPaint(
+    readJsonLines(state.tui.performanceTracePath),
+    {
+      semanticPaneId: sample.semanticPaneId,
+      generation: state.daemon.instanceId,
+      canonicalCols: sample.geometry.width,
+      canonicalRows: sample.geometry.height + 1,
+      viewportCols: sample.bodyRect.width,
+      viewportRows: sample.geometry.height,
+      processId: hostFrame.processId,
+      clockId: hostFrame.clockId,
+      sourceEpoch: 1,
+    },
+  );
+  return Object.freeze({ ...sample, internalPublication, hostFrame, canonicalSeedPaint });
+}
+
 async function preserveWarmRehostFailure(state, ordinal, error) {
   const suffix = `warm-rehost-${ordinal}-failure-${Date.now()}`;
   mkdirSync(artifactDir, { recursive: true });
@@ -1289,9 +1471,9 @@ function runtimeResourceRetirement(lifecycle, ordinal) {
   });
 }
 
-async function diagnoseOnce(planEntry) {
+async function diagnoseRuntimeQualification(planEntry) {
   diagnosticAttemptPhases.set(planEntry.runId, "product-rig-startup");
-  await start(false, true);
+  await start(false, true, planEntry);
   let state = await waitForState((candidate) => candidate?.status === "ready");
   diagnosticAttemptPhases.set(planEntry.runId, "journey-drive");
   const tracePath = state.tui.performanceTracePath;
@@ -2142,6 +2324,7 @@ async function diagnoseOnce(planEntry) {
       qualifyingInputEvidence,
     }),
     journey: planEntry.journey.id,
+    variant: planEntry.variant,
     repetition: planEntry.repetition,
     repeat: planEntry.repeat,
     runId: planEntry.runId,
@@ -2203,13 +2386,92 @@ async function diagnoseOnce(planEntry) {
       ),
       webPngPath: captureEvidence.webPath,
       stderr: boundedDiagnosticText(stderr),
-      reproduction: diagnosticReproduction(planEntry.journey.id),
+      reproduction: diagnosticReproduction(planEntry.journey.id, planEntry.variant),
     },
   };
 }
 
+async function diagnoseConfiglessColdStart(planEntry) {
+  diagnosticAttemptPhases.set(planEntry.runId, "product-rig-startup");
+  await start(false, true, planEntry);
+  const state = await waitForState((candidate) => candidate?.status === "ready");
+  diagnosticAttemptPhases.set(planEntry.runId, "evidence-capture");
+  const captureEvidence = await captureArtifacts(
+    state,
+    `diagnose-${planEntry.journey.id}-r${planEntry.repetition}`,
+  );
+  diagnosticCaptures.set(planEntry.runId, captureEvidence);
+  tuiCommand(state, ["stop"]);
+  const timeline = readJsonLines(timelinePath);
+  const correlation = productDiagnosticCorrelation(state, captureEvidence);
+  const { boundaries, firstBrokenBoundary, firstUnmeasuredBoundary, status } =
+    assessConfiglessJourneyBoundaries({
+      timeline,
+      correlationComplete: correlation.complete,
+      correlationMissing: correlation.missing,
+      automaticPromotionCausalityComplete: Boolean(
+        state.journeyEvidence?.configlessColdStart?.discovered?.publicLifecycle &&
+        state.journeyEvidence?.configlessColdStart?.adopted?.fleetSessionId,
+      ),
+      canonicalSeedPaintComplete: Boolean(
+        state.journeyEvidence?.configlessColdStart?.coherent?.canonicalSeedPaint,
+      ),
+    });
+  const report = {
+    version: 1,
+    status,
+    journey: planEntry.journey.id,
+    variant: planEntry.variant,
+    repetition: planEntry.repetition,
+    repeat: planEntry.repeat,
+    runId: planEntry.runId,
+    firstBrokenBoundary,
+    firstUnmeasuredBoundary,
+    boundaries,
+    journeyEvidence: state.journeyEvidence?.configlessColdStart ?? null,
+    diagnosticCorrelation: { complete: correlation.complete, missing: correlation.missing },
+    sourceProvenance: {
+      commit: state.tui?.performanceTraceCommit ?? null,
+      tree: state.tui?.performanceTraceTree ?? null,
+    },
+  };
+  const stderr = readDiagnosticText(join(state.tui.runtimeDir, "stderr.log"));
+  return {
+    report,
+    reportPath: null,
+    evidence: {
+      report,
+      alignment: {
+        version: 1,
+        journey: planEntry.journey.id,
+        firstBrokenBoundary,
+        firstUnmeasuredBoundary,
+        boundaries,
+        correlation: { complete: correlation.complete, missing: correlation.missing },
+        availability: correlation.availability,
+      },
+      timeline: readDiagnosticText(timelinePath),
+      tmuxTruth: captureEvidence.truth,
+      daemonState: correlation.daemonState,
+      clientState: correlation.clientState,
+      tuiAnsi: readDiagnosticText(captureEvidence.tuiPath),
+      webPngPath: captureEvidence.webPath,
+      stderr: boundedDiagnosticText(stderr),
+      reproduction: diagnosticReproduction(planEntry.journey.id, planEntry.variant),
+    },
+  };
+}
+
+function executeProductJourney(planEntry) {
+  return dispatchProductJourneyExecutor(planEntry, {
+    "configless-cold-start": diagnoseConfiglessColdStart,
+    "runtime-qualification": diagnoseRuntimeQualification,
+  });
+}
+
 async function prepareDiagnosticFailure(planEntry, error, firstBrokenBoundary) {
   const state = readJson(statePath);
+  const failureObservation = error?.observation ?? state?.failureObservation ?? null;
   let captureEvidence = diagnosticCaptures.get(planEntry.runId) ?? null;
   if (!captureEvidence && state?.status === "ready") {
     try {
@@ -2242,12 +2504,14 @@ async function prepareDiagnosticFailure(planEntry, error, firstBrokenBoundary) {
     version: 1,
     status: "failed",
     journey: planEntry.journey.id,
+    variant: planEntry.variant,
     repetition: planEntry.repetition,
     repeat: planEntry.repeat,
     runId: planEntry.runId,
     firstBrokenBoundary,
     firstUnmeasuredBoundary: null,
     failure,
+    failureObservation,
     sourceProvenance: {
       commit: state?.tui?.performanceTraceCommit ?? null,
       tree: state?.tui?.performanceTraceTree ?? null,
@@ -2263,6 +2527,7 @@ async function prepareDiagnosticFailure(planEntry, error, firstBrokenBoundary) {
         journey: planEntry.journey.id,
         firstBrokenBoundary,
         failure,
+        failureObservation,
         correlation: { complete: false, missing: correlation.missing },
         availability: {
           tmuxTruth: truth !== null,
@@ -2276,13 +2541,13 @@ async function prepareDiagnosticFailure(planEntry, error, firstBrokenBoundary) {
         reason: `not captured before ${firstBrokenBoundary}`,
       },
       daemonState: correlation.daemonState,
-      clientState: correlation.clientState,
+      clientState: { ...correlation.clientState, failureObservation },
       tuiAnsi: tuiAvailable
         ? readDiagnosticText(captureEvidence.tuiPath)
         : `[unavailable: TUI frame not captured before ${firstBrokenBoundary}]\n`,
       ...(webAvailable ? { webPngPath: captureEvidence.webPath } : { webPng: UNAVAILABLE_WEB_PNG }),
       stderr,
-      reproduction: diagnosticReproduction(planEntry.journey.id),
+      reproduction: diagnosticReproduction(planEntry.journey.id, planEntry.variant),
     },
   };
 }
@@ -2293,10 +2558,20 @@ async function executeDiagnosticAttempt(entry) {
       onPhase: (phase) => diagnosticAttemptPhases.set(entry.runId, phase),
       currentBoundary: () => diagnosticAttemptPhases.get(entry.runId) ?? "journey-drive",
       preCleanup: () => stop(false, { quiet: true, strict: true }),
-      drive: () => diagnoseOnce(entry),
+      drive: () => executeProductJourney(entry),
       prepareFailure: (error, boundary) => prepareDiagnosticFailure(entry, error, boundary),
-      postCleanup: () => stop(false, { quiet: true, strict: true, maxAttempts: 1 }),
-      retryCleanup: () => stop(false, { quiet: true, strict: true, maxAttempts: 1 }),
+      postCleanup: async () =>
+        createProductRigCleanupReceipt(
+          entry,
+          await stop(false, { quiet: true, strict: true, maxAttempts: 1 }),
+          1,
+        ),
+      retryCleanup: async () =>
+        createProductRigCleanupReceipt(
+          entry,
+          await stop(false, { quiet: true, strict: true, maxAttempts: 1 }),
+          2,
+        ),
       appendCleanupFailure: (failedResult, cleanupError) => {
         const cleanupFailure = boundedDiagnosticText(
           cleanupError instanceof Error
@@ -2306,21 +2581,41 @@ async function executeDiagnosticAttempt(entry) {
         failedResult.report.cleanupFailure = cleanupFailure;
         failedResult.evidence.alignment.cleanupFailure = cleanupFailure;
       },
-      publishFailure: (failedResult) =>
-        createProductDiagnosticBundle({
+      publishFailure: (failedResult, cleanupReceipt) => {
+        const publication = prepareProductDiagnosticBundlePublication({
           root: diagnosticRoot,
           runId: entry.runId,
+          report: failedResult.report,
           evidence: failedResult.evidence,
-        }),
-      publishSuccess: (completed) => {
+          cleanupReceipt,
+        });
         const bundle = createProductDiagnosticBundle({
           root: diagnosticRoot,
           runId: entry.runId,
-          evidence: completed.evidence,
+          evidence: publication.evidence,
         });
-        return {
+        if (join(bundle.runDir, "report.json") !== publication.reportPath)
+          throw new Error("published diagnostic reportPath diverged from its sealed bundle");
+        return bundle;
+      },
+      publishSuccess: (completed, cleanupReceipt) => {
+        const publication = prepareProductDiagnosticBundlePublication({
+          root: diagnosticRoot,
+          runId: entry.runId,
           report: completed.report,
-          reportPath: join(bundle.runDir, "report.json"),
+          evidence: completed.evidence,
+          cleanupReceipt,
+        });
+        const bundle = createProductDiagnosticBundle({
+          root: diagnosticRoot,
+          runId: entry.runId,
+          evidence: publication.evidence,
+        });
+        if (join(bundle.runDir, "report.json") !== publication.reportPath)
+          throw new Error("published diagnostic reportPath diverged from its sealed bundle");
+        return {
+          report: publication.report,
+          reportPath: publication.reportPath,
           bundle,
         };
       },
@@ -2336,6 +2631,7 @@ async function diagnose(options) {
     ...entry,
     runId: productDiagnosticRunId({
       journeyId: entry.journey.id,
+      variant: entry.variant,
       repetition: entry.repetition,
       now: Date.now(),
       nonce: randomBytes(4).toString("hex"),
@@ -2351,6 +2647,7 @@ async function diagnose(options) {
           status: failed ? "failed" : "passed",
           runs: runs.map(({ report, reportPath, bundle }) => ({
             journey: report.journey,
+            variant: report.variant,
             repetition: report.repetition,
             status: report.status,
             firstBrokenBoundary: report.firstBrokenBoundary,
@@ -2405,9 +2702,71 @@ function inventory(json) {
   emit(json ? report : JSON.stringify(report, null, 2), json);
 }
 
+async function observePublicElectedDaemon(daemonInfoDir, timeoutMs = 45_000) {
+  const daemonInfoPath = join(daemonInfoDir, "daemon.json");
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const record = readJson(daemonInfoPath);
+    if (
+      record &&
+      Number.isInteger(record.pid) &&
+      typeof record.instanceId === "string" &&
+      typeof record.authToken === "string" &&
+      Number.isInteger(record.port) &&
+      processAlive(record.pid)
+    )
+      return record;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+  throw new Error("public no-argument CLI did not elect a canonical daemon before deadline");
+}
+
+function attachPublicElectedDaemon(record) {
+  const baseUrl = `http://${record.bindHostname ?? "127.0.0.1"}:${record.port}`;
+  const headers = { Authorization: `Bearer ${record.authToken}` };
+  const readJsonResponse = async (path, init = {}) => {
+    const response = await fetch(`${baseUrl}${path}`, { ...init, headers });
+    if (!response.ok) throw new Error(`${path} answered ${response.status}`);
+    return response.json();
+  };
+  const fleetCatalog = createFreshFleetCatalogReader(readJsonResponse);
+  return {
+    record,
+    baseUrl,
+    readiness: async () => (await readJsonResponse("/api/resources/startup-readiness")).ladder,
+    workspaceCatalog: async () => readJsonResponse("/api/resources/workspace-catalog?version=2"),
+    fleetCatalog,
+    fleetLabels: async () => {
+      const body = await readJsonResponse("/api/resources/fleet-catalog");
+      return (body.sessions ?? []).map(({ label }) => label);
+    },
+    output: () => "",
+    stop: async () => {
+      const response = await fetch(`${baseUrl}/api/v2/action/daemon.shutdown`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reason: "product-rig-exact-owner-cleanup",
+          expectedInstanceId: record.instanceId,
+        }),
+        signal: AbortSignal.timeout(2_000),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || result?.ok !== true || result?.result?.stopping !== true)
+        throw new Error(`public-elected daemon refused exact shutdown (${response.status})`);
+      const deadline = Date.now() + 5_000;
+      while (processAlive(record.pid) && Date.now() < deadline)
+        await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+      if (processAlive(record.pid))
+        throw new Error(`public-elected daemon ${record.instanceId} remained live after shutdown`);
+    },
+  };
+}
+
 let ownerStartedAt = Date.now();
 async function owner() {
   ownerStartedAt = Date.now();
+  const journeyId = process.env.TMUX_IDE_PRODUCT_JOURNEY ?? "runtime-qualification";
   const slug = randomBytes(3).toString("hex");
   const ownerToken = randomBytes(24).toString("hex");
   let sleepAssertion = null;
@@ -2558,6 +2917,241 @@ async function owner() {
     if (!sleepAssertion.active())
       throw new Error("ProductRig host sleep assertion was not active before orchestration");
     event("namespace-start");
+    if (journeyId === "configless-cold-start") {
+      const coldBoot = await runConfiglessProductJourneyOwnerBoot(
+        createConfiglessProductJourneyOwnerOperations({
+          createNamespace: async ({ adoptSessions }) => {
+            const marker = `RIG_CONFIGLESS_${randomBytes(6).toString("hex").toUpperCase()}`;
+            const scratchFleet = await createScratchFleet({
+              sessions: 1,
+              slug,
+              adoptSessions,
+              initialPaneMarker: marker,
+            });
+            const cleanupToken = `product-test-rig:${slug}`;
+            fleet = {
+              ...scratchFleet,
+              environment: {
+                ...scratchFleet.environment,
+                TMUX_IDE_RUNTIME_MODE: "testdrive",
+                TMUX_IDE_CLEANUP_TOKEN: cleanupToken,
+                TMUX_IDE_TMUX_SOCKET_PATH: scratchFleet.socketPath,
+              },
+            };
+            const session = fleet.sessionNames[0];
+            const runtimeNamespace = {
+              root: fleet.root,
+              home: fleet.environment.HOME,
+              projectDir: fleet.projectDir,
+              registryDir: fleet.environment.TMUX_IDE_REGISTRY_DIR,
+              settingsDir: fleet.environment.TMUX_IDE_SETTINGS_DIR,
+              stateDir: fleet.environment.TMUX_IDE_HOME,
+              tmuxSocketPath: fleet.socketPath,
+              hostTmuxSocketPath: join(fleet.root, "product-rig-host-tmux.sock"),
+              daemonInfoDir: fleet.daemonInfoDir,
+              cleanupToken,
+            };
+            const traceProvenance = sourceTraceProvenance();
+            const tui = {
+              hostSession: `_tmux-ide-product-rig-${slug}`,
+              runtimeDir: join(rigRoot, "tui"),
+              performanceTracePath: join(rigRoot, "tui", "performance-trace.jsonl"),
+              performanceTraceCommit: traceProvenance.commit,
+              performanceTraceTree: traceProvenance.tree,
+              daemonPerformanceTracePath: null,
+              publicEntry: true,
+            };
+            publish({ session, runtimeNamespace, tui });
+            const seedPane = activeWindowPaneGeometry(state).find(
+              ({ windowActive }) => windowActive,
+            );
+            if (!seedPane) throw new Error("configless namespace has no preseeded active pane");
+            event("ordinary-session-ready", { session, socketPath: fleet.socketPath });
+            return {
+              session,
+              marker,
+              runtimeNamespace,
+              seed: { marker, paneId: seedPane.paneId, geometry: seedPane },
+              tui,
+            };
+          },
+          inspectNamespace: async (namespace) => {
+            const configPaths = [
+              join(namespace.runtimeNamespace.projectDir, ".tmux-ide", "workspace.yml"),
+              join(namespace.runtimeNamespace.projectDir, "ide.yml"),
+            ];
+            const daemonEntries = readdirSync(namespace.runtimeNamespace.daemonInfoDir);
+            const registryEntries = readdirSync(namespace.runtimeNamespace.registryDir);
+            const sessionInventory = parseConfiglessTmuxSessionInventory(
+              execFileSync(
+                "tmux",
+                [
+                  "-S",
+                  namespace.runtimeNamespace.tmuxSocketPath,
+                  "list-sessions",
+                  "-F",
+                  CONFIGLESS_TMUX_SESSION_FORMAT,
+                ],
+                { encoding: "utf8", maxBuffer: 64 * 1024 },
+              ),
+              namespace.session,
+            );
+            const exactSession = sessionInventory.exact;
+            return {
+              workspaceConfigExists: existsSync(configPaths[0]),
+              legacyConfigExists: existsSync(configPaths[1]),
+              configPaths,
+              daemonEntries,
+              registryEntries,
+              session: namespace.session,
+              sessionNames: sessionInventory.sessionNames,
+              adoptionStamp: exactSession.adoptionStamp,
+              promotedStamp: exactSession.promotedStamp,
+              workspaceNameStamp: exactSession.workspaceNameStamp,
+              promotionOperationStamp: exactSession.promotionOperationStamp,
+              workspaceOpenStamp: exactSession.workspaceOpenStamp,
+              workspaceOpenOperationStamp: exactSession.workspaceOpenOperationStamp,
+            };
+          },
+          buildBeforeMeasurement: async () => {
+            await execFileAsync("bun", [join(repoRoot, "scripts", "build-tui.mjs")], {
+              cwd: repoRoot,
+              timeout: 120_000,
+            });
+            event("premeasurement-build-complete");
+          },
+          launchPublicEntry: async (launch) => {
+            const actualEnvironment = commandEnv(state);
+            for (const [key, value] of Object.entries(launch.environment))
+              if (actualEnvironment[key] !== value)
+                throw new Error(`public entry environment mismatch for ${key}`);
+            if (
+              "TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON" in actualEnvironment ||
+              "TMUX_IDE_TESTDRIVE_CANONICAL_HOME" in actualEnvironment
+            )
+              throw new Error("public entry retained a canonical-daemon testdrive override");
+            event("public-cli-spawn", {
+              argv: ["bin/cli.js"],
+              cwd: launch.cwd,
+            });
+            tuiCommand(state, [
+              "start",
+              "--public-entry",
+              "--cwd",
+              launch.cwd,
+              "--cols",
+              "160",
+              "--rows",
+              "44",
+            ]);
+            const status = JSON.parse(tuiCommand(state, ["status", "--json"]));
+            if (status.entry !== "public-no-argument-cli")
+              throw new Error("testdrive did not preserve the public no-argument CLI entry");
+            return status;
+          },
+          observeElectedDaemon: async (namespace) => {
+            const record = await observePublicElectedDaemon(
+              namespace.runtimeNamespace.daemonInfoDir,
+            );
+            daemon = attachPublicElectedDaemon(record);
+            publish({ daemon: record });
+            event("daemon-election", { instanceId: record.instanceId, pid: record.pid });
+            return daemon;
+          },
+          poll: async (label, probe) => {
+            const deadline = Date.now() + 30_000;
+            while (Date.now() < deadline) {
+              const value = await probe();
+              if (value) return value;
+              await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+            }
+            throw new Error(`${label} did not settle before deadline`);
+          },
+          readWorkspaceCatalog: (electedDaemon) => electedDaemon.workspaceCatalog(),
+          readPublicLifecycle: (namespace) =>
+            readJsonLines(join(namespace.tui.runtimeDir, "performance.jsonl")),
+          readFleetCatalog: (electedDaemon) => electedDaemon.fleetCatalog(),
+          recordObservation: async (phase, detail) => event(phase, detail),
+          recordBoundary: async (phase, detail) => {
+            if (phase === "canonical-promotion-adoption")
+              publish({
+                workspace: detail.workspaceName,
+                daemon: {
+                  ...state.daemon,
+                  revision: detail.catalogRevision,
+                  revisionKind: "fleet-catalog",
+                },
+              });
+            event(phase, detail);
+          },
+          proveCoherentPublication: async (namespace, _electedDaemon, adopted) => {
+            await waitForReadinessLadder(daemon);
+            await waitForCoherentTui(state);
+            const publication = await provePreseededPanePublication(state, namespace.seed);
+            const workspaceClient = await waitForQualifiedWorkspaceClientState(
+              () => readJsonLines(join(namespace.tui.runtimeDir, "performance.jsonl")),
+              {
+                processId: publication.hostFrame.processId,
+                daemonGeneration: daemon.record.instanceId,
+                workspaceName: state.workspace,
+                sessionName: state.session,
+                fleetSessionId: adopted.fleetSessionId,
+                semanticPaneId: publication.semanticPaneId,
+                canonicalGeneration: publication.canonicalSeedPaint.publication.generation,
+              },
+            );
+            publish({
+              convergence: { workspaceClient },
+              tui: {
+                ...namespace.tui,
+                readiness: coherentReadiness({
+                  chromeMs: publication.chromeElapsedMs ?? publication.elapsedMs,
+                  terminalMs: publication.elapsedMs,
+                }),
+              },
+            });
+            event("coherent-terminal-publication", {
+              markerHash: createHash("sha256").update(namespace.marker).digest("hex"),
+              publication,
+            });
+            return publication;
+          },
+          startWebAfterColdBoundary: async () => {
+            devServer = await startDevServer(daemon, {
+              daemonInfoPath: join(fleet.daemonInfoDir, "daemon.json"),
+            });
+            browser = await chromium.launch({ headless: true });
+            const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+            const page = await context.newPage();
+            await page.goto(devServer.pageUrl, { waitUntil: "domcontentloaded" });
+            await page.locator(".app[data-shell-source='runtime']").waitFor({ timeout: 60_000 });
+            await page
+              .locator(".terminal-surface[data-phase='connected']")
+              .first()
+              .waitFor({ timeout: 60_000 });
+            publish({ web: { pageUrl: devServer.pageUrl, startedAfterColdBoundary: true } });
+            event("web-started-after-cold-boundary", { pageUrl: devServer.pageUrl });
+            await captureArtifacts(state, "configless-cold", page);
+            return { pageUrl: devServer.pageUrl, semanticConnected: true };
+          },
+        }),
+      );
+      publish({
+        journeyEvidence: {
+          configlessColdStart: {
+            discovered: coldBoot.discovered,
+            adopted: coldBoot.adopted,
+            coherent: coldBoot.coherent,
+            publicProcess: coldBoot.publicProcess,
+            web: coldBoot.web,
+          },
+        },
+        status: "ready",
+        readyAt: new Date().toISOString(),
+      });
+      await new Promise(() => undefined);
+      return;
+    }
     const scratchFleet = await createScratchFleet({ sessions: 1, slug });
     const cleanupToken = `product-test-rig:${slug}`;
     const daemonPerformanceTracePath = join(rigRoot, "daemon-performance.jsonl");
@@ -2745,7 +3339,7 @@ async function owner() {
     await new Promise(() => undefined);
   } catch (error) {
     const daemonOutput = daemon?.output().slice(-16_384) ?? "";
-    publish({ status: "failed", failure: error instanceof Error ? error.stack : String(error) });
+    publish(productRigTerminalFailureState(error, "product-rig-startup"));
     event("failed", {
       failure: error instanceof Error ? error.message : String(error),
       ...(daemonOutput ? { daemonOutput } : {}),

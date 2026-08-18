@@ -207,6 +207,8 @@ describe("reference performance trace", () => {
       append: () => undefined,
     });
     expect(quiet.terminalCanonicalMode).toBeUndefined();
+    expect(quiet.terminalCanonicalPublication).toBeUndefined();
+    expect(quiet.terminalCanonicalPaint).toBeUndefined();
     expect(quiet.terminalInputQueueState).toBeUndefined();
 
     const records: Array<Readonly<Record<string, unknown>>> = [];

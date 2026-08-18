@@ -47,6 +47,28 @@ function target(workspaceName: string, identity = ALPHA_DAEMON): DesktopApplicat
   return DesktopApplicationShellTargetSchemaZ.parse({ daemon: identity, workspaceName });
 }
 
+function workspaceCatalog(workspaceName: string, identity = ALPHA_DAEMON) {
+  return {
+    version: 2,
+    daemon: identity,
+    intents: [
+      {
+        workspaceName,
+        sessionName: workspaceName,
+        source: "workspace",
+        availability: "live",
+      },
+    ],
+    liveSessions: [
+      {
+        sessionName: workspaceName,
+        fleetSessionId: `session.${workspaceName === "alpha" ? "a" : "b"}`.padEnd(28, "0"),
+        paneCount: 1,
+      },
+    ],
+  };
+}
+
 function shellResource(
   name: string,
   semanticPaneIds: readonly string[] = [`pane.${name}`],
@@ -1001,6 +1023,38 @@ describe("WorkspaceClient", () => {
     expect(beta.inputs).toHaveLength(1);
     client.dispose();
     await settle();
+  });
+
+  it("ignores a delayed catalog read from a retired target generation", async () => {
+    const alphaCatalog = deferred<ReturnType<typeof workspaceCatalog>>();
+    const betaCatalog = deferred<ReturnType<typeof workspaceCatalog>>();
+    const shell = shellBroker({ alpha: shellResource("alpha"), beta: shellResource("beta") });
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        catalog: {
+          read: (current) =>
+            current.workspaceName === "alpha" ? alphaCatalog.promise : betaCatalog.promise,
+          subscribe: () => ({ close: () => undefined }),
+        },
+        connectRuntime: async (current) => new FakeRuntime(current.daemon.instanceId),
+        actions,
+      },
+    });
+    await settle();
+    const replacing = client.setTarget(target("beta", BETA_DAEMON));
+    await settle();
+    alphaCatalog.resolve(workspaceCatalog("alpha"));
+    betaCatalog.resolve(workspaceCatalog("beta", BETA_DAEMON));
+    await replacing;
+    await settle();
+    expect(client.getSnapshot().catalog).toMatchObject({
+      daemonInstanceId: BETA_DAEMON.instanceId,
+      intents: [{ workspaceName: "beta" }],
+      liveSessions: [{ sessionName: "beta" }],
+    });
+    await client.dispose();
   });
 
   it("settles target replacement even when the retired connect adapter never resolves", async () => {

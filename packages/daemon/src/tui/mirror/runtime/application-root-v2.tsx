@@ -86,7 +86,10 @@ export async function startApplicationRoot(
       let initialPreparation = options.initialPreparation ?? null;
       let sessionOwner: OpenTuiSessionOwner | null = null;
       let interaction!: ApplicationTerminalInteractionController;
-      const terminalHostFocus = new OpenTuiTerminalHostFocus(true);
+      const terminalHostFocus = new OpenTuiTerminalHostFocus(
+        true,
+        tuiPerfStream ? (phase, details) => tuiPerfMark(`terminal-host-${phase}`, details) : null,
+      );
 
       const root = render(() => {
         tuiPerfMark("solid-root-evaluate");
@@ -349,8 +352,8 @@ export async function startApplicationRoot(
         interaction.settleResizeGuideFrame();
       };
       if (tuiPerfStream) renderer.on("frame", observeResizeGuideFrame);
-      const foregroundTerminalHost = () => terminalHostFocus.focus();
-      const backgroundTerminalHost = () => terminalHostFocus.blur();
+      const foregroundTerminalHost = () => terminalHostFocus.rendererFocus();
+      const backgroundTerminalHost = () => terminalHostFocus.rendererBlur();
       renderer.on("focus", foregroundTerminalHost);
       renderer.on("blur", backgroundTerminalHost);
       return {

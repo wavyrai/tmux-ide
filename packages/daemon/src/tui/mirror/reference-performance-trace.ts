@@ -6,6 +6,8 @@ import {
   installTuiPerformanceEventSink,
   type TuiPerformanceEventSink,
   type TuiTerminalDeliveryPerformanceEvent,
+  type TuiTerminalCanonicalPaintEvent,
+  type TuiTerminalCanonicalPublicationEvent,
   type TuiTerminalCanonicalModeEvent,
   type TuiTerminalInputQueueStateEvent,
   type TuiTerminalTraceStageEvent,
@@ -370,6 +372,22 @@ export function createReferencePerformanceTraceSink(options: {
     },
     ...(detailed
       ? {
+          terminalCanonicalPublication: (event: TuiTerminalCanonicalPublicationEvent) => {
+            if (!closed)
+              options.append({
+                version: 1,
+                type: "performance.terminal-canonical-publication",
+                ...event,
+              });
+          },
+          terminalCanonicalPaint: (event: TuiTerminalCanonicalPaintEvent) => {
+            if (!closed)
+              options.append({
+                version: 1,
+                type: "performance.terminal-canonical-paint",
+                ...event,
+              });
+          },
           terminalInputQueueState: (event: TuiTerminalInputQueueStateEvent) => {
             if (!closed)
               options.append({ version: 1, type: "performance.input-queue-state", ...event });

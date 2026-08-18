@@ -234,6 +234,10 @@ export function App(props: AppProps = {}) {
     const current = effectiveTheme();
     return `${current?.mode ?? "system"}:${current?.highContrast ?? false}`;
   });
+  const bootstrapDaemonGeneration = createMemo(() => {
+    const daemon = bootstrap()?.daemon;
+    return daemon?.status === "connected" ? daemon.identity.instanceId : undefined;
+  });
   const productionTerminalTransport = createMemo<NativeTerminalTransport | null>(() => {
     const daemon = bootstrap()?.daemon;
     if (!host || browserPreview || daemon?.status !== "connected") return null;
@@ -277,6 +281,7 @@ export function App(props: AppProps = {}) {
                 ? "preview"
                 : "runtime"
         }
+        data-daemon-generation={bootstrapDaemonGeneration()}
       >
         <Show
           when={!hostResolutionError && host}
