@@ -6,14 +6,14 @@ import { runtimeResourceSnapshot } from "@tmux-ide/daemon-client/runtime-resourc
 import { render, useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
 import { publishTuiInputReady } from "../../readiness.ts";
 import { prepareOpenTuiApplicationShellConnection } from "../application-shell-daemon-connection.ts";
-import { registerPaneSurface } from "../pane-surface.tsx";
+import {
+  createPaneSurfaceHostFocusTransitionOwner,
+  registerPaneSurface,
+} from "../pane-surface.tsx";
 import { currentTuiPerformanceEventSink } from "../performance-events.ts";
 import { createSemanticThemeSnapshot, createTerminalPaletteProjection } from "../theme.ts";
 import { startTuiApplication, observeTuiRootFailure } from "./application-bootstrap.ts";
-import {
-  createApplicationShellBinding,
-  type ApplicationShellBindingSnapshot,
-} from "./application-shell-binding.ts";
+import { createApplicationShellBinding } from "./application-shell-binding.ts";
 import { TuiApplicationLifecycle } from "./application-lifecycle.ts";
 import {
   loadApplicationConfig,
@@ -29,6 +29,10 @@ import {
   createApplicationTerminalInteractionController,
   type ApplicationTerminalInteractionController,
 } from "./application-terminal-interaction-controller.ts";
+import {
+  createApplicationHostFocusPresentation,
+  type HostFocusRendererSource,
+} from "./application-host-focus-presentation.ts";
 import {
   closeTuiPerfMarks,
   tuiPerfCriticalMark,
@@ -89,6 +93,10 @@ export async function startApplicationRoot(
       let initialPreparation = options.initialPreparation ?? null;
       let sessionOwner: OpenTuiSessionOwner | null = null;
       const frameDiagnosticSink = currentTuiPerformanceEventSink();
+      const hostFocusTransitionOwner =
+        frameDiagnosticSink?.terminalFocusPaint && frameDiagnosticSink.terminalFocusFence
+          ? createPaneSurfaceHostFocusTransitionOwner(() => renderer.requestRender())
+          : null;
       const terminalFrameReadiness =
         tuiPerfStream || frameDiagnosticSink
           ? createTerminalFrameReadiness({
@@ -115,9 +123,34 @@ export async function startApplicationRoot(
             })
           : null;
       let interaction!: ApplicationTerminalInteractionController;
+      let setRendererFocused: ((focused: boolean) => void) | null = null;
+      let getRendererFocused: (() => boolean) | null = null;
+      let getFocusedPane: (() => string | null) | null = null;
+      let observedFocusGenerationKey: string | null = null;
+      let getTerminalRendererSource: (() => HostFocusRendererSource | null) | null = null;
       const terminalHostFocus = new OpenTuiTerminalHostFocus(
         true,
-        tuiPerfStream ? (phase, details) => tuiPerfMark(`terminal-host-${phase}`, details) : null,
+        tuiPerfStream
+          ? (phase, details) => {
+              const rendererEpoch = sessionOwner?.snapshot()?.rendererEpoch ?? null;
+              const enriched = { ...details, rendererEpoch };
+              const epoch = details.diagnosticEpoch;
+              const key = `terminal-host-focus:${String(epoch)}:${phase}`;
+              tuiPerfCriticalMark(key, `terminal-host-${phase}`, enriched);
+              if (phase === "focus-authority-settled" || phase === "blur-authority-settled") {
+                const health = tuiPerfDiagnostics();
+                tuiPerfCriticalMark(`${key}:fence`, "terminal-host-focus-fence", {
+                  diagnosticEpoch: epoch,
+                  rendererEpoch,
+                  daemonGeneration: details.daemonInstanceId,
+                  workspaceName: details.workspaceName,
+                  clientGeneration: details.clientGeneration,
+                  settledPhase: phase,
+                  writerHealth: health,
+                });
+              }
+            }
+          : null,
       );
 
       const root = render(() => {
@@ -133,9 +166,7 @@ export async function startApplicationRoot(
           ReturnType<typeof createOpenTuiGenerationHost>["getSnapshot"]
         > | null>(null);
         const shellBinding = createApplicationShellBinding({ onDiagnostic: tuiPerfMark });
-        const [shell, setShell] = createSignal<ApplicationShellBindingSnapshot>(
-          shellBinding.getSnapshot(),
-        );
+        const [shell, setShell] = createSignal(shellBinding.getSnapshot());
         const stopShell = shellBinding.subscribe(setShell);
         sessionOwner = createOpenTuiSessionOwner({
           prepareConnection: (sessionName) => {
@@ -159,6 +190,23 @@ export async function startApplicationRoot(
                 : {}),
             }),
           onSnapshot: (snapshot) => {
+            let clientGeneration: number | null = null;
+            try {
+              const value = snapshot?.client?.getSnapshot().generation;
+              clientGeneration = Number.isSafeInteger(value) ? value! : null;
+            } catch {
+              clientGeneration = null;
+            }
+            const focusGenerationKey =
+              snapshot?.status === "live" && snapshot.daemonGeneration && clientGeneration !== null
+                ? `${snapshot.daemonGeneration}:${clientGeneration}:${snapshot.rendererEpoch}`
+                : null;
+            if (
+              observedFocusGenerationKey !== null &&
+              focusGenerationKey !== observedFocusGenerationKey
+            )
+              hostFocusTransitionOwner?.cancel();
+            observedFocusGenerationKey = focusGenerationKey;
             terminalFrameReadiness?.adopt(snapshot);
             setGeneration(snapshot);
             shellBinding.adoptGeneration(snapshot);
@@ -173,6 +221,10 @@ export async function startApplicationRoot(
         });
         const [layoutSnapshot, setLayoutSnapshot] = createSignal(presentation.getWindowSnapshot());
         const [focusedPane, setFocusedPane] = createSignal<string | null>(null);
+        getFocusedPane = focusedPane;
+        const [rendererFocused, setRendererFocusedSignal] = createSignal(true);
+        getRendererFocused = rendererFocused;
+        setRendererFocused = setRendererFocusedSignal;
         const [selectedSession, setSelectedSession] = createSignal(0);
         const [bootstrapNote, setBootstrapNote] = createSignal<string | null>(null);
         const viewport = createMemo(() => ({
@@ -187,6 +239,23 @@ export async function startApplicationRoot(
             ? Object.freeze({ adapter: active.adapter, rendererEpoch: active.rendererEpoch })
             : null;
         });
+        const focusRendererSource = createMemo(() => {
+          const active = generation();
+          if (!active?.adapter || active.status !== "live" || !active.daemonGeneration) return null;
+          try {
+            const clientGeneration = active.client?.getSnapshot().generation;
+            if (!Number.isSafeInteger(clientGeneration)) return null;
+            return Object.freeze({
+              adapter: active.adapter,
+              rendererEpoch: active.rendererEpoch,
+              daemonGeneration: active.daemonGeneration,
+              clientGeneration: clientGeneration!,
+            });
+          } catch {
+            return null;
+          }
+        });
+        getTerminalRendererSource = focusRendererSource;
 
         interaction = createApplicationTerminalInteractionController({
           generation,
@@ -331,7 +400,8 @@ export async function startApplicationRoot(
             paletteOpen={() => shell().semantic?.focus.palette.open ?? shell().localPaletteOpen}
             terminalRendererSource={terminalRendererSource}
             layout={layoutSnapshot}
-            focusedPane={focusedPane}
+            focusedPane={() => (rendererFocused() ? focusedPane() : null)}
+            hostFocusTransitionOwner={hostFocusTransitionOwner ?? undefined}
             theme={theme}
             palette={palette}
             onOpenSurface={openSurface}
@@ -375,14 +445,22 @@ export async function startApplicationRoot(
         interaction.settleResizeGuideFrame();
       };
       if (tuiPerfStream) renderer.on("frame", observeResizeGuideFrame);
-      const foregroundTerminalHost = () => terminalHostFocus.rendererFocus();
-      const backgroundTerminalHost = () => terminalHostFocus.rendererBlur();
-      renderer.on("focus", foregroundTerminalHost);
-      renderer.on("blur", backgroundTerminalHost);
+      const hostFocusPresentation = createApplicationHostFocusPresentation({
+        renderer,
+        owner: hostFocusTransitionOwner,
+        sink: frameDiagnosticSink,
+        hostFocus: terminalHostFocus,
+        focusedPane: () => getFocusedPane?.() ?? null,
+        rendererFocused: () => getRendererFocused?.() ?? true,
+        setRendererFocused: (focused) => setRendererFocused?.(focused),
+        rendererSource: () => getTerminalRendererSource?.() ?? null,
+      });
       return {
         root,
         ready,
         close: async () => {
+          hostFocusPresentation.dispose();
+          hostFocusTransitionOwner?.dispose();
           tuiPerfMark("resource-snapshot", {
             boundary: "pre-close",
             resources: runtimeResourceSnapshot(),
@@ -393,8 +471,6 @@ export async function startApplicationRoot(
           if (observeDiagnosticFrame) renderer.off("frame", observeDiagnosticFrame);
           if (tuiPerfStream) renderer.off("frame", observeWindowSwitchFrame);
           if (tuiPerfStream) renderer.off("frame", observeResizeGuideFrame);
-          renderer.off("focus", foregroundTerminalHost);
-          renderer.off("blur", backgroundTerminalHost);
           terminalHostFocus.dispose();
           await sessionOwner?.dispose();
           presentation.dispose();

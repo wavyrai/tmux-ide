@@ -21,6 +21,9 @@ export interface TuiPerformanceEventSink {
   readonly terminalCanonicalPaint?: (event: TuiTerminalCanonicalPaintEvent) => void;
   /** Bounded detailed-only proof that canonical state progressed after a seed paint. */
   readonly terminalCanonicalUpdate?: (event: TuiTerminalCanonicalUpdateEvent) => void;
+  /** Detailed-only proof of the exact rows touched by a pane focus transition. */
+  readonly terminalFocusPaint?: (event: TuiTerminalFocusPaintEvent) => void;
+  readonly terminalFocusFence?: (event: TuiTerminalFocusPaintEvent) => void;
   /** Detailed-only host publication of one exact canonical identity on a renderer frame. */
   readonly terminalCanonicalHostFrame?: (event: TuiTerminalCanonicalHostFrameEvent) => void;
   /** Same-stream watermark emitted after the renderer's first coherent frame. */
@@ -29,6 +32,36 @@ export interface TuiPerformanceEventSink {
   readonly terminalInputOrigin?: true;
   readonly terminalInputFence?: (event: TuiTerminalInputFenceEvent) => void;
   readonly beginTerminalInput?: (origin?: TuiTerminalInputOrigin) => TuiTerminalInputTrace;
+}
+
+export interface TuiTerminalFocusPaintEvent {
+  readonly processId: string;
+  readonly clockId: "opentui-performance-now";
+  readonly clockKind: "performance-now";
+  readonly atMicros: number;
+  readonly semanticPaneId: string;
+  readonly generation: string;
+  readonly incarnation: string;
+  readonly revision: number;
+  readonly stateHash: string;
+  readonly cols: number;
+  readonly rows: number;
+  readonly sourceEpoch: number;
+  readonly rendererEpoch: number;
+  readonly viewportCols: number;
+  readonly viewportRows: number;
+  readonly focused: boolean;
+  readonly diagnosticEpoch: number;
+  readonly full: boolean;
+  readonly writtenRows: readonly number[];
+}
+
+export interface TuiTerminalFocusFenceEvent extends TuiTerminalFocusPaintEvent {
+  readonly writerHealth: Readonly<{
+    droppedRecords: number;
+    oversizedRecords: number;
+    failed: boolean;
+  }>;
 }
 
 export interface TuiTerminalClockCalibrationEvent extends PaneStreamClockCalibrationOutcome {

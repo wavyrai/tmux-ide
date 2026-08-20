@@ -9,7 +9,7 @@
  * `_tmux-ide-testdrive` host is owned by this script.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import {
   appendFileSync,
   chmodSync,
@@ -26,7 +26,9 @@ import { dirname, join, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { promisify } from "node:util";
 import { buildTuiHostPublicationEvidence } from "./lib/tui-host-publication.mjs";
+import { classifyProductTuiCommandFailure } from "./lib/product-tui-host-readiness.mjs";
 import {
   buildTestdriveExecCommand,
   resolvePublicTestdriveEnvironment,
@@ -64,6 +66,7 @@ const targetSocketPath = process.env.TMUX_IDE_TMUX_SOCKET_PATH?.trim() || null;
 const hostSocketPath = process.env.TMUX_IDE_TESTDRIVE_HOST_SOCKET_PATH?.trim() || null;
 const compiledTui = join(repoRoot, "packages", "daemon", "dist", "tui", "tmux-ide-tui");
 const sourceTui = join(repoRoot, "packages", "daemon", "src", "tui", "mirror", "app.tsx");
+const execFileAsync = promisify(execFile);
 
 function canonicalDaemonHome() {
   return resolve(
@@ -182,6 +185,7 @@ function parseOptions(args) {
     debug: false,
     publicEntry: false,
     cwd: null,
+    json: false,
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -189,6 +193,7 @@ function parseOptions(args) {
     if (arg === "--source") options.source = true;
     else if (arg === "--debug") options.debug = true;
     else if (arg === "--public-entry") options.publicEntry = true;
+    else if (arg === "--json") options.json = true;
     else if (arg === "--cwd") options.cwd = args[++index] ?? fail("--cwd needs a value");
     else if (arg.startsWith("--cwd=")) options.cwd = arg.slice("--cwd=".length);
     else if (arg === "--target") options.target = args[++index] ?? fail("--target needs a value");
@@ -233,7 +238,10 @@ function injectHostBytes(identity, bytes, timeoutMs = 2_000) {
 }
 
 function parseHostPaneIdentity(output) {
-  const [paneId, sessionId, rawCols, rawRows] = output.trim().split("\t");
+  const [paneId, sessionId, sessionName, rawProcessId, rawCols, rawRows] = output
+    .trim()
+    .split("\t");
+  const processId = Number(rawProcessId);
   const cols = Number(rawCols);
   const rows = Number(rawRows);
   if (!/^%[0-9]+$/u.test(paneId ?? "") || !/^\$[0-9]+$/u.test(sessionId ?? "")) {
@@ -242,7 +250,30 @@ function parseHostPaneIdentity(output) {
   if (!Number.isInteger(cols) || cols < 1 || !Number.isInteger(rows) || rows < 1) {
     fail("tmux did not resolve valid host pane geometry");
   }
-  return { paneId, sessionId, cols, rows };
+  if (sessionName !== hostSession || !Number.isSafeInteger(processId) || processId < 1) {
+    fail("tmux did not resolve the exact host session and process");
+  }
+  return { paneId, sessionId, sessionName, processId, cols, rows };
+}
+
+async function atomicHostPaneIdentity({ timeoutMs = 1_000, signal } = {}) {
+  const args = [
+    ...(hostSocketPath ? ["-S", hostSocketPath] : []),
+    "display-message",
+    "-p",
+    "-t",
+    `=${hostSession}:0.0`,
+    "#{pane_id}\t#{session_id}\t#{session_name}\t#{pane_pid}\t#{pane_width}\t#{pane_height}",
+  ];
+  const { stdout } = await execFileAsync("tmux", args, {
+    cwd: repoRoot,
+    env: { ...process.env, TMUX: "", TMUX_TMPDIR: "" },
+    encoding: "utf8",
+    timeout: timeoutMs,
+    signal,
+    maxBuffer: 4_096,
+  });
+  return parseHostPaneIdentity(stdout);
 }
 
 function resolveHostPaneIdentity(timeoutMs) {
@@ -260,7 +291,7 @@ function resolveHostPaneIdentity(timeoutMs) {
         "-p",
         "-t",
         `=${hostSession}:0.0`,
-        "#{pane_id}\t#{session_id}\t#{pane_width}\t#{pane_height}",
+        "#{pane_id}\t#{session_id}\t#{session_name}\t#{pane_pid}\t#{pane_width}\t#{pane_height}",
       ],
       { timeout: remaining() },
     ),
@@ -275,7 +306,7 @@ function verifyHostPaneIdentity(identity, timeoutMs) {
         "-p",
         "-t",
         identity.paneId,
-        "#{pane_id}\t#{session_id}\t#{pane_width}\t#{pane_height}",
+        "#{pane_id}\t#{session_id}\t#{session_name}\t#{pane_pid}\t#{pane_width}\t#{pane_height}",
       ],
       { timeout: timeoutMs },
     ),
@@ -283,6 +314,7 @@ function verifyHostPaneIdentity(identity, timeoutMs) {
   if (
     current.paneId !== identity.paneId ||
     current.sessionId !== identity.sessionId ||
+    current.processId !== identity.processId ||
     current.cols !== identity.cols ||
     current.rows !== identity.rows
   ) {
@@ -357,11 +389,76 @@ function resolveTarget(requested) {
   return target;
 }
 
-function capture({ ansi = false, history = 0 } = {}) {
+function capture({ ansi = false, history = 0, preserveSpaces = false } = {}) {
   if (!sessionExists(hostSession)) fail("The test-drive TUI is not running");
   const args = ["capture-pane", "-p", "-t", `=${hostSession}:0.0`, "-S", String(-history)];
   if (ansi) args.splice(1, 0, "-e");
+  if (preserveSpaces) args.splice(1, 0, "-N");
   return tmux(args).replace(/\n+$/u, "");
+}
+
+async function captureEnvelope() {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  process.once("SIGTERM", abort);
+  process.once("SIGINT", abort);
+  const startedAt = performance.now();
+  const deadlineMs = 1_500;
+  const remaining = () => Math.max(1, Math.floor(deadlineMs - (performance.now() - startedAt)));
+  const timer = setTimeout(abort, deadlineMs);
+  try {
+    const identity = await atomicHostPaneIdentity({
+      timeoutMs: Math.min(500, remaining()),
+      signal: controller.signal,
+    });
+    const { stdout } = await execFileAsync(
+      "tmux",
+      [
+        ...(hostSocketPath ? ["-S", hostSocketPath] : []),
+        "capture-pane",
+        "-N",
+        "-e",
+        "-p",
+        "-t",
+        identity.paneId,
+        "-S",
+        "0",
+      ],
+      {
+        cwd: repoRoot,
+        env: { ...process.env, TMUX: "", TMUX_TMPDIR: "" },
+        encoding: "utf8",
+        timeout: Math.min(750, remaining()),
+        signal: controller.signal,
+        maxBuffer: 4 * 1_024 * 1_024,
+      },
+    );
+    const current = await atomicHostPaneIdentity({
+      timeoutMs: Math.min(500, remaining()),
+      signal: controller.signal,
+    });
+    if (
+      current.paneId !== identity.paneId ||
+      current.sessionId !== identity.sessionId ||
+      current.processId !== identity.processId ||
+      current.cols !== identity.cols ||
+      current.rows !== identity.rows
+    ) {
+      fail("test-drive host pane identity changed during framebuffer capture");
+    }
+    const ansi = stdout.replace(/\n$/u, "");
+    return Object.freeze({
+      version: 1,
+      cols: identity.cols,
+      rows: identity.rows,
+      hostIdentity: identity,
+      ansi,
+    });
+  } finally {
+    clearTimeout(timer);
+    process.removeListener("SIGTERM", abort);
+    process.removeListener("SIGINT", abort);
+  }
 }
 
 function readMetadata() {
@@ -414,6 +511,7 @@ function recordHostPublication({
   token = null,
   generation = null,
   elapsedMs = null,
+  processId = null,
 } = {}) {
   if (kind !== "chrome" && kind !== "terminal") {
     fail("publication kind must be chrome or terminal");
@@ -425,7 +523,7 @@ function recordHostPublication({
     kind,
     token,
     generation,
-    processId: liveHostProcessPid(),
+    processId: processId ?? liveHostProcessPid(),
     elapsedMs:
       elapsedMs ?? (Number.isFinite(startedAtMs) ? Math.max(0, Date.now() - startedAtMs) : null),
   });
@@ -950,30 +1048,38 @@ async function start(args) {
   chmodSync(launcherPath, 0o700);
 
   const launchStartedAt = performance.now();
-  tmux([
-    "new-session",
-    "-d",
-    "-s",
-    hostSession,
-    "-x",
-    String(options.cols),
-    "-y",
-    String(options.rows),
-    "-c",
-    launch.cwd,
-    ...(process.env.TMUX_IDE_PERFORMANCE_TRACE_INPUT_FINGERPRINT_KEY
-      ? [
-          "-e",
-          `TMUX_IDE_PERFORMANCE_TRACE_INPUT_FINGERPRINT_KEY=${process.env.TMUX_IDE_PERFORMANCE_TRACE_INPUT_FINGERPRINT_KEY}`,
-        ]
-      : []),
-    launcherPath,
-  ]);
-  const frame = await waitForFrame((value) => value.includes("tmux-ide"));
-  const appChromeFrameMs = performance.now() - launchStartedAt;
-  const processId = liveHostProcessPid();
-  if (!processId) fail("OpenTUI host published chrome without an owned process id");
-  const metadata = {
+  const hostIdentity = parseHostPaneIdentity(
+    tmux([
+      "new-session",
+      "-d",
+      "-P",
+      "-F",
+      "#{pane_id}\t#{session_id}\t#{session_name}\t#{pane_pid}\t#{pane_width}\t#{pane_height}",
+      "-s",
+      hostSession,
+      "-x",
+      String(options.cols),
+      "-y",
+      String(options.rows),
+      "-c",
+      launch.cwd,
+      ...(process.env.TMUX_IDE_PERFORMANCE_TRACE_INPUT_FINGERPRINT_KEY
+        ? [
+            "-e",
+            `TMUX_IDE_PERFORMANCE_TRACE_INPUT_FINGERPRINT_KEY=${process.env.TMUX_IDE_PERFORMANCE_TRACE_INPUT_FINGERPRINT_KEY}`,
+          ]
+        : []),
+      launcherPath,
+    ]),
+  );
+  const processId = hostIdentity.processId;
+  const launchReceipt = Object.freeze({
+    launchId,
+    processId,
+    target,
+    hostIdentity,
+  });
+  const metadataBase = {
     hostSession,
     target,
     entry: launch.entry,
@@ -984,6 +1090,29 @@ async function start(args) {
     startedAt: new Date().toISOString(),
     launchId,
     processId,
+    hostIdentity,
+  };
+  writeFileSync(
+    metadataPath,
+    `${JSON.stringify(
+      {
+        ...metadataBase,
+        appChromeFrameMs: null,
+        coherentTerminalFrameMs: null,
+        firstFrameMs: null,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(launchReceipt)}\n`);
+    return;
+  }
+  const frame = await waitForFrame((value) => value.includes("tmux-ide"));
+  const appChromeFrameMs = performance.now() - launchStartedAt;
+  const metadata = {
+    ...metadataBase,
     // Keep the two readiness boundaries honest. App chrome is useful but is
     // not evidence that a semantic terminal seed has reached the renderer.
     appChromeFrameMs: Math.round(appChromeFrameMs),
@@ -995,6 +1124,7 @@ async function start(args) {
     kind: "chrome",
     frame,
     elapsedMs: appChromeFrameMs,
+    processId,
   });
 
   process.stdout.write(
@@ -1005,17 +1135,56 @@ async function start(args) {
 }
 
 async function status(json = false) {
-  const running = sessionExists(hostSession);
   const metadata = readMetadata();
-  const result = {
-    running,
-    ...metadata,
-    readiness: readLifecycleTimings(metadata),
-    ...(running ? liveHostSize() : null),
-    daemon: daemonStatus(),
-    logPath,
-    perfLogPath,
-  };
+  let hostIdentity = null;
+  let statusObservation = null;
+  try {
+    hostIdentity = await atomicHostPaneIdentity({ timeoutMs: 1_000 });
+  } catch (error) {
+    const reason = classifyProductTuiCommandFailure(error);
+    const metadataProcessAlive = processIsAlive(metadata?.processId);
+    statusObservation = Object.freeze({
+      reason:
+        !metadataProcessAlive && Number.isSafeInteger(metadata?.processId)
+          ? "process-dead"
+          : reason === "host-status-timeout" || reason === "aborted"
+            ? reason
+            : error?.code
+              ? "server-gone"
+              : "identity-invalid",
+      stage: "atomic-host-display",
+      metadataPresent: metadata !== null,
+      processAlive: metadataProcessAlive,
+    });
+  }
+  const running = hostIdentity !== null;
+  const result = hostIdentity
+    ? {
+        running,
+        ...metadata,
+        readiness: readLifecycleTimings(metadata),
+        cols: hostIdentity.cols,
+        rows: hostIdentity.rows,
+        hostIdentity,
+        daemon: daemonStatus(),
+        logPath,
+        perfLogPath,
+      }
+    : {
+        running,
+        readiness: readLifecycleTimings(metadata),
+        statusObservation,
+        metadata: {
+          present: metadata !== null,
+          launchId: metadata?.launchId ?? null,
+          processId: metadata?.processId ?? null,
+          target: metadata?.target ?? null,
+          processAlive: processIsAlive(metadata?.processId),
+        },
+        daemon: daemonStatus(),
+        logPath,
+        perfLogPath,
+      };
   if (json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   else {
     process.stdout.write(
@@ -1096,12 +1265,17 @@ async function main() {
     case "capture": {
       let ansi = false;
       let history = 0;
+      let json = false;
       for (let index = 0; index < args.length; index += 1) {
         if (args[index] === "--ansi") ansi = true;
+        else if (args[index] === "--json") json = true;
         else if (args[index] === "--history") history = numberOption("--history", args[++index]);
         else fail(`Unknown capture option: ${args[index]}`);
       }
-      process.stdout.write(`${capture({ ansi, history })}\n`);
+      if (json) {
+        if (!ansi || history !== 0) fail("capture --json requires --ansi and no history");
+        process.stdout.write(`${JSON.stringify(await captureEnvelope())}\n`);
+      } else process.stdout.write(`${capture({ ansi, history })}\n`);
       break;
     }
     case "publication": {

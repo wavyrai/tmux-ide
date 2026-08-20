@@ -45,6 +45,7 @@ export interface ApplicationShellViewProps {
   } | null>;
   readonly layout: Accessor<TerminalWorkspaceProps["layout"]>;
   readonly focusedPane: Accessor<string | null>;
+  readonly hostFocusTransitionOwner?: TerminalWorkspaceProps["hostFocusTransitionOwner"];
   readonly theme: TerminalWorkspaceProps["theme"];
   readonly palette: TerminalWorkspaceProps["palette"];
   readonly onOpenSurface: (surface: RootSurface, source: InputSource) => void;
@@ -348,6 +349,19 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
       quitHint: "^q quit",
     });
   });
+  // Generation snapshots and semantic projections are immutable publications,
+  // so both wrappers are freshly allocated for ordinary authority/presence
+  // progress. Preserve the terminal owner unless the actual renderer changes.
+  const terminalRendererSource = createMemo(() => props.terminalRendererSource(), undefined, {
+    equals: (previous, next) =>
+      previous?.adapter === next?.adapter && previous?.rendererEpoch === next?.rendererEpoch,
+  });
+  // This stable reactive facade keeps Solid/OpenTUI ownership anchored while
+  // exposing every property from the latest immutable semantic projection.
+  const retainedProjection = new Proxy({} as NonNullable<ReturnType<typeof projection>>, {
+    get: (_target, property) => Reflect.get(projection()!, property),
+  });
+  const projectionOwner = createMemo(() => (projection() ? retainedProjection : null));
   const routeChromePointer = (x: number, y: number): void => {
     const shell = projection();
     if (!shell) return;
@@ -358,7 +372,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
   };
 
   return (
-    <Show when={projection()} keyed fallback={<CatalogShell {...props} />}>
+    <Show when={projectionOwner()} keyed fallback={<CatalogShell {...props} />}>
       {(shell) => (
         <box
           width={props.dimensions().width}
@@ -393,7 +407,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                 overflow="hidden"
               >
                 <Show
-                  when={props.terminalRendererSource()}
+                  when={terminalRendererSource()}
                   keyed
                   fallback={
                     <HomeSurface
@@ -415,6 +429,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                       originX={shell.content.x}
                       originY={shell.content.y}
                       focusedPane={props.focusedPane()}
+                      hostFocusTransitionOwner={props.hostFocusTransitionOwner}
                       theme={props.theme}
                       palette={props.palette}
                       onSelectPane={props.onSelectPane}

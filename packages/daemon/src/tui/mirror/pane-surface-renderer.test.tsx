@@ -12,8 +12,11 @@ import {
   splitTerminalDeliveryChunks,
 } from "@tmux-ide/core";
 import type { BlitOptions } from "./pane-mirror.ts";
+import { installTuiPerformanceEventSink } from "./performance-events.ts";
 import {
   PaneSurfaceRenderable,
+  createPaneSurfaceHostFocusTransitionOwner,
+  qualifiesPaneSurfaceHostFocusFrame,
   registerPaneSurface,
   type PaneSurfaceOptions,
   type TerminalPaneRenderSource,
@@ -81,6 +84,106 @@ function semanticLane(
 }
 
 describe("PaneSurface OpenTUI renderer", () => {
+  it("consumes one exact root-owned focus transition and fences stale replacements", () => {
+    let followupRenders = 0;
+    const owner = createPaneSurfaceHostFocusTransitionOwner(() => {
+      followupRenders += 1;
+    });
+    const transition = {
+      diagnosticEpoch: 1,
+      semanticPaneId: "pane-1",
+      focused: false,
+      rendererEpoch: 3,
+      sourceEpoch: 4,
+      generation: "generation-1",
+      daemonGeneration: "generation-1",
+      clientGeneration: 1,
+      incarnation: "incarnation-1",
+      revision: 1,
+      stateHash: "0a63b052b8f1d994",
+      cols: 10,
+      rows: 6,
+    };
+    const first = owner.arm(transition);
+    const second = owner.arm({ ...transition, diagnosticEpoch: 2, focused: true });
+    expect(first).not.toBe(second);
+    expect(owner.pending(first!)).toBe(false);
+    expect(owner.pending(second!)).toBe(true);
+    expect(owner.claim({ ...transition, focused: false })).toBeNull();
+    expect(owner.claim({ ...transition, focused: true })?.token).toBe(second);
+    expect(owner.pending(second!)).toBe(true);
+    const focusEvent = {
+      processId: "opentui:123",
+      clockId: "opentui-performance-now",
+      clockKind: "performance-now",
+      atMicros: 100,
+      semanticPaneId: transition.semanticPaneId,
+      generation: transition.generation,
+      incarnation: transition.incarnation,
+      revision: transition.revision,
+      stateHash: transition.stateHash,
+      cols: transition.cols,
+      rows: transition.rows,
+      sourceEpoch: transition.sourceEpoch,
+      rendererEpoch: transition.rendererEpoch,
+      viewportCols: 10,
+      viewportRows: 5,
+      focused: true,
+      diagnosticEpoch: 2,
+      full: false,
+      writtenRows: [2],
+    } as const;
+    expect(owner.complete(second!, focusEvent)).toBe(true);
+    expect(followupRenders).toBe(1);
+    const completed = owner.completed(second!);
+    expect(completed).not.toBeNull();
+    const currentFrame = {
+      semanticPaneId: transition.semanticPaneId,
+      focused: true,
+      rendererEpoch: transition.rendererEpoch,
+      daemonGeneration: transition.daemonGeneration,
+      clientGeneration: transition.clientGeneration,
+      identity: {
+        generation: transition.generation,
+        incarnation: transition.incarnation,
+        revision: transition.revision,
+        stateHash: transition.stateHash,
+        cols: transition.cols,
+        rows: transition.rows,
+        sourceEpoch: transition.sourceEpoch,
+      },
+    } as const;
+    expect(qualifiesPaneSurfaceHostFocusFrame(completed!, currentFrame)).toBe(true);
+    expect(
+      qualifiesPaneSurfaceHostFocusFrame(completed!, {
+        ...currentFrame,
+        clientGeneration: 2,
+      }),
+    ).toBe(false);
+    owner.retire(second!);
+    expect(owner.completed(second!)).toBeNull();
+    expect(owner.claim({ ...transition, focused: true })).toBeNull();
+    const claimed = owner.arm(transition);
+    expect(owner.claim(transition)?.token).toBe(claimed);
+    const superseding = owner.arm({ ...transition, diagnosticEpoch: 3, focused: true });
+    expect(owner.complete(claimed!, focusEvent)).toBe(false);
+    owner.cancel(superseding ?? undefined);
+    const replacement = owner.arm(transition);
+    expect(owner.claim({ ...transition, rendererEpoch: 4 })).toBeNull();
+    owner.cancel(replacement ?? undefined);
+    expect(owner.claim(transition)).toBeNull();
+    const paneCancelled = owner.arm(transition);
+    owner.cancelPane("other-pane");
+    expect(owner.pending(paneCancelled!)).toBe(true);
+    owner.cancelPane("pane-1");
+    expect(owner.pending(paneCancelled!)).toBe(false);
+    expect(owner.arm({ ...transition, stateHash: `sha256:${"a".repeat(64)}` })).toBeNull();
+    owner.arm(transition);
+    owner.dispose();
+    expect(owner.claim(transition)).toBeNull();
+    expect(owner.arm(transition)).toBeNull();
+  });
+
   it("renders semantic cells and survives an atomic fault/reconnect source replacement", async () => {
     registerPaneSurface();
     const palette = createTerminalPaletteProjection(createSemanticThemeSnapshot({ mode: "dark" }));
@@ -142,6 +245,7 @@ describe("PaneSurface OpenTUI renderer", () => {
   it("repaints only the cursor-marker row when focus changes", async () => {
     registerPaneSurface();
     const blits: Array<Pick<BlitOptions, "full" | "forceRows">> = [];
+    let diagnosticIdentityReads = 0;
     const mirror = {
       scrollbackDepth: () => 0,
       cursorState: () => ({
@@ -151,6 +255,10 @@ describe("PaneSurface OpenTUI renderer", () => {
         style: "block" as const,
         blink: false,
       }),
+      paneCanonicalIdentity: () => {
+        diagnosticIdentityReads += 1;
+        throw new Error("disabled diagnostic identity read");
+      },
       blitPane: (
         _id: string,
         _buffers: unknown,
@@ -204,6 +312,151 @@ describe("PaneSurface OpenTUI renderer", () => {
     setFocused(true);
     await setup.renderOnce();
     expect(blits).toEqual([{ full: false, forceRows: [2] }]);
+    expect(diagnosticIdentityReads).toBe(0);
+  });
+
+  it("publishes exact focus rows only when explicitly armed and remains fail-open", async () => {
+    registerPaneSurface();
+    const paints: Array<{
+      diagnosticEpoch: number;
+      focused: boolean;
+      writtenRows: readonly number[];
+    }> = [];
+    const uninstall = installTuiPerformanceEventSink({
+      frame: () => undefined,
+      terminalPaint: () => undefined,
+      terminalDelivery: () => undefined,
+      terminalFocusPaint: (event) => paints.push(event),
+      terminalFocusFence: () => {
+        throw new Error("diagnostic failure");
+      },
+    });
+    let canonicalIdentity = {
+      generation: "generation-1",
+      incarnation: "incarnation-1",
+      revision: 1,
+      stateHash: "0a63b052b8f1d994",
+      cols: 10,
+      rows: 6,
+      sourceEpoch: 4,
+    };
+    const mirror = {
+      scrollbackDepth: () => 0,
+      cursorState: () => ({ x: 2, y: 2, hidden: false, style: "block" as const, blink: false }),
+      paneCanonicalIdentity: () => canonicalIdentity,
+      blitPane: (
+        _id: string,
+        _buffers: unknown,
+        _width: number,
+        _height: number,
+        _scrollOffset: number,
+        _defaultFg: number,
+        _defaultBg: number,
+        options: BlitOptions,
+      ) => options.dirtyRows.push(...(options.forceRows ?? [])),
+    } as unknown as TerminalPaneRenderSource;
+    const palette = createTerminalPaletteProjection(createSemanticThemeSnapshot({ mode: "dark" }));
+    const focusTransitions = createPaneSurfaceHostFocusTransitionOwner();
+    const armFocus = (diagnosticEpoch: number, semanticPaneId: string, focused: boolean) =>
+      focusTransitions.arm({
+        diagnosticEpoch,
+        semanticPaneId,
+        focused,
+        rendererEpoch: 3,
+        sourceEpoch: 4,
+        generation: "generation-1",
+        daemonGeneration: "generation-1",
+        clientGeneration: 1,
+        incarnation: "incarnation-1",
+        revision: 1,
+        stateHash: "0a63b052b8f1d994",
+        cols: 10,
+        rows: 6,
+      });
+    let setFocused!: (focused: boolean) => void;
+    const setup = await renderForTest(
+      () => {
+        const [focused, setFocusedSignal] = createSignal(true);
+        setFocused = setFocusedSignal;
+        return (
+          <pane_surface
+            width={10}
+            height={5}
+            mirror={mirror}
+            paneId="pane-1"
+            defaultFg={palette.foreground}
+            defaultBg={palette.background}
+            terminalPalette={palette}
+            searchHl={palette.searchHighlight}
+            searchCur={palette.searchCurrent}
+            paneFocused={focused()}
+            sourceEpoch={4}
+            rendererEpoch={3}
+            hostFocusTransitionOwner={focusTransitions}
+          />
+        );
+      },
+      { width: 10, height: 5 },
+    );
+    await setup.renderOnce();
+    expect(paints).toEqual([]);
+    const wrongPaneToken = armFocus(99, "other-pane", false);
+    setFocused(false);
+    await setup.renderOnce();
+    focusTransitions.cancel(wrongPaneToken ?? undefined);
+    setFocused(true);
+    await setup.renderOnce();
+    expect(paints).toEqual([]);
+    const replacedIdentityToken = armFocus(1, "pane-1", false);
+    setFocused(false);
+    canonicalIdentity = { ...canonicalIdentity, revision: 2, stateHash: "1a63b052b8f1d994" };
+    await setup.renderOnce();
+    focusTransitions.cancel(replacedIdentityToken ?? undefined);
+    setFocused(true);
+    await setup.renderOnce();
+    canonicalIdentity = { ...canonicalIdentity, revision: 1, stateHash: "0a63b052b8f1d994" };
+    const supersededToken = armFocus(1, "pane-1", false);
+    setFocused(false);
+    const replacementToken = armFocus(2, "pane-1", true);
+    await setup.renderOnce();
+    focusTransitions.cancel(supersededToken ?? undefined);
+    focusTransitions.cancel(replacementToken ?? undefined);
+    setFocused(true);
+    await setup.renderOnce();
+    expect(paints).toEqual([]);
+    const blurToken = armFocus(1, "pane-1", false);
+    setFocused(false);
+    await expect(setup.renderOnce()).resolves.toBeUndefined();
+    focusTransitions.cancel(blurToken ?? undefined);
+    const focusToken = armFocus(2, "pane-1", true);
+    setFocused(true);
+    await expect(setup.renderOnce()).resolves.toBeUndefined();
+    focusTransitions.cancel(focusToken ?? undefined);
+    expect(
+      paints.map(({ diagnosticEpoch, focused, writtenRows, sourceEpoch, rendererEpoch }) => ({
+        diagnosticEpoch,
+        focused,
+        writtenRows,
+        sourceEpoch,
+        rendererEpoch,
+      })),
+    ).toEqual([
+      {
+        diagnosticEpoch: 1,
+        focused: false,
+        writtenRows: [2],
+        sourceEpoch: 4,
+        rendererEpoch: 3,
+      },
+      {
+        diagnosticEpoch: 2,
+        focused: true,
+        writtenRows: [2],
+        sourceEpoch: 4,
+        rendererEpoch: 3,
+      },
+    ]);
+    uninstall();
   });
 
   it("forces a full blit when a retained source epoch changes at the same content version", async () => {

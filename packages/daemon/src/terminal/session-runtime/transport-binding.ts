@@ -89,6 +89,24 @@ function assertLiveControllerPrincipal(
 
 const clientsByRegistry = new WeakMap<object, Map<string, SharedClient>>();
 
+function authenticatedSurface(transport: SessionRuntimeTransport, hostClientId: string): string {
+  // The production host and development gateway mint these principals
+  // server-side and bind them to the document session before either transport
+  // reaches the daemon. Classify both transports identically so an attachment
+  // that arrives before pane-stream cannot poison the shared client's surface.
+  if (
+    /^(?:web|dev-web):[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
+      hostClientId,
+    )
+  )
+    return "web";
+  if (transport !== "pane-stream") return transport;
+  if (/^opentui:[1-9][0-9]*$/u.test(hostClientId)) return "opentui";
+  // `dev-web-direct` is generated inside the weaker direct browser host and is
+  // intentionally not treated as an authenticated server-minted principal.
+  return transport;
+}
+
 export class SessionRuntimeTransportBinding {
   readonly #binder: SessionRuntimeTransportBinder;
   readonly #shared: SharedClient;
@@ -474,7 +492,11 @@ export class SessionRuntimeTransportBinder {
     let shared = this.#clients.get(key);
     if (!shared) {
       shared = {
-        consumer: this.registry.connect(request.session, transport, hostClientId),
+        consumer: this.registry.connect(
+          request.session,
+          authenticatedSurface(transport, hostClientId),
+          hostClientId,
+        ),
         refs: 0,
         interactiveRefs: 0,
         lease: null,

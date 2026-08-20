@@ -319,6 +319,8 @@ describe("reference performance trace", () => {
     expect(quiet.terminalCanonicalUpdate).toBeUndefined();
     expect(quiet.terminalCanonicalHostFrame).toBeUndefined();
     expect(quiet.terminalFrameFence).toBeUndefined();
+    expect(quiet.terminalFocusPaint).toBeUndefined();
+    expect(quiet.terminalFocusFence).toBeUndefined();
     expect(quiet.terminalInputQueueState).toBeUndefined();
     expect(quiet.terminalClockCalibration).toBeUndefined();
 
@@ -427,6 +429,35 @@ describe("reference performance trace", () => {
       rendererEpoch: 4,
       writerHealth: { droppedRecords: 0, oversizedRecords: 0, failed: false },
     });
+    const focusPaint = {
+      processId: "opentui:1",
+      clockId: "opentui-performance-now" as const,
+      clockKind: "performance-now" as const,
+      atMicros: 14,
+      semanticPaneId: "pane.alpha",
+      generation: "11111111-1111-4111-8111-111111111111",
+      incarnation: "incarnation",
+      revision: 4,
+      stateHash: "next-hash",
+      cols: 80,
+      rows: 24,
+      viewportCols: 80,
+      viewportRows: 23,
+      focused: false,
+      diagnosticEpoch: 1,
+      full: false,
+      writtenRows: [2],
+    };
+    detailed.terminalFocusPaint?.(focusPaint);
+    detailed.terminalFocusFence?.(focusPaint);
+    expect(records.slice(-2)).toMatchObject([
+      { type: "performance.terminal-focus-paint", diagnosticEpoch: 1, writtenRows: [2] },
+      {
+        type: "performance.terminal-focus-fence",
+        diagnosticEpoch: 1,
+        writerHealth: { droppedRecords: 0, oversizedRecords: 0, failed: false },
+      },
+    ]);
     detailed.terminalInputQueueState?.({
       operation: "initialized",
       processId: "opentui:1",
@@ -560,6 +591,28 @@ describe("reference performance trace", () => {
     expect(stream.destroyed).toBe(true);
     expect(stream.listenerCount("drain")).toBe(0);
     expect(stream.listenerCount("error")).toBe(0);
+  });
+
+  it("retains the two bounded focus watermark records beyond ordinary pending capacity", () => {
+    class SaturatedWritable extends EventEmitter {
+      writableLength = 0;
+      destroyed = false;
+      write(): boolean {
+        return false;
+      }
+      end(_value: string, callback: () => void): void {
+        callback();
+      }
+      destroy(): void {
+        this.destroyed = true;
+      }
+    }
+    const writer = createReferenceTraceWriter(new SaturatedWritable(), { maxPendingBytes: 64 });
+    writer.append({ type: "saturate" });
+    writer.append({ type: "ordinary", value: "x".repeat(40) });
+    writer.appendCritical({ type: "performance.terminal-focus-paint", diagnosticEpoch: 1 });
+    writer.appendCritical({ type: "performance.terminal-focus-fence", diagnosticEpoch: 1 });
+    expect(writer.snapshot()).toMatchObject({ droppedRecords: 1, pendingRecords: 2 });
   });
 
   it("bounds queued bytes and reports the first overflowed record without payload", async () => {

@@ -20,7 +20,15 @@ export interface RunningDevServer {
   readonly pageUrl: string;
   readonly origin: string;
   readonly output: () => string;
+  readonly isRunning: () => boolean;
   readonly stop: () => Promise<void>;
+}
+
+export function devServerProcessIsRunning(child: {
+  readonly exitCode: number | null;
+  readonly signalCode: NodeJS.Signals | null;
+}): boolean {
+  return child.exitCode === null && child.signalCode === null;
 }
 
 export function reservePort(): Promise<number> {
@@ -94,6 +102,7 @@ export async function startDevServer(
     pageUrl: `${origin}/?devHost=1`,
     origin,
     output: harness.output,
+    isRunning: () => devServerProcessIsRunning(harness.child),
     stop: async () => {
       await harness.stop();
       await gateway?.stop();

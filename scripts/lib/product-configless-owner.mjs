@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 export const CONFIGLESS_TMUX_SESSION_FIELD_SEPARATOR = "|tmux-ide-configless-session-field-v1|";
@@ -226,23 +227,77 @@ export function buildProductDiagnosticCorrelation({
   });
 }
 
-export function qualifySelectedWindowWebSemantic({
+export function assessFocusWebSemantic({
   web,
   derivedResources,
   expectedWorkspaceName,
   expectedSemanticPaneId,
+  expectedDaemonGeneration,
 }) {
+  const predicates = [];
+  const add = (id, passed) => predicates.push(Object.freeze({ id, passed: passed === true }));
+  let strictQualified;
+  let groupCount = null;
+  let activeWindowCount = 0;
+  let connectedTerminalCount = 0;
+  let availableResourceCount = 0;
+  let observedWindowNodeCount = null;
+  let observedTerminalNodeCount = null;
+  let windowMembershipExact = false;
+  let terminalExact = false;
   try {
-    if (
-      web?.windowContainerCount !== 1 ||
-      !Array.isArray(web.windows) ||
-      !Array.isArray(web.terminals) ||
-      !Array.isArray(derivedResources) ||
-      web.windows.length === 0 ||
-      web.windows.length > 512 ||
-      web.terminals.length !== 1
-    )
-      return false;
+    const derivedResourcesBounded =
+      Array.isArray(derivedResources) &&
+      derivedResources.length > 0 &&
+      derivedResources.length <= 512;
+    observedWindowNodeCount = Number.isSafeInteger(web?.windowNodeCount)
+      ? web.windowNodeCount
+      : Array.isArray(web?.windows)
+        ? web.windows.length
+        : null;
+    observedTerminalNodeCount = Number.isSafeInteger(web?.terminalNodeCount)
+      ? web.terminalNodeCount
+      : Array.isArray(web?.terminals)
+        ? web.terminals.length
+        : null;
+    activeWindowCount = Array.isArray(web?.windows)
+      ? web.windows.slice(0, 513).filter((window) => window?.active === "true").length
+      : 0;
+    connectedTerminalCount = Array.isArray(web?.terminals)
+      ? web.terminals.slice(0, 513).filter((terminal) => terminal?.phase === "connected").length
+      : 0;
+    availableResourceCount = derivedResourcesBounded
+      ? derivedResources.filter((resource) => resource?.attachability?.status === "available")
+          .length
+      : Array.isArray(derivedResources)
+        ? Math.min(derivedResources.length, 513)
+        : 0;
+    groupCount = derivedResourcesBounded
+      ? new Set(
+          derivedResources
+            .filter((resource) => resource?.attachability?.status === "available")
+            .map((resource) => resource.windowResourceId ?? resource.id),
+        ).size
+      : null;
+    const inputShapeBounded =
+      Array.isArray(web?.windows) && Array.isArray(web?.terminals) && derivedResourcesBounded;
+    const workspaceCountExact = web?.windowContainerCount === 1;
+    const windowCountBounded =
+      Array.isArray(web?.windows) &&
+      observedWindowNodeCount === web.windows.length &&
+      observedWindowNodeCount > 0 &&
+      observedWindowNodeCount <= 512;
+    const terminalCountExact =
+      Array.isArray(web?.terminals) &&
+      observedTerminalNodeCount === web.terminals.length &&
+      observedTerminalNodeCount === 1;
+    add("web-input-shape-bounded", inputShapeBounded);
+    add("web-workspace-count", workspaceCountExact);
+    add("web-window-count-bounded", windowCountBounded);
+    add("web-terminal-count", terminalCountExact);
+    const shapeBounded =
+      inputShapeBounded && workspaceCountExact && windowCountBounded && terminalCountExact;
+    if (!shapeBounded) throw new Error("shape");
     const groups = new Map();
     for (const resource of derivedResources) {
       if (resource?.attachability?.status !== "available") continue;
@@ -252,27 +307,38 @@ export function qualifySelectedWindowWebSemantic({
         typeof windowResourceId !== "string" ||
         typeof pane !== "string" ||
         windowResourceId.length === 0 ||
-        pane.length === 0
+        windowResourceId.length > 256 ||
+        pane.length === 0 ||
+        pane.length > 256
       )
-        return false;
+        throw new Error("derived-identity");
       const group = groups.get(windowResourceId) ?? { panes: [], activePanes: [] };
-      if (group.panes.includes(pane)) return false;
+      if (group.panes.includes(pane)) throw new Error("derived-duplicate");
       group.panes.push(pane);
       if (resource.active === true) group.activePanes.push(pane);
       groups.set(windowResourceId, group);
     }
-    if (groups.size !== web.windows.length || groups.size === 0) return false;
+    groupCount = groups.size;
+    add("web-window-group-count", groups.size === web.windows.length && groups.size > 0);
+    if (groups.size !== web.windows.length || groups.size === 0) throw new Error("groups");
     const derivedActiveGroups = [...groups.entries()].filter(
       ([, group]) => group.activePanes.length > 0,
+    );
+    add(
+      "web-derived-active-pane",
+      derivedActiveGroups.length === 1 &&
+        derivedActiveGroups[0][1].activePanes.length === 1 &&
+        derivedActiveGroups[0][1].activePanes[0] === expectedSemanticPaneId,
     );
     if (
       derivedActiveGroups.length !== 1 ||
       derivedActiveGroups[0][1].activePanes.length !== 1 ||
       derivedActiveGroups[0][1].activePanes[0] !== expectedSemanticPaneId
     )
-      return false;
+      throw new Error("active-derived");
     const seenWindows = new Set();
     const seenPanes = new Set();
+    let semanticPaneBytes = 0;
     let activeGroup = null;
     for (const window of web.windows) {
       if (
@@ -281,48 +347,141 @@ export function qualifySelectedWindowWebSemantic({
         seenWindows.has(window.windowResourceId) ||
         !groups.has(window.windowResourceId)
       )
-        return false;
+        throw new Error("window-identity");
       seenWindows.add(window.windowResourceId);
       let panes;
+      if (
+        typeof window.semanticPaneIds !== "string" ||
+        window.semanticPaneIds.length === 0 ||
+        window.semanticPaneIds.length > 8_192
+      )
+        throw new Error("window-panes");
+      semanticPaneBytes += window.semanticPaneIds.length;
+      if (semanticPaneBytes > 65_536) throw new Error("window-panes");
       try {
         panes = JSON.parse(window.semanticPaneIds);
       } catch {
-        return false;
+        throw new Error("window-panes");
       }
       if (
         !Array.isArray(panes) ||
         panes.length === 0 ||
         panes.length > 512 ||
-        panes.some((pane) => typeof pane !== "string" || pane.length === 0 || seenPanes.has(pane))
+        panes.some(
+          (pane) =>
+            typeof pane !== "string" ||
+            pane.length === 0 ||
+            pane.length > 256 ||
+            seenPanes.has(pane),
+        )
       )
-        return false;
+        throw new Error("window-panes");
       for (const pane of panes) seenPanes.add(pane);
       const sorted = [...panes].sort();
-      if (JSON.stringify(panes) !== JSON.stringify(sorted)) return false;
+      if (JSON.stringify(panes) !== JSON.stringify(sorted)) throw new Error("window-order");
       const expectedPanes = [...groups.get(window.windowResourceId).panes].sort();
       if (
         JSON.stringify(sorted) !== JSON.stringify(expectedPanes) ||
         window.paneCount !== String(panes.length) ||
         !["true", "false"].includes(window.active)
       )
-        return false;
+        throw new Error("window-membership");
       if (window.active === "true") {
-        if (activeGroup !== null) return false;
-        if (window.windowResourceId !== derivedActiveGroups[0][0]) return false;
+        if (activeGroup !== null) throw new Error("active-window");
+        if (window.windowResourceId !== derivedActiveGroups[0][0]) throw new Error("active-window");
         activeGroup = new Set(panes);
       }
     }
+    windowMembershipExact = true;
+    add("web-window-membership", true);
+    add(
+      "web-active-window",
+      activeWindowCount === 1 && activeGroup !== null && activeGroup.has(expectedSemanticPaneId),
+    );
     const terminal = web.terminals[0];
-    return Boolean(
+    add("web-terminal-connected", terminal.phase === "connected");
+    add("web-terminal-workspace", terminal.workspaceName === expectedWorkspaceName);
+    add("web-terminal-pane", terminal.semanticPaneId === expectedSemanticPaneId);
+    terminalExact = Boolean(
       activeGroup &&
       activeGroup.has(expectedSemanticPaneId) &&
       terminal.phase === "connected" &&
       terminal.workspaceName === expectedWorkspaceName &&
       terminal.semanticPaneId === expectedSemanticPaneId,
     );
-  } catch {
-    return false;
+    add("web-terminal-exact", terminalExact);
+    strictQualified = terminalExact;
+  } catch (error) {
+    strictQualified = false;
+    const failure =
+      error instanceof Error &&
+      [
+        "shape",
+        "derived-identity",
+        "derived-duplicate",
+        "groups",
+        "active-derived",
+        "window-identity",
+        "window-panes",
+        "window-membership",
+        "window-order",
+        "active-window",
+      ].includes(error.message)
+        ? `web-${error.message}`
+        : "web-structure-invalid";
+    if (!predicates.some(({ id, passed }) => id === failure && passed === false))
+      add(failure, false);
   }
+  const runtimeShellExact = web?.shellSource === "runtime";
+  const daemonGenerationExact =
+    typeof expectedDaemonGeneration !== "string" || expectedDaemonGeneration.length === 0
+      ? true
+      : web?.daemonGeneration === expectedDaemonGeneration;
+  add("web-runtime-shell", runtimeShellExact);
+  add("web-daemon-generation", daemonGenerationExact);
+  add("web-visible", web?.visibilityState === "visible");
+  add("web-focused", web?.hasFocus === true);
+  add("web-strict-selected-window", strictQualified);
+  const qualified =
+    strictQualified &&
+    runtimeShellExact &&
+    daemonGenerationExact &&
+    web?.visibilityState === "visible" &&
+    web?.hasFocus === true;
+  const normalized = Object.freeze({
+    runtimeShellExact,
+    daemonGenerationExact,
+    visible: web?.visibilityState === "visible",
+    focused: web?.hasFocus === true,
+    workspaceCount: Number.isSafeInteger(web?.windowContainerCount)
+      ? Math.min(Math.max(web.windowContainerCount, 0), 513)
+      : null,
+    expectedGroupCount: Number.isSafeInteger(groupCount) ? Math.min(groupCount, 513) : null,
+    observedWindowCount: Number.isSafeInteger(observedWindowNodeCount)
+      ? Math.min(Math.max(observedWindowNodeCount, 0), 513)
+      : null,
+    activeWindowCount: Math.min(activeWindowCount, 513),
+    availableResourceCount: Math.min(availableResourceCount, 513),
+    observedTerminalCount: Number.isSafeInteger(observedTerminalNodeCount)
+      ? Math.min(Math.max(observedTerminalNodeCount, 0), 513)
+      : null,
+    connectedTerminalCount: Math.min(connectedTerminalCount, 513),
+    windowMembershipExact,
+    terminalExact,
+    strictQualified,
+  });
+  return Object.freeze({
+    qualified,
+    strictQualified,
+    firstFailedPredicate: predicates.find(({ passed }) => !passed)?.id ?? null,
+    predicates: Object.freeze(predicates.slice(0, 16)),
+    normalized,
+    digest: createHash("sha256").update(JSON.stringify(normalized)).digest("hex"),
+  });
+}
+
+export function qualifySelectedWindowWebSemantic(options) {
+  return assessFocusWebSemantic(options).strictQualified;
 }
 
 export function qualifyCanonicalSeedPaint(records, expected) {

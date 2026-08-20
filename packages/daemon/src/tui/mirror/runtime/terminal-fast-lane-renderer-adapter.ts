@@ -57,6 +57,7 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     },
     blitPane: (paneId, buffers, width, height, scrollOffset, defaultFg, defaultBg, options) =>
       this.#blit(paneId, buffers, width, height, scrollOffset, defaultFg, defaultBg, options),
+    paneCanonicalIdentity: (paneId) => this.paneCanonicalIdentity(paneId),
   };
 
   constructor(
@@ -170,6 +171,21 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     this.#pendingCanonicalHostFrames = null;
     this.#seenCanonicalHostFrameKeys = null;
     this.#droppedCanonicalHostFrames = 0;
+  }
+
+  paneCanonicalIdentity(paneId: string) {
+    const state = this.#panes.get(paneId)?.state ?? this.#lane.paneState(paneId);
+    const snapshot = state?.snapshot;
+    if (!state || !snapshot) return null;
+    return {
+      generation: state.generation,
+      incarnation: state.incarnation,
+      revision: state.revision,
+      stateHash: state.hash,
+      cols: snapshot.cols,
+      rows: snapshot.rows,
+      sourceEpoch: this.#sourceEpoch,
+    } as const;
   }
 
   #interest(paneId: string): PaneRendererInterest {

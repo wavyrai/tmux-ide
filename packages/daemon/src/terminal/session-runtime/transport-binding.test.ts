@@ -44,6 +44,91 @@ function sendResult(operationId: string, intent: ReturnType<typeof sendIntent>) 
 }
 
 describe("SessionRuntimeTransportBinder", () => {
+  it("attributes an authenticated OpenTUI host principal to the opentui surface", async () => {
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION,
+      createControllerToken: () => "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+    const binding = new SessionRuntimeTransportBinder(registry).bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000070",
+      session: "alpha",
+      hostClientId: "opentui:42",
+      allowedSourcePaneIds: ["pane.a"],
+      interactive: true,
+      explicitAuthority: true,
+    });
+    expect(binding.authoritySnapshot().clients).toContainEqual(
+      expect.objectContaining({ clientId: "opentui:42", surface: "opentui" }),
+    );
+    await binding.close();
+    await registry.dispose();
+  });
+
+  it.each([
+    "web:12345678-1234-4123-8123-123456789abc",
+    "dev-web:12345678-1234-4123-8123-123456789abc",
+  ])("attributes server-minted Web principal %s on both transports", async (hostClientId) => {
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION,
+      createControllerToken: () => "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+    const binder = new SessionRuntimeTransportBinder(registry);
+    const attachment = binder.bind({
+      transport: "terminal-attachment",
+      transportLeaseId: "00000000-0000-4000-8000-000000000073",
+      session: "alpha",
+      hostClientId,
+      allowedSourcePaneIds: ["pane.a"],
+      interactive: true,
+      explicitAuthority: true,
+    });
+    const paneStream = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000075",
+      session: "alpha",
+      hostClientId,
+      allowedSourcePaneIds: ["pane.a"],
+      interactive: true,
+      explicitAuthority: true,
+    });
+    expect(paneStream.authoritySnapshot().clients).toContainEqual(
+      expect.objectContaining({
+        clientId: hostClientId,
+        surface: "web",
+      }),
+    );
+    await Promise.all([paneStream.close(), attachment.close()]);
+    await registry.dispose();
+  });
+
+  it.each([
+    "dev-web:not-a-minted-uuid",
+    "dev-web:12345678-1234-1123-8123-123456789abc",
+    "dev-web:12345678-1234-4123-7123-123456789abc",
+    "dev-web:12345678-1234-4123-8123-123456789ABC",
+    "dev-web-direct:12345678-1234-4123-8123-123456789abc",
+  ])("does not infer Web authority from untrusted principal %s", async (hostClientId) => {
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION,
+      createControllerToken: () => "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+    const binding = new SessionRuntimeTransportBinder(registry).bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000074",
+      session: "alpha",
+      hostClientId,
+      allowedSourcePaneIds: ["pane.a"],
+      interactive: true,
+      explicitAuthority: true,
+    });
+    expect(binding.authoritySnapshot().clients).toContainEqual(
+      expect.objectContaining({ clientId: hostClientId, surface: "unknown" }),
+    );
+    await binding.close();
+    await registry.dispose();
+  });
+
   it("keeps a same-host pane authorized when its sibling pane stream closes", async () => {
     const registry = new SessionRuntimeRegistry({
       generation: GENERATION,

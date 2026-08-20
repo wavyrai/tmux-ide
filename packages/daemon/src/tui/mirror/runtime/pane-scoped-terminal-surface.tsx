@@ -1,7 +1,11 @@
 /* @jsxImportSource @opentui/solid */
 import { createRenderEffect, onCleanup } from "solid-js";
 
-import type { PaneSearchHighlight, PaneSurfaceRenderable } from "../pane-surface.tsx";
+import type {
+  PaneSearchHighlight,
+  PaneSurfaceHostFocusTransitionOwner,
+  PaneSurfaceRenderable,
+} from "../pane-surface.tsx";
 import type { TerminalPaletteProjection } from "../theme.ts";
 import type { Cell } from "../selection.ts";
 
@@ -28,6 +32,7 @@ export interface PaneScopedTerminalSurfaceProps {
   readonly scrollOffset: number;
   readonly paneFocused: boolean;
   readonly sourceEpoch: number;
+  readonly hostFocusTransitionOwner?: PaneSurfaceHostFocusTransitionOwner;
   readonly selRange: { readonly start: Cell; readonly end: Cell } | null;
   readonly search: PaneSearchHighlight | null;
 }
@@ -76,6 +81,8 @@ export function PaneScopedTerminalSurface(props: PaneScopedTerminalSurfaceProps)
       paneFocused={props.paneFocused}
       contentVersion={props.adapter.paneVersion(props.paneId)}
       sourceEpoch={props.sourceEpoch + props.adapter.paneSourceEpoch()}
+      rendererEpoch={props.sourceEpoch}
+      hostFocusTransitionOwner={props.hostFocusTransitionOwner}
       selRange={props.selRange}
       search={props.search}
     />

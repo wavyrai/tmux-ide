@@ -70,9 +70,12 @@ const GOLDEN_JOURNEYS = Object.freeze(
       coverage: Object.freeze(coverage),
       executor: id,
       variants: Object.freeze(id === "first-key-paste" ? ["key", "paste"] : [null]),
-      implementation: ["configless-cold-start", "coherent-first-pane", "first-key-paste"].includes(
-        id,
-      )
+      implementation: [
+        "configless-cold-start",
+        "coherent-first-pane",
+        "first-key-paste",
+        "focus",
+      ].includes(id)
         ? "implemented"
         : "pending",
     }),
@@ -367,6 +370,55 @@ export async function runFirstKeyPasteOwnerBoot(operations) {
     distribution,
     web,
   });
+}
+
+/** Dedicated focus journey: coherent target → exact blur/yield → focus/reclaim → Web. */
+export async function runFocusOwnerBoot(operations) {
+  const atBoundary = async (boundary, operation) => {
+    try {
+      return await operation();
+    } catch (error) {
+      if (error && typeof error === "object" && error.boundary) throw error;
+      const bounded = new Error(error instanceof Error ? error.message : String(error), {
+        cause: error,
+      });
+      bounded.boundary = boundary;
+      if (error?.observation) bounded.observation = error.observation;
+      throw bounded;
+    }
+  };
+  const namespace = await atBoundary("focus-namespace-ready", () =>
+    operations.createFocusNamespace(),
+  );
+  const daemon = await atBoundary("focus-daemon-ready", () =>
+    operations.startCanonicalDaemon(namespace),
+  );
+  const identity = await atBoundary("focus-daemon-ready", () =>
+    operations.openCanonicalWorkspace(namespace, daemon),
+  );
+  await atBoundary("focus-tui-build", () => operations.buildBeforeMeasurement(namespace));
+  const started = await atBoundary("focus-tui-started", () =>
+    operations.launchFocusTui(namespace, daemon, identity),
+  );
+  const host = await atBoundary("focus-host-ready", () =>
+    operations.waitForFocusHostReady(namespace, daemon, identity, started),
+  );
+  const process = await atBoundary("focus-tui-coherent", () =>
+    operations.waitForFocusTuiCoherent(namespace, daemon, identity, started, host),
+  );
+  const baseline = await atBoundary("focus-baseline", () =>
+    operations.proveFocusBaseline(namespace, daemon, identity, process),
+  );
+  const blur = await atBoundary("focus-blur-proved", () =>
+    operations.driveBlur(namespace, daemon, identity, process, baseline),
+  );
+  const reclaim = await atBoundary("focus-reclaim-proved", () =>
+    operations.driveFocus(namespace, daemon, identity, process, baseline, blur),
+  );
+  const web = await atBoundary("focus-web-correlation", () =>
+    operations.startWebAfterFocus(namespace, daemon, identity, process, reclaim),
+  );
+  return Object.freeze({ namespace, identity, process, baseline, blur, reclaim, web });
 }
 
 function exactTargetedTuiCwd(runtimeDir, { createMissing, hooks = {} }) {

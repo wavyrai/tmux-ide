@@ -12,6 +12,7 @@ import {
 import {
   assessCoherentFirstPaneBoundaries,
   assessConfiglessJourneyBoundaries,
+  assessFocusWebSemantic,
   buildProductDiagnosticCorrelation,
   canonicalPromotionPredicateSignature,
   CONFIGLESS_TMUX_SESSION_FIELD_SEPARATOR,
@@ -952,6 +953,50 @@ test("selected-window Web proof correlates unordered complete groups to one acti
     }),
     false,
   );
+
+  for (const [candidateResources, candidateWeb, failed] of [
+    [
+      resources.map((resource, index) =>
+        index === 0
+          ? { ...resource, attachability: { status: "available", semanticPaneId: "" } }
+          : resource,
+      ),
+      web,
+      "web-derived-identity",
+    ],
+    [[...resources, { ...resources[0], id: "duplicate" }], web, "web-derived-duplicate"],
+    [
+      resources,
+      {
+        ...web,
+        windows: web.windows.map((window) =>
+          window.windowResourceId === "window.one"
+            ? { ...window, semanticPaneIds: '["pane.one-b","pane.one-a"]' }
+            : window,
+        ),
+      },
+      "web-window-order",
+    ],
+  ]) {
+    const assessment = assessFocusWebSemantic({
+      web: { ...candidateWeb, shellSource: "runtime" },
+      derivedResources: candidateResources,
+      expectedWorkspaceName: "workspace",
+      expectedSemanticPaneId: "pane.one-a",
+    });
+    assert.equal(typeof assessment, "object");
+    assert.equal(assessment.strictQualified, false);
+    assert.equal(assessment.firstFailedPredicate, failed);
+    assert.equal(
+      qualifySelectedWindowWebSemantic({
+        web: candidateWeb,
+        derivedResources: candidateResources,
+        expectedWorkspaceName: "workspace",
+        expectedSemanticPaneId: "pane.one-a",
+      }),
+      false,
+    );
+  }
 });
 
 test("legacy runtime correlation remains compatible while supplied malformed exact scope fails closed", () => {

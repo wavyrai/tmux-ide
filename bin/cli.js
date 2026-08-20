@@ -61403,6 +61403,15 @@ function assertLiveControllerPrincipal(shared, lease) {
   }
 }
 var clientsByRegistry = /* @__PURE__ */ new WeakMap();
+function authenticatedSurface(transport, hostClientId) {
+  if (/^(?:web|dev-web):[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
+    hostClientId
+  ))
+    return "web";
+  if (transport !== "pane-stream") return transport;
+  if (/^opentui:[1-9][0-9]*$/u.test(hostClientId)) return "opentui";
+  return transport;
+}
 var SessionRuntimeTransportBinding = class {
   #binder;
   #shared;
@@ -61718,7 +61727,11 @@ var SessionRuntimeTransportBinder = class {
     let shared = this.#clients.get(key);
     if (!shared) {
       shared = {
-        consumer: this.registry.connect(request.session, transport, hostClientId),
+        consumer: this.registry.connect(
+          request.session,
+          authenticatedSurface(transport, hostClientId),
+          hostClientId
+        ),
         refs: 0,
         interactiveRefs: 0,
         lease: null,

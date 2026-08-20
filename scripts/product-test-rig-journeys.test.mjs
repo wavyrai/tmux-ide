@@ -52,6 +52,7 @@ import {
   runConfiglessProductJourneyOwnerBoot,
   runCoherentFirstPaneOwnerBoot,
   runFirstKeyPasteOwnerBoot,
+  runFocusOwnerBoot,
   runProductJourneyPlan,
   settleInternalProductRigCleanup,
   startOwnedProductRigDaemon,
@@ -143,21 +144,21 @@ test("golden registry enables only accepted direct journey executors", () => {
     golden.map(({ id }) => id),
     expected,
   );
-  assert.ok(golden.slice(0, 3).every(({ implementation }) => implementation === "implemented"));
-  assert.ok(golden.slice(3).every(({ implementation }) => implementation === "pending"));
+  assert.ok(golden.slice(0, 4).every(({ implementation }) => implementation === "implemented"));
+  assert.ok(golden.slice(4).every(({ implementation }) => implementation === "pending"));
   assert.deepEqual(auditProductJourneyScope(), {
     complete: false,
     declarationComplete: true,
     executableComplete: false,
     missing: [],
-    pendingJourneyIds: expected.slice(3),
+    pendingJourneyIds: expected.slice(4),
   });
   assert.deepEqual(auditProductJourneyScope(golden.slice(1)), {
     complete: false,
     declarationComplete: false,
     executableComplete: false,
     missing: ["configless", "cold-start"],
-    pendingJourneyIds: expected.slice(3),
+    pendingJourneyIds: expected.slice(4),
   });
 });
 
@@ -733,6 +734,201 @@ test("first-key-paste owner preserves direct phase order and named failures", as
   }
 });
 
+test("focus owner preserves blur before reclaim and names every failure boundary", async () => {
+  const calls = [];
+  const operations = {
+    createFocusNamespace: async () => (calls.push("namespace"), {}),
+    startCanonicalDaemon: async () => (calls.push("daemon"), {}),
+    openCanonicalWorkspace: async () => (calls.push("workspace"), {}),
+    buildBeforeMeasurement: async () => calls.push("build"),
+    launchFocusTui: async () => (calls.push("tui-start"), {}),
+    waitForFocusHostReady: async () => (calls.push("host-ready"), {}),
+    waitForFocusTuiCoherent: async () => (calls.push("tui-coherent"), {}),
+    proveFocusBaseline: async () => (calls.push("baseline"), {}),
+    driveBlur: async () => (calls.push("blur"), {}),
+    driveFocus: async () => (calls.push("focus"), {}),
+    startWebAfterFocus: async () => (calls.push("web"), {}),
+  };
+  const framebufferObservation = Object.freeze({
+    operation: "wait-for-focus-framebuffer-capture",
+    reason: "semantic-chrome-missing",
+    attempts: 8,
+    matchCount: 0,
+  });
+  await assert.rejects(
+    runFocusOwnerBoot({
+      ...operations,
+      driveBlur: async () => {
+        const error = new Error("focus framebuffer capture did not stabilize");
+        error.boundary = "focus-framebuffer-capture";
+        error.observation = framebufferObservation;
+        throw error;
+      },
+    }),
+    (error) =>
+      error.boundary === "focus-framebuffer-capture" &&
+      error.observation === framebufferObservation,
+  );
+  calls.length = 0;
+  await runFocusOwnerBoot(operations);
+  assert.deepEqual(calls, [
+    "namespace",
+    "daemon",
+    "workspace",
+    "build",
+    "tui-start",
+    "host-ready",
+    "tui-coherent",
+    "baseline",
+    "blur",
+    "focus",
+    "web",
+  ]);
+  for (const [method, boundary] of [
+    ["createFocusNamespace", "focus-namespace-ready"],
+    ["startCanonicalDaemon", "focus-daemon-ready"],
+    ["buildBeforeMeasurement", "focus-tui-build"],
+    ["launchFocusTui", "focus-tui-started"],
+    ["waitForFocusHostReady", "focus-host-ready"],
+    ["waitForFocusTuiCoherent", "focus-tui-coherent"],
+    ["proveFocusBaseline", "focus-baseline"],
+    ["driveBlur", "focus-blur-proved"],
+    ["driveFocus", "focus-reclaim-proved"],
+    ["startWebAfterFocus", "focus-web-correlation"],
+  ]) {
+    await assert.rejects(
+      runFocusOwnerBoot({
+        ...operations,
+        [method]: async () => {
+          throw new Error(`failed ${method}`);
+        },
+      }),
+      (error) => error.boundary === boundary,
+    );
+  }
+});
+
+test("focus framebuffer failure observation is bounded and sealed before artifact gating", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "focus-framebuffer-bundle-"));
+  const runId = "20260818211500000-focus-r1-framebuffer";
+  const failureObservation = {
+    operation: "wait-for-focus-framebuffer-capture",
+    reason: "semantic-chrome-missing",
+    attempts: 8,
+    matchCount: 0,
+    positions: [],
+    frameRows: 44,
+    frameMaxWidth: 160,
+    frameHash: "a".repeat(64),
+    projectedDigest: "b".repeat(64),
+    nativeDigest: "c".repeat(64),
+    expectedMarker: "○",
+    latestTrace: [],
+  };
+  const evidence = failureEvidence(
+    "focus-framebuffer-capture",
+    "focus framebuffer capture did not stabilize",
+  );
+  evidence.report.failureObservation = failureObservation;
+  evidence.alignment.failureObservation = failureObservation;
+  evidence.clientState.failureObservation = failureObservation;
+  try {
+    const bundle = createProductDiagnosticBundle({ root: temporary, runId, evidence });
+    for (const artifact of ["report.json", "alignment.json", "client-state.json"]) {
+      const value = JSON.parse(readFileSync(join(bundle.runDir, artifact), "utf8"));
+      assert.deepEqual(value.failureObservation, failureObservation);
+    }
+    const serialized = JSON.stringify(failureObservation);
+    assert.ok(serialized.length < 2_048);
+    assert.doesNotMatch(serialized, /[\\/]/u);
+  } finally {
+    removeTestTree(temporary);
+  }
+});
+
+test("focus Web readiness failure preserves bounded structural predicates in every sealed view", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "focus-web-bundle-"));
+  const runId = "20260820090000000-focus-r1-web";
+  const failureObservation = {
+    operation: "wait-for-focus-web-semantic",
+    reason: "deadline",
+    attempts: 41,
+    elapsedMs: 60_001,
+    deadlineMs: 60_000,
+    firstFailedPredicate: "web-window-group-count",
+    stableExactSamples: 0,
+    expectedGroupCount: 2,
+    latest: {
+      runtimeShellExact: true,
+      daemonGenerationExact: true,
+      visible: true,
+      focused: true,
+      workspaceCount: 1,
+      observedWindowCount: 1,
+      activeWindowCount: 1,
+      availableResourceCount: 2,
+      observedTerminalCount: 1,
+      connectedTerminalCount: 1,
+      windowMembershipExact: false,
+      terminalExact: false,
+      strictQualified: false,
+      digest: "a".repeat(64),
+    },
+    predicates: [{ id: "web-window-group-count", passed: false }],
+  };
+  const evidence = failureEvidence("focus-web-correlation", "focus Web readiness deadline");
+  evidence.report.failureObservation = failureObservation;
+  evidence.alignment.failureObservation = failureObservation;
+  evidence.clientState.failureObservation = failureObservation;
+  try {
+    const bundle = createProductDiagnosticBundle({ root: temporary, runId, evidence });
+    for (const artifact of ["report.json", "alignment.json", "client-state.json"]) {
+      const value = JSON.parse(readFileSync(join(bundle.runDir, artifact), "utf8"));
+      assert.deepEqual(value.failureObservation, failureObservation);
+    }
+    const serialized = JSON.stringify(failureObservation);
+    assert.ok(serialized.length < 2_048);
+    assert.doesNotMatch(serialized, /[\\/]|pane\.|window\.|workspace-/u);
+  } finally {
+    removeTestTree(temporary);
+  }
+});
+
+test("focus host readiness failure observation remains bounded and sealed after cleanup", () => {
+  const temporary = mkdtempSync(join(tmpdir(), "focus-host-ready-bundle-"));
+  const runId = "20260818213000000-focus-r1-host-ready";
+  const failureObservation = {
+    operation: "focus-host-ready",
+    reason: "host-status-timeout",
+    stage: "atomic-host-display",
+    attempts: 6,
+    elapsedMs: 10_000,
+    deadlineMs: 10_000,
+    metadataPresent: true,
+    metadataProcessId: 27415,
+    metadataProcessAlive: true,
+    currentHostIdentity: null,
+    lifecycleCount: 41,
+    latestLifecyclePhase: "generation-workspace-client-state",
+    stderrBytes: 0,
+    stderrSha256: "a".repeat(64),
+  };
+  const evidence = failureEvidence("focus-host-ready", "focus host readiness failed");
+  evidence.report.failureObservation = failureObservation;
+  evidence.alignment.failureObservation = failureObservation;
+  evidence.clientState.failureObservation = failureObservation;
+  try {
+    const bundle = createProductDiagnosticBundle({ root: temporary, runId, evidence });
+    for (const artifact of ["report.json", "alignment.json", "client-state.json"]) {
+      const value = JSON.parse(readFileSync(join(bundle.runDir, artifact), "utf8"));
+      assert.deepEqual(value.failureObservation, failureObservation);
+    }
+    assert.doesNotMatch(JSON.stringify(failureObservation), /[\\/]/u);
+  } finally {
+    removeTestTree(temporary);
+  }
+});
+
 test("journey dispatcher invokes the exact registry executor instead of the runtime monolith", async () => {
   const calls = [];
   const entry = { journey: { id: "configless-cold-start", executor: "configless-cold-start" } };
@@ -832,12 +1028,12 @@ test("repeat runner drives every planned journey sequentially and stops at the f
 
 test("pending, all, unknown, and invalid repetition selections fail before orchestration", () => {
   assert.throws(
-    () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "focus"])),
-    /not implemented: focus; missing evidence is a failure/u,
+    () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "window-lifecycle"])),
+    /not implemented: window-lifecycle; missing evidence is a failure/u,
   );
   assert.throws(
     () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "all"])),
-    /not implemented: focus/u,
+    /not implemented: window-lifecycle/u,
   );
   assert.throws(
     () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "imaginary"])),
@@ -869,7 +1065,7 @@ test("CLI rejects a pending journey before creating ProductRig state", () => {
     const diagnosticRoot = join(temporary, "diagnostics");
     const result = spawnSync(
       process.execPath,
-      ["scripts/product-test-rig.mjs", "diagnose", "--journey", "focus", "--json"],
+      ["scripts/product-test-rig.mjs", "diagnose", "--journey", "window-lifecycle", "--json"],
       {
         cwd: process.cwd(),
         encoding: "utf8",
@@ -881,7 +1077,10 @@ test("CLI rejects a pending journey before creating ProductRig state", () => {
       },
     );
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /not implemented: focus; missing evidence is a failure/u);
+    assert.match(
+      result.stderr,
+      /not implemented: window-lifecycle; missing evidence is a failure/u,
+    );
     assert.equal(existsSync(join(rigRoot, "state.json")), false);
     assert.equal(existsSync(diagnosticRoot), false);
   } finally {

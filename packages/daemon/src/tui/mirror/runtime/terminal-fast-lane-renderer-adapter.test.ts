@@ -102,6 +102,41 @@ function paintViewport(
 }
 
 describe("TerminalFastLaneRendererAdapter", () => {
+  it("projects the exact retained canonical identity through the production render source", () => {
+    const source = new Source();
+    const lane = createTerminalFastLane({
+      address: { workspaceName, generation },
+      source,
+      repair: { request: () => undefined },
+      control: {
+        owns: () => true,
+        request: async () => true,
+        write: async () => "ok",
+        resize: async () => "ok",
+      },
+    });
+    const adapter = new TerminalFastLaneRendererAdapter(lane, 7);
+    const unsubscribe = adapter.subscribePaneVersion("pane.editor", () => undefined);
+    try {
+      const update = seed("pane.editor", "S");
+      source.emit("pane.editor", update);
+      expect(adapter.renderSource.paneCanonicalIdentity?.("pane.editor")).toEqual({
+        generation: update.generation,
+        incarnation: update.incarnation,
+        revision: update.revision,
+        stateHash: update.stateHash,
+        cols: update.cols,
+        rows: update.rows,
+        sourceEpoch: 7,
+      });
+      expect(adapter.renderSource.paneCanonicalIdentity?.("pane.missing")).toBeNull();
+    } finally {
+      unsubscribe();
+      adapter.dispose();
+      lane.dispose();
+    }
+  });
+
   it("keeps dirty-row invalidation and paint live when the trace sink throws", () => {
     const source = new Source();
     const lane = createTerminalFastLane({

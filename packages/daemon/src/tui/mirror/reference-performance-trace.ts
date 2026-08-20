@@ -9,6 +9,7 @@ import {
   type TuiTerminalCanonicalPaintEvent,
   type TuiTerminalCanonicalPublicationEvent,
   type TuiTerminalCanonicalUpdateEvent,
+  type TuiTerminalFocusPaintEvent,
   type TuiTerminalCanonicalHostFrameEvent,
   type TuiTerminalFrameFenceEvent,
   type TuiTerminalCanonicalModeEvent,
@@ -103,6 +104,7 @@ export function installReferencePerformanceTraceCollectorFromEnvironment(): void
     inputDetail: INPUT_DETAIL_TRACE,
     inputFingerprintKey: INPUT_FINGERPRINT_KEY,
     append: writer.append,
+    appendCritical: writer.appendCritical,
     health: writer.snapshot,
   });
   const uninstall = installTuiPerformanceEventSink(sink);
@@ -128,6 +130,7 @@ export function createReferenceTraceWriter(
   options: { readonly maxPendingBytes?: number } = {},
 ): {
   readonly append: (value: Readonly<Record<string, unknown>>) => void;
+  readonly appendCritical: (value: Readonly<Record<string, unknown>>) => void;
   readonly snapshot: () => ReferenceTraceWriterSnapshot;
   readonly close: (sink: {
     readonly pendingInputs: number;
@@ -222,7 +225,7 @@ export function createReferenceTraceWriter(
       failed,
       firstDroppedRecord,
     });
-  const append = (value: Readonly<Record<string, unknown>>): void => {
+  const appendValue = (value: Readonly<Record<string, unknown>>, critical: boolean): void => {
     if (closed || failed) {
       droppedRecords += 1;
       firstDroppedRecord ??= droppedRecordKind(value);
@@ -239,7 +242,8 @@ export function createReferenceTraceWriter(
         writeLine(line);
         return;
       }
-      if (pendingBytes + bytes > maxPendingBytes) {
+      const limit = maxPendingBytes + (critical ? 64 * 1_024 : 0);
+      if (pendingBytes + bytes > limit) {
         droppedRecords += 1;
         firstDroppedRecord ??= droppedRecordKind(value);
         return;
@@ -255,6 +259,9 @@ export function createReferenceTraceWriter(
       settleFlushWaiters();
     }
   };
+  const append = (value: Readonly<Record<string, unknown>>): void => appendValue(value, false);
+  const appendCritical = (value: Readonly<Record<string, unknown>>): void =>
+    appendValue(value, true);
   const close = (sink: {
     readonly pendingInputs: number;
     readonly droppedInputs: number;
@@ -298,7 +305,7 @@ export function createReferenceTraceWriter(
     })();
     return closePromise;
   };
-  return Object.freeze({ append, snapshot, close });
+  return Object.freeze({ append, appendCritical, snapshot, close });
 }
 
 function droppedRecordKind(
@@ -317,6 +324,7 @@ export function createReferencePerformanceTraceSink(options: {
   readonly commit: string;
   readonly tree: string;
   readonly append: (value: Readonly<Record<string, unknown>>) => void;
+  readonly appendCritical?: (value: Readonly<Record<string, unknown>>) => void;
   readonly health?: () => Pick<
     ReferenceTraceWriterSnapshot,
     "droppedRecords" | "oversizedRecords" | "failed"
@@ -416,6 +424,26 @@ export function createReferencePerformanceTraceSink(options: {
                 type: "performance.terminal-canonical-update",
                 ...event,
               });
+          },
+          terminalFocusPaint: (event: TuiTerminalFocusPaintEvent) => {
+            if (!closed)
+              (options.appendCritical ?? options.append)({
+                version: 1,
+                type: "performance.terminal-focus-paint",
+                ...event,
+              });
+          },
+          terminalFocusFence: (event: TuiTerminalFocusPaintEvent) => {
+            if (!closed) {
+              const health = options.health?.();
+              if (health)
+                (options.appendCritical ?? options.append)({
+                  version: 1,
+                  type: "performance.terminal-focus-fence",
+                  ...event,
+                  writerHealth: health,
+                });
+            }
           },
           terminalCanonicalHostFrame: (event: TuiTerminalCanonicalHostFrameEvent) => {
             if (!closed)

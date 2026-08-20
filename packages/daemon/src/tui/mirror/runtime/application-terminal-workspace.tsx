@@ -3,9 +3,10 @@ import { For, Show, createMemo, createSignal } from "solid-js";
 
 import type { OpenTuiWorkspaceLayoutSnapshot } from "../open-tui-workspace-runtime-port.ts";
 import type { SemanticThemeSnapshot, TerminalPaletteProjection } from "../theme.ts";
+import type { PaneSurfaceHostFocusTransitionOwner } from "../pane-surface.tsx";
 import type { PaneScopedTerminalAdapter } from "./pane-scoped-terminal-surface.tsx";
 import { PaneScopedTerminalSurface } from "./pane-scoped-terminal-surface.tsx";
-import { projectOpenTuiPaneFrames } from "./terminal-layout-projection.ts";
+import { projectOpenTuiPaneFrames, type OpenTuiPaneFrame } from "./terminal-layout-projection.ts";
 import { MIN_PANE, type ResizeGuideRect } from "../resize-model.ts";
 
 type WorkspaceMouseEvent = {
@@ -37,6 +38,7 @@ export interface ApplicationTerminalWorkspaceProps {
   readonly layout: OpenTuiWorkspaceLayoutSnapshot;
   readonly adapter: PaneScopedTerminalAdapter;
   readonly rendererEpoch: number;
+  readonly hostFocusTransitionOwner?: PaneSurfaceHostFocusTransitionOwner;
   readonly width: number;
   readonly height: number;
   /** Rows owned by parent chrome before the terminal canvas. Defaults to the
@@ -51,6 +53,32 @@ export interface ApplicationTerminalWorkspaceProps {
   readonly onSelectPane: (paneId: string) => void;
   readonly onResizePreview?: (preview: ApplicationPaneResizePreview) => void;
   readonly onResizePane?: (preview: ApplicationPaneResizePreview) => void;
+}
+
+function samePaneFrames(
+  previous: readonly OpenTuiPaneFrame[] | undefined,
+  next: readonly OpenTuiPaneFrame[],
+): boolean {
+  return (
+    previous !== undefined &&
+    previous.length === next.length &&
+    previous.every((frame, index) => {
+      const candidate = next[index];
+      return (
+        candidate !== undefined &&
+        frame.paneId === candidate.paneId &&
+        frame.left === candidate.left &&
+        frame.top === candidate.top &&
+        frame.width === candidate.width &&
+        frame.height === candidate.height &&
+        frame.contentHeight === candidate.contentHeight
+      );
+    })
+  );
+}
+
+export function terminalPaneChromeLabel(paneId: string, focused: boolean, width: number): string {
+  return `${focused ? "●" : "○"} ${paneId}`.slice(0, Math.max(0, width));
 }
 
 function titleOf(layout: OpenTuiWorkspaceLayoutSnapshot["windows"][number]): string {
@@ -193,11 +221,18 @@ function previewFor(
  */
 export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspaceProps) {
   const topOffset = () => Math.max(1, Math.floor(props.topOffset ?? 2));
-  const projectedFrames = () =>
-    projectOpenTuiPaneFrames(props.layout.current, {
-      width: props.width,
-      height: props.height,
-    });
+  // Immutable layout publications may be fresh objects with identical pane
+  // geometry. Retain the frame items so Solid's keyed-by-reference <For>
+  // preserves each PaneSurface owner and its canonical subscription.
+  const projectedFrames = createMemo(
+    () =>
+      projectOpenTuiPaneFrames(props.layout.current, {
+        width: props.width,
+        height: props.height,
+      }),
+    undefined,
+    { equals: samePaneFrames },
+  );
   const [hoveredSeparator, setHoveredSeparator] = createSignal<ApplicationPaneSeparator | null>(
     null,
   );
@@ -326,6 +361,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
               top={0}
               width={frame.width}
               height={1}
+              zIndex={2}
               backgroundColor={props.theme.roles.surfaces.command}
             >
               <text
@@ -335,10 +371,11 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
                     : props.theme.roles.text.secondary
                 }
               >
-                {`${props.focusedPane === frame.paneId ? "●" : "○"} ${frame.paneId}`.slice(
-                  0,
+                {` ${terminalPaneChromeLabel(
+                  frame.paneId,
+                  props.focusedPane === frame.paneId,
                   frame.width,
-                )}
+                ).slice(1)}`}
               </text>
             </box>
             <box
@@ -361,11 +398,34 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
                 scrollOffset={0}
                 paneFocused={props.focusedPane === frame.paneId}
                 sourceEpoch={props.rendererEpoch}
+                hostFocusTransitionOwner={props.hostFocusTransitionOwner}
                 selRange={null}
                 search={null}
               />
             </box>
           </box>
+        )}
+      </For>
+      {/* PaneSurface is a native renderable. Keep the one-cell focus marker as
+          a workspace-level overlay so its framebuffer cell cannot be cleared
+          by native child composition at the frame origin. */}
+      <For each={projectedFrames()}>
+        {(frame) => (
+          <text
+            position="absolute"
+            left={frame.left}
+            top={frame.top + topOffset()}
+            zIndex={3}
+            selectable={false}
+            onMouseDown={() => props.onSelectPane(frame.paneId)}
+            fg={
+              props.focusedPane === frame.paneId
+                ? props.theme.roles.text.link
+                : props.theme.roles.text.secondary
+            }
+          >
+            {props.focusedPane === frame.paneId ? "●" : "○"}
+          </text>
         )}
       </For>
       <For each={separatorsFor(projectedFrames())}>

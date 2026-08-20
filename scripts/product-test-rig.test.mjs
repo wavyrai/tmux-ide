@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { devServerProcessIsRunning } from "../apps/desktop-renderer/e2e/fixtures/dev-server.ts";
 import {
   PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES,
   PRODUCT_RIG_SOURCE_INVENTORY_MAX_PATHS,
@@ -58,9 +59,16 @@ import {
   waitForLifecycleEntry,
   writeJsonAtomic,
 } from "./product-test-rig-lib.mjs";
+
 import { sourceArchitectureInventory } from "./architecture-debt-inventory.mjs";
 import { buildTuiHostPublicationEvidence } from "./lib/tui-host-publication.mjs";
 import { acquireProductRigSleepAssertion } from "./lib/product-rig-sleep-assertion.mjs";
+
+test("focus Web readiness detects dev-server exit and signal death", () => {
+  assert.equal(devServerProcessIsRunning({ exitCode: null, signalCode: null }), true);
+  assert.equal(devServerProcessIsRunning({ exitCode: 1, signalCode: null }), false);
+  assert.equal(devServerProcessIsRunning({ exitCode: null, signalCode: "SIGTERM" }), false);
+});
 
 function fakeSleepAssertionChild({ pid = 1234, exitBeforeReady = false } = {}) {
   const child = new EventEmitter();
@@ -705,6 +713,52 @@ test("root-v2 projects all 40 tmux content rows below separate semantic chrome",
   });
   assert.equal(paneBodyRegion(frame, pane).split("\n").length, 40);
   assert.match(paneBodyRegion(frame, pane), /body-39/u);
+});
+
+test("focus framebuffer proof has no synchronous target tmux reads and fences native capture", () => {
+  const source = readFileSync(join(process.cwd(), "scripts", "product-test-rig.mjs"), "utf8");
+  const focusSlice = source.slice(
+    source.indexOf("async function focusPaneSnapshot("),
+    source.indexOf("async function activePaneBodyEvidence("),
+  );
+  assert.doesNotMatch(focusSlice, /execFileSync|tuiCommand\(/u);
+  assert.match(focusSlice, /focusActiveWindowPaneGeometry\(state, lifecycle\)/u);
+  assert.match(focusSlice, /stage: "native-body-post-capture"/u);
+  assert.match(source, /#\{window_visible_layout\}/u);
+});
+
+test("focus Web success publishes exact stable semantic readiness before later correlation", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("startWebAfterFocus:");
+  const slice = source.slice(
+    start,
+    source.indexOf('if (journeyId === "coherent-first-pane")', start),
+  );
+  const readinessPublish = slice.indexOf("focusWebSemantic: semantic");
+  const laterWorkspaceState = slice.indexOf("waitForFocusWorkspaceEvidence", readinessPublish);
+  const watermark = slice.indexOf("focusWorkspaceEvidenceWatermark");
+  const devServerStart = slice.indexOf("startDevServer");
+  assert.ok(readinessPublish > 0);
+  assert.ok(laterWorkspaceState > readinessPublish);
+  assert.ok(watermark > 0);
+  assert.ok(devServerStart > watermark);
+  assert.match(
+    slice,
+    /derivedResources: reclaim\.workspaceClient\.derived\.terminalInventory\.resources/u,
+  );
+  assert.doesNotMatch(slice, /derivedResources:[^\n]*\?\?/u);
+  assert.match(slice, /clientGeneration: reclaim\.workspaceClient\.committed\.generation/u);
+  assert.match(slice, /semanticPaneId: reclaim\.assessment\.qualified\.semanticPaneId/u);
+  assert.match(slice, /afterMicros: workspaceClientWatermark \+ 1/u);
+  assert.match(slice, /boundary: "focus-web-correlation"/u);
+  const reclaimStart = source.indexOf("driveFocus:");
+  const reclaimSlice = source.slice(reclaimStart, start);
+  assert.match(reclaimSlice, /\.\.\.baseline\.expected,[\s\S]*boundary: "focus-reclaim-proved"/u);
+  assert.match(
+    slice,
+    /semantic: focusBoot\.web\.semantic,[\s\S]*readiness: focusBoot\.web\.readiness/u,
+  );
+  assert.doesNotMatch(slice, /locator\("\.terminal-surface\[data-phase='connected'\]"\)/u);
 });
 
 test("causal qualification passes the full active pane into its after-capture body", () => {

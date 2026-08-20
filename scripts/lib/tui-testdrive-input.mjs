@@ -636,6 +636,7 @@ export async function executeTestdriveInputOperation(command, port) {
       delivery: "exact-bytes-to-immutable-host-pane-pty",
       bytesInjected,
       phases,
+      ...(command.kind === "focus" ? { requestedState: command.state } : null),
       elapsedMs: Number((port.clock.now() - startedAt).toFixed(2)),
       ...(clipboard ? { clipboard: { bytes: clipboard.bytes, sha256: clipboard.sha256 } } : null),
     };

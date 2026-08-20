@@ -12,6 +12,12 @@ import { createApplicationShellBinding } from "./application-shell-binding.ts";
 import type { OpenTuiProductionWorkspaceClient } from "./open-tui-generation-host.ts";
 import type { PaneScopedTerminalAdapter } from "./pane-scoped-terminal-surface.tsx";
 import { ApplicationShellView, applicationShellKeyAction } from "./application-shell-view.tsx";
+import { terminalPaneChromeLabel } from "./application-terminal-workspace.tsx";
+import {
+  decodeFocusFramebufferCapture,
+  inspectFocusFramebufferCapture,
+  projectFocusFramebufferRect,
+} from "../../../../../../scripts/lib/product-focus.mjs";
 
 function terminalLayout() {
   const current = {
@@ -38,6 +44,23 @@ function twoWindowLayout() {
     panes: [{ pane: "pane.logs", left: 0, top: 0, width: 40, height: 12, active: true }],
   };
   return { current: main, windows: [main, logs] };
+}
+
+const focusPaneId = "pane.promoted.4d2e6ef021a27f2ffc19";
+
+function focusLayout() {
+  const current = {
+    type: "layout" as const,
+    semanticWindowId: "window.main",
+    windowName: "main",
+    currentWindow: true,
+    cols: 132,
+    rows: 41,
+    zoomed: false,
+    paneBorderStatus: "top" as const,
+    panes: [{ pane: focusPaneId, left: 0, top: 0, width: 132, height: 41, active: true }],
+  };
+  return { current, windows: [current] };
 }
 
 function semantic() {
@@ -81,6 +104,48 @@ function adapter(): PaneScopedTerminalAdapter {
     paneSourceEpoch: () => 1,
     subscribePaneVersion: () => () => undefined,
   };
+}
+
+function trackedAdapter() {
+  const lifecycle = { subscriptions: 0, unsubscriptions: 0, fullBlits: 0 };
+  const blits: Array<{
+    full: boolean;
+    forceRows: readonly number[] | null;
+    writtenRows: readonly number[];
+  }> = [];
+  const base = adapter();
+  const tracked: PaneScopedTerminalAdapter = {
+    ...base,
+    renderSource: {
+      ...base.renderSource,
+      cursorState: () => ({ x: 2, y: 2, hidden: false, style: "block", blink: false }),
+      blitPane: (paneId, buffers, width, height, scroll, fg, bg, options) => {
+        if (options.full) lifecycle.fullBlits += 1;
+        const result = options.full
+          ? base.renderSource.blitPane(paneId, buffers, width, height, scroll, fg, bg, options)
+          : (() => {
+              options.dirtyRows.push(...(options.forceRows ?? []));
+              return null;
+            })();
+        blits.push({
+          full: options.full,
+          forceRows: options.forceRows ? [...options.forceRows] : null,
+          writtenRows: [...options.dirtyRows],
+        });
+        return result;
+      },
+    },
+    subscribePaneVersion: () => {
+      lifecycle.subscriptions += 1;
+      let active = true;
+      return () => {
+        if (!active) return;
+        active = false;
+        lifecycle.unsubscriptions += 1;
+      };
+    },
+  };
+  return { adapter: tracked, lifecycle, blits };
 }
 
 function rendererShellClient(initial: ReturnType<typeof semantic>) {
@@ -193,12 +258,89 @@ describe("production ApplicationShellView", () => {
       expect(frame).toContain("Agents");
       expect(frame).toContain("Codex");
       expect(frame).toContain("main");
-      expect(frame).toContain("pane.main");
+      expect(frame).toContain("● pane.main");
       expect(frame).toContain("CANONICAL-CELL");
       expect(frame).not.toContain("Missions");
       setup.renderer.destroy();
     },
   );
+
+  it("keeps the ProductRig focus projection exact through active-inactive-active frames", async () => {
+    registerPaneSurface();
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const palette = createTerminalPaletteProjection(theme);
+    const canonical = semantic();
+    const selected: string[] = [];
+    let setFocusedPane!: (paneId: string | null) => void;
+    const setup = await renderForTest(
+      () => {
+        const [focusedPane, setFocusedPaneSignal] = createSignal<string | null>(focusPaneId);
+        setFocusedPane = setFocusedPaneSignal;
+        return (
+          <ApplicationShellView
+            dimensions={() => ({ width: 160, height: 44 })}
+            surface={() => "terminals"}
+            semantic={() => canonical}
+            generationStatus={() => "live"}
+            sessions={["main", "inactive"]}
+            selectedSession={() => 0}
+            bootstrapNote={() => null}
+            paletteOpen={() => false}
+            terminalRendererSource={() => ({ adapter: adapter(), rendererEpoch: 1 })}
+            layout={focusLayout}
+            focusedPane={focusedPane}
+            theme={theme}
+            palette={palette}
+            onOpenSurface={() => undefined}
+            onOpenSession={() => undefined}
+            onSetPaletteOpen={() => undefined}
+            onSelectPane={(paneId) => selected.push(paneId)}
+            onResizePreview={() => undefined}
+            onResizePane={() => undefined}
+          />
+        );
+      },
+      { width: 160, height: 44 },
+    );
+    const projectedRect = projectFocusFramebufferRect({
+      hostCols: 160,
+      hostRows: 44,
+      canonicalLayout: focusLayout().current,
+      canonicalPaneId: focusPaneId,
+    });
+    expect(terminalPaneChromeLabel(focusPaneId, true, 132)).toBe(`● ${focusPaneId}`);
+    expect(terminalPaneChromeLabel(focusPaneId, false, 132)).toBe(`○ ${focusPaneId}`);
+    const inspect = (expectedMarker: "●" | "○") => {
+      const rendererRows = setup.captureCharFrame().split("\n");
+      while (rendererRows.length > 44 && rendererRows.at(-1) === "") rendererRows.pop();
+      while (rendererRows.length < 44) rendererRows.push("");
+      return inspectFocusFramebufferCapture({
+        ansiFrame: decodeFocusFramebufferCapture({
+          version: 1,
+          cols: 160,
+          rows: 44,
+          ansi: rendererRows.map((row) => row.padEnd(160)).join("\n"),
+        }).ansi,
+        semanticPaneId: focusPaneId,
+        expectedMarker,
+        projectedRect,
+        cursorRow: 0,
+      });
+    };
+
+    await setup.renderOnce();
+    expect(projectedRect).toMatchObject({ left: 28, chromeRow: 2, firstBodyRow: 3 });
+    expect(inspect("●")).toMatchObject({ valid: true, reason: null });
+    setFocusedPane(null);
+    await setup.renderOnce();
+    expect(inspect("○")).toMatchObject({ valid: true, reason: null });
+    setFocusedPane(focusPaneId);
+    await setup.renderOnce();
+    expect(inspect("●")).toMatchObject({ valid: true, reason: null });
+    await setup.mockMouse.click(28, 2, MouseButtons.LEFT);
+    expect(selected).toEqual([focusPaneId]);
+    setup.renderer.destroy();
+  });
 
   it("keeps the coherent shell and canonical framebuffer mounted through rebinding only", async () => {
     registerPaneSurface();
@@ -253,6 +395,114 @@ describe("production ApplicationShellView", () => {
     expect(setup.captureCharFrame()).not.toContain("CANONICAL-CELL");
     stop();
     binding.dispose();
+    setup.renderer.destroy();
+  });
+
+  it("preserves one terminal owner across fresh semantic bursts and remounts only for availability or renderer identity", async () => {
+    registerPaneSurface();
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const palette = createTerminalPaletteProjection(theme);
+    const first = trackedAdapter();
+    const second = trackedAdapter();
+    let setSemantic!: (value: ReturnType<typeof semantic>) => void;
+    let setStatus!: (value: string) => void;
+    let setFocusedPane!: (value: string | null) => void;
+    let setSource!: (
+      value: { adapter: PaneScopedTerminalAdapter; rendererEpoch: number } | null,
+    ) => void;
+    const setup = await renderForTest(
+      () => {
+        const [semanticProjection, setSemanticProjection] = createSignal(semantic());
+        const [status, setStatusSignal] = createSignal("live");
+        const [focusedPane, setFocusedPaneSignal] = createSignal<string | null>("pane.main");
+        const [source, setSourceSignal] = createSignal<{
+          adapter: PaneScopedTerminalAdapter;
+          rendererEpoch: number;
+        } | null>({ adapter: first.adapter, rendererEpoch: 1 });
+        setSemantic = setSemanticProjection;
+        setStatus = setStatusSignal;
+        setFocusedPane = setFocusedPaneSignal;
+        setSource = setSourceSignal;
+        return (
+          <ApplicationShellView
+            dimensions={() => ({ width: 120, height: 40 })}
+            surface={() => "terminals"}
+            semantic={semanticProjection}
+            generationStatus={status}
+            sessions={["main"]}
+            selectedSession={() => 0}
+            bootstrapNote={() => null}
+            paletteOpen={() => false}
+            terminalRendererSource={() => {
+              const current = source();
+              return current
+                ? { adapter: current.adapter, rendererEpoch: current.rendererEpoch }
+                : null;
+            }}
+            layout={terminalLayout}
+            focusedPane={focusedPane}
+            theme={theme}
+            palette={palette}
+            onOpenSurface={() => undefined}
+            onOpenSession={() => undefined}
+            onSetPaletteOpen={() => undefined}
+            onSelectPane={() => undefined}
+            onResizePreview={() => undefined}
+            onResizePane={() => undefined}
+          />
+        );
+      },
+      { width: 120, height: 40 },
+    );
+
+    await setup.renderOnce();
+    expect(first.lifecycle).toEqual({ subscriptions: 1, unsubscriptions: 0, fullBlits: 1 });
+    for (const notification of ["authority-release", "background", "authority-settled"]) {
+      const next = structuredClone(semantic());
+      next.notification = notification;
+      setSemantic(next);
+      await setup.renderOnce();
+    }
+    setStatus("rebinding");
+    setSemantic(structuredClone(semantic()));
+    await setup.renderOnce();
+    expect(first.lifecycle).toEqual({ subscriptions: 1, unsubscriptions: 0, fullBlits: 1 });
+    expect(first.blits).toEqual([
+      {
+        full: true,
+        forceRows: null,
+        writtenRows: Array.from({ length: 11 }, (_, row) => row),
+      },
+    ]);
+
+    setFocusedPane(null);
+    await setup.renderOnce();
+    setFocusedPane("pane.main");
+    await setup.renderOnce();
+    expect(first.blits.slice(1)).toEqual([
+      { full: false, forceRows: [2], writtenRows: [2] },
+      { full: false, forceRows: [2], writtenRows: [2] },
+    ]);
+    expect(first.lifecycle).toEqual({ subscriptions: 1, unsubscriptions: 0, fullBlits: 1 });
+
+    // A fresh wrapper around the same adapter/epoch is not a renderer replacement.
+    setSource({ adapter: first.adapter, rendererEpoch: 1 });
+    await setup.renderOnce();
+    expect(first.lifecycle).toEqual({ subscriptions: 1, unsubscriptions: 0, fullBlits: 1 });
+
+    setSource({ adapter: first.adapter, rendererEpoch: 2 });
+    await setup.renderOnce();
+    expect(first.lifecycle).toEqual({ subscriptions: 2, unsubscriptions: 1, fullBlits: 2 });
+
+    setSource({ adapter: second.adapter, rendererEpoch: 2 });
+    await setup.renderOnce();
+    expect(first.lifecycle.unsubscriptions).toBe(2);
+    expect(second.lifecycle).toEqual({ subscriptions: 1, unsubscriptions: 0, fullBlits: 1 });
+
+    setSource(null);
+    await setup.renderOnce();
+    expect(second.lifecycle.unsubscriptions).toBe(1);
+    expect(setup.captureCharFrame()).not.toContain("CANONICAL-CELL");
     setup.renderer.destroy();
   });
 

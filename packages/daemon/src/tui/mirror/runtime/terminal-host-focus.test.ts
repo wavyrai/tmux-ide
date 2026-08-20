@@ -72,7 +72,7 @@ describe("OpenTuiTerminalHostFocus", () => {
     });
     focus.adopt(runtime as never);
 
-    focus.rendererBlur();
+    expect(focus.rendererBlur()).toBe(1);
     await vi.waitFor(() => expect(events.at(-1)?.phase).toBe("blur-authority-settled"));
     expect(events.map(({ phase }) => phase)).toEqual([
       "renderer-blur-event",
@@ -87,7 +87,7 @@ describe("OpenTuiTerminalHostFocus", () => {
     });
 
     events.length = 0;
-    focus.rendererFocus();
+    expect(focus.rendererFocus()).toBe(2);
     await vi.waitFor(() => expect(events.at(-1)?.phase).toBe("focus-authority-settled"));
     expect(events.map(({ phase }) => phase)).toEqual([
       "renderer-focus-event",
@@ -104,6 +104,17 @@ describe("OpenTuiTerminalHostFocus", () => {
       ],
       status: "fulfilled",
     });
+  });
+
+  it("returns one monotonic presentation epoch per accepted renderer transition", () => {
+    const focus = new OpenTuiTerminalHostFocus(true, () => undefined);
+    focus.adopt(client() as never);
+    expect(focus.rendererFocus()).toBeNull();
+    expect(focus.rendererBlur()).toBe(1);
+    expect(focus.rendererBlur()).toBeNull();
+    expect(focus.rendererFocus()).toBe(2);
+    expect(focus.rendererBlur()).toBe(3);
+    expect(focus.rendererFocus()).toBe(4);
   });
 
   it("keeps rapid blur and focus settlements causally separated by epoch", async () => {
@@ -199,5 +210,43 @@ describe("OpenTuiTerminalHostFocus", () => {
     });
     expect(() => throwing.adopt(runtime as never)).not.toThrow();
     expect(runtime.setPresence).toHaveBeenLastCalledWith("background");
+  });
+
+  it("reports partial authority settlement and fences a retired client binding", async () => {
+    let resolveRelease!: (value: never) => void;
+    const pending = new Promise<never>((resolve) => {
+      resolveRelease = resolve;
+    });
+    const first = client();
+    first.releaseAuthority.mockImplementationOnce(async () => {
+      throw new Error("input release failed");
+    });
+    first.releaseAuthority.mockImplementationOnce(() => pending);
+    first.releaseAuthority.mockImplementationOnce(() => pending);
+    const events: Array<{ phase: string; details: Readonly<Record<string, unknown>> }> = [];
+    const focus = new OpenTuiTerminalHostFocus(true, (phase, details) =>
+      events.push({ phase, details }),
+    );
+    focus.adopt(first as never);
+    focus.rendererBlur();
+    focus.adopt(client() as never);
+    resolveRelease({
+      generation: "generation-1",
+      session: "session-1",
+      revision: 12,
+      owners: { input: null, focus: null, geometry: null },
+    } as never);
+    await vi.waitFor(() =>
+      expect(events.some(({ phase }) => phase === "blur-authority-settled")).toBe(true),
+    );
+    expect(events.find(({ phase }) => phase === "blur-authority-settled")?.details).toMatchObject({
+      status: "partial",
+      bindingCurrent: false,
+      receipts: [
+        { authority: "input", status: "rejected" },
+        { authority: "focus", status: "fulfilled" },
+        { authority: "geometry", status: "fulfilled" },
+      ],
+    });
   });
 });

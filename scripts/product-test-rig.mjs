@@ -120,11 +120,28 @@ import {
   runConfiglessProductJourneyOwnerBoot,
   runCoherentFirstPaneOwnerBoot,
   runFirstKeyPasteOwnerBoot,
+  runFocusOwnerBoot,
   runIsolatedProductJourneyAttempt,
   runProductJourneyPlan,
   settleInternalProductRigCleanup,
   startOwnedProductRigDaemon,
 } from "./product-test-rig-journeys.mjs";
+import {
+  assessFocusJourneyBoundaries,
+  advanceFocusFramebufferStability,
+  assessFocusFramebufferAttempt,
+  decodeFocusFramebufferCapture,
+  captureFocusWebSemanticDocument,
+  inspectFocusFramebufferCapture,
+  projectFocusFramebufferRect,
+  qualifyFocusWorkspaceState,
+  qualifyProductFocusEvidence,
+  selectFocusCursorPresentationRow,
+  sliceFocusTerminalCells,
+  waitForFocusWebSemantic,
+} from "./lib/product-focus.mjs";
+import { runBoundedFocusTmux } from "./lib/product-focus-tmux.mjs";
+import { parseLayout } from "../packages/daemon/src/terminal/protocol/layout-parse.ts";
 import {
   assessFirstKeyPasteBoundaries,
   assessProductFirstInput,
@@ -140,6 +157,11 @@ import {
   waitForProductInputQualification,
   waitForProductInputPersistenceFence,
 } from "./lib/product-first-input.mjs";
+import {
+  classifyProductTuiCommandFailure,
+  exactProductTuiLaunchReceipt,
+  waitForProductTuiHostReadiness,
+} from "./lib/product-tui-host-readiness.mjs";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -187,6 +209,7 @@ function productDiagnosticCorrelation(state, captureEvidence) {
   const configless = state?.journeyEvidence?.configlessColdStart ?? null;
   const coherent = state?.journeyEvidence?.coherentFirstPane ?? null;
   const firstInput = state?.journeyEvidence?.firstKeyPaste ?? null;
+  const focus = state?.journeyEvidence?.focus ?? null;
   const exact = configless
     ? {
         fleetSessionId: configless.adopted?.fleetSessionId,
@@ -205,7 +228,13 @@ function productDiagnosticCorrelation(state, captureEvidence) {
             catalogRevision: firstInput.identity?.catalogRevision,
             semanticPaneId: firstInput.distribution?.semanticPaneId,
           }
-        : null;
+        : focus
+          ? {
+              fleetSessionId: focus.identity?.fleetSessionId,
+              catalogRevision: focus.identity?.catalogRevision,
+              semanticPaneId: focus.reclaim?.assessment?.qualified?.semanticPaneId,
+            }
+          : null;
   return buildProductDiagnosticCorrelation({
     state,
     tuiAvailable,
@@ -427,6 +456,118 @@ function tuiCommand(state, args, options = {}) {
   });
 }
 
+async function tuiCommandAsync(state, args, { timeout = 5_000, signal } = {}) {
+  const { stdout } = await execFileAsync(
+    process.execPath,
+    [join(repoRoot, "scripts", "tui-testdrive.mjs"), ...args],
+    {
+      cwd: repoRoot,
+      env: commandEnv(state),
+      encoding: "utf8",
+      timeout,
+      signal,
+      maxBuffer: 64 * 1_024,
+    },
+  );
+  return stdout;
+}
+
+function focusHostReadinessObservation(
+  state,
+  {
+    reason,
+    stage = "atomic-host-display",
+    attempts,
+    startedAt,
+    deadlineMs,
+    currentHostIdentity = null,
+  },
+) {
+  const lifecycle = readJsonLines(join(state.tui.runtimeDir, "performance.jsonl"));
+  const stderr = readDiagnosticText(join(state.tui.runtimeDir, "stderr.log"));
+  const metadataPath = join(state.tui.runtimeDir, "state.json");
+  const metadata = existsSync(metadataPath) ? readJson(metadataPath) : null;
+  return Object.freeze({
+    operation: "focus-host-ready",
+    reason,
+    stage,
+    attempts,
+    elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
+    deadlineMs,
+    metadataPresent: metadata !== null,
+    metadataProcessId: Number.isSafeInteger(metadata?.processId) ? metadata.processId : null,
+    metadataProcessAlive: processAlive(metadata?.processId),
+    currentHostIdentity,
+    lifecycleCount: Math.min(lifecycle.length, 256),
+    latestLifecyclePhase:
+      typeof lifecycle.at(-1)?.phase === "string" ? lifecycle.at(-1).phase.slice(0, 64) : null,
+    stderrBytes: Math.min(Buffer.byteLength(stderr), 65_536),
+    stderrSha256: createHash("sha256").update(stderr).digest("hex"),
+  });
+}
+
+async function waitForExactFocusHostReceipt(state, launched, { deadlineMs = 10_000, signal } = {}) {
+  const startedAt = performance.now();
+  const result = await waitForProductTuiHostReadiness({
+    launched,
+    readStatus: async ({ remainingMs }) => {
+      const commandTimeout = Math.min(1_500, remainingMs);
+      const controller = new AbortController();
+      let timeoutFired = false;
+      const abort = () => controller.abort();
+      signal?.addEventListener("abort", abort, { once: true });
+      const timer = setTimeout(() => {
+        timeoutFired = true;
+        controller.abort();
+      }, commandTimeout);
+      try {
+        const parsed = JSON.parse(
+          await tuiCommandAsync(state, ["status", "--json"], {
+            timeout: commandTimeout,
+            signal: controller.signal,
+          }),
+        );
+        return parsed && typeof parsed === "object" && typeof parsed.running === "boolean"
+          ? parsed
+          : { running: false, statusObservation: { reason: "identity-invalid" } };
+      } catch (error) {
+        if (error instanceof SyntaxError) {
+          return { running: false, statusObservation: { reason: "identity-invalid" } };
+        }
+        const reason = signal?.aborted
+          ? "aborted"
+          : classifyProductTuiCommandFailure(error, { timeoutFired });
+        if (reason === "host-status-timeout") {
+          return { running: false, statusObservation: { reason: "host-status-timeout" } };
+        }
+        if (reason === "aborted") {
+          const aborted = new Error("focus host status aborted", { cause: error });
+          aborted.code = "ABORT_ERR";
+          throw aborted;
+        }
+        throw error;
+      } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", abort);
+      }
+    },
+    isProcessAlive: processAlive,
+    deadlineMs,
+    signal,
+  });
+  if (result.passed) return result.status;
+  const failure = new Error(`focus host readiness failed: ${result.reason}`);
+  failure.boundary = "focus-host-ready";
+  failure.observation = focusHostReadinessObservation(state, {
+    reason: result.reason,
+    attempts: result.attempts,
+    startedAt,
+    deadlineMs,
+    currentHostIdentity: result.currentHostIdentity,
+  });
+  throw failure;
+}
+
 function tmuxTruth(state) {
   const socket = state.runtimeNamespace.tmuxSocketPath;
   const session = state.session;
@@ -570,6 +711,445 @@ function sessionPaneGeometry(state) {
 
 function activeWindowPaneGeometry(state) {
   return sessionPaneGeometry(state).filter(({ windowActive }) => windowActive);
+}
+
+async function focusTargetTmux(state, args, { deadline, signal, maxBuffer = 64 * 1_024 }) {
+  return runBoundedFocusTmux({
+    socketPath: state.runtimeNamespace.tmuxSocketPath,
+    args,
+    deadline,
+    signal,
+    maxBuffer,
+  });
+}
+
+function parseFocusPaneGeometry(stdout) {
+  const panes = stdout
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [paneId, windowActive, semanticPaneId, left, top, width, height] = line.split("\t");
+      return {
+        paneId,
+        semanticPaneId,
+        windowActive: windowActive === "1",
+        left: Number(left),
+        top: Number(top),
+        width: Number(width),
+        height: Number(height),
+      };
+    });
+  if (
+    panes.length < 1 ||
+    panes.some(
+      (pane) =>
+        !/^%[0-9]+$/u.test(pane.paneId ?? "") ||
+        typeof pane.semanticPaneId !== "string" ||
+        pane.semanticPaneId.length < 1 ||
+        ![pane.left, pane.top, pane.width, pane.height].every(Number.isSafeInteger) ||
+        pane.left < 0 ||
+        pane.top < 0 ||
+        pane.width < 1 ||
+        pane.height < 1,
+    )
+  )
+    throw new Error("focus target pane geometry was invalid");
+  return panes;
+}
+
+async function focusActiveWindowPaneGeometry(state, lifecycle) {
+  const stdout = await focusTargetTmux(
+    state,
+    [
+      "list-panes",
+      "-s",
+      "-t",
+      `=${state.session}`,
+      "-F",
+      "#{pane_id}\t#{window_active}\t#{@tmux_ide_pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}",
+    ],
+    lifecycle,
+  );
+  return parseFocusPaneGeometry(stdout).filter(({ windowActive }) => windowActive);
+}
+
+async function canonicalWindowLayout(state, paneId, lifecycle) {
+  const stdout = await focusTargetTmux(
+    state,
+    [
+      "list-panes",
+      "-t",
+      paneId,
+      "-F",
+      "#{window_visible_layout}\t#{window_id}\t#{?window_zoomed_flag,1,0}\t#{pane-border-status}\t#{pane_id}\t#{@tmux_ide_pane_id}\t#{pane_active}",
+    ],
+    lifecycle,
+  );
+  const rows = stdout
+    .trimEnd()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => line.split("\t"));
+  const [first] = rows;
+  const [visibleLayout = "", windowId = "", zoomed = "", paneBorderStatus = ""] = first ?? [];
+  const parsed = parseLayout(visibleLayout);
+  if (
+    !parsed ||
+    !["top", "bottom", "off"].includes(paneBorderStatus) ||
+    rows.some(
+      (row) =>
+        row[0] !== visibleLayout ||
+        row[1] !== windowId ||
+        row[2] !== zoomed ||
+        row[3] !== paneBorderStatus,
+    )
+  )
+    return null;
+  const semanticByRawPaneId = new Map(
+    rows.map(([, , , , rawPaneId = "", semanticPaneId = "", active = ""]) => [
+      rawPaneId,
+      { semanticPaneId, active: active === "1" },
+    ]),
+  );
+  const panes = parsed.leaves.map((leaf) => {
+    const identity = semanticByRawPaneId.get(leaf.id);
+    if (!identity?.semanticPaneId) return null;
+    return Object.freeze({
+      pane: identity.semanticPaneId,
+      left: leaf.left,
+      top: leaf.top,
+      width: leaf.width,
+      height: leaf.height,
+      active: identity.active,
+    });
+  });
+  if (
+    panes.some((pane) => pane === null) ||
+    new Set(panes.map((pane) => pane?.pane)).size !== panes.length
+  )
+    return null;
+  return Object.freeze({
+    type: "layout",
+    semanticWindowId: windowId,
+    windowName: null,
+    currentWindow: true,
+    cols: parsed.width,
+    rows: parsed.height,
+    zoomed: zoomed === "1",
+    paneBorderStatus,
+    panes: Object.freeze(panes),
+  });
+}
+
+function latestFocusFramebufferTrace(state, expected, diagnosticEpoch) {
+  return readJsonLines(state.tui.performanceTracePath)
+    .filter(
+      (record) =>
+        record?.semanticPaneId === expected.semanticPaneId &&
+        record.processId === expected.processId &&
+        record.clockId === expected.clockId &&
+        record.generation === expected.canonicalGeneration &&
+        record.incarnation === expected.incarnation &&
+        record.rendererEpoch === expected.rendererEpoch &&
+        record.sourceEpoch === expected.sourceEpoch &&
+        (diagnosticEpoch === 0 || record.diagnosticEpoch === diagnosticEpoch) &&
+        /^performance\.terminal-focus-(?:paint|fence)$/u.test(record.type ?? ""),
+    )
+    .slice(-2)
+    .map((record) => ({
+      type: record.type,
+      diagnosticEpoch: record.diagnosticEpoch,
+      atMicros: record.atMicros,
+      rendererEpoch: record.rendererEpoch,
+      revision: record.revision,
+      stateHash: record.stateHash,
+    }));
+}
+
+function focusFramebufferCaptureFailureReason(error) {
+  const message = error instanceof Error ? error.message : "";
+  if (message.includes("host identity mismatched")) return "capture-host-identity";
+  if (message.includes("row count mismatched")) return "capture-row-count";
+  if (message.includes("row overflowed")) return "capture-column-overflow";
+  if (error?.code === "ABORT_ERR" || error?.killed === true || error?.signal === "SIGTERM")
+    return "target-tmux-timeout";
+  if (message.includes("geometry was invalid") || message.includes("layout"))
+    return "target-tmux-parse";
+  if (typeof error?.code === "string") return "target-tmux-server-gone";
+  return "capture-error";
+}
+
+async function focusPaneSnapshot(
+  state,
+  expectedPaneId,
+  { expectedMarker, expected, diagnosticEpoch = 0, timeoutMs = 2_000 },
+) {
+  const deadline = performance.now() + timeoutMs;
+  const controller = new AbortController();
+  const deadlineTimer = setTimeout(() => controller.abort(), timeoutMs);
+  const lifecycle = { deadline, signal: controller.signal };
+  let previousDigest = null;
+  let attempts = 0;
+  let lastObservation = null;
+  try {
+    while (performance.now() < deadline) {
+      attempts += 1;
+      let geometryBefore;
+      try {
+        geometryBefore = await focusActiveWindowPaneGeometry(state, lifecycle);
+      } catch (error) {
+        lastObservation = {
+          reason: focusFramebufferCaptureFailureReason(error),
+          stage: "native-geometry-before",
+          matchCount: 0,
+          expectedPaneId,
+          expectedSemanticPaneId: expected.semanticPaneId,
+          diagnosticEpoch,
+          latestTrace: latestFocusFramebufferTrace(state, expected, diagnosticEpoch),
+        };
+        break;
+      }
+      const pane = geometryBefore.find(({ paneId }) => paneId === expectedPaneId);
+      if (!pane || geometryBefore.length !== 1) {
+        lastObservation = { reason: "active-pane-cardinality", matchCount: 0 };
+        const retryMs = Math.min(25, Math.max(0, deadline - performance.now()));
+        if (retryMs > 0) await new Promise((resolveWait) => setTimeout(resolveWait, retryMs));
+        continue;
+      }
+      let canonicalLayout;
+      try {
+        canonicalLayout = await canonicalWindowLayout(state, pane.paneId, lifecycle);
+      } catch (error) {
+        lastObservation = {
+          reason: focusFramebufferCaptureFailureReason(error),
+          matchCount: 0,
+          expectedPaneId,
+          expectedSemanticPaneId: expected.semanticPaneId,
+          diagnosticEpoch,
+          nativeRect: { left: pane.left, top: pane.top, width: pane.width, height: pane.height },
+          nativePane: { left: pane.left, top: pane.top, width: pane.width, height: pane.height },
+          latestTrace: latestFocusFramebufferTrace(state, expected, diagnosticEpoch),
+        };
+        const retryMs = Math.min(25, Math.max(0, deadline - performance.now()));
+        if (retryMs > 0) await new Promise((resolveWait) => setTimeout(resolveWait, retryMs));
+        continue;
+      }
+      const projectedRect = projectFocusFramebufferRect({
+        hostCols: expected.hostCols,
+        hostRows: expected.hostRows,
+        canonicalLayout,
+        canonicalPaneId: pane.semanticPaneId,
+      });
+      let capture;
+      try {
+        const remainingMs = Math.max(1, Math.floor(deadline - performance.now()));
+        const envelope = JSON.parse(
+          await tuiCommandAsync(state, ["capture", "--ansi", "--json"], {
+            timeout: Math.min(1_750, remainingMs),
+            signal: controller.signal,
+          }),
+        );
+        if (
+          envelope?.hostIdentity?.paneId !== expected.hostPaneId ||
+          envelope?.hostIdentity?.sessionId !== expected.hostSessionId ||
+          envelope?.hostIdentity?.processId !==
+            Number(expected.processId.slice("opentui:".length)) ||
+          envelope?.hostIdentity?.cols !== expected.hostCols ||
+          envelope?.hostIdentity?.rows !== expected.hostRows
+        )
+          throw new Error("focus capture host identity mismatched");
+        capture = decodeFocusFramebufferCapture(envelope);
+      } catch (error) {
+        lastObservation = {
+          reason: focusFramebufferCaptureFailureReason(error),
+          matchCount: 0,
+          expectedPaneId,
+          expectedSemanticPaneId: expected.semanticPaneId,
+          diagnosticEpoch,
+          nativeRect: { left: pane.left, top: pane.top, width: pane.width, height: pane.height },
+          nativePane: { left: pane.left, top: pane.top, width: pane.width, height: pane.height },
+          latestTrace: latestFocusFramebufferTrace(state, expected, diagnosticEpoch),
+        };
+        const retryMs = Math.min(25, Math.max(0, deadline - performance.now()));
+        if (retryMs > 0) await new Promise((resolveWait) => setTimeout(resolveWait, retryMs));
+        continue;
+      }
+      let cursorRow;
+      let geometryAfter;
+      try {
+        cursorRow = Number(
+          (
+            await focusTargetTmux(
+              state,
+              ["display-message", "-p", "-t", pane.paneId, "#{cursor_y}"],
+              lifecycle,
+            )
+          ).trim(),
+        );
+        if (!Number.isSafeInteger(cursorRow) || cursorRow < 0)
+          throw new Error("focus target cursor geometry was invalid");
+        geometryAfter = await focusActiveWindowPaneGeometry(state, lifecycle);
+      } catch (error) {
+        lastObservation = {
+          reason: focusFramebufferCaptureFailureReason(error),
+          stage: "native-geometry-after",
+          matchCount: 0,
+          expectedPaneId,
+          expectedSemanticPaneId: expected.semanticPaneId,
+          diagnosticEpoch,
+          latestTrace: latestFocusFramebufferTrace(state, expected, diagnosticEpoch),
+        };
+        break;
+      }
+      const inspected = inspectFocusFramebufferCapture({
+        ansiFrame: capture.ansi,
+        semanticPaneId: pane.semanticPaneId,
+        expectedMarker,
+        projectedRect,
+        cursorRow,
+      });
+      const attempt = assessFocusFramebufferAttempt({
+        inspected,
+        geometryBeforeDigest: paneGeometryIdentity(geometryBefore),
+        geometryAfterDigest: paneGeometryIdentity(geometryAfter),
+        pane,
+        canonicalLayout,
+        expected,
+      });
+      const frameHash = createHash("sha256").update(capture.ansi).digest("hex");
+      const canonicalLayoutDigest = createHash("sha256")
+        .update(JSON.stringify(canonicalLayout))
+        .digest("hex");
+      const projectedDigest = createHash("sha256")
+        .update(JSON.stringify(projectedRect))
+        .digest("hex");
+      const nativeDigest = createHash("sha256")
+        .update(paneGeometryIdentity(geometryAfter))
+        .digest("hex");
+      const latestTrace = latestFocusFramebufferTrace(state, expected, diagnosticEpoch);
+      lastObservation = {
+        reason: attempt.valid ? "framebuffer-unstable" : attempt.reason,
+        ...inspected.observation,
+        frameHash,
+        projectedRect,
+        canonicalPane: projectedRect,
+        projectedDigest,
+        canonicalLayout: canonicalLayout
+          ? {
+              cols: canonicalLayout.cols,
+              rows: canonicalLayout.rows,
+              paneBorderStatus: canonicalLayout.paneBorderStatus,
+              paneCount: canonicalLayout.panes.length,
+            }
+          : null,
+        canonicalLayoutDigest,
+        nativeRect: { left: pane.left, top: pane.top, width: pane.width, height: pane.height },
+        nativePane: { left: pane.left, top: pane.top, width: pane.width, height: pane.height },
+        nativeDigest,
+        expectedMarker,
+        expectedPaneId,
+        expectedSemanticPaneId: expected.semanticPaneId,
+        diagnosticEpoch,
+        latestTrace,
+      };
+      const structuralDigest = createHash("sha256")
+        .update(
+          `${frameHash}:${projectedDigest}:${canonicalLayoutDigest}:${nativeDigest}:${cursorRow}`,
+        )
+        .digest("hex");
+      const stability = advanceFocusFramebufferStability(previousDigest, {
+        valid: attempt.valid,
+        digest: structuralDigest,
+      });
+      if (attempt.valid && stability.stable) {
+        let nativeBody;
+        let geometryFinal;
+        try {
+          nativeBody = await focusTargetTmux(
+            state,
+            ["capture-pane", "-p", "-J", "-t", pane.paneId],
+            { ...lifecycle, maxBuffer: 4 * 1_024 * 1_024 },
+          );
+          geometryFinal = await focusActiveWindowPaneGeometry(state, lifecycle);
+        } catch (error) {
+          lastObservation = {
+            ...lastObservation,
+            reason: focusFramebufferCaptureFailureReason(error),
+            stage: "native-body-capture",
+          };
+          break;
+        }
+        const finalPane = geometryFinal.find(({ paneId }) => paneId === expectedPaneId);
+        if (
+          geometryFinal.length !== 1 ||
+          !finalPane ||
+          paneGeometryIdentity(geometryFinal) !== paneGeometryIdentity(geometryAfter)
+        ) {
+          lastObservation = {
+            ...lastObservation,
+            reason: "geometry-drift",
+            stage: "native-body-post-capture",
+          };
+          previousDigest = null;
+          continue;
+        }
+        const bodyLines = inspected.lines
+          .slice(projectedRect.firstBodyRow, projectedRect.firstBodyRow + projectedRect.bodyRows)
+          .map((line) => sliceFocusTerminalCells(line, projectedRect.left, projectedRect.width));
+        if (bodyLines.some((line) => line === null)) {
+          lastObservation = {
+            ...lastObservation,
+            reason: "capture-cell-boundary",
+            stage: "framebuffer-body-slice",
+          };
+          break;
+        }
+        const body = bodyLines.join("\n");
+        const lines = body.split("\n");
+        return Object.freeze({
+          cursorRow,
+          nativeBodyHash: createHash("sha256").update(nativeBody).digest("hex"),
+          renderedBodyHash: createHash("sha256").update(body).digest("hex"),
+          renderedBodyWithoutCursorHash: createHash("sha256")
+            .update(lines.filter((_line, index) => index !== cursorRow).join("\n"))
+            .digest("hex"),
+          cursorTextRowHash: createHash("sha256")
+            .update(lines[cursorRow] ?? "")
+            .digest("hex"),
+          cursorPresentationRowHash: createHash("sha256")
+            .update(
+              selectFocusCursorPresentationRow(
+                capture.ansi,
+                { ...projectedRect, valid: true },
+                cursorRow,
+              ),
+            )
+            .digest("hex"),
+          geometryHash: nativeDigest,
+          canonicalGeometryHash: canonicalLayoutDigest,
+          projectedRect,
+          canonicalPane: projectedRect,
+          nativePane: { left: pane.left, top: pane.top, width: pane.width, height: pane.height },
+          captureAttempts: attempts,
+        });
+      }
+      previousDigest = stability.nextDigest;
+      const retryMs = Math.min(25, Math.max(0, deadline - performance.now()));
+      if (retryMs > 0) await new Promise((resolveWait) => setTimeout(resolveWait, retryMs));
+    }
+    const error = new Error("focus framebuffer capture did not stabilize");
+    error.boundary = "focus-framebuffer-capture";
+    error.observation = Object.freeze({
+      operation: "wait-for-focus-framebuffer-capture",
+      attempts,
+      ...(lastObservation ?? { reason: "capture-error", matchCount: 0 }),
+    });
+    throw error;
+  } finally {
+    clearTimeout(deadlineTimer);
+    controller.abort();
+  }
 }
 
 async function activePaneBodyEvidence(state) {
@@ -1193,9 +1773,34 @@ async function smoke(json) {
   emit(json ? { ...evidence, reportPath } : `Product smoke passed; ${reportPath}`, json);
 }
 
-async function waitForTuiLifecycleEntry(state, predicate, timeoutMs, timeoutMessage) {
+async function waitForTuiLifecycleEntry(
+  state,
+  predicate,
+  timeoutMs,
+  timeoutMessage,
+  { signal, processId } = {},
+) {
   const lifecyclePath = join(state.tui.runtimeDir, "performance.jsonl");
   const findEntry = () => readJsonLines(lifecyclePath).findLast(predicate) ?? null;
+  if (signal || processId) {
+    const deadline = performance.now() + timeoutMs;
+    while (performance.now() < deadline) {
+      if (signal?.aborted) {
+        const error = new Error("TUI lifecycle wait aborted");
+        error.code = "ABORT_ERR";
+        throw error;
+      }
+      if (processId && !processAlive(processId)) {
+        const error = new Error("TUI process exited during lifecycle wait");
+        error.code = "PROCESS_DEAD";
+        throw error;
+      }
+      const entry = findEntry();
+      if (entry) return entry;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+    }
+    throw new Error(timeoutMessage);
+  }
   return await waitForLifecycleEntry({
     findEntry,
     subscribe: (check) => watch(lifecyclePath, { persistent: false }, check),
@@ -1204,7 +1809,150 @@ async function waitForTuiLifecycleEntry(state, predicate, timeoutMs, timeoutMess
   });
 }
 
-async function waitForCoherentTui(state, timeoutMs = 30_000, expectedProcessId = null) {
+async function waitForFocusQualification(
+  state,
+  expected,
+  snapshots,
+  inputs,
+  timeoutMs = 5_000,
+  stage = "complete",
+) {
+  const deadline = performance.now() + timeoutMs;
+  let assessment = null;
+  while (performance.now() < deadline) {
+    assessment = qualifyProductFocusEvidence({
+      lifecycleRecords: readJsonLines(join(state.tui.runtimeDir, "performance.jsonl")),
+      traceRecords: readJsonLines(state.tui.performanceTracePath),
+      expected,
+      snapshots,
+      inputs,
+      stage,
+    });
+    if (assessment.qualified) return assessment;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+  const error = new Error("focus journey exact blur/reclaim proof did not settle");
+  error.boundary =
+    stage === "blur" || assessment?.firstFailedPredicate?.startsWith("blur")
+      ? "focus-blur-proved"
+      : "focus-reclaim-proved";
+  error.observation = Object.freeze({
+    operation: "wait-for-focus-proof",
+    firstFailedPredicate: assessment?.firstFailedPredicate ?? "missing",
+    predicates: assessment?.predicates ?? [],
+  });
+  throw error;
+}
+
+async function waitForFocusWorkspaceEvidence(state, expected, timeoutMs = 5_000) {
+  const deadline = performance.now() + timeoutMs;
+  let lastError = null;
+  while (performance.now() < deadline) {
+    try {
+      return qualifyFocusWorkspaceState(
+        readJsonLines(join(state.tui.runtimeDir, "performance.jsonl")),
+        expected,
+      );
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+  throw lastError ?? new Error("focus WorkspaceClient evidence did not settle");
+}
+
+function focusWorkspaceEvidenceWatermark(state, expected) {
+  const matches = readJsonLines(join(state.tui.runtimeDir, "performance.jsonl")).filter(
+    (record) =>
+      record?.phase === "generation-workspace-client-state" &&
+      record.processId === expected.processId &&
+      record.daemonGeneration === expected.daemonGeneration &&
+      Number.isSafeInteger(record.monotonicMicros) &&
+      record.monotonicMicros >= 0,
+  );
+  const watermark = Math.max(-1, ...matches.map((record) => record.monotonicMicros));
+  if (!Number.isSafeInteger(watermark) || watermark < 0 || watermark >= Number.MAX_SAFE_INTEGER) {
+    const error = new Error("focus post-Web WorkspaceClient watermark is unavailable");
+    error.boundary = "focus-web-correlation";
+    error.observation = Object.freeze({
+      operation: "focus-workspace-client-watermark",
+      matchingRecords: Math.min(matches.length, 513),
+      reason: "watermark-unavailable",
+    });
+    throw error;
+  }
+  return watermark;
+}
+
+async function waitForFocusPaintFence(state, expected, diagnosticEpoch, timeoutMs = 5_000) {
+  const deadline = performance.now() + timeoutMs;
+  let observation = null;
+  while (performance.now() < deadline) {
+    const records = readJsonLines(state.tui.performanceTracePath);
+    const exactIdentity = (record) =>
+      record.diagnosticEpoch === diagnosticEpoch &&
+      record.processId === expected.processId &&
+      record.clockId === expected.clockId &&
+      record.semanticPaneId === expected.semanticPaneId &&
+      record.generation === expected.canonicalGeneration &&
+      record.incarnation === expected.incarnation &&
+      record.revision === expected.revision &&
+      record.stateHash === expected.stateHash &&
+      record.sourceEpoch === expected.sourceEpoch &&
+      record.rendererEpoch === expected.rendererEpoch;
+    const matches = records.filter(
+      (record) =>
+        record?.type === "performance.terminal-focus-fence" &&
+        exactIdentity(record) &&
+        record.writerHealth?.failed === false &&
+        record.writerHealth?.droppedRecords === 0 &&
+        record.writerHealth?.oversizedRecords === 0,
+    );
+    const latestPaint = records.findLast(
+      (record) =>
+        record?.type === "performance.terminal-paint" &&
+        record.processId === expected.processId &&
+        record.clockId === expected.clockId,
+    );
+    observation = Object.freeze({
+      matchingPaints: records.filter(
+        (record) => record?.type === "performance.terminal-focus-paint" && exactIdentity(record),
+      ).length,
+      matchingFences: matches.length,
+      totalFocusRecords: records.filter((record) =>
+        ["performance.terminal-focus-paint", "performance.terminal-focus-fence"].includes(
+          record?.type,
+        ),
+      ).length,
+      latestOrdinaryPaint:
+        latestPaint &&
+        Number.isSafeInteger(latestPaint.atMicros) &&
+        Number.isSafeInteger(latestPaint.dirtyRows)
+          ? { atMicros: latestPaint.atMicros, dirtyRows: latestPaint.dirtyRows }
+          : null,
+    });
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) break;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+  const error = new Error("focus pane paint fence did not settle exactly once");
+  error.boundary = diagnosticEpoch === 1 ? "focus-blur-proved" : "focus-reclaim-proved";
+  error.observation = Object.freeze({
+    operation: "wait-for-focus-paint-fence",
+    diagnosticEpoch,
+    semanticPaneId: expected.semanticPaneId,
+    ...observation,
+  });
+  throw error;
+}
+
+async function waitForCoherentTui(
+  state,
+  timeoutMs = 30_000,
+  expectedProcessId = null,
+  retainedStatus = null,
+  signal = undefined,
+) {
   try {
     await waitForTuiLifecycleEntry(
       state,
@@ -1214,6 +1962,7 @@ async function waitForCoherentTui(state, timeoutMs = 30_000, expectedProcessId =
         (expectedProcessId === null || entry?.processId === `opentui:${expectedProcessId}`),
       timeoutMs,
       "diagnostic TUI did not reach a coherent terminal frame",
+      { signal, processId: expectedProcessId },
     );
   } catch (error) {
     error.observation = productCoherentFrameTimeoutObservation({
@@ -1225,7 +1974,7 @@ async function waitForCoherentTui(state, timeoutMs = 30_000, expectedProcessId =
     });
     throw error;
   }
-  return JSON.parse(tuiCommand(state, ["status", "--json"]));
+  return retainedStatus ?? JSON.parse(tuiCommand(state, ["status", "--json"]));
 }
 
 async function proveHostTerminalPublication(state, label, timeoutMs = 5_000) {
@@ -2726,11 +3475,75 @@ async function diagnoseFirstKeyPaste(planEntry) {
   };
 }
 
+async function diagnoseFocus(planEntry) {
+  diagnosticAttemptPhases.set(planEntry.runId, "product-rig-startup");
+  await start(false, true, planEntry);
+  const state = await waitForState((candidate) => candidate?.status === "ready");
+  diagnosticAttemptPhases.set(planEntry.runId, "evidence-capture");
+  const captureEvidence = await captureArtifacts(
+    state,
+    `diagnose-${planEntry.journey.id}-r${planEntry.repetition}`,
+  );
+  diagnosticCaptures.set(planEntry.runId, captureEvidence);
+  tuiCommand(state, ["stop"]);
+  const timeline = readJsonLines(timelinePath);
+  const correlation = productDiagnosticCorrelation(state, captureEvidence);
+  const journeyEvidence = state.journeyEvidence?.focus ?? null;
+  const assessment = assessFocusJourneyBoundaries({
+    timeline,
+    evidence: journeyEvidence?.reclaim?.assessment ?? null,
+    correlationComplete: correlation.complete,
+  });
+  const report = {
+    version: 1,
+    status: assessment.status,
+    journey: planEntry.journey.id,
+    variant: null,
+    repetition: planEntry.repetition,
+    repeat: planEntry.repeat,
+    runId: planEntry.runId,
+    firstBrokenBoundary: assessment.firstBrokenBoundary,
+    firstUnmeasuredBoundary: assessment.firstUnmeasuredBoundary,
+    boundaries: assessment.boundaries,
+    focus: journeyEvidence,
+    diagnosticCorrelation: { complete: correlation.complete, missing: correlation.missing },
+    sourceProvenance: {
+      commit: state.tui?.performanceTraceCommit ?? null,
+      tree: state.tui?.performanceTraceTree ?? null,
+    },
+  };
+  return {
+    report,
+    reportPath: null,
+    evidence: {
+      report,
+      alignment: {
+        version: 1,
+        journey: planEntry.journey.id,
+        firstBrokenBoundary: assessment.firstBrokenBoundary,
+        firstUnmeasuredBoundary: assessment.firstUnmeasuredBoundary,
+        boundaries: assessment.boundaries,
+        correlation: { complete: correlation.complete, missing: correlation.missing },
+        availability: correlation.availability,
+      },
+      timeline: readDiagnosticText(timelinePath),
+      tmuxTruth: captureEvidence.truth,
+      daemonState: correlation.daemonState,
+      clientState: correlation.clientState,
+      tuiAnsi: readDiagnosticText(captureEvidence.tuiPath),
+      webPngPath: captureEvidence.webPath,
+      stderr: boundedDiagnosticText(readDiagnosticText(join(state.tui.runtimeDir, "stderr.log"))),
+      reproduction: diagnosticReproduction(planEntry.journey.id, null),
+    },
+  };
+}
+
 function executeProductJourney(planEntry) {
   return dispatchProductJourneyExecutor(planEntry, {
     "configless-cold-start": diagnoseConfiglessColdStart,
     "coherent-first-pane": diagnoseCoherentFirstPane,
     "first-key-paste": diagnoseFirstKeyPaste,
+    focus: diagnoseFocus,
     "runtime-qualification": diagnoseRuntimeQualification,
   });
 }
@@ -3918,6 +4731,580 @@ async function owner() {
       });
       publish({
         journeyEvidence: { firstKeyPaste: inputBoot },
+        status: "ready",
+        readyAt: new Date().toISOString(),
+      });
+      await new Promise(() => undefined);
+      return;
+    }
+    if (journeyId === "focus") {
+      let focusReadiness = null;
+      const focusBoot = await runFocusOwnerBoot({
+        createFocusNamespace: async () => {
+          const marker = `RIG_FOCUS_${randomBytes(6).toString("hex").toUpperCase()}`;
+          const scratchFleet = await createScratchFleet({
+            sessions: 1,
+            slug,
+            initialPaneMarker: marker,
+          });
+          const cleanupToken = `product-test-rig:${slug}`;
+          fleet = {
+            ...scratchFleet,
+            environment: {
+              ...scratchFleet.environment,
+              TMUX_IDE_RUNTIME_MODE: "testdrive",
+              TMUX_IDE_CLEANUP_TOKEN: cleanupToken,
+              TMUX_IDE_TMUX_SOCKET_PATH: scratchFleet.socketPath,
+            },
+          };
+          const session = fleet.sessionNames[0];
+          const initialPane = fleet.initialPanes.find((pane) => pane.sessionName === session);
+          if (!initialPane) throw new Error("focus namespace lost its exact initial pane");
+          const runtimeNamespace = {
+            root: fleet.root,
+            home: fleet.environment.HOME,
+            projectDir: fleet.projectDir,
+            registryDir: fleet.environment.TMUX_IDE_REGISTRY_DIR,
+            settingsDir: fleet.environment.TMUX_IDE_SETTINGS_DIR,
+            stateDir: fleet.environment.TMUX_IDE_HOME,
+            tmuxSocketPath: fleet.socketPath,
+            hostTmuxSocketPath: join(fleet.root, "product-rig-host-tmux.sock"),
+            daemonInfoDir: fleet.daemonInfoDir,
+            cleanupToken,
+          };
+          const tui = prepareOwnedTuiRuntime({
+            ownership: { session, runtimeNamespace },
+            intendedTui: {
+              hostSession: `_tmux-ide-product-rig-${slug}`,
+              runtimeDir: join(rigRoot, "tui-focus"),
+              performanceTracePath: join(rigRoot, "tui-focus", "performance-trace.jsonl"),
+              performanceTraceDetail: "1",
+              daemonPerformanceTracePath: null,
+            },
+            publish,
+            resolveProvenance: sourceTraceProvenance,
+            createRuntimeDir: createIsolatedTargetedTuiCwd,
+          });
+          event("focus-namespace-ready", { paneId: initialPane.paneId });
+          return {
+            session,
+            marker,
+            seed: { marker, paneId: initialPane.paneId, geometry: initialPane },
+            runtimeNamespace,
+            tui,
+          };
+        },
+        startCanonicalDaemon: async () => {
+          daemon = await startOwnedProductRigDaemon({
+            start: () => startDaemon(fleet),
+            publish,
+            waitUntilReady: waitForReadinessLadder,
+          });
+          return daemon;
+        },
+        openCanonicalWorkspace: async (namespace, runningDaemon) => {
+          const workspace = await runningDaemon.promote(namespace.session);
+          const identity = await observeTargetedCanonicalIdentity(
+            runningDaemon,
+            namespace.session,
+            workspace,
+          );
+          publish({
+            workspace,
+            daemon: {
+              ...runningDaemon.record,
+              revision: identity.catalogRevision,
+              revisionKind: "fleet-catalog",
+            },
+          });
+          event("focus-daemon-ready", identity);
+          return identity;
+        },
+        buildBeforeMeasurement: async () => {
+          await execFileAsync("bun", [join(repoRoot, "scripts", "build-tui.mjs")], {
+            cwd: repoRoot,
+            timeout: 120_000,
+          });
+          prepareIsolatedTargetedTuiCwd(state.tui.runtimeDir);
+          event("focus-tui-build", { prepared: true });
+        },
+        launchFocusTui: async (namespace) => {
+          let launched;
+          const launchStartedAt = performance.now();
+          try {
+            launched = JSON.parse(
+              await tuiCommandAsync(
+                state,
+                ["start", "--target", namespace.session, "--cols", "160", "--rows", "44", "--json"],
+                { timeout: 30_000 },
+              ),
+            );
+          } catch (error) {
+            const reason = classifyProductTuiCommandFailure(error);
+            const bounded = new Error(`focus TUI launch failed: ${reason}`, { cause: error });
+            bounded.boundary = "focus-tui-started";
+            bounded.observation = focusHostReadinessObservation(state, {
+              reason,
+              stage: "launch-command",
+              attempts: 1,
+              startedAt: launchStartedAt,
+              deadlineMs: 30_000,
+            });
+            throw bounded;
+          }
+          if (
+            !exactProductTuiLaunchReceipt(launched, {
+              target: namespace.session,
+              cols: 160,
+              rows: 44,
+            })
+          ) {
+            const error = new Error("focus TUI launch receipt was invalid");
+            error.boundary = "focus-tui-started";
+            error.observation = focusHostReadinessObservation(state, {
+              reason: "identity-invalid",
+              attempts: 0,
+              startedAt: performance.now(),
+              deadlineMs: 10_000,
+            });
+            throw error;
+          }
+          event("focus-tui-started", {
+            launchId: launched.launchId,
+            processId: launched.processId,
+            target: launched.target,
+            hostIdentity: launched.hostIdentity,
+          });
+          const startedAt = performance.now();
+          const deadlineMs = 50_000;
+          const controller = new AbortController();
+          focusReadiness = {
+            launched,
+            startedAt,
+            deadlineMs,
+            controller,
+            timer: setTimeout(() => controller.abort(), deadlineMs),
+          };
+          return launched;
+        },
+        waitForFocusHostReady: async (_namespace, _daemon, _identity, launched) => {
+          const readiness = focusReadiness;
+          if (!readiness || readiness.launched !== launched)
+            throw new Error("focus readiness lifecycle was not initialized");
+          let status;
+          try {
+            status = await waitForExactFocusHostReceipt(state, launched, {
+              deadlineMs: Math.min(
+                10_000,
+                Math.max(1, readiness.deadlineMs - (performance.now() - readiness.startedAt)),
+              ),
+              signal: readiness.controller.signal,
+            });
+          } catch (error) {
+            clearTimeout(readiness.timer);
+            readiness.controller.abort();
+            focusReadiness = null;
+            throw error;
+          }
+          event("focus-host-ready", {
+            launchId: status.launchId,
+            processId: status.processId,
+            hostIdentity: status.hostIdentity,
+          });
+          return status;
+        },
+        waitForFocusTuiCoherent: async (_namespace, _daemon, _identity, launched, status) => {
+          const readiness = focusReadiness;
+          if (!readiness || readiness.launched !== launched)
+            throw new Error("focus readiness lifecycle was not initialized");
+          try {
+            const coherentRemaining = Math.max(
+              1,
+              Math.min(30_000, readiness.deadlineMs - (performance.now() - readiness.startedAt)),
+            );
+            await waitForCoherentTui(
+              state,
+              coherentRemaining,
+              launched.processId,
+              status,
+              readiness.controller.signal,
+            );
+            const revalidationRemaining = Math.max(
+              1,
+              readiness.deadlineMs - (performance.now() - readiness.startedAt),
+            );
+            try {
+              status = await waitForExactFocusHostReceipt(state, launched, {
+                deadlineMs: revalidationRemaining,
+                signal: readiness.controller.signal,
+              });
+            } catch (error) {
+              error.boundary = "focus-tui-coherent";
+              if (error.observation) {
+                error.observation = Object.freeze({
+                  ...error.observation,
+                  stage: "post-frame-host-revalidation",
+                });
+              }
+              throw error;
+            }
+          } catch (error) {
+            if (error?.code === "PROCESS_DEAD" || error?.code === "ABORT_ERR") {
+              const rendererObservation = error.observation ?? null;
+              error.boundary = "focus-tui-coherent";
+              const hostObservation = focusHostReadinessObservation(state, {
+                reason: error.code === "PROCESS_DEAD" ? "process-dead" : "aborted",
+                attempts: 1,
+                stage: "renderer-coherent-wait",
+                startedAt: readiness.startedAt,
+                deadlineMs: readiness.deadlineMs,
+              });
+              error.observation = Object.freeze({
+                ...hostObservation,
+                renderer: rendererObservation,
+              });
+            } else if (!error?.boundary) {
+              error.boundary = "focus-tui-coherent";
+            }
+            throw error;
+          } finally {
+            clearTimeout(readiness.timer);
+            readiness.controller.abort();
+            focusReadiness = null;
+          }
+          event("focus-tui-coherent", { processId: launched.processId });
+          return Object.freeze({
+            processId: launched.processId,
+            target: launched.target,
+            launchId: launched.launchId,
+            hostIdentity: launched.hostIdentity,
+          });
+        },
+        proveFocusBaseline: async (namespace, runningDaemon, identity, process) => {
+          const publication = await provePreseededPanePublication(state, namespace.seed);
+          const lifecycle = readJsonLines(join(namespace.tui.runtimeDir, "performance.jsonl"));
+          if (lifecycle.some(({ phase }) => phase?.startsWith("terminal-host-")))
+            throw new Error("focus journey observed hosted focus input before its exact baseline");
+          const expectedBase = {
+            processId: `opentui:${process.processId}`,
+            clockId: publication.hostFrame.clockId,
+            daemonGeneration: runningDaemon.record.instanceId,
+            workspaceName: identity.workspaceName,
+            sessionName: identity.sessionName,
+            clientId: `opentui:${process.processId}`,
+            rendererEpoch: publication.hostFrame.rendererEpoch,
+            sourceEpoch: publication.canonicalSeedPaint.paint.sourceEpoch,
+            semanticPaneId: publication.semanticPaneId,
+            canonicalGeneration: publication.canonicalSeedPaint.publication.generation,
+            incarnation: publication.canonicalSeedPaint.publication.incarnation,
+            revision: publication.canonicalSeedPaint.publication.revision,
+            stateHash: publication.canonicalSeedPaint.publication.stateHash,
+            canonicalCols: publication.canonicalSeedPaint.publication.cols,
+            canonicalRows: publication.canonicalSeedPaint.publication.rows,
+            viewportCols: publication.canonicalSeedPaint.paint.viewportCols,
+            viewportRows: publication.canonicalSeedPaint.paint.viewportRows,
+          };
+          let workspaceClient;
+          try {
+            workspaceClient = await waitForQualifiedWorkspaceClientState(
+              () => readJsonLines(join(namespace.tui.runtimeDir, "performance.jsonl")),
+              {
+                processId: expectedBase.processId,
+                daemonGeneration: expectedBase.daemonGeneration,
+                workspaceName: identity.workspaceName,
+                sessionName: identity.sessionName,
+                fleetSessionId: identity.fleetSessionId,
+                semanticPaneId: expectedBase.semanticPaneId,
+                canonicalGeneration: expectedBase.canonicalGeneration,
+              },
+            );
+          } catch (error) {
+            error.boundary = "focus-baseline";
+            throw error;
+          }
+          const expected = Object.freeze({
+            ...expectedBase,
+            clientGeneration: workspaceClient.committed.generation,
+            hostPaneId: process.hostIdentity.paneId,
+            hostSessionId: process.hostIdentity.sessionId,
+            hostCols: process.hostIdentity.cols,
+            hostRows: process.hostIdentity.rows,
+            baselineAuthorityRevision: workspaceClient.committed.authority.revision,
+          });
+          const owners = workspaceClient.committed.authority?.owners;
+          if (!["input", "focus", "geometry"].every((kind) => owners?.[kind] === expected.clientId))
+            throw new Error("focus baseline did not own all three authorities");
+          const snapshot = await focusPaneSnapshot(state, namespace.seed.paneId, {
+            expectedMarker: "●",
+            expected,
+          });
+          publish({ convergence: { workspaceClient } });
+          return Object.freeze({ publication, expected, snapshot, workspaceClient });
+        },
+        driveBlur: async (namespace, _daemon, _identity, _process, baseline) => {
+          const delivery = JSON.parse(
+            tuiCommand(state, [
+              "input",
+              JSON.stringify({ version: 1, kind: "focus", state: "blur" }),
+            ]),
+          );
+          if (
+            delivery?.kind !== "focus" ||
+            delivery?.delivery !== "exact-bytes-to-immutable-host-pane-pty" ||
+            delivery?.bytesInjected !== 3 ||
+            delivery?.phases !== 1
+          )
+            throw new Error("focus journey blur parser receipt was not exact");
+          const settled = await waitForTuiLifecycleEntry(
+            state,
+            (entry) => entry?.phase === "terminal-host-focus-fence" && entry.diagnosticEpoch === 1,
+            5_000,
+            "focus blur did not settle",
+          );
+          const initiated = readJsonLines(join(state.tui.runtimeDir, "performance.jsonl")).find(
+            (entry) =>
+              entry?.phase === "terminal-host-renderer-blur-event" && entry.diagnosticEpoch === 1,
+          );
+          if (!Number.isSafeInteger(initiated?.monotonicMicros))
+            throw new Error("focus blur initiation evidence is missing");
+          const authorityReceipt = readJsonLines(
+            join(state.tui.runtimeDir, "performance.jsonl"),
+          ).find(
+            (entry) =>
+              entry?.phase === "terminal-host-blur-authority-settled" &&
+              entry.diagnosticEpoch === 1,
+          );
+          if (!authorityReceipt) throw new Error("focus blur authority receipt is missing");
+          const workspaceClient = await waitForFocusWorkspaceEvidence(state, {
+            ...baseline.expected,
+            boundary: "focus-blur-proved",
+            afterMicros: initiated.monotonicMicros,
+            owners: { input: null, focus: null, geometry: null },
+            presence: "background",
+          });
+          const paintFence = await waitForFocusPaintFence(state, baseline.expected, 1);
+          const snapshot = await focusPaneSnapshot(state, namespace.seed.paneId, {
+            expectedMarker: "○",
+            expected: baseline.expected,
+            diagnosticEpoch: 1,
+          });
+          const assessment = await waitForFocusQualification(
+            state,
+            {
+              ...baseline.expected,
+              blurAuthorityRevision: workspaceClient.committed.authority.revision,
+            },
+            { before: baseline.snapshot, blur: snapshot },
+            { blur: delivery },
+            5_000,
+            "blur",
+          );
+          event("focus-blur-proved", {
+            diagnosticEpoch: 1,
+            rendererEpoch: baseline.expected.rendererEpoch,
+          });
+          return Object.freeze({
+            delivery,
+            initiated,
+            settled,
+            authorityReceipt,
+            paintFence,
+            snapshot,
+            workspaceClient,
+            assessment,
+          });
+        },
+        driveFocus: async (namespace, _daemon, _identity, _process, baseline, blur) => {
+          const delivery = JSON.parse(
+            tuiCommand(state, [
+              "input",
+              JSON.stringify({ version: 1, kind: "focus", state: "focus" }),
+            ]),
+          );
+          if (
+            delivery?.kind !== "focus" ||
+            delivery?.delivery !== "exact-bytes-to-immutable-host-pane-pty" ||
+            delivery?.bytesInjected !== 3 ||
+            delivery?.phases !== 1
+          )
+            throw new Error("focus journey reclaim parser receipt was not exact");
+          const settled = await waitForTuiLifecycleEntry(
+            state,
+            (entry) => entry?.phase === "terminal-host-focus-fence" && entry.diagnosticEpoch === 2,
+            5_000,
+            "focus reclaim did not settle",
+          );
+          const initiated = readJsonLines(join(state.tui.runtimeDir, "performance.jsonl")).find(
+            (entry) =>
+              entry?.phase === "terminal-host-renderer-focus-event" && entry.diagnosticEpoch === 2,
+          );
+          if (!Number.isSafeInteger(initiated?.monotonicMicros))
+            throw new Error("focus reclaim initiation evidence is missing");
+          const authorityReceipt = readJsonLines(
+            join(state.tui.runtimeDir, "performance.jsonl"),
+          ).find(
+            (entry) =>
+              entry?.phase === "terminal-host-focus-authority-settled" &&
+              entry.diagnosticEpoch === 2,
+          );
+          if (!authorityReceipt) throw new Error("focus reclaim authority receipt is missing");
+          const owners = {
+            input: baseline.expected.clientId,
+            focus: baseline.expected.clientId,
+            geometry: baseline.expected.clientId,
+          };
+          const workspaceClient = await waitForFocusWorkspaceEvidence(state, {
+            ...baseline.expected,
+            boundary: "focus-reclaim-proved",
+            afterMicros: initiated.monotonicMicros,
+            owners,
+            presence: "foreground",
+          });
+          const paintFence = await waitForFocusPaintFence(state, baseline.expected, 2);
+          const snapshot = await focusPaneSnapshot(state, namespace.seed.paneId, {
+            expectedMarker: "●",
+            expected: baseline.expected,
+            diagnosticEpoch: 2,
+          });
+          const assessment = await waitForFocusQualification(
+            state,
+            {
+              ...baseline.expected,
+              blurAuthorityRevision: blur.workspaceClient.committed.authority.revision,
+              focusAuthorityRevision: workspaceClient.committed.authority.revision,
+            },
+            {
+              before: baseline.snapshot,
+              blur: blur.snapshot,
+              focus: snapshot,
+            },
+            { blur: blur.delivery, focus: delivery },
+          );
+          event("focus-reclaim-proved", {
+            diagnosticEpoch: 2,
+            rendererEpoch: baseline.expected.rendererEpoch,
+            firstFailedPredicate: assessment.firstFailedPredicate,
+          });
+          return Object.freeze({
+            delivery,
+            initiated,
+            settled,
+            authorityReceipt,
+            paintFence,
+            snapshot,
+            workspaceClient,
+            assessment,
+          });
+        },
+        startWebAfterFocus: async (_namespace, _daemon, identity, process, reclaim) => {
+          const workspaceClientWatermark = focusWorkspaceEvidenceWatermark(state, {
+            processId: `opentui:${process.processId}`,
+            daemonGeneration: state.daemon.instanceId,
+          });
+          devServer = await startDevServer(daemon, {
+            daemonInfoPath: join(fleet.daemonInfoDir, "daemon.json"),
+          });
+          browser = await chromium.launch({ headless: true });
+          const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+          const page = await context.newPage();
+          await page.goto(devServer.pageUrl, { waitUntil: "domcontentloaded" });
+          let ready;
+          try {
+            ready = await waitForFocusWebSemantic({
+              signal: ownerAbort.signal,
+              health: () =>
+                ownerAbort.signal.aborted
+                  ? "aborted"
+                  : !devServer.isRunning()
+                    ? "dev-server-dead"
+                    : !browser.isConnected()
+                      ? "browser-disconnected"
+                      : page.isClosed()
+                        ? "page-closed"
+                        : null,
+              sample: () => page.evaluate(captureFocusWebSemanticDocument),
+              derivedResources: reclaim.workspaceClient.derived.terminalInventory.resources,
+              expectedWorkspaceName: identity.workspaceName,
+              expectedSemanticPaneId: reclaim.assessment.qualified.semanticPaneId,
+              expectedDaemonGeneration: state.daemon.instanceId,
+            });
+          } catch (error) {
+            if (error?.observation) publish({ focusWebObservation: error.observation });
+            throw error;
+          }
+          const semantic = ready.semantic;
+          publish({
+            focusWebSemantic: semantic,
+            focusWebObservation: {
+              operation: "wait-for-focus-web-semantic",
+              reason: "qualified",
+              attempts: ready.attempts,
+              stableExactSamples: ready.stableExactSamples,
+              firstFailedPredicate: null,
+              latest: ready.assessment.normalized,
+              digest: ready.assessment.digest,
+            },
+          });
+          const clientId = `opentui:${process.processId}`;
+          const workspaceClient = await waitForFocusWorkspaceEvidence(state, {
+            processId: clientId,
+            daemonGeneration: state.daemon.instanceId,
+            clientGeneration: reclaim.workspaceClient.committed.generation,
+            workspaceName: identity.workspaceName,
+            sessionName: identity.sessionName,
+            clientId,
+            semanticPaneId: reclaim.assessment.qualified.semanticPaneId,
+            afterMicros: workspaceClientWatermark + 1,
+            boundary: "focus-web-correlation",
+            owners: { input: clientId, focus: clientId, geometry: clientId },
+            presence: "foreground",
+          });
+          publish({ web: { pageUrl: devServer.pageUrl, startedAfterFocusBoundary: true } });
+          event("focus-web-correlation", { pageUrl: devServer.pageUrl });
+          return Object.freeze({
+            pageUrl: devServer.pageUrl,
+            semantic,
+            readiness: ready.assessment,
+            workspaceClient,
+          });
+        },
+      });
+      publish({
+        convergence: { workspaceClient: focusBoot.web.workspaceClient },
+        journeyEvidence: {
+          focus: {
+            identity: focusBoot.identity,
+            process: focusBoot.process,
+            baseline: {
+              expected: focusBoot.baseline.expected,
+              snapshot: focusBoot.baseline.snapshot,
+              canonicalSeedPaint: focusBoot.baseline.publication.canonicalSeedPaint,
+              hostFrame: focusBoot.baseline.publication.hostFrame,
+            },
+            blur: {
+              delivery: focusBoot.blur.delivery,
+              authorityReceipt: focusBoot.blur.authorityReceipt,
+              authorityFence: focusBoot.blur.settled,
+              paintFence: focusBoot.blur.paintFence,
+              snapshot: focusBoot.blur.snapshot,
+              authorityRevision: focusBoot.blur.workspaceClient.committed.authority.revision,
+              assessment: focusBoot.blur.assessment,
+            },
+            reclaim: {
+              delivery: focusBoot.reclaim.delivery,
+              authorityReceipt: focusBoot.reclaim.authorityReceipt,
+              authorityFence: focusBoot.reclaim.settled,
+              paintFence: focusBoot.reclaim.paintFence,
+              snapshot: focusBoot.reclaim.snapshot,
+              authorityRevision: focusBoot.reclaim.workspaceClient.committed.authority.revision,
+              assessment: focusBoot.reclaim.assessment,
+            },
+            web: {
+              semantic: focusBoot.web.semantic,
+              readiness: focusBoot.web.readiness,
+            },
+          },
+        },
         status: "ready",
         readyAt: new Date().toISOString(),
       });

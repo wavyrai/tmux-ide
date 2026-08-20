@@ -268,6 +268,7 @@ test("orchestration pins identity, uses one deadline, and verifies after deliver
   const result = await executeTestdriveInputOperation(command, harness.port);
   assert.equal(result.target, "%7");
   assert.equal(result.sessionId, "$3");
+  assert.equal(result.requestedState, "blur");
   assert.deepEqual(
     harness.calls.filter(([kind]) => kind === "verify").map((call) => call[1]),
     ["%7", "%7"],
