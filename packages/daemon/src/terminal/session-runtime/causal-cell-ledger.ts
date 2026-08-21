@@ -100,6 +100,8 @@ function snapshotsSemanticallyEqual(
       "origin",
       "wraparound",
       "mouseTracking",
+      "mouseProtocol",
+      "mouseEncoding",
       "synchronizedOutput",
     ]) ||
     left.placements.length !== right.placements.length ||
@@ -197,6 +199,8 @@ function structuralDiff(
       "origin",
       "wraparound",
       "mouseTracking",
+      "mouseProtocol",
+      "mouseEncoding",
       "synchronizedOutput",
     ]),
     historyChanged:

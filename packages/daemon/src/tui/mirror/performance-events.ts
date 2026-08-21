@@ -117,8 +117,14 @@ export interface TuiTerminalInputFenceEvent {
 }
 
 export interface TuiTerminalInputOrigin {
-  readonly origin: "keyboard" | "bracketed-paste";
+  readonly origin: "keyboard" | "bracketed-paste" | "application-mouse";
   readonly payload: Uint8Array;
+  readonly ingressAtMicros?: number;
+  readonly gestureId?: string;
+  readonly pointerAction?: "down" | "drag" | "move" | "up" | "wheel-up" | "wheel-down";
+  readonly pointerColumn?: number;
+  readonly pointerRow?: number;
+  readonly pointerButton?: number | null;
   readonly semanticPaneId: string;
   readonly generation: string;
   readonly incarnation: string;
@@ -131,10 +137,15 @@ export interface TuiTerminalInputOriginEvent {
   readonly clockId: "opentui-performance-now";
   readonly clockKind: "performance-now";
   readonly atMicros: number;
-  readonly origin: "keyboard" | "bracketed-paste";
+  readonly origin: "keyboard" | "bracketed-paste" | "application-mouse";
   readonly payloadByteCount: number;
   readonly payloadFingerprint: string;
-  readonly parserConsumption: "keyboard-event" | "paste-event";
+  readonly parserConsumption: "keyboard-event" | "paste-event" | "pointer-event";
+  readonly gestureId?: string;
+  readonly pointerAction?: "down" | "drag" | "move" | "up" | "wheel-up" | "wheel-down";
+  readonly pointerColumn?: number;
+  readonly pointerRow?: number;
+  readonly pointerButton?: number | null;
   readonly traceId: string;
   readonly semanticPaneId: string;
   readonly generation: string;
@@ -229,6 +240,8 @@ export interface TuiTerminalCanonicalModeEvent {
   readonly revision: number;
   readonly stateHash: string;
   readonly wraparound: boolean;
+  readonly mouseProtocol: "none" | "x10" | "vt200" | "drag" | "any";
+  readonly mouseEncoding: "default" | "utf8" | "sgr" | "sgr-pixels";
 }
 
 export interface TuiTerminalInputTrace {

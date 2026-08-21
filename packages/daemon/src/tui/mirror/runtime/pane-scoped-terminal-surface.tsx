@@ -8,6 +8,7 @@ import type {
 } from "../pane-surface.tsx";
 import type { TerminalPaletteProjection } from "../theme.ts";
 import type { Cell } from "../selection.ts";
+import type { TerminalReplicaSnapshot } from "@tmux-ide/contracts";
 
 export interface PaneScopedTerminalAdapter {
   readonly renderSource: import("../pane-surface.tsx").TerminalPaneRenderSource;
@@ -17,6 +18,8 @@ export interface PaneScopedTerminalAdapter {
     paneId: string,
     listener: (version: number, sourceEpoch: number) => void,
   ): () => void;
+  /** Immutable canonical state used only by explicit selection/copy gestures. */
+  paneSelectionSnapshot(paneId: string): TerminalReplicaSnapshot | null;
 }
 
 export interface PaneScopedTerminalSurfaceProps {

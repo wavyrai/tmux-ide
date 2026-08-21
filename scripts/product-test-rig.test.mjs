@@ -1999,6 +1999,82 @@ test("resize journey owns one bounded two-pane Meta+Arrow and SGR causal executo
   assert.doesNotMatch(resize, /\bexecFileSync\(/u);
 });
 
+test("selection journey owns one exact hosted selection copy app-mouse executor", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const start = source.indexOf('if (journeyId === "selection-copy-app-mouse")');
+  const end = source.indexOf('if (journeyId === "keyboard-pointer-resize")', start);
+  const selection = source.slice(start, end);
+  assert.ok(start > 0 && end > start);
+  assert.match(selection, /runSelectionCopyAppMouseOwnerBoot/u);
+  assert.match(selection, /initialPaneCommand/u);
+  assert.match(selection, /kind: "selection-drag"/u);
+  assert.match(selection, /kind: "copy-capture"/u);
+  assert.match(selection, /kind: "copy-capture", timeoutMs: 3_000/u);
+  assert.match(selection, /beforeCount: before/u);
+  assert.match(selection, /expectedOrdinal: priorCopy\.copyOrdinal \+ 1/u);
+  assert.equal((selection.match(/kind: "application-mouse"/gu) ?? []).length, 1);
+  assert.match(selection, /\["down", point\.x\]/u);
+  assert.match(selection, /\["drag", point\.x \+ 1\]/u);
+  assert.match(selection, /\["up", point\.x \+ 1\]/u);
+  assert.match(selection, /gesture < 10/u);
+  assert.match(selection, /applicationMouseCausalSamples/u);
+  assert.match(selection, /assessApplicationMouseDistribution/u);
+  assert.match(selection, /distribution\.qualified/u);
+  assert.match(selection, /createHmac/u);
+  assert.match(selection, /evidenceKey/u);
+  assert.match(selection, /selectionStyle\.extraChangedCells/u);
+  assert.match(selection, /selectionMouseFixtureProgram\(\)/u);
+  assert.match(selection, /kind: "control-key", key: "y"/u);
+  assert.match(selection, /waitForSelectionMouseModeConditioning/u);
+  assert.match(selection, /applicationMouseReceipts: 0/u);
+  assert.match(selection, /preCleanTmux/u);
+  assert.match(selection, /selectionLocalModeFailureObservation/u);
+  assert.match(selection, /performanceWatermark: performanceBefore\.length/u);
+  assert.match(selection, /traceWatermark: traceBefore\.length/u);
+  assert.match(selection, /selectionCopyFailureEvidence/u);
+  assert.match(selection, /copyFailure/u);
+  assert.match(
+    selection,
+    /selectionWorkspaceClientEvidence\(selectionBoot\.web\.workspaceClient\)/u,
+  );
+  assert.match(selection, /workspaceClient\.committed\.terminalResourceRevision/u);
+  assert.match(selection, /exactTerminalResourceRevision: baseline\.terminalResourceRevision/u);
+  assert.doesNotMatch(selection, /derived\.terminalInventory\.terminalResourceRevision/u);
+  assert.match(selection, /selectionCausalFailureObservation\(assessment, journeyEvidence\)/u);
+  assert.match(selection, /failureObservation,/u);
+  assert.match(selection, /evidenceKey: namespace\.evidenceKey/u);
+  assert.match(
+    selection,
+    /distribution = assessApplicationMouseDistribution\(samples, expectedPoint\)/u,
+  );
+  assert.match(selection, /applicationMouseDistributionFailureObservation\(\{/u);
+  const assessmentFailure = selection.slice(
+    selection.indexOf("const assessment = assessProductSelectionCopyAppMouse"),
+    selection.indexOf("publish({\n        convergence:", selection.indexOf("const assessment =")),
+  );
+  assert.ok(assessmentFailure.indexOf("publish({") < assessmentFailure.indexOf("throw error"));
+  assert.doesNotMatch(assessmentFailure, /status:\s*"ready"/u);
+  assert.match(source, /timeout: testdriveInputSupervisorTimeout\(document\.timeoutMs\)/u);
+  assert.match(selection, /latestMode/u);
+  assert.match(selection, /waitForWindowWorkspaceEvidence/u);
+  assert.match(selection, /waitForFocusWebSemantic/u);
+  assert.match(selection, /settleWindowReferenceTrace/u);
+  assert.doesNotMatch(selection, /\btuiCommand\(state/u);
+  assert.doesNotMatch(selection, /\bexecFileSync\(/u);
+});
+
+test("selection report seals strict causal distribution evidence in report and alignment", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("async function diagnoseSelectionCopyAppMouse");
+  const end = source.indexOf("function executeProductJourney", start);
+  const diagnose = source.slice(start, end);
+  assert.ok(start > 0 && end > start);
+  assert.match(diagnose, /const causal = assessProductSelectionCopyAppMouse/u);
+  assert.equal((diagnose.match(/causalAssessment: causal/gu) ?? []).length, 2);
+  assert.match(diagnose, /selectionCopyAppMouse: journeyEvidence/u);
+  assert.match(diagnose, /firstBrokenBoundary: assessment\.firstBrokenBoundary/u);
+});
+
 test("resize diagnostic correlation uses strict post-Web identity and never a sibling fallback", () => {
   const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
   const start = source.indexOf("function productDiagnosticCorrelation");
@@ -2016,6 +2092,23 @@ test("resize diagnostic correlation uses strict post-Web identity and never a si
   assert.doesNotMatch(correlation, /keyboardPointerResize\.keyboard\.workspaceClient/u);
   assert.doesNotMatch(correlation, /keyboardPointerResize\.pointerRelease\.workspaceClient/u);
   assert.match(correlation, /buildProductDiagnosticCorrelation\(\{[\s\S]*?state,/u);
+});
+
+test("selection diagnostic correlation uses its own post-Web identity and no sibling evidence", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("function productDiagnosticCorrelation");
+  const end = source.indexOf("const WARM_COHERENT_SAMPLE_COUNT", start);
+  const correlation = source.slice(start, end);
+  assert.match(
+    correlation,
+    /const selectionCopyAppMouse = state\?\.journeyEvidence\?\.selectionCopyAppMouse \?\? null/u,
+  );
+  assert.match(
+    correlation,
+    /selectionCopyAppMouse\.expected\?\.fleetSessionId[\s\S]*?selectionCopyAppMouse\.expected\?\.catalogRevision[\s\S]*?selectionCopyAppMouse\.expected\?\.semanticPaneId/u,
+  );
+  assert.doesNotMatch(correlation, /selectionCopyAppMouse\.selection\.workspaceClient/u);
+  assert.doesNotMatch(correlation, /selectionCopyAppMouse\.copy\.workspaceClient/u);
 });
 
 test("strict seed failure preserves bounded native and same-pane patch/frame/fence evidence", () => {

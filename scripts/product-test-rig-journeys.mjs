@@ -77,6 +77,7 @@ const GOLDEN_JOURNEYS = Object.freeze(
         "focus",
         "window-lifecycle",
         "keyboard-pointer-resize",
+        "selection-copy-app-mouse",
       ].includes(id)
         ? "implemented"
         : "pending",
@@ -576,6 +577,73 @@ export async function runKeyboardPointerResizeOwnerBoot(operations) {
     keyboard,
     pointerPreviews,
     pointerRelease,
+    web,
+  });
+}
+
+/** Dedicated selection journey: coherent pane → local selection/copy → app mouse → Web. */
+export async function runSelectionCopyAppMouseOwnerBoot(operations) {
+  const atBoundary = async (boundary, operation) => {
+    operations.onBoundary?.(boundary);
+    try {
+      return await operation();
+    } catch (error) {
+      if (error && typeof error === "object" && error.boundary) throw error;
+      const bounded = new Error(error instanceof Error ? error.message : String(error), {
+        cause: error,
+      });
+      bounded.boundary = boundary;
+      bounded.observation =
+        error?.observation ??
+        Object.freeze({ operation: "selection-copy-app-mouse-owner", stage: boundary });
+      throw bounded;
+    }
+  };
+  const namespace = await atBoundary("selection-namespace-ready", operations.createNamespace);
+  const daemon = await atBoundary("selection-daemon-ready", () =>
+    operations.startDaemon(namespace),
+  );
+  const identity = await atBoundary("selection-daemon-ready", () =>
+    operations.openWorkspace(namespace, daemon),
+  );
+  await atBoundary("selection-tui-build", () => operations.build(namespace));
+  const started = await atBoundary("selection-tui-started", () =>
+    operations.launch(namespace, daemon, identity),
+  );
+  const host = await atBoundary("selection-host-ready", () =>
+    operations.waitHost(namespace, daemon, identity, started),
+  );
+  const process = await atBoundary("selection-tui-coherent", () =>
+    operations.waitCoherent(namespace, daemon, identity, started, host),
+  );
+  const baseline = await atBoundary("selection-baseline", () =>
+    operations.proveBaseline(namespace, daemon, identity, process, host),
+  );
+  const selection = await atBoundary("selection-visible", () =>
+    operations.driveSelection(namespace, daemon, identity, process, baseline),
+  );
+  const copy = await atBoundary("selection-copy-proved", () =>
+    operations.driveCopy(namespace, daemon, identity, process, baseline, selection),
+  );
+  const appMouse = await atBoundary("application-mouse-forwarded", () =>
+    operations.driveAppMouse(namespace, daemon, identity, process, baseline, copy),
+  );
+  const localMode = await atBoundary("selection-local-mode-proved", () =>
+    operations.driveLocalMode(namespace, daemon, identity, process, baseline, appMouse),
+  );
+  const web = await atBoundary("selection-web-correlation", () =>
+    operations.startWeb(namespace, daemon, identity, process, baseline, localMode),
+  );
+  return Object.freeze({
+    namespace,
+    identity,
+    process,
+    host,
+    baseline,
+    selection,
+    copy,
+    appMouse,
+    localMode,
     web,
   });
 }

@@ -48,7 +48,7 @@ describe("TUI input readiness", () => {
     const keyboard = source.indexOf("useKeyboard((event) =>");
     const paste = source.indexOf("usePaste((event) =>", keyboard);
     const mounted = source.indexOf("onMount(() =>", paste);
-    const inputBarrier = source.indexOf("resolveReady()", mounted);
+    const inputBarrier = source.indexOf("clipboardReady.then(resolveReady, rejectReady)", mounted);
     const ready = source.indexOf('publishTuiInputReady("app")', inputBarrier);
 
     expect(keyboard).toBeGreaterThan(-1);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -116,4 +116,30 @@ test("testdrive CLI rejects a public target before starting any host", () => {
   );
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /--public-entry cannot be combined with --target/u);
+});
+
+test("targeted host launch preserves tmux injection while public clean env stays detached", () => {
+  const source = readFileSync(new URL("../tui-testdrive.mjs", import.meta.url), "utf8");
+  const environment = source.slice(
+    source.indexOf("const environment = ["),
+    source.indexOf(
+      "const command = buildTestdriveExecCommand",
+      source.indexOf("const environment = ["),
+    ),
+  );
+  assert.doesNotMatch(environment, /!publicEnvironment[^\n]*\["TMUX="\]/u);
+  assert.match(environment, /TMUX_IDE_TMUX_SOCKET_PATH/u);
+  assert.equal(
+    resolvePublicTestdriveEnvironment({
+      HOME: "/private/home",
+      XDG_CONFIG_HOME: "/private/home/.config",
+      TMUX_IDE_HOME: "/private/state",
+      TMUX_IDE_CONFIG: "/private/state/config.json",
+      TMUX_IDE_REGISTRY_DIR: "/private/registry",
+      TMUX_IDE_SETTINGS_DIR: "/private/settings",
+      TMUX_IDE_DAEMON_INFO_DIR: "/private/daemon",
+      TMUX_IDE_TMUX_SOCKET_PATH: "/private/target.sock",
+    }).TMUX,
+    "",
+  );
 });

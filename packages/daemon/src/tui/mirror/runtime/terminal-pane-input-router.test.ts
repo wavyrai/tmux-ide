@@ -11,6 +11,42 @@ function deferred<T>() {
 }
 
 describe("TerminalPaneInputRouter", () => {
+  test("current canonical pane selection is a no-op and input sends once", async () => {
+    const selected: string[] = [];
+    const sent: string[] = [];
+    const router = new TerminalPaneInputRouter<string>({
+      select: async (paneId) => (selected.push(paneId), true),
+      send: async (paneId, input) => void sent.push(`${paneId}:${input}`),
+      onFocusedPane: () => undefined,
+    });
+    router.adoptCanonicalPane("one");
+    router.selectPane("one");
+    router.selectPane("one");
+    await expect(router.sendInputToPane("one", "mouse-down")).resolves.toBe(true);
+    expect(selected).toEqual([]);
+    expect(sent).toEqual(["one:mouse-down"]);
+  });
+
+  test("duplicate pending same-pane selection reuses one receipt and one ordered send", async () => {
+    const selection = deferred<boolean>();
+    const selected: string[] = [];
+    const sent: string[] = [];
+    const router = new TerminalPaneInputRouter<string>({
+      select: (paneId) => (selected.push(paneId), selection.promise),
+      send: async (paneId, input) => void sent.push(`${paneId}:${input}`),
+      onFocusedPane: () => undefined,
+    });
+    router.adoptCanonicalPane("one");
+    router.selectPane("two");
+    const pending = router.sendInputToPane("two", "mouse-down");
+    router.selectPane("two");
+    expect(selected).toEqual(["two"]);
+    expect(sent).toEqual([]);
+    selection.resolve(true);
+    await expect(pending).resolves.toBe(true);
+    expect(sent).toEqual(["two:mouse-down"]);
+  });
+
   test("keeps the optimistic pane through stale layout and orders first input after selection", async () => {
     const selection = deferred<boolean>();
     const events: string[] = [];
@@ -53,6 +89,37 @@ describe("TerminalPaneInputRouter", () => {
     await expect(result).resolves.toBe(false);
     expect(router.focusedPane).toBe("one");
     expect(sent).toEqual([]);
+  });
+
+  test("pane-targeted input refuses an unrelated visible or pending owner", async () => {
+    const sent: string[] = [];
+    const router = new TerminalPaneInputRouter<string>({
+      select: async () => true,
+      send: async (paneId) => void sent.push(paneId),
+      onFocusedPane: () => undefined,
+    });
+    router.adoptCanonicalPane("one");
+    await expect(router.sendInputToPane("two", "wrong")).resolves.toBe(false);
+    await expect(router.sendInputToPane("one", "right")).resolves.toBe(true);
+    expect(sent).toEqual(["one"]);
+  });
+
+  test("pane-targeted app input waits for the exact pending pane receipt", async () => {
+    const selection = deferred<boolean>();
+    const sent: string[] = [];
+    const router = new TerminalPaneInputRouter<string>({
+      select: () => selection.promise,
+      send: async (paneId, input) => void sent.push(`${paneId}:${input}`),
+      onFocusedPane: () => undefined,
+    });
+    router.adoptCanonicalPane("one");
+    router.selectPane("two");
+    const pending = router.sendInputToPane("two", "mouse");
+    await Promise.resolve();
+    expect(sent).toEqual([]);
+    selection.resolve(true);
+    await expect(pending).resolves.toBe(true);
+    expect(sent).toEqual(["two:mouse"]);
   });
 
   test("retains an optimistic target through a stale layout after the selection receipt", async () => {

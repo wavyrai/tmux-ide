@@ -2,6 +2,7 @@
 import { MouseButtons } from "@opentui/core/testing";
 import { describe, expect, it } from "bun:test";
 import { batch, createSignal } from "solid-js";
+import type { TerminalReplicaSnapshot } from "@tmux-ide/contracts";
 
 import { registerPaneSurface, type TerminalPaneRenderSource } from "../pane-surface.tsx";
 import { createSemanticThemeSnapshot, createTerminalPaletteProjection } from "../theme.ts";
@@ -12,6 +13,8 @@ import { createApplicationShellBinding } from "./application-shell-binding.ts";
 import type { OpenTuiProductionWorkspaceClient } from "./open-tui-generation-host.ts";
 import type { PaneScopedTerminalAdapter } from "./pane-scoped-terminal-surface.tsx";
 import { ApplicationShellView, applicationShellKeyAction } from "./application-shell-view.tsx";
+import { applicationMousePointerIngressCapability } from "./application-terminal-selection-owner.ts";
+import { beginApplicationMouseIngress } from "./application-terminal-workspace.tsx";
 import {
   terminalPaneChromeLabel,
   terminalWindowStripSlotWidth,
@@ -104,9 +107,61 @@ function adapter(): PaneScopedTerminalAdapter {
   };
   return {
     renderSource,
+    paneSelectionSnapshot: () => null,
     paneVersion: () => 1,
     paneSourceEpoch: () => 1,
     subscribePaneVersion: () => () => undefined,
+  };
+}
+
+function selectionAdapter(): PaneScopedTerminalAdapter {
+  const defaultColor = { kind: "default" as const };
+  const snapshot: TerminalReplicaSnapshot = {
+    cols: 132,
+    rows: 41,
+    history: [],
+    grid: Array.from({ length: 41 }, (_, row) => ({
+      wrapped: false,
+      cells: Array.from({ length: 132 }, (_, column) => ({
+        grapheme: row === 0 ? ("SELECT_TARGET"[column] ?? " ") : " ",
+        width: 1 as const,
+        foreground: defaultColor,
+        background: defaultColor,
+        attributes: 0,
+      })),
+    })),
+    cursor: { x: 0, y: 0, hidden: true, style: "block", blink: false },
+    modes: {
+      alternateScreen: false,
+      applicationCursor: false,
+      applicationKeypad: false,
+      bracketedPaste: false,
+      insert: false,
+      origin: false,
+      wraparound: true,
+      mouseTracking: true,
+      mouseProtocol: "drag",
+      mouseEncoding: "sgr",
+      synchronizedOutput: false,
+    },
+    placements: [],
+    bootstrap: { kind: "authoritative-stream", hiddenState: "observed-from-start" },
+  };
+  const base = adapter();
+  return {
+    ...base,
+    paneSelectionSnapshot: (paneId) => (paneId === focusPaneId ? snapshot : null),
+    renderSource: {
+      ...base.renderSource,
+      blitPane: (_paneId, buffers, _width, height, _scroll, _fg, _bg, options) => {
+        buffers.char.fill(32);
+        buffers.attributes.fill(0);
+        for (const [index, char] of [..."SELECT_TARGET"].entries())
+          buffers.char[index] = char.codePointAt(0)!;
+        for (let row = 0; row < height; row += 1) options.dirtyRows.push(row);
+        return null;
+      },
+    },
   };
 }
 
@@ -345,6 +400,144 @@ describe("production ApplicationShellView", () => {
     await setup.mockMouse.click(28, 2, MouseButtons.LEFT);
     expect(selected).toEqual([focusPaneId]);
     setup.renderer.destroy();
+  });
+
+  it("routes exact SGR app mouse and keeps explicit select mode local in the real 160x44 shell", async () => {
+    registerPaneSurface();
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const palette = createTerminalPaletteProjection(theme);
+    const forwarded: Array<{ paneId: string; input: Record<string, unknown> }> = [];
+    const selected: string[] = [];
+    const copied: string[] = [];
+    let selectionKey: ((name: string) => boolean) | null = null;
+    const liveAdapter = selectionAdapter();
+    liveAdapter.renderSource.paneCanonicalIdentity = (paneId) =>
+      paneId === focusPaneId
+        ? {
+            generation: "11111111-1111-4111-8111-111111111111",
+            incarnation: "11111111-1111-4111-8111-111111111111:0",
+            revision: 1,
+            stateHash: "selection-state",
+            cols: 132,
+            rows: 41,
+            sourceEpoch: 1,
+            historyTrim: 0,
+          }
+        : null;
+    const connection = {};
+    const client = {};
+    let ingressOwnerCalls = 0;
+    let ingressClockCalls = 0;
+    const diagnosticsOffIngress = applicationMousePointerIngressCapability(false, () => {
+      ingressOwnerCalls += 1;
+      return null;
+    });
+    expect(
+      beginApplicationMouseIngress(diagnosticsOffIngress, () => {
+        ingressClockCalls += 1;
+        return 1;
+      }),
+    ).toBeNull();
+    const applicationIngress = applicationMousePointerIngressCapability(true, (input) => ({
+      ...input,
+      gestureId: "00000000-0000-4000-8000-000000000001",
+    }));
+    const setup = await renderForTest(
+      () => (
+        <ApplicationShellView
+          dimensions={() => ({ width: 160, height: 44 })}
+          surface={() => "terminals"}
+          semantic={() => semantic()}
+          generationStatus={() => "live"}
+          sessions={["main"]}
+          selectedSession={() => 0}
+          bootstrapNote={() => null}
+          paletteOpen={() => false}
+          terminalRendererSource={() => ({ adapter: liveAdapter, rendererEpoch: 1 })}
+          terminalGestureRuntime={() => ({
+            daemonGeneration: "22222222-2222-4222-8222-222222222222",
+            clientGeneration: 1,
+            connection,
+            client,
+            adapter: liveAdapter,
+            rendererEpoch: 1,
+          })}
+          onApplicationMousePointerIngress={applicationIngress}
+          layout={focusLayout}
+          focusedPane={() => focusPaneId}
+          rendererFocused={() => true}
+          theme={theme}
+          palette={palette}
+          onOpenSurface={() => undefined}
+          onOpenSession={() => undefined}
+          onSetPaletteOpen={() => undefined}
+          onSelectPane={(paneId) => selected.push(paneId)}
+          onResizePreview={() => undefined}
+          onResizePane={() => undefined}
+          onTerminalInput={(paneId, input) => forwarded.push({ paneId, input: { ...input } })}
+          onCopyText={(text) => (copied.push(text), true)}
+          onSelectionKeyOwner={(handle) => {
+            selectionKey = handle;
+          }}
+        />
+      ),
+      { width: 160, height: 44 },
+    );
+    try {
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("SELECT_TARGET");
+
+      await setup.mockMouse.pressDown(29, 3, MouseButtons.LEFT);
+      await setup.mockMouse.release(159, 2, MouseButtons.LEFT);
+      expect(forwarded.map(({ paneId, input }) => ({ paneId, data: input.data }))).toEqual([
+        { paneId: focusPaneId, data: "\u001b[<0;2;1M" },
+        { paneId: focusPaneId, data: "\u001b[<0;132;1m" },
+      ]);
+      expect(ingressOwnerCalls).toBe(0);
+      expect(ingressClockCalls).toBe(0);
+      expect(forwarded.map(({ input }) => input)).toEqual([
+        expect.objectContaining({
+          kind: "application-mouse",
+          action: "down",
+          column: 1,
+          row: 0,
+          button: 0,
+          modifiers: { shift: false, alt: false, ctrl: false },
+          ingress: expect.objectContaining({
+            gestureId: "00000000-0000-4000-8000-000000000001",
+            action: "down",
+          }),
+        }),
+        expect.objectContaining({
+          kind: "application-mouse",
+          action: "up",
+          column: 131,
+          row: 0,
+          button: 0,
+          ingress: expect.objectContaining({
+            gestureId: "00000000-0000-4000-8000-000000000001",
+            action: "up",
+          }),
+        }),
+      ]);
+      expect(copied).toEqual([]);
+      expect(selected).toEqual([focusPaneId]);
+
+      await setup.mockMouse.click(29, 3, MouseButtons.RIGHT);
+      await setup.renderOnce();
+      expect(setup.captureCharFrame()).toContain("Select text…");
+      expect(selectionKey?.("enter")).toBe(true);
+      await setup.mockMouse.pressDown(29, 3, MouseButtons.LEFT);
+      await setup.mockMouse.moveTo(34, 3);
+      await setup.renderOnce();
+      await setup.mockMouse.release(34, 3, MouseButtons.LEFT);
+      await setup.renderOnce();
+      expect(forwarded).toHaveLength(2);
+      expect(copied).toEqual(["ELECT_"]);
+      expect(setup.captureCharFrame()).not.toContain("⧉ select");
+    } finally {
+      setup.renderer.destroy();
+    }
   });
 
   it("projects vertical and horizontal pane resize guides through the real 160x44 shell", async () => {

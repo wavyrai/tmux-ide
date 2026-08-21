@@ -54,6 +54,7 @@ import {
   runFirstKeyPasteOwnerBoot,
   runFocusOwnerBoot,
   runKeyboardPointerResizeOwnerBoot,
+  runSelectionCopyAppMouseOwnerBoot,
   runWindowLifecycleOwnerBoot,
   runProductJourneyPlan,
   settleInternalProductRigCleanup,
@@ -146,21 +147,21 @@ test("golden registry enables only accepted direct journey executors", () => {
     golden.map(({ id }) => id),
     expected,
   );
-  assert.ok(golden.slice(0, 6).every(({ implementation }) => implementation === "implemented"));
-  assert.ok(golden.slice(6).every(({ implementation }) => implementation === "pending"));
+  assert.ok(golden.slice(0, 7).every(({ implementation }) => implementation === "implemented"));
+  assert.ok(golden.slice(7).every(({ implementation }) => implementation === "pending"));
   assert.deepEqual(auditProductJourneyScope(), {
     complete: false,
     declarationComplete: true,
     executableComplete: false,
     missing: [],
-    pendingJourneyIds: expected.slice(6),
+    pendingJourneyIds: expected.slice(7),
   });
   assert.deepEqual(auditProductJourneyScope(golden.slice(1)), {
     complete: false,
     declarationComplete: false,
     executableComplete: false,
     missing: ["configless", "cold-start"],
-    pendingJourneyIds: expected.slice(6),
+    pendingJourneyIds: expected.slice(7),
   });
 });
 
@@ -317,6 +318,55 @@ test("resize owner preserves exact keyboard preview release Web ordering and bou
   }
 });
 
+test("selection owner preserves exact local copy app-mouse local-mode Web ordering", async () => {
+  const calls = [];
+  const operation = (name) => async () => (calls.push(name), Object.freeze({ name }));
+  await runSelectionCopyAppMouseOwnerBoot({
+    onBoundary: (boundary) => calls.push(`boundary:${boundary}`),
+    createNamespace: operation("namespace"),
+    startDaemon: operation("daemon"),
+    openWorkspace: operation("workspace"),
+    build: operation("build"),
+    launch: operation("start"),
+    waitHost: operation("host"),
+    waitCoherent: operation("coherent"),
+    proveBaseline: operation("baseline"),
+    driveSelection: operation("selection"),
+    driveCopy: operation("copy"),
+    driveAppMouse: operation("app-mouse"),
+    driveLocalMode: operation("local-mode"),
+    startWeb: operation("web"),
+  });
+  assert.deepEqual(calls, [
+    "boundary:selection-namespace-ready",
+    "namespace",
+    "boundary:selection-daemon-ready",
+    "daemon",
+    "boundary:selection-daemon-ready",
+    "workspace",
+    "boundary:selection-tui-build",
+    "build",
+    "boundary:selection-tui-started",
+    "start",
+    "boundary:selection-host-ready",
+    "host",
+    "boundary:selection-tui-coherent",
+    "coherent",
+    "boundary:selection-baseline",
+    "baseline",
+    "boundary:selection-visible",
+    "selection",
+    "boundary:selection-copy-proved",
+    "copy",
+    "boundary:application-mouse-forwarded",
+    "app-mouse",
+    "boundary:selection-local-mode-proved",
+    "local-mode",
+    "boundary:selection-web-correlation",
+    "web",
+  ]);
+});
+
 test("window lifecycle owner preserves the bounded owned-action predicate at rename boundary", async () => {
   const observation = Object.freeze({
     version: 1,
@@ -461,6 +511,18 @@ test("diagnose options select and repeat the executable journey deterministicall
       parseProductDiagnoseOptions(["--journey", "coherent-first-pane", "--repeat", "1", "--json"]),
     ).map(({ journey, repetition, variant }) => [journey.id, repetition, variant]),
     [["coherent-first-pane", 1, null]],
+  );
+  assert.deepEqual(
+    resolveProductJourneyPlan(
+      parseProductDiagnoseOptions([
+        "--journey",
+        "selection-copy-app-mouse",
+        "--repeat",
+        "1",
+        "--json",
+      ]),
+    ).map(({ journey, repetition, variant }) => [journey.id, repetition, variant]),
+    [["selection-copy-app-mouse", 1, null]],
   );
 });
 
@@ -1250,13 +1312,13 @@ test("pending, all, unknown, and invalid repetition selections fail before orche
   assert.throws(
     () =>
       resolveProductJourneyPlan(
-        parseProductDiagnoseOptions(["--journey", "selection-copy-app-mouse"]),
+        parseProductDiagnoseOptions(["--journey", "ansi-cursor-alt-screen"]),
       ),
-    /not implemented: selection-copy-app-mouse; missing evidence is a failure/u,
+    /not implemented: ansi-cursor-alt-screen; missing evidence is a failure/u,
   );
   assert.throws(
     () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "all"])),
-    /not implemented: selection-copy-app-mouse/u,
+    /not implemented: ansi-cursor-alt-screen/u,
   );
   assert.throws(
     () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "imaginary"])),
@@ -1281,20 +1343,14 @@ test("pending, all, unknown, and invalid repetition selections fail before orche
   );
 });
 
-test("CLI rejects a pending journey before creating ProductRig state", () => {
+test("CLI rejects the next pending journey before creating ProductRig state", () => {
   const temporary = mkdtempSync(join(tmpdir(), "product-rig-cli-plan-"));
   try {
     const rigRoot = join(temporary, "rig");
     const diagnosticRoot = join(temporary, "diagnostics");
     const result = spawnSync(
       process.execPath,
-      [
-        "scripts/product-test-rig.mjs",
-        "diagnose",
-        "--journey",
-        "selection-copy-app-mouse",
-        "--json",
-      ],
+      ["scripts/product-test-rig.mjs", "diagnose", "--journey", "ansi-cursor-alt-screen", "--json"],
       {
         cwd: process.cwd(),
         encoding: "utf8",
@@ -1308,7 +1364,7 @@ test("CLI rejects a pending journey before creating ProductRig state", () => {
     assert.equal(result.status, 1);
     assert.match(
       result.stderr,
-      /not implemented: selection-copy-app-mouse; missing evidence is a failure/u,
+      /not implemented: ansi-cursor-alt-screen; missing evidence is a failure/u,
     );
     assert.equal(existsSync(join(rigRoot, "state.json")), false);
     assert.equal(existsSync(diagnosticRoot), false);

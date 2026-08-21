@@ -7,8 +7,13 @@ import { registerPaneSurface, type TerminalPaneRenderSource } from "../pane-surf
 import { createSemanticThemeSnapshot, createTerminalPaletteProjection } from "../theme.ts";
 import { renderForTest } from "../testing/renderer-harness.test.ts";
 import type { OpenTuiWorkspaceLayoutSnapshot } from "../open-tui-workspace-runtime-port.ts";
-import { ApplicationTerminalWorkspace } from "./application-terminal-workspace.tsx";
+import {
+  ApplicationTerminalWorkspace,
+  beginApplicationMouseIngress,
+  safeApplicationMouseIngressMicros,
+} from "./application-terminal-workspace.tsx";
 import type { PaneScopedTerminalAdapter } from "./pane-scoped-terminal-surface.tsx";
+import type { TerminalReplicaSnapshot } from "@tmux-ide/contracts";
 
 function layout(): OpenTuiWorkspaceLayoutSnapshot {
   const current = {
@@ -50,10 +55,31 @@ function adapter(
     paneVersion: () => 1,
     paneSourceEpoch: () => 1,
     subscribePaneVersion: () => () => undefined,
+    paneSelectionSnapshot: () => null,
   };
 }
 
 describe("ApplicationTerminalWorkspace", () => {
+  it("samples application-mouse ingress fail-open and only when enabled", () => {
+    let calls = 0;
+    expect(
+      safeApplicationMouseIngressMicros(() => {
+        calls += 1;
+        return 12.345;
+      }),
+    ).toBe(12_345);
+    expect(calls).toBe(1);
+    expect(safeApplicationMouseIngressMicros(() => Number.NaN)).toBeNull();
+    expect(
+      safeApplicationMouseIngressMicros(() => {
+        throw new Error("diagnostic clock failed");
+      }),
+    ).toBeNull();
+    const disabledClock = () => {
+      throw new Error("disabled clock must not be sampled");
+    };
+    expect(beginApplicationMouseIngress(undefined, disabledClock)).toBeNull();
+  });
   it("retains inactive window subscriptions without waking their hidden surface", async () => {
     registerPaneSurface();
     const theme = createSemanticThemeSnapshot({ mode: "dark" });
@@ -110,6 +136,7 @@ describe("ApplicationTerminalWorkspace", () => {
           listeners.delete(paneId);
         };
       },
+      paneSelectionSnapshot: () => null,
     };
     let workspaceLayout!: Accessor<OpenTuiWorkspaceLayoutSnapshot>;
     let setWorkspaceLayout!: Setter<OpenTuiWorkspaceLayoutSnapshot>;
@@ -251,6 +278,7 @@ describe("ApplicationTerminalWorkspace", () => {
           listeners.delete(paneId);
         };
       },
+      paneSelectionSnapshot: () => null,
     };
     const setup = await renderForTest(
       () => (
@@ -324,6 +352,7 @@ describe("ApplicationTerminalWorkspace", () => {
         listeners.set(paneId, listener);
         return () => listeners.delete(paneId);
       },
+      paneSelectionSnapshot: () => null,
     };
     const twoPaneLayout = layout();
     const current = {
@@ -439,6 +468,150 @@ describe("ApplicationTerminalWorkspace", () => {
       axis: "cols",
       cells: 12,
     });
+    setup.renderer.destroy();
+  });
+
+  it("forwards app mouse until explicit select mode, then paints and copies the local range", async () => {
+    registerPaneSurface();
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const palette = createTerminalPaletteProjection(theme);
+    const defaultColor = { kind: "default" as const };
+    const replica: TerminalReplicaSnapshot = {
+      cols: 10,
+      rows: 8,
+      history: [],
+      grid: Array.from({ length: 8 }, (_, row) => ({
+        wrapped: false,
+        cells: Array.from({ length: 10 }, (_, column) => ({
+          grapheme: row === 0 ? ("selection!"[column] ?? " ") : " ",
+          width: 1 as const,
+          foreground: defaultColor,
+          background: defaultColor,
+          attributes: 0,
+        })),
+      })),
+      cursor: { x: 0, y: 0, hidden: true, style: "block", blink: false },
+      modes: {
+        alternateScreen: false,
+        applicationCursor: false,
+        applicationKeypad: false,
+        bracketedPaste: false,
+        insert: false,
+        origin: false,
+        wraparound: true,
+        mouseTracking: true,
+        mouseProtocol: "drag",
+        mouseEncoding: "sgr",
+        synchronizedOutput: false,
+      },
+      placements: [],
+      bootstrap: { kind: "authoritative-stream", hiddenState: "observed-from-start" },
+    };
+    const forwarded: string[] = [];
+    const copied: Array<{ text: string; bytes: number }> = [];
+    let handleSelectionKey: ((name: string) => boolean) | null = null;
+    let copyCurrent: (() => boolean) | null = null;
+    let canonicalRevision = 1;
+    const liveAdapter: PaneScopedTerminalAdapter = {
+      ...adapter({ "pane.a": "s", "pane.b": "B", "pane.c": "C" }, []),
+      paneSelectionSnapshot: (paneId) => (paneId === "pane.a" ? replica : null),
+    };
+    liveAdapter.renderSource.paneCanonicalIdentity = (paneId) =>
+      paneId === "pane.a"
+        ? {
+            generation: "11111111-1111-4111-8111-111111111111",
+            incarnation: "11111111-1111-4111-8111-111111111111:0",
+            revision: canonicalRevision,
+            stateHash: "canonical-a",
+            cols: replica.cols,
+            rows: replica.rows,
+            sourceEpoch: 1,
+            historyTrim: 0,
+          }
+        : null;
+    let connection = {};
+    let client = {};
+    const setup = await renderForTest(
+      () => (
+        <ApplicationTerminalWorkspace
+          layout={layout}
+          adapter={liveAdapter}
+          rendererEpoch={1}
+          terminalGestureRuntime={() => ({
+            daemonGeneration: "22222222-2222-4222-8222-222222222222",
+            clientGeneration: 1,
+            connection,
+            client,
+            adapter: liveAdapter,
+            rendererEpoch: 1,
+          })}
+          width={30}
+          height={9}
+          focusedPane="pane.a"
+          theme={theme}
+          palette={palette}
+          onSelectPane={() => undefined}
+          onTerminalInput={(_paneId, input) => forwarded.push(input.data)}
+          onCopyText={(text, evidence) => {
+            copied.push({ text, bytes: evidence.bytes });
+            return true;
+          }}
+          onSelectionKeyOwner={(handle) => {
+            handleSelectionKey = handle;
+          }}
+          onSelectionCopyOwner={(copy) => {
+            copyCurrent = copy;
+          }}
+        />
+      ),
+      { width: 30, height: 11 },
+    );
+    await setup.renderOnce();
+
+    await setup.mockMouse.click(2, 3, MouseButtons.LEFT);
+    expect(forwarded).toEqual(["\u001b[<0;3;1M", "\u001b[<0;3;1m"]);
+
+    forwarded.length = 0;
+    await setup.mockMouse.pressDown(2, 3, MouseButtons.LEFT);
+    connection = {};
+    await setup.mockMouse.release(3, 3, MouseButtons.LEFT);
+    expect(forwarded).toEqual(["\u001b[<0;3;1M"]);
+    connection = {};
+
+    await setup.mockMouse.click(2, 3, MouseButtons.RIGHT);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("Select text…");
+    expect(handleSelectionKey?.("enter")).toBe(true);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("select");
+
+    await setup.mockMouse.pressDown(1, 3, MouseButtons.LEFT);
+    await setup.mockMouse.moveTo(4, 3);
+    client = {};
+    await setup.mockMouse.release(4, 3, MouseButtons.LEFT);
+    expect(copied).toEqual([]);
+
+    await setup.mockMouse.click(2, 3, MouseButtons.RIGHT);
+    expect(handleSelectionKey?.("enter")).toBe(true);
+
+    forwarded.length = 0;
+    await setup.mockMouse.pressDown(1, 3, MouseButtons.LEFT);
+    await setup.mockMouse.moveTo(4, 3);
+    await setup.renderOnce();
+    await setup.mockMouse.release(4, 3, MouseButtons.LEFT);
+    await Promise.resolve();
+    await setup.renderOnce();
+    expect(forwarded).toEqual([]);
+    expect(copied).toEqual([{ text: "elec", bytes: 4 }]);
+    replica.grid[0]!.cells[1]!.grapheme = "X";
+    expect(copyCurrent?.()).toBe(true);
+    expect(copied).toEqual([
+      { text: "elec", bytes: 4 },
+      { text: "elec", bytes: 4 },
+    ]);
+    canonicalRevision += 1;
+    expect(copyCurrent?.()).toBe(false);
+    expect(copied).toHaveLength(2);
     setup.renderer.destroy();
   });
 });

@@ -81,8 +81,19 @@ export interface ApplicationTerminalInteractionController {
   selectPane(paneId: string): void;
   sendInput(
     input: SessionRuntimeTerminalInput,
-    parserOrigin?: Pick<TuiTerminalInputOrigin, "origin" | "payload">,
+    parserOrigin?: Omit<
+      TuiTerminalInputOrigin,
+      "semanticPaneId" | "generation" | "incarnation" | "revision" | "stateHash"
+    >,
   ): Promise<void>;
+  sendInputToPane(
+    paneId: string,
+    input: SessionRuntimeTerminalInput,
+    parserOrigin?: Omit<
+      TuiTerminalInputOrigin,
+      "semanticPaneId" | "generation" | "incarnation" | "revision" | "stateHash"
+    >,
+  ): Promise<boolean>;
   previewPaneResize(preview: ApplicationPaneResizePreview): void;
   beginResizePointerIngress(input: {
     readonly action: "down" | "drag" | "up";
@@ -576,7 +587,10 @@ export function createApplicationTerminalInteractionController(
 
   const paneInput = new TerminalPaneInputRouter<{
     readonly input: SessionRuntimeTerminalInput;
-    readonly parserOrigin?: Pick<TuiTerminalInputOrigin, "origin" | "payload">;
+    readonly parserOrigin?: Omit<
+      TuiTerminalInputOrigin,
+      "semanticPaneId" | "generation" | "incarnation" | "revision" | "stateHash"
+    >;
   }>({
     select: async (paneId) => {
       const expected = liveSelectionTarget();
@@ -874,6 +888,8 @@ export function createApplicationTerminalInteractionController(
     sendInput: async (input, parserOrigin) => {
       await paneInput.sendInput({ input, parserOrigin });
     },
+    sendInputToPane: (paneId, input, parserOrigin) =>
+      paneInput.sendInputToPane(paneId, { input, parserOrigin }),
     beginResizePointerIngress(input) {
       if (!options.diagnosticsEnabled) return null;
       const atMicros = diagnosticNowMicros();

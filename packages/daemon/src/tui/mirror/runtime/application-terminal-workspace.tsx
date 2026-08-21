@@ -1,5 +1,13 @@
 /* @jsxImportSource @opentui/solid */
-import { For, Show, createMemo, createRenderEffect, createSignal, type Accessor } from "solid-js";
+import {
+  For,
+  Show,
+  createMemo,
+  createRenderEffect,
+  createSignal,
+  onCleanup,
+  type Accessor,
+} from "solid-js";
 
 import type { OpenTuiWorkspaceLayoutSnapshot } from "../open-tui-workspace-runtime-port.ts";
 import type { SemanticThemeSnapshot, TerminalPaletteProjection } from "../theme.ts";
@@ -9,12 +17,24 @@ import { PaneScopedTerminalSurface } from "./pane-scoped-terminal-surface.tsx";
 import { projectOpenTuiPaneFrames, type OpenTuiPaneFrame } from "./terminal-layout-projection.ts";
 import { MIN_PANE, type ResizeGuideRect } from "../resize-model.ts";
 import { nativePaneResizeCells } from "./pane-resize-geometry.ts";
+import {
+  extractTerminalSelection,
+  terminalMouseActionSupported,
+  terminalGestureLeaseMatches,
+  terminalSelectionCell,
+  terminalSgrMouse,
+  type TerminalGestureLease,
+  type TerminalGestureRuntimeIdentity,
+  type TerminalSelectionRange,
+} from "./terminal-selection.ts";
 
 type WorkspaceMouseEvent = {
   readonly type: string;
   readonly button?: number;
   readonly x: number;
   readonly y: number;
+  readonly modifiers?: { readonly shift: boolean; readonly alt: boolean; readonly ctrl: boolean };
+  readonly scroll?: { readonly direction?: "up" | "down" | "left" | "right" };
   stopPropagation?: () => void;
 };
 
@@ -37,6 +57,14 @@ export interface ApplicationResizePointerIngress {
   readonly atMicros: number;
 }
 
+export interface ApplicationMousePointerIngress {
+  readonly gestureId: string;
+  readonly action: "down" | "drag" | "move" | "up" | "wheel-up" | "wheel-down";
+  readonly x: number;
+  readonly y: number;
+  readonly atMicros: number;
+}
+
 interface ApplicationPaneSeparator {
   readonly axis: "x" | "y";
   readonly position: number;
@@ -45,6 +73,31 @@ interface ApplicationPaneSeparator {
   readonly paneId: string;
   readonly initialCells: number;
   readonly siblingCells: number;
+}
+
+export function safeApplicationMouseIngressMicros(
+  now: () => number = () => performance.now(),
+): number | null {
+  try {
+    const atMicros = Math.floor(now() * 1_000);
+    return Number.isSafeInteger(atMicros) && atMicros >= 0 ? atMicros : null;
+  } catch {
+    return null;
+  }
+}
+
+export function beginApplicationMouseIngress(
+  ingress: ApplicationTerminalWorkspaceProps["onApplicationMousePointerIngress"],
+  now: () => number = () => performance.now(),
+):
+  | ((
+      input: Omit<Parameters<NonNullable<typeof ingress>>[0], "atMicros">,
+    ) => ApplicationMousePointerIngress | null)
+  | null {
+  if (!ingress) return null;
+  const atMicros = safeApplicationMouseIngressMicros(now);
+  if (atMicros === null) return () => null;
+  return (input) => ingress({ ...input, atMicros }) ?? null;
 }
 
 export interface ApplicationTerminalWorkspaceProps {
@@ -74,6 +127,37 @@ export interface ApplicationTerminalWorkspaceProps {
     readonly y: number;
     readonly gestureId: string | null;
   }) => ApplicationResizePointerIngress | null;
+  readonly onTerminalInput?: (
+    paneId: string,
+    input:
+      | { readonly kind: "text"; readonly data: string }
+      | Readonly<{
+          kind: "application-mouse";
+          data: string;
+          action: "down" | "drag" | "move" | "up" | "wheel-up" | "wheel-down";
+          column: number;
+          row: number;
+          button: number | null;
+          modifiers: Readonly<{ shift: boolean; alt: boolean; ctrl: boolean }>;
+          ingress: ApplicationMousePointerIngress | null;
+        }>,
+  ) => void;
+  readonly onApplicationMousePointerIngress?: (
+    input: Omit<ApplicationMousePointerIngress, "gestureId">,
+  ) => ApplicationMousePointerIngress | null;
+  /** Exact live generation owner used to fence multi-event pointer/copy gestures. */
+  readonly terminalGestureRuntime?: Accessor<TerminalGestureRuntimeIdentity | null>;
+  readonly onCopyText?: (
+    text: string,
+    evidence: Readonly<{
+      semanticPaneId: string;
+      bytes: number;
+      start: Readonly<{ row: number; col: number }>;
+      end: Readonly<{ row: number; col: number }>;
+    }>,
+  ) => boolean;
+  readonly onSelectionCopyOwner?: (copy: (() => boolean) | null) => void;
+  readonly onSelectionKeyOwner?: (handle: ((name: string) => boolean) | null) => void;
   readonly onWindowPresented?: (
     semanticWindowId: string,
     paneId: string,
@@ -321,6 +405,28 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     null,
   );
   const [resizePreview, setResizePreview] = createSignal<ApplicationPaneResizePreview | null>(null);
+  const [selection, setSelection] = createSignal<TerminalSelectionRange | null>(null);
+  const [committedSelection, setCommittedSelection] = createSignal<Readonly<{
+    range: TerminalSelectionRange;
+    text: string;
+    bytes: number;
+    lease: TerminalGestureLease;
+  }> | null>(null);
+  const [selectModePane, setSelectModePane] = createSignal<string | null>(null);
+  const [selectMenuPane, setSelectMenuPane] = createSignal<string | null>(null);
+  let selecting: {
+    readonly paneId: string;
+    readonly anchor: TerminalSelectionRange["start"];
+    readonly frame: OpenTuiPaneFrame;
+    readonly lease: TerminalGestureLease;
+    moved: boolean;
+  } | null = null;
+  let forwardedPointer: {
+    readonly paneId: string;
+    readonly button: number;
+    readonly frame: OpenTuiPaneFrame;
+    lease: TerminalGestureLease;
+  } | null = null;
   let drag: {
     readonly separator: ApplicationPaneSeparator;
     readonly origin: number;
@@ -348,7 +454,236 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
   // remains a separate workspace chrome overlay.
   const terminalSurfaceFocused = (frame: OpenTuiPaneFrame): boolean =>
     (props.rendererFocused ?? props.focusedPane !== null) && frame.active;
+  const paneContentAt = (
+    point: Readonly<{ x: number; y: number }>,
+  ): Readonly<{
+    frame: OpenTuiPaneFrame & { readonly visible: boolean };
+    col: number;
+    row: number;
+  }> | null => {
+    const frame = visibleFrames().find(
+      (candidate) =>
+        point.x >= candidate.left &&
+        point.x < candidate.left + candidate.width &&
+        point.y >= candidate.top + 1 &&
+        point.y < candidate.top + 1 + candidate.contentHeight,
+    );
+    return frame
+      ? Object.freeze({
+          frame,
+          col: point.x - frame.left,
+          row: point.y - frame.top - 1,
+        })
+      : null;
+  };
+  const clampedPaneCell = (
+    frame: OpenTuiPaneFrame,
+    snapshot: ReturnType<PaneScopedTerminalAdapter["paneSelectionSnapshot"]>,
+    point: Readonly<{ x: number; y: number }>,
+  ): Readonly<{ col: number; row: number }> | null => {
+    if (!snapshot || snapshot.cols < 1 || snapshot.rows < 1) return null;
+    const cols = Math.min(snapshot.cols, frame.width);
+    const rows = Math.min(snapshot.rows, frame.contentHeight);
+    if (cols < 1 || rows < 1) return null;
+    return Object.freeze({
+      col: Math.max(0, Math.min(cols - 1, point.x - frame.left)),
+      row: Math.max(0, Math.min(rows - 1, point.y - frame.top - 1)),
+    });
+  };
+  const captureGestureLease = (
+    paneId: string,
+    frame: OpenTuiPaneFrame,
+  ): TerminalGestureLease | null => {
+    const runtime = props.terminalGestureRuntime?.();
+    const identity = props.adapter.renderSource.paneCanonicalIdentity?.(paneId);
+    const snapshot = props.adapter.paneSelectionSnapshot(paneId);
+    if (
+      !runtime ||
+      runtime.adapter !== props.adapter ||
+      runtime.rendererEpoch !== props.rendererEpoch ||
+      !identity ||
+      !Number.isSafeInteger(identity.historyTrim) ||
+      !snapshot ||
+      identity.cols !== snapshot.cols ||
+      identity.rows !== snapshot.rows
+    )
+      return null;
+    return Object.freeze({
+      paneId,
+      runtime,
+      sourceEpoch: identity.sourceEpoch,
+      canonicalIdentity: Object.freeze({ ...identity }),
+      snapshot,
+      historyLength: snapshot.history.length,
+      historyTrim: identity.historyTrim!,
+      mouseProtocol: snapshot.modes.mouseProtocol,
+      mouseEncoding: snapshot.modes.mouseEncoding,
+      frame: Object.freeze({
+        left: frame.left,
+        top: frame.top,
+        width: frame.width,
+        height: frame.height,
+        contentHeight: frame.contentHeight,
+      }),
+    });
+  };
+  const gestureLeaseCurrent = (lease: TerminalGestureLease): boolean => {
+    const runtime = props.terminalGestureRuntime?.();
+    const identity = props.adapter.renderSource.paneCanonicalIdentity?.(lease.paneId);
+    const snapshot = props.adapter.paneSelectionSnapshot(lease.paneId);
+    const frame = projectedFrames().find(
+      ({ paneId, visible }) => paneId === lease.paneId && visible,
+    );
+    return terminalGestureLeaseMatches(lease, {
+      runtime: runtime ?? null,
+      identity: identity ?? null,
+      snapshot,
+      frame: frame ?? null,
+    });
+  };
+  const refreshApplicationMouseLease = (
+    lease: TerminalGestureLease,
+  ): TerminalGestureLease | null => {
+    const frame = projectedFrames().find(
+      ({ paneId, visible }) => paneId === lease.paneId && visible,
+    );
+    const next = frame ? captureGestureLease(lease.paneId, frame) : null;
+    return next &&
+      next.runtime.daemonGeneration === lease.runtime.daemonGeneration &&
+      next.runtime.clientGeneration === lease.runtime.clientGeneration &&
+      next.runtime.connection === lease.runtime.connection &&
+      next.runtime.client === lease.runtime.client &&
+      next.runtime.adapter === lease.runtime.adapter &&
+      next.runtime.rendererEpoch === lease.runtime.rendererEpoch &&
+      next.sourceEpoch === lease.sourceEpoch &&
+      next.canonicalIdentity.generation === lease.canonicalIdentity.generation &&
+      next.canonicalIdentity.incarnation === lease.canonicalIdentity.incarnation &&
+      next.canonicalIdentity.cols === lease.canonicalIdentity.cols &&
+      next.canonicalIdentity.rows === lease.canonicalIdentity.rows &&
+      next.historyLength === lease.historyLength &&
+      next.historyTrim === lease.historyTrim &&
+      next.mouseProtocol === lease.mouseProtocol &&
+      next.mouseEncoding === lease.mouseEncoding &&
+      next.frame.left === lease.frame.left &&
+      next.frame.top === lease.frame.top &&
+      next.frame.width === lease.frame.width &&
+      next.frame.height === lease.frame.height &&
+      next.frame.contentHeight === lease.frame.contentHeight
+      ? next
+      : null;
+  };
+  const forwardMouse = (
+    lease: TerminalGestureLease,
+    action: "down" | "drag" | "move" | "up" | "wheel-up" | "wheel-down",
+    cell: Readonly<{ col: number; row: number }>,
+    button: number | undefined,
+    modifiers: WorkspaceMouseEvent["modifiers"],
+    ingress: ApplicationMousePointerIngress | null,
+  ): boolean => {
+    if (!gestureLeaseCurrent(lease)) return false;
+    const snapshot = lease.snapshot;
+    if (!terminalMouseActionSupported(snapshot, action)) return false;
+    const data = terminalSgrMouse({
+      action,
+      column: cell.col,
+      row: cell.row,
+      ...(button === undefined ? {} : { button }),
+      ...modifiers,
+    });
+    if (!data) return false;
+    props.onTerminalInput?.(lease.paneId, {
+      kind: "application-mouse",
+      data,
+      action,
+      column: cell.col,
+      row: cell.row,
+      button: button ?? null,
+      modifiers: Object.freeze({
+        shift: modifiers?.shift === true,
+        alt: modifiers?.alt === true,
+        ctrl: modifiers?.ctrl === true,
+      }),
+      ingress,
+    });
+    return true;
+  };
+  const copySelection = (): boolean => {
+    const committed = committedSelection();
+    if (!committed || !gestureLeaseCurrent(committed.lease)) return false;
+    return (
+      props.onCopyText?.(committed.text, {
+        semanticPaneId: committed.range.paneId,
+        bytes: committed.bytes,
+        start: committed.range.start,
+        end: committed.range.end,
+      }) === true
+    );
+  };
+  createRenderEffect(() => {
+    props.terminalGestureRuntime?.();
+    projectedFrames();
+    for (const paneId of retainedPaneIds()) props.adapter.paneVersion(paneId);
+    if (selecting && !gestureLeaseCurrent(selecting.lease)) {
+      selecting = null;
+      setSelection(null);
+      setCommittedSelection(null);
+      setSelectModePane(null);
+    }
+    if (forwardedPointer) {
+      const refreshed = refreshApplicationMouseLease(forwardedPointer.lease);
+      if (refreshed) forwardedPointer.lease = refreshed;
+      else forwardedPointer = null;
+    }
+    const committed = committedSelection();
+    if (committed && !gestureLeaseCurrent(committed.lease)) {
+      setSelection(null);
+      setCommittedSelection(null);
+    }
+  });
+  props.onSelectionCopyOwner?.(copySelection);
+  const handleSelectionKey = (name: string): boolean => {
+    const paneId = selectMenuPane();
+    if (!paneId) return false;
+    if (name === "escape") setSelectMenuPane(null);
+    else if (name === "return" || name === "enter") {
+      setSelectMenuPane(null);
+      setSelectModePane(paneId);
+      setSelection(null);
+      setCommittedSelection(null);
+    }
+    return true;
+  };
+  props.onSelectionKeyOwner?.(handleSelectionKey);
+  onCleanup(() => {
+    props.onSelectionCopyOwner?.(null);
+    props.onSelectionKeyOwner?.(null);
+  });
   const routePointer = (event: WorkspaceMouseEvent): void => {
+    const applicationAction =
+      event.type === "down"
+        ? "down"
+        : event.type === "drag"
+          ? "drag"
+          : event.type === "move" || event.type === "over"
+            ? "move"
+            : event.type === "up" || event.type === "drag-end" || event.type === "drop"
+              ? "up"
+              : event.type === "scroll" && event.scroll?.direction === "up"
+                ? "wheel-up"
+                : event.type === "scroll" && event.scroll?.direction === "down"
+                  ? "wheel-down"
+                  : null;
+    const applicationIngressStart = beginApplicationMouseIngress(
+      props.onApplicationMousePointerIngress,
+    );
+    const applicationIngress = () =>
+      applicationAction && applicationIngressStart
+        ? applicationIngressStart({
+            action: applicationAction,
+            x: event.x,
+            y: event.y,
+          })
+        : null;
     const requestedAction =
       event.type === "down"
         ? "down"
@@ -357,18 +692,20 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           : event.type === "up" || event.type === "drag-end" || event.type === "drop"
             ? "up"
             : null;
-    const ingress = requestedAction
-      ? (props.onResizePointerIngress?.({
-          action: requestedAction,
-          x: event.x,
-          y: event.y,
-          gestureId: drag?.gestureId ?? null,
-        }) ?? null)
-      : null;
-    event.stopPropagation?.();
+    const resizeIngress = () =>
+      requestedAction
+        ? (props.onResizePointerIngress?.({
+            action: requestedAction,
+            x: event.x,
+            y: event.y,
+            gestureId: drag?.gestureId ?? null,
+          }) ?? null)
+        : null;
     const point = terminalPoint(event);
     const isRelease = event.type === "up" || event.type === "drag-end" || event.type === "drop";
     if (drag) {
+      event.stopPropagation?.();
+      const ingress = resizeIngress();
       if (event.type === "drag" || isRelease) {
         const pointer = drag.separator.axis === "x" ? point.x : point.y;
         const next = previewFor(drag.separator, pointer, drag.origin);
@@ -400,28 +737,216 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       return;
     }
     if (event.type === "move" || event.type === "over") {
-      setHoveredSeparator(
-        separatorAt(visibleFrames(), layout().current?.paneBorderStatus ?? "off", point.x, point.y),
+      const separator = separatorAt(
+        visibleFrames(),
+        layout().current?.paneBorderStatus ?? "off",
+        point.x,
+        point.y,
       );
+      setHoveredSeparator(separator);
+      if (separator) {
+        event.stopPropagation?.();
+        return;
+      }
+      const hit = paneContentAt(point);
+      const snapshot = hit ? props.adapter.paneSelectionSnapshot(hit.frame.paneId) : null;
+      if (hit && snapshot && selectModePane() !== hit.frame.paneId) {
+        const lease = captureGestureLease(hit.frame.paneId, hit.frame);
+        if (
+          lease &&
+          forwardMouse(lease, "move", hit, undefined, event.modifiers, applicationIngress())
+        )
+          event.stopPropagation?.();
+      }
+      return;
+    }
+    if (event.type === "scroll") {
+      if (event.scroll?.direction !== "up" && event.scroll?.direction !== "down") return;
+      const hit = paneContentAt(point);
+      const snapshot = hit ? props.adapter.paneSelectionSnapshot(hit.frame.paneId) : null;
+      const lease = hit ? captureGestureLease(hit.frame.paneId, hit.frame) : null;
+      const action = event.scroll?.direction === "up" ? "wheel-up" : "wheel-down";
+      if (
+        hit &&
+        snapshot &&
+        lease &&
+        selectModePane() !== hit.frame.paneId &&
+        forwardMouse(lease, action, hit, undefined, event.modifiers, applicationIngress())
+      )
+        event.stopPropagation?.();
       return;
     }
     if (event.type === "out") {
       setHoveredSeparator(null);
       return;
     }
-    if (event.type !== "down" || event.button === 2) return;
-    const separator = separatorAt(
-      visibleFrames(),
-      layout().current?.paneBorderStatus ?? "off",
-      point.x,
-      point.y,
-    );
-    if (!separator) return;
-    const origin = separator.axis === "x" ? point.x : point.y;
-    const preview = previewFor(separator, origin, origin);
-    drag = { separator, origin, preview, gestureId: ingress?.gestureId ?? null };
-    setHoveredSeparator(null);
-    setResizePreview(preview);
+    if (event.type === "down" && event.button !== 2) {
+      const separator = separatorAt(
+        visibleFrames(),
+        layout().current?.paneBorderStatus ?? "off",
+        point.x,
+        point.y,
+      );
+      if (separator) {
+        event.stopPropagation?.();
+        const ingress = resizeIngress();
+        const origin = separator.axis === "x" ? point.x : point.y;
+        const preview = previewFor(separator, origin, origin);
+        drag = { separator, origin, preview, gestureId: ingress?.gestureId ?? null };
+        setHoveredSeparator(null);
+        setResizePreview(preview);
+        return;
+      }
+    }
+    {
+      if (isRelease && forwardedPointer) {
+        event.stopPropagation?.();
+        const debt = forwardedPointer;
+        forwardedPointer = null;
+        const lease = refreshApplicationMouseLease(debt.lease);
+        const cell = lease ? clampedPaneCell(debt.frame, lease.snapshot, point) : null;
+        if (cell)
+          forwardMouse(lease!, "up", cell, debt.button, event.modifiers, applicationIngress());
+        return;
+      }
+      if (isRelease && selecting) {
+        event.stopPropagation?.();
+        const active = selecting;
+        selecting = null;
+        const snapshot = active.lease.snapshot;
+        const cell = clampedPaneCell(active.frame, snapshot, point);
+        const head =
+          gestureLeaseCurrent(active.lease) && cell
+            ? terminalSelectionCell(snapshot, cell.col, cell.row)
+            : null;
+        if (
+          !snapshot ||
+          !head ||
+          !active.moved ||
+          (head.row === active.anchor.row && head.col === active.anchor.col)
+        ) {
+          setSelection(null);
+          setCommittedSelection(null);
+          return;
+        }
+        const completed = Object.freeze({ paneId: active.paneId, start: active.anchor, end: head });
+        const copied = extractTerminalSelection(snapshot, completed.start, completed.end);
+        setSelection(completed);
+        setCommittedSelection(
+          copied
+            ? Object.freeze({
+                range: completed,
+                text: copied.text,
+                bytes: copied.bytes,
+                lease: active.lease,
+              })
+            : null,
+        );
+        if (selectModePane() === active.paneId) setSelectModePane(null);
+        if (copied)
+          props.onCopyText?.(copied.text, {
+            semanticPaneId: active.paneId,
+            bytes: copied.bytes,
+            start: completed.start,
+            end: completed.end,
+          });
+        return;
+      }
+      if (event.type === "drag" && forwardedPointer) {
+        event.stopPropagation?.();
+        const debt = forwardedPointer;
+        const lease = refreshApplicationMouseLease(debt.lease);
+        if (lease) debt.lease = lease;
+        const cell = lease ? clampedPaneCell(debt.frame, lease.snapshot, point) : null;
+        if (cell)
+          forwardMouse(lease!, "drag", cell, debt.button, event.modifiers, applicationIngress());
+        return;
+      }
+      if (event.type === "drag" && selecting) {
+        event.stopPropagation?.();
+        const active = selecting;
+        const snapshot = active.lease.snapshot;
+        const cell = clampedPaneCell(active.frame, snapshot, point);
+        const head =
+          gestureLeaseCurrent(active.lease) && cell
+            ? terminalSelectionCell(snapshot, cell.col, cell.row)
+            : null;
+        if (head) {
+          active.moved ||= head.row !== active.anchor.row || head.col !== active.anchor.col;
+          setSelection({ paneId: active.paneId, start: active.anchor, end: head });
+        }
+        return;
+      }
+      const hit = paneContentAt(point);
+      if (!hit) return;
+      const snapshot = props.adapter.paneSelectionSnapshot(hit.frame.paneId);
+      if (!snapshot) return;
+      const lease = captureGestureLease(hit.frame.paneId, hit.frame);
+      if (!lease) return;
+      const appMouse = terminalMouseActionSupported(snapshot, "down");
+      if (event.button === 2 && event.type === "down") {
+        event.stopPropagation?.();
+        setSelectMenuPane(appMouse ? hit.frame.paneId : null);
+        return;
+      }
+      const localSelection =
+        selectModePane() === hit.frame.paneId || event.modifiers?.shift === true;
+      const forward = appMouse && !localSelection;
+      if (event.type === "down") {
+        event.stopPropagation?.();
+        props.onSelectPane(hit.frame.paneId);
+        setSelectMenuPane(null);
+        if (forward) {
+          setSelection(null);
+          setCommittedSelection(null);
+          if (
+            !forwardMouse(lease, "down", hit, event.button, event.modifiers, applicationIngress())
+          )
+            return;
+          forwardedPointer = {
+            paneId: hit.frame.paneId,
+            button: event.button ?? 0,
+            frame: hit.frame,
+            lease,
+          };
+          return;
+        }
+        const anchor = terminalSelectionCell(snapshot, hit.col, hit.row);
+        if (!anchor) return;
+        selecting = {
+          paneId: hit.frame.paneId,
+          anchor,
+          frame: hit.frame,
+          lease,
+          moved: false,
+        };
+        setCommittedSelection(null);
+        setSelection({ paneId: hit.frame.paneId, start: anchor, end: anchor });
+        return;
+      }
+      if (event.type === "drag" && selecting?.paneId === hit.frame.paneId) {
+        event.stopPropagation?.();
+        const head = terminalSelectionCell(snapshot, hit.col, hit.row);
+        if (head) {
+          selecting.moved ||=
+            head.row !== selecting.anchor.row || head.col !== selecting.anchor.col;
+          setSelection({ paneId: hit.frame.paneId, start: selecting.anchor, end: head });
+        }
+        return;
+      }
+      if (event.type === "drag" && forwardedPointer?.paneId === hit.frame.paneId) {
+        event.stopPropagation?.();
+        forwardMouse(
+          forwardedPointer.lease,
+          "drag",
+          hit,
+          forwardedPointer.button,
+          event.modifiers,
+          applicationIngress(),
+        );
+      }
+      return;
+    }
   };
   const guide = createMemo(() => {
     const active = resizePreview();
@@ -514,7 +1039,6 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
               height={frame().height}
               visible={frame().visible}
               backgroundColor={props.theme.roles.surfaces.canvas}
-              onMouseDown={() => props.onSelectPane(frame().paneId)}
               onMouse={routePointer}
             >
               <box
@@ -525,6 +1049,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
                 height={1}
                 zIndex={2}
                 backgroundColor={props.theme.roles.surfaces.command}
+                onMouseDown={() => props.onSelectPane(frame().paneId)}
               >
                 <text
                   fg={
@@ -562,7 +1087,11 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
                   active={() => frame().visible}
                   sourceEpoch={props.rendererEpoch}
                   hostFocusTransitionOwner={props.hostFocusTransitionOwner}
-                  selRange={null}
+                  selRange={
+                    selection()?.paneId === frame().paneId
+                      ? { start: selection()!.start, end: selection()!.end }
+                      : null
+                  }
                   search={null}
                 />
               </box>
@@ -613,6 +1142,31 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           />
         )}
       </For>
+      <Show when={selectMenuPane()}>
+        <box
+          position="absolute"
+          left={2}
+          top={topOffset() + 2}
+          width={24}
+          height={3}
+          zIndex={20}
+          border
+          backgroundColor={props.theme.roles.surfaces.panelRaised}
+        >
+          <text fg={props.theme.roles.text.primary}>Select text…</text>
+        </box>
+      </Show>
+      <Show when={selectModePane()}>
+        <text
+          position="absolute"
+          right={1}
+          top={topOffset()}
+          zIndex={20}
+          fg={props.theme.roles.text.link}
+        >
+          {" ⧉ select "}
+        </text>
+      </Show>
       <box
         position="absolute"
         left={guide()?.rect.x ?? 0}

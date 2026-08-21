@@ -21,6 +21,8 @@ const source = productionGraph.files
 const applicationRootSource =
   productionGraph.sourceByFile.get(OPENTUI_PRODUCTION_APPLICATION_ROOT) ??
   readFileSync(join(repoRoot, OPENTUI_PRODUCTION_APPLICATION_ROOT), "utf8");
+const terminalRendererSourcesPath =
+  "packages/daemon/src/tui/mirror/runtime/application-terminal-renderer-sources.ts";
 
 const RETIRED_FEATURE_PATHS = [
   /\/runtime\/application-optional-features\.ts$/u,
@@ -117,8 +119,29 @@ describe("production OpenTUI v2 data path", () => {
     expect(applicationRootSource).toContain('active?.status === "live" ? active.fastLane : null');
   });
 
-  it("keeps the coherent terminal renderer resident while authority rebinds", () => {
+  it("gates application-mouse ingress diagnostics before the workspace clock boundary", () => {
     expect(applicationRootSource).toMatch(
+      /const applicationMouseIngress = applicationMousePointerIngressCapability\(\s*tuiPerfStream,\s*selectionOwner\.beginPointerIngress,\s*\)/u,
+    );
+    expect(applicationRootSource).toContain(
+      "onApplicationMousePointerIngress={applicationMouseIngress}",
+    );
+    expect(applicationRootSource).not.toContain(
+      "onApplicationMousePointerIngress={selectionOwner.beginPointerIngress}",
+    );
+  });
+
+  it("keeps the coherent terminal renderer resident while authority rebinds", () => {
+    const owners = productionGraph.files.filter((path) => path === terminalRendererSourcesPath);
+    expect(owners).toEqual([terminalRendererSourcesPath]);
+    const rendererSources = productionGraph.sourceByFile.get(terminalRendererSourcesPath);
+    expect(rendererSources).toMatch(
+      /active\?\.adapter\s*&&\s*\(active\.status\s*===\s*["']live["']\s*\|\|\s*active\.status\s*===\s*["']rebinding["']\)/u,
+    );
+    expect(
+      applicationRootSource.match(/createApplicationTerminalRendererSources\(generation\)/gu),
+    ).toHaveLength(1);
+    expect(applicationRootSource).not.toMatch(
       /active\?\.adapter\s*&&\s*\(active\.status\s*===\s*["']live["']\s*\|\|\s*active\.status\s*===\s*["']rebinding["']\)/u,
     );
   });

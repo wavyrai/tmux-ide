@@ -553,7 +553,11 @@ export function createReferencePerformanceTraceSink(options: {
           processId,
           clockId: "opentui-performance-now",
           clockKind: "performance-now",
-          atMicros: startedAtMicros,
+          atMicros:
+            Number.isSafeInteger(origin.ingressAtMicros) &&
+            origin.ingressAtMicros! <= startedAtMicros
+              ? origin.ingressAtMicros!
+              : startedAtMicros,
           origin: origin.origin,
           payloadByteCount: payload.byteLength,
           payloadFingerprint: createHmac("sha256", options.inputFingerprintKey)
@@ -561,7 +565,21 @@ export function createReferencePerformanceTraceSink(options: {
             .update("\0")
             .update(payload)
             .digest("hex"),
-          parserConsumption: origin.origin === "keyboard" ? "keyboard-event" : "paste-event",
+          parserConsumption:
+            origin.origin === "keyboard"
+              ? "keyboard-event"
+              : origin.origin === "bracketed-paste"
+                ? "paste-event"
+                : "pointer-event",
+          ...(origin.gestureId ? { gestureId: origin.gestureId } : {}),
+          ...(origin.pointerAction ? { pointerAction: origin.pointerAction } : {}),
+          ...(Number.isSafeInteger(origin.pointerColumn)
+            ? { pointerColumn: origin.pointerColumn }
+            : {}),
+          ...(Number.isSafeInteger(origin.pointerRow) ? { pointerRow: origin.pointerRow } : {}),
+          ...(origin.pointerButton === null || Number.isSafeInteger(origin.pointerButton)
+            ? { pointerButton: origin.pointerButton }
+            : {}),
           traceId,
           semanticPaneId: origin.semanticPaneId,
           generation: origin.generation,

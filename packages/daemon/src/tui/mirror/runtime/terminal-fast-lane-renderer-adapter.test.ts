@@ -128,6 +128,7 @@ describe("TerminalFastLaneRendererAdapter", () => {
         cols: update.cols,
         rows: update.rows,
         sourceEpoch: 7,
+        historyTrim: 0,
       });
       expect(adapter.renderSource.paneCanonicalIdentity?.("pane.missing")).toBeNull();
     } finally {
@@ -379,6 +380,7 @@ describe("TerminalFastLaneRendererAdapter", () => {
     const publications: Array<Record<string, unknown>> = [];
     const paints: Array<Record<string, unknown>> = [];
     const updates: Array<Record<string, unknown>> = [];
+    const modes: Array<Record<string, unknown>> = [];
     const uninstall = installTuiPerformanceEventSink({
       frame: () => undefined,
       terminalPaint: () => undefined,
@@ -386,6 +388,7 @@ describe("TerminalFastLaneRendererAdapter", () => {
       terminalCanonicalPublication: (event) => publications.push(event),
       terminalCanonicalPaint: (event) => paints.push(event),
       terminalCanonicalUpdate: (event) => updates.push(event),
+      terminalCanonicalMode: (event) => modes.push(event),
       terminalCanonicalHostFrame: () => undefined,
       terminalFrameFence: () => undefined,
     });
@@ -402,7 +405,20 @@ describe("TerminalFastLaneRendererAdapter", () => {
       },
     });
     lane.retainPanes(["pane.editor"]);
-    const first = seed("pane.editor", "S");
+    const original = seed("pane.editor", "S");
+    const snapshot = {
+      ...original.snapshot,
+      modes: {
+        ...original.snapshot.modes,
+        mouseProtocol: "drag" as const,
+        mouseEncoding: "sgr" as const,
+      },
+    };
+    const first = {
+      ...original,
+      stateHash: hashTerminalReplicaSnapshot(snapshot),
+      snapshot,
+    };
     source.emit("pane.editor", first);
     const adapter = new TerminalFastLaneRendererAdapter(lane, 7);
     try {
@@ -411,6 +427,16 @@ describe("TerminalFastLaneRendererAdapter", () => {
       expect(publications).toHaveLength(1);
       expect(paints).toHaveLength(1);
       expect(updates).toHaveLength(0);
+      expect(modes).toEqual([
+        expect.objectContaining({
+          semanticPaneId: "pane.editor",
+          revision: first.revision,
+          mouseProtocol: "drag",
+          mouseEncoding: "sgr",
+        }),
+      ]);
+      adapter.subscribePaneVersion("pane.editor", () => undefined)();
+      expect(modes).toHaveLength(1);
       expect(paints[0]).toMatchObject({
         semanticPaneId: "pane.editor",
         revision: first.revision,
@@ -560,13 +586,19 @@ describe("TerminalFastLaneRendererAdapter", () => {
   });
 
   it("reports exact canonical wraparound transitions only through the optional diagnostic sink", () => {
-    const events: Array<{ wraparound: boolean; revision: number; stateHash: string }> = [];
+    const events: Array<{
+      wraparound: boolean;
+      mouseProtocol: string;
+      mouseEncoding: string;
+      revision: number;
+      stateHash: string;
+    }> = [];
     const uninstall = installTuiPerformanceEventSink({
       frame: () => undefined,
       terminalPaint: () => undefined,
       terminalDelivery: () => undefined,
-      terminalCanonicalMode: ({ wraparound, revision, stateHash }) =>
-        events.push({ wraparound, revision, stateHash }),
+      terminalCanonicalMode: ({ wraparound, mouseProtocol, mouseEncoding, revision, stateHash }) =>
+        events.push({ wraparound, mouseProtocol, mouseEncoding, revision, stateHash }),
     });
     const source = new Source();
     const lane = createTerminalFastLane({
@@ -606,21 +638,56 @@ describe("TerminalFastLaneRendererAdapter", () => {
         stateHash: hashTerminalReplicaSnapshot(snapshot),
         patch: { rows: [], modes: snapshot.modes },
       });
+      const wrapSnapshot = snapshot;
+      snapshot = {
+        ...snapshot,
+        modes: {
+          ...snapshot.modes,
+          mouseTracking: true,
+          mouseProtocol: "drag",
+          mouseEncoding: "sgr",
+        },
+      };
+      source.emit("pane.editor", {
+        ...initial,
+        type: "terminal.patch",
+        baseRevision: 2,
+        revision: 3,
+        stateHash: hashTerminalReplicaSnapshot(snapshot),
+        patch: { rows: [], modes: snapshot.modes },
+      });
       expect(events).toEqual([
         {
           wraparound: true,
+          mouseProtocol: "none",
+          mouseEncoding: "default",
           revision: 0,
           stateHash: initial.stateHash,
         },
         {
           wraparound: false,
+          mouseProtocol: "none",
+          mouseEncoding: "default",
           revision: 1,
           stateHash: hashTerminalReplicaSnapshot({
             ...initial.snapshot,
             modes: { ...initial.snapshot.modes, wraparound: false },
           }),
         },
-        { wraparound: true, revision: 2, stateHash: hashTerminalReplicaSnapshot(snapshot) },
+        {
+          wraparound: true,
+          mouseProtocol: "none",
+          mouseEncoding: "default",
+          revision: 2,
+          stateHash: hashTerminalReplicaSnapshot(wrapSnapshot),
+        },
+        {
+          wraparound: true,
+          mouseProtocol: "drag",
+          mouseEncoding: "sgr",
+          revision: 3,
+          stateHash: hashTerminalReplicaSnapshot(snapshot),
+        },
       ]);
     } finally {
       adapter.dispose();

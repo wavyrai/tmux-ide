@@ -29,6 +29,7 @@ interface PaneRendererInterest {
   pendingTrace: TerminalPaintTrace | null;
   pendingSeedDiagnostic: TuiTerminalCanonicalPublicationEvent | null;
   lastAcceptedUpdateType: "terminal.seed" | "terminal.patch" | null;
+  historyTrim: number;
 }
 
 /**
@@ -48,6 +49,7 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
   #paintedCanonicalSnapshot = false;
   #pendingCanonicalHostFrames: Map<string, TuiTerminalCanonicalPaintIdentity> | null = null;
   #seenCanonicalHostFrameKeys: Set<string> | null = null;
+  #canonicalModeKeys: Map<string, string> | null = null;
   #droppedCanonicalHostFrames = 0;
 
   readonly renderSource: TerminalPaneRenderSource = {
@@ -77,6 +79,12 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
 
   paneSourceEpoch(): number {
     return this.#sourceEpoch;
+  }
+
+  paneSelectionSnapshot(paneId: string): TerminalReplicaSnapshot | null {
+    return (
+      this.#panes.get(paneId)?.state?.snapshot ?? this.#lane.paneState(paneId)?.snapshot ?? null
+    );
   }
 
   /** True only after the shared reducer has published a canonical framebuffer. */
@@ -173,6 +181,7 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     this.#panes.clear();
     this.#pendingCanonicalHostFrames = null;
     this.#seenCanonicalHostFrameKeys = null;
+    this.#canonicalModeKeys = null;
     this.#droppedCanonicalHostFrames = 0;
   }
 
@@ -188,6 +197,7 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
       cols: snapshot.cols,
       rows: snapshot.rows,
       sourceEpoch: this.#sourceEpoch,
+      historyTrim: this.#panes.get(paneId)?.historyTrim ?? 0,
     } as const;
   }
 
@@ -211,11 +221,13 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
         lastAcceptedUpdateType === "terminal.seed" || lastAcceptedUpdateType === "terminal.patch"
           ? lastAcceptedUpdateType
           : null,
+      historyTrim: 0,
     };
     if (lastAcceptedUpdateType === "terminal.seed" && state?.snapshot) {
       this.#noteSeedDiagnostic(interest, state, paneId);
     }
     this.#panes.set(paneId, interest);
+    if (state?.snapshot) this.#reportCanonicalMode(paneId, state);
     return interest;
   }
 
@@ -227,6 +239,9 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     else if (next)
       this.#noteSeedDiagnostic(interest, publication.state, publication.address.semanticPaneId);
     interest.state = publication.state;
+    if (publication.update.type === "terminal.seed") interest.historyTrim = 0;
+    else if (publication.update.type === "terminal.patch")
+      interest.historyTrim += publication.update.patch.historyDelta?.trim ?? 0;
     if (publication.update.type !== "terminal.tombstone")
       interest.lastAcceptedUpdateType = publication.update.type;
     const canonicalUpdateSink = currentTuiPerformanceEventSink()?.terminalCanonicalUpdate;
@@ -251,21 +266,13 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
         // Opt-in diagnostics never own canonical publication.
       }
     }
-    const canonicalModeSink = currentTuiPerformanceEventSink()?.terminalCanonicalMode;
-    if (canonicalModeSink && next && previous?.modes.wraparound !== next.modes.wraparound) {
-      canonicalModeSink({
-        processId: `opentui:${process.pid}`,
-        clockId: "opentui-performance-now",
-        clockKind: "performance-now",
-        atMicros: Math.floor(performance.now() * 1_000),
-        semanticPaneId: publication.address.semanticPaneId,
-        generation: publication.state.generation,
-        incarnation: publication.state.incarnation,
-        revision: publication.state.revision,
-        stateHash: publication.state.hash,
-        wraparound: next.modes.wraparound,
-      });
-    }
+    if (
+      next &&
+      (previous?.modes.wraparound !== next.modes.wraparound ||
+        previous?.modes.mouseProtocol !== next.modes.mouseProtocol ||
+        previous?.modes.mouseEncoding !== next.modes.mouseEncoding)
+    )
+      this.#reportCanonicalMode(publication.address.semanticPaneId, publication.state);
     if (this.#causalCellLedger && publication.state.snapshot) {
       try {
         this.#causalCellLedger.noteDelivery({
@@ -335,6 +342,42 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
       } catch {
         // A renderer observer cannot prevent sibling invalidation.
       }
+    }
+  }
+
+  #reportCanonicalMode(paneId: string, state: TerminalFastLanePublication["state"]): void {
+    const sink = currentTuiPerformanceEventSink()?.terminalCanonicalMode;
+    const snapshot = state.snapshot;
+    if (!sink || !snapshot) return;
+    const key = [
+      state.generation,
+      state.incarnation,
+      state.revision,
+      state.hash,
+      snapshot.modes.wraparound,
+      snapshot.modes.mouseProtocol ?? "none",
+      snapshot.modes.mouseEncoding ?? "default",
+    ].join(":");
+    const keys = (this.#canonicalModeKeys ??= new Map());
+    if (keys.get(paneId) === key) return;
+    keys.set(paneId, key);
+    try {
+      sink({
+        processId: `opentui:${process.pid}`,
+        clockId: "opentui-performance-now",
+        clockKind: "performance-now",
+        atMicros: Math.floor(performance.now() * 1_000),
+        semanticPaneId: paneId,
+        generation: state.generation,
+        incarnation: state.incarnation,
+        revision: state.revision,
+        stateHash: state.hash,
+        wraparound: snapshot.modes.wraparound,
+        mouseProtocol: snapshot.modes.mouseProtocol ?? "none",
+        mouseEncoding: snapshot.modes.mouseEncoding ?? "default",
+      });
+    } catch {
+      // Detailed mode diagnostics never own canonical publication or paint.
     }
   }
 

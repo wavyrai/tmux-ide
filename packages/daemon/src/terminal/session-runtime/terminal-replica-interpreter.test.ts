@@ -25,6 +25,28 @@ function create(updates: CanonicalTerminalReplicaUpdate[], cols = 12, rows = 3) 
 }
 
 describe("TerminalReplicaInterpreter", () => {
+  it("projects exact mouse protocol and encoding modes from the production parser", async () => {
+    const interpreter = create([]);
+    await interpreter.enqueue({
+      type: "reseed",
+      cols: 12,
+      rows: 3,
+      chunks: [new TextEncoder().encode("\u001b[?1002h\u001b[?1006h")],
+      cursor: { x: 0, y: 0 },
+      bootstrap: "authoritative-stream",
+    });
+    expect(interpreter.currentSnapshot().modes).toMatchObject({
+      mouseTracking: true,
+      mouseProtocol: "drag",
+      mouseEncoding: "sgr",
+    });
+    await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("\u001b[?1003h") });
+    expect(interpreter.currentSnapshot().modes.mouseProtocol).toBe("any");
+    await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("\u001b[?1006l") });
+    expect(interpreter.currentSnapshot().modes.mouseEncoding).toBe("default");
+    await interpreter.enqueue({ type: "close", reason: "runtime-disposed" });
+  });
+
   it.each([
     ["key", "x"],
     ["multi-byte paste", "PASTE0Q"],

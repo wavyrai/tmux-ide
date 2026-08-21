@@ -56,6 +56,12 @@ export interface ApplicationShellViewProps {
   readonly onResizePreview: TerminalWorkspaceProps["onResizePreview"];
   readonly onResizePane: TerminalWorkspaceProps["onResizePane"];
   readonly onResizePointerIngress?: TerminalWorkspaceProps["onResizePointerIngress"];
+  readonly onTerminalInput?: TerminalWorkspaceProps["onTerminalInput"];
+  readonly terminalGestureRuntime?: TerminalWorkspaceProps["terminalGestureRuntime"];
+  readonly onApplicationMousePointerIngress?: TerminalWorkspaceProps["onApplicationMousePointerIngress"];
+  readonly onCopyText?: TerminalWorkspaceProps["onCopyText"];
+  readonly onSelectionCopyOwner?: TerminalWorkspaceProps["onSelectionCopyOwner"];
+  readonly onSelectionKeyOwner?: TerminalWorkspaceProps["onSelectionKeyOwner"];
   readonly onWindowPresented?: TerminalWorkspaceProps["onWindowPresented"];
 }
 
@@ -440,6 +446,12 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                       onResizePreview={props.onResizePreview}
                       onResizePane={props.onResizePane}
                       onResizePointerIngress={props.onResizePointerIngress}
+                      onTerminalInput={props.onTerminalInput}
+                      terminalGestureRuntime={props.terminalGestureRuntime}
+                      onApplicationMousePointerIngress={props.onApplicationMousePointerIngress}
+                      onCopyText={props.onCopyText}
+                      onSelectionCopyOwner={props.onSelectionCopyOwner}
+                      onSelectionKeyOwner={props.onSelectionKeyOwner}
                       onWindowPresented={props.onWindowPresented}
                     />
                   )}

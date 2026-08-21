@@ -45,6 +45,9 @@ export class TerminalPaneInputRouter<Input> {
   }
 
   selectPane(paneId: string, options: { readonly presentOptimistically?: boolean } = {}): void {
+    if (this.#pending?.paneId === paneId) return;
+    if (this.#pending === null && this.#canonicalPane === paneId && this.#focusedPane === paneId)
+      return;
     const token = ++this.#selectionToken;
     const presentOptimistically = options.presentOptimistically !== false;
     if (presentOptimistically) this.#setFocusedPane(paneId);
@@ -75,6 +78,12 @@ export class TerminalPaneInputRouter<Input> {
     }
     await this.#options.send(paneId, input);
     return true;
+  }
+
+  async sendInputToPane(paneId: string, input: Input): Promise<boolean> {
+    const routedPane = this.#pending?.paneId ?? this.#focusedPane;
+    if (routedPane !== paneId) return false;
+    return this.sendInput(input);
   }
 
   #setFocusedPane(paneId: string | null): void {

@@ -51,10 +51,19 @@ import {
 import { createOpenTuiSessionOwner, type OpenTuiSessionOwner } from "./open-tui-session-owner.ts";
 import { TUI_RENDERER_CADENCE } from "./renderer-cadence.ts";
 import { createOpenTuiRuntimeLayoutPresentation } from "./runtime-layout-presentation.ts";
-import { terminalInputForOpenTuiKey, terminalInputsForPaste } from "./terminal-input-adapter.ts";
 import { OpenTuiTerminalHostFocus } from "./terminal-host-focus.ts";
-import { publishCanonicalHostFrameDiagnostics } from "./terminal-host-frame-diagnostics.ts";
-import { createTerminalFrameReadiness } from "./terminal-frame-readiness.ts";
+import { createApplicationTerminalFrameReadinessOwner } from "./application-terminal-frame-readiness-owner.ts";
+import {
+  applicationMousePointerIngressCapability,
+  createApplicationTerminalSelectionOwner,
+  applicationClipboardReadiness,
+  routeApplicationTerminalPointerInput,
+} from "./application-terminal-selection-owner.ts";
+import { createApplicationTerminalRendererSources } from "./application-terminal-renderer-sources.ts";
+import {
+  sendApplicationTerminalKey,
+  sendApplicationTerminalPaste,
+} from "./application-terminal-paste.ts";
 export type { StartApplicationRootOptions } from "./application-root-configuration.ts";
 export async function startApplicationRoot(options: StartApplicationRootOptions = {}) {
   options.initialPreparation?.diagnosticHandoff?.attach(tuiPerfMark);
@@ -89,7 +98,10 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
     },
     mountRoot({ config }) {
       const hostLocal = createOpenTuiHostLocalTmuxAdapter();
-      hostLocal.configureClipboard();
+      const clipboardReady = applicationClipboardReadiness(
+        hostLocal.configureClipboard,
+        Boolean(process.env.TMUX),
+      );
       const presentation = createOpenTuiRuntimeLayoutPresentation();
       let initialPreparation = options.initialPreparation ?? null;
       let sessionOwner: OpenTuiSessionOwner | null = null;
@@ -98,31 +110,11 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         frameDiagnosticSink?.terminalFocusPaint && frameDiagnosticSink.terminalFocusFence
           ? createPaneSurfaceHostFocusTransitionOwner(() => renderer.requestRender())
           : null;
-      const terminalFrameReadiness =
-        tuiPerfStream || frameDiagnosticSink
-          ? createTerminalFrameReadiness({
-              requestRender: () => renderer.requestRender(),
-              markReady: (key, snapshot) =>
-                tuiPerfCriticalMark(`first-terminal-frame:${key}`, "first-terminal-frame", {
-                  daemonGeneration: snapshot.daemonGeneration,
-                  rendererEpoch: snapshot.rendererEpoch,
-                }),
-              drainDetailed: (snapshot) =>
-                publishCanonicalHostFrameDiagnostics(
-                  snapshot.adapter!,
-                  snapshot.daemonGeneration!,
-                  snapshot.rendererEpoch,
-                  frameDiagnosticSink,
-                ),
-              ...(frameDiagnosticSink?.terminalCanonicalHostFrame &&
-              frameDiagnosticSink.terminalFrameFence
-                ? {
-                    needsDetailedDrain: (snapshot) =>
-                      snapshot.adapter!.hasPendingCanonicalHostFrameDiagnostics(),
-                  }
-                : {}),
-            })
-          : null;
+      const terminalFrameReadiness = createApplicationTerminalFrameReadinessOwner({
+        enabled: tuiPerfStream,
+        sink: frameDiagnosticSink,
+        requestRender: () => renderer.requestRender(),
+      });
       let interaction!: ApplicationTerminalInteractionController;
       let setRendererFocused: ((focused: boolean) => void) | null = null;
       let getRendererFocused: (() => boolean) | null = null;
@@ -221,6 +213,11 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         });
         const [layoutSnapshot, setLayoutSnapshot] = createSignal(presentation.getWindowSnapshot());
         const [focusedPane, setFocusedPane] = createSignal<string | null>(null);
+        const selectionOwner = createApplicationTerminalSelectionOwner({
+          copyText: hostLocal.copyText,
+          diagnosticsEnabled: tuiPerfStream,
+          generation,
+        });
         getFocusedPane = focusedPane;
         const [rendererFocused, setRendererFocusedSignal] = createSignal(true);
         getRendererFocused = rendererFocused;
@@ -233,28 +230,8 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         const activeSurface = createMemo<"home" | "terminals">(
           () => shell().semantic?.workspaceCanvas.activeMode ?? surface(),
         );
-        const terminalRendererSource = createMemo(() => {
-          const active = generation();
-          return active?.adapter && (active.status === "live" || active.status === "rebinding")
-            ? Object.freeze({ adapter: active.adapter, rendererEpoch: active.rendererEpoch })
-            : null;
-        });
-        const focusRendererSource = createMemo(() => {
-          const active = generation();
-          if (!active?.adapter || active.status !== "live" || !active.daemonGeneration) return null;
-          try {
-            const clientGeneration = active.client?.getSnapshot().generation;
-            if (!Number.isSafeInteger(clientGeneration)) return null;
-            return Object.freeze({
-              adapter: active.adapter,
-              rendererEpoch: active.rendererEpoch,
-              daemonGeneration: active.daemonGeneration,
-              clientGeneration: clientGeneration!,
-            });
-          } catch {
-            return null;
-          }
-        });
+        const { terminalRendererSource, terminalGestureRuntime, focusRendererSource } =
+          createApplicationTerminalRendererSources(generation);
         getTerminalRendererSource = focusRendererSource;
         interaction = createApplicationTerminalInteractionController({
           generation,
@@ -329,6 +306,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         });
         useKeyboard((event) => {
           const name = event.name.toLowerCase();
+          if (selectionOwner.handleKey(name)) return;
           if (event.ctrl && name === "q") {
             void hostLocal.putAway().finally(() => lifecycle.shutdown("keyboard"));
             return;
@@ -361,37 +339,42 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             }
           }
           if (activeSurface() === "terminals" && interaction.routeWorkspaceKey(event)) return;
+          if (
+            activeSurface() === "terminals" &&
+            event.ctrl &&
+            event.name.toLowerCase() === "c" &&
+            selectionOwner.copyCurrent()
+          )
+            return;
           const active = generation();
           const lane = active?.status === "live" ? active.fastLane : null;
           if (activeSurface() !== "terminals" || !lane || !focusedPane()) return;
-          const input = terminalInputForOpenTuiKey(event);
-          if (input) {
-            const parserOrigin = currentTuiPerformanceEventSink()?.terminalInputOrigin
-              ? { origin: "keyboard" as const, payload: Buffer.from(input.data, "utf8") }
-              : undefined;
-            void interaction.sendInput(input, parserOrigin);
-          }
+          sendApplicationTerminalKey(
+            interaction,
+            event,
+            Boolean(currentTuiPerformanceEventSink()?.terminalInputOrigin),
+          );
         });
         usePaste((event) => {
           const active = generation();
           const lane = active?.status === "live" ? active.fastLane : null;
           if (activeSurface() !== "terminals" || !lane || !focusedPane()) return;
-          const text = Buffer.from(event.bytes).toString("utf8");
-          const inputs = terminalInputsForPaste(text);
-          for (let index = 0; index < inputs.length; index += 1) {
-            const parserOrigin =
-              index === 0 && currentTuiPerformanceEventSink()?.terminalInputOrigin
-                ? { origin: "bracketed-paste" as const, payload: Buffer.from(event.bytes) }
-                : undefined;
-            void interaction.sendInput(inputs[index]!, parserOrigin);
-          }
+          sendApplicationTerminalPaste(
+            interaction,
+            event.bytes,
+            Boolean(currentTuiPerformanceEventSink()?.terminalInputOrigin),
+          );
         });
         onMount(() => {
           tuiPerfMark("solid-mounted");
           if (config.target) void startGeneration(config.target);
-          resolveReady();
+          void clipboardReady.then(resolveReady, rejectReady);
         });
         const resizeIngress = tuiPerfStream ? interaction.beginResizePointerIngress : undefined;
+        const applicationMouseIngress = applicationMousePointerIngressCapability(
+          tuiPerfStream,
+          selectionOwner.beginPointerIngress,
+        );
         return (
           <ApplicationShellView
             dimensions={dimensions}
@@ -403,6 +386,8 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             bootstrapNote={bootstrapNote}
             paletteOpen={() => shell().semantic?.focus.palette.open ?? shell().localPaletteOpen}
             terminalRendererSource={terminalRendererSource}
+            terminalGestureRuntime={terminalGestureRuntime}
+            onApplicationMousePointerIngress={applicationMouseIngress}
             layout={layoutSnapshot}
             focusedPane={() => (rendererFocused() ? focusedPane() : null)}
             rendererFocused={rendererFocused}
@@ -416,6 +401,12 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             onResizePreview={interaction.previewPaneResize}
             onResizePane={interaction.resizePane}
             onResizePointerIngress={resizeIngress}
+            onTerminalInput={(paneId, input) =>
+              routeApplicationTerminalPointerInput(interaction, paneId, input)
+            }
+            onCopyText={selectionOwner.copy}
+            onSelectionCopyOwner={selectionOwner.registerCopy}
+            onSelectionKeyOwner={selectionOwner.registerKey}
             onWindowPresented={tuiPerfStream ? interaction.observeWindowPresentation : undefined}
           />
         );

@@ -8,6 +8,7 @@ export function runBoundedChildCommand({
   signal,
   onSpawn = () => undefined,
   onSettled = () => undefined,
+  terminationGraceMs = 250,
   execFileImpl = execFile,
 }) {
   if (signal?.aborted) {
@@ -26,6 +27,8 @@ export function runBoundedChildCommand({
       signal?.removeEventListener("abort", abort);
       onSettled(child.pid);
       if (error) {
+        error.stdout = stdout;
+        error.stderr = stderr;
         if (timedOut) error.productRigReason = "command-timeout";
         if (aborted) error.code = "ABORT_ERR";
         reject(error);
@@ -39,7 +42,7 @@ export function runBoundedChildCommand({
       child.kill("SIGTERM");
       escalation = setTimeout(() => {
         if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-      }, 250);
+      }, terminationGraceMs);
       escalation.unref?.();
     };
     const abort = () => {

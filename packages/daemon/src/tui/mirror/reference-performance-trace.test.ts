@@ -202,6 +202,48 @@ describe("reference performance trace", () => {
     expect(JSON.stringify(records[1])).not.toContain('"payload"');
   });
 
+  it("retains exact application-mouse ingress metadata with an ephemeral keyed fingerprint", () => {
+    const records: Readonly<Record<string, unknown>>[] = [];
+    const sink = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      inputOrigin: true,
+      inputFingerprintKey: "run-local-key".repeat(4),
+      processId: "opentui:52",
+      createTraceId: () => "00000000-0000-4000-8000-000000000052",
+      nowMicros: () => 20,
+      append: (record) => records.push(record),
+    });
+    sink.beginTerminalInput!({
+      origin: "application-mouse",
+      payload: Buffer.from("\x1b[<0;4;2M"),
+      ingressAtMicros: 10,
+      gestureId: "00000000-0000-4000-8000-000000000051",
+      pointerAction: "down",
+      pointerColumn: 3,
+      pointerRow: 1,
+      pointerButton: 0,
+      semanticPaneId: "pane-a",
+      generation: "generation-a",
+      incarnation: "incarnation-a",
+      revision: 7,
+      stateHash: "hash-a",
+    });
+    expect(records[1]).toMatchObject({
+      type: "performance.input-origin",
+      atMicros: 10,
+      origin: "application-mouse",
+      parserConsumption: "pointer-event",
+      gestureId: "00000000-0000-4000-8000-000000000051",
+      pointerAction: "down",
+      pointerColumn: 3,
+      pointerRow: 1,
+      pointerButton: 0,
+    });
+    expect(records[1]?.payloadFingerprint).toMatch(/^[0-9a-f]{64}$/u);
+    expect(JSON.stringify(records[1])).not.toContain("[<0;4;2M");
+  });
+
   it("records only bounded parser metadata and omits origin work from minimal traces", () => {
     const detailedRecords: Readonly<Record<string, unknown>>[] = [];
     let ordinal = 0;
@@ -411,12 +453,16 @@ describe("reference performance trace", () => {
       revision: 3,
       stateHash: "hash",
       wraparound: true,
+      mouseProtocol: "drag",
+      mouseEncoding: "sgr",
     });
     expect(records.at(-1)).toMatchObject({
       type: "performance.terminal-canonical-mode",
       semanticPaneId: "pane.alpha",
       revision: 3,
       wraparound: true,
+      mouseProtocol: "drag",
+      mouseEncoding: "sgr",
     });
     detailed.terminalCanonicalUpdate?.({
       processId: "opentui:1",

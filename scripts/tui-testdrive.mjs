@@ -28,6 +28,12 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { buildTuiHostPublicationEvidence } from "./lib/tui-host-publication.mjs";
+import { runBoundedChildCommand } from "./lib/bounded-child-command.mjs";
+import {
+  acquireClipboardPaneHook,
+  ensureClipboardAcquisitionRollback,
+  retireClipboardPaneHook,
+} from "./lib/tui-testdrive-clipboard-hook.mjs";
 import { classifyProductTuiCommandFailure } from "./lib/product-tui-host-readiness.mjs";
 import {
   buildTestdriveExecCommand,
@@ -37,11 +43,21 @@ import {
 import {
   MAX_CLIPBOARD_BYTES,
   MAX_CLIPBOARD_CALLBACK_ARTIFACTS,
+  assessClipboardAutoBufferDelta,
+  buildClipboardPaneHookCommand,
   deliverExactHostBytes,
   enforceClipboardCallbackCap,
   executeTestdriveInputOperation,
   fullTerminalCapabilities,
+  isClipboardObservationTimeout,
+  parseClipboardAutoBufferInventory,
+  parseClipboardCallbackState,
   parseTestdriveInputDocument,
+  readClipboardAutoBufferInventoryTransactionAsync,
+  reapOwnedClipboardCallback,
+  settleClipboardObservationAfterRetirement,
+  TESTDRIVE_INPUT_OBSERVATION_PREFIX,
+  watchClipboardCallbackAbort,
   waitForClipboardObservation,
 } from "./lib/tui-testdrive-input.mjs";
 
@@ -137,6 +153,26 @@ function tmux(args, options = {}) {
   });
 }
 
+async function tmuxAsync(args, options = {}) {
+  const { stdout } = await runBoundedChildCommand({
+    executable: "tmux",
+    args: [...(hostSocketPath ? ["-S", hostSocketPath] : []), ...args],
+    options: {
+      cwd: repoRoot,
+      env: { ...process.env, TMUX: "", TMUX_TMPDIR: "" },
+      encoding: options.encoding ?? "utf8",
+      input: options.input,
+      maxBuffer: options.maxBuffer,
+    },
+    timeoutMs: options.timeout,
+    signal: options.signal,
+    onSpawn: options.onSpawn,
+    onSettled: options.onSettled,
+    terminationGraceMs: options.terminationGraceMs ?? 250,
+  });
+  return stdout;
+}
+
 function sessionExists(name, timeout) {
   try {
     tmux(["has-session", "-t", `=${name}`], { timeout });
@@ -227,7 +263,7 @@ function injectHostBytes(identity, bytes, timeoutMs = 2_000) {
   // load-buffer/paste-buffer writes the exact byte string to the hosted pane
   // PTY. Unlike send-keys it does not translate key names or reinterpret the
   // payload, so OpenTUI's own parser sees paste/focus/mouse protocols.
-  deliverExactHostBytes({
+  return deliverExactHostBytes({
     identity,
     bytes,
     timeoutMs,
@@ -585,70 +621,175 @@ function clipboardEventArtifacts(nonce) {
   return artifacts;
 }
 
-function clipboardHookName(nonce) {
-  const index = Number.parseInt(nonce.replaceAll("-", "").slice(0, 8), 16) % 1_000_000_000;
-  return `pane-set-clipboard[${index}]`;
+function clipboardAutoBufferInventory(timeoutMs) {
+  const bufferLimit = Number(
+    tmux(["show-options", "-gv", "buffer-limit"], { timeout: timeoutMs }).trim(),
+  );
+  let source;
+  try {
+    source = tmux(["list-buffers", "-F", "#{buffer_name}\t#{buffer_size}\t#{buffer_created}"], {
+      timeout: timeoutMs,
+    });
+  } catch (error) {
+    const stderr = String(error?.stderr ?? "");
+    if (!/no buffers/iu.test(stderr)) throw error;
+    source = "";
+  }
+  return { source, inventory: parseClipboardAutoBufferInventory(source, bufferLimit) };
 }
 
-function clipboardObserverShell(identity, nonce, hookName) {
-  const script = fileURLToPath(import.meta.url);
-  return [
-    "env",
-    ...(hostSocketPath ? [`TMUX_IDE_TESTDRIVE_HOST_SOCKET_PATH=${shQuote(hostSocketPath)}`] : []),
-    `TMUX_IDE_TESTDRIVE_RUNTIME_DIR=${shQuote(runtimeDir)}`,
-    shQuote(process.execPath),
-    shQuote(script),
-    "clipboard-observe",
-    shQuote(nonce),
-    shQuote(identity.paneId),
-    // q: asks tmux to shell-quote values after format expansion.
-    "#{q:pane_id}",
-    "#{q:buffer_name}",
-    shQuote(hookName),
-  ].join(" ");
-}
-
-async function armClipboardObservation(identity, nonce, timeoutMs) {
+async function armClipboardObservation(identity, nonce, timeoutMs, cleanupTimeoutMs) {
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < 1 ||
+    timeoutMs > 5_000 ||
+    !Number.isSafeInteger(cleanupTimeoutMs) ||
+    cleanupTimeoutMs < 1 ||
+    cleanupTimeoutMs > 5_000
+  ) {
+    fail("clipboard arm budgets are malformed");
+  }
   const deadline = performance.now() + timeoutMs;
   const remaining = () => {
     const value = Math.floor(deadline - performance.now());
     if (value < 1) fail("clipboard preflight exceeded its absolute deadline");
     return value;
   };
+  let rollbackDeadline = null;
+  const rollbackRemaining = () => {
+    if (rollbackDeadline === null) rollbackDeadline = performance.now() + cleanupTimeoutMs;
+    const value = Math.floor(rollbackDeadline - performance.now());
+    if (value < 1) fail("clipboard acquisition rollback exceeded its deadline");
+    return value;
+  };
   mkdirSync(clipboardObservationDir, { recursive: true, mode: 0o700 });
   chmodSync(clipboardObservationDir, 0o700);
   const operationDir = join(clipboardObservationDir, nonce);
   mkdirSync(operationDir, { recursive: false, mode: 0o700 });
-  const hookName = clipboardHookName(nonce);
-  let existingHook = "";
+  let callbackControlToken;
+  let baseline;
+  let hookCommand;
+  let hookLease;
   try {
-    existingHook = tmux(["show-hooks", "-p", "-t", identity.paneId, hookName], {
-      timeout: remaining(),
+    callbackControlToken = randomUUID();
+    baseline = clipboardAutoBufferInventory(remaining());
+    hookCommand = buildClipboardPaneHookCommand({
+      nodePath: process.execPath,
+      scriptPath: fileURLToPath(import.meta.url),
+      runtimeDir,
+      socketPath: hostSocketPath,
+      nonce,
+      paneId: identity.paneId,
     });
-  } catch {
-    // An unset indexed hook has no value to show.
-  }
-  if (existingHook.trim()) {
-    rmSync(operationDir, { recursive: true, force: true });
-    fail(`clipboard hook slot ${hookName} is already occupied`);
-  }
-  const hookCommand = [
-    `save-buffer -b #{q:buffer_name} ${shQuote(join(operationDir, "#{buffer_name}.bin"))}`,
-    `run-shell ${shQuote(clipboardObserverShell(identity, nonce, hookName))}`,
-  ].join(" ; ");
-  try {
-    tmux(["set-hook", "-p", "-t", identity.paneId, hookName, hookCommand], {
-      timeout: remaining(),
+    hookLease = acquireClipboardPaneHook({
+      paneId: identity.paneId,
+      ownerToken: nonce,
+      command: hookCommand,
+      runTmux: tmux,
+      remaining,
+      cleanupRemaining: rollbackRemaining,
     });
+    const armedAtEpochMs = Date.now();
+    writeFileSync(
+      join(operationDir, "lease.json"),
+      `${JSON.stringify({
+        version: 1,
+        nonce,
+        paneId: identity.paneId,
+        hookName: hookLease.hookName,
+        controlToken: callbackControlToken,
+        armedAtEpochMs,
+        inventory: baseline.inventory,
+        pollTimeoutMs: Math.min(1_000, remaining()),
+      })}\n`,
+      { flag: "wx", mode: 0o600 },
+    );
   } catch (error) {
+    let rollbackEvidence = Object.freeze({
+      candidateAttempts: 0,
+      occupiedCount: 0,
+      retirementExact: true,
+      retirementStage: "complete",
+      retirementElapsedMs: 0,
+      finalOwnerAbsent: true,
+      finalHookAbsent: true,
+    });
+    if (hookCommand) {
+      try {
+        rollbackEvidence = ensureClipboardAcquisitionRollback({
+          evidence: error?.clipboardLeaseEvidence,
+          paneId: identity.paneId,
+          ownerToken: nonce,
+          command: hookCommand,
+          runTmux: tmux,
+          remaining: rollbackRemaining,
+        });
+      } catch (rollbackError) {
+        if (rollbackError?.clipboardLeaseEvidence)
+          rollbackEvidence = rollbackError.clipboardLeaseEvidence;
+      }
+    }
     rmSync(operationDir, { recursive: true, force: true });
+    if (error && typeof error === "object") error.clipboardLeaseEvidence = rollbackEvidence;
     throw error;
   }
   let disposed = false;
+  const observationStartedAt = performance.now();
+  let retainedArtifact = null;
+  let retainedClipboard = null;
+  let artifactObservedElapsedMs = null;
+  let duplicateSettleElapsedMs = null;
+  let callbackLastScanElapsedMs = null;
+  let callbackEvidence = Object.freeze({
+    callbackInvocations: 0,
+    callbackStage: "not-invoked",
+    callbackOutcome: "pending",
+    callbackInventoryPolls: 0,
+    callbackHookElapsedMs: null,
+    callbackHookEntryLagMs: null,
+    callbackInventorySeenElapsedMs: null,
+    callbackArtifactPublishedElapsedMs: null,
+    callbackPreSaveElapsedMs: null,
+    callbackSaveElapsedMs: null,
+    callbackSaveOutcome: "not-started",
+  });
+  let callbackRetirementEvidence = Object.freeze({
+    callbackRetirementStage: "not-started",
+    callbackRetirementElapsedMs: 0,
+    callbackWorkSettled: false,
+    callbackLeaseInactive: false,
+  });
+  const readCallbackEvidence = () => {
+    const statePath = join(operationDir, "callback-state.json");
+    if (!existsSync(statePath)) return callbackEvidence;
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    const parsed = parseClipboardCallbackState(state, { nonce, paneId: identity.paneId });
+    callbackEvidence = Object.freeze({
+      callbackInvocations: existsSync(join(operationDir, "overflow.json")) ? 2 : 1,
+      ...parsed,
+    });
+    return callbackEvidence;
+  };
+  const listClipboardArtifacts = () => {
+    callbackLastScanElapsedMs = Math.min(
+      5_000,
+      Math.max(0, Math.round(performance.now() - observationStartedAt)),
+    );
+    return clipboardEventArtifacts(nonce);
+  };
+  let retirementEvidence = Object.freeze({
+    candidateAttempts: hookLease.candidateAttempts,
+    occupiedCount: hookLease.occupiedCount,
+    retirementExact: false,
+    retirementStage: "not-started",
+    retirementElapsedMs: 0,
+    finalOwnerAbsent: false,
+    finalHookAbsent: false,
+  });
   return {
     async wait(waitTimeoutMs) {
-      return waitForClipboardObservation({
-        listArtifacts: () => clipboardEventArtifacts(nonce),
+      const observed = await waitForClipboardObservation({
+        listArtifacts: listClipboardArtifacts,
         readEvent: (artifactId) => {
           const path = join(operationDir, `${artifactId}.json`);
           return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
@@ -657,25 +798,198 @@ async function armClipboardObservation(identity, nonce, timeoutMs) {
         clock: performance,
         sleep: delay,
         timeoutMs: waitTimeoutMs,
+        quietMs: 0,
+      });
+      retainedArtifact = observed.artifactId;
+      artifactObservedElapsedMs = Math.min(
+        5_000,
+        Math.max(0, Math.round(performance.now() - observationStartedAt)),
+      );
+      retainedClipboard = Object.freeze({
+        ...observed.clipboard,
+        priorCopyCount: baseline.inventory.buffers.length,
+        newCopyCount: Math.min(
+          baseline.inventory.bufferLimit,
+          baseline.inventory.buffers.length + 1,
+        ),
+        identityExact: true,
+      });
+      return retainedClipboard;
+    },
+    evidence() {
+      try {
+        readCallbackEvidence();
+      } catch {
+        callbackEvidence = Object.freeze({
+          callbackInvocations: 0,
+          callbackStage: "not-invoked",
+          callbackOutcome: "error",
+          callbackInventoryPolls: 0,
+          callbackHookElapsedMs: null,
+          callbackHookEntryLagMs: null,
+          callbackInventorySeenElapsedMs: null,
+          callbackArtifactPublishedElapsedMs: null,
+          callbackPreSaveElapsedMs: null,
+          callbackSaveElapsedMs: null,
+          callbackSaveOutcome: "not-started",
+        });
+      }
+      return Object.freeze({
+        ...retirementEvidence,
+        ...callbackRetirementEvidence,
+        ...callbackEvidence,
+        artifactObservedElapsedMs,
+        duplicateSettleElapsedMs,
+        callbackLastScanElapsedMs,
       });
     },
     async dispose(cleanupTimeoutMs) {
       if (disposed) return;
       disposed = true;
+      const cleanupDeadline = performance.now() + cleanupTimeoutMs;
       try {
-        tmux(["set-hook", "-pu", "-t", identity.paneId, hookName], {
-          timeout: cleanupTimeoutMs,
+        retirementEvidence = retireClipboardPaneHook({
+          paneId: identity.paneId,
+          lease: hookLease,
+          runTmux: tmux,
+          remaining: () => {
+            const value = Math.floor(cleanupDeadline - performance.now());
+            if (value < 1) fail("clipboard hook retirement exceeded its deadline");
+            return value;
+          },
         });
-      } catch {
-        // The pane may have retired; artifact validation below still fails closed.
+      } catch (error) {
+        if (error?.clipboardLeaseEvidence) {
+          retirementEvidence = error.clipboardLeaseEvidence;
+        }
+        throw error;
       }
-      if (clipboardEventArtifacts(nonce).length > 1) {
-        rmSync(operationDir, { recursive: true, force: true });
-        fail("multiple clipboard events arrived before observation disposal");
+      const callbackLockPath = join(operationDir, "callback.lock");
+      const abortPath = join(operationDir, "callback-abort.json");
+      const abortTemporaryPath = join(operationDir, "callback-abort.tmp");
+      const ackPath = join(operationDir, "callback-abort-ack.json");
+      const completePath = join(operationDir, "callback-complete.json");
+      const readControlRecord = (path, kind) => {
+        if (!existsSync(path)) return null;
+        const value = JSON.parse(readFileSync(path, "utf8"));
+        if (
+          value?.version !== 1 ||
+          Object.keys(value).length !== 3 ||
+          value.kind !== kind ||
+          value.controlToken !== callbackControlToken
+        ) {
+          fail(`clipboard callback ${kind} identity is malformed`);
+        }
+        return value;
+      };
+      if (existsSync(callbackLockPath)) {
+        callbackRetirementEvidence = Object.freeze({
+          callbackRetirementStage: "not-started",
+          callbackRetirementElapsedMs: 0,
+          callbackWorkSettled: false,
+          callbackLeaseInactive: false,
+        });
+        try {
+          callbackRetirementEvidence = await reapOwnedClipboardCallback({
+            isActive: () => readControlRecord(callbackLockPath, "active") !== null,
+            requestAbort: async () => {
+              writeFileSync(
+                abortTemporaryPath,
+                `${JSON.stringify({
+                  version: 1,
+                  kind: "abort",
+                  controlToken: callbackControlToken,
+                })}\n`,
+                { flag: "wx", mode: 0o600 },
+              );
+              renameSync(abortTemporaryPath, abortPath);
+            },
+            isAcknowledged: () => readControlRecord(ackPath, "abort-ack") !== null,
+            sleep: delay,
+            clock: performance,
+            timeoutMs: Math.max(1, Math.floor(cleanupDeadline - performance.now())),
+          });
+        } catch (error) {
+          if (error?.clipboardCallbackRetirement) {
+            callbackRetirementEvidence = error.clipboardCallbackRetirement;
+          }
+          try {
+            readCallbackEvidence();
+          } catch {
+            // Preserve the exact cooperative-retirement failure.
+          }
+          throw error;
+        }
+        readCallbackEvidence();
+      } else if (readControlRecord(completePath, "complete")) {
+        callbackRetirementEvidence = Object.freeze({
+          callbackRetirementStage: "already-exited",
+          callbackRetirementElapsedMs: 0,
+          callbackWorkSettled: true,
+          callbackLeaseInactive: true,
+        });
+      }
+      readCallbackEvidence();
+      if (!retainedArtifact) {
+        // A callback already owned by this operation may publish after the
+        // work cutoff while the exact hook and cooperative callback are being
+        // retired. Sample it once after that retirement, still inside the
+        // original total deadline, before removing the private operation dir.
+        if (performance.now() >= cleanupDeadline) {
+          fail("clipboard final artifact scan exceeded its deadline");
+        }
+        try {
+          const observed = await waitForClipboardObservation({
+            listArtifacts: listClipboardArtifacts,
+            readEvent: (artifactId) => {
+              const path = join(operationDir, `${artifactId}.json`);
+              return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
+            },
+            expected: { nonce, paneId: identity.paneId },
+            clock: performance,
+            sleep: delay,
+            timeoutMs: 0,
+            quietMs: 0,
+          });
+          retainedArtifact = observed.artifactId;
+          artifactObservedElapsedMs = Math.min(
+            5_000,
+            Math.max(0, Math.round(performance.now() - observationStartedAt)),
+          );
+          retainedClipboard = Object.freeze({
+            ...observed.clipboard,
+            priorCopyCount: baseline.inventory.buffers.length,
+            newCopyCount: Math.min(
+              baseline.inventory.bufferLimit,
+              baseline.inventory.buffers.length + 1,
+            ),
+            identityExact: true,
+          });
+        } catch (error) {
+          // Preserve the provisional wait failure when no exact terminal-edge
+          // artifact exists. Malformed/duplicate evidence still fails below.
+          if (!isClipboardObservationTimeout(error)) throw error;
+        }
+      }
+      if (retainedArtifact) {
+        try {
+          duplicateSettleElapsedMs = await settleClipboardObservationAfterRetirement({
+            listArtifacts: listClipboardArtifacts,
+            readCallbackEvidence,
+            retainedBufferName: retainedArtifact,
+            clock: performance,
+            sleep: delay,
+            timeoutMs: Math.max(1, Math.floor(cleanupDeadline - performance.now())),
+          });
+        } finally {
+          rmSync(operationDir, { recursive: true, force: true });
+        }
+        return retainedClipboard;
       }
       // Removing the operation directory fences a queued helper that has not
       // atomically renamed its result yet; it cannot publish after disposal.
       rmSync(operationDir, { recursive: true, force: true });
+      return null;
     },
   };
 }
@@ -718,60 +1032,297 @@ async function executeInputDocument(source) {
   });
 }
 
-function captureClipboardObservation(args) {
-  const [nonce, expectedPaneId, observedPaneId, bufferName, hookName] = args;
+async function captureClipboardObservation(args) {
+  const [nonce, expectedPaneId, observedPaneId] = args;
   if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u.test(nonce ?? "")) {
     fail("invalid clipboard operation nonce");
   }
   if (!/^%[0-9]+$/u.test(expectedPaneId ?? "") || observedPaneId !== expectedPaneId) {
     fail("clipboard hook pane identity mismatch");
   }
-  if (!/^buffer[0-9]+$/u.test(bufferName ?? "")) fail("clipboard hook buffer is not tmux-owned");
-  if (!/^pane-set-clipboard\[[0-9]+\]$/u.test(hookName ?? "")) {
-    fail("clipboard hook name is malformed");
-  }
   mkdirSync(clipboardObservationDir, { recursive: true, mode: 0o700 });
   chmodSync(clipboardObservationDir, 0o700);
   const operationDir = join(clipboardObservationDir, nonce);
   if (!existsSync(operationDir)) fail("clipboard observation lease is no longer active");
-  const capturedPayload = join(operationDir, `${bufferName}.bin`);
-  const callbackCount = rawClipboardArtifactIds(operationDir).length;
-  if (callbackCount > MAX_CLIPBOARD_CALLBACK_ARTIFACTS) {
-    rmSync(capturedPayload, { force: true });
+  const callbackLock = join(operationDir, "callback.lock");
+  const callbackAbort = join(operationDir, "callback-abort.json");
+  const callbackAbortAck = join(operationDir, "callback-abort-ack.json");
+  const callbackComplete = join(operationDir, "callback-complete.json");
+  let lease;
+  try {
+    lease = JSON.parse(readFileSync(join(operationDir, "lease.json"), "utf8"));
+  } catch {
+    fail("clipboard observation lease is malformed");
+  }
+  if (
+    lease?.version !== 1 ||
+    Object.keys(lease).length !== 8 ||
+    ![
+      "version",
+      "nonce",
+      "paneId",
+      "hookName",
+      "controlToken",
+      "armedAtEpochMs",
+      "inventory",
+      "pollTimeoutMs",
+    ].every((key) => key in lease) ||
+    !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u.test(lease.controlToken ?? "") ||
+    !Number.isSafeInteger(lease.armedAtEpochMs) ||
+    lease.armedAtEpochMs < 0 ||
+    lease.armedAtEpochMs > Date.now()
+  ) {
+    fail("clipboard observation lease identity is malformed");
+  }
+  try {
+    if (existsSync(callbackComplete)) throw new Error("clipboard callback already completed");
+    writeFileSync(
+      callbackLock,
+      `${JSON.stringify({ version: 1, kind: "active", controlToken: lease.controlToken })}\n`,
+      { flag: "wx", mode: 0o600 },
+    );
+  } catch {
     const overflow = join(operationDir, "overflow.json");
     if (!existsSync(overflow)) {
       writeFileSync(
         overflow,
-        `${JSON.stringify({ version: 1, nonce, paneId: observedPaneId, overflow: callbackCount })}\n`,
+        `${JSON.stringify({ version: 1, nonce, paneId: observedPaneId, overflow: 2 })}\n`,
         { flag: "wx", mode: 0o600 },
       );
     }
-    try {
-      tmux(["set-hook", "-pu", "-t", expectedPaneId, hookName], { timeout: 250 });
-    } catch {
-      // The parent disposer will retry bounded cleanup.
-    }
     return;
   }
-  enforceClipboardCallbackCap(rawClipboardArtifactIds(operationDir));
-  const declaredBytes = statSync(capturedPayload).size;
-  if (declaredBytes < 1 || declaredBytes > MAX_CLIPBOARD_BYTES)
-    fail("clipboard hook payload is empty or over cap");
-  const content = readFileSync(capturedPayload);
-  rmSync(capturedPayload, { force: true });
-  if (content.byteLength !== declaredBytes) fail("clipboard payload changed during hashing");
-  const event = {
-    version: 1,
-    nonce,
-    paneId: observedPaneId,
-    bytes: declaredBytes,
-    sha256: createHash("sha256").update(content).digest("hex"),
+  const callbackStatePath = join(operationDir, "callback-state.json");
+  const callbackStartedAt = performance.now();
+  const hookEntryLagMs = Math.min(5_000, Math.max(0, Date.now() - lease.armedAtEpochMs));
+  const callbackElapsed = () =>
+    Math.min(5_000, Math.max(0, Math.round(performance.now() - callbackStartedAt)));
+  let callbackStage = "hook-invoked";
+  let inventoryPolls = 0;
+  const hookElapsedMs = callbackElapsed();
+  let inventorySeenElapsedMs = null;
+  let artifactPublishedElapsedMs = null;
+  let preSaveElapsedMs = null;
+  let saveElapsedMs = null;
+  let saveOutcome = "not-started";
+  const callbackController = new AbortController();
+  const callbackTmuxChildren = new Set();
+  const callbackTmux = (args, options) =>
+    tmuxAsync(args, {
+      ...options,
+      onSpawn: (pid) => callbackTmuxChildren.add(pid),
+      onSettled: (pid) => callbackTmuxChildren.delete(pid),
+      terminationGraceMs: 50,
+    });
+  let callbackSettled = false;
+  let abortAcknowledged = false;
+  const controlWatch = watchClipboardCallbackAbort({
+    controlToken: lease.controlToken,
+    readRequest: () => {
+      if (!existsSync(callbackAbort)) return null;
+      try {
+        return JSON.parse(readFileSync(callbackAbort, "utf8"));
+      } catch {
+        fail("clipboard callback abort request is malformed");
+      }
+    },
+    abort: () => {
+      abortAcknowledged = true;
+      callbackController.abort();
+    },
+    isSettled: () => callbackSettled,
+    sleep: delay,
+  });
+  const publishCallbackState = (outcome = "pending") => {
+    const temporary = join(operationDir, "callback-state.tmp");
+    writeFileSync(
+      temporary,
+      `${JSON.stringify({
+        version: 1,
+        nonce,
+        paneId: observedPaneId,
+        stage: callbackStage,
+        outcome,
+        inventoryPolls: Math.min(inventoryPolls, 2_048),
+        hookElapsedMs,
+        hookEntryLagMs,
+        inventorySeenElapsedMs,
+        artifactPublishedElapsedMs,
+        preSaveElapsedMs,
+        saveElapsedMs,
+        saveOutcome,
+      })}\n`,
+      { mode: 0o600 },
+    );
+    renameSync(temporary, callbackStatePath);
   };
-  const temporary = join(operationDir, `${bufferName}.tmp`);
-  const complete = join(operationDir, `${bufferName}.json`);
-  writeFileSync(temporary, `${JSON.stringify(event)}\n`, { flag: "wx", mode: 0o600 });
-  if (!existsSync(operationDir)) fail("clipboard observation lease retired before publication");
-  renameSync(temporary, complete);
+  publishCallbackState();
+  try {
+    if (
+      lease?.version !== 1 ||
+      Object.keys(lease).length !== 8 ||
+      ![
+        "version",
+        "nonce",
+        "paneId",
+        "hookName",
+        "controlToken",
+        "armedAtEpochMs",
+        "inventory",
+        "pollTimeoutMs",
+      ].every((key) => key in lease) ||
+      lease.nonce !== nonce ||
+      lease.paneId !== expectedPaneId ||
+      !/^pane-set-clipboard\[[0-9]+\]$/u.test(lease.hookName ?? "") ||
+      lease.inventory === null ||
+      typeof lease.inventory !== "object" ||
+      Array.isArray(lease.inventory) ||
+      Object.keys(lease.inventory).length !== 3 ||
+      !["bufferLimit", "oldestAutoName", "buffers"].every((key) => key in lease.inventory) ||
+      !Array.isArray(lease.inventory.buffers) ||
+      !Number.isSafeInteger(lease.pollTimeoutMs) ||
+      lease.pollTimeoutMs < 1 ||
+      lease.pollTimeoutMs > 1_000 ||
+      !Number.isSafeInteger(lease.armedAtEpochMs) ||
+      lease.armedAtEpochMs < 0 ||
+      lease.armedAtEpochMs > Date.now()
+    ) {
+      fail("clipboard observation lease identity is malformed");
+    }
+    const baselineParsed = parseClipboardAutoBufferInventory(
+      lease.inventory.buffers
+        .map((entry) => `${entry?.name}\t${entry?.size}\t${entry?.created}`)
+        .join("\n"),
+      lease.inventory.bufferLimit,
+    );
+    if (
+      JSON.stringify(baselineParsed.buffers) !== JSON.stringify(lease.inventory.buffers) ||
+      (lease.inventory.oldestAutoName === null) !== (baselineParsed.buffers.length === 0) ||
+      (lease.inventory.oldestAutoName !== null &&
+        !baselineParsed.buffers.some((entry) => entry.name === lease.inventory.oldestAutoName))
+    ) {
+      fail("clipboard observation lease oldest buffer is malformed");
+    }
+    const baseline = Object.freeze({
+      ...baselineParsed,
+      oldestAutoName: lease.inventory.oldestAutoName,
+    });
+    const deadline = performance.now() + lease.pollTimeoutMs;
+    let captured = null;
+    callbackStage = "inventory-pending";
+    publishCallbackState();
+    while (performance.now() + 100 < deadline) {
+      inventoryPolls += 1;
+      const current = await readClipboardAutoBufferInventoryTransactionAsync({
+        runTmux: callbackTmux,
+        timeoutMs: Math.max(100, Math.floor(deadline - performance.now())),
+        signal: callbackController.signal,
+      });
+      if (current.inventory.bufferLimit !== baseline.bufferLimit) {
+        fail("clipboard buffer-limit changed during observation");
+      }
+      const assessment = assessClipboardAutoBufferDelta(baseline, current.inventory);
+      if (assessment.status === "captured") {
+        captured = assessment.buffer;
+        callbackStage = "inventory-seen";
+        inventorySeenElapsedMs = callbackElapsed();
+        publishCallbackState("seen");
+        break;
+      }
+      await delay(Math.min(5, Math.max(1, deadline - performance.now())));
+    }
+    if (!captured) fail("clipboard automatic buffer did not appear before deadline");
+    if (!existsSync(operationDir)) fail("clipboard observation lease retired before capture");
+    const capturedPayload = join(operationDir, `${captured.name}.bin`);
+    callbackStage = "save-pending";
+    preSaveElapsedMs = callbackElapsed();
+    saveOutcome = "pending";
+    publishCallbackState();
+    const afterSave = await readClipboardAutoBufferInventoryTransactionAsync({
+      runTmux: callbackTmux,
+      timeoutMs: Math.max(1, Math.floor(deadline - performance.now())),
+      save: { bufferName: captured.name, path: capturedPayload },
+      signal: callbackController.signal,
+    });
+    saveElapsedMs = Math.max(0, callbackElapsed() - preSaveElapsedMs);
+    saveOutcome = "complete";
+    const afterSaveAssessment = assessClipboardAutoBufferDelta(baseline, afterSave.inventory);
+    if (
+      afterSaveAssessment.status !== "captured" ||
+      afterSaveAssessment.buffer.name !== captured.name ||
+      afterSaveAssessment.buffer.size !== captured.size ||
+      afterSaveAssessment.buffer.created !== captured.created
+    ) {
+      rmSync(capturedPayload, { force: true });
+      fail("clipboard automatic buffer changed during capture");
+    }
+    enforceClipboardCallbackCap(rawClipboardArtifactIds(operationDir));
+    const declaredBytes = statSync(capturedPayload).size;
+    if (declaredBytes < 1 || declaredBytes > MAX_CLIPBOARD_BYTES)
+      fail("clipboard hook payload is empty or over cap");
+    const content = readFileSync(capturedPayload);
+    rmSync(capturedPayload, { force: true });
+    if (content.byteLength !== declaredBytes) fail("clipboard payload changed during hashing");
+    const event = {
+      version: 1,
+      nonce,
+      paneId: observedPaneId,
+      bufferName: captured.name,
+      bytes: declaredBytes,
+      sha256: createHash("sha256").update(content).digest("hex"),
+    };
+    const temporary = join(operationDir, `${captured.name}.tmp`);
+    const complete = join(operationDir, `${captured.name}.json`);
+    writeFileSync(temporary, `${JSON.stringify(event)}\n`, { flag: "wx", mode: 0o600 });
+    if (!existsSync(operationDir)) fail("clipboard observation lease retired before publication");
+    renameSync(temporary, complete);
+    callbackStage = "artifact-published";
+    artifactPublishedElapsedMs = callbackElapsed();
+    publishCallbackState("published");
+  } catch (error) {
+    if (preSaveElapsedMs !== null) {
+      saveElapsedMs ??= Math.max(0, callbackElapsed() - preSaveElapsedMs);
+      saveOutcome = "error";
+    }
+    try {
+      publishCallbackState("error");
+    } catch {
+      // The operation may already be retired. The owning input operation still
+      // fails closed from the missing artifact and exact retirement evidence.
+    }
+    throw error;
+  } finally {
+    callbackSettled = true;
+    await controlWatch;
+    if (callbackTmuxChildren.size !== 0) {
+      fail("clipboard callback child did not settle before callback retirement");
+    }
+    if (abortAcknowledged) {
+      writeFileSync(
+        callbackAbortAck,
+        `${JSON.stringify({
+          version: 1,
+          kind: "abort-ack",
+          controlToken: lease.controlToken,
+        })}\n`,
+        { flag: "wx", mode: 0o600 },
+      );
+    }
+    writeFileSync(
+      callbackComplete,
+      `${JSON.stringify({
+        version: 1,
+        kind: "complete",
+        controlToken: lease.controlToken,
+      })}\n`,
+      { flag: "wx", mode: 0o600 },
+    );
+    // This marker transition proves only that callback-owned work and tmux
+    // children settled and that the private callback lease is inactive. The
+    // outer test-drive process owner proves OS-process absence during global
+    // cleanup; this operation never infers it from a file disappearing.
+    rmSync(callbackLock, { force: true });
+  }
 }
 
 function liveHostProcessPid() {
@@ -982,7 +1533,10 @@ async function start(args) {
           ]
         : []),
     `TMUX_IDE_CLI=${shQuote(join(repoRoot, "bin", "cli.js"))}`,
-    ...(!publicEnvironment ? ["TMUX="] : []),
+    // The targeted TUI is launched inside the private host tmux. Preserve the
+    // exact TMUX value injected by that server so host-local clipboard policy
+    // configures the host, while semantic target access remains pinned by
+    // TMUX_IDE_TMUX_SOCKET_PATH. Public clean-env launches still carry TMUX="".
     `TMUX_IDE_TUI_PERF_LOG=${shQuote(perfLogPath)}`,
     `TMUX_IDE_TUI_LAUNCH_EPOCH_MS=${launchEpochMs}`,
     ...(process.env.TMUX_IDE_PERFORMANCE_TRACE_LOG
@@ -1315,8 +1869,8 @@ async function main() {
       break;
     }
     case "clipboard-observe":
-      if (args.length !== 5) fail("clipboard-observe received malformed hook arguments");
-      captureClipboardObservation(args);
+      if (args.length !== 3) fail("clipboard-observe received malformed hook arguments");
+      await captureClipboardObservation(args);
       break;
     case "mouse":
       await mouse(args);
@@ -1365,6 +1919,11 @@ async function main() {
 }
 
 main().catch((error) => {
+  if (error?.observation) {
+    process.stderr.write(
+      `${TESTDRIVE_INPUT_OBSERVATION_PREFIX}${JSON.stringify(error.observation)}\n`,
+    );
+  }
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 1;
 });

@@ -5,7 +5,7 @@
  * It is deliberately an operator/test surface, not a second product runtime.
  */
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import {
   chmodSync,
   closeSync,
@@ -86,6 +86,10 @@ import { sourceArchitectureInventory } from "./architecture-debt-inventory.mjs";
 import { acquireProductRigSleepAssertion } from "./lib/product-rig-sleep-assertion.mjs";
 import { runBoundedChildCommand } from "./lib/bounded-child-command.mjs";
 import {
+  parseTestdriveInputFailureObservation,
+  testdriveInputSupervisorTimeout,
+} from "./lib/tui-testdrive-input.mjs";
+import {
   assessCoherentFirstPaneBoundaries,
   assessConfiglessJourneyBoundaries,
   buildProductDiagnosticCorrelation,
@@ -125,6 +129,7 @@ import {
   runFirstKeyPasteOwnerBoot,
   runFocusOwnerBoot,
   runKeyboardPointerResizeOwnerBoot,
+  runSelectionCopyAppMouseOwnerBoot,
   runWindowLifecycleOwnerBoot,
   runIsolatedProductJourneyAttempt,
   runProductJourneyPlan,
@@ -167,6 +172,22 @@ import {
   assessProductKeyboardPointerResize,
   inspectResizeGuideFramebuffer,
 } from "./lib/product-keyboard-pointer-resize.mjs";
+import {
+  assessProductSelectionCopyAppMouse,
+  assessApplicationMouseDistribution,
+  applicationMouseDistributionFailureObservation,
+  applicationMouseForwardFailureObservation,
+  applicationMouseCausalSamples,
+  assessSelectionCopyAppMouseJourneyBoundaries,
+  selectionCausalFailureObservation,
+  selectionClipboardEvidence,
+  selectionCopyFailureEvidence,
+  selectionMouseFixtureProgram,
+  selectionLocalModeFailureObservation,
+  selectionWebEvidence,
+  selectionWorkspaceClientEvidence,
+  waitForSelectionMouseModeConditioning,
+} from "./lib/product-selection-copy-app-mouse.mjs";
 import { runBoundedFocusTmux } from "./lib/product-focus-tmux.mjs";
 import { readBoundedDiagnosticTail } from "./lib/bounded-diagnostic-tail.mjs";
 import { parseLayout } from "../packages/daemon/src/terminal/protocol/layout-parse.ts";
@@ -289,6 +310,7 @@ function productDiagnosticCorrelation(state, captureEvidence) {
   const focus = state?.journeyEvidence?.focus ?? null;
   const windowLifecycle = state?.journeyEvidence?.windowLifecycle ?? null;
   const keyboardPointerResize = state?.journeyEvidence?.keyboardPointerResize ?? null;
+  const selectionCopyAppMouse = state?.journeyEvidence?.selectionCopyAppMouse ?? null;
   const exact = configless
     ? {
         fleetSessionId: configless.adopted?.fleetSessionId,
@@ -325,7 +347,13 @@ function productDiagnosticCorrelation(state, captureEvidence) {
                   catalogRevision: keyboardPointerResize.expected?.catalogRevision,
                   semanticPaneId: keyboardPointerResize.expected?.semanticPaneId,
                 }
-              : null;
+              : selectionCopyAppMouse
+                ? {
+                    fleetSessionId: selectionCopyAppMouse.expected?.fleetSessionId,
+                    catalogRevision: selectionCopyAppMouse.expected?.catalogRevision,
+                    semanticPaneId: selectionCopyAppMouse.expected?.semanticPaneId,
+                  }
+                : null;
   return buildProductDiagnosticCorrelation({
     state,
     tuiAvailable,
@@ -3077,13 +3105,21 @@ function resizeTmuxGeometryExact(before, after, semanticPaneId, settledCols) {
   return keyedAfter.get(semanticPaneId)?.cols === settledCols && nextExtent === priorExtent;
 }
 
-async function driveExactResizeInput(state, document, signal) {
-  const receipt = JSON.parse(
-    await tuiCommandAsync(state, ["input", JSON.stringify(document)], {
-      timeout: document.timeoutMs,
+async function driveExactHostedInput(state, document, signal) {
+  let output;
+  try {
+    output = await tuiCommandAsync(state, ["input", JSON.stringify(document)], {
+      // The document retains its exact product deadline. This fixed outer-only
+      // grace lets the helper publish typed progress and dispose its hook.
+      timeout: testdriveInputSupervisorTimeout(document.timeoutMs),
       signal,
-    }),
-  );
+    });
+  } catch (error) {
+    const observation = parseTestdriveInputFailureObservation(error?.stderr, document.kind);
+    if (observation) error.observation = observation;
+    throw error;
+  }
+  const receipt = JSON.parse(output);
   if (
     receipt?.version !== 1 ||
     receipt.kind !== document.kind ||
@@ -3094,10 +3130,40 @@ async function driveExactResizeInput(state, document, signal) {
     receipt.geometry?.cols !== 160 ||
     receipt.geometry?.rows !== 44 ||
     !Number.isSafeInteger(receipt.bytesInjected) ||
-    receipt.bytesInjected < 1
+    receipt.bytesInjected < 1 ||
+    !Number.isSafeInteger(receipt.phases) ||
+    receipt.phases < 1 ||
+    receipt.phases > 32 ||
+    !Number.isSafeInteger(receipt.transportCalls) ||
+    receipt.transportCalls < 1 ||
+    receipt.transportCalls > 5
   )
-    throw new Error("resize hosted input receipt was invalid");
+    throw new Error("hosted input receipt was invalid");
   return Object.freeze(receipt);
+}
+
+async function selectionPreCleanTmuxSnapshot(state, session) {
+  try {
+    const stdout = await runBoundedFocusTmux({
+      socketPath: state.runtimeNamespace.tmuxSocketPath,
+      args: [
+        "list-panes",
+        "-t",
+        session,
+        "-F",
+        "#{pane_id}\\t#{@tmux_ide_pane_id}\\t#{pane_width}\\t#{pane_height}",
+      ],
+      deadline: performance.now() + 500,
+      maxBuffer: 64 * 1_024,
+    });
+    const rows = stdout.trimEnd().split("\n").filter(Boolean).slice(0, 514);
+    return Object.freeze({
+      available: rows.length > 0 && rows.length <= 513,
+      paneCount: Math.min(rows.length, 513),
+    });
+  } catch {
+    return Object.freeze({ available: false, paneCount: 0 });
+  }
 }
 
 function windowWorkspaceEvidenceWatermark(state, processId, daemonGeneration) {
@@ -5043,6 +5109,76 @@ async function diagnoseKeyboardPointerResize(planEntry) {
   };
 }
 
+async function diagnoseSelectionCopyAppMouse(planEntry) {
+  diagnosticAttemptPhases.set(planEntry.runId, "product-rig-startup");
+  await start(false, true, planEntry);
+  const state = await waitForState((candidate) => candidate?.status === "ready");
+  diagnosticAttemptPhases.set(planEntry.runId, "evidence-capture");
+  const captureEvidence = await captureArtifacts(
+    state,
+    `diagnose-${planEntry.journey.id}-r${planEntry.repetition}`,
+  );
+  diagnosticCaptures.set(planEntry.runId, captureEvidence);
+  await tuiCommandAsync(state, ["stop"], { timeout: 5_000 });
+  const timeline = readJsonLines(timelinePath);
+  const correlation = productDiagnosticCorrelation(state, captureEvidence);
+  const journeyEvidence = state.journeyEvidence?.selectionCopyAppMouse ?? null;
+  const causal = assessProductSelectionCopyAppMouse({
+    evidence: journeyEvidence,
+    expected: journeyEvidence?.expected ?? null,
+  });
+  const assessment = assessSelectionCopyAppMouseJourneyBoundaries({
+    timeline,
+    assessment: causal,
+    correlationComplete: correlation.complete,
+  });
+  const report = {
+    version: 1,
+    status: assessment.status,
+    journey: planEntry.journey.id,
+    variant: null,
+    repetition: planEntry.repetition,
+    repeat: planEntry.repeat,
+    runId: planEntry.runId,
+    firstBrokenBoundary: assessment.firstBrokenBoundary,
+    firstUnmeasuredBoundary: assessment.firstUnmeasuredBoundary,
+    boundaries: assessment.boundaries,
+    causalAssessment: causal,
+    selectionCopyAppMouse: journeyEvidence,
+    diagnosticCorrelation: { complete: correlation.complete, missing: correlation.missing },
+    sourceProvenance: {
+      commit: state.tui?.performanceTraceCommit ?? null,
+      tree: state.tui?.performanceTraceTree ?? null,
+      manifestDigest: state.tui?.performanceTraceManifestDigest ?? null,
+    },
+  };
+  return {
+    report,
+    reportPath: null,
+    evidence: {
+      report,
+      alignment: {
+        version: 1,
+        journey: planEntry.journey.id,
+        firstBrokenBoundary: assessment.firstBrokenBoundary,
+        firstUnmeasuredBoundary: assessment.firstUnmeasuredBoundary,
+        boundaries: assessment.boundaries,
+        causalAssessment: causal,
+        correlation: { complete: correlation.complete, missing: correlation.missing },
+        availability: correlation.availability,
+      },
+      timeline: readDiagnosticText(timelinePath),
+      tmuxTruth: captureEvidence.truth,
+      daemonState: correlation.daemonState,
+      clientState: correlation.clientState,
+      tuiAnsi: readDiagnosticText(captureEvidence.tuiPath),
+      webPngPath: captureEvidence.webPath,
+      stderr: boundedDiagnosticText(readDiagnosticText(join(state.tui.runtimeDir, "stderr.log"))),
+      reproduction: diagnosticReproduction(planEntry.journey.id, null),
+    },
+  };
+}
+
 function executeProductJourney(planEntry) {
   return dispatchProductJourneyExecutor(planEntry, {
     "configless-cold-start": diagnoseConfiglessColdStart,
@@ -5051,6 +5187,7 @@ function executeProductJourney(planEntry) {
     focus: diagnoseFocus,
     "window-lifecycle": diagnoseWindowLifecycle,
     "keyboard-pointer-resize": diagnoseKeyboardPointerResize,
+    "selection-copy-app-mouse": diagnoseSelectionCopyAppMouse,
     "runtime-qualification": diagnoseRuntimeQualification,
   });
 }
@@ -6295,6 +6432,878 @@ async function owner() {
       await new Promise(() => undefined);
       return;
     }
+    if (journeyId === "selection-copy-app-mouse") {
+      let selectionReadiness = null;
+      const selectionHmac = (key, value) =>
+        createHmac("sha256", key).update(String(value)).digest("hex");
+      const selectionDeliveryEvidence = (delivery, key, clipboard) =>
+        Object.freeze({
+          ...delivery,
+          ...(clipboard ? { clipboard } : {}),
+          ...(delivery.selectionStyle
+            ? {
+                selectionStyle: Object.freeze({
+                  cells: delivery.selectionStyle.cells,
+                  extraChangedCells: delivery.selectionStyle.extraChangedCells,
+                  presentationHmac: selectionHmac(key, delivery.selectionStyle.frameDigest),
+                }),
+              }
+            : {}),
+        });
+      const captureSelectionFrame = async () => {
+        const envelope = JSON.parse(
+          await tuiCommandAsync(state, ["capture", "--ansi", "--json"], {
+            timeout: 1_500,
+            signal: ownerAbort.signal,
+          }),
+        );
+        return Object.freeze({ envelope, capture: decodeFocusFramebufferCapture(envelope) });
+      };
+      const exactSelectionPoint = (plain, marker) => {
+        const lines = plain.split("\n");
+        const y = lines.findIndex((line) => line.includes(marker));
+        const x = y < 0 ? -1 : lines[y].indexOf(marker);
+        if (x < 28 || y < 3 || x + marker.length > 160 || y >= 44)
+          throw new Error("selection marker was not in the exact terminal content rectangle");
+        return Object.freeze({
+          from: Object.freeze({ x, y }),
+          to: Object.freeze({ x: x + marker.length - 1, y }),
+          contentRect: Object.freeze({ x: 28, y: 3, width: 132, height: 40 }),
+        });
+      };
+      const selectionBoot = await runSelectionCopyAppMouseOwnerBoot({
+        onBoundary: (boundary) =>
+          publish({
+            currentJourneyBoundary: boundary,
+            currentJourneyBoundaryAtWallMs: Date.now(),
+            currentJourneyBoundaryAtMonotonicMs: performance.now(),
+          }),
+        createNamespace: async () => {
+          const marker = `SELECT_${randomBytes(6).toString("hex").toUpperCase()}`;
+          const modeMarker = `MOUSE_READY_${randomBytes(6).toString("hex").toUpperCase()}`;
+          const mouseProgram = selectionMouseFixtureProgram();
+          const scratchFleet = await createScratchFleet({
+            sessions: 1,
+            slug,
+            windowsPerSession: 1,
+            initialPaneCommand: {
+              executable: process.execPath,
+              args: ["-e", mouseProgram, marker, modeMarker],
+            },
+          });
+          fleet = scratchFleet;
+          const session = scratchFleet.sessionNames[0];
+          const initialPane = scratchFleet.initialPanes[0];
+          if (!initialPane) throw new Error("selection namespace lost its exact initial pane");
+          const cleanupToken = `product-test-rig:${slug}`;
+          fleet = {
+            ...scratchFleet,
+            environment: {
+              ...scratchFleet.environment,
+              TMUX_IDE_RUNTIME_MODE: "testdrive",
+              TMUX_IDE_CLEANUP_TOKEN: cleanupToken,
+              TMUX_IDE_TMUX_SOCKET_PATH: scratchFleet.socketPath,
+            },
+          };
+          const runtimeNamespace = {
+            root: fleet.root,
+            home: fleet.environment.HOME,
+            projectDir: fleet.projectDir,
+            registryDir: fleet.environment.TMUX_IDE_REGISTRY_DIR,
+            settingsDir: fleet.environment.TMUX_IDE_SETTINGS_DIR,
+            stateDir: fleet.environment.TMUX_IDE_HOME,
+            tmuxSocketPath: fleet.socketPath,
+            hostTmuxSocketPath: join(fleet.root, "product-rig-host-tmux.sock"),
+            daemonInfoDir: fleet.daemonInfoDir,
+            cleanupToken,
+          };
+          const tui = prepareOwnedTuiRuntime({
+            ownership: { session, runtimeNamespace },
+            intendedTui: {
+              hostSession: `_tmux-ide-product-rig-${slug}`,
+              runtimeDir: join(rigRoot, "tui-selection-copy-app-mouse"),
+              performanceTracePath: join(
+                rigRoot,
+                "tui-selection-copy-app-mouse",
+                "performance-trace.jsonl",
+              ),
+              performanceTraceDetail: "1",
+              daemonPerformanceTracePath: null,
+            },
+            publish,
+            resolveProvenance: sourceTraceProvenance,
+            createRuntimeDir: createIsolatedTargetedTuiCwd,
+          });
+          const evidenceKey = randomBytes(32);
+          productInputFingerprintKeys.set(tui.runtimeDir, evidenceKey.toString("hex"));
+          publish({ session, runtimeNamespace, tui });
+          event("selection-namespace-ready", { windows: 1, panes: 1 });
+          return Object.freeze({
+            session,
+            marker,
+            modeMarker,
+            seed: { marker, paneId: initialPane.paneId, geometry: initialPane },
+            runtimeNamespace,
+            tui,
+            evidenceKey,
+          });
+        },
+        startDaemon: async () => {
+          daemon = await startOwnedProductRigDaemon({
+            start: () => startDaemon(fleet),
+            publish,
+            waitUntilReady: waitForReadinessLadder,
+          });
+          return daemon;
+        },
+        openWorkspace: async (namespace, runningDaemon) => {
+          const workspace = await runningDaemon.promote(namespace.session);
+          const identity = await observeTargetedCanonicalIdentity(
+            runningDaemon,
+            namespace.session,
+            workspace,
+          );
+          publish({
+            workspace,
+            daemon: {
+              ...runningDaemon.record,
+              revision: identity.catalogRevision,
+              revisionKind: "fleet-catalog",
+            },
+          });
+          event("selection-daemon-ready", identity);
+          return identity;
+        },
+        build: async () => {
+          await execFileAsync("bun", [join(repoRoot, "scripts", "build-tui.mjs")], {
+            cwd: repoRoot,
+            timeout: 120_000,
+          });
+          prepareIsolatedTargetedTuiCwd(state.tui.runtimeDir);
+          event("selection-tui-build", {});
+        },
+        launch: async (namespace) => {
+          const launched = JSON.parse(
+            await tuiCommandAsync(
+              state,
+              ["start", "--target", namespace.session, "--cols", "160", "--rows", "44", "--json"],
+              { timeout: 30_000, signal: ownerAbort.signal },
+            ),
+          );
+          if (
+            !exactProductTuiLaunchReceipt(launched, {
+              target: namespace.session,
+              cols: 160,
+              rows: 44,
+            })
+          )
+            throw new Error("selection TUI launch receipt was invalid");
+          const controller = new AbortController();
+          const abort = () => controller.abort();
+          ownerAbort.signal.addEventListener("abort", abort, { once: true });
+          selectionReadiness = {
+            launched,
+            controller,
+            startedAt: performance.now(),
+            deadlineMs: 50_000,
+            timer: setTimeout(() => controller.abort(), 50_000),
+            detach: () => ownerAbort.signal.removeEventListener("abort", abort),
+          };
+          event("selection-tui-started", { processId: launched.processId });
+          return launched;
+        },
+        waitHost: async (_namespace, _daemon, _identity, launched) => {
+          if (!selectionReadiness || selectionReadiness.launched !== launched)
+            throw new Error("selection readiness owner was unavailable");
+          const host = await waitForExactFocusHostReceipt(state, launched, {
+            deadlineMs: 10_000,
+            signal: selectionReadiness.controller.signal,
+          });
+          event("selection-host-ready", { processId: launched.processId });
+          return host;
+        },
+        waitCoherent: async (_namespace, _daemon, _identity, launched, host) => {
+          const readiness = selectionReadiness;
+          if (!readiness || readiness.launched !== launched)
+            throw new Error("selection readiness owner was unavailable");
+          try {
+            await waitForCoherentTui(
+              state,
+              30_000,
+              launched.processId,
+              host,
+              readiness.controller.signal,
+            );
+            await waitForExactFocusHostReceipt(state, launched, {
+              deadlineMs: Math.max(
+                1,
+                readiness.deadlineMs - (performance.now() - readiness.startedAt),
+              ),
+              signal: readiness.controller.signal,
+            });
+          } finally {
+            clearTimeout(readiness.timer);
+            readiness.detach();
+            readiness.controller.abort();
+            selectionReadiness = null;
+          }
+          event("selection-tui-coherent", { processId: launched.processId });
+          return Object.freeze({
+            processId: launched.processId,
+            launchId: launched.launchId,
+            hostIdentity: launched.hostIdentity,
+          });
+        },
+        proveBaseline: async (namespace, runningDaemon, identity, process, host) => {
+          const publication = await provePreseededPanePublication(state, namespace.seed);
+          const shell = await waitForProductApplicationShell(
+            runningDaemon,
+            namespace.session,
+            (candidate) => productWindowResources(candidate).length === 1,
+            10_000,
+            1,
+          );
+          const resources = productWindowResources(shell);
+          const selected = resources[0];
+          if (!selected?.active || selected.semanticPaneId !== publication.semanticPaneId)
+            throw new Error("selection baseline did not join the exact active pane");
+          const processId = `opentui:${process.processId}`;
+          const workspaceClient = await waitForQualifiedWorkspaceClientState(
+            () => readJsonLines(join(namespace.tui.runtimeDir, "performance.jsonl")),
+            {
+              processId,
+              daemonGeneration: runningDaemon.record.instanceId,
+              workspaceName: identity.workspaceName,
+              sessionName: identity.sessionName,
+              fleetSessionId: identity.fleetSessionId,
+              semanticPaneId: selected.semanticPaneId,
+              canonicalGeneration: publication.canonicalSeedPaint.publication.generation,
+            },
+          );
+          const terminalResourceRevision = workspaceClient.committed.terminalResourceRevision;
+          if (!Number.isSafeInteger(terminalResourceRevision) || terminalResourceRevision < 0)
+            throw new Error("selection baseline terminal resource revision was unavailable");
+          const tmux = await exactWindowTmuxSnapshot(state, resources);
+          const seedPaint = publication.canonicalSeedPaint;
+          const modeExpected = Object.freeze({
+            processId: seedPaint.publication.processId,
+            clockId: seedPaint.publication.clockId,
+            daemonGeneration: runningDaemon.record.instanceId,
+            semanticPaneId: selected.semanticPaneId,
+            canonicalGeneration: seedPaint.publication.generation,
+            canonicalIncarnation: seedPaint.publication.incarnation,
+            beforeStateHash: seedPaint.publication.stateHash,
+            afterRevision: seedPaint.publication.revision,
+            sourceEpoch: seedPaint.publication.sourceEpoch,
+            rendererEpoch: publication.frameCausality.hostFrame.rendererEpoch,
+            canonicalCols: seedPaint.publication.cols,
+            canonicalRows: seedPaint.publication.rows,
+            viewportCols: seedPaint.paint.viewportCols,
+            viewportRows: seedPaint.paint.viewportRows,
+          });
+          let conditioning;
+          let frame;
+          try {
+            const traceWatermark = readJsonLines(namespace.tui.performanceTracePath).length;
+            const delivery = await driveExactHostedInput(
+              state,
+              { version: 1, kind: "control-key", key: "y", timeoutMs: 2_000 },
+              ownerAbort.signal,
+            );
+            if (
+              delivery.requestedKey !== "y" ||
+              delivery.bytesInjected !== 1 ||
+              delivery.paneId !== host.hostIdentity.paneId ||
+              delivery.sessionId !== host.hostIdentity.sessionId
+            )
+              throw new Error("selection mouse-mode conditioning delivery was not exact");
+            conditioning = await waitForSelectionMouseModeConditioning({
+              readRecords: () =>
+                readJsonLines(namespace.tui.performanceTracePath).slice(traceWatermark),
+              expected: modeExpected,
+              signal: ownerAbort.signal,
+            });
+            frame = await captureSelectionFrame();
+            exactSelectionPoint(frame.capture.plain, namespace.modeMarker);
+            if ((frame.capture.plain.match(/APP_MOUSE_/gu) ?? []).length !== 0)
+              throw new Error("mouse-mode conditioning fabricated an application mouse receipt");
+          } catch (error) {
+            const records = readJsonLines(namespace.tui.performanceTracePath);
+            const latestMode = records
+              .filter(
+                (record) =>
+                  record?.type === "performance.terminal-canonical-mode" &&
+                  record.semanticPaneId === selected.semanticPaneId &&
+                  record.generation === modeExpected.canonicalGeneration,
+              )
+              .at(-1);
+            const preCleanTmux = await selectionPreCleanTmuxSnapshot(state, namespace.session);
+            if (error instanceof Error) {
+              error.boundary = "selection-baseline";
+              error.observation = Object.freeze({
+                ...(error.observation ?? {}),
+                preCleanTmux,
+                mode: Object.freeze({
+                  protocol: ["none", "x10", "vt200", "drag", "any"].includes(
+                    latestMode?.mouseProtocol,
+                  )
+                    ? latestMode.mouseProtocol
+                    : null,
+                  encoding: ["default", "utf8", "sgr", "sgr-pixels"].includes(
+                    latestMode?.mouseEncoding,
+                  )
+                    ? latestMode.mouseEncoding
+                    : null,
+                  revision: Number.isSafeInteger(latestMode?.revision) ? latestMode.revision : null,
+                  samePane: latestMode?.semanticPaneId === selected.semanticPaneId,
+                  sameGeneration: latestMode?.generation === modeExpected.canonicalGeneration,
+                }),
+              });
+            }
+            throw error;
+          }
+          const mouseMode = conditioning.qualifiedMode;
+          const point = exactSelectionPoint(frame.capture.plain, namespace.marker);
+          const baseline = Object.freeze({
+            processId,
+            daemonGeneration: runningDaemon.record.instanceId,
+            clientGeneration: workspaceClient.committed.generation,
+            workspaceName: identity.workspaceName,
+            sessionName: identity.sessionName,
+            semanticPaneId: selected.semanticPaneId,
+            canonicalGeneration: publication.canonicalSeedPaint.publication.generation,
+            canonicalIncarnation: publication.canonicalSeedPaint.publication.incarnation,
+            canonicalStateHash: publication.canonicalSeedPaint.publication.stateHash,
+            terminalResourceRevision,
+            clientId: processId,
+            resources,
+            workspaceClient,
+            tmux,
+            mouseMode: Object.freeze({
+              protocol: mouseMode.mouseProtocol,
+              encoding: mouseMode.mouseEncoding,
+              revision: mouseMode.revision,
+              incarnation: mouseMode.incarnation,
+              stateHash: mouseMode.stateHash,
+            }),
+            conditioning: Object.freeze({
+              kind: "control-key",
+              requestedKey: "y",
+              applicationMouseReceipts: 0,
+            }),
+            point,
+            host: Object.freeze({
+              paneId: host.hostIdentity.paneId,
+              sessionId: host.hostIdentity.sessionId,
+            }),
+          });
+          event("selection-baseline", { resources: 1 });
+          return baseline;
+        },
+        driveSelection: async (namespace, _daemon, _identity, _process, baseline) => {
+          let delivery;
+          try {
+            delivery = await driveExactHostedInput(
+              state,
+              {
+                version: 1,
+                kind: "selection-drag",
+                ...baseline.point,
+                timeoutMs: 3_000,
+              },
+              ownerAbort.signal,
+            );
+          } catch (error) {
+            if (error && typeof error === "object") {
+              const copyFailure = selectionCopyFailureEvidence(
+                readJsonLines(join(state.tui.runtimeDir, "performance.jsonl")),
+                baseline,
+              );
+              error.observation = Object.freeze({
+                ...(error.observation ?? {
+                  operation: "tui-testdrive-input",
+                  kind: "selection-drag",
+                  substage: "unknown",
+                }),
+                copyFailure,
+                preCleanTmux: await selectionPreCleanTmuxSnapshot(state, namespace.session),
+              });
+            }
+            throw error;
+          }
+          const expectedClipboard = selectionClipboardEvidence(
+            namespace.marker,
+            namespace.evidenceKey,
+          );
+          const expectedClipboardSha = createHash("sha256").update(namespace.marker).digest("hex");
+          if (
+            !delivery.selectionStyle ||
+            delivery.selectionStyle.extraChangedCells !== 0 ||
+            delivery.clipboard?.bytes !== expectedClipboard?.bytes ||
+            delivery.clipboard?.sha256 !== expectedClipboardSha
+          )
+            throw new Error("selection visual/clipboard delivery was not exact");
+          const records = readJsonLines(join(state.tui.runtimeDir, "performance.jsonl"));
+          const copied = records.filter(({ phase }) => phase === "terminal-selection-copy").at(-1);
+          if (copied?.copied !== true || copied.semanticPaneId !== baseline.semanticPaneId)
+            throw new Error("selection copy lifecycle fence was unavailable");
+          event("selection-visible", { cells: delivery.selectionStyle.cells });
+          return Object.freeze({
+            delivery: selectionDeliveryEvidence(delivery, namespace.evidenceKey, expectedClipboard),
+            style: Object.freeze({
+              cells: delivery.selectionStyle.cells,
+              extraChangedCells: delivery.selectionStyle.extraChangedCells,
+            }),
+            presentationHmac: selectionHmac(
+              namespace.evidenceKey,
+              delivery.selectionStyle.frameDigest,
+            ),
+            copyFence: copied,
+          });
+        },
+        driveCopy: async (namespace, _daemon, _identity, _process, _baseline) => {
+          const beforeCopies = readJsonLines(
+            join(state.tui.runtimeDir, "performance.jsonl"),
+          ).filter(({ phase }) => phase === "terminal-selection-copy");
+          const before = beforeCopies.length;
+          const priorCopy = beforeCopies.at(-1) ?? null;
+          let delivery;
+          try {
+            delivery = await driveExactHostedInput(
+              state,
+              { version: 1, kind: "copy-capture", timeoutMs: 3_000 },
+              ownerAbort.signal,
+            );
+          } catch (error) {
+            if (error && typeof error === "object") {
+              error.observation = Object.freeze({
+                ...(error.observation ?? {
+                  operation: "tui-testdrive-input",
+                  kind: "copy-capture",
+                  substage: "unknown",
+                }),
+                copyFailure: selectionCopyFailureEvidence(
+                  readJsonLines(join(state.tui.runtimeDir, "performance.jsonl")),
+                  _baseline,
+                ),
+                preCleanTmux: await selectionPreCleanTmuxSnapshot(state, namespace.session),
+              });
+            }
+            throw error;
+          }
+          const expectedClipboard = selectionClipboardEvidence(
+            namespace.marker,
+            namespace.evidenceKey,
+          );
+          const expectedClipboardSha = createHash("sha256").update(namespace.marker).digest("hex");
+          if (
+            delivery.clipboard?.bytes !== expectedClipboard?.bytes ||
+            delivery.clipboard?.sha256 !== expectedClipboardSha
+          )
+            throw new Error("Ctrl-C clipboard evidence did not match the selected terminal cells");
+          const copies = readJsonLines(join(state.tui.runtimeDir, "performance.jsonl")).filter(
+            ({ phase }) => phase === "terminal-selection-copy",
+          );
+          const copied = copies.at(-1);
+          if (
+            before !== 1 ||
+            priorCopy?.copyOrdinal !== 0 ||
+            copies.length !== before + 1 ||
+            copied?.copied !== true ||
+            copied.copyOrdinal !== priorCopy.copyOrdinal + 1 ||
+            copied.semanticPaneId !== _baseline.semanticPaneId ||
+            copied.daemonGeneration !== _baseline.daemonGeneration ||
+            copied.clientGeneration !== _baseline.clientGeneration ||
+            copied.canonicalIdentity?.generation !== _baseline.canonicalGeneration ||
+            copied.canonicalIdentity?.incarnation !== _baseline.mouseMode.incarnation ||
+            copied.canonicalIdentity?.revision !== _baseline.mouseMode.revision ||
+            copied.canonicalIdentity?.stateHash !== _baseline.mouseMode.stateHash
+          )
+            throw new Error("Ctrl-C copy lifecycle fence was not exact");
+          event("selection-copy-proved", { bytes: delivery.clipboard.bytes });
+          return Object.freeze({
+            delivery: selectionDeliveryEvidence(delivery, namespace.evidenceKey, expectedClipboard),
+            copyFence: copied,
+            copySequence: Object.freeze({
+              beforeCount: before,
+              afterCount: copies.length,
+              priorOrdinal: priorCopy.copyOrdinal,
+              expectedOrdinal: priorCopy.copyOrdinal + 1,
+              actualOrdinal: copied.copyOrdinal,
+              identityExact: true,
+            }),
+          });
+        },
+        driveAppMouse: async (namespace, _daemon, _identity, _process, baseline) => {
+          const point = baseline.point.from;
+          const deliveries = [];
+          const beforePerformance = readJsonLines(join(state.tui.runtimeDir, "performance.jsonl"));
+          const selectReceiptWatermark = Math.max(
+            0,
+            ...beforePerformance
+              .map((record) => record?.workspaceClient?.committed?.lastReceipt?.sequence)
+              .filter(Number.isSafeInteger),
+          );
+          const copyCountBefore = readJsonLines(
+            join(state.tui.runtimeDir, "performance.jsonl"),
+          ).filter(({ phase }) => phase === "terminal-selection-copy").length;
+          try {
+            for (let gesture = 0; gesture < 10; gesture += 1)
+              for (const [action, x] of [
+                ["down", point.x],
+                ["drag", point.x + 1],
+                ["up", point.x + 1],
+              ]) {
+                deliveries.push(
+                  await driveExactHostedInput(
+                    state,
+                    {
+                      version: 1,
+                      kind: "application-mouse",
+                      action,
+                      x,
+                      y: point.y,
+                      button: "left",
+                      modifiers: [],
+                      timeoutMs: 2_000,
+                    },
+                    ownerAbort.signal,
+                  ),
+                );
+                const paintDeadline = performance.now() + 2_000;
+                for (;;) {
+                  const records = readJsonLines(namespace.tui.performanceTracePath);
+                  const origins = records.filter(
+                    (record) =>
+                      record?.type === "performance.input-origin" &&
+                      record.origin === "application-mouse",
+                  );
+                  const painted = new Set(
+                    records
+                      .filter(
+                        (record) =>
+                          record?.type === "performance.stage" && record.stage === "paint",
+                      )
+                      .map(({ traceId }) => traceId),
+                  );
+                  if (
+                    origins.filter(({ traceId }) => painted.has(traceId)).length >=
+                    deliveries.length
+                  )
+                    break;
+                  if (performance.now() >= paintDeadline)
+                    throw new Error(
+                      "application mouse input did not reach its exact changed-cell paint",
+                    );
+                  await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+                }
+              }
+          } catch (error) {
+            if (error && typeof error === "object") {
+              const performanceRecords = readJsonLines(
+                join(state.tui.runtimeDir, "performance.jsonl"),
+              );
+              const traceRecords = readJsonLines(namespace.tui.performanceTracePath);
+              let fixtureReceiptCount = 0;
+              try {
+                const captured = await captureSelectionFrame();
+                fixtureReceiptCount = Math.min(
+                  [...captured.capture.plain.matchAll(/APP_MOUSE_/gu)].length,
+                  64,
+                );
+              } catch {
+                // The bounded structural counters below remain useful when the
+                // failure itself prevents framebuffer capture.
+              }
+              error.observation = applicationMouseForwardFailureObservation({
+                performanceRecords,
+                traceRecords,
+                deliveries,
+                expectedPaneId: baseline.semanticPaneId,
+                selectReceiptWatermark,
+                fixtureReceiptCount,
+              });
+            }
+            throw error;
+          }
+          const expectedPoint = Object.freeze({
+            column: point.x - baseline.point.contentRect.x,
+            row: point.y - baseline.point.contentRect.y,
+          });
+          let receipts = [];
+          let samples = null;
+          let distribution = null;
+          try {
+            const frame = await captureSelectionFrame();
+            receipts = [
+              ...frame.capture.plain.matchAll(/APP_MOUSE_(\d+)_(\d+)_(\d+)_(\d+)_([Mm])/gu),
+            ]
+              .map((match) =>
+                Object.freeze({
+                  ordinal: Number(match[1]),
+                  code: Number(match[2]),
+                  column: Number(match[3]),
+                  row: Number(match[4]),
+                  release: match[5] === "m",
+                }),
+              )
+              .slice(-deliveries.length);
+            const terminalInputDelta = receipts.length;
+            const copyCountAfter = readJsonLines(
+              join(state.tui.runtimeDir, "performance.jsonl"),
+            ).filter(({ phase }) => phase === "terminal-selection-copy").length;
+            samples = applicationMouseCausalSamples({
+              records: readJsonLines(namespace.tui.performanceTracePath),
+              evidenceKey: namespace.evidenceKey,
+              expected: {
+                processId: baseline.processId,
+                semanticPaneId: baseline.semanticPaneId,
+                daemonGeneration: baseline.daemonGeneration,
+                canonicalGeneration: baseline.canonicalGeneration,
+                ...expectedPoint,
+              },
+              receipts,
+            });
+            distribution = assessApplicationMouseDistribution(samples, expectedPoint);
+            if (terminalInputDelta !== deliveries.length || !distribution.qualified)
+              throw new Error("application mouse bytes did not reach the exact pane application");
+            event("application-mouse-forwarded", { terminalInputDelta });
+            return Object.freeze({
+              deliveries: Object.freeze(
+                deliveries.map((delivery) =>
+                  selectionDeliveryEvidence(delivery, namespace.evidenceKey, null),
+                ),
+              ),
+              terminalInputDelta,
+              localSelectionCopyDelta: copyCountAfter - copyCountBefore,
+              acceptedReceiptsExact: samples?.every(({ receiptExact }) => receiptExact) === true,
+              terminalProofHmac: createHmac("sha256", namespace.evidenceKey)
+                .update(frame.capture.plain)
+                .digest("hex"),
+              distribution,
+            });
+          } catch (error) {
+            if (error && typeof error === "object" && !error.observation)
+              error.observation = applicationMouseDistributionFailureObservation({
+                samples,
+                distribution,
+                expected: expectedPoint,
+                deliveryCount: deliveries.length,
+                receiptCount: receipts.length,
+              });
+            throw error;
+          }
+        },
+        driveLocalMode: async (namespace, _daemon, _identity, _process, _baseline, appMouse) => {
+          const frame = await captureSelectionFrame();
+          const point = exactSelectionPoint(frame.capture.plain, namespace.marker);
+          const performancePath = join(state.tui.runtimeDir, "performance.jsonl");
+          const performanceBefore = readJsonLines(performancePath);
+          const traceBefore = readJsonLines(namespace.tui.performanceTracePath);
+          const copiesBefore = performanceBefore.filter(
+            ({ phase }) => phase === "terminal-selection-copy",
+          ).length;
+          let delivery;
+          try {
+            delivery = await driveExactHostedInput(
+              state,
+              { version: 1, kind: "selection-drag", ...point, timeoutMs: 3_000 },
+              ownerAbort.signal,
+            );
+          } catch (error) {
+            if (error && typeof error === "object") {
+              error.observation = Object.freeze(
+                selectionLocalModeFailureObservation({
+                  inputObservation: error.observation ?? {
+                    operation: "tui-testdrive-input",
+                    kind: "selection-drag",
+                    substage: "unknown",
+                  },
+                  performanceRecords: readJsonLines(performancePath),
+                  traceRecords: readJsonLines(namespace.tui.performanceTracePath),
+                  performanceWatermark: performanceBefore.length,
+                  traceWatermark: traceBefore.length,
+                  copyCountBefore: copiesBefore,
+                  expectedPaneId: _baseline.semanticPaneId,
+                  mouseMode: _baseline.mouseMode,
+                }),
+              );
+              error.observation = Object.freeze({
+                ...error.observation,
+                preCleanTmux: await selectionPreCleanTmuxSnapshot(state, namespace.session),
+              });
+            }
+            throw error;
+          }
+          const after = await captureSelectionFrame();
+          const expectedClipboard = selectionClipboardEvidence(
+            namespace.marker,
+            namespace.evidenceKey,
+          );
+          const expectedClipboardSha = createHash("sha256").update(namespace.marker).digest("hex");
+          const count = (after.capture.plain.match(/APP_MOUSE_/gu) ?? []).length;
+          const copies = readJsonLines(join(state.tui.runtimeDir, "performance.jsonl")).filter(
+            ({ phase }) => phase === "terminal-selection-copy",
+          );
+          if (
+            count !== appMouse.terminalInputDelta ||
+            delivery.selectionStyle?.extraChangedCells !== 0 ||
+            delivery.clipboard?.sha256 !== expectedClipboardSha ||
+            copies.length !== copiesBefore + 1 ||
+            copies.at(-1)?.copied !== true
+          )
+            throw new Error("local select mode leaked pointer input to the pane application");
+          event("selection-local-mode-proved", { cells: delivery.selectionStyle.cells });
+          return Object.freeze({
+            delivery: selectionDeliveryEvidence(delivery, namespace.evidenceKey, expectedClipboard),
+            point,
+            terminalInputDelta: count - appMouse.terminalInputDelta,
+            style: Object.freeze({
+              cells: delivery.selectionStyle.cells,
+              extraChangedCells: delivery.selectionStyle.extraChangedCells,
+            }),
+            copyFence: copies.at(-1),
+          });
+        },
+        startWeb: async (_namespace, runningDaemon, identity, _process, baseline) => {
+          devServer = await startDevServer(runningDaemon, {
+            daemonInfoPath: join(fleet.daemonInfoDir, "daemon.json"),
+          });
+          browser = await chromium.launch({ headless: true });
+          const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+          const page = await context.newPage();
+          await page.goto(devServer.pageUrl, { waitUntil: "domcontentloaded" });
+          const ready = await waitForFocusWebSemantic({
+            signal: ownerAbort.signal,
+            health: () =>
+              ownerAbort.signal.aborted
+                ? "aborted"
+                : !devServer.isRunning()
+                  ? "dev-server-dead"
+                  : !browser.isConnected()
+                    ? "browser-disconnected"
+                    : page.isClosed()
+                      ? "page-closed"
+                      : null,
+            sample: () => page.evaluate(captureFocusWebSemanticDocument),
+            derivedResources: baseline.workspaceClient.derived.terminalInventory.resources,
+            expectedWorkspaceName: identity.workspaceName,
+            expectedSemanticPaneId: baseline.semanticPaneId,
+            expectedDaemonGeneration: runningDaemon.record.instanceId,
+          });
+          const workspaceClient = await waitForWindowWorkspaceEvidence(state, {
+            processId: baseline.processId,
+            daemonGeneration: baseline.daemonGeneration,
+            clientGeneration: baseline.clientGeneration,
+            clientId: baseline.clientId,
+            workspaceName: baseline.workspaceName,
+            sessionName: baseline.sessionName,
+            afterMicros: 0,
+            boundary: "selection-web-correlation",
+            resources: baseline.resources,
+            web: true,
+            exactTerminalResourceRevision: baseline.terminalResourceRevision,
+          });
+          publish({ web: { pageUrl: devServer.pageUrl, startedAfterSelectionBoundary: true } });
+          event("selection-web-correlation", { terminals: ready.semantic.terminalNodeCount });
+          return Object.freeze({
+            semantic: ready.semantic,
+            readiness: ready.assessment,
+            stableExactSamples: ready.stableExactSamples,
+            workspaceClient,
+            correlation: Object.freeze({
+              daemon: true,
+              workspaceClient: true,
+              tui: true,
+              web: true,
+              tmux: true,
+            }),
+          });
+        },
+      });
+      const tracePath = state.tui.performanceTracePath;
+      const quietBefore = readJsonLines(tracePath).length;
+      const quiet = await settleWindowReferenceTrace(
+        tracePath,
+        quietBefore,
+        performance.now() + 2_000,
+      );
+      const clipboard = selectionClipboardEvidence(
+        selectionBoot.namespace.marker,
+        selectionBoot.namespace.evidenceKey,
+      );
+      const writerHealth = selectionBoot.localMode.copyFence.writerHealth;
+      const tmuxAfter = await exactWindowTmuxSnapshot(state, selectionBoot.baseline.resources);
+      const journeyEvidence = Object.freeze({
+        expected: Object.freeze({
+          processId: selectionBoot.baseline.processId,
+          daemonGeneration: selectionBoot.baseline.daemonGeneration,
+          clientGeneration: selectionBoot.baseline.clientGeneration,
+          workspaceName: selectionBoot.baseline.workspaceName,
+          sessionName: selectionBoot.baseline.sessionName,
+          fleetSessionId: selectionBoot.identity.fleetSessionId,
+          catalogRevision: selectionBoot.identity.catalogRevision,
+          semanticPaneId: selectionBoot.baseline.semanticPaneId,
+          canonicalGeneration: selectionBoot.baseline.canonicalGeneration,
+          canonicalIncarnation: selectionBoot.baseline.canonicalIncarnation,
+          canonicalStateHash: selectionBoot.baseline.canonicalStateHash,
+          terminalResourceRevision: selectionBoot.baseline.terminalResourceRevision,
+        }),
+        baseline: selectionBoot.baseline,
+        host: selectionBoot.baseline.host,
+        clipboard,
+        selection: selectionBoot.selection,
+        copy: selectionBoot.copy,
+        appMouse: selectionBoot.appMouse,
+        localMode: selectionBoot.localMode,
+        workspaceClient: selectionWorkspaceClientEvidence(selectionBoot.web.workspaceClient),
+        tmux: Object.freeze({
+          semanticPaneId: selectionBoot.baseline.semanticPaneId,
+          geometryStable: JSON.stringify(tmuxAfter) === JSON.stringify(selectionBoot.baseline.tmux),
+          snapshotExact:
+            tmuxAfter.length === 1 &&
+            tmuxAfter[0]?.semanticPaneId === selectionBoot.baseline.semanticPaneId,
+          applicationMouseMode: `${selectionBoot.baseline.mouseMode.encoding}-${selectionBoot.baseline.mouseMode.protocol}`,
+        }),
+        correlation: selectionBoot.web.correlation,
+        web: selectionWebEvidence(selectionBoot.web, selectionBoot.baseline.semanticPaneId),
+        work: Object.freeze({
+          identicalIdleFrames: quiet.tail.filter(({ type }) => type === "performance.frame").length,
+          unchangedPaneGridWalks: quiet.tail.filter(
+            ({ type }) => type === "performance.terminal-paint",
+          ).length,
+          terminalPaintsOutsideGestures: quiet.tail.filter(
+            ({ type }) => type === "performance.terminal-paint",
+          ).length,
+        }),
+        writerHealth,
+      });
+      const assessment = assessProductSelectionCopyAppMouse({
+        evidence: journeyEvidence,
+        expected: journeyEvidence.expected,
+      });
+      if (!assessment.qualified) {
+        const error = new Error("selection/copy/app-mouse causal assessment failed");
+        error.boundary = "selection-causal-proof";
+        const failureObservation = selectionCausalFailureObservation(assessment, journeyEvidence);
+        publish({
+          currentJourneyBoundary: "selection-causal-proof",
+          currentJourneyBoundaryAtWallMs: Date.now(),
+          currentJourneyBoundaryAtMonotonicMs: performance.now(),
+          failureObservation,
+        });
+        error.observation = failureObservation;
+        throw error;
+      }
+      publish({
+        convergence: { workspaceClient: selectionBoot.web.workspaceClient },
+        journeyEvidence: { selectionCopyAppMouse: journeyEvidence },
+        status: "ready",
+        readyAt: new Date().toISOString(),
+      });
+      await new Promise(() => undefined);
+      return;
+    }
     if (journeyId === "keyboard-pointer-resize") {
       let resizeReadiness = null;
       let activeDrag = null;
@@ -6571,7 +7580,7 @@ async function owner() {
           const targetBefore = tmuxBefore.find(
             ({ semanticPaneId }) => semanticPaneId === baseline.semanticPaneId,
           );
-          const delivery = await driveExactResizeInput(
+          const delivery = await driveExactHostedInput(
             state,
             {
               version: 1,
@@ -6679,7 +7688,7 @@ async function owner() {
           const x = 28 + left.left + left.cols;
           const y =
             2 + Math.floor(Math.max(left.top, right.top) + Math.min(left.rows, right.rows) / 2);
-          const down = await driveExactResizeInput(
+          const down = await driveExactHostedInput(
             state,
             {
               version: 1,
@@ -6700,7 +7709,7 @@ async function owner() {
             const baselineCount = readJsonLines(
               join(state.tui.runtimeDir, "performance.jsonl"),
             ).length;
-            const delivery = await driveExactResizeInput(
+            const delivery = await driveExactHostedInput(
               state,
               {
                 version: 1,
@@ -6807,7 +7816,7 @@ async function owner() {
             baseline.processId,
             baseline.daemonGeneration,
           );
-          const delivery = await driveExactResizeInput(
+          const delivery = await driveExactHostedInput(
             state,
             {
               version: 1,

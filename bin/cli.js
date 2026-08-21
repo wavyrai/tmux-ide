@@ -7751,6 +7751,8 @@ var init_terminal_replica = __esm({
       origin: z48.boolean(),
       wraparound: z48.boolean(),
       mouseTracking: z48.boolean(),
+      mouseProtocol: z48.enum(["none", "x10", "vt200", "drag", "any"]).optional(),
+      mouseEncoding: z48.enum(["default", "utf8", "sgr", "sgr-pixels"]).optional(),
       synchronizedOutput: z48.boolean()
     }).strict();
     TerminalReplicaPlacementSchemaZ = z48.object({
@@ -43476,6 +43478,8 @@ var init_xterm_terminal_interpreter_backend = __esm({
         const core = this.#terminal._core;
         const dec = core?.coreService?.decPrivateModes ?? {};
         const modes = core?.coreService?.modes ?? {};
+        const protocol = core?.coreMouseService?._activeProtocol?.toUpperCase();
+        const encoding = core?.coreMouseService?._activeEncoding?.toUpperCase();
         return {
           alternateScreen: this.#terminal.buffer.active.type === "alternate",
           applicationCursor: dec.applicationCursorKeys === true,
@@ -43484,7 +43488,9 @@ var init_xterm_terminal_interpreter_backend = __esm({
           insert: modes.insertMode === true,
           origin: dec.origin === true,
           wraparound: dec.wraparound !== false,
-          mouseTracking: core?.coreMouseService?._activeProtocol !== void 0 && core.coreMouseService._activeProtocol !== "NONE",
+          mouseTracking: protocol !== void 0 && protocol !== "NONE",
+          mouseProtocol: protocol === "X10" ? "x10" : protocol === "VT200" ? "vt200" : protocol === "DRAG" ? "drag" : protocol === "ANY" ? "any" : "none",
+          mouseEncoding: encoding === "SGR" ? "sgr" : encoding === "SGR_PIXELS" ? "sgr-pixels" : encoding === "UTF8" ? "utf8" : "default",
           synchronizedOutput: dec.synchronizedOutput === true
         };
       }
@@ -43602,6 +43608,8 @@ function snapshotsSemanticallyEqual(left, right) {
     "origin",
     "wraparound",
     "mouseTracking",
+    "mouseProtocol",
+    "mouseEncoding",
     "synchronizedOutput"
   ]) || left.placements.length !== right.placements.length || !left.placements.every(
     (placement, index) => recordEquals(placement, right.placements[index], [
@@ -43683,6 +43691,8 @@ function structuralDiff(baseline, candidate, probe, revision, stateHash) {
       "origin",
       "wraparound",
       "mouseTracking",
+      "mouseProtocol",
+      "mouseEncoding",
       "synchronizedOutput"
     ]),
     historyChanged: baseline.history.length !== candidate.history.length || !baseline.history.every(
@@ -57955,7 +57965,7 @@ var require_package = __commonJS({
         "test:tui-renderer": "bun test --preload @opentui/solid/preload --preload ./packages/daemon/test-support/opentui-renderer-preload.ts ./packages/daemon/src/tui/mirror/pane-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/widget-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/missions-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/recipes-gallery-renderer.test.tsx ./packages/daemon/src/tui/mirror/shell-chrome-renderer.test.tsx ./packages/daemon/src/tui/mirror/sidebar-renderer.test.tsx ./packages/daemon/src/tui/mirror/home-files-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/changes-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/activity-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/files/session-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-terminal-workspace-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/application-shell-view-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/files-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/changes-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/missions-activity-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/dialogs-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/optional-feature-registry-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/palette-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/runtime/pane-scoped-terminal-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/features/rich-preview/feature.test.ts ./packages/daemon/src/tui/mirror/runtime/rich-preview-optional-feature-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/application-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/pane-frame-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-pane-chrome-view.test.tsx ./packages/daemon/src/tui/mirror/workspace/terminal-window-strip-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-shell-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/workbench-dock-dual-host-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/command-palette-surface-renderer.test.tsx ./packages/daemon/src/tui/mirror/workspace/opentui-insertion-stability-renderer.test.tsx",
         "test:tui-smoke": "bun scripts/smoke-tui-missions.mjs",
         "test:tui-live": "node scripts/tui-testdrive.mjs smoke",
-        "test:tui-testdrive": "node --test scripts/lib/tui-testdrive-input.test.mjs",
+        "test:tui-testdrive": "node --test scripts/lib/tui-testdrive-clipboard-hook.test.mjs scripts/lib/tui-testdrive-input.test.mjs",
         "test:performance-qualification": "node scripts/performance-qualification.mjs",
         "measure:performance-portable": "node scripts/performance-portable-evidence.mjs",
         "test:portable-release-contract": "pnpm exec vitest run scripts/lib/portable-performance-evidence.test.mjs",

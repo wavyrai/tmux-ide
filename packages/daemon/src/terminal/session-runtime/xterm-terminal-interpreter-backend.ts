@@ -98,12 +98,14 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
             decPrivateModes?: Record<string, boolean>;
             modes?: Record<string, boolean>;
           };
-          coreMouseService?: { _activeProtocol?: string };
+          coreMouseService?: { _activeProtocol?: string; _activeEncoding?: string };
         };
       }
     )._core;
     const dec = core?.coreService?.decPrivateModes ?? {};
     const modes = core?.coreService?.modes ?? {};
+    const protocol = core?.coreMouseService?._activeProtocol?.toUpperCase();
+    const encoding = core?.coreMouseService?._activeEncoding?.toUpperCase();
     return {
       alternateScreen: this.#terminal.buffer.active.type === "alternate",
       applicationCursor: dec.applicationCursorKeys === true,
@@ -112,9 +114,25 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
       insert: modes.insertMode === true,
       origin: dec.origin === true,
       wraparound: dec.wraparound !== false,
-      mouseTracking:
-        core?.coreMouseService?._activeProtocol !== undefined &&
-        core.coreMouseService._activeProtocol !== "NONE",
+      mouseTracking: protocol !== undefined && protocol !== "NONE",
+      mouseProtocol:
+        protocol === "X10"
+          ? "x10"
+          : protocol === "VT200"
+            ? "vt200"
+            : protocol === "DRAG"
+              ? "drag"
+              : protocol === "ANY"
+                ? "any"
+                : "none",
+      mouseEncoding:
+        encoding === "SGR"
+          ? "sgr"
+          : encoding === "SGR_PIXELS"
+            ? "sgr-pixels"
+            : encoding === "UTF8"
+              ? "utf8"
+              : "default",
       synchronizedOutput: dec.synchronizedOutput === true,
     };
   }

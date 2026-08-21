@@ -38,6 +38,7 @@ function runTmux(argv: readonly string[]): string {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, TMUX: "" },
+    timeout: 5_000,
   }).trimEnd();
 }
 
@@ -89,6 +90,7 @@ describe.skipIf(!hasTmux)("pane-stream wire live", () => {
     spawnSync("tmux", ["-L", socketName, "kill-server"], {
       stdio: "ignore",
       env: { ...process.env, TMUX: "" },
+      timeout: 5_000,
     });
     try {
       rmSync(

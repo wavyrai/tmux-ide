@@ -128,9 +128,9 @@ describe("production OpenTUI entry boundary", () => {
 
   it("installs frame readiness only for an explicit lifecycle or detailed diagnostic sink", () => {
     const root = read("packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx");
-    expect(root).toMatch(
-      /terminalFrameReadiness\s*=\s*tuiPerfStream\s*\|\|\s*frameDiagnosticSink[\s\S]*createTerminalFrameReadiness/u,
-    );
+    expect(root).toContain("createApplicationTerminalFrameReadinessOwner({");
+    expect(root).toContain("enabled: tuiPerfStream,");
+    expect(root).toContain("sink: frameDiagnosticSink,");
     expect(root).toContain(
       'if (terminalFrameReadiness) renderer.on("frame", observeTerminalFrame)',
     );

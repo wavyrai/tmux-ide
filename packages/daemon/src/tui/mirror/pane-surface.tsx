@@ -106,6 +106,8 @@ export interface TerminalPaneRenderSource {
     cols: number;
     rows: number;
     sourceEpoch: number;
+    /** Generation-local count of canonical history rows trimmed after the retained seed. */
+    historyTrim?: number;
   }> | null;
 }
 
