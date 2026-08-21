@@ -34261,6 +34261,7 @@ var init_session_channel = __esm({
           semanticPaneId: semanticPaneId3,
           freeze: () => this.freeze(sub),
           thaw: () => this.thaw(sub),
+          reseed: () => this.reseed(sub),
           sendText: (text) => {
             if (!sub.closed) this.input.literal(sub.pane.runtimeId, text);
           },
@@ -34558,13 +34559,14 @@ var init_session_channel = __esm({
         if (!event) return;
         for (const subscriber of this.layoutSubscribers) subscriber(event);
         for (const pane of this.panesByRuntime.values()) {
+          if (pane.windowRuntimeId !== windowRuntimeId) continue;
           for (const sub of pane.subs) {
             if (!sub.closed && sub.onLayout) sub.onLayout(event);
           }
         }
       }
       /**
-       * Hand ONE new subscriber the geometry of every window this session has.
+       * Hand ONE new subscriber the geometry of its owning window.
        *
        * Without it a subscriber's first layout frame arrives only when a layout
        * happens to change, so a view built from these frames opens empty and stays
@@ -34573,10 +34575,10 @@ var init_session_channel = __esm({
        */
       emitLayoutSnapshot(sub) {
         if (!sub.onLayout) return;
-        for (const windowRuntimeId of this.layoutByWindow.keys()) {
-          const event = this.layoutEventFor(windowRuntimeId);
-          if (!sub.closed && event) sub.onLayout(event);
-        }
+        const windowRuntimeId = sub.pane.windowRuntimeId;
+        if (windowRuntimeId === null) return;
+        const event = this.layoutEventFor(windowRuntimeId);
+        if (!sub.closed && event) sub.onLayout(event);
       }
       layoutEventFor(windowRuntimeId) {
         const layout = this.layoutByWindow.get(windowRuntimeId);
@@ -34633,24 +34635,30 @@ var init_session_channel = __esm({
             windowActive: windowActive === "1"
           });
         }
-        const listed = this.applyPaneTruth(truth);
-        await this.syncWindows();
+        const { listed, movedWindowRuntimeIds } = this.applyPaneTruth(truth);
+        await this.syncWindows(this.opts.session, movedWindowRuntimeIds);
         this.discovery.discover(listed);
       }
       applyPaneTruth(truth) {
         const listed = /* @__PURE__ */ new Set();
+        const movedWindowRuntimeIds = /* @__PURE__ */ new Set();
         this.truthActive.clear();
         this.truthWindow.clear();
+        this.activePaneByWindow.clear();
         for (const row of truth) {
           listed.add(row.runtimePaneId);
           this.truthActive.set(row.runtimePaneId, row.active);
           this.truthWindow.set(row.runtimePaneId, row.runtimeWindowId);
+          if (row.active) this.activePaneByWindow.set(row.runtimeWindowId, row.runtimePaneId);
           if (row.windowActive) this.currentWindow = row.runtimeWindowId;
         }
         for (const [runtime, pane] of [...this.panesByRuntime]) {
           if (listed.has(runtime)) {
             pane.active = this.truthActive.get(runtime) ?? pane.active;
-            pane.windowRuntimeId = this.truthWindow.get(runtime) ?? pane.windowRuntimeId;
+            const nextWindowRuntimeId = this.truthWindow.get(runtime) ?? pane.windowRuntimeId;
+            if (nextWindowRuntimeId !== pane.windowRuntimeId && nextWindowRuntimeId !== null)
+              movedWindowRuntimeIds.add(nextWindowRuntimeId);
+            pane.windowRuntimeId = nextWindowRuntimeId;
             continue;
           }
           this.panesByRuntime.delete(runtime);
@@ -34665,7 +34673,7 @@ var init_session_channel = __esm({
           }
           pane.subs.clear();
         }
-        return listed;
+        return { listed, movedWindowRuntimeIds };
       }
       async refreshTrustedInventory(expectedRuntimeSessionId, attempt = 0) {
         const beforeLines = await this.io.request(
@@ -34699,7 +34707,7 @@ var init_session_channel = __esm({
         )) {
           throw new Error(`trusted inventory for ${this.opts.session} has incomplete counts`);
         }
-        const listed = this.applyPaneTruth(
+        const { listed, movedWindowRuntimeIds } = this.applyPaneTruth(
           descriptors.map((pane) => ({
             runtimePaneId: pane.runtimePaneId,
             active: pane.paneActive,
@@ -34707,7 +34715,7 @@ var init_session_channel = __esm({
             windowActive: pane.windowActive
           }))
         );
-        const repairedWindows = await this.syncWindows(expectedRuntimeSessionId);
+        const repairedWindows = await this.syncWindows(expectedRuntimeSessionId, movedWindowRuntimeIds);
         const repairedPanes = await this.reconcileIdentity(descriptors, listed);
         const afterLines = await this.io.request(
           `list-panes -s -t "${expectedRuntimeSessionId}" -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`
@@ -34758,7 +34766,7 @@ var init_session_channel = __esm({
           panes: Object.freeze(panes)
         });
       }
-      async syncWindows(target = this.opts.session) {
+      async syncWindows(target = this.opts.session, requiredLayoutEmits = /* @__PURE__ */ new Set()) {
         const lines = await this.io.request(
           `list-windows -t "${target}" -F "#{window_id}	#{qa:@tmux_ide_window_id}	#{qa:window_name}	#{window_active}	#{window_visible_layout}	#{?window_zoomed_flag,1,0}	#{pane-border-status}"`
         );
@@ -34846,7 +34854,8 @@ var init_session_channel = __esm({
         });
         this.windowsByRuntime.clear();
         for (const [key, value] of next) this.windowsByRuntime.set(key, value);
-        if (changed) for (const runtimeId of next.keys()) this.emitLayout(runtimeId);
+        const layoutEmits = changed ? new Set(next.keys()) : new Set([...requiredLayoutEmits].filter((runtimeId) => next.has(runtimeId)));
+        for (const runtimeId of layoutEmits) this.emitLayout(runtimeId);
         return repairedIdentity;
       }
       async reconcileIdentity(descriptors, listed) {
@@ -35080,6 +35089,7 @@ var init_mirror_service = __esm({
           semanticPaneId: request.semanticPaneId,
           freeze: () => handle.freeze(),
           thaw: () => handle.thaw(),
+          reseed: () => handle.reseed(),
           sendText: (text) => handle.sendText(text),
           sendKey: (key) => handle.sendKey(key),
           close: async () => {
@@ -44008,20 +44018,32 @@ var init_terminal_replica_interpreter = __esm({
         if (this.#closed) return;
         if (operation.type === "reseed") {
           this.#causalCell?.fail("reseeded");
+          const nativeCols = operation.nativeCols ?? operation.cols;
+          const nativeRows = operation.nativeRows ?? operation.rows;
           const replacement = this.#backendFactory({
-            cols: operation.cols,
-            rows: operation.rows,
+            cols: nativeCols,
+            rows: nativeRows,
             scrollback: this.#scrollback
           });
           try {
             for (const chunk of operation.chunks) {
-              this.#admitRaw(chunk);
-              this.#observeMarkerBytes(chunk);
               await this.#writeToBackend(replacement, chunk);
+            }
+            replacement.setAuthoritativeCursor(operation.cursor.x, operation.cursor.y);
+            if (nativeCols !== operation.cols || nativeRows !== operation.rows)
+              replacement.resize(operation.cols, operation.rows);
+            if (operation.validateBeforeCommit && !operation.validateBeforeCommit()) {
+              replacement.dispose();
+              operation.onInvalidated?.();
+              return;
             }
           } catch (error) {
             replacement.dispose();
             throw error;
+          }
+          for (const chunk of operation.chunks) {
+            this.#admitRaw(chunk);
+            this.#observeMarkerBytes(chunk);
           }
           const previous = this.#backend;
           this.#backend = replacement;
@@ -44029,7 +44051,6 @@ var init_terminal_replica_interpreter = __esm({
             kind: operation.bootstrap,
             hiddenState: operation.bootstrap === "authoritative-stream" ? "observed-from-start" : "unknown"
           };
-          this.#backend.setAuthoritativeCursor(operation.cursor.x, operation.cursor.y);
           this.#commit(true, void 0, operation.trace ?? null);
           previous.dispose();
           return;
@@ -44308,6 +44329,12 @@ var init_terminal_replica_interpreter = __esm({
 });
 
 // packages/daemon/src/terminal/session-runtime/terminal-replica-owner.ts
+function boundedPositive(value) {
+  return Number.isSafeInteger(value) && value > 0 && value <= 65535;
+}
+function layoutLeaseEqual(left, right) {
+  return left.semanticWindowId === right.semanticWindowId && left.currentWindow === right.currentWindow && left.zoomed === right.zoomed && left.windowCols === right.windowCols && left.windowRows === right.windowRows && left.paneBorderStatus === right.paneBorderStatus && left.pane.semanticPaneId === right.pane.semanticPaneId && left.pane.left === right.pane.left && left.pane.top === right.pane.top && left.pane.width === right.pane.width && left.pane.height === right.pane.height && left.pane.active === right.pane.active;
+}
 var SessionRuntimeTerminalReplicaOwner;
 var init_terminal_replica_owner = __esm({
   "packages/daemon/src/terminal/session-runtime/terminal-replica-owner.ts"() {
@@ -44336,7 +44363,10 @@ var init_terminal_replica_owner = __esm({
           scheduler: options.scheduler,
           observability: options.observability,
           onUpdate: (update, trace) => {
-            if (update.type === "terminal.seed") this.#bootstrapped = true;
+            if (update.type === "terminal.seed") {
+              this.#bootstrapped = true;
+              this.#reseedRetryCount = 0;
+            }
             options.onRevision?.(update.revision);
             for (const listener of this.#listeners) {
               try {
@@ -44391,6 +44421,10 @@ var init_terminal_replica_owner = __esm({
       #disposed = false;
       #cols = 80;
       #rows = 24;
+      #layoutEpoch = 0;
+      #layoutLease = null;
+      #subscriptionEpoch = 1;
+      #reseedRetryCount = 0;
       #reseed = null;
       #bootstrapped = false;
       installOutputTraceReader(reader) {
@@ -44461,6 +44495,7 @@ var init_terminal_replica_owner = __esm({
       async dispose(reason = "runtime-disposed") {
         if (this.#disposed) return;
         this.#disposed = true;
+        this.#subscriptionEpoch += 1;
         await this.#interpreter.enqueue({ type: "close", reason });
         await this.#start.catch(() => void 0);
         await this.#upstream?.close();
@@ -44470,11 +44505,11 @@ var init_terminal_replica_owner = __esm({
       }
       #observePane(event) {
         if (event.type === "reset") {
-          this.#cols = event.cols;
-          this.#rows = event.rows;
           this.#reseed = {
-            cols: event.cols,
-            rows: event.rows,
+            nativeCols: event.cols,
+            nativeRows: event.rows,
+            layoutLease: this.#layoutLease,
+            subscriptionEpoch: this.#subscriptionEpoch,
             chunks: [],
             trace: this.#consumeOutputTrace()
           };
@@ -44491,13 +44526,21 @@ var init_terminal_replica_owner = __esm({
         } else if (event.type === "cursor") {
           const reseed = this.#reseed;
           this.#reseed = null;
+          const lease = reseed ? this.#qualifyReseed(reseed, event.x, event.y) : null;
           this.#supervise(
-            reseed ? this.#interpreter.enqueue({
+            reseed && lease ? this.#interpreter.enqueue({
               type: "reseed",
-              ...reseed,
+              nativeCols: reseed.nativeCols,
+              nativeRows: reseed.nativeRows,
+              cols: lease.pane.width,
+              rows: lease.pane.height,
+              chunks: reseed.chunks,
+              trace: reseed.trace,
               cursor: { x: event.x, y: event.y },
-              bootstrap: "painted-capture"
-            }) : this.#interpreter.enqueue({ type: "cursor", x: event.x, y: event.y })
+              bootstrap: "painted-capture",
+              validateBeforeCommit: () => this.#leaseIsCurrent(lease, reseed.subscriptionEpoch),
+              onInvalidated: () => this.#retryReseedOrFault("terminal reseed layout lease crossed")
+            }) : reseed ? (this.#retryReseedOrFault("terminal reseed geometry is incompatible"), Promise.resolve()) : this.#interpreter.enqueue({ type: "cursor", x: event.x, y: event.y })
           );
         } else if (event.type === "closed") {
           const closed = this.#interpreter.enqueue({ type: "close", reason: "pane-closed" });
@@ -44512,21 +44555,88 @@ var init_terminal_replica_owner = __esm({
         }
       }
       #observeLayout(event) {
-        const pane = event.panes.find((candidate) => candidate.semanticPaneId === this.semanticPaneId);
-        if (!pane || pane.width === this.#cols && pane.height === this.#rows) return;
-        this.#cols = pane.width;
-        this.#rows = pane.height;
-        if (this.#reseed) {
-          this.#reseed.cols = pane.width;
-          this.#reseed.rows = pane.height;
+        const observed = this.#readLayoutLease(event);
+        if (observed.kind === "irrelevant") return;
+        if (observed.kind === "invalid") {
+          this.#layoutEpoch += 1;
+          this.#layoutLease = null;
           return;
         }
+        const lease = observed.lease;
+        if (this.#layoutLease && layoutLeaseEqual(this.#layoutLease, lease)) return;
+        const priorCols = this.#cols;
+        const priorRows = this.#rows;
+        this.#layoutEpoch += 1;
+        this.#layoutLease = { ...lease, epoch: this.#layoutEpoch };
+        this.#cols = lease.pane.width;
+        this.#rows = lease.pane.height;
+        if (this.#reseed) return;
         if (!this.#bootstrapped) {
           return;
         }
+        if (priorCols === lease.pane.width && priorRows === lease.pane.height) return;
         this.#supervise(
-          this.#interpreter.enqueue({ type: "resize", cols: pane.width, rows: pane.height })
+          this.#interpreter.enqueue({
+            type: "resize",
+            cols: lease.pane.width,
+            rows: lease.pane.height
+          })
         );
+      }
+      #readLayoutLease(event) {
+        if (event.session !== this.session) return { kind: "irrelevant" };
+        const targetCount = event.panes.filter(
+          (pane2) => pane2.semanticPaneId === this.semanticPaneId
+        ).length;
+        if (targetCount === 0 && event.semanticWindowId !== null) {
+          if (this.#layoutLease === null || event.semanticWindowId !== this.#layoutLease.semanticWindowId)
+            return { kind: "irrelevant" };
+        }
+        if (event.semanticWindowId === null || targetCount !== 1) return { kind: "invalid" };
+        const identities = event.panes.map((pane2) => pane2.semanticPaneId);
+        if (identities.some((identity) => identity === null)) return { kind: "invalid" };
+        if (new Set(identities).size !== identities.length) return { kind: "invalid" };
+        const pane = event.panes.find((candidate) => candidate.semanticPaneId === this.semanticPaneId);
+        if (!boundedPositive(event.cols) || !boundedPositive(event.rows) || !boundedPositive(pane.width) || !boundedPositive(pane.height) || !Number.isSafeInteger(pane.left) || !Number.isSafeInteger(pane.top) || pane.left < 0 || pane.top < 0 || pane.left + pane.width > event.cols || pane.top + pane.height > event.rows)
+          return { kind: "invalid" };
+        return {
+          kind: "valid",
+          lease: {
+            semanticWindowId: event.semanticWindowId,
+            currentWindow: event.currentWindow,
+            zoomed: event.zoomed,
+            windowCols: event.cols,
+            windowRows: event.rows,
+            paneBorderStatus: event.paneBorderStatus,
+            pane: { ...pane }
+          }
+        };
+      }
+      #qualifyReseed(reseed, cursorX, cursorY) {
+        const lease = reseed.layoutLease;
+        if (!lease || !this.#leaseIsCurrent(lease, reseed.subscriptionEpoch)) return null;
+        if (lease.pane.width !== reseed.nativeCols) return null;
+        const rowsExact = lease.paneBorderStatus === "off" ? lease.pane.height === reseed.nativeRows : lease.pane.height === reseed.nativeRows + 1;
+        if (!rowsExact) return null;
+        if (!Number.isSafeInteger(cursorX) || !Number.isSafeInteger(cursorY) || cursorX < 0 || cursorY < 0 || cursorX >= reseed.nativeCols || cursorY >= reseed.nativeRows)
+          return null;
+        return lease;
+      }
+      #leaseIsCurrent(lease, subscriptionEpoch) {
+        return !this.#disposed && subscriptionEpoch === this.#subscriptionEpoch && this.#layoutLease !== null && this.#layoutLease.epoch === lease.epoch && layoutLeaseEqual(this.#layoutLease, lease);
+      }
+      #retryReseedOrFault(message) {
+        if (this.#disposed) return;
+        if (this.#reseedRetryCount >= 1) {
+          const error = new Error(message);
+          this.#interpreter.abort(error);
+          this.#onFault?.(error);
+          return;
+        }
+        this.#reseedRetryCount += 1;
+        void this.#start.then(() => {
+          if (!this.#disposed) this.#upstream?.reseed();
+        });
       }
       #supervise(operation) {
         void operation.catch((error) => {

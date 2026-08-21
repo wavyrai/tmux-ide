@@ -28,6 +28,7 @@ interface PaneRendererInterest {
   version: number;
   pendingTrace: TerminalPaintTrace | null;
   pendingSeedDiagnostic: TuiTerminalCanonicalPublicationEvent | null;
+  lastAcceptedUpdateType: "terminal.seed" | "terminal.patch" | null;
 }
 
 /**
@@ -120,6 +121,8 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
         identity.sourceEpoch,
         identity.viewportCols,
         identity.viewportRows,
+        identity.acceptedUpdateType,
+        identity.acceptedRevision,
       ]);
       if (seen.has(key)) continue;
       if (seen.size >= 256) this.#droppedCanonicalHostFrames += 1;
@@ -204,6 +207,10 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
       version: state ? 1 : 0,
       pendingTrace: null,
       pendingSeedDiagnostic: null,
+      lastAcceptedUpdateType:
+        lastAcceptedUpdateType === "terminal.seed" || lastAcceptedUpdateType === "terminal.patch"
+          ? lastAcceptedUpdateType
+          : null,
     };
     if (lastAcceptedUpdateType === "terminal.seed" && state?.snapshot) {
       this.#noteSeedDiagnostic(interest, state, paneId);
@@ -220,6 +227,8 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     else if (next)
       this.#noteSeedDiagnostic(interest, publication.state, publication.address.semanticPaneId);
     interest.state = publication.state;
+    if (publication.update.type !== "terminal.tombstone")
+      interest.lastAcceptedUpdateType = publication.update.type;
     const canonicalUpdateSink = currentTuiPerformanceEventSink()?.terminalCanonicalUpdate;
     if (canonicalUpdateSink && publication.update.type === "terminal.patch" && next) {
       try {
@@ -438,6 +447,8 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
           sourceEpoch: this.#sourceEpoch,
           viewportCols: width,
           viewportRows: height,
+          acceptedUpdateType: interest.lastAcceptedUpdateType ?? "terminal.seed",
+          acceptedRevision: interest.state.revision,
         });
         const pending = (this.#pendingCanonicalHostFrames ??= new Map());
         if (pending.has(identity.semanticPaneId) || pending.size < 256)

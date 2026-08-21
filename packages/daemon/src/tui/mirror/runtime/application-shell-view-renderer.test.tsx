@@ -347,6 +347,122 @@ describe("production ApplicationShellView", () => {
     setup.renderer.destroy();
   });
 
+  it("projects vertical and horizontal pane resize guides through the real 160x44 shell", async () => {
+    registerPaneSurface();
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const palette = createTerminalPaletteProjection(theme);
+    const run = async (
+      panes: NonNullable<OpenTuiWorkspaceLayoutSnapshot["current"]>["panes"],
+      gesture: { down: [number, number]; move: [number, number] },
+      expected: Record<string, unknown>,
+    ) => {
+      const current = {
+        type: "layout" as const,
+        semanticWindowId: "window.main",
+        windowName: "main",
+        currentWindow: true,
+        cols: 132,
+        rows: 41,
+        zoomed: false,
+        paneBorderStatus: "top" as const,
+        panes,
+      };
+      const previews: unknown[] = [];
+      const submissions: unknown[] = [];
+      let ingressOrdinal = 0;
+      const setup = await renderForTest(
+        () => (
+          <ApplicationShellView
+            dimensions={() => ({ width: 160, height: 44 })}
+            surface={() => "terminals"}
+            semantic={() => semantic()}
+            generationStatus={() => "live"}
+            sessions={["main"]}
+            selectedSession={() => 0}
+            bootstrapNote={() => null}
+            paletteOpen={() => false}
+            terminalRendererSource={() => ({ adapter: adapter(), rendererEpoch: 1 })}
+            layout={() => ({ current, windows: [current] })}
+            focusedPane={() => "pane.main"}
+            rendererFocused={() => true}
+            theme={theme}
+            palette={palette}
+            onOpenSurface={() => undefined}
+            onOpenSession={() => undefined}
+            onSetPaletteOpen={() => undefined}
+            onSelectPane={() => undefined}
+            onResizePreview={(preview) => previews.push(preview)}
+            onResizePane={(preview) => submissions.push(preview)}
+            onResizePointerIngress={(input) => ({
+              ...input,
+              gestureId: input.gestureId ?? "123e4567-e89b-42d3-a456-426614174000",
+              traceId: `123e4567-e89b-42d3-a456-${String(ingressOrdinal++).padStart(12, "0")}`,
+              atMicros: ingressOrdinal,
+            })}
+          />
+        ),
+        { width: 160, height: 44 },
+      );
+      try {
+        await setup.renderOnce();
+        await setup.mockMouse.pressDown(...gesture.down, MouseButtons.LEFT);
+        await setup.mockMouse.moveTo(...gesture.move);
+        await setup.renderOnce();
+        expect(previews.at(-1)).toMatchObject(expected);
+        const captured = setup.captureCharFrame().split("\n");
+        const frameGuide = expected.globalGuide as {
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+        };
+        const marker = expected.axis === "cols" ? "╎" : "╌";
+        const markerCount = captured.reduce(
+          (count, row) => count + [...row].filter((cell) => cell === marker).length,
+          0,
+        );
+        expect(markerCount).toBe(frameGuide.width * frameGuide.height);
+        for (let y = 0; y < frameGuide.height; y += 1)
+          for (let x = 0; x < frameGuide.width; x += 1)
+            expect(captured[frameGuide.y + y]?.[frameGuide.x + x]).toBe(marker);
+        await setup.mockMouse.release(...gesture.move, MouseButtons.LEFT);
+        await setup.renderOnce();
+        expect(submissions).toHaveLength(1);
+        expect(submissions[0]).toMatchObject(expected);
+      } finally {
+        setup.renderer.destroy();
+      }
+    };
+    await run(
+      [
+        { pane: "pane.main", left: 0, top: 1, width: 65, height: 40, active: true },
+        { pane: "pane.side", left: 66, top: 1, width: 66, height: 40, active: false },
+      ],
+      { down: [93, 10], move: [95, 10] },
+      {
+        semanticPaneId: "pane.main",
+        axis: "cols",
+        cells: 67,
+        guide: { x: 67, y: 1, width: 1, height: 40 },
+        globalGuide: { x: 95, y: 3, width: 1, height: 40 },
+      },
+    );
+    await run(
+      [
+        { pane: "pane.main", left: 0, top: 1, width: 132, height: 19, active: true },
+        { pane: "pane.lower", left: 0, top: 21, width: 132, height: 20, active: false },
+      ],
+      { down: [40, 22], move: [40, 24] },
+      {
+        semanticPaneId: "pane.main",
+        axis: "rows",
+        cells: 20,
+        guide: { x: 0, y: 22, width: 132, height: 1 },
+        globalGuide: { x: 28, y: 24, width: 132, height: 1 },
+      },
+    );
+  });
+
   it("retains two 132x41 window surfaces through warm switches and an active rename", async () => {
     registerPaneSurface();
     const theme = createSemanticThemeSnapshot({ mode: "dark" });

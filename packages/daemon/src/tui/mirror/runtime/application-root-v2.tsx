@@ -56,9 +56,7 @@ import { OpenTuiTerminalHostFocus } from "./terminal-host-focus.ts";
 import { publishCanonicalHostFrameDiagnostics } from "./terminal-host-frame-diagnostics.ts";
 import { createTerminalFrameReadiness } from "./terminal-frame-readiness.ts";
 export type { StartApplicationRootOptions } from "./application-root-configuration.ts";
-export async function startApplicationRoot(
-  options: StartApplicationRootOptions = {},
-): Promise<void> {
+export async function startApplicationRoot(options: StartApplicationRootOptions = {}) {
   options.initialPreparation?.diagnosticHandoff?.attach(tuiPerfMark);
   let renderer!: Awaited<ReturnType<typeof createCliRenderer>>;
   let lifecycle!: TuiApplicationLifecycle;
@@ -362,7 +360,7 @@ export async function startApplicationRoot(
               return;
             }
           }
-          if (event.ctrl && name === "t") return interaction.cycleWindow();
+          if (activeSurface() === "terminals" && interaction.routeWorkspaceKey(event)) return;
           const active = generation();
           const lane = active?.status === "live" ? active.fastLane : null;
           if (activeSurface() !== "terminals" || !lane || !focusedPane()) return;
@@ -393,6 +391,7 @@ export async function startApplicationRoot(
           if (config.target) void startGeneration(config.target);
           resolveReady();
         });
+        const resizeIngress = tuiPerfStream ? interaction.beginResizePointerIngress : undefined;
         return (
           <ApplicationShellView
             dimensions={dimensions}
@@ -416,6 +415,7 @@ export async function startApplicationRoot(
             onSelectPane={interaction.selectPane}
             onResizePreview={interaction.previewPaneResize}
             onResizePane={interaction.resizePane}
+            onResizePointerIngress={resizeIngress}
             onWindowPresented={tuiPerfStream ? interaction.observeWindowPresentation : undefined}
           />
         );

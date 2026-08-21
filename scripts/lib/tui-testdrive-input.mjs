@@ -9,6 +9,7 @@ const ESC = "\u001b";
 const DOCUMENT_KEYS = new Set(["version", "kind", "timeoutMs"]);
 const KEYS_BY_KIND = {
   key: new Set([...DOCUMENT_KEYS, "key"]),
+  "modified-key": new Set([...DOCUMENT_KEYS, "key", "modifiers"]),
   "control-key": new Set([...DOCUMENT_KEYS, "key"]),
   paste: new Set([...DOCUMENT_KEYS, "text"]),
   focus: new Set([...DOCUMENT_KEYS, "state"]),
@@ -18,7 +19,7 @@ const KEYS_BY_KIND = {
 };
 const POINTER_KEYS = new Set(["x", "y"]);
 const RECT_KEYS = new Set(["x", "y", "width", "height"]);
-const MODIFIERS = new Set(["shift", "alt", "ctrl"]);
+const MODIFIERS = new Set(["shift", "alt", "meta", "ctrl"]);
 
 function inputError(message) {
   throw new Error(`Invalid test-drive input: ${message}`);
@@ -115,6 +116,19 @@ export function parseTestdriveInputDocument(source) {
         inputError("control-key key must be one lowercase ASCII letter");
       return { ...common, kind: "control-key", key: object.key };
     }
+    case "modified-key": {
+      if (!["left", "right", "up", "down"].includes(object.key))
+        inputError("modified-key key must be left, right, up, or down");
+      const requestedModifiers = modifiers(object.modifiers);
+      if (requestedModifiers.length !== 1 || requestedModifiers[0] !== "meta")
+        inputError("modified-key currently requires exactly the meta modifier");
+      return {
+        ...common,
+        kind: "modified-key",
+        key: object.key,
+        modifiers: requestedModifiers,
+      };
+    }
     case "paste": {
       if (typeof object.text !== "string") inputError("paste text must be a string");
       if (object.text.includes(`${ESC}[201~`)) {
@@ -144,8 +158,8 @@ export function parseTestdriveInputDocument(source) {
       }
       return { ...common, kind: "focus", state: object.state };
     case "application-mouse": {
-      if (!["move", "down", "up", "click"].includes(object.action)) {
-        inputError("application-mouse action must be move, down, up, or click");
+      if (!["move", "down", "drag", "up", "click"].includes(object.action)) {
+        inputError("application-mouse action must be move, down, drag, up, or click");
       }
       const button = object.button ?? "left";
       if (object.action === "move" && object.button !== undefined) {
@@ -225,7 +239,7 @@ function assertGeometry(pointValue, geometry, label) {
 function modifierCode(values) {
   return (
     (values.includes("shift") ? 4 : 0) +
-    (values.includes("alt") ? 8 : 0) +
+    (values.includes("alt") || values.includes("meta") ? 8 : 0) +
     (values.includes("ctrl") ? 16 : 0)
   );
 }
@@ -266,6 +280,10 @@ export function translateTestdriveInput(command, { capabilities, geometry } = {}
       return {
         phases: [{ bytes: String.fromCharCode(command.key.charCodeAt(0) - 96), delayMs: 0 }],
       };
+    case "modified-key": {
+      const final = { up: "A", down: "B", right: "C", left: "D" }[command.key];
+      return { phases: [{ bytes: `${ESC}[1;3${final}`, delayMs: 0 }] };
+    }
     case "paste":
       requireCapability(capabilities, "bracketedPaste", "bracketed paste");
       return { phases: [{ bytes: `${ESC}[200~${command.text}${ESC}[201~`, delayMs: 0 }] };
@@ -648,6 +666,12 @@ export async function executeTestdriveInputOperation(command, port) {
       phases,
       ...(command.kind === "focus" ? { requestedState: command.state } : null),
       ...(command.kind === "control-key" ? { requestedKey: command.key } : null),
+      ...(command.kind === "modified-key"
+        ? { requestedKey: command.key, requestedModifiers: command.modifiers }
+        : null),
+      ...(command.kind === "application-mouse"
+        ? { requestedAction: command.action, requestedPoint: { x: command.x, y: command.y } }
+        : null),
       elapsedMs: Number((port.clock.now() - startedAt).toFixed(2)),
       ...(clipboard ? { clipboard: { bytes: clipboard.bytes, sha256: clipboard.sha256 } } : null),
     };

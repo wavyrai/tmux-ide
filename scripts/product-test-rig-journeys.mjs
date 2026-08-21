@@ -76,6 +76,7 @@ const GOLDEN_JOURNEYS = Object.freeze(
         "first-key-paste",
         "focus",
         "window-lifecycle",
+        "keyboard-pointer-resize",
       ].includes(id)
         ? "implemented"
         : "pending",
@@ -493,6 +494,88 @@ export async function runWindowLifecycleOwnerBoot(operations) {
     primed,
     switches,
     renamed,
+    web,
+  });
+}
+
+/** Dedicated resize journey: coherent two-pane baseline → keyboard → pointer previews/release → Web. */
+export async function runKeyboardPointerResizeOwnerBoot(operations) {
+  const atBoundary = async (boundary, operation) => {
+    operations.onBoundary?.(boundary);
+    try {
+      return await operation();
+    } catch (error) {
+      if (error && typeof error === "object" && error.boundary) throw error;
+      const bounded = new Error(error instanceof Error ? error.message : String(error), {
+        cause: error,
+      });
+      bounded.boundary = boundary;
+      bounded.observation =
+        error?.observation ??
+        Object.freeze({
+          operation: "keyboard-pointer-resize-owner",
+          reason: "operation-failed",
+          stage: boundary,
+        });
+      throw bounded;
+    }
+  };
+  const namespace = await atBoundary("resize-namespace-ready", operations.createResizeNamespace);
+  const daemon = await atBoundary("resize-daemon-ready", () =>
+    operations.startCanonicalDaemon(namespace),
+  );
+  const identity = await atBoundary("resize-daemon-ready", () =>
+    operations.openCanonicalWorkspace(namespace, daemon),
+  );
+  await atBoundary("resize-tui-build", () => operations.buildBeforeMeasurement(namespace));
+  const started = await atBoundary("resize-tui-started", () =>
+    operations.launchResizeTui(namespace, daemon, identity),
+  );
+  const host = await atBoundary("resize-host-ready", () =>
+    operations.waitForResizeHostReady(namespace, daemon, identity, started),
+  );
+  const process = await atBoundary("resize-tui-coherent", () =>
+    operations.waitForResizeTuiCoherent(namespace, daemon, identity, started, host),
+  );
+  const baseline = await atBoundary("resize-baseline", () =>
+    operations.proveResizeBaseline(namespace, daemon, identity, process),
+  );
+  const keyboard = await atBoundary("resize-keyboard-proved", () =>
+    operations.driveKeyboardResize(namespace, daemon, identity, process, baseline),
+  );
+  const pointerPreviews = await atBoundary("resize-pointer-preview-distribution", () =>
+    operations.drivePointerPreviews(namespace, daemon, identity, process, baseline, keyboard),
+  );
+  const pointerRelease = await atBoundary("resize-pointer-release-proved", () =>
+    operations.drivePointerRelease(
+      namespace,
+      daemon,
+      identity,
+      process,
+      baseline,
+      keyboard,
+      pointerPreviews,
+    ),
+  );
+  const web = await atBoundary("resize-web-correlation", () =>
+    operations.startWebAfterResize(
+      namespace,
+      daemon,
+      identity,
+      process,
+      baseline,
+      keyboard,
+      pointerRelease,
+    ),
+  );
+  return Object.freeze({
+    namespace,
+    identity,
+    process,
+    baseline,
+    keyboard,
+    pointerPreviews,
+    pointerRelease,
     web,
   });
 }

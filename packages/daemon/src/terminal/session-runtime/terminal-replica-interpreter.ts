@@ -51,6 +51,10 @@ export type TerminalReplicaInterpreterOperation =
   | { readonly type: "resize"; readonly cols: number; readonly rows: number }
   | {
       readonly type: "reseed";
+      /** Raw tmux pane dimensions at which capture bytes were painted. */
+      readonly nativeCols?: number;
+      readonly nativeRows?: number;
+      /** Canonical visible dimensions published by the semantic layout. */
       readonly cols: number;
       readonly rows: number;
       readonly chunks: readonly Uint8Array[];
@@ -58,6 +62,9 @@ export type TerminalReplicaInterpreterOperation =
       readonly trace?: SessionRuntimeTraceContext | null;
       /** capture-pane is painted truth, not proof of hidden pre-existing VT modes. */
       readonly bootstrap: "painted-capture" | "authoritative-stream";
+      /** Exact owner lease fence, sampled immediately before replacement. */
+      readonly validateBeforeCommit?: () => boolean;
+      readonly onInvalidated?: () => void;
     }
   | { readonly type: "close"; readonly reason: CloseReason };
 
@@ -306,20 +313,32 @@ export class TerminalReplicaInterpreter {
     if (this.#closed) return;
     if (operation.type === "reseed") {
       this.#causalCell?.fail("reseeded");
+      const nativeCols = operation.nativeCols ?? operation.cols;
+      const nativeRows = operation.nativeRows ?? operation.rows;
       const replacement = this.#backendFactory({
-        cols: operation.cols,
-        rows: operation.rows,
+        cols: nativeCols,
+        rows: nativeRows,
         scrollback: this.#scrollback,
       });
       try {
         for (const chunk of operation.chunks) {
-          this.#admitRaw(chunk);
-          this.#observeMarkerBytes(chunk);
           await this.#writeToBackend(replacement, chunk);
+        }
+        replacement.setAuthoritativeCursor(operation.cursor.x, operation.cursor.y);
+        if (nativeCols !== operation.cols || nativeRows !== operation.rows)
+          replacement.resize(operation.cols, operation.rows);
+        if (operation.validateBeforeCommit && !operation.validateBeforeCommit()) {
+          replacement.dispose();
+          operation.onInvalidated?.();
+          return;
         }
       } catch (error) {
         replacement.dispose();
         throw error;
+      }
+      for (const chunk of operation.chunks) {
+        this.#admitRaw(chunk);
+        this.#observeMarkerBytes(chunk);
       }
       const previous = this.#backend;
       this.#backend = replacement;
@@ -328,7 +347,6 @@ export class TerminalReplicaInterpreter {
         hiddenState:
           operation.bootstrap === "authoritative-stream" ? "observed-from-start" : "unknown",
       };
-      this.#backend.setAuthoritativeCursor(operation.cursor.x, operation.cursor.y);
       this.#commit(true, undefined, operation.trace ?? null);
       previous.dispose();
       return;

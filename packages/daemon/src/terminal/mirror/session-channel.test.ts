@@ -504,7 +504,7 @@ describe("layout push", () => {
     await rig.channel.dispose();
   });
 
-  it("hands a new subscriber every window's geometry immediately", async () => {
+  it("hands a new pane subscriber only its owning window geometry immediately", async () => {
     /*
      * Bug this catches — and it did, on the first live run of the layout-faithful
      * view: layout frames were emitted only when a layout CHANGED, so a view
@@ -518,14 +518,89 @@ describe("layout push", () => {
       () => {},
       (event) => layouts.push(event),
     );
-    expect(layouts.map((event) => event.semanticWindowId).sort()).toEqual([
-      "window.test.one",
-      "window.test.two",
-    ]);
+    expect(layouts.map((event) => event.semanticWindowId)).toEqual(["window.test.one"]);
     // Every pane names an identity. A frame that arrives before the stamp-back
     // carries nulls, and a consumer that renders semantic ids draws nothing for
     // them — which is how a freshly split pane goes missing from the view.
     expect(layouts.every((event) => event.panes.every((pane) => pane.semanticPaneId))).toBe(true);
+    await rig.channel.dispose();
+  });
+
+  it("never broadcasts one window layout to a subscriber owned by another window", async () => {
+    const rig = await startedRig();
+    const alphaLayouts: MirrorLayoutEvent[] = [];
+    const gammaLayouts: MirrorLayoutEvent[] = [];
+    rig.channel.subscribePane(
+      "pane.alpha",
+      () => {},
+      (event) => alphaLayouts.push(event),
+    );
+    rig.sim.reply(["a"]);
+    rig.sim.reply(["0 0 100 50"]);
+    rig.channel.subscribePane(
+      "pane.mirror.gen1",
+      () => {},
+      (event) => gammaLayouts.push(event),
+    );
+    rig.sim.reply(["g"]);
+    rig.sim.reply(["0 0 200 50"]);
+    expect(alphaLayouts.map((event) => event.semanticWindowId)).toEqual(["window.test.one"]);
+    expect(gammaLayouts.map((event) => event.semanticWindowId)).toEqual(["window.test.two"]);
+    alphaLayouts.length = 0;
+    gammaLayouts.length = 0;
+
+    rig.sim.feedLines(`%layout-change @2 ${FIXTURE.layoutW2} ${FIXTURE.layoutW2} 0`);
+    expect(alphaLayouts).toEqual([]);
+    expect(gammaLayouts.map((event) => event.semanticWindowId)).toEqual(["window.test.two"]);
+    gammaLayouts.length = 0;
+    rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
+    expect(alphaLayouts.map((event) => event.semanticWindowId)).toEqual(["window.test.one"]);
+    expect(gammaLayouts).toEqual([]);
+    await rig.channel.dispose();
+  });
+
+  it("emits the exact new owning layout after a delayed truth-sync pane move", async () => {
+    const rig = await startedRig();
+    const layouts: MirrorLayoutEvent[] = [];
+    rig.channel.subscribePane(
+      "pane.alpha",
+      () => {},
+      (event) => layouts.push(event),
+    );
+    rig.sim.reply(["a"]);
+    rig.sim.reply(["0 0 100 50"]);
+    layouts.length = 0;
+
+    const oldWithoutAlpha = "cccc,200x50,0,0,2";
+    const newWithAlpha = "dddd,200x50,0,0{100x50,0,0,1,99x50,101,0,3}";
+    // Tmux publishes the destination layout before list-panes truth has moved
+    // the record, so the pane-scoped subscriber correctly does not see it yet.
+    rig.sim.feedLines(`%layout-change @2 ${FIXTURE.layoutW2} ${newWithAlpha} 0`);
+    expect(layouts).toEqual([]);
+    // The old owning layout is relevant and invalidates the old lease.
+    rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${oldWithoutAlpha} 0`);
+    expect(layouts.map((event) => event.semanticWindowId)).toEqual(["window.test.one"]);
+    expect(layouts[0]!.panes.some((pane) => pane.semanticPaneId === "pane.alpha")).toBe(false);
+
+    rig.state.truthRows = ["%1\t1\t@2\t1", "%2\t1\t@1\t0", "%3\t0\t@2\t1"];
+    rig.state.windowRows = FIXTURE.windowRows(oldWithoutAlpha, newWithAlpha);
+    expect(rig.pendingSyncs).toHaveLength(1);
+    rig.pendingSyncs.shift()!();
+
+    await vi.waitFor(() => {
+      expect(layouts.some((event) => event.semanticWindowId === "window.test.two")).toBe(true);
+    });
+    const movedIndex = layouts.findIndex((event) => event.semanticWindowId === "window.test.two");
+    expect(movedIndex).toBeGreaterThan(0);
+    expect(
+      layouts.slice(movedIndex).every((event) => event.semanticWindowId === "window.test.two"),
+    ).toBe(true);
+    const moved = layouts[movedIndex]!;
+    expect(moved.panes.find((pane) => pane.semanticPaneId === "pane.alpha")).toMatchObject({
+      width: 100,
+      height: 50,
+      active: true,
+    });
     await rig.channel.dispose();
   });
 
@@ -546,7 +621,7 @@ describe("layout push", () => {
     await rig.channel.dispose();
   });
 
-  it("re-emits BOTH windows when the session's current window changes", async () => {
+  it("keeps pane layout delivery scoped while global layout listeners receive both windows", async () => {
     /*
      * Bug this catches: `currentWindow` is carried on the layout frame and only
      * %session-window-changed moves it, so without a re-emit a view whose window
@@ -554,26 +629,33 @@ describe("layout push", () => {
      * the one they are in — until something unrelated happens to change a layout.
      */
     const rig = await startedRig();
-    const layouts: MirrorLayoutEvent[] = [];
+    const paneLayouts: MirrorLayoutEvent[] = [];
+    const globalLayouts: MirrorLayoutEvent[] = [];
     rig.channel.subscribePane(
       "pane.alpha",
       () => {},
-      (event) => layouts.push(event),
+      (event) => paneLayouts.push(event),
     );
+    const global = rig.channel.subscribeLayout((event) => globalLayouts.push(event));
     rig.sim.reply(["s"]);
     rig.sim.reply(["0 0 100 50"]);
     // Seed a layout for both windows so each has geometry to re-emit.
     rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
     rig.sim.feedLines(`%layout-change @2 ${FIXTURE.layoutW2} ${FIXTURE.layoutW2} 0`);
-    layouts.length = 0;
+    paneLayouts.length = 0;
+    globalLayouts.length = 0;
 
     rig.sim.feedLines("%session-window-changed $0 @2");
 
-    const byWindow = new Map(layouts.map((event) => [event.semanticWindowId, event.currentWindow]));
+    expect(paneLayouts.map((event) => event.semanticWindowId)).toEqual(["window.test.one"]);
+    const byWindow = new Map(
+      globalLayouts.map((event) => [event.semanticWindowId, event.currentWindow]),
+    );
     expect(byWindow.get("window.test.two")).toBe(true);
     // The window that was left says so in the same burst, so no tab is left
     // claiming to be current alongside the new one.
     expect(byWindow.get("window.test.one")).toBe(false);
+    global.close();
     await rig.channel.dispose();
   });
 });

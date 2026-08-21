@@ -53,6 +53,7 @@ import {
   runCoherentFirstPaneOwnerBoot,
   runFirstKeyPasteOwnerBoot,
   runFocusOwnerBoot,
+  runKeyboardPointerResizeOwnerBoot,
   runWindowLifecycleOwnerBoot,
   runProductJourneyPlan,
   settleInternalProductRigCleanup,
@@ -145,21 +146,21 @@ test("golden registry enables only accepted direct journey executors", () => {
     golden.map(({ id }) => id),
     expected,
   );
-  assert.ok(golden.slice(0, 5).every(({ implementation }) => implementation === "implemented"));
-  assert.ok(golden.slice(5).every(({ implementation }) => implementation === "pending"));
+  assert.ok(golden.slice(0, 6).every(({ implementation }) => implementation === "implemented"));
+  assert.ok(golden.slice(6).every(({ implementation }) => implementation === "pending"));
   assert.deepEqual(auditProductJourneyScope(), {
     complete: false,
     declarationComplete: true,
     executableComplete: false,
     missing: [],
-    pendingJourneyIds: expected.slice(5),
+    pendingJourneyIds: expected.slice(6),
   });
   assert.deepEqual(auditProductJourneyScope(golden.slice(1)), {
     complete: false,
     declarationComplete: false,
     executableComplete: false,
     missing: ["configless", "cold-start"],
-    pendingJourneyIds: expected.slice(5),
+    pendingJourneyIds: expected.slice(6),
   });
 });
 
@@ -238,6 +239,77 @@ test("window lifecycle owner preserves exact create switch rename Web ordering a
         ...operations,
         [method]: async () => {
           throw new Error(`failed ${method}`);
+        },
+      }),
+      (error) => error?.boundary === boundary,
+    );
+  }
+});
+
+test("resize owner preserves exact keyboard preview release Web ordering and boundaries", async () => {
+  const calls = [];
+  const operation = (name) => async () => (calls.push(name), Object.freeze({ name }));
+  const operations = {
+    onBoundary: (boundary) => calls.push(`boundary:${boundary}`),
+    createResizeNamespace: operation("namespace"),
+    startCanonicalDaemon: operation("daemon"),
+    openCanonicalWorkspace: operation("workspace"),
+    buildBeforeMeasurement: operation("build"),
+    launchResizeTui: operation("start"),
+    waitForResizeHostReady: operation("host"),
+    waitForResizeTuiCoherent: operation("coherent"),
+    proveResizeBaseline: operation("baseline"),
+    driveKeyboardResize: operation("keyboard"),
+    drivePointerPreviews: operation("previews"),
+    drivePointerRelease: operation("release"),
+    startWebAfterResize: operation("web"),
+  };
+  await runKeyboardPointerResizeOwnerBoot(operations);
+  assert.deepEqual(calls, [
+    "boundary:resize-namespace-ready",
+    "namespace",
+    "boundary:resize-daemon-ready",
+    "daemon",
+    "boundary:resize-daemon-ready",
+    "workspace",
+    "boundary:resize-tui-build",
+    "build",
+    "boundary:resize-tui-started",
+    "start",
+    "boundary:resize-host-ready",
+    "host",
+    "boundary:resize-tui-coherent",
+    "coherent",
+    "boundary:resize-baseline",
+    "baseline",
+    "boundary:resize-keyboard-proved",
+    "keyboard",
+    "boundary:resize-pointer-preview-distribution",
+    "previews",
+    "boundary:resize-pointer-release-proved",
+    "release",
+    "boundary:resize-web-correlation",
+    "web",
+  ]);
+  for (const [method, boundary] of [
+    ["createResizeNamespace", "resize-namespace-ready"],
+    ["startCanonicalDaemon", "resize-daemon-ready"],
+    ["openCanonicalWorkspace", "resize-daemon-ready"],
+    ["buildBeforeMeasurement", "resize-tui-build"],
+    ["launchResizeTui", "resize-tui-started"],
+    ["waitForResizeHostReady", "resize-host-ready"],
+    ["waitForResizeTuiCoherent", "resize-tui-coherent"],
+    ["proveResizeBaseline", "resize-baseline"],
+    ["driveKeyboardResize", "resize-keyboard-proved"],
+    ["drivePointerPreviews", "resize-pointer-preview-distribution"],
+    ["drivePointerRelease", "resize-pointer-release-proved"],
+    ["startWebAfterResize", "resize-web-correlation"],
+  ]) {
+    await assert.rejects(
+      runKeyboardPointerResizeOwnerBoot({
+        ...operations,
+        [method]: async () => {
+          throw new Error(String(method));
         },
       }),
       (error) => error?.boundary === boundary,
@@ -1178,13 +1250,13 @@ test("pending, all, unknown, and invalid repetition selections fail before orche
   assert.throws(
     () =>
       resolveProductJourneyPlan(
-        parseProductDiagnoseOptions(["--journey", "keyboard-pointer-resize"]),
+        parseProductDiagnoseOptions(["--journey", "selection-copy-app-mouse"]),
       ),
-    /not implemented: keyboard-pointer-resize; missing evidence is a failure/u,
+    /not implemented: selection-copy-app-mouse; missing evidence is a failure/u,
   );
   assert.throws(
     () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "all"])),
-    /not implemented: keyboard-pointer-resize/u,
+    /not implemented: selection-copy-app-mouse/u,
   );
   assert.throws(
     () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "imaginary"])),
@@ -1220,7 +1292,7 @@ test("CLI rejects a pending journey before creating ProductRig state", () => {
         "scripts/product-test-rig.mjs",
         "diagnose",
         "--journey",
-        "keyboard-pointer-resize",
+        "selection-copy-app-mouse",
         "--json",
       ],
       {
@@ -1236,7 +1308,7 @@ test("CLI rejects a pending journey before creating ProductRig state", () => {
     assert.equal(result.status, 1);
     assert.match(
       result.stderr,
-      /not implemented: keyboard-pointer-resize; missing evidence is a failure/u,
+      /not implemented: selection-copy-app-mouse; missing evidence is a failure/u,
     );
     assert.equal(existsSync(join(rigRoot, "state.json")), false);
     assert.equal(existsSync(diagnosticRoot), false);

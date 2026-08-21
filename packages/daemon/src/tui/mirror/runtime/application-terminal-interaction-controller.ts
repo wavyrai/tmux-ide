@@ -10,12 +10,22 @@ import {
   type OpenTuiWorkspaceLayout,
   type OpenTuiWorkspaceLayoutSnapshot,
 } from "../open-tui-workspace-runtime-port.ts";
-import type { ApplicationPaneResizePreview } from "./application-terminal-workspace.tsx";
+import type {
+  ApplicationPaneResizePreview,
+  ApplicationResizePointerIngress,
+} from "./application-terminal-workspace.tsx";
 import { prepareCausalCellFixtureV1 } from "./causal-cell-input-fixture.ts";
 import type { OpenTuiGenerationHostSnapshot } from "./open-tui-generation-host.ts";
 import { selectTerminalPane, type LivePaneSelectionTarget } from "./select-terminal-pane.ts";
 import type { PaneSelectionFailure } from "./select-terminal-pane.ts";
 import { TerminalPaneInputRouter } from "./terminal-pane-input-router.ts";
+import {
+  resizeTerminalPane,
+  type LivePaneResizeTarget,
+  type PaneResizeFailure,
+} from "./resize-terminal-pane.ts";
+import { ResizeTransactionController } from "../resize-transaction.ts";
+import { nativePaneResizeCells } from "./pane-resize-geometry.ts";
 
 type DiagnosticSink = (phase: string, details?: Readonly<Record<string, unknown>>) => void;
 
@@ -59,6 +69,7 @@ export interface ApplicationTerminalInteractionControllerOptions {
     pendingCriticalRecords: number;
   }>;
   readonly createTraceId?: () => string;
+  readonly createOperationId?: () => string;
   readonly nowMicros?: () => number;
   readonly causalCellFixtureEnabled?: () => boolean;
   readonly requestRender?: () => void;
@@ -73,7 +84,17 @@ export interface ApplicationTerminalInteractionController {
     parserOrigin?: Pick<TuiTerminalInputOrigin, "origin" | "payload">,
   ): Promise<void>;
   previewPaneResize(preview: ApplicationPaneResizePreview): void;
+  beginResizePointerIngress(input: {
+    readonly action: "down" | "drag" | "up";
+    readonly x: number;
+    readonly y: number;
+    readonly gestureId: string | null;
+  }): ApplicationResizePointerIngress | null;
   resizePane(preview: ApplicationPaneResizePreview): void;
+  keyboardResize(axis: "cols" | "rows", direction: -1 | 1): void;
+  routeWorkspaceKey(
+    event: Readonly<{ name: string; meta: boolean; ctrl: boolean; shift: boolean }>,
+  ): boolean;
   cycleWindow(): void;
   observeWindowPresentation(semanticWindowId: string, paneId: string, windowName?: string): void;
   observeDiagnosticWindowFrame():
@@ -96,6 +117,7 @@ export function createApplicationTerminalInteractionController(
   options: ApplicationTerminalInteractionControllerOptions,
 ): ApplicationTerminalInteractionController {
   const createTraceId = options.createTraceId ?? randomUUID;
+  const createOperationId = options.createOperationId ?? randomUUID;
   const nowMicros = options.nowMicros ?? (() => Math.floor(performance.now() * 1_000));
   const diagnosticNowMicros = (): number | null => {
     try {
@@ -108,6 +130,7 @@ export function createApplicationTerminalInteractionController(
   const causalCellFixtureEnabled =
     options.causalCellFixtureEnabled ?? (() => process.env.TMUX_IDE_CAUSAL_CELL_FIXTURE === "1");
   const diagnose = (phase: string, details?: Readonly<Record<string, unknown>>): void => {
+    if (!options.diagnosticsEnabled) return;
     try {
       options.diagnose(phase, details);
     } catch {
@@ -119,6 +142,7 @@ export function createApplicationTerminalInteractionController(
     phase: string,
     details?: Readonly<Record<string, unknown>>,
   ): void => {
+    if (!options.diagnosticsEnabled) return;
     try {
       if (options.diagnoseCritical) options.diagnoseCritical(key, phase, details);
       else diagnose(phase, details);
@@ -176,8 +200,52 @@ export function createApplicationTerminalInteractionController(
     readonly paneId: string;
     readonly name: string;
   } | null = null;
-  let pendingResizeGuide: { readonly traceId: string; readonly startedAtMicros: number } | null =
-    null;
+  let pendingResizeGuide: {
+    traceId: string;
+    startedAtMicros: number;
+    preview: ApplicationPaneResizePreview;
+    guideDigest: string;
+    readonly daemonGeneration: string;
+    readonly clientGeneration: number;
+    readonly rendererEpoch: number;
+    readonly sourceEpoch: number;
+    readonly generation: string;
+    readonly incarnation: string;
+    readonly revision: number;
+    readonly stateHash: string;
+    readonly cols: number;
+    readonly rows: number;
+    readonly connection: object;
+    readonly presentationBeforeDigest: string;
+    pointerIngress: ApplicationResizePointerIngress | null;
+  } | null = null;
+  let pendingPaneResize: {
+    readonly source: "keyboard" | "pointer";
+    readonly operationId: string;
+    readonly semanticPaneId: string;
+    readonly axis: "cols" | "rows";
+    readonly beforeCells: number;
+    readonly requestedCells: number;
+    readonly daemonGeneration: string;
+    readonly workspaceName: string;
+    readonly clientGeneration: number;
+    readonly rendererEpoch: number;
+    readonly sourceEpoch: number;
+    readonly generation: string;
+    readonly incarnation: string;
+    readonly revision: number;
+    readonly stateHash: string;
+    readonly cols: number;
+    readonly rows: number;
+    readonly connection: object;
+    readonly presentationBeforeDigest: string;
+    readonly pointerIngress: ApplicationResizePointerIngress | null;
+    receiptCells: number | null;
+    receiptOutcome: "applied" | "unchanged" | null;
+    layoutCells: number | null;
+    frameRequested: boolean;
+  } | null = null;
+  let lastResizeGuidePresentationDigest: string | null = null;
   let lastWindowPresentationDigest: string | null = null;
   let diagnosticWindowFrame: DiagnosticWindowFrameContext | null = null;
   let diagnosticWindowFrameExpiresAtMicros = 0;
@@ -217,6 +285,277 @@ export function createApplicationTerminalInteractionController(
       client: active.client,
     };
   };
+  const liveResizeTarget = (): LivePaneResizeTarget | null => {
+    const active = options.generation();
+    if (
+      active?.status !== "live" ||
+      !active.daemonGeneration ||
+      !active.client ||
+      !active.connection
+    )
+      return null;
+    try {
+      const clientGeneration = active.client.getSnapshot().generation;
+      if (!Number.isSafeInteger(clientGeneration)) return null;
+      return {
+        status: "live",
+        daemonGeneration: active.daemonGeneration,
+        workspaceName: active.connection.workspaceName,
+        connection: active.connection,
+        clientGeneration,
+        rendererEpoch: active.rendererEpoch,
+        client: active.client,
+      };
+    } catch {
+      return null;
+    }
+  };
+  const paneCells = (
+    snapshot: OpenTuiWorkspaceLayoutSnapshot,
+    paneId: string,
+    axis: "cols" | "rows",
+  ): number | null => {
+    const window = snapshot.windows.find(({ panes }) => panes.some(({ pane }) => pane === paneId));
+    const pane = window?.panes.find(({ pane }) => pane === paneId);
+    return pane && window ? nativePaneResizeCells(pane, axis, window.paneBorderStatus) : null;
+  };
+  const resizePresentationDigest = (
+    preview: ApplicationPaneResizePreview | null,
+  ): string | null => {
+    try {
+      const snapshot = options.layout();
+      const shell = options.shellPresentation?.() ?? null;
+      const guide = preview ? (preview.globalGuide ?? preview.guide) : null;
+      const parts: (string | number | boolean | null)[] = [
+        "resize-presentation-v1",
+        snapshot.current?.cols ?? null,
+        snapshot.current?.rows ?? null,
+        snapshot.windows.length,
+      ];
+      for (const window of snapshot.windows) {
+        parts.push(
+          "window",
+          window.semanticWindowId ?? null,
+          window.windowName,
+          window.currentWindow,
+          window.panes.length,
+        );
+        for (const frame of window.panes)
+          parts.push(
+            "pane",
+            frame.pane,
+            frame.left,
+            frame.top,
+            frame.width,
+            frame.height,
+            frame.active,
+          );
+      }
+      parts.push(
+        "focus",
+        options.focusedPane?.() ?? null,
+        options.rendererFocused?.() ?? true,
+        "shell",
+        shell?.length ?? 0,
+        ...(shell ?? []),
+        "guide",
+        preview?.semanticPaneId ?? null,
+        preview?.axis ?? null,
+        preview?.cells ?? null,
+        guide?.x ?? null,
+        guide?.y ?? null,
+        guide?.width ?? null,
+        guide?.height ?? null,
+      );
+      return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
+    } catch {
+      return null;
+    }
+  };
+  const resizeDiagnosticDetails = <T extends { readonly connection: unknown }>(value: T) => {
+    const details = { ...value };
+    Reflect.deleteProperty(details, "connection");
+    return details;
+  };
+  const maybeRequestPaneResizeFrame = (): void => {
+    const pending = pendingPaneResize;
+    if (
+      !pending ||
+      pending.frameRequested ||
+      pending.receiptCells === null ||
+      pending.layoutCells !== pending.receiptCells
+    )
+      return;
+    if (!options.diagnosticsEnabled) {
+      pendingPaneResize = null;
+      return;
+    }
+    pending.frameRequested = true;
+    try {
+      options.requestRender?.();
+    } catch {
+      pendingPaneResize = null;
+    }
+  };
+  const dispatchPaneResize = (
+    preview: ApplicationPaneResizePreview,
+    source: "keyboard" | "pointer",
+    operationId: string,
+    beforeCells: number,
+  ): void => {
+    const expected = liveResizeTarget();
+    const active = options.generation();
+    if (!expected || active?.status !== "live" || !active.client) return;
+    let clientGeneration: number;
+    let identity;
+    try {
+      clientGeneration = active.client.getSnapshot().generation;
+      identity = active.adapter?.paneCanonicalIdentity(preview.semanticPaneId);
+    } catch {
+      return;
+    }
+    if (!identity) return;
+    pendingPaneResize = {
+      source,
+      operationId,
+      semanticPaneId: preview.semanticPaneId,
+      axis: preview.axis,
+      beforeCells,
+      requestedCells: preview.cells,
+      daemonGeneration: expected.daemonGeneration,
+      workspaceName: expected.workspaceName,
+      clientGeneration,
+      rendererEpoch: active.rendererEpoch,
+      sourceEpoch: identity.sourceEpoch,
+      generation: identity.generation,
+      incarnation: identity.incarnation,
+      revision: identity.revision,
+      stateHash: identity.stateHash,
+      cols: identity.cols,
+      rows: identity.rows,
+      connection: expected.connection,
+      presentationBeforeDigest: options.diagnosticsEnabled
+        ? (resizePresentationDigest(null) ?? "")
+        : "",
+      pointerIngress: preview.pointerIngress ?? null,
+      receiptCells: null,
+      receiptOutcome: null,
+      layoutCells: null,
+      frameRequested: false,
+    };
+    const failure: { current: PaneResizeFailure | null } = { current: null };
+    void resizeTerminalPane(
+      expected,
+      liveResizeTarget,
+      {
+        operationId,
+        semanticPaneId: preview.semanticPaneId,
+        axis: preview.axis,
+        cells: preview.cells,
+      },
+      (next) => {
+        failure.current = next;
+      },
+    )
+      .then((receipt) => {
+        const pending = pendingPaneResize;
+        if (!pending || pending.operationId !== operationId) return;
+        if (!receipt) {
+          diagnoseCritical(`pane-resize:${operationId}:failed`, "pane-resize-failed", {
+            ...resizeDiagnosticDetails(pending),
+            stage: failure.current?.stage ?? "receipt",
+            reason: failure.current?.reason ?? "receipt-invalid",
+          });
+          resizeTransaction.reject({
+            operationId,
+            code: failure.current?.reason ?? "receipt-invalid",
+            message: failure.current?.stage ?? "receipt",
+          });
+          pendingPaneResize = null;
+          return;
+        }
+        pending.receiptCells = receipt.cells;
+        pending.receiptOutcome = receipt.outcome;
+        diagnose("pane-resize-receipt", {
+          ...resizeDiagnosticDetails(pending),
+          verb: "workspace.pane.resize",
+        });
+        if (receipt.outcome === "unchanged" && receipt.cells === pending.beforeCells) {
+          pending.layoutCells = receipt.cells;
+          resizeTransaction.observeLayout({
+            operationId,
+            authorityGeneration: pending.daemonGeneration,
+            workspaceName: pending.workspaceName,
+            semanticPaneId: pending.semanticPaneId,
+            axis: pending.axis,
+            cells: receipt.cells,
+          });
+          diagnoseCritical(`pane-resize:${operationId}:unchanged`, "pane-resize-unchanged", {
+            ...resizeDiagnosticDetails(pending),
+            changed: false,
+          });
+          pendingPaneResize = null;
+          return;
+        }
+        if (pending.layoutCells === receipt.cells)
+          resizeTransaction.observeLayout({
+            operationId,
+            authorityGeneration: pending.daemonGeneration,
+            workspaceName: pending.workspaceName,
+            semanticPaneId: pending.semanticPaneId,
+            axis: pending.axis,
+            cells: receipt.cells,
+          });
+        maybeRequestPaneResizeFrame();
+      })
+      .catch(() => {
+        resizeTransaction.reject({
+          operationId,
+          code: "transport-rejected",
+          message: "dispatch",
+        });
+        if (pendingPaneResize?.operationId === operationId) pendingPaneResize = null;
+      });
+  };
+  let resizeCommitContext: Readonly<{
+    source: "keyboard" | "pointer";
+    pointerIngress: ApplicationResizePointerIngress | null;
+  }> | null = null;
+  const resizeTransaction = new ResizeTransactionController({
+    timeoutMs: 5_000,
+    operationId: createOperationId,
+    now: () => performance.now(),
+    schedule: (callback, delayMs) => {
+      const timer = setTimeout(callback, delayMs);
+      return () => clearTimeout(timer);
+    },
+    submit: ({ operationId, intent }) => {
+      const state = resizeTransaction.state();
+      const context = resizeCommitContext;
+      if (state.phase !== "pending" || state.operationId !== operationId || !context) return;
+      dispatchPaneResize(
+        {
+          semanticPaneId: intent.semanticPaneId,
+          axis: intent.axis,
+          cells: intent.cells,
+          guide: { x: 0, y: 0, width: 1, height: 1 },
+          ...(context.pointerIngress ? { pointerIngress: context.pointerIngress } : {}),
+        },
+        context.source,
+        operationId,
+        state.canonicalCells,
+      );
+    },
+    onState: (state) => {
+      if (state.phase === "idle" && state.outcome?.kind === "reverted") {
+        diagnose("pane-resize-transaction-reverted", {
+          operationId: state.outcome.operationId,
+          reason: state.outcome.reason.kind,
+        });
+        if (pendingPaneResize?.operationId === state.outcome.operationId) pendingPaneResize = null;
+      }
+    },
+  });
   const maybeRequestWindowSwitchFrame = (): void => {
     const pending = pendingWindowSwitch;
     if (
@@ -440,6 +779,10 @@ export function createApplicationTerminalInteractionController(
         pendingWindowSwitch = null;
         pendingWindowRename = null;
         diagnosticWindowFrame = null;
+        pendingPaneResize = null;
+        pendingResizeGuide = null;
+        resizeCommitContext = null;
+        resizeTransaction.retire();
       }
       inputAuthorityIdentity = next;
     },
@@ -508,47 +851,197 @@ export function createApplicationTerminalInteractionController(
           });
         }
       }
+      if (pendingPaneResize) {
+        const cells = paneCells(snapshot, pendingPaneResize.semanticPaneId, pendingPaneResize.axis);
+        if (cells !== null && cells !== pendingPaneResize.beforeCells) {
+          pendingPaneResize.layoutCells = cells;
+          diagnose("pane-resize-layout", resizeDiagnosticDetails(pendingPaneResize));
+          if (pendingPaneResize.receiptCells === cells)
+            resizeTransaction.observeLayout({
+              operationId: pendingPaneResize.operationId,
+              authorityGeneration: pendingPaneResize.daemonGeneration,
+              workspaceName: pendingPaneResize.workspaceName,
+              semanticPaneId: pendingPaneResize.semanticPaneId,
+              axis: pendingPaneResize.axis,
+              cells,
+            });
+        }
+      }
       maybeRequestWindowSwitchFrame();
+      maybeRequestPaneResizeFrame();
     },
     selectPane: (paneId) => paneInput.selectPane(paneId),
     sendInput: async (input, parserOrigin) => {
       await paneInput.sendInput({ input, parserOrigin });
     },
-    previewPaneResize() {
-      if (!options.diagnosticsEnabled || pendingResizeGuide) return;
-      pendingResizeGuide = { traceId: createTraceId(), startedAtMicros: nowMicros() };
+    beginResizePointerIngress(input) {
+      if (!options.diagnosticsEnabled) return null;
+      const atMicros = diagnosticNowMicros();
+      if (
+        atMicros === null ||
+        !["down", "drag", "up"].includes(input.action) ||
+        !Number.isSafeInteger(input.x) ||
+        input.x < 0 ||
+        !Number.isSafeInteger(input.y) ||
+        input.y < 0
+      )
+        return null;
+      try {
+        return Object.freeze({
+          gestureId: input.gestureId ?? createTraceId(),
+          traceId: createTraceId(),
+          action: input.action,
+          x: input.x,
+          y: input.y,
+          atMicros,
+        });
+      } catch {
+        return null;
+      }
     },
-    resizePane(preview) {
-      const expected = options.generation();
-      if (expected?.status !== "live" || !expected.client || !expected.connection) return;
-      const expectedGeneration = expected.daemonGeneration;
-      const expectedClient = expected.client;
-      void (async () => {
-        const lease = await expectedClient.requestAuthority("geometry");
-        const current = options.generation();
+    previewPaneResize(preview) {
+      const live = liveResizeTarget();
+      const canonicalCells = paneCells(options.layout(), preview.semanticPaneId, preview.axis);
+      const state = resizeTransaction.state();
+      if (live && canonicalCells !== null && state.phase === "idle")
+        resizeTransaction.begin({
+          authorityGeneration: live.daemonGeneration,
+          workspaceName: live.workspaceName,
+          semanticPaneId: preview.semanticPaneId,
+          axis: preview.axis,
+          canonicalCells,
+        });
+      resizeTransaction.move(preview.cells);
+      if (!options.diagnosticsEnabled) return;
+      if (pendingResizeGuide) {
+        try {
+          const guide = preview.globalGuide ?? preview.guide;
+          pendingResizeGuide.preview = preview;
+          if (preview.pointerIngress) {
+            pendingResizeGuide.traceId = preview.pointerIngress.traceId;
+            pendingResizeGuide.startedAtMicros = preview.pointerIngress.atMicros;
+            pendingResizeGuide.pointerIngress = preview.pointerIngress;
+          }
+          pendingResizeGuide.guideDigest = createHash("sha256")
+            .update(
+              `${preview.semanticPaneId}\0${preview.axis}\0${preview.cells}\0${guide.x}\0${guide.y}\0${guide.width}\0${guide.height}`,
+            )
+            .digest("hex");
+        } catch {
+          pendingResizeGuide = null;
+        }
+        return;
+      }
+      try {
+        const startedAtMicros = preview.pointerIngress?.atMicros ?? diagnosticNowMicros();
+        if (startedAtMicros === null) return;
+        const active = options.generation();
+        const identity = active?.adapter?.paneCanonicalIdentity(preview.semanticPaneId);
+        const clientGeneration = active?.client?.getSnapshot().generation;
         if (
-          !lease ||
-          current?.status !== "live" ||
-          current.daemonGeneration !== expectedGeneration ||
-          current.client !== expectedClient
+          active?.status !== "live" ||
+          !active.daemonGeneration ||
+          !active.connection ||
+          !identity ||
+          !Number.isSafeInteger(clientGeneration)
         )
           return;
-        await expectedClient.dispatch({
-          kind: "semantic-intent",
-          operationId: createTraceId(),
-          intent: {
-            verb: "workspace.pane.resize",
-            workspaceName: expected.connection!.workspaceName,
-            semanticPaneId: preview.semanticPaneId,
-            axis: preview.axis,
-            cells: preview.cells,
-          },
+        const traceId = preview.pointerIngress?.traceId ?? createTraceId();
+        const guide = preview.globalGuide ?? preview.guide;
+        const guideDigest = createHash("sha256")
+          .update(
+            `${preview.semanticPaneId}\0${preview.axis}\0${preview.cells}\0${guide.x}\0${guide.y}\0${guide.width}\0${guide.height}`,
+          )
+          .digest("hex");
+        pendingResizeGuide = {
+          traceId,
+          startedAtMicros,
+          preview,
+          guideDigest,
+          daemonGeneration: active.daemonGeneration,
+          clientGeneration: clientGeneration!,
+          rendererEpoch: active.rendererEpoch,
+          sourceEpoch: identity.sourceEpoch,
+          generation: identity.generation,
+          incarnation: identity.incarnation,
+          revision: identity.revision,
+          stateHash: identity.stateHash,
+          cols: identity.cols,
+          rows: identity.rows,
+          connection: active.connection,
+          presentationBeforeDigest:
+            lastResizeGuidePresentationDigest ?? resizePresentationDigest(null) ?? "",
+          pointerIngress: preview.pointerIngress ?? null,
+        };
+        diagnose("pane-resize-preview-start", {
+          ...resizeDiagnosticDetails(pendingResizeGuide),
+          semanticPaneId: preview.semanticPaneId,
+          axis: preview.axis,
+          cells: preview.cells,
+          guide,
+          guideDigest,
         });
-      })().catch((error: unknown) => {
-        options.diagnose("pane-resize-rejected", {
-          message: error instanceof Error ? error.message : String(error),
-        });
-      });
+      } catch {
+        pendingResizeGuide = null;
+        return;
+      }
+    },
+    resizePane(preview) {
+      pendingResizeGuide = null;
+      lastResizeGuidePresentationDigest = null;
+      resizeTransaction.move(preview.cells);
+      resizeCommitContext = {
+        source: "pointer",
+        pointerIngress: preview.pointerIngress?.action === "up" ? preview.pointerIngress : null,
+      };
+      try {
+        resizeTransaction.release();
+      } finally {
+        resizeCommitContext = null;
+      }
+    },
+    keyboardResize(axis, direction) {
+      const paneId = options.focusedPane?.() ?? null;
+      if (!paneId) return;
+      const beforeCells = paneCells(options.layout(), paneId, axis);
+      if (beforeCells === null) return;
+      const live = liveResizeTarget();
+      if (!live || resizeTransaction.state().phase !== "idle") return;
+      if (
+        !resizeTransaction.begin({
+          authorityGeneration: live.daemonGeneration,
+          workspaceName: live.workspaceName,
+          semanticPaneId: paneId,
+          axis,
+          canonicalCells: beforeCells,
+        })
+      )
+        return;
+      resizeTransaction.move(Math.max(1, beforeCells + direction));
+      resizeCommitContext = { source: "keyboard", pointerIngress: null };
+      try {
+        resizeTransaction.release();
+      } finally {
+        resizeCommitContext = null;
+      }
+    },
+    routeWorkspaceKey(event) {
+      const name = event.name.toLowerCase();
+      if (event.ctrl && !event.meta && !event.shift && name === "t") {
+        this.cycleWindow();
+        return true;
+      }
+      if (
+        !event.meta ||
+        event.ctrl ||
+        event.shift ||
+        !["left", "right", "up", "down"].includes(name)
+      )
+        return false;
+      const axis = name === "left" || name === "right" ? "cols" : "rows";
+      const direction = name === "left" || name === "up" ? -1 : 1;
+      this.keyboardResize(axis, direction);
+      return true;
     },
     cycleWindow() {
       const windows = options.layout().windows;
@@ -884,12 +1377,131 @@ export function createApplicationTerminalInteractionController(
       });
     },
     settleResizeGuideFrame() {
-      if (!pendingResizeGuide) return;
-      const settled = pendingResizeGuide;
-      pendingResizeGuide = null;
-      options.diagnose("resize-guide-settled", {
-        traceId: settled.traceId,
-        durationMicros: nowMicros() - settled.startedAtMicros,
+      if (pendingResizeGuide) {
+        const settled = pendingResizeGuide;
+        pendingResizeGuide = null;
+        const settledAtMicros = diagnosticNowMicros();
+        let identityExact: boolean;
+        try {
+          const active = options.generation();
+          const identity = active?.adapter?.paneCanonicalIdentity(settled.preview.semanticPaneId);
+          const clientGeneration = active?.client?.getSnapshot().generation;
+          const layoutPane = options
+            .layout()
+            .current?.panes.find(({ pane }) => pane === settled.preview.semanticPaneId);
+          identityExact =
+            active?.status === "live" &&
+            active.daemonGeneration === settled.daemonGeneration &&
+            active.connection === settled.connection &&
+            active.rendererEpoch === settled.rendererEpoch &&
+            clientGeneration === settled.clientGeneration &&
+            identity?.sourceEpoch === settled.sourceEpoch &&
+            identity.generation === settled.generation &&
+            identity.incarnation === settled.incarnation &&
+            identity.revision === settled.revision &&
+            identity.stateHash === settled.stateHash &&
+            identity.cols === settled.cols &&
+            identity.rows === settled.rows &&
+            layoutPane?.width === settled.cols &&
+            layoutPane.height === settled.rows;
+        } catch {
+          identityExact = false;
+        }
+        const guide = settled.preview.globalGuide ?? settled.preview.guide;
+        const presentationDigest = resizePresentationDigest(settled.preview);
+        lastResizeGuidePresentationDigest = presentationDigest;
+        const details = {
+          ...resizeDiagnosticDetails(settled),
+          semanticPaneId: settled.preview.semanticPaneId,
+          axis: settled.preview.axis,
+          cells: settled.preview.cells,
+          guide,
+          guideDigest: settled.guideDigest,
+          presentationDigest,
+          presentationChanged:
+            presentationDigest !== null &&
+            settled.presentationBeforeDigest.length === 64 &&
+            presentationDigest !== settled.presentationBeforeDigest,
+          identityExact,
+          durationMicros:
+            settledAtMicros === null ? null : settledAtMicros - settled.startedAtMicros,
+        };
+        diagnoseCritical(`resize-guide:${settled.traceId}:settled`, "resize-guide-settled", {
+          ...details,
+        });
+        let writerHealth = null;
+        try {
+          writerHealth = options.diagnosticHealth?.() ?? null;
+        } catch {
+          // Missing writer health remains explicit in the guide fence.
+        }
+        diagnoseCritical(`resize-guide:${settled.traceId}:fence`, "resize-guide-fence", {
+          ...details,
+          writerHealth,
+        });
+      }
+      const pending = pendingPaneResize;
+      if (!pending?.frameRequested) return;
+      pendingPaneResize = null;
+      let canonicalAfter = null;
+      let identityLineageExact = false;
+      try {
+        const active = options.generation();
+        const identity = active?.adapter?.paneCanonicalIdentity(pending.semanticPaneId);
+        const layoutCells = paneCells(options.layout(), pending.semanticPaneId, pending.axis);
+        if (identity) {
+          canonicalAfter = identity;
+          identityLineageExact =
+            active?.status === "live" &&
+            active.daemonGeneration === pending.daemonGeneration &&
+            active.connection === pending.connection &&
+            active.rendererEpoch === pending.rendererEpoch &&
+            active.client?.getSnapshot().generation === pending.clientGeneration &&
+            identity.sourceEpoch === pending.sourceEpoch &&
+            identity.generation === pending.generation &&
+            identity.incarnation === pending.incarnation &&
+            identity.revision >= pending.revision &&
+            layoutCells === pending.layoutCells;
+        }
+      } catch {
+        canonicalAfter = null;
+        identityLineageExact = false;
+      }
+      const presentationDigest = resizePresentationDigest(null);
+      const details = {
+        ...resizeDiagnosticDetails(pending),
+        canonicalBefore: {
+          sourceEpoch: pending.sourceEpoch,
+          generation: pending.generation,
+          incarnation: pending.incarnation,
+          revision: pending.revision,
+          stateHash: pending.stateHash,
+          cols: pending.cols,
+          rows: pending.rows,
+        },
+        canonicalAfter,
+        identityLineageExact,
+        presentationDigest,
+        presentationChanged:
+          presentationDigest !== null &&
+          pending.presentationBeforeDigest.length === 64 &&
+          presentationDigest !== pending.presentationBeforeDigest,
+        changed: pending.layoutCells !== pending.beforeCells,
+      };
+      diagnoseCritical(
+        `pane-resize:${pending.operationId}:settled`,
+        "pane-resize-settled",
+        details,
+      );
+      let writerHealth = null;
+      try {
+        writerHealth = options.diagnosticHealth?.() ?? null;
+      } catch {
+        // Missing writer health remains explicit in the critical fence.
+      }
+      diagnoseCritical(`pane-resize:${pending.operationId}:fence`, "pane-resize-fence", {
+        ...details,
+        writerHealth,
       });
     },
   };

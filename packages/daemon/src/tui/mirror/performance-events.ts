@@ -178,7 +178,10 @@ export interface TuiTerminalCanonicalUpdateEvent extends Omit<
 export type TuiTerminalCanonicalPaintIdentity = Omit<
   TuiTerminalCanonicalPaintEvent,
   "atMicros" | "writtenRows"
->;
+> & {
+  readonly acceptedUpdateType: "terminal.seed" | "terminal.patch";
+  readonly acceptedRevision: number;
+};
 
 export interface TuiTerminalCanonicalHostFrameEvent extends TuiTerminalCanonicalPaintIdentity {
   readonly atMicros: number;

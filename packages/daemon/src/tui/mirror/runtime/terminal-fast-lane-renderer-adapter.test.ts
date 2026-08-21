@@ -378,12 +378,16 @@ describe("TerminalFastLaneRendererAdapter", () => {
   it("qualifies a retained seed accepted before the renderer mounts", () => {
     const publications: Array<Record<string, unknown>> = [];
     const paints: Array<Record<string, unknown>> = [];
+    const updates: Array<Record<string, unknown>> = [];
     const uninstall = installTuiPerformanceEventSink({
       frame: () => undefined,
       terminalPaint: () => undefined,
       terminalDelivery: () => undefined,
       terminalCanonicalPublication: (event) => publications.push(event),
       terminalCanonicalPaint: (event) => paints.push(event),
+      terminalCanonicalUpdate: (event) => updates.push(event),
+      terminalCanonicalHostFrame: () => undefined,
+      terminalFrameFence: () => undefined,
     });
     const source = new Source();
     const lane = createTerminalFastLane({
@@ -406,11 +410,18 @@ describe("TerminalFastLaneRendererAdapter", () => {
       paint(adapter, "pane.editor");
       expect(publications).toHaveLength(1);
       expect(paints).toHaveLength(1);
+      expect(updates).toHaveLength(0);
       expect(paints[0]).toMatchObject({
         semanticPaneId: "pane.editor",
         revision: first.revision,
         stateHash: first.stateHash,
       });
+      expect(adapter.drainCanonicalHostFrameIdentities().identities).toEqual([
+        expect.objectContaining({
+          acceptedUpdateType: "terminal.seed",
+          acceptedRevision: first.revision,
+        }),
+      ]);
     } finally {
       adapter.dispose();
       lane.dispose();
@@ -427,6 +438,8 @@ describe("TerminalFastLaneRendererAdapter", () => {
       terminalDelivery: () => undefined,
       terminalCanonicalPublication: (event) => publications.push(event),
       terminalCanonicalPaint: (event) => paints.push(event),
+      terminalCanonicalHostFrame: () => undefined,
+      terminalFrameFence: () => undefined,
     });
     const source = new Source();
     const lane = createTerminalFastLane({
@@ -456,6 +469,9 @@ describe("TerminalFastLaneRendererAdapter", () => {
       paint(adapter, "pane.editor");
       expect(publications).toHaveLength(0);
       expect(paints).toHaveLength(0);
+      expect(adapter.drainCanonicalHostFrameIdentities().identities).toEqual([
+        expect.objectContaining({ acceptedUpdateType: "terminal.patch", acceptedRevision: 1 }),
+      ]);
     } finally {
       adapter.dispose();
       lane.dispose();

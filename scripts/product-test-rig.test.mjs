@@ -1942,12 +1942,95 @@ test("window switch rejects writer loss before quiet-tail or rename attribution"
 test("window reports seal the bounded causal frame assessment in report and alignment", () => {
   const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
   const start = source.indexOf("async function diagnoseWindowLifecycle");
-  const end = source.indexOf("function executeProductJourney", start);
+  const end = source.indexOf("async function diagnoseKeyboardPointerResize", start);
   const diagnose = source.slice(start, end);
   assert.ok(start > 0 && end > start);
   assert.match(diagnose, /const causal = assessProductWindowLifecycle/u);
   assert.equal((diagnose.match(/causalAssessment: causal/gu) ?? []).length, 2);
   assert.match(diagnose, /firstBrokenBoundary: assessment\.firstBrokenBoundary/u);
+});
+
+test("resize journey owns one bounded two-pane Meta+Arrow and SGR causal executor", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const start = source.indexOf('if (journeyId === "keyboard-pointer-resize")');
+  const end = source.indexOf('if (journeyId === "window-lifecycle")', start);
+  const resize = source.slice(start, end);
+  const resizeConditioning = source.slice(
+    source.indexOf("async function conditionExactResizeTmuxFixture"),
+    source.indexOf("async function validateExactResizeTmuxBaseline"),
+  );
+  const resizeBaseline = source.slice(
+    source.indexOf("async function validateExactResizeTmuxBaseline"),
+    source.indexOf("async function preserveWarmRehostFailure"),
+  );
+  assert.ok(start > 0 && end > start);
+  assert.match(resize, /runKeyboardPointerResizeOwnerBoot/u);
+  assert.match(resize, /windowsPerSession: 1/u);
+  assert.match(resize, /"split-window",\s+"-h"/u);
+  assert.match(resize, /validateExactResizeTmuxBaseline/u);
+  assert.match(resize, /initialPaneCommand/u);
+  assert.match(resize, /exactResizeBlockerCommand/u);
+  assert.doesNotMatch(resize, /exec sh -i/u);
+  assert.match(resizeConditioning, /pane-border-status",\s+"top"/u);
+  assert.match(
+    resizeConditioning,
+    /"resize-window",\s+"-t",\s+target,\s+"-x",\s+"132",\s+"-y",\s+"41"/u,
+  );
+  assert.match(resizeConditioning, /"select-layout",\s+"-t",\s+target,\s+"even-horizontal"/u);
+  assert.doesNotMatch(resizeBaseline, /set-option|resize-window|select-layout/u);
+  assert.match(resize, /kind: "modified-key"/u);
+  assert.match(resize, /modifiers: \["meta"\]/u);
+  assert.match(resize, /ordinal < 30/u);
+  assert.match(resize, /action: "down"/u);
+  assert.match(resize, /action: "drag"/u);
+  assert.match(resize, /action: "up"/u);
+  assert.match(resize, /presentationDigest/u);
+  assert.match(resize, /waitForWindowWorkspaceEvidence/u);
+  assert.match(resize, /waitForFocusWebSemantic/u);
+  assert.match(
+    resize,
+    /fleetSessionId: resizeBoot\.identity\.fleetSessionId,[\s\S]*?catalogRevision: resizeBoot\.identity\.catalogRevision/u,
+  );
+  assert.match(
+    resize,
+    /publish\(\{\s*convergence: \{ workspaceClient: resizeBoot\.web\.workspaceClient \},\s*journeyEvidence: \{ keyboardPointerResize: journeyEvidence \}/u,
+  );
+  assert.doesNotMatch(resize, /\btuiCommand\(state/u);
+  assert.doesNotMatch(resize, /\bexecFileSync\(/u);
+});
+
+test("resize diagnostic correlation uses strict post-Web identity and never a sibling fallback", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("function productDiagnosticCorrelation");
+  const end = source.indexOf("const WARM_COHERENT_SAMPLE_COUNT", start);
+  const correlation = source.slice(start, end);
+  assert.ok(start > 0 && end > start);
+  assert.match(
+    correlation,
+    /const keyboardPointerResize = state\?\.journeyEvidence\?\.keyboardPointerResize \?\? null/u,
+  );
+  assert.match(
+    correlation,
+    /keyboardPointerResize\.expected\?\.fleetSessionId[\s\S]*?keyboardPointerResize\.expected\?\.catalogRevision[\s\S]*?keyboardPointerResize\.expected\?\.semanticPaneId/u,
+  );
+  assert.doesNotMatch(correlation, /keyboardPointerResize\.keyboard\.workspaceClient/u);
+  assert.doesNotMatch(correlation, /keyboardPointerResize\.pointerRelease\.workspaceClient/u);
+  assert.match(correlation, /buildProductDiagnosticCorrelation\(\{[\s\S]*?state,/u);
+});
+
+test("strict seed failure preserves bounded native and same-pane patch/frame/fence evidence", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("async function provePreseededPanePublication");
+  const end = source.indexOf("async function preserveWarmRehostFailure", start);
+  const proof = source.slice(start, end);
+  assert.ok(start > 0 && end > start);
+  assert.match(proof, /runBoundedFocusTmux/u);
+  assert.match(proof, /deadline: performance\.now\(\) \+ 500/u);
+  assert.match(proof, /maxBuffer: 64 \* 1_024/u);
+  assert.match(proof, /latestCanonicalPatch/u);
+  assert.match(proof, /latestCanonicalFrame/u);
+  assert.match(proof, /latestCanonicalFence/u);
+  assert.match(proof, /targetGeometryExact/u);
 });
 
 test("window owned actions use the exact live OpenTUI principal and preserve typed failures", () => {

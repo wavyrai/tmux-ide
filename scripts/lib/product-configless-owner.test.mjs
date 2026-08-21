@@ -782,6 +782,58 @@ test("complete diagnostic correlation requires exact daemon, client, TUI and Web
   assert.deepEqual(correlation.missing, []);
   assert.equal(correlation.daemonState.revision, "a".repeat(20));
   assert.deepEqual(correlation.clientState.pending, []);
+  const missingConvergence = buildProductDiagnosticCorrelation({
+    state: { ...state, convergence: null },
+    tuiAvailable: true,
+    webAvailable: true,
+    expected,
+    web,
+  });
+  assert.equal(missingConvergence.complete, false);
+  assert.deepEqual(
+    missingConvergence.missing.filter((predicate) => predicate.startsWith("workspaceClient.")),
+    [
+      "workspaceClient.committed",
+      "workspaceClient.pending",
+      "workspaceClient.derived",
+      "workspaceClient.correlation",
+    ],
+  );
+  for (const expectedMismatch of [
+    { ...expected, fleetSessionId: "opaque-sibling" },
+    { ...expected, catalogRevision: "b".repeat(20) },
+    { ...expected, semanticPaneId: "pane.sibling" },
+  ]) {
+    const rejected = buildProductDiagnosticCorrelation({
+      state,
+      tuiAvailable: true,
+      webAvailable: true,
+      expected: expectedMismatch,
+      web,
+    });
+    assert.equal(rejected.complete, false);
+    assert.ok(
+      rejected.missing.includes("workspaceClient.correlation") ||
+        rejected.missing.includes("daemon.revision") ||
+        rejected.missing.includes("web.semantic"),
+    );
+  }
+  const siblingWorkspaceClient = {
+    ...state.convergence.workspaceClient,
+    committed: {
+      ...state.convergence.workspaceClient.committed,
+      target: { ...committed.target, workspaceName: "workspace-sibling" },
+    },
+  };
+  const siblingSplice = buildProductDiagnosticCorrelation({
+    state: { ...state, convergence: { workspaceClient: siblingWorkspaceClient } },
+    tuiAvailable: true,
+    webAvailable: true,
+    expected,
+    web,
+  });
+  assert.equal(siblingSplice.complete, false);
+  assert.ok(siblingSplice.missing.includes("workspaceClient.correlation"));
   for (const mutate of [
     (web) => ({ ...web, shellSource: "fixture" }),
     (web) => ({

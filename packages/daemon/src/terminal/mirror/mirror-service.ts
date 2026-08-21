@@ -83,6 +83,8 @@ export interface MirrorSubscription {
   freeze(): void;
   /** Resume after a freeze: continue + a fresh atomic seed batch. */
   thaw(): void;
+  /** Request one fresh atomic capture on this exact retained subscription. */
+  reseed(): void;
   sendText(text: string): void;
   sendKey(key: string): void;
   close(): Promise<void>;
@@ -183,6 +185,7 @@ export class MirrorService {
       semanticPaneId: request.semanticPaneId,
       freeze: () => handle.freeze(),
       thaw: () => handle.thaw(),
+      reseed: () => handle.reseed(),
       sendText: (text) => handle.sendText(text),
       sendKey: (key) => handle.sendKey(key),
       close: async () => {

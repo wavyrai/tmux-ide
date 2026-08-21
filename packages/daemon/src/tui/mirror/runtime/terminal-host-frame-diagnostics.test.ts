@@ -17,6 +17,8 @@ const identity: TuiTerminalCanonicalPaintIdentity = {
   sourceEpoch: 1,
   viewportCols: 132,
   viewportRows: 40,
+  acceptedUpdateType: "terminal.seed",
+  acceptedRevision: 3,
 };
 
 describe("publishCanonicalHostFrameDiagnostics", () => {

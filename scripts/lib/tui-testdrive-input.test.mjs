@@ -304,6 +304,39 @@ test("control-key receipt preserves the exact requested key", async () => {
   );
 });
 
+test("modified Meta+Arrow and application drag preserve exact requested input", async () => {
+  const keyboard = orchestrationPort();
+  const modified = parseTestdriveInputDocument(
+    JSON.stringify({
+      version: 1,
+      kind: "modified-key",
+      key: "right",
+      modifiers: ["meta"],
+      timeoutMs: 500,
+    }),
+  );
+  const keyboardResult = await executeTestdriveInputOperation(modified, keyboard.port);
+  assert.equal(keyboardResult.requestedKey, "right");
+  assert.deepEqual(keyboardResult.requestedModifiers, ["meta"]);
+  assert.equal(keyboard.calls.find(([kind]) => kind === "inject")[2], "\x1b[1;3C");
+
+  const pointer = orchestrationPort();
+  const drag = parseTestdriveInputDocument(
+    JSON.stringify({
+      version: 1,
+      kind: "application-mouse",
+      action: "drag",
+      x: 40,
+      y: 10,
+      timeoutMs: 500,
+    }),
+  );
+  const pointerResult = await executeTestdriveInputOperation(drag, pointer.port);
+  assert.equal(pointerResult.requestedAction, "drag");
+  assert.deepEqual(pointerResult.requestedPoint, { x: 40, y: 10 });
+  assert.equal(pointer.calls.find(([kind]) => kind === "inject")[2], "\x1b[<32;41;11M");
+});
+
 test("one monotonic absolute deadline includes resolve, phases, and cleanup reserve", async () => {
   const harness = orchestrationPort({
     resolveIdentity: async () => {

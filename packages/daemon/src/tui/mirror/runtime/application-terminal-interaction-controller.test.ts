@@ -48,6 +48,9 @@ describe("application terminal interaction controller", () => {
       createTraceId,
     });
     controller.cycleWindow();
+    expect(
+      controller.beginResizePointerIngress({ action: "drag", x: 10, y: 4, gestureId: null }),
+    ).toBeNull();
     await Promise.resolve();
     expect(nowMicros).not.toHaveBeenCalled();
     expect(createTraceId).not.toHaveBeenCalled();
@@ -1011,8 +1014,26 @@ describe("application terminal interaction controller", () => {
   it("coalesces resize previews and does no timing work when diagnostics are disabled", () => {
     let micros = 10;
     const enabledDiagnostics = vi.fn();
+    const resizeGeneration = {
+      status: "live",
+      daemonGeneration: "generation-a",
+      rendererEpoch: 7,
+      connection: { workspaceName: "workspace.alpha" },
+      client: { getSnapshot: () => ({ generation: 4 }) },
+      adapter: {
+        paneCanonicalIdentity: () => ({
+          sourceEpoch: 2,
+          generation: "generation-a",
+          incarnation: "incarnation-a",
+          revision: 9,
+          stateHash: "0123456789abcdef",
+          cols: 20,
+          rows: 8,
+        }),
+      },
+    };
     const enabled = createApplicationTerminalInteractionController({
-      generation: () => null,
+      generation: () => resizeGeneration as never,
       layout: () => layout(),
       setFocusedPane: () => undefined,
       diagnosticsEnabled: true,
@@ -1020,16 +1041,43 @@ describe("application terminal interaction controller", () => {
       createTraceId: () => "resize-trace",
       nowMicros: () => micros,
     });
-    const preview = { semanticPaneId: "pane.main", axis: "x" as const, cells: 12 };
+    const preview = {
+      semanticPaneId: "pane.main",
+      axis: "cols" as const,
+      cells: 12,
+      guide: { x: 12, y: 0, width: 1, height: 8 },
+    };
     enabled.previewPaneResize(preview);
-    enabled.previewPaneResize(preview);
+    enabled.previewPaneResize({
+      ...preview,
+      cells: 13,
+      guide: { x: 13, y: 0, width: 1, height: 8 },
+    });
     micros = 40;
     enabled.settleResizeGuideFrame();
-    expect(enabledDiagnostics).toHaveBeenCalledOnce();
-    expect(enabledDiagnostics).toHaveBeenCalledWith("resize-guide-settled", {
-      traceId: "resize-trace",
-      durationMicros: 30,
-    });
+    expect(enabledDiagnostics).toHaveBeenCalledTimes(3);
+    expect(enabledDiagnostics).toHaveBeenCalledWith(
+      "resize-guide-settled",
+      expect.objectContaining({
+        traceId: "resize-trace",
+        semanticPaneId: "pane.main",
+        axis: "cols",
+        cells: 13,
+        guide: { x: 13, y: 0, width: 1, height: 8 },
+        guideDigest: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        presentationDigest: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        presentationChanged: true,
+        identityExact: true,
+        durationMicros: 30,
+      }),
+    );
+    enabled.previewPaneResize(preview);
+    resizeGeneration.rendererEpoch = 8;
+    enabled.settleResizeGuideFrame();
+    expect(enabledDiagnostics).toHaveBeenCalledWith(
+      "resize-guide-settled",
+      expect.objectContaining({ identityExact: false }),
+    );
 
     const nowMicros = vi.fn(() => {
       throw new Error("disabled diagnostics must not read the clock");
@@ -1046,5 +1094,332 @@ describe("application terminal interaction controller", () => {
     disabled.settleResizeGuideFrame();
     expect(disabled.observeDiagnosticWindowFrame()).toBeNull();
     expect(nowMicros).not.toHaveBeenCalled();
+  });
+
+  it("does not credit a guide frame after pointer release removed the guide", async () => {
+    const diagnostics = vi.fn();
+    const critical = vi.fn();
+    const client = {
+      ownsRuntimeAuthority: () => true,
+      requestAuthority: async () => ({}),
+      dispatch: vi.fn(async () => {
+        throw new Error("release refusal is irrelevant to the removed guide");
+      }),
+      getSnapshot: () => ({ generation: 4 }),
+    };
+    const controller = createApplicationTerminalInteractionController({
+      generation: () =>
+        ({
+          status: "live",
+          daemonGeneration: "generation-a",
+          rendererEpoch: 7,
+          connection: { workspaceName: "workspace.alpha" },
+          client,
+          adapter: {
+            paneCanonicalIdentity: () => ({
+              sourceEpoch: 2,
+              generation: "generation-a",
+              incarnation: "incarnation-a",
+              revision: 9,
+              stateHash: "0123456789abcdef",
+              cols: 20,
+              rows: 8,
+            }),
+          },
+        }) as never,
+      layout: () => layout(),
+      setFocusedPane: () => undefined,
+      diagnosticsEnabled: true,
+      diagnose: diagnostics,
+      diagnoseCritical: critical,
+      createTraceId: () => "123e4567-e89b-42d3-a456-426614174000",
+      createOperationId: () => "223e4567-e89b-42d3-a456-426614174000",
+    });
+    const preview = {
+      semanticPaneId: "pane.main",
+      axis: "cols" as const,
+      cells: 19,
+      guide: { x: 19, y: 0, width: 1, height: 8 },
+    };
+    controller.previewPaneResize(preview);
+    controller.resizePane(preview);
+    controller.settleResizeGuideFrame();
+    expect(critical).not.toHaveBeenCalledWith(
+      expect.stringContaining("resize-guide"),
+      expect.anything(),
+      expect.anything(),
+    );
+    await Promise.resolve();
+  });
+
+  it("routes exact Meta+Arrow through one resize transaction and fences receipt, layout, and frame", async () => {
+    let snapshot = layout(0);
+    const diagnostics = vi.fn();
+    const critical = vi.fn(() => true);
+    const requestRender = vi.fn();
+    const dispatch = vi.fn(async (command) => ({
+      kind: "semantic-intent",
+      operationId: command.operationId,
+      result: {
+        operationId: command.operationId,
+        verb: "workspace.pane.resize",
+        daemonInstanceId: "generation-a",
+        workspaceName: "workspace.alpha",
+        semanticPaneId: "pane.main",
+        axis: "cols",
+        cells: 21,
+        outcome: "applied",
+      },
+    }));
+    const generation = {
+      status: "live",
+      daemonGeneration: "generation-a",
+      rendererEpoch: 7,
+      connection: { workspaceName: "workspace.alpha" },
+      client: {
+        ownsRuntimeAuthority: () => true,
+        requestAuthority: async () => ({}),
+        dispatch,
+        getSnapshot: () => ({ generation: 4 }),
+      },
+      adapter: {
+        paneCanonicalIdentity: () => ({
+          sourceEpoch: 2,
+          generation: "generation-a",
+          incarnation: "incarnation-a",
+          revision: 9,
+          stateHash: "0123456789abcdef",
+          cols: 20,
+          rows: 8,
+        }),
+      },
+    };
+    const controller = createApplicationTerminalInteractionController({
+      generation: () => generation as never,
+      layout: () => snapshot,
+      focusedPane: () => "pane.main",
+      setFocusedPane: () => undefined,
+      diagnosticsEnabled: true,
+      diagnose: diagnostics,
+      diagnoseCritical: critical,
+      diagnosticHealth: () => ({ droppedRecords: 0, failed: false, pendingCriticalRecords: 0 }),
+      createTraceId: () => "123e4567-e89b-42d3-a456-426614174000",
+      createOperationId: () => "123e4567-e89b-42d3-a456-426614174000",
+      nowMicros: () => 100,
+      requestRender,
+    });
+    expect(
+      controller.routeWorkspaceKey({ name: "right", meta: true, ctrl: false, shift: false }),
+    ).toBe(true);
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledOnce());
+    snapshot = {
+      ...snapshot,
+      current: {
+        ...snapshot.current!,
+        panes: [{ ...snapshot.current!.panes[0]!, width: 21 }],
+      },
+      windows: snapshot.windows.map((window, index) =>
+        index === 0 ? { ...window, panes: [{ ...window.panes[0]!, width: 21 }] } : window,
+      ),
+    };
+    controller.adoptLayout(snapshot);
+    await Promise.resolve();
+    expect(requestRender).toHaveBeenCalledOnce();
+    controller.settleResizeGuideFrame();
+    expect(diagnostics).toHaveBeenCalledWith(
+      "pane-resize-receipt",
+      expect.objectContaining({ source: "keyboard", receiptCells: 21 }),
+    );
+    expect(critical).toHaveBeenCalledWith(
+      "pane-resize:123e4567-e89b-42d3-a456-426614174000:fence",
+      "pane-resize-fence",
+      expect.objectContaining({ layoutCells: 21, receiptCells: 21 }),
+    );
+  });
+
+  it("converts Meta+Down and a horizontal pointer release to exact native rows", async () => {
+    const withTopStatus = (value: OpenTuiWorkspaceLayoutSnapshot) => {
+      const windows = value.windows.map((window) => ({
+        ...window,
+        paneBorderStatus: "top" as const,
+      }));
+      return { current: windows.find(({ currentWindow }) => currentWindow)!, windows };
+    };
+    let snapshot = withTopStatus(layout(0));
+    const diagnostics = vi.fn();
+    const critical = vi.fn(() => true);
+    const requestRender = vi.fn();
+    const dispatch = vi.fn(
+      async (command: { operationId: string; intent: { axis: string; cells: number } }) => ({
+        kind: "semantic-intent",
+        operationId: command.operationId,
+        result: {
+          operationId: command.operationId,
+          verb: "workspace.pane.resize",
+          daemonInstanceId: "generation-a",
+          workspaceName: "workspace.alpha",
+          semanticPaneId: "pane.main",
+          axis: command.intent.axis,
+          cells: command.intent.cells,
+          outcome: "applied",
+        },
+      }),
+    );
+    const generation = {
+      status: "live",
+      daemonGeneration: "generation-a",
+      rendererEpoch: 7,
+      connection: { workspaceName: "workspace.alpha" },
+      client: {
+        ownsRuntimeAuthority: () => true,
+        requestAuthority: async () => ({}),
+        dispatch,
+        getSnapshot: () => ({ generation: 4 }),
+      },
+      adapter: {
+        paneCanonicalIdentity: () => ({
+          sourceEpoch: 2,
+          generation: "generation-a",
+          incarnation: "incarnation-a",
+          revision: 9,
+          stateHash: "0123456789abcdef",
+          cols: 20,
+          rows: 8,
+        }),
+      },
+    };
+    const controller = createApplicationTerminalInteractionController({
+      generation: () => generation as never,
+      layout: () => snapshot,
+      focusedPane: () => "pane.main",
+      setFocusedPane: () => undefined,
+      diagnosticsEnabled: true,
+      diagnose: diagnostics,
+      diagnoseCritical: critical,
+      diagnosticHealth: () => ({ droppedRecords: 0, failed: false, pendingCriticalRecords: 0 }),
+      createTraceId: () => "123e4567-e89b-42d3-a456-426614174000",
+      createOperationId: () => "123e4567-e89b-42d3-a456-426614174000",
+      nowMicros: () => 100,
+      requestRender,
+    });
+
+    // The promoted top status row is included in visible layout, not pane_height.
+    expect(
+      controller.routeWorkspaceKey({ name: "down", meta: true, ctrl: false, shift: false }),
+    ).toBe(true);
+    await vi.waitFor(() =>
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ intent: expect.objectContaining({ axis: "rows", cells: 8 }) }),
+      ),
+    );
+    snapshot = {
+      ...snapshot,
+      current: { ...snapshot.current!, panes: [{ ...snapshot.current!.panes[0]!, height: 9 }] },
+      windows: snapshot.windows.map((window, index) =>
+        index === 0 ? { ...window, panes: [{ ...window.panes[0]!, height: 9 }] } : window,
+      ),
+    };
+    controller.adoptLayout(snapshot);
+    await Promise.resolve();
+    controller.settleResizeGuideFrame();
+    expect(diagnostics).toHaveBeenCalledWith(
+      "pane-resize-receipt",
+      expect.objectContaining({ axis: "rows", requestedCells: 8, receiptCells: 8 }),
+    );
+    expect(critical).toHaveBeenCalledWith(
+      expect.stringContaining(":fence"),
+      "pane-resize-fence",
+      expect.objectContaining({ axis: "rows", layoutCells: 8, receiptCells: 8 }),
+    );
+
+    // A real horizontal separator preview/release uses the same native row contract.
+    snapshot = withTopStatus(layout(0));
+    dispatch.mockClear();
+    const ingress = controller.beginResizePointerIngress({
+      action: "drag",
+      x: 40,
+      y: 10,
+      gestureId: null,
+    });
+    const preview = {
+      semanticPaneId: "pane.main",
+      axis: "rows" as const,
+      cells: 8,
+      guide: { x: 0, y: 8, width: 20, height: 1 },
+      globalGuide: { x: 28, y: 10, width: 20, height: 1 },
+      ...(ingress ? { pointerIngress: ingress } : {}),
+    };
+    controller.previewPaneResize(preview);
+    const releaseIngress = controller.beginResizePointerIngress({
+      action: "up",
+      x: 40,
+      y: 10,
+      gestureId: ingress?.gestureId ?? null,
+    });
+    controller.resizePane({
+      ...preview,
+      ...(releaseIngress ? { pointerIngress: releaseIngress } : {}),
+    });
+    await vi.waitFor(() =>
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ intent: expect.objectContaining({ axis: "rows", cells: 8 }) }),
+      ),
+    );
+    snapshot = {
+      ...snapshot,
+      current: { ...snapshot.current!, panes: [{ ...snapshot.current!.panes[0]!, height: 9 }] },
+      windows: snapshot.windows.map((window, index) =>
+        index === 0 ? { ...window, panes: [{ ...window.panes[0]!, height: 9 }] } : window,
+      ),
+    };
+    controller.adoptLayout(snapshot);
+    await Promise.resolve();
+    controller.settleResizeGuideFrame();
+    expect(critical).toHaveBeenCalledWith(
+      expect.stringContaining(":fence"),
+      "pane-resize-fence",
+      expect.objectContaining({
+        source: "pointer",
+        axis: "rows",
+        layoutCells: 8,
+        receiptCells: 8,
+        pointerIngress: expect.objectContaining({
+          action: "up",
+          gestureId: ingress?.gestureId,
+          x: 40,
+          y: 10,
+        }),
+      }),
+    );
+
+    diagnostics.mockClear();
+    dispatch.mockClear();
+    expect(
+      controller.routeWorkspaceKey({ name: "right", meta: true, ctrl: false, shift: false }),
+    ).toBe(true);
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledOnce());
+    await vi.waitFor(() =>
+      expect(diagnostics).toHaveBeenCalledWith(
+        "pane-resize-receipt",
+        expect.objectContaining({ source: "keyboard", pointerIngress: null }),
+      ),
+    );
+  });
+
+  it("does not route Ctrl/Shift arrows or Meta non-arrows as pane resize", () => {
+    const controller = createApplicationTerminalInteractionController({
+      generation: () => null,
+      layout: () => layout(0),
+      focusedPane: () => "pane.main",
+      setFocusedPane: () => undefined,
+      diagnosticsEnabled: false,
+      diagnose: vi.fn(),
+    });
+    expect(
+      controller.routeWorkspaceKey({ name: "right", meta: false, ctrl: true, shift: true }),
+    ).toBe(false);
+    expect(controller.routeWorkspaceKey({ name: "x", meta: true, ctrl: false, shift: false })).toBe(
+      false,
+    );
   });
 });

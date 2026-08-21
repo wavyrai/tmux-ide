@@ -130,6 +130,7 @@ export interface PaneSubscriptionHandle {
   readonly semanticPaneId: string;
   freeze(): void;
   thaw(): void;
+  reseed(): void;
   sendText(text: string): void;
   sendKey(key: string): void;
   close(): void;
@@ -382,6 +383,7 @@ export class SessionChannel {
       semanticPaneId,
       freeze: () => this.freeze(sub),
       thaw: () => this.thaw(sub),
+      reseed: () => this.reseed(sub),
       sendText: (text) => {
         if (!sub.closed) this.input.literal(sub.pane.runtimeId, text);
       },
@@ -749,6 +751,7 @@ export class SessionChannel {
     if (!event) return;
     for (const subscriber of this.layoutSubscribers) subscriber(event);
     for (const pane of this.panesByRuntime.values()) {
+      if (pane.windowRuntimeId !== windowRuntimeId) continue;
       for (const sub of pane.subs) {
         if (!sub.closed && sub.onLayout) sub.onLayout(event);
       }
@@ -756,7 +759,7 @@ export class SessionChannel {
   }
 
   /**
-   * Hand ONE new subscriber the geometry of every window this session has.
+   * Hand ONE new subscriber the geometry of its owning window.
    *
    * Without it a subscriber's first layout frame arrives only when a layout
    * happens to change, so a view built from these frames opens empty and stays
@@ -765,10 +768,10 @@ export class SessionChannel {
    */
   private emitLayoutSnapshot(sub: SubRecord): void {
     if (!sub.onLayout) return;
-    for (const windowRuntimeId of this.layoutByWindow.keys()) {
-      const event = this.layoutEventFor(windowRuntimeId);
-      if (!sub.closed && event) sub.onLayout(event);
-    }
+    const windowRuntimeId = sub.pane.windowRuntimeId;
+    if (windowRuntimeId === null) return;
+    const event = this.layoutEventFor(windowRuntimeId);
+    if (!sub.closed && event) sub.onLayout(event);
   }
 
   private layoutEventFor(windowRuntimeId: string): MirrorLayoutEvent | null {
@@ -835,8 +838,8 @@ export class SessionChannel {
         windowActive: windowActive === "1",
       });
     }
-    const listed = this.applyPaneTruth(truth);
-    await this.syncWindows();
+    const { listed, movedWindowRuntimeIds } = this.applyPaneTruth(truth);
+    await this.syncWindows(this.opts.session, movedWindowRuntimeIds);
     this.discovery.discover(listed);
   }
 
@@ -847,14 +850,17 @@ export class SessionChannel {
       runtimeWindowId: string;
       windowActive: boolean;
     }[],
-  ): Set<string> {
+  ): { listed: Set<string>; movedWindowRuntimeIds: Set<string> } {
     const listed = new Set<string>();
+    const movedWindowRuntimeIds = new Set<string>();
     this.truthActive.clear();
     this.truthWindow.clear();
+    this.activePaneByWindow.clear();
     for (const row of truth) {
       listed.add(row.runtimePaneId);
       this.truthActive.set(row.runtimePaneId, row.active);
       this.truthWindow.set(row.runtimePaneId, row.runtimeWindowId);
+      if (row.active) this.activePaneByWindow.set(row.runtimeWindowId, row.runtimePaneId);
       if (row.windowActive) this.currentWindow = row.runtimeWindowId;
     }
     // Closure is decided ONLY by a successful truth reply that omits the pane
@@ -862,7 +868,10 @@ export class SessionChannel {
     for (const [runtime, pane] of [...this.panesByRuntime]) {
       if (listed.has(runtime)) {
         pane.active = this.truthActive.get(runtime) ?? pane.active;
-        pane.windowRuntimeId = this.truthWindow.get(runtime) ?? pane.windowRuntimeId;
+        const nextWindowRuntimeId = this.truthWindow.get(runtime) ?? pane.windowRuntimeId;
+        if (nextWindowRuntimeId !== pane.windowRuntimeId && nextWindowRuntimeId !== null)
+          movedWindowRuntimeIds.add(nextWindowRuntimeId);
+        pane.windowRuntimeId = nextWindowRuntimeId;
         continue;
       }
       this.panesByRuntime.delete(runtime);
@@ -877,7 +886,7 @@ export class SessionChannel {
       }
       pane.subs.clear();
     }
-    return listed;
+    return { listed, movedWindowRuntimeIds };
   }
 
   private async refreshTrustedInventory(
@@ -931,7 +940,7 @@ export class SessionChannel {
     ) {
       throw new Error(`trusted inventory for ${this.opts.session} has incomplete counts`);
     }
-    const listed = this.applyPaneTruth(
+    const { listed, movedWindowRuntimeIds } = this.applyPaneTruth(
       descriptors.map((pane) => ({
         runtimePaneId: pane.runtimePaneId,
         active: pane.paneActive,
@@ -939,7 +948,7 @@ export class SessionChannel {
         windowActive: pane.windowActive,
       })),
     );
-    const repairedWindows = await this.syncWindows(expectedRuntimeSessionId);
+    const repairedWindows = await this.syncWindows(expectedRuntimeSessionId, movedWindowRuntimeIds);
     const repairedPanes = await this.reconcileIdentity(descriptors, listed);
     const afterLines = await this.io.request(
       `list-panes -s -t "${expectedRuntimeSessionId}" -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`,
@@ -1006,7 +1015,10 @@ export class SessionChannel {
     });
   }
 
-  private async syncWindows(target = this.opts.session): Promise<boolean> {
+  private async syncWindows(
+    target = this.opts.session,
+    requiredLayoutEmits: ReadonlySet<string> = new Set(),
+  ): Promise<boolean> {
     const lines = await this.io.request(
       `list-windows -t "${target}" -F "#{window_id}\t#{qa:@tmux_ide_window_id}\t#{qa:window_name}\t#{window_active}\t#{window_visible_layout}\t#{?window_zoomed_flag,1,0}\t#{pane-border-status}"`,
     );
@@ -1121,7 +1133,10 @@ export class SessionChannel {
      * tabs are labelled from these frames keeps showing the old name after the
      * rename it just performed reached tmux.
      */
-    if (changed) for (const runtimeId of next.keys()) this.emitLayout(runtimeId);
+    const layoutEmits = changed
+      ? new Set(next.keys())
+      : new Set([...requiredLayoutEmits].filter((runtimeId) => next.has(runtimeId)));
+    for (const runtimeId of layoutEmits) this.emitLayout(runtimeId);
     return repairedIdentity;
   }
 

@@ -242,14 +242,26 @@ describe("production application root controller", () => {
       join(repoRoot, "packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx"),
       "utf8",
     );
-    const preview = controller.indexOf("previewPaneResize()");
+    const resizeAction = readFileSync(
+      join(repoRoot, "packages/daemon/src/tui/mirror/runtime/resize-terminal-pane.ts"),
+      "utf8",
+    );
+    const preview = controller.indexOf("previewPaneResize(preview)");
     const commit = controller.indexOf("resizePane(preview)");
-    const verb = controller.indexOf('verb: "workspace.pane.resize"', commit);
+    const release = controller.indexOf("resizeTransaction.release()", commit);
+    const actionCall = controller.indexOf("resizeTerminalPane(");
+    const verb = resizeAction.indexOf('verb: "workspace.pane.resize"');
     expect(preview).toBeGreaterThan(-1);
     expect(commit).toBeGreaterThan(preview);
-    expect(verb).toBeGreaterThan(commit);
+    expect(release).toBeGreaterThan(commit);
+    expect(actionCall).toBeGreaterThan(-1);
+    expect(verb).toBeGreaterThan(-1);
     expect(root).toContain("onResizePreview={interaction.previewPaneResize}");
     expect(root).toContain("onResizePane={interaction.resizePane}");
+    expect(root).toContain(
+      "const resizeIngress = tuiPerfStream ? interaction.beginResizePointerIngress : undefined",
+    );
+    expect(root).toContain("onResizePointerIngress={resizeIngress}");
     expect(app).not.toContain("routeSidebarResizePointer");
   });
 });

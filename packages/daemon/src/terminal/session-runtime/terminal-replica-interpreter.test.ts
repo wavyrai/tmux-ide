@@ -408,6 +408,83 @@ describe("TerminalReplicaInterpreter", () => {
     expect(interpreter.currentSnapshot()).toMatchObject({ cols: 10, rows: 2 });
   });
 
+  it.each(["top", "bottom"] as const)(
+    "makes one dual-geometry %s seed semantically equal to native seed then visible resize",
+    async () => {
+      const chunks = [
+        new TextEncoder().encode("one界e\u0301\r\ntwo\r\nthree\r\nfour\u001b[31mR\u001b[?25l"),
+        new TextEncoder().encode("\u001b[?7l\u001b[2;3H界e\u0301"),
+      ];
+      const legacyUpdates: CanonicalTerminalReplicaUpdate[] = [];
+      const atomicUpdates: CanonicalTerminalReplicaUpdate[] = [];
+      const legacy = create(legacyUpdates, 8, 3);
+      const atomic = create(atomicUpdates, 8, 3);
+      await legacy.enqueue({
+        type: "reseed",
+        cols: 8,
+        rows: 3,
+        chunks,
+        cursor: { x: 4, y: 1 },
+        bootstrap: "painted-capture",
+      });
+      await legacy.enqueue({ type: "resize", cols: 8, rows: 4 });
+      await atomic.enqueue({
+        type: "reseed",
+        nativeCols: 8,
+        nativeRows: 3,
+        cols: 8,
+        rows: 4,
+        chunks,
+        cursor: { x: 4, y: 1 },
+        bootstrap: "painted-capture",
+      });
+      expect(atomic.currentSnapshot()).toEqual(legacy.currentSnapshot());
+      expect(atomic.currentSnapshot().cursor).toMatchObject({ x: 4, y: 1 });
+      expect(atomic.currentSnapshot().modes).toEqual(legacy.currentSnapshot().modes);
+      expect(atomicUpdates.map((update) => update.type)).toEqual(["terminal.seed"]);
+      expect(legacyUpdates.map((update) => update.type)).toEqual([
+        "terminal.seed",
+        "terminal.patch",
+      ]);
+    },
+  );
+
+  it("parses held deltas at native geometry and discards a crossed lease before commit", async () => {
+    const updates: CanonicalTerminalReplicaUpdate[] = [];
+    let valid = false;
+    let invalidated = 0;
+    const interpreter = create(updates, 8, 3);
+    await interpreter.enqueue({
+      type: "reseed",
+      nativeCols: 8,
+      nativeRows: 3,
+      cols: 8,
+      rows: 4,
+      chunks: [new TextEncoder().encode("capture"), new TextEncoder().encode("-held")],
+      cursor: { x: 4, y: 1 },
+      bootstrap: "painted-capture",
+      validateBeforeCommit: () => valid,
+      onInvalidated: () => (invalidated += 1),
+    });
+    expect(invalidated).toBe(1);
+    expect(updates).toEqual([]);
+    expect(interpreter.currentSeed()).toBeNull();
+    valid = true;
+    await interpreter.enqueue({
+      type: "reseed",
+      nativeCols: 8,
+      nativeRows: 3,
+      cols: 8,
+      rows: 4,
+      chunks: [new TextEncoder().encode("capture"), new TextEncoder().encode("-held")],
+      cursor: { x: 4, y: 1 },
+      bootstrap: "painted-capture",
+      validateBeforeCommit: () => valid,
+    });
+    expect(updates.map((update) => update.type)).toEqual(["terminal.seed"]);
+    expect(interpreter.currentSnapshot()).toMatchObject({ cols: 8, rows: 4 });
+  });
+
   it("keeps tmux cursor truth absolute under DECOM without mutating parser state", async () => {
     const updates: CanonicalTerminalReplicaUpdate[] = [];
     const interpreter = create(updates, 20, 8);

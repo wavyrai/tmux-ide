@@ -42,6 +42,15 @@ export interface TerminalReplicaQualificationSnapshot {
   readonly stats: TerminalReplicaInterpreterStats;
 }
 
+interface ReseedCandidate {
+  readonly nativeCols: number;
+  readonly nativeRows: number;
+  readonly layoutLease: LayoutLease | null;
+  readonly subscriptionEpoch: number;
+  readonly chunks: Uint8Array[];
+  readonly trace: SessionRuntimeTraceContext | null;
+}
+
 /** One parser/replica owner for one semantic pane inside one SessionRuntime. */
 export class SessionRuntimeTerminalReplicaOwner {
   readonly #interpreter: TerminalReplicaInterpreter;
@@ -59,12 +68,11 @@ export class SessionRuntimeTerminalReplicaOwner {
   #disposed = false;
   #cols = 80;
   #rows = 24;
-  #reseed: {
-    cols: number;
-    rows: number;
-    chunks: Uint8Array[];
-    trace: SessionRuntimeTraceContext | null;
-  } | null = null;
+  #layoutEpoch = 0;
+  #layoutLease: LayoutLease | null = null;
+  #subscriptionEpoch = 1;
+  #reseedRetryCount = 0;
+  #reseed: ReseedCandidate | null = null;
   #bootstrapped = false;
 
   constructor(
@@ -99,7 +107,10 @@ export class SessionRuntimeTerminalReplicaOwner {
       scheduler: options.scheduler,
       observability: options.observability,
       onUpdate: (update, trace) => {
-        if (update.type === "terminal.seed") this.#bootstrapped = true;
+        if (update.type === "terminal.seed") {
+          this.#bootstrapped = true;
+          this.#reseedRetryCount = 0;
+        }
         options.onRevision?.(update.revision);
         for (const listener of this.#listeners) {
           try {
@@ -241,6 +252,7 @@ export class SessionRuntimeTerminalReplicaOwner {
   ): Promise<void> {
     if (this.#disposed) return;
     this.#disposed = true;
+    this.#subscriptionEpoch += 1;
     await this.#interpreter.enqueue({ type: "close", reason });
     await this.#start.catch(() => undefined);
     await this.#upstream?.close();
@@ -251,14 +263,14 @@ export class SessionRuntimeTerminalReplicaOwner {
 
   #observePane(event: MirrorPaneEvent): void {
     if (event.type === "reset") {
-      this.#cols = event.cols;
-      this.#rows = event.rows;
       // Deterministic capture point: reset opens the atomic capture. A probe
       // armed after reset belongs to the next post-capture delta, never to this
       // already-started reseed.
       this.#reseed = {
-        cols: event.cols,
-        rows: event.rows,
+        nativeCols: event.cols,
+        nativeRows: event.rows,
+        layoutLease: this.#layoutLease,
+        subscriptionEpoch: this.#subscriptionEpoch,
         chunks: [],
         trace: this.#consumeOutputTrace(),
       };
@@ -275,15 +287,26 @@ export class SessionRuntimeTerminalReplicaOwner {
     } else if (event.type === "cursor") {
       const reseed = this.#reseed;
       this.#reseed = null;
+      const lease = reseed ? this.#qualifyReseed(reseed, event.x, event.y) : null;
       this.#supervise(
-        reseed
+        reseed && lease
           ? this.#interpreter.enqueue({
               type: "reseed",
-              ...reseed,
+              nativeCols: reseed.nativeCols,
+              nativeRows: reseed.nativeRows,
+              cols: lease.pane.width,
+              rows: lease.pane.height,
+              chunks: reseed.chunks,
+              trace: reseed.trace,
               cursor: { x: event.x, y: event.y },
               bootstrap: "painted-capture",
+              validateBeforeCommit: () => this.#leaseIsCurrent(lease, reseed.subscriptionEpoch),
+              onInvalidated: () => this.#retryReseedOrFault("terminal reseed layout lease crossed"),
             })
-          : this.#interpreter.enqueue({ type: "cursor", x: event.x, y: event.y }),
+          : reseed
+            ? (this.#retryReseedOrFault("terminal reseed geometry is incompatible"),
+              Promise.resolve())
+            : this.#interpreter.enqueue({ type: "cursor", x: event.x, y: event.y }),
       );
     } else if (event.type === "closed") {
       const closed = this.#interpreter.enqueue({ type: "close", reason: "pane-closed" });
@@ -299,21 +322,122 @@ export class SessionRuntimeTerminalReplicaOwner {
   }
 
   #observeLayout(event: MirrorLayoutEvent): void {
-    const pane = event.panes.find((candidate) => candidate.semanticPaneId === this.semanticPaneId);
-    if (!pane || (pane.width === this.#cols && pane.height === this.#rows)) return;
-    this.#cols = pane.width;
-    this.#rows = pane.height;
-    if (this.#reseed) {
-      this.#reseed.cols = pane.width;
-      this.#reseed.rows = pane.height;
+    const observed = this.#readLayoutLease(event);
+    if (observed.kind === "irrelevant") return;
+    if (observed.kind === "invalid") {
+      this.#layoutEpoch += 1;
+      this.#layoutLease = null;
       return;
     }
+    const lease = observed.lease;
+    if (this.#layoutLease && layoutLeaseEqual(this.#layoutLease, lease)) return;
+    const priorCols = this.#cols;
+    const priorRows = this.#rows;
+    this.#layoutEpoch += 1;
+    this.#layoutLease = { ...lease, epoch: this.#layoutEpoch };
+    this.#cols = lease.pane.width;
+    this.#rows = lease.pane.height;
+    if (this.#reseed) return;
     if (!this.#bootstrapped) {
       return;
     }
+    if (priorCols === lease.pane.width && priorRows === lease.pane.height) return;
     this.#supervise(
-      this.#interpreter.enqueue({ type: "resize", cols: pane.width, rows: pane.height }),
+      this.#interpreter.enqueue({
+        type: "resize",
+        cols: lease.pane.width,
+        rows: lease.pane.height,
+      }),
     );
+  }
+
+  #readLayoutLease(event: MirrorLayoutEvent): LayoutLeaseObservation {
+    if (event.session !== this.session) return { kind: "irrelevant" };
+    const targetCount = event.panes.filter(
+      (pane) => pane.semanticPaneId === this.semanticPaneId,
+    ).length;
+    if (targetCount === 0 && event.semanticWindowId !== null) {
+      if (
+        this.#layoutLease === null ||
+        event.semanticWindowId !== this.#layoutLease.semanticWindowId
+      )
+        return { kind: "irrelevant" };
+    }
+    if (event.semanticWindowId === null || targetCount !== 1) return { kind: "invalid" };
+    const identities = event.panes.map((pane) => pane.semanticPaneId);
+    if (identities.some((identity) => identity === null)) return { kind: "invalid" };
+    if (new Set(identities).size !== identities.length) return { kind: "invalid" };
+    const pane = event.panes.find((candidate) => candidate.semanticPaneId === this.semanticPaneId)!;
+    if (
+      !boundedPositive(event.cols) ||
+      !boundedPositive(event.rows) ||
+      !boundedPositive(pane.width) ||
+      !boundedPositive(pane.height) ||
+      !Number.isSafeInteger(pane.left) ||
+      !Number.isSafeInteger(pane.top) ||
+      pane.left < 0 ||
+      pane.top < 0 ||
+      pane.left + pane.width > event.cols ||
+      pane.top + pane.height > event.rows
+    )
+      return { kind: "invalid" };
+    return {
+      kind: "valid",
+      lease: {
+        semanticWindowId: event.semanticWindowId,
+        currentWindow: event.currentWindow,
+        zoomed: event.zoomed,
+        windowCols: event.cols,
+        windowRows: event.rows,
+        paneBorderStatus: event.paneBorderStatus,
+        pane: { ...pane },
+      },
+    };
+  }
+
+  #qualifyReseed(reseed: ReseedCandidate, cursorX: number, cursorY: number): LayoutLease | null {
+    const lease = reseed.layoutLease;
+    if (!lease || !this.#leaseIsCurrent(lease, reseed.subscriptionEpoch)) return null;
+    if (lease.pane.width !== reseed.nativeCols) return null;
+    const rowsExact =
+      lease.paneBorderStatus === "off"
+        ? lease.pane.height === reseed.nativeRows
+        : lease.pane.height === reseed.nativeRows + 1;
+    if (!rowsExact) return null;
+    if (
+      !Number.isSafeInteger(cursorX) ||
+      !Number.isSafeInteger(cursorY) ||
+      cursorX < 0 ||
+      cursorY < 0 ||
+      cursorX >= reseed.nativeCols ||
+      cursorY >= reseed.nativeRows
+    )
+      return null;
+    return lease;
+  }
+
+  #leaseIsCurrent(lease: LayoutLease, subscriptionEpoch: number): boolean {
+    return (
+      !this.#disposed &&
+      subscriptionEpoch === this.#subscriptionEpoch &&
+      this.#layoutLease !== null &&
+      this.#layoutLease.epoch === lease.epoch &&
+      layoutLeaseEqual(this.#layoutLease, lease)
+    );
+  }
+
+  #retryReseedOrFault(message: string): void {
+    if (this.#disposed) return;
+    if (this.#reseedRetryCount >= 1) {
+      const error = new Error(message);
+      this.#interpreter.abort(error);
+      this.#onFault?.(error);
+      return;
+    }
+    this.#reseedRetryCount += 1;
+    void this.#start.then(() => {
+      if (!this.#disposed) this.#upstream?.reseed();
+    });
   }
 
   #supervise(operation: Promise<void>): void {
@@ -331,4 +455,44 @@ export class SessionRuntimeTerminalReplicaOwner {
     }
     return trace;
   }
+}
+
+interface LayoutLease {
+  readonly epoch: number;
+  readonly semanticWindowId: string;
+  readonly currentWindow: boolean;
+  readonly zoomed: boolean;
+  readonly windowCols: number;
+  readonly windowRows: number;
+  readonly paneBorderStatus: MirrorLayoutEvent["paneBorderStatus"];
+  readonly pane: MirrorLayoutEvent["panes"][number];
+}
+
+type LayoutLeaseObservation =
+  | { readonly kind: "irrelevant" }
+  | { readonly kind: "invalid" }
+  | { readonly kind: "valid"; readonly lease: Omit<LayoutLease, "epoch"> };
+
+function boundedPositive(value: number): boolean {
+  return Number.isSafeInteger(value) && value > 0 && value <= 65_535;
+}
+
+function layoutLeaseEqual(
+  left: LayoutLease | Omit<LayoutLease, "epoch">,
+  right: LayoutLease | Omit<LayoutLease, "epoch">,
+): boolean {
+  return (
+    left.semanticWindowId === right.semanticWindowId &&
+    left.currentWindow === right.currentWindow &&
+    left.zoomed === right.zoomed &&
+    left.windowCols === right.windowCols &&
+    left.windowRows === right.windowRows &&
+    left.paneBorderStatus === right.paneBorderStatus &&
+    left.pane.semanticPaneId === right.pane.semanticPaneId &&
+    left.pane.left === right.pane.left &&
+    left.pane.top === right.pane.top &&
+    left.pane.width === right.pane.width &&
+    left.pane.height === right.pane.height &&
+    left.pane.active === right.pane.active
+  );
 }

@@ -23,7 +23,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
@@ -124,6 +124,7 @@ import {
   runCoherentFirstPaneOwnerBoot,
   runFirstKeyPasteOwnerBoot,
   runFocusOwnerBoot,
+  runKeyboardPointerResizeOwnerBoot,
   runWindowLifecycleOwnerBoot,
   runIsolatedProductJourneyAttempt,
   runProductJourneyPlan,
@@ -159,6 +160,13 @@ import {
   windowSwitchInputFailureObservation,
   windowSwitchSelectionFailureObservation,
 } from "./lib/product-window-lifecycle.mjs";
+import {
+  assessKeyboardPointerResizeJourneyBoundaries,
+  assessExactResizeTmuxBaseline,
+  assessResizePostPromotionCommands,
+  assessProductKeyboardPointerResize,
+  inspectResizeGuideFramebuffer,
+} from "./lib/product-keyboard-pointer-resize.mjs";
 import { runBoundedFocusTmux } from "./lib/product-focus-tmux.mjs";
 import { readBoundedDiagnosticTail } from "./lib/bounded-diagnostic-tail.mjs";
 import { parseLayout } from "../packages/daemon/src/terminal/protocol/layout-parse.ts";
@@ -280,6 +288,7 @@ function productDiagnosticCorrelation(state, captureEvidence) {
   const firstInput = state?.journeyEvidence?.firstKeyPaste ?? null;
   const focus = state?.journeyEvidence?.focus ?? null;
   const windowLifecycle = state?.journeyEvidence?.windowLifecycle ?? null;
+  const keyboardPointerResize = state?.journeyEvidence?.keyboardPointerResize ?? null;
   const exact = configless
     ? {
         fleetSessionId: configless.adopted?.fleetSessionId,
@@ -310,7 +319,13 @@ function productDiagnosticCorrelation(state, captureEvidence) {
                 catalogRevision: windowLifecycle.identity?.catalogRevision,
                 semanticPaneId: windowLifecycle.renamed?.selected?.semanticPaneId,
               }
-            : null;
+            : keyboardPointerResize
+              ? {
+                  fleetSessionId: keyboardPointerResize.expected?.fleetSessionId,
+                  catalogRevision: keyboardPointerResize.expected?.catalogRevision,
+                  semanticPaneId: keyboardPointerResize.expected?.semanticPaneId,
+                }
+              : null;
   return buildProductDiagnosticCorrelation({
     state,
     tuiAvailable,
@@ -2765,6 +2780,326 @@ async function waitForWindowWorkspaceEvidence(state, expected, timeoutMs = 5_000
   throw lastError ?? new Error("window WorkspaceClient evidence did not settle");
 }
 
+async function readExactResizeTmuxPanes(state, timeoutMs = 2_000) {
+  const deadline = performance.now() + timeoutMs;
+  const stdout = await runBoundedFocusTmux({
+    socketPath: state.runtimeNamespace.tmuxSocketPath,
+    args: [
+      "list-panes",
+      "-t",
+      `=${state.session}:`,
+      "-F",
+      "#{pane_id}|#{@tmux_ide_pane_id}|#{pane_left}|#{pane_top}|#{pane_width}|#{pane_height}|#{pane_active}",
+    ],
+    deadline,
+  });
+  const rows = stdout
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [paneId, semanticPaneId, left, top, cols, rows, active] = line.split("|");
+      return Object.freeze({
+        paneId,
+        semanticPaneId,
+        left: Number(left),
+        top: Number(top),
+        cols: Number(cols),
+        rows: Number(rows),
+        active: active === "1",
+      });
+    });
+  if (
+    rows.length !== 2 ||
+    rows.some(
+      (row) =>
+        !/^%\d+$/u.test(row.paneId) ||
+        typeof row.semanticPaneId !== "string" ||
+        row.semanticPaneId.length < 1 ||
+        row.semanticPaneId.length > 256 ||
+        ![row.left, row.top, row.cols, row.rows].every(Number.isSafeInteger) ||
+        row.cols < 1 ||
+        row.rows < 1,
+    ) ||
+    new Set(rows.map(({ paneId }) => paneId)).size !== 2 ||
+    new Set(rows.map(({ semanticPaneId }) => semanticPaneId)).size !== 2 ||
+    rows.filter(({ active }) => active).length !== 1
+  )
+    throw new Error("resize tmux inventory was not exactly two stamped panes");
+  return Object.freeze(rows);
+}
+
+function exactResizeBlockerCommand(marker = "") {
+  const script =
+    "if(process.argv[1])process.stdout.write(process.argv[1]+'\\n');setInterval(()=>{},2147483647)";
+  const quote = (value) => `'${value.replaceAll("'", `'\\''`)}'`;
+  return `exec ${[process.execPath, "-e", script, marker].map(quote).join(" ")}`;
+}
+
+async function conditionExactResizeTmuxFixture(socketPath, session, seed, timeoutMs = 5_000) {
+  const deadline = performance.now() + timeoutMs;
+  const target = `=${session}:=one`;
+  const run = (args) => runBoundedFocusTmux({ socketPath, args, deadline });
+  await run(["set-option", "-w", "-t", target, "pane-border-status", "top"]);
+  await run(["resize-window", "-t", target, "-x", "132", "-y", "41"]);
+  await run(["select-layout", "-t", target, "even-horizontal"]);
+  let previousDigest = null;
+  while (performance.now() < deadline) {
+    const stdout = await run([
+      "list-panes",
+      "-t",
+      target,
+      "-F",
+      "#{window_visible_layout}\t#{pane-border-status}\t#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}\t#{pane_pid}\t#{pane_current_command}",
+    ]);
+    const rows = stdout
+      .trimEnd()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => line.split("\t"));
+    const visibleLayout = rows[0]?.[0] ?? "";
+    const panes = rows.map((row) => ({
+      visibleLayout: row[0],
+      paneBorderStatus: row[1],
+      paneId: row[2],
+      semanticPaneId: "",
+      left: Number(row[3]),
+      top: Number(row[4]),
+      width: Number(row[5]),
+      height: Number(row[6]),
+      processId: Number(row[7]),
+      currentCommand: row[8],
+    }));
+    let targetMarkerCount = 0;
+    let otherMarkerCount = 0;
+    for (const pane of panes) {
+      const body = await run(["capture-pane", "-p", "-J", "-t", pane.paneId]);
+      const count = body.split(seed.marker).length - 1;
+      if (pane.paneId === seed.paneId) targetMarkerCount += count;
+      else otherMarkerCount += count;
+    }
+    const assessment = assessExactResizeTmuxBaseline({
+      visibleLayout,
+      layout: parseLayout(visibleLayout),
+      panes,
+      expectedCommand: basename(process.execPath),
+      requireSemanticPaneIds: false,
+      seedPaneId: seed.paneId,
+      targetMarkerCount,
+      otherMarkerCount,
+    });
+    const digest = createHash("sha256")
+      .update(JSON.stringify({ visibleLayout, panes, targetMarkerCount, otherMarkerCount }))
+      .digest("hex");
+    if (assessment.exact && digest === previousDigest) return;
+    previousDigest = assessment.exact ? digest : null;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+  throw new Error("resize tmux fixture did not quiesce before daemon startup");
+}
+
+async function validateExactResizeTmuxBaseline(state, session, seed, timeoutMs = 5_000) {
+  const deadline = performance.now() + timeoutMs;
+  const target = `=${session}:=one`;
+  const commandLog = [];
+  const run = (args) => {
+    commandLog.push(Object.freeze([...args]));
+    return runBoundedFocusTmux({
+      socketPath: state.runtimeNamespace.tmuxSocketPath,
+      args,
+      deadline,
+    });
+  };
+  const sample = async () => {
+    const stdout = await run([
+      "list-panes",
+      "-t",
+      target,
+      "-F",
+      "#{window_visible_layout}\t#{pane-border-status}\t#{pane_id}\t#{@tmux_ide_pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}\t#{pane_pid}\t#{pane_current_command}",
+    ]);
+    const rows = stdout
+      .trimEnd()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => line.split("\t"));
+    const visibleLayout = rows[0]?.[0] ?? "";
+    const parsed = parseLayout(visibleLayout);
+    const panes = rows.map((row) => ({
+      visibleLayout: row[0],
+      paneBorderStatus: row[1],
+      paneId: row[2],
+      semanticPaneId: row[3],
+      left: Number(row[4]),
+      top: Number(row[5]),
+      width: Number(row[6]),
+      height: Number(row[7]),
+      processId: Number(row[8]),
+      currentCommand: row[9],
+    }));
+    let targetMarkerCount = 0;
+    let otherMarkerCount = 0;
+    for (const pane of panes) {
+      const body = await run(["capture-pane", "-p", "-J", "-t", pane.paneId]);
+      const count = body.split(seed.marker).length - 1;
+      if (pane.paneId === seed.paneId) targetMarkerCount += count;
+      else otherMarkerCount += count;
+    }
+    const assessment = assessExactResizeTmuxBaseline({
+      visibleLayout,
+      layout: parsed,
+      panes,
+      expectedCommand: basename(process.execPath),
+      seedPaneId: seed.paneId,
+      targetMarkerCount,
+      otherMarkerCount,
+    });
+    return Object.freeze({
+      exact: assessment.exact,
+      digest: createHash("sha256")
+        .update(
+          JSON.stringify({
+            visibleLayout,
+            panes,
+            targetMarkerCount,
+            otherMarkerCount,
+          }),
+        )
+        .digest("hex"),
+      panes: Object.freeze(panes),
+    });
+  };
+  let previous = null;
+  let attempts = 0;
+  while (performance.now() < deadline) {
+    attempts += 1;
+    const current = await sample();
+    if (
+      current.exact &&
+      previous?.exact &&
+      current.digest === previous.digest &&
+      assessResizePostPromotionCommands(commandLog)
+    )
+      return Object.freeze({ digest: current.digest, attempts, paneCount: current.panes.length });
+    previous = current;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+  const error = new Error("resize tmux baseline did not settle at exact pre-sized geometry");
+  error.boundary = "resize-daemon-ready";
+  error.observation = Object.freeze({
+    reason: "resize-baseline-geometry-mismatch",
+    attempts: Math.min(attempts, 512),
+    exact: previous?.exact === true,
+    paneCount: Math.min(previous?.panes?.length ?? 0, 513),
+  });
+  throw error;
+}
+
+async function waitForResizeLifecycleRecord(state, predicate, baseline, timeoutMs = 5_000) {
+  const deadline = performance.now() + timeoutMs;
+  while (performance.now() < deadline) {
+    const records = readJsonLines(join(state.tui.runtimeDir, "performance.jsonl"));
+    const matches = records.slice(baseline).filter(predicate);
+    if (matches.length === 1) return Object.freeze({ record: matches[0], records });
+    if (matches.length > 1) throw new Error("resize lifecycle evidence duplicated");
+    await new Promise((resolveWait) => setTimeout(resolveWait, 4));
+  }
+  throw new Error("resize lifecycle evidence did not settle before deadline");
+}
+
+function exactResizeFence(records, operationId, semanticPaneId) {
+  const phases = [
+    "pane-resize-receipt",
+    "pane-resize-layout",
+    "pane-resize-settled",
+    "pane-resize-fence",
+  ];
+  const selected = Object.fromEntries(
+    phases.map((phase) => [
+      phase,
+      records.filter(
+        (record) =>
+          record?.phase === phase &&
+          record.operationId === operationId &&
+          record.semanticPaneId === semanticPaneId,
+      ),
+    ]),
+  );
+  if (phases.some((phase) => selected[phase].length !== 1))
+    throw new Error("resize operation lifecycle cardinality was not exact");
+  const [receipt, layout, settled, fence] = phases.map((phase) => selected[phase][0]);
+  if (
+    receipt.verb !== "workspace.pane.resize" ||
+    !["applied", "unchanged"].includes(receipt.receiptOutcome) ||
+    receipt.receiptCells !== layout.layoutCells ||
+    settled.layoutCells !== receipt.receiptCells ||
+    settled.presentationChanged !== true ||
+    !/^[0-9a-f]{64}$/u.test(settled.presentationDigest ?? "") ||
+    settled.identityLineageExact !== true ||
+    fence.writerHealth?.droppedRecords !== 0 ||
+    fence.writerHealth?.failed !== false ||
+    fence.writerHealth?.pendingCriticalRecords !== 0
+  )
+    throw new Error("resize operation lifecycle fence was not exact");
+  return Object.freeze({ receipt, layout, settled, fence });
+}
+
+function resizeIdentityEvidence(value) {
+  return Object.freeze({
+    processId: value.processId,
+    daemonGeneration: value.daemonGeneration,
+    clientGeneration: value.clientGeneration,
+    workspaceName: value.workspaceName,
+    sessionName: value.sessionName,
+    semanticPaneId: value.semanticPaneId,
+  });
+}
+
+function resizeTmuxGeometryExact(before, after, semanticPaneId, settledCols) {
+  if (!Array.isArray(before) || !Array.isArray(after) || before.length !== 2 || after.length !== 2)
+    return false;
+  const keyedBefore = new Map(before.map((pane) => [pane.semanticPaneId, pane]));
+  const keyedAfter = new Map(after.map((pane) => [pane.semanticPaneId, pane]));
+  if (keyedBefore.size !== 2 || keyedAfter.size !== 2) return false;
+  for (const [paneId, prior] of keyedBefore) {
+    const next = keyedAfter.get(paneId);
+    if (
+      !next ||
+      next.paneId !== prior.paneId ||
+      next.top !== prior.top ||
+      next.rows !== prior.rows ||
+      next.active !== prior.active
+    )
+      return false;
+  }
+  const priorExtent = Math.max(...before.map(({ left, cols }) => left + cols));
+  const nextExtent = Math.max(...after.map(({ left, cols }) => left + cols));
+  return keyedAfter.get(semanticPaneId)?.cols === settledCols && nextExtent === priorExtent;
+}
+
+async function driveExactResizeInput(state, document, signal) {
+  const receipt = JSON.parse(
+    await tuiCommandAsync(state, ["input", JSON.stringify(document)], {
+      timeout: document.timeoutMs,
+      signal,
+    }),
+  );
+  if (
+    receipt?.version !== 1 ||
+    receipt.kind !== document.kind ||
+    receipt.delivery !== "exact-bytes-to-immutable-host-pane-pty" ||
+    !/^%\d+$/u.test(receipt.paneId ?? "") ||
+    !/^\$\d+$/u.test(receipt.sessionId ?? "") ||
+    receipt.target !== receipt.paneId ||
+    receipt.geometry?.cols !== 160 ||
+    receipt.geometry?.rows !== 44 ||
+    !Number.isSafeInteger(receipt.bytesInjected) ||
+    receipt.bytesInjected < 1
+  )
+    throw new Error("resize hosted input receipt was invalid");
+  return Object.freeze(receipt);
+}
+
 function windowWorkspaceEvidenceWatermark(state, processId, daemonGeneration) {
   const values = readJsonLines(join(state.tui.runtimeDir, "performance.jsonl"))
     .filter(
@@ -3059,6 +3394,7 @@ async function provePreseededPanePublication(state, seed, timeoutMs = 5_000) {
       paneId: target.paneId,
       semanticPaneId: target.semanticPaneId,
       geometry: target,
+      paneCount: geometryAfter.length,
       bodyRect,
       geometryStable: paneGeometryIdentity(geometryBefore) === paneGeometryIdentity(geometryAfter),
       markerHash: createHash("sha256").update(seed.marker).digest("hex"),
@@ -3104,17 +3440,105 @@ async function provePreseededPanePublication(state, seed, timeoutMs = 5_000) {
     },
   );
   const performanceRecords = fencedTrace.records;
-  const canonicalSeedPaint = qualifyCanonicalSeedPaint(performanceRecords, {
-    semanticPaneId: sample.semanticPaneId,
-    generation: state.daemon.instanceId,
-    canonicalCols: sample.geometry.width,
-    canonicalRows: sample.geometry.height + 1,
-    viewportCols: sample.bodyRect.width,
-    viewportRows: sample.geometry.height,
-    processId: hostFrame.processId,
-    clockId: hostFrame.clockId,
-    sourceEpoch: 1,
-  });
+  let canonicalSeedPaint;
+  try {
+    canonicalSeedPaint = qualifyCanonicalSeedPaint(performanceRecords, {
+      semanticPaneId: sample.semanticPaneId,
+      generation: state.daemon.instanceId,
+      canonicalCols: sample.geometry.width,
+      canonicalRows: sample.geometry.height + 1,
+      viewportCols: sample.bodyRect.width,
+      viewportRows: sample.geometry.height,
+      processId: hostFrame.processId,
+      clockId: hostFrame.clockId,
+      sourceEpoch: 1,
+    });
+  } catch (error) {
+    let preCleanTmux = Object.freeze({
+      available: false,
+      paneCount: 0,
+      targetGeometryExact: false,
+      targetCols: null,
+      targetRows: null,
+    });
+    try {
+      const stdout = await runBoundedFocusTmux({
+        socketPath: state.runtimeNamespace.tmuxSocketPath,
+        args: [
+          "list-panes",
+          "-t",
+          sample.paneId,
+          "-F",
+          "#{pane_id}\t#{@tmux_ide_pane_id}\t#{pane_width}\t#{pane_height}",
+        ],
+        deadline: performance.now() + 500,
+        maxBuffer: 64 * 1_024,
+      });
+      const rows = stdout
+        .trimEnd()
+        .split("\n")
+        .filter(Boolean)
+        .slice(0, 514)
+        .map((line) => line.split("\t"));
+      const target = rows.find(([paneId]) => paneId === sample.paneId);
+      const targetCols = Number(target?.[2]);
+      const targetRows = Number(target?.[3]);
+      preCleanTmux = Object.freeze({
+        available: rows.length <= 513 && Boolean(target),
+        paneCount: Math.min(rows.length, 513),
+        targetGeometryExact:
+          target?.[1] === sample.semanticPaneId &&
+          targetCols === sample.geometry.width &&
+          targetRows === sample.geometry.height,
+        targetCols: Number.isSafeInteger(targetCols) ? targetCols : null,
+        targetRows: Number.isSafeInteger(targetRows) ? targetRows : null,
+      });
+    } catch {
+      // Failure evidence is optional, bounded, and must not mask the seed-proof failure.
+    }
+    const samePane = performanceRecords.filter(
+      (record) =>
+        record?.semanticPaneId === sample.semanticPaneId &&
+        record.generation === state.daemon.instanceId &&
+        record.processId === hostFrame.processId &&
+        record.clockId === hostFrame.clockId &&
+        record.sourceEpoch === 1,
+    );
+    const summarize = (record) =>
+      record
+        ? Object.freeze({
+            type: record.type,
+            updateType: record.updateType ?? null,
+            revision: Number.isSafeInteger(record.revision) ? record.revision : null,
+            cols: Number.isSafeInteger(record.cols) ? record.cols : null,
+            rows: Number.isSafeInteger(record.rows) ? record.rows : null,
+            viewportCols: Number.isSafeInteger(record.viewportCols) ? record.viewportCols : null,
+            viewportRows: Number.isSafeInteger(record.viewportRows) ? record.viewportRows : null,
+            acceptedUpdateType: ["terminal.seed", "terminal.patch"].includes(
+              record.acceptedUpdateType,
+            )
+              ? record.acceptedUpdateType
+              : null,
+            acceptedRevision: Number.isSafeInteger(record.acceptedRevision)
+              ? record.acceptedRevision
+              : null,
+          })
+        : null;
+    error.observation = Object.freeze({
+      ...(error.observation ?? {}),
+      preCleanTmux,
+      latestCanonicalPatch: summarize(
+        samePane.findLast(({ type }) => type === "performance.terminal-canonical-update"),
+      ),
+      latestCanonicalFrame: summarize(
+        samePane.findLast(({ type }) => type === "performance.terminal-canonical-host-frame"),
+      ),
+      latestCanonicalFence: summarize(
+        samePane.findLast(({ type }) => type === "performance.terminal-frame-fence"),
+      ),
+    });
+    throw error;
+  }
   const frameCausality = qualifyCoherentFrameCausality(
     lifecycle,
     canonicalSeedPaint,
@@ -4549,6 +4973,76 @@ async function diagnoseWindowLifecycle(planEntry) {
   };
 }
 
+async function diagnoseKeyboardPointerResize(planEntry) {
+  diagnosticAttemptPhases.set(planEntry.runId, "product-rig-startup");
+  await start(false, true, planEntry);
+  const state = await waitForState((candidate) => candidate?.status === "ready");
+  diagnosticAttemptPhases.set(planEntry.runId, "evidence-capture");
+  const captureEvidence = await captureArtifacts(
+    state,
+    `diagnose-${planEntry.journey.id}-r${planEntry.repetition}`,
+  );
+  diagnosticCaptures.set(planEntry.runId, captureEvidence);
+  await tuiCommandAsync(state, ["stop"], { timeout: 5_000 });
+  const timeline = readJsonLines(timelinePath);
+  const correlation = productDiagnosticCorrelation(state, captureEvidence);
+  const journeyEvidence = state.journeyEvidence?.keyboardPointerResize ?? null;
+  const causal = assessProductKeyboardPointerResize({
+    evidence: journeyEvidence,
+    expected: journeyEvidence?.expected ?? null,
+  });
+  const assessment = assessKeyboardPointerResizeJourneyBoundaries({
+    timeline,
+    assessment: causal,
+    correlationComplete: correlation.complete,
+  });
+  const report = {
+    version: 1,
+    status: assessment.status,
+    journey: planEntry.journey.id,
+    variant: null,
+    repetition: planEntry.repetition,
+    repeat: planEntry.repeat,
+    runId: planEntry.runId,
+    firstBrokenBoundary: assessment.firstBrokenBoundary,
+    firstUnmeasuredBoundary: assessment.firstUnmeasuredBoundary,
+    boundaries: assessment.boundaries,
+    causalAssessment: causal,
+    keyboardPointerResize: journeyEvidence,
+    diagnosticCorrelation: { complete: correlation.complete, missing: correlation.missing },
+    sourceProvenance: {
+      commit: state.tui?.performanceTraceCommit ?? null,
+      tree: state.tui?.performanceTraceTree ?? null,
+      manifestDigest: state.tui?.performanceTraceManifestDigest ?? null,
+    },
+  };
+  return {
+    report,
+    reportPath: null,
+    evidence: {
+      report,
+      alignment: {
+        version: 1,
+        journey: planEntry.journey.id,
+        firstBrokenBoundary: assessment.firstBrokenBoundary,
+        firstUnmeasuredBoundary: assessment.firstUnmeasuredBoundary,
+        boundaries: assessment.boundaries,
+        causalAssessment: causal,
+        correlation: { complete: correlation.complete, missing: correlation.missing },
+        availability: correlation.availability,
+      },
+      timeline: readDiagnosticText(timelinePath),
+      tmuxTruth: captureEvidence.truth,
+      daemonState: correlation.daemonState,
+      clientState: correlation.clientState,
+      tuiAnsi: readDiagnosticText(captureEvidence.tuiPath),
+      webPngPath: captureEvidence.webPath,
+      stderr: boundedDiagnosticText(readDiagnosticText(join(state.tui.runtimeDir, "stderr.log"))),
+      reproduction: diagnosticReproduction(planEntry.journey.id, null),
+    },
+  };
+}
+
 function executeProductJourney(planEntry) {
   return dispatchProductJourneyExecutor(planEntry, {
     "configless-cold-start": diagnoseConfiglessColdStart,
@@ -4556,6 +5050,7 @@ function executeProductJourney(planEntry) {
     "first-key-paste": diagnoseFirstKeyPaste,
     focus: diagnoseFocus,
     "window-lifecycle": diagnoseWindowLifecycle,
+    "keyboard-pointer-resize": diagnoseKeyboardPointerResize,
     "runtime-qualification": diagnoseRuntimeQualification,
   });
 }
@@ -5794,6 +6289,745 @@ async function owner() {
       });
       publish({
         journeyEvidence: { firstKeyPaste: inputBoot },
+        status: "ready",
+        readyAt: new Date().toISOString(),
+      });
+      await new Promise(() => undefined);
+      return;
+    }
+    if (journeyId === "keyboard-pointer-resize") {
+      let resizeReadiness = null;
+      let activeDrag = null;
+      const resizeBoot = await runKeyboardPointerResizeOwnerBoot({
+        onBoundary: (boundary) =>
+          publish({
+            currentJourneyBoundary: boundary,
+            currentJourneyBoundaryAtWallMs: Date.now(),
+            currentJourneyBoundaryAtMonotonicMs: performance.now(),
+          }),
+        createResizeNamespace: async () => {
+          const marker = `RIG_RESIZE_${randomBytes(6).toString("hex").toUpperCase()}`;
+          const daemonPerformanceTracePath = join(rigRoot, "resize-daemon-performance.jsonl");
+          const scratchFleet = await createScratchFleet({
+            sessions: 1,
+            slug,
+            initialPaneCommand: {
+              executable: process.execPath,
+              args: [
+                "-e",
+                "if(process.argv[1])process.stdout.write(process.argv[1]+'\\n');setInterval(()=>{},2147483647)",
+                marker,
+              ],
+            },
+            windowsPerSession: 1,
+          });
+          // Cleanup owns the scratch server before any further setup subprocess can fail.
+          fleet = scratchFleet;
+          const session = scratchFleet.sessionNames[0];
+          if (!scratchFleet.initialPanes[0])
+            throw new Error("resize namespace lost its exact initial pane receipt");
+          await execFileAsync(
+            "tmux",
+            [
+              "-S",
+              scratchFleet.socketPath,
+              "split-window",
+              "-h",
+              "-t",
+              `=${session}:one`,
+              "-d",
+              exactResizeBlockerCommand(),
+            ],
+            { cwd: scratchFleet.root, env: scratchFleet.environment, timeout: 2_000 },
+          );
+          await conditionExactResizeTmuxFixture(scratchFleet.socketPath, session, {
+            marker,
+            paneId: scratchFleet.initialPanes[0].paneId,
+          });
+          if (
+            scratchFleet.listWindows(session).length !== 1 ||
+            scratchFleet.countPanes(session) !== 2 ||
+            scratchFleet.paneSizes(session, "one").length !== 2
+          )
+            throw new Error("resize namespace did not start with one window and two panes");
+          const cleanupToken = `product-test-rig:${slug}`;
+          fleet = {
+            ...scratchFleet,
+            environment: {
+              ...scratchFleet.environment,
+              TMUX_IDE_RUNTIME_MODE: "testdrive",
+              TMUX_IDE_CLEANUP_TOKEN: cleanupToken,
+              TMUX_IDE_TMUX_SOCKET_PATH: scratchFleet.socketPath,
+              TMUX_IDE_SESSION_RUNTIME_TRACE_LOG: daemonPerformanceTracePath,
+            },
+          };
+          const runtimeNamespace = {
+            root: fleet.root,
+            home: fleet.environment.HOME,
+            projectDir: fleet.projectDir,
+            registryDir: fleet.environment.TMUX_IDE_REGISTRY_DIR,
+            settingsDir: fleet.environment.TMUX_IDE_SETTINGS_DIR,
+            stateDir: fleet.environment.TMUX_IDE_HOME,
+            tmuxSocketPath: fleet.socketPath,
+            hostTmuxSocketPath: join(fleet.root, "product-rig-host-tmux.sock"),
+            daemonInfoDir: fleet.daemonInfoDir,
+            cleanupToken,
+          };
+          const tui = prepareOwnedTuiRuntime({
+            ownership: { session, runtimeNamespace },
+            intendedTui: {
+              hostSession: `_tmux-ide-product-rig-${slug}`,
+              runtimeDir: join(rigRoot, "tui-keyboard-pointer-resize"),
+              performanceTracePath: join(
+                rigRoot,
+                "tui-keyboard-pointer-resize",
+                "performance-trace.jsonl",
+              ),
+              performanceTraceDetail: "1",
+              daemonPerformanceTracePath,
+            },
+            publish,
+            resolveProvenance: sourceTraceProvenance,
+            createRuntimeDir: createIsolatedTargetedTuiCwd,
+          });
+          publish({ session, runtimeNamespace, tui });
+          event("resize-namespace-ready", { windows: 1, panes: 2 });
+          return Object.freeze({
+            session,
+            marker,
+            seed: scratchFleet.initialPanes[0],
+            runtimeNamespace,
+            tui,
+          });
+        },
+        startCanonicalDaemon: async () => {
+          daemon = await startOwnedProductRigDaemon({
+            start: () => startDaemon(fleet),
+            publish,
+            waitUntilReady: waitForReadinessLadder,
+          });
+          return daemon;
+        },
+        openCanonicalWorkspace: async (namespace, runningDaemon) => {
+          const workspace = await runningDaemon.promote(namespace.session);
+          const identity = await observeTargetedCanonicalIdentity(
+            runningDaemon,
+            namespace.session,
+            workspace,
+          );
+          const resizeBaseline = await validateExactResizeTmuxBaseline(state, namespace.session, {
+            marker: namespace.marker,
+            paneId: namespace.seed.paneId,
+          });
+          publish({
+            workspace,
+            daemon: {
+              ...runningDaemon.record,
+              revision: identity.catalogRevision,
+              revisionKind: "fleet-catalog",
+            },
+          });
+          event("resize-daemon-ready", { ...identity, resizeBaseline });
+          return identity;
+        },
+        buildBeforeMeasurement: async () => {
+          await execFileAsync("bun", [join(repoRoot, "scripts", "build-tui.mjs")], {
+            cwd: repoRoot,
+            timeout: 120_000,
+          });
+          prepareIsolatedTargetedTuiCwd(state.tui.runtimeDir);
+          event("resize-tui-build", {});
+        },
+        launchResizeTui: async (namespace) => {
+          const launched = JSON.parse(
+            await tuiCommandAsync(
+              state,
+              ["start", "--target", namespace.session, "--cols", "160", "--rows", "44", "--json"],
+              { timeout: 30_000, signal: ownerAbort.signal },
+            ),
+          );
+          if (
+            !exactProductTuiLaunchReceipt(launched, {
+              target: namespace.session,
+              cols: 160,
+              rows: 44,
+            })
+          )
+            throw new Error("resize TUI launch receipt was invalid");
+          const controller = new AbortController();
+          const abort = () => controller.abort();
+          ownerAbort.signal.addEventListener("abort", abort, { once: true });
+          resizeReadiness = {
+            launched,
+            controller,
+            startedAt: performance.now(),
+            deadlineMs: 50_000,
+            timer: setTimeout(() => controller.abort(), 50_000),
+            detach: () => ownerAbort.signal.removeEventListener("abort", abort),
+          };
+          event("resize-tui-started", { processId: launched.processId });
+          return launched;
+        },
+        waitForResizeHostReady: async (_namespace, _daemon, _identity, launched) => {
+          if (!resizeReadiness || resizeReadiness.launched !== launched)
+            throw new Error("resize readiness owner was unavailable");
+          const host = await waitForExactFocusHostReceipt(state, launched, {
+            deadlineMs: 10_000,
+            signal: resizeReadiness.controller.signal,
+          });
+          event("resize-host-ready", { processId: launched.processId });
+          return host;
+        },
+        waitForResizeTuiCoherent: async (_namespace, _daemon, _identity, launched, host) => {
+          const readiness = resizeReadiness;
+          if (!readiness || readiness.launched !== launched)
+            throw new Error("resize readiness owner was unavailable");
+          try {
+            await waitForCoherentTui(
+              state,
+              30_000,
+              launched.processId,
+              host,
+              readiness.controller.signal,
+            );
+            await waitForExactFocusHostReceipt(state, launched, {
+              deadlineMs: Math.max(
+                1,
+                readiness.deadlineMs - (performance.now() - readiness.startedAt),
+              ),
+              signal: readiness.controller.signal,
+            });
+          } finally {
+            clearTimeout(readiness.timer);
+            readiness.detach();
+            readiness.controller.abort();
+            resizeReadiness = null;
+          }
+          event("resize-tui-coherent", { processId: launched.processId });
+          return Object.freeze({ processId: launched.processId, launchId: launched.launchId });
+        },
+        proveResizeBaseline: async (namespace, runningDaemon, identity, process) => {
+          const publication = await provePreseededPanePublication(state, {
+            marker: namespace.marker,
+            paneId: namespace.seed.paneId,
+            geometry: namespace.seed,
+          });
+          const shell = await waitForProductApplicationShell(
+            runningDaemon,
+            namespace.session,
+            (candidate) => productWindowResources(candidate).length === 2,
+            10_000,
+            2,
+          );
+          const resources = productWindowResources(shell);
+          const panes = await readExactResizeTmuxPanes(state);
+          const active = panes.find(({ active }) => active);
+          const selected = resources.find(
+            ({ semanticPaneId }) => semanticPaneId === active?.semanticPaneId,
+          );
+          if (!active || !selected || resources.filter(({ active }) => active).length !== 1)
+            throw new Error("resize baseline did not join exact active pane");
+          const clientId = `opentui:${process.processId}`;
+          const workspaceClient = await waitForQualifiedWorkspaceClientState(
+            () => readJsonLines(join(namespace.tui.runtimeDir, "performance.jsonl")),
+            {
+              processId: clientId,
+              daemonGeneration: runningDaemon.record.instanceId,
+              workspaceName: identity.workspaceName,
+              sessionName: identity.sessionName,
+              fleetSessionId: identity.fleetSessionId,
+              semanticPaneId: selected.semanticPaneId,
+              canonicalGeneration: publication.canonicalSeedPaint.publication.generation,
+            },
+          );
+          const baseline = Object.freeze({
+            processId: clientId,
+            daemonGeneration: runningDaemon.record.instanceId,
+            clientGeneration: workspaceClient.committed.generation,
+            workspaceName: identity.workspaceName,
+            sessionName: identity.sessionName,
+            semanticPaneId: selected.semanticPaneId,
+            clientId,
+            resources,
+            selected,
+            panes,
+            publication,
+            workspaceClient,
+            terminalResourceRevision: workspaceClient.committed.terminalResourceRevision,
+          });
+          event("resize-baseline", { panes: panes.length });
+          return baseline;
+        },
+        driveKeyboardResize: async (_namespace, runningDaemon, _identity, _process, baseline) => {
+          const lifecycleBefore = readJsonLines(
+            join(state.tui.runtimeDir, "performance.jsonl"),
+          ).length;
+          const watermark = windowWorkspaceEvidenceWatermark(
+            state,
+            baseline.processId,
+            baseline.daemonGeneration,
+          );
+          const tmuxBefore = await readExactResizeTmuxPanes(state);
+          const targetBefore = tmuxBefore.find(
+            ({ semanticPaneId }) => semanticPaneId === baseline.semanticPaneId,
+          );
+          const delivery = await driveExactResizeInput(
+            state,
+            {
+              version: 1,
+              kind: "modified-key",
+              key: "right",
+              modifiers: ["meta"],
+              timeoutMs: 2_000,
+            },
+            ownerAbort.signal,
+          );
+          if (delivery.requestedKey !== "right" || delivery.requestedModifiers?.[0] !== "meta")
+            throw new Error("resize Meta+Right delivery receipt was invalid");
+          const found = await waitForResizeLifecycleRecord(
+            state,
+            (record) =>
+              record?.phase === "pane-resize-fence" &&
+              record.source === "keyboard" &&
+              record.semanticPaneId === baseline.semanticPaneId,
+            lifecycleBefore,
+          );
+          const joined = exactResizeFence(
+            found.records.slice(lifecycleBefore),
+            found.record.operationId,
+            baseline.semanticPaneId,
+          );
+          const tmuxAfter = await readExactResizeTmuxPanes(state);
+          const targetAfter = tmuxAfter.find(
+            ({ semanticPaneId }) => semanticPaneId === baseline.semanticPaneId,
+          );
+          if (!targetBefore || !targetAfter || targetAfter.cols !== targetBefore.cols + 1)
+            throw new Error("Meta+Right did not resize the exact active pane by one cell");
+          const shell = await waitForProductApplicationShell(
+            runningDaemon,
+            baseline.sessionName,
+            (candidate) => productWindowResources(candidate).length === 2,
+            10_000,
+            2,
+          );
+          const resources = productWindowResources(shell);
+          const workspaceClient = await waitForWindowWorkspaceEvidence(state, {
+            processId: baseline.processId,
+            daemonGeneration: baseline.daemonGeneration,
+            clientGeneration: baseline.clientGeneration,
+            clientId: baseline.clientId,
+            workspaceName: baseline.workspaceName,
+            sessionName: baseline.sessionName,
+            afterMicros: watermark + 1,
+            boundary: "resize-keyboard-proved",
+            resources,
+            web: false,
+            exactTerminalResourceRevision: baseline.terminalResourceRevision,
+            receipt: {
+              operationId: found.record.operationId,
+              operationKind: "workspace.pane.resize",
+              semanticPaneId: baseline.semanticPaneId,
+            },
+          });
+          const evidence = Object.freeze({
+            ...resizeIdentityEvidence(baseline),
+            source: "keyboard",
+            operationId: found.record.operationId,
+            axis: "cols",
+            beforeCells: targetBefore.cols,
+            requestedCells: targetBefore.cols + 1,
+            settledCells: targetAfter.cols,
+            receipt: Object.freeze({
+              operationId: found.record.operationId,
+              verb: "workspace.pane.resize",
+              axis: found.record.axis,
+              requestedCells: found.record.requestedCells,
+              outcome: joined.receipt.receiptOutcome,
+              cells: joined.receipt.receiptCells,
+            }),
+            layout: Object.freeze({
+              operationId: found.record.operationId,
+              cells: joined.layout.layoutCells,
+            }),
+            frame: Object.freeze({
+              operationId: found.record.operationId,
+              identityExact: joined.settled.identityLineageExact,
+              presentationChanged: joined.settled.presentationChanged,
+              presentationDigest: joined.settled.presentationDigest,
+            }),
+            fence: Object.freeze({ writerHealth: joined.fence.writerHealth }),
+            tmux: tmuxAfter,
+            workspaceClient,
+            delivery,
+          });
+          event("resize-keyboard-proved", { axis: "cols" });
+          return evidence;
+        },
+        drivePointerPreviews: async (
+          _namespace,
+          _daemon,
+          _identity,
+          _process,
+          baseline,
+          keyboard,
+        ) => {
+          const panes = keyboard.tmux;
+          const left = panes.slice().sort((a, b) => a.left - b.left)[0];
+          const right = panes.slice().sort((a, b) => a.left - b.left)[1];
+          if (!left || !right || right.left !== left.left + left.cols + 1)
+            throw new Error("resize baseline had no exact vertical separator");
+          const x = 28 + left.left + left.cols;
+          const y =
+            2 + Math.floor(Math.max(left.top, right.top) + Math.min(left.rows, right.rows) / 2);
+          const down = await driveExactResizeInput(
+            state,
+            {
+              version: 1,
+              kind: "application-mouse",
+              action: "down",
+              x,
+              y,
+              timeoutMs: 2_000,
+            },
+            ownerAbort.signal,
+          );
+          if (down.requestedAction !== "down")
+            throw new Error("resize pointer-down delivery receipt was invalid");
+          const samples = [];
+          let lastX = x;
+          for (let ordinal = 0; ordinal < 30; ordinal += 1) {
+            lastX = x + 1 + (ordinal % 2);
+            const baselineCount = readJsonLines(
+              join(state.tui.runtimeDir, "performance.jsonl"),
+            ).length;
+            const delivery = await driveExactResizeInput(
+              state,
+              {
+                version: 1,
+                kind: "application-mouse",
+                action: "drag",
+                x: lastX,
+                y,
+                timeoutMs: 2_000,
+              },
+              ownerAbort.signal,
+            );
+            if (delivery.requestedAction !== "drag")
+              throw new Error("resize pointer-drag delivery receipt was invalid");
+            const settled = await waitForResizeLifecycleRecord(
+              state,
+              (record) =>
+                record?.phase === "resize-guide-settled" &&
+                record.semanticPaneId === baseline.semanticPaneId,
+              baselineCount,
+              2_000,
+            );
+            const record = settled.record;
+            const fences = settled.records
+              .slice(baselineCount)
+              .filter(
+                (candidate) =>
+                  candidate?.phase === "resize-guide-fence" && candidate.traceId === record.traceId,
+              );
+            if (
+              fences.length !== 1 ||
+              record.identityExact !== true ||
+              record.presentationChanged !== true ||
+              !/^[0-9a-f]{64}$/u.test(record.presentationDigest ?? "")
+            )
+              throw new Error("resize guide actual-frame evidence was not exact");
+            if (!Number.isSafeInteger(record.durationMicros) || record.durationMicros < 0)
+              throw new Error("resize guide duration was unavailable");
+            const captureEnvelope = JSON.parse(
+              await tuiCommandAsync(state, ["capture", "--ansi", "--json"], {
+                timeout: 1_500,
+                signal: ownerAbort.signal,
+              }),
+            );
+            const capture = decodeFocusFramebufferCapture(captureEnvelope);
+            const framebuffer = inspectResizeGuideFramebuffer({
+              plain: capture.plain,
+              cols: capture.cols,
+              rows: capture.rows,
+              guide: record.guide,
+              axis: record.axis,
+            });
+            if (
+              framebuffer.exact !== true ||
+              captureEnvelope.hostIdentity?.paneId !== delivery.paneId ||
+              captureEnvelope.hostIdentity?.sessionId !== delivery.sessionId ||
+              captureEnvelope.hostIdentity?.cols !== delivery.geometry.cols ||
+              captureEnvelope.hostIdentity?.rows !== delivery.geometry.rows
+            )
+              throw new Error("resize guide framebuffer cells were not exact");
+            samples.push(
+              Object.freeze({
+                ordinal,
+                traceId: record.traceId,
+                ...resizeIdentityEvidence(baseline),
+                axis: record.axis,
+                cells: record.cells,
+                durationMs: record.durationMicros / 1_000,
+                guide: Object.freeze({
+                  ...record.guide,
+                  digest: record.guideDigest,
+                }),
+                actualFrame: Object.freeze({
+                  traceId: record.traceId,
+                  guideDigest: record.guideDigest,
+                  presentationDigest: record.presentationDigest,
+                  presentationChanged: record.presentationChanged,
+                  identityExact: record.identityExact,
+                  framebuffer,
+                }),
+                fence: Object.freeze({ writerHealth: fences[0].writerHealth }),
+                delivery,
+                pointerIngress: record.pointerIngress,
+              }),
+            );
+          }
+          activeDrag = Object.freeze({ x: lastX, y, beforeCells: left.cols });
+          event("resize-pointer-preview-distribution", { samples: samples.length });
+          return Object.freeze(samples);
+        },
+        drivePointerRelease: async (
+          _namespace,
+          runningDaemon,
+          _identity,
+          _process,
+          baseline,
+          keyboard,
+        ) => {
+          if (!activeDrag) throw new Error("resize pointer drag ownership was unavailable");
+          const lifecycleBefore = readJsonLines(
+            join(state.tui.runtimeDir, "performance.jsonl"),
+          ).length;
+          const watermark = windowWorkspaceEvidenceWatermark(
+            state,
+            baseline.processId,
+            baseline.daemonGeneration,
+          );
+          const delivery = await driveExactResizeInput(
+            state,
+            {
+              version: 1,
+              kind: "application-mouse",
+              action: "up",
+              x: activeDrag.x,
+              y: activeDrag.y,
+              timeoutMs: 2_000,
+            },
+            ownerAbort.signal,
+          );
+          if (delivery.requestedAction !== "up")
+            throw new Error("resize pointer-up delivery receipt was invalid");
+          activeDrag = null;
+          const found = await waitForResizeLifecycleRecord(
+            state,
+            (record) =>
+              record?.phase === "pane-resize-fence" &&
+              record.source === "pointer" &&
+              record.semanticPaneId === baseline.semanticPaneId,
+            lifecycleBefore,
+          );
+          const joined = exactResizeFence(
+            found.records.slice(lifecycleBefore),
+            found.record.operationId,
+            baseline.semanticPaneId,
+          );
+          const tmux = await readExactResizeTmuxPanes(state);
+          const target = tmux.find(
+            ({ semanticPaneId }) => semanticPaneId === baseline.semanticPaneId,
+          );
+          if (!target || target.cols !== joined.receipt.receiptCells)
+            throw new Error("pointer release did not join exact tmux geometry");
+          const shell = await waitForProductApplicationShell(
+            runningDaemon,
+            baseline.sessionName,
+            (candidate) => productWindowResources(candidate).length === 2,
+            10_000,
+            2,
+          );
+          const resources = productWindowResources(shell);
+          const workspaceClient = await waitForWindowWorkspaceEvidence(state, {
+            processId: baseline.processId,
+            daemonGeneration: baseline.daemonGeneration,
+            clientGeneration: baseline.clientGeneration,
+            clientId: baseline.clientId,
+            workspaceName: baseline.workspaceName,
+            sessionName: baseline.sessionName,
+            afterMicros: watermark + 1,
+            boundary: "resize-pointer-release-proved",
+            resources,
+            web: false,
+            exactTerminalResourceRevision: baseline.terminalResourceRevision,
+            receipt: {
+              operationId: found.record.operationId,
+              operationKind: "workspace.pane.resize",
+              semanticPaneId: baseline.semanticPaneId,
+            },
+          });
+          const evidence = Object.freeze({
+            ...resizeIdentityEvidence(baseline),
+            source: "pointer",
+            operationId: found.record.operationId,
+            axis: "cols",
+            beforeCells: found.record.beforeCells,
+            requestedCells: found.record.requestedCells,
+            settledCells: target.cols,
+            receipt: Object.freeze({
+              operationId: found.record.operationId,
+              verb: "workspace.pane.resize",
+              axis: found.record.axis,
+              requestedCells: found.record.requestedCells,
+              outcome: joined.receipt.receiptOutcome,
+              cells: joined.receipt.receiptCells,
+            }),
+            layout: Object.freeze({
+              operationId: found.record.operationId,
+              cells: joined.layout.layoutCells,
+            }),
+            frame: Object.freeze({
+              operationId: found.record.operationId,
+              identityExact: joined.settled.identityLineageExact,
+              presentationChanged: joined.settled.presentationChanged,
+              presentationDigest: joined.settled.presentationDigest,
+            }),
+            fence: Object.freeze({ writerHealth: joined.fence.writerHealth }),
+            resources,
+            workspaceClient,
+            tmux,
+            geometryStable: resizeTmuxGeometryExact(
+              keyboard.tmux,
+              tmux,
+              baseline.semanticPaneId,
+              target.cols,
+            ),
+            delivery,
+            pointerIngress: joined.settled.pointerIngress,
+          });
+          event("resize-pointer-release-proved", { axis: "cols" });
+          return evidence;
+        },
+        startWebAfterResize: async (
+          _namespace,
+          runningDaemon,
+          identity,
+          _process,
+          baseline,
+          _keyboard,
+          release,
+        ) => {
+          const watermark = windowWorkspaceEvidenceWatermark(
+            state,
+            baseline.processId,
+            baseline.daemonGeneration,
+          );
+          devServer = await startDevServer(runningDaemon, {
+            daemonInfoPath: join(fleet.daemonInfoDir, "daemon.json"),
+          });
+          browser = await chromium.launch({ headless: true });
+          const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+          const page = await context.newPage();
+          await page.goto(devServer.pageUrl, { waitUntil: "domcontentloaded" });
+          const ready = await waitForFocusWebSemantic({
+            signal: ownerAbort.signal,
+            health: () =>
+              ownerAbort.signal.aborted
+                ? "aborted"
+                : !devServer.isRunning()
+                  ? "dev-server-dead"
+                  : !browser.isConnected()
+                    ? "browser-disconnected"
+                    : page.isClosed()
+                      ? "page-closed"
+                      : null,
+            sample: () => page.evaluate(captureFocusWebSemanticDocument),
+            derivedResources: release.workspaceClient.derived.terminalInventory.resources,
+            expectedWorkspaceName: identity.workspaceName,
+            expectedSemanticPaneId: baseline.semanticPaneId,
+            expectedDaemonGeneration: runningDaemon.record.instanceId,
+          });
+          if (ready.semantic.windowNodeCount !== 1 || ready.semantic.terminalNodeCount !== 1)
+            throw new Error("resize Web semantic did not retain one tiled two-pane window");
+          const workspaceClient = await waitForWindowWorkspaceEvidence(state, {
+            processId: baseline.processId,
+            daemonGeneration: baseline.daemonGeneration,
+            clientGeneration: baseline.clientGeneration,
+            clientId: baseline.clientId,
+            workspaceName: baseline.workspaceName,
+            sessionName: baseline.sessionName,
+            afterMicros: watermark + 1,
+            boundary: "resize-web-correlation",
+            resources: release.resources,
+            web: true,
+            exactTerminalResourceRevision: baseline.terminalResourceRevision,
+          });
+          publish({ web: { pageUrl: devServer.pageUrl, startedAfterResizeBoundary: true } });
+          event("resize-web-correlation", { windows: ready.semantic.windowNodeCount });
+          return Object.freeze({
+            semantic: ready.semantic,
+            readiness: ready.assessment,
+            workspaceClient,
+            correlation: Object.freeze({
+              daemon: true,
+              workspaceClient: true,
+              tui: true,
+              web: true,
+              tmux: true,
+            }),
+          });
+        },
+      });
+      const pointerRelease = resizeBoot.pointerRelease;
+      const journeyEvidence = Object.freeze({
+        expected: Object.freeze({
+          processId: resizeBoot.baseline.processId,
+          daemonGeneration: resizeBoot.baseline.daemonGeneration,
+          clientGeneration: resizeBoot.baseline.clientGeneration,
+          workspaceName: resizeBoot.baseline.workspaceName,
+          sessionName: resizeBoot.baseline.sessionName,
+          fleetSessionId: resizeBoot.identity.fleetSessionId,
+          catalogRevision: resizeBoot.identity.catalogRevision,
+          semanticPaneId: resizeBoot.baseline.semanticPaneId,
+        }),
+        baseline: resizeIdentityEvidence(resizeBoot.baseline),
+        keyboard: resizeBoot.keyboard,
+        pointerPreviews: resizeBoot.pointerPreviews,
+        pointerRelease,
+        tmux: Object.freeze({
+          semanticPaneId: resizeBoot.baseline.semanticPaneId,
+          [pointerRelease.axis]: pointerRelease.settledCells,
+          geometryStable: pointerRelease.geometryStable,
+        }),
+        workspaceClient: Object.freeze({
+          pendingCount: pointerRelease.workspaceClient.pending.length,
+          semanticPaneId: resizeBoot.baseline.semanticPaneId,
+          lastReceiptOperationId:
+            pointerRelease.workspaceClient.committed.lastReceipt?.operationId ?? null,
+          lastReceiptPhase: pointerRelease.workspaceClient.committed.lastReceipt?.phase ?? null,
+        }),
+        correlation: resizeBoot.web.correlation,
+        web: resizeBoot.web,
+      });
+      const assessment = assessProductKeyboardPointerResize({
+        evidence: journeyEvidence,
+        expected: journeyEvidence.expected,
+      });
+      if (!assessment.qualified) {
+        const error = new Error("keyboard/pointer resize causal assessment failed");
+        error.boundary = "resize-causal-proof";
+        error.observation = Object.freeze({
+          operation: "keyboard-pointer-resize-assessment",
+          firstFailedPredicate: assessment.firstFailedPredicate,
+          sampleCount: assessment.metrics.sampleCount,
+          previewP95Ms: assessment.metrics.previewP95Ms,
+        });
+        throw error;
+      }
+      publish({
+        convergence: { workspaceClient: resizeBoot.web.workspaceClient },
+        journeyEvidence: { keyboardPointerResize: journeyEvidence },
         status: "ready",
         readyAt: new Date().toISOString(),
       });

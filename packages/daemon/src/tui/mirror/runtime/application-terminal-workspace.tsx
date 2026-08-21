@@ -8,6 +8,7 @@ import type { PaneScopedTerminalAdapter } from "./pane-scoped-terminal-surface.t
 import { PaneScopedTerminalSurface } from "./pane-scoped-terminal-surface.tsx";
 import { projectOpenTuiPaneFrames, type OpenTuiPaneFrame } from "./terminal-layout-projection.ts";
 import { MIN_PANE, type ResizeGuideRect } from "../resize-model.ts";
+import { nativePaneResizeCells } from "./pane-resize-geometry.ts";
 
 type WorkspaceMouseEvent = {
   readonly type: string;
@@ -22,6 +23,18 @@ export interface ApplicationPaneResizePreview {
   readonly axis: "cols" | "rows";
   readonly cells: number;
   readonly guide: ResizeGuideRect;
+  /** Exact renderer-global guide cells after nested shell/canvas projection. */
+  readonly globalGuide?: ResizeGuideRect;
+  readonly pointerIngress?: ApplicationResizePointerIngress;
+}
+
+export interface ApplicationResizePointerIngress {
+  readonly gestureId: string;
+  readonly traceId: string;
+  readonly action: "down" | "drag" | "up";
+  readonly x: number;
+  readonly y: number;
+  readonly atMicros: number;
 }
 
 interface ApplicationPaneSeparator {
@@ -55,6 +68,12 @@ export interface ApplicationTerminalWorkspaceProps {
   readonly onSelectPane: (paneId: string) => void;
   readonly onResizePreview?: (preview: ApplicationPaneResizePreview) => void;
   readonly onResizePane?: (preview: ApplicationPaneResizePreview) => void;
+  readonly onResizePointerIngress?: (input: {
+    readonly action: "down" | "drag" | "up";
+    readonly x: number;
+    readonly y: number;
+    readonly gestureId: string | null;
+  }) => ApplicationResizePointerIngress | null;
   readonly onWindowPresented?: (
     semanticWindowId: string,
     paneId: string,
@@ -69,6 +88,8 @@ export function terminalPaneChromeLabel(paneId: string, focused: boolean, width:
 export function terminalWindowStripSlotWidth(width: number, windowCount: number): number {
   return Math.max(1, Math.min(32, Math.floor(width / Math.max(1, windowCount))));
 }
+
+export const ACTIVE_RESIZE_GUIDE_CELL = Object.freeze({ cols: "╎", rows: "╌" });
 
 function titleOf(layout: OpenTuiWorkspaceLayoutSnapshot["windows"][number]): string {
   return layout.windowName ?? layout.semanticWindowId ?? "window";
@@ -90,6 +111,7 @@ function retainedWindowKey(
 
 function separatorAt(
   frames: ReturnType<typeof projectOpenTuiPaneFrames>,
+  paneBorderStatus: "top" | "bottom" | "off",
   x: number,
   y: number,
 ): ApplicationPaneSeparator | null {
@@ -120,14 +142,17 @@ function separatorAt(
         x < Math.min(before.left + before.width, candidate.left + candidate.width),
     );
     if (after && y === before.top + before.height) {
+      const initialCells = nativePaneResizeCells(before, "rows", paneBorderStatus);
+      const siblingCells = nativePaneResizeCells(after, "rows", paneBorderStatus);
+      if (initialCells === null || siblingCells === null) return null;
       return Object.freeze({
         axis: "y" as const,
         position: before.top + before.height,
         start: Math.max(before.left, after.left),
         end: Math.min(before.left + before.width, after.left + after.width),
         paneId: before.paneId,
-        initialCells: before.height,
-        siblingCells: after.height,
+        initialCells,
+        siblingCells,
       });
     }
   }
@@ -136,6 +161,7 @@ function separatorAt(
 
 function separatorsFor(
   frames: ReturnType<typeof projectOpenTuiPaneFrames>,
+  paneBorderStatus: "top" | "bottom" | "off",
 ): readonly ApplicationPaneSeparator[] {
   const separators: ApplicationPaneSeparator[] = [];
   for (const before of frames) {
@@ -163,16 +189,19 @@ function separatorsFor(
         Math.max(before.left, candidate.left) <
           Math.min(before.left + before.width, candidate.left + candidate.width),
     );
-    if (after)
-      separators.push({
-        axis: "y",
-        position: before.top + before.height,
-        start: Math.max(before.left, after.left),
-        end: Math.min(before.left + before.width, after.left + after.width),
-        paneId: before.paneId,
-        initialCells: before.height,
-        siblingCells: after.height,
-      });
+    if (!after) continue;
+    const initialCells = nativePaneResizeCells(before, "rows", paneBorderStatus);
+    const siblingCells = nativePaneResizeCells(after, "rows", paneBorderStatus);
+    if (initialCells === null || siblingCells === null) continue;
+    separators.push({
+      axis: "y",
+      position: before.top + before.height,
+      start: Math.max(before.left, after.left),
+      end: Math.min(before.left + before.width, after.left + after.width),
+      paneId: before.paneId,
+      initialCells,
+      siblingCells,
+    });
   }
   return Object.freeze(separators);
 }
@@ -296,12 +325,22 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     readonly separator: ApplicationPaneSeparator;
     readonly origin: number;
     preview: ApplicationPaneResizePreview;
+    readonly gestureId: string | null;
   } | null = null;
 
   const terminalPoint = (event: WorkspaceMouseEvent): { x: number; y: number } => ({
     x: event.x - (props.originX ?? 0),
     y: event.y - (props.originY ?? 0) - topOffset(),
   });
+  const globalPreview = (preview: ApplicationPaneResizePreview): ApplicationPaneResizePreview =>
+    Object.freeze({
+      ...preview,
+      globalGuide: Object.freeze({
+        ...preview.guide,
+        x: preview.guide.x + (props.originX ?? 0),
+        y: preview.guide.y + (props.originY ?? 0) + topOffset(),
+      }),
+    });
   // tmux retains one active pane per window even while that window is hidden.
   // Keep those native terminal surfaces presentation-ready while the host has
   // focus; switching the visible window then changes only composition, not
@@ -310,6 +349,22 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
   const terminalSurfaceFocused = (frame: OpenTuiPaneFrame): boolean =>
     (props.rendererFocused ?? props.focusedPane !== null) && frame.active;
   const routePointer = (event: WorkspaceMouseEvent): void => {
+    const requestedAction =
+      event.type === "down"
+        ? "down"
+        : event.type === "drag"
+          ? "drag"
+          : event.type === "up" || event.type === "drag-end" || event.type === "drop"
+            ? "up"
+            : null;
+    const ingress = requestedAction
+      ? (props.onResizePointerIngress?.({
+          action: requestedAction,
+          x: event.x,
+          y: event.y,
+          gestureId: drag?.gestureId ?? null,
+        }) ?? null)
+      : null;
     event.stopPropagation?.();
     const point = terminalPoint(event);
     const isRelease = event.type === "up" || event.type === "drag-end" || event.type === "drop";
@@ -318,8 +373,11 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         const pointer = drag.separator.axis === "x" ? point.x : point.y;
         const next = previewFor(drag.separator, pointer, drag.origin);
         if (next.cells !== drag.preview.cells) {
-          drag.preview = next;
-          props.onResizePreview?.(next);
+          drag.preview = Object.freeze({
+            ...next,
+            ...(ingress ? { pointerIngress: ingress } : {}),
+          });
+          props.onResizePreview?.(globalPreview(drag.preview));
           setResizePreview(next);
         }
         if (isRelease) {
@@ -328,13 +386,23 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           drag = null;
           setResizePreview(null);
           setHoveredSeparator(null);
-          if (changed) props.onResizePane?.(completed);
+          if (changed)
+            props.onResizePane?.(
+              globalPreview(
+                Object.freeze({
+                  ...completed,
+                  ...(ingress ? { pointerIngress: ingress } : {}),
+                }),
+              ),
+            );
         }
       }
       return;
     }
     if (event.type === "move" || event.type === "over") {
-      setHoveredSeparator(separatorAt(visibleFrames(), point.x, point.y));
+      setHoveredSeparator(
+        separatorAt(visibleFrames(), layout().current?.paneBorderStatus ?? "off", point.x, point.y),
+      );
       return;
     }
     if (event.type === "out") {
@@ -342,11 +410,16 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       return;
     }
     if (event.type !== "down" || event.button === 2) return;
-    const separator = separatorAt(visibleFrames(), point.x, point.y);
+    const separator = separatorAt(
+      visibleFrames(),
+      layout().current?.paneBorderStatus ?? "off",
+      point.x,
+      point.y,
+    );
     if (!separator) return;
     const origin = separator.axis === "x" ? point.x : point.y;
     const preview = previewFor(separator, origin, origin);
-    drag = { separator, origin, preview };
+    drag = { separator, origin, preview, gestureId: ingress?.gestureId ?? null };
     setHoveredSeparator(null);
     setResizePreview(preview);
   };
@@ -357,6 +430,21 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     return hovered
       ? { rect: previewFor(hovered, hovered.position, hovered.position).guide, active: false }
       : null;
+  });
+  const guideCells = createMemo(() => {
+    const active = guide();
+    if (!active?.active) return Object.freeze([]);
+    const axis = resizePreview()?.axis;
+    if (!axis) return Object.freeze([]);
+    const cells: Array<{ x: number; y: number; marker: string }> = [];
+    for (let y = 0; y < active.rect.height; y += 1)
+      for (let x = 0; x < active.rect.width; x += 1)
+        cells.push({
+          x: active.rect.x + x,
+          y: active.rect.y + y + topOffset(),
+          marker: ACTIVE_RESIZE_GUIDE_CELL[axis],
+        });
+    return Object.freeze(cells);
   });
 
   return (
@@ -510,7 +598,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           );
         }}
       </For>
-      <For each={separatorsFor(visibleFrames())}>
+      <For each={separatorsFor(visibleFrames(), layout().current?.paneBorderStatus ?? "off")}>
         {(separator) => (
           <box
             position="absolute"
@@ -536,6 +624,22 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         }
         onMouse={routePointer}
       />
+      <For each={guideCells()}>
+        {(cell) => (
+          <text
+            position="absolute"
+            left={cell.x}
+            top={cell.y}
+            width={1}
+            height={1}
+            zIndex={5}
+            selectable={false}
+            fg={props.theme.roles.text.primary}
+            content={cell.marker}
+            onMouse={routePointer}
+          />
+        )}
+      </For>
     </>
   );
 }
