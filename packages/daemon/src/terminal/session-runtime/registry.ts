@@ -102,6 +102,12 @@ export interface SessionRuntimeRegistryOptions {
   readonly createTraceCorrelator?: (scheduler: SessionRuntimeScheduler) => RuntimeTraceCorrelator;
 }
 
+/** Opaque daemon-internal proof that an inventory came from one exact runtime owner. */
+export interface TrustedSessionInventoryCandidate {
+  readonly inventory: TrustedMirrorSessionInventory;
+  readonly token: object;
+}
+
 export interface SessionRuntimeQualificationSnapshot {
   readonly generation: SessionRuntimeGeneration;
   readonly controlChannels: number;
@@ -244,6 +250,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   readonly #createTraceCorrelator: (scheduler: SessionRuntimeScheduler) => RuntimeTraceCorrelator;
   readonly #sessions = new Map<string, SessionRuntime>();
   readonly #proofPrewarmOwnership = new Map<SessionRuntime, { owned: boolean; claims: number }>();
+  readonly #trustedInventoryTokens = new WeakMap<object, SessionRuntime>();
   readonly #executionHandles = new WeakMap<object, ExecutionHandleState>();
   readonly #stopExitObserver: () => void;
   #disposed = false;
@@ -425,6 +432,17 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     session: string,
     signal?: AbortSignal,
   ): Promise<TrustedMirrorSessionInventory> {
+    return (await this.describeTrustedSessionInventoryCandidate(session, signal)).inventory;
+  }
+
+  /**
+   * Return an opaque token bound to the exact runtime that produced the
+   * inventory. Consumers must revalidate it after their final await.
+   */
+  async describeTrustedSessionInventoryCandidate(
+    session: string,
+    signal?: AbortSignal,
+  ): Promise<TrustedSessionInventoryCandidate> {
     signal?.throwIfAborted();
     if (this.#disposed) throw new Error("SessionRuntimeRegistry is disposed");
     const runtime = this.#sessions.get(session);
@@ -441,7 +459,19 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     if (!inventory) {
       throw new Error(`SessionRuntime ${session} lost its retained inventory authority`);
     }
-    return inventory;
+    const token = Object.freeze({});
+    this.#trustedInventoryTokens.set(token, runtime);
+    return Object.freeze({ inventory, token });
+  }
+
+  isTrustedSessionInventoryCandidateCurrent(session: string, token: object): boolean {
+    if (this.#disposed) return false;
+    const runtime = this.#trustedInventoryTokens.get(token);
+    return (
+      runtime !== undefined &&
+      this.#sessions.get(session) === runtime &&
+      runtime.trustedInventoryQualified()
+    );
   }
 
   hasProofQualifiedInventory(session: string): boolean {

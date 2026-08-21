@@ -1,9 +1,40 @@
-import type { OpenTuiProductionWorkspaceClient } from "./open-tui-generation-host.ts";
+import type {
+  SessionRuntimeActivityKind,
+  SessionRuntimeAuthorityKind,
+  SessionRuntimeAuthorityLease,
+  SessionRuntimeAuthoritySnapshot,
+  SessionRuntimePresenceState,
+} from "@tmux-ide/contracts";
 
-type TerminalAuthorityClient = Pick<
-  OpenTuiProductionWorkspaceClient,
-  "getSnapshot" | "noteActivity" | "releaseAuthority" | "requestAuthority" | "setPresence"
->;
+export interface TerminalAuthorityClient {
+  readonly authorityIdentity: Readonly<{
+    generation: string;
+    session: string;
+    clientId: string;
+  }>;
+  getAuthoritySnapshot(): SessionRuntimeAuthoritySnapshot | null;
+  getSnapshot():
+    | Readonly<{
+        generation?: number;
+        phase?: string;
+        target?: Readonly<{
+          daemon: Readonly<{ instanceId: string }>;
+          workspaceName: string;
+        }> | null;
+        authority?: SessionRuntimeAuthoritySnapshot | null;
+      }>
+    | null
+    | undefined;
+  setPresence(state: SessionRuntimePresenceState): void;
+  noteActivity(activity: SessionRuntimeActivityKind): void;
+  requestAuthority(
+    authority: SessionRuntimeAuthorityKind,
+  ): Promise<SessionRuntimeAuthorityLease | null>;
+  releaseAuthority(
+    authority: SessionRuntimeAuthorityKind,
+  ): Promise<SessionRuntimeAuthoritySnapshot | null>;
+  onAuthority(listener: (snapshot: SessionRuntimeAuthoritySnapshot) => void): () => void;
+}
 
 export type TerminalHostFocusDiagnostic = (
   phase:
@@ -12,6 +43,7 @@ export type TerminalHostFocusDiagnostic = (
     | "focus-presence"
     | "focus-activity"
     | "focus-authority-settled"
+    | "focus-authority-reconcile"
     | "blur-presence"
     | "blur-authority-settled",
   details: Readonly<Record<string, unknown>>,
@@ -39,9 +71,19 @@ type TerminalHostFocusIdentity = Readonly<{
  */
 export class OpenTuiTerminalHostFocus {
   #client: TerminalAuthorityClient | null = null;
+  #appliedClient: TerminalAuthorityClient | null = null;
+  #handoff: Promise<void> = Promise.resolve();
+  #handoffPending = false;
+  #stopAuthority: (() => void) | null = null;
   readonly #diagnose: TerminalHostFocusDiagnostic | null;
   #diagnosticEpoch = 0;
   #bindingEpoch = 0;
+  #stateEpoch = 0;
+  #appliedFocused = false;
+  #appliedMayHoldAuthority = false;
+  #claimInFlight = false;
+  #latestAuthority: SessionRuntimeAuthoritySnapshot | null = null;
+  #outcomeId = 0;
   #focused: boolean;
 
   constructor(initiallyFocused = true, diagnose: TerminalHostFocusDiagnostic | null = null) {
@@ -51,11 +93,29 @@ export class OpenTuiTerminalHostFocus {
 
   adopt(client: TerminalAuthorityClient | null): void {
     if (client === this.#client) return;
-    const previous = this.#client;
+    this.#stopAuthority?.();
+    this.#stopAuthority = null;
+    this.#latestAuthority = null;
     this.#client = client;
     this.#bindingEpoch += 1;
-    if (previous) this.#yield(previous);
-    if (client) this.#apply(client);
+    this.#queueTransition(null, null);
+    if (client)
+      try {
+        this.#stopAuthority = client.onAuthority((snapshot) => {
+          this.#latestAuthority = snapshot;
+          if (
+            this.#client !== client ||
+            !this.#focused ||
+            this.#claimInFlight ||
+            this.#authoritySnapshotExact(client, snapshot)
+          )
+            return;
+          this.#appliedFocused = false;
+          this.#queueTransition(null, null);
+        });
+      } catch {
+        this.#stopAuthority = null;
+      }
   }
 
   focus(): void {
@@ -65,7 +125,7 @@ export class OpenTuiTerminalHostFocus {
   #focus(diagnosticEpoch: number | null, identity: TerminalHostFocusIdentity | null = null): void {
     if (this.#focused) return;
     this.#focused = true;
-    if (this.#client) this.#claim(this.#client, diagnosticEpoch, identity);
+    this.#queueTransition(diagnosticEpoch, identity);
   }
 
   rendererFocus(): number | null {
@@ -85,7 +145,7 @@ export class OpenTuiTerminalHostFocus {
   #blur(diagnosticEpoch: number | null, identity: TerminalHostFocusIdentity | null = null): void {
     if (!this.#focused) return;
     this.#focused = false;
-    if (this.#client) this.#yield(this.#client, diagnosticEpoch, identity);
+    this.#queueTransition(diagnosticEpoch, identity);
   }
 
   rendererBlur(): number | null {
@@ -99,59 +159,220 @@ export class OpenTuiTerminalHostFocus {
   }
 
   dispose(): void {
+    this.adopt(null);
+  }
+
+  #queueTransition(
+    diagnosticEpoch: number | null,
+    identity: TerminalHostFocusIdentity | null,
+  ): void {
     const client = this.#client;
-    this.#client = null;
-    this.#bindingEpoch += 1;
-    if (client) this.#yield(client);
+    const focused = this.#focused;
+    const stateEpoch = ++this.#stateEpoch;
+    const bindingEpoch = this.#bindingEpoch;
+    const transition = async (): Promise<void> => {
+      const applied = this.#appliedClient;
+      const mustYield =
+        applied !== null && this.#appliedMayHoldAuthority && (applied !== client || !focused);
+      const yieldedForBlur = mustYield && applied === client && !focused;
+      if (mustYield) {
+        this.#appliedFocused = false;
+        this.#appliedMayHoldAuthority = false;
+        if (applied !== client) this.#appliedClient = null;
+        await this.#yield(
+          applied,
+          focused || applied !== client ? null : diagnosticEpoch,
+          identity,
+          stateEpoch,
+          bindingEpoch,
+        );
+      }
+      if (
+        this.#stateEpoch !== stateEpoch ||
+        this.#bindingEpoch !== bindingEpoch ||
+        this.#client !== client ||
+        this.#focused !== focused
+      )
+        return;
+      if (client === null) {
+        this.#appliedClient = null;
+        this.#appliedFocused = false;
+        this.#appliedMayHoldAuthority = false;
+        return;
+      }
+      if (this.#appliedClient !== client) {
+        this.#appliedClient = client;
+        this.#appliedFocused = false;
+        this.#appliedMayHoldAuthority = false;
+      }
+      if (focused && !this.#appliedFocused) {
+        this.#appliedFocused = await this.#claim(
+          client,
+          diagnosticEpoch,
+          identity,
+          stateEpoch,
+          bindingEpoch,
+        );
+      } else if (!focused && !yieldedForBlur) {
+        client.setPresence("background");
+        if (diagnosticEpoch !== null)
+          this.#emit("blur-presence", { diagnosticEpoch, state: "background" }, identity);
+      }
+    };
+    const queued = this.#handoffPending ? this.#handoff.then(transition) : transition();
+    this.#handoffPending = true;
+    const settled = queued.catch(() => undefined);
+    this.#handoff = settled;
+    void settled.then(() => {
+      if (this.#handoff === settled) this.#handoffPending = false;
+    });
   }
 
-  #apply(client: TerminalAuthorityClient): void {
-    if (this.#focused) this.#claim(client);
-    else client.setPresence("background");
-  }
-
-  #claim(
+  async #claim(
     client: TerminalAuthorityClient,
     diagnosticEpoch: number | null = null,
     identity: TerminalHostFocusIdentity | null = null,
-  ): void {
+    stateEpoch = this.#stateEpoch,
+    bindingEpoch = this.#bindingEpoch,
+  ): Promise<boolean> {
     client.setPresence("foreground");
     if (diagnosticEpoch !== null)
       this.#emit("focus-presence", { diagnosticEpoch, state: "foreground" }, identity);
     client.noteActivity("focus");
     if (diagnosticEpoch !== null)
       this.#emit("focus-activity", { activity: "focus", diagnosticEpoch }, identity);
-    const claims = Promise.allSettled([
-      client.requestAuthority("input"),
-      client.requestAuthority("focus"),
-      client.requestAuthority("geometry"),
-    ]);
-    if (diagnosticEpoch === null) return;
-    const bindingEpoch = this.#bindingEpoch;
-    void claims.then((results) =>
-      this.#emit(
-        "focus-authority-settled",
-        {
-          diagnosticEpoch,
-          receipts: (["input", "focus", "geometry"] as const).map((authority, index) => {
-            const result = results[index];
-            const lease = result?.status === "fulfilled" ? result.value : null;
-            return {
+    const authorities = ["input", "focus", "geometry"] as const;
+    this.#appliedMayHoldAuthority = true;
+    this.#claimInFlight = true;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const results = await Promise.allSettled(
+        authorities.map((authority) => client.requestAuthority(authority)),
+      );
+      const current =
+        this.#client === client &&
+        this.#bindingEpoch === bindingEpoch &&
+        this.#stateEpoch === stateEpoch &&
+        this.#focused;
+      const leases = results.map((result) => (result.status === "fulfilled" ? result.value : null));
+      try {
+        this.#latestAuthority = client.getAuthoritySnapshot();
+      } catch {
+        this.#latestAuthority = null;
+      }
+      const exact =
+        current &&
+        this.#latestAuthority !== null &&
+        this.#authoritySnapshotExact(client, this.#latestAuthority) &&
+        leases.every((lease, index) =>
+          this.#authorityLeaseExact(client, authorities[index]!, lease),
+        );
+      if (this.#diagnose)
+        this.#emit(
+          "focus-authority-reconcile",
+          {
+            outcomeId: ++this.#outcomeId,
+            diagnosticEpoch,
+            attempt,
+            status: exact ? "applied" : current && attempt < 3 ? "retrying" : "failed",
+            receipts: authorities.map((authority, index) => ({
               authority,
-              status: result?.status ?? "rejected",
-              generation: lease?.generation ?? null,
-              granted: lease !== null,
-              revision: lease?.revision ?? null,
-              session: lease?.session ?? null,
-              clientId: lease?.clientId ?? null,
-            };
-          }),
-          settledIdentity: this.#captureIdentity(client),
-          bindingCurrent: this.#client === client && this.#bindingEpoch === bindingEpoch,
-          status: results.every(({ status }) => status === "fulfilled") ? "fulfilled" : "partial",
-        },
-        identity,
-      ),
+              status: results[index]?.status ?? "rejected",
+              granted: leases[index] !== null,
+              exact: this.#authorityLeaseExact(client, authority, leases[index] ?? null),
+            })),
+          },
+          identity ?? this.#captureIdentity(client),
+        );
+      if (exact) {
+        this.#claimInFlight = false;
+        if (diagnosticEpoch !== null)
+          this.#emitFocusSettlement(
+            client,
+            diagnosticEpoch,
+            identity,
+            stateEpoch,
+            bindingEpoch,
+            results,
+          );
+        return true;
+      }
+      if (!current) {
+        this.#claimInFlight = false;
+        return false;
+      }
+      await Promise.resolve();
+    }
+    this.#claimInFlight = false;
+    return false;
+  }
+
+  #emitFocusSettlement(
+    client: TerminalAuthorityClient,
+    diagnosticEpoch: number,
+    identity: TerminalHostFocusIdentity | null,
+    stateEpoch: number,
+    bindingEpoch: number,
+    results: PromiseSettledResult<SessionRuntimeAuthorityLease | null>[],
+  ): void {
+    this.#emit(
+      "focus-authority-settled",
+      {
+        diagnosticEpoch,
+        receipts: (["input", "focus", "geometry"] as const).map((authority, index) => {
+          const result = results[index];
+          const lease = result?.status === "fulfilled" ? result.value : null;
+          return {
+            authority,
+            status: result?.status ?? "rejected",
+            generation: lease?.generation ?? null,
+            granted: lease !== null,
+            revision: lease?.revision ?? null,
+            session: lease?.session ?? null,
+            clientId: lease?.clientId ?? null,
+          };
+        }),
+        settledIdentity: this.#captureIdentity(client),
+        bindingCurrent:
+          this.#client === client &&
+          this.#bindingEpoch === bindingEpoch &&
+          this.#stateEpoch === stateEpoch &&
+          this.#focused,
+        status: "fulfilled",
+      },
+      identity,
+    );
+  }
+
+  #authorityLeaseExact(
+    client: TerminalAuthorityClient,
+    authority: SessionRuntimeAuthorityKind,
+    lease: SessionRuntimeAuthorityLease | null,
+  ): boolean {
+    const expected = client.authorityIdentity;
+    return (
+      lease !== null &&
+      lease.authority === authority &&
+      lease.generation === expected.generation &&
+      lease.session === expected.session &&
+      lease.clientId === expected.clientId
+    );
+  }
+
+  #authoritySnapshotExact(
+    client: TerminalAuthorityClient,
+    snapshot: SessionRuntimeAuthoritySnapshot,
+  ): boolean {
+    const expected = client.authorityIdentity;
+    const matchingClients = snapshot.clients.filter(
+      ({ clientId, state }) => clientId === expected.clientId && state === "foreground",
+    );
+    return (
+      snapshot.generation === expected.generation &&
+      snapshot.session === expected.session &&
+      matchingClients.length === 1 &&
+      snapshot.owners.input === expected.clientId &&
+      snapshot.owners.focus === expected.clientId &&
+      snapshot.owners.geometry === expected.clientId
     );
   }
 
@@ -159,15 +380,15 @@ export class OpenTuiTerminalHostFocus {
     client: TerminalAuthorityClient,
     diagnosticEpoch: number | null = null,
     identity: TerminalHostFocusIdentity | null = null,
-  ): void {
+    stateEpoch = this.#stateEpoch,
+    bindingEpoch = this.#bindingEpoch,
+  ): Promise<void> {
     const releases = Promise.allSettled([
       client.releaseAuthority("input"),
       client.releaseAuthority("focus"),
       client.releaseAuthority("geometry"),
     ]);
-    if (diagnosticEpoch === null) void releases;
-    else {
-      const bindingEpoch = this.#bindingEpoch;
+    if (diagnosticEpoch !== null) {
       void releases.then((results) =>
         this.#emit(
           "blur-authority-settled",
@@ -186,7 +407,11 @@ export class OpenTuiTerminalHostFocus {
               };
             }),
             settledIdentity: this.#captureIdentity(client),
-            bindingCurrent: this.#client === client && this.#bindingEpoch === bindingEpoch,
+            bindingCurrent:
+              this.#client === client &&
+              this.#bindingEpoch === bindingEpoch &&
+              this.#stateEpoch === stateEpoch &&
+              !this.#focused,
             status: results.every(({ status }) => status === "fulfilled") ? "fulfilled" : "partial",
           },
           identity,
@@ -196,6 +421,7 @@ export class OpenTuiTerminalHostFocus {
     client.setPresence("background");
     if (diagnosticEpoch !== null)
       this.#emit("blur-presence", { diagnosticEpoch, state: "background" }, identity);
+    return releases.then(() => undefined);
   }
 
   #captureIdentity(client: TerminalAuthorityClient | null): TerminalHostFocusIdentity {

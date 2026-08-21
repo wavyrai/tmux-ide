@@ -88,6 +88,24 @@ export const PANE_STREAM_MAX_REDEMPTION_MS = 1_000;
 const WS_OPEN = 1;
 const CANONICAL_KEY_INPUT_FRAME_PREFIX = Buffer.from('{"kind":"key",', "utf8");
 const CANONICAL_TEXT_INPUT_FRAME_PREFIX = Buffer.from('{"kind":"text",', "utf8");
+const SEMANTIC_BACKEND_REFUSALS = new Set([
+  "pane_inventory_not_ready",
+  "pane_identity_changed_before_select",
+  "pane_not_active",
+]);
+
+function semanticBackendRefusal(error: unknown): string | null {
+  let candidate = error;
+  for (let depth = 0; depth < 3; depth += 1) {
+    if (!candidate || typeof candidate !== "object") return null;
+    const context = "context" in candidate ? candidate.context : null;
+    const reason =
+      context && typeof context === "object" && "reason" in context ? context.reason : null;
+    if (typeof reason === "string" && SEMANTIC_BACKEND_REFUSALS.has(reason)) return reason;
+    candidate = "cause" in candidate ? candidate.cause : null;
+  }
+  return null;
+}
 const TYPE_FIRST_INPUT_FRAME_PREFIX = Buffer.from('{"type":"input",', "utf8");
 
 function startsWithBuffer(raw: Buffer, prefix: Buffer): boolean {
@@ -1990,12 +2008,14 @@ export class PaneStreamLiveConnection {
         });
       })
       .catch((error: unknown) => {
+        const backendRefusal = semanticBackendRefusal(error);
         const rawCode =
-          error && typeof error === "object" && "code" in error
+          backendRefusal ??
+          (error && typeof error === "object" && "code" in error
             ? String(error.code)
             : error && typeof error === "object" && "outcome" in error
               ? `intent-${String(error.outcome)}`
-              : "stream-unavailable";
+              : "stream-unavailable");
         const code = [
           "controller-conflict",
           "controller-target-unavailable",
@@ -2005,6 +2025,9 @@ export class PaneStreamLiveConnection {
           "intent-session-mismatch",
           "intent-rejected",
           "intent-timed-out",
+          "pane_inventory_not_ready",
+          "pane_identity_changed_before_select",
+          "pane_not_active",
         ].includes(rawCode)
           ? rawCode
           : "stream-unavailable";

@@ -35,11 +35,13 @@ import {
   coherentReadiness,
   coherentGenerationDuration,
   createProductRigAttemptTimelineClock,
+  compareProductSourceProvenance,
   inputPaintSamples,
   paneBodyRegion,
   paneGeometryIdentity,
   productInputQueuesSettled,
   productRigSourceTraceIncludesPath,
+  productRigHostHeartbeatObservation,
   productRigSourceTraceDiffArgs,
   productRigSourceTraceUntrackedArgs,
   readBoundedSourceTraceFiles,
@@ -97,6 +99,7 @@ test("ProductRig owns one macOS idle-sleep assertion until exact cleanup", async
   const calls = [];
   const assertion = await acquireProductRigSleepAssertion({
     platform: "darwin",
+    verifyAssertions: async () => true,
     ownerPid: 99,
     spawnProcess: (command, args, options) => {
       calls.push({ command, args, options });
@@ -106,7 +109,7 @@ test("ProductRig owns one macOS idle-sleep assertion until exact cleanup", async
   assert.deepEqual(calls, [
     {
       command: "/usr/bin/caffeinate",
-      args: ["-i", "-w", "99"],
+      args: ["-s", "-i", "-w", "99"],
       options: { stdio: "ignore" },
     },
   ]);
@@ -159,6 +162,7 @@ test("ProductRig fails closed when the macOS sleep assertion exits during acquis
   await assert.rejects(
     acquireProductRigSleepAssertion({
       platform: "darwin",
+      verifyAssertions: async () => true,
       ownerPid: 99,
       spawnProcess: () => fakeSleepAssertionChild({ exitBeforeReady: true }),
     }),
@@ -175,6 +179,7 @@ test("ProductRig fails closed when caffeinate cannot spawn", async () => {
   await assert.rejects(
     acquireProductRigSleepAssertion({
       platform: "darwin",
+      verifyAssertions: async () => true,
       ownerPid: 99,
       spawnProcess: () => child,
     }),
@@ -187,6 +192,7 @@ test("ProductRig aborts and reaps a sleep assertion acquisition in flight", asyn
   const controller = new AbortController();
   const acquisition = acquireProductRigSleepAssertion({
     platform: "darwin",
+    verifyAssertions: async () => true,
     ownerPid: 99,
     spawnProcess: () => child,
     settle: () => new Promise(() => undefined),
@@ -202,6 +208,7 @@ test("ProductRig reports an acquired sleep assertion that dies unexpectedly", as
   const child = fakeSleepAssertionChild();
   const assertion = await acquireProductRigSleepAssertion({
     platform: "darwin",
+    verifyAssertions: async () => true,
     ownerPid: 99,
     spawnProcess: () => child,
   });
@@ -209,6 +216,52 @@ test("ProductRig reports an acquired sleep assertion that dies unexpectedly", as
   child.emit("close", 9, null);
   await assert.rejects(assertion.failure, /exited unexpectedly \(9\)/u);
   assert.equal(assertion.active(), false);
+});
+
+test("ProductRig fails closed when macOS does not publish both sleep assertions", async () => {
+  const child = fakeSleepAssertionChild();
+  await assert.rejects(
+    acquireProductRigSleepAssertion({
+      platform: "darwin",
+      ownerPid: 99,
+      spawnProcess: () => child,
+      verifyAssertions: async () => false,
+    }),
+    /system-sleep assertion could not be verified/u,
+  );
+  assert.deepEqual(child.kills, ["SIGTERM"]);
+});
+
+test("ProductRig reaps caffeinate when assertion verification errors", async () => {
+  const child = fakeSleepAssertionChild();
+  await assert.rejects(
+    acquireProductRigSleepAssertion({
+      platform: "darwin",
+      ownerPid: 99,
+      spawnProcess: () => child,
+      verifyAssertions: async () => {
+        throw new Error("pmset timeout");
+      },
+    }),
+    /pmset timeout/u,
+  );
+  assert.deepEqual(child.kills, ["SIGTERM"]);
+});
+
+test("ProductRig classifies a verified heartbeat gap without relying on monotonic sleep", () => {
+  assert.deepEqual(
+    productRigHostHeartbeatObservation({
+      previousHeartbeatWallMs: 1_000,
+      wallNowMs: 931_000,
+    }),
+    {
+      reason: "host-suspended",
+      suspended: true,
+      elapsedMs: 930_000,
+      expectedIntervalMs: 100,
+      gapMs: 929_900,
+    },
+  );
 });
 
 test("source provenance accepts patches above Node's default buffer and enforces a hard ceiling", () => {
@@ -265,6 +318,28 @@ test("source provenance deterministically binds sorted untracked paths and bytes
     productRigSourceTraceIncludesPath("packages/daemon/native/target/debug/artifact"),
     false,
   );
+});
+
+test("source provenance manifest reports stable and bounded between-run drift", () => {
+  const expected = {
+    commit: "a".repeat(40),
+    tree: "b".repeat(40),
+    manifestDigest: "c".repeat(64),
+    manifest: [
+      { pathDigest: "1".repeat(64), contentDigest: "2".repeat(64), bytes: 10 },
+      { pathDigest: "3".repeat(64), contentDigest: "4".repeat(64), bytes: 20 },
+    ],
+  };
+  assert.equal(compareProductSourceProvenance(expected, structuredClone(expected)).stable, true);
+  const changed = structuredClone(expected);
+  changed.tree = "d".repeat(40);
+  changed.manifestDigest = "e".repeat(64);
+  changed.manifest[1].contentDigest = "f".repeat(64);
+  const assessment = compareProductSourceProvenance(expected, changed);
+  assert.equal(assessment.stable, false);
+  assert.equal(assessment.treeExact, false);
+  assert.equal(assessment.changedCount, 1);
+  assert.deepEqual(assessment.changedPathDigests, ["3".repeat(64)]);
 });
 
 test("source provenance rejects oversized untracked input before reading content", () => {
@@ -1792,6 +1867,114 @@ test("causal baseline stability ignores unrelated trace growth", () => {
   const identity = baseline.match(/const nextIdentity = \[[\s\S]*?\]\.join/)?.[0] ?? "";
   assert.doesNotMatch(identity, /records\.length/u);
   assert.match(identity, /queueObservation\?\.atMicros/u);
+});
+
+test("window failure preparation seals relocated structural runtime evidence in every JSON view", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("async function prepareDiagnosticFailure");
+  const end = source.indexOf("async function executeDiagnosticAttempt", start);
+  const failure = source.slice(start, end);
+  assert.ok(start > 0 && end > start);
+  assert.match(failure, /const state = readJson\(statePath\);\s*const partialRuntime =/u);
+  assert.match(failure, /report = \{[\s\S]*?failureObservation,\s*partialRuntime,/u);
+  assert.match(failure, /alignment: \{[\s\S]*?failureObservation,\s*partialRuntime,/u);
+  assert.match(
+    failure,
+    /clientState: \{ \.\.\.correlation\.clientState, failureObservation, partialRuntime \}/u,
+  );
+});
+
+test("window switch selection rejection fails immediately with its bounded predicate", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("async function driveExactHostedWindowSwitch");
+  const end = source.indexOf("async function", start + 20);
+  const drive = source.slice(start, end);
+  assert.ok(start > 0 && end > start);
+  assert.match(drive, /record\?\.phase === "window-switch-failed"/u);
+  assert.match(drive, /windowSwitchSelectionFailureObservation/u);
+  assert.doesNotMatch(drive, /tuiCommand\(state/u);
+  assert.match(drive, /await tuiCommandAsync\([\s\S]*?signal/u);
+  assert.match(drive, /windowSwitchInputFailureObservation/u);
+  assert.match(drive, /error\.boundary = boundary/u);
+  assert.match(drive, /backendReason: rejectedReceipt\?\.failureBackendReason/u);
+  assert.ok(
+    drive.indexOf("windowSwitchSelectionFailureObservation") <
+      drive.indexOf("window switch actual-frame fence did not settle"),
+  );
+});
+
+test("window switch callers identify prime versus measured input failures", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  assert.match(
+    source,
+    /driveExactHostedWindowSwitch\([\s\S]*?boundary: "window-switch-visible"[\s\S]*?signal: ownerAbort\.signal/u,
+  );
+  assert.match(
+    source,
+    /driveExactHostedWindowSwitch\(state, tracePath, seen, \{[\s\S]*?boundary: "window-switch-distribution",\s*ordinal,\s*signal: ownerAbort\.signal/u,
+  );
+});
+
+test("ProductRig checks a heartbeat gap before its monotonic timeout", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("async function waitForState");
+  const end = source.indexOf("function installWebStartupDiagnostics", start);
+  const wait = source.slice(start, end);
+  assert.match(wait, /for \(;;\)/u);
+  assert.ok(wait.indexOf("heartbeat.suspended") < wait.indexOf("performance.now() >= deadline"));
+  assert.match(wait, /switchOrdinalWatermark/u);
+});
+
+test("window switch rejects writer loss before quiet-tail or rename attribution", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("async function driveExactHostedWindowSwitch");
+  const end = source.indexOf("async function waitForWindowRenameFence", start);
+  const drive = source.slice(start, end);
+  assert.ok(start > 0 && end > start);
+  assert.match(drive, /window switch lifecycle writer fence was unhealthy/u);
+  assert.match(drive, /windowLifecycleWriterFailureObservation/u);
+  assert.ok(
+    drive.indexOf("windowLifecycleWriterFailureObservation") <
+      drive.indexOf("settleWindowReferenceTrace"),
+  );
+});
+
+test("window reports seal the bounded causal frame assessment in report and alignment", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("async function diagnoseWindowLifecycle");
+  const end = source.indexOf("function executeProductJourney", start);
+  const diagnose = source.slice(start, end);
+  assert.ok(start > 0 && end > start);
+  assert.match(diagnose, /const causal = assessProductWindowLifecycle/u);
+  assert.equal((diagnose.match(/causalAssessment: causal/gu) ?? []).length, 2);
+  assert.match(diagnose, /firstBrokenBoundary: assessment\.firstBrokenBoundary/u);
+});
+
+test("window owned actions use the exact live OpenTUI principal and preserve typed failures", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("async function dispatchOwnedProductAction");
+  const end = source.indexOf("async function productApplicationShell", start);
+  const dispatch = source.slice(start, end);
+  assert.ok(start > 0 && end > start);
+  assert.match(dispatch, /"X-Tmux-Ide-Host-Client-Id": hostClientId/u);
+  assert.match(dispatch, /ownedWindowActionFailureObservation/u);
+  assert.match(dispatch, /predicate: "action-result"|error\.observation/u);
+  const windowOwner = source.slice(
+    source.indexOf("createWindow: async"),
+    source.indexOf("startWebAfterWindowLifecycle:", source.indexOf("createWindow: async")),
+  );
+  assert.equal(
+    (windowOwner.match(/dispatchOwnedProductAction\([\s\S]*?baseline\.clientId,/gu) ?? []).length,
+    2,
+  );
+  assert.match(windowOwner, /postFailure: Object\.freeze/u);
+  assert.match(windowOwner, /applicationShellExact/u);
+  assert.match(windowOwner, /tmuxPreActionStateExact/u);
+  const renameOwner = windowOwner.slice(windowOwner.indexOf("renameWindow: async"));
+  assert.match(renameOwner, /windowResourceAcknowledgementWatermark/u);
+  assert.match(renameOwner, /exactTerminalResourceRevision: created\.terminalResourceRevision/u);
+  assert.match(renameOwner, /acknowledgement: \{[\s\S]*?operationId,[\s\S]*?afterSequence:/u);
+  assert.doesNotMatch(renameOwner, /receipt: \{[\s\S]*?operationKind: "workspace\.rename"/u);
 });
 
 test("resource conditioning remains in peak and queue evidence but not memory slopes", () => {

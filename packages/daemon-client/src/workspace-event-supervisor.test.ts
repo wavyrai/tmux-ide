@@ -63,7 +63,486 @@ async function tick(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
+function fakeRefreshClock() {
+  let nextId = 1;
+  const callbacks = new Map<number, () => void>();
+  return {
+    clock: {
+      setTimeout(callback: () => void) {
+        const id = nextId++;
+        callbacks.set(id, callback);
+        return id;
+      },
+      clearTimeout(handle: unknown) {
+        callbacks.delete(handle as number);
+      },
+    },
+    get pending() {
+      return callbacks.size;
+    },
+    runNext() {
+      const entry = callbacks.entries().next().value as [number, () => void] | undefined;
+      if (!entry) return false;
+      callbacks.delete(entry[0]);
+      entry[1]();
+      return true;
+    },
+  };
+}
+
 describe("WorkspaceEventSupervisor", () => {
+  it("bounds a sink-triggered refresh and cancels its delayed successor on dispose", async () => {
+    const socket = new FakeSocket();
+    const fetch = vi.fn(async () => resource(0));
+    const refreshDiagnostics: Readonly<Record<string, unknown>>[] = [];
+    const supervisor = createWorkspaceEventSupervisor({
+      socket,
+      daemon,
+      workspaceName: "alpha",
+      sessionName: "tmux-alpha",
+      fetchTerminalRuntimeInventory: fetch,
+      onDiagnostic: (phase, details) => {
+        if (phase === "terminal-refresh") refreshDiagnostics.push(details);
+      },
+    });
+    const preparing = supervisor.prepareTerminalRuntimeInventory(new AbortController().signal);
+    socket.emit("open");
+    socket.frame({ type: "hello", daemon, sessions: [], eventSequence: 0 });
+    await tick();
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    const prepared = await preparing;
+    expect(
+      supervisor.adoptTerminalRuntimeInventory(prepared, () => {
+        supervisor.refreshTerminalRuntimeInventory();
+      }),
+    ).toEqual(resource(0));
+
+    supervisor.refreshTerminalRuntimeInventory();
+    await tick();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(refreshDiagnostics).toEqual([
+      {
+        reason: "consumer",
+        coalescedRequests: 0,
+        delayed: false,
+        attempt: 1,
+        outcome: "success",
+        failure: null,
+      },
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(fetch).toHaveBeenCalledTimes(2);
+    supervisor.dispose();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("delays a sink-requeued refresh and still publishes a later authority revision", async () => {
+    const socket = new FakeSocket();
+    const reads = [resource(0), resource(1), resource(2)];
+    const diagnostics: Readonly<Record<string, unknown>>[] = [];
+    const fetch = vi.fn(async () => reads.shift() ?? resource(2));
+    const supervisor = createWorkspaceEventSupervisor({
+      socket,
+      daemon,
+      workspaceName: "alpha",
+      sessionName: "tmux-alpha",
+      fetchTerminalRuntimeInventory: fetch,
+      onDiagnostic: (phase, details) => {
+        if (phase === "terminal-refresh") diagnostics.push(details);
+      },
+    });
+    const preparing = supervisor.prepareTerminalRuntimeInventory(new AbortController().signal);
+    socket.emit("open");
+    socket.frame({ type: "hello", daemon, sessions: [], eventSequence: 0 });
+    await tick();
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    const prepared = await preparing;
+    const published: number[] = [];
+    supervisor.adoptTerminalRuntimeInventory(prepared, (next) => {
+      published.push(next.resourceRevision);
+      if (next.resourceRevision === 1) supervisor.refreshTerminalRuntimeInventory();
+    });
+
+    supervisor.refreshTerminalRuntimeInventory();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(published).toEqual([1, 2]);
+    expect(diagnostics).toEqual([
+      {
+        reason: "consumer",
+        coalescedRequests: 0,
+        delayed: false,
+        attempt: 1,
+        outcome: "success",
+        failure: null,
+      },
+      {
+        reason: "consumer",
+        coalescedRequests: 0,
+        delayed: true,
+        attempt: 1,
+        outcome: "success",
+        failure: null,
+      },
+    ]);
+    supervisor.dispose();
+  });
+
+  it("retries one transient refresh failure on the bounded clock", async () => {
+    const socket = new FakeSocket();
+    const timer = fakeRefreshClock();
+    let reads = 0;
+    const supervisor = createWorkspaceEventSupervisor({
+      socket,
+      daemon,
+      workspaceName: "alpha",
+      sessionName: "tmux-alpha",
+      terminalRefreshClock: timer.clock,
+      fetchTerminalRuntimeInventory: async () => {
+        reads += 1;
+        if (reads === 2) throw new Error("transient");
+        return resource(reads === 1 ? 0 : 1);
+      },
+    });
+    const preparing = supervisor.prepareTerminalRuntimeInventory(new AbortController().signal);
+    socket.emit("open");
+    socket.frame({ type: "hello", daemon, sessions: [], eventSequence: 0 });
+    await tick();
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    const prepared = await preparing;
+    const published: number[] = [];
+    supervisor.adoptTerminalRuntimeInventory(prepared, (next) =>
+      published.push(next.resourceRevision),
+    );
+
+    supervisor.refreshTerminalRuntimeInventory();
+    await tick();
+    expect(timer.pending).toBe(1);
+    timer.runNext();
+    await tick();
+    expect(reads).toBe(3);
+    expect(published).toEqual([1]);
+    expect(timer.pending).toBe(0);
+    supervisor.dispose();
+  });
+
+  it("bounds permanent refresh failure and lets an event replace a pending retry", async () => {
+    const socket = new FakeSocket();
+    const timer = fakeRefreshClock();
+    let reads = 0;
+    let fail = true;
+    const diagnostics: Readonly<Record<string, unknown>>[] = [];
+    const supervisor = createWorkspaceEventSupervisor({
+      socket,
+      daemon,
+      workspaceName: "alpha",
+      sessionName: "tmux-alpha",
+      terminalRefreshClock: timer.clock,
+      fetchTerminalRuntimeInventory: async () => {
+        reads += 1;
+        if (reads > 1 && fail) throw new Error("persistent");
+        return resource(reads > 1 ? 1 : 0);
+      },
+      onDiagnostic: (phase, details) => {
+        if (phase === "terminal-refresh") diagnostics.push(details);
+      },
+    });
+    const preparing = supervisor.prepareTerminalRuntimeInventory(new AbortController().signal);
+    socket.emit("open");
+    socket.frame({ type: "hello", daemon, sessions: [], eventSequence: 0 });
+    await tick();
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    const prepared = await preparing;
+    const published: number[] = [];
+    supervisor.adoptTerminalRuntimeInventory(prepared, (next) =>
+      published.push(next.resourceRevision),
+    );
+
+    supervisor.refreshTerminalRuntimeInventory();
+    await tick();
+    expect(timer.pending).toBe(1);
+    socket.frame({
+      type: "resource.changed",
+      sequence: 1,
+      workspaceName: "alpha",
+      resource: "terminal-runtime-inventory",
+      revision: 1,
+      causeOperationId: null,
+    });
+    fail = false;
+    timer.runNext();
+    await tick();
+    expect(published).toEqual([1]);
+    expect(timer.pending).toBe(0);
+    expect(diagnostics.at(-1)).toMatchObject({ reason: "event", coalescedRequests: 1 });
+
+    fail = true;
+    supervisor.refreshTerminalRuntimeInventory();
+    await tick();
+    expect(timer.pending).toBe(1);
+    timer.runNext();
+    await tick();
+    expect(timer.pending).toBe(1);
+    timer.runNext();
+    await tick();
+    expect(timer.pending).toBe(0);
+    expect(diagnostics.slice(-3).map(({ attempt }) => attempt)).toEqual([1, 2, 3]);
+    expect(diagnostics.at(-1)).toMatchObject({ outcome: "exhausted" });
+    supervisor.dispose();
+  });
+
+  it("aborts an in-flight refresh without scheduling a retry on dispose", async () => {
+    const socket = new FakeSocket();
+    const timer = fakeRefreshClock();
+    let reads = 0;
+    let refreshAborted = false;
+    const supervisor = createWorkspaceEventSupervisor({
+      socket,
+      daemon,
+      workspaceName: "alpha",
+      sessionName: "tmux-alpha",
+      terminalRefreshClock: timer.clock,
+      fetchTerminalRuntimeInventory: async (signal) => {
+        reads += 1;
+        if (reads === 1) return resource(0);
+        return await new Promise<ReturnType<typeof resource>>((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              refreshAborted = true;
+              reject(new Error("aborted"));
+            },
+            { once: true },
+          );
+        });
+      },
+    });
+    const preparing = supervisor.prepareTerminalRuntimeInventory(new AbortController().signal);
+    socket.emit("open");
+    socket.frame({ type: "hello", daemon, sessions: [], eventSequence: 0 });
+    await tick();
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    const prepared = await preparing;
+    supervisor.adoptTerminalRuntimeInventory(prepared, vi.fn());
+    supervisor.refreshTerminalRuntimeInventory();
+    await tick();
+    supervisor.dispose();
+    await tick();
+    expect(refreshAborted).toBe(true);
+    expect(timer.pending).toBe(0);
+  });
+
+  it("retries a stale response until the event revision becomes readable", async () => {
+    const socket = new FakeSocket();
+    const timer = fakeRefreshClock();
+    const reads = [resource(0), resource(1), resource(2)];
+    const diagnostics: Readonly<Record<string, unknown>>[] = [];
+    const supervisor = createWorkspaceEventSupervisor({
+      socket,
+      daemon,
+      workspaceName: "alpha",
+      sessionName: "tmux-alpha",
+      terminalRefreshClock: timer.clock,
+      fetchTerminalRuntimeInventory: async () => reads.shift() ?? resource(2),
+      onDiagnostic: (phase, details) => {
+        if (phase === "terminal-refresh") diagnostics.push(details);
+      },
+    });
+    const preparing = supervisor.prepareTerminalRuntimeInventory(new AbortController().signal);
+    socket.emit("open");
+    socket.frame({ type: "hello", daemon, sessions: [], eventSequence: 0 });
+    await tick();
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    const prepared = await preparing;
+    const published: number[] = [];
+    supervisor.adoptTerminalRuntimeInventory(prepared, (next) =>
+      published.push(next.resourceRevision),
+    );
+    socket.frame({
+      type: "resource.changed",
+      sequence: 1,
+      workspaceName: "alpha",
+      resource: "terminal-runtime-inventory",
+      revision: 2,
+      causeOperationId: null,
+    });
+    await tick();
+    expect(published).toEqual([]);
+    expect(timer.pending).toBe(1);
+    expect(diagnostics.at(-1)).toMatchObject({
+      attempt: 1,
+      outcome: "retry",
+      failure: "stale-revision",
+    });
+    timer.runNext();
+    await tick();
+    expect(published).toEqual([2]);
+    expect(timer.pending).toBe(0);
+    supervisor.dispose();
+  });
+
+  it("exhausts three stale responses without publishing older authority", async () => {
+    const socket = new FakeSocket();
+    const timer = fakeRefreshClock();
+    let initial = true;
+    const diagnostics: Readonly<Record<string, unknown>>[] = [];
+    const supervisor = createWorkspaceEventSupervisor({
+      socket,
+      daemon,
+      workspaceName: "alpha",
+      sessionName: "tmux-alpha",
+      terminalRefreshClock: timer.clock,
+      fetchTerminalRuntimeInventory: async () => {
+        if (initial) {
+          initial = false;
+          return resource(0);
+        }
+        return resource(1);
+      },
+      onDiagnostic: (phase, details) => {
+        if (phase === "terminal-refresh") diagnostics.push(details);
+      },
+    });
+    const preparing = supervisor.prepareTerminalRuntimeInventory(new AbortController().signal);
+    socket.emit("open");
+    socket.frame({ type: "hello", daemon, sessions: [], eventSequence: 0 });
+    await tick();
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    const prepared = await preparing;
+    const sink = vi.fn();
+    supervisor.adoptTerminalRuntimeInventory(prepared, sink);
+    socket.frame({
+      type: "resource.changed",
+      sequence: 1,
+      workspaceName: "alpha",
+      resource: "terminal-runtime-inventory",
+      revision: 3,
+      causeOperationId: null,
+    });
+    await tick();
+    timer.runNext();
+    await tick();
+    timer.runNext();
+    await tick();
+    expect(timer.pending).toBe(0);
+    expect(sink).not.toHaveBeenCalled();
+    expect(diagnostics.map(({ attempt }) => attempt)).toEqual([1, 2, 3]);
+    expect(diagnostics.at(-1)).toMatchObject({
+      outcome: "exhausted",
+      failure: "stale-revision",
+    });
+    supervisor.dispose();
+  });
+
+  it("charges an in-flight failed attempt despite repeated consumer coalescing", async () => {
+    const socket = new FakeSocket();
+    const timer = fakeRefreshClock();
+    const firstRefresh = deferred<ReturnType<typeof resource>>();
+    const finalRefresh = deferred<ReturnType<typeof resource>>();
+    let reads = 0;
+    const diagnostics: Readonly<Record<string, unknown>>[] = [];
+    const supervisor = createWorkspaceEventSupervisor({
+      socket,
+      daemon,
+      workspaceName: "alpha",
+      sessionName: "tmux-alpha",
+      terminalRefreshClock: timer.clock,
+      fetchTerminalRuntimeInventory: async () => {
+        reads += 1;
+        if (reads === 1) return resource(0);
+        if (reads === 2) return firstRefresh.promise;
+        if (reads === 4) return finalRefresh.promise;
+        throw new Error("persistent");
+      },
+      onDiagnostic: (phase, details) => {
+        if (phase === "terminal-refresh") diagnostics.push(details);
+      },
+    });
+    const preparing = supervisor.prepareTerminalRuntimeInventory(new AbortController().signal);
+    socket.emit("open");
+    socket.frame({ type: "hello", daemon, sessions: [], eventSequence: 0 });
+    await tick();
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    const prepared = await preparing;
+    supervisor.adoptTerminalRuntimeInventory(prepared, vi.fn());
+    supervisor.refreshTerminalRuntimeInventory();
+    await tick();
+    for (let index = 0; index < 1_000; index += 1) supervisor.refreshTerminalRuntimeInventory();
+    for (let index = 1; index <= 1_000; index += 1)
+      socket.frame({
+        type: "resource.changed",
+        sequence: index,
+        workspaceName: "alpha",
+        resource: "terminal-runtime-inventory",
+        revision: 0,
+        causeOperationId: null,
+      });
+    firstRefresh.reject(new Error("first failed"));
+    await tick();
+    expect(timer.pending).toBe(1);
+    timer.runNext();
+    await tick();
+    expect(timer.pending).toBe(1);
+    timer.runNext();
+    await tick();
+    for (let index = 0; index < 1_000; index += 1) supervisor.refreshTerminalRuntimeInventory();
+    finalRefresh.reject(new Error("final failed"));
+    await tick();
+    expect(timer.pending).toBe(0);
+    expect(reads).toBe(4);
+    expect(diagnostics.map(({ attempt }) => attempt)).toEqual([1, 2, 3]);
+    expect(diagnostics.at(-1)).toMatchObject({
+      outcome: "exhausted",
+      failure: "read-failed",
+    });
+    expect(diagnostics.at(-1)?.coalescedRequests).toBe(999);
+    supervisor.refreshTerminalRuntimeInventory();
+    await tick();
+    expect(diagnostics.at(-1)).toMatchObject({ attempt: 1, coalescedRequests: 0 });
+    supervisor.dispose();
+  });
+
   it("installs terminal authority first and never publishes a dirty initial read", async () => {
     const socket = new FakeSocket();
     const first = deferred<ReturnType<typeof resource>>();
@@ -172,6 +651,141 @@ describe("WorkspaceEventSupervisor", () => {
     expect(verified).toHaveBeenCalledTimes(1);
     supervisor.dispose();
     expect(socket.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("acknowledges one exact application-shell mutation before invalidation", async () => {
+    const socket = new FakeSocket();
+    const supervisor = createWorkspaceEventSupervisor({
+      socket,
+      daemon,
+      workspaceName: "alpha",
+      sessionName: "tmux-alpha",
+      fetchTerminalRuntimeInventory: async () => resource(0),
+    });
+    const preparing = supervisor.prepareTerminalRuntimeInventory(new AbortController().signal);
+    socket.emit("open");
+    socket.frame({ type: "hello", daemon, sessions: [], eventSequence: 0 });
+    await tick();
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    const prepared = await preparing;
+    supervisor.adoptTerminalRuntimeInventory(prepared, vi.fn());
+    const ordered: string[] = [];
+    const acknowledgements: unknown[] = [];
+    const retiredAcknowledgement = vi.fn((acknowledgement: unknown) => {
+      acknowledgements.push(acknowledgement);
+      ordered.push("ack");
+    });
+    const retiredInvalidation = vi.fn(() => ordered.push("invalidate"));
+    const connection = supervisor.connectApplicationShell({
+      onVerifiedOpen: vi.fn(),
+      onInvalidate: retiredInvalidation,
+      onOperationAcknowledged: retiredAcknowledgement,
+      onMalformedFrame: vi.fn(),
+      onPeerMismatch: vi.fn(),
+      onProtocolError: vi.fn(),
+      onClose: vi.fn(),
+      onError: vi.fn(),
+    });
+    await tick();
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 2,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    await tick();
+    const operationId = "17000000-0000-4000-8000-000000000017";
+    const changed = {
+      type: "resource.changed" as const,
+      sequence: 1,
+      workspaceName: "alpha",
+      resource: "application-shell" as const,
+      revision: 8,
+      causeOperationId: operationId,
+    };
+    socket.frame(changed);
+    expect(ordered).toEqual(["ack", "invalidate"]);
+    expect(acknowledgements).toEqual([
+      {
+        daemonInstanceId: daemon.instanceId,
+        operationId,
+        sequence: 1,
+        revision: 8,
+      },
+    ]);
+
+    socket.frame(changed);
+    socket.frame({ ...changed, sequence: 0 });
+    expect(ordered).toEqual(["ack", "invalidate"]);
+    socket.frame({ ...changed, sequence: 3, revision: 9 });
+    expect(ordered).toEqual(["ack", "invalidate", "invalidate"]);
+    expect(retiredAcknowledgement).toHaveBeenCalledTimes(1);
+    socket.frame({ ...changed, sequence: 4, workspaceName: "beta", revision: 10 });
+    expect(retiredAcknowledgement).toHaveBeenCalledTimes(1);
+
+    connection.close();
+    const replacementAcknowledgement = vi.fn();
+    const replacementInvalidation = vi.fn();
+    const replacementConnection = supervisor.connectApplicationShell({
+      onVerifiedOpen: vi.fn(),
+      onInvalidate: replacementInvalidation,
+      onOperationAcknowledged: replacementAcknowledgement,
+      onMalformedFrame: vi.fn(),
+      onPeerMismatch: vi.fn(),
+      onProtocolError: vi.fn(),
+      onClose: vi.fn(),
+      onError: vi.fn(),
+    });
+    await tick();
+    socket.frame({ ...changed, sequence: 5, revision: 11 });
+    expect(retiredAcknowledgement).toHaveBeenCalledTimes(1);
+    expect(retiredInvalidation).toHaveBeenCalledTimes(2);
+    expect(replacementAcknowledgement).toHaveBeenCalledTimes(1);
+    expect(replacementInvalidation).toHaveBeenCalledTimes(1);
+
+    replacementConnection.close();
+    const reentrantAcknowledgement = vi.fn();
+    const reentrantInvalidation = vi.fn();
+    const successorAcknowledgement = vi.fn();
+    const successorInvalidation = vi.fn();
+    let reentrantConnection!: ReturnType<typeof supervisor.connectApplicationShell>;
+    reentrantConnection = supervisor.connectApplicationShell({
+      onVerifiedOpen: vi.fn(),
+      onInvalidate: reentrantInvalidation,
+      onOperationAcknowledged: (acknowledgement) => {
+        reentrantAcknowledgement(acknowledgement);
+        reentrantConnection.close();
+        supervisor.connectApplicationShell({
+          onVerifiedOpen: vi.fn(),
+          onInvalidate: successorInvalidation,
+          onOperationAcknowledged: successorAcknowledgement,
+          onMalformedFrame: vi.fn(),
+          onPeerMismatch: vi.fn(),
+          onProtocolError: vi.fn(),
+          onClose: vi.fn(),
+          onError: vi.fn(),
+        });
+      },
+      onMalformedFrame: vi.fn(),
+      onPeerMismatch: vi.fn(),
+      onProtocolError: vi.fn(),
+      onClose: vi.fn(),
+      onError: vi.fn(),
+    });
+    await tick();
+    socket.frame({ ...changed, sequence: 6, revision: 12 });
+    expect(reentrantAcknowledgement).toHaveBeenCalledTimes(1);
+    expect(reentrantInvalidation).not.toHaveBeenCalled();
+    expect(successorInvalidation).not.toHaveBeenCalled();
+    socket.frame({ ...changed, sequence: 7, revision: 13 });
+    expect(successorAcknowledgement).toHaveBeenCalledTimes(1);
+    expect(successorInvalidation).toHaveBeenCalledTimes(1);
+    supervisor.dispose();
   });
 
   it("serializes the full terminal, shell, and catalog interest union on one socket", async () => {

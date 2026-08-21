@@ -219,6 +219,37 @@ function rig(coherent = true, corruptBeforeCoherent = false) {
 }
 
 describe("OpenTUI WorkspaceClient runtime port", () => {
+  it("retains one current window across tmux false-then-true switch frames", async () => {
+    const test = rig(true);
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const seen: Array<{ current: string | null; currentCount: number }> = [];
+    const stop = port.onLayout((snapshot) =>
+      seen.push({
+        current: snapshot.current?.semanticWindowId ?? null,
+        currentCount: snapshot.windows.filter((window) => window.currentWindow).length,
+      }),
+    );
+    const main = port.getLayout()!;
+    test.options().onLayout?.({ ...main, currentWindow: false, panes: [main.panes[0]!] });
+    expect(seen.at(-1)).toEqual({ current: "window.main", currentCount: 1 });
+    test.options().onLayout?.({
+      ...main,
+      semanticWindowId: "window.next",
+      windowName: "next",
+      currentWindow: true,
+      panes: [main.panes[1]!],
+    });
+    expect(seen.at(-1)).toEqual({ current: "window.next", currentCount: 1 });
+    expect(seen.every(({ current, currentCount }) => current !== null && currentCount === 1)).toBe(
+      true,
+    );
+    stop();
+    await port.close();
+  });
+
   it("does not publish a live port until current layout and every pane seed are coherent", async () => {
     const test = rig(false);
     let settled = false;
@@ -242,7 +273,10 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
       rows: 40,
       zoomed: false,
       paneBorderStatus: "off",
-      panes: [],
+      panes: [
+        { pane: PANE_A, left: 0, top: 0, width: 60, height: 40, active: true },
+        { pane: PANE_B, left: 60, top: 0, width: 60, height: 40, active: false },
+      ],
     });
     const first = seedDelivery(PANE_A, blankTerminalReplicaSnapshot(4, 2), "201");
     test.options().onTerminalDelivery(PANE_A, first.envelope);
@@ -258,6 +292,51 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
     expect(port.getLayout()).toMatchObject({ semanticWindowId: "window.main" });
     await port.close();
   });
+
+  for (const [name, mutate] of [
+    ["missing", (panes: Array<Record<string, unknown>>) => panes.slice(0, 1)],
+    ["extra", (panes: Array<Record<string, unknown>>) => [...panes, { ...panes[0], pane: PANE_C }]],
+    ["duplicate", (panes: Array<Record<string, unknown>>) => [...panes, { ...panes[0] }]],
+  ] as const) {
+    it(`refuses coherent activation for ${name} pane coverage`, async () => {
+      const test = rig(false);
+      let settled = false;
+      const opening = connectOpenTuiWorkspaceRuntimePort({
+        inventory: inventory(),
+        routing: test.routing,
+      }).then((port) => {
+        settled = true;
+        return port;
+      });
+      await Promise.resolve();
+      const valid = {
+        type: "layout" as const,
+        semanticWindowId: "window.main",
+        windowName: "main",
+        currentWindow: true,
+        cols: 120,
+        rows: 40,
+        zoomed: false,
+        paneBorderStatus: "off" as const,
+        panes: [
+          { pane: PANE_A, left: 0, top: 0, width: 60, height: 40, active: true },
+          { pane: PANE_B, left: 60, top: 0, width: 60, height: 40, active: false },
+        ],
+      };
+      test.options().onLayout?.({ ...valid, panes: mutate(valid.panes) });
+      for (const [index, pane] of [PANE_A, PANE_B].entries()) {
+        const seed = seedDelivery(pane, blankTerminalReplicaSnapshot(4, 2), `30${index}`);
+        test.options().onTerminalDelivery(pane, seed.envelope);
+        for (const chunk of seed.chunks) test.options().onTerminalDelivery(pane, chunk);
+      }
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      test.options().onLayout?.(valid);
+      const port = await opening;
+      expect(settled).toBe(true);
+      await port.close();
+    });
+  }
 
   it("primes every pane across the inventory before coherent publication", async () => {
     const test = rig();
@@ -381,8 +460,11 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
       paneBorderStatus: "off",
       panes: [{ pane: PANE_A, left: 0, top: 0, width: 60, height: 40, active: true }],
     });
-    expect(layouts).toHaveLength(2);
-    expect(port.getLayout()).toMatchObject({ cols: 120, panes: [{ pane: PANE_A }] });
+    expect(layouts).toHaveLength(1);
+    expect(port.getLayout()).toMatchObject({
+      cols: 120,
+      panes: [{ pane: PANE_A }, { pane: PANE_B }],
+    });
     expect(Object.isFrozen(port.getLayout())).toBe(true);
     test.options().onLayout?.({
       type: "layout",
@@ -399,6 +481,130 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
       current: { semanticWindowId: "window.main" },
       windows: [{ semanticWindowId: "window.main" }, { semanticWindowId: "window.logs" }],
     });
+  });
+
+  it("retains the last coherent live layout across incomplete extra and duplicate updates", async () => {
+    const test = rig();
+    const rejected: unknown[] = [];
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+      onDiagnostic: (phase, details) => {
+        if (phase === "layout" && "rejected" in details) rejected.push(details);
+      },
+    });
+    const coherent = port.getLayoutSnapshot();
+    const published: unknown[] = [];
+    port.onLayout((snapshot) => published.push(snapshot));
+    const frame = coherent.current!;
+    const invalidPanes = [
+      [frame.panes[0]!],
+      [...frame.panes, { ...frame.panes[0]! }],
+      [...frame.panes, { ...frame.panes[0]!, pane: PANE_C }],
+    ];
+    for (const panes of invalidPanes) {
+      test.options().onLayout?.({ ...frame, panes });
+      expect(port.getLayoutSnapshot()).toBe(coherent);
+    }
+    for (let index = 0; index < 150; index += 1)
+      test.options().onLayout?.({ ...frame, panes: invalidPanes[0]! });
+    expect(published).toEqual([coherent]);
+    expect(rejected).toHaveLength(4);
+    await port.close();
+  });
+
+  it("deduplicates identical semantic layouts while publishing switch rename and geometry once", async () => {
+    const test = rig();
+    const layoutDiagnostics: unknown[] = [];
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+      onDiagnostic: (phase, details) => {
+        if (phase === "layout" && !("rejected" in details)) layoutDiagnostics.push(details);
+      },
+    });
+    const published: Array<ReturnType<OpenTuiWorkspaceRuntimePort["getLayoutSnapshot"]>> = [];
+    port.onLayout((snapshot) => published.push(snapshot));
+    const initial = port.getLayoutSnapshot().current!;
+
+    for (let index = 0; index < 150; index += 1) {
+      test.options().onLayout?.({
+        ...initial,
+        panes: initial.panes.map((pane) => ({ ...pane })),
+      });
+    }
+    expect(published).toHaveLength(1);
+    expect(layoutDiagnostics).toHaveLength(1);
+
+    test.options().onLayout?.({ ...initial, windowName: "renamed" });
+    expect(published).toHaveLength(2);
+    expect(layoutDiagnostics).toHaveLength(2);
+    test.options().onLayout?.({ ...initial, windowName: "renamed" });
+    expect(published).toHaveLength(2);
+    expect(layoutDiagnostics).toHaveLength(2);
+
+    const renamed = port.getLayoutSnapshot().current!;
+    test.options().onLayout?.({
+      ...renamed,
+      cols: renamed.cols + 1,
+      panes: renamed.panes.map((pane, index) =>
+        index === renamed.panes.length - 1 ? { ...pane, width: pane.width + 1 } : { ...pane },
+      ),
+    });
+    expect(published).toHaveLength(3);
+    expect(layoutDiagnostics).toHaveLength(3);
+
+    const resized = port.getLayoutSnapshot().current!;
+    test.options().onLayout?.({ ...resized, currentWindow: false, panes: [resized.panes[0]!] });
+    expect(published).toHaveLength(3);
+    test.options().onLayout?.({
+      ...resized,
+      semanticWindowId: "window.next",
+      windowName: "next",
+      currentWindow: true,
+      panes: [resized.panes[1]!],
+    });
+    expect(published).toHaveLength(4);
+    expect(published.at(-1)?.current?.semanticWindowId).toBe("window.next");
+    test.options().onLayout?.({ ...resized, currentWindow: true, panes: [resized.panes[0]!] });
+    expect(published).toHaveLength(5);
+    expect(layoutDiagnostics).toHaveLength(5);
+    expect(published.at(-1)?.current?.semanticWindowId).toBe("window.main");
+    await port.close();
+  });
+
+  it("retains one unstamped window across rename by stable pane identity", async () => {
+    const test = rig(false);
+    const opening = connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const frame = (windowName: string) => ({
+      type: "layout" as const,
+      semanticWindowId: null,
+      windowName,
+      currentWindow: true,
+      cols: 120,
+      rows: 40,
+      zoomed: false,
+      paneBorderStatus: "off" as const,
+      panes: [
+        { pane: PANE_A, left: 0, top: 0, width: 60, height: 40, active: true },
+        { pane: PANE_B, left: 60, top: 0, width: 60, height: 40, active: false },
+      ],
+    });
+    test.options().onLayout?.(frame("before"));
+    for (const [index, pane] of [PANE_A, PANE_B].entries()) {
+      const seed = seedDelivery(pane, blankTerminalReplicaSnapshot(4, 2), `40${index}`);
+      test.options().onTerminalDelivery(pane, seed.envelope);
+      for (const chunk of seed.chunks) test.options().onTerminalDelivery(pane, chunk);
+    }
+    const port = await opening;
+    test.options().onLayout?.(frame("after"));
+    expect(port.getLayoutSnapshot().current).toMatchObject({ windowName: "after" });
+    expect(
+      port.getLayoutSnapshot().windows.filter(({ semanticWindowId }) => semanticWindowId === null),
+    ).toMatchObject([{ windowName: "after" }]);
   });
 
   it("delivers only the addressed pane, preserves trace metadata, then ACKs", async () => {

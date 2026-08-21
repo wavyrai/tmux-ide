@@ -364,9 +364,12 @@ describe("createSessionRuntimeMultiplexerBackend", () => {
       origin: "gui",
     } as const;
 
-    await expect(h.backend.mutate(request(intent), "stale-host")).rejects.toThrow(
-      "no live controller grant",
-    );
+    const failure = await h.backend.mutate(request(intent), "stale-host").catch((error) => error);
+    expect(failure).toBeInstanceOf(WorkspaceMultiplexerError);
+    expect(failure).toMatchObject({
+      code: "operation_conflict",
+      context: { reason: "authenticated_controller_unavailable" },
+    });
     expect(h.connect).not.toHaveBeenCalled();
     expect(h.submitIntent).not.toHaveBeenCalled();
     expect(h.submitAuthenticatedIntent).not.toHaveBeenCalled();

@@ -88,6 +88,7 @@ export interface DaemonTransportDependencies {
       | "terminal-event-hello"
       | "terminal-interest-send"
       | "terminal-interest-ack"
+      | "terminal-refresh"
       | "terminal-http-start"
       | "terminal-http-response"
       | "terminal-capability-adopted"

@@ -16,6 +16,14 @@ export interface WorkspaceClientOperationSnapshot {
   readonly pending: readonly WorkspaceClientPendingOperation[];
   readonly terminalOperationIds: readonly string[];
   readonly lastReceipt: InteractionReceipt | null;
+  readonly lastResourceChangeAcknowledgement: WorkspaceClientResourceChangeAcknowledgement | null;
+}
+
+export interface WorkspaceClientResourceChangeAcknowledgement {
+  readonly daemonInstanceId: string;
+  readonly operationId: string;
+  readonly sequence: number;
+  readonly revision: number;
 }
 
 export interface WorkspaceClientOperationLedger {
@@ -27,6 +35,10 @@ export interface WorkspaceClientOperationLedger {
     readonly timeoutMs: number;
   }): boolean;
   receipt(receipt: InteractionReceipt, generation: number): boolean;
+  acknowledgeResourceChange(
+    acknowledgement: WorkspaceClientResourceChangeAcknowledgement,
+    generation: number,
+  ): boolean;
   terminal(operationId: string, generation: number): boolean;
   replaceGeneration(generation: number): void;
   dispose(): void;
@@ -50,6 +62,7 @@ export function createWorkspaceClientOperationLedger(options: {
   const terminal = new Set<string>();
   let terminalOrder: string[] = [];
   let lastReceipt: InteractionReceipt | null = null;
+  let lastResourceChangeAcknowledgement: WorkspaceClientResourceChangeAcknowledgement | null = null;
   let generation = options.initialGeneration;
   let disposed = false;
 
@@ -81,6 +94,7 @@ export function createWorkspaceClientOperationLedger(options: {
         pending: Object.freeze([...pending.values()].map(({ operation }) => operation)),
         terminalOperationIds: Object.freeze([...terminalOrder]),
         lastReceipt,
+        lastResourceChangeAcknowledgement,
       });
     },
     begin(input) {
@@ -140,6 +154,23 @@ export function createWorkspaceClientOperationLedger(options: {
       publish();
       return true;
     },
+    acknowledgeResourceChange(acknowledgement, expectedGeneration) {
+      if (
+        disposed ||
+        expectedGeneration !== generation ||
+        !Number.isSafeInteger(acknowledgement.sequence) ||
+        acknowledgement.sequence < 0 ||
+        !Number.isSafeInteger(acknowledgement.revision) ||
+        acknowledgement.revision < 0 ||
+        (lastResourceChangeAcknowledgement !== null &&
+          acknowledgement.sequence <= lastResourceChangeAcknowledgement.sequence)
+      ) {
+        return false;
+      }
+      lastResourceChangeAcknowledgement = Object.freeze({ ...acknowledgement });
+      publish();
+      return true;
+    },
     terminal: settle,
     replaceGeneration(nextGeneration) {
       if (disposed || nextGeneration === generation) return;
@@ -152,6 +183,7 @@ export function createWorkspaceClientOperationLedger(options: {
       terminal.clear();
       terminalOrder = [];
       lastReceipt = null;
+      lastResourceChangeAcknowledgement = null;
       publish();
     },
     dispose() {
@@ -165,6 +197,7 @@ export function createWorkspaceClientOperationLedger(options: {
       terminal.clear();
       terminalOrder = [];
       lastReceipt = null;
+      lastResourceChangeAcknowledgement = null;
     },
   };
 }

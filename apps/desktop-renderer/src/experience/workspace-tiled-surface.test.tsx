@@ -658,9 +658,27 @@ describe("the layout-faithful workspace view", () => {
     const tab = root.querySelector<HTMLElement>(".window-tabs__tab")!;
     expect(tab.dataset.windowTab).toBe("window.editor");
     expect(tab.dataset.windowResourceId).toBe("terminal-window.hashed-editor");
+    expect(tab.dataset.windowLabel).toBe("editor");
     expect(tab.dataset.semanticPaneIds).toBe('["pane.a","pane.b"]');
     expect(tab.dataset.paneCount).toBe("2");
     expect(tab.dataset.active).toBe("true");
+  });
+
+  it("bounds the diagnostic window label and excludes control characters", () => {
+    const renderLabel = (label: string) =>
+      renderSurface([layout({ windowName: label, panes: SPLIT.panes })], {
+        fallbackWindows: [
+          {
+            key: "terminal-window.hashed-editor",
+            label,
+            panes: ["pane.b", "pane.a"],
+            active: true,
+          },
+        ],
+      }).root.querySelector<HTMLElement>(".window-tabs__tab")!.dataset.windowLabel;
+    expect(renderLabel("renamed-window")).toBe("renamed-window");
+    expect(renderLabel("x".repeat(257))).toBe("");
+    expect(renderLabel("bad\nlabel")).toBe("");
   });
 
   it("fails closed when a layout window has no unique inventory membership join", () => {

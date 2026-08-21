@@ -9,6 +9,10 @@ import {
   type SessionRuntimeIntentResult,
   type SessionRuntimeReceiptInput,
 } from "./semantic-mutation-executor.ts";
+import {
+  createSessionRuntimeObservability,
+  type SessionRuntimeStageSpan,
+} from "./runtime-observability.ts";
 
 const OP_A = "11111111-1111-4111-8111-111111111111";
 const OP_B = "22222222-2222-4222-8222-222222222222";
@@ -102,6 +106,7 @@ function rig(
 ) {
   let sequence = 0;
   const receipts: InteractionReceipt[] = [];
+  const resourceChanges: unknown[] = [];
   const publishReceipt = (input: SessionRuntimeReceiptInput): InteractionReceipt => {
     const receipt = { type: "interaction.receipt", sequence: ++sequence, ...input } as const;
     receipts.push(receipt);
@@ -111,10 +116,11 @@ function rig(
     resolveSession: (workspace) => (workspace === "beta" ? "session-beta" : "session-alpha"),
     execute: options.execute ?? resultFor,
     publishReceipt,
+    publishResourceChange: (change) => resourceChanges.push(change),
     observationTimeoutMs: options.timeout ?? 100,
     now: () => new Date("2026-08-11T10:00:00.000Z"),
   });
-  return { executor, receipts };
+  return { executor, receipts, resourceChanges };
 }
 
 function submit(
@@ -133,6 +139,146 @@ function submit(
 }
 
 describe("SessionSemanticMutationExecutor", () => {
+  it("threads one operation-fenced detailed timing port and keeps a throwing span sink fail-open", async () => {
+    let micros = 0;
+    const observed: SessionRuntimeStageSpan[] = [];
+    const observability = createSessionRuntimeObservability({
+      nowMicros: () => (micros += 10),
+      onSpan: (span) => {
+        observed.push(span);
+        if (span.operation === "semantic-pane-resolution") throw new Error("sink failed");
+      },
+    });
+    const executor = new SessionSemanticMutationExecutor({
+      resolveSession: () => "session-alpha",
+      traceAuthority: { generation: "daemon-a", incarnation: null },
+      observability,
+      execute: (operationId, intent, timing) => {
+        const started = timing?.nowMicros() ?? -1;
+        timing?.record("semantic-pane-resolution", started, timing.nowMicros());
+        return resultFor(operationId, intent);
+      },
+      publishReceipt: (input) => ({ type: "interaction.receipt", sequence: 1, ...input }),
+    });
+    await expect(
+      submit(executor, OP_A, {
+        verb: "workspace.pane.select",
+        workspaceName: "alpha",
+        semanticPaneId: "pane.beta",
+      }),
+    ).resolves.toMatchObject({ outcome: "applied" });
+    expect(observed).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          traceId: OP_A,
+          scenario: "window-switch",
+          authority: { generation: "daemon-a", incarnation: null },
+          operation: "semantic-pane-resolution",
+        }),
+        expect.objectContaining({ traceId: OP_A, operation: "semantic-mutation-effect" }),
+      ]),
+    );
+    await executor.dispose();
+  });
+
+  it("publishes applied semantic invalidations once only after the observed receipt", async () => {
+    const operation = operationId(90);
+    const order: string[] = [];
+    let sequence = 0;
+    const executor = new SessionSemanticMutationExecutor({
+      resolveSession: () => "session-alpha",
+      execute: resultFor,
+      publishReceipt: (input) => {
+        order.push(`receipt:${input.phase}`);
+        return { type: "interaction.receipt", sequence: ++sequence, ...input };
+      },
+      publishResourceChange: (change) => order.push(`resource:${change.resource}`),
+    });
+    const intent = {
+      verb: "workspace.pane.select" as const,
+      workspaceName: "alpha",
+      semanticPaneId: "pane.beta",
+    };
+    await submit(executor, operation, intent);
+    await submit(executor, operation, intent);
+    expect(order).toEqual([
+      "receipt:accepted",
+      "receipt:observed",
+      "resource:application-shell",
+      "resource:workspace-missions",
+    ]);
+    await executor.dispose();
+  });
+
+  it("never invalidates rejected, accepted-only timed-out, replayed, send, or read work", async () => {
+    const rejected = rig({
+      execute: () => {
+        throw new Error("rejected");
+      },
+    });
+    await expect(
+      submit(rejected.executor, operationId(91), {
+        verb: "workspace.pane.select",
+        workspaceName: "alpha",
+        semanticPaneId: "pane.beta",
+      }),
+    ).rejects.toThrow();
+    expect(rejected.resourceChanges).toEqual([]);
+    await rejected.executor.dispose();
+
+    const replayed = rig({
+      execute: (id) => ({
+        ...resultFor(id, {
+          verb: "workspace.pane.select",
+          workspaceName: "alpha",
+          semanticPaneId: "pane.beta",
+        }),
+        outcome: "replayed",
+      }),
+    });
+    await submit(replayed.executor, operationId(92), {
+      verb: "workspace.pane.select",
+      workspaceName: "alpha",
+      semanticPaneId: "pane.beta",
+    });
+    expect(replayed.resourceChanges).toEqual([]);
+    await replayed.executor.dispose();
+
+    const timedOut = rig({ timeout: 1 });
+    await expect(submit(timedOut.executor, operationId(95), send())).rejects.toThrow();
+    expect(timedOut.resourceChanges).toEqual([]);
+    await timedOut.executor.dispose();
+
+    for (const [index, intent] of [
+      send(),
+      {
+        verb: "workspace.pane.read" as const,
+        workspaceName: "alpha",
+        semanticPaneId: "pane.alpha",
+        origin: "sdk" as const,
+      },
+    ].entries()) {
+      let executor!: SessionSemanticMutationExecutor;
+      const built = rig({
+        execute: (id, exactIntent) => {
+          queueMicrotask(() =>
+            executor.observe({
+              operationId: id,
+              workspaceName: exactIntent.workspaceName,
+              semanticPaneId: exactIntent.semanticPaneId,
+              operationKind: exactIntent.verb,
+            }),
+          );
+          return resultFor(id, exactIntent);
+        },
+      });
+      executor = built.executor;
+      await submit(executor, operationId(93 + index), intent);
+      expect(built.resourceChanges).toEqual([]);
+      await executor.dispose();
+    }
+  });
+
   it("publishes result-derived accepted and observed receipts for all eleven intents", async () => {
     const intents: SessionRuntimeSemanticIntent[] = [
       {
@@ -217,6 +363,41 @@ describe("SessionSemanticMutationExecutor", () => {
           receipt.operationKind === "workspace.pane.resize" && receipt.phase === "observed",
       )?.proof,
     ).toMatchObject({ cells: 72 });
+    expect(built.resourceChanges).toEqual(
+      intents.flatMap((intent, index) => {
+        const result = resultFor(operationId(index + 100), intent);
+        if (
+          result === undefined ||
+          result.verb === "workspace.pane.send" ||
+          result.outcome !== "applied"
+        )
+          return [];
+        const base = {
+          workspaceName: "alpha",
+          causeOperationId: operationId(index + 100),
+        };
+        const changes = [
+          { ...base, resource: "application-shell" },
+          { ...base, resource: "workspace-missions" },
+        ];
+        if (
+          [
+            "workspace.window.split",
+            "workspace.window.kill",
+            "workspace.pane.kill",
+            "workspace.session.kill",
+          ].includes(result.verb)
+        )
+          changes.push({ ...base, workspaceName: null, resource: "fleet-catalog" });
+        if (result.verb === "workspace.session.kill")
+          changes.push({ ...base, workspaceName: null, resource: "workspace-catalog" });
+        if (result.verb === "workspace.rename" && result.scope === "session") {
+          changes.push({ ...base, workspaceName: null, resource: "fleet-catalog" });
+          changes.push({ ...base, workspaceName: null, resource: "workspace-catalog" });
+        }
+        return changes;
+      }),
+    );
     await executor.dispose();
   });
 

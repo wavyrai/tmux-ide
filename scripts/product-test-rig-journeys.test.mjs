@@ -53,6 +53,7 @@ import {
   runCoherentFirstPaneOwnerBoot,
   runFirstKeyPasteOwnerBoot,
   runFocusOwnerBoot,
+  runWindowLifecycleOwnerBoot,
   runProductJourneyPlan,
   settleInternalProductRigCleanup,
   startOwnedProductRigDaemon,
@@ -144,22 +145,146 @@ test("golden registry enables only accepted direct journey executors", () => {
     golden.map(({ id }) => id),
     expected,
   );
-  assert.ok(golden.slice(0, 4).every(({ implementation }) => implementation === "implemented"));
-  assert.ok(golden.slice(4).every(({ implementation }) => implementation === "pending"));
+  assert.ok(golden.slice(0, 5).every(({ implementation }) => implementation === "implemented"));
+  assert.ok(golden.slice(5).every(({ implementation }) => implementation === "pending"));
   assert.deepEqual(auditProductJourneyScope(), {
     complete: false,
     declarationComplete: true,
     executableComplete: false,
     missing: [],
-    pendingJourneyIds: expected.slice(4),
+    pendingJourneyIds: expected.slice(5),
   });
   assert.deepEqual(auditProductJourneyScope(golden.slice(1)), {
     complete: false,
     declarationComplete: false,
     executableComplete: false,
     missing: ["configless", "cold-start"],
-    pendingJourneyIds: expected.slice(4),
+    pendingJourneyIds: expected.slice(5),
   });
+});
+
+test("window lifecycle owner preserves exact create switch rename Web ordering and boundaries", async () => {
+  const calls = [];
+  const renamedValue = Object.freeze({ windows: ["post-rename"] });
+  const operation =
+    (name, value = {}) =>
+    async () => (calls.push(name), value);
+  const operations = {
+    onBoundary: (boundary) => calls.push(`boundary:${boundary}`),
+    createWindowNamespace: operation("namespace"),
+    startCanonicalDaemon: operation("daemon"),
+    openCanonicalWorkspace: operation("workspace"),
+    buildBeforeMeasurement: operation("build"),
+    launchWindowTui: operation("tui-started"),
+    waitForWindowHostReady: operation("host"),
+    waitForWindowTuiCoherent: operation("tui"),
+    proveWindowBaseline: operation("baseline"),
+    createWindow: operation("create"),
+    primeCreatedWindow: operation("prime"),
+    renameWindow: operation("rename", renamedValue),
+    driveWarmSwitches: async (...args) => {
+      calls.push("switch");
+      assert.equal(args[6], renamedValue);
+      return {};
+    },
+    startWebAfterWindowLifecycle: operation("web"),
+  };
+  await runWindowLifecycleOwnerBoot(operations);
+  assert.deepEqual(calls, [
+    "boundary:window-namespace-ready",
+    "namespace",
+    "boundary:window-daemon-ready",
+    "daemon",
+    "boundary:window-daemon-ready",
+    "workspace",
+    "boundary:window-tui-build",
+    "build",
+    "boundary:window-tui-started",
+    "tui-started",
+    "boundary:window-host-ready",
+    "host",
+    "boundary:window-tui-coherent",
+    "tui",
+    "boundary:window-baseline",
+    "baseline",
+    "boundary:window-create-proved",
+    "create",
+    "boundary:window-switch-visible",
+    "prime",
+    "boundary:window-rename-visible",
+    "rename",
+    "boundary:window-switch-distribution",
+    "switch",
+    "boundary:window-web-correlation",
+    "web",
+  ]);
+  for (const [method, boundary] of [
+    ["createWindowNamespace", "window-namespace-ready"],
+    ["startCanonicalDaemon", "window-daemon-ready"],
+    ["openCanonicalWorkspace", "window-daemon-ready"],
+    ["buildBeforeMeasurement", "window-tui-build"],
+    ["launchWindowTui", "window-tui-started"],
+    ["waitForWindowHostReady", "window-host-ready"],
+    ["waitForWindowTuiCoherent", "window-tui-coherent"],
+    ["proveWindowBaseline", "window-baseline"],
+    ["createWindow", "window-create-proved"],
+    ["primeCreatedWindow", "window-switch-visible"],
+    ["renameWindow", "window-rename-visible"],
+    ["driveWarmSwitches", "window-switch-distribution"],
+    ["startWebAfterWindowLifecycle", "window-web-correlation"],
+  ]) {
+    await assert.rejects(
+      runWindowLifecycleOwnerBoot({
+        ...operations,
+        [method]: async () => {
+          throw new Error(`failed ${method}`);
+        },
+      }),
+      (error) => error?.boundary === boundary,
+    );
+  }
+});
+
+test("window lifecycle owner preserves the bounded owned-action predicate at rename boundary", async () => {
+  const observation = Object.freeze({
+    version: 1,
+    operation: "window-owned-action",
+    predicate: "action-result",
+    action: "workspace.rename",
+    operationId: "12345678-1234-4234-8234-123456789abc",
+    status: 200,
+    ok: false,
+    resultPresent: false,
+    code: "operation_conflict",
+    reason: "controller_conflict",
+    issueCount: 0,
+  });
+  const operation =
+    (value = {}) =>
+    async () =>
+      value;
+  await assert.rejects(
+    runWindowLifecycleOwnerBoot({
+      createWindowNamespace: operation(),
+      startCanonicalDaemon: operation(),
+      openCanonicalWorkspace: operation(),
+      buildBeforeMeasurement: operation(),
+      launchWindowTui: operation(),
+      waitForWindowHostReady: operation(),
+      waitForWindowTuiCoherent: operation(),
+      proveWindowBaseline: operation(),
+      createWindow: operation(),
+      primeCreatedWindow: operation(),
+      renameWindow: async () => {
+        const error = new Error("owned action failed");
+        error.observation = observation;
+        throw error;
+      },
+      driveWarmSwitches: operation(),
+      startWebAfterWindowLifecycle: operation(),
+    }),
+    (error) => error?.boundary === "window-rename-visible" && error?.observation === observation,
+  );
 });
 
 test("scratch fleet rejects unsafe preseed markers before creating any namespace", async () => {
@@ -204,6 +329,29 @@ test("scratch fleet starts an exact argv command in the initial pane before orch
     assert.equal(semanticStamp.stdout.trim(), "");
   } finally {
     await fleet.dispose();
+  }
+});
+
+test("scratch fleet preserves two-window default and supports exact one-window lifecycle namespace", async () => {
+  for (const [suffix, windowsPerSession, expectedWindows] of [
+    ["default", undefined, ["one", "two"]],
+    ["one-window", 1, ["one"]],
+  ]) {
+    const fleet = await createScratchFleet({
+      sessions: 1,
+      slug: `window-count-${suffix}-${process.pid}`,
+      ...(windowsPerSession === undefined ? {} : { windowsPerSession }),
+    });
+    try {
+      const session = fleet.sessionNames[0];
+      assert.ok(session);
+      assert.deepEqual(fleet.listWindows(session), expectedWindows);
+      assert.equal(fleet.countPanes(session), expectedWindows.length);
+      assert.equal(fleet.currentWindow(session), "one");
+      assert.equal(fleet.initialPanes.filter((pane) => pane.sessionName === session).length, 1);
+    } finally {
+      await fleet.dispose();
+    }
   }
 });
 
@@ -1028,12 +1176,15 @@ test("repeat runner drives every planned journey sequentially and stops at the f
 
 test("pending, all, unknown, and invalid repetition selections fail before orchestration", () => {
   assert.throws(
-    () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "window-lifecycle"])),
-    /not implemented: window-lifecycle; missing evidence is a failure/u,
+    () =>
+      resolveProductJourneyPlan(
+        parseProductDiagnoseOptions(["--journey", "keyboard-pointer-resize"]),
+      ),
+    /not implemented: keyboard-pointer-resize; missing evidence is a failure/u,
   );
   assert.throws(
     () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "all"])),
-    /not implemented: window-lifecycle/u,
+    /not implemented: keyboard-pointer-resize/u,
   );
   assert.throws(
     () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "imaginary"])),
@@ -1065,7 +1216,13 @@ test("CLI rejects a pending journey before creating ProductRig state", () => {
     const diagnosticRoot = join(temporary, "diagnostics");
     const result = spawnSync(
       process.execPath,
-      ["scripts/product-test-rig.mjs", "diagnose", "--journey", "window-lifecycle", "--json"],
+      [
+        "scripts/product-test-rig.mjs",
+        "diagnose",
+        "--journey",
+        "keyboard-pointer-resize",
+        "--json",
+      ],
       {
         cwd: process.cwd(),
         encoding: "utf8",
@@ -1079,7 +1236,7 @@ test("CLI rejects a pending journey before creating ProductRig state", () => {
     assert.equal(result.status, 1);
     assert.match(
       result.stderr,
-      /not implemented: window-lifecycle; missing evidence is a failure/u,
+      /not implemented: keyboard-pointer-resize; missing evidence is a failure/u,
     );
     assert.equal(existsSync(join(rigRoot, "state.json")), false);
     assert.equal(existsSync(diagnosticRoot), false);
@@ -1329,6 +1486,7 @@ test("attempt startup failure cleans up before publishing immutable placeholder 
       "drive",
       "phase:attempt-cleanup",
       "cleanup:after",
+      "phase:post-cleanup-validation",
       "prepare:first-input-namespace-ready",
       "phase:failure-bundle-publication",
       "publish:failure",
@@ -1555,6 +1713,79 @@ test("isolated attempts thread first-pass and retry cleanup receipts into every 
     }),
     (error) =>
       error instanceof ProductJourneyAttemptError && error.originalCause === journeyFailure,
+  );
+});
+
+test("post-cleanup provenance drift replaces success before immutable publication", async () => {
+  const entry = attemptEntry("20260818060000000-window-lifecycle-r1-source-drift");
+  const receipt = cleanupReceipt(entry.runId);
+  const drift = new Error("source changed after cleanup");
+  drift.boundary = "source-provenance";
+  drift.observation = { reason: "source-drift", changedCount: 1 };
+  await assert.rejects(
+    runIsolatedProductJourneyAttempt(entry, {
+      preCleanup: async () => undefined,
+      drive: async () => ({ report: { status: "passed" } }),
+      currentBoundary: () => "window-web-correlation",
+      postCleanup: async () => receipt,
+      retryCleanup: () => assert.fail("cleanup passed"),
+      validateAfterCleanup: () => {
+        throw drift;
+      },
+      prepareFailure: async (error, boundary, cleanup) => ({ error, boundary, cleanup }),
+      appendCleanupFailure: () => assert.fail("no prior failure"),
+      publishFailure: async (prepared, cleanup) => {
+        assert.equal(prepared.error, drift);
+        assert.equal(prepared.boundary, "source-provenance");
+        assert.equal(prepared.cleanup, receipt);
+        assert.equal(cleanup, receipt);
+        return { runDir: "/immutable/source-drift" };
+      },
+      publishSuccess: () => assert.fail("drift cannot publish success"),
+    }),
+    (error) =>
+      error instanceof ProductJourneyAttemptError &&
+      error.boundary === "source-provenance" &&
+      error.originalCause === drift,
+  );
+});
+
+test("post-cleanup provenance drift remains structured beside an earlier journey failure", async () => {
+  const entry = attemptEntry("20260818060000000-window-lifecycle-r1-source-drift-secondary");
+  const receipt = cleanupReceipt(entry.runId);
+  const journey = new Error("window action failed");
+  const drift = new Error("source changed after cleanup");
+  drift.boundary = "source-provenance";
+  drift.observation = { reason: "source-drift", changedCount: 2 };
+  await assert.rejects(
+    runIsolatedProductJourneyAttempt(entry, {
+      preCleanup: async () => undefined,
+      drive: async () => {
+        throw journey;
+      },
+      currentBoundary: () => "window-rename-visible",
+      postCleanup: async () => receipt,
+      retryCleanup: () => assert.fail("cleanup passed"),
+      validateAfterCleanup: () => {
+        throw drift;
+      },
+      prepareFailure: async (error, boundary) => ({ error, boundary }),
+      appendCleanupFailure: () => assert.fail("drift is not cleanup failure text"),
+      appendValidationFailure: (prepared, error) => {
+        prepared.sourceProvenanceFailure = error.observation;
+      },
+      publishFailure: async (prepared) => {
+        assert.equal(prepared.error, journey);
+        assert.equal(prepared.boundary, "window-rename-visible");
+        assert.deepEqual(prepared.sourceProvenanceFailure, drift.observation);
+        return { runDir: "/immutable/source-drift-secondary" };
+      },
+      publishSuccess: () => assert.fail("journey failed"),
+    }),
+    (error) =>
+      error instanceof ProductJourneyAttemptError &&
+      error.boundary === "window-rename-visible" &&
+      error.originalCause === journey,
   );
 });
 

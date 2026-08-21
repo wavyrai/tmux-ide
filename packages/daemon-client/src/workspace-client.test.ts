@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   APPLICATION_SHELL_COMMAND_IDS,
+  APPLICATION_SHELL_RESOURCE_V3_VERSION,
   ApplicationShellProjectionInputV3SchemaZ,
   COHESION_FIXTURE_V1,
   DAEMON_WIRE_PROTOCOL_VERSION,
@@ -20,6 +21,16 @@ import type {
   ApplicationShellTransport,
 } from "./application-shell-session.ts";
 import type { GenerationBoundClock } from "./generation-bound-store.ts";
+import {
+  createDirectLoopbackDaemonTransport,
+  type TerminalFirstDaemonTransport,
+} from "./direct-application-shell-transport.ts";
+import type {
+  WorkspaceEventSocket,
+  WorkspaceEventSocketEvent,
+  WorkspaceEventSocketEventType,
+  WorkspaceEventSocketListener,
+} from "./workspace-event-supervisor.ts";
 import { createWorkspaceClient } from "./workspace-client.ts";
 import { runtimeResourceSnapshot } from "./runtime-resource-ledger.ts";
 import {
@@ -168,6 +179,30 @@ function shellBroker(resources: Readonly<Record<string, ApplicationShellProjecti
   return { transport, connections, byWorkspace };
 }
 
+class WorkspaceClientEventSocket implements WorkspaceEventSocket {
+  readyState = 1;
+  readonly sent: unknown[] = [];
+  readonly listeners = new Map<WorkspaceEventSocketEventType, Set<WorkspaceEventSocketListener>>();
+  addEventListener(type: WorkspaceEventSocketEventType, listener: WorkspaceEventSocketListener) {
+    const listeners = this.listeners.get(type) ?? new Set();
+    listeners.add(listener);
+    this.listeners.set(type, listeners);
+  }
+  removeEventListener(type: WorkspaceEventSocketEventType, listener: WorkspaceEventSocketListener) {
+    this.listeners.get(type)?.delete(listener);
+  }
+  send(value: string) {
+    this.sent.push(JSON.parse(value));
+  }
+  close() {}
+  emit(type: WorkspaceEventSocketEventType, event: WorkspaceEventSocketEvent = {}) {
+    for (const listener of this.listeners.get(type) ?? []) listener(event);
+  }
+  frame(value: unknown) {
+    this.emit("message", { data: JSON.stringify(value) });
+  }
+}
+
 class FakeTerminalSubscription {
   readonly listeners = new Set<(update: TerminalReplicaUpdate<string, string>) => void>();
   closeCount = 0;
@@ -203,6 +238,7 @@ class FakeRuntime implements WorkspaceClientRuntimePort<string, string> {
   inputGate: Promise<void> | null = null;
   readonly viewportFits: Array<{ cols: number; rows: number }> = [];
   viewportGate: Promise<void> | null = null;
+  authorityGate: Promise<void> | null = null;
   closeGate: Promise<void> | null = null;
   readonly repairRequests: Array<{
     target: TerminalReplicaAddress;
@@ -230,6 +266,17 @@ class FakeRuntime implements WorkspaceClientRuntimePort<string, string> {
     if (this.viewportGate) await this.viewportGate;
     this.viewportFits.push({ cols, rows });
   }
+  async requestAuthority(authority: "input" | "focus" | "geometry") {
+    if (this.authorityGate) await this.authorityGate;
+    return {
+      generation: this.generation,
+      session: "alpha",
+      clientId: "opentui:test",
+      authority,
+      token: "55555555-5555-4555-8555-555555555555",
+      revision: 1,
+    } as const;
+  }
   onReceipt(listener: (receipt: InteractionReceipt) => void): () => void {
     this.receipts.add(listener);
     return () => this.receipts.delete(listener);
@@ -246,6 +293,14 @@ class FakeRuntime implements WorkspaceClientRuntimePort<string, string> {
   async close(): Promise<void> {
     this.closeCount += 1;
     if (this.closeGate) await this.closeGate;
+  }
+}
+
+class ClosableFakeRuntime extends FakeRuntime {
+  private readonly closedState = deferred<void>();
+  override readonly closed = this.closedState.promise;
+  fail(): void {
+    this.closedState.resolve();
   }
 }
 
@@ -442,7 +497,37 @@ describe("WorkspaceClient", () => {
     });
     await settle();
     expect(inventories.map((inventory) => inventory.semanticPaneIds)).toEqual([["pane.a"]]);
-    expect(refreshes).toBeGreaterThan(0);
+    expect(refreshes).toBe(1);
+    for (let index = 0; index < 2_000; index += 1) {
+      expect(
+        client.adoptTerminalRuntimeInventory({
+          workspaceName: "alpha",
+          workspaceId: "workspace.alpha",
+          sessionId: COHESION_FIXTURE_V1.workspace.session.id,
+          resourceRevision: 1,
+          semanticPaneIds: ["pane.a"],
+        }),
+      ).toBe(true);
+    }
+    await settle();
+    expect(refreshes).toBe(1);
+
+    shell.byWorkspace.set("alpha", shellResource("alpha", ["pane.c"]));
+    shell.connections.at(-1)?.handlers.onInvalidate();
+    await settle();
+    expect(refreshes).toBe(2);
+
+    expect(
+      client.adoptTerminalRuntimeInventory({
+        workspaceName: "alpha",
+        workspaceId: "workspace.alpha",
+        sessionId: COHESION_FIXTURE_V1.workspace.session.id,
+        resourceRevision: 2,
+        semanticPaneIds: ["pane.c"],
+      }),
+    ).toBe(true);
+    await settle();
+    expect(refreshes).toBe(2);
     await client.dispose();
   });
 
@@ -480,7 +565,11 @@ describe("WorkspaceClient", () => {
     );
     await settle();
     expect(inventories.map((inventory) => inventory.semanticPaneIds)).toEqual([["pane.a"]]);
-    expect(refreshes).toBeGreaterThan(0);
+    expect(refreshes).toBe(1);
+    expect(client.adoptTerminalRuntimeInventory({ ...base, semanticPaneIds: ["pane.b"] })).toBe(
+      false,
+    );
+    expect(refreshes).toBe(1);
     await client.dispose();
   });
 
@@ -730,6 +819,339 @@ describe("WorkspaceClient", () => {
     expect(calls).toHaveLength(2);
     client.dispose();
     await settle();
+  });
+
+  it("converges a rebound runtime select receipt with the invalidated active shell inventory", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha", ["pane.alpha"]) });
+    const first = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const second = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    let connections = 0;
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async () => (++connections === 1 ? first : second),
+        actions,
+      },
+    });
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+    shell.byWorkspace.set("alpha", shellResource("alpha", ["pane.alpha", "pane.beta"]));
+    shell.connections[0]!.handlers.onInvalidate();
+    await settle();
+    expect(connections).toBe(2);
+
+    const operationId = "13000000-0000-4000-8000-000000000013";
+    await client.dispatch({
+      kind: "semantic-intent",
+      operationId,
+      intent: {
+        verb: "workspace.pane.select",
+        workspaceName: "alpha",
+        semanticPaneId: "pane.beta",
+      },
+    });
+    second.emitReceipt({
+      ...receipt(operationId, "observed"),
+      target: { kind: "pane", semanticPaneId: "pane.beta" },
+      operationKind: "workspace.pane.select",
+      summary: { operationKind: "workspace.pane.select" },
+      proof: {
+        operationKind: "workspace.pane.select",
+        outcome: "applied",
+        semanticPaneId: "pane.beta",
+      },
+    });
+    const externalRenameId = "14000000-0000-4000-8000-000000000014";
+    shell.connections[0]!.handlers.onOperationAcknowledged?.({
+      daemonInstanceId: ALPHA_DAEMON.instanceId,
+      operationId: externalRenameId,
+      sequence: 10,
+      revision: 8,
+    });
+    shell.byWorkspace.set("alpha", shellResource("alpha", ["pane.beta", "pane.alpha"]));
+    shell.connections[0]!.handlers.onInvalidate();
+    await settle();
+
+    const snapshot = client.getSnapshot();
+    expect(snapshot.operations.pending).toEqual([]);
+    expect(snapshot.operations.lastReceipt).toMatchObject({
+      operationId,
+      operationKind: "workspace.pane.select",
+      phase: "observed",
+      proof: { outcome: "applied", semanticPaneId: "pane.beta" },
+    });
+    expect(snapshot.operations.lastResourceChangeAcknowledgement).toEqual({
+      daemonInstanceId: ALPHA_DAEMON.instanceId,
+      operationId: externalRenameId,
+      sequence: 10,
+      revision: 8,
+    });
+    expect(snapshot.authorityShell?.terminalInventory?.activeResourceId).toBe("pane.beta");
+    expect(snapshot.semantic?.terminalInventory?.activeResourceId).toBe("pane.beta");
+    expect(connections).toBe(2);
+
+    const acknowledgementAfterRefreshId = "15000000-0000-4000-8000-000000000015";
+    const priorShell = shellResource("alpha", ["pane.beta", "pane.alpha"]);
+    const renamedShell = ApplicationShellProjectionInputV3SchemaZ.parse({
+      ...priorShell,
+      terminalInventory: {
+        ...priorShell.terminalInventory,
+        resources: priorShell.terminalInventory.resources.map((resource, index) =>
+          index === 0 ? { ...resource, title: "Lifecycle Renamed" } : resource,
+        ),
+      },
+    });
+    shell.byWorkspace.set("alpha", renamedShell);
+    shell.connections[0]!.handlers.onInvalidate();
+    await settle();
+    shell.connections[0]!.handlers.onOperationAcknowledged?.({
+      daemonInstanceId: ALPHA_DAEMON.instanceId,
+      operationId: acknowledgementAfterRefreshId,
+      sequence: 11,
+      revision: 8,
+    });
+    expect(connections).toBe(2);
+    expect(client.getSnapshot().semantic?.terminalInventory?.resources[0]?.title).toBe(
+      "Lifecycle Renamed",
+    );
+    expect(client.getSnapshot().operations.lastResourceChangeAcknowledgement).toEqual({
+      daemonInstanceId: ALPHA_DAEMON.instanceId,
+      operationId: acknowledgementAfterRefreshId,
+      sequence: 11,
+      revision: 8,
+    });
+    second.emitReceipt({
+      ...receipt(externalRenameId, "observed"),
+      operationKind: "workspace.rename",
+      summary: { operationKind: "workspace.rename", scope: "window" },
+      target: { kind: "window", target: { by: "pane", semanticPaneId: "pane.beta" } },
+      proof: { operationKind: "workspace.rename", outcome: "applied", scope: "window" },
+    });
+    expect(client.getSnapshot().operations.lastReceipt?.operationId).toBe(operationId);
+    client.dispose();
+    await settle();
+  });
+
+  it("fences resource-change acknowledgements by generation and monotonic sequence", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha"), beta: shellResource("beta") });
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async (current) => new FakeRuntime(current.daemon.instanceId),
+        actions,
+      },
+    });
+    const retiredHandlers = shell.connections[0]!.handlers;
+    retiredHandlers.onVerifiedOpen();
+    await settle();
+    await client.setTarget(target("beta", ALPHA_DAEMON));
+    const activeHandlers = shell.connections.findLast(
+      (connection) => connection.target.workspaceName === "beta" && !connection.closed,
+    )!.handlers;
+    activeHandlers.onVerifiedOpen();
+    await settle();
+
+    retiredHandlers.onOperationAcknowledged?.({
+      daemonInstanceId: ALPHA_DAEMON.instanceId,
+      operationId: "16000000-0000-4000-8000-000000000016",
+      sequence: 20,
+      revision: 9,
+    });
+    expect(client.getSnapshot().operations.lastResourceChangeAcknowledgement).toBeNull();
+    activeHandlers.onOperationAcknowledged?.({
+      daemonInstanceId: ALPHA_DAEMON.instanceId,
+      operationId: "17000000-0000-4000-8000-000000000017",
+      sequence: 21,
+      revision: 10,
+    });
+    const accepted = client.getSnapshot().operations.lastResourceChangeAcknowledgement;
+    expect(accepted).toEqual({
+      daemonInstanceId: ALPHA_DAEMON.instanceId,
+      operationId: "17000000-0000-4000-8000-000000000017",
+      sequence: 21,
+      revision: 10,
+    });
+    for (const acknowledgement of [
+      {
+        daemonInstanceId: ALPHA_DAEMON.instanceId,
+        operationId: "18000000-0000-4000-8000-000000000018",
+        sequence: 20,
+        revision: 11,
+      },
+      {
+        daemonInstanceId: BETA_DAEMON.instanceId,
+        operationId: "18000000-0000-4000-8000-000000000018",
+        sequence: 22,
+        revision: 11,
+      },
+      {
+        daemonInstanceId: ALPHA_DAEMON.instanceId,
+        operationId: "NOT-A-MINTED-OPERATION",
+        sequence: 22,
+        revision: 11,
+      },
+    ])
+      activeHandlers.onOperationAcknowledged?.(acknowledgement);
+    expect(client.getSnapshot().operations.lastResourceChangeAcknowledgement).toBe(accepted);
+    client.dispose();
+    await settle();
+  });
+
+  it("carries a supervised application-shell acknowledgement into WorkspaceClient before refresh", async () => {
+    const socket = new WorkspaceClientEventSocket();
+    const initialShell = shellResource("alpha", ["pane.alpha"]);
+    let currentShell = ApplicationShellProjectionInputV3SchemaZ.parse({
+      ...initialShell,
+      workspace: {
+        ...initialShell.workspace,
+        id: "workspace.0123456789abcdefabcd",
+        session: {
+          ...initialShell.workspace.session,
+          id: "session.0123456789abcdefabcd",
+        },
+      },
+    });
+    const transport = createDirectLoopbackDaemonTransport({
+      descriptor: { ...ALPHA_DAEMON, apiBaseUrl: "http://127.0.0.1:6060/" },
+      resolveSessionName: () => "alpha",
+      terminalRuntimeAuthority: true,
+      applicationShellResourceVersion: APPLICATION_SHELL_RESOURCE_V3_VERSION,
+      createWebSocket: () => socket,
+      fetch: async (input) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith("/terminal-runtime-inventory")) {
+          return new Response(
+            JSON.stringify({
+              version: 1,
+              daemon: ALPHA_DAEMON,
+              resource: {
+                workspaceName: "alpha",
+                workspaceId: currentShell.workspace.id,
+                sessionId: currentShell.workspace.session.id,
+                resourceRevision: 7,
+                semanticPaneIds: ["pane.alpha"],
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            version: APPLICATION_SHELL_RESOURCE_V3_VERSION,
+            daemon: ALPHA_DAEMON,
+            resource: currentShell,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    }) as TerminalFirstDaemonTransport;
+    const runtime = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      deferApplicationShell: true,
+      ports: { shell: transport, connectRuntime: async () => runtime, actions },
+    });
+    const preparation = transport.prepareTerminalRuntimeInventory(
+      target("alpha"),
+      new AbortController().signal,
+    );
+    socket.emit("open");
+    socket.frame({ type: "hello", daemon: ALPHA_DAEMON, sessions: [], eventSequence: 0 });
+    await settle();
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    const prepared = await preparation;
+    const terminalAuthority = transport.adoptTerminalRuntimeInventory(prepared, (resource) => {
+      client.adoptTerminalRuntimeInventory(resource);
+    });
+    expect(terminalAuthority).not.toBeNull();
+    client.adoptTerminalRuntimeInventory(terminalAuthority!);
+    await settle();
+    expect(socket.sent[1]).toMatchObject({
+      type: "subscribe",
+      interestRevision: 2,
+      interests: [{ resource: "terminal-runtime-inventory" }, { resource: "application-shell" }],
+    });
+    socket.frame({
+      type: "resource.interests-ack",
+      interestRevision: 2,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    await settle();
+    expect(client.getSnapshot().phase).toBe("live");
+
+    const renamedShell = ApplicationShellProjectionInputV3SchemaZ.parse({
+      ...currentShell,
+      terminalInventory: {
+        ...currentShell.terminalInventory,
+        resources: currentShell.terminalInventory.resources.map((resource) => ({
+          ...resource,
+          title: "Lifecycle Renamed",
+        })),
+      },
+    });
+    currentShell = renamedShell;
+    const operationId = "19000000-0000-4000-8000-000000000019";
+    socket.frame({
+      type: "resource.changed",
+      sequence: 1,
+      workspaceName: "alpha",
+      resource: "application-shell",
+      revision: 8,
+      causeOperationId: operationId,
+    });
+    expect(client.getSnapshot().operations.lastResourceChangeAcknowledgement).toEqual({
+      daemonInstanceId: ALPHA_DAEMON.instanceId,
+      operationId,
+      sequence: 1,
+      revision: 8,
+    });
+    expect(client.getSnapshot().semantic?.terminalInventory?.resources[0]?.title).toBe(
+      "Terminal 1",
+    );
+    await settle();
+    expect(client.getSnapshot().semantic?.terminalInventory?.resources[0]?.title).toBe(
+      "Lifecycle Renamed",
+    );
+    expect(client.getSnapshot().operations.lastReceipt).toBeNull();
+    await client.dispose();
+    transport.disposeEventSupervisor();
+  });
+
+  it("suspends only the exact active runtime while its supervisor reconnects", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha") });
+    const first = new ClosableFakeRuntime(ALPHA_DAEMON.instanceId);
+    const replacement = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const suspended: FakeRuntime[] = [];
+    let connects = 0;
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async () => (++connects === 1 ? first : replacement),
+        didSuspendRuntime: (runtime) => suspended.push(runtime as FakeRuntime),
+        actions,
+      },
+    });
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+    expect(client.ownsRuntimeAuthority("input")).toBe(false);
+
+    first.fail();
+    await settle();
+    expect(suspended).toEqual([first]);
+    expect(connects).toBe(1);
+    expect(await client.requestAuthority("input")).toBeNull();
+    expect(replacement.closeCount).toBe(0);
+
+    await client.dispose();
   });
 
   it("isolates overlapping candidate preparation and publishes only the winning runtime", async () => {
@@ -1299,6 +1721,38 @@ describe("WorkspaceClient", () => {
     expect(alphaRuntime.viewportFits).toEqual([{ cols: 132, rows: 44 }]);
     expect(await client.fitViewport(100, 30)).toBe("ok");
     expect(betaRuntime.viewportFits).toEqual([{ cols: 100, rows: 30 }]);
+    client.dispose();
+    await settle();
+  });
+
+  it("rejects an authority grant that settles after its exact runtime was replaced", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha"), beta: shellResource("beta") });
+    const alphaRuntime = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const betaRuntime = new FakeRuntime(BETA_DAEMON.instanceId);
+    const lateAuthority = deferred<void>();
+    alphaRuntime.authorityGate = lateAuthority.promise;
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async (current) =>
+          current.workspaceName === "alpha" ? alphaRuntime : betaRuntime,
+        actions,
+      },
+    });
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+
+    const staleGrant = client.requestAuthority("input");
+    client.setTarget(target("beta", BETA_DAEMON));
+    shell.connections[1]!.handlers.onVerifiedOpen();
+    await settle();
+    lateAuthority.resolve();
+    await expect(staleGrant).resolves.toBeNull();
+    await expect(client.requestAuthority("input")).resolves.toMatchObject({
+      generation: BETA_DAEMON.instanceId,
+      authority: "input",
+    });
     client.dispose();
     await settle();
   });

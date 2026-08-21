@@ -59,7 +59,7 @@ export function createOpenTuiWorkspaceTerminalFastLane(
         return (
           snapshot.target?.daemon.instanceId === expectedGeneration &&
           snapshot.authority?.generation === expectedGeneration &&
-          snapshot.authority.owners[authority] === hostClientId
+          client.ownsRuntimeAuthority?.(authority) === true
         );
       },
       async request(authority, expectedGeneration) {

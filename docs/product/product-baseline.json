@@ -17,7 +17,7 @@
   "sourceMeasurements": {
     "openTuiApplicationRootLines": 9027,
     "webApplicationShellLines": 2217,
-    "webWorkspaceTiledSurfaceLines": 2326
+    "webWorkspaceTiledSurfaceLines": 2335
   },
   "portablePerformance": {
     "command": "pnpm measure:performance-portable",

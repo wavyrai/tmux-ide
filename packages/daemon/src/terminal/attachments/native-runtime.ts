@@ -12,7 +12,10 @@ import { z } from "zod";
 import type { WorkspaceRegistry } from "../../lib/workspace-registry.ts";
 import type { PtyAdapter } from "../PtyAdapter.ts";
 import type { TrustedMirrorSessionInventory } from "../mirror/trusted-inventory.ts";
-import type { SessionRuntimeRegistry } from "../session-runtime/registry.ts";
+import type {
+  SessionRuntimeRegistry,
+  TrustedSessionInventoryCandidate,
+} from "../session-runtime/registry.ts";
 import {
   DISABLED_SESSION_RUNTIME_OBSERVABILITY,
   type SessionRuntimeObservability,
@@ -1024,6 +1027,11 @@ export interface WorkspaceTerminalInventoryRuntimeOptions {
   }) => AgentStatusProbe;
   /** Opt-in bounded daemon qualification spans; production normally uses the disabled singleton. */
   readonly observability?: SessionRuntimeObservability;
+  readonly onInventory?: (snapshot: NativeTerminalInventorySnapshot) => void;
+  readonly onSessionInventory?: (
+    sessionName: string,
+    snapshot: NativeTerminalInventorySnapshot | null,
+  ) => void;
 }
 
 /**
@@ -1065,13 +1073,19 @@ export class WorkspaceTerminalInventoryRuntime {
   ) => Promise<NativeTerminalInventorySnapshot>;
   readonly #agentStatusProbe: AgentStatusProbe | null;
   readonly #observability: SessionRuntimeObservability;
+  readonly #onInventory: ((snapshot: NativeTerminalInventorySnapshot) => void) | null;
+  readonly #onSessionInventory:
+    | ((sessionName: string, snapshot: NativeTerminalInventorySnapshot | null) => void)
+    | null;
   readonly #prewarmSessionRuntime:
     | ((sessionName: string, runtimeSessionId: string, signal: AbortSignal) => Promise<void>)
     | null;
   readonly #discoverTrustedSessionInventory:
-    | ((sessionName: string, signal: AbortSignal) => Promise<TrustedMirrorSessionInventory>)
+    | ((sessionName: string, signal: AbortSignal) => Promise<TrustedSessionInventoryCandidate>)
     | null;
-  readonly #trustedSessionInventoryReady: ((sessionName: string) => boolean) | null;
+  readonly #trustedSessionInventoryCurrent:
+    | ((sessionName: string, token: object) => boolean)
+    | null;
   readonly #observeWorkspaceSession: ((workspaceName: string, sessionName: string) => void) | null;
   readonly #stopWorkspaceAddedObserver: (() => void) | null;
   readonly #stopWorkspaceRemovedObserver: (() => void) | null;
@@ -1103,6 +1117,8 @@ export class WorkspaceTerminalInventoryRuntime {
     this.readRunner = pinnedReadRunner(authority, executeRead);
     this.#registry = options.registry;
     this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
+    this.#onInventory = options.onInventory ?? null;
+    this.#onSessionInventory = options.onSessionInventory ?? null;
     this.#discoverTerminalInventory = (signal) => this.#readInventory(signal);
     this.semanticPaneCatalog =
       options.semanticPaneCatalog ??
@@ -1184,14 +1200,22 @@ export class WorkspaceTerminalInventoryRuntime {
         ).then(() => undefined);
       };
       this.#discoverTrustedSessionInventory =
-        typeof sessionRuntimeRegistry.describeTrustedSessionInventory === "function"
+        typeof sessionRuntimeRegistry.describeTrustedSessionInventoryCandidate === "function"
           ? (sessionName, signal) =>
-              sessionRuntimeRegistry.describeTrustedSessionInventory(sessionName, signal)
-          : null;
-      this.#trustedSessionInventoryReady =
-        typeof sessionRuntimeRegistry.hasProofQualifiedInventory === "function"
-          ? (sessionName) => sessionRuntimeRegistry.hasProofQualifiedInventory(sessionName)
-          : null;
+              sessionRuntimeRegistry.describeTrustedSessionInventoryCandidate(sessionName, signal)
+          : typeof sessionRuntimeRegistry.describeTrustedSessionInventory === "function"
+            ? (sessionName, signal) =>
+                sessionRuntimeRegistry
+                  .describeTrustedSessionInventory(sessionName, signal)
+                  .then((inventory) => ({ inventory, token: Object.freeze({}) }))
+            : null;
+      this.#trustedSessionInventoryCurrent =
+        typeof sessionRuntimeRegistry.isTrustedSessionInventoryCandidateCurrent === "function"
+          ? (sessionName, token) =>
+              sessionRuntimeRegistry.isTrustedSessionInventoryCandidateCurrent(sessionName, token)
+          : typeof sessionRuntimeRegistry.hasProofQualifiedInventory === "function"
+            ? (sessionName) => sessionRuntimeRegistry.hasProofQualifiedInventory(sessionName)
+            : null;
       this.#observeWorkspaceSession = (workspaceName, sessionName) => {
         const previousSessionName = sessionsByWorkspace.get(workspaceName);
         sessionsByWorkspace.set(workspaceName, sessionName);
@@ -1206,7 +1230,7 @@ export class WorkspaceTerminalInventoryRuntime {
     } else {
       this.#prewarmSessionRuntime = null;
       this.#discoverTrustedSessionInventory = null;
-      this.#trustedSessionInventoryReady = null;
+      this.#trustedSessionInventoryCurrent = null;
       this.#observeWorkspaceSession = null;
     }
     this.#stopWorkspaceAddedObserver = options.registry.on("workspace.added", (workspace) => {
@@ -1227,8 +1251,8 @@ export class WorkspaceTerminalInventoryRuntime {
     });
   }
 
-  discoverTerminalInventory(): Promise<NativeTerminalInventorySnapshot> {
-    return this.#discoverTerminalInventory();
+  discoverTerminalInventory(signal?: AbortSignal): Promise<NativeTerminalInventorySnapshot> {
+    return this.#discoverTerminalInventory(signal);
   }
 
   lifecycleState(): "initializing" | "ready" | "failed" | "disposed" {
@@ -1294,27 +1318,61 @@ export class WorkspaceTerminalInventoryRuntime {
     );
   }
 
-  async #readInventory(signal?: AbortSignal): Promise<NativeTerminalInventorySnapshot> {
+  #publishInventory(snapshot: NativeTerminalInventorySnapshot): NativeTerminalInventorySnapshot {
+    try {
+      this.#onInventory?.(snapshot);
+    } catch {
+      // Cache adoption is an optimization/readiness fence, never inventory authority.
+    }
+    return snapshot;
+  }
+
+  async #readInventory(
+    signal?: AbortSignal,
+    staleRetry = 0,
+  ): Promise<NativeTerminalInventorySnapshot> {
     if (this.#disposed) throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
+    const epoch = this.#inventoryEpoch;
     if (signal) {
       if (signal.aborted) throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
-      return this.#readInventoryAttempt(signal);
+      let snapshot: NativeTerminalInventorySnapshot;
+      try {
+        snapshot = await this.#readInventoryAttempt(signal);
+      } catch (error) {
+        if (this.#inventoryEpoch !== epoch) {
+          if (staleRetry < 1) return this.#readInventory(signal, staleRetry + 1);
+          throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+        }
+        throw error;
+      }
+      if (signal.aborted) throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
+      if (this.#inventoryEpoch !== epoch) {
+        if (staleRetry < 1) return this.#readInventory(signal, staleRetry + 1);
+        throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+      }
+      return this.#publishInventory(snapshot);
     }
-    const epoch = this.#inventoryEpoch;
     if (this.#inventoryRead?.epoch === epoch) return this.#inventoryRead.promise;
     const abort = new AbortController();
-    const observedAttempt = this.#readInventoryAttempt(abort.signal);
-    const promise = observedAttempt
-      .then((value) =>
-        abort.signal.aborted || this.#inventoryEpoch !== epoch ? this.#readInventory() : value,
-      )
-      .catch((error: unknown) => {
-        if (abort.signal.aborted || this.#inventoryEpoch !== epoch) return this.#readInventory();
+    const promise = (async () => {
+      let value: NativeTerminalInventorySnapshot;
+      try {
+        value = await this.#readInventoryAttempt(abort.signal);
+      } catch (error) {
+        if (abort.signal.aborted || this.#inventoryEpoch !== epoch) {
+          if (staleRetry < 1) return this.#readInventory(undefined, staleRetry + 1);
+          throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+        }
         throw error;
-      })
-      .finally(() => {
-        if (this.#inventoryRead?.promise === promise) this.#inventoryRead = null;
-      });
+      }
+      if (abort.signal.aborted || this.#inventoryEpoch !== epoch) {
+        if (staleRetry < 1) return this.#readInventory(undefined, staleRetry + 1);
+        throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+      }
+      return this.#publishInventory(value);
+    })().finally(() => {
+      if (this.#inventoryRead?.promise === promise) this.#inventoryRead = null;
+    });
     this.#inventoryRead = { epoch, abort, promise };
     return promise;
   }
@@ -1365,11 +1423,20 @@ export class WorkspaceTerminalInventoryRuntime {
   async #discoverTerminalRuntimeSession(
     requestedSessionName: string,
     signal: AbortSignal,
+    staleRetry = 0,
   ): Promise<NativeTerminalRuntimeSessionSnapshot | null> {
+    const epoch = this.#inventoryEpoch;
     const assertLive = (): void => {
       if (signal.aborted || this.#disposed) {
         throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
       }
+    };
+    const retryIfReplaced = (): Promise<NativeTerminalRuntimeSessionSnapshot | null> | null => {
+      assertLive();
+      if (this.#inventoryEpoch === epoch) return null;
+      if (staleRetry < 1)
+        return this.#discoverTerminalRuntimeSession(requestedSessionName, signal, staleRetry + 1);
+      return Promise.reject(new NativeTerminalAttachmentRuntimeError("discovery-failed"));
     };
     assertLive();
     const memberships = this.#registry
@@ -1380,19 +1447,19 @@ export class WorkspaceTerminalInventoryRuntime {
       throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
     const workspace = memberships[0]!;
     let inventory: NativeTerminalInventorySnapshot;
-    if (
-      this.#discoverTrustedSessionInventory &&
-      this.#trustedSessionInventoryReady?.(workspace.sessionName)
-    ) {
+    let trustedInventory = false;
+    let trustedInventoryToken: object | null = null;
+    if (this.#discoverTrustedSessionInventory) {
       const trusted = await awaitInventoryUnlessAborted(
         this.#discoverTrustedSessionInventory(workspace.sessionName, signal),
         signal,
       ).catch(() => null);
-      assertLive();
+      const trustedRetry = retryIfReplaced();
+      if (trustedRetry) return trustedRetry;
       if (trusted) {
         try {
           const panes = projectTrustedMirrorInventory(
-            trusted,
+            trusted.inventory,
             workspace.name,
             workspace.sessionName,
           );
@@ -1422,6 +1489,8 @@ export class WorkspaceTerminalInventoryRuntime {
             throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
           }
           inventory = Object.freeze({ panes, catalog });
+          trustedInventory = true;
+          trustedInventoryToken = trusted.token;
         } catch {
           assertLive();
           inventory = await awaitInventoryUnlessAborted(
@@ -1441,7 +1510,8 @@ export class WorkspaceTerminalInventoryRuntime {
         signal,
       );
     }
-    assertLive();
+    const inventoryRetry = retryIfReplaced();
+    if (inventoryRetry) return inventoryRetry;
     const panes = inventory.panes.filter(
       (pane) => pane.workspaceName === workspace.name && pane.sessionName === workspace.sessionName,
     );
@@ -1497,9 +1567,27 @@ export class WorkspaceTerminalInventoryRuntime {
         this.#prewarmSessionRuntime(workspace.sessionName, active.sessionId, signal),
         signal,
       ).catch(() => undefined);
-      assertLive();
+      const prewarmRetry = retryIfReplaced();
+      if (prewarmRetry) return prewarmRetry;
     }
-    assertLive();
+    const finalRetry = retryIfReplaced();
+    if (finalRetry) return finalRetry;
+    if (trustedInventory) {
+      if (
+        trustedInventoryToken === null ||
+        this.#trustedSessionInventoryCurrent?.(workspace.sessionName, trustedInventoryToken) !==
+          true
+      ) {
+        if (staleRetry < 1)
+          return this.#discoverTerminalRuntimeSession(requestedSessionName, signal, staleRetry + 1);
+        throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+      }
+      try {
+        this.#onSessionInventory?.(workspace.sessionName, shouldPrewarm ? inventory : null);
+      } catch {
+        // A cache consumer cannot own terminal inventory discovery.
+      }
+    }
     this.#observeWorkspaceSession?.(workspace.name, workspace.sessionName);
     return Object.freeze({
       workspaceName: workspace.name,

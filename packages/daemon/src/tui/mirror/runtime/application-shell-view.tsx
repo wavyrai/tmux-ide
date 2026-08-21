@@ -43,8 +43,9 @@ export interface ApplicationShellViewProps {
     readonly adapter: TerminalWorkspaceProps["adapter"];
     readonly rendererEpoch: TerminalWorkspaceProps["rendererEpoch"];
   } | null>;
-  readonly layout: Accessor<TerminalWorkspaceProps["layout"]>;
+  readonly layout: TerminalWorkspaceProps["layout"];
   readonly focusedPane: Accessor<string | null>;
+  readonly rendererFocused?: Accessor<boolean>;
   readonly hostFocusTransitionOwner?: TerminalWorkspaceProps["hostFocusTransitionOwner"];
   readonly theme: TerminalWorkspaceProps["theme"];
   readonly palette: TerminalWorkspaceProps["palette"];
@@ -54,6 +55,7 @@ export interface ApplicationShellViewProps {
   readonly onSelectPane: TerminalWorkspaceProps["onSelectPane"];
   readonly onResizePreview: TerminalWorkspaceProps["onResizePreview"];
   readonly onResizePane: TerminalWorkspaceProps["onResizePane"];
+  readonly onWindowPresented?: TerminalWorkspaceProps["onWindowPresented"];
 }
 
 /** The one physical terminal viewport after production shell chrome. */
@@ -420,7 +422,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                 >
                   {(source) => (
                     <ApplicationTerminalWorkspace
-                      layout={props.layout()}
+                      layout={props.layout}
                       adapter={source.adapter}
                       rendererEpoch={source.rendererEpoch}
                       width={shell.content.width}
@@ -429,12 +431,14 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                       originX={shell.content.x}
                       originY={shell.content.y}
                       focusedPane={props.focusedPane()}
+                      rendererFocused={props.rendererFocused?.() ?? props.focusedPane() !== null}
                       hostFocusTransitionOwner={props.hostFocusTransitionOwner}
                       theme={props.theme}
                       palette={props.palette}
                       onSelectPane={props.onSelectPane}
                       onResizePreview={props.onResizePreview}
                       onResizePane={props.onResizePane}
+                      onWindowPresented={props.onWindowPresented}
                     />
                   )}
                 </Show>

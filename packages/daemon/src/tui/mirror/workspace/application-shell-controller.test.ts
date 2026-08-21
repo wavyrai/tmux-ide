@@ -337,14 +337,30 @@ describe("OpenTUI canonical application-shell controller", () => {
       "utf8",
     );
     const app = productionRootSource();
+    const applicationRoot = readFileSync(
+      join(repoRoot, "packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx"),
+      "utf8",
+    );
+    const terminalInteraction = readFileSync(
+      join(
+        repoRoot,
+        "packages/daemon/src/tui/mirror/runtime/application-terminal-interaction-controller.ts",
+      ),
+      "utf8",
+    );
     expect(workbench).not.toContain("const DOCK_TABS");
     expect(app).not.toContain("<ShellTabBar");
     expect(app).not.toContain("RENDERER_COMMAND_IDS.openPalette");
     expect(app).not.toContain("rendererInvocationForCanvas(");
     expect(app).not.toContain("rendererInvocationForDock(");
     expect(app).toContain("createOpenTuiSessionOwner({");
-    expect(app).toContain("new TerminalPaneInputRouter<SessionRuntimeTerminalInput>({");
-    expect(app).toContain("selectTerminalPane(expected, liveSelectionTarget, paneId)");
+    expect(applicationRoot).toContain("createApplicationTerminalInteractionController({");
+    expect(applicationRoot).not.toContain("new TerminalPaneInputRouter<");
+    expect(applicationRoot).not.toContain("selectTerminalPane(");
+    expect(terminalInteraction).toContain("new TerminalPaneInputRouter<{");
+    expect(terminalInteraction.replace(/\s+/gu, " ")).toContain(
+      "selectTerminalPane( expected, liveSelectionTarget, paneId, operationId, (failure) =>",
+    );
     expect(app).toContain("active.fastLane.lane.sendInput(");
     expect(app).toContain("fixture?.probe");
     expect(app).toContain("<ApplicationTerminalWorkspace");

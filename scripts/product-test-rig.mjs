@@ -5,7 +5,7 @@
  * It is deliberately an operator/test surface, not a second product runtime.
  */
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   chmodSync,
   closeSync,
@@ -50,7 +50,9 @@ import {
   causalInputSampleHasIncarnation,
   causalProbeEpochState,
   createProductRigAttemptTimelineClock,
+  compareProductSourceProvenance,
   productRigSourceTraceIncludesPath,
+  productRigHostHeartbeatObservation,
   productRigSourceTraceDiffArgs,
   productRigSourceTraceUntrackedArgs,
   readBoundedSourceTraceFiles,
@@ -82,6 +84,7 @@ import {
 } from "./product-test-rig-lib.mjs";
 import { sourceArchitectureInventory } from "./architecture-debt-inventory.mjs";
 import { acquireProductRigSleepAssertion } from "./lib/product-rig-sleep-assertion.mjs";
+import { runBoundedChildCommand } from "./lib/bounded-child-command.mjs";
 import {
   assessCoherentFirstPaneBoundaries,
   assessConfiglessJourneyBoundaries,
@@ -121,6 +124,7 @@ import {
   runCoherentFirstPaneOwnerBoot,
   runFirstKeyPasteOwnerBoot,
   runFocusOwnerBoot,
+  runWindowLifecycleOwnerBoot,
   runIsolatedProductJourneyAttempt,
   runProductJourneyPlan,
   settleInternalProductRigCleanup,
@@ -140,7 +144,23 @@ import {
   sliceFocusTerminalCells,
   waitForFocusWebSemantic,
 } from "./lib/product-focus.mjs";
+import {
+  assessProductWindowLifecycle,
+  assessWindowPresentationFrames,
+  assessWindowSwitchPhaseTimingRecords,
+  assessWindowLifecycleJourneyBoundaries,
+  classifyWindowTmuxPostFailureSnapshot,
+  joinWindowResourcesToTmuxLabels,
+  ownedWindowActionFailureObservation,
+  qualifyWindowWorkspaceState,
+  summarizeWindowPartialRuntimeEvidence,
+  windowApplicationShellTimeoutObservation,
+  windowLifecycleWriterFailureObservation,
+  windowSwitchInputFailureObservation,
+  windowSwitchSelectionFailureObservation,
+} from "./lib/product-window-lifecycle.mjs";
 import { runBoundedFocusTmux } from "./lib/product-focus-tmux.mjs";
+import { readBoundedDiagnosticTail } from "./lib/bounded-diagnostic-tail.mjs";
 import { parseLayout } from "../packages/daemon/src/terminal/protocol/layout-parse.ts";
 import {
   assessFirstKeyPasteBoundaries,
@@ -183,6 +203,8 @@ const diagnosticRoot = resolve(
 );
 const diagnosticCaptures = new Map();
 const diagnosticAttemptPhases = new Map();
+let diagnosticFrozenProvenance = null;
+const activeTuiCommandPids = new Set();
 const productInputFingerprintKeys = new Map();
 const UNAVAILABLE_WEB_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -203,6 +225,53 @@ function readDiagnosticText(path, fallback = "") {
   }
 }
 
+function boundedRuntimeJsonLines(path) {
+  const tail = readBoundedDiagnosticTail(path);
+  const text = tail.available ? tail.text : "";
+  if (!text)
+    return Object.freeze({
+      text: "",
+      records: Object.freeze([]),
+      available: false,
+      reason: tail.reason,
+    });
+  const records = text
+    .split("\n")
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line)];
+      } catch {
+        return [];
+      }
+    });
+  return Object.freeze({
+    text,
+    records: Object.freeze(records),
+    available: true,
+    reason: null,
+  });
+}
+
+function partialProductRuntimeEvidence(state) {
+  const runtimeDir = state?.tui?.runtimeDir;
+  const tracePath = state?.tui?.performanceTracePath;
+  const lifecycle =
+    typeof runtimeDir === "string"
+      ? boundedRuntimeJsonLines(join(runtimeDir, "performance.jsonl"))
+      : { text: "", records: [] };
+  const trace =
+    typeof tracePath === "string" ? boundedRuntimeJsonLines(tracePath) : { text: "", records: [] };
+  return summarizeWindowPartialRuntimeEvidence({
+    lifecycleText: lifecycle.text,
+    lifecycleRecords: lifecycle.records,
+    lifecycleReadReason: lifecycle.reason ?? null,
+    referenceText: trace.text,
+    referenceRecords: trace.records,
+    referenceReadReason: trace.reason ?? null,
+  });
+}
+
 function productDiagnosticCorrelation(state, captureEvidence) {
   const tuiAvailable = Boolean(captureEvidence?.tuiPath && existsSync(captureEvidence.tuiPath));
   const webAvailable = Boolean(captureEvidence?.webPath && existsSync(captureEvidence.webPath));
@@ -210,6 +279,7 @@ function productDiagnosticCorrelation(state, captureEvidence) {
   const coherent = state?.journeyEvidence?.coherentFirstPane ?? null;
   const firstInput = state?.journeyEvidence?.firstKeyPaste ?? null;
   const focus = state?.journeyEvidence?.focus ?? null;
+  const windowLifecycle = state?.journeyEvidence?.windowLifecycle ?? null;
   const exact = configless
     ? {
         fleetSessionId: configless.adopted?.fleetSessionId,
@@ -234,7 +304,13 @@ function productDiagnosticCorrelation(state, captureEvidence) {
               catalogRevision: focus.identity?.catalogRevision,
               semanticPaneId: focus.reclaim?.assessment?.qualified?.semanticPaneId,
             }
-          : null;
+          : windowLifecycle
+            ? {
+                fleetSessionId: windowLifecycle.identity?.fleetSessionId,
+                catalogRevision: windowLifecycle.identity?.catalogRevision,
+                semanticPaneId: windowLifecycle.renamed?.selected?.semanticPaneId,
+              }
+            : null;
   return buildProductDiagnosticCorrelation({
     state,
     tuiAvailable,
@@ -444,7 +520,120 @@ function sourceTraceProvenance() {
     input: payload,
     encoding: "utf8",
   }).trim();
-  return { commit, tree };
+  const trackedPaths = execFileSync(
+    "git",
+    [
+      "diff",
+      "--name-only",
+      "--no-renames",
+      "-z",
+      "HEAD",
+      "--",
+      ".",
+      ":(exclude)packages/daemon/native/**",
+    ],
+    { cwd: repoRoot, maxBuffer: PRODUCT_RIG_SOURCE_INVENTORY_MAX_BYTES },
+  )
+    .toString("utf8")
+    .split("\0")
+    .filter(Boolean);
+  const manifestPaths = [...new Set([...trackedPaths, ...includedUntracked])].sort();
+  if (manifestPaths.length > PRODUCT_RIG_SOURCE_INVENTORY_MAX_PATHS)
+    throw new Error("Product rig source manifest exceeded its path-count ceiling");
+  let manifestBytes = 0;
+  const manifest = manifestPaths.map((path) => {
+    const pathDigest = createHash("sha256").update(path).digest("hex");
+    let descriptor;
+    try {
+      descriptor = openSync(
+        resolve(repoRoot, path),
+        fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0),
+      );
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        return Object.freeze({
+          pathDigest,
+          contentDigest: createHash("sha256").update("deleted").digest("hex"),
+          bytes: 0,
+        });
+      }
+      throw error;
+    }
+    try {
+      const before = fstatSync(descriptor);
+      if (!before.isFile() || !Number.isSafeInteger(before.size) || before.size < 0)
+        throw new Error("Product rig source manifest encountered a non-regular file");
+      manifestBytes += before.size;
+      if (manifestBytes > PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES)
+        throw new Error("Product rig source manifest exceeded its byte ceiling");
+      const content = Buffer.allocUnsafe(before.size);
+      let offset = 0;
+      while (offset < before.size) {
+        const count = readSync(descriptor, content, offset, before.size - offset, offset);
+        if (count === 0) break;
+        offset += count;
+      }
+      const grew = readSync(descriptor, Buffer.allocUnsafe(1), 0, 1, before.size) !== 0;
+      const after = fstatSync(descriptor);
+      if (
+        offset !== before.size ||
+        grew ||
+        after.size !== before.size ||
+        after.dev !== before.dev ||
+        after.ino !== before.ino
+      )
+        throw new Error("Product rig source changed while building its manifest");
+      return Object.freeze({
+        pathDigest,
+        contentDigest: createHash("sha256").update(content).digest("hex"),
+        bytes: content.length,
+      });
+    } finally {
+      closeSync(descriptor);
+    }
+  });
+  const manifestDigest = createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
+  const provenance = Object.freeze({
+    commit,
+    tree,
+    manifestDigest,
+    manifest: Object.freeze(manifest),
+  });
+  const expectedCommit = process.env.TMUX_IDE_PRODUCT_EXPECTED_SOURCE_COMMIT;
+  const expectedTree = process.env.TMUX_IDE_PRODUCT_EXPECTED_SOURCE_TREE;
+  const expectedManifest = process.env.TMUX_IDE_PRODUCT_EXPECTED_SOURCE_MANIFEST;
+  if (
+    (expectedCommit && expectedCommit !== provenance.commit) ||
+    (expectedTree && expectedTree !== provenance.tree) ||
+    (expectedManifest && expectedManifest !== provenance.manifestDigest)
+  ) {
+    const error = new Error("ProductRig source provenance changed before TUI launch");
+    error.boundary = "source-provenance";
+    throw error;
+  }
+  return provenance;
+}
+
+function assertFrozenProductSource(stage) {
+  if (!diagnosticFrozenProvenance) return;
+  const actual = sourceTraceProvenance();
+  const assessment = compareProductSourceProvenance(diagnosticFrozenProvenance, actual);
+  if (assessment.stable) return;
+  const error = new Error(`ProductRig source provenance changed ${stage}`);
+  error.boundary = "source-provenance";
+  error.observation = Object.freeze({
+    operation: "product-rig-source-provenance",
+    reason: "source-drift",
+    stage,
+    commitExact: assessment.commitExact,
+    treeExact: assessment.treeExact,
+    manifestExact: assessment.manifestExact,
+    changedCount: Math.min(assessment.changedCount, PRODUCT_RIG_SOURCE_INVENTORY_MAX_PATHS),
+    changedPathDigests: assessment.changedPathDigests,
+    expectedManifestDigest: diagnosticFrozenProvenance.manifestDigest,
+    actualManifestDigest: actual.manifestDigest,
+  });
+  throw error;
 }
 
 function tuiCommand(state, args, options = {}) {
@@ -457,18 +646,24 @@ function tuiCommand(state, args, options = {}) {
 }
 
 async function tuiCommandAsync(state, args, { timeout = 5_000, signal } = {}) {
-  const { stdout } = await execFileAsync(
-    process.execPath,
-    [join(repoRoot, "scripts", "tui-testdrive.mjs"), ...args],
-    {
+  const { stdout } = await runBoundedChildCommand({
+    executable: process.execPath,
+    args: [join(repoRoot, "scripts", "tui-testdrive.mjs"), ...args],
+    options: {
       cwd: repoRoot,
       env: commandEnv(state),
       encoding: "utf8",
-      timeout,
-      signal,
       maxBuffer: 64 * 1_024,
     },
-  );
+    timeoutMs: timeout,
+    signal,
+    onSpawn: (pid) => {
+      if (Number.isSafeInteger(pid)) activeTuiCommandPids.add(pid);
+    },
+    onSettled: (pid) => {
+      if (Number.isSafeInteger(pid)) activeTuiCommandPids.delete(pid);
+    },
+  });
   return stdout;
 }
 
@@ -772,6 +967,100 @@ async function focusActiveWindowPaneGeometry(state, lifecycle) {
     lifecycle,
   );
   return parseFocusPaneGeometry(stdout).filter(({ windowActive }) => windowActive);
+}
+
+async function exactWindowTmuxSnapshot(state, expected, timeoutMs = 2_000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const stdout = await focusTargetTmux(
+      state,
+      [
+        "list-panes",
+        "-s",
+        "-t",
+        `=${state.session}`,
+        "-F",
+        "#{window_id}\t#{@tmux_ide_window_id}\t#{window_name}\t#{window_active}\t#{window_width}\t#{window_height}\t#{pane_id}\t#{@tmux_ide_pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}",
+      ],
+      { deadline: performance.now() + timeoutMs, signal: controller.signal },
+    );
+    const rows = stdout
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        const [
+          nativeWindowId,
+          resourceId,
+          name,
+          active,
+          windowCols,
+          windowRows,
+          paneId,
+          semanticPaneId,
+          left,
+          top,
+          cols,
+          rows,
+        ] = line.split("\t");
+        return Object.freeze({
+          nativeWindowId,
+          resourceId,
+          name,
+          active: active === "1",
+          paneId,
+          semanticPaneId,
+          geometry: Object.freeze({
+            windowCols: Number(windowCols),
+            windowRows: Number(windowRows),
+            left: Number(left),
+            top: Number(top),
+            cols: Number(cols),
+            rows: Number(rows),
+          }),
+        });
+      });
+    const exact =
+      rows.length === expected.length &&
+      rows.filter(({ active }) => active).length === 1 &&
+      rows.every(
+        (row) =>
+          /^@[0-9]+$/u.test(row.nativeWindowId) &&
+          /^%[0-9]+$/u.test(row.paneId) &&
+          Object.values(row.geometry).every(Number.isSafeInteger) &&
+          row.geometry.windowCols > 0 &&
+          row.geometry.windowRows > 0 &&
+          row.geometry.left >= 0 &&
+          row.geometry.top >= 0 &&
+          row.geometry.cols > 0 &&
+          row.geometry.rows > 0 &&
+          typeof row.resourceId === "string" &&
+          row.resourceId.length > 0 &&
+          row.resourceId.length <= 256 &&
+          expected.some(
+            (window) =>
+              `terminal-window.${createHash("sha256").update(row.resourceId).digest("hex").slice(0, 20)}` ===
+                window.windowResourceId &&
+              row.semanticPaneId === window.semanticPaneId &&
+              (!("name" in window) || row.name === window.name) &&
+              row.active === window.active,
+          ),
+      );
+    if (!exact) {
+      const error = new Error("exact window tmux snapshot did not match semantic inventory");
+      error.observation = Object.freeze({
+        operation: "window-tmux-snapshot",
+        expectedCount: Math.min(expected.length, 513),
+        actualCount: Math.min(rows.length, 513),
+        activeCount: Math.min(rows.filter(({ active }) => active).length, 513),
+      });
+      throw error;
+    }
+    return Object.freeze(rows);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function canonicalWindowLayout(state, paneId, lifecycle) {
@@ -1341,17 +1630,54 @@ async function captureArtifacts(state, label = "capture", existingPage = null) {
 }
 
 async function waitForState(predicate, timeoutMs = 90_000, { allowTerminalFailure = false } = {}) {
-  const deadline = Date.now() + timeoutMs;
-  let state = null;
-  while (Date.now() < deadline) {
+  const deadline = performance.now() + timeoutMs;
+  let previousHeartbeatWallMs = Date.now();
+  let state;
+  for (;;) {
     state = readJson(statePath);
+    const wallNowMs = Date.now();
+    const heartbeat = productRigHostHeartbeatObservation({
+      previousHeartbeatWallMs,
+      wallNowMs,
+    });
+    previousHeartbeatWallMs = wallNowMs;
+    if (heartbeat.suspended) {
+      const suspended = new Error("ProductRig host was suspended during orchestration");
+      suspended.boundary = state?.currentJourneyBoundary ?? "host-suspended";
+      suspended.observation = Object.freeze({
+        operation: "product-rig-host-suspension",
+        reason: "host-suspended",
+        stage: state?.currentJourneyBoundary ?? "unknown",
+        switchOrdinalWatermark: Number.isSafeInteger(state?.windowSwitchOrdinalWatermark)
+          ? Math.min(state.windowSwitchOrdinalWatermark, 32)
+          : null,
+        heartbeatElapsedMs: heartbeat.elapsedMs,
+        heartbeatExpectedIntervalMs: heartbeat.expectedIntervalMs,
+        heartbeatGapMs: heartbeat.gapMs,
+      });
+      throw suspended;
+    }
     if (!allowTerminalFailure && ["failed", "cleanup-failed"].includes(state?.status)) {
       throw productRigTerminalFailureError(state);
     }
     if (predicate(state)) return state;
+    if (performance.now() >= deadline) break;
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
-  throw new Error(`timed out waiting for product rig (${state?.status ?? "no state"})`);
+  const timeout = new Error(`timed out waiting for product rig (${state?.status ?? "no state"})`);
+  if (typeof state?.currentJourneyBoundary === "string") {
+    timeout.boundary = state.currentJourneyBoundary;
+    timeout.observation = Object.freeze({
+      operation: "product-rig-owner-readiness",
+      reason: "owner-timeout",
+      stage: state.currentJourneyBoundary,
+      switchOrdinalWatermark: Number.isSafeInteger(state?.windowSwitchOrdinalWatermark)
+        ? Math.min(state.windowSwitchOrdinalWatermark, 32)
+        : null,
+      elapsedMs: timeoutMs,
+    });
+  }
+  throw timeout;
 }
 
 function installWebStartupDiagnostics(page) {
@@ -1528,6 +1854,560 @@ async function firstAttachablePane(daemon, session) {
   return available.attachability.semanticPaneId;
 }
 
+async function dispatchOwnedProductAction(daemon, action, operationId, input, hostClientId) {
+  const response = await fetch(`${daemon.baseUrl}/api/v2/action/${action}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${daemon.record.authToken}`,
+      "Content-Type": "application/json",
+      "X-Tmux-Ide-Operation-Id": operationId,
+      ...(typeof hostClientId === "string" && hostClientId.length <= 256
+        ? { "X-Tmux-Ide-Host-Client-Id": hostClientId }
+        : {}),
+    },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(5_000),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || payload?.ok !== true || !payload.result) {
+    const error = new Error(`owned ${action} action failed (${response.status})`);
+    error.observation = ownedWindowActionFailureObservation({
+      action,
+      operationId,
+      status: response.status,
+      payload,
+    });
+    throw error;
+  }
+  if (
+    payload.result.operationId !== operationId ||
+    payload.result.daemonInstanceId !== daemon.record.instanceId
+  ) {
+    const error = new Error(`owned ${action} action returned a mismatched operation identity`);
+    error.observation = ownedWindowActionFailureObservation({
+      action,
+      operationId,
+      status: response.status,
+      payload: { ok: false, result: payload.result, error: { code: "result_invalid" } },
+    });
+    throw error;
+  }
+  return Object.freeze(payload.result);
+}
+
+function invalidOwnedProductActionResult(action, operationId, result) {
+  const error = new Error(`owned ${action} action returned an invalid result`);
+  error.observation = ownedWindowActionFailureObservation({
+    action,
+    operationId,
+    status: 200,
+    payload: { ok: false, result, error: { code: "result_invalid" } },
+  });
+  return error;
+}
+
+async function productApplicationShell(daemon, session) {
+  const response = await fetch(
+    `${daemon.baseUrl}/api/project/${encodeURIComponent(session)}/application-shell?version=3`,
+    {
+      headers: { Authorization: `Bearer ${daemon.record.authToken}` },
+      signal: AbortSignal.timeout(3_000),
+    },
+  );
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.resource)
+    throw new Error("application-shell inventory was unavailable");
+  return payload.resource;
+}
+
+function productApplicationShellWaitObservation(latest, expectedCount, attempts, startedAt) {
+  const resources = productWindowResources(latest);
+  const revisionCandidates = [
+    latest?.revision,
+    latest?.terminalInventory?.revision,
+    latest?.terminalInventory?.resourceRevision,
+  ];
+  return windowApplicationShellTimeoutObservation({
+    resources,
+    expectedCount,
+    attempts,
+    elapsedMs: performance.now() - startedAt,
+    revision: revisionCandidates.find((value) => Number.isSafeInteger(value)) ?? null,
+  });
+}
+
+async function waitForProductApplicationShell(
+  daemon,
+  session,
+  qualify,
+  timeoutMs = 10_000,
+  expectedCount = null,
+) {
+  const startedAt = performance.now();
+  const deadline = performance.now() + timeoutMs;
+  let latest = null;
+  let attempts = 0;
+  while (performance.now() < deadline) {
+    latest = await productApplicationShell(daemon, session);
+    attempts += 1;
+    if (qualify(latest)) return latest;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+  const error = new Error("application-shell lifecycle state did not settle");
+  error.observation = productApplicationShellWaitObservation(
+    latest,
+    Number.isSafeInteger(expectedCount) ? expectedCount : null,
+    attempts,
+    startedAt,
+  );
+  throw error;
+}
+
+function productWindowResources(shell) {
+  const inventory = shell?.terminalInventory;
+  const activeResourceId = inventory?.activeResourceId ?? null;
+  if (!Array.isArray(inventory?.resources)) return [];
+  return inventory.resources.flatMap((resource) => {
+    const resourceId = resource?.resourceId ?? resource?.id;
+    const semanticPaneId =
+      resource?.semanticPaneId ?? resource?.attachability?.semanticPaneId ?? null;
+    const windowResourceId = resource?.windowResourceId ?? resourceId;
+    const resourceTitle = resource?.displayTitle ?? resource?.title ?? resource?.name;
+    if (
+      typeof resourceId !== "string" ||
+      typeof windowResourceId !== "string" ||
+      typeof semanticPaneId !== "string" ||
+      typeof resourceTitle !== "string"
+    )
+      return [];
+    return [
+      Object.freeze({
+        resourceId,
+        windowResourceId,
+        semanticPaneId,
+        resourceTitle,
+        active: resourceId === activeResourceId,
+      }),
+    ];
+  });
+}
+
+function productWindowResourcesExactlyMatch(resources, expected) {
+  if (!Array.isArray(resources) || !Array.isArray(expected) || resources.length !== expected.length)
+    return false;
+  const tuples = (values) =>
+    values
+      .map((resource) => [
+        resource.resourceId,
+        resource.windowResourceId ?? resource.resourceId,
+        resource.semanticPaneId,
+        resource.resourceTitle,
+        resource.active === true,
+      ])
+      .sort(([left], [right]) => left.localeCompare(right));
+  return JSON.stringify(tuples(resources)) === JSON.stringify(tuples(expected));
+}
+
+async function settleWindowReferenceTrace(referenceTracePath, beforeCount, deadline) {
+  let previousDigest = null;
+  let stableSamples = 0;
+  let quietStartedAt = performance.now();
+  while (performance.now() < deadline) {
+    const tail = readJsonLines(referenceTracePath).slice(beforeCount);
+    if (tail.length > 4_096) throw new Error("window presentation trace exceeded its bound");
+    const digest = createHash("sha256").update(JSON.stringify(tail)).digest("hex");
+    if (digest === previousDigest) stableSamples += 1;
+    else {
+      stableSamples = 1;
+      quietStartedAt = performance.now();
+    }
+    previousDigest = digest;
+    const quietDurationMs = Math.floor(performance.now() - quietStartedAt);
+    if (stableSamples >= 2 && quietDurationMs >= 300)
+      return Object.freeze({ tail, digest, stableSamples, quietDurationMs, quiet: true });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+  throw new Error("window presentation trace did not reach a quiet watermark");
+}
+
+function windowRenderWork(tail, digest, stableSamples, quietDurationMs, expected) {
+  const frames = tail.filter((record) => record?.type === "performance.frame");
+  return Object.freeze({
+    terminalPaintCount: tail.filter((record) => record?.type === "performance.terminal-paint")
+      .length,
+    canonicalPublicationCount: tail.filter(
+      (record) => record?.type === "performance.terminal-canonical-publication",
+    ).length,
+    canonicalPaintCount: tail.filter(
+      (record) => record?.type === "performance.terminal-canonical-paint",
+    ).length,
+    canonicalUpdateCount: tail.filter(
+      (record) => record?.type === "performance.terminal-canonical-update",
+    ).length,
+    frameCount: tail.filter((record) => record?.type === "performance.frame").length,
+    presentation: assessWindowPresentationFrames(frames, expected),
+    eventCount: tail.length,
+    traceDigest: digest,
+    stableSamples,
+    quietDurationMs,
+    quiet: true,
+  });
+}
+
+function exactWindowSwitchDaemonTiming(records, started) {
+  const fail = (firstFailedPredicate) => {
+    const error = new Error("window switch daemon phase timing did not qualify");
+    error.observation = Object.freeze({
+      operation: "window-switch-daemon-phase-timing",
+      firstFailedPredicate,
+    });
+    throw error;
+  };
+  if (!Array.isArray(records) || records.length > 4_096) fail("record-cardinality");
+  const operations = [
+    "semantic-pane-inventory-lookup",
+    "semantic-pane-resolution",
+    "tmux-selection-effect-proof",
+    "semantic-mutation-effect",
+  ];
+  const exact = records.filter(
+    (record) =>
+      record?.type === "performance.stage" &&
+      record.traceId === started.traceId &&
+      record.scenario === "window-switch",
+  );
+  if (exact.length !== operations.length) fail("phase-cardinality");
+  const values = {};
+  const spans = [];
+  let clockIdentity = null;
+  for (const operation of operations) {
+    const matches = exact.filter((record) => record.operation === operation);
+    if (matches.length !== 1) fail("phase-operation");
+    const span = matches[0];
+    if (
+      span.authority?.generation !== started.daemonGeneration ||
+      span.authority?.incarnation !== null ||
+      span.stage !== "tmux" ||
+      typeof span.processId !== "string" ||
+      span.processId.length < 1 ||
+      span.processId.length > 256 ||
+      typeof span.clockId !== "string" ||
+      span.clockId.length < 1 ||
+      span.clockId.length > 128 ||
+      span.clockKind !== "performance-now" ||
+      !Number.isSafeInteger(span.startedAtMicros) ||
+      !Number.isSafeInteger(span.endedAtMicros) ||
+      span.startedAtMicros < 0 ||
+      span.endedAtMicros < span.startedAtMicros
+    )
+      fail(
+        span.authority?.generation !== started.daemonGeneration ||
+          span.authority?.incarnation !== null ||
+          span.stage !== "tmux"
+          ? "phase-identity"
+          : "phase-monotonic",
+      );
+    const currentClockIdentity = `${span.processId}\0${span.clockId}\0${span.clockKind}`;
+    if (clockIdentity !== null && currentClockIdentity !== clockIdentity) fail("phase-clock");
+    clockIdentity = currentClockIdentity;
+    spans.push(span);
+    values[`${operation.replaceAll("-", "_")}Ms`] =
+      (span.endedAtMicros - span.startedAtMicros) / 1_000;
+  }
+  const [inventory, resolution, selection, total] = spans;
+  if (
+    total.startedAtMicros > inventory.startedAtMicros ||
+    inventory.endedAtMicros > resolution.startedAtMicros ||
+    resolution.endedAtMicros > selection.startedAtMicros ||
+    selection.endedAtMicros > total.endedAtMicros
+  )
+    fail("phase-order");
+  return Object.freeze(values);
+}
+
+async function driveExactHostedWindowSwitch(
+  state,
+  tracePath,
+  seen,
+  { timeoutMs = 5_000, signal, boundary, ordinal = null },
+) {
+  const before = readJsonLines(tracePath);
+  const beforeCount = before.length;
+  const referenceTracePath = state.tui.performanceTracePath;
+  const referenceBefore = readJsonLines(referenceTracePath);
+  const daemonTracePath = state.tui.daemonPerformanceTracePath;
+  if (typeof daemonTracePath !== "string")
+    throw new Error("window switch daemon phase trace was unavailable");
+  const daemonBeforeCount = readJsonLines(daemonTracePath).length;
+  let delivery;
+  try {
+    delivery = JSON.parse(
+      await tuiCommandAsync(
+        state,
+        ["input", JSON.stringify({ version: 1, kind: "control-key", key: "t" })],
+        { timeout: Math.min(timeoutMs, 2_000), signal },
+      ),
+    );
+  } catch (cause) {
+    const error = new Error("window switch hosted input command failed", { cause });
+    error.boundary = boundary;
+    error.observation = windowSwitchInputFailureObservation({
+      boundary,
+      ordinal,
+      reason: signal?.aborted ? "aborted" : (cause?.productRigReason ?? "command-failed"),
+      timeoutMs: Math.min(timeoutMs, 2_000),
+    });
+    throw error;
+  }
+  if (
+    delivery?.kind !== "control-key" ||
+    delivery?.requestedKey !== "t" ||
+    delivery?.delivery !== "exact-bytes-to-immutable-host-pane-pty" ||
+    delivery?.bytesInjected !== 1 ||
+    delivery?.phases !== 1
+  )
+    throw new Error("window switch hosted control-key receipt was invalid");
+  const deadline = performance.now() + timeoutMs;
+  let started = null;
+  let settled = null;
+  let fence = null;
+  while (performance.now() < deadline && (!started || !settled)) {
+    const appended = readJsonLines(tracePath).slice(beforeCount);
+    const starts = appended.filter(
+      (record) => record?.phase === "window-switch-start" && !seen.has(record.traceId),
+    );
+    if (starts.length > 1) throw new Error("hosted control-key produced duplicate switch starts");
+    started = starts[0] ?? null;
+    const receipts = started
+      ? appended.filter(
+          (record) =>
+            record?.phase === "window-switch-receipt" && record.traceId === started.traceId,
+        )
+      : [];
+    if (receipts.length > 1)
+      throw new Error("hosted control-key produced duplicate switch selection receipts");
+    const failures = started
+      ? appended.filter(
+          (record) =>
+            record?.phase === "window-switch-failed" && record.traceId === started.traceId,
+        )
+      : [];
+    if (failures.length > 1)
+      throw new Error("hosted control-key produced duplicate terminal switch failures");
+    const rejectedReceipt = receipts.find(
+      (record) => record?.selected !== true || record?.applied !== true,
+    );
+    if (failures.length === 1 || rejectedReceipt) {
+      const failure = failures[0] ?? {
+        stage: rejectedReceipt?.failureStage,
+        reason: rejectedReceipt?.failureReason,
+        backendReason: rejectedReceipt?.failureBackendReason,
+      };
+      const error = new Error("window switch selection receipt failed");
+      error.observation = windowSwitchSelectionFailureObservation(
+        failure,
+        starts.length,
+        receipts.length,
+        failures.length,
+      );
+      throw error;
+    }
+    const settledMatches = started
+      ? appended.filter(
+          (record) =>
+            record?.phase === "window-switch-settled" && record.traceId === started.traceId,
+        )
+      : [];
+    if (settledMatches.length > 1)
+      throw new Error("hosted control-key produced duplicate switch settlements");
+    settled = settledMatches[0] ?? null;
+    if (!started || !settled) await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  }
+  if (!started || !settled) throw new Error("window switch actual-frame fence did not settle");
+  const appended = readJsonLines(tracePath).slice(beforeCount);
+  if (
+    settled.traceId !== started.traceId ||
+    settled.target !== started.target ||
+    settled.paneId !== started.paneId ||
+    settled.startedAtMicros !== started.startedAtMicros
+  )
+    throw new Error("window switch lifecycle identity did not join exactly");
+  while (performance.now() < deadline && !fence) {
+    const fenceMatches = readJsonLines(tracePath)
+      .slice(beforeCount)
+      .filter(
+        (record) => record?.phase === "window-switch-fence" && record.traceId === settled.traceId,
+      );
+    if (fenceMatches.length > 1)
+      throw new Error("hosted control-key produced duplicate switch fences");
+    fence = fenceMatches[0] ?? null;
+    if (!fence) await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  }
+  if (!fence) throw new Error("window switch critical persistence fence did not settle");
+  const fenceIdentityKeys = [
+    "traceId",
+    "target",
+    "paneId",
+    "startedAtMicros",
+    "daemonGeneration",
+    "clientGeneration",
+    "rendererEpoch",
+    "sourceEpoch",
+    "generation",
+    "incarnation",
+    "revision",
+    "stateHash",
+    "cols",
+    "rows",
+    "processId",
+    "clockId",
+  ];
+  if (
+    fence.phase !== "window-switch-fence" ||
+    fenceIdentityKeys.some((key) => fence[key] !== started[key])
+  )
+    throw new Error("window switch persistence fence identity did not join exactly");
+  if (
+    fence.writerHealth?.droppedRecords !== 0 ||
+    fence.writerHealth?.failed !== false ||
+    fence.writerHealth?.pendingCriticalRecords !== 0
+  ) {
+    const error = new Error("window switch lifecycle writer fence was unhealthy");
+    error.observation = windowLifecycleWriterFailureObservation({
+      stage: "switch",
+      health: fence.writerHealth,
+      records: readJsonLines(tracePath),
+    });
+    throw error;
+  }
+  const quiet = await settleWindowReferenceTrace(
+    referenceTracePath,
+    referenceBefore.length,
+    deadline,
+  );
+  const renderWork = windowRenderWork(
+    quiet.tail,
+    quiet.digest,
+    quiet.stableSamples,
+    quiet.quietDurationMs,
+    { kind: "window-switch", ...started },
+  );
+  const phaseAssessment = assessWindowSwitchPhaseTimingRecords({
+    records: appended,
+    started,
+    settled,
+  });
+  if (!phaseAssessment.qualified) {
+    const error = new Error("window switch phase timing did not qualify");
+    error.observation = Object.freeze({
+      operation: "window-switch-phase-timing",
+      firstFailedPredicate: phaseAssessment.firstFailedPredicate,
+    });
+    throw error;
+  }
+  const phaseTiming = phaseAssessment.timing;
+  const daemonTiming = exactWindowSwitchDaemonTiming(
+    readJsonLines(daemonTracePath).slice(daemonBeforeCount),
+    started,
+  );
+  seen.add(settled.traceId);
+  return Object.freeze({
+    delivery,
+    started,
+    settled,
+    fence,
+    renderWork,
+    phaseTiming: Object.freeze({ ...phaseTiming, daemon: daemonTiming }),
+  });
+}
+
+async function waitForWindowRenameFence(
+  state,
+  { lifecycleBefore, referenceBefore, expected, timeoutMs = 5_000 },
+) {
+  const lifecyclePath = join(state.tui.runtimeDir, "performance.jsonl");
+  const deadline = performance.now() + timeoutMs;
+  let started = null;
+  let presented = null;
+  let fence = null;
+  while (performance.now() < deadline && (!started || !presented || !fence)) {
+    const appended = readJsonLines(lifecyclePath).slice(lifecycleBefore);
+    const starts = appended.filter(
+      (record) =>
+        record?.phase === "window-rename-start" &&
+        record.target === expected.windowResourceId &&
+        record.paneId === expected.semanticPaneId &&
+        record.previousName === expected.previousName &&
+        record.windowName === expected.windowName,
+    );
+    if (starts.length > 1) throw new Error("window rename published duplicate starts");
+    started = starts[0] ?? null;
+    presented = started
+      ? (appended.find(
+          (record) =>
+            record?.phase === "window-rename-presented" && record.traceId === started.traceId,
+        ) ?? null)
+      : null;
+    fence = started
+      ? (appended.find(
+          (record) => record?.phase === "window-rename-fence" && record.traceId === started.traceId,
+        ) ?? null)
+      : null;
+    if (!started || !presented || !fence)
+      await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  }
+  if (!started || !presented || !fence)
+    throw new Error("window rename actual-frame fence did not settle");
+  const identityKeys = [
+    "target",
+    "paneId",
+    "windowName",
+    "daemonGeneration",
+    "clientGeneration",
+    "rendererEpoch",
+    "sourceEpoch",
+    "generation",
+    "incarnation",
+    "revision",
+    "stateHash",
+    "cols",
+    "rows",
+  ];
+  if (identityKeys.some((key) => presented[key] !== started[key] || fence[key] !== started[key]))
+    throw new Error("window rename presentation identity or writer fence was invalid");
+  if (
+    fence.writerHealth?.droppedRecords !== 0 ||
+    fence.writerHealth?.failed !== false ||
+    fence.writerHealth?.pendingCriticalRecords !== 0
+  ) {
+    const error = new Error("window rename lifecycle writer fence was unhealthy");
+    error.observation = windowLifecycleWriterFailureObservation({
+      stage: "rename",
+      health: fence.writerHealth,
+      records: readJsonLines(lifecyclePath),
+    });
+    throw error;
+  }
+  const quiet = await settleWindowReferenceTrace(
+    state.tui.performanceTracePath,
+    referenceBefore,
+    deadline,
+  );
+  return Object.freeze({
+    traceId: started.traceId,
+    started,
+    presented,
+    fence,
+    renderWork: windowRenderWork(
+      quiet.tail,
+      quiet.digest,
+      quiet.stableSamples,
+      quiet.quietDurationMs,
+      { kind: "window-rename", ...started },
+    ),
+  });
+}
+
 async function fleetSessionId(daemon, label) {
   const response = await fetch(`${daemon.baseUrl}/api/resources/fleet-catalog`, {
     headers: { Authorization: `Bearer ${daemon.record.authToken}` },
@@ -1618,6 +2498,13 @@ async function start(json, quiet = false, planEntry = null) {
           }
         : {}),
       TMUX_IDE_PRODUCT_TIMELINE_ORIGIN_MS: String(attemptTimelineOriginMs),
+      ...(diagnosticFrozenProvenance
+        ? {
+            TMUX_IDE_PRODUCT_EXPECTED_SOURCE_COMMIT: diagnosticFrozenProvenance.commit,
+            TMUX_IDE_PRODUCT_EXPECTED_SOURCE_TREE: diagnosticFrozenProvenance.tree,
+            TMUX_IDE_PRODUCT_EXPECTED_SOURCE_MANIFEST: diagnosticFrozenProvenance.manifestDigest,
+          }
+        : {}),
     },
     detached: true,
     stdio: ["ignore", log, log],
@@ -1859,6 +2746,57 @@ async function waitForFocusWorkspaceEvidence(state, expected, timeoutMs = 5_000)
     await new Promise((resolveWait) => setTimeout(resolveWait, 25));
   }
   throw lastError ?? new Error("focus WorkspaceClient evidence did not settle");
+}
+
+async function waitForWindowWorkspaceEvidence(state, expected, timeoutMs = 5_000) {
+  const deadline = performance.now() + timeoutMs;
+  let lastError = null;
+  while (performance.now() < deadline) {
+    try {
+      return qualifyWindowWorkspaceState(
+        readJsonLines(join(state.tui.runtimeDir, "performance.jsonl")),
+        expected,
+      );
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+  throw lastError ?? new Error("window WorkspaceClient evidence did not settle");
+}
+
+function windowWorkspaceEvidenceWatermark(state, processId, daemonGeneration) {
+  const values = readJsonLines(join(state.tui.runtimeDir, "performance.jsonl"))
+    .filter(
+      (record) =>
+        record?.phase === "generation-workspace-client-state" &&
+        record.processId === processId &&
+        record.daemonGeneration === daemonGeneration &&
+        Number.isSafeInteger(record.monotonicMicros),
+    )
+    .map((record) => record.monotonicMicros);
+  const watermark = Math.max(-1, ...values);
+  if (!Number.isSafeInteger(watermark) || watermark < 0 || watermark >= Number.MAX_SAFE_INTEGER)
+    throw new Error("window WorkspaceClient watermark is unavailable");
+  return watermark;
+}
+
+function windowResourceAcknowledgementWatermark(state, processId, daemonGeneration) {
+  const values = readJsonLines(join(state.tui.runtimeDir, "performance.jsonl"))
+    .filter(
+      (record) =>
+        record?.phase === "generation-workspace-client-state" &&
+        record.processId === processId &&
+        record.daemonGeneration === daemonGeneration,
+    )
+    .map(
+      (record) => record?.workspaceClient?.committed?.lastResourceChangeAcknowledgement?.sequence,
+    )
+    .filter((sequence) => Number.isSafeInteger(sequence) && sequence >= 0);
+  const watermark = Math.max(-1, ...values);
+  if (!Number.isSafeInteger(watermark) || watermark >= Number.MAX_SAFE_INTEGER)
+    throw new Error("window resource acknowledgement watermark is unavailable");
+  return watermark;
 }
 
 function focusWorkspaceEvidenceWatermark(state, expected) {
@@ -3177,7 +4115,7 @@ async function diagnoseRuntimeQualification(planEntry) {
   // A closed collector summary is the only truthful proof that trace
   // backpressure did not drop or oversize records. Stop the hosted TUI after
   // all visual journeys, then build the report from its final streams.
-  tuiCommand(state, ["stop"]);
+  await tuiCommandAsync(state, ["stop"], { timeout: 5_000 });
   const lifecycle = readJsonLines(join(state.tui.runtimeDir, "performance.jsonl"));
   const traceRecords = tracePath ? readJsonLines(tracePath) : [];
   const daemonTraceRecords = state.tui.daemonPerformanceTracePath
@@ -3216,6 +4154,7 @@ async function diagnoseRuntimeQualification(planEntry) {
     sourceProvenance: {
       commit: state.tui?.performanceTraceCommit ?? null,
       tree: state.tui?.performanceTraceTree ?? null,
+      manifestDigest: state.tui?.performanceTraceManifestDigest ?? null,
     },
     warmHostPublications: Object.freeze([...warmHostPublications]),
   };
@@ -3286,7 +4225,7 @@ async function diagnoseConfiglessColdStart(planEntry) {
     `diagnose-${planEntry.journey.id}-r${planEntry.repetition}`,
   );
   diagnosticCaptures.set(planEntry.runId, captureEvidence);
-  tuiCommand(state, ["stop"]);
+  await tuiCommandAsync(state, ["stop"], { timeout: 5_000 });
   const timeline = readJsonLines(timelinePath);
   const correlation = productDiagnosticCorrelation(state, captureEvidence);
   const { boundaries, firstBrokenBoundary, firstUnmeasuredBoundary, status } =
@@ -3318,6 +4257,7 @@ async function diagnoseConfiglessColdStart(planEntry) {
     sourceProvenance: {
       commit: state.tui?.performanceTraceCommit ?? null,
       tree: state.tui?.performanceTraceTree ?? null,
+      manifestDigest: state.tui?.performanceTraceManifestDigest ?? null,
     },
   };
   const stderr = readDiagnosticText(join(state.tui.runtimeDir, "stderr.log"));
@@ -3357,7 +4297,7 @@ async function diagnoseCoherentFirstPane(planEntry) {
     `diagnose-${planEntry.journey.id}-r${planEntry.repetition}`,
   );
   diagnosticCaptures.set(planEntry.runId, captureEvidence);
-  tuiCommand(state, ["stop"]);
+  await tuiCommandAsync(state, ["stop"], { timeout: 5_000 });
   const timeline = readJsonLines(timelinePath);
   const correlation = productDiagnosticCorrelation(state, captureEvidence);
   const assessment = assessCoherentFirstPaneBoundaries({
@@ -3380,6 +4320,7 @@ async function diagnoseCoherentFirstPane(planEntry) {
     sourceProvenance: {
       commit: state.tui?.performanceTraceCommit ?? null,
       tree: state.tui?.performanceTraceTree ?? null,
+      manifestDigest: state.tui?.performanceTraceManifestDigest ?? null,
     },
   };
   const stderr = readDiagnosticText(join(state.tui.runtimeDir, "stderr.log"));
@@ -3419,7 +4360,7 @@ async function diagnoseFirstKeyPaste(planEntry) {
     `diagnose-${planEntry.journey.id}-${planEntry.variant}-r${planEntry.repetition}`,
   );
   diagnosticCaptures.set(planEntry.runId, captureEvidence);
-  tuiCommand(state, ["stop"]);
+  await tuiCommandAsync(state, ["stop"], { timeout: 5_000 });
   const timeline = readJsonLines(timelinePath);
   const correlation = productDiagnosticCorrelation(state, captureEvidence);
   const journeyEvidence = state.journeyEvidence?.firstKeyPaste ?? null;
@@ -3445,6 +4386,7 @@ async function diagnoseFirstKeyPaste(planEntry) {
     sourceProvenance: {
       commit: state.tui?.performanceTraceCommit ?? null,
       tree: state.tui?.performanceTraceTree ?? null,
+      manifestDigest: state.tui?.performanceTraceManifestDigest ?? null,
     },
   };
   const stderr = readDiagnosticText(join(state.tui.runtimeDir, "stderr.log"));
@@ -3485,7 +4427,7 @@ async function diagnoseFocus(planEntry) {
     `diagnose-${planEntry.journey.id}-r${planEntry.repetition}`,
   );
   diagnosticCaptures.set(planEntry.runId, captureEvidence);
-  tuiCommand(state, ["stop"]);
+  await tuiCommandAsync(state, ["stop"], { timeout: 5_000 });
   const timeline = readJsonLines(timelinePath);
   const correlation = productDiagnosticCorrelation(state, captureEvidence);
   const journeyEvidence = state.journeyEvidence?.focus ?? null;
@@ -3510,6 +4452,7 @@ async function diagnoseFocus(planEntry) {
     sourceProvenance: {
       commit: state.tui?.performanceTraceCommit ?? null,
       tree: state.tui?.performanceTraceTree ?? null,
+      manifestDigest: state.tui?.performanceTraceManifestDigest ?? null,
     },
   };
   return {
@@ -3538,18 +4481,88 @@ async function diagnoseFocus(planEntry) {
   };
 }
 
+async function diagnoseWindowLifecycle(planEntry) {
+  diagnosticAttemptPhases.set(planEntry.runId, "product-rig-startup");
+  await start(false, true, planEntry);
+  const state = await waitForState((candidate) => candidate?.status === "ready");
+  diagnosticAttemptPhases.set(planEntry.runId, "evidence-capture");
+  const captureEvidence = await captureArtifacts(
+    state,
+    `diagnose-${planEntry.journey.id}-r${planEntry.repetition}`,
+  );
+  diagnosticCaptures.set(planEntry.runId, captureEvidence);
+  await tuiCommandAsync(state, ["stop"], { timeout: 5_000 });
+  const timeline = readJsonLines(timelinePath);
+  const correlation = productDiagnosticCorrelation(state, captureEvidence);
+  const journeyEvidence = state.journeyEvidence?.windowLifecycle ?? null;
+  const expected = journeyEvidence?.expected ?? null;
+  const causal = assessProductWindowLifecycle({ evidence: journeyEvidence, expected });
+  const assessment = assessWindowLifecycleJourneyBoundaries({
+    timeline,
+    assessment: causal,
+    correlationComplete: correlation.complete,
+  });
+  const report = {
+    version: 1,
+    status: assessment.status,
+    journey: planEntry.journey.id,
+    variant: null,
+    repetition: planEntry.repetition,
+    repeat: planEntry.repeat,
+    runId: planEntry.runId,
+    firstBrokenBoundary: assessment.firstBrokenBoundary,
+    firstUnmeasuredBoundary: assessment.firstUnmeasuredBoundary,
+    boundaries: assessment.boundaries,
+    causalAssessment: causal,
+    windowLifecycle: journeyEvidence,
+    diagnosticCorrelation: { complete: correlation.complete, missing: correlation.missing },
+    sourceProvenance: {
+      commit: state.tui?.performanceTraceCommit ?? null,
+      tree: state.tui?.performanceTraceTree ?? null,
+      manifestDigest: state.tui?.performanceTraceManifestDigest ?? null,
+    },
+  };
+  return {
+    report,
+    reportPath: null,
+    evidence: {
+      report,
+      alignment: {
+        version: 1,
+        journey: planEntry.journey.id,
+        firstBrokenBoundary: assessment.firstBrokenBoundary,
+        firstUnmeasuredBoundary: assessment.firstUnmeasuredBoundary,
+        boundaries: assessment.boundaries,
+        causalAssessment: causal,
+        correlation: { complete: correlation.complete, missing: correlation.missing },
+        availability: correlation.availability,
+      },
+      timeline: readDiagnosticText(timelinePath),
+      tmuxTruth: captureEvidence.truth,
+      daemonState: correlation.daemonState,
+      clientState: correlation.clientState,
+      tuiAnsi: readDiagnosticText(captureEvidence.tuiPath),
+      webPngPath: captureEvidence.webPath,
+      stderr: boundedDiagnosticText(readDiagnosticText(join(state.tui.runtimeDir, "stderr.log"))),
+      reproduction: diagnosticReproduction(planEntry.journey.id, null),
+    },
+  };
+}
+
 function executeProductJourney(planEntry) {
   return dispatchProductJourneyExecutor(planEntry, {
     "configless-cold-start": diagnoseConfiglessColdStart,
     "coherent-first-pane": diagnoseCoherentFirstPane,
     "first-key-paste": diagnoseFirstKeyPaste,
     focus: diagnoseFocus,
+    "window-lifecycle": diagnoseWindowLifecycle,
     "runtime-qualification": diagnoseRuntimeQualification,
   });
 }
 
 async function prepareDiagnosticFailure(planEntry, error, firstBrokenBoundary) {
   const state = readJson(statePath);
+  const partialRuntime = partialProductRuntimeEvidence(state);
   let failureObservation = error?.observation ?? state?.failureObservation ?? null;
   if (
     failureObservation?.operation === "wait-for-coherent-terminal-frame" &&
@@ -3604,9 +4617,11 @@ async function prepareDiagnosticFailure(planEntry, error, firstBrokenBoundary) {
     firstUnmeasuredBoundary: null,
     failure,
     failureObservation,
+    partialRuntime,
     sourceProvenance: {
       commit: state?.tui?.performanceTraceCommit ?? null,
       tree: state?.tui?.performanceTraceTree ?? null,
+      manifestDigest: state?.tui?.performanceTraceManifestDigest ?? null,
     },
   };
   return {
@@ -3620,11 +4635,14 @@ async function prepareDiagnosticFailure(planEntry, error, firstBrokenBoundary) {
         firstBrokenBoundary,
         failure,
         failureObservation,
+        partialRuntime,
         correlation: { complete: false, missing: correlation.missing },
         availability: {
           tmuxTruth: truth !== null,
           tui: tuiAvailable,
           web: webAvailable,
+          partialRuntime:
+            partialRuntime.lifecycle.available || partialRuntime.referenceTrace.available,
         },
       },
       timeline: readDiagnosticText(timelinePath),
@@ -3633,7 +4651,7 @@ async function prepareDiagnosticFailure(planEntry, error, firstBrokenBoundary) {
         reason: `not captured before ${firstBrokenBoundary}`,
       },
       daemonState: correlation.daemonState,
-      clientState: { ...correlation.clientState, failureObservation },
+      clientState: { ...correlation.clientState, failureObservation, partialRuntime },
       tuiAnsi: tuiAvailable
         ? readDiagnosticText(captureEvidence.tuiPath)
         : `[unavailable: TUI frame not captured before ${firstBrokenBoundary}]\n`,
@@ -3651,7 +4669,12 @@ async function executeDiagnosticAttempt(entry) {
       onPhase: (phase) => diagnosticAttemptPhases.set(entry.runId, phase),
       currentBoundary: () => diagnosticAttemptPhases.get(entry.runId) ?? "journey-drive",
       preCleanup: () => stop(false, { quiet: true, strict: true }),
-      drive: () => executeProductJourney(entry),
+      drive: async () => {
+        assertFrozenProductSource("before-repetition");
+        const completed = await executeProductJourney(entry);
+        assertFrozenProductSource("after-repetition");
+        return completed;
+      },
       prepareFailure: (error, boundary) => prepareDiagnosticFailure(entry, error, boundary),
       postCleanup: async () =>
         createProductRigCleanupReceipt(
@@ -3665,6 +4688,7 @@ async function executeDiagnosticAttempt(entry) {
           await stop(false, { quiet: true, strict: true, maxAttempts: 1 }),
           2,
         ),
+      validateAfterCleanup: () => assertFrozenProductSource("after-cleanup"),
       appendCleanupFailure: (failedResult, cleanupError) => {
         const cleanupFailure = boundedDiagnosticText(
           cleanupError instanceof Error
@@ -3673,6 +4697,19 @@ async function executeDiagnosticAttempt(entry) {
         );
         failedResult.report.cleanupFailure = cleanupFailure;
         failedResult.evidence.alignment.cleanupFailure = cleanupFailure;
+      },
+      appendValidationFailure: (failedResult, validationError) => {
+        const observation =
+          validationError?.boundary === "source-provenance" &&
+          validationError?.observation?.reason === "source-drift"
+            ? validationError.observation
+            : Object.freeze({
+                operation: "product-rig-post-cleanup-validation",
+                reason: "validation-failed",
+              });
+        failedResult.report.sourceProvenanceFailure = observation;
+        failedResult.evidence.alignment.sourceProvenanceFailure = observation;
+        failedResult.evidence.clientState.sourceProvenanceFailure = observation;
       },
       publishFailure: (failedResult, cleanupReceipt) => {
         const publication = prepareProductDiagnosticBundlePublication({
@@ -3730,7 +4767,17 @@ async function diagnose(options) {
       nonce: randomBytes(4).toString("hex"),
     }),
   }));
-  const runs = await runProductJourneyPlan(plan, executeDiagnosticAttempt);
+  await execFileAsync(process.execPath, [join(repoRoot, "scripts", "build-cli.mjs")], {
+    cwd: repoRoot,
+    timeout: 120_000,
+  });
+  diagnosticFrozenProvenance = sourceTraceProvenance();
+  let runs;
+  try {
+    runs = await runProductJourneyPlan(plan, executeDiagnosticAttempt);
+  } finally {
+    diagnosticFrozenProvenance = null;
+  }
   const failed = runs.some(({ report }) => report.status !== "passed");
   const result =
     runs.length === 1
@@ -4011,7 +5058,7 @@ async function owner() {
           {
             subsystem: "tui",
             run: async () => {
-              if (state.tui) tuiCommand(state, ["stop"]);
+              if (state.tui) await tuiCommandAsync(state, ["stop"], { timeout: 5_000 });
             },
           },
           {
@@ -4046,6 +5093,10 @@ async function owner() {
       ];
       if (Number.isInteger(state.daemon?.pid) && processAlive(state.daemon.pid))
         failures.push({ subsystem: "daemon", detail: `pid ${state.daemon.pid} remained live` });
+      for (const pid of activeTuiCommandPids) {
+        if (processAlive(pid))
+          failures.push({ subsystem: "tui-command", detail: `pid ${pid} remained live` });
+      }
       for (const [subsystem, path] of [
         ["runtime-root", state.runtimeNamespace?.root],
         ["tmux-socket", state.runtimeNamespace?.tmuxSocketPath],
@@ -4120,7 +5171,19 @@ async function owner() {
     sleepAssertion = await sleepAssertionAcquisition;
     void sleepAssertion.failure.catch(async (error) => {
       if (closing) return;
-      publish({ status: "failed", failure: error.stack ?? error.message });
+      publish({
+        status: "failed",
+        failure: error.stack ?? error.message,
+        firstBrokenBoundary: state.currentJourneyBoundary ?? "host-sleep-assertion",
+        failureObservation: Object.freeze({
+          operation: "product-rig-host-sleep-assertion",
+          reason: "sleep-assertion-lost",
+          stage: state.currentJourneyBoundary ?? "startup",
+          switchOrdinalWatermark: Number.isSafeInteger(state.windowSwitchOrdinalWatermark)
+            ? Math.min(state.windowSwitchOrdinalWatermark, 32)
+            : null,
+        }),
+      });
       event("failed", { failure: error.message });
       await settleInternalProductRigCleanup({
         maxImmediateAttempts: 1,
@@ -4731,6 +5794,872 @@ async function owner() {
       });
       publish({
         journeyEvidence: { firstKeyPaste: inputBoot },
+        status: "ready",
+        readyAt: new Date().toISOString(),
+      });
+      await new Promise(() => undefined);
+      return;
+    }
+    if (journeyId === "window-lifecycle") {
+      let windowReadiness = null;
+      const windowBoot = await runWindowLifecycleOwnerBoot({
+        onBoundary: (boundary) =>
+          publish({
+            currentJourneyBoundary: boundary,
+            currentJourneyBoundaryAtWallMs: Date.now(),
+            currentJourneyBoundaryAtMonotonicMs: performance.now(),
+          }),
+        createWindowNamespace: async () => {
+          const marker = `RIG_WINDOW_${randomBytes(6).toString("hex").toUpperCase()}`;
+          const daemonPerformanceTracePath = join(
+            rigRoot,
+            "window-lifecycle-daemon-performance.jsonl",
+          );
+          const scratchFleet = await createScratchFleet({
+            sessions: 1,
+            slug,
+            initialPaneMarker: marker,
+            windowsPerSession: 1,
+          });
+          const cleanupToken = `product-test-rig:${slug}`;
+          fleet = {
+            ...scratchFleet,
+            environment: {
+              ...scratchFleet.environment,
+              TMUX_IDE_RUNTIME_MODE: "testdrive",
+              TMUX_IDE_CLEANUP_TOKEN: cleanupToken,
+              TMUX_IDE_TMUX_SOCKET_PATH: scratchFleet.socketPath,
+              TMUX_IDE_SESSION_RUNTIME_TRACE_LOG: daemonPerformanceTracePath,
+            },
+          };
+          const session = fleet.sessionNames[0];
+          const initialPane = fleet.initialPanes.find((pane) => pane.sessionName === session);
+          if (!initialPane) throw new Error("window namespace lost its exact initial pane");
+          const initialWindows = fleet.listWindows(session);
+          const initialPaneCount = fleet.countPanes(session);
+          const initialWindow = fleet.currentWindow(session);
+          if (
+            initialWindows.length !== 1 ||
+            initialWindows[0] !== "one" ||
+            initialWindow !== "one" ||
+            initialPaneCount !== 1
+          ) {
+            const error = new Error("window namespace did not start with exactly one window/pane");
+            error.boundary = "window-namespace-ready";
+            error.observation = Object.freeze({
+              operation: "window-namespace-cardinality",
+              reason: "unexpected-initial-cardinality",
+              expectedWindowCount: 1,
+              actualWindowCount: Math.min(initialWindows.length, 3),
+              expectedPaneCount: 1,
+              actualPaneCount: Math.min(initialPaneCount, 3),
+              selectedWindowMatched: initialWindow === "one",
+            });
+            throw error;
+          }
+          const runtimeNamespace = {
+            root: fleet.root,
+            home: fleet.environment.HOME,
+            projectDir: fleet.projectDir,
+            registryDir: fleet.environment.TMUX_IDE_REGISTRY_DIR,
+            settingsDir: fleet.environment.TMUX_IDE_SETTINGS_DIR,
+            stateDir: fleet.environment.TMUX_IDE_HOME,
+            tmuxSocketPath: fleet.socketPath,
+            hostTmuxSocketPath: join(fleet.root, "product-rig-host-tmux.sock"),
+            daemonInfoDir: fleet.daemonInfoDir,
+            cleanupToken,
+          };
+          const tui = prepareOwnedTuiRuntime({
+            ownership: { session, runtimeNamespace },
+            intendedTui: {
+              hostSession: `_tmux-ide-product-rig-${slug}`,
+              runtimeDir: join(rigRoot, "tui-window-lifecycle"),
+              performanceTracePath: join(
+                rigRoot,
+                "tui-window-lifecycle",
+                "performance-trace.jsonl",
+              ),
+              performanceTraceDetail: "1",
+              daemonPerformanceTracePath,
+            },
+            publish,
+            resolveProvenance: sourceTraceProvenance,
+            createRuntimeDir: createIsolatedTargetedTuiCwd,
+          });
+          event("window-namespace-ready", {
+            paneId: initialPane.paneId,
+            windows: initialWindows.length,
+            panes: initialPaneCount,
+          });
+          return Object.freeze({
+            session,
+            seed: { marker, paneId: initialPane.paneId, geometry: initialPane },
+            runtimeNamespace,
+            tui,
+          });
+        },
+        startCanonicalDaemon: async () => {
+          daemon = await startOwnedProductRigDaemon({
+            start: () => startDaemon(fleet),
+            publish,
+            waitUntilReady: waitForReadinessLadder,
+          });
+          return daemon;
+        },
+        openCanonicalWorkspace: async (namespace, runningDaemon) => {
+          const workspace = await runningDaemon.promote(namespace.session);
+          const identity = await observeTargetedCanonicalIdentity(
+            runningDaemon,
+            namespace.session,
+            workspace,
+          );
+          publish({
+            workspace,
+            daemon: {
+              ...runningDaemon.record,
+              revision: identity.catalogRevision,
+              revisionKind: "fleet-catalog",
+            },
+          });
+          event("window-daemon-ready", identity);
+          return identity;
+        },
+        buildBeforeMeasurement: async () => {
+          await execFileAsync("bun", [join(repoRoot, "scripts", "build-tui.mjs")], {
+            cwd: repoRoot,
+            timeout: 120_000,
+          });
+          prepareIsolatedTargetedTuiCwd(state.tui.runtimeDir);
+          event("window-tui-build", {});
+        },
+        launchWindowTui: async (namespace) => {
+          const launchStartedAt = performance.now();
+          let launched;
+          try {
+            launched = JSON.parse(
+              await tuiCommandAsync(
+                state,
+                ["start", "--target", namespace.session, "--cols", "160", "--rows", "44", "--json"],
+                { timeout: 30_000 },
+              ),
+            );
+          } catch (cause) {
+            const error = new Error("window lifecycle TUI launch failed", { cause });
+            error.boundary = "window-tui-started";
+            error.observation = Object.freeze({
+              ...focusHostReadinessObservation(state, {
+                reason: "identity-invalid",
+                attempts: 0,
+                startedAt: launchStartedAt,
+                deadlineMs: 30_000,
+                stage: "launch",
+              }),
+              operation: "window-tui-started",
+            });
+            throw error;
+          }
+          if (
+            !exactProductTuiLaunchReceipt(launched, {
+              target: namespace.session,
+              cols: 160,
+              rows: 44,
+            })
+          ) {
+            const error = new Error("window lifecycle TUI launch receipt was invalid");
+            error.boundary = "window-tui-started";
+            error.observation = Object.freeze({
+              ...focusHostReadinessObservation(state, {
+                reason: "identity-invalid",
+                attempts: 0,
+                startedAt: launchStartedAt,
+                deadlineMs: 30_000,
+                stage: "launch-receipt",
+              }),
+              operation: "window-tui-started",
+            });
+            throw error;
+          }
+          const startedAt = performance.now();
+          const deadlineMs = 50_000;
+          const controller = new AbortController();
+          windowReadiness = {
+            launched,
+            startedAt,
+            deadlineMs,
+            controller,
+            timer: setTimeout(() => controller.abort(), deadlineMs),
+          };
+          event("window-tui-started", { processId: launched.processId });
+          return launched;
+        },
+        waitForWindowHostReady: async (_namespace, _daemon, _identity, launched) => {
+          const readiness = windowReadiness;
+          if (!readiness || readiness.launched !== launched)
+            throw new Error("window readiness lifecycle was not initialized");
+          let status;
+          try {
+            status = await waitForExactFocusHostReceipt(state, launched, {
+              deadlineMs: Math.min(
+                10_000,
+                Math.max(1, readiness.deadlineMs - (performance.now() - readiness.startedAt)),
+              ),
+              signal: readiness.controller.signal,
+            });
+          } catch (error) {
+            clearTimeout(readiness.timer);
+            readiness.controller.abort();
+            windowReadiness = null;
+            error.boundary = "window-host-ready";
+            if (error.observation)
+              error.observation = Object.freeze({
+                ...error.observation,
+                operation: "window-host-ready",
+              });
+            throw error;
+          }
+          event("window-host-ready", { processId: launched.processId });
+          return status;
+        },
+        waitForWindowTuiCoherent: async (_namespace, _daemon, _identity, launched, host) => {
+          const readiness = windowReadiness;
+          if (!readiness || readiness.launched !== launched)
+            throw new Error("window readiness lifecycle was not initialized");
+          try {
+            const remaining = Math.max(
+              1,
+              Math.min(30_000, readiness.deadlineMs - (performance.now() - readiness.startedAt)),
+            );
+            await waitForCoherentTui(
+              state,
+              remaining,
+              launched.processId,
+              host,
+              readiness.controller.signal,
+            );
+            await waitForExactFocusHostReceipt(state, launched, {
+              deadlineMs: Math.max(
+                1,
+                readiness.deadlineMs - (performance.now() - readiness.startedAt),
+              ),
+              signal: readiness.controller.signal,
+            });
+          } catch (error) {
+            error.boundary = "window-tui-coherent";
+            error.observation = Object.freeze({
+              ...(error.observation ?? {}),
+              operation: "window-tui-coherent",
+              stage: "post-frame-host-revalidation",
+            });
+            throw error;
+          } finally {
+            clearTimeout(readiness.timer);
+            readiness.controller.abort();
+            windowReadiness = null;
+          }
+          event("window-tui-coherent", { processId: launched.processId });
+          return Object.freeze({
+            processId: launched.processId,
+            launchId: launched.launchId,
+            hostIdentity: launched.hostIdentity,
+          });
+        },
+        proveWindowBaseline: async (namespace, runningDaemon, identity, process) => {
+          const publication = await provePreseededPanePublication(state, namespace.seed);
+          const shell = await waitForProductApplicationShell(
+            runningDaemon,
+            namespace.session,
+            (candidate) => productWindowResources(candidate).length === 1,
+            10_000,
+            1,
+          );
+          const shellResources = productWindowResources(shell);
+          const shellSelected = shellResources[0];
+          if (!shellSelected || shellSelected.semanticPaneId !== publication.semanticPaneId)
+            throw new Error("window baseline resource did not match the canonical pane");
+          const clientId = `opentui:${process.processId}`;
+          const workspaceClient = await waitForQualifiedWorkspaceClientState(
+            () => readJsonLines(join(namespace.tui.runtimeDir, "performance.jsonl")),
+            {
+              processId: clientId,
+              daemonGeneration: runningDaemon.record.instanceId,
+              workspaceName: identity.workspaceName,
+              sessionName: identity.sessionName,
+              fleetSessionId: identity.fleetSessionId,
+              semanticPaneId: shellSelected.semanticPaneId,
+              canonicalGeneration: publication.canonicalSeedPaint.publication.generation,
+            },
+          );
+          const owners = workspaceClient.committed.authority?.owners;
+          if (!["input", "focus", "geometry"].every((kind) => owners?.[kind] === clientId))
+            throw new Error("window baseline did not own all authorities");
+          if (!Number.isSafeInteger(workspaceClient.committed.terminalResourceRevision))
+            throw new Error("window baseline terminal resource revision was unavailable");
+          const tmux = await exactWindowTmuxSnapshot(state, shellResources);
+          const windows = joinWindowResourcesToTmuxLabels(shellResources, tmux);
+          const selected = windows[0];
+          const baseline = Object.freeze({
+            processId: `opentui:${process.processId}`,
+            daemonGeneration: runningDaemon.record.instanceId,
+            clientGeneration: workspaceClient.committed.generation,
+            clientId,
+            workspaceName: identity.workspaceName,
+            sessionName: identity.sessionName,
+            windows,
+            selected,
+            publication,
+            terminalResourceRevision: workspaceClient.committed.terminalResourceRevision,
+            workspaceClient,
+            tmux,
+          });
+          event("window-baseline", { semanticPaneId: selected.semanticPaneId });
+          return baseline;
+        },
+        createWindow: async (namespace, runningDaemon, _identity, _process, baseline) => {
+          const watermark = windowWorkspaceEvidenceWatermark(
+            state,
+            baseline.processId,
+            baseline.daemonGeneration,
+          );
+          const operationId = randomUUID();
+          const receipt = await dispatchOwnedProductAction(
+            runningDaemon,
+            "workspace.pane.create",
+            operationId,
+            {
+              kind: "terminal",
+              workspaceName: baseline.workspaceName,
+              displayTitle: "Lifecycle Two",
+              placement: { kind: "window" },
+            },
+            baseline.clientId,
+          );
+          if (
+            receipt.outcome !== "created" ||
+            receipt.resource?.kind !== "terminal" ||
+            receipt.resource?.workspaceName !== baseline.workspaceName ||
+            receipt.resource?.displayTitle !== "Lifecycle Two"
+          )
+            throw invalidOwnedProductActionResult("workspace.pane.create", operationId, receipt);
+          const shell = await waitForProductApplicationShell(
+            runningDaemon,
+            namespace.session,
+            (candidate) => productWindowResources(candidate).length === 2,
+            10_000,
+            2,
+          );
+          const shellResources = productWindowResources(shell);
+          const shellSelected = shellResources.find(
+            ({ semanticPaneId }) => semanticPaneId === receipt.resource.semanticPaneId,
+          );
+          if (!shellSelected) throw new Error("created window was absent from application-shell");
+          const workspaceClient = await waitForWindowWorkspaceEvidence(state, {
+            processId: baseline.processId,
+            daemonGeneration: baseline.daemonGeneration,
+            clientGeneration: baseline.clientGeneration,
+            clientId: baseline.clientId,
+            workspaceName: baseline.workspaceName,
+            sessionName: baseline.sessionName,
+            afterMicros: watermark + 1,
+            boundary: "window-create-proved",
+            resources: shellResources,
+            web: false,
+            minimumTerminalResourceRevision: baseline.terminalResourceRevision + 1,
+          });
+          const expectedTmuxWindows = shellResources.map((window) => ({
+            ...window,
+            name:
+              window.semanticPaneId === shellSelected.semanticPaneId
+                ? receipt.resource.displayTitle
+                : baseline.windows.find(
+                    ({ semanticPaneId }) => semanticPaneId === window.semanticPaneId,
+                  )?.name,
+          }));
+          const tmux = await exactWindowTmuxSnapshot(state, expectedTmuxWindows);
+          const windows = joinWindowResourcesToTmuxLabels(shellResources, tmux);
+          const selected = windows.find(
+            ({ semanticPaneId }) => semanticPaneId === shellSelected.semanticPaneId,
+          );
+          if (!selected) throw new Error("created window label did not join application-shell");
+          event("window-create-proved", { operationId, semanticPaneId: selected.semanticPaneId });
+          return Object.freeze({
+            ...baseline,
+            windows,
+            selected,
+            terminalResourceRevision: workspaceClient.committed.terminalResourceRevision,
+            workspaceClient,
+            tmux,
+            operationId,
+            actionResult: receipt,
+          });
+        },
+        primeCreatedWindow: async (
+          namespace,
+          runningDaemon,
+          _identity,
+          _process,
+          baseline,
+          created,
+        ) => {
+          const tracePath = join(namespace.tui.runtimeDir, "performance.jsonl");
+          const watermark = windowWorkspaceEvidenceWatermark(
+            state,
+            baseline.processId,
+            baseline.daemonGeneration,
+          );
+          const { delivery, settled, fence, renderWork, phaseTiming } =
+            await driveExactHostedWindowSwitch(state, tracePath, new Set(), {
+              boundary: "window-switch-visible",
+              signal: ownerAbort.signal,
+            });
+          if (settled.paneId !== created.selected.semanticPaneId)
+            throw new Error("first hosted switch did not select the detached created window");
+          const primedWindows = created.windows.map((window) => ({
+            ...window,
+            active: window.resourceId === created.selected.resourceId,
+          }));
+          const shell = await waitForProductApplicationShell(
+            runningDaemon,
+            namespace.session,
+            (candidate) =>
+              productWindowResourcesExactlyMatch(productWindowResources(candidate), primedWindows),
+            10_000,
+            2,
+          );
+          const shellResources = productWindowResources(shell);
+          const workspaceClient = await waitForWindowWorkspaceEvidence(state, {
+            processId: baseline.processId,
+            daemonGeneration: baseline.daemonGeneration,
+            clientGeneration: baseline.clientGeneration,
+            clientId: baseline.clientId,
+            workspaceName: baseline.workspaceName,
+            sessionName: baseline.sessionName,
+            afterMicros: watermark + 1,
+            boundary: "window-switch-visible",
+            resources: shellResources,
+            web: false,
+            minimumTerminalResourceRevision: created.terminalResourceRevision,
+            receipt: {
+              operationId: settled.traceId,
+              operationKind: "workspace.pane.select",
+              semanticPaneId: created.selected.semanticPaneId,
+            },
+          });
+          const tmux = await exactWindowTmuxSnapshot(state, primedWindows);
+          event("window-switch-visible", { traceId: settled.traceId });
+          return Object.freeze({
+            processId: baseline.processId,
+            daemonGeneration: baseline.daemonGeneration,
+            clientGeneration: baseline.clientGeneration,
+            workspaceName: baseline.workspaceName,
+            sessionName: baseline.sessionName,
+            traceId: settled.traceId,
+            operationId: settled.traceId,
+            selectionApplied: settled.selectionApplied,
+            canonicalIdentity: Object.freeze({
+              sourceEpoch: settled.sourceEpoch,
+              generation: settled.generation,
+              incarnation: settled.incarnation,
+              revision: settled.revision,
+              stateHash: settled.stateHash,
+              cols: settled.cols,
+              rows: settled.rows,
+            }),
+            targetResourceId: created.selected.resourceId,
+            visibleFrame: Object.freeze({
+              resourceId: created.selected.resourceId,
+              semanticPaneId: created.selected.semanticPaneId,
+            }),
+            fence: Object.freeze({ traceId: fence.traceId, writerHealth: fence.writerHealth }),
+            delivery,
+            renderWork,
+            phaseTiming,
+            tmux,
+            workspaceClient,
+          });
+        },
+        driveWarmSwitches: async (
+          namespace,
+          _daemon,
+          _identity,
+          _process,
+          baseline,
+          created,
+          renamed,
+        ) => {
+          const samples = [];
+          const tracePath = join(namespace.tui.runtimeDir, "performance.jsonl");
+          const seen = new Set(
+            readJsonLines(tracePath)
+              .filter((record) => record?.phase === "window-switch-settled")
+              .map((record) => record.traceId)
+              .filter((traceId) => typeof traceId === "string"),
+          );
+          for (let ordinal = 0; ordinal < 32; ordinal += 1) {
+            publish({
+              currentJourneyBoundary: "window-switch-distribution",
+              windowSwitchOrdinalWatermark: ordinal,
+              currentJourneyBoundaryAtWallMs: Date.now(),
+              currentJourneyBoundaryAtMonotonicMs: performance.now(),
+            });
+            const { delivery, settled, fence, renderWork, phaseTiming } =
+              await driveExactHostedWindowSwitch(state, tracePath, seen, {
+                boundary: "window-switch-distribution",
+                ordinal,
+                signal: ownerAbort.signal,
+              });
+            const selected = renamed.windows.find(
+              ({ semanticPaneId }) => semanticPaneId === settled.paneId,
+            );
+            if (!selected) throw new Error("window switch selected an unknown pane");
+            const switchedWindows = renamed.windows.map((window) => ({
+              ...window,
+              active: window.resourceId === selected.resourceId,
+            }));
+            const tmux = await exactWindowTmuxSnapshot(state, switchedWindows);
+            if (ordinal >= 2)
+              samples.push(
+                Object.freeze({
+                  ordinal: ordinal - 2,
+                  traceId: settled.traceId,
+                  operationId: settled.traceId,
+                  selectionApplied: settled.selectionApplied,
+                  followUpRequested: settled.followUpRequested,
+                  processId: baseline.processId,
+                  daemonGeneration: baseline.daemonGeneration,
+                  clientGeneration: baseline.clientGeneration,
+                  workspaceName: baseline.workspaceName,
+                  sessionName: baseline.sessionName,
+                  targetResourceId: selected.resourceId,
+                  visibleFrame: Object.freeze({
+                    resourceId: selected.resourceId,
+                    semanticPaneId: selected.semanticPaneId,
+                  }),
+                  fence: Object.freeze({
+                    traceId: fence.traceId,
+                    writerHealth: fence.writerHealth,
+                  }),
+                  delivery,
+                  renderWork,
+                  phaseTiming,
+                  tmux,
+                  durationMs: settled.durationMicros / 1_000,
+                }),
+              );
+          }
+          publish({
+            currentJourneyBoundary: "window-switch-distribution",
+            windowSwitchOrdinalWatermark: 32,
+            currentJourneyBoundaryAtWallMs: Date.now(),
+            currentJourneyBoundaryAtMonotonicMs: performance.now(),
+          });
+          event("window-switch-distribution", { samples: samples.length });
+          return Object.freeze(samples);
+        },
+        renameWindow: async (
+          namespace,
+          runningDaemon,
+          _identity,
+          _process,
+          baseline,
+          created,
+          primed,
+        ) => {
+          if (
+            primed?.targetResourceId !== created.selected.resourceId ||
+            primed?.visibleFrame?.semanticPaneId !== created.selected.semanticPaneId ||
+            primed?.workspaceClient?.committed?.lastReceipt?.operationId !== primed?.traceId ||
+            primed?.workspaceClient?.committed?.lastReceipt?.operationKind !==
+              "workspace.pane.select" ||
+            primed?.workspaceClient?.committed?.lastReceipt?.phase !== "observed" ||
+            primed?.workspaceClient?.committed?.lastReceipt?.proof?.outcome !== "applied" ||
+            !Number.isSafeInteger(primed?.workspaceClient?.record?.monotonicMicros) ||
+            primed.workspaceClient.record.monotonicMicros <=
+              created.workspaceClient.record.monotonicMicros
+          )
+            throw new Error("window rename lacked exact newer selected-pane convergence");
+          const lifecycleBefore = readJsonLines(
+            join(namespace.tui.runtimeDir, "performance.jsonl"),
+          ).length;
+          const referenceBefore = readJsonLines(namespace.tui.performanceTracePath).length;
+          const watermark = windowWorkspaceEvidenceWatermark(
+            state,
+            baseline.processId,
+            baseline.daemonGeneration,
+          );
+          const acknowledgementWatermark = windowResourceAcknowledgementWatermark(
+            state,
+            baseline.processId,
+            baseline.daemonGeneration,
+          );
+          const operationId = randomUUID();
+          const renamedName = "Lifecycle Renamed";
+          let result;
+          try {
+            result = await dispatchOwnedProductAction(
+              runningDaemon,
+              "workspace.rename",
+              operationId,
+              {
+                workspaceName: baseline.workspaceName,
+                scope: "window",
+                target: { by: "pane", semanticPaneId: created.selected.semanticPaneId },
+                name: renamedName,
+              },
+              baseline.clientId,
+            );
+          } catch (error) {
+            const expectedResources = created.windows.map((window) => ({
+              ...window,
+              active: window.resourceId === created.selected.resourceId,
+            }));
+            const [shellSnapshot, tmuxSnapshot] = await Promise.allSettled([
+              productApplicationShell(runningDaemon, namespace.session),
+              exactWindowTmuxSnapshot(state, expectedResources),
+            ]);
+            const shellResources =
+              shellSnapshot.status === "fulfilled"
+                ? productWindowResources(shellSnapshot.value)
+                : [];
+            const tmuxEvidence = classifyWindowTmuxPostFailureSnapshot(tmuxSnapshot);
+            const bounded = new Error(error instanceof Error ? error.message : String(error), {
+              cause: error,
+            });
+            bounded.observation = Object.freeze({
+              ...(error?.observation ??
+                ownedWindowActionFailureObservation({
+                  action: "workspace.rename",
+                  operationId,
+                  status: null,
+                  payload: null,
+                })),
+              postFailure: Object.freeze({
+                applicationShellAvailable: shellSnapshot.status === "fulfilled",
+                applicationShellResourceCount: Math.min(shellResources.length, 512),
+                applicationShellExact:
+                  shellSnapshot.status === "fulfilled" &&
+                  productWindowResourcesExactlyMatch(shellResources, expectedResources),
+                tmuxAvailable: tmuxEvidence.tmuxAvailable,
+                tmuxWindowCount: tmuxEvidence.tmuxWindowCount,
+                tmuxPreActionStateExact: tmuxEvidence.tmuxPreActionStateExact,
+              }),
+            });
+            throw bounded;
+          }
+          if (
+            result.outcome !== "applied" ||
+            result.verb !== "workspace.rename" ||
+            result.scope !== "window" ||
+            result.name !== renamedName ||
+            result.workspaceName !== baseline.workspaceName
+          )
+            throw invalidOwnedProductActionResult("workspace.rename", operationId, result);
+          const renamedResources = created.windows.map((window) => ({
+            ...window,
+            resourceTitle:
+              window.semanticPaneId === created.selected.semanticPaneId
+                ? renamedName
+                : window.resourceTitle,
+            active: window.resourceId === created.selected.resourceId,
+          }));
+          const shell = await waitForProductApplicationShell(
+            runningDaemon,
+            namespace.session,
+            (candidate) =>
+              productWindowResourcesExactlyMatch(
+                productWindowResources(candidate),
+                renamedResources,
+              ),
+            10_000,
+            2,
+          );
+          const shellResources = productWindowResources(shell);
+          const shellSelected = shellResources.find(
+            ({ semanticPaneId }) => semanticPaneId === created.selected.semanticPaneId,
+          );
+          if (!shellSelected?.active)
+            throw new Error("renamed window was not the active selected window");
+          const workspaceClient = await waitForWindowWorkspaceEvidence(state, {
+            processId: baseline.processId,
+            daemonGeneration: baseline.daemonGeneration,
+            clientGeneration: baseline.clientGeneration,
+            clientId: baseline.clientId,
+            workspaceName: baseline.workspaceName,
+            sessionName: baseline.sessionName,
+            afterMicros: watermark + 1,
+            boundary: "window-rename-visible",
+            resources: shellResources,
+            web: false,
+            exactTerminalResourceRevision: created.terminalResourceRevision,
+            acknowledgement: {
+              daemonInstanceId: baseline.daemonGeneration,
+              operationId,
+              afterSequence: acknowledgementWatermark,
+            },
+          });
+          const expectedTmuxWindows = shellResources.map((window) => ({
+            ...window,
+            name:
+              window.semanticPaneId === shellSelected.semanticPaneId
+                ? renamedName
+                : created.windows.find(
+                    ({ semanticPaneId }) => semanticPaneId === window.semanticPaneId,
+                  )?.name,
+          }));
+          const tmux = await exactWindowTmuxSnapshot(state, expectedTmuxWindows);
+          const windows = joinWindowResourcesToTmuxLabels(shellResources, tmux);
+          const selected = windows.find(
+            ({ semanticPaneId }) => semanticPaneId === shellSelected.semanticPaneId,
+          );
+          if (!selected) throw new Error("renamed tmux label did not join application-shell");
+          const renamedTmuxWindow = tmux.find(
+            (row) => row.semanticPaneId === selected.semanticPaneId,
+          );
+          if (!renamedTmuxWindow)
+            throw new Error("renamed window lost its exact tmux semantic identity");
+          const presentation = await waitForWindowRenameFence(state, {
+            lifecycleBefore,
+            referenceBefore,
+            expected: {
+              windowResourceId: renamedTmuxWindow.resourceId,
+              semanticPaneId: selected.semanticPaneId,
+              previousName: created.selected.name,
+              windowName: renamedName,
+            },
+          });
+          event("window-rename-visible", { operationId, renamedName });
+          return Object.freeze({
+            ...baseline,
+            windows,
+            selected,
+            terminalResourceRevision: workspaceClient.committed.terminalResourceRevision,
+            workspaceClient,
+            tmux,
+            presentation,
+            operationId,
+            acknowledgementWatermark,
+            actionResult: result,
+          });
+        },
+        startWebAfterWindowLifecycle: async (
+          _namespace,
+          runningDaemon,
+          identity,
+          _process,
+          baseline,
+          created,
+          _switches,
+          renamed,
+        ) => {
+          const watermark = windowWorkspaceEvidenceWatermark(
+            state,
+            baseline.processId,
+            baseline.daemonGeneration,
+          );
+          devServer = await startDevServer(runningDaemon, {
+            daemonInfoPath: join(fleet.daemonInfoDir, "daemon.json"),
+          });
+          browser = await chromium.launch({ headless: true });
+          const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+          const page = await context.newPage();
+          await page.goto(devServer.pageUrl, { waitUntil: "domcontentloaded" });
+          const ready = await waitForFocusWebSemantic({
+            signal: ownerAbort.signal,
+            health: () =>
+              ownerAbort.signal.aborted
+                ? "aborted"
+                : !devServer.isRunning()
+                  ? "dev-server-dead"
+                  : !browser.isConnected()
+                    ? "browser-disconnected"
+                    : page.isClosed()
+                      ? "page-closed"
+                      : null,
+            sample: () => page.evaluate(captureFocusWebSemanticDocument),
+            derivedResources: renamed.workspaceClient.derived.terminalInventory.resources,
+            expectedWorkspaceName: identity.workspaceName,
+            expectedSemanticPaneId: renamed.selected.semanticPaneId,
+            expectedDaemonGeneration: runningDaemon.record.instanceId,
+          });
+          const semantic = ready.semantic;
+          if (
+            semantic.windowNodeCount !== 2 ||
+            semantic.terminalNodeCount !== 1 ||
+            semantic.windows.filter(
+              (window) =>
+                window.windowResourceId === created.selected.windowResourceId &&
+                window.label === renamed.selected.name &&
+                window.active === "true",
+            ).length !== 1 ||
+            semantic.windows.filter(
+              (window) =>
+                window.windowResourceId === baseline.selected.windowResourceId &&
+                window.label === baseline.selected.name &&
+                window.active === "false",
+            ).length !== 1
+          )
+            throw new Error("window Web semantic did not converge to two groups and one terminal");
+          const workspaceClient = await waitForWindowWorkspaceEvidence(state, {
+            processId: baseline.processId,
+            daemonGeneration: baseline.daemonGeneration,
+            clientGeneration: baseline.clientGeneration,
+            clientId: baseline.clientId,
+            workspaceName: baseline.workspaceName,
+            sessionName: baseline.sessionName,
+            afterMicros: watermark + 1,
+            boundary: "window-web-correlation",
+            resources: renamed.windows,
+            web: true,
+          });
+          publish({ web: { pageUrl: devServer.pageUrl, startedAfterWindowBoundary: true } });
+          event("window-web-correlation", { windows: semantic.windowNodeCount });
+          return Object.freeze({
+            pageUrl: devServer.pageUrl,
+            semantic,
+            readiness: ready.assessment,
+            workspaceClient,
+            correlation: Object.freeze({
+              daemon: true,
+              workspaceClient: true,
+              tui: true,
+              web: true,
+              tmux: true,
+            }),
+            expected: Object.freeze({
+              processId: baseline.processId,
+              daemonGeneration: baseline.daemonGeneration,
+              clientGeneration: baseline.clientGeneration,
+              workspaceName: identity.workspaceName,
+              sessionName: identity.sessionName,
+              initial: Object.freeze({
+                ...baseline.selected,
+                semanticWindowId: baseline.tmux.find(
+                  (row) => row.semanticPaneId === baseline.selected.semanticPaneId,
+                )?.resourceId,
+              }),
+              created: Object.freeze({
+                ...created.selected,
+                semanticWindowId: renamed.presentation.started.target,
+              }),
+              renamedName: renamed.selected.name,
+            }),
+          });
+        },
+      });
+      publish({
+        convergence: { workspaceClient: windowBoot.web.workspaceClient },
+        journeyEvidence: {
+          windowLifecycle: {
+            identity: windowBoot.identity,
+            expected: windowBoot.web.expected,
+            baseline: windowBoot.baseline,
+            created: windowBoot.created,
+            primed: windowBoot.primed,
+            switches: windowBoot.switches,
+            renamed: windowBoot.renamed,
+            correlation: windowBoot.web.correlation,
+            web: { semantic: windowBoot.web.semantic },
+          },
+        },
         status: "ready",
         readyAt: new Date().toISOString(),
       });

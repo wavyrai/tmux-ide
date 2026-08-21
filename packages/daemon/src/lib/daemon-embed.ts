@@ -36,6 +36,7 @@ import { DaemonShutdownError, DaemonStartupError } from "./errors.ts";
 import { handlePtyWebSocket, shutdownPtyBridges } from "../server/ws-route.ts";
 import {
   broadcastInteractionReceipt,
+  broadcastResourceChanged,
   handleWsEventsConnection,
   setFleetFactsObserverDiagnostics,
   shutdownWsEventObservation,
@@ -1120,16 +1121,19 @@ export async function startEmbeddedDaemon(
     let startedServer: Awaited<ReturnType<typeof startHttpServer>>;
     try {
       const selector = tmuxAuthority.socketSelector;
-      const executeRuntimeIntent = (operationId: string, intent: SessionRuntimeSemanticIntent) => {
+      const executeRuntimeIntent = (
+        operationId: string,
+        intent: SessionRuntimeSemanticIntent,
+        timing?: Parameters<typeof workspaceMultiplexer.mutate>[1],
+      ) => {
         if (intent.verb === "workspace.pane.read") {
           workspaceMultiplexer.readPane(operationId, intent);
           return;
         }
-        return workspaceMultiplexer.mutate({
-          operationId,
-          expectedDaemonInstanceId: instanceId,
-          intent,
-        });
+        return workspaceMultiplexer.mutate(
+          { operationId, expectedDaemonInstanceId: instanceId, intent },
+          timing,
+        );
       };
       const runtimeTracePath = process.env.TMUX_IDE_SESSION_RUNTIME_TRACE_LOG;
       runtimeTraceStream = runtimeTracePath
@@ -1188,7 +1192,9 @@ export async function startEmbeddedDaemon(
           resolveSession: (workspaceName) =>
             workspaceRegistry.get(workspaceName)?.sessionName ?? null,
           execute: executeRuntimeIntent,
+          traceAuthority: { generation: instanceId, incarnation: null },
           publishReceipt: (receipt) => broadcastInteractionReceipt(receipt, instanceId),
+          publishResourceChange: (change) => broadcastResourceChanged(change, instanceId),
         },
         mirror: {
           executable: tmuxAuthority.executablePath,
@@ -1269,6 +1275,9 @@ export async function startEmbeddedDaemon(
           trustedCwd: dir,
         },
         agentStatusProbeFactory: ({ run }) => createTmuxAgentStatusProbe({ run }),
+        onInventory: (snapshot) => workspaceMultiplexer.adoptPaneInventory(snapshot.panes),
+        onSessionInventory: (sessionName, snapshot) =>
+          workspaceMultiplexer.adoptSessionPaneInventory(sessionName, snapshot?.panes ?? []),
         ...(runtimeObservability ? { observability: runtimeObservability } : {}),
       } satisfies ConstructorParameters<typeof WorkspaceTerminalInventoryRuntime>[0];
       terminalInventoryRuntime = new WorkspaceTerminalInventoryRuntime(terminalRuntimeOptions);

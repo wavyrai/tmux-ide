@@ -24,6 +24,7 @@ import {
   discoverWorkspaceRegistryTerminalInventory,
   discoverWorkspaceRegistrySemanticPanes,
   type NativeTerminalAttachmentCommandExecutor,
+  type NativeTerminalInventorySnapshot,
 } from "../attachments/native-runtime.ts";
 import {
   SemanticPaneCatalog,
@@ -34,6 +35,7 @@ import {
   type TmuxAttachmentCommandRunner,
 } from "../attachments/tmux-view-executor.ts";
 import type { SessionRuntimeRegistry } from "../session-runtime/registry.ts";
+import type { TrustedMirrorSessionInventory } from "../mirror/trusted-inventory.ts";
 import {
   DISABLED_SESSION_RUNTIME_OBSERVABILITY,
   createSessionRuntimeObservability,
@@ -108,6 +110,47 @@ function row(overrides: Partial<TrustedSemanticPaneSnapshot> = {}): TrustedSeman
     windowPaneCount: 1,
     sessionWindowCount: 2,
     ...overrides,
+  };
+}
+
+function trustedInventory(
+  panes: ReadonlyArray<{
+    readonly paneId: string;
+    readonly windowId: string;
+    readonly semanticPaneId: string;
+    readonly semanticWindowId: string;
+    readonly active: boolean;
+  }> = [
+    {
+      paneId: "%3",
+      windowId: "@2",
+      semanticPaneId: "pane.agent",
+      semanticWindowId: "window.promoted.abc123",
+      active: true,
+    },
+  ],
+): TrustedMirrorSessionInventory {
+  return {
+    sessionName: "runtime:session",
+    runtimeSessionId: "$7",
+    panes: panes.map((pane, index) => ({
+      runtimeSessionId: "$7",
+      runtimeWindowId: pane.windowId,
+      runtimePaneId: pane.paneId,
+      semanticWindowId: pane.semanticWindowId,
+      semanticPaneId: pane.semanticPaneId,
+      windowPaneCount: 1,
+      sessionWindowCount: panes.length,
+      paneIndex: 0,
+      title: `Pane ${index + 1}`,
+      currentCommand: "zsh",
+      active: pane.active,
+      role: null,
+      name: null,
+      type: null,
+      missionStamp: null,
+      dir: "/repo",
+    })),
   };
 }
 
@@ -730,6 +773,70 @@ describe("async terminal inventory reads", () => {
     runtime.dispose();
   });
 
+  it("publishes each authoritative inventory snapshot to the generation-owned cache seam", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    const adopted: NativeTerminalInventorySnapshot[] = [];
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: asyncInventory("runtime:session", []),
+      onInventory: (snapshot) => adopted.push(snapshot),
+    });
+    await runtime.whenReady();
+    const inventory = await runtime.discoverTerminalInventory();
+    expect(adopted).toEqual([inventory]);
+    expect(adopted[0]!.panes[0]).toMatchObject({
+      sessionName: "runtime:session",
+      runtimePaneId: "%3",
+      windowId: "@2",
+      semanticPaneId: "pane.agent",
+    });
+    runtime.dispose();
+  });
+
+  it("never publishes an external-signal inventory read that crossed invalidation", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    const adopted: NativeTerminalInventorySnapshot[] = [];
+    let paneReads = 0;
+    let resolveOld!: (value: string) => void;
+    const oldPaneRead = new Promise<string>((resolve) => {
+      resolveOld = resolve;
+    });
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: async (_executable, rawArgv) => {
+        const argv = rawArgv.slice(2);
+        if (argv[0] === "list-sessions")
+          return ["runtime:session", "$7", "tmux-ide-session-v2"].join(INVENTORY_SEPARATOR) + "\n";
+        if (argv[0] === "list-panes") {
+          paneReads += 1;
+          if (paneReads === 1) return oldPaneRead;
+          return `${applicationShellPaneWire("runtime:session", { stamp: "pane.new" })}\n`;
+        }
+        return "";
+      },
+      onInventory: (snapshot) => adopted.push(snapshot),
+    });
+    await runtime.whenReady();
+    const first = runtime.discoverTerminalInventory(new AbortController().signal);
+    await vi.waitFor(() => expect(paneReads).toBe(1));
+    runtime.invalidate();
+    const second = runtime.discoverTerminalInventory(new AbortController().signal);
+    await expect(second).resolves.toMatchObject({
+      panes: [{ semanticPaneId: "pane.new" }],
+    });
+    resolveOld(`${applicationShellPaneWire("runtime:session", { stamp: "pane.old" })}\n`);
+    await expect(first).resolves.toMatchObject({
+      panes: [{ semanticPaneId: "pane.new" }],
+    });
+    expect(adopted).toHaveLength(2);
+    expect(adopted.every(({ panes }) => panes[0]?.semanticPaneId === "pane.new")).toBe(true);
+    runtime.dispose();
+  });
+
   it("aborts and fences an invalidated flight, then retries at the current epoch", async () => {
     const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
     let calls = 0;
@@ -931,9 +1038,66 @@ describe("async terminal inventory reads", () => {
     runtime.dispose();
   });
 
+  it("publishes a proof-qualified post-create inventory through the session-scoped adoption seam", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    const scoped: Array<{ sessionName: string; snapshot: NativeTerminalInventorySnapshot }> = [];
+    const global: NativeTerminalInventorySnapshot[] = [];
+    const inventory = trustedInventory([
+      {
+        paneId: "%3",
+        windowId: "@2",
+        semanticPaneId: "pane.agent",
+        semanticWindowId: "window.promoted.abc123",
+        active: false,
+      },
+      {
+        paneId: "%4",
+        windowId: "@3",
+        semanticPaneId: "pane.created",
+        semanticWindowId: "window.promoted.def456",
+        active: true,
+      },
+    ]);
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: vi.fn(async () => {
+        throw new Error("global inventory must not run");
+      }),
+      sessionRuntimeRegistry: {
+        hasProofQualifiedInventory: () => true,
+        describeTrustedSessionInventory: vi.fn(async () => inventory),
+        prewarmProofQualifiedSession: vi.fn(async () => undefined),
+        prewarmSession: vi.fn(async () => undefined),
+        retireSession: vi.fn(async () => undefined),
+      } as unknown as SessionRuntimeRegistry,
+      onInventory: (snapshot) => global.push(snapshot),
+      onSessionInventory: (sessionName, snapshot) => {
+        if (snapshot) scoped.push({ sessionName, snapshot });
+      },
+    });
+    await runtime.whenReady();
+
+    await expect(runtime.discoverTerminalRuntimeSession("runtime:session")).resolves.toMatchObject({
+      panes: [
+        expect.objectContaining({ semanticPaneId: "pane.agent", active: false }),
+        expect.objectContaining({ semanticPaneId: "pane.created", active: true }),
+      ],
+    });
+    expect(global).toEqual([]);
+    expect(scoped).toHaveLength(1);
+    expect(scoped[0]).toMatchObject({
+      sessionName: "runtime:session",
+      snapshot: { panes: [expect.any(Object), expect.any(Object)] },
+    });
+    runtime.dispose();
+  });
+
   it("falls back to native discovery when a trusted provider snapshot is malformed", async () => {
     const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
     const calls: Array<{ argv: readonly string[] }> = [];
+    const scoped = vi.fn();
     const runtime = new WorkspaceTerminalInventoryRuntime({
       registry,
       tmuxAuthority: authority(root),
@@ -969,6 +1133,7 @@ describe("async terminal inventory reads", () => {
         prewarmSession: vi.fn(async () => undefined),
         retireSession: vi.fn(async () => undefined),
       } as unknown as SessionRuntimeRegistry,
+      onSessionInventory: scoped,
     });
     await runtime.whenReady();
 
@@ -978,6 +1143,141 @@ describe("async terminal inventory reads", () => {
       },
     );
     expect(calls).toHaveLength(3);
+    expect(scoped).not.toHaveBeenCalled();
+    runtime.dispose();
+  });
+
+  it("never session-adopts a duplicate trusted pane projection", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    const scoped = vi.fn();
+    const duplicate = trustedInventory([
+      {
+        paneId: "%3",
+        windowId: "@2",
+        semanticPaneId: "pane.agent",
+        semanticWindowId: "window.promoted.abc123",
+        active: true,
+      },
+      {
+        paneId: "%4",
+        windowId: "@3",
+        semanticPaneId: "pane.agent",
+        semanticWindowId: "window.promoted.def456",
+        active: false,
+      },
+    ]);
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: asyncInventory("runtime:session", []),
+      sessionRuntimeRegistry: {
+        hasProofQualifiedInventory: () => true,
+        describeTrustedSessionInventory: vi.fn(async () => duplicate),
+        prewarmProofQualifiedSession: vi.fn(async () => undefined),
+        prewarmSession: vi.fn(async () => undefined),
+        retireSession: vi.fn(async () => undefined),
+      } as unknown as SessionRuntimeRegistry,
+      onSessionInventory: scoped,
+    });
+    await runtime.whenReady();
+
+    await expect(runtime.discoverTerminalRuntimeSession("runtime:session")).resolves.not.toBeNull();
+    expect(scoped).not.toHaveBeenCalled();
+    runtime.dispose();
+  });
+
+  it("does not adopt a trusted result after its current runtime qualification is replaced", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    let ready = true;
+    const scoped = vi.fn();
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: vi.fn(async () => ""),
+      sessionRuntimeRegistry: {
+        hasProofQualifiedInventory: () => ready,
+        describeTrustedSessionInventory: vi.fn(async () => {
+          ready = false;
+          return trustedInventory();
+        }),
+        prewarmProofQualifiedSession: vi.fn(async () => undefined),
+        prewarmSession: vi.fn(async () => undefined),
+        retireSession: vi.fn(async () => undefined),
+      } as unknown as SessionRuntimeRegistry,
+      onSessionInventory: scoped,
+    });
+    await runtime.whenReady();
+
+    await expect(runtime.discoverTerminalRuntimeSession("runtime:session")).rejects.toMatchObject({
+      code: "discovery-failed",
+    });
+    expect(scoped).not.toHaveBeenCalled();
+    runtime.dispose();
+  });
+
+  it("retries the exact current runtime when a qualified replacement overtakes prewarm", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    const tokenA = Object.freeze({ runtime: "a" });
+    const tokenB = Object.freeze({ runtime: "b" });
+    let currentToken: object = tokenA;
+    let descriptions = 0;
+    const inventoryA = trustedInventory();
+    const inventoryBSource = trustedInventory([
+      {
+        paneId: "%4",
+        windowId: "@3",
+        semanticPaneId: "pane.current",
+        semanticWindowId: "window.promoted.def456",
+        active: true,
+      },
+    ]);
+    const inventoryB = {
+      ...inventoryBSource,
+      runtimeSessionId: "$8",
+      panes: inventoryBSource.panes.map((pane) => ({ ...pane, runtimeSessionId: "$8" })),
+    };
+    const prewarm = vi.fn(async (_sessionName: string, runtimeSessionId: string) => {
+      if (runtimeSessionId === "$7") currentToken = tokenB;
+    });
+    const adopted: NativeTerminalInventorySnapshot[] = [];
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: vi.fn(async () => ""),
+      sessionRuntimeRegistry: {
+        describeTrustedSessionInventoryCandidate: vi.fn(async () => {
+          descriptions += 1;
+          return descriptions === 1
+            ? { inventory: inventoryA, token: tokenA }
+            : { inventory: inventoryB, token: tokenB };
+        }),
+        isTrustedSessionInventoryCandidateCurrent: (_sessionName: string, token: object) =>
+          token === currentToken,
+        hasProofQualifiedInventory: () => true,
+        prewarmProofQualifiedSession: prewarm,
+        prewarmSession: vi.fn(async () => undefined),
+        retireSession: vi.fn(async () => undefined),
+      } as unknown as SessionRuntimeRegistry,
+      onSessionInventory: (_sessionName, snapshot) => {
+        if (snapshot) adopted.push(snapshot);
+      },
+    });
+    await runtime.whenReady();
+
+    await expect(runtime.discoverTerminalRuntimeSession("runtime:session")).resolves.toMatchObject({
+      runtimeSessionId: "$8",
+      panes: [expect.objectContaining({ semanticPaneId: "pane.current" })],
+    });
+    expect(descriptions).toBe(2);
+    expect(prewarm.mock.calls.map((call) => call[1])).toEqual(["$7", "$8"]);
+    expect(adopted).toHaveLength(1);
+    expect(adopted[0]!.panes[0]).toMatchObject({
+      sessionId: "$8",
+      semanticPaneId: "pane.current",
+    });
     runtime.dispose();
   });
 
@@ -1082,6 +1382,7 @@ describe("async terminal inventory reads", () => {
         },
       ],
     };
+    const adopted: NativeTerminalInventorySnapshot[] = [];
     const runtime = new WorkspaceTerminalInventoryRuntime({
       registry,
       tmuxAuthority: authority(root),
@@ -1101,6 +1402,9 @@ describe("async terminal inventory reads", () => {
         prewarmSession: vi.fn(async () => undefined),
         retireSession: vi.fn(async () => undefined),
       } as unknown as SessionRuntimeRegistry,
+      onSessionInventory: (_sessionName, snapshot) => {
+        if (snapshot) adopted.push(snapshot);
+      },
     });
     await runtime.whenReady();
     const pending = runtime.discoverApplicationShellSession("runtime:session");
@@ -1110,6 +1414,54 @@ describe("async terminal inventory reads", () => {
     releaseFirst({ ...valid, runtimeSessionId: "$9" });
     await Promise.resolve();
     expect(calls).toBe(2);
+    expect(adopted).toHaveLength(1);
+    expect(adopted[0]!.panes[0]!.sessionId).toBe("$7");
+    runtime.dispose();
+  });
+
+  it("fails boundedly when a trusted session inventory crosses two inventory epochs", async () => {
+    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+    const releases: Array<(value: TrustedMirrorSessionInventory) => void> = [];
+    const starts: Array<() => void> = [];
+    const started = [
+      new Promise<void>((resolve) => starts.push(resolve)),
+      new Promise<void>((resolve) => starts.push(resolve)),
+    ];
+    let calls = 0;
+    const adopted = vi.fn();
+    const runtime = new WorkspaceTerminalInventoryRuntime({
+      registry,
+      tmuxAuthority: authority(root),
+      commandExecutor: syncStartup,
+      readCommandExecutor: vi.fn(async () => ""),
+      sessionRuntimeRegistry: {
+        hasProofQualifiedInventory: () => true,
+        describeTrustedSessionInventory: vi.fn(
+          () =>
+            new Promise<TrustedMirrorSessionInventory>((resolve) => {
+              releases.push(resolve);
+              starts[calls]?.();
+              calls += 1;
+            }),
+        ),
+        prewarmProofQualifiedSession: vi.fn(async () => undefined),
+        prewarmSession: vi.fn(async () => undefined),
+        retireSession: vi.fn(async () => undefined),
+      } as unknown as SessionRuntimeRegistry,
+      onSessionInventory: adopted,
+    });
+    await runtime.whenReady();
+
+    const pending = runtime.discoverTerminalRuntimeSession("runtime:session");
+    await started[0];
+    runtime.invalidate();
+    releases[0]!(trustedInventory());
+    await started[1];
+    runtime.invalidate();
+    releases[1]!(trustedInventory());
+    await expect(pending).rejects.toMatchObject({ code: "discovery-failed" });
+    expect(calls).toBe(2);
+    expect(adopted).not.toHaveBeenCalled();
     runtime.dispose();
   });
 

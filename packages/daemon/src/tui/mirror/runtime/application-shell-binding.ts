@@ -13,6 +13,86 @@ import type { OpenTuiProductionWorkspaceClient } from "./open-tui-generation-hos
 
 type ShellClient = Pick<OpenTuiProductionWorkspaceClient, "dispatch" | "getSnapshot" | "subscribe">;
 
+export type ApplicationShellRenderSignature = readonly (string | number | boolean | null)[];
+
+export function applicationShellRenderSignature(
+  semantic: ApplicationShellProjectionV1 | null,
+): ApplicationShellRenderSignature | null {
+  if (!semantic) return null;
+  return Object.freeze([
+    "project",
+    semantic.project.name,
+    "sidebar",
+    semantic.sidebar.activeSessionId,
+    "sessions",
+    semantic.sidebar.sessions.length,
+    ...semantic.sidebar.sessions.flatMap((session) => [
+      session.id,
+      session.label,
+      session.state,
+      session.active,
+    ]),
+    "agents",
+    semantic.sidebar.agents.length,
+    ...semantic.sidebar.agents.flatMap((agent) => [
+      agent.id,
+      agent.name,
+      agent.harness,
+      agent.activity,
+      agent.paneId,
+      agent.attention,
+    ]),
+    "primary-navigation",
+    semantic.primaryNavigation.activeMode,
+    semantic.primaryNavigation.items.length,
+    ...semantic.primaryNavigation.items.flatMap((item) => [
+      item.id,
+      item.icon,
+      item.label,
+      item.shortcut,
+      item.active,
+      item.attention,
+      item.disabledReason,
+    ]),
+    "workspace-canvas",
+    semantic.workspaceCanvas.activeMode,
+    "bottom-dock",
+    semantic.bottomDock.mode,
+    semantic.bottomDock.activeTool,
+    semantic.bottomDock.tools.length,
+    ...semantic.bottomDock.tools.flatMap((item) => [
+      item.id,
+      item.icon,
+      item.label,
+      item.shortcut,
+      item.active,
+      item.attention,
+      item.disabledReason,
+    ]),
+    "status-strip",
+    semantic.statusStrip.message,
+    "focus",
+    semantic.focus.zone,
+    "overlays",
+    semantic.focus.overlays.length,
+    semantic.focus.overlays.length > 0,
+    semantic.focus.palette.open,
+  ]);
+}
+
+function sameSignature(
+  left: ApplicationShellRenderSignature | null,
+  right: ApplicationShellRenderSignature | null,
+): boolean {
+  return (
+    left === right ||
+    (left !== null &&
+      right !== null &&
+      left.length === right.length &&
+      left.every((value, index) => Object.is(value, right[index])))
+  );
+}
+
 export interface ApplicationShellBindingGeneration {
   readonly status: "connecting" | "live" | "rebinding" | "empty" | "unavailable" | "disposed";
   readonly client: ShellClient | null;
@@ -23,6 +103,21 @@ export interface ApplicationShellBindingSnapshot {
   readonly status: string;
   readonly readOnly: boolean;
   readonly localPaletteOpen: boolean;
+}
+
+export function applicationShellBindingRenderSignature(
+  snapshot: ApplicationShellBindingSnapshot,
+): ApplicationShellRenderSignature {
+  const semantic = applicationShellRenderSignature(snapshot.semantic);
+  return Object.freeze([
+    "semantic",
+    semantic?.length ?? 0,
+    ...(semantic ?? []),
+    "binding",
+    snapshot.status,
+    snapshot.readOnly,
+    snapshot.localPaletteOpen,
+  ]);
 }
 
 export interface ApplicationShellBinding {
@@ -51,6 +146,7 @@ export function createApplicationShellBinding(
   let clientStatus: string | null = null;
   let readOnly = false;
   let localPaletteOpen = false;
+  let publishedSignature: ApplicationShellRenderSignature | null = null;
   let stops: readonly (() => void)[] = [];
   const listeners = new Set<(snapshot: ApplicationShellBindingSnapshot) => void>();
 
@@ -64,6 +160,9 @@ export function createApplicationShellBinding(
     Object.freeze({ semantic: retainedSemantic, status: status(), readOnly, localPaletteOpen });
   const publish = (): void => {
     const value = snapshot();
+    const signature = applicationShellBindingRenderSignature(value);
+    if (sameSignature(signature, publishedSignature)) return;
+    publishedSignature = signature;
     for (const listener of listeners) listener(value);
   };
   const unbind = (): void => {

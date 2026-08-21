@@ -4,6 +4,10 @@ import type {
   ActionInput,
   ActionName,
   ApplicationShellProjectionInputV1,
+  SessionRuntimeActivityKind,
+  SessionRuntimeAuthorityKind,
+  SessionRuntimeAuthoritySnapshot,
+  SessionRuntimePresenceState,
   TerminalReplicaPatchPayload,
   TerminalReplicaSnapshot,
   TerminalReplicaTombstonePayload,
@@ -13,6 +17,7 @@ import { createWorkspaceClient } from "@tmux-ide/daemon-client/workspace-client"
 import type {
   WorkspaceClient,
   WorkspaceClientOwnerActionPort,
+  WorkspaceClientRuntimeInventory,
 } from "@tmux-ide/daemon-client/workspace-client-types";
 
 import {
@@ -43,6 +48,7 @@ import {
   createOpenTuiWorkspaceTerminalFastLane,
   type OpenTuiWorkspaceTerminalFastLane,
 } from "./workspace-terminal-fast-lane.ts";
+import type { TerminalAuthorityClient } from "./terminal-host-focus.ts";
 
 export type OpenTuiProductionWorkspaceClient = WorkspaceClient<
   ApplicationShellProjectionInputV1,
@@ -87,14 +93,40 @@ export interface OpenTuiGenerationHostSnapshot {
   readonly daemonGeneration: string | null;
   readonly connection: OpenTuiApplicationShellConnection | null;
   readonly client: OpenTuiProductionWorkspaceClient | null;
+  /** Runtime-bound authority port; unlike WorkspaceClient methods it cannot retarget mid-handoff. */
+  readonly authorityClient: TerminalAuthorityClient | null;
   readonly fastLane: OpenTuiWorkspaceTerminalFastLane | null;
   readonly adapter: TerminalFastLaneRendererAdapter | null;
 }
 
+/** Exact equality for the subset consumed by the Solid/OpenTUI render tree. */
+export function openTuiGenerationRenderEqual(
+  left: OpenTuiGenerationHostSnapshot | null,
+  right: OpenTuiGenerationHostSnapshot | null,
+): boolean {
+  return (
+    left === right ||
+    (left !== null &&
+      right !== null &&
+      left.status === right.status &&
+      left.rendererEpoch === right.rendererEpoch &&
+      left.daemonGeneration === right.daemonGeneration &&
+      left.connection === right.connection &&
+      left.client === right.client &&
+      left.authorityClient === right.authorityClient &&
+      left.fastLane === right.fastLane &&
+      left.adapter === right.adapter)
+  );
+}
+
 interface BundleCallbacks {
-  readonly didActivateRuntime: (runtime: OpenTuiWorkspaceRuntimePort) => void;
+  readonly didActivateRuntime: (
+    runtime: OpenTuiWorkspaceRuntimePort,
+    inventory: WorkspaceClientRuntimeInventory,
+  ) => void;
+  readonly didSuspendRuntime: (runtime: OpenTuiWorkspaceRuntimePort) => void;
   readonly didRetireRuntime: () => void;
-  readonly didFaultRuntime: (error: Error) => void;
+  readonly didFaultRuntime: (runtime: OpenTuiWorkspaceRuntimePort | null, error: Error) => void;
   readonly didRuntimeDiagnostic: (
     phase: Parameters<NonNullable<ConnectOpenTuiWorkspaceRuntimePortOptions["onDiagnostic"]>>[0],
     details: Readonly<Record<string, unknown>>,
@@ -226,15 +258,17 @@ function buildProductionBundle(
         // its exact retained frame remain intact until atomic activation.
         const releaseStage = fastLane.lane.stagePanes(inventory.semanticPaneIds);
         try {
+          let connectedRuntime: OpenTuiWorkspaceRuntimePort | null = null;
           const runtime = await connectOpenTuiWorkspaceRuntimePort({
             inventory,
             routing: connection.routing!,
             signal,
             ...(causalCellLedger ? { causalCellLedger } : {}),
             prepareRuntime: prepare,
-            onFault: callbacks.didFaultRuntime,
+            onFault: (error) => callbacks.didFaultRuntime(connectedRuntime, error),
             onDiagnostic: callbacks.didRuntimeDiagnostic,
           });
+          connectedRuntime = runtime;
           candidateStages.set(runtime, releaseStage);
           void runtime.closed
             .finally(() => {
@@ -257,7 +291,10 @@ function buildProductionBundle(
         const releaseStage = candidateStages.get(candidate);
         candidateStages.delete(candidate);
         releaseStage?.();
-        callbacks.didActivateRuntime(runtime as OpenTuiWorkspaceRuntimePort);
+        callbacks.didActivateRuntime(runtime as OpenTuiWorkspaceRuntimePort, inventory);
+      },
+      didSuspendRuntime: (runtime) => {
+        callbacks.didSuspendRuntime(runtime as OpenTuiWorkspaceRuntimePort);
       },
       didRetireRuntime: callbacks.didRetireRuntime,
       requestTerminalRuntimeInventoryRefresh: () => {
@@ -374,6 +411,50 @@ interface Candidate {
   readonly settleReady: (usable: boolean) => void;
   revoked: boolean;
   settled: boolean;
+  runtime: OpenTuiWorkspaceRuntimePort | null;
+  authorityClient: TerminalAuthorityClient | null;
+}
+
+function runtimeAuthorityClient(
+  bundle: OpenTuiGenerationBundle,
+  runtime: OpenTuiWorkspaceRuntimePort,
+): TerminalAuthorityClient | null {
+  let authority: SessionRuntimeAuthoritySnapshot | null;
+  try {
+    authority = runtime.getAuthoritySnapshot();
+  } catch {
+    return null;
+  }
+  if (
+    !authority ||
+    authority.generation !== runtime.generation ||
+    !runtime.setPresence ||
+    !runtime.noteActivity ||
+    !runtime.requestAuthority ||
+    !runtime.releaseAuthority ||
+    authority.clients.filter(({ clientId }) => clientId === OPEN_TUI_HOST_CLIENT_ID).length !== 1
+  )
+    return null;
+  const setPresence = runtime.setPresence.bind(runtime);
+  const noteActivity = runtime.noteActivity.bind(runtime);
+  const requestAuthority = runtime.requestAuthority.bind(runtime);
+  const releaseAuthority = runtime.releaseAuthority.bind(runtime);
+  const authorityIdentity = Object.freeze({
+    generation: authority.generation,
+    session: authority.session,
+    clientId: OPEN_TUI_HOST_CLIENT_ID,
+  });
+  return Object.freeze({
+    authorityIdentity,
+    getAuthoritySnapshot: () => runtime.getAuthoritySnapshot(),
+    getSnapshot: () => bundle.client.getSnapshot(),
+    setPresence: (state: SessionRuntimePresenceState) => setPresence(state),
+    noteActivity: (activity: SessionRuntimeActivityKind) => noteActivity(activity),
+    requestAuthority: (kind: SessionRuntimeAuthorityKind) => requestAuthority(kind),
+    releaseAuthority: (kind: SessionRuntimeAuthorityKind) => releaseAuthority(kind),
+    onAuthority: (listener: (snapshot: SessionRuntimeAuthoritySnapshot) => void) =>
+      runtime.onAuthority?.(listener) ?? (() => undefined),
+  });
 }
 
 const EMPTY_SNAPSHOT: OpenTuiGenerationHostSnapshot = Object.freeze({
@@ -382,6 +463,7 @@ const EMPTY_SNAPSHOT: OpenTuiGenerationHostSnapshot = Object.freeze({
   daemonGeneration: null,
   connection: null,
   client: null,
+  authorityClient: null,
   fastLane: null,
   adapter: null,
 });
@@ -449,7 +531,36 @@ export function createOpenTuiGenerationHost(
   };
 
   const activate = (owner: Candidate, runtime: OpenTuiWorkspaceRuntimePort | null): void => {
-    if (disposed || owner.settled || candidate !== owner) return;
+    if (disposed || owner.settled) return;
+    if (active === owner) {
+      // WorkspaceClient may replace its terminal inventory without changing
+      // daemon/client generation. Adopt that runtime atomically into the live
+      // owner instead of dropping it merely because candidate activation has
+      // already completed. Presentation retains the last coherent layout until
+      // the replacement publishes, and the retired subscription is fenced.
+      // The WorkspaceClient has already detached the prior runtime and made
+      // this exact replacement current. Publish a retained-frame suspension
+      // first so runtime-scoped authority owners yield and then replay their
+      // desired state against the fresh socket on the following live publish.
+      publish({ ...snapshot, status: "rebinding" });
+      owner.stopPresentation?.();
+      owner.stopPresentation = runtime ? presentation.adopt(runtime) : null;
+      owner.runtime = runtime;
+      owner.authorityClient = runtime ? runtimeAuthorityClient(owner.bundle, runtime) : null;
+      if (!runtime) presentation.clear();
+      diagnose?.("host-internal-snapshot-publication", {
+        publicationPhase: runtime ? "active-runtime-replaced" : "active-runtime-retired",
+        daemonGeneration: owner.bundle.connection.target.daemon.instanceId,
+        rendererEpoch,
+      });
+      publish({
+        ...snapshot,
+        status: runtime ? "live" : "empty",
+        authorityClient: owner.authorityClient,
+      });
+      return;
+    }
+    if (candidate !== owner) return;
     if (runtime) {
       owner.stopPresentation = presentation.adopt(runtime);
       diagnose?.("host-internal-snapshot-publication", {
@@ -460,6 +571,8 @@ export function createOpenTuiGenerationHost(
     const previous = active;
     candidate = null;
     active = owner;
+    owner.runtime = runtime;
+    owner.authorityClient = runtime ? runtimeAuthorityClient(owner.bundle, runtime) : null;
     owner.settleReady(true);
     diagnose?.("host-internal-snapshot-publication", {
       publicationPhase: "candidate-activation-admitted",
@@ -471,6 +584,7 @@ export function createOpenTuiGenerationHost(
       daemonGeneration: owner.bundle.connection.target.daemon.instanceId,
       connection: owner.bundle.connection,
       client: owner.bundle.client,
+      authorityClient: owner.authorityClient,
       fastLane: owner.bundle.fastLane,
       adapter: owner.bundle.adapter,
     });
@@ -539,6 +653,8 @@ export function createOpenTuiGenerationHost(
         });
         let owner: Candidate | null = null;
         let pendingRuntime: OpenTuiWorkspaceRuntimePort | null = null;
+        let activeRuntimeInventory: WorkspaceClientRuntimeInventory | null = null;
+        let emitWorkspaceClientState: (() => void) | null = null;
         let pendingEmpty = false;
         let resolveReady!: (usable: boolean) => void;
         const ready = new Promise<boolean>((resolve) => {
@@ -553,14 +669,17 @@ export function createOpenTuiGenerationHost(
         let bundle: OpenTuiGenerationBundle;
         try {
           bundle = dependencies.buildBundle(connection, {
-            didActivateRuntime(runtime) {
+            didActivateRuntime(runtime, inventory) {
+              activeRuntimeInventory = inventory;
               if (!owner) {
                 pendingRuntime = runtime;
                 return;
               }
               activate(owner, runtime);
+              emitWorkspaceClientState?.();
             },
             didRetireRuntime() {
+              activeRuntimeInventory = null;
               if (!owner) {
                 pendingEmpty = true;
                 return;
@@ -570,9 +689,31 @@ export function createOpenTuiGenerationHost(
                 presentation.clear();
                 publish({ ...snapshot, status: "empty" });
               }
+              emitWorkspaceClientState?.();
             },
-            didFaultRuntime(error) {
+            didSuspendRuntime(runtime) {
+              const currentOwner = owner;
+              if (!currentOwner || active !== currentOwner || currentOwner.runtime !== runtime)
+                return;
+              currentOwner.runtime = null;
+              publish({ ...snapshot, status: "rebinding" });
+            },
+            didFaultRuntime(runtime, error) {
               diagnose?.("runtime-fault", { message: error.message });
+              // A retired runtime can close after its replacement has already
+              // become authoritative. Only the exact active runtime may
+              // demote readiness; the retained renderer remains published
+              // while WorkspaceClient prepares its replacement.
+              const currentOwner = owner;
+              if (
+                !runtime ||
+                !currentOwner ||
+                active !== currentOwner ||
+                currentOwner.runtime !== runtime
+              )
+                return;
+              currentOwner.runtime = null;
+              publish({ ...snapshot, status: "rebinding" });
             },
             didRuntimeDiagnostic(phase, details) {
               diagnose?.("runtime-progress", {
@@ -594,48 +735,68 @@ export function createOpenTuiGenerationHost(
           settleReady,
           revoked: false,
           settled: false,
+          runtime: null,
+          authorityClient: null,
         };
         const owned = owner;
         const replacedCandidate = candidate;
         candidate = owned;
         if (replacedCandidate && replacedCandidate !== active) disposeCandidate(replacedCandidate);
-        const emitWorkspaceClientState = diagnose
-          ? (): void => {
-              try {
-                const snapshot = bundle.client.getSnapshot();
-                if (snapshot.phase !== "live") return;
-                const terminalResources =
-                  snapshot.authorityShell?.terminalInventory?.resources.map((resource) => ({
-                    resourceId: resource.id,
-                    windowResourceId: resource.windowResourceId ?? resource.id,
-                    active: resource.active,
-                    semanticPaneId:
-                      resource.attachability.status === "available"
-                        ? resource.attachability.semanticPaneId
-                        : null,
-                  })) ?? [];
-                diagnose("workspace-client-state", {
-                  daemonGeneration: owned.bundle.connection.target.daemon.instanceId,
-                  workspaceClient: {
-                    committed: {
-                      generation: snapshot.generation,
-                      target: snapshot.target,
-                      phase: snapshot.phase,
-                      authorityWorkspaceId: snapshot.authorityShell?.workspace.id ?? null,
-                      authorityWorkspaceName: snapshot.authorityShell?.workspace.name ?? null,
-                      catalog: snapshot.catalog,
-                      authority: snapshot.authority,
-                      terminalResources,
-                      lastReceipt: snapshot.operations.lastReceipt,
+        emitWorkspaceClientState = diagnose
+          ? (() => {
+              let lastProjectionSignature: string | null = null;
+              return (): void => {
+                try {
+                  if (disposed || owned.settled) return;
+                  const snapshot = bundle.client.getSnapshot();
+                  if (snapshot.phase !== "live") return;
+                  const terminalResources =
+                    snapshot.authorityShell?.terminalInventory?.resources.map((resource) => ({
+                      resourceId: resource.id,
+                      windowResourceId: resource.windowResourceId ?? resource.id,
+                      resourceTitle: resource.title,
+                      active: resource.active,
+                      semanticPaneId:
+                        resource.attachability.status === "available"
+                          ? resource.attachability.semanticPaneId
+                          : null,
+                    })) ?? [];
+                  const projection = {
+                    daemonGeneration: owned.bundle.connection.target.daemon.instanceId,
+                    workspaceClient: {
+                      committed: {
+                        generation: snapshot.generation,
+                        target: snapshot.target,
+                        phase: snapshot.phase,
+                        authorityWorkspaceId: snapshot.authorityShell?.workspace.id ?? null,
+                        authorityWorkspaceName: snapshot.authorityShell?.workspace.name ?? null,
+                        catalog: snapshot.catalog,
+                        authority: snapshot.authority,
+                        terminalResources,
+                        terminalResourceRevision:
+                          activeRuntimeInventory?.terminalResourceRevision ?? null,
+                        lastReceipt: snapshot.operations.lastReceipt,
+                        lastResourceChangeAcknowledgement:
+                          snapshot.operations.lastResourceChangeAcknowledgement,
+                      },
+                      pending: snapshot.operations.pending,
+                      derived: snapshot.semantic,
                     },
-                    pending: snapshot.operations.pending,
-                    derived: snapshot.semantic,
-                  },
-                });
-              } catch {
-                // Diagnostics and snapshot inspection never own generation lifecycle.
-              }
-            }
+                  } as const;
+                  // Every subscribed scope can publish the same immutable
+                  // WorkspaceClient projection in one synchronous transition.
+                  // Retain only the immediately preceding normalized value for
+                  // this exact generation: distinct authority, receipt, ack,
+                  // semantic, catalog, or active-runtime revisions still emit.
+                  const signature = JSON.stringify(projection);
+                  if (signature === lastProjectionSignature) return;
+                  diagnose("workspace-client-state", projection);
+                  lastProjectionSignature = signature;
+                } catch {
+                  // Diagnostics and snapshot inspection never own generation lifecycle.
+                }
+              };
+            })()
           : null;
         const stopLifecycle = bundle.client.subscribe("lifecycle", (lifecycle) => {
           if (disposed || owned.settled) return;
@@ -706,8 +867,10 @@ export function createOpenTuiGenerationHost(
           stopLifecycle();
           for (const stop of diagnosticStops) stop();
         };
-        if (pendingRuntime) activate(owned, pendingRuntime);
-        else if (pendingEmpty) activate(owned, null);
+        if (pendingRuntime) {
+          activate(owned, pendingRuntime);
+          emitWorkspaceClientState?.();
+        } else if (pendingEmpty) activate(owned, null);
         return owned.ready;
       })
       .catch(() => false)

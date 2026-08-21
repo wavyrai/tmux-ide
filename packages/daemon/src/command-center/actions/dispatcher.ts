@@ -212,43 +212,10 @@ function resourceChangesForAction(
       { ...base, workspaceName: null, resource: "fleet-catalog" },
     ];
   }
-  if (actionName.startsWith("workspace.")) {
-    const mutation = WorkspaceMultiplexerMutationResultSchemaZ.safeParse(result);
-    if (!mutation.success || mutation.data.outcome !== "applied") return [];
-    if (mutation.data.verb === "workspace.pane.send") return [];
-    const changes: ResourceChangedBroadcast[] = [
-      {
-        workspaceName: mutation.data.workspaceName,
-        resource: "application-shell",
-        causeOperationId: mutation.data.operationId,
-      },
-      {
-        workspaceName: mutation.data.workspaceName,
-        resource: "workspace-missions",
-        causeOperationId: mutation.data.operationId,
-      },
-    ];
-    if (
-      mutation.data.verb === "workspace.window.split" ||
-      mutation.data.verb === "workspace.window.kill" ||
-      mutation.data.verb === "workspace.pane.kill" ||
-      mutation.data.verb === "workspace.session.kill"
-    ) {
-      changes.push({
-        workspaceName: null,
-        resource: "fleet-catalog",
-        causeOperationId: mutation.data.operationId,
-      });
-    }
-    if (mutation.data.verb === "workspace.session.kill") {
-      changes.push({
-        workspaceName: null,
-        resource: "workspace-catalog",
-        causeOperationId: mutation.data.operationId,
-      });
-    }
-    return changes;
-  }
+  // Semantic multiplexer actions already publish from the observed-completion
+  // owner used by every HTTP/TUI/SDK transport. Repeating them here advances
+  // the resource revision twice for one operation.
+  if (isSemanticMultiplexerActionName(actionName)) return [];
   return [];
 }
 

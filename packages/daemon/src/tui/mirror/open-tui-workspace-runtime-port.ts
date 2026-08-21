@@ -52,6 +52,7 @@ export interface OpenTuiWorkspaceRuntimePort extends WorkspaceClientRuntimePort<
   TerminalReplicaPatchPayload,
   TerminalReplicaTombstonePayload
 > {
+  getAuthoritySnapshot(): SessionRuntimeAuthoritySnapshot | null;
   getLayout(): OpenTuiWorkspaceLayout | null;
   getLayoutSnapshot(): OpenTuiWorkspaceLayoutSnapshot;
   onLayout(listener: (layout: OpenTuiWorkspaceLayoutSnapshot) => void): () => void;
@@ -105,20 +106,100 @@ function freezeLayout(frame: OpenTuiWorkspaceLayout): OpenTuiWorkspaceLayout {
   });
 }
 
-function layoutKey(frame: OpenTuiWorkspaceLayout): string {
+function layoutKey(frame: OpenTuiWorkspaceLayout): string | null {
   if (frame.semanticWindowId) return `semantic:${frame.semanticWindowId}`;
-  if (frame.windowName) return `name:${frame.windowName}`;
-  return "unidentified";
+  const panes = frame.panes.flatMap(({ pane }) => (typeof pane === "string" ? [pane] : [])).sort();
+  if (
+    panes.length === 0 ||
+    panes.length !== frame.panes.length ||
+    panes.some((pane) => pane.length === 0 || pane.length > 256) ||
+    new Set(panes).size !== panes.length
+  )
+    return null;
+  return `panes:${panes.join("\u0000")}`;
 }
 
 function layoutSnapshot(
   windows: ReadonlyMap<string, OpenTuiWorkspaceLayout>,
+  currentWindowKey: string | null = null,
 ): OpenTuiWorkspaceLayoutSnapshot {
-  const frames = Object.freeze([...windows.values()]);
+  const selectedKey =
+    currentWindowKey ??
+    [...windows.entries()].find(([, frame]) => frame.currentWindow)?.[0] ??
+    null;
+  const frames = Object.freeze(
+    [...windows.entries()].map(([key, frame]) =>
+      frame.currentWindow === (key === selectedKey)
+        ? frame
+        : freezeLayout({ ...frame, currentWindow: key === selectedKey }),
+    ),
+  );
   return Object.freeze({
     current: frames.find((frame) => frame.currentWindow) ?? null,
     windows: frames,
   });
+}
+
+function layoutFrameSemanticallyEqual(
+  left: OpenTuiWorkspaceLayout,
+  right: OpenTuiWorkspaceLayout,
+): boolean {
+  return (
+    left.semanticWindowId === right.semanticWindowId &&
+    left.windowName === right.windowName &&
+    left.currentWindow === right.currentWindow &&
+    left.cols === right.cols &&
+    left.rows === right.rows &&
+    left.zoomed === right.zoomed &&
+    left.paneBorderStatus === right.paneBorderStatus &&
+    left.panes.length === right.panes.length &&
+    left.panes.every((pane, index) => {
+      const candidate = right.panes[index];
+      return (
+        candidate !== undefined &&
+        pane.pane === candidate.pane &&
+        pane.left === candidate.left &&
+        pane.top === candidate.top &&
+        pane.width === candidate.width &&
+        pane.height === candidate.height &&
+        pane.active === candidate.active
+      );
+    })
+  );
+}
+
+function layoutSnapshotsSemanticallyEqual(
+  left: OpenTuiWorkspaceLayoutSnapshot,
+  right: OpenTuiWorkspaceLayoutSnapshot,
+): boolean {
+  return (
+    left.windows.length === right.windows.length &&
+    left.windows.every((window, index) => {
+      const candidate = right.windows[index];
+      return candidate !== undefined && layoutFrameSemanticallyEqual(window, candidate);
+    })
+  );
+}
+
+function layoutExactlyCoversPanes(
+  snapshot: OpenTuiWorkspaceLayoutSnapshot,
+  expectedPanes: readonly string[],
+): boolean {
+  if (
+    snapshot.current === null ||
+    snapshot.windows.filter((window) => window.currentWindow).length !== 1
+  )
+    return false;
+  const observed = snapshot.windows.flatMap((window) => window.panes.map((pane) => pane.pane));
+  if (!observed.every((pane): pane is string => typeof pane === "string")) return false;
+  const observedPanes = observed as string[];
+  return (
+    new Set(observedPanes).size === observedPanes.length &&
+    observedPanes.length === expectedPanes.length &&
+    [...observedPanes]
+      .sort((left, right) => left.localeCompare(right))
+      .every((pane, index) => pane === expectedPanes[index])
+  );
 }
 
 function canonicalPaneIds(inventory: WorkspaceClientRuntimeInventory): readonly string[] {
@@ -576,6 +657,8 @@ export async function connectOpenTuiWorkspaceRuntimePort(
 
   let client: PaneStreamClientWithReceipts | null = null;
   const layoutsByWindow = new Map<string, OpenTuiWorkspaceLayout>();
+  let currentWindowKey: string | null = null;
+  let lastRejectedLayoutSnapshot: OpenTuiWorkspaceLayoutSnapshot | null = null;
   let latestLayoutSnapshot: OpenTuiWorkspaceLayoutSnapshot = Object.freeze({
     current: null,
     windows: Object.freeze([]),
@@ -608,7 +691,7 @@ export async function connectOpenTuiWorkspaceRuntimePort(
       coherentSettled ||
       closed ||
       !physicalReady ||
-      latestLayoutSnapshot.current === null ||
+      !layoutExactlyCoversPanes(latestLayoutSnapshot, panes) ||
       canonicalSeedPanes.size !== panes.length
     ) {
       return;
@@ -880,8 +963,40 @@ export async function connectOpenTuiWorkspaceRuntimePort(
       onLayout: (frame) => {
         if (closed) return;
         const retained = freezeLayout(frame);
-        layoutsByWindow.set(layoutKey(retained), retained);
-        latestLayoutSnapshot = layoutSnapshot(layoutsByWindow);
+        const key = layoutKey(retained);
+        if (key === null) {
+          options.onDiagnostic?.("layout", {
+            windows: layoutsByWindow.size,
+            current: currentWindowKey !== null,
+            panes: retained.panes.length,
+            rejected: "ambiguous-window-identity",
+          });
+          return;
+        }
+        layoutsByWindow.set(key, retained);
+        // tmux reports a switch as incumbent=false followed by target=true.
+        // Retain the incumbent through that pair and publish one unique current
+        // window only when the positive target frame arrives.
+        if (retained.currentWindow) currentWindowKey = key;
+        const candidate = layoutSnapshot(layoutsByWindow, currentWindowKey);
+        if (!layoutExactlyCoversPanes(candidate, panes)) {
+          if (
+            lastRejectedLayoutSnapshot &&
+            layoutSnapshotsSemanticallyEqual(candidate, lastRejectedLayoutSnapshot)
+          )
+            return;
+          lastRejectedLayoutSnapshot = candidate;
+          options.onDiagnostic?.("layout", {
+            windows: candidate.windows.length,
+            current: candidate.current !== null,
+            panes: retained.panes.length,
+            rejected: "incomplete-inventory-coverage",
+          });
+          return;
+        }
+        lastRejectedLayoutSnapshot = null;
+        if (layoutSnapshotsSemanticallyEqual(candidate, latestLayoutSnapshot)) return;
+        latestLayoutSnapshot = candidate;
         options.onDiagnostic?.("layout", {
           windows: latestLayoutSnapshot.windows.length,
           current: latestLayoutSnapshot.current !== null,
@@ -956,6 +1071,7 @@ export async function connectOpenTuiWorkspaceRuntimePort(
     }) ?? null;
   const runtimePort: OpenTuiWorkspaceRuntimePort = {
     generation: inventory.daemonGeneration,
+    getAuthoritySnapshot: () => latestAuthority,
     closed: closedPromise,
     requestTerminalRepair: (target, reason) => {
       if (
@@ -999,6 +1115,7 @@ export async function connectOpenTuiWorkspaceRuntimePort(
     },
     setPresence: (state) => opened.setPresence(state),
     noteActivity: (activity) => opened.noteActivity(activity),
+    ownsConnectionAuthority: (authority) => opened.ownsConnectionAuthority(authority),
     requestAuthority: (authority: SessionRuntimeAuthorityKind) =>
       opened.requestAuthority(authority),
     releaseAuthority: (authority: SessionRuntimeAuthorityKind) =>

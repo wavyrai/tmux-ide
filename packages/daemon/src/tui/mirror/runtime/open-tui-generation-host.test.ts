@@ -2,14 +2,48 @@ import { describe, expect, it, vi } from "vitest";
 import type { ApplicationShellSessionState } from "@tmux-ide/daemon-client/application-shell-session";
 
 import type { OpenTuiApplicationShellConnection } from "../application-shell-daemon-connection.ts";
-import type { OpenTuiWorkspaceRuntimePort } from "../open-tui-workspace-runtime-port.ts";
+import {
+  OPEN_TUI_HOST_CLIENT_ID,
+  type OpenTuiWorkspaceRuntimePort,
+} from "../open-tui-workspace-runtime-port.ts";
 import { DaemonAuthorityRebindCoordinator } from "./daemon-authority-rebind.ts";
+import { BoundedPerformanceRecordWriter } from "./bounded-performance-record-writer.ts";
 import {
   createOpenTuiGenerationHost,
   emitTerminalTraceStageFailOpen,
+  openTuiGenerationRenderEqual,
   type OpenTuiGenerationBundle,
   type OpenTuiProductionWorkspaceClient,
 } from "./open-tui-generation-host.ts";
+
+it("compares only the exact generation tuple consumed by the render tree", () => {
+  const connectionValue = {} as OpenTuiApplicationShellConnection;
+  const client = {} as OpenTuiProductionWorkspaceClient;
+  const fastLane = {} as OpenTuiWorkspaceTerminalFastLane;
+  const adapter = {} as TerminalFastLaneRendererAdapter;
+  const base = {
+    status: "live" as const,
+    rendererEpoch: 7,
+    daemonGeneration: "daemon.one",
+    connection: connectionValue,
+    client,
+    authorityClient: null,
+    fastLane,
+    adapter,
+  };
+  expect(openTuiGenerationRenderEqual(base, { ...base })).toBe(true);
+  for (const changed of [
+    { ...base, status: "rebinding" as const },
+    { ...base, rendererEpoch: 8 },
+    { ...base, daemonGeneration: "daemon.two" },
+    { ...base, connection: {} as OpenTuiApplicationShellConnection },
+    { ...base, client: {} as OpenTuiProductionWorkspaceClient },
+    { ...base, fastLane: {} as OpenTuiWorkspaceTerminalFastLane },
+    { ...base, adapter: {} as TerminalFastLaneRendererAdapter },
+  ])
+    expect(openTuiGenerationRenderEqual(base, changed)).toBe(false);
+  expect(openTuiGenerationRenderEqual(base, null)).toBe(false);
+});
 
 it("keeps delivery and paint authoritative when trace-stage diagnostics throw", () => {
   expect(() =>
@@ -33,6 +67,7 @@ it("keeps delivery and paint authoritative when trace-stage diagnostics throw", 
 import type { OpenTuiRuntimeLayoutPresentation } from "./runtime-layout-presentation.ts";
 import type { TerminalFastLaneRendererAdapter } from "./terminal-fast-lane-renderer-adapter.ts";
 import type { OpenTuiWorkspaceTerminalFastLane } from "./workspace-terminal-fast-lane.ts";
+import { OpenTuiTerminalHostFocus } from "./terminal-host-focus.ts";
 
 type LifecycleListener = (snapshot: { readonly shell: ApplicationShellSessionState }) => void;
 
@@ -92,6 +127,52 @@ function connection(instanceId: string, dispose = vi.fn()): OpenTuiApplicationSh
   };
 }
 
+function authorityRuntime(generation: string) {
+  const authority = {
+    generation,
+    session: "session.alpha",
+    revision: 10,
+    owners: {
+      input: OPEN_TUI_HOST_CLIENT_ID,
+      focus: OPEN_TUI_HOST_CLIENT_ID,
+      geometry: OPEN_TUI_HOST_CLIENT_ID,
+    },
+    nativeGeometryYieldUntilMs: 0,
+    clients: [
+      {
+        clientId: OPEN_TUI_HOST_CLIENT_ID,
+        surface: "opentui" as const,
+        state: "foreground" as const,
+        connectedRevision: 1,
+        activityRevision: 10,
+      },
+    ],
+  };
+  const listeners = new Set<(snapshot: typeof authority) => void>();
+  return {
+    runtime: {
+      generation,
+      getAuthoritySnapshot: () => authority,
+      setPresence: vi.fn(),
+      noteActivity: vi.fn(),
+      requestAuthority: vi.fn(async (kind: "input" | "focus" | "geometry") => ({
+        generation,
+        session: "session.alpha",
+        clientId: OPEN_TUI_HOST_CLIENT_ID,
+        authority: kind,
+        revision: 10,
+      })),
+      releaseAuthority: vi.fn(async () => authority),
+      onAuthority: vi.fn((listener: (snapshot: typeof authority) => void) => {
+        listeners.add(listener);
+        listener(authority);
+        return () => listeners.delete(listener);
+      }),
+    } as unknown as OpenTuiWorkspaceRuntimePort,
+    authority,
+  };
+}
+
 function presentation() {
   const adopt = vi.fn(() => vi.fn());
   const clear = vi.fn();
@@ -134,7 +215,12 @@ interface FakeBundle extends OpenTuiGenerationBundle {
   readonly setClientSnapshot: (snapshot: unknown) => void;
   readonly getSnapshotSpy: ReturnType<typeof vi.fn>;
   readonly activate: () => void;
+  readonly activateRuntime: (
+    runtime: OpenTuiWorkspaceRuntimePort,
+    inventory?: { readonly terminalResourceRevision?: number },
+  ) => void;
   readonly retireRuntime: () => void;
+  readonly faultRuntime: (runtime: OpenTuiWorkspaceRuntimePort) => void;
   readonly revokeSpy: ReturnType<typeof vi.fn>;
   readonly disposeSpy: ReturnType<typeof vi.fn>;
 }
@@ -142,8 +228,20 @@ interface FakeBundle extends OpenTuiGenerationBundle {
 function bundle(
   nextConnection: OpenTuiApplicationShellConnection,
   callbacks: {
-    readonly didActivateRuntime: (runtime: OpenTuiWorkspaceRuntimePort) => void;
+    readonly didActivateRuntime: (
+      runtime: OpenTuiWorkspaceRuntimePort,
+      inventory: {
+        readonly workspaceName: string;
+        readonly workspaceId: string;
+        readonly sessionId: string;
+        readonly daemonGeneration: string;
+        readonly shellGeneration: number;
+        readonly terminalResourceRevision?: number;
+        readonly semanticPaneIds: readonly string[];
+      },
+    ) => void;
     readonly didRetireRuntime: () => void;
+    readonly didFaultRuntime: (runtime: OpenTuiWorkspaceRuntimePort | null, error: Error) => void;
   },
 ): FakeBundle {
   const listeners = new Set<LifecycleListener>();
@@ -175,6 +273,15 @@ function bundle(
   const runtime = {
     generation: nextConnection.target.daemon.instanceId,
   } as unknown as OpenTuiWorkspaceRuntimePort;
+  const inventory = (terminalResourceRevision = 1) => ({
+    workspaceName: "alpha",
+    workspaceId: "workspace.alpha",
+    sessionId: "session.alpha",
+    daemonGeneration: nextConnection.target.daemon.instanceId,
+    shellGeneration: 1,
+    terminalResourceRevision,
+    semanticPaneIds: ["pane.alpha"],
+  });
   return {
     connection: nextConnection,
     client,
@@ -192,8 +299,15 @@ function bundle(
     setClientSnapshot: (snapshot) => {
       clientSnapshot = snapshot;
     },
-    activate: () => callbacks.didActivateRuntime(runtime),
+    activate: () => callbacks.didActivateRuntime(runtime, inventory()),
+    activateRuntime: (nextRuntime, nextInventory) =>
+      callbacks.didActivateRuntime(
+        nextRuntime,
+        inventory(nextInventory?.terminalResourceRevision ?? 1),
+      ),
     retireRuntime: callbacks.didRetireRuntime,
+    faultRuntime: (failedRuntime) =>
+      callbacks.didFaultRuntime(failedRuntime, new Error("runtime connection closed")),
     revoke: revokeSpy,
     dispose: disposeSpy,
   };
@@ -349,6 +463,130 @@ describe("OpenTUI generation host", () => {
     ]);
   });
 
+  it("atomically adopts a replacement runtime for the active owner without replacing its generation", async () => {
+    const view = presentation();
+    let created!: FakeBundle;
+    const host = createOpenTuiGenerationHost("alpha", view.value, {
+      observeCanonicalGeneration: inertCanonicalObserver,
+      resolveConnection: vi.fn(async () => connection("daemon-a")),
+      buildBundle: (resolved, callbacks) => (created = bundle(resolved, callbacks)),
+    });
+    const started = host.start();
+    await flushHostStart();
+    const first = authorityRuntime("daemon-a");
+    created.setClientSnapshot({
+      generation: 1,
+      phase: "live",
+      target: created.connection.target,
+      authority: first.authority,
+    });
+    created.activateRuntime(first.runtime);
+    await expect(started).resolves.toBe(true);
+    const rendererEpoch = host.getSnapshot().rendererEpoch;
+    const firstAuthorityClient = host.getSnapshot().authorityClient;
+    expect(firstAuthorityClient).not.toBeNull();
+    const replacementStates: string[] = [];
+    const replacementAuthorityClients: unknown[] = [];
+    const stop = host.subscribe((snapshot) => replacementStates.push(snapshot.status));
+    const stopAuthority = host.subscribe((snapshot) =>
+      replacementAuthorityClients.push(snapshot.authorityClient),
+    );
+    replacementStates.length = 0;
+    replacementAuthorityClients.length = 0;
+    const replacement = authorityRuntime("daemon-a");
+
+    created.activateRuntime(replacement.runtime);
+
+    expect(host.getSnapshot()).toMatchObject({
+      status: "live",
+      daemonGeneration: "daemon-a",
+      rendererEpoch,
+    });
+    expect(view.adopt).toHaveBeenCalledTimes(2);
+    expect(view.clear).not.toHaveBeenCalled();
+    expect(replacementStates).toEqual(["rebinding", "live"]);
+    expect(replacementAuthorityClients).toEqual([
+      firstAuthorityClient,
+      host.getSnapshot().authorityClient,
+    ]);
+    expect(host.getSnapshot().authorityClient).not.toBe(firstAuthorityClient);
+    await firstAuthorityClient!.releaseAuthority("input");
+    expect(first.runtime.releaseAuthority).toHaveBeenCalledWith("input");
+    expect(replacement.runtime.releaseAuthority).not.toHaveBeenCalled();
+    stop();
+    stopAuthority();
+    await host.dispose();
+  });
+
+  it("yields the exact retired runtime before a focused replacement can claim", async () => {
+    const view = presentation();
+    let created!: FakeBundle;
+    const host = createOpenTuiGenerationHost("alpha", view.value, {
+      observeCanonicalGeneration: inertCanonicalObserver,
+      resolveConnection: vi.fn(async () => connection("daemon-a")),
+      buildBundle: (resolved, callbacks) => (created = bundle(resolved, callbacks)),
+    });
+    const focus = new OpenTuiTerminalHostFocus(true);
+    const stopFocus = host.subscribe((snapshot) =>
+      focus.adopt(snapshot.status === "live" ? snapshot.authorityClient : null),
+    );
+    const started = host.start();
+    await flushHostStart();
+    const first = authorityRuntime("daemon-a");
+    created.activateRuntime(first.runtime);
+    await started;
+    await vi.waitFor(() => expect(first.runtime.requestAuthority).toHaveBeenCalledTimes(3));
+
+    let releaseRetired!: () => void;
+    const retired = new Promise<ReturnType<typeof first.runtime.getAuthoritySnapshot>>(
+      (resolve) => {
+        releaseRetired = () => resolve(first.authority);
+      },
+    );
+    first.runtime.releaseAuthority.mockImplementation(() => retired as never);
+    const replacement = authorityRuntime("daemon-a");
+    created.activateRuntime(replacement.runtime);
+
+    await vi.waitFor(() => expect(first.runtime.releaseAuthority).toHaveBeenCalledTimes(3));
+    expect(replacement.runtime.requestAuthority).not.toHaveBeenCalled();
+    releaseRetired();
+    await vi.waitFor(() => expect(replacement.runtime.requestAuthority).toHaveBeenCalledTimes(3));
+    expect(first.runtime.releaseAuthority).toHaveBeenCalledTimes(3);
+
+    stopFocus();
+    focus.dispose();
+    await host.dispose();
+  });
+
+  it("demotes only an exact active runtime fault and ignores a retired runtime closing late", async () => {
+    const view = presentation();
+    let created!: FakeBundle;
+    const host = createOpenTuiGenerationHost("alpha", view.value, {
+      observeCanonicalGeneration: inertCanonicalObserver,
+      resolveConnection: vi.fn(async () => connection("daemon-a")),
+      buildBundle: (resolved, callbacks) => (created = bundle(resolved, callbacks)),
+    });
+    const started = host.start();
+    await flushHostStart();
+    created.activate();
+    await expect(started).resolves.toBe(true);
+    const incumbent = view.adopt.mock.calls[0]![0];
+    const replacement = { generation: "daemon-a" } as unknown as OpenTuiWorkspaceRuntimePort;
+
+    created.activateRuntime(replacement);
+    created.faultRuntime(incumbent);
+    expect(host.getSnapshot()).toMatchObject({ status: "live", adapter: created.adapter });
+
+    created.faultRuntime(replacement);
+    expect(host.getSnapshot()).toMatchObject({
+      status: "rebinding",
+      adapter: created.adapter,
+      daemonGeneration: "daemon-a",
+    });
+    expect(view.clear).not.toHaveBeenCalled();
+    await host.dispose();
+  });
+
   it("emits a later exact WorkspaceClient diagnostic when authority settles after shell live", async () => {
     const view = presentation();
     let created!: FakeBundle;
@@ -379,6 +617,13 @@ describe("OpenTUI generation host", () => {
     };
     created.setClientSnapshot(base);
     created.emitLifecycle(liveEmpty("daemon-a"));
+    const baseDiagnosticCount = diagnostics.length;
+    created.emitLifecycle(liveEmpty("daemon-a"));
+    created.emitScope("authority");
+    created.emitScope("semantic");
+    created.emitScope("operations");
+    created.emitScope("catalog");
+    expect(diagnostics).toHaveLength(baseDiagnosticCount);
     expect(diagnostics.at(-1)?.workspaceClient).toMatchObject({
       committed: { authority: null },
     });
@@ -392,6 +637,7 @@ describe("OpenTUI generation host", () => {
       },
     });
     created.emitScope("authority");
+    expect(diagnostics).toHaveLength(baseDiagnosticCount + 1);
     expect(diagnostics.at(-1)?.workspaceClient).toMatchObject({
       committed: {
         authorityWorkspaceId: "workspace.id",
@@ -420,6 +666,7 @@ describe("OpenTUI generation host", () => {
       },
     });
     created.emitScope("catalog");
+    expect(diagnostics).toHaveLength(baseDiagnosticCount + 2);
     expect(diagnostics.at(-1)?.workspaceClient).toMatchObject({
       committed: {
         catalog: {
@@ -428,8 +675,294 @@ describe("OpenTUI generation host", () => {
         },
       },
     });
+    const acknowledgement = {
+      daemonInstanceId: "daemon-a",
+      operationId: "17000000-0000-4000-8000-000000000017",
+      sequence: 12,
+      revision: 7,
+    };
+    created.setClientSnapshot({
+      ...base,
+      operations: {
+        pending: [],
+        lastReceipt: null,
+        lastResourceChangeAcknowledgement: acknowledgement,
+      },
+    });
+    created.emitScope("operations");
+    expect(diagnostics).toHaveLength(baseDiagnosticCount + 3);
+    expect(diagnostics.at(-1)?.workspaceClient).toMatchObject({
+      committed: { lastResourceChangeAcknowledgement: acknowledgement },
+    });
     created.activate();
     await started;
+    expect(diagnostics).toHaveLength(baseDiagnosticCount + 4);
+    expect(diagnostics.at(-1)?.workspaceClient).toMatchObject({
+      committed: { terminalResourceRevision: 1 },
+    });
+    created.activateRuntime({ generation: "daemon-a" } as unknown as OpenTuiWorkspaceRuntimePort, {
+      terminalResourceRevision: 7,
+    });
+    expect(diagnostics).toHaveLength(baseDiagnosticCount + 5);
+    created.activateRuntime({ generation: "daemon-a" } as unknown as OpenTuiWorkspaceRuntimePort, {
+      terminalResourceRevision: 7,
+    });
+    expect(diagnostics).toHaveLength(baseDiagnosticCount + 5);
+    expect(diagnostics.at(-1)?.workspaceClient).toMatchObject({
+      committed: { terminalResourceRevision: 7 },
+    });
+    created.retireRuntime();
+    expect(diagnostics).toHaveLength(baseDiagnosticCount + 6);
+    expect(diagnostics.at(-1)?.workspaceClient).toMatchObject({
+      committed: { terminalResourceRevision: null },
+    });
+    created.retireRuntime();
+    expect(diagnostics).toHaveLength(baseDiagnosticCount + 6);
+    await host.dispose();
+  });
+
+  it("retains every distinct pending, receipt, semantic, resource title, and active transition", async () => {
+    const view = presentation();
+    let created!: FakeBundle;
+    const diagnostics: Array<Record<string, unknown>> = [];
+    const target = connection("daemon-a").target;
+    const host = createOpenTuiGenerationHost("alpha", view.value, {
+      observeCanonicalGeneration: inertCanonicalObserver,
+      resolveConnection: vi.fn(async () => connection("daemon-a")),
+      buildBundle: (resolved, callbacks) => (created = bundle(resolved, callbacks)),
+      onDiagnostic: (phase, details) => {
+        if (phase === "workspace-client-state") diagnostics.push(details);
+      },
+    });
+    const started = host.start();
+    await flushHostStart();
+    const resource = (title: string, active: boolean) => ({
+      id: "resource.one",
+      windowResourceId: "window.one",
+      title,
+      active,
+      attachability: { status: "available", semanticPaneId: "pane.one" },
+    });
+    const base = {
+      phase: "live",
+      generation: 2,
+      target,
+      catalog: { daemonInstanceId: "daemon-a", intents: [], liveSessions: [] },
+      authorityShell: {
+        workspace: { id: "workspace.id", name: "alpha workspace" },
+        terminalInventory: { resources: [resource("Terminal", false)] },
+      },
+      authority: null,
+      operations: { pending: [], lastReceipt: null },
+      semantic: { workspace: { id: "workspace.id", name: "alpha workspace" } },
+    };
+    const states = [
+      base,
+      {
+        ...base,
+        operations: {
+          pending: [{ operationId: "17000000-0000-4000-8000-000000000021" }],
+          lastReceipt: null,
+        },
+      },
+      {
+        ...base,
+        operations: {
+          pending: [],
+          lastReceipt: {
+            operationId: "17000000-0000-4000-8000-000000000021",
+            phase: "observed",
+          },
+        },
+      },
+      {
+        ...base,
+        semantic: {
+          workspace: { id: "workspace.id", name: "alpha workspace" },
+          activeResourceId: "resource.one",
+        },
+      },
+      {
+        ...base,
+        authorityShell: {
+          ...base.authorityShell,
+          terminalInventory: { resources: [resource("Renamed", false)] },
+        },
+      },
+      {
+        ...base,
+        authorityShell: {
+          ...base.authorityShell,
+          terminalInventory: { resources: [resource("Renamed", true)] },
+        },
+      },
+    ];
+    for (const [index, state] of states.entries()) {
+      created.setClientSnapshot(state);
+      created.emitScope(index === 0 ? "catalog" : "operations");
+      created.emitScope("authority");
+      expect(diagnostics).toHaveLength(index + 1);
+    }
+    created.activate();
+    await started;
+    await host.dispose();
+  });
+
+  it("keeps a production-shaped authority burst below a deterministic 64KiB writer fence", async () => {
+    const view = presentation();
+    let created!: FakeBundle;
+    const accepted: string[] = [];
+    let acceptedBytes = 0;
+    const highWaterMark = 64 * 1_024;
+    const writer = new BoundedPerformanceRecordWriter({
+      write(record) {
+        accepted.push(record);
+        acceptedBytes += Buffer.byteLength(record);
+        return acceptedBytes < highWaterMark;
+      },
+    });
+    const host = createOpenTuiGenerationHost("alpha", view.value, {
+      observeCanonicalGeneration: inertCanonicalObserver,
+      resolveConnection: vi.fn(async () => connection("daemon-a")),
+      buildBundle: (resolved, callbacks) => (created = bundle(resolved, callbacks)),
+      onDiagnostic: (phase, details) => {
+        writer.write(`${JSON.stringify({ phase: `generation-${phase}`, ...details })}\n`);
+      },
+    });
+    const started = host.start();
+    await flushHostStart();
+    const target = connection("daemon-a").target;
+    const catalogEntries = Array.from({ length: 28 }, (_, index) => ({
+      workspaceName: `workspace-${String(index).padStart(2, "0")}`,
+      sessionName: `session-${String(index).padStart(2, "0")}`,
+      availability: "live",
+    }));
+    const snapshotForRevision = (revision: number) => ({
+      phase: "live",
+      generation: 2,
+      target,
+      catalog: {
+        daemonInstanceId: "daemon-a",
+        intents: catalogEntries,
+        liveSessions: catalogEntries.map(({ sessionName }) => ({
+          sessionName,
+          fleetSessionId: `fleet-${sessionName}`,
+        })),
+      },
+      authorityShell: {
+        workspace: { id: "workspace.id", name: "alpha workspace" },
+        terminalInventory: {
+          resources: [
+            {
+              id: "resource.one",
+              windowResourceId: "window.one",
+              title: "Lifecycle One",
+              active: revision < 18,
+              attachability: { status: "available", semanticPaneId: "pane.one" },
+            },
+            {
+              id: "resource.two",
+              windowResourceId: "window.two",
+              title: "Lifecycle Two",
+              active: revision >= 18,
+              attachability: { status: "available", semanticPaneId: "pane.two" },
+            },
+          ],
+        },
+      },
+      authority: {
+        generation: "daemon-a",
+        session: "alpha",
+        revision,
+        owners: { input: "tui", focus: "tui", geometry: "tui" },
+        clients: [],
+      },
+      operations: { pending: [], lastReceipt: null },
+      semantic: {
+        workspace: { id: "workspace.id", name: "alpha workspace" },
+        terminalInventory: { activeResourceId: revision < 18 ? "resource.one" : "resource.two" },
+      },
+    });
+    for (const revision of [13, 14, 17, 18, 19, 20]) {
+      created.setClientSnapshot(snapshotForRevision(revision));
+      created.emitScope("authority");
+      created.emitScope("semantic");
+      created.emitScope("operations");
+    }
+    created.activate();
+    await started;
+    const workspaceRecords = accepted.filter((record) =>
+      record.includes('"phase":"generation-workspace-client-state"'),
+    );
+    expect(workspaceRecords).toHaveLength(7);
+    expect(Buffer.byteLength(workspaceRecords[0]!)).toBeGreaterThan(4_096);
+    expect(acceptedBytes).toBeLessThan(highWaterMark);
+    expect(writer.writeCritical("switch:fence", '{"phase":"window-switch-fence"}\n')).toBe(true);
+    expect(writer.diagnostics()).toEqual({
+      droppedRecords: 0,
+      failed: false,
+      pendingCriticalRecords: 0,
+    });
+    const latest = JSON.parse(workspaceRecords.at(-1)!);
+    expect(latest.workspaceClient.committed).toMatchObject({
+      terminalResourceRevision: 1,
+      authority: { revision: 20 },
+    });
+    await host.dispose();
+  });
+
+  it("scopes duplicate suppression to the exact generation and retires stale publishers", async () => {
+    const view = presentation();
+    const connections = [connection("daemon-a"), connection("daemon-b")];
+    const bundles: FakeBundle[] = [];
+    const scheduled: Array<() => void> = [];
+    const diagnosticGenerations: string[] = [];
+    const host = createOpenTuiGenerationHost("alpha", view.value, {
+      observeCanonicalGeneration: inertCanonicalObserver,
+      resolveConnection: vi.fn(async () => connections.shift() ?? null),
+      buildBundle: (resolved, callbacks) => {
+        const created = bundle(resolved, callbacks);
+        bundles.push(created);
+        return created;
+      },
+      createRebindCoordinator: () =>
+        new DaemonAuthorityRebindCoordinator({
+          schedule: (callback) => {
+            scheduled.push(callback);
+            return scheduled.length as unknown as ReturnType<typeof setTimeout>;
+          },
+          cancel: vi.fn(),
+        }),
+      onDiagnostic: (phase, details) => {
+        if (phase === "workspace-client-state")
+          diagnosticGenerations.push(String(details.daemonGeneration));
+      },
+    });
+    const liveSnapshot = (daemonGeneration: string) => ({
+      phase: "live",
+      generation: 2,
+      target: connection(daemonGeneration).target,
+      catalog: { daemonInstanceId: daemonGeneration, intents: [], liveSessions: [] },
+      authorityShell: null,
+      authority: null,
+      operations: { pending: [], lastReceipt: null },
+      semantic: null,
+    });
+    const started = host.start();
+    await flushHostStart();
+    bundles[0]!.setClientSnapshot(liveSnapshot("daemon-a"));
+    bundles[0]!.activate();
+    await started;
+    bundles[0]!.emitLifecycle(mismatch("daemon-a"));
+    scheduled.shift()?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(bundles).toHaveLength(2);
+    bundles[1]!.setClientSnapshot(liveSnapshot("daemon-b"));
+    bundles[1]!.activate();
+    bundles[1]!.emitScope("authority");
+    bundles[0]!.emitScope("authority");
+    expect(diagnosticGenerations).toEqual(["daemon-a", "daemon-b"]);
     await host.dispose();
   });
 

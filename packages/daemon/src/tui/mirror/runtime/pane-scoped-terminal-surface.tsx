@@ -1,5 +1,5 @@
 /* @jsxImportSource @opentui/solid */
-import { createRenderEffect, onCleanup } from "solid-js";
+import { createRenderEffect, onCleanup, untrack, type Accessor } from "solid-js";
 
 import type {
   PaneSearchHighlight,
@@ -31,6 +31,8 @@ export interface PaneScopedTerminalSurfaceProps {
   readonly searchCur: number;
   readonly scrollOffset: number;
   readonly paneFocused: boolean;
+  /** Retain inactive-window native surfaces without scheduling hidden paints. */
+  readonly active?: boolean | Accessor<boolean>;
   readonly sourceEpoch: number;
   readonly hostFocusTransitionOwner?: PaneSurfaceHostFocusTransitionOwner;
   readonly selRange: { readonly start: Cell; readonly end: Cell } | null;
@@ -40,25 +42,33 @@ export interface PaneScopedTerminalSurfaceProps {
 /** One Solid owner per terminal pane; terminal output never wakes the root shell. */
 export function PaneScopedTerminalSurface(props: PaneScopedTerminalSurfaceProps) {
   let surface: PaneSurfaceRenderable | undefined;
+  const isActive = (): boolean =>
+    typeof props.active === "function" ? props.active() : props.active !== false;
 
   // This subscription is part of renderer ownership, so install it in the
   // synchronous render phase. A deferred effect can miss publications between
   // the initial blit and the first effect flush (and OpenTUI's deterministic
   // renderer does not promise an extra idle frame just to flush effects).
   createRenderEffect(() => {
-    const adapter = props.adapter;
-    const paneId = props.paneId;
-    const rendererEpoch = props.sourceEpoch;
-    if (surface) {
+    const adapter = untrack(() => props.adapter);
+    const paneId = untrack(() => props.paneId);
+    const rendererEpoch = untrack(() => props.sourceEpoch);
+    if (surface && untrack(isActive)) {
       surface.contentVersion = adapter.paneVersion(paneId);
       surface.sourceEpoch = rendererEpoch + adapter.paneSourceEpoch();
     }
     const unsubscribe = adapter.subscribePaneVersion(paneId, (version, sourceEpoch) => {
-      if (!surface) return;
+      if (!surface || !untrack(isActive)) return;
       surface.contentVersion = version;
       surface.sourceEpoch = rendererEpoch + sourceEpoch;
     });
     onCleanup(unsubscribe);
+  });
+
+  createRenderEffect(() => {
+    if (!isActive() || !surface) return;
+    surface.contentVersion = props.adapter.paneVersion(props.paneId);
+    surface.sourceEpoch = props.sourceEpoch + props.adapter.paneSourceEpoch();
   });
 
   return (

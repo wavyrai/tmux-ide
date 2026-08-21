@@ -32,6 +32,21 @@ test("translates one key through the exact host PTY without paste framing", () =
   );
 });
 
+test("translates one strict control key through the exact host PTY", () => {
+  const command = parseTestdriveInputDocument(
+    JSON.stringify({ version: 1, kind: "control-key", key: "t" }),
+  );
+  assert.deepEqual(translateTestdriveInput(command, context), {
+    phases: [{ bytes: "\x14", delayMs: 0 }],
+  });
+  for (const key of ["T", "tt", "1"]) {
+    assert.throws(
+      () => parseTestdriveInputDocument(JSON.stringify({ version: 1, kind: "control-key", key })),
+      /lowercase ASCII letter/u,
+    );
+  }
+});
+
 test("translates bracketed paste through one exact OpenTUI input sequence", () => {
   const command = parseTestdriveInputDocument(
     JSON.stringify({ version: 1, kind: "paste", text: "alpha\nbeta" }),
@@ -274,6 +289,19 @@ test("orchestration pins identity, uses one deadline, and verifies after deliver
     ["%7", "%7"],
   );
   assert.deepEqual(harness.calls.find(([kind]) => kind === "inject").slice(1, 3), ["%7", "\x1b[O"]);
+});
+
+test("control-key receipt preserves the exact requested key", async () => {
+  const harness = orchestrationPort();
+  const command = parseTestdriveInputDocument(
+    JSON.stringify({ version: 1, kind: "control-key", key: "t", timeoutMs: 500 }),
+  );
+  const result = await executeTestdriveInputOperation(command, harness.port);
+  assert.equal(result.requestedKey, "t");
+  assert.deepEqual(
+    harness.calls.filter(([kind]) => kind === "inject").map((call) => call[2]),
+    ["\x14"],
+  );
 });
 
 test("one monotonic absolute deadline includes resolve, phases, and cleanup reserve", async () => {

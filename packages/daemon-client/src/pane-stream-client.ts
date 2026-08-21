@@ -303,6 +303,7 @@ export interface PaneStreamRuntimeClient {
   readonly requestId: string;
   readonly effectiveViewerMode: PaneStreamIssueDescriptor["effectiveViewerMode"];
   readonly authoritySnapshot: SessionRuntimeAuthoritySnapshot | null;
+  ownsConnectionAuthority(authority: SessionRuntimeAuthorityKind): boolean;
   setPresence(state: SessionRuntimePresenceState): void;
   noteActivity(activity: SessionRuntimeActivityKind): void;
   requestAuthority(
@@ -627,10 +628,27 @@ export async function connectIssuedPaneStreamRuntimeClient(
     }
   >();
   let authoritySnapshot: SessionRuntimeAuthoritySnapshot | null = null;
+  // Authority ownership is global to the authenticated client, but explicit
+  // authority admission is scoped to this pane-stream connection. A fresh
+  // socket must not infer that it has completed the request handshake merely
+  // because its ready snapshot names the same host client as owner.
+  const connectionAuthorityGrants = new Map<
+    SessionRuntimeAuthorityKind,
+    SessionRuntimeAuthorityLease
+  >();
+  const connectionAuthorityRequests = new Map<
+    SessionRuntimeAuthorityKind,
+    Promise<SessionRuntimeAuthorityLease | null>
+  >();
+  const connectionAuthorityReleases = new Map<
+    SessionRuntimeAuthorityKind,
+    Promise<SessionRuntimeAuthoritySnapshot>
+  >();
   const pendingAuthorities = new Map<
     string,
     {
       authority: SessionRuntimeAuthorityKind;
+      action: "request" | "release";
       resolve(
         lease: SessionRuntimeAuthorityLease | null,
         snapshot: SessionRuntimeAuthoritySnapshot,
@@ -639,6 +657,19 @@ export async function connectIssuedPaneStreamRuntimeClient(
       timer: RuntimeTimer;
     }
   >();
+  const retiredAuthorities = new Map<
+    string,
+    { readonly authority: SessionRuntimeAuthorityKind; readonly action: "request" | "release" }
+  >();
+  const retireAuthorityRequest = (
+    requestId: string,
+    authority: SessionRuntimeAuthorityKind,
+    action: "request" | "release",
+  ): void => {
+    retiredAuthorities.set(requestId, { authority, action });
+    if (retiredAuthorities.size > 16)
+      retiredAuthorities.delete(retiredAuthorities.keys().next().value!);
+  };
   let viewportSequence = 0;
   const pendingViewports = new Map<
     number,
@@ -659,6 +690,10 @@ export async function connectIssuedPaneStreamRuntimeClient(
     }
   >();
   const rejectPending = (error: Error): void => {
+    connectionAuthorityGrants.clear();
+    connectionAuthorityRequests.clear();
+    connectionAuthorityReleases.clear();
+    retiredAuthorities.clear();
     if (!clockCalibrationSettled && (pendingClockProbe || finishClockCalibration))
       completeClockCalibration(null, "connection-closed", false);
     for (const pending of pendingInputs.values()) {
@@ -696,24 +731,46 @@ export async function connectIssuedPaneStreamRuntimeClient(
     }
     const ownedInput = authoritySnapshot?.owners.input === options.hostClientId;
     authoritySnapshot = snapshot;
+    if (snapshot.owners.input !== options.hostClientId) connectionAuthorityGrants.delete("input");
+    if (snapshot.owners.focus !== options.hostClientId) connectionAuthorityGrants.delete("focus");
+    if (snapshot.owners.geometry !== options.hostClientId)
+      connectionAuthorityGrants.delete("geometry");
     if (ownedInput && snapshot.owners.input !== options.hostClientId) {
       retirePendingInputsForAuthorityLoss();
     }
     options.onAuthoritySnapshot?.(snapshot);
   };
-  const requestAuthority = (
+  const authorityReceiptMatchesAction = (
+    action: "request" | "release",
+    frame: Extract<PaneStreamServerFrame, { type: "authority-receipt" }>,
+  ): boolean => {
+    if (frame.snapshot.generation !== descriptor.daemonInstanceId) return false;
+    if (action === "release") return frame.status === "released" && frame.lease === null;
+    if (frame.status === "rejected") return frame.lease === null;
+    if (frame.status !== "granted" || frame.lease === null) return false;
+    return (
+      frame.lease.generation === descriptor.daemonInstanceId &&
+      frame.lease.session === frame.snapshot.session &&
+      frame.lease.clientId === options.hostClientId &&
+      frame.lease.authority === frame.authority &&
+      frame.snapshot.owners[frame.authority] === options.hostClientId
+    );
+  };
+  const requestAuthorityOnce = (
     authority: SessionRuntimeAuthorityKind,
   ): Promise<SessionRuntimeAuthorityLease | null> => {
     const requestId = crypto.randomUUID();
     return new Promise((resolve, reject) => {
       const timer = createRuntimeTimer(() => {
         pendingAuthorities.delete(requestId);
+        retireAuthorityRequest(requestId, authority, "request");
         reject(
           new PaneStreamOperationError("operation-timeout", `${authority} authority timed out`),
         );
       }, 2_000);
       pendingAuthorities.set(requestId, {
         authority,
+        action: "request",
         resolve: (lease) => resolve(lease),
         reject,
         timer,
@@ -732,17 +789,45 @@ export async function connectIssuedPaneStreamRuntimeClient(
       }
     });
   };
-  const releaseAuthority = (
+  const requestAuthority = (
+    authority: SessionRuntimeAuthorityKind,
+  ): Promise<SessionRuntimeAuthorityLease | null> => {
+    const releasing = connectionAuthorityReleases.get(authority);
+    if (releasing)
+      return releasing.then(
+        () => requestAuthority(authority),
+        (error: unknown) => {
+          // A timed-out/rejected release has still invalidated the local
+          // lease. A live socket can recover only through a fresh request;
+          // transport closure remains terminal and must not emit again.
+          if (closed) throw error;
+          return requestAuthority(authority);
+        },
+      );
+    const granted = connectionAuthorityGrants.get(authority);
+    if (granted) return Promise.resolve(granted);
+    const existing = connectionAuthorityRequests.get(authority);
+    if (existing) return existing;
+    const request = requestAuthorityOnce(authority).finally(() => {
+      if (connectionAuthorityRequests.get(authority) === request)
+        connectionAuthorityRequests.delete(authority);
+    });
+    connectionAuthorityRequests.set(authority, request);
+    return request;
+  };
+  const releaseAuthorityOnce = (
     authority: SessionRuntimeAuthorityKind,
   ): Promise<SessionRuntimeAuthoritySnapshot> => {
     const requestId = crypto.randomUUID();
     return new Promise((resolve, reject) => {
       const timer = createRuntimeTimer(() => {
         pendingAuthorities.delete(requestId);
+        retireAuthorityRequest(requestId, authority, "release");
         reject(new PaneStreamOperationError("operation-timeout", `${authority} release timed out`));
       }, 2_000);
       pendingAuthorities.set(requestId, {
         authority,
+        action: "release",
         resolve: (_lease, snapshot) => resolve(snapshot),
         reject,
         timer,
@@ -760,6 +845,39 @@ export async function connectIssuedPaneStreamRuntimeClient(
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
+  };
+  const releaseAuthority = (
+    authority: SessionRuntimeAuthorityKind,
+  ): Promise<SessionRuntimeAuthoritySnapshot> => {
+    const existing = connectionAuthorityReleases.get(authority);
+    if (existing) return existing;
+    // A release is authoritative from initiation: no caller on this socket may
+    // reuse the prior lease while its ACK is pending. A reclaim queues behind
+    // this operation and must complete a fresh connection-local handshake.
+    connectionAuthorityGrants.delete(authority);
+    const requesting = connectionAuthorityRequests.get(authority);
+    const settledRequest = requesting
+      ? requesting.then(
+          () => undefined,
+          () => undefined,
+        )
+      : Promise.resolve();
+    const release = settledRequest
+      .then(() => {
+        if (closed)
+          throw new PaneStreamOperationError(
+            "connection-closed",
+            `${authority} release cannot use a closed pane stream`,
+          );
+        connectionAuthorityGrants.delete(authority);
+        return releaseAuthorityOnce(authority);
+      })
+      .finally(() => {
+        if (connectionAuthorityReleases.get(authority) === release)
+          connectionAuthorityReleases.delete(authority);
+      });
+    connectionAuthorityReleases.set(authority, release);
+    return release;
   };
   const sendTerminalInput = (
     target: TerminalReplicaAddress,
@@ -1157,11 +1275,30 @@ export async function connectIssuedPaneStreamRuntimeClient(
     }
     if (frame.type === "authority-receipt") {
       const pending = pendingAuthorities.get(frame.requestId);
-      if (!pending || pending.authority !== frame.authority)
+      if (!pending) {
+        const retired = retiredAuthorities.get(frame.requestId);
+        if (
+          !retired ||
+          retired.authority !== frame.authority ||
+          !authorityReceiptMatchesAction(retired.action, frame)
+        )
+          return fail("Pane-stream authority receipt did not match a request");
+        // The successor operation is authoritative. Consume one exact late
+        // receipt without applying its stale snapshot or resurrecting a grant.
+        retiredAuthorities.delete(frame.requestId);
+        return;
+      }
+      if (
+        pending.authority !== frame.authority ||
+        !authorityReceiptMatchesAction(pending.action, frame)
+      )
         return fail("Pane-stream authority receipt did not match a request");
       pending.timer.release();
       pendingAuthorities.delete(frame.requestId);
       applyAuthoritySnapshot(frame.snapshot);
+      if (pending.action === "request" && frame.status === "granted" && frame.lease)
+        connectionAuthorityGrants.set(frame.authority, frame.lease);
+      else connectionAuthorityGrants.delete(frame.authority);
       pending.resolve(frame.status === "granted" ? frame.lease : null, frame.snapshot);
       return;
     }
@@ -1240,6 +1377,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
     get authoritySnapshot() {
       return authoritySnapshot;
     },
+    ownsConnectionAuthority: (authority) => connectionAuthorityGrants.has(authority),
     setPresence: (state) =>
       send({ type: "presence", generation: descriptor.daemonInstanceId, state }),
     noteActivity: (activity) =>
@@ -1266,7 +1404,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
       );
     },
     fitViewport: async (cols, rows) => {
-      if (authoritySnapshot?.owners.geometry !== options.hostClientId) {
+      if (!connectionAuthorityGrants.has("geometry")) {
         const geometry = await requestAuthority("geometry");
         if (!geometry) {
           throw new PaneStreamOperationError(

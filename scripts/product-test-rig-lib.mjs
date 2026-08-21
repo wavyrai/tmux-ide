@@ -301,6 +301,65 @@ export function createProductRigAttemptTimelineClock(
     },
   });
 }
+
+export function productRigHostHeartbeatObservation({
+  previousHeartbeatWallMs,
+  wallNowMs,
+  expectedIntervalMs = 100,
+  suspensionThresholdMs = 5_000,
+}) {
+  const values = [previousHeartbeatWallMs, wallNowMs, expectedIntervalMs, suspensionThresholdMs];
+  if (!values.every(Number.isFinite) || !Number.isFinite(suspensionThresholdMs)) {
+    return Object.freeze({ reason: "heartbeat-unavailable", suspended: false, gapMs: null });
+  }
+  const elapsedMs = Math.max(0, wallNowMs - previousHeartbeatWallMs);
+  const gapMs = Math.max(0, elapsedMs - expectedIntervalMs);
+  return Object.freeze({
+    reason: gapMs >= suspensionThresholdMs ? "host-suspended" : "running",
+    suspended: gapMs >= suspensionThresholdMs,
+    elapsedMs: Math.round(elapsedMs),
+    expectedIntervalMs: Math.round(expectedIntervalMs),
+    gapMs: Math.round(gapMs),
+  });
+}
+
+export function compareProductSourceProvenance(expected, actual, changedLimit = 16) {
+  const expectedFiles = new Map(
+    Array.isArray(expected?.manifest)
+      ? expected.manifest.map((entry) => [entry.pathDigest, entry])
+      : [],
+  );
+  const actualFiles = new Map(
+    Array.isArray(actual?.manifest)
+      ? actual.manifest.map((entry) => [entry.pathDigest, entry])
+      : [],
+  );
+  const changed = [...new Set([...expectedFiles.keys(), ...actualFiles.keys()])]
+    .sort()
+    .filter((pathDigest) => {
+      const before = expectedFiles.get(pathDigest);
+      const after = actualFiles.get(pathDigest);
+      return (
+        !before ||
+        !after ||
+        before.contentDigest !== after.contentDigest ||
+        before.bytes !== after.bytes
+      );
+    });
+  const stable =
+    expected?.commit === actual?.commit &&
+    expected?.tree === actual?.tree &&
+    expected?.manifestDigest === actual?.manifestDigest &&
+    changed.length === 0;
+  return Object.freeze({
+    stable,
+    commitExact: expected?.commit === actual?.commit,
+    treeExact: expected?.tree === actual?.tree,
+    manifestExact: expected?.manifestDigest === actual?.manifestDigest,
+    changedCount: changed.length,
+    changedPathDigests: Object.freeze(changed.slice(0, changedLimit)),
+  });
+}
 const WARM_COHERENT_SAMPLE_COUNT = 20;
 const MEMORY_BUDGET = JSON.parse(
   readFileSync(new URL("../performance/reference-budgets.json", import.meta.url), "utf8"),

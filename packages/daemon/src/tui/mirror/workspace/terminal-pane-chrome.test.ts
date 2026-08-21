@@ -541,7 +541,7 @@ describe("terminal pane chrome projection", () => {
     expect(workspaceSource.match(/<PaneScopedTerminalSurface\b/gu)).toHaveLength(1);
     expect(workspaceSource).toContain("top={0}");
     expect(workspaceSource).toContain("top={1}");
-    expect(workspaceSource).toContain("onMouseDown={() => props.onSelectPane(frame.paneId)}");
+    expect(workspaceSource).toContain("onMouseDown={() => props.onSelectPane(frame().paneId)}");
     expect(workspaceSource).not.toMatch(/\b(?:useKeyboard|usePaste|process\.exit)\b/u);
     expect(appSource).not.toContain("resize-pane -Z");
     expect(appSource).toContain('verb: "workspace.pane.resize"');

@@ -7,7 +7,9 @@ import type { PaneStreamClockCalibrationOutcome } from "@tmux-ide/daemon-client/
  * read the sink before taking a clock sample or allocating diagnostic data.
  */
 export interface TuiPerformanceEventSink {
-  readonly frame: (intervalMs: number) => void;
+  /** Producers must gate all semantic frame evidence work on this exact capability. */
+  readonly detailedWindowPresentationFrames?: true;
+  readonly frame: (intervalMs: number, window?: TuiWindowPresentationFrameEvidence | null) => void;
   readonly terminalPaint: (dirtyRows: number, durationMs: number) => void;
   readonly terminalDelivery: (event: TuiTerminalDeliveryPerformanceEvent) => void;
   readonly terminalTraceSpan?: (event: TuiTerminalTraceSpanEvent) => void;
@@ -32,6 +34,36 @@ export interface TuiPerformanceEventSink {
   readonly terminalInputOrigin?: true;
   readonly terminalInputFence?: (event: TuiTerminalInputFenceEvent) => void;
   readonly beginTerminalInput?: (origin?: TuiTerminalInputOrigin) => TuiTerminalInputTrace;
+}
+
+/** Detailed-only, content-free proof of what one native frame presented. */
+export interface TuiWindowPresentationFrameEvidence {
+  readonly kind: "window-switch" | "window-rename";
+  readonly traceId: string;
+  readonly targetIdentityDigest: string;
+  readonly paneIdentityDigest: string;
+  readonly daemonGeneration: string;
+  readonly clientGeneration: number;
+  readonly rendererEpoch: number;
+  readonly sourceEpoch: number;
+  readonly generation: string;
+  readonly incarnation: string;
+  readonly revision: number;
+  readonly stateHash: string;
+  readonly cols: number;
+  readonly rows: number;
+  readonly presentationDigest: string;
+  readonly presentationChanged: boolean | null;
+  readonly identityExact: boolean;
+  readonly targetVisible: boolean;
+  readonly settledTargetFrame: boolean;
+}
+
+export function detailedWindowFrame(
+  sink: TuiPerformanceEventSink,
+  observe: () => TuiWindowPresentationFrameEvidence | null,
+): TuiWindowPresentationFrameEvidence | null {
+  return sink.detailedWindowPresentationFrames === true ? observe() : null;
 }
 
 export interface TuiTerminalFocusPaintEvent {

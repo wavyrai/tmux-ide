@@ -22,6 +22,8 @@ import {
   daemonToClientOneWayBounds,
   type PaneStreamClockCalibration,
 } from "@tmux-ide/daemon-client/pane-stream-clock-calibration";
+import { WorkspaceMultiplexerError } from "../../lib/workspace-multiplexer-verbs.ts";
+import { SessionRuntimeIntentError } from "../session-runtime/semantic-mutation-executor.ts";
 import { PaneStreamLeaseManager } from "./lease-manager.ts";
 import {
   PaneStreamAdmissionCoordinator,
@@ -1392,6 +1394,36 @@ describe("PaneStreamAdmissionCoordinator", () => {
       },
     });
     expect(socket.closed).toBeNull();
+
+    const inventoryRefusalOperationId = "00000000-0000-4000-8000-000000000095";
+    h.submitIntent.mockRejectedValueOnce(
+      new SessionRuntimeIntentError("rejected", "generic semantic refusal", {
+        cause: new WorkspaceMultiplexerError("workspace_unavailable", {
+          reason: "pane_inventory_not_ready",
+          pane: "%99",
+        }),
+      }),
+    );
+    socket.message({
+      type: "semantic-intent",
+      operationId: inventoryRefusalOperationId,
+      intent: {
+        verb: "workspace.pane.select",
+        workspaceName: "workspace.alpha",
+        semanticPaneId: "pane.editor",
+      },
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("semantic-intent-ack")).toHaveLength(3));
+    expect(socket.framesOfType("semantic-intent-ack")[2]).toEqual({
+      type: "semantic-intent-ack",
+      operationId: inventoryRefusalOperationId,
+      outcome: {
+        status: "rejected",
+        code: "pane_inventory_not_ready",
+        message: "generic semantic refusal",
+      },
+    });
+    expect(JSON.stringify(socket.framesOfType("semantic-intent-ack")[2])).not.toContain("%99");
 
     // Terminal input stays FIFO and byte-exact across named keys and bracketed
     // paste while both daemon transport edges retain the originating trace.

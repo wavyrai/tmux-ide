@@ -206,6 +206,7 @@ export async function captureFocusWebSemanticDocument(browserGlobal = globalThis
     if (semanticPaneIdsBounded !== null) semanticPaneBytes = nextSemanticPaneBytes;
     windows.push({
       windowResourceId: boundedAttribute(node, "data-window-resource-id"),
+      label: boundedAttribute(node, "data-window-label", 256),
       semanticPaneIds: semanticPaneIdsBounded,
       paneCount: boundedAttribute(node, "data-pane-count"),
       active: boundedAttribute(node, "data-active"),

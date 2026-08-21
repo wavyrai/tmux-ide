@@ -5,7 +5,11 @@ import type {
 } from "@tmux-ide/contracts";
 import type { WorkspaceMultiplexerBackend } from "../../command-center/actions/handlers/workspace-multiplexer.ts";
 import { WorkspaceMultiplexerError } from "../../lib/workspace-multiplexer-verbs.ts";
-import type { SessionRuntimeConsumer, SessionRuntimeRegistry } from "./registry.ts";
+import {
+  SessionRuntimeControllerLeaseError,
+  type SessionRuntimeConsumer,
+  type SessionRuntimeRegistry,
+} from "./registry.ts";
 import { SessionRuntimeIntentError } from "./semantic-mutation-executor.ts";
 import { SessionRuntimeTransportBinder } from "./transport-binding.ts";
 
@@ -110,7 +114,10 @@ export function createSessionRuntimeMultiplexerBackend(
           claimedSource,
         );
         if (!authenticatedContext) {
-          throw new Error("Authenticated host has no live controller grant for this mutation");
+          throw new WorkspaceMultiplexerError("operation_conflict", {
+            operationId: request.operationId,
+            reason: "authenticated_controller_unavailable",
+          });
         }
         const result = await submit(() =>
           options.registry.submitAuthenticatedIntent(
@@ -155,7 +162,21 @@ export function createSessionRuntimeMultiplexerBackend(
       }
       const owner = acquireOwner(session);
       try {
-        const lease = owner.consumer.acquireController();
+        let lease: ReturnType<SessionRuntimeConsumer["acquireController"]>;
+        try {
+          lease = owner.consumer.acquireController();
+        } catch (error) {
+          if (
+            error instanceof SessionRuntimeControllerLeaseError &&
+            error.code === "controller-conflict"
+          ) {
+            throw new WorkspaceMultiplexerError("operation_conflict", {
+              operationId: request.operationId,
+              reason: "controller_conflict",
+            });
+          }
+          throw error;
+        }
         const result = await submit(() =>
           owner.consumer.submitIntent(
             lease,

@@ -1,6 +1,7 @@
 /* @jsxImportSource @opentui/solid */
 import { describe, expect, it } from "bun:test";
 import { MouseButtons } from "@opentui/core/testing";
+import { createSignal, type Accessor, type Setter } from "solid-js";
 
 import { registerPaneSurface, type TerminalPaneRenderSource } from "../pane-surface.tsx";
 import { createSemanticThemeSnapshot, createTerminalPaletteProjection } from "../theme.ts";
@@ -53,6 +54,132 @@ function adapter(
 }
 
 describe("ApplicationTerminalWorkspace", () => {
+  it("retains inactive window subscriptions without waking their hidden surface", async () => {
+    registerPaneSurface();
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const palette = createTerminalPaletteProjection(theme);
+    const versions = new Map([
+      ["pane.a", 1],
+      ["pane.b", 1],
+    ]);
+    const listeners = new Map<string, (version: number, sourceEpoch: number) => void>();
+    const subscriptions = new Map<string, number>();
+    const unsubscriptions = new Map<string, number>();
+    const blits: Array<{ paneId: string; full: boolean }> = [];
+    const presentations: string[] = [];
+    const windowA = {
+      type: "layout" as const,
+      semanticWindowId: "window.a",
+      windowName: "a",
+      currentWindow: true,
+      cols: 30,
+      rows: 9,
+      zoomed: false,
+      paneBorderStatus: "off" as const,
+      panes: [{ pane: "pane.a", left: 0, top: 0, width: 30, height: 9, active: true }],
+    };
+    const windowB = {
+      ...windowA,
+      semanticWindowId: "window.b",
+      windowName: "b",
+      currentWindow: false,
+      panes: [{ pane: "pane.b", left: 0, top: 0, width: 30, height: 9, active: true }],
+    };
+    const liveAdapter: PaneScopedTerminalAdapter = {
+      renderSource: {
+        scrollbackDepth: () => 0,
+        cursorState: () => null,
+        blitPane: (paneId, buffers, _width, height, _scroll, _fg, _bg, options) => {
+          blits.push({ paneId, full: options.full });
+          buffers.char.fill(32);
+          buffers.attributes.fill(0);
+          buffers.char[0] = (
+            paneId === "pane.a" ? "A" : versions.get(paneId) === 2 ? "X" : "B"
+          ).codePointAt(0)!;
+          for (let row = 0; row < height; row += 1) options.dirtyRows.push(row);
+          return null;
+        },
+      },
+      paneVersion: (paneId) => versions.get(paneId) ?? 0,
+      paneSourceEpoch: () => 1,
+      subscribePaneVersion: (paneId, listener) => {
+        subscriptions.set(paneId, (subscriptions.get(paneId) ?? 0) + 1);
+        listeners.set(paneId, listener);
+        return () => {
+          unsubscriptions.set(paneId, (unsubscriptions.get(paneId) ?? 0) + 1);
+          listeners.delete(paneId);
+        };
+      },
+    };
+    let workspaceLayout!: Accessor<OpenTuiWorkspaceLayoutSnapshot>;
+    let setWorkspaceLayout!: Setter<OpenTuiWorkspaceLayoutSnapshot>;
+    const Harness = () => {
+      [workspaceLayout, setWorkspaceLayout] = createSignal<OpenTuiWorkspaceLayoutSnapshot>({
+        current: windowA,
+        windows: [windowA, windowB],
+      });
+      return (
+        <>
+          <ApplicationTerminalWorkspace
+            layout={workspaceLayout}
+            adapter={liveAdapter}
+            rendererEpoch={1}
+            width={30}
+            height={9}
+            focusedPane="pane.a"
+            theme={theme}
+            palette={palette}
+            onSelectPane={() => undefined}
+            onWindowPresented={(windowId) => presentations.push(windowId)}
+          />
+          <text position="absolute" top={10}>
+            {workspaceLayout().current?.semanticWindowId}
+          </text>
+        </>
+      );
+    };
+    const setup = await renderForTest(() => <Harness />, { width: 30, height: 11 });
+    await setup.renderOnce();
+    expect(presentations.at(-1)).toBe("window.a");
+    expect(Object.fromEntries(subscriptions)).toEqual({ "pane.a": 1, "pane.b": 1 });
+    blits.length = 0;
+
+    const inactiveA = { ...windowA, currentWindow: false };
+    const activeB = { ...windowB, currentWindow: true };
+    setWorkspaceLayout({ current: activeB, windows: [inactiveA, activeB] });
+    expect(workspaceLayout().current?.semanticWindowId).toBe("window.b");
+    await setup.renderOnce();
+    expect(workspaceLayout().current?.semanticWindowId).toBe("window.b");
+    expect(setup.captureCharFrame()).toContain("window.b");
+    expect(blits).toEqual([{ paneId: "pane.b", full: true }]);
+    expect(setup.captureCharFrame()).toContain("B");
+    blits.length = 0;
+
+    setWorkspaceLayout({ current: windowA, windows: [windowA, windowB] });
+    await setup.renderOnce();
+    expect(blits).toEqual([]);
+    expect(setup.captureCharFrame()).toContain("A");
+
+    versions.set("pane.b", 2);
+    listeners.get("pane.b")?.(2, 1);
+    await setup.renderOnce();
+    expect(blits).toEqual([]);
+
+    setWorkspaceLayout({ current: activeB, windows: [inactiveA, activeB] });
+    await setup.renderOnce();
+    expect(blits).toEqual([{ paneId: "pane.b", full: false }]);
+    expect(setup.captureCharFrame()).toContain("X");
+    blits.length = 0;
+
+    setWorkspaceLayout({ current: windowA, windows: [windowA, windowB] });
+    await setup.renderOnce();
+    expect(blits).toEqual([]);
+
+    expect(Object.fromEntries(subscriptions)).toEqual({ "pane.a": 1, "pane.b": 1 });
+    expect(Object.fromEntries(unsubscriptions)).toEqual({});
+    setup.renderer.destroy();
+  });
+
   it("mounts every canonical pane, paints cells, and has no optional tool dock", async () => {
     registerPaneSurface();
     const blits: string[] = [];
@@ -61,7 +188,7 @@ describe("ApplicationTerminalWorkspace", () => {
     const setup = await renderForTest(
       () => (
         <ApplicationTerminalWorkspace
-          layout={layout()}
+          layout={layout}
           adapter={adapter({ "pane.a": "A", "pane.b": "B", "pane.c": "C" }, blits)}
           rendererEpoch={1}
           width={30}
@@ -128,7 +255,7 @@ describe("ApplicationTerminalWorkspace", () => {
     const setup = await renderForTest(
       () => (
         <ApplicationTerminalWorkspace
-          layout={layout()}
+          layout={layout}
           adapter={generationAdapter}
           rendererEpoch={1}
           width={30}
@@ -211,7 +338,7 @@ describe("ApplicationTerminalWorkspace", () => {
     const setup = await renderForTest(
       () => (
         <ApplicationTerminalWorkspace
-          layout={{ current, windows: [current] }}
+          layout={() => ({ current, windows: [current] })}
           adapter={liveAdapter}
           rendererEpoch={1}
           width={101}
@@ -277,7 +404,7 @@ describe("ApplicationTerminalWorkspace", () => {
     const setup = await renderForTest(
       () => (
         <ApplicationTerminalWorkspace
-          layout={layout()}
+          layout={layout}
           adapter={adapter({ "pane.a": "A", "pane.b": "B", "pane.c": "C" }, [])}
           rendererEpoch={1}
           width={30}

@@ -11,6 +11,46 @@ import { createOpenTuiWorkspaceTerminalFastLane } from "./workspace-terminal-fas
 const GENERATION = "11111111-1111-4111-8111-111111111111";
 
 describe("OpenTUI workspace terminal fast lane", () => {
+  it("does not treat global input ownership as a grant on a replacement runtime", async () => {
+    let localGrant = false;
+    const requestAuthority = vi.fn(async () => {
+      localGrant = true;
+      return {
+        generation: GENERATION,
+        session: "workspace",
+        clientId: "opentui:test",
+        authority: "input" as const,
+        token: "55555555-5555-4555-8555-555555555555",
+        revision: 2,
+      };
+    });
+    const sendTerminalInput = vi.fn(async () => "ok" as const);
+    const client = {
+      getSnapshot: () => ({
+        target: { workspaceName: "workspace", daemon: { instanceId: GENERATION } },
+        authority: {
+          generation: GENERATION,
+          owners: { input: "opentui:test", focus: null, geometry: null },
+        },
+      }),
+      ownsRuntimeAuthority: () => localGrant,
+      subscribeTerminal: vi.fn(() => vi.fn()),
+      requestTerminalRepair: vi.fn(),
+      requestAuthority,
+      sendTerminalInput,
+      fitViewport: vi.fn(async () => "ok" as const),
+    } as unknown as OpenTuiProductionWorkspaceClient;
+    const fastLane = createOpenTuiWorkspaceTerminalFastLane(client, "opentui:test");
+    fastLane.lane.retainPanes(["pane.a"]);
+
+    await expect(
+      fastLane.lane.sendInput("pane.a", { kind: "key", data: "Enter" }),
+    ).resolves.toEqual({ status: "sent" });
+    expect(requestAuthority).toHaveBeenCalledOnce();
+    expect(sendTerminalInput).toHaveBeenCalledOnce();
+    fastLane.dispose();
+  });
+
   it("keeps lane construction live when initial queue diagnostics throw", () => {
     const terminalInputQueueState = vi.fn(() => {
       throw new Error("queue diagnostic failed");

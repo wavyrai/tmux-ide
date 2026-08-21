@@ -8,6 +8,49 @@ import {
 import { emitTuiTerminalFrameFenceFailOpen } from "./performance-events.ts";
 
 describe("reference performance trace", () => {
+  it("persists bounded content-free window presentation evidence only in detailed mode", () => {
+    const records: Readonly<Record<string, unknown>>[] = [];
+    const sink = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      detailed: true,
+      processId: "opentui:test",
+      nowMicros: () => 1_000,
+      append: (record) => records.push(record),
+    });
+    expect(sink.detailedWindowPresentationFrames).toBe(true);
+    sink.frame(16, {
+      kind: "window-switch",
+      traceId: "trace.one",
+      targetIdentityDigest: "c".repeat(64),
+      paneIdentityDigest: "d".repeat(64),
+      daemonGeneration: "daemon.one",
+      clientGeneration: 1,
+      rendererEpoch: 2,
+      sourceEpoch: 3,
+      generation: "terminal.one",
+      incarnation: "incarnation.one",
+      revision: 4,
+      stateHash: "0123456789abcdef",
+      cols: 132,
+      rows: 41,
+      presentationDigest: "e".repeat(64),
+      presentationChanged: true,
+      identityExact: true,
+      targetVisible: true,
+      settledTargetFrame: true,
+    });
+    expect(records[1]).toMatchObject({
+      type: "performance.frame",
+      window: {
+        traceId: "trace.one",
+        presentationDigest: "e".repeat(64),
+        settledTargetFrame: true,
+      },
+    });
+    expect(JSON.stringify(records[1])).not.toContain("pane.one");
+  });
+
   it("pairs local input and consumed framebuffer paint on one OpenTUI clock", () => {
     const records: Readonly<Record<string, unknown>>[] = [];
     const times = [1_000, 1_150];
@@ -93,6 +136,7 @@ describe("reference performance trace", () => {
       nowMicros: () => times.shift()!,
       append: (record) => records.push(record),
     });
+    expect(sink.detailedWindowPresentationFrames).toBeUndefined();
     sink.frame!(16);
     sink.terminalPaint!(1, 0.1);
     const input = sink.beginTerminalInput!();

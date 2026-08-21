@@ -327,6 +327,7 @@ export function createApplicationShellSession<
   Shell extends ApplicationShellProjectionInputV1 = ApplicationShellProjectionInputV1,
 >(options: ApplicationShellSessionOptions<Shell>): ApplicationShellSession<Shell> {
   const transport = options.transport;
+  let eventGeneration = 0;
   const adapter: GenerationBoundAdapter<
     DesktopApplicationShellTarget,
     Shell,
@@ -354,24 +355,47 @@ export function createApplicationShellSession<
     },
     connect(target, handlers) {
       try {
+        const expectedEventGeneration = ++eventGeneration;
+        const isCurrent = (): boolean => expectedEventGeneration === eventGeneration;
+        const failCurrent = (failure: ShellFailure): void => {
+          if (!isCurrent()) return;
+          eventGeneration += 1;
+          handlers.failed(failure);
+        };
         const connection = transport.connectEvents(target, {
-          onTransportStateChanged: (state) => handlers.transportChanged(state),
-          onVerifiedOpen: () => handlers.live(),
-          onInvalidate: () => handlers.invalidate(),
-          onOperationAcknowledged: options.onOperationAcknowledged,
-          onInteractionReceipt: options.onInteractionReceipt,
+          onTransportStateChanged: (state) => {
+            if (isCurrent()) handlers.transportChanged(state);
+          },
+          onVerifiedOpen: () => {
+            if (isCurrent()) handlers.live();
+          },
+          onInvalidate: () => {
+            if (isCurrent()) handlers.invalidate();
+          },
+          onOperationAcknowledged: (acknowledgement) => {
+            if (isCurrent()) options.onOperationAcknowledged?.(acknowledgement);
+          },
+          onInteractionReceipt: (receipt) => {
+            if (isCurrent()) options.onInteractionReceipt?.(receipt);
+          },
           onProtocolError: (reason) =>
-            handlers.failed({
+            failCurrent({
               kind: "event-frame-invalid",
               reason: `Daemon rejected the event subscription: ${reason}`,
             }),
-          onMalformedFrame: (reason) => handlers.failed({ kind: "event-frame-invalid", reason }),
-          onPeerMismatch: (reason) => handlers.failed({ kind: "daemon-identity-mismatch", reason }),
+          onMalformedFrame: (reason) => failCurrent({ kind: "event-frame-invalid", reason }),
+          onPeerMismatch: (reason) => failCurrent({ kind: "daemon-identity-mismatch", reason }),
           onClose: () =>
-            handlers.failed({ kind: "disconnected", reason: "Daemon event socket disconnected." }),
-          onError: (reason) => handlers.failed({ kind: "disconnected", reason }),
+            failCurrent({ kind: "disconnected", reason: "Daemon event socket disconnected." }),
+          onError: (reason) => failCurrent({ kind: "disconnected", reason }),
         });
-        return { status: "connected", close: () => connection.close() };
+        return {
+          status: "connected",
+          close: () => {
+            if (isCurrent()) eventGeneration += 1;
+            connection.close();
+          },
+        };
       } catch (error) {
         return {
           status: "failed",

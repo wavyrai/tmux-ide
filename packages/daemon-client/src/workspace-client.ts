@@ -59,6 +59,8 @@ const DEFAULT_OPERATION_TIMEOUT_MS = 2_000;
 const MAX_PREPARED_TERMINAL_UPDATES = 256;
 const MAX_PREPARED_TERMINAL_BYTES = 8 * 1024 * 1024;
 const UTF8_ENCODER = new TextEncoder();
+const RESOURCE_ACK_OPERATION_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 interface TerminalInterest<Snapshot, Patch, Tombstone> {
   readonly target: TerminalReplicaAddress;
@@ -223,6 +225,33 @@ function sameTerminalAuthority(
   );
 }
 
+function terminalAuthorityMismatchKey<Shell extends ApplicationShellProjectionInputV1>(
+  generation: number,
+  shell: Shell,
+  terminal: TerminalRuntimeInventoryProjectionV1,
+): string {
+  const shellPaneIds = [
+    ...new Set(
+      (shell.terminalInventory?.resources ?? []).flatMap((resource) =>
+        resource.attachability.status === "available"
+          ? [resource.attachability.semanticPaneId]
+          : [],
+      ),
+    ),
+  ].sort();
+  return JSON.stringify([
+    generation,
+    shell.workspace.id,
+    shell.workspace.session.id,
+    shellPaneIds,
+    terminal.workspaceName,
+    terminal.workspaceId,
+    terminal.sessionId,
+    terminal.resourceRevision,
+    terminal.semanticPaneIds,
+  ]);
+}
+
 function scopeValue<
   Shell extends ApplicationShellProjectionInputV1,
   Scope extends WorkspaceClientScope,
@@ -305,6 +334,7 @@ export function createWorkspaceClient<
   let shellSession: ApplicationShellSession<Shell> | null = null;
   let unsubscribeShell: () => void = () => undefined;
   let terminalAuthority: TerminalRuntimeInventoryProjectionV1 | null = null;
+  let requestedTerminalMismatch: string | null = null;
   let authorityShell: Shell | null = null;
   let replay: ApplicationShellReplayStateV1 | null = null;
   let semantic: WorkspaceClientSnapshot<Shell>["semantic"] = null;
@@ -333,6 +363,16 @@ export function createWorkspaceClient<
   let catalogConnection: { close(): void } | null = null;
   let preparedOpen: PreparedOpen | null = null;
   let reconcileRuntimeInventory = (): void => undefined;
+
+  const requestTerminalRefresh = (mismatch: string): void => {
+    if (requestedTerminalMismatch === mismatch) return;
+    requestedTerminalMismatch = mismatch;
+    options.ports.requestTerminalRuntimeInventoryRefresh?.();
+  };
+  const requestTerminalMismatchRefresh = (
+    shell: Shell,
+    terminal: TerminalRuntimeInventoryProjectionV1,
+  ): void => requestTerminalRefresh(terminalAuthorityMismatchKey(generation, shell, terminal));
 
   const notify = (scope: WorkspaceClientScope): void => {
     const value = scopeValue(snapshot, scope);
@@ -378,8 +418,8 @@ export function createWorkspaceClient<
       rebuild(["lifecycle", "semantic"]);
       if (terminalAuthority === null) reconcileRuntimeInventory();
       else if (!shellMatchesTerminalAuthority(nextInput, terminalAuthority)) {
-        options.ports.requestTerminalRuntimeInventoryRefresh?.();
-      }
+        requestTerminalMismatchRefresh(nextInput, terminalAuthority);
+      } else requestedTerminalMismatch = null;
       return;
     }
     if (next.status !== "stale" && next.status !== "degraded") {
@@ -399,6 +439,15 @@ export function createWorkspaceClient<
       clock,
       onInteractionReceipt: (receipt) => {
         ledger.receipt(receipt, generation);
+      },
+      onOperationAcknowledged: (acknowledgement) => {
+        if (
+          disposed ||
+          acknowledgement.daemonInstanceId !== target.daemon.instanceId ||
+          !RESOURCE_ACK_OPERATION_ID.test(acknowledgement.operationId)
+        )
+          return;
+        ledger.acknowledgeResourceChange(acknowledgement, generation);
       },
     });
     shellSession = session;
@@ -817,7 +866,14 @@ export function createWorkspaceClient<
       ) {
         return;
       }
-      if (state.phase !== "live" || state.value === null) return;
+      if (state.phase !== "live" || state.value === null) {
+        if (activeRuntimeOwner === owner && runtime !== null) {
+          const suspendedRuntime = runtime;
+          void detachRuntimeValue();
+          options.ports.didSuspendRuntime?.(suspendedRuntime);
+        }
+        return;
+      }
       const nextRuntime = state.value;
       if (runtime === nextRuntime) return;
       activateRuntime(owner, nextRuntime);
@@ -1012,6 +1068,7 @@ export function createWorkspaceClient<
       targetKey = nextKey;
       preparedOpen = null;
       terminalAuthority = null;
+      requestedTerminalMismatch = null;
       authorityShell = null;
       replay = null;
       semantic = null;
@@ -1058,19 +1115,42 @@ export function createWorkspaceClient<
         resource.resourceRevision === terminalAuthority.resourceRevision
       ) {
         if (!sameTerminalAuthority(resource, terminalAuthority)) {
-          options.ports.requestTerminalRuntimeInventoryRefresh?.();
+          requestTerminalRefresh(
+            JSON.stringify([
+              "conflict",
+              generation,
+              terminalAuthority.workspaceId,
+              terminalAuthority.sessionId,
+              terminalAuthority.resourceRevision,
+              terminalAuthority.semanticPaneIds,
+              resource.workspaceId,
+              resource.sessionId,
+              resource.semanticPaneIds,
+            ]),
+          );
           return false;
         }
+        if (
+          authorityShell !== null &&
+          shellMatchesTerminalAuthority(authorityShell, terminalAuthority)
+        )
+          requestedTerminalMismatch = null;
         return true;
       }
       terminalAuthority = resource;
+      requestedTerminalMismatch = null;
       reconcileRuntimeInventory();
       startApplicationShell();
+      if (authorityShell !== null) {
+        if (!shellMatchesTerminalAuthority(authorityShell, resource))
+          requestTerminalMismatchRefresh(authorityShell, resource);
+      }
       return true;
     },
     startApplicationShellFallback() {
       if (disposed) return;
       terminalAuthority = null;
+      requestedTerminalMismatch = null;
       reconcileRuntimeInventory();
       startApplicationShell();
     },
@@ -1192,11 +1272,20 @@ export function createWorkspaceClient<
     noteActivity(activity) {
       runtime?.noteActivity?.(activity);
     },
-    requestAuthority(authorityKind: SessionRuntimeAuthorityKind) {
-      return runtime?.requestAuthority?.(authorityKind) ?? Promise.resolve(null);
+    ownsRuntimeAuthority(authorityKind) {
+      return runtime?.ownsConnectionAuthority?.(authorityKind) === true;
     },
-    releaseAuthority(authorityKind: SessionRuntimeAuthorityKind) {
-      return runtime?.releaseAuthority?.(authorityKind) ?? Promise.resolve(null);
+    async requestAuthority(authorityKind: SessionRuntimeAuthorityKind) {
+      const expectedRuntime = runtime;
+      if (!expectedRuntime?.requestAuthority) return null;
+      const lease = await expectedRuntime.requestAuthority(authorityKind);
+      return runtime === expectedRuntime ? lease : null;
+    },
+    async releaseAuthority(authorityKind: SessionRuntimeAuthorityKind) {
+      const expectedRuntime = runtime;
+      if (!expectedRuntime?.releaseAuthority) return null;
+      const snapshot = await expectedRuntime.releaseAuthority(authorityKind);
+      return runtime === expectedRuntime ? snapshot : null;
     },
     dispose() {
       if (disposePromise) return disposePromise;

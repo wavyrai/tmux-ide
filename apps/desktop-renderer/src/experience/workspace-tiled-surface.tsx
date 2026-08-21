@@ -446,6 +446,14 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
     );
     return matches.length === 1 ? matches[0]!.key : null;
   };
+  const diagnosticWindowLabel = (tab: WindowTab): string =>
+    tab.label.length <= 256 &&
+    [...tab.label].every((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint > 0x1f && codePoint !== 0x7f;
+    })
+      ? tab.label
+      : "";
   const currentFrame = createMemo<LayoutFrame | null>(() => {
     const selected = optimisticProjection().focusPane;
     return (
@@ -1580,6 +1588,7 @@ export function WorkspaceTiledSurface(props: WorkspaceTiledSurfaceProps) {
               class="window-tabs__tab"
               data-window-tab={tab().semanticWindowId ?? ""}
               data-window-resource-id={diagnosticWindowResourceId(tab()) ?? ""}
+              data-window-label={diagnosticWindowLabel(tab())}
               data-semantic-pane-ids={JSON.stringify(tab().semanticPaneIds)}
               data-pane-count={tab().paneCount}
               data-active={tab().active}

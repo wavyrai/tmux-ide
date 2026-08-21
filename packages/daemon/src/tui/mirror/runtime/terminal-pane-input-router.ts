@@ -18,7 +18,9 @@ export class TerminalPaneInputRouter<Input> {
   #pending: {
     readonly token: number;
     readonly paneId: string;
+    readonly presentOptimistically: boolean;
     readonly settled: Promise<boolean>;
+    selected: boolean | null;
   } | null = null;
 
   constructor(options: TerminalPaneInputRouterOptions<Input>) {
@@ -29,31 +31,45 @@ export class TerminalPaneInputRouter<Input> {
     return this.#focusedPane;
   }
 
+  invalidateSelection(): void {
+    this.#selectionToken += 1;
+    this.#pending = null;
+    this.#setFocusedPane(this.#canonicalPane);
+  }
+
   adoptCanonicalPane(paneId: string | null): void {
     this.#canonicalPane = paneId;
     if (this.#pending !== null && paneId !== this.#pending.paneId) return;
     this.#setFocusedPane(paneId);
+    if (this.#pending?.selected === true) this.#pending = null;
   }
 
-  selectPane(paneId: string): void {
+  selectPane(paneId: string, options: { readonly presentOptimistically?: boolean } = {}): void {
     const token = ++this.#selectionToken;
-    this.#setFocusedPane(paneId);
+    const presentOptimistically = options.presentOptimistically !== false;
+    if (presentOptimistically) this.#setFocusedPane(paneId);
     const settled = this.#options.select(paneId);
-    this.#pending = { token, paneId, settled };
+    this.#pending = { token, paneId, presentOptimistically, settled, selected: null };
     void settled.then((selected) => {
       if (this.#pending?.token !== token) return;
+      this.#pending.selected = selected;
+      if (selected && this.#canonicalPane !== paneId) return;
       this.#pending = null;
       if (!selected) this.#setFocusedPane(this.#canonicalPane);
     });
   }
 
   async sendInput(input: Input): Promise<boolean> {
-    const paneId = this.#focusedPane;
+    const paneId = this.#pending?.paneId ?? this.#focusedPane;
     if (paneId === null) return false;
     const pending = this.#pending?.paneId === paneId ? this.#pending : null;
     if (pending !== null) {
       const selected = await pending.settled;
-      if (!selected || this.#selectionToken !== pending.token || this.#focusedPane !== paneId) {
+      if (
+        !selected ||
+        this.#selectionToken !== pending.token ||
+        (pending.presentOptimistically && this.#focusedPane !== paneId)
+      ) {
         return false;
       }
     }

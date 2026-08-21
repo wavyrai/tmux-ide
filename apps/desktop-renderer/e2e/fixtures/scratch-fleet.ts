@@ -68,6 +68,8 @@ export interface CreateScratchFleetOptions {
   readonly slug: string;
   /** Leave sessions ordinary until the public app adopts them. Defaults true. */
   readonly adoptSessions?: boolean;
+  /** Number of initial windows per session. Defaults to the historical two. */
+  readonly windowsPerSession?: 1 | 2;
   /** Safe setup-only marker printed once before the first interactive shell. */
   readonly initialPaneMarker?: string;
   /** Exact setup command for the first pane; argv is shell-quoted by this fixture. */
@@ -93,6 +95,8 @@ function sessionName(slug: string, index: number): string {
 export async function createScratchFleet(
   options: CreateScratchFleetOptions,
 ): Promise<ScratchFleet> {
+  if (options.windowsPerSession !== undefined && ![1, 2].includes(options.windowsPerSession))
+    throw new Error("scratch windows per session must be exactly one or two");
   if (options.initialPaneMarker && !/^RIG_[A-Z0-9_]{8,96}$/u.test(options.initialPaneMarker))
     throw new Error("scratch initial pane marker must be a bounded safe ProductRig token");
   if (options.initialPaneMarker && options.initialPaneCommand)
@@ -193,7 +197,8 @@ export async function createScratchFleet(
     } else {
       runTmux(["new-session", "-d", "-s", name, "-c", projectDir, "-n", "one", "exec sh -i"]);
     }
-    runTmux(["new-window", "-d", "-t", `=${name}:`, "-c", projectDir, "-n", "two", "exec sh -i"]);
+    if ((options.windowsPerSession ?? 2) === 2)
+      runTmux(["new-window", "-d", "-t", `=${name}:`, "-c", projectDir, "-n", "two", "exec sh -i"]);
     const [paneId, left, top, width, height] = runTmux([
       "display-message",
       "-p",

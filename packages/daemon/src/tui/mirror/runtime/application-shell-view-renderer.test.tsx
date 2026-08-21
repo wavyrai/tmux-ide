@@ -1,7 +1,7 @@
 /* @jsxImportSource @opentui/solid */
 import { MouseButtons } from "@opentui/core/testing";
 import { describe, expect, it } from "bun:test";
-import { createSignal } from "solid-js";
+import { batch, createSignal } from "solid-js";
 
 import { registerPaneSurface, type TerminalPaneRenderSource } from "../pane-surface.tsx";
 import { createSemanticThemeSnapshot, createTerminalPaletteProjection } from "../theme.ts";
@@ -12,7 +12,11 @@ import { createApplicationShellBinding } from "./application-shell-binding.ts";
 import type { OpenTuiProductionWorkspaceClient } from "./open-tui-generation-host.ts";
 import type { PaneScopedTerminalAdapter } from "./pane-scoped-terminal-surface.tsx";
 import { ApplicationShellView, applicationShellKeyAction } from "./application-shell-view.tsx";
-import { terminalPaneChromeLabel } from "./application-terminal-workspace.tsx";
+import {
+  terminalPaneChromeLabel,
+  terminalWindowStripSlotWidth,
+} from "./application-terminal-workspace.tsx";
+import type { OpenTuiWorkspaceLayoutSnapshot } from "../open-tui-workspace-runtime-port.ts";
 import {
   decodeFocusFramebufferCapture,
   inspectFocusFramebufferCapture,
@@ -271,11 +275,11 @@ describe("production ApplicationShellView", () => {
     const palette = createTerminalPaletteProjection(theme);
     const canonical = semantic();
     const selected: string[] = [];
-    let setFocusedPane!: (paneId: string | null) => void;
+    let setRendererFocused!: (focused: boolean) => void;
     const setup = await renderForTest(
       () => {
-        const [focusedPane, setFocusedPaneSignal] = createSignal<string | null>(focusPaneId);
-        setFocusedPane = setFocusedPaneSignal;
+        const [rendererFocused, setRendererFocusedSignal] = createSignal(true);
+        setRendererFocused = setRendererFocusedSignal;
         return (
           <ApplicationShellView
             dimensions={() => ({ width: 160, height: 44 })}
@@ -288,7 +292,8 @@ describe("production ApplicationShellView", () => {
             paletteOpen={() => false}
             terminalRendererSource={() => ({ adapter: adapter(), rendererEpoch: 1 })}
             layout={focusLayout}
-            focusedPane={focusedPane}
+            focusedPane={() => (rendererFocused() ? focusPaneId : null)}
+            rendererFocused={rendererFocused}
             theme={theme}
             palette={palette}
             onOpenSurface={() => undefined}
@@ -331,14 +336,138 @@ describe("production ApplicationShellView", () => {
     await setup.renderOnce();
     expect(projectedRect).toMatchObject({ left: 28, chromeRow: 2, firstBodyRow: 3 });
     expect(inspect("●")).toMatchObject({ valid: true, reason: null });
-    setFocusedPane(null);
+    setRendererFocused(false);
     await setup.renderOnce();
     expect(inspect("○")).toMatchObject({ valid: true, reason: null });
-    setFocusedPane(focusPaneId);
+    setRendererFocused(true);
     await setup.renderOnce();
     expect(inspect("●")).toMatchObject({ valid: true, reason: null });
     await setup.mockMouse.click(28, 2, MouseButtons.LEFT);
     expect(selected).toEqual([focusPaneId]);
+    setup.renderer.destroy();
+  });
+
+  it("retains two 132x41 window surfaces through warm switches and an active rename", async () => {
+    registerPaneSurface();
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const palette = createTerminalPaletteProjection(theme);
+    const tracked = trackedAdapter();
+    const windowA = {
+      type: "layout" as const,
+      semanticWindowId: "window.a",
+      windowName: "alpha",
+      currentWindow: true,
+      cols: 132,
+      rows: 41,
+      zoomed: false,
+      paneBorderStatus: "top" as const,
+      panes: [{ pane: "pane.main", left: 0, top: 0, width: 132, height: 41, active: true }],
+    };
+    const windowB = {
+      ...windowA,
+      semanticWindowId: "window.b",
+      windowName: "beta",
+      currentWindow: false,
+      panes: [{ pane: "pane.logs", left: 0, top: 0, width: 132, height: 41, active: true }],
+    };
+    let setLayout!: (value: OpenTuiWorkspaceLayoutSnapshot) => void;
+    let setFocused!: (value: string) => void;
+    const Harness = () => {
+      const [layout, updateLayout] = createSignal<OpenTuiWorkspaceLayoutSnapshot>({
+        current: windowA,
+        windows: [windowA, windowB],
+      });
+      const [focused, updateFocused] = createSignal("pane.main");
+      setLayout = updateLayout;
+      setFocused = updateFocused;
+      return (
+        <ApplicationShellView
+          dimensions={() => ({ width: 160, height: 44 })}
+          surface={() => "terminals"}
+          semantic={() => semantic()}
+          generationStatus={() => "live"}
+          sessions={["main"]}
+          selectedSession={() => 0}
+          bootstrapNote={() => null}
+          paletteOpen={() => false}
+          terminalRendererSource={() => ({ adapter: tracked.adapter, rendererEpoch: 1 })}
+          layout={layout}
+          focusedPane={focused}
+          rendererFocused={() => true}
+          theme={theme}
+          palette={palette}
+          onOpenSurface={() => undefined}
+          onOpenSession={() => undefined}
+          onSetPaletteOpen={() => undefined}
+          onSelectPane={() => undefined}
+          onResizePreview={() => undefined}
+          onResizePane={() => undefined}
+        />
+      );
+    };
+    const setup = await renderForTest(() => <Harness />, { width: 160, height: 44 });
+    await setup.renderOnce();
+    expect(tracked.lifecycle.subscriptions).toBe(2);
+    tracked.blits.length = 0;
+
+    const inactiveA = { ...windowA, currentWindow: false };
+    const activeB = { ...windowB, currentWindow: true };
+    batch(() => {
+      setFocused("pane.logs");
+      setLayout({ current: activeB, windows: [inactiveA, activeB] });
+    });
+    await setup.renderOnce();
+    expect(tracked.blits).toEqual([expect.objectContaining({ full: true })]);
+    tracked.blits.length = 0;
+    await Bun.sleep(30);
+    let measuredFrames = 0;
+    let measuredStage = "warm-a";
+    const measuredFrameStages: string[] = [];
+    const onMeasuredFrame = () => {
+      measuredFrames += 1;
+      measuredFrameStages.push(measuredStage);
+    };
+    setup.renderer.on("frame", onMeasuredFrame);
+    const waitForMeasuredFrame = async (expected: number): Promise<void> => {
+      const deadline = performance.now() + 250;
+      while (measuredFrames < expected && performance.now() < deadline) await Bun.sleep(1);
+      expect(measuredFrames).toBe(expected);
+    };
+    const expectQuiet = async (expected: number): Promise<void> => {
+      await Bun.sleep(320);
+      expect(measuredFrames).toBe(expected);
+    };
+
+    batch(() => {
+      setFocused("pane.main");
+      setLayout({ current: windowA, windows: [windowA, windowB] });
+    });
+    await waitForMeasuredFrame(1);
+    await expectQuiet(1);
+    expect(tracked.blits).toEqual([]);
+    tracked.blits.length = 0;
+
+    measuredStage = "warm-b";
+    batch(() => {
+      setFocused("pane.logs");
+      setLayout({ current: activeB, windows: [inactiveA, activeB] });
+    });
+    await waitForMeasuredFrame(2);
+    await expectQuiet(2);
+    expect(tracked.blits).toEqual([]);
+    tracked.blits.length = 0;
+
+    measuredStage = "rename";
+    const renamedB = { ...activeB, windowName: "renamed-beta" };
+    setLayout({ current: renamedB, windows: [inactiveA, renamedB] });
+    await waitForMeasuredFrame(3);
+    await expectQuiet(3);
+    expect(setup.captureCharFrame()).toContain("renamed-beta");
+    expect(tracked.blits).toEqual([]);
+    expect(tracked.lifecycle.subscriptions).toBe(2);
+    expect(tracked.lifecycle.unsubscriptions).toBe(0);
+    expect(measuredFrameStages).toEqual(["warm-a", "warm-b", "rename"]);
+    setup.renderer.off("frame", onMeasuredFrame);
     setup.renderer.destroy();
   });
 
@@ -406,7 +535,7 @@ describe("production ApplicationShellView", () => {
     const second = trackedAdapter();
     let setSemantic!: (value: ReturnType<typeof semantic>) => void;
     let setStatus!: (value: string) => void;
-    let setFocusedPane!: (value: string | null) => void;
+    let setRendererFocused!: (value: boolean) => void;
     let setSource!: (
       value: { adapter: PaneScopedTerminalAdapter; rendererEpoch: number } | null,
     ) => void;
@@ -414,14 +543,14 @@ describe("production ApplicationShellView", () => {
       () => {
         const [semanticProjection, setSemanticProjection] = createSignal(semantic());
         const [status, setStatusSignal] = createSignal("live");
-        const [focusedPane, setFocusedPaneSignal] = createSignal<string | null>("pane.main");
+        const [rendererFocused, setRendererFocusedSignal] = createSignal(true);
         const [source, setSourceSignal] = createSignal<{
           adapter: PaneScopedTerminalAdapter;
           rendererEpoch: number;
         } | null>({ adapter: first.adapter, rendererEpoch: 1 });
         setSemantic = setSemanticProjection;
         setStatus = setStatusSignal;
-        setFocusedPane = setFocusedPaneSignal;
+        setRendererFocused = setRendererFocusedSignal;
         setSource = setSourceSignal;
         return (
           <ApplicationShellView
@@ -440,7 +569,8 @@ describe("production ApplicationShellView", () => {
                 : null;
             }}
             layout={terminalLayout}
-            focusedPane={focusedPane}
+            focusedPane={() => (rendererFocused() ? "pane.main" : null)}
+            rendererFocused={rendererFocused}
             theme={theme}
             palette={palette}
             onOpenSurface={() => undefined}
@@ -475,9 +605,9 @@ describe("production ApplicationShellView", () => {
       },
     ]);
 
-    setFocusedPane(null);
+    setRendererFocused(false);
     await setup.renderOnce();
-    setFocusedPane("pane.main");
+    setRendererFocused(true);
     await setup.renderOnce();
     expect(first.blits.slice(1)).toEqual([
       { full: false, forceRows: [2], writtenRows: [2] },
@@ -612,8 +742,13 @@ describe("production ApplicationShellView", () => {
     await setup.renderOnce();
 
     // " main " occupies six cells; the next window begins immediately after it.
-    await setup.mockMouse.click(shell.content.x + 7, shell.content.y, MouseButtons.LEFT);
-    expect(selected).toEqual(["pane.logs"]);
+    await setup.mockMouse.click(shell.content.x + 1, shell.content.y, MouseButtons.LEFT);
+    await setup.mockMouse.click(
+      shell.content.x + terminalWindowStripSlotWidth(shell.content.width, 2) + 1,
+      shell.content.y,
+      MouseButtons.LEFT,
+    );
+    expect(selected).toEqual(["pane.main", "pane.logs"]);
     setup.renderer.destroy();
   });
 });

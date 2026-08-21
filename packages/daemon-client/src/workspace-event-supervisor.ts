@@ -55,13 +55,18 @@ export interface WorkspaceEventSupervisorOptions {
     signal: AbortSignal,
   ) => Promise<TerminalRuntimeInventoryProjectionV1>;
   readonly maxInitialReadAttempts?: number;
+  readonly terminalRefreshClock?: {
+    setTimeout(callback: () => void, delayMs: number): unknown;
+    clearTimeout(handle: unknown): void;
+  };
   readonly onRetired?: () => void;
   readonly onDiagnostic?: (
     phase:
       | "terminal-event-socket-open"
       | "terminal-event-hello"
       | "terminal-interest-send"
-      | "terminal-interest-ack",
+      | "terminal-interest-ack"
+      | "terminal-refresh",
     details: Readonly<Record<string, unknown>>,
   ) => void;
 }
@@ -157,6 +162,13 @@ export function createWorkspaceEventSupervisor(
       }
     : null;
   const socket = options.socket;
+  const refreshClock =
+    options.terminalRefreshClock ??
+    Object.freeze({
+      setTimeout: (callback: () => void, delayMs: number): unknown => setTimeout(callback, delayMs),
+      clearTimeout: (handle: unknown): void =>
+        clearTimeout(handle as ReturnType<typeof setTimeout>),
+    });
   const terminalInterest = {
     resource: "terminal-runtime-inventory",
     workspaceName: options.workspaceName,
@@ -191,6 +203,12 @@ export function createWorkspaceEventSupervisor(
   let terminalSink: ((resource: TerminalRuntimeInventoryProjectionV1) => void) | null = null;
   let terminalRefreshQueued = false;
   let terminalRefreshRunning = false;
+  let terminalRefreshTimer: unknown | null = null;
+  let terminalRefreshController: AbortController | null = null;
+  let terminalRefreshReason: "event" | "gap" | "snapshot" | "consumer" = "consumer";
+  let terminalRefreshCoalesced = 0;
+  let terminalRefreshDelayed = false;
+  let terminalRefreshRetryAttempt = 0;
   let applicationShellHandlers: ApplicationShellEventHandlers | null = null;
   let workspaceCatalogInvalidate: (() => void) | null = null;
   let retirementNotified = false;
@@ -324,32 +342,93 @@ export function createWorkspaceEventSupervisor(
     throw lastError ?? new Error("terminal runtime inventory did not reach a clean snapshot");
   };
 
-  const refreshTerminalAuthority = (): void => {
+  const refreshTerminalAuthority = (
+    reason: "event" | "gap" | "snapshot" | "consumer" = "consumer",
+    continuation = false,
+  ): void => {
+    if (!continuation && !terminalRefreshQueued && !terminalRefreshRunning)
+      terminalRefreshRetryAttempt = 0;
+    if (!continuation && reason !== "consumer") {
+      terminalRefreshReason = reason;
+      terminalRefreshRetryAttempt = 0;
+    }
+    if (terminalRefreshQueued)
+      terminalRefreshCoalesced = Math.min(terminalRefreshCoalesced + 1, 65_536);
+    else terminalRefreshReason = reason;
     terminalRefreshQueued = true;
-    if (terminalRefreshRunning || terminalSink === null || disposed) return;
+    if (
+      terminalRefreshRunning ||
+      terminalRefreshTimer !== null ||
+      terminalSink === null ||
+      disposed
+    )
+      return;
     terminalRefreshRunning = true;
     queueMicrotask(() => {
       const run = async (): Promise<void> => {
-        while (terminalRefreshQueued && terminalSink !== null && !disposed) {
-          terminalRefreshQueued = false;
-          const controller = new AbortController();
-          try {
-            const resource = await readTerminal(controller.signal, false);
-            if (
-              !disposed &&
-              terminalSink !== null &&
-              resource.resourceRevision >= terminalRevision
-            ) {
-              terminalSink(resource);
-            }
-          } catch {
-            // The next replayable invalidation/reconnect owns recovery.
+        if (!terminalRefreshQueued || terminalSink === null || disposed) return;
+        terminalRefreshQueued = false;
+        const refreshReason = terminalRefreshReason;
+        const coalescedRequests = terminalRefreshCoalesced;
+        const delayed = terminalRefreshDelayed;
+        const attempt = terminalRefreshRetryAttempt + 1;
+        terminalRefreshCoalesced = 0;
+        terminalRefreshDelayed = false;
+        const controller = new AbortController();
+        terminalRefreshController = controller;
+        let outcome: "success" | "retry" | "exhausted" | "aborted" = "success";
+        let failure: "read-failed" | "stale-revision" | null = null;
+        try {
+          const resource = await readTerminal(controller.signal, false);
+          if (resource.resourceRevision < terminalRevision) {
+            failure = "stale-revision";
+            throw new Error("terminal runtime inventory response was stale");
           }
+          if (!disposed && terminalSink !== null) {
+            terminalSink(resource);
+          }
+          terminalRefreshRetryAttempt = 0;
+        } catch {
+          if (failure === null && !controller.signal.aborted) failure = "read-failed";
+          const recoverable = !controller.signal.aborted && !disposed && terminalSink !== null;
+          const authoritativeReplacement =
+            recoverable && terminalRefreshQueued && terminalRefreshReason !== "consumer";
+          if (authoritativeReplacement) outcome = "retry";
+          else if (recoverable && terminalRefreshRetryAttempt < 2) {
+            terminalRefreshRetryAttempt += 1;
+            terminalRefreshQueued = true;
+            outcome = "retry";
+          } else {
+            terminalRefreshQueued = false;
+            outcome = controller.signal.aborted ? "aborted" : "exhausted";
+          }
+        } finally {
+          const discardedCoalesced =
+            outcome === "exhausted" || outcome === "aborted" ? terminalRefreshCoalesced : 0;
+          if (discardedCoalesced > 0) terminalRefreshCoalesced = 0;
+          diagnose?.("terminal-refresh", {
+            reason: refreshReason,
+            coalescedRequests: Math.min(coalescedRequests + discardedCoalesced, 65_536),
+            delayed,
+            attempt,
+            outcome,
+            failure,
+          });
+          if (terminalRefreshController === controller) terminalRefreshController = null;
         }
       };
       void run().finally(() => {
         terminalRefreshRunning = false;
-        if (terminalRefreshQueued) refreshTerminalAuthority();
+        if (!terminalRefreshQueued || terminalSink === null || disposed) return;
+        // A sink may synchronously request another read while adopting the
+        // just-read snapshot. Keep that recovery live, but never let it form a
+        // microtask spin loop against a stale same-revision authority.
+        terminalRefreshDelayed = true;
+        terminalRefreshTimer = refreshClock.setTimeout(() => {
+          terminalRefreshTimer = null;
+          terminalRefreshQueued = false;
+          refreshTerminalAuthority(terminalRefreshReason, true);
+        }, 25);
       });
     });
   };
@@ -406,7 +485,7 @@ export function createWorkspaceEventSupervisor(
       if (gap) {
         terminalEpoch += 1;
         applicationShellHandlers?.onInvalidate();
-        refreshTerminalAuthority();
+        refreshTerminalAuthority("gap");
         workspaceCatalogInvalidate?.();
       }
       const waiter = ackWaiters.get(frame.interestRevision);
@@ -438,15 +517,40 @@ export function createWorkspaceEventSupervisor(
       snapshotRequired = true;
       terminalEpoch += 1;
       applicationShellHandlers?.onInvalidate();
-      refreshTerminalAuthority();
+      refreshTerminalAuthority("snapshot");
       workspaceCatalogInvalidate?.();
       return;
     }
+    let applicationShellChangeAccepted = false;
+    let acceptedApplicationShellHandlers: ApplicationShellEventHandlers | null = null;
     if (frame.type === "resource.changed" || frame.type === "resource.observed") {
-      if (observeSequence(frame.sequence)) {
+      const priorSequence = sequence;
+      const gap = observeSequence(frame.sequence);
+      applicationShellChangeAccepted =
+        isApplicationShellChange(frame) && frame.sequence === priorSequence + 1 && !gap;
+      if (applicationShellChangeAccepted)
+        acceptedApplicationShellHandlers = applicationShellHandlers;
+      if (
+        applicationShellChangeAccepted &&
+        frame.type === "resource.changed" &&
+        frame.causeOperationId !== null
+      ) {
+        try {
+          acceptedApplicationShellHandlers?.onOperationAcknowledged?.({
+            daemonInstanceId: options.daemon.instanceId,
+            operationId: frame.causeOperationId,
+            sequence: frame.sequence,
+            revision: frame.revision,
+          });
+        } catch {
+          // A consumer acknowledgement observer cannot suppress the resource
+          // invalidation that makes the same operation visible.
+        }
+      }
+      if (gap) {
         terminalEpoch += 1;
         applicationShellHandlers?.onInvalidate();
-        refreshTerminalAuthority();
+        refreshTerminalAuthority("gap");
         workspaceCatalogInvalidate?.();
       }
     }
@@ -455,11 +559,18 @@ export function createWorkspaceEventSupervisor(
       frame.resource === "terminal-runtime-inventory" &&
       (frame.workspaceName === null || frame.workspaceName === options.workspaceName)
     ) {
-      terminalEpoch += 1;
-      terminalRevision = Math.max(terminalRevision, frame.revision);
-      refreshTerminalAuthority();
+      if (frame.revision > terminalRevision) {
+        terminalEpoch += 1;
+        terminalRevision = frame.revision;
+        refreshTerminalAuthority("event");
+      }
     }
-    if (isApplicationShellChange(frame)) applicationShellHandlers?.onInvalidate();
+    if (
+      applicationShellChangeAccepted &&
+      acceptedApplicationShellHandlers !== null &&
+      applicationShellHandlers === acceptedApplicationShellHandlers
+    )
+      acceptedApplicationShellHandlers.onInvalidate();
     if (
       frame.type === "resource.changed" &&
       frame.resource === "workspace-catalog" &&
@@ -570,16 +681,27 @@ export function createWorkspaceEventSupervisor(
       applicationShellInstalled = false;
       terminalSink = null;
       terminalRefreshQueued = false;
+      if (terminalRefreshTimer !== null) refreshClock.clearTimeout(terminalRefreshTimer);
+      terminalRefreshTimer = null;
+      terminalRefreshDelayed = false;
+      terminalRefreshController?.abort();
+      terminalRefreshController = null;
       applicationShellHandlers = null;
       const terminalBarrier = terminalInstallFlight ?? Promise.resolve();
       return terminalBarrier.catch(() => undefined).then(() => reconcileDesiredInterests());
     },
     refreshTerminalRuntimeInventory() {
-      refreshTerminalAuthority();
+      refreshTerminalAuthority("consumer");
     },
     dispose() {
       if (disposed) return;
       disposed = true;
+      if (terminalRefreshTimer !== null) refreshClock.clearTimeout(terminalRefreshTimer);
+      terminalRefreshTimer = null;
+      terminalRefreshQueued = false;
+      terminalRefreshDelayed = false;
+      terminalRefreshController?.abort();
+      terminalRefreshController = null;
       terminalSink = null;
       applicationShellHandlers = null;
       workspaceCatalogInvalidate = null;

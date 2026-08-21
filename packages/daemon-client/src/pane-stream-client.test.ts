@@ -1267,6 +1267,412 @@ describe("semantic pane-stream runtime client", () => {
     client.close();
   });
 
+  it("serializes an immediate reclaim behind a delayed release acknowledgement", async () => {
+    const socket = new FakeSocket();
+    socket.onSend = (frame) => {
+      if (frame.type !== "redeem") return;
+      queueMicrotask(() =>
+        socket.message({
+          type: "ready",
+          protocolVersion: 1,
+          daemonInstanceId: INSTANCE,
+          requestId: REQUEST,
+          panes: ["pane.editor"],
+          effectiveViewerMode: "interactive",
+        }),
+      );
+    };
+    const client = await openPaneStreamRuntimeClient(
+      options(socket, { requestInitialInputAuthority: false }),
+    );
+    const initial = client.requestAuthority("focus");
+    await Bun.sleep(0);
+    const initialRequest = socket.sent.find((frame) => frame.type === "authority-request")!;
+    socket.message({
+      type: "authority-receipt",
+      requestId: initialRequest.requestId,
+      authority: "focus",
+      status: "granted",
+      lease: {
+        generation: INSTANCE,
+        session: "alpha",
+        clientId: "tui:one",
+        authority: "focus",
+        token: "55555555-5555-4555-8555-555555555555",
+        revision: 2,
+      },
+      snapshot: {
+        generation: INSTANCE,
+        session: "alpha",
+        revision: 2,
+        nativeGeometryYieldUntilMs: 0,
+        owners: { input: null, focus: "tui:one", geometry: null },
+        clients: [],
+      },
+    });
+    await initial;
+
+    const release = client.releaseAuthority("focus");
+    expect(client.ownsConnectionAuthority("focus")).toBe(false);
+    const reclaimOne = client.requestAuthority("focus");
+    const reclaimTwo = client.requestAuthority("focus");
+    await Bun.sleep(0);
+    const releaseFrame = socket.sent.find((frame) => frame.type === "authority-release")!;
+    expect(socket.sent.filter((frame) => frame.type === "authority-request")).toHaveLength(1);
+
+    socket.message({
+      type: "authority-receipt",
+      requestId: releaseFrame.requestId,
+      authority: "focus",
+      status: "released",
+      lease: null,
+      snapshot: {
+        generation: INSTANCE,
+        session: "alpha",
+        revision: 3,
+        nativeGeometryYieldUntilMs: 0,
+        owners: { input: null, focus: null, geometry: null },
+        clients: [],
+      },
+    });
+    await release;
+    await Bun.sleep(0);
+    const requestFrames = socket.sent.filter((frame) => frame.type === "authority-request");
+    expect(requestFrames).toHaveLength(2);
+    expect(socket.sent.indexOf(releaseFrame)).toBeLessThan(socket.sent.indexOf(requestFrames[1]!));
+    const reclaimRequest = requestFrames[1]!;
+    socket.message({
+      type: "authority-receipt",
+      requestId: reclaimRequest.requestId,
+      authority: "focus",
+      status: "granted",
+      lease: {
+        generation: INSTANCE,
+        session: "alpha",
+        clientId: "tui:one",
+        authority: "focus",
+        token: "66666666-6666-4666-8666-666666666666",
+        revision: 4,
+      },
+      snapshot: {
+        generation: INSTANCE,
+        session: "alpha",
+        revision: 4,
+        nativeGeometryYieldUntilMs: 0,
+        owners: { input: null, focus: "tui:one", geometry: null },
+        clients: [],
+      },
+    });
+    const [one, two] = await Promise.all([reclaimOne, reclaimTwo]);
+    expect(one).toEqual(two);
+    expect(client.ownsConnectionAuthority("focus")).toBe(true);
+    expect(socket.sent.filter((frame) => frame.type === "authority-request")).toHaveLength(2);
+    client.close();
+  });
+
+  it("emits a queued release after the preceding authority request times out", async () => {
+    const socket = new FakeSocket();
+    socket.onSend = (frame) => {
+      if (frame.type !== "redeem") return;
+      queueMicrotask(() =>
+        socket.message({
+          type: "ready",
+          protocolVersion: 1,
+          daemonInstanceId: INSTANCE,
+          requestId: REQUEST,
+          panes: ["pane.editor"],
+          effectiveViewerMode: "interactive",
+        }),
+      );
+    };
+    const client = await openPaneStreamRuntimeClient(
+      options(socket, { requestInitialInputAuthority: false }),
+    );
+    const request = client.requestAuthority("input");
+    void request.catch(() => undefined);
+    const release = client.releaseAuthority("input");
+    await Bun.sleep(2_050);
+    await expect(request).rejects.toThrow("authority timed out");
+    const requestFrame = socket.sent.find((frame) => frame.type === "authority-request")!;
+    const releaseFrame = socket.sent.find((frame) => frame.type === "authority-release")!;
+    expect(socket.sent.indexOf(requestFrame)).toBeLessThan(socket.sent.indexOf(releaseFrame));
+
+    socket.message({
+      type: "authority-receipt",
+      requestId: requestFrame.requestId,
+      authority: "input",
+      status: "granted",
+      lease: {
+        generation: INSTANCE,
+        session: "alpha",
+        clientId: "tui:one",
+        authority: "input",
+        token: "55555555-5555-4555-8555-555555555555",
+        revision: 2,
+      },
+      snapshot: {
+        generation: INSTANCE,
+        session: "alpha",
+        revision: 2,
+        nativeGeometryYieldUntilMs: 0,
+        owners: { input: "tui:one", focus: null, geometry: null },
+        clients: [],
+      },
+    });
+    expect(client.ownsConnectionAuthority("input")).toBe(false);
+    socket.message({
+      type: "authority-receipt",
+      requestId: releaseFrame.requestId,
+      authority: "input",
+      status: "released",
+      lease: null,
+      snapshot: {
+        generation: INSTANCE,
+        session: "alpha",
+        revision: 3,
+        nativeGeometryYieldUntilMs: 0,
+        owners: { input: null, focus: null, geometry: null },
+        clients: [],
+      },
+    });
+    await expect(release).resolves.toMatchObject({ owners: { input: null } });
+    client.close();
+  });
+
+  it("coalesces a fresh reclaim after release timeout and ignores one exact late ACK", async () => {
+    const socket = new FakeSocket();
+    socket.onSend = (frame) => {
+      if (frame.type !== "redeem") return;
+      queueMicrotask(() =>
+        socket.message({
+          type: "ready",
+          protocolVersion: 1,
+          daemonInstanceId: INSTANCE,
+          requestId: REQUEST,
+          panes: ["pane.editor"],
+          effectiveViewerMode: "interactive",
+        }),
+      );
+    };
+    const client = await openPaneStreamRuntimeClient(
+      options(socket, { requestInitialInputAuthority: false }),
+    );
+    const release = client.releaseAuthority("geometry");
+    void release.catch(() => undefined);
+    const reclaimOne = client.requestAuthority("geometry");
+    const reclaimTwo = client.requestAuthority("geometry");
+    await Bun.sleep(2_050);
+    await expect(release).rejects.toThrow("release timed out");
+    const releaseFrame = socket.sent.find((frame) => frame.type === "authority-release")!;
+    const requestFrames = socket.sent.filter((frame) => frame.type === "authority-request");
+    expect(requestFrames).toHaveLength(1);
+    const reclaimFrame = requestFrames[0]!;
+
+    socket.message({
+      type: "authority-receipt",
+      requestId: releaseFrame.requestId,
+      authority: "geometry",
+      status: "released",
+      lease: null,
+      snapshot: {
+        generation: INSTANCE,
+        session: "alpha",
+        revision: 3,
+        nativeGeometryYieldUntilMs: 0,
+        owners: { input: null, focus: null, geometry: null },
+        clients: [],
+      },
+    });
+    expect(client.ownsConnectionAuthority("geometry")).toBe(false);
+    socket.message({
+      type: "authority-receipt",
+      requestId: reclaimFrame.requestId,
+      authority: "geometry",
+      status: "granted",
+      lease: {
+        generation: INSTANCE,
+        session: "alpha",
+        clientId: "tui:one",
+        authority: "geometry",
+        token: "66666666-6666-4666-8666-666666666666",
+        revision: 4,
+      },
+      snapshot: {
+        generation: INSTANCE,
+        session: "alpha",
+        revision: 4,
+        nativeGeometryYieldUntilMs: 0,
+        owners: { input: null, focus: null, geometry: "tui:one" },
+        clients: [],
+      },
+    });
+    await Promise.all([reclaimOne, reclaimTwo]);
+    expect(client.ownsConnectionAuthority("geometry")).toBe(true);
+    expect(socket.sent.filter((frame) => frame.type === "authority-request")).toHaveLength(1);
+
+    socket.message({
+      type: "authority-receipt",
+      requestId: releaseFrame.requestId,
+      authority: "geometry",
+      status: "released",
+      lease: null,
+      snapshot: {
+        generation: INSTANCE,
+        session: "alpha",
+        revision: 3,
+        nativeGeometryYieldUntilMs: 0,
+        owners: { input: null, focus: null, geometry: null },
+        clients: [],
+      },
+    });
+    expect(socket.closed).toEqual({ code: 1008, reason: "protocol-error" });
+  });
+
+  it("rejects a serialized authority chain on close without emitting its queued operations", async () => {
+    const socket = new FakeSocket();
+    socket.onSend = (frame) => {
+      if (frame.type !== "redeem") return;
+      queueMicrotask(() =>
+        socket.message({
+          type: "ready",
+          protocolVersion: 1,
+          daemonInstanceId: INSTANCE,
+          requestId: REQUEST,
+          panes: ["pane.editor"],
+          effectiveViewerMode: "interactive",
+        }),
+      );
+    };
+    const client = await openPaneStreamRuntimeClient(
+      options(socket, { requestInitialInputAuthority: false }),
+    );
+    const initial = client.requestAuthority("input");
+    const release = client.releaseAuthority("input");
+    const reclaim = client.requestAuthority("input");
+    client.close();
+
+    expect(
+      (await Promise.allSettled([initial, release, reclaim])).every(
+        (result) => result.status === "rejected",
+      ),
+    ).toBe(true);
+    expect(socket.sent.filter((frame) => frame.type === "authority-request")).toHaveLength(1);
+    expect(socket.sent.filter((frame) => frame.type === "authority-release")).toHaveLength(0);
+  });
+
+  it("rejects every pending authority action status or lease inconsistency", async () => {
+    const cases = [
+      { action: "request", status: "released", lease: null },
+      { action: "request", status: "granted", lease: null },
+      { action: "request", status: "rejected", lease: "present" },
+      { action: "release", status: "granted", lease: "present" },
+      { action: "release", status: "rejected", lease: null },
+      { action: "release", status: "released", lease: "present" },
+    ] as const;
+    for (const testCase of cases) {
+      const socket = new FakeSocket();
+      socket.onSend = (frame) => {
+        if (frame.type !== "redeem") return;
+        queueMicrotask(() =>
+          socket.message({
+            type: "ready",
+            protocolVersion: 1,
+            daemonInstanceId: INSTANCE,
+            requestId: REQUEST,
+            panes: ["pane.editor"],
+            effectiveViewerMode: "interactive",
+          }),
+        );
+      };
+      const client = await openPaneStreamRuntimeClient(
+        options(socket, { requestInitialInputAuthority: false }),
+      );
+      const operation =
+        testCase.action === "request"
+          ? client.requestAuthority("input")
+          : client.releaseAuthority("input");
+      await Bun.sleep(0);
+      const sent = socket.sent.find((frame) =>
+        testCase.action === "request"
+          ? frame.type === "authority-request"
+          : frame.type === "authority-release",
+      )!;
+      const lease =
+        testCase.lease === "present"
+          ? {
+              generation: INSTANCE,
+              session: "alpha",
+              clientId: "tui:one",
+              authority: "input" as const,
+              token: "55555555-5555-4555-8555-555555555555",
+              revision: 2,
+            }
+          : null;
+      socket.message({
+        type: "authority-receipt",
+        requestId: sent.requestId,
+        authority: "input",
+        status: testCase.status,
+        lease,
+        snapshot: {
+          generation: INSTANCE,
+          session: "alpha",
+          revision: 2,
+          nativeGeometryYieldUntilMs: 0,
+          owners: {
+            input: testCase.status === "granted" ? "tui:one" : null,
+            focus: null,
+            geometry: null,
+          },
+          clients: [],
+        },
+      });
+      await expect(operation).rejects.toThrow("did not match a request");
+      expect(socket.closed).toEqual({ code: 1008, reason: "protocol-error" });
+    }
+  });
+
+  it("rejects an action-mismatched receipt for a retired authority request", async () => {
+    const socket = new FakeSocket();
+    socket.onSend = (frame) => {
+      if (frame.type !== "redeem") return;
+      queueMicrotask(() =>
+        socket.message({
+          type: "ready",
+          protocolVersion: 1,
+          daemonInstanceId: INSTANCE,
+          requestId: REQUEST,
+          panes: ["pane.editor"],
+          effectiveViewerMode: "interactive",
+        }),
+      );
+    };
+    const client = await openPaneStreamRuntimeClient(
+      options(socket, { requestInitialInputAuthority: false }),
+    );
+    const request = client.requestAuthority("focus");
+    void request.catch(() => undefined);
+    await Bun.sleep(2_050);
+    await expect(request).rejects.toThrow("authority timed out");
+    const requestFrame = socket.sent.find((frame) => frame.type === "authority-request")!;
+    socket.message({
+      type: "authority-receipt",
+      requestId: requestFrame.requestId,
+      authority: "focus",
+      status: "released",
+      lease: null,
+      snapshot: {
+        generation: INSTANCE,
+        session: "alpha",
+        revision: 3,
+        nativeGeometryYieldUntilMs: 0,
+        owners: { input: null, focus: null, geometry: null },
+        clients: [],
+      },
+    });
+    expect(socket.closed).toEqual({ code: 1008, reason: "protocol-error" });
+  });
+
   it("resolves only after verified ready and decodes delivery chunks", async () => {
     const socket = new FakeSocket();
     socket.onSend = (frame) => {
@@ -1470,7 +1876,7 @@ describe("semantic pane-stream runtime client", () => {
     client.close();
   });
 
-  it("does not reacquire geometry when the caller already owns it", async () => {
+  it("requests a connection-local geometry grant when a fresh socket inherits global ownership", async () => {
     const socket = new FakeSocket();
     socket.onSend = (frame) => {
       if (frame.type === "redeem") {
@@ -1492,6 +1898,31 @@ describe("semantic pane-stream runtime client", () => {
             },
           }),
         );
+      } else if (frame.type === "authority-request") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "authority-receipt",
+            requestId: frame.requestId,
+            authority: "geometry",
+            status: "granted",
+            lease: {
+              generation: INSTANCE,
+              session: "alpha",
+              clientId: "tui:one",
+              authority: "geometry",
+              token: "55555555-5555-4555-8555-555555555555",
+              revision: 3,
+            },
+            snapshot: {
+              generation: INSTANCE,
+              session: "alpha",
+              revision: 3,
+              nativeGeometryYieldUntilMs: 0,
+              owners: { input: null, focus: null, geometry: "tui:one" },
+              clients: [],
+            },
+          }),
+        );
       } else if (frame.type === "viewport") {
         queueMicrotask(() =>
           socket.message({
@@ -1506,9 +1937,30 @@ describe("semantic pane-stream runtime client", () => {
     const client = await openPaneStreamRuntimeClient(
       options(socket, { requestInitialInputAuthority: false }),
     );
+    expect(client.ownsConnectionAuthority("geometry")).toBe(false);
     await client.fitViewport(120, 40);
-    expect(socket.sent.filter((frame) => frame.type === "authority-request")).toHaveLength(0);
-    expect(socket.sent.filter((frame) => frame.type === "viewport")).toHaveLength(1);
+    expect(client.ownsConnectionAuthority("geometry")).toBe(true);
+    await client.fitViewport(121, 41);
+    expect(await client.requestAuthority("geometry")).not.toBeNull();
+    expect(socket.sent.filter((frame) => frame.type === "authority-request")).toHaveLength(1);
+    expect(socket.sent.findIndex((frame) => frame.type === "authority-request")).toBeLessThan(
+      socket.sent.findIndex((frame) => frame.type === "viewport"),
+    );
+    expect(socket.sent.filter((frame) => frame.type === "viewport")).toHaveLength(2);
+    socket.message({
+      type: "authority-snapshot",
+      snapshot: {
+        generation: INSTANCE,
+        session: "alpha",
+        revision: 4,
+        nativeGeometryYieldUntilMs: 0,
+        owners: { input: null, focus: null, geometry: null },
+        clients: [],
+      },
+    });
+    expect(client.ownsConnectionAuthority("geometry")).toBe(false);
+    await client.fitViewport(122, 42);
+    expect(socket.sent.filter((frame) => frame.type === "authority-request")).toHaveLength(2);
     client.close();
   });
 

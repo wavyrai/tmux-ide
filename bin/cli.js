@@ -8546,6 +8546,9 @@ var init_pane_stream = __esm({
             "intent-session-mismatch",
             "intent-rejected",
             "intent-timed-out",
+            "pane_inventory_not_ready",
+            "pane_identity_changed_before_select",
+            "pane_not_active",
             "stream-unavailable"
           ]),
           message: z52.string().min(1).max(512)
@@ -31851,6 +31854,14 @@ var init_tmux_external_interaction_observer = __esm({
 
 // packages/daemon/src/lib/workspace-multiplexer-verbs.ts
 import { realpathSync as realpathSync9, statSync as statSync9 } from "node:fs";
+function boundedCacheIdentity(value) {
+  if (value.length === 0 || value.length > 256) return false;
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint < 32 || codePoint === 127) return false;
+  }
+  return true;
+}
 function parseMultiplexerPaneRows(output) {
   if (output === "") return [];
   const rows = [];
@@ -31938,7 +31949,7 @@ function canonicalProjectDir2(path2) {
   if (!statSync9(canonical).isDirectory()) throw new Error("project root is not a directory");
   return canonical;
 }
-var CREATION_OPTION2, SEMANTIC_PANE_OPTION4, SEMANTIC_WINDOW_OPTION3, DISPLAY_TITLE_OPTION, ERROR_MESSAGES5, WorkspaceMultiplexerError, PANE_FIELDS, RUNTIME_PANE2, RUNTIME_WINDOW, DEFAULT_IO4, WorkspaceMultiplexerAuthority;
+var CREATION_OPTION2, SEMANTIC_PANE_OPTION4, SEMANTIC_WINDOW_OPTION3, DISPLAY_TITLE_OPTION, ERROR_MESSAGES5, WorkspaceMultiplexerError, PANE_FIELDS, RUNTIME_PANE2, RUNTIME_WINDOW, DEFAULT_IO4, MAX_CACHED_SESSIONS, WorkspaceMultiplexerAuthority;
 var init_workspace_multiplexer_verbs = __esm({
   "packages/daemon/src/lib/workspace-multiplexer-verbs.ts"() {
     "use strict";
@@ -31963,6 +31974,7 @@ var init_workspace_multiplexer_verbs = __esm({
       last_pane_refused: "This is the session's last pane. Close the session instead if that is what you mean.",
       mutation_failed: "tmux refused the requested change.",
       mutation_unverified: "tmux accepted the change but the result could not be verified.",
+      operation_conflict: "Another live controller owns this workspace mutation.",
       single_pane_window: "This window has only one pane, so it has no border to move.",
       zoomed_window_refused: "Unzoom this window before resizing its panes.",
       different_window_refused: "Panes can only be swapped inside the same window."
@@ -31994,10 +32006,12 @@ var init_workspace_multiplexer_verbs = __esm({
       canonicalProjectDir: canonicalProjectDir2,
       isMissingTmuxTarget: (error) => error instanceof TmuxError && (error.code === "SESSION_NOT_FOUND" || error.code === "TMUX_UNAVAILABLE")
     };
+    MAX_CACHED_SESSIONS = 512;
     WorkspaceMultiplexerAuthority = class {
       #daemonInstanceId;
       #registry;
       #io;
+      #paneIdentityCache = /* @__PURE__ */ new Map();
       #disposed = false;
       constructor(options) {
         this.#daemonInstanceId = options.daemonInstanceId;
@@ -32015,8 +32029,8 @@ var init_workspace_multiplexer_verbs = __esm({
        * The returned promise is only an API envelope: no second queue or replay
        * ledger is allowed below SessionSemanticMutationExecutor.
        */
-      mutate(raw) {
-        return this.#mutate(raw);
+      mutate(raw, timing) {
+        return this.#mutate(raw, timing);
       }
       /**
        * Capture a semantically addressed pane for an authored read. The tmux
@@ -32073,9 +32087,76 @@ var init_workspace_multiplexer_verbs = __esm({
       }
       dispose() {
         this.#disposed = true;
+        this.#paneIdentityCache.clear();
         return Promise.resolve();
       }
-      #mutate(raw) {
+      /**
+       * Adopt one complete, generation-owned inventory projection. Selection never
+       * performs discovery itself: a missing candidate is a pre-effect refusal.
+       */
+      adoptPaneInventory(rows) {
+        if (this.#disposed) return;
+        const bySession = /* @__PURE__ */ new Map();
+        for (const row of rows) {
+          const current = bySession.get(row.sessionName);
+          if (current) current.push(row);
+          else bySession.set(row.sessionName, [row]);
+        }
+        this.#paneIdentityCache.clear();
+        for (const [sessionName, sessionRows] of bySession) {
+          const identities = /* @__PURE__ */ new Map();
+          const ambiguous = /* @__PURE__ */ new Set();
+          for (const row of sessionRows) {
+            if (row.semanticPaneId === null) continue;
+            if (identities.has(row.semanticPaneId)) {
+              identities.delete(row.semanticPaneId);
+              ambiguous.add(row.semanticPaneId);
+            } else if (!ambiguous.has(row.semanticPaneId)) {
+              identities.set(
+                row.semanticPaneId,
+                Object.freeze({ paneId: row.runtimePaneId, windowId: row.windowId })
+              );
+            }
+          }
+          this.#setPaneIdentities(sessionName, identities);
+        }
+      }
+      /**
+       * Replace one exact session's generation-owned inventory without evicting
+       * unrelated sessions. Trusted retained-mirror projections use this path;
+       * malformed or ambiguous projections invalidate only the target session.
+       */
+      adoptSessionPaneInventory(sessionName, rows) {
+        if (this.#disposed || !boundedCacheIdentity(sessionName)) return false;
+        const refuse = () => {
+          this.#paneIdentityCache.delete(sessionName);
+          return false;
+        };
+        if (rows.length === 0 || rows.length > 512) return refuse();
+        const identities = /* @__PURE__ */ new Map();
+        const runtimePaneIds = /* @__PURE__ */ new Set();
+        for (const row of rows) {
+          if (row.sessionName !== sessionName || typeof row.semanticPaneId !== "string" || !boundedCacheIdentity(row.semanticPaneId) || !/^%(0|[1-9][0-9]*)$/u.test(row.runtimePaneId) || !/^@(0|[1-9][0-9]*)$/u.test(row.windowId) || identities.has(row.semanticPaneId) || runtimePaneIds.has(row.runtimePaneId))
+            return refuse();
+          identities.set(
+            row.semanticPaneId,
+            Object.freeze({ paneId: row.runtimePaneId, windowId: row.windowId })
+          );
+          runtimePaneIds.add(row.runtimePaneId);
+        }
+        this.#setPaneIdentities(sessionName, identities);
+        return true;
+      }
+      #setPaneIdentities(sessionName, identities) {
+        this.#paneIdentityCache.delete(sessionName);
+        this.#paneIdentityCache.set(sessionName, identities);
+        while (this.#paneIdentityCache.size > MAX_CACHED_SESSIONS) {
+          const oldest = this.#paneIdentityCache.keys().next().value;
+          if (typeof oldest !== "string") break;
+          this.#paneIdentityCache.delete(oldest);
+        }
+      }
+      #mutate(raw, timing) {
         if (this.#disposed) {
           throw new WorkspaceMultiplexerError("workspace_unavailable", {
             reason: "authority_disposed"
@@ -32095,7 +32176,9 @@ var init_workspace_multiplexer_verbs = __esm({
           });
         }
         try {
-          return WorkspaceMultiplexerMutationResultSchemaZ.parse(this.#perform(request, workspace));
+          return WorkspaceMultiplexerMutationResultSchemaZ.parse(
+            this.#perform(request, workspace, timing)
+          );
         } catch (error) {
           const mapped = error instanceof WorkspaceMultiplexerError ? error : new WorkspaceMultiplexerError(
             "mutation_failed",
@@ -32119,9 +32202,25 @@ var init_workspace_multiplexer_verbs = __esm({
             cause
           );
         }
-        return parseMultiplexerPaneRows(output);
+        const rows = parseMultiplexerPaneRows(output);
+        const identities = /* @__PURE__ */ new Map();
+        const ambiguous = /* @__PURE__ */ new Set();
+        for (const row of rows) {
+          if (row.semanticPaneId === null) continue;
+          if (identities.has(row.semanticPaneId)) {
+            identities.delete(row.semanticPaneId);
+            ambiguous.add(row.semanticPaneId);
+          } else if (!ambiguous.has(row.semanticPaneId)) {
+            identities.set(
+              row.semanticPaneId,
+              Object.freeze({ paneId: row.paneId, windowId: row.windowId })
+            );
+          }
+        }
+        this.#setPaneIdentities(sessionName, identities);
+        return rows;
       }
-      #perform(request, workspace) {
+      #perform(request, workspace, timing) {
         const intent = request.intent;
         const sessionName = workspace.sessionName;
         const envelope = {
@@ -32143,7 +32242,7 @@ var init_workspace_multiplexer_verbs = __esm({
           case "workspace.pane.zoom.toggle":
             return this.#zoom(intent, sessionName, envelope);
           case "workspace.pane.select":
-            return this.#select(intent, sessionName, envelope);
+            return this.#select(intent, sessionName, envelope, timing);
           case "workspace.pane.send":
             return this.#send(intent, sessionName, envelope);
           case "workspace.pane.swap":
@@ -32328,6 +32427,7 @@ var init_workspace_multiplexer_verbs = __esm({
             });
           }
         }
+        this.#paneIdentityCache.delete(sessionName);
         return {
           ...envelope,
           verb: "workspace.session.kill",
@@ -32366,6 +32466,9 @@ var init_workspace_multiplexer_verbs = __esm({
             });
           }
           this.#registry.renameSession(workspace.name, intent.name);
+          const cached2 = this.#paneIdentityCache.get(sessionName);
+          this.#paneIdentityCache.delete(sessionName);
+          if (cached2) this.#paneIdentityCache.set(intent.name, cached2);
           return {
             ...envelope,
             verb: "workspace.rename",
@@ -32442,36 +32545,89 @@ var init_workspace_multiplexer_verbs = __esm({
           zoomed
         };
       }
-      #select(intent, sessionName, envelope) {
-        const rows = this.#panes(sessionName);
-        const pane = resolvePaneRow(rows, intent.semanticPaneId);
-        const observations = this.#io.runTmux([
-          "display-message",
-          "-p",
-          "-t",
+      #select(intent, sessionName, envelope, timing) {
+        const timed = (operation, run) => {
+          if (!timing) return run();
+          let startedAtMicros;
+          try {
+            startedAtMicros = timing.nowMicros();
+          } catch {
+            return run();
+          }
+          try {
+            return run();
+          } finally {
+            try {
+              timing.record(operation, startedAtMicros, timing.nowMicros());
+            } catch {
+            }
+          }
+        };
+        const cached2 = timed(
+          "semantic-pane-inventory-lookup",
+          () => this.#paneIdentityCache.get(sessionName)?.get(intent.semanticPaneId)
+        );
+        const pane = timed("semantic-pane-resolution", () => cached2);
+        if (!pane) {
+          throw new WorkspaceMultiplexerError("workspace_unavailable", {
+            operationId: envelope.operationId,
+            reason: "pane_inventory_not_ready"
+          });
+        }
+        const semanticMatchPaneIdsFormat = `#{W:#{P:#{?#{==:#{${SEMANTIC_PANE_OPTION4}},${tmuxFormatLiteral2(intent.semanticPaneId)}},#{pane_id},}}}`;
+        const precondition = [
           pane.paneId,
-          "#{?pane_active,1,0}	#{?window_active,1,0}",
-          ";",
-          // Both halves matter: select-pane alone moves the cursor inside a window
-          // that may not be the one on screen. Keep selection plus both proofs in
-          // one tmux command queue: one server snapshot, one process boundary.
-          "select-window",
-          "-t",
           pane.windowId,
-          ";",
-          "select-pane",
-          "-t",
-          pane.paneId,
-          ";",
-          "display-message",
-          "-p",
-          "-t",
-          pane.paneId,
-          "#{?pane_active,1,0}	#{?window_active,1,0}"
-        ]);
+          intent.semanticPaneId,
+          // One matching pane expands to its cached native ID. Missing, duplicate,
+          // or remapped stamps cannot satisfy the in-server mutation guard.
+          pane.paneId
+        ].join("	");
+        const preconditionFormat = [
+          "#{pane_id}",
+          "#{window_id}",
+          `#{${SEMANTIC_PANE_OPTION4}}`,
+          semanticMatchPaneIdsFormat
+        ].join("	");
+        const selectCommand = `select-window -t ${pane.windowId} ; select-pane -t ${pane.paneId}`;
+        const observations = timed(
+          "tmux-selection-effect-proof",
+          () => this.#io.runTmux([
+            "display-message",
+            "-p",
+            "-t",
+            pane.paneId,
+            `${preconditionFormat}	#{?pane_active,1,0}	#{?window_active,1,0}`,
+            ";",
+            // Resolve once from an authoritative inventory, then keep the semantic
+            // stamp and both native IDs as an exact in-server precondition. A stale
+            // cache entry may observe, but it cannot mutate.
+            "if-shell",
+            "-F",
+            "-t",
+            pane.paneId,
+            `#{==:${preconditionFormat},${tmuxFormatLiteral2(precondition)}}`,
+            selectCommand,
+            "",
+            ";",
+            "display-message",
+            "-p",
+            "-t",
+            pane.paneId,
+            `${preconditionFormat}	#{?pane_active,1,0}	#{?window_active,1,0}`
+          ])
+        );
         const [before = "", observed = ""] = observations.split("\n");
-        const wasActive = before === "1	1";
-        if (observed !== "1	1") {
+        if (!before.startsWith(`${precondition}	`)) {
+          this.#paneIdentityCache.delete(sessionName);
+          throw new WorkspaceMultiplexerError("mutation_unverified", {
+            operationId: envelope.operationId,
+            reason: "pane_identity_changed_before_select"
+          });
+        }
+        const wasActive = before === `${precondition}	1	1`;
+        if (observed !== `${precondition}	1	1`) {
+          this.#paneIdentityCache.delete(sessionName);
           throw new WorkspaceMultiplexerError("mutation_unverified", {
             operationId: envelope.operationId,
             reason: "pane_not_active"
@@ -35290,6 +35446,39 @@ var init_runtime_scheduler = __esm({
   }
 });
 
+// packages/daemon/src/terminal/session-runtime/semantic-mutation-resource-changes.ts
+function semanticMutationResourceChanges(raw) {
+  const parsed = WorkspaceMultiplexerMutationResultSchemaZ.safeParse(raw);
+  if (!parsed.success || parsed.data.outcome !== "applied") return [];
+  const result = parsed.data;
+  if (result.verb === "workspace.pane.send") return [];
+  const base = {
+    workspaceName: result.workspaceName,
+    causeOperationId: result.operationId
+  };
+  const changes = [
+    { ...base, resource: "application-shell" },
+    { ...base, resource: "workspace-missions" }
+  ];
+  if (result.verb === "workspace.window.split" || result.verb === "workspace.window.kill" || result.verb === "workspace.pane.kill" || result.verb === "workspace.session.kill") {
+    changes.push({ ...base, workspaceName: null, resource: "fleet-catalog" });
+  }
+  if (result.verb === "workspace.session.kill") {
+    changes.push({ ...base, workspaceName: null, resource: "workspace-catalog" });
+  }
+  if (result.verb === "workspace.rename" && result.scope === "session") {
+    changes.push({ ...base, workspaceName: null, resource: "fleet-catalog" });
+    changes.push({ ...base, workspaceName: null, resource: "workspace-catalog" });
+  }
+  return Object.freeze(changes.map((change) => Object.freeze(change)));
+}
+var init_semantic_mutation_resource_changes = __esm({
+  "packages/daemon/src/terminal/session-runtime/semantic-mutation-resource-changes.ts"() {
+    "use strict";
+    init_src();
+  }
+});
+
 // packages/daemon/src/terminal/session-runtime/semantic-mutation-executor.ts
 import { z as z72 } from "zod";
 function replayedResult(result) {
@@ -35303,6 +35492,7 @@ var init_semantic_mutation_executor = __esm({
     init_interaction_receipt_facts();
     init_runtime_scheduler();
     init_runtime_observability();
+    init_semantic_mutation_resource_changes();
     SessionRuntimeIntentError = class extends Error {
       constructor(outcome, message, options) {
         super(message, options);
@@ -35523,10 +35713,44 @@ var init_semantic_mutation_executor = __esm({
           });
         }
         let result;
-        const tmuxStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
+        let trace = null;
+        if (this.#observability.enabled && this.#options.traceAuthority) {
+          try {
+            trace = this.#observability.beginTrace(
+              intent.verb === "workspace.pane.select" ? "window-switch" : "semantic-mutation",
+              this.#options.traceAuthority,
+              operationId
+            );
+          } catch {
+            trace = null;
+          }
+        }
+        const timing = trace ? {
+          nowMicros: () => this.#observability.nowMicros(),
+          record: (operation, startedAtMicros, endedAtMicros) => {
+            try {
+              this.#observability.recordSpan(
+                "tmux",
+                operation,
+                startedAtMicros,
+                endedAtMicros,
+                trace
+              );
+            } catch {
+            }
+          }
+        } : void 0;
+        let tmuxStarted = null;
+        if (this.#observability.enabled) {
+          try {
+            tmuxStarted = this.#observability.nowMicros();
+          } catch {
+            tmuxStarted = null;
+          }
+        }
         try {
           authorizeBeforeEffect?.();
-          result = this.#options.execute(operationId, intent);
+          result = this.#options.execute(operationId, intent, timing);
         } catch (cause) {
           if (needsTmuxObservation) this.#deletePending(session, operationId);
           const error = new SessionRuntimeIntentError(
@@ -35537,13 +35761,18 @@ var init_semantic_mutation_executor = __esm({
           this.#publish(operationId, intent, "rejected", null, void 0, origin);
           throw error;
         } finally {
-          if (this.#observability.enabled)
-            this.#observability.recordSpan(
-              "tmux",
-              "semantic-mutation-effect",
-              tmuxStarted,
-              this.#observability.nowMicros()
-            );
+          if (tmuxStarted !== null)
+            try {
+              const tmuxEnded = this.#observability.nowMicros();
+              this.#observability.recordSpan(
+                "tmux",
+                "semantic-mutation-effect",
+                tmuxStarted,
+                tmuxEnded,
+                trace
+              );
+            } catch {
+            }
         }
         try {
           sessionRuntimeObservedProof(intent, result);
@@ -35594,6 +35823,12 @@ var init_semantic_mutation_executor = __esm({
           result,
           origin
         );
+        for (const change of semanticMutationResourceChanges(result)) {
+          try {
+            this.#options.publishResourceChange?.(change);
+          } catch {
+          }
+        }
         return result;
       }
       #deletePending(session, operationId) {
@@ -45310,6 +45545,7 @@ var init_registry2 = __esm({
       #createTraceCorrelator;
       #sessions = /* @__PURE__ */ new Map();
       #proofPrewarmOwnership = /* @__PURE__ */ new Map();
+      #trustedInventoryTokens = /* @__PURE__ */ new WeakMap();
       #executionHandles = /* @__PURE__ */ new WeakMap();
       #stopExitObserver;
       #disposed = false;
@@ -45461,6 +45697,13 @@ var init_registry2 = __esm({
       }
       /** Daemon-internal only. Runtime tmux ids in the result must never cross wire. */
       async describeTrustedSessionInventory(session, signal) {
+        return (await this.describeTrustedSessionInventoryCandidate(session, signal)).inventory;
+      }
+      /**
+       * Return an opaque token bound to the exact runtime that produced the
+       * inventory. Consumers must revalidate it after their final await.
+       */
+      async describeTrustedSessionInventoryCandidate(session, signal) {
         signal?.throwIfAborted();
         if (this.#disposed) throw new Error("SessionRuntimeRegistry is disposed");
         const runtime = this.#sessions.get(session);
@@ -45477,7 +45720,14 @@ var init_registry2 = __esm({
         if (!inventory) {
           throw new Error(`SessionRuntime ${session} lost its retained inventory authority`);
         }
-        return inventory;
+        const token = Object.freeze({});
+        this.#trustedInventoryTokens.set(token, runtime);
+        return Object.freeze({ inventory, token });
+      }
+      isTrustedSessionInventoryCandidateCurrent(session, token) {
+        if (this.#disposed) return false;
+        const runtime = this.#trustedInventoryTokens.get(token);
+        return runtime !== void 0 && this.#sessions.get(session) === runtime && runtime.trustedInventoryQualified();
       }
       hasProofQualifiedInventory(session) {
         return (this.#sessions.get(session)?.trustedInventoryQualified() ?? false) && this.#mirror.hasRetainedSession(session);
@@ -48893,6 +49143,17 @@ var init_wire_ledger = __esm({
 
 // packages/daemon/src/terminal/pane-stream/pane-stream-websocket.ts
 import { z as z83 } from "zod";
+function semanticBackendRefusal(error) {
+  let candidate = error;
+  for (let depth = 0; depth < 3; depth += 1) {
+    if (!candidate || typeof candidate !== "object") return null;
+    const context = "context" in candidate ? candidate.context : null;
+    const reason = context && typeof context === "object" && "reason" in context ? context.reason : null;
+    if (typeof reason === "string" && SEMANTIC_BACKEND_REFUSALS.has(reason)) return reason;
+    candidate = "cause" in candidate ? candidate.cause : null;
+  }
+  return null;
+}
 function startsWithBuffer(raw, prefix) {
   return raw.length >= prefix.length && raw.compare(prefix, 0, prefix.length, 0, prefix.length) === 0;
 }
@@ -48958,7 +49219,7 @@ function chunkBytes(data, maxChunk) {
   }
   return chunks;
 }
-var PANE_STREAM_MAX_REDEMPTION_BYTES, PANE_STREAM_MAX_CONTROL_BYTES, PANE_STREAM_MAX_REDEMPTION_MS, WS_OPEN5, CANONICAL_KEY_INPUT_FRAME_PREFIX, CANONICAL_TEXT_INPUT_FRAME_PREFIX, TYPE_FIRST_INPUT_FRAME_PREFIX, TicketPattern3, BindingIdSchemaZ4, PaneStreamAdmissionError, PaneStreamAdmissionCoordinator, PreAuthAdmission2, PaneStreamLiveConnection;
+var PANE_STREAM_MAX_REDEMPTION_BYTES, PANE_STREAM_MAX_CONTROL_BYTES, PANE_STREAM_MAX_REDEMPTION_MS, WS_OPEN5, CANONICAL_KEY_INPUT_FRAME_PREFIX, CANONICAL_TEXT_INPUT_FRAME_PREFIX, SEMANTIC_BACKEND_REFUSALS, TYPE_FIRST_INPUT_FRAME_PREFIX, TicketPattern3, BindingIdSchemaZ4, PaneStreamAdmissionError, PaneStreamAdmissionCoordinator, PreAuthAdmission2, PaneStreamLiveConnection;
 var init_pane_stream_websocket = __esm({
   "packages/daemon/src/terminal/pane-stream/pane-stream-websocket.ts"() {
     "use strict";
@@ -48972,6 +49233,11 @@ var init_pane_stream_websocket = __esm({
     WS_OPEN5 = 1;
     CANONICAL_KEY_INPUT_FRAME_PREFIX = Buffer.from('{"kind":"key",', "utf8");
     CANONICAL_TEXT_INPUT_FRAME_PREFIX = Buffer.from('{"kind":"text",', "utf8");
+    SEMANTIC_BACKEND_REFUSALS = /* @__PURE__ */ new Set([
+      "pane_inventory_not_ready",
+      "pane_identity_changed_before_select",
+      "pane_not_active"
+    ]);
     TYPE_FIRST_INPUT_FRAME_PREFIX = Buffer.from('{"type":"input",', "utf8");
     TicketPattern3 = /^ps1_[A-Za-z0-9_-]{43}$/u;
     BindingIdSchemaZ4 = z83.string().min(1).max(4096).refine((value) => !value.includes("\0"));
@@ -50357,7 +50623,8 @@ var init_pane_stream_websocket = __esm({
             outcome: { status: "applied", result: result ?? null }
           });
         }).catch((error) => {
-          const rawCode = error && typeof error === "object" && "code" in error ? String(error.code) : error && typeof error === "object" && "outcome" in error ? `intent-${String(error.outcome)}` : "stream-unavailable";
+          const backendRefusal = semanticBackendRefusal(error);
+          const rawCode = backendRefusal ?? (error && typeof error === "object" && "code" in error ? String(error.code) : error && typeof error === "object" && "outcome" in error ? `intent-${String(error.outcome)}` : "stream-unavailable");
           const code = [
             "controller-conflict",
             "controller-target-unavailable",
@@ -50366,7 +50633,10 @@ var init_pane_stream_websocket = __esm({
             "invalid-source-pane-binding",
             "intent-session-mismatch",
             "intent-rejected",
-            "intent-timed-out"
+            "intent-timed-out",
+            "pane_inventory_not_ready",
+            "pane_identity_changed_before_select",
+            "pane_not_active"
           ].includes(rawCode) ? rawCode : "stream-unavailable";
           this.#sendFrame(null, {
             type: "semantic-intent-ack",
@@ -52339,38 +52609,7 @@ function resourceChangesForAction(actionName, result) {
       { ...base, workspaceName: null, resource: "fleet-catalog" }
     ];
   }
-  if (actionName.startsWith("workspace.")) {
-    const mutation = WorkspaceMultiplexerMutationResultSchemaZ.safeParse(result);
-    if (!mutation.success || mutation.data.outcome !== "applied") return [];
-    if (mutation.data.verb === "workspace.pane.send") return [];
-    const changes = [
-      {
-        workspaceName: mutation.data.workspaceName,
-        resource: "application-shell",
-        causeOperationId: mutation.data.operationId
-      },
-      {
-        workspaceName: mutation.data.workspaceName,
-        resource: "workspace-missions",
-        causeOperationId: mutation.data.operationId
-      }
-    ];
-    if (mutation.data.verb === "workspace.window.split" || mutation.data.verb === "workspace.window.kill" || mutation.data.verb === "workspace.pane.kill" || mutation.data.verb === "workspace.session.kill") {
-      changes.push({
-        workspaceName: null,
-        resource: "fleet-catalog",
-        causeOperationId: mutation.data.operationId
-      });
-    }
-    if (mutation.data.verb === "workspace.session.kill") {
-      changes.push({
-        workspaceName: null,
-        resource: "workspace-catalog",
-        causeOperationId: mutation.data.operationId
-      });
-    }
-    return changes;
-  }
+  if (isSemanticMultiplexerActionName(actionName)) return [];
   return [];
 }
 function errorEnvelope(err) {
@@ -63669,9 +63908,11 @@ var WorkspaceTerminalInventoryRuntime = class {
   #discoverTerminalInventory;
   #agentStatusProbe;
   #observability;
+  #onInventory;
+  #onSessionInventory;
   #prewarmSessionRuntime;
   #discoverTrustedSessionInventory;
-  #trustedSessionInventoryReady;
+  #trustedSessionInventoryCurrent;
   #observeWorkspaceSession;
   #stopWorkspaceAddedObserver;
   #stopWorkspaceRemovedObserver;
@@ -63691,6 +63932,8 @@ var WorkspaceTerminalInventoryRuntime = class {
     this.readRunner = pinnedReadRunner(authority, executeRead);
     this.#registry = options.registry;
     this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
+    this.#onInventory = options.onInventory ?? null;
+    this.#onSessionInventory = options.onSessionInventory ?? null;
     this.#discoverTerminalInventory = (signal) => this.#readInventory(signal);
     this.semanticPaneCatalog = options.semanticPaneCatalog ?? new SemanticPaneCatalog({
       discover: async () => {
@@ -63755,8 +63998,8 @@ var WorkspaceTerminalInventoryRuntime = class {
         const qualify = sessionRuntimeRegistry.prewarmProofQualifiedSession;
         return (typeof qualify === "function" ? qualify.call(sessionRuntimeRegistry, sessionName, runtimeSessionId, signal) : sessionRuntimeRegistry.prewarmSession(sessionName, signal)).then(() => void 0);
       };
-      this.#discoverTrustedSessionInventory = typeof sessionRuntimeRegistry.describeTrustedSessionInventory === "function" ? (sessionName, signal) => sessionRuntimeRegistry.describeTrustedSessionInventory(sessionName, signal) : null;
-      this.#trustedSessionInventoryReady = typeof sessionRuntimeRegistry.hasProofQualifiedInventory === "function" ? (sessionName) => sessionRuntimeRegistry.hasProofQualifiedInventory(sessionName) : null;
+      this.#discoverTrustedSessionInventory = typeof sessionRuntimeRegistry.describeTrustedSessionInventoryCandidate === "function" ? (sessionName, signal) => sessionRuntimeRegistry.describeTrustedSessionInventoryCandidate(sessionName, signal) : typeof sessionRuntimeRegistry.describeTrustedSessionInventory === "function" ? (sessionName, signal) => sessionRuntimeRegistry.describeTrustedSessionInventory(sessionName, signal).then((inventory) => ({ inventory, token: Object.freeze({}) })) : null;
+      this.#trustedSessionInventoryCurrent = typeof sessionRuntimeRegistry.isTrustedSessionInventoryCandidateCurrent === "function" ? (sessionName, token) => sessionRuntimeRegistry.isTrustedSessionInventoryCandidateCurrent(sessionName, token) : typeof sessionRuntimeRegistry.hasProofQualifiedInventory === "function" ? (sessionName) => sessionRuntimeRegistry.hasProofQualifiedInventory(sessionName) : null;
       this.#observeWorkspaceSession = (workspaceName, sessionName) => {
         const previousSessionName = sessionsByWorkspace.get(workspaceName);
         sessionsByWorkspace.set(workspaceName, sessionName);
@@ -63767,7 +64010,7 @@ var WorkspaceTerminalInventoryRuntime = class {
     } else {
       this.#prewarmSessionRuntime = null;
       this.#discoverTrustedSessionInventory = null;
-      this.#trustedSessionInventoryReady = null;
+      this.#trustedSessionInventoryCurrent = null;
       this.#observeWorkspaceSession = null;
     }
     this.#stopWorkspaceAddedObserver = options.registry.on("workspace.added", (workspace) => {
@@ -63784,8 +64027,8 @@ var WorkspaceTerminalInventoryRuntime = class {
       }
     });
   }
-  discoverTerminalInventory() {
-    return this.#discoverTerminalInventory();
+  discoverTerminalInventory(signal) {
+    return this.#discoverTerminalInventory(signal);
   }
   lifecycleState() {
     return this.#disposed ? "disposed" : this.#lifecycle;
@@ -63841,22 +64084,54 @@ var WorkspaceTerminalInventoryRuntime = class {
       () => discoverWorkspaceRegistryTerminalInventory(this.#registry, this.readRunner, signal)
     );
   }
-  async #readInventory(signal) {
+  #publishInventory(snapshot) {
+    try {
+      this.#onInventory?.(snapshot);
+    } catch {
+    }
+    return snapshot;
+  }
+  async #readInventory(signal, staleRetry = 0) {
     if (this.#disposed) throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
+    const epoch = this.#inventoryEpoch;
     if (signal) {
       if (signal.aborted) throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
-      return this.#readInventoryAttempt(signal);
+      let snapshot;
+      try {
+        snapshot = await this.#readInventoryAttempt(signal);
+      } catch (error) {
+        if (this.#inventoryEpoch !== epoch) {
+          if (staleRetry < 1) return this.#readInventory(signal, staleRetry + 1);
+          throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+        }
+        throw error;
+      }
+      if (signal.aborted) throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
+      if (this.#inventoryEpoch !== epoch) {
+        if (staleRetry < 1) return this.#readInventory(signal, staleRetry + 1);
+        throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+      }
+      return this.#publishInventory(snapshot);
     }
-    const epoch = this.#inventoryEpoch;
     if (this.#inventoryRead?.epoch === epoch) return this.#inventoryRead.promise;
     const abort = new AbortController();
-    const observedAttempt = this.#readInventoryAttempt(abort.signal);
-    const promise = observedAttempt.then(
-      (value) => abort.signal.aborted || this.#inventoryEpoch !== epoch ? this.#readInventory() : value
-    ).catch((error) => {
-      if (abort.signal.aborted || this.#inventoryEpoch !== epoch) return this.#readInventory();
-      throw error;
-    }).finally(() => {
+    const promise = (async () => {
+      let value;
+      try {
+        value = await this.#readInventoryAttempt(abort.signal);
+      } catch (error) {
+        if (abort.signal.aborted || this.#inventoryEpoch !== epoch) {
+          if (staleRetry < 1) return this.#readInventory(void 0, staleRetry + 1);
+          throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+        }
+        throw error;
+      }
+      if (abort.signal.aborted || this.#inventoryEpoch !== epoch) {
+        if (staleRetry < 1) return this.#readInventory(void 0, staleRetry + 1);
+        throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+      }
+      return this.#publishInventory(value);
+    })().finally(() => {
       if (this.#inventoryRead?.promise === promise) this.#inventoryRead = null;
     });
     this.#inventoryRead = { epoch, abort, promise };
@@ -63893,11 +64168,19 @@ var WorkspaceTerminalInventoryRuntime = class {
       return Promise.reject(new NativeTerminalAttachmentRuntimeError("runtime-disposed"));
     return this.#discoverTerminalRuntimeSession(requestedSessionName, signal);
   }
-  async #discoverTerminalRuntimeSession(requestedSessionName, signal) {
+  async #discoverTerminalRuntimeSession(requestedSessionName, signal, staleRetry = 0) {
+    const epoch = this.#inventoryEpoch;
     const assertLive = () => {
       if (signal.aborted || this.#disposed) {
         throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
       }
+    };
+    const retryIfReplaced = () => {
+      assertLive();
+      if (this.#inventoryEpoch === epoch) return null;
+      if (staleRetry < 1)
+        return this.#discoverTerminalRuntimeSession(requestedSessionName, signal, staleRetry + 1);
+      return Promise.reject(new NativeTerminalAttachmentRuntimeError("discovery-failed"));
     };
     assertLive();
     const memberships = this.#registry.list().filter((workspace2) => workspace2.sessionName === requestedSessionName);
@@ -63906,16 +64189,19 @@ var WorkspaceTerminalInventoryRuntime = class {
       throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
     const workspace = memberships[0];
     let inventory;
-    if (this.#discoverTrustedSessionInventory && this.#trustedSessionInventoryReady?.(workspace.sessionName)) {
+    let trustedInventory = false;
+    let trustedInventoryToken = null;
+    if (this.#discoverTrustedSessionInventory) {
       const trusted = await awaitInventoryUnlessAborted(
         this.#discoverTrustedSessionInventory(workspace.sessionName, signal),
         signal
       ).catch(() => null);
-      assertLive();
+      const trustedRetry = retryIfReplaced();
+      if (trustedRetry) return trustedRetry;
       if (trusted) {
         try {
           const panes2 = projectTrustedMirrorInventory(
-            trusted,
+            trusted.inventory,
             workspace.name,
             workspace.sessionName
           );
@@ -63940,6 +64226,8 @@ var WorkspaceTerminalInventoryRuntime = class {
             throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
           }
           inventory = Object.freeze({ panes: panes2, catalog });
+          trustedInventory = true;
+          trustedInventoryToken = trusted.token;
         } catch {
           assertLive();
           inventory = await awaitInventoryUnlessAborted(
@@ -63959,7 +64247,8 @@ var WorkspaceTerminalInventoryRuntime = class {
         signal
       );
     }
-    assertLive();
+    const inventoryRetry = retryIfReplaced();
+    if (inventoryRetry) return inventoryRetry;
     const panes = inventory.panes.filter(
       (pane) => pane.workspaceName === workspace.name && pane.sessionName === workspace.sessionName
     );
@@ -64001,9 +64290,22 @@ var WorkspaceTerminalInventoryRuntime = class {
         this.#prewarmSessionRuntime(workspace.sessionName, active2.sessionId, signal),
         signal
       ).catch(() => void 0);
-      assertLive();
+      const prewarmRetry = retryIfReplaced();
+      if (prewarmRetry) return prewarmRetry;
     }
-    assertLive();
+    const finalRetry = retryIfReplaced();
+    if (finalRetry) return finalRetry;
+    if (trustedInventory) {
+      if (trustedInventoryToken === null || this.#trustedSessionInventoryCurrent?.(workspace.sessionName, trustedInventoryToken) !== true) {
+        if (staleRetry < 1)
+          return this.#discoverTerminalRuntimeSession(requestedSessionName, signal, staleRetry + 1);
+        throw new NativeTerminalAttachmentRuntimeError("discovery-failed");
+      }
+      try {
+        this.#onSessionInventory?.(workspace.sessionName, shouldPrewarm ? inventory : null);
+      } catch {
+      }
+    }
     this.#observeWorkspaceSession?.(workspace.name, workspace.sessionName);
     return Object.freeze({
       workspaceName: workspace.name,
@@ -64949,6 +65251,7 @@ init_runtime_observability();
 
 // packages/daemon/src/terminal/session-runtime/multiplexer-backend.ts
 init_workspace_multiplexer_verbs();
+init_registry2();
 init_semantic_mutation_executor();
 function createSessionRuntimeMultiplexerBackend(options) {
   const owners = /* @__PURE__ */ new Map();
@@ -65001,7 +65304,10 @@ function createSessionRuntimeMultiplexerBackend(options) {
           claimedSource
         );
         if (!authenticatedContext) {
-          throw new Error("Authenticated host has no live controller grant for this mutation");
+          throw new WorkspaceMultiplexerError("operation_conflict", {
+            operationId: request.operationId,
+            reason: "authenticated_controller_unavailable"
+          });
         }
         const result = await submit(
           () => options.registry.submitAuthenticatedIntent(
@@ -65046,7 +65352,18 @@ function createSessionRuntimeMultiplexerBackend(options) {
       }
       const owner = acquireOwner(session);
       try {
-        const lease = owner.consumer.acquireController();
+        let lease;
+        try {
+          lease = owner.consumer.acquireController();
+        } catch (error) {
+          if (error instanceof SessionRuntimeControllerLeaseError && error.code === "controller-conflict") {
+            throw new WorkspaceMultiplexerError("operation_conflict", {
+              operationId: request.operationId,
+              reason: "controller_conflict"
+            });
+          }
+          throw error;
+        }
         const result = await submit(
           () => owner.consumer.submitIntent(
             lease,
@@ -65866,16 +66183,15 @@ async function startEmbeddedDaemon(opts) {
     let startedServer;
     try {
       const selector = tmuxAuthority.socketSelector;
-      const executeRuntimeIntent = (operationId, intent) => {
+      const executeRuntimeIntent = (operationId, intent, timing) => {
         if (intent.verb === "workspace.pane.read") {
           workspaceMultiplexer.readPane(operationId, intent);
           return;
         }
-        return workspaceMultiplexer.mutate({
-          operationId,
-          expectedDaemonInstanceId: instanceId,
-          intent
-        });
+        return workspaceMultiplexer.mutate(
+          { operationId, expectedDaemonInstanceId: instanceId, intent },
+          timing
+        );
       };
       const runtimeTracePath = process.env.TMUX_IDE_SESSION_RUNTIME_TRACE_LOG;
       runtimeTraceStream = runtimeTracePath ? createWriteStream(runtimeTracePath, { flags: "a", highWaterMark: 64 * 1024 }) : null;
@@ -65930,7 +66246,9 @@ async function startEmbeddedDaemon(opts) {
         semanticMutations: {
           resolveSession: (workspaceName) => workspaceRegistry.get(workspaceName)?.sessionName ?? null,
           execute: executeRuntimeIntent,
-          publishReceipt: (receipt) => broadcastInteractionReceipt(receipt, instanceId)
+          traceAuthority: { generation: instanceId, incarnation: null },
+          publishReceipt: (receipt) => broadcastInteractionReceipt(receipt, instanceId),
+          publishResourceChange: (change) => broadcastResourceChanged(change, instanceId)
         },
         mirror: {
           executable: tmuxAuthority.executablePath,
@@ -66000,6 +66318,8 @@ async function startEmbeddedDaemon(opts) {
           trustedCwd: dir
         },
         agentStatusProbeFactory: ({ run }) => createTmuxAgentStatusProbe({ run }),
+        onInventory: (snapshot) => workspaceMultiplexer.adoptPaneInventory(snapshot.panes),
+        onSessionInventory: (sessionName2, snapshot) => workspaceMultiplexer.adoptSessionPaneInventory(sessionName2, snapshot?.panes ?? []),
         ...runtimeObservability ? { observability: runtimeObservability } : {}
       };
       terminalInventoryRuntime = new WorkspaceTerminalInventoryRuntime(terminalRuntimeOptions);

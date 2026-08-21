@@ -20,6 +20,7 @@ import {
   type TuiTerminalTraceStageEvent,
   type TuiTerminalClockCalibrationEvent,
   type TuiTerminalTraceSpanEvent,
+  type TuiWindowPresentationFrameEvidence,
 } from "./performance-events.ts";
 
 const TRACE_PATH = process.env.TMUX_IDE_PERFORMANCE_TRACE_LOG;
@@ -365,7 +366,8 @@ export function createReferencePerformanceTraceSink(options: {
   let closed = false;
   const snapshot = () => Object.freeze({ pendingInputs: inputs.size, droppedInputs });
   return Object.freeze({
-    frame: (intervalMs: number) => {
+    detailedWindowPresentationFrames: detailed ? true : undefined,
+    frame: (intervalMs: number, window?: TuiWindowPresentationFrameEvidence | null) => {
       if (!detailed || closed) return;
       options.append({
         version: 1,
@@ -374,6 +376,7 @@ export function createReferencePerformanceTraceSink(options: {
         clockId: "opentui-performance-now",
         atMicros: nowMicros(),
         intervalMs,
+        window: window ?? null,
       });
     },
     terminalPaint: (dirtyRows: number, durationMs: number) => {

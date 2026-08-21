@@ -75,6 +75,7 @@ const GOLDEN_JOURNEYS = Object.freeze(
         "coherent-first-pane",
         "first-key-paste",
         "focus",
+        "window-lifecycle",
       ].includes(id)
         ? "implemented"
         : "pending",
@@ -421,6 +422,81 @@ export async function runFocusOwnerBoot(operations) {
   return Object.freeze({ namespace, identity, process, baseline, blur, reclaim, web });
 }
 
+/** Dedicated window lifecycle: coherent baseline → create → warm switches → rename → Web. */
+export async function runWindowLifecycleOwnerBoot(operations) {
+  const atBoundary = async (boundary, operation) => {
+    operations.onBoundary?.(boundary);
+    try {
+      return await operation();
+    } catch (error) {
+      if (error && typeof error === "object" && error.boundary) throw error;
+      const bounded = new Error(error instanceof Error ? error.message : String(error), {
+        cause: error,
+      });
+      bounded.boundary = boundary;
+      if (error?.observation) bounded.observation = error.observation;
+      throw bounded;
+    }
+  };
+  const namespace = await atBoundary("window-namespace-ready", () =>
+    operations.createWindowNamespace(),
+  );
+  const daemon = await atBoundary("window-daemon-ready", () =>
+    operations.startCanonicalDaemon(namespace),
+  );
+  const identity = await atBoundary("window-daemon-ready", () =>
+    operations.openCanonicalWorkspace(namespace, daemon),
+  );
+  await atBoundary("window-tui-build", () => operations.buildBeforeMeasurement(namespace));
+  const started = await atBoundary("window-tui-started", () =>
+    operations.launchWindowTui(namespace, daemon, identity),
+  );
+  const host = await atBoundary("window-host-ready", () =>
+    operations.waitForWindowHostReady(namespace, daemon, identity, started),
+  );
+  const process = await atBoundary("window-tui-coherent", () =>
+    operations.waitForWindowTuiCoherent(namespace, daemon, identity, started, host),
+  );
+  const baseline = await atBoundary("window-baseline", () =>
+    operations.proveWindowBaseline(namespace, daemon, identity, process),
+  );
+  const created = await atBoundary("window-create-proved", () =>
+    operations.createWindow(namespace, daemon, identity, process, baseline),
+  );
+  const primed = await atBoundary("window-switch-visible", () =>
+    operations.primeCreatedWindow(namespace, daemon, identity, process, baseline, created),
+  );
+  const renamed = await atBoundary("window-rename-visible", () =>
+    operations.renameWindow(namespace, daemon, identity, process, baseline, created, primed),
+  );
+  const switches = await atBoundary("window-switch-distribution", () =>
+    operations.driveWarmSwitches(namespace, daemon, identity, process, baseline, created, renamed),
+  );
+  const web = await atBoundary("window-web-correlation", () =>
+    operations.startWebAfterWindowLifecycle(
+      namespace,
+      daemon,
+      identity,
+      process,
+      baseline,
+      created,
+      switches,
+      renamed,
+    ),
+  );
+  return Object.freeze({
+    namespace,
+    identity,
+    process,
+    baseline,
+    created,
+    primed,
+    switches,
+    renamed,
+    web,
+  });
+}
+
 function exactTargetedTuiCwd(runtimeDir, { createMissing, hooks = {} }) {
   const fail = (reason, cause = undefined) => {
     const error = new Error(`targeted TUI isolated cwd preparation failed: ${reason}`, { cause });
@@ -568,6 +644,7 @@ export async function runIsolatedProductJourneyAttempt(entry, operations) {
   let failure = null;
   let failureBoundary = null;
   let cleanupFailure = null;
+  let validationFailure = null;
   let cleanupReceipt;
   const phase = (value) => operations.onPhase?.(value);
 
@@ -603,9 +680,22 @@ export async function runIsolatedProductJourneyAttempt(entry, operations) {
     }
   }
 
+  phase("post-cleanup-validation");
+  try {
+    await operations.validateAfterCleanup?.();
+  } catch (validationError) {
+    if (!failure) {
+      failure = validationError;
+      failureBoundary = productJourneyFailureBoundary(validationError, "post-cleanup-validation");
+    } else {
+      validationFailure = validationError;
+    }
+  }
+
   if (failure) {
     const failedResult = await operations.prepareFailure(failure, failureBoundary, cleanupReceipt);
     if (cleanupFailure) operations.appendCleanupFailure(failedResult, cleanupFailure);
+    if (validationFailure) operations.appendValidationFailure?.(failedResult, validationFailure);
     phase("failure-bundle-publication");
     const bundle = await operations.publishFailure(failedResult, cleanupReceipt);
     throw new ProductJourneyAttemptError(entry, failureBoundary, bundle, failure);
@@ -940,6 +1030,7 @@ export function prepareOwnedTuiRuntime({
     ...intendedTui,
     performanceTraceCommit: provenance.commit,
     performanceTraceTree: provenance.tree,
+    performanceTraceManifestDigest: provenance.manifestDigest ?? null,
   });
   publish({ tui });
   createRuntimeDir(tui.runtimeDir);

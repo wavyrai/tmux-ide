@@ -35,6 +35,7 @@ import type { GenerationBoundClock } from "./generation-bound-store.ts";
 import type {
   WorkspaceClientOperationSnapshot,
   WorkspaceClientPendingOperation,
+  WorkspaceClientResourceChangeAcknowledgement,
 } from "./workspace-client-operations.ts";
 import type { WorkspaceCatalogV2State } from "./workspace-catalog-v2.ts";
 
@@ -135,6 +136,7 @@ export interface WorkspaceClientRuntimePort<
   fitViewport(cols: number, rows: number): Promise<void>;
   setPresence?(state: SessionRuntimePresenceState): void;
   noteActivity?(activity: SessionRuntimeActivityKind): void;
+  ownsConnectionAuthority?(authority: SessionRuntimeAuthorityKind): boolean;
   requestAuthority?(
     authority: SessionRuntimeAuthorityKind,
   ): Promise<SessionRuntimeAuthorityLease | null>;
@@ -200,6 +202,10 @@ export interface WorkspaceClientPorts<
     runtime: WorkspaceClientRuntimePort<TerminalSnapshot, TerminalPatch, TerminalTombstone>,
     inventory: WorkspaceClientRuntimeInventory,
   ) => void;
+  /** The exact active runtime left live state while its supervisor reconnects. */
+  readonly didSuspendRuntime?: (
+    runtime: WorkspaceClientRuntimePort<TerminalSnapshot, TerminalPatch, TerminalTombstone>,
+  ) => void;
   /** Called only when no active runtime remains (empty inventory/target retirement). */
   readonly didRetireRuntime?: () => void;
   /** Presentation inventory disagreed with the newer terminal authority. */
@@ -262,6 +268,7 @@ export interface WorkspaceClient<
   fitViewport(cols: number, rows: number): Promise<"ok" | "authority-lost">;
   setPresence(state: SessionRuntimePresenceState): void;
   noteActivity(activity: SessionRuntimeActivityKind): void;
+  ownsRuntimeAuthority?(authority: SessionRuntimeAuthorityKind): boolean;
   requestAuthority(
     authority: SessionRuntimeAuthorityKind,
   ): Promise<SessionRuntimeAuthorityLease | null>;
@@ -277,4 +284,9 @@ export type WorkspaceOpenActionResult =
   | WorkspaceOpenCommittedResult
   | WorkspaceOpenCancelledResult;
 
-export type { InteractionReceipt, WorkspaceClientPendingOperation, GenerationBoundClock };
+export type {
+  InteractionReceipt,
+  WorkspaceClientPendingOperation,
+  WorkspaceClientResourceChangeAcknowledgement,
+  GenerationBoundClock,
+};

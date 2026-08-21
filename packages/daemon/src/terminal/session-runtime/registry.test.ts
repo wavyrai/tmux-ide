@@ -264,6 +264,10 @@ describe("SessionRuntimeRegistry", () => {
       },
     });
     await registry.prewarmProofQualifiedSession(FIXTURE.session, "$1");
+    const oldCandidate = await registry.describeTrustedSessionInventoryCandidate(FIXTURE.session);
+    expect(
+      registry.isTrustedSessionInventoryCandidateCurrent(FIXTURE.session, oldCandidate.token),
+    ).toBe(true);
     const oldWrites = sims[0]!.written.length;
 
     await registry.prewarmProofQualifiedSession(FIXTURE.session, "$2");
@@ -271,6 +275,15 @@ describe("SessionRuntimeRegistry", () => {
     expect(sims).toHaveLength(2);
     expect(sims[0]!.disposed).toBe(true);
     expect(sims[0]!.written).toHaveLength(oldWrites);
+    expect(
+      registry.isTrustedSessionInventoryCandidateCurrent(FIXTURE.session, oldCandidate.token),
+    ).toBe(false);
+    const currentCandidate = await registry.describeTrustedSessionInventoryCandidate(
+      FIXTURE.session,
+    );
+    expect(
+      registry.isTrustedSessionInventoryCandidateCurrent(FIXTURE.session, currentCandidate.token),
+    ).toBe(true);
     await expect(registry.describeTrustedSessionInventory(FIXTURE.session)).resolves.toMatchObject({
       runtimeSessionId: "$2",
     });
