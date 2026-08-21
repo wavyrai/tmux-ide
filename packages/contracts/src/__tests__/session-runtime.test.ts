@@ -1,13 +1,39 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  SessionRuntimeAuthorityLeaseSchemaZ,
+  SessionRuntimeAuthoritySnapshotSchemaZ,
   SessionRuntimeControllerLeaseSchemaZ,
   SessionRuntimeControllerSnapshotSchemaZ,
   SessionRuntimeSemanticIntentSchemaZ,
+  SessionRuntimeTerminalInputSchemaZ,
 } from "../session-runtime.ts";
 import { InteractionReceiptSchemaZ } from "../interaction-receipts.ts";
 
 describe("session runtime architecture contract", () => {
+  it("keeps terminal text and named keys as one closed canonical input union", () => {
+    expect(SessionRuntimeTerminalInputSchemaZ.parse({ kind: "text", data: "paste界" })).toEqual({
+      kind: "text",
+      data: "paste界",
+    });
+    for (const key of ["Up", "Enter", "C-c"]) {
+      expect(SessionRuntimeTerminalInputSchemaZ.parse({ kind: "key", data: key })).toEqual({
+        kind: "key",
+        data: key,
+      });
+    }
+    expect(
+      SessionRuntimeTerminalInputSchemaZ.safeParse({ kind: "text", data: "a\0b" }).success,
+    ).toBe(false);
+    expect(
+      SessionRuntimeTerminalInputSchemaZ.safeParse({ kind: "key", data: "Enter; kill-server" })
+        .success,
+    ).toBe(false);
+    expect(
+      SessionRuntimeTerminalInputSchemaZ.safeParse({ kind: "key", data: "\u001b[A" }).success,
+    ).toBe(false);
+  });
+
   it("pins controller capabilities to one client, session, revision, and daemon generation", () => {
     const lease = {
       generation: "11111111-1111-4111-8111-111111111111",
@@ -31,6 +57,45 @@ describe("session runtime architecture contract", () => {
         revision: 0,
       }),
     ).toMatchObject({ controllerClientId: null, revision: 0 });
+  });
+
+  it("pins separated authority leases to one capability and generation", () => {
+    const lease = {
+      generation: "11111111-1111-4111-8111-111111111111",
+      session: "alpha",
+      clientId: "client:web",
+      authority: "geometry" as const,
+      token: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      revision: 3,
+    };
+    expect(SessionRuntimeAuthorityLeaseSchemaZ.parse(lease)).toEqual(lease);
+    expect(
+      SessionRuntimeAuthorityLeaseSchemaZ.safeParse({ ...lease, authority: "controller" }).success,
+    ).toBe(false);
+  });
+
+  it("represents input, focus, and geometry owners independently", () => {
+    const snapshot = SessionRuntimeAuthoritySnapshotSchemaZ.parse({
+      generation: "11111111-1111-4111-8111-111111111111",
+      session: "alpha",
+      revision: 7,
+      owners: { input: "client:web", focus: null, geometry: "client:tui" },
+      nativeGeometryYieldUntilMs: 0,
+      clients: [
+        {
+          clientId: "client:web",
+          surface: "web",
+          state: "foreground",
+          connectedRevision: 1,
+          activityRevision: 4,
+        },
+      ],
+    });
+    expect(snapshot.owners).toEqual({
+      input: "client:web",
+      focus: null,
+      geometry: "client:tui",
+    });
   });
 
   it("accepts semantic intents and refuses raw tmux addresses", () => {

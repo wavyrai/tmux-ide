@@ -12,10 +12,10 @@ import {
 } from "../daemon-wire.ts";
 import { WorkspaceCatalogResourceV1SchemaZ } from "../workspace-catalog-resource.ts";
 
-const fixturePath = fileURLToPath(new URL("./fixtures/daemon-wire-v1.json", import.meta.url));
+const fixturePath = fileURLToPath(new URL("./fixtures/daemon-wire-v2.json", import.meta.url));
 
 describe("daemon wire protocol", () => {
-  it("validates the shared desktop/TypeScript v1 fixture", () => {
+  it("validates the shared desktop/TypeScript v2 fixture", () => {
     const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as Record<string, unknown>;
 
     expect(CanonicalDaemonInfoSchema.parse(fixture.canonical).protocolVersion).toBe(
@@ -34,15 +34,19 @@ describe("daemon wire protocol", () => {
       canonical: Record<string, unknown>;
       health: Record<string, unknown>;
     };
-    const health = DaemonHealthSchema.parse({ ...fixture.health, protocolVersion: 2 });
+    const unknownVersion = DAEMON_WIRE_PROTOCOL_VERSION + 1;
+    const health = DaemonHealthSchema.parse({
+      ...fixture.health,
+      protocolVersion: unknownVersion,
+    });
     const canonical = CanonicalDaemonInfoSchema.parse({
       ...fixture.canonical,
-      protocolVersion: 2,
+      protocolVersion: unknownVersion,
     });
 
-    expect(health.protocolVersion).toBe(2);
-    expect(canonical.protocolVersion).toBe(2);
-    expect(isDaemonWireProtocolCompatible(2)).toBe(false);
+    expect(health.protocolVersion).toBe(unknownVersion);
+    expect(canonical.protocolVersion).toBe(unknownVersion);
+    expect(isDaemonWireProtocolCompatible(unknownVersion)).toBe(false);
     expect(isDaemonWireProtocolCompatible(DAEMON_WIRE_PROTOCOL_VERSION)).toBe(true);
   });
 });

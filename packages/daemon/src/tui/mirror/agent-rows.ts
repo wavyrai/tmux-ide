@@ -36,6 +36,10 @@ export interface AgentRowInput {
   /** Self-reported display name (`@agent_display_name`) — row-label precedence
    *  over the detected `kind` ({@link agentDisplayKind}). */
   displayName?: string;
+  /** Opaque owner-action identities; present only after an unambiguous catalog join. */
+  fleetSessionId?: string;
+  fleetAgentId?: string;
+  fleetCatalogRevision?: string;
 }
 
 /** PURE — what an agent row is CALLED: the self-reported display name when one

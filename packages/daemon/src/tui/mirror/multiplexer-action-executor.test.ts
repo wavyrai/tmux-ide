@@ -57,17 +57,26 @@ function context() {
 
 function catalog(instanceId = INSTANCE): Response {
   return Response.json({
-    version: 1,
+    version: 2,
     daemon: {
       protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
       productVersion: "2.8.0",
       instanceId,
       startedAt: canonical.startedAt,
     },
-    workspaces: [
+    intents: [
       {
         workspaceName: "project-stable-identity",
         sessionName: "renamed-session",
+        source: "workspace",
+        availability: "live",
+      },
+    ],
+    liveSessions: [
+      {
+        sessionName: "renamed-session",
+        fleetSessionId: "session.aaaaaaaaaaaaaaaaaaaa",
+        paneCount: 2,
       },
     ],
   });

@@ -106,6 +106,7 @@ describe("terminal delivery client", () => {
     const committed = commitTerminalDelivery(state, completeTerminalDelivery(state, assembler));
     expect(committed.ack.canonicalRevision).toBe(0);
     expect(committed.state.canonicalSnapshot).not.toBeNull();
+    expect(committed.semanticUpdate).toMatchObject({ frame: "seed", revision: 0 });
   });
 
   it("rejects representation corruption and semantic frame confusion", () => {

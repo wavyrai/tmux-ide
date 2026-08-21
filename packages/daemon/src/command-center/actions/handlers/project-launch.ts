@@ -14,6 +14,7 @@ import { type ActionInput, type ActionResult } from "../contract.ts";
 import { resolveProject, type ProjectResolverDeps } from "./_resolve-project.ts";
 import { getDefaultWorkspaceRegistry } from "../../../lib/workspace-registry.ts";
 import { resolveProjectConfigContext } from "../../../lib/config-context.ts";
+import { isProjectVolatile } from "../../../lib/project-registry.ts";
 
 export interface ProjectLaunchDeps extends ProjectResolverDeps {
   hasSession?: (session: string) => boolean;
@@ -44,6 +45,7 @@ async function ensureWorkspaceRegistered(
       configKind: facts.configKind,
       configPath: facts.configPath,
       hasWorkspaceConfig: facts.hasWorkspaceConfig,
+      persistence: isProjectVolatile(name) ? "volatile" : "durable",
     });
   } catch {
     // ALREADY_EXISTS or persistence error — non-fatal; the next discover

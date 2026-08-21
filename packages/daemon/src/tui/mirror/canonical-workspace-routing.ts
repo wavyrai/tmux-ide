@@ -1,10 +1,17 @@
 import {
-  WorkspaceCatalogResourceV1SchemaZ,
+  WorkspaceCatalogResourceV2SchemaZ,
   type CanonicalDaemonInfo,
-  type WorkspaceCatalogResourceV1,
+  type WorkspaceCatalogResourceV2,
 } from "@tmux-ide/contracts";
 
 import { canonicalDaemonUrl } from "../../lib/canonical-daemon.ts";
+
+const WORKSPACE_CATALOG_ATTEMPTS = 3;
+const WORKSPACE_CATALOG_ATTEMPT_TIMEOUT_MS = 1_000;
+
+function isTimeout(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "TimeoutError";
+}
 
 /**
  * Read the generation-stamped workspace catalog used by trusted TUI adapters.
@@ -14,29 +21,43 @@ import { canonicalDaemonUrl } from "../../lib/canonical-daemon.ts";
  * only routing hints; daemon-owned actions always receive the stable workspace
  * name from this catalog.
  */
-export async function fetchCanonicalWorkspaceCatalog(
+export async function fetchCanonicalWorkspaceRouting(
   daemon: CanonicalDaemonInfo,
   request: typeof fetch = fetch,
-): Promise<WorkspaceCatalogResourceV1> {
+  signal?: AbortSignal,
+): Promise<WorkspaceCatalogResourceV2> {
   const baseUrl = canonicalDaemonUrl("http", daemon.bindHostname, daemon.port);
-  const response = await request(`${baseUrl}/api/resources/workspace-catalog`, {
-    signal: AbortSignal.timeout(1_000),
-  });
+  let response: Response | null = null;
+  for (let attempt = 0; attempt < WORKSPACE_CATALOG_ATTEMPTS; attempt += 1) {
+    try {
+      const timeout = AbortSignal.timeout(WORKSPACE_CATALOG_ATTEMPT_TIMEOUT_MS);
+      response = await request(`${baseUrl}/api/resources/workspace-catalog?version=2`, {
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+        cache: "no-store",
+      });
+      break;
+    } catch (error) {
+      if (signal?.aborted || !isTimeout(error) || attempt === WORKSPACE_CATALOG_ATTEMPTS - 1)
+        throw error;
+    }
+  }
+  if (!response) throw new Error("workspace catalog did not return a response");
   if (!response.ok) throw new Error(`workspace catalog returned HTTP ${response.status}`);
 
-  const catalog = WorkspaceCatalogResourceV1SchemaZ.parse(await response.json());
+  const catalog = WorkspaceCatalogResourceV2SchemaZ.parse(await response.json());
   if (catalog.daemon.instanceId !== daemon.instanceId) {
     throw new Error("daemon generation changed while resolving the workspace");
   }
   return catalog;
 }
 
-export function workspaceNameForSession(
-  catalog: WorkspaceCatalogResourceV1,
+export function workspaceNameForLiveSession(
+  catalog: WorkspaceCatalogResourceV2,
   sessionName: string,
 ): string | null {
   return (
-    catalog.workspaces.find((workspace) => workspace.sessionName === sessionName)?.workspaceName ??
-    null
+    catalog.intents.find(
+      (workspace) => workspace.sessionName === sessionName && workspace.availability === "live",
+    )?.workspaceName ?? null
   );
 }

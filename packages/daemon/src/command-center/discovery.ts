@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { listSessionPanes } from "../widgets/lib/pane-comms.ts";
 import type { PaneInfo } from "@tmux-ide/contracts";
 import { getDefaultWorkspaceRegistry } from "../lib/workspace-registry.ts";
-import { ADOPTED_OPTION } from "../tui/chrome/front-door.ts";
+import { ADOPTED_OPTION } from "../lib/chrome-front-door.ts";
 
 export interface SessionInfo {
   name: string;
@@ -70,6 +70,40 @@ export function listTmuxSessions(): string[] {
   const raw = tmuxSilent(["list-sessions", "-F", "#{session_name}"]);
   if (!raw) return [];
   return raw.split("\n").filter(Boolean);
+}
+
+export interface LiveSessionSummary {
+  readonly sessionName: string;
+  readonly paneCount: number;
+}
+
+/**
+ * Enumerate observed tmux truth without consulting the workspace registry.
+ *
+ * The V2 workspace catalog deliberately separates durable workspace intent
+ * from live tmux sessions. Reusing {@link discoverSessions} here would erase
+ * every ordinary, not-yet-promoted tmux session as soon as the registry has
+ * loaded, making the configless app unable to discover its own front door.
+ * Production passes the daemon-generation-pinned runner; the default keeps
+ * the small command-center test seam backwards compatible.
+ */
+export function discoverLiveSessionSummaries(
+  runTmux: TmuxRunner = _tmuxRunner,
+): LiveSessionSummary[] {
+  let raw: string;
+  try {
+    raw = runTmux(["list-panes", "-a", "-F", "#{session_name}"]);
+  } catch {
+    return [];
+  }
+  if (!raw) return [];
+  const paneCounts = new Map<string, number>();
+  for (const line of raw.split("\n")) {
+    const sessionName = line.trim();
+    if (!sessionName || !isVisibleFleetSession(sessionName)) continue;
+    paneCounts.set(sessionName, (paneCounts.get(sessionName) ?? 0) + 1);
+  }
+  return [...paneCounts].map(([sessionName, paneCount]) => ({ sessionName, paneCount }));
 }
 
 const AGENT_STATE_LINE = /^([^\t]+)\t(%[0-9]+)\t([^\t]*)\t(.*)$/u;
@@ -146,10 +180,10 @@ export function isVisibleFleetSession(name: string): boolean {
  * (e.g. no server) so a caller — the fleet-composition watcher — can hold its
  * baseline across a transient hiccup instead of reporting the whole fleet gone.
  */
-export function readAdoptedSessionNames(): string[] | null {
+export function readAdoptedSessionNames(runTmux: TmuxRunner = _tmuxRunner): string[] | null {
   let raw: string;
   try {
-    raw = _tmuxRunner(["list-sessions", "-F", `#{session_name}\t#{${ADOPTED_OPTION}}`]);
+    raw = runTmux(["list-sessions", "-F", `#{session_name}\t#{${ADOPTED_OPTION}}`]);
   } catch {
     return null;
   }
@@ -168,6 +202,10 @@ export function readAdoptedSessionNames(): string[] | null {
 /** One live pane, with the raw agent-authority options gathered for the fleet. */
 export interface FleetPaneFacts {
   readonly runtimePaneId: string;
+  /** Durable semantic pane stamp owned by tmux-ide, when one has been assigned. */
+  readonly semanticPaneId: string | null;
+  /** tmux pane process id; fences runtime id reuse and pane reincarnation. */
+  readonly incarnation: number;
   readonly active: boolean;
   readonly currentCommand: string;
   readonly currentPath: string;
@@ -198,6 +236,8 @@ const FLEET_LINE_SENTINEL = "tmux-ide-fleet-v1";
 const FLEET_PANE_FORMAT = [
   "#{session_name}",
   "#{pane_id}",
+  "#{@tmux_ide_pane_id}",
+  "#{pane_pid}",
   "#{pane_active}",
   "#{pane_current_command}",
   "#{pane_current_path}",
@@ -224,8 +264,9 @@ function emptyToNull(value: string): string | null {
  */
 export function readAdoptedFleet(
   registry: { list(): { sessionName: string }[] } = getDefaultWorkspaceRegistry(),
+  runTmux: TmuxRunner = _tmuxRunner,
 ): FleetSessionFacts[] | null {
-  const adopted = readAdoptedSessionNames();
+  const adopted = readAdoptedSessionNames(runTmux);
   if (adopted === null) return null;
   const adoptedSet = new Set(adopted);
   if (adoptedSet.size === 0) return [];
@@ -235,19 +276,22 @@ export function readAdoptedFleet(
   const panesBySession = new Map<string, FleetPaneFacts[]>();
   let panesRaw: string;
   try {
-    panesRaw = _tmuxRunner(["list-panes", "-a", "-F", FLEET_PANE_FORMAT]);
+    panesRaw = runTmux(["list-panes", "-a", "-F", FLEET_PANE_FORMAT]);
   } catch {
     panesRaw = "";
   }
   for (const line of panesRaw.split("\n")) {
     if (!line) continue;
     const fields = line.split(FLEET_FIELD_SEPARATOR);
-    // session, pane, active, command, path, state, statusText, displayName, hint, sentinel
-    if (fields.length !== 10 || fields[9] !== FLEET_LINE_SENTINEL) continue;
+    // session, pane, semantic pane, incarnation pid, active, command, path, state,
+    // statusText, displayName, hint, sentinel
+    if (fields.length !== 12 || fields[11] !== FLEET_LINE_SENTINEL) continue;
     const sessionName = fields[0]!;
     if (!adoptedSet.has(sessionName)) continue;
     const runtimePaneId = fields[1]!;
     if (!/^%[0-9]+$/u.test(runtimePaneId)) continue;
+    const incarnation = Number.parseInt(fields[3]!, 10);
+    if (!Number.isSafeInteger(incarnation) || incarnation < 1) continue;
     let panes = panesBySession.get(sessionName);
     if (!panes) {
       panes = [];
@@ -255,13 +299,15 @@ export function readAdoptedFleet(
     }
     panes.push({
       runtimePaneId,
-      active: fields[2] === "1",
-      currentCommand: fields[3]!,
-      currentPath: fields[4]!,
-      agentStateRaw: emptyToNull(fields[5]!),
-      agentStatusTextRaw: emptyToNull(fields[6]!),
-      agentDisplayNameRaw: emptyToNull(fields[7]!),
-      agentHintRaw: emptyToNull(fields[8]!),
+      semanticPaneId: emptyToNull(fields[2]!),
+      incarnation,
+      active: fields[4] === "1",
+      currentCommand: fields[5]!,
+      currentPath: fields[6]!,
+      agentStateRaw: emptyToNull(fields[7]!),
+      agentStatusTextRaw: emptyToNull(fields[8]!),
+      agentDisplayNameRaw: emptyToNull(fields[9]!),
+      agentHintRaw: emptyToNull(fields[10]!),
     });
   }
 
@@ -287,9 +333,12 @@ export function discoverSessions(): SessionInfo[] {
   // fall through to the legacy "any tmux session with a cwd" behavior.
   const registry = getDefaultWorkspaceRegistry();
   const enforceRegistry = registry._isLoaded();
+  const registeredSessionNames = enforceRegistry
+    ? new Set(registry.list().map(({ sessionName }) => sessionName))
+    : null;
 
   for (const name of sessionNames) {
-    if (enforceRegistry && !registry.has(name)) continue;
+    if (registeredSessionNames && !registeredSessionNames.has(name)) continue;
     const dir = getSessionCwd(name);
     if (!dir) continue;
 

@@ -19,6 +19,7 @@ import {
   readAgentStateFacts,
   readSessionCompositionFacts,
   type DaemonFleetFactsObserverOptions,
+  type DaemonFleetFactsObserverDiagnostic,
 } from "./daemon-fleet-facts-observer.ts";
 import { agentIdForPaneStamp } from "./resources/application-shell.ts";
 import { projectRegistryEmitter } from "../lib/project-registry.ts";
@@ -127,7 +128,14 @@ export function broadcastResourceChanged(
 ): DaemonEventResourceChangedFrame {
   useResourceEventGeneration(daemonInstanceId);
   const key = resourceRevisionKey(change.workspaceName, change.resource);
-  const previousRevision = resourceRevisions.get(key) ?? 0;
+  // Terminal topology has both global (out-of-band tmux) and workspace-scoped
+  // invalidations. They describe one authority and therefore require one
+  // monotonically increasing daemon-generation clock across both scopes.
+  const revisionKey =
+    change.resource === "terminal-runtime-inventory"
+      ? resourceRevisionKey(null, change.resource)
+      : key;
+  const previousRevision = resourceRevisions.get(revisionKey) ?? 0;
   // A domain revision (for example AppWindow documentRevision) is a useful
   // lower bound, not the resource projection's whole clock: pane creation and
   // tmux mutations also change application-shell. Always advance strictly so
@@ -142,13 +150,24 @@ export function broadcastResourceChanged(
     causeOperationId: change.causeOperationId ?? null,
   });
   resourceEventSequence = frame.sequence;
-  resourceRevisions.set(key, revision);
+  resourceRevisions.set(revisionKey, revision);
   resourceEventJournal.push(frame);
   if (resourceEventJournal.length > RESOURCE_EVENT_JOURNAL_LIMIT) {
     resourceEventJournal.splice(0, resourceEventJournal.length - RESOURCE_EVENT_JOURNAL_LIMIT);
   }
   for (const client of allClients) client.broadcastResourceChanged(frame);
   return frame;
+}
+
+/** Current generation-scoped revision for a resource snapshot read barrier. */
+export function currentResourceRevision(
+  workspaceName: string,
+  resource: DaemonEventResourceKind,
+): number {
+  return Math.max(
+    resourceRevisions.get(resourceRevisionKey(workspaceName, resource)) ?? 0,
+    resourceRevisions.get(resourceRevisionKey(null, resource)) ?? 0,
+  );
 }
 
 export interface InteractionReceiptBroadcast {
@@ -198,6 +217,7 @@ export function broadcastInteractionReceipt(
 let projectRegistryListener: (() => void) | null = null;
 let workspaceRegistryListenerReleases: readonly (() => void)[] = [];
 let fleetFactsObserver: DaemonFleetFactsObserver | null = null;
+let fleetFactsDiagnostics: DaemonFleetFactsObserverOptions["diagnostics"] | undefined;
 let fleetFactsReaderOverride: Pick<
   DaemonFleetFactsObserverOptions,
   "readSessions" | "readAgents"
@@ -238,7 +258,19 @@ function broadcastSessionCompositionChanged(): void {
       { workspaceName: null, resource: "fleet-catalog" },
       resourceEventGeneration,
     );
+    broadcastResourceChanged(
+      { workspaceName: null, resource: "terminal-runtime-inventory" },
+      resourceEventGeneration,
+    );
   }
+}
+
+function broadcastTerminalTopologyChanged(): void {
+  if (!resourceEventGeneration) return;
+  broadcastResourceChanged(
+    { workspaceName: null, resource: "terminal-runtime-inventory" },
+    resourceEventGeneration,
+  );
 }
 
 /**
@@ -253,6 +285,10 @@ function ensureProjectRegistryListener(): void {
     if (resourceEventGeneration) {
       broadcastResourceChanged(
         { workspaceName: null, resource: "workspace-catalog" },
+        resourceEventGeneration,
+      );
+      broadcastResourceChanged(
+        { workspaceName: null, resource: "terminal-runtime-inventory" },
         resourceEventGeneration,
       );
     }
@@ -345,7 +381,9 @@ function ensureFleetFactsObserver(): DaemonFleetFactsObserver {
   };
   fleetFactsObserver ??= new DaemonFleetFactsObserver({
     ...readers,
+    ...(fleetFactsDiagnostics ? { diagnostics: fleetFactsDiagnostics } : {}),
     onSessionsChanged: broadcastSessionCompositionChanged,
+    onTerminalTopologyChanged: broadcastTerminalTopologyChanged,
     onAdoptedChanged: broadcastAdoptedCompositionChanged,
     onAgentSessionsChanged: broadcastAgentSessionsChanged,
     onAgentTurnCompleted: (completion) => {
@@ -354,6 +392,16 @@ function ensureFleetFactsObserver(): DaemonFleetFactsObserver {
     },
   });
   return fleetFactsObserver;
+}
+
+export function setFleetFactsObserverDiagnostics(
+  diagnostics: {
+    readonly nowMicros: () => number;
+    readonly createTraceId: () => string;
+    readonly publish: (event: DaemonFleetFactsObserverDiagnostic) => void;
+  } | null,
+): void {
+  fleetFactsDiagnostics = diagnostics ?? undefined;
 }
 
 interface ResourceObservationHandle {
@@ -433,6 +481,11 @@ function acquireResourceObservation(
   if (interest.resource === "application-shell") {
     return acquireGlobalObserver("agents");
   }
+  if (interest.resource === "terminal-runtime-inventory") {
+    // Topology invalidations are emitted by the existing session/workspace
+    // composition authority. Crucially this lane never acquires agent polling.
+    return acquireGlobalObserver("sessions");
+  }
   if (isObservableWorkspaceResource(interest.resource) && interest.workspaceName !== null) {
     return ensureWorkspaceResourceObserver(daemonInstanceId).acquire(
       interest.workspaceName,
@@ -501,6 +554,14 @@ export function broadcastWorkspacePromotionCompleted(
 
 export function broadcastTerminalsChanged(sessionName: string): void {
   for (const client of allClients) client.broadcastTerminalsChanged(sessionName);
+  if (!resourceEventGeneration) return;
+  const workspaceName = workspaceNameForSession(sessionName);
+  if (workspaceName) {
+    broadcastResourceChanged(
+      { workspaceName, resource: "terminal-runtime-inventory" },
+      resourceEventGeneration,
+    );
+  }
 }
 
 function rawDataToText(data: RawData | string): string {
@@ -528,7 +589,7 @@ export function buildSessionSnapshot(sessionName: string): DaemonSessionSnapshot
 export function handleWsEventsConnection(
   socket: WebSocket | WsLike,
   daemonIdentity: DaemonInstanceIdentity,
-  options: { readonly mode?: "legacy" | "semantic" } = {},
+  options: { readonly mode?: "legacy" | "semantic"; readonly ownerAuthorized?: boolean } = {},
 ): void {
   useResourceEventGeneration(daemonIdentity.instanceId);
   const ws = socket as WsLike;
@@ -623,7 +684,9 @@ export function handleWsEventsConnection(
   const broadcastResourceChangedForClient = (frame: DaemonEventResourceChangedFrame): void => {
     if (
       legacyDeliveryEnabled ||
-      explicitInterestKeys.has(resourceRevisionKey(frame.workspaceName, frame.resource))
+      explicitInterestKeys.has(resourceRevisionKey(frame.workspaceName, frame.resource)) ||
+      (frame.workspaceName === null &&
+        [...explicitInterestKeys].some((key) => key.endsWith(`\0${frame.resource}`)))
     ) {
       send(frame);
       return;
@@ -694,6 +757,13 @@ export function handleWsEventsConnection(
   };
 
   const subscribeInterest = (interest: DaemonEventResourceInterest): ResourceObservationHandle => {
+    if (interest.resource === "terminal-runtime-inventory" && !options.ownerAuthorized) {
+      // Owner-only control retention: reject before acquiring any observer.
+      return {
+        ready: Promise.resolve({ status: "unavailable" }),
+        release: () => undefined,
+      };
+    }
     const key = resourceInterestKey(interest);
     const existing = interestHandles.get(key);
     if (existing && existing.status !== "unavailable") return existing.handle;

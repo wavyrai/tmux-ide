@@ -1,6 +1,7 @@
 import type { SemanticPaneCatalog } from "../attachments/semantic-pane-catalog.ts";
 import type { SessionRuntimeRegistry } from "../session-runtime/registry.ts";
 import { SessionRuntimeTransportBinder } from "../session-runtime/transport-binding.ts";
+import type { SessionRuntimeObservability } from "../session-runtime/runtime-observability.ts";
 import { PaneStreamLeaseManager } from "./lease-manager.ts";
 import {
   PaneStreamAdmissionCoordinator,
@@ -14,6 +15,7 @@ export interface PaneStreamRuntimeOptions {
   readonly sessionRuntimeRegistry: SessionRuntimeRegistry;
   /** Shared production authority and trusted semantic resolver. */
   readonly semanticPaneCatalog?: SemanticPaneCatalog;
+  readonly observability?: SessionRuntimeObservability;
   readonly admission?: Omit<
     PaneStreamAdmissionCoordinatorOptions,
     "daemonInstanceId" | "webSocketUrl" | "leaseManager" | "mirror"
@@ -40,6 +42,7 @@ export class PaneStreamRuntime {
       webSocketUrl: options.webSocketUrl,
       leaseManager,
       mirror: options.sessionRuntimeRegistry,
+      observability: options.observability,
       bindSessionRuntime: (descriptor) => {
         if (!descriptor.hostClientId) {
           throw new Error("Pane stream lacks trusted host identity");
@@ -53,6 +56,7 @@ export class PaneStreamRuntime {
           interactive: descriptor.viewerMode === "interactive",
           ownsGeometry:
             descriptor.viewerMode === "interactive" && descriptor.terminalDelivery !== null,
+          explicitAuthority: true,
         });
       },
     });

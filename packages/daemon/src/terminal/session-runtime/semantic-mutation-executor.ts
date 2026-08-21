@@ -20,7 +20,13 @@ import {
 import {
   DISABLED_SESSION_RUNTIME_OBSERVABILITY,
   type SessionRuntimeObservability,
+  type SessionRuntimeTraceAuthority,
+  type SessionRuntimeTraceContext,
 } from "./runtime-observability.ts";
+import {
+  semanticMutationResourceChanges,
+  type SemanticMutationResourceChange,
+} from "./semantic-mutation-resource-changes.ts";
 
 export type SessionRuntimeIntentResult = WorkspaceMultiplexerMutationResult | void;
 export type ExecutableSessionRuntimeIntent = SessionRuntimeSemanticIntent;
@@ -46,13 +52,20 @@ export interface SessionSemanticMutationExecutorOptions {
   readonly execute: (
     operationId: string,
     intent: ExecutableSessionRuntimeIntent,
+    timing?: Readonly<{
+      nowMicros(): number;
+      record(operation: string, startedAtMicros: number, endedAtMicros: number): void;
+    }>,
   ) => SessionRuntimeIntentResult;
   /** Publishes through the daemon's existing replayable interaction journal. */
   readonly publishReceipt: (receipt: SessionRuntimeReceiptInput) => InteractionReceipt;
+  /** Publishes the same replayable invalidation contract as HTTP semantic actions. */
+  readonly publishResourceChange?: (change: SemanticMutationResourceChange) => void;
   readonly observationTimeoutMs?: number;
   readonly now?: () => Date;
   readonly scheduler?: SessionRuntimeScheduler;
   readonly observability?: SessionRuntimeObservability;
+  readonly traceAuthority?: SessionRuntimeTraceAuthority;
 }
 
 export interface SessionSemanticMutationMetrics {
@@ -358,12 +371,49 @@ export class SessionSemanticMutationExecutor {
     }
 
     let result: SessionRuntimeIntentResult;
-    const tmuxStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
+    let trace: SessionRuntimeTraceContext | null = null;
+    if (this.#observability.enabled && this.#options.traceAuthority) {
+      try {
+        trace = this.#observability.beginTrace(
+          intent.verb === "workspace.pane.select" ? "window-switch" : "semantic-mutation",
+          this.#options.traceAuthority,
+          operationId,
+        );
+      } catch {
+        trace = null;
+      }
+    }
+    const timing = trace
+      ? {
+          nowMicros: () => this.#observability.nowMicros(),
+          record: (operation: string, startedAtMicros: number, endedAtMicros: number) => {
+            try {
+              this.#observability.recordSpan(
+                "tmux",
+                operation,
+                startedAtMicros,
+                endedAtMicros,
+                trace,
+              );
+            } catch {
+              // Qualification diagnostics never own semantic mutation.
+            }
+          },
+        }
+      : undefined;
+    let tmuxStarted: number | null = null;
+    if (this.#observability.enabled) {
+      try {
+        tmuxStarted = this.#observability.nowMicros();
+      } catch {
+        tmuxStarted = null;
+      }
+    }
     try {
       // Admission can wait behind prior work. Revalidate the opaque principal
       // at the last synchronous boundary before tmux receives any effect.
       authorizeBeforeEffect?.();
-      result = this.#options.execute(operationId, intent);
+      result = this.#options.execute(operationId, intent, timing);
     } catch (cause) {
       if (needsTmuxObservation) this.#deletePending(session, operationId);
       const error = new SessionRuntimeIntentError(
@@ -374,13 +424,19 @@ export class SessionSemanticMutationExecutor {
       this.#publish(operationId, intent, "rejected", null, undefined, origin);
       throw error;
     } finally {
-      if (this.#observability.enabled)
-        this.#observability.recordSpan(
-          "tmux",
-          "semantic-mutation-effect",
-          tmuxStarted,
-          this.#observability.nowMicros(),
-        );
+      if (tmuxStarted !== null)
+        try {
+          const tmuxEnded = this.#observability.nowMicros();
+          this.#observability.recordSpan(
+            "tmux",
+            "semantic-mutation-effect",
+            tmuxStarted,
+            tmuxEnded,
+            trace,
+          );
+        } catch {
+          // Qualification diagnostics never own semantic mutation.
+        }
     }
 
     try {
@@ -441,6 +497,13 @@ export class SessionSemanticMutationExecutor {
       result,
       origin,
     );
+    for (const change of semanticMutationResourceChanges(result)) {
+      try {
+        this.#options.publishResourceChange?.(change);
+      } catch {
+        // A resource observer cannot roll back an already-observed tmux mutation.
+      }
+    }
     return result;
   }
 

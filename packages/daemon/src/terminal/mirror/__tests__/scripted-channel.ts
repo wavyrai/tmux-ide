@@ -34,6 +34,9 @@ export class ScriptedChannelDriver {
     this.#maxTurns = options.maxTurns ?? 100;
     const basic = fixtureAutoReply(state);
     this.channel = new SimulatedChannel(handlers, (command) => {
+      if (command.startsWith('display-message -p "#{qa:session_name}')) {
+        return basic(command) ?? [];
+      }
       if (command.includes("capture-pane") || command.startsWith("display-message")) return null;
       return basic(command) ?? [];
     });
@@ -43,6 +46,7 @@ export class ScriptedChannelDriver {
   pump(): void {
     for (let index = this.#handledWrites; index < this.channel.written.length; index += 1) {
       const command = this.channel.written[index]!;
+      if (command.startsWith('display-message -p "#{qa:session_name}')) continue;
       if (command.includes("capture-pane") || command.startsWith("display-message")) {
         this.deferredCommands.push(command);
       }

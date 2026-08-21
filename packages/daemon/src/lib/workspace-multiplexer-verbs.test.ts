@@ -133,6 +133,14 @@ class FakeTmux {
       case "#{session_name}":
         return this.sessionName;
       default: {
+        if (field.startsWith("#{W:#{P:")) {
+          const semanticPaneId = /@tmux_ide_pane_id\},([A-Za-z0-9._-]+)/u.exec(field)?.[1];
+          if (!semanticPaneId) throw new Error(`unsupported pane loop: ${field}`);
+          return this.panes
+            .filter((candidate) => candidate.options.get("@tmux_ide_pane_id") === semanticPaneId)
+            .map((candidate) => candidate.id)
+            .join("");
+        }
         const option = /^#\{(@[a-z_]+)\}$/u.exec(field)?.[1];
         if (!option) throw new Error(`unsupported format: ${field}`);
         return pane.options.get(option) ?? window.options.get(option) ?? "";
@@ -183,10 +191,49 @@ class FakeTmux {
           // a verb that drops the colon fails here as well as live.
           (args[3] === `=${this.sessionName}:` ? this.panes[0] : undefined);
         if (!pane) throw new Error(`no such target: ${args[3]}`);
-        return args[4]!
+        const before = args[4]!
           .split("\t")
           .map((field) => this.#format(field, pane))
           .join("\t");
+        if (args.length === 5) return before;
+        if (
+          args[5] !== ";" ||
+          args[6] !== "if-shell" ||
+          args[7] !== "-F" ||
+          args[8] !== "-t" ||
+          args[9] !== args[3] ||
+          typeof args[10] !== "string" ||
+          typeof args[11] !== "string" ||
+          args[12] !== "" ||
+          args[13] !== ";" ||
+          args[14] !== "display-message" ||
+          args[15] !== "-p" ||
+          args[16] !== "-t" ||
+          args[17] !== args[3] ||
+          args[18] !== args[4] ||
+          args.length !== 19
+        ) {
+          throw new Error(`unsupported atomic selection: ${args.join(" ")}`);
+        }
+        const exactPrecondition = before.split("\t").slice(0, 4).join("\t");
+        const condition = `#{==:${args[4]!.split("\t").slice(0, 4).join("\t")},${exactPrecondition}}`;
+        if (args[10] === condition) {
+          const selection = /^select-window -t (@[0-9]+) ; select-pane -t (%[0-9]+)$/u.exec(
+            args[11]!,
+          );
+          if (!selection) throw new Error(`unsupported guarded selection: ${args[11]}`);
+          for (const window of this.windows) window.active = window.id === selection[1];
+          const selected = this.#pane(selection[2]!);
+          for (const other of this.panes) {
+            if (other.windowId === selected.windowId) other.active = other.id === selected.id;
+          }
+        }
+        const selected = this.#pane(args[17]!);
+        const after = args[18]!
+          .split("\t")
+          .map((field) => this.#format(field, selected))
+          .join("\t");
+        return `${before}\n${after}`;
       }
       case "set-option": {
         if (args[1] !== "-p") throw new Error("unsupported set-option");
@@ -451,6 +498,10 @@ describe("the multiplexer authority", () => {
         isMissingTmuxTarget: (error) => /no such session/u.test(String(error)),
       },
     });
+    authority.adoptPaneInventory([
+      { sessionName: "work", semanticPaneId: "pane.one", runtimePaneId: "%0", windowId: "@0" },
+      { sessionName: "work", semanticPaneId: "pane.two", runtimePaneId: "%1", windowId: "@1" },
+    ]);
   });
 
   afterEach(() => {
@@ -759,6 +810,11 @@ describe("the multiplexer authority", () => {
       expect(tmux.sessionName).toBe("rebuilt");
       // The workspace name is identity and never moves; only the session does.
       expect(registry.get("work")?.sessionName).toBe("rebuilt");
+      tmux.calls.length = 0;
+      expect(
+        authority.mutate(request({ verb: "workspace.pane.select", semanticPaneId: "pane.two" })),
+      ).toMatchObject({ outcome: "applied" });
+      expect(tmux.calls).toHaveLength(1);
     });
 
     it("renames a window and follows the display title of its only pane", async () => {
@@ -1043,6 +1099,121 @@ describe("the multiplexer authority", () => {
   });
 
   describe("zoom and select", () => {
+    it("refuses a cold select before any tmux subprocess or mutation", async () => {
+      const cold = new WorkspaceMultiplexerAuthority({
+        daemonInstanceId: DAEMON_ID,
+        registry,
+        io: {
+          runTmux: tmux.run,
+          canonicalProjectDir: (path) => path,
+          isMissingTmuxTarget: (error) => /no such session/u.test(String(error)),
+        },
+      });
+      tmux.calls.length = 0;
+      await expectRefusal(
+        () => cold.mutate(request({ verb: "workspace.pane.select", semanticPaneId: "pane.two" })),
+        "workspace_unavailable",
+      );
+      expect(tmux.calls).toEqual([]);
+      expect(tmux.windows[0]!.active).toBe(true);
+    });
+
+    it("bounds adopted session candidates and evicts the oldest before selection", async () => {
+      authority.adoptPaneInventory([
+        { sessionName: "work", semanticPaneId: "pane.one", runtimePaneId: "%0", windowId: "@0" },
+        ...Array.from({ length: 512 }, (_, index) => ({
+          sessionName: `session-${index}`,
+          semanticPaneId: `pane-${index}`,
+          runtimePaneId: `%${index + 10}`,
+          windowId: `@${index + 10}`,
+        })),
+      ]);
+      tmux.calls.length = 0;
+      await expectRefusal(
+        () =>
+          authority.mutate(request({ verb: "workspace.pane.select", semanticPaneId: "pane.one" })),
+        "workspace_unavailable",
+      );
+      expect(tmux.calls).toEqual([]);
+    });
+
+    it("wires a trusted A-to-A+B session projection into the first guarded B select", () => {
+      registry.add({ name: "sibling", sessionName: "sibling", projectDir: dir });
+      authority.adoptPaneInventory([
+        { sessionName: "work", semanticPaneId: "pane.one", runtimePaneId: "%0", windowId: "@0" },
+        {
+          sessionName: "sibling",
+          semanticPaneId: "pane.two",
+          runtimePaneId: "%1",
+          windowId: "@1",
+        },
+      ]);
+      const onSessionInventory = (
+        sessionName: string,
+        snapshot: {
+          panes: readonly {
+            sessionName: string;
+            semanticPaneId: string | null;
+            runtimePaneId: string;
+            windowId: string;
+          }[];
+        },
+      ): boolean => authority.adoptSessionPaneInventory(sessionName, snapshot.panes);
+      expect(
+        onSessionInventory("work", {
+          panes: [
+            {
+              sessionName: "work",
+              semanticPaneId: "pane.one",
+              runtimePaneId: "%0",
+              windowId: "@0",
+            },
+            {
+              sessionName: "work",
+              semanticPaneId: "pane.two",
+              runtimePaneId: "%1",
+              windowId: "@1",
+            },
+          ],
+        }),
+      ).toBe(true);
+
+      tmux.calls.length = 0;
+      expect(
+        authority.mutate(request({ verb: "workspace.pane.select", semanticPaneId: "pane.two" })),
+      ).toMatchObject({ outcome: "applied" });
+      expect(tmux.calls).toHaveLength(1);
+
+      tmux.calls.length = 0;
+      expect(
+        authority.mutate(
+          request({
+            verb: "workspace.pane.select",
+            workspaceName: "sibling",
+            semanticPaneId: "pane.two",
+          }),
+        ),
+      ).toMatchObject({ outcome: "unchanged" });
+      expect(tmux.calls).toHaveLength(1);
+    });
+
+    it("invalidates only the target session cache when a scoped projection is malformed", async () => {
+      expect(
+        authority.adoptSessionPaneInventory("work", [
+          { sessionName: "work", semanticPaneId: "pane.two", runtimePaneId: "%1", windowId: "@1" },
+          { sessionName: "work", semanticPaneId: "pane.two", runtimePaneId: "%0", windowId: "@0" },
+        ]),
+      ).toBe(false);
+
+      tmux.calls.length = 0;
+      await expectRefusal(
+        () =>
+          authority.mutate(request({ verb: "workspace.pane.select", semanticPaneId: "pane.two" })),
+        "workspace_unavailable",
+      );
+      expect(tmux.calls).toEqual([]);
+    });
+
     it("zooms and unzooms with the toggle", async () => {
       const zoomed = await authority.mutate(
         request({ verb: "workspace.pane.zoom.toggle", semanticPaneId: "pane.one" }),
@@ -1080,10 +1251,50 @@ describe("the multiplexer authority", () => {
       );
       expect(result).toMatchObject({ outcome: "applied" });
       // Both halves ran, and in the order that leaves the pane active.
-      const verbs = tmux.calls.map((args) => args[0]);
-      expect(verbs.indexOf("select-window")).toBeLessThan(verbs.indexOf("select-pane"));
+      const selection = tmux.calls.find((args) =>
+        args.some((argument) => argument.includes("select-window")),
+      );
+      expect(selection).toBeDefined();
+      const guarded = selection!.find((argument) => argument.includes("select-window"))!;
+      expect(guarded.indexOf("select-window")).toBeLessThan(guarded.indexOf("select-pane"));
       expect(tmux.windows.find((window) => window.id === "@1")!.active).toBe(true);
       expect(tmux.panes.find((pane) => pane.id === "%1")!.active).toBe(true);
+    });
+
+    it("records bounded select subphases only through the optional same-operation timing port", async () => {
+      let micros = 0;
+      const spans: Array<{ operation: string; start: number; end: number }> = [];
+      const result = await authority.mutate(
+        request({ verb: "workspace.pane.select", semanticPaneId: "pane.two" }),
+        {
+          nowMicros: () => (micros += 10),
+          record: (operation, start, end) => spans.push({ operation, start, end }),
+        },
+      );
+      expect(result).toMatchObject({ outcome: "applied" });
+      expect(spans.map(({ operation }) => operation)).toEqual([
+        "semantic-pane-inventory-lookup",
+        "semantic-pane-resolution",
+        "tmux-selection-effect-proof",
+      ]);
+      expect(spans.every(({ start, end }) => end >= start)).toBe(true);
+
+      expect(
+        authority.mutate(request({ verb: "workspace.pane.select", semanticPaneId: "pane.one" }), {
+          nowMicros: () => (micros += 10),
+          record: () => {
+            throw new Error("diagnostic sink");
+          },
+        }),
+      ).toMatchObject({ outcome: "applied" });
+      expect(
+        authority.mutate(request({ verb: "workspace.pane.select", semanticPaneId: "pane.one" }), {
+          nowMicros: () => {
+            throw new Error("diagnostic clock");
+          },
+          record: () => undefined,
+        }),
+      ).toMatchObject({ outcome: "unchanged" });
     });
 
     it("reports selecting the already-focused pane as unchanged", async () => {
@@ -1093,12 +1304,50 @@ describe("the multiplexer authority", () => {
       expect(result).toMatchObject({ outcome: "unchanged" });
     });
 
+    it("uses one guarded tmux subprocess after the authoritative inventory is warm", async () => {
+      authority.mutate(request({ verb: "workspace.pane.select", semanticPaneId: "pane.two" }));
+      tmux.calls.length = 0;
+      const result = authority.mutate(
+        request({ verb: "workspace.pane.select", semanticPaneId: "pane.one" }),
+      );
+      expect(result).toMatchObject({ outcome: "applied" });
+      expect(tmux.calls).toHaveLength(1);
+      expect(tmux.calls[0]).toContain("if-shell");
+      expect(tmux.calls[0]).not.toContain("list-panes");
+    });
+
+    it("fails closed without selecting when a cached pane identity is remapped", async () => {
+      authority.mutate(request({ verb: "workspace.pane.select", semanticPaneId: "pane.two" }));
+      tmux.panes[0]!.options.set("@tmux_ide_pane_id", "pane.remapped");
+      tmux.calls.length = 0;
+      await expectRefusal(
+        () =>
+          authority.mutate(request({ verb: "workspace.pane.select", semanticPaneId: "pane.one" })),
+        "mutation_unverified",
+      );
+      expect(tmux.windows.find((window) => window.id === "@1")!.active).toBe(true);
+      expect(tmux.calls).toHaveLength(1);
+    });
+
+    it("fails closed without selecting when a second pane duplicates the cached semantic stamp", async () => {
+      authority.mutate(request({ verb: "workspace.pane.select", semanticPaneId: "pane.two" }));
+      tmux.panes[1]!.options.set("@tmux_ide_pane_id", "pane.one");
+      tmux.calls.length = 0;
+      await expectRefusal(
+        () =>
+          authority.mutate(request({ verb: "workspace.pane.select", semanticPaneId: "pane.one" })),
+        "mutation_unverified",
+      );
+      expect(tmux.windows.find((window) => window.id === "@1")!.active).toBe(true);
+      expect(tmux.calls).toHaveLength(1);
+    });
+
     it("refuses a pane that no longer carries the requested stamp", async () => {
       tmux.panes[0]!.options.delete("@tmux_ide_pane_id");
       await expectRefusal(
         () =>
           authority.mutate(request({ verb: "workspace.pane.select", semanticPaneId: "pane.one" })),
-        "pane_not_found",
+        "mutation_unverified",
       );
     });
   });

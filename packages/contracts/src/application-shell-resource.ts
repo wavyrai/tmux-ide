@@ -10,8 +10,6 @@ import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
 export const APPLICATION_SHELL_RESOURCE_V1_VERSION = 1 as const;
 export const APPLICATION_SHELL_RESOURCE_V2_VERSION = 2 as const;
 export const APPLICATION_SHELL_RESOURCE_V3_VERSION = 3 as const;
-/** @deprecated Use the explicit version constants at a wire boundary. */
-export const APPLICATION_SHELL_RESOURCE_VERSION = APPLICATION_SHELL_RESOURCE_V1_VERSION;
 
 /**
  * Strict daemon-bound REST envelope. The projection input is not trusted

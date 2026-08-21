@@ -117,6 +117,32 @@ describe("OpenTUI terminal workspace adapter", () => {
     await lifecycle.shutdown("host");
   });
 
+  it("keeps pane subscribers stable while fencing replacement and disposal generations", async () => {
+    const lifecycle = new TuiApplicationLifecycle({ destroyRenderer: vi.fn() });
+    const adapter = new OpenTuiTerminalWorkspaceAdapter({ target: "alpha", lifecycle });
+    lifecycle.registerCloser("terminal-workspace", () => adapter.dispose());
+    const editor = vi.fn();
+    const tests = vi.fn();
+    adapter.subscribePaneVersion("pane.editor", editor);
+    adapter.subscribePaneVersion("pane.tests", tests);
+
+    const retiringGeneration = adapter.beginPaneGeneration();
+    expect(adapter.publishPaneVersion(retiringGeneration, "pane.editor", 1)).toBe(true);
+
+    const replacementGeneration = adapter.beginPaneGeneration();
+    expect(adapter.publishPaneVersion(retiringGeneration, "pane.editor", 2)).toBe(false);
+    expect(adapter.publishPaneVersion(replacementGeneration, "pane.editor", 1)).toBe(true);
+    expect(editor.mock.calls).toEqual([
+      [1, 0],
+      [2, 0],
+    ]);
+    expect(tests).not.toHaveBeenCalled();
+
+    await lifecycle.shutdown("host");
+    expect(adapter.publishPaneVersion(replacementGeneration, "pane.editor", 2)).toBe(false);
+    expect(editor).toHaveBeenCalledTimes(2);
+  });
+
   it("allocates and forwards a trace only while an opt-in input observer is installed", async () => {
     const lifecycle = new TuiApplicationLifecycle({ destroyRenderer: vi.fn() });
     const adapter = new OpenTuiTerminalWorkspaceAdapter({ target: "alpha", lifecycle });

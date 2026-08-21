@@ -25,8 +25,13 @@ import {
 import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../../../../test-support/opentui-production-root-manifest.ts";
 
 const repoRoot = fileURLToPath(new URL("../../../../../../", import.meta.url));
+const APPLICATION_ROOT_OWNER_SOURCES = [
+  ...OPENTUI_PRODUCTION_ROOT_SOURCES,
+  "packages/daemon/src/tui/mirror/runtime/application-terminal-interaction-controller.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-shell-view.tsx",
+] as const;
 const productionRootSource = () =>
-  OPENTUI_PRODUCTION_ROOT_SOURCES.map((path) => readFileSync(join(repoRoot, path), "utf8")).join(
+  APPLICATION_ROOT_OWNER_SOURCES.map((path) => readFileSync(join(repoRoot, path), "utf8")).join(
     "\n",
   );
 
@@ -332,21 +337,39 @@ describe("OpenTUI canonical application-shell controller", () => {
       "utf8",
     );
     const app = productionRootSource();
+    const applicationRoot = readFileSync(
+      join(repoRoot, "packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx"),
+      "utf8",
+    );
+    const terminalInteraction = readFileSync(
+      join(
+        repoRoot,
+        "packages/daemon/src/tui/mirror/runtime/application-terminal-interaction-controller.ts",
+      ),
+      "utf8",
+    );
     expect(workbench).not.toContain("const DOCK_TABS");
     expect(app).not.toContain("<ShellTabBar");
     expect(app).not.toContain("RENDERER_COMMAND_IDS.openPalette");
     expect(app).not.toContain("rendererInvocationForCanvas(");
     expect(app).not.toContain("rendererInvocationForDock(");
-    expect(app).toContain("submitSemanticPaneFocus(runtimePaneId)");
-    expect(app).toContain('verb: "workspace.pane.select"');
-    expect(app).toContain("mirror={semanticReplica()!.adapter.renderSource}");
-    expect(app).not.toContain("semanticView={semanticReplica()?.lane.source");
-    expect(app).toContain("semanticViewportAcknowledged()");
+    expect(app).toContain("createOpenTuiSessionOwner({");
+    expect(applicationRoot).toContain("createApplicationTerminalInteractionController({");
+    expect(applicationRoot).not.toContain("new TerminalPaneInputRouter<");
+    expect(applicationRoot).not.toContain("selectTerminalPane(");
+    expect(terminalInteraction).toContain("new TerminalPaneInputRouter<{");
+    expect(terminalInteraction.replace(/\s+/gu, " ")).toContain(
+      "selectTerminalPane( expected, liveSelectionTarget, paneId, operationId, (failure) =>",
+    );
+    expect(app).toContain("active.fastLane.lane.sendInput(");
+    expect(app).toContain("fixture?.probe");
+    expect(app).toContain("<ApplicationTerminalWorkspace");
     expect(app).not.toMatch(
       /semanticView\?*\.(?:command|commandList|switchWindow|sendTextTo|sendKey)\(/u,
     );
+    expect(app).not.toMatch(/<WorkbenchShell\b/u);
+    expect(app.match(/<ApplicationShellView\b/gu)).toHaveLength(1);
     expect(app.match(/<ApplicationShell\b/gu)).toHaveLength(1);
-    expect(app.match(/<WorkbenchShell\b/gu)).toHaveLength(1);
     expect(app.match(/\buseKeyboard\(/gu)).toHaveLength(1);
     expect(app.match(/\busePaste\(/gu)).toHaveLength(1);
 

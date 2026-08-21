@@ -1,4 +1,5 @@
 import type { DesktopDaemonTransportState } from "@tmux-ide/contracts";
+import type { SessionRuntimeActivityKind, SessionRuntimePresenceState } from "@tmux-ide/contracts";
 
 import type {
   PaneMirrorEvent,
@@ -196,6 +197,15 @@ export class PaneMirrorController {
       layouts: [...this.#layouts],
       fault: this.#fault,
     };
+  }
+
+  updatePresence(state: SessionRuntimePresenceState): void {
+    this.#session?.updatePresence?.(state);
+    this.#candidate?.session?.updatePresence?.(state);
+  }
+
+  noteActivity(activity: SessionRuntimeActivityKind): void {
+    this.#session?.noteActivity?.(activity);
   }
 
   /**

@@ -644,6 +644,102 @@ describe("the layout-faithful workspace view", () => {
     expect(renderSurface([SPLIT]).root.querySelectorAll(".pane-tile")).toHaveLength(2);
   });
 
+  it("publishes stable sorted window membership for a multi-pane window", () => {
+    const { root } = renderSurface([SPLIT], {
+      fallbackWindows: [
+        {
+          key: "terminal-window.hashed-editor",
+          label: "editor",
+          panes: ["pane.b", "pane.a"],
+          active: true,
+        },
+      ],
+    });
+    const tab = root.querySelector<HTMLElement>(".window-tabs__tab")!;
+    expect(tab.dataset.windowTab).toBe("window.editor");
+    expect(tab.dataset.windowResourceId).toBe("terminal-window.hashed-editor");
+    expect(tab.dataset.windowLabel).toBe("editor");
+    expect(tab.dataset.semanticPaneIds).toBe('["pane.a","pane.b"]');
+    expect(tab.dataset.paneCount).toBe("2");
+    expect(tab.dataset.active).toBe("true");
+  });
+
+  it("bounds the diagnostic window label and excludes control characters", () => {
+    const renderLabel = (label: string) =>
+      renderSurface([layout({ windowName: label, panes: SPLIT.panes })], {
+        fallbackWindows: [
+          {
+            key: "terminal-window.hashed-editor",
+            label,
+            panes: ["pane.b", "pane.a"],
+            active: true,
+          },
+        ],
+      }).root.querySelector<HTMLElement>(".window-tabs__tab")!.dataset.windowLabel;
+    expect(renderLabel("renamed-window")).toBe("renamed-window");
+    expect(renderLabel("x".repeat(257))).toBe("");
+    expect(renderLabel("bad\nlabel")).toBe("");
+  });
+
+  it("fails closed when a layout window has no unique inventory membership join", () => {
+    const missing = renderSurface([SPLIT]).root.querySelector<HTMLElement>(".window-tabs__tab")!;
+    expect(missing.dataset.windowResourceId).toBe("");
+    const ambiguous = renderSurface([SPLIT], {
+      fallbackWindows: [
+        { key: "window.one", label: "one", panes: ["pane.a", "pane.b"], active: true },
+        { key: "window.two", label: "two", panes: ["pane.b", "pane.a"], active: false },
+      ],
+    }).root.querySelector<HTMLElement>(".window-tabs__tab")!;
+    expect(ambiguous.dataset.windowResourceId).toBe("");
+  });
+
+  it("joins raw multiwindow layout stamps to hashed inventory window resources", () => {
+    const other = layout({
+      semanticWindowId: "raw-window-stamp.two",
+      windowName: "two",
+      currentWindow: false,
+      panes: [{ pane: "pane.c", left: 0, top: 0, width: 200, height: 50, active: true }],
+    });
+    const first = { ...SPLIT, semanticWindowId: "raw-window-stamp.one" };
+    const { root } = renderSurface([first, other], {
+      fallbackWindows: [
+        {
+          key: "terminal-window.11111111111111111111",
+          label: "one",
+          panes: ["pane.a", "pane.b"],
+          active: true,
+        },
+        {
+          key: "terminal-window.22222222222222222222",
+          label: "two",
+          panes: ["pane.c"],
+          active: false,
+        },
+      ],
+    });
+    expect(
+      [...root.querySelectorAll<HTMLElement>(".window-tabs__tab")].map((tab) => ({
+        raw: tab.dataset.windowTab,
+        resource: tab.dataset.windowResourceId,
+        panes: tab.dataset.semanticPaneIds,
+        active: tab.dataset.active,
+      })),
+    ).toEqual([
+      {
+        raw: "raw-window-stamp.one",
+        resource: "terminal-window.11111111111111111111",
+        panes: '["pane.a","pane.b"]',
+        active: "true",
+      },
+      {
+        raw: "raw-window-stamp.two",
+        resource: "terminal-window.22222222222222222222",
+        panes: '["pane.c"]',
+        active: "false",
+      },
+    ]);
+  });
+
   it("uses the whole panel header as the drag handle", async () => {
     const { root, invoke } = renderSurface([SPLIT]);
     const overlay = root.querySelector<HTMLElement>(".tiled-pane-area__overlay")!;

@@ -48,6 +48,15 @@ const SEMANTIC_PANE_OPTION = "@tmux_ide_pane_id";
 const SEMANTIC_WINDOW_OPTION = "@tmux_ide_window_id";
 const DISPLAY_TITLE_OPTION = "@ide_name";
 
+function boundedCacheIdentity(value: string): boolean {
+  if (value.length === 0 || value.length > 256) return false;
+  for (const character of value) {
+    const codePoint = character.codePointAt(0)!;
+    if (codePoint < 0x20 || codePoint === 0x7f) return false;
+  }
+  return true;
+}
+
 export type WorkspaceMultiplexerErrorCode =
   | "daemon_instance_mismatch"
   | "workspace_not_found"
@@ -61,6 +70,7 @@ export type WorkspaceMultiplexerErrorCode =
   | "last_pane_refused"
   | "mutation_failed"
   | "mutation_unverified"
+  | "operation_conflict"
   /** Refused: a one-pane window has no border to move. */
   | "single_pane_window"
   /** Refused: a zoomed pane fills its window, so its size is not the layout's. */
@@ -81,6 +91,7 @@ const ERROR_MESSAGES: Readonly<Record<WorkspaceMultiplexerErrorCode, string>> = 
     "This is the session's last pane. Close the session instead if that is what you mean.",
   mutation_failed: "tmux refused the requested change.",
   mutation_unverified: "tmux accepted the change but the result could not be verified.",
+  operation_conflict: "Another live controller owns this workspace mutation.",
   single_pane_window: "This window has only one pane, so it has no border to move.",
   zoomed_window_refused: "Unzoom this window before resizing its panes.",
   different_window_refused: "Panes can only be swapped inside the same window.",
@@ -253,6 +264,11 @@ export interface WorkspaceMultiplexerIo {
   readonly isMissingTmuxTarget: (error: unknown) => boolean;
 }
 
+export interface WorkspaceMultiplexerOperationTiming {
+  nowMicros(): number;
+  record(operation: string, startedAtMicros: number, endedAtMicros: number): void;
+}
+
 function canonicalProjectDir(path: string): string {
   const canonical = realpathSync(path);
   if (!statSync(canonical).isDirectory()) throw new Error("project root is not a directory");
@@ -266,10 +282,16 @@ const DEFAULT_IO: Omit<WorkspaceMultiplexerIo, "runTmux"> = {
     (error.code === "SESSION_NOT_FOUND" || error.code === "TMUX_UNAVAILABLE"),
 };
 
+const MAX_CACHED_SESSIONS = 512;
+
 export class WorkspaceMultiplexerAuthority {
   readonly #daemonInstanceId: string;
   readonly #registry: WorkspaceRegistry;
   readonly #io: WorkspaceMultiplexerIo;
+  readonly #paneIdentityCache = new Map<
+    string,
+    ReadonlyMap<string, Readonly<{ paneId: string; windowId: string }>>
+  >();
   #disposed = false;
 
   constructor(options: {
@@ -296,8 +318,11 @@ export class WorkspaceMultiplexerAuthority {
    * The returned promise is only an API envelope: no second queue or replay
    * ledger is allowed below SessionSemanticMutationExecutor.
    */
-  mutate(raw: WorkspaceMultiplexerMutationRequest): WorkspaceMultiplexerMutationResult {
-    return this.#mutate(raw);
+  mutate(
+    raw: WorkspaceMultiplexerMutationRequest,
+    timing?: WorkspaceMultiplexerOperationTiming,
+  ): WorkspaceMultiplexerMutationResult {
+    return this.#mutate(raw, timing);
   }
 
   /**
@@ -357,10 +382,109 @@ export class WorkspaceMultiplexerAuthority {
 
   dispose(): Promise<void> {
     this.#disposed = true;
+    this.#paneIdentityCache.clear();
     return Promise.resolve();
   }
 
-  #mutate(raw: WorkspaceMultiplexerMutationRequest): WorkspaceMultiplexerMutationResult {
+  /**
+   * Adopt one complete, generation-owned inventory projection. Selection never
+   * performs discovery itself: a missing candidate is a pre-effect refusal.
+   */
+  adoptPaneInventory(
+    rows: readonly {
+      readonly sessionName: string;
+      readonly semanticPaneId: string | null;
+      readonly runtimePaneId: string;
+      readonly windowId: string;
+    }[],
+  ): void {
+    if (this.#disposed) return;
+    const bySession = new Map<string, (typeof rows)[number][]>();
+    for (const row of rows) {
+      const current = bySession.get(row.sessionName);
+      if (current) current.push(row);
+      else bySession.set(row.sessionName, [row]);
+    }
+    this.#paneIdentityCache.clear();
+    for (const [sessionName, sessionRows] of bySession) {
+      const identities = new Map<string, { paneId: string; windowId: string }>();
+      const ambiguous = new Set<string>();
+      for (const row of sessionRows) {
+        if (row.semanticPaneId === null) continue;
+        if (identities.has(row.semanticPaneId)) {
+          identities.delete(row.semanticPaneId);
+          ambiguous.add(row.semanticPaneId);
+        } else if (!ambiguous.has(row.semanticPaneId)) {
+          identities.set(
+            row.semanticPaneId,
+            Object.freeze({ paneId: row.runtimePaneId, windowId: row.windowId }),
+          );
+        }
+      }
+      this.#setPaneIdentities(sessionName, identities);
+    }
+  }
+
+  /**
+   * Replace one exact session's generation-owned inventory without evicting
+   * unrelated sessions. Trusted retained-mirror projections use this path;
+   * malformed or ambiguous projections invalidate only the target session.
+   */
+  adoptSessionPaneInventory(
+    sessionName: string,
+    rows: readonly {
+      readonly sessionName: string;
+      readonly semanticPaneId: string | null;
+      readonly runtimePaneId: string;
+      readonly windowId: string;
+    }[],
+  ): boolean {
+    if (this.#disposed || !boundedCacheIdentity(sessionName)) return false;
+    const refuse = (): false => {
+      this.#paneIdentityCache.delete(sessionName);
+      return false;
+    };
+    if (rows.length === 0 || rows.length > 512) return refuse();
+    const identities = new Map<string, { paneId: string; windowId: string }>();
+    const runtimePaneIds = new Set<string>();
+    for (const row of rows) {
+      if (
+        row.sessionName !== sessionName ||
+        typeof row.semanticPaneId !== "string" ||
+        !boundedCacheIdentity(row.semanticPaneId) ||
+        !/^%(0|[1-9][0-9]*)$/u.test(row.runtimePaneId) ||
+        !/^@(0|[1-9][0-9]*)$/u.test(row.windowId) ||
+        identities.has(row.semanticPaneId) ||
+        runtimePaneIds.has(row.runtimePaneId)
+      )
+        return refuse();
+      identities.set(
+        row.semanticPaneId,
+        Object.freeze({ paneId: row.runtimePaneId, windowId: row.windowId }),
+      );
+      runtimePaneIds.add(row.runtimePaneId);
+    }
+    this.#setPaneIdentities(sessionName, identities);
+    return true;
+  }
+
+  #setPaneIdentities(
+    sessionName: string,
+    identities: ReadonlyMap<string, Readonly<{ paneId: string; windowId: string }>>,
+  ): void {
+    this.#paneIdentityCache.delete(sessionName);
+    this.#paneIdentityCache.set(sessionName, identities);
+    while (this.#paneIdentityCache.size > MAX_CACHED_SESSIONS) {
+      const oldest = this.#paneIdentityCache.keys().next().value;
+      if (typeof oldest !== "string") break;
+      this.#paneIdentityCache.delete(oldest);
+    }
+  }
+
+  #mutate(
+    raw: WorkspaceMultiplexerMutationRequest,
+    timing?: WorkspaceMultiplexerOperationTiming,
+  ): WorkspaceMultiplexerMutationResult {
     if (this.#disposed) {
       throw new WorkspaceMultiplexerError("workspace_unavailable", {
         reason: "authority_disposed",
@@ -381,7 +505,9 @@ export class WorkspaceMultiplexerAuthority {
     }
 
     try {
-      return WorkspaceMultiplexerMutationResultSchemaZ.parse(this.#perform(request, workspace));
+      return WorkspaceMultiplexerMutationResultSchemaZ.parse(
+        this.#perform(request, workspace, timing),
+      );
     } catch (error) {
       const mapped =
         error instanceof WorkspaceMultiplexerError
@@ -409,12 +535,29 @@ export class WorkspaceMultiplexerAuthority {
         cause,
       );
     }
-    return parseMultiplexerPaneRows(output);
+    const rows = parseMultiplexerPaneRows(output);
+    const identities = new Map<string, { paneId: string; windowId: string }>();
+    const ambiguous = new Set<string>();
+    for (const row of rows) {
+      if (row.semanticPaneId === null) continue;
+      if (identities.has(row.semanticPaneId)) {
+        identities.delete(row.semanticPaneId);
+        ambiguous.add(row.semanticPaneId);
+      } else if (!ambiguous.has(row.semanticPaneId)) {
+        identities.set(
+          row.semanticPaneId,
+          Object.freeze({ paneId: row.paneId, windowId: row.windowId }),
+        );
+      }
+    }
+    this.#setPaneIdentities(sessionName, identities);
+    return rows;
   }
 
   #perform(
     request: WorkspaceMultiplexerMutationRequest,
     workspace: Workspace,
+    timing?: WorkspaceMultiplexerOperationTiming,
   ): WorkspaceMultiplexerMutationResult {
     const intent = request.intent;
     const sessionName = workspace.sessionName;
@@ -438,7 +581,7 @@ export class WorkspaceMultiplexerAuthority {
       case "workspace.pane.zoom.toggle":
         return this.#zoom(intent, sessionName, envelope);
       case "workspace.pane.select":
-        return this.#select(intent, sessionName, envelope);
+        return this.#select(intent, sessionName, envelope, timing);
       case "workspace.pane.send":
         return this.#send(intent, sessionName, envelope);
       case "workspace.pane.swap":
@@ -660,6 +803,7 @@ export class WorkspaceMultiplexerAuthority {
         });
       }
     }
+    this.#paneIdentityCache.delete(sessionName);
     return {
       ...envelope,
       verb: "workspace.session.kill",
@@ -708,6 +852,9 @@ export class WorkspaceMultiplexerAuthority {
       }
       // The registry must follow or the workspace is orphaned on next load.
       this.#registry.renameSession(workspace.name, intent.name);
+      const cached = this.#paneIdentityCache.get(sessionName);
+      this.#paneIdentityCache.delete(sessionName);
+      if (cached) this.#paneIdentityCache.set(intent.name, cached);
       return {
         ...envelope,
         verb: "workspace.rename",
@@ -800,30 +947,89 @@ export class WorkspaceMultiplexerAuthority {
     intent: Extract<WorkspaceMultiplexerIntent, { verb: "workspace.pane.select" }>,
     sessionName: string,
     envelope: { operationId: string; daemonInstanceId: string; workspaceName: string },
+    timing?: WorkspaceMultiplexerOperationTiming,
   ): WorkspaceMultiplexerMutationResult {
-    const rows = this.#panes(sessionName);
-    const pane = resolvePaneRow(rows, intent.semanticPaneId);
-    const wasActive =
+    const timed = <T>(operation: string, run: () => T): T => {
+      if (!timing) return run();
+      let startedAtMicros: number;
+      try {
+        startedAtMicros = timing.nowMicros();
+      } catch {
+        return run();
+      }
+      try {
+        return run();
+      } finally {
+        try {
+          timing.record(operation, startedAtMicros, timing.nowMicros());
+        } catch {
+          // Detailed diagnostics never own the tmux selection.
+        }
+      }
+    };
+    const cached = timed("semantic-pane-inventory-lookup", () =>
+      this.#paneIdentityCache.get(sessionName)?.get(intent.semanticPaneId),
+    );
+    const pane = timed("semantic-pane-resolution", () => cached);
+    if (!pane) {
+      throw new WorkspaceMultiplexerError("workspace_unavailable", {
+        operationId: envelope.operationId,
+        reason: "pane_inventory_not_ready",
+      });
+    }
+    const semanticMatchPaneIdsFormat = `#{W:#{P:#{?#{==:#{${SEMANTIC_PANE_OPTION}},${tmuxFormatLiteral(intent.semanticPaneId)}},#{pane_id},}}}`;
+    const precondition = [
+      pane.paneId,
+      pane.windowId,
+      intent.semanticPaneId,
+      // One matching pane expands to its cached native ID. Missing, duplicate,
+      // or remapped stamps cannot satisfy the in-server mutation guard.
+      pane.paneId,
+    ].join("\t");
+    const preconditionFormat = [
+      "#{pane_id}",
+      "#{window_id}",
+      `#{${SEMANTIC_PANE_OPTION}}`,
+      semanticMatchPaneIdsFormat,
+    ].join("\t");
+    const selectCommand = `select-window -t ${pane.windowId} ; select-pane -t ${pane.paneId}`;
+    const observations = timed("tmux-selection-effect-proof", () =>
       this.#io.runTmux([
         "display-message",
         "-p",
         "-t",
         pane.paneId,
-        "#{?pane_active,1,0}\t#{?window_active,1,0}",
-      ]) === "1\t1";
-    // Both halves matter: select-pane alone moves the cursor inside a window
-    // that may not be the one on screen, so an attached client would see
-    // nothing move. This is the pair that makes GUI focus reach tmux.
-    this.#io.runTmux(["select-window", "-t", pane.windowId]);
-    this.#io.runTmux(["select-pane", "-t", pane.paneId]);
-    const observed = this.#io.runTmux([
-      "display-message",
-      "-p",
-      "-t",
-      pane.paneId,
-      "#{?pane_active,1,0}\t#{?window_active,1,0}",
-    ]);
-    if (observed !== "1\t1") {
+        `${preconditionFormat}\t#{?pane_active,1,0}\t#{?window_active,1,0}`,
+        ";",
+        // Resolve once from an authoritative inventory, then keep the semantic
+        // stamp and both native IDs as an exact in-server precondition. A stale
+        // cache entry may observe, but it cannot mutate.
+        "if-shell",
+        "-F",
+        "-t",
+        pane.paneId,
+        `#{==:${preconditionFormat},${tmuxFormatLiteral(precondition)}}`,
+        selectCommand,
+        "",
+        ";",
+        "display-message",
+        "-p",
+        "-t",
+        pane.paneId,
+        `${preconditionFormat}\t#{?pane_active,1,0}\t#{?window_active,1,0}`,
+      ]),
+    );
+    const [before = "", observed = ""] = observations.split("\n");
+    if (!before.startsWith(`${precondition}\t`)) {
+      this.#paneIdentityCache.delete(sessionName);
+      throw new WorkspaceMultiplexerError("mutation_unverified", {
+        operationId: envelope.operationId,
+        reason: "pane_identity_changed_before_select",
+      });
+    }
+    const wasActive = before === `${precondition}\t1\t1`;
+    if (observed !== `${precondition}\t1\t1`) {
+      this.#paneIdentityCache.delete(sessionName);
       throw new WorkspaceMultiplexerError("mutation_unverified", {
         operationId: envelope.operationId,
         reason: "pane_not_active",

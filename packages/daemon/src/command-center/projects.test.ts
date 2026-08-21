@@ -152,6 +152,31 @@ describe("REST /api/projects", () => {
     expect(list.projects[0]!.name).toBe(created.project.name);
   });
 
+  it("POST can register a live-only fixture without serializing it", async () => {
+    const app = createApp();
+    const res = await app.request("/api/projects", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        dir: projectDir,
+        name: "performance-fixture",
+        persistence: "volatile",
+      }),
+    });
+    expect(res.status).toBe(201);
+    expect(
+      (await app.request("/api/projects").then((response) => response.json())) as unknown,
+    ).toEqual(
+      expect.objectContaining({
+        projects: [expect.objectContaining({ name: "performance-fixture" })],
+      }),
+    );
+    const persisted = JSON.parse(readFileSync(join(registryHome, "projects.json"), "utf8")) as {
+      projects: unknown[];
+    };
+    expect(persisted.projects).toEqual([]);
+  });
+
   it("POST returns 400 when the directory does not exist", async () => {
     const app = createApp();
     const res = await app.request("/api/projects", {

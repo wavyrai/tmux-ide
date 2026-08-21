@@ -22,8 +22,13 @@ import {
 
 const canvas = projectAgentTerminalCanvas({ width: 120, height: 40, chromeRows: 2 });
 const repoRoot = fileURLToPath(new URL("../../../../../../", import.meta.url));
+const APPLICATION_ROOT_OWNER_SOURCES = [
+  ...OPENTUI_PRODUCTION_ROOT_SOURCES,
+  "packages/daemon/src/tui/mirror/runtime/application-terminal-interaction-controller.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-shell-view.tsx",
+] as const;
 const productionRootSource = () =>
-  OPENTUI_PRODUCTION_ROOT_SOURCES.map((path) => readFileSync(join(repoRoot, path), "utf8")).join(
+  APPLICATION_ROOT_OWNER_SOURCES.map((path) => readFileSync(join(repoRoot, path), "utf8")).join(
     "\n",
   );
 
@@ -525,35 +530,21 @@ describe("terminal pane chrome projection", () => {
     expect(ptyWrites).toEqual([]);
   });
 
-  it("mounts exactly two passive shared hosts and routes their semantic commands at root", () => {
+  it("keeps one v2 pane chrome owner around the pane-scoped terminal surface", () => {
     const appSource = productionRootSource();
-    const hostSource = readFileSync(
-      new URL("./terminal-pane-chrome-view.tsx", import.meta.url),
+    const workspaceSource = readFileSync(
+      new URL("../runtime/application-terminal-workspace.tsx", import.meta.url),
       "utf8",
     );
-    const productionHosts = appSource.match(/<SharedTerminalPaneChromeLayer\b[\s\S]*?\/>/gu) ?? [];
-    expect(productionHosts).toHaveLength(2);
-    expect(productionHosts.map((host) => host.match(/layer="([^"]+)"/u)?.[1])).toEqual([
-      "native",
-      "framebuffer",
-    ]);
-    for (const host of productionHosts) {
-      expect(host).toContain("theme={semanticTheme()}");
-      expect(host).toContain("layout={terminalPaneChromeLayout()}");
-      expect(host).not.toMatch(/\b(?:inputOwner|onActionActivate|onGripActivate)\b/u);
-    }
-    expect(appSource).not.toMatch(/<TerminalPaneChromeLayer\b/u);
-    expect(hostSource).not.toContain("function TerminalPaneChromeLayer");
-    expect(hostSource).not.toMatch(
-      /\b(?:useKeyboard|usePaste|onMount|onCleanup|createEffect|process\.exit)\b|mirror\?*\.|\.command\(/u,
-    );
-    expect(appSource).toContain("action: (paneId, _actionId, actionIndex, semanticIntent) => {");
-    expect(appSource).toContain('semanticIntent.commandId === "workspace.pane.menu.open"');
-    expect(appSource).toContain(
-      'semanticIntent.commandId === "workspace.windowMode.maximize.toggle"',
-    );
+    expect(appSource).not.toMatch(/<(?:Shared)?TerminalPaneChromeLayer\b/u);
+    expect(appSource).toContain("<ApplicationTerminalWorkspace");
+    expect(workspaceSource.match(/<PaneScopedTerminalSurface\b/gu)).toHaveLength(1);
+    expect(workspaceSource).toContain("top={0}");
+    expect(workspaceSource).toContain("top={1}");
+    expect(workspaceSource).toContain("onMouseDown={() => props.onSelectPane(frame().paneId)}");
+    expect(workspaceSource).not.toMatch(/\b(?:useKeyboard|usePaste|process\.exit)\b/u);
     expect(appSource).not.toContain("resize-pane -Z");
-    expect(appSource).toContain('verb: "workspace.pane.zoom.toggle"');
+    expect(appSource).toContain('verb: "workspace.pane.resize"');
   });
 
   it("lets non-action lower-header cells fall through to separator resize", () => {

@@ -14,8 +14,10 @@ const CLIENT_ROOTS = [
 ] as const;
 
 const REQUIRED_SEMANTIC_RUNTIME_LANE = [
-  "packages/daemon/src/tui/mirror/application-shell-daemon-runtime.ts",
+  "packages/daemon/src/tui/mirror/open-tui-workspace-runtime-port.ts",
   "packages/daemon/src/tui/mirror/semantic-pane-render-source.ts",
+  "packages/daemon/src/tui/mirror/runtime/workspace-terminal-fast-lane.ts",
+  "packages/daemon/src/tui/mirror/runtime/terminal-fast-lane-renderer-adapter.ts",
 ] as const;
 
 const LEGACY_CONTROL_STACK = [
@@ -142,5 +144,32 @@ describe("one SessionRuntime import DAG", () => {
 
   it("separately freezes direct tmux command and polling debt for deletion in m56.6", async () => {
     expect(await matches(DIRECT_TMUX_BRIDGE_IMPORT)).toEqual([...M56_6_DELETION_TARGET].sort());
+  });
+});
+
+describe("terminal inventory read boundary", () => {
+  it("keeps async discovery separate from synchronous attachment proof and mutation", async () => {
+    const source = await readFile(
+      join(REPO, "packages/daemon/src/terminal/attachments/native-runtime.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain("this.runner = pinnedRunner(authority, execute");
+    expect(source).toContain("this.readRunner = pinnedReadRunner(authority, executeRead)");
+    expect(source).toContain(
+      "const executeRead = options.readCommandExecutor ?? defaultReadCommandExecutor",
+    );
+    expect(source).not.toContain("options.commandExecutor!(executable, argv, readOptions)");
+    expect(source).toContain("runner: this.runner");
+    expect(source).toContain(
+      "discoverWorkspaceRegistryTerminalInventory(this.#registry, this.readRunner, signal)",
+    );
+    const asyncExecutor = source.slice(
+      source.indexOf("function defaultReadCommandExecutor"),
+      source.indexOf("function pinnedRunner"),
+    );
+    expect(asyncExecutor).toMatch(/\bexecFile\s*\(/u);
+    expect(asyncExecutor).not.toMatch(/\bexecFileSync\s*\(/u);
+    expect(source).not.toContain("#inventorySnapshot");
   });
 });

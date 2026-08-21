@@ -70,6 +70,26 @@ export interface TerminalConformanceFixture {
   /** Writes are separate deliberately: parsers must preserve state across chunks. */
   readonly writes: readonly string[];
   readonly cells: readonly TerminalConformanceCell[];
+  readonly wrappedRows?: readonly number[];
+  readonly historyRows?: number;
+  readonly cursor?: {
+    readonly x: number;
+    readonly y: number;
+    readonly hidden: boolean;
+    readonly style: "block" | "underline" | "bar";
+    readonly blink: boolean;
+  };
+  readonly modes?: Partial<{
+    readonly alternateScreen: boolean;
+    readonly applicationCursor: boolean;
+    readonly applicationKeypad: boolean;
+    readonly bracketedPaste: boolean;
+    readonly insert: boolean;
+    readonly origin: boolean;
+    readonly wraparound: boolean;
+    readonly mouseTracking: boolean;
+    readonly synchronizedOutput: boolean;
+  }>;
 }
 
 const DEFAULT = Object.freeze({ kind: "default" } as const);
@@ -336,5 +356,50 @@ export const TERMINAL_CONFORMANCE_FIXTURES: readonly TerminalConformanceFixture[
         attributes: ["inverse"],
       },
     ],
+  },
+  {
+    id: "soft-wrap-row",
+    description: "A soft-wrapped continuation row retains its wrapped bit",
+    cols: 4,
+    rows: 2,
+    writes: ["ABCDE"],
+    cells: [
+      { row: 0, column: 0, chars: "A", width: 1, foreground: DEFAULT, background: DEFAULT },
+      { row: 1, column: 0, chars: "E", width: 1, foreground: DEFAULT, background: DEFAULT },
+    ],
+    wrappedRows: [1],
+  },
+  {
+    id: "wrapped-row-and-history",
+    description: "Soft wrapping and styled scrollback remain canonical row state",
+    cols: 4,
+    rows: 2,
+    writes: ["ABCD", "E\r\n", "\u001b[32mFG\u001b[0m", "\r\nHI"],
+    cells: [
+      { row: 0, column: 0, chars: "F", width: 1, foreground: indexed(2), background: DEFAULT },
+      { row: 1, column: 0, chars: "H", width: 1, foreground: DEFAULT, background: DEFAULT },
+    ],
+    historyRows: 2,
+  },
+  {
+    id: "cursor-and-modes",
+    description: "Cursor presentation and DEC/ANSI input modes survive parser projection",
+    cols: 8,
+    rows: 3,
+    writes: [
+      "\u001b[?1h\u001b=\u001b[?2004h\u001b[4h\u001b[?6h",
+      "\u001b[?7l\u001b[?1000h\u001b[?25l\u001b[5 qZ",
+    ],
+    cells: [{ row: 0, column: 0, chars: "Z", width: 1, foreground: DEFAULT, background: DEFAULT }],
+    cursor: { x: 0, y: 0, hidden: true, style: "bar", blink: true },
+    modes: {
+      applicationCursor: true,
+      applicationKeypad: true,
+      bracketedPaste: true,
+      insert: true,
+      origin: true,
+      wraparound: false,
+      mouseTracking: true,
+    },
   },
 ]);

@@ -13,32 +13,15 @@
  * render-loop law).
  */
 
-/** Per-session marker option set on adopt so the updater can enumerate adopted
- *  sessions. (Owned here; re-exported by `updater.ts` for its callers.) */
-export const ADOPTED_OPTION = "@tmux_ide_adopted";
+export {
+  ADOPTED_OPTION,
+  UPDATER_SESSION,
+  adoptMarkArgv,
+  updaterProbeArgv,
+  updaterSpawnArgv,
+} from "../../lib/chrome-front-door.ts";
 
 export {
   PANE_CHROME_BORDER_FORMAT,
   PANE_CHROME_CHIP_OPTION as CHIP_OPTION,
 } from "../../lib/pane-chrome.ts";
-
-/** The hidden internal session that hosts the updater loop. */
-export const UPDATER_SESSION = "_tmux-ide-chrome";
-
-/** PURE — stamp `session` watched (see the header: inert re: chrome painting). */
-export function adoptMarkArgv(session: string): string[] {
-  return ["set-option", "-t", session, ADOPTED_OPTION, "1"];
-}
-
-/** PURE — the existence probe for the updater session (`=` exact-match, so a
- *  user session that merely starts with the name can't shadow it). Exit 0 =
- *  running. */
-export function updaterProbeArgv(): string[] {
-  return ["has-session", "-t", `=${UPDATER_SESSION}`];
-}
-
-/** PURE — the argv that spawns the updater loop, detached. `exec` replaces the
- *  shell so the pane IS the loop; killing the session stops it. */
-export function updaterSpawnArgv(): string[] {
-  return ["new-session", "-d", "-s", UPDATER_SESSION, "exec tmux-ide chrome-updater"];
-}

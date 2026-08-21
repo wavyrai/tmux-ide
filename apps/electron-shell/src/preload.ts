@@ -13,6 +13,10 @@ import {
   DesktopUpdateStatusSchemaZ,
   DesktopWindowStateSchemaZ,
   WorkspaceOpenHostResultSchemaZ,
+  WorkspaceOpenPreparedHostResultSchemaZ,
+  WorkspaceOpenCommittedHostResultSchemaZ,
+  WorkspaceOpenCancelledHostResultSchemaZ,
+  WorkspaceOpenDecisionArgumentsSchemaZ,
   createDaemonResourceMethods,
   isCancellableDaemonResourceKind,
   type DaemonResourceRequest,
@@ -22,6 +26,7 @@ import {
   type DesktopUpdateStatus,
   type DesktopWindowState,
   type HostCapabilities,
+  type WorkspaceOpenDecisionArguments,
 } from "@tmux-ide/contracts";
 
 import { HOST_IPC } from "./ipc-channels.ts";
@@ -124,6 +129,27 @@ const capabilities: HostCapabilities = Object.freeze({
     openProjectDirectory: async () =>
       WorkspaceOpenHostResultSchemaZ.nullable().parse(
         await ipcRenderer.invoke(HOST_IPC.workspaceOpenProjectDirectory),
+      ),
+    prepareProjectDirectory: async (previousWorkspaceName?: string | null) =>
+      WorkspaceOpenPreparedHostResultSchemaZ.nullable().parse(
+        await ipcRenderer.invoke(
+          HOST_IPC.workspacePrepareProjectDirectory,
+          previousWorkspaceName ?? null,
+        ),
+      ),
+    commitPreparedOpen: async (decision: WorkspaceOpenDecisionArguments) =>
+      WorkspaceOpenCommittedHostResultSchemaZ.parse(
+        await ipcRenderer.invoke(
+          HOST_IPC.workspaceCommitPreparedOpen,
+          WorkspaceOpenDecisionArgumentsSchemaZ.parse(decision),
+        ),
+      ),
+    cancelPreparedOpen: async (decision: WorkspaceOpenDecisionArguments) =>
+      WorkspaceOpenCancelledHostResultSchemaZ.parse(
+        await ipcRenderer.invoke(
+          HOST_IPC.workspaceCancelPreparedOpen,
+          WorkspaceOpenDecisionArgumentsSchemaZ.parse(decision),
+        ),
       ),
   }),
   onboarding: Object.freeze({

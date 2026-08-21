@@ -1,5 +1,13 @@
 # Architecture
 
+> **Current architecture notice (M59, 2026-08-14):** this long-form document
+> contains historical package and product descriptions that are being retired.
+> The authoritative runtime decision is
+> [`docs/product/one-session-runtime.md`](docs/product/one-session-runtime.md),
+> and current measured product truth is
+> [`docs/product/product-baseline.md`](docs/product/product-baseline.md). Until
+> this document is fully rewritten, those two documents win on any conflict.
+
 `tmux-ide` is a CLI tool that turns any project into a tmux-powered terminal IDE plus a single-page web dashboard. It runs as a long-lived **daemon** (Node + Effect + Hono) with a **Solid SPA** dashboard and **TUI widgets** rendered inside tmux panes.
 
 This document is the **single source of truth** for how the codebase is structured, which libraries we use for each concern, and where we deliberately diverge from the reference codebases under `context/`.

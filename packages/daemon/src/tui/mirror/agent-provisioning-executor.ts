@@ -17,8 +17,8 @@ import {
 } from "../../lib/canonical-daemon.ts";
 import { CUSTOM_KIND_ID, type SpawnWhere } from "./agent-lifecycle.ts";
 import {
-  fetchCanonicalWorkspaceCatalog,
-  workspaceNameForSession,
+  fetchCanonicalWorkspaceRouting,
+  workspaceNameForLiveSession,
 } from "./canonical-workspace-routing.ts";
 
 export interface TuiAgentProvisioningRequest {
@@ -104,8 +104,8 @@ export async function executeTuiAgentProvisioning(
   }
 
   try {
-    const catalog = await fetchCanonicalWorkspaceCatalog(canonical, deps.fetch);
-    const workspaceName = workspaceNameForSession(catalog, request.sessionName);
+    const catalog = await fetchCanonicalWorkspaceRouting(canonical, deps.fetch);
+    const workspaceName = workspaceNameForLiveSession(catalog, request.sessionName);
     if (!workspaceName) {
       return {
         status: "error",

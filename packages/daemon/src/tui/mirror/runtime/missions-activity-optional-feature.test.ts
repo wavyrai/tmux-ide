@@ -33,13 +33,15 @@ describe("deferred Missions and Activity feature boundary", () => {
     expect(source).toContain("disposeOwner();");
   });
 
-  it("fences deferred Missions and Activity hydration by full workspace identity", () => {
+  it("keeps Missions and Activity outside bootstrap, resource demand, and restore", () => {
     const source = readFileSync(new URL("./application-root.tsx", import.meta.url), "utf8");
     expect(source).toContain("missionsActivityIdentityScope");
-    expect(source).toContain("missionsHydrationIntent.isCurrent");
-    expect(source).toContain("activityHydrationIntent.isCurrent");
-    expect(source).toContain("missionsActivitySession()?.setWorkspaceIdentity(");
-    expect(source).toContain("scopeKey: missionsActivityIdentityScope()");
-    expect(source).toContain('applyToolResource(slot.resource, state.target?.scopeKey ?? "")');
+    expect(source).toContain("isDefaultProductDockTool(activeDockTab())");
+    expect(source).toContain("toolResources.setOpenDock(null)");
+    expect(source).toContain('setDockMode("collapsed")');
+    const restoreStart = source.indexOf("const requestedDockTab =");
+    const restoreEnd = source.indexOf("panelHostResolved = true", restoreStart);
+    const restore = source.slice(restoreStart, restoreEnd);
+    expect(restore).not.toContain("loadMissionsWorkspace");
   });
 });

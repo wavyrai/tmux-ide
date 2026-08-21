@@ -111,6 +111,7 @@ export default [
   // ===========================================================================
   // Zone boundaries (ARCHITECTURE.md "Import direction").
   //
+  //   contracts ← core ← daemon-client ← renderers
   //   contracts ← tmux-bridge ← daemon
   //
   // Arrows point in the allowed direction; A ← B means "B may import A".
@@ -192,8 +193,8 @@ export default [
         {
           patterns: [
             {
-              group: ["@tmux-ide/*", "!@tmux-ide/contracts"],
-              message: "daemon-client is renderer-neutral and may only import contracts",
+              group: ["@tmux-ide/*", "!@tmux-ide/contracts", "!@tmux-ide/core"],
+              message: "daemon-client is renderer-neutral and may only import contracts and core",
             },
             {
               group: ["**/packages/*/src/**", "!**/packages/daemon-client/src/**"],

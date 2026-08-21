@@ -8,7 +8,7 @@ import {
 } from "./session-descriptor-discovery.ts";
 
 function line(runtimePaneId: string, cwd = "/repo", title = "Shell"): string {
-  return `${runtimePaneId}\tpane-one\tshell\tshell\tzsh\t${cwd}\t0\tmain\t@1\t${title}`;
+  return `${runtimePaneId}\tpane-one\tshell\tshell\tzsh\t${cwd}\t0\tmain\t@1\t${title}\t$1\t0\tShell\tmission-one\t1\t1\twindow-one\tzz-sim\t1\t1`;
 }
 
 function controlModeBytes(value: string): string {
@@ -44,7 +44,7 @@ describe("SessionDescriptorDiscovery", () => {
     const cwd = "/repo/café 😀";
     const title = "Review café 😀";
     const replyLine = controlModeBytes(
-      `%21\t"pane-one"\t"lead"\t"agent"\t"codex"\t"${cwd}"\t0\t"mission"\t@1\t"${title}"`,
+      `%21\t"pane-one"\t"lead"\t"agent"\t"codex"\t"${cwd}"\t0\t"mission"\t@1\t"${title}"\t$1\t0\t"Agent"\t"mission-one"\t1\t1\t"window-one"\t"zz-sim"\t1\t1`,
     );
 
     expect(parseSessionPaneDescriptors([replyLine])).toEqual([
@@ -56,11 +56,25 @@ describe("SessionDescriptorDiscovery", () => {
     ]);
   });
 
+  it("applies the native inventory value and reply bounds", () => {
+    expect(parseSessionPaneDescriptors([line("%1", "/repo", "x".repeat(1_025))])).toEqual([]);
+    expect(parseSessionPaneDescriptors(Array.from({ length: 4_097 }, () => line("%1")))).toEqual(
+      [],
+    );
+    const noncanonical = line("%1").split("\t");
+    noncanonical[11] = "1e2";
+    expect(parseSessionPaneDescriptors([noncanonical.join("\t")])).toEqual([]);
+    expect(parseSessionPaneDescriptors([line("%01")])).toEqual([]);
+  });
+
   it("rejects malformed UTF-8 safely and exposes a discovery diagnostic", async () => {
     const malformed = Buffer.concat([
       Buffer.from("%7\tpane-one\tshell\tshell\tzsh\t/repo/", "ascii"),
       Buffer.from([0xff]),
-      Buffer.from("\t0\tmain\t@1\tShell", "ascii"),
+      Buffer.from(
+        "\t0\tmain\t@1\tShell\t$1\t0\tShell\tmission-one\t1\t1\twindow-one\tzz-sim\t1\t1",
+        "ascii",
+      ),
     ]).toString("latin1");
     const statuses: unknown[] = [];
     const discovery = new SessionDescriptorDiscovery({
@@ -86,7 +100,10 @@ describe("SessionDescriptorDiscovery", () => {
     const malformed = Buffer.concat([
       Buffer.from("%8\tpane-two\tshell\tshell\tzsh\t/repo/", "ascii"),
       Buffer.from([0xff]),
-      Buffer.from("\t0\tmain\t@1\tBroken", "ascii"),
+      Buffer.from(
+        "\t0\tmain\t@1\tBroken\t$1\t0\tShell\tmission-one\t1\t1\twindow-one\tzz-sim\t1\t1",
+        "ascii",
+      ),
     ]).toString("latin1");
     const statuses: unknown[] = [];
     const discoveries: unknown[] = [];
@@ -128,7 +145,7 @@ describe("SessionDescriptorDiscovery", () => {
         queryCount += 1;
         return queryCount === 1
           ? Promise.reject(new Error("temporary failure"))
-          : Promise.resolve([line("%7", "/repo/apps\\tweb")]);
+          : Promise.resolve([line("%7", "/repo/apps\\ web")]);
       },
       onDescriptors: (descriptors) => discoveries.push(descriptors),
       onStatus: (status) => statuses.push(status),
@@ -151,7 +168,7 @@ describe("SessionDescriptorDiscovery", () => {
     expect(queryCount).toBe(2);
     expect(statuses.at(-1)).toBeNull();
     expect(discoveries).toEqual([
-      [expect.objectContaining({ runtimePaneId: "%7", cwd: "/repo/apps\tweb" })],
+      [expect.objectContaining({ runtimePaneId: "%7", cwd: "/repo/apps web" })],
     ]);
   });
 

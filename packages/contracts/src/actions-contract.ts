@@ -27,6 +27,13 @@ import {
   WorkspaceOpenMutationResultSchemaZ,
 } from "./workspace-open.ts";
 import {
+  WorkspaceOpenCancelledResultSchemaZ,
+  WorkspaceOpenCommittedResultSchemaZ,
+  WorkspaceOpenDecisionArgumentsSchemaZ,
+  WorkspaceOpenPrepareArgumentsSchemaZ,
+  WorkspaceOpenPreparedResultSchemaZ,
+} from "./workspace-open-handoff.ts";
+import {
   WorkspacePromoteArgumentsSchemaZ,
   WorkspacePromoteMutationResultSchemaZ,
 } from "./workspace-promotion.ts";
@@ -56,6 +63,14 @@ import {
   WorkspaceWindowSplitArgumentsSchemaZ,
   WorkspaceWindowSplitResultSchemaZ,
 } from "./workspace-multiplexer.ts";
+import {
+  FleetAgentMutateArgumentsSchemaZ,
+  FleetAgentMutateResultSchemaZ,
+  FleetAgentProvisionArgumentsSchemaZ,
+  FleetAgentProvisionResultSchemaZ,
+  WorkspaceSessionCreateArgumentsSchemaZ,
+  WorkspaceSessionCreateResultSchemaZ,
+} from "./fleet-lifecycle.ts";
 
 // ---------------------------------------------------------------------------
 // project.openTerminal
@@ -243,6 +258,12 @@ export const WorkspacePaneCreateResultZ = WorkspacePaneCreateMutationResultSchem
 
 export const WorkspaceOpenInputZ = WorkspaceOpenArgumentsSchemaZ;
 export const WorkspaceOpenResultZ = WorkspaceOpenMutationResultSchemaZ;
+export const WorkspaceOpenPrepareInputZ = WorkspaceOpenPrepareArgumentsSchemaZ;
+export const WorkspaceOpenPrepareResultZ = WorkspaceOpenPreparedResultSchemaZ;
+export const WorkspaceOpenCommitInputZ = WorkspaceOpenDecisionArgumentsSchemaZ;
+export const WorkspaceOpenCommitResultZ = WorkspaceOpenCommittedResultSchemaZ;
+export const WorkspaceOpenCancelInputZ = WorkspaceOpenDecisionArgumentsSchemaZ;
+export const WorkspaceOpenCancelResultZ = WorkspaceOpenCancelledResultSchemaZ;
 
 // ---------------------------------------------------------------------------
 // workspace.promote
@@ -364,9 +385,33 @@ export const ActionContractsZ = {
     input: WorkspacePaneCreateInputZ,
     result: WorkspacePaneCreateResultZ,
   },
+  "workspace.session.create": {
+    input: WorkspaceSessionCreateArgumentsSchemaZ,
+    result: WorkspaceSessionCreateResultSchemaZ,
+  },
+  "fleet.agent.mutate": {
+    input: FleetAgentMutateArgumentsSchemaZ,
+    result: FleetAgentMutateResultSchemaZ,
+  },
+  "fleet.agent.provision": {
+    input: FleetAgentProvisionArgumentsSchemaZ,
+    result: FleetAgentProvisionResultSchemaZ,
+  },
   "workspace.open": {
     input: WorkspaceOpenInputZ,
     result: WorkspaceOpenResultZ,
+  },
+  "workspace.open.prepare": {
+    input: WorkspaceOpenPrepareInputZ,
+    result: WorkspaceOpenPrepareResultZ,
+  },
+  "workspace.open.commit": {
+    input: WorkspaceOpenCommitInputZ,
+    result: WorkspaceOpenCommitResultZ,
+  },
+  "workspace.open.cancel": {
+    input: WorkspaceOpenCancelInputZ,
+    result: WorkspaceOpenCancelResultZ,
   },
   "workspace.promote": {
     input: WorkspacePromoteInputZ,

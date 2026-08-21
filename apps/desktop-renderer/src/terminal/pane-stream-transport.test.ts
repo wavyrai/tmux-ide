@@ -29,6 +29,28 @@ const WS_URL = "ws://127.0.0.1:6060/v1/terminal/pane-streams/redeem";
 const PANE_A = "pane.workspace.a1";
 const PANE_B = "pane.workspace.b2";
 
+function authoritySnapshot(input: string | null, revision: number) {
+  return {
+    generation: DAEMON_INSTANCE_ID,
+    session: "workspace-a",
+    revision,
+    owners: { input, focus: null, geometry: null },
+    nativeGeometryYieldUntilMs: 0,
+    clients: [],
+  };
+}
+
+function inputLease(clientId: string, revision: number) {
+  return {
+    generation: DAEMON_INSTANCE_ID,
+    session: "workspace-a",
+    clientId,
+    authority: "input" as const,
+    token: globalThis.crypto.randomUUID(),
+    revision,
+  };
+}
+
 function encodeBase64(text: string): string {
   return Buffer.from(text, "utf8").toString("base64");
 }
@@ -159,6 +181,7 @@ function harness(options: {
   deferApplies?: boolean;
   listeners?: Partial<PaneStreamSessionListeners>;
   terminalDelivery?: null;
+  viewerMode?: "read-only" | "interactive";
 }): Harness {
   const clock = new Clock();
   const socket = new FakeSocket();
@@ -173,7 +196,11 @@ function harness(options: {
     ...(options.terminalDelivery === null ? { terminalDelivery: null } : {}),
   });
   const connect = transport.connect(
-    { workspaceName: "workspace-a", panes: options.panes ?? [PANE_A, PANE_B] },
+    {
+      workspaceName: "workspace-a",
+      panes: options.panes ?? [PANE_A, PANE_B],
+      viewerMode: options.viewerMode,
+    },
     {
       onPaneEvent: (pane, event) => {
         events.push({ pane, event });
@@ -210,7 +237,7 @@ async function liveHarness(
     daemonInstanceId: DAEMON_INSTANCE_ID,
     requestId: REQUEST_ID,
     panes: [...(options.panes ?? [PANE_A, PANE_B])],
-    effectiveViewerMode: "read-only",
+    effectiveViewerMode: options.viewerMode ?? "read-only",
   });
   const result = await h.connect;
   expect(result.status).toBe("connected");
@@ -637,6 +664,190 @@ describe("pane-stream transport demultiplexing", () => {
     await flushMicrotasks();
     expect(layouts).toHaveLength(1);
     expect(h.socket.sent).toHaveLength(1);
+  });
+
+  it("publishes visibility/activity and consumes authority snapshots without polling", async () => {
+    const snapshots: unknown[] = [];
+    const h = await liveHarness({
+      listeners: { onAuthoritySnapshot: (snapshot) => snapshots.push(snapshot) },
+    });
+    h.result.session.updatePresence?.("foreground");
+    h.result.session.noteActivity?.("focus");
+    expect(h.socket.sent.slice(-2).map((frame) => JSON.parse(frame))).toEqual([
+      { type: "presence", generation: DAEMON_INSTANCE_ID, state: "foreground" },
+      { type: "activity", generation: DAEMON_INSTANCE_ID, activity: "focus" },
+    ]);
+    h.socket.serverSends({
+      type: "authority-snapshot",
+      snapshot: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "workspace-a",
+        revision: 1,
+        owners: { input: null, focus: null, geometry: null },
+        nativeGeometryYieldUntilMs: 0,
+        clients: [],
+      },
+    });
+    expect(snapshots).toHaveLength(1);
+  });
+
+  it("queues immediate input behind explicit authority and resolves on input ack", async () => {
+    const h = await liveHarness({
+      viewerMode: "interactive",
+      descriptorOverrides: { effectiveViewerMode: "interactive" },
+    });
+    const pending = h.result.session.write?.(PANE_A, "hello");
+    await flushMicrotasks();
+    const request = JSON.parse(h.socket.sent.at(-1)!);
+    expect(request).toMatchObject({ type: "authority-request", authority: "input" });
+    h.socket.serverSends({
+      type: "authority-receipt",
+      requestId: request.requestId,
+      authority: "input",
+      status: "granted",
+      lease: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "workspace-a",
+        clientId: "client-a",
+        authority: "input",
+        token: "70000000-0000-4000-8000-000000000001",
+        revision: 1,
+      },
+      snapshot: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "workspace-a",
+        revision: 1,
+        owners: { input: "client-a", focus: null, geometry: null },
+        nativeGeometryYieldUntilMs: 0,
+        clients: [],
+      },
+    });
+    await flushMicrotasks();
+    const input = JSON.parse(h.socket.sent.at(-2)!);
+    expect(input).toMatchObject({ type: "input", pane: PANE_A, data: "hello" });
+    h.socket.serverSends({ type: "input-ack", pane: PANE_A, seq: input.seq });
+    await expect(pending).resolves.toBe(true);
+  });
+
+  it("does not send input when another Web client owns authority", async () => {
+    const h = await liveHarness({
+      viewerMode: "interactive",
+      descriptorOverrides: { effectiveViewerMode: "interactive" },
+    });
+    const pending = h.result.session.write?.(PANE_A, "blocked");
+    await flushMicrotasks();
+    const request = JSON.parse(h.socket.sent.at(-1)!);
+    h.socket.serverSends({
+      type: "authority-receipt",
+      requestId: request.requestId,
+      authority: "input",
+      status: "rejected",
+      lease: null,
+      snapshot: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "workspace-a",
+        revision: 2,
+        owners: { input: "other-web-client", focus: null, geometry: null },
+        nativeGeometryYieldUntilMs: 0,
+        clients: [],
+      },
+    });
+    await expect(pending).resolves.toBe(false);
+    expect(h.socket.sent.some((frame) => JSON.parse(frame).type === "input")).toBe(false);
+  });
+
+  it("revokes a stale local hold from an unsolicited snapshot before the next write", async () => {
+    const h = await liveHarness({
+      viewerMode: "interactive",
+      descriptorOverrides: { effectiveViewerMode: "interactive" },
+    });
+    const first = h.result.session.write?.(PANE_A, "first");
+    await flushMicrotasks();
+    const firstRequest = JSON.parse(h.socket.sent.at(-1)!);
+    h.socket.serverSends({
+      type: "authority-receipt",
+      requestId: firstRequest.requestId,
+      authority: "input",
+      status: "granted",
+      lease: inputLease("client-a", 1),
+      snapshot: authoritySnapshot("client-a", 1),
+    });
+    await flushMicrotasks();
+    const firstInput = h.socket.sent
+      .map((frame) => JSON.parse(frame))
+      .find((frame) => frame.type === "input" && frame.data === "first");
+    h.socket.serverSends({ type: "input-ack", pane: PANE_A, seq: firstInput.seq });
+    await expect(first).resolves.toBe(true);
+
+    h.socket.serverSends({
+      type: "authority-snapshot",
+      snapshot: authoritySnapshot("client-b", 2),
+    });
+    const second = h.result.session.write?.(PANE_A, "second");
+    await flushMicrotasks();
+    const secondRequest = JSON.parse(h.socket.sent.at(-1)!);
+    expect(secondRequest).toMatchObject({ type: "authority-request", authority: "input" });
+    expect(
+      h.socket.sent
+        .map((frame) => JSON.parse(frame))
+        .some((frame) => frame.type === "input" && frame.data === "second"),
+    ).toBe(false);
+    h.socket.serverSends({
+      type: "authority-receipt",
+      requestId: secondRequest.requestId,
+      authority: "input",
+      status: "rejected",
+      lease: null,
+      snapshot: authoritySnapshot("client-b", 3),
+    });
+    await expect(second).resolves.toBe(false);
+    expect(
+      h.socket.sent
+        .map((frame) => JSON.parse(frame))
+        .some((frame) => frame.type === "input" && frame.data === "second"),
+    ).toBe(false);
+  });
+
+  it("serializes rapid first writes through one authority request and preserves byte order", async () => {
+    const h = await liveHarness({
+      viewerMode: "interactive",
+      descriptorOverrides: { effectiveViewerMode: "interactive" },
+    });
+    const first = h.result.session.write?.(PANE_A, "a");
+    const second = h.result.session.write?.(PANE_A, "b");
+    await flushMicrotasks();
+    const frames = h.socket.sent.map((frame) => JSON.parse(frame));
+    const requests = frames.filter((frame) => frame.type === "authority-request");
+    expect(requests).toHaveLength(1);
+    expect(frames.filter((frame) => frame.type === "input")).toHaveLength(0);
+
+    h.socket.serverSends({
+      type: "authority-receipt",
+      requestId: requests[0].requestId,
+      authority: "input",
+      status: "granted",
+      lease: inputLease("client-a", 1),
+      snapshot: authoritySnapshot("client-a", 1),
+    });
+    await flushMicrotasks();
+    const firstInput = h.socket.sent
+      .map((frame) => JSON.parse(frame))
+      .find((frame) => frame.type === "input");
+    expect(firstInput.data).toBe("a");
+    h.socket.serverSends({ type: "input-ack", pane: PANE_A, seq: firstInput.seq });
+    await expect(first).resolves.toBe(true);
+    await flushMicrotasks();
+    const inputFrames = h.socket.sent
+      .map((frame) => JSON.parse(frame))
+      .filter((frame) => frame.type === "input");
+    expect(inputFrames.map((frame) => frame.data)).toEqual(["a", "b"]);
+    expect(
+      h.socket.sent
+        .map((frame) => JSON.parse(frame))
+        .filter((frame) => frame.type === "authority-request"),
+    ).toHaveLength(1);
+    h.socket.serverSends({ type: "input-ack", pane: PANE_A, seq: inputFrames[1].seq });
+    await expect(second).resolves.toBe(true);
   });
 
   it("disposing the session closes the socket without an error end", async () => {

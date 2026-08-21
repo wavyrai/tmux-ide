@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CausalCellProofV1SchemaZ } from "./causal-cell.ts";
 import { TerminalAttachmentSemanticPaneIdSchemaZ } from "./semantic-identity.ts";
 import { SessionRuntimeGenerationSchemaZ } from "./session-runtime.ts";
 import { WorkspaceIdSchemaZ } from "./workspace-state.ts";
@@ -84,6 +85,8 @@ export const TerminalDeliveryEnvelopeSchemaZ = DeliveryAddressSchemaZ.extend({
    * as general causality: unrelated external tmux output may consume the probe.
    */
   performanceTraceId: z.uuid().optional(),
+  /** Finalized diagnostic proof for this exact canonical revision/hash. */
+  causalCellProof: CausalCellProofV1SchemaZ.optional(),
   protocolVersion: z.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
   encoding: TerminalDeliveryEncodingSchemaZ,
   frame: z.enum(["seed", "patch", "tombstone"]),

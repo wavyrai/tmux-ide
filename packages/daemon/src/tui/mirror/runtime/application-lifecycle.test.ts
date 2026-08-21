@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { TuiCleanupRegistry } from "../input-lifecycle.ts";
+import { runtimeResourceSnapshot } from "@tmux-ide/daemon-client/runtime-resource-ledger";
 import {
   TuiApplicationLifecycle,
   createApplicationLifecycleInputExecutor,
@@ -18,6 +19,7 @@ function deferred<T = void>() {
 
 describe("OpenTUI application lifecycle", () => {
   it("returns one shutdown Promise and destroys the renderer after every owned resource settles", async () => {
+    const timerBaseline = runtimeResourceSnapshot()["host-shutdown-timer"].active;
     const calls: string[] = [];
     const child = deferred();
     const socket = deferred();
@@ -36,6 +38,7 @@ describe("OpenTUI application lifecycle", () => {
 
     const first = lifecycle.shutdown("keyboard");
     const duplicate = lifecycle.shutdown("palette");
+    expect(runtimeResourceSnapshot()["host-shutdown-timer"].active).toBe(timerBaseline + 1);
 
     expect(first).toBe(duplicate);
     expect(lifecycle.accepting).toBe(false);
@@ -47,6 +50,7 @@ describe("OpenTUI application lifecycle", () => {
     expect(calls).not.toContain("renderer");
     socket.resolve();
     await expect(first).resolves.toEqual({ reason: "keyboard", failures: [], timedOut: [] });
+    expect(runtimeResourceSnapshot()["host-shutdown-timer"].active).toBe(timerBaseline);
     expect(calls).toEqual([
       "kill-child",
       "close-socket",
@@ -218,8 +222,7 @@ describe("OpenTUI application lifecycle", () => {
     const destroy = vi.fn();
     const lifecycle = new TuiApplicationLifecycle({ destroyRenderer: destroy });
     const executor = createApplicationLifecycleInputExecutor(lifecycle, {
-      switchClientBack: vi.fn(),
-      detachClient: vi.fn(),
+      putAway: vi.fn(),
     });
 
     executor.run({ kind: "destroy-renderer", source: "palette" });

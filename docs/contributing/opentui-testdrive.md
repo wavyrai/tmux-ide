@@ -15,22 +15,80 @@ pnpm build:cli
 pnpm build:tui
 ```
 
-Start the canonical daemon in one terminal:
-
-```bash
-node bin/cli.js --headless
-```
-
-Start the browser renderer in another terminal:
+Start the browser renderer. This command discovers or starts the canonical
+daemon itself:
 
 ```bash
 pnpm dev:web
 ```
 
-`dev:web` reads the owner-only canonical daemon record and starts Vite with the
+`dev:web` ensures the daemon, then reads the owner-only canonical record and starts Vite with the
 same-origin development gateway. Open
 `http://127.0.0.1:5173/?devHost=1`. A plain `vite` invocation deliberately
 falls back to illustrative preview data because it has no daemon authority.
+
+## Unified real-product rig
+
+Use the product rig when a change must be proven in Web, OpenTUI, and tmux at
+the same time:
+
+```bash
+pnpm product:testdrive start
+pnpm product:testdrive status --json
+pnpm product:testdrive capture --json
+pnpm product:testdrive smoke --json
+pnpm product:testdrive stop
+```
+
+`diagnose` defaults to the historical `runtime-qualification` compatibility
+journey and can repeat that journey in fresh private runtime namespaces:
+
+```bash
+pnpm product:testdrive diagnose --journey runtime-qualification --repeat 3 --json
+```
+
+`--repeat` accepts 1–10 attempts. `inventory --json` lists every required M59.4
+golden journey and its implementation status. Selecting a pending journey (or
+`all` while any journey remains pending) fails before a rig owner starts;
+missing evidence never falls back to the compatibility journey. Every attempted
+executable journey publishes the exact ten-file evidence set once under
+`.tasks/product-diagnostics/<run-id>`. Unavailable visual/state correlations
+are explicit bounded placeholders and keep the report incomplete or failed.
+Published files are owner-read-only, the reproduction script remains
+owner-executable, and the run directory is sealed against later entry changes.
+
+The rig owns exactly one disposable runtime namespace under `/tmp`: one
+non-default tmux socket and target session, one daemon generation, one real
+OpenTUI process hosted in a PTY, and one real Chromium page behind the reviewed
+same-origin development gateway. It never reads or mutates the default tmux
+socket or canonical user catalog. Every capture writes terminal ANSI, a Web
+screenshot and DOM summary, tmux layout truth, and a timestamped JSONL timeline
+under `.tasks/product-test-rig/artifacts`.
+
+Readiness deliberately names two separate boundaries:
+
+- `appChromeFrameMs`: OpenTUI has painted application chrome;
+- `coherentTerminalFrameMs`: a non-empty semantic terminal layout has reached
+  the OpenTUI renderer.
+
+The former is not counted as a usable terminal frame. Rig startup now proves a
+real Web and OpenTUI coherent terminal frame, shared daemon/session identity,
+multi-client authority convergence, generation-fenced writes, atomic workspace
+handoff, and recovery of both clients across a daemon generation restart.
+`smoke` additionally proves viewport resize, evidence capture, tmux layout
+agreement, and bounded cleanup. The rig still does **not** qualify input to
+consumed paint, operation-correlated drag settlement, or packed-install first
+run; those remain explicitly unmeasured in the checked-in M59 baseline.
+
+Inspect the source/metric baseline without starting the rig:
+
+```bash
+pnpm product:testdrive inventory --json
+```
+
+Inventory is side-effect free. It includes the checked-in product scope, known
+defects, measured and unmeasured performance boundaries, rig capabilities, and
+architecture-debt counts.
 
 ## Test-drive the compiled TUI
 
@@ -73,6 +131,35 @@ pnpm tui:testdrive status --json
 pnpm tui:testdrive stop
 ```
 
+Protocol-sensitive input uses one strict versioned JSON command. It injects
+exact bytes through the host pane PTY with `load-buffer`/`paste-buffer`, not
+tmux key-name translation:
+
+```bash
+pnpm tui:testdrive input '{"version":1,"kind":"paste","text":"first line\nsecond line"}'
+pnpm tui:testdrive input '{"version":1,"kind":"focus","state":"blur"}'
+pnpm tui:testdrive input '{"version":1,"kind":"focus","state":"focus"}'
+pnpm tui:testdrive input '{"version":1,"kind":"application-mouse","action":"click","x":42,"y":8}'
+pnpm tui:testdrive input '{"version":1,"kind":"selection-drag","from":{"x":42,"y":8},"to":{"x":55,"y":8},"contentRect":{"x":40,"y":6,"width":80,"height":24}}'
+pnpm tui:testdrive input '{"version":1,"kind":"copy-capture","timeoutMs":2000}'
+```
+
+`paste` sends an explicit bracketed-paste sequence to OpenTUI. Application
+mouse input is intentionally separate from the legacy divider-drag helper.
+Coordinates are zero-based and must fit the immutable host pane's current
+geometry. Paste is capped at 64 KiB, clipboard evidence at 1 MiB, and one
+monotonic timeout covers the complete operation. `selection-drag` first enters
+and validates OpenTUI's pane-local select mode, proves the highlight, then
+captures the release-triggered copy. Its required `contentRect` is the exact
+projected pane-content rectangle; multi-row selection wraps inside that box and
+never treats sidebar or chrome columns as terminal content. `copy-capture`
+sends Ctrl-C through the same PTY path. Both clipboard operations use an
+operation-scoped, pane-scoped tmux hook tied to the exact pane and operation
+nonce. It remains armed through a bounded quiet window so missing, unrelated,
+multiple, or callback-overflow events fail.
+Successful JSON reports only clipboard byte count and SHA-256—no clipboard
+plaintext or base64.
+
 For gesture assertions, the low-level mouse phases let a test inspect the
 renderer while capture is still active:
 
@@ -97,6 +184,47 @@ Component-level OpenTUI snapshots remain the faster inner loop:
 
 ```bash
 pnpm test:tui-renderer
+```
+
+## Diagnose a blank or stale TUI
+
+Use the causal diagnostic before debugging a blank terminal surface by eye:
+
+```bash
+pnpm tui:diagnose --target my-session
+```
+
+It starts the compiled TUI against the canonical daemon, waits for the first
+terminal-frame publication, captures the framebuffer, and checks the complete
+path in order:
+
+1. the canonical daemon record agrees with the live `/identity` endpoint;
+2. Catalog V2 pane counts agree with exact tmux session truth;
+3. Application Shell V3 exposes every pane as semantically attachable;
+4. the OpenTUI runtime applies inventory and a non-empty active-window layout;
+5. runtime connection precedes the first terminal-frame publication;
+6. stable text captured from tmux is present in the final OpenTUI framebuffer.
+
+The command prints the first broken boundary and writes a machine-readable
+bundle under `.tasks/tui-diagnostics/latest/`: `report.json`, the rendered
+`frame.txt`, runtime `timeline.jsonl`, `stderr.log`, exact `tmux-truth.json`,
+`catalog.json`, and `application-shell.json`. This distinguishes “the app
+painted chrome” from “terminal cells reached the renderer.”
+
+Use the current build while iterating, or keep the hidden host alive for manual
+inspection:
+
+```bash
+pnpm tui:diagnose --target my-session --no-build
+pnpm tui:diagnose --target my-session --keep
+pnpm tui:testdrive attach
+pnpm tui:testdrive stop
+```
+
+The focused analyzer contract runs without tmux or a daemon:
+
+```bash
+pnpm test:tui-diagnose
 ```
 
 ## Optional black-box PTY drive with Pilotty

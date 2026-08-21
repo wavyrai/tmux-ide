@@ -785,6 +785,22 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   const [mirrorEnabled, setMirrorEnabled] = createSignal(false);
   const [mirrorState, setMirrorState] = createSignal<PaneMirrorControllerState | null>(null);
   const [mirrorController, setMirrorController] = createSignal<PaneMirrorController | null>(null);
+  const publishWebPresence = (): void => {
+    if (typeof document === "undefined") return;
+    const foreground = document.visibilityState === "visible" && document.hasFocus();
+    mirrorController()?.updatePresence(foreground ? "foreground" : "background");
+    if (foreground) mirrorController()?.noteActivity("focus");
+  };
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", publishWebPresence);
+    globalThis.addEventListener?.("focus", publishWebPresence);
+    globalThis.addEventListener?.("blur", publishWebPresence);
+    onCleanup(() => {
+      document.removeEventListener("visibilitychange", publishWebPresence);
+      globalThis.removeEventListener?.("focus", publishWebPresence);
+      globalThis.removeEventListener?.("blur", publishWebPresence);
+    });
+  }
   const mirrorPaneIds = createMemo<readonly string[]>(() => {
     const inventory = shell().terminalInventory;
     if (!inventory) return [];
@@ -869,6 +885,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     setMirrorController(controller);
     setMirrorState(controller.state());
     controller.start();
+    queueMicrotask(publishWebPresence);
   });
   onCleanup(() => {
     mirrorController()?.dispose();

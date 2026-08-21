@@ -33,6 +33,14 @@ function scratchDir(): string {
   return dir;
 }
 
+function openFixtureRepository(): Promise<MissionRepository> {
+  // These are projection fixtures, not durability tests. Avoid making the
+  // graph suite compete for macOS fsync slots with live daemon/PTY workers.
+  return MissionRepository.open(scratchDir(), {
+    io: { fsyncFile: () => {}, fsyncDirectory: () => {} },
+  });
+}
+
 interface FakeAgent {
   readonly runtimePaneId: string;
   readonly semanticPaneId: string;
@@ -96,9 +104,7 @@ async function missionWithAttempts(
   // Projection tests need the real event/replay repository semantics, not a
   // durability benchmark. macOS can occasionally stall a temporary-directory
   // fsync for several seconds, making this otherwise pure suite timing-racy.
-  const repository = await MissionRepository.open(scratchDir(), {
-    io: { fsyncFile: () => {}, fsyncDirectory: () => {} },
-  });
+  const repository = await openFixtureRepository();
   const user: MissionActor = { type: "user" };
   const mission = repository.create({ title, objective: "objective", actor: user });
   members.forEach((member, index) => {
@@ -441,7 +447,7 @@ describe("projectApplicationShellAgentGraphOverlay", () => {
     );
 
     // One mission per agent, each with a single correlated attempt.
-    const repository = await MissionRepository.open(scratchDir());
+    const repository = await openFixtureRepository();
     const user: MissionActor = { type: "user" };
     for (let i = 0; i < missionCount; i += 1) {
       const mission = repository.create({ title: `Mission ${i}`, objective: "o", actor: user });

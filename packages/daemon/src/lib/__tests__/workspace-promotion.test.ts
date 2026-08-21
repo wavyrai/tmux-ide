@@ -375,8 +375,9 @@ describe("WorkspacePromotionAuthority", () => {
       mock: MockTmux,
       registry: FakeRegistry,
       name = "fleet-revived",
+      adopted = true,
     ) {
-      const session = mock.session(name, "$1", { "@tmux_ide_adopted": "1" });
+      const session = mock.session(name, "$1", adopted ? { "@tmux_ide_adopted": "1" } : {});
       const w1 = mock.window(session, "@1", "agent");
       mock.pane(w1, "%0", { active: true, currentCommand: "claude" });
       const w2 = mock.window(session, "@2", "work");
@@ -455,6 +456,27 @@ describe("WorkspacePromotionAuthority", () => {
       // promotion). Reconciliation repairs pane identity only; it must not
       // claim the session's provenance or rewrite its workspace name.
       const session = mock.sessionOf("$1")!;
+      expect(session.options.has("@tmux_ide_workspace_promoted_v1")).toBe(false);
+      expect(session.options.has("@tmux_ide_workspace_name")).toBe(false);
+      expect(session.options.has("@tmux_ide_workspace_promote_operation")).toBe(false);
+    });
+
+    it("fleet-enrolls a registered ordinary session without claiming promotion provenance", async () => {
+      const mock = new MockTmux();
+      const registry = new FakeRegistry();
+      const { name } = registeredButUnstamped(mock, registry, "fleet-unenrolled", false);
+      const authority = new WorkspacePromotionAuthority({
+        daemonInstanceId: DAEMON,
+        registry,
+        io: io(mock),
+      });
+
+      const result = await authority.promote(request(fleetSessionIdForName(name)));
+
+      expect(result.outcome).toBe("replayed");
+      expect(registry.list()).toHaveLength(1);
+      const session = mock.sessionOf("$1")!;
+      expect(session.options.get("@tmux_ide_adopted")).toBe("1");
       expect(session.options.has("@tmux_ide_workspace_promoted_v1")).toBe(false);
       expect(session.options.has("@tmux_ide_workspace_name")).toBe(false);
       expect(session.options.has("@tmux_ide_workspace_promote_operation")).toBe(false);
@@ -627,19 +649,83 @@ describe("WorkspacePromotionAuthority", () => {
     ).rejects.toMatchObject({ code: "session_not_found" });
   });
 
-  it("rejects a non-adopted session as session_not_adopted", async () => {
+  it("promotes and fleet-enrolls an ordinary non-adopted live session", async () => {
     const mock = new MockTmux();
     const session = mock.session("fleet-unadopted", "$1");
     const window = mock.window(session, "@1", "shell");
     mock.pane(window, "%1", { active: true });
+    const registry = new FakeRegistry();
     const authority = new WorkspacePromotionAuthority({
       daemonInstanceId: DAEMON,
-      registry: new FakeRegistry(),
+      registry,
       io: io(mock),
     });
+
+    const result = await authority.promote(request(fleetSessionIdForName("fleet-unadopted")));
+
+    expect(result.outcome).toBe("promoted");
+    expect(result.resource.workspaceName).toMatch(/^fleet-unadopted-[0-9a-f]{32}$/u);
+    expect(registry.list()).toEqual([
+      expect.objectContaining({
+        name: result.resource.workspaceName,
+        sessionName: "fleet-unadopted",
+      }),
+    ]);
+    expect(mock.sessionOf("$1")!.options.get("@tmux_ide_adopted")).toBe("1");
+  });
+
+  it("does not publish fleet enrollment when terminal verification fails", async () => {
+    const mock = new MockTmux();
+    const session = mock.session("fleet-unverified", "$1");
+    const window = mock.window(session, "@1", "split");
+    for (const paneId of ["%1", "%2"]) {
+      mock.pane(window, paneId, {
+        active: paneId === "%1",
+        options: { "@tmux_ide_pane_id": "pane.workspace.collision" },
+      });
+    }
+    const registry = new FakeRegistry();
+    const authority = new WorkspacePromotionAuthority({
+      daemonInstanceId: DAEMON,
+      registry,
+      io: io(mock),
+    });
+
     await expect(
-      authority.promote(request(fleetSessionIdForName("fleet-unadopted"))),
-    ).rejects.toMatchObject({ code: "session_not_adopted" });
+      authority.promote(request(fleetSessionIdForName("fleet-unverified"))),
+    ).rejects.toMatchObject({ code: "promotion_verification_failed" });
+    expect(mock.sessionOf("$1")!.options.has("@tmux_ide_adopted")).toBe(false);
+    expect(registry.list()).toHaveLength(0);
+  });
+
+  it("keeps verified fleet enrollment when registry admission fails so a fresh retry can finish", async () => {
+    const mock = new MockTmux();
+    const session = mock.session("fleet-retry", "$1");
+    const window = mock.window(session, "@1", "shell");
+    mock.pane(window, "%1", { active: true });
+    class FailsOnceRegistry extends FakeRegistry {
+      failuresRemaining = 1;
+      override add(input: AddWorkspaceInput): Workspace {
+        if (this.failuresRemaining-- > 0) throw new Error("injected registry failure");
+        return super.add(input);
+      }
+    }
+    const registry = new FailsOnceRegistry();
+    const authority = new WorkspacePromotionAuthority({
+      daemonInstanceId: DAEMON,
+      registry,
+      io: io(mock),
+    });
+
+    await expect(
+      authority.promote(request(fleetSessionIdForName("fleet-retry"))),
+    ).rejects.toMatchObject({ code: "promotion_verification_failed" });
+    expect(registry.list()).toEqual([]);
+    expect(mock.sessionOf("$1")!.options.get("@tmux_ide_adopted")).toBe("1");
+
+    const retry = await authority.promote(request(fleetSessionIdForName("fleet-retry")));
+    expect(retry.outcome).toBe("promoted");
+    expect(registry.list()).toHaveLength(1);
   });
 
   it("refuses to promote an internal session", async () => {

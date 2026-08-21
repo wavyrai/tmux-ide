@@ -29,6 +29,10 @@ import {
   WorkspacePaneCreateMutationRequestSchemaZ,
   WorkspaceOpenHostResultSchemaZ,
   WorkspaceOpenMutationRequestSchemaZ,
+  WorkspaceOpenPreparedHostResultSchemaZ,
+  WorkspaceOpenCommittedHostResultSchemaZ,
+  WorkspaceOpenCancelledHostResultSchemaZ,
+  WorkspaceOpenDecisionArgumentsSchemaZ,
   WorkspacePromoteHostResultSchemaZ,
   WorkspacePromoteMutationRequestSchemaZ,
   isDaemonResourceKind,
@@ -399,6 +403,72 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
         });
       }
       return WorkspaceOpenHostResultSchemaZ.parse({
+        status: "error",
+        error: daemonCapabilityError("request-failed"),
+      });
+    }
+  });
+  handle(
+    HOST_IPC.workspacePrepareProjectDirectory,
+    async (event, previousWorkspaceName: unknown) => {
+      const authority = trustedRendererAuthority(event);
+      if (previousWorkspaceName !== null && typeof previousWorkspaceName !== "string") {
+        return WorkspaceOpenPreparedHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("invalid-request"),
+        });
+      }
+      const path = await deps.selectProjectDirectory(authority.window);
+      assertRendererAuthority(event, authority.generation);
+      if (!path) return null;
+      const before = deps.daemonResources.state();
+      if (before.status !== "connected")
+        return WorkspaceOpenPreparedHostResultSchemaZ.parse({
+          status: "error",
+          error: disconnectedCapabilityError(before),
+        });
+      try {
+        const result = await deps.daemonResources.prepareWorkspaceOpen(randomUUID(), {
+          source: { kind: "project", projectDir: path },
+          previousWorkspaceName,
+        });
+        assertRendererAuthority(event, authority.generation);
+        if (result.daemonInstanceId !== before.identity.instanceId)
+          throw new Error("generation changed");
+        return WorkspaceOpenPreparedHostResultSchemaZ.parse({ status: "ok", result });
+      } catch {
+        return WorkspaceOpenPreparedHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("request-failed"),
+        });
+      }
+    },
+  );
+  handle(HOST_IPC.workspaceCommitPreparedOpen, async (event, value: unknown) => {
+    trustedRendererAuthority(event);
+    try {
+      const result = await deps.daemonResources.commitWorkspaceOpen(
+        randomUUID(),
+        WorkspaceOpenDecisionArgumentsSchemaZ.parse(value),
+      );
+      return WorkspaceOpenCommittedHostResultSchemaZ.parse({ status: "ok", result });
+    } catch {
+      return WorkspaceOpenCommittedHostResultSchemaZ.parse({
+        status: "error",
+        error: daemonCapabilityError("request-failed"),
+      });
+    }
+  });
+  handle(HOST_IPC.workspaceCancelPreparedOpen, async (event, value: unknown) => {
+    trustedRendererAuthority(event);
+    try {
+      const result = await deps.daemonResources.cancelWorkspaceOpen(
+        randomUUID(),
+        WorkspaceOpenDecisionArgumentsSchemaZ.parse(value),
+      );
+      return WorkspaceOpenCancelledHostResultSchemaZ.parse({ status: "ok", result });
+    } catch {
+      return WorkspaceOpenCancelledHostResultSchemaZ.parse({
         status: "error",
         error: daemonCapabilityError("request-failed"),
       });

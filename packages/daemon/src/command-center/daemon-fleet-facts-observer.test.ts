@@ -25,6 +25,7 @@ function emptySessions(): SessionCompositionFacts {
 function callbacks() {
   return {
     onSessionsChanged: vi.fn(),
+    onTerminalTopologyChanged: vi.fn(),
     onAdoptedChanged: vi.fn(),
     onAgentSessionsChanged: vi.fn(),
     onAgentTurnCompleted: vi.fn(),
@@ -36,10 +37,39 @@ describe("DaemonFleetFactsObserver", () => {
     expect(parseSessionCompositionFacts("work\t0\nmanaged\t1\n__tmux_ide_preview\t1")).toEqual({
       sessions: ["__tmux_ide_preview", "managed", "work"],
       adopted: ["managed"],
+      terminalTopology: ["__tmux_ide_preview\t1", "managed\t1", "work\t0"],
     });
     expect(parseAgentStateFacts("work\t%1\tpane.editor\tworking:1").get("work")?.get("%1")).toEqual(
       { paneStamp: "pane.editor", state: "working:1" },
     );
+  });
+
+  it("invalidates agent-free topology when a pane or durable stamp changes", async () => {
+    const changed = callbacks();
+    let facts: SessionCompositionFacts = {
+      sessions: ["alpha"],
+      adopted: [],
+      terminalTopology: ["alpha\t0\t$1\t@1\t%1\t1\t1\tpane.a\t"],
+    };
+    const observer = new DaemonFleetFactsObserver({
+      readSessions: async () => facts,
+      readAgents: async () => new Map(),
+      ...changed,
+      setTimer: vi.fn(() => 1 as unknown as ReturnType<typeof setTimeout>),
+      clearTimer: vi.fn(),
+    });
+    const handle = observer.acquire(["sessions"]);
+    await handle.ready;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    facts = {
+      ...facts,
+      terminalTopology: ["alpha\t0\t$1\t@1\t%1\t1\t1\tpane.b\twindow.a"],
+    };
+    await observer.runOnce();
+    expect(changed.onTerminalTopologyChanged).toHaveBeenCalledOnce();
+    expect(changed.onSessionsChanged).not.toHaveBeenCalled();
+    expect(changed.onAgentSessionsChanged).not.toHaveBeenCalled();
+    handle.release();
   });
 
   it("unions demand and never overlaps observation cycles", async () => {
@@ -61,6 +91,53 @@ describe("DaemonFleetFactsObserver", () => {
     sessions.resolve(emptySessions());
     agents.resolve(new Map());
     await Promise.all([handle.ready, sameCycle]);
+    handle.release();
+  });
+
+  it("emits bounded cycle and event-loop diagnostics without overlapping reads", async () => {
+    const sessions = deferred<SessionCompositionFacts | null>();
+    const events: unknown[] = [];
+    let now = 10;
+    let activeReads = 0;
+    let maximumReads = 0;
+    const observer = new DaemonFleetFactsObserver({
+      readSessions: async () => {
+        activeReads += 1;
+        maximumReads = Math.max(maximumReads, activeReads);
+        const result = await sessions.promise;
+        activeReads -= 1;
+        return result;
+      },
+      readAgents: async () => new Map(),
+      ...callbacks(),
+      diagnostics: {
+        nowMicros: () => now++,
+        createTraceId: () => "11111111-1111-4111-8111-111111111111",
+        publish: (event) => events.push(event),
+        queueMicrotask: (callback) => callback(),
+      },
+      setTimer: vi.fn(() => 1 as unknown as ReturnType<typeof setTimeout>),
+      clearTimer: vi.fn(),
+    });
+    const handle = observer.acquire(["sessions"]);
+    const duplicate = observer.runOnce();
+    sessions.resolve(emptySessions());
+    await Promise.all([handle.ready, duplicate]);
+    expect(maximumReads).toBe(1);
+    expect(events).toEqual([
+      expect.objectContaining({ operation: "fleet-cycle", phase: "begin", activeOperations: 1 }),
+      expect.objectContaining({
+        operation: "fleet-cycle",
+        phase: "event-loop-sentinel",
+        activeOperations: 1,
+      }),
+      expect.objectContaining({
+        operation: "fleet-cycle",
+        phase: "end",
+        activeOperations: 1,
+        succeeded: true,
+      }),
+    ]);
     handle.release();
   });
 
@@ -166,6 +243,40 @@ describe("DaemonFleetFactsObserver", () => {
     expect(readSessions).toHaveBeenCalledTimes(2);
     reacquired.release();
     retained.release();
+  });
+
+  it("baselines a replacement acquired while the final released read is retiring", async () => {
+    const first = deferred<SessionCompositionFacts | null>();
+    const second = deferred<SessionCompositionFacts | null>();
+    const readSessions = vi
+      .fn<() => Promise<SessionCompositionFacts | null>>()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+    const observer = new DaemonFleetFactsObserver({
+      readSessions,
+      readAgents: async () => new Map(),
+      ...callbacks(),
+      setTimer: vi.fn(() => 1 as unknown as ReturnType<typeof setTimeout>),
+      clearTimer: vi.fn(),
+    });
+
+    const retired = observer.acquire(["sessions"]);
+    await Promise.resolve();
+    retired.release();
+    const replacement = observer.acquire(["sessions"]);
+    let ready = false;
+    void replacement.ready.then(() => {
+      ready = true;
+    });
+
+    first.resolve({ sessions: ["stale"], adopted: [] });
+    expect(ready).toBe(false);
+    await vi.waitFor(() => expect(readSessions).toHaveBeenCalledTimes(2));
+
+    second.resolve({ sessions: ["current"], adopted: [] });
+    await replacement.ready;
+    expect(ready).toBe(true);
+    replacement.release();
   });
 
   it.each([

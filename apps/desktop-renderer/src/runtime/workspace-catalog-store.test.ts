@@ -1,5 +1,6 @@
 import { createRoot } from "solid-js";
 import {
+  DAEMON_WIRE_PROTOCOL_VERSION,
   DESKTOP_HOST_API_VERSION,
   type DaemonInstanceIdentity,
   type DesktopDaemonCapabilityState,
@@ -18,7 +19,7 @@ import {
 } from "./workspace-catalog-store.ts";
 
 const DAEMON: DaemonInstanceIdentity = {
-  protocolVersion: 1,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "2.8.0",
   instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
   startedAt: "2026-07-21T00:00:00.000Z",
@@ -63,6 +64,29 @@ function catalog(
     status: "ok",
     daemon,
     workspaces: names.map((workspaceName) => ({ workspaceName })),
+  };
+}
+
+function catalogWithStoppedIntent(): DesktopDaemonListWorkspacesResult {
+  return {
+    status: "ok",
+    daemon: DAEMON,
+    workspaces: [
+      {
+        workspaceName: "running",
+        sessionName: "running-session",
+        source: "workspace",
+        availability: "live",
+        paneCount: 2,
+      },
+      {
+        workspaceName: "parked",
+        sessionName: "parked-session",
+        source: "project",
+        availability: "stopped",
+        paneCount: 0,
+      },
+    ],
   };
 }
 
@@ -123,6 +147,23 @@ function liveSnapshot(state: DesktopWorkspaceCatalogState) {
 }
 
 describe("desktop live workspace catalog and selection store", () => {
+  it("keeps stopped intent visible but excludes it from selection and attach", async () => {
+    const fake = fakeDaemonHost(async () => catalogWithStoppedIntent());
+    const store = createDesktopWorkspaceCatalogStore({ host: fake.host, daemon: CONNECTED });
+    await publishLive(fake);
+    await vi.waitFor(() => expect(store.getState().status).toBe("live"));
+
+    const snapshot = liveSnapshot(store.getState());
+    expect(snapshot.workspaces).toMatchObject([
+      { workspaceName: "parked", availability: "stopped", paneCount: 0 },
+      { workspaceName: "running", availability: "live", paneCount: 2 },
+    ]);
+    expect(snapshot.selection).toMatchObject({ view: "workspace", workspaceName: "running" });
+    expect(store.select("parked")).toBe(false);
+    expect(store.select("running")).toBe(true);
+    store.dispose();
+  });
+
   it.each([
     {
       label: "zero",

@@ -1,4 +1,5 @@
 import type { DesktopDaemonTransportState } from "@tmux-ide/contracts";
+import { acquireRuntimeResource } from "./runtime-resource-ledger.ts";
 
 /**
  * The ONE generation-bound resource engine behind the fleet catalog, the
@@ -338,16 +339,19 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
   let requestId = 0;
   let requestController: AbortController | null = null;
   let requestRetryTimer: unknown | null = null;
+  let releaseRequestRetryTimer: (() => void) | null = null;
   let requestRetryAttempts = 0;
 
   let subscriptionId = 0;
   let pendingSubscriptionId: number | null = null;
   let closeSubscription: (() => void) | null = null;
   let eventRetryTimer: unknown | null = null;
+  let releaseEventRetryTimer: (() => void) | null = null;
   let eventRetryAttempts = 0;
   let eventRetryRequested = false;
   let eventLive = false;
   let stabilityTimer: unknown | null = null;
+  let releaseStabilityTimer: (() => void) | null = null;
   /** A verified reconnect must refetch so a missed invalidation cannot hide. */
   let resyncNeeded = false;
 
@@ -400,16 +404,22 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
   const clearRequestRetry = (): void => {
     clearTimer(requestRetryTimer);
     requestRetryTimer = null;
+    releaseRequestRetryTimer?.();
+    releaseRequestRetryTimer = null;
   };
 
   const clearEventRetry = (): void => {
     clearTimer(eventRetryTimer);
     eventRetryTimer = null;
+    releaseEventRetryTimer?.();
+    releaseEventRetryTimer = null;
   };
 
   const clearStability = (): void => {
     clearTimer(stabilityTimer);
     stabilityTimer = null;
+    releaseStabilityTimer?.();
+    releaseStabilityTimer = null;
   };
 
   const retireRequest = (): void => {
@@ -462,10 +472,17 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
     }
     const delay = boundedRetryDelay(requestRetryAttempts, retry, random);
     requestRetryAttempts += 1;
-    requestRetryTimer = clock.setTimeout(() => {
+    const releaseTimer = acquireRuntimeResource("runtime-timer");
+    let handle: unknown;
+    handle = clock.setTimeout(() => {
+      releaseTimer();
+      if (requestRetryTimer !== handle) return;
+      releaseRequestRetryTimer = null;
       requestRetryTimer = null;
       fetchResource(expectedGeneration, expectedKey);
     }, delay);
+    requestRetryTimer = handle;
+    releaseRequestRetryTimer = releaseTimer;
   };
 
   const scheduleEventRetry = (expectedGeneration: number, expectedKey: string): void => {
@@ -491,10 +508,17 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
     const delay = boundedRetryDelay(eventRetryAttempts, retry, random);
     eventRetryAttempts += 1;
     eventRetryRequested = false;
-    eventRetryTimer = clock.setTimeout(() => {
+    const releaseTimer = acquireRuntimeResource("runtime-timer");
+    let handle: unknown;
+    handle = clock.setTimeout(() => {
+      releaseTimer();
+      if (eventRetryTimer !== handle) return;
+      releaseEventRetryTimer = null;
       eventRetryTimer = null;
       connectEvents(expectedGeneration, expectedKey);
     }, delay);
+    eventRetryTimer = handle;
+    releaseEventRetryTimer = releaseTimer;
   };
 
   const handleEventFailure = (
@@ -634,7 +658,12 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
       clearEventRetry();
       clearStability();
       if (retry.stabilityWindowMs > 0 && eventRetryAttempts > 0) {
-        stabilityTimer = clock.setTimeout(() => {
+        const releaseTimer = acquireRuntimeResource("runtime-timer");
+        let handle: unknown;
+        handle = clock.setTimeout(() => {
+          releaseTimer();
+          if (stabilityTimer !== handle) return;
+          releaseStabilityTimer = null;
           stabilityTimer = null;
           if (
             activeSubscriptionId === subscriptionId &&
@@ -644,6 +673,8 @@ export function createGenerationBoundStore<TTarget, TResource, TFailure, TState>
             eventRetryAttempts = 0;
           }
         }, retry.stabilityWindowMs);
+        stabilityTimer = handle;
+        releaseStabilityTimer = releaseTimer;
       } else {
         eventRetryAttempts = 0;
       }

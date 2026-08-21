@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "minimumVersion": "3.0",
+  "requiredCommands": [
+    "attach-session",
+    "capture-pane",
+    "display-message",
+    "list-clients",
+    "list-panes",
+    "list-windows",
+    "new-session",
+    "new-window",
+    "refresh-client",
+    "resize-pane",
+    "select-pane",
+    "select-window",
+    "send-keys",
+    "set-option",
+    "split-window",
+    "swap-pane"
+  ],
+  "features": {
+    "coreVisualWorkspace": {
+      "minimumVersion": "3.0",
+      "requiredCommands": ["capture-pane", "list-panes", "resize-pane", "send-keys"]
+    },
+    "readOnlyIgnoreSizeAttach": {
+      "minimumVersion": "3.2",
+      "requiredCommands": ["attach-session", "refresh-client"],
+      "probe": {
+        "command": "attach-session",
+        "args": ["-r", "-x", "-t", "={session}"]
+      }
+    },
+    "controlModePauseAfter": {
+      "minimumVersion": "3.2",
+      "requiredCommands": ["attach-session", "list-clients"],
+      "probe": {
+        "command": "attach-session",
+        "args": ["-f", "pause-after=1", "-t", "={session}"]
+      }
+    }
+  }
+}

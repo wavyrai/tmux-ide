@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,6 +8,8 @@ import {
 } from "../lib/workspace-registry.ts";
 import { handleWsEventsConnection } from "./ws-events.ts";
 import { createApp } from "./server.ts";
+import { _resetCacheForTests, registerProject } from "../lib/project-registry.ts";
+import { fleetSessionIdForName } from "./resources/fleet-catalog.ts";
 
 const TEST_DAEMON_IDENTITY = {
   protocolVersion: 1,
@@ -26,11 +28,15 @@ beforeEach(async () => {
     listSessions: () => ["alpha", "beta"],
   });
   await registry.load();
+  process.env.TMUX_IDE_REGISTRY_DIR = tmpDir;
   _setDefaultWorkspaceRegistryForTests(registry);
+  _resetCacheForTests();
 });
 
 afterEach(() => {
   _setDefaultWorkspaceRegistryForTests(null);
+  delete process.env.TMUX_IDE_REGISTRY_DIR;
+  _resetCacheForTests();
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -57,6 +63,64 @@ describe("REST /api/workspaces", () => {
       workspaces: [{ workspaceName: "alpha", sessionName: "alpha-live" }],
     });
     expect(JSON.stringify(body)).not.toMatch(/projectDir|ideConfigPath|configPath/);
+  });
+
+  it("V2 keeps persisted project intent when tmux has no live sessions", async () => {
+    const projectDir = join(tmpDir, "alpha");
+    mkdirSync(projectDir);
+    await registerProject({
+      dir: projectDir,
+      name: "alpha",
+      io: { exists: () => false, runGit: async () => null },
+    });
+    const app = createApp({
+      daemonIdentity: TEST_DAEMON_IDENTITY,
+      catalogLiveSessions: () => [],
+    });
+    const response = await app.request("/api/resources/workspace-catalog?version=2");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      version: 2,
+      daemon: TEST_DAEMON_IDENTITY,
+      intents: [
+        {
+          workspaceName: "alpha",
+          sessionName: "alpha",
+          source: "project",
+          availability: "stopped",
+        },
+      ],
+      liveSessions: [],
+    });
+  });
+
+  it("V2 joins an observed session to durable workspace intent", async () => {
+    registry.add({ name: "alpha", sessionName: "alpha-live", projectDir: "/tmp/alpha" });
+    const app = createApp({
+      daemonIdentity: TEST_DAEMON_IDENTITY,
+      catalogLiveSessions: () => [{ sessionName: "alpha-live", paneCount: 3 }],
+    });
+    const response = await app.request("/api/resources/workspace-catalog?version=2");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      version: 2,
+      daemon: TEST_DAEMON_IDENTITY,
+      intents: [
+        {
+          workspaceName: "alpha",
+          sessionName: "alpha-live",
+          source: "workspace",
+          availability: "live",
+        },
+      ],
+      liveSessions: [
+        {
+          sessionName: "alpha-live",
+          fleetSessionId: fleetSessionIdForName("alpha-live"),
+          paneCount: 3,
+        },
+      ],
+    });
   });
 
   it("POST adds a workspace and returns 201 with the new entry", async () => {

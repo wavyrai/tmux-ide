@@ -94,6 +94,8 @@ export interface WindowTab {
   readonly label: string;
   readonly active: boolean;
   readonly paneCount: number;
+  /** Exact semantic pane membership, sorted for stable diagnostics/correlation. */
+  readonly semanticPaneIds: readonly string[];
   readonly zoomed: boolean;
   /**
    * A pane of this window, which is how the window is addressed: window verbs
@@ -127,6 +129,7 @@ export function windowTabs(frames: readonly LayoutFrame[]): readonly WindowTab[]
       label: frame.windowName?.trim() || `Window ${index + 1}`,
       active: frame.currentWindow,
       paneCount: frame.panes.length,
+      semanticPaneIds: joined.map(({ pane }) => pane!).sort(),
       zoomed: frame.zoomed,
       addressPane: active?.pane ?? null,
     };

@@ -74,9 +74,10 @@ afterEach(() => {
 describe("/ws/events fleet composition invalidation", () => {
   it("keeps session composition to one compact tmux query", () => {
     expect(SESSION_COMPOSITION_TMUX_ARGS).toEqual([
-      "list-sessions",
+      "list-panes",
+      "-a",
       "-F",
-      "#{session_name}\t#{@tmux_ide_adopted}",
+      "#{session_name}\t#{@tmux_ide_adopted}\t#{session_id}\t#{window_id}\t#{pane_id}\t#{window_panes}\t#{session_windows}\t#{@tmux_ide_pane_id}\t#{@tmux_ide_window_id}",
     ]);
   });
 

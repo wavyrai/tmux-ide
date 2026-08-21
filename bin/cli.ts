@@ -3,9 +3,9 @@
 // esbuild banner. Dev iteration uses `bun bin/cli.ts` directly, which
 // doesn't need a shebang.
 import { parseArgs } from "node:util";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -45,6 +45,8 @@ import { send } from "../packages/daemon/src/send.ts";
 import { IdeError } from "../packages/daemon/src/lib/errors.ts";
 import { printCommandError } from "../packages/daemon/src/lib/output.ts";
 import { runHeadlessDaemon } from "../packages/daemon/src/lib/headless-daemon.ts";
+import { ensureCanonicalDaemon } from "../packages/daemon/src/lib/canonical-daemon-bootstrap.ts";
+import { stateHome } from "../packages/daemon/src/lib/state-home.ts";
 import {
   wantsHostedApp,
   hostedEnvVars,
@@ -160,6 +162,7 @@ const knownCommands = new Set([
   "update",
   "skill-sync",
   "widget",
+  "web",
   "serve",
   "command-center",
   "server",
@@ -199,6 +202,7 @@ function printHelp() {
 
 ${bold("Usage:")}
   ${cyan("tmux-ide")}                    ${dim("Open the visual tmux app (workspace config is optional)")}
+  ${cyan("tmux-ide start")} [path]       ${dim("Explicitly launch the declarative project layout")}
   ${cyan("tmux-ide --headless")}         ${dim("Run the canonical daemon in this foreground process")}
   ${cyan("tmux-ide <path>")}             ${dim("Open a configured workspace, or visually manage tmux from that folder")}
   ${cyan("tmux-ide setup")}              ${dim("Interactive TUI setup wizard")}
@@ -231,6 +235,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide popup")} <widget>     ${dim("Open a widget as a floating panel (explorer/changes/config; ⌥e/⌥g/⌥,)")}
   ${cyan("tmux-ide widget")} <markdown|image|card> [file]  ${dim("Render rich live content in the current pane")}
   ${cyan("tmux-ide show")} <file>          ${dim("Show Markdown, images, GIFs, or cards by file type")}
+  ${cyan("tmux-ide web")} [--port N]       ${dim("Serve the packaged Web GUI on loopback (ephemeral port by default)")}
   ${cyan("tmux-ide sidebar-toggle")} [--session S]  ${dim("Toggle the app nav column (⌥b on adopted sessions)")}
   ${cyan("tmux-ide worktree create")} <branch> [--from <ref>] [--dir <path>] [--no-session]
                               ${dim("Add a git worktree (new branch) + open a session in it")}
@@ -315,34 +320,103 @@ function execBunWidget(
     );
   }
 
+  const launchEpochMs = Date.now();
+  let automaticDiagnosticLog: string | undefined;
+  if (surface === "app" && !process.env.TMUX_IDE_TUI_PERF_LOG) {
+    try {
+      const logDirectory = join(stateHome(), "logs");
+      mkdirSync(logDirectory, { recursive: true, mode: 0o700 });
+      automaticDiagnosticLog = join(logDirectory, "tui-latest.jsonl");
+      writeFileSync(
+        automaticDiagnosticLog,
+        `${JSON.stringify({
+          phase: "launcher-start",
+          elapsedMs: 0,
+          at: new Date(launchEpochMs).toISOString(),
+          surface,
+          launchMode: launch.mode,
+        })}\n`,
+        { mode: 0o600 },
+      );
+    } catch {
+      // Diagnostics must never prevent the product from launching.
+      automaticDiagnosticLog = undefined;
+    }
+  }
   const env = {
     ...process.env,
     TMUX_IDE_CWD: process.cwd(),
     TMUX_IDE_CLI: nodeCliPath,
+    ...(automaticDiagnosticLog
+      ? {
+          TMUX_IDE_TUI_PERF_LOG: automaticDiagnosticLog,
+          TMUX_IDE_TUI_LAUNCH_EPOCH_MS: String(launchEpochMs),
+        }
+      : {}),
     ...extraEnv,
   };
-  if (launch.mode === "bun") {
-    // Spawn from the repo root so bun finds `bunfig.toml` (the @opentui/solid
-    // JSX preload). Without this, running from any other cwd — e.g. bare
-    // `tmux-ide` in a project dir — falls back to the React JSX runtime and the
-    // widget fails to load. The real invocation dir rides in env so in-widget
-    // prompts (register / new session) still default to where the user is.
+  const markChildExited = () => {
+    if (!automaticDiagnosticLog) return;
+    try {
+      appendFileSync(
+        automaticDiagnosticLog,
+        `${JSON.stringify({
+          phase: "launcher-child-exited",
+          elapsedMs: Date.now() - launchEpochMs,
+          at: new Date().toISOString(),
+          status: 0,
+          signal: null,
+        })}\n`,
+      );
+    } catch {
+      // Diagnostics must never change successful process semantics.
+    }
+  };
+  try {
+    if (launch.mode === "bun") {
+      // Spawn from the repo root so bun finds `bunfig.toml` (the @opentui/solid
+      // JSX preload). Without this, running from any other cwd — e.g. bare
+      // `tmux-ide` in a project dir — falls back to the React JSX runtime and the
+      // widget fails to load. The real invocation dir rides in env so in-widget
+      // prompts (register / new session) still default to where the user is.
+      execFileSync(launch.bin, launch.argv, {
+        stdio: "inherit",
+        cwd: resolve(__dirname, ".."),
+        env,
+      });
+      markChildExited();
+      return;
+    }
+
+    // A compiled Bun executable still reads bunfig.toml from its cwd before the
+    // embedded app starts. Isolate it from the project checkout; TMUX_IDE_CWD
+    // preserves the user's real project directory for every app action.
     execFileSync(launch.bin, launch.argv, {
       stdio: "inherit",
-      cwd: resolve(__dirname, ".."),
+      cwd: ensureCompiledTuiRuntimeDir(),
       env,
     });
-    return;
+    markChildExited();
+  } catch (error) {
+    if (automaticDiagnosticLog) {
+      try {
+        const childError = error as { status?: unknown; signal?: unknown };
+        appendFileSync(
+          automaticDiagnosticLog,
+          `${JSON.stringify({
+            phase: "launcher-child-failed",
+            elapsedMs: Date.now() - launchEpochMs,
+            at: new Date().toISOString(),
+            status: childError.status ?? null,
+            signal: childError.signal ?? null,
+          })}\n`,
+        );
+      } catch {
+        // Preserve the original child failure.
+      }
+    }
+    throw error;
   }
-
-  // A compiled Bun executable still reads bunfig.toml from its cwd before the
-  // embedded app starts. Isolate it from the project checkout; TMUX_IDE_CWD
-  // preserves the user's real project directory for every app action.
-  execFileSync(launch.bin, launch.argv, {
-    stdio: "inherit",
-    cwd: ensureCompiledTuiRuntimeDir(),
-    env,
-  });
 }
 
 // The detachable cockpit (M23.2): instead of running the app in THIS terminal,
@@ -463,7 +537,10 @@ function launchTeamCockpit(): void {
 // `app.detachable` in config) route through the hosted launcher, everything
 // else runs the app in this terminal as before. The HOSTED_ENV guard keeps the
 // app INSIDE the host session from re-hosting itself.
-function runApp(appArgs: string[]): void {
+async function runApp(appArgs: string[]): Promise<void> {
+  // The app is a thin client. Establish the one persistent daemon generation
+  // before OpenTUI mounts so its first frame never races manual daemon startup.
+  await ensureCanonicalDaemon({ entryPath: nodeCliPath });
   const hosted = wantsHostedApp({
     flagDetachable: values.detachable === true,
     flagHosted: values.hosted === true,
@@ -478,8 +555,8 @@ function runApp(appArgs: string[]): void {
 // app`'s HOME panel when `app.frontDoor` is on and there's nothing else to
 // launch. Same entry as the explicit `app` command with no session positional
 // — including the hosted flip when `app.detachable` is set (M23.2).
-function launchApp(): void {
-  runApp([]);
+function launchApp(): Promise<void> {
+  return runApp([]);
 }
 
 try {
@@ -534,6 +611,7 @@ try {
       // cockpit; a present project config still auto-launches the project; otherwise
       // `app.frontDoor` flips the default no-project entry to the unified app.
       const entry = resolveEntry({
+        bareInvocation: firstPositional === undefined,
         configKind: configContext.configKind,
         hasWorkspaceConfig: configContext.hasWorkspaceConfig,
         hasIdeYml: configContext.hasIdeYml,
@@ -547,7 +625,7 @@ try {
           await printFleetJson();
           break;
         }
-        if (entry === "app") launchApp();
+        if (entry === "app") await launchApp();
         else launchTeamCockpit();
         break;
       }
@@ -715,7 +793,7 @@ try {
       // cockpit at CREATE time; a reattach finds the app exactly as left.
       const session = positionals[1];
       const appArgs = session ? [`--target=${session}`] : [];
-      runApp(appArgs);
+      await runApp(appArgs);
       break;
     }
 
@@ -1960,6 +2038,39 @@ try {
       process.on("SIGTERM", shutdown);
       process.on("SIGINT", shutdown);
       await new Promise(() => {}); // the server owns the process lifetime
+      break;
+    }
+
+    case "web": {
+      const rawPort = values.port;
+      const webPort = rawPort === undefined ? undefined : Number(rawPort);
+      if (
+        webPort !== undefined &&
+        (!Number.isInteger(webPort) || webPort < 0 || webPort > 65_535)
+      ) {
+        throw new IdeError(`Invalid Web GUI port: ${rawPort}`, {
+          code: "USAGE",
+          exitCode: 1,
+        });
+      }
+      const { startProductionWebServer } =
+        await import("../apps/desktop-renderer/scripts/production-web-server.ts");
+      const web = await startProductionWebServer({
+        staticRoot: resolve(__dirname, "../apps/desktop-renderer/dist"),
+        cliEntryPath: nodeCliPath,
+        cwd: process.cwd(),
+        ...(webPort === undefined ? {} : { port: webPort }),
+      });
+      process.stdout.write(`${web.url}\n`);
+      let closing = false;
+      const shutdown = (): void => {
+        if (closing) return;
+        closing = true;
+        void web.stop().then(() => process.exit(0));
+      };
+      process.once("SIGINT", shutdown);
+      process.once("SIGTERM", shutdown);
+      await new Promise(() => {});
       break;
     }
 

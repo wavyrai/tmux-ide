@@ -31,6 +31,22 @@ describe("InputCoalescer", () => {
     expect(actions).toEqual([{ kind: "literal", pane: "%1", text: "hello" }]);
   });
 
+  it("retains every diagnostic trace across a coalesced literal write", () => {
+    const { c, actions, drain } = harness();
+    c.literal("%1", "a", "trace-a");
+    c.literal("%1", "b", "trace-b");
+    c.literal("%1", "c", "trace-a");
+    drain();
+    expect(actions).toEqual([
+      {
+        kind: "literal",
+        pane: "%1",
+        text: "abc",
+        traceIds: ["trace-a", "trace-b"],
+      },
+    ]);
+  });
+
   it("ORDERING: a pending literal batch flushes before a named key", () => {
     const { c, actions } = harness();
     c.literal("%1", "a");

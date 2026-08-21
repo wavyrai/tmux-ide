@@ -8,6 +8,7 @@ import type {
   TerminalReplicaColor,
   TerminalReplicaRow,
   TerminalReplicaSnapshot,
+  TerminalSemanticDeliveryPayload,
 } from "@tmux-ide/contracts";
 import {
   TerminalDeliveryAssembler,
@@ -16,7 +17,6 @@ import {
   commitTerminalDelivery,
   completeTerminalDelivery,
   createTerminalDeliveryClientState,
-  decodeSemanticTerminalUpdate,
   nackTerminalDelivery,
   type TerminalDeliveryClientState,
 } from "@tmux-ide/core";
@@ -170,6 +170,19 @@ export class SemanticPaneReplica {
     return this.#snapshot;
   }
 
+  /** Bounded ownership facts for deterministic resource-lifecycle tests. */
+  resourceOwnership(): {
+    readonly activeAssemblers: 0 | 1;
+    readonly retainedGridRows: number;
+    readonly retainedHistoryRows: number;
+  } {
+    return Object.freeze({
+      activeAssemblers: this.#assembler ? 1 : 0,
+      retainedGridRows: this.#snapshot?.grid.length ?? 0,
+      retainedHistoryRows: this.#snapshot?.history.length ?? 0,
+    });
+  }
+
   canonicalSnapshot(): SemanticPaneCanonicalSnapshot | null {
     if (!this.#snapshot) return null;
     return Object.freeze({
@@ -224,7 +237,7 @@ export class SemanticPaneReplica {
     const snapshot = this.#snapshot;
     if (!snapshot) return [];
     return Array.from({ length: snapshot.rows }, (_, row) =>
-      this.#textRow(visibleRowAt(snapshot, scrollOffset, row)),
+      this.#textRow(visibleTerminalRowAt(snapshot, scrollOffset, row)),
     );
   }
 
@@ -279,7 +292,7 @@ export class SemanticPaneReplica {
     for (let y = 0; y < height; y += 1) {
       if (!full && !this.#dirtyRows.has(y) && !forced?.has(y)) continue;
       blitSemanticRow(
-        visibleRowAt(this.#snapshot, scrollOffset, y),
+        visibleTerminalRowAt(this.#snapshot, scrollOffset, y),
         buffers,
         y,
         width,
@@ -322,7 +335,7 @@ export class SemanticPaneReplica {
       return;
     }
     let committed: ReturnType<typeof commitTerminalDelivery>;
-    let payload: ReturnType<typeof decodeSemanticTerminalUpdate>;
+    let payload: TerminalSemanticDeliveryPayload;
     let envelope: TerminalDeliveryEnvelope;
     const performanceSink = currentTuiPerformanceEventSink();
     let parseStartedAt = 0;
@@ -336,8 +349,10 @@ export class SemanticPaneReplica {
       envelope = admittedEnvelope;
       if (performanceSink) parseStartedAt = performance.now();
       const staged = completeTerminalDelivery(this.#delivery, assembler);
-      payload = decodeSemanticTerminalUpdate(staged.bytes);
       committed = commitTerminalDelivery(this.#delivery, staged);
+      if (!committed.semanticUpdate)
+        throw new TypeError("Semantic delivery did not produce an update");
+      payload = committed.semanticUpdate;
     } catch {
       this.#fail("decode-failed", message.transactionId);
       return;
@@ -355,6 +370,9 @@ export class SemanticPaneReplica {
         traceId: envelope.performanceTraceId,
         generation: envelope.generation,
         incarnation: envelope.incarnation,
+        semanticPaneId: envelope.semanticPaneId,
+        revision: envelope.canonicalRevision,
+        stateHash: envelope.canonicalStateHash,
       });
     if (!committed.state.canonicalSnapshot) this.#pendingPaintTrace = null;
     // Publish trace authority before notifying the renderer. `#applySnapshot`
@@ -369,6 +387,7 @@ export class SemanticPaneReplica {
           parseMs: performance.now() - parseStartedAt,
           queuePeak: 1,
           queueCapacity: 1,
+          settledQueueDepth: 0,
           revisionLagPeak: Math.max(0, envelope.canonicalRevision - (envelope.baseRevision ?? -1)),
           reseed,
         });
@@ -390,7 +409,7 @@ export class SemanticPaneReplica {
     previous: TerminalReplicaSnapshot | null,
     next: TerminalReplicaSnapshot | null,
     envelope: TerminalDeliveryEnvelope,
-    payload: ReturnType<typeof decodeSemanticTerminalUpdate>,
+    payload: TerminalSemanticDeliveryPayload,
   ): void {
     const previousKey = this.#renderKey;
     this.#snapshot = next;
@@ -400,7 +419,7 @@ export class SemanticPaneReplica {
       this.#notify({ kind: "closed", version: this.#version });
       return;
     }
-    const dirty = changedRows(previous, next, envelope.frame === "seed");
+    const dirty = changedTerminalRows(previous, next, envelope.frame === "seed");
     for (const row of dirty) this.#dirtyRows.add(row);
     if (envelope.frame === "seed") this.#lineTrim = 0;
     else if (payload.frame === "patch" && payload.patch.historyDelta)
@@ -514,7 +533,7 @@ export class SemanticTerminalRenderSource implements TerminalPaneRenderSource {
   }
 }
 
-function changedRows(
+export function changedTerminalRows(
   previous: TerminalReplicaSnapshot | null,
   next: TerminalReplicaSnapshot,
   seed: boolean,
@@ -533,7 +552,11 @@ function changedRows(
   return rows;
 }
 
-function visibleRowAt(snapshot: TerminalReplicaSnapshot | null, scrollOffset: number, row: number) {
+export function visibleTerminalRowAt(
+  snapshot: TerminalReplicaSnapshot | null,
+  scrollOffset: number,
+  row: number,
+) {
   if (!snapshot) return undefined;
   const depth = snapshot.history.length;
   const offset = Math.min(depth, Math.max(0, scrollOffset));
@@ -685,7 +708,7 @@ function resolveColor(
     : (palette?.ansiBackground[color.index] ?? null);
 }
 
-function blitSemanticRow(
+export function blitSemanticRow(
   row: TerminalReplicaSnapshot["grid"][number] | undefined,
   buffers: CellArrays,
   y: number,

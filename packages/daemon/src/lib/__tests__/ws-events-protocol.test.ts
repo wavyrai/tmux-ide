@@ -10,6 +10,7 @@ import {
   _stopFleetFactsObserverForTests,
   broadcastInteractionReceipt,
   broadcastResourceChanged,
+  currentResourceRevision,
   handleWsEventsConnection,
 } from "../../command-center/ws-events.ts";
 import { _setTmuxRunner } from "../../command-center/discovery.ts";
@@ -78,6 +79,86 @@ afterEach(() => {
 });
 
 describe("/ws/events client frame protocol", () => {
+  it("uses one terminal revision clock across global and workspace invalidations", () => {
+    expect(
+      broadcastResourceChanged(
+        { workspaceName: null, resource: "terminal-runtime-inventory" },
+        daemonIdentity.instanceId,
+      ).revision,
+    ).toBe(1);
+    expect(
+      broadcastResourceChanged(
+        { workspaceName: "alpha", resource: "terminal-runtime-inventory" },
+        daemonIdentity.instanceId,
+      ).revision,
+    ).toBe(2);
+    expect(
+      broadcastResourceChanged(
+        { workspaceName: null, resource: "terminal-runtime-inventory" },
+        daemonIdentity.instanceId,
+      ).revision,
+    ).toBe(3);
+    expect(currentResourceRevision("alpha", "terminal-runtime-inventory")).toBe(3);
+  });
+
+  it("rejects terminal authority before observer acquisition on an unprivileged socket", async () => {
+    const acquire = vi.fn(() => ({
+      release: vi.fn(),
+      ready: Promise.resolve({ status: "installed" as const }),
+    }));
+    _setResourceObservationOverrideForTests(acquire);
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity, {
+      mode: "semantic",
+      ownerAuthorized: false,
+    });
+    socket.sent.length = 0;
+    socket.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        legacyEvents: false,
+        interestRevision: 1,
+        interests: [{ resource: "terminal-runtime-inventory", workspaceName: "alpha" }],
+      }),
+    );
+    await flushProtocol();
+    expect(acquire).not.toHaveBeenCalled();
+    expect(frames(socket)).toContainEqual({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
+      unavailableInterests: [{ resource: "terminal-runtime-inventory", workspaceName: "alpha" }],
+    });
+    socket.disconnect();
+  });
+
+  it("installs privileged terminal authority without acquiring agent observation", async () => {
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity, {
+      mode: "semantic",
+      ownerAuthorized: true,
+    });
+    socket.sent.length = 0;
+    socket.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        legacyEvents: false,
+        interestRevision: 1,
+        interests: [{ resource: "terminal-runtime-inventory", workspaceName: "alpha" }],
+      }),
+    );
+    await flushProtocol();
+    expect(_resourceObserverStateForTests()).toMatchObject({ sessions: 1, agents: 0 });
+    expect(frames(socket).at(-1)).toMatchObject({
+      type: "resource.interests-ack",
+      unavailableInterests: [],
+    });
+    socket.disconnect();
+    expect(_resourceObserverStateForTests()).toMatchObject({ sessions: 0, agents: 0 });
+  });
+
   it("waits for observer installation and acknowledges the post-install sequence", async () => {
     let install!: (value: { status: "installed" }) => void;
     _setResourceObservationOverrideForTests(() => ({
@@ -254,15 +335,17 @@ describe("/ws/events client frame protocol", () => {
   });
 
   it("keeps semantic hello and delivery free of real path-bearing session facts", () => {
-    const restore = _setTmuxRunner((args) => {
+    const tmuxRunner = vi.fn((args: readonly string[]) => {
       if (args[0] === "list-sessions") return "secret";
       if (args[0] === "display-message") return "/Users/private/secret-project";
       return "";
     });
+    const restore = _setTmuxRunner(tmuxRunner);
     try {
       const socket = new ProtocolWebSocket();
       handleWsEventsConnection(socket, daemonIdentity, { mode: "semantic" });
       expect(frames(socket)[0]).toMatchObject({ type: "hello", sessions: [] });
+      expect(tmuxRunner).not.toHaveBeenCalled();
       socket.receive(
         JSON.stringify({ type: "subscribe", sessions: ["secret"], legacyEvents: true }),
       );

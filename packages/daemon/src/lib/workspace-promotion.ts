@@ -1,5 +1,5 @@
 /**
- * Workspace promotion — make an already-adopted tmux session ATTACHABLE by
+ * Workspace promotion — make an ordinary live tmux session ATTACHABLE by
  * admitting it into the workspace registry through an explicit, owner-initiated
  * action.
  *
@@ -60,9 +60,13 @@ const MAX_OPERATIONS = 128;
 const MAX_REPLAYABLE_FAILURES = 64;
 const MAX_TMUX_OUTPUT_BYTES = 128 * 1024;
 
-// The durable adopt stamp (mirrors tui/chrome/front-door.ts ADOPTED_OPTION) and
-// the tmux-ide identity options. The promotion marker is DELIBERATELY distinct
-// from the m32 open marker so a promoted session is a separate provenance.
+// The durable fleet-enrollment stamp is read as part of the exact session
+// inventory, but it is not an admission prerequisite: an owner-authenticated
+// workspace.promote request is itself the explicit intent to open an ordinary
+// live session. Promotion publishes the stamp only after the terminal inventory
+// is proven, immediately before registry admission. The promotion marker is
+// DELIBERATELY distinct from the m32 open marker so a promoted session is a
+// separate provenance.
 const ADOPTED_OPTION = "@tmux_ide_adopted";
 const SESSION_PROMOTED_MARKER_OPTION = "@tmux_ide_workspace_promoted_v1";
 const SESSION_WORKSPACE_OPTION = "@tmux_ide_workspace_name";
@@ -132,7 +136,7 @@ export type WorkspacePromotionErrorCode =
 
 const ERROR_MESSAGES: Readonly<Record<WorkspacePromotionErrorCode, string>> = {
   daemon_instance_mismatch: "The daemon generation changed before the session was promoted.",
-  session_not_found: "No adopted fleet session matches the requested session identity.",
+  session_not_found: "No live fleet session matches the requested session identity.",
   session_not_adopted: "The requested session is not adopted and cannot be promoted.",
   session_internal: "Internal tmux-ide sessions cannot be promoted.",
   workspace_conflict: "The derived workspace identity is already owned by another session.",
@@ -417,7 +421,7 @@ const DEFAULT_IO: Omit<WorkspacePromotionIo, "runTmux"> = {
 };
 
 /**
- * Owner-capability-gated admission that turns an adopted tmux session into a
+ * Owner-capability-gated admission that turns an ordinary live tmux session into a
  * registry workspace. Idempotent and serialized exactly like
  * {@link ../lib/workspace-open.ts}'s authority — a repeated operation id replays,
  * and an already-registered session resolves to a `replayed` outcome.
@@ -532,6 +536,7 @@ export class WorkspacePromotionAuthority {
         this.#stampPaneInventory(request, session, registeredIdentity);
         this.#assertActive(request.operationId);
         this.#verifyPromotedInventory(session.sessionId, registeredIdentity);
+        this.#publishFleetEnrollment(request, session, registeredIdentity);
         return this.#succeed(request, fingerprint, alreadyRegistered.name, session.sessionName, {
           replayed: true,
         });
@@ -543,6 +548,7 @@ export class WorkspacePromotionAuthority {
       const canonicalRoot = this.#stampSession(request, session, identity);
       this.#assertActive(request.operationId);
       this.#verifyPromotedInventory(session.sessionId, identity);
+      this.#publishFleetEnrollment(request, session, identity);
 
       let registered: Workspace;
       try {
@@ -593,9 +599,6 @@ export class WorkspacePromotionAuthority {
     if (isInternalSession(match.sessionName)) {
       throw new WorkspacePromotionError("session_internal", { sessionId });
     }
-    if (!match.adopted) {
-      throw new WorkspacePromotionError("session_not_adopted", { sessionId });
-    }
     return match;
   }
 
@@ -618,6 +621,29 @@ export class WorkspacePromotionAuthority {
           workspaceName: identity.workspaceName,
         });
       }
+    }
+  }
+
+  /**
+   * Publish fleet enrollment only after the complete terminal inventory has
+   * passed promotion verification. A pre-existing enrollment is byte-identical;
+   * a newly published marker makes the soon-to-be registered workspace visible
+   * to the shared FleetCatalog in the same mutation transaction.
+   */
+  #publishFleetEnrollment(
+    request: WorkspacePromoteMutationRequest,
+    session: SessionRecord,
+    identity: PromotionIdentity,
+  ): void {
+    if (session.adopted) return;
+    try {
+      this.#io.runTmux(["set-option", "-t", session.sessionId, ADOPTED_OPTION, "1"]);
+    } catch (error) {
+      throw new WorkspacePromotionError(
+        "stamp_failed",
+        { operationId: request.operationId, workspaceName: identity.workspaceName },
+        error,
+      );
     }
   }
 

@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { delimiter, isAbsolute, join, relative, sep } from "node:path";
 
@@ -22,6 +23,7 @@ import {
 import { getDefaultWorkspaceRegistry, type WorkspaceRegistry } from "./workspace-registry.ts";
 import { shellEscape } from "./shell.ts";
 import { MissionRepository } from "./mission-repository.ts";
+import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
 
 const MAX_LIVE_OR_UNSAFE_OPERATIONS = 128;
 const MAX_REPLAYABLE_FAILURES = 64;
@@ -141,7 +143,7 @@ export interface WorkspacePaneTmuxAuthority {
   readonly executablePath: string;
   readonly socketSelector:
     | { readonly kind: "path"; readonly path: string }
-    | { readonly kind: "name"; readonly name: "default" };
+    | { readonly kind: "name"; readonly name: string };
 }
 
 function canonicalProjectDir(path: string): string {
@@ -281,10 +283,7 @@ export function resolveWorkspacePaneTmuxAuthority(): WorkspacePaneTmuxAuthority 
   // A sessionless daemon may start before the default tmux server exists. Pin
   // the daemon's default socket *name* and captured environment rather than
   // consulting a later request's TMUX/PATH.
-  return Object.freeze({
-    executablePath,
-    socketSelector: { kind: "name" as const, name: "default" as const },
-  });
+  return Object.freeze({ executablePath, socketSelector: resolveRuntimeNamespace().tmuxSocket });
 }
 
 /** Execute mutations only through the daemon-generation-pinned tmux authority. */
@@ -305,8 +304,8 @@ export function createPinnedWorkspaceTmuxRunner(
           }
           return ["-S", path];
         })()
-      : authority.socketSelector.name === "default"
-        ? ["-L", "default"]
+      : /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(authority.socketSelector.name)
+        ? ["-L", authority.socketSelector.name]
         : (() => {
             throw new TypeError("Pinned tmux socket is invalid.");
           })();
@@ -320,6 +319,51 @@ export function createPinnedWorkspaceTmuxRunner(
         stdio: ["ignore", "pipe", "pipe"],
       }),
     ).replace(/(?:\r?\n)+$/u, "");
+}
+
+/** Execute read-only observer work without blocking the daemon event loop. */
+export function createPinnedWorkspaceTmuxAsyncRunner(
+  authority: WorkspacePaneTmuxAuthority,
+): (args: readonly string[], signal?: AbortSignal) => Promise<string> {
+  const executablePath = realpathSync(authority.executablePath);
+  accessSync(executablePath, constants.X_OK);
+  if (!isAbsolute(executablePath) || !statSync(executablePath).isFile()) {
+    throw new TypeError("Pinned tmux executable is invalid.");
+  }
+  const socketArgv =
+    authority.socketSelector.kind === "path"
+      ? (() => {
+          const path = realpathSync(authority.socketSelector.path);
+          if (!isAbsolute(path) || !statSync(path).isSocket()) {
+            throw new TypeError("Pinned tmux socket is invalid.");
+          }
+          return ["-S", path];
+        })()
+      : /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(authority.socketSelector.name)
+        ? ["-L", authority.socketSelector.name]
+        : (() => {
+            throw new TypeError("Pinned tmux socket is invalid.");
+          })();
+  const environment = Object.freeze(tmuxClientEnvironment(process.env));
+  return (args, signal) =>
+    new Promise<string>((resolve, reject) => {
+      execFile(
+        executablePath,
+        [...socketArgv, ...args],
+        {
+          encoding: "utf8",
+          env: environment,
+          maxBuffer: TMUX_OUTPUT_BYTES,
+          timeout: 5_000,
+          ...(signal ? { signal } : {}),
+          windowsHide: true,
+        },
+        (error, stdout) => {
+          if (error) reject(error);
+          else resolve(stdout.replace(/(?:\r?\n)+$/u, ""));
+        },
+      );
+    });
 }
 
 function profileCommand(profile: WorkspaceHarnessProfile): readonly string[] {

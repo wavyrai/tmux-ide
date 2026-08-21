@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { CausalCellProbeV1 } from "@tmux-ide/contracts";
 import type { SessionRuntimeConsumer } from "./registry.ts";
 import { SessionRuntimeRegistry } from "./registry.ts";
 import { SessionRuntimeTransportBinder } from "./transport-binding.ts";
@@ -43,6 +44,204 @@ function sendResult(operationId: string, intent: ReturnType<typeof sendIntent>) 
 }
 
 describe("SessionRuntimeTransportBinder", () => {
+  it("attributes an authenticated OpenTUI host principal to the opentui surface", async () => {
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION,
+      createControllerToken: () => "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+    const binding = new SessionRuntimeTransportBinder(registry).bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000070",
+      session: "alpha",
+      hostClientId: "opentui:42",
+      allowedSourcePaneIds: ["pane.a"],
+      interactive: true,
+      explicitAuthority: true,
+    });
+    expect(binding.authoritySnapshot().clients).toContainEqual(
+      expect.objectContaining({ clientId: "opentui:42", surface: "opentui" }),
+    );
+    await binding.close();
+    await registry.dispose();
+  });
+
+  it.each([
+    "web:12345678-1234-4123-8123-123456789abc",
+    "dev-web:12345678-1234-4123-8123-123456789abc",
+  ])("attributes server-minted Web principal %s on both transports", async (hostClientId) => {
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION,
+      createControllerToken: () => "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+    const binder = new SessionRuntimeTransportBinder(registry);
+    const attachment = binder.bind({
+      transport: "terminal-attachment",
+      transportLeaseId: "00000000-0000-4000-8000-000000000073",
+      session: "alpha",
+      hostClientId,
+      allowedSourcePaneIds: ["pane.a"],
+      interactive: true,
+      explicitAuthority: true,
+    });
+    const paneStream = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000075",
+      session: "alpha",
+      hostClientId,
+      allowedSourcePaneIds: ["pane.a"],
+      interactive: true,
+      explicitAuthority: true,
+    });
+    expect(paneStream.authoritySnapshot().clients).toContainEqual(
+      expect.objectContaining({
+        clientId: hostClientId,
+        surface: "web",
+      }),
+    );
+    await Promise.all([paneStream.close(), attachment.close()]);
+    await registry.dispose();
+  });
+
+  it.each([
+    "dev-web:not-a-minted-uuid",
+    "dev-web:12345678-1234-1123-8123-123456789abc",
+    "dev-web:12345678-1234-4123-7123-123456789abc",
+    "dev-web:12345678-1234-4123-8123-123456789ABC",
+    "dev-web-direct:12345678-1234-4123-8123-123456789abc",
+  ])("does not infer Web authority from untrusted principal %s", async (hostClientId) => {
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION,
+      createControllerToken: () => "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+    const binding = new SessionRuntimeTransportBinder(registry).bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000074",
+      session: "alpha",
+      hostClientId,
+      allowedSourcePaneIds: ["pane.a"],
+      interactive: true,
+      explicitAuthority: true,
+    });
+    expect(binding.authoritySnapshot().clients).toContainEqual(
+      expect.objectContaining({ clientId: hostClientId, surface: "unknown" }),
+    );
+    await binding.close();
+    await registry.dispose();
+  });
+
+  it("keeps a same-host pane authorized when its sibling pane stream closes", async () => {
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION,
+      createControllerToken: () => "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+    const binder = new SessionRuntimeTransportBinder(registry);
+    const paneA = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000071",
+      session: "alpha",
+      hostClientId: "web:document-a",
+      allowedSourcePaneIds: ["pane.a"],
+      interactive: true,
+      ownsGeometry: true,
+      explicitAuthority: true,
+    });
+    const paneB = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000072",
+      session: "alpha",
+      hostClientId: "web:document-a",
+      allowedSourcePaneIds: ["pane.b"],
+      interactive: true,
+      ownsGeometry: true,
+      explicitAuthority: true,
+    });
+
+    expect(paneB.requestAuthority("input")?.clientId).toBe("web:document-a");
+    expect(paneB.requestAuthority("geometry")?.clientId).toBe("web:document-a");
+    await paneA.close();
+
+    expect(paneB.authoritySnapshot().owners).toMatchObject({
+      input: "web:document-a",
+      geometry: "web:document-a",
+    });
+    paneB.assertController("pane.b");
+    expect(paneB.requestAuthority("geometry")?.clientId).toBe("web:document-a");
+    await paneB.close();
+    await registry.dispose();
+  });
+
+  it("lets explicit multi-client authority hand off independently without admission conflicts", async () => {
+    const tokens = [
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    ];
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION,
+      createControllerToken: () => tokens.shift()!,
+    });
+    const binder = new SessionRuntimeTransportBinder(registry);
+    const first = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000081",
+      session: "alpha",
+      hostClientId: "web:first",
+      allowedSourcePaneIds: ["pane.editor"],
+      interactive: true,
+      ownsGeometry: true,
+      explicitAuthority: true,
+    });
+    const second = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000082",
+      session: "alpha",
+      hostClientId: "opentui:second",
+      allowedSourcePaneIds: ["pane.editor"],
+      interactive: true,
+      ownsGeometry: true,
+      explicitAuthority: true,
+    });
+    const publishedOwners: Array<string | null> = [];
+    const stopSnapshots = first.onAuthoritySnapshot((snapshot) => {
+      publishedOwners.push(snapshot.owners.input);
+      if (snapshot.owners.input === "web:first") first.assertController("pane.editor");
+      if (snapshot.owners.input === "opentui:second") second.assertController("pane.editor");
+    });
+
+    second.updatePresence("foreground");
+    expect(second.requestAuthority("input")?.clientId).toBe("opentui:second");
+    first.updatePresence("foreground");
+    expect(first.requestAuthority("input")?.clientId).toBe("web:first");
+    expect(first.requestAuthority("geometry")?.clientId).toBe("web:first");
+
+    // Both clients retain claims, but ambient presence/activity is not allowed
+    // to move executable input authority behind the controller seam's back.
+    second.updatePresence("background");
+    second.updatePresence("foreground");
+    second.noteActivity("input");
+    expect(first.authoritySnapshot().owners.input).toBe("web:first");
+    first.assertController("pane.editor");
+
+    // An explicit acquire performs the controller handoff before publishing
+    // B as owner; from this point A's old execution proof is stale.
+    expect(second.requestAuthority("input")?.clientId).toBe("opentui:second");
+    expect(second.authoritySnapshot().owners).toMatchObject({ input: "opentui:second" });
+    expect(() => first.assertController("pane.editor")).toThrowError(
+      expect.objectContaining({ code: "stale-controller-lease" }),
+    );
+    second.assertController("pane.editor");
+
+    await second.close();
+    expect(first.requestAuthority("input")?.clientId).toBe("web:first");
+    first.assertController("pane.editor");
+    expect(publishedOwners).toContain("web:first");
+    expect(publishedOwners).toContain("opentui:second");
+    stopSnapshots();
+    await first.close();
+    await registry.dispose();
+  });
+
   it("never promotes a passive cross-transport pane into an authorship grant", async () => {
     const registry = new SessionRuntimeRegistry({
       generation: GENERATION,
@@ -263,6 +462,55 @@ describe("SessionRuntimeTransportBinder", () => {
     await newDelivery.close();
     await replacement.close();
     expect(deliveryCloses.get(subscriberIds[1]!)).toHaveBeenCalledOnce();
+  });
+
+  it("fails only the closing transport binding's active causal probe immediately", async () => {
+    const failCausalCellProbe = vi.fn();
+    const consumer = {
+      generation: GENERATION,
+      session: "alpha",
+      surface: "pane-stream",
+      clientId: "web:document-a",
+      acquireController: vi.fn(() => LEASE),
+      releaseController: vi.fn(),
+      sendInput: vi.fn(),
+      failCausalCellProbe,
+      close: vi.fn(async () => undefined),
+    } as unknown as SessionRuntimeConsumer;
+    const handle = Object.freeze(Object.create(null)) as object;
+    const registry = {
+      generation: GENERATION,
+      connect: vi.fn(() => consumer),
+      createExecutionHandle: vi.fn(() => handle),
+      bindExecutionSource: vi.fn(() => handle),
+      assertExecutionHandle: vi.fn(),
+      submitAuthenticatedIntent: vi.fn(),
+    };
+    const binder = new SessionRuntimeTransportBinder(registry);
+    const owner = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000001",
+      session: "alpha",
+      hostClientId: "web:document-a",
+      allowedSourcePaneIds: ["pane.editor"],
+      interactive: true,
+    });
+    const sibling = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000002",
+      session: "alpha",
+      hostClientId: "web:document-a",
+      allowedSourcePaneIds: ["pane.editor"],
+      interactive: true,
+    });
+    const probe = { traceId: OP_A } as unknown as CausalCellProbeV1;
+    owner.sendInput("pane.editor", { kind: "text", data: "x" }, OP_A, probe, vi.fn());
+
+    await sibling.close();
+    expect(failCausalCellProbe).not.toHaveBeenCalled();
+    await owner.close();
+    expect(failCausalCellProbe).toHaveBeenCalledOnce();
+    expect(failCausalCellProbe).toHaveBeenCalledWith("pane.editor", OP_A, "transport-closed");
   });
 
   it("restores geometry authority to an older live same-host transport when its replacement closes", async () => {

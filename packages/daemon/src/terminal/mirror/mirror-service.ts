@@ -14,9 +14,12 @@ import {
   MirrorControlChannel,
   type MirrorChannelHandlers,
   type MirrorChannelIo,
+  type MirrorOutputTiming,
 } from "./control-channel.ts";
 import type { MirrorLayoutEvent, MirrorPaneEvent, MirrorSessionDescription } from "./events.ts";
 import { SessionChannel, type SessionChannelOptions } from "./session-channel.ts";
+import type { TrustedMirrorSessionInventory } from "./trusted-inventory.ts";
+import type { InputAction } from "../protocol/input-coalescer.ts";
 import {
   controlModeAuthorityKey,
   processControlModeOwnershipRegistry,
@@ -40,6 +43,29 @@ export interface MirrorServiceOptions {
   generateWindowId?: () => string;
   /** Test seam; production uses the daemon-generation process registry. */
   controlModeOwnershipRegistry?: ControlModeOwnershipRegistry;
+  /** Emitted only after an event-triggered list-clients proof of a native client. */
+  onNativeClientActivity?: (session: string) => void;
+  onInputWrite?: (
+    session: string,
+    action: InputAction,
+    startedAtMicros: number,
+    endedAtMicros: number,
+    pendingBeforeSend: number,
+  ) => void;
+  onInputAccepted?: (
+    session: string,
+    action: InputAction,
+    acceptedAtMicros: number,
+    ok: boolean,
+  ) => void;
+  onOutputObserved?: (
+    session: string,
+    semanticPaneId: string,
+    ageMs: number | null,
+    timing?: MirrorOutputTiming,
+  ) => void;
+  /** Qualification-only clock; absent from production's disabled observer. */
+  nowMicros?: () => number;
 }
 
 export interface MirrorSubscribeRequest {
@@ -57,6 +83,8 @@ export interface MirrorSubscription {
   freeze(): void;
   /** Resume after a freeze: continue + a fresh atomic seed batch. */
   thaw(): void;
+  /** Request one fresh atomic capture on this exact retained subscription. */
+  reseed(): void;
   sendText(text: string): void;
   sendKey(key: string): void;
   close(): Promise<void>;
@@ -104,6 +132,40 @@ export class MirrorService {
     }
   }
 
+  /**
+   * Daemon-private raw inventory from an already-retained channel. This seam
+   * never creates or starts authority; a retirement race returns null.
+   */
+  async describeTrustedInventory(
+    session: string,
+    expectedRuntimeSessionId: string,
+  ): Promise<TrustedMirrorSessionInventory | null> {
+    const entry = this.channels.get(session);
+    if (!entry || entry.retired) return null;
+    await entry.started;
+    if (this.channels.get(session) !== entry || entry.retired) return null;
+    const inventory = await entry.channel.describeTrustedInventory(expectedRuntimeSessionId);
+    if (this.channels.get(session) !== entry || entry.retired) return null;
+    return inventory;
+  }
+
+  hasRetainedSession(session: string): boolean {
+    const entry = this.channels.get(session);
+    return entry !== undefined && !entry.retired;
+  }
+
+  async retainedSessionIdentity(
+    session: string,
+  ): Promise<{ sessionName: string; runtimeSessionId: string } | null> {
+    const entry = this.channels.get(session);
+    if (!entry || entry.retired) return null;
+    await entry.started;
+    if (this.channels.get(session) !== entry || entry.retired) return null;
+    const identity = await entry.channel.attachedSessionIdentity();
+    if (this.channels.get(session) !== entry || entry.retired) return null;
+    return identity;
+  }
+
   async subscribe(request: MirrorSubscribeRequest): Promise<MirrorSubscription> {
     const entry = await this.acquire(request.session);
     let handle;
@@ -123,6 +185,7 @@ export class MirrorService {
       semanticPaneId: request.semanticPaneId,
       freeze: () => handle.freeze(),
       thaw: () => handle.thaw(),
+      reseed: () => handle.reseed(),
       sendText: (text) => handle.sendText(text),
       sendKey: (key) => handle.sendKey(key),
       close: async () => {
@@ -162,22 +225,35 @@ export class MirrorService {
   }
 
   /** Synchronous hot input on an already-retained SessionRuntime channel. */
-  sendText(session: string, semanticPaneId: string, text: string): void {
+  sendText(
+    session: string,
+    semanticPaneId: string,
+    text: string,
+    performanceTraceId?: string,
+    isolated = false,
+  ): void {
     const entry = this.channels.get(session);
     if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
-    entry.channel.sendText(semanticPaneId, text);
+    entry.channel.sendText(semanticPaneId, text, performanceTraceId, isolated);
   }
 
-  sendKey(session: string, semanticPaneId: string, key: string): void {
+  sendKey(session: string, semanticPaneId: string, key: string, performanceTraceId?: string): void {
     const entry = this.channels.get(session);
     if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
-    entry.channel.sendKey(semanticPaneId, key);
+    entry.channel.sendKey(semanticPaneId, key, performanceTraceId);
   }
 
   fitViewport(session: string, cols: number, rows: number): void {
     const entry = this.channels.get(session);
     if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
     entry.channel.fitViewport(cols, rows);
+  }
+
+  /** Keep the retained control client passive unless the arbiter elects it. */
+  setGeometryParticipation(session: string, active: boolean): void {
+    const entry = this.channels.get(session);
+    if (!entry || entry.retired) return;
+    entry.channel.setGeometryParticipation(active);
   }
 
   /**
@@ -267,6 +343,7 @@ export class MirrorService {
               executable: this.opts.executable,
               configFile: this.opts.configFile,
               pauseAfterSeconds: this.opts.pauseAfterSeconds,
+              nowMicros: this.opts.nowMicros,
             }),
           historyLines: this.opts.historyLines,
           generatePaneId: this.opts.generatePaneId,
@@ -281,6 +358,19 @@ export class MirrorService {
               for (const listener of this.sessionExitListeners) listener(session);
             }
           },
+          onNativeClientActivity: () => this.opts.onNativeClientActivity?.(session),
+          onInputWrite: (action, startedAtMicros, endedAtMicros, pendingBeforeSend) =>
+            this.opts.onInputWrite?.(
+              session,
+              action,
+              startedAtMicros,
+              endedAtMicros,
+              pendingBeforeSend,
+            ),
+          onInputAccepted: (action, acceptedAtMicros, ok) =>
+            this.opts.onInputAccepted?.(session, action, acceptedAtMicros, ok),
+          onOutputObserved: (semanticPaneId, ageMs, timing) =>
+            this.opts.onOutputObserved?.(session, semanticPaneId, ageMs, timing),
         };
         channel = new SessionChannel(channelOptions);
       } catch (cause) {

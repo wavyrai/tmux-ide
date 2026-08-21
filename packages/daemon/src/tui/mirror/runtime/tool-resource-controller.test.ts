@@ -66,6 +66,7 @@ function fakeAdapter(log: string[]) {
     interestKey: (key) =>
       ({
         fleet: "fleet-catalog",
+        catalog: "workspace-catalog",
         sessions: "workspace-catalog",
         projects: "workspace-catalog",
         files: "workspace-files",
@@ -169,7 +170,7 @@ describe("OpenTUI demand-driven tool resources", () => {
 
     expect(log[0]).toBe("terminal-ready");
     expect(new Set(log.slice(1))).toEqual(
-      new Set(["fetch:fleet", "fetch:sessions", "fetch:projects", "fetch:files"]),
+      new Set(["fetch:fleet", "fetch:catalog", "fetch:sessions", "fetch:projects", "fetch:files"]),
     );
     controller.dispose();
   });
@@ -189,7 +190,7 @@ describe("OpenTUI demand-driven tool resources", () => {
     readiness.observeTerminalFrameCommitted();
     await settle();
     expect(new Set(log)).toEqual(
-      new Set(["fetch:fleet", "fetch:sessions", "fetch:projects", "fetch:files"]),
+      new Set(["fetch:fleet", "fetch:catalog", "fetch:sessions", "fetch:projects", "fetch:files"]),
     );
     controller.dispose();
   });
@@ -203,7 +204,9 @@ describe("OpenTUI demand-driven tool resources", () => {
     controller.markCatalogReady();
     await settle();
 
-    expect(new Set(log)).toEqual(new Set(["fetch:fleet", "fetch:sessions", "fetch:projects"]));
+    expect(new Set(log)).toEqual(
+      new Set(["fetch:fleet", "fetch:catalog", "fetch:sessions", "fetch:projects"]),
+    );
     expect(log).not.toContain("fetch:files");
     controller.dispose();
   });
@@ -269,6 +272,19 @@ describe("OpenTUI semantic event adapter", () => {
             sessions: [],
           });
         }
+        if (url.endsWith("/workspace-catalog?version=2")) {
+          return Response.json({
+            version: 2,
+            daemon: {
+              protocolVersion: DAEMON.protocolVersion,
+              productVersion: DAEMON.productVersion,
+              instanceId: DAEMON.instanceId,
+              startedAt: DAEMON.startedAt,
+            },
+            intents: [],
+            liveSessions: [],
+          });
+        }
         return Response.json(url.endsWith("/sessions") ? { sessions: [] } : { projects: [] });
       },
     });
@@ -276,6 +292,7 @@ describe("OpenTUI semantic event adapter", () => {
       retry: { maximumAttempts: 0 },
     });
     session.activate("fleet");
+    session.activate("catalog");
     session.activate("sessions");
     session.activate("projects");
     await settle();
@@ -312,6 +329,7 @@ describe("OpenTUI semantic event adapter", () => {
       expect(new Set(fetched)).toEqual(
         new Set([
           "http://127.0.0.1:4040/api/resources/fleet-catalog",
+          "http://127.0.0.1:4040/api/resources/workspace-catalog?version=2",
           "http://127.0.0.1:4040/api/sessions",
           "http://127.0.0.1:4040/api/projects",
         ]),

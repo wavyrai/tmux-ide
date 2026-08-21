@@ -320,12 +320,12 @@ importers:
       '@tmux-ide/tmux-bridge':
         specifier: workspace:*
         version: link:../tmux-bridge
+      '@tmux-ide/xterm-headless':
+        specifier: https://github.com/wavyrai/xterm.js/releases/download/v6.0.0-tmuxide.2/tmux-ide-xterm-headless-6.0.0-tmuxide.2.tgz
+        version: https://github.com/wavyrai/xterm.js/releases/download/v6.0.0-tmuxide.2/tmux-ide-xterm-headless-6.0.0-tmuxide.2.tgz
       '@xterm/addon-unicode11':
         specifier: 0.9.0
         version: 0.9.0
-      '@xterm/headless':
-        specifier: 6.0.0
-        version: 6.0.0
       hono:
         specifier: ^4.12.34
         version: 4.12.34
@@ -357,6 +357,9 @@ importers:
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.1
+      '@xterm/headless-stock':
+        specifier: npm:@xterm/headless@6.0.0
+        version: '@xterm/headless@6.0.0'
       happy-dom:
         specifier: ^20.8.4
         version: 20.8.4
@@ -381,6 +384,9 @@ importers:
       '@tmux-ide/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@tmux-ide/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       '@types/node':
         specifier: ^25.5.0
@@ -2013,6 +2019,10 @@ packages:
 
   '@takumi-rs/wasm@0.70.4':
     resolution: {integrity: sha512-gl5JQv1MCgKkndxqZf7H/SBvuezZCg4n74CXBVcjP2eXC+ZGtStM4J6KMQYdP8mCF3Y9cD2Fdfezyx9KfJsOOg==}
+
+  '@tmux-ide/xterm-headless@https://github.com/wavyrai/xterm.js/releases/download/v6.0.0-tmuxide.2/tmux-ide-xterm-headless-6.0.0-tmuxide.2.tgz':
+    resolution: {integrity: sha512-ZL6DLYJtTbAjJg3HKmofbW9yLDnUayHKrp41PrwEOI2rPlEZ1SLUomTKmBLIr9YrvR8vFlRPl7Bbyk3JEtBY4A==, tarball: https://github.com/wavyrai/xterm.js/releases/download/v6.0.0-tmuxide.2/tmux-ide-xterm-headless-6.0.0-tmuxide.2.tgz}
+    version: 6.0.0-tmuxide.2
 
   '@tsconfig/bun@1.0.10':
     resolution: {integrity: sha512-5AV5YknQjNyoYzZ/8NG0dawqew/wH+x7ANiCfCIn29qo0cdbd1EryvFD1k5NSZWLBMOI/fGqMIaxi58GPIP9Cg==}
@@ -5864,6 +5874,8 @@ snapshots:
       '@takumi-rs/wasm': 0.70.4
 
   '@takumi-rs/wasm@0.70.4': {}
+
+  '@tmux-ide/xterm-headless@https://github.com/wavyrai/xterm.js/releases/download/v6.0.0-tmuxide.2/tmux-ide-xterm-headless-6.0.0-tmuxide.2.tgz': {}
 
   '@tsconfig/bun@1.0.10': {}
 

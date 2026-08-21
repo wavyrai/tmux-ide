@@ -41,6 +41,12 @@ import { FleetCatalogResourceV1SchemaZ } from "./fleet-catalog.ts";
 import { WorkspaceMissionsEnvelopeV1SchemaZ } from "./workspace-missions-resource.ts";
 import { DaemonEventResourceInterestSchemaZ } from "./daemon-events.ts";
 import type { WorkspaceOpenHostResult } from "./workspace-open.ts";
+import type {
+  WorkspaceOpenCancelledHostResult,
+  WorkspaceOpenCommittedHostResult,
+  WorkspaceOpenDecisionArguments,
+  WorkspaceOpenPreparedHostResult,
+} from "./workspace-open-handoff.ts";
 // Type-only, and deliberately so: `daemon-resource-request.ts` imports the
 // result schemas declared below, so a value import here would close a module
 // cycle. Types are erased, this edge is not.
@@ -199,7 +205,15 @@ export const DesktopDaemonCapabilityErrorSchemaZ = z
   .strict();
 
 export const DesktopDaemonWorkspaceSummarySchemaZ = z
-  .object({ workspaceName: DesktopWorkspaceNameSchemaZ })
+  .object({
+    workspaceName: DesktopWorkspaceNameSchemaZ,
+    /** Durable routing intent; absent only for older host fixtures. */
+    sessionName: z.string().min(1).optional(),
+    source: z.enum(["project", "workspace"]).optional(),
+    /** Observed tmux truth. A stopped intent is visible but never attachable. */
+    availability: z.enum(["live", "stopped"]).optional(),
+    paneCount: z.number().int().nonnegative().optional(),
+  })
   .strict();
 
 export const DesktopDaemonListWorkspacesResultSchemaZ = z.discriminatedUnion("status", [
@@ -669,6 +683,15 @@ export interface HostCapabilities {
   };
   readonly workspace: {
     openProjectDirectory(): Promise<WorkspaceOpenHostResult | null>;
+    prepareProjectDirectory?(
+      previousWorkspaceName?: string | null,
+    ): Promise<WorkspaceOpenPreparedHostResult | null>;
+    commitPreparedOpen?(
+      decision: WorkspaceOpenDecisionArguments,
+    ): Promise<WorkspaceOpenCommittedHostResult>;
+    cancelPreparedOpen?(
+      decision: WorkspaceOpenDecisionArguments,
+    ): Promise<WorkspaceOpenCancelledHostResult>;
   };
   readonly onboarding: {
     /** Persist that the first-run intro layer has been dismissed. Idempotent. */

@@ -33,6 +33,41 @@ afterEach(() => {
 });
 
 describe("command-backed action dispatcher compatibility", () => {
+  it("does not duplicate semantic invalidations owned by observed completion", async () => {
+    const resourceBroadcast = vi.fn();
+    const app = new Hono();
+    app.post(
+      "/api/v2/action/:name",
+      createActionDispatcher({
+        broadcast: vi.fn(),
+        broadcastResourceChanged: resourceBroadcast,
+        daemonInstanceId: "20000000-0000-4000-8000-000000000002",
+        workspaceMultiplexerBackend: {
+          mutate: async (input) => ({
+            operationId: input.operationId,
+            daemonInstanceId: input.expectedDaemonInstanceId,
+            workspaceName: input.intent.workspaceName,
+            verb: "workspace.pane.select",
+            outcome: "applied",
+            semanticPaneId: "pane.beta",
+          }),
+        },
+      }),
+    );
+    const response = await app.request("http://localhost/api/v2/action/workspace.pane.select", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Tmux-Ide-Operation-Id": "10000000-0000-4000-8000-000000000001",
+        "X-Tmux-Ide-Host-Client-Id": "opentui:trusted",
+      },
+      body: JSON.stringify({ workspaceName: "alpha", semanticPaneId: "pane.beta" }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, result: { outcome: "applied" } });
+    expect(resourceBroadcast).not.toHaveBeenCalled();
+  });
+
   it("broadcasts a non-semantic action even when test data has a multiplexer result shape", () => {
     const multiplexerResult = {
       verb: "workspace.pane.select",
@@ -150,7 +185,7 @@ describe("command-backed action dispatcher compatibility", () => {
     expect(broadcast).not.toHaveBeenCalled();
   });
 
-  it("publishes killed-session catalog changes on the global interest key", async () => {
+  it("leaves killed-session invalidations to the observed semantic owner", async () => {
     const mutate = vi.fn(async (input) => ({
       verb: "workspace.session.kill" as const,
       outcome: "applied" as const,
@@ -178,25 +213,10 @@ describe("command-backed action dispatcher compatibility", () => {
       body: JSON.stringify({ workspaceName: "workspace.alpha" }),
     });
     expect(response.status).toBe(200);
-    expect(resourceBroadcast).toHaveBeenCalledWith(
-      {
-        workspaceName: null,
-        resource: "workspace-catalog",
-        causeOperationId: "10000000-0000-4000-8000-000000000001",
-      },
-      "20000000-0000-4000-8000-000000000002",
-    );
-    expect(resourceBroadcast).toHaveBeenCalledWith(
-      {
-        workspaceName: "workspace.alpha",
-        resource: "workspace-missions",
-        causeOperationId: "10000000-0000-4000-8000-000000000001",
-      },
-      "20000000-0000-4000-8000-000000000002",
-    );
+    expect(resourceBroadcast).not.toHaveBeenCalled();
   });
 
-  it("invalidates mission overlays after a pane layout mutation", async () => {
+  it("leaves pane-layout invalidations to the observed semantic owner", async () => {
     const mutate = vi.fn(async (input) => ({
       verb: "workspace.pane.resize" as const,
       outcome: "applied" as const,
@@ -232,14 +252,7 @@ describe("command-backed action dispatcher compatibility", () => {
       }),
     });
     expect(response.status).toBe(200);
-    expect(resourceBroadcast).toHaveBeenCalledWith(
-      {
-        workspaceName: "workspace.alpha",
-        resource: "workspace-missions",
-        causeOperationId: "10000000-0000-4000-8000-000000000001",
-      },
-      "20000000-0000-4000-8000-000000000002",
-    );
+    expect(resourceBroadcast).not.toHaveBeenCalled();
   });
   it("keeps unknown action transport behavior unchanged", async () => {
     const { app } = actionApp();

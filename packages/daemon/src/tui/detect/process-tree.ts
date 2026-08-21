@@ -11,7 +11,7 @@
  * nothing ever throws — a missing/garbled `ps` simply yields no matches, and
  * resolution falls back to the fast `pane_current_command` path.
  */
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { pickManifest, type AgentManifest } from "./manifest.ts";
 import { getManifests } from "./manifest-loader.ts";
 
@@ -128,6 +128,22 @@ export function readProcessTable(): ProcEntry[] {
   } catch {
     return [];
   }
+}
+
+/** Non-blocking daemon read path; preserves the synchronous helper's fail-soft semantics. */
+export function readProcessTableAsync(signal?: AbortSignal): Promise<ProcEntry[]> {
+  return new Promise((resolve) => {
+    execFile(
+      "ps",
+      ["-axo", "pid=,ppid=,command="],
+      {
+        encoding: "utf8",
+        timeout: 2_000,
+        signal,
+      },
+      (error, stdout) => resolve(error ? [] : parsePsOutput(stdout)),
+    );
+  });
 }
 
 /**

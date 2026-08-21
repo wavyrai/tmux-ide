@@ -52,7 +52,7 @@ describe.skipIf(!hasTmux).sequential("tmux external interaction observer live", 
         return interaction.operationId !== null;
       },
     });
-    observer.start();
+    await observer.start();
     const operationIds = Array.from({ length: 32 }, () => randomUUID());
     for (const operationId of operationIds) {
       run([
@@ -105,7 +105,7 @@ describe.skipIf(!hasTmux).sequential("tmux external interaction observer live", 
       } as unknown as WorkspaceRegistry,
       onObserved: () => true,
     });
-    observer.start();
+    await observer.start();
     const exits: Array<string | null> = [];
     const channel = new MirrorControlChannel({
       executable: executablePath,

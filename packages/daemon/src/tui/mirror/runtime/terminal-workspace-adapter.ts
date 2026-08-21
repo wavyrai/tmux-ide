@@ -13,6 +13,7 @@ import type { TerminalPaletteProjection } from "../theme.ts";
 import type { OpenTuiSessionRuntimeLane } from "../application-shell-daemon-runtime.ts";
 import { currentTuiPerformanceEventSink } from "../performance-events.ts";
 import type { TuiApplicationLifecycle } from "./application-lifecycle.ts";
+import { PaneScopedTerminalOwner } from "./pane-scoped-terminal-owner.ts";
 
 export type OpenTuiTerminalRuntimeFactory = () => Promise<OpenTuiSessionRuntimeLane | null>;
 
@@ -72,6 +73,7 @@ export class OpenTuiTerminalWorkspaceAdapter {
   readonly #emptySource = new SemanticTerminalRenderSource();
   readonly #slot = new AsyncDisposableSlot<string>();
   readonly #lifecycle: TuiApplicationLifecycle;
+  readonly #paneOwner = new PaneScopedTerminalOwner();
   #lane: OpenTuiSessionRuntimeLane | null = null;
   #generation = 0;
   #renderEpoch = 0;
@@ -98,6 +100,29 @@ export class OpenTuiTerminalWorkspaceAdapter {
   /** Bumps whenever the retained facade adopts or retires a backing source. */
   get renderEpoch(): number {
     return this.#renderEpoch;
+  }
+
+  beginPaneGeneration(): number {
+    return this.#paneOwner.beginGeneration();
+  }
+
+  publishPaneVersion(generation: number, paneId: string, version: number): boolean {
+    return this.#paneOwner.publish(generation, paneId, version);
+  }
+
+  paneVersion(paneId: string): number {
+    return this.#paneOwner.version(paneId);
+  }
+
+  paneSourceEpoch(): number {
+    return this.#paneOwner.sourceEpoch();
+  }
+
+  subscribePaneVersion(
+    paneId: string,
+    listener: (version: number, sourceEpoch: number) => void,
+  ): () => void {
+    return this.#paneOwner.subscribe(paneId, listener);
   }
 
   connect(
@@ -131,6 +156,7 @@ export class OpenTuiTerminalWorkspaceAdapter {
       this.#lane = lane;
       this.#renderEpoch += 1;
       this.#retainedSource.setSource(lane.source);
+      this.#paneOwner.replaceSource();
       this.view.setSource(lane.source);
       resolveConnection(lane);
       return () => {
@@ -138,6 +164,7 @@ export class OpenTuiTerminalWorkspaceAdapter {
           this.#lane = null;
           this.#renderEpoch += 1;
           this.#retainedSource.setSource(null);
+          this.#paneOwner.replaceSource();
           this.view.setSource(this.#emptySource);
         }
         lane.close();
@@ -208,6 +235,7 @@ export class OpenTuiTerminalWorkspaceAdapter {
     this.#lane = null;
     this.#renderEpoch += 1;
     this.#retainedSource.setSource(null);
+    this.#paneOwner.dispose();
     this.view.dispose();
   }
 }

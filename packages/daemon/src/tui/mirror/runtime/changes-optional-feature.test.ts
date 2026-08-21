@@ -66,12 +66,12 @@ describe("deferred Changes feature boundary", () => {
     expect(source).toContain("const startupChangesIdentity = values.diff");
     expect(source).toContain("resolveDeferredChangesIdentity({");
     expect(source).toContain("startup: startupChangesIdentity");
-    const workspaceActivation = source.slice(
-      source.indexOf("const openWorkspace ="),
-      source.indexOf("const jumpToAgent ="),
+    const committedWorkspaceActivation = source.slice(
+      source.indexOf("const applyWorkspaceContext ="),
+      source.indexOf("let pendingWorkspaceSwitch", source.indexOf("const applyWorkspaceContext =")),
     );
-    expect(workspaceActivation).toContain("setContextDir(wd)");
-    expect(workspaceActivation).toContain("changesHydrationIntent.retire()");
+    expect(committedWorkspaceActivation).toContain("setContextDir(wd)");
+    expect(committedWorkspaceActivation).toContain("changesHydrationIntent.retire()");
   });
 
   it("deterministically rejects A hydration after a same-directory switch to B", () => {
@@ -104,19 +104,18 @@ describe("deferred Changes feature boundary", () => {
     ).toEqual({ workspaceName: "beta", directory: "/repo" });
   });
 
-  it("retains Changes demand without starting its literal loader before admission", () => {
+  it("rejects quarantined Changes demand without retaining or loading it", async () => {
     const registry = createApplicationOptionalFeatureRegistry();
-    const first = registry.request("changes");
-    const second = registry.request("changes");
-    expect(first).toBe(second);
+    await expect(registry.request("changes")).resolves.toBeUndefined();
+    await expect(registry.request("changes")).resolves.toBeUndefined();
     expect(registry.getMetrics()).toMatchObject({
       requests: 2,
-      retainedIntents: 1,
-      joinedRequests: 1,
+      retainedIntents: 0,
+      joinedRequests: 0,
+      unavailableRequests: 2,
       loadsStarted: 0,
       publications: 0,
     });
     registry.dispose();
-    void first.catch(() => undefined);
   });
 });

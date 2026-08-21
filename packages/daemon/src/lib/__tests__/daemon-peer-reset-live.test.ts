@@ -50,6 +50,7 @@ describe.sequential("embedded daemon peer reset containment", () => {
 
   it("survives a reset after HTTP hands an unmatched upgrade socket to the daemon", async () => {
     handle = await startEmbeddedDaemon({ silent: true });
+    expect(handle.compatibilityTerminalAttachmentRuntimeConstructed()).toBe(false);
 
     const peer = connect({ host: "127.0.0.1", port: handle.port });
     await once(peer, "connect");
@@ -68,6 +69,7 @@ describe.sequential("embedded daemon peer reset containment", () => {
     const response = await fetch(`${handle.apiBaseUrl}/health`);
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ ok: true });
+    expect(handle.compatibilityTerminalAttachmentRuntimeConstructed()).toBe(false);
     expect(inspectCanonicalDaemonInfo()).toMatchObject({
       status: "valid",
       info: { instanceId: handle.instanceId },

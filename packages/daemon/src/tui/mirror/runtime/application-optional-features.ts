@@ -12,13 +12,10 @@ export interface ApplicationOptionalFeatures {
   readonly performanceHud: typeof import("../features/performance-hud/feature.tsx");
 }
 
-/** Literal imports keep every optional module discoverable by Bun's compiler. */
+/** Literal imports keep each admitted module discoverable by Bun's compiler. */
 export function createApplicationOptionalFeatureRegistry(): OptionalFeatureRegistry<ApplicationOptionalFeatures> {
   return new OptionalFeatureRegistry<ApplicationOptionalFeatures>({
     home: () => import("../features/home/feature.tsx"),
-    files: () => import("../features/files/feature.tsx"),
-    changes: () => import("../features/changes/feature.tsx"),
-    missionsActivity: () => import("../features/missions-activity/feature.tsx"),
     dialogs: () => import("../features/dialogs/feature.tsx"),
     settings: () => import("../features/settings/feature.ts"),
     palette: () => import("../features/palette/feature.ts"),

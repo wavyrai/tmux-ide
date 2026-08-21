@@ -60,12 +60,14 @@ await build({
           if (id.startsWith(".") || id.startsWith("/")) return undefined;
           // node: builtins → external.
           if (id.startsWith("node:")) return { external: true };
+          // The pinned headless xterm fork is a release asset, not a workspace
+          // package. Bundle it with the Unicode addon: both are pure JS and
+          // their named imports are not portable when left bare under stock
+          // Node. The stock alias is test-only and must never reach this graph.
+          if (id === "@tmux-ide/xterm-headless" || id === "@xterm/addon-unicode11")
+            return undefined;
           // Workspace packages → bundle.
           if (id.startsWith("@tmux-ide/")) return undefined;
-          // xterm/headless is CommonJS and its named ESM import is not usable
-          // when left bare under stock Node. It is pure JS, so bundle the
-          // canonical replica parser and Unicode width addon into the CLI.
-          if (id === "@xterm/headless" || id === "@xterm/addon-unicode11") return undefined;
           // Everything else → external.
           return { external: true };
         });

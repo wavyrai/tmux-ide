@@ -313,7 +313,7 @@ describe("runHeadlessDaemon", () => {
 
   it("does not reuse a daemon rejected by protocol compatibility", async () => {
     const harness = createHarness({
-      state: validState(daemonInfo({ protocolVersion: 2 })),
+      state: validState(daemonInfo({ protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION + 1 })),
       alive: true,
     });
 
@@ -372,7 +372,12 @@ describe("runHeadlessDaemon", () => {
     const harness = createHarness({
       state: validState(daemonInfo()),
       alive: true,
-      health: { ok: true, protocolVersion: 2, productVersion: "2.8.0", uptime: 42 },
+      health: {
+        ok: true,
+        protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION + 1,
+        productVersion: "2.8.0",
+        uptime: 42,
+      },
     });
 
     await expect(runHeadlessDaemon({}, harness.deps)).rejects.toMatchObject({

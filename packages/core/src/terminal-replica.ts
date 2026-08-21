@@ -38,6 +38,56 @@ export type TerminalReplicaApplyResult =
       readonly receivedRevision: number;
     };
 
+export interface TerminalReplicaApplyProfile {
+  readonly reusedAuthenticatedFrameHash: boolean;
+  readonly phaseMicros: Readonly<{
+    updateHash: number;
+    rowValidationFreeze: number;
+    rowEquality: number;
+    rowHash: number;
+    snapshotHash: number;
+  }>;
+  readonly counts: Readonly<{
+    patchedRows: number;
+    validatedCells: number;
+    frozenCells: number;
+    comparedCells: number;
+    rowHashMisses: number;
+  }>;
+}
+
+export interface TerminalReplicaApplyOptions {
+  /**
+   * Digest of transport bytes that were authenticated before decoding. This is
+   * strict replay identity, not canonical state identity. Callers must omit it
+   * for updates that did not pass the representation-hash barrier.
+   */
+  readonly authenticatedFrameHash?: string;
+  /** Opt-in benchmark seam. The ordinary reducer path does not clock or allocate it. */
+  readonly instrumentation?: {
+    readonly nowMicros: () => number;
+    readonly onComplete: (profile: TerminalReplicaApplyProfile) => void;
+  };
+}
+
+interface MutableTerminalReplicaApplyProfile {
+  reusedAuthenticatedFrameHash: boolean;
+  phaseMicros: {
+    updateHash: number;
+    rowValidationFreeze: number;
+    rowEquality: number;
+    rowHash: number;
+    snapshotHash: number;
+  };
+  counts: {
+    patchedRows: number;
+    validatedCells: number;
+    frozenCells: number;
+    comparedCells: number;
+    rowHashMisses: number;
+  };
+}
+
 export function blankTerminalReplicaSnapshot(cols: number, rows: number): TerminalReplicaSnapshot {
   const row = blankRow(cols);
   return freezeSnapshot({
@@ -65,32 +115,49 @@ export function blankTerminalReplicaSnapshot(cols: number, rows: number): Termin
 export function applyTerminalReplicaUpdate(
   current: TerminalReplicaState | null,
   update: CanonicalTerminalReplicaUpdate,
+  options: TerminalReplicaApplyOptions = {},
 ): TerminalReplicaApplyResult {
-  const receivedFrameHash = hashStable(update);
+  const profile = options.instrumentation ? createApplyProfile() : undefined;
+  const receivedFrameHash = resolveFrameHash(update, options, profile);
+  const complete = (result: TerminalReplicaApplyResult): TerminalReplicaApplyResult => {
+    if (profile && options.instrumentation) {
+      try {
+        options.instrumentation.onComplete(freezeProfile(profile));
+      } catch {
+        // Benchmark observers never own canonical state application.
+      }
+    }
+    return result;
+  };
   if (update.type === "terminal.seed") {
     if (update.hashAlgorithm !== "fnv1a64-v1" || !terminalReplicaSnapshotIsValid(update.snapshot)) {
-      return current
-        ? protocolConflict(current, update.revision)
-        : {
-            status: "conflict",
-            state: null,
-            expectedRevision: 0,
-            receivedRevision: update.revision,
-          };
+      return complete(
+        current
+          ? protocolConflict(current, update.revision)
+          : {
+              status: "conflict",
+              state: null,
+              expectedRevision: 0,
+              receivedRevision: update.revision,
+            },
+      );
     }
-    const hash = hashTerminalReplicaSnapshot(update.snapshot);
+    // Hash the exact immutable snapshot retained by state. Besides avoiding a
+    // second deep clone, this seeds the row Merkle cache for the first patch.
+    const frozenSnapshot = freezeSnapshot(update.snapshot);
+    const hash = hashTerminalReplicaSnapshot(frozenSnapshot);
     if (
       current &&
       (current.workspaceName !== update.workspaceName ||
         current.semanticPaneId !== update.semanticPaneId)
     ) {
-      return protocolConflict(current, update.revision);
+      return complete(protocolConflict(current, update.revision));
     }
     // Generations are opaque UUIDs, not sortable epochs. A live reducer is
     // generation-pinned; callers must discard it and bootstrap a new reducer
     // from a seed during an authenticated daemon-generation transition.
     if (current && current.generation !== update.generation) {
-      return protocolConflict(current, update.revision);
+      return complete(protocolConflict(current, update.revision));
     }
     if (
       current &&
@@ -98,7 +165,7 @@ export function applyTerminalReplicaUpdate(
       (!isNewerIncarnation(current.incarnation, update.incarnation) ||
         update.revision <= current.revision)
     ) {
-      return protocolConflict(current, update.revision);
+      return complete(protocolConflict(current, update.revision));
     }
     if (
       current?.generation === update.generation &&
@@ -108,38 +175,38 @@ export function applyTerminalReplicaUpdate(
       current.incarnation === update.incarnation &&
       current.frameHash === receivedFrameHash
     ) {
-      return { status: "idempotent", state: current };
+      return complete({ status: "idempotent", state: current });
     }
     if (
       current?.generation === update.generation &&
       current.revision === update.revision &&
       current.hash !== update.stateHash
     ) {
-      return {
+      return complete({
         status: "conflict",
         state: current,
         expectedRevision: current.revision,
         receivedRevision: update.revision,
-      };
+      });
     }
     if (
       hash !== update.stateHash ||
       update.cols !== update.snapshot.cols ||
       update.rows !== update.snapshot.rows
     ) {
-      return {
+      return complete({
         status: "conflict",
         state: current,
         expectedRevision: current?.revision ?? 0,
         receivedRevision: update.revision,
-      };
+      });
     }
     if (
       current?.generation === update.generation &&
       current.incarnation === update.incarnation &&
       update.revision < current.revision
     ) {
-      return { status: "stale", state: current };
+      return complete({ status: "stale", state: current });
     }
     const state = Object.freeze({
       workspaceName: update.workspaceName,
@@ -147,83 +214,88 @@ export function applyTerminalReplicaUpdate(
       generation: update.generation,
       revision: update.revision,
       incarnation: update.incarnation,
-      snapshot: freezeSnapshot(update.snapshot),
+      snapshot: frozenSnapshot,
       tombstone: null,
       hash,
       frameHash: receivedFrameHash,
     });
-    return { status: "applied", state };
+    return complete({ status: "applied", state });
   }
 
   if (current === null || current.generation !== update.generation) {
-    return {
+    return complete({
       status: "gap",
       state: current,
       expectedRevision: current === null ? 0 : current.revision + 1,
       receivedRevision: update.revision,
-    };
+    });
   }
-  if (update.hashAlgorithm !== "fnv1a64-v1") return protocolConflict(current, update.revision);
+  if (update.hashAlgorithm !== "fnv1a64-v1")
+    return complete(protocolConflict(current, update.revision));
   if (
     current.workspaceName !== update.workspaceName ||
     current.semanticPaneId !== update.semanticPaneId
   ) {
-    return protocolConflict(current, update.revision);
+    return complete(protocolConflict(current, update.revision));
   }
   if (current.incarnation !== update.incarnation) {
-    return {
+    return complete({
       status: "gap",
       state: current,
       expectedRevision: current.revision + 1,
       receivedRevision: update.revision,
-    };
+    });
   }
   if (update.revision <= current.revision) {
     if (update.type === "terminal.tombstone") {
-      return update.revision === current.revision &&
+      return complete(
+        update.revision === current.revision &&
+          update.baseRevision === current.revision - 1 &&
+          update.stateHash === current.hash &&
+          current.tombstone?.reason === update.tombstone.reason &&
+          current.frameHash === receivedFrameHash
+          ? { status: "idempotent", state: current }
+          : update.revision === current.revision
+            ? protocolConflict(current, update.revision)
+            : { status: "stale", state: current },
+      );
+    }
+    return complete(
+      update.revision === current.revision &&
         update.baseRevision === current.revision - 1 &&
         update.stateHash === current.hash &&
-        current.tombstone?.reason === update.tombstone.reason &&
+        update.cols === current.snapshot?.cols &&
+        update.rows === current.snapshot?.rows &&
         current.frameHash === receivedFrameHash
         ? { status: "idempotent", state: current }
         : update.revision === current.revision
           ? protocolConflict(current, update.revision)
-          : { status: "stale", state: current };
-    }
-    return update.revision === current.revision &&
-      update.baseRevision === current.revision - 1 &&
-      update.stateHash === current.hash &&
-      update.cols === current.snapshot?.cols &&
-      update.rows === current.snapshot?.rows &&
-      current.frameHash === receivedFrameHash
-      ? { status: "idempotent", state: current }
-      : update.revision === current.revision
-        ? protocolConflict(current, update.revision)
-        : { status: "stale", state: current };
+          : { status: "stale", state: current },
+    );
   }
   if (update.baseRevision !== current.revision || update.revision !== current.revision + 1) {
-    return {
+    return complete({
       status: "gap",
       state: current,
       expectedRevision: current.revision + 1,
       receivedRevision: update.revision,
-    };
+    });
   }
   if (update.type === "terminal.tombstone") {
     if (
       current.snapshot &&
       (update.cols !== current.snapshot.cols || update.rows !== current.snapshot.rows)
     ) {
-      return protocolConflict(current, update.revision);
+      return complete(protocolConflict(current, update.revision));
     }
     const hash = hashStable(["tombstone", update.tombstone.reason]);
     if (hash !== update.stateHash) {
-      return {
+      return complete({
         status: "conflict",
         state: current,
         expectedRevision: current.revision + 1,
         receivedRevision: update.revision,
-      };
+      });
     }
     const state = Object.freeze({
       ...current,
@@ -233,30 +305,35 @@ export function applyTerminalReplicaUpdate(
       hash,
       frameHash: receivedFrameHash,
     });
-    return { status: "applied", state };
+    return complete({ status: "applied", state });
   }
   if (current.snapshot === null) {
-    return {
+    return complete({
       status: "conflict",
       state: current,
       expectedRevision: current.revision + 1,
       receivedRevision: update.revision,
-    };
+    });
   }
   let snapshot: TerminalReplicaSnapshot;
   try {
-    snapshot = applyTerminalReplicaPatch(current.snapshot, update.patch);
+    snapshot = applyTerminalReplicaPatchProfiled(
+      current.snapshot,
+      update.patch,
+      profile,
+      options.instrumentation,
+    );
   } catch {
-    return protocolConflict(current, update.revision);
+    return complete(protocolConflict(current, update.revision));
   }
-  const hash = hashTerminalReplicaSnapshot(snapshot);
+  const hash = hashTerminalReplicaSnapshotProfiled(snapshot, profile, options.instrumentation);
   if (hash !== update.stateHash || snapshot.cols !== update.cols || snapshot.rows !== update.rows) {
-    return {
+    return complete({
       status: "conflict",
       state: current,
       expectedRevision: current.revision + 1,
       receivedRevision: update.revision,
-    };
+    });
   }
   const state = Object.freeze({
     ...current,
@@ -266,27 +343,36 @@ export function applyTerminalReplicaUpdate(
     hash,
     frameHash: receivedFrameHash,
   });
-  return { status: "applied", state };
+  return complete({ status: "applied", state });
 }
 
 export function applyTerminalReplicaPatch(
   current: TerminalReplicaSnapshot,
   patch: TerminalReplicaPatchPayload,
 ): TerminalReplicaSnapshot {
+  return applyTerminalReplicaPatchProfiled(current, patch);
+}
+
+function applyTerminalReplicaPatchProfiled(
+  current: TerminalReplicaSnapshot,
+  patch: TerminalReplicaPatchPayload,
+  profile?: MutableTerminalReplicaApplyProfile,
+  instrumentation?: TerminalReplicaApplyOptions["instrumentation"],
+): TerminalReplicaSnapshot {
   const cols = patch.dimensions?.cols ?? current.cols;
   const rows = patch.dimensions?.rows ?? current.rows;
   const seen = new Set<number>();
+  const preparedRows: Array<{ readonly index: number; readonly row: TerminalReplicaRow }> = [];
+  const prepareStarted = readProfileClock(instrumentation);
   for (const change of patch.rows) {
-    if (
-      change.index >= rows ||
-      change.row.cells.length !== cols ||
-      !terminalReplicaRowIsValid(change.row) ||
-      seen.has(change.index)
-    ) {
+    if (change.index >= rows || change.row.cells.length !== cols || seen.has(change.index)) {
       throw new TypeError("Malformed terminal replica row patch");
     }
     seen.add(change.index);
+    preparedRows.push({ index: change.index, row: validateAndFreezeRow(change.row, profile) });
   }
+  addProfileDuration(profile, "rowValidationFreeze", prepareStarted, instrumentation);
+  if (profile) profile.counts.patchedRows += preparedRows.length;
   const cursor = patch.cursor ?? current.cursor;
   if (cursor.x >= cols || cursor.y >= rows) throw new TypeError("Terminal cursor is out of bounds");
   if (patch.history?.some((row) => row.cells.length !== cols || !terminalReplicaRowIsValid(row)))
@@ -334,13 +420,15 @@ export function applyTerminalReplicaPatch(
   } else {
     grid = current.grid;
   }
-  if (patch.rows.length > 0) {
+  if (preparedRows.length > 0) {
     const next = [...grid];
     let changed = false;
-    for (const change of patch.rows) {
-      const row = freezeRow(change.row);
-      if (!terminalReplicaRowsEqual(next[change.index], row)) {
-        next[change.index] = row;
+    for (const change of preparedRows) {
+      const equalityStarted = readProfileClock(instrumentation);
+      const equal = terminalReplicaRowsEqualProfiled(next[change.index], change.row, profile);
+      addProfileDuration(profile, "rowEquality", equalityStarted, instrumentation);
+      if (!equal) {
+        next[change.index] = change.row;
         changed = true;
       }
     }
@@ -388,6 +476,14 @@ export function terminalReplicaRowsEqual(
   left: TerminalReplicaRow | undefined,
   right: TerminalReplicaRow,
 ): boolean {
+  return terminalReplicaRowsEqualProfiled(left, right);
+}
+
+function terminalReplicaRowsEqualProfiled(
+  left: TerminalReplicaRow | undefined,
+  right: TerminalReplicaRow,
+  profile?: MutableTerminalReplicaApplyProfile,
+): boolean {
   if (
     !left ||
     left === right ||
@@ -396,6 +492,7 @@ export function terminalReplicaRowsEqual(
   )
     return left === right;
   for (let index = 0; index < left.cells.length; index += 1) {
+    if (profile) profile.counts.comparedCells += 1;
     const a = left.cells[index]!;
     const b = right.cells[index]!;
     if (
@@ -411,21 +508,32 @@ export function terminalReplicaRowsEqual(
 }
 
 export function hashTerminalReplicaSnapshot(snapshot: TerminalReplicaSnapshot): string {
+  return hashTerminalReplicaSnapshotProfiled(snapshot);
+}
+
+function hashTerminalReplicaSnapshotProfiled(
+  snapshot: TerminalReplicaSnapshot,
+  profile?: MutableTerminalReplicaApplyProfile,
+  instrumentation?: TerminalReplicaApplyOptions["instrumentation"],
+): string {
   // Cross-language Merkle stream: each immutable row is FNV-1a over the
   // type-tagged UTF-8 cell stream, then the snapshot hashes fixed-order row
   // digests + metadata. WeakMap caching makes dirty-row patches O(rows), not
   // O(scrollback*cols), without placing host-private hashes on the wire.
-  return hashStable([
+  const started = readProfileClock(instrumentation);
+  const hash = hashStable([
     "terminal-replica-v1",
     snapshot.cols,
     snapshot.rows,
-    hashTerminalReplicaRows(snapshot.grid),
-    hashTerminalReplicaRows(snapshot.history),
+    hashTerminalReplicaRows(snapshot.grid, profile, instrumentation),
+    hashTerminalReplicaRows(snapshot.history, profile, instrumentation),
     snapshot.cursor,
     snapshot.modes,
     snapshot.placements,
     snapshot.bootstrap,
   ]);
+  addProfileDuration(profile, "snapshotHash", started, instrumentation);
+  return hash;
 }
 
 export function hashTerminalReplicaTombstone(reason: string): string {
@@ -477,6 +585,31 @@ function freezeRow(row: TerminalReplicaRow): TerminalReplicaRow {
         }),
       ),
     ),
+  }) as unknown as TerminalReplicaRow;
+}
+
+function validateAndFreezeRow(
+  row: TerminalReplicaRow,
+  profile?: MutableTerminalReplicaApplyProfile,
+): TerminalReplicaRow {
+  const cells = new Array(row.cells.length);
+  for (let index = 0; index < row.cells.length; index += 1) {
+    const cell = row.cells[index]!;
+    if (profile) profile.counts.validatedCells += 1;
+    if (cell.width === 2 && row.cells[index + 1]?.width !== 0)
+      throw new TypeError("Malformed terminal replica row");
+    if (cell.width === 0 && (index === 0 || row.cells[index - 1]?.width !== 2))
+      throw new TypeError("Malformed terminal replica row");
+    cells[index] = Object.freeze({
+      ...cell,
+      foreground: Object.freeze({ ...cell.foreground }),
+      background: Object.freeze({ ...cell.background }),
+    });
+    if (profile) profile.counts.frozenCells += 1;
+  }
+  return Object.freeze({
+    wrapped: row.wrapped,
+    cells: Object.freeze(cells),
   }) as unknown as TerminalReplicaRow;
 }
 
@@ -562,6 +695,74 @@ function canonicalEncode(value: unknown): string {
     .join("")};`;
 }
 
+function createApplyProfile(): MutableTerminalReplicaApplyProfile {
+  return {
+    reusedAuthenticatedFrameHash: false,
+    phaseMicros: {
+      updateHash: 0,
+      rowValidationFreeze: 0,
+      rowEquality: 0,
+      rowHash: 0,
+      snapshotHash: 0,
+    },
+    counts: {
+      patchedRows: 0,
+      validatedCells: 0,
+      frozenCells: 0,
+      comparedCells: 0,
+      rowHashMisses: 0,
+    },
+  };
+}
+
+function freezeProfile(profile: MutableTerminalReplicaApplyProfile): TerminalReplicaApplyProfile {
+  return Object.freeze({
+    reusedAuthenticatedFrameHash: profile.reusedAuthenticatedFrameHash,
+    phaseMicros: Object.freeze({ ...profile.phaseMicros }),
+    counts: Object.freeze({ ...profile.counts }),
+  });
+}
+
+function resolveFrameHash(
+  update: CanonicalTerminalReplicaUpdate,
+  options: TerminalReplicaApplyOptions,
+  profile?: MutableTerminalReplicaApplyProfile,
+): string {
+  const authenticated = options.authenticatedFrameHash;
+  if (authenticated && /^[0-9a-f]{16}$/u.test(authenticated)) {
+    if (profile) profile.reusedAuthenticatedFrameHash = true;
+    return authenticated;
+  }
+  const started = readProfileClock(options.instrumentation);
+  const hash = hashStable(update);
+  addProfileDuration(profile, "updateHash", started, options.instrumentation);
+  return hash;
+}
+
+function readProfileClock(
+  instrumentation: TerminalReplicaApplyOptions["instrumentation"] | undefined,
+): number | undefined {
+  if (!instrumentation) return undefined;
+  try {
+    const value = instrumentation.nowMicros();
+    return Number.isFinite(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function addProfileDuration(
+  profile: MutableTerminalReplicaApplyProfile | undefined,
+  phase: keyof MutableTerminalReplicaApplyProfile["phaseMicros"],
+  startedAtMicros: number | undefined,
+  instrumentation: TerminalReplicaApplyOptions["instrumentation"] | undefined,
+): void {
+  if (!profile || startedAtMicros === undefined) return;
+  const endedAtMicros = readProfileClock(instrumentation);
+  if (endedAtMicros === undefined || endedAtMicros < startedAtMicros) return;
+  profile.phaseMicros[phase] += endedAtMicros - startedAtMicros;
+}
+
 function protocolConflict(
   current: TerminalReplicaState,
   receivedRevision: number,
@@ -584,9 +785,15 @@ function isNewerIncarnation(current: string, candidate: string): boolean {
   );
 }
 
-function hashTerminalReplicaRow(row: TerminalReplicaRow): string {
+function hashTerminalReplicaRow(
+  row: TerminalReplicaRow,
+  profile?: MutableTerminalReplicaApplyProfile,
+  instrumentation?: TerminalReplicaApplyOptions["instrumentation"],
+): string {
   const cached = ROW_HASH_CACHE.get(row);
   if (cached) return cached;
+  if (profile) profile.counts.rowHashMisses += 1;
+  const started = readProfileClock(instrumentation);
   const hash = hashStable([
     row.wrapped,
     row.cells.map((cell) => [
@@ -597,18 +804,24 @@ function hashTerminalReplicaRow(row: TerminalReplicaRow): string {
       cell.attributes,
     ]),
   ]);
+  addProfileDuration(profile, "rowHash", started, instrumentation);
   if (Object.isFrozen(row)) ROW_HASH_CACHE.set(row, hash);
   return hash;
 }
 
-function hashTerminalReplicaRows(rows: readonly TerminalReplicaRow[]): string {
+function hashTerminalReplicaRows(
+  rows: readonly TerminalReplicaRow[],
+  profile?: MutableTerminalReplicaApplyProfile,
+  instrumentation?: TerminalReplicaApplyOptions["instrumentation"],
+): string {
   const cached = ROW_ARRAY_HASH_CACHE.get(rows);
   if (cached) return cached.hash.toString(16).padStart(16, "0");
   let hash = 0n;
   for (const row of rows)
     hash = BigInt.asUintN(
       64,
-      hash * ROW_SEQUENCE_BASE + BigInt(`0x${hashTerminalReplicaRow(row)}`),
+      hash * ROW_SEQUENCE_BASE +
+        BigInt(`0x${hashTerminalReplicaRow(row, profile, instrumentation)}`),
     );
   if (Object.isFrozen(rows)) ROW_ARRAY_HASH_CACHE.set(rows, { hash, length: rows.length });
   return hash.toString(16).padStart(16, "0");

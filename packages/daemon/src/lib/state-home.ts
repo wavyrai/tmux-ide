@@ -4,10 +4,9 @@
  * update cache, and app state each grew locally; new state files should
  * resolve through here so none of them can drift from the override again.
  */
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
 
 /** Absolute path to the state home directory (not created here). */
 export function stateHome(): string {
-  return process.env.TMUX_IDE_HOME ?? join(homedir(), ".tmux-ide");
+  return resolveRuntimeNamespace().stateHome;
 }

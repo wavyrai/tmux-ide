@@ -39,12 +39,18 @@ import {
   StartupReadinessResourceSchemaZ,
   TERMINAL_ATTACHMENT_ISSUE_PATH,
   TerminalAttachmentIssueResultSchemaZ,
-  WorkspaceCatalogResourceV1SchemaZ,
+  WorkspaceCatalogResourceV2SchemaZ,
   WorkspaceChangeDiffEnvelopeV1SchemaZ,
   WorkspaceChangesCatalogEnvelopeV1SchemaZ,
   WorkspaceFilePreviewEnvelopeV1SchemaZ,
   WorkspaceFilesCatalogEnvelopeV1SchemaZ,
   WorkspaceMissionsEnvelopeV1SchemaZ,
+  WorkspaceOpenCancelledHostResultSchemaZ,
+  WorkspaceOpenCancelledResultSchemaZ,
+  WorkspaceOpenCommittedHostResultSchemaZ,
+  WorkspaceOpenCommittedResultSchemaZ,
+  WorkspaceOpenPreparedHostResultSchemaZ,
+  WorkspaceOpenHostResultSchemaZ,
   WorkspacePaneCreateMutationResultSchemaZ,
   WorkspacePromoteMutationResultSchemaZ,
   WorkspacePromotionFailureSchemaZ,
@@ -170,6 +176,9 @@ export function sameIdentity(
 export interface DevWorkspaceCatalogEntry {
   readonly workspaceName: string;
   readonly sessionName: string;
+  readonly source: "project" | "workspace";
+  readonly availability: "live" | "stopped";
+  readonly paneCount: number;
 }
 
 function shellEventsForSession(
@@ -177,17 +186,19 @@ function shellEventsForSession(
   sessionName: string,
 ): DesktopDaemonEvent[] {
   return catalog
-    .filter((entry) => entry.sessionName === sessionName)
+    .filter((entry) => entry.availability === "live" && entry.sessionName === sessionName)
     .map((entry) => ({ type: "application-shell.changed", workspaceName: entry.workspaceName }));
 }
 
 function shellEventsForEveryWorkspace(
   catalog: readonly DevWorkspaceCatalogEntry[],
 ): DesktopDaemonEvent[] {
-  return catalog.map((entry) => ({
-    type: "application-shell.changed",
-    workspaceName: entry.workspaceName,
-  }));
+  return catalog
+    .filter((entry) => entry.availability === "live")
+    .map((entry) => ({
+      type: "application-shell.changed",
+      workspaceName: entry.workspaceName,
+    }));
 }
 
 /**
@@ -360,6 +371,72 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
   };
   let nextDevHostSessionGeneration = 0;
   let devHostSession: DevHostSessionBootstrap | null = null;
+  const takeEmbeddedDevHostSession = (): string | null => {
+    if (config.transport !== "same-origin-gateway" || typeof document === "undefined") return null;
+    const element = document.querySelector<HTMLMetaElement>(
+      'meta[name="tmux-ide-dev-host-session"]',
+    );
+    const parsed = z.uuid().safeParse(element?.content);
+    element?.remove();
+    return parsed.success ? parsed.data : null;
+  };
+  let embeddedDevHostSession = takeEmbeddedDevHostSession();
+  const useGatewayXmlHttpRequest = embeddedDevHostSession !== null;
+  const httpRequest = (input: string, init: RequestInit): Promise<Response> => {
+    if (!useGatewayXmlHttpRequest) return fetch(input, init);
+    return new Promise<Response>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      let settled = false;
+      const finish = (action: () => void): void => {
+        if (settled) return;
+        settled = true;
+        init.signal?.removeEventListener("abort", abort);
+        action();
+      };
+      const abort = (): void => {
+        xhr.abort();
+        finish(() => reject(new DOMException("The request was aborted", "AbortError")));
+      };
+      if (init.signal?.aborted) {
+        abort();
+        return;
+      }
+      xhr.open(init.method ?? "GET", input);
+      const headers = new Headers(init.headers);
+      headers.forEach((value, name) => xhr.setRequestHeader(name, value));
+      xhr.addEventListener("load", () => {
+        finish(() => {
+          const responseHeaders = new Headers();
+          for (const line of xhr
+            .getAllResponseHeaders()
+            .trim()
+            .split(/[\r\n]+/u)) {
+            const separator = line.indexOf(":");
+            if (separator <= 0) continue;
+            responseHeaders.append(
+              line.slice(0, separator).trim(),
+              line.slice(separator + 1).trim(),
+            );
+          }
+          resolve(
+            new Response(xhr.responseText, {
+              status: xhr.status,
+              statusText: xhr.statusText,
+              headers: responseHeaders,
+            }),
+          );
+        });
+      });
+      xhr.addEventListener("error", () =>
+        finish(() => reject(new TypeError("The development gateway request failed"))),
+      );
+      xhr.addEventListener("abort", () =>
+        finish(() => reject(new DOMException("The request was aborted", "AbortError"))),
+      );
+      init.signal?.addEventListener("abort", abort, { once: true });
+      xhr.send(typeof init.body === "string" ? init.body : null);
+    });
+  };
   const loadDevHostSession = (
     staleGeneration: number | null = null,
     signal?: AbortSignal,
@@ -394,13 +471,26 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
       devHostSession = record;
       const pending = (async () => {
         try {
-          const response = await fetch("/__tmux_ide_host_session", {
+          if (embeddedDevHostSession !== null) {
+            const token = embeddedDevHostSession;
+            embeddedDevHostSession = null;
+            const lease = { generation, token };
+            if (devHostSession !== record || disposed) throw new DevHostFailure(DISPOSED);
+            resolvedDevHostSession = lease;
+            return lease;
+          }
+          const response = await httpRequest(`${config.daemonOrigin}/api/dev/host-session`, {
             method: "POST",
             cache: "no-store",
             credentials: "omit",
             signal: controller.signal,
           });
-          if (!response.ok) throw new DevHostFailure(REQUEST_FAILED);
+          if (!response.ok) {
+            console.warn(
+              `[tmux-ide] development host session request failed -> ${response.status}`,
+            );
+            throw new DevHostFailure(REQUEST_FAILED);
+          }
           const token = z
             .object({ token: z.uuid() })
             .strict()
@@ -499,7 +589,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         ...(config.ownerToken ? { Authorization: `Bearer ${config.ownerToken}` } : {}),
         ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
       };
-      let response = await fetch(url(pathname), {
+      let response = await httpRequest(url(pathname), {
         method: wireMethod,
         headers: wireHeaders,
         ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
@@ -527,7 +617,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           controller.signal,
           timeoutMs,
         );
-        response = await fetch(url(pathname), {
+        response = await httpRequest(url(pathname), {
           method: wireMethod,
           headers: {
             ...extraHeaders,
@@ -610,15 +700,18 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
    */
   async function loadIdentity(signal?: AbortSignal): Promise<DaemonInstanceIdentity> {
     if (identity) return identity;
-    const result = DesktopDaemonCapabilitiesResultSchemaZ.parse(
-      await request(
-        "/api/v2/capabilities",
-        { method: "POST", body: {} },
-        {},
-        REQUEST_TIMEOUT_MS,
-        signal,
-      ),
+    const rawResult = await request(
+      "/api/v2/capabilities",
+      { method: "POST", body: {} },
+      {},
+      REQUEST_TIMEOUT_MS,
+      signal,
     );
+    const parsedResult = DesktopDaemonCapabilitiesResultSchemaZ.safeParse(rawResult);
+    if (!parsedResult.success) {
+      throw new DevHostFailure(INVALID_RESPONSE);
+    }
+    const result = parsedResult.data;
     if (result.status !== "ok") throw new DevHostFailure(result.error);
     identity = result.daemon;
     return identity;
@@ -636,9 +729,9 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
   async function workspaceCatalog(
     signal?: AbortSignal,
   ): Promise<readonly DevWorkspaceCatalogEntry[]> {
-    const parsed = WorkspaceCatalogResourceV1SchemaZ.safeParse(
+    const parsed = WorkspaceCatalogResourceV2SchemaZ.safeParse(
       await request(
-        "/api/resources/workspace-catalog",
+        "/api/resources/workspace-catalog?version=2",
         { method: "GET" },
         {},
         REQUEST_TIMEOUT_MS,
@@ -651,10 +744,18 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         capabilityError("daemon-identity-mismatch", "The daemon generation changed."),
       );
     }
-    catalogCache = parsed.data.workspaces.map(({ workspaceName, sessionName }) => ({
-      workspaceName,
-      sessionName,
-    }));
+    const liveBySession = new Map(
+      parsed.data.liveSessions.map((session) => [session.sessionName, session] as const),
+    );
+    catalogCache = parsed.data.intents.map(
+      ({ workspaceName, sessionName, source, availability }) => ({
+        workspaceName,
+        sessionName,
+        source,
+        availability,
+        paneCount: liveBySession.get(sessionName)?.paneCount ?? 0,
+      }),
+    );
     sendEventSubscriptionDelta();
     return catalogCache;
   }
@@ -664,7 +765,7 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     signal?: AbortSignal,
   ): Promise<DevWorkspaceCatalogEntry> {
     const entry = (await workspaceCatalog(signal)).find(
-      (candidate) => candidate.workspaceName === workspaceName,
+      (candidate) => candidate.workspaceName === workspaceName && candidate.availability === "live",
     );
     if (!entry) {
       throw new DevHostFailure(
@@ -740,7 +841,10 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
     );
     return new Set(
       catalogCache
-        .filter(({ workspaceName }) => workspaces.has(workspaceName))
+        .filter(
+          ({ workspaceName, availability }) =>
+            availability === "live" && workspaces.has(workspaceName),
+        )
         .map(({ sessionName }) => sessionName),
     );
   }
@@ -939,6 +1043,10 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
   }
 
   async function connectEventSocket(signal: AbortSignal): Promise<RuntimeConnection<true>> {
+    // Every physical socket is generation-bound. After a close the cached
+    // identity is retired, so bootstrap capabilities before minting the next
+    // WebSocket URL and comparing its hello.
+    await loadIdentity(signal);
     const eventHostSession = await loadDevHostSession(null, signal);
     if (signal.aborted || disposed) throw new DevHostFailure(DISPOSED);
     return new Promise((resolve, reject) => {
@@ -1189,6 +1297,13 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
           eventCursorSent = false;
         }
         signal.removeEventListener("abort", dispose);
+        // A physical daemon socket closing retires every credential and
+        // generation-bound descriptor minted by that process. Preserve the UI
+        // stores' last coherent frames, but force the connection supervisor's
+        // next attempt through capabilities bootstrap before accepting a new
+        // hello. This fences stale tickets while allowing the stable host
+        // gateway to rebind to the replacement daemon.
+        if (connected) identity = null;
         const reason = new Error(event.reason || `daemon event socket closed (${event.code})`);
         if (connected) closedResolve(reason);
         else {
@@ -1295,9 +1410,15 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
       case "listWorkspaces":
         try {
           await loadIdentity(signal);
-          const workspaces = (await workspaceCatalog(signal)).map(({ workspaceName }) => ({
-            workspaceName,
-          }));
+          const workspaces = (await workspaceCatalog(signal)).map(
+            ({ workspaceName, sessionName, source, availability, paneCount }) => ({
+              workspaceName,
+              sessionName,
+              source,
+              availability,
+              paneCount,
+            }),
+          );
           return { status: "ok", daemon: requireIdentity(), workspaces };
         } catch (error) {
           return { status: "error", error: failureOf(error) };
@@ -1592,9 +1713,69 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
       onStateChanged: () => () => undefined,
     },
     workspace: {
-      // A browser tab has no native directory picker with a real filesystem
-      // path, and the daemon will not accept a renderer-authored one.
-      openProjectDirectory: async () => null,
+      openProjectDirectory: async () => {
+        // Direct compatibility mode has no trusted server-side picker. In
+        // gateway mode Vite owns selection and mutation; no path crosses into
+        // this renderer or appears in a browser-authored request.
+        if (config.transport !== "same-origin-gateway") return null;
+        try {
+          return WorkspaceOpenHostResultSchemaZ.nullable().parse(
+            await request("/api/dev/open-project-directory", { method: "POST", body: {} }),
+          );
+        } catch (error) {
+          return { status: "error", error: failureOf(error) };
+        }
+      },
+      prepareProjectDirectory: async () => {
+        if (config.transport !== "same-origin-gateway") return null;
+        try {
+          return WorkspaceOpenPreparedHostResultSchemaZ.nullable().parse(
+            await request("/api/dev/open-project-directory", { method: "POST", body: {} }),
+          );
+        } catch (error) {
+          return { status: "error", error: failureOf(error) };
+        }
+      },
+      commitPreparedOpen: async (decision) => {
+        const operationId = crypto.randomUUID();
+        try {
+          const envelope = z
+            .object({ ok: z.literal(true), result: WorkspaceOpenCommittedResultSchemaZ })
+            .parse(
+              await request(
+                "/api/v2/action/workspace.open.commit",
+                { method: "POST", body: decision },
+                { "X-Tmux-Ide-Operation-Id": operationId },
+              ),
+            );
+          return WorkspaceOpenCommittedHostResultSchemaZ.parse({
+            status: "ok",
+            result: envelope.result,
+          });
+        } catch (error) {
+          return { status: "error", error: failureOf(error) };
+        }
+      },
+      cancelPreparedOpen: async (decision) => {
+        const operationId = crypto.randomUUID();
+        try {
+          const envelope = z
+            .object({ ok: z.literal(true), result: WorkspaceOpenCancelledResultSchemaZ })
+            .parse(
+              await request(
+                "/api/v2/action/workspace.open.cancel",
+                { method: "POST", body: decision },
+                { "X-Tmux-Ide-Operation-Id": operationId },
+              ),
+            );
+          return WorkspaceOpenCancelledHostResultSchemaZ.parse({
+            status: "ok",
+            result: envelope.result,
+          });
+        } catch (error) {
+          return { status: "error", error: failureOf(error) };
+        }
+      },
     },
     onboarding: {
       acknowledgeIntro: async () => undefined,

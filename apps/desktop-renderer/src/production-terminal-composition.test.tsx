@@ -6,6 +6,7 @@ import {
   APPLICATION_SHELL_RESOURCE_V3_VERSION,
   ApplicationShellProjectionInputV2SchemaZ,
   ApplicationShellProjectionInputV3SchemaZ,
+  DAEMON_WIRE_PROTOCOL_VERSION,
   DESKTOP_HOST_API_VERSION,
   type ApplicationShellProjectionInputV2,
   type ApplicationShellProjectionInputV3,
@@ -47,8 +48,8 @@ const xtermHarness = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock("./runtime/host-terminal-transport.ts", () => ({
-  createHostNativeTerminalTransport: terminalHarness.create,
+vi.mock("./runtime/host-pane-stream-native-terminal-transport.ts", () => ({
+  createHostPaneStreamNativeTerminalTransport: terminalHarness.create,
 }));
 
 vi.mock("./terminal/xterm-renderer.ts", () => ({
@@ -59,14 +60,14 @@ import { App } from "./App.tsx";
 import { createDefaultDomShellInput } from "./experience/dom-shell.ts";
 
 const DAEMON_A: DaemonInstanceIdentity = {
-  protocolVersion: 1,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "test-a",
   instanceId: "00000000-0000-4000-8000-000000000001",
   startedAt: "2026-07-22T00:00:00.000Z",
 };
 
 const DAEMON_B: DaemonInstanceIdentity = {
-  protocolVersion: 1,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "test-b",
   instanceId: "00000000-0000-4000-8000-000000000002",
   startedAt: "2026-07-22T00:01:00.000Z",
@@ -453,7 +454,7 @@ describe("production terminal composition", () => {
   });
 
   it.each([
-    ["protocolVersion", { protocolVersion: 2 }],
+    ["protocolVersion", { protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION + 1 }],
     ["productVersion", { productVersion: "different-product" }],
     ["instanceId", { instanceId: "00000000-0000-4000-8000-000000000099" }],
     ["startedAt", { startedAt: "2026-07-22T00:00:01.000Z" }],
@@ -585,6 +586,28 @@ describe("production terminal composition", () => {
     );
     expect(tabLabels.length).toBeGreaterThanOrEqual(2);
     expect(tabLabels.join(" ")).toContain("Logs shell");
+    const diagnosticWindows = [...root.querySelectorAll<HTMLElement>(".window-tabs__tab")].map(
+      (tab) => ({
+        windowResourceId: tab.dataset.windowResourceId,
+        semanticPaneIds: JSON.parse(tab.dataset.semanticPaneIds ?? "null"),
+        paneCount: tab.dataset.paneCount,
+        active: tab.dataset.active,
+      }),
+    );
+    expect(diagnosticWindows).toEqual([
+      {
+        windowResourceId: "pane.shell",
+        semanticPaneIds: ["pane.shell"],
+        paneCount: "1",
+        active: "true",
+      },
+      {
+        windowResourceId: "pane.logs",
+        semanticPaneIds: ["pane.logs"],
+        paneCount: "1",
+        active: "false",
+      },
+    ]);
     // Bug this catches: an unattachable pane is offered as though it were a
     // window a click could reach, and the click can only fail.
     expect(tabLabels.join(" ")).not.toContain("Unavailable shell");

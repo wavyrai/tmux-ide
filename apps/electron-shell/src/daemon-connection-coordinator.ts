@@ -32,6 +32,11 @@ import {
   type WorkspacePaneCreateMutationResult,
   type WorkspaceOpenMutationRequest,
   type WorkspaceOpenMutationResult,
+  type WorkspaceOpenPrepareArguments,
+  type WorkspaceOpenPreparedResult,
+  type WorkspaceOpenDecisionArguments,
+  type WorkspaceOpenCommittedResult,
+  type WorkspaceOpenCancelledResult,
   type WorkspacePromoteMutationRequest,
   type WorkspacePromoteMutationResult,
   type AppWindowMutationRequest,
@@ -64,6 +69,18 @@ export interface DaemonResourceAuthority {
     hostClientId?: string,
   ): Promise<WorkspaceMultiplexerMutationResult>;
   openWorkspace(request: WorkspaceOpenMutationRequest): Promise<WorkspaceOpenMutationResult>;
+  prepareWorkspaceOpen?(
+    operationId: string,
+    input: WorkspaceOpenPrepareArguments,
+  ): Promise<WorkspaceOpenPreparedResult>;
+  commitWorkspaceOpen?(
+    operationId: string,
+    input: WorkspaceOpenDecisionArguments,
+  ): Promise<WorkspaceOpenCommittedResult>;
+  cancelWorkspaceOpen?(
+    operationId: string,
+    input: WorkspaceOpenDecisionArguments,
+  ): Promise<WorkspaceOpenCancelledResult>;
   promoteWorkspace(
     request: WorkspacePromoteMutationRequest,
   ): Promise<WorkspacePromoteMutationResult>;
@@ -124,6 +141,18 @@ export interface DaemonResourceAuthority {
 }
 
 export interface DaemonConnectionAuthority extends DaemonResourceAuthority {
+  prepareWorkspaceOpen(
+    operationId: string,
+    input: WorkspaceOpenPrepareArguments,
+  ): Promise<WorkspaceOpenPreparedResult>;
+  commitWorkspaceOpen(
+    operationId: string,
+    input: WorkspaceOpenDecisionArguments,
+  ): Promise<WorkspaceOpenCommittedResult>;
+  cancelWorkspaceOpen(
+    operationId: string,
+    input: WorkspaceOpenDecisionArguments,
+  ): Promise<WorkspaceOpenCancelledResult>;
   state(): DesktopDaemonCapabilityState;
   refreshConnection(): Promise<DesktopDaemonRefreshConnectionResult>;
 }
@@ -343,7 +372,8 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     request: WorkspacePaneCreateMutationRequest,
   ): Promise<WorkspacePaneCreateMutationResult> {
     const broker = this.#broker;
-    if (!broker || this.#disposed) throw new Error("daemon mutation authority is unavailable");
+    if (!broker?.prepareWorkspaceOpen || this.#disposed)
+      throw new Error("daemon mutation authority is unavailable");
     const rendererGeneration = this.#rendererGeneration;
     const result = await broker.createWorkspacePane(request);
     if (
@@ -361,7 +391,8 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
     hostClientId?: string,
   ): Promise<WorkspaceMultiplexerMutationResult> {
     const broker = this.#broker;
-    if (!broker || this.#disposed) throw new Error("daemon mutation authority is unavailable");
+    if (!broker?.commitWorkspaceOpen || this.#disposed)
+      throw new Error("daemon mutation authority is unavailable");
     const rendererGeneration = this.#rendererGeneration;
     const result = await broker.invokeVerb(request, hostClientId);
     if (
@@ -376,7 +407,8 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
 
   async mutateAppWindow(request: AppWindowMutationRequest): Promise<AppWindowMutationResult> {
     const broker = this.#broker;
-    if (!broker || this.#disposed) throw new Error("daemon mutation authority is unavailable");
+    if (!broker?.cancelWorkspaceOpen || this.#disposed)
+      throw new Error("daemon mutation authority is unavailable");
     const rendererGeneration = this.#rendererGeneration;
     const result = await broker.mutateAppWindow(request);
     if (
@@ -402,6 +434,40 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
       throw new Error("daemon mutation authority changed during the request");
     }
     return result;
+  }
+
+  async prepareWorkspaceOpen(
+    operationId: string,
+    input: WorkspaceOpenPrepareArguments,
+  ): Promise<WorkspaceOpenPreparedResult> {
+    const broker = this.#broker;
+    const prepare = broker?.prepareWorkspaceOpen;
+    if (!prepare || this.#disposed) throw new Error("daemon mutation authority is unavailable");
+    const generation = this.#rendererGeneration;
+    const result = await prepare.call(broker, operationId, input);
+    if (this.#broker !== broker || generation !== this.#rendererGeneration || this.#disposed)
+      throw new Error("daemon mutation authority changed during the request");
+    return result;
+  }
+
+  async commitWorkspaceOpen(
+    operationId: string,
+    input: WorkspaceOpenDecisionArguments,
+  ): Promise<WorkspaceOpenCommittedResult> {
+    const broker = this.#broker;
+    const commit = broker?.commitWorkspaceOpen;
+    if (!commit || this.#disposed) throw new Error("daemon mutation authority is unavailable");
+    return await commit.call(broker, operationId, input);
+  }
+
+  async cancelWorkspaceOpen(
+    operationId: string,
+    input: WorkspaceOpenDecisionArguments,
+  ): Promise<WorkspaceOpenCancelledResult> {
+    const broker = this.#broker;
+    const cancel = broker?.cancelWorkspaceOpen;
+    if (!cancel || this.#disposed) throw new Error("daemon mutation authority is unavailable");
+    return await cancel.call(broker, operationId, input);
   }
 
   async promoteWorkspace(

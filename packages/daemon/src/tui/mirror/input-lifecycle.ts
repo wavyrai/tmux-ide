@@ -229,12 +229,10 @@ export interface TuiLifecycleExecutor {
 
 export function createTuiLifecycleExecutor(deps: {
   destroyRenderer: () => void;
-  switchClientBack: (callback: (error: unknown) => void) => void;
-  detachClient: () => void;
+  putAway: () => void;
 }): TuiLifecycleExecutor {
   let destroyRequested = false;
   let hostedDetachRequested = false;
-  let fallbackDetachRequested = false;
 
   return {
     run(command) {
@@ -246,11 +244,7 @@ export function createTuiLifecycleExecutor(deps: {
       }
       if (hostedDetachRequested) return;
       hostedDetachRequested = true;
-      deps.switchClientBack((error) => {
-        if (!error || fallbackDetachRequested) return;
-        fallbackDetachRequested = true;
-        deps.detachClient();
-      });
+      deps.putAway();
     },
   };
 }

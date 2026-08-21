@@ -46,8 +46,20 @@ import {
 import { appSetRemoteAccessHandler } from "./handlers/app-set-remote-access.ts";
 import { daemonShutdownHandler } from "./handlers/daemon-shutdown.ts";
 import { workspacePaneCreateHandler } from "./handlers/workspace-pane-create.ts";
-import { workspaceOpenHandler } from "./handlers/workspace-open.ts";
+import {
+  workspaceOpenCancelHandler,
+  workspaceOpenCommitHandler,
+  workspaceOpenHandler,
+  workspaceOpenPrepareHandler,
+  type WorkspaceOpenHandoffBackend,
+} from "./handlers/workspace-open.ts";
 import { workspacePromoteHandler } from "./handlers/workspace-promote.ts";
+import {
+  fleetAgentMutateHandler,
+  fleetAgentProvisionHandler,
+  workspaceSessionCreateHandler,
+  type FleetLifecycleBackend,
+} from "./handlers/fleet-lifecycle.ts";
 import {
   workspacePaneKillHandler,
   workspacePaneResizeHandler,
@@ -70,6 +82,8 @@ export interface ActionExecutionContext {
   readonly workspaceOpenBackend?: {
     open(input: WorkspaceOpenMutationRequest): Promise<WorkspaceOpenMutationResult>;
   };
+  readonly workspaceOpenHandoffBackend?: WorkspaceOpenHandoffBackend;
+  readonly fleetLifecycleBackend?: FleetLifecycleBackend;
   readonly workspacePromotionBackend?: {
     promote(input: WorkspacePromoteMutationRequest): Promise<WorkspacePromoteMutationResult>;
   };
@@ -192,11 +206,47 @@ export const actionRegistry: RegistryShape = {
     handler: (input) => workspacePaneCreateHandler(input),
     handlerWithContext: workspacePaneCreateHandler,
   },
+  "workspace.session.create": {
+    inputSchema: ActionContractsZ["workspace.session.create"].input,
+    resultSchema: ActionContractsZ["workspace.session.create"].result,
+    handler: (input) => workspaceSessionCreateHandler(input, {}),
+    handlerWithContext: workspaceSessionCreateHandler,
+  },
+  "fleet.agent.mutate": {
+    inputSchema: ActionContractsZ["fleet.agent.mutate"].input,
+    resultSchema: ActionContractsZ["fleet.agent.mutate"].result,
+    handler: (input) => fleetAgentMutateHandler(input, {}),
+    handlerWithContext: fleetAgentMutateHandler,
+  },
+  "fleet.agent.provision": {
+    inputSchema: ActionContractsZ["fleet.agent.provision"].input,
+    resultSchema: ActionContractsZ["fleet.agent.provision"].result,
+    handler: (input) => fleetAgentProvisionHandler(input, {}),
+    handlerWithContext: fleetAgentProvisionHandler,
+  },
   "workspace.open": {
     inputSchema: ActionContractsZ["workspace.open"].input,
     resultSchema: ActionContractsZ["workspace.open"].result,
     handler: (input) => workspaceOpenHandler(input),
     handlerWithContext: workspaceOpenHandler,
+  },
+  "workspace.open.prepare": {
+    inputSchema: ActionContractsZ["workspace.open.prepare"].input,
+    resultSchema: ActionContractsZ["workspace.open.prepare"].result,
+    handler: (input) => workspaceOpenPrepareHandler(input, {}),
+    handlerWithContext: workspaceOpenPrepareHandler,
+  },
+  "workspace.open.commit": {
+    inputSchema: ActionContractsZ["workspace.open.commit"].input,
+    resultSchema: ActionContractsZ["workspace.open.commit"].result,
+    handler: (input) => workspaceOpenCommitHandler(input, {}),
+    handlerWithContext: workspaceOpenCommitHandler,
+  },
+  "workspace.open.cancel": {
+    inputSchema: ActionContractsZ["workspace.open.cancel"].input,
+    resultSchema: ActionContractsZ["workspace.open.cancel"].result,
+    handler: (input) => workspaceOpenCancelHandler(input, {}),
+    handlerWithContext: workspaceOpenCancelHandler,
   },
   "workspace.promote": {
     inputSchema: ActionContractsZ["workspace.promote"].input,

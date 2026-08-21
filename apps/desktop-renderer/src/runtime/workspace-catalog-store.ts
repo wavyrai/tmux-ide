@@ -199,6 +199,11 @@ function sortWorkspaceSummaries(workspaces: WorkspaceList): DesktopDaemonWorkspa
   );
 }
 
+/** Compatibility fixtures without V2 facts describe the historical live-only list. */
+function isLiveWorkspace(workspace: DesktopDaemonWorkspaceSummary): boolean {
+  return workspace.availability !== "stopped";
+}
+
 export function createDesktopWorkspaceCatalogStore(
   options: DesktopWorkspaceCatalogStoreOptions,
 ): DesktopWorkspaceCatalogStore {
@@ -315,7 +320,7 @@ export function createDesktopWorkspaceCatalogStore(
         ? {
             daemon,
             workspaces: view.snapshot.resource,
-            selection: selectionOf(view.snapshot.resource),
+            selection: selectionOf(view.snapshot.resource.filter(isLiveWorkspace)),
             updatedAt: view.snapshot.updatedAt,
           }
         : null;
@@ -439,7 +444,16 @@ export function createDesktopWorkspaceCatalogStore(
         }
         names.add(parsedName);
       }
-      return { status: "ok", resource: sortWorkspaceSummaries(parsed.data.workspaces) };
+      return {
+        status: "ok",
+        resource: sortWorkspaceSummaries(
+          parsed.data.workspaces.map((workspace) => ({
+            ...workspace,
+            availability: workspace.availability ?? "live",
+            paneCount: workspace.paneCount ?? 0,
+          })),
+        ),
+      };
     },
     project,
   });
@@ -469,7 +483,9 @@ export function createDesktopWorkspaceCatalogStore(
       if (
         workspaceName === null ||
         snapshot === null ||
-        !snapshot.workspaces.some((workspace) => workspace.workspaceName === workspaceName)
+        !snapshot.workspaces.some(
+          (workspace) => workspace.workspaceName === workspaceName && isLiveWorkspace(workspace),
+        )
       ) {
         return false;
       }

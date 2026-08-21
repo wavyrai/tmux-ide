@@ -2,8 +2,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import {
-  APPLICATION_SHELL_RESOURCE_VERSION,
+  APPLICATION_SHELL_RESOURCE_V1_VERSION,
   ApplicationShellProjectionInputV1SchemaZ,
+  DAEMON_WIRE_PROTOCOL_VERSION,
   DESKTOP_HOST_API_VERSION,
   buildStartupReadinessLadder,
   type ApplicationShellProjectionInputV1,
@@ -48,14 +49,14 @@ function deferred<T>(): Deferred<T> {
 }
 
 const DAEMON_A: DaemonInstanceIdentity = {
-  protocolVersion: 1,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "test-a",
   instanceId: "00000000-0000-4000-8000-000000000001",
   startedAt: "2026-07-22T00:00:00.000Z",
 };
 
 const DAEMON_B: DaemonInstanceIdentity = {
-  protocolVersion: 1,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "test-b",
   instanceId: "00000000-0000-4000-8000-000000000002",
   startedAt: "2026-07-22T00:01:00.000Z",
@@ -145,6 +146,9 @@ function createHostHarness() {
 
   const stopTheme = vi.fn();
   const stopWindow = vi.fn();
+  const openProjectDirectory = vi.fn<HostCapabilities["workspace"]["openProjectDirectory"]>(
+    async () => null,
+  );
   const host: HostCapabilities = {
     apiVersion: DESKTOP_HOST_API_VERSION,
     bootstrap: vi.fn(async () => activeBootstrap),
@@ -157,7 +161,54 @@ function createHostHarness() {
         return stopWindow;
       },
     },
-    workspace: { openProjectDirectory: vi.fn(async () => null) },
+    workspace: {
+      openProjectDirectory,
+      prepareProjectDirectory: async (previousWorkspaceName) => {
+        const legacy = await openProjectDirectory();
+        if (!legacy || legacy.status === "error") return legacy;
+        return {
+          status: "ok",
+          result: {
+            operationId: legacy.result.operationId,
+            daemonInstanceId: legacy.result.daemonInstanceId,
+            phase: "prepared",
+            prepareToken: "90000000-0000-4000-8000-000000000001",
+            preparedRevision: 1,
+            outcome: legacy.result.outcome,
+            workspaceName: legacy.result.resource.workspaceName,
+            previousWorkspaceName: previousWorkspaceName ?? null,
+            proof: {
+              semanticPaneId: legacy.result.resource.initialPaneId,
+              paneCount: 1,
+              terminalRevision: 0,
+              terminalStateHash: "0123456789abcdef",
+            },
+          },
+        };
+      },
+      commitPreparedOpen: async (decision) => ({
+        status: "ok",
+        result: {
+          operationId: "90000000-0000-4000-8000-000000000002",
+          daemonInstanceId: activeDaemon.instanceId,
+          phase: "committed",
+          ...decision,
+          workspaceName: "project-00112233445566778899aabbccddeeff",
+          previousWorkspaceName: null,
+        },
+      }),
+      cancelPreparedOpen: async (decision) => ({
+        status: "ok",
+        result: {
+          operationId: "90000000-0000-4000-8000-000000000003",
+          daemonInstanceId: activeDaemon.instanceId,
+          phase: "cancelled",
+          ...decision,
+          workspaceName: "project-00112233445566778899aabbccddeeff",
+          previousWorkspaceName: null,
+        },
+      }),
+    },
     onboarding: { acknowledgeIntro: vi.fn(async () => undefined) },
     theme: {
       onChanged(listener) {
@@ -239,7 +290,7 @@ function createHostHarness() {
       fetchApplicationShell: vi.fn(async ({ workspaceName }) => ({
         status: "ok" as const,
         envelope: {
-          version: APPLICATION_SHELL_RESOURCE_VERSION,
+          version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
           daemon: activeDaemon,
           resource: shellInputs.get(workspaceName) ?? shellInput(workspaceName),
         },
@@ -374,7 +425,7 @@ async function mountResourceIdentityMismatch(
   mismatched.resolve({
     status: "ok",
     envelope: {
-      version: APPLICATION_SHELL_RESOURCE_VERSION,
+      version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
       daemon: DAEMON_B,
       resource: shellInput("Rejected mismatched workspace"),
     },
@@ -968,7 +1019,7 @@ describe("desktop App live composition", () => {
     mismatched.resolve({
       status: "ok",
       envelope: {
-        version: APPLICATION_SHELL_RESOURCE_VERSION,
+        version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
         daemon: DAEMON_B,
         resource: shellInput("Mismatched resource"),
       },

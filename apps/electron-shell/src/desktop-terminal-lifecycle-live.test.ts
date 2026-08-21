@@ -21,9 +21,9 @@ import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-// Live spawns (daemon, tmux, pty) starve the default 5s/10s budgets when the
-// full monorepo check runs suites concurrently; same hardening as the daemon's
-// live suites.
+// These remain hard product-lifecycle budgets. The package gate runs this
+// process-owning suite in its serial live lane so contention cannot turn them
+// into scheduler-dependent assertions.
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 import {
   APPLICATION_SHELL_RESOURCE_V3_VERSION,
@@ -47,11 +47,7 @@ type ConnectedDaemonState = Extract<DesktopDaemonHostState, { status: "connected
 import { canonicalDaemonPreflight, runDaemonPreflight } from "./daemon-preflight.ts";
 import { inspectCanonicalDaemonInfo } from "../../../packages/daemon/src/lib/canonical-daemon.ts";
 
-/**
- * The default broker's 3s request timeout starves when the full monorepo check
- * runs this live suite concurrently with the daemon's own suite; the raised
- * budget changes nothing about behavior, only how long a live spawn may take.
- */
+/** The live broker keeps a bounded request budget across daemon replacement. */
 function liveBrokerFactory(daemon: ConnectedDaemonState): DaemonResourceBroker {
   const canonical = inspectCanonicalDaemonInfo();
   if (canonical.status !== "valid" || !canonical.info.authToken) {

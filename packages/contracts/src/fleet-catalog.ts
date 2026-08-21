@@ -29,6 +29,7 @@ import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
 import { AgentActivitySchemaZ } from "./pane-appearance.ts";
 
 export const FLEET_CATALOG_RESOURCE_VERSION = 1 as const;
+export const FleetCatalogRevisionSchemaZ = z.string().regex(/^[0-9a-f]{20}$/u);
 
 /** Fleet-scale caps, exported so producers can pre-trim before projecting. */
 export const FLEET_MAX_SESSIONS = 64;
@@ -147,6 +148,8 @@ export const FleetCatalogResourceV1SchemaZ = z
   .object({
     version: z.literal(FLEET_CATALOG_RESOURCE_VERSION),
     daemon: DaemonInstanceIdentitySchemaZ,
+    /** Optimistic-concurrency fence over canonical live identity/incarnation facts. */
+    catalogRevision: FleetCatalogRevisionSchemaZ.optional(),
     sessions: z.array(FleetCatalogSessionEntryV1SchemaZ).max(FLEET_MAX_SESSIONS),
   })
   .strict()

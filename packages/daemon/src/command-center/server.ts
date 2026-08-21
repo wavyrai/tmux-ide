@@ -8,8 +8,10 @@ import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
 import {
   discoverSessions,
+  discoverLiveSessionSummaries,
   buildOverviews,
   buildProjectDetail,
+  type FleetSessionFacts,
   type SessionOverview,
 } from "./discovery.ts";
 import {
@@ -41,6 +43,8 @@ import {
   APPLICATION_SHELL_RESOURCE_V2_VERSION,
   APPLICATION_SHELL_RESOURCE_V3_VERSION,
   WORKSPACE_CATALOG_RESOURCE_VERSION,
+  WORKSPACE_CATALOG_RESOURCE_V2_VERSION,
+  projectWorkspaceCatalogV2,
   DAEMON_WIRE_PROTOCOL_VERSION,
   DaemonInstanceIdentitySchemaZ,
   type ApplicationShellResourceV1,
@@ -49,6 +53,8 @@ import {
   type AppWindowDocumentV1,
   type DesktopMissionWorkspaceResource,
   type WorkspaceCatalogResourceV1,
+  type WorkspaceCatalogResourceV2,
+  TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION,
   type DaemonInstanceIdentity,
   type DaemonPanesResponse,
   type DaemonProjectResponse,
@@ -117,12 +123,15 @@ import { isAbsolute, resolve as pathResolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
 import {
-  projectLegacyApplicationShellResourceV1,
+  projectDeprecatedStandaloneApplicationShellResourceV1,
   projectApplicationShellResource,
   projectApplicationShellResourceV3,
   type ApplicationShellSessionFacts,
   type ApplicationShellWorkspaceDockSummary,
 } from "./resources/application-shell.ts";
+import { terminalRuntimeInventoryEnvelope } from "./resources/terminal-runtime-inventory.ts";
+import { currentResourceRevision } from "./ws-events.ts";
+import { fleetSessionIdForName } from "./resources/fleet-catalog.ts";
 import { FilesAuthority } from "./resources/workspace-files-authority.ts";
 import { ChangesAuthority } from "./resources/workspace-changes-authority.ts";
 import { loadApplicationShellAppWindows } from "../lib/application-shell-app-windows.ts";
@@ -162,6 +171,8 @@ export interface CreateAppOptions {
   };
   workspacePaneCreationBackend?: import("./actions/handlers/workspace-pane-create.ts").WorkspacePaneCreationBackend;
   workspaceOpenBackend?: import("./actions/handlers/workspace-open.ts").WorkspaceOpenBackend;
+  workspaceOpenHandoffBackend?: import("./actions/handlers/workspace-open.ts").WorkspaceOpenHandoffBackend;
+  fleetLifecycleBackend?: import("./actions/handlers/fleet-lifecycle.ts").FleetLifecycleBackend;
   workspacePromotionBackend?: import("./actions/handlers/workspace-promote.ts").WorkspacePromotionBackend;
   appWindowMutationBackend?: import("./actions/handlers/app-window-mutate.ts").AppWindowMutationBackend;
   workspaceMultiplexerBackend?: import("./actions/handlers/workspace-multiplexer.ts").WorkspaceMultiplexerBackend;
@@ -174,7 +185,24 @@ export interface CreateAppOptions {
     discoverApplicationShellSession(
       requestedSessionName: string,
     ): Promise<ApplicationShellSessionFacts | null>;
+    discoverTerminalRuntimeSession?(
+      requestedSessionName: string,
+      signal?: AbortSignal,
+    ): Promise<
+      | import("../terminal/attachments/native-runtime.ts").NativeTerminalRuntimeSessionSnapshot
+      | null
+    >;
+    recordTerminalRuntimeResourceMark?(
+      operation: "terminal-resource-handler-admitted" | "terminal-resource-response-projection",
+    ): void;
   } | null;
+  /** Injectable live tmux projection for catalog tests and alternate hosts. */
+  catalogLiveSessions?: () => readonly {
+    readonly sessionName: string;
+    readonly paneCount: number;
+  }[];
+  /** Injectable daemon-generation-pinned adopted fleet projection. */
+  catalogFleet?: () => FleetSessionFacts[] | null;
   applicationShellAppWindowBackend?: {
     load(
       projectDir: string,
@@ -278,7 +306,13 @@ function requireAuth(token: string | null, localBypassToken: string | null): Mid
  */
 const GATED_ACTIONS: Readonly<Record<string, "owner" | "owner-and-operation-id">> = {
   "workspace.pane.create": "owner-and-operation-id",
+  "workspace.session.create": "owner-and-operation-id",
+  "fleet.agent.mutate": "owner-and-operation-id",
+  "fleet.agent.provision": "owner-and-operation-id",
   "workspace.open": "owner-and-operation-id",
+  "workspace.open.prepare": "owner-and-operation-id",
+  "workspace.open.commit": "owner-and-operation-id",
+  "workspace.open.cancel": "owner-and-operation-id",
   "workspace.promote": "owner-and-operation-id",
   "workspace.app-window.mutate": "owner-and-operation-id",
   "workspace.window.split": "owner-and-operation-id",
@@ -296,6 +330,7 @@ const GATED_ACTIONS: Readonly<Record<string, "owner" | "owner-and-operation-id">
   "project.restart": "owner",
   "project.activate": "owner",
   "project.openTerminal": "owner",
+  "daemon.shutdown": "owner",
 };
 
 function requireHostCapability(ownerToken: string | null): MiddlewareHandler {
@@ -353,6 +388,14 @@ const sseMetrics = {
   connections: 0,
   messagesSent: 0,
 };
+
+const compatibilityMetrics = {
+  applicationShellV1Requests: 0,
+};
+
+export function getCompatibilityMetrics(): { applicationShellV1Requests: number } {
+  return { ...compatibilityMetrics };
+}
 
 export function getSseMetrics(): { connections: number; messagesSent: number } {
   return { ...sseMetrics };
@@ -579,6 +622,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       daemonInstanceId: daemonIdentity.instanceId,
       workspacePaneCreationBackend: options.workspacePaneCreationBackend,
       workspaceOpenBackend: options.workspaceOpenBackend,
+      workspaceOpenHandoffBackend: options.workspaceOpenHandoffBackend,
+      fleetLifecycleBackend: options.fleetLifecycleBackend,
       workspacePromotionBackend: options.workspacePromotionBackend,
       appWindowMutationBackend: options.appWindowMutationBackend,
       workspaceMultiplexerBackend: options.workspaceMultiplexerBackend,
@@ -680,7 +725,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     return c.json({ workspaces: registry.list() } satisfies DaemonWorkspacesResponse);
   });
 
-  // OWNER POLICY: not owner-gated, deliberately. This is the name-only index
+  // OWNER POLICY: not owner-gated, deliberately. This is the path-free index
   // the host reads BEFORE it can address any owner-gated resource, and the
   // production broker fetches it with no Authorization header
   // (`daemon-resource-broker.ts` `#requestJson`, whose `authorize` argument
@@ -690,9 +735,45 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   // and it still sits behind the remote-access gate on a non-loopback bind.
   // Gating it on the owner bearer would break every desktop workspace read
   // without withholding a single fact the owner-gated routes do not already
-  // protect.
+  // protect. V2 live rows additionally carry the daemon-minted opaque Fleet
+  // session id so trusted clients never infer mutation identity from a display
+  // label.
   app.get("/api/resources/workspace-catalog", (c) => {
     const registry = getDefaultWorkspaceRegistry();
+    if (c.req.query("version") === String(WORKSPACE_CATALOG_RESOURCE_V2_VERSION)) {
+      const workspaceIntents = registry.list().map(({ name, sessionName }) => ({
+        workspaceName: name,
+        sessionName,
+        source: "workspace" as const,
+      }));
+      const knownWorkspaceNames = new Set(
+        workspaceIntents.map(({ workspaceName }) => workspaceName),
+      );
+      const projectIntents = listProjects().flatMap((project) =>
+        knownWorkspaceNames.has(project.name)
+          ? []
+          : [
+              {
+                workspaceName: project.name,
+                sessionName: project.name,
+                source: "project" as const,
+              },
+            ],
+      );
+      const liveSessions = (options.catalogLiveSessions?.() ?? discoverLiveSessionSummaries()).map(
+        (session) => ({
+          ...session,
+          fleetSessionId: fleetSessionIdForName(session.sessionName),
+        }),
+      );
+      return c.json(
+        projectWorkspaceCatalogV2(
+          daemonInstanceIdentity,
+          [...workspaceIntents, ...projectIntents],
+          liveSessions,
+        ) satisfies WorkspaceCatalogResourceV2,
+      );
+    }
     return c.json({
       version: WORKSPACE_CATALOG_RESOURCE_VERSION,
       daemon: daemonInstanceIdentity,
@@ -765,11 +846,75 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     return c.json({ ...detail } satisfies DaemonProjectResponse);
   });
 
+  const terminalRuntimeInventoryOwnerGate = ownerAuthorityGate(
+    options.remoteAccess?.ownerToken ?? null,
+    {
+      whenOwnerless: "unavailable",
+      unavailableMessage: "Terminal runtime inventory capability is unavailable",
+      mismatchMessage: "Terminal runtime inventory requires owner authority",
+    },
+  );
+  app.get("/api/project/:name/terminal-runtime-inventory", async (c) => {
+    const denied = terminalRuntimeInventoryOwnerGate(c);
+    if (denied) return denied;
+    if (
+      (c.req.query("version") ?? String(TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION)) !==
+      String(TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION)
+    ) {
+      return c.json({ error: "Unsupported terminal-runtime inventory resource version" }, 400);
+    }
+    const backend = options.applicationShellInventoryBackend;
+    if (!backend?.discoverTerminalRuntimeSession) {
+      return c.json({ error: "Terminal runtime inventory unavailable" }, 503);
+    }
+    try {
+      backend.recordTerminalRuntimeResourceMark?.("terminal-resource-handler-admitted");
+    } catch {
+      // Diagnostics never own the authenticated request lifecycle.
+    }
+    const requestedSessionName = c.req.param("name");
+    let session: Awaited<ReturnType<NonNullable<typeof backend.discoverTerminalRuntimeSession>>>;
+    try {
+      session = await backend.discoverTerminalRuntimeSession(
+        requestedSessionName,
+        c.req.raw.signal,
+      );
+    } catch {
+      return c.json({ error: "Terminal runtime inventory unavailable" }, 503);
+    }
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    const projection = terminalRuntimeInventoryEnvelope(
+      daemonInstanceIdentity,
+      session,
+      currentResourceRevision(session.workspaceName, "terminal-runtime-inventory"),
+    );
+    try {
+      backend.recordTerminalRuntimeResourceMark?.("terminal-resource-response-projection");
+    } catch {
+      // Diagnostics never own response projection.
+    }
+    return c.json(projection);
+  });
+
   app.get("/api/project/:name/application-shell", async (c) => {
     const name = c.req.param("name");
-    const requestedVersion = c.req.query("version");
+    // The unversioned compatibility default used to mean V1. Every current
+    // product host requests V3 (with an Electron V2 fallback), so the default
+    // now follows the current contract. Explicit V1 remains for external peers
+    // during a measured deprecation window.
+    const requestedVersion =
+      c.req.query("version") ?? String(APPLICATION_SHELL_RESOURCE_V3_VERSION);
+    const markV1Compatibility = (): void => {
+      compatibilityMetrics.applicationShellV1Requests += 1;
+      c.header("Deprecation", "true");
+      c.header("Sunset", "Mon, 01 Feb 2027 00:00:00 GMT");
+      c.header(
+        "Link",
+        `</api/project/${encodeURIComponent(name)}/application-shell?version=3>; rel="successor-version"`,
+      );
+      c.header("X-Tmux-Ide-Compatibility", "application-shell-v1");
+    };
     if (
-      requestedVersion !== undefined &&
       requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V1_VERSION) &&
       requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V2_VERSION) &&
       requestedVersion !== String(APPLICATION_SHELL_RESOURCE_V3_VERSION)
@@ -826,13 +971,17 @@ export function createApp(options: CreateAppOptions = {}): Hono {
 
     const backend = options.applicationShellInventoryBackend;
     if (!backend) {
-      const legacySession = discoverSessions().find((candidate) => candidate.name === name);
-      if (!legacySession) return c.json({ error: "Session not found" }, 404);
-      return c.json({
-        version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
-        daemon: daemonInstanceIdentity,
-        resource: projectLegacyApplicationShellResourceV1(legacySession),
-      } satisfies ApplicationShellResourceV1);
+      if (requestedVersion === String(APPLICATION_SHELL_RESOURCE_V1_VERSION)) {
+        const standaloneSession = discoverSessions().find((candidate) => candidate.name === name);
+        if (!standaloneSession) return c.json({ error: "Session not found" }, 404);
+        markV1Compatibility();
+        return c.json({
+          version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
+          daemon: daemonInstanceIdentity,
+          resource: projectDeprecatedStandaloneApplicationShellResourceV1(standaloneSession),
+        } satisfies ApplicationShellResourceV1);
+      }
+      return c.json({ error: "Session discovery unavailable" }, 503);
     }
 
     let session: ApplicationShellSessionFacts | null;
@@ -850,6 +999,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       focus: resource.focus,
       connection: resource.connection,
     };
+    markV1Compatibility();
     return c.json({
       version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
       daemon: daemonInstanceIdentity,
@@ -893,6 +1043,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     daemon: daemonInstanceIdentity,
     ownerToken: options.remoteAccess?.ownerToken ?? null,
     registry: options.workspaceRegistry ?? getDefaultWorkspaceRegistry(),
+    readFleet: options.catalogFleet,
   });
 
   // The startup readiness ladder: the ordered, typed answer to "what is this
@@ -1471,6 +1622,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       const project = await registerProject({
         dir: parsed.data.dir,
         name: parsed.data.name,
+        persistence: parsed.data.persistence,
       });
       return c.json({ project } satisfies DaemonRegisteredProjectResponse, 201);
     } catch (err) {

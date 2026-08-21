@@ -1,9 +1,14 @@
 import type { RGBA } from "@opentui/core";
-import type { HostedPanelView } from "./panel-host.ts";
-import { terminalDisplayWidth } from "./panel-host.ts";
-import type { Rect } from "./recipes.ts";
 import type { SemanticThemeSnapshot } from "./theme.ts";
 import type { Span } from "./spans.ts";
+import { terminalDisplayWidth } from "./terminal-text.ts";
+
+interface ShellRect {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
 
 export type ShellChromeVariant = "compact" | "standard" | "wide";
 
@@ -11,10 +16,10 @@ export interface ShellChromeLayout {
   width: number;
   height: number;
   variant: ShellChromeVariant;
-  tabbar: Rect;
-  sidebar: Rect;
-  main: Rect;
-  status: Rect;
+  tabbar: ShellRect;
+  sidebar: ShellRect;
+  main: ShellRect;
+  status: ShellRect;
   paletteWidth: number;
   dialogWidth: number;
 }
@@ -27,6 +32,15 @@ export interface ShellTabPresentation {
   focused: boolean;
   hovered: boolean;
   attention: boolean;
+}
+
+/** Minimal structural view consumed by chrome; keeps optional panel hosts out
+ * of the production shell import graph. */
+export interface ShellChromeView {
+  readonly id: string;
+  readonly title: string;
+  readonly glyph: string;
+  readonly shortcut: { readonly key: `f${number}`; readonly label: `F${number}` } | null;
 }
 
 export interface ShellNavigationPresentation {
@@ -133,7 +147,7 @@ export function shellChromeLayout(
 }
 
 export function shellPanelCell(
-  view: Pick<HostedPanelView, "glyph" | "title" | "shortcut">,
+  view: Pick<ShellChromeView, "glyph" | "title" | "shortcut">,
   variant: ShellChromeVariant,
   selected = false,
   attention = false,
@@ -156,7 +170,7 @@ export function shellNavigationPresentation(
 }
 
 export function shellSurfaceTabs(
-  views: readonly HostedPanelView[],
+  views: readonly ShellChromeView[],
   activeViewId: string,
   variant: ShellChromeVariant,
   hoveredIndex: number | null,
@@ -184,7 +198,7 @@ export function shellSurfaceTabs(
 }
 
 export function shellSurfaceTabSpans(
-  views: readonly HostedPanelView[],
+  views: readonly ShellChromeView[],
   variant: ShellChromeVariant,
 ): Span[] {
   return shellSurfaceTabs(views, "", variant, null).map((tab) => tab.span);

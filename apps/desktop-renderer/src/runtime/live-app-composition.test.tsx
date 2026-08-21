@@ -20,6 +20,39 @@ function mount(node: () => unknown): HTMLElement {
 }
 
 describe("DesktopConnectionSurface recovery command", () => {
+  it("renders stopped workspace intent as disabled and non-attachable", () => {
+    const onSelectWorkspace = vi.fn();
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(
+      () => (
+        <DesktopConnectionSurface
+          state="chooser"
+          eyebrow="Workspaces"
+          title="Choose"
+          description="Choose a workspace"
+          guidance="Live only"
+          workspaces={[
+            { workspaceName: "running", availability: "live", paneCount: 2 },
+            { workspaceName: "parked", availability: "stopped", paneCount: 0 },
+          ]}
+          onSelectWorkspace={onSelectWorkspace}
+        />
+      ),
+      root,
+    );
+
+    const parked = [...root.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((button) =>
+      button.textContent?.includes("parked"),
+    );
+    expect(parked?.disabled).toBe(true);
+    expect(parked?.textContent).toContain("Stopped · not attachable");
+    parked?.click();
+    expect(onSelectWorkspace).not.toHaveBeenCalled();
+    dispose();
+    root.remove();
+  });
+
   it("renders a copyable command block and copies on click", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {

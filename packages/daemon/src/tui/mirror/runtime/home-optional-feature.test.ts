@@ -4,20 +4,25 @@ import { describe, expect, it } from "vitest";
 import { loadLocalSourceBoundaryGraph } from "../../../../test-support/source-import-boundaries.ts";
 import { createApplicationOptionalFeatureRegistry } from "./application-optional-features.ts";
 
-const PRE_HOME_SEAM_STATIC_BYTES = 1_263_222;
-
 describe("terminal-first Home optional feature", () => {
   it("keeps Home actions outside the terminal-first static root by at least 50KB", async () => {
-    const graph = await loadLocalSourceBoundaryGraph(
+    const staticRoot = await loadLocalSourceBoundaryGraph(
       process.cwd(),
       ["src/tui/mirror/runtime/application-root.tsx"],
       new Set(["static-runtime"]),
     );
-    const bytes = [...graph.sourceByFile.values()].reduce(
-      (total, source) => total + Buffer.byteLength(source),
-      0,
+    const homeFeature = await loadLocalSourceBoundaryGraph(
+      process.cwd(),
+      ["src/tui/mirror/features/home/feature.tsx"],
+      new Set(["static-runtime"]),
     );
-    expect(PRE_HOME_SEAM_STATIC_BYTES - bytes).toBeGreaterThanOrEqual(50_000);
+    const deferredBytes = [...homeFeature.sourceByFile]
+      .filter(([file]) => !staticRoot.sourceByFile.has(file))
+      .reduce((total, [, source]) => total + Buffer.byteLength(source), 0);
+    // Compare the two current dependency closures. A historical absolute byte
+    // baseline turns every legitimate terminal-first feature into a fake Home
+    // regression even when Home remains fully deferred.
+    expect(deferredBytes).toBeGreaterThanOrEqual(50_000);
     for (const deferred of [
       "src/tui/mirror/features/home/feature.tsx",
       "src/tui/mirror/home-surface.tsx",
@@ -26,7 +31,7 @@ describe("terminal-first Home optional feature", () => {
       "src/tui/mirror/agent-provisioning-executor.ts",
       "src/lib/project-registry.ts",
     ]) {
-      expect(graph.files).not.toContain(deferred);
+      expect(staticRoot.files).not.toContain(deferred);
     }
   });
 

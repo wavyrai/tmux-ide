@@ -282,8 +282,7 @@ describe("input lifecycle boundary", () => {
     const calls: string[] = [];
     const executor = createTuiLifecycleExecutor({
       destroyRenderer: () => calls.push("destroy"),
-      switchClientBack: () => calls.push("switch"),
-      detachClient: () => calls.push("detach"),
+      putAway: () => calls.push("put-away"),
     });
 
     executor.run({ kind: "destroy-renderer", source: "keyboard" });
@@ -292,29 +291,24 @@ describe("input lifecycle boundary", () => {
     expect(calls).toEqual(["destroy"]);
   });
 
-  it("executes hosted detach once and falls back to one detach on switch failure", () => {
+  it("delegates hosted put-away exactly once to the host-local adapter", () => {
     const calls: string[] = [];
     const executor = createTuiLifecycleExecutor({
       destroyRenderer: () => calls.push("destroy"),
-      switchClientBack: (callback) => {
-        calls.push("switch");
-        callback(new Error("no last client"));
-      },
-      detachClient: () => calls.push("detach"),
+      putAway: () => calls.push("put-away"),
     });
 
     executor.run({ kind: "hosted-detach", source: "keyboard" });
     executor.run({ kind: "hosted-detach", source: "keyboard" });
 
-    expect(calls).toEqual(["switch", "detach"]);
+    expect(calls).toEqual(["put-away"]);
   });
 
   it("executes hosted palette quit as destroy once", () => {
     const calls: string[] = [];
     const executor = createTuiLifecycleExecutor({
       destroyRenderer: () => calls.push("destroy"),
-      switchClientBack: () => calls.push("switch"),
-      detachClient: () => calls.push("detach"),
+      putAway: () => calls.push("put-away"),
     });
 
     executor.run(resolveQuitLifecycleCommand({ hosted: true }, "palette"));

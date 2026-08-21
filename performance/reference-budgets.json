@@ -13,6 +13,30 @@
     "minimumSamples": 30,
     "clockRule": "input and consumed paint share one client performance-now clock"
   },
+  "coherentTerminalFrame": {
+    "webTrackedTargetP95Ms": 3000,
+    "openTuiTrackedTargetP95Ms": 3000,
+    "hardPortabilityCeilingMs": 5000,
+    "minimumWarmSamples": 5,
+    "requiredObserver": "ProductTestRig live terminal frame"
+  },
+  "resizeResponsiveness": {
+    "p95Ms": 250,
+    "maximumMs": 500,
+    "minimumSamples": 20,
+    "boundary": "test-drive command issued through observed host geometry"
+  },
+  "dragResponsiveness": {
+    "p95Ms": 100,
+    "maximumMs": 250,
+    "minimumSamples": 3,
+    "boundary": "pointer input and preview phase share one browser performance-now clock"
+  },
+  "visualDeterminism": {
+    "algorithm": "sha256",
+    "minimumPairs": 3,
+    "boundary": "two idle captures of the same mounted OpenTUI document"
+  },
   "memory": {
     "minimumSamples": 16,
     "rssRobustSlopeBytesPerSample": 262144,

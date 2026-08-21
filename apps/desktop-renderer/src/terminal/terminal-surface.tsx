@@ -1131,6 +1131,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   return (
     <div
       class="terminal-surface"
+      data-workspace-name={props.target.workspaceName}
+      data-semantic-pane-id={props.target.semanticPaneId}
       data-phase={phase()}
       data-attach-phase={terminalTransport() ? attachPhase() : undefined}
       data-attach-attempt={terminalTransport() ? attachAttempt() : undefined}

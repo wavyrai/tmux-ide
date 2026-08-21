@@ -41,6 +41,32 @@ async function subscribed(service: MirrorService, session: string, pane: string)
 }
 
 describe("MirrorService refcounting", () => {
+  it("yields geometry only from event-driven proof of a non-control tmux client", async () => {
+    const onNativeClientActivity = vi.fn();
+    let sim!: SimulatedChannel;
+    const service = new MirrorService({
+      createIo: (_session, handlers) => {
+        sim = new SimulatedChannel(handlers, (cmd) => {
+          const auto = fixtureAutoReply(fixtureState())(cmd);
+          if (auto) return auto;
+          if (cmd.startsWith("list-clients")) return ["0\t123456", "1\t123455"];
+          if (cmd.startsWith("capture-pane")) return ["seed"];
+          if (cmd.startsWith("display-message")) return ["0 0 100 50"];
+          return [];
+        });
+        return sim;
+      },
+      generatePaneId: () => "pane.mirror.gen1",
+      onNativeClientActivity,
+    });
+    const retention = await service.retainSession(FIXTURE.session);
+
+    sim.feedLines("%client-resized /dev/ttys001", "%client-resized /dev/ttys001");
+    await vi.waitFor(() => expect(onNativeClientActivity).toHaveBeenCalledWith(FIXTURE.session));
+    expect(sim.written.filter((command) => command.startsWith("list-clients"))).toHaveLength(1);
+    await retention.close();
+  });
+
   it("never returns a channel that exited between start settlement and acquire continuation", async () => {
     const sims: SimulatedChannel[] = [];
     let creation = 0;

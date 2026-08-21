@@ -1,0 +1,617 @@
+/* @jsxImportSource @opentui/solid */
+import { describe, expect, it } from "bun:test";
+import { MouseButtons } from "@opentui/core/testing";
+import { createSignal, type Accessor, type Setter } from "solid-js";
+
+import { registerPaneSurface, type TerminalPaneRenderSource } from "../pane-surface.tsx";
+import { createSemanticThemeSnapshot, createTerminalPaletteProjection } from "../theme.ts";
+import { renderForTest } from "../testing/renderer-harness.test.ts";
+import type { OpenTuiWorkspaceLayoutSnapshot } from "../open-tui-workspace-runtime-port.ts";
+import {
+  ApplicationTerminalWorkspace,
+  beginApplicationMouseIngress,
+  safeApplicationMouseIngressMicros,
+} from "./application-terminal-workspace.tsx";
+import type { PaneScopedTerminalAdapter } from "./pane-scoped-terminal-surface.tsx";
+import type { TerminalReplicaSnapshot } from "@tmux-ide/contracts";
+
+function layout(): OpenTuiWorkspaceLayoutSnapshot {
+  const current = {
+    type: "layout" as const,
+    semanticWindowId: "window.main",
+    windowName: "main",
+    currentWindow: true,
+    cols: 30,
+    rows: 9,
+    zoomed: false,
+    paneBorderStatus: "off" as const,
+    panes: [
+      { pane: "pane.a", left: 0, top: 0, width: 10, height: 9, active: true },
+      { pane: "pane.b", left: 11, top: 0, width: 9, height: 9, active: false },
+      { pane: "pane.c", left: 21, top: 0, width: 9, height: 9, active: false },
+    ],
+  };
+  return Object.freeze({ current, windows: Object.freeze([current]) });
+}
+
+function adapter(
+  cells: Readonly<Record<string, string>>,
+  blits: string[],
+): PaneScopedTerminalAdapter {
+  const renderSource: TerminalPaneRenderSource = {
+    scrollbackDepth: () => 0,
+    cursorState: () => null,
+    blitPane: (paneId, buffers, width, height, _scroll, _fg, _bg, options) => {
+      blits.push(paneId);
+      buffers.char.fill(32);
+      buffers.attributes.fill(0);
+      buffers.char[0] = (cells[paneId] ?? "?").codePointAt(0)!;
+      for (let row = 0; row < height; row += 1) options.dirtyRows.push(row);
+      return null;
+    },
+  };
+  return {
+    renderSource,
+    paneVersion: () => 1,
+    paneSourceEpoch: () => 1,
+    subscribePaneVersion: () => () => undefined,
+    paneSelectionSnapshot: () => null,
+  };
+}
+
+describe("ApplicationTerminalWorkspace", () => {
+  it("samples application-mouse ingress fail-open and only when enabled", () => {
+    let calls = 0;
+    expect(
+      safeApplicationMouseIngressMicros(() => {
+        calls += 1;
+        return 12.345;
+      }),
+    ).toBe(12_345);
+    expect(calls).toBe(1);
+    expect(safeApplicationMouseIngressMicros(() => Number.NaN)).toBeNull();
+    expect(
+      safeApplicationMouseIngressMicros(() => {
+        throw new Error("diagnostic clock failed");
+      }),
+    ).toBeNull();
+    const disabledClock = () => {
+      throw new Error("disabled clock must not be sampled");
+    };
+    expect(beginApplicationMouseIngress(undefined, disabledClock)).toBeNull();
+  });
+  it("retains inactive window subscriptions without waking their hidden surface", async () => {
+    registerPaneSurface();
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const palette = createTerminalPaletteProjection(theme);
+    const versions = new Map([
+      ["pane.a", 1],
+      ["pane.b", 1],
+    ]);
+    const listeners = new Map<string, (version: number, sourceEpoch: number) => void>();
+    const subscriptions = new Map<string, number>();
+    const unsubscriptions = new Map<string, number>();
+    const blits: Array<{ paneId: string; full: boolean }> = [];
+    const presentations: string[] = [];
+    const windowA = {
+      type: "layout" as const,
+      semanticWindowId: "window.a",
+      windowName: "a",
+      currentWindow: true,
+      cols: 30,
+      rows: 9,
+      zoomed: false,
+      paneBorderStatus: "off" as const,
+      panes: [{ pane: "pane.a", left: 0, top: 0, width: 30, height: 9, active: true }],
+    };
+    const windowB = {
+      ...windowA,
+      semanticWindowId: "window.b",
+      windowName: "b",
+      currentWindow: false,
+      panes: [{ pane: "pane.b", left: 0, top: 0, width: 30, height: 9, active: true }],
+    };
+    const liveAdapter: PaneScopedTerminalAdapter = {
+      renderSource: {
+        scrollbackDepth: () => 0,
+        cursorState: () => null,
+        blitPane: (paneId, buffers, _width, height, _scroll, _fg, _bg, options) => {
+          blits.push({ paneId, full: options.full });
+          buffers.char.fill(32);
+          buffers.attributes.fill(0);
+          buffers.char[0] = (
+            paneId === "pane.a" ? "A" : versions.get(paneId) === 2 ? "X" : "B"
+          ).codePointAt(0)!;
+          for (let row = 0; row < height; row += 1) options.dirtyRows.push(row);
+          return null;
+        },
+      },
+      paneVersion: (paneId) => versions.get(paneId) ?? 0,
+      paneSourceEpoch: () => 1,
+      subscribePaneVersion: (paneId, listener) => {
+        subscriptions.set(paneId, (subscriptions.get(paneId) ?? 0) + 1);
+        listeners.set(paneId, listener);
+        return () => {
+          unsubscriptions.set(paneId, (unsubscriptions.get(paneId) ?? 0) + 1);
+          listeners.delete(paneId);
+        };
+      },
+      paneSelectionSnapshot: () => null,
+    };
+    let workspaceLayout!: Accessor<OpenTuiWorkspaceLayoutSnapshot>;
+    let setWorkspaceLayout!: Setter<OpenTuiWorkspaceLayoutSnapshot>;
+    const Harness = () => {
+      [workspaceLayout, setWorkspaceLayout] = createSignal<OpenTuiWorkspaceLayoutSnapshot>({
+        current: windowA,
+        windows: [windowA, windowB],
+      });
+      return (
+        <>
+          <ApplicationTerminalWorkspace
+            layout={workspaceLayout}
+            adapter={liveAdapter}
+            rendererEpoch={1}
+            width={30}
+            height={9}
+            focusedPane="pane.a"
+            theme={theme}
+            palette={palette}
+            onSelectPane={() => undefined}
+            onWindowPresented={(windowId) => presentations.push(windowId)}
+          />
+          <text position="absolute" top={10}>
+            {workspaceLayout().current?.semanticWindowId}
+          </text>
+        </>
+      );
+    };
+    const setup = await renderForTest(() => <Harness />, { width: 30, height: 11 });
+    await setup.renderOnce();
+    expect(presentations.at(-1)).toBe("window.a");
+    expect(Object.fromEntries(subscriptions)).toEqual({ "pane.a": 1, "pane.b": 1 });
+    blits.length = 0;
+
+    const inactiveA = { ...windowA, currentWindow: false };
+    const activeB = { ...windowB, currentWindow: true };
+    setWorkspaceLayout({ current: activeB, windows: [inactiveA, activeB] });
+    expect(workspaceLayout().current?.semanticWindowId).toBe("window.b");
+    await setup.renderOnce();
+    expect(workspaceLayout().current?.semanticWindowId).toBe("window.b");
+    expect(setup.captureCharFrame()).toContain("window.b");
+    expect(blits).toEqual([{ paneId: "pane.b", full: true }]);
+    expect(setup.captureCharFrame()).toContain("B");
+    blits.length = 0;
+
+    setWorkspaceLayout({ current: windowA, windows: [windowA, windowB] });
+    await setup.renderOnce();
+    expect(blits).toEqual([]);
+    expect(setup.captureCharFrame()).toContain("A");
+
+    versions.set("pane.b", 2);
+    listeners.get("pane.b")?.(2, 1);
+    await setup.renderOnce();
+    expect(blits).toEqual([]);
+
+    setWorkspaceLayout({ current: activeB, windows: [inactiveA, activeB] });
+    await setup.renderOnce();
+    expect(blits).toEqual([{ paneId: "pane.b", full: false }]);
+    expect(setup.captureCharFrame()).toContain("X");
+    blits.length = 0;
+
+    setWorkspaceLayout({ current: windowA, windows: [windowA, windowB] });
+    await setup.renderOnce();
+    expect(blits).toEqual([]);
+
+    expect(Object.fromEntries(subscriptions)).toEqual({ "pane.a": 1, "pane.b": 1 });
+    expect(Object.fromEntries(unsubscriptions)).toEqual({});
+    setup.renderer.destroy();
+  });
+
+  it("mounts every canonical pane, paints cells, and has no optional tool dock", async () => {
+    registerPaneSurface();
+    const blits: string[] = [];
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const palette = createTerminalPaletteProjection(theme);
+    const setup = await renderForTest(
+      () => (
+        <ApplicationTerminalWorkspace
+          layout={layout}
+          adapter={adapter({ "pane.a": "A", "pane.b": "B", "pane.c": "C" }, blits)}
+          rendererEpoch={1}
+          width={30}
+          height={9}
+          focusedPane="pane.a"
+          theme={theme}
+          palette={palette}
+          onSelectPane={() => undefined}
+        />
+      ),
+      { width: 30, height: 11 },
+    );
+
+    await setup.renderOnce();
+
+    expect(new Set(blits)).toEqual(new Set(["pane.a", "pane.b", "pane.c"]));
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("A");
+    expect(frame).toContain("B");
+    expect(frame).toContain("C");
+    expect(frame).not.toContain("Files");
+    expect(frame).not.toContain("Changes");
+    expect(frame).not.toContain("Missions");
+    expect(frame).not.toContain("Activity");
+    setup.renderer.destroy();
+  });
+
+  it("fully repaints generation B seed v1 over generation A seed v1", async () => {
+    registerPaneSurface();
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const palette = createTerminalPaletteProjection(theme);
+    let character = "A";
+    let sourceEpoch = 1;
+    const firstBlits: string[] = [];
+    const secondBlits: string[] = [];
+    const listeners = new Map<string, (version: number, sourceEpoch: number) => void>();
+    let subscribed = 0;
+    let cleaned = 0;
+    const renderSource: TerminalPaneRenderSource = {
+      scrollbackDepth: () => 0,
+      cursorState: () => null,
+      blitPane: (paneId, buffers, width, height, _scroll, _fg, _bg, options) => {
+        (sourceEpoch === 1 ? firstBlits : secondBlits).push(paneId);
+        buffers.char.fill(32);
+        buffers.attributes.fill(0);
+        buffers.char[0] = character.codePointAt(0)!;
+        for (let row = 0; row < height; row += 1) options.dirtyRows.push(row);
+        return null;
+      },
+    };
+    const generationAdapter: PaneScopedTerminalAdapter = {
+      renderSource,
+      paneVersion: () => 1,
+      paneSourceEpoch: () => sourceEpoch,
+      subscribePaneVersion: (paneId, listener) => {
+        subscribed += 1;
+        listeners.set(paneId, listener);
+        return () => {
+          cleaned += 1;
+          listeners.delete(paneId);
+        };
+      },
+      paneSelectionSnapshot: () => null,
+    };
+    const setup = await renderForTest(
+      () => (
+        <ApplicationTerminalWorkspace
+          layout={layout}
+          adapter={generationAdapter}
+          rendererEpoch={1}
+          width={30}
+          height={9}
+          focusedPane="pane.a"
+          theme={theme}
+          palette={palette}
+          onSelectPane={() => undefined}
+        />
+      ),
+      { width: 30, height: 11 },
+    );
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("A");
+    expect({ subscribed, cleaned, listeners: listeners.size }).toEqual({
+      subscribed: 3,
+      cleaned: 0,
+      listeners: 3,
+    });
+
+    character = "B";
+    sourceEpoch = 2;
+    for (const listener of listeners.values()) listener(1, sourceEpoch);
+    await setup.renderOnce();
+
+    expect(new Set(secondBlits)).toEqual(new Set(["pane.a", "pane.b", "pane.c"]));
+    expect(setup.captureCharFrame()).toContain("B");
+    setup.renderer.destroy();
+  });
+
+  it("independently invalidates and paints both visible pane rectangles after mount", async () => {
+    registerPaneSurface();
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const palette = createTerminalPaletteProjection(theme);
+    const cells: Record<string, string> = {
+      "pane.a": "A-seed",
+      "pane.b": "B-seed",
+      "pane.c": "C-seed",
+    };
+    const versions: Record<string, number> = {
+      "pane.a": 1,
+      "pane.b": 1,
+      "pane.c": 1,
+    };
+    const listeners = new Map<string, (version: number, sourceEpoch: number) => void>();
+    const blits: string[] = [];
+    const renderSource: TerminalPaneRenderSource = {
+      scrollbackDepth: () => 0,
+      cursorState: () => null,
+      blitPane: (paneId, buffers, width, height, _scroll, _fg, _bg, options) => {
+        blits.push(paneId);
+        buffers.char.fill(32);
+        buffers.attributes.fill(0);
+        const value = cells[paneId] ?? "";
+        for (let column = 0; column < Math.min(width, value.length); column += 1)
+          buffers.char[column] = value.codePointAt(column)!;
+        for (let row = 0; row < height; row += 1) options.dirtyRows.push(row);
+        return null;
+      },
+    };
+    const liveAdapter: PaneScopedTerminalAdapter = {
+      renderSource,
+      paneVersion: (paneId) => versions[paneId] ?? 0,
+      paneSourceEpoch: () => 1,
+      subscribePaneVersion: (paneId, listener) => {
+        listeners.set(paneId, listener);
+        return () => listeners.delete(paneId);
+      },
+      paneSelectionSnapshot: () => null,
+    };
+    const twoPaneLayout = layout();
+    const current = {
+      ...twoPaneLayout.current!,
+      cols: 101,
+      rows: 31,
+      panes: [
+        { pane: "pane.a", left: 0, top: 0, width: 50, height: 31, active: true },
+        { pane: "pane.b", left: 51, top: 0, width: 50, height: 31, active: false },
+      ],
+    };
+    const setup = await renderForTest(
+      () => (
+        <ApplicationTerminalWorkspace
+          layout={() => ({ current, windows: [current] })}
+          adapter={liveAdapter}
+          rendererEpoch={1}
+          width={101}
+          height={31}
+          focusedPane="pane.a"
+          theme={theme}
+          palette={palette}
+          onSelectPane={() => undefined}
+        />
+      ),
+      { width: 101, height: 33 },
+    );
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("B-seed");
+
+    blits.length = 0;
+    cells["pane.a"] = "__pane_a_marker__";
+    versions["pane.a"]! += 1;
+    listeners.get("pane.a")?.(versions["pane.a"]!, 1);
+    await setup.renderOnce();
+
+    expect(blits).toEqual(["pane.a"]);
+    let rows = setup.captureCharFrame().split("\n");
+    let paneABody = rows
+      .slice(3, 33)
+      .map((row) => row.slice(0, 50))
+      .join("\n");
+    let paneBBody = rows
+      .slice(3, 33)
+      .map((row) => row.slice(51, 101))
+      .join("\n");
+    expect(paneABody).toContain("__pane_a_marker__");
+    expect(paneBBody).toContain("B-seed");
+    expect(paneBBody).not.toContain("__pane_a_marker__");
+
+    blits.length = 0;
+    cells["pane.b"] = "__pane_b_marker__";
+    versions["pane.b"]! += 1;
+    listeners.get("pane.b")?.(versions["pane.b"]!, 1);
+    await setup.renderOnce();
+
+    expect(blits).toEqual(["pane.b"]);
+    rows = setup.captureCharFrame().split("\n");
+    paneABody = rows
+      .slice(3, 33)
+      .map((row) => row.slice(0, 50))
+      .join("\n");
+    paneBBody = rows
+      .slice(3, 33)
+      .map((row) => row.slice(51, 101))
+      .join("\n");
+    expect(paneABody).toContain("__pane_a_marker__");
+    expect(paneBBody).toContain("__pane_b_marker__");
+    setup.renderer.destroy();
+  });
+
+  it("paints a local divider guide during drag and submits one semantic resize on release", async () => {
+    registerPaneSurface();
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const palette = createTerminalPaletteProjection(theme);
+    const previews: Array<{ semanticPaneId: string; axis: string; cells: number }> = [];
+    const submissions: Array<{ semanticPaneId: string; axis: string; cells: number }> = [];
+    const setup = await renderForTest(
+      () => (
+        <ApplicationTerminalWorkspace
+          layout={layout}
+          adapter={adapter({ "pane.a": "A", "pane.b": "B", "pane.c": "C" }, [])}
+          rendererEpoch={1}
+          width={30}
+          height={9}
+          focusedPane="pane.a"
+          theme={theme}
+          palette={palette}
+          onSelectPane={() => undefined}
+          onResizePreview={(preview) => previews.push(preview)}
+          onResizePane={(preview) => submissions.push(preview)}
+        />
+      ),
+      { width: 30, height: 11 },
+    );
+    await setup.renderOnce();
+
+    // Canonical pane.a is 10 cells wide; its tmux divider occupies x=10.
+    // coordinates include the two app-owned rows above the tmux framebuffer.
+    await setup.mockMouse.pressDown(10, 5, MouseButtons.LEFT);
+    await setup.mockMouse.moveTo(12, 5);
+    await setup.renderOnce();
+    expect(previews.at(-1)).toMatchObject({
+      semanticPaneId: "pane.a",
+      axis: "cols",
+      cells: 12,
+    });
+    await setup.mockMouse.release(12, 5, MouseButtons.LEFT);
+    await setup.renderOnce();
+    expect(submissions).toHaveLength(1);
+    expect(submissions[0]).toMatchObject({
+      semanticPaneId: "pane.a",
+      axis: "cols",
+      cells: 12,
+    });
+    setup.renderer.destroy();
+  });
+
+  it("forwards app mouse until explicit select mode, then paints and copies the local range", async () => {
+    registerPaneSurface();
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const palette = createTerminalPaletteProjection(theme);
+    const defaultColor = { kind: "default" as const };
+    const replica: TerminalReplicaSnapshot = {
+      cols: 10,
+      rows: 8,
+      history: [],
+      grid: Array.from({ length: 8 }, (_, row) => ({
+        wrapped: false,
+        cells: Array.from({ length: 10 }, (_, column) => ({
+          grapheme: row === 0 ? ("selection!"[column] ?? " ") : " ",
+          width: 1 as const,
+          foreground: defaultColor,
+          background: defaultColor,
+          attributes: 0,
+        })),
+      })),
+      cursor: { x: 0, y: 0, hidden: true, style: "block", blink: false },
+      modes: {
+        alternateScreen: false,
+        applicationCursor: false,
+        applicationKeypad: false,
+        bracketedPaste: false,
+        insert: false,
+        origin: false,
+        wraparound: true,
+        mouseTracking: true,
+        mouseProtocol: "drag",
+        mouseEncoding: "sgr",
+        synchronizedOutput: false,
+      },
+      placements: [],
+      bootstrap: { kind: "authoritative-stream", hiddenState: "observed-from-start" },
+    };
+    const forwarded: string[] = [];
+    const copied: Array<{ text: string; bytes: number }> = [];
+    let handleSelectionKey: ((name: string) => boolean) | null = null;
+    let copyCurrent: (() => boolean) | null = null;
+    let canonicalRevision = 1;
+    const liveAdapter: PaneScopedTerminalAdapter = {
+      ...adapter({ "pane.a": "s", "pane.b": "B", "pane.c": "C" }, []),
+      paneSelectionSnapshot: (paneId) => (paneId === "pane.a" ? replica : null),
+    };
+    liveAdapter.renderSource.paneCanonicalIdentity = (paneId) =>
+      paneId === "pane.a"
+        ? {
+            generation: "11111111-1111-4111-8111-111111111111",
+            incarnation: "11111111-1111-4111-8111-111111111111:0",
+            revision: canonicalRevision,
+            stateHash: "canonical-a",
+            cols: replica.cols,
+            rows: replica.rows,
+            sourceEpoch: 1,
+            historyTrim: 0,
+          }
+        : null;
+    let connection = {};
+    let client = {};
+    const setup = await renderForTest(
+      () => (
+        <ApplicationTerminalWorkspace
+          layout={layout}
+          adapter={liveAdapter}
+          rendererEpoch={1}
+          terminalGestureRuntime={() => ({
+            daemonGeneration: "22222222-2222-4222-8222-222222222222",
+            clientGeneration: 1,
+            connection,
+            client,
+            adapter: liveAdapter,
+            rendererEpoch: 1,
+          })}
+          width={30}
+          height={9}
+          focusedPane="pane.a"
+          theme={theme}
+          palette={palette}
+          onSelectPane={() => undefined}
+          onTerminalInput={(_paneId, input) => forwarded.push(input.data)}
+          onCopyText={(text, evidence) => {
+            copied.push({ text, bytes: evidence.bytes });
+            return true;
+          }}
+          onSelectionKeyOwner={(handle) => {
+            handleSelectionKey = handle;
+          }}
+          onSelectionCopyOwner={(copy) => {
+            copyCurrent = copy;
+          }}
+        />
+      ),
+      { width: 30, height: 11 },
+    );
+    await setup.renderOnce();
+
+    await setup.mockMouse.click(2, 3, MouseButtons.LEFT);
+    expect(forwarded).toEqual(["\u001b[<0;3;1M", "\u001b[<0;3;1m"]);
+
+    forwarded.length = 0;
+    await setup.mockMouse.pressDown(2, 3, MouseButtons.LEFT);
+    connection = {};
+    await setup.mockMouse.release(3, 3, MouseButtons.LEFT);
+    expect(forwarded).toEqual(["\u001b[<0;3;1M"]);
+    connection = {};
+
+    await setup.mockMouse.click(2, 3, MouseButtons.RIGHT);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("Select text…");
+    expect(handleSelectionKey?.("enter")).toBe(true);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("select");
+
+    await setup.mockMouse.pressDown(1, 3, MouseButtons.LEFT);
+    await setup.mockMouse.moveTo(4, 3);
+    client = {};
+    await setup.mockMouse.release(4, 3, MouseButtons.LEFT);
+    expect(copied).toEqual([]);
+
+    await setup.mockMouse.click(2, 3, MouseButtons.RIGHT);
+    expect(handleSelectionKey?.("enter")).toBe(true);
+
+    forwarded.length = 0;
+    await setup.mockMouse.pressDown(1, 3, MouseButtons.LEFT);
+    await setup.mockMouse.moveTo(4, 3);
+    await setup.renderOnce();
+    await setup.mockMouse.release(4, 3, MouseButtons.LEFT);
+    await Promise.resolve();
+    await setup.renderOnce();
+    expect(forwarded).toEqual([]);
+    expect(copied).toEqual([{ text: "elec", bytes: 4 }]);
+    replica.grid[0]!.cells[1]!.grapheme = "X";
+    expect(copyCurrent?.()).toBe(true);
+    expect(copied).toEqual([
+      { text: "elec", bytes: 4 },
+      { text: "elec", bytes: 4 },
+    ]);
+    canonicalRevision += 1;
+    expect(copyCurrent?.()).toBe(false);
+    expect(copied).toHaveLength(2);
+    setup.renderer.destroy();
+  });
+});

@@ -2,9 +2,64 @@ import { describe, expect, it, vi } from "vitest";
 import {
   PANE_SOURCE_CREDENTIAL_OPTION,
   PaneSourceCredentialAuthority,
+  reconcilePaneSourceCredentialsAtStartup,
 } from "./pane-source-credentials.ts";
 
 describe("PaneSourceCredentialAuthority", () => {
+  it("deduplicates workspace aliases before concurrent startup reconciliation", async () => {
+    const installed = new Map<string, string>();
+    const issuedTokens: string[] = [];
+    const execute = (args: readonly string[]) => {
+      if (args[0] === "list-panes") return `%1\tpane.editor\t${installed.get("%1") ?? ""}`;
+      if (args[0] === "set-option") {
+        installed.set(args[3]!, args[5]!);
+        issuedTokens.push(args[5]!);
+        return "";
+      }
+      throw new Error(`unexpected tmux call: ${args.join(" ")}`);
+    };
+    const run = vi.fn(execute);
+    const runAsync = vi.fn(async (args: readonly string[]) => execute(args));
+    const authority = new PaneSourceCredentialAuthority({ run, runAsync });
+
+    await expect(
+      reconcilePaneSourceCredentialsAtStartup(authority, ["alpha", "alpha"]),
+    ).resolves.toBe("complete");
+
+    expect(runAsync).toHaveBeenCalledTimes(2);
+    expect(issuedTokens).toHaveLength(1);
+    expect(authority.resolve(issuedTokens[0], "alpha", "pane.editor")).toBe("pane.editor");
+  });
+
+  it("bounds startup reconciliation and aborts ignored late work", async () => {
+    let observedSignal: AbortSignal | undefined;
+    let releaseListPanes: ((rows: string) => void) | undefined;
+    let setOptionCalls = 0;
+    const authority = new PaneSourceCredentialAuthority({
+      run: () => "",
+      runAsync: (args, signal) => {
+        observedSignal = signal;
+        if (args[0] === "set-option") {
+          setOptionCalls += 1;
+          return Promise.resolve("");
+        }
+        return new Promise<string>((resolve) => {
+          releaseListPanes = resolve;
+        });
+      },
+    });
+
+    await expect(reconcilePaneSourceCredentialsAtStartup(authority, ["alpha"], 5)).resolves.toBe(
+      "timed-out",
+    );
+    expect(observedSignal?.aborted).toBe(true);
+
+    releaseListPanes?.("%1\tpane.editor\t");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(setOptionCalls).toBe(0);
+  });
+
   it("reconciles credential grants through the async monitor shell", async () => {
     const installed = new Map<string, string>();
     const runAsync = vi.fn(async (args: readonly string[]) => {

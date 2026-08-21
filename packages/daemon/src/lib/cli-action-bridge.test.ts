@@ -241,10 +241,10 @@ describe("CLI owner action bridge", () => {
   });
 
   it("does not autostart a daemon when an interactive caller requests canonical-only dispatch", async () => {
-    const startEmbeddedDaemon = vi.fn();
+    const ensureCanonicalDaemon = vi.fn();
     const restore = __setCliActionBridgeDepsForTests({
       readCanonicalDaemonInfo: () => null,
-      startEmbeddedDaemon,
+      ensureCanonicalDaemon,
     });
     try {
       await expect(
@@ -261,7 +261,100 @@ describe("CLI owner action bridge", () => {
     } finally {
       restore();
     }
-    expect(startEmbeddedDaemon).not.toHaveBeenCalled();
+    expect(ensureCanonicalDaemon).not.toHaveBeenCalled();
+  });
+
+  it("preserves the local fallback when persistent bootstrap is unavailable", async () => {
+    const fetch = vi.fn();
+    const ensureCanonicalDaemon = vi.fn(async () => {
+      throw new Error("daemon unavailable");
+    });
+    const restore = __setCliActionBridgeDepsForTests({
+      fetch: fetch as typeof globalThis.fetch,
+      readCanonicalDaemonInfo: () => null,
+      ensureCanonicalDaemon,
+      cliEntryPath: () => "/repo/bin/cli.js",
+    });
+    try {
+      await expect(
+        tryDispatchAction(
+          "workspace.window.split",
+          {
+            workspaceName: "workspace.alpha",
+            semanticPaneId: "pane.source",
+            direction: "right",
+          },
+          { cwd: "/repo", operationId: OPERATION },
+        ),
+      ).resolves.toBeNull();
+    } finally {
+      restore();
+    }
+    expect(ensureCanonicalDaemon).toHaveBeenCalledOnce();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("keeps the ensured canonical generation alive and reuses it for sequential mutations", async () => {
+    const canonical: CanonicalDaemonInfo = {
+      pid: process.pid,
+      port: 6060,
+      protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
+      productVersion: "2.8.0",
+      instanceId: INSTANCE,
+      startedAt: "2026-07-22T00:00:00.000Z",
+      bindHostname: "127.0.0.1",
+      authToken: "owner-only-token",
+    };
+    let published: CanonicalDaemonInfo | null = null;
+    const ensureCanonicalDaemon = vi.fn(async () => {
+      published = canonical;
+      return { candidate: canonical };
+    });
+    const fetch = vi.fn(async () =>
+      Response.json({
+        ok: true,
+        result: {
+          operationId: OPERATION,
+          daemonInstanceId: INSTANCE,
+          outcome: "applied",
+          workspaceName: "workspace.alpha",
+          verb: "workspace.window.split",
+          direction: "right",
+          semanticPaneId: "pane.created",
+          displayTitle: "Terminal",
+        },
+      }),
+    );
+    const restore = __setCliActionBridgeDepsForTests({
+      fetch: fetch as typeof globalThis.fetch,
+      readCanonicalDaemonInfo: () => published,
+      isCanonicalDaemonAlive: async () => true,
+      ensureCanonicalDaemon,
+      cliEntryPath: () => "/repo/bin/cli.js",
+    });
+    try {
+      for (let index = 0; index < 2; index += 1) {
+        await expect(
+          tryDispatchAction(
+            "workspace.window.split",
+            {
+              workspaceName: "workspace.alpha",
+              semanticPaneId: "pane.source",
+              direction: "right",
+            },
+            { cwd: "/repo", operationId: OPERATION },
+          ),
+        ).resolves.toMatchObject({ daemonInstanceId: INSTANCE });
+      }
+    } finally {
+      restore();
+    }
+    expect(ensureCanonicalDaemon).toHaveBeenCalledOnce();
+    expect(ensureCanonicalDaemon).toHaveBeenCalledWith({
+      entryPath: "/repo/bin/cli.js",
+      cwd: "/repo",
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it("gives multiplexer verbs one stable owner operation id across retry", async () => {

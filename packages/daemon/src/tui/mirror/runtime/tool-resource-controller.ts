@@ -22,6 +22,10 @@ import {
   type PushResourceSessionOptions,
   type PushResourceSessionState,
 } from "@tmux-ide/daemon-client/push-resource-session";
+import {
+  decodeWorkspaceCatalogV2,
+  type WorkspaceCatalogV2State,
+} from "@tmux-ide/daemon-client/workspace-catalog-v2";
 import { createRuntimeConnectionSupervisor } from "@tmux-ide/daemon-client/connection-supervisor";
 import WebSocket from "ws";
 
@@ -29,6 +33,7 @@ import { canonicalDaemonUrl } from "../../../lib/canonical-daemon.ts";
 
 export type TuiToolResourceKey =
   | "fleet"
+  | "catalog"
   | "sessions"
   | "projects"
   | "files"
@@ -38,6 +43,7 @@ export type TuiDockResourceKey = "files" | "changes" | "missions";
 
 export type TuiToolResource =
   | { readonly kind: "fleet"; readonly value: FleetCatalogResourceV1 }
+  | { readonly kind: "catalog"; readonly value: WorkspaceCatalogV2State }
   | { readonly kind: "sessions"; readonly value: DaemonSessionsResponse }
   | { readonly kind: "projects"; readonly value: DaemonProjectsResponse }
   | { readonly kind: "files"; readonly value: WorkspaceFilesCatalogEnvelopeV1 }
@@ -104,10 +110,12 @@ function boundedEventText(value: unknown): string | null {
 export interface TuiToolResourceAdapterDependencies {
   readonly fetch?: typeof globalThis.fetch;
   readonly createSocket?: (url: string, ownerToken: string | null) => ToolEventSocket;
+  readonly diagnostic?: (phase: string, details?: Readonly<Record<string, unknown>>) => void;
 }
 
 const INTEREST_BY_KEY = {
   fleet: "fleet-catalog",
+  catalog: "workspace-catalog",
   sessions: "workspace-catalog",
   projects: "workspace-catalog",
   files: "workspace-files",
@@ -116,7 +124,7 @@ const INTEREST_BY_KEY = {
 } as const;
 
 const keysForInterest = (interest: string): readonly TuiToolResourceKey[] => {
-  if (interest === "workspace-catalog") return ["sessions", "projects"];
+  if (interest === "workspace-catalog") return ["catalog", "sessions", "projects"];
   const match = Object.entries(INTEREST_BY_KEY).find(([, value]) => value === interest);
   return match ? [match[0] as TuiToolResourceKey] : [];
 };
@@ -140,6 +148,7 @@ function sameDaemon(left: CanonicalDaemonInfo, right: FleetCatalogResourceV1["da
 function resourceUrl(target: TuiToolResourceTarget, key: TuiToolResourceKey): string {
   const base = canonicalDaemonUrl("http", target.daemon.bindHostname, target.daemon.port);
   if (key === "fleet") return `${base}/api/resources/fleet-catalog`;
+  if (key === "catalog") return `${base}/api/resources/workspace-catalog?version=2`;
   if (key === "sessions") return `${base}/api/sessions`;
   if (key === "projects") return `${base}/api/projects`;
   const workspace = encodeURIComponent(target.workspaceName);
@@ -185,6 +194,7 @@ export function createTuiToolResourceAdapter(
 > {
   const fetchImpl = dependencies.fetch ?? globalThis.fetch;
   const createSocket = dependencies.createSocket ?? defaultSocket;
+  const diagnostic = dependencies.diagnostic ?? (() => undefined);
 
   return {
     validateTarget(value) {
@@ -251,25 +261,36 @@ export function createTuiToolResourceAdapter(
           failure: failure("schema", "The daemon resource was not valid JSON.", false),
         };
       }
-      const parsed =
-        key === "fleet"
-          ? FleetCatalogResourceV1SchemaZ.safeParse(body)
-          : key === "sessions"
-            ? DaemonSessionsResponseSchemaZ.safeParse(body)
-            : key === "projects"
-              ? DaemonProjectsResponseSchemaZ.safeParse(body)
-              : key === "files"
-                ? WorkspaceFilesCatalogEnvelopeV1SchemaZ.safeParse(body)
-                : key === "changes"
-                  ? WorkspaceChangesCatalogEnvelopeV1SchemaZ.safeParse(body)
-                  : WorkspaceMissionsEnvelopeV1SchemaZ.safeParse(body);
+      let parsed: { readonly success: true; readonly data: unknown } | { readonly success: false };
+      if (key === "catalog") {
+        try {
+          parsed = { success: true, data: decodeWorkspaceCatalogV2(body) };
+        } catch {
+          parsed = { success: false };
+        }
+      } else {
+        parsed =
+          key === "fleet"
+            ? FleetCatalogResourceV1SchemaZ.safeParse(body)
+            : key === "sessions"
+              ? DaemonSessionsResponseSchemaZ.safeParse(body)
+              : key === "projects"
+                ? DaemonProjectsResponseSchemaZ.safeParse(body)
+                : key === "files"
+                  ? WorkspaceFilesCatalogEnvelopeV1SchemaZ.safeParse(body)
+                  : key === "changes"
+                    ? WorkspaceChangesCatalogEnvelopeV1SchemaZ.safeParse(body)
+                    : WorkspaceMissionsEnvelopeV1SchemaZ.safeParse(body);
+      }
       if (
         !parsed.success ||
         ((key === "fleet" || key === "files" || key === "changes" || key === "missions") &&
           !sameDaemon(
             target.daemon,
             (parsed.data as { readonly daemon: FleetCatalogResourceV1["daemon"] }).daemon,
-          ))
+          )) ||
+        (key === "catalog" &&
+          (parsed.data as WorkspaceCatalogV2State).daemonInstanceId !== target.daemon.instanceId)
       ) {
         return {
           status: "failed",
@@ -403,6 +424,7 @@ export function createTuiToolResourceAdapter(
         backoffMs: (attempt) => Math.min(4_000, 250 * 2 ** Math.max(0, attempt - 1)),
         async connect({ signal }) {
           if (signal.aborted || disposed) throw new Error("TUI resource session stopped.");
+          diagnostic("resource-socket-connecting");
           const socket = createSocket(socketUrl(target), target.daemon.authToken);
           activeSocket = socket;
           verifiedSocket = null;
@@ -432,6 +454,7 @@ export function createTuiToolResourceAdapter(
           const endTransport = (reason: string): void => {
             if (ended) return;
             ended = true;
+            diagnostic("resource-socket-retired", { reason, verified, live });
             rejectPendingAcks(reason);
             rejectSocketInterestWaiters(socket, reason);
             cleanupTransport();
@@ -471,9 +494,11 @@ export function createTuiToolResourceAdapter(
                 everVerified = true;
                 verified = true;
                 verifiedSocket = socket;
+                diagnostic("resource-socket-verified", { cursor });
                 void installDesired(socket).then(
                   () => {
                     live = true;
+                    diagnostic("resource-socket-live", { interestCount: desired.size });
                     settleOpen();
                   },
                   () => {
@@ -493,6 +518,10 @@ export function createTuiToolResourceAdapter(
             }
             if (frame.type === "resource.interests-ack") {
               cursor = Math.max(cursor, frame.sequence);
+              diagnostic("resource-interests-ack", {
+                interestRevision: frame.interestRevision,
+                unavailableCount: frame.unavailableInterests.length,
+              });
               const pending = pendingAcks.get(frame.interestRevision);
               if (!pending) return;
               pendingAcks.delete(frame.interestRevision);
@@ -531,7 +560,7 @@ export function createTuiToolResourceAdapter(
               verified ? "Daemon event socket failed." : "Daemon event socket failed before hello.",
             );
           };
-          const onOpen = (): void => undefined;
+          const onOpen = (): void => diagnostic("resource-socket-open");
           const onAbort = (): void => socket.close(1000, "TUI resource session stopped");
           signal.addEventListener("abort", onAbort, { once: true });
           socket.addEventListener("open", onOpen);
@@ -562,6 +591,12 @@ export function createTuiToolResourceAdapter(
         rejectFirstLive = reject;
       });
       const unsubscribe = supervisor.subscribe((state) => {
+        diagnostic("resource-supervisor-state", {
+          phase: state.phase,
+          ...(state.phase === "connecting" || state.phase === "reconnecting"
+            ? { attempt: state.attempt }
+            : {}),
+        });
         if (state.phase === "live") resolveFirstLive();
         if (state.phase === "failed") rejectFirstLive(state.error);
       });
@@ -656,6 +691,7 @@ export function createTuiToolResourceController(
   let terminalReady = false;
   let openDock: TuiDockResourceKey | null = null;
   let releaseFleet: (() => void) | null = null;
+  let releaseCatalog: (() => void) | null = null;
   let releaseSessions: (() => void) | null = null;
   let releaseProjects: (() => void) | null = null;
   let releaseDock: (() => void) | null = null;
@@ -669,6 +705,7 @@ export function createTuiToolResourceController(
   const reconcile = (): void => {
     if (catalogReady) {
       releaseFleet ??= session.activate("fleet");
+      releaseCatalog ??= session.activate("catalog");
       releaseSessions ??= session.activate("sessions");
       releaseProjects ??= session.activate("projects");
     }
@@ -737,10 +774,12 @@ export function createTuiToolResourceController(
     dispose() {
       releaseDock?.();
       releaseFleet?.();
+      releaseCatalog?.();
       releaseSessions?.();
       releaseProjects?.();
       releaseDock = null;
       releaseFleet = null;
+      releaseCatalog = null;
       releaseSessions = null;
       releaseProjects = null;
       session.dispose();

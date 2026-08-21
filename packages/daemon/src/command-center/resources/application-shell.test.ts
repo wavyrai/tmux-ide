@@ -7,7 +7,7 @@ import {
   AppWindowDocumentV1SchemaZ,
   projectApplicationShellV1,
 } from "@tmux-ide/contracts";
-import { createApp } from "../server.ts";
+import { createApp, getCompatibilityMetrics } from "../server.ts";
 import { isHostNameTitle } from "./application-shell.ts";
 import { _setTmuxRunner } from "../discovery.ts";
 import { _setExecutor } from "../../widgets/lib/pane-comms.ts";
@@ -733,7 +733,7 @@ describe("agent status composition (facts -> presentation)", () => {
 });
 
 describe("GET /api/project/:name/application-shell", () => {
-  it("keeps standalone default and explicit V1 discovery while V2/V3 fail closed", async () => {
+  it("quarantines standalone discovery behind explicit deprecated V1", async () => {
     restorers.push(
       _setTmuxRunner((args) => {
         if (args[0] === "list-sessions") return "product";
@@ -751,26 +751,24 @@ describe("GET /api/project/:name/application-shell", () => {
     );
     const app = createApp();
 
+    const legacy = await app.request("/api/project/product/application-shell?version=1");
+    expect(legacy.status).toBe(200);
+    expect(legacy.headers.get("deprecation")).toBe("true");
+    expect(legacy.headers.get("x-tmux-ide-compatibility")).toBe("application-shell-v1");
+    const legacyBody = ApplicationShellResourceV1SchemaZ.parse(await legacy.json());
+    expect(legacyBody.resource.workspace.sidebar.agents[0]).toEqual(
+      expect.objectContaining({ name: "Codex", paneId: "pane.implementer" }),
+    );
+
     for (const path of [
       "/api/project/product/application-shell",
-      "/api/project/product/application-shell?version=1",
+      "/api/project/product/application-shell?version=2",
+      "/api/project/product/application-shell?version=3",
     ]) {
       const response = await app.request(path);
-      expect(response.status).toBe(200);
-      const body = ApplicationShellResourceV1SchemaZ.parse(await response.json());
-      expect(body.resource.workspace.sidebar.agents[0]).toEqual(
-        expect.objectContaining({ name: "Codex", paneId: "pane.implementer" }),
-      );
-      expect(Object.hasOwn(body.resource, "terminalInventory")).toBe(false);
-      expect(JSON.stringify(body)).not.toContain("%7");
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ error: "Session discovery unavailable" });
     }
-
-    const v2 = await app.request("/api/project/product/application-shell?version=2");
-    expect(v2.status).toBe(503);
-    expect(await v2.json()).toEqual({ error: "Session discovery unavailable" });
-    const v3 = await app.request("/api/project/product/application-shell?version=3");
-    expect(v3.status).toBe(503);
-    expect(await v3.json()).toEqual({ error: "Session discovery unavailable" });
   });
 
   it("negotiates V3 with the persisted app-window document while preserving V1/V2", async () => {
@@ -814,7 +812,8 @@ describe("GET /api/project/:name/application-shell", () => {
     });
     expect(denied.status).toBe(401);
 
-    const legacyResponse = await app.request("/api/project/product/application-shell", {
+    const beforeCompatibility = getCompatibilityMetrics().applicationShellV1Requests;
+    const legacyResponse = await app.request("/api/project/product/application-shell?version=1", {
       headers: {
         authorization: "Bearer secret",
         origin: "https://desktop.invalid",
@@ -822,9 +821,24 @@ describe("GET /api/project/:name/application-shell", () => {
     });
     expect(legacyResponse.status).toBe(200);
     expect(legacyResponse.headers.get("access-control-allow-origin")).toBe("*");
+    expect(legacyResponse.headers.get("deprecation")).toBe("true");
+    expect(legacyResponse.headers.get("sunset")).toBe("Mon, 01 Feb 2027 00:00:00 GMT");
+    expect(legacyResponse.headers.get("x-tmux-ide-compatibility")).toBe("application-shell-v1");
+    expect(legacyResponse.headers.get("link")).toContain("version=3");
+    expect(getCompatibilityMetrics().applicationShellV1Requests).toBe(beforeCompatibility + 1);
     const legacy = ApplicationShellResourceV1SchemaZ.parse(await legacyResponse.json());
     expect(legacy.daemon.instanceId).toBe("9bcf33b0-c837-4a94-b5e8-c0977f54464f");
     expect(Object.hasOwn(legacy.resource, "terminalInventory")).toBe(false);
+
+    const currentResponse = await app.request("/api/project/product/application-shell", {
+      headers: {
+        authorization: "Bearer secret",
+        origin: "https://desktop.invalid",
+      },
+    });
+    expect(currentResponse.status).toBe(200);
+    const current = ApplicationShellResourceV3SchemaZ.parse(await currentResponse.json());
+    expect(current.version).toBe(3);
 
     const response = await app.request("/api/project/product/application-shell?version=2", {
       headers: { authorization: "Bearer secret" },
@@ -850,14 +864,13 @@ describe("GET /api/project/:name/application-shell", () => {
     expect(v3Response.status).toBe(200);
     const v3 = ApplicationShellResourceV3SchemaZ.parse(await v3Response.json());
     expect(v3.resource.appWindows).toEqual(appWindows);
-    expect(windowLoads).toEqual([
-      {
-        projectDir: liveSession().dir,
-        terminalSourceIds: v3.resource.terminalInventory.resources.map(({ id }) => id),
-        focusedTerminalSourceId: v3.resource.terminalInventory.activeResourceId,
-      },
-    ]);
-    expect(requests).toEqual(["product", "product", "product"]);
+    const expectedWindowLoad = {
+      projectDir: liveSession().dir,
+      terminalSourceIds: v3.resource.terminalInventory.resources.map(({ id }) => id),
+      focusedTerminalSourceId: v3.resource.terminalInventory.activeResourceId,
+    };
+    expect(windowLoads).toEqual([expectedWindowLoad, expectedWindowLoad]);
+    expect(requests).toEqual(["product", "product", "product", "product"]);
   });
 
   it("never opens mission history while serving the terminal-first V3 shell", async () => {

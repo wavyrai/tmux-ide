@@ -1,27 +1,32 @@
 import { randomUUID } from "node:crypto";
-import WebSocket from "ws";
 import type {
   PaneStreamServerFrame,
+  SessionRuntimeActivityKind,
+  SessionRuntimeAuthorityKind,
+  SessionRuntimeAuthorityLease,
+  SessionRuntimeAuthoritySnapshot,
+  SessionRuntimePresenceState,
   SessionRuntimeSemanticIntent,
   TerminalDeliveryAck,
   TerminalDeliveryNack,
   WorkspaceMultiplexerMutationResult,
 } from "@tmux-ide/contracts";
-import {
-  type PaneStreamClientSocket,
-  type PaneStreamRuntimeClient,
-} from "@tmux-ide/daemon-client/pane-stream-client";
+import { type PaneStreamRuntimeClient } from "@tmux-ide/daemon-client/pane-stream-client";
 
 import { isCanonicalDaemonAlive, readCanonicalDaemonInfo } from "../../lib/canonical-daemon.ts";
 import {
-  fetchCanonicalWorkspaceCatalog,
-  workspaceNameForSession,
+  fetchCanonicalWorkspaceRouting,
+  workspaceNameForLiveSession,
 } from "./canonical-workspace-routing.ts";
 import {
   createOpenTuiVerifiedRoutingContext,
   type OpenTuiVerifiedRoutingContext,
   type OpenTuiVerifiedRoutingIdentity,
 } from "./open-tui-verified-routing.ts";
+import {
+  createOpenTuiPaneStreamSocket,
+  type OpenTuiPaneStreamSocketDependencies,
+} from "./open-tui-pane-stream-socket.ts";
 import {
   SemanticPaneReplica,
   SemanticTerminalRenderSource,
@@ -31,51 +36,8 @@ import {
 const OPENTUI_ORIGIN = "tmux-ide://opentui";
 const OPENTUI_HOST_CLIENT_ID = `opentui:${process.pid}`;
 
-type PaneStreamSocketConstructor = new (...args: unknown[]) => PaneStreamClientSocket;
-
-export interface OpenTuiPaneStreamSocketDependencies {
-  readonly bunRuntime?: boolean;
-  readonly bunWebSocket?: PaneStreamSocketConstructor;
-  readonly nodeWebSocket?: PaneStreamSocketConstructor;
-}
-
-/**
- * Construct the pane-stream socket with the runtime's real client contract.
- *
- * Bun implements `ws` through its native WebSocket compatibility layer and
- * does not consume Node ws's third `ClientOptions` argument. Passing the Node
- * shape silently drops Origin/host identity, so the daemon correctly rejects
- * the upgrade before redemption. Bun's native `{ protocols, headers }` shape
- * preserves both admission headers; Node keeps the ordinary ws constructor.
- */
-export function createOpenTuiPaneStreamSocket(
-  descriptor: { readonly webSocketUrl: string; readonly subprotocol: string },
-  headers: Readonly<Record<string, string>>,
-  dependencies: OpenTuiPaneStreamSocketDependencies = {},
-): PaneStreamClientSocket {
-  const bunRuntime = dependencies.bunRuntime ?? typeof process.versions.bun === "string";
-  if (bunRuntime) {
-    const BunWebSocket = dependencies.bunWebSocket ?? globalThis.WebSocket;
-    if (typeof BunWebSocket !== "function") {
-      throw new Error("Bun pane-stream runtime requires the native global WebSocket client");
-    }
-    const Socket = BunWebSocket as unknown as PaneStreamSocketConstructor;
-    return new Socket(descriptor.webSocketUrl, {
-      protocols: [descriptor.subprotocol],
-      headers: {
-        Origin: headers.Origin!,
-        "X-Tmux-Ide-Host-Client-Id": headers["X-Tmux-Ide-Host-Client-Id"]!,
-      },
-    });
-  }
-  const NodeWebSocket =
-    dependencies.nodeWebSocket ?? (WebSocket as unknown as PaneStreamSocketConstructor);
-  return new NodeWebSocket(descriptor.webSocketUrl, descriptor.subprotocol, {
-    origin: headers.Origin,
-    headers: { "X-Tmux-Ide-Host-Client-Id": headers["X-Tmux-Ide-Host-Client-Id"]! },
-    perMessageDeflate: false,
-  });
-}
+export { createOpenTuiPaneStreamSocket };
+export type { OpenTuiPaneStreamSocketDependencies };
 
 export interface OpenTuiSessionRuntimeLane {
   readonly daemonInstanceId: string;
@@ -85,6 +47,7 @@ export interface OpenTuiSessionRuntimeLane {
   readonly viewerMode: "interactive" | "read-only";
   readonly ownsInput: boolean;
   readonly ownsGeometry: boolean;
+  readonly authoritySnapshot: SessionRuntimeAuthoritySnapshot | null;
   readonly source: SemanticTerminalRenderSource;
   sendText(semanticPaneId: string, text: string, performanceTraceId?: string): void;
   sendKey(semanticPaneId: string, key: string, performanceTraceId?: string): void;
@@ -93,6 +56,14 @@ export interface OpenTuiSessionRuntimeLane {
     intent: SessionRuntimeSemanticIntent,
     operationId?: string,
   ): Promise<WorkspaceMultiplexerMutationResult | null>;
+  setPresence(state: SessionRuntimePresenceState): void;
+  noteActivity(activity: SessionRuntimeActivityKind): void;
+  requestAuthority(
+    authority: SessionRuntimeAuthorityKind,
+  ): Promise<SessionRuntimeAuthorityLease | null>;
+  releaseAuthority(
+    authority: SessionRuntimeAuthorityKind,
+  ): Promise<SessionRuntimeAuthoritySnapshot>;
   close(): void;
 }
 
@@ -102,20 +73,21 @@ export interface ConnectOpenTuiSessionRuntimeOptions {
   readonly routing?: OpenTuiVerifiedRoutingContext | null;
   readonly onPaneChange: (paneId: string, change: SemanticPaneReplicaChange) => void;
   readonly onLayout?: (frame: Extract<PaneStreamServerFrame, { type: "layout" }>) => void;
+  readonly onAuthoritySnapshot?: (snapshot: SessionRuntimeAuthoritySnapshot) => void;
   readonly onFault?: (error: Error) => void;
 }
 
 interface ConnectOpenTuiSessionRuntimeDependencies {
   readonly readCanonicalDaemonInfo: typeof readCanonicalDaemonInfo;
   readonly isCanonicalDaemonAlive: typeof isCanonicalDaemonAlive;
-  readonly fetchCanonicalWorkspaceCatalog: typeof fetchCanonicalWorkspaceCatalog;
+  readonly fetchCanonicalWorkspaceRouting: typeof fetchCanonicalWorkspaceRouting;
   readonly createRoutingContext: typeof createOpenTuiVerifiedRoutingContext;
 }
 
 const DEFAULT_RUNTIME_DEPENDENCIES: ConnectOpenTuiSessionRuntimeDependencies = {
   readCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
-  fetchCanonicalWorkspaceCatalog,
+  fetchCanonicalWorkspaceRouting,
   createRoutingContext: createOpenTuiVerifiedRoutingContext,
 };
 
@@ -134,8 +106,8 @@ export async function connectOpenTuiSessionRuntime(
   if (!routing) {
     const daemon = dependencies.readCanonicalDaemonInfo();
     if (!daemon?.authToken || !(await dependencies.isCanonicalDaemonAlive(daemon))) return null;
-    const catalog = await dependencies.fetchCanonicalWorkspaceCatalog(daemon);
-    const workspaceName = workspaceNameForSession(catalog, options.sessionName);
+    const catalog = await dependencies.fetchCanonicalWorkspaceRouting(daemon);
+    const workspaceName = workspaceNameForLiveSession(catalog, options.sessionName);
     if (!workspaceName) return null;
     routing = dependencies.createRoutingContext(daemon, workspaceName, options.sessionName);
     if (!routing) return null;
@@ -204,6 +176,7 @@ export async function connectOpenTuiSessionRuntime(
         if (replica) replica.accept(message);
         else pending.set(paneId, [...(pending.get(paneId) ?? []), message]);
       },
+      ...(options.onAuthoritySnapshot ? { onAuthoritySnapshot: options.onAuthoritySnapshot } : {}),
       ...(options.onLayout ? { onLayout: options.onLayout } : {}),
       ...(options.onFault
         ? {
@@ -240,6 +213,8 @@ export async function connectOpenTuiSessionRuntime(
       throw new Error("This OpenTUI connection is a passive viewer; another client owns input");
     }
   };
+  const owns = (authority: SessionRuntimeAuthorityKind): boolean =>
+    activeClient.authoritySnapshot?.owners[authority] === OPENTUI_HOST_CLIENT_ID;
 
   return {
     daemonInstanceId: activeClient.daemonInstanceId,
@@ -247,8 +222,15 @@ export async function connectOpenTuiSessionRuntime(
     generation: runtimeGeneration,
     connectionIdentity: `${activeClient.daemonInstanceId}:${activeClient.requestId}`,
     viewerMode,
-    ownsInput: viewerMode === "interactive",
-    ownsGeometry: viewerMode === "interactive",
+    get ownsInput() {
+      return viewerMode === "interactive" && owns("input");
+    },
+    get ownsGeometry() {
+      return viewerMode === "interactive" && owns("geometry");
+    },
+    get authoritySnapshot() {
+      return activeClient.authoritySnapshot;
+    },
     source,
     sendText: (semanticPaneId, text, performanceTraceId) => {
       requireInteractive();
@@ -266,6 +248,10 @@ export async function connectOpenTuiSessionRuntime(
       requireInteractive();
       return activeClient.submitIntent(operationId, intent);
     },
+    setPresence: (state) => activeClient.setPresence(state),
+    noteActivity: (activity) => activeClient.noteActivity(activity),
+    requestAuthority: (authority) => activeClient.requestAuthority(authority),
+    releaseAuthority: (authority) => activeClient.releaseAuthority(authority),
     close: () => activeClient.close(),
   };
 }

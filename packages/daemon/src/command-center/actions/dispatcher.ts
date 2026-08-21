@@ -35,6 +35,9 @@ import {
 } from "../ws-events.ts";
 import {
   AppWindowMutationResultSchemaZ,
+  FleetAgentMutateResultSchemaZ,
+  FleetAgentProvisionResultSchemaZ,
+  WorkspaceSessionCreateResultSchemaZ,
   WorkspaceMultiplexerMutationResultSchemaZ,
   WorkspaceOpenMutationResultSchemaZ,
   WorkspacePaneCreateMutationResultSchemaZ,
@@ -44,6 +47,7 @@ import { daemonActionCommandRegistry } from "./command-definitions.ts";
 import type { WorkspacePaneCreationBackend } from "./handlers/workspace-pane-create.ts";
 import type { WorkspaceMultiplexerBackend } from "./handlers/workspace-multiplexer.ts";
 import type { WorkspaceOpenBackend } from "./handlers/workspace-open.ts";
+import type { FleetLifecycleBackend } from "./handlers/fleet-lifecycle.ts";
 import type { WorkspacePromotionBackend } from "./handlers/workspace-promote.ts";
 import type { AppWindowMutationBackend } from "./handlers/app-window-mutate.ts";
 import { isSemanticMultiplexerActionName } from "./semantic-multiplexer-actions.ts";
@@ -61,6 +65,8 @@ export interface DispatcherDeps {
   workspacePaneCreationBackend?: WorkspacePaneCreationBackend;
   /** Instance-owned config-free admission authority; never renderer-authored. */
   workspaceOpenBackend?: WorkspaceOpenBackend;
+  workspaceOpenHandoffBackend?: import("./handlers/workspace-open.ts").WorkspaceOpenHandoffBackend;
+  fleetLifecycleBackend?: FleetLifecycleBackend;
   /** Instance-owned session-promotion admission authority; never renderer-authored. */
   workspacePromotionBackend?: WorkspacePromotionBackend;
   /** Instance-owned AppWindow authority; renderer never supplies its envelope. */
@@ -97,6 +103,49 @@ function resourceChangesForAction(
   actionName: ActionName,
   result: unknown,
 ): readonly ResourceChangedBroadcast[] {
+  if (actionName === "workspace.session.create") {
+    const mutation = WorkspaceSessionCreateResultSchemaZ.safeParse(result);
+    if (!mutation.success || mutation.data.outcome === "replayed") return [];
+    return [
+      {
+        workspaceName: null,
+        resource: "workspace-catalog",
+        causeOperationId: mutation.data.operationId,
+      },
+      {
+        workspaceName: null,
+        resource: "fleet-catalog",
+        causeOperationId: mutation.data.operationId,
+      },
+    ];
+  }
+  if (actionName === "fleet.agent.mutate") {
+    const mutation = FleetAgentMutateResultSchemaZ.safeParse(result);
+    if (!mutation.success || mutation.data.outcome === "replayed") return [];
+    return [
+      {
+        workspaceName: null,
+        resource: "fleet-catalog",
+        causeOperationId: mutation.data.operationId,
+      },
+    ];
+  }
+  if (actionName === "fleet.agent.provision") {
+    const mutation = FleetAgentProvisionResultSchemaZ.safeParse(result);
+    if (!mutation.success || mutation.data.outcome === "replayed") return [];
+    return [
+      {
+        workspaceName: null,
+        resource: "workspace-catalog",
+        causeOperationId: mutation.data.operationId,
+      },
+      {
+        workspaceName: null,
+        resource: "fleet-catalog",
+        causeOperationId: mutation.data.operationId,
+      },
+    ];
+  }
   if (actionName === "workspace.app-window.mutate") {
     const mutation = AppWindowMutationResultSchemaZ.safeParse(result);
     if (!mutation.success || mutation.data.outcome !== "applied") return [];
@@ -163,43 +212,10 @@ function resourceChangesForAction(
       { ...base, workspaceName: null, resource: "fleet-catalog" },
     ];
   }
-  if (actionName.startsWith("workspace.")) {
-    const mutation = WorkspaceMultiplexerMutationResultSchemaZ.safeParse(result);
-    if (!mutation.success || mutation.data.outcome !== "applied") return [];
-    if (mutation.data.verb === "workspace.pane.send") return [];
-    const changes: ResourceChangedBroadcast[] = [
-      {
-        workspaceName: mutation.data.workspaceName,
-        resource: "application-shell",
-        causeOperationId: mutation.data.operationId,
-      },
-      {
-        workspaceName: mutation.data.workspaceName,
-        resource: "workspace-missions",
-        causeOperationId: mutation.data.operationId,
-      },
-    ];
-    if (
-      mutation.data.verb === "workspace.window.split" ||
-      mutation.data.verb === "workspace.window.kill" ||
-      mutation.data.verb === "workspace.pane.kill" ||
-      mutation.data.verb === "workspace.session.kill"
-    ) {
-      changes.push({
-        workspaceName: null,
-        resource: "fleet-catalog",
-        causeOperationId: mutation.data.operationId,
-      });
-    }
-    if (mutation.data.verb === "workspace.session.kill") {
-      changes.push({
-        workspaceName: null,
-        resource: "workspace-catalog",
-        causeOperationId: mutation.data.operationId,
-      });
-    }
-    return changes;
-  }
+  // Semantic multiplexer actions already publish from the observed-completion
+  // owner used by every HTTP/TUI/SDK transport. Repeating them here advances
+  // the resource revision twice for one operation.
+  if (isSemanticMultiplexerActionName(actionName)) return [];
   return [];
 }
 
@@ -325,6 +341,8 @@ export function createActionDispatcher(deps: DispatcherDeps = {}) {
       ownerAuthorized: ownerAuthorizedContexts.has(c),
       workspacePaneCreationBackend: deps.workspacePaneCreationBackend,
       workspaceOpenBackend: deps.workspaceOpenBackend,
+      workspaceOpenHandoffBackend: deps.workspaceOpenHandoffBackend,
+      fleetLifecycleBackend: deps.fleetLifecycleBackend,
       workspacePromotionBackend: deps.workspacePromotionBackend,
       appWindowMutationBackend: deps.appWindowMutationBackend,
       workspaceMultiplexerBackend: deps.workspaceMultiplexerBackend,

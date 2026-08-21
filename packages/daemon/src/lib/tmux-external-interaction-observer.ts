@@ -4,7 +4,7 @@ import { WorkspacePaneCreationReferenceSchemaZ } from "@tmux-ide/contracts";
 import { z } from "zod";
 
 import type { WorkspacePaneTmuxAuthority } from "./workspace-pane-creation.ts";
-import { createPinnedWorkspaceTmuxRunner } from "./workspace-pane-creation.ts";
+import { createPinnedWorkspaceTmuxAsyncRunner } from "./workspace-pane-creation.ts";
 import { getDefaultWorkspaceRegistry, type WorkspaceRegistry } from "./workspace-registry.ts";
 import {
   AuthenticatedInternalReadVerifier,
@@ -37,9 +37,28 @@ export interface ExternalTmuxInteraction {
 }
 
 export interface ExternalTmuxInteractionObserverIo {
-  readonly runTmux: (args: readonly string[]) => string;
+  readonly runTmux: (args: readonly string[], signal?: AbortSignal) => Promise<string>;
   readonly waitForSignal: (channel: string, signal: AbortSignal) => Promise<void>;
   readonly delay: (milliseconds: number, signal: AbortSignal) => Promise<void>;
+}
+
+export interface ExternalTmuxObserverDiagnostic {
+  readonly operation: "healthcheck" | "drain";
+  readonly phase: "begin" | "event-loop-sentinel" | "end";
+  readonly traceId: string;
+  readonly processId: string;
+  readonly clockId: "node-performance-now";
+  readonly clockKind: "performance-now";
+  readonly atMicros: number;
+  readonly activeOperations: number;
+  readonly succeeded?: boolean;
+}
+
+export interface ExternalTmuxObserverDiagnostics {
+  readonly nowMicros: () => number;
+  readonly createTraceId: () => string;
+  readonly publish: (event: ExternalTmuxObserverDiagnostic) => void;
+  readonly queueMicrotask?: (callback: () => void) => void;
 }
 
 function socketArguments(authority: WorkspacePaneTmuxAuthority): readonly string[] {
@@ -145,8 +164,13 @@ export class TmuxExternalInteractionObserver {
   #active = false;
   #installed = false;
   #loop: Promise<void> | null = null;
+  #starting: Promise<void> | null = null;
   #hookHealthcheck: ReturnType<typeof setInterval> | null = null;
   #drainSequence = 0;
+  #tmuxWork: Promise<unknown> = Promise.resolve();
+  #reconcile: Promise<void> | null = null;
+  #diagnostics: ExternalTmuxObserverDiagnostics | null;
+  #diagnosticActiveOperations = 0;
   readonly #authenticatedInternalReads: AuthenticatedInternalReadVerifier;
 
   constructor(options: {
@@ -161,6 +185,7 @@ export class TmuxExternalInteractionObserver {
      * must fall through to the caller's honest external-observation path.
      */
     onObserved: (interaction: ExternalTmuxInteraction) => boolean;
+    diagnostics?: ExternalTmuxObserverDiagnostics;
   }) {
     this.#daemonInstanceId = options.daemonInstanceId;
     this.#registry = options.registry ?? getDefaultWorkspaceRegistry();
@@ -171,37 +196,77 @@ export class TmuxExternalInteractionObserver {
     });
     this.#bufferName = `${HOOK_MARKER}-${options.daemonInstanceId}`;
     this.#signalChannel = `${this.#bufferName}-ready`;
+    this.#diagnostics = options.diagnostics ?? null;
     this.#io = {
-      runTmux: options.io?.runTmux ?? createPinnedWorkspaceTmuxRunner(options.tmuxAuthority),
+      runTmux: options.io?.runTmux ?? createPinnedWorkspaceTmuxAsyncRunner(options.tmuxAuthority),
       waitForSignal: options.io?.waitForSignal ?? defaultWaiter(options.tmuxAuthority),
       delay: options.io?.delay ?? abortableDelay,
     };
   }
 
-  start(): void {
-    if (this.#active) return;
+  start(): Promise<void> {
+    if (this.#starting) return this.#starting;
+    if (this.#active) return Promise.resolve();
+    const work = this.#start();
+    const settled = work.finally(() => {
+      if (this.#starting === settled) this.#starting = null;
+    });
+    this.#starting = settled;
+    return settled;
+  }
+
+  async #start(): Promise<void> {
     this.#active = true;
+    try {
+      await this.install();
+    } catch (error) {
+      this.#active = false;
+      await this.#serializeTmux(async () => {
+        await this.#removeOwnedHooks();
+        await this.#deleteBuffer(this.#bufferName);
+      });
+      throw error;
+    }
+    if (!this.#active || this.#abort.signal.aborted) {
+      await this.#serializeTmux(async () => {
+        await this.#removeOwnedHooks();
+        await this.#deleteBuffer(this.#bufferName);
+      });
+      throw new Error("tmux external interaction observer was disposed during startup");
+    }
     this.#loop = this.#run();
-    this.#hookHealthcheck = setInterval(() => this.reconcileHooks(), HOOK_HEALTHCHECK_MS);
+    this.#hookHealthcheck = setInterval(() => void this.reconcileHooks(), HOOK_HEALTHCHECK_MS);
     this.#hookHealthcheck.unref?.();
   }
 
+  setDiagnostics(diagnostics: ExternalTmuxObserverDiagnostics | null): void {
+    this.#diagnostics = diagnostics;
+  }
+
   async dispose(): Promise<void> {
-    if (!this.#active && !this.#loop) return;
+    if (!this.#active && !this.#loop && !this.#starting) return;
+    const starting = this.#starting;
     this.#active = false;
     this.#abort.abort();
     if (this.#hookHealthcheck) clearInterval(this.#hookHealthcheck);
     this.#hookHealthcheck = null;
-    await this.#loop;
+    await Promise.allSettled([starting, this.#loop]);
     this.#loop = null;
-    this.#removeOwnedHooks();
-    this.#deleteBuffer(this.#bufferName);
+    await this.#serializeTmux(async () => {
+      await this.#removeOwnedHooks();
+      await this.#deleteBuffer(this.#bufferName);
+    });
   }
 
   /** Install the hook once. Public for hermetic lifecycle tests. */
-  install(): void {
-    this.#removeOwnedHooks();
-    this.#deleteOwnedBuffers();
+  install(): Promise<void> {
+    return this.#serializeTmux(() => this.#install(this.#abort.signal));
+  }
+
+  async #install(signal?: AbortSignal): Promise<void> {
+    await this.#removeOwnedHooks(signal);
+    await this.#deleteOwnedBuffers(signal);
+    signal?.throwIfAborted();
     const hook = (
       operationKind: ExternalTmuxInteraction["operationKind"],
       markerOption: string,
@@ -221,18 +286,26 @@ export class TmuxExternalInteractionObserver {
       const consume = consumeMarker ? ` ; set-option -pu '${markerOption}'` : "";
       return `${publish}${consume}`;
     };
-    this.#io.runTmux([
-      "set-hook",
-      "-ag",
-      "after-send-keys",
-      hook("workspace.pane.send", INTERNAL_SEND_OPERATION_OPTION, true),
-    ]);
-    this.#io.runTmux([
-      "set-hook",
-      "-ag",
-      "after-capture-pane",
-      hook("workspace.pane.read", INTERNAL_READ_OPERATION_OPTION, true),
-    ]);
+    await this.#io.runTmux(
+      [
+        "set-hook",
+        "-ag",
+        "after-send-keys",
+        hook("workspace.pane.send", INTERNAL_SEND_OPERATION_OPTION, true),
+      ],
+      signal,
+    );
+    signal?.throwIfAborted();
+    await this.#io.runTmux(
+      [
+        "set-hook",
+        "-ag",
+        "after-capture-pane",
+        hook("workspace.pane.read", INTERNAL_READ_OPERATION_OPTION, true),
+      ],
+      signal,
+    );
+    signal?.throwIfAborted();
     this.#installed = true;
   }
 
@@ -241,46 +314,83 @@ export class TmuxExternalInteractionObserver {
    * Public only so the lifecycle is hermetically testable; the production
    * observer invokes it from a cheap one-second health check.
    */
-  reconcileHooks(): void {
-    if (this.#ownedHooksPresent()) return;
-    this.#installed = false;
-    try {
-      this.install();
-    } catch {
-      this.#installed = false;
-    }
+  reconcileHooks(options: { readonly allowInactive?: boolean } = {}): Promise<void> {
+    if (!this.#active && options.allowInactive !== true) return Promise.resolve();
+    if (this.#reconcile) return this.#reconcile;
+    const work = this.#serializeTmux(async () => {
+      const finish = this.#beginDiagnostic("healthcheck");
+      try {
+        if (await this.#ownedHooksPresent(this.#abort.signal)) {
+          finish(true);
+          return;
+        }
+        this.#installed = false;
+        try {
+          await this.#install(this.#abort.signal);
+        } catch {
+          this.#installed = false;
+        }
+        finish(this.#installed);
+      } catch (error) {
+        finish(false);
+        throw error;
+      }
+    });
+    const settled = work.finally(() => {
+      if (this.#reconcile === settled) this.#reconcile = null;
+    });
+    this.#reconcile = settled;
+    return settled;
   }
 
   /** Atomically detach and drain the current event buffer. */
-  drain(): boolean {
+  drain(): Promise<boolean> {
+    return this.#serializeTmux(() => this.#drain());
+  }
+
+  async #drain(): Promise<boolean> {
+    const finish = this.#beginDiagnostic("drain");
     const drainName = `${this.#bufferName}-drain-${++this.#drainSequence}`;
     try {
-      this.#io.runTmux(["set-buffer", "-b", this.#bufferName, "-n", drainName]);
+      await this.#io.runTmux(
+        ["set-buffer", "-b", this.#bufferName, "-n", drainName],
+        this.#abort.signal,
+      );
     } catch {
+      finish(false);
       return false;
     }
     let raw: string;
     try {
-      raw = this.#io.runTmux(["show-buffer", "-b", drainName]);
+      raw = await this.#io.runTmux(["show-buffer", "-b", drainName], this.#abort.signal);
+    } catch {
+      finish(false);
+      return false;
     } finally {
-      this.#deleteBuffer(drainName);
+      await this.#deleteBuffer(drainName);
     }
     let consumed = false;
-    for (const record of parseTmuxInputHookRecords(raw)) {
-      consumed = this.#project(record) || consumed;
+    try {
+      for (const record of parseTmuxInputHookRecords(raw)) {
+        consumed = (await this.#project(record)) || consumed;
+      }
+    } catch (error) {
+      finish(false);
+      throw error;
     }
+    finish(true);
     return consumed;
   }
 
   async #run(): Promise<void> {
     while (this.#active && !this.#abort.signal.aborted) {
       try {
-        if (!this.#installed) this.install();
+        if (!this.#installed) await this.install();
         // A signal sent before this waiter starts is latched by tmux, so hook
         // installation and process scheduling cannot lose the first event.
         await this.#io.waitForSignal(this.#signalChannel, this.#abort.signal);
         if (!this.#active || this.#abort.signal.aborted) break;
-        this.drain();
+        await this.drain();
       } catch {
         this.#installed = false;
         await this.#io.delay(RETRY_MS, this.#abort.signal);
@@ -288,7 +398,7 @@ export class TmuxExternalInteractionObserver {
     }
   }
 
-  #project(record: TmuxInputHookRecord): boolean {
+  async #project(record: TmuxInputHookRecord): Promise<boolean> {
     if (
       consumeInternalReadOperation(
         record.operationMarker,
@@ -310,13 +420,16 @@ export class TmuxExternalInteractionObserver {
     const operationId = z.uuid().safeParse(authoredOperationId);
     let identity: string;
     try {
-      identity = this.#io.runTmux([
-        "display-message",
-        "-p",
-        "-t",
-        record.runtimePaneId,
-        `#{session_name}\t#{${"@tmux_ide_pane_id"}}`,
-      ]);
+      identity = await this.#io.runTmux(
+        [
+          "display-message",
+          "-p",
+          "-t",
+          record.runtimePaneId,
+          `#{session_name}\t#{${"@tmux_ide_pane_id"}}`,
+        ],
+        this.#abort.signal,
+      );
     } catch {
       return false;
     }
@@ -335,17 +448,17 @@ export class TmuxExternalInteractionObserver {
     });
   }
 
-  #removeOwnedHooks(): void {
+  async #removeOwnedHooks(signal?: AbortSignal): Promise<void> {
     for (const hookName of ["after-send-keys", "after-capture-pane"] as const) {
       let output: string;
       try {
-        output = this.#io.runTmux(["show-hooks", "-g", hookName]);
+        output = await this.#io.runTmux(["show-hooks", "-g", hookName], signal);
       } catch {
         continue;
       }
       for (const index of hookIndexes(output, hookName)) {
         try {
-          this.#io.runTmux(["set-hook", "-gu", `${hookName}[${index}]`]);
+          await this.#io.runTmux(["set-hook", "-gu", `${hookName}[${index}]`], signal);
         } catch {
           // Best-effort retirement. A dead tmux server already retired the hook.
         }
@@ -354,11 +467,11 @@ export class TmuxExternalInteractionObserver {
     this.#installed = false;
   }
 
-  #ownedHooksPresent(): boolean {
+  async #ownedHooksPresent(signal?: AbortSignal): Promise<boolean> {
     for (const hookName of ["after-send-keys", "after-capture-pane"] as const) {
       let output: string;
       try {
-        output = this.#io.runTmux(["show-hooks", "-g", hookName]);
+        output = await this.#io.runTmux(["show-hooks", "-g", hookName], signal);
       } catch {
         return false;
       }
@@ -367,23 +480,94 @@ export class TmuxExternalInteractionObserver {
     return true;
   }
 
-  #deleteOwnedBuffers(): void {
+  async #deleteOwnedBuffers(signal?: AbortSignal): Promise<void> {
     let output: string;
     try {
-      output = this.#io.runTmux(["list-buffers", "-F", "#{buffer_name}"]);
+      output = await this.#io.runTmux(["list-buffers", "-F", "#{buffer_name}"], signal);
     } catch {
       return;
     }
     for (const name of output.split("\n")) {
-      if (name.startsWith(OWNED_HOOK_MARKER)) this.#deleteBuffer(name);
+      if (name.startsWith(OWNED_HOOK_MARKER)) await this.#deleteBuffer(name, signal);
     }
   }
 
-  #deleteBuffer(name: string): void {
+  async #deleteBuffer(name: string, signal?: AbortSignal): Promise<void> {
     try {
-      this.#io.runTmux(["delete-buffer", "-b", name]);
+      await this.#io.runTmux(["delete-buffer", "-b", name], signal);
     } catch {
       // Missing buffers are the ordinary idle case.
     }
+  }
+
+  #serializeTmux<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.#tmuxWork.then(operation, operation);
+    this.#tmuxWork = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  }
+
+  #beginDiagnostic(
+    operation: ExternalTmuxObserverDiagnostic["operation"],
+  ): (succeeded: boolean) => void {
+    const diagnostics = this.#diagnostics;
+    if (!diagnostics) return () => undefined;
+    let traceId: string;
+    let startedAtMicros: number;
+    try {
+      traceId = diagnostics.createTraceId();
+      startedAtMicros = diagnostics.nowMicros();
+    } catch {
+      return () => undefined;
+    }
+    this.#diagnosticActiveOperations += 1;
+    const publish = (
+      phase: ExternalTmuxObserverDiagnostic["phase"],
+      atMicros: number,
+      succeeded?: boolean,
+    ): void => {
+      try {
+        diagnostics.publish({
+          operation,
+          phase,
+          traceId,
+          processId: `daemon:${process.pid}`,
+          clockId: "node-performance-now",
+          clockKind: "performance-now",
+          atMicros,
+          activeOperations: this.#diagnosticActiveOperations,
+          ...(succeeded === undefined ? {} : { succeeded }),
+        });
+      } catch {
+        // Diagnostics never alter observer authority or lifecycle.
+      }
+    };
+    publish("begin", startedAtMicros);
+    try {
+      (diagnostics.queueMicrotask ?? queueMicrotask)(() => {
+        try {
+          publish("event-loop-sentinel", diagnostics.nowMicros());
+        } catch {
+          // Diagnostics are fail-open.
+        }
+      });
+    } catch {
+      // Diagnostics are fail-open.
+    }
+    let finished = false;
+    return (succeeded) => {
+      if (finished) return;
+      finished = true;
+      let atMicros = startedAtMicros;
+      try {
+        atMicros = diagnostics.nowMicros();
+      } catch {
+        // Preserve the operation even when the optional clock fails.
+      }
+      publish("end", atMicros, succeeded);
+      this.#diagnosticActiveOperations = Math.max(0, this.#diagnosticActiveOperations - 1);
+    };
   }
 }

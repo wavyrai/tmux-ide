@@ -74,6 +74,31 @@ describe("terminal replica performance invariants", () => {
     }
   });
 
+  it("releases canonical scrollback authority when the terminal clears history", async () => {
+    const replica = interpreter([]);
+    await replica.enqueue({
+      type: "write",
+      data: new TextEncoder().encode(
+        Array.from({ length: 300 }, (_, index) => `load-${index}`).join("\r\n"),
+      ),
+    });
+    expect(replica.currentSnapshot().history.length).toBeGreaterThan(0);
+
+    await replica.enqueue({
+      type: "write",
+      data: new TextEncoder().encode("\u001b[2J\u001b[3J\u001b[Hsettled"),
+    });
+
+    const settled = replica.currentSnapshot();
+    expect(settled.history).toHaveLength(0);
+    expect(
+      settled.grid[0]?.cells
+        .map(({ grapheme }) => grapheme)
+        .join("")
+        .startsWith("settled"),
+    ).toBe(true);
+  });
+
   it("never leaks a resize or byte frame while DEC synchronized-output is open", async () => {
     const updates: CanonicalTerminalReplicaUpdate[] = [];
     const replica = interpreter(updates);

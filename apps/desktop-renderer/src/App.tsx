@@ -30,7 +30,7 @@ import {
   recoveryForDaemonCapability,
   startupReadinessDiagnostics,
 } from "./runtime/connection-recovery.ts";
-import { createHostNativeTerminalTransport } from "./runtime/host-terminal-transport.ts";
+import { createHostPaneStreamNativeTerminalTransport } from "./runtime/host-pane-stream-native-terminal-transport.ts";
 import type { NativeTerminalTransport } from "./terminal/native-terminal-transport.ts";
 import type {
   PaneFrameActionIntent,
@@ -234,6 +234,10 @@ export function App(props: AppProps = {}) {
     const current = effectiveTheme();
     return `${current?.mode ?? "system"}:${current?.highContrast ?? false}`;
   });
+  const bootstrapDaemonGeneration = createMemo(() => {
+    const daemon = bootstrap()?.daemon;
+    return daemon?.status === "connected" ? daemon.identity.instanceId : undefined;
+  });
   const productionTerminalTransport = createMemo<NativeTerminalTransport | null>(() => {
     const daemon = bootstrap()?.daemon;
     if (!host || browserPreview || daemon?.status !== "connected") return null;
@@ -245,7 +249,7 @@ export function App(props: AppProps = {}) {
       identity.startedAt,
     ].join("\u0000");
     if (productionTerminalAuthority?.key === key) return productionTerminalAuthority.transport;
-    const transport = createHostNativeTerminalTransport(host, identity);
+    const transport = createHostPaneStreamNativeTerminalTransport(host, identity);
     productionTerminalAuthority = { key, transport };
     return transport;
   });
@@ -277,6 +281,7 @@ export function App(props: AppProps = {}) {
                 ? "preview"
                 : "runtime"
         }
+        data-daemon-generation={bootstrapDaemonGeneration()}
       >
         <Show
           when={!hostResolutionError && host}

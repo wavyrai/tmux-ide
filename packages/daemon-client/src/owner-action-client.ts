@@ -11,6 +11,8 @@ export interface OwnerActionClientOptions<Name extends ActionName> {
   readonly name: Name;
   readonly input: ActionInput<Name>;
   readonly operationId?: string | null;
+  /** Stable renderer principal for generation-scoped multi-client handoffs. */
+  readonly hostClientId?: string | null;
   readonly fetch?: typeof fetch;
   readonly timeoutMs?: number;
 }
@@ -56,6 +58,7 @@ export async function dispatchOwnerAction<Name extends ActionName>(
             "Content-Type": "application/json",
             Authorization: `Bearer ${options.ownerToken}`,
             ...(operationId ? { "X-Tmux-Ide-Operation-Id": operationId } : {}),
+            ...(options.hostClientId ? { "X-Tmux-Ide-Host-Client-Id": options.hostClientId } : {}),
           },
           body: JSON.stringify(input),
           signal: AbortSignal.timeout(options.timeoutMs ?? 2_000),

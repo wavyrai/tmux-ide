@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { TerminalDeliveryEnvelopeSchemaZ, type TerminalReplicaSnapshot } from "@tmux-ide/contracts";
 import {
+  applyTerminalReplicaPatch,
   blankTerminalReplicaSnapshot,
   encodeSemanticTerminalUpdate,
   hashTerminalDeliveryRepresentation,
@@ -115,6 +116,40 @@ function patchMessages(
   return { envelope, chunks: splitTerminalDeliveryChunks(transactionId, bytes), next };
 }
 
+function exactPatchMessages(
+  previous: TerminalReplicaSnapshot,
+  patch: Parameters<typeof applyTerminalReplicaPatch>[1],
+  revision: number,
+  txSuffix: string,
+) {
+  const next = applyTerminalReplicaPatch(previous, patch);
+  const payload = { frame: "patch" as const, baseRevision: revision - 1, revision, patch };
+  const bytes = encodeSemanticTerminalUpdate(payload);
+  const transactionId = `00000000-0000-4000-8000-${txSuffix.padStart(12, "0")}`;
+  const envelope = TerminalDeliveryEnvelopeSchemaZ.parse({
+    type: "terminal.delivery",
+    workspaceName: "workspace.alpha",
+    semanticPaneId: pane,
+    generation,
+    incarnation: `${generation}:7`,
+    deliveryNonce: nonce,
+    transactionId,
+    protocolVersion: 1,
+    encoding: "semantic-v1",
+    frame: "patch",
+    baseRevision: revision - 1,
+    canonicalRevision: revision,
+    canonicalStateHash: hashTerminalReplicaSnapshot(next),
+    representationHash: hashTerminalDeliveryRepresentation(bytes),
+    representationBytes: bytes.byteLength,
+    chunkCount: Math.max(1, Math.ceil(bytes.byteLength / (256 * 1024))),
+    canonicalEquivalent: true,
+    history: "complete",
+    richPlacements: false,
+  });
+  return { envelope, chunks: splitTerminalDeliveryChunks(transactionId, bytes), next };
+}
+
 function arrays(width: number, height: number): CellArrays {
   return {
     char: new Uint32Array(width * height),
@@ -125,6 +160,57 @@ function arrays(width: number, height: number): CellArrays {
 }
 
 describe("SemanticPaneReplica", () => {
+  it("releases delivery assembly and old history ownership after an exact clear", () => {
+    const replica = new SemanticPaneReplica({
+      negotiated: negotiated(),
+      workspaceName: "workspace.alpha",
+      semanticPaneId: pane,
+      ack: vi.fn(),
+      nack: vi.fn(),
+    });
+    const blank = blankTerminalReplicaSnapshot(4, 2);
+    const withHistory = {
+      ...blank,
+      history: Object.freeze(Array.from({ length: 300 }, () => blank.grid[0]!)),
+    } as TerminalReplicaSnapshot;
+    const seed = seedMessages(withHistory, "390");
+    replica.accept(seed.envelope);
+    expect(replica.resourceOwnership()).toEqual({
+      activeAssemblers: 1,
+      retainedGridRows: 0,
+      retainedHistoryRows: 0,
+    });
+    for (const chunk of seed.chunks) replica.accept(chunk);
+    expect(replica.resourceOwnership()).toEqual({
+      activeAssemblers: 0,
+      retainedGridRows: 2,
+      retainedHistoryRows: 300,
+    });
+
+    const cleared = exactPatchMessages(withHistory, { rows: [], history: [] }, 1, "391");
+    replica.accept(cleared.envelope);
+    expect(replica.resourceOwnership().activeAssemblers).toBe(1);
+    for (const chunk of cleared.chunks) replica.accept(chunk);
+    expect(replica.resourceOwnership()).toEqual({
+      activeAssemblers: 0,
+      retainedGridRows: 2,
+      retainedHistoryRows: 0,
+    });
+
+    const beforeDirty = replica.snapshot!;
+    const dirty = exactPatchMessages(
+      beforeDirty,
+      { rows: [{ index: 1, row: { ...beforeDirty.grid[1]!, wrapped: true } }] },
+      2,
+      "392",
+    );
+    replica.accept(dirty.envelope);
+    for (const chunk of dirty.chunks) replica.accept(chunk);
+    expect(replica.snapshot?.history).toBe(beforeDirty.history);
+    expect(replica.snapshot?.grid[0]).toBe(beforeDirty.grid[0]);
+    expect(replica.resourceOwnership().activeAssemblers).toBe(0);
+  });
+
   it("keeps independent GUI/TUI consumers converged on one canonical revision and hash", () => {
     const changes = [vi.fn(), vi.fn()];
     const replicas = changes.map(
@@ -274,6 +360,9 @@ describe("SemanticPaneReplica", () => {
       traceId,
       generation,
       incarnation: `${generation}:7`,
+      semanticPaneId: pane,
+      revision: 0,
+      stateHash: "a1d4bef4c2291a16",
     });
   });
 
@@ -299,6 +388,7 @@ describe("SemanticPaneReplica", () => {
     expect(sink.terminalDelivery.mock.calls[0]![0]).toMatchObject({
       queuePeak: 1,
       queueCapacity: 1,
+      settledQueueDepth: 0,
       revisionLagPeak: 1,
       reseed: false,
     });
@@ -338,6 +428,9 @@ describe("SemanticPaneReplica", () => {
       traceId,
       generation,
       incarnation: `${generation}:7`,
+      semanticPaneId: pane,
+      revision: 0,
+      stateHash: "a1d4bef4c2291a16",
     });
     expect(
       source.blitPane(pane, arrays(2, 1), 2, 1, 0, 0xffffff, 0, {

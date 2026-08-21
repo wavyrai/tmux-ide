@@ -1,12 +1,12 @@
 /* @jsxImportSource @opentui/solid */
 import { For, Show } from "solid-js";
-import type { HostedPanelView } from "./panel-host.ts";
 import {
   shellStatusLine,
   shellNavigationPresentation,
   shellSurfaceTabs,
   shellVisualPalette,
   type ShellChromeLayout,
+  type ShellChromeView,
   type ShellChromeVariant,
   type ShellSidebarHint,
 } from "./shell-chrome.ts";
@@ -17,7 +17,7 @@ export interface ShellTabBarProps {
   theme: SemanticThemeSnapshot;
   width: number;
   variant: ShellChromeVariant;
-  views: readonly HostedPanelView[];
+  views: readonly ShellChromeView[];
   activeViewId: string;
   hoveredIndex: number | null;
   attentionViewIds?: ReadonlySet<string>;

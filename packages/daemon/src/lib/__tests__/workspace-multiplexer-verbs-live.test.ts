@@ -84,6 +84,25 @@ describe.skipIf(!hasTmux)("multiplexer verbs against live tmux", () => {
           /can't find session|no server running/iu.test(String(error)),
       },
     });
+    const [editorPane, shellPane] = tmux([
+      "list-panes",
+      "-s",
+      "-t",
+      `=${sessionName}`,
+      "-F",
+      "#{pane_id}\t#{window_id}\t#{@tmux_ide_pane_id}",
+    ]).split("\n");
+    authority.adoptPaneInventory(
+      [editorPane, shellPane].map((row) => {
+        const [runtimePaneId, windowId, semanticPaneId] = row!.split("\t");
+        return {
+          sessionName,
+          runtimePaneId: runtimePaneId!,
+          windowId: windowId!,
+          semanticPaneId: semanticPaneId!,
+        };
+      }),
+    );
   });
 
   afterEach(() => {
@@ -284,6 +303,21 @@ describe.skipIf(!hasTmux)("multiplexer verbs against live tmux", () => {
 
     const again = await mutate({ verb: "workspace.pane.select", semanticPaneId: "pane.shell" });
     expect(again).toMatchObject({ outcome: "unchanged" });
+  });
+
+  it("guards a warm native target against a stale or duplicate semantic remap", async () => {
+    await mutate({ verb: "workspace.pane.select", semanticPaneId: "pane.shell" });
+    await mutate({ verb: "workspace.pane.select", semanticPaneId: "pane.editor" });
+    stampPane(`=${sessionName}:editor.0`, "pane.shell");
+    await expect(
+      mutate({ verb: "workspace.pane.select", semanticPaneId: "pane.shell" }),
+    ).rejects.toMatchObject({
+      code: "mutation_unverified",
+      context: { reason: "pane_identity_changed_before_select" },
+    });
+    expect(tmux(["display-message", "-p", "-t", `=${sessionName}:`, "#{window_name}"])).toBe(
+      "editor",
+    );
   });
 
   it("swaps two panes in one window by semantic identity", async () => {
