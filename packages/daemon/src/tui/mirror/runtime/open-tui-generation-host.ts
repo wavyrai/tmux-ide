@@ -309,7 +309,12 @@ function buildProductionBundle(
     causalCellLedger,
   );
   const activeFastLane = fastLane;
-  const adapter = new TerminalFastLaneRendererAdapter(activeFastLane.lane, 1, causalCellLedger);
+  const adapter = new TerminalFastLaneRendererAdapter(
+    activeFastLane.lane,
+    1,
+    causalCellLedger,
+    activeFastLane.resourceSampler,
+  );
   let revoked = false;
   let disposed = false;
   let revokePromise: Promise<void> | null = null;

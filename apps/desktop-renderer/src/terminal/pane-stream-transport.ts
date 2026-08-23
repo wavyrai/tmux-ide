@@ -116,11 +116,38 @@ export interface PaneMirrorSeedBatch {
   readonly cursor: { readonly x: number; readonly y: number } | null;
 }
 
+export interface PaneMirrorCanonicalProjection {
+  readonly deliveryRequestId: string;
+  readonly generation: string;
+  readonly incarnation: string;
+  readonly revision: number;
+  readonly stateHash: string;
+  readonly cols: number;
+  readonly rows: number;
+  readonly sourceEpoch: number;
+  readonly alternateScreen: boolean;
+  readonly cursor: Readonly<{
+    x: number;
+    y: number;
+    hidden: boolean;
+    style: "block" | "underline" | "bar";
+    blink: boolean;
+  }>;
+  readonly gridRowsRead: number;
+  readonly gridCellsRead: number;
+  readonly fullGridWalks: number;
+}
+
 export type PaneMirrorEvent =
-  | { readonly type: "seed-batch"; readonly batch: PaneMirrorSeedBatch }
+  | {
+      readonly type: "seed-batch";
+      readonly batch: PaneMirrorSeedBatch;
+      readonly canonical?: PaneMirrorCanonicalProjection;
+    }
   | {
       readonly type: "output";
       readonly bytes: Uint8Array;
+      readonly canonical?: PaneMirrorCanonicalProjection;
       /** Lazily materialized canonical repaint retained for sink handoff. */
       readonly replay?: () => PaneMirrorSeedBatch;
     }
@@ -359,6 +386,7 @@ interface PaneChannel {
   semanticPhase: "awaiting" | "live" | "faulted";
   semanticDelivery: TerminalDeliveryClientState | null;
   semanticAssembler: TerminalDeliveryAssembler | null;
+  sourceEpoch: number;
 }
 
 class PaneStreamSession {
@@ -418,6 +446,7 @@ class PaneStreamSession {
         semanticPhase: "awaiting",
         semanticDelivery: null,
         semanticAssembler: null,
+        sourceEpoch: 0,
       });
     }
     this.#connectPromise = new Promise((resolve) => {
@@ -910,9 +939,46 @@ class PaneStreamSession {
           this.#deliverSemantic(channel, { type: "closed" }, committed.ack);
           return;
         }
+        if (semanticUpdate.frame === "tombstone") {
+          throw new TypeError("Semantic tombstone retained a canonical snapshot");
+        }
+        if (semanticUpdate.frame === "patch" && !previousSnapshot) {
+          throw new TypeError("Semantic patch did not retain its exact canonical baseline");
+        }
+        if (!committed.state.incarnation || !committed.state.appliedHash) {
+          throw new TypeError("Semantic delivery did not retain its exact canonical identity");
+        }
+        if (semanticUpdate.frame === "seed") channel.sourceEpoch += 1;
+        const fullGridWalk =
+          semanticUpdate.frame === "seed" ||
+          semanticUpdate.patch.dimensions !== undefined ||
+          previousSnapshot?.modes.alternateScreen !== snapshot.modes.alternateScreen;
+        const projectedRows =
+          semanticUpdate.frame === "patch" && !fullGridWalk
+            ? semanticUpdate.patch.rows.map(({ row }) => row)
+            : snapshot.grid;
+        const canonical = Object.freeze({
+          deliveryRequestId: this.#descriptor.requestId,
+          generation: committed.state.negotiated.generation,
+          incarnation: committed.state.incarnation,
+          revision: committed.state.appliedRevision,
+          stateHash: committed.state.appliedHash,
+          cols: snapshot.cols,
+          rows: snapshot.rows,
+          sourceEpoch: channel.sourceEpoch,
+          alternateScreen: snapshot.modes.alternateScreen,
+          cursor: Object.freeze({ ...snapshot.cursor }),
+          gridRowsRead: projectedRows.length,
+          gridCellsRead: projectedRows.reduce((total, row) => total + row.cells.length, 0),
+          fullGridWalks: fullGridWalk ? 1 : 0,
+        } satisfies PaneMirrorCanonicalProjection);
         const ansi =
-          semanticUpdate.frame === "patch"
-            ? encodeAnsiTerminalPatchRepresentation(semanticUpdate.patch, snapshot)
+          semanticUpdate.frame === "patch" && previousSnapshot
+            ? encodeAnsiTerminalPatchRepresentation(
+                semanticUpdate.patch,
+                snapshot,
+                previousSnapshot,
+              )
             : encodeAnsiTerminalRepresentation(previousSnapshot, snapshot);
         const requiresAtomicReset =
           !previousSnapshot ||
@@ -923,6 +989,7 @@ class PaneStreamSession {
           requiresAtomicReset
             ? {
                 type: "seed-batch",
+                canonical,
                 batch: {
                   reset: { cols: snapshot.cols, rows: snapshot.rows },
                   seed: ansi,
@@ -933,6 +1000,7 @@ class PaneStreamSession {
             : {
                 type: "output",
                 bytes: ansi,
+                canonical,
                 // Snapshot state already exists for semantic validation. Keep
                 // it by reference and do the full-grid ANSI materialization
                 // only if a replacement sink actually asks for a repaint.
@@ -1284,7 +1352,7 @@ export function createPaneStreamTransport(
     dependencies.terminalDelivery === undefined
       ? ({
           protocolVersions: [1],
-          encodings: ["semantic-v1"],
+          encodings: ["semantic-compact-v1", "semantic-v1"],
           richPlacements: true,
         } as const)
       : dependencies.terminalDelivery;

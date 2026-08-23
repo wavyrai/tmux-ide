@@ -1,17 +1,23 @@
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import type {
+  CanonicalTerminalReplicaUpdate,
   InteractionReceipt,
   TerminalDeliveryEnvelope,
   TerminalReplicaSnapshot,
 } from "@tmux-ide/contracts";
 import {
   applyTerminalReplicaPatch,
+  applyTerminalReplicaUpdate,
   blankTerminalReplicaSnapshot,
+  encodeCompactSemanticTerminalUpdate,
   encodeSemanticTerminalUpdate,
   hashTerminalDeliveryRepresentation,
   hashTerminalReplicaSnapshot,
   negotiateTerminalDelivery,
   splitTerminalDeliveryChunks,
+  type TerminalReplicaState,
 } from "@tmux-ide/core";
 import type {
   OpenPaneStreamClientOptions,
@@ -48,9 +54,13 @@ function inventory(
   });
 }
 
-function negotiated() {
+function negotiated(compact = false) {
   const result = negotiateTerminalDelivery(
-    { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: true },
+    {
+      protocolVersions: [1],
+      encodings: compact ? ["semantic-compact-v1", "semantic-v1"] : ["semantic-v1"],
+      richPlacements: true,
+    },
     GENERATION,
     NONCE,
   );
@@ -63,8 +73,12 @@ function seedDelivery(
   snapshot: TerminalReplicaSnapshot,
   suffix: string,
   performanceTraceId?: string,
+  encoding: "semantic-v1" | "semantic-compact-v1" = "semantic-v1",
 ) {
-  const bytes = encodeSemanticTerminalUpdate({ frame: "seed", revision: 0, snapshot });
+  const bytes =
+    encoding === "semantic-compact-v1"
+      ? encodeCompactSemanticTerminalUpdate({ frame: "seed", revision: 0, snapshot })
+      : encodeSemanticTerminalUpdate({ frame: "seed", revision: 0, snapshot });
   const transactionId = `00000000-0000-4000-8000-${suffix.padStart(12, "0")}`;
   const envelope: TerminalDeliveryEnvelope = {
     type: "terminal.delivery",
@@ -76,7 +90,7 @@ function seedDelivery(
     transactionId,
     ...(performanceTraceId ? { performanceTraceId } : {}),
     protocolVersion: 1,
-    encoding: "semantic-v1",
+    encoding,
     frame: "seed",
     baseRevision: null,
     canonicalRevision: 0,
@@ -97,15 +111,15 @@ function patchDelivery(
   baseRevision: number,
   revision: number,
   suffix: string,
+  encoding: "semantic-v1" | "semantic-compact-v1" = "semantic-v1",
 ) {
   const patch = { rows: [], cursor: { ...previous.cursor, x: 1 } };
   const next = applyTerminalReplicaPatch(previous, patch);
-  const bytes = encodeSemanticTerminalUpdate({
-    frame: "patch",
-    baseRevision,
-    revision,
-    patch,
-  });
+  const payload = { frame: "patch" as const, baseRevision, revision, patch };
+  const bytes =
+    encoding === "semantic-compact-v1"
+      ? encodeCompactSemanticTerminalUpdate(payload)
+      : encodeSemanticTerminalUpdate(payload);
   const transactionId = `00000000-0000-4000-8000-${suffix.padStart(12, "0")}`;
   const envelope: TerminalDeliveryEnvelope = {
     type: "terminal.delivery",
@@ -116,7 +130,7 @@ function patchDelivery(
     deliveryNonce: NONCE,
     transactionId,
     protocolVersion: 1,
-    encoding: "semantic-v1",
+    encoding,
     frame: "patch",
     baseRevision,
     canonicalRevision: revision,
@@ -131,7 +145,78 @@ function patchDelivery(
   return { envelope, chunks: splitTerminalDeliveryChunks(transactionId, bytes) };
 }
 
-function rig(coherent = true, corruptBeforeCoherent = false) {
+function uniqueHistoryRows(start: number, count: number, cols = 132) {
+  const blank = blankTerminalReplicaSnapshot(cols, 41);
+  const defaultCell = blank.grid[0]!.cells[0]!;
+  return Object.freeze(
+    Array.from({ length: count }, (_, offset) => {
+      const prefix = `workload-${String(start + offset).padStart(4, "0")}`;
+      return Object.freeze({
+        wrapped: false,
+        cells: Object.freeze([
+          ...[...prefix].map((grapheme) => Object.freeze({ ...defaultCell, grapheme })),
+          ...Array.from({ length: cols - prefix.length }, () => defaultCell),
+        ]),
+      });
+    }),
+  );
+}
+
+function repeatedBlankHistoryRows(count: number, cols = 132) {
+  const row = blankTerminalReplicaSnapshot(cols, 41).grid[0]!;
+  return Object.freeze(Array.from({ length: count }, () => row));
+}
+
+function compactHistoryPatchDelivery(
+  previous: TerminalReplicaSnapshot,
+  baseRevision: number,
+  revision: number,
+  append: ReturnType<typeof uniqueHistoryRows>,
+  suffix: string,
+  trim = 0,
+) {
+  const patch = Object.freeze({
+    dimensions: Object.freeze({ cols: previous.cols, rows: previous.rows }),
+    rows: Object.freeze([]),
+    historyDelta: Object.freeze({ trim, append }),
+  });
+  const next = applyTerminalReplicaPatch(previous, patch);
+  const bytes = encodeCompactSemanticTerminalUpdate({
+    frame: "patch",
+    baseRevision,
+    revision,
+    patch,
+  });
+  const transactionId = `00000000-0000-4000-8000-${suffix.padStart(12, "0")}`;
+  const envelope: TerminalDeliveryEnvelope = {
+    type: "terminal.delivery",
+    workspaceName: WORKSPACE,
+    semanticPaneId: PANE_A,
+    generation: GENERATION,
+    incarnation: `${GENERATION}:1`,
+    deliveryNonce: NONCE,
+    transactionId,
+    protocolVersion: 1,
+    encoding: "semantic-compact-v1",
+    frame: "patch",
+    baseRevision,
+    canonicalRevision: revision,
+    canonicalStateHash: hashTerminalReplicaSnapshot(next),
+    representationHash: hashTerminalDeliveryRepresentation(bytes),
+    representationBytes: bytes.byteLength,
+    chunkCount: Math.max(1, Math.ceil(bytes.byteLength / (256 * 1024))),
+    canonicalEquivalent: true,
+    history: "complete",
+    richPlacements: true,
+  };
+  return { envelope, chunks: splitTerminalDeliveryChunks(transactionId, bytes), next };
+}
+
+function rig(
+  coherent = true,
+  corruptBeforeCoherent = false,
+  encoding: "semantic-v1" | "semantic-compact-v1" = "semantic-v1",
+) {
   let streamOptions: OpenPaneStreamClientOptions | null = null;
   const receiptListeners = new Set<(receipt: InteractionReceipt) => void>();
   const client = {
@@ -162,7 +247,10 @@ function rig(coherent = true, corruptBeforeCoherent = false) {
   const openPaneStream = vi.fn(async (_expected, options) => {
     streamOptions = options as OpenPaneStreamClientOptions;
     for (const pane of options.stream.panes) {
-      options.onNegotiated(pane, { accepted: true, negotiated: negotiated() });
+      options.onNegotiated(pane, {
+        accepted: true,
+        negotiated: negotiated(encoding === "semantic-compact-v1"),
+      });
     }
     if (corruptBeforeCoherent) {
       options.onTerminalDelivery(PANE_A, {
@@ -192,7 +280,13 @@ function rig(coherent = true, corruptBeforeCoherent = false) {
         })),
       });
       for (const [index, pane] of options.stream.panes.entries()) {
-        const seed = seedDelivery(pane, blankTerminalReplicaSnapshot(4, 2), String(10 + index));
+        const seed = seedDelivery(
+          pane,
+          blankTerminalReplicaSnapshot(4, 2),
+          String(10 + index),
+          undefined,
+          encoding,
+        );
         options.onTerminalDelivery(pane, seed.envelope);
         for (const chunk of seed.chunks) options.onTerminalDelivery(pane, chunk);
       }
@@ -441,7 +535,7 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
       workspaceName: WORKSPACE,
       panes: [PANE_A, PANE_B],
       viewerMode: "interactive",
-      terminalDelivery: { encodings: ["semantic-v1"] },
+      terminalDelivery: { encodings: ["semantic-compact-v1", "semantic-v1"] },
     });
     expect(test.options().hostClientId).toBe(OPEN_TUI_HOST_CLIENT_ID);
     expect(test.options()).not.toHaveProperty("onTerminalFrameArrival");
@@ -718,6 +812,704 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
     expect(test.client.ack).toHaveBeenCalledOnce();
   });
 
+  it("dispatches compact seed and patch envelopes through the production endpoint", async () => {
+    const test = rig(true, false, "semantic-compact-v1");
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    let replicaState: TerminalReplicaState | null = null;
+    let acceptedSeed: CanonicalTerminalReplicaUpdate | null = null;
+    const applyProfiles: unknown[] = [];
+    const listener = vi.fn((update: CanonicalTerminalReplicaUpdate) => {
+      const result = applyTerminalReplicaUpdate(replicaState, update, {
+        authenticatedFrameHash: "0000000000000000",
+        instrumentation: {
+          nowMicros: () => 1,
+          onComplete: (profile) => applyProfiles.push(profile),
+        },
+      });
+      if (result.status !== "applied") throw new Error(`compact reducer ${result.status}`);
+      replicaState = result.state;
+      if (update.type === "terminal.seed") {
+        acceptedSeed = update;
+        expect(result.state.snapshot).toBe(update.snapshot);
+      }
+      if (update.type === "terminal.patch")
+        expect(result.state.snapshot?.cursor).toBe(update.patch.cursor);
+    });
+    subscription.onUpdate(listener);
+    expect(listener).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "terminal.seed", revision: 0 }),
+      expect.any(Object),
+    );
+    listener.mockClear();
+    test.client.ack.mockClear();
+    const previous = blankTerminalReplicaSnapshot(4, 2);
+    const delivery = patchDelivery(PANE_A, previous, 0, 1, "211", "semantic-compact-v1");
+    test.options().onTerminalDelivery(PANE_A, delivery.envelope);
+    for (const chunk of delivery.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    await vi.waitFor(() => {
+      expect(listener).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "terminal.patch", revision: 1 }),
+        expect.any(Object),
+      );
+      expect(test.client.ack).toHaveBeenCalledWith(
+        expect.objectContaining({ transactionId: delivery.envelope.transactionId }),
+      );
+    });
+    expect(test.client.nack).not.toHaveBeenCalled();
+    expect(applyProfiles).toEqual([
+      expect.objectContaining({
+        trustedCompactAdoption: true,
+        counts: expect.objectContaining({ validatedCells: 0, frozenCells: 0, rowHashMisses: 0 }),
+      }),
+      expect.objectContaining({
+        trustedCompactAdoption: true,
+        counts: expect.objectContaining({ validatedCells: 0, frozenCells: 0, rowHashMisses: 0 }),
+      }),
+    ]);
+    let replayProfile: unknown = null;
+    const replay = applyTerminalReplicaUpdate(null, acceptedSeed!, {
+      authenticatedFrameHash: "0000000000000000",
+      instrumentation: {
+        nowMicros: () => 1,
+        onComplete: (profile) => (replayProfile = profile),
+      },
+    });
+    expect(replay.status).toBe("applied");
+    expect(replayProfile).toMatchObject({ trustedCompactAdoption: false });
+    await subscription.close();
+    await port.close();
+  });
+
+  it("cooperatively commits unique 4096+904 history patches with no partial ACK", async () => {
+    const test = rig(true, false, "semantic-compact-v1");
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    let state = blankTerminalReplicaSnapshot(132, 41);
+    const listener = vi.fn((update: CanonicalTerminalReplicaUpdate) => {
+      if (update.type === "terminal.patch") state = applyTerminalReplicaPatch(state, update.patch);
+    });
+    subscription.onUpdate(listener);
+    listener.mockClear();
+    test.client.ack.mockClear();
+
+    const first = compactHistoryPatchDelivery(state, 0, 1, uniqueHistoryRows(0, 4_096), "301");
+    test.options().onTerminalDelivery(PANE_A, first.envelope);
+    for (const chunk of first.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    expect(listener).not.toHaveBeenCalled();
+    expect(test.client.ack).not.toHaveBeenCalled();
+    await vi.waitFor(
+      () => {
+        expect(test.client.ack).toHaveBeenCalledWith(
+          expect.objectContaining({ transactionId: first.envelope.transactionId }),
+        );
+      },
+      { timeout: 5_000 },
+    );
+    expect(listener).toHaveBeenCalledOnce();
+    expect(hashTerminalReplicaSnapshot(state)).toBe(hashTerminalReplicaSnapshot(first.next));
+
+    listener.mockClear();
+    test.client.ack.mockClear();
+    const second = compactHistoryPatchDelivery(state, 1, 2, uniqueHistoryRows(4_096, 904), "302");
+    test.options().onTerminalDelivery(PANE_A, second.envelope);
+    for (const chunk of second.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    expect(listener).not.toHaveBeenCalled();
+    expect(test.client.ack).not.toHaveBeenCalled();
+    await vi.waitFor(
+      () => {
+        expect(test.client.ack).toHaveBeenCalledWith(
+          expect.objectContaining({ transactionId: second.envelope.transactionId }),
+        );
+      },
+      { timeout: 5_000 },
+    );
+    expect(listener).toHaveBeenCalledOnce();
+    expect(hashTerminalReplicaSnapshot(state)).toBe(hashTerminalReplicaSnapshot(second.next));
+    expect(state.history).toHaveLength(5_000);
+    expect(test.client.nack).not.toHaveBeenCalled();
+    await subscription.close();
+    await port.close();
+  }, 20_000);
+
+  it("cooperatively adopts an expansion-heavy compact patch below 64KiB without blocking", () => {
+    const fixture = fileURLToPath(
+      new URL("../../../test-support/open-tui-compact-sub64-process.ts", import.meta.url),
+    );
+    const tsx = fileURLToPath(new URL("../../../../../node_modules/.bin/tsx", import.meta.url));
+    const result = spawnSync(tsx, [fixture], {
+      encoding: "utf8",
+      timeout: 90_000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const measurement = JSON.parse(result.stdout.trim()) as {
+      representationBytes: number;
+      placementSeedBytes: number;
+      placementPatchBytes: number;
+      maxHeartbeatDelayMs: number;
+      deliveryCount: number;
+      ackCount: number;
+      finalHashExact: boolean;
+      decodeProfiles: readonly unknown[];
+      applyProfiles: readonly {
+        readonly trustedCompactAdoption: boolean;
+        readonly phaseMicros: Readonly<Record<string, number>>;
+        readonly counts: Readonly<Record<string, number>>;
+      }[];
+    };
+    expect(measurement.representationBytes).toBeGreaterThan(32 * 1_024);
+    expect(measurement.representationBytes).toBeLessThan(64 * 1_024);
+    expect(measurement.placementSeedBytes).toBeGreaterThan(2 * 1_024 * 1_024);
+    expect(measurement.placementPatchBytes).toBeGreaterThan(2 * 1_024 * 1_024);
+    expect(measurement.placementSeedBytes).toBeLessThan(16 * 1_024 * 1_024);
+    expect(measurement.placementPatchBytes).toBeLessThan(16 * 1_024 * 1_024);
+    expect(measurement.maxHeartbeatDelayMs).toBeLessThanOrEqual(33);
+    expect(measurement.deliveryCount).toBe(5);
+    expect(measurement.ackCount).toBe(5);
+    expect(measurement.finalHashExact).toBe(true);
+    expect(measurement.applyProfiles).toHaveLength(5);
+    expect(measurement.decodeProfiles).toHaveLength(5);
+    for (const profile of measurement.applyProfiles) {
+      expect(profile.trustedCompactAdoption).toBe(true);
+      expect(Object.values(profile.phaseMicros).every((value) => value === 0)).toBe(true);
+      expect(Object.values(profile.counts).every((value) => value === 0)).toBe(true);
+    }
+  }, 35_000);
+
+  it("reuses authenticated history rows across 24 compact endpoint workload cycles", () => {
+    const fixture = fileURLToPath(
+      new URL("../../../test-support/open-tui-compact-sub64-process.ts", import.meta.url),
+    );
+    const tsx = fileURLToPath(new URL("../../../../../node_modules/.bin/tsx", import.meta.url));
+    const result = spawnSync(tsx, [fixture, "workload"], {
+      encoding: "utf8",
+      timeout: 90_000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const measurement = JSON.parse(result.stdout.trim()) as {
+      workloadMinBytes: number;
+      workloadMaxBytes: number;
+      workloadCycles: number;
+      explicitGcAvailable: boolean;
+      maxHeartbeatDelayMs: number;
+      peakRssBytes: number;
+      peakHeapBytes: number;
+      rssSlopeBytesPerSample: number;
+      heapSlopeBytesPerSample: number;
+      rssGrowthBytes: number;
+      heapGrowthBytes: number;
+      measuredExternalBytes: readonly number[];
+      measuredArrayBufferBytes: readonly number[];
+      deliveryCount: number;
+      ackCount: number;
+      finalHashExact: boolean;
+      applyProfiles: readonly {
+        readonly trustedCompactAdoption: boolean;
+        readonly phaseMicros: Readonly<Record<string, number>>;
+        readonly counts: Readonly<Record<string, number>>;
+      }[];
+      decodeProfiles: readonly {
+        readonly reusedCompactPayload: boolean;
+        readonly expandedRuns: number;
+        readonly expandedCells: number;
+        readonly reusedRows: number;
+        readonly allocatedCells: number;
+        readonly canonicalUtf8Allocations: number;
+        readonly canonicalUtf8Bytes: number;
+        readonly validatedCellAllocations: number;
+      }[];
+    };
+    expect(measurement.workloadCycles).toBe(24);
+    expect(measurement.explicitGcAvailable).toBe(false);
+    expect(measurement.workloadMinBytes).toBeGreaterThan(512 * 1_024);
+    expect(measurement.workloadMaxBytes).toBeLessThan(1_024 * 1_024);
+    expect(measurement.maxHeartbeatDelayMs).toBeLessThanOrEqual(33);
+    expect(measurement.peakRssBytes).toBeLessThan(1_073_741_824);
+    expect(measurement.peakHeapBytes).toBeLessThan(536_870_912);
+    expect(measurement.rssSlopeBytesPerSample).toBeLessThanOrEqual(262_144);
+    expect(measurement.heapSlopeBytesPerSample).toBeLessThanOrEqual(131_072);
+    expect(measurement.rssGrowthBytes).toBeLessThanOrEqual(67_108_864);
+    expect(measurement.heapGrowthBytes).toBeLessThanOrEqual(33_554_432);
+    expect(
+      Math.max(...measurement.measuredExternalBytes) -
+        Math.min(...measurement.measuredExternalBytes),
+    ).toBeLessThanOrEqual(262_144);
+    expect(
+      Math.max(...measurement.measuredArrayBufferBytes) -
+        Math.min(...measurement.measuredArrayBufferBytes),
+    ).toBeLessThanOrEqual(262_144);
+    expect(measurement.deliveryCount).toBe(28);
+    expect(measurement.ackCount).toBe(28);
+    expect(measurement.finalHashExact).toBe(true);
+    expect(measurement.applyProfiles).toHaveLength(28);
+    expect(measurement.decodeProfiles).toHaveLength(28);
+    for (const profile of measurement.applyProfiles) {
+      expect(profile.trustedCompactAdoption).toBe(true);
+      expect(Object.values(profile.phaseMicros).every((value) => value === 0)).toBe(true);
+      expect(Object.values(profile.counts).every((value) => value === 0)).toBe(true);
+    }
+    for (const profile of measurement.decodeProfiles.slice(-24)) {
+      expect(profile.reusedCompactPayload).toBe(false);
+      expect(profile.reusedRows).toBe(4_096);
+      expect(profile.allocatedCells).toBe(0);
+      expect(profile.canonicalUtf8Allocations).toBeLessThan(64);
+      expect(profile.expandedCells).toBeGreaterThan(0);
+      expect(profile.canonicalUtf8Allocations).toBe(0);
+      expect(profile.canonicalUtf8Bytes).toBe(0);
+      expect(profile.validatedCellAllocations).toBeLessThan(64);
+    }
+  }, 95_000);
+
+  it("retires a cooperative hash mismatch without publication or ACK", async () => {
+    const test = rig(true, false, "semantic-compact-v1");
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    const listener = vi.fn();
+    subscription.onUpdate(listener);
+    listener.mockClear();
+    test.client.ack.mockClear();
+    test.client.nack.mockClear();
+    const delivery = compactHistoryPatchDelivery(
+      blankTerminalReplicaSnapshot(132, 41),
+      0,
+      1,
+      uniqueHistoryRows(0, 4_096),
+      "303",
+    );
+    const envelope = { ...delivery.envelope, canonicalStateHash: "ffffffffffffffff" };
+    test.options().onTerminalDelivery(PANE_A, envelope);
+    for (const chunk of delivery.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    await vi.waitFor(
+      () => {
+        expect(test.client.nack).toHaveBeenCalledWith(
+          expect.objectContaining({
+            reason: "decode-failed",
+            transactionId: envelope.transactionId,
+          }),
+        );
+      },
+      { timeout: 5_000 },
+    );
+    expect(listener).not.toHaveBeenCalled();
+    expect(test.client.ack).not.toHaveBeenCalled();
+    await subscription.close();
+    await port.close();
+  }, 15_000);
+
+  it("never detaches ungranted exact aliases or shared transport views", async () => {
+    const test = rig(true, false, "semantic-compact-v1");
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    subscription.onUpdate(() => undefined);
+    await vi.waitFor(() => expect(test.client.ack).toHaveBeenCalled());
+    test.client.ack.mockClear();
+    const first = patchDelivery(
+      PANE_A,
+      blankTerminalReplicaSnapshot(4, 2),
+      0,
+      1,
+      "611",
+      "semantic-compact-v1",
+    );
+    expect(first.chunks).toHaveLength(1);
+    const owned = first.chunks[0]!.bytes;
+    test.options().onTerminalDelivery(PANE_A, first.envelope);
+    test.options().onTerminalDelivery(PANE_A, first.chunks[0]!);
+    expect(owned.byteLength).toBeGreaterThan(0);
+    await vi.waitFor(() => expect(test.client.ack).toHaveBeenCalledOnce());
+
+    const firstSnapshot = applyTerminalReplicaPatch(blankTerminalReplicaSnapshot(4, 2), {
+      rows: [],
+      cursor: { ...blankTerminalReplicaSnapshot(4, 2).cursor, x: 1 },
+    });
+    const second = patchDelivery(PANE_A, firstSnapshot, 1, 2, "612", "semantic-compact-v1");
+    expect(second.chunks).toHaveLength(1);
+    const source = second.chunks[0]!.bytes;
+    const shared = new Uint8Array(source.byteLength + 2);
+    shared.set(source, 1);
+    test.options().onTerminalDelivery(PANE_A, second.envelope);
+    test.options().onTerminalDelivery(PANE_A, {
+      ...second.chunks[0]!,
+      bytes: shared.subarray(1, shared.byteLength - 1),
+    });
+    expect(shared.byteLength).toBe(source.byteLength + 2);
+    await vi.waitFor(() => expect(test.client.ack).toHaveBeenCalledTimes(2));
+    expect(test.client.nack).not.toHaveBeenCalled();
+    await subscription.close();
+    await port.close();
+  });
+
+  it("invalidates an in-flight cooperative decode when its generation host closes", async () => {
+    const test = rig(true, false, "semantic-compact-v1");
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    const listener = vi.fn();
+    subscription.onUpdate(listener);
+    listener.mockClear();
+    test.client.ack.mockClear();
+    test.client.nack.mockClear();
+    const delivery = compactHistoryPatchDelivery(
+      blankTerminalReplicaSnapshot(132, 41),
+      0,
+      1,
+      uniqueHistoryRows(0, 1_000),
+      "304",
+    );
+    test.options().onTerminalDelivery(PANE_A, delivery.envelope);
+    for (const chunk of delivery.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    expect(test.client.ack).not.toHaveBeenCalled();
+    await port.close();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(listener).not.toHaveBeenCalled();
+    expect(test.client.ack).not.toHaveBeenCalled();
+    expect(test.client.nack).not.toHaveBeenCalled();
+  }, 10_000);
+
+  it("retires an incumbent cooperative flight before closing on an overlapping envelope", async () => {
+    const test = rig(true, false, "semantic-compact-v1");
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    const listener = vi.fn();
+    subscription.onUpdate(listener);
+    listener.mockClear();
+    test.client.ack.mockClear();
+    test.client.nack.mockClear();
+    test.client.close.mockClear();
+    const incumbent = compactHistoryPatchDelivery(
+      blankTerminalReplicaSnapshot(132, 41),
+      0,
+      1,
+      repeatedBlankHistoryRows(1_000),
+      "305",
+    );
+    expect(incumbent.envelope.representationBytes).toBeLessThan(64 * 1_024);
+    test.options().onTerminalDelivery(PANE_A, incumbent.envelope);
+    for (const chunk of incumbent.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    expect(test.client.ack).not.toHaveBeenCalled();
+
+    const overlap = seedDelivery(
+      PANE_A,
+      blankTerminalReplicaSnapshot(4, 2),
+      "306",
+      undefined,
+      "semantic-compact-v1",
+    );
+    test.options().onTerminalDelivery(PANE_A, overlap.envelope);
+    await port.closed;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(test.client.close).toHaveBeenCalledOnce();
+    expect(listener).not.toHaveBeenCalled();
+    expect(test.client.ack).not.toHaveBeenCalled();
+    expect(test.client.nack).not.toHaveBeenCalled();
+  }, 10_000);
+
+  it("NACKs a duplicate cooperative chunk, retires its token, and accepts the next seed", async () => {
+    const test = rig(true, false, "semantic-compact-v1");
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    const listener = vi.fn();
+    subscription.onUpdate(listener);
+    listener.mockClear();
+    test.client.ack.mockClear();
+    test.client.nack.mockClear();
+    const incumbent = compactHistoryPatchDelivery(
+      blankTerminalReplicaSnapshot(132, 41),
+      0,
+      1,
+      repeatedBlankHistoryRows(1_000),
+      "307",
+    );
+    expect(incumbent.envelope.representationBytes).toBeLessThan(64 * 1_024);
+    test.options().onTerminalDelivery(PANE_A, incumbent.envelope);
+    for (const chunk of incumbent.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    test.options().onTerminalDelivery(PANE_A, incumbent.chunks.at(-1)!);
+    expect(test.client.nack).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "decode-failed",
+        transactionId: incumbent.envelope.transactionId,
+      }),
+    );
+
+    const next = seedDelivery(
+      PANE_A,
+      blankTerminalReplicaSnapshot(4, 2),
+      "308",
+      undefined,
+      "semantic-compact-v1",
+    );
+    test.options().onTerminalDelivery(PANE_A, next.envelope);
+    for (const chunk of next.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    await vi.waitFor(() => {
+      expect(test.client.ack).toHaveBeenCalledWith(
+        expect.objectContaining({ transactionId: next.envelope.transactionId }),
+      );
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(listener).toHaveBeenCalledOnce();
+    expect(test.client.ack).toHaveBeenCalledTimes(1);
+    await subscription.close();
+    await port.close();
+  }, 10_000);
+
+  it("dispatches an offered semantic-v1 fallback envelope after compact negotiation", async () => {
+    const test = rig(true, false, "semantic-compact-v1");
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    const listener = vi.fn();
+    subscription.onUpdate(listener);
+    listener.mockClear();
+    test.client.ack.mockClear();
+    const delivery = patchDelivery(
+      PANE_A,
+      blankTerminalReplicaSnapshot(4, 2),
+      0,
+      1,
+      "213",
+      "semantic-v1",
+    );
+    test.options().onTerminalDelivery(PANE_A, delivery.envelope);
+    for (const chunk of delivery.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    expect(listener).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "terminal.patch", revision: 1 }),
+      expect.any(Object),
+    );
+    expect(test.client.ack).toHaveBeenCalledWith(
+      expect.objectContaining({ transactionId: delivery.envelope.transactionId }),
+    );
+    expect(test.client.nack).not.toHaveBeenCalled();
+    await subscription.close();
+    await port.close();
+  });
+
+  it("freezes the legacy fallback baseline before a later compact patch grant", async () => {
+    const test = rig(true, false, "semantic-compact-v1");
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    let fallbackSeed: CanonicalTerminalReplicaUpdate | null = null;
+    subscription.onUpdate((update) => {
+      if (update.type === "terminal.seed") fallbackSeed = update;
+    });
+    const baseline = blankTerminalReplicaSnapshot(4, 2);
+    const seed = seedDelivery(PANE_A, baseline, "215", undefined, "semantic-v1");
+    test.options().onTerminalDelivery(PANE_A, seed.envelope);
+    for (const chunk of seed.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    if (fallbackSeed?.type !== "terminal.seed") throw new Error("fallback seed missing");
+    expect(() => {
+      fallbackSeed.snapshot.grid[0]!.cells[0]!.grapheme = "mutated-after-ack";
+    }).toThrow();
+
+    test.client.ack.mockClear();
+    test.client.nack.mockClear();
+    const patch = patchDelivery(PANE_A, baseline, 0, 1, "216", "semantic-compact-v1");
+    test.options().onTerminalDelivery(PANE_A, patch.envelope);
+    for (const chunk of patch.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    await vi.waitFor(() => {
+      expect(test.client.ack).toHaveBeenCalledWith(
+        expect.objectContaining({ transactionId: patch.envelope.transactionId }),
+      );
+    });
+    expect(test.client.nack).not.toHaveBeenCalled();
+    await subscription.close();
+    await port.close();
+  });
+
+  it("NACKs an unoffered compact envelope without canonical mutation", async () => {
+    const test = rig(true, false, "semantic-v1");
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    const listener = vi.fn();
+    subscription.onUpdate(listener);
+    listener.mockClear();
+    test.client.ack.mockClear();
+    test.client.nack.mockClear();
+    const delivery = patchDelivery(
+      PANE_A,
+      blankTerminalReplicaSnapshot(4, 2),
+      0,
+      1,
+      "214",
+      "semantic-compact-v1",
+    );
+    test.options().onTerminalDelivery(PANE_A, delivery.envelope);
+    for (const chunk of delivery.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    expect(listener).not.toHaveBeenCalled();
+    expect(test.client.ack).not.toHaveBeenCalled();
+    expect(test.client.nack).toHaveBeenCalled();
+    await subscription.close();
+    await port.close();
+  });
+
+  it.each([
+    ["semantic-compact-v1", '{"v":999}'],
+    ["semantic-v1", "{"],
+  ] as const)(
+    "NACKs malformed %s bytes after compact negotiation without ACK or canonical mutation",
+    async (encoding, malformed) => {
+      const test = rig(true, false, "semantic-compact-v1");
+      const port = await connectOpenTuiWorkspaceRuntimePort({
+        inventory: inventory(),
+        routing: test.routing,
+      });
+      const subscription = await port.subscribeTerminal({
+        workspaceName: WORKSPACE,
+        semanticPaneId: PANE_A,
+      });
+      const listener = vi.fn();
+      subscription.onUpdate(listener);
+      listener.mockClear();
+      test.client.ack.mockClear();
+      test.client.nack.mockClear();
+      const bytes = new TextEncoder().encode(malformed);
+      const seed = seedDelivery(
+        PANE_A,
+        blankTerminalReplicaSnapshot(4, 2),
+        "212",
+        undefined,
+        encoding,
+      );
+      const envelope = {
+        ...seed.envelope,
+        incarnation: `${GENERATION}:2`,
+        transactionId: "00000000-0000-4000-8000-000000000212",
+        representationHash: hashTerminalDeliveryRepresentation(bytes),
+        representationBytes: bytes.byteLength,
+        chunkCount: 1,
+      };
+      test.options().onTerminalDelivery(PANE_A, envelope);
+      for (const chunk of splitTerminalDeliveryChunks(envelope.transactionId, bytes))
+        test.options().onTerminalDelivery(PANE_A, chunk);
+      await vi.waitFor(() => {
+        expect(test.client.nack).toHaveBeenCalledWith(
+          expect.objectContaining({
+            reason: "decode-failed",
+            transactionId: envelope.transactionId,
+          }),
+        );
+      });
+      expect(test.client.ack).not.toHaveBeenCalled();
+      expect(listener).not.toHaveBeenCalled();
+      await subscription.close();
+      await port.close();
+    },
+  );
+
+  it("NACKs a large malformed cooperative compact frame without publication", async () => {
+    const test = rig(true, false, "semantic-compact-v1");
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    const listener = vi.fn();
+    subscription.onUpdate(listener);
+    listener.mockClear();
+    test.client.ack.mockClear();
+    test.client.nack.mockClear();
+    const bytes = new TextEncoder().encode(
+      JSON.stringify({
+        f: "s",
+        k: "terminal-semantic-compact",
+        r: 1,
+        s: "malformed".repeat(10_000),
+        v: 1,
+      }),
+    );
+    const seed = seedDelivery(
+      PANE_A,
+      blankTerminalReplicaSnapshot(4, 2),
+      "305",
+      undefined,
+      "semantic-compact-v1",
+    );
+    const envelope: TerminalDeliveryEnvelope = {
+      ...seed.envelope,
+      incarnation: `${GENERATION}:2`,
+      transactionId: "00000000-0000-4000-8000-000000000305",
+      canonicalRevision: 1,
+      representationHash: hashTerminalDeliveryRepresentation(bytes),
+      representationBytes: bytes.byteLength,
+      chunkCount: Math.max(1, Math.ceil(bytes.byteLength / (256 * 1024))),
+    };
+    test.options().onTerminalDelivery(PANE_A, envelope);
+    for (const chunk of splitTerminalDeliveryChunks(envelope.transactionId, bytes))
+      test.options().onTerminalDelivery(PANE_A, chunk);
+    await vi.waitFor(() => {
+      expect(test.client.nack).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reason: "decode-failed",
+          transactionId: envelope.transactionId,
+        }),
+      );
+    });
+    expect(listener).not.toHaveBeenCalled();
+    expect(test.client.ack).not.toHaveBeenCalled();
+    await subscription.close();
+    await port.close();
+  });
+
   it("NACKs baseline gaps and invalid semantic representations", async () => {
     const test = rig();
     const port = await connectOpenTuiWorkspaceRuntimePort({
@@ -760,7 +1552,7 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
     );
   });
 
-  it("reconnects for canonical patch rejection without ACKing the rejected delivery", async () => {
+  it("NACKs a compact hash mismatch before publication or ACK", async () => {
     const test = rig();
     const port = await connectOpenTuiWorkspaceRuntimePort({
       inventory: inventory(),
@@ -779,6 +1571,7 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
       }
     });
     test.client.ack.mockClear();
+    test.client.nack.mockClear();
     test.client.close.mockClear();
 
     const previous = blankTerminalReplicaSnapshot(4, 2);
@@ -788,7 +1581,13 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
     for (const chunk of corrupt.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
 
     expect(test.client.ack).not.toHaveBeenCalled();
-    expect(test.client.close).toHaveBeenCalledOnce();
+    expect(test.client.nack).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "decode-failed",
+        transactionId: corruptEnvelope.transactionId,
+      }),
+    );
+    expect(test.client.close).not.toHaveBeenCalled();
     port.requestTerminalRepair?.({ workspaceName: WORKSPACE, semanticPaneId: PANE_A }, "conflict");
     expect(test.client.close).toHaveBeenCalledOnce();
     await port.closed;

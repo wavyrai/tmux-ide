@@ -8,9 +8,15 @@ import type {
   TerminalReplicaSnapshot,
   TerminalReplicaTombstonePayload,
 } from "@tmux-ide/contracts";
+import { consumeCompactReplicaCapability } from "./terminal-compact-capability.ts";
+import {
+  hashCanonicalTerminalValue,
+  hashCanonicalTerminalValueCooperatively,
+  hashTerminalReplicaRowCached,
+  isTerminalReplicaRowDeeplyFrozen,
+} from "./terminal-replica-hash-cache.ts";
 
 const DEFAULT_COLOR = Object.freeze({ kind: "default" } as const);
-const ROW_HASH_CACHE = new WeakMap<object, string>();
 const ROW_ARRAY_HASH_CACHE = new WeakMap<
   object,
   { readonly hash: bigint; readonly length: number }
@@ -40,6 +46,7 @@ export type TerminalReplicaApplyResult =
 
 export interface TerminalReplicaApplyProfile {
   readonly reusedAuthenticatedFrameHash: boolean;
+  readonly trustedCompactAdoption: boolean;
   readonly phaseMicros: Readonly<{
     updateHash: number;
     rowValidationFreeze: number;
@@ -72,6 +79,7 @@ export interface TerminalReplicaApplyOptions {
 
 interface MutableTerminalReplicaApplyProfile {
   reusedAuthenticatedFrameHash: boolean;
+  trustedCompactAdoption: boolean;
   phaseMicros: {
     updateHash: number;
     rowValidationFreeze: number;
@@ -130,7 +138,20 @@ export function applyTerminalReplicaUpdate(
     return result;
   };
   if (update.type === "terminal.seed") {
-    if (update.hashAlgorithm !== "fnv1a64-v1" || !terminalReplicaSnapshotIsValid(update.snapshot)) {
+    const trustedSnapshot =
+      update.hashAlgorithm === "fnv1a64-v1"
+        ? consumeCompactReplicaCapability(
+            update.snapshot,
+            current?.snapshot ?? null,
+            update.stateHash,
+          )
+        : undefined;
+    if (profile && trustedSnapshot !== undefined) profile.trustedCompactAdoption = true;
+    if (
+      update.hashAlgorithm !== "fnv1a64-v1" ||
+      (trustedSnapshot === undefined && !terminalReplicaSnapshotIsValid(update.snapshot)) ||
+      (trustedSnapshot !== undefined && trustedSnapshot !== update.snapshot)
+    ) {
       return complete(
         current
           ? protocolConflict(current, update.revision)
@@ -144,8 +165,8 @@ export function applyTerminalReplicaUpdate(
     }
     // Hash the exact immutable snapshot retained by state. Besides avoiding a
     // second deep clone, this seeds the row Merkle cache for the first patch.
-    const frozenSnapshot = freezeSnapshot(update.snapshot);
-    const hash = hashTerminalReplicaSnapshot(frozenSnapshot);
+    const frozenSnapshot = trustedSnapshot ?? freezeSnapshot(update.snapshot);
+    const hash = trustedSnapshot ? update.stateHash : hashTerminalReplicaSnapshot(frozenSnapshot);
     if (
       current &&
       (current.workspaceName !== update.workspaceName ||
@@ -316,17 +337,29 @@ export function applyTerminalReplicaUpdate(
     });
   }
   let snapshot: TerminalReplicaSnapshot;
-  try {
-    snapshot = applyTerminalReplicaPatchProfiled(
-      current.snapshot,
-      update.patch,
-      profile,
-      options.instrumentation,
-    );
-  } catch {
-    return complete(protocolConflict(current, update.revision));
+  const trustedSnapshot = consumeCompactReplicaCapability(
+    update.patch,
+    current.snapshot,
+    update.stateHash,
+  );
+  let hash: string;
+  if (trustedSnapshot !== undefined && trustedSnapshot !== null) {
+    if (profile) profile.trustedCompactAdoption = true;
+    snapshot = trustedSnapshot;
+    hash = update.stateHash;
+  } else {
+    try {
+      snapshot = applyTerminalReplicaPatchProfiled(
+        current.snapshot,
+        update.patch,
+        profile,
+        options.instrumentation,
+      );
+    } catch {
+      return complete(protocolConflict(current, update.revision));
+    }
+    hash = hashTerminalReplicaSnapshotProfiled(snapshot, profile, options.instrumentation);
   }
-  const hash = hashTerminalReplicaSnapshotProfiled(snapshot, profile, options.instrumentation);
   if (hash !== update.stateHash || snapshot.cols !== update.cols || snapshot.rows !== update.rows) {
     return complete({
       status: "conflict",
@@ -451,7 +484,12 @@ function applyTerminalReplicaPatchProfiled(
   } else if (patch.historyDelta) {
     const appended = patch.historyDelta.append.map(freezeRow);
     history = Object.freeze([...current.history.slice(patch.historyDelta.trim), ...appended]);
-    registerRowsDeltaHash(current.history, history, patch.historyDelta.trim, appended);
+    registerTerminalReplicaRowsDeltaHash(
+      current.history,
+      history,
+      patch.historyDelta.trim,
+      appended,
+    );
   } else {
     history = current.history;
   }
@@ -534,6 +572,28 @@ function hashTerminalReplicaSnapshotProfiled(
   ]);
   addProfileDuration(profile, "snapshotHash", started, instrumentation);
   return hash;
+}
+
+export async function hashTerminalReplicaSnapshotCooperatively(
+  snapshot: TerminalReplicaSnapshot,
+  yieldControl: () => Promise<void>,
+): Promise<string> {
+  await primeTerminalReplicaRowsHashCooperatively(snapshot.grid, yieldControl);
+  await primeTerminalReplicaRowsHashCooperatively(snapshot.history, yieldControl);
+  return hashCanonicalTerminalValueCooperatively(
+    [
+      "terminal-replica-v1",
+      snapshot.cols,
+      snapshot.rows,
+      hashTerminalReplicaRows(snapshot.grid),
+      hashTerminalReplicaRows(snapshot.history),
+      snapshot.cursor,
+      snapshot.modes,
+      snapshot.placements,
+      snapshot.bootstrap,
+    ],
+    yieldControl,
+  );
 }
 
 export function hashTerminalReplicaTombstone(reason: string): string {
@@ -670,34 +730,13 @@ function colorsEqual(left: TerminalReplicaColor, right: TerminalReplicaColor): b
 }
 
 function hashStable(value: unknown): string {
-  const bytes = new TextEncoder().encode(canonicalEncode(value));
-  let hash = 0xcbf29ce484222325n;
-  for (const byte of bytes) {
-    hash ^= BigInt(byte);
-    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
-  }
-  return hash.toString(16).padStart(16, "0");
-}
-
-function canonicalEncode(value: unknown): string {
-  if (value === null) return "n;";
-  if (typeof value === "boolean") return value ? "b1;" : "b0;";
-  if (typeof value === "number") return `d${String(value).length}:${String(value)};`;
-  if (typeof value === "string") {
-    const length = new TextEncoder().encode(value).length;
-    return `s${length}:${value};`;
-  }
-  if (Array.isArray(value)) return `a${value.length}:${value.map(canonicalEncode).join("")};`;
-  const record = value as Record<string, unknown>;
-  const keys = Object.keys(record).sort();
-  return `o${keys.length}:${keys
-    .map((key) => `${canonicalEncode(key)}${canonicalEncode(record[key])}`)
-    .join("")};`;
+  return hashCanonicalTerminalValue(value);
 }
 
 function createApplyProfile(): MutableTerminalReplicaApplyProfile {
   return {
     reusedAuthenticatedFrameHash: false,
+    trustedCompactAdoption: false,
     phaseMicros: {
       updateHash: 0,
       rowValidationFreeze: 0,
@@ -718,6 +757,7 @@ function createApplyProfile(): MutableTerminalReplicaApplyProfile {
 function freezeProfile(profile: MutableTerminalReplicaApplyProfile): TerminalReplicaApplyProfile {
   return Object.freeze({
     reusedAuthenticatedFrameHash: profile.reusedAuthenticatedFrameHash,
+    trustedCompactAdoption: profile.trustedCompactAdoption,
     phaseMicros: Object.freeze({ ...profile.phaseMicros }),
     counts: Object.freeze({ ...profile.counts }),
   });
@@ -790,22 +830,12 @@ function hashTerminalReplicaRow(
   profile?: MutableTerminalReplicaApplyProfile,
   instrumentation?: TerminalReplicaApplyOptions["instrumentation"],
 ): string {
-  const cached = ROW_HASH_CACHE.get(row);
-  if (cached) return cached;
-  if (profile) profile.counts.rowHashMisses += 1;
   const started = readProfileClock(instrumentation);
-  const hash = hashStable([
-    row.wrapped,
-    row.cells.map((cell) => [
-      cell.grapheme,
-      cell.width,
-      cell.foreground,
-      cell.background,
-      cell.attributes,
-    ]),
-  ]);
+  const hash = hashTerminalReplicaRowCached(
+    row,
+    profile ? () => (profile.counts.rowHashMisses += 1) : undefined,
+  );
   addProfileDuration(profile, "rowHash", started, instrumentation);
-  if (Object.isFrozen(row)) ROW_HASH_CACHE.set(row, hash);
   return hash;
 }
 
@@ -823,11 +853,29 @@ function hashTerminalReplicaRows(
       hash * ROW_SEQUENCE_BASE +
         BigInt(`0x${hashTerminalReplicaRow(row, profile, instrumentation)}`),
     );
-  if (Object.isFrozen(rows)) ROW_ARRAY_HASH_CACHE.set(rows, { hash, length: rows.length });
+  if (Object.isFrozen(rows) && rows.every(isTerminalReplicaRowDeeplyFrozen))
+    ROW_ARRAY_HASH_CACHE.set(rows, { hash, length: rows.length });
   return hash.toString(16).padStart(16, "0");
 }
 
-function registerRowsDeltaHash(
+export async function primeTerminalReplicaRowsHashCooperatively(
+  rows: readonly TerminalReplicaRow[],
+  yieldControl: () => Promise<void>,
+): Promise<void> {
+  if (ROW_ARRAY_HASH_CACHE.has(rows)) return;
+  let hash = 0n;
+  for (let index = 0; index < rows.length; index += 1) {
+    hash = BigInt.asUintN(
+      64,
+      hash * ROW_SEQUENCE_BASE + BigInt(`0x${hashTerminalReplicaRow(rows[index]!)}`),
+    );
+    if ((index + 1) % 64 === 0) await yieldControl();
+  }
+  if (Object.isFrozen(rows) && rows.every(isTerminalReplicaRowDeeplyFrozen))
+    ROW_ARRAY_HASH_CACHE.set(rows, { hash, length: rows.length });
+}
+
+export function registerTerminalReplicaRowsDeltaHash(
   previous: readonly TerminalReplicaRow[],
   next: readonly TerminalReplicaRow[],
   trim: number,
@@ -850,7 +898,8 @@ function registerRowsDeltaHash(
       64,
       hash * ROW_SEQUENCE_BASE + BigInt(`0x${hashTerminalReplicaRow(row)}`),
     );
-  ROW_ARRAY_HASH_CACHE.set(next, { hash, length: next.length });
+  if (Object.isFrozen(next) && next.every(isTerminalReplicaRowDeeplyFrozen))
+    ROW_ARRAY_HASH_CACHE.set(next, { hash, length: next.length });
 }
 
 function pow64(base: bigint, exponent: number): bigint {

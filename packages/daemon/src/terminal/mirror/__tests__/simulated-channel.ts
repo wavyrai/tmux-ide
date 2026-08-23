@@ -60,19 +60,20 @@ export class SimulatedChannel implements MirrorChannelIo {
     resultIndex: number,
     onReply: (reply: { ok: boolean; lines: string[] }) => void,
   ): void {
-    for (let index = 0; index < replyCount; index++) {
-      this.core.push(
-        index === resultIndex ? { kind: "inline", onReply, lines: [] } : { kind: "discard" },
-      );
-    }
+    this.core.pushCommandList(replyCount, resultIndex, onReply);
     this.written.push(cmd);
-    // The seed command-list is `set-option ; capture-pane`: acknowledge the
-    // marker command now and leave the selected capture reply manual.
+    // Acknowledge the outer command now. Source-shaped fixtures may also
+    // auto-answer the selected branch; capture lists deliberately return null
+    // and leave that second reply manual.
     this.reply([]);
+    const auto = this.autoReply(cmd);
+    if (auto)
+      for (let index = 1; index < replyCount; index += 1)
+        this.reply(index === resultIndex ? auto : []);
   }
 
-  send(cmd: string): void {
-    this.core.push({ kind: "discard" });
+  send(cmd: string, onReply?: (reply: { ok: boolean; lines: string[] }) => void): void {
+    this.core.push({ kind: "discard", ...(onReply ? { onReply } : {}) });
     this.record(cmd);
   }
 
@@ -144,6 +145,7 @@ export function fixtureAutoReply(state: FixtureState): AutoReply {
     // Product-owned seeds are one atomic `set-option ; capture-pane` command
     // list. The capture reply remains manual just like a bare capture probe.
     if (cmd.includes("capture-pane")) return null;
+    if (cmd.startsWith("if-shell -t")) return [];
     if (cmd.startsWith("set-option")) return [];
     if (cmd.startsWith("send-keys") || cmd.startsWith("refresh-client")) return [];
     return null; // capture-pane / display-message: manual

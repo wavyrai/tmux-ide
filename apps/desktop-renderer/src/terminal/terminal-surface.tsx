@@ -23,6 +23,7 @@ import {
   validateNativeTerminalRequest,
   validateNativeTerminalViewport,
   type NativeTerminalAttachment,
+  type NativeTerminalCanonicalProjection,
   type NativeTerminalEvent,
   type NativeTerminalTransport,
   type NativeTerminalTransportError,
@@ -34,6 +35,49 @@ import { WIDGET_SCAN_MAX_ROWS } from "./widgets/xterm-cell-rows.ts";
 import type { TerminalRenderer, TerminalRendererFactory } from "./xterm-renderer.ts";
 import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "../runtime-style.ts";
 import { useGuiPerformanceTelemetry } from "../runtime/gui-performance-context.tsx";
+
+type AnsiProbeGlobals = typeof globalThis & {
+  __TMUX_IDE_ANSI_RENDITION_PROBE_ENABLED__?: boolean;
+  __TMUX_IDE_PROBE_TERMINAL_RENDITION__?: (
+    semanticPaneId: string,
+    keyHex: string,
+  ) => Promise<DetailedAnsiProbe | null>;
+  __TMUX_IDE_ANSI_RENDITION_RENDERERS__?: Map<
+    string,
+    (keyHex: string) => Promise<DetailedAnsiProbe | null>
+  >;
+};
+
+type DetailedAnsiProbe = Readonly<{
+  surface: HTMLElement;
+  presentation: NonNullable<ReturnType<NonNullable<TerminalRenderer["readPresentation"]>>>;
+  canonical: NativeTerminalCanonicalProjection & { readonly rendererEpoch: number };
+  rendition: NonNullable<Awaited<ReturnType<NonNullable<TerminalRenderer["probeRendition"]>>>>;
+}>;
+
+function registerDetailedAnsiProbe(
+  semanticPaneId: string,
+  probe: (keyHex: string) => Promise<DetailedAnsiProbe | null>,
+): () => void {
+  const globals = globalThis as AnsiProbeGlobals;
+  if (globals.__TMUX_IDE_ANSI_RENDITION_PROBE_ENABLED__ !== true) return () => undefined;
+  const registry = (globals.__TMUX_IDE_ANSI_RENDITION_RENDERERS__ ??= new Map());
+  registry.set(semanticPaneId, probe);
+  globals.__TMUX_IDE_PROBE_TERMINAL_RENDITION__ ??= async (paneId, keyHex) => {
+    try {
+      return (await globals.__TMUX_IDE_ANSI_RENDITION_RENDERERS__?.get(paneId)?.(keyHex)) ?? null;
+    } catch {
+      return null;
+    }
+  };
+  return () => {
+    if (registry.get(semanticPaneId) === probe) registry.delete(semanticPaneId);
+    if (registry.size === 0) {
+      delete globals.__TMUX_IDE_ANSI_RENDITION_RENDERERS__;
+      delete globals.__TMUX_IDE_PROBE_TERMINAL_RENDITION__;
+    }
+  };
+}
 
 export type TerminalSurfacePhase =
   | "unavailable"
@@ -292,6 +336,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   const [sourceGrid, setSourceGrid] = createSignal<TerminalAttachmentViewport | null>(null);
   const [clientViewport, setClientViewport] = createSignal<TerminalAttachmentViewport | null>(null);
   const [widget, setWidget] = createSignal<WidgetResolution | null>(null);
+  let detailedPresentation: DetailedAnsiProbe["presentation"] | null = null;
+  let detailedCanonical: DetailedAnsiProbe["canonical"] | null = null;
   let mount: HTMLDivElement | undefined;
   let renderer: TerminalRenderer | null = null;
   let attachment: NativeTerminalAttachment | null = null;
@@ -477,6 +523,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   const disposeRenderer = (): void => {
     rendererLoadGeneration += 1;
     resetWidgetState();
+    detailedPresentation = null;
+    detailedCanonical = null;
     if (animationFrame !== null) cancelAnimationFrame(animationFrame);
     animationFrame = null;
     const activeObserver = observer;
@@ -539,7 +587,11 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     resizeFlight = operation;
   };
 
-  const queueOutput = (bytes: Uint8Array, activeGeneration: number): Promise<void> => {
+  const queueOutput = (
+    bytes: Uint8Array,
+    activeGeneration: number,
+    canonical?: NativeTerminalCanonicalProjection,
+  ): Promise<void> => {
     const activeRenderer = renderer;
     const epoch = activeOutputEpoch;
     if (!activeRenderer || epoch.pending >= MAX_PENDING_OUTPUT_WRITES) {
@@ -572,6 +624,9 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         );
         let written = false;
         try {
+          if (canonical) {
+            activeRenderer.resizeGrid({ cols: canonical.cols, rows: canonical.rows });
+          }
           const outcome = await Promise.race([
             activeRenderer.write(payload).then(() => "written" as const),
             epoch.retired.then(() => "retired" as const),
@@ -584,6 +639,15 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
           ]);
           if (outcome === "retired") throw OUTPUT_NOT_CONSUMED;
           written = true;
+          if (
+            (globalThis as AnsiProbeGlobals).__TMUX_IDE_ANSI_RENDITION_PROBE_ENABLED__ === true &&
+            props.focused
+          ) {
+            detailedPresentation = activeRenderer.readPresentation?.() ?? null;
+            detailedCanonical = canonical
+              ? Object.freeze({ ...canonical, rendererEpoch: activeGeneration })
+              : null;
+          }
           finishParse?.();
           paint?.commit();
           performanceTelemetry?.commitDelivery();
@@ -661,7 +725,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         recordAttachPhase("first-output-received");
         recordAttachPhase("painting-first-frame");
       }
-      return queueOutput(event.bytes, activeGeneration).then(() => {
+      return queueOutput(event.bytes, activeGeneration, event.canonical).then(() => {
         if (!disposed && activeGeneration === generation) {
           reconnectAttempt = 0;
           setHasValidatedFrame(true);
@@ -678,6 +742,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         resizePassiveGrid(event.sourceGrid);
         return;
       }
+      renderer?.resizeGrid(event.sourceGrid);
       const measured = latestMeasuredViewport;
       if (attachment && measured && !sameViewport(event.clientViewport, measured)) {
         pendingResize = measured;
@@ -700,6 +765,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
           resizePassiveGrid(event.sourceGrid);
           return;
         }
+        renderer?.resizeGrid(event.sourceGrid);
         const measured = latestMeasuredViewport;
         if (measured && !sameViewport(event.clientViewport, measured)) {
           pendingResize = measured;
@@ -812,10 +878,19 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         setPhase("connected");
         recordAttachPhase("attachment-ready");
         if (!hasValidatedFrame()) recordAttachPhase("awaiting-first-output");
+        const retainedSourceGrid = sourceGrid();
+        if (sizePassive() && retainedSourceGrid) {
+          pendingResize = null;
+          resizePassiveGrid(retainedSourceGrid);
+        } else if (retainedSourceGrid) {
+          renderer?.resizeGrid(retainedSourceGrid);
+        }
         const latestViewport = latestMeasuredViewport;
         if (currentViewport && latestViewport && !sameViewport(currentViewport, latestViewport)) {
-          pendingResize = latestViewport;
-          flushResize();
+          if (!sizePassive()) {
+            pendingResize = latestViewport;
+            flushResize();
+          }
         }
         if (props.focused) renderer?.focus();
       })
@@ -902,6 +977,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     pendingResize = null;
     setSourceGrid(null);
     setClientViewport(null);
+    detailedPresentation = null;
+    detailedCanonical = null;
     setHasValidatedFrame(false);
     resetAttachTrace(Boolean(terminalTransport()));
     setPhase(terminalTransport() ? "measuring" : "unavailable");
@@ -1064,6 +1141,21 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         recordAttachPhase("failed");
       });
   };
+
+  createEffect(() => {
+    const semanticPaneId = props.target.semanticPaneId;
+    if (!props.focused) return;
+    const unregister = registerDetailedAnsiProbe(semanticPaneId, async (keyHex) => {
+      const activeRenderer = renderer;
+      const presentation = detailedPresentation;
+      const canonical = detailedCanonical;
+      const surface = mount?.parentElement;
+      if (!activeRenderer || !presentation || !canonical || !surface) return null;
+      const rendition = await activeRenderer.probeRendition?.(keyHex);
+      return rendition ? Object.freeze({ surface, presentation, canonical, rendition }) : null;
+    });
+    onCleanup(unregister);
+  });
 
   onMount(() => {
     ensureRenderer();

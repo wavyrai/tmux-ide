@@ -45,6 +45,8 @@ export function qualifyMemoryEvidence(worker, budgets) {
     summary.heapRobustSlopeBytesPerSample <= budgets.heapRobustSlopeBytesPerSample &&
     summary.rssGrowthBytes <= budgets.rssGrowthCeilingBytes &&
     summary.heapGrowthBytes <= budgets.heapGrowthCeilingBytes &&
+    summary.rssBytes.max <= budgets.rssAbsoluteCeilingBytes &&
+    summary.heapUsedBytes.max <= budgets.heapAbsoluteCeilingBytes &&
     summary.maxQueueDepth <= budgets.settledQueueDepth &&
     summary.maxRepresentationCacheBytes <= budgets.representationCacheCeilingBytes &&
     summary.maxRawJournalBytes <= budgets.rawJournalCeilingBytes;

@@ -558,6 +558,8 @@ function measureMemory() {
     summary.heapRobustSlopeBytesPerSample <= budgets.memory.heapRobustSlopeBytesPerSample &&
     summary.rssGrowthBytes <= budgets.memory.rssGrowthCeilingBytes &&
     summary.heapGrowthBytes <= budgets.memory.heapGrowthCeilingBytes &&
+    Math.max(...rss) <= budgets.memory.rssAbsoluteCeilingBytes &&
+    Math.max(...heap) <= budgets.memory.heapAbsoluteCeilingBytes &&
     summary.maxQueueDepth <= budgets.memory.settledQueueDepth &&
     summary.maxRepresentationCacheBytes <= budgets.memory.representationCacheCeilingBytes &&
     summary.maxRawJournalBytes <= budgets.memory.rawJournalCeilingBytes;

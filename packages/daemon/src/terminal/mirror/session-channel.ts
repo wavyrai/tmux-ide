@@ -26,7 +26,7 @@
  *    keys flush pending literals first — the shared {@link InputCoalescer}
  *    discipline — leaving fire-and-forget via the channel.
  */
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   WORKSPACE_SEMANTIC_PANE_OPTION,
   WORKSPACE_SEMANTIC_WINDOW_OPTION,
@@ -58,6 +58,9 @@ import {
   type WorkspaceTmuxStampOutcome,
 } from "../protocol/workspace-tmux-adapter.ts";
 import type {
+  AtomicPaneSnapshotFailureReason,
+  AtomicPaneSnapshotProgress,
+  AtomicPaneSnapshotResult,
   MirrorChannelHandlers,
   MirrorChannelIo,
   MirrorOutputTiming,
@@ -77,6 +80,7 @@ import type {
 import {
   INTERNAL_READ_OPERATION_OPTION,
   registerInternalReadOperation,
+  retireInternalReadOperation,
 } from "../../lib/tmux-interaction-options.ts";
 
 /** Notifications whose payload cannot be applied directly — fall back to the
@@ -98,6 +102,75 @@ const NATIVE_CLIENT_SUBSCRIPTION = "tmux-ide-native-clients";
 
 const DEFAULT_HISTORY_LINES = 2000;
 const SYNC_DEBOUNCE_MS = 40;
+const RECOVERY_QUIET_MS = 40;
+const RECOVERY_COMMAND_DEADLINE_MS = 500;
+const RECOVERY_NO_PROGRESS_DEADLINE_MS = 3_000;
+const RECOVERY_ABSOLUTE_DEADLINE_MS = 5_000;
+const RECOVERY_MAX_ATTEMPTS = 4;
+const RECOVERY_CAPTURE_MAX_BYTES = 16 * 1024 * 1024;
+const RECOVERY_CAPTURE_MAX_LINES = 8_192;
+const RECOVERY_CURSOR_MAX_BYTES = 1_024;
+const MAX_CONTINUE_NOTIFICATION_QUEUE = 32;
+const MAX_CONTINUE_NOTIFICATION_DEBT = 65_536;
+const RECOVERY_CURSOR_PROBE_FORMAT = [
+  "#{cursor_x}",
+  "#{cursor_y}",
+  "#{pane_width}",
+  "#{pane_height}",
+  "#{alternate_on}",
+  "#{cursor_flag}",
+  "#{insert_flag}",
+  "#{keypad_cursor_flag}",
+  "#{keypad_flag}",
+  "#{mouse_any_flag}",
+  "#{mouse_button_flag}",
+  "#{mouse_standard_flag}",
+  "#{origin_flag}",
+  "#{wrap_flag}",
+].join(" ");
+
+export type MirrorFlowRecoveryPhase =
+  | "pause"
+  | "continue-request"
+  | "continue-reply"
+  | "continue-notify"
+  | "provisional-reseed"
+  | "final-continue-request"
+  | "final-continue-reply"
+  | "final-reseed"
+  | "confirmation-reseed"
+  | "converged"
+  | "nonconverged";
+
+export type MirrorFlowRecoveryFailureReason =
+  | "command-error"
+  | "command-timeout"
+  | "notification-queue-overflow"
+  | "no-progress"
+  | "absolute-deadline"
+  | "attempts-exhausted";
+
+export interface MirrorFlowRecoveryObservation {
+  readonly semanticPaneId: string;
+  readonly phase: MirrorFlowRecoveryPhase;
+  readonly recoveryOrdinal: number;
+  readonly paneIncarnation: number;
+  readonly outputOrdinal: number;
+  readonly failureReason: MirrorFlowRecoveryFailureReason | null;
+  /** Monotonic time from this recovery's start, bounded by its absolute lease. */
+  readonly elapsedMicros: number;
+  /** Private full-snapshot fingerprints never leave this module. */
+  readonly fingerprintExact: boolean | null;
+  readonly confirmationOrdinal: number;
+  readonly collectorStarted: boolean;
+  readonly collectorLastCompletedOrdinal: number;
+  readonly collectorCaptureLineCount: number;
+  readonly collectorCaptureByteCount: number;
+  readonly collectorContinueObserved: boolean;
+  readonly collectorStatusObserved: boolean;
+  readonly collectorObserverEmissionObserved: boolean;
+  readonly collectorFailureReason: AtomicPaneSnapshotFailureReason | null;
+}
 
 export interface SessionChannelOptions {
   session: string;
@@ -108,6 +181,13 @@ export interface SessionChannelOptions {
   /** Debounce scheduler for the truth sync — injectable for tests. Returns a
    *  cancel function. */
   scheduleSync?: (callback: () => void, delayMs: number) => () => void;
+  scheduleRecovery?: (callback: () => void, delayMs: number) => () => void;
+  recoveryNowMs?: () => number;
+  generateAtomicHookNonce?: () => string;
+  internalReadHookEmission?: (
+    runtimePaneId: string,
+    marker: string,
+  ) => { readonly bufferName: string; readonly signalChannel: string; readonly record: string };
   /** The channel died underneath us (tmux exited or detached the client). */
   onExit?: () => void;
   /** Event-driven proof that a non-control tmux client is actively attached. */
@@ -124,6 +204,7 @@ export interface SessionChannelOptions {
     ageMs: number | null,
     timing?: MirrorOutputTiming,
   ) => void;
+  onFlowRecoveryObserved?: (observation: MirrorFlowRecoveryObservation) => void;
 }
 
 export interface PaneSubscriptionHandle {
@@ -156,7 +237,97 @@ interface PaneRecord {
   active: boolean;
   windowRuntimeId: string | null;
   readonly subs: Set<SubRecord>;
+  incarnation: number;
 }
+
+interface RecoveryRecord {
+  readonly ordinal: number;
+  readonly runtimeId: string;
+  readonly paneIncarnation: number;
+  readonly reason: "backpressure" | "requested";
+  readonly startedAtMs: number;
+  retired: boolean;
+  continueReply: boolean;
+  continueNotify: boolean;
+  stage: "continue" | "provisional" | "final-continue" | "quiet" | "final" | "confirm";
+  attempts: number;
+  reseedOrdinal: number;
+  outputOrdinal: number;
+  candidateFingerprint: string | null;
+  confirmationFingerprint: string | null;
+  confirmationOrdinal: number;
+  atomicCollectorNonce: string | null;
+  collectorStarted: boolean;
+  collectorLastCompletedOrdinal: number;
+  collectorCaptureLineCount: number;
+  collectorCaptureByteCount: number;
+  collectorContinueObserved: boolean;
+  collectorStatusObserved: boolean;
+  collectorObserverEmissionObserved: boolean;
+  collectorFailureReason: AtomicPaneSnapshotFailureReason | null;
+  cancelQuiet: (() => void) | null;
+  cancelCommandDeadline: (() => void) | null;
+  cancelNoProgressDeadline: (() => void) | null;
+  cancelAbsoluteDeadline: (() => void) | null;
+}
+
+interface ReseedResult {
+  readonly ok: boolean;
+  readonly fingerprint: string | null;
+  readonly publish: () => boolean;
+  readonly hold: () => void;
+}
+
+const FAILED_RESEED_RESULT: ReseedResult = Object.freeze({
+  ok: false,
+  fingerprint: null,
+  publish: () => false,
+  hold: () => {},
+});
+
+function snapshotFingerprint(
+  captureLines: readonly string[],
+  cursorLine: string,
+  fallbackSize: { cols: number; rows: number } | null,
+): string {
+  const hash = createHash("sha256");
+  const append = (bytes: Uint8Array): void => {
+    const length = Buffer.allocUnsafe(4);
+    length.writeUInt32BE(bytes.byteLength);
+    hash.update(length);
+    hash.update(bytes);
+  };
+  hash.update("tmux-ide/recovery-snapshot/v1\0");
+  const count = Buffer.allocUnsafe(4);
+  count.writeUInt32BE(captureLines.length);
+  hash.update(count);
+  for (const line of captureLines) append(Buffer.from(line, "latin1"));
+  append(Buffer.from(cursorLine, "utf8"));
+  append(
+    Buffer.from(
+      fallbackSize ? `${fallbackSize.cols}x${fallbackSize.rows}` : "no-layout-fallback",
+      "ascii",
+    ),
+  );
+  return hash.digest("hex");
+}
+
+function tmuxSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+interface ContinueNotificationOwner {
+  readonly kind: "owner";
+  readonly recovery: RecoveryRecord;
+}
+
+interface ContinueNotificationDebt {
+  readonly kind: "debt";
+  count: number;
+  saturated: boolean;
+}
+
+type ContinueNotificationEntry = ContinueNotificationOwner | ContinueNotificationDebt;
 
 interface WindowRecord {
   runtimeId: string;
@@ -195,6 +366,11 @@ export class SessionChannel {
   private cancelSync: (() => void) | null = null;
   private disposed = false;
   private nativeClientProbePending = false;
+  private paneIncarnation = 0;
+  private recoveryOrdinal = 0;
+  private readonly outputOrdinals = new Map<string, number>();
+  private readonly recoveries = new Map<string, RecoveryRecord>();
+  private readonly continueNotificationQueues = new Map<string, ContinueNotificationEntry[]>();
   private trustedInventoryFlight: Promise<TrustedMirrorSessionInventory> | null = null;
   private trustedInventoryFlightSessionId: string | null = null;
   private attachedIdentity: { sessionName: string; runtimeSessionId: string } | null = null;
@@ -375,15 +551,19 @@ export class SessionChannel {
     pane.subs.add(sub);
     // A paused pane gains an unfrozen watcher: release the park before the
     // seed so the capture reflects a flowing pane.
-    if (this.ledger.isRequested(pane.runtimeId)) this.ledger.clearRequest(pane.runtimeId);
-    if (this.ledger.isBackpressured(pane.runtimeId)) this.continuePane(pane.runtimeId);
-    this.reseed(sub);
+    const recoveryReason = this.ledger.isRequested(pane.runtimeId)
+      ? "requested"
+      : this.ledger.isBackpressured(pane.runtimeId)
+        ? "backpressure"
+        : null;
+    if (recoveryReason) this.beginRecovery(pane, recoveryReason);
+    else this.reseedPlain(sub);
     this.emitLayoutSnapshot(sub);
     return {
       semanticPaneId,
       freeze: () => this.freeze(sub),
       thaw: () => this.thaw(sub),
-      reseed: () => this.reseed(sub),
+      reseed: () => this.reseedPlain(sub),
       sendText: (text) => {
         if (!sub.closed) this.input.literal(sub.pane.runtimeId, text);
       },
@@ -484,6 +664,8 @@ export class SessionChannel {
     this.settleFirstJoin();
     this.cancelSync?.();
     this.cancelSync = null;
+    for (const runtime of [...this.recoveries.keys()]) this.cancelRecovery(runtime);
+    this.continueNotificationQueues.clear();
     this.discovery.dispose();
     this.input.flush();
     for (const pane of this.panesByRuntime.values()) {
@@ -513,23 +695,50 @@ export class SessionChannel {
     }
     const pane = this.panesByRuntime.get(runtimePane);
     if (!pane) return;
+    const outputOrdinal = (this.outputOrdinals.get(runtimePane) ?? 0) + 1;
+    this.outputOrdinals.set(runtimePane, outputOrdinal);
     this.opts.onOutputObserved?.(pane.semanticId, ageMs, timing);
+    let overflowed = false;
     for (const sub of pane.subs) {
       if (sub.frozen || sub.closed) continue;
       for (const event of sub.feed.delta(data)) sub.onEvent(event);
+      if (sub.feed.takeOverflowed()) overflowed = true;
     }
+    if (overflowed) this.restartRecoveryAfterOutputOverflow(pane);
+    this.noteRecoveryOutput(pane, outputOrdinal);
   }
 
   // ── Seed / reseed (the atomic recipe) ────────────────────────────────────
 
-  private reseed(sub: SubRecord): void {
-    if (sub.closed || this.disposed) return;
+  private reseed(
+    sub: SubRecord,
+    onSettled?: (result: ReseedResult) => void,
+    deferPublish = false,
+  ): void {
+    if (sub.closed || sub.frozen || this.disposed) {
+      onSettled?.(FAILED_RESEED_RESULT);
+      return;
+    }
     const runtime = sub.pane.runtimeId;
     const epoch = sub.feed.beginReseed();
+    let settled = false;
+    let captureSucceeded = false;
+    let markerRetired = false;
+    let captureLines: readonly string[] | null = null;
+    const settle = (result: ReseedResult) => {
+      if (settled) return;
+      settled = true;
+      onSettled?.(result);
+    };
     // Keystroke ordering: pending coalesced input leaves before the probes.
     this.input.flush();
     const history = this.opts.historyLines ?? DEFAULT_HISTORY_LINES;
     const internalReadMarker = registerInternalReadOperation(runtime);
+    const retireMarker = (): void => {
+      if (markerRetired) return;
+      markerRetired = true;
+      this.retireInternalReadMarker(runtime, internalReadMarker);
+    };
     // Both probes ride one write burst; the FIFO reply order is the seam.
     this.io.commandListInline(
       `set-option -p -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p -e -J -S -${history} -t ${runtime}`,
@@ -540,29 +749,83 @@ export class SessionChannel {
           // Successful captures consume the marker atomically inside the tmux
           // after-capture-pane hook. The command-list also prevents a concurrent
           // mirror from stealing the marker. Only failures need cleanup.
-          this.io.send(`set-option -pu -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION}`);
+          retireMarker();
           sub.feed.abort(epoch);
+          settle(FAILED_RESEED_RESULT);
           return;
         }
+        captureSucceeded = true;
+        if (sub.closed || sub.frozen || this.disposed) {
+          sub.feed.abort(epoch);
+          settle(FAILED_RESEED_RESULT);
+          return;
+        }
+        captureLines = [...reply.lines];
         sub.feed.captureReply(epoch, reply.lines);
       },
     );
     this.io.commandInline(
-      `display-message -p -t ${runtime} "#{cursor_x} #{cursor_y} #{pane_width} #{pane_height}"`,
+      `display-message -p -t ${runtime} "${RECOVERY_CURSOR_PROBE_FORMAT}"`,
       (reply) => {
-        if (!reply.ok) {
+        if (sub.closed || sub.frozen || this.disposed) {
           sub.feed.abort(epoch);
+          settle(FAILED_RESEED_RESULT);
           return;
         }
-        const events = sub.feed.cursorReply(
-          epoch,
-          reply.lines[0] ?? "",
-          this.layoutSizeFor(runtime),
-        );
-        for (const event of events) {
-          if (!sub.closed) sub.onEvent(event);
+        if (!reply.ok) {
+          if (!captureSucceeded) retireMarker();
+          sub.feed.abort(epoch);
+          settle(FAILED_RESEED_RESULT);
+          return;
         }
+        const cursorLine = reply.lines[0] ?? "";
+        const fallbackSize = this.layoutSizeFor(runtime);
+        const events = sub.feed.cursorReply(epoch, cursorLine, fallbackSize);
+        let published = false;
+        const publish = (): boolean => {
+          if (published) return true;
+          if (sub.closed || sub.frozen || this.disposed) return false;
+          published = true;
+          for (const event of events) sub.onEvent(event);
+          return true;
+        };
+        const ok = events.length > 0 && !sub.closed && captureLines !== null;
+        const result = {
+          ok,
+          fingerprint: ok ? snapshotFingerprint(captureLines!, cursorLine, fallbackSize) : null,
+          publish,
+          hold: () => sub.feed.quarantine(epoch),
+        } satisfies ReseedResult;
+        if (!deferPublish) publish();
+        settle(result);
       },
+    );
+  }
+
+  private reseedPlain(sub: SubRecord): void {
+    this.reseed(sub, ({ ok }) => {
+      if (
+        ok ||
+        sub.closed ||
+        sub.frozen ||
+        this.disposed ||
+        this.recoveries.has(sub.pane.runtimeId) ||
+        this.panesByRuntime.get(sub.pane.runtimeId) !== sub.pane
+      )
+        return;
+      this.beginLocalOverflowRecovery(sub.pane);
+    });
+  }
+
+  private retireInternalReadMarker(runtime: string, marker: string): void {
+    if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtime))
+      throw new TypeError("internal read cleanup requires a runtime pane id");
+    retireInternalReadOperation(marker, runtime);
+    // Pane capture phases overlap under cancellation. Clear only the exact
+    // failed marker so a late A callback cannot erase the newer B authority.
+    this.io.send(
+      `if-shell -t ${runtime} -F "#{==:#{${INTERNAL_READ_OPERATION_OPTION}},${marker}}" ` +
+        `"set-option -pu -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION}" ""`,
     );
   }
 
@@ -583,6 +846,7 @@ export class SessionChannel {
     const pane = sub.pane;
     const allFrozen = [...pane.subs].every((candidate) => candidate.frozen || candidate.closed);
     if (allFrozen) {
+      this.cancelRecovery(pane.runtimeId);
       this.ledger.requestPause(pane.runtimeId);
       this.io.send(`refresh-client -A '${pane.runtimeId}:pause'`);
     }
@@ -592,13 +856,9 @@ export class SessionChannel {
     if (!sub.frozen || sub.closed) return;
     sub.frozen = false;
     const runtime = sub.pane.runtimeId;
-    if (this.ledger.isRequested(runtime) || this.ledger.isBackpressured(runtime)) {
-      this.ledger.clearRequest(runtime);
-      this.continuePane(runtime);
-    }
-    sub.onEvent({ type: "flow", state: "resumed", reason: "requested" });
-    this.reseed(sub);
-    // Any recovery recovers every sticky-paused sibling (spike policy).
+    if (this.ledger.isRequested(runtime) || this.ledger.isBackpressured(runtime))
+      this.beginRecovery(sub.pane, "requested");
+    else this.reseedPlain(sub);
     this.recoverSticky();
   }
 
@@ -607,19 +867,851 @@ export class SessionChannel {
     this.ledger.noteContinued(runtime);
   }
 
+  private scheduleRecovery(callback: () => void, delayMs: number): () => void {
+    if (this.opts.scheduleRecovery) return this.opts.scheduleRecovery(callback, delayMs);
+    const timer = setTimeout(callback, delayMs);
+    return () => clearTimeout(timer);
+  }
+
+  private observeRecovery(
+    pane: PaneRecord,
+    recovery: RecoveryRecord,
+    phase: MirrorFlowRecoveryPhase,
+    failureReason: MirrorFlowRecoveryFailureReason | null = null,
+    fingerprintExact: boolean | null = null,
+  ): void {
+    const elapsedMicros = Math.min(
+      RECOVERY_ABSOLUTE_DEADLINE_MS * 1_000,
+      Math.max(0, Math.floor((this.recoveryNowMs() - recovery.startedAtMs) * 1_000)),
+    );
+    this.opts.onFlowRecoveryObserved?.(
+      Object.freeze({
+        semanticPaneId: pane.semanticId,
+        phase,
+        recoveryOrdinal: recovery.ordinal,
+        paneIncarnation: recovery.paneIncarnation,
+        outputOrdinal: this.outputOrdinals.get(recovery.runtimeId) ?? 0,
+        failureReason,
+        elapsedMicros,
+        fingerprintExact,
+        confirmationOrdinal: recovery.confirmationOrdinal,
+        collectorStarted: recovery.collectorStarted,
+        collectorLastCompletedOrdinal: recovery.collectorLastCompletedOrdinal,
+        collectorCaptureLineCount: recovery.collectorCaptureLineCount,
+        collectorCaptureByteCount: recovery.collectorCaptureByteCount,
+        collectorContinueObserved: recovery.collectorContinueObserved,
+        collectorStatusObserved: recovery.collectorStatusObserved,
+        collectorObserverEmissionObserved: recovery.collectorObserverEmissionObserved,
+        collectorFailureReason: recovery.collectorFailureReason,
+      }),
+    );
+  }
+
+  private recoveryNowMs(): number {
+    return this.opts.recoveryNowMs?.() ?? performance.now();
+  }
+
+  private recoveryPane(recovery: RecoveryRecord): PaneRecord | null {
+    const pane = this.panesByRuntime.get(recovery.runtimeId);
+    return !this.disposed &&
+      this.recoveries.get(recovery.runtimeId) === recovery &&
+      pane?.incarnation === recovery.paneIncarnation
+      ? !recovery.retired
+        ? pane
+        : null
+      : null;
+  }
+
+  private cancelRecovery(runtime: string): void {
+    const recovery = this.recoveries.get(runtime);
+    if (!recovery) return;
+    recovery.retired = true;
+    recovery.cancelQuiet?.();
+    recovery.cancelCommandDeadline?.();
+    recovery.cancelNoProgressDeadline?.();
+    recovery.cancelAbsoluteDeadline?.();
+    if (recovery.atomicCollectorNonce)
+      this.io.retireAtomicPaneSnapshotCollector?.(recovery.atomicCollectorNonce, "retired");
+    recovery.atomicCollectorNonce = null;
+    this.recoveries.delete(runtime);
+    this.retireContinueNotificationOwner(recovery);
+    const pane = this.panesByRuntime.get(runtime);
+    if (pane?.incarnation === recovery.paneIncarnation)
+      for (const sub of pane.subs) sub.feed.abortCurrent();
+  }
+
+  private beginRecovery(pane: PaneRecord, reason: "backpressure" | "requested"): void {
+    const runtime = pane.runtimeId;
+    this.cancelRecovery(runtime);
+    const recovery: RecoveryRecord = {
+      ordinal: ++this.recoveryOrdinal,
+      runtimeId: runtime,
+      paneIncarnation: pane.incarnation,
+      reason,
+      startedAtMs: this.recoveryNowMs(),
+      retired: false,
+      continueReply: false,
+      continueNotify: false,
+      stage: "continue",
+      attempts: 0,
+      reseedOrdinal: 0,
+      outputOrdinal: this.outputOrdinals.get(runtime) ?? 0,
+      candidateFingerprint: null,
+      confirmationFingerprint: null,
+      confirmationOrdinal: 0,
+      atomicCollectorNonce: null,
+      collectorStarted: false,
+      collectorLastCompletedOrdinal: -1,
+      collectorCaptureLineCount: 0,
+      collectorCaptureByteCount: 0,
+      collectorContinueObserved: false,
+      collectorStatusObserved: false,
+      collectorObserverEmissionObserved: false,
+      collectorFailureReason: null,
+      cancelQuiet: null,
+      cancelCommandDeadline: null,
+      cancelNoProgressDeadline: null,
+      cancelAbsoluteDeadline: null,
+    };
+    this.recoveries.set(runtime, recovery);
+    for (const sub of pane.subs) {
+      if (!sub.frozen && !sub.closed) sub.feed.abortCurrent();
+    }
+    this.observeRecovery(pane, recovery, "pause");
+    this.observeRecovery(pane, recovery, "continue-request");
+    recovery.cancelCommandDeadline = this.scheduleRecovery(() => {
+      if (this.recoveryPane(recovery) && !recovery.continueReply)
+        this.failRecovery(recovery, "command-timeout");
+    }, RECOVERY_COMMAND_DEADLINE_MS);
+    const queue = this.continueNotificationQueues.get(runtime) ?? [];
+    if (queue.length >= MAX_CONTINUE_NOTIFICATION_QUEUE) {
+      this.failRecovery(recovery, "notification-queue-overflow");
+      return;
+    }
+    queue.push({ kind: "owner", recovery });
+    this.continueNotificationQueues.set(runtime, queue);
+    this.io.send(`refresh-client -A '${runtime}:continue'`, (reply) => {
+      const current = this.recoveryPane(recovery);
+      if (!reply.ok) {
+        this.removeContinueNotificationOwner(recovery);
+        if (current) this.failRecovery(recovery, "command-error");
+        return;
+      }
+      recovery.continueReply = true;
+      if (!current) {
+        this.retireContinueNotificationOwner(recovery);
+        return;
+      }
+      recovery.cancelCommandDeadline?.();
+      recovery.cancelCommandDeadline = null;
+      this.beginRecoveryConvergence(recovery);
+      this.observeRecovery(current, recovery, "continue-reply");
+      this.noteRecoveryProgress(recovery);
+      this.beginFinalRecovery(recovery);
+    });
+  }
+
+  private beginLocalOverflowRecovery(pane: PaneRecord): void {
+    const runtime = pane.runtimeId;
+    this.cancelRecovery(runtime);
+    const recovery: RecoveryRecord = {
+      ordinal: ++this.recoveryOrdinal,
+      runtimeId: runtime,
+      paneIncarnation: pane.incarnation,
+      reason: "backpressure",
+      startedAtMs: this.recoveryNowMs(),
+      retired: false,
+      continueReply: true,
+      continueNotify: true,
+      stage: "continue",
+      attempts: 0,
+      reseedOrdinal: 0,
+      outputOrdinal: this.outputOrdinals.get(runtime) ?? 0,
+      candidateFingerprint: null,
+      confirmationFingerprint: null,
+      confirmationOrdinal: 0,
+      atomicCollectorNonce: null,
+      collectorStarted: false,
+      collectorLastCompletedOrdinal: -1,
+      collectorCaptureLineCount: 0,
+      collectorCaptureByteCount: 0,
+      collectorContinueObserved: false,
+      collectorStatusObserved: false,
+      collectorObserverEmissionObserved: false,
+      collectorFailureReason: null,
+      cancelQuiet: null,
+      cancelCommandDeadline: null,
+      cancelNoProgressDeadline: null,
+      cancelAbsoluteDeadline: null,
+    };
+    this.recoveries.set(runtime, recovery);
+    for (const sub of pane.subs) {
+      if (!sub.frozen && !sub.closed)
+        sub.onEvent({ type: "flow", state: "paused", reason: "backpressure" });
+    }
+    this.observeRecovery(pane, recovery, "pause");
+    this.beginRecoveryConvergence(recovery);
+    this.beginFinalRecovery(recovery);
+  }
+
+  private beginRecoveryConvergence(recovery: RecoveryRecord): void {
+    if (recovery.cancelAbsoluteDeadline) return;
+    recovery.cancelAbsoluteDeadline = this.scheduleRecovery(() => {
+      if (this.recoveryPane(recovery)) this.failRecovery(recovery, "absolute-deadline");
+    }, RECOVERY_ABSOLUTE_DEADLINE_MS);
+    this.noteRecoveryProgress(recovery);
+  }
+
+  private noteRecoveryProgress(recovery: RecoveryRecord): void {
+    if (!this.recoveryPane(recovery) || !recovery.cancelAbsoluteDeadline) return;
+    recovery.cancelNoProgressDeadline?.();
+    recovery.cancelNoProgressDeadline = this.scheduleRecovery(() => {
+      if (this.recoveryPane(recovery)) this.failRecovery(recovery, "no-progress");
+    }, RECOVERY_NO_PROGRESS_DEADLINE_MS);
+  }
+
+  private noteAtomicCollectorProgress(
+    recovery: RecoveryRecord,
+    nonce: string,
+    progress: AtomicPaneSnapshotProgress,
+  ): void {
+    if (
+      this.recoveryPane(recovery) === null ||
+      recovery.atomicCollectorNonce !== nonce ||
+      !progress.started
+    )
+      return;
+    recovery.collectorStarted = true;
+    recovery.collectorLastCompletedOrdinal = Math.max(
+      recovery.collectorLastCompletedOrdinal,
+      progress.lastCompletedOrdinal,
+    );
+    recovery.collectorCaptureLineCount = Math.max(
+      recovery.collectorCaptureLineCount,
+      progress.captureLineCount,
+    );
+    recovery.collectorCaptureByteCount = Math.max(
+      recovery.collectorCaptureByteCount,
+      progress.captureByteCount,
+    );
+    recovery.collectorContinueObserved ||= progress.continueObserved;
+    recovery.collectorStatusObserved ||= progress.statusObserved;
+    recovery.collectorObserverEmissionObserved ||= progress.observerEmissionObserved;
+    this.noteRecoveryProgress(recovery);
+  }
+
+  private reseedRecoverySubscribers(
+    pane: PaneRecord,
+    recovery: RecoveryRecord,
+    done: (result: ReseedResult) => void,
+    deferPublish = false,
+  ): void {
+    if (this.io.armAtomicPaneSnapshotCollector && this.io.retireAtomicPaneSnapshotCollector) {
+      this.reseedRecoverySubscribersAtomic(pane, recovery, done, deferPublish);
+      return;
+    }
+    const live = [...pane.subs].filter((sub) => !sub.frozen && !sub.closed);
+    if (live.length === 0) {
+      done(FAILED_RESEED_RESULT);
+      return;
+    }
+    const participants = live.map((sub) => Object.freeze({ sub, epoch: sub.feed.beginReseed() }));
+    const reseedOrdinal = ++recovery.reseedOrdinal;
+    let settled = false;
+    let captureSucceeded = false;
+    let markerRetired = false;
+    let captureLines: readonly string[] | null = null;
+    // One pane authority capture is enough for every subscriber. Per-feed
+    // epochs still independently fence delivery, while membership is frozen
+    // across both FIFO replies so no subscriber can join half a snapshot.
+    this.input.flush();
+    const history = this.opts.historyLines ?? DEFAULT_HISTORY_LINES;
+    const internalReadMarker = registerInternalReadOperation(pane.runtimeId);
+    const participantsExact = (): boolean => {
+      if (
+        this.recoveryPane(recovery) !== pane ||
+        recovery.reseedOrdinal !== reseedOrdinal ||
+        participants.some(
+          ({ sub }) => sub.closed || sub.frozen || sub.pane !== pane || !pane.subs.has(sub),
+        )
+      )
+        return false;
+      const current = [...pane.subs].filter((sub) => !sub.frozen && !sub.closed);
+      return (
+        current.length === participants.length &&
+        current.every((sub) => participants.some((participant) => participant.sub === sub))
+      );
+    };
+    const retireMarker = (): void => {
+      if (markerRetired) return;
+      markerRetired = true;
+      this.retireInternalReadMarker(pane.runtimeId, internalReadMarker);
+    };
+    const fail = (): void => {
+      if (settled) return;
+      settled = true;
+      if (!captureSucceeded) retireMarker();
+      for (const { sub } of participants) sub.feed.abortCurrent();
+      done(FAILED_RESEED_RESULT);
+    };
+    this.io.commandListInline(
+      `set-option -p -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p -e -J -S -${history} -t ${pane.runtimeId}`,
+      2,
+      1,
+      (reply) => {
+        if (!reply.ok) {
+          fail();
+          return;
+        }
+        captureSucceeded = true;
+        if (!participantsExact()) {
+          fail();
+          return;
+        }
+        captureLines = Object.freeze([...reply.lines]);
+        for (const { sub, epoch } of participants) sub.feed.captureReply(epoch, captureLines);
+      },
+    );
+    this.io.commandInline(
+      `display-message -p -t ${pane.runtimeId} "${RECOVERY_CURSOR_PROBE_FORMAT}"`,
+      (reply) => {
+        if (settled) return;
+        if (!participantsExact() || captureLines === null || !reply.ok) {
+          fail();
+          return;
+        }
+        const cursorLine = reply.lines[0] ?? "";
+        const fallbackSize = this.layoutSizeFor(pane.runtimeId);
+        const deliveries = participants.map(({ sub, epoch }) => ({
+          sub,
+          epoch,
+          events: sub.feed.cursorReply(epoch, cursorLine, fallbackSize),
+        }));
+        if (!participantsExact() || deliveries.some(({ events }) => events.length === 0)) {
+          fail();
+          return;
+        }
+        let published = false;
+        const publish = (): boolean => {
+          if (published) return true;
+          if (!participantsExact()) return false;
+          published = true;
+          for (const { sub, events } of deliveries) for (const event of events) sub.onEvent(event);
+          return participantsExact();
+        };
+        if (!deferPublish && !publish()) {
+          fail();
+          return;
+        }
+        for (const { sub, epoch } of deliveries) sub.feed.quarantine(epoch);
+        settled = true;
+        done({
+          ok: true,
+          fingerprint: snapshotFingerprint(captureLines, cursorLine, fallbackSize),
+          publish,
+          hold: () => {},
+        });
+      },
+    );
+  }
+
+  private reseedRecoverySubscribersAtomic(
+    pane: PaneRecord,
+    recovery: RecoveryRecord,
+    done: (result: ReseedResult) => void,
+    deferPublish: boolean,
+  ): void {
+    const live = [...pane.subs].filter((sub) => !sub.frozen && !sub.closed);
+    if (live.length === 0) {
+      done(FAILED_RESEED_RESULT);
+      return;
+    }
+    const participants = live.map((sub) => Object.freeze({ sub, epoch: sub.feed.beginReseed() }));
+    const reseedOrdinal = ++recovery.reseedOrdinal;
+    const nonce = this.opts.generateAtomicHookNonce?.() ?? randomBytes(24).toString("hex");
+    if (!/^[0-9a-f]{32,128}$/u.test(nonce)) {
+      for (const { sub } of participants) sub.feed.abortCurrent();
+      done(FAILED_RESEED_RESULT);
+      return;
+    }
+    const hookName = `@tmux_ide_atomic_${nonce}`;
+    const expectedName = `@tmux_ide_atomic_expected_${nonce}`;
+    const ownerName = `@tmux_ide_atomic_owner_${nonce}`;
+    const internalReadMarker = registerInternalReadOperation(pane.runtimeId);
+    recovery.atomicCollectorNonce = nonce;
+    recovery.collectorStarted = false;
+    recovery.collectorLastCompletedOrdinal = -1;
+    recovery.collectorCaptureLineCount = 0;
+    recovery.collectorCaptureByteCount = 0;
+    recovery.collectorContinueObserved = false;
+    recovery.collectorStatusObserved = false;
+    recovery.collectorObserverEmissionObserved = false;
+    recovery.collectorFailureReason = null;
+    const participantsExact = (): boolean => {
+      if (
+        this.recoveryPane(recovery) !== pane ||
+        recovery.reseedOrdinal !== reseedOrdinal ||
+        participants.some(
+          ({ sub }) => sub.closed || sub.frozen || sub.pane !== pane || !pane.subs.has(sub),
+        )
+      )
+        return false;
+      const current = [...pane.subs].filter((sub) => !sub.frozen && !sub.closed);
+      return (
+        current.length === participants.length &&
+        current.every((sub) => participants.some((participant) => participant.sub === sub))
+      );
+    };
+    let settled = false;
+    let observerEmitted = false;
+    const hookOwned = `#{==:#{${ownerName}},${nonce}}`;
+    const hookUnchanged = `#{==:#{${hookName}},#{${expectedName}}}`;
+    const cleanupHook = (): void => {
+      this.io.commandListInline(
+        `if-shell -t ${pane.runtimeId} -F "#{&&:${hookOwned},${hookUnchanged}}" ` +
+          `${tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${hookName}`)} ` +
+          tmuxSingleQuote(
+            `display-message -p -t ${pane.runtimeId} tmux-ide-atomic-cleanup-hook-skip-v1:${nonce}`,
+          ),
+        2,
+        1,
+        () => {},
+      );
+      this.io.commandListInline(
+        `if-shell -t ${pane.runtimeId} -F "${hookOwned}" ` +
+          tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${expectedName}`) +
+          ` ${tmuxSingleQuote(
+            `display-message -p -t ${pane.runtimeId} tmux-ide-atomic-cleanup-expected-skip-v1:${nonce}`,
+          )}`,
+        2,
+        1,
+        () => {},
+      );
+      this.io.commandListInline(
+        `if-shell -t ${pane.runtimeId} -F "${hookOwned}" ` +
+          tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${ownerName}`) +
+          ` ${tmuxSingleQuote(
+            `display-message -p -t ${pane.runtimeId} tmux-ide-atomic-cleanup-owner-skip-v1:${nonce}`,
+          )}`,
+        2,
+        1,
+        () => {},
+      );
+    };
+    const fail = (statusObserved = false): void => {
+      if (settled) return;
+      settled = true;
+      if (recovery.atomicCollectorNonce === nonce) recovery.atomicCollectorNonce = null;
+      cleanupHook();
+      if (!statusObserved && !observerEmitted)
+        this.retireInternalReadMarker(pane.runtimeId, internalReadMarker);
+      for (const { sub } of participants) sub.feed.abortCurrent();
+      done(FAILED_RESEED_RESULT);
+    };
+    let observer: {
+      readonly bufferName: string;
+      readonly signalChannel: string;
+      readonly record: string;
+    } | null;
+    try {
+      observer = this.opts.internalReadHookEmission?.(pane.runtimeId, internalReadMarker) ?? null;
+    } catch {
+      fail();
+      return;
+    }
+    const safeObserver =
+      observer !== null &&
+      /^[A-Za-z0-9._-]{1,256}$/u.test(observer.bufferName) &&
+      /^[A-Za-z0-9._-]{1,256}$/u.test(observer.signalChannel) &&
+      /^[A-Za-z0-9%:._|-]{1,1024}$/u.test(observer.record);
+    if (!safeObserver) {
+      fail();
+      return;
+    }
+    const sentinel = (kind: string): string =>
+      `display-message -p -t ${pane.runtimeId} ` + `"%tmux-ide-atomic-v1 ${nonce} ${kind}"`;
+    const observerCommands =
+      ` ; set-buffer -a -b ${observer!.bufferName} ${observer!.record}` +
+      ` ; wait-for -S ${observer!.signalChannel}`;
+    const body =
+      `set-option -po -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker}` +
+      ` ; ${sentinel("start")}` +
+      ` ; capture-pane -p -e -J -S -${this.opts.historyLines ?? DEFAULT_HISTORY_LINES} -t ${pane.runtimeId}` +
+      ` ; ${sentinel("capture-end")}` +
+      ` ; display-message -p -t ${pane.runtimeId} "${RECOVERY_CURSOR_PROBE_FORMAT}"` +
+      ` ; ${sentinel("cursor-end")}` +
+      ` ; refresh-client -A ${pane.runtimeId}:continue` +
+      observerCommands +
+      ` ; if-shell -t ${pane.runtimeId} -F ` +
+      `"#{==:#{${INTERNAL_READ_OPERATION_OPTION}},${internalReadMarker}}" ` +
+      tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION}`) +
+      ` ${tmuxSingleQuote(`${sentinel("marker-rejected")}`)}` +
+      ` ; ${sentinel("status-ok")}` +
+      ` ; set-option -pu -t ${pane.runtimeId} ${hookName}` +
+      ` ; ${sentinel("complete")}`;
+    this.input.flush();
+    const invoke = (reply: { ok: boolean }): void => {
+      if (!reply.ok || !participantsExact()) {
+        fail();
+        return;
+      }
+      const remaining = Math.floor(
+        RECOVERY_ABSOLUTE_DEADLINE_MS - (this.recoveryNowMs() - recovery.startedAtMs),
+      );
+      if (remaining <= 0) {
+        fail();
+        return;
+      }
+      const armed = this.io.armAtomicPaneSnapshotCollector!(
+        {
+          nonce,
+          runtimePaneId: pane.runtimeId,
+          maxCaptureBytes: RECOVERY_CAPTURE_MAX_BYTES,
+          maxCaptureLines: RECOVERY_CAPTURE_MAX_LINES,
+          maxCursorBytes: RECOVERY_CURSOR_MAX_BYTES,
+          observerCommandCount: 2,
+          onProgress: (progress) => this.noteAtomicCollectorProgress(recovery, nonce, progress),
+          onSettled: (result: AtomicPaneSnapshotResult) => {
+            if (recovery.atomicCollectorNonce === nonce) recovery.atomicCollectorNonce = null;
+            recovery.collectorStarted ||= result.started;
+            recovery.collectorLastCompletedOrdinal = Math.max(
+              recovery.collectorLastCompletedOrdinal,
+              result.lastCompletedOrdinal,
+            );
+            recovery.collectorCaptureLineCount = Math.max(
+              recovery.collectorCaptureLineCount,
+              result.captureLineCount,
+            );
+            recovery.collectorCaptureByteCount = Math.max(
+              recovery.collectorCaptureByteCount,
+              result.captureByteCount,
+            );
+            recovery.collectorContinueObserved ||= result.continueObserved;
+            recovery.collectorStatusObserved ||= result.statusObserved;
+            recovery.collectorObserverEmissionObserved ||= result.observerEmissionObserved;
+            recovery.collectorFailureReason = result.failureReason;
+            observerEmitted = result.observerEmissionObserved && safeObserver;
+            cleanupHook();
+            if (settled) return;
+            if (!result.ok || !participantsExact() || result.cursorLine === null) {
+              fail(result.statusObserved);
+              return;
+            }
+            const captureLines = Object.freeze([...result.captureLines]);
+            for (const { sub, epoch } of participants) sub.feed.captureReply(epoch, captureLines);
+            const fallbackSize = this.layoutSizeFor(pane.runtimeId);
+            const deliveries = participants.map(({ sub, epoch }) => ({
+              sub,
+              epoch,
+              events: sub.feed.cursorReply(epoch, result.cursorLine!, fallbackSize),
+            }));
+            if (!participantsExact() || deliveries.some(({ events }) => events.length === 0)) {
+              fail(true);
+              return;
+            }
+            let published = false;
+            const publish = (): boolean => {
+              if (published) return true;
+              if (!participantsExact()) return false;
+              published = true;
+              for (const { sub, events } of deliveries)
+                for (const event of events) sub.onEvent(event);
+              return participantsExact();
+            };
+            if (!deferPublish && !publish()) {
+              fail(true);
+              return;
+            }
+            for (const { sub, epoch } of deliveries) sub.feed.quarantine(epoch);
+            settled = true;
+            done({
+              ok: true,
+              fingerprint: snapshotFingerprint(captureLines, result.cursorLine, fallbackSize),
+              publish,
+              hold: () => {},
+            });
+          },
+        },
+        remaining,
+      );
+      if (!armed) {
+        fail();
+        return;
+      }
+      const rejected = `tmux-ide-atomic-invoke-rejected-v1:${nonce}`;
+      this.io.commandListInline(
+        `if-shell -t ${pane.runtimeId} -F "#{&&:${hookOwned},${hookUnchanged}}" ` +
+          `${tmuxSingleQuote(`set-hook -Rp -t ${pane.runtimeId} ${hookName}`)} ` +
+          tmuxSingleQuote(`display-message -p -t ${pane.runtimeId} ${rejected}`),
+        2,
+        1,
+        (hookReply) => {
+          if (!hookReply.ok || hookReply.lines.length > 0) {
+            this.io.retireAtomicPaneSnapshotCollector?.(nonce, "retired");
+            fail();
+          }
+        },
+      );
+    };
+    // Three owner-local create-only writes avoid a command-group partial-error
+    // ambiguity: every accepted step has its own ordered reply and any later
+    // failure can conditionally retire exactly the already-created prefix.
+    this.io.commandInline(
+      `set-option -po -t ${pane.runtimeId} ${ownerName} ${nonce}`,
+      (ownerReply) => {
+        if (!ownerReply.ok || !participantsExact()) {
+          fail();
+          return;
+        }
+        this.io.commandInline(
+          `set-option -po -t ${pane.runtimeId} ${expectedName} ${tmuxSingleQuote(body)}`,
+          (expectedReply) => {
+            if (!expectedReply.ok || !participantsExact()) {
+              fail();
+              return;
+            }
+            this.io.commandInline(
+              `set-option -po -t ${pane.runtimeId} ${hookName} ${tmuxSingleQuote(body)}`,
+              invoke,
+            );
+          },
+        );
+      },
+    );
+  }
+
+  private armRecoveryQuiet(recovery: RecoveryRecord, callback: () => void): void {
+    recovery.cancelQuiet?.();
+    recovery.cancelQuiet = this.scheduleRecovery(() => {
+      recovery.cancelQuiet = null;
+      if (this.recoveryPane(recovery)) callback();
+    }, RECOVERY_QUIET_MS);
+  }
+
+  private beginFinalRecovery(recovery: RecoveryRecord): void {
+    const pane = this.recoveryPane(recovery);
+    if (!pane) return;
+    if (recovery.attempts >= RECOVERY_MAX_ATTEMPTS) {
+      this.failRecovery(recovery, "attempts-exhausted");
+      return;
+    }
+    recovery.attempts += 1;
+    recovery.stage = "final";
+    this.noteRecoveryProgress(recovery);
+    // The final read is only a private candidate. Publishing it here can put
+    // expensive replica projection ahead of the confirmation timers and, more
+    // importantly, exposes a snapshot that has not yet survived the two-read
+    // authority proof.
+    this.reseedRecoverySubscribers(
+      pane,
+      recovery,
+      ({ ok, fingerprint }) => {
+        const current = this.recoveryPane(recovery);
+        if (!current) return;
+        if (!ok || fingerprint === null) {
+          this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
+          return;
+        }
+        recovery.outputOrdinal = this.outputOrdinals.get(recovery.runtimeId) ?? 0;
+        recovery.candidateFingerprint = fingerprint;
+        recovery.confirmationFingerprint = null;
+        recovery.confirmationOrdinal = 0;
+        recovery.stage = "confirm";
+        this.observeRecovery(current, recovery, "final-reseed");
+        this.noteRecoveryProgress(recovery);
+        this.armRecoveryQuiet(recovery, () => this.confirmRecovery(recovery));
+      },
+      true,
+    );
+  }
+
+  private confirmRecovery(recovery: RecoveryRecord): void {
+    const pane = this.recoveryPane(recovery);
+    if (!pane) return;
+    if ((this.outputOrdinals.get(recovery.runtimeId) ?? 0) !== recovery.outputOrdinal) {
+      this.beginFinalRecovery(recovery);
+      return;
+    }
+    recovery.stage = "final";
+    this.noteRecoveryProgress(recovery);
+    this.reseedRecoverySubscribers(
+      pane,
+      recovery,
+      ({ ok, fingerprint, publish }) => {
+        const current = this.recoveryPane(recovery);
+        if (!current) return;
+        if (!ok || fingerprint === null) {
+          this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
+          return;
+        }
+        const outputOrdinal = this.outputOrdinals.get(recovery.runtimeId) ?? 0;
+        const ordinalExact = outputOrdinal === recovery.outputOrdinal;
+        const candidateExact = ordinalExact && fingerprint === recovery.candidateFingerprint;
+        const consecutiveExact =
+          candidateExact &&
+          recovery.confirmationFingerprint !== null &&
+          fingerprint === recovery.confirmationFingerprint;
+        recovery.confirmationOrdinal += 1;
+        this.observeRecovery(current, recovery, "confirmation-reseed", null, consecutiveExact);
+        this.noteRecoveryProgress(recovery);
+        if (!ordinalExact) {
+          recovery.stage = "confirm";
+          this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
+          return;
+        }
+        if (!candidateExact) {
+          if (recovery.attempts >= RECOVERY_MAX_ATTEMPTS) {
+            this.failRecovery(recovery, "attempts-exhausted");
+            return;
+          }
+          // A changed confirmation replaces the private candidate without
+          // becoming observable. Two subsequent reads must confirm this truth.
+          recovery.attempts += 1;
+          recovery.candidateFingerprint = fingerprint;
+          recovery.confirmationFingerprint = null;
+          recovery.outputOrdinal = outputOrdinal;
+          recovery.stage = "confirm";
+          this.armRecoveryQuiet(recovery, () => this.confirmRecovery(recovery));
+          return;
+        }
+        if (!consecutiveExact) {
+          recovery.confirmationFingerprint = fingerprint;
+          recovery.outputOrdinal = outputOrdinal;
+          recovery.stage = "confirm";
+          this.armRecoveryQuiet(recovery, () => this.confirmRecovery(recovery));
+          return;
+        }
+        // This publisher belongs to the current second matching read, not the
+        // older candidate. Publish exactly once while every participant is
+        // still fenced, then synchronously retire recovery before downstream
+        // projection work can run.
+        if (!publish()) {
+          recovery.stage = "confirm";
+          this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
+          return;
+        }
+        this.convergeRecovery(current, recovery);
+      },
+      true,
+    );
+  }
+
+  private convergeRecovery(pane: PaneRecord, recovery: RecoveryRecord): void {
+    recovery.cancelCommandDeadline?.();
+    recovery.cancelCommandDeadline = null;
+    recovery.cancelNoProgressDeadline?.();
+    recovery.cancelNoProgressDeadline = null;
+    recovery.cancelAbsoluteDeadline?.();
+    recovery.cancelAbsoluteDeadline = null;
+    this.recoveries.delete(recovery.runtimeId);
+    recovery.retired = true;
+    this.retireContinueNotificationOwner(recovery);
+    this.ledger.noteContinued(recovery.runtimeId);
+    if (recovery.reason === "requested") this.ledger.clearRequest(recovery.runtimeId);
+    for (const sub of pane.subs) {
+      if (!sub.frozen && !sub.closed) {
+        sub.feed.releaseQuarantine();
+        sub.onEvent({ type: "flow", state: "resumed", reason: recovery.reason });
+      }
+    }
+    this.observeRecovery(pane, recovery, "converged", null, true);
+  }
+
+  private noteRecoveryOutput(pane: PaneRecord, outputOrdinal: number): void {
+    const recovery = this.recoveries.get(pane.runtimeId);
+    if (!recovery || recovery.paneIncarnation !== pane.incarnation) return;
+    recovery.outputOrdinal = outputOrdinal;
+    if (recovery.continueReply) this.noteRecoveryProgress(recovery);
+    if (recovery.stage === "quiet")
+      this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
+    else if (recovery.stage === "confirm")
+      this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
+  }
+
+  private restartRecoveryAfterOutputOverflow(pane: PaneRecord): void {
+    const recovery = this.recoveries.get(pane.runtimeId);
+    if (recovery?.paneIncarnation === pane.incarnation) {
+      if (recovery.stage === "quiet" || recovery.stage === "confirm")
+        this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
+      return;
+    }
+    this.beginLocalOverflowRecovery(pane);
+  }
+
+  private failRecovery(
+    recovery: RecoveryRecord,
+    failureReason: MirrorFlowRecoveryFailureReason,
+  ): void {
+    const pane = this.recoveryPane(recovery);
+    if (!pane) return;
+    recovery.cancelQuiet?.();
+    recovery.cancelQuiet = null;
+    recovery.cancelCommandDeadline?.();
+    recovery.cancelCommandDeadline = null;
+    recovery.cancelNoProgressDeadline?.();
+    recovery.cancelNoProgressDeadline = null;
+    recovery.cancelAbsoluteDeadline?.();
+    recovery.cancelAbsoluteDeadline = null;
+    recovery.retired = true;
+    const collectorNonce = recovery.atomicCollectorNonce;
+    recovery.atomicCollectorNonce = null;
+    if (collectorNonce) this.io.retireAtomicPaneSnapshotCollector?.(collectorNonce, "retired");
+    this.recoveries.delete(recovery.runtimeId);
+    this.retireContinueNotificationOwner(recovery);
+    for (const sub of pane.subs) sub.feed.abortCurrent();
+    this.observeRecovery(pane, recovery, "nonconverged", failureReason);
+  }
+
+  private removeContinueNotificationOwner(recovery: RecoveryRecord): void {
+    const queue = this.continueNotificationQueues.get(recovery.runtimeId);
+    if (!queue) return;
+    const index = queue.findIndex((entry) => entry.kind === "owner" && entry.recovery === recovery);
+    if (index < 0) return;
+    queue.splice(index, 1);
+    this.compactContinueNotificationQueue(recovery.runtimeId, queue);
+  }
+
+  private retireContinueNotificationOwner(recovery: RecoveryRecord): void {
+    if (!recovery.continueReply) return;
+    const queue = this.continueNotificationQueues.get(recovery.runtimeId);
+    if (!queue) return;
+    const index = queue.findIndex((entry) => entry.kind === "owner" && entry.recovery === recovery);
+    if (index < 0) return;
+    queue.splice(index, 1, { kind: "debt", count: 1, saturated: false });
+    this.compactContinueNotificationQueue(recovery.runtimeId, queue);
+  }
+
+  private compactContinueNotificationQueue(
+    runtime: string,
+    queue: ContinueNotificationEntry[],
+  ): void {
+    for (let index = 1; index < queue.length; ) {
+      const previous = queue[index - 1];
+      const current = queue[index];
+      if (previous?.kind !== "debt" || current?.kind !== "debt") {
+        index += 1;
+        continue;
+      }
+      const total = previous.count + current.count;
+      previous.count = Math.min(total, MAX_CONTINUE_NOTIFICATION_DEBT);
+      previous.saturated =
+        previous.saturated || current.saturated || total > MAX_CONTINUE_NOTIFICATION_DEBT;
+      queue.splice(index, 1);
+    }
+    if (queue.length === 0) this.continueNotificationQueues.delete(runtime);
+    else this.continueNotificationQueues.set(runtime, queue);
+  }
+
   /** Continue + reseed EVERY backpressure-paused pane that still has an
    *  unfrozen subscriber. %pause is sticky and hits quiet panes after any
    *  stall — recovering only the noisy pane leaves siblings dark. */
   private recoverSticky(): void {
     for (const runtime of this.ledger.stickyRecoverySet()) {
+      if (this.recoveries.has(runtime)) continue;
       const pane = this.panesByRuntime.get(runtime);
       const live = pane ? [...pane.subs].filter((sub) => !sub.frozen && !sub.closed) : [];
       if (live.length === 0) continue; // nobody watching: staying paused is free
-      this.continuePane(runtime);
-      for (const sub of live) {
-        sub.onEvent({ type: "flow", state: "resumed", reason: "backpressure" });
-        this.reseed(sub);
-      }
+      this.beginRecovery(pane!, "backpressure");
     }
   }
 
@@ -628,6 +1720,8 @@ export class SessionChannel {
     sub.closed = true;
     const pane = sub.pane;
     pane.subs.delete(sub);
+    if ([...pane.subs].every((candidate) => candidate.closed || candidate.frozen))
+      this.cancelRecovery(pane.runtimeId);
     // Ticket return on departure: a pane parked by a now-gone subscriber must
     // not stay paused forever.
     if (pane.subs.size === 0 && this.ledger.isRequested(pane.runtimeId)) {
@@ -651,6 +1745,7 @@ export class SessionChannel {
     if (name === "pause") {
       const runtime = rest.trim().split(/\s+/)[0] ?? "";
       if (!runtime.startsWith("%")) return;
+      this.cancelRecovery(runtime);
       this.ledger.notePause(runtime);
       const pane = this.panesByRuntime.get(runtime);
       if (pane) {
@@ -665,7 +1760,26 @@ export class SessionChannel {
     }
     if (name === "continue") {
       const runtime = rest.trim().split(/\s+/)[0] ?? "";
-      if (runtime.startsWith("%")) this.ledger.noteContinued(runtime);
+      if (runtime.startsWith("%")) {
+        const queue = this.continueNotificationQueues.get(runtime);
+        const entry = queue?.[0] ?? null;
+        if (entry?.kind === "debt") {
+          if (!entry.saturated) {
+            entry.count -= 1;
+            if (entry.count === 0) queue!.shift();
+          }
+          this.compactContinueNotificationQueue(runtime, queue!);
+        } else if (entry?.kind === "owner") {
+          queue!.shift();
+          this.compactContinueNotificationQueue(runtime, queue!);
+          const owner = entry.recovery;
+          const pane = this.recoveryPane(owner);
+          owner.continueNotify = true;
+          if (pane) {
+            this.observeRecovery(pane, owner, "continue-notify");
+          }
+        }
+      }
       return;
     }
     if (name === "layout-change") {
@@ -874,7 +1988,10 @@ export class SessionChannel {
         pane.windowRuntimeId = nextWindowRuntimeId;
         continue;
       }
+      this.cancelRecovery(runtime);
+      this.continueNotificationQueues.delete(runtime);
       this.panesByRuntime.delete(runtime);
+      this.outputOrdinals.delete(runtime);
       this.panesBySemantic.delete(pane.semanticId);
       this.ledger.forget(runtime);
       this.ageByRuntime.delete(runtime);
@@ -1192,15 +2309,20 @@ export class SessionChannel {
         // The semantic identity moved to a different runtime address (respawn/
         // restore). Follow it and reseed every live subscriber — the old
         // address's bytes are a different pane's now.
-        this.panesByRuntime.delete(existingBySemantic.runtimeId);
-        this.ledger.forget(existingBySemantic.runtimeId);
+        const retiredRuntime = existingBySemantic.runtimeId;
+        this.cancelRecovery(retiredRuntime);
+        this.continueNotificationQueues.delete(retiredRuntime);
+        this.panesByRuntime.delete(retiredRuntime);
+        this.outputOrdinals.delete(retiredRuntime);
+        this.ledger.forget(retiredRuntime);
         existingBySemantic.runtimeId = verified.runtimePaneId;
+        existingBySemantic.incarnation = ++this.paneIncarnation;
         existingBySemantic.descriptor = descriptor;
         existingBySemantic.active = verified.active;
         existingBySemantic.windowRuntimeId = windowRuntimeId;
         this.panesByRuntime.set(verified.runtimePaneId, existingBySemantic);
         for (const sub of existingBySemantic.subs) {
-          if (!sub.closed && !sub.frozen) this.reseed(sub);
+          if (!sub.closed && !sub.frozen) this.reseedPlain(sub);
         }
         continue;
       }
@@ -1214,6 +2336,18 @@ export class SessionChannel {
         // The runtime address was restamped to a new identity (duplicate
         // resolution). The old semantic id is gone.
         this.panesBySemantic.delete(existingByRuntime.semanticId);
+        this.cancelRecovery(existingByRuntime.runtimeId);
+        this.continueNotificationQueues.delete(existingByRuntime.runtimeId);
+        this.ledger.forget(existingByRuntime.runtimeId);
+        this.outputOrdinals.delete(existingByRuntime.runtimeId);
+        for (const sub of existingByRuntime.subs) {
+          if (sub.closed) continue;
+          sub.closed = true;
+          sub.feed.abortCurrent();
+          sub.onEvent({ type: "closed" });
+        }
+        existingByRuntime.subs.clear();
+        existingByRuntime.incarnation = ++this.paneIncarnation;
         existingByRuntime.semanticId = verified.semanticPaneId;
         existingByRuntime.descriptor = descriptor;
         existingByRuntime.active = verified.active;
@@ -1228,6 +2362,7 @@ export class SessionChannel {
         active: verified.active,
         windowRuntimeId,
         subs: new Set(),
+        incarnation: ++this.paneIncarnation,
       };
       this.panesByRuntime.set(record.runtimeId, record);
       this.panesBySemantic.set(record.semanticId, record);
@@ -1283,6 +2418,8 @@ export class SessionChannel {
   private onChannelExit(): void {
     if (this.disposed) return;
     this.settleFirstJoin();
+    for (const runtime of [...this.recoveries.keys()]) this.cancelRecovery(runtime);
+    this.continueNotificationQueues.clear();
     for (const pane of this.panesByRuntime.values()) {
       for (const sub of pane.subs) {
         if (!sub.closed) {

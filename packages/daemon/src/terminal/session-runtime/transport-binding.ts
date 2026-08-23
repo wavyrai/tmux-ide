@@ -35,6 +35,7 @@ export type SessionRuntimeTransport = z.infer<typeof TransportSchemaZ>;
 export interface SessionRuntimeTransportBindingRequest {
   readonly transport: SessionRuntimeTransport;
   readonly transportLeaseId: string;
+  readonly diagnosticRequestId?: string;
   readonly session: string;
   /** Minted by the trusted host generation, never accepted from renderer JSON. */
   readonly hostClientId: string;
@@ -116,6 +117,7 @@ export class SessionRuntimeTransportBinding {
   readonly #explicitAuthority: boolean;
   readonly #deliverySubscriberId: string;
   readonly #transportLeaseId: string;
+  readonly #diagnosticRequestId: string;
   readonly #intentHandles = new Map<string, SessionRuntimeExecutionHandle>();
   readonly #causalCellProbes = new Map<string, string>();
   #baseHandle: SessionRuntimeExecutionHandle | null;
@@ -129,6 +131,7 @@ export class SessionRuntimeTransportBinding {
     contributedSourcePaneIds: readonly string[],
     interactive: boolean,
     transportLeaseId: string,
+    diagnosticRequestId: string,
     ownsGeometry: boolean,
     explicitAuthority: boolean,
   ) {
@@ -143,6 +146,7 @@ export class SessionRuntimeTransportBinding {
     // visibility and close namespaces even when they share controller power.
     this.#deliverySubscriberId = `${shared.consumer.clientId}:${transportLeaseId}`;
     this.#transportLeaseId = transportLeaseId;
+    this.#diagnosticRequestId = diagnosticRequestId;
     if (interactive && ownsGeometry) shared.geometryTransportLeaseIds.push(transportLeaseId);
     if (interactive && !explicitAuthority && shared.lease === null)
       shared.lease = shared.consumer.acquireController();
@@ -176,6 +180,18 @@ export class SessionRuntimeTransportBinding {
   }
   get clientId(): string {
     return this.#shared.consumer.clientId;
+  }
+
+  get surface(): string {
+    return this.#shared.consumer.surface;
+  }
+
+  get deliveryLaneId(): string {
+    return this.#deliverySubscriberId;
+  }
+
+  get deliveryRequestId(): string {
+    return this.#diagnosticRequestId;
   }
 
   authoritySnapshot(): SessionRuntimeAuthoritySnapshot {
@@ -267,6 +283,7 @@ export class SessionRuntimeTransportBinding {
     }
     return this.#shared.consumer.openTerminalDelivery(
       this.#deliverySubscriberId,
+      this.#diagnosticRequestId,
       semanticPaneId,
       offer,
       onMessage,
@@ -481,6 +498,8 @@ export class SessionRuntimeTransportBinder {
   bind(request: SessionRuntimeTransportBindingRequest): SessionRuntimeTransportBinding {
     const transport = TransportSchemaZ.parse(request.transport);
     LeaseIdSchemaZ.parse(request.transportLeaseId); // connection association, never identity
+    if (request.diagnosticRequestId !== undefined)
+      LeaseIdSchemaZ.parse(request.diagnosticRequestId);
     const hostClientId = HostClientIdSchemaZ.parse(request.hostClientId);
     const allowedSourcePaneIds = request.allowedSourcePaneIds.map((paneId) =>
       TerminalAttachmentSemanticPaneIdSchemaZ.parse(paneId),
@@ -518,6 +537,7 @@ export class SessionRuntimeTransportBinder {
         contributedSourcePaneIds,
         request.interactive,
         request.transportLeaseId,
+        request.diagnosticRequestId ?? request.transportLeaseId,
         request.ownsGeometry === true,
         request.explicitAuthority === true,
       );

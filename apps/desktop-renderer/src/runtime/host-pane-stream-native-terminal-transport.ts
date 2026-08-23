@@ -122,10 +122,18 @@ export function createHostPaneStreamNativeTerminalTransport(
                   clientViewport: request.viewport,
                 });
               }
-              await listener({ type: "output", bytes: event.batch.seed });
+              await listener({
+                type: "output",
+                bytes: event.batch.seed,
+                ...(event.canonical ? { canonical: event.canonical } : {}),
+              });
               for (const held of event.batch.held) await listener({ type: "output", bytes: held });
             } else if (event.type === "output") {
-              await listener({ type: "output", bytes: event.bytes });
+              await listener({
+                type: "output",
+                bytes: event.bytes,
+                ...(event.canonical ? { canonical: event.canonical } : {}),
+              });
             } else if (event.type === "closed") {
               await listener({ type: "state", state: "disconnected", error: null });
             }

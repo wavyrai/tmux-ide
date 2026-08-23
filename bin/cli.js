@@ -8085,13 +8085,14 @@ var init_terminal_delivery = __esm({
     TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES = 512 * 1024;
     TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES = 16 * 1024 * 1024;
     TerminalDeliveryEncodingSchemaZ = z51.enum([
+      "semantic-compact-v1",
       "semantic-v1",
       "ansi-diff-v1",
       "ansi-raw-v1"
     ]);
     TerminalDeliveryOfferSchemaZ = z51.object({
       protocolVersions: z51.array(z51.number().int().positive()).min(1).max(8),
-      encodings: z51.array(TerminalDeliveryEncodingSchemaZ).min(1).max(3),
+      encodings: z51.array(TerminalDeliveryEncodingSchemaZ).min(1).max(4),
       richPlacements: z51.boolean()
     }).strict().superRefine((value, context) => {
       if (new Set(value.protocolVersions).size !== value.protocolVersions.length)
@@ -8102,11 +8103,14 @@ var init_terminal_delivery = __esm({
     TerminalDeliveryNegotiatedSchemaZ = z51.object({
       protocolVersion: z51.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
       encoding: TerminalDeliveryEncodingSchemaZ,
+      fallbackEncoding: z51.literal("semantic-v1").nullable().optional(),
       richPlacements: z51.boolean(),
       generation: SessionRuntimeGenerationSchemaZ,
       deliveryNonce: z51.uuid()
     }).strict().superRefine((value, context) => {
-      if (value.richPlacements && value.encoding !== "semantic-v1")
+      if (value.fallbackEncoding && value.encoding !== "semantic-compact-v1")
+        context.addIssue({ code: "custom", message: "fallback encoding requires compact semantic" });
+      if (value.richPlacements && value.encoding !== "semantic-v1" && value.encoding !== "semantic-compact-v1")
         context.addIssue({ code: "custom", message: "rich placements require semantic delivery" });
     });
     TerminalDeliveryNegotiationResultSchemaZ = z51.discriminatedUnion("accepted", [
@@ -8151,6 +8155,7 @@ var init_terminal_delivery = __esm({
       history: z51.enum(["complete", "truncated", "not-applicable"]),
       richPlacements: z51.boolean()
     }).strict().superRefine((value, context) => {
+      const semantic = value.encoding === "semantic-v1" || value.encoding === "semantic-compact-v1";
       const expectedChunks = Math.max(
         1,
         Math.ceil(value.representationBytes / TERMINAL_DELIVERY_CHUNK_BYTES)
@@ -8167,19 +8172,19 @@ var init_terminal_delivery = __esm({
           code: "custom",
           message: "patch/tombstone requires an earlier baseRevision"
         });
-      if (value.encoding === "semantic-v1" && (!value.canonicalEquivalent || value.frame !== "tombstone" && value.history !== "complete"))
+      if (semantic && (!value.canonicalEquivalent || value.frame !== "tombstone" && value.history !== "complete"))
         context.addIssue({
           code: "custom",
           message: "semantic delivery must be complete canonical truth"
         });
-      if (value.encoding === "semantic-v1" && value.frame === "tombstone" && value.history !== "not-applicable")
+      if (semantic && value.frame === "tombstone" && value.history !== "not-applicable")
         context.addIssue({ code: "custom", message: "semantic tombstones have no history" });
-      if (value.encoding !== "semantic-v1" && value.canonicalEquivalent)
+      if (!semantic && value.canonicalEquivalent)
         context.addIssue({
           code: "custom",
           message: "ANSI representation cannot claim canonical equivalence"
         });
-      if (value.encoding !== "semantic-v1" && value.richPlacements)
+      if (!semantic && value.richPlacements)
         context.addIssue({ code: "custom", message: "ANSI cannot carry rich placements" });
     });
     TerminalDeliveryChunkSchemaZ = z51.object({
@@ -13998,6 +14003,12 @@ function registerInternalReadOperation(runtimePaneId) {
   const marker = `${INTERNAL_READ_PREFIX}${randomUUID2()}`;
   internalReads.set(marker, { paneId: runtimePaneId, expiresAt: now + INTERNAL_READ_TTL_MS });
   return marker;
+}
+function retireInternalReadOperation(marker, runtimePaneId) {
+  const registration = internalReads.get(marker);
+  if (!registration || registration.paneId !== runtimePaneId) return false;
+  internalReads.delete(marker);
+  return true;
 }
 function consumeInternalReadOperation(marker, runtimePaneId, operationKind) {
   if (marker === null || !marker.startsWith(INTERNAL_READ_PREFIX)) return false;
@@ -31532,6 +31543,20 @@ var init_tmux_external_interaction_observer = __esm({
           delay: options.io?.delay ?? abortableDelay
         };
       }
+      /** Private synchronous equivalent of the installed after-capture hook.
+       * Recovery hook bodies run with NOHOOKS, so they append this exact bounded
+       * record and signal the already-owned observer drain explicitly. */
+      internalReadHookEmission(runtimePaneId, marker) {
+        if (!RUNTIME_PANE.test(runtimePaneId))
+          throw new TypeError("internal read hook emission requires a runtime pane id");
+        if (!/^[A-Za-z0-9:._-]{16,256}$/u.test(marker))
+          throw new TypeError("internal read hook emission requires a bounded marker");
+        return Object.freeze({
+          bufferName: this.#bufferName,
+          signalChannel: this.#signalChannel,
+          record: `${runtimePaneId}${FIELD_SEPARATOR}${marker}${FIELD_SEPARATOR}workspace.pane.read${EVENT_SEPARATOR}`
+        });
+      }
       start() {
         if (this.#starting) return this.#starting;
         if (this.#active) return Promise.resolve();
@@ -32891,7 +32916,7 @@ function createSessionRuntimeObservability(options = {}) {
         authority
       });
     },
-    recordSpan(stage, operation, startedAtMicros, endedAtMicros, trace = null, shared) {
+    recordSpan(stage, operation, startedAtMicros, endedAtMicros, trace = null, shared, terminalDelivery) {
       const span = Object.freeze({
         traceId: trace?.traceId ?? null,
         scenario: trace?.scenario ?? null,
@@ -32906,7 +32931,8 @@ function createSessionRuntimeObservability(options = {}) {
         ...shared ? {
           sharedStartedAtMicros: shared.startedAtMicros,
           sharedEndedAtMicros: shared.endedAtMicros
-        } : {}
+        } : {},
+        ...terminalDelivery ? { terminalDelivery: Object.freeze({ ...terminalDelivery }) } : {}
       });
       if (spans.length < capacity) spans.push(span);
       else {
@@ -33051,11 +33077,14 @@ function waitForExit(proc, timeoutMs) {
     proc.once("exit", onExit);
   });
 }
-var ControlChannelCore, DEFAULT_PAUSE_AFTER_SECONDS, MirrorControlChannel;
+var ATOMIC_CAPTURE_BYTE_HARD_CAP, ATOMIC_CAPTURE_LINE_HARD_CAP, ATOMIC_CURSOR_BYTE_HARD_CAP, ControlChannelCore, DEFAULT_PAUSE_AFTER_SECONDS, MirrorControlChannel;
 var init_control_channel = __esm({
   "packages/daemon/src/terminal/mirror/control-channel.ts"() {
     "use strict";
     init_control2();
+    ATOMIC_CAPTURE_BYTE_HARD_CAP = 16 * 1024 * 1024;
+    ATOMIC_CAPTURE_LINE_HARD_CAP = 8192;
+    ATOMIC_CURSOR_BYTE_HARD_CAP = 1024;
     ControlChannelCore = class {
       constructor(handlers, nowMicros) {
         this.handlers = handlers;
@@ -33064,6 +33093,8 @@ var init_control_channel = __esm({
       buffer = "";
       bufferReceivedAtMicros = null;
       inReply = false;
+      currentReplyNum = null;
+      currentReplyFlags = null;
       /** The greeting is the sole flags=0 block that belongs to pending work.
        *  Subsequent flags=0 blocks are tmux hook command results, emitted on the
        *  initiating control client but not caused by an input line. */
@@ -33072,14 +33103,64 @@ var init_control_channel = __esm({
       pending = [];
       discardedErrors = 0;
       failed = false;
+      atomicCollector = null;
       push(sink) {
         this.pending.push(sink);
+      }
+      pushCommandList(replyCount, resultIndex, onReply) {
+        const state = { resultIndex, onReply, lines: [], settled: false };
+        for (let index = 0; index < replyCount; index += 1)
+          this.pending.push({ kind: "command-list", state, index });
       }
       get inputErrorCount() {
         return this.discardedErrors;
       }
       get pendingCount() {
         return this.pending.length;
+      }
+      armAtomicPaneSnapshotCollector(spec) {
+        if (this.failed || this.atomicCollector) return false;
+        if (!/^[0-9a-f]{32,128}$/.test(spec.nonce) || !/^%\d+$/.test(spec.runtimePaneId)) return false;
+        if (!Number.isSafeInteger(spec.maxCaptureBytes) || spec.maxCaptureBytes < 1 || spec.maxCaptureBytes > ATOMIC_CAPTURE_BYTE_HARD_CAP || !Number.isSafeInteger(spec.maxCaptureLines) || spec.maxCaptureLines < 1 || spec.maxCaptureLines > ATOMIC_CAPTURE_LINE_HARD_CAP || !Number.isSafeInteger(spec.maxCursorBytes) || spec.maxCursorBytes < 1 || spec.maxCursorBytes > ATOMIC_CURSOR_BYTE_HARD_CAP || !Number.isSafeInteger(spec.observerCommandCount) || spec.observerCommandCount < 0 || spec.observerCommandCount > 4)
+          return false;
+        this.atomicCollector = {
+          spec,
+          started: false,
+          blockOrdinal: -1,
+          blockContentCount: 0,
+          captureLines: [],
+          captureBytes: 0,
+          totalLines: 0,
+          totalBytes: 0,
+          cursorLine: null,
+          continueObserved: false,
+          statusObserved: false,
+          observerEmissionObserved: false,
+          lastCompletedOrdinal: -1,
+          failureReason: null
+        };
+        return true;
+      }
+      retireAtomicPaneSnapshotCollector(nonce, reason = "retired") {
+        const collector = this.atomicCollector;
+        if (!collector || collector.spec.nonce !== nonce) return false;
+        this.atomicCollector = null;
+        collector.spec.onSettled(
+          Object.freeze({
+            ok: false,
+            captureLines: Object.freeze([]),
+            cursorLine: null,
+            continueObserved: collector.continueObserved,
+            statusObserved: collector.statusObserved,
+            observerEmissionObserved: collector.observerEmissionObserved,
+            started: collector.started,
+            lastCompletedOrdinal: collector.lastCompletedOrdinal,
+            captureLineCount: collector.captureLines.length,
+            captureByteCount: collector.captureBytes,
+            failureReason: collector.failureReason ?? reason
+          })
+        );
+        return true;
       }
       feed(chunk, receivedAtMicros) {
         if (this.buffer.length === 0 && receivedAtMicros !== void 0)
@@ -33099,12 +33180,19 @@ var init_control_channel = __esm({
       fail(reason) {
         if (this.failed) return;
         this.failed = true;
+        if (this.atomicCollector)
+          this.retireAtomicPaneSnapshotCollector(this.atomicCollector.spec.nonce, "channel-exit");
         for (const sink of this.pending.splice(0)) {
           if (sink.kind === "promise") sink.reject(new Error(reason));
           else if (sink.kind === "inline") sink.onReply({ ok: false, lines: [reason] });
+          else if (sink.kind === "command-list" && !sink.state.settled) {
+            sink.state.settled = true;
+            sink.state.onReply({ ok: false, lines: [reason] });
+          }
         }
       }
       handleLine(line, receivedAtMicros) {
+        if (this.consumeAtomicPaneSnapshotLine(line)) return;
         const event = parseControlLine(line, this.inReply);
         const timing = receivedAtMicros !== null && this.nowMicros ? Object.freeze({
           receivedAtMicros,
@@ -33113,16 +33201,22 @@ var init_control_channel = __esm({
         switch (event.kind) {
           case "begin":
             this.inReply = true;
+            this.currentReplyNum = event.num;
+            this.currentReplyFlags = event.flags;
             this.currentReplyConsumesPending = this.awaitingGreeting || event.flags !== 0;
             break;
           case "reply-line": {
             const head3 = this.currentReplyConsumesPending ? this.pending[0] : void 0;
-            if (head3 && head3.kind !== "discard") head3.lines.push(event.line);
+            if (head3?.kind === "promise" || head3?.kind === "inline") head3.lines.push(event.line);
+            else if (head3?.kind === "command-list" && head3.index === head3.state.resultIndex)
+              head3.state.lines.push(event.line);
             break;
           }
           case "end":
           case "error": {
             this.inReply = false;
+            this.currentReplyNum = null;
+            this.currentReplyFlags = null;
             if (!this.currentReplyConsumesPending) {
               this.currentReplyConsumesPending = false;
               break;
@@ -33131,6 +33225,22 @@ var init_control_channel = __esm({
             this.awaitingGreeting = false;
             const sink = this.pending.shift();
             if (!sink) break;
+            if (sink.kind === "command-list") {
+              if (event.kind === "error" && sink.index !== sink.state.resultIndex)
+                this.discardedErrors += 1;
+              if (event.kind === "error" && sink.index === 0) {
+                while (this.pending[0]?.kind === "command-list" && this.pending[0].state === sink.state)
+                  this.pending.shift();
+                if (!sink.state.settled) {
+                  sink.state.settled = true;
+                  sink.state.onReply({ ok: false, lines: sink.state.lines });
+                }
+              } else if (sink.index === sink.state.resultIndex && !sink.state.settled) {
+                sink.state.settled = true;
+                sink.state.onReply({ ok: event.kind === "end", lines: sink.state.lines });
+              }
+              break;
+            }
             if (sink.kind === "discard") {
               if (event.kind === "error") this.discardedErrors++;
               sink.onReply?.({ ok: event.kind === "end", lines: [] });
@@ -33161,6 +33271,148 @@ var init_control_channel = __esm({
             break;
         }
       }
+      consumeAtomicPaneSnapshotLine(line) {
+        const collector = this.atomicCollector;
+        if (!collector) return false;
+        const prefix = "%tmux-ide-atomic-v1 ";
+        const ownPrefix = `${prefix}${collector.spec.nonce} `;
+        if (line.startsWith(prefix) && !line.startsWith(ownPrefix)) {
+          collector.failureReason ??= "foreign-sentinel";
+          return true;
+        }
+        const token = line.startsWith(ownPrefix) ? line.slice(ownPrefix.length) : null;
+        if (!collector.started) {
+          if (token === null) return false;
+          if (token !== "start" || !this.inReply || this.currentReplyFlags !== 0 || this.currentReplyNum === null) {
+            collector.failureReason ??= "sentinel-order";
+            return true;
+          }
+          collector.started = true;
+          collector.blockOrdinal = 0;
+          collector.blockContentCount = 1;
+          this.reportAtomicPaneSnapshotProgress(collector);
+          return true;
+        }
+        collector.totalLines += 1;
+        collector.totalBytes += Buffer.byteLength(line, "latin1") + 1;
+        if (collector.totalLines > collector.spec.maxCaptureLines + 64)
+          collector.failureReason ??= "capture-line-cap";
+        if (collector.totalBytes > collector.spec.maxCaptureBytes + 64 * 1024)
+          collector.failureReason ??= "capture-byte-cap";
+        const guard = parseControlLine(line, this.inReply);
+        if (guard.kind === "begin") {
+          if (guard.flags !== 0 || this.inReply) collector.failureReason ??= "sentinel-order";
+          this.inReply = true;
+          this.currentReplyNum = guard.num;
+          this.currentReplyFlags = guard.flags;
+          collector.blockOrdinal += 1;
+          collector.blockContentCount = 0;
+          return true;
+        }
+        if (guard.kind === "end" || guard.kind === "error") {
+          const guardInvalid = !this.inReply || guard.flags !== 0 || this.currentReplyFlags !== 0 || guard.num !== this.currentReplyNum;
+          if (guardInvalid) collector.failureReason ??= "sentinel-order";
+          if (guard.kind === "error") collector.failureReason ??= "sentinel-order";
+          const markerBranchOrdinal2 = 7 + collector.spec.observerCommandCount;
+          const statusOrdinal2 = 8 + collector.spec.observerCommandCount;
+          const completeOrdinal2 = 10 + collector.spec.observerCommandCount;
+          const contentRequired = /* @__PURE__ */ new Set([0, 2, 3, 4, statusOrdinal2, completeOrdinal2]);
+          const contentSilent = collector.blockOrdinal !== 1 && collector.blockOrdinal !== markerBranchOrdinal2 && !contentRequired.has(collector.blockOrdinal);
+          const markerBranchValid = collector.blockOrdinal !== markerBranchOrdinal2 || collector.blockContentCount <= 1;
+          if (contentRequired.has(collector.blockOrdinal) && collector.blockContentCount !== 1 || contentSilent && collector.blockContentCount !== 0 || !markerBranchValid)
+            collector.failureReason ??= "sentinel-order";
+          if (guard.kind === "end" && !guardInvalid && collector.spec.observerCommandCount > 0 && collector.blockOrdinal === 5 + collector.spec.observerCommandCount)
+            collector.observerEmissionObserved = true;
+          if (!guardInvalid && guard.kind === "end") {
+            collector.lastCompletedOrdinal = collector.blockOrdinal;
+            this.reportAtomicPaneSnapshotProgress(collector);
+          }
+          this.inReply = false;
+          this.currentReplyNum = null;
+          this.currentReplyFlags = null;
+          if (collector.blockOrdinal === completeOrdinal2) {
+            this.atomicCollector = null;
+            const ok2 = collector.failureReason === null && collector.cursorLine !== null && collector.statusObserved;
+            collector.spec.onSettled(
+              Object.freeze({
+                ok: ok2,
+                captureLines: Object.freeze(ok2 ? [...collector.captureLines] : []),
+                cursorLine: ok2 ? collector.cursorLine : null,
+                continueObserved: collector.continueObserved,
+                statusObserved: collector.statusObserved,
+                observerEmissionObserved: collector.observerEmissionObserved,
+                started: collector.started,
+                lastCompletedOrdinal: collector.lastCompletedOrdinal,
+                captureLineCount: collector.captureLines.length,
+                captureByteCount: collector.captureBytes,
+                failureReason: ok2 ? null : collector.failureReason ?? "sentinel-order"
+              })
+            );
+          }
+          return true;
+        }
+        if (line === `%continue ${collector.spec.runtimePaneId}` && collector.blockOrdinal === 5) {
+          if (collector.continueObserved) collector.failureReason ??= "duplicate-sentinel";
+          collector.continueObserved = true;
+          return true;
+        }
+        if (!this.inReply && (line === "%exit" || line.startsWith("%exit "))) {
+          this.retireAtomicPaneSnapshotCollector(collector.spec.nonce, "channel-exit");
+          return false;
+        }
+        if (!this.inReply) {
+          collector.failureReason ??= "unexpected-post-line";
+          return true;
+        }
+        const markerBranchOrdinal = 7 + collector.spec.observerCommandCount;
+        const statusOrdinal = 8 + collector.spec.observerCommandCount;
+        const completeOrdinal = 10 + collector.spec.observerCommandCount;
+        collector.blockContentCount += 1;
+        if (collector.blockOrdinal === 1) {
+          collector.captureBytes += Buffer.byteLength(line, "latin1") + 1;
+          if (collector.captureBytes > collector.spec.maxCaptureBytes)
+            collector.failureReason ??= "capture-byte-cap";
+          if (collector.captureLines.length >= collector.spec.maxCaptureLines)
+            collector.failureReason ??= "capture-line-cap";
+          else collector.captureLines.push(line);
+          this.reportAtomicPaneSnapshotProgress(collector);
+          return true;
+        }
+        if (collector.blockOrdinal === 3) {
+          if (collector.cursorLine !== null) collector.failureReason ??= "cursor-cardinality";
+          else if (Buffer.byteLength(line, "latin1") > collector.spec.maxCursorBytes)
+            collector.failureReason ??= "cursor-byte-cap";
+          else collector.cursorLine = line;
+          return true;
+        }
+        const markerRejected = `marker-rejected`;
+        if (collector.blockOrdinal === markerBranchOrdinal) {
+          collector.failureReason ??= token === markerRejected ? "marker-rejected" : "sentinel-order";
+          return true;
+        }
+        const expectedToken = collector.blockOrdinal === 2 ? "capture-end" : collector.blockOrdinal === 4 ? "cursor-end" : collector.blockOrdinal === statusOrdinal ? "status-ok" : collector.blockOrdinal === completeOrdinal ? "complete" : null;
+        if (expectedToken === null || token !== expectedToken)
+          collector.failureReason ??= token === "start" ? "duplicate-sentinel" : "sentinel-order";
+        if (collector.blockOrdinal === statusOrdinal && token === "status-ok") {
+          if (collector.statusObserved) collector.failureReason ??= "duplicate-sentinel";
+          collector.statusObserved = true;
+        }
+        return true;
+      }
+      reportAtomicPaneSnapshotProgress(collector) {
+        if (collector.failureReason !== null) return;
+        collector.spec.onProgress?.(
+          Object.freeze({
+            started: collector.started,
+            lastCompletedOrdinal: collector.lastCompletedOrdinal,
+            captureLineCount: Math.min(collector.captureLines.length, ATOMIC_CAPTURE_LINE_HARD_CAP),
+            captureByteCount: Math.min(collector.captureBytes, ATOMIC_CAPTURE_BYTE_HARD_CAP),
+            continueObserved: collector.continueObserved,
+            statusObserved: collector.statusObserved,
+            observerEmissionObserved: collector.observerEmissionObserved
+          })
+        );
+      }
     };
     DEFAULT_PAUSE_AFTER_SECONDS = 2;
     MirrorControlChannel = class {
@@ -33168,6 +33420,7 @@ var init_control_channel = __esm({
       core;
       opts;
       exited = false;
+      atomicCollectorTimer = null;
       constructor(opts) {
         this.opts = opts;
         this.core = new ControlChannelCore(
@@ -33235,13 +33488,32 @@ var init_control_channel = __esm({
           onReply({ ok: false, lines: ["invalid control command-list reply selection"] });
           return;
         }
-        for (let index = 0; index < replyCount; index++) {
-          this.core.push(
-            index === resultIndex ? { kind: "inline", onReply, lines: [] } : { kind: "discard" }
-          );
-        }
+        this.core.pushCommandList(replyCount, resultIndex, onReply);
         proc.stdin.write(`${cmd}
 `);
+      }
+      armAtomicPaneSnapshotCollector(spec, timeoutMs) {
+        if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 5e3) return false;
+        const wrapped = {
+          ...spec,
+          onSettled: (result) => {
+            if (this.atomicCollectorTimer) clearTimeout(this.atomicCollectorTimer);
+            this.atomicCollectorTimer = null;
+            spec.onSettled(result);
+          }
+        };
+        if (!this.core.armAtomicPaneSnapshotCollector(wrapped)) return false;
+        this.atomicCollectorTimer = setTimeout(() => {
+          this.atomicCollectorTimer = null;
+          this.core.retireAtomicPaneSnapshotCollector(spec.nonce, "timeout");
+        }, timeoutMs);
+        this.atomicCollectorTimer.unref?.();
+        return true;
+      }
+      retireAtomicPaneSnapshotCollector(nonce, reason = "retired") {
+        if (!this.core.retireAtomicPaneSnapshotCollector(nonce, reason)) return;
+        if (this.atomicCollectorTimer) clearTimeout(this.atomicCollectorTimer);
+        this.atomicCollectorTimer = null;
       }
       send(cmd, onReply) {
         const proc = this.proc;
@@ -33262,6 +33534,8 @@ var init_control_channel = __esm({
        * signals are a fallback, never the first move (wedged-server hazard).
        */
       async dispose() {
+        if (this.atomicCollectorTimer) clearTimeout(this.atomicCollectorTimer);
+        this.atomicCollectorTimer = null;
         const proc = this.proc;
         this.proc = null;
         if (!proc) return;
@@ -33982,11 +34256,15 @@ var PaneFeed;
 var init_pane_feed = __esm({
   "packages/daemon/src/terminal/mirror/pane-feed.ts"() {
     "use strict";
-    PaneFeed = class {
+    PaneFeed = class _PaneFeed {
+      static MAX_HELD_CHUNKS = 512;
+      static MAX_HELD_BYTES = 1024 * 1024;
       state = "live";
       epoch = 0;
       seedLines = null;
       held = [];
+      heldBytes = 0;
+      overflowed = false;
       currentState() {
         return this.state;
       }
@@ -33997,6 +34275,8 @@ var init_pane_feed = __esm({
         this.state = "awaiting-capture";
         this.seedLines = null;
         this.held = [];
+        this.heldBytes = 0;
+        this.overflowed = false;
         return this.epoch;
       }
       /** Route one live output delta. Discarded while a capture is pending (the
@@ -34004,8 +34284,25 @@ var init_pane_feed = __esm({
        *  plain delta event otherwise. */
       delta(data) {
         if (this.state === "live") return [{ type: "delta", data }];
-        if (this.state === "awaiting-cursor") this.held.push(data);
+        if (this.state === "quarantined") return [];
+        if (this.state === "awaiting-cursor") {
+          if (this.held.length >= _PaneFeed.MAX_HELD_CHUNKS || this.heldBytes + data.byteLength > _PaneFeed.MAX_HELD_BYTES) {
+            this.state = "quarantined";
+            this.seedLines = null;
+            this.held = [];
+            this.heldBytes = 0;
+            this.overflowed = true;
+            return [];
+          }
+          this.held.push(data);
+          this.heldBytes += data.byteLength;
+        }
         return [];
+      }
+      takeOverflowed() {
+        const overflowed = this.overflowed;
+        this.overflowed = false;
+        return overflowed;
       }
       /** The capture reply landed (synchronously, in channel read order). */
       captureReply(epoch, lines) {
@@ -34027,6 +34324,7 @@ var init_pane_feed = __esm({
         this.state = "live";
         this.seedLines = null;
         this.held = [];
+        this.heldBytes = 0;
         const probe = parseCursorProbe(line);
         const events = [];
         if (probe) events.push({ type: "reset", cols: probe.cols, rows: probe.rows });
@@ -34038,27 +34336,73 @@ var init_pane_feed = __esm({
         if (probe) events.push({ type: "cursor", x: probe.x, y: probe.y });
         return events;
       }
-      /** A probe errored (pane raced away, channel died). Drop back to live so
-       *  deltas are not black-holed; the owner decides closure separately. */
+      /** A probe errored (pane raced away, channel died). Quarantine subsequent
+       *  deltas until a new authoritative seed succeeds or the owner retires it. */
       abort(epoch) {
         if (epoch !== this.epoch || this.state === "live") return;
-        this.state = "live";
+        this.state = "quarantined";
         this.seedLines = null;
         this.held = [];
+        this.heldBytes = 0;
+        this.overflowed = false;
+      }
+      abortCurrent() {
+        this.epoch += 1;
+        this.state = "quarantined";
+        this.seedLines = null;
+        this.held = [];
+        this.heldBytes = 0;
+        this.overflowed = false;
+      }
+      /** Keep a completed authoritative snapshot as the recovery candidate while
+       * dropping later raw deltas until the owner proves convergence. */
+      quarantine(epoch) {
+        if (epoch !== this.epoch || this.state !== "live") return;
+        this.state = "quarantined";
+      }
+      /** Recovery owner only: the published candidate has passed its independent
+       * confirmation proof, so subsequent deltas may flow again. */
+      releaseQuarantine() {
+        if (this.state === "quarantined") this.state = "live";
       }
     };
   }
 });
 
 // packages/daemon/src/terminal/mirror/session-channel.ts
-import { randomBytes as randomBytes4 } from "node:crypto";
+import { createHash as createHash11, randomBytes as randomBytes4 } from "node:crypto";
+function snapshotFingerprint2(captureLines, cursorLine, fallbackSize) {
+  const hash = createHash11("sha256");
+  const append = (bytes) => {
+    const length = Buffer.allocUnsafe(4);
+    length.writeUInt32BE(bytes.byteLength);
+    hash.update(length);
+    hash.update(bytes);
+  };
+  hash.update("tmux-ide/recovery-snapshot/v1\0");
+  const count = Buffer.allocUnsafe(4);
+  count.writeUInt32BE(captureLines.length);
+  hash.update(count);
+  for (const line of captureLines) append(Buffer.from(line, "latin1"));
+  append(Buffer.from(cursorLine, "utf8"));
+  append(
+    Buffer.from(
+      fallbackSize ? `${fallbackSize.cols}x${fallbackSize.rows}` : "no-layout-fallback",
+      "ascii"
+    )
+  );
+  return hash.digest("hex");
+}
+function tmuxSingleQuote(value) {
+  return `'${value.replaceAll("'", "''")}'`;
+}
 function defaultMirrorPaneId() {
   return `pane.mirror.${randomBytes4(8).toString("hex")}`;
 }
 function defaultMirrorWindowId() {
   return `window.mirror.${randomBytes4(8).toString("hex")}`;
 }
-var STRUCTURAL_NOTIFICATIONS, NATIVE_CLIENT_NOTIFICATIONS, NATIVE_CLIENT_SUBSCRIPTION, DEFAULT_HISTORY_LINES, SYNC_DEBOUNCE_MS, SessionChannel;
+var STRUCTURAL_NOTIFICATIONS, NATIVE_CLIENT_NOTIFICATIONS, NATIVE_CLIENT_SUBSCRIPTION, DEFAULT_HISTORY_LINES, SYNC_DEBOUNCE_MS, RECOVERY_QUIET_MS, RECOVERY_COMMAND_DEADLINE_MS, RECOVERY_NO_PROGRESS_DEADLINE_MS, RECOVERY_ABSOLUTE_DEADLINE_MS, RECOVERY_MAX_ATTEMPTS, RECOVERY_CAPTURE_MAX_BYTES, RECOVERY_CAPTURE_MAX_LINES, RECOVERY_CURSOR_MAX_BYTES, MAX_CONTINUE_NOTIFICATION_QUEUE, MAX_CONTINUE_NOTIFICATION_DEBT, RECOVERY_CURSOR_PROBE_FORMAT, FAILED_RESEED_RESULT, SessionChannel;
 var init_session_channel = __esm({
   "packages/daemon/src/terminal/mirror/session-channel.ts"() {
     "use strict";
@@ -34087,6 +34431,39 @@ var init_session_channel = __esm({
     NATIVE_CLIENT_SUBSCRIPTION = "tmux-ide-native-clients";
     DEFAULT_HISTORY_LINES = 2e3;
     SYNC_DEBOUNCE_MS = 40;
+    RECOVERY_QUIET_MS = 40;
+    RECOVERY_COMMAND_DEADLINE_MS = 500;
+    RECOVERY_NO_PROGRESS_DEADLINE_MS = 3e3;
+    RECOVERY_ABSOLUTE_DEADLINE_MS = 5e3;
+    RECOVERY_MAX_ATTEMPTS = 4;
+    RECOVERY_CAPTURE_MAX_BYTES = 16 * 1024 * 1024;
+    RECOVERY_CAPTURE_MAX_LINES = 8192;
+    RECOVERY_CURSOR_MAX_BYTES = 1024;
+    MAX_CONTINUE_NOTIFICATION_QUEUE = 32;
+    MAX_CONTINUE_NOTIFICATION_DEBT = 65536;
+    RECOVERY_CURSOR_PROBE_FORMAT = [
+      "#{cursor_x}",
+      "#{cursor_y}",
+      "#{pane_width}",
+      "#{pane_height}",
+      "#{alternate_on}",
+      "#{cursor_flag}",
+      "#{insert_flag}",
+      "#{keypad_cursor_flag}",
+      "#{keypad_flag}",
+      "#{mouse_any_flag}",
+      "#{mouse_button_flag}",
+      "#{mouse_standard_flag}",
+      "#{origin_flag}",
+      "#{wrap_flag}"
+    ].join(" ");
+    FAILED_RESEED_RESULT = Object.freeze({
+      ok: false,
+      fingerprint: null,
+      publish: () => false,
+      hold: () => {
+      }
+    });
     SessionChannel = class {
       opts;
       io;
@@ -34109,6 +34486,11 @@ var init_session_channel = __esm({
       cancelSync = null;
       disposed = false;
       nativeClientProbePending = false;
+      paneIncarnation = 0;
+      recoveryOrdinal = 0;
+      outputOrdinals = /* @__PURE__ */ new Map();
+      recoveries = /* @__PURE__ */ new Map();
+      continueNotificationQueues = /* @__PURE__ */ new Map();
       trustedInventoryFlight = null;
       trustedInventoryFlightSessionId = null;
       attachedIdentity = null;
@@ -34255,15 +34637,15 @@ var init_session_channel = __esm({
           closed: false
         };
         pane.subs.add(sub);
-        if (this.ledger.isRequested(pane.runtimeId)) this.ledger.clearRequest(pane.runtimeId);
-        if (this.ledger.isBackpressured(pane.runtimeId)) this.continuePane(pane.runtimeId);
-        this.reseed(sub);
+        const recoveryReason = this.ledger.isRequested(pane.runtimeId) ? "requested" : this.ledger.isBackpressured(pane.runtimeId) ? "backpressure" : null;
+        if (recoveryReason) this.beginRecovery(pane, recoveryReason);
+        else this.reseedPlain(sub);
         this.emitLayoutSnapshot(sub);
         return {
           semanticPaneId: semanticPaneId3,
           freeze: () => this.freeze(sub),
           thaw: () => this.thaw(sub),
-          reseed: () => this.reseed(sub),
+          reseed: () => this.reseedPlain(sub),
           sendText: (text) => {
             if (!sub.closed) this.input.literal(sub.pane.runtimeId, text);
           },
@@ -34349,6 +34731,8 @@ var init_session_channel = __esm({
         this.settleFirstJoin();
         this.cancelSync?.();
         this.cancelSync = null;
+        for (const runtime of [...this.recoveries.keys()]) this.cancelRecovery(runtime);
+        this.continueNotificationQueues.clear();
         this.discovery.dispose();
         this.input.flush();
         for (const pane of this.panesByRuntime.values()) {
@@ -34371,49 +34755,114 @@ var init_session_channel = __esm({
         }
         const pane = this.panesByRuntime.get(runtimePane);
         if (!pane) return;
+        const outputOrdinal = (this.outputOrdinals.get(runtimePane) ?? 0) + 1;
+        this.outputOrdinals.set(runtimePane, outputOrdinal);
         this.opts.onOutputObserved?.(pane.semanticId, ageMs, timing);
+        let overflowed = false;
         for (const sub of pane.subs) {
           if (sub.frozen || sub.closed) continue;
           for (const event of sub.feed.delta(data)) sub.onEvent(event);
+          if (sub.feed.takeOverflowed()) overflowed = true;
         }
+        if (overflowed) this.restartRecoveryAfterOutputOverflow(pane);
+        this.noteRecoveryOutput(pane, outputOrdinal);
       }
       // ── Seed / reseed (the atomic recipe) ────────────────────────────────────
-      reseed(sub) {
-        if (sub.closed || this.disposed) return;
+      reseed(sub, onSettled, deferPublish = false) {
+        if (sub.closed || sub.frozen || this.disposed) {
+          onSettled?.(FAILED_RESEED_RESULT);
+          return;
+        }
         const runtime = sub.pane.runtimeId;
         const epoch = sub.feed.beginReseed();
+        let settled = false;
+        let captureSucceeded = false;
+        let markerRetired = false;
+        let captureLines = null;
+        const settle = (result) => {
+          if (settled) return;
+          settled = true;
+          onSettled?.(result);
+        };
         this.input.flush();
         const history = this.opts.historyLines ?? DEFAULT_HISTORY_LINES;
         const internalReadMarker = registerInternalReadOperation(runtime);
+        const retireMarker = () => {
+          if (markerRetired) return;
+          markerRetired = true;
+          this.retireInternalReadMarker(runtime, internalReadMarker);
+        };
         this.io.commandListInline(
           `set-option -p -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p -e -J -S -${history} -t ${runtime}`,
           2,
           1,
           (reply) => {
             if (!reply.ok) {
-              this.io.send(`set-option -pu -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION}`);
+              retireMarker();
               sub.feed.abort(epoch);
+              settle(FAILED_RESEED_RESULT);
               return;
             }
+            captureSucceeded = true;
+            if (sub.closed || sub.frozen || this.disposed) {
+              sub.feed.abort(epoch);
+              settle(FAILED_RESEED_RESULT);
+              return;
+            }
+            captureLines = [...reply.lines];
             sub.feed.captureReply(epoch, reply.lines);
           }
         );
         this.io.commandInline(
-          `display-message -p -t ${runtime} "#{cursor_x} #{cursor_y} #{pane_width} #{pane_height}"`,
+          `display-message -p -t ${runtime} "${RECOVERY_CURSOR_PROBE_FORMAT}"`,
           (reply) => {
-            if (!reply.ok) {
+            if (sub.closed || sub.frozen || this.disposed) {
               sub.feed.abort(epoch);
+              settle(FAILED_RESEED_RESULT);
               return;
             }
-            const events = sub.feed.cursorReply(
-              epoch,
-              reply.lines[0] ?? "",
-              this.layoutSizeFor(runtime)
-            );
-            for (const event of events) {
-              if (!sub.closed) sub.onEvent(event);
+            if (!reply.ok) {
+              if (!captureSucceeded) retireMarker();
+              sub.feed.abort(epoch);
+              settle(FAILED_RESEED_RESULT);
+              return;
             }
+            const cursorLine = reply.lines[0] ?? "";
+            const fallbackSize = this.layoutSizeFor(runtime);
+            const events = sub.feed.cursorReply(epoch, cursorLine, fallbackSize);
+            let published = false;
+            const publish = () => {
+              if (published) return true;
+              if (sub.closed || sub.frozen || this.disposed) return false;
+              published = true;
+              for (const event of events) sub.onEvent(event);
+              return true;
+            };
+            const ok2 = events.length > 0 && !sub.closed && captureLines !== null;
+            const result = {
+              ok: ok2,
+              fingerprint: ok2 ? snapshotFingerprint2(captureLines, cursorLine, fallbackSize) : null,
+              publish,
+              hold: () => sub.feed.quarantine(epoch)
+            };
+            if (!deferPublish) publish();
+            settle(result);
           }
+        );
+      }
+      reseedPlain(sub) {
+        this.reseed(sub, ({ ok: ok2 }) => {
+          if (ok2 || sub.closed || sub.frozen || this.disposed || this.recoveries.has(sub.pane.runtimeId) || this.panesByRuntime.get(sub.pane.runtimeId) !== sub.pane)
+            return;
+          this.beginLocalOverflowRecovery(sub.pane);
+        });
+      }
+      retireInternalReadMarker(runtime, marker) {
+        if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtime))
+          throw new TypeError("internal read cleanup requires a runtime pane id");
+        retireInternalReadOperation(marker, runtime);
+        this.io.send(
+          `if-shell -t ${runtime} -F "#{==:#{${INTERNAL_READ_OPERATION_OPTION}},${marker}}" "set-option -pu -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION}" ""`
         );
       }
       layoutSizeFor(runtime) {
@@ -34431,6 +34880,7 @@ var init_session_channel = __esm({
         const pane = sub.pane;
         const allFrozen = [...pane.subs].every((candidate) => candidate.frozen || candidate.closed);
         if (allFrozen) {
+          this.cancelRecovery(pane.runtimeId);
           this.ledger.requestPause(pane.runtimeId);
           this.io.send(`refresh-client -A '${pane.runtimeId}:pause'`);
         }
@@ -34439,31 +34889,739 @@ var init_session_channel = __esm({
         if (!sub.frozen || sub.closed) return;
         sub.frozen = false;
         const runtime = sub.pane.runtimeId;
-        if (this.ledger.isRequested(runtime) || this.ledger.isBackpressured(runtime)) {
-          this.ledger.clearRequest(runtime);
-          this.continuePane(runtime);
-        }
-        sub.onEvent({ type: "flow", state: "resumed", reason: "requested" });
-        this.reseed(sub);
+        if (this.ledger.isRequested(runtime) || this.ledger.isBackpressured(runtime))
+          this.beginRecovery(sub.pane, "requested");
+        else this.reseedPlain(sub);
         this.recoverSticky();
       }
       continuePane(runtime) {
         this.io.send(`refresh-client -A '${runtime}:continue'`);
         this.ledger.noteContinued(runtime);
       }
+      scheduleRecovery(callback, delayMs) {
+        if (this.opts.scheduleRecovery) return this.opts.scheduleRecovery(callback, delayMs);
+        const timer = setTimeout(callback, delayMs);
+        return () => clearTimeout(timer);
+      }
+      observeRecovery(pane, recovery, phase, failureReason = null, fingerprintExact = null) {
+        const elapsedMicros = Math.min(
+          RECOVERY_ABSOLUTE_DEADLINE_MS * 1e3,
+          Math.max(0, Math.floor((this.recoveryNowMs() - recovery.startedAtMs) * 1e3))
+        );
+        this.opts.onFlowRecoveryObserved?.(
+          Object.freeze({
+            semanticPaneId: pane.semanticId,
+            phase,
+            recoveryOrdinal: recovery.ordinal,
+            paneIncarnation: recovery.paneIncarnation,
+            outputOrdinal: this.outputOrdinals.get(recovery.runtimeId) ?? 0,
+            failureReason,
+            elapsedMicros,
+            fingerprintExact,
+            confirmationOrdinal: recovery.confirmationOrdinal,
+            collectorStarted: recovery.collectorStarted,
+            collectorLastCompletedOrdinal: recovery.collectorLastCompletedOrdinal,
+            collectorCaptureLineCount: recovery.collectorCaptureLineCount,
+            collectorCaptureByteCount: recovery.collectorCaptureByteCount,
+            collectorContinueObserved: recovery.collectorContinueObserved,
+            collectorStatusObserved: recovery.collectorStatusObserved,
+            collectorObserverEmissionObserved: recovery.collectorObserverEmissionObserved,
+            collectorFailureReason: recovery.collectorFailureReason
+          })
+        );
+      }
+      recoveryNowMs() {
+        return this.opts.recoveryNowMs?.() ?? performance.now();
+      }
+      recoveryPane(recovery) {
+        const pane = this.panesByRuntime.get(recovery.runtimeId);
+        return !this.disposed && this.recoveries.get(recovery.runtimeId) === recovery && pane?.incarnation === recovery.paneIncarnation ? !recovery.retired ? pane : null : null;
+      }
+      cancelRecovery(runtime) {
+        const recovery = this.recoveries.get(runtime);
+        if (!recovery) return;
+        recovery.retired = true;
+        recovery.cancelQuiet?.();
+        recovery.cancelCommandDeadline?.();
+        recovery.cancelNoProgressDeadline?.();
+        recovery.cancelAbsoluteDeadline?.();
+        if (recovery.atomicCollectorNonce)
+          this.io.retireAtomicPaneSnapshotCollector?.(recovery.atomicCollectorNonce, "retired");
+        recovery.atomicCollectorNonce = null;
+        this.recoveries.delete(runtime);
+        this.retireContinueNotificationOwner(recovery);
+        const pane = this.panesByRuntime.get(runtime);
+        if (pane?.incarnation === recovery.paneIncarnation)
+          for (const sub of pane.subs) sub.feed.abortCurrent();
+      }
+      beginRecovery(pane, reason) {
+        const runtime = pane.runtimeId;
+        this.cancelRecovery(runtime);
+        const recovery = {
+          ordinal: ++this.recoveryOrdinal,
+          runtimeId: runtime,
+          paneIncarnation: pane.incarnation,
+          reason,
+          startedAtMs: this.recoveryNowMs(),
+          retired: false,
+          continueReply: false,
+          continueNotify: false,
+          stage: "continue",
+          attempts: 0,
+          reseedOrdinal: 0,
+          outputOrdinal: this.outputOrdinals.get(runtime) ?? 0,
+          candidateFingerprint: null,
+          confirmationFingerprint: null,
+          confirmationOrdinal: 0,
+          atomicCollectorNonce: null,
+          collectorStarted: false,
+          collectorLastCompletedOrdinal: -1,
+          collectorCaptureLineCount: 0,
+          collectorCaptureByteCount: 0,
+          collectorContinueObserved: false,
+          collectorStatusObserved: false,
+          collectorObserverEmissionObserved: false,
+          collectorFailureReason: null,
+          cancelQuiet: null,
+          cancelCommandDeadline: null,
+          cancelNoProgressDeadline: null,
+          cancelAbsoluteDeadline: null
+        };
+        this.recoveries.set(runtime, recovery);
+        for (const sub of pane.subs) {
+          if (!sub.frozen && !sub.closed) sub.feed.abortCurrent();
+        }
+        this.observeRecovery(pane, recovery, "pause");
+        this.observeRecovery(pane, recovery, "continue-request");
+        recovery.cancelCommandDeadline = this.scheduleRecovery(() => {
+          if (this.recoveryPane(recovery) && !recovery.continueReply)
+            this.failRecovery(recovery, "command-timeout");
+        }, RECOVERY_COMMAND_DEADLINE_MS);
+        const queue = this.continueNotificationQueues.get(runtime) ?? [];
+        if (queue.length >= MAX_CONTINUE_NOTIFICATION_QUEUE) {
+          this.failRecovery(recovery, "notification-queue-overflow");
+          return;
+        }
+        queue.push({ kind: "owner", recovery });
+        this.continueNotificationQueues.set(runtime, queue);
+        this.io.send(`refresh-client -A '${runtime}:continue'`, (reply) => {
+          const current = this.recoveryPane(recovery);
+          if (!reply.ok) {
+            this.removeContinueNotificationOwner(recovery);
+            if (current) this.failRecovery(recovery, "command-error");
+            return;
+          }
+          recovery.continueReply = true;
+          if (!current) {
+            this.retireContinueNotificationOwner(recovery);
+            return;
+          }
+          recovery.cancelCommandDeadline?.();
+          recovery.cancelCommandDeadline = null;
+          this.beginRecoveryConvergence(recovery);
+          this.observeRecovery(current, recovery, "continue-reply");
+          this.noteRecoveryProgress(recovery);
+          this.beginFinalRecovery(recovery);
+        });
+      }
+      beginLocalOverflowRecovery(pane) {
+        const runtime = pane.runtimeId;
+        this.cancelRecovery(runtime);
+        const recovery = {
+          ordinal: ++this.recoveryOrdinal,
+          runtimeId: runtime,
+          paneIncarnation: pane.incarnation,
+          reason: "backpressure",
+          startedAtMs: this.recoveryNowMs(),
+          retired: false,
+          continueReply: true,
+          continueNotify: true,
+          stage: "continue",
+          attempts: 0,
+          reseedOrdinal: 0,
+          outputOrdinal: this.outputOrdinals.get(runtime) ?? 0,
+          candidateFingerprint: null,
+          confirmationFingerprint: null,
+          confirmationOrdinal: 0,
+          atomicCollectorNonce: null,
+          collectorStarted: false,
+          collectorLastCompletedOrdinal: -1,
+          collectorCaptureLineCount: 0,
+          collectorCaptureByteCount: 0,
+          collectorContinueObserved: false,
+          collectorStatusObserved: false,
+          collectorObserverEmissionObserved: false,
+          collectorFailureReason: null,
+          cancelQuiet: null,
+          cancelCommandDeadline: null,
+          cancelNoProgressDeadline: null,
+          cancelAbsoluteDeadline: null
+        };
+        this.recoveries.set(runtime, recovery);
+        for (const sub of pane.subs) {
+          if (!sub.frozen && !sub.closed)
+            sub.onEvent({ type: "flow", state: "paused", reason: "backpressure" });
+        }
+        this.observeRecovery(pane, recovery, "pause");
+        this.beginRecoveryConvergence(recovery);
+        this.beginFinalRecovery(recovery);
+      }
+      beginRecoveryConvergence(recovery) {
+        if (recovery.cancelAbsoluteDeadline) return;
+        recovery.cancelAbsoluteDeadline = this.scheduleRecovery(() => {
+          if (this.recoveryPane(recovery)) this.failRecovery(recovery, "absolute-deadline");
+        }, RECOVERY_ABSOLUTE_DEADLINE_MS);
+        this.noteRecoveryProgress(recovery);
+      }
+      noteRecoveryProgress(recovery) {
+        if (!this.recoveryPane(recovery) || !recovery.cancelAbsoluteDeadline) return;
+        recovery.cancelNoProgressDeadline?.();
+        recovery.cancelNoProgressDeadline = this.scheduleRecovery(() => {
+          if (this.recoveryPane(recovery)) this.failRecovery(recovery, "no-progress");
+        }, RECOVERY_NO_PROGRESS_DEADLINE_MS);
+      }
+      noteAtomicCollectorProgress(recovery, nonce, progress) {
+        if (this.recoveryPane(recovery) === null || recovery.atomicCollectorNonce !== nonce || !progress.started)
+          return;
+        recovery.collectorStarted = true;
+        recovery.collectorLastCompletedOrdinal = Math.max(
+          recovery.collectorLastCompletedOrdinal,
+          progress.lastCompletedOrdinal
+        );
+        recovery.collectorCaptureLineCount = Math.max(
+          recovery.collectorCaptureLineCount,
+          progress.captureLineCount
+        );
+        recovery.collectorCaptureByteCount = Math.max(
+          recovery.collectorCaptureByteCount,
+          progress.captureByteCount
+        );
+        recovery.collectorContinueObserved ||= progress.continueObserved;
+        recovery.collectorStatusObserved ||= progress.statusObserved;
+        recovery.collectorObserverEmissionObserved ||= progress.observerEmissionObserved;
+        this.noteRecoveryProgress(recovery);
+      }
+      reseedRecoverySubscribers(pane, recovery, done, deferPublish = false) {
+        if (this.io.armAtomicPaneSnapshotCollector && this.io.retireAtomicPaneSnapshotCollector) {
+          this.reseedRecoverySubscribersAtomic(pane, recovery, done, deferPublish);
+          return;
+        }
+        const live = [...pane.subs].filter((sub) => !sub.frozen && !sub.closed);
+        if (live.length === 0) {
+          done(FAILED_RESEED_RESULT);
+          return;
+        }
+        const participants = live.map((sub) => Object.freeze({ sub, epoch: sub.feed.beginReseed() }));
+        const reseedOrdinal = ++recovery.reseedOrdinal;
+        let settled = false;
+        let captureSucceeded = false;
+        let markerRetired = false;
+        let captureLines = null;
+        this.input.flush();
+        const history = this.opts.historyLines ?? DEFAULT_HISTORY_LINES;
+        const internalReadMarker = registerInternalReadOperation(pane.runtimeId);
+        const participantsExact = () => {
+          if (this.recoveryPane(recovery) !== pane || recovery.reseedOrdinal !== reseedOrdinal || participants.some(
+            ({ sub }) => sub.closed || sub.frozen || sub.pane !== pane || !pane.subs.has(sub)
+          ))
+            return false;
+          const current = [...pane.subs].filter((sub) => !sub.frozen && !sub.closed);
+          return current.length === participants.length && current.every((sub) => participants.some((participant) => participant.sub === sub));
+        };
+        const retireMarker = () => {
+          if (markerRetired) return;
+          markerRetired = true;
+          this.retireInternalReadMarker(pane.runtimeId, internalReadMarker);
+        };
+        const fail2 = () => {
+          if (settled) return;
+          settled = true;
+          if (!captureSucceeded) retireMarker();
+          for (const { sub } of participants) sub.feed.abortCurrent();
+          done(FAILED_RESEED_RESULT);
+        };
+        this.io.commandListInline(
+          `set-option -p -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p -e -J -S -${history} -t ${pane.runtimeId}`,
+          2,
+          1,
+          (reply) => {
+            if (!reply.ok) {
+              fail2();
+              return;
+            }
+            captureSucceeded = true;
+            if (!participantsExact()) {
+              fail2();
+              return;
+            }
+            captureLines = Object.freeze([...reply.lines]);
+            for (const { sub, epoch } of participants) sub.feed.captureReply(epoch, captureLines);
+          }
+        );
+        this.io.commandInline(
+          `display-message -p -t ${pane.runtimeId} "${RECOVERY_CURSOR_PROBE_FORMAT}"`,
+          (reply) => {
+            if (settled) return;
+            if (!participantsExact() || captureLines === null || !reply.ok) {
+              fail2();
+              return;
+            }
+            const cursorLine = reply.lines[0] ?? "";
+            const fallbackSize = this.layoutSizeFor(pane.runtimeId);
+            const deliveries = participants.map(({ sub, epoch }) => ({
+              sub,
+              epoch,
+              events: sub.feed.cursorReply(epoch, cursorLine, fallbackSize)
+            }));
+            if (!participantsExact() || deliveries.some(({ events }) => events.length === 0)) {
+              fail2();
+              return;
+            }
+            let published = false;
+            const publish = () => {
+              if (published) return true;
+              if (!participantsExact()) return false;
+              published = true;
+              for (const { sub, events } of deliveries) for (const event of events) sub.onEvent(event);
+              return participantsExact();
+            };
+            if (!deferPublish && !publish()) {
+              fail2();
+              return;
+            }
+            for (const { sub, epoch } of deliveries) sub.feed.quarantine(epoch);
+            settled = true;
+            done({
+              ok: true,
+              fingerprint: snapshotFingerprint2(captureLines, cursorLine, fallbackSize),
+              publish,
+              hold: () => {
+              }
+            });
+          }
+        );
+      }
+      reseedRecoverySubscribersAtomic(pane, recovery, done, deferPublish) {
+        const live = [...pane.subs].filter((sub) => !sub.frozen && !sub.closed);
+        if (live.length === 0) {
+          done(FAILED_RESEED_RESULT);
+          return;
+        }
+        const participants = live.map((sub) => Object.freeze({ sub, epoch: sub.feed.beginReseed() }));
+        const reseedOrdinal = ++recovery.reseedOrdinal;
+        const nonce = this.opts.generateAtomicHookNonce?.() ?? randomBytes4(24).toString("hex");
+        if (!/^[0-9a-f]{32,128}$/u.test(nonce)) {
+          for (const { sub } of participants) sub.feed.abortCurrent();
+          done(FAILED_RESEED_RESULT);
+          return;
+        }
+        const hookName = `@tmux_ide_atomic_${nonce}`;
+        const expectedName = `@tmux_ide_atomic_expected_${nonce}`;
+        const ownerName = `@tmux_ide_atomic_owner_${nonce}`;
+        const internalReadMarker = registerInternalReadOperation(pane.runtimeId);
+        recovery.atomicCollectorNonce = nonce;
+        recovery.collectorStarted = false;
+        recovery.collectorLastCompletedOrdinal = -1;
+        recovery.collectorCaptureLineCount = 0;
+        recovery.collectorCaptureByteCount = 0;
+        recovery.collectorContinueObserved = false;
+        recovery.collectorStatusObserved = false;
+        recovery.collectorObserverEmissionObserved = false;
+        recovery.collectorFailureReason = null;
+        const participantsExact = () => {
+          if (this.recoveryPane(recovery) !== pane || recovery.reseedOrdinal !== reseedOrdinal || participants.some(
+            ({ sub }) => sub.closed || sub.frozen || sub.pane !== pane || !pane.subs.has(sub)
+          ))
+            return false;
+          const current = [...pane.subs].filter((sub) => !sub.frozen && !sub.closed);
+          return current.length === participants.length && current.every((sub) => participants.some((participant) => participant.sub === sub));
+        };
+        let settled = false;
+        let observerEmitted = false;
+        const hookOwned = `#{==:#{${ownerName}},${nonce}}`;
+        const hookUnchanged = `#{==:#{${hookName}},#{${expectedName}}}`;
+        const cleanupHook = () => {
+          this.io.commandListInline(
+            `if-shell -t ${pane.runtimeId} -F "#{&&:${hookOwned},${hookUnchanged}}" ${tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${hookName}`)} ` + tmuxSingleQuote(
+              `display-message -p -t ${pane.runtimeId} tmux-ide-atomic-cleanup-hook-skip-v1:${nonce}`
+            ),
+            2,
+            1,
+            () => {
+            }
+          );
+          this.io.commandListInline(
+            `if-shell -t ${pane.runtimeId} -F "${hookOwned}" ` + tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${expectedName}`) + ` ${tmuxSingleQuote(
+              `display-message -p -t ${pane.runtimeId} tmux-ide-atomic-cleanup-expected-skip-v1:${nonce}`
+            )}`,
+            2,
+            1,
+            () => {
+            }
+          );
+          this.io.commandListInline(
+            `if-shell -t ${pane.runtimeId} -F "${hookOwned}" ` + tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${ownerName}`) + ` ${tmuxSingleQuote(
+              `display-message -p -t ${pane.runtimeId} tmux-ide-atomic-cleanup-owner-skip-v1:${nonce}`
+            )}`,
+            2,
+            1,
+            () => {
+            }
+          );
+        };
+        const fail2 = (statusObserved = false) => {
+          if (settled) return;
+          settled = true;
+          if (recovery.atomicCollectorNonce === nonce) recovery.atomicCollectorNonce = null;
+          cleanupHook();
+          if (!statusObserved && !observerEmitted)
+            this.retireInternalReadMarker(pane.runtimeId, internalReadMarker);
+          for (const { sub } of participants) sub.feed.abortCurrent();
+          done(FAILED_RESEED_RESULT);
+        };
+        let observer;
+        try {
+          observer = this.opts.internalReadHookEmission?.(pane.runtimeId, internalReadMarker) ?? null;
+        } catch {
+          fail2();
+          return;
+        }
+        const safeObserver = observer !== null && /^[A-Za-z0-9._-]{1,256}$/u.test(observer.bufferName) && /^[A-Za-z0-9._-]{1,256}$/u.test(observer.signalChannel) && /^[A-Za-z0-9%:._|-]{1,1024}$/u.test(observer.record);
+        if (!safeObserver) {
+          fail2();
+          return;
+        }
+        const sentinel = (kind) => `display-message -p -t ${pane.runtimeId} "%tmux-ide-atomic-v1 ${nonce} ${kind}"`;
+        const observerCommands = ` ; set-buffer -a -b ${observer.bufferName} ${observer.record} ; wait-for -S ${observer.signalChannel}`;
+        const body = `set-option -po -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; ${sentinel("start")} ; capture-pane -p -e -J -S -${this.opts.historyLines ?? DEFAULT_HISTORY_LINES} -t ${pane.runtimeId} ; ${sentinel("capture-end")} ; display-message -p -t ${pane.runtimeId} "${RECOVERY_CURSOR_PROBE_FORMAT}" ; ${sentinel("cursor-end")} ; refresh-client -A ${pane.runtimeId}:continue` + observerCommands + ` ; if-shell -t ${pane.runtimeId} -F "#{==:#{${INTERNAL_READ_OPERATION_OPTION}},${internalReadMarker}}" ` + tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION}`) + ` ${tmuxSingleQuote(`${sentinel("marker-rejected")}`)} ; ${sentinel("status-ok")} ; set-option -pu -t ${pane.runtimeId} ${hookName} ; ${sentinel("complete")}`;
+        this.input.flush();
+        const invoke = (reply) => {
+          if (!reply.ok || !participantsExact()) {
+            fail2();
+            return;
+          }
+          const remaining = Math.floor(
+            RECOVERY_ABSOLUTE_DEADLINE_MS - (this.recoveryNowMs() - recovery.startedAtMs)
+          );
+          if (remaining <= 0) {
+            fail2();
+            return;
+          }
+          const armed = this.io.armAtomicPaneSnapshotCollector(
+            {
+              nonce,
+              runtimePaneId: pane.runtimeId,
+              maxCaptureBytes: RECOVERY_CAPTURE_MAX_BYTES,
+              maxCaptureLines: RECOVERY_CAPTURE_MAX_LINES,
+              maxCursorBytes: RECOVERY_CURSOR_MAX_BYTES,
+              observerCommandCount: 2,
+              onProgress: (progress) => this.noteAtomicCollectorProgress(recovery, nonce, progress),
+              onSettled: (result) => {
+                if (recovery.atomicCollectorNonce === nonce) recovery.atomicCollectorNonce = null;
+                recovery.collectorStarted ||= result.started;
+                recovery.collectorLastCompletedOrdinal = Math.max(
+                  recovery.collectorLastCompletedOrdinal,
+                  result.lastCompletedOrdinal
+                );
+                recovery.collectorCaptureLineCount = Math.max(
+                  recovery.collectorCaptureLineCount,
+                  result.captureLineCount
+                );
+                recovery.collectorCaptureByteCount = Math.max(
+                  recovery.collectorCaptureByteCount,
+                  result.captureByteCount
+                );
+                recovery.collectorContinueObserved ||= result.continueObserved;
+                recovery.collectorStatusObserved ||= result.statusObserved;
+                recovery.collectorObserverEmissionObserved ||= result.observerEmissionObserved;
+                recovery.collectorFailureReason = result.failureReason;
+                observerEmitted = result.observerEmissionObserved && safeObserver;
+                cleanupHook();
+                if (settled) return;
+                if (!result.ok || !participantsExact() || result.cursorLine === null) {
+                  fail2(result.statusObserved);
+                  return;
+                }
+                const captureLines = Object.freeze([...result.captureLines]);
+                for (const { sub, epoch } of participants) sub.feed.captureReply(epoch, captureLines);
+                const fallbackSize = this.layoutSizeFor(pane.runtimeId);
+                const deliveries = participants.map(({ sub, epoch }) => ({
+                  sub,
+                  epoch,
+                  events: sub.feed.cursorReply(epoch, result.cursorLine, fallbackSize)
+                }));
+                if (!participantsExact() || deliveries.some(({ events }) => events.length === 0)) {
+                  fail2(true);
+                  return;
+                }
+                let published = false;
+                const publish = () => {
+                  if (published) return true;
+                  if (!participantsExact()) return false;
+                  published = true;
+                  for (const { sub, events } of deliveries)
+                    for (const event of events) sub.onEvent(event);
+                  return participantsExact();
+                };
+                if (!deferPublish && !publish()) {
+                  fail2(true);
+                  return;
+                }
+                for (const { sub, epoch } of deliveries) sub.feed.quarantine(epoch);
+                settled = true;
+                done({
+                  ok: true,
+                  fingerprint: snapshotFingerprint2(captureLines, result.cursorLine, fallbackSize),
+                  publish,
+                  hold: () => {
+                  }
+                });
+              }
+            },
+            remaining
+          );
+          if (!armed) {
+            fail2();
+            return;
+          }
+          const rejected = `tmux-ide-atomic-invoke-rejected-v1:${nonce}`;
+          this.io.commandListInline(
+            `if-shell -t ${pane.runtimeId} -F "#{&&:${hookOwned},${hookUnchanged}}" ${tmuxSingleQuote(`set-hook -Rp -t ${pane.runtimeId} ${hookName}`)} ` + tmuxSingleQuote(`display-message -p -t ${pane.runtimeId} ${rejected}`),
+            2,
+            1,
+            (hookReply) => {
+              if (!hookReply.ok || hookReply.lines.length > 0) {
+                this.io.retireAtomicPaneSnapshotCollector?.(nonce, "retired");
+                fail2();
+              }
+            }
+          );
+        };
+        this.io.commandInline(
+          `set-option -po -t ${pane.runtimeId} ${ownerName} ${nonce}`,
+          (ownerReply) => {
+            if (!ownerReply.ok || !participantsExact()) {
+              fail2();
+              return;
+            }
+            this.io.commandInline(
+              `set-option -po -t ${pane.runtimeId} ${expectedName} ${tmuxSingleQuote(body)}`,
+              (expectedReply) => {
+                if (!expectedReply.ok || !participantsExact()) {
+                  fail2();
+                  return;
+                }
+                this.io.commandInline(
+                  `set-option -po -t ${pane.runtimeId} ${hookName} ${tmuxSingleQuote(body)}`,
+                  invoke
+                );
+              }
+            );
+          }
+        );
+      }
+      armRecoveryQuiet(recovery, callback) {
+        recovery.cancelQuiet?.();
+        recovery.cancelQuiet = this.scheduleRecovery(() => {
+          recovery.cancelQuiet = null;
+          if (this.recoveryPane(recovery)) callback();
+        }, RECOVERY_QUIET_MS);
+      }
+      beginFinalRecovery(recovery) {
+        const pane = this.recoveryPane(recovery);
+        if (!pane) return;
+        if (recovery.attempts >= RECOVERY_MAX_ATTEMPTS) {
+          this.failRecovery(recovery, "attempts-exhausted");
+          return;
+        }
+        recovery.attempts += 1;
+        recovery.stage = "final";
+        this.noteRecoveryProgress(recovery);
+        this.reseedRecoverySubscribers(
+          pane,
+          recovery,
+          ({ ok: ok2, fingerprint: fingerprint2 }) => {
+            const current = this.recoveryPane(recovery);
+            if (!current) return;
+            if (!ok2 || fingerprint2 === null) {
+              this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
+              return;
+            }
+            recovery.outputOrdinal = this.outputOrdinals.get(recovery.runtimeId) ?? 0;
+            recovery.candidateFingerprint = fingerprint2;
+            recovery.confirmationFingerprint = null;
+            recovery.confirmationOrdinal = 0;
+            recovery.stage = "confirm";
+            this.observeRecovery(current, recovery, "final-reseed");
+            this.noteRecoveryProgress(recovery);
+            this.armRecoveryQuiet(recovery, () => this.confirmRecovery(recovery));
+          },
+          true
+        );
+      }
+      confirmRecovery(recovery) {
+        const pane = this.recoveryPane(recovery);
+        if (!pane) return;
+        if ((this.outputOrdinals.get(recovery.runtimeId) ?? 0) !== recovery.outputOrdinal) {
+          this.beginFinalRecovery(recovery);
+          return;
+        }
+        recovery.stage = "final";
+        this.noteRecoveryProgress(recovery);
+        this.reseedRecoverySubscribers(
+          pane,
+          recovery,
+          ({ ok: ok2, fingerprint: fingerprint2, publish }) => {
+            const current = this.recoveryPane(recovery);
+            if (!current) return;
+            if (!ok2 || fingerprint2 === null) {
+              this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
+              return;
+            }
+            const outputOrdinal = this.outputOrdinals.get(recovery.runtimeId) ?? 0;
+            const ordinalExact = outputOrdinal === recovery.outputOrdinal;
+            const candidateExact = ordinalExact && fingerprint2 === recovery.candidateFingerprint;
+            const consecutiveExact = candidateExact && recovery.confirmationFingerprint !== null && fingerprint2 === recovery.confirmationFingerprint;
+            recovery.confirmationOrdinal += 1;
+            this.observeRecovery(current, recovery, "confirmation-reseed", null, consecutiveExact);
+            this.noteRecoveryProgress(recovery);
+            if (!ordinalExact) {
+              recovery.stage = "confirm";
+              this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
+              return;
+            }
+            if (!candidateExact) {
+              if (recovery.attempts >= RECOVERY_MAX_ATTEMPTS) {
+                this.failRecovery(recovery, "attempts-exhausted");
+                return;
+              }
+              recovery.attempts += 1;
+              recovery.candidateFingerprint = fingerprint2;
+              recovery.confirmationFingerprint = null;
+              recovery.outputOrdinal = outputOrdinal;
+              recovery.stage = "confirm";
+              this.armRecoveryQuiet(recovery, () => this.confirmRecovery(recovery));
+              return;
+            }
+            if (!consecutiveExact) {
+              recovery.confirmationFingerprint = fingerprint2;
+              recovery.outputOrdinal = outputOrdinal;
+              recovery.stage = "confirm";
+              this.armRecoveryQuiet(recovery, () => this.confirmRecovery(recovery));
+              return;
+            }
+            if (!publish()) {
+              recovery.stage = "confirm";
+              this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
+              return;
+            }
+            this.convergeRecovery(current, recovery);
+          },
+          true
+        );
+      }
+      convergeRecovery(pane, recovery) {
+        recovery.cancelCommandDeadline?.();
+        recovery.cancelCommandDeadline = null;
+        recovery.cancelNoProgressDeadline?.();
+        recovery.cancelNoProgressDeadline = null;
+        recovery.cancelAbsoluteDeadline?.();
+        recovery.cancelAbsoluteDeadline = null;
+        this.recoveries.delete(recovery.runtimeId);
+        recovery.retired = true;
+        this.retireContinueNotificationOwner(recovery);
+        this.ledger.noteContinued(recovery.runtimeId);
+        if (recovery.reason === "requested") this.ledger.clearRequest(recovery.runtimeId);
+        for (const sub of pane.subs) {
+          if (!sub.frozen && !sub.closed) {
+            sub.feed.releaseQuarantine();
+            sub.onEvent({ type: "flow", state: "resumed", reason: recovery.reason });
+          }
+        }
+        this.observeRecovery(pane, recovery, "converged", null, true);
+      }
+      noteRecoveryOutput(pane, outputOrdinal) {
+        const recovery = this.recoveries.get(pane.runtimeId);
+        if (!recovery || recovery.paneIncarnation !== pane.incarnation) return;
+        recovery.outputOrdinal = outputOrdinal;
+        if (recovery.continueReply) this.noteRecoveryProgress(recovery);
+        if (recovery.stage === "quiet")
+          this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
+        else if (recovery.stage === "confirm")
+          this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
+      }
+      restartRecoveryAfterOutputOverflow(pane) {
+        const recovery = this.recoveries.get(pane.runtimeId);
+        if (recovery?.paneIncarnation === pane.incarnation) {
+          if (recovery.stage === "quiet" || recovery.stage === "confirm")
+            this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
+          return;
+        }
+        this.beginLocalOverflowRecovery(pane);
+      }
+      failRecovery(recovery, failureReason) {
+        const pane = this.recoveryPane(recovery);
+        if (!pane) return;
+        recovery.cancelQuiet?.();
+        recovery.cancelQuiet = null;
+        recovery.cancelCommandDeadline?.();
+        recovery.cancelCommandDeadline = null;
+        recovery.cancelNoProgressDeadline?.();
+        recovery.cancelNoProgressDeadline = null;
+        recovery.cancelAbsoluteDeadline?.();
+        recovery.cancelAbsoluteDeadline = null;
+        recovery.retired = true;
+        const collectorNonce = recovery.atomicCollectorNonce;
+        recovery.atomicCollectorNonce = null;
+        if (collectorNonce) this.io.retireAtomicPaneSnapshotCollector?.(collectorNonce, "retired");
+        this.recoveries.delete(recovery.runtimeId);
+        this.retireContinueNotificationOwner(recovery);
+        for (const sub of pane.subs) sub.feed.abortCurrent();
+        this.observeRecovery(pane, recovery, "nonconverged", failureReason);
+      }
+      removeContinueNotificationOwner(recovery) {
+        const queue = this.continueNotificationQueues.get(recovery.runtimeId);
+        if (!queue) return;
+        const index = queue.findIndex((entry) => entry.kind === "owner" && entry.recovery === recovery);
+        if (index < 0) return;
+        queue.splice(index, 1);
+        this.compactContinueNotificationQueue(recovery.runtimeId, queue);
+      }
+      retireContinueNotificationOwner(recovery) {
+        if (!recovery.continueReply) return;
+        const queue = this.continueNotificationQueues.get(recovery.runtimeId);
+        if (!queue) return;
+        const index = queue.findIndex((entry) => entry.kind === "owner" && entry.recovery === recovery);
+        if (index < 0) return;
+        queue.splice(index, 1, { kind: "debt", count: 1, saturated: false });
+        this.compactContinueNotificationQueue(recovery.runtimeId, queue);
+      }
+      compactContinueNotificationQueue(runtime, queue) {
+        for (let index = 1; index < queue.length; ) {
+          const previous = queue[index - 1];
+          const current = queue[index];
+          if (previous?.kind !== "debt" || current?.kind !== "debt") {
+            index += 1;
+            continue;
+          }
+          const total = previous.count + current.count;
+          previous.count = Math.min(total, MAX_CONTINUE_NOTIFICATION_DEBT);
+          previous.saturated = previous.saturated || current.saturated || total > MAX_CONTINUE_NOTIFICATION_DEBT;
+          queue.splice(index, 1);
+        }
+        if (queue.length === 0) this.continueNotificationQueues.delete(runtime);
+        else this.continueNotificationQueues.set(runtime, queue);
+      }
       /** Continue + reseed EVERY backpressure-paused pane that still has an
        *  unfrozen subscriber. %pause is sticky and hits quiet panes after any
        *  stall — recovering only the noisy pane leaves siblings dark. */
       recoverSticky() {
         for (const runtime of this.ledger.stickyRecoverySet()) {
+          if (this.recoveries.has(runtime)) continue;
           const pane = this.panesByRuntime.get(runtime);
           const live = pane ? [...pane.subs].filter((sub) => !sub.frozen && !sub.closed) : [];
           if (live.length === 0) continue;
-          this.continuePane(runtime);
-          for (const sub of live) {
-            sub.onEvent({ type: "flow", state: "resumed", reason: "backpressure" });
-            this.reseed(sub);
-          }
+          this.beginRecovery(pane, "backpressure");
         }
       }
       closeSub(sub) {
@@ -34471,6 +35629,8 @@ var init_session_channel = __esm({
         sub.closed = true;
         const pane = sub.pane;
         pane.subs.delete(sub);
+        if ([...pane.subs].every((candidate) => candidate.closed || candidate.frozen))
+          this.cancelRecovery(pane.runtimeId);
         if (pane.subs.size === 0 && this.ledger.isRequested(pane.runtimeId)) {
           this.ledger.clearRequest(pane.runtimeId);
           this.continuePane(pane.runtimeId);
@@ -34484,6 +35644,7 @@ var init_session_channel = __esm({
         if (name === "pause") {
           const runtime = rest.trim().split(/\s+/)[0] ?? "";
           if (!runtime.startsWith("%")) return;
+          this.cancelRecovery(runtime);
           this.ledger.notePause(runtime);
           const pane = this.panesByRuntime.get(runtime);
           if (pane) {
@@ -34498,7 +35659,26 @@ var init_session_channel = __esm({
         }
         if (name === "continue") {
           const runtime = rest.trim().split(/\s+/)[0] ?? "";
-          if (runtime.startsWith("%")) this.ledger.noteContinued(runtime);
+          if (runtime.startsWith("%")) {
+            const queue = this.continueNotificationQueues.get(runtime);
+            const entry = queue?.[0] ?? null;
+            if (entry?.kind === "debt") {
+              if (!entry.saturated) {
+                entry.count -= 1;
+                if (entry.count === 0) queue.shift();
+              }
+              this.compactContinueNotificationQueue(runtime, queue);
+            } else if (entry?.kind === "owner") {
+              queue.shift();
+              this.compactContinueNotificationQueue(runtime, queue);
+              const owner = entry.recovery;
+              const pane = this.recoveryPane(owner);
+              owner.continueNotify = true;
+              if (pane) {
+                this.observeRecovery(pane, owner, "continue-notify");
+              }
+            }
+          }
           return;
         }
         if (name === "layout-change") {
@@ -34663,7 +35843,10 @@ var init_session_channel = __esm({
             pane.windowRuntimeId = nextWindowRuntimeId;
             continue;
           }
+          this.cancelRecovery(runtime);
+          this.continueNotificationQueues.delete(runtime);
           this.panesByRuntime.delete(runtime);
+          this.outputOrdinals.delete(runtime);
           this.panesBySemantic.delete(pane.semanticId);
           this.ledger.forget(runtime);
           this.ageByRuntime.delete(runtime);
@@ -34901,15 +36084,20 @@ var init_session_channel = __esm({
           const existingBySemantic = this.panesBySemantic.get(verified.semanticPaneId);
           const existingByRuntime = this.panesByRuntime.get(verified.runtimePaneId);
           if (existingBySemantic && existingBySemantic.runtimeId !== verified.runtimePaneId) {
-            this.panesByRuntime.delete(existingBySemantic.runtimeId);
-            this.ledger.forget(existingBySemantic.runtimeId);
+            const retiredRuntime = existingBySemantic.runtimeId;
+            this.cancelRecovery(retiredRuntime);
+            this.continueNotificationQueues.delete(retiredRuntime);
+            this.panesByRuntime.delete(retiredRuntime);
+            this.outputOrdinals.delete(retiredRuntime);
+            this.ledger.forget(retiredRuntime);
             existingBySemantic.runtimeId = verified.runtimePaneId;
+            existingBySemantic.incarnation = ++this.paneIncarnation;
             existingBySemantic.descriptor = descriptor2;
             existingBySemantic.active = verified.active;
             existingBySemantic.windowRuntimeId = windowRuntimeId;
             this.panesByRuntime.set(verified.runtimePaneId, existingBySemantic);
             for (const sub of existingBySemantic.subs) {
-              if (!sub.closed && !sub.frozen) this.reseed(sub);
+              if (!sub.closed && !sub.frozen) this.reseedPlain(sub);
             }
             continue;
           }
@@ -34921,6 +36109,18 @@ var init_session_channel = __esm({
           }
           if (existingByRuntime) {
             this.panesBySemantic.delete(existingByRuntime.semanticId);
+            this.cancelRecovery(existingByRuntime.runtimeId);
+            this.continueNotificationQueues.delete(existingByRuntime.runtimeId);
+            this.ledger.forget(existingByRuntime.runtimeId);
+            this.outputOrdinals.delete(existingByRuntime.runtimeId);
+            for (const sub of existingByRuntime.subs) {
+              if (sub.closed) continue;
+              sub.closed = true;
+              sub.feed.abortCurrent();
+              sub.onEvent({ type: "closed" });
+            }
+            existingByRuntime.subs.clear();
+            existingByRuntime.incarnation = ++this.paneIncarnation;
             existingByRuntime.semanticId = verified.semanticPaneId;
             existingByRuntime.descriptor = descriptor2;
             existingByRuntime.active = verified.active;
@@ -34934,7 +36134,8 @@ var init_session_channel = __esm({
             descriptor: descriptor2,
             active: verified.active,
             windowRuntimeId,
-            subs: /* @__PURE__ */ new Set()
+            subs: /* @__PURE__ */ new Set(),
+            incarnation: ++this.paneIncarnation
           };
           this.panesByRuntime.set(record.runtimeId, record);
           this.panesBySemantic.set(record.semanticId, record);
@@ -34973,6 +36174,8 @@ var init_session_channel = __esm({
       onChannelExit() {
         if (this.disposed) return;
         this.settleFirstJoin();
+        for (const runtime of [...this.recoveries.keys()]) this.cancelRecovery(runtime);
+        this.continueNotificationQueues.clear();
         for (const pane of this.panesByRuntime.values()) {
           for (const sub of pane.subs) {
             if (!sub.closed) {
@@ -35227,6 +36430,7 @@ var init_mirror_service = __esm({
                 nowMicros: this.opts.nowMicros
               }),
               historyLines: this.opts.historyLines,
+              internalReadHookEmission: this.opts.internalReadHookEmission,
               generatePaneId: this.opts.generatePaneId,
               generateWindowId: this.opts.generateWindowId,
               onExit: () => {
@@ -35245,7 +36449,8 @@ var init_mirror_service = __esm({
                 pendingBeforeSend
               ),
               onInputAccepted: (action, acceptedAtMicros, ok2) => this.opts.onInputAccepted?.(session, action, acceptedAtMicros, ok2),
-              onOutputObserved: (semanticPaneId3, ageMs, timing) => this.opts.onOutputObserved?.(session, semanticPaneId3, ageMs, timing)
+              onOutputObserved: (semanticPaneId3, ageMs, timing) => this.opts.onOutputObserved?.(session, semanticPaneId3, ageMs, timing),
+              onFlowRecoveryObserved: (observation2) => this.opts.onFlowRecoveryObserved?.(session, observation2)
             };
             channel = new SessionChannel(channelOptions);
           } catch (cause) {
@@ -36258,6 +37463,158 @@ var init_terminal_conformance = __esm({
   }
 });
 
+// packages/core/src/terminal-compact-capability.ts
+function consumeCompactReplicaCapability(owner, baseline, hash) {
+  const capability = compactReplicaCapabilities.get(owner);
+  compactReplicaCapabilities.delete(owner);
+  if (!capability || capability.baseline !== baseline || capability.hash !== hash) return void 0;
+  return capability.snapshot;
+}
+var compactReplicaCapabilities;
+var init_terminal_compact_capability = __esm({
+  "packages/core/src/terminal-compact-capability.ts"() {
+    "use strict";
+    compactReplicaCapabilities = /* @__PURE__ */ new WeakMap();
+  }
+});
+
+// packages/core/src/terminal-replica-hash-cache.ts
+function hashCanonicalTerminalValue(value) {
+  const hash = new CanonicalFnv64();
+  hash.value(value);
+  return hash.digest();
+}
+function writeColor(hash, color3) {
+  const keys = color3.kind === "default" ? ["kind"] : color3.kind === "indexed" ? ["index", "kind"] : ["kind", "value"];
+  hash.ascii(`o${keys.length}:`);
+  for (const key of keys) {
+    hash.string(key);
+    if (key === "kind") hash.string(color3.kind);
+    else
+      hash.number(
+        key === "index" && color3.kind === "indexed" ? color3.index : color3.kind === "rgb" ? color3.value : 0
+      );
+  }
+  hash.ascii(";");
+}
+function hashTerminalReplicaRowCached(row, onMiss) {
+  const cached2 = ROW_HASH_CACHE.get(row);
+  if (cached2) return cached2;
+  onMiss?.();
+  const hash = new CanonicalFnv64();
+  hash.array(2, () => {
+    hash.boolean(row.wrapped);
+    hash.array(row.cells.length, () => {
+      for (const cell of row.cells) {
+        hash.array(5, () => {
+          hash.string(cell.grapheme);
+          hash.number(cell.width);
+          writeColor(hash, cell.foreground);
+          writeColor(hash, cell.background);
+          hash.number(cell.attributes);
+        });
+      }
+    });
+  });
+  const digest3 = hash.digest();
+  if (isTerminalReplicaRowDeeplyFrozen(row)) {
+    DEEPLY_FROZEN_ROWS.add(row);
+    ROW_HASH_CACHE.set(row, digest3);
+  }
+  return digest3;
+}
+function isTerminalReplicaRowDeeplyFrozen(row) {
+  if (DEEPLY_FROZEN_ROWS.has(row)) return true;
+  if (!Object.isFrozen(row) || !Object.isFrozen(row.cells)) return false;
+  for (const cell of row.cells) {
+    if (!Object.isFrozen(cell) || !Object.isFrozen(cell.foreground) || !Object.isFrozen(cell.background))
+      return false;
+  }
+  DEEPLY_FROZEN_ROWS.add(row);
+  return true;
+}
+var ROW_HASH_CACHE, DEEPLY_FROZEN_ROWS, UTF8_ENCODER, CanonicalFnv64;
+var init_terminal_replica_hash_cache = __esm({
+  "packages/core/src/terminal-replica-hash-cache.ts"() {
+    "use strict";
+    ROW_HASH_CACHE = /* @__PURE__ */ new WeakMap();
+    DEEPLY_FROZEN_ROWS = /* @__PURE__ */ new WeakSet();
+    UTF8_ENCODER = new TextEncoder();
+    CanonicalFnv64 = class {
+      #high = 3421674724;
+      #low = 2216829733;
+      #byte(value) {
+        const low = (this.#low ^ value) >>> 0;
+        const product = low * 435;
+        const carry = Math.floor(product / 4294967296);
+        this.#low = product >>> 0;
+        this.#high = this.#high * 435 + carry + low * 256 >>> 0;
+      }
+      ascii(value) {
+        for (let index = 0; index < value.length; index += 1) this.#byte(value.charCodeAt(index));
+        return value.length;
+      }
+      bytes(value) {
+        for (const byte of value) this.#byte(byte);
+      }
+      string(value) {
+        const bytes = UTF8_ENCODER.encode(value);
+        this.ascii(`s${bytes.byteLength}:`);
+        for (const byte of bytes) this.#byte(byte);
+        this.#byte(59);
+        return bytes.byteLength;
+      }
+      number(value) {
+        const text = String(value);
+        this.ascii(`d${text.length}:${text};`);
+      }
+      boolean(value) {
+        this.ascii(value ? "b1;" : "b0;");
+      }
+      value(value) {
+        if (value === null) {
+          this.ascii("n;");
+          return;
+        }
+        if (typeof value === "boolean") {
+          this.boolean(value);
+          return;
+        }
+        if (typeof value === "number") {
+          this.number(value);
+          return;
+        }
+        if (typeof value === "string") {
+          this.string(value);
+          return;
+        }
+        if (Array.isArray(value)) {
+          this.ascii(`a${value.length}:`);
+          for (const entry of value) this.value(entry);
+          this.ascii(";");
+          return;
+        }
+        const record = value;
+        const keys = Object.keys(record).sort();
+        this.ascii(`o${keys.length}:`);
+        for (const key of keys) {
+          this.string(key);
+          this.value(record[key]);
+        }
+        this.ascii(";");
+      }
+      array(length, entries) {
+        this.ascii(`a${length}:`);
+        entries();
+        this.ascii(";");
+      }
+      digest() {
+        return `${this.#high.toString(16).padStart(8, "0")}${this.#low.toString(16).padStart(8, "0")}`;
+      }
+    };
+  }
+});
+
 // packages/core/src/terminal-replica.ts
 function blankTerminalReplicaSnapshot(cols, rows) {
   const row = blankRow(cols);
@@ -36295,7 +37652,13 @@ function applyTerminalReplicaUpdate(current, update, options = {}) {
     return result;
   };
   if (update.type === "terminal.seed") {
-    if (update.hashAlgorithm !== "fnv1a64-v1" || !terminalReplicaSnapshotIsValid(update.snapshot)) {
+    const trustedSnapshot2 = update.hashAlgorithm === "fnv1a64-v1" ? consumeCompactReplicaCapability(
+      update.snapshot,
+      current?.snapshot ?? null,
+      update.stateHash
+    ) : void 0;
+    if (profile && trustedSnapshot2 !== void 0) profile.trustedCompactAdoption = true;
+    if (update.hashAlgorithm !== "fnv1a64-v1" || trustedSnapshot2 === void 0 && !terminalReplicaSnapshotIsValid(update.snapshot) || trustedSnapshot2 !== void 0 && trustedSnapshot2 !== update.snapshot) {
       return complete(
         current ? protocolConflict(current, update.revision) : {
           status: "conflict",
@@ -36305,8 +37668,8 @@ function applyTerminalReplicaUpdate(current, update, options = {}) {
         }
       );
     }
-    const frozenSnapshot = freezeSnapshot(update.snapshot);
-    const hash2 = hashTerminalReplicaSnapshot(frozenSnapshot);
+    const frozenSnapshot = trustedSnapshot2 ?? freezeSnapshot(update.snapshot);
+    const hash2 = trustedSnapshot2 ? update.stateHash : hashTerminalReplicaSnapshot(frozenSnapshot);
     if (current && (current.workspaceName !== update.workspaceName || current.semanticPaneId !== update.semanticPaneId)) {
       return complete(protocolConflict(current, update.revision));
     }
@@ -36422,17 +37785,29 @@ function applyTerminalReplicaUpdate(current, update, options = {}) {
     });
   }
   let snapshot;
-  try {
-    snapshot = applyTerminalReplicaPatchProfiled(
-      current.snapshot,
-      update.patch,
-      profile,
-      options.instrumentation
-    );
-  } catch {
-    return complete(protocolConflict(current, update.revision));
+  const trustedSnapshot = consumeCompactReplicaCapability(
+    update.patch,
+    current.snapshot,
+    update.stateHash
+  );
+  let hash;
+  if (trustedSnapshot !== void 0 && trustedSnapshot !== null) {
+    if (profile) profile.trustedCompactAdoption = true;
+    snapshot = trustedSnapshot;
+    hash = update.stateHash;
+  } else {
+    try {
+      snapshot = applyTerminalReplicaPatchProfiled(
+        current.snapshot,
+        update.patch,
+        profile,
+        options.instrumentation
+      );
+    } catch {
+      return complete(protocolConflict(current, update.revision));
+    }
+    hash = hashTerminalReplicaSnapshotProfiled(snapshot, profile, options.instrumentation);
   }
-  const hash = hashTerminalReplicaSnapshotProfiled(snapshot, profile, options.instrumentation);
   if (hash !== update.stateHash || snapshot.cols !== update.cols || snapshot.rows !== update.rows) {
     return complete({
       status: "conflict",
@@ -36522,7 +37897,12 @@ function applyTerminalReplicaPatchProfiled(current, patch, profile, instrumentat
   } else if (patch.historyDelta) {
     const appended = patch.historyDelta.append.map(freezeRow);
     history = Object.freeze([...current.history.slice(patch.historyDelta.trim), ...appended]);
-    registerRowsDeltaHash(current.history, history, patch.historyDelta.trim, appended);
+    registerTerminalReplicaRowsDeltaHash(
+      current.history,
+      history,
+      patch.historyDelta.trim,
+      appended
+    );
   } else {
     history = current.history;
   }
@@ -36668,30 +38048,12 @@ function colorsEqual(left, right) {
   return left.kind === "rgb" && right.kind === "rgb" && left.value === right.value;
 }
 function hashStable(value) {
-  const bytes = new TextEncoder().encode(canonicalEncode(value));
-  let hash = 0xcbf29ce484222325n;
-  for (const byte of bytes) {
-    hash ^= BigInt(byte);
-    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
-  }
-  return hash.toString(16).padStart(16, "0");
-}
-function canonicalEncode(value) {
-  if (value === null) return "n;";
-  if (typeof value === "boolean") return value ? "b1;" : "b0;";
-  if (typeof value === "number") return `d${String(value).length}:${String(value)};`;
-  if (typeof value === "string") {
-    const length = new TextEncoder().encode(value).length;
-    return `s${length}:${value};`;
-  }
-  if (Array.isArray(value)) return `a${value.length}:${value.map(canonicalEncode).join("")};`;
-  const record = value;
-  const keys = Object.keys(record).sort();
-  return `o${keys.length}:${keys.map((key) => `${canonicalEncode(key)}${canonicalEncode(record[key])}`).join("")};`;
+  return hashCanonicalTerminalValue(value);
 }
 function createApplyProfile() {
   return {
     reusedAuthenticatedFrameHash: false,
+    trustedCompactAdoption: false,
     phaseMicros: {
       updateHash: 0,
       rowValidationFreeze: 0,
@@ -36711,6 +38073,7 @@ function createApplyProfile() {
 function freezeProfile(profile) {
   return Object.freeze({
     reusedAuthenticatedFrameHash: profile.reusedAuthenticatedFrameHash,
+    trustedCompactAdoption: profile.trustedCompactAdoption,
     phaseMicros: Object.freeze({ ...profile.phaseMicros }),
     counts: Object.freeze({ ...profile.counts })
   });
@@ -36755,22 +38118,12 @@ function isNewerIncarnation(current, candidate) {
   return currentEpoch !== void 0 && candidateEpoch !== void 0 && Number(candidateEpoch) > Number(currentEpoch);
 }
 function hashTerminalReplicaRow(row, profile, instrumentation) {
-  const cached2 = ROW_HASH_CACHE.get(row);
-  if (cached2) return cached2;
-  if (profile) profile.counts.rowHashMisses += 1;
   const started = readProfileClock(instrumentation);
-  const hash = hashStable([
-    row.wrapped,
-    row.cells.map((cell) => [
-      cell.grapheme,
-      cell.width,
-      cell.foreground,
-      cell.background,
-      cell.attributes
-    ])
-  ]);
+  const hash = hashTerminalReplicaRowCached(
+    row,
+    profile ? () => profile.counts.rowHashMisses += 1 : void 0
+  );
   addProfileDuration(profile, "rowHash", started, instrumentation);
-  if (Object.isFrozen(row)) ROW_HASH_CACHE.set(row, hash);
   return hash;
 }
 function hashTerminalReplicaRows(rows, profile, instrumentation) {
@@ -36782,10 +38135,11 @@ function hashTerminalReplicaRows(rows, profile, instrumentation) {
       64,
       hash * ROW_SEQUENCE_BASE + BigInt(`0x${hashTerminalReplicaRow(row, profile, instrumentation)}`)
     );
-  if (Object.isFrozen(rows)) ROW_ARRAY_HASH_CACHE.set(rows, { hash, length: rows.length });
+  if (Object.isFrozen(rows) && rows.every(isTerminalReplicaRowDeeplyFrozen))
+    ROW_ARRAY_HASH_CACHE.set(rows, { hash, length: rows.length });
   return hash.toString(16).padStart(16, "0");
 }
-function registerRowsDeltaHash(previous, next, trim, append) {
+function registerTerminalReplicaRowsDeltaHash(previous, next, trim, append) {
   hashTerminalReplicaRows(previous);
   const prior = ROW_ARRAY_HASH_CACHE.get(previous);
   if (!prior) return;
@@ -36803,7 +38157,8 @@ function registerRowsDeltaHash(previous, next, trim, append) {
       64,
       hash * ROW_SEQUENCE_BASE + BigInt(`0x${hashTerminalReplicaRow(row)}`)
     );
-  ROW_ARRAY_HASH_CACHE.set(next, { hash, length: next.length });
+  if (Object.isFrozen(next) && next.every(isTerminalReplicaRowDeeplyFrozen))
+    ROW_ARRAY_HASH_CACHE.set(next, { hash, length: next.length });
 }
 function pow64(base, exponent) {
   let result = 1n;
@@ -36834,12 +38189,13 @@ function terminalReplicaRowIsValid(row) {
   }
   return true;
 }
-var DEFAULT_COLOR, ROW_HASH_CACHE, ROW_ARRAY_HASH_CACHE, ROW_SEQUENCE_BASE;
+var DEFAULT_COLOR, ROW_ARRAY_HASH_CACHE, ROW_SEQUENCE_BASE;
 var init_terminal_replica2 = __esm({
   "packages/core/src/terminal-replica.ts"() {
     "use strict";
+    init_terminal_compact_capability();
+    init_terminal_replica_hash_cache();
     DEFAULT_COLOR = Object.freeze({ kind: "default" });
-    ROW_HASH_CACHE = /* @__PURE__ */ new WeakMap();
     ROW_ARRAY_HASH_CACHE = /* @__PURE__ */ new WeakMap();
     ROW_SEQUENCE_BASE = 0x100000001b3n;
   }
@@ -36849,18 +38205,17 @@ var init_terminal_replica2 = __esm({
 function negotiateTerminalDelivery(offer, generation, deliveryNonce) {
   if (!offer.protocolVersions.includes(TERMINAL_DELIVERY_PROTOCOL_VERSION))
     return { accepted: false, reason: "protocol-version-mismatch" };
-  const encoding = ["semantic-v1", "ansi-diff-v1", "ansi-raw-v1"].find(
-    (value) => offer.encodings.includes(value)
-  );
+  const encoding = ["semantic-compact-v1", "semantic-v1", "ansi-diff-v1", "ansi-raw-v1"].find((value) => offer.encodings.includes(value));
   if (!encoding) return { accepted: false, reason: "encoding-mismatch" };
-  if (offer.richPlacements && encoding !== "semantic-v1")
+  if (offer.richPlacements && encoding !== "semantic-v1" && encoding !== "semantic-compact-v1")
     return { accepted: false, reason: "unsupported-capability-combination" };
   return {
     accepted: true,
     negotiated: {
       protocolVersion: TERMINAL_DELIVERY_PROTOCOL_VERSION,
       encoding,
-      richPlacements: offer.richPlacements && encoding === "semantic-v1",
+      ...encoding === "semantic-compact-v1" && offer.encodings.includes("semantic-v1") ? { fallbackEncoding: "semantic-v1" } : {},
+      richPlacements: offer.richPlacements && (encoding === "semantic-v1" || encoding === "semantic-compact-v1"),
       generation,
       deliveryNonce
     }
@@ -36873,34 +38228,302 @@ function encodeSemanticTerminalUpdate(update) {
   assertRepresentationSize(bytes);
   return bytes;
 }
-function hashTerminalDeliveryRepresentation(bytes) {
-  let high = 2166136261;
-  let low = 2654435769;
-  for (const byte of bytes) {
-    high = Math.imul(high ^ byte, 16777619) >>> 0;
-    low = Math.imul(low ^ byte, 2246822507) >>> 0;
+function preaccountSemanticTerminalUpdateBytes(input, maximum = TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES) {
+  let bytes = 0;
+  const saturated = {};
+  const add = (amount) => {
+    bytes += amount;
+    if (bytes > maximum) throw saturated;
+  };
+  const stringBytes = (value) => {
+    add(2);
+    for (let index = 0; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      if (code === 34 || code === 92 || code === 8 || code === 12 || code === 10 || code === 13 || code === 9)
+        add(2);
+      else if (code <= 31) add(6);
+      else if (code <= 127) add(1);
+      else if (code <= 2047) add(2);
+      else if (code >= 55296 && code <= 56319) {
+        const next = value.charCodeAt(index + 1);
+        if (next >= 56320 && next <= 57343) {
+          add(4);
+          index += 1;
+        } else add(6);
+      } else if (code >= 56320 && code <= 57343) add(6);
+      else add(3);
+    }
+  };
+  const visit = (value) => {
+    if (value === null) {
+      add(4);
+      return;
+    }
+    if (typeof value === "string") {
+      stringBytes(value);
+      return;
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+      add(String(value).length);
+      return;
+    }
+    if (Array.isArray(value)) {
+      add(1);
+      for (let index = 0; index < value.length; index += 1) {
+        if (index > 0) add(1);
+        visit(value[index]);
+      }
+      add(1);
+      return;
+    }
+    if (typeof value !== "object" || value === void 0)
+      throw new TypeError("Unsupported canonical JSON value");
+    add(1);
+    const record = value;
+    const keys = Object.keys(record).sort();
+    let emitted = 0;
+    for (const key of keys) {
+      const member = record[key];
+      if (member === void 0) continue;
+      if (emitted > 0) add(1);
+      stringBytes(key);
+      add(1);
+      visit(member);
+      emitted += 1;
+    }
+    add(1);
+  };
+  try {
+    visit(input);
+    return Object.freeze({ exact: true, bytes });
+  } catch (error) {
+    if (error !== saturated) throw error;
+    return Object.freeze({ exact: false, atLeastBytes: maximum + 1 });
   }
-  return high.toString(16).padStart(8, "0") + low.toString(16).padStart(8, "0");
+}
+function encodeCompactSemanticTerminalUpdate(input) {
+  const update = TerminalSemanticDeliveryPayloadSchemaZ.parse(input);
+  const wire = update.frame === "seed" ? {
+    v: 1,
+    k: COMPACT_SEMANTIC_KIND,
+    f: "s",
+    r: update.revision,
+    s: compactSnapshot(update.snapshot)
+  } : update.frame === "patch" ? {
+    v: 1,
+    k: COMPACT_SEMANTIC_KIND,
+    f: "p",
+    b: update.baseRevision,
+    r: update.revision,
+    p: compactPatch(update.patch)
+  } : {
+    v: 1,
+    k: COMPACT_SEMANTIC_KIND,
+    f: "t",
+    b: update.baseRevision,
+    r: update.revision,
+    t: update.tombstone.reason
+  };
+  const bytes = UTF8_ENCODER2.encode(canonicalJson(wire));
+  assertRepresentationSize(bytes);
+  return bytes;
+}
+function compactSnapshot(snapshot) {
+  const budget = {
+    rows: 0,
+    runs: 0,
+    cells: 0,
+    placements: 0,
+    maxCells: COMPACT_MAX_EXPANDED_CELLS,
+    reusedRows: 0,
+    allocatedCells: 0,
+    canonicalUtf8Allocations: 0,
+    canonicalUtf8Bytes: 0,
+    validatedCellAllocations: 0
+  };
+  if (snapshot.cols > COMPACT_MAX_DIMENSION || snapshot.rows > COMPACT_MAX_DIMENSION || snapshot.grid.length !== snapshot.rows)
+    compactEncodingLimit();
+  return [
+    snapshot.cols,
+    snapshot.rows,
+    compactRows(snapshot.grid, snapshot.cols, budget),
+    compactRows(snapshot.history, snapshot.cols, budget),
+    compactCursor(snapshot.cursor),
+    compactModes(snapshot.modes),
+    compactPlacements(snapshot.placements, budget),
+    compactBootstrap(snapshot.bootstrap)
+  ];
+}
+function compactPatch(patch) {
+  const budget = {
+    rows: 0,
+    runs: 0,
+    cells: 0,
+    placements: 0,
+    maxCells: COMPACT_MAX_EXPANDED_CELLS,
+    reusedRows: 0,
+    allocatedCells: 0,
+    canonicalUtf8Allocations: 0,
+    canonicalUtf8Bytes: 0,
+    validatedCellAllocations: 0
+  };
+  const cols = patch.dimensions?.cols ?? null;
+  if (patch.dimensions && (patch.dimensions.cols > COMPACT_MAX_DIMENSION || patch.dimensions.rows > COMPACT_MAX_DIMENSION))
+    compactEncodingLimit();
+  if (patch.rows.length > COMPACT_MAX_DIMENSION) compactEncodingLimit();
+  return [
+    patch.dimensions ? [patch.dimensions.cols, patch.dimensions.rows] : null,
+    patch.rows.map(({ index, row }) => [index, compactRow(row, cols, budget)]),
+    patch.history ? compactRows(patch.history, cols, budget) : null,
+    patch.historyDelta ? [patch.historyDelta.trim, compactRows(patch.historyDelta.append, cols, budget)] : null,
+    patch.cursor ? compactCursor(patch.cursor) : null,
+    patch.modes ? compactModes(patch.modes) : null,
+    patch.placements ? compactPlacements(patch.placements, budget) : null,
+    patch.bootstrap ? compactBootstrap(patch.bootstrap) : null
+  ];
+}
+function compactRows(rows, cols, budget) {
+  return rows.map((row) => compactRow(row, cols, budget));
+}
+function compactRow(row, cols, budget) {
+  if (++budget.rows > COMPACT_MAX_ROWS) compactEncodingLimit();
+  if (row.cells.length > COMPACT_MAX_EXPANDED_CELLS || cols !== null && row.cells.length !== cols)
+    compactEncodingLimit();
+  budget.cells += row.cells.length;
+  if (budget.cells > COMPACT_MAX_EXPANDED_CELLS) compactEncodingLimit();
+  const runs = [];
+  for (const cell of row.cells) {
+    const prior = runs.at(-1);
+    const encoded = compactCell(cell);
+    if (prior && compactRunCellEqual(prior, encoded)) prior[0] += 1;
+    else {
+      if (++budget.runs > COMPACT_MAX_RUNS) compactEncodingLimit();
+      runs.push(encoded);
+    }
+  }
+  return [row.wrapped ? 1 : 0, runs];
+}
+function compactCell(cell) {
+  return [
+    1,
+    compactEncodeString(cell.grapheme),
+    cell.width,
+    compactColor(cell.foreground),
+    compactColor(cell.background),
+    cell.attributes
+  ];
+}
+function compactRunCellEqual(a, b) {
+  return a[1] === b[1] && a[2] === b[2] && compactColorEqual(a[3], b[3]) && compactColorEqual(a[4], b[4]) && a[5] === b[5];
+}
+function compactColor(color3) {
+  return color3.kind === "default" ? 0 : [color3.kind === "indexed" ? 1 : 2, color3.kind === "indexed" ? color3.index : color3.value];
+}
+function compactColorEqual(a, b) {
+  return a === 0 ? b === 0 : b !== 0 && a[0] === b[0] && a[1] === b[1];
+}
+function compactCursor(cursor) {
+  return [cursor.x, cursor.y, cursor.hidden ? 1 : 0, cursor.style, cursor.blink ? 1 : 0];
+}
+function compactModes(modes) {
+  return [
+    modes.alternateScreen ? 1 : 0,
+    modes.applicationCursor ? 1 : 0,
+    modes.applicationKeypad ? 1 : 0,
+    modes.bracketedPaste ? 1 : 0,
+    modes.insert ? 1 : 0,
+    modes.origin ? 1 : 0,
+    modes.wraparound ? 1 : 0,
+    modes.mouseTracking ? 1 : 0,
+    modes.mouseProtocol ?? null,
+    modes.mouseEncoding ?? null,
+    modes.synchronizedOutput ? 1 : 0
+  ];
+}
+function compactPlacement(placement) {
+  return [
+    compactEncodeString(placement.id),
+    compactEncodeString(placement.kind),
+    placement.row,
+    placement.column,
+    placement.columns,
+    placement.rows,
+    compactEncodeString(placement.contentDigest)
+  ];
+}
+function compactPlacements(placements, budget) {
+  budget.placements += placements.length;
+  if (budget.placements > COMPACT_MAX_PLACEMENTS) compactEncodingLimit();
+  return placements.map(compactPlacement);
+}
+function compactBootstrap(bootstrap) {
+  return [bootstrap.kind, bootstrap.hiddenState];
+}
+function compactEncodeString(value) {
+  if (value.length > COMPACT_MAX_STRING_BYTES / 4 && UTF8_ENCODER2.encode(value).byteLength > COMPACT_MAX_STRING_BYTES)
+    compactEncodingLimit();
+  return value;
+}
+function compactEncodingLimit() {
+  throw new TerminalDeliveryStateTooLargeError(TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES + 1);
+}
+function hashTerminalDeliveryRepresentation(bytes) {
+  const hasher = new TerminalDeliveryRepresentationHasher();
+  hasher.write(bytes);
+  return hasher.digest();
 }
 function encodeAnsiTerminalRepresentation(baseline, target) {
   let output = "";
-  if (!baseline || baseline.cols !== target.cols || baseline.rows !== target.rows) {
+  const alternateScreenChanged = baseline === null || baseline.modes.alternateScreen !== target.modes.alternateScreen;
+  if (alternateScreenChanged)
+    output += target.modes.alternateScreen ? "\x1B[?1049h" : "\x1B[?1049l";
+  if (!baseline || baseline.cols !== target.cols || baseline.rows !== target.rows || alternateScreenChanged) {
     output += "\x1B[0m\x1B[2J\x1B[H";
-    for (let row = 0; row < target.rows; row += 1) {
-      output += renderAnsiRow(target.grid[row]);
-      if (row + 1 < target.rows) output += "\r\n";
-    }
+    output += prepareAnsiTopWrappedRow(target);
+    output += renderAnsiRowChains(
+      target,
+      target.grid.map((_, index) => index),
+      false
+    );
   } else {
+    const changedRows = /* @__PURE__ */ new Map();
     for (let row = 0; row < target.rows; row += 1) {
       if (terminalReplicaRowsEqual(baseline.grid[row], target.grid[row])) continue;
-      output += `\x1B[${row + 1};1H${renderAnsiRow(target.grid[row])}\x1B[K`;
+      changedRows.set(row, target.grid[row]);
     }
+    if ([...changedRows].some(([index, row]) => row.wrapped || baseline.grid[index]?.wrapped === true))
+      return encodeAnsiTerminalRepresentation(null, target);
+    output += renderAnsiPatchRows(target, changedRows);
+    if (changedRows.size === 0 && baseline.modes.wraparound !== target.modes.wraparound)
+      output += ansiWraparoundPresentation(target);
   }
-  output += `\x1B[${target.cursor.y + 1};${target.cursor.x + 1}H`;
-  output += target.cursor.hidden ? "\x1B[?25l" : "\x1B[?25h";
+  output += ansiCursorPresentation(target);
   const bytes = new TextEncoder().encode(output);
   assertRepresentationSize(bytes);
   return bytes;
+}
+function renderAnsiPatchRows(target, patchedRows) {
+  const affectedRows = new Set(patchedRows.keys());
+  for (const index of patchedRows.keys()) {
+    let dependency = index;
+    while (dependency > 0 && (patchedRows.get(dependency) ?? target.grid[dependency])?.wrapped) {
+      dependency -= 1;
+      affectedRows.add(dependency);
+    }
+  }
+  return renderAnsiRowChains(
+    target,
+    [...affectedRows].sort((left, right) => left - right),
+    true,
+    patchedRows
+  );
+}
+function ansiCursorPresentation(target) {
+  const cursorShape = target.cursor.style === "underline" ? target.cursor.blink ? 3 : 4 : target.cursor.style === "bar" ? target.cursor.blink ? 5 : 6 : target.cursor.blink ? 1 : 2;
+  return `\x1B[${target.cursor.y + 1};${target.cursor.x + 1}H\x1B[${cursorShape} q` + (target.cursor.hidden ? "\x1B[?25l" : "\x1B[?25h");
+}
+function ansiWraparoundPresentation(target) {
+  return target.modes.wraparound ? "\x1B[?7h" : "\x1B[?7l";
 }
 function renderAnsiRow(row) {
   let output = "\x1B[0m";
@@ -36910,6 +38533,33 @@ function renderAnsiRow(row) {
     output += cell.grapheme;
   }
   return `${output}\x1B[0m`;
+}
+function renderAnsiRowChains(target, indices, clearRows, patchedRows = /* @__PURE__ */ new Map()) {
+  if (indices.length === 0) return "";
+  const rowAt = (index) => patchedRows.get(index) ?? target.grid[index];
+  let output = "\x1B[?7h";
+  if (clearRows) {
+    for (const index of indices) output += `\x1B[${index + 1};1H\x1B[2K`;
+  }
+  let previous = -2;
+  for (const index of indices) {
+    const row = rowAt(index);
+    const continuesPrevious = index === previous + 1 && row.wrapped;
+    if (!continuesPrevious) output += `\x1B[${index + 1};1H`;
+    output += renderAnsiRow(row);
+    previous = index;
+  }
+  output += ansiWraparoundPresentation(target);
+  return output;
+}
+function prepareAnsiTopWrappedRow(target) {
+  const first = target.grid[0];
+  if (!first?.wrapped) return "";
+  let output = `\x1B[?7h\x1B[${target.rows};1H\x1B[2K`;
+  output += renderAnsiRow(first);
+  output += renderAnsiRow(first);
+  if (target.rows > 1) output += `\x1B[${target.rows - 1}S`;
+  return `${output}\x1B[3J`;
 }
 function ansiCellStyle(cell) {
   const codes = [0];
@@ -36949,12 +38599,14 @@ function assertRepresentationSize(bytes) {
   if (bytes.byteLength > TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES)
     throw new TerminalDeliveryStateTooLargeError(bytes.byteLength);
 }
-var TerminalDeliveryStateTooLargeError;
+var TerminalDeliveryStateTooLargeError, COMPACT_SEMANTIC_KIND, COMPACT_MAX_DIMENSION, COMPACT_MAX_ROWS, COMPACT_MAX_RUNS, COMPACT_MAX_EXPANDED_CELLS, COMPACT_MAX_PLACEMENTS, COMPACT_MAX_STRING_BYTES, UTF8_ENCODER2, COMPACT_DEFAULT_COLOR, COOPERATIVE_JSON_WORK_CHARS, COOPERATIVE_JSON_MAX_STRING_CHARS, TerminalDeliveryRepresentationHasher;
 var init_terminal_delivery2 = __esm({
   "packages/core/src/terminal-delivery.ts"() {
     "use strict";
     init_src();
     init_terminal_replica2();
+    init_terminal_compact_capability();
+    init_terminal_replica_hash_cache();
     TerminalDeliveryStateTooLargeError = class extends Error {
       bytes;
       constructor(bytes) {
@@ -36963,6 +38615,32 @@ var init_terminal_delivery2 = __esm({
         );
         this.name = "TerminalDeliveryStateTooLargeError";
         this.bytes = bytes;
+      }
+    };
+    COMPACT_SEMANTIC_KIND = "terminal-semantic-compact";
+    COMPACT_MAX_DIMENSION = 4096;
+    COMPACT_MAX_ROWS = 1e4;
+    COMPACT_MAX_RUNS = 1e6;
+    COMPACT_MAX_EXPANDED_CELLS = 1e6;
+    COMPACT_MAX_PLACEMENTS = 4096;
+    COMPACT_MAX_STRING_BYTES = 4096;
+    UTF8_ENCODER2 = new TextEncoder();
+    COMPACT_DEFAULT_COLOR = Object.freeze({ kind: "default" });
+    COOPERATIVE_JSON_WORK_CHARS = 16 * 1024;
+    COOPERATIVE_JSON_MAX_STRING_CHARS = COMPACT_MAX_STRING_BYTES * 6 + 2;
+    TerminalDeliveryRepresentationHasher = class {
+      // Two independent 32-bit lanes avoid BigInt's per-byte allocation cost while
+      // retaining a deterministic 64-bit wire fingerprint in browser and daemon.
+      #high = 2166136261;
+      #low = 2654435769;
+      write(bytes) {
+        for (const byte of bytes) {
+          this.#high = Math.imul(this.#high ^ byte, 16777619) >>> 0;
+          this.#low = Math.imul(this.#low ^ byte, 2246822507) >>> 0;
+        }
+      }
+      digest() {
+        return this.#high.toString(16).padStart(8, "0") + this.#low.toString(16).padStart(8, "0");
       }
     };
   }
@@ -44666,7 +46344,195 @@ var init_terminal_replica_owner = __esm({
   }
 });
 
+// packages/daemon/src/terminal/session-runtime/terminal-delivery-observation-identity.ts
+function registerTerminalDeliveryObservationOrdinal(envelope, ordinal) {
+  if (!Number.isSafeInteger(ordinal) || ordinal < 1)
+    throw new TypeError("terminal delivery observation ordinal was invalid");
+  deliveryOrdinals.set(envelope, ordinal);
+}
+function terminalDeliveryObservationOrdinal(envelope) {
+  return deliveryOrdinals.get(envelope) ?? null;
+}
+var deliveryOrdinals;
+var init_terminal_delivery_observation_identity = __esm({
+  "packages/daemon/src/terminal/session-runtime/terminal-delivery-observation-identity.ts"() {
+    "use strict";
+    deliveryOrdinals = /* @__PURE__ */ new WeakMap();
+  }
+});
+
 // packages/daemon/src/terminal/session-runtime/terminal-delivery-hub.ts
+function selectExactSemanticRepresentation(encodePatch, encodeSeed, observe = true) {
+  let patch;
+  try {
+    patch = encodePatch();
+  } catch (error) {
+    if (!(error instanceof TerminalDeliveryStateTooLargeError)) throw error;
+    let seed;
+    try {
+      seed = encodeSeed();
+    } catch (seedError) {
+      if (!(seedError instanceof TerminalDeliveryStateTooLargeError)) throw seedError;
+      throw new ExactSemanticRepresentationSelectionError(seedError.bytes, {
+        attemptedPatchBytes: error.bytes,
+        attemptedSeedBytes: seedError.bytes,
+        selectionStatus: "seed-preferred"
+      });
+    }
+    if (!observe) return seed;
+    return {
+      ...seed,
+      observation: Object.freeze({
+        attemptedPatchBytes: error.bytes,
+        attemptedSeedBytes: seed.bytes.byteLength,
+        selectionStatus: "seed-preferred"
+      })
+    };
+  }
+  if (patch.payload.frame !== "patch") {
+    if (!observe) return patch;
+    return {
+      ...patch,
+      observation: Object.freeze({
+        attemptedPatchBytes: null,
+        attemptedSeedBytes: patch.payload.frame === "seed" ? patch.bytes.byteLength : null,
+        selectionStatus: patch.payload.frame === "seed" ? "direct-seed" : "direct-tombstone"
+      })
+    };
+  }
+  if (patch.bytes.byteLength <= TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES) {
+    if (!observe) return patch;
+    return {
+      ...patch,
+      observation: Object.freeze({
+        attemptedPatchBytes: patch.bytes.byteLength,
+        attemptedSeedBytes: null,
+        selectionStatus: "patch-preferred"
+      })
+    };
+  }
+  try {
+    const seed = encodeSeed();
+    const selected = patch.bytes.byteLength <= seed.bytes.byteLength ? patch : seed;
+    if (!observe) return selected;
+    return {
+      ...selected,
+      observation: Object.freeze({
+        attemptedPatchBytes: patch.bytes.byteLength,
+        attemptedSeedBytes: seed.bytes.byteLength,
+        selectionStatus: selected === patch ? "patch-preferred" : "seed-preferred"
+      })
+    };
+  } catch (error) {
+    if (!(error instanceof TerminalDeliveryStateTooLargeError)) throw error;
+    if (!observe) return patch;
+    return {
+      ...patch,
+      observation: Object.freeze({
+        attemptedPatchBytes: patch.bytes.byteLength,
+        attemptedSeedBytes: error.bytes,
+        selectionStatus: "patch-fallback"
+      })
+    };
+  }
+}
+function completeSemanticSelectionObservation(observation2, selectedEncoding, legacyAttempts) {
+  const compact = selectedEncoding === "semantic-compact-v1";
+  return Object.freeze({
+    ...observation2,
+    attemptedLegacyPatchBytes: compact ? legacyAttempts?.patchBytes ?? null : observation2.attemptedPatchBytes,
+    attemptedLegacySeedBytes: compact ? legacyAttempts?.seedBytes ?? null : observation2.attemptedSeedBytes,
+    attemptedLegacyPatchAtLeastBytes: null,
+    attemptedLegacySeedAtLeastBytes: null,
+    attemptedLegacyPatchSizeCapped: false,
+    attemptedLegacySeedSizeCapped: false,
+    attemptedCompactPatchBytes: compact ? observation2.attemptedPatchBytes : null,
+    attemptedCompactSeedBytes: compact ? observation2.attemptedSeedBytes : null,
+    selectedEncoding
+  });
+}
+function legacyFallbackObservation(frame, compactBytes, legacyBytes) {
+  return Object.freeze({
+    attemptedPatchBytes: frame === "patch" ? legacyBytes : null,
+    attemptedSeedBytes: frame === "seed" ? legacyBytes : null,
+    attemptedLegacyPatchBytes: frame === "patch" ? legacyBytes : null,
+    attemptedLegacySeedBytes: frame === "seed" ? legacyBytes : null,
+    attemptedLegacyPatchAtLeastBytes: null,
+    attemptedLegacySeedAtLeastBytes: null,
+    attemptedLegacyPatchSizeCapped: false,
+    attemptedLegacySeedSizeCapped: false,
+    attemptedCompactPatchBytes: frame === "patch" ? compactBytes : null,
+    attemptedCompactSeedBytes: frame === "seed" ? compactBytes : null,
+    selectedEncoding: "semantic-v1",
+    selectionStatus: frame === "patch" ? "legacy-patch-fallback" : "legacy-seed-fallback"
+  });
+}
+function legacyFallbackFromSelection(legacy, compact, frame) {
+  return Object.freeze({
+    attemptedPatchBytes: legacy.attemptedPatchBytes,
+    attemptedSeedBytes: legacy.attemptedSeedBytes,
+    attemptedLegacyPatchBytes: legacy.attemptedPatchBytes,
+    attemptedLegacySeedBytes: legacy.attemptedSeedBytes,
+    attemptedLegacyPatchAtLeastBytes: null,
+    attemptedLegacySeedAtLeastBytes: null,
+    attemptedLegacyPatchSizeCapped: false,
+    attemptedLegacySeedSizeCapped: false,
+    attemptedCompactPatchBytes: compact.attemptedPatchBytes,
+    attemptedCompactSeedBytes: compact.attemptedSeedBytes,
+    selectedEncoding: "semantic-v1",
+    selectionStatus: frame === "patch" ? "legacy-patch-fallback" : "legacy-seed-fallback"
+  });
+}
+function failedCompactAndLegacyObservation(frame, compactBytes, legacyError) {
+  const capped = legacyError instanceof TerminalDeliveryPreaccountLimitError;
+  return Object.freeze({
+    attemptedPatchBytes: frame === "patch" ? compactBytes : null,
+    attemptedSeedBytes: frame === "seed" ? compactBytes : null,
+    attemptedLegacyPatchBytes: !capped && frame === "patch" ? legacyError.bytes : null,
+    attemptedLegacySeedBytes: !capped && frame === "seed" ? legacyError.bytes : null,
+    attemptedLegacyPatchAtLeastBytes: capped && frame === "patch" ? legacyError.atLeastBytes : null,
+    attemptedLegacySeedAtLeastBytes: capped && frame === "seed" ? legacyError.atLeastBytes : null,
+    attemptedLegacyPatchSizeCapped: capped && frame === "patch",
+    attemptedLegacySeedSizeCapped: capped && frame === "seed",
+    attemptedCompactPatchBytes: frame === "patch" ? compactBytes : null,
+    attemptedCompactSeedBytes: frame === "seed" ? compactBytes : null,
+    selectedEncoding: "semantic-compact-v1",
+    selectionStatus: frame === "patch" ? "patch-preferred" : "direct-seed"
+  });
+}
+function failedCompactAndLegacySelectionObservation(compact, legacy) {
+  return Object.freeze({
+    attemptedPatchBytes: compact.attemptedPatchBytes,
+    attemptedSeedBytes: compact.attemptedSeedBytes,
+    attemptedLegacyPatchBytes: legacy.attemptedPatchBytes,
+    attemptedLegacySeedBytes: legacy.attemptedSeedBytes,
+    attemptedLegacyPatchAtLeastBytes: null,
+    attemptedLegacySeedAtLeastBytes: null,
+    attemptedLegacyPatchSizeCapped: false,
+    attemptedLegacySeedSizeCapped: false,
+    attemptedCompactPatchBytes: compact.attemptedPatchBytes,
+    attemptedCompactSeedBytes: compact.attemptedSeedBytes,
+    selectedEncoding: "semantic-compact-v1",
+    selectionStatus: compact.selectionStatus
+  });
+}
+function terminalSelectionObservation(observation2) {
+  return Object.freeze({
+    selectionStatus: observation2.selectionStatus,
+    selectedEncoding: observation2.selectedEncoding,
+    attemptedLegacyPatchBytes: observation2.attemptedLegacyPatchBytes,
+    attemptedLegacySeedBytes: observation2.attemptedLegacySeedBytes,
+    attemptedLegacyPatchAtLeastBytes: observation2.attemptedLegacyPatchAtLeastBytes,
+    attemptedLegacySeedAtLeastBytes: observation2.attemptedLegacySeedAtLeastBytes,
+    attemptedLegacyPatchSizeCapped: observation2.attemptedLegacyPatchSizeCapped,
+    attemptedLegacySeedSizeCapped: observation2.attemptedLegacySeedSizeCapped,
+    attemptedCompactPatchBytes: observation2.attemptedCompactPatchBytes,
+    attemptedCompactSeedBytes: observation2.attemptedCompactSeedBytes
+  });
+}
+function semanticSelectionObservationFromError(error) {
+  return error instanceof TerminalDeliveryRepresentationSelectionError ? error.selectionObservation : null;
+}
 function semanticPayload(baselineRevision, baseline, target) {
   const update = target.update;
   if (!target.state.snapshot) {
@@ -44686,6 +46552,18 @@ function semanticPayload(baselineRevision, baseline, target) {
       patch: update.patch
     };
   return semanticSeed(target);
+}
+function encodeLegacySemanticCandidate(payload) {
+  const preaccounted = preaccountSemanticTerminalUpdateBytes(
+    payload,
+    TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES
+  );
+  if (!preaccounted.exact)
+    throw new TerminalDeliveryPreaccountLimitError(preaccounted.atLeastBytes);
+  const bytes = encodeSemanticTerminalUpdate(payload);
+  if (bytes.byteLength !== preaccounted.bytes)
+    throw new TypeError("Legacy semantic byte preaccount did not match encoding");
+  return bytes;
 }
 function semanticSeed(target) {
   if (!target.state.snapshot) throw new TypeError("Cannot seed a tombstone");
@@ -44721,7 +46599,7 @@ function joinBytes(chunks) {
   }
   return joined;
 }
-var MAX_CANONICAL_REVISIONS, MAX_RAW_JOURNAL_BYTES, MAX_REPRESENTATION_CACHE_ENTRIES, MAX_REPRESENTATION_CACHE_BYTES, MAX_CLIENTS, MAX_PANES, MAX_CONNECTIONS, BACKGROUND_CADENCE_MS, SessionRuntimeTerminalDeliveryHub;
+var MAX_CANONICAL_REVISIONS, MAX_RAW_JOURNAL_BYTES, MAX_REPRESENTATION_CACHE_ENTRIES, MAX_REPRESENTATION_CACHE_BYTES, MAX_CLIENTS, MAX_PANES, MAX_CONNECTIONS, BACKGROUND_CADENCE_MS, ExactSemanticRepresentationSelectionError, TerminalDeliveryRepresentationSelectionError, TerminalDeliveryPreaccountLimitError, SessionRuntimeTerminalDeliveryHub;
 var init_terminal_delivery_hub = __esm({
   "packages/daemon/src/terminal/session-runtime/terminal-delivery-hub.ts"() {
     "use strict";
@@ -44729,14 +46607,47 @@ var init_terminal_delivery_hub = __esm({
     init_src3();
     init_runtime_scheduler();
     init_runtime_observability();
+    init_terminal_delivery_observation_identity();
     MAX_CANONICAL_REVISIONS = 128;
     MAX_RAW_JOURNAL_BYTES = 4 * 1024 * 1024;
-    MAX_REPRESENTATION_CACHE_ENTRIES = 32;
+    MAX_REPRESENTATION_CACHE_ENTRIES = 8;
     MAX_REPRESENTATION_CACHE_BYTES = 16 * 1024 * 1024;
     MAX_CLIENTS = 64;
     MAX_PANES = 32;
     MAX_CONNECTIONS = MAX_CLIENTS * MAX_PANES;
     BACKGROUND_CADENCE_MS = 100;
+    ExactSemanticRepresentationSelectionError = class extends TerminalDeliveryStateTooLargeError {
+      selectionObservation;
+      constructor(bytes, selectionObservation) {
+        super(bytes);
+        this.name = "ExactSemanticRepresentationSelectionError";
+        this.selectionObservation = selectionObservation;
+      }
+    };
+    TerminalDeliveryRepresentationSelectionError = class extends TerminalDeliveryStateTooLargeError {
+      selectionObservation;
+      sizeCapped;
+      atLeastBytes;
+      constructor(bytes, selectionObservation) {
+        super(bytes);
+        this.name = "TerminalDeliveryRepresentationSelectionError";
+        this.selectionObservation = selectionObservation;
+        this.atLeastBytes = selectionObservation.attemptedLegacyPatchAtLeastBytes ?? selectionObservation.attemptedLegacySeedAtLeastBytes;
+        this.sizeCapped = this.atLeastBytes !== null;
+        if (this.atLeastBytes !== null)
+          this.message = `Terminal delivery representation is at least ${this.atLeastBytes} bytes; maximum is ${TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES}`;
+      }
+    };
+    TerminalDeliveryPreaccountLimitError = class extends TerminalDeliveryStateTooLargeError {
+      atLeastBytes;
+      sizeCapped = true;
+      constructor(atLeastBytes) {
+        super(atLeastBytes);
+        this.name = "TerminalDeliveryPreaccountLimitError";
+        this.message = `Terminal delivery representation is at least ${atLeastBytes} bytes; maximum is ${TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES}`;
+        this.atLeastBytes = atLeastBytes;
+      }
+    };
     SessionRuntimeTerminalDeliveryHub = class {
       constructor(generation, workspaceName, ownerForPane, options = {}) {
         this.generation = generation;
@@ -44759,8 +46670,11 @@ var init_terminal_delivery_hub = __esm({
       #nacks = 0;
       #maxSlowClientMs = 0;
       #maxQueueDepth = 0;
+      #deliveryOrdinal = 0;
+      #deliveryLifecycleOrdinal = 0;
+      #deliveryStatusOrdinal = 0;
       #closed = false;
-      async open(clientId, semanticPaneId3, offerInput, accept) {
+      async open(clientId, semanticPaneId3, offerInput, accept, diagnosticIdentity = Object.freeze({ clientId, surface: "direct", laneId: clientId })) {
         if (this.#closed) throw new Error("Terminal delivery hub is closed");
         const offer = TerminalDeliveryOfferSchemaZ.parse(offerInput);
         const negotiation = negotiateTerminalDelivery(
@@ -44787,6 +46701,10 @@ var init_terminal_delivery_hub = __esm({
           const client = {
             key,
             clientId,
+            diagnosticClientId: diagnosticIdentity.clientId,
+            diagnosticSurface: diagnosticIdentity.surface,
+            diagnosticLaneId: diagnosticIdentity.laneId,
+            diagnosticRequestId: diagnosticIdentity.requestId ?? diagnosticIdentity.laneId,
             paneId: semanticPaneId3,
             negotiated: negotiation.negotiated,
             accept,
@@ -44798,6 +46716,7 @@ var init_terminal_delivery_hub = __esm({
             latestRevision: pane.latest?.update.revision ?? null,
             scheduled: false,
             closed: false,
+            lifecycleOpenRecorded: false,
             outgoing: [],
             sending: false,
             retireAfterDrain: false,
@@ -44806,7 +46725,9 @@ var init_terminal_delivery_hub = __esm({
             backgroundTimer: null
           };
           this.#clients.set(key, client);
+          client.lifecycleOpenRecorded = this.#recordDeliveryLifecycle(client, pane, "open");
           this.#schedule(client);
+          this.#recordDeliveryStatus(client, pane);
           return {
             negotiation,
             ack: (ack) => this.#ack(client, ack),
@@ -44816,6 +46737,7 @@ var init_terminal_delivery_hub = __esm({
               client.visibility = TerminalDeliveryVisibilitySchemaZ.parse(visibilityInput);
               if (client.visibility === "visible" || client.visibility === "background")
                 this.#schedule(client);
+              this.#recordDeliveryStatus(client, this.#panes.get(client.paneId));
             },
             close: async () => this.#closeClient(client)
           };
@@ -44977,6 +46899,8 @@ var init_terminal_delivery_hub = __esm({
           pane.revisions.delete(pane.revisions.keys().next().value);
         for (const client of this.#clients.values()) {
           if (client.paneId !== semanticPaneId3 || client.closed) continue;
+          if (!client.lifecycleOpenRecorded)
+            client.lifecycleOpenRecorded = this.#recordDeliveryLifecycle(client, pane, "open");
           if (update.type === "terminal.tombstone" && (client.inFlight !== null || client.visibility !== "visible")) {
             this.#fault(client, "source-closed", "Terminal source closed before final state delivery");
             continue;
@@ -45051,8 +46975,13 @@ var init_terminal_delivery_hub = __esm({
         const target = pane?.latest;
         if (!pane || !target || target.update.revision !== client.latestRevision) return;
         const traceStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
+        let encodedRepresentation = null;
+        let failedSelectionObservation = null;
+        let deliveryEnvelope = null;
+        let deliveryOrdinal = null;
         try {
           const representation = this.#representation(client, pane, target);
+          encodedRepresentation = representation;
           const transactionId = this.#scheduler.createId();
           const chunkCount = Math.max(1, Math.ceil(representation.bytes.byteLength / (256 * 1024)));
           const envelope = TerminalDeliveryEnvelopeSchemaZ.parse({
@@ -45065,7 +46994,7 @@ var init_terminal_delivery_hub = __esm({
             transactionId,
             ...target.trace ? { performanceTraceId: target.trace.traceId } : {},
             protocolVersion: 1,
-            encoding: client.negotiated.encoding,
+            encoding: representation.encoding ?? client.negotiated.encoding,
             frame: representation.frame,
             baseRevision: representation.frame === "seed" ? null : Math.max(0, client.baselineRevision),
             canonicalRevision: target.update.revision,
@@ -45077,30 +47006,74 @@ var init_terminal_delivery_hub = __esm({
             history: representation.history,
             richPlacements: client.negotiated.richPlacements
           });
+          deliveryEnvelope = envelope;
+          deliveryOrdinal = ++this.#deliveryOrdinal;
+          registerTerminalDeliveryObservationOrdinal(envelope, deliveryOrdinal);
           client.inFlight = {
             envelope,
+            deliveryOrdinal,
             bytes: representation.bytes,
             nextChunk: 0,
             sentAt: this.#scheduler.nowMs()
           };
           this.#enqueue(client, envelope);
+          this.#recordDeliveryStatus(client, pane);
           if (target.trace?.traceId === pane.pendingDeliveryTrace?.traceId)
             pane.pendingDeliveryTrace = null;
         } catch (error) {
+          failedSelectionObservation = semanticSelectionObservationFromError(error);
           this.#fault(
             client,
             error instanceof TerminalDeliveryStateTooLargeError ? "state-too-large" : "protocol-violation",
-            error instanceof Error ? error.message : String(error)
+            error instanceof Error ? error.message : String(error),
+            failedSelectionObservation
           );
         } finally {
           if (this.#observability.enabled)
-            this.#observability.recordSpan(
-              "transport",
-              "terminal-delivery-encode-enqueue",
-              traceStarted,
-              this.#observability.nowMicros(),
-              target.trace
-            );
+            try {
+              const metrics = this.metrics();
+              this.#observability.recordSpan(
+                "transport",
+                "terminal-delivery-encode-enqueue",
+                traceStarted,
+                this.#observability.nowMicros(),
+                target.trace,
+                void 0,
+                Object.freeze({
+                  representationCacheBytes: metrics.representationCacheBytes,
+                  rawJournalBytes: metrics.rawJournalBytes,
+                  queueDepth: metrics.queueDepth,
+                  maxQueueDepth: metrics.maxQueueDepth,
+                  inFlight: metrics.inFlight,
+                  inFlightBytes: metrics.inFlightBytes,
+                  ...encodedRepresentation ? {
+                    representation: encodedRepresentation.frame,
+                    representationBytes: encodedRepresentation.bytes.byteLength
+                  } : {},
+                  attemptedPatchBytes: encodedRepresentation?.selectionObservation?.attemptedPatchBytes ?? failedSelectionObservation?.attemptedPatchBytes ?? null,
+                  attemptedSeedBytes: encodedRepresentation?.selectionObservation?.attemptedSeedBytes ?? failedSelectionObservation?.attemptedSeedBytes ?? null,
+                  ...encodedRepresentation?.selectionObservation ?? failedSelectionObservation ? terminalSelectionObservation(
+                    encodedRepresentation?.selectionObservation ?? failedSelectionObservation
+                  ) : {},
+                  ...deliveryEnvelope && deliveryOrdinal !== null ? {
+                    workspaceName: deliveryEnvelope.workspaceName,
+                    semanticPaneId: deliveryEnvelope.semanticPaneId,
+                    canonicalGeneration: deliveryEnvelope.generation,
+                    canonicalIncarnation: deliveryEnvelope.incarnation,
+                    canonicalRevision: deliveryEnvelope.canonicalRevision,
+                    canonicalStateHash: deliveryEnvelope.canonicalStateHash,
+                    deliveryOrdinal,
+                    transactionId: deliveryEnvelope.transactionId,
+                    deliveryClientId: client.diagnosticClientId,
+                    deliverySurface: client.diagnosticSurface,
+                    deliveryLaneId: client.diagnosticLaneId,
+                    deliveryRequestId: client.diagnosticRequestId,
+                    deliveryNonce: deliveryEnvelope.deliveryNonce
+                  } : {}
+                })
+              );
+            } catch {
+            }
         }
       }
       #representation(client, pane, target) {
@@ -45110,6 +47083,7 @@ var init_terminal_delivery_hub = __esm({
           target.update.generation,
           target.update.incarnation,
           client.negotiated.encoding,
+          client.negotiated.fallbackEncoding ?? "no-fallback",
           client.negotiated.richPlacements ? "rich" : "plain",
           client.baselineRevision,
           client.baselineHash ?? "none",
@@ -45121,21 +47095,220 @@ var init_terminal_delivery_hub = __esm({
         if (cached2) return cached2;
         const baseline = client.reseedRequired ? null : pane.revisions.get(client.baselineRevision)?.state.snapshot ?? null;
         const snapshot = target.state.snapshot;
-        let result;
-        if (client.negotiated.encoding === "semantic-v1") {
-          let payload = client.reseedRequired ? semanticSeed(target) : semanticPayload(client.baselineRevision, baseline, target);
-          let bytes = encodeSemanticTerminalUpdate(payload);
-          if (payload.frame === "patch" && bytes.byteLength > TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES) {
-            payload = semanticSeed(target);
-            bytes = encodeSemanticTerminalUpdate(payload);
+        let result = null;
+        if (client.negotiated.encoding === "semantic-v1" || client.negotiated.encoding === "semantic-compact-v1") {
+          const encodeSemantic = client.negotiated.encoding === "semantic-compact-v1" ? encodeCompactSemanticTerminalUpdate : encodeSemanticTerminalUpdate;
+          if (client.reseedRequired) {
+            const payload = semanticSeed(target);
+            let bytes;
+            let actualEncoding = client.negotiated.encoding;
+            let fallbackObservation = null;
+            try {
+              bytes = encodeSemantic(payload);
+            } catch (error) {
+              if (!(error instanceof TerminalDeliveryStateTooLargeError)) throw error;
+              if (client.negotiated.encoding === "semantic-compact-v1" && client.negotiated.fallbackEncoding === "semantic-v1") {
+                try {
+                  bytes = encodeLegacySemanticCandidate(payload);
+                  actualEncoding = "semantic-v1";
+                  fallbackObservation = legacyFallbackObservation(
+                    "seed",
+                    error.bytes,
+                    bytes.byteLength
+                  );
+                } catch (legacyError) {
+                  if (!(legacyError instanceof TerminalDeliveryStateTooLargeError)) throw legacyError;
+                  throw new TerminalDeliveryRepresentationSelectionError(
+                    legacyError.bytes,
+                    failedCompactAndLegacyObservation("seed", error.bytes, legacyError)
+                  );
+                }
+              } else {
+                throw new TerminalDeliveryRepresentationSelectionError(error.bytes, {
+                  attemptedPatchBytes: null,
+                  attemptedSeedBytes: error.bytes,
+                  attemptedLegacyPatchBytes: null,
+                  attemptedLegacySeedBytes: client.negotiated.encoding === "semantic-v1" ? error.bytes : null,
+                  attemptedLegacyPatchAtLeastBytes: null,
+                  attemptedLegacySeedAtLeastBytes: null,
+                  attemptedLegacyPatchSizeCapped: false,
+                  attemptedLegacySeedSizeCapped: false,
+                  attemptedCompactPatchBytes: null,
+                  attemptedCompactSeedBytes: client.negotiated.encoding === "semantic-compact-v1" ? error.bytes : null,
+                  selectedEncoding: client.negotiated.encoding,
+                  selectionStatus: "direct-seed"
+                });
+              }
+            }
+            const selectionObservation = fallbackObservation ?? (this.#observability.enabled ? completeSemanticSelectionObservation(
+              {
+                attemptedPatchBytes: null,
+                attemptedSeedBytes: bytes.byteLength,
+                selectionStatus: "direct-seed"
+              },
+              client.negotiated.encoding,
+              null
+            ) : null);
+            result = {
+              bytes,
+              encoding: actualEncoding,
+              frame: payload.frame,
+              canonicalEquivalent: true,
+              history: payload.frame === "tombstone" ? "not-applicable" : "complete",
+              ...selectionObservation ? { selectionObservation } : {}
+            };
             this.#reseeds += 1;
+          } else {
+            const patchPayload = semanticPayload(client.baselineRevision, baseline, target);
+            const seedPayload = patchPayload.frame === "tombstone" ? null : semanticSeed(target);
+            const legacyAttempts = null;
+            if (patchPayload.frame !== "patch") {
+              let bytes;
+              let actualEncoding = client.negotiated.encoding;
+              let fallbackObservation = null;
+              try {
+                bytes = encodeSemantic(patchPayload);
+              } catch (error) {
+                if (!(error instanceof TerminalDeliveryStateTooLargeError)) throw error;
+                if (client.negotiated.encoding === "semantic-compact-v1" && client.negotiated.fallbackEncoding === "semantic-v1" && patchPayload.frame === "seed") {
+                  try {
+                    bytes = encodeLegacySemanticCandidate(patchPayload);
+                    actualEncoding = "semantic-v1";
+                    fallbackObservation = legacyFallbackObservation(
+                      "seed",
+                      error.bytes,
+                      bytes.byteLength
+                    );
+                  } catch (legacyError) {
+                    if (!(legacyError instanceof TerminalDeliveryStateTooLargeError)) throw legacyError;
+                    const directObservation2 = failedCompactAndLegacyObservation(
+                      "seed",
+                      error.bytes,
+                      legacyError
+                    );
+                    throw new TerminalDeliveryRepresentationSelectionError(
+                      legacyError.bytes,
+                      directObservation2
+                    );
+                  }
+                } else {
+                  const directObservation2 = completeSemanticSelectionObservation(
+                    {
+                      attemptedPatchBytes: null,
+                      attemptedSeedBytes: patchPayload.frame === "seed" ? error.bytes : null,
+                      selectionStatus: patchPayload.frame === "seed" ? "direct-seed" : "direct-tombstone"
+                    },
+                    client.negotiated.encoding,
+                    legacyAttempts
+                  );
+                  throw new TerminalDeliveryRepresentationSelectionError(
+                    error.bytes,
+                    directObservation2
+                  );
+                }
+              }
+              const directObservation = fallbackObservation ?? (this.#observability.enabled ? completeSemanticSelectionObservation(
+                {
+                  attemptedPatchBytes: null,
+                  attemptedSeedBytes: patchPayload.frame === "seed" ? bytes.byteLength : null,
+                  selectionStatus: patchPayload.frame === "seed" ? "direct-seed" : "direct-tombstone"
+                },
+                client.negotiated.encoding,
+                legacyAttempts
+              ) : null);
+              if (patchPayload.frame === "seed") this.#reseeds += 1;
+              result = {
+                bytes,
+                encoding: actualEncoding,
+                frame: patchPayload.frame,
+                canonicalEquivalent: true,
+                history: patchPayload.frame === "tombstone" ? "not-applicable" : "complete",
+                ...directObservation ? { selectionObservation: directObservation } : {}
+              };
+            } else {
+              let selected = null;
+              try {
+                selected = selectExactSemanticRepresentation(
+                  () => ({ payload: patchPayload, bytes: encodeSemantic(patchPayload) }),
+                  () => {
+                    if (!seedPayload) throw new TypeError("Patch has no seed representation");
+                    return { payload: seedPayload, bytes: encodeSemantic(seedPayload) };
+                  },
+                  this.#observability.enabled
+                );
+              } catch (error) {
+                if (!(error instanceof ExactSemanticRepresentationSelectionError)) throw error;
+                if (client.negotiated.encoding === "semantic-compact-v1" && client.negotiated.fallbackEncoding === "semantic-v1") {
+                  try {
+                    const legacySelected = selectExactSemanticRepresentation(
+                      () => ({
+                        payload: patchPayload,
+                        bytes: encodeLegacySemanticCandidate(patchPayload)
+                      }),
+                      () => {
+                        if (!seedPayload)
+                          throw new TypeError("Patch has no legacy seed representation");
+                        return {
+                          payload: seedPayload,
+                          bytes: encodeLegacySemanticCandidate(seedPayload)
+                        };
+                      },
+                      true
+                    );
+                    const fallbackObservation = legacyFallbackFromSelection(
+                      legacySelected.observation,
+                      error.selectionObservation,
+                      legacySelected.payload.frame
+                    );
+                    if (legacySelected.payload.frame === "seed") this.#reseeds += 1;
+                    result = {
+                      bytes: legacySelected.bytes,
+                      encoding: "semantic-v1",
+                      frame: legacySelected.payload.frame,
+                      canonicalEquivalent: true,
+                      history: legacySelected.payload.frame === "tombstone" ? "not-applicable" : "complete",
+                      selectionObservation: fallbackObservation
+                    };
+                  } catch (legacyError) {
+                    if (!(legacyError instanceof ExactSemanticRepresentationSelectionError))
+                      throw legacyError;
+                    throw new TerminalDeliveryRepresentationSelectionError(
+                      legacyError.bytes,
+                      failedCompactAndLegacySelectionObservation(
+                        error.selectionObservation,
+                        legacyError.selectionObservation
+                      )
+                    );
+                  }
+                } else {
+                  throw new TerminalDeliveryRepresentationSelectionError(
+                    error.bytes,
+                    completeSemanticSelectionObservation(
+                      error.selectionObservation,
+                      client.negotiated.encoding,
+                      legacyAttempts
+                    )
+                  );
+                }
+              }
+              if (selected) {
+                if (selected.payload.frame === "seed") this.#reseeds += 1;
+                const selectionObservation = selected.observation ? completeSemanticSelectionObservation(
+                  selected.observation,
+                  client.negotiated.encoding,
+                  legacyAttempts
+                ) : null;
+                result = {
+                  bytes: selected.bytes,
+                  encoding: client.negotiated.encoding,
+                  frame: selected.payload.frame,
+                  canonicalEquivalent: true,
+                  history: selected.payload.frame === "tombstone" ? "not-applicable" : "complete",
+                  ...selectionObservation ? { selectionObservation } : {}
+                };
+              }
+            }
           }
-          result = {
-            bytes,
-            frame: payload.frame,
-            canonicalEquivalent: true,
-            history: payload.frame === "tombstone" ? "not-applicable" : "complete"
-          };
         } else if (client.negotiated.encoding === "ansi-diff-v1") {
           if (!snapshot) result = emptyTombstone();
           else {
@@ -45149,9 +47322,13 @@ var init_terminal_delivery_hub = __esm({
             if (!patch) this.#reseeds += 1;
           }
         } else result = this.#rawRepresentation(client, pane, target);
+        if (!result) throw new TypeError("Terminal delivery representation selection was incomplete");
         const hashed = {
           ...result,
-          representationHash: hashTerminalDeliveryRepresentation(result.bytes)
+          representationHash: hashTerminalDeliveryRepresentation(result.bytes),
+          cachePaneId: client.paneId,
+          cacheBaseRevision: client.baselineRevision,
+          cacheTargetRevision: target.update.revision
         };
         this.#cacheSet(key, hashed);
         return hashed;
@@ -45210,7 +47387,51 @@ var init_terminal_delivery_hub = __esm({
         client.inFlight = null;
         client.lastAck = ack;
         if (client.latestRevision === ack.canonicalRevision) client.latestRevision = null;
+        this.#pruneAckSupersededCache(client.paneId);
+        if (this.#observability.enabled)
+          try {
+            const atMicros = this.#observability.nowMicros();
+            const metrics = this.metrics();
+            this.#observability.recordSpan(
+              "transport",
+              "terminal-delivery-settled",
+              atMicros,
+              atMicros,
+              envelope.performanceTraceId ? Object.freeze({
+                traceId: envelope.performanceTraceId,
+                scenario: "terminal-input-to-paint",
+                authority: Object.freeze({
+                  generation: envelope.generation,
+                  incarnation: envelope.incarnation
+                })
+              }) : null,
+              void 0,
+              Object.freeze({
+                representationCacheBytes: metrics.representationCacheBytes,
+                rawJournalBytes: metrics.rawJournalBytes,
+                queueDepth: metrics.queueDepth,
+                maxQueueDepth: metrics.maxQueueDepth,
+                inFlight: metrics.inFlight,
+                inFlightBytes: metrics.inFlightBytes,
+                workspaceName: envelope.workspaceName,
+                semanticPaneId: envelope.semanticPaneId,
+                canonicalGeneration: envelope.generation,
+                canonicalIncarnation: envelope.incarnation,
+                canonicalRevision: envelope.canonicalRevision,
+                canonicalStateHash: envelope.canonicalStateHash,
+                deliveryOrdinal: flight.deliveryOrdinal,
+                transactionId: envelope.transactionId,
+                deliveryClientId: client.diagnosticClientId,
+                deliverySurface: client.diagnosticSurface,
+                deliveryLaneId: client.diagnosticLaneId,
+                deliveryRequestId: client.diagnosticRequestId,
+                deliveryNonce: envelope.deliveryNonce
+              })
+            );
+          } catch {
+          }
         this.#schedule(client);
+        this.#recordDeliveryStatus(client, this.#panes.get(client.paneId));
       }
       #nack(client, input) {
         const nack = TerminalDeliveryNackSchemaZ.parse(input);
@@ -45223,8 +47444,44 @@ var init_terminal_delivery_hub = __esm({
         client.reseedRequired = true;
         client.inFlight = null;
         this.#schedule(client);
+        this.#recordDeliveryStatus(client, this.#panes.get(client.paneId));
       }
-      #fault(client, reason, message) {
+      #fault(client, reason, message, selectionObservation = null) {
+        if (this.#observability.enabled)
+          try {
+            const atMicros = this.#observability.nowMicros();
+            const flight = client.inFlight;
+            const metrics = this.metrics();
+            this.#observability.recordSpan(
+              "transport",
+              "terminal-delivery-fault",
+              atMicros,
+              atMicros,
+              null,
+              void 0,
+              Object.freeze({
+                representationCacheBytes: metrics.representationCacheBytes,
+                rawJournalBytes: metrics.rawJournalBytes,
+                queueDepth: metrics.queueDepth,
+                maxQueueDepth: metrics.maxQueueDepth,
+                inFlight: metrics.inFlight,
+                inFlightBytes: metrics.inFlightBytes,
+                workspaceName: this.workspaceName,
+                semanticPaneId: client.paneId,
+                faultReason: reason,
+                ...selectionObservation ? terminalSelectionObservation(selectionObservation) : {},
+                ...flight ? {
+                  canonicalGeneration: flight.envelope.generation,
+                  canonicalIncarnation: flight.envelope.incarnation,
+                  canonicalRevision: flight.envelope.canonicalRevision,
+                  canonicalStateHash: flight.envelope.canonicalStateHash,
+                  deliveryOrdinal: flight.deliveryOrdinal,
+                  transactionId: flight.envelope.transactionId
+                } : {}
+              })
+            );
+          } catch {
+          }
         client.outgoing.length = 0;
         if (reason === "source-closed") client.sourceClosedFlight = client.inFlight?.envelope ?? null;
         client.inFlight = null;
@@ -45291,6 +47548,8 @@ var init_terminal_delivery_hub = __esm({
       async #closeClient(client) {
         if (client.closed) return;
         client.closed = true;
+        if (client.lifecycleOpenRecorded)
+          this.#recordDeliveryLifecycle(client, this.#panes.get(client.paneId), "close");
         client.backgroundTimer?.cancel();
         client.outgoing.length = 0;
         this.#clients.delete(client.key);
@@ -45303,6 +47562,80 @@ var init_terminal_delivery_hub = __esm({
         }
         await pane?.source?.close().catch(() => void 0);
         this.#clearCache();
+      }
+      #recordDeliveryLifecycle(client, pane, event) {
+        if (!this.#observability.enabled) return false;
+        const canonical = pane?.latest?.update;
+        if (!canonical) return false;
+        try {
+          const atMicros = this.#observability.nowMicros();
+          this.#observability.recordSpan(
+            "transport",
+            "terminal-delivery-subscriber-lifecycle",
+            atMicros,
+            atMicros,
+            null,
+            void 0,
+            Object.freeze({
+              workspaceName: this.workspaceName,
+              semanticPaneId: client.paneId,
+              canonicalGeneration: this.generation,
+              canonicalIncarnation: canonical.incarnation,
+              canonicalRevision: canonical.revision,
+              canonicalStateHash: canonical.stateHash,
+              deliveryClientId: client.diagnosticClientId,
+              deliverySurface: client.diagnosticSurface,
+              deliveryLaneId: client.diagnosticLaneId,
+              deliveryRequestId: client.diagnosticRequestId,
+              deliveryLifecycleEvent: event,
+              deliveryPurpose: "terminal-surface",
+              deliveryLifecycleOrdinal: ++this.#deliveryLifecycleOrdinal
+            })
+          );
+          return true;
+        } catch {
+          return false;
+        }
+      }
+      #recordDeliveryStatus(client, pane) {
+        if (!this.#observability.enabled || client.closed) return false;
+        const canonical = pane?.latest?.update;
+        if (!canonical) return false;
+        try {
+          const atMicros = this.#observability.nowMicros();
+          this.#observability.recordSpan(
+            "transport",
+            "terminal-delivery-subscriber-status",
+            atMicros,
+            atMicros,
+            null,
+            void 0,
+            Object.freeze({
+              workspaceName: this.workspaceName,
+              semanticPaneId: client.paneId,
+              canonicalGeneration: this.generation,
+              canonicalIncarnation: canonical.incarnation,
+              canonicalRevision: canonical.revision,
+              canonicalStateHash: canonical.stateHash,
+              deliveryClientId: client.diagnosticClientId,
+              deliverySurface: client.diagnosticSurface,
+              deliveryLaneId: client.diagnosticLaneId,
+              deliveryRequestId: client.diagnosticRequestId,
+              deliveryPurpose: "terminal-surface",
+              deliveryStatusOrdinal: ++this.#deliveryStatusOrdinal,
+              deliveryVisibility: client.visibility,
+              deliveryBaselineRevision: client.baselineRevision,
+              deliveryBaselineHash: client.baselineHash,
+              deliveryInFlightRevision: client.inFlight?.envelope.canonicalRevision ?? null,
+              deliveryInFlightHash: client.inFlight?.envelope.canonicalStateHash ?? null,
+              deliveryLatestRevision: client.latestRevision,
+              deliveryClientQueueDepth: client.outgoing.length
+            })
+          );
+          return true;
+        } catch {
+          return false;
+        }
       }
       async #withDeadline(promise, milliseconds) {
         let timer;
@@ -45336,6 +47669,20 @@ var init_terminal_delivery_hub = __esm({
       #clearCache() {
         this.#cache.clear();
         this.#cacheBytes = 0;
+      }
+      #pruneAckSupersededCache(paneId) {
+        const clients = [...this.#clients.values()].filter(
+          (candidate) => !candidate.closed && candidate.paneId === paneId
+        );
+        for (const [key, cached2] of this.#cache) {
+          if (cached2.cachePaneId !== paneId) continue;
+          const reachable = clients.some(
+            (candidate) => cached2.cacheBaseRevision === candidate.baselineRevision || Number.isSafeInteger(cached2.cacheTargetRevision) && cached2.cacheTargetRevision > candidate.baselineRevision || cached2.cacheTargetRevision === candidate.inFlight?.envelope.canonicalRevision
+          );
+          if (reachable) continue;
+          this.#cache.delete(key);
+          this.#cacheBytes -= cached2.bytes.byteLength;
+        }
       }
     };
   }
@@ -45726,6 +48073,39 @@ var init_registry2 = __esm({
           if (this.#observability.enabled)
             this.#sessions.get(session)?.noteOutputObserved(semanticPaneId3, ageMs, timing);
         } : void 0;
+        const observeFlowRecovery = this.#observability.enabled || options.mirror?.onFlowRecoveryObserved ? (session, observation2) => {
+          options.mirror?.onFlowRecoveryObserved?.(session, observation2);
+          if (!this.#observability.enabled) return;
+          const atMicros = this.#observability.nowMicros();
+          this.#observability.recordSpan(
+            "tmux",
+            `terminal-mirror-flow-${observation2.phase}`,
+            atMicros,
+            atMicros,
+            null,
+            void 0,
+            {
+              workspaceName: session,
+              semanticPaneId: observation2.semanticPaneId,
+              mirrorFlowPhase: observation2.phase,
+              mirrorFlowRecoveryOrdinal: observation2.recoveryOrdinal,
+              mirrorPaneIncarnation: observation2.paneIncarnation,
+              mirrorOutputOrdinal: observation2.outputOrdinal,
+              mirrorRecoveryElapsedMicros: observation2.elapsedMicros,
+              mirrorRecoveryConfirmationOrdinal: observation2.confirmationOrdinal,
+              mirrorCollectorStarted: observation2.collectorStarted,
+              mirrorCollectorLastCompletedOrdinal: observation2.collectorLastCompletedOrdinal,
+              mirrorCollectorCaptureLineCount: observation2.collectorCaptureLineCount,
+              mirrorCollectorCaptureByteCount: observation2.collectorCaptureByteCount,
+              mirrorCollectorContinueObserved: observation2.collectorContinueObserved,
+              mirrorCollectorStatusObserved: observation2.collectorStatusObserved,
+              mirrorCollectorObserverEmissionObserved: observation2.collectorObserverEmissionObserved,
+              ...observation2.collectorFailureReason ? { mirrorCollectorFailureReason: observation2.collectorFailureReason } : {},
+              ...observation2.fingerprintExact === null ? {} : { mirrorRecoveryFingerprintExact: observation2.fingerprintExact },
+              ...observation2.failureReason ? { mirrorFlowFailureReason: observation2.failureReason } : {}
+            }
+          );
+        } : void 0;
         this.#mirror = new MirrorService({
           ...options.mirror,
           ...diagnosticMirrorOptions,
@@ -45733,7 +48113,8 @@ var init_registry2 = __esm({
             options.mirror?.onNativeClientActivity?.(session);
             this.#sessions.get(session)?.noteNativeGeometryActivity();
           },
-          ...observeOutput ? { onOutputObserved: observeOutput } : {}
+          ...observeOutput ? { onOutputObserved: observeOutput } : {},
+          ...observeFlowRecovery ? { onFlowRecoveryObserved: observeFlowRecovery } : {}
         });
         this.#semanticMutations = options.semanticMutations ? new SessionSemanticMutationExecutor({
           ...options.semanticMutations,
@@ -46557,7 +48938,7 @@ var init_registry2 = __esm({
           throw error;
         }
       }
-      async openTerminalDelivery(clientId, deliverySubscriberId, semanticPaneId3, offer, onMessage) {
+      async openTerminalDelivery(clientId, surface, deliverySubscriberId, deliveryRequestId, semanticPaneId3, offer, onMessage) {
         await this.whenReady();
         await this.#restartBarrier;
         this.#assertConnected(clientId);
@@ -46565,7 +48946,13 @@ var init_registry2 = __esm({
           deliverySubscriberId,
           semanticPaneId3,
           offer,
-          onMessage
+          onMessage,
+          Object.freeze({
+            clientId,
+            surface,
+            laneId: deliverySubscriberId,
+            requestId: deliveryRequestId
+          })
         );
       }
       #terminalReplicaOwner(semanticPaneId3) {
@@ -46890,11 +49277,13 @@ var init_registry2 = __esm({
         this.#replicaSubscriptions.add(subscription);
         return subscription;
       }
-      async openTerminalDelivery(deliverySubscriberId, semanticPaneId3, offer, onMessage) {
+      async openTerminalDelivery(deliverySubscriberId, deliveryRequestId, semanticPaneId3, offer, onMessage) {
         this.#assertOpen();
         const upstream = await this.#runtime.openTerminalDelivery(
           this.clientId,
+          this.surface,
           deliverySubscriberId,
+          deliveryRequestId,
           semanticPaneId3,
           offer,
           onMessage
@@ -46941,7 +49330,7 @@ var init_registry2 = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/admission-util.ts
-import { createHash as createHash11, timingSafeEqual as timingSafeEqual3 } from "node:crypto";
+import { createHash as createHash12, timingSafeEqual as timingSafeEqual3 } from "node:crypto";
 function canonicalOriginOrNull(value) {
   if (typeof value !== "string" || value.length < 4 || value.length > 2048 || value === "null" || value === "*" || /[\0\r\n\t ]/u.test(value)) {
     return null;
@@ -46989,7 +49378,7 @@ function safeCloseSocket(socket, code, reason) {
   }
 }
 function digestSecret(secret) {
-  return createHash11("sha256").update(secret, "utf8").digest();
+  return createHash12("sha256").update(secret, "utf8").digest();
 }
 function digestsEqual(left, right) {
   return left.byteLength === right.byteLength && timingSafeEqual3(left, right);
@@ -47216,7 +49605,7 @@ var init_grouped_tmux = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/lease-manager.ts
-import { createHash as createHash12, randomBytes as randomBytes5, randomUUID as randomUUID11, timingSafeEqual as timingSafeEqual4 } from "node:crypto";
+import { createHash as createHash13, randomBytes as randomBytes5, randomUUID as randomUUID11, timingSafeEqual as timingSafeEqual4 } from "node:crypto";
 import { z as z78 } from "zod";
 function positiveDuration(value, fallback, label2) {
   const resolved2 = value ?? fallback;
@@ -47226,7 +49615,7 @@ function positiveDuration(value, fallback, label2) {
   return resolved2;
 }
 function hashTicket(ticket) {
-  return createHash12("sha256").update(ticket, "utf8").digest();
+  return createHash13("sha256").update(ticket, "utf8").digest();
 }
 function constantTimeDigestMatch(left, right) {
   return left.byteLength === right.byteLength && timingSafeEqual4(left, right);
@@ -48939,7 +51328,7 @@ var init_direct_websocket = __esm({
 });
 
 // packages/daemon/src/terminal/pane-stream/lease-manager.ts
-import { createHash as createHash13, randomBytes as randomBytes6, randomUUID as randomUUID13, timingSafeEqual as timingSafeEqual5 } from "node:crypto";
+import { createHash as createHash14, randomBytes as randomBytes6, randomUUID as randomUUID13, timingSafeEqual as timingSafeEqual5 } from "node:crypto";
 import { z as z82 } from "zod";
 function positiveDuration2(value, fallback, label2) {
   const resolved2 = value ?? fallback;
@@ -48949,7 +51338,7 @@ function positiveDuration2(value, fallback, label2) {
   return resolved2;
 }
 function hashTicket2(ticket) {
-  return createHash13("sha256").update(ticket, "utf8").digest();
+  return createHash14("sha256").update(ticket, "utf8").digest();
 }
 function digestsMatch(left, right) {
   return left.byteLength === right.byteLength && timingSafeEqual5(left, right);
@@ -49345,6 +51734,7 @@ var init_pane_stream_websocket = __esm({
     "use strict";
     init_src();
     init_admission_util();
+    init_terminal_delivery_observation_identity();
     init_lease_manager2();
     init_wire_ledger();
     PANE_STREAM_MAX_REDEMPTION_BYTES = 4 * 1024;
@@ -50208,14 +52598,20 @@ var init_pane_stream_websocket = __esm({
         if (message.type === "terminal.delivery") {
           const channel = this.#panes.get(pane);
           if (channel?.deliveryAddress) channel.deliveryAddress.incarnation = message.incarnation;
-          const trace = message.performanceTraceId ? this.#observability?.beginTrace(
+          const detailedDeliveryObservation = this.#observability?.enabled === true;
+          const trace = message.performanceTraceId && detailedDeliveryObservation ? this.#observability.beginTrace(
             "terminal-input-to-paint",
             { generation: message.generation, incarnation: message.incarnation },
             message.performanceTraceId
           ) : null;
-          const startedAtMicros = trace ? this.#observability.nowMicros() : 0;
+          let startedAtMicros = null;
+          if (detailedDeliveryObservation)
+            try {
+              startedAtMicros = this.#observability.nowMicros();
+            } catch {
+            }
           let startedAtSharedMicros = null;
-          if (trace && this.#diagnosticSharedRawMicros) {
+          if (startedAtMicros !== null && this.#diagnosticSharedRawMicros) {
             try {
               startedAtSharedMicros = this.#sharedMicros();
             } catch {
@@ -50226,7 +52622,7 @@ var init_pane_stream_websocket = __esm({
             pane,
             envelope: { ...message, workspaceName: this.#descriptor.workspaceName }
           });
-          if (trace) {
+          if (startedAtMicros !== null) {
             let endedAtMicros;
             try {
               endedAtMicros = this.#observability.nowMicros();
@@ -50250,7 +52646,22 @@ var init_pane_stream_websocket = __esm({
                 startedAtSharedMicros === null || endedAtSharedMicros === null ? void 0 : {
                   startedAtMicros: startedAtSharedMicros,
                   endedAtMicros: endedAtSharedMicros
-                }
+                },
+                Object.freeze({
+                  workspaceName: message.workspaceName,
+                  semanticPaneId: message.semanticPaneId,
+                  canonicalGeneration: message.generation,
+                  canonicalIncarnation: message.incarnation,
+                  canonicalRevision: message.canonicalRevision,
+                  canonicalStateHash: message.canonicalStateHash,
+                  transactionId: message.transactionId,
+                  ...terminalDeliveryObservationOrdinal(message) === null ? {} : { deliveryOrdinal: terminalDeliveryObservationOrdinal(message) },
+                  deliveryClientId: this.#sessionRuntimeBinding?.clientId ?? this.#clientId,
+                  deliverySurface: this.#sessionRuntimeBinding?.surface ?? "unknown",
+                  deliveryLaneId: this.#sessionRuntimeBinding?.deliveryLaneId ?? this.#clientId,
+                  deliveryRequestId: this.#sessionRuntimeBinding?.deliveryRequestId ?? this.#clientId,
+                  deliveryNonce: message.deliveryNonce
+                })
               );
             } catch {
             }
@@ -53267,9 +55678,9 @@ var init_terminal_runtime_inventory2 = __esm({
 });
 
 // packages/daemon/src/command-center/resources/workspace-resource-ids.ts
-import { createHash as createHash14 } from "node:crypto";
+import { createHash as createHash15 } from "node:crypto";
 function opaqueDigest(...parts) {
-  const hash = createHash14("sha256");
+  const hash = createHash15("sha256");
   for (const part of parts) {
     hash.update(part, "utf8");
     hash.update("\0");
@@ -55835,7 +58246,7 @@ var init_fleet_resource_route = __esm({
 });
 
 // packages/daemon/src/command-center/resources/agent-graph-overlay.ts
-import { createHash as createHash15 } from "node:crypto";
+import { createHash as createHash16 } from "node:crypto";
 function pairKey(a, b) {
   return a < b ? `${a}\0${b}` : `${b}\0${a}`;
 }
@@ -55851,7 +58262,7 @@ function nodeLabel(value) {
   return normalized.length > 0 ? normalized : null;
 }
 function groupId(missionId) {
-  const token = createHash15("sha256").update(missionId).digest("hex").slice(0, 32);
+  const token = createHash16("sha256").update(missionId).digest("hex").slice(0, 32);
   return `group.${token}`;
 }
 function projectApplicationShellAgentGraphOverlay(input) {
@@ -56351,7 +58762,7 @@ __export(widget_asset_store_exports, {
   publishWidgetAsset: () => publishWidgetAsset,
   readWidgetAsset: () => readWidgetAsset
 });
-import { createHash as createHash16, randomUUID as randomUUID16 } from "node:crypto";
+import { createHash as createHash17, randomUUID as randomUUID16 } from "node:crypto";
 import {
   chmodSync as chmodSync5,
   existsSync as existsSync34,
@@ -56441,7 +58852,7 @@ function publishWidgetAsset(bytes, options) {
     throw new WidgetAssetStoreError("unsupported-media", "The widget asset media type is unsafe.");
   }
   const root = ensureAssetRoot();
-  const assetId = createHash16("sha256").update(bytes).digest("hex");
+  const assetId = createHash17("sha256").update(bytes).digest("hex");
   const paths = assetPaths(root, assetId);
   const metadata = {
     version: 1,
@@ -56479,7 +58890,7 @@ function readWidgetAsset(assetIdInput) {
       return null;
     }
     const bytes = readFileSync28(paths.data);
-    if (createHash16("sha256").update(bytes).digest("hex") !== parsedId.data) return null;
+    if (createHash17("sha256").update(bytes).digest("hex") !== parsedId.data) return null;
     return { ...metadata, bytes };
   } catch {
     return null;
@@ -61780,12 +64191,13 @@ var SessionRuntimeTransportBinding = class {
   #explicitAuthority;
   #deliverySubscriberId;
   #transportLeaseId;
+  #diagnosticRequestId;
   #intentHandles = /* @__PURE__ */ new Map();
   #causalCellProbes = /* @__PURE__ */ new Map();
   #baseHandle;
   #baseHandleLease;
   #closed = false;
-  constructor(binder, shared, allowedSourcePaneIds, contributedSourcePaneIds, interactive, transportLeaseId, ownsGeometry, explicitAuthority) {
+  constructor(binder, shared, allowedSourcePaneIds, contributedSourcePaneIds, interactive, transportLeaseId, diagnosticRequestId, ownsGeometry, explicitAuthority) {
     this.#binder = binder;
     this.#shared = shared;
     this.#allowedSourcePaneIds = new Set(allowedSourcePaneIds);
@@ -61794,6 +64206,7 @@ var SessionRuntimeTransportBinding = class {
     this.#explicitAuthority = explicitAuthority;
     this.#deliverySubscriberId = `${shared.consumer.clientId}:${transportLeaseId}`;
     this.#transportLeaseId = transportLeaseId;
+    this.#diagnosticRequestId = diagnosticRequestId;
     if (interactive && ownsGeometry) shared.geometryTransportLeaseIds.push(transportLeaseId);
     if (interactive && !explicitAuthority && shared.lease === null)
       shared.lease = shared.consumer.acquireController();
@@ -61823,6 +64236,15 @@ var SessionRuntimeTransportBinding = class {
   }
   get clientId() {
     return this.#shared.consumer.clientId;
+  }
+  get surface() {
+    return this.#shared.consumer.surface;
+  }
+  get deliveryLaneId() {
+    return this.#deliverySubscriberId;
+  }
+  get deliveryRequestId() {
+    return this.#diagnosticRequestId;
   }
   authoritySnapshot() {
     this.#assertOpen();
@@ -61896,6 +64318,7 @@ var SessionRuntimeTransportBinding = class {
     }
     return this.#shared.consumer.openTerminalDelivery(
       this.#deliverySubscriberId,
+      this.#diagnosticRequestId,
       semanticPaneId3,
       offer,
       onMessage
@@ -62077,6 +64500,8 @@ var SessionRuntimeTransportBinder = class {
   bind(request) {
     const transport = TransportSchemaZ.parse(request.transport);
     LeaseIdSchemaZ.parse(request.transportLeaseId);
+    if (request.diagnosticRequestId !== void 0)
+      LeaseIdSchemaZ.parse(request.diagnosticRequestId);
     const hostClientId = HostClientIdSchemaZ.parse(request.hostClientId);
     const allowedSourcePaneIds = request.allowedSourcePaneIds.map(
       (paneId) => TerminalAttachmentSemanticPaneIdSchemaZ.parse(paneId)
@@ -62112,6 +64537,7 @@ var SessionRuntimeTransportBinder = class {
         contributedSourcePaneIds,
         request.interactive,
         request.transportLeaseId,
+        request.diagnosticRequestId ?? request.transportLeaseId,
         request.ownsGeometry === true,
         request.explicitAuthority === true
       );
@@ -65342,6 +67768,7 @@ var PaneStreamRuntime = class {
         return transportBinder.bind({
           transport: "pane-stream",
           transportLeaseId: descriptor2.leaseId,
+          diagnosticRequestId: descriptor2.requestId,
           session: descriptor2.sessionName,
           hostClientId: descriptor2.hostClientId,
           allowedSourcePaneIds: descriptor2.panes,
@@ -66372,6 +68799,7 @@ async function startEmbeddedDaemon(opts) {
         },
         mirror: {
           executable: tmuxAuthority.executablePath,
+          internalReadHookEmission: (runtimePaneId, marker) => externalInteractionObserver.internalReadHookEmission(runtimePaneId, marker),
           ...selector.kind === "path" ? { socketPath: selector.path } : {},
           ...selector.kind === "name" && selector.name !== "default" ? { socketName: selector.name } : {}
         }

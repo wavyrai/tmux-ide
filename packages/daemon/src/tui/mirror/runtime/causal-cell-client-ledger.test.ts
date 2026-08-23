@@ -109,10 +109,48 @@ function clippedRig() {
 }
 
 describe("CausalCellClientLedger", () => {
+  it("does zero snapshot work and retains nothing for unarmed delivery, paint, or proof traffic", () => {
+    const input = rig();
+    let snapshotReads = 0;
+    const unreadSnapshot = Object.defineProperties(
+      {},
+      Object.fromEntries(
+        ["cols", "rows", "grid", "history", "cursor", "modes", "placements", "bootstrap"].map(
+          (field) => [
+            field,
+            {
+              enumerable: true,
+              get: () => {
+                snapshotReads += 1;
+                throw new Error("unarmed snapshot was read");
+              },
+            },
+          ],
+        ),
+      ),
+    ) as typeof input.delivery.snapshot;
+    for (let revision = 8; revision < 40; revision += 1) {
+      input.ledger.noteDelivery({ ...input.delivery, revision, snapshot: unreadSnapshot });
+      input.ledger.notePaint({ ...input.paint, revision, snapshot: unreadSnapshot });
+      input.ledger.noteProof({ ...input.proof, committedRevision: revision });
+    }
+    expect(snapshotReads).toBe(0);
+    expect(input.ledger.resourceOwnership()).toEqual({
+      activeProbes: 0,
+      retainedProofs: 0,
+      retainedDeliveryProjections: 0,
+      retainedPaintProjections: 0,
+      retainedSnapshots: 0,
+    });
+  });
+
   it.each([
     ["proof-delivery-paint", ["proof", "delivery", "paint"]],
+    ["proof-paint-delivery", ["proof", "paint", "delivery"]],
+    ["delivery-proof-paint", ["delivery", "proof", "paint"]],
     ["paint-proof-delivery", ["paint", "proof", "delivery"]],
     ["delivery-paint-proof", ["delivery", "paint", "proof"]],
+    ["paint-delivery-proof", ["paint", "delivery", "proof"]],
   ])("joins %s without relying on latest trace", (_name, order) => {
     const input = rig();
     input.ledger.arm(input.request, 10);
@@ -125,6 +163,84 @@ describe("CausalCellClientLedger", () => {
       expect.objectContaining({ inputAtMicros: 10, deliveredAtMicros: 20, paintedAtMicros: 30 }),
     ]);
     expect(input.failures).toEqual([]);
+  });
+
+  it("retains bounded state-keyed candidates until a later proof selects its exact state", () => {
+    const input = rig();
+    input.ledger.arm(input.request, 10);
+    const stateA = {
+      delivery: { ...input.delivery, revision: 8, stateHash: "aaaaaaaaaaaaaaaa" },
+      paint: { ...input.paint, revision: 8, stateHash: "aaaaaaaaaaaaaaaa" },
+    };
+    const stateB = {
+      delivery: { ...input.delivery, revision: 9, stateHash: "bbbbbbbbbbbbbbbb" },
+      paint: { ...input.paint, revision: 9, stateHash: "bbbbbbbbbbbbbbbb" },
+      proof: {
+        ...input.proof,
+        committedRevision: 9,
+        committedStateHash: "bbbbbbbbbbbbbbbb",
+      },
+    };
+    input.ledger.noteDelivery(stateA.delivery);
+    input.ledger.notePaint(stateA.paint);
+    input.ledger.noteDelivery(stateB.delivery);
+    input.ledger.notePaint(stateB.paint);
+    expect(input.ledger.resourceOwnership()).toMatchObject({
+      retainedDeliveryProjections: 2,
+      retainedPaintProjections: 2,
+      retainedSnapshots: 0,
+    });
+    input.ledger.noteProof(stateB.proof);
+    expect(input.finalized).toHaveLength(1);
+    expect(input.failures).toEqual([]);
+  });
+
+  it("does not splice asymmetric delivery and paint states before exact coalesced evidence", () => {
+    const input = rig();
+    input.ledger.arm(input.request, 10);
+    input.ledger.noteDelivery({ ...input.delivery, revision: 8, stateHash: "aaaaaaaaaaaaaaaa" });
+    input.ledger.notePaint({ ...input.paint, revision: 9, stateHash: "bbbbbbbbbbbbbbbb" });
+    input.ledger.noteProof({
+      ...input.proof,
+      committedRevision: 9,
+      committedStateHash: "bbbbbbbbbbbbbbbb",
+    });
+    expect(input.finalized).toEqual([]);
+    input.ledger.noteDelivery({
+      ...input.delivery,
+      revision: 9,
+      stateHash: "bbbbbbbbbbbbbbbb",
+    });
+    expect(input.finalized).toHaveLength(1);
+  });
+
+  it("caps snapshot-free delivery and paint candidates at sixteen per armed probe", () => {
+    const input = rig();
+    input.ledger.arm(input.request, 10);
+    for (let index = 0; index < 20; index += 1) {
+      const revision = 8 + index;
+      const stateHash = revision.toString(16).padStart(16, "0");
+      input.ledger.noteDelivery({ ...input.delivery, revision, stateHash });
+      input.ledger.notePaint({ ...input.paint, revision, stateHash });
+    }
+    expect(input.ledger.resourceOwnership()).toMatchObject({
+      retainedDeliveryProjections: 16,
+      retainedPaintProjections: 16,
+      retainedSnapshots: 0,
+    });
+    input.ledger.noteProof({
+      ...input.proof,
+      committedRevision: 27,
+      committedStateHash: "000000000000001b",
+    });
+    expect(input.finalized).toHaveLength(1);
+    expect(input.ledger.resourceOwnership()).toEqual({
+      activeProbes: 0,
+      retainedProofs: 0,
+      retainedDeliveryProjections: 0,
+      retainedPaintProjections: 0,
+      retainedSnapshots: 0,
+    });
   });
 
   it("fails closed when the exact target row was not written in the active pane", () => {
@@ -146,6 +262,13 @@ describe("CausalCellClientLedger", () => {
     input.ledger.notePaint({ ...input.paint, semanticPaneId });
     expect(input.finalized).toEqual([]);
     expect(input.failures).toEqual([[traceId, "marker-mismatch"]]);
+    expect(input.ledger.resourceOwnership()).toEqual({
+      activeProbes: 0,
+      retainedProofs: 0,
+      retainedDeliveryProjections: 0,
+      retainedPaintProjections: 0,
+      retainedSnapshots: 0,
+    });
   });
 
   it("retires every pending proof on disconnect and ignores late evidence", () => {
@@ -155,6 +278,13 @@ describe("CausalCellClientLedger", () => {
     input.ledger.noteProof(input.proof);
     expect(input.failures).toEqual([[traceId, "transport-closed"]]);
     expect(input.finalized).toEqual([]);
+    expect(input.ledger.resourceOwnership()).toEqual({
+      activeProbes: 0,
+      retainedProofs: 0,
+      retainedDeliveryProjections: 0,
+      retainedPaintProjections: 0,
+      retainedSnapshots: 0,
+    });
   });
 
   it("fails a skipped revision on the bounded client deadline", () => {
@@ -167,6 +297,31 @@ describe("CausalCellClientLedger", () => {
     input.ledger.noteProof(input.proof);
     expire();
     expect(input.failures).toEqual([[traceId, "timeout"]]);
+  });
+
+  it("ignores wrong authority and pre-baseline revisions without reading snapshots", () => {
+    const input = rig();
+    let snapshotReads = 0;
+    const unreadSnapshot = Object.defineProperty({}, "grid", {
+      get: () => {
+        snapshotReads += 1;
+        throw new Error("foreign snapshot was read");
+      },
+    }) as typeof input.delivery.snapshot;
+    input.ledger.arm(input.request, 10);
+    for (const delivery of [
+      { ...input.delivery, semanticPaneId: "pane.beta", snapshot: unreadSnapshot },
+      {
+        ...input.delivery,
+        generation: "22222222-2222-4222-8222-222222222222",
+        snapshot: unreadSnapshot,
+      },
+      { ...input.delivery, incarnation: `${generation}:1`, snapshot: unreadSnapshot },
+      { ...input.delivery, revision: input.request.baselineRevision, snapshot: unreadSnapshot },
+    ])
+      input.ledger.noteDelivery(delivery);
+    expect(snapshotReads).toBe(0);
+    expect(input.ledger.resourceOwnership().retainedDeliveryProjections).toBe(0);
   });
 
   it("preserves a bounded daemon structural diagnostic on failure", () => {

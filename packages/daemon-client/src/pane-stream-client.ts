@@ -229,7 +229,10 @@ export interface OpenPaneStreamClientOptions {
   readonly signal?: AbortSignal;
   readonly fetch?: typeof fetch;
   readonly onNegotiated: (pane: string, negotiation: TerminalDeliveryNegotiationResult) => void;
-  readonly onTerminalDelivery: (pane: string, message: TerminalDeliveryServerMessage) => void;
+  readonly onTerminalDelivery: (
+    pane: string,
+    message: TerminalDeliveryServerMessage,
+  ) => void | { readonly consumedOwnedChunk: true };
   /** Diagnostic-only arrival edge, sampled before JSON decode/validation work. */
   readonly onTerminalFrameArrival?: (event: {
     readonly pane: string;
@@ -1478,12 +1481,16 @@ function routeFrame(
       options.onTerminalDelivery(frame.pane, frame.envelope);
       return;
     case "terminal-delivery-chunk":
-      options.onTerminalDelivery(frame.pane, {
-        type: "terminal.delivery.chunk",
-        transactionId: frame.transactionId,
-        index: frame.index,
-        bytes: decodeBase64(frame.data),
-      });
+      {
+        const bytes = decodeBase64(frame.data);
+        const consumed = options.onTerminalDelivery(frame.pane, {
+          type: "terminal.delivery.chunk",
+          transactionId: frame.transactionId,
+          index: frame.index,
+          bytes,
+        });
+        if (consumed?.consumedOwnedChunk === true) releaseOwnedArrayBuffer(bytes);
+      }
       return;
     case "terminal-delivery-fault":
       options.onTerminalDelivery(frame.pane, frame.fault);
@@ -1518,4 +1525,17 @@ function decodeBase64(value: string): Uint8Array<ArrayBuffer> {
   const bytes = new Uint8Array(new ArrayBuffer(binary.length));
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   return bytes;
+}
+
+function releaseOwnedArrayBuffer(bytes: Uint8Array<ArrayBuffer>): void {
+  const backing = bytes.buffer as ArrayBuffer & {
+    transfer?: (newByteLength?: number) => ArrayBuffer;
+  };
+  try {
+    if (typeof backing.transfer === "function") backing.transfer(0);
+    else if (typeof globalThis.structuredClone === "function")
+      globalThis.structuredClone(backing, { transfer: [backing] });
+  } catch {
+    // Releasing transport-owned storage is an allocation optimization only.
+  }
 }

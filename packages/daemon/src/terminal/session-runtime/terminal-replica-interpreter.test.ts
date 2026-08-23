@@ -25,6 +25,69 @@ function create(updates: CanonicalTerminalReplicaUpdate[], cols = 12, rows = 3) 
 }
 
 describe("TerminalReplicaInterpreter", () => {
+  it("keeps the explicit ANSI baseline exact across reset, geometry reseed, and alt restore", async () => {
+    const marker = "ANSI_BASELINE_MARKER";
+    const baseline = `\u001b[3J\u001b[2J\u001b[H\u001b[2 q\u001b[?25h${marker}\u001b[2;1H`;
+    const normalize = "\u001b[0m\u001b[2;1H\u001b[2 q\u001b[?25h";
+    const interpreter = new TerminalReplicaInterpreter({
+      generation,
+      workspaceName: "workspace",
+      semanticPaneId: "pane-a",
+      incarnation: `${generation}:0`,
+      cols: 132,
+      rows: 41,
+      backendFactory: createXtermTerminalInterpreterBackend,
+    });
+    const reseed = () =>
+      interpreter.enqueue({
+        type: "reseed",
+        cols: 132,
+        rows: 41,
+        chunks: [new TextEncoder().encode(baseline)],
+        cursor: { x: 0, y: 1 },
+        bootstrap: "painted-capture",
+      });
+    await reseed();
+    const expected = structuredClone(interpreter.currentSnapshot());
+    expect(expected.cursor).toEqual({ x: 0, y: 1, hidden: false, style: "block", blink: false });
+
+    await interpreter.enqueue({ type: "write", data: new TextEncoder().encode(baseline) });
+    expect(interpreter.currentSnapshot()).toEqual(expected);
+
+    await interpreter.enqueue({
+      type: "write",
+      data: new TextEncoder().encode(
+        `${baseline}\u001b[?1049h\u001b[2J\u001b[HALT_SCREEN\u001b[8;12H\u001b[4 q\u001b[?25l`,
+      ),
+    });
+    expect(interpreter.currentSnapshot()).toMatchObject({
+      cursor: { x: 11, y: 7, hidden: true, style: "underline", blink: false },
+      modes: { alternateScreen: true },
+    });
+    await interpreter.enqueue({
+      type: "write",
+      data: new TextEncoder().encode(`\u001b[?1049l${normalize}`),
+    });
+    expect(interpreter.currentSnapshot()).toEqual(expected);
+
+    await interpreter.enqueue({
+      type: "write",
+      data: new TextEncoder().encode(
+        "\u001b[?1049h\u001b[2J\u001b[HALT_SCREEN\u001b[8;12H\u001b[4 q\u001b[?25l",
+      ),
+    });
+    await interpreter.enqueue({
+      type: "write",
+      data: new TextEncoder().encode(`\u001b[?1049l\u001b[HRETURN_BROKEN${normalize}`),
+    });
+    expect(interpreter.currentSnapshot().cursor).toEqual(expected.cursor);
+    expect(interpreter.currentSnapshot().modes).toEqual(expected.modes);
+    expect(interpreter.currentSnapshot()).not.toEqual(expected);
+
+    await reseed();
+    expect(interpreter.currentSnapshot()).toEqual(expected);
+  });
+
   it("projects exact mouse protocol and encoding modes from the production parser", async () => {
     const interpreter = create([]);
     await interpreter.enqueue({

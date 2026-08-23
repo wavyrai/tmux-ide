@@ -145,7 +145,7 @@ export async function connectOpenTuiSessionRuntime(
         viewerMode,
         terminalDelivery: {
           protocolVersions: [1],
-          encodings: ["semantic-v1"],
+          encodings: ["semantic-compact-v1", "semantic-v1"],
           richPlacements: true,
         },
       },

@@ -17,7 +17,11 @@ import {
   type MirrorOutputTiming,
 } from "./control-channel.ts";
 import type { MirrorLayoutEvent, MirrorPaneEvent, MirrorSessionDescription } from "./events.ts";
-import { SessionChannel, type SessionChannelOptions } from "./session-channel.ts";
+import {
+  SessionChannel,
+  type MirrorFlowRecoveryObservation,
+  type SessionChannelOptions,
+} from "./session-channel.ts";
 import type { TrustedMirrorSessionInventory } from "./trusted-inventory.ts";
 import type { InputAction } from "../protocol/input-coalescer.ts";
 import {
@@ -37,6 +41,7 @@ export interface MirrorServiceOptions {
   configFile?: string;
   pauseAfterSeconds?: number;
   historyLines?: number;
+  internalReadHookEmission?: SessionChannelOptions["internalReadHookEmission"];
   /** Test seam: replace the spawned control channel per session. */
   createIo?: (session: string, handlers: MirrorChannelHandlers) => MirrorChannelIo;
   generatePaneId?: () => string;
@@ -64,6 +69,7 @@ export interface MirrorServiceOptions {
     ageMs: number | null,
     timing?: MirrorOutputTiming,
   ) => void;
+  onFlowRecoveryObserved?: (session: string, observation: MirrorFlowRecoveryObservation) => void;
   /** Qualification-only clock; absent from production's disabled observer. */
   nowMicros?: () => number;
 }
@@ -346,6 +352,7 @@ export class MirrorService {
               nowMicros: this.opts.nowMicros,
             }),
           historyLines: this.opts.historyLines,
+          internalReadHookEmission: this.opts.internalReadHookEmission,
           generatePaneId: this.opts.generatePaneId,
           generateWindowId: this.opts.generateWindowId,
           onExit: () => {
@@ -371,6 +378,8 @@ export class MirrorService {
             this.opts.onInputAccepted?.(session, action, acceptedAtMicros, ok),
           onOutputObserved: (semanticPaneId, ageMs, timing) =>
             this.opts.onOutputObserved?.(session, semanticPaneId, ageMs, timing),
+          onFlowRecoveryObserved: (observation) =>
+            this.opts.onFlowRecoveryObserved?.(session, observation),
         };
         channel = new SessionChannel(channelOptions);
       } catch (cause) {

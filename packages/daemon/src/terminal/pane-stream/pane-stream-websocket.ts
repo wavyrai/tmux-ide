@@ -54,6 +54,7 @@ import {
 } from "../attachments/admission-util.ts";
 import type { DirectTerminalSocket } from "../attachments/direct-websocket.ts";
 import type { SessionRuntimeObservability } from "../session-runtime/runtime-observability.ts";
+import { terminalDeliveryObservationOrdinal } from "../session-runtime/terminal-delivery-observation-identity.ts";
 import {
   PaneStreamLeaseError,
   type IssuedPaneStreamLease,
@@ -251,6 +252,9 @@ export interface SessionRuntimePaneStreamTransportBinding {
   readonly generation: string;
   readonly session: string;
   readonly clientId: string;
+  readonly surface?: string;
+  readonly deliveryLaneId?: string;
+  readonly deliveryRequestId?: string;
   /** Optional only for the bounded v1 transport adapter. New clients require these methods. */
   authoritySnapshot?(): SessionRuntimeAuthoritySnapshot;
   activateLegacyAuthority?(geometry: boolean): SessionRuntimeAuthoritySnapshot;
@@ -1370,16 +1374,24 @@ export class PaneStreamLiveConnection {
       // SessionRuntime keys canonical replicas by the tmux session, while the
       // public pane-stream lease is keyed by its workspace identity. Translate
       // at this boundary so the renderer has one coherent address vocabulary.
-      const trace = message.performanceTraceId
-        ? this.#observability?.beginTrace(
-            "terminal-input-to-paint",
-            { generation: message.generation, incarnation: message.incarnation },
-            message.performanceTraceId,
-          )
-        : null;
-      const startedAtMicros = trace ? this.#observability!.nowMicros() : 0;
+      const detailedDeliveryObservation = this.#observability?.enabled === true;
+      const trace =
+        message.performanceTraceId && detailedDeliveryObservation
+          ? this.#observability!.beginTrace(
+              "terminal-input-to-paint",
+              { generation: message.generation, incarnation: message.incarnation },
+              message.performanceTraceId,
+            )
+          : null;
+      let startedAtMicros: number | null = null;
+      if (detailedDeliveryObservation)
+        try {
+          startedAtMicros = this.#observability!.nowMicros();
+        } catch {
+          // Detailed delivery timing cannot alter socket delivery.
+        }
       let startedAtSharedMicros: number | null = null;
-      if (trace && this.#diagnosticSharedRawMicros) {
+      if (startedAtMicros !== null && this.#diagnosticSharedRawMicros) {
         try {
           startedAtSharedMicros = this.#sharedMicros();
         } catch {
@@ -1391,7 +1403,7 @@ export class PaneStreamLiveConnection {
         pane,
         envelope: { ...message, workspaceName: this.#descriptor.workspaceName },
       });
-      if (trace) {
+      if (startedAtMicros !== null) {
         let endedAtMicros: number;
         try {
           endedAtMicros = this.#observability!.nowMicros();
@@ -1419,6 +1431,23 @@ export class PaneStreamLiveConnection {
                   startedAtMicros: startedAtSharedMicros,
                   endedAtMicros: endedAtSharedMicros,
                 },
+            Object.freeze({
+              workspaceName: message.workspaceName,
+              semanticPaneId: message.semanticPaneId,
+              canonicalGeneration: message.generation,
+              canonicalIncarnation: message.incarnation,
+              canonicalRevision: message.canonicalRevision,
+              canonicalStateHash: message.canonicalStateHash,
+              transactionId: message.transactionId,
+              ...(terminalDeliveryObservationOrdinal(message) === null
+                ? {}
+                : { deliveryOrdinal: terminalDeliveryObservationOrdinal(message)! }),
+              deliveryClientId: this.#sessionRuntimeBinding?.clientId ?? this.#clientId,
+              deliverySurface: this.#sessionRuntimeBinding?.surface ?? "unknown",
+              deliveryLaneId: this.#sessionRuntimeBinding?.deliveryLaneId ?? this.#clientId,
+              deliveryRequestId: this.#sessionRuntimeBinding?.deliveryRequestId ?? this.#clientId,
+              deliveryNonce: message.deliveryNonce,
+            }),
           );
         } catch {
           // Diagnostics cannot alter terminal delivery.

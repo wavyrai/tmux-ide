@@ -79,6 +79,30 @@ export interface CreateScratchFleetOptions {
   }>;
 }
 
+export const SCRATCH_INITIAL_PANE_COMMAND_INVALID = "scratch-initial-pane-command-invalid";
+
+export class ScratchInitialPaneCommandError extends Error {
+  readonly code = SCRATCH_INITIAL_PANE_COMMAND_INVALID;
+
+  constructor() {
+    super("scratch initial pane command must contain bounded argv");
+    this.name = "ScratchInitialPaneCommandError";
+  }
+}
+
+export function validateScratchInitialPaneCommand(
+  command: CreateScratchFleetOptions["initialPaneCommand"],
+): void {
+  if (
+    command &&
+    (!command.executable ||
+      command.executable.length > 4_096 ||
+      /[\0\r\n]/u.test(command.executable) ||
+      (command.args ?? []).some((value) => value.length > 4_096 || /[\0\r\n]/u.test(value)))
+  )
+    throw new ScratchInitialPaneCommandError();
+}
+
 function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
@@ -101,16 +125,7 @@ export async function createScratchFleet(
     throw new Error("scratch initial pane marker must be a bounded safe ProductRig token");
   if (options.initialPaneMarker && options.initialPaneCommand)
     throw new Error("scratch first pane may have either a marker or an exact command");
-  if (
-    options.initialPaneCommand &&
-    (!options.initialPaneCommand.executable ||
-      options.initialPaneCommand.executable.length > 4_096 ||
-      /[\0\r\n]/u.test(options.initialPaneCommand.executable) ||
-      (options.initialPaneCommand.args ?? []).some(
-        (value) => value.length > 4_096 || /[\0\r\n]/u.test(value),
-      ))
-  )
-    throw new Error("scratch initial pane command must contain bounded argv");
+  validateScratchInitialPaneCommand(options.initialPaneCommand);
   // /tmp, not os.tmpdir(): on macOS the per-user temp dir realpaths to a long
   // prefix that pushes the tmux socket past the sun_path limit.
   const root = await mkdtemp(`/tmp/tmi-e2e-${options.slug}-`);

@@ -85,4 +85,46 @@ describe("session runtime observability", () => {
       ),
     ).toThrow();
   });
+
+  it("retains bounded terminal-delivery resource metrics only when explicitly supplied", () => {
+    const observer = createSessionRuntimeObservability({ processId: "daemon:test" });
+    observer.recordSpan("transport", "terminal-delivery-encode-enqueue", 10, 20, null, undefined, {
+      representationCacheBytes: 1_024,
+      rawJournalBytes: 2_048,
+      queueDepth: 1,
+      maxQueueDepth: 2,
+      inFlight: 1,
+      inFlightBytes: 512,
+      semanticPaneId: "pane:alpha",
+      mirrorFlowPhase: "nonconverged",
+      mirrorFlowRecoveryOrdinal: 7,
+      mirrorPaneIncarnation: 3,
+      mirrorOutputOrdinal: 41,
+      mirrorRecoveryElapsedMicros: 4_999_000,
+      mirrorRecoveryFingerprintExact: false,
+      mirrorRecoveryConfirmationOrdinal: 2,
+      mirrorFlowFailureReason: "absolute-deadline",
+    });
+    expect(observer.snapshot().spans).toEqual([
+      expect.objectContaining({
+        terminalDelivery: {
+          representationCacheBytes: 1_024,
+          rawJournalBytes: 2_048,
+          queueDepth: 1,
+          maxQueueDepth: 2,
+          inFlight: 1,
+          inFlightBytes: 512,
+          semanticPaneId: "pane:alpha",
+          mirrorFlowPhase: "nonconverged",
+          mirrorFlowRecoveryOrdinal: 7,
+          mirrorPaneIncarnation: 3,
+          mirrorOutputOrdinal: 41,
+          mirrorRecoveryElapsedMicros: 4_999_000,
+          mirrorRecoveryFingerprintExact: false,
+          mirrorRecoveryConfirmationOrdinal: 2,
+          mirrorFlowFailureReason: "absolute-deadline",
+        },
+      }),
+    ]);
+  });
 });

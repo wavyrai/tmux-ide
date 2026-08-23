@@ -13,6 +13,9 @@ import {
   type TuiTerminalCanonicalHostFrameEvent,
   type TuiTerminalFrameFenceEvent,
   type TuiTerminalCanonicalModeEvent,
+  type TuiTerminalCursorPresentationEvent,
+  type TuiTerminalFramebufferProjectionEvent,
+  type TuiTerminalResourceSampleEvent,
   type TuiTerminalInputQueueStateEvent,
   type TuiTerminalInputOriginEvent,
   type TuiTerminalInputOrigin,
@@ -48,6 +51,7 @@ export interface ReferenceTraceWriterSnapshot {
   readonly writableLength: number;
   readonly pendingBytes: number;
   readonly pendingRecords: number;
+  readonly pendingCriticalRecords: number;
   readonly pendingStorageSlots: number;
   readonly peakPendingBytes: number;
   readonly saturated: boolean;
@@ -146,6 +150,7 @@ export function createReferenceTraceWriter(
   let closed = false;
   let closePromise: Promise<ReferenceTraceCollectorReport> | null = null;
   let pendingBytes = 0;
+  let pendingCriticalRecords = 0;
   let peakPendingBytes = 0;
   let firstDroppedRecord: ReferenceTraceDroppedRecordKind | null = null;
   const maxPendingBytes = options.maxPendingBytes ?? MAX_PENDING_TRACE_BYTES;
@@ -155,6 +160,7 @@ export function createReferenceTraceWriter(
     readonly line: string;
     readonly bytes: number;
     readonly kind: ReferenceTraceDroppedRecordKind;
+    readonly critical: boolean;
   };
   const pending: Array<PendingRecord | undefined> = [];
   let pendingIndex = 0;
@@ -171,6 +177,7 @@ export function createReferenceTraceWriter(
     pending.length = 0;
     pendingIndex = 0;
     pendingBytes = 0;
+    pendingCriticalRecords = 0;
   };
   const onError = () => {
     failed = true;
@@ -189,6 +196,7 @@ export function createReferenceTraceWriter(
       const next = pending[pendingIndex++]!;
       pending[pendingIndex - 1] = undefined;
       pendingBytes -= next.bytes;
+      if (next.critical) pendingCriticalRecords -= 1;
       try {
         if (!writeLine(next.line)) break;
       } catch {
@@ -220,6 +228,7 @@ export function createReferenceTraceWriter(
       writableLength: stream.writableLength,
       pendingBytes,
       pendingRecords: pendingCount(),
+      pendingCriticalRecords,
       pendingStorageSlots: pending.length,
       peakPendingBytes,
       saturated,
@@ -249,7 +258,8 @@ export function createReferenceTraceWriter(
         firstDroppedRecord ??= droppedRecordKind(value);
         return;
       }
-      pending.push({ line, bytes, kind: droppedRecordKind(value) });
+      pending.push({ line, bytes, kind: droppedRecordKind(value), critical });
+      if (critical) pendingCriticalRecords += 1;
       pendingBytes += bytes;
       peakPendingBytes = Math.max(peakPendingBytes, pendingBytes);
     } catch {
@@ -328,7 +338,7 @@ export function createReferencePerformanceTraceSink(options: {
   readonly appendCritical?: (value: Readonly<Record<string, unknown>>) => void;
   readonly health?: () => Pick<
     ReferenceTraceWriterSnapshot,
-    "droppedRecords" | "oversizedRecords" | "failed"
+    "droppedRecords" | "oversizedRecords" | "failed" | "pendingCriticalRecords"
   >;
   readonly nowMicros?: () => number;
   readonly createTraceId?: () => string;
@@ -406,7 +416,7 @@ export function createReferencePerformanceTraceSink(options: {
       ? {
           terminalCanonicalPublication: (event: TuiTerminalCanonicalPublicationEvent) => {
             if (!closed)
-              options.append({
+              (options.appendCritical ?? options.append)({
                 version: 1,
                 type: "performance.terminal-canonical-publication",
                 ...event,
@@ -472,6 +482,7 @@ export function createReferencePerformanceTraceSink(options: {
                       droppedRecords: health.droppedRecords,
                       oversizedRecords: health.oversizedRecords,
                       failed: health.failed,
+                      pendingCriticalRecords: health.pendingCriticalRecords,
                     })
                   : null,
               });
@@ -480,6 +491,43 @@ export function createReferencePerformanceTraceSink(options: {
           terminalCanonicalMode: (event: TuiTerminalCanonicalModeEvent) => {
             if (!closed)
               options.append({ version: 1, type: "performance.terminal-canonical-mode", ...event });
+          },
+          terminalCursorPresentation: (event: TuiTerminalCursorPresentationEvent) => {
+            if (!closed)
+              options.append({
+                version: 1,
+                type: "performance.terminal-cursor-presentation",
+                ...event,
+              });
+          },
+          ...(typeof options.inputFingerprintKey === "string" &&
+          /^[0-9a-f]{64}$/u.test(options.inputFingerprintKey)
+            ? {
+                terminalFramebufferProjection: (event: TuiTerminalFramebufferProjectionEvent) => {
+                  if (closed) return;
+                  const { projection, ...identity } = event;
+                  options.append({
+                    version: 1,
+                    type: "performance.terminal-framebuffer-projection",
+                    ...identity,
+                    projectionHmac: createHmac(
+                      "sha256",
+                      Buffer.from(options.inputFingerprintKey!, "hex"),
+                    )
+                      .update("opentui-framebuffer\0")
+                      .update(projection)
+                      .digest("hex"),
+                  });
+                },
+              }
+            : {}),
+          terminalResourceSample: (event: TuiTerminalResourceSampleEvent) => {
+            if (!closed)
+              options.append({
+                version: 1,
+                type: "performance.terminal-resource-sample",
+                ...event,
+              });
           },
         }
       : {}),

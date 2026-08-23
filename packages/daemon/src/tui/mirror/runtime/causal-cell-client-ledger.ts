@@ -36,6 +36,8 @@ interface ArmedProbe {
   readonly request: CausalCellProbeRequestV1;
   readonly inputAtMicros: number;
   readonly cancelTimeout: () => void;
+  readonly deliveries: Map<string, CompactDeliveryEvidence>;
+  readonly paints: Map<string, CompactPaintEvidence>;
 }
 
 interface DeliveryEvidence {
@@ -46,6 +48,30 @@ interface DeliveryEvidence {
   readonly stateHash: string;
   readonly snapshot: TerminalReplicaSnapshot;
   readonly atMicros: number;
+}
+
+interface CompactDeliveryEvidence {
+  readonly semanticPaneId: string;
+  readonly generation: string;
+  readonly incarnation: string;
+  readonly revision: number;
+  readonly stateHash: string;
+  readonly cols: number;
+  readonly rows: number;
+  readonly targetCell: CausalCellProbeRequestV1["after"] | null;
+  readonly atMicros: number;
+}
+
+interface CompactPaintEvidence extends CompactDeliveryEvidence {
+  readonly viewport: { readonly cols: number; readonly rows: number };
+  readonly activePaneRect: {
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+  };
+  readonly targetRowWritten: boolean;
+  readonly scrollOffset: number;
 }
 
 const MAX_DIAGNOSTIC_RECORDS = 16;
@@ -77,8 +103,6 @@ function proofStateKey(proof: CausalCellProofV1): string {
 export class CausalCellClientLedger {
   readonly #armed = new Map<string, ArmedProbe>();
   readonly #proofs = new Map<string, CausalCellProofV1>();
-  readonly #deliveries = new Map<string, DeliveryEvidence>();
-  readonly #paints = new Map<string, CausalCellPaintEvidenceV1>();
   readonly #onFinalized: (evidence: FinalizedCausalCellEvidenceV1) => void;
   readonly #onFailure: (
     traceId: string,
@@ -127,35 +151,120 @@ export class CausalCellClientLedger {
       return false;
     }
     const cancelTimeout = this.#scheduleTimeout(() => this.fail(request.traceId, "timeout"), 2_000);
-    this.#armed.set(request.traceId, { request, inputAtMicros, cancelTimeout });
+    this.#armed.set(request.traceId, {
+      request,
+      inputAtMicros,
+      cancelTimeout,
+      deliveries: new Map(),
+      paints: new Map(),
+    });
     this.#tryFinalize(request.traceId);
     return true;
   }
 
   noteProof(proof: CausalCellProofV1): void {
     if (this.#disposed) return;
+    const armed = this.#armed.get(proof.traceId);
+    if (!armed) return;
+    if (!this.#proofMatchesRequest(proof, armed.request))
+      return this.fail(proof.traceId, "marker-mismatch");
     const previous = this.#proofs.get(proof.traceId);
     if (previous && JSON.stringify(previous) !== JSON.stringify(proof))
       return this.fail(proof.traceId, "marker-mismatch");
     this.#proofs.set(proof.traceId, proof);
+    const selectedKey = proofStateKey(proof);
+    for (const key of armed.deliveries.keys())
+      if (key !== selectedKey) armed.deliveries.delete(key);
+    for (const key of armed.paints.keys()) if (key !== selectedKey) armed.paints.delete(key);
     this.#trim(this.#proofs, (evicted) => this.fail(evicted, "capacity-exhausted"));
     this.#tryFinalize(proof.traceId);
   }
 
   noteDelivery(input: DeliveryEvidence): void {
     if (this.#disposed) return;
-    this.#deliveries.set(stateKey(input), input);
-    this.#trim(this.#deliveries, (evicted) => this.#failProofForState(evicted));
-    for (const [traceId, proof] of this.#proofs)
-      if (proofStateKey(proof) === stateKey(input)) this.#tryFinalize(traceId);
+    const matched = this.#armedFor(input);
+    if (!matched) return;
+    const [traceId, armed] = matched;
+    const proof = this.#proofs.get(traceId);
+    if (proof && proofStateKey(proof) !== stateKey(input)) return;
+    const { row, column } = armed.request.geometry;
+    const targetCell = freezeCell(input.snapshot.grid[row]?.cells[column]);
+    if (JSON.stringify(targetCell) !== JSON.stringify(armed.request.after)) return;
+    const key = stateKey(input);
+    if (armed.deliveries.has(key)) return;
+    this.#trimCandidateMap(armed.deliveries);
+    armed.deliveries.set(
+      key,
+      Object.freeze({
+        semanticPaneId: input.semanticPaneId,
+        generation: input.generation,
+        incarnation: input.incarnation,
+        revision: input.revision,
+        stateHash: input.stateHash,
+        cols: input.snapshot.cols,
+        rows: input.snapshot.rows,
+        targetCell,
+        atMicros: input.atMicros,
+      }),
+    );
+    this.#tryFinalize(traceId);
   }
 
   notePaint(input: CausalCellPaintEvidenceV1): void {
     if (this.#disposed) return;
-    this.#paints.set(stateKey(input), input);
-    this.#trim(this.#paints, (evicted) => this.#failProofForState(evicted));
-    for (const [traceId, proof] of this.#proofs)
-      if (proofStateKey(proof) === stateKey(input)) this.#tryFinalize(traceId);
+    const matched = this.#armedFor(input);
+    if (!matched) return;
+    const [traceId, armed] = matched;
+    const proof = this.#proofs.get(traceId);
+    if (proof && proofStateKey(proof) !== stateKey(input)) return;
+    const { row, column } = armed.request.geometry;
+    const targetCell = freezeCell(input.snapshot.grid[row]?.cells[column]);
+    if (JSON.stringify(targetCell) !== JSON.stringify(armed.request.after)) return;
+    const key = stateKey(input);
+    if (armed.paints.has(key)) return;
+    this.#trimCandidateMap(armed.paints);
+    armed.paints.set(
+      key,
+      Object.freeze({
+        semanticPaneId: input.semanticPaneId,
+        generation: input.generation,
+        incarnation: input.incarnation,
+        revision: input.revision,
+        stateHash: input.stateHash,
+        cols: input.snapshot.cols,
+        rows: input.snapshot.rows,
+        targetCell,
+        viewport: Object.freeze({ ...input.viewport }),
+        activePaneRect: Object.freeze({ ...input.activePaneRect }),
+        targetRowWritten: input.writtenRows.has(row),
+        scrollOffset: input.scrollOffset,
+        atMicros: input.atMicros,
+      }),
+    );
+    this.#tryFinalize(traceId);
+  }
+
+  /** Bounded diagnostics ownership facts; full canonical snapshots are never retained. */
+  resourceOwnership(): {
+    readonly activeProbes: number;
+    readonly retainedProofs: number;
+    readonly retainedDeliveryProjections: number;
+    readonly retainedPaintProjections: number;
+    readonly retainedSnapshots: 0;
+  } {
+    let retainedDeliveryProjections = 0;
+    let retainedPaintProjections = 0;
+    for (const armed of this.#armed.values()) {
+      retainedDeliveryProjections += armed.deliveries.size;
+      retainedPaintProjections += armed.paints.size;
+    }
+    return Object.freeze({
+      activeProbes: this.#armed.size,
+      retainedProofs: this.#proofs.size,
+      retainedDeliveryProjections,
+      retainedPaintProjections,
+      retainedSnapshots: 0,
+    });
   }
 
   fail(
@@ -181,34 +290,24 @@ export class CausalCellClientLedger {
     }
     this.#armed.clear();
     this.#proofs.clear();
-    this.#deliveries.clear();
-    this.#paints.clear();
   }
 
   #tryFinalize(traceId: string): void {
     const armed = this.#armed.get(traceId);
     const proof = this.#proofs.get(traceId);
     if (!armed || !proof) return;
-    if (
-      proof.semanticPaneId !== armed.request.semanticPaneId ||
-      proof.generation !== armed.request.generation ||
-      proof.incarnation !== armed.request.incarnation ||
-      proof.baselineRevision !== armed.request.baselineRevision ||
-      proof.baselineStateHash !== armed.request.baselineStateHash ||
-      JSON.stringify(proof.geometry) !== JSON.stringify(armed.request.geometry) ||
-      JSON.stringify(proof.before) !== JSON.stringify(armed.request.before) ||
-      JSON.stringify(proof.after) !== JSON.stringify(armed.request.after)
-    )
+    if (!this.#proofMatchesRequest(proof, armed.request))
       return this.fail(traceId, "marker-mismatch");
     const key = proofStateKey(proof);
-    const delivery = this.#deliveries.get(key);
-    const paint = this.#paints.get(key);
+    const delivery = armed.deliveries.get(key);
+    const paint = armed.paints.get(key);
     if (!delivery || !paint) return;
+    if (stateKey(delivery) !== key || stateKey(paint) !== key) return;
     const { row, column, cols, rows } = proof.geometry;
     if (
-      delivery.snapshot.cols !== cols ||
-      delivery.snapshot.rows !== rows ||
-      JSON.stringify(delivery.snapshot.grid[row]?.cells[column]) !== JSON.stringify(proof.after)
+      delivery.cols !== cols ||
+      delivery.rows !== rows ||
+      JSON.stringify(delivery.targetCell) !== JSON.stringify(proof.after)
     )
       return this.fail(traceId, "baseline-drift");
     const visibleRow = row;
@@ -219,26 +318,21 @@ export class CausalCellClientLedger {
       visibleRow < 0 ||
       visibleRow >= paint.viewport.rows ||
       column >= paint.viewport.cols ||
-      !paint.writtenRows.has(visibleRow) ||
-      JSON.stringify(paint.snapshot.grid[row]?.cells[column]) !== JSON.stringify(proof.after)
+      !paint.targetRowWritten ||
+      paint.cols !== cols ||
+      paint.rows !== rows ||
+      JSON.stringify(paint.targetCell) !== JSON.stringify(proof.after)
     )
       return this.fail(traceId, "geometry-drift");
     this.#armed.delete(traceId);
     armed.cancelTimeout();
     this.#proofs.delete(traceId);
-    this.#deliveries.delete(key);
-    this.#paints.delete(key);
     this.#onFinalized({
       proof,
       inputAtMicros: armed.inputAtMicros,
       deliveredAtMicros: delivery.atMicros,
       paintedAtMicros: paint.atMicros,
     });
-  }
-
-  #failProofForState(key: string): void {
-    for (const [traceId, proof] of this.#proofs)
-      if (proofStateKey(proof) === key) this.fail(traceId, "capacity-exhausted");
   }
 
   #trim<T>(map: Map<string, T>, onEvict: (key: string) => void): void {
@@ -248,4 +342,53 @@ export class CausalCellClientLedger {
       onEvict(key);
     }
   }
+
+  #trimCandidateMap<T>(map: Map<string, T>): void {
+    while (map.size >= MAX_DIAGNOSTIC_RECORDS) map.delete(map.keys().next().value as string);
+  }
+
+  #armedFor(input: {
+    readonly semanticPaneId: string;
+    readonly generation: string;
+    readonly incarnation: string;
+    readonly revision: number;
+  }): readonly [string, ArmedProbe] | null {
+    for (const entry of this.#armed) {
+      const request = entry[1].request;
+      if (
+        request.semanticPaneId === input.semanticPaneId &&
+        request.generation === input.generation &&
+        request.incarnation === input.incarnation &&
+        input.revision > request.baselineRevision
+      )
+        return entry;
+    }
+    return null;
+  }
+
+  #proofMatchesRequest(proof: CausalCellProofV1, request: CausalCellProbeRequestV1): boolean {
+    return (
+      proof.semanticPaneId === request.semanticPaneId &&
+      proof.generation === request.generation &&
+      proof.incarnation === request.incarnation &&
+      proof.baselineRevision === request.baselineRevision &&
+      proof.baselineStateHash === request.baselineStateHash &&
+      proof.committedRevision > request.baselineRevision &&
+      JSON.stringify(proof.geometry) === JSON.stringify(request.geometry) &&
+      JSON.stringify(proof.before) === JSON.stringify(request.before) &&
+      JSON.stringify(proof.after) === JSON.stringify(request.after)
+    );
+  }
+}
+
+function freezeCell(
+  cell: CausalCellProbeRequestV1["after"] | undefined,
+): CausalCellProbeRequestV1["after"] | null {
+  return cell
+    ? Object.freeze({
+        ...cell,
+        foreground: Object.freeze({ ...cell.foreground }),
+        background: Object.freeze({ ...cell.background }),
+      })
+    : null;
 }

@@ -297,7 +297,12 @@ describe("reference performance trace", () => {
       inputDetail: true,
       inputOrigin: true,
       inputFingerprintKey: "f".repeat(64),
-      health: () => ({ droppedRecords: 0, oversizedRecords: 0, failed: false }),
+      health: () => ({
+        droppedRecords: 0,
+        oversizedRecords: 0,
+        failed: false,
+        pendingCriticalRecords: 0,
+      }),
       append: (record) => records.push(record),
     });
     expect(sink.terminalCanonicalPublication).toBeTypeOf("function");
@@ -407,6 +412,7 @@ describe("reference performance trace", () => {
     expect(quiet.terminalFrameFence).toBeUndefined();
     expect(quiet.terminalFocusPaint).toBeUndefined();
     expect(quiet.terminalFocusFence).toBeUndefined();
+    expect(quiet.terminalFramebufferProjection).toBeUndefined();
     expect(quiet.terminalInputQueueState).toBeUndefined();
     expect(quiet.terminalClockCalibration).toBeUndefined();
 
@@ -415,9 +421,15 @@ describe("reference performance trace", () => {
       commit: "a".repeat(40),
       tree: "b".repeat(40),
       detailed: true,
-      health: () => ({ droppedRecords: 0, oversizedRecords: 0, failed: false }),
+      health: () => ({
+        droppedRecords: 0,
+        oversizedRecords: 0,
+        failed: false,
+        pendingCriticalRecords: 0,
+      }),
       append: (record) => records.push(record),
     });
+    expect(detailed.terminalFramebufferProjection).toBeUndefined();
     detailed.terminalClockCalibration?.({
       version: 1,
       processId: "opentui:1",
@@ -567,6 +579,49 @@ describe("reference performance trace", () => {
       inputInFlight: 0,
       inputPendingBytes: 0,
     });
+  });
+
+  it("HMACs detailed framebuffer cells with the run key and never persists raw content", () => {
+    const records: Array<Readonly<Record<string, unknown>>> = [];
+    const sink = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      detailed: true,
+      inputFingerprintKey: "ab".repeat(32),
+      append: (record) => records.push(record),
+    });
+    sink.terminalFramebufferProjection?.({
+      traceId: "trace-a",
+      processId: "opentui:1",
+      clockId: "opentui-performance-now",
+      clockKind: "performance-now",
+      atMicros: 10,
+      semanticPaneId: "pane-a",
+      generation: "generation-a",
+      incarnation: "incarnation-a",
+      revision: 2,
+      stateHash: "state-a",
+      cols: 2,
+      rows: 1,
+      sourceEpoch: 1,
+      rendererEpoch: 1,
+      cellCount: 1,
+      wideContinuationCount: 0,
+      combiningCount: 0,
+      styledCellCount: 1,
+      projection: '[{"chars":"secret"}]',
+    });
+    const projectionRecords = records.filter(
+      ({ type }) => type === "performance.terminal-framebuffer-projection",
+    );
+    expect(projectionRecords).toHaveLength(1);
+    expect(projectionRecords[0]).toMatchObject({
+      type: "performance.terminal-framebuffer-projection",
+      traceId: "trace-a",
+      projectionHmac: expect.stringMatching(/^[0-9a-f]{64}$/u),
+    });
+    expect(JSON.stringify(projectionRecords[0])).not.toContain("secret");
+    expect(projectionRecords[0]).not.toHaveProperty("projection");
   });
 
   it("cannot certify a frame fence without writer health and keeps throwing sinks fail-open", () => {

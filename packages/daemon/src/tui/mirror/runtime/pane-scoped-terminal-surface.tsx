@@ -13,10 +13,16 @@ import type { TerminalReplicaSnapshot } from "@tmux-ide/contracts";
 export interface PaneScopedTerminalAdapter {
   readonly renderSource: import("../pane-surface.tsx").TerminalPaneRenderSource;
   paneVersion(paneId: string): number;
+  panePresentationVersion?(paneId: string): number;
   paneSourceEpoch(): number;
   subscribePaneVersion(
     paneId: string,
-    listener: (version: number, sourceEpoch: number) => void,
+    listener: (
+      version: number,
+      sourceEpoch: number,
+      presentationVersion: number,
+      kind: "content" | "presentation",
+    ) => void,
   ): () => void;
   /** Immutable canonical state used only by explicit selection/copy gestures. */
   paneSelectionSnapshot(paneId: string): TerminalReplicaSnapshot | null;
@@ -58,19 +64,25 @@ export function PaneScopedTerminalSurface(props: PaneScopedTerminalSurfaceProps)
     const rendererEpoch = untrack(() => props.sourceEpoch);
     if (surface && untrack(isActive)) {
       surface.contentVersion = adapter.paneVersion(paneId);
+      surface.presentationVersion = adapter.panePresentationVersion?.(paneId) ?? 0;
       surface.sourceEpoch = rendererEpoch + adapter.paneSourceEpoch();
     }
-    const unsubscribe = adapter.subscribePaneVersion(paneId, (version, sourceEpoch) => {
-      if (!surface || !untrack(isActive)) return;
-      surface.contentVersion = version;
-      surface.sourceEpoch = rendererEpoch + sourceEpoch;
-    });
+    const unsubscribe = adapter.subscribePaneVersion(
+      paneId,
+      (version, sourceEpoch, presentationVersion, kind) => {
+        if (!surface || !untrack(isActive)) return;
+        if (kind === "presentation") surface.presentationVersion = presentationVersion;
+        else surface.contentVersion = version;
+        surface.sourceEpoch = rendererEpoch + sourceEpoch;
+      },
+    );
     onCleanup(unsubscribe);
   });
 
   createRenderEffect(() => {
     if (!isActive() || !surface) return;
     surface.contentVersion = props.adapter.paneVersion(props.paneId);
+    surface.presentationVersion = props.adapter.panePresentationVersion?.(props.paneId) ?? 0;
     surface.sourceEpoch = props.sourceEpoch + props.adapter.paneSourceEpoch();
   });
 
@@ -79,6 +91,7 @@ export function PaneScopedTerminalSurface(props: PaneScopedTerminalSurfaceProps)
       ref={(renderable: PaneSurfaceRenderable) => {
         surface = renderable;
         renderable.contentVersion = props.adapter.paneVersion(props.paneId);
+        renderable.presentationVersion = props.adapter.panePresentationVersion?.(props.paneId) ?? 0;
         renderable.sourceEpoch = props.sourceEpoch + props.adapter.paneSourceEpoch();
       }}
       width={props.width}
@@ -93,6 +106,7 @@ export function PaneScopedTerminalSurface(props: PaneScopedTerminalSurfaceProps)
       scrollOffset={props.scrollOffset}
       paneFocused={props.paneFocused}
       contentVersion={props.adapter.paneVersion(props.paneId)}
+      presentationVersion={props.adapter.panePresentationVersion?.(props.paneId) ?? 0}
       sourceEpoch={props.sourceEpoch + props.adapter.paneSourceEpoch()}
       rendererEpoch={props.sourceEpoch}
       hostFocusTransitionOwner={props.hostFocusTransitionOwner}

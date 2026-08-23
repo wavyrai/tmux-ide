@@ -40,12 +40,42 @@ describe("portable performance evidence", () => {
         heapRobustSlopeBytesPerSample: 5,
         rssGrowthCeilingBytes: 30,
         heapGrowthCeilingBytes: 15,
+        rssAbsoluteCeilingBytes: 2_000,
+        heapAbsoluteCeilingBytes: 1_000,
         settledQueueDepth: 0,
         representationCacheCeilingBytes: 20,
         rawJournalCeilingBytes: 10,
       },
     );
     expect(result.status).toBe("passed");
+  });
+
+  it("rejects an absolute memory peak even when slope and growth are flat", () => {
+    const result = qualifyMemoryEvidence(
+      {
+        samples: Array.from({ length: 4 }, (_, ordinal) => ({
+          ordinal,
+          rssBytes: 1_001,
+          heapUsedBytes: 501,
+          queueDepth: 0,
+          representationCacheBytes: 0,
+          rawJournalBytes: 0,
+        })),
+      },
+      {
+        minimumSamples: 4,
+        rssRobustSlopeBytesPerSample: 0,
+        heapRobustSlopeBytesPerSample: 0,
+        rssGrowthCeilingBytes: 0,
+        heapGrowthCeilingBytes: 0,
+        rssAbsoluteCeilingBytes: 1_000,
+        heapAbsoluteCeilingBytes: 500,
+        settledQueueDepth: 0,
+        representationCacheCeilingBytes: 0,
+        rawJournalCeilingBytes: 0,
+      },
+    );
+    expect(result.status).toBe("failed");
   });
 
   it("enforces responsiveness p95 and hard maximum independently", () => {

@@ -1,4 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
+import type { TerminalDeliveryServerMessage } from "@tmux-ide/contracts";
 
 import {
   classifyPaneStreamInputTransportDelay,
@@ -1748,7 +1749,14 @@ describe("semantic pane-stream runtime client", () => {
         );
       }
     };
-    const onTerminalDelivery = mock();
+    let consumedOwnedChunk: Uint8Array | null = null;
+    let consumedOwnedChunkContents: number[] | null = null;
+    const onTerminalDelivery = mock((_: string, message: TerminalDeliveryServerMessage) => {
+      if (message.type !== "terminal.delivery.chunk") return;
+      consumedOwnedChunk = message.bytes;
+      consumedOwnedChunkContents = [...message.bytes];
+      return { consumedOwnedChunk: true as const };
+    });
     const onTerminalFrameArrival = mock();
     const client = await openPaneStreamRuntimeClient(
       options(socket, { onTerminalDelivery, onTerminalFrameArrival }),
@@ -1847,8 +1855,10 @@ describe("semantic pane-stream runtime client", () => {
     });
     expect(onTerminalDelivery).toHaveBeenCalledWith(
       "pane.editor",
-      expect.objectContaining({ bytes: new Uint8Array([104, 105]) }),
+      expect.objectContaining({ transactionId: TRANSACTION, index: 0 }),
     );
+    expect(consumedOwnedChunkContents).toEqual([104, 105]);
+    expect(consumedOwnedChunk?.byteLength).toBe(0);
     socket.message({
       type: "authority-snapshot",
       snapshot: {

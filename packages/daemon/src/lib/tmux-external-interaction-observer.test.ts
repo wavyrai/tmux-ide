@@ -9,7 +9,9 @@ import {
 } from "./tmux-external-interaction-observer.ts";
 import {
   createAuthenticatedInternalReadOperation,
+  consumeInternalReadOperation,
   registerInternalReadOperation,
+  retireInternalReadOperation,
 } from "./tmux-interaction-options.ts";
 
 const DAEMON = "21f2625e-d1a5-4ad2-9068-b1426bcc6651";
@@ -136,6 +138,18 @@ function statefulHookHarness(): {
 }
 
 describe("tmux external interaction observer", () => {
+  it("exposes one bounded synchronous internal-read emission for NOHOOKS recovery", () => {
+    const { observer } = harness("");
+    const marker = registerInternalReadOperation("%9");
+    const emission = observer.internalReadHookEmission("%9", marker);
+    expect(emission.bufferName).toBe(`tmux-ide-interaction-v2-${DAEMON}`);
+    expect(emission.signalChannel).toBe(`${emission.bufferName}-ready`);
+    expect(emission.record).toBe(`%9${FIELD}${marker}${FIELD}${READ}${EVENT}`);
+    expect(Object.isFrozen(emission)).toBe(true);
+    expect(() => observer.internalReadHookEmission("foreign", marker)).toThrow(TypeError);
+    retireInternalReadOperation(marker, "%9");
+  });
+
   it("parses only closed runtime metadata and never accepts payload-shaped fields", () => {
     expect(
       parseTmuxInputHookRecords(
@@ -240,6 +254,15 @@ describe("tmux external interaction observer", () => {
     const replay = harness(`%9${FIELD}${marker}${FIELD}${READ}${EVENT}`);
     expect(await replay.observer.drain()).toBe(false);
     expect(replay.observed).toHaveLength(1);
+  });
+
+  it("retires only the exact failed read while preserving a newer pane proof", () => {
+    const retired = registerInternalReadOperation("%9");
+    const current = registerInternalReadOperation("%9");
+    expect(retireInternalReadOperation(retired, "%9")).toBe(true);
+    expect(consumeInternalReadOperation(retired, "%9", READ)).toBe(false);
+    expect(retireInternalReadOperation(current, "%8")).toBe(false);
+    expect(consumeInternalReadOperation(current, "%9", READ)).toBe(true);
   });
 
   it("suppresses a cross-process product read only with daemon-owner proof", async () => {

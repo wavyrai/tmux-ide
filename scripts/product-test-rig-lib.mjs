@@ -1,4 +1,14 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 
 import { theilSenSlope } from "./lib/performance-reference-report.mjs";
 
@@ -19,6 +29,197 @@ export const PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS = Object.freeze({
   textChars: 4_000,
   processOutputChars: 16_384,
 });
+
+const PRODUCT_JSONL_TAIL_MAX_RECORD_BYTES = 64 * 1024;
+
+/**
+ * Owner-scoped, cumulative JSONL tail. Each source byte and record is decoded
+ * once; a poll admits bounded new work while preserving the exact ordered
+ * prefix expected by existing evidence qualifiers.
+ */
+export function createProductJsonlTailReader(
+  path,
+  { maxBytesPerPoll = 64 * 1024, maxRecordsPerPoll = 512, recordKind = "trace" } = {},
+) {
+  if (
+    typeof path !== "string" ||
+    path.length === 0 ||
+    !Number.isSafeInteger(maxBytesPerPoll) ||
+    maxBytesPerPoll < 1 ||
+    maxBytesPerPoll > 1024 * 1024 ||
+    !Number.isSafeInteger(maxRecordsPerPoll) ||
+    maxRecordsPerPoll < 1 ||
+    maxRecordsPerPoll > 2_048 ||
+    !new Set(["trace", "lifecycle"]).has(recordKind)
+  )
+    throw new TypeError("invalid JSONL tail reader options");
+  let descriptor = null;
+  let device = null;
+  let inode = null;
+  let offset = 0;
+  let carry = Buffer.alloc(0);
+  let closed = false;
+  let observedSize = 0;
+  let retainedRecordBytes = 0;
+  let invalidReason = null;
+  const records = [];
+  const recordsView = new Proxy(records, {
+    set: () => fail("records-mutation"),
+    deleteProperty: () => fail("records-mutation"),
+    defineProperty: () => fail("records-mutation"),
+  });
+  const marks = new WeakSet();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const deepFreezeRecord = (value) => {
+    const pending = [value];
+    const seen = new WeakSet();
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (current === null || typeof current !== "object" || seen.has(current)) continue;
+      seen.add(current);
+      for (const child of Object.values(current)) pending.push(child);
+      Object.freeze(current);
+    }
+    return value;
+  };
+  const fail = (reason) => {
+    invalidReason ??= reason;
+    const error = new Error(`JSONL tail integrity failure: ${invalidReason}`);
+    error.code = "PRODUCT_JSONL_TAIL_INVALID";
+    error.reason = invalidReason;
+    throw error;
+  };
+  const open = () => {
+    if (descriptor !== null) return true;
+    if (!existsSync(path)) return false;
+    descriptor = openSync(path, "r");
+    const metadata = fstatSync(descriptor);
+    if (!metadata.isFile()) fail("not-file");
+    device = metadata.dev;
+    inode = metadata.ino;
+    return true;
+  };
+  const parseCompleteLines = (staged, recordBudget) => {
+    let parsed = 0;
+    while (parsed < recordBudget) {
+      const newline = staged.carry.indexOf(0x0a);
+      if (newline < 0) break;
+      const raw = staged.carry.subarray(0, newline);
+      staged.carry = staged.carry.subarray(newline + 1);
+      const line = raw.length > 0 && raw.at(-1) === 0x0d ? raw.subarray(0, -1) : raw;
+      if (line.length === 0) fail("empty-line");
+      if (line.length > PRODUCT_JSONL_TAIL_MAX_RECORD_BYTES) fail("record-too-large");
+      if (
+        records.length + staged.records.length >= 8_192 ||
+        retainedRecordBytes + staged.retainedRecordBytes + line.length > 16 * 1024 * 1024
+      )
+        fail("history-cap");
+      let value;
+      try {
+        value = JSON.parse(decoder.decode(line));
+      } catch {
+        fail("malformed-record");
+      }
+      const object = value !== null && typeof value === "object" && !Array.isArray(value);
+      const shapeExact =
+        object &&
+        (recordKind === "trace"
+          ? value.version === 1 &&
+            typeof value.type === "string" &&
+            value.type.length > 0 &&
+            value.type.length <= 128
+          : typeof value.phase === "string" && value.phase.length > 0 && value.phase.length <= 128);
+      if (!shapeExact) fail("record-shape");
+      staged.records.push(deepFreezeRecord(value));
+      staged.retainedRecordBytes += line.length;
+      parsed += 1;
+    }
+    return parsed;
+  };
+  return Object.freeze({
+    read() {
+      if (invalidReason !== null) fail(invalidReason);
+      if (closed) fail("closed");
+      if (!open()) return recordsView;
+      let pathMetadata;
+      try {
+        pathMetadata = statSync(path);
+      } catch {
+        fail("missing");
+      }
+      if (!pathMetadata.isFile()) fail("not-file");
+      const descriptorMetadata = fstatSync(descriptor);
+      if (
+        pathMetadata.dev !== device ||
+        pathMetadata.ino !== inode ||
+        descriptorMetadata.dev !== device ||
+        descriptorMetadata.ino !== inode
+      )
+        fail("replaced");
+      if (pathMetadata.size < offset) fail("truncated");
+      const staged = {
+        offset,
+        carry,
+        records: [],
+        retainedRecordBytes: 0,
+      };
+      let byteBudget = maxBytesPerPoll;
+      let recordBudget = maxRecordsPerPoll;
+      recordBudget -= parseCompleteLines(staged, recordBudget);
+      while (byteBudget > 0 && recordBudget > 0 && staged.offset < pathMetadata.size) {
+        const length = Math.min(64 * 1024, byteBudget, pathMetadata.size - staged.offset);
+        const chunk = Buffer.allocUnsafe(length);
+        const bytesRead = readSync(descriptor, chunk, 0, length, staged.offset);
+        if (bytesRead <= 0) fail("short-read");
+        staged.offset += bytesRead;
+        byteBudget -= bytesRead;
+        staged.carry =
+          staged.carry.length === 0
+            ? chunk.subarray(0, bytesRead)
+            : Buffer.concat([staged.carry, chunk.subarray(0, bytesRead)]);
+        recordBudget -= parseCompleteLines(staged, recordBudget);
+        if (staged.carry.length > PRODUCT_JSONL_TAIL_MAX_RECORD_BYTES) fail("record-too-large");
+      }
+      offset = staged.offset;
+      carry = staged.carry;
+      records.push(...staged.records);
+      retainedRecordBytes += staged.retainedRecordBytes;
+      observedSize = pathMetadata.size;
+      return recordsView;
+    },
+    snapshot() {
+      if (invalidReason !== null) fail(invalidReason);
+      return Object.freeze({
+        offset,
+        recordCount: records.length,
+        retainedRecordBytes,
+        partialBytes: carry.length,
+        caughtUp: offset === observedSize && carry.length === 0,
+      });
+    },
+    mark() {
+      if (invalidReason !== null) fail(invalidReason);
+      if (closed) fail("closed");
+      if (offset !== observedSize || carry.length !== 0) fail("mark-not-caught-up");
+      const mark = Object.freeze({ recordCount: records.length });
+      marks.add(mark);
+      return mark;
+    },
+    recordsSince(mark) {
+      if (invalidReason !== null) fail(invalidReason);
+      if (closed) fail("closed");
+      if (!marks.has(mark)) fail("foreign-mark");
+      return Object.freeze(records.slice(mark.recordCount));
+    },
+    close() {
+      if (closed) return;
+      closed = true;
+      if (descriptor !== null) closeSync(descriptor);
+      descriptor = null;
+      carry = Buffer.alloc(0);
+    },
+  });
+}
 
 const SECRET_KEY = /(?:authorization|bearer|capability|cookie|password|secret|token)/iu;
 const SECRET_QUERY =
@@ -659,6 +860,27 @@ export function writeJsonAtomic(path, value) {
   const temporary = `${path}.${process.pid}.tmp`;
   writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   renameSync(temporary, path);
+}
+
+export function productCapturePageUrlStatus(value) {
+  if (typeof value !== "string" || value.length < 1 || value.length > 2_048)
+    return Object.freeze({ exact: false, pageUrl: null, reason: "missing-or-shape" });
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return Object.freeze({ exact: false, pageUrl: null, reason: "malformed" });
+  }
+  if (parsed.protocol !== "http:")
+    return Object.freeze({ exact: false, pageUrl: null, reason: "scheme" });
+  if (!new Set(["127.0.0.1", "localhost", "[::1]"]).has(parsed.hostname))
+    return Object.freeze({ exact: false, pageUrl: null, reason: "host" });
+  const port = Number(parsed.port);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535)
+    return Object.freeze({ exact: false, pageUrl: null, reason: "port" });
+  if (parsed.username !== "" || parsed.password !== "")
+    return Object.freeze({ exact: false, pageUrl: null, reason: "credentials" });
+  return Object.freeze({ exact: true, pageUrl: value, reason: null });
 }
 
 export function publicRigStatus(state) {
@@ -1624,6 +1846,8 @@ export function buildProductDiagnosticReport({
               MEMORY_BUDGET.heapRobustSlopeBytesPerSample &&
             resourceObservation.rssGrowthBytes <= MEMORY_BUDGET.rssGrowthCeilingBytes &&
             resourceObservation.heapGrowthBytes <= MEMORY_BUDGET.heapGrowthCeilingBytes &&
+            resourceObservation.rssPeakBytes <= MEMORY_BUDGET.rssAbsoluteCeilingBytes &&
+            resourceObservation.heapPeakBytes <= MEMORY_BUDGET.heapAbsoluteCeilingBytes &&
             resourceObservation.inputPendingPeak <= 256 &&
             resourceObservation.inputPendingBytesPeak <= 256 * 1_024 &&
             resourceObservation.inputInFlightPeak <= 8 &&

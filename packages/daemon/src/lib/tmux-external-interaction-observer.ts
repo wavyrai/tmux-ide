@@ -61,6 +61,12 @@ export interface ExternalTmuxObserverDiagnostics {
   readonly queueMicrotask?: (callback: () => void) => void;
 }
 
+export interface InternalReadHookEmission {
+  readonly bufferName: string;
+  readonly signalChannel: string;
+  readonly record: string;
+}
+
 function socketArguments(authority: WorkspacePaneTmuxAuthority): readonly string[] {
   return authority.socketSelector.kind === "path"
     ? ["-S", authority.socketSelector.path]
@@ -202,6 +208,23 @@ export class TmuxExternalInteractionObserver {
       waitForSignal: options.io?.waitForSignal ?? defaultWaiter(options.tmuxAuthority),
       delay: options.io?.delay ?? abortableDelay,
     };
+  }
+
+  /** Private synchronous equivalent of the installed after-capture hook.
+   * Recovery hook bodies run with NOHOOKS, so they append this exact bounded
+   * record and signal the already-owned observer drain explicitly. */
+  internalReadHookEmission(runtimePaneId: string, marker: string): InternalReadHookEmission {
+    if (!RUNTIME_PANE.test(runtimePaneId))
+      throw new TypeError("internal read hook emission requires a runtime pane id");
+    if (!/^[A-Za-z0-9:._-]{16,256}$/u.test(marker))
+      throw new TypeError("internal read hook emission requires a bounded marker");
+    return Object.freeze({
+      bufferName: this.#bufferName,
+      signalChannel: this.#signalChannel,
+      record:
+        `${runtimePaneId}${FIELD_SEPARATOR}${marker}${FIELD_SEPARATOR}` +
+        `workspace.pane.read${EVENT_SEPARATOR}`,
+    });
   }
 
   start(): Promise<void> {

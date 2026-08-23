@@ -2,7 +2,16 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  truncateSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -34,6 +43,7 @@ import {
   latestCausalFixtureCanonicalWraparound,
   coherentReadiness,
   coherentGenerationDuration,
+  createProductJsonlTailReader,
   createProductRigAttemptTimelineClock,
   compareProductSourceProvenance,
   inputPaintSamples,
@@ -51,6 +61,7 @@ import {
   productResourceGeometryIdentity,
   productResourceMeasuredEndpointTraceIds,
   productResourceProbeCells,
+  productCapturePageUrlStatus,
   publicRigStatus,
   readJson,
   redactWebDiagnosticText,
@@ -66,10 +77,196 @@ import { sourceArchitectureInventory } from "./architecture-debt-inventory.mjs";
 import { buildTuiHostPublicationEvidence } from "./lib/tui-host-publication.mjs";
 import { acquireProductRigSleepAssertion } from "./lib/product-rig-sleep-assertion.mjs";
 
+test("incremental JSONL tail parses each bounded append exactly once", () => {
+  const root = mkdtempSync(join(tmpdir(), "product-jsonl-tail-"));
+  const path = join(root, "trace.jsonl");
+  try {
+    const values = Array.from({ length: 2_560 }, (_, ordinal) => ({
+      version: 1,
+      type: "performance.test",
+      ordinal,
+      text: `${ordinal}:界:${"x".repeat(560)}`,
+      ...(ordinal === 0 ? { nested: { exact: true } } : {}),
+    }));
+    const bytes = Buffer.from(values.map((value) => JSON.stringify(value)).join("\n") + "\n");
+    writeFileSync(path, bytes.subarray(0, bytes.length - 1));
+    const reader = createProductJsonlTailReader(path, {
+      maxBytesPerPoll: 64 * 1024,
+      maxRecordsPerPoll: 128,
+    });
+    let prior = reader.snapshot();
+    let maxPollMs = 0;
+    while (reader.snapshot().offset < bytes.length - 1) {
+      const startedAt = performance.now();
+      reader.read();
+      maxPollMs = Math.max(maxPollMs, performance.now() - startedAt);
+      const next = reader.snapshot();
+      assert.ok(next.offset - prior.offset <= 64 * 1024);
+      assert.ok(next.recordCount - prior.recordCount <= 128);
+      prior = next;
+    }
+    assert.equal(reader.read().length, values.length - 1);
+    appendFileSync(path, "\n");
+    assert.deepEqual(reader.read(), values);
+    assert.equal(reader.read().length, values.length);
+    assert.ok(maxPollMs < 33, `incremental observer poll blocked ${maxPollMs.toFixed(3)}ms`);
+    assert.equal(reader.snapshot().offset, bytes.length);
+    assert.equal(new Set(reader.read().map(({ ordinal }) => ordinal)).size, values.length);
+    assert.throws(() => {
+      reader.read()[0].nested.exact = false;
+    }, TypeError);
+    let maxQualificationPollMs = 0;
+    for (let poll = 0; poll < 1_000; poll += 1) {
+      const startedAt = performance.now();
+      const cumulative = reader.read();
+      const tail = cumulative.slice(2_400);
+      assert.equal(tail.filter(({ type }) => type === "performance.test").length, 160);
+      assert.equal(cumulative.findLast(({ ordinal }) => ordinal <= 2_559)?.ordinal, 2_559);
+      maxQualificationPollMs = Math.max(maxQualificationPollMs, performance.now() - startedAt);
+    }
+    assert.ok(
+      maxQualificationPollMs < 33,
+      `integrated observer qualification blocked ${maxQualificationPollMs.toFixed(3)}ms`,
+    );
+    reader.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("incremental JSONL tail preserves partial UTF-8 and fails closed on source mutation", () => {
+  const root = mkdtempSync(join(tmpdir(), "product-jsonl-integrity-"));
+  const path = join(root, "trace.jsonl");
+  try {
+    const line = Buffer.from(JSON.stringify({ version: 1, type: "test", text: "界" }) + "\n");
+    const split = line.indexOf(Buffer.from("界")) + 1;
+    writeFileSync(path, line.subarray(0, split));
+    const partial = createProductJsonlTailReader(path, {
+      maxBytesPerPoll: 64,
+      maxRecordsPerPoll: 2,
+    });
+    assert.deepEqual(partial.read(), []);
+    appendFileSync(path, line.subarray(split));
+    assert.equal(partial.read()[0].text, "界");
+    truncateSync(path, 0);
+    assert.throws(() => partial.read(), { code: "PRODUCT_JSONL_TAIL_INVALID" });
+    partial.close();
+
+    writeFileSync(path, `${JSON.stringify({ version: 1, type: "first" })}\n`);
+    const replaced = createProductJsonlTailReader(path);
+    replaced.read();
+    renameSync(path, `${path}.old`);
+    writeFileSync(path, `${JSON.stringify({ version: 1, type: "second" })}\n`);
+    assert.throws(() => replaced.read(), { code: "PRODUCT_JSONL_TAIL_INVALID" });
+    replaced.close();
+
+    writeFileSync(path, "{bad}\n");
+    const malformed = createProductJsonlTailReader(path);
+    assert.throws(() => malformed.read(), { code: "PRODUCT_JSONL_TAIL_INVALID" });
+    malformed.close();
+
+    writeFileSync(path, Buffer.from([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xff, 0x22, 0x7d, 0x0a]));
+    const invalidUtf8 = createProductJsonlTailReader(path);
+    assert.throws(() => invalidUtf8.read(), { code: "PRODUCT_JSONL_TAIL_INVALID" });
+    invalidUtf8.close();
+
+    writeFileSync(path, `${JSON.stringify({ version: 1, type: "deleted" })}\n`);
+    const deleted = createProductJsonlTailReader(path);
+    deleted.read();
+    rmSync(path);
+    assert.throws(() => deleted.read(), { code: "PRODUCT_JSONL_TAIL_INVALID" });
+    deleted.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("incremental JSONL watermark drains buffered records and commits each poll atomically", () => {
+  const root = mkdtempSync(join(tmpdir(), "product-jsonl-watermark-"));
+  const path = join(root, "trace.jsonl");
+  try {
+    const values = Array.from({ length: 600 }, (_, ordinal) => ({
+      version: 1,
+      type: "t",
+      ordinal,
+    }));
+    writeFileSync(path, `${values.map((value) => JSON.stringify(value)).join("\n")}\n`);
+    const reader = createProductJsonlTailReader(path, {
+      maxBytesPerPoll: 64 * 1024,
+      maxRecordsPerPoll: 512,
+    });
+    assert.equal(reader.read().length, 512);
+    assert.equal(reader.snapshot().caughtUp, false);
+    assert.equal(reader.read().length, 600);
+    assert.equal(reader.snapshot().caughtUp, true);
+    const mark = reader.mark();
+    appendFileSync(path, `${JSON.stringify({ version: 1, type: "t", ordinal: 600 })}\n`);
+    reader.read();
+    assert.deepEqual(
+      reader.recordsSince(mark).map(({ ordinal }) => ordinal),
+      [600],
+    );
+    assert.equal(Object.isFrozen(reader.recordsSince(mark)), true);
+    const foreign = createProductJsonlTailReader(path);
+    foreign.read();
+    assert.throws(() => foreign.recordsSince(mark), { code: "PRODUCT_JSONL_TAIL_INVALID" });
+    foreign.close();
+    assert.throws(() => reader.read().push(values[0]), {
+      code: "PRODUCT_JSONL_TAIL_INVALID",
+    });
+    assert.throws(() => reader.read(), { code: "PRODUCT_JSONL_TAIL_INVALID" });
+    reader.close();
+
+    writeFileSync(path, `${JSON.stringify(values[0])}\n`);
+    const atomic = createProductJsonlTailReader(path);
+    const visible = atomic.read();
+    assert.equal(visible.length, 1);
+    appendFileSync(path, `{malformed}\n${JSON.stringify(values[1])}\n`);
+    assert.throws(() => atomic.read(), { code: "PRODUCT_JSONL_TAIL_INVALID" });
+    assert.equal(visible.length, 1);
+    assert.throws(() => atomic.read(), { code: "PRODUCT_JSONL_TAIL_INVALID" });
+    assert.throws(() => atomic.snapshot(), { code: "PRODUCT_JSONL_TAIL_INVALID" });
+    atomic.close();
+
+    writeFileSync(
+      path,
+      `${JSON.stringify({ phase: "generation-workspace-client-state", elapsedMs: 1 })}\n`,
+    );
+    const lifecycle = createProductJsonlTailReader(path, { recordKind: "lifecycle" });
+    assert.equal(lifecycle.read()[0].phase, "generation-workspace-client-state");
+    assert.equal(lifecycle.snapshot().caughtUp, true);
+    lifecycle.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("focus Web readiness detects dev-server exit and signal death", () => {
   assert.equal(devServerProcessIsRunning({ exitCode: null, signalCode: null }), true);
   assert.equal(devServerProcessIsRunning({ exitCode: 1, signalCode: null }), false);
   assert.equal(devServerProcessIsRunning({ exitCode: null, signalCode: "SIGTERM" }), false);
+});
+
+test("artifact capture accepts only bounded local ProductRig page URLs", () => {
+  for (const pageUrl of [
+    "http://127.0.0.1:5173/?devHost=1",
+    "http://localhost:4000/",
+    "http://[::1]:8080/path",
+  ])
+    assert.deepEqual(productCapturePageUrlStatus(pageUrl), {
+      exact: true,
+      pageUrl,
+      reason: null,
+    });
+  for (const [value, reason] of [
+    [undefined, "missing-or-shape"],
+    ["not a URL", "malformed"],
+    ["https://127.0.0.1:5173/", "scheme"],
+    ["http://example.com:5173/", "host"],
+    ["http://127.0.0.1/", "port"],
+    ["http://user:secret@127.0.0.1:5173/", "credentials"],
+  ])
+    assert.equal(productCapturePageUrlStatus(value).reason, reason);
 });
 
 function fakeSleepAssertionChild({ pid = 1234, exitBeforeReady = false } = {}) {
@@ -1925,6 +2122,59 @@ test("ProductRig checks a heartbeat gap before its monotonic timeout", () => {
   assert.match(wait, /switchOrdinalWatermark/u);
 });
 
+test("ANSI owner readiness uses one bounded journey-specific wait and publishes progress", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const startAt = source.indexOf("async function start(json");
+  const stopAt = source.indexOf("async function stop(", startAt);
+  const start = source.slice(startAt, stopAt);
+  assert.match(start, /ansi-cursor-alt-screen" \? 900_000 : 90_000/u);
+  const diagnoseAt = source.indexOf("async function diagnoseAnsiCursorAltScreen");
+  const diagnoseEnd = source.indexOf("function executeProductJourney", diagnoseAt);
+  const diagnose = source.slice(diagnoseAt, diagnoseEnd);
+  assert.match(diagnose, /const state = await start\(false, true, planEntry\)/u);
+  assert.doesNotMatch(diagnose, /waitForState/u);
+  assert.match(
+    source,
+    /workloadProgress: Object\.freeze\(\{[\s\S]*?activeCycle:[\s\S]*?completedCycles:/u,
+  );
+  assert.match(source, /resource-sample-unavailable/u);
+  assert.match(source, /resource-sample-cardinality/u);
+  assert.match(source, /rss-absolute-cap/u);
+  assert.match(source, /heap-absolute-cap/u);
+  assert.equal((source.match(/ansiEventLoopResourceCapStatus\(/gu) ?? []).length, 2);
+  assert.doesNotMatch(source, /eventLoopDelayPeakMicros\s*>\s*33_000/u);
+  const ansiOwnerAt = source.indexOf('if (journeyId === "ansi-cursor-alt-screen")');
+  const ansiOwnerEnd = source.indexOf('if (journeyId === "keyboard-pointer-resize")', ansiOwnerAt);
+  const ansiOwner = source.slice(ansiOwnerAt, ansiOwnerEnd);
+  assert.ok(ansiOwnerAt > 0);
+  assert.ok(ansiOwnerEnd > ansiOwnerAt);
+  assert.match(ansiOwner, /const ansiJsonlReaders = new Map\(\)/u);
+  assert.match(ansiOwner, /createProductJsonlTailReader\(path, \{ recordKind \}\)/u);
+  assert.match(ansiOwner, /await ansiJsonlWatermark\(namespace\.tui\.performanceTracePath\)/u);
+  assert.equal((ansiOwner.match(/\breadJsonLines\(/gu) ?? []).length, 0);
+  assert.ok((ansiOwner.match(/ansiReadJsonLines\(/gu) ?? []).length >= 15);
+  assert.match(source, /heartbeatPeakRevisionHmac/u);
+  assert.match(source, /heartbeatPeakContextSwitchesAvailable/u);
+  const ansiStartWebAt = source.indexOf(
+    "startWeb: async (namespace, runningDaemon, identity, _process, baseline)",
+  );
+  const ansiStartWebEnd = ansiStartWebAt + 60_000;
+  const ansiStartWeb = source.slice(ansiStartWebAt, ansiStartWebEnd);
+  assert.ok(ansiStartWebAt > 0 && ansiStartWeb.length === 60_000);
+  assert.match(ansiStartWeb, /productCapturePageUrlStatus\(devServer\.pageUrl\)/u);
+  assert.match(ansiStartWeb, /publish\(\{ web: \{ pageUrl: ansiPageUrl\.pageUrl/u);
+  assert.ok(ansiStartWeb.indexOf("publish({ web:") < ansiStartWeb.indexOf("await page.goto("));
+
+  const captureAt = source.indexOf("async function captureArtifacts");
+  const captureEnd = source.indexOf("async function waitForState", captureAt);
+  const capture = source.slice(captureAt, captureEnd);
+  assert.match(capture, /productCapturePageUrlStatus\(state\?\.web\?\.pageUrl\)/u);
+  assert.match(capture, /PRODUCT_RIG_CAPTURE_PAGE_URL_INVALID/u);
+  assert.match(capture, /error\.boundary = "evidence-capture"/u);
+  assert.ok(capture.indexOf("if (!capturePageUrl.exact)") < capture.indexOf("mkdirSync("));
+  assert.doesNotMatch(capture, /state\.web\.pageUrl/u);
+});
+
 test("window switch rejects writer loss before quiet-tail or rename attribution", () => {
   const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
   const start = source.indexOf("async function driveExactHostedWindowSwitch");
@@ -2002,7 +2252,7 @@ test("resize journey owns one bounded two-pane Meta+Arrow and SGR causal executo
 test("selection journey owns one exact hosted selection copy app-mouse executor", () => {
   const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
   const start = source.indexOf('if (journeyId === "selection-copy-app-mouse")');
-  const end = source.indexOf('if (journeyId === "keyboard-pointer-resize")', start);
+  const end = source.indexOf('if (journeyId === "ansi-cursor-alt-screen")', start);
   const selection = source.slice(start, end);
   assert.ok(start > 0 && end > start);
   assert.match(selection, /runSelectionCopyAppMouseOwnerBoot/u);
@@ -2063,16 +2313,266 @@ test("selection journey owns one exact hosted selection copy app-mouse executor"
   assert.doesNotMatch(selection, /\bexecFileSync\(/u);
 });
 
+test("ANSI journey owns one isolated cursor alternate-screen executor", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const ansiHelper = readFileSync(
+    new URL("./lib/product-ansi-cursor-alt-screen.mjs", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf('if (journeyId === "ansi-cursor-alt-screen")');
+  const end = source.indexOf('if (journeyId === "keyboard-pointer-resize")', start);
+  const ansi = source.slice(start, end);
+  assert.ok(start > 0 && end > start);
+  assert.match(source, /TMUX_IDE_PRODUCT_RUN_ID: planEntry\.runId/u);
+  assert.match(source, /diagnosticAttempt: inheritedDiagnosticAttempt/u);
+  assert.match(source, /Persist the parent-frozen run\/provenance identity/u);
+  assert.match(ansi, /runAnsiCursorAltScreenOwnerBoot/u);
+  assert.match(ansi, /product-ansi-cursor-alt-screen-fixture\.mjs/u);
+  assert.match(ansi, /validateScratchInitialPaneCommand\(initialPaneCommand\)/u);
+  assert.doesNotMatch(ansi, /args: \["-e", ansiCursorAltScreenFixtureProgram/u);
+  assert.match(ansi, /const marker = ansiWorkloadMarker\(namespace\.marker, cycle\)/u);
+  assert.match(ansi, /const workloadPayload = ansiWorkloadPayload\(namespace\.marker, cycle\)/u);
+  assert.match(ansi, /ansiWorkloadProducerStatus\(producerTail,/u);
+  assert.match(ansi, /producerStatus: producer\.state/u);
+  assert.match(ansi, /producerFirstCause:/u);
+  assert.match(ansi, /flowRecovery: flowRecoveryEvidence/u);
+  assert.match(ansi, /lastFailureReason: ANSI_MIRROR_FLOW_FAILURE_REASONS\.has/u);
+  assert.match(ansi, /nativeTimeout:/u);
+  assert.doesNotMatch(ansi, /4096 \* 28 \+ Buffer\.byteLength\(marker\)/u);
+  assert.match(ansi, /windowsPerSession: 1/u);
+  assert.match(ansi, /performanceTraceDetail: "1"/u);
+  assert.match(ansi, /for \(let ordinal = 1; ordinal <= 30; ordinal \+= 1\)/u);
+  assert.match(ansi, /gridWalked: false/u);
+  assert.match(
+    ansi,
+    /gridWalked: options\.gridWalked,\s*gridRowsRead: options\.gridRowsRead,\s*fullWalk: options\.fullWalk,/u,
+  );
+  assert.match(ansi, /conditioningCycleCount: 8/u);
+  assert.match(ansi, /measuredCycleCount: 16/u);
+  assert.match(ansi, /advanceAnsiWorkloadProgress/u);
+  assert.match(ansi, /ansiWorkloadProgressExpiry/u);
+  assert.match(ansi, /ANSI_WORKLOAD_ABSOLUTE_MS/u);
+  assert.match(ansi, /ANSI_WORKLOAD_NO_PROGRESS_MS/u);
+  assert.match(ansi, /decodeFocusFramebufferCapture\(captureEnvelope\)/u);
+  assert.match(ansi, /markerCount === 1 && captureIdentityExact/u);
+  assert.match(ansi, /finalCursorPresentation\.cursorY === 39/u);
+  assert.match(ansi, /finalCursorPresentation\.viewportRows === 40/u);
+  assert.match(ansi, /finalCursorPresentation\.visible === true/u);
+  assert.match(
+    ansi,
+    /ansiWorkloadDeliveryJoin\(\{\s*canonical: finalTransition,\s*daemonRecords: daemonTail,\s*expected:/u,
+  );
+  assert.match(ansi, /ansiWorkloadOrderedTailStatus/u);
+  assert.match(ansi, /type === "performance\.terminal-canonical-update"/u);
+  assert.match(ansi, /type === "performance\.terminal-canonical-publication"/u);
+  assert.match(ansi, /record\.updateType === "terminal\.seed"/u);
+  assert.match(ansi, /ansiWorkloadOrderedTailStatus\(\{\s*transitions: canonicalTransitions,/u);
+  assert.match(ansi, /const finalTransition = canonicalTransitions\.at\(-1\) \?\? null/u);
+  assert.match(ansi, /const mode = matchingModes\.length === 1 \? matchingModes\[0\] : null/u);
+  assert.match(ansi, /canonical: finalTransition/u);
+  assert.match(ansi, /transition: finalTransition/u);
+  assert.doesNotMatch(ansi, /mode\.cursor\?\.y === 39/u);
+  assert.match(ansi, /finalCursorPresentation\.cursorY === 39/u);
+  assert.match(ansi, /laterTransitionCount/u);
+  assert.match(ansi, /canonicalTransitionType: finalTransition\.updateType/u);
+  assert.match(ansi, /workloadFailure: error\.observation/u);
+  assert.match(ansi, /const tracedDelivery = tracedEnqueues\.length === 1/u);
+  assert.match(ansi, /tracedDelivery\.traceId/u);
+  assert.doesNotMatch(ansi, /daemonTraceHmac:[\s\S]{0,160}daemonDelivery\.traceId/u);
+  assert.match(ansi, /workloadFirstFailedPredicate/u);
+  assert.match(ansi, /workloadMetrics: Object\.freeze/u);
+  assert.match(ansi, /webPredicates: Object\.freeze/u);
+  assert.ok(
+    ansi.indexOf("ansiWorkloadOrderedTailStatus") <
+      ansi.indexOf("const finalTransition = canonicalTransitions.at"),
+  );
+  assert.match(ansi, /deliveryWorkspaceName: identity\.sessionName/u);
+  assert.match(ansi, /workspaceName: baseline\.deliveryWorkspaceName/u);
+  assert.match(ansi, /deliverySurfaces: ansiExpectedDeliverySurfaces/u);
+  assert.match(ansi, /deliveryClients: ansiExpectedDeliveryClients/u);
+  assert.match(ansiHelper, /ansiDeliverySubscriberTopologyStatus/u);
+  assert.match(ansi, /const readinessGate = await runAnsiDeliveryReadyAction\(\{/u);
+  assert.match(ansiHelper, /waitForAnsiDeliverySubscriberReadiness/u);
+  assert.match(ansiHelper, /ansiDeliverySubscriberReadinessStatus/u);
+  assert.match(ansi, /ANSI_DELIVERY_LANE_NOT_CAUGHT_UP/u);
+  assert.match(
+    ansi,
+    /publishAnsiPartial\(\{ stage: "web-readiness", webFailure: error\.observation \}\)/u,
+  );
+  assert.match(ansi, /const expectedGrid = ansiWebExpectedGridProjection\(stage, driven\)/u);
+  assert.doesNotMatch(ansi, /driven\.raw\.mode\.dirtyRows/u);
+  assert.match(ansi, /operation: "ansi-web-expected-projection"/u);
+  assert.match(ansi, /error\.code = "ANSI_WEB_EXPECTED_GRID_INVALID"/u);
+  assert.match(ansi, /renditionHmacExact: candidate\?\.renditionHmac === renditionHmac/u);
+  assert.match(
+    ansi,
+    /rendererColsExact:\s*candidate\?\.rendererCols === expectedPresentation\.rendererCols/u,
+  );
+  assert.match(
+    ansi,
+    /rendererRowsExact:\s*candidate\?\.rendererRows === expectedPresentation\.rendererRows/u,
+  );
+  assert.match(ansi, /renditionCellCountExact:/u);
+  assert.match(
+    ansi,
+    /cursorCountExact:\s*candidate\?\.cursorCount === \(expectedPresentation\.cursorHidden \? 0 : 1\)/u,
+  );
+  assert.match(ansi, /ansiRenditionFailureLocalization\(candidate,/u);
+  assert.match(ansi, /positionWrappedHmac:/u);
+  assert.match(ansi, /"cellHmacs"/u);
+  assert.match(ansi, /renditionFailure: identityExact \? null : localization/u);
+  assert.match(ansi, /firstFailedPredicate,/u);
+  assert.match(ansi, /code: error\.code,\s*firstFailedPredicate,\s*stableSamples:/u);
+  assert.match(ansi, /candidate: boundedCandidate,\s*predicates: predicateVector/u);
+  assert.ok(
+    ansi.indexOf("const readinessGate = await runAnsiDeliveryReadyAction") <
+      ansi.indexOf("takeWatermark:", ansi.indexOf("driveAnsiStage")),
+  );
+  assert.ok(
+    ansi.indexOf("takeWatermark:", ansi.indexOf("driveAnsiStage")) <
+      ansi.indexOf("driveInput:", ansi.indexOf("driveAnsiStage")),
+  );
+  assert.doesNotMatch(ansi, /waitAnsiDeliveryTopology/u);
+  assert.match(ansiHelper, /timeoutMs = 60_000/u);
+  assert.match(ansi, /const deadline = performance\.now\(\) \+ 3_000/u);
+  assert.match(ansiHelper, /sampledAt - stableSince >= stableMs/u);
+  assert.match(ansi, /ansiExpectedDeliverySurfaces = Object\.freeze\(\["opentui", "web"\]\)/u);
+  assert.match(ansi, /exactWebClients\.length !== 1/u);
+  assert.match(ansi, /opentui: baseline\.clientId,\s*web: exactWebClients\[0\]\.clientId/u);
+  assert.match(ansi, /semanticPaneId: baseline\.semanticPaneId/u);
+  assert.match(ansi, /daemonProcessId: baseline\.rawIdentity\.daemonProcessId/u);
+  assert.match(ansi, /daemonClockKind: "performance-now"/u);
+  assert.match(ansi, /deliveryJoin\.exact/u);
+  assert.match(ansi, /deliveryJoin\.enqueueCount - candidate\.enqueueCount/u);
+  assert.match(ansi, /performance\.now\(\) - candidate\.startedAt >= 40/u);
+  assert.match(ansi, /workloadFinalities: ansiBoot\.sustained\.workloadFinalities/u);
+  assert.match(
+    ansi,
+    /const qualifiedPresentation = result\.raw\.presentation;[\s\S]*?ansiPresentationCounters = Object\.freeze\(\{\s*gridRowsReadTotal: qualifiedPresentation\.gridRowsReadTotal,\s*fullWalkTotal: qualifiedPresentation\.fullWalkTotal,\s*presentationCount: qualifiedPresentation\.presentationCount,/u,
+  );
+  assert.match(ansi, /operation: "ansi-idle-counter-continuity"/u);
+  assert.match(ansi, /workloadFailure: timeoutObservation/u);
+  assert.match(ansi, /captureAnsiCursorWebPresentation/u);
+  assert.match(ansi, /__TMUX_IDE_ANSI_RENDITION_PROBE_ENABLED__/u);
+  assert.match(ansi, /webStageVector/u);
+  assert.match(ansi, /webFirstFailure/u);
+  assert.match(ansi, /boundedWebCandidate/u);
+  assert.match(ansi, /ansiBaselineCursorEvidenceStatus/u);
+  assert.match(ansi, /ansiBaselinePreviousCounters/u);
+  assert.match(ansi, /baselinePredecessor,/u);
+  assert.doesNotMatch(ansi, /priorPresentation\?\.gridRowsReadTotal \?\? 0/u);
+  assert.match(ansi, /ansiNativePaneLeaseStatus/u);
+  assert.equal((ansi.match(/inspectAnsiNativeStage\(/gu) ?? []).length, 6);
+  assert.match(ansi, /const preAlternate = await driveAnsiStage\(namespace, "b"/u);
+  assert.match(ansi, /afterRevision: cursor\.latest\.stage\.revision/u);
+  assert.match(ansi, /afterRevision: preAlternate\.stage\.revision/u);
+  assert.match(
+    ansi,
+    /preAlternate\.stage\.presentationHmac === baseline\.stage\.presentationHmac/u,
+  );
+  assert.match(
+    ansi,
+    /result\.stage\.presentationHmac !== alternate\.preAlternate\.stage\.presentationHmac/u,
+  );
+  assert.match(ansi, /preAlternate: ansiBoot\.alternate\.preAlternate\.evidence/u);
+  assert.match(ansi, /const lastCursorExpected = ansiBoot\.cursor\.expectedSamples\.at\(-1\)/u);
+  assert.match(ansi, /predecessorRevision: lastCursorExpected\.presentation\.revision/u);
+  assert.match(ansi, /predecessorStateHmac: lastCursorExpected\.presentation\.stateHmac/u);
+  assert.match(ansi, /"-t", leaseStatus\.lease\.paneId/u);
+  assert.doesNotMatch(ansi, /"-t",\s*(?:baseline|ansiBoot\.baseline)\.semanticPaneId/u);
+  assert.match(ansi, /const semanticBody = ansiSemanticBodyProjection\(publication\.bodyRect\)/u);
+  assert.equal((ansi.match(/\.\.\.semanticBody/gu) ?? []).length, 2);
+  assert.doesNotMatch(ansi, /publication\.bodyRect\.(?:x|y|height)\b/u);
+  assert.match(ansi, /operation: "ansi-normal-baseline"/u);
+  assert.match(ansi, /stage: "cursor-evidence"/u);
+  assert.match(ansi, /modes: modes\.slice\(0, 2\)/u);
+  assert.match(ansi, /presentations: presentations\.slice\(0, 2\)/u);
+  assert.match(ansi, /rendererEpoch: hostFrame\.rendererEpoch/u);
+  assert.match(ansi, /daemonProcessId: `daemon:\$\{runningDaemon\.record\.pid\}`/u);
+  assert.match(ansi, /daemonClockId: "node-performance-now"/u);
+  assert.match(ansi, /seedIdentityExact:/u);
+  assert.match(ansi, /\.\.\.status/u);
+  assert.match(ansi, /firstFailedPredicate/u);
+  assert.match(ansi, /webRestorationPredicates: Object\.freeze/u);
+  assert.match(ansi, /webFirstFailedRestorationPredicate: new Set/u);
+  assert.match(ansi, /positionWrappedHmacExact/u);
+  assert.match(ansi, /domRowsHmacPresent/u);
+  assert.match(ansi, /domCursorHmacPresent/u);
+  assert.match(ansi, /domSemanticExact: candidate\?\.domSemanticExact === true/u);
+  assert.match(ansi, /domRowCountExact: candidate\?\.domRowCountExact === true/u);
+  assert.match(ansi, /domTextExact: candidate\?\.domTextExact === true/u);
+  assert.match(ansi, /domStyleExact: candidate\?\.domStyleExact === true/u);
+  assert.match(ansi, /domFirstMismatchComponent: new Set/u);
+  assert.match(ansi, /domCursorExact: candidate\?\.domCursorExact === true/u);
+  assert.match(ansi, /expectedRendition,/u);
+  assert.match(ansi, /expectedCursor: Object\.freeze\(\{[\s\S]*?style: canonicalCursorStyle/u);
+  assert.match(ansi, /"rowsHmac",\s*"cursorHmac"/u);
+  assert.match(ansi, /JSON\.stringify\(qualifiedWebPresentation\(candidate, undefined\)\)/u);
+  assert.match(ansi, /ansiResourceEpochIdentity === null/u);
+  assert.match(ansi, /sample\.resourceEpochArmed !== true/u);
+  assert.match(ansi, /ansiResourceEpochIdentityExact\(sample\.resourceEpochIdentity/u);
+  assert.match(ansi, /"ansi-normal-baseline-resource-cap"/u);
+  assert.match(ansi, /baselineResource \? "ansi-normal-baseline" : "ansi-sustained-workload"/u);
+  assert.match(ansi, /rssBytes: sample\.rssBytes/u);
+  assert.match(ansi, /rssPeakBytes: sample\.rssPeakBytes/u);
+  assert.match(ansi, /daemonEvidence: latest\?\.daemonEvidence \?\? null/u);
+  assert.match(ansi, /stageEvidence: latest\?\.stageEvidence \?\? null/u);
+  assert.match(ansi, /ansiCursorStageFromRecords/u);
+  assert.match(ansi, /ansiCursorAltScreenExpected: expected/u);
+  assert.match(ansi, /assessAnsiCursorAltScreenEvidence\(journeyEvidence, expected\)/u);
+  assert.doesNotMatch(ansi, /\btuiCommand\(state/u);
+  assert.doesNotMatch(ansi, /\bexecFileSync\(/u);
+});
+
 test("selection report seals strict causal distribution evidence in report and alignment", () => {
   const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
   const start = source.indexOf("async function diagnoseSelectionCopyAppMouse");
-  const end = source.indexOf("function executeProductJourney", start);
+  const end = source.indexOf("async function diagnoseAnsiCursorAltScreen", start);
   const diagnose = source.slice(start, end);
   assert.ok(start > 0 && end > start);
   assert.match(diagnose, /const causal = assessProductSelectionCopyAppMouse/u);
   assert.equal((diagnose.match(/causalAssessment: causal/gu) ?? []).length, 2);
   assert.match(diagnose, /selectionCopyAppMouse: journeyEvidence/u);
   assert.match(diagnose, /firstBrokenBoundary: assessment\.firstBrokenBoundary/u);
+});
+
+test("ANSI report seals its causal vector and independent HMAC contract in both JSON views", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("async function diagnoseAnsiCursorAltScreen");
+  const end = source.indexOf("function executeProductJourney", start);
+  const diagnose = source.slice(start, end);
+  assert.ok(start > 0 && end > start);
+  assert.equal((diagnose.match(/causalAssessment: causal/gu) ?? []).length, 2);
+  assert.equal((diagnose.match(/ansiCursorAltScreen: journeyEvidence/gu) ?? []).length, 2);
+  assert.equal((diagnose.match(/ansiCursorAltScreenExpected: expected/gu) ?? []).length, 2);
+});
+
+test("ANSI fixture reaches exact stable 132x41 geometry before daemon startup", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const start = source.indexOf('if (journeyId === "ansi-cursor-alt-screen")');
+  const end = source.indexOf('if (journeyId === "', start + 10);
+  const ansi = source.slice(start, end > start ? end : undefined);
+  const cleanupToken = ansi.indexOf("const cleanupToken =");
+  const runtimeNamespace = ansi.indexOf("const runtimeNamespace =");
+  const ownership = ansi.indexOf("const tui = prepareOwnedTuiRuntime({");
+  const condition = ansi.indexOf("await conditionAnsiTmuxFixture({");
+  const ready = ansi.indexOf('event("ansi-namespace-ready"');
+  const daemon = ansi.indexOf("startDaemon: async");
+  assert.ok(
+    cleanupToken > 0 &&
+      runtimeNamespace > cleanupToken &&
+      ownership > runtimeNamespace &&
+      condition > ownership &&
+      ready > condition &&
+      daemon > ready,
+  );
+  assert.match(ansi, /paneId: initialPane\.paneId/u);
+  assert.match(ansi, /socketPath: scratchFleet\.socketPath/u);
+  assert.match(ansi, /ownership: \{ session, runtimeNamespace \}/u);
+  assert.match(ansi, /resolveProvenance: sourceTraceProvenance/u);
+  assert.match(ansi, /left: conditioned\.paneLeft/u);
+  assert.match(ansi, /top: conditioned\.paneTop/u);
+  assert.doesNotMatch(ansi, /geometry: Object\.freeze\(\{[\s\S]*?top: 0,[\s\S]*?\}\),/u);
 });
 
 test("resize diagnostic correlation uses strict post-Web identity and never a sibling fallback", () => {
@@ -2124,6 +2624,10 @@ test("strict seed failure preserves bounded native and same-pane patch/frame/fen
   assert.match(proof, /latestCanonicalFrame/u);
   assert.match(proof, /latestCanonicalFence/u);
   assert.match(proof, /targetGeometryExact/u);
+  assert.match(proof, /canonicalGeometryExact/u);
+  assert.match(proof, /viewportGeometryExact/u);
+  assert.match(proof, /sourceEpochExact/u);
+  assert.doesNotMatch(proof, /\.\.\.\(error\.observation/u);
 });
 
 test("window owned actions use the exact live OpenTUI principal and preserve typed failures", () => {

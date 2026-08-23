@@ -17,8 +17,14 @@ export interface TuiPerformanceEventSink {
   readonly terminalClockCalibration?: (event: TuiTerminalClockCalibrationEvent) => void;
   /** Explicit fresh-lane state for fail-closed queue fences before the first input. */
   readonly terminalInputQueueState?: (event: TuiTerminalInputQueueStateEvent) => void;
+  /** Detailed-only bounded quiescent process/queue sample, never a hot-path read. */
+  readonly terminalResourceSample?: (event: TuiTerminalResourceSampleEvent) => void;
   /** Diagnostic-only proof of a canonical DEC-mode transition. */
   readonly terminalCanonicalMode?: (event: TuiTerminalCanonicalModeEvent) => void;
+  /** Detailed-only proof of the cursor command actually applied by PaneSurface. */
+  readonly terminalCursorPresentation?: (event: TuiTerminalCursorPresentationEvent) => void;
+  /** Raw cells stay in-process; the reference sink persists only their run-keyed HMAC. */
+  readonly terminalFramebufferProjection?: (event: TuiTerminalFramebufferProjectionEvent) => void;
   readonly terminalCanonicalPublication?: (event: TuiTerminalCanonicalPublicationEvent) => void;
   readonly terminalCanonicalPaint?: (event: TuiTerminalCanonicalPaintEvent) => void;
   /** Bounded detailed-only proof that canonical state progressed after a seed paint. */
@@ -239,9 +245,74 @@ export interface TuiTerminalCanonicalModeEvent {
   readonly incarnation: string;
   readonly revision: number;
   readonly stateHash: string;
+  readonly alternateScreen: boolean;
+  readonly cursor: Readonly<{
+    x: number;
+    y: number;
+    hidden: boolean;
+    style: "block" | "underline" | "bar";
+    blink: boolean;
+  }>;
   readonly wraparound: boolean;
   readonly mouseProtocol: "none" | "x10" | "vt200" | "drag" | "any";
   readonly mouseEncoding: "default" | "utf8" | "sgr" | "sgr-pixels";
+}
+
+export interface TuiTerminalCursorPresentationEvent {
+  readonly traceId: string | null;
+  readonly processId: string;
+  readonly clockId: "opentui-performance-now";
+  readonly clockKind: "performance-now";
+  readonly atMicros: number;
+  readonly semanticPaneId: string;
+  readonly generation: string;
+  readonly incarnation: string;
+  readonly revision: number;
+  readonly stateHash: string;
+  readonly cols: number;
+  readonly rows: number;
+  readonly sourceEpoch: number;
+  readonly rendererEpoch: number;
+  readonly viewportCols: number;
+  readonly viewportRows: number;
+  readonly cursorX: number;
+  readonly cursorY: number;
+  readonly screenX: number;
+  readonly screenY: number;
+  readonly visible: boolean;
+  readonly style: "block" | "underline" | "line";
+  readonly blink: boolean;
+  /** Cursor-only publications must never be credited with a terminal grid walk. */
+  readonly gridWalked: boolean;
+  /** Exact canonical rows read for this presentation (zero for cursor-only work). */
+  readonly gridRowsRead: number;
+  /** Whether this presentation traversed the entire viewport. */
+  readonly fullWalk: boolean;
+  readonly gridRowsReadTotal: number;
+  readonly fullWalkTotal: number;
+  readonly presentationCount: number;
+}
+
+export interface TuiTerminalFramebufferProjectionEvent {
+  readonly traceId: string | null;
+  readonly processId: string;
+  readonly clockId: "opentui-performance-now";
+  readonly clockKind: "performance-now";
+  readonly atMicros: number;
+  readonly semanticPaneId: string;
+  readonly generation: string;
+  readonly incarnation: string;
+  readonly revision: number;
+  readonly stateHash: string;
+  readonly cols: number;
+  readonly rows: number;
+  readonly sourceEpoch: number;
+  readonly rendererEpoch: number;
+  readonly cellCount: number;
+  readonly wideContinuationCount: number;
+  readonly combiningCount: number;
+  readonly styledCellCount: number;
+  readonly projection: string;
 }
 
 export interface TuiTerminalInputTrace {
@@ -317,6 +388,68 @@ export interface TuiTerminalInputQueueStateEvent {
   readonly inputPendingBytes: number;
   readonly rssBytes: number;
   readonly heapUsedBytes: number;
+}
+
+export interface TuiTerminalResourceSampleEvent {
+  readonly operation: "post-fence" | "idle";
+  readonly processId: string;
+  readonly clockId: "opentui-performance-now";
+  readonly clockKind: "performance-now";
+  readonly atMicros: number;
+  readonly ordinal: number;
+  readonly resourceEpochArmed: true;
+  readonly resourceEpochIdentity: TuiTerminalCanonicalPaintIdentity & {
+    readonly rendererEpoch: number;
+  };
+  readonly lowWaterFirstSampleOrdinal: 1;
+  readonly lowWaterLastSampleOrdinal: number;
+  readonly lowWaterSampleCount: number;
+  readonly lowWaterWindowMicros: number;
+  readonly semanticPaneId: string;
+  readonly generation: string;
+  readonly incarnation: string;
+  readonly revision: number;
+  readonly stateHash: string;
+  readonly sourceEpoch: number;
+  readonly rendererEpoch: number;
+  readonly viewportCols: number;
+  readonly viewportRows: number;
+  readonly inputPending: number;
+  readonly inputInFlight: number;
+  readonly inputPendingBytes: number;
+  readonly inputPendingPeak: number;
+  readonly inputInFlightPeak: number;
+  readonly inputPendingBytesPeak: number;
+  readonly rssBytes: number;
+  readonly heapUsedBytes: number;
+  readonly eventLoopDelayMicros: number;
+  readonly rssPeakBytes: number;
+  readonly heapUsedPeakBytes: number;
+  readonly eventLoopDelayPeakMicros: number;
+  readonly eventLoopDelayPeakSource: "heartbeat" | "endpoint";
+  readonly heartbeatPeakExpectedAtMicros: number | null;
+  readonly heartbeatPeakActualAtMicros: number | null;
+  readonly heartbeatPeakWallLatenessMicros: number | null;
+  readonly heartbeatPeakCpuUserMicros: number | null;
+  readonly heartbeatPeakCpuSystemMicros: number | null;
+  readonly heartbeatPeakVoluntaryContextSwitches: number | null;
+  readonly heartbeatPeakInvoluntaryContextSwitches: number | null;
+  readonly heartbeatPeakContextSwitchesAvailable: boolean;
+  readonly heartbeatPeakPhase: "terminal-runtime" | null;
+  readonly heartbeatPeakRevision: number | null;
+  readonly heartbeatPeakStateHash: string | null;
+  /** Construction failures only; sink/writer failures are fenced separately. */
+  readonly resourceSamplingFailureCount: number;
+  /** Fixed-cadence retained-memory observations collected inside the idle lease. */
+  readonly idleRetainedSamples?: readonly {
+    readonly ordinal: number;
+    readonly atMicros: number;
+    readonly rssBytes: number;
+    readonly heapUsedBytes: number;
+    readonly inputPending: number;
+    readonly inputInFlight: number;
+    readonly inputPendingBytes: number;
+  }[];
 }
 
 export interface TuiTerminalDeliveryPerformanceEvent {

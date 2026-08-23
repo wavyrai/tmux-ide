@@ -19,8 +19,10 @@ import type {
 } from "@tmux-ide/contracts";
 import {
   TerminalDeliveryAssembler,
-  decodeSemanticTerminalUpdate,
-  hashTerminalReplicaSnapshot,
+  decodeVerifiedCompactSemanticTerminalUpdateCooperatively,
+  decodeVerifiedLegacySemanticTerminalUpdate,
+  terminalDeliveryEncodingAccepted,
+  type CompactSemanticCommitProfile,
 } from "@tmux-ide/core";
 import type { PaneStreamRuntimeClient } from "@tmux-ide/daemon-client/pane-stream-client";
 import type {
@@ -76,6 +78,7 @@ export interface ConnectOpenTuiWorkspaceRuntimePortOptions {
       | "stream-open-start"
       | "stream-open-resolved"
       | "clock-calibration"
+      | "compact-decode"
       | `stream-${
           | "issue-start"
           | "issue-response"
@@ -96,8 +99,13 @@ interface PendingDelivery {
   readonly update: CanonicalTerminalReplicaUpdate;
   readonly nextCols: number;
   readonly nextRows: number;
+  readonly nextSnapshot: TerminalReplicaSnapshot | null;
   readonly metadata: TerminalReplicaDeliveryMetadata | undefined;
 }
+
+type VerifiedTerminalDelivery = Awaited<
+  ReturnType<typeof decodeVerifiedCompactSemanticTerminalUpdateCooperatively>
+>;
 
 function freezeLayout(frame: OpenTuiWorkspaceLayout): OpenTuiWorkspaceLayout {
   return Object.freeze({
@@ -218,7 +226,8 @@ function canonicalPaneIds(inventory: WorkspaceClientRuntimeInventory): readonly 
 
 function updateFromDelivery(
   envelope: TerminalDeliveryEnvelope,
-  payload: ReturnType<typeof decodeSemanticTerminalUpdate>,
+  payload: ReturnType<typeof decodeVerifiedLegacySemanticTerminalUpdate>["payload"],
+  canonicalSnapshot: TerminalReplicaSnapshot | null,
   cols: number,
   rows: number,
 ): CanonicalTerminalReplicaUpdate {
@@ -237,7 +246,7 @@ function updateFromDelivery(
       ...common,
       type: "terminal.seed" as const,
       revision: payload.revision,
-      snapshot: payload.snapshot,
+      snapshot: canonicalSnapshot!,
     });
   }
   if (payload.frame === "patch") {
@@ -265,17 +274,21 @@ class WireTerminalEndpoint {
   readonly #nack: PaneStreamRuntimeClient["nack"];
   readonly #failConnection: (error: Error) => void;
   readonly #canonicalSeedReady: () => void;
+  readonly #compactDecodeProfile: ((profile: CompactSemanticCommitProfile) => void) | undefined;
   #negotiated: TerminalDeliveryNegotiated | null = null;
   #assembler: TerminalDeliveryAssembler | null = null;
+  #assemblyStorage: Uint8Array | null = null;
   #envelope: TerminalDeliveryEnvelope | null = null;
   #appliedRevision = -1;
   #incarnation: string | null = null;
   #cols = 0;
   #rows = 0;
+  #canonicalSnapshot: TerminalReplicaSnapshot | null = null;
   #reseedRequired = false;
   #subscription: WireTerminalSubscription | null = null;
   #pending: PendingDelivery | null = null;
   #rejectedTransactionId: string | null = null;
+  #decodeToken: object | null = null;
   #closed = false;
   readonly #ready: Promise<boolean>;
   #resolveReady!: (ready: boolean) => void;
@@ -289,6 +302,7 @@ class WireTerminalEndpoint {
     nack: PaneStreamRuntimeClient["nack"];
     failConnection(error: Error): void;
     canonicalSeedReady(): void;
+    compactDecodeProfile?: (profile: CompactSemanticCommitProfile) => void;
   }) {
     this.#workspaceName = options.workspaceName;
     this.#semanticPaneId = options.semanticPaneId;
@@ -296,6 +310,7 @@ class WireTerminalEndpoint {
     this.#nack = options.nack;
     this.#failConnection = options.failConnection;
     this.#canonicalSeedReady = options.canonicalSeedReady;
+    this.#compactDecodeProfile = options.compactDecodeProfile;
     this.#ready = new Promise<boolean>((resolve) => {
       this.#resolveReady = resolve;
     });
@@ -306,7 +321,7 @@ class WireTerminalEndpoint {
       this.#failConnection(new Error(`Duplicate terminal negotiation for ${this.#semanticPaneId}`));
       return;
     }
-    if (negotiated.encoding !== "semantic-v1") {
+    if (negotiated.encoding !== "semantic-v1" && negotiated.encoding !== "semantic-compact-v1") {
       this.#failConnection(
         new Error(`OpenTUI requires semantic-v1 delivery for ${this.#semanticPaneId}`),
       );
@@ -341,7 +356,7 @@ class WireTerminalEndpoint {
     return subscription;
   }
 
-  accept(message: TerminalDeliveryServerMessage): void {
+  accept(message: TerminalDeliveryServerMessage): void | { readonly consumedOwnedChunk: true } {
     if (this.#closed) return;
     if (!this.#negotiated) {
       this.#failConnection(
@@ -362,15 +377,18 @@ class WireTerminalEndpoint {
       this.#acceptEnvelope(message);
       return;
     }
-    this.#acceptChunk(message);
+    return this.#acceptChunk(message);
   }
 
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
     this.#assembler = null;
+    this.#assemblyStorage = null;
     this.#envelope = null;
     this.#pending = null;
+    this.#decodeToken = null;
+    this.#canonicalSnapshot = null;
     if (!this.#readySettled) {
       this.#readySettled = true;
       this.#resolveReady(false);
@@ -382,6 +400,19 @@ class WireTerminalEndpoint {
 
   #acceptEnvelope(envelope: TerminalDeliveryEnvelope): void {
     const negotiated = this.#negotiated!;
+    if (this.#decodeToken !== null) {
+      // A negotiated server owns exactly one flight. Overlap while a compact
+      // decode is yielding is a connection-level protocol violation: retire
+      // the incumbent token atomically rather than NACKing either ambiguous
+      // transaction and leaving a poisoned endpoint behind.
+      this.#decodeToken = null;
+      this.#assembler = null;
+      this.#envelope = null;
+      this.#pending = null;
+      this.#reseedRequired = true;
+      this.#failConnection(new Error(`Overlapping terminal delivery for ${this.#semanticPaneId}`));
+      return;
+    }
     if (envelope.generation !== negotiated.generation) {
       this.#reject("stale-generation", envelope);
       return;
@@ -391,10 +422,11 @@ class WireTerminalEndpoint {
       envelope.semanticPaneId !== this.#semanticPaneId ||
       envelope.protocolVersion !== negotiated.protocolVersion ||
       envelope.deliveryNonce !== negotiated.deliveryNonce ||
-      envelope.encoding !== negotiated.encoding ||
+      !terminalDeliveryEncodingAccepted(negotiated, envelope.encoding) ||
       envelope.richPlacements !== negotiated.richPlacements ||
       this.#envelope !== null ||
-      this.#pending !== null
+      this.#pending !== null ||
+      this.#decodeToken !== null
     ) {
       this.#reject("protocol-violation", envelope);
       return;
@@ -410,12 +442,13 @@ class WireTerminalEndpoint {
     }
     this.#envelope = envelope;
     this.#rejectedTransactionId = null;
-    this.#assembler = new TerminalDeliveryAssembler(envelope);
+    this.#assembler = new TerminalDeliveryAssembler(envelope, this.#assemblyStorage ?? undefined);
+    this.#assemblyStorage = null;
   }
 
   #acceptChunk(
     chunk: Extract<TerminalDeliveryServerMessage, { type: "terminal.delivery.chunk" }>,
-  ): void {
+  ): void | { readonly consumedOwnedChunk: true } {
     // A rejected envelope is still followed by its already-framed chunks.
     // The first NACK retires the daemon flight, so rejecting those chunks
     // again would accidentally target the next flight.
@@ -432,8 +465,80 @@ class WireTerminalEndpoint {
     const parseStartedAt = performanceSink ? performance.now() : 0;
     try {
       assembler.write(chunk);
-      if (chunk.index + 1 < envelope.chunkCount) return;
-      const payload = decodeSemanticTerminalUpdate(assembler.complete());
+      const consumed = Object.freeze({ consumedOwnedChunk: true as const });
+      if (chunk.index + 1 < envelope.chunkCount) return consumed;
+      const bytes = assembler.complete();
+      if (envelope.encoding === "semantic-compact-v1") {
+        const token = Object.freeze({});
+        this.#decodeToken = token;
+        void this.#completeCooperativeCompactDecode(
+          token,
+          envelope,
+          bytes,
+          performanceSink,
+          parseStartedAt,
+        );
+        return consumed;
+      }
+      const verified = decodeVerifiedLegacySemanticTerminalUpdate(
+        bytes,
+        this.#canonicalSnapshot,
+        envelope.canonicalStateHash,
+      );
+      this.#acceptVerified(envelope, verified, performanceSink, parseStartedAt);
+      return consumed;
+    } catch {
+      this.#reject("decode-failed", envelope);
+    }
+  }
+
+  async #completeCooperativeCompactDecode(
+    token: object,
+    envelope: TerminalDeliveryEnvelope,
+    bytes: Uint8Array,
+    performanceSink: ReturnType<typeof currentTuiPerformanceEventSink>,
+    parseStartedAt: number,
+  ): Promise<void> {
+    try {
+      const verified = await decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
+        bytes,
+        this.#canonicalSnapshot,
+        envelope.canonicalStateHash,
+        {
+          grantReducerAdoption: true,
+          ...(this.#compactDecodeProfile ? { onComplete: this.#compactDecodeProfile } : {}),
+          yieldControl: async () => {
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            if (this.#closed || this.#decodeToken !== token || this.#envelope !== envelope)
+              throw new Error("Cooperative terminal decode was retired");
+          },
+        },
+      );
+      if (
+        this.#closed ||
+        this.#decodeToken !== token ||
+        this.#envelope !== envelope ||
+        this.#assembler === null
+      )
+        return;
+      this.#decodeToken = null;
+      this.#acceptVerified(envelope, verified, performanceSink, parseStartedAt);
+    } catch {
+      if (!this.#closed && this.#decodeToken === token && this.#envelope === envelope) {
+        this.#decodeToken = null;
+        this.#reject("decode-failed", envelope);
+      }
+    }
+  }
+
+  #acceptVerified(
+    envelope: TerminalDeliveryEnvelope,
+    verified: VerifiedTerminalDelivery,
+    performanceSink: ReturnType<typeof currentTuiPerformanceEventSink>,
+    parseStartedAt: number,
+  ): void {
+    try {
+      const payload = verified.payload;
       if (
         payload.frame !== envelope.frame ||
         payload.revision !== envelope.canonicalRevision ||
@@ -451,17 +556,19 @@ class WireTerminalEndpoint {
         this.#reject("gap", envelope);
         return;
       }
-      if (
-        payload.frame === "seed" &&
-        hashTerminalReplicaSnapshot(payload.snapshot) !== envelope.canonicalStateHash
-      ) {
-        throw new TypeError("Semantic seed hash did not match its envelope");
-      }
+      const nextSnapshot = verified.canonicalSnapshot;
       this.#pending = Object.freeze({
         envelope,
-        update: updateFromDelivery(envelope, payload, dimensions.cols, dimensions.rows),
+        update: updateFromDelivery(
+          envelope,
+          payload,
+          nextSnapshot,
+          dimensions.cols,
+          dimensions.rows,
+        ),
         nextCols: dimensions.cols,
         nextRows: dimensions.rows,
+        nextSnapshot,
         metadata: Object.freeze({
           representationHash: envelope.representationHash,
           ...(envelope.performanceTraceId
@@ -514,9 +621,15 @@ class WireTerminalEndpoint {
     this.#incarnation = delivery.envelope.incarnation;
     this.#cols = delivery.nextCols;
     this.#rows = delivery.nextRows;
+    this.#canonicalSnapshot = delivery.nextSnapshot;
     this.#reseedRequired = false;
     this.#pending = null;
+    this.#decodeToken = null;
     this.#envelope = null;
+    if (this.#assembler) {
+      const storage = this.#assembler.releaseStorage();
+      this.#assemblyStorage = storage.byteLength <= 2 * 1_024 * 1_024 ? storage : null;
+    }
     this.#assembler = null;
     try {
       this.#ack({
@@ -565,6 +678,7 @@ class WireTerminalEndpoint {
     this.#assembler = null;
     this.#envelope = null;
     this.#pending = null;
+    this.#decodeToken = null;
     this.#rejectedTransactionId = attempted?.transactionId ?? transactionId;
     this.#reseedRequired = true;
   }
@@ -773,6 +887,12 @@ export async function connectOpenTuiWorkspaceRuntimePort(
           });
           settleCoherent();
         },
+        ...(options.onDiagnostic
+          ? {
+              compactDecodeProfile: (profile: CompactSemanticCommitProfile) =>
+                options.onDiagnostic?.("compact-decode", { ...profile }),
+            }
+          : {}),
         failConnection,
       }),
     );
@@ -858,7 +978,7 @@ export async function connectOpenTuiWorkspaceRuntimePort(
         viewerMode: "interactive",
         terminalDelivery: {
           protocolVersions: [1],
-          encodings: ["semantic-v1"],
+          encodings: ["semantic-compact-v1", "semantic-v1"],
           richPlacements: true,
         },
       },
@@ -883,7 +1003,7 @@ export async function connectOpenTuiWorkspaceRuntimePort(
           failConnection(new Error(`Pane-stream delivered an unrequested pane: ${pane}`));
           return;
         }
-        endpoint.accept(message);
+        return endpoint.accept(message);
       },
       ...(performanceSink?.terminalTraceStage
         ? {

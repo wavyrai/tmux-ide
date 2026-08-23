@@ -126,6 +126,16 @@ describe("production OpenTUI entry boundary", () => {
     expect(host).toContain('diagnose?.("host-internal-snapshot-publication"');
   });
 
+  it("delegates viewport resize to the semantic-ready generation owner", () => {
+    const root = read("packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx");
+    expect(root).toContain("createSemanticShellViewportResizeOwner()");
+    expect(root).toContain(
+      "semanticViewportResize.adopt(dimensions(), currentShell.semantic, generation())",
+    );
+    expect(root).not.toMatch(/lane\.lane\.resize/u);
+    expect(root).not.toMatch(/applicationShellViewport\(dimensions\(\), shell\(\)\.semantic/u);
+  });
+
   it("installs frame readiness only for an explicit lifecycle or detailed diagnostic sink", () => {
     const root = read("packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx");
     expect(root).toContain("createApplicationTerminalFrameReadinessOwner({");

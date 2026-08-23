@@ -43,8 +43,18 @@
     "heapRobustSlopeBytesPerSample": 131072,
     "rssGrowthCeilingBytes": 67108864,
     "heapGrowthCeilingBytes": 33554432,
+    "rssAbsoluteCeilingBytes": 1073741824,
+    "heapAbsoluteCeilingBytes": 536870912,
     "representationCacheCeilingBytes": 16777216,
     "rawJournalCeilingBytes": 4194304,
     "settledQueueDepth": 0
+  },
+  "eventLoop": {
+    "currentEndpointCeilingMicros": 33000,
+    "generationStickyPeakCeilingMicros": 100000,
+    "workloadP99CeilingMs": 33
+  },
+  "cursorPresentation": {
+    "p99CeilingMicros": 33000
   }
 }

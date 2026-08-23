@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   blankTerminalReplicaSnapshot,
+  encodeCompactSemanticTerminalUpdate,
   encodeSemanticTerminalUpdate,
   hashTerminalDeliveryRepresentation,
   hashTerminalReplicaSnapshot,
@@ -436,75 +437,111 @@ describe("pane-stream transport demultiplexing", () => {
     expect(h.ends).toEqual([expect.objectContaining({ code: "protocol-error", retryable: false })]);
   });
 
-  it("applies a semantic seed atomically and ACKs only after the renderer settles", async () => {
-    const h = await liveHarness({ deferApplies: true });
-    const generation = "20000000-0000-4000-8000-000000000001";
-    const deliveryNonce = "20000000-0000-4000-8000-000000000002";
-    const transactionId = "20000000-0000-4000-8000-000000000003";
-    const negotiation = negotiateTerminalDelivery(
-      { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: true },
-      generation,
-      deliveryNonce,
-    );
-    if (!negotiation.accepted) throw new Error("semantic negotiation failed");
-    const snapshot = blankTerminalReplicaSnapshot(12, 4);
-    const bytes = encodeSemanticTerminalUpdate({ frame: "seed", revision: 0, snapshot });
-    const incarnation = `${generation}:0`;
-    h.socket.serverSends({
-      type: "terminal-delivery-ready",
-      pane: PANE_A,
-      negotiation,
-    });
-    h.socket.serverSends({
-      type: "terminal-delivery-envelope",
-      pane: PANE_A,
-      envelope: {
-        type: "terminal.delivery",
-        workspaceName: "workspace-a",
-        semanticPaneId: PANE_A,
+  it.each([
+    ["semantic-v1", "semantic-v1", true, false],
+    ["semantic-compact-v1", "semantic-compact-v1", true, false],
+    ["semantic-compact-v1", "semantic-v1", true, false],
+    ["semantic-v1", "semantic-compact-v1", false, false],
+    ["semantic-compact-v1", "semantic-v1", false, true],
+  ] as const)(
+    "applies a %s negotiation / %s envelope seed atomically and ACKs only after the renderer settles",
+    async (negotiatedEncoding, encoding, accepted, malformed) => {
+      const h = await liveHarness({ deferApplies: true });
+      const generation = "20000000-0000-4000-8000-000000000001";
+      const deliveryNonce = "20000000-0000-4000-8000-000000000002";
+      const transactionId = "20000000-0000-4000-8000-000000000003";
+      const negotiation = negotiateTerminalDelivery(
+        {
+          protocolVersions: [1],
+          encodings:
+            negotiatedEncoding === "semantic-compact-v1"
+              ? ["semantic-compact-v1", "semantic-v1"]
+              : ["semantic-v1"],
+          richPlacements: true,
+        },
         generation,
-        incarnation,
         deliveryNonce,
-        transactionId,
-        protocolVersion: 1,
-        encoding: "semantic-v1",
-        frame: "seed",
-        baseRevision: null,
-        canonicalRevision: 0,
-        canonicalStateHash: hashTerminalReplicaSnapshot(snapshot),
-        representationHash: hashTerminalDeliveryRepresentation(bytes),
-        representationBytes: bytes.byteLength,
-        chunkCount: splitTerminalDeliveryChunks(transactionId, bytes).length,
-        canonicalEquivalent: true,
-        history: "complete",
-        richPlacements: true,
-      },
-    });
-    for (const chunk of splitTerminalDeliveryChunks(transactionId, bytes)) {
+      );
+      if (!negotiation.accepted) throw new Error("semantic negotiation failed");
+      const normal = blankTerminalReplicaSnapshot(12, 4);
+      const snapshot = {
+        ...normal,
+        modes: { ...normal.modes, alternateScreen: true },
+      };
+      const payload = { frame: "seed" as const, revision: 0, snapshot };
+      const bytes = malformed
+        ? new TextEncoder().encode("{")
+        : encoding === "semantic-compact-v1"
+          ? encodeCompactSemanticTerminalUpdate(payload)
+          : encodeSemanticTerminalUpdate(payload);
+      const incarnation = `${generation}:0`;
       h.socket.serverSends({
-        type: "terminal-delivery-chunk",
+        type: "terminal-delivery-ready",
         pane: PANE_A,
-        transactionId,
-        index: chunk.index,
-        data: encodeBytesBase64(chunk.bytes),
+        negotiation,
       });
-    }
-    await flushMicrotasks();
-    expect(h.events).toHaveLength(1);
-    expect(h.events[0]).toMatchObject({ pane: PANE_A, event: { type: "seed-batch" } });
-    expect(h.socket.sent).toHaveLength(1);
-    h.settleApply();
-    await flushMicrotasks();
-    expect(JSON.parse(h.socket.sent[1]!)).toMatchObject({
-      type: "terminal-delivery-ack",
-      ack: {
-        workspaceName: "workspace-a",
-        semanticPaneId: PANE_A,
-        canonicalRevision: 0,
-        transactionId,
-      },
-    });
-  });
+      h.socket.serverSends({
+        type: "terminal-delivery-envelope",
+        pane: PANE_A,
+        envelope: {
+          type: "terminal.delivery",
+          workspaceName: "workspace-a",
+          semanticPaneId: PANE_A,
+          generation,
+          incarnation,
+          deliveryNonce,
+          transactionId,
+          protocolVersion: 1,
+          encoding,
+          frame: "seed",
+          baseRevision: null,
+          canonicalRevision: 0,
+          canonicalStateHash: hashTerminalReplicaSnapshot(snapshot),
+          representationHash: hashTerminalDeliveryRepresentation(bytes),
+          representationBytes: bytes.byteLength,
+          chunkCount: splitTerminalDeliveryChunks(transactionId, bytes).length,
+          canonicalEquivalent: true,
+          history: "complete",
+          richPlacements: true,
+        },
+      });
+      for (const chunk of splitTerminalDeliveryChunks(transactionId, bytes)) {
+        h.socket.serverSends({
+          type: "terminal-delivery-chunk",
+          pane: PANE_A,
+          transactionId,
+          index: chunk.index,
+          data: encodeBytesBase64(chunk.bytes),
+        });
+      }
+      await flushMicrotasks();
+      if (!accepted) {
+        expect(h.events).toEqual([]);
+        expect(h.ends).toEqual([
+          expect.objectContaining({ code: "protocol-error", retryable: false }),
+        ]);
+        return;
+      }
+      expect(h.events).toHaveLength(1);
+      expect(h.events[0]).toMatchObject({ pane: PANE_A, event: { type: "seed-batch" } });
+      const seeded = h.events[0]!.event;
+      if (seeded.type !== "seed-batch") throw new Error("semantic seed event was unavailable");
+      expect(seeded.canonical?.deliveryRequestId).toBe(REQUEST_ID);
+      expect(new TextDecoder().decode(seeded.batch.seed).startsWith("\u001b[?1049h")).toBe(true);
+      expect(h.socket.sent).toHaveLength(1);
+      h.settleApply();
+      await flushMicrotasks();
+      expect(JSON.parse(h.socket.sent[1]!)).toMatchObject({
+        type: "terminal-delivery-ack",
+        ack: {
+          workspaceName: "workspace-a",
+          semanticPaneId: PANE_A,
+          canonicalRevision: 0,
+          transactionId,
+        },
+      });
+    },
+  );
 
   it("delivers per-pane events in wire order with decoded bytes", async () => {
     const h = await liveHarness();

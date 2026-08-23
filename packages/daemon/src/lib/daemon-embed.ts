@@ -1198,6 +1198,8 @@ export async function startEmbeddedDaemon(
         },
         mirror: {
           executable: tmuxAuthority.executablePath,
+          internalReadHookEmission: (runtimePaneId, marker) =>
+            externalInteractionObserver.internalReadHookEmission(runtimePaneId, marker),
           ...(selector.kind === "path" ? { socketPath: selector.path } : {}),
           ...(selector.kind === "name" && selector.name !== "default"
             ? { socketName: selector.name }

@@ -97,7 +97,10 @@ class ResizeObserverHarness {
   }
 }
 
-function rendererHarness(initialViewport: TerminalAttachmentViewport = { cols: 80, rows: 24 }) {
+function rendererHarness(
+  initialViewport: TerminalAttachmentViewport = { cols: 80, rows: 24 },
+  presentation: ReturnType<NonNullable<TerminalRenderer["readPresentation"]>> | null = null,
+) {
   let viewport = initialViewport;
   let input: ((bytes: Uint8Array) => void) | null = null;
   const writes: Uint8Array[] = [];
@@ -109,9 +112,28 @@ function rendererHarness(initialViewport: TerminalAttachmentViewport = { cols: 8
     write: vi.fn(async (bytes) => {
       writes.push(bytes);
     }),
+    ...(presentation ? { readPresentation: vi.fn(() => presentation) } : {}),
+    probeRendition: vi.fn(async () => ({
+      renditionHmac: "a".repeat(64),
+      positionWrappedHmac: "b".repeat(64),
+      graphemeWidthHmac: "c".repeat(64),
+      colorHmac: "d".repeat(64),
+      attributesHmac: "e".repeat(64),
+      cellHmacs: Object.freeze(["f".repeat(64)]),
+      defaultForeground: "#e6e8f2",
+      defaultBackground: "#12131a",
+      rendererCols: viewport.cols,
+      rendererRows: viewport.rows,
+      renditionCellCount: 1,
+      wideContinuationCount: 0,
+      combiningCount: 0,
+      styledCellCount: 1,
+    })),
     focus: vi.fn(),
     fit: vi.fn(() => viewport),
-    resizeGrid: vi.fn(),
+    resizeGrid: vi.fn((next) => {
+      viewport = next;
+    }),
     refreshTheme: vi.fn(),
     setReducedMotion: vi.fn(),
     onInput: vi.fn((listener) => {
@@ -191,11 +213,67 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  delete (globalThis as Record<string, unknown>).__TMUX_IDE_ANSI_RENDITION_PROBE_ENABLED__;
+  delete (globalThis as Record<string, unknown>).__TMUX_IDE_PROBE_TERMINAL_RENDITION__;
+  delete (globalThis as Record<string, unknown>).__TMUX_IDE_ANSI_RENDITION_RENDERERS__;
   vi.unstubAllGlobals();
   document.body.replaceChildren();
 });
 
 describe("TerminalSurface", () => {
+  it("does zero rendition probe work and publishes no rendition DOM state when disabled", async () => {
+    const root = document.body.appendChild(document.createElement("div"));
+    const renderer = rendererHarness();
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          focused
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await Promise.resolve();
+    expect(renderer.renderer.probeRendition).not.toHaveBeenCalled();
+    expect(root.querySelector("[data-terminal-rendition-projection]")).toBeNull();
+    expect(
+      (globalThis as Record<string, unknown>).__TMUX_IDE_PROBE_TERMINAL_RENDITION__,
+    ).toBeUndefined();
+    dispose();
+  });
+
+  it("registers one selected-pane detailed probe and cleans it up without raw state", async () => {
+    (globalThis as Record<string, unknown>).__TMUX_IDE_ANSI_RENDITION_PROBE_ENABLED__ = true;
+    const root = document.body.appendChild(document.createElement("div"));
+    const renderer = rendererHarness();
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          focused
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await Promise.resolve();
+    const probe = (globalThis as Record<string, unknown>).__TMUX_IDE_PROBE_TERMINAL_RENDITION__ as (
+      paneId: string,
+      keyHex: string,
+    ) => Promise<unknown>;
+    await expect(probe(TARGET_A.semanticPaneId, "07".repeat(32))).resolves.toBeNull();
+    await expect(probe(TARGET_B.semanticPaneId, "07".repeat(32))).resolves.toBeNull();
+    expect(renderer.renderer.probeRendition).not.toHaveBeenCalled();
+    expect(root.querySelector("[data-terminal-rendition-projection]")).toBeNull();
+    dispose();
+    expect(
+      (globalThis as Record<string, unknown>).__TMUX_IDE_PROBE_TERMINAL_RENDITION__,
+    ).toBeUndefined();
+  });
+
   it("renders an explicit unavailable surface without a production transport", () => {
     const root = document.body.appendChild(document.createElement("div"));
     const renderer = rendererHarness();
@@ -209,6 +287,178 @@ describe("TerminalSurface", () => {
     expect(root.innerHTML).toMatchSnapshot();
     dispose();
     expect(renderer.renderer.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("probes actual xterm and canonical state only in detailed mode without DOM proof attrs", async () => {
+    (globalThis as Record<string, unknown>).__TMUX_IDE_ANSI_RENDITION_PROBE_ENABLED__ = true;
+    const attachment = attachmentHarness();
+    let listener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
+    const transport = transportHarness(async (_request, nextListener) => {
+      listener = nextListener;
+      return { status: "connected", attachment };
+    });
+    const renderer = rendererHarness(
+      { cols: 80, rows: 24 },
+      {
+        activeBuffer: "alternate",
+        cursorX: 11,
+        cursorY: 7,
+        cursorHidden: true,
+        cursorStyle: "underline",
+        cursorBlink: false,
+      },
+    );
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          focused
+          transport={transport}
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+    const emit = listener as ((event: NativeTerminalEvent) => void | Promise<void>) | null;
+    if (!emit) throw new Error("terminal listener was unavailable");
+    await emit({
+      type: "output",
+      bytes: new TextEncoder().encode("alt"),
+      canonical: {
+        generation: "generation-a",
+        incarnation: "incarnation-a",
+        revision: 9,
+        stateHash: "state-a",
+        cols: 80,
+        rows: 24,
+        sourceEpoch: 2,
+        alternateScreen: true,
+        cursor: { x: 11, y: 7, hidden: true, style: "underline", blink: false },
+        gridRowsRead: 0,
+        gridCellsRead: 0,
+        fullGridWalks: 0,
+      },
+    });
+    const probe = (globalThis as Record<string, unknown>).__TMUX_IDE_PROBE_TERMINAL_RENDITION__ as (
+      paneId: string,
+      keyHex: string,
+    ) => Promise<unknown>;
+    const surface = root.querySelector(".terminal-surface");
+    await expect(probe(TARGET_A.semanticPaneId, "07".repeat(32))).resolves.toEqual({
+      surface,
+      presentation: {
+        activeBuffer: "alternate",
+        cursorX: 11,
+        cursorY: 7,
+        cursorHidden: true,
+        cursorStyle: "underline",
+        cursorBlink: false,
+      },
+      canonical: {
+        generation: "generation-a",
+        incarnation: "incarnation-a",
+        revision: 9,
+        stateHash: "state-a",
+        cols: 80,
+        rows: 24,
+        sourceEpoch: 2,
+        rendererEpoch: 1,
+        alternateScreen: true,
+        cursor: { x: 11, y: 7, hidden: true, style: "underline", blink: false },
+        gridRowsRead: 0,
+        gridCellsRead: 0,
+        fullGridWalks: 0,
+      },
+      rendition: {
+        renditionHmac: "a".repeat(64),
+        positionWrappedHmac: "b".repeat(64),
+        graphemeWidthHmac: "c".repeat(64),
+        colorHmac: "d".repeat(64),
+        attributesHmac: "e".repeat(64),
+        cellHmacs: ["f".repeat(64)],
+        defaultForeground: "#e6e8f2",
+        defaultBackground: "#12131a",
+        rendererCols: 80,
+        rendererRows: 24,
+        renditionCellCount: 1,
+        wideContinuationCount: 0,
+        combiningCount: 0,
+        styledCellCount: 1,
+      },
+    });
+    expect(
+      surface?.getAttributeNames().filter((name) => name.startsWith("data-terminal-")),
+    ).toEqual([]);
+    dispose();
+  });
+
+  it("does no ProductRig presentation work on a real output when diagnostics are disabled", async () => {
+    const attachment = attachmentHarness();
+    let listener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
+    const transport = transportHarness(async (_request, nextListener) => {
+      listener = nextListener;
+      return { status: "connected", attachment };
+    });
+    const renderer = rendererHarness(
+      { cols: 80, rows: 24 },
+      {
+        activeBuffer: "normal",
+        cursorX: 1,
+        cursorY: 2,
+        cursorHidden: false,
+        cursorStyle: "block",
+        cursorBlink: false,
+      },
+    );
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          focused
+          transport={transport}
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+    const emit = listener as ((event: NativeTerminalEvent) => void | Promise<void>) | null;
+    if (!emit) throw new Error("terminal listener was unavailable");
+    await emit({
+      type: "output",
+      bytes: new Uint8Array([65]),
+      canonical: {
+        generation: "generation-a",
+        incarnation: "incarnation-a",
+        revision: 1,
+        stateHash: "0123456789abcdef",
+        cols: 80,
+        rows: 24,
+        sourceEpoch: 1,
+        alternateScreen: false,
+        cursor: { x: 1, y: 2, hidden: false, style: "block", blink: false },
+        gridRowsRead: 0,
+        gridCellsRead: 0,
+        fullGridWalks: 0,
+      },
+    });
+    expect(renderer.renderer.readPresentation).not.toHaveBeenCalled();
+    expect(renderer.renderer.probeRendition).not.toHaveBeenCalled();
+    expect(
+      root
+        .querySelector(".terminal-surface")
+        ?.getAttributeNames()
+        .filter((name) => name.startsWith("data-terminal-")),
+    ).toEqual([]);
+    expect(
+      (globalThis as Record<string, unknown>).__TMUX_IDE_PROBE_TERMINAL_RENDITION__,
+    ).toBeUndefined();
+    dispose();
   });
 
   it("mirrors the origin window grid and never reflows tmux when size-passive", async () => {
@@ -256,6 +506,76 @@ describe("TerminalSurface", () => {
     await Promise.resolve();
     expect(attachment.resize).not.toHaveBeenCalled();
     expect(root.querySelector(".terminal-surface")?.getAttribute("data-size-passive")).toBe("true");
+    dispose();
+  });
+
+  it("applies retained and per-delivery canonical grids before passive early output", async () => {
+    const connection = deferred<NativeTerminalConnectResult>();
+    const attachment = attachmentHarness();
+    let listener: ((event: NativeTerminalEvent) => void | Promise<void>) | null = null;
+    const transport = transportHarness(async (_request, nextListener) => {
+      listener = nextListener;
+      return connection.promise;
+    });
+    const renderer = rendererHarness({ cols: 162, rows: 51 });
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Codex"
+          transport={transport}
+          rendererFactory={renderer.factory}
+          geometryOwnership="passive"
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledOnce());
+    const emit = listener as unknown as (event: NativeTerminalEvent) => void | Promise<void>;
+    if (!emit) throw new Error("terminal listener was unavailable");
+    emit({
+      type: "state",
+      state: "connected",
+      error: null,
+      sourceGrid: { cols: 132, rows: 41 },
+      clientViewport: { cols: 132, rows: 41 },
+    });
+    const canonical = {
+      generation: "generation-a",
+      incarnation: "incarnation-a",
+      revision: 1,
+      stateHash: "0123456789abcdef",
+      cols: 132,
+      rows: 41,
+      sourceEpoch: 1,
+      alternateScreen: false,
+      cursor: { x: 6, y: 3, hidden: false, style: "bar" as const, blink: true },
+      gridRowsRead: 3,
+      gridCellsRead: 396,
+      fullGridWalks: 0,
+    };
+    await emit({ type: "output", bytes: new Uint8Array([65]), canonical });
+    expect(renderer.renderer.resizeGrid).toHaveBeenLastCalledWith({ cols: 132, rows: 41 });
+    expect(vi.mocked(renderer.renderer.resizeGrid).mock.invocationCallOrder.at(-1)).toBeLessThan(
+      vi.mocked(renderer.renderer.write).mock.invocationCallOrder.at(-1)!,
+    );
+    connection.resolve({ status: "connected", attachment });
+    await vi.waitFor(() =>
+      expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("connected"),
+    );
+    expect(renderer.renderer.resizeGrid).toHaveBeenLastCalledWith({ cols: 132, rows: 41 });
+    expect(attachment.resize).not.toHaveBeenCalled();
+    await emit({
+      type: "output",
+      bytes: new Uint8Array([66]),
+      canonical: { ...canonical, revision: 2, cols: 162, rows: 51 },
+    });
+    expect(renderer.renderer.resizeGrid).toHaveBeenLastCalledWith({ cols: 162, rows: 51 });
+    expect(vi.mocked(renderer.renderer.resizeGrid).mock.invocationCallOrder.at(-1)).toBeLessThan(
+      vi.mocked(renderer.renderer.write).mock.invocationCallOrder.at(-1)!,
+    );
+    expect(attachment.resize).not.toHaveBeenCalled();
     dispose();
   });
 
@@ -320,7 +640,7 @@ describe("TerminalSurface", () => {
       clientViewport: { cols: 80, rows: 24 },
     });
     await vi.waitFor(() => expect(attachment.resize).toHaveBeenCalledWith({ cols: 118, rows: 38 }));
-    expect(renderer.renderer.resizeGrid).not.toHaveBeenCalled();
+    expect(renderer.renderer.resizeGrid).toHaveBeenCalledWith({ cols: 80, rows: 24 });
     dispose();
   });
 

@@ -24,6 +24,7 @@ import {
 } from "@tmux-ide/daemon-client/pane-stream-clock-calibration";
 import { WorkspaceMultiplexerError } from "../../lib/workspace-multiplexer-verbs.ts";
 import { SessionRuntimeIntentError } from "../session-runtime/semantic-mutation-executor.ts";
+import { registerTerminalDeliveryObservationOrdinal } from "../session-runtime/terminal-delivery-observation-identity.ts";
 import { PaneStreamLeaseManager } from "./lease-manager.ts";
 import {
   PaneStreamAdmissionCoordinator,
@@ -342,10 +343,13 @@ function harness(
     diagnosticAfterFrameParse: options.diagnosticAfterFrameParse,
     bindSessionRuntime:
       options.bindSessionRuntime ??
-      (() => ({
+      ((descriptor) => ({
         generation: INSTANCE,
         session: SESSION,
         clientId: "test:interactive",
+        surface: "web" as const,
+        deliveryLaneId: "test:interactive:lane-1",
+        deliveryRequestId: descriptor.requestId,
         authoritySnapshot,
         activateLegacyAuthority,
         updatePresence: () => {
@@ -1122,7 +1126,8 @@ describe("PaneStreamAdmissionCoordinator", () => {
       snapshot: () => ({ spans: [], droppedSpans: 0 }),
     };
     const h = harness({ observability });
-    const { socket } = await connect(h, { viewerMode: "interactive" });
+    const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2));
     const beginTraceCallsBeforeInput = vi.mocked(observability.beginTrace).mock.calls.length;
     const recordSpanCallsBeforeInput = vi.mocked(observability.recordSpan).mock.calls.length;
     socket.message({
@@ -1134,6 +1139,30 @@ describe("PaneStreamAdmissionCoordinator", () => {
       performanceTraceId: "00000000-0000-4000-8000-000000000093",
     });
     expect(socket.framesOfType("input-ack").map((frame) => frame.seq)).toEqual([1]);
+    expect(nowMicros).not.toHaveBeenCalled();
+    expect(vi.mocked(observability.beginTrace).mock.calls).toHaveLength(beginTraceCallsBeforeInput);
+    expect(vi.mocked(observability.recordSpan).mock.calls).toHaveLength(recordSpanCallsBeforeInput);
+    await h.deliveryListeners.get("pane.shell")?.({
+      type: "terminal.delivery",
+      workspaceName: SESSION,
+      semanticPaneId: "pane.shell",
+      generation: INSTANCE,
+      incarnation: `${INSTANCE}:0`,
+      deliveryNonce: "00000000-0000-4000-8000-000000000098",
+      transactionId: "00000000-0000-4000-8000-000000000095",
+      protocolVersion: 1,
+      encoding: "semantic-v1",
+      frame: "seed",
+      baseRevision: null,
+      canonicalRevision: 0,
+      canonicalStateHash: "1111111111111111",
+      representationHash: "2222222222222222",
+      representationBytes: 1,
+      chunkCount: 1,
+      canonicalEquivalent: true,
+      history: "complete",
+      richPlacements: false,
+    } as never);
     expect(nowMicros).not.toHaveBeenCalled();
     expect(vi.mocked(observability.beginTrace).mock.calls).toHaveLength(beginTraceCallsBeforeInput);
     expect(vi.mocked(observability.recordSpan).mock.calls).toHaveLength(recordSpanCallsBeforeInput);
@@ -1233,7 +1262,7 @@ describe("PaneStreamAdmissionCoordinator", () => {
       nowMicros: () => (nowMicros += 5),
     });
     const h = harness({ observability });
-    const { socket } = await connect(h, {
+    const { socket, requestId } = await connect(h, {
       viewerMode: "interactive",
       semanticDelivery: true,
     });
@@ -1275,6 +1304,20 @@ describe("PaneStreamAdmissionCoordinator", () => {
         traceId: "00000000-0000-4000-8000-000000000096",
         stage: "transport",
         operation: "pane-stream-socket-send",
+        terminalDelivery: expect.objectContaining({
+          workspaceName: SESSION,
+          semanticPaneId: "pane.shell",
+          canonicalGeneration: INSTANCE,
+          canonicalIncarnation: `${INSTANCE}:0`,
+          canonicalRevision: 0,
+          canonicalStateHash: "1111111111111111",
+          transactionId,
+          deliveryClientId: "test:interactive",
+          deliverySurface: "web",
+          deliveryLaneId: "test:interactive:lane-1",
+          deliveryRequestId: requestId,
+          deliveryNonce: "00000000-0000-4000-8000-000000000098",
+        }),
       }),
     );
     socket.message({
@@ -1300,7 +1343,7 @@ describe("PaneStreamAdmissionCoordinator", () => {
     // applied and ACKed the preceding seed. The address cache contains only
     // the latest incarnation; the delivery owner must remain the authority for
     // ordered transaction validation instead of tearing down the whole stream.
-    await h.deliveryListeners.get("pane.shell")?.({
+    const untracedReplacement = {
       type: "terminal.delivery",
       workspaceName: SESSION,
       semanticPaneId: "pane.shell",
@@ -1320,7 +1363,40 @@ describe("PaneStreamAdmissionCoordinator", () => {
       canonicalEquivalent: true,
       history: "complete",
       richPlacements: false,
-    } as never);
+    } as const;
+    registerTerminalDeliveryObservationOrdinal(untracedReplacement as never, 77);
+    await h.deliveryListeners.get("pane.shell")?.(untracedReplacement as never);
+    const untracedSocketSpans = observability
+      .snapshot()
+      .spans.filter(
+        (span) =>
+          span.operation === "pane-stream-socket-send" &&
+          span.terminalDelivery?.transactionId === "00000000-0000-4000-8000-000000000094",
+      );
+    expect(untracedSocketSpans).toHaveLength(1);
+    expect(untracedSocketSpans).toContainEqual(
+      expect.objectContaining({
+        traceId: null,
+        scenario: null,
+        stage: "transport",
+        operation: "pane-stream-socket-send",
+        terminalDelivery: expect.objectContaining({
+          workspaceName: SESSION,
+          semanticPaneId: "pane.shell",
+          canonicalGeneration: INSTANCE,
+          canonicalIncarnation: `${INSTANCE}:1`,
+          canonicalRevision: 0,
+          canonicalStateHash: "3333333333333333",
+          deliveryOrdinal: 77,
+          transactionId: "00000000-0000-4000-8000-000000000094",
+          deliveryClientId: "test:interactive",
+          deliverySurface: "web",
+          deliveryLaneId: "test:interactive:lane-1",
+          deliveryRequestId: requestId,
+          deliveryNonce: "00000000-0000-4000-8000-000000000098",
+        }),
+      }),
+    );
     socket.message({
       type: "terminal-delivery-ack",
       ack: {

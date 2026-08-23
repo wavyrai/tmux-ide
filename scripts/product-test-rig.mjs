@@ -32,7 +32,11 @@ import {
   waitForReadinessLadder,
 } from "../apps/desktop-renderer/e2e/fixtures/daemon.ts";
 import { startDevServer } from "../apps/desktop-renderer/e2e/fixtures/dev-server.ts";
-import { createScratchFleet } from "../apps/desktop-renderer/e2e/fixtures/scratch-fleet.ts";
+import {
+  SCRATCH_INITIAL_PANE_COMMAND_INVALID,
+  createScratchFleet,
+  validateScratchInitialPaneCommand,
+} from "../apps/desktop-renderer/e2e/fixtures/scratch-fleet.ts";
 import {
   PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES,
   PRODUCT_RIG_SOURCE_INVENTORY_MAX_BYTES,
@@ -59,6 +63,7 @@ import {
   coherentGenerationPaint,
   coherentGenerationDuration,
   coherentReadiness,
+  createProductJsonlTailReader,
   inputPaintSamples,
   latestCausalFixtureCanonicalMode,
   paneBodyRegion,
@@ -72,6 +77,7 @@ import {
   productResourceGeometryIdentity,
   productResourceMeasuredEndpointTraceIds,
   productResourceProbeCells,
+  productCapturePageUrlStatus,
   publicRigStatus,
   readJson,
   resolvePaneBodyRect,
@@ -130,6 +136,7 @@ import {
   runFocusOwnerBoot,
   runKeyboardPointerResizeOwnerBoot,
   runSelectionCopyAppMouseOwnerBoot,
+  runAnsiCursorAltScreenOwnerBoot,
   runWindowLifecycleOwnerBoot,
   runIsolatedProductJourneyAttempt,
   runProductJourneyPlan,
@@ -188,6 +195,64 @@ import {
   selectionWorkspaceClientEvidence,
   waitForSelectionMouseModeConditioning,
 } from "./lib/product-selection-copy-app-mouse.mjs";
+import {
+  ANSI_WORKLOAD_ABSOLUTE_MS,
+  ANSI_WORKLOAD_NO_PROGRESS_MS,
+  ANSI_TUI_HEAP_ABSOLUTE_CEILING_BYTES,
+  ANSI_TUI_RSS_ABSOLUTE_CEILING_BYTES,
+  advanceAnsiCanonicalPredecessor,
+  advanceAnsiWorkloadProgress,
+  ansiBaselinePreviousCounters,
+  ansiBaselineCursorEvidenceStatus,
+  ansiEventLoopResourceCapStatus,
+  ansiNativePaneLeaseStatus,
+  ansiPreAlternateNormalStatus,
+  ansiResourceEpochIdentityExact,
+  ansiRenditionFailureLocalization,
+  ansiSemanticBodyProjection,
+  ansiWorkloadMarker,
+  ansiWorkloadOrderedTailStatus,
+  ansiWorkloadPayload,
+  ansiWorkloadProducerStatus,
+  ansiWorkloadProgressExpiry,
+  ansiCanonicalPresentationHmac,
+  ansiCursorAltJourneyStatus,
+  ansiCursorStageFromRecords,
+  ansiWebExpectedGridProjection,
+  ansiWorkloadDeliveryAuthorityTail,
+  ansiWorkloadDeliveryJoin,
+  assessAnsiCursorAltScreenEvidence,
+  assessAnsiIdleRetainedResourceSamples,
+  boundedAnsiResourceFailureFacts,
+  boundedAnsiResourcePeakFailureFacts,
+  captureAnsiCursorWebPresentation,
+  runAnsiDeliveryReadyAction,
+} from "./lib/product-ansi-cursor-alt-screen.mjs";
+import { conditionAnsiTmuxFixture } from "./lib/product-ansi-tmux-precondition.mjs";
+
+const ANSI_MIRROR_FLOW_FAILURE_REASONS = new Set([
+  "command-error",
+  "command-timeout",
+  "notification-queue-overflow",
+  "no-progress",
+  "absolute-deadline",
+  "attempts-exhausted",
+]);
+const ANSI_ATOMIC_COLLECTOR_FAILURE_REASONS = new Set([
+  "busy",
+  "channel-exit",
+  "foreign-sentinel",
+  "duplicate-sentinel",
+  "sentinel-order",
+  "capture-byte-cap",
+  "capture-line-cap",
+  "cursor-cardinality",
+  "cursor-byte-cap",
+  "unexpected-post-line",
+  "marker-rejected",
+  "timeout",
+  "retired",
+]);
 import { runBoundedFocusTmux } from "./lib/product-focus-tmux.mjs";
 import { readBoundedDiagnosticTail } from "./lib/bounded-diagnostic-tail.mjs";
 import { parseLayout } from "../packages/daemon/src/terminal/protocol/layout-parse.ts";
@@ -311,6 +376,8 @@ function productDiagnosticCorrelation(state, captureEvidence) {
   const windowLifecycle = state?.journeyEvidence?.windowLifecycle ?? null;
   const keyboardPointerResize = state?.journeyEvidence?.keyboardPointerResize ?? null;
   const selectionCopyAppMouse = state?.journeyEvidence?.selectionCopyAppMouse ?? null;
+  const ansiCursorAltScreenCorrelation =
+    state?.journeyEvidence?.ansiCursorAltScreenCorrelation ?? null;
   const exact = configless
     ? {
         fleetSessionId: configless.adopted?.fleetSessionId,
@@ -353,7 +420,9 @@ function productDiagnosticCorrelation(state, captureEvidence) {
                     catalogRevision: selectionCopyAppMouse.expected?.catalogRevision,
                     semanticPaneId: selectionCopyAppMouse.expected?.semanticPaneId,
                   }
-                : null;
+                : ansiCursorAltScreenCorrelation
+                  ? ansiCursorAltScreenCorrelation
+                  : null;
   return buildProductDiagnosticCorrelation({
     state,
     tuiAvailable,
@@ -1024,7 +1093,7 @@ async function exactWindowTmuxSnapshot(state, expected, timeoutMs = 2_000) {
         "-t",
         `=${state.session}`,
         "-F",
-        "#{window_id}\t#{@tmux_ide_window_id}\t#{window_name}\t#{window_active}\t#{window_width}\t#{window_height}\t#{pane_id}\t#{@tmux_ide_pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}",
+        "#{session_name}\t#{window_id}\t#{@tmux_ide_window_id}\t#{window_name}\t#{window_active}\t#{window_width}\t#{window_height}\t#{pane_id}\t#{@tmux_ide_pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}",
       ],
       { deadline: performance.now() + timeoutMs, signal: controller.signal },
     );
@@ -1034,6 +1103,7 @@ async function exactWindowTmuxSnapshot(state, expected, timeoutMs = 2_000) {
       .filter(Boolean)
       .map((line) => {
         const [
+          sessionName,
           nativeWindowId,
           resourceId,
           name,
@@ -1048,6 +1118,7 @@ async function exactWindowTmuxSnapshot(state, expected, timeoutMs = 2_000) {
           rows,
         ] = line.split("\t");
         return Object.freeze({
+          sessionName,
           nativeWindowId,
           resourceId,
           name,
@@ -1071,6 +1142,7 @@ async function exactWindowTmuxSnapshot(state, expected, timeoutMs = 2_000) {
         (row) =>
           /^@[0-9]+$/u.test(row.nativeWindowId) &&
           /^%[0-9]+$/u.test(row.paneId) &&
+          row.sessionName === state.session &&
           Object.values(row.geometry).every(Number.isSafeInteger) &&
           row.geometry.windowCols > 0 &&
           row.geometry.windowRows > 0 &&
@@ -1574,6 +1646,20 @@ async function activePaneBodyEvidence(state) {
 }
 
 async function captureArtifacts(state, label = "capture", existingPage = null) {
+  const capturePageUrl = existingPage
+    ? Object.freeze({ exact: true, pageUrl: null, reason: null })
+    : productCapturePageUrlStatus(state?.web?.pageUrl);
+  if (!capturePageUrl.exact) {
+    const error = new Error("ProductRig artifact capture requires an exact local Web page");
+    error.code = "PRODUCT_RIG_CAPTURE_PAGE_URL_INVALID";
+    error.boundary = "evidence-capture";
+    error.observation = Object.freeze({
+      operation: "product-artifact-web-url",
+      code: error.code,
+      reason: capturePageUrl.reason,
+    });
+    throw error;
+  }
   mkdirSync(artifactDir, { recursive: true });
   const suffix = `${label}-${Date.now()}`;
   const tuiText = tuiCommand(state, ["capture", "--ansi", "--history", "80"]);
@@ -1589,7 +1675,7 @@ async function captureArtifacts(state, label = "capture", existingPage = null) {
     const page =
       existingPage ?? (await captureBrowser.newPage({ viewport: { width: 1440, height: 900 } }));
     if (!existingPage) {
-      await page.goto(state.web.pageUrl, { waitUntil: "domcontentloaded" });
+      await page.goto(capturePageUrl.pageUrl, { waitUntil: "domcontentloaded" });
       await page.locator(".app[data-shell-source='runtime']").waitFor({ timeout: 60_000 });
       await page
         .locator(".terminal-surface[data-phase='connected']")
@@ -1718,6 +1804,71 @@ async function waitForState(predicate, timeoutMs = 90_000, { allowTerminalFailur
         ? Math.min(state.windowSwitchOrdinalWatermark, 32)
         : null,
       elapsedMs: timeoutMs,
+      ...(state?.journeyEvidence?.ansiCursorAltScreenPartial?.workloadProgress
+        ? {
+            workloadProgress: Object.freeze({
+              activeCycle: Number.isSafeInteger(
+                state.journeyEvidence.ansiCursorAltScreenPartial.workloadProgress.activeCycle,
+              )
+                ? Math.min(
+                    Math.max(
+                      state.journeyEvidence.ansiCursorAltScreenPartial.workloadProgress.activeCycle,
+                      0,
+                    ),
+                    24,
+                  )
+                : null,
+              completedCycles: Number.isSafeInteger(
+                state.journeyEvidence.ansiCursorAltScreenPartial.workloadProgress.completedCycles,
+              )
+                ? Math.min(
+                    Math.max(
+                      state.journeyEvidence.ansiCursorAltScreenPartial.workloadProgress
+                        .completedCycles,
+                      0,
+                    ),
+                    24,
+                  )
+                : null,
+              progressCount: Number.isSafeInteger(
+                state.journeyEvidence.ansiCursorAltScreenPartial.workloadProgress.progressCount,
+              )
+                ? Math.min(
+                    Math.max(
+                      state.journeyEvidence.ansiCursorAltScreenPartial.workloadProgress
+                        .progressCount,
+                      0,
+                    ),
+                    8_192,
+                  )
+                : null,
+              elapsedMs: Number.isSafeInteger(
+                state.journeyEvidence.ansiCursorAltScreenPartial.workloadProgress.elapsedMs,
+              )
+                ? Math.min(
+                    Math.max(
+                      state.journeyEvidence.ansiCursorAltScreenPartial.workloadProgress.elapsedMs,
+                      0,
+                    ),
+                    30_000,
+                  )
+                : null,
+              noProgressElapsedMs: Number.isSafeInteger(
+                state.journeyEvidence.ansiCursorAltScreenPartial.workloadProgress
+                  .noProgressElapsedMs,
+              )
+                ? Math.min(
+                    Math.max(
+                      state.journeyEvidence.ansiCursorAltScreenPartial.workloadProgress
+                        .noProgressElapsedMs,
+                      0,
+                    ),
+                    15_000,
+                  )
+                : null,
+            }),
+          }
+        : {}),
     });
   }
   throw timeout;
@@ -2524,7 +2675,7 @@ async function start(json, quiet = false, planEntry = null) {
   if (existing && processAlive(existing.ownerPid)) {
     if (!quiet)
       emit(json ? publicRigStatus(existing) : `Product rig already ${existing.status}`, json);
-    return;
+    return existing;
   }
   rmSync(rigRoot, { recursive: true, force: true });
   mkdirSync(artifactDir, { recursive: true, mode: 0o700 });
@@ -2537,6 +2688,7 @@ async function start(json, quiet = false, planEntry = null) {
       ...(planEntry
         ? {
             TMUX_IDE_PRODUCT_JOURNEY: planEntry.journey.id,
+            TMUX_IDE_PRODUCT_RUN_ID: planEntry.runId,
             ...(planEntry.variant ? { TMUX_IDE_PRODUCT_JOURNEY_VARIANT: planEntry.variant } : {}),
           }
         : {}),
@@ -2554,12 +2706,20 @@ async function start(json, quiet = false, planEntry = null) {
   });
   closeSync(log);
   child.unref();
-  const state = await waitForState((candidate) => candidate?.status === "ready");
+  // Twenty-four independently bounded 30s ANSI workload cycles plus startup,
+  // Web, and the 10.1s idle proof remain below this journey-specific owner cap.
+  // Other ProductRig journeys retain the normal 90s readiness boundary.
+  const readinessTimeoutMs = planEntry?.journey?.id === "ansi-cursor-alt-screen" ? 900_000 : 90_000;
+  const state = await waitForState(
+    (candidate) => candidate?.status === "ready",
+    readinessTimeoutMs,
+  );
   if (!quiet)
     emit(
       json ? publicRigStatus(state) : `Product rig ready: ${state.session} · ${state.web.pageUrl}`,
       json,
     );
+  return state;
 }
 
 async function stop(json, { quiet = false, strict = false, maxAttempts = 2 } = {}) {
@@ -3590,8 +3750,21 @@ async function provePreseededPanePublication(state, seed, timeoutMs = 5_000) {
               : null,
           })
         : null;
+    const seedObservation = error?.observation ?? null;
     error.observation = Object.freeze({
-      ...(error.observation ?? {}),
+      matchingPublications: Number.isSafeInteger(seedObservation?.matchingPublications)
+        ? Math.min(seedObservation.matchingPublications, 257)
+        : null,
+      matchingPaints: Number.isSafeInteger(seedObservation?.matchingPaints)
+        ? Math.min(seedObservation.matchingPaints, 257)
+        : null,
+      canonicalGeometryExact:
+        seedObservation?.canonicalGeometry?.cols === sample.geometry.width &&
+        seedObservation?.canonicalGeometry?.rows === sample.geometry.height + 1,
+      viewportGeometryExact:
+        seedObservation?.viewportGeometry?.cols === sample.bodyRect.width &&
+        seedObservation?.viewportGeometry?.rows === sample.geometry.height,
+      sourceEpochExact: seedObservation?.sourceEpoch === 1,
       preCleanTmux,
       latestCanonicalPatch: summarize(
         samePane.findLast(({ type }) => type === "performance.terminal-canonical-update"),
@@ -5179,6 +5352,76 @@ async function diagnoseSelectionCopyAppMouse(planEntry) {
   };
 }
 
+async function diagnoseAnsiCursorAltScreen(planEntry) {
+  diagnosticAttemptPhases.set(planEntry.runId, "product-rig-startup");
+  const state = await start(false, true, planEntry);
+  diagnosticAttemptPhases.set(planEntry.runId, "evidence-capture");
+  const captureEvidence = await captureArtifacts(
+    state,
+    `diagnose-${planEntry.journey.id}-r${planEntry.repetition}`,
+  );
+  diagnosticCaptures.set(planEntry.runId, captureEvidence);
+  await tuiCommandAsync(state, ["stop"], { timeout: 5_000 });
+  const timeline = readJsonLines(timelinePath);
+  const correlation = productDiagnosticCorrelation(state, captureEvidence);
+  const journeyEvidence = state.journeyEvidence?.ansiCursorAltScreen ?? null;
+  const expected = state.journeyEvidence?.ansiCursorAltScreenExpected ?? null;
+  const causal = assessAnsiCursorAltScreenEvidence(journeyEvidence, expected);
+  const assessment = ansiCursorAltJourneyStatus({
+    timeline,
+    assessment: causal,
+    correlationComplete: correlation.complete,
+  });
+  const report = {
+    version: 1,
+    status: assessment.status,
+    journey: planEntry.journey.id,
+    variant: null,
+    repetition: planEntry.repetition,
+    repeat: planEntry.repeat,
+    runId: planEntry.runId,
+    firstBrokenBoundary: assessment.firstBrokenBoundary,
+    firstUnmeasuredBoundary: assessment.firstUnmeasuredBoundary,
+    boundaries: assessment.boundaries,
+    causalAssessment: causal,
+    ansiCursorAltScreen: journeyEvidence,
+    ansiCursorAltScreenExpected: expected,
+    diagnosticCorrelation: { complete: correlation.complete, missing: correlation.missing },
+    sourceProvenance: {
+      commit: state.tui?.performanceTraceCommit ?? null,
+      tree: state.tui?.performanceTraceTree ?? null,
+      manifestDigest: state.tui?.performanceTraceManifestDigest ?? null,
+    },
+  };
+  return {
+    report,
+    reportPath: null,
+    evidence: {
+      report,
+      alignment: {
+        version: 1,
+        journey: planEntry.journey.id,
+        firstBrokenBoundary: assessment.firstBrokenBoundary,
+        firstUnmeasuredBoundary: assessment.firstUnmeasuredBoundary,
+        boundaries: assessment.boundaries,
+        causalAssessment: causal,
+        ansiCursorAltScreen: journeyEvidence,
+        ansiCursorAltScreenExpected: expected,
+        correlation: { complete: correlation.complete, missing: correlation.missing },
+        availability: correlation.availability,
+      },
+      timeline: readDiagnosticText(timelinePath),
+      tmuxTruth: captureEvidence.truth,
+      daemonState: correlation.daemonState,
+      clientState: correlation.clientState,
+      tuiAnsi: readDiagnosticText(captureEvidence.tuiPath),
+      webPngPath: captureEvidence.webPath,
+      stderr: boundedDiagnosticText(readDiagnosticText(join(state.tui.runtimeDir, "stderr.log"))),
+      reproduction: diagnosticReproduction(planEntry.journey.id, null),
+    },
+  };
+}
+
 function executeProductJourney(planEntry) {
   return dispatchProductJourneyExecutor(planEntry, {
     "configless-cold-start": diagnoseConfiglessColdStart,
@@ -5188,6 +5431,7 @@ function executeProductJourney(planEntry) {
     "window-lifecycle": diagnoseWindowLifecycle,
     "keyboard-pointer-resize": diagnoseKeyboardPointerResize,
     "selection-copy-app-mouse": diagnoseSelectionCopyAppMouse,
+    "ansi-cursor-alt-screen": diagnoseAnsiCursorAltScreen,
     "runtime-qualification": diagnoseRuntimeQualification,
   });
 }
@@ -5251,9 +5495,18 @@ async function prepareDiagnosticFailure(planEntry, error, firstBrokenBoundary) {
     failureObservation,
     partialRuntime,
     sourceProvenance: {
-      commit: state?.tui?.performanceTraceCommit ?? null,
-      tree: state?.tui?.performanceTraceTree ?? null,
-      manifestDigest: state?.tui?.performanceTraceManifestDigest ?? null,
+      commit:
+        state?.tui?.performanceTraceCommit ??
+        state?.diagnosticAttempt?.sourceProvenance?.commit ??
+        null,
+      tree:
+        state?.tui?.performanceTraceTree ??
+        state?.diagnosticAttempt?.sourceProvenance?.tree ??
+        null,
+      manifestDigest:
+        state?.tui?.performanceTraceManifestDigest ??
+        state?.diagnosticAttempt?.sourceProvenance?.manifestDigest ??
+        null,
     },
   };
   return {
@@ -5664,6 +5917,29 @@ async function owner() {
   let cleanupPromise = null;
   let sleepAssertionAcquisition = null;
   const ownerAbort = new AbortController();
+  const inheritedRunId = process.env.TMUX_IDE_PRODUCT_RUN_ID;
+  const inheritedSourceCommit = process.env.TMUX_IDE_PRODUCT_EXPECTED_SOURCE_COMMIT;
+  const inheritedSourceTree = process.env.TMUX_IDE_PRODUCT_EXPECTED_SOURCE_TREE;
+  const inheritedSourceManifest = process.env.TMUX_IDE_PRODUCT_EXPECTED_SOURCE_MANIFEST;
+  const inheritedDiagnosticAttempt =
+    typeof inheritedRunId === "string" &&
+    /^[a-z0-9][a-z0-9-]{0,159}$/u.test(inheritedRunId) &&
+    typeof inheritedSourceCommit === "string" &&
+    /^[0-9a-f]{40,64}$/u.test(inheritedSourceCommit) &&
+    typeof inheritedSourceTree === "string" &&
+    /^[0-9a-f]{40,64}$/u.test(inheritedSourceTree) &&
+    typeof inheritedSourceManifest === "string" &&
+    /^[0-9a-f]{64}$/u.test(inheritedSourceManifest)
+      ? Object.freeze({
+          runId: inheritedRunId,
+          resourcesCreated: false,
+          sourceProvenance: Object.freeze({
+            commit: inheritedSourceCommit,
+            tree: inheritedSourceTree,
+            manifestDigest: inheritedSourceManifest,
+          }),
+        })
+      : null;
   let state = {
     version: PRODUCT_RIG_STATE_VERSION,
     status: "starting",
@@ -5672,6 +5948,7 @@ async function owner() {
     daemonLifecycle: "not-started",
     artifactDir,
     timelinePath,
+    ...(inheritedDiagnosticAttempt ? { diagnosticAttempt: inheritedDiagnosticAttempt } : {}),
   };
   const publish = (patch) => {
     state = { ...state, ...patch };
@@ -5799,6 +6076,9 @@ async function owner() {
 
   try {
     rmSync(timelinePath, { force: true });
+    // Persist the parent-frozen run/provenance identity before any namespace
+    // operation can create resources or fail validation.
+    publish({});
     sleepAssertionAcquisition = acquireProductRigSleepAssertion({ signal: ownerAbort.signal });
     sleepAssertion = await sleepAssertionAcquisition;
     void sleepAssertion.failure.catch(async (error) => {
@@ -7298,6 +7578,4025 @@ async function owner() {
       publish({
         convergence: { workspaceClient: selectionBoot.web.workspaceClient },
         journeyEvidence: { selectionCopyAppMouse: journeyEvidence },
+        status: "ready",
+        readyAt: new Date().toISOString(),
+      });
+      await new Promise(() => undefined);
+      return;
+    }
+    if (journeyId === "ansi-cursor-alt-screen") {
+      const ansiJsonlReaders = new Map();
+      const ansiReadJsonLines = (path, recordKind = "trace") => {
+        const readerKey = `${recordKind}\0${path}`;
+        let reader = ansiJsonlReaders.get(readerKey);
+        if (!reader) {
+          reader = createProductJsonlTailReader(path, { recordKind });
+          ansiJsonlReaders.set(readerKey, reader);
+        }
+        return reader.read();
+      };
+      const ansiJsonlWatermark = async (path, recordKind = "trace") => {
+        const deadline = performance.now() + 2_000;
+        for (;;) {
+          ansiReadJsonLines(path, recordKind);
+          const reader = ansiJsonlReaders.get(`${recordKind}\0${path}`);
+          if (reader.snapshot().caughtUp) return reader.mark();
+          if (performance.now() >= deadline) {
+            const error = new Error("ANSI JSONL watermark did not reach an exact line boundary");
+            error.code = "ANSI_JSONL_WATERMARK_INVALID";
+            error.observation = Object.freeze({
+              operation: "ansi-jsonl-watermark",
+              reason: "incomplete-or-over-budget",
+              recordKind,
+            });
+            throw error;
+          }
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+      };
+      ownerAbort.signal.addEventListener(
+        "abort",
+        () => {
+          for (const reader of ansiJsonlReaders.values()) reader.close();
+          ansiJsonlReaders.clear();
+        },
+        { once: true },
+      );
+      let ansiReadiness = null;
+      let ansiBaseline = null;
+      let ansiPresentationCounters = null;
+      let ansiCanonicalPredecessor = null;
+      let ansiExpectedDeliverySurfaces = Object.freeze(["opentui"]);
+      let ansiExpectedDeliveryClients = null;
+      let ansiResourceOrdinal = 0;
+      let ansiResourceEpochIdentity = null;
+      let ansiPartialEvidence = Object.freeze({
+        stage: "starting",
+        baseline: null,
+        rich: null,
+        cursorSamples: Object.freeze([]),
+        preAlternateNormal: null,
+        alternate: null,
+        restored: null,
+        workload: null,
+        workloadFinalities: Object.freeze([]),
+        workloadFailure: null,
+        resourceSamples: Object.freeze([]),
+        idle: null,
+        webPresentations: Object.freeze([]),
+        webStageVector: Object.freeze([]),
+        webFailure: null,
+      });
+      const publishAnsiPartial = (patch) => {
+        ansiPartialEvidence = Object.freeze({ ...ansiPartialEvidence, ...patch });
+        publish({
+          journeyEvidence: {
+            ...(state.journeyEvidence ?? {}),
+            ansiCursorAltScreenPartial: ansiPartialEvidence,
+          },
+        });
+      };
+      const ansiHmac = (key, domain, value) =>
+        createHmac("sha256", key).update(domain).update("\0").update(String(value)).digest("hex");
+      const ansiResourceIdentityHmac = (key, identity) =>
+        ansiHmac(
+          key,
+          "resource-identity",
+          JSON.stringify([
+            identity.semanticPaneId,
+            identity.generation,
+            identity.incarnation,
+            identity.revision,
+            identity.stateHash,
+            identity.sourceEpoch,
+            identity.rendererEpoch,
+            identity.viewportCols,
+            identity.viewportRows,
+          ]),
+        );
+      const ansiResourceEpochIdentityHmac = (key, identity) =>
+        ansiHmac(
+          key,
+          "resource-epoch-identity",
+          JSON.stringify([
+            identity?.processId,
+            identity?.clockId,
+            identity?.clockKind,
+            identity?.semanticPaneId,
+            identity?.generation,
+            identity?.incarnation,
+            identity?.revision,
+            identity?.stateHash,
+            identity?.sourceEpoch,
+            identity?.rendererEpoch,
+            identity?.cols,
+            identity?.rows,
+            identity?.viewportCols,
+            identity?.viewportRows,
+            identity?.acceptedUpdateType,
+            identity?.acceptedRevision,
+          ]),
+        );
+      const ansiStageProjection = (key, mode, presentation) =>
+        Object.freeze({
+          processHmac: ansiHmac(key, "process", mode.processId),
+          clockId: mode.clockId,
+          clockKind: mode.clockKind,
+          paneHmac: ansiHmac(key, "pane", mode.semanticPaneId),
+          generationHmac: ansiHmac(key, "generation", mode.generation),
+          incarnationHmac: ansiHmac(key, "incarnation", mode.incarnation),
+          revision: mode.revision,
+          stateHmac: ansiHmac(key, "state", mode.stateHash),
+          presentationHmac: ansiCanonicalPresentationHmac(key, mode, presentation),
+          canonicalCols: presentation.cols,
+          canonicalRows: presentation.rows,
+          viewportCols: presentation.viewportCols,
+          viewportRows: presentation.viewportRows,
+          sourceEpoch: presentation.sourceEpoch,
+          rendererEpoch: presentation.rendererEpoch,
+          alternateScreen: mode.alternateScreen,
+          cursor: Object.freeze({
+            x: presentation.cursorX,
+            y: presentation.cursorY,
+            hidden: !presentation.visible,
+            style: presentation.style,
+            blink: presentation.blink,
+          }),
+          framebufferHmac: null,
+          framebufferCellCount: null,
+          framebufferWideContinuationCount: null,
+          framebufferCombiningCount: null,
+          framebufferStyledCellCount: null,
+          gridRowsReadTotal: presentation.gridRowsReadTotal,
+          fullWalkTotal: presentation.fullWalkTotal,
+          presentationCount: presentation.presentationCount,
+        });
+      const waitAnsiStage = async (namespace, key, expected) => {
+        const deadline = performance.now() + 3_000;
+        let latest;
+        for (;;) {
+          const records = ansiReadJsonLines(namespace.tui.performanceTracePath);
+          latest = ansiCursorStageFromRecords({
+            records,
+            daemonRecords: ansiReadJsonLines(namespace.tui.daemonPerformanceTracePath),
+            watermark: expected.watermark,
+            expected,
+            evidenceKey: namespace.evidenceKey,
+          });
+          if (latest.qualified) return latest;
+          if (ownerAbort.signal.aborted) throw new Error("ANSI presentation wait aborted");
+          if (performance.now() >= deadline) {
+            const error = new Error("ANSI presentation did not reach an exact frame fence");
+            error.observation = Object.freeze({
+              operation: "ansi-presentation",
+              stage: key,
+              firstFailedPredicate: latest?.firstFailedPredicate ?? "missing",
+              recordCount: Math.min(records.length - expected.watermark, 8_192),
+              daemonEvidence: latest?.daemonEvidence ?? null,
+              stageEvidence: latest?.stageEvidence ?? null,
+            });
+            throw error;
+          }
+          await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+        }
+      };
+      const inspectAnsiNativeStage = async (
+        namespace,
+        { resources, sessionName, windowResourceId, semanticPaneId },
+        stage,
+        { displayCursor = false, deadlineMs = 1_500 } = {},
+      ) => {
+        if (
+          !new Set(["baseline", "pre-alternate", "alternate", "final", "workload-timeout"]).has(
+            stage,
+          )
+        )
+          throw new TypeError("ANSI native stage was invalid");
+        if (!Number.isSafeInteger(deadlineMs) || deadlineMs < 1 || deadlineMs > 1_500)
+          throw new TypeError("ANSI native deadline was invalid");
+        let snapshotOutcome = "pending";
+        let captureOutcome = "not-attempted";
+        let displayOutcome = displayCursor ? "not-attempted" : "not-requested";
+        let leaseStatus = Object.freeze({ matchCount: null, mappingExact: false, lease: null });
+        try {
+          const nativeDeadline = performance.now() + deadlineMs;
+          const snapshot = await exactWindowTmuxSnapshot(state, resources);
+          snapshotOutcome = "accepted";
+          leaseStatus = ansiNativePaneLeaseStatus(snapshot, {
+            sessionName,
+            windowResourceId,
+            semanticPaneId,
+          });
+          if (!leaseStatus.mappingExact || !leaseStatus.lease) throw new Error("mapping");
+          captureOutcome = "attempted";
+          const capture = await runBoundedFocusTmux({
+            socketPath: namespace.runtimeNamespace.tmuxSocketPath,
+            args: ["capture-pane", "-p", "-e", "-t", leaseStatus.lease.paneId],
+            deadline: nativeDeadline,
+            signal: ownerAbort.signal,
+          });
+          captureOutcome = "accepted";
+          let cursor = null;
+          if (displayCursor) {
+            displayOutcome = "attempted";
+            const fields = (
+              await runBoundedFocusTmux({
+                socketPath: namespace.runtimeNamespace.tmuxSocketPath,
+                args: [
+                  "display-message",
+                  "-p",
+                  "-t",
+                  leaseStatus.lease.paneId,
+                  "#{cursor_x}\t#{cursor_y}\t#{pane_width}\t#{pane_height}",
+                ],
+                deadline: nativeDeadline,
+                signal: ownerAbort.signal,
+              })
+            )
+              .trimEnd()
+              .split("\t")
+              .map(Number);
+            if (
+              fields.length !== 4 ||
+              !fields.every(Number.isSafeInteger) ||
+              fields.some((value) => value < 0)
+            )
+              throw new Error("display");
+            displayOutcome = "accepted";
+            cursor = Object.freeze({
+              x: fields[0],
+              y: fields[1],
+              cols: fields[2],
+              rows: fields[3],
+            });
+          }
+          return Object.freeze({
+            snapshot,
+            capture,
+            cursor,
+            matchCount: leaseStatus.matchCount,
+            mappingExact: leaseStatus.mappingExact,
+          });
+        } catch {
+          const error = new Error(`ANSI native ${stage} evidence failed`);
+          error.observation = Object.freeze({
+            operation: "ansi-native-tmux",
+            stage,
+            snapshotOutcome,
+            matchCount: leaseStatus.matchCount,
+            mappingExact: leaseStatus.mappingExact,
+            captureOutcome,
+            displayOutcome,
+          });
+          throw error;
+        }
+      };
+      const ansiTmuxSemanticProjection = (snapshot) =>
+        JSON.stringify(
+          snapshot.map(({ sessionName, resourceId, name, active, semanticPaneId, geometry }) => ({
+            sessionName,
+            resourceId,
+            name,
+            active,
+            semanticPaneId,
+            geometry,
+          })),
+        );
+      const fixedAnsiCursor = (stage, _marker) => {
+        if (stage === "rich")
+          return Object.freeze({ x: 6, y: 3, hidden: false, style: "line", blink: true });
+        if (stage === "cursor-only")
+          return Object.freeze({ x: 3, y: 2, hidden: false, style: "block", blink: false });
+        if (stage === "alternate")
+          return Object.freeze({ x: 11, y: 7, hidden: true, style: "underline", blink: false });
+        return Object.freeze({
+          x: 0,
+          y: 1,
+          hidden: false,
+          style: "block",
+          blink: false,
+        });
+      };
+      const ansiRenditionCells = (stage, marker) => {
+        const cell = (row, column, chars, width, wrapped, rendition = {}) =>
+          Object.freeze({
+            row,
+            column,
+            chars,
+            width,
+            wrapped,
+            foreground: rendition.foreground ?? "default",
+            background: rendition.background ?? "default",
+            bold: rendition.bold ?? false,
+            italic: rendition.italic ?? false,
+            underline: rendition.underline ?? false,
+          });
+        const text = (value, row, start, wrapped, rendition) =>
+          [...value].map((chars, index) => cell(row, start + index, chars, 1, wrapped, rendition));
+        if (stage === "normal" || stage === "restored") return text(marker, 0, 0, false);
+        if (stage === "alternate")
+          return [
+            ...text("ALT_SCREEN", 0, 0, false),
+            cell(0, 10, "界", 2, false),
+            cell(0, 11, "", 0, false),
+            cell(0, 12, "é", 1, false),
+          ];
+        if (stage === "rich" || stage === "cursor-only") {
+          const first = {
+            foreground: "indexed:196",
+            background: "rgb:010203",
+            bold: true,
+            italic: true,
+            underline: true,
+          };
+          const wrapped = {
+            foreground: "rgb:5ab4ff",
+            background: "indexed:17",
+            bold: true,
+            underline: true,
+          };
+          return [
+            ...text("ANSI_RICH", 0, 0, false, first),
+            cell(0, 9, "界", 2, false, first),
+            cell(0, 10, "", 0, false, first),
+            cell(0, 11, "é", 1, false, first),
+            cell(1, 128, "W", 1, false, wrapped),
+            cell(1, 129, "界", 2, false, wrapped),
+            cell(1, 130, "", 0, false, wrapped),
+            cell(1, 131, "é", 1, false, wrapped),
+            cell(2, 0, "Z", 1, true, wrapped),
+          ];
+        }
+        return null;
+      };
+      const ansiFramebufferCells = (stage, marker) => {
+        const rendition = ansiRenditionCells(stage, marker);
+        if (!rendition) return null;
+        const rgb = (color) =>
+          color === "indexed:196" ? "rgb:ff0000" : color === "indexed:17" ? "rgb:00005f" : color;
+        return Object.freeze(
+          rendition.map(
+            ({ row, column, chars, width, foreground, background, bold, italic, underline }) =>
+              Object.freeze({
+                row,
+                column,
+                chars,
+                width,
+                foreground: rgb(foreground),
+                background: rgb(background),
+                attributes: (bold ? 1 : 0) | (italic ? 4 : 0) | (underline ? 8 : 0),
+              }),
+          ),
+        );
+      };
+      const waitAnsiPostFenceResource = async (namespace, identity, cycle) => {
+        const baselineResource = cycle === 0;
+        const operation = baselineResource
+          ? "ansi-normal-baseline-resource-cap"
+          : "ansi-workload-resource-cap";
+        const boundary = baselineResource ? "ansi-normal-baseline" : "ansi-sustained-workload";
+        if (ansiResourceEpochIdentity === null) ansiResourceEpochIdentity = identity;
+        const deadline = performance.now() + 2_000;
+        let sample;
+        for (;;) {
+          sample = ansiReadJsonLines(namespace.tui.performanceTracePath).findLast(
+            (record) =>
+              record?.type === "performance.terminal-resource-sample" &&
+              record.operation === "post-fence" &&
+              record.ordinal > ansiResourceOrdinal &&
+              record.atMicros >= identity.atMicros &&
+              record.processId === identity.processId &&
+              record.clockId === identity.clockId &&
+              record.clockKind === "performance-now" &&
+              record.semanticPaneId === identity.semanticPaneId &&
+              record.generation === identity.generation &&
+              record.incarnation === identity.incarnation &&
+              record.revision === identity.revision &&
+              record.stateHash === identity.stateHash &&
+              record.sourceEpoch === identity.sourceEpoch &&
+              record.rendererEpoch === identity.rendererEpoch &&
+              record.viewportCols === identity.viewportCols &&
+              record.viewportRows === identity.viewportRows,
+          );
+          if (sample) break;
+          if (performance.now() >= deadline) {
+            const observedCount = ansiReadJsonLines(namespace.tui.performanceTracePath).filter(
+              (record) => record?.type === "performance.terminal-resource-sample",
+            ).length;
+            const observation = Object.freeze({
+              operation,
+              cycle,
+              ...boundedAnsiResourceFailureFacts({
+                rssBytes: null,
+                heapUsedBytes: null,
+                eventLoopDelayMicros: null,
+              }),
+              ...boundedAnsiResourcePeakFailureFacts({
+                rssPeakBytes: null,
+                heapUsedPeakBytes: null,
+                eventLoopDelayPeakMicros: null,
+              }),
+              resourceEpochArmed: null,
+              resourceEpochIdentityHmac: null,
+              resourceEpochIdentityExact: null,
+              lowWaterFirstSampleOrdinal: null,
+              lowWaterLastSampleOrdinal: null,
+              lowWaterSampleCount: null,
+              lowWaterWindowMicros: null,
+              eventLoopDelayPeakSource: null,
+              heartbeatPeakExpectedAtMicros: null,
+              heartbeatPeakActualAtMicros: null,
+              heartbeatPeakWallLatenessMicros: null,
+              heartbeatPeakCpuUserMicros: null,
+              heartbeatPeakCpuSystemMicros: null,
+              heartbeatPeakVoluntaryContextSwitches: null,
+              heartbeatPeakInvoluntaryContextSwitches: null,
+              heartbeatPeakContextSwitchesAvailable: null,
+              heartbeatPeakPhase: null,
+              heartbeatPeakRevisionHmac: null,
+              heartbeatPeakStateHmac: null,
+              heartbeatPeakEpochBound: null,
+              inputPending: null,
+              inputInFlight: null,
+              inputPendingBytes: null,
+              inputPendingPeak: null,
+              inputInFlightPeak: null,
+              inputPendingBytesPeak: null,
+              observedCount: Math.min(observedCount, 512),
+              resourceSamplingFailureCount: null,
+              firstFailedPredicate: "resource-sample-unavailable",
+            });
+            publishAnsiPartial({
+              stage: baselineResource ? "baseline" : "workload",
+              workloadFailure: observation,
+            });
+            const error = new Error(
+              baselineResource
+                ? "ANSI baseline resource endpoint was unavailable"
+                : "ANSI workload resource endpoint was unavailable",
+            );
+            error.boundary = boundary;
+            error.observation = observation;
+            throw error;
+          }
+          await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+        }
+        ansiResourceOrdinal = sample.ordinal;
+        const eventLoopFailure = ansiEventLoopResourceCapStatus(sample);
+        const firstFailedPredicate =
+          sample.resourceEpochArmed !== true ||
+          !ansiResourceEpochIdentityExact(sample.resourceEpochIdentity, ansiResourceEpochIdentity)
+            ? "resource-epoch-identity"
+            : sample.lowWaterFirstSampleOrdinal !== 1 ||
+                sample.lowWaterLastSampleOrdinal !== 8 ||
+                sample.lowWaterSampleCount !== 8 ||
+                !Number.isSafeInteger(sample.lowWaterWindowMicros) ||
+                sample.lowWaterWindowMicros < 40_000 ||
+                sample.lowWaterWindowMicros > 2_000_000
+              ? "resource-low-water-window"
+              : !Number.isSafeInteger(sample.resourceSamplingFailureCount) ||
+                  sample.resourceSamplingFailureCount !== 0
+                ? "resource-sampling-failure"
+                : !Number.isSafeInteger(sample.rssBytes) ||
+                    sample.rssBytes < 0 ||
+                    sample.rssBytes > ANSI_TUI_RSS_ABSOLUTE_CEILING_BYTES
+                  ? "rss-current-cap"
+                  : !Number.isSafeInteger(sample.rssPeakBytes) ||
+                      sample.rssPeakBytes < 0 ||
+                      sample.rssPeakBytes > ANSI_TUI_RSS_ABSOLUTE_CEILING_BYTES
+                    ? "rss-absolute-cap"
+                    : !Number.isSafeInteger(sample.heapUsedBytes) ||
+                        sample.heapUsedBytes < 0 ||
+                        sample.heapUsedBytes > ANSI_TUI_HEAP_ABSOLUTE_CEILING_BYTES
+                      ? "heap-current-cap"
+                      : !Number.isSafeInteger(sample.heapUsedPeakBytes) ||
+                          sample.heapUsedPeakBytes < 0 ||
+                          sample.heapUsedPeakBytes > ANSI_TUI_HEAP_ABSOLUTE_CEILING_BYTES
+                        ? "heap-absolute-cap"
+                        : eventLoopFailure !== null
+                          ? eventLoopFailure
+                          : !new Set(["heartbeat", "endpoint"]).has(sample.eventLoopDelayPeakSource)
+                            ? "event-loop-peak-source"
+                            : sample.eventLoopDelayPeakSource === "heartbeat" &&
+                                (!Number.isSafeInteger(sample.heartbeatPeakExpectedAtMicros) ||
+                                  !Number.isSafeInteger(sample.heartbeatPeakActualAtMicros) ||
+                                  sample.heartbeatPeakActualAtMicros <
+                                    sample.heartbeatPeakExpectedAtMicros ||
+                                  Math.abs(
+                                    sample.heartbeatPeakActualAtMicros -
+                                      sample.heartbeatPeakExpectedAtMicros -
+                                      sample.eventLoopDelayPeakMicros,
+                                  ) > 1 ||
+                                  !Number.isSafeInteger(sample.heartbeatPeakWallLatenessMicros) ||
+                                  sample.heartbeatPeakWallLatenessMicros < 0 ||
+                                  !Number.isSafeInteger(sample.heartbeatPeakCpuUserMicros) ||
+                                  sample.heartbeatPeakCpuUserMicros < 0 ||
+                                  !Number.isSafeInteger(sample.heartbeatPeakCpuSystemMicros) ||
+                                  sample.heartbeatPeakCpuSystemMicros < 0 ||
+                                  (sample.heartbeatPeakContextSwitchesAvailable === true
+                                    ? !Number.isSafeInteger(
+                                        sample.heartbeatPeakVoluntaryContextSwitches,
+                                      ) ||
+                                      sample.heartbeatPeakVoluntaryContextSwitches < 0 ||
+                                      !Number.isSafeInteger(
+                                        sample.heartbeatPeakInvoluntaryContextSwitches,
+                                      ) ||
+                                      sample.heartbeatPeakInvoluntaryContextSwitches < 0
+                                    : sample.heartbeatPeakContextSwitchesAvailable !== false ||
+                                      sample.heartbeatPeakVoluntaryContextSwitches !== null ||
+                                      sample.heartbeatPeakInvoluntaryContextSwitches !== null) ||
+                                  sample.heartbeatPeakPhase !== "terminal-runtime" ||
+                                  !Number.isSafeInteger(sample.heartbeatPeakRevision) ||
+                                  sample.heartbeatPeakRevision <
+                                    sample.resourceEpochIdentity.revision ||
+                                  sample.heartbeatPeakRevision > sample.revision ||
+                                  !/^[0-9a-f]{16}$/u.test(sample.heartbeatPeakStateHash ?? ""))
+                              ? "heartbeat-peak-episode"
+                              : sample.inputPending !== 0 ||
+                                  sample.inputInFlight !== 0 ||
+                                  sample.inputPendingBytes !== 0 ||
+                                  sample.inputPendingPeak !== 0 ||
+                                  sample.inputInFlightPeak !== 0 ||
+                                  sample.inputPendingBytesPeak !== 0
+                                ? "input-not-settled"
+                                : null;
+        if (firstFailedPredicate) {
+          const observation = Object.freeze({
+            operation,
+            cycle,
+            ...boundedAnsiResourceFailureFacts({
+              rssBytes: sample.rssBytes,
+              heapUsedBytes: sample.heapUsedBytes,
+              eventLoopDelayMicros: sample.eventLoopDelayMicros,
+            }),
+            ...boundedAnsiResourcePeakFailureFacts({
+              rssPeakBytes: sample.rssPeakBytes,
+              heapUsedPeakBytes: sample.heapUsedPeakBytes,
+              eventLoopDelayPeakMicros: sample.eventLoopDelayPeakMicros,
+            }),
+            resourceEpochArmed: sample.resourceEpochArmed === true,
+            resourceEpochIdentityHmac:
+              sample.resourceEpochArmed === true && sample.resourceEpochIdentity
+                ? ansiResourceEpochIdentityHmac(namespace.evidenceKey, sample.resourceEpochIdentity)
+                : null,
+            resourceEpochIdentityExact: ansiResourceEpochIdentityExact(
+              sample.resourceEpochIdentity,
+              ansiResourceEpochIdentity,
+            ),
+            lowWaterFirstSampleOrdinal: Number.isSafeInteger(sample.lowWaterFirstSampleOrdinal)
+              ? Math.min(Math.max(sample.lowWaterFirstSampleOrdinal, 0), 16)
+              : null,
+            lowWaterLastSampleOrdinal: Number.isSafeInteger(sample.lowWaterLastSampleOrdinal)
+              ? Math.min(Math.max(sample.lowWaterLastSampleOrdinal, 0), 16)
+              : null,
+            lowWaterSampleCount: Number.isSafeInteger(sample.lowWaterSampleCount)
+              ? Math.min(Math.max(sample.lowWaterSampleCount, 0), 16)
+              : null,
+            lowWaterWindowMicros: Number.isSafeInteger(sample.lowWaterWindowMicros)
+              ? Math.min(Math.max(sample.lowWaterWindowMicros, 0), 2_000_000)
+              : null,
+            eventLoopDelayPeakSource: new Set(["heartbeat", "endpoint"]).has(
+              sample.eventLoopDelayPeakSource,
+            )
+              ? sample.eventLoopDelayPeakSource
+              : null,
+            heartbeatPeakExpectedAtMicros: Number.isSafeInteger(
+              sample.heartbeatPeakExpectedAtMicros,
+            )
+              ? Math.min(Math.max(sample.heartbeatPeakExpectedAtMicros, 0), 9_007_199_254_740_991)
+              : null,
+            heartbeatPeakActualAtMicros: Number.isSafeInteger(sample.heartbeatPeakActualAtMicros)
+              ? Math.min(Math.max(sample.heartbeatPeakActualAtMicros, 0), 9_007_199_254_740_991)
+              : null,
+            heartbeatPeakWallLatenessMicros: Number.isSafeInteger(
+              sample.heartbeatPeakWallLatenessMicros,
+            )
+              ? Math.min(Math.max(sample.heartbeatPeakWallLatenessMicros, 0), 5_000_000)
+              : null,
+            heartbeatPeakCpuUserMicros: Number.isSafeInteger(sample.heartbeatPeakCpuUserMicros)
+              ? Math.min(Math.max(sample.heartbeatPeakCpuUserMicros, 0), 5_000_000)
+              : null,
+            heartbeatPeakCpuSystemMicros: Number.isSafeInteger(sample.heartbeatPeakCpuSystemMicros)
+              ? Math.min(Math.max(sample.heartbeatPeakCpuSystemMicros, 0), 5_000_000)
+              : null,
+            heartbeatPeakVoluntaryContextSwitches: Number.isSafeInteger(
+              sample.heartbeatPeakVoluntaryContextSwitches,
+            )
+              ? Math.min(Math.max(sample.heartbeatPeakVoluntaryContextSwitches, 0), 65_536)
+              : null,
+            heartbeatPeakInvoluntaryContextSwitches: Number.isSafeInteger(
+              sample.heartbeatPeakInvoluntaryContextSwitches,
+            )
+              ? Math.min(Math.max(sample.heartbeatPeakInvoluntaryContextSwitches, 0), 65_536)
+              : null,
+            heartbeatPeakContextSwitchesAvailable:
+              sample.heartbeatPeakContextSwitchesAvailable === true,
+            heartbeatPeakPhase:
+              sample.heartbeatPeakPhase === "terminal-runtime" ? "terminal-runtime" : null,
+            heartbeatPeakRevisionHmac: Number.isSafeInteger(sample.heartbeatPeakRevision)
+              ? ansiHmac(
+                  namespace.evidenceKey,
+                  "heartbeat-peak-revision",
+                  sample.heartbeatPeakRevision,
+                )
+              : null,
+            heartbeatPeakStateHmac:
+              typeof sample.heartbeatPeakStateHash === "string"
+                ? ansiHmac(
+                    namespace.evidenceKey,
+                    "heartbeat-peak-state",
+                    sample.heartbeatPeakStateHash,
+                  )
+                : null,
+            heartbeatPeakEpochBound:
+              Number.isSafeInteger(sample.heartbeatPeakRevision) &&
+              sample.heartbeatPeakRevision >= sample.resourceEpochIdentity.revision &&
+              sample.heartbeatPeakRevision <= sample.revision,
+            inputPending: Number.isSafeInteger(sample.inputPending) ? sample.inputPending : null,
+            inputInFlight: Number.isSafeInteger(sample.inputInFlight) ? sample.inputInFlight : null,
+            inputPendingBytes: Number.isSafeInteger(sample.inputPendingBytes)
+              ? sample.inputPendingBytes
+              : null,
+            inputPendingPeak: Number.isSafeInteger(sample.inputPendingPeak)
+              ? sample.inputPendingPeak
+              : null,
+            inputInFlightPeak: Number.isSafeInteger(sample.inputInFlightPeak)
+              ? sample.inputInFlightPeak
+              : null,
+            inputPendingBytesPeak: Number.isSafeInteger(sample.inputPendingBytesPeak)
+              ? sample.inputPendingBytesPeak
+              : null,
+            observedCount: Math.min(ansiResourceOrdinal, 512),
+            resourceSamplingFailureCount: Number.isSafeInteger(sample.resourceSamplingFailureCount)
+              ? Math.min(Math.max(sample.resourceSamplingFailureCount, 0), 512)
+              : null,
+            firstFailedPredicate,
+          });
+          publishAnsiPartial({
+            stage: baselineResource ? "baseline" : "workload",
+            workloadFailure: observation,
+          });
+          const error = new Error(
+            baselineResource
+              ? "ANSI baseline exceeded its resource cap"
+              : "ANSI workload exceeded its resource cap",
+          );
+          error.boundary = boundary;
+          error.observation = observation;
+          throw error;
+        }
+        return sample;
+      };
+      const driveAnsiStage = async (namespace, key, options) => {
+        const predecessor = ansiCanonicalPredecessor;
+        if (
+          !predecessor ||
+          options.afterRevision !== predecessor.revision ||
+          typeof predecessor.stateHash !== "string"
+        )
+          throw new Error("ANSI stage did not own the immediate canonical predecessor");
+        const readinessGate = await runAnsiDeliveryReadyAction({
+          readRecords: () => ansiReadJsonLines(namespace.tui.daemonPerformanceTracePath),
+          now: () => performance.now(),
+          sleep: (milliseconds) =>
+            new Promise((resolveWait) => setTimeout(resolveWait, milliseconds)),
+          expected: {
+            ...ansiBaseline.rawIdentity,
+            deliveryWorkspaceName: ansiBaseline.deliveryWorkspaceName,
+            deliveryClients: ansiExpectedDeliveryClients,
+            predecessorRevision: predecessor.revision,
+            predecessorStateHash: predecessor.stateHash,
+          },
+          takeWatermark: async () =>
+            (await ansiJsonlWatermark(namespace.tui.performanceTracePath)).recordCount,
+          driveInput: () =>
+            driveExactHostedInput(
+              state,
+              { version: 1, kind: "key", key, timeoutMs: 2_000 },
+              ownerAbort.signal,
+            ),
+        });
+        if (!readinessGate.qualified) {
+          const status = readinessGate.topology;
+          const readiness = readinessGate.readiness;
+          const error = new Error("ANSI delivery subscriber lanes did not catch up");
+          error.code = "ANSI_DELIVERY_LANE_NOT_CAUGHT_UP";
+          error.observation = Object.freeze({
+            operation: "ansi-delivery-readiness",
+            code: "delivery-lane-not-caught-up",
+            topologyExact: status?.exact === true,
+            reason: status?.exact === true ? readiness?.reason : status?.reason,
+            laneCount: Math.min(status?.lanes?.length ?? 0, 17),
+            readyLaneCount: readiness?.readyLaneCount ?? 0,
+            firstInvalidLaneOrdinal: readiness?.firstInvalidLaneOrdinal ?? null,
+            predecessorRevisionHmac: ansiHmac(
+              namespace.evidenceKey,
+              "delivery-readiness-revision",
+              String(predecessor.revision),
+            ),
+            predecessorStateHmac: ansiHmac(
+              namespace.evidenceKey,
+              "delivery-readiness-state",
+              predecessor.stateHash,
+            ),
+          });
+          publishAnsiPartial({ stage: "web-readiness", webFailure: error.observation });
+          throw error;
+        }
+        const deliveryTopology = readinessGate.topology;
+        const watermark = readinessGate.watermark;
+        const delivery = readinessGate.delivery;
+        if (delivery.bytesInjected !== 1 || delivery.phases !== 1)
+          throw new Error("ANSI fixture input delivery was not one exact byte");
+        const framebuffer = options.gridWalked
+          ? ansiFramebufferCells(options.stage, namespace.marker)
+          : null;
+        const result = await waitAnsiStage(namespace, key, {
+          ...ansiBaseline.rawIdentity,
+          watermark,
+          afterRevision: predecessor.revision,
+          priorStateHash: predecessor.stateHash,
+          alternateScreen: options.alternateScreen,
+          action: options.action,
+          gridWalked: options.gridWalked,
+          gridRowsRead: options.gridRowsRead,
+          fullWalk: options.fullWalk,
+          previousCounters: ansiPresentationCounters,
+          deliveryWorkspaceName: ansiBaseline.deliveryWorkspaceName,
+          deliverySurfaces: ansiExpectedDeliverySurfaces,
+          deliveryClients: ansiExpectedDeliveryClients,
+          deliveryTopology,
+          framebufferHmac: framebuffer
+            ? ansiHmac(namespace.evidenceKey, "opentui-framebuffer", JSON.stringify(framebuffer))
+            : null,
+          framebufferCellCount: framebuffer?.length ?? null,
+          framebufferWideContinuationCount:
+            framebuffer?.filter(({ width }) => width === 0).length ?? null,
+          framebufferCombiningCount:
+            framebuffer?.filter(({ chars }) => /\p{Mark}/u.test(chars)).length ?? null,
+          framebufferStyledCellCount:
+            framebuffer?.filter(
+              ({ foreground, background, attributes }) =>
+                foreground !== "default" || background !== "default" || attributes !== 0,
+            ).length ?? null,
+        });
+        ansiPresentationCounters = result.counters;
+        ansiCanonicalPredecessor = advanceAnsiCanonicalPredecessor(predecessor, result);
+        if (!ansiCanonicalPredecessor)
+          throw new Error("ANSI stage did not advance its exact canonical predecessor");
+        return result;
+      };
+      const ansiBoot = await runAnsiCursorAltScreenOwnerBoot({
+        onBoundary: (boundary) =>
+          publish({
+            currentJourneyBoundary: boundary,
+            currentJourneyBoundaryAtWallMs: Date.now(),
+            currentJourneyBoundaryAtMonotonicMs: performance.now(),
+          }),
+        createNamespace: async () => {
+          const marker = `ANSI_${randomBytes(6).toString("hex").toUpperCase()}`;
+          const daemonPerformanceTracePath = join(rigRoot, "ansi-daemon-performance.jsonl");
+          const fixtureCompletionPath = join(rigRoot, "ansi-fixture-completion.jsonl");
+          const initialPaneCommand = Object.freeze({
+            executable: process.execPath,
+            args: Object.freeze([
+              join(repoRoot, "scripts", "lib", "product-ansi-cursor-alt-screen-fixture.mjs"),
+              marker,
+              fixtureCompletionPath,
+            ]),
+          });
+          try {
+            validateScratchInitialPaneCommand(initialPaneCommand);
+          } catch (error) {
+            if (error?.code === SCRATCH_INITIAL_PANE_COMMAND_INVALID) {
+              const observation = Object.freeze({
+                operation: "product-rig-namespace-preflight",
+                stage: "ansi-initial-pane-command",
+                outcome: "command-rejected",
+                resourcesCreated: false,
+                pathsClaimed: 0,
+                daemonStarted: false,
+              });
+              publish({
+                diagnosticAttempt: Object.freeze({
+                  ...state.diagnosticAttempt,
+                  resourcesCreated: false,
+                  preflight: observation,
+                }),
+              });
+              error.observation = observation;
+            }
+            throw error;
+          }
+          const scratchFleet = await createScratchFleet({
+            sessions: 1,
+            slug,
+            windowsPerSession: 1,
+            initialPaneCommand,
+          });
+          fleet = scratchFleet;
+          if (state.diagnosticAttempt)
+            publish({
+              diagnosticAttempt: Object.freeze({
+                ...state.diagnosticAttempt,
+                resourcesCreated: true,
+              }),
+            });
+          const session = scratchFleet.sessionNames[0];
+          const initialPane = scratchFleet.initialPanes[0];
+          if (!initialPane) throw new Error("ANSI namespace lost its initial pane");
+          const cleanupToken = `product-test-rig:${slug}`;
+          fleet = {
+            ...scratchFleet,
+            environment: {
+              ...scratchFleet.environment,
+              TMUX_IDE_RUNTIME_MODE: "testdrive",
+              TMUX_IDE_CLEANUP_TOKEN: cleanupToken,
+              TMUX_IDE_TMUX_SOCKET_PATH: scratchFleet.socketPath,
+              TMUX_IDE_SESSION_RUNTIME_TRACE_LOG: daemonPerformanceTracePath,
+            },
+          };
+          const runtimeNamespace = {
+            root: fleet.root,
+            home: fleet.environment.HOME,
+            projectDir: fleet.projectDir,
+            registryDir: fleet.environment.TMUX_IDE_REGISTRY_DIR,
+            settingsDir: fleet.environment.TMUX_IDE_SETTINGS_DIR,
+            stateDir: fleet.environment.TMUX_IDE_HOME,
+            tmuxSocketPath: fleet.socketPath,
+            hostTmuxSocketPath: join(fleet.root, "product-rig-host-tmux.sock"),
+            daemonInfoDir: fleet.daemonInfoDir,
+            cleanupToken,
+          };
+          // Publish the complete ownership/provenance lease before fixture
+          // conditioning. A pre-daemon conditioning failure must still be able
+          // to produce a non-vacuous exact cleanup receipt and sealed bundle.
+          const tui = prepareOwnedTuiRuntime({
+            ownership: { session, runtimeNamespace },
+            intendedTui: {
+              hostSession: `_tmux-ide-product-rig-${slug}`,
+              runtimeDir: join(rigRoot, "tui-ansi-cursor-alt-screen"),
+              performanceTracePath: join(
+                rigRoot,
+                "tui-ansi-cursor-alt-screen",
+                "performance-trace.jsonl",
+              ),
+              performanceTraceDetail: "1",
+              daemonPerformanceTracePath,
+            },
+            publish,
+            resolveProvenance: sourceTraceProvenance,
+            createRuntimeDir: createIsolatedTargetedTuiCwd,
+          });
+          const conditioned = await conditionAnsiTmuxFixture({
+            paneId: initialPane.paneId,
+            marker,
+            executable: process.execPath,
+            run: (args, deadline) =>
+              runBoundedFocusTmux({ socketPath: scratchFleet.socketPath, args, deadline }),
+          });
+          const evidenceKey = randomBytes(32);
+          productInputFingerprintKeys.set(tui.runtimeDir, evidenceKey.toString("hex"));
+          event("ansi-namespace-ready", { windows: 1, panes: 1 });
+          return Object.freeze({
+            session,
+            marker,
+            seed: {
+              marker,
+              paneId: initialPane.paneId,
+              geometry: Object.freeze({
+                ...initialPane,
+                left: conditioned.paneLeft,
+                top: conditioned.paneTop,
+                width: conditioned.paneCols,
+                height: conditioned.paneRows,
+              }),
+            },
+            runtimeNamespace,
+            tui,
+            evidenceKey,
+            fixtureCompletionPath,
+          });
+        },
+        startDaemon: async () => {
+          daemon = await startOwnedProductRigDaemon({
+            start: () => startDaemon(fleet),
+            publish,
+            waitUntilReady: waitForReadinessLadder,
+          });
+          return daemon;
+        },
+        openWorkspace: async (namespace, runningDaemon) => {
+          const workspace = await runningDaemon.promote(namespace.session);
+          const identity = await observeTargetedCanonicalIdentity(
+            runningDaemon,
+            namespace.session,
+            workspace,
+          );
+          publish({
+            workspace,
+            daemon: {
+              ...runningDaemon.record,
+              revision: identity.catalogRevision,
+              revisionKind: "fleet-catalog",
+            },
+          });
+          event("ansi-daemon-ready", {});
+          return identity;
+        },
+        build: async () => {
+          await execFileAsync("bun", [join(repoRoot, "scripts", "build-tui.mjs")], {
+            cwd: repoRoot,
+            timeout: 120_000,
+          });
+          prepareIsolatedTargetedTuiCwd(state.tui.runtimeDir);
+          event("ansi-tui-build", {});
+        },
+        launch: async (namespace) => {
+          const launched = JSON.parse(
+            await tuiCommandAsync(
+              state,
+              ["start", "--target", namespace.session, "--cols", "160", "--rows", "44", "--json"],
+              { timeout: 30_000, signal: ownerAbort.signal },
+            ),
+          );
+          if (
+            !exactProductTuiLaunchReceipt(launched, {
+              target: namespace.session,
+              cols: 160,
+              rows: 44,
+            })
+          )
+            throw new Error("ANSI TUI launch receipt was invalid");
+          const controller = new AbortController();
+          const abort = () => controller.abort();
+          ownerAbort.signal.addEventListener("abort", abort, { once: true });
+          ansiReadiness = {
+            launched,
+            controller,
+            startedAt: performance.now(),
+            deadlineMs: 50_000,
+            timer: setTimeout(() => controller.abort(), 50_000),
+            detach: () => ownerAbort.signal.removeEventListener("abort", abort),
+          };
+          event("ansi-tui-started", { processId: launched.processId });
+          return launched;
+        },
+        waitHost: async (_namespace, _daemon, _identity, launched) => {
+          if (!ansiReadiness || ansiReadiness.launched !== launched)
+            throw new Error("ANSI readiness owner was unavailable");
+          return waitForExactFocusHostReceipt(state, launched, {
+            deadlineMs: 10_000,
+            signal: ansiReadiness.controller.signal,
+          });
+        },
+        waitCoherent: async (_namespace, _daemon, _identity, launched, host) => {
+          const readiness = ansiReadiness;
+          if (!readiness || readiness.launched !== launched)
+            throw new Error("ANSI readiness owner was unavailable");
+          try {
+            await waitForCoherentTui(
+              state,
+              30_000,
+              launched.processId,
+              host,
+              readiness.controller.signal,
+            );
+          } finally {
+            clearTimeout(readiness.timer);
+            readiness.detach();
+            readiness.controller.abort();
+            ansiReadiness = null;
+          }
+          event("ansi-tui-coherent", { processId: launched.processId });
+          return Object.freeze({
+            processId: launched.processId,
+            launchId: launched.launchId,
+            hostIdentity: launched.hostIdentity,
+          });
+        },
+        proveNormalBaseline: async (namespace, runningDaemon, identity, process, host) => {
+          const publication = await provePreseededPanePublication(state, namespace.seed);
+          const shell = await waitForProductApplicationShell(
+            runningDaemon,
+            namespace.session,
+            (candidate) => productWindowResources(candidate).length === 1,
+            10_000,
+            1,
+          );
+          const resources = productWindowResources(shell);
+          const selected = resources[0];
+          if (!selected?.active || selected.semanticPaneId !== publication.semanticPaneId)
+            throw new Error("ANSI baseline did not join the active pane");
+          const processId = `opentui:${process.processId}`;
+          const workspaceClient = await waitForQualifiedWorkspaceClientState(
+            () =>
+              ansiReadJsonLines(join(namespace.tui.runtimeDir, "performance.jsonl"), "lifecycle"),
+            {
+              processId,
+              daemonGeneration: runningDaemon.record.instanceId,
+              workspaceName: identity.workspaceName,
+              sessionName: identity.sessionName,
+              fleetSessionId: identity.fleetSessionId,
+              semanticPaneId: selected.semanticPaneId,
+              canonicalGeneration: publication.canonicalSeedPaint.publication.generation,
+            },
+          );
+          const terminalResourceRevision = workspaceClient.committed.terminalResourceRevision;
+          if (!Number.isSafeInteger(terminalResourceRevision) || terminalResourceRevision < 0)
+            throw new Error("ANSI baseline terminal resource revision was unavailable");
+          const seed = publication.canonicalSeedPaint.publication;
+          const hostFrame = publication.frameCausality.hostFrame;
+          const expectedCursor = fixedAnsiCursor("normal", namespace.marker);
+          const semanticBody = ansiSemanticBodyProjection(publication.bodyRect);
+          if (!semanticBody) {
+            const error = new Error("ANSI baseline semantic body projection was invalid");
+            error.observation = Object.freeze({
+              operation: "ansi-normal-baseline",
+              stage: "semantic-body",
+              semanticBodyExact: false,
+            });
+            throw error;
+          }
+          const baselineExpected = Object.freeze({
+            processId,
+            clockId: hostFrame.clockId,
+            semanticPaneId: selected.semanticPaneId,
+            generation: seed.generation,
+            incarnation: seed.incarnation,
+            revision: seed.revision,
+            stateHash: seed.stateHash,
+            canonicalCols: seed.cols,
+            canonicalRows: seed.rows,
+            ...semanticBody,
+            sourceEpoch: seed.sourceEpoch,
+            rendererEpoch: hostFrame.rendererEpoch,
+            cursor: expectedCursor,
+            alternateScreen: false,
+            wraparound: true,
+            mouseProtocol: "none",
+            mouseEncoding: "default",
+            activePaneExact:
+              selected.active === true && selected.semanticPaneId === seed.semanticPaneId,
+            seedRevisionExact:
+              Number.isSafeInteger(seed.revision) &&
+              seed.revision >= 0 &&
+              hostFrame.revision === seed.revision &&
+              hostFrame.acceptedRevision === seed.revision,
+            seedGeometryExact:
+              Number.isSafeInteger(seed.cols) &&
+              seed.cols > 0 &&
+              Number.isSafeInteger(seed.rows) &&
+              seed.rows > 0 &&
+              hostFrame.cols === seed.cols &&
+              hostFrame.rows === seed.rows,
+            seedIdentityExact:
+              seed.processId === processId &&
+              seed.clockId === hostFrame.clockId &&
+              seed.clockKind === "performance-now" &&
+              hostFrame.processId === processId &&
+              hostFrame.clockKind === "performance-now" &&
+              hostFrame.semanticPaneId === seed.semanticPaneId &&
+              hostFrame.generation === seed.generation &&
+              hostFrame.incarnation === seed.incarnation &&
+              hostFrame.stateHash === seed.stateHash &&
+              hostFrame.sourceEpoch === seed.sourceEpoch &&
+              hostFrame.acceptedUpdateType === "terminal.seed" &&
+              Number.isSafeInteger(seed.sourceEpoch) &&
+              seed.sourceEpoch >= 0 &&
+              typeof seed.generation === "string" &&
+              seed.generation.length > 0 &&
+              typeof seed.incarnation === "string" &&
+              seed.incarnation.length > 0 &&
+              /^[0-9a-f]{16}$/u.test(seed.stateHash),
+          });
+          const deadline = performance.now() + 3_000;
+          let mode;
+          let presentation;
+          const baselineFailure = (status) => {
+            const error = new Error(
+              `ANSI baseline cursor evidence failed: ${status.firstFailedPredicate}`,
+            );
+            error.observation = Object.freeze({
+              operation: "ansi-normal-baseline",
+              stage: "cursor-evidence",
+              ...status,
+            });
+            return error;
+          };
+          for (;;) {
+            const records = ansiReadJsonLines(namespace.tui.performanceTracePath);
+            const modes = records.filter(
+              (record) =>
+                record?.type === "performance.terminal-canonical-mode" &&
+                record.semanticPaneId === selected.semanticPaneId &&
+                record.revision === seed.revision,
+            );
+            const presentations = records.filter(
+              (record) =>
+                record?.type === "performance.terminal-cursor-presentation" &&
+                record.semanticPaneId === selected.semanticPaneId &&
+                record.revision === seed.revision,
+            );
+            const currentPresentationIndex = records.indexOf(presentations[0]);
+            const baselinePredecessor = ansiBaselinePreviousCounters(
+              records,
+              currentPresentationIndex >= 0 ? currentPresentationIndex : records.length,
+              baselineExpected,
+            );
+            const status = ansiBaselineCursorEvidenceStatus(
+              { modes: modes.slice(0, 2), presentations: presentations.slice(0, 2) },
+              {
+                ...baselineExpected,
+                baselinePredecessor,
+              },
+            );
+            if (status.qualified) {
+              mode = modes[0];
+              presentation = presentations[0];
+              break;
+            }
+            if (modes.length > 1 || presentations.length > 1 || presentations.length === 1)
+              throw baselineFailure(status);
+            if (performance.now() >= deadline) throw baselineFailure(status);
+            await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+          }
+          const baselineResourceSample = await waitAnsiPostFenceResource(namespace, hostFrame, 0);
+          const baselineNative = await inspectAnsiNativeStage(
+            namespace,
+            {
+              resources,
+              sessionName: identity.sessionName,
+              windowResourceId: selected.windowResourceId,
+              semanticPaneId: selected.semanticPaneId,
+            },
+            "baseline",
+          );
+          const baseline = Object.freeze({
+            stage: ansiStageProjection(namespace.evidenceKey, mode, presentation),
+            rawIdentity: Object.freeze({
+              processId,
+              clockId: "opentui-performance-now",
+              daemonProcessId: `daemon:${runningDaemon.record.pid}`,
+              daemonClockId: "node-performance-now",
+              deliveryWorkspaceName: identity.sessionName,
+              deliverySurfaces: Object.freeze(["opentui"]),
+              daemonGeneration: runningDaemon.record.instanceId,
+              semanticPaneId: selected.semanticPaneId,
+              canonicalGeneration: seed.generation,
+              canonicalIncarnation: seed.incarnation,
+              sourceEpoch: seed.sourceEpoch,
+              rendererEpoch: presentation.rendererEpoch,
+              canonicalCols: seed.cols,
+              canonicalRows: seed.rows,
+              ...semanticBody,
+            }),
+            processId,
+            daemonGeneration: runningDaemon.record.instanceId,
+            clientGeneration: workspaceClient.committed.generation,
+            clientId: processId,
+            workspaceName: identity.workspaceName,
+            deliveryWorkspaceName: identity.sessionName,
+            sessionName: identity.sessionName,
+            semanticPaneId: selected.semanticPaneId,
+            windowResourceId: selected.windowResourceId,
+            terminalResourceRevision,
+            resources,
+            workspaceClient,
+            tmux: baselineNative.snapshot,
+            tmuxCaptureHmac: ansiHmac(
+              namespace.evidenceKey,
+              "tmux-capture",
+              baselineNative.capture,
+            ),
+            host,
+            hostFrame,
+            baselineResourceSample,
+          });
+          ansiBaseline = baseline;
+          ansiExpectedDeliveryClients = Object.freeze({ opentui: processId });
+          ansiCanonicalPredecessor = Object.freeze({
+            revision: seed.revision,
+            stateHash: seed.stateHash,
+          });
+          ansiPresentationCounters = Object.freeze({
+            gridRowsReadTotal: presentation.gridRowsReadTotal,
+            fullWalkTotal: presentation.fullWalkTotal,
+            presentationCount: presentation.presentationCount,
+          });
+          const fixedBaselineCursor = fixedAnsiCursor("normal", namespace.marker);
+          if (
+            baseline.stage.alternateScreen !== false ||
+            Object.entries(fixedBaselineCursor).some(
+              ([field, value]) => baseline.stage.cursor[field] !== value,
+            )
+          )
+            throw new Error("ANSI baseline cursor did not match the fixed normal contract");
+          event("ansi-normal-baseline", { revision: seed.revision });
+          publishAnsiPartial({ stage: "normal", baseline: baseline.stage });
+          return baseline;
+        },
+        driveRichAnsi: async (namespace, _daemon, _identity, _process, baseline) => {
+          const result = await driveAnsiStage(namespace, "r", {
+            stage: "rich",
+            action: "rich-ansi",
+            afterRevision: baseline.stage.revision,
+            alternateScreen: false,
+            gridWalked: true,
+            gridRowsRead: 3,
+            fullWalk: false,
+          });
+          if (
+            Object.entries(fixedAnsiCursor("rich", namespace.marker)).some(
+              ([field, value]) => result.stage.cursor[field] !== value,
+            )
+          )
+            throw new Error("ANSI rich cursor did not match the fixed contract");
+          event("ansi-rich-presentation", { revision: result.stage.revision });
+          publishAnsiPartial({ stage: "rich", rich: result.stage });
+          return result;
+        },
+        driveCursorDistribution: async (
+          namespace,
+          _daemon,
+          _identity,
+          _process,
+          baseline,
+          rich,
+        ) => {
+          const samples = [];
+          const expectedSamples = [];
+          let revision = rich.stage.revision;
+          let latest = rich;
+          for (let ordinal = 1; ordinal <= 30; ordinal += 1) {
+            latest = await driveAnsiStage(namespace, "c", {
+              stage: "cursor-only",
+              action: "cursor-next",
+              afterRevision: revision,
+              alternateScreen: false,
+              gridWalked: false,
+              gridRowsRead: 0,
+              fullWalk: false,
+            });
+            revision = latest.stage.revision;
+            const sample = Object.freeze({ ...latest.sample, ordinal });
+            const cursorValue = ordinal % 30;
+            const shape = 1 + (cursorValue % 6);
+            const fixed = {
+              x: 2 + (cursorValue % 20),
+              y: 1 + (cursorValue % 8),
+              hidden: false,
+              style: shape <= 2 ? "block" : shape <= 4 ? "underline" : "line",
+              blink: shape % 2 === 1,
+            };
+            if (
+              Object.entries(fixed).some(([field, value]) => latest.stage.cursor[field] !== value)
+            )
+              throw new Error("ANSI cursor-only stage did not match its fixed ordinal contract");
+            samples.push(sample);
+            expectedSamples.push(
+              Object.freeze({
+                ordinal,
+                action: "cursor-next",
+                traceHmac: sample.traceHmac,
+                gestureHmac: sample.gestureHmac,
+                daemonProcessHmac: ansiHmac(
+                  namespace.evidenceKey,
+                  "daemon-process",
+                  baseline.rawIdentity.daemonProcessId,
+                ),
+                daemonClockId: baseline.rawIdentity.daemonClockId,
+                presentation: sample.presentation,
+                cursor: Object.freeze({
+                  x: fixed.x,
+                  y: fixed.y,
+                  hidden: fixed.hidden,
+                  canonicalStyle: shape <= 2 ? "block" : shape <= 4 ? "underline" : "bar",
+                  rendererStyle: fixed.style,
+                  blink: fixed.blink,
+                }),
+              }),
+            );
+          }
+          event("ansi-cursor-only-distribution", { sampleCount: samples.length });
+          publishAnsiPartial({
+            stage: "cursor-distribution",
+            cursorSamples: Object.freeze(samples),
+          });
+          return Object.freeze({
+            samples: Object.freeze(samples),
+            expectedSamples: Object.freeze(expectedSamples),
+            latest,
+          });
+        },
+        enterAlternateScreen: async (namespace, _daemon, _identity, _process, baseline, cursor) => {
+          const preAlternateCountersBefore = ansiPresentationCounters;
+          const preAlternate = await driveAnsiStage(namespace, "b", {
+            stage: "normal",
+            action: "pre-alternate-normal",
+            afterRevision: cursor.latest.stage.revision,
+            alternateScreen: false,
+            gridWalked: true,
+            gridRowsRead: 3,
+            fullWalk: false,
+          });
+          const normalCursor = fixedAnsiCursor("normal", namespace.marker);
+          const preAlternateSemanticExact =
+            preAlternate.stage.presentationHmac === baseline.stage.presentationHmac &&
+            /^[0-9a-f]{64}$/u.test(preAlternate.stage.framebufferHmac ?? "") &&
+            preAlternate.stage.alternateScreen === false &&
+            Object.entries(normalCursor).every(
+              ([field, value]) => preAlternate.stage.cursor[field] === value,
+            );
+          const preAlternateNative = await inspectAnsiNativeStage(
+            namespace,
+            {
+              resources: baseline.resources,
+              sessionName: baseline.sessionName,
+              windowResourceId: baseline.windowResourceId,
+              semanticPaneId: baseline.semanticPaneId,
+            },
+            "pre-alternate",
+          );
+          const expectedNormalFramebuffer = ansiFramebufferCells("normal", namespace.marker);
+          const preAlternateStatus = ansiPreAlternateNormalStatus(
+            {
+              stage: preAlternate.stage,
+              nativeGeometryExact:
+                ansiTmuxSemanticProjection(preAlternateNative.snapshot) ===
+                ansiTmuxSemanticProjection(baseline.tmux),
+              nativeCaptureHmac: ansiHmac(
+                namespace.evidenceKey,
+                "tmux-capture",
+                preAlternateNative.capture,
+              ),
+            },
+            {
+              presentationHmac: baseline.stage.presentationHmac,
+              framebufferHmac: ansiHmac(
+                namespace.evidenceKey,
+                "opentui-framebuffer",
+                JSON.stringify(expectedNormalFramebuffer),
+              ),
+              cursor: normalCursor,
+              nativeCaptureHmac: baseline.tmuxCaptureHmac,
+            },
+          );
+          publishAnsiPartial({
+            stage: "pre-alternate-normal",
+            preAlternateNormal: Object.freeze({
+              ...preAlternateStatus,
+              modeCandidateCount: preAlternate.stageEvidence.modeCandidateCount,
+              presentationCandidateCount: preAlternate.stageEvidence.presentationCandidateCount,
+              frameCandidateCount: preAlternate.stageEvidence.frameCandidateCount,
+              fenceCandidateCount: preAlternate.stageEvidence.fenceCandidateCount,
+            }),
+          });
+          if (!preAlternateSemanticExact || !preAlternateStatus.qualified)
+            throw new Error("ANSI pre-alternate normal state did not match the baseline");
+          const preAlternateEvidence = Object.freeze({
+            stage: preAlternate.stage,
+            sample: preAlternate.sample,
+            cardinality: Object.freeze({
+              mode: preAlternate.stageEvidence.modeCandidateCount,
+              presentation: preAlternate.stageEvidence.presentationCandidateCount,
+              frame: preAlternate.stageEvidence.frameCandidateCount,
+              fence: preAlternate.stageEvidence.fenceCandidateCount,
+              traced: preAlternate.stageEvidence.tracedCandidateExact,
+            }),
+            predecessor: Object.freeze({
+              revision: cursor.latest.stage.revision,
+              stateHmac: cursor.latest.stage.stateHmac,
+            }),
+            counters: Object.freeze({
+              beforeGridRowsReadTotal: preAlternateCountersBefore.gridRowsReadTotal,
+              afterGridRowsReadTotal: preAlternate.counters.gridRowsReadTotal,
+              beforeFullWalkTotal: preAlternateCountersBefore.fullWalkTotal,
+              afterFullWalkTotal: preAlternate.counters.fullWalkTotal,
+              beforePresentationCount: preAlternateCountersBefore.presentationCount,
+              afterPresentationCount: preAlternate.counters.presentationCount,
+              gridRowsReadDelta: preAlternate.sample.causal.gridRowsReadDelta,
+              fullWalkDelta: preAlternate.sample.causal.fullWalkDelta,
+              presentationCountDelta: preAlternate.sample.causal.presentationCountDelta,
+            }),
+            native: Object.freeze({
+              paneCount: Math.min(preAlternateNative.snapshot.length, 2),
+              matchCount: preAlternateNative.matchCount,
+              mappingExact: preAlternateNative.mappingExact,
+              geometryExact:
+                ansiTmuxSemanticProjection(preAlternateNative.snapshot) ===
+                ansiTmuxSemanticProjection(baseline.tmux),
+              captureHmac: ansiHmac(
+                namespace.evidenceKey,
+                "tmux-capture",
+                preAlternateNative.capture,
+              ),
+            }),
+          });
+          const result = await driveAnsiStage(namespace, "a", {
+            stage: "alternate",
+            action: "enter-alternate",
+            afterRevision: preAlternate.stage.revision,
+            alternateScreen: true,
+            gridWalked: true,
+            gridRowsRead: baseline.rawIdentity.viewportRows,
+            fullWalk: false,
+          });
+          if (
+            Object.entries(fixedAnsiCursor("alternate", namespace.marker)).some(
+              ([field, value]) => result.stage.cursor[field] !== value,
+            )
+          )
+            throw new Error("ANSI alternate cursor did not match the fixed contract");
+          event("ansi-alternate-screen", { revision: result.stage.revision });
+          const native = await inspectAnsiNativeStage(
+            namespace,
+            {
+              resources: baseline.resources,
+              sessionName: baseline.sessionName,
+              windowResourceId: baseline.windowResourceId,
+              semanticPaneId: baseline.semanticPaneId,
+            },
+            "alternate",
+            { displayCursor: true },
+          );
+          const alternateResult = Object.freeze({
+            ...result,
+            preAlternate: Object.freeze({
+              stage: preAlternate.stage,
+              evidence: preAlternateEvidence,
+              nativeCaptureHmac: ansiHmac(
+                namespace.evidenceKey,
+                "tmux-capture",
+                preAlternateNative.capture,
+              ),
+            }),
+            tmux: Object.freeze({
+              geometryStable:
+                ansiTmuxSemanticProjection(native.snapshot) ===
+                ansiTmuxSemanticProjection(baseline.tmux),
+              markerAbsent: !native.capture.includes(namespace.marker),
+              cursorExact:
+                native.cursor.x === 11 &&
+                native.cursor.y === 7 &&
+                native.cursor.cols === result.stage.canonicalCols &&
+                native.cursor.rows === result.stage.viewportRows,
+              captureHmac: ansiHmac(namespace.evidenceKey, "tmux-capture", native.capture),
+            }),
+          });
+          publishAnsiPartial({ stage: "alternate", alternate: result.stage });
+          return alternateResult;
+        },
+        restoreNormalScreen: async (
+          namespace,
+          _daemon,
+          _identity,
+          _process,
+          _baseline,
+          alternate,
+        ) => {
+          const result = await driveAnsiStage(namespace, "n", {
+            stage: "restored",
+            action: "restore-normal",
+            afterRevision: alternate.stage.revision,
+            alternateScreen: false,
+            gridWalked: true,
+            gridRowsRead: _baseline.rawIdentity.viewportRows,
+            fullWalk: false,
+          });
+          if (
+            Object.entries(fixedAnsiCursor("restored", namespace.marker)).some(
+              ([field, value]) => result.stage.cursor[field] !== value,
+            )
+          )
+            throw new Error("ANSI restored cursor did not match the fixed normal contract");
+          const restoredNative = await inspectAnsiNativeStage(
+            namespace,
+            {
+              resources: _baseline.resources,
+              sessionName: _baseline.sessionName,
+              windowResourceId: _baseline.windowResourceId,
+              semanticPaneId: _baseline.semanticPaneId,
+            },
+            "final",
+          );
+          const restoredNativeCaptureHmac = ansiHmac(
+            namespace.evidenceKey,
+            "tmux-capture",
+            restoredNative.capture,
+          );
+          if (
+            result.stage.presentationHmac !== _baseline.stage.presentationHmac ||
+            result.stage.presentationHmac !== alternate.preAlternate.stage.presentationHmac ||
+            result.stage.framebufferHmac !== alternate.preAlternate.stage.framebufferHmac ||
+            ansiTmuxSemanticProjection(restoredNative.snapshot) !==
+              ansiTmuxSemanticProjection(_baseline.tmux) ||
+            restoredNativeCaptureHmac !== _baseline.tmuxCaptureHmac ||
+            restoredNativeCaptureHmac !== alternate.preAlternate.nativeCaptureHmac
+          )
+            throw new Error("ANSI normal buffer restoration was not exact");
+          event("ansi-normal-restored", { revision: result.stage.revision });
+          publishAnsiPartial({ stage: "restored", restored: result.stage });
+          return result;
+        },
+        runSustainedWorkload: async (
+          namespace,
+          _daemon,
+          _identity,
+          _process,
+          baseline,
+          restored,
+        ) => {
+          let revision = restored.stage.revision;
+          const resourceSamples = [];
+          const expectedResources = [];
+          const resourceCheckpointSamples = [];
+          const expectedResourceCheckpoints = [];
+          const workloadFinalities = [];
+          const expectedWorkloadFinalities = [];
+          let latestFence = restored.raw.fence;
+          const boundedWorkloadRegression = ({ cycle, reason, ordered, progress, nowMs }) => {
+            const lastResource = resourceCheckpointSamples.at(-1) ?? null;
+            const boundedMetric = (value, ceiling) =>
+              Number.isSafeInteger(value) && value >= 0 ? Math.min(value, ceiling) : null;
+            return Object.freeze({
+              operation: "ansi-workload-finality",
+              cycle,
+              completedCycles: cycle - 1,
+              firstFailedPredicate: "progress-regression",
+              progressReason: reason,
+              progressCount: boundedMetric(progress?.progressCount, 65_536),
+              elapsedMs:
+                progress && Number.isSafeInteger(nowMs)
+                  ? boundedMetric(nowMs - progress.startedAtMs, ANSI_WORKLOAD_ABSOLUTE_MS)
+                  : null,
+              noProgressElapsedMs:
+                progress && Number.isSafeInteger(nowMs)
+                  ? boundedMetric(nowMs - progress.lastProgressAtMs, ANSI_WORKLOAD_NO_PROGRESS_MS)
+                  : null,
+              streamCounts: ordered?.counts ?? null,
+              offendingRevisionHmac: Number.isSafeInteger(ordered?.offendingRevision)
+                ? ansiHmac(
+                    namespace.evidenceKey,
+                    "workload-offending-revision",
+                    ordered.offendingRevision,
+                  )
+                : null,
+              offendingAcceptedType: new Set(["terminal.seed", "terminal.patch"]).has(
+                ordered?.offendingAcceptedType,
+              )
+                ? ordered.offendingAcceptedType
+                : null,
+              resourceLast: lastResource
+                ? Object.freeze({
+                    cycle: lastResource.cycle,
+                    rssBytes: boundedMetric(lastResource.rssBytes, 1_073_741_825),
+                    heapUsedBytes: boundedMetric(lastResource.heapUsedBytes, 536_870_913),
+                    eventLoopDelayMicros: boundedMetric(
+                      lastResource.eventLoopDelayMicros,
+                      5_000_000,
+                    ),
+                    rssPeakBytes: boundedMetric(lastResource.rssPeakBytes, 1_073_741_825),
+                    heapUsedPeakBytes: boundedMetric(lastResource.heapUsedPeakBytes, 536_870_913),
+                    eventLoopDelayPeakMicros: boundedMetric(
+                      lastResource.eventLoopDelayPeakMicros,
+                      5_000_000,
+                    ),
+                    inputPendingPeak: boundedMetric(lastResource.inputPendingPeak, 65_537),
+                    inputInFlightPeak: boundedMetric(lastResource.inputInFlightPeak, 65_537),
+                    inputPendingBytesPeak: boundedMetric(
+                      lastResource.inputPendingBytesPeak,
+                      67_108_865,
+                    ),
+                    resourceSamplingFailureCount: boundedMetric(
+                      lastResource.resourceSamplingFailureCount,
+                      65_537,
+                    ),
+                  })
+                : null,
+            });
+          };
+          for (let cycle = 1; cycle <= 24; cycle += 1) {
+            publishAnsiPartial({
+              stage: "workload",
+              workloadProgress: Object.freeze({
+                activeCycle: cycle,
+                completedCycles: cycle - 1,
+                progressCount: 0,
+                elapsedMs: 0,
+                noProgressElapsedMs: 0,
+              }),
+            });
+            const watermark = (await ansiJsonlWatermark(namespace.tui.performanceTracePath))
+              .recordCount;
+            const daemonWatermark = (
+              await ansiJsonlWatermark(namespace.tui.daemonPerformanceTracePath)
+            ).recordCount;
+            const lifecycleWatermark = (
+              await ansiJsonlWatermark(
+                join(namespace.tui.runtimeDir, "performance.jsonl"),
+                "lifecycle",
+              )
+            ).recordCount;
+            const producerWatermark = (await ansiJsonlWatermark(namespace.fixtureCompletionPath))
+              .recordCount;
+            const marker = ansiWorkloadMarker(namespace.marker, cycle);
+            const markerHmac = ansiHmac(namespace.evidenceKey, "workload-marker", marker);
+            const workloadPayload = ansiWorkloadPayload(namespace.marker, cycle);
+            const payloadBytes = Buffer.byteLength(workloadPayload);
+            const payloadSha256 = createHash("sha256").update(workloadPayload).digest("hex");
+            const producerPayloadHmac = ansiHmac(
+              namespace.evidenceKey,
+              "workload-producer-payload",
+              payloadSha256,
+            );
+            const delivery = await driveExactHostedInput(
+              state,
+              { version: 1, kind: "key", key: "w", timeoutMs: 2_000 },
+              ownerAbort.signal,
+            );
+            if (delivery.bytesInjected !== 1 || delivery.phases !== 1)
+              throw new Error("ANSI workload input was not one exact byte");
+            const workloadStartedAtMs = Math.floor(performance.now());
+            let workloadProgress = advanceAnsiWorkloadProgress(
+              null,
+              {
+                canonicalRevision: null,
+                enqueueOrdinal: null,
+                enqueueCanonicalRevision: null,
+                settledOrdinal: null,
+                settledCanonicalRevision: null,
+                frameRevision: null,
+                fenceRevision: null,
+                producerOrdinal: null,
+              },
+              workloadStartedAtMs,
+            );
+            let result;
+            let candidate = null;
+            let lastMarkerCount = 0;
+            let lastFinalityObservation;
+            let publishedProgressCount = -1;
+            let timeoutNativeEvidence = null;
+            for (;;) {
+              const records = ansiReadJsonLines(namespace.tui.performanceTracePath);
+              const tail = records.slice(watermark);
+              const daemonRecords = ansiReadJsonLines(namespace.tui.daemonPerformanceTracePath);
+              const daemonTail = daemonRecords.slice(daemonWatermark);
+              const producerRecords = ansiReadJsonLines(namespace.fixtureCompletionPath);
+              const producerTail = producerRecords.slice(producerWatermark);
+              const producer = ansiWorkloadProducerStatus(producerTail, {
+                cycle,
+                ordinal: cycle,
+                payloadBytes,
+                payloadSha256,
+              });
+              const origins = tail.filter(
+                (record) =>
+                  record?.type === "performance.input-origin" &&
+                  record.origin === "keyboard" &&
+                  record.semanticPaneId === restored.raw.mode.semanticPaneId,
+              );
+              const origin = origins.length === 1 ? origins[0] : null;
+              const modes = tail.filter(
+                (record) =>
+                  record?.type === "performance.terminal-canonical-mode" &&
+                  record.semanticPaneId === restored.raw.mode.semanticPaneId &&
+                  record.generation === restored.raw.mode.generation &&
+                  record.incarnation === restored.raw.mode.incarnation &&
+                  record.processId === baseline.rawIdentity.processId &&
+                  record.clockId === baseline.rawIdentity.clockId &&
+                  record.clockKind === "performance-now" &&
+                  record.revision > revision,
+              );
+              const canonicalTransitions = tail.filter(
+                (record) =>
+                  ((record?.type === "performance.terminal-canonical-update" &&
+                    record.updateType === "terminal.patch") ||
+                    (record?.type === "performance.terminal-canonical-publication" &&
+                      record.updateType === "terminal.seed")) &&
+                  record.semanticPaneId === restored.raw.mode.semanticPaneId &&
+                  record.generation === restored.raw.mode.generation &&
+                  record.incarnation === restored.raw.mode.incarnation &&
+                  record.processId === baseline.rawIdentity.processId &&
+                  record.clockId === baseline.rawIdentity.clockId &&
+                  record.clockKind === "performance-now" &&
+                  record.revision > revision,
+              );
+              const authorityFrames = tail.filter(
+                (record) =>
+                  record?.type === "performance.terminal-canonical-host-frame" &&
+                  record.semanticPaneId === restored.raw.mode.semanticPaneId &&
+                  record.generation === restored.raw.mode.generation &&
+                  record.incarnation === restored.raw.mode.incarnation &&
+                  record.processId === baseline.rawIdentity.processId &&
+                  record.clockId === baseline.rawIdentity.clockId &&
+                  record.clockKind === "performance-now" &&
+                  record.revision > revision,
+              );
+              const authorityFences = tail.filter(
+                (record) =>
+                  record?.type === "performance.terminal-frame-fence" &&
+                  record.semanticPaneId === restored.raw.mode.semanticPaneId &&
+                  record.generation === restored.raw.mode.generation &&
+                  record.incarnation === restored.raw.mode.incarnation &&
+                  record.processId === baseline.rawIdentity.processId &&
+                  record.clockId === baseline.rawIdentity.clockId &&
+                  record.clockKind === "performance-now" &&
+                  record.revision > revision,
+              );
+              const deliveryAuthority = ansiWorkloadDeliveryAuthorityTail({
+                daemonRecords: daemonTail,
+                expected: {
+                  workspaceName: baseline.deliveryWorkspaceName,
+                  semanticPaneId: baseline.semanticPaneId,
+                  generation: restored.raw.mode.generation,
+                  incarnation: restored.raw.mode.incarnation,
+                  daemonProcessId: baseline.rawIdentity.daemonProcessId,
+                  daemonClockId: baseline.rawIdentity.daemonClockId,
+                  daemonClockKind: "performance-now",
+                },
+              });
+              const orderedProgress = deliveryAuthority.exact
+                ? ansiWorkloadOrderedTailStatus({
+                    transitions: canonicalTransitions,
+                    modes,
+                    enqueues: deliveryAuthority.enqueues,
+                    settlements: deliveryAuthority.settlements,
+                    frames: authorityFrames,
+                    fences: authorityFences,
+                  })
+                : Object.freeze({ exact: false, reason: "delivery-authority", progress: null });
+              if (!orderedProgress.exact) {
+                const error = new Error("ANSI workload progress tail regressed");
+                error.boundary = "ansi-workload-finality";
+                error.observation = boundedWorkloadRegression({
+                  cycle,
+                  reason: orderedProgress.reason,
+                  ordered: orderedProgress,
+                  progress: workloadProgress,
+                  nowMs: Math.floor(performance.now()),
+                });
+                publishAnsiPartial({ stage: "workload", workloadFailure: error.observation });
+                throw error;
+              }
+              const finalTransition = canonicalTransitions.at(-1) ?? null;
+              const matchingModes = modes.filter(
+                (record) =>
+                  record.revision === finalTransition?.revision &&
+                  record.stateHash === finalTransition?.stateHash,
+              );
+              const mode = matchingModes.length === 1 ? matchingModes[0] : null;
+              const frames = authorityFrames.filter(
+                (record) =>
+                  record.revision === finalTransition?.revision &&
+                  record.stateHash === finalTransition?.stateHash,
+              );
+              const fences = authorityFences.filter(
+                (record) =>
+                  record.revision === finalTransition?.revision &&
+                  record.stateHash === finalTransition?.stateHash,
+              );
+              const cursorPresentations = tail.filter(
+                (record) =>
+                  record?.type === "performance.terminal-cursor-presentation" &&
+                  record.semanticPaneId === finalTransition?.semanticPaneId &&
+                  record.generation === finalTransition?.generation &&
+                  record.incarnation === finalTransition?.incarnation &&
+                  record.processId === baseline.rawIdentity.processId &&
+                  record.clockId === baseline.rawIdentity.clockId &&
+                  record.clockKind === "performance-now" &&
+                  record.revision === finalTransition?.revision &&
+                  record.stateHash === finalTransition?.stateHash,
+              );
+              const finalCursorPresentation =
+                cursorPresentations.length === 1 ? cursorPresentations[0] : null;
+              const deliveryJoin = ansiWorkloadDeliveryJoin({
+                canonical: finalTransition,
+                daemonRecords: daemonTail,
+                expected: {
+                  workspaceName: baseline.deliveryWorkspaceName,
+                  semanticPaneId: baseline.semanticPaneId,
+                  daemonProcessId: baseline.rawIdentity.daemonProcessId,
+                  daemonClockId: baseline.rawIdentity.daemonClockId,
+                  daemonClockKind: "performance-now",
+                },
+              });
+              const progressNowMs = Math.floor(performance.now());
+              try {
+                workloadProgress = advanceAnsiWorkloadProgress(
+                  workloadProgress,
+                  {
+                    ...orderedProgress.progress,
+                    producerOrdinal: producer.exact ? producer.record.ordinal : null,
+                  },
+                  progressNowMs,
+                );
+              } catch (error) {
+                if (error?.code !== "ANSI_WORKLOAD_PROGRESS_REGRESSION") throw error;
+                const regression = new Error("ANSI workload progress regressed across polls");
+                regression.boundary = "ansi-workload-finality";
+                regression.observation = boundedWorkloadRegression({
+                  cycle,
+                  reason: "cross-poll",
+                  ordered: orderedProgress,
+                  progress: workloadProgress,
+                  nowMs: progressNowMs,
+                });
+                publishAnsiPartial({
+                  stage: "workload",
+                  workloadFailure: regression.observation,
+                });
+                throw regression;
+              }
+              if (workloadProgress.progressCount !== publishedProgressCount) {
+                publishedProgressCount = workloadProgress.progressCount;
+                publishAnsiPartial({
+                  stage: "workload",
+                  workloadProgress: Object.freeze({
+                    activeCycle: cycle,
+                    completedCycles: cycle - 1,
+                    progressCount: workloadProgress.progressCount,
+                    elapsedMs: Math.min(progressNowMs - workloadProgress.startedAtMs, 30_000),
+                    noProgressElapsedMs: Math.min(
+                      progressNowMs - workloadProgress.lastProgressAtMs,
+                      15_000,
+                    ),
+                  }),
+                });
+              }
+              const progressDeadlineExpiry = ansiWorkloadProgressExpiry(
+                workloadProgress,
+                progressNowMs,
+              );
+              if (
+                timeoutNativeEvidence === null &&
+                progressNowMs - workloadProgress.lastProgressAtMs >= 12_000
+              ) {
+                try {
+                  const native = await inspectAnsiNativeStage(
+                    namespace,
+                    {
+                      resources: baseline.resources,
+                      sessionName: baseline.sessionName,
+                      windowResourceId: baseline.windowResourceId,
+                      semanticPaneId: baseline.semanticPaneId,
+                    },
+                    "workload-timeout",
+                    { displayCursor: true, deadlineMs: 500 },
+                  );
+                  const nativeMarkerCount = native.capture.split(marker).length - 1;
+                  timeoutNativeEvidence = Object.freeze({
+                    available: true,
+                    markerPresent: nativeMarkerCount === 1,
+                    markerCount: Math.min(Math.max(nativeMarkerCount, 0), 2),
+                    captureHmac: ansiHmac(
+                      namespace.evidenceKey,
+                      "workload-timeout-native-capture",
+                      native.capture,
+                    ),
+                    cursorX:
+                      Number.isSafeInteger(native.cursor?.x) && native.cursor.x <= 4_096
+                        ? native.cursor.x
+                        : null,
+                    cursorY:
+                      Number.isSafeInteger(native.cursor?.y) && native.cursor.y <= 4_096
+                        ? native.cursor.y
+                        : null,
+                    cursorVisible: null,
+                    reason: null,
+                  });
+                } catch {
+                  timeoutNativeEvidence = Object.freeze({
+                    available: false,
+                    markerPresent: null,
+                    markerCount: null,
+                    captureHmac: null,
+                    cursorX: null,
+                    cursorY: null,
+                    cursorVisible: null,
+                    reason: "capture-unavailable",
+                  });
+                }
+              }
+              const encode = deliveryJoin.encode;
+              const finalSettled = deliveryJoin.settled;
+              const tracedEnqueues = deliveryAuthority.enqueues.filter(
+                (record) =>
+                  typeof origin?.traceId === "string" && record?.traceId === origin.traceId,
+              );
+              const tracedDelivery = tracedEnqueues.length === 1 ? tracedEnqueues[0] : null;
+              const paintCount = tail.filter(
+                (record) =>
+                  record?.type === "performance.terminal-paint" &&
+                  record.processId === baseline.rawIdentity.processId &&
+                  record.clockId === baseline.rawIdentity.clockId,
+              ).length;
+              const lifecycleRecords = ansiReadJsonLines(
+                join(namespace.tui.runtimeDir, "performance.jsonl"),
+                "lifecycle",
+              );
+              const currentState = readJson(statePath);
+              const latestWorkspaceClient = lifecycleRecords
+                .filter(
+                  (record) =>
+                    record?.phase === "generation-workspace-client-state" &&
+                    record.processId === baseline.rawIdentity.processId,
+                )
+                .at(-1);
+              const latestGenerationStatus = lifecycleRecords
+                .filter(
+                  (record) =>
+                    record?.phase === "generation-status" &&
+                    record.processId === baseline.rawIdentity.processId,
+                )
+                .at(-1);
+              const workspaceClientExact =
+                latestWorkspaceClient?.daemonGeneration === baseline.daemonGeneration &&
+                latestWorkspaceClient?.workspaceClient?.committed?.generation ===
+                  baseline.clientGeneration;
+              const lifecycleExact =
+                latestGenerationStatus?.daemonGeneration === baseline.daemonGeneration &&
+                latestGenerationStatus?.status === "live";
+              const lifecycleViolation = lifecycleRecords
+                .slice(lifecycleWatermark)
+                .some(
+                  (record) =>
+                    record?.processId === baseline.rawIdentity.processId &&
+                    ((record.phase === "generation-status" &&
+                      (record.daemonGeneration !== baseline.daemonGeneration ||
+                        record.status !== "live")) ||
+                      (record.phase === "generation-workspace-client-state" &&
+                        (record.daemonGeneration !== baseline.daemonGeneration ||
+                          record.workspaceClient?.committed?.generation !==
+                            baseline.clientGeneration))),
+                );
+              const rebound =
+                currentState?.daemon?.instanceId !== baseline.daemonGeneration ||
+                currentState?.tui?.runtimeDir !== namespace.tui.runtimeDir ||
+                !processAlive(Number(baseline.processId.slice("opentui:".length))) ||
+                !workspaceClientExact ||
+                !lifecycleExact ||
+                lifecycleViolation;
+              const faulted =
+                currentState?.status === "failed" ||
+                daemonTail.some(
+                  (record) =>
+                    record?.operation === "terminal-delivery-fault" &&
+                    record?.processId === baseline.rawIdentity.daemonProcessId &&
+                    record?.clockId === baseline.rawIdentity.daemonClockId &&
+                    record?.clockKind === "performance-now" &&
+                    record?.terminalDelivery?.workspaceName === baseline.deliveryWorkspaceName &&
+                    record?.terminalDelivery?.semanticPaneId === baseline.semanticPaneId &&
+                    record?.terminalDelivery?.faultReason,
+                );
+              const flowPhases = new Set([
+                "pause",
+                "continue-request",
+                "continue-reply",
+                "continue-notify",
+                "provisional-reseed",
+                "final-continue-request",
+                "final-continue-reply",
+                "final-reseed",
+                "confirmation-reseed",
+                "converged",
+                "nonconverged",
+              ]);
+              const flowRecords = daemonTail.filter(
+                (record) =>
+                  flowPhases.has(record?.terminalDelivery?.mirrorFlowPhase) &&
+                  record?.terminalDelivery?.semanticPaneId === baseline.semanticPaneId,
+              );
+              const lastFlow = flowRecords.at(-1)?.terminalDelivery ?? null;
+              const flowRecoveryEvidence = Object.freeze({
+                count: Math.min(flowRecords.length, 33),
+                lastPhase: flowPhases.has(lastFlow?.mirrorFlowPhase)
+                  ? lastFlow.mirrorFlowPhase
+                  : null,
+                recoveryOrdinal:
+                  Number.isSafeInteger(lastFlow?.mirrorFlowRecoveryOrdinal) &&
+                  lastFlow.mirrorFlowRecoveryOrdinal >= 0
+                    ? Math.min(lastFlow.mirrorFlowRecoveryOrdinal, 65_536)
+                    : null,
+                paneIncarnation:
+                  Number.isSafeInteger(lastFlow?.mirrorPaneIncarnation) &&
+                  lastFlow.mirrorPaneIncarnation >= 0
+                    ? Math.min(lastFlow.mirrorPaneIncarnation, 65_536)
+                    : null,
+                outputOrdinal:
+                  Number.isSafeInteger(lastFlow?.mirrorOutputOrdinal) &&
+                  lastFlow.mirrorOutputOrdinal >= 0
+                    ? Math.min(lastFlow.mirrorOutputOrdinal, 1_000_000)
+                    : null,
+                elapsedMicros:
+                  Number.isSafeInteger(lastFlow?.mirrorRecoveryElapsedMicros) &&
+                  lastFlow.mirrorRecoveryElapsedMicros >= 0
+                    ? Math.min(lastFlow.mirrorRecoveryElapsedMicros, 5_000_000)
+                    : null,
+                fingerprintExact:
+                  typeof lastFlow?.mirrorRecoveryFingerprintExact === "boolean"
+                    ? lastFlow.mirrorRecoveryFingerprintExact
+                    : null,
+                confirmationOrdinal:
+                  Number.isSafeInteger(lastFlow?.mirrorRecoveryConfirmationOrdinal) &&
+                  lastFlow.mirrorRecoveryConfirmationOrdinal >= 0
+                    ? Math.min(lastFlow.mirrorRecoveryConfirmationOrdinal, 65_536)
+                    : null,
+                collectorStarted:
+                  typeof lastFlow?.mirrorCollectorStarted === "boolean"
+                    ? lastFlow.mirrorCollectorStarted
+                    : null,
+                collectorLastCompletedOrdinal:
+                  Number.isSafeInteger(lastFlow?.mirrorCollectorLastCompletedOrdinal) &&
+                  lastFlow.mirrorCollectorLastCompletedOrdinal >= -1
+                    ? Math.min(lastFlow.mirrorCollectorLastCompletedOrdinal, 32)
+                    : null,
+                collectorCaptureLineCount:
+                  Number.isSafeInteger(lastFlow?.mirrorCollectorCaptureLineCount) &&
+                  lastFlow.mirrorCollectorCaptureLineCount >= 0
+                    ? Math.min(lastFlow.mirrorCollectorCaptureLineCount, 8_192)
+                    : null,
+                collectorCaptureByteCount:
+                  Number.isSafeInteger(lastFlow?.mirrorCollectorCaptureByteCount) &&
+                  lastFlow.mirrorCollectorCaptureByteCount >= 0
+                    ? Math.min(lastFlow.mirrorCollectorCaptureByteCount, 16 * 1024 * 1024)
+                    : null,
+                collectorContinueObserved:
+                  typeof lastFlow?.mirrorCollectorContinueObserved === "boolean"
+                    ? lastFlow.mirrorCollectorContinueObserved
+                    : null,
+                collectorStatusObserved:
+                  typeof lastFlow?.mirrorCollectorStatusObserved === "boolean"
+                    ? lastFlow.mirrorCollectorStatusObserved
+                    : null,
+                collectorObserverEmissionObserved:
+                  typeof lastFlow?.mirrorCollectorObserverEmissionObserved === "boolean"
+                    ? lastFlow.mirrorCollectorObserverEmissionObserved
+                    : null,
+                collectorFailureReason: ANSI_ATOMIC_COLLECTOR_FAILURE_REASONS.has(
+                  lastFlow?.mirrorCollectorFailureReason,
+                )
+                  ? lastFlow.mirrorCollectorFailureReason
+                  : null,
+                canonicalStateHmac:
+                  typeof finalTransition?.stateHash === "string"
+                    ? ansiHmac(
+                        namespace.evidenceKey,
+                        "workload-timeout-canonical-state",
+                        finalTransition.stateHash,
+                      )
+                    : null,
+                lastFailureReason: ANSI_MIRROR_FLOW_FAILURE_REASONS.has(
+                  lastFlow?.mirrorFlowFailureReason,
+                )
+                  ? lastFlow.mirrorFlowFailureReason
+                  : null,
+              });
+              const baseExact =
+                origin &&
+                origin.revision === ansiCanonicalPredecessor?.revision &&
+                origin.stateHash === ansiCanonicalPredecessor?.stateHash &&
+                finalTransition &&
+                tail.length <= 65_536 &&
+                daemonTail.length <= 65_536 &&
+                frames.length === 1 &&
+                fences.length === 1 &&
+                finalCursorPresentation !== null &&
+                finalCursorPresentation.cursorY === 39 &&
+                finalCursorPresentation.viewportRows === 40 &&
+                finalCursorPresentation.visible === true &&
+                producer.exact &&
+                deliveryJoin.exact &&
+                tracedDelivery &&
+                encode &&
+                ["patch", "seed"].includes(encode.terminalDelivery.representation) &&
+                Number.isSafeInteger(encode.terminalDelivery.representationBytes) &&
+                progressDeadlineExpiry === null &&
+                !faulted &&
+                !rebound;
+              if (baseExact) {
+                if (
+                  !candidate ||
+                  candidate.revision !== finalTransition.revision ||
+                  candidate.stateHash !== finalTransition.stateHash ||
+                  candidate.canonicalTransitionCount !== canonicalTransitions.length ||
+                  candidate.frameCount !== frames.length ||
+                  candidate.fenceCount !== fences.length ||
+                  candidate.enqueueCount !== deliveryJoin.enqueueCount ||
+                  candidate.settledCount !== deliveryJoin.settledCount ||
+                  candidate.paintCount !== paintCount
+                ) {
+                  const captureEnvelope = JSON.parse(
+                    await tuiCommandAsync(state, ["capture", "--ansi", "--json"], {
+                      timeout: 1_500,
+                      signal: ownerAbort.signal,
+                    }),
+                  );
+                  const capture = decodeFocusFramebufferCapture(captureEnvelope);
+                  const markerCount = capture.plain.split(marker).length - 1;
+                  lastMarkerCount = Math.min(markerCount, 2);
+                  const captureIdentityExact =
+                    captureEnvelope?.hostIdentity?.processId ===
+                      baseline.host?.hostIdentity?.processId &&
+                    captureEnvelope?.hostIdentity?.cols === baseline.host?.hostIdentity?.cols &&
+                    captureEnvelope?.hostIdentity?.rows === baseline.host?.hostIdentity?.rows;
+                  candidate =
+                    markerCount === 1 && captureIdentityExact
+                      ? Object.freeze({
+                          revision: finalTransition.revision,
+                          stateHash: finalTransition.stateHash,
+                          canonicalTransitionCount: canonicalTransitions.length,
+                          frameCount: frames.length,
+                          fenceCount: fences.length,
+                          enqueueCount: deliveryJoin.enqueueCount,
+                          settledCount: deliveryJoin.settledCount,
+                          paintCount,
+                          startedAt: performance.now(),
+                          markerCount,
+                        })
+                      : null;
+                } else if (performance.now() - candidate.startedAt >= 40) {
+                  const stableTailMs = Math.floor(performance.now() - candidate.startedAt);
+                  const finality = Object.freeze({
+                    cycle,
+                    markerHmac,
+                    payloadBytes,
+                    producerStatus: producer.state,
+                    producerOrdinal: producer.record.ordinal,
+                    producerPayloadHmac,
+                    producerBackpressureCount: producer.record.backpressureCount,
+                    deliveryBytes: encode.terminalDelivery.representationBytes,
+                    representation: encode.terminalDelivery.representation,
+                    attemptedPatchBytes: encode.terminalDelivery.attemptedPatchBytes,
+                    attemptedSeedBytes: encode.terminalDelivery.attemptedSeedBytes,
+                    attemptedLegacyPatchBytes: encode.terminalDelivery.attemptedLegacyPatchBytes,
+                    attemptedLegacySeedBytes: encode.terminalDelivery.attemptedLegacySeedBytes,
+                    attemptedCompactPatchBytes: encode.terminalDelivery.attemptedCompactPatchBytes,
+                    attemptedCompactSeedBytes: encode.terminalDelivery.attemptedCompactSeedBytes,
+                    selectedEncoding: encode.terminalDelivery.selectedEncoding,
+                    selectionStatus: encode.terminalDelivery.selectionStatus,
+                    deliveryOrdinal: encode.terminalDelivery.deliveryOrdinal,
+                    deliveryHmac: ansiHmac(
+                      namespace.evidenceKey,
+                      "workload-delivery",
+                      encode.terminalDelivery.transactionId,
+                    ),
+                    originCount: origins.length,
+                    canonicalTransitionType: finalTransition.updateType,
+                    canonicalTransitionCount: Math.min(canonicalTransitions.length, 8_193),
+                    frameCount: frames.length,
+                    fenceCount: fences.length,
+                    settledCount: deliveryJoin.settledCount,
+                    markerCount: candidate.markerCount,
+                    finalCursorY: finalCursorPresentation.cursorY,
+                    viewportRows: finalCursorPresentation.viewportRows,
+                    cursorVisible: finalCursorPresentation.visible,
+                    queueDepth: finalSettled.terminalDelivery.queueDepth,
+                    inFlight: finalSettled.terminalDelivery.inFlight,
+                    inFlightBytes: finalSettled.terminalDelivery.inFlightBytes,
+                    stableTailMs,
+                    elapsedMs: Math.min(
+                      progressNowMs - workloadProgress.startedAtMs,
+                      ANSI_WORKLOAD_ABSOLUTE_MS,
+                    ),
+                    noProgressElapsedMs: Math.min(
+                      progressNowMs - workloadProgress.lastProgressAtMs,
+                      ANSI_WORKLOAD_NO_PROGRESS_MS,
+                    ),
+                    progressCount: workloadProgress.progressCount,
+                    absoluteDeadlineMs: ANSI_WORKLOAD_ABSOLUTE_MS,
+                    noProgressDeadlineMs: ANSI_WORKLOAD_NO_PROGRESS_MS,
+                    laterTransitionCount: Math.max(
+                      0,
+                      canonicalTransitions.length - candidate.canonicalTransitionCount,
+                    ),
+                    laterEnqueueCount: Math.max(
+                      0,
+                      deliveryJoin.enqueueCount - candidate.enqueueCount,
+                    ),
+                    laterPaintCount: Math.max(0, paintCount - candidate.paintCount),
+                    authorityIdentityExact: deliveryJoin.exact,
+                    finalityExact: true,
+                    drainExact: true,
+                    faulted,
+                    rebound,
+                  });
+                  workloadFinalities.push(finality);
+                  expectedWorkloadFinalities.push(
+                    Object.freeze({ cycle, markerHmac, payloadBytes, producerPayloadHmac }),
+                  );
+                  result = Object.freeze({
+                    raw: Object.freeze({
+                      origin,
+                      transition: finalTransition,
+                      mode,
+                      presentation: finalCursorPresentation,
+                      fence: fences[0],
+                      daemonDelivery: finalSettled,
+                      tracedDelivery,
+                    }),
+                    finality,
+                  });
+                  break;
+                }
+              } else {
+                candidate = null;
+              }
+              const drainExact = deliveryJoin.exact;
+              const firstFailedPredicate =
+                origins.length !== 1
+                  ? "origin-count"
+                  : !finalTransition
+                    ? "canonical-final"
+                    : frames.length !== 1
+                      ? "actual-frame"
+                      : fences.length !== 1
+                        ? "healthy-fence"
+                        : finalCursorPresentation === null
+                          ? "cursor-presentation"
+                          : finalCursorPresentation.cursorY !== 39 ||
+                              finalCursorPresentation.viewportRows !== 40 ||
+                              finalCursorPresentation.visible !== true
+                            ? "visible-marker-cursor"
+                            : faulted
+                              ? "runtime-fault"
+                              : rebound
+                                ? "runtime-rebind"
+                                : !producer.exact
+                                  ? producer.state === "error"
+                                    ? "producer-error"
+                                    : "producer-incomplete"
+                                  : !encode
+                                    ? "representation"
+                                    : !tracedDelivery
+                                      ? "operation-trace"
+                                      : !drainExact
+                                        ? "delivery-drain"
+                                        : lastMarkerCount !== 1
+                                          ? "visible-marker"
+                                          : "stable-tail";
+              lastFinalityObservation = Object.freeze({
+                operation: "ansi-workload-finality",
+                cycle,
+                payloadBytes,
+                producerStatus: producer.state,
+                producerOrdinal: Number.isSafeInteger(producer.record?.ordinal)
+                  ? producer.record.ordinal
+                  : null,
+                producerPayloadHmac:
+                  producer.record?.payloadSha256 === payloadSha256 ? producerPayloadHmac : null,
+                producerBackpressureCount: Number.isSafeInteger(producer.record?.backpressureCount)
+                  ? Math.min(producer.record.backpressureCount, 8_193)
+                  : null,
+                producerFirstCause: producer.exact
+                  ? null
+                  : producer.state === "error"
+                    ? "stdout-write"
+                    : producer.state === "pending"
+                      ? "completion-absent"
+                      : "completion-invalid",
+                originCount: Math.min(origins.length, 2),
+                canonicalTransitionType: new Set(["terminal.seed", "terminal.patch"]).has(
+                  finalTransition?.updateType,
+                )
+                  ? finalTransition.updateType
+                  : null,
+                canonicalTransitionCount: Math.min(canonicalTransitions.length, 8_193),
+                frameCount: Math.min(frames.length, 2),
+                fenceCount: Math.min(fences.length, 2),
+                settledCount: Math.min(deliveryJoin.settledCount, 2),
+                markerCount: lastMarkerCount,
+                finalCursorY:
+                  Number.isSafeInteger(finalCursorPresentation?.cursorY) &&
+                  finalCursorPresentation.cursorY >= 0 &&
+                  finalCursorPresentation.cursorY <= 4_096
+                    ? finalCursorPresentation.cursorY
+                    : null,
+                viewportRows:
+                  Number.isSafeInteger(finalCursorPresentation?.viewportRows) &&
+                  finalCursorPresentation.viewportRows > 0 &&
+                  finalCursorPresentation.viewportRows <= 4_096
+                    ? finalCursorPresentation.viewportRows
+                    : null,
+                cursorVisible:
+                  typeof finalCursorPresentation?.visible === "boolean"
+                    ? finalCursorPresentation.visible
+                    : null,
+                authorityIdentityExact: deliveryJoin.exact,
+                operationTraceExact: tracedDelivery !== null,
+                finalityExact: false,
+                drainExact,
+                stableExact: false,
+                elapsedMs: Math.min(
+                  progressNowMs - workloadProgress.startedAtMs,
+                  ANSI_WORKLOAD_ABSOLUTE_MS,
+                ),
+                noProgressElapsedMs: Math.min(
+                  progressNowMs - workloadProgress.lastProgressAtMs,
+                  ANSI_WORKLOAD_NO_PROGRESS_MS,
+                ),
+                progressCount: workloadProgress.progressCount,
+                absoluteDeadlineMs: ANSI_WORKLOAD_ABSOLUTE_MS,
+                noProgressDeadlineMs: ANSI_WORKLOAD_NO_PROGRESS_MS,
+                faulted,
+                rebound,
+                representation: ["patch", "seed"].includes(encode?.terminalDelivery?.representation)
+                  ? encode.terminalDelivery.representation
+                  : null,
+                selectedEncoding: ["semantic-v1", "semantic-compact-v1"].includes(
+                  encode?.terminalDelivery?.selectedEncoding,
+                )
+                  ? encode.terminalDelivery.selectedEncoding
+                  : null,
+                attemptedPatchBytes: Number.isSafeInteger(
+                  encode?.terminalDelivery?.attemptedPatchBytes,
+                )
+                  ? Math.min(encode.terminalDelivery.attemptedPatchBytes, 67_108_865)
+                  : null,
+                attemptedSeedBytes: Number.isSafeInteger(
+                  encode?.terminalDelivery?.attemptedSeedBytes,
+                )
+                  ? Math.min(encode.terminalDelivery.attemptedSeedBytes, 67_108_865)
+                  : null,
+                attemptedLegacyPatchBytes: Number.isSafeInteger(
+                  encode?.terminalDelivery?.attemptedLegacyPatchBytes,
+                )
+                  ? Math.min(encode.terminalDelivery.attemptedLegacyPatchBytes, 67_108_865)
+                  : null,
+                attemptedLegacySeedBytes: Number.isSafeInteger(
+                  encode?.terminalDelivery?.attemptedLegacySeedBytes,
+                )
+                  ? Math.min(encode.terminalDelivery.attemptedLegacySeedBytes, 67_108_865)
+                  : null,
+                attemptedLegacyPatchAtLeastBytes: Number.isSafeInteger(
+                  encode?.terminalDelivery?.attemptedLegacyPatchAtLeastBytes,
+                )
+                  ? Math.min(encode.terminalDelivery.attemptedLegacyPatchAtLeastBytes, 67_108_865)
+                  : null,
+                attemptedLegacySeedAtLeastBytes: Number.isSafeInteger(
+                  encode?.terminalDelivery?.attemptedLegacySeedAtLeastBytes,
+                )
+                  ? Math.min(encode.terminalDelivery.attemptedLegacySeedAtLeastBytes, 67_108_865)
+                  : null,
+                attemptedLegacyPatchSizeCapped:
+                  encode?.terminalDelivery?.attemptedLegacyPatchSizeCapped === true,
+                attemptedLegacySeedSizeCapped:
+                  encode?.terminalDelivery?.attemptedLegacySeedSizeCapped === true,
+                attemptedCompactPatchBytes: Number.isSafeInteger(
+                  encode?.terminalDelivery?.attemptedCompactPatchBytes,
+                )
+                  ? Math.min(encode.terminalDelivery.attemptedCompactPatchBytes, 67_108_865)
+                  : null,
+                attemptedCompactSeedBytes: Number.isSafeInteger(
+                  encode?.terminalDelivery?.attemptedCompactSeedBytes,
+                )
+                  ? Math.min(encode.terminalDelivery.attemptedCompactSeedBytes, 67_108_865)
+                  : null,
+                deliveryBytes: Number.isSafeInteger(encode?.terminalDelivery?.representationBytes)
+                  ? Math.min(encode.terminalDelivery.representationBytes, 16_777_217)
+                  : null,
+                selectionStatus: [
+                  "patch-preferred",
+                  "seed-preferred",
+                  "patch-fallback",
+                  "direct-seed",
+                  "legacy-patch-fallback",
+                  "legacy-seed-fallback",
+                ].includes(encode?.terminalDelivery?.selectionStatus)
+                  ? encode.terminalDelivery.selectionStatus
+                  : null,
+                deliveryOrdinal: Number.isSafeInteger(encode?.terminalDelivery?.deliveryOrdinal)
+                  ? encode.terminalDelivery.deliveryOrdinal
+                  : null,
+                deliveryHmac:
+                  typeof encode?.terminalDelivery?.transactionId === "string"
+                    ? ansiHmac(
+                        namespace.evidenceKey,
+                        "workload-delivery",
+                        encode.terminalDelivery.transactionId,
+                      )
+                    : null,
+                laterTransitionCount: candidate
+                  ? Math.min(
+                      Math.max(0, canonicalTransitions.length - candidate.canonicalTransitionCount),
+                      8_193,
+                    )
+                  : null,
+                laterEnqueueCount: candidate
+                  ? Math.min(Math.max(0, deliveryJoin.enqueueCount - candidate.enqueueCount), 8_193)
+                  : null,
+                laterPaintCount: candidate
+                  ? Math.min(Math.max(0, paintCount - candidate.paintCount), 8_193)
+                  : null,
+                firstFailedPredicate,
+                flowRecovery: flowRecoveryEvidence,
+              });
+              const progressExpiry = faulted
+                ? "runtime-fault"
+                : rebound
+                  ? "runtime-rebind"
+                  : progressDeadlineExpiry;
+              if (progressExpiry !== null) {
+                const timeoutObservation = Object.freeze({
+                  ...lastFinalityObservation,
+                  nativeTimeout:
+                    timeoutNativeEvidence ??
+                    Object.freeze({
+                      available: false,
+                      markerPresent: null,
+                      markerCount: null,
+                      captureHmac: null,
+                      cursorX: null,
+                      cursorY: null,
+                      cursorVisible: null,
+                      reason: "not-attempted",
+                    }),
+                  firstFailedPredicate:
+                    producer.state === "error"
+                      ? "producer-error"
+                      : producer.state !== "complete"
+                        ? "producer-incomplete"
+                        : progressExpiry,
+                });
+                publishAnsiPartial({
+                  stage: "workload",
+                  workloadFinalities: Object.freeze(workloadFinalities),
+                  workloadFailure: timeoutObservation,
+                });
+                const error = new Error(
+                  "ANSI workload did not reach its exact settled final epoch",
+                );
+                error.boundary = "ansi-workload-finality";
+                error.observation = timeoutObservation;
+                throw error;
+              }
+              await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+            }
+            revision = result.raw.transition.revision;
+            const nextPredecessor = advanceAnsiCanonicalPredecessor(
+              ansiCanonicalPredecessor,
+              Object.freeze({ qualified: true, raw: result.raw }),
+            );
+            if (!nextPredecessor)
+              throw new Error("ANSI workload crossed its canonical predecessor");
+            ansiCanonicalPredecessor = nextPredecessor;
+            const qualifiedPresentation = result.raw.presentation;
+            if (
+              !qualifiedPresentation ||
+              !Number.isSafeInteger(qualifiedPresentation.gridRowsReadTotal) ||
+              !Number.isSafeInteger(qualifiedPresentation.fullWalkTotal) ||
+              !Number.isSafeInteger(qualifiedPresentation.presentationCount)
+            )
+              throw new Error("ANSI workload final presentation counters were unavailable");
+            ansiPresentationCounters = Object.freeze({
+              gridRowsReadTotal: qualifiedPresentation.gridRowsReadTotal,
+              fullWalkTotal: qualifiedPresentation.fullWalkTotal,
+              presentationCount: qualifiedPresentation.presentationCount,
+            });
+            latestFence = result.raw.fence;
+            const sample = await waitAnsiPostFenceResource(namespace, latestFence, cycle);
+            resourceCheckpointSamples.push(
+              Object.freeze({
+                phase: "cycle",
+                cycle,
+                sampleOrdinal: sample.ordinal,
+                operation: sample.operation,
+                resourceEpochArmed: sample.resourceEpochArmed,
+                resourceEpochIdentityHmac: ansiResourceEpochIdentityHmac(
+                  namespace.evidenceKey,
+                  sample.resourceEpochIdentity,
+                ),
+                identityHmac: ansiResourceIdentityHmac(namespace.evidenceKey, sample),
+                stateHmac: ansiHmac(namespace.evidenceKey, "state", sample.stateHash),
+                processHmac: ansiHmac(namespace.evidenceKey, "process", sample.processId),
+                clockId: sample.clockId,
+                clockKind: sample.clockKind,
+                atMicros: sample.atMicros,
+                rssBytes: sample.rssBytes,
+                heapUsedBytes: sample.heapUsedBytes,
+                eventLoopDelayMicros: sample.eventLoopDelayMicros,
+                rssPeakBytes: sample.rssPeakBytes,
+                heapUsedPeakBytes: sample.heapUsedPeakBytes,
+                eventLoopDelayPeakMicros: sample.eventLoopDelayPeakMicros,
+                eventLoopDelayPeakSource: sample.eventLoopDelayPeakSource,
+                lowWaterFirstSampleOrdinal: sample.lowWaterFirstSampleOrdinal,
+                lowWaterLastSampleOrdinal: sample.lowWaterLastSampleOrdinal,
+                lowWaterSampleCount: sample.lowWaterSampleCount,
+                lowWaterWindowMicros: sample.lowWaterWindowMicros,
+                inputPending: sample.inputPending,
+                inputInFlight: sample.inputInFlight,
+                inputPendingBytes: sample.inputPendingBytes,
+                inputPendingPeak: sample.inputPendingPeak,
+                inputInFlightPeak: sample.inputInFlightPeak,
+                inputPendingBytesPeak: sample.inputPendingBytesPeak,
+                resourceSamplingFailureCount: sample.resourceSamplingFailureCount,
+              }),
+            );
+            expectedResourceCheckpoints.push(
+              Object.freeze({
+                phase: "cycle",
+                cycle,
+                operation: "post-fence",
+                resourceEpochIdentityHmac: ansiResourceEpochIdentityHmac(
+                  namespace.evidenceKey,
+                  ansiResourceEpochIdentity,
+                ),
+                identityHmac: ansiResourceIdentityHmac(namespace.evidenceKey, latestFence),
+                stateHmac: ansiHmac(namespace.evidenceKey, "state", latestFence.stateHash),
+                processHmac: baseline.stage.processHmac,
+                clockId: baseline.stage.clockId,
+                lowWaterFirstSampleOrdinal: 1,
+                lowWaterLastSampleOrdinal: 8,
+                lowWaterSampleCount: 8,
+              }),
+            );
+            publishAnsiPartial({
+              stage: "workload",
+              workloadProgress: Object.freeze({
+                activeCycle: cycle,
+                completedCycles: cycle,
+                progressCount: workloadProgress.progressCount,
+                elapsedMs: Math.min(
+                  Math.floor(performance.now()) - workloadProgress.startedAtMs,
+                  30_000,
+                ),
+                noProgressElapsedMs: 0,
+              }),
+              resourceCheckpointCount: resourceCheckpointSamples.length,
+              resourcePeak: Object.freeze({
+                rssBytes: Math.max(...resourceCheckpointSamples.map(({ rssBytes }) => rssBytes)),
+                heapUsedBytes: Math.max(
+                  ...resourceCheckpointSamples.map(({ heapUsedBytes }) => heapUsedBytes),
+                ),
+                eventLoopDelayMicros: Math.max(
+                  ...resourceCheckpointSamples.map(
+                    ({ eventLoopDelayMicros }) => eventLoopDelayMicros,
+                  ),
+                ),
+              }),
+            });
+            if (cycle <= 8) continue;
+            const daemonDelivery = result.raw.daemonDelivery;
+            const tracedDelivery = result.raw.tracedDelivery;
+            const endpointOrdinal = cycle - 8;
+            resourceSamples.push(
+              Object.freeze({
+                endpointOrdinal,
+                sampleOrdinal: sample.ordinal,
+                fenceHmac: ansiHmac(namespace.evidenceKey, "fence", latestFence.stateHash),
+                markerHmac: result.finality.markerHmac,
+                processHmac: ansiHmac(namespace.evidenceKey, "process", sample.processId),
+                clockId: sample.clockId,
+                clockKind: sample.clockKind,
+                atMicros: sample.atMicros,
+                inputPending: sample.inputPending,
+                inputInFlight: sample.inputInFlight,
+                inputPendingBytes: sample.inputPendingBytes,
+                daemonTraceHmac: ansiHmac(
+                  namespace.evidenceKey,
+                  "daemon-trace",
+                  tracedDelivery.traceId,
+                ),
+                daemonProcessHmac: ansiHmac(
+                  namespace.evidenceKey,
+                  "daemon-process",
+                  tracedDelivery.processId,
+                ),
+                daemonClockId: tracedDelivery.clockId,
+                daemonClockKind: tracedDelivery.clockKind,
+                daemonStartedAtMicros: tracedDelivery.startedAtMicros,
+                daemonEndedAtMicros: tracedDelivery.endedAtMicros,
+                representationCacheBytes: daemonDelivery.terminalDelivery.representationCacheBytes,
+                rawJournalBytes: daemonDelivery.terminalDelivery.rawJournalBytes,
+                deliveryQueueDepth: daemonDelivery.terminalDelivery.queueDepth,
+                deliveryMaxQueueDepth: daemonDelivery.terminalDelivery.maxQueueDepth,
+                deliveryInFlight: daemonDelivery.terminalDelivery.inFlight,
+                deliveryInFlightBytes: daemonDelivery.terminalDelivery.inFlightBytes,
+                rssBytes: sample.rssBytes,
+                heapUsedBytes: sample.heapUsedBytes,
+                eventLoopDelayMicros: sample.eventLoopDelayMicros,
+              }),
+            );
+            expectedResources.push(
+              Object.freeze({
+                endpointOrdinal,
+                sampleOrdinal: sample.ordinal,
+                fenceHmac: ansiHmac(namespace.evidenceKey, "fence", latestFence.stateHash),
+                markerHmac: result.finality.markerHmac,
+                processHmac: baseline.stage.processHmac,
+                clockId: baseline.stage.clockId,
+                fenceAtMicros: latestFence.atMicros,
+                daemonTraceHmac: ansiHmac(
+                  namespace.evidenceKey,
+                  "daemon-trace",
+                  result.raw.origin.traceId,
+                ),
+                daemonProcessHmac: ansiHmac(
+                  namespace.evidenceKey,
+                  "daemon-process",
+                  daemonDelivery.processId,
+                ),
+                daemonClockId: daemonDelivery.clockId,
+              }),
+            );
+          }
+          const deliveries = ansiReadJsonLines(namespace.tui.performanceTracePath).filter(
+            ({ type }) => type === "performance.terminal-delivery",
+          );
+          const lastDelivery = deliveries.at(-1);
+          event("ansi-sustained-workload", { cycleCount: 24 });
+          const sustained = Object.freeze({
+            resourceSamples: Object.freeze(resourceSamples),
+            expectedResources: Object.freeze(expectedResources),
+            workloadFinalities: Object.freeze(workloadFinalities),
+            expectedWorkloadFinalities: Object.freeze(expectedWorkloadFinalities),
+            latestFence,
+            resourceCheckpointSamples: Object.freeze(resourceCheckpointSamples),
+            expectedResourceCheckpoints: Object.freeze(expectedResourceCheckpoints),
+            workload: Object.freeze({
+              cycleCount: 24,
+              conditioningCycleCount: 8,
+              measuredCycleCount: 16,
+              bytes: workloadFinalities.reduce((sum, sample) => sum + sample.payloadBytes, 0),
+              maxQueueDepth: Math.max(0, ...deliveries.map(({ queuePeak }) => queuePeak ?? 0)),
+              settledDeliveryQueueDepth: lastDelivery?.settledQueueDepth ?? null,
+              representationCacheBytes: Math.max(
+                0,
+                ...resourceSamples.map(({ representationCacheBytes }) => representationCacheBytes),
+              ),
+              rawJournalBytes: Math.max(
+                0,
+                ...resourceSamples.map(({ rawJournalBytes }) => rawJournalBytes),
+              ),
+              eventLoopP99Ms:
+                Math.max(
+                  0,
+                  ...resourceSamples.map(({ eventLoopDelayMicros }) => eventLoopDelayMicros),
+                ) / 1_000,
+              finalityCycleCount: workloadFinalities.length,
+              markerCount: workloadFinalities.reduce((sum, sample) => sum + sample.markerCount, 0),
+              stableTailMs: 40,
+              finalityExact: workloadFinalities.every((sample) => sample.finalityExact),
+              drainExact: workloadFinalities.every((sample) => sample.drainExact),
+              faulted: workloadFinalities.some((sample) => sample.faulted),
+              rebound: workloadFinalities.some((sample) => sample.rebound),
+            }),
+          });
+          publishAnsiPartial({
+            stage: "workload",
+            workload: sustained.workload,
+            workloadFinalities: sustained.workloadFinalities,
+            resourceSamples: sustained.resourceSamples,
+          });
+          return sustained;
+        },
+        proveIdle: async (namespace, _daemon, _identity, _process, _baseline, sustained) => {
+          const beforeRecords = ansiReadJsonLines(namespace.tui.performanceTracePath);
+          const watermark = beforeRecords.length;
+          const beforeCounters = beforeRecords
+            .filter(({ type }) => type === "performance.terminal-cursor-presentation")
+            .at(-1);
+          const beforeFrame = await tuiCommandAsync(state, ["capture", "--ansi", "--json"], {
+            timeout: 1_500,
+            signal: ownerAbort.signal,
+          });
+          const startedAt = performance.now();
+          await new Promise((resolveWait) => setTimeout(resolveWait, 10_100));
+          const allAfter = ansiReadJsonLines(namespace.tui.performanceTracePath);
+          const tail = allAfter.slice(watermark);
+          const afterCounters = allAfter
+            .filter(({ type }) => type === "performance.terminal-cursor-presentation")
+            .at(-1);
+          const countersEqual = (record, expected) =>
+            record?.gridRowsReadTotal === expected?.gridRowsReadTotal &&
+            record?.fullWalkTotal === expected?.fullWalkTotal &&
+            record?.presentationCount === expected?.presentationCount;
+          if (
+            !ansiPresentationCounters ||
+            !countersEqual(beforeCounters, ansiPresentationCounters) ||
+            !countersEqual(afterCounters, ansiPresentationCounters)
+          ) {
+            const error = new Error("ANSI idle did not retain its qualified presentation counters");
+            error.boundary = "ansi-idle-quiescent";
+            error.observation = Object.freeze({
+              operation: "ansi-idle-counter-continuity",
+              beforeExact: countersEqual(beforeCounters, ansiPresentationCounters),
+              afterExact: countersEqual(afterCounters, ansiPresentationCounters),
+            });
+            throw error;
+          }
+          const afterFrame = await tuiCommandAsync(state, ["capture", "--ansi", "--json"], {
+            timeout: 1_500,
+            signal: ownerAbort.signal,
+          });
+          const idleResourceSamples = allAfter.filter(
+            (record) =>
+              record?.type === "performance.terminal-resource-sample" &&
+              record.operation === "idle" &&
+              record.ordinal > ansiResourceOrdinal &&
+              record.semanticPaneId === sustained.latestFence.semanticPaneId &&
+              record.generation === sustained.latestFence.generation &&
+              record.incarnation === sustained.latestFence.incarnation &&
+              record.revision === sustained.latestFence.revision &&
+              record.stateHash === sustained.latestFence.stateHash &&
+              record.sourceEpoch === sustained.latestFence.sourceEpoch &&
+              record.rendererEpoch === sustained.latestFence.rendererEpoch &&
+              record.viewportCols === sustained.latestFence.viewportCols &&
+              record.viewportRows === sustained.latestFence.viewportRows,
+          );
+          if (idleResourceSamples.length !== 1) {
+            const observation = Object.freeze({
+              operation: "ansi-idle-resource-cap",
+              observedCount: Math.min(idleResourceSamples.length, 512),
+              resourceSamplingFailureCount: null,
+              ...boundedAnsiResourceFailureFacts({
+                rssBytes: null,
+                heapUsedBytes: null,
+                eventLoopDelayMicros: null,
+              }),
+              ...boundedAnsiResourcePeakFailureFacts({
+                rssPeakBytes: null,
+                heapUsedPeakBytes: null,
+                eventLoopDelayPeakMicros: null,
+              }),
+              resourceEpochArmed: null,
+              resourceEpochIdentityHmac: null,
+              resourceEpochIdentityExact: null,
+              lowWaterFirstSampleOrdinal: null,
+              lowWaterLastSampleOrdinal: null,
+              lowWaterSampleCount: null,
+              lowWaterWindowMicros: null,
+              eventLoopDelayPeakSource: null,
+              inputPending: null,
+              inputInFlight: null,
+              inputPendingBytes: null,
+              inputPendingPeak: null,
+              inputInFlightPeak: null,
+              inputPendingBytesPeak: null,
+              firstFailedPredicate: "resource-sample-cardinality",
+            });
+            publishAnsiPartial({ stage: "idle", workloadFailure: observation });
+            const error = new Error("ANSI idle resource endpoint was not exact");
+            error.boundary = "ansi-idle-quiescent";
+            error.observation = observation;
+            throw error;
+          }
+          const idleResource = idleResourceSamples[0];
+          const idleEventLoopFailure = ansiEventLoopResourceCapStatus(idleResource);
+          const idleRetained = assessAnsiIdleRetainedResourceSamples(
+            idleResource.idleRetainedSamples,
+            {
+              fenceAtMicros: sustained.latestFence.atMicros,
+              endpointAtMicros: idleResource.atMicros,
+            },
+          );
+          ansiResourceOrdinal = idleResource.ordinal;
+          if (
+            idleResource.resourceEpochArmed !== true ||
+            !ansiResourceEpochIdentityExact(
+              idleResource.resourceEpochIdentity,
+              ansiResourceEpochIdentity,
+            ) ||
+            idleResource.lowWaterFirstSampleOrdinal !== 1 ||
+            idleResource.lowWaterLastSampleOrdinal !== 1 ||
+            idleResource.lowWaterSampleCount !== 1 ||
+            idleResource.lowWaterWindowMicros !== 0 ||
+            !Number.isSafeInteger(idleResource.resourceSamplingFailureCount) ||
+            idleResource.resourceSamplingFailureCount !== 0 ||
+            !Number.isSafeInteger(idleResource.rssBytes) ||
+            idleResource.rssBytes < 0 ||
+            idleResource.rssBytes > ANSI_TUI_RSS_ABSOLUTE_CEILING_BYTES ||
+            !Number.isSafeInteger(idleResource.rssPeakBytes) ||
+            idleResource.rssPeakBytes < 0 ||
+            idleResource.rssPeakBytes > ANSI_TUI_RSS_ABSOLUTE_CEILING_BYTES ||
+            !Number.isSafeInteger(idleResource.heapUsedBytes) ||
+            idleResource.heapUsedBytes < 0 ||
+            idleResource.heapUsedBytes > ANSI_TUI_HEAP_ABSOLUTE_CEILING_BYTES ||
+            !Number.isSafeInteger(idleResource.heapUsedPeakBytes) ||
+            idleResource.heapUsedPeakBytes < 0 ||
+            idleResource.heapUsedPeakBytes > ANSI_TUI_HEAP_ABSOLUTE_CEILING_BYTES ||
+            idleEventLoopFailure !== null ||
+            !new Set(["heartbeat", "endpoint"]).has(idleResource.eventLoopDelayPeakSource) ||
+            idleResource.inputPending !== 0 ||
+            idleResource.inputInFlight !== 0 ||
+            idleResource.inputPendingBytes !== 0 ||
+            idleResource.inputPendingPeak !== 0 ||
+            idleResource.inputInFlightPeak !== 0 ||
+            idleResource.inputPendingBytesPeak !== 0 ||
+            !idleRetained.qualified
+          ) {
+            const firstFailedPredicate =
+              idleResource.resourceEpochArmed !== true ||
+              !ansiResourceEpochIdentityExact(
+                idleResource.resourceEpochIdentity,
+                ansiResourceEpochIdentity,
+              )
+                ? "resource-epoch-identity"
+                : idleResource.lowWaterFirstSampleOrdinal !== 1 ||
+                    idleResource.lowWaterLastSampleOrdinal !== 1 ||
+                    idleResource.lowWaterSampleCount !== 1 ||
+                    idleResource.lowWaterWindowMicros !== 0
+                  ? "resource-low-water-window"
+                  : !Number.isSafeInteger(idleResource.resourceSamplingFailureCount) ||
+                      idleResource.resourceSamplingFailureCount !== 0
+                    ? "resource-sampling-failure"
+                    : !Number.isSafeInteger(idleResource.rssBytes) ||
+                        idleResource.rssBytes < 0 ||
+                        idleResource.rssBytes > ANSI_TUI_RSS_ABSOLUTE_CEILING_BYTES
+                      ? "rss-current-cap"
+                      : !Number.isSafeInteger(idleResource.rssPeakBytes) ||
+                          idleResource.rssPeakBytes < 0 ||
+                          idleResource.rssPeakBytes > ANSI_TUI_RSS_ABSOLUTE_CEILING_BYTES
+                        ? "rss-absolute-cap"
+                        : !Number.isSafeInteger(idleResource.heapUsedBytes) ||
+                            idleResource.heapUsedBytes < 0 ||
+                            idleResource.heapUsedBytes > ANSI_TUI_HEAP_ABSOLUTE_CEILING_BYTES
+                          ? "heap-current-cap"
+                          : !Number.isSafeInteger(idleResource.heapUsedPeakBytes) ||
+                              idleResource.heapUsedPeakBytes < 0 ||
+                              idleResource.heapUsedPeakBytes > ANSI_TUI_HEAP_ABSOLUTE_CEILING_BYTES
+                            ? "heap-absolute-cap"
+                            : idleEventLoopFailure !== null
+                              ? idleEventLoopFailure
+                              : !new Set(["heartbeat", "endpoint"]).has(
+                                    idleResource.eventLoopDelayPeakSource,
+                                  )
+                                ? "event-loop-peak-source"
+                                : idleResource.inputPending !== 0 ||
+                                    idleResource.inputInFlight !== 0 ||
+                                    idleResource.inputPendingBytes !== 0 ||
+                                    idleResource.inputPendingPeak !== 0 ||
+                                    idleResource.inputInFlightPeak !== 0 ||
+                                    idleResource.inputPendingBytesPeak !== 0
+                                  ? "input-not-settled"
+                                  : idleRetained.firstInvalidPredicate;
+            const observation = Object.freeze({
+              operation: "ansi-idle-resource-cap",
+              observedCount: 1,
+              resourceSamplingFailureCount: Number.isSafeInteger(
+                idleResource.resourceSamplingFailureCount,
+              )
+                ? Math.min(Math.max(idleResource.resourceSamplingFailureCount, 0), 512)
+                : null,
+              ...boundedAnsiResourceFailureFacts({
+                rssBytes: idleResource.rssBytes,
+                heapUsedBytes: idleResource.heapUsedBytes,
+                eventLoopDelayMicros: idleResource.eventLoopDelayMicros,
+              }),
+              ...boundedAnsiResourcePeakFailureFacts({
+                rssPeakBytes: idleResource.rssPeakBytes,
+                heapUsedPeakBytes: idleResource.heapUsedPeakBytes,
+                eventLoopDelayPeakMicros: idleResource.eventLoopDelayPeakMicros,
+              }),
+              resourceEpochArmed: idleResource.resourceEpochArmed === true,
+              resourceEpochIdentityHmac:
+                idleResource.resourceEpochArmed === true && idleResource.resourceEpochIdentity
+                  ? ansiResourceEpochIdentityHmac(
+                      namespace.evidenceKey,
+                      idleResource.resourceEpochIdentity,
+                    )
+                  : null,
+              resourceEpochIdentityExact: ansiResourceEpochIdentityExact(
+                idleResource.resourceEpochIdentity,
+                ansiResourceEpochIdentity,
+              ),
+              lowWaterFirstSampleOrdinal: Number.isSafeInteger(
+                idleResource.lowWaterFirstSampleOrdinal,
+              )
+                ? Math.min(Math.max(idleResource.lowWaterFirstSampleOrdinal, 0), 16)
+                : null,
+              lowWaterLastSampleOrdinal: Number.isSafeInteger(
+                idleResource.lowWaterLastSampleOrdinal,
+              )
+                ? Math.min(Math.max(idleResource.lowWaterLastSampleOrdinal, 0), 16)
+                : null,
+              lowWaterSampleCount: Number.isSafeInteger(idleResource.lowWaterSampleCount)
+                ? Math.min(Math.max(idleResource.lowWaterSampleCount, 0), 16)
+                : null,
+              lowWaterWindowMicros: Number.isSafeInteger(idleResource.lowWaterWindowMicros)
+                ? Math.min(Math.max(idleResource.lowWaterWindowMicros, 0), 2_000_000)
+                : null,
+              eventLoopDelayPeakSource: new Set(["heartbeat", "endpoint"]).has(
+                idleResource.eventLoopDelayPeakSource,
+              )
+                ? idleResource.eventLoopDelayPeakSource
+                : null,
+              inputPending: Number.isSafeInteger(idleResource.inputPending)
+                ? idleResource.inputPending
+                : null,
+              inputInFlight: Number.isSafeInteger(idleResource.inputInFlight)
+                ? idleResource.inputInFlight
+                : null,
+              inputPendingBytes: Number.isSafeInteger(idleResource.inputPendingBytes)
+                ? idleResource.inputPendingBytes
+                : null,
+              inputPendingPeak: Number.isSafeInteger(idleResource.inputPendingPeak)
+                ? idleResource.inputPendingPeak
+                : null,
+              inputInFlightPeak: Number.isSafeInteger(idleResource.inputInFlightPeak)
+                ? idleResource.inputInFlightPeak
+                : null,
+              inputPendingBytesPeak: Number.isSafeInteger(idleResource.inputPendingBytesPeak)
+                ? idleResource.inputPendingBytesPeak
+                : null,
+              idleRetainedSampleCount: Math.min(Math.max(idleRetained.sampleCount ?? 0, 0), 8),
+              idleRetainedFirstInvalidOrdinal: Number.isSafeInteger(
+                idleRetained.firstInvalidOrdinal,
+              )
+                ? Math.min(Math.max(idleRetained.firstInvalidOrdinal, 1), 8)
+                : null,
+              idleRetainedFirstInvalidPredicate: new Set([
+                "idle-retained-cardinality",
+                "idle-retained-ordinal",
+                "idle-retained-cadence",
+                "idle-retained-window",
+                "idle-retained-queue",
+                "idle-retained-endpoint",
+                "rss-slope",
+                "heap-slope",
+                "idle-retained-rss-growth",
+                "idle-retained-heap-growth",
+                "idle-retained-rss-high",
+                "idle-retained-heap-high",
+              ]).has(idleRetained.firstInvalidPredicate)
+                ? idleRetained.firstInvalidPredicate
+                : null,
+              idleRetainedRssSlopeBytesPerSample: Number.isFinite(
+                idleRetained.rssSlopeBytesPerSample,
+              )
+                ? Math.min(
+                    Math.max(idleRetained.rssSlopeBytesPerSample, -1_073_741_825),
+                    1_073_741_825,
+                  )
+                : null,
+              idleRetainedHeapSlopeBytesPerSample: Number.isFinite(
+                idleRetained.heapSlopeBytesPerSample,
+              )
+                ? Math.min(
+                    Math.max(idleRetained.heapSlopeBytesPerSample, -536_870_913),
+                    536_870_913,
+                  )
+                : null,
+              idleRetainedRssGrowthBytes: Number.isSafeInteger(idleRetained.rssGrowthBytes)
+                ? Math.min(Math.max(idleRetained.rssGrowthBytes, -1_073_741_825), 1_073_741_825)
+                : null,
+              idleRetainedHeapGrowthBytes: Number.isSafeInteger(idleRetained.heapGrowthBytes)
+                ? Math.min(Math.max(idleRetained.heapGrowthBytes, -536_870_913), 536_870_913)
+                : null,
+              firstFailedPredicate,
+            });
+            publishAnsiPartial({ stage: "idle", workloadFailure: observation });
+            const error = new Error("ANSI idle resource endpoint exceeded a hard cap");
+            error.boundary = "ansi-idle-quiescent";
+            error.observation = observation;
+            throw error;
+          }
+          const idle = Object.freeze({
+            durationMs: Math.floor(performance.now() - startedAt),
+            frameCount: tail.filter(({ type }) => type === "performance.frame").length,
+            paintCount: tail.filter(({ type }) => type === "performance.terminal-paint").length,
+            gridRowsReadDelta:
+              (afterCounters?.gridRowsReadTotal ?? -1) - (beforeCounters?.gridRowsReadTotal ?? -2),
+            fullWalkDelta:
+              (afterCounters?.fullWalkTotal ?? -1) - (beforeCounters?.fullWalkTotal ?? -2),
+            presentationCountDelta:
+              (afterCounters?.presentationCount ?? -1) - (beforeCounters?.presentationCount ?? -2),
+            framebufferHmacBefore: ansiHmac(namespace.evidenceKey, "idle-frame", beforeFrame),
+            framebufferHmacAfter: ansiHmac(namespace.evidenceKey, "idle-frame", afterFrame),
+            queueDepth: sustained.workload.settledDeliveryQueueDepth,
+            resourceExact: true,
+            resourceSampleOrdinal: idleResource.ordinal,
+            lowWaterFirstSampleOrdinal: idleResource.lowWaterFirstSampleOrdinal,
+            lowWaterLastSampleOrdinal: idleResource.lowWaterLastSampleOrdinal,
+            lowWaterSampleCount: idleResource.lowWaterSampleCount,
+            lowWaterWindowMicros: idleResource.lowWaterWindowMicros,
+            resourceProcessHmac: ansiHmac(namespace.evidenceKey, "process", idleResource.processId),
+            resourceClockId: idleResource.clockId,
+            resourceClockKind: idleResource.clockKind,
+            resourceAtMicros: idleResource.atMicros,
+            resourceIdentityHmac: ansiResourceIdentityHmac(namespace.evidenceKey, idleResource),
+            resourceStateHmac: ansiHmac(namespace.evidenceKey, "state", idleResource.stateHash),
+            resourceInputPending: idleResource.inputPending,
+            resourceInputInFlight: idleResource.inputInFlight,
+            resourceInputPendingBytes: idleResource.inputPendingBytes,
+            resourceInputPendingPeak: idleResource.inputPendingPeak,
+            resourceInputInFlightPeak: idleResource.inputInFlightPeak,
+            resourceInputPendingBytesPeak: idleResource.inputPendingBytesPeak,
+            resourceSamplingFailureCount: idleResource.resourceSamplingFailureCount,
+            rssBytes: idleResource.rssBytes,
+            heapUsedBytes: idleResource.heapUsedBytes,
+            eventLoopDelayMicros: idleResource.eventLoopDelayMicros,
+            rssPeakBytes: idleResource.rssPeakBytes,
+            heapUsedPeakBytes: idleResource.heapUsedPeakBytes,
+            eventLoopDelayPeakMicros: idleResource.eventLoopDelayPeakMicros,
+            resourceEpochArmed: idleResource.resourceEpochArmed,
+            resourceEpochIdentityHmac: ansiResourceEpochIdentityHmac(
+              namespace.evidenceKey,
+              idleResource.resourceEpochIdentity,
+            ),
+            eventLoopDelayPeakSource: idleResource.eventLoopDelayPeakSource,
+            idleRetainedSampleCount: idleRetained.sampleCount,
+            idleRetainedRssSlopeBytesPerSample: idleRetained.rssSlopeBytesPerSample,
+            idleRetainedHeapSlopeBytesPerSample: idleRetained.heapSlopeBytesPerSample,
+            idleRetainedRssGrowthBytes: idleRetained.rssGrowthBytes,
+            idleRetainedHeapGrowthBytes: idleRetained.heapGrowthBytes,
+            idleRetainedRssHighBytes: idleRetained.rssHighBytes,
+            idleRetainedHeapHighBytes: idleRetained.heapHighBytes,
+            idleRetainedFirstInvalidOrdinal: idleRetained.firstInvalidOrdinal,
+            idleRetainedFirstInvalidPredicate: idleRetained.firstInvalidPredicate,
+          });
+          event("ansi-idle-quiescent", idle);
+          publishAnsiPartial({ stage: "idle", idle });
+          return idle;
+        },
+        startWeb: async (namespace, runningDaemon, identity, _process, baseline) => {
+          devServer = await startDevServer(runningDaemon, {
+            daemonInfoPath: join(fleet.daemonInfoDir, "daemon.json"),
+          });
+          const ansiPageUrl = productCapturePageUrlStatus(devServer.pageUrl);
+          if (!ansiPageUrl.exact) {
+            const error = new Error("ANSI Web server did not publish an exact local page");
+            error.code = "PRODUCT_RIG_ANSI_PAGE_URL_INVALID";
+            error.boundary = "ansi-web-correlation";
+            error.observation = Object.freeze({
+              operation: "ansi-web-page-url",
+              code: error.code,
+              reason: ansiPageUrl.reason,
+            });
+            throw error;
+          }
+          publish({ web: { pageUrl: ansiPageUrl.pageUrl, startedAfterAnsiBoundary: true } });
+          browser = await chromium.launch({ headless: true });
+          const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+          await context.addInitScript(() => {
+            globalThis.__TMUX_IDE_ANSI_RENDITION_PROBE_ENABLED__ = true;
+          });
+          const page = await context.newPage();
+          await page.goto(ansiPageUrl.pageUrl, { waitUntil: "domcontentloaded" });
+          await page.locator(".app[data-shell-source='runtime']").waitFor({ timeout: 60_000 });
+          await page
+            .locator(".terminal-surface[data-phase='connected']")
+            .first()
+            .waitFor({ timeout: 60_000 });
+          const ready = await waitForFocusWebSemantic({
+            signal: ownerAbort.signal,
+            health: () =>
+              ownerAbort.signal.aborted
+                ? "aborted"
+                : !devServer.isRunning()
+                  ? "dev-server-dead"
+                  : !browser.isConnected()
+                    ? "browser-disconnected"
+                    : page.isClosed()
+                      ? "page-closed"
+                      : null,
+            sample: () => page.evaluate(captureFocusWebSemanticDocument),
+            derivedResources: baseline.workspaceClient.derived.terminalInventory.resources,
+            expectedWorkspaceName: identity.workspaceName,
+            expectedSemanticPaneId: baseline.semanticPaneId,
+            expectedDaemonGeneration: runningDaemon.record.instanceId,
+          });
+          // Publish and settle the final workspace-client diagnostic before the
+          // per-stage frames. The restored stage's critical fence therefore
+          // observes writer health after every Web/WC correlation publication.
+          const workspaceClient = await waitForWindowWorkspaceEvidence(state, {
+            processId: baseline.processId,
+            daemonGeneration: baseline.daemonGeneration,
+            clientGeneration: baseline.clientGeneration,
+            clientId: baseline.clientId,
+            workspaceName: baseline.workspaceName,
+            sessionName: baseline.sessionName,
+            afterMicros: 0,
+            boundary: "ansi-web-correlation",
+            resources: baseline.resources,
+            web: true,
+            exactTerminalResourceRevision: baseline.terminalResourceRevision,
+          });
+          ansiExpectedDeliverySurfaces = Object.freeze(["opentui", "web"]);
+          const exactWebClients = workspaceClient.committed.authority.clients.filter(
+            (client) => client?.surface === "web",
+          );
+          if (exactWebClients.length !== 1 || exactWebClients[0]?.clientId === baseline.clientId)
+            throw new Error("ANSI Web delivery client authority was not exact");
+          ansiExpectedDeliveryClients = Object.freeze({
+            opentui: baseline.clientId,
+            web: exactWebClients[0].clientId,
+          });
+          const presentations = [];
+          const expectedPresentations = [];
+          const webStageVector = [];
+          let webFirstFailure = null;
+          const boundedWebCandidate = (candidate, stableSamples, identityExact, localization) =>
+            candidate
+              ? Object.freeze({
+                  stage: candidate.stage,
+                  semanticPaneHmac: candidate.semanticPaneHmac,
+                  generationHmac: candidate.generationHmac,
+                  incarnationHmac: candidate.incarnationHmac,
+                  stateHmac: candidate.stateHmac,
+                  deliveryRequestHmac: candidate.deliveryRequestHmac,
+                  rowsHmac: candidate.rowsHmac,
+                  cursorHmac: candidate.cursorHmac,
+                  domRowsHmac: candidate.domRowsHmac,
+                  domCursorHmac: candidate.domCursorHmac,
+                  domSemanticExact: candidate.domSemanticExact === true,
+                  domRowCountExact: candidate.domRowCountExact === true,
+                  domTextExact: candidate.domTextExact === true,
+                  domStyleExact: candidate.domStyleExact === true,
+                  domFirstMismatchRow:
+                    Number.isSafeInteger(candidate.domFirstMismatchRow) &&
+                    candidate.domFirstMismatchRow >= 0 &&
+                    candidate.domFirstMismatchRow <= 4_095
+                      ? candidate.domFirstMismatchRow
+                      : null,
+                  domFirstMismatchColumn:
+                    Number.isSafeInteger(candidate.domFirstMismatchColumn) &&
+                    candidate.domFirstMismatchColumn >= 0 &&
+                    candidate.domFirstMismatchColumn <= 4_095
+                      ? candidate.domFirstMismatchColumn
+                      : null,
+                  domFirstMismatchComponent: new Set([
+                    "row-cardinality",
+                    "row-text",
+                    "cell-missing",
+                    "foreground",
+                    "background",
+                    "bold",
+                    "italic",
+                    "underline",
+                    "width",
+                    "wrap",
+                  ]).has(candidate.domFirstMismatchComponent)
+                    ? candidate.domFirstMismatchComponent
+                    : null,
+                  domCursorExact: candidate.domCursorExact === true,
+                  renditionHmac: candidate.renditionHmac,
+                  positionWrappedHmac: candidate.positionWrappedHmac,
+                  renditionCellCount: candidate.renditionCellCount,
+                  wideContinuationCount: candidate.wideContinuationCount,
+                  combiningCount: candidate.combiningCount,
+                  styledCellCount: candidate.styledCellCount,
+                  activeBuffer: candidate.activeBuffer,
+                  cursorX: candidate.cursorX,
+                  cursorY: candidate.cursorY,
+                  cursorHidden: candidate.cursorHidden,
+                  cursorStyle: candidate.cursorStyle,
+                  cursorBlink: candidate.cursorBlink,
+                  revision: candidate.revision,
+                  sourceEpoch: candidate.sourceEpoch,
+                  rendererEpoch: candidate.rendererEpoch,
+                  rendererCols:
+                    Number.isSafeInteger(candidate.rendererCols) &&
+                    candidate.rendererCols >= 1 &&
+                    candidate.rendererCols <= 4_096
+                      ? candidate.rendererCols
+                      : null,
+                  rendererRows:
+                    Number.isSafeInteger(candidate.rendererRows) &&
+                    candidate.rendererRows >= 1 &&
+                    candidate.rendererRows <= 4_096
+                      ? candidate.rendererRows
+                      : null,
+                  cols: candidate.cols,
+                  rows: candidate.rows,
+                  gridRowsRead: candidate.gridRowsRead,
+                  gridCellsRead: candidate.gridCellsRead,
+                  fullGridWalks: candidate.fullGridWalks,
+                  renditionFailure: identityExact ? null : localization,
+                  stableSamples: Math.min(Math.max(stableSamples, 0), 2),
+                  identityExact,
+                })
+              : null;
+          const publishWebStage = (index, stage, status, candidate, reason = null) => {
+            webStageVector[index] = Object.freeze({
+              ordinal: index + 1,
+              stage,
+              status,
+              reason,
+              candidate,
+            });
+            publishAnsiPartial({
+              stage: `web-${stage}`,
+              webPresentations: Object.freeze([...presentations]),
+              webStageVector: Object.freeze([...webStageVector]),
+              webFailure: webFirstFailure,
+            });
+          };
+          const qualifiedWebPresentation = (candidate, stableSamples) => {
+            const presentation = { ...candidate, stableSamples };
+            for (const key of [
+              "rowsHmac",
+              "cursorHmac",
+              "graphemeWidthHmac",
+              "colorHmac",
+              "attributesHmac",
+              "cellHmacs",
+            ])
+              delete presentation[key];
+            return Object.freeze(presentation);
+          };
+          let lastDriven = null;
+          let webRendererEpoch = null;
+          let revision = ansiReadJsonLines(namespace.tui.performanceTracePath)
+            .filter(
+              ({ type, semanticPaneId }) =>
+                type === "performance.terminal-canonical-mode" &&
+                semanticPaneId === baseline.semanticPaneId,
+            )
+            .at(-1)?.revision;
+          for (const [stageIndex, [stage, key, alternateScreen, gridWalked]] of [
+            ["normal", "b", false, true],
+            ["rich", "r", false, true],
+            ["cursor-only", "c", false, false],
+            ["alternate", "a", true, true],
+            ["restored", "n", false, true],
+          ].entries()) {
+            if (stage === "alternate") {
+              const normalized = await driveAnsiStage(namespace, "b", {
+                stage: "normal",
+                action: "pre-alternate-normal",
+                afterRevision: revision,
+                alternateScreen: false,
+                gridWalked: true,
+                gridRowsRead: 3,
+                fullWalk: false,
+              });
+              revision = normalized.stage.revision;
+            }
+            const driven = await driveAnsiStage(namespace, key, {
+              stage,
+              action:
+                stage === "normal"
+                  ? "pre-alternate-normal"
+                  : stage === "rich"
+                    ? "rich-ansi"
+                    : stage === "cursor-only"
+                      ? "cursor-next"
+                      : stage === "alternate"
+                        ? "enter-alternate"
+                        : "restore-normal",
+              afterRevision: revision,
+              alternateScreen,
+              gridWalked,
+              gridRowsRead:
+                stage === "rich"
+                  ? 3
+                  : stage === "cursor-only"
+                    ? 0
+                    : baseline.rawIdentity.viewportRows,
+              fullWalk: false,
+            });
+            lastDriven = driven;
+            revision = driven.stage.revision;
+            const fixedCursor = fixedAnsiCursor(stage, namespace.marker);
+            const canonicalCursorStyle = fixedCursor.style === "line" ? "bar" : fixedCursor.style;
+            const expectedRendition = ansiRenditionCells(stage, namespace.marker);
+            if (!expectedRendition) throw new Error("ANSI Web rendition contract was unavailable");
+            const renditionHmac = ansiHmac(
+              namespace.evidenceKey,
+              "web-rendition",
+              JSON.stringify(expectedRendition),
+            );
+            const expectedRenditionComponents = Object.freeze({
+              positionWrappedHmac: ansiHmac(
+                namespace.evidenceKey,
+                "web-rendition-position-wrapped",
+                JSON.stringify(
+                  expectedRendition.map(({ row, column, wrapped }) => ({ row, column, wrapped })),
+                ),
+              ),
+              graphemeWidthHmac: ansiHmac(
+                namespace.evidenceKey,
+                "web-rendition-grapheme-width",
+                JSON.stringify(expectedRendition.map(({ chars, width }) => ({ chars, width }))),
+              ),
+              colorHmac: ansiHmac(
+                namespace.evidenceKey,
+                "web-rendition-color",
+                JSON.stringify(
+                  expectedRendition.map(({ foreground, background }) => ({
+                    foreground,
+                    background,
+                  })),
+                ),
+              ),
+              attributesHmac: ansiHmac(
+                namespace.evidenceKey,
+                "web-rendition-attributes",
+                JSON.stringify(
+                  expectedRendition.map(({ bold, italic, underline }) => ({
+                    bold,
+                    italic,
+                    underline,
+                  })),
+                ),
+              ),
+              cellHmacs: Object.freeze(
+                expectedRendition.map((cell) =>
+                  ansiHmac(namespace.evidenceKey, "web-rendition-cell", JSON.stringify(cell)),
+                ),
+              ),
+            });
+            if (
+              driven.stage.alternateScreen !== alternateScreen ||
+              driven.stage.cursor.x !== fixedCursor.x ||
+              driven.stage.cursor.y !== fixedCursor.y ||
+              driven.stage.cursor.hidden !== fixedCursor.hidden ||
+              driven.stage.cursor.style !== fixedCursor.style ||
+              driven.stage.cursor.blink !== fixedCursor.blink
+            )
+              throw new Error("ANSI driven stage did not match its fixed cursor contract");
+            const expectedGrid = ansiWebExpectedGridProjection(stage, driven);
+            if (!expectedGrid.exact) {
+              const observation = Object.freeze({
+                operation: "ansi-web-expected-projection",
+                stage,
+                code: "ANSI_WEB_EXPECTED_GRID_INVALID",
+                reason: expectedGrid.reason,
+                canonicalRows: expectedGrid.canonicalRows,
+                canonicalCols: expectedGrid.canonicalCols,
+                presentationRows: expectedGrid.presentationRows,
+              });
+              webFirstFailure ??= Object.freeze({
+                ordinal: stageIndex + 1,
+                stage,
+                reason: "expected-grid-projection",
+              });
+              publishWebStage(stageIndex, stage, "failed", observation, "expected-grid-projection");
+              const error = new Error("ANSI Web expected grid projection was invalid");
+              error.code = "ANSI_WEB_EXPECTED_GRID_INVALID";
+              error.observation = observation;
+              throw error;
+            }
+            const webDeliveryRequestHmacs = Object.freeze(
+              driven.raw.deliveryTopology.lanes
+                .filter((lane) => lane.surface === "web" && lane.purpose === "terminal-surface")
+                .map((lane) => ansiHmac(namespace.evidenceKey, "delivery-request", lane.requestId))
+                .sort(),
+            );
+            if (
+              webDeliveryRequestHmacs.length < 1 ||
+              new Set(webDeliveryRequestHmacs).size !== webDeliveryRequestHmacs.length
+            )
+              throw new Error("ANSI Web terminal delivery lane authority was not exact");
+            const expectedPresentation = Object.freeze({
+              generationHmac: driven.stage.generationHmac,
+              incarnationHmac: driven.stage.incarnationHmac,
+              stateHmac: driven.stage.stateHmac,
+              deliveryRequestHmacs: webDeliveryRequestHmacs,
+              revision: driven.stage.revision,
+              sourceEpoch: 1,
+              activeBuffer: alternateScreen ? "alternate" : "normal",
+              cursorX: fixedCursor.x,
+              cursorY: fixedCursor.y,
+              cursorHidden: fixedCursor.hidden,
+              cursorStyle: canonicalCursorStyle,
+              canonicalCursorStyle,
+              cursorBlink: fixedCursor.blink,
+              cols: driven.stage.canonicalCols,
+              rows: driven.stage.canonicalRows,
+              rendererCols: driven.stage.canonicalCols,
+              rendererRows: driven.stage.canonicalRows,
+              renditionHmac,
+              positionWrappedHmac: expectedRenditionComponents.positionWrappedHmac,
+              renditionCellCount: expectedRendition.length,
+              wideContinuationCount: expectedRendition.filter(({ width }) => width === 0).length,
+              combiningCount: expectedRendition.filter(({ chars }) => /\p{Mark}/u.test(chars))
+                .length,
+              styledCellCount: expectedRendition.filter(
+                ({ foreground, background, bold, italic, underline }) =>
+                  foreground !== "default" ||
+                  background !== "default" ||
+                  bold ||
+                  italic ||
+                  underline,
+              ).length,
+              gridRowsRead: expectedGrid.gridRowsRead,
+              gridCellsRead: expectedGrid.gridCellsRead,
+              fullGridWalks: expectedGrid.fullGridWalks,
+            });
+            const stageDeadline = performance.now() + 2_000;
+            let captured;
+            let previousProjection = null;
+            let lastPublishedCandidate = null;
+            let stableSamples = 0;
+            for (;;) {
+              if (ownerAbort.signal.aborted || !devServer.isRunning() || !browser.isConnected()) {
+                webFirstFailure ??= Object.freeze({
+                  ordinal: stageIndex + 1,
+                  stage,
+                  reason: "owner-lost",
+                });
+                publishWebStage(stageIndex, stage, "failed", null, "owner-lost");
+                throw new Error("ANSI Web presentation wait lost its owner");
+              }
+              let candidate;
+              try {
+                candidate = await captureAnsiCursorWebPresentation(page, {
+                  keyHex: namespace.evidenceKey.toString("hex"),
+                  stage,
+                  semanticPaneId: baseline.semanticPaneId,
+                  expectedRendition,
+                  expectedCursor: Object.freeze({
+                    ...fixedCursor,
+                    style: canonicalCursorStyle,
+                  }),
+                });
+              } catch {
+                webFirstFailure ??= Object.freeze({
+                  ordinal: stageIndex + 1,
+                  stage,
+                  reason: "capture-failed",
+                });
+                publishWebStage(stageIndex, stage, "failed", null, "capture-failed");
+                throw new Error("ANSI Web presentation capture failed");
+              }
+              const predicateVector = Object.freeze({
+                generationExact: candidate?.generationHmac === expectedPresentation.generationHmac,
+                incarnationExact:
+                  candidate?.incarnationHmac === expectedPresentation.incarnationHmac,
+                stateExact: candidate?.stateHmac === expectedPresentation.stateHmac,
+                deliveryRequestExact: expectedPresentation.deliveryRequestHmacs.includes(
+                  candidate?.deliveryRequestHmac,
+                ),
+                revisionExact: candidate?.revision === expectedPresentation.revision,
+                sourceEpochExact: candidate?.sourceEpoch === 1,
+                rendererEpochExact:
+                  webRendererEpoch === null || candidate?.rendererEpoch === webRendererEpoch,
+                rendererColsExact: candidate?.rendererCols === expectedPresentation.rendererCols,
+                rendererRowsExact: candidate?.rendererRows === expectedPresentation.rendererRows,
+                activeBufferExact: candidate?.activeBuffer === expectedPresentation.activeBuffer,
+                canonicalBufferExact:
+                  candidate?.canonicalBuffer === expectedPresentation.activeBuffer,
+                canonicalCursorXExact: candidate?.canonicalCursorX === fixedCursor.x,
+                canonicalCursorYExact: candidate?.canonicalCursorY === fixedCursor.y,
+                canonicalCursorHiddenExact: candidate?.canonicalCursorHidden === fixedCursor.hidden,
+                canonicalCursorStyleExact: candidate?.canonicalCursorStyle === canonicalCursorStyle,
+                canonicalCursorBlinkExact: candidate?.canonicalCursorBlink === fixedCursor.blink,
+                renditionHmacExact: candidate?.renditionHmac === renditionHmac,
+                positionWrappedHmacExact:
+                  candidate?.positionWrappedHmac ===
+                  expectedRenditionComponents.positionWrappedHmac,
+                domRowsHmacPresent: /^[0-9a-f]{64}$/u.test(candidate?.domRowsHmac ?? ""),
+                domCursorHmacPresent: /^[0-9a-f]{64}$/u.test(candidate?.domCursorHmac ?? ""),
+                domRowCountExact: candidate?.domRowCountExact === true,
+                domTextExact: candidate?.domTextExact === true,
+                domStyleExact: candidate?.domStyleExact === true,
+                domSemanticExact: candidate?.domSemanticExact === true,
+                domCursorExact: candidate?.domCursorExact === true,
+                renditionCellCountExact: candidate?.renditionCellCount === expectedRendition.length,
+                wideContinuationCountExact:
+                  candidate?.wideContinuationCount ===
+                  expectedRendition.filter(({ width }) => width === 0).length,
+                combiningCountExact:
+                  candidate?.combiningCount ===
+                  expectedRendition.filter(({ chars }) => /\p{Mark}/u.test(chars)).length,
+                styledCellCountExact:
+                  candidate?.styledCellCount ===
+                  expectedRendition.filter(
+                    ({ foreground, background, bold, italic, underline }) =>
+                      foreground !== "default" ||
+                      background !== "default" ||
+                      bold ||
+                      italic ||
+                      underline,
+                  ).length,
+                cursorXExact: candidate?.cursorX === fixedCursor.x,
+                cursorYExact: candidate?.cursorY === fixedCursor.y,
+                cursorHiddenExact: candidate?.cursorHidden === fixedCursor.hidden,
+                cursorStyleExact: candidate?.cursorStyle === canonicalCursorStyle,
+                cursorBlinkExact: candidate?.cursorBlink === fixedCursor.blink,
+                cursorCountExact:
+                  candidate?.cursorCount === (expectedPresentation.cursorHidden ? 0 : 1),
+                gridRowsReadExact: candidate?.gridRowsRead === expectedPresentation.gridRowsRead,
+                gridCellsReadExact: candidate?.gridCellsRead === expectedPresentation.gridCellsRead,
+                fullGridWalksExact: candidate?.fullGridWalks === expectedPresentation.fullGridWalks,
+              });
+              const identityExact = Object.values(predicateVector).every((value) => value === true);
+              const renditionLocalization = ansiRenditionFailureLocalization(candidate, {
+                ...expectedRenditionComponents,
+                rows: expectedRendition.map(({ row }) => row),
+              });
+              const serialized = identityExact
+                ? JSON.stringify(qualifiedWebPresentation(candidate, undefined))
+                : null;
+              stableSamples =
+                serialized && serialized === previousProjection
+                  ? stableSamples + 1
+                  : serialized
+                    ? 1
+                    : 0;
+              previousProjection = serialized;
+              const boundedCandidate = boundedWebCandidate(
+                candidate,
+                stableSamples,
+                identityExact,
+                renditionLocalization,
+              );
+              if (identityExact && stableSamples === 2) {
+                captured = qualifiedWebPresentation(candidate, stableSamples);
+                webRendererEpoch ??= candidate.rendererEpoch;
+                publishWebStage(stageIndex, stage, "qualified", boundedCandidate);
+                break;
+              }
+              const publishedCandidate = JSON.stringify(boundedCandidate);
+              if (publishedCandidate !== lastPublishedCandidate) {
+                publishWebStage(stageIndex, stage, "candidate", boundedCandidate);
+                lastPublishedCandidate = publishedCandidate;
+              }
+              if (performance.now() >= stageDeadline) {
+                const firstFailedPredicate =
+                  Object.entries(predicateVector).find(([, exact]) => !exact)?.[0] ??
+                  "candidate-missing";
+                webFirstFailure ??= Object.freeze({
+                  ordinal: stageIndex + 1,
+                  stage,
+                  reason: "deadline",
+                });
+                publishWebStage(stageIndex, stage, "failed", boundedCandidate, "deadline");
+                const error = new Error("ANSI Web stage did not reach two exact stable samples");
+                error.code = "ANSI_WEB_PRESENTATION_DEADLINE";
+                error.observation = Object.freeze({
+                  operation: "ansi-web-presentation",
+                  stage,
+                  ordinal: stageIndex + 1,
+                  code: error.code,
+                  firstFailedPredicate,
+                  stableSamples: Math.min(Math.max(stableSamples, 0), 2),
+                  candidate: boundedCandidate,
+                  predicates: predicateVector,
+                });
+                throw error;
+              }
+              try {
+                await page.evaluate(
+                  () =>
+                    new Promise((resolve) => globalThis.requestAnimationFrame(() => resolve(null))),
+                );
+              } catch {
+                const reason =
+                  ownerAbort.signal.aborted || !devServer.isRunning() || !browser.isConnected()
+                    ? "owner-lost"
+                    : "animation-frame-failed";
+                webFirstFailure ??= Object.freeze({
+                  ordinal: stageIndex + 1,
+                  stage,
+                  reason,
+                });
+                publishWebStage(stageIndex, stage, "failed", boundedCandidate, reason);
+                throw new Error("ANSI Web presentation frame wait failed");
+              }
+            }
+            presentations.push(captured);
+            expectedPresentations.push(
+              Object.freeze({
+                ...expectedPresentation,
+                rendererEpoch: webRendererEpoch,
+              }),
+            );
+          }
+          event("ansi-web-correlation", { stages: presentations.length });
+          publishAnsiPartial({
+            stage: "web",
+            webPresentations: Object.freeze(presentations),
+            webStageVector: Object.freeze(webStageVector),
+            webFailure: null,
+          });
+          return Object.freeze({
+            readiness: ready.assessment,
+            stableExactSamples: ready.stableExactSamples,
+            presentations: Object.freeze(presentations),
+            expected: Object.freeze({
+              semanticPaneHmac: ansiHmac(namespace.evidenceKey, "pane", baseline.semanticPaneId),
+              presentations: Object.freeze(expectedPresentations),
+            }),
+            workspaceClient,
+            finalStage: lastDriven,
+          });
+        },
+      });
+      const writerHealth = ansiBoot.web.finalStage?.writerHealth;
+      const finalNative = await inspectAnsiNativeStage(
+        ansiBoot.namespace,
+        {
+          resources: ansiBoot.baseline.resources,
+          sessionName: ansiBoot.baseline.sessionName,
+          windowResourceId: ansiBoot.baseline.windowResourceId,
+          semanticPaneId: ansiBoot.baseline.semanticPaneId,
+        },
+        "final",
+      );
+      const finalTmux = finalNative.snapshot;
+      const finalTmuxCapture = finalNative.capture;
+      const journeyEvidence = Object.freeze({
+        baseline: ansiBoot.baseline.stage,
+        rich: ansiBoot.rich.stage,
+        cursorSamples: ansiBoot.cursor.samples,
+        preAlternate: ansiBoot.alternate.preAlternate.evidence,
+        alternate: ansiBoot.alternate.stage,
+        restored: ansiBoot.restored.stage,
+        workload: ansiBoot.sustained.workload,
+        workloadFinalities: ansiBoot.sustained.workloadFinalities,
+        resourceSamples: ansiBoot.sustained.resourceSamples,
+        resourceLifecycle: Object.freeze([
+          Object.freeze({
+            phase: "baseline",
+            cycle: 0,
+            sampleOrdinal: ansiBoot.baseline.baselineResourceSample.ordinal,
+            operation: ansiBoot.baseline.baselineResourceSample.operation,
+            resourceEpochArmed: ansiBoot.baseline.baselineResourceSample.resourceEpochArmed,
+            lowWaterFirstSampleOrdinal:
+              ansiBoot.baseline.baselineResourceSample.lowWaterFirstSampleOrdinal,
+            lowWaterLastSampleOrdinal:
+              ansiBoot.baseline.baselineResourceSample.lowWaterLastSampleOrdinal,
+            lowWaterSampleCount: ansiBoot.baseline.baselineResourceSample.lowWaterSampleCount,
+            lowWaterWindowMicros: ansiBoot.baseline.baselineResourceSample.lowWaterWindowMicros,
+            resourceEpochIdentityHmac: ansiResourceEpochIdentityHmac(
+              ansiBoot.namespace.evidenceKey,
+              ansiBoot.baseline.baselineResourceSample.resourceEpochIdentity,
+            ),
+            identityHmac: ansiResourceIdentityHmac(
+              ansiBoot.namespace.evidenceKey,
+              ansiBoot.baseline.baselineResourceSample,
+            ),
+            stateHmac: ansiHmac(
+              ansiBoot.namespace.evidenceKey,
+              "state",
+              ansiBoot.baseline.baselineResourceSample.stateHash,
+            ),
+            processHmac: ansiHmac(
+              ansiBoot.namespace.evidenceKey,
+              "process",
+              ansiBoot.baseline.baselineResourceSample.processId,
+            ),
+            clockId: ansiBoot.baseline.baselineResourceSample.clockId,
+            clockKind: ansiBoot.baseline.baselineResourceSample.clockKind,
+            atMicros: ansiBoot.baseline.baselineResourceSample.atMicros,
+            rssBytes: ansiBoot.baseline.baselineResourceSample.rssBytes,
+            heapUsedBytes: ansiBoot.baseline.baselineResourceSample.heapUsedBytes,
+            eventLoopDelayMicros: ansiBoot.baseline.baselineResourceSample.eventLoopDelayMicros,
+            rssPeakBytes: ansiBoot.baseline.baselineResourceSample.rssPeakBytes,
+            heapUsedPeakBytes: ansiBoot.baseline.baselineResourceSample.heapUsedPeakBytes,
+            eventLoopDelayPeakMicros:
+              ansiBoot.baseline.baselineResourceSample.eventLoopDelayPeakMicros,
+            eventLoopDelayPeakSource:
+              ansiBoot.baseline.baselineResourceSample.eventLoopDelayPeakSource,
+            inputPending: ansiBoot.baseline.baselineResourceSample.inputPending,
+            inputInFlight: ansiBoot.baseline.baselineResourceSample.inputInFlight,
+            inputPendingBytes: ansiBoot.baseline.baselineResourceSample.inputPendingBytes,
+            inputPendingPeak: ansiBoot.baseline.baselineResourceSample.inputPendingPeak,
+            inputInFlightPeak: ansiBoot.baseline.baselineResourceSample.inputInFlightPeak,
+            inputPendingBytesPeak: ansiBoot.baseline.baselineResourceSample.inputPendingBytesPeak,
+            resourceSamplingFailureCount:
+              ansiBoot.baseline.baselineResourceSample.resourceSamplingFailureCount,
+          }),
+          ...ansiBoot.sustained.resourceCheckpointSamples,
+          Object.freeze({
+            phase: "idle",
+            cycle: 25,
+            sampleOrdinal: ansiBoot.idle.resourceSampleOrdinal,
+            operation: "idle",
+            resourceEpochArmed: ansiBoot.idle.resourceEpochArmed,
+            lowWaterFirstSampleOrdinal: ansiBoot.idle.lowWaterFirstSampleOrdinal,
+            lowWaterLastSampleOrdinal: ansiBoot.idle.lowWaterLastSampleOrdinal,
+            lowWaterSampleCount: ansiBoot.idle.lowWaterSampleCount,
+            lowWaterWindowMicros: ansiBoot.idle.lowWaterWindowMicros,
+            resourceEpochIdentityHmac: ansiBoot.idle.resourceEpochIdentityHmac,
+            identityHmac: ansiBoot.idle.resourceIdentityHmac,
+            stateHmac: ansiBoot.idle.resourceStateHmac,
+            processHmac: ansiBoot.idle.resourceProcessHmac,
+            clockId: ansiBoot.idle.resourceClockId,
+            clockKind: ansiBoot.idle.resourceClockKind,
+            atMicros: ansiBoot.idle.resourceAtMicros,
+            rssBytes: ansiBoot.idle.rssBytes,
+            heapUsedBytes: ansiBoot.idle.heapUsedBytes,
+            eventLoopDelayMicros: ansiBoot.idle.eventLoopDelayMicros,
+            rssPeakBytes: ansiBoot.idle.rssPeakBytes,
+            heapUsedPeakBytes: ansiBoot.idle.heapUsedPeakBytes,
+            eventLoopDelayPeakMicros: ansiBoot.idle.eventLoopDelayPeakMicros,
+            eventLoopDelayPeakSource: ansiBoot.idle.eventLoopDelayPeakSource,
+            inputPending: ansiBoot.idle.resourceInputPending,
+            inputInFlight: ansiBoot.idle.resourceInputInFlight,
+            inputPendingBytes: ansiBoot.idle.resourceInputPendingBytes,
+            inputPendingPeak: ansiBoot.idle.resourceInputPendingPeak,
+            inputInFlightPeak: ansiBoot.idle.resourceInputInFlightPeak,
+            inputPendingBytesPeak: ansiBoot.idle.resourceInputPendingBytesPeak,
+            resourceSamplingFailureCount: ansiBoot.idle.resourceSamplingFailureCount,
+          }),
+        ]),
+        idle: ansiBoot.idle,
+        web: Object.freeze({
+          readiness: ansiBoot.web.readiness,
+          stableExactSamples: ansiBoot.web.stableExactSamples,
+          presentations: ansiBoot.web.presentations,
+        }),
+        tmux: Object.freeze({
+          paneCount: finalTmux.length,
+          geometryStable:
+            ansiTmuxSemanticProjection(finalTmux) ===
+            ansiTmuxSemanticProjection(ansiBoot.baseline.tmux),
+          markerExact:
+            (finalTmuxCapture.match(new RegExp(ansiBoot.namespace.marker, "gu")) ?? []).length ===
+            1,
+          baselineCaptureHmac: ansiBoot.baseline.tmuxCaptureHmac,
+          alternateCaptureHmac: ansiBoot.alternate.tmux.captureHmac,
+          alternateGeometryStable: ansiBoot.alternate.tmux.geometryStable,
+          alternateMarkerAbsent: ansiBoot.alternate.tmux.markerAbsent,
+          alternateCursorExact: ansiBoot.alternate.tmux.cursorExact,
+          finalCaptureHmac: ansiHmac(
+            ansiBoot.namespace.evidenceKey,
+            "tmux-capture",
+            finalTmuxCapture,
+          ),
+        }),
+        writer: Object.freeze({
+          droppedRecords: writerHealth?.droppedRecords ?? null,
+          oversizedRecords: writerHealth?.oversizedRecords ?? null,
+          failed: writerHealth?.failed ?? null,
+          pendingCriticalRecords: writerHealth?.pendingCriticalRecords ?? null,
+        }),
+      });
+      const expectedStage = (stage) =>
+        Object.freeze({
+          processHmac: stage.processHmac,
+          clockId: stage.clockId,
+          clockKind: stage.clockKind,
+          paneHmac: stage.paneHmac,
+          generationHmac: stage.generationHmac,
+          incarnationHmac: stage.incarnationHmac,
+          revision: stage.revision,
+          stateHmac: stage.stateHmac,
+          presentationHmac: stage.presentationHmac,
+          canonicalCols: stage.canonicalCols,
+          canonicalRows: stage.canonicalRows,
+          viewportCols: stage.viewportCols,
+          viewportRows: stage.viewportRows,
+          sourceEpoch: stage.sourceEpoch,
+          rendererEpoch: stage.rendererEpoch,
+          alternateScreen: stage.alternateScreen,
+          cursor: Object.freeze({ ...stage.cursor }),
+          framebufferHmac: stage.framebufferHmac,
+          framebufferCellCount: stage.framebufferCellCount,
+          framebufferWideContinuationCount: stage.framebufferWideContinuationCount,
+          framebufferCombiningCount: stage.framebufferCombiningCount,
+          framebufferStyledCellCount: stage.framebufferStyledCellCount,
+          gridRowsReadTotal: stage.gridRowsReadTotal,
+          fullWalkTotal: stage.fullWalkTotal,
+          presentationCount: stage.presentationCount,
+        });
+      const lastCursorExpected = ansiBoot.cursor.expectedSamples.at(-1);
+      const expectedNormalFramebuffer = ansiFramebufferCells("normal", ansiBoot.namespace.marker);
+      const preAlternateExpectedStage = Object.freeze({
+        ...expectedStage(ansiBoot.baseline.stage),
+        revision: lastCursorExpected.presentation.revision + 1,
+        stateHmac: ansiBoot.baseline.stage.stateHmac,
+        presentationHmac: ansiBoot.baseline.stage.presentationHmac,
+        framebufferHmac: ansiHmac(
+          ansiBoot.namespace.evidenceKey,
+          "opentui-framebuffer",
+          JSON.stringify(expectedNormalFramebuffer),
+        ),
+        framebufferCellCount: expectedNormalFramebuffer.length,
+        framebufferWideContinuationCount: expectedNormalFramebuffer.filter(
+          ({ width }) => width === 0,
+        ).length,
+        framebufferCombiningCount: expectedNormalFramebuffer.filter(({ chars }) =>
+          /\p{Mark}/u.test(chars),
+        ).length,
+        framebufferStyledCellCount: expectedNormalFramebuffer.filter(
+          ({ foreground, background, attributes }) =>
+            foreground !== "default" || background !== "default" || attributes !== 0,
+        ).length,
+        gridRowsReadTotal: lastCursorExpected.presentation.gridRowsReadTotal + 3,
+        fullWalkTotal: lastCursorExpected.presentation.fullWalkTotal,
+        presentationCount: lastCursorExpected.presentation.presentationCount + 1,
+        alternateScreen: false,
+        cursor: Object.freeze({ ...fixedAnsiCursor("normal", ansiBoot.namespace.marker) }),
+      });
+      const expected = Object.freeze({
+        baseline: expectedStage(ansiBoot.baseline.stage),
+        rich: expectedStage(ansiBoot.rich.stage),
+        cursorSamples: ansiBoot.cursor.expectedSamples,
+        preAlternate: Object.freeze({
+          stage: preAlternateExpectedStage,
+          predecessorRevision: lastCursorExpected.presentation.revision,
+          predecessorStateHmac: lastCursorExpected.presentation.stateHmac,
+          presentationHmac: ansiBoot.baseline.stage.presentationHmac,
+          framebufferHmac: preAlternateExpectedStage.framebufferHmac,
+          nativeCaptureHmac: ansiBoot.baseline.tmuxCaptureHmac,
+          cursor: Object.freeze({ ...fixedAnsiCursor("normal", ansiBoot.namespace.marker) }),
+          beforeGridRowsReadTotal: lastCursorExpected.presentation.gridRowsReadTotal,
+          afterGridRowsReadTotal: preAlternateExpectedStage.gridRowsReadTotal,
+          beforeFullWalkTotal: lastCursorExpected.presentation.fullWalkTotal,
+          afterFullWalkTotal: preAlternateExpectedStage.fullWalkTotal,
+          beforePresentationCount: lastCursorExpected.presentation.presentationCount,
+          afterPresentationCount: preAlternateExpectedStage.presentationCount,
+          gridRowsReadDelta: 3,
+          fullWalkDelta: 0,
+          presentationCountDelta: 1,
+          daemonProcessHmac: lastCursorExpected.daemonProcessHmac,
+          daemonClockId: lastCursorExpected.daemonClockId,
+        }),
+        alternate: expectedStage(ansiBoot.alternate.stage),
+        restored: expectedStage(ansiBoot.restored.stage),
+        normalBeforeAlternateHmac: ansiBoot.baseline.stage.presentationHmac,
+        workloadFinalities: ansiBoot.sustained.expectedWorkloadFinalities,
+        resourceSamples: ansiBoot.sustained.expectedResources,
+        resourceLifecycle: Object.freeze([
+          Object.freeze({
+            phase: "baseline",
+            cycle: 0,
+            operation: "post-fence",
+            resourceEpochIdentityHmac: ansiResourceEpochIdentityHmac(
+              ansiBoot.namespace.evidenceKey,
+              ansiBoot.baseline.hostFrame,
+            ),
+            identityHmac: ansiResourceIdentityHmac(
+              ansiBoot.namespace.evidenceKey,
+              ansiBoot.baseline.hostFrame,
+            ),
+            stateHmac: ansiHmac(
+              ansiBoot.namespace.evidenceKey,
+              "state",
+              ansiBoot.baseline.hostFrame.stateHash,
+            ),
+            processHmac: ansiBoot.baseline.stage.processHmac,
+            clockId: ansiBoot.baseline.stage.clockId,
+            lowWaterFirstSampleOrdinal: 1,
+            lowWaterLastSampleOrdinal: 8,
+            lowWaterSampleCount: 8,
+          }),
+          ...ansiBoot.sustained.expectedResourceCheckpoints,
+          Object.freeze({
+            phase: "idle",
+            cycle: 25,
+            operation: "idle",
+            resourceEpochIdentityHmac: ansiResourceEpochIdentityHmac(
+              ansiBoot.namespace.evidenceKey,
+              ansiBoot.baseline.hostFrame,
+            ),
+            identityHmac: ansiResourceIdentityHmac(
+              ansiBoot.namespace.evidenceKey,
+              ansiBoot.sustained.latestFence,
+            ),
+            stateHmac: ansiHmac(
+              ansiBoot.namespace.evidenceKey,
+              "state",
+              ansiBoot.sustained.latestFence.stateHash,
+            ),
+            processHmac: ansiBoot.baseline.stage.processHmac,
+            clockId: ansiBoot.baseline.stage.clockId,
+            lowWaterFirstSampleOrdinal: 1,
+            lowWaterLastSampleOrdinal: 1,
+            lowWaterSampleCount: 1,
+          }),
+        ]),
+        web: ansiBoot.web.expected,
+      });
+      const assessment = assessAnsiCursorAltScreenEvidence(journeyEvidence, expected);
+      if (!assessment.qualified) {
+        publish({
+          journeyEvidence: {
+            ansiCursorAltScreen: journeyEvidence,
+            ansiCursorAltScreenExpected: expected,
+          },
+        });
+        const error = new Error("ANSI cursor/alternate-screen causal assessment failed");
+        error.boundary = "ansi-causal-proof";
+        const boundedNonnegative = (value, cap) =>
+          Number.isFinite(value) && value >= 0 ? Math.min(value, cap) : null;
+        const boundedSigned = (value, cap) =>
+          Number.isFinite(value) ? Math.min(Math.max(value, -cap), cap) : null;
+        const workloadFirstFailedPredicate =
+          Object.entries(assessment.workloadPredicates).find(([, passed]) => !passed)?.[0] ?? null;
+        error.observation = Object.freeze({
+          operation: "ansi-cursor-alt-screen",
+          firstFailedPredicate:
+            Object.entries(assessment.predicates).find(([, passed]) => !passed)?.[0] ?? null,
+          predicates: assessment.predicates,
+          sampleCount: assessment.distribution.sampleCount,
+          p95Micros: assessment.distribution.p95Micros,
+          p99Micros: assessment.distribution.p99Micros,
+          workloadFinalitySampleCount: assessment.workloadFinalities.sampleCount,
+          workloadFirstInvalidOrdinal: assessment.workloadFinalities.firstInvalidOrdinal,
+          workloadFirstFailedPredicate,
+          workloadPredicates: assessment.workloadPredicates,
+          workloadMetrics: Object.freeze({
+            bytes: boundedNonnegative(journeyEvidence.workload?.bytes, 67_108_865),
+            maxQueueDepth: boundedNonnegative(journeyEvidence.workload?.maxQueueDepth, 65),
+            settledDeliveryQueueDepth: boundedNonnegative(
+              journeyEvidence.workload?.settledDeliveryQueueDepth,
+              65,
+            ),
+            representationCacheBytes: boundedNonnegative(
+              journeyEvidence.workload?.representationCacheBytes,
+              16_777_217,
+            ),
+            rawJournalBytes: boundedNonnegative(
+              journeyEvidence.workload?.rawJournalBytes,
+              4_194_305,
+            ),
+            eventLoopP99Ms: boundedNonnegative(journeyEvidence.workload?.eventLoopP99Ms, 34),
+            rssSlopeBytesPerSample: boundedSigned(
+              assessment.resources.rssSlopeBytesPerSample,
+              67_108_865,
+            ),
+            heapSlopeBytesPerSample: boundedSigned(
+              assessment.resources.heapSlopeBytesPerSample,
+              33_554_433,
+            ),
+            rssGrowthBytes: boundedNonnegative(assessment.resources.rssGrowthBytes, 1_073_741_825),
+            heapGrowthBytes: boundedNonnegative(assessment.resources.heapGrowthBytes, 536_870_913),
+            rssPeakBytes: boundedNonnegative(assessment.resources.rssPeakBytes, 1_073_741_825),
+            heapPeakBytes: boundedNonnegative(assessment.resources.heapPeakBytes, 536_870_913),
+            resourceLifecycleExact: assessment.resourceLifecycle.qualified,
+            resourceLifecycleSampleCount: Math.min(
+              Math.max(assessment.resourceLifecycle.sampleCount ?? 0, 0),
+              27,
+            ),
+          }),
+          resourceSampleCount: assessment.resources.sampleCount,
+          resourceFirstInvalidEndpointOrdinal: Number.isSafeInteger(
+            assessment.resources.firstInvalidEndpointOrdinal,
+          )
+            ? Math.min(Math.max(assessment.resources.firstInvalidEndpointOrdinal, 1), 16)
+            : null,
+          resourceFirstInvalidPredicate: new Set([
+            "endpoint-cardinality",
+            "endpoint-shape-or-authority",
+            "rss-growth",
+            "heap-growth",
+            "rss-absolute-cap",
+            "heap-absolute-cap",
+          ]).has(assessment.resources.firstInvalidPredicate)
+            ? assessment.resources.firstInvalidPredicate
+            : null,
+          webStageCount: assessment.web.stageCount,
+          webPredicates: Object.freeze({
+            readinessExact: assessment.web.readinessExact === true,
+            topologyExact: assessment.web.topologyExact === true,
+            stageExact: assessment.web.stageExact === true,
+            restorationExact: assessment.web.restorationExact === true,
+          }),
+          webRestorationPredicates: Object.freeze({
+            normalRestoredDomRenditionExact:
+              assessment.web.restorationPredicates?.normalRestoredDomRenditionExact === true,
+            normalRestoredSemanticRenditionExact:
+              assessment.web.restorationPredicates?.normalRestoredSemanticRenditionExact === true,
+            normalRestoredCanonicalCursorExact:
+              assessment.web.restorationPredicates?.normalRestoredCanonicalCursorExact === true,
+            normalRestoredDomCursorExact:
+              assessment.web.restorationPredicates?.normalRestoredDomCursorExact === true,
+            normalBufferExact: assessment.web.restorationPredicates?.normalBufferExact === true,
+            richDomDistinctFromNormalExact:
+              assessment.web.restorationPredicates?.richDomDistinctFromNormalExact === true,
+            richCursorDomRenditionExact:
+              assessment.web.restorationPredicates?.richCursorDomRenditionExact === true,
+            richCursorSemanticRenditionExact:
+              assessment.web.restorationPredicates?.richCursorSemanticRenditionExact === true,
+            cursorOnlyZeroGridExact:
+              assessment.web.restorationPredicates?.cursorOnlyZeroGridExact === true,
+            richCursorDistinctExact:
+              assessment.web.restorationPredicates?.richCursorDistinctExact === true,
+            alternateSemanticDistinct:
+              assessment.web.restorationPredicates?.alternateSemanticDistinct === true,
+            alternateBufferHiddenExact:
+              assessment.web.restorationPredicates?.alternateBufferHiddenExact === true,
+            rendererCanonicalDimensionsExact:
+              assessment.web.restorationPredicates?.rendererCanonicalDimensionsExact === true,
+          }),
+          webFirstFailedRestorationPredicate: new Set([
+            "normalRestoredDomRenditionExact",
+            "normalRestoredSemanticRenditionExact",
+            "normalRestoredCanonicalCursorExact",
+            "normalRestoredDomCursorExact",
+            "normalBufferExact",
+            "richDomDistinctFromNormalExact",
+            "richCursorDomRenditionExact",
+            "richCursorSemanticRenditionExact",
+            "cursorOnlyZeroGridExact",
+            "richCursorDistinctExact",
+            "alternateSemanticDistinct",
+            "alternateBufferHiddenExact",
+            "rendererCanonicalDimensionsExact",
+          ]).has(assessment.web.firstFailedRestorationPredicate)
+            ? assessment.web.firstFailedRestorationPredicate
+            : null,
+        });
+        throw error;
+      }
+      publish({
+        convergence: { workspaceClient: ansiBoot.web.workspaceClient },
+        journeyEvidence: {
+          ansiCursorAltScreen: journeyEvidence,
+          ansiCursorAltScreenExpected: expected,
+          ansiCursorAltScreenCorrelation: Object.freeze({
+            fleetSessionId: ansiBoot.identity.fleetSessionId,
+            catalogRevision: ansiBoot.identity.catalogRevision,
+            semanticPaneId: ansiBoot.baseline.semanticPaneId,
+          }),
+        },
         status: "ready",
         readyAt: new Date().toISOString(),
       });

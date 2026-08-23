@@ -78,6 +78,7 @@ const GOLDEN_JOURNEYS = Object.freeze(
         "window-lifecycle",
         "keyboard-pointer-resize",
         "selection-copy-app-mouse",
+        "ansi-cursor-alt-screen",
       ].includes(id)
         ? "implemented"
         : "pending",
@@ -648,6 +649,79 @@ export async function runSelectionCopyAppMouseOwnerBoot(operations) {
   });
 }
 
+/** Dedicated ANSI journey: normal baseline → cursor/ANSI → alternate buffer → exact restore. */
+export async function runAnsiCursorAltScreenOwnerBoot(operations) {
+  const atBoundary = async (boundary, operation) => {
+    operations.onBoundary?.(boundary);
+    try {
+      return await operation();
+    } catch (error) {
+      if (error && typeof error === "object" && error.boundary) throw error;
+      const bounded = new Error(error instanceof Error ? error.message : String(error), {
+        cause: error,
+      });
+      bounded.boundary = boundary;
+      bounded.observation =
+        error?.observation ??
+        Object.freeze({ operation: "ansi-cursor-alt-screen-owner", stage: boundary });
+      throw bounded;
+    }
+  };
+  const namespace = await atBoundary("ansi-namespace-ready", operations.createNamespace);
+  const daemon = await atBoundary("ansi-daemon-ready", () => operations.startDaemon(namespace));
+  const identity = await atBoundary("ansi-daemon-ready", () =>
+    operations.openWorkspace(namespace, daemon),
+  );
+  await atBoundary("ansi-tui-build", () => operations.build(namespace));
+  const started = await atBoundary("ansi-tui-started", () =>
+    operations.launch(namespace, daemon, identity),
+  );
+  const host = await atBoundary("ansi-host-ready", () =>
+    operations.waitHost(namespace, daemon, identity, started),
+  );
+  const process = await atBoundary("ansi-tui-coherent", () =>
+    operations.waitCoherent(namespace, daemon, identity, started, host),
+  );
+  const baseline = await atBoundary("ansi-normal-baseline", () =>
+    operations.proveNormalBaseline(namespace, daemon, identity, process, host),
+  );
+  const rich = await atBoundary("ansi-rich-presentation", () =>
+    operations.driveRichAnsi(namespace, daemon, identity, process, baseline),
+  );
+  const cursor = await atBoundary("ansi-cursor-only-distribution", () =>
+    operations.driveCursorDistribution(namespace, daemon, identity, process, baseline, rich),
+  );
+  const alternate = await atBoundary("ansi-alternate-screen", () =>
+    operations.enterAlternateScreen(namespace, daemon, identity, process, baseline, cursor),
+  );
+  const restored = await atBoundary("ansi-normal-restored", () =>
+    operations.restoreNormalScreen(namespace, daemon, identity, process, baseline, alternate),
+  );
+  const sustained = await atBoundary("ansi-sustained-workload", () =>
+    operations.runSustainedWorkload(namespace, daemon, identity, process, baseline, restored),
+  );
+  const idle = await atBoundary("ansi-idle-quiescent", () =>
+    operations.proveIdle(namespace, daemon, identity, process, baseline, sustained),
+  );
+  const web = await atBoundary("ansi-web-correlation", () =>
+    operations.startWeb(namespace, daemon, identity, process, baseline, restored, idle),
+  );
+  return Object.freeze({
+    namespace,
+    identity,
+    process,
+    host,
+    baseline,
+    rich,
+    cursor,
+    alternate,
+    restored,
+    sustained,
+    idle,
+    web,
+  });
+}
+
 function exactTargetedTuiCwd(runtimeDir, { createMissing, hooks = {} }) {
   const fail = (reason, cause = undefined) => {
     const error = new Error(`targeted TUI isolated cwd preparation failed: ${reason}`, { cause });
@@ -866,9 +940,114 @@ export async function runIsolatedProductJourneyAttempt(entry, operations) {
   }
 }
 
+function exactObjectKeys(value, keys) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value).sort().join("\0") === [...keys].sort().join("\0")
+  );
+}
+
 export function createProductRigCleanupReceipt(entry, state, attempt) {
   const namespace = state?.runtimeNamespace;
   const cleanup = state?.cleanup;
+  const preflight = state?.diagnosticAttempt?.preflight;
+  const exactNoResourcePreflight =
+    exactObjectKeys(state?.diagnosticAttempt, [
+      "runId",
+      "resourcesCreated",
+      "sourceProvenance",
+      "preflight",
+    ]) &&
+    exactObjectKeys(state?.diagnosticAttempt?.sourceProvenance, [
+      "commit",
+      "tree",
+      "manifestDigest",
+    ]) &&
+    /^[0-9a-f]{40,64}$/u.test(state?.diagnosticAttempt?.sourceProvenance?.commit ?? "") &&
+    /^[0-9a-f]{40,64}$/u.test(state?.diagnosticAttempt?.sourceProvenance?.tree ?? "") &&
+    /^[0-9a-f]{64}$/u.test(state?.diagnosticAttempt?.sourceProvenance?.manifestDigest ?? "") &&
+    exactObjectKeys(preflight, [
+      "operation",
+      "stage",
+      "outcome",
+      "resourcesCreated",
+      "pathsClaimed",
+      "daemonStarted",
+    ]) &&
+    state?.diagnosticAttempt?.runId === entry?.runId &&
+    state?.diagnosticAttempt?.resourcesCreated === false &&
+    preflight?.operation === "product-rig-namespace-preflight" &&
+    preflight?.stage === "ansi-initial-pane-command" &&
+    preflight?.outcome === "command-rejected" &&
+    preflight?.resourcesCreated === false &&
+    preflight?.pathsClaimed === 0 &&
+    preflight?.daemonStarted === false &&
+    state?.firstBrokenBoundary === "ansi-namespace-ready" &&
+    exactObjectKeys(state?.failureObservation, [
+      "operation",
+      "stage",
+      "outcome",
+      "resourcesCreated",
+      "pathsClaimed",
+      "daemonStarted",
+    ]) &&
+    state.failureObservation.operation === preflight.operation &&
+    state.failureObservation.stage === preflight.stage &&
+    state.failureObservation.outcome === preflight.outcome &&
+    state.failureObservation.resourcesCreated === preflight.resourcesCreated &&
+    state.failureObservation.pathsClaimed === preflight.pathsClaimed &&
+    state.failureObservation.daemonStarted === preflight.daemonStarted &&
+    !Object.prototype.hasOwnProperty.call(state ?? {}, "runtimeNamespace") &&
+    !Object.prototype.hasOwnProperty.call(state ?? {}, "session") &&
+    !Object.prototype.hasOwnProperty.call(state ?? {}, "tui") &&
+    !Object.prototype.hasOwnProperty.call(state ?? {}, "daemon") &&
+    state?.daemonLifecycle === "not-started";
+  if (exactNoResourcePreflight) {
+    if (
+      !cleanup ||
+      cleanup.status !== "passed" ||
+      cleanup.cleanupToken !== null ||
+      !Array.isArray(cleanup.failures) ||
+      cleanup.failures.length !== 0 ||
+      !Number.isSafeInteger(attempt) ||
+      attempt < 1 ||
+      attempt > 2 ||
+      !Number.isSafeInteger(state.ownerPid)
+    )
+      throw new Error("ProductRig preflight cleanup receipt source is incomplete");
+    const ownerDead = (() => {
+      try {
+        process.kill(state.ownerPid, 0);
+        return false;
+      } catch (error) {
+        return error?.code === "ESRCH";
+      }
+    })();
+    return validateProductRigCleanupReceipt(
+      {
+        version: 1,
+        scope: "preflight-no-resources",
+        runId: entry.runId,
+        requestId: cleanup.requestId,
+        attempt,
+        passed: true,
+        completedAt: cleanup.completedAt,
+        ownerPid: state.ownerPid,
+        daemon: { status: "not-started" },
+        namespaceDigest: createHash("sha256")
+          .update(`preflight-no-resources\0${entry.runId}`)
+          .digest("hex"),
+        ownerDead,
+        daemonDead: true,
+        resourcesCreated: false,
+        pathsClaimed: 0,
+        failureCount: 0,
+      },
+      entry.runId,
+    );
+  }
   const ownedPaths = [
     namespace?.root,
     namespace?.tmuxSocketPath,
@@ -947,7 +1126,7 @@ export function validateProductRigCleanupReceipt(receipt, runId) {
     (receipt?.daemon?.status === "not-started" &&
       !Object.prototype.hasOwnProperty.call(receipt.daemon, "instanceId") &&
       !Object.prototype.hasOwnProperty.call(receipt.daemon, "pid"));
-  const valid =
+  const commonValid =
     receipt?.version === 1 &&
     receipt.runId === runId &&
     typeof receipt.requestId === "string" &&
@@ -963,14 +1142,62 @@ export function validateProductRigCleanupReceipt(receipt, runId) {
     /^[0-9a-f]{64}$/u.test(receipt.namespaceDigest ?? "") &&
     receipt.ownerDead === true &&
     receipt.daemonDead === true &&
-    receipt.pathsAbsent === true &&
-    receipt.pathAbsence?.runtimeRoot === true &&
-    receipt.pathAbsence?.tmuxSocket === true &&
-    receipt.pathAbsence?.hostTmuxSocket === true &&
-    receipt.pathAbsence?.daemonInfo === true &&
-    receipt.pathAbsence?.tuiRuntime === true &&
     receipt.failureCount === 0;
+  const preflightValid =
+    exactObjectKeys(receipt, [
+      "version",
+      "scope",
+      "runId",
+      "requestId",
+      "attempt",
+      "passed",
+      "completedAt",
+      "ownerPid",
+      "daemon",
+      "namespaceDigest",
+      "ownerDead",
+      "daemonDead",
+      "resourcesCreated",
+      "pathsClaimed",
+      "failureCount",
+    ]) &&
+    receipt?.scope === "preflight-no-resources" &&
+    exactObjectKeys(receipt.daemon, ["status"]) &&
+    receipt.daemon?.status === "not-started" &&
+    receipt.resourcesCreated === false &&
+    receipt.pathsClaimed === 0 &&
+    !Object.prototype.hasOwnProperty.call(receipt, "pathsAbsent") &&
+    !Object.prototype.hasOwnProperty.call(receipt, "pathAbsence");
+  const ownedNamespaceValid =
+    !Object.prototype.hasOwnProperty.call(receipt ?? {}, "scope") &&
+    receipt?.pathsAbsent === true &&
+    receipt?.pathAbsence?.runtimeRoot === true &&
+    receipt?.pathAbsence?.tmuxSocket === true &&
+    receipt?.pathAbsence?.hostTmuxSocket === true &&
+    receipt?.pathAbsence?.daemonInfo === true &&
+    receipt?.pathAbsence?.tuiRuntime === true &&
+    !Object.prototype.hasOwnProperty.call(receipt ?? {}, "resourcesCreated") &&
+    !Object.prototype.hasOwnProperty.call(receipt ?? {}, "pathsClaimed");
+  const valid = commonValid && (preflightValid || ownedNamespaceValid);
   if (!valid) throw new Error("ProductRig cleanup receipt is missing, mismatched, or not passed");
+  if (preflightValid)
+    return Object.freeze({
+      version: 1,
+      scope: "preflight-no-resources",
+      runId: receipt.runId,
+      requestId: receipt.requestId,
+      attempt: receipt.attempt,
+      passed: true,
+      completedAt: receipt.completedAt,
+      ownerPid: receipt.ownerPid,
+      daemon: Object.freeze({ status: "not-started" }),
+      namespaceDigest: receipt.namespaceDigest,
+      ownerDead: true,
+      daemonDead: true,
+      resourcesCreated: false,
+      pathsClaimed: 0,
+      failureCount: 0,
+    });
   return Object.freeze({
     version: 1,
     runId: receipt.runId,

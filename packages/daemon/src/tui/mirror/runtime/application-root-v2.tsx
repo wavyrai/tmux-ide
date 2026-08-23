@@ -23,11 +23,7 @@ import {
   parseApplicationArgs,
   type StartApplicationRootOptions,
 } from "./application-root-configuration.ts";
-import {
-  ApplicationShellView,
-  applicationShellKeyAction,
-  applicationShellViewport,
-} from "./application-shell-view.tsx";
+import { ApplicationShellView, applicationShellKeyAction } from "./application-shell-view.tsx";
 import {
   createApplicationTerminalInteractionController,
   type ApplicationTerminalInteractionController,
@@ -60,6 +56,7 @@ import {
   routeApplicationTerminalPointerInput,
 } from "./application-terminal-selection-owner.ts";
 import { createApplicationTerminalRendererSources } from "./application-terminal-renderer-sources.ts";
+import { createSemanticShellViewportResizeOwner } from "./semantic-shell-viewport-resize.ts";
 import {
   sendApplicationTerminalKey,
   sendApplicationTerminalPaste,
@@ -224,9 +221,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         setRendererFocused = setRendererFocusedSignal;
         const [selectedSession, setSelectedSession] = createSignal(0);
         const [bootstrapNote, setBootstrapNote] = createSignal<string | null>(null);
-        const viewport = createMemo(() => ({
-          ...applicationShellViewport(dimensions(), shell().semantic !== null),
-        }));
+        const semanticViewportResize = createSemanticShellViewportResizeOwner();
         const activeSurface = createMemo<"home" | "terminals">(
           () => shell().semantic?.workspaceCanvas.activeMode ?? surface(),
         );
@@ -279,6 +274,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           }
         };
         onCleanup(() => {
+          semanticViewportResize.dispose();
           stopLayout();
           stopShell();
           shellBinding.dispose();
@@ -299,10 +295,8 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         };
         createEffect(() => {
           renderer.setBackgroundColor(theme.roles.surfaces.canvas);
-          const size = viewport();
-          const active = generation();
-          const lane = active?.status === "live" ? active.fastLane : null;
-          if (lane) void lane.lane.resize({ cols: size.width, rows: size.height });
+          const currentShell = shell();
+          semanticViewportResize.adopt(dimensions(), currentShell.semantic, generation());
         });
         useKeyboard((event) => {
           const name = event.name.toLowerCase();

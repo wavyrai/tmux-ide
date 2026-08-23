@@ -205,6 +205,7 @@ export interface SessionRuntimeConsumer {
   ): Promise<TerminalReplicaSubscription>;
   openTerminalDelivery(
     deliverySubscriberId: string,
+    deliveryRequestId: string,
     semanticPaneId: string,
     offer: TerminalDeliveryOffer,
     onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
@@ -325,6 +326,52 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
               this.#sessions.get(session)?.noteOutputObserved(semanticPaneId, ageMs, timing);
           }
         : undefined;
+    const observeFlowRecovery =
+      this.#observability.enabled || options.mirror?.onFlowRecoveryObserved
+        ? (
+            session: string,
+            observation: Parameters<NonNullable<MirrorServiceOptions["onFlowRecoveryObserved"]>>[1],
+          ) => {
+            options.mirror?.onFlowRecoveryObserved?.(session, observation);
+            if (!this.#observability.enabled) return;
+            const atMicros = this.#observability.nowMicros();
+            this.#observability.recordSpan(
+              "tmux",
+              `terminal-mirror-flow-${observation.phase}`,
+              atMicros,
+              atMicros,
+              null,
+              undefined,
+              {
+                workspaceName: session,
+                semanticPaneId: observation.semanticPaneId,
+                mirrorFlowPhase: observation.phase,
+                mirrorFlowRecoveryOrdinal: observation.recoveryOrdinal,
+                mirrorPaneIncarnation: observation.paneIncarnation,
+                mirrorOutputOrdinal: observation.outputOrdinal,
+                mirrorRecoveryElapsedMicros: observation.elapsedMicros,
+                mirrorRecoveryConfirmationOrdinal: observation.confirmationOrdinal,
+                mirrorCollectorStarted: observation.collectorStarted,
+                mirrorCollectorLastCompletedOrdinal: observation.collectorLastCompletedOrdinal,
+                mirrorCollectorCaptureLineCount: observation.collectorCaptureLineCount,
+                mirrorCollectorCaptureByteCount: observation.collectorCaptureByteCount,
+                mirrorCollectorContinueObserved: observation.collectorContinueObserved,
+                mirrorCollectorStatusObserved: observation.collectorStatusObserved,
+                mirrorCollectorObserverEmissionObserved:
+                  observation.collectorObserverEmissionObserved,
+                ...(observation.collectorFailureReason
+                  ? { mirrorCollectorFailureReason: observation.collectorFailureReason }
+                  : {}),
+                ...(observation.fingerprintExact === null
+                  ? {}
+                  : { mirrorRecoveryFingerprintExact: observation.fingerprintExact }),
+                ...(observation.failureReason
+                  ? { mirrorFlowFailureReason: observation.failureReason }
+                  : {}),
+              },
+            );
+          }
+        : undefined;
     this.#mirror = new MirrorService({
       ...options.mirror,
       ...diagnosticMirrorOptions,
@@ -333,6 +380,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
         this.#sessions.get(session)?.noteNativeGeometryActivity();
       },
       ...(observeOutput ? { onOutputObserved: observeOutput } : {}),
+      ...(observeFlowRecovery ? { onFlowRecoveryObserved: observeFlowRecovery } : {}),
     });
     this.#semanticMutations = options.semanticMutations
       ? new SessionSemanticMutationExecutor({
@@ -1393,7 +1441,9 @@ class SessionRuntime {
 
   async openTerminalDelivery(
     clientId: string,
+    surface: string,
     deliverySubscriberId: string,
+    deliveryRequestId: string,
     semanticPaneId: string,
     offer: TerminalDeliveryOffer,
     onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
@@ -1406,6 +1456,12 @@ class SessionRuntime {
       semanticPaneId,
       offer,
       onMessage,
+      Object.freeze({
+        clientId,
+        surface,
+        laneId: deliverySubscriberId,
+        requestId: deliveryRequestId,
+      }),
     );
   }
 
@@ -1805,6 +1861,7 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
 
   async openTerminalDelivery(
     deliverySubscriberId: string,
+    deliveryRequestId: string,
     semanticPaneId: string,
     offer: TerminalDeliveryOffer,
     onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
@@ -1812,7 +1869,9 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
     this.#assertOpen();
     const upstream = await this.#runtime.openTerminalDelivery(
       this.clientId,
+      this.surface,
       deliverySubscriberId,
+      deliveryRequestId,
       semanticPaneId,
       offer,
       onMessage,

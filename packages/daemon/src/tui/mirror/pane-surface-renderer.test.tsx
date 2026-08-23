@@ -16,6 +16,7 @@ import { installTuiPerformanceEventSink } from "./performance-events.ts";
 import {
   PaneSurfaceRenderable,
   createPaneSurfaceHostFocusTransitionOwner,
+  projectPaneFramebufferCells,
   qualifiesPaneSurfaceHostFocusFrame,
   registerPaneSurface,
   type PaneSurfaceOptions,
@@ -31,6 +32,58 @@ import {
 function laneUuid(lane: number, offset = 0): string {
   return `00000000-0000-4000-8000-${String(lane * 10 + offset).padStart(12, "0")}`;
 }
+
+it("projects actual framebuffer styles, wide continuation, and combining cells", () => {
+  const buffers = {
+    char: new Uint32Array([0x754c, 0, 0x65]),
+    fg: new Uint16Array(12),
+    bg: new Uint16Array(12),
+    attributes: new Uint32Array([13, 13, 0]),
+  };
+  for (let index = 0; index < 3; index += 1) {
+    const offset = index * 4;
+    buffers.fg.set([255, 0, 0, 255], offset);
+    buffers.bg.set([1, 2, 3, 255], offset);
+  }
+  expect(
+    projectPaneFramebufferCells(
+      buffers,
+      3,
+      1,
+      [{ x: 2, y: 0, chars: "é", fg: 0xff0000, bg: 0x010203, attrs: 0 }],
+      0xffffff,
+      0x000000,
+    ),
+  ).toEqual([
+    {
+      row: 0,
+      column: 0,
+      chars: "界",
+      width: 2,
+      foreground: "rgb:ff0000",
+      background: "rgb:010203",
+      attributes: 13,
+    },
+    {
+      row: 0,
+      column: 1,
+      chars: "",
+      width: 0,
+      foreground: "rgb:ff0000",
+      background: "rgb:010203",
+      attributes: 13,
+    },
+    {
+      row: 0,
+      column: 2,
+      chars: "é",
+      width: 1,
+      foreground: "rgb:ff0000",
+      background: "rgb:010203",
+      attributes: 0,
+    },
+  ]);
+});
 
 function semanticLane(
   grapheme: string,
@@ -313,6 +366,215 @@ describe("PaneSurface OpenTUI renderer", () => {
     await setup.renderOnce();
     expect(blits).toEqual([{ full: false, forceRows: [2] }]);
     expect(diagnosticIdentityReads).toBe(0);
+  });
+
+  it("applies a cursor-only presentation without a terminal grid walk", async () => {
+    registerPaneSurface();
+    let cursor = { x: 1, y: 1, hidden: false, style: "block" as const, blink: false };
+    let blits = 0;
+    let acknowledgements = 0;
+    const presentations: Array<{
+      gridWalked: boolean;
+      gridRowsRead: number;
+      fullWalk: boolean;
+      cursorX: number;
+      style: string;
+    }> = [];
+    const traceSpans: string[] = [];
+    const uninstall = installTuiPerformanceEventSink({
+      frame: () => undefined,
+      terminalPaint: () => undefined,
+      terminalDelivery: () => undefined,
+      terminalCursorPresentation: (event) =>
+        presentations.push({
+          gridWalked: event.gridWalked,
+          gridRowsRead: event.gridRowsRead,
+          fullWalk: event.fullWalk,
+          cursorX: event.cursorX,
+          style: event.style,
+        }),
+      terminalTraceSpan: (event) => traceSpans.push(event.traceId),
+    });
+    const mirror = {
+      scrollbackDepth: () => 0,
+      cursorState: () => cursor,
+      cursorPresentationTrace: () => ({
+        traceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        generation: "generation-1",
+        incarnation: "incarnation-1",
+        semanticPaneId: "pane-1",
+        revision: 1,
+        stateHash: "0a63b052b8f1d994",
+      }),
+      paneCanonicalIdentity: () => ({
+        generation: "generation-1",
+        incarnation: "incarnation-1",
+        revision: 1,
+        stateHash: "0a63b052b8f1d994",
+        cols: 10,
+        rows: 5,
+        sourceEpoch: 2,
+      }),
+      acknowledgePresentation: () => {
+        acknowledgements += 1;
+      },
+      blitPane: () => {
+        blits += 1;
+        return null;
+      },
+    } satisfies TerminalPaneRenderSource;
+    const palette = createTerminalPaletteProjection(createSemanticThemeSnapshot({ mode: "dark" }));
+    let bumpPresentation!: () => void;
+    const setup = await renderForTest(
+      () => {
+        const [presentationVersion, setPresentationVersion] = createSignal(0);
+        bumpPresentation = () => setPresentationVersion((value) => value + 1);
+        return (
+          <pane_surface
+            width={10}
+            height={5}
+            mirror={mirror}
+            paneId="pane-1"
+            defaultFg={palette.foreground}
+            defaultBg={palette.background}
+            terminalPalette={palette}
+            searchHl={palette.searchHighlight}
+            searchCur={palette.searchCurrent}
+            scrollOffset={0}
+            paneFocused={true}
+            contentVersion={1}
+            presentationVersion={presentationVersion()}
+            sourceEpoch={2}
+            rendererEpoch={3}
+            selRange={null}
+            search={null}
+          />
+        );
+      },
+      { width: 10, height: 5 },
+    );
+    try {
+      await setup.renderOnce();
+      blits = 0;
+      acknowledgements = 0;
+      presentations.length = 0;
+      cursor = { x: 4, y: 1, hidden: false, style: "bar", blink: true };
+      bumpPresentation();
+      await setup.renderOnce();
+      expect(blits).toBe(0);
+      expect(acknowledgements).toBe(1);
+      expect(presentations).toEqual([
+        { gridWalked: false, gridRowsRead: 0, fullWalk: false, cursorX: 4, style: "line" },
+      ]);
+      expect(traceSpans).toEqual(["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"]);
+    } finally {
+      uninstall();
+    }
+  });
+
+  it("distinguishes retained all-row and partial-row walks from a full viewport walk", async () => {
+    registerPaneSurface();
+    const presentations: Array<{
+      gridRowsRead: number;
+      fullWalk: boolean;
+      gridRowsReadTotal: number;
+      fullWalkTotal: number;
+      presentationCount: number;
+    }> = [];
+    const uninstall = installTuiPerformanceEventSink({
+      frame: () => undefined,
+      terminalPaint: () => undefined,
+      terminalDelivery: () => undefined,
+      terminalCursorPresentation: (event) =>
+        presentations.push({
+          gridRowsRead: event.gridRowsRead,
+          fullWalk: event.fullWalk,
+          gridRowsReadTotal: event.gridRowsReadTotal,
+          fullWalkTotal: event.fullWalkTotal,
+          presentationCount: event.presentationCount,
+        }),
+    });
+    let dirtyRows = [0, 1, 2, 3, 4];
+    const mirror = {
+      scrollbackDepth: () => 0,
+      cursorState: () => ({ x: 1, y: 1, hidden: false, style: "block" as const, blink: false }),
+      paneCanonicalIdentity: () => ({
+        generation: "generation-1",
+        incarnation: "incarnation-1",
+        revision: 2,
+        stateHash: "0a63b052b8f1d994",
+        cols: 10,
+        rows: 6,
+        sourceEpoch: 2,
+      }),
+      blitPane: (
+        _id: string,
+        _buffers: unknown,
+        _width: number,
+        _height: number,
+        _scrollOffset: number,
+        _defaultFg: number,
+        _defaultBg: number,
+        options: BlitOptions,
+      ) => options.dirtyRows.push(...dirtyRows),
+    } as unknown as TerminalPaneRenderSource;
+    const palette = createTerminalPaletteProjection(createSemanticThemeSnapshot({ mode: "dark" }));
+    let bump!: () => void;
+    const setup = await renderForTest(
+      () => {
+        const [contentVersion, setContentVersion] = createSignal(1);
+        bump = () => setContentVersion((value) => value + 1);
+        return (
+          <pane_surface
+            width={10}
+            height={5}
+            mirror={mirror}
+            paneId="pane-1"
+            defaultFg={palette.foreground}
+            defaultBg={palette.background}
+            terminalPalette={palette}
+            searchHl={palette.searchHighlight}
+            searchCur={palette.searchCurrent}
+            contentVersion={contentVersion()}
+            paneFocused={true}
+          />
+        );
+      },
+      { width: 10, height: 5 },
+    );
+    try {
+      await setup.renderOnce();
+      bump();
+      await setup.renderOnce();
+      dirtyRows = [0, 2, 4];
+      bump();
+      await setup.renderOnce();
+      expect(presentations).toEqual([
+        {
+          gridRowsRead: 5,
+          fullWalk: true,
+          gridRowsReadTotal: 5,
+          fullWalkTotal: 1,
+          presentationCount: 1,
+        },
+        {
+          gridRowsRead: 5,
+          fullWalk: false,
+          gridRowsReadTotal: 10,
+          fullWalkTotal: 1,
+          presentationCount: 2,
+        },
+        {
+          gridRowsRead: 3,
+          fullWalk: false,
+          gridRowsReadTotal: 13,
+          fullWalkTotal: 1,
+          presentationCount: 3,
+        },
+      ]);
+    } finally {
+      uninstall();
+    }
   });
 
   it("publishes exact focus rows only when explicitly armed and remains fail-open", async () => {

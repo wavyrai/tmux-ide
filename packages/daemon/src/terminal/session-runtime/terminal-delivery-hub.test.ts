@@ -1,20 +1,36 @@
 import { describe, expect, it, vi } from "vitest";
 import type {
   CanonicalTerminalReplicaUpdate,
+  TerminalReplicaSnapshot,
   TerminalDeliveryAck,
   TerminalDeliveryEnvelope,
   TerminalDeliveryServerMessage,
 } from "@tmux-ide/contracts";
 import {
   blankTerminalReplicaSnapshot,
+  admitTerminalDeliveryChunk,
+  admitTerminalDeliveryEnvelope,
+  commitTerminalDelivery,
+  completeTerminalDelivery,
+  createTerminalDeliveryClientState,
+  decodeCompactSemanticTerminalUpdate,
   hashTerminalReplicaSnapshot,
   hashTerminalReplicaTombstone,
+  TerminalDeliveryAssembler,
+  TerminalDeliveryStateTooLargeError,
+  type TerminalDeliveryClientState,
 } from "@tmux-ide/core";
 import {
   SessionRuntimeTerminalDeliveryHub,
+  selectExactSemanticRepresentation,
   type TerminalDeliverySourceOwner,
 } from "./terminal-delivery-hub.ts";
-import type { SessionRuntimeTraceContext } from "./runtime-observability.ts";
+import {
+  createSessionRuntimeObservability,
+  type SessionRuntimeStageSpan,
+  type SessionRuntimeTraceContext,
+} from "./runtime-observability.ts";
+import { terminalDeliveryObservationOrdinal } from "./terminal-delivery-observation-identity.ts";
 
 const generation = "00000000-0000-4000-8000-000000000001";
 
@@ -145,7 +161,311 @@ async function settle(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function assembledBytes(
+  envelope: TerminalDeliveryEnvelope,
+  messages: readonly TerminalDeliveryServerMessage[],
+): Uint8Array {
+  const assembler = new TerminalDeliveryAssembler(envelope);
+  for (const message of messages)
+    if (
+      message.type === "terminal.delivery.chunk" &&
+      message.transactionId === envelope.transactionId
+    )
+      assembler.write(message);
+  return assembler.complete();
+}
+
+function commitMessages(
+  state: TerminalDeliveryClientState,
+  envelope: TerminalDeliveryEnvelope,
+  messages: readonly TerminalDeliveryServerMessage[],
+) {
+  let admitted = admitTerminalDeliveryEnvelope(state, envelope);
+  const assembler = new TerminalDeliveryAssembler(envelope);
+  for (const message of messages)
+    if (
+      message.type === "terminal.delivery.chunk" &&
+      message.transactionId === envelope.transactionId
+    ) {
+      admitted = admitTerminalDeliveryChunk(admitted, message);
+      assembler.write(message);
+    }
+  return commitTerminalDelivery(admitted, completeTerminalDelivery(admitted, assembler));
+}
+
 describe("SessionRuntimeTerminalDeliveryHub", () => {
+  it("prunes ACK-superseded representations only after divergent clients advance", async () => {
+    const owner = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    const firstMessages: TerminalDeliveryServerMessage[] = [];
+    const secondMessages: TerminalDeliveryServerMessage[] = [];
+    const offer = {
+      protocolVersions: [1],
+      encodings: ["semantic-compact-v1"],
+      richPlacements: false,
+    } as const;
+    const first = await hub.open("first", "pane-a", offer, (message) =>
+      firstMessages.push(message),
+    );
+    const second = await hub.open("second", "pane-a", offer, (message) =>
+      secondMessages.push(message),
+    );
+    owner.emit(seed());
+    await settle();
+    const firstEnvelope = firstMessages.find(
+      (message): message is TerminalDeliveryEnvelope => message.type === "terminal.delivery",
+    );
+    const secondEnvelope = secondMessages.find(
+      (message): message is TerminalDeliveryEnvelope => message.type === "terminal.delivery",
+    );
+    expect(firstEnvelope).toBeDefined();
+    expect(secondEnvelope).toBeDefined();
+    expect(hub.metrics().representationCacheBytes).toBeGreaterThan(0);
+    first.ack(ack(firstEnvelope!));
+    expect(hub.metrics().representationCacheBytes).toBeGreaterThan(0);
+    second.ack(ack(secondEnvelope!));
+    expect(hub.metrics().representationCacheBytes).toBe(0);
+
+    await first.close();
+    await second.close();
+    const reconnectMessages: TerminalDeliveryServerMessage[] = [];
+    const reconnect = await hub.open("reconnect", "pane-a", offer, (message) =>
+      reconnectMessages.push(message),
+    );
+    owner.emit(seed());
+    await settle();
+    const reconnectEnvelope = reconnectMessages.find(
+      (message): message is TerminalDeliveryEnvelope => message.type === "terminal.delivery",
+    );
+    expect(reconnectEnvelope).toBeDefined();
+    reconnect.ack(ack(reconnectEnvelope!));
+    expect(hub.metrics().representationCacheBytes).toBe(0);
+    await reconnect.close();
+    await hub.close();
+  });
+
+  it("selects the exact representable semantic representation without discarding a valid patch", () => {
+    const candidate = (frame: "patch" | "seed" | "tombstone", bytes: number) => ({
+      payload: { frame },
+      bytes: new Uint8Array(bytes),
+    });
+    const tooLarge = () => {
+      throw new TerminalDeliveryStateTooLargeError(16 * 1024 * 1024 + 1);
+    };
+    const seed = vi.fn(() => candidate("seed", 1024));
+
+    expect(
+      selectExactSemanticRepresentation(() => candidate("patch", 512 * 1024), seed).payload.frame,
+    ).toBe("patch");
+    expect(seed).not.toHaveBeenCalled();
+
+    const observedSmallerPatch = selectExactSemanticRepresentation(
+      () => candidate("patch", 740_307),
+      () => candidate("seed", 2_194_552),
+    );
+    expect(observedSmallerPatch.payload.frame).toBe("patch");
+    expect(observedSmallerPatch.bytes).toHaveLength(740_307);
+    expect(observedSmallerPatch.observation).toEqual({
+      attemptedPatchBytes: 740_307,
+      attemptedSeedBytes: 2_194_552,
+      selectionStatus: "patch-preferred",
+    });
+
+    const observedSmallerSeed = selectExactSemanticRepresentation(
+      () => candidate("patch", 740_307),
+      () => candidate("seed", 600_000),
+    );
+    expect(observedSmallerSeed.payload.frame).toBe("seed");
+    expect(observedSmallerSeed.bytes).toHaveLength(600_000);
+    expect(observedSmallerSeed.observation?.selectionStatus).toBe("seed-preferred");
+
+    const observedTie = selectExactSemanticRepresentation(
+      () => candidate("patch", 740_307),
+      () => candidate("seed", 740_307),
+    );
+    expect(observedTie.payload.frame).toBe("patch");
+    expect(observedTie.observation?.selectionStatus).toBe("patch-preferred");
+    const unobservedSmallerPatch = candidate("patch", 740_307);
+    expect(
+      selectExactSemanticRepresentation(
+        () => unobservedSmallerPatch,
+        () => candidate("seed", 2_194_552),
+        false,
+      ),
+    ).toBe(unobservedSmallerPatch);
+
+    const validLargePatch = selectExactSemanticRepresentation(
+      () => candidate("patch", 512 * 1024 + 1),
+      tooLarge,
+    );
+    expect(validLargePatch.payload.frame).toBe("patch");
+    expect(validLargePatch.bytes).toHaveLength(512 * 1024 + 1);
+    expect(validLargePatch.observation).toEqual({
+      attemptedPatchBytes: 512 * 1024 + 1,
+      attemptedSeedBytes: 16 * 1024 * 1024 + 1,
+      selectionStatus: "patch-fallback",
+    });
+
+    const validSeed = selectExactSemanticRepresentation(tooLarge, () =>
+      candidate("seed", 16 * 1024 * 1024),
+    );
+    expect(validSeed.payload.frame).toBe("seed");
+    expect(validSeed.bytes).toHaveLength(16 * 1024 * 1024);
+    expect(validSeed.observation).toEqual({
+      attemptedPatchBytes: 16 * 1024 * 1024 + 1,
+      attemptedSeedBytes: 16 * 1024 * 1024,
+      selectionStatus: "seed-preferred",
+    });
+    const unobservedPatch = candidate("patch", 512 * 1024 + 1);
+    expect(selectExactSemanticRepresentation(() => unobservedPatch, tooLarge, false)).toBe(
+      unobservedPatch,
+    );
+    const directSeed = candidate("seed", 321);
+    expect(selectExactSemanticRepresentation(() => directSeed, seed).observation).toEqual({
+      attemptedPatchBytes: null,
+      attemptedSeedBytes: 321,
+      selectionStatus: "direct-seed",
+    });
+    const directTombstone = candidate("tombstone", 123);
+    expect(selectExactSemanticRepresentation(() => directTombstone, seed).observation).toEqual({
+      attemptedPatchBytes: null,
+      attemptedSeedBytes: null,
+      selectionStatus: "direct-tombstone",
+    });
+
+    expect(() => selectExactSemanticRepresentation(tooLarge, tooLarge)).toThrow(
+      TerminalDeliveryStateTooLargeError,
+    );
+    expect(() =>
+      selectExactSemanticRepresentation(
+        () => {
+          throw new Error("patch encoding failed");
+        },
+        () => candidate("seed", 1),
+      ),
+    ).toThrow("patch encoding failed");
+    expect(() =>
+      selectExactSemanticRepresentation(
+        () => candidate("patch", 512 * 1024 + 1),
+        () => {
+          throw new Error("seed encoding failed");
+        },
+      ),
+    ).toThrow("seed encoding failed");
+  });
+
+  it("selects the smaller exact over-threshold representation through the real hub", async () => {
+    const runCase = async (
+      baseRevision: number,
+      patchShape: "patch-smaller" | "seed-smaller" | "tie",
+      expectedFrame: "patch" | "seed",
+    ) => {
+      const owner = new FakeOwner();
+      const spans: SessionRuntimeStageSpan[] = [];
+      const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner, {
+        observability: createSessionRuntimeObservability({ onSpan: (span) => spans.push(span) }),
+      });
+      const messages: TerminalDeliveryServerMessage[] = [];
+      const connection = await hub.open(
+        `size-${patchShape}`,
+        "pane-a",
+        { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false },
+        (message) => messages.push(message),
+      );
+      const blank = blankTerminalReplicaSnapshot(2, 1);
+      const initialSnapshot = {
+        ...blank,
+        history: Array.from({ length: 3_000 }, () => blank.grid[0]!),
+      };
+      owner.emit({
+        type: "terminal.seed",
+        workspaceName: "workspace",
+        semanticPaneId: "pane-a",
+        generation,
+        incarnation: `${generation}:0`,
+        revision: baseRevision,
+        cols: 2,
+        rows: 1,
+        stateHash: hashTerminalReplicaSnapshot(initialSnapshot),
+        hashAlgorithm: "fnv1a64-v1",
+        snapshot: initialSnapshot,
+      });
+      await settle();
+      const initialEnvelope = messages.findLast(
+        (message) => message.type === "terminal.delivery",
+      ) as TerminalDeliveryEnvelope;
+      connection.ack(ack(initialEnvelope));
+      const targetSnapshot = {
+        ...initialSnapshot,
+        cursor: { ...initialSnapshot.cursor, x: 1 },
+      };
+      const commonPatch = {
+        rows: [] as { index: number; row: TerminalReplicaSnapshot["grid"][number] }[],
+        history: targetSnapshot.history,
+        cursor: targetSnapshot.cursor,
+      };
+      const richPatch = {
+        ...commonPatch,
+        dimensions: { cols: 2, rows: 1 },
+        rows: targetSnapshot.grid.map((row, index) => ({ index, row })),
+        modes: targetSnapshot.modes,
+        placements: targetSnapshot.placements,
+        bootstrap: targetSnapshot.bootstrap,
+      };
+      const tiePatch = {
+        ...commonPatch,
+        rows: targetSnapshot.grid.map((row, index) => ({ index, row })),
+        modes: targetSnapshot.modes,
+        bootstrap: targetSnapshot.bootstrap,
+      };
+      owner.emit({
+        type: "terminal.patch",
+        workspaceName: "workspace",
+        semanticPaneId: "pane-a",
+        generation,
+        incarnation: `${generation}:0`,
+        baseRevision,
+        revision: baseRevision + 1,
+        cols: 2,
+        rows: 1,
+        stateHash: hashTerminalReplicaSnapshot(targetSnapshot),
+        hashAlgorithm: "fnv1a64-v1",
+        patch:
+          patchShape === "seed-smaller" ? richPatch : patchShape === "tie" ? tiePatch : commonPatch,
+      });
+      await settle();
+      const envelope = messages.findLast(
+        (message) => message.type === "terminal.delivery",
+      ) as TerminalDeliveryEnvelope;
+      expect(envelope.frame).toBe(expectedFrame);
+      expect(envelope.representationBytes).toBeGreaterThan(512 * 1024);
+      const observation = spans.findLast(
+        (span) =>
+          span.operation === "terminal-delivery-encode-enqueue" &&
+          span.terminalDelivery?.canonicalRevision === baseRevision + 1,
+      )?.terminalDelivery;
+      expect(observation?.attemptedPatchBytes).toBeGreaterThan(512 * 1024);
+      expect(observation?.attemptedSeedBytes).toBeGreaterThan(512 * 1024);
+      if (patchShape === "tie")
+        expect(observation?.attemptedPatchBytes).toBe(observation?.attemptedSeedBytes);
+      else if (expectedFrame === "patch")
+        expect(observation?.attemptedPatchBytes).toBeLessThan(observation?.attemptedSeedBytes ?? 0);
+      else
+        expect(observation?.attemptedSeedBytes).toBeLessThan(observation?.attemptedPatchBytes ?? 0);
+      connection.ack(ack(envelope));
+      expect(hub.metrics()).toMatchObject({
+        inFlight: 0,
+        queueDepth: 0,
+        reseeds: expectedFrame === "seed" ? 2 : 1,
+      });
+      await connection.close();
+      await hub.close();
+    };
+    await runCase(0, "patch-smaller", "patch");
+    await runCase(0, "seed-smaller", "seed");
+    await runCase(10, "tie", "patch");
+  });
+
   it("closes a source that resolves after reset and allows a clean retry", async () => {
     let resolveLate!: (source: {
       generation: string;
@@ -623,7 +943,10 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
 
   it("coalesces a frozen revision flood into one latest seed on thaw", async () => {
     const owner = new FakeOwner();
-    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    const spans: SessionRuntimeStageSpan[] = [];
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner, {
+      observability: createSessionRuntimeObservability({ onSpan: (span) => spans.push(span) }),
+    });
     const messages: TerminalDeliveryServerMessage[] = [];
     const connection = await hub.open(
       "frozen-client",
@@ -645,6 +968,19 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
       (message) => message.type === "terminal.delivery",
     ) as TerminalDeliveryEnvelope;
     expect(resumed).toMatchObject({ frame: "seed", canonicalRevision: 20 });
+    expect(
+      spans.findLast(
+        (span) =>
+          span.operation === "terminal-delivery-encode-enqueue" &&
+          span.terminalDelivery?.canonicalRevision === 20,
+      )?.terminalDelivery,
+    ).toMatchObject({
+      representation: "seed",
+      representationBytes: resumed.representationBytes,
+      attemptedPatchBytes: null,
+      attemptedSeedBytes: resumed.representationBytes,
+      selectionStatus: "direct-seed",
+    });
     expect(hub.metrics().latestPointers).toBe(1);
     await connection.close();
     await hub.close();
@@ -684,6 +1020,636 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     ) as TerminalDeliveryEnvelope;
     expect(delivered).toMatchObject({ canonicalRevision: 4, performanceTraceId: traceB.traceId });
     await connection.close();
+    await hub.close();
+  });
+
+  it("joins trace-null enqueue and settlement by exact delivery identity", async () => {
+    const owner = new FakeOwner();
+    const spans: SessionRuntimeStageSpan[] = [];
+    const observability = createSessionRuntimeObservability({ onSpan: (span) => spans.push(span) });
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner, {
+      observability,
+    });
+    const messages: TerminalDeliveryServerMessage[] = [];
+    const connection = await hub.open(
+      "identity-client",
+      "pane-a",
+      { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false },
+      (message) => messages.push(message),
+      {
+        clientId: "opentui:42",
+        surface: "opentui",
+        laneId: "lane-a",
+        requestId: "00000000-0000-4000-8000-000000000010",
+      },
+    );
+    owner.emit(seed());
+    await settle();
+    connection.ack(ack(messages[0] as TerminalDeliveryEnvelope));
+    owner.emit(patch(1, 1));
+    await settle();
+    const envelope = messages.findLast(
+      (message) => message.type === "terminal.delivery",
+    ) as TerminalDeliveryEnvelope;
+    expect(terminalDeliveryObservationOrdinal(envelope)).toBeGreaterThan(0);
+    connection.ack(ack(envelope));
+    const encode = spans.findLast(
+      (span) =>
+        span.operation === "terminal-delivery-encode-enqueue" &&
+        span.terminalDelivery?.canonicalRevision === 1,
+    );
+    const settled = spans.findLast(
+      (span) =>
+        span.operation === "terminal-delivery-settled" &&
+        span.terminalDelivery?.canonicalRevision === 1,
+    );
+    expect(encode).toMatchObject({ traceId: null, clockKind: "performance-now" });
+    expect(settled).toMatchObject({ traceId: null, clockKind: "performance-now" });
+    expect(encode?.terminalDelivery).toMatchObject({
+      workspaceName: "workspace",
+      semanticPaneId: "pane-a",
+      canonicalGeneration: generation,
+      canonicalIncarnation: `${generation}:0`,
+      canonicalRevision: 1,
+      canonicalStateHash: envelope.canonicalStateHash,
+      transactionId: envelope.transactionId,
+      representation: "patch",
+      selectionStatus: "patch-preferred",
+      deliveryClientId: "opentui:42",
+      deliverySurface: "opentui",
+      deliveryLaneId: "lane-a",
+      deliveryRequestId: "00000000-0000-4000-8000-000000000010",
+      deliveryNonce: envelope.deliveryNonce,
+    });
+    expect(settled?.terminalDelivery).toMatchObject({
+      workspaceName: "workspace",
+      semanticPaneId: "pane-a",
+      canonicalGeneration: generation,
+      canonicalIncarnation: `${generation}:0`,
+      canonicalRevision: 1,
+      canonicalStateHash: envelope.canonicalStateHash,
+      deliveryOrdinal: encode?.terminalDelivery?.deliveryOrdinal,
+      transactionId: envelope.transactionId,
+      queueDepth: 0,
+      inFlight: 0,
+      inFlightBytes: 0,
+      deliveryClientId: "opentui:42",
+      deliverySurface: "opentui",
+      deliveryLaneId: "lane-a",
+      deliveryRequestId: "00000000-0000-4000-8000-000000000010",
+      deliveryNonce: envelope.deliveryNonce,
+    });
+    const readyStatus = spans.findLast(
+      (span) =>
+        span.operation === "terminal-delivery-subscriber-status" &&
+        span.terminalDelivery?.canonicalRevision === 1,
+    );
+    expect(readyStatus?.terminalDelivery).toMatchObject({
+      workspaceName: "workspace",
+      semanticPaneId: "pane-a",
+      canonicalGeneration: generation,
+      canonicalIncarnation: `${generation}:0`,
+      canonicalRevision: 1,
+      canonicalStateHash: envelope.canonicalStateHash,
+      deliveryClientId: "opentui:42",
+      deliverySurface: "opentui",
+      deliveryLaneId: "lane-a",
+      deliveryRequestId: "00000000-0000-4000-8000-000000000010",
+      deliveryPurpose: "terminal-surface",
+      deliveryVisibility: "visible",
+      deliveryBaselineRevision: 1,
+      deliveryBaselineHash: envelope.canonicalStateHash,
+      deliveryInFlightRevision: null,
+      deliveryInFlightHash: null,
+      deliveryLatestRevision: null,
+      deliveryClientQueueDepth: 0,
+    });
+    expect(readyStatus?.terminalDelivery?.deliveryStatusOrdinal).toBeGreaterThan(0);
+    expect(
+      spans.filter((span) => span.operation === "terminal-delivery-subscriber-lifecycle"),
+    ).toEqual([
+      expect.objectContaining({
+        terminalDelivery: expect.objectContaining({
+          deliveryLifecycleEvent: "open",
+          deliveryPurpose: "terminal-surface",
+          deliveryLifecycleOrdinal: 1,
+          deliveryClientId: "opentui:42",
+          deliverySurface: "opentui",
+          deliveryLaneId: "lane-a",
+          deliveryRequestId: "00000000-0000-4000-8000-000000000010",
+        }),
+      }),
+    ]);
+    await connection.close();
+    expect(
+      spans.filter((span) => span.operation === "terminal-delivery-subscriber-lifecycle"),
+    ).toEqual([
+      expect.objectContaining({
+        terminalDelivery: expect.objectContaining({ deliveryLifecycleEvent: "open" }),
+      }),
+      expect.objectContaining({
+        terminalDelivery: expect.objectContaining({
+          deliveryLifecycleEvent: "close",
+          deliveryLifecycleOrdinal: 2,
+        }),
+      }),
+    ]);
+    await hub.close();
+  });
+
+  it("delivers and ACKs the smaller exact large representation through adjacent updates", async () => {
+    const owner = new FakeOwner();
+    const spans: SessionRuntimeStageSpan[] = [];
+    const observability = createSessionRuntimeObservability({ onSpan: (span) => spans.push(span) });
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner, {
+      observability,
+    });
+    const messages: TerminalDeliveryServerMessage[] = [];
+    const connection = await hub.open(
+      "large-client",
+      "pane-a",
+      { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false },
+      (message) => messages.push(message),
+    );
+    const initial = seed();
+    if (initial.type !== "terminal.seed") throw new Error("test seed unavailable");
+    owner.emit(initial);
+    await settle();
+    connection.ack(ack(messages[0] as TerminalDeliveryEnvelope));
+    const append = (base: TerminalReplicaSnapshot, revision: number, graphemeBytes: number) => {
+      const row = {
+        wrapped: false,
+        cells: [
+          { ...base.grid[0]!.cells[0]!, grapheme: "x".repeat(graphemeBytes) },
+          base.grid[0]!.cells[1]!,
+        ],
+      };
+      const snapshot = { ...base, history: [...base.history, row] };
+      return {
+        snapshot,
+        update: {
+          type: "terminal.patch" as const,
+          workspaceName: "workspace",
+          semanticPaneId: "pane-a",
+          generation,
+          incarnation: `${generation}:0`,
+          baseRevision: revision - 1,
+          revision,
+          cols: snapshot.cols,
+          rows: snapshot.rows,
+          stateHash: hashTerminalReplicaSnapshot(snapshot),
+          hashAlgorithm: "fnv1a64-v1" as const,
+          patch: { rows: [], historyDelta: { trim: 0, append: [row] } },
+        },
+      };
+    };
+    const first = append(initial.snapshot, 1, 14 * 1024 * 1024);
+    owner.emit(first.update);
+    await settle();
+    const firstEnvelope = messages.findLast(
+      (message) => message.type === "terminal.delivery",
+    ) as TerminalDeliveryEnvelope;
+    expect(firstEnvelope).toMatchObject({ frame: "patch", canonicalRevision: 1 });
+    const second = append(first.snapshot, 2, 3 * 1024 * 1024);
+    owner.emit(second.update);
+    await settle();
+    expect(messages.filter((message) => message.type === "terminal.delivery").at(-1)).toBe(
+      firstEnvelope,
+    );
+    connection.ack(ack(firstEnvelope));
+    await settle();
+    const secondEnvelope = messages.findLast(
+      (message) => message.type === "terminal.delivery",
+    ) as TerminalDeliveryEnvelope;
+    expect(secondEnvelope).toMatchObject({ frame: "patch", canonicalRevision: 2 });
+    expect(secondEnvelope.representationBytes).toBeLessThanOrEqual(16 * 1024 * 1024);
+    expect(messages.some((message) => message.type === "terminal.delivery.fault")).toBe(false);
+    connection.ack(ack(secondEnvelope));
+    expect(hub.metrics()).toMatchObject({ reseeds: 1, inFlight: 0, queueDepth: 0 });
+    expect(
+      spans.findLast(
+        (span) =>
+          span.operation === "terminal-delivery-encode-enqueue" &&
+          span.terminalDelivery?.canonicalRevision === 2,
+      )?.terminalDelivery,
+    ).toMatchObject({
+      representation: "patch",
+      selectionStatus: "patch-fallback",
+      canonicalStateHash: second.update.stateHash,
+    });
+    const impossible = append(second.snapshot, 3, 17 * 1024 * 1024);
+    owner.emit(impossible.update);
+    await settle();
+    expect(
+      messages.findLast((message) => message.type === "terminal.delivery.fault"),
+    ).toMatchObject({ reason: "state-too-large" });
+    expect(spans.findLast((span) => span.operation === "terminal-delivery-fault")).toMatchObject({
+      terminalDelivery: {
+        workspaceName: "workspace",
+        semanticPaneId: "pane-a",
+        faultReason: "state-too-large",
+      },
+    });
+    await connection.close();
+    await hub.close();
+  }, 30_000);
+
+  it("delivers a compact 5000-row state through the real hub, coalesces exactly, and reseeds reconnects", async () => {
+    const owner = new FakeOwner();
+    const spans: SessionRuntimeStageSpan[] = [];
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner, {
+      observability: createSessionRuntimeObservability({ onSpan: (span) => spans.push(span) }),
+    });
+    const messages: TerminalDeliveryServerMessage[] = [];
+    const connection = await hub.open(
+      "compact-client",
+      "pane-a",
+      {
+        protocolVersions: [1],
+        encodings: ["semantic-compact-v1", "semantic-v1"],
+        richPlacements: false,
+      },
+      (message) => messages.push(message),
+    );
+    expect(connection.negotiation).toMatchObject({
+      accepted: true,
+      negotiated: { encoding: "semantic-compact-v1" },
+    });
+    if (!connection.negotiation.accepted) throw new Error("compact negotiation rejected");
+    let clientState = createTerminalDeliveryClientState(
+      connection.negotiation.negotiated,
+      "workspace",
+      "pane-a",
+    );
+    const blank = blankTerminalReplicaSnapshot(132, 40);
+    const historyRow = blank.grid[0]!;
+    const snapshots = [{ ...blank, history: Array.from({ length: 5_000 }, () => historyRow) }];
+    const canonicalUpdate = (
+      revision: number,
+      snapshot: TerminalReplicaSnapshot,
+    ): CanonicalTerminalReplicaUpdate =>
+      revision === 0
+        ? {
+            type: "terminal.seed",
+            workspaceName: "workspace",
+            semanticPaneId: "pane-a",
+            generation,
+            incarnation: `${generation}:0`,
+            revision,
+            cols: snapshot.cols,
+            rows: snapshot.rows,
+            stateHash: hashTerminalReplicaSnapshot(snapshot),
+            hashAlgorithm: "fnv1a64-v1",
+            snapshot,
+          }
+        : {
+            type: "terminal.patch",
+            workspaceName: "workspace",
+            semanticPaneId: "pane-a",
+            generation,
+            incarnation: `${generation}:0`,
+            baseRevision: revision - 1,
+            revision,
+            cols: snapshot.cols,
+            rows: snapshot.rows,
+            stateHash: hashTerminalReplicaSnapshot(snapshot),
+            hashAlgorithm: "fnv1a64-v1",
+            patch: { rows: [], cursor: snapshot.cursor },
+          };
+
+    owner.emit(canonicalUpdate(0, snapshots[0]!));
+    await settle();
+    const first = messages.find(
+      (message) => message.type === "terminal.delivery",
+    ) as TerminalDeliveryEnvelope;
+    expect(first).toMatchObject({
+      encoding: "semantic-compact-v1",
+      frame: "seed",
+      canonicalRevision: 0,
+    });
+    expect(first.representationBytes).toBeLessThan(16 * 1024 * 1024);
+    expect(
+      spans.findLast(
+        (span) =>
+          span.operation === "terminal-delivery-encode-enqueue" &&
+          span.terminalDelivery?.canonicalRevision === 0,
+      )?.terminalDelivery,
+    ).toMatchObject({
+      selectedEncoding: "semantic-compact-v1",
+      selectionStatus: "direct-seed",
+      attemptedPatchBytes: null,
+      attemptedCompactPatchBytes: null,
+      attemptedCompactSeedBytes: first.representationBytes,
+    });
+    expect(
+      spans.findLast(
+        (span) =>
+          span.operation === "terminal-delivery-encode-enqueue" &&
+          span.terminalDelivery?.canonicalRevision === 0,
+      )?.terminalDelivery?.attemptedLegacySeedBytes,
+    ).toBeNull();
+    expect(decodeCompactSemanticTerminalUpdate(assembledBytes(first, messages))).toEqual({
+      frame: "seed",
+      revision: 0,
+      snapshot: snapshots[0],
+    });
+    const firstCommit = commitMessages(clientState, first, messages);
+    clientState = firstCommit.state;
+
+    for (let revision = 1; revision <= 2; revision += 1) {
+      const prior = snapshots.at(-1)!;
+      const next = { ...prior, cursor: { ...prior.cursor, x: revision } };
+      snapshots.push(next);
+      owner.emit(canonicalUpdate(revision, next));
+    }
+    await settle();
+    connection.ack(firstCommit.ack);
+    await settle();
+    const coalesced = messages.findLast(
+      (message) => message.type === "terminal.delivery",
+    ) as TerminalDeliveryEnvelope;
+    expect(coalesced).toMatchObject({ frame: "seed", canonicalRevision: 2 });
+    expect(decodeCompactSemanticTerminalUpdate(assembledBytes(coalesced, messages))).toMatchObject({
+      frame: "seed",
+      revision: 2,
+      snapshot: snapshots[2],
+    });
+    const coalescedCommit = commitMessages(clientState, coalesced, messages);
+    clientState = coalescedCommit.state;
+    connection.ack(coalescedCommit.ack);
+
+    const next = { ...snapshots[2]!, cursor: { ...snapshots[2]!.cursor, x: 3 } };
+    snapshots.push(next);
+    owner.emit(canonicalUpdate(3, next));
+    await settle();
+    const adjacent = messages.findLast(
+      (message) => message.type === "terminal.delivery",
+    ) as TerminalDeliveryEnvelope;
+    expect(adjacent).toMatchObject({ frame: "patch", canonicalRevision: 3 });
+    const adjacentCommit = commitMessages(clientState, adjacent, messages);
+    clientState = adjacentCommit.state;
+    expect(clientState.canonicalSnapshot).toEqual(snapshots[3]);
+    connection.ack(adjacentCommit.ack);
+    expect(hub.metrics()).toMatchObject({ inFlight: 0, queueDepth: 0 });
+    expect(messages.some((message) => message.type === "terminal.delivery.fault")).toBe(false);
+
+    const reconnectMessages: TerminalDeliveryServerMessage[] = [];
+    const reconnect = await hub.open(
+      "compact-reconnect",
+      "pane-a",
+      {
+        protocolVersions: [1],
+        encodings: ["semantic-compact-v1", "semantic-v1"],
+        richPlacements: false,
+      },
+      (message) => reconnectMessages.push(message),
+    );
+    await settle();
+    const reseed = reconnectMessages[0] as TerminalDeliveryEnvelope;
+    expect(reseed).toMatchObject({ frame: "seed", canonicalRevision: 3 });
+    expect(decodeCompactSemanticTerminalUpdate(assembledBytes(reseed, reconnectMessages))).toEqual({
+      frame: "seed",
+      revision: 3,
+      snapshot: snapshots[3],
+    });
+    if (!reconnect.negotiation.accepted) throw new Error("compact reconnect negotiation rejected");
+    const reconnectCommit = commitMessages(
+      createTerminalDeliveryClientState(reconnect.negotiation.negotiated, "workspace", "pane-a"),
+      reseed,
+      reconnectMessages,
+    );
+    expect(reconnectCommit.state.canonicalSnapshot).toEqual(snapshots[3]);
+    reconnect.ack(reconnectCommit.ack);
+    await Promise.all([connection.close(), reconnect.close()]);
+    await hub.close();
+  }, 30_000);
+
+  it("faults only when the compact and legacy exact seeds are both unrepresentable", async () => {
+    const owner = new FakeOwner();
+    const spans: SessionRuntimeStageSpan[] = [];
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner, {
+      observability: createSessionRuntimeObservability({ onSpan: (span) => spans.push(span) }),
+    });
+    const messages: TerminalDeliveryServerMessage[] = [];
+    await hub.open(
+      "compact-impossible",
+      "pane-a",
+      {
+        protocolVersions: [1],
+        encodings: ["semantic-compact-v1", "semantic-v1"],
+        richPlacements: false,
+      },
+      (message) => messages.push(message),
+    );
+    const blank = blankTerminalReplicaSnapshot(132, 40);
+    const longA = "a".repeat(1_500);
+    const longB = "b".repeat(1_500);
+    const row = {
+      wrapped: false,
+      cells: Array.from({ length: 132 }, (_, index) => ({
+        ...blank.grid[0]!.cells[0]!,
+        grapheme: index % 2 === 0 ? longA : longB,
+      })),
+    };
+    const snapshot = {
+      ...blank,
+      grid: Array.from({ length: 40 }, () => row),
+      history: Array.from({ length: 60 }, () => row),
+    };
+    owner.emit({
+      type: "terminal.seed",
+      workspaceName: "workspace",
+      semanticPaneId: "pane-a",
+      generation,
+      incarnation: `${generation}:0`,
+      revision: 0,
+      cols: snapshot.cols,
+      rows: snapshot.rows,
+      stateHash: hashTerminalReplicaSnapshot(snapshot),
+      hashAlgorithm: "fnv1a64-v1",
+      snapshot,
+    });
+    await settle();
+    expect(
+      messages.findLast((message) => message.type === "terminal.delivery.fault"),
+    ).toMatchObject({ reason: "state-too-large" });
+    const failure = spans.findLast((span) => span.operation === "terminal-delivery-fault");
+    expect(failure?.terminalDelivery).toMatchObject({
+      faultReason: "state-too-large",
+      selectedEncoding: "semantic-compact-v1",
+      selectionStatus: "direct-seed",
+      attemptedLegacyPatchBytes: null,
+      attemptedCompactPatchBytes: null,
+    });
+    expect(failure?.terminalDelivery).toMatchObject({
+      attemptedLegacySeedBytes: null,
+      attemptedLegacySeedAtLeastBytes: 16 * 1024 * 1024 + 1,
+      attemptedLegacySeedSizeCapped: true,
+    });
+    expect(failure?.terminalDelivery?.attemptedCompactSeedBytes).toBeGreaterThan(16 * 1024 * 1024);
+    expect(
+      spans.findLast((span) => span.operation === "terminal-delivery-encode-enqueue")
+        ?.terminalDelivery,
+    ).toMatchObject({
+      selectedEncoding: "semantic-compact-v1",
+      selectionStatus: "direct-seed",
+    });
+    await hub.close();
+  }, 30_000);
+
+  it("falls back per envelope when compact structure rejects an exact legacy-representable seed", async () => {
+    const owner = new FakeOwner();
+    const spans: SessionRuntimeStageSpan[] = [];
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner, {
+      observability: createSessionRuntimeObservability({ onSpan: (span) => spans.push(span) }),
+    });
+    const messages: TerminalDeliveryServerMessage[] = [];
+    const connection = await hub.open(
+      "compact-legacy-fallback",
+      "pane-a",
+      {
+        protocolVersions: [1],
+        encodings: ["semantic-compact-v1", "semantic-v1"],
+        richPlacements: false,
+      },
+      (message) => messages.push(message),
+    );
+    if (!connection.negotiation.accepted) throw new Error("fallback negotiation rejected");
+    expect(connection.negotiation.negotiated).toMatchObject({
+      encoding: "semantic-compact-v1",
+      fallbackEncoding: "semantic-v1",
+    });
+    const compactOnlyMessages: TerminalDeliveryServerMessage[] = [];
+    const compactOnly = await hub.open(
+      "compact-only",
+      "pane-a",
+      {
+        protocolVersions: [1],
+        encodings: ["semantic-compact-v1"],
+        richPlacements: false,
+      },
+      (message) => compactOnlyMessages.push(message),
+    );
+    const blank = blankTerminalReplicaSnapshot(1, 1);
+    const placement = {
+      id: "i",
+      kind: "k",
+      row: 0,
+      column: 0,
+      columns: 1,
+      rows: 1,
+      contentDigest: "d",
+    };
+    const snapshot = {
+      ...blank,
+      placements: Array.from({ length: 170_000 }, () => placement),
+    };
+    owner.emit({
+      type: "terminal.seed",
+      workspaceName: "workspace",
+      semanticPaneId: "pane-a",
+      generation,
+      incarnation: `${generation}:0`,
+      revision: 0,
+      cols: 1,
+      rows: 1,
+      stateHash: hashTerminalReplicaSnapshot(snapshot),
+      hashAlgorithm: "fnv1a64-v1",
+      snapshot,
+    });
+    await settle();
+    const envelope = messages[0] as TerminalDeliveryEnvelope;
+    expect(envelope).toMatchObject({ encoding: "semantic-v1", frame: "seed" });
+    const committed = commitMessages(
+      createTerminalDeliveryClientState(connection.negotiation.negotiated, "workspace", "pane-a"),
+      envelope,
+      messages,
+    );
+    expect(committed.state.canonicalSnapshot).toEqual(snapshot);
+    connection.ack(committed.ack);
+    expect(messages.some((message) => message.type === "terminal.delivery.fault")).toBe(false);
+    expect(compactOnlyMessages).toContainEqual(
+      expect.objectContaining({ type: "terminal.delivery.fault", reason: "state-too-large" }),
+    );
+    expect(
+      compactOnlyMessages.some(
+        (message) => message.type === "terminal.delivery" && message.encoding === "semantic-v1",
+      ),
+    ).toBe(false);
+    await compactOnly.close();
+    expect(
+      spans.findLast(
+        (span) =>
+          span.operation === "terminal-delivery-encode-enqueue" &&
+          span.terminalDelivery?.selectedEncoding === "semantic-v1",
+      )?.terminalDelivery,
+    ).toMatchObject({
+      selectedEncoding: "semantic-v1",
+      selectionStatus: "legacy-seed-fallback",
+      attemptedCompactPatchBytes: null,
+      attemptedLegacyPatchBytes: null,
+    });
+    await connection.close();
+    await hub.close();
+  });
+
+  it("does not let a compact-only cache entry suppress a later client's negotiated fallback", async () => {
+    const owner = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    const compactMessages: TerminalDeliveryServerMessage[] = [];
+    const fallbackMessages: TerminalDeliveryServerMessage[] = [];
+    const compact = await hub.open(
+      "compact-first",
+      "pane-a",
+      { protocolVersions: [1], encodings: ["semantic-compact-v1"], richPlacements: false },
+      (message) => compactMessages.push(message),
+    );
+    const fallback = await hub.open(
+      "fallback-second",
+      "pane-a",
+      {
+        protocolVersions: [1],
+        encodings: ["semantic-compact-v1", "semantic-v1"],
+        richPlacements: false,
+      },
+      (message) => fallbackMessages.push(message),
+    );
+    const blank = blankTerminalReplicaSnapshot(2, 1);
+    const snapshot = {
+      ...blank,
+      grid: [
+        {
+          ...blank.grid[0]!,
+          cells: [
+            { ...blank.grid[0]!.cells[0]!, grapheme: "x".repeat(4_097) },
+            blank.grid[0]!.cells[1]!,
+          ],
+        },
+      ],
+    };
+    owner.emit({
+      type: "terminal.seed",
+      workspaceName: "workspace",
+      semanticPaneId: "pane-a",
+      generation,
+      incarnation: `${generation}:0`,
+      revision: 0,
+      cols: 2,
+      rows: 1,
+      stateHash: hashTerminalReplicaSnapshot(snapshot),
+      hashAlgorithm: "fnv1a64-v1",
+      snapshot,
+    });
+    await settle();
+    expect(compactMessages).toContainEqual(
+      expect.objectContaining({ type: "terminal.delivery.fault", reason: "state-too-large" }),
+    );
+    expect(fallbackMessages[0]).toMatchObject({
+      type: "terminal.delivery",
+      encoding: "semantic-v1",
+    });
+    await compact.close();
+    await fallback.close();
     await hub.close();
   });
 });

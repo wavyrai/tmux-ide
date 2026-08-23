@@ -55,6 +55,7 @@ import {
   runFocusOwnerBoot,
   runKeyboardPointerResizeOwnerBoot,
   runSelectionCopyAppMouseOwnerBoot,
+  runAnsiCursorAltScreenOwnerBoot,
   runWindowLifecycleOwnerBoot,
   runProductJourneyPlan,
   settleInternalProductRigCleanup,
@@ -147,21 +148,21 @@ test("golden registry enables only accepted direct journey executors", () => {
     golden.map(({ id }) => id),
     expected,
   );
-  assert.ok(golden.slice(0, 7).every(({ implementation }) => implementation === "implemented"));
-  assert.ok(golden.slice(7).every(({ implementation }) => implementation === "pending"));
+  assert.ok(golden.slice(0, 8).every(({ implementation }) => implementation === "implemented"));
+  assert.ok(golden.slice(8).every(({ implementation }) => implementation === "pending"));
   assert.deepEqual(auditProductJourneyScope(), {
     complete: false,
     declarationComplete: true,
     executableComplete: false,
     missing: [],
-    pendingJourneyIds: expected.slice(7),
+    pendingJourneyIds: expected.slice(8),
   });
   assert.deepEqual(auditProductJourneyScope(golden.slice(1)), {
     complete: false,
     declarationComplete: false,
     executableComplete: false,
     missing: ["configless", "cold-start"],
-    pendingJourneyIds: expected.slice(7),
+    pendingJourneyIds: expected.slice(8),
   });
 });
 
@@ -367,6 +368,50 @@ test("selection owner preserves exact local copy app-mouse local-mode Web orderi
   ]);
 });
 
+test("ANSI owner preserves normal cursor alternate restore workload idle Web ordering", async () => {
+  const calls = [];
+  const operation = (name) => async () => (calls.push(name), Object.freeze({ name }));
+  await runAnsiCursorAltScreenOwnerBoot({
+    onBoundary: (boundary) => calls.push(`boundary:${boundary}`),
+    createNamespace: operation("namespace"),
+    startDaemon: operation("daemon"),
+    openWorkspace: operation("workspace"),
+    build: operation("build"),
+    launch: operation("start"),
+    waitHost: operation("host"),
+    waitCoherent: operation("coherent"),
+    proveNormalBaseline: operation("baseline"),
+    driveRichAnsi: operation("rich"),
+    driveCursorDistribution: operation("cursor"),
+    enterAlternateScreen: operation("alternate"),
+    restoreNormalScreen: operation("restore"),
+    runSustainedWorkload: operation("sustained"),
+    proveIdle: operation("idle"),
+    startWeb: operation("web"),
+  });
+  assert.deepEqual(
+    calls.filter((value) => !value.startsWith("boundary:")),
+    [
+      "namespace",
+      "daemon",
+      "workspace",
+      "build",
+      "start",
+      "host",
+      "coherent",
+      "baseline",
+      "rich",
+      "cursor",
+      "alternate",
+      "restore",
+      "sustained",
+      "idle",
+      "web",
+    ],
+  );
+  assert.equal(calls.at(-2), "boundary:ansi-web-correlation");
+});
+
 test("window lifecycle owner preserves the bounded owned-action predicate at rename boundary", async () => {
   const observation = Object.freeze({
     version: 1,
@@ -511,6 +556,18 @@ test("diagnose options select and repeat the executable journey deterministicall
       parseProductDiagnoseOptions(["--journey", "coherent-first-pane", "--repeat", "1", "--json"]),
     ).map(({ journey, repetition, variant }) => [journey.id, repetition, variant]),
     [["coherent-first-pane", 1, null]],
+  );
+  assert.deepEqual(
+    resolveProductJourneyPlan(
+      parseProductDiagnoseOptions([
+        "--journey",
+        "ansi-cursor-alt-screen",
+        "--repeat",
+        "1",
+        "--json",
+      ]),
+    ).map(({ journey, repetition, variant }) => [journey.id, repetition, variant]),
+    [["ansi-cursor-alt-screen", 1, null]],
   );
   assert.deepEqual(
     resolveProductJourneyPlan(
@@ -1311,14 +1368,12 @@ test("repeat runner drives every planned journey sequentially and stops at the f
 test("pending, all, unknown, and invalid repetition selections fail before orchestration", () => {
   assert.throws(
     () =>
-      resolveProductJourneyPlan(
-        parseProductDiagnoseOptions(["--journey", "ansi-cursor-alt-screen"]),
-      ),
-    /not implemented: ansi-cursor-alt-screen; missing evidence is a failure/u,
+      resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "cross-client-handoff"])),
+    /not implemented: cross-client-handoff; missing evidence is a failure/u,
   );
   assert.throws(
     () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "all"])),
-    /not implemented: ansi-cursor-alt-screen/u,
+    /not implemented: cross-client-handoff/u,
   );
   assert.throws(
     () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "imaginary"])),
@@ -1350,7 +1405,7 @@ test("CLI rejects the next pending journey before creating ProductRig state", ()
     const diagnosticRoot = join(temporary, "diagnostics");
     const result = spawnSync(
       process.execPath,
-      ["scripts/product-test-rig.mjs", "diagnose", "--journey", "ansi-cursor-alt-screen", "--json"],
+      ["scripts/product-test-rig.mjs", "diagnose", "--journey", "cross-client-handoff", "--json"],
       {
         cwd: process.cwd(),
         encoding: "utf8",
@@ -1364,7 +1419,7 @@ test("CLI rejects the next pending journey before creating ProductRig state", ()
     assert.equal(result.status, 1);
     assert.match(
       result.stderr,
-      /not implemented: ansi-cursor-alt-screen; missing evidence is a failure/u,
+      /not implemented: cross-client-handoff; missing evidence is a failure/u,
     );
     assert.equal(existsSync(join(rigRoot, "state.json")), false);
     assert.equal(existsSync(diagnosticRoot), false);
@@ -2007,6 +2062,72 @@ test("cleanup receipt builder rejects live identity or namespace residue", () =>
   }
 });
 
+test("command preflight seals one explicit no-resource receipt without fabricated path absence", () => {
+  const entry = attemptEntry("20260822030000000-ansi-cursor-alt-screen-r1-preflight");
+  const preflight = {
+    operation: "product-rig-namespace-preflight",
+    stage: "ansi-initial-pane-command",
+    outcome: "command-rejected",
+    resourcesCreated: false,
+    pathsClaimed: 0,
+    daemonStarted: false,
+  };
+  const state = {
+    status: "failed",
+    ownerPid: 2_000_000_111,
+    daemonLifecycle: "not-started",
+    firstBrokenBoundary: "ansi-namespace-ready",
+    failureObservation: preflight,
+    diagnosticAttempt: {
+      runId: entry.runId,
+      resourcesCreated: false,
+      sourceProvenance: {
+        commit: "a".repeat(40),
+        tree: "b".repeat(40),
+        manifestDigest: "c".repeat(64),
+      },
+      preflight,
+    },
+    cleanup: {
+      requestId: "ansi-preflight-cleanup",
+      status: "passed",
+      cleanupToken: null,
+      failures: [],
+      completedAt: "2026-08-22T03:00:01.000Z",
+    },
+  };
+  const receipt = createProductRigCleanupReceipt(entry, state, 1);
+  assert.deepEqual(receipt.daemon, { status: "not-started" });
+  assert.equal(receipt.scope, "preflight-no-resources");
+  assert.equal(receipt.resourcesCreated, false);
+  assert.equal(receipt.pathsClaimed, 0);
+  assert.equal(Object.hasOwn(receipt, "pathsAbsent"), false);
+  assert.equal(Object.hasOwn(receipt, "pathAbsence"), false);
+  const prepared = prepareProductDiagnosticBundlePublication({
+    root: "/immutable",
+    runId: entry.runId,
+    report: { version: 1, status: "failed", reportPath: null },
+    evidence: { alignment: {} },
+    cleanupReceipt: receipt,
+  });
+  assert.equal(prepared.report.cleanupReceipt.scope, "preflight-no-resources");
+  for (const mutate of [
+    (value) => (value.diagnosticAttempt.runId = `${entry.runId}-wrong`),
+    (value) => (value.diagnosticAttempt.resourcesCreated = true),
+    (value) => (value.diagnosticAttempt.preflight.pathsClaimed = 1),
+    (value) => (value.diagnosticAttempt.preflight.outcome = "other"),
+    (value) => (value.diagnosticAttempt.preflight.rawPath = "/tmp/forbidden"),
+    (value) => (value.failureObservation.pathsClaimed = 1),
+    (value) => (value.firstBrokenBoundary = "other"),
+    (value) => (value.runtimeNamespace = {}),
+    (value) => (value.cleanup.cleanupToken = "fabricated"),
+  ]) {
+    const invalid = structuredClone(state);
+    mutate(invalid);
+    assert.throws(() => createProductRigCleanupReceipt(entry, invalid, 1), /cleanup receipt/u);
+  }
+});
+
 test("TUI cleanup buffers active evidence and removes every owned runtime path", () => {
   const temporary = mkdtempSync(join(tmpdir(), "product-rig-tui-buffer-"));
   const first = join(temporary, "first");
@@ -2120,6 +2241,85 @@ test("namespace ownership is published before provenance and runtime setup failu
       assert.equal(publications.length, 2);
       assert.equal(publications[1].tui.performanceTraceCommit, "a".repeat(40));
     }
+  }
+});
+
+test("pre-daemon fixture failure retains non-vacuous ownership through cleanup and sealed publication", async () => {
+  const temporary = mkdtempSync(join(tmpdir(), "product-rig-ansi-early-failure-"));
+  const runtimeNamespace = {
+    root: temporary,
+    tmuxSocketPath: join(temporary, "tmux.sock"),
+    hostTmuxSocketPath: join(temporary, "host.sock"),
+    daemonInfoDir: join(temporary, "daemon"),
+    cleanupToken: "product-test-rig:ansi-early-failure",
+  };
+  const state = { ownerPid: 2_000_000_101, daemonLifecycle: "not-started" };
+  const publish = (value) => Object.assign(state, value);
+  const entry = attemptEntry("20260822013000000-ansi-cursor-alt-screen-r1-early");
+  let sealedReceipt = null;
+  try {
+    await assert.rejects(
+      runIsolatedProductJourneyAttempt(entry, {
+        preCleanup: async () => undefined,
+        drive: async () => {
+          prepareOwnedTuiRuntime({
+            ownership: { session: "ansi-session", runtimeNamespace },
+            intendedTui: {
+              runtimeDir: join(temporary, "tui-ansi"),
+              performanceTracePath: join(temporary, "tui-ansi", "performance.jsonl"),
+            },
+            publish,
+            resolveProvenance: () => ({
+              commit: "a".repeat(40),
+              tree: "b".repeat(40),
+              manifestDigest: "c".repeat(64),
+            }),
+            createRuntimeDir: (path) => mkdirSync(path, { recursive: true }),
+          });
+          const error = new Error("ANSI tmux fixture did not reach exact stable geometry");
+          error.boundary = "ansi-namespace-ready";
+          error.observation = { stage: "ansi-tmux-precondition", outcome: "list-timeout" };
+          throw error;
+        },
+        currentBoundary: () => "ansi-namespace-ready",
+        postCleanup: async () => {
+          removeTestTree(temporary);
+          Object.assign(state, {
+            status: "failed",
+            cleanup: {
+              requestId: "ansi-cleanup-1",
+              status: "passed",
+              cleanupToken: runtimeNamespace.cleanupToken,
+              failures: [],
+              completedAt: "2026-08-22T01:30:01.000Z",
+            },
+          });
+          return createProductRigCleanupReceipt(entry, state, 1);
+        },
+        retryCleanup: () => assert.fail("exact early cleanup must not retry"),
+        prepareFailure: async (error, boundary, receipt) => ({ error, boundary, receipt }),
+        appendCleanupFailure: () => assert.fail("cleanup passed"),
+        publishFailure: async (prepared, receipt) => {
+          assert.equal(prepared.boundary, "ansi-namespace-ready");
+          assert.equal(prepared.error.observation.stage, "ansi-tmux-precondition");
+          assert.equal(receipt, prepared.receipt);
+          assert.equal(receipt.daemon.status, "not-started");
+          assert.equal(receipt.pathsAbsent, true);
+          assert.match(receipt.namespaceDigest, /^[0-9a-f]{64}$/u);
+          sealedReceipt = receipt;
+          return { runDir: "/immutable/ansi-early-failure" };
+        },
+        publishSuccess: () => assert.fail("fixture failure cannot publish success"),
+      }),
+      (error) =>
+        error instanceof ProductJourneyAttemptError &&
+        error.boundary === "ansi-namespace-ready" &&
+        error.bundle.runDir === "/immutable/ansi-early-failure",
+    );
+    assert.equal(sealedReceipt?.passed, true);
+    assert.doesNotMatch(JSON.stringify(sealedReceipt), /cleanupToken|ansi-session|tmux\.sock/u);
+  } finally {
+    removeTestTree(temporary);
   }
 });
 

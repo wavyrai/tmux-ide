@@ -84,7 +84,7 @@ function paintViewport(
   height: number,
 ) {
   const cells = width * height;
-  return adapter.renderSource.blitPane(
+  const trace = adapter.renderSource.blitPane(
     paneId,
     {
       char: new Uint32Array(cells),
@@ -99,6 +99,8 @@ function paintViewport(
     0,
     { full: true, dirtyRows: [] },
   );
+  adapter.renderSource.acknowledgePresentation?.(paneId, width, height);
+  return trace;
 }
 
 describe("TerminalFastLaneRendererAdapter", () => {
@@ -218,7 +220,7 @@ describe("TerminalFastLaneRendererAdapter", () => {
     }
   });
 
-  it("publishes only final same-frame identity and dedupes across-frame A-B-A", () => {
+  it("publishes only pending canonical presentations and ignores local repaint acknowledgements", () => {
     const source = new Source();
     const lane = createTerminalFastLane({
       address: { workspaceName, generation },
@@ -252,9 +254,7 @@ describe("TerminalFastLaneRendererAdapter", () => {
       unsubscribe();
       unsubscribe = adapter.subscribePaneVersion("pane.editor", () => undefined);
       paintViewport(adapter, "pane.editor", 3, 2);
-      expect(adapter.drainCanonicalHostFrameIdentities().identities).toMatchObject([
-        { viewportCols: 3, viewportRows: 2 },
-      ]);
+      expect(adapter.drainCanonicalHostFrameIdentities()).toEqual({ identities: [], dropped: 0 });
       unsubscribe();
       unsubscribe = adapter.subscribePaneVersion("pane.editor", () => undefined);
       paint(adapter, "pane.editor");
@@ -263,12 +263,11 @@ describe("TerminalFastLaneRendererAdapter", () => {
       const second = seed("pane.second", "T");
       source.emit("pane.second", second);
       paint(adapter, "pane.second");
+      expect(adapter.drainCanonicalHostFrameIdentities().identities).toHaveLength(1);
       unsubscribeSecond();
       unsubscribeSecond = adapter.subscribePaneVersion("pane.second", () => undefined);
       paintViewport(adapter, "pane.second", 3, 2);
-      expect(adapter.drainCanonicalHostFrameIdentities().identities).toMatchObject([
-        { semanticPaneId: "pane.second", viewportCols: 3, viewportRows: 2 },
-      ]);
+      expect(adapter.drainCanonicalHostFrameIdentities()).toEqual({ identities: [], dropped: 0 });
       unsubscribeSecond();
       uninstall();
       source.emit("pane.editor", {
@@ -312,10 +311,22 @@ describe("TerminalFastLaneRendererAdapter", () => {
     let unsubscribe = adapter.subscribePaneVersion("pane.editor", () => undefined);
     try {
       source.emit("pane.editor", first);
+      let snapshot = first.snapshot;
       for (let ordinal = 0; ordinal < 257; ordinal += 1) {
         if (ordinal > 0) {
-          unsubscribe();
-          unsubscribe = adapter.subscribePaneVersion("pane.editor", () => undefined);
+          const next = {
+            ...snapshot,
+            cursor: { ...snapshot.cursor, hidden: !snapshot.cursor.hidden },
+          };
+          source.emit("pane.editor", {
+            ...first,
+            type: "terminal.patch",
+            baseRevision: ordinal - 1,
+            revision: ordinal,
+            stateHash: hashTerminalReplicaSnapshot(next),
+            patch: { rows: [], cursor: next.cursor },
+          });
+          snapshot = next;
         }
         paintViewport(adapter, "pane.editor", ordinal + 1, 2);
         const drained = adapter.drainCanonicalHostFrameIdentities();
@@ -689,6 +700,254 @@ describe("TerminalFastLaneRendererAdapter", () => {
           stateHash: hashTerminalReplicaSnapshot(snapshot),
         },
       ]);
+    } finally {
+      adapter.dispose();
+      lane.dispose();
+      uninstall();
+    }
+  });
+
+  it("reports every full reseed mode once while unchanged patches stay silent", () => {
+    const modes: Array<{ revision: number; stateHash: string }> = [];
+    const uninstall = installTuiPerformanceEventSink({
+      frame: () => undefined,
+      terminalPaint: () => undefined,
+      terminalDelivery: () => undefined,
+      terminalCanonicalMode: ({ revision, stateHash }) => modes.push({ revision, stateHash }),
+    });
+    const source = new Source();
+    const lane = createTerminalFastLane({
+      address: { workspaceName, generation },
+      source,
+      repair: { request: () => undefined },
+      control: {
+        owns: () => true,
+        request: async () => true,
+        write: async () => "ok",
+        resize: async () => "ok",
+      },
+    });
+    const adapter = new TerminalFastLaneRendererAdapter(lane);
+    adapter.subscribePaneVersion("pane.editor", () => undefined);
+    try {
+      const firstBlank = blankTerminalReplicaSnapshot(160, 42);
+      const first = {
+        ...seed("pane.editor", "E"),
+        cols: firstBlank.cols,
+        rows: firstBlank.rows,
+        stateHash: hashTerminalReplicaSnapshot(firstBlank),
+        snapshot: firstBlank,
+      };
+      source.emit("pane.editor", first);
+      const resizedBlank = blankTerminalReplicaSnapshot(132, 41);
+      const snapshot = {
+        ...resizedBlank,
+        cursor: first.snapshot.cursor,
+        modes: first.snapshot.modes,
+      };
+      const second = {
+        ...first,
+        revision: 1,
+        cols: snapshot.cols,
+        rows: snapshot.rows,
+        stateHash: hashTerminalReplicaSnapshot(snapshot),
+        snapshot,
+      };
+      source.emit("pane.editor", second);
+      source.emit("pane.editor", second);
+      source.emit("pane.editor", {
+        ...second,
+        type: "terminal.patch",
+        baseRevision: 1,
+        revision: 2,
+        patch: { rows: [] },
+      });
+      expect(modes).toEqual([
+        { revision: first.revision, stateHash: first.stateHash },
+        { revision: second.revision, stateHash: second.stateHash },
+      ]);
+    } finally {
+      adapter.dispose();
+      lane.dispose();
+      uninstall();
+    }
+  });
+
+  it("keeps accepted reseeds live when mode diagnostics are absent or throw", () => {
+    const source = new Source();
+    const lane = createTerminalFastLane({
+      address: { workspaceName, generation },
+      source,
+      repair: { request: () => undefined },
+      control: {
+        owns: () => true,
+        request: async () => true,
+        write: async () => "ok",
+        resize: async () => "ok",
+      },
+    });
+    const adapter = new TerminalFastLaneRendererAdapter(lane);
+    adapter.subscribePaneVersion("pane.editor", () => undefined);
+    const first = seed("pane.editor", "E");
+    try {
+      source.emit("pane.editor", first);
+      const secondSnapshot = blankTerminalReplicaSnapshot(5, 3);
+      const second = {
+        ...first,
+        revision: 1,
+        cols: secondSnapshot.cols,
+        rows: secondSnapshot.rows,
+        stateHash: hashTerminalReplicaSnapshot(secondSnapshot),
+        snapshot: secondSnapshot,
+      };
+      const now = spyOn(performance, "now");
+      source.emit("pane.editor", second);
+      expect(now).not.toHaveBeenCalled();
+      now.mockRestore();
+      expect(adapter.paneCanonicalIdentity("pane.editor")?.revision).toBe(1);
+
+      const uninstall = installTuiPerformanceEventSink({
+        frame: () => undefined,
+        terminalPaint: () => undefined,
+        terminalDelivery: () => undefined,
+        terminalCanonicalMode: () => {
+          throw new Error("diagnostic failed");
+        },
+      });
+      try {
+        const thirdSnapshot = blankTerminalReplicaSnapshot(6, 4);
+        expect(() =>
+          source.emit("pane.editor", {
+            ...second,
+            revision: 2,
+            cols: thirdSnapshot.cols,
+            rows: thirdSnapshot.rows,
+            stateHash: hashTerminalReplicaSnapshot(thirdSnapshot),
+            snapshot: thirdSnapshot,
+          }),
+        ).not.toThrow();
+        expect(adapter.paneCanonicalIdentity("pane.editor")?.revision).toBe(2);
+      } finally {
+        uninstall();
+      }
+    } finally {
+      adapter.dispose();
+      lane.dispose();
+    }
+  });
+
+  it("publishes cursor-only canonical changes through the presentation lane without dirty rows", () => {
+    const source = new Source();
+    const lane = createTerminalFastLane({
+      address: { workspaceName, generation },
+      source,
+      repair: { request: () => undefined },
+      control: {
+        owns: () => true,
+        request: async () => true,
+        write: async () => "ok",
+        resize: async () => "ok",
+      },
+    });
+    const adapter = new TerminalFastLaneRendererAdapter(lane);
+    const notifications: Array<readonly [number, number, string]> = [];
+    adapter.subscribePaneVersion(
+      "pane.editor",
+      (version, _sourceEpoch, presentationVersion, kind) =>
+        notifications.push([version, presentationVersion, kind]),
+    );
+    try {
+      const initial = seed("pane.editor", "E");
+      source.emit("pane.editor", initial);
+      paint(adapter, "pane.editor");
+      notifications.length = 0;
+      const snapshot = {
+        ...initial.snapshot,
+        cursor: { ...initial.snapshot.cursor, x: 2, style: "bar" as const, blink: true },
+      };
+      source.emit(
+        "pane.editor",
+        {
+          ...initial,
+          type: "terminal.patch",
+          baseRevision: 0,
+          revision: 1,
+          stateHash: hashTerminalReplicaSnapshot(snapshot),
+          patch: { rows: [], cursor: snapshot.cursor },
+        },
+        { performanceTraceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" },
+      );
+      expect(notifications).toEqual([[1, 1, "presentation"]]);
+      expect(adapter.paneVersion("pane.editor")).toBe(1);
+      expect(adapter.panePresentationVersion("pane.editor")).toBe(1);
+      expect(adapter.renderSource.cursorState("pane.editor")).toEqual(snapshot.cursor);
+      expect(adapter.renderSource.cursorPresentationTrace?.("pane.editor")).toMatchObject({
+        traceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        revision: 1,
+      });
+    } finally {
+      adapter.dispose();
+      lane.dispose();
+    }
+  });
+
+  it("fences a coalesced cursor acknowledgment to the latest exact canonical revision", () => {
+    const uninstall = installTuiPerformanceEventSink({
+      frame: () => undefined,
+      terminalPaint: () => undefined,
+      terminalDelivery: () => undefined,
+      terminalCanonicalHostFrame: () => undefined,
+      terminalFrameFence: () => undefined,
+    });
+    const source = new Source();
+    const lane = createTerminalFastLane({
+      address: { workspaceName, generation },
+      source,
+      repair: { request: () => undefined },
+      control: {
+        owns: () => true,
+        request: async () => true,
+        write: async () => "ok",
+        resize: async () => "ok",
+      },
+    });
+    const adapter = new TerminalFastLaneRendererAdapter(lane);
+    adapter.subscribePaneVersion("pane.editor", () => undefined);
+    try {
+      const initial = seed("pane.editor", "E");
+      source.emit("pane.editor", initial);
+      paint(adapter, "pane.editor");
+      adapter.drainCanonicalHostFrameIdentities();
+      const firstSnapshot = {
+        ...initial.snapshot,
+        cursor: { ...initial.snapshot.cursor, x: 1 },
+      };
+      source.emit("pane.editor", {
+        ...initial,
+        type: "terminal.patch",
+        baseRevision: 0,
+        revision: 1,
+        stateHash: hashTerminalReplicaSnapshot(firstSnapshot),
+        patch: { rows: [], cursor: firstSnapshot.cursor },
+      });
+      const secondSnapshot = {
+        ...firstSnapshot,
+        cursor: { ...firstSnapshot.cursor, x: 2 },
+      };
+      source.emit("pane.editor", {
+        ...initial,
+        type: "terminal.patch",
+        baseRevision: 1,
+        revision: 2,
+        stateHash: hashTerminalReplicaSnapshot(secondSnapshot),
+        patch: { rows: [], cursor: secondSnapshot.cursor },
+      });
+      adapter.renderSource.acknowledgePresentation?.("pane.editor", 4, 2);
+      expect(adapter.drainCanonicalHostFrameIdentities().identities).toMatchObject([
+        { revision: 2, stateHash: hashTerminalReplicaSnapshot(secondSnapshot) },
+      ]);
+      adapter.renderSource.acknowledgePresentation?.("pane.editor", 4, 2);
+      expect(adapter.drainCanonicalHostFrameIdentities()).toEqual({ identities: [], dropped: 0 });
     } finally {
       adapter.dispose();
       lane.dispose();

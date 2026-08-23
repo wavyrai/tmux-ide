@@ -50,6 +50,7 @@ export class PaneStreamRuntime {
         return transportBinder.bind({
           transport: "pane-stream",
           transportLeaseId: descriptor.leaseId,
+          diagnosticRequestId: descriptor.requestId,
           session: descriptor.sessionName,
           hostClientId: descriptor.hostClientId,
           allowedSourcePaneIds: descriptor.panes,

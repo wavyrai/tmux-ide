@@ -30,6 +30,7 @@ export function publishCanonicalHostFrameDiagnostics(
         rendererEpoch,
         identityDrops: dropped,
       });
+      adapter.sampleResourceAfterFence({ ...identity, rendererEpoch });
     }
     if (identities.length === 0 && dropped > 0) {
       emitTuiTerminalFrameFenceFailOpen(fence, {
