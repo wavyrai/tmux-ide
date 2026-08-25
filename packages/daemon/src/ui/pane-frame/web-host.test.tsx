@@ -11,15 +11,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   paneFrameModelFromCohesionPane,
   paneFrameModelsFromApplicationShellAgents,
-} from "./model.js";
+} from "@tmux-ide/presentation/pane-frame";
 import type {
   PaneFrameActionIntent,
   PaneFrameActivationSource,
   PaneFrameGripIntent,
   PaneFrameModel,
-} from "./presenter.js";
-import { WebPaneFrame } from "./web-host.js";
-import styles from "./web-host.css?raw";
+} from "@tmux-ide/presentation/pane-frame";
+import { WebPaneFrame } from "@tmux-ide/presentation/pane-frame/web";
+import styles from "@tmux-ide/presentation/pane-frame/web.css?raw";
 
 const disposers: Array<() => void> = [];
 const fixturePane = COHESION_FIXTURE_V1.panes.find((pane) => pane.id === "pane.implementer")!;

@@ -43,12 +43,12 @@ import * as fleetGraphMergeModule from "./fleet-graph-merge.ts";
 import { FLEET_FIXTURE_DAEMON, mixedFleetCatalog } from "../runtime/fleet-catalog-fixture.ts";
 import type { DesktopFleetCatalogState } from "../runtime/fleet-catalog-store.ts";
 import styles from "../styles.css?raw";
-import paneFrameStyles from "../../../../packages/daemon/src/ui/pane-frame/web-host.css?raw";
+import paneFrameStyles from "@tmux-ide/presentation/pane-frame/web.css?raw";
 import {
   APPLICATION_SHELL_AGENT_TERMINAL_ACTION_IDS,
   applicationShellAgentTerminalActions,
   paneFrameTerminalsFromApplicationShellInventory,
-} from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
+} from "@tmux-ide/presentation/pane-frame";
 
 const disposers: Array<() => void> = [];
 
@@ -596,10 +596,8 @@ describe("visible DOM application shell", () => {
     expect(styles).toContain("opacity 100ms cubic-bezier(0.5, 0, 1, 1)");
     expect(styles).not.toContain("transition: all");
     expect(styles).toContain('.status-strip__connection[data-state="recovering"] > i');
-    expect(styles).toContain('@import "../../../packages/daemon/src/ui/pane-frame/web-host.css"');
-    expect(styles).toContain(
-      '@import "../../../packages/daemon/src/ui/workbench-dock/web-host.css"',
-    );
+    expect(styles).toContain('@import "@tmux-ide/presentation/pane-frame/web.css"');
+    expect(styles).toContain('@import "@tmux-ide/presentation/workbench-dock/web.css"');
     expect(paneFrameStyles).toContain('.web-pane-frame[data-border-role="focused"]');
     expect(styles).not.toMatch(/^\[data-state=/mu);
   });

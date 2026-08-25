@@ -67,6 +67,7 @@ import type {
 } from "./control-channel.ts";
 import type {
   MirrorDiagnostic,
+  MirrorLayoutAuthoritySnapshot,
   MirrorLayoutEvent,
   MirrorPaneEvent,
   MirrorSessionDescription,
@@ -336,6 +337,13 @@ interface WindowRecord {
   paneBorderStatus: "top" | "bottom" | "off";
 }
 
+interface WindowSyncStage {
+  readonly windows: Map<string, WindowRecord>;
+  readonly layouts: Map<string, ParsedLayout & { zoomed: boolean }>;
+  readonly currentWindow: string;
+  readonly repairedIdentity: boolean;
+}
+
 export function defaultMirrorPaneId(): string {
   return `pane.mirror.${randomBytes(8).toString("hex")}`;
 }
@@ -355,6 +363,10 @@ export class SessionChannel {
   private readonly layoutByWindow = new Map<string, ParsedLayout & { zoomed: boolean }>();
   private readonly activePaneByWindow = new Map<string, string>();
   private readonly layoutSubscribers = new Set<(event: MirrorLayoutEvent) => void>();
+  private readonly layoutAuthoritySubscribers = new Set<
+    (snapshot: MirrorLayoutAuthoritySnapshot) => void
+  >();
+  private layoutTopologyEpoch = 0;
   private readonly truthActive = new Map<string, boolean>();
   private readonly truthWindow = new Map<string, string>();
   private currentWindow = "";
@@ -366,6 +378,7 @@ export class SessionChannel {
   private cancelSync: (() => void) | null = null;
   private disposed = false;
   private nativeClientProbePending = false;
+  private windowAuthorityOrdinal = 0;
   private paneIncarnation = 0;
   private recoveryOrdinal = 0;
   private readonly outputOrdinals = new Map<string, number>();
@@ -592,6 +605,77 @@ export class SessionChannel {
     };
   }
 
+  /**
+   * Refresh all session/window authority before exposing a global layout
+   * subscription. A cached control-mode channel may have been retained while
+   * only the current window had emitted geometry; replaying that cache would
+   * strand a multi-window renderer behind its exact inventory-coverage gate.
+   */
+  async subscribeAuthoritativeLayout(
+    onLayout: (event: MirrorLayoutEvent) => void,
+    expectedSemanticPaneIds?: readonly string[],
+    onAuthority?: (snapshot: MirrorLayoutAuthoritySnapshot) => void,
+  ): Promise<LayoutSubscriptionHandle> {
+    if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
+    const identity = await this.attachedSessionIdentity();
+    const inventory = await this.describeTrustedInventory(identity.runtimeSessionId);
+    if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
+
+    const expectedByWindow = new Map<string, Set<string>>();
+    for (const pane of inventory.panes) {
+      const expected = expectedByWindow.get(pane.runtimeWindowId) ?? new Set<string>();
+      expected.add(pane.semanticPaneId);
+      expectedByWindow.set(pane.runtimeWindowId, expected);
+    }
+    if (expectedSemanticPaneIds) {
+      const requested = [...expectedSemanticPaneIds].sort();
+      const authoritative = inventory.panes.map(({ semanticPaneId }) => semanticPaneId).sort();
+      if (
+        requested.length === 0 ||
+        new Set(requested).size !== requested.length ||
+        requested.length !== authoritative.length ||
+        requested.some((pane, index) => pane !== authoritative[index])
+      ) {
+        const error = new Error(`authoritative layout for ${this.opts.session} changed topology`);
+        error.name = "MirrorTopologyChangedError";
+        throw error;
+      }
+    }
+    if (
+      expectedByWindow.size !== inventory.panes[0]!.sessionWindowCount ||
+      expectedByWindow.size !== this.windowsByRuntime.size
+    ) {
+      throw new Error(`authoritative layout for ${this.opts.session} has incomplete windows`);
+    }
+    for (const [runtimeWindowId, expectedPanes] of expectedByWindow) {
+      const event = this.layoutEventFor(runtimeWindowId);
+      if (!event)
+        throw new Error(`authoritative layout for ${this.opts.session} has incomplete panes`);
+      const observed = event.panes.flatMap(({ semanticPaneId }) =>
+        typeof semanticPaneId === "string" ? [semanticPaneId] : [],
+      );
+      if (
+        observed.length !== event.panes.length ||
+        observed.length !== expectedPanes.size ||
+        new Set(observed).size !== observed.length ||
+        observed.some((pane) => !expectedPanes.has(pane))
+      ) {
+        throw new Error(`authoritative layout for ${this.opts.session} has incomplete panes`);
+      }
+    }
+    const handle = this.subscribeLayout(onLayout);
+    if (onAuthority) {
+      this.layoutAuthoritySubscribers.add(onAuthority);
+      this.emitLayoutAuthorityTo(onAuthority, identity.runtimeSessionId);
+    }
+    return {
+      close: () => {
+        handle.close();
+        if (onAuthority) this.layoutAuthoritySubscribers.delete(onAuthority);
+      },
+    };
+  }
+
   /** Controller-authorized input fast path. It deliberately reuses the one
    * session InputCoalescer, so literal/key ordering and tmux application-mode
    * named-key semantics are identical for GUI, TUI and direct subscribers. */
@@ -678,6 +762,7 @@ export class SessionChannel {
       pane.subs.clear();
     }
     this.layoutSubscribers.clear();
+    this.layoutAuthoritySubscribers.clear();
     await this.io.dispose();
   }
 
@@ -1733,6 +1818,14 @@ export class SessionChannel {
   // ── Notifications (channel order is the invariant) ──────────────────────
 
   private onNotify(name: string, rest: string): void {
+    if (
+      name === "layout-change" ||
+      name === "window-pane-changed" ||
+      name === "session-window-changed" ||
+      STRUCTURAL_NOTIFICATIONS.has(name)
+    ) {
+      this.windowAuthorityOrdinal += 1;
+    }
     // Layout changes remain a second honest wake-up: a native resize can arrive
     // before the once-per-second subscription notification. The inventory
     // (not either notification) remains the proof.
@@ -1804,6 +1897,7 @@ export class SessionChannel {
         this.scheduleSync();
       }
       this.emitLayout(change.windowId);
+      this.emitLayoutAuthority();
       return;
     }
     if (name === "window-pane-changed") {
@@ -1815,6 +1909,7 @@ export class SessionChannel {
           pane.active = pane.runtimeId === change.paneId;
       }
       this.emitLayout(change.windowId);
+      this.emitLayoutAuthority();
       return;
     }
     if (name === "session-window-changed") {
@@ -1834,6 +1929,7 @@ export class SessionChannel {
        */
       if (previous) this.emitLayout(previous);
       this.emitLayout(change.windowId);
+      this.emitLayoutAuthority();
       return;
     }
     if (STRUCTURAL_NOTIFICATIONS.has(name)) this.scheduleSync();
@@ -1870,6 +1966,29 @@ export class SessionChannel {
         if (!sub.closed && sub.onLayout) sub.onLayout(event);
       }
     }
+  }
+
+  private emitLayoutAuthority(): void {
+    const runtimeSessionId = this.attachedIdentity?.runtimeSessionId;
+    if (!runtimeSessionId || this.layoutAuthoritySubscribers.size === 0) return;
+    this.layoutTopologyEpoch += 1;
+    for (const subscriber of this.layoutAuthoritySubscribers)
+      this.emitLayoutAuthorityTo(subscriber, runtimeSessionId);
+  }
+
+  private emitLayoutAuthorityTo(
+    subscriber: (snapshot: MirrorLayoutAuthoritySnapshot) => void,
+    runtimeSessionId: string,
+  ): void {
+    const layouts = [...this.layoutByWindow.keys()]
+      .map((runtimeId) => this.layoutEventFor(runtimeId))
+      .filter((event): event is MirrorLayoutEvent => event !== null);
+    subscriber({
+      session: this.opts.session,
+      runtimeSessionId,
+      topologyEpoch: this.layoutTopologyEpoch,
+      layouts,
+    });
   }
 
   /**
@@ -2010,6 +2129,7 @@ export class SessionChannel {
     expectedRuntimeSessionId: string,
     attempt = 0,
   ): Promise<TrustedMirrorSessionInventory> {
+    const authorityOrdinal = this.windowAuthorityOrdinal;
     const beforeLines = await this.io.request(
       `list-panes -s -t "${expectedRuntimeSessionId}" -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`,
     );
@@ -2057,7 +2177,76 @@ export class SessionChannel {
     ) {
       throw new Error(`trusted inventory for ${this.opts.session} has incomplete counts`);
     }
-    const { listed, movedWindowRuntimeIds } = this.applyPaneTruth(
+    const windowStage = await this.stageWindows(expectedRuntimeSessionId);
+    const repairedPanes = await this.repairTrustedPaneIdentity(descriptors, windowStage.layouts);
+    const afterLines = await this.io.request(
+      `list-panes -s -t "${expectedRuntimeSessionId}" -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`,
+    );
+    const confirmedWindowStage = await this.stageWindows(expectedRuntimeSessionId);
+    const coherent =
+      beforeLines.length === afterLines.length &&
+      beforeLines.every((line, index) => line === afterLines[index]);
+    if (
+      windowStage.repairedIdentity ||
+      confirmedWindowStage.repairedIdentity ||
+      repairedPanes ||
+      !coherent ||
+      !this.windowStagesEqual(windowStage, confirmedWindowStage) ||
+      authorityOrdinal !== this.windowAuthorityOrdinal
+    ) {
+      if (attempt >= 1)
+        throw new Error(`trusted inventory for ${this.opts.session} did not settle`);
+      return await this.refreshTrustedInventory(expectedRuntimeSessionId, attempt + 1);
+    }
+    if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
+    const activeWindowId = activeWindowIds.values().next().value;
+    const descriptorWindowByPane = new Map(
+      descriptors.map((descriptor) => [descriptor.runtimePaneId, descriptor.windowId!]),
+    );
+    const stagedPaneIds = new Set<string>();
+    let stagedPaneCount = 0;
+    let stagedPaneMembershipExact = true;
+    for (const [runtimeWindowId, layout] of confirmedWindowStage.layouts) {
+      if (layout.leaves.length !== computedWindowCounts.get(runtimeWindowId)) {
+        stagedPaneMembershipExact = false;
+        break;
+      }
+      for (const leaf of layout.leaves) {
+        stagedPaneCount += 1;
+        if (stagedPaneIds.has(leaf.id) || descriptorWindowByPane.get(leaf.id) !== runtimeWindowId) {
+          stagedPaneMembershipExact = false;
+          break;
+        }
+        stagedPaneIds.add(leaf.id);
+      }
+      if (!stagedPaneMembershipExact) break;
+    }
+    if (
+      confirmedWindowStage.currentWindow !== activeWindowId ||
+      confirmedWindowStage.windows.size !== computedWindowCounts.size ||
+      !stagedPaneMembershipExact ||
+      stagedPaneCount !== descriptors.length ||
+      stagedPaneIds.size !== descriptors.length ||
+      [...computedWindowCounts.keys()].some(
+        (runtimeWindowId) => !confirmedWindowStage.windows.has(runtimeWindowId),
+      ) ||
+      descriptors.some((descriptor) => {
+        const pane = this.panesByRuntime.get(descriptor.runtimePaneId);
+        const window = confirmedWindowStage.windows.get(descriptor.windowId!);
+        return (
+          !pane ||
+          !window?.semanticId ||
+          descriptor.semanticPaneId !== pane.semanticId ||
+          descriptor.semanticWindowId !== window.semanticId ||
+          !WorkspaceIdSchemaZ.safeParse(pane.semanticId).success ||
+          !WorkspaceIdSchemaZ.safeParse(window.semanticId).success
+        );
+      })
+    ) {
+      throw new Error(`trusted inventory for ${this.opts.session} lacks verified identity`);
+    }
+    const previousCurrentWindow = this.currentWindow;
+    const { movedWindowRuntimeIds } = this.applyPaneTruth(
       descriptors.map((pane) => ({
         runtimePaneId: pane.runtimePaneId,
         active: pane.paneActive,
@@ -2065,20 +2254,12 @@ export class SessionChannel {
         windowActive: pane.windowActive,
       })),
     );
-    const repairedWindows = await this.syncWindows(expectedRuntimeSessionId, movedWindowRuntimeIds);
-    const repairedPanes = await this.reconcileIdentity(descriptors, listed);
-    const afterLines = await this.io.request(
-      `list-panes -s -t "${expectedRuntimeSessionId}" -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`,
-    );
-    const coherent =
-      beforeLines.length === afterLines.length &&
-      beforeLines.every((line, index) => line === afterLines[index]);
-    if (repairedWindows || repairedPanes || !coherent) {
-      if (attempt >= 1)
-        throw new Error(`trusted inventory for ${this.opts.session} did not settle`);
-      return await this.refreshTrustedInventory(expectedRuntimeSessionId, attempt + 1);
+    for (const descriptor of descriptors) {
+      const pane = this.panesByRuntime.get(descriptor.runtimePaneId)!;
+      pane.descriptor = descriptor;
+      pane.active = descriptor.paneActive;
     }
-    if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
+    this.commitWindowStage(confirmedWindowStage, movedWindowRuntimeIds, previousCurrentWindow);
     if (
       this.degraded ||
       this.panesByRuntime.size !== descriptors.length ||
@@ -2136,6 +2317,109 @@ export class SessionChannel {
     target = this.opts.session,
     requiredLayoutEmits: ReadonlySet<string> = new Set(),
   ): Promise<boolean> {
+    const stage = await this.stageWindows(target);
+    this.commitWindowStage(stage, requiredLayoutEmits);
+    return stage.repairedIdentity;
+  }
+
+  private commitWindowStage(
+    stage: WindowSyncStage,
+    requiredLayoutEmits: ReadonlySet<string> = new Set(),
+    previousCurrentWindow = this.currentWindow,
+  ): void {
+    const changedWindows = new Set<string>();
+    for (const [runtimeId, record] of stage.windows) {
+      const previous = this.windowsByRuntime.get(runtimeId);
+      const previousLayout = this.layoutByWindow.get(runtimeId);
+      const nextLayout = stage.layouts.get(runtimeId)!;
+      if (
+        !previous ||
+        previous.name !== record.name ||
+        previous.semanticId !== record.semanticId ||
+        previous.paneBorderStatus !== record.paneBorderStatus ||
+        !previousLayout ||
+        previousLayout.zoomed !== nextLayout.zoomed ||
+        previousLayout.width !== nextLayout.width ||
+        previousLayout.height !== nextLayout.height ||
+        previousLayout.leaves.length !== nextLayout.leaves.length ||
+        previousLayout.leaves.some((leaf, index) => {
+          const candidate = nextLayout.leaves[index];
+          return (
+            !candidate ||
+            leaf.id !== candidate.id ||
+            leaf.left !== candidate.left ||
+            leaf.top !== candidate.top ||
+            leaf.width !== candidate.width ||
+            leaf.height !== candidate.height
+          );
+        })
+      ) {
+        changedWindows.add(runtimeId);
+      }
+    }
+    const windowSetChanged = stage.windows.size !== this.windowsByRuntime.size;
+    if (previousCurrentWindow !== stage.currentWindow) {
+      if (stage.windows.has(previousCurrentWindow)) changedWindows.add(previousCurrentWindow);
+      if (stage.windows.has(stage.currentWindow)) changedWindows.add(stage.currentWindow);
+    }
+    this.currentWindow = stage.currentWindow;
+    this.windowsByRuntime.clear();
+    for (const [key, value] of stage.windows) this.windowsByRuntime.set(key, value);
+    this.layoutByWindow.clear();
+    for (const [key, value] of stage.layouts) this.layoutByWindow.set(key, value);
+    const layoutEmits = windowSetChanged
+      ? new Set(stage.windows.keys())
+      : new Set(
+          [...changedWindows, ...requiredLayoutEmits].filter((runtimeId) =>
+            stage.windows.has(runtimeId),
+          ),
+        );
+    for (const runtimeId of layoutEmits) this.emitLayout(runtimeId);
+    this.emitLayoutAuthority();
+  }
+
+  private windowStagesEqual(left: WindowSyncStage, right: WindowSyncStage): boolean {
+    if (
+      left.currentWindow !== right.currentWindow ||
+      left.windows.size !== right.windows.size ||
+      left.layouts.size !== right.layouts.size
+    ) {
+      return false;
+    }
+    for (const [runtimeId, leftWindow] of left.windows) {
+      const rightWindow = right.windows.get(runtimeId);
+      const leftLayout = left.layouts.get(runtimeId);
+      const rightLayout = right.layouts.get(runtimeId);
+      if (
+        !rightWindow ||
+        !leftLayout ||
+        !rightLayout ||
+        leftWindow.semanticId !== rightWindow.semanticId ||
+        leftWindow.name !== rightWindow.name ||
+        leftWindow.paneBorderStatus !== rightWindow.paneBorderStatus ||
+        leftLayout.zoomed !== rightLayout.zoomed ||
+        leftLayout.width !== rightLayout.width ||
+        leftLayout.height !== rightLayout.height ||
+        leftLayout.leaves.length !== rightLayout.leaves.length ||
+        leftLayout.leaves.some((leaf, index) => {
+          const candidate = rightLayout.leaves[index];
+          return (
+            !candidate ||
+            leaf.id !== candidate.id ||
+            leaf.left !== candidate.left ||
+            leaf.top !== candidate.top ||
+            leaf.width !== candidate.width ||
+            leaf.height !== candidate.height
+          );
+        })
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private async stageWindows(target = this.opts.session): Promise<WindowSyncStage> {
     const lines = await this.io.request(
       `list-windows -t "${target}" -F "#{window_id}\t#{qa:@tmux_ide_window_id}\t#{qa:window_name}\t#{window_active}\t#{window_visible_layout}\t#{?window_zoomed_flag,1,0}\t#{pane-border-status}"`,
     );
@@ -2149,11 +2433,14 @@ export class SessionChannel {
       paneBorderStatus: "top" | "bottom" | "off";
     }
     const rows: Row[] = [];
+    const seenRuntimeIds = new Set<string>();
     for (const raw of lines) {
       // Replies are latin1 byte strings; recover UTF-8 window names first.
       const line = Buffer.from(raw, "latin1").toString("utf8");
       const parts = line.split("\t");
-      if (parts.length < 6) continue;
+      if (parts.length !== 7) {
+        throw new Error(`window layout truth for ${this.opts.session} is malformed`);
+      }
       const [
         runtimeId = "",
         stampRaw = "",
@@ -2163,7 +2450,16 @@ export class SessionChannel {
         zoomed = "",
         borderStatus = "off",
       ] = parts;
-      if (!/^@[0-9]+$/u.test(runtimeId)) continue;
+      if (
+        !/^@[0-9]+$/u.test(runtimeId) ||
+        seenRuntimeIds.has(runtimeId) ||
+        (active !== "0" && active !== "1") ||
+        (zoomed !== "0" && zoomed !== "1") ||
+        (borderStatus !== "top" && borderStatus !== "bottom" && borderStatus !== "off")
+      ) {
+        throw new Error(`window layout truth for ${this.opts.session} is malformed`);
+      }
+      seenRuntimeIds.add(runtimeId);
       const stamp = decodeTmuxArgument(stampRaw);
       const name = decodeTmuxArgument(nameRaw);
       rows.push({
@@ -2173,9 +2469,25 @@ export class SessionChannel {
         active: active === "1",
         visible,
         zoomed: zoomed === "1",
-        paneBorderStatus:
-          borderStatus === "top" || borderStatus === "bottom" ? borderStatus : "off",
+        paneBorderStatus: borderStatus,
       });
+    }
+    if (rows.length === 0) {
+      throw new Error(`window layout truth for ${this.opts.session} is missing`);
+    }
+    const activeRows = rows.filter(({ active }) => active);
+    if (activeRows.length !== 1) {
+      throw new Error(
+        `window layout truth for ${this.opts.session} has inconsistent active window`,
+      );
+    }
+    const nextLayoutByWindow = new Map<string, ParsedLayout & { zoomed: boolean }>();
+    for (const row of rows) {
+      const parsed = parseLayout(row.visible);
+      if (!parsed) {
+        throw new Error(`window layout truth for ${this.opts.session} is malformed`);
+      }
+      nextLayoutByWindow.set(row.runtimeId, { ...parsed, zoomed: row.zoomed });
     }
     // Valid unique stamps are identity; missing/invalid/duplicated stamps are
     // ALL regenerated and stamped back (the pane policy, applied to windows).
@@ -2189,10 +2501,9 @@ export class SessionChannel {
     const generateWindowId = this.opts.generateWindowId ?? defaultMirrorWindowId;
     let repairedIdentity = false;
     const next = new Map<string, WindowRecord>();
+    let nextCurrentWindow = "";
     for (const row of rows) {
-      if (row.active) this.currentWindow = row.runtimeId;
-      const parsed = parseLayout(row.visible);
-      if (parsed) this.layoutByWindow.set(row.runtimeId, { ...parsed, zoomed: row.zoomed });
+      if (row.active) nextCurrentWindow = row.runtimeId;
       let semanticId: string | null = null;
       if (row.stamp && stampCounts.get(row.stamp) === 1) {
         semanticId = row.stamp;
@@ -2232,29 +2543,12 @@ export class SessionChannel {
         paneBorderStatus: row.paneBorderStatus,
       });
     }
-    const changed = [...next].some(([runtimeId, record]) => {
-      const previous = this.windowsByRuntime.get(runtimeId);
-      return (
-        !previous ||
-        previous.name !== record.name ||
-        previous.semanticId !== record.semanticId ||
-        previous.paneBorderStatus !== record.paneBorderStatus
-      );
-    });
-    this.windowsByRuntime.clear();
-    for (const [key, value] of next) this.windowsByRuntime.set(key, value);
-    /*
-     * A rename arrives as %window-renamed, which is a structural notification:
-     * it triggers this sync and emits no layout of its own. Without a re-emit
-     * the window NAME on every layout frame stays as it was, so a view whose
-     * tabs are labelled from these frames keeps showing the old name after the
-     * rename it just performed reached tmux.
-     */
-    const layoutEmits = changed
-      ? new Set(next.keys())
-      : new Set([...requiredLayoutEmits].filter((runtimeId) => next.has(runtimeId)));
-    for (const runtimeId of layoutEmits) this.emitLayout(runtimeId);
-    return repairedIdentity;
+    return {
+      windows: next,
+      layouts: nextLayoutByWindow,
+      currentWindow: nextCurrentWindow,
+      repairedIdentity,
+    };
   }
 
   private async reconcileIdentity(
@@ -2393,8 +2687,60 @@ export class SessionChannel {
      * move a layout, and a split looks like it did not reach the view.
      */
     for (const runtimeId of this.layoutByWindow.keys()) this.emitLayout(runtimeId);
+    this.emitLayoutAuthority();
     this.settleFirstJoin();
     return plan.stampEffects.length > 0;
+  }
+
+  private async repairTrustedPaneIdentity(
+    descriptors: readonly SessionPaneDescriptor[],
+    layouts: ReadonlyMap<string, ParsedLayout & { zoomed: boolean }>,
+  ): Promise<boolean> {
+    const rectForRuntime = (runtimePaneId: string): WorkspacePaneRect => {
+      for (const layout of layouts.values()) {
+        const leaf = layout.leaves.find(({ id }) => id === runtimePaneId);
+        if (leaf) {
+          return {
+            left: leaf.left,
+            top: leaf.top,
+            width: leaf.width,
+            height: leaf.height,
+          };
+        }
+      }
+      return { left: 0, top: 0, width: 1, height: 1 };
+    };
+    const plan = planWorkspaceTmuxReconciliation({
+      panes: descriptors.map((descriptor) => ({
+        runtimePaneId: descriptor.runtimePaneId,
+        semanticPaneId: descriptor.semanticPaneId,
+        role: descriptor.role,
+        type: descriptor.type,
+        currentCommand: descriptor.currentCommand,
+        cwd: descriptor.cwd,
+        title: descriptor.title,
+        rect: rectForRuntime(descriptor.runtimePaneId),
+        active: descriptor.paneActive && descriptor.windowActive,
+      })),
+      generateSemanticPaneId: this.opts.generatePaneId ?? defaultMirrorPaneId,
+    });
+    if (plan.stampEffects.length === 0) return false;
+    const outcomes = await Promise.all(
+      plan.stampEffects.map((effect) =>
+        this.io
+          .request(
+            `set-option -p -t ${effect.runtimePaneId} ${WORKSPACE_SEMANTIC_PANE_OPTION} "${effect.value}"`,
+          )
+          .then(
+            () => true,
+            () => false,
+          ),
+      ),
+    );
+    if (outcomes.some((ok) => !ok)) {
+      throw new Error(`trusted inventory for ${this.opts.session} could not repair identity`);
+    }
+    return true;
   }
 
   private settleFirstJoin(): void {

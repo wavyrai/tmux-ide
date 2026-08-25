@@ -74,6 +74,19 @@ export interface SessionRuntimeStageSpan {
     readonly deliveryPurpose?: "terminal-surface";
     readonly deliveryLifecycleOrdinal?: number;
     readonly deliveryStatusOrdinal?: number;
+    readonly paneStreamCloseCode?: number;
+    readonly paneStreamCloseReason?:
+      | "none"
+      | "stream-retired"
+      | "stream-unavailable"
+      | "stream-closed"
+      | "topology-changed"
+      | "output-backpressure"
+      | "panes-closed"
+      | "peer-closed"
+      | "daemon-shutdown"
+      | "redemption-rejected"
+      | "unknown";
     readonly deliveryVisibility?: "visible" | "background" | "hidden" | "frozen";
     readonly deliveryBaselineRevision?: number;
     readonly deliveryBaselineHash?: string | null;

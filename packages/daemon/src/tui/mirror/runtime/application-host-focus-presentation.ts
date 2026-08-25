@@ -30,7 +30,13 @@ export function createApplicationHostFocusPresentation(
     setRendererFocused: (focused: boolean) => void;
     rendererSource: () => HostFocusRendererSource | null;
   }>,
-): Readonly<{ dispose(): void }> {
+): Readonly<{
+  driveFocusState(focused: boolean): Readonly<{
+    changed: boolean;
+    diagnosticEpoch: number | null;
+  }>;
+  dispose(): void;
+}> {
   let pendingFrame: { readonly token: number; readonly listener: () => void } | null = null;
   const cancelPending = (token?: number) => {
     const pending = pendingFrame;
@@ -113,23 +119,23 @@ export function createApplicationHostFocusPresentation(
       cancelPending(token);
     }
   };
-  const focus = () => {
-    if (options.rendererFocused() !== false) return;
-    const diagnosticEpoch = options.hostFocus.rendererFocus();
-    const token = diagnosticEpoch === null ? null : prepare(true, diagnosticEpoch);
-    options.setRendererFocused(true);
+  const driveFocusState = (focused: boolean) => {
+    if (options.rendererFocused() === focused)
+      return Object.freeze({ changed: false, diagnosticEpoch: null });
+    const diagnosticEpoch = focused
+      ? options.hostFocus.rendererFocus()
+      : options.hostFocus.rendererBlur();
+    const token = diagnosticEpoch === null ? null : prepare(focused, diagnosticEpoch);
+    options.setRendererFocused(focused);
     settle(token);
+    return Object.freeze({ changed: diagnosticEpoch !== null, diagnosticEpoch });
   };
-  const blur = () => {
-    if (options.rendererFocused() !== true) return;
-    const diagnosticEpoch = options.hostFocus.rendererBlur();
-    const token = diagnosticEpoch === null ? null : prepare(false, diagnosticEpoch);
-    options.setRendererFocused(false);
-    settle(token);
-  };
+  const focus = () => void driveFocusState(true);
+  const blur = () => void driveFocusState(false);
   options.renderer.on("focus", focus);
   options.renderer.on("blur", blur);
   return Object.freeze({
+    driveFocusState,
     dispose() {
       cancelPending();
       options.renderer.off("focus", focus);

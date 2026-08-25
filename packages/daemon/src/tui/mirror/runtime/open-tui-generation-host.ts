@@ -459,6 +459,7 @@ function runtimeAuthorityClient(
     releaseAuthority: (kind: SessionRuntimeAuthorityKind) => releaseAuthority(kind),
     onAuthority: (listener: (snapshot: SessionRuntimeAuthoritySnapshot) => void) =>
       runtime.onAuthority?.(listener) ?? (() => undefined),
+    onBinding: (listener: () => void) => bundle.client.subscribe("lifecycle", listener),
   });
 }
 

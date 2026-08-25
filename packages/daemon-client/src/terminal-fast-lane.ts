@@ -57,6 +57,9 @@ export interface TerminalFastLaneRepairPort {
 }
 
 export type TerminalFastLaneMutationResult = "ok" | "authority-lost";
+export type TerminalFastLaneResizeMutationResult =
+  | TerminalFastLaneMutationResult
+  | "geometry-authority-conflict";
 
 export interface TerminalFastLaneControlPort {
   owns(authority: SessionRuntimeAuthorityKind, generation: string): boolean;
@@ -70,7 +73,7 @@ export interface TerminalFastLaneControlPort {
   resize(
     address: TerminalFastLaneGenerationAddress,
     viewport: TerminalFastLaneViewport,
-  ): Promise<TerminalFastLaneMutationResult>;
+  ): Promise<TerminalFastLaneResizeMutationResult>;
 }
 
 export interface TerminalFastLaneViewport {
@@ -104,8 +107,16 @@ export type TerminalFastLaneInputOutcome =
 
 export type TerminalFastLaneResizeOutcome =
   | { readonly status: "applied" }
+  | { readonly status: "geometry-authority-conflict" }
   | { readonly status: "superseded" | "disposed" | "retired" }
   | { readonly status: "failed"; readonly error: unknown };
+
+class GeometryAuthorityConflictError extends Error {
+  constructor() {
+    super("geometry authority conflict");
+    this.name = "GeometryAuthorityConflictError";
+  }
+}
 
 export interface TerminalFastLaneCounters {
   readonly accepted: number;
@@ -752,6 +763,8 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
               throw new Error("geometry authority unavailable");
             mutableCounters.resizeTransports += 1;
             const result = await options.control.resize(generationAddress, retained);
+            if (result === "geometry-authority-conflict")
+              throw new GeometryAuthorityConflictError();
             if (result !== "ok") throw new Error("geometry authority lost");
           },
           onSuccess: () => settleResize(key, { status: "applied" }),
@@ -760,7 +773,9 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
               key,
               disposed || epoch !== generationEpoch
                 ? { status: disposed ? "disposed" : "retired" }
-                : { status: "failed", error },
+                : error instanceof GeometryAuthorityConflictError
+                  ? { status: "geometry-authority-conflict" }
+                  : { status: "failed", error },
             ),
           onSuperseded: () => {
             mutableCounters.resizeSuperseded += 1;

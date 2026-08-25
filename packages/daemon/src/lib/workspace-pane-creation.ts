@@ -24,6 +24,10 @@ import { getDefaultWorkspaceRegistry, type WorkspaceRegistry } from "./workspace
 import { shellEscape } from "./shell.ts";
 import { MissionRepository } from "./mission-repository.ts";
 import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
+import {
+  captureUnixSocketIdentity,
+  revalidateUnixSocketIdentity,
+} from "./unix-socket-authority.ts";
 
 const MAX_LIVE_OR_UNSAFE_OPERATIONS = 128;
 const MAX_REPLAYABLE_FAILURES = 64;
@@ -269,15 +273,21 @@ export function resolveWorkspacePaneTmuxAuthority(): WorkspacePaneTmuxAuthority 
   const executablePath = resolveTmuxExecutable();
   const environmentSocket = tmuxSocketFromEnvironment();
   if (environmentSocket) {
-    const path = realpathSync(environmentSocket);
-    if (!statSync(path).isSocket()) {
-      throw new WorkspacePaneCreationError("workspace_unavailable", {
-        reason: "tmux_socket_unavailable",
-      });
+    let socket;
+    try {
+      socket = captureUnixSocketIdentity(environmentSocket);
+    } catch (error) {
+      throw new WorkspacePaneCreationError(
+        "workspace_unavailable",
+        {
+          reason: "tmux_socket_unavailable",
+        },
+        error,
+      );
     }
     return Object.freeze({
       executablePath,
-      socketSelector: { kind: "path" as const, path },
+      socketSelector: { kind: "path" as const, path: socket.path },
     });
   }
   // A sessionless daemon may start before the default tmux server exists. Pin
@@ -295,30 +305,33 @@ export function createPinnedWorkspaceTmuxRunner(
   if (!isAbsolute(executablePath) || !statSync(executablePath).isFile()) {
     throw new TypeError("Pinned tmux executable is invalid.");
   }
-  const socketArgv =
+  const socketIdentity =
     authority.socketSelector.kind === "path"
-      ? (() => {
-          const path = realpathSync(authority.socketSelector.path);
-          if (!isAbsolute(path) || !statSync(path).isSocket()) {
-            throw new TypeError("Pinned tmux socket is invalid.");
-          }
-          return ["-S", path];
-        })()
-      : /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(authority.socketSelector.name)
-        ? ["-L", authority.socketSelector.name]
-        : (() => {
-            throw new TypeError("Pinned tmux socket is invalid.");
-          })();
+      ? captureUnixSocketIdentity(authority.socketSelector.path)
+      : null;
+  if (
+    socketIdentity === null &&
+    (authority.socketSelector.kind !== "name" ||
+      !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(authority.socketSelector.name))
+  )
+    throw new TypeError("Pinned tmux socket is invalid.");
+  const socketArgv = socketIdentity
+    ? ["-S", socketIdentity.path]
+    : ["-L", authority.socketSelector.kind === "name" ? authority.socketSelector.name : ""];
   const environment = Object.freeze(tmuxClientEnvironment(process.env));
-  return (args) =>
-    String(
-      runTmuxBinary(executablePath, [...socketArgv, ...args], {
+  return (args) => {
+    const selector = socketIdentity
+      ? ["-S", revalidateUnixSocketIdentity(socketIdentity)]
+      : socketArgv;
+    return String(
+      runTmuxBinary(executablePath, [...selector, ...args], {
         encoding: "utf8",
         env: environment,
         maxBuffer: TMUX_OUTPUT_BYTES,
         stdio: ["ignore", "pipe", "pipe"],
       }),
     ).replace(/(?:\r?\n)+$/u, "");
+  };
 }
 
 /** Execute read-only observer work without blocking the daemon event loop. */
@@ -330,26 +343,28 @@ export function createPinnedWorkspaceTmuxAsyncRunner(
   if (!isAbsolute(executablePath) || !statSync(executablePath).isFile()) {
     throw new TypeError("Pinned tmux executable is invalid.");
   }
-  const socketArgv =
+  const socketIdentity =
     authority.socketSelector.kind === "path"
-      ? (() => {
-          const path = realpathSync(authority.socketSelector.path);
-          if (!isAbsolute(path) || !statSync(path).isSocket()) {
-            throw new TypeError("Pinned tmux socket is invalid.");
-          }
-          return ["-S", path];
-        })()
-      : /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(authority.socketSelector.name)
-        ? ["-L", authority.socketSelector.name]
-        : (() => {
-            throw new TypeError("Pinned tmux socket is invalid.");
-          })();
+      ? captureUnixSocketIdentity(authority.socketSelector.path)
+      : null;
+  if (
+    socketIdentity === null &&
+    (authority.socketSelector.kind !== "name" ||
+      !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(authority.socketSelector.name))
+  )
+    throw new TypeError("Pinned tmux socket is invalid.");
+  const socketArgv = socketIdentity
+    ? ["-S", socketIdentity.path]
+    : ["-L", authority.socketSelector.kind === "name" ? authority.socketSelector.name : ""];
   const environment = Object.freeze(tmuxClientEnvironment(process.env));
-  return (args, signal) =>
-    new Promise<string>((resolve, reject) => {
+  return (args, signal) => {
+    const selector = socketIdentity
+      ? ["-S", revalidateUnixSocketIdentity(socketIdentity)]
+      : socketArgv;
+    return new Promise<string>((resolve, reject) => {
       execFile(
         executablePath,
-        [...socketArgv, ...args],
+        [...selector, ...args],
         {
           encoding: "utf8",
           env: environment,
@@ -364,6 +379,7 @@ export function createPinnedWorkspaceTmuxAsyncRunner(
         },
       );
     });
+  };
 }
 
 function profileCommand(profile: WorkspaceHarnessProfile): readonly string[] {

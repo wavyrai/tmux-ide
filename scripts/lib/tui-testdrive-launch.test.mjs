@@ -7,9 +7,31 @@ import test from "node:test";
 
 import {
   buildTestdriveExecCommand,
+  resolveCard5HostFocusControlEnvironment,
+  resolvePrivateTestdriveRuntimeEnvironment,
   resolvePublicTestdriveEnvironment,
+  resolveTestdriveCapabilityEnvironment,
   resolveTestdriveLaunch,
 } from "./tui-testdrive-launch.mjs";
+
+const CARD5_ENVIRONMENT = {
+  TMUX_IDE_CARD5_HOST_FOCUS_CONTROL_CAPABILITY: "1",
+  TMUX_IDE_CARD5_HOST_FOCUS_CONTROL_PATH: "/private/hf.sock",
+  TMUX_IDE_CARD5_HOST_FOCUS_CONTROL_ROOT: "/private",
+  TMUX_IDE_PERFORMANCE_TRACE_LOG: "/trace/performance.jsonl",
+  TMUX_IDE_PERFORMANCE_TRACE_DETAIL: "1",
+  TMUX_IDE_PERFORMANCE_TRACE_INPUT_FINGERPRINT_KEY: "1".repeat(64),
+};
+
+const PRIVATE_RUNTIME = {
+  stateHome: "/private/state",
+  canonicalHome: "/private/canonical",
+  standaloneRegistryDir: "/private/registry",
+  standaloneDaemonInfoDir: "/private/daemon",
+  cleanupToken: "testdrive:cleanup:1234",
+  tmuxSocketName: null,
+  tmuxSocketPath: "/private/t.sock",
+};
 
 const base = {
   source: false,
@@ -75,6 +97,8 @@ test("public launcher preserves the exact audited ProductRig namespace", () => {
     TERM: "xterm-256color",
   });
   assert.equal("TMUX_IDE_HOSTILE_FIXTURE" in environment, false);
+  assert.equal("TMUX_IDE_RUNTIME_MODE" in environment, false);
+  assert.equal("TMUX_IDE_CARD5_HOST_FOCUS_CONTROL_CAPABILITY" in environment, false);
   assert.throws(
     () =>
       resolvePublicTestdriveEnvironment({
@@ -83,6 +107,131 @@ test("public launcher preserves the exact audited ProductRig namespace", () => {
       }),
     /cannot use a canonical-daemon/u,
   );
+});
+
+test("Card5 control forwarding is exact, inseparable, and confined to the private target root", () => {
+  assert.deepEqual(resolveCard5HostFocusControlEnvironment(CARD5_ENVIRONMENT, "/private"), {
+    TMUX_IDE_CARD5_HOST_FOCUS_CONTROL_CAPABILITY: "1",
+    TMUX_IDE_CARD5_HOST_FOCUS_CONTROL_PATH: "/private/hf.sock",
+    TMUX_IDE_CARD5_HOST_FOCUS_CONTROL_ROOT: "/private",
+    TMUX_IDE_PERFORMANCE_TRACE_INPUT_FINGERPRINT_KEY: "1".repeat(64),
+  });
+  assert.deepEqual(resolveCard5HostFocusControlEnvironment({}, "/private"), {});
+  for (const changed of [
+    { TMUX_IDE_CARD5_HOST_FOCUS_CONTROL_PATH: undefined },
+    { TMUX_IDE_CARD5_HOST_FOCUS_CONTROL_ROOT: undefined },
+    { TMUX_IDE_CARD5_HOST_FOCUS_CONTROL_CAPABILITY: undefined },
+    { TMUX_IDE_CARD5_HOST_FOCUS_CONTROL_CAPABILITY: "0" },
+    { TMUX_IDE_CARD5_HOST_FOCUS_CONTROL_PATH: "/outside/hf.sock" },
+    { TMUX_IDE_CARD5_HOST_FOCUS_CONTROL_PATH: "/private/other.sock" },
+    { TMUX_IDE_CARD5_HOST_FOCUS_CONTROL_ROOT: "/outside" },
+    { TMUX_IDE_PERFORMANCE_TRACE_DETAIL: "0" },
+    { TMUX_IDE_PERFORMANCE_TRACE_INPUT_FINGERPRINT_KEY: "f" },
+  ])
+    assert.throws(
+      () =>
+        resolveCard5HostFocusControlEnvironment({ ...CARD5_ENVIRONMENT, ...changed }, "/private"),
+      /environment was invalid/u,
+    );
+});
+
+test("private canonical and standalone children receive one complete runtime namespace", () => {
+  for (const canonicalDaemon of [false, true])
+    for (const source of [false, true]) {
+      const launch = resolveTestdriveLaunch({ ...base, publicEntry: false, source });
+      assert.equal(launch.entry, source ? "source-app-target" : "compiled-app-target");
+      assert.deepEqual(
+        resolveTestdriveCapabilityEnvironment({
+          publicEntry: false,
+          canonicalDaemon,
+          environment: CARD5_ENVIRONMENT,
+          privateRoot: "/private",
+          ...PRIVATE_RUNTIME,
+        }),
+        {
+          TMUX_IDE_RUNTIME_MODE: "testdrive",
+          TMUX_IDE_HOME: "/private/state",
+          TMUX_IDE_REGISTRY_DIR: canonicalDaemon ? "/private/canonical" : "/private/registry",
+          TMUX_IDE_DAEMON_INFO_DIR: canonicalDaemon ? "/private/canonical" : "/private/daemon",
+          TMUX_IDE_CLEANUP_TOKEN: "testdrive:cleanup:1234",
+          TMUX_IDE_TMUX_SOCKET_PATH: "/private/t.sock",
+          ...resolveCard5HostFocusControlEnvironment(CARD5_ENVIRONMENT, "/private"),
+        },
+      );
+    }
+  const publicCapabilities = resolveTestdriveCapabilityEnvironment({
+    publicEntry: true,
+    canonicalDaemon: false,
+    environment: CARD5_ENVIRONMENT,
+    privateRoot: "/private",
+  });
+  assert.equal("TMUX_IDE_RUNTIME_MODE" in publicCapabilities, false);
+  assert.equal("TMUX_IDE_HOME" in publicCapabilities, false);
+  assert.equal("TMUX_IDE_CLEANUP_TOKEN" in publicCapabilities, false);
+  assert.equal("TMUX_IDE_TMUX_SOCKET_PATH" in publicCapabilities, false);
+  assert.equal("TMUX_IDE_TMUX_SOCKET_NAME" in publicCapabilities, false);
+  assert.equal(publicCapabilities.TMUX_IDE_CARD5_HOST_FOCUS_CONTROL_CAPABILITY, "1");
+  assert.deepEqual(
+    resolveTestdriveCapabilityEnvironment({
+      publicEntry: true,
+      canonicalDaemon: false,
+      environment: {},
+      privateRoot: "/private",
+    }),
+    {},
+  );
+});
+
+test("private runtime namespace requires an exact token and one nondefault socket selector", () => {
+  const directRuntime = {
+    stateHome: PRIVATE_RUNTIME.stateHome,
+    registryDir: PRIVATE_RUNTIME.standaloneRegistryDir,
+    daemonInfoDir: PRIVATE_RUNTIME.standaloneDaemonInfoDir,
+    cleanupToken: PRIVATE_RUNTIME.cleanupToken,
+    tmuxSocketName: PRIVATE_RUNTIME.tmuxSocketName,
+    tmuxSocketPath: PRIVATE_RUNTIME.tmuxSocketPath,
+  };
+  assert.deepEqual(resolvePrivateTestdriveRuntimeEnvironment(directRuntime), {
+    TMUX_IDE_RUNTIME_MODE: "testdrive",
+    TMUX_IDE_HOME: "/private/state",
+    TMUX_IDE_REGISTRY_DIR: "/private/registry",
+    TMUX_IDE_DAEMON_INFO_DIR: "/private/daemon",
+    TMUX_IDE_CLEANUP_TOKEN: "testdrive:cleanup:1234",
+    TMUX_IDE_TMUX_SOCKET_PATH: "/private/t.sock",
+  });
+  assert.deepEqual(
+    resolvePrivateTestdriveRuntimeEnvironment({
+      ...directRuntime,
+      tmuxSocketPath: null,
+      tmuxSocketName: "testdrive-private",
+    }),
+    {
+      TMUX_IDE_RUNTIME_MODE: "testdrive",
+      TMUX_IDE_HOME: "/private/state",
+      TMUX_IDE_REGISTRY_DIR: "/private/registry",
+      TMUX_IDE_DAEMON_INFO_DIR: "/private/daemon",
+      TMUX_IDE_CLEANUP_TOKEN: "testdrive:cleanup:1234",
+      TMUX_IDE_TMUX_SOCKET_NAME: "testdrive-private",
+    },
+  );
+  for (const changed of [
+    { stateHome: null },
+    { stateHome: "relative" },
+    { registryDir: null },
+    { registryDir: "relative" },
+    { daemonInfoDir: null },
+    { daemonInfoDir: "relative" },
+    { cleanupToken: null },
+    { cleanupToken: "short" },
+    { tmuxSocketPath: null, tmuxSocketName: null },
+    { tmuxSocketName: "also-set" },
+    { tmuxSocketPath: null, tmuxSocketName: "default" },
+    { tmuxSocketPath: "relative", tmuxSocketName: null },
+  ])
+    assert.throws(
+      () => resolvePrivateTestdriveRuntimeEnvironment({ ...directRuntime, ...changed }),
+      /private testdrive runtime namespace was invalid/u,
+    );
 });
 
 test("clean public exec quotes the raw environment exactly once", () => {

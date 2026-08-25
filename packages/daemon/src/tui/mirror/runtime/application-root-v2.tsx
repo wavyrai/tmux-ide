@@ -32,6 +32,8 @@ import {
   createApplicationHostFocusPresentation,
   type HostFocusRendererSource,
 } from "./application-host-focus-presentation.ts";
+import { resolveApplicationHostFocusControlCapability } from "./application-host-focus-control-capability.ts";
+import { createApplicationHostFocusControlBindingObserver } from "./application-host-focus-control-binding.ts";
 import {
   closeTuiPerfMarks,
   tuiPerfCriticalMark,
@@ -117,6 +119,22 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
       let getRendererFocused: (() => boolean) | null = null;
       let getFocusedPane: (() => string | null) | null = null;
       let observedFocusGenerationKey: string | null = null;
+      const hostFocusControlCapability = resolveApplicationHostFocusControlCapability(process.env);
+      tuiPerfCriticalMark(
+        "terminal-host-focus-control-gate",
+        "terminal-host-focus-control-gate-ready",
+        hostFocusControlCapability.observation,
+      );
+      const hostFocusBindingObserver = createApplicationHostFocusControlBindingObserver({
+        enabled: hostFocusControlCapability.enabled,
+        currentHost: () => sessionOwner?.snapshot() ?? null,
+        publish: (identity) =>
+          tuiPerfCriticalMark(
+            `terminal-host-focus-binding:${identity.bindingEpoch}`,
+            "terminal-host-focus-control-binding-ready",
+            identity,
+          ),
+      });
       let getTerminalRendererSource: (() => HostFocusRendererSource | null) | null = null;
       const terminalHostFocus = new OpenTuiTerminalHostFocus(
         true,
@@ -200,7 +218,10 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             interaction?.adoptGeneration(snapshot);
             setGeneration(snapshot);
             shellBinding.adoptGeneration(snapshot);
-            terminalHostFocus.adopt(snapshot?.status === "live" ? snapshot.authorityClient : null);
+            const nextAuthorityClient =
+              snapshot?.status === "live" ? snapshot.authorityClient : null;
+            terminalHostFocus.adopt(nextAuthorityClient);
+            hostFocusBindingObserver.adopt(snapshot);
             if (snapshot)
               tuiPerfMark("generation-status", {
                 status: snapshot.status,
@@ -445,10 +466,47 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         setRendererFocused: (focused) => setRendererFocused?.(focused),
         rendererSource: () => getTerminalRendererSource?.() ?? null,
       });
+      const hostFocusControl = hostFocusControlCapability.enabled
+        ? import("./application-host-focus-test-control.ts").then(async (module) => {
+            const control = module.createApplicationHostFocusTestControl({
+              path: hostFocusControlCapability.path!,
+              runtimeRoot: hostFocusControlCapability.runtimeRoot!,
+              key: hostFocusControlCapability.key!,
+              driveFocusState: hostFocusPresentation.driveFocusState,
+              currentBinding: () => {
+                const observed = hostFocusBindingObserver.current();
+                const pane = getFocusedPane?.() ?? null;
+                if (
+                  observed === null ||
+                  typeof pane !== "string" ||
+                  !Number.isSafeInteger(observed.clientGeneration)
+                )
+                  return null;
+                return Object.freeze({
+                  generation: observed.authorityGeneration,
+                  runtimeSession: observed.runtimeSession,
+                  workspaceName: observed.workspaceName,
+                  semanticPaneId: pane,
+                  clientId: observed.clientId,
+                  rendererEpoch: observed.rendererEpoch,
+                  clientGeneration: observed.clientGeneration,
+                  bindingEpoch: observed.bindingEpoch,
+                  processId: `opentui:${process.pid}`,
+                  rendererFocused: getRendererFocused?.() ?? true,
+                });
+              },
+            });
+            await control.ready;
+            return control;
+          })
+        : null;
+      void hostFocusControl?.catch(() => undefined);
       return {
         root,
         ready,
         close: async () => {
+          if (hostFocusControl) await (await hostFocusControl).close();
+          hostFocusBindingObserver.dispose();
           hostFocusPresentation.dispose();
           hostFocusTransitionOwner?.dispose();
           tuiPerfMark("resource-snapshot", {

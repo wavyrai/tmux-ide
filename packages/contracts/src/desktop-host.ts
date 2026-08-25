@@ -38,6 +38,7 @@ import {
   WorkspaceFileResourceIdSchemaZ,
 } from "./workspace-resource-identity.ts";
 import { FleetCatalogResourceV1SchemaZ } from "./fleet-catalog.ts";
+import { WorkspaceCatalogResourceV2SchemaZ } from "./workspace-catalog-resource.ts";
 import { WorkspaceMissionsEnvelopeV1SchemaZ } from "./workspace-missions-resource.ts";
 import { DaemonEventResourceInterestSchemaZ } from "./daemon-events.ts";
 import type { WorkspaceOpenHostResult } from "./workspace-open.ts";
@@ -339,6 +340,12 @@ export const DesktopDaemonFetchFleetCatalogResultSchemaZ = z.discriminatedUnion(
   z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
 ]);
 
+/** One coherent daemon-generation-stamped workspace intent/live-session catalog. */
+export const DesktopDaemonFetchWorkspaceCatalogResultSchemaZ = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ok"), envelope: WorkspaceCatalogResourceV2SchemaZ }).strict(),
+  z.object({ status: z.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+]);
+
 /**
  * The daemon's own startup readiness ladder, read on demand.
  *
@@ -390,6 +397,12 @@ export const DesktopDaemonSubscriptionRequestIdSchemaZ = z.uuid();
 
 /** Renderer-minted correlation id used only to cancel one in-flight resource read IPC. */
 export const DesktopDaemonRequestIdSchemaZ = z.uuid();
+
+/** Main-process-minted principal for one trusted Electron Web renderer generation. */
+export const DesktopWebHostClientIdSchemaZ = z
+  .string()
+  .regex(/^web:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+export type DesktopWebHostClientId = z.infer<typeof DesktopWebHostClientIdSchemaZ>;
 
 /**
  * Derived transport health of the single daemon event connection, published by
@@ -641,6 +654,9 @@ export type DesktopDaemonFetchWorkspaceChangeDiffResult = z.infer<
 export type DesktopDaemonFetchFleetCatalogResult = z.infer<
   typeof DesktopDaemonFetchFleetCatalogResultSchemaZ
 >;
+export type DesktopDaemonFetchWorkspaceCatalogResult = z.infer<
+  typeof DesktopDaemonFetchWorkspaceCatalogResultSchemaZ
+>;
 export type DesktopDaemonEventSubscriptionRequest = z.infer<
   typeof DesktopDaemonEventSubscriptionRequestSchemaZ
 >;
@@ -685,12 +701,15 @@ export interface HostCapabilities {
     openProjectDirectory(): Promise<WorkspaceOpenHostResult | null>;
     prepareProjectDirectory?(
       previousWorkspaceName?: string | null,
+      operationId?: string,
     ): Promise<WorkspaceOpenPreparedHostResult | null>;
     commitPreparedOpen?(
       decision: WorkspaceOpenDecisionArguments,
+      operationId?: string,
     ): Promise<WorkspaceOpenCommittedHostResult>;
     cancelPreparedOpen?(
       decision: WorkspaceOpenDecisionArguments,
+      operationId?: string,
     ): Promise<WorkspaceOpenCancelledHostResult>;
   };
   readonly onboarding: {

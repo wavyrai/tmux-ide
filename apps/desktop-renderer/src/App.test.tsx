@@ -163,13 +163,13 @@ function createHostHarness() {
     },
     workspace: {
       openProjectDirectory,
-      prepareProjectDirectory: async (previousWorkspaceName) => {
+      prepareProjectDirectory: async (previousWorkspaceName, operationId) => {
         const legacy = await openProjectDirectory();
         if (!legacy || legacy.status === "error") return legacy;
         return {
           status: "ok",
           result: {
-            operationId: legacy.result.operationId,
+            operationId: operationId ?? legacy.result.operationId,
             daemonInstanceId: legacy.result.daemonInstanceId,
             phase: "prepared",
             prepareToken: "90000000-0000-4000-8000-000000000001",
@@ -186,10 +186,10 @@ function createHostHarness() {
           },
         };
       },
-      commitPreparedOpen: async (decision) => ({
+      commitPreparedOpen: async (decision, operationId) => ({
         status: "ok",
         result: {
-          operationId: "90000000-0000-4000-8000-000000000002",
+          operationId: operationId ?? "90000000-0000-4000-8000-000000000002",
           daemonInstanceId: activeDaemon.instanceId,
           phase: "committed",
           ...decision,
@@ -197,10 +197,10 @@ function createHostHarness() {
           previousWorkspaceName: null,
         },
       }),
-      cancelPreparedOpen: async (decision) => ({
+      cancelPreparedOpen: async (decision, operationId) => ({
         status: "ok",
         result: {
-          operationId: "90000000-0000-4000-8000-000000000003",
+          operationId: operationId ?? "90000000-0000-4000-8000-000000000003",
           daemonInstanceId: activeDaemon.instanceId,
           phase: "cancelled",
           ...decision,
@@ -283,6 +283,24 @@ function createHostHarness() {
         status: "ok" as const,
         envelope: { version: 1 as const, daemon: activeDaemon, sessions: [] },
       })),
+      fetchWorkspaceCatalog: vi.fn(async () => ({
+        status: "ok" as const,
+        envelope: {
+          version: 2 as const,
+          daemon: activeDaemon,
+          intents: workspaceNames.map((workspaceName) => ({
+            workspaceName,
+            sessionName: workspaceName,
+            source: "project" as const,
+            availability: "live" as const,
+          })),
+          liveSessions: workspaceNames.map((workspaceName, index) => ({
+            sessionName: workspaceName,
+            fleetSessionId: `session.${String(index + 1).padStart(32, "0")}`,
+            paneCount: 1,
+          })),
+        },
+      })),
       promoteWorkspace: vi.fn(async () => ({
         status: "error" as const,
         error: { code: "preview-only" as const, reason: "not used by App tests" },
@@ -357,6 +375,7 @@ function createHostHarness() {
     emit(workspaceNames: readonly string[], event: DesktopDaemonEvent) {
       for (const subscription of subscriptions) {
         if (
+          subscription.unsubscribe.mock.calls.length === 0 &&
           subscription.workspaceNames.length === workspaceNames.length &&
           subscription.workspaceNames.every((name, index) => name === workspaceNames[index])
         ) {
@@ -400,6 +419,7 @@ async function markLive(harness: ReturnType<typeof createHostHarness>, names: re
     expect(
       harness.subscriptions.some(
         (subscription) =>
+          subscription.unsubscribe.mock.calls.length === 0 &&
           subscription.workspaceNames.length === names.length &&
           subscription.workspaceNames.every((name, index) => name === names[index]),
       ),
@@ -656,7 +676,7 @@ describe("desktop App live composition", () => {
     buttonNamed(root, "Open Folder")?.click();
     await vi.waitFor(() =>
       expect(root.querySelector('[role="alert"]')?.textContent).toContain(
-        "The selected project could not be opened.",
+        "tmux-ide could not open that folder through the verified daemon.",
       ),
     );
     expect(root.querySelector(".shell-workbench")).toBeNull();
@@ -889,6 +909,9 @@ describe("desktop App live composition", () => {
 
     harness.setWorkspaces("beta");
     harness.emit([], { type: "workspaces.changed" });
+    await vi.waitFor(() =>
+      expect(harness.host.daemon.fetchWorkspaceCatalog).toHaveBeenCalledTimes(2),
+    );
     await vi.waitFor(() => {
       expect(root.querySelector(".runtime-state-surface")?.getAttribute("data-state")).toBe(
         "chooser",
@@ -924,6 +947,7 @@ describe("desktop App live composition", () => {
     harness.setShell("new-workspace", shellInput("New generation"));
     vi.mocked(harness.host.daemon.refreshConnection).mockImplementationOnce(async () => {
       harness.setDaemon(DAEMON_B);
+      harness.setWorkspaces("new-workspace");
       return {
         outcome: "generation-replaced",
         previousIdentity: DAEMON_A,
@@ -980,7 +1004,7 @@ describe("desktop App live composition", () => {
       expect(root.querySelector(".runtime-state-surface")?.getAttribute("data-state")).toBe(
         "degraded",
       );
-      expect(root.textContent).toContain("rejected an incoherent semantic workspace update");
+      expect(root.textContent).toContain("failed semantic projection");
     });
     expect(root.querySelector(".shell-workbench")).toBeNull();
     expect(root.querySelector(".titlebar__preview-badge")).toBeNull();
@@ -1047,14 +1071,20 @@ describe("desktop App live composition", () => {
     });
     await vi.waitFor(() =>
       expect(
-        harness.subscriptions.filter(({ workspaceNames }) => workspaceNames.length === 0).length,
+        harness.subscriptions.filter(
+          ({ workspaceNames, unsubscribe }) =>
+            workspaceNames.length === 0 && unsubscribe.mock.calls.length === 0,
+        ).length,
       ).toBeGreaterThanOrEqual(2),
     );
     harness.emit([], { type: "connection.changed", state: "live", error: null });
     await vi.waitFor(() =>
       expect(
-        harness.subscriptions.filter(({ workspaceNames }) => workspaceNames[0] === "alpha").length,
-      ).toBeGreaterThanOrEqual(2),
+        harness.subscriptions.filter(
+          ({ workspaceNames, unsubscribe }) =>
+            workspaceNames[0] === "alpha" && unsubscribe.mock.calls.length === 0,
+        ).length,
+      ).toBeGreaterThanOrEqual(1),
     );
     harness.emit(["alpha"], { type: "connection.changed", state: "live", error: null });
     await vi.waitFor(() => expect(root.textContent).toContain("Replacement generation"));
@@ -1072,7 +1102,7 @@ describe("desktop App live composition", () => {
     expect(harness.host.daemon.refreshConnection).toHaveBeenCalledOnce();
     expect(harness.host.daemon.fetchApplicationShell).toHaveBeenCalledTimes(fetchCount);
     expect(root.textContent).toContain("Replacement generation");
-    expect(root.querySelector(".runtime-resource-notice")).toBeNull();
+    expect(root.textContent).not.toContain("Late old-generation callback");
     dispose();
   });
 

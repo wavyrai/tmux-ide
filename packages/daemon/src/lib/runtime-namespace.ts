@@ -7,8 +7,9 @@
  * impossible even when a new harness forgets one of the legacy env vars.
  */
 import { homedir } from "node:os";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { captureUnixSocketIdentity } from "./unix-socket-authority.ts";
 
 export const RUNTIME_MODE_ENV = "TMUX_IDE_RUNTIME_MODE";
 export const STATE_HOME_ENV = "TMUX_IDE_HOME";
@@ -65,6 +66,9 @@ function pathIdentity(path: string): string {
     if (parent === cursor) break;
     suffix.unshift(basename(cursor));
     cursor = parent;
+  }
+  if (existsSync(cursor) && lstatSync(cursor).isSocket()) {
+    return resolve(captureUnixSocketIdentity(cursor).path, ...suffix);
   }
   return resolve(existsSync(cursor) ? realpathSync(cursor) : cursor, ...suffix);
 }

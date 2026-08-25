@@ -8,7 +8,7 @@ import type {
   WorkbenchDockHostActivationSource,
   WorkbenchDockHostMode,
   WorkbenchDockHostTabId,
-} from "../../../ui/workbench-dock/presenter.tsx";
+} from "@tmux-ide/presentation/workbench-dock";
 
 export interface WorkbenchShellProps {
   theme: SemanticThemeSnapshot;

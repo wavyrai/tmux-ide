@@ -146,6 +146,36 @@ describe("pane-stream lease contracts", () => {
     ).toBe(false);
   });
 
+  it("requires layout authority snapshots to be complete and bijective", () => {
+    const layout = (window: string | null, pane: string | null, currentWindow: boolean) => ({
+      type: "layout" as const,
+      semanticWindowId: window,
+      windowName: "work",
+      currentWindow,
+      cols: 80,
+      rows: 24,
+      zoomed: false,
+      paneBorderStatus: "off" as const,
+      panes: [{ pane, left: 0, top: 0, width: 80, height: 24, active: true }],
+    });
+    const snapshot = {
+      type: "layout-snapshot" as const,
+      topologyEpoch: 1,
+      layouts: [layout("window.one", "pane.editor", true)],
+    };
+    expect(PaneStreamServerFrameSchemaZ.safeParse(snapshot).success).toBe(true);
+    for (const layouts of [
+      [layout(null, "pane.editor", true)],
+      [layout("window.one", null, true)],
+      [layout("window.one", "pane.editor", false)],
+      [layout("window.one", "pane.editor", true), layout("window.two", "pane.two", true)],
+      [layout("window.one", "pane.editor", true), layout("window.one", "pane.two", false)],
+      [layout("window.one", "pane.editor", true), layout("window.two", "pane.editor", false)],
+    ]) {
+      expect(PaneStreamServerFrameSchemaZ.safeParse({ ...snapshot, layouts }).success).toBe(false);
+    }
+  });
+
   it("redacts credential material from renderer-facing error reasons", () => {
     for (const reason of [
       `The redemptionTicket was ${TICKET}`,

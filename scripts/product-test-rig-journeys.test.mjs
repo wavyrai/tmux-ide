@@ -56,6 +56,8 @@ import {
   runKeyboardPointerResizeOwnerBoot,
   runSelectionCopyAppMouseOwnerBoot,
   runAnsiCursorAltScreenOwnerBoot,
+  runCrossClientHandoffOwnerBoot,
+  runDaemonRestartOwnerBoot,
   runWindowLifecycleOwnerBoot,
   runProductJourneyPlan,
   settleInternalProductRigCleanup,
@@ -148,22 +150,144 @@ test("golden registry enables only accepted direct journey executors", () => {
     golden.map(({ id }) => id),
     expected,
   );
-  assert.ok(golden.slice(0, 8).every(({ implementation }) => implementation === "implemented"));
-  assert.ok(golden.slice(8).every(({ implementation }) => implementation === "pending"));
+  assert.ok(golden.slice(0, 10).every(({ implementation }) => implementation === "implemented"));
+  assert.ok(golden.slice(10).every(({ implementation }) => implementation === "pending"));
   assert.deepEqual(auditProductJourneyScope(), {
     complete: false,
     declarationComplete: true,
     executableComplete: false,
     missing: [],
-    pendingJourneyIds: expected.slice(8),
+    pendingJourneyIds: ["session-recreate"],
   });
   assert.deepEqual(auditProductJourneyScope(golden.slice(1)), {
     complete: false,
     declarationComplete: false,
     executableComplete: false,
     missing: ["configless", "cold-start"],
-    pendingJourneyIds: expected.slice(8),
+    pendingJourneyIds: ["session-recreate"],
   });
+});
+
+test("Card5 owner drives production clients through exact restart/correlation boundaries", async () => {
+  const calls = [];
+  const operation = (name) => async () => (calls.push(name), { name });
+  await runCrossClientHandoffOwnerBoot({
+    onBoundary: (boundary) => calls.push(`boundary:${boundary}`),
+    createProductionHosts: operation("hosts"),
+    waitInitialConvergence: operation("initial"),
+    driveAuthorityHandoff: operation("handoff"),
+    provePassiveGeometry: operation("geometry"),
+    proveSlowWebIsolation: operation("slow"),
+    restartDaemon: operation("restart"),
+    waitRestartConvergence: operation("after"),
+    proveNativeObserver: operation("native"),
+    sealCorrelation: operation("correlation"),
+  });
+  assert.deepEqual(calls, [
+    "boundary:cross-client-production-hosts",
+    "hosts",
+    "boundary:cross-client-initial-convergence",
+    "initial",
+    "boundary:cross-client-authority-handoff",
+    "handoff",
+    "boundary:cross-client-passive-geometry",
+    "geometry",
+    "boundary:cross-client-slow-web-isolation",
+    "slow",
+    "boundary:cross-client-daemon-restart",
+    "restart",
+    "boundary:cross-client-restart-convergence",
+    "after",
+    "boundary:cross-client-native-observer",
+    "native",
+    "boundary:cross-client-correlation-privacy",
+    "correlation",
+  ]);
+  for (const method of [
+    "createProductionHosts",
+    "waitInitialConvergence",
+    "driveAuthorityHandoff",
+    "provePassiveGeometry",
+    "proveSlowWebIsolation",
+    "restartDaemon",
+    "waitRestartConvergence",
+    "proveNativeObserver",
+    "sealCorrelation",
+  ]) {
+    await assert.rejects(
+      runCrossClientHandoffOwnerBoot({
+        createProductionHosts: operation("hosts"),
+        waitInitialConvergence: operation("initial"),
+        driveAuthorityHandoff: operation("handoff"),
+        provePassiveGeometry: operation("geometry"),
+        proveSlowWebIsolation: operation("slow"),
+        restartDaemon: operation("restart"),
+        waitRestartConvergence: operation("after"),
+        proveNativeObserver: operation("native"),
+        sealCorrelation: operation("correlation"),
+        [method]: async () => {
+          throw new Error(`failed ${method}`);
+        },
+      }),
+      /failed/u,
+    );
+  }
+});
+
+test("Card5 daemon restart owner has a distinct fail-closed phase vector", async () => {
+  const calls = [];
+  const operation = (name) => async () => (calls.push(name), { name });
+  await runDaemonRestartOwnerBoot({
+    onBoundary: (boundary) => calls.push(`boundary:${boundary}`),
+    createProductionHosts: operation("hosts"),
+    waitBeforeConvergence: operation("before"),
+    replaceDaemon: operation("replace"),
+    proveStaleFence: operation("stale"),
+    waitHostsReconnected: operation("reconnect"),
+    waitCanonicalConvergence: operation("after"),
+    sealRestartCorrelation: operation("correlation"),
+  });
+  assert.deepEqual(calls, [
+    "boundary:daemon-restart-production-hosts",
+    "hosts",
+    "boundary:daemon-restart-before-convergence",
+    "before",
+    "boundary:daemon-restart-generation-replaced",
+    "replace",
+    "boundary:daemon-restart-stale-authority-rejected",
+    "stale",
+    "boundary:daemon-restart-hosts-reconnected",
+    "reconnect",
+    "boundary:daemon-restart-canonical-convergence",
+    "after",
+    "boundary:daemon-restart-correlation-privacy",
+    "correlation",
+  ]);
+  for (const method of [
+    "createProductionHosts",
+    "waitBeforeConvergence",
+    "replaceDaemon",
+    "proveStaleFence",
+    "waitHostsReconnected",
+    "waitCanonicalConvergence",
+    "sealRestartCorrelation",
+  ]) {
+    await assert.rejects(
+      runDaemonRestartOwnerBoot({
+        createProductionHosts: operation("hosts"),
+        waitBeforeConvergence: operation("before"),
+        replaceDaemon: operation("replace"),
+        proveStaleFence: operation("stale"),
+        waitHostsReconnected: operation("reconnect"),
+        waitCanonicalConvergence: operation("after"),
+        sealRestartCorrelation: operation("correlation"),
+        [method]: async () => {
+          throw new Error(`failed ${method}`);
+        },
+      }),
+      /failed/u,
+    );
+  }
 });
 
 test("window lifecycle owner preserves exact create switch rename Web ordering and boundaries", async () => {
@@ -1365,15 +1489,15 @@ test("repeat runner drives every planned journey sequentially and stops at the f
   assert.deepEqual(failedCalls, [1, 2]);
 });
 
-test("pending, all, unknown, and invalid repetition selections fail before orchestration", () => {
-  assert.throws(
-    () =>
-      resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "cross-client-handoff"])),
-    /not implemented: cross-client-handoff; missing evidence is a failure/u,
+test("implemented Card5, pending, all, unknown, and invalid selections are fail closed", () => {
+  assert.equal(
+    resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "cross-client-handoff"]))[0]
+      .journey.id,
+    "cross-client-handoff",
   );
   assert.throws(
     () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "all"])),
-    /not implemented: cross-client-handoff/u,
+    /not implemented: session-recreate/u,
   );
   assert.throws(
     () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "imaginary"])),
@@ -1398,14 +1522,14 @@ test("pending, all, unknown, and invalid repetition selections fail before orche
   );
 });
 
-test("CLI rejects the next pending journey before creating ProductRig state", () => {
+test("CLI rejects session-recreate before creating ProductRig state", () => {
   const temporary = mkdtempSync(join(tmpdir(), "product-rig-cli-plan-"));
   try {
     const rigRoot = join(temporary, "rig");
     const diagnosticRoot = join(temporary, "diagnostics");
     const result = spawnSync(
       process.execPath,
-      ["scripts/product-test-rig.mjs", "diagnose", "--journey", "cross-client-handoff", "--json"],
+      ["scripts/product-test-rig.mjs", "diagnose", "--journey", "session-recreate", "--json"],
       {
         cwd: process.cwd(),
         encoding: "utf8",
@@ -1419,7 +1543,7 @@ test("CLI rejects the next pending journey before creating ProductRig state", ()
     assert.equal(result.status, 1);
     assert.match(
       result.stderr,
-      /not implemented: cross-client-handoff; missing evidence is a failure/u,
+      /not implemented: session-recreate; missing evidence is a failure/u,
     );
     assert.equal(existsSync(join(rigRoot, "state.json")), false);
     assert.equal(existsSync(diagnosticRoot), false);
@@ -1688,6 +1812,73 @@ test("attempt startup failure cleans up before publishing immutable placeholder 
     );
   } finally {
     removeTestTree(temporary);
+  }
+});
+
+test("failure evidence is awaited before cleanup and capture failures stay bounded", async () => {
+  for (const mode of ["captured", "failed", "timeout", "abort-aware"]) {
+    const entry = attemptEntry(`20260817143100000-cross-client-handoff-r1-${mode}`);
+    const events = [];
+    let lateResolve;
+    const late = new Promise((resolve) => {
+      lateResolve = resolve;
+    });
+    await assert.rejects(
+      runIsolatedProductJourneyAttempt(entry, {
+        onPhase: (phase) => events.push(`phase:${phase}`),
+        preCleanup: async () => undefined,
+        drive: async () => {
+          throw new Error("readiness failed");
+        },
+        currentBoundary: () => "product-rig-startup",
+        failureEvidenceTimeoutMs: 5,
+        captureFailureEvidence: async (_error, _boundary, signal) => {
+          events.push("capture:start");
+          if (mode === "failed") throw new Error("capture failed");
+          if (mode === "timeout") return late;
+          if (mode === "abort-aware")
+            return new Promise((resolve) => {
+              signal.addEventListener(
+                "abort",
+                () => {
+                  events.push("capture:aborted");
+                  resolve(Object.freeze({ available: false, reason: "read-aborted" }));
+                },
+                { once: true },
+              );
+            });
+          events.push("capture:complete");
+          return Object.freeze({ available: true, count: 1 });
+        },
+        postCleanup: async () => {
+          events.push("cleanup");
+          return cleanupReceipt(entry.runId);
+        },
+        retryCleanup: () => assert.fail("cleanup passed"),
+        prepareFailure: async (_error, _boundary, _receipt, captured) => {
+          events.push("prepare");
+          return { captured };
+        },
+        appendCleanupFailure: () => assert.fail("no cleanup failure"),
+        publishFailure: async ({ captured }) => {
+          if (mode === "captured") assert.deepEqual(captured, { available: true, count: 1 });
+          else
+            assert.deepEqual(captured, {
+              available: false,
+              reason: mode === "abort-aware" ? "pre-cleanup-timeout" : `pre-cleanup-${mode}`,
+            });
+          return { runDir: `/immutable/precleanup-${mode}` };
+        },
+        publishSuccess: () => assert.fail("failure cannot publish success"),
+      }),
+      ProductJourneyAttemptError,
+    );
+    assert.ok(events.indexOf("capture:start") < events.indexOf("cleanup"));
+    if (mode === "abort-aware")
+      assert.ok(events.indexOf("capture:aborted") < events.indexOf("cleanup"));
+    assert.ok(events.indexOf("cleanup") < events.indexOf("prepare"));
+    lateResolve(Object.freeze({ available: true, count: 99 }));
+    await new Promise((resolve) => setImmediate(resolve));
   }
 });
 
@@ -2240,6 +2431,55 @@ test("namespace ownership is published before provenance and runtime setup failu
     if (failure === "runtime") {
       assert.equal(publications.length, 2);
       assert.equal(publications[1].tui.performanceTraceCommit, "a".repeat(40));
+    }
+  }
+});
+
+test("Card5 creates an absent owned TUI cwd and cleanup retires it before or after acquisition", () => {
+  for (const acquired of [false, true]) {
+    const temporary = mkdtempSync(join(tmpdir(), `product-rig-card5-cwd-${acquired}-`));
+    const runtimeDir = join(temporary, "tui");
+    const state = {};
+    const publish = (value) => Object.assign(state, value);
+    try {
+      assert.equal(existsSync(runtimeDir), false);
+      const tui = prepareOwnedTuiRuntime({
+        ownership: {
+          session: "card5-session",
+          runtimeNamespace: { root: join(temporary, "namespace") },
+        },
+        intendedTui: {
+          runtimeDir,
+          performanceTracePath: join(runtimeDir, "performance-trace.jsonl"),
+        },
+        publish,
+        resolveProvenance: () => ({
+          commit: "a".repeat(40),
+          tree: "b".repeat(40),
+          manifestDigest: "c".repeat(64),
+        }),
+        createRuntimeDir: createIsolatedTargetedTuiCwd,
+      });
+      assert.deepEqual(state.ownedTuiRuntimeDirs, [runtimeDir]);
+      assert.equal(prepareIsolatedTargetedTuiCwd(tui.runtimeDir), join(runtimeDir, "home"));
+      assert.equal(statSync(runtimeDir).mode & 0o777, 0o700);
+      assert.equal(statSync(join(runtimeDir, "home")).mode & 0o777, 0o700);
+      if (acquired) writeFileSync(join(runtimeDir, "state.json"), '{"processId":123}\n');
+      const artifacts = join(temporary, "artifacts");
+      const bufferedTui = bufferOwnedTuiRuntimeEvidence({
+        ownedRuntimeDirs: state.ownedTuiRuntimeDirs,
+        activeTui: state.tui,
+        artifactDir: artifacts,
+        pathExists: existsSync,
+        ensureArtifactDir: (path) => mkdirSync(path, { recursive: true, mode: 0o700 }),
+        moveRuntimeDir: renameSync,
+      });
+      assert.equal(existsSync(runtimeDir), false);
+      assert.equal(bufferedTui.runtimeDir, join(artifacts, "tui-runtime-1"));
+      assert.equal(existsSync(join(bufferedTui.runtimeDir, "home")), true);
+      assert.equal(existsSync(join(bufferedTui.runtimeDir, "state.json")), acquired);
+    } finally {
+      removeTestTree(temporary);
     }
   }
 });

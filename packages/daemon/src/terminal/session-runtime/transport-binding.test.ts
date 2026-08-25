@@ -15,6 +15,14 @@ const LEASE = {
 const OP_A = "00000000-0000-4000-8000-000000000011";
 const OP_B = "00000000-0000-4000-8000-000000000012";
 const OP_C = "00000000-0000-4000-8000-000000000013";
+const GEOMETRY_LEASE = {
+  generation: GENERATION,
+  session: "alpha",
+  clientId: "electron:renderer-a",
+  authority: "geometry",
+  token: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  revision: 2,
+} as const;
 
 function sendIntent() {
   return {
@@ -44,6 +52,121 @@ function sendResult(operationId: string, intent: ReturnType<typeof sendIntent>) 
 }
 
 describe("SessionRuntimeTransportBinder", () => {
+  it("fits with exact geometry authority before input and promotes only the requesting same-host transport", async () => {
+    const consumer = {
+      generation: GENERATION,
+      session: "alpha",
+      surface: "pane-stream",
+      clientId: "electron:renderer-a",
+      acquireAuthority: vi.fn(() => GEOMETRY_LEASE),
+      releaseAuthority: vi.fn(),
+      authoritySnapshot: vi.fn(() => ({
+        generation: GENERATION,
+        session: "alpha",
+        revision: 1,
+        owners: { input: null, focus: null, geometry: "electron:renderer-a" },
+        clients: [],
+      })),
+      acquireController: vi.fn(),
+      fitViewport: vi.fn(),
+      fitViewportWithAuthority: vi.fn(),
+      close: vi.fn(async () => undefined),
+    } as unknown as SessionRuntimeConsumer;
+    const registry = {
+      generation: GENERATION,
+      connect: vi.fn(() => consumer),
+      createExecutionHandle: vi.fn(),
+      bindExecutionSource: vi.fn(),
+      assertExecutionHandle: vi.fn(),
+      submitAuthenticatedIntent: vi.fn(),
+    };
+    const binder = new SessionRuntimeTransportBinder(registry);
+    const first = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000081",
+      session: "alpha",
+      hostClientId: "electron:renderer-a",
+      allowedSourcePaneIds: ["pane.a"],
+      interactive: true,
+      ownsGeometry: true,
+      explicitAuthority: true,
+    });
+    const replacement = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000082",
+      session: "alpha",
+      hostClientId: "electron:renderer-a",
+      allowedSourcePaneIds: ["pane.a"],
+      interactive: true,
+      ownsGeometry: true,
+      explicitAuthority: true,
+    });
+
+    expect(first.requestAuthority("geometry")).toEqual(GEOMETRY_LEASE);
+    first.fitViewport(GEOMETRY_LEASE, 100, 30);
+    expect(consumer.fitViewportWithAuthority).toHaveBeenLastCalledWith(GEOMETRY_LEASE, 100, 30);
+    expect(consumer.acquireController).not.toHaveBeenCalled();
+    expect(replacement.requestAuthority("geometry")).toEqual(GEOMETRY_LEASE);
+    expect(() => first.fitViewport(GEOMETRY_LEASE, 101, 31)).toThrowError(
+      expect.objectContaining({ code: "invalid-client-capability" }),
+    );
+    replacement.fitViewport(GEOMETRY_LEASE, 102, 32);
+    await first.close();
+    expect(consumer.releaseAuthority).not.toHaveBeenCalled();
+    replacement.fitViewport(GEOMETRY_LEASE, 103, 33);
+    await replacement.close();
+    expect(consumer.releaseAuthority).toHaveBeenCalledExactlyOnceWith("geometry");
+  });
+
+  it("restores a prior same-host geometry requester when the current transport revokes", async () => {
+    const consumer = {
+      generation: GENERATION,
+      session: "alpha",
+      surface: "pane-stream",
+      clientId: "electron:renderer-a",
+      acquireAuthority: vi.fn(() => GEOMETRY_LEASE),
+      releaseAuthority: vi.fn(),
+      authoritySnapshot: vi.fn(() => ({
+        generation: GENERATION,
+        session: "alpha",
+        revision: 2,
+        owners: { input: null, focus: null, geometry: "electron:renderer-a" },
+        clients: [],
+      })),
+      acquireController: vi.fn(),
+      fitViewportWithAuthority: vi.fn(),
+      close: vi.fn(async () => undefined),
+    } as unknown as SessionRuntimeConsumer;
+    const binder = new SessionRuntimeTransportBinder({
+      generation: GENERATION,
+      connect: vi.fn(() => consumer),
+    } as unknown as SessionRuntimeRegistry);
+    const bind = (transportLeaseId: string) =>
+      binder.bind({
+        transport: "pane-stream",
+        transportLeaseId,
+        session: "alpha",
+        hostClientId: "electron:renderer-a",
+        allowedSourcePaneIds: ["pane.a"],
+        interactive: true,
+        ownsGeometry: true,
+        explicitAuthority: true,
+      });
+    const first = bind("00000000-0000-4000-8000-000000000091");
+    const second = bind("00000000-0000-4000-8000-000000000092");
+    first.requestAuthority("geometry");
+    second.requestAuthority("geometry");
+    second.releaseAuthority("geometry");
+    expect(() => second.fitViewport(GEOMETRY_LEASE, 119, 39)).toThrowError(
+      expect.objectContaining({ code: "invalid-client-capability" }),
+    );
+    first.fitViewport(GEOMETRY_LEASE, 120, 40);
+    expect(consumer.fitViewportWithAuthority).toHaveBeenCalledWith(GEOMETRY_LEASE, 120, 40);
+    expect(consumer.releaseAuthority).not.toHaveBeenCalled();
+    await second.close();
+    await first.close();
+    expect(consumer.releaseAuthority).toHaveBeenCalledExactlyOnceWith("geometry");
+  });
   it("attributes an authenticated OpenTUI host principal to the opentui surface", async () => {
     const registry = new SessionRuntimeRegistry({
       generation: GENERATION,
@@ -103,6 +226,7 @@ describe("SessionRuntimeTransportBinder", () => {
   });
 
   it.each([
+    "12345678-1234-4123-8123-123456789abc",
     "dev-web:not-a-minted-uuid",
     "dev-web:12345678-1234-1123-8123-123456789abc",
     "dev-web:12345678-1234-4123-7123-123456789abc",
@@ -239,6 +363,80 @@ describe("SessionRuntimeTransportBinder", () => {
     expect(publishedOwners).toContain("opentui:second");
     stopSnapshots();
     await first.close();
+    await registry.dispose();
+  });
+
+  it("replays and publishes one current authority topology to every late explicit binding", async () => {
+    const tokens = [
+      "10000000-0000-4000-8000-000000000001",
+      "10000000-0000-4000-8000-000000000002",
+      "10000000-0000-4000-8000-000000000003",
+      "10000000-0000-4000-8000-000000000004",
+    ];
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION,
+      createControllerToken: () => tokens.shift()!,
+    });
+    const binder = new SessionRuntimeTransportBinder(registry);
+    const bind = (clientId: string, lease: string) =>
+      binder.bind({
+        transport: "pane-stream",
+        transportLeaseId: lease,
+        session: "alpha",
+        hostClientId: clientId,
+        allowedSourcePaneIds: ["pane.editor"],
+        interactive: true,
+        ownsGeometry: true,
+        explicitAuthority: true,
+      });
+    const webA = bind("web:a", "20000000-0000-4000-8000-000000000001");
+    const snapshotsA: ReturnType<typeof webA.authoritySnapshot>[] = [];
+    webA.onAuthoritySnapshot((snapshot) => snapshotsA.push(snapshot));
+    expect(snapshotsA).toHaveLength(1);
+    webA.updatePresence("foreground");
+    expect(webA.requestAuthority("focus")?.clientId).toBe("web:a");
+
+    const webB = bind("web:b", "20000000-0000-4000-8000-000000000002");
+    const snapshotsB: ReturnType<typeof webB.authoritySnapshot>[] = [];
+    webB.onAuthoritySnapshot((snapshot) => snapshotsB.push(snapshot));
+    expect(
+      snapshotsB
+        .at(-1)
+        ?.clients.map(({ clientId }) => clientId)
+        .sort(),
+    ).toEqual(["web:a", "web:b"]);
+    webB.updatePresence("foreground");
+    expect(webB.requestAuthority("geometry")?.clientId).toBe("web:b");
+
+    const tui = bind("opentui:tui", "20000000-0000-4000-8000-000000000003");
+    const snapshotsTui: ReturnType<typeof tui.authoritySnapshot>[] = [];
+    tui.onAuthoritySnapshot((snapshot) => snapshotsTui.push(snapshot));
+    expect(snapshotsTui.at(-1)?.clients).toHaveLength(3);
+    tui.updatePresence("foreground");
+    expect(tui.requestAuthority("input")?.clientId).toBe("opentui:tui");
+    expect(tui.requestAuthority("focus")?.clientId).toBe("opentui:tui");
+    webB.noteActivity("geometry");
+
+    const current = registry.authoritySnapshot("alpha");
+    expect(current.owners).toEqual({
+      input: "opentui:tui",
+      focus: "opentui:tui",
+      geometry: "web:b",
+    });
+    for (const snapshots of [snapshotsA, snapshotsB, snapshotsTui]) {
+      expect(snapshots.at(-1)).toEqual(current);
+      expect(snapshots.at(-1)?.revision).toBe(current.revision);
+      expect(snapshots.at(-1)?.clients).toHaveLength(3);
+      expect(
+        snapshots.every(
+          (snapshot, index) => index === 0 || snapshot.revision > snapshots[index - 1]!.revision,
+        ),
+      ).toBe(true);
+    }
+
+    await tui.close();
+    await webB.close();
+    await webA.close();
     await registry.dispose();
   });
 
@@ -449,10 +647,10 @@ describe("SessionRuntimeTransportBinder", () => {
       `web:document-a:${secondLeaseId}`,
     ]);
     await oldDelivery.close();
-    expect(() => first.fitViewport(120, 40)).toThrowError(
+    expect(() => first.fitViewport(GEOMETRY_LEASE, 120, 40)).toThrowError(
       expect.objectContaining({ code: "invalid-client-capability" }),
     );
-    replacement.fitViewport(132, 44);
+    replacement.fitViewport(GEOMETRY_LEASE, 132, 44);
     expect(consumer.fitViewport).toHaveBeenCalledWith(LEASE, 132, 44);
     await first.close();
     expect(deliveryCloses.get(subscriberIds[0]!)).toHaveBeenCalledOnce();
@@ -553,12 +751,12 @@ describe("SessionRuntimeTransportBinder", () => {
       ownsGeometry: true,
     });
 
-    expect(() => first.fitViewport(120, 40)).toThrowError(
+    expect(() => first.fitViewport(GEOMETRY_LEASE, 120, 40)).toThrowError(
       expect.objectContaining({ code: "invalid-client-capability" }),
     );
-    replacement.fitViewport(132, 44);
+    replacement.fitViewport(GEOMETRY_LEASE, 132, 44);
     await replacement.close();
-    first.fitViewport(120, 40);
+    first.fitViewport(GEOMETRY_LEASE, 120, 40);
     expect(consumer.fitViewport).toHaveBeenLastCalledWith(LEASE, 120, 40);
 
     await first.close();

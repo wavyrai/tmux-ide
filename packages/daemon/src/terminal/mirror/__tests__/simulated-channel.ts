@@ -118,8 +118,8 @@ export const FIXTURE = {
   layoutW2: "bbbb,200x50,0,0,3",
   truthRows: ["%1\t1\t@1\t1", "%2\t0\t@1\t1", "%3\t0\t@2\t0"],
   windowRows: (layoutW1: string, layoutW2: string): string[] => [
-    `@1\twindow.test.one\tmain\t1\t${layoutW1}\t0`,
-    `@2\twindow.test.two\taux\t0\t${layoutW2}\t0`,
+    `@1\twindow.test.one\tmain\t1\t${layoutW1}\t0\toff`,
+    `@2\twindow.test.two\taux\t0\t${layoutW2}\t0\toff`,
   ],
   descriptorRows: [
     "%1\tpane.alpha\t\t\tzsh\t/tmp/a\t0\tmain\t@1\tAlpha\t$1\t0\tAlpha IDE\tmission-a\t1\t1\twindow.test.one\tzz-sim\t2\t2",

@@ -2246,15 +2246,19 @@ export function encodeAnsiTerminalRepresentation(
     !baseline ||
     baseline.cols !== target.cols ||
     baseline.rows !== target.rows ||
-    alternateScreenChanged
+    alternateScreenChanged ||
+    !historyEqual(baseline.history, target.history)
   ) {
-    output += "\u001b[0m\u001b[2J\u001b[H";
-    output += prepareAnsiTopWrappedRow(target);
-    output += renderAnsiRowChains(
-      target,
-      target.grid.map((_, index) => index),
-      false,
-    );
+    output += "\u001b[0m\u001b[2J\u001b[3J\u001b[H";
+    if (target.history.length > 0) output += renderAnsiSeedRows(target);
+    else {
+      output += prepareAnsiTopWrappedRow(target);
+      output += renderAnsiRowChains(
+        target,
+        target.grid.map((_, index) => index),
+        false,
+      );
+    }
   } else {
     const changedRows = new Map<number, TerminalReplicaRow>();
     for (let row = 0; row < target.rows; row += 1) {
@@ -2269,10 +2273,28 @@ export function encodeAnsiTerminalRepresentation(
     if (changedRows.size === 0 && baseline.modes.wraparound !== target.modes.wraparound)
       output += ansiWraparoundPresentation(target);
   }
+  output += ansiInputModesPresentation(target, baseline);
   output += ansiCursorPresentation(target);
   const bytes = new TextEncoder().encode(output);
   assertRepresentationSize(bytes);
   return bytes;
+}
+
+/**
+ * Reconstruct an unknown emulator from canonical scrollback plus viewport.
+ * Writing the rows in wire order lets xterm itself create scrollback and soft
+ * wraps; repainting only addressable viewport rows would silently discard the
+ * selection/search identity carried by `snapshot.history`.
+ */
+function renderAnsiSeedRows(target: TerminalReplicaSnapshot): string {
+  const rows = [...target.history, ...target.grid];
+  let output = "\u001b[?7h";
+  rows.forEach((row, index) => {
+    if (index > 0 && !row.wrapped) output += "\r\n";
+    output += renderAnsiRow(row);
+  });
+  output += ansiWraparoundPresentation(target);
+  return output;
 }
 
 /**
@@ -2300,9 +2322,53 @@ export function encodeAnsiTerminalPatchRepresentation(
     [...patchedRows].some(([index, row]) => row.wrapped || baseline.grid[index]?.wrapped === true)
   )
     return encodeAnsiTerminalRepresentation(null, target);
-  let output = renderAnsiPatchRows(target, patchedRows);
+  let output = "";
+  const historyDelta = patch.historyDelta;
+  const appendedRows = historyDelta?.append.length ?? 0;
+  const incrementalScroll =
+    historyDelta &&
+    historyDelta.trim === 0 &&
+    appendedRows > 0 &&
+    appendedRows <= baseline.rows &&
+    patchedRows.size === patch.rows.length &&
+    [...patchedRows].every(
+      ([index, row]) =>
+        index >= 0 && index < target.rows && terminalReplicaRowsEqual(row, target.grid[index]!),
+    ) &&
+    historyDelta.append.every((row, index) =>
+      terminalReplicaRowsEqual(row, baseline.grid[index]!),
+    ) &&
+    target.grid.every((row, index) => {
+      const shiftedIndex = index + appendedRows;
+      if (shiftedIndex < baseline.rows) {
+        return (
+          terminalReplicaRowsEqual(row, baseline.grid[shiftedIndex]!) || patchedRows.has(index)
+        );
+      }
+      // LF creates emulator-owned blank bottom rows. Requiring an exact dirty
+      // replacement avoids depending on an implicit blank-row representation.
+      return patchedRows.has(index);
+    });
+  if (incrementalScroll) {
+    // A line-feed at the viewport bottom asks xterm to perform the same scroll
+    // that moved these canonical rows into history. This preserves existing
+    // selection/viewport state and lets xterm enforce its own scrollback cap;
+    // replaying all 5k history rows on every append would be destructive and
+    // quadratic over a sustained terminal stream.
+    output += `\u001b[${target.rows};1H`;
+    output += "\n".repeat(appendedRows);
+  } else if (
+    (patch.history !== undefined || patch.historyDelta !== undefined) &&
+    !historyEqual(baseline.history, target.history)
+  ) {
+    // Full history replacement has no incremental authority. It is rare and
+    // must remain exact rather than synthesizing an unsafe delta.
+    return encodeAnsiTerminalRepresentation(null, target);
+  }
+  output += renderAnsiPatchRows(target, patchedRows);
   if (patchedRows.size === 0 && baseline.modes.wraparound !== target.modes.wraparound)
     output += ansiWraparoundPresentation(target);
+  output += ansiInputModesPresentation(target, baseline);
   output += ansiCursorPresentation(target);
   const bytes = new TextEncoder().encode(output);
   assertRepresentationSize(bytes);
@@ -2351,6 +2417,60 @@ function ansiCursorPresentation(target: TerminalReplicaSnapshot): string {
 
 function ansiWraparoundPresentation(target: TerminalReplicaSnapshot): string {
   return target.modes.wraparound ? "\u001b[?7h" : "\u001b[?7l";
+}
+
+/**
+ * Restore the emulator modes that affect subsequent input and parsing. These
+ * are deliberately emitted after painting/cursor placement: origin, insert,
+ * and synchronized-output modes must describe the resulting terminal without
+ * changing how the reconstruction itself is interpreted.
+ */
+function ansiInputModesPresentation(
+  target: TerminalReplicaSnapshot,
+  baseline: TerminalReplicaSnapshot | null,
+): string {
+  const prior = baseline?.modes;
+  const modes = target.modes;
+  let output = "";
+  const decMode = (code: number, enabled: boolean): string =>
+    `\u001b[?${code}${enabled ? "h" : "l"}`;
+  const ansiMode = (code: number, enabled: boolean): string =>
+    `\u001b[${code}${enabled ? "h" : "l"}`;
+  if (!prior || prior.applicationCursor !== modes.applicationCursor)
+    output += decMode(1, modes.applicationCursor);
+  if (!prior || prior.applicationKeypad !== modes.applicationKeypad)
+    output += modes.applicationKeypad ? "\u001b=" : "\u001b>";
+  if (!prior || prior.bracketedPaste !== modes.bracketedPaste)
+    output += decMode(2004, modes.bracketedPaste);
+  if (!prior || prior.insert !== modes.insert) output += ansiMode(4, modes.insert);
+  if (!prior || prior.origin !== modes.origin) output += decMode(6, modes.origin);
+  const mouseChanged =
+    !prior ||
+    prior.mouseTracking !== modes.mouseTracking ||
+    prior.mouseProtocol !== modes.mouseProtocol ||
+    prior.mouseEncoding !== modes.mouseEncoding;
+  if (mouseChanged) {
+    output += decMode(9, false);
+    output += decMode(1000, false);
+    output += decMode(1002, false);
+    output += decMode(1003, false);
+    output += decMode(1005, false);
+    output += decMode(1006, false);
+    output += decMode(1016, false);
+    if (modes.mouseTracking) {
+      const protocol = modes.mouseProtocol ?? "vt200";
+      if (protocol === "x10") output += decMode(9, true);
+      else if (protocol === "drag") output += decMode(1002, true);
+      else if (protocol === "any") output += decMode(1003, true);
+      else if (protocol !== "none") output += decMode(1000, true);
+    }
+    if (modes.mouseEncoding === "utf8") output += decMode(1005, true);
+    else if (modes.mouseEncoding === "sgr") output += decMode(1006, true);
+    else if (modes.mouseEncoding === "sgr-pixels") output += decMode(1016, true);
+  }
+  if (!prior || prior.synchronizedOutput !== modes.synchronizedOutput)
+    output += decMode(2026, modes.synchronizedOutput);
+  return output;
 }
 
 export interface TerminalDeliveryClientState {

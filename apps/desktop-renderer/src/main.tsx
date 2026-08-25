@@ -1,10 +1,15 @@
 import { render } from "solid-js/web";
 import { config } from "zod";
+import { installCard5ProbeBootstrap } from "./runtime/card5-probe-bootstrap.ts";
 
 // Zod's optional object-schema JIT uses Function construction before falling
 // back under CSP. Disable it before loading application contracts so the
 // renderer emits no blocked script evaluations under `script-src 'self'`.
 config({ jitless: true });
+
+// Card5's exact loopback URL installs diagnostics before App and terminal
+// modules are evaluated, so Electron uses its one production navigation.
+installCard5ProbeBootstrap(window.location.href);
 
 // Electron publishes `window.tmuxIdeHost` through preload. A plain browser gets
 // the same renderer contract from either the opt-in development gateway or the

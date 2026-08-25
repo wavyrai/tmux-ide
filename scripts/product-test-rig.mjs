@@ -5,7 +5,7 @@
  * It is deliberately an operator/test surface, not a second product runtime.
  */
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   chmodSync,
   closeSync,
@@ -24,6 +24,7 @@ import {
 } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
+import { createConnection } from "node:net";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
@@ -41,12 +42,14 @@ import {
   PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES,
   PRODUCT_RIG_SOURCE_INVENTORY_MAX_BYTES,
   PRODUCT_RIG_SOURCE_INVENTORY_MAX_PATHS,
+  PRODUCT_RIG_SOURCE_PATH_MAX_BYTES,
   PRODUCT_RIG_STATE_VERSION,
   activeTmuxPaneFromRows,
   bindPromotedInitialPane,
   appendBoundedWebDiagnostic,
   awaitWebDiagnosticWithDeadline,
   buildSourceTracePayload,
+  buildProductSourceManifest,
   buildProductDiagnosticReport,
   buildWebStartupEvidence,
   causalFixtureBaselineReadiness,
@@ -55,10 +58,12 @@ import {
   causalProbeEpochState,
   createProductRigAttemptTimelineClock,
   compareProductSourceProvenance,
+  deriveProductSourceManifestReadBudget,
   productRigSourceTraceIncludesPath,
   productRigHostHeartbeatObservation,
   productRigSourceTraceDiffArgs,
   productRigSourceTraceUntrackedArgs,
+  productSourceHeadBaselineBytes,
   readBoundedSourceTraceFiles,
   coherentGenerationPaint,
   coherentGenerationDuration,
@@ -76,6 +81,7 @@ import {
   productResourceEndpointEpochState,
   productResourceGeometryIdentity,
   productResourceMeasuredEndpointTraceIds,
+  projectProductPaneStreamLifecycle,
   productResourceProbeCells,
   productCapturePageUrlStatus,
   publicRigStatus,
@@ -132,6 +138,8 @@ import {
   resolveProductJourneyPlan,
   runConfiglessProductJourneyOwnerBoot,
   runCoherentFirstPaneOwnerBoot,
+  runCrossClientHandoffOwnerBoot,
+  runDaemonRestartOwnerBoot,
   runFirstKeyPasteOwnerBoot,
   runFocusOwnerBoot,
   runKeyboardPointerResizeOwnerBoot,
@@ -228,6 +236,64 @@ import {
   captureAnsiCursorWebPresentation,
   runAnsiDeliveryReadyAction,
 } from "./lib/product-ansi-cursor-alt-screen.mjs";
+import {
+  assessCard5CrossClientEvidence,
+  assessCard5DaemonRestartEvidence,
+  card5AuthorityReleaseBindingDigest,
+  card5AuthorityReleaseBindingHmac,
+  card5CrossClientFailureObservation,
+  card5DaemonRestartFailureObservation,
+} from "./lib/product-cross-client-handoff.mjs";
+import {
+  activateCard5ExactTerminalSurface,
+  createCard5ProductionWebHostLease,
+  issueCard5PredecessorDescriptor,
+  observeCard5WebAuthorityReceipt,
+  observeCard5WebCanonical,
+  releaseCard5WebOwnedAuthorities,
+  rejectCard5PredecessorDescriptor,
+} from "./lib/product-card5-production-host-owner.mjs";
+import {
+  advanceCard5AuthorityReleaseStability,
+  advanceCard5PostInputAuthorityPreconditionHistory,
+  advanceCard5FocusedConvergenceStability,
+  advanceCard5RetainedFocusStability,
+  assessCard5PostHandoffAuthority,
+  assessCard5WebAuthorityRelease,
+  assessCard5NullAuthorityPair,
+  assessCard5TuiFocusAuthority,
+  assessCard5TuiFocusedPane,
+  assessCard5TuiRetainedFocus,
+  assessCard5TuiFocusTransition,
+  assessCard5TuiHandoffInput,
+  assessCard5ReplacementEnvelopeEvidence,
+  boundedCard5PostInputAuthorityPreconditionObservation,
+  boundedCard5TuiFocusFailureObservation,
+  boundedCard5TuiBlurTransitionObservation,
+  boundedCard5HostFailureObservation,
+  card5AuthorityActivityWithinCap,
+  createCard5TuiFrameFenceTracker,
+  createCard5DiagnosticEvidenceBinding,
+  exactSharedCard5WebPane,
+  isExactCard5TuiHostInputReceipt,
+  matchesExpectedCard5WebPane,
+  mergeCard5SemanticAuthorityEvidence,
+  observeCard5WithinDeadline,
+  selectCard5PostInputAuthorityJoin,
+  selectCard5TuiHostFocusBinding,
+  selectExactCard5PaneGeometry,
+  selectExactCard5TmuxPaneBinding,
+  runExactCard5TmuxPaneCapture,
+  sealCard5TuiFocusAuthority,
+  sealCard5CorrelationEvidence,
+  sealCard5ProductionClientObservation,
+} from "./lib/product-cross-client-host-evidence.mjs";
+import {
+  assessCard5ObservedHostLifecycle,
+  card5HostCleanupStatus,
+  validateCard5NativeObserverCommand,
+  waitForCard5ObservedHostLifecycle,
+} from "./lib/product-card5-host-topology.mjs";
 import { conditionAnsiTmuxFixture } from "./lib/product-ansi-tmux-precondition.mjs";
 
 const ANSI_MIRROR_FLOW_FAILURE_REASONS = new Set([
@@ -279,7 +345,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const { chromium } = await import(
+const { chromium, _electron: electron } = await import(
   fileURLToPath(
     new URL("../apps/desktop-renderer/node_modules/playwright/index.mjs", import.meta.url),
   )
@@ -299,6 +365,7 @@ const diagnosticCaptures = new Map();
 const diagnosticAttemptPhases = new Map();
 let diagnosticFrozenProvenance = null;
 const activeTuiCommandPids = new Set();
+const activeCard5NativeObserverPids = new Set();
 const productInputFingerprintKeys = new Map();
 const UNAVAILABLE_WEB_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -440,6 +507,90 @@ function productDiagnosticCorrelation(state, captureEvidence) {
       : null,
   });
 }
+
+function card5ArtifactCorrelation(state, captureEvidence, journeyEvidence, evidenceKey) {
+  const tuiAvailable = Boolean(captureEvidence?.tuiPath && existsSync(captureEvidence.tuiPath));
+  const webAvailable = Boolean(captureEvidence?.webPath && existsSync(captureEvidence.webPath));
+  const identity = state?.card5ArtifactIdentity ?? null;
+  const generation = journeyEvidence?.generations?.after ?? null;
+  const expectedPaneHmac = journeyEvidence?.after?.clients?.opentui?.paneHmac ?? null;
+  const expectedWorkspaceHmac = journeyEvidence?.after?.clients?.opentui?.workspaceHmac ?? null;
+  const web = captureEvidence?.web ?? null;
+  const host = web?.hostCorrelation ?? null;
+  const exactTerminal = web?.terminals?.filter(
+    ({ phase, workspaceName, semanticPaneId }) =>
+      phase === "connected" &&
+      card5EvidenceHmac("workspace", workspaceName, evidenceKey) === expectedWorkspaceHmac &&
+      card5EvidenceHmac("pane", semanticPaneId, evidenceKey) === expectedPaneHmac,
+  );
+  const predicates = Object.freeze({
+    tuiAvailable,
+    webAvailable,
+    identity:
+      typeof identity?.fleetSessionId === "string" &&
+      /^[0-9a-f]{20}$/u.test(identity?.catalogRevision ?? "") &&
+      card5EvidenceHmac("pane", identity?.semanticPaneId, evidenceKey) === expectedPaneHmac,
+    daemon:
+      typeof generation === "string" &&
+      state?.daemon?.instanceId === generation &&
+      host?.bootstrapDaemon === generation &&
+      host?.listDaemon === generation &&
+      host?.shellDaemon === generation &&
+      host?.domDaemonGeneration === generation,
+    workspace:
+      host?.workspaceRow?.workspaceName === state?.workspace &&
+      host?.workspaceRow?.sessionName === state?.session &&
+      host?.workspaceRow?.availability === "live" &&
+      host?.shellFleetSessionId === identity?.fleetSessionId &&
+      host?.shellWorkspaceName === state?.workspace,
+    terminal: exactTerminal?.length === 1,
+    native:
+      captureEvidence?.truth?.session === state?.session &&
+      Array.isArray(captureEvidence?.truth?.panes) &&
+      captureEvidence.truth.panes.length > 0 &&
+      captureEvidence?.tuiStatus?.daemon?.instanceId === generation,
+  });
+  const missing = Object.entries(predicates)
+    .filter(([, passed]) => passed !== true)
+    .map(([name]) => `card5-artifact.${name}`);
+  const artifactHmac =
+    missing.length === 0
+      ? card5EvidenceHmac(
+          "artifact-correlation",
+          JSON.stringify({
+            generation,
+            journeyHmac: journeyEvidence?.correlation?.journeyHmac,
+            paneHmac: expectedPaneHmac,
+            workspaceHmac: expectedWorkspaceHmac,
+            fleetSessionHmac: card5EvidenceHmac(
+              "fleet-session",
+              identity.fleetSessionId,
+              evidenceKey,
+            ),
+            catalogRevisionHmac: card5EvidenceHmac(
+              "catalog-revision",
+              identity.catalogRevision,
+              evidenceKey,
+            ),
+          }),
+          evidenceKey,
+        )
+      : null;
+  return Object.freeze({
+    complete: missing.length === 0,
+    missing: Object.freeze(missing),
+    artifactHmac,
+    daemonState: Object.freeze({
+      generationHmac:
+        typeof generation === "string"
+          ? card5EvidenceHmac("daemon-generation", generation, evidenceKey)
+          : null,
+      correlationComplete: predicates.daemon,
+    }),
+    clientState: Object.freeze({ artifactHmac, correlationComplete: missing.length === 0 }),
+    availability: Object.freeze({ tui: tuiAvailable, web: webAvailable }),
+  });
+}
 const WARM_COHERENT_SAMPLE_COUNT = 20;
 
 function shellSingleQuote(value) {
@@ -533,6 +684,16 @@ function commandEnv(state) {
           TMUX_IDE_PERFORMANCE_TRACE_INPUT_DETAIL: state.tui.performanceTraceInputDetail ?? "0",
           TMUX_IDE_PERFORMANCE_TRACE_INPUT_FINGERPRINT_KEY:
             productInputFingerprintKeys.get(state.tui.runtimeDir) ?? "",
+          ...(state.tui.hostFocusLifecyclePath
+            ? { TMUX_IDE_TUI_PERF_LOG: state.tui.hostFocusLifecyclePath }
+            : {}),
+          ...(state.tui.hostFocusControlPath
+            ? {
+                TMUX_IDE_CARD5_HOST_FOCUS_CONTROL_CAPABILITY: "1",
+                TMUX_IDE_CARD5_HOST_FOCUS_CONTROL_PATH: state.tui.hostFocusControlPath,
+                TMUX_IDE_CARD5_HOST_FOCUS_CONTROL_ROOT: state.tui.hostFocusControlRoot,
+              }
+            : {}),
         }
       : {}),
   };
@@ -652,59 +813,41 @@ function sourceTraceProvenance() {
   const manifestPaths = [...new Set([...trackedPaths, ...includedUntracked])].sort();
   if (manifestPaths.length > PRODUCT_RIG_SOURCE_INVENTORY_MAX_PATHS)
     throw new Error("Product rig source manifest exceeded its path-count ceiling");
-  let manifestBytes = 0;
-  const manifest = manifestPaths.map((path) => {
-    const pathDigest = createHash("sha256").update(path).digest("hex");
-    let descriptor;
-    try {
-      descriptor = openSync(
-        resolve(repoRoot, path),
-        fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0),
-      );
-    } catch (error) {
-      if (error?.code === "ENOENT") {
-        return Object.freeze({
-          pathDigest,
-          contentDigest: createHash("sha256").update("deleted").digest("hex"),
-          bytes: 0,
-        });
-      }
-      throw error;
-    }
-    try {
-      const before = fstatSync(descriptor);
-      if (!before.isFile() || !Number.isSafeInteger(before.size) || before.size < 0)
-        throw new Error("Product rig source manifest encountered a non-regular file");
-      manifestBytes += before.size;
-      if (manifestBytes > PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES)
-        throw new Error("Product rig source manifest exceeded its byte ceiling");
-      const content = Buffer.allocUnsafe(before.size);
-      let offset = 0;
-      while (offset < before.size) {
-        const count = readSync(descriptor, content, offset, before.size - offset, offset);
-        if (count === 0) break;
-        offset += count;
-      }
-      const grew = readSync(descriptor, Buffer.allocUnsafe(1), 0, 1, before.size) !== 0;
-      const after = fstatSync(descriptor);
-      if (
-        offset !== before.size ||
-        grew ||
-        after.size !== before.size ||
-        after.dev !== before.dev ||
-        after.ino !== before.ino
-      )
-        throw new Error("Product rig source changed while building its manifest");
-      return Object.freeze({
-        pathDigest,
-        contentDigest: createHash("sha256").update(content).digest("hex"),
-        bytes: content.length,
-      });
-    } finally {
-      closeSync(descriptor);
-    }
-  });
-  const manifestDigest = createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
+  for (const path of manifestPaths) {
+    if (
+      path.startsWith("/") ||
+      path.split("/").includes("..") ||
+      /[\0\r\n]/u.test(path) ||
+      Buffer.byteLength(path) > PRODUCT_RIG_SOURCE_PATH_MAX_BYTES
+    )
+      throw new Error("Product rig source manifest path was malformed");
+  }
+  const headObjects =
+    trackedPaths.length === 0
+      ? []
+      : execFileSync("git", ["cat-file", "--batch-check=%(objecttype) %(objectsize)"], {
+          cwd: repoRoot,
+          input: trackedPaths.map((path) => `HEAD:${path}`).join("\n") + "\n",
+          encoding: "utf8",
+          maxBuffer: PRODUCT_RIG_SOURCE_INVENTORY_MAX_BYTES,
+        })
+          .trimEnd()
+          .split("\n");
+  const selectedHeadBytes = productSourceHeadBaselineBytes(headObjects, trackedPaths.length);
+  const manifestBudget = deriveProductSourceManifestReadBudget(selectedHeadBytes);
+  const builtManifest = buildProductSourceManifest(
+    manifestPaths,
+    {
+      openFile: (path) =>
+        openSync(resolve(repoRoot, path), fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0)),
+      statFile: fstatSync,
+      readChunk: (descriptor, buffer, length, position) =>
+        readSync(descriptor, buffer, 0, length, position),
+      closeFile: closeSync,
+    },
+    manifestBudget,
+  );
+  const { manifest, manifestDigest } = builtManifest;
   const provenance = Object.freeze({
     commit,
     tree,
@@ -994,7 +1137,7 @@ function sessionPaneGeometry(state) {
       "-t",
       `=${state.session}`,
       "-F",
-      "#{pane_id}|#{window_active}|#{@tmux_ide_pane_id}|#{pane_left}|#{pane_top}|#{pane_width}|#{pane_height}",
+      "#{session_name}|#{session_id}|#{pane_id}|#{pane_created}|#{window_active}|#{@tmux_ide_pane_id}|#{pane_left}|#{pane_top}|#{pane_width}|#{pane_height}",
     ],
     { encoding: "utf8" },
   )
@@ -1002,9 +1145,23 @@ function sessionPaneGeometry(state) {
     .split("\n")
     .filter(Boolean)
     .map((line) => {
-      const [paneId, windowActive, semanticPaneId, left, top, width, height] = line.split("|");
-      return {
+      const [
+        sessionName,
+        sessionId,
         paneId,
+        paneCreated,
+        windowActive,
+        semanticPaneId,
+        left,
+        top,
+        width,
+        height,
+      ] = line.split("|");
+      return {
+        sessionName,
+        sessionId,
+        paneId,
+        paneCreated: Number(paneCreated),
         semanticPaneId,
         windowActive: windowActive === "1",
         left: Number(left),
@@ -2048,6 +2205,25 @@ async function firstAttachablePane(daemon, session) {
   return available.attachability.semanticPaneId;
 }
 
+async function exactAttachablePane(daemon, session, expectedPane) {
+  if (typeof expectedPane !== "string" || expectedPane.length < 1) {
+    throw new Error("Card5 expected pane identity was unavailable");
+  }
+  const response = await fetch(
+    `${daemon.baseUrl}/api/project/${encodeURIComponent(session)}/application-shell?version=3`,
+    { headers: { Authorization: `Bearer ${daemon.record.authToken}` } },
+  );
+  if (!response.ok) throw new Error(`application-shell answered ${response.status}`);
+  const body = await response.json();
+  const matching = (body?.resource?.terminalInventory?.resources ?? []).filter(
+    (resource) =>
+      resource?.attachability?.status === "available" &&
+      resource?.attachability?.semanticPaneId === expectedPane,
+  );
+  if (matching.length !== 1) throw new Error("Card5 exact semantic pane was not attachable");
+  return expectedPane;
+}
+
 async function dispatchOwnedProductAction(daemon, action, operationId, input, hostClientId) {
   const response = await fetch(`${daemon.baseUrl}/api/v2/action/${action}`, {
     method: "POST",
@@ -2613,6 +2789,30 @@ async function fleetSessionId(daemon, label) {
   return session.sessionId;
 }
 
+async function card5ArtifactIdentity(daemon, label, semanticPaneId) {
+  const response = await fetch(`${daemon.baseUrl}/api/resources/fleet-catalog`, {
+    headers: { Authorization: `Bearer ${daemon.record.authToken}` },
+  });
+  if (!response.ok) throw new Error(`fleet-catalog answered ${response.status}`);
+  const body = await response.json();
+  const session = body?.sessions?.filter((entry) => entry?.label === label) ?? [];
+  if (
+    session.length !== 1 ||
+    typeof session[0].sessionId !== "string" ||
+    !/^[0-9a-f]{20}$/u.test(body?.catalogRevision ?? "") ||
+    typeof semanticPaneId !== "string" ||
+    semanticPaneId.length < 1 ||
+    semanticPaneId.length > 256
+  ) {
+    throw new Error("Card5 artifact identity was unavailable or ambiguous");
+  }
+  return Object.freeze({
+    fleetSessionId: session[0].sessionId,
+    catalogRevision: body.catalogRevision,
+    semanticPaneId,
+  });
+}
+
 async function proveMultiClientConvergence(
   state,
   daemon,
@@ -2668,6 +2868,2951 @@ async function proveMultiClientConvergence(
     report,
   });
   return report;
+}
+
+function createCard5TuiEvidenceStream(path, daemonPath, lifecyclePath) {
+  const reader = createProductJsonlTailReader(path);
+  const daemonReader = createProductJsonlTailReader(daemonPath);
+  const lifecycleReader = createProductJsonlTailReader(lifecyclePath, {
+    recordKind: "lifecycle",
+  });
+  let processed = 0;
+  let lifecycleProcessed = 0;
+  const frameFences = createCard5TuiFrameFenceTracker();
+  let latestResource = null;
+  let inputFenceCount = 0;
+  let resourceCount = 0;
+  let authorityActivityCount = 0;
+  const authorityActivityEvents = [];
+  const processReferenceRecords = (records) => {
+    for (let index = processed; index < records.length; index += 1) {
+      const candidate = records[index];
+      if (candidate?.type === "performance.terminal-frame-fence") frameFences.ingest(candidate);
+      if (candidate?.type === "performance.input-fence") inputFenceCount += 1;
+      if (candidate?.type === "performance.terminal-resource-sample") {
+        latestResource = candidate;
+        resourceCount += 1;
+      }
+    }
+    processed = records.length;
+  };
+  const processLifecycleRecords = (records) => {
+    for (let index = lifecycleProcessed; index < records.length; index += 1) {
+      const candidate = records[index];
+      if (
+        candidate?.phase === "terminal-host-focus-claim-attempt" &&
+        Number.isSafeInteger(candidate?.claimOrdinal) &&
+        candidate.claimOrdinal >= 1
+      ) {
+        authorityActivityCount += 1;
+        authorityActivityEvents.push(
+          Object.freeze({
+            ordinal: candidate.claimOrdinal,
+            surface: "opentui",
+            kind: "focus",
+            outcome: "ok",
+            operationOrdinal: null,
+            dimensionsHmac: null,
+          }),
+        );
+        if (authorityActivityEvents.length > 64) authorityActivityEvents.shift();
+      }
+    }
+    lifecycleProcessed = records.length;
+  };
+  const drainBindingSourcesOnce = () => {
+    processReferenceRecords(reader.read());
+    processLifecycleRecords(lifecycleReader.read());
+    return frameFences;
+  };
+  const drain = () => {
+    do {
+      processReferenceRecords(reader.read());
+    } while (!reader.snapshot().caughtUp);
+    do {
+      daemonReader.read();
+    } while (!daemonReader.snapshot().caughtUp);
+    do {
+      processLifecycleRecords(lifecycleReader.read());
+    } while (!lifecycleReader.snapshot().caughtUp);
+    return frameFences;
+  };
+  return Object.freeze({
+    reader,
+    daemonReader,
+    lifecycleReader,
+    drainBindingSourcesOnce,
+    drain,
+    inputFenceCount: () => inputFenceCount,
+    resourceSnapshot: () => Object.freeze({ count: resourceCount, record: latestResource }),
+    authorityActivitySnapshot: () =>
+      Object.freeze({
+        count: Math.min(authorityActivityCount, 0xffff_ffff),
+        overflow: authorityActivityCount > authorityActivityEvents.length,
+        events: Object.freeze([...authorityActivityEvents]),
+        geometrySettlements: Object.freeze([]),
+      }),
+    close: () => {
+      reader.close();
+      daemonReader.close();
+      lifecycleReader.close();
+    },
+  });
+}
+
+function latestCard5TuiCanonical(stream, semanticPaneId) {
+  return stream.drain().latest(semanticPaneId);
+}
+
+function card5EvidenceHmac(domain, value, evidenceKey) {
+  return createHmac("sha256", Buffer.from(evidenceKey, "hex"))
+    .update(`${domain}\0${value}`)
+    .digest("hex");
+}
+
+async function invokeCard5TuiHostFocusControl({
+  state,
+  action,
+  expected,
+  evidenceKey,
+  timeoutMs = 1_000,
+}) {
+  const path = state?.tui?.hostFocusControlPath;
+  if (
+    !["blur", "focus"].includes(action) ||
+    typeof path !== "string" ||
+    !path.startsWith("/") ||
+    !/^[0-9a-f]{64}$/u.test(evidenceKey ?? "") ||
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < 1 ||
+    timeoutMs > 2_000
+  )
+    throw new Error("Card5 host-focus control contract was invalid");
+  const nonce = randomBytes(16).toString("hex");
+  const unsigned = Object.freeze({ version: 1, action, nonce, expected });
+  const request = Object.freeze({
+    ...unsigned,
+    authHmac: card5EvidenceHmac(
+      "host-focus-control-request",
+      JSON.stringify(unsigned),
+      evidenceKey,
+    ),
+  });
+  const response = await new Promise((resolveResponse, rejectResponse) => {
+    const socket = createConnection(path);
+    let bytes = Buffer.alloc(0);
+    let settled = false;
+    let timer = null;
+    const finish = (error, value = null) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== null) clearTimeout(timer);
+      socket.destroy();
+      if (error) rejectResponse(error);
+      else resolveResponse(value);
+    };
+    timer = setTimeout(() => finish(new Error("Card5 host-focus control timed out")), timeoutMs);
+    socket.once("connect", () => socket.write(`${JSON.stringify(request)}\n`));
+    socket.on("data", (chunk) => {
+      bytes = Buffer.concat([bytes, chunk]);
+      if (bytes.length > 8_192)
+        return finish(new Error("Card5 host-focus control response exceeded its cap"));
+      const newline = bytes.indexOf(0x0a);
+      if (newline < 0) return;
+      if (newline !== bytes.length - 1)
+        return finish(new Error("Card5 host-focus control response was malformed"));
+      try {
+        finish(null, JSON.parse(bytes.subarray(0, newline).toString("utf8")));
+      } catch (error) {
+        finish(error);
+      }
+    });
+    socket.once("error", (error) => finish(error));
+    socket.once("end", () => {
+      if (!settled) finish(new Error("Card5 host-focus control ended without a receipt"));
+    });
+  });
+  const exactKeys = (value, keys) =>
+    value !== null &&
+    typeof value === "object" &&
+    Object.keys(value).sort().join("\0") === [...keys].sort().join("\0");
+  if (response?.status === "stale" || response?.status === "rejected") return response;
+  if (
+    !exactKeys(response, [
+      "version",
+      "status",
+      "action",
+      "nonceHmac",
+      "diagnosticEpoch",
+      "state",
+      "bindingHmac",
+      "receiptHmac",
+    ]) ||
+    response.version !== 1 ||
+    !["changed", "no-op"].includes(response.status) ||
+    response.action !== action ||
+    response.nonceHmac !== card5EvidenceHmac("host-focus-control-nonce", nonce, evidenceKey) ||
+    response.state !== (action === "focus" ? "foreground" : "background") ||
+    response.bindingHmac !==
+      card5EvidenceHmac("host-focus-control-binding", JSON.stringify(expected), evidenceKey) ||
+    (response.status === "changed"
+      ? !Number.isSafeInteger(response.diagnosticEpoch) || response.diagnosticEpoch < 1
+      : response.diagnosticEpoch !== null)
+  )
+    throw new Error("Card5 host-focus control receipt was invalid");
+  const unsignedReceipt = {
+    version: response.version,
+    status: response.status,
+    action: response.action,
+    nonceHmac: response.nonceHmac,
+    diagnosticEpoch: response.diagnosticEpoch,
+    state: response.state,
+    bindingHmac: response.bindingHmac,
+  };
+  const expectedReceiptHmac = card5EvidenceHmac(
+    "host-focus-control-receipt",
+    JSON.stringify(unsignedReceipt),
+    evidenceKey,
+  );
+  if (
+    !/^[0-9a-f]{64}$/u.test(response.receiptHmac) ||
+    !timingSafeEqual(Buffer.from(response.receiptHmac), Buffer.from(expectedReceiptHmac))
+  )
+    throw new Error("Card5 host-focus control receipt authentication failed");
+  return Object.freeze({ ...response });
+}
+
+function card5CorrelationRecord(kind, ordinal, value, identities, evidenceKey) {
+  const clients = ["opentui", "web-a", "web-b"];
+  const sourceBindings = clients.map((client) => {
+    const identity = identities?.[client];
+    if (
+      !identity ||
+      !/^[0-9a-f]{64}$/u.test(identity.paneHmac ?? "") ||
+      !/^[0-9a-f]{64}$/u.test(identity.processHmac ?? "") ||
+      !/^[0-9a-f]{64}$/u.test(identity.clockHmac ?? "")
+    ) {
+      throw new Error(`Card5 correlation source ${client} is incomplete`);
+    }
+    const bindingHmac = card5EvidenceHmac(
+      "source-binding",
+      [client, identity.paneHmac, identity.processHmac, identity.clockHmac].join("\0"),
+      evidenceKey,
+    );
+    return Object.freeze({
+      client,
+      paneHmac: identity.paneHmac,
+      processHmac: identity.processHmac,
+      clockHmac: identity.clockHmac,
+      bindingHmac,
+    });
+  });
+  const valueHmac = card5EvidenceHmac("value", JSON.stringify(value), evidenceKey);
+  return Object.freeze({
+    kind,
+    ordinal,
+    valueHmac,
+    sourceBindings: Object.freeze(sourceBindings),
+    recordHmac: card5EvidenceHmac(
+      "record",
+      [kind, ordinal, valueHmac, ...sourceBindings.map(({ bindingHmac }) => bindingHmac)].join(
+        "\0",
+      ),
+      evidenceKey,
+    ),
+  });
+}
+
+function sealCrossClientCorrelation(proof, evidenceKey) {
+  return sealCard5CorrelationEvidence(
+    [
+      ["host-open", proof.namespace],
+      ["canonical-before", proof.initial],
+      ["authority-handoff", proof.handoff],
+      ["slow-isolation", proof.slowWeb],
+      ["generation-replacement", proof.restart],
+      ["canonical-after", proof.after],
+      ["native-observer", proof.nativeObserver],
+    ].map(([kind, value], ordinal) => {
+      const identities = ordinal >= 4 ? proof.after.clients : proof.initial.clients;
+      return card5CorrelationRecord(kind, ordinal, value, identities, evidenceKey);
+    }),
+    evidenceKey,
+  );
+}
+
+function sealDaemonRestartCorrelation(hosts, before, replacement, after, evidenceKey) {
+  return sealCard5CorrelationEvidence(
+    [
+      ["host-open", hosts],
+      ["canonical-before", before],
+      ["generation-replacement", replacement],
+      ["canonical-after", after],
+    ].map(([kind, value], ordinal) =>
+      card5CorrelationRecord(
+        kind,
+        ordinal,
+        value,
+        ordinal >= 2 ? after.clients : before.clients,
+        evidenceKey,
+      ),
+    ),
+    evidenceKey,
+    ["host-open", "canonical-before", "generation-replacement", "canonical-after"],
+  );
+}
+
+async function waitForCard5ProductionClientConvergence(
+  state,
+  hosts,
+  evidenceKey,
+  tuiEvidence,
+  timeoutMs,
+  { expectedPane = undefined, onStablePane = undefined, postHandoff = null } = {},
+) {
+  if (expectedPane !== undefined && (typeof expectedPane !== "string" || expectedPane.length < 1)) {
+    throw new TypeError("Card5 expected convergence pane is malformed");
+  }
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 5_000) {
+    throw new TypeError("Card5 convergence timeout is malformed");
+  }
+  if (
+    postHandoff !== null &&
+    (!postHandoff ||
+      !["web", "opentui"].includes(postHandoff.expectedSurface) ||
+      typeof postHandoff.expectedClientId !== "string" ||
+      !Number.isSafeInteger(postHandoff.grantRevision) ||
+      !/^[0-9a-f]{64}$/u.test(postHandoff.inputProofHmac ?? "") ||
+      !postHandoff.expectedBinding ||
+      typeof postHandoff.expectedTuiClientId !== "string")
+  )
+    throw new TypeError("Card5 post-handoff convergence contract is malformed");
+  const startedAt = performance.now();
+  const deadline = startedAt + timeoutMs;
+  let previousDigest = null;
+  let previousAuthorityRevision = null;
+  let attempts = 0;
+  let observedClients = 0;
+  let stableSamples = 0;
+  let queuePeak = null;
+  let divergenceAxes = null;
+  let focusDivergenceAxes = null;
+  let authorityActivityStorm = false;
+  const candidateSummaries = [];
+  const focusCandidates = [];
+  const authorityViews = [];
+  while (performance.now() < deadline) {
+    attempts += 1;
+    const observed = await observeCard5WithinDeadline(
+      () =>
+        Promise.all([
+          observeCard5WebCanonical(hosts.chromiumPage, evidenceKey, hosts.chromiumProcessIdentity),
+          observeCard5WebCanonical(hosts.electronPage, evidenceKey, hosts.electronProcessIdentity),
+        ]),
+      { deadline },
+    );
+    if (observed.status !== "ok" || performance.now() >= deadline) break;
+    const [webA, webB] = observed.value;
+    const tuiAuthorityActivity = tuiEvidence.authorityActivitySnapshot();
+    authorityActivityStorm =
+      [webA, webB].some(
+        (web) => !card5AuthorityActivityWithinCap(web?.workspaceEvidence?.authorityActivity),
+      ) || !card5AuthorityActivityWithinCap(tuiAuthorityActivity);
+    if (authorityActivityStorm) {
+      authorityViews.push(
+        Object.freeze({
+          a: null,
+          b: null,
+          activityA: webA?.workspaceEvidence?.authorityActivity ?? null,
+          activityB: webB?.workspaceEvidence?.authorityActivity ?? null,
+          activityTui: tuiAuthorityActivity,
+          semanticEqual: false,
+          revisionMonotonic: true,
+        }),
+      );
+      break;
+    }
+    const sharedPaneId = exactSharedCard5WebPane([webA, webB]);
+    const exactPaneId =
+      sharedPaneId !== null &&
+      (expectedPane === undefined || matchesExpectedCard5WebPane([webA, webB], expectedPane))
+        ? sharedPaneId
+        : null;
+    if (performance.now() >= deadline) break;
+    const tui = exactPaneId === null ? null : latestCard5TuiCanonical(tuiEvidence, exactPaneId);
+    if (performance.now() >= deadline) break;
+    const canonicalAssessmentA =
+      tui === null
+        ? null
+        : assessCard5TuiFocusedPane({
+            records: tuiEvidence.reader.read(),
+            expectedPane: exactPaneId,
+            expectedCanonical: tui,
+            expectedAuthority:
+              postHandoff === null ? webA?.workspaceEvidence?.authority : undefined,
+            evidenceKey,
+          });
+    const canonicalAssessmentB =
+      tui === null
+        ? null
+        : assessCard5TuiFocusedPane({
+            records: tuiEvidence.reader.read(),
+            expectedPane: exactPaneId,
+            expectedCanonical: tui,
+            expectedAuthority:
+              postHandoff === null ? webB?.workspaceEvidence?.authority : undefined,
+            evidenceKey,
+          });
+    const authorityAssessmentA =
+      postHandoff === null
+        ? assessCard5TuiFocusAuthority(
+            webA?.workspaceEvidence?.authority,
+            tui?.generation,
+            evidenceKey,
+            webA?.workspaceEvidence?.authorityRecords,
+          )
+        : assessCard5PostHandoffAuthority({
+            authority: webA?.workspaceEvidence?.authority,
+            authorityRecords: webA?.workspaceEvidence?.authorityRecords,
+            generation: tui?.generation,
+            expectedClientId: postHandoff.expectedClientId,
+            expectedSurface: postHandoff.expectedSurface,
+            grantRevision: postHandoff.grantRevision,
+            inputProofHmac: postHandoff.inputProofHmac,
+            evidenceKey,
+          });
+    const authorityAssessmentB =
+      postHandoff === null
+        ? assessCard5TuiFocusAuthority(
+            webB?.workspaceEvidence?.authority,
+            tui?.generation,
+            evidenceKey,
+            webB?.workspaceEvidence?.authorityRecords,
+          )
+        : assessCard5PostHandoffAuthority({
+            authority: webB?.workspaceEvidence?.authority,
+            authorityRecords: webB?.workspaceEvidence?.authorityRecords,
+            generation: tui?.generation,
+            expectedClientId: postHandoff.expectedClientId,
+            expectedSurface: postHandoff.expectedSurface,
+            grantRevision: postHandoff.grantRevision,
+            inputProofHmac: postHandoff.inputProofHmac,
+            evidenceKey,
+          });
+    const bindingAssessment =
+      postHandoff === null || tui === null
+        ? null
+        : selectCard5TuiHostFocusBinding({
+            lifecycleRecords: tuiEvidence.lifecycleReader.read(),
+            referenceRecords: tuiEvidence.reader.read(),
+            expectedCanonical: tui,
+            expectedAuthority: webA?.workspaceEvidence?.authority,
+            expectedWorkspaceName: state.workspace,
+            expectedTuiClientId: postHandoff.expectedTuiClientId,
+            evidenceKey,
+          });
+    const postBindingExact =
+      postHandoff === null ||
+      (bindingAssessment?.passed === true &&
+        bindingAssessment.binding.rendererEpoch === postHandoff.expectedBinding.rendererEpoch &&
+        bindingAssessment.binding.clientGeneration ===
+          postHandoff.expectedBinding.clientGeneration &&
+        bindingAssessment.binding.bindingEpoch === postHandoff.expectedBinding.bindingEpoch);
+    const focusAssessmentA =
+      canonicalAssessmentA?.passed === true && authorityAssessmentA.valid && postBindingExact
+        ? Object.freeze({
+            ...canonicalAssessmentA,
+            candidate: Object.freeze({
+              ...canonicalAssessmentA.candidate,
+              authoritySequenceHmac: authorityAssessmentA.evidence.authoritySequenceHmac,
+            }),
+            evidence: Object.freeze({
+              ...canonicalAssessmentA.evidence,
+              ...(postHandoff === null ? {} : authorityAssessmentA.evidence),
+            }),
+          })
+        : canonicalAssessmentA;
+    const focusAssessmentB =
+      canonicalAssessmentB?.passed === true && authorityAssessmentB.valid && postBindingExact
+        ? Object.freeze({
+            ...canonicalAssessmentB,
+            candidate: Object.freeze({
+              ...canonicalAssessmentB.candidate,
+              authoritySequenceHmac: authorityAssessmentB.evidence.authoritySequenceHmac,
+            }),
+            evidence: Object.freeze({
+              ...canonicalAssessmentB.evidence,
+              ...(postHandoff === null ? {} : authorityAssessmentB.evidence),
+            }),
+          })
+        : canonicalAssessmentB;
+    const focusCanonicalCrossbound =
+      focusAssessmentA?.passed === true &&
+      focusAssessmentB?.passed === true &&
+      authorityAssessmentA.valid &&
+      authorityAssessmentB.valid &&
+      postBindingExact &&
+      focusAssessmentA.evidence.presentationHmac === focusAssessmentB.evidence.presentationHmac &&
+      focusAssessmentA.evidence.frameHmac === focusAssessmentB.evidence.frameHmac &&
+      focusAssessmentA.evidence.canonicalHmac === focusAssessmentB.evidence.canonicalHmac;
+    const authorityMerge = mergeCard5SemanticAuthorityEvidence(
+      focusAssessmentA?.evidence,
+      focusAssessmentB?.evidence,
+      previousAuthorityRevision,
+    );
+    const currentAuthorityRevision = authorityMerge.evidence?.authorityRevision ?? null;
+    authorityViews.push(
+      Object.freeze({
+        a: authorityAssessmentA,
+        b: authorityAssessmentB,
+        activityA: webA?.workspaceEvidence?.authorityActivity ?? null,
+        activityB: webB?.workspaceEvidence?.authorityActivity ?? null,
+        activityTui: tuiAuthorityActivity,
+        semanticEqual: authorityMerge.status === "exact",
+        revisionMonotonic: authorityMerge.status !== "revision-regressed",
+      }),
+    );
+    if (authorityViews.length > 2) authorityViews.shift();
+    const focusAssessment =
+      focusAssessmentA === null
+        ? null
+        : focusCanonicalCrossbound && authorityMerge.status === "exact"
+          ? Object.freeze({
+              ...focusAssessmentA,
+              evidence: authorityMerge.evidence,
+            })
+          : Object.freeze({
+              passed: false,
+              reason: "focus-presentation-mismatch",
+              evidence: null,
+              axes: Object.freeze({ ...focusAssessmentA.axes, authority: true }),
+              candidate: focusAssessmentA.candidate,
+            });
+    if (performance.now() >= deadline) break;
+    focusDivergenceAxes = focusAssessment?.axes ?? null;
+    if (focusAssessment?.candidate) {
+      focusCandidates.push(focusAssessment.candidate);
+      if (focusCandidates.length > 2) focusCandidates.shift();
+    }
+    observedClients = [tui, webA, webB].filter(Boolean).length;
+    const queueCandidates = [webA?.queuePeak, webB?.queuePeak].filter(Number.isSafeInteger);
+    queuePeak = queueCandidates.length > 0 ? Math.max(...queueCandidates) : null;
+    if (performance.now() >= deadline) break;
+    if (tui && webA && webB && focusAssessment?.passed === true) {
+      previousAuthorityRevision = currentAuthorityRevision;
+      const connectElapsedMs = Math.max(1, performance.now() - startedAt);
+      const currentTuiAuthorityClient = webA?.workspaceEvidence?.authority?.clients?.find(
+        ({ surface }) => surface === "opentui",
+      );
+      const currentTuiAuthorityOwners = webA?.workspaceEvidence?.authority?.owners;
+      const observations = [
+        sealCard5ProductionClientObservation(
+          {
+            client: "opentui",
+            host: "opentui",
+            ...tui,
+            workspaceName: state.workspace,
+            processIdentity: tui.processId,
+            presence: postHandoff === null ? "foreground" : currentTuiAuthorityClient?.state,
+            passive:
+              postHandoff === null
+                ? false
+                : currentTuiAuthorityOwners?.input !== currentTuiAuthorityClient?.clientId &&
+                  currentTuiAuthorityOwners?.focus !== currentTuiAuthorityClient?.clientId,
+            geometryOwner:
+              postHandoff === null
+                ? true
+                : currentTuiAuthorityOwners?.geometry === currentTuiAuthorityClient?.clientId,
+            queueCurrent: 0,
+            queuePeak: 0,
+            queueCap: 32,
+            connectElapsedMs,
+          },
+          evidenceKey,
+        ),
+        sealCard5ProductionClientObservation(
+          {
+            client: "web-a",
+            host: "chromium",
+            ...webA,
+            queueCap: 32,
+            connectElapsedMs,
+          },
+          evidenceKey,
+        ),
+        sealCard5ProductionClientObservation(
+          {
+            client: "web-b",
+            host: "electron",
+            ...webB,
+            queueCap: 32,
+            connectElapsedMs,
+          },
+          evidenceKey,
+        ),
+      ];
+      if (performance.now() >= deadline) break;
+      const stability = advanceCard5FocusedConvergenceStability(
+        previousDigest,
+        observations,
+        focusAssessment.evidence,
+        evidenceKey,
+      );
+      if (performance.now() >= deadline) break;
+      divergenceAxes = stability.axes;
+      if (stability.candidate) {
+        candidateSummaries.push(stability.candidate);
+        if (candidateSummaries.length > 2) candidateSummaries.shift();
+      }
+      stableSamples = stability.stable ? 2 : stability.digest === null ? 0 : 1;
+      if (stability.stable) {
+        if (performance.now() >= deadline) break;
+        onStablePane?.(exactPaneId);
+        if (performance.now() >= deadline) break;
+        return Object.freeze({
+          generation: observations[0].generation,
+          semanticPaneId: exactPaneId,
+          focusedPaneEvidence: focusAssessment.evidence,
+          clients: Object.freeze(
+            Object.fromEntries(observations.map((entry) => [entry.client, entry])),
+          ),
+          attempts,
+          postHandoffAuthorityEvidence:
+            postHandoff === null
+              ? null
+              : Object.freeze({
+                  mode: "post-handoff",
+                  relation: focusAssessment.evidence.relation,
+                  grantRevision: focusAssessment.evidence.grantRevision,
+                  currentRevision: focusAssessment.evidence.authorityRevision,
+                  releaseRevision: focusAssessment.evidence.releaseRevision,
+                  relationHmac: focusAssessment.evidence.authorityRelationHmac,
+                  sequenceHmac: focusAssessment.evidence.authoritySequenceHmac,
+                  inputProofHmac: focusAssessment.evidence.inputProofHmac,
+                  authorityHmac: focusAssessment.evidence.authorityHmac,
+                  authorityOwnerHmac: focusAssessment.evidence.authorityOwnerHmac,
+                  authorityTopologyHmac: focusAssessment.evidence.authorityTopologyHmac,
+                  authorityMutationHmac: focusAssessment.evidence.authorityMutationHmac,
+                  duplicateCount: focusAssessment.evidence.authorityDuplicateCount,
+                }),
+        });
+      }
+      previousDigest = stability.digest;
+    } else {
+      previousDigest = null;
+      if (currentAuthorityRevision !== null) {
+        previousAuthorityRevision = currentAuthorityRevision;
+      }
+    }
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) break;
+    await new Promise((resolveWait) => setTimeout(resolveWait, Math.min(40, remaining)));
+  }
+  const error = new Error("Card5 production clients did not reach two-sample canonical stability");
+  error.observation = boundedCard5HostFailureObservation({
+    operation: "card5-production-host-observation",
+    reason: authorityActivityStorm ? "authority-activity-storm" : "stability-timeout",
+    attempts: Math.min(attempts, 4_096),
+    elapsedMs: Math.min(Math.round(performance.now() - startedAt), 60_000),
+    observedClients,
+    stableSamples,
+    queuePeak,
+    divergenceAxes,
+    focusDivergenceAxes,
+    focusCandidates,
+    authorityViews,
+    candidateSummaries,
+  });
+  throw error;
+}
+
+function card5Percentile(samples, percentile) {
+  if (!Array.isArray(samples) || samples.length === 0) return null;
+  const ordered = [...samples].sort((left, right) => left - right);
+  return ordered[Math.min(ordered.length - 1, Math.ceil(ordered.length * percentile) - 1)];
+}
+
+async function driveCard5AuthorityHandoff(state, daemon, hosts) {
+  const expectedPane = hosts.expectedPane;
+  const acceptedFocusEvidence = hosts.focusedPaneEvidence;
+  const acceptedAuthorityEvidence = Object.freeze({
+    authorityHmac: acceptedFocusEvidence?.authorityHmac ?? null,
+    authorityOwnerHmac: acceptedFocusEvidence?.authorityOwnerHmac ?? null,
+    authorityRevision: acceptedFocusEvidence?.authorityRevision ?? null,
+    authorityTopologyHmac: acceptedFocusEvidence?.authorityTopologyHmac ?? null,
+    authorityMutationHmac: acceptedFocusEvidence?.authorityMutationHmac ?? null,
+  });
+  await exactAttachablePane(daemon, state.session, expectedPane);
+  const observeTmuxPaneBinding = () =>
+    selectExactCard5TmuxPaneBinding(activeWindowPaneGeometry(state), expectedPane, state.session);
+  const capturedTmuxPaneBinding = observeTmuxPaneBinding();
+  const failTmuxPaneBinding = () => {
+    const error = new Error("Card5 exact semantic-to-tmux pane binding changed");
+    error.observation = Object.freeze({
+      operation: "card5-tmux-semantic-pane-capture",
+      reason: "topology-changed",
+      expectedBinding: capturedTmuxPaneBinding !== null,
+      currentBinding: false,
+    });
+    return error;
+  };
+  if (capturedTmuxPaneBinding === null) throw failTmuxPaneBinding();
+  const requireExpectedWeb = (observed) => {
+    if (observed?.semanticPaneId !== expectedPane) {
+      throw new Error("Card5 Web terminal switched semantic panes during authority handoff");
+    }
+    return observed;
+  };
+  const clickExactSurface = async (page, input = null) => {
+    const activationDeadline = input === null ? performance.now() + 3_000 : input.deadline;
+    const processIdentity =
+      page === hosts.chromiumPage
+        ? hosts.chromiumProcessIdentity
+        : page === hosts.electronPage
+          ? hosts.electronProcessIdentity
+          : null;
+    if (processIdentity === null) {
+      throw new Error("Card5 Web page identity was unavailable for terminal focus");
+    }
+    return activateCard5ExactTerminalSurface({
+      mode: input === null ? "focus" : "input",
+      page,
+      keyHex: evidenceKey,
+      processIdentity,
+      expectedPane,
+      expectedPaneHmac: card5EvidenceHmac("pane", expectedPane, evidenceKey),
+      deadline: activationDeadline,
+      ...(input === null
+        ? {}
+        : {
+            inputText: input.text,
+            inputSha256: input.sha256,
+            inputHostRole:
+              page === hosts.chromiumPage
+                ? "chromium"
+                : page === hosts.electronPage
+                  ? "electron"
+                  : null,
+            inputOrdinal: input.ordinal,
+          }),
+    });
+  };
+  const driveExactTuiFocus = async (stateValue, expected) => {
+    try {
+      return await invokeCard5TuiHostFocusControl({
+        state,
+        action: stateValue === "blur" ? "blur" : "focus",
+        expected,
+        evidenceKey,
+      });
+    } catch (cause) {
+      const error = new Error(`Card5 OpenTUI ${stateValue} control receipt was unavailable`, {
+        cause,
+      });
+      error.observation = boundedCard5TuiFocusFailureObservation({
+        reason:
+          stateValue === "blur" ? "focus-blur-receipt-invalid" : "focus-focus-receipt-invalid",
+        axes: { authority: true },
+      });
+      throw error;
+    }
+  };
+  const steps = [
+    async (marker) => {
+      return JSON.parse(
+        tuiCommand(state, [
+          "input",
+          JSON.stringify({ version: 1, kind: "paste", text: `${marker}\n` }),
+        ]),
+      );
+    },
+    async (marker, inputDeadline) => {
+      return clickExactSurface(hosts.chromiumPage, {
+        text: `${marker}\n`,
+        sha256: createHash("sha256").update(`${marker}\n`).digest("hex"),
+        deadline: inputDeadline,
+        ordinal: 1,
+      });
+    },
+    async (marker, inputDeadline) => {
+      return clickExactSurface(hosts.electronPage, {
+        text: `${marker}\n`,
+        sha256: createHash("sha256").update(`${marker}\n`).digest("hex"),
+        deadline: inputDeadline,
+        ordinal: 2,
+      });
+    },
+  ];
+  const evidenceKey = hosts.evidenceKey;
+  let retainedAuthorityEvidence = null;
+  let initialNullAuthorityEvidence = null;
+  const retainedAuthorityDeadline = performance.now() + 1_000;
+  while (performance.now() < retainedAuthorityDeadline) {
+    const retainedObservation = await observeCard5WithinDeadline(
+      () =>
+        Promise.all([
+          observeCard5WebCanonical(hosts.chromiumPage, evidenceKey, hosts.chromiumProcessIdentity),
+          observeCard5WebCanonical(hosts.electronPage, evidenceKey, hosts.electronProcessIdentity),
+        ]),
+      { deadline: retainedAuthorityDeadline },
+    );
+    if (retainedObservation.status !== "ok") break;
+    const [authorityWebA, authorityWebB] = retainedObservation.value;
+    requireExpectedWeb(authorityWebA);
+    requireExpectedWeb(authorityWebB);
+    const retainedActivityWithinCap = [authorityWebA, authorityWebB].every((web) =>
+      card5AuthorityActivityWithinCap(web?.workspaceEvidence?.authorityActivity),
+    );
+    const sealedA = sealCard5TuiFocusAuthority(
+      authorityWebA?.workspaceEvidence?.authority,
+      authorityWebA?.generation,
+      evidenceKey,
+    );
+    const sealedB = sealCard5TuiFocusAuthority(
+      authorityWebB?.workspaceEvidence?.authority,
+      authorityWebB?.generation,
+      evidenceKey,
+    );
+    const retainedMerge = mergeCard5SemanticAuthorityEvidence(
+      sealedA,
+      sealedB,
+      acceptedAuthorityEvidence.authorityRevision,
+    );
+    if (
+      retainedMerge.status === "exact" &&
+      retainedActivityWithinCap &&
+      retainedMerge.evidence.authorityHmac === acceptedAuthorityEvidence.authorityHmac &&
+      retainedMerge.evidence.authorityOwnerHmac === acceptedAuthorityEvidence.authorityOwnerHmac &&
+      retainedMerge.evidence.authorityTopologyHmac ===
+        acceptedAuthorityEvidence.authorityTopologyHmac
+    ) {
+      retainedAuthorityEvidence = retainedMerge.evidence;
+      break;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+  }
+  if (retainedAuthorityEvidence === null) {
+    const error = new Error("Card5 retained focus authority changed before handoff");
+    error.observation = boundedCard5TuiFocusFailureObservation({
+      reason: "focus-convergence-changed",
+      axes: { authority: true },
+    });
+    throw error;
+  }
+  const transitions = [];
+  const ownerReleaseEvidence = [];
+  for (const [ordinal, step] of steps.entries()) {
+    const marker = `CARD5_HANDOFF_${ordinal}_${randomBytes(4).toString("hex")}`;
+    const priorOwnerPage = ordinal === 2 ? hosts.chromiumPage : hosts.electronPage;
+    await clickExactSurface(priorOwnerPage);
+    let before = null;
+    const ownerDeadline = Date.now() + 1_000;
+    while (Date.now() < ownerDeadline) {
+      before = requireExpectedWeb(
+        await observeCard5WebCanonical(
+          hosts.chromiumPage,
+          evidenceKey,
+          hosts.chromiumProcessIdentity,
+        ),
+      );
+      if (before?.workspaceEvidence?.authority?.owners?.input !== null) break;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+    }
+    let beforeOwner;
+    let authorityBoundary = before?.workspaceEvidence?.authorityRecordCount ?? null;
+    const ownerObservation = await observeCard5WithinDeadline(
+      () =>
+        Promise.all([
+          observeCard5WebCanonical(hosts.chromiumPage, evidenceKey, hosts.chromiumProcessIdentity),
+          observeCard5WebCanonical(hosts.electronPage, evidenceKey, hosts.electronProcessIdentity),
+        ]),
+      { deadline: performance.now() + 1_000 },
+    );
+    if (ownerObservation.status !== "ok") {
+      throw new Error("Card5 current authority owner tuple was unavailable");
+    }
+    const ownerSamples = ownerObservation.value.map(requireExpectedWeb);
+    const ownerAuthorities = ownerSamples.map((sample) => sample?.workspaceEvidence?.authority);
+    const ownerAuthority = ownerAuthorities[0];
+    const canonicalOwnerTuple = (authority) =>
+      authority === null || authority === undefined
+        ? null
+        : JSON.stringify({
+            generation: authority.generation,
+            session: authority.session,
+            revision: authority.revision,
+            owners: {
+              input: authority.owners?.input,
+              focus: authority.owners?.focus,
+              geometry: authority.owners?.geometry,
+            },
+            nativeGeometryYieldUntilMs: authority.nativeGeometryYieldUntilMs,
+            clients: Array.isArray(authority.clients)
+              ? [...authority.clients]
+                  .map((client) => ({
+                    clientId: client.clientId,
+                    surface: client.surface,
+                    state: client.state,
+                    connectedRevision: client.connectedRevision,
+                    activityRevision: client.activityRevision,
+                  }))
+                  .sort((left, right) => left.clientId.localeCompare(right.clientId))
+              : null,
+          });
+    const canonicalOwnerAuthority = canonicalOwnerTuple(ownerAuthority);
+    if (
+      ownerAuthority === null ||
+      ownerAuthority === undefined ||
+      canonicalOwnerAuthority === null ||
+      canonicalOwnerAuthority !== canonicalOwnerTuple(ownerAuthorities[1]) ||
+      ownerAuthority.generation !== ownerSamples[0].generation ||
+      ownerAuthority.session !== ownerAuthorities[1]?.session ||
+      !Number.isSafeInteger(ownerAuthority.revision) ||
+      ownerAuthority.revision < retainedAuthorityEvidence.authorityRevision ||
+      !["input", "focus", "geometry"].every((authority) => {
+        const owner = ownerAuthority.owners?.[authority];
+        return (
+          owner === null ||
+          ownerAuthority.clients?.filter(({ clientId }) => clientId === owner).length === 1
+        );
+      })
+    ) {
+      const error = new Error("Card5 current authority owner tuple diverged across Web views");
+      error.observation = boundedCard5TuiFocusFailureObservation({
+        reason: "focus-owner-tuple-mismatch",
+        axes: { authority: true },
+      });
+      throw error;
+    }
+    const ownerTuiClients = ownerAuthority.clients.filter(({ surface }) => surface === "opentui");
+    if (ownerTuiClients.length !== 1) {
+      throw new Error("Card5 current authority owner tuple had no exact OpenTUI client");
+    }
+    const ownerTuiClientId = ownerTuiClients[0].clientId;
+    const tuiOwnedAuthorities = ["input", "focus", "geometry"].filter(
+      (authority) => ownerAuthority.owners[authority] === ownerTuiClientId,
+    );
+    beforeOwner = ownerAuthority.owners.input;
+    authorityBoundary = ownerSamples[0]?.workspaceEvidence?.authorityRecordCount ?? null;
+    if (beforeOwner === null || !Number.isSafeInteger(authorityBoundary)) {
+      throw new Error("Card5 current authority owner tuple had no exact input owner boundary");
+    }
+    let tuiFocus = null;
+    let tuiInputMark = null;
+    let postBlurAuthorityEvidence = null;
+    let postBlurAuthorityGrant = null;
+    let tuiFocusTransition = null;
+    let focusTransitionMark = null;
+    let focusTransitionReceipts = null;
+    let baselineClaimOrdinal = null;
+    let blurTransitionAssessment = null;
+    let blurTransitionMark = null;
+    let priorBlurRecords = [];
+    let blurReceipt = null;
+    let hostFocusBinding = null;
+    let hostFocusBindingHmac = null;
+    let currentFocusBeforeBlur = null;
+    let focusReferenceMark;
+    const releaseTransactionDeadline = performance.now() + 2_000;
+    const tuiCanonicalBeforeInput =
+      ordinal === 0 || tuiOwnedAuthorities.length > 0
+        ? latestCard5TuiCanonical(hosts.tuiEvidence, expectedPane)
+        : null;
+    if (ordinal === 0 || tuiOwnedAuthorities.length > 0) {
+      currentFocusBeforeBlur =
+        ordinal === 0
+          ? null
+          : assessCard5TuiFocusedPane({
+              records: hosts.tuiEvidence.reader.recordsThrough(hosts.tuiEvidence.reader.mark()),
+              expectedPane,
+              expectedCanonical: tuiCanonicalBeforeInput,
+              evidenceKey,
+            });
+      const canonicalHmac =
+        tuiCanonicalBeforeInput === null
+          ? null
+          : card5EvidenceHmac(
+              "focused-canonical-identity",
+              [
+                tuiCanonicalBeforeInput.generation,
+                tuiCanonicalBeforeInput.incarnation,
+                tuiCanonicalBeforeInput.revision,
+                tuiCanonicalBeforeInput.canonicalStateHash,
+                tuiCanonicalBeforeInput.cols,
+                tuiCanonicalBeforeInput.rows,
+              ].join("\0"),
+              evidenceKey,
+            );
+      if (
+        !acceptedFocusEvidence ||
+        tuiCanonicalBeforeInput === null ||
+        card5EvidenceHmac("pane", expectedPane, evidenceKey) !== acceptedFocusEvidence.paneHmac ||
+        card5EvidenceHmac("process", tuiCanonicalBeforeInput.processId, evidenceKey) !==
+          acceptedFocusEvidence.processHmac ||
+        card5EvidenceHmac("clock", tuiCanonicalBeforeInput.clockId, evidenceKey) !==
+          acceptedFocusEvidence.clockHmac ||
+        tuiCanonicalBeforeInput.generation !== ownerAuthority.generation ||
+        typeof tuiCanonicalBeforeInput.incarnation !== "string" ||
+        !Number.isSafeInteger(tuiCanonicalBeforeInput.revision) ||
+        tuiCanonicalBeforeInput.revision < acceptedFocusEvidence.revision ||
+        !/^[0-9a-f]{16}$/u.test(tuiCanonicalBeforeInput.canonicalStateHash ?? "") ||
+        !Number.isSafeInteger(tuiCanonicalBeforeInput.cols) ||
+        tuiCanonicalBeforeInput.cols < 1 ||
+        !Number.isSafeInteger(tuiCanonicalBeforeInput.rows) ||
+        tuiCanonicalBeforeInput.rows < 1 ||
+        (ordinal === 0 &&
+          (canonicalHmac !== acceptedFocusEvidence.canonicalHmac ||
+            tuiCanonicalBeforeInput.revision !== acceptedFocusEvidence.revision ||
+            tuiCanonicalBeforeInput.cols !== acceptedFocusEvidence.cols ||
+            tuiCanonicalBeforeInput.rows !== acceptedFocusEvidence.rows)) ||
+        (ordinal > 0 &&
+          (!currentFocusBeforeBlur?.passed ||
+            currentFocusBeforeBlur.evidence.paneHmac !== acceptedFocusEvidence.paneHmac ||
+            currentFocusBeforeBlur.evidence.processHmac !== acceptedFocusEvidence.processHmac ||
+            currentFocusBeforeBlur.evidence.clockHmac !== acceptedFocusEvidence.clockHmac ||
+            currentFocusBeforeBlur.evidence.canonicalHmac !== canonicalHmac))
+      ) {
+        throw new Error("Card5 OpenTUI focused-pane convergence proof changed");
+      }
+      const bindingDeadline = Math.min(releaseTransactionDeadline, performance.now() + 1_000);
+      let bindingSelection = null;
+      let bindingCandidate = null;
+      let bindingStableSamples = 0;
+      let referenceTailStable = false;
+      let lifecycleTailStable = false;
+      while (performance.now() < bindingDeadline) {
+        const bindingFrames = hosts.tuiEvidence.drainBindingSourcesOnce();
+        if (performance.now() >= bindingDeadline) break;
+        const referenceBefore = hosts.tuiEvidence.reader.snapshot();
+        const lifecycleBefore = hosts.tuiEvidence.lifecycleReader.snapshot();
+        const currentCanonical = bindingFrames.latest(expectedPane);
+        if (performance.now() >= bindingDeadline) break;
+        const observedBinding = await observeCard5WithinDeadline(
+          () =>
+            Promise.all([
+              observeCard5WebCanonical(
+                hosts.chromiumPage,
+                evidenceKey,
+                hosts.chromiumProcessIdentity,
+              ),
+              observeCard5WebCanonical(
+                hosts.electronPage,
+                evidenceKey,
+                hosts.electronProcessIdentity,
+              ),
+            ]),
+          { deadline: bindingDeadline },
+        );
+        if (observedBinding.status !== "ok" || performance.now() >= bindingDeadline) break;
+        const currentWeb = observedBinding.value.map(requireExpectedWeb);
+        const currentAuthorities = currentWeb.map((sample) => sample?.workspaceEvidence?.authority);
+        const currentAuthorityTuple = canonicalOwnerTuple(currentAuthorities[0]);
+        hosts.tuiEvidence.drainBindingSourcesOnce();
+        if (performance.now() >= bindingDeadline) break;
+        const referenceAfter = hosts.tuiEvidence.reader.snapshot();
+        const lifecycleAfter = hosts.tuiEvidence.lifecycleReader.snapshot();
+        referenceTailStable =
+          hosts.tuiEvidence.reader.confirmCaughtUp() &&
+          referenceBefore.offset === referenceAfter.offset &&
+          referenceBefore.recordCount === referenceAfter.recordCount;
+        lifecycleTailStable =
+          hosts.tuiEvidence.lifecycleReader.confirmCaughtUp() &&
+          lifecycleBefore.offset === lifecycleAfter.offset &&
+          lifecycleBefore.recordCount === lifecycleAfter.recordCount;
+        const sourcesStable = referenceTailStable && lifecycleTailStable;
+        const currentExact =
+          sourcesStable &&
+          currentCanonical !== null &&
+          currentCanonical.semanticPaneId === expectedPane &&
+          currentCanonical.processId === tuiCanonicalBeforeInput.processId &&
+          currentCanonical.clockId === tuiCanonicalBeforeInput.clockId &&
+          currentCanonical.generation === tuiCanonicalBeforeInput.generation &&
+          currentCanonical.incarnation === tuiCanonicalBeforeInput.incarnation &&
+          currentCanonical.revision === tuiCanonicalBeforeInput.revision &&
+          currentCanonical.canonicalStateHash === tuiCanonicalBeforeInput.canonicalStateHash &&
+          currentAuthorityTuple !== null &&
+          currentAuthorityTuple === canonicalOwnerTuple(currentAuthorities[1]) &&
+          currentAuthorityTuple === canonicalOwnerAuthority;
+        const selected = selectCard5TuiHostFocusBinding({
+          lifecycleRecords: hosts.tuiEvidence.lifecycleReader.recordsThrough(
+            hosts.tuiEvidence.lifecycleReader.mark(),
+          ),
+          referenceRecords: hosts.tuiEvidence.reader.recordsThrough(
+            hosts.tuiEvidence.reader.mark(),
+          ),
+          expectedCanonical: currentCanonical,
+          expectedAuthority: currentAuthorities[0],
+          expectedWorkspaceName: state.workspace,
+          expectedTuiClientId: ownerTuiClientId,
+          evidenceKey,
+        });
+        const candidate = JSON.stringify({
+          currentExact,
+          source: selected.source,
+          binding: selected.binding,
+          authority: currentAuthorityTuple,
+          referenceOffset: referenceAfter.offset,
+          referenceRecords: referenceAfter.recordCount,
+          lifecycleOffset: lifecycleAfter.offset,
+          lifecycleRecords: lifecycleAfter.recordCount,
+        });
+        if (performance.now() >= bindingDeadline) break;
+        if (currentExact && selected.passed) {
+          bindingStableSamples = candidate === bindingCandidate ? bindingStableSamples + 1 : 1;
+          bindingCandidate = candidate;
+          bindingSelection = selected;
+          if (bindingStableSamples >= 2) break;
+        } else {
+          bindingStableSamples = 0;
+          bindingCandidate = null;
+          bindingSelection = selected;
+        }
+        const remaining = bindingDeadline - performance.now();
+        if (remaining <= 0) break;
+        await new Promise((resolveWait) => setTimeout(resolveWait, Math.min(5, remaining)));
+      }
+      blurTransitionMark = hosts.tuiEvidence.lifecycleReader.mark();
+      priorBlurRecords = hosts.tuiEvidence.lifecycleReader.recordsThrough(blurTransitionMark);
+      if (!bindingSelection?.passed || bindingStableSamples < 2) {
+        const error = new Error("Card5 OpenTUI host-focus control binding was unavailable");
+        error.observation = Object.freeze({
+          ...(bindingSelection?.observation ?? {
+            bindingSource: null,
+            reason: "binding-source-unavailable",
+            gateCount: 0,
+            gateOverflow: false,
+            gateSchemaMismatch: false,
+            gateProcessMismatch: false,
+            gateClockMismatch: false,
+            gateCapability: false,
+            gateDetail: false,
+            gatePath: false,
+            gateRoot: false,
+            gateKey: false,
+            gateTrace: false,
+            gateEnabled: false,
+            relevantCount: 0,
+            overflow: false,
+            processMismatch: false,
+            clockMismatch: false,
+            generationMismatch: false,
+            sessionMismatch: false,
+            workspaceMismatch: false,
+            clientMismatch: false,
+            epochMismatch: false,
+            clientGenerationMismatch: false,
+            diagnosticEpochMismatch: false,
+            statusMismatch: false,
+            presenceMismatch: false,
+            revisionRelationMismatch: false,
+            receiptMismatch: false,
+            ownerMismatch: false,
+            authorityOutcome: Object.freeze({
+              input: "missing-record",
+              focus: "missing-record",
+              geometry: "missing-record",
+            }),
+            allTuiOwners: null,
+            recordHmac: null,
+          }),
+          referenceTailStable,
+          lifecycleTailStable,
+          stableSamples: bindingStableSamples,
+        });
+        throw error;
+      }
+      hostFocusBinding = Object.freeze({
+        generation: ownerAuthority.generation,
+        runtimeSession: ownerAuthority.session,
+        workspaceName: state.workspace,
+        semanticPaneId: expectedPane,
+        clientId: ownerTuiClientId,
+        rendererEpoch: bindingSelection.binding.rendererEpoch,
+        clientGeneration: bindingSelection.binding.clientGeneration,
+        bindingEpoch: bindingSelection.binding.bindingEpoch,
+        processId: tuiCanonicalBeforeInput.processId,
+      });
+      hostFocusBindingHmac = card5EvidenceHmac(
+        "host-focus-control-binding",
+        JSON.stringify(hostFocusBinding),
+        evidenceKey,
+      );
+      if (ordinal === 0) focusTransitionMark = blurTransitionMark;
+      baselineClaimOrdinal = hosts.tuiEvidence.lifecycleReader
+        .recordsThrough(blurTransitionMark)
+        .filter(
+          (record) =>
+            record?.phase === "terminal-host-focus-claim-attempt" &&
+            Number.isSafeInteger(record?.claimOrdinal),
+        )
+        .reduce((latest, record) => Math.max(latest, record.claimOrdinal), 0);
+      blurReceipt = await driveExactTuiFocus("blur", hostFocusBinding);
+      if (ordinal === 0) focusTransitionReceipts = { blur: blurReceipt };
+    }
+    const expectedWebReleases = ["input", "focus", "geometry"].filter((authority) => {
+      const owner = ownerAuthority.owners[authority];
+      return ownerAuthority.clients.find(({ clientId }) => clientId === owner)?.surface === "web";
+    });
+    const releaseAssessmentFor = (results) =>
+      assessCard5WebAuthorityRelease({
+        results,
+        expectedAuthorities: expectedWebReleases,
+        workspaceHmac: card5EvidenceHmac("release-workspace", state.workspace, evidenceKey),
+        generationHmac: card5EvidenceHmac(
+          "release-generation",
+          ownerAuthority.generation,
+          evidenceKey,
+        ),
+        runtimeSessionHmac: card5EvidenceHmac(
+          "release-runtime-session",
+          ownerAuthority.session,
+          evidenceKey,
+        ),
+        paneHmac: card5EvidenceHmac("release-pane", expectedPane, evidenceKey),
+        requestHmacs: ownerSamples
+          .map((sample) => sample.runtimeReplacement?.currentLifecycleRequest?.requestHmac)
+          .filter((value) => typeof value === "string"),
+        clientHmacs: Object.freeze(
+          Object.fromEntries(
+            ["input", "focus", "geometry"].map((authority) => [
+              authority,
+              card5EvidenceHmac("authority-client", ownerAuthority.owners[authority], evidenceKey),
+            ]),
+          ),
+        ),
+      });
+    const releaseObservation = await observeCard5WithinDeadline(
+      () =>
+        Promise.all(
+          [
+            ["chromium", hosts.chromiumPage],
+            ["electron", hosts.electronPage],
+          ].map(([pageRole, page]) =>
+            releaseCard5WebOwnedAuthorities(page, {
+              workspaceName: state.workspace,
+              generation: ownerAuthority.generation,
+              runtimeSession: ownerAuthority.session,
+              semanticPaneId: expectedPane,
+              evidenceKey,
+              pageHmac: card5EvidenceHmac("release-page", pageRole, evidenceKey),
+            }),
+          ),
+        ),
+      { deadline: releaseTransactionDeadline },
+    );
+    if (releaseObservation.status !== "ok") {
+      const error = new Error("Card5 exact current Web authority release timed out");
+      error.observation = boundedCard5TuiFocusFailureObservation({
+        reason: "focus-web-release-invalid",
+        axes: { authority: true },
+        webRelease: releaseAssessmentFor([]).observation,
+      });
+      throw error;
+    }
+    const releaseResults = releaseObservation.value;
+    const webReleaseReceipts = releaseResults.flatMap((result) => result?.receipts ?? []);
+    const releaseAssessment = releaseAssessmentFor(releaseResults);
+    if (
+      releaseResults.some(({ status }) => status !== "exact") ||
+      webReleaseReceipts.length !== expectedWebReleases.length ||
+      expectedWebReleases.some(
+        (authority) =>
+          webReleaseReceipts.filter((receipt) => receipt.authority === authority).length !== 1,
+      ) ||
+      webReleaseReceipts.some(
+        (receipt) =>
+          receipt.status !== "released" ||
+          !Number.isSafeInteger(receipt.operationOrdinal) ||
+          receipt.operationOrdinal < 1 ||
+          receipt.afterRevision <= receipt.beforeRevision ||
+          receipt.workspaceHmac !==
+            card5EvidenceHmac("release-workspace", state.workspace, evidenceKey) ||
+          receipt.generationHmac !==
+            card5EvidenceHmac("release-generation", ownerAuthority.generation, evidenceKey) ||
+          receipt.runtimeSessionHmac !==
+            card5EvidenceHmac("release-runtime-session", ownerAuthority.session, evidenceKey) ||
+          receipt.paneHmac !== card5EvidenceHmac("release-pane", expectedPane, evidenceKey) ||
+          !ownerSamples.some(
+            (sample) =>
+              receipt.requestHmac ===
+              sample.runtimeReplacement?.currentLifecycleRequest?.requestHmac,
+          ) ||
+          receipt.clientHmac !==
+            card5EvidenceHmac(
+              "authority-client",
+              ownerAuthority.owners[receipt.authority],
+              evidenceKey,
+            ),
+      )
+    ) {
+      const error = new Error("Card5 exact current Web authority release did not settle");
+      error.observation = boundedCard5TuiFocusFailureObservation({
+        reason: "focus-web-release-invalid",
+        axes: { authority: true },
+        webRelease: releaseAssessment.observation,
+      });
+      throw error;
+    }
+    const expectedReleaseMap = ["input", "focus", "geometry"]
+      .filter((authority) => ownerAuthority.owners[authority] !== null)
+      .map((authority) => {
+        const clientId = ownerAuthority.owners[authority];
+        const surface = ownerAuthority.clients.find(
+          (client) => client.clientId === clientId,
+        )?.surface;
+        const webReceipt = webReleaseReceipts.find((receipt) => receipt.authority === authority);
+        return Object.freeze({
+          authority,
+          surface,
+          clientHmac: card5EvidenceHmac("authority-client", clientId, evidenceKey),
+          requestHmac: surface === "web" ? (webReceipt?.requestHmac ?? null) : null,
+        });
+      });
+    const expectedReleaseMapHmac = card5EvidenceHmac(
+      "handoff-expected-release-map",
+      JSON.stringify(expectedReleaseMap),
+      evidenceKey,
+    );
+    const expectedTuiReleaseCount = expectedReleaseMap.filter(
+      ({ surface }) => surface === "opentui",
+    ).length;
+    const ownerReleaseSeal = card5EvidenceHmac(
+      "handoff-owner-release-seal",
+      `${canonicalOwnerAuthority}\0${expectedReleaseMapHmac}\0${expectedReleaseMap.length}\0${expectedWebReleases.length}\0${expectedTuiReleaseCount}`,
+      evidenceKey,
+    );
+    let nullOwner = null;
+    let nullOwnerObserved = false;
+    let nullAuthorityEvidence = null;
+    let nullAuthoritySnapshot = null;
+    let nullRuntimeSession = null;
+    const nullCandidates = [];
+    const blurCandidates = [];
+    let stableRelease = Object.freeze({ candidate: null, samples: 0, passed: false });
+    while (performance.now() < releaseTransactionDeadline) {
+      hosts.tuiEvidence.drain();
+      const blurRecords =
+        blurTransitionMark === null
+          ? []
+          : hosts.tuiEvidence.lifecycleReader.recordsSince(blurTransitionMark);
+      blurTransitionAssessment =
+        expectedTuiReleaseCount === 0
+          ? Object.freeze({ passed: true, reason: null, evidence: null })
+          : assessCard5TuiFocusTransition({
+              records: blurRecords,
+              priorBlurRecords,
+              receipts: { blur: blurReceipt },
+              expectedCanonical: tuiCanonicalBeforeInput,
+              expectedBindingHmac: hostFocusBindingHmac,
+              expectedWorkspaceName: state.workspace,
+              expectedRendererEpoch: hostFocusBinding.rendererEpoch,
+              expectedClientGeneration: hostFocusBinding.clientGeneration,
+              expectedRuntimeSession: ownerAuthority.session,
+              expectedAuthorityOwners: ownerAuthority.owners,
+              expectedTuiClientId: ownerTuiClientId,
+              minimumBlurAuthorityRevision: retainedAuthorityEvidence.authorityRevision,
+              minimumFocusAuthorityRevision: retainedAuthorityEvidence.authorityRevision,
+              baselineClaimOrdinal,
+              evidenceKey,
+              stage: "blur",
+            });
+      const blurObservation = boundedCard5TuiBlurTransitionObservation({
+        assessment: blurTransitionAssessment,
+        records: blurRecords,
+        receipt: blurReceipt,
+        evidenceKey,
+      });
+      blurCandidates.push(blurObservation);
+      if (blurCandidates.length > 2) blurCandidates.shift();
+      if (performance.now() >= releaseTransactionDeadline) break;
+      const observedNull = await observeCard5WithinDeadline(
+        () =>
+          Promise.all([
+            observeCard5WebCanonical(
+              hosts.chromiumPage,
+              evidenceKey,
+              hosts.chromiumProcessIdentity,
+            ),
+            observeCard5WebCanonical(
+              hosts.electronPage,
+              evidenceKey,
+              hosts.electronProcessIdentity,
+            ),
+          ]),
+        { deadline: releaseTransactionDeadline },
+      );
+      if (observedNull.status !== "ok") break;
+      if (performance.now() >= releaseTransactionDeadline) break;
+      const samples = observedNull.value;
+      samples.forEach(requireExpectedWeb);
+      const authorities = samples.map((sample) => sample?.workspaceEvidence?.authority);
+      nullOwner = authorities[0]?.owners?.input ?? null;
+      const releaseRevisions = [
+        ...(blurTransitionAssessment?.evidence?.blurReceiptRevision === undefined ||
+        blurTransitionAssessment?.evidence?.blurReceiptRevision === null
+          ? []
+          : [blurTransitionAssessment.evidence.blurReceiptRevision]),
+        ...webReleaseReceipts.map(({ afterRevision }) => afterRevision),
+      ];
+      const nullAssessment = assessCard5NullAuthorityPair({
+        authorities,
+        generations: samples.map((sample) => sample?.generation),
+        minimumRevision: retainedAuthorityEvidence.authorityRevision,
+        releaseRevisions,
+        evidenceKey,
+      });
+      nullCandidates.push(nullAssessment.observation);
+      if (nullCandidates.length > 2) nullCandidates.shift();
+      const candidate = JSON.stringify({
+        blur: blurObservation,
+        null: nullAssessment.observation,
+      });
+      stableRelease = advanceCard5AuthorityReleaseStability(
+        stableRelease,
+        candidate,
+        blurTransitionAssessment.passed && nullAssessment.passed,
+      );
+      nullOwnerObserved = stableRelease.passed;
+      if (nullOwnerObserved) {
+        nullAuthorityEvidence = nullAssessment.evidence;
+        nullAuthoritySnapshot = authorities[0];
+        nullRuntimeSession = authorities[0].session;
+        if (ordinal === 0) initialNullAuthorityEvidence = nullAssessment.evidence;
+      }
+      if (nullOwnerObserved) break;
+      const remaining = releaseTransactionDeadline - performance.now();
+      if (remaining <= 0) break;
+      await new Promise((resolveWait) => setTimeout(resolveWait, Math.min(10, remaining)));
+    }
+    if (
+      !nullOwnerObserved ||
+      nullAuthorityEvidence === null ||
+      nullAuthoritySnapshot === null ||
+      typeof nullRuntimeSession !== "string" ||
+      performance.now() >= releaseTransactionDeadline
+    ) {
+      const error = new Error("Card5 authority release transaction did not reach a stable null");
+      error.observation = boundedCard5TuiFocusFailureObservation({
+        reason: "focus-release-unsettled",
+        axes: { authority: true },
+      });
+      error.observation = Object.freeze({
+        ...error.observation,
+        blurCandidates: Object.freeze([...blurCandidates]),
+        nullCandidates: Object.freeze([...nullCandidates]),
+      });
+      throw error;
+    }
+    if (expectedTuiReleaseCount > 0) {
+      const tuiCanonicalAfterBlur = latestCard5TuiCanonical(hosts.tuiEvidence, expectedPane);
+      const currentFocusAfterBlur =
+        ordinal === 0
+          ? null
+          : assessCard5TuiFocusedPane({
+              records: hosts.tuiEvidence.reader.recordsThrough(hosts.tuiEvidence.reader.mark()),
+              expectedPane,
+              expectedCanonical: tuiCanonicalAfterBlur,
+              evidenceKey,
+            });
+      if (
+        tuiCanonicalAfterBlur === null ||
+        [
+          "generation",
+          "incarnation",
+          "processId",
+          "clockId",
+          "revision",
+          "canonicalStateHash",
+          "cols",
+          "rows",
+        ].some((field) => tuiCanonicalAfterBlur[field] !== tuiCanonicalBeforeInput[field]) ||
+        (ordinal > 0 &&
+          (!currentFocusAfterBlur?.passed ||
+            [
+              "paneHmac",
+              "processHmac",
+              "clockHmac",
+              "canonicalHmac",
+              "focusStateHmac",
+              "revision",
+              "cols",
+              "rows",
+              "viewportCols",
+              "viewportRows",
+            ].some(
+              (field) =>
+                currentFocusAfterBlur.evidence[field] !== currentFocusBeforeBlur.evidence[field],
+            )))
+      ) {
+        throw new Error("Card5 OpenTUI canonical state changed across explicit blur release");
+      }
+    }
+    const authorityReleaseEvidence = Object.freeze({
+      ownerTupleHmac: card5EvidenceHmac(
+        "handoff-owner-tuple",
+        canonicalOwnerAuthority,
+        evidenceKey,
+      ),
+      ownerRevision: ownerAuthority.revision,
+      ownerReleaseSeal,
+      expectedReleaseMapHmac,
+      expectedReleaseCount: expectedReleaseMap.length,
+      expectedWebReleaseCount: expectedWebReleases.length,
+      expectedTuiReleaseCount,
+      tuiBlurSettlementHmac: blurTransitionAssessment?.evidence?.blurSettlementHmac ?? null,
+      tuiBlurRevision: blurTransitionAssessment?.evidence?.blurReceiptRevision ?? null,
+      tuiBlurClientHmac: blurTransitionAssessment?.evidence?.clientHmac ?? null,
+      receipts: Object.freeze(webReleaseReceipts.map((receipt) => Object.freeze({ ...receipt }))),
+    });
+    ownerReleaseEvidence.push(
+      Object.freeze({
+        ownerTupleHmac: authorityReleaseEvidence.ownerTupleHmac,
+        ownerReleaseSeal,
+        expectedReleaseMapHmac,
+        expectedReleaseCount: expectedReleaseMap.length,
+        expectedWebReleaseCount: expectedWebReleases.length,
+        expectedTuiReleaseCount,
+        tuiBlurSettlementHmac: authorityReleaseEvidence.tuiBlurSettlementHmac,
+        tuiBlurRevision: authorityReleaseEvidence.tuiBlurRevision,
+        tuiBlurClientHmac: authorityReleaseEvidence.tuiBlurClientHmac,
+        expectedReleases: Object.freeze(expectedReleaseMap),
+      }),
+    );
+    hosts.tuiEvidence.drain();
+    const inputFencesBefore = hosts.tuiEvidence.inputFenceCount();
+    const inputSha256 = createHash("sha256").update(`${marker}\n`).digest("hex");
+    if (ordinal === 0) {
+      hosts.tuiEvidence.drain();
+      focusReferenceMark = hosts.tuiEvidence.reader.mark();
+      const focusReceipt = await driveExactTuiFocus("focus", hostFocusBinding);
+      let transitionAssessment = null;
+      const focusTransitionDeadline = performance.now() + 1_000;
+      while (performance.now() < focusTransitionDeadline) {
+        hosts.tuiEvidence.drain();
+        transitionAssessment = assessCard5TuiFocusTransition({
+          records: hosts.tuiEvidence.lifecycleReader.recordsSince(focusTransitionMark),
+          receipts: { ...focusTransitionReceipts, focus: focusReceipt },
+          expectedCanonical: tuiCanonicalBeforeInput,
+          priorBlurRecords,
+          expectedBindingHmac: hostFocusBindingHmac,
+          expectedWorkspaceName: state.workspace,
+          expectedRendererEpoch: hostFocusBinding.rendererEpoch,
+          expectedClientGeneration: hostFocusBinding.clientGeneration,
+          expectedRuntimeSession: nullRuntimeSession,
+          expectedAuthorityOwners: ownerAuthority.owners,
+          expectedTuiClientId: ownerTuiClientId,
+          minimumBlurAuthorityRevision: retainedAuthorityEvidence.authorityRevision,
+          minimumFocusAuthorityRevision: nullAuthorityEvidence.authorityRevision,
+          baselineClaimOrdinal,
+          evidenceKey,
+          stage: "focus",
+        });
+        if (transitionAssessment.passed) break;
+        await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+      }
+      if (!transitionAssessment?.passed) {
+        const error = new Error("Card5 OpenTUI explicit focus claim did not settle");
+        error.observation = boundedCard5TuiFocusFailureObservation({
+          reason: transitionAssessment?.reason ?? "focus-claim-lifecycle-invalid",
+          axes: { authority: true },
+        });
+        throw error;
+      }
+      const duplicateFocusReceipt = await driveExactTuiFocus("focus", hostFocusBinding);
+      focusTransitionReceipts = Object.freeze({
+        ...focusTransitionReceipts,
+        focus: focusReceipt,
+        duplicateFocus: duplicateFocusReceipt,
+      });
+      const focusAuthorityDeadline = performance.now() + 1_000;
+      while (performance.now() < focusAuthorityDeadline) {
+        const focusObservation = await observeCard5WithinDeadline(
+          () =>
+            Promise.all([
+              observeCard5WebCanonical(
+                hosts.chromiumPage,
+                evidenceKey,
+                hosts.chromiumProcessIdentity,
+              ),
+              observeCard5WebCanonical(
+                hosts.electronPage,
+                evidenceKey,
+                hosts.electronProcessIdentity,
+              ),
+            ]),
+          { deadline: focusAuthorityDeadline },
+        );
+        if (focusObservation.status !== "ok") break;
+        const [focusedA, focusedB] = focusObservation.value;
+        requireExpectedWeb(focusedA);
+        requireExpectedWeb(focusedB);
+        const sealedA = sealCard5TuiFocusAuthority(
+          focusedA.workspaceEvidence?.authority,
+          tuiCanonicalBeforeInput.generation,
+          evidenceKey,
+        );
+        const sealedB = sealCard5TuiFocusAuthority(
+          focusedB.workspaceEvidence?.authority,
+          tuiCanonicalBeforeInput.generation,
+          evidenceKey,
+        );
+        const exactFocusAuthority =
+          sealedA !== null &&
+          sealedB !== null &&
+          sealedA.authorityHmac === sealedB.authorityHmac &&
+          sealedA.authorityRevision === sealedB.authorityRevision &&
+          sealedA.authorityTopologyHmac === sealedB.authorityTopologyHmac &&
+          sealedA.authorityOwnerHmac === sealedB.authorityOwnerHmac &&
+          sealedA.authorityRevision > retainedAuthorityEvidence.authorityRevision;
+        if (exactFocusAuthority) {
+          const records = (focusedA.workspaceEvidence?.authorityRecords ?? []).filter(
+            ({ ordinal: recordOrdinal }) =>
+              Number.isSafeInteger(authorityBoundary) && recordOrdinal > authorityBoundary,
+          );
+          const nullIndex = records.findIndex(({ inputOwner }) => inputOwner === null);
+          const grant = records.find(
+            ({ inputOwner, revision, clients }, recordIndex) =>
+              recordIndex > nullIndex &&
+              inputOwner !== null &&
+              revision === sealedA.authorityRevision &&
+              clients?.some(
+                ({ clientId, surface }) => clientId === inputOwner && surface === "opentui",
+              ) &&
+              card5EvidenceHmac("focused-authority-owner", inputOwner, evidenceKey) ===
+                sealedA.authorityOwnerHmac,
+          );
+          if (nullIndex >= 0 && grant) {
+            postBlurAuthorityEvidence = sealedA;
+            postBlurAuthorityGrant = grant;
+            break;
+          }
+        }
+        await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+      }
+      if (postBlurAuthorityEvidence === null) {
+        const error = new Error("Card5 OpenTUI did not acquire exact input and focus authority");
+        error.observation = boundedCard5TuiFocusFailureObservation({
+          reason: "focus-authority-unowned",
+          axes: { authority: true },
+        });
+        throw error;
+      }
+      const retainedFocusDeadline = releaseTransactionDeadline;
+      let retainedFocusAssessment = null;
+      let retainedFocusStability = Object.freeze({ candidate: null, samples: 0, passed: false });
+      let retainedFocusMark = null;
+      while (performance.now() < retainedFocusDeadline) {
+        const retainedFrames = hosts.tuiEvidence.drainBindingSourcesOnce();
+        if (performance.now() >= retainedFocusDeadline) break;
+        const referenceBefore = hosts.tuiEvidence.reader.snapshot();
+        const lifecycleBefore = hosts.tuiEvidence.lifecycleReader.snapshot();
+        const candidateMark = hosts.tuiEvidence.reader.mark();
+        const currentCanonical = retainedFrames.latest(expectedPane);
+        retainedFocusAssessment = assessCard5TuiRetainedFocus({
+          records: hosts.tuiEvidence.reader.recordsSince(focusReferenceMark),
+          expectedPane,
+          expectedCanonical: tuiCanonicalBeforeInput,
+          acceptedFocusEvidence,
+          expectedDiagnosticEpoch: focusReceipt.diagnosticEpoch,
+          expectedRendererEpoch: hostFocusBinding.rendererEpoch,
+          evidenceKey,
+        });
+        if (performance.now() >= retainedFocusDeadline) break;
+        const observed = await observeCard5WithinDeadline(
+          () =>
+            Promise.all([
+              observeCard5WebCanonical(
+                hosts.chromiumPage,
+                evidenceKey,
+                hosts.chromiumProcessIdentity,
+              ),
+              observeCard5WebCanonical(
+                hosts.electronPage,
+                evidenceKey,
+                hosts.electronProcessIdentity,
+              ),
+            ]),
+          { deadline: retainedFocusDeadline },
+        );
+        if (observed.status !== "ok" || performance.now() >= retainedFocusDeadline) break;
+        const currentWeb = observed.value.map(requireExpectedWeb);
+        const currentAuthorities = currentWeb.map((sample) => sample?.workspaceEvidence?.authority);
+        const sealedA = sealCard5TuiFocusAuthority(
+          currentAuthorities[0],
+          tuiCanonicalBeforeInput.generation,
+          evidenceKey,
+        );
+        const sealedB = sealCard5TuiFocusAuthority(
+          currentAuthorities[1],
+          tuiCanonicalBeforeInput.generation,
+          evidenceKey,
+        );
+        const selectedBinding = selectCard5TuiHostFocusBinding({
+          lifecycleRecords: hosts.tuiEvidence.lifecycleReader.recordsThrough(
+            hosts.tuiEvidence.lifecycleReader.mark(),
+          ),
+          referenceRecords: hosts.tuiEvidence.reader.recordsThrough(candidateMark),
+          expectedCanonical: currentCanonical,
+          expectedAuthority: currentAuthorities[0],
+          expectedWorkspaceName: state.workspace,
+          expectedTuiClientId: ownerTuiClientId,
+          evidenceKey,
+        });
+        hosts.tuiEvidence.drainBindingSourcesOnce();
+        if (performance.now() >= retainedFocusDeadline) break;
+        const referenceAfter = hosts.tuiEvidence.reader.snapshot();
+        const lifecycleAfter = hosts.tuiEvidence.lifecycleReader.snapshot();
+        const tailsStable =
+          hosts.tuiEvidence.reader.confirmCaughtUp() &&
+          hosts.tuiEvidence.lifecycleReader.confirmCaughtUp() &&
+          referenceBefore.offset === referenceAfter.offset &&
+          referenceBefore.recordCount === referenceAfter.recordCount &&
+          lifecycleBefore.offset === lifecycleAfter.offset &&
+          lifecycleBefore.recordCount === lifecycleAfter.recordCount;
+        const authorityStable =
+          sealedA !== null &&
+          sealedB !== null &&
+          sealedA.authorityHmac === postBlurAuthorityEvidence.authorityHmac &&
+          sealedA.authorityHmac === sealedB.authorityHmac &&
+          sealedA.authorityRevision === postBlurAuthorityEvidence.authorityRevision &&
+          sealedA.authorityRevision === sealedB.authorityRevision &&
+          sealedA.authorityTopologyHmac === postBlurAuthorityEvidence.authorityTopologyHmac &&
+          sealedA.authorityTopologyHmac === sealedB.authorityTopologyHmac &&
+          sealedA.authorityOwnerHmac === postBlurAuthorityEvidence.authorityOwnerHmac &&
+          sealedA.authorityOwnerHmac === sealedB.authorityOwnerHmac;
+        const bindingStable =
+          selectedBinding.passed &&
+          selectedBinding.binding.rendererEpoch === hostFocusBinding.rendererEpoch &&
+          selectedBinding.binding.clientGeneration === hostFocusBinding.clientGeneration &&
+          selectedBinding.binding.bindingEpoch === hostFocusBinding.bindingEpoch;
+        const canonicalStable =
+          currentCanonical !== null &&
+          currentCanonical.semanticPaneId === expectedPane &&
+          currentCanonical.processId === tuiCanonicalBeforeInput.processId &&
+          currentCanonical.clockId === tuiCanonicalBeforeInput.clockId &&
+          currentCanonical.generation === tuiCanonicalBeforeInput.generation &&
+          currentCanonical.incarnation === tuiCanonicalBeforeInput.incarnation &&
+          currentCanonical.revision === tuiCanonicalBeforeInput.revision &&
+          currentCanonical.canonicalStateHash === tuiCanonicalBeforeInput.canonicalStateHash &&
+          currentCanonical.cols === tuiCanonicalBeforeInput.cols &&
+          currentCanonical.rows === tuiCanonicalBeforeInput.rows;
+        const qualified =
+          retainedFocusAssessment.passed &&
+          tailsStable &&
+          authorityStable &&
+          bindingStable &&
+          canonicalStable;
+        const candidate = JSON.stringify({
+          focus: retainedFocusAssessment.candidate,
+          authorityHmac: sealedA?.authorityHmac ?? null,
+          authorityRevision: sealedA?.authorityRevision ?? null,
+          authorityTopologyHmac: sealedA?.authorityTopologyHmac ?? null,
+          bindingSource: selectedBinding.source,
+          rendererEpoch: selectedBinding.binding?.rendererEpoch ?? null,
+          clientGeneration: selectedBinding.binding?.clientGeneration ?? null,
+          bindingEpoch: selectedBinding.binding?.bindingEpoch ?? null,
+          canonicalRevision: currentCanonical?.revision ?? null,
+          canonicalHashHmac:
+            currentCanonical === null
+              ? null
+              : card5EvidenceHmac(
+                  "retained-canonical",
+                  currentCanonical.canonicalStateHash,
+                  evidenceKey,
+                ),
+          referenceOffset: referenceAfter.offset,
+          referenceRecordCount: referenceAfter.recordCount,
+          lifecycleOffset: lifecycleAfter.offset,
+          lifecycleRecordCount: lifecycleAfter.recordCount,
+        });
+        if (performance.now() >= retainedFocusDeadline) break;
+        retainedFocusStability = advanceCard5RetainedFocusStability(
+          retainedFocusStability,
+          candidate,
+          qualified,
+        );
+        if (retainedFocusStability.passed) {
+          retainedFocusMark = candidateMark;
+          break;
+        } else if (qualified) {
+          retainedFocusMark = candidateMark;
+        } else {
+          retainedFocusMark = null;
+        }
+        const remaining = retainedFocusDeadline - performance.now();
+        if (remaining <= 0) break;
+        await new Promise((resolveWait) => setTimeout(resolveWait, Math.min(5, remaining)));
+      }
+      if (
+        !retainedFocusAssessment?.passed ||
+        !retainedFocusStability.passed ||
+        retainedFocusMark === null
+      ) {
+        const error = new Error("Card5 retained OpenTUI focus state changed before handoff input");
+        error.observation = boundedCard5TuiFocusFailureObservation({
+          reason: "focus-convergence-changed",
+          axes: retainedFocusAssessment?.axes,
+          candidate: retainedFocusAssessment?.candidate,
+        });
+        throw error;
+      }
+      tuiInputMark = retainedFocusMark;
+      tuiFocus = Object.freeze({
+        canonical: tuiCanonicalBeforeInput,
+        evidence: retainedFocusAssessment.evidence,
+      });
+    }
+    if (ordinal !== 0) hosts.tuiEvidence.drain();
+    const inputDeadline = performance.now() + 3_000;
+    const tuiInputReceipt = await step(marker, inputDeadline);
+    const receiptBoundary = ordinal === 0 ? null : tuiInputReceipt?.receiptBoundary;
+    if (
+      ordinal > 0 &&
+      (!Number.isSafeInteger(receiptBoundary) ||
+        !Number.isSafeInteger(tuiInputReceipt?.receiptOrdinal) ||
+        typeof tuiInputReceipt?.authorityClientId !== "string" ||
+        !/^[0-9a-f]{64}$/u.test(tuiInputReceipt?.requestHmac ?? ""))
+    ) {
+      const error = new Error("Card5 exact Web activation receipt changed before handoff join");
+      error.observation = Object.freeze({
+        operation: "card5-web-terminal-input",
+        reason: "activation-receipt-invalid",
+      });
+      throw error;
+    }
+    const deadline = Date.now() + 3_000;
+    let markerPresent = false;
+    while (Date.now() < deadline) {
+      const captureResult = runExactCard5TmuxPaneCapture({
+        latchedBinding: capturedTmuxPaneBinding,
+        observeBinding: observeTmuxPaneBinding,
+        capture: (captureArgv) =>
+          execFileSync("tmux", ["-S", state.runtimeNamespace.tmuxSocketPath, ...captureArgv], {
+            encoding: "utf8",
+            maxBuffer: 4 * 1_024 * 1_024,
+          }),
+      });
+      if (captureResult.status !== "ok") throw failTmuxPaneBinding();
+      const body = captureResult.value;
+      if (body.includes(marker)) {
+        markerPresent = true;
+        break;
+      }
+      await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+    }
+    let after;
+    let authorityRecords = [];
+    let grantRecord = null;
+    let exactInputReceipt = null;
+    let tuiInputTrace = null;
+    let authorityJoinObservation = null;
+    let authorityPreconditionObservation = null;
+    let authorityPreconditionHistory = null;
+    const authorityDeadline = Date.now() + 3_000;
+    while (Date.now() < authorityDeadline) {
+      const observationRemainingMs = authorityDeadline - Date.now();
+      if (observationRemainingMs <= 0) break;
+      const webObservationDeadline = performance.now() + observationRemainingMs;
+      const currentWebResults = await Promise.all([
+        observeCard5WithinDeadline(
+          () =>
+            observeCard5WebAuthorityReceipt(
+              hosts.chromiumPage,
+              evidenceKey,
+              hosts.chromiumProcessIdentity,
+            ),
+          { deadline: webObservationDeadline },
+        ),
+        observeCard5WithinDeadline(
+          () =>
+            observeCard5WebAuthorityReceipt(
+              hosts.electronPage,
+              evidenceKey,
+              hosts.electronProcessIdentity,
+            ),
+          { deadline: webObservationDeadline },
+        ),
+      ]);
+      const currentWebObservations = currentWebResults.map(({ status, value }) =>
+        status === "ok" && value?.semanticPaneId === expectedPane ? value : null,
+      );
+      after = currentWebObservations[0] ?? after;
+      const allAuthorityRecords = after?.workspaceEvidence?.authorityRecords ?? [];
+      authorityRecords = allAuthorityRecords.filter(
+        ({ ordinal: recordOrdinal }) =>
+          Number.isSafeInteger(authorityBoundary) && recordOrdinal > authorityBoundary,
+      );
+      const authorityBoundaryOverflow =
+        Number.isSafeInteger(authorityBoundary) &&
+        allAuthorityRecords.length > 0 &&
+        allAuthorityRecords[0].ordinal > authorityBoundary + 1;
+      let receiptCandidates = [];
+      let rawReceipts = [];
+      let expectedReceiptRequestHmac = null;
+      let expectedWebGrantRecord = null;
+      if (ordinal > 0) {
+        const receiptObservation = currentWebObservations[ordinal === 1 ? 0 : 1];
+        rawReceipts = receiptObservation?.runtimeReplacement?.inputReceipts ?? [];
+        expectedReceiptRequestHmac = ordinal > 0 ? (tuiInputReceipt?.requestHmac ?? null) : null;
+        receiptCandidates = rawReceipts.filter(
+          (receipt) =>
+            Number.isSafeInteger(receiptBoundary) &&
+            receipt.ordinal >= receiptBoundary &&
+            receipt.ordinal === tuiInputReceipt?.receiptOrdinal &&
+            receipt.generation === receiptObservation.generation &&
+            receipt.pane === receiptObservation.semanticPaneId &&
+            receipt.inputSha256 === inputSha256 &&
+            receipt.authorityClientId === tuiInputReceipt?.authorityClientId &&
+            card5EvidenceHmac("request", receipt.requestId, evidenceKey) ===
+              tuiInputReceipt?.requestHmac,
+        );
+        const expectedWebClient =
+          receiptCandidates.length === 1 ? receiptCandidates[0].authorityClientId : null;
+        const currentAuthorities = currentWebObservations.map(
+          (observation) => observation?.workspaceEvidence?.authority,
+        );
+        const currentAuthority = currentAuthorities[0];
+        const currentAuthorityExact =
+          currentAuthority !== null &&
+          currentAuthority !== undefined &&
+          JSON.stringify(currentAuthorities[0]) === JSON.stringify(currentAuthorities[1]) &&
+          expectedWebClient !== null &&
+          ["input", "focus", "geometry"].every(
+            (kind) => currentAuthority.owners?.[kind] === expectedWebClient,
+          ) &&
+          currentAuthority.clients?.some(
+            ({ clientId, surface }) => clientId === expectedWebClient && surface === "web",
+          );
+        if (currentAuthorityExact) {
+          expectedWebGrantRecord = authorityRecords.find(
+            (record) =>
+              record.generation === currentAuthority.generation &&
+              record.session === currentAuthority.session &&
+              record.revision === currentAuthority.revision &&
+              record.nativeGeometryYieldUntilMs === currentAuthority.nativeGeometryYieldUntilMs &&
+              record.inputOwner === currentAuthority.owners.input &&
+              record.focusOwner === currentAuthority.owners.focus &&
+              record.geometryOwner === currentAuthority.owners.geometry &&
+              JSON.stringify(record.clients) === JSON.stringify(currentAuthority.clients),
+          );
+        }
+      }
+      const expectedGrantClient =
+        ordinal === 0
+          ? (postBlurAuthorityGrant?.inputOwner ?? "")
+          : (receiptCandidates[0]?.authorityClientId ?? "");
+      const expectedGrantRecord = ordinal === 0 ? postBlurAuthorityGrant : expectedWebGrantRecord;
+      const expectedGrantRevision = expectedGrantRecord?.revision ?? null;
+      const terminalAuthorityPrecondition = boundedCard5PostInputAuthorityPreconditionObservation({
+        webResults: currentWebResults,
+        receiptPage: ordinal === 0 ? "none" : ordinal === 1 ? "chromium" : "electron",
+        receiptBoundary: receiptBoundary ?? 0,
+        rawReceipts,
+        receiptCandidates,
+        expectedInputSha256: inputSha256,
+        expectedRequestHmac: expectedReceiptRequestHmac,
+        requireReceipt: ordinal > 0,
+        expectedPane,
+        expectedGeneration: nullAuthoritySnapshot.generation,
+        expectedBaselineAuthority: nullAuthoritySnapshot,
+        expectedClientId: expectedGrantClient || null,
+        expectedSurface: ordinal === 0 ? "opentui" : "web",
+        expectedGrantRecord,
+        authorityRecords,
+        authorityBoundary,
+        boundaryOverflow: authorityBoundaryOverflow,
+        evidenceKey,
+      });
+      authorityPreconditionHistory = advanceCard5PostInputAuthorityPreconditionHistory(
+        authorityPreconditionHistory,
+        terminalAuthorityPrecondition,
+        currentWebResults,
+      );
+      authorityPreconditionObservation =
+        authorityPreconditionHistory.lastSuccessful ??
+        authorityPreconditionHistory.firstInformative ??
+        authorityPreconditionHistory.terminal;
+      if (currentWebObservations.some((observation) => observation === null)) {
+        const remaining = authorityDeadline - Date.now();
+        if (remaining <= 0) break;
+        await new Promise((resolveWait) => setTimeout(resolveWait, Math.min(10, remaining)));
+        continue;
+      }
+      const joined = selectCard5PostInputAuthorityJoin({
+        records: authorityRecords,
+        nullRevision: nullAuthorityEvidence.authorityRevision,
+        expectedNullAuthority: nullAuthoritySnapshot,
+        expectedNullEvidence: nullAuthorityEvidence,
+        expectedClientId: expectedGrantClient,
+        expectedSurface: ordinal === 0 ? "opentui" : "web",
+        expectedGrantRevision,
+        expectedGrantRecord,
+        receiptCandidates,
+        requireReceipt: ordinal > 0,
+        boundary: authorityBoundary,
+        boundaryOverflow: authorityBoundaryOverflow,
+        evidenceKey,
+      });
+      grantRecord = joined.grant;
+      exactInputReceipt = joined.receipt;
+      const ordinalZeroGrantExact =
+        ordinal !== 0 ||
+        (grantRecord !== null && postBlurAuthorityGrant !== null && joined.observation.grantExact);
+      authorityJoinObservation = Object.freeze({
+        ...joined.observation,
+        grantExact: joined.observation.grantExact && ordinalZeroGrantExact,
+      });
+      if (joined.passed && ordinalZeroGrantExact) break;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+    }
+    const nullIndex = authorityRecords.findIndex(
+      ({ inputOwner, focusOwner, geometryOwner, revision }) =>
+        inputOwner === null &&
+        focusOwner === null &&
+        geometryOwner === null &&
+        revision === nullAuthorityEvidence.authorityRevision,
+    );
+    const grantIndex = authorityRecords.indexOf(grantRecord);
+    if (
+      grantRecord === null ||
+      grantIndex <= nullIndex ||
+      (ordinal > 0 && exactInputReceipt === null)
+    ) {
+      const error = new Error("Card5 post-input authority grant did not settle exactly");
+      error.observation = Object.freeze({
+        operation: "card5-post-input-authority-join",
+        reason: "post-input-authority-unsettled",
+        precondition: authorityPreconditionObservation,
+        preconditionHistory: authorityPreconditionHistory,
+        ...(authorityJoinObservation ?? {
+          nullCount: 0,
+          nullOverflow: false,
+          grantCount: 0,
+          grantOverflow: false,
+          receiptCount: 0,
+          nullExact: false,
+          grantExact: false,
+          receiptExact: false,
+          boundary: Number.isSafeInteger(authorityBoundary) ? authorityBoundary : null,
+          boundaryOverflow: false,
+          nullReplayCount: 0,
+          nullReplayOrdinalHmac: null,
+          grantReplayCount: 0,
+          grantReplayOrdinalHmac: null,
+          stagingCount: 0,
+          stagingOverflow: false,
+          stagingExact: false,
+          stagingOrdinalHmac: null,
+          stagingSequenceHmac: null,
+          lastRecords: Object.freeze([]),
+        }),
+      });
+      throw error;
+    }
+    if (ordinal === 0) {
+      const traceDeadline = performance.now() + 3_000;
+      let assessment = null;
+      while (performance.now() < traceDeadline) {
+        hosts.tuiEvidence.drain();
+        assessment = assessCard5TuiHandoffInput({
+          records: hosts.tuiEvidence.reader.recordsSince(tuiInputMark),
+          hostReceipt: tuiInputReceipt,
+          payload: `${marker}\n`,
+          expectedPane,
+          expectedCanonical: tuiCanonicalBeforeInput,
+          inputFingerprintKey: hosts.inputFingerprintKey,
+          evidenceKey,
+        });
+        if (
+          assessment.passed ||
+          !["input-origin-missing", "input-trace-cardinality"].includes(assessment.reason)
+        )
+          break;
+        await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+      }
+      if (!assessment?.passed) {
+        const error = new Error(
+          `Card5 OpenTUI input trace was invalid: ${assessment?.reason ?? "timeout"}`,
+        );
+        error.observation = Object.freeze({
+          operation: "card5-tui-authority-handoff-input",
+          reason: assessment?.reason ?? "input-trace-timeout",
+        });
+        throw error;
+      }
+      tuiInputTrace = assessment.evidence;
+      hosts.tuiEvidence.drain();
+      const postInputMark = hosts.tuiEvidence.lifecycleReader.mark();
+      const transitionAssessment = assessCard5TuiFocusTransition({
+        records: hosts.tuiEvidence.lifecycleReader
+          .recordsThrough(postInputMark)
+          .slice(focusTransitionMark.recordCount),
+        receipts: focusTransitionReceipts,
+        expectedCanonical: tuiCanonicalBeforeInput,
+        priorBlurRecords,
+        expectedBindingHmac: hostFocusBindingHmac,
+        expectedWorkspaceName: state.workspace,
+        expectedRendererEpoch: hostFocusBinding.rendererEpoch,
+        expectedClientGeneration: hostFocusBinding.clientGeneration,
+        expectedRuntimeSession: nullRuntimeSession,
+        expectedAuthorityOwners: ownerAuthority.owners,
+        expectedTuiClientId: ownerTuiClientId,
+        minimumBlurAuthorityRevision: retainedAuthorityEvidence.authorityRevision,
+        minimumFocusAuthorityRevision: nullAuthorityEvidence.authorityRevision,
+        baselineClaimOrdinal,
+        evidenceKey,
+      });
+      if (!transitionAssessment.passed) {
+        const error = new Error("Card5 OpenTUI duplicate focus changed the explicit focus epoch");
+        error.observation = boundedCard5TuiFocusFailureObservation({
+          reason: transitionAssessment.reason,
+          axes: { authority: true },
+        });
+        throw error;
+      }
+      tuiFocusTransition = Object.freeze({
+        ...transitionAssessment.evidence,
+        nullAuthorityHmac: nullAuthorityEvidence.authorityHmac,
+        nullAuthorityMutationHmac: nullAuthorityEvidence.authorityMutationHmac,
+        nullAuthorityOwnerHmac: nullAuthorityEvidence.authorityOwnerHmac,
+        nullAuthorityRevision: nullAuthorityEvidence.authorityRevision,
+        nullAuthorityTopologyHmac: nullAuthorityEvidence.authorityTopologyHmac,
+        postInputRecordCount: postInputMark.recordCount,
+      });
+    }
+    const rendered = await waitForCard5ProductionClientConvergence(
+      state,
+      hosts,
+      evidenceKey,
+      hosts.tuiEvidence,
+      5_000,
+      {
+        expectedPane,
+        postHandoff: {
+          expectedClientId: grantRecord.inputOwner,
+          expectedSurface: ordinal === 0 ? "opentui" : "web",
+          grantRevision: grantRecord.revision,
+          inputProofHmac: card5EvidenceHmac(
+            "post-handoff-input-proof",
+            ordinal === 0
+              ? [tuiInputTrace.hostReceiptHmac, tuiInputTrace.traceHmac, inputSha256].join("\0")
+              : [
+                  exactInputReceipt.requestId,
+                  exactInputReceipt.seq,
+                  exactInputReceipt.authorityClientId,
+                  inputSha256,
+                ].join("\0"),
+            evidenceKey,
+          ),
+          expectedBinding: hostFocusBinding,
+          expectedTuiClientId: ownerTuiClientId,
+        },
+      },
+    );
+    const renderedMarkerCount = (
+      await Promise.all(
+        [hosts.chromiumPage, hosts.electronPage].map((page) =>
+          page.evaluate(
+            ({ expected, semanticPaneId }) => {
+              const surface = Array.from(
+                globalThis.document.querySelectorAll(".terminal-surface[data-phase='connected']"),
+              ).find((node) => node.getAttribute("data-semantic-pane-id") === semanticPaneId);
+              return Array.from(surface?.querySelectorAll(".xterm-rows") ?? []).some((node) =>
+                node.textContent?.includes(expected),
+              );
+            },
+            { expected: marker, semanticPaneId: expectedPane },
+          ),
+        ),
+      )
+    ).filter(Boolean).length;
+    hosts.tuiEvidence.drain();
+    const inputFencesAfter = hosts.tuiEvidence.inputFenceCount();
+    if (markerPresent) hosts.recordNativeMarker?.(marker);
+    const transition = {
+      ordinal,
+      client: ["opentui", "web-a", "web-b"][ordinal],
+      releaseObserved:
+        beforeOwner !== null && nullIndex >= 0 && authorityRecords[nullIndex].revision > 0,
+      authorityReleaseEvidence,
+      nullAuthorityEvidence: Object.freeze({
+        authorityHmac: nullAuthorityEvidence.authorityHmac,
+        authorityMutationHmac: nullAuthorityEvidence.authorityMutationHmac,
+        authorityOwnerHmac: nullAuthorityEvidence.authorityOwnerHmac,
+        authorityRevision: nullAuthorityEvidence.authorityRevision,
+        authorityTopologyHmac: nullAuthorityEvidence.authorityTopologyHmac,
+      }),
+      nullObserved: nullOwner === null && nullIndex >= 0,
+      grantObserved: grantIndex > nullIndex,
+      inputAccepted: markerPresent,
+      receiptSettled:
+        ordinal === 0
+          ? tuiInputTrace !== null && inputFencesAfter > inputFencesBefore
+          : exactInputReceipt !== null,
+      renderedClientCount: Object.keys(rendered.clients).length,
+      renderedMarkerCount,
+      beforeRenditionHmac: before?.contentHmac ?? null,
+      renderedRenditionHmac:
+        rendered.clients["web-a"]?.renditionHmac === rendered.clients["web-b"]?.renditionHmac
+          ? rendered.clients["web-a"].renditionHmac
+          : null,
+      grantRevision: grantRecord?.revision ?? null,
+      grantedClientHmac: grantRecord?.inputOwner
+        ? card5EvidenceHmac("authority-client", grantRecord.inputOwner, evidenceKey)
+        : null,
+      receiptClientHmac:
+        ordinal === 0
+          ? grantRecord?.inputOwner
+            ? card5EvidenceHmac("authority-client", grantRecord.inputOwner, evidenceKey)
+            : null
+          : exactInputReceipt?.authorityClientId
+            ? card5EvidenceHmac(
+                "authority-client",
+                exactInputReceipt.authorityClientId,
+                evidenceKey,
+              )
+            : null,
+      receiptRequestHmac:
+        ordinal === 0
+          ? (tuiInputTrace?.hostReceiptHmac ?? null)
+          : exactInputReceipt?.requestId
+            ? card5EvidenceHmac("input-request", exactInputReceipt.requestId, evidenceKey)
+            : null,
+      receiptOrdinal:
+        ordinal === 0 ? (tuiInputReceipt?.physicalTransportCalls ?? null) : exactInputReceipt?.seq,
+      receiptPaneHmac:
+        ordinal === 0
+          ? (tuiInputTrace?.paneHmac ?? null)
+          : card5EvidenceHmac("receipt-pane", exactInputReceipt?.pane ?? "unobserved", evidenceKey),
+      operationHmac: card5EvidenceHmac(
+        "operation",
+        `${ordinal}\0${grantRecord?.revision ?? "unobserved"}\0${grantRecord?.inputOwner ?? "unobserved"}\0${ordinal === 0 ? tuiInputReceipt?.paneId : exactInputReceipt?.seq}\0${inputSha256}`,
+        evidenceKey,
+      ),
+      markerHmac: card5EvidenceHmac("marker", marker, evidenceKey),
+      authorityJoinEvidence: authorityJoinObservation,
+      postHandoffAuthorityEvidence: rendered.postHandoffAuthorityEvidence,
+      tuiFocusEvidence:
+        tuiFocus === null
+          ? null
+          : Object.freeze({
+              ...tuiFocus.evidence,
+              ...postBlurAuthorityEvidence,
+              transition: tuiFocusTransition,
+              retainedAuthorityHmac: retainedAuthorityEvidence.authorityHmac,
+              retainedAuthorityOwnerHmac: retainedAuthorityEvidence.authorityOwnerHmac,
+              retainedAuthorityRevision: retainedAuthorityEvidence.authorityRevision,
+              retainedAuthorityTopologyHmac: retainedAuthorityEvidence.authorityTopologyHmac,
+              postBlurGrantRevision: postBlurAuthorityGrant?.revision ?? null,
+            }),
+      tuiInputTrace,
+    };
+    transitions.push(
+      Object.freeze({
+        ...transition,
+        releaseBindingDigest: card5AuthorityReleaseBindingDigest(
+          transition,
+          ownerReleaseEvidence[ordinal],
+        ),
+        releaseBindingHmac: card5AuthorityReleaseBindingHmac(
+          transition,
+          ownerReleaseEvidence[ordinal],
+          evidenceKey,
+        ),
+      }),
+    );
+  }
+  return Object.freeze({
+    transitions: Object.freeze(transitions),
+    ownerReleaseEvidence: Object.freeze(ownerReleaseEvidence),
+    retainedAuthorityEvidence,
+    nullAuthorityEvidence: initialNullAuthorityEvidence,
+    postBlurAuthorityEvidence: Object.freeze({
+      authorityHmac: transitions[0]?.tuiFocusEvidence?.authorityHmac ?? null,
+      authorityOwnerHmac: transitions[0]?.tuiFocusEvidence?.authorityOwnerHmac ?? null,
+      authorityRevision: transitions[0]?.tuiFocusEvidence?.authorityRevision ?? null,
+      authorityTopologyHmac: transitions[0]?.tuiFocusEvidence?.authorityTopologyHmac ?? null,
+    }),
+  });
+}
+
+async function proveCard5PassiveGeometry(
+  state,
+  hosts,
+  evidenceKey,
+  { activeChallenge = true, semanticPaneId } = {},
+) {
+  if (typeof semanticPaneId !== "string" || semanticPaneId.length < 1) {
+    throw new Error("Card5 geometry proof requires the accepted convergence pane");
+  }
+  const argv = validateCard5NativeObserverCommand([
+    "list-panes",
+    "-a",
+    "-F",
+    "#{session_id}\t#{window_id}\t#{pane_id}\t#{@tmux_ide_pane_id}\t#{pane_width}\t#{pane_height}",
+  ]);
+  let geometryReceipt = null;
+  if (activeChallenge) {
+    const geometryBefore = await observeCard5WebCanonical(
+      hosts.chromiumPage,
+      evidenceKey,
+      hosts.chromiumProcessIdentity,
+    );
+    if (geometryBefore?.semanticPaneId !== semanticPaneId) {
+      throw new Error("Card5 geometry challenge switched semantic panes");
+    }
+    const geometryBoundary = geometryBefore?.runtimeReplacement?.geometryReceiptCount;
+    const viewport = hosts.chromiumPage.viewportSize();
+    if (!viewport || !Number.isSafeInteger(geometryBoundary)) {
+      throw new Error("Card5 geometry challenge baseline was unavailable");
+    }
+    await hosts.chromiumPage.setViewportSize({
+      width: Math.max(800, viewport.width - 40),
+      height: Math.max(600, viewport.height - 24),
+    });
+    const geometryDeadline = Date.now() + 3_000;
+    while (Date.now() < geometryDeadline) {
+      const observed = await observeCard5WebCanonical(
+        hosts.chromiumPage,
+        evidenceKey,
+        hosts.chromiumProcessIdentity,
+      );
+      geometryReceipt = observed?.runtimeReplacement?.geometryReceipts?.find(
+        ({ ordinal, generation, authorityClientId }) =>
+          ordinal >= geometryBoundary &&
+          generation === observed.generation &&
+          authorityClientId === observed.workspaceEvidence?.authority?.owners?.geometry,
+      );
+      if (geometryReceipt) break;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+    }
+    if (!geometryReceipt) throw new Error("Card5 geometry challenge had no exact viewport receipt");
+    await waitForCard5ProductionClientConvergence(
+      state,
+      hosts,
+      evidenceKey,
+      hosts.tuiEvidence,
+      5_000,
+      { expectedPane: semanticPaneId },
+    );
+  }
+  const samples = [];
+  for (let ordinal = 0; ordinal < 2; ordinal += 1) {
+    const [webA, webB] = await Promise.all([
+      observeCard5WebCanonical(hosts.chromiumPage, evidenceKey, hosts.chromiumProcessIdentity),
+      observeCard5WebCanonical(hosts.electronPage, evidenceKey, hosts.electronProcessIdentity),
+    ]);
+    const sharedPane = exactSharedCard5WebPane([webA, webB]);
+    const tui =
+      sharedPane === semanticPaneId
+        ? latestCard5TuiCanonical(hosts.tuiEvidence, semanticPaneId)
+        : null;
+    const authority = webA?.workspaceEvidence?.authority;
+    const secondAuthority = webB?.workspaceEvidence?.authority;
+    hosts.tuiEvidence.drain();
+    const daemonRecords = hosts.tuiEvidence.daemonReader.read();
+    const activeOpens = daemonRecords.filter(
+      (record) =>
+        record?.operation === "terminal-delivery-subscriber-lifecycle" &&
+        record.terminalDelivery?.deliveryLifecycleEvent === "open" &&
+        record.terminalDelivery?.canonicalGeneration === tui?.generation &&
+        record.terminalDelivery?.semanticPaneId === tui?.semanticPaneId,
+    );
+    const requestFor = (observed) => {
+      const current = observed?.runtimeReplacement?.currentLifecycleRequest;
+      return current?.status === "exact" ? current : null;
+    };
+    const clientFor = (surface, request) =>
+      activeOpens.find(
+        ({ terminalDelivery }) =>
+          terminalDelivery.deliverySurface === surface &&
+          (surface === "opentui" ||
+            (request !== null &&
+              card5EvidenceHmac("request", terminalDelivery.deliveryRequestId, evidenceKey) ===
+                request.requestHmac)),
+      )?.terminalDelivery?.deliveryClientId ?? null;
+    const identities = [
+      {
+        client: "opentui",
+        source: "authority-snapshot",
+        clientId: clientFor("opentui", null),
+        observed: tui,
+        passive: null,
+        geometryOwner: null,
+      },
+      {
+        client: "web-a",
+        source: "chromium-dom-and-authority",
+        clientId: clientFor("web", requestFor(webA)),
+        observed: webA,
+        passive: webA?.passive,
+        geometryOwner: webA?.geometryOwner,
+      },
+      {
+        client: "web-b",
+        source: "electron-dom-and-authority",
+        clientId: clientFor("web", requestFor(webB)),
+        observed: webB,
+        passive: webB?.passive,
+        geometryOwner: webB?.geometryOwner,
+      },
+    ];
+    const authorityClients = new Map(authority?.clients?.map((entry) => [entry.clientId, entry]));
+    const clients = identities.map((identity) => {
+      const authorityClient = authorityClients.get(identity.clientId);
+      const geometryOwner = authority?.owners?.geometry === identity.clientId;
+      const passive = !geometryOwner;
+      if (
+        !identity.clientId ||
+        !authorityClient ||
+        (identity.passive !== null && identity.passive !== passive) ||
+        (identity.geometryOwner !== null && identity.geometryOwner !== geometryOwner) ||
+        !Number.isSafeInteger(identity.observed?.cols) ||
+        !Number.isSafeInteger(identity.observed?.rows)
+      ) {
+        throw new Error("Card5 geometry client observation was incomplete or contradictory");
+      }
+      return Object.freeze({
+        client: identity.client,
+        source: identity.source,
+        clientHmac: card5EvidenceHmac("geometry-client", identity.clientId, evidenceKey),
+        authorityRevision: authority.revision,
+        connectedRevision: authorityClient.connectedRevision,
+        activityRevision: authorityClient.activityRevision,
+        geometryOwner,
+        passive,
+        cols: identity.observed.cols,
+        rows: identity.observed.rows,
+      });
+    });
+    if (
+      JSON.stringify(authority) !== JSON.stringify(secondAuthority) ||
+      clients.length !== 3 ||
+      new Set(clients.map(({ clientHmac }) => clientHmac)).size !== 3 ||
+      new Set(clients.map(({ cols, rows }) => `${cols}x${rows}`)).size !== 1
+    ) {
+      throw new Error("Card5 geometry authority did not converge across all three clients");
+    }
+    const nativeLayout = execFileSync(
+      "tmux",
+      ["-S", state.runtimeNamespace.tmuxSocketPath, ...argv],
+      { encoding: "utf8", maxBuffer: 4 * 1_024 * 1_024 },
+    );
+    const nativePane = nativeLayout
+      .trimEnd()
+      .split("\n")
+      .map((line) => line.split("\t"))
+      .find((fields) => fields[3] === tui.semanticPaneId);
+    const nativeCols = Number(nativePane?.[4]);
+    const nativeRows = Number(nativePane?.[5]);
+    if (
+      !nativePane ||
+      !Number.isSafeInteger(nativeCols) ||
+      !Number.isSafeInteger(nativeRows) ||
+      nativeCols !== clients[0].cols ||
+      nativeRows !== clients[0].rows
+    ) {
+      throw new Error("Card5 native geometry did not match the canonical pane dimensions");
+    }
+    samples.push(
+      Object.freeze({
+        clients: Object.freeze(clients),
+        authorityRevision: authority.revision,
+        ownerCount: clients.filter(({ geometryOwner }) => geometryOwner).length,
+        passiveCount: clients.filter(({ passive }) => passive).length,
+        geometryFightCount:
+          clients.filter(({ geometryOwner }) => geometryOwner).length === 1 ? 0 : 1,
+        nativeCols,
+        nativeRows,
+        topologyHmac: card5EvidenceHmac(
+          "topology",
+          JSON.stringify({
+            generation: authority.generation,
+            revision: authority.revision,
+            owners: authority.owners,
+            clients,
+          }),
+          evidenceKey,
+        ),
+        nativeLayoutHmac: card5EvidenceHmac("native-layout", nativeLayout, evidenceKey),
+      }),
+    );
+    if (ordinal === 0) await new Promise((resolveWait) => setTimeout(resolveWait, 40));
+  }
+  return Object.freeze({
+    challenge: geometryReceipt
+      ? Object.freeze({
+          receiptHmac: card5EvidenceHmac(
+            "geometry-receipt",
+            JSON.stringify(geometryReceipt),
+            evidenceKey,
+          ),
+          authorityClientHmac: card5EvidenceHmac(
+            "geometry-client",
+            geometryReceipt.authorityClientId,
+            evidenceKey,
+          ),
+          requestHmac: card5EvidenceHmac(
+            "geometry-request",
+            geometryReceipt.requestId,
+            evidenceKey,
+          ),
+          seq: geometryReceipt.seq,
+          cols: geometryReceipt.cols,
+          rows: geometryReceipt.rows,
+        })
+      : null,
+    samples: Object.freeze(samples),
+  });
+}
+
+async function proveCard5SlowWebIsolation(state, hosts, evidenceKey, tuiEvidence, semanticPaneId) {
+  const requireExpectedWeb = (observed) => {
+    if (observed?.semanticPaneId !== semanticPaneId) {
+      throw new Error("Card5 slow-client observation switched semantic panes");
+    }
+    return observed;
+  };
+  const expectedTuiIdentity = latestCard5TuiCanonical(tuiEvidence, semanticPaneId);
+  const expectedTuiProcessId = expectedTuiIdentity?.processId;
+  if (!/^opentui:[1-9]\d*$/u.test(expectedTuiProcessId ?? "")) {
+    throw new Error("Card5 slow-client OpenTUI process identity was unavailable");
+  }
+  const slow = await hosts.setElectronSlowHidden(4);
+  const reader = tuiEvidence.reader;
+  tuiEvidence.drain();
+  const mark = reader.mark();
+  const daemonMark = tuiEvidence.daemonReader.mark();
+  const blockedAt = await hosts.setElectronSinkBlocked(true);
+  const deliverySamples = [];
+  let immutableHostInputIdentity = null;
+  try {
+    let priorDeliveryFence = requireExpectedWeb(
+      await observeCard5WebCanonical(
+        hosts.electronPage,
+        evidenceKey,
+        hosts.electronProcessIdentity,
+      ),
+    )?.deliveryFence;
+    for (let ordinal = 0; ordinal < 30; ordinal += 1) {
+      tuiEvidence.drain();
+      const resourceBefore = tuiEvidence.resourceSnapshot().count;
+      const marker = `CARD5_SLOW_${ordinal}_${randomBytes(3).toString("hex")}`;
+      const payload = `${marker}\n`;
+      const ackBoundary = requireExpectedWeb(
+        await observeCard5WebCanonical(
+          hosts.electronPage,
+          evidenceKey,
+          hosts.electronProcessIdentity,
+        ),
+      )?.runtimeReplacement?.ackSentCount;
+      if (!Number.isSafeInteger(ackBoundary)) {
+        throw new Error("Card5 slow-client ACK boundary was unavailable");
+      }
+      const inputReceipt = JSON.parse(
+        tuiCommand(state, ["input", JSON.stringify({ version: 1, kind: "paste", text: payload })]),
+      );
+      if (!isExactCard5TuiHostInputReceipt(inputReceipt, payload))
+        throw new Error("Card5 slow input host receipt was invalid");
+      const hostInputIdentity = [
+        inputReceipt.sessionId,
+        inputReceipt.paneId,
+        inputReceipt.target,
+      ].join("\0");
+      if (immutableHostInputIdentity === null) immutableHostInputIdentity = hostInputIdentity;
+      else if (hostInputIdentity !== immutableHostInputIdentity)
+        throw new Error("Card5 slow input host pane identity changed");
+      const deadline = performance.now() + 3_000;
+      while (performance.now() < deadline) {
+        if (tuiCommand(state, ["capture", "--history", "20"]).includes(marker)) break;
+        await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+      }
+      if (performance.now() >= deadline)
+        throw new Error("Card5 OpenTUI input stalled behind hidden Web client");
+      let observed = null;
+      const deliveryDeadline = performance.now() + 3_000;
+      while (performance.now() < deliveryDeadline) {
+        observed = requireExpectedWeb(
+          await observeCard5WebCanonical(
+            hosts.electronPage,
+            evidenceKey,
+            hosts.electronProcessIdentity,
+          ),
+        );
+        if (observed?.deliveryFence > priorDeliveryFence) break;
+        await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+      }
+      const sink = await hosts.observeElectronSink();
+      let resourceSample = null;
+      const resourceDeadline = performance.now() + 1_000;
+      while (performance.now() < resourceDeadline) {
+        tuiEvidence.drain();
+        const resource = tuiEvidence.resourceSnapshot();
+        if (resource.count > resourceBefore) {
+          resourceSample = resource.record;
+          break;
+        }
+        await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+      }
+      deliverySamples.push(
+        Object.freeze({
+          deliveryFenceBefore: priorDeliveryFence,
+          deliveryFenceAfter: observed?.deliveryFence ?? null,
+          deliveryAckFence: observed?.deliveryAckFence ?? null,
+          ackEvent:
+            observed?.runtimeReplacement?.ackEvents?.find(
+              ({ ordinal: ackOrdinal }) => ackOrdinal >= ackBoundary,
+            ) ?? null,
+          ackEvents:
+            observed?.runtimeReplacement?.ackEvents?.filter(
+              ({ ordinal: ackOrdinal }) => ackOrdinal >= ackBoundary,
+            ) ?? [],
+          ackBoundary,
+          requestHmac:
+            observed?.runtimeReplacement?.currentLifecycleRequest?.status === "exact"
+              ? observed.runtimeReplacement.currentLifecycleRequest.requestHmac
+              : null,
+          queueCurrent: sink.pendingCurrent,
+          queuePeak: sink.pendingPeak,
+          queueCap: sink.queueCap,
+          resource: resourceSample,
+          marker,
+          payload,
+          inputReceipt,
+        }),
+      );
+      priorDeliveryFence = observed?.deliveryFence ?? priorDeliveryFence;
+    }
+    while (!reader.snapshot().caughtUp) reader.read();
+    const records = reader.recordsSince(mark);
+    let daemonRecords = [];
+    const settlementDeadline = performance.now() + 1_000;
+    while (performance.now() < settlementDeadline) {
+      do {
+        tuiEvidence.daemonReader.read();
+      } while (!tuiEvidence.daemonReader.snapshot().caughtUp);
+      daemonRecords = tuiEvidence.daemonReader.recordsSince(daemonMark);
+      if (
+        deliverySamples.every((delivery) =>
+          daemonRecords.some(
+            (record) =>
+              record?.operation === "terminal-delivery-settled" &&
+              card5EvidenceHmac(
+                "request",
+                record.terminalDelivery?.deliveryRequestId,
+                evidenceKey,
+              ) === delivery.requestHmac &&
+              record.terminalDelivery?.transactionId === delivery.ackEvent?.transactionId &&
+              record.terminalDelivery?.canonicalGeneration === delivery.ackEvent?.generation &&
+              record.terminalDelivery?.canonicalRevision === delivery.ackEvent?.revision &&
+              record.terminalDelivery?.canonicalStateHash === delivery.ackEvent?.canonicalStateHash,
+          ),
+        )
+      )
+        break;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+    }
+    const paintsByTrace = new Map(
+      inputPaintSamples(records).map((paint) => [paint.traceId, paint]),
+    );
+    const inputOrigins = records.filter(
+      ({ type, traceId, payloadFingerprint }) =>
+        type === "performance.input-origin" &&
+        typeof traceId === "string" &&
+        typeof payloadFingerprint === "string",
+    );
+    const fences = new Map(
+      records
+        .filter(
+          ({ type, traceId }) => type === "performance.input-fence" && typeof traceId === "string",
+        )
+        .map((record) => [record.traceId, record]),
+    );
+    const samples = deliverySamples.map((delivery, ordinal) => {
+      const matchingOrigins = inputOrigins.filter(
+        (origin) =>
+          origin.semanticPaneId === semanticPaneId &&
+          origin.payloadByteCount === Buffer.byteLength(delivery.payload) &&
+          origin.payloadFingerprint ===
+            createHmac("sha256", hosts.inputFingerprintKey)
+              .update(origin.traceId)
+              .update("\0")
+              .update(delivery.payload)
+              .digest("hex"),
+      );
+      if (matchingOrigins.length !== 1) {
+        throw new Error("Card5 slow input marker did not map to one exact trace");
+      }
+      const paint = paintsByTrace.get(matchingOrigins[0].traceId);
+      if (!paint) throw new Error("Card5 slow input trace had no exact paint endpoint");
+      const fence = fences.get(paint.traceId);
+      if (
+        matchingOrigins[0].generation !== expectedTuiIdentity.generation ||
+        matchingOrigins[0].incarnation !== expectedTuiIdentity.incarnation ||
+        matchingOrigins[0].processId !== expectedTuiProcessId ||
+        matchingOrigins[0].clockId !== expectedTuiIdentity.clockId ||
+        paint.semanticPaneId !== semanticPaneId ||
+        paint.generation !== matchingOrigins[0].generation ||
+        paint.incarnation !== matchingOrigins[0].incarnation ||
+        paint.processId !== matchingOrigins[0].processId ||
+        paint.clockId !== matchingOrigins[0].clockId ||
+        fence?.semanticPaneId !== semanticPaneId ||
+        fence?.generation !== paint.generation ||
+        fence?.incarnation !== paint.incarnation ||
+        fence?.revision !== paint.revision ||
+        fence?.stateHash !== paint.stateHash
+      )
+        throw new Error("Card5 slow input trace changed semantic authority");
+      const matchingAcks = delivery.ackEvents.filter(
+        (ack) =>
+          ack.generation === fence?.generation &&
+          ack.revision === fence?.revision &&
+          ack.canonicalStateHash === fence?.stateHash,
+      );
+      const ackEvent = matchingAcks.length === 1 ? matchingAcks[0] : null;
+      const matchingSettlements = daemonRecords.filter(
+        (record) =>
+          record?.operation === "terminal-delivery-settled" &&
+          record.traceId === paint.traceId &&
+          card5EvidenceHmac("request", record.terminalDelivery?.deliveryRequestId, evidenceKey) ===
+            delivery.requestHmac &&
+          record.terminalDelivery?.transactionId === ackEvent?.transactionId &&
+          record.terminalDelivery?.canonicalGeneration === ackEvent?.generation &&
+          record.terminalDelivery?.canonicalRevision === ackEvent?.revision &&
+          record.terminalDelivery?.canonicalStateHash === ackEvent?.canonicalStateHash,
+      );
+      const settled = matchingSettlements.length === 1 ? matchingSettlements[0] : null;
+      const matchingResources = records.filter(
+        (record) =>
+          record?.type === "performance.terminal-resource-sample" &&
+          record.operation === "post-fence" &&
+          record.semanticPaneId === fence?.semanticPaneId &&
+          record.generation === fence?.generation &&
+          record.incarnation === fence?.incarnation &&
+          record.revision === fence?.revision &&
+          record.stateHash === fence?.stateHash &&
+          record.resourceEpochIdentity?.semanticPaneId === fence?.semanticPaneId &&
+          record.resourceEpochIdentity?.generation === fence?.generation &&
+          record.resourceEpochIdentity?.incarnation === fence?.incarnation &&
+          record.resourceEpochIdentity?.revision === fence?.revision &&
+          record.resourceEpochIdentity?.stateHash === fence?.stateHash,
+      );
+      const resource = matchingResources.length === 1 ? matchingResources[0] : null;
+      const canonicalIdentity = (value) =>
+        value ? [value.generation, value.revision, value.stateHash].join("\0") : "unobserved";
+      return Object.freeze({
+        inputPaintMs: paint.durationMs,
+        sampleOrdinal: ordinal,
+        traceHmac: card5EvidenceHmac("input-trace", paint.traceId, evidenceKey),
+        markerHmac: card5EvidenceHmac("input-marker", delivery.marker, evidenceKey),
+        inputReceiptHmac: card5EvidenceHmac(
+          "tui-input-receipt",
+          JSON.stringify(delivery.inputReceipt),
+          evidenceKey,
+        ),
+        queueCurrent: delivery.queueCurrent,
+        queuePeak: delivery.queuePeak,
+        queueCap: delivery.queueCap,
+        ackSettled:
+          delivery.deliveryFenceAfter > delivery.deliveryFenceBefore &&
+          delivery.deliveryAckFence >= delivery.deliveryFenceAfter &&
+          settled !== undefined,
+        deliveryLaneHmac: settled
+          ? card5EvidenceHmac("delivery-lane", settled.terminalDelivery.deliveryLaneId, evidenceKey)
+          : null,
+        deliveryRequestHmac: settled
+          ? card5EvidenceHmac(
+              "delivery-request",
+              settled.terminalDelivery.deliveryRequestId,
+              evidenceKey,
+            )
+          : null,
+        transactionHmac: settled
+          ? card5EvidenceHmac(
+              "delivery-transaction",
+              settled.terminalDelivery.transactionId,
+              evidenceKey,
+            )
+          : null,
+        settlementTraceHmac: settled
+          ? card5EvidenceHmac("settlement-trace", settled.traceId, evidenceKey)
+          : null,
+        matchingSettlementCount: matchingSettlements.length,
+        fenceTraceHmac: card5EvidenceHmac("settlement-trace", paint.traceId, evidenceKey),
+        fenceCanonicalHmac: card5EvidenceHmac(
+          "canonical-identity",
+          canonicalIdentity(fence),
+          evidenceKey,
+        ),
+        ackCanonicalHmac: card5EvidenceHmac(
+          "canonical-identity",
+          canonicalIdentity(
+            ackEvent
+              ? {
+                  generation: ackEvent.generation,
+                  revision: ackEvent.revision,
+                  stateHash: ackEvent.canonicalStateHash,
+                }
+              : null,
+          ),
+          evidenceKey,
+        ),
+        matchingAckCount: matchingAcks.length,
+        ackOrdinal: ackEvent?.ordinal ?? null,
+        ackBoundary: delivery.ackBoundary,
+        canonicalRevision: ackEvent?.revision ?? null,
+        deliveryFenceSettled: fence !== undefined,
+        writerHealth: fence?.writerHealth ?? null,
+        resource: resource
+          ? Object.freeze({
+              processId: resource.processId,
+              processIdentityExact: resource.processId === expectedTuiProcessId,
+              clockId: resource.clockId,
+              processHmac: card5EvidenceHmac("process", resource.processId, evidenceKey),
+              clockHmac: card5EvidenceHmac("clock", resource.clockId, evidenceKey),
+              atMicros: resource.atMicros,
+              resourceEpochIdentityHmac: card5EvidenceHmac(
+                "resource-epoch",
+                JSON.stringify(resource.resourceEpochIdentity),
+                evidenceKey,
+              ),
+              canonicalIdentityHmac: card5EvidenceHmac(
+                "canonical-identity",
+                canonicalIdentity(resource),
+                evidenceKey,
+              ),
+              rssBytes: resource.rssBytes,
+              heapUsedBytes: resource.heapUsedBytes,
+              rssPeakBytes: resource.rssPeakBytes,
+              heapUsedPeakBytes: resource.heapUsedPeakBytes,
+              inputPending: resource.inputPending,
+              inputInFlight: resource.inputInFlight,
+              inputPendingBytes: resource.inputPendingBytes,
+              inputPendingPeak: resource.inputPendingPeak,
+              inputInFlightPeak: resource.inputInFlightPeak,
+              inputPendingBytesPeak: resource.inputPendingBytesPeak,
+              resourceSamplingFailureCount: resource.resourceSamplingFailureCount,
+              eventLoopDelayMicros: resource.eventLoopDelayMicros,
+              eventLoopDelayPeakMicros: resource.eventLoopDelayPeakMicros,
+            })
+          : null,
+      });
+    });
+    await hosts.setElectronSinkBlocked(false);
+    const caughtUp = await waitForCard5ProductionClientConvergence(
+      state,
+      hosts,
+      evidenceKey,
+      tuiEvidence,
+      5_000,
+      { expectedPane: semanticPaneId },
+    );
+    const sinkAfterRelease = await hosts.observeElectronSink();
+    const observed = requireExpectedWeb(
+      await observeCard5WebCanonical(
+        hosts.electronPage,
+        evidenceKey,
+        hosts.electronProcessIdentity,
+      ),
+    );
+    if (!observed || observed.presence !== "background") {
+      throw new Error("Card5 slow Electron client was not observably hidden");
+    }
+    return Object.freeze({
+      hidden: true,
+      throttled: true,
+      blockedSinkObserved: blockedAt.blocked === true && sinkAfterRelease.coalescedCount > 0,
+      catchUpExact:
+        caughtUp.semanticPaneId === semanticPaneId &&
+        sinkAfterRelease.blocked === false &&
+        sinkAfterRelease.pendingCurrent === 0 &&
+        Object.values(caughtUp.clients).every(
+          (client) =>
+            client.generation === caughtUp.generation &&
+            client.canonicalStateHash === caughtUp.clients.opentui.canonicalStateHash &&
+            client.revision === caughtUp.clients.opentui.revision,
+        ),
+      tuiInputP95Ms: card5Percentile(
+        samples.map(({ inputPaintMs }) => inputPaintMs),
+        0.95,
+      ),
+      tuiInputP99Ms: card5Percentile(
+        samples.map(({ inputPaintMs }) => inputPaintMs),
+        0.99,
+      ),
+      queuePeak: Math.max(...samples.map(({ queuePeak }) => queuePeak)),
+      queueCap: samples[0].queueCap,
+      droppedCriticalObserved: Math.max(
+        ...samples.map(
+          ({ writerHealth }) => writerHealth?.droppedRecords ?? Number.POSITIVE_INFINITY,
+        ),
+      ),
+      samples: Object.freeze(samples),
+    });
+  } finally {
+    await hosts.restoreElectron(slow);
+  }
+}
+
+async function execCard5NativeObserver(state, rawArgv) {
+  const argv = validateCard5NativeObserverCommand(rawArgv);
+  return new Promise((resolveRun, rejectRun) => {
+    const child = spawn("tmux", ["-S", state.runtimeNamespace.tmuxSocketPath, ...argv], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (Number.isSafeInteger(child.pid)) activeCard5NativeObserverPids.add(child.pid);
+    const stdout = [];
+    const stderr = [];
+    let bytes = 0;
+    const collect = (target) => (chunk) => {
+      bytes += chunk.length;
+      if (bytes > 4 * 1_024 * 1_024) child.kill("SIGKILL");
+      else target.push(chunk);
+    };
+    child.stdout.on("data", collect(stdout));
+    child.stderr.on("data", collect(stderr));
+    child.once("error", rejectRun);
+    child.once("close", (code) => {
+      if (Number.isSafeInteger(child.pid)) activeCard5NativeObserverPids.delete(child.pid);
+      if (code === 0) resolveRun(Buffer.concat(stdout).toString("utf8"));
+      else rejectRun(new Error(`Card5 native observer exited ${code}: ${Buffer.concat(stderr)}`));
+    });
+  });
+}
+
+async function proveCard5NativeObserver(state, evidenceKey, expectedPane, expectedMarker) {
+  if (
+    typeof expectedMarker !== "string" ||
+    !/^CARD5_HANDOFF_[0-2]_[0-9a-f]{8}$/u.test(expectedMarker)
+  ) {
+    throw new Error("Card5 native observer expected marker was unavailable");
+  }
+  const pane = selectExactCard5PaneGeometry(activeWindowPaneGeometry(state), expectedPane);
+  if (!pane) throw new Error("Card5 native observer found no exact accepted pane");
+  const layoutArgv = [
+    "list-panes",
+    "-a",
+    "-F",
+    "#{session_id}:#{window_id}:#{pane_id}:#{pane_width}:#{pane_height}",
+  ];
+  const captureArgv = ["capture-pane", "-p", "-J", "-t", pane.paneId];
+  const beforeLayout = await execCard5NativeObserver(state, layoutArgv);
+  const body = await execCard5NativeObserver(state, captureArgv);
+  const afterLayout = await execCard5NativeObserver(state, layoutArgv);
+  const layoutHmac = (value) =>
+    createHmac("sha256", Buffer.from(evidenceKey, "hex")).update(value).digest("hex");
+  return Object.freeze({
+    readOnly: beforeLayout === afterLayout,
+    markerPresent: body.includes(expectedMarker),
+    markerHmac: card5EvidenceHmac("marker", expectedMarker, evidenceKey),
+    contentHmac: createHmac("sha256", Buffer.from(evidenceKey, "hex")).update(body).digest("hex"),
+    paneHmac: card5EvidenceHmac("pane", pane.semanticPaneId, evidenceKey),
+    mutationCount: beforeLayout === afterLayout ? 0 : 1,
+    beforeLayoutHmac: layoutHmac(beforeLayout),
+    afterLayoutHmac: layoutHmac(afterLayout),
+    validatedCommandCount: 3,
+    activeProcessCount: activeCard5NativeObserverPids.size,
+  });
 }
 
 async function start(json, quiet = false, planEntry = null) {
@@ -4769,10 +7914,10 @@ async function diagnoseRuntimeQualification(planEntry) {
   state = await waitForState((candidate) => candidate?.status === "ready", 5_000);
   const framebufferEvidence = await activePaneBodyEvidence(state);
   diagnosticAttemptPhases.set(planEntry.runId, "evidence-capture");
-  const captureEvidence = await captureArtifacts(
-    state,
-    `diagnose-${planEntry.journey.id}-r${planEntry.repetition}`,
-  );
+  const captureEvidence = state.card5CaptureEvidence;
+  if (!captureEvidence) {
+    throw new Error("Card5 owner did not publish its existing-client correlation capture");
+  }
   diagnosticCaptures.set(planEntry.runId, captureEvidence);
   diagnosticAttemptPhases.set(planEntry.runId, "report-correlation");
   // A closed collector summary is the only truthful proof that trace
@@ -5144,6 +8289,113 @@ async function diagnoseFocus(planEntry) {
   };
 }
 
+async function diagnoseCard5Journey(planEntry, journeyEvidenceKey, assess) {
+  diagnosticAttemptPhases.set(planEntry.runId, "product-rig-startup");
+  await start(false, true, planEntry);
+  const state = await waitForState((candidate) => candidate?.status === "ready");
+  diagnosticAttemptPhases.set(planEntry.runId, "evidence-capture");
+  const captureEvidence = state.card5CaptureEvidence;
+  if (!captureEvidence) {
+    throw new Error("Card5 owner did not publish its existing-client correlation capture");
+  }
+  diagnosticCaptures.set(planEntry.runId, captureEvidence);
+  await tuiCommandAsync(state, ["stop"], { timeout: 5_000 });
+  const privateEvidenceKey = productInputFingerprintKeys.get(state.tui.runtimeDir) ?? null;
+  if (!/^[0-9a-f]{64}$/u.test(privateEvidenceKey ?? "")) {
+    throw new Error("Card5 private evidence key was unavailable for final correlation");
+  }
+  const diagnosticBinding = createCard5DiagnosticEvidenceBinding({
+    journeyEvidence: state.journeyEvidence,
+    journeyEvidenceKey,
+    privateEvidenceKey,
+  });
+  const journeyEvidence = diagnosticBinding.evidence;
+  const artifactCorrelation = diagnosticBinding.correlate((boundEvidence, boundPrivateKey) =>
+    card5ArtifactCorrelation(state, captureEvidence, boundEvidence, boundPrivateKey),
+  );
+  const card5CorrelationComplete =
+    journeyEvidence?.correlation?.complete === true &&
+    journeyEvidence?.correlation?.missingJoinCount === 0 &&
+    journeyEvidence?.correlation?.duplicateJoinCount === 0 &&
+    artifactCorrelation.complete === true;
+  const correlationMissing = [
+    ...(artifactCorrelation.missing ?? []),
+    ...(journeyEvidence?.correlation?.complete === true ? [] : ["card5-correlation"]),
+  ];
+  const correlation = Object.freeze({
+    complete: card5CorrelationComplete,
+    missing: card5CorrelationComplete ? [] : Object.freeze([...new Set(correlationMissing)]),
+    artifactHmac: card5CorrelationComplete ? artifactCorrelation.artifactHmac : null,
+  });
+  const assessment = diagnosticBinding.assess((boundEvidence, boundPrivateKey) =>
+    assess({
+      evidence: boundEvidence,
+      correlationComplete: correlation.complete,
+      evidenceKey: boundPrivateKey,
+    }),
+  );
+  const failureObservation = assessment.qualified
+    ? null
+    : journeyEvidenceKey === "crossClientHandoff"
+      ? card5CrossClientFailureObservation(assessment, journeyEvidence)
+      : card5DaemonRestartFailureObservation(assessment, journeyEvidence);
+  const report = {
+    version: 1,
+    status: assessment.status,
+    journey: planEntry.journey.id,
+    variant: null,
+    repetition: planEntry.repetition,
+    repeat: planEntry.repeat,
+    runId: planEntry.runId,
+    firstBrokenBoundary: assessment.firstBrokenBoundary,
+    firstUnmeasuredBoundary: assessment.firstUnmeasuredBoundary,
+    boundaries: assessment.boundaries,
+    failureObservation,
+    [journeyEvidenceKey]: journeyEvidence,
+    diagnosticCorrelation: {
+      complete: correlation.complete,
+      missing: correlation.missing,
+      artifactHmac: correlation.artifactHmac,
+    },
+    sourceProvenance: {
+      commit: state.tui?.performanceTraceCommit ?? null,
+      tree: state.tui?.performanceTraceTree ?? null,
+      manifestDigest: state.tui?.performanceTraceManifestDigest ?? null,
+    },
+  };
+  return {
+    report,
+    reportPath: null,
+    evidence: {
+      report,
+      alignment: {
+        version: 1,
+        journey: planEntry.journey.id,
+        firstBrokenBoundary: assessment.firstBrokenBoundary,
+        firstUnmeasuredBoundary: assessment.firstUnmeasuredBoundary,
+        boundaries: assessment.boundaries,
+        correlation: { complete: correlation.complete, missing: correlation.missing },
+        availability: artifactCorrelation.availability,
+        failureObservation,
+      },
+      timeline: readDiagnosticText(timelinePath),
+      tmuxTruth: captureEvidence.truth,
+      daemonState: artifactCorrelation.daemonState,
+      clientState: artifactCorrelation.clientState,
+      tuiAnsi: readDiagnosticText(captureEvidence.tuiPath),
+      webPngPath: captureEvidence.webPath,
+      stderr: boundedDiagnosticText(readDiagnosticText(join(state.tui.runtimeDir, "stderr.log"))),
+      reproduction: diagnosticReproduction(planEntry.journey.id, null),
+    },
+  };
+}
+
+const diagnoseCrossClientHandoff = (planEntry) =>
+  diagnoseCard5Journey(planEntry, "crossClientHandoff", assessCard5CrossClientEvidence);
+
+const diagnoseDaemonRestart = (planEntry) =>
+  diagnoseCard5Journey(planEntry, "daemonRestart", assessCard5DaemonRestartEvidence);
+
 async function diagnoseWindowLifecycle(planEntry) {
   diagnosticAttemptPhases.set(planEntry.runId, "product-rig-startup");
   await start(false, true, planEntry);
@@ -5432,14 +8684,47 @@ function executeProductJourney(planEntry) {
     "keyboard-pointer-resize": diagnoseKeyboardPointerResize,
     "selection-copy-app-mouse": diagnoseSelectionCopyAppMouse,
     "ansi-cursor-alt-screen": diagnoseAnsiCursorAltScreen,
+    "cross-client-handoff": diagnoseCrossClientHandoff,
+    "daemon-restart": diagnoseDaemonRestart,
     "runtime-qualification": diagnoseRuntimeQualification,
   });
 }
 
-async function prepareDiagnosticFailure(planEntry, error, firstBrokenBoundary) {
+async function card5DaemonPaneStreamLifecycle(state, options) {
+  const tracePath = state?.tui?.daemonPerformanceTracePath;
+  const evidenceKey = state?.tui?.runtimeDir
+    ? productInputFingerprintKeys.get(state.tui.runtimeDir)
+    : null;
+  return projectProductPaneStreamLifecycle(tracePath, evidenceKey, options);
+}
+
+async function prepareDiagnosticFailure(
+  planEntry,
+  error,
+  firstBrokenBoundary,
+  _cleanupReceipt,
+  preCleanupFailureEvidence,
+) {
   const state = readJson(statePath);
   const partialRuntime = partialProductRuntimeEvidence(state);
   let failureObservation = error?.observation ?? state?.failureObservation ?? null;
+  if (
+    failureObservation?.operation === "card5-production-host-launch" &&
+    ["chromium-readiness", "electron-readiness"].includes(failureObservation.stage)
+  ) {
+    failureObservation = Object.freeze({
+      ...failureObservation,
+      daemonPaneStreamLifecycle:
+        preCleanupFailureEvidence?.daemonPaneStreamLifecycle ??
+        Object.freeze({
+          available: false,
+          reason: "pre-cleanup-evidence-unavailable",
+          count: 0,
+          overflow: 0,
+          events: Object.freeze([]),
+        }),
+    });
+  }
   if (
     failureObservation?.operation === "wait-for-coherent-terminal-frame" &&
     state?.tui?.runtimeDir &&
@@ -5454,7 +8739,17 @@ async function prepareDiagnosticFailure(planEntry, error, firstBrokenBoundary) {
     });
   }
   let captureEvidence = diagnosticCaptures.get(planEntry.runId) ?? null;
-  if (!captureEvidence && state?.status === "ready") {
+  if (
+    !captureEvidence &&
+    ["cross-client-handoff", "daemon-restart"].includes(planEntry.journey.id)
+  ) {
+    captureEvidence = state?.card5CaptureEvidence ?? null;
+  }
+  if (
+    !captureEvidence &&
+    state?.status === "ready" &&
+    !["cross-client-handoff", "daemon-restart"].includes(planEntry.journey.id)
+  ) {
     try {
       captureEvidence = await captureArtifacts(
         state,
@@ -5471,7 +8766,11 @@ async function prepareDiagnosticFailure(planEntry, error, firstBrokenBoundary) {
   const stderrPath = state?.tui?.runtimeDir ? join(state.tui.runtimeDir, "stderr.log") : null;
   const stderr = stderrPath ? readDiagnosticText(stderrPath) : "";
   let truth = captureEvidence?.truth ?? null;
-  if (!truth && state?.session) {
+  if (
+    !truth &&
+    state?.session &&
+    !["cross-client-handoff", "daemon-restart"].includes(planEntry.journey.id)
+  ) {
     try {
       truth = tmuxTruth(state);
     } catch {
@@ -5560,7 +8859,23 @@ async function executeDiagnosticAttempt(entry) {
         assertFrozenProductSource("after-repetition");
         return completed;
       },
-      prepareFailure: (error, boundary) => prepareDiagnosticFailure(entry, error, boundary),
+      captureFailureEvidence: async (error, _boundary, signal) => {
+        if (
+          error?.observation?.operation !== "card5-production-host-launch" ||
+          !["chromium-readiness", "electron-readiness"].includes(error.observation.stage)
+        )
+          return null;
+        const state = readJson(statePath);
+        if (state?.failureObservation?.daemonPaneStreamLifecycle)
+          return Object.freeze({
+            daemonPaneStreamLifecycle: state.failureObservation.daemonPaneStreamLifecycle,
+          });
+        return Object.freeze({
+          daemonPaneStreamLifecycle: await card5DaemonPaneStreamLifecycle(state, { signal }),
+        });
+      },
+      prepareFailure: (error, boundary, receipt, preCleanupEvidence) =>
+        prepareDiagnosticFailure(entry, error, boundary, receipt, preCleanupEvidence),
       postCleanup: async () =>
         createProductRigCleanupReceipt(
           entry,
@@ -5656,6 +8971,12 @@ async function diagnose(options) {
     cwd: repoRoot,
     timeout: 120_000,
   });
+  if (plan.some(({ journey }) => ["cross-client-handoff", "daemon-restart"].includes(journey.id))) {
+    await execFileAsync("pnpm", ["--filter", "@tmux-ide/electron-shell", "build"], {
+      cwd: repoRoot,
+      timeout: 120_000,
+    });
+  }
   diagnosticFrozenProvenance = sourceTraceProvenance();
   let runs;
   try {
@@ -5906,6 +9227,8 @@ async function owner() {
       : performance.timeOrigin + performance.now(),
   );
   const journeyId = process.env.TMUX_IDE_PRODUCT_JOURNEY ?? "runtime-qualification";
+  const card5Journey = ["cross-client-handoff", "daemon-restart"].includes(journeyId);
+  const card5InputFingerprintKey = card5Journey ? randomBytes(32).toString("hex") : null;
   const slug = randomBytes(3).toString("hex");
   const ownerToken = randomBytes(24).toString("hex");
   let sleepAssertion = null;
@@ -5913,6 +9236,12 @@ async function owner() {
   let daemon = null;
   let devServer = null;
   let browser = null;
+  let card5WebHosts = null;
+  let card5WebHostLease = null;
+  let card5TuiEvidence = null;
+  let card5NativeExpectedMarker = null;
+  let card5TuiProcessPid = null;
+  let card5WebCleanupReceipt = null;
   let closing = false;
   let cleanupPromise = null;
   let sleepAssertionAcquisition = null;
@@ -5987,6 +9316,14 @@ async function owner() {
             },
           },
           { subsystem: "browser", run: async () => browser?.close() },
+          {
+            subsystem: "card5-web-hosts",
+            run: async () => {
+              card5WebCleanupReceipt =
+                (await card5WebHostLease?.close()) ?? card5WebHostLease?.snapshot() ?? null;
+            },
+          },
+          { subsystem: "card5-tui-evidence", run: async () => card5TuiEvidence?.close() },
           { subsystem: "dev-server", run: async () => devServer?.stop() },
           { subsystem: "daemon", run: async () => daemon?.stop() },
           { subsystem: "fleet", run: async () => fleet?.dispose() },
@@ -6015,6 +9352,63 @@ async function owner() {
       ])
         if (typeof path === "string" && existsSync(path))
           failures.push({ subsystem, detail: `owned path remained: ${path}` });
+      let card5Cleanup = null;
+      if (["cross-client-handoff", "daemon-restart"].includes(journeyId)) {
+        const ownedPaths = [
+          state.runtimeNamespace?.root,
+          state.runtimeNamespace?.tmuxSocketPath,
+          state.runtimeNamespace?.hostTmuxSocketPath,
+          state.runtimeNamespace?.daemonInfoDir,
+        ].filter((path) => typeof path === "string");
+        const pathResidueCount = ownedPaths.filter((path) => existsSync(path)).length;
+        const socketResidueCount = ownedPaths.filter(
+          (path) => path.endsWith(".sock") && existsSync(path),
+        ).length;
+        card5Cleanup = card5HostCleanupStatus({
+          entries: {
+            chromium: {
+              owned: card5WebCleanupReceipt?.chromiumOwned === true,
+              retired: card5WebCleanupReceipt?.chromiumRetired === true,
+              reason: card5WebCleanupReceipt?.chromiumReason ?? "cleanup-receipt-missing",
+            },
+            electron: {
+              owned: card5WebCleanupReceipt?.electronOwned === true,
+              retired: card5WebCleanupReceipt?.electronRetired === true,
+              reason: card5WebCleanupReceipt?.electronReason ?? "cleanup-receipt-missing",
+            },
+            opentui: {
+              owned: Number.isSafeInteger(card5TuiProcessPid),
+              retired:
+                !Number.isSafeInteger(card5TuiProcessPid) || !processAlive(card5TuiProcessPid),
+              reason: Number.isSafeInteger(card5TuiProcessPid)
+                ? "owner-process-retirement"
+                : "not-acquired",
+            },
+            daemon: {
+              owned: daemon !== null,
+              retired: !processAlive(state.daemon?.pid),
+              reason: daemon === null ? "not-acquired" : "owner-process-retirement",
+            },
+            namespace: {
+              owned: fleet !== null,
+              retired: pathResidueCount === 0,
+              reason: fleet === null ? "not-acquired" : "owned-path-retirement",
+            },
+          },
+          ...(card5WebCleanupReceipt ?? {}),
+          launchStage: card5WebCleanupReceipt?.launchStage ?? "unknown",
+          socketResidueCount,
+          nativeObserverProcessCount: [...activeCard5NativeObserverPids].filter(processAlive)
+            .length,
+          pathResidueCount,
+        });
+        if (!card5Cleanup.passed) {
+          failures.push({
+            subsystem: "card5-cleanup-ledger",
+            detail: "owned host residue remained",
+          });
+        }
+      }
       const passed = failures.length === 0;
       const ownerFailed = state.status === "failed" || typeof state.failure === "string";
       publish({
@@ -6027,6 +9421,7 @@ async function owner() {
           status: passed ? "passed" : "failed",
           cleanupToken: state.runtimeNamespace?.cleanupToken ?? null,
           failures,
+          ...(card5Cleanup ? { card5: card5Cleanup } : {}),
           completedAt: new Date().toISOString(),
         },
         web: null,
@@ -14223,16 +17618,44 @@ async function owner() {
       daemonInfoDir: fleet.daemonInfoDir,
       cleanupToken,
     };
-    const traceProvenance = sourceTraceProvenance();
-    const tui = {
+    const intendedTui = {
       hostSession: `_tmux-ide-product-rig-${slug}`,
       runtimeDir: join(rigRoot, "tui"),
       performanceTracePath: join(rigRoot, "tui", "performance-trace.jsonl"),
-      performanceTraceCommit: traceProvenance.commit,
-      performanceTraceTree: traceProvenance.tree,
       daemonPerformanceTracePath: collectDaemonCausalTrace ? daemonPerformanceTracePath : null,
+      ...(card5Journey
+        ? {
+            hostFocusControlRoot: fleet.root,
+            hostFocusControlPath: join(fleet.root, "hf.sock"),
+            hostFocusLifecyclePath: join(rigRoot, "tui", "performance.jsonl"),
+          }
+        : {}),
     };
-    publish({ session, runtimeNamespace, tui });
+    let tui;
+    if (card5Journey) {
+      tui = prepareOwnedTuiRuntime({
+        ownership: { session, runtimeNamespace },
+        intendedTui,
+        ownedTuiRuntimeDirs: state.ownedTuiRuntimeDirs ?? [],
+        publish,
+        resolveProvenance: sourceTraceProvenance,
+        createRuntimeDir: createIsolatedTargetedTuiCwd,
+      });
+    } else {
+      const traceProvenance = sourceTraceProvenance();
+      tui = {
+        ...intendedTui,
+        performanceTraceCommit: traceProvenance.commit,
+        performanceTraceTree: traceProvenance.tree,
+      };
+      publish({ session, runtimeNamespace, tui });
+    }
+    if (card5Journey) {
+      // Publish the private correlation key to this process-local map before
+      // either production Web host can fail readiness. It never enters state
+      // or artifacts; failure sealing uses it only to HMAC daemon request ids.
+      productInputFingerprintKeys.set(tui.runtimeDir, card5InputFingerprintKey);
+    }
     event("tmux-ready", { session, socketPath: fleet.socketPath });
 
     publish({ daemonLifecycle: "starting" });
@@ -14246,9 +17669,32 @@ async function owner() {
     devServer = await startDevServer(daemon, {
       daemonInfoPath: join(fleet.daemonInfoDir, "daemon.json"),
     });
-    browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-    const page = await context.newPage();
+    let page;
+    if (card5Journey) {
+      card5WebHostLease = createCard5ProductionWebHostLease({
+        chromium,
+        electron,
+        pageUrl: devServer.pageUrl,
+        runtimeRoot: fleet.root,
+        electronUserData: join(fleet.root, "electron-user-data"),
+        daemonInfoPath: join(fleet.daemonInfoDir, "daemon.json"),
+        daemonInfoDir: fleet.daemonInfoDir,
+        registryDir: fleet.environment.TMUX_IDE_REGISTRY_DIR,
+        settingsDir: fleet.environment.TMUX_IDE_SETTINGS_DIR,
+        cleanupToken,
+        evidenceKey: card5InputFingerprintKey,
+        electronEntry: join(repoRoot, "apps", "electron-shell", "dist", "main.cjs"),
+        repoRoot,
+        environment: { ...process.env, ...fleet.environment },
+        signal: ownerAbort.signal,
+      });
+      card5WebHosts = await card5WebHostLease.ready;
+      page = card5WebHosts.chromiumPage;
+    } else {
+      browser = await chromium.launch({ headless: true });
+      const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      page = await context.newPage();
+    }
     // Register before navigation: module-load failures often happen before any
     // selector can exist, and closing Chromium would otherwise destroy them.
     const webDiagnostics = installWebStartupDiagnostics(page);
@@ -14259,7 +17705,9 @@ async function owner() {
       status: null,
     };
     try {
-      const response = await page.goto(devServer.pageUrl, { waitUntil: "domcontentloaded" });
+      const response = card5Journey
+        ? null
+        : await page.goto(devServer.pageUrl, { waitUntil: "domcontentloaded" });
       navigation.url = response?.url() ?? page.url();
       navigation.status = response?.status() ?? null;
       await page.locator(".app[data-shell-source='runtime']").waitFor({ timeout: 60_000 });
@@ -14299,9 +17747,19 @@ async function owner() {
       cwd: repoRoot,
       timeout: 120_000,
     });
-    tuiCommand(state, ["start", "--target", session, "--cols", "160", "--rows", "44"]);
+    if (card5Journey) prepareIsolatedTargetedTuiCwd(state.tui.runtimeDir);
+    const launchedTui = JSON.parse(
+      tuiCommand(state, ["start", "--target", session, "--cols", "160", "--rows", "44", "--json"]),
+    );
+    if (!exactProductTuiLaunchReceipt(launchedTui, { target: session, cols: 160, rows: 44 }))
+      throw new Error("Card5 OpenTUI launch receipt was invalid");
+    if (card5Journey) card5TuiProcessPid = launchedTui.processId;
     tuiCommand(state, ["key", "F2"]);
-    let tuiStatus = await waitForCoherentTui(state);
+    let tuiStatus = await waitForCoherentTui(state, 30_000, launchedTui.processId);
+    if (card5Journey) {
+      if (tuiStatus.processId !== card5TuiProcessPid)
+        throw new Error("Card5 OpenTUI process identity changed before coherent readiness");
+    }
     const initialHostPublication = await proveHostTerminalPublication(state, "boot");
     tuiStatus = JSON.parse(tuiCommand(state, ["status", "--json"]));
     const readiness = coherentReadiness({
@@ -14310,6 +17768,562 @@ async function owner() {
     });
     publish({ tui: { ...tui, readiness } });
     event("tui-coherent-terminal-frame", readiness);
+    if (card5Journey) {
+      const evidenceKey = card5InputFingerprintKey;
+      if (!state.tui.daemonPerformanceTracePath) {
+        throw new Error("Card5 requires the detailed daemon delivery trace");
+      }
+      card5TuiEvidence = createCard5TuiEvidenceStream(
+        state.tui.performanceTracePath,
+        state.tui.daemonPerformanceTracePath,
+        state.tui.hostFocusLifecyclePath,
+      );
+      let predecessorDescriptors = null;
+      const observeInitialWeb = async () =>
+        Promise.all([
+          observeCard5WebCanonical(
+            card5WebHosts.chromiumPage,
+            evidenceKey,
+            card5WebHosts.chromiumProcessIdentity,
+          ),
+          observeCard5WebCanonical(
+            card5WebHosts.electronPage,
+            evidenceKey,
+            card5WebHosts.electronProcessIdentity,
+          ),
+        ]);
+      const initialWebIdentity = await observeCard5WithinDeadline(observeInitialWeb, {
+        deadline: performance.now() + 5_000,
+      });
+      const initialPaneId =
+        initialWebIdentity.status === "ok"
+          ? exactSharedCard5WebPane(initialWebIdentity.value)
+          : null;
+      const tuiIdentity =
+        initialPaneId === null ? null : latestCard5TuiCanonical(card5TuiEvidence, initialPaneId);
+      if (!tuiIdentity) throw new Error("Card5 OpenTUI lifecycle identity was unavailable");
+      let acceptedConvergencePaneId = null;
+      card5TuiEvidence.drain();
+      const hostEvidence = Object.freeze({
+        lifecycle: await waitForCard5ObservedHostLifecycle({
+          reader: card5TuiEvidence.daemonReader,
+          observeWeb: observeInitialWeb,
+          failureIdentity: {
+            stage: "initial-host-lifecycle",
+            generation: tuiIdentity.generation,
+            pane: tuiIdentity.semanticPaneId,
+            evidenceKey,
+          },
+          assess: (daemonRecords, web) =>
+            assessCard5ObservedHostLifecycle({
+              stage: "initial-host-lifecycle",
+              generation: tuiIdentity.generation,
+              pane: tuiIdentity.semanticPaneId,
+              tuiProcessId: tuiIdentity.processId,
+              web,
+              daemonRecords,
+              evidenceKey,
+            }),
+        }),
+      });
+      let restartEvidence = null;
+      let restartTuiMark = null;
+      let restartStartedAt = null;
+      const replaceDaemon = async (before) => {
+        if (before?.generation !== tuiIdentity.generation) {
+          throw new Error("Card5 predecessor generation changed before the replacement boundary");
+        }
+        predecessorDescriptors = await Promise.all([
+          issueCard5PredecessorDescriptor(card5WebHosts.chromiumPage, {
+            workspaceName: workspace,
+            generation: before.generation,
+            semanticPaneId: tuiIdentity.semanticPaneId,
+          }),
+          issueCard5PredecessorDescriptor(card5WebHosts.electronPage, {
+            workspaceName: workspace,
+            generation: before.generation,
+            semanticPaneId: tuiIdentity.semanticPaneId,
+          }),
+        ]);
+        if (predecessorDescriptors.some((descriptor) => descriptor === null)) {
+          throw new Error(
+            "Card5 could not issue predecessor descriptors through both host brokers",
+          );
+        }
+        card5TuiEvidence.drain();
+        restartTuiMark = card5TuiEvidence.reader.mark();
+        const previousDaemonGeneration = daemon.record.instanceId;
+        const startedAt = Date.now();
+        restartStartedAt = startedAt;
+        await daemon.stop();
+        publish({ daemonLifecycle: "starting" });
+        daemon = await startDaemon(fleet);
+        publish({ daemonLifecycle: "started", daemon: daemon.record });
+        const replacementWorkspace = await daemon.promote(session);
+        await waitForReadinessLadder(daemon);
+        publish({ daemon: daemon.record, workspace: replacementWorkspace });
+        restartEvidence = Object.freeze({
+          previousDaemonGeneration,
+          daemonGeneration: daemon.record.instanceId,
+          previousCanonicalGeneration: before.generation,
+          elapsedMs: Date.now() - startedAt,
+        });
+        return restartEvidence;
+      };
+      const waitAfterReplacement = async (before) => {
+        if (!Array.isArray(predecessorDescriptors) || predecessorDescriptors.length !== 2) {
+          throw new Error(
+            "Card5 predecessor descriptors were not issued at the replacement boundary",
+          );
+        }
+        const after = await waitForCard5ProductionClientConvergence(
+          state,
+          card5WebHosts,
+          evidenceKey,
+          card5TuiEvidence,
+          5_000,
+          {
+            expectedPane: acceptedConvergencePaneId,
+            onStablePane: (semanticPaneId) => {
+              acceptedConvergencePaneId = semanticPaneId;
+            },
+          },
+        );
+        let raw = null;
+        const observeReplacementWeb = async () =>
+          Promise.all([
+            observeCard5WebCanonical(
+              card5WebHosts.chromiumPage,
+              evidenceKey,
+              card5WebHosts.chromiumProcessIdentity,
+            ),
+            observeCard5WebCanonical(
+              card5WebHosts.electronPage,
+              evidenceKey,
+              card5WebHosts.electronProcessIdentity,
+            ),
+          ]);
+        card5TuiEvidence.drain();
+        const replacementTuiIdentity = latestCard5TuiCanonical(
+          card5TuiEvidence,
+          acceptedConvergencePaneId,
+        );
+        if (!replacementTuiIdentity) {
+          throw new Error("Card5 replacement OpenTUI identity was unavailable");
+        }
+        publish({
+          card5ArtifactIdentity: await card5ArtifactIdentity(
+            daemon,
+            state.session,
+            replacementTuiIdentity.semanticPaneId,
+          ),
+        });
+        const replacementGeometryProof = await proveCard5PassiveGeometry(
+          state,
+          { ...card5WebHosts, tuiEvidence: card5TuiEvidence },
+          evidenceKey,
+          { activeChallenge: false, semanticPaneId: acceptedConvergencePaneId },
+        );
+        const replacementLifecycle = await waitForCard5ObservedHostLifecycle({
+          reader: card5TuiEvidence.daemonReader,
+          observeWeb: observeReplacementWeb,
+          onStableWeb: (web) => {
+            raw = web;
+          },
+          failureIdentity: {
+            stage: "replacement-host-lifecycle",
+            generation: after.generation,
+            pane: replacementTuiIdentity.semanticPaneId,
+            evidenceKey,
+          },
+          assess: (daemonRecords, web) =>
+            assessCard5ObservedHostLifecycle({
+              stage: "replacement-host-lifecycle",
+              generation: after.generation,
+              pane: replacementTuiIdentity.semanticPaneId,
+              tuiProcessId: replacementTuiIdentity.processId,
+              web,
+              daemonRecords,
+              evidenceKey,
+            }),
+        });
+        const tuiReplacementRecords = restartTuiMark
+          ? card5TuiEvidence.reader.recordsSince(restartTuiMark)
+          : [];
+        const tuiEvents = tuiReplacementRecords
+          .filter(
+            ({ type }) =>
+              type === "performance.terminal-canonical-publication" ||
+              type === "performance.terminal-canonical-update",
+          )
+          .map((record, acceptedOrdinal) => ({
+            type: record.updateType === "terminal.seed" ? "terminal.seed" : "terminal.patch",
+            generation: record.generation,
+            acceptedOrdinal,
+          }));
+        const tuiBoundary = {
+          predecessorGeneration: before.generation,
+          replacementGeneration: after.generation,
+          acceptedOrdinal: 0,
+        };
+        const staleResults = await Promise.all([
+          rejectCard5PredecessorDescriptor(card5WebHosts.chromiumPage, predecessorDescriptors[0]),
+          rejectCard5PredecessorDescriptor(card5WebHosts.electronPage, predecessorDescriptors[1]),
+        ]);
+        const replacement = assessCard5ReplacementEnvelopeEvidence({
+          predecessorGeneration: before.generation,
+          replacementGeneration: after.generation,
+          staleRedemptions: staleResults,
+          lanes: raw
+            .map((entry) => ({
+              events: entry?.envelopes ?? [],
+              replacementBoundary: entry?.runtimeReplacement?.replacementBoundary ?? null,
+              predecessorAcceptedAfterReplacement:
+                entry?.runtimeReplacement?.predecessorAcceptedAfterReplacement ?? null,
+              socketEvents: entry?.runtimeReplacement?.socketEvents ?? null,
+            }))
+            .concat({
+              events: tuiEvents,
+              replacementBoundary: tuiBoundary,
+              predecessorAcceptedAfterReplacement: tuiEvents.filter(
+                ({ generation, acceptedOrdinal }) =>
+                  generation === before.generation &&
+                  acceptedOrdinal >= tuiBoundary.acceptedOrdinal,
+              ).length,
+            }),
+        });
+        if (!replacement.passed) {
+          throw new Error("Card5 replacement was not seed-first or accepted stale G1 output");
+        }
+        if (staleResults.some(({ rejected, typed }) => rejected !== true || typed !== true)) {
+          throw new Error("Card5 predecessor descriptor remained redeemable after replacement");
+        }
+        const predecessorSocketOutcomes = raw.map((entry) => ({
+          outcome: entry?.runtimeReplacement?.socketEvents?.some(
+            ({ generation, outcome, ordinal }) =>
+              generation === before.generation &&
+              outcome === "closed" &&
+              ordinal >=
+                (entry?.runtimeReplacement?.replacementBoundary?.socketOrdinal ?? Infinity),
+          )
+            ? "predecessor-closed"
+            : "predecessor-open",
+        }));
+        const authorityClients = raw[0]?.workspaceEvidence?.authority?.clients ?? [];
+        const physicalClientIds = authorityClients.map(({ clientId }) => clientId);
+        const replacementAuthority = raw[0]?.workspaceEvidence?.authority ?? null;
+        const replacementAuthorityPeer = raw[1]?.workspaceEvidence?.authority ?? null;
+        const replacementDaemonRecords = card5TuiEvidence.daemonReader.read();
+        const replacementOpens = replacementDaemonRecords.filter(
+          (record) =>
+            record?.operation === "terminal-delivery-subscriber-lifecycle" &&
+            record.terminalDelivery?.deliveryLifecycleEvent === "open" &&
+            record.terminalDelivery?.canonicalGeneration === after.generation &&
+            record.terminalDelivery?.semanticPaneId === replacementTuiIdentity.semanticPaneId,
+        );
+        const replacementRequest = (observed) => {
+          const current = observed?.runtimeReplacement?.currentLifecycleRequest;
+          return current?.status === "exact" && /^[0-9a-f]{64}$/u.test(current.requestHmac ?? "")
+            ? current
+            : null;
+        };
+        const replacementClientId = (surface, request) =>
+          replacementOpens.find(
+            ({ terminalDelivery }) =>
+              terminalDelivery.deliverySurface === surface &&
+              (surface === "opentui" ||
+                (request !== null &&
+                  card5EvidenceHmac("request", terminalDelivery.deliveryRequestId, evidenceKey) ===
+                    request.requestHmac)),
+          )?.terminalDelivery?.deliveryClientId ?? null;
+        const replacementGeometryClients = [
+          {
+            client: "opentui",
+            clientId: replacementClientId("opentui", null),
+            observed: replacementTuiIdentity,
+            passive: null,
+            geometryOwner: null,
+          },
+          {
+            client: "web-a",
+            clientId: replacementClientId("web", replacementRequest(raw[0])),
+            observed: raw[0],
+            passive: raw[0]?.passive,
+            geometryOwner: raw[0]?.geometryOwner,
+          },
+          {
+            client: "web-b",
+            clientId: replacementClientId("web", replacementRequest(raw[1])),
+            observed: raw[1],
+            passive: raw[1]?.passive,
+            geometryOwner: raw[1]?.geometryOwner,
+          },
+        ];
+        const replacementGeometry = Object.freeze({
+          authorityEqual:
+            replacementAuthority !== null &&
+            JSON.stringify(replacementAuthority) === JSON.stringify(replacementAuthorityPeer),
+          physicalClientCount: physicalClientIds.length,
+          uniquePhysicalClientCount: new Set(physicalClientIds).size,
+          authorityRevision: replacementAuthority?.revision ?? null,
+          topologyHmac: replacementGeometryProof.samples[0]?.topologyHmac ?? null,
+          samples: replacementGeometryProof.samples,
+          clients: Object.freeze(
+            replacementGeometryClients.map((entry) => {
+              const ownsGeometry = replacementAuthority?.owners?.geometry === entry.clientId;
+              return Object.freeze({
+                client: entry.client,
+                clientHmac: entry.clientId
+                  ? card5EvidenceHmac("geometry-client", entry.clientId, evidenceKey)
+                  : null,
+                geometryOwner: ownsGeometry,
+                passive: !ownsGeometry,
+                observedGeometryOwner: entry.geometryOwner,
+                observedPassive: entry.passive,
+                cols: entry.observed?.cols ?? null,
+                rows: entry.observed?.rows ?? null,
+              });
+            }),
+          ),
+        });
+        const replacementSocketOutcomes = [
+          {
+            outcome:
+              after.clients.opentui?.connected === true
+                ? "replacement-open"
+                : "replacement-missing",
+          },
+          ...raw.map((entry) => ({
+            outcome: entry?.runtimeReplacement?.socketEvents?.some(
+              ({ generation, outcome, ordinal }) =>
+                generation === after.generation &&
+                outcome === "open" &&
+                ordinal <=
+                  (entry?.runtimeReplacement?.replacementBoundary?.socketOrdinal ?? Infinity),
+            )
+              ? "replacement-open"
+              : "replacement-missing",
+          })),
+        ];
+        return Object.freeze({
+          ...after,
+          ...replacement,
+          replacementLifecycle,
+          staleResults,
+          staleSocketRejected: predecessorSocketOutcomes.every(
+            ({ outcome }) => outcome === "predecessor-closed",
+          ),
+          socketOutcomes: Object.freeze([
+            ...predecessorSocketOutcomes,
+            ...replacementSocketOutcomes,
+          ]),
+          reconnectedHosts: Object.values(after.clients).filter(
+            ({ connected }) => connected === true,
+          ).length,
+          physicalClientCount: physicalClientIds.length,
+          duplicatePhysicalClients: physicalClientIds.length - new Set(physicalClientIds).size,
+          replacementGeometry,
+          geometryFightCount:
+            replacementGeometry.clients.filter(({ geometryOwner }) => geometryOwner).length === 1
+              ? 0
+              : 1,
+          recoveryElapsedMs:
+            restartStartedAt === null ? Number.POSITIVE_INFINITY : Date.now() - restartStartedAt,
+        });
+      };
+      if (journeyId === "cross-client-handoff") {
+        const proof = await runCrossClientHandoffOwnerBoot({
+          onBoundary: (boundary) => {
+            publish({ currentJourneyBoundary: boundary });
+            event(boundary);
+          },
+          createProductionHosts: async () => hostEvidence,
+          waitInitialConvergence: async () =>
+            waitForCard5ProductionClientConvergence(
+              state,
+              card5WebHosts,
+              evidenceKey,
+              card5TuiEvidence,
+              5_000,
+              {
+                expectedPane: initialPaneId,
+                onStablePane: (semanticPaneId) => {
+                  acceptedConvergencePaneId = semanticPaneId;
+                },
+              },
+            ),
+          driveAuthorityHandoff: async (_namespace, initial) =>
+            driveCard5AuthorityHandoff(state, daemon, {
+              ...card5WebHosts,
+              evidenceKey,
+              tuiEvidence: card5TuiEvidence,
+              hostIdentity: launchedTui.hostIdentity,
+              expectedPane: acceptedConvergencePaneId,
+              focusedPaneEvidence: initial.focusedPaneEvidence,
+              inputFingerprintKey: card5InputFingerprintKey,
+              recordNativeMarker: (marker) => {
+                card5NativeExpectedMarker = marker;
+              },
+            }),
+          provePassiveGeometry: async () =>
+            proveCard5PassiveGeometry(
+              state,
+              { ...card5WebHosts, tuiEvidence: card5TuiEvidence },
+              evidenceKey,
+              { semanticPaneId: acceptedConvergencePaneId },
+            ),
+          proveSlowWebIsolation: async () =>
+            proveCard5SlowWebIsolation(
+              state,
+              { ...card5WebHosts, inputFingerprintKey: card5InputFingerprintKey },
+              evidenceKey,
+              card5TuiEvidence,
+              acceptedConvergencePaneId,
+            ),
+          restartDaemon: async (_namespace, initial) => replaceDaemon(initial),
+          waitRestartConvergence: async (_namespace, initial) => waitAfterReplacement(initial),
+          proveNativeObserver: async () =>
+            proveCard5NativeObserver(
+              state,
+              evidenceKey,
+              acceptedConvergencePaneId,
+              card5NativeExpectedMarker,
+            ),
+          sealCorrelation: async (
+            namespace,
+            initial,
+            handoff,
+            geometry,
+            slowWeb,
+            restart,
+            after,
+            nativeObserver,
+          ) =>
+            sealCrossClientCorrelation(
+              { namespace, initial, handoff, geometry, slowWeb, restart, after, nativeObserver },
+              evidenceKey,
+            ),
+        });
+        const journeyEvidence = Object.freeze({
+          hosts: proof.namespace,
+          generations: {
+            before: proof.initial.generation,
+            after: proof.after.generation,
+          },
+          before: {
+            clients: proof.initial.clients,
+            focusedPaneEvidence: proof.initial.focusedPaneEvidence,
+          },
+          after: { clients: proof.after.clients },
+          handoff: proof.handoff,
+          geometry: proof.geometry,
+          slowWeb: proof.slowWeb,
+          restart: {
+            staleGenerationRejected: proof.after.predecessorEnvelopeAcceptedAfterReplace === false,
+            staleRedemptions: Object.freeze(
+              proof.after.staleResults.map(({ rejected, typed, reason }) =>
+                Object.freeze({ rejected, typed, reason }),
+              ),
+            ),
+            elapsedMs: proof.after.recoveryElapsedMs,
+            replacementLifecycle: proof.after.replacementLifecycle,
+          },
+          nativeObserver: proof.nativeObserver,
+          privacy: proof.correlation.privacy,
+          correlation: proof.correlation.correlation,
+        });
+        publish({ journeyEvidence: { crossClientHandoff: journeyEvidence } });
+      } else {
+        let before = null;
+        let after = null;
+        const proof = await runDaemonRestartOwnerBoot({
+          onBoundary: (boundary) => {
+            publish({ currentJourneyBoundary: boundary });
+            event(boundary);
+          },
+          createProductionHosts: async () => hostEvidence,
+          waitBeforeConvergence: async () =>
+            (before = await waitForCard5ProductionClientConvergence(
+              state,
+              card5WebHosts,
+              evidenceKey,
+              card5TuiEvidence,
+              5_000,
+              {
+                expectedPane: initialPaneId,
+                onStablePane: (semanticPaneId) => {
+                  acceptedConvergencePaneId = semanticPaneId;
+                },
+              },
+            )),
+          replaceDaemon: async () => replaceDaemon(before),
+          proveStaleFence: async () => Object.freeze({ awaitedReplacement: true }),
+          waitHostsReconnected: async () => {
+            const reconnected = await waitAfterReplacement(before);
+            after = reconnected;
+            return Object.freeze({
+              reconnectedHosts: reconnected.reconnectedHosts,
+              physicalClientCount: reconnected.physicalClientCount,
+              duplicatePhysicalClients: reconnected.duplicatePhysicalClients,
+              geometryFightCount: reconnected.geometryFightCount,
+              replacementGeometry: reconnected.replacementGeometry,
+              socketOutcomes: reconnected.socketOutcomes,
+              replacementLifecycle: reconnected.replacementLifecycle,
+            });
+          },
+          waitCanonicalConvergence: async () => after,
+          sealRestartCorrelation: async (hosts, beforeSample, replacement, afterSample) =>
+            sealDaemonRestartCorrelation(
+              hosts,
+              beforeSample,
+              replacement,
+              afterSample,
+              evidenceKey,
+            ),
+        });
+        const journeyEvidence = Object.freeze({
+          hosts: proof.hosts,
+          generations: { before: before.generation, after: after.generation },
+          before: { clients: before.clients },
+          after: { clients: after.clients },
+          restart: {
+            elapsedMs: after.recoveryElapsedMs,
+            staleDescriptorRejected: after.staleResults.every(
+              ({ rejected, typed }) => rejected && typed,
+            ),
+            staleRedemptions: Object.freeze(
+              after.staleResults.map(({ rejected, typed, reason }) =>
+                Object.freeze({ rejected, typed, reason }),
+              ),
+            ),
+            staleSocketRejected: after.staleSocketRejected,
+            staleGenerationError: after.staleGenerationError,
+            replacementFirstEnvelope: after.replacementFirstEnvelope,
+            replacementSeedGeneration: after.replacementSeedGeneration,
+            predecessorEnvelopeAcceptedAfterReplace: after.predecessorEnvelopeAcceptedAfterReplace,
+            reconnectedHosts: proof.reconnect.reconnectedHosts,
+            physicalClientCount: proof.reconnect.physicalClientCount,
+            duplicatePhysicalClients: proof.reconnect.duplicatePhysicalClients,
+            geometryFightCount: proof.reconnect.geometryFightCount,
+            replacementGeometry: proof.reconnect.replacementGeometry,
+            socketOutcomes: proof.reconnect.socketOutcomes,
+            replacementLifecycle: proof.reconnect.replacementLifecycle,
+          },
+          privacy: proof.correlation.privacy,
+          correlation: proof.correlation.correlation,
+        });
+        publish({ journeyEvidence: { daemonRestart: journeyEvidence } });
+      }
+      const card5CaptureEvidence = await captureArtifacts(
+        state,
+        `card5-${journeyId}`,
+        card5WebHosts.chromiumPage,
+      );
+      publish({ card5CaptureEvidence });
+      publish({ status: "ready", readyAt: new Date().toISOString() });
+      await new Promise(() => undefined);
+      return;
+    }
     const beforeRestart = await proveMultiClientConvergence(state, daemon, {
       allowRestartPending: true,
     });
@@ -14382,7 +18396,23 @@ async function owner() {
     await new Promise(() => undefined);
   } catch (error) {
     const daemonOutput = daemon?.output().slice(-16_384) ?? "";
-    publish(productRigTerminalFailureState(error, "product-rig-startup"));
+    let terminalFailure = productRigTerminalFailureState(error, "product-rig-startup");
+    if (
+      card5Journey &&
+      terminalFailure.failureObservation?.operation === "card5-production-host-launch" &&
+      ["chromium-readiness", "electron-readiness"].includes(
+        terminalFailure.failureObservation.stage,
+      )
+    ) {
+      terminalFailure = Object.freeze({
+        ...terminalFailure,
+        failureObservation: Object.freeze({
+          ...terminalFailure.failureObservation,
+          daemonPaneStreamLifecycle: await card5DaemonPaneStreamLifecycle(state),
+        }),
+      });
+    }
+    publish(terminalFailure);
     event("failed", {
       failure: error instanceof Error ? error.message : String(error),
       ...(daemonOutput ? { daemonOutput } : {}),

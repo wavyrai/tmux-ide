@@ -12,12 +12,12 @@ import type {
   PaneFrameChip as SemanticPaneFrameChip,
   PaneFrameModel,
   PaneFrameStatus as SemanticPaneFrameStatus,
-} from "../../../ui/pane-frame/presenter.tsx";
+} from "@tmux-ide/presentation/pane-frame";
 import {
   resolveEffectivePaneFrameActionState,
   type EffectivePaneFrameActionState,
   type EffectivePaneFrameActionVisualState,
-} from "../../../ui/pane-frame/action-state.ts";
+} from "@tmux-ide/presentation/pane-frame";
 import { terminalDisplayWidth } from "../panel-host.ts";
 import { actionChipWidth, iconButtonWidth, type RecipeTone, type Rect } from "../recipes.ts";
 import { clipWorkspaceText } from "./text.ts";

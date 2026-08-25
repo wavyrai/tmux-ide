@@ -31,7 +31,10 @@ import type {
   ApplicationShellSessionState,
   ApplicationShellTransport,
 } from "./application-shell-session.ts";
-import type { GenerationBoundClock } from "./generation-bound-store.ts";
+import type {
+  GenerationBoundClock,
+  GenerationBoundStoreMetrics,
+} from "./generation-bound-store.ts";
 import type {
   WorkspaceClientOperationSnapshot,
   WorkspaceClientPendingOperation,
@@ -133,10 +136,11 @@ export interface WorkspaceClientRuntimePort<
   ): void;
   close(): void | Promise<void>;
   /** Fits the one shared physical terminal stream, never a renderer-local replica. */
-  fitViewport(cols: number, rows: number): Promise<void>;
+  fitViewport(cols: number, rows: number): Promise<"ok" | "geometry-authority-conflict">;
   setPresence?(state: SessionRuntimePresenceState): void;
   noteActivity?(activity: SessionRuntimeActivityKind): void;
   ownsConnectionAuthority?(authority: SessionRuntimeAuthorityKind): boolean;
+  connectionAuthorityClientId?(authority: SessionRuntimeAuthorityKind): string | null;
   requestAuthority?(
     authority: SessionRuntimeAuthorityKind,
   ): Promise<SessionRuntimeAuthorityLease | null>;
@@ -235,6 +239,8 @@ export interface WorkspaceClient<
   TerminalTombstone = unknown,
 > {
   getSnapshot(): WorkspaceClientSnapshot<Shell>;
+  /** Metrics of the one application-shell resource owned by this client. */
+  getMetrics(): GenerationBoundStoreMetrics;
   subscribe<Scope extends WorkspaceClientScope>(
     scope: Scope,
     listener: (value: WorkspaceClientScopeValue<Shell, Scope>) => void,
@@ -265,10 +271,14 @@ export interface WorkspaceClient<
     performanceTraceId?: string,
     causalProbe?: CausalCellProbeRequestV1,
   ): Promise<SessionRuntimeTerminalInputResult>;
-  fitViewport(cols: number, rows: number): Promise<"ok" | "authority-lost">;
+  fitViewport(
+    cols: number,
+    rows: number,
+  ): Promise<"ok" | "authority-lost" | "geometry-authority-conflict">;
   setPresence(state: SessionRuntimePresenceState): void;
   noteActivity(activity: SessionRuntimeActivityKind): void;
   ownsRuntimeAuthority?(authority: SessionRuntimeAuthorityKind): boolean;
+  runtimeAuthorityClientId?(authority: SessionRuntimeAuthorityKind): string | null;
   requestAuthority(
     authority: SessionRuntimeAuthorityKind,
   ): Promise<SessionRuntimeAuthorityLease | null>;

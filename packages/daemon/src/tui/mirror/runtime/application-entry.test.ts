@@ -146,6 +146,17 @@ describe("production OpenTUI entry boundary", () => {
     );
   });
 
+  it("publishes a dedicated detailed host-focus control binding independent of claim outcome", () => {
+    const root = read("packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx");
+    expect(root).toContain('"terminal-host-focus-control-gate-ready"');
+    expect(root).toContain('"terminal-host-focus-control-binding-ready"');
+    expect(root).toContain("resolveApplicationHostFocusControlCapability(process.env)");
+    expect(root).toContain("createApplicationHostFocusControlBindingObserver({");
+    expect(root.indexOf("terminalHostFocus.adopt(nextAuthorityClient)")).toBeLessThan(
+      root.indexOf("hostFocusBindingObserver.adopt(snapshot)"),
+    );
+  });
+
   it("manifests every bootstrap boundary used to seed transitive architecture audits", () => {
     expect(OPENTUI_PRODUCTION_ROOT_SOURCES).toEqual([
       "packages/daemon/src/tui/mirror/app.tsx",

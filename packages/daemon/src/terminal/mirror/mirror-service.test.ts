@@ -40,7 +40,369 @@ async function subscribed(service: MirrorService, session: string, pane: string)
   return await service.subscribe({ session, semanticPaneId: pane, onEvent: () => {} });
 }
 
+function stampDetachedFixture(state: ReturnType<typeof fixtureState>): void {
+  state.descriptorRows[2] = state.descriptorRows[2]!.replace("%3\t\t", "%3\tpane.gamma\t").replace(
+    "\t\tzz-sim\t1\t2",
+    "\twindow.test.two\tzz-sim\t1\t2",
+  );
+}
+
 describe("MirrorService refcounting", () => {
+  it("rejects a descriptor pane-set splice before authoritative replay", async () => {
+    const state = fixtureState();
+    stampDetachedFixture(state);
+    const layouts: unknown[] = [];
+    let sim!: SimulatedChannel;
+    const service = new MirrorService({
+      createIo: (_session, handlers) => {
+        sim = new SimulatedChannel(handlers, fixtureAutoReply(state));
+        return sim;
+      },
+      generatePaneId: () => "pane.mirror.gen1",
+    });
+
+    await expect(
+      service.subscribeLayout(FIXTURE.session, (layout) => layouts.push(layout), {
+        expectedSemanticPaneIds: ["pane.alpha", "pane.beta"],
+        expectedRuntimeSessionId: "$1",
+      }),
+    ).rejects.toMatchObject({ name: "MirrorTopologyChangedError" });
+    expect(layouts).toHaveLength(0);
+    await vi.waitFor(() => expect(sim.disposed).toBe(true));
+  });
+
+  it("refreshes and replays every detached window before activating a global layout subscriber", async () => {
+    const state = fixtureState();
+    state.descriptorRows[2] = state.descriptorRows[2]!.replace(
+      "%3\t\t",
+      "%3\tpane.gamma\t",
+    ).replace("\t\tzz-sim\t1\t2", "\twindow.test.two\tzz-sim\t1\t2");
+    let sim!: SimulatedChannel;
+    const service = new MirrorService({
+      createIo: (_session, handlers) => {
+        sim = new SimulatedChannel(handlers, fixtureAutoReply(state));
+        return sim;
+      },
+    });
+    const layouts: Array<{ semanticWindowId: string | null; panes: readonly unknown[] }> = [];
+
+    const subscription = await service.subscribeLayout(
+      FIXTURE.session,
+      (layout) => layouts.push({ semanticWindowId: layout.semanticWindowId, panes: layout.panes }),
+      {
+        expectedSemanticPaneIds: ["pane.alpha", "pane.beta", "pane.gamma"],
+        expectedRuntimeSessionId: "$1",
+      },
+    );
+
+    expect(layouts.map(({ semanticWindowId }) => semanticWindowId)).toEqual([
+      "window.test.one",
+      "window.test.two",
+    ]);
+    expect(layouts.map(({ panes }) => panes.length)).toEqual([2, 1]);
+    expect(sim.written.filter((command) => command.startsWith("list-windows"))).toHaveLength(3);
+    await subscription.close();
+    expect(sim.disposed).toBe(true);
+  });
+
+  it("fails a global layout subscription when fresh truth omits a detached window", async () => {
+    const state = fixtureState();
+    state.descriptorRows[2] = state.descriptorRows[2]!.replace(
+      "%3\t\t",
+      "%3\tpane.gamma\t",
+    ).replace("\t\tzz-sim\t1\t2", "\twindow.test.two\tzz-sim\t1\t2");
+    state.windowRows = state.windowRows.slice(0, 1);
+    let sim!: SimulatedChannel;
+    const service = new MirrorService({
+      createIo: (_session, handlers) => {
+        sim = new SimulatedChannel(handlers, fixtureAutoReply(state));
+        return sim;
+      },
+    });
+
+    await expect(service.subscribeLayout(FIXTURE.session, () => undefined)).rejects.toThrow(
+      /trusted inventory.*(?:degraded|verified identity)|incomplete windows/u,
+    );
+    await vi.waitFor(() => expect(sim.disposed).toBe(true));
+  });
+
+  it("prunes a stale detached window before authoritative layout replay", async () => {
+    const state = fixtureState();
+    state.descriptorRows[2] = state.descriptorRows[2]!.replace(
+      "%3\t\t",
+      "%3\tpane.gamma\t",
+    ).replace("\t\tzz-sim\t1\t2", "\twindow.test.two\tzz-sim\t1\t2");
+    const service = new MirrorService({
+      createIo: (_session, handlers) => new SimulatedChannel(handlers, fixtureAutoReply(state)),
+    });
+    const retention = await service.retainSession(FIXTURE.session);
+    state.truthRows = state.truthRows.slice(0, 2);
+    state.windowRows = state.windowRows.slice(0, 1);
+    state.descriptorRows = state.descriptorRows
+      .slice(0, 2)
+      .map((row) => row.replace(/\t2\t2$/u, "\t2\t1"));
+    const layouts: string[] = [];
+
+    const subscription = await service.subscribeLayout(FIXTURE.session, (layout) => {
+      if (layout.semanticWindowId) layouts.push(layout.semanticWindowId);
+    });
+
+    expect(layouts).toEqual(["window.test.one"]);
+    await subscription.close();
+    await retention.close();
+  });
+
+  it("rejects malformed fresh geometry atomically without replaying or partially swapping stale layout", async () => {
+    const state = fixtureState();
+    stampDetachedFixture(state);
+    const service = new MirrorService({
+      createIo: (_session, handlers) => new SimulatedChannel(handlers, fixtureAutoReply(state)),
+    });
+    const incumbent: Array<{ window: string | null; cols: number }> = [];
+    const first = await service.subscribeLayout(FIXTURE.session, (layout) => {
+      incumbent.push({ window: layout.semanticWindowId, cols: layout.cols });
+    });
+    incumbent.length = 0;
+    state.windowRows = FIXTURE.windowRows("cccc,180x40,0,0{90x40,0,0,1,89x40,91,0,2}", "bad");
+
+    await expect(service.subscribeLayout(FIXTURE.session, () => undefined)).rejects.toThrow(
+      /window layout truth.*malformed/u,
+    );
+    expect(incumbent).toEqual([]);
+
+    state.windowRows = FIXTURE.windowRows(FIXTURE.layoutW1, FIXTURE.layoutW2);
+    const replay: Array<{ window: string | null; cols: number }> = [];
+    const second = await service.subscribeLayout(FIXTURE.session, (layout) => {
+      replay.push({ window: layout.semanticWindowId, cols: layout.cols });
+    });
+    expect(replay).toEqual([
+      { window: "window.test.one", cols: 200 },
+      { window: "window.test.two", cols: 200 },
+    ]);
+    await second.close();
+    await first.close();
+  });
+
+  it.each([
+    [
+      "duplicate",
+      (state: ReturnType<typeof fixtureState>) => [state.windowRows[0]!, state.windowRows[0]!],
+    ],
+    ["missing", (_state: ReturnType<typeof fixtureState>) => []],
+  ])("rejects %s authoritative window layout truth", async (_name, mutate) => {
+    const state = fixtureState();
+    stampDetachedFixture(state);
+    const service = new MirrorService({
+      createIo: (_session, handlers) => new SimulatedChannel(handlers, fixtureAutoReply(state)),
+    });
+    const retention = await service.retainSession(FIXTURE.session);
+    state.windowRows = mutate(state);
+    await expect(service.subscribeLayout(FIXTURE.session, () => undefined)).rejects.toThrow(
+      /window layout truth.*(?:malformed|missing)/u,
+    );
+    await retention.close();
+  });
+
+  it("publishes detached geometry-only refresh to an incumbent before replaying current truth to a new subscriber", async () => {
+    const state = fixtureState();
+    stampDetachedFixture(state);
+    const service = new MirrorService({
+      createIo: (_session, handlers) => new SimulatedChannel(handlers, fixtureAutoReply(state)),
+    });
+    const incumbent: Array<{ window: string | null; cols: number; rows: number }> = [];
+    const first = await service.subscribeLayout(FIXTURE.session, (layout) => {
+      incumbent.push({ window: layout.semanticWindowId, cols: layout.cols, rows: layout.rows });
+    });
+    incumbent.length = 0;
+    state.windowRows = FIXTURE.windowRows(FIXTURE.layoutW1, "cccc,180x40,0,0,3");
+    const newcomer: Array<{ window: string | null; cols: number; rows: number }> = [];
+
+    const second = await service.subscribeLayout(FIXTURE.session, (layout) => {
+      newcomer.push({ window: layout.semanticWindowId, cols: layout.cols, rows: layout.rows });
+    });
+
+    expect(incumbent).toEqual([{ window: "window.test.two", cols: 180, rows: 40 }]);
+    expect(newcomer).toEqual([
+      { window: "window.test.one", cols: 200, rows: 50 },
+      { window: "window.test.two", cols: 180, rows: 40 },
+    ]);
+    await second.close();
+    await first.close();
+  });
+
+  it.each([
+    ["missing leaf", "aaaa,200x50,0,0,1", FIXTURE.layoutW2],
+    ["duplicate leaf", "aaaa,200x50,0,0{100x50,0,0,1,99x50,101,0,1}", FIXTURE.layoutW2],
+    ["extra leaf", "aaaa,200x50,0,0{100x50,0,0,1,99x50,101,0,9}", FIXTURE.layoutW2],
+    ["cross-window leaf", "aaaa,200x50,0,0{100x50,0,0,1,99x50,101,0,3}", "bbbb,200x50,0,0,2"],
+  ])("rejects stable %s geometry without mutating incumbent truth", async (_name, w1, w2) => {
+    const state = fixtureState();
+    stampDetachedFixture(state);
+    const service = new MirrorService({
+      createIo: (_session, handlers) => new SimulatedChannel(handlers, fixtureAutoReply(state)),
+    });
+    const incumbent: string[] = [];
+    const first = await service.subscribeLayout(FIXTURE.session, (layout) => {
+      if (layout.semanticWindowId) incumbent.push(layout.semanticWindowId);
+    });
+    incumbent.length = 0;
+    state.windowRows = FIXTURE.windowRows(w1, w2);
+    const newcomer = vi.fn();
+
+    await expect(service.subscribeLayout(FIXTURE.session, newcomer)).rejects.toThrow(
+      /trusted inventory.*verified identity/u,
+    );
+    expect(incumbent).toEqual([]);
+    expect(newcomer).not.toHaveBeenCalled();
+    await first.close();
+  });
+
+  it("publishes both surviving windows when only current-window authority changes", async () => {
+    const state = fixtureState();
+    stampDetachedFixture(state);
+    const service = new MirrorService({
+      createIo: (_session, handlers) => new SimulatedChannel(handlers, fixtureAutoReply(state)),
+    });
+    const incumbent: Array<{ window: string | null; current: boolean }> = [];
+    const first = await service.subscribeLayout(FIXTURE.session, (layout) => {
+      incumbent.push({ window: layout.semanticWindowId, current: layout.currentWindow });
+    });
+    incumbent.length = 0;
+    state.windowRows = state.windowRows.map((row, index) => {
+      const fields = row.split("\t");
+      fields[3] = index === 1 ? "1" : "0";
+      return fields.join("\t");
+    });
+    state.descriptorRows = state.descriptorRows.map((row, index) => {
+      const fields = row.split("\t");
+      fields[14] = index === 2 ? "1" : index === 0 ? "1" : "0";
+      fields[15] = index === 2 ? "1" : "0";
+      return fields.join("\t");
+    });
+    const newcomer: Array<{ window: string | null; current: boolean }> = [];
+
+    const second = await service.subscribeLayout(FIXTURE.session, (layout) => {
+      newcomer.push({ window: layout.semanticWindowId, current: layout.currentWindow });
+    });
+
+    expect(incumbent).toEqual([
+      { window: "window.test.one", current: false },
+      { window: "window.test.two", current: true },
+    ]);
+    expect(newcomer).toEqual(incumbent);
+    await second.close();
+    await first.close();
+  });
+
+  it("publishes only the final stable transaction after pane truth churns between reads", async () => {
+    const state = fixtureState();
+    stampDetachedFixture(state);
+    let transactional = false;
+    let descriptorReads = 0;
+    let windowReads = 0;
+    const changedDescriptors = state.descriptorRows.map((row, index) =>
+      index === 0 ? row.replace("Alpha IDE", "Alpha stable") : row,
+    );
+    const intermediateWindows = FIXTURE.windowRows(FIXTURE.layoutW1, "cccc,180x40,0,0,3");
+    const finalWindows = FIXTURE.windowRows(FIXTURE.layoutW1, "dddd,170x35,0,0,3");
+    const service = new MirrorService({
+      createIo: (_session, handlers) =>
+        new SimulatedChannel(handlers, (command) => {
+          if (transactional && command.includes("qa:@tmux_ide_pane_id")) {
+            descriptorReads += 1;
+            return descriptorReads === 1 ? state.descriptorRows : changedDescriptors;
+          }
+          if (transactional && command.startsWith("list-windows")) {
+            windowReads += 1;
+            return windowReads === 1 ? intermediateWindows : finalWindows;
+          }
+          return fixtureAutoReply(state)(command);
+        }),
+    });
+    const incumbent: Array<{ window: string | null; cols: number }> = [];
+    const first = await service.subscribeLayout(FIXTURE.session, (layout) => {
+      incumbent.push({ window: layout.semanticWindowId, cols: layout.cols });
+    });
+    incumbent.length = 0;
+    transactional = true;
+    const newcomer: Array<{ window: string | null; cols: number }> = [];
+
+    const second = await service.subscribeLayout(FIXTURE.session, (layout) => {
+      newcomer.push({ window: layout.semanticWindowId, cols: layout.cols });
+    });
+
+    expect(descriptorReads).toBe(4);
+    expect(windowReads).toBe(4);
+    expect(incumbent).toEqual([{ window: "window.test.two", cols: 170 }]);
+    expect(newcomer).toEqual([
+      { window: "window.test.one", cols: 200 },
+      { window: "window.test.two", cols: 170 },
+    ]);
+    expect(incumbent).not.toContainEqual({ window: "window.test.two", cols: 180 });
+    await second.close();
+    await first.close();
+  });
+
+  it("exhausts a churning trusted transaction without mutating or publishing incumbent state", async () => {
+    const state = fixtureState();
+    stampDetachedFixture(state);
+    let transactional = false;
+    let windowReads = 0;
+    const service = new MirrorService({
+      createIo: (_session, handlers) =>
+        new SimulatedChannel(handlers, (command) => {
+          if (transactional && command.startsWith("list-windows")) {
+            windowReads += 1;
+            return FIXTURE.windowRows(
+              FIXTURE.layoutW1,
+              windowReads % 2 === 1 ? "cccc,180x40,0,0,3" : "dddd,170x35,0,0,3",
+            );
+          }
+          return fixtureAutoReply(state)(command);
+        }),
+    });
+    const incumbent: Array<{ window: string | null; cols: number }> = [];
+    const first = await service.subscribeLayout(FIXTURE.session, (layout) => {
+      incumbent.push({ window: layout.semanticWindowId, cols: layout.cols });
+    });
+    incumbent.length = 0;
+    transactional = true;
+
+    await expect(service.subscribeLayout(FIXTURE.session, () => undefined)).rejects.toThrow(
+      /trusted inventory.*did not settle/u,
+    );
+    expect(incumbent).toEqual([]);
+    await first.close();
+  });
+
+  it.each([
+    ["zero-active", ["0", "0"]],
+    ["multiple-active", ["1", "1"]],
+    ["descriptor-mismatch", ["0", "1"]],
+  ])("rejects %s fresh window authority without publishing", async (_name, activeTokens) => {
+    const state = fixtureState();
+    stampDetachedFixture(state);
+    const service = new MirrorService({
+      createIo: (_session, handlers) => new SimulatedChannel(handlers, fixtureAutoReply(state)),
+    });
+    const incumbent: string[] = [];
+    const first = await service.subscribeLayout(FIXTURE.session, (layout) => {
+      if (layout.semanticWindowId) incumbent.push(layout.semanticWindowId);
+    });
+    incumbent.length = 0;
+    state.windowRows = state.windowRows.map((row, index) => {
+      const fields = row.split("\t");
+      fields[3] = activeTokens[index]!;
+      return fields.join("\t");
+    });
+
+    await expect(service.subscribeLayout(FIXTURE.session, () => undefined)).rejects.toThrow(
+      /inconsistent active window|lacks verified identity/u,
+    );
+    expect(incumbent).toEqual([]);
+    await first.close();
+  });
+
   it("yields geometry only from event-driven proof of a non-control tmux client", async () => {
     const onNativeClientActivity = vi.fn();
     let sim!: SimulatedChannel;

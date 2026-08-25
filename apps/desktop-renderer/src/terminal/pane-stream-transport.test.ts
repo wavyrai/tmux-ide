@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   blankTerminalReplicaSnapshot,
+  applyTerminalReplicaUpdate,
   encodeCompactSemanticTerminalUpdate,
   encodeSemanticTerminalUpdate,
   hashTerminalDeliveryRepresentation,
@@ -17,6 +18,7 @@ import {
   createPaneStreamTransport,
   type PaneMirrorEvent,
   type PaneStreamConnectResult,
+  type PaneStreamDiagnosticLifecycleEvent,
   type PaneStreamSessionListeners,
   type PaneStreamSocketListener,
   type PaneStreamTransportError,
@@ -142,6 +144,11 @@ class FakeSocket implements PaneStreamWebSocket {
     for (const listener of [...(this.#listeners.get(type) ?? [])]) listener({ data });
   }
 
+  peerCloses(code: number, reason: string): void {
+    this.readyState = 3;
+    for (const listener of [...(this.#listeners.get("close") ?? [])]) listener({ code, reason });
+  }
+
   open(): void {
     this.readyState = 1;
     this.emit("open");
@@ -246,6 +253,101 @@ async function liveHarness(
 }
 
 describe("pane-stream transport admission", () => {
+  it("reports bounded causal stages and exact typed peer/client/dispose terminals", async () => {
+    const peerEvents: PaneStreamDiagnosticLifecycleEvent[] = [];
+    const peer = await liveHarness({
+      listeners: { onDiagnosticLifecycle: (event) => peerEvents.push(event) },
+    });
+    peer.socket.serverSends({
+      type: "layout-snapshot",
+      topologyEpoch: 1,
+      layouts: [
+        {
+          type: "layout",
+          semanticWindowId: "window.workspace.one",
+          windowName: "work",
+          currentWindow: true,
+          cols: 200,
+          rows: 50,
+          zoomed: false,
+          paneBorderStatus: "off",
+          panes: [
+            { pane: PANE_A, left: 0, top: 0, width: 100, height: 50, active: true },
+            { pane: PANE_B, left: 100, top: 0, width: 100, height: 50, active: false },
+          ],
+        },
+      ],
+    });
+    sendSemanticReady(peer.socket);
+    peer.socket.peerCloses(1012, "topology-changed");
+    expect(peerEvents.map(({ stage }) => stage)).toEqual([
+      "issued",
+      "socket-open",
+      "server-ready",
+      "layout-validated",
+      "delivery-open",
+      "terminal",
+    ]);
+    expect(peerEvents.at(-1)).toMatchObject({
+      code: "stream-closed",
+      origin: "peer",
+      closeCode: 1012,
+      closeReason: "topology-changed",
+    });
+    const peerCount = peerEvents.length;
+    peer.socket.serverSends({
+      type: "error",
+      protocolVersion: 1,
+      code: "stream-unavailable",
+      retryable: true,
+    });
+    expect(peerEvents).toHaveLength(peerCount);
+
+    const protocolEvents: PaneStreamDiagnosticLifecycleEvent[] = [];
+    const protocol = await liveHarness({
+      listeners: { onDiagnosticLifecycle: (event) => protocolEvents.push(event) },
+    });
+    protocol.socket.serverSends({ nope: true });
+    expect(protocolEvents.at(-1)).toMatchObject({
+      stage: "terminal",
+      code: "protocol-error",
+      origin: "peer",
+      closeCode: 1002,
+      closeReason: "protocol-error",
+    });
+
+    const typedEvents: PaneStreamDiagnosticLifecycleEvent[] = [];
+    const typed = await liveHarness({
+      listeners: { onDiagnosticLifecycle: (event) => typedEvents.push(event) },
+    });
+    typed.socket.serverSends({
+      type: "error",
+      protocolVersion: 1,
+      code: "topology-changed",
+      retryable: true,
+    });
+    expect(typedEvents.at(-1)).toMatchObject({
+      stage: "terminal",
+      code: "topology-changed",
+      origin: "peer",
+      closeCode: 1008,
+      closeReason: "topology-changed",
+    });
+
+    const disposeEvents: PaneStreamDiagnosticLifecycleEvent[] = [];
+    const disposed = await liveHarness({
+      listeners: { onDiagnosticLifecycle: (event) => disposeEvents.push(event) },
+    });
+    disposed.result.session.dispose();
+    expect(disposeEvents.at(-1)).toMatchObject({
+      stage: "terminal",
+      code: "disposed",
+      origin: "dispose",
+      closeCode: 1000,
+      closeReason: "renderer-disposed",
+    });
+  });
+
   it("rejects an invalid semantic request without calling the issuer", async () => {
     const issue = vi.fn();
     const transport = createPaneStreamTransport({ issuePaneStream: issue });
@@ -325,6 +427,19 @@ describe("pane-stream transport admission", () => {
       requestId: REQUEST_ID,
       daemonInstanceId: DAEMON_INSTANCE_ID,
     });
+  });
+
+  it("reports the exact validated physical descriptor before opening its socket", async () => {
+    const issued = vi.fn();
+    const h = await liveHarness({ listeners: { onDescriptorIssued: issued } });
+    expect(issued).toHaveBeenCalledTimes(1);
+    expect(issued).toHaveBeenCalledWith({
+      daemonInstanceId: DAEMON_INSTANCE_ID,
+      requestId: REQUEST_ID,
+      webSocketUrl: "ws://127.0.0.1:6060/v1/terminal/pane-streams/redeem",
+      subprotocol: PANE_STREAM_TRANSPORT_PROTOCOL,
+    });
+    h.result.session.dispose();
   });
 
   it("retains cumulative delivery ACKs for the explicit legacy profile", async () => {
@@ -446,7 +561,11 @@ describe("pane-stream transport demultiplexing", () => {
   ] as const)(
     "applies a %s negotiation / %s envelope seed atomically and ACKs only after the renderer settles",
     async (negotiatedEncoding, encoding, accepted, malformed) => {
-      const h = await liveHarness({ deferApplies: true });
+      const lifecycle: PaneStreamDiagnosticLifecycleEvent[] = [];
+      const h = await liveHarness({
+        deferApplies: true,
+        listeners: { onDiagnosticLifecycle: (event) => lifecycle.push(event) },
+      });
       const generation = "20000000-0000-4000-8000-000000000001";
       const deliveryNonce = "20000000-0000-4000-8000-000000000002";
       const transactionId = "20000000-0000-4000-8000-000000000003";
@@ -466,7 +585,19 @@ describe("pane-stream transport demultiplexing", () => {
       const normal = blankTerminalReplicaSnapshot(12, 4);
       const snapshot = {
         ...normal,
-        modes: { ...normal.modes, alternateScreen: true },
+        modes: {
+          ...normal.modes,
+          alternateScreen: true,
+          applicationCursor: true,
+          applicationKeypad: true,
+          bracketedPaste: true,
+          insert: true,
+          origin: true,
+          mouseTracking: true,
+          mouseProtocol: "drag" as const,
+          mouseEncoding: "sgr" as const,
+          synchronizedOutput: true,
+        },
       };
       const payload = { frame: "seed" as const, revision: 0, snapshot };
       const bytes = malformed
@@ -514,6 +645,7 @@ describe("pane-stream transport demultiplexing", () => {
           data: encodeBytesBase64(chunk.bytes),
         });
       }
+      if (accepted) expect(lifecycle.some(({ stage }) => stage === "first-seed")).toBe(true);
       await flushMicrotasks();
       if (!accepted) {
         expect(h.events).toEqual([]);
@@ -527,7 +659,31 @@ describe("pane-stream transport demultiplexing", () => {
       const seeded = h.events[0]!.event;
       if (seeded.type !== "seed-batch") throw new Error("semantic seed event was unavailable");
       expect(seeded.canonical?.deliveryRequestId).toBe(REQUEST_ID);
-      expect(new TextDecoder().decode(seeded.batch.seed).startsWith("\u001b[?1049h")).toBe(true);
+      expect(seeded.canonicalUpdate).toMatchObject({
+        type: "terminal.seed",
+        workspaceName: "workspace-a",
+        semanticPaneId: PANE_A,
+        generation,
+        incarnation,
+        revision: 0,
+        stateHash: hashTerminalReplicaSnapshot(snapshot),
+      });
+      const adopted = applyTerminalReplicaUpdate(null, seeded.canonicalUpdate!);
+      expect(adopted.status).toBe("applied");
+      expect(adopted.state?.snapshot).toStrictEqual(snapshot);
+      const presented = new TextDecoder().decode(seeded.batch.seed);
+      expect(presented.startsWith("\u001b[?1049h")).toBe(true);
+      for (const sequence of [
+        "\u001b[?1h",
+        "\u001b=",
+        "\u001b[?2004h",
+        "\u001b[4h",
+        "\u001b[?6h",
+        "\u001b[?1002h",
+        "\u001b[?1006h",
+        "\u001b[?2026h",
+      ])
+        expect(presented).toContain(sequence);
       expect(h.socket.sent).toHaveLength(1);
       h.settleApply();
       await flushMicrotasks();
@@ -703,6 +859,39 @@ describe("pane-stream transport demultiplexing", () => {
     expect(h.socket.sent).toHaveLength(1);
   });
 
+  it("atomically routes only strictly advancing layout snapshots", async () => {
+    const snapshots: unknown[] = [];
+    const h = await liveHarness({
+      listeners: { onLayoutSnapshot: (snapshot) => snapshots.push(snapshot) },
+    });
+    const frame = {
+      type: "layout-snapshot",
+      topologyEpoch: 3,
+      layouts: [
+        {
+          type: "layout",
+          semanticWindowId: "window.workspace.one",
+          windowName: "work",
+          currentWindow: true,
+          cols: 200,
+          rows: 50,
+          zoomed: false,
+          paneBorderStatus: "off",
+          panes: [
+            { pane: PANE_A, left: 0, top: 0, width: 100, height: 50, active: true },
+            { pane: PANE_B, left: 100, top: 0, width: 100, height: 50, active: false },
+          ],
+        },
+      ],
+    };
+    h.socket.serverSends(frame);
+    expect(snapshots).toHaveLength(1);
+    h.socket.serverSends(frame);
+    await flushMicrotasks();
+    expect(snapshots).toHaveLength(1);
+    expect(h.ends).toEqual([expect.objectContaining({ code: "protocol-error", retryable: false })]);
+  });
+
   it("publishes visibility/activity and consumes authority snapshots without polling", async () => {
     const snapshots: unknown[] = [];
     const h = await liveHarness({
@@ -766,6 +955,256 @@ describe("pane-stream transport demultiplexing", () => {
     await expect(pending).resolves.toBe(true);
   });
 
+  it("exposes and releases only this connection's exact held authority once", async () => {
+    const h = await liveHarness({
+      viewerMode: "interactive",
+      descriptorOverrides: { effectiveViewerMode: "interactive" },
+    });
+    const requested = h.result.session.requestAuthority!("geometry");
+    await flushMicrotasks();
+    const request = JSON.parse(h.socket.sent.at(-1)!);
+    h.socket.serverSends({
+      type: "authority-receipt",
+      requestId: request.requestId,
+      authority: "geometry",
+      status: "granted",
+      lease: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "runtime-a",
+        clientId: "client-a",
+        authority: "geometry",
+        token: "70000000-0000-4000-8000-000000000001",
+        revision: 1,
+      },
+      snapshot: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "runtime-a",
+        revision: 1,
+        owners: { input: null, focus: null, geometry: "client-a" },
+        nativeGeometryYieldUntilMs: 0,
+        clients: [],
+      },
+    });
+    await expect(requested).resolves.toMatchObject({ clientId: "client-a" });
+    expect(h.result.session.connectionAuthorityClientId!("geometry")).toBe("client-a");
+
+    const released = h.result.session.releaseAuthority!("geometry");
+    await flushMicrotasks();
+    const release = JSON.parse(h.socket.sent.at(-1)!);
+    expect(release).toMatchObject({ type: "authority-release", authority: "geometry" });
+    expect(h.result.session.connectionAuthorityClientId!("geometry")).toBeNull();
+    const sentCount = h.socket.sent.length;
+    await expect(h.result.session.releaseAuthority!("geometry")).resolves.toBeNull();
+    expect(h.socket.sent).toHaveLength(sentCount);
+    h.socket.serverSends({
+      type: "authority-receipt",
+      requestId: release.requestId,
+      authority: "geometry",
+      status: "released",
+      lease: null,
+      snapshot: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "runtime-a",
+        revision: 2,
+        owners: { input: null, focus: null, geometry: null },
+        nativeGeometryYieldUntilMs: 0,
+        clients: [],
+      },
+    });
+    await expect(released).resolves.toMatchObject({ revision: 2 });
+    h.result.session.dispose();
+    expect(h.result.session.connectionAuthorityClientId!("geometry")).toBeNull();
+  });
+
+  it("does not let an observing connection release another connection's global owner", async () => {
+    const owner = await liveHarness({
+      viewerMode: "interactive",
+      descriptorOverrides: { effectiveViewerMode: "interactive" },
+    });
+    const observer = await liveHarness({
+      viewerMode: "interactive",
+      descriptorOverrides: { effectiveViewerMode: "interactive" },
+    });
+    const grant = owner.result.session.requestAuthority!("geometry");
+    await flushMicrotasks();
+    const request = JSON.parse(owner.socket.sent.at(-1)!);
+    const ownedSnapshot = {
+      generation: DAEMON_INSTANCE_ID,
+      session: "runtime-a",
+      revision: 1,
+      owners: { input: null, focus: null, geometry: "client-a" },
+      nativeGeometryYieldUntilMs: 0,
+      clients: [],
+    };
+    owner.socket.serverSends({
+      type: "authority-receipt",
+      requestId: request.requestId,
+      authority: "geometry",
+      status: "granted",
+      lease: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "runtime-a",
+        clientId: "client-a",
+        authority: "geometry",
+        token: "70000000-0000-4000-8000-000000000002",
+        revision: 1,
+      },
+      snapshot: ownedSnapshot,
+    });
+    await grant;
+    observer.socket.serverSends({ type: "authority-snapshot", snapshot: ownedSnapshot });
+    expect(observer.result.session.connectionAuthorityClientId!("geometry")).toBeNull();
+    const observerSent = observer.socket.sent.length;
+    await expect(observer.result.session.releaseAuthority!("geometry")).resolves.toBeNull();
+    expect(observer.socket.sent).toHaveLength(observerSent);
+
+    const released = owner.result.session.releaseAuthority!("geometry");
+    await flushMicrotasks();
+    const release = JSON.parse(owner.socket.sent.at(-1)!);
+    owner.socket.serverSends({
+      type: "authority-receipt",
+      requestId: release.requestId,
+      authority: "geometry",
+      status: "released",
+      lease: null,
+      snapshot: {
+        ...ownedSnapshot,
+        revision: 2,
+        owners: { ...ownedSnapshot.owners, geometry: null },
+      },
+    });
+    await expect(released).resolves.toMatchObject({ revision: 2 });
+    expect(
+      owner.socket.sent.filter((frame) => JSON.parse(frame).type === "authority-release"),
+    ).toHaveLength(1);
+  });
+
+  it("binds authority to the authenticated runtime session without conflating workspace name", async () => {
+    const h = await liveHarness({
+      viewerMode: "interactive",
+      descriptorOverrides: { effectiveViewerMode: "interactive" },
+    });
+    const pending = h.result.session.write?.(PANE_A, "hello");
+    await flushMicrotasks();
+    const request = JSON.parse(h.socket.sent.at(-1)!);
+    h.socket.serverSends({
+      type: "authority-receipt",
+      requestId: request.requestId,
+      authority: "input",
+      status: "granted",
+      lease: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "tmux-runtime-a",
+        clientId: "client-a",
+        authority: "input",
+        token: "70000000-0000-4000-8000-000000000001",
+        revision: 1,
+      },
+      snapshot: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "tmux-runtime-a",
+        revision: 1,
+        owners: { input: "client-a", focus: null, geometry: null },
+        nativeGeometryYieldUntilMs: 0,
+        clients: [],
+      },
+    });
+    await flushMicrotasks();
+    const input = h.socket.sent
+      .map((frame) => JSON.parse(frame))
+      .find((frame) => frame.type === "input");
+    h.socket.serverSends({ type: "input-ack", pane: PANE_A, seq: input.seq });
+    await expect(pending).resolves.toBe(true);
+    expect(h.ends).toEqual([]);
+
+    h.socket.serverSends({
+      type: "authority-snapshot",
+      snapshot: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "tmux-runtime-b",
+        revision: 2,
+        owners: { input: null, focus: null, geometry: null },
+        nativeGeometryYieldUntilMs: 0,
+        clients: [],
+      },
+    });
+    expect(h.ends.at(-1)).toMatchObject({ code: "protocol-error" });
+  });
+
+  it("accepts a sticky lease older than its coherent authority snapshot and rejects the reverse", async () => {
+    const h = await liveHarness({
+      viewerMode: "interactive",
+      descriptorOverrides: { effectiveViewerMode: "interactive" },
+    });
+    const fitted = h.result.session.resize?.(140, 46);
+    await flushMicrotasks();
+    const request = JSON.parse(h.socket.sent.at(-1)!);
+    h.socket.serverSends({
+      type: "authority-receipt",
+      requestId: request.requestId,
+      authority: "geometry",
+      status: "granted",
+      lease: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "tmux-runtime-a",
+        clientId: "client-a",
+        authority: "geometry",
+        token: "70000000-0000-4000-8000-000000000002",
+        revision: 2,
+      },
+      snapshot: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "tmux-runtime-a",
+        revision: 3,
+        owners: { input: null, focus: null, geometry: "client-a" },
+        nativeGeometryYieldUntilMs: 0,
+        clients: [],
+      },
+    });
+    await flushMicrotasks();
+    const viewport = h.socket.sent
+      .map((frame) => JSON.parse(frame))
+      .find((frame) => frame.type === "viewport");
+    h.socket.serverSends({
+      type: "viewport-ack",
+      seq: viewport.seq,
+      cols: viewport.cols,
+      rows: viewport.rows,
+      outcome: "ok",
+      authorityLease: viewport.authorityLease,
+    });
+    await expect(fitted).resolves.toBe("ok");
+    expect(h.ends).toEqual([]);
+
+    const next = h.result.session.requestAuthority?.("focus");
+    await flushMicrotasks();
+    const nextRequest = JSON.parse(h.socket.sent.at(-1)!);
+    h.socket.serverSends({
+      type: "authority-receipt",
+      requestId: nextRequest.requestId,
+      authority: "focus",
+      status: "granted",
+      lease: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "tmux-runtime-a",
+        clientId: "client-a",
+        authority: "focus",
+        token: "70000000-0000-4000-8000-000000000003",
+        revision: 5,
+      },
+      snapshot: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "tmux-runtime-a",
+        revision: 4,
+        owners: { input: null, focus: "client-a", geometry: "client-a" },
+        nativeGeometryYieldUntilMs: 0,
+        clients: [],
+      },
+    });
+    await expect(next).resolves.toBeNull();
+    expect(h.ends.at(-1)).toMatchObject({ code: "protocol-error" });
+  });
+
   it("does not send input when another Web client owns authority", async () => {
     const h = await liveHarness({
       viewerMode: "interactive",
@@ -791,6 +1230,344 @@ describe("pane-stream transport demultiplexing", () => {
     });
     await expect(pending).resolves.toBe(false);
     expect(h.socket.sent.some((frame) => JSON.parse(frame).type === "input")).toBe(false);
+  });
+
+  it("distinguishes an explicit geometry authority rejection from transport failure", async () => {
+    const h = await liveHarness({
+      viewerMode: "interactive",
+      descriptorOverrides: { effectiveViewerMode: "interactive" },
+    });
+    const pending = h.result.session.resize?.(140, 46);
+    await flushMicrotasks();
+    const request = JSON.parse(h.socket.sent.at(-1)!);
+    expect(request).toMatchObject({ type: "authority-request", authority: "geometry" });
+    h.socket.serverSends({
+      type: "authority-receipt",
+      requestId: request.requestId,
+      authority: "geometry",
+      status: "rejected",
+      lease: null,
+      snapshot: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "workspace-a",
+        revision: 2,
+        owners: { input: null, focus: null, geometry: "other-web-client" },
+        nativeGeometryYieldUntilMs: 0,
+        clients: [],
+      },
+    });
+    await expect(pending).resolves.toBe("geometry-authority-conflict");
+    expect(h.socket.sent.some((frame) => JSON.parse(frame).type === "viewport")).toBe(false);
+
+    h.result.session.dispose();
+    await expect(h.result.session.resize?.(140, 46)).resolves.toBe("lifecycle-retired");
+  });
+
+  it.each(["unknown-request", "cross-authority"] as const)(
+    "rejects %s authority receipts before they can install a local lease",
+    async (kind) => {
+      const h = await liveHarness({
+        viewerMode: "interactive",
+        descriptorOverrides: { effectiveViewerMode: "interactive" },
+      });
+      const pending = h.result.session.resize?.(140, 46);
+      await flushMicrotasks();
+      const request = JSON.parse(h.socket.sent.at(-1)!);
+      const authority = kind === "cross-authority" ? "input" : "geometry";
+      const clientId = "web-client-a";
+      h.socket.serverSends({
+        type: "authority-receipt",
+        requestId: kind === "unknown-request" ? globalThis.crypto.randomUUID() : request.requestId,
+        authority,
+        status: "granted",
+        lease: {
+          generation: DAEMON_INSTANCE_ID,
+          session: "workspace-a",
+          clientId,
+          authority,
+          token: globalThis.crypto.randomUUID(),
+          revision: 2,
+        },
+        snapshot: {
+          generation: DAEMON_INSTANCE_ID,
+          session: "workspace-a",
+          revision: 2,
+          owners: {
+            input: authority === "input" ? clientId : null,
+            focus: null,
+            geometry: authority === "geometry" ? clientId : null,
+          },
+          nativeGeometryYieldUntilMs: 0,
+          clients: [],
+        },
+      });
+      await expect(pending).resolves.toBe("stream-closed");
+      expect(h.socket.sent.some((frame) => JSON.parse(frame).type === "viewport")).toBe(false);
+      expect(h.ends.at(-1)).toMatchObject({ code: "protocol-error" });
+    },
+  );
+
+  it.each(["granted-without-lease", "request-released", "rejected-with-lease"] as const)(
+    "rejects malformed authority receipt shape %s before mutation",
+    async (kind) => {
+      const h = await liveHarness({
+        viewerMode: "interactive",
+        descriptorOverrides: { effectiveViewerMode: "interactive" },
+      });
+      const pending = h.result.session.resize?.(140, 46);
+      await flushMicrotasks();
+      const request = JSON.parse(h.socket.sent.at(-1)!);
+      const malformedLease = {
+        generation: DAEMON_INSTANCE_ID,
+        session: "workspace-a",
+        clientId: "web-client-a",
+        authority: "geometry" as const,
+        token: globalThis.crypto.randomUUID(),
+        revision: 2,
+      };
+      h.socket.serverSends({
+        type: "authority-receipt",
+        requestId: request.requestId,
+        authority: "geometry",
+        status:
+          kind === "request-released"
+            ? "released"
+            : kind === "rejected-with-lease"
+              ? "rejected"
+              : "granted",
+        lease: kind === "rejected-with-lease" ? malformedLease : null,
+        snapshot: {
+          generation: DAEMON_INSTANCE_ID,
+          session: "workspace-a",
+          revision: 2,
+          owners: { input: null, focus: null, geometry: null },
+          nativeGeometryYieldUntilMs: 0,
+          clients: [],
+        },
+      });
+      await expect(pending).resolves.toBe("stream-closed");
+      expect(h.socket.sent.some((frame) => JSON.parse(frame).type === "viewport")).toBe(false);
+      expect(h.ends.at(-1)).toMatchObject({ code: "protocol-error" });
+    },
+  );
+
+  it("rejects a granted receipt for an exact pending release", async () => {
+    const h = await liveHarness({
+      viewerMode: "interactive",
+      descriptorOverrides: { effectiveViewerMode: "interactive" },
+    });
+    const acquire = h.result.session.requestAuthority?.("geometry");
+    await flushMicrotasks();
+    const acquireRequest = JSON.parse(h.socket.sent.at(-1)!);
+    const lease = {
+      generation: DAEMON_INSTANCE_ID,
+      session: "workspace-a",
+      clientId: "web-client-a",
+      authority: "geometry" as const,
+      token: globalThis.crypto.randomUUID(),
+      revision: 2,
+    };
+    h.socket.serverSends({
+      type: "authority-receipt",
+      requestId: acquireRequest.requestId,
+      authority: "geometry",
+      status: "granted",
+      lease,
+      snapshot: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "workspace-a",
+        revision: 2,
+        owners: { input: null, focus: null, geometry: "web-client-a" },
+        nativeGeometryYieldUntilMs: 0,
+        clients: [],
+      },
+    });
+    await expect(acquire).resolves.toEqual(lease);
+    const release = h.result.session.releaseAuthority?.("geometry");
+    await flushMicrotasks();
+    const releaseRequest = JSON.parse(h.socket.sent.at(-1)!);
+    h.socket.serverSends({
+      type: "authority-receipt",
+      requestId: releaseRequest.requestId,
+      authority: "geometry",
+      status: "granted",
+      lease,
+      snapshot: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "workspace-a",
+        revision: 2,
+        owners: { input: null, focus: null, geometry: "web-client-a" },
+        nativeGeometryYieldUntilMs: 0,
+        clients: [],
+      },
+    });
+    await expect(release).resolves.toBeNull();
+    expect(h.ends.at(-1)).toMatchObject({ code: "protocol-error" });
+  });
+
+  it("keeps authority and viewport deadlines distinct and fatal", async () => {
+    const authorityTimeout = await liveHarness({
+      viewerMode: "interactive",
+      descriptorOverrides: { effectiveViewerMode: "interactive" },
+    });
+    const pendingAuthority = authorityTimeout.result.session.resize?.(140, 46);
+    await authorityTimeout.clock.advance(2_001);
+    await expect(pendingAuthority).resolves.toBe("authority-timeout");
+    expect(
+      authorityTimeout.socket.sent.some((frame) => JSON.parse(frame).type === "viewport"),
+    ).toBe(false);
+
+    const viewportTimeout = await liveHarness({
+      viewerMode: "interactive",
+      descriptorOverrides: { effectiveViewerMode: "interactive" },
+    });
+    const pendingViewport = viewportTimeout.result.session.resize?.(140, 46);
+    await flushMicrotasks();
+    const request = JSON.parse(viewportTimeout.socket.sent.at(-1)!);
+    viewportTimeout.socket.serverSends({
+      type: "authority-receipt",
+      requestId: request.requestId,
+      authority: "geometry",
+      status: "granted",
+      lease: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "workspace-a",
+        clientId: "web-client-a",
+        authority: "geometry",
+        token: globalThis.crypto.randomUUID(),
+        revision: 2,
+      },
+      snapshot: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "workspace-a",
+        revision: 2,
+        owners: { input: null, focus: null, geometry: "web-client-a" },
+        nativeGeometryYieldUntilMs: 0,
+        clients: [],
+      },
+    });
+    await flushMicrotasks();
+    expect(
+      viewportTimeout.socket.sent
+        .map((frame): Record<string, unknown> => JSON.parse(frame))
+        .reverse()
+        .find((frame) => frame.type === "viewport"),
+    ).toMatchObject({ type: "viewport", cols: 140, rows: 46 });
+    await viewportTimeout.clock.advance(2_001);
+    await expect(pendingViewport).resolves.toBe("viewport-timeout");
+  });
+
+  it("binds the viewport acknowledgement to the exact granted lease and preserves conflict", async () => {
+    const h = await liveHarness({
+      viewerMode: "interactive",
+      descriptorOverrides: { effectiveViewerMode: "interactive" },
+    });
+    const pending = h.result.session.resize?.(140, 46);
+    await flushMicrotasks();
+    const request = JSON.parse(h.socket.sent.at(-1)!);
+    const lease = {
+      generation: DAEMON_INSTANCE_ID,
+      session: "workspace-a",
+      clientId: "web-client-a",
+      authority: "geometry",
+      token: globalThis.crypto.randomUUID(),
+      revision: 2,
+    } as const;
+    h.socket.serverSends({
+      type: "authority-receipt",
+      requestId: request.requestId,
+      authority: "geometry",
+      status: "granted",
+      lease,
+      snapshot: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "workspace-a",
+        revision: 2,
+        owners: { input: null, focus: null, geometry: "web-client-a" },
+        nativeGeometryYieldUntilMs: 0,
+        clients: [],
+      },
+    });
+    await flushMicrotasks();
+    const viewport = h.socket.sent
+      .map((frame): Record<string, unknown> => JSON.parse(frame))
+      .reverse()
+      .find((frame) => frame.type === "viewport")!;
+    expect(viewport).toMatchObject({
+      type: "viewport",
+      authorityLease: lease,
+      cols: 140,
+      rows: 46,
+    });
+    h.socket.serverSends({
+      type: "viewport-ack",
+      seq: viewport.seq,
+      cols: 140,
+      rows: 46,
+      outcome: "geometry-authority-conflict",
+      authorityLease: lease,
+    });
+    await expect(pending).resolves.toBe("geometry-authority-conflict");
+  });
+
+  it("rejects a viewport acknowledgement whose echoed dimensions do not match", async () => {
+    const h = await liveHarness({
+      viewerMode: "interactive",
+      descriptorOverrides: { effectiveViewerMode: "interactive" },
+    });
+    const pending = h.result.session.resize?.(140, 46);
+    await flushMicrotasks();
+    const request = JSON.parse(h.socket.sent.at(-1)!);
+    const lease = {
+      generation: DAEMON_INSTANCE_ID,
+      session: "workspace-a",
+      clientId: "web-client-a",
+      authority: "geometry",
+      token: globalThis.crypto.randomUUID(),
+      revision: 2,
+    } as const;
+    h.socket.serverSends({
+      type: "authority-receipt",
+      requestId: request.requestId,
+      authority: "geometry",
+      status: "granted",
+      lease,
+      snapshot: {
+        generation: DAEMON_INSTANCE_ID,
+        session: "workspace-a",
+        revision: 2,
+        owners: { input: null, focus: null, geometry: "web-client-a" },
+        nativeGeometryYieldUntilMs: 0,
+        clients: [],
+      },
+    });
+    await flushMicrotasks();
+    const viewport = h.socket.sent
+      .map((frame): Record<string, unknown> => JSON.parse(frame))
+      .reverse()
+      .find((frame) => frame.type === "viewport")!;
+    h.socket.serverSends({
+      type: "viewport-ack",
+      seq: viewport.seq,
+      cols: 139,
+      rows: 46,
+      outcome: "ok",
+      authorityLease: lease,
+    });
+    await expect(pending).resolves.toBe("stream-closed");
+    expect(h.ends.at(-1)).toMatchObject({ code: "protocol-error" });
+  });
+
+  it("settles a pending geometry request as closed without emitting viewport evidence", async () => {
+    const h = await liveHarness({
+      viewerMode: "interactive",
+      descriptorOverrides: { effectiveViewerMode: "interactive" },
+    });
+    const pending = h.result.session.resize?.(140, 46);
+    await flushMicrotasks();
+    h.result.session.dispose();
+    await expect(pending).resolves.toBe("stream-closed");
+    expect(h.socket.sent.some((frame) => JSON.parse(frame).type === "viewport")).toBe(false);
   });
 
   it("revokes a stale local hold from an unsolicited snapshot before the next write", async () => {

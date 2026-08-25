@@ -223,6 +223,7 @@ describe("OpenTuiTerminalHostFocus", () => {
     await vi.waitFor(() =>
       expect(events.map(({ phase }) => phase)).toEqual([
         "renderer-focus-event",
+        "focus-claim-attempt",
         "focus-presence",
         "focus-activity",
         "focus-authority-reconcile",
@@ -291,12 +292,13 @@ describe("OpenTuiTerminalHostFocus", () => {
     expect(focus.rendererBlur()).toBe(1);
     await vi.waitFor(() => expect(events.at(-1)?.phase).toBe("blur-authority-settled"));
     expect(events.map(({ phase }) => phase)).toEqual([
+      "focus-claim-attempt",
       "renderer-blur-event",
       "focus-authority-reconcile",
       "blur-presence",
       "blur-authority-settled",
     ]);
-    expect(events[0]?.details).toMatchObject({
+    expect(events.find(({ phase }) => phase === "renderer-blur-event")?.details).toMatchObject({
       clientGeneration: 7,
       daemonInstanceId: "daemon-1",
       diagnosticEpoch: 1,
@@ -308,6 +310,7 @@ describe("OpenTuiTerminalHostFocus", () => {
     await vi.waitFor(() => expect(events.at(-1)?.phase).toBe("focus-authority-settled"));
     expect(events.map(({ phase }) => phase)).toEqual([
       "renderer-focus-event",
+      "focus-claim-attempt",
       "focus-presence",
       "focus-activity",
       "focus-authority-reconcile",
@@ -333,6 +336,21 @@ describe("OpenTuiTerminalHostFocus", () => {
     expect(focus.rendererFocus()).toBe(2);
     expect(focus.rendererBlur()).toBe(3);
     expect(focus.rendererFocus()).toBe(4);
+  });
+
+  it("coalesces ten thousand duplicate renderer focus events into one claim triplet", async () => {
+    const runtime = client();
+    const focus = new OpenTuiTerminalHostFocus(true);
+    focus.adopt(runtime as never);
+
+    for (let index = 0; index < 10_000; index += 1) expect(focus.rendererFocus()).toBeNull();
+    await vi.waitFor(() => expect(runtime.requestAuthority).toHaveBeenCalledTimes(3));
+
+    expect(runtime.requestAuthority.mock.calls.map(([authority]) => authority)).toEqual([
+      "input",
+      "focus",
+      "geometry",
+    ]);
   });
 
   it("keeps rapid blur and focus settlements causally separated by epoch", async () => {
@@ -429,17 +447,16 @@ describe("OpenTuiTerminalHostFocus", () => {
     expect(runtime.setPresence).toHaveBeenLastCalledWith("background");
   });
 
-  it("does not apply a partial claim and recovers only after all three exact leases", async () => {
+  it("settles one partial claim without retrying on unrelated authority revisions", async () => {
     const runtime = client();
     runtime.requestAuthority.mockImplementation(async (authority) => {
-      const attempt = Math.floor((runtime.requestAuthority.mock.calls.length - 1) / 3) + 1;
-      if (attempt === 1 && authority !== "geometry") return null;
+      if (authority !== "geometry") return null;
       return {
         generation: "generation-1",
         session: "session-1",
         clientId: "tui",
         authority,
-        revision: 11 + attempt,
+        revision: 12,
       };
     });
     const events: Array<{ phase: string; details: Readonly<Record<string, unknown>> }> = [];
@@ -448,13 +465,15 @@ describe("OpenTuiTerminalHostFocus", () => {
     );
 
     focus.adopt(runtime as never);
-    await vi.waitFor(() => expect(runtime.requestAuthority).toHaveBeenCalledTimes(6));
+    await vi.waitFor(() =>
+      expect(events.filter(({ phase }) => phase === "focus-authority-reconcile")).toHaveLength(1),
+    );
 
     expect(
       events
         .filter(({ phase }) => phase === "focus-authority-reconcile")
         .map(({ details }) => details.status),
-    ).toEqual(["retrying", "applied"]);
+    ).toEqual(["failed"]);
     expect(events.filter(({ phase }) => phase === "focus-authority-settled")).toHaveLength(0);
     focus.blur();
     await vi.waitFor(() => expect(runtime.releaseAuthority).toHaveBeenCalledTimes(3));
@@ -479,25 +498,64 @@ describe("OpenTuiTerminalHostFocus", () => {
     );
 
     focus.adopt(runtime as never);
-    await vi.waitFor(() => expect(runtime.requestAuthority).toHaveBeenCalledTimes(9));
+    await vi.waitFor(() =>
+      expect(events.filter(({ phase }) => phase === "focus-authority-reconcile")).toHaveLength(1),
+    );
 
     const outcomes = events.filter(({ phase }) => phase === "focus-authority-reconcile");
-    expect(outcomes).toHaveLength(3);
-    expect(outcomes.at(-1)?.details).toMatchObject({ attempt: 3, status: "failed" });
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes.at(-1)?.details).toMatchObject({ attempt: 1, status: "failed" });
     expect(events.some(({ phase }) => phase === "focus-authority-settled")).toBe(false);
   });
 
-  it("recovers from one rejected claim without applying the partial attempt", async () => {
+  it("does not rearm when an unheld geometry authority advances repeatedly", async () => {
+    const runtime = client();
+    let authorityListener!: Parameters<typeof runtime.onAuthority>[0];
+    runtime.onAuthority.mockImplementation((listener) => {
+      authorityListener = listener;
+      return () => undefined;
+    });
+    runtime.requestAuthority.mockImplementation(async (authority) =>
+      authority === "geometry"
+        ? null
+        : {
+            generation: "generation-1",
+            session: "session-1",
+            clientId: "tui",
+            authority,
+            revision: 12,
+          },
+    );
+    runtime.getAuthoritySnapshot.mockReturnValue({
+      ...runtime.getSnapshot().authority!,
+      revision: 12,
+      owners: { input: "tui", focus: "tui", geometry: "web" },
+    });
+    const focus = new OpenTuiTerminalHostFocus(true);
+    focus.adopt(runtime as never);
+    await vi.waitFor(() => expect(runtime.requestAuthority).toHaveBeenCalledTimes(3));
+
+    for (let revision = 13; revision < 10_013; revision += 1) {
+      authorityListener({
+        ...runtime.getSnapshot().authority!,
+        revision,
+        owners: { input: "tui", focus: "tui", geometry: "web" },
+      });
+    }
+    await Promise.resolve();
+    expect(runtime.requestAuthority).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not spin after one rejected authority in a foreground epoch", async () => {
     const runtime = client();
     runtime.requestAuthority.mockImplementation(async (authority) => {
-      const attempt = Math.floor((runtime.requestAuthority.mock.calls.length - 1) / 3) + 1;
-      if (attempt === 1 && authority === "input") throw new Error("authority request timed out");
+      if (authority === "input") throw new Error("authority request timed out");
       return {
         generation: "generation-1",
         session: "session-1",
         clientId: "tui",
         authority,
-        revision: 11 + attempt,
+        revision: 12,
       };
     });
     const events: Array<{ phase: string; details: Readonly<Record<string, unknown>> }> = [];
@@ -506,10 +564,12 @@ describe("OpenTuiTerminalHostFocus", () => {
     );
 
     focus.adopt(runtime as never);
-    await vi.waitFor(() => expect(runtime.requestAuthority).toHaveBeenCalledTimes(6));
+    await vi.waitFor(() =>
+      expect(events.filter(({ phase }) => phase === "focus-authority-reconcile")).toHaveLength(1),
+    );
 
     const outcomes = events.filter(({ phase }) => phase === "focus-authority-reconcile");
-    expect(outcomes.map(({ details }) => details.status)).toEqual(["retrying", "applied"]);
+    expect(outcomes.map(({ details }) => details.status)).toEqual(["failed"]);
     expect(outcomes[0]?.details).toMatchObject({
       receipts: [
         { authority: "input", status: "rejected", granted: false, exact: false },
@@ -519,7 +579,7 @@ describe("OpenTuiTerminalHostFocus", () => {
     });
   });
 
-  it("reconciles an exact authority loss on the same runtime binding", async () => {
+  it("passivates an authority loss until an explicit focus or binding epoch", async () => {
     const runtime = client();
     let authorityListener!: Parameters<typeof runtime.onAuthority>[0];
     runtime.onAuthority.mockImplementation((listener) => {
@@ -546,12 +606,24 @@ describe("OpenTuiTerminalHostFocus", () => {
       nativeGeometryYieldUntilMs: 0,
       clients: [],
     });
-    authorityListener(runtime.getSnapshot().authority!);
+    for (let revision = 13; revision < 10_013; revision += 1) {
+      authorityListener({
+        ...runtime.getSnapshot().authority!,
+        revision,
+        owners: {
+          input: revision % 2 === 0 ? "web" : null,
+          focus: revision % 2 === 0 ? "web" : null,
+          geometry: revision % 2 === 0 ? "web" : null,
+        },
+      });
+    }
+    await Promise.resolve();
+    expect(runtime.requestAuthority).toHaveBeenCalledTimes(3);
 
+    focus.rendererBlur();
+    await vi.waitFor(() => expect(runtime.releaseAuthority).toHaveBeenCalledTimes(3));
+    focus.rendererFocus();
     await vi.waitFor(() => expect(runtime.requestAuthority).toHaveBeenCalledTimes(6));
-    expect(
-      events.filter(({ phase }) => phase === "focus-authority-reconcile").at(-1)?.details,
-    ).toMatchObject({ status: "applied" });
   });
 
   it("reports partial authority settlement and fences a retired client binding", async () => {

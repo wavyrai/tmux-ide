@@ -543,6 +543,9 @@ describe("Electron main daemon resource broker", () => {
       expect(headers.get("origin")).toBe(rendererOrigin);
       expect(headers.get("x-tmux-ide-request-id")).toBe(requestId);
       expect(headers.get("x-tmux-ide-expected-daemon-instance-id")).toBe(IDENTITY.instanceId);
+      expect(headers.get("x-tmux-ide-host-client-id")).toMatch(
+        /^web:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+      );
       expect(JSON.parse(String(sent.init?.body))).toEqual(mutation);
       expect(JSON.stringify(sent)).not.toContain(descriptor.redemptionTicket);
     },
@@ -2240,6 +2243,37 @@ describe("Electron main daemon workspace read resources", () => {
       error: { code: "daemon-unavailable" },
     });
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("returns the coherent owner-gated workspace intent/live catalog", async () => {
+    const envelope = {
+      version: 2 as const,
+      daemon: IDENTITY,
+      intents: [
+        {
+          workspaceName: "product",
+          sessionName: "product",
+          source: "project" as const,
+          availability: "live" as const,
+        },
+      ],
+      liveSessions: [
+        { sessionName: "product", fleetSessionId: "session.aaaaaaaaaaaaaaaa", paneCount: 2 },
+      ],
+    };
+    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json(envelope));
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch,
+    });
+    await expect(broker.fetchWorkspaceCatalog()).resolves.toEqual({
+      status: "ok",
+      envelope,
+    });
+    expect(fetch.mock.calls[0]?.[0].toString()).toBe(
+      "http://127.0.0.1:6060/api/resources/workspace-catalog?version=2",
+    );
   });
 
   it("replays one host-authored workspace promotion across a transport retry", async () => {

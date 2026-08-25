@@ -1445,6 +1445,28 @@ export function createDevWebHostCapabilities(config: DevWebHostConfig): DevWebHo
         } catch (error) {
           return { status: "error", error: failureOf(error) };
         }
+      case "fetchWorkspaceCatalog":
+        try {
+          await loadIdentity(signal);
+          const parsed = WorkspaceCatalogResourceV2SchemaZ.safeParse(
+            await request(
+              "/api/resources/workspace-catalog?version=2",
+              { method: "GET" },
+              {},
+              REQUEST_TIMEOUT_MS,
+              signal,
+            ),
+          );
+          if (!parsed.success) throw new DevHostFailure(INVALID_RESPONSE);
+          if (!sameIdentity(parsed.data.daemon, requireIdentity())) {
+            throw new DevHostFailure(
+              capabilityError("daemon-identity-mismatch", "The daemon generation changed."),
+            );
+          }
+          return { status: "ok", envelope: parsed.data };
+        } catch (error) {
+          return { status: "error", error: failureOf(error) };
+        }
       case "fetchWidgetAsset":
         try {
           await loadIdentity(signal);

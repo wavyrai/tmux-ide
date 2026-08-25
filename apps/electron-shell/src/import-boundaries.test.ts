@@ -85,10 +85,10 @@ describe("desktop process boundaries", () => {
       HOST_IPC.daemonCancelSubscribe,
       HOST_IPC.daemonUnsubscribe,
     ]);
-    // Seventeen after the content-addressed widget asset read joined the same
-    // closed request union. `invokeVerb` still carries all seven multiplexer
-    // verbs, so this remains one reviewed capability per semantic resource.
-    expect(DAEMON_RESOURCE_KINDS.length).toBe(18);
+    // Nineteen after the client-owned workspace catalog joined the same closed
+    // request union. `invokeVerb` still carries all seven multiplexer verbs, so
+    // this remains one reviewed capability per semantic resource.
+    expect(DAEMON_RESOURCE_KINDS.length).toBe(19);
     expect(new Set(DAEMON_RESOURCE_KINDS).size).toBe(DAEMON_RESOURCE_KINDS.length);
   });
 

@@ -15,6 +15,7 @@ import {
   qualifyProductInputDistribution,
   summarizeProductInputDistribution,
   settleProductFirstInputFixtureReset,
+  summarizeProductTuiRuntimeProgress,
   waitForProductInputQualification,
   waitForProductInputPersistenceFence,
   assessFirstKeyPasteBoundaries,
@@ -92,8 +93,98 @@ test("coherent timeout observation is exact-runtime fenced, bounded, and path-fr
     terminalFrameFenceCount: 0,
     lifecycleDroppedRecords: 5,
     lifecycleWriterFailed: false,
+    runtimeProgress: {
+      records: [],
+      matchingCount: 0,
+      retainedCount: 0,
+      overflowCount: 0,
+      malformedCount: 0,
+    },
   });
   assert.doesNotMatch(JSON.stringify(observation), /private|\/tmp/u);
+});
+
+test("runtime timeout progress is PID/generation fenced, bounded, and rejects malformed facts", () => {
+  const generation = "226826d4-5f72-4b59-be54-9f75e85640d4";
+  const records = [
+    {
+      phase: "generation-connection-start",
+      processId: "opentui:4934",
+      clockId: "opentui-performance-now",
+      daemonGeneration: generation,
+    },
+    {
+      phase: "generation-runtime-progress",
+      runtimePhase: "layout",
+      processId: "opentui:1111",
+      clockId: "opentui-performance-now",
+      monotonicMicros: 1,
+      windows: 99,
+      panes: 99,
+      current: true,
+    },
+    {
+      phase: "generation-runtime-progress",
+      runtimePhase: "layout",
+      processId: "opentui:4934",
+      clockId: "opentui-performance-now",
+      monotonicMicros: 2,
+      windows: 1,
+      panes: 2,
+      current: true,
+      rejected: "raw-private-reason",
+    },
+    {
+      phase: "generation-shell-lifecycle",
+      processId: "opentui:4934",
+      clockId: "opentui-performance-now",
+      monotonicMicros: 3,
+      clientPhase: "loading",
+      inventoryResources: 3,
+    },
+    {
+      phase: "generation-runtime-fault",
+      processId: "opentui:4934",
+      clockId: "opentui-performance-now",
+      monotonicMicros: 4,
+      message: "private runtime fault body",
+    },
+    ...Array.from({ length: 35 }, (_, index) => ({
+      phase: "generation-runtime-progress",
+      runtimePhase: "physical-ready",
+      processId: "opentui:4934",
+      clockId: "opentui-performance-now",
+      monotonicMicros: 10 + index,
+      panes: 3,
+    })),
+  ];
+  const progress = summarizeProductTuiRuntimeProgress({
+    lifecycleRecords: records,
+    processId: "opentui:4934",
+    daemonGeneration: generation,
+  });
+  assert.equal(progress.matchingCount, 37);
+  assert.equal(progress.retainedCount, 32);
+  assert.equal(progress.overflowCount, 5);
+  assert.equal(progress.malformedCount, 1);
+  assert.deepEqual(progress.records.slice(0, 2), [
+    {
+      phase: "supervisor",
+      atMicros: 3,
+      clientPhase: "loading",
+      inventoryResources: 3,
+    },
+    {
+      phase: "runtime-fault",
+      atMicros: 4,
+      reason: "runtime-fault",
+    },
+  ]);
+  assert.equal(
+    progress.records.slice(2).every(({ panes }) => panes === 3),
+    true,
+  );
+  assert.doesNotMatch(JSON.stringify(progress), /private|1111/u);
 });
 
 test("exact ProductRig TUI launch passes its fresh PID into coherent wait", async () => {

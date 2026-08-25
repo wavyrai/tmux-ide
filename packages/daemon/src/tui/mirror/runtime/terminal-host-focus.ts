@@ -34,6 +34,7 @@ export interface TerminalAuthorityClient {
     authority: SessionRuntimeAuthorityKind,
   ): Promise<SessionRuntimeAuthoritySnapshot | null>;
   onAuthority(listener: (snapshot: SessionRuntimeAuthoritySnapshot) => void): () => void;
+  onBinding?(listener: () => void): () => void;
 }
 
 export type TerminalHostFocusDiagnostic = (
@@ -41,6 +42,7 @@ export type TerminalHostFocusDiagnostic = (
     | "renderer-focus-event"
     | "renderer-blur-event"
     | "focus-presence"
+    | "focus-claim-attempt"
     | "focus-activity"
     | "focus-authority-settled"
     | "focus-authority-reconcile"
@@ -53,6 +55,7 @@ type TerminalHostFocusIdentity = Readonly<{
   clientGeneration: number | null;
   clientPhase: string | null;
   authorityGeneration: string | null;
+  runtimeSession: string | null;
   authorityOwners: Readonly<Record<string, string | null>> | null;
   authorityRevision: number | null;
   daemonInstanceId: string | null;
@@ -82,8 +85,10 @@ export class OpenTuiTerminalHostFocus {
   #appliedFocused = false;
   #appliedMayHoldAuthority = false;
   #claimInFlight = false;
+  readonly #heldAuthorities = new Set<SessionRuntimeAuthorityKind>();
   #latestAuthority: SessionRuntimeAuthoritySnapshot | null = null;
   #outcomeId = 0;
+  #claimOrdinal = 0;
   #focused: boolean;
 
   constructor(initiallyFocused = true, diagnose: TerminalHostFocusDiagnostic | null = null) {
@@ -107,11 +112,15 @@ export class OpenTuiTerminalHostFocus {
             this.#client !== client ||
             !this.#focused ||
             this.#claimInFlight ||
-            this.#authoritySnapshotExact(client, snapshot)
+            this.#appliedClient !== client ||
+            !this.#heldAuthorityLost(client, snapshot)
           )
             return;
-          this.#appliedFocused = false;
-          this.#queueTransition(null, null);
+          // An authority loss settles this foreground/binding epoch. Competing
+          // foreground hosts must not be able to make each other reclaim in a
+          // loop; only a trusted blur->focus transition or a new binding epoch
+          // may arm another claim triplet.
+          this.#heldAuthorities.clear();
         });
       } catch {
         this.#stopAuthority = null;
@@ -178,6 +187,7 @@ export class OpenTuiTerminalHostFocus {
       if (mustYield) {
         this.#appliedFocused = false;
         this.#appliedMayHoldAuthority = false;
+        this.#heldAuthorities.clear();
         if (applied !== client) this.#appliedClient = null;
         await this.#yield(
           applied,
@@ -204,6 +214,7 @@ export class OpenTuiTerminalHostFocus {
         this.#appliedClient = client;
         this.#appliedFocused = false;
         this.#appliedMayHoldAuthority = false;
+        this.#heldAuthorities.clear();
       }
       if (focused && !this.#appliedFocused) {
         this.#appliedFocused = await this.#claim(
@@ -235,6 +246,13 @@ export class OpenTuiTerminalHostFocus {
     stateEpoch = this.#stateEpoch,
     bindingEpoch = this.#bindingEpoch,
   ): Promise<boolean> {
+    const claimOrdinal = ++this.#claimOrdinal;
+    if (this.#diagnose)
+      this.#emit(
+        "focus-claim-attempt",
+        { claimOrdinal, diagnosticEpoch, bindingEpoch, stateEpoch },
+        identity ?? this.#captureIdentity(client),
+      );
     client.setPresence("foreground");
     if (diagnosticEpoch !== null)
       this.#emit("focus-presence", { diagnosticEpoch, state: "foreground" }, identity);
@@ -244,66 +262,83 @@ export class OpenTuiTerminalHostFocus {
     const authorities = ["input", "focus", "geometry"] as const;
     this.#appliedMayHoldAuthority = true;
     this.#claimInFlight = true;
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      const results = await Promise.allSettled(
-        authorities.map((authority) => client.requestAuthority(authority)),
-      );
-      const current =
-        this.#client === client &&
-        this.#bindingEpoch === bindingEpoch &&
-        this.#stateEpoch === stateEpoch &&
-        this.#focused;
-      const leases = results.map((result) => (result.status === "fulfilled" ? result.value : null));
-      try {
-        this.#latestAuthority = client.getAuthoritySnapshot();
-      } catch {
-        this.#latestAuthority = null;
-      }
-      const exact =
-        current &&
-        this.#latestAuthority !== null &&
-        this.#authoritySnapshotExact(client, this.#latestAuthority) &&
-        leases.every((lease, index) =>
-          this.#authorityLeaseExact(client, authorities[index]!, lease),
-        );
-      if (this.#diagnose)
-        this.#emit(
-          "focus-authority-reconcile",
-          {
-            outcomeId: ++this.#outcomeId,
-            diagnosticEpoch,
-            attempt,
-            status: exact ? "applied" : current && attempt < 3 ? "retrying" : "failed",
-            receipts: authorities.map((authority, index) => ({
-              authority,
-              status: results[index]?.status ?? "rejected",
-              granted: leases[index] !== null,
-              exact: this.#authorityLeaseExact(client, authority, leases[index] ?? null),
-            })),
-          },
-          identity ?? this.#captureIdentity(client),
-        );
-      if (exact) {
-        this.#claimInFlight = false;
-        if (diagnosticEpoch !== null)
-          this.#emitFocusSettlement(
-            client,
-            diagnosticEpoch,
-            identity,
-            stateEpoch,
-            bindingEpoch,
-            results,
-          );
-        return true;
-      }
-      if (!current) {
-        this.#claimInFlight = false;
-        return false;
-      }
-      await Promise.resolve();
+    const results = await Promise.allSettled(
+      authorities.map((authority) => client.requestAuthority(authority)),
+    );
+    const current =
+      this.#client === client &&
+      this.#bindingEpoch === bindingEpoch &&
+      this.#stateEpoch === stateEpoch &&
+      this.#focused;
+    const leases = results.map((result) => (result.status === "fulfilled" ? result.value : null));
+    try {
+      this.#latestAuthority = client.getAuthoritySnapshot();
+    } catch {
+      this.#latestAuthority = null;
     }
+    const leaseExact = authorities.map((authority, index) =>
+      this.#authorityLeaseExact(client, authority, leases[index] ?? null),
+    );
+    const allExact =
+      current &&
+      this.#latestAuthority !== null &&
+      this.#authoritySnapshotExact(client, this.#latestAuthority) &&
+      leaseExact.every(Boolean);
+    if (current) {
+      this.#heldAuthorities.clear();
+      for (const [index, authority] of authorities.entries()) {
+        if (
+          leaseExact[index] &&
+          this.#latestAuthority?.owners[authority] === client.authorityIdentity.clientId
+        )
+          this.#heldAuthorities.add(authority);
+      }
+    }
+    if (this.#diagnose)
+      this.#emit(
+        "focus-authority-reconcile",
+        {
+          outcomeId: ++this.#outcomeId,
+          diagnosticEpoch,
+          attempt: 1,
+          status: allExact ? "applied" : "failed",
+          receipts: authorities.map((authority, index) => ({
+            authority,
+            status: results[index]?.status ?? "rejected",
+            granted: leases[index] !== null,
+            exact: leaseExact[index] ?? false,
+          })),
+        },
+        identity ?? this.#captureIdentity(client),
+      );
     this.#claimInFlight = false;
-    return false;
+    if (!current) return false;
+    if (allExact && diagnosticEpoch !== null)
+      this.#emitFocusSettlement(
+        client,
+        diagnosticEpoch,
+        identity,
+        stateEpoch,
+        bindingEpoch,
+        results,
+      );
+    // One foreground/binding epoch owns exactly one claim triplet. A partial
+    // result remains settled until blur/rebind starts a new epoch. Authority
+    // loss passivates this epoch; it must not create a cross-host reclaim loop.
+    return true;
+  }
+
+  #heldAuthorityLost(
+    client: TerminalAuthorityClient,
+    snapshot: SessionRuntimeAuthoritySnapshot,
+  ): boolean {
+    if (this.#heldAuthorities.size === 0) return false;
+    const expected = client.authorityIdentity;
+    if (snapshot.generation !== expected.generation || snapshot.session !== expected.session)
+      return true;
+    return [...this.#heldAuthorities].some(
+      (authority) => snapshot.owners[authority] !== expected.clientId,
+    );
   }
 
   #emitFocusSettlement(
@@ -443,6 +478,7 @@ export class OpenTuiTerminalHostFocus {
         clientGeneration: snapshot?.generation ?? null,
         clientPhase: snapshot?.phase ?? null,
         authorityGeneration: snapshot?.authority?.generation ?? null,
+        runtimeSession: snapshot?.authority?.session ?? null,
         authorityOwners: snapshot?.authority?.owners ?? null,
         authorityRevision: snapshot?.authority?.revision ?? null,
         daemonInstanceId: snapshot?.target?.daemon.instanceId ?? null,
@@ -454,6 +490,7 @@ export class OpenTuiTerminalHostFocus {
         clientGeneration: null,
         clientPhase: null,
         authorityGeneration: null,
+        runtimeSession: null,
         authorityOwners: null,
         authorityRevision: null,
         daemonInstanceId: null,

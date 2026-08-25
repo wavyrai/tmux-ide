@@ -156,6 +156,118 @@ function finishSeed(sim: SimulatedChannel): void {
 }
 
 describe("SessionRuntimeRegistry", () => {
+  it("exposes exact retained session and full-layout authority to PaneStream", async () => {
+    const state = fixtureState();
+    state.descriptorRows[2] = state.descriptorRows[2]!.replace(
+      "%3\t\t",
+      "%3\tpane.gamma\t",
+    ).replace("\t\tzz-sim\t1\t2", "\twindow.test.two\tzz-sim\t1\t2");
+    const sims: SimulatedChannel[] = [];
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION_A,
+      mirror: {
+        createIo: (_session, handlers) => {
+          const sim = new SimulatedChannel(handlers, fixtureAutoReply(state));
+          sims.push(sim);
+          return sim;
+        },
+        controlModeOwnershipRegistry: new ControlModeOwnershipRegistry(),
+      },
+    });
+    const authority = await registry.describeSessionAuthority(FIXTURE.session);
+    expect(authority.runtimeSessionId).toBe("$1");
+    const panes = authority.description.panes.map(({ semanticPaneId }) => semanticPaneId).sort();
+    const layouts: unknown[] = [];
+    const snapshots: unknown[] = [];
+    const subscription = await registry.subscribeLayout(
+      FIXTURE.session,
+      (layout) => layouts.push(layout),
+      {
+        expectedSemanticPaneIds: panes,
+        expectedRuntimeSessionId: authority.runtimeSessionId,
+        onAuthority: (snapshot) => snapshots.push(snapshot),
+      },
+    );
+    expect(sims).toHaveLength(1);
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toMatchObject({ runtimeSessionId: "$1" });
+    expect(layouts.length).toBeGreaterThan(0);
+    await subscription.close();
+    await registry.retireSession(FIXTURE.session);
+    await registry.dispose();
+  });
+
+  it("rejects stale runtime layout authority without publishing staged layouts", async () => {
+    const state = fixtureState();
+    state.descriptorRows[2] = state.descriptorRows[2]!.replace(
+      "%3\t\t",
+      "%3\tpane.gamma\t",
+    ).replace("\t\tzz-sim\t1\t2", "\twindow.test.two\tzz-sim\t1\t2");
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION_A,
+      mirror: {
+        createIo: (_session, handlers) => new SimulatedChannel(handlers, fixtureAutoReply(state)),
+        controlModeOwnershipRegistry: new ControlModeOwnershipRegistry(),
+      },
+    });
+    const authority = await registry.describeSessionAuthority(FIXTURE.session);
+    const layouts: unknown[] = [];
+    await expect(
+      registry.subscribeLayout(FIXTURE.session, (layout) => layouts.push(layout), {
+        expectedSemanticPaneIds: authority.description.panes.map(
+          ({ semanticPaneId }) => semanticPaneId,
+        ),
+        expectedRuntimeSessionId: "$999",
+      }),
+    ).rejects.toMatchObject({ name: "MirrorTopologyChangedError" });
+    expect(layouts).toEqual([]);
+    await registry.dispose();
+  });
+
+  it("fences late authoritative layout callbacks after exact runtime retirement", async () => {
+    const state = fixtureState();
+    state.descriptorRows[2] = state.descriptorRows[2]!.replace(
+      "%3\t\t",
+      "%3\tpane.gamma\t",
+    ).replace("\t\tzz-sim\t1\t2", "\twindow.test.two\tzz-sim\t1\t2");
+    const sims: SimulatedChannel[] = [];
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION_A,
+      mirror: {
+        createIo: (_session, handlers) => {
+          const sim = new SimulatedChannel(handlers, fixtureAutoReply(state));
+          sims.push(sim);
+          return sim;
+        },
+        controlModeOwnershipRegistry: new ControlModeOwnershipRegistry(),
+      },
+    });
+    const authority = await registry.describeSessionAuthority(FIXTURE.session);
+    const layouts: unknown[] = [];
+    const snapshots: unknown[] = [];
+    const subscription = await registry.subscribeLayout(
+      FIXTURE.session,
+      (layout) => layouts.push(layout),
+      {
+        expectedSemanticPaneIds: authority.description.panes.map(
+          ({ semanticPaneId }) => semanticPaneId,
+        ),
+        expectedRuntimeSessionId: authority.runtimeSessionId,
+        onAuthority: (snapshot) => snapshots.push(snapshot),
+      },
+    );
+    const publishedLayouts = layouts.length;
+    const publishedSnapshots = snapshots.length;
+    await registry.retireSession(FIXTURE.session);
+    sims[0]!.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
+    await Promise.resolve();
+    expect(layouts).toHaveLength(publishedLayouts);
+    expect(snapshots).toHaveLength(publishedSnapshots);
+    await subscription.close();
+    await subscription.close();
+    await registry.dispose();
+  });
+
   it("prewarms and reuses the authoritative runtime for later admission", async () => {
     const { registry, sims } = rig();
     const warming = registry.prewarmSession(FIXTURE.session);
@@ -862,6 +974,47 @@ describe("SessionRuntimeRegistry", () => {
         (command) => command === "refresh-client -B 'tmux-ide-native-clients::#{session_attached}'",
       ),
     ).toHaveLength(1);
+    await registry.dispose();
+  });
+
+  it("fits with an exact geometry lease without creating or moving input authority", async () => {
+    const { registry, sims } = controllerRig();
+    const consumer = registry.connect("alpha-session", "web", "client:geometry-only");
+    await consumer.subscribe("pane.alpha", () => {});
+    consumer.updatePresence("foreground");
+    const lease = consumer.acquireAuthority("geometry");
+    expect(lease).not.toBeNull();
+    consumer.fitViewportWithAuthority(lease!, 140, 46);
+    expect(registry.authoritySnapshot("alpha-session").owners).toEqual({
+      input: null,
+      focus: null,
+      geometry: "client:geometry-only",
+    });
+    expect(sims[0]!.written).toContain("refresh-client -C 140x46");
+
+    consumer.releaseAuthority("geometry");
+    expect(() => consumer.fitViewportWithAuthority(lease!, 141, 47)).toThrow(
+      expect.objectContaining({ code: "stale-controller-lease" }),
+    );
+    await registry.dispose();
+  });
+
+  it("types native yield and same-client lease revision replacement as stale geometry", async () => {
+    const { registry } = controllerRig();
+    const consumer = registry.connect("alpha-session", "web", "client:geometry-fenced");
+    await consumer.subscribe("pane.alpha", () => {});
+    consumer.updatePresence("foreground");
+    const original = consumer.acquireAuthority("geometry")!;
+    consumer.releaseAuthority("geometry");
+    const replacement = consumer.acquireAuthority("geometry")!;
+    expect(replacement.revision).not.toBe(original.revision);
+    expect(() => consumer.fitViewportWithAuthority(original, 141, 47)).toThrow(
+      expect.objectContaining({ code: "stale-controller-lease" }),
+    );
+    registry.noteNativeGeometryActivity("alpha-session");
+    expect(() => consumer.fitViewportWithAuthority(replacement, 140, 46)).toThrow(
+      expect.objectContaining({ code: "stale-controller-lease" }),
+    );
     await registry.dispose();
   });
 

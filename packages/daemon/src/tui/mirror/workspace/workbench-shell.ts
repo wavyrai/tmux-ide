@@ -7,13 +7,13 @@ import { workspaceIcon } from "./icons.ts";
 import {
   workbenchDockNavigationTarget,
   type WorkbenchDockNavigationTabId,
-} from "../../../ui/workbench-dock/navigation.ts";
+} from "@tmux-ide/presentation/workbench-dock";
 
 export type WorkbenchVariant = "compact" | "standard" | "wide";
 export type WorkbenchDockMode = "collapsed" | "open" | "maximized";
 export type WorkbenchFocusZone = "canvas" | "dock-tabs" | "dock-body";
 export type WorkbenchDockTabId = WorkbenchDockNavigationTabId;
-export { workbenchDockNavigationTarget } from "../../../ui/workbench-dock/navigation.ts";
+export { workbenchDockNavigationTarget } from "@tmux-ide/presentation/workbench-dock";
 export type WorkbenchDockActionId = "toggle-collapse" | "toggle-maximize";
 
 export interface WorkbenchDockToolDefinition {

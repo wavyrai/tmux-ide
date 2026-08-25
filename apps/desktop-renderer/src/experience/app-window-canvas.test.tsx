@@ -10,14 +10,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 
-import type { PaneFrameModel } from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
+import type { PaneFrameModel } from "@tmux-ide/presentation/pane-frame";
 import type {
   NativeTerminalAttachment,
   NativeTerminalTransport,
 } from "../terminal/native-terminal-transport.ts";
 import type { TerminalRenderer, TerminalRendererFactory } from "../terminal/xterm-renderer.ts";
 import runtimeStyles from "../runtime-styles.css?raw";
-import { stableAppWindowInstanceId } from "../../../../packages/daemon/src/lib/app-window-state.ts";
+import { stableAppWindowInstanceId } from "@tmux-ide/core";
 import { createRecordingMirrorRendererFactory } from "../terminal/mirror-pane-fixture.ts";
 import type { AppWindowCanvasMirrorProps } from "./app-window-canvas.tsx";
 import {

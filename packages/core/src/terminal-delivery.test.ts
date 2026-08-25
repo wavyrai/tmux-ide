@@ -65,6 +65,253 @@ function seedEnvelope(): { envelope: TerminalDeliveryEnvelope; bytes: Uint8Array
 }
 
 describe("terminal delivery client", () => {
+  it("serializes canonical history before the viewport for an unknown renderer", () => {
+    const blank = blankTerminalReplicaSnapshot(4, 2);
+    const row = (text: string) => ({
+      ...blank.grid[0]!,
+      cells: blank.grid[0]!.cells.map((cell, index) => ({
+        ...cell,
+        grapheme: text[index] ?? " ",
+      })),
+    });
+    const target = {
+      ...blank,
+      history: [row("A"), row("B")],
+      grid: [row("C"), row("D")],
+    };
+    const encoded = new TextDecoder().decode(encodeAnsiTerminalRepresentation(null, target));
+    expect(encoded).toContain("\u001b[3J");
+    expect(encoded.indexOf("A")).toBeLessThan(encoded.indexOf("B"));
+    expect(encoded.indexOf("B")).toBeLessThan(encoded.indexOf("C"));
+    expect(encoded.indexOf("C")).toBeLessThan(encoded.indexOf("D"));
+  });
+
+  it("encodes a rolling 5k history delta as bounded xterm scroll work", () => {
+    const blank = blankTerminalReplicaSnapshot(20, 5);
+    const history = Array.from({ length: 5_000 }, () => blank.grid[0]!);
+    const baseline = { ...blank, history };
+    const appended = { ...blank.grid[0]!, wrapped: false };
+    const latest = {
+      ...blank.grid[0]!,
+      cells: blank.grid[0]!.cells.map((cell, index) => ({
+        ...cell,
+        grapheme: index === 0 ? "Z" : " ",
+      })),
+    };
+    const target = {
+      ...blank,
+      history: [...history, appended],
+      grid: [...blank.grid.slice(1), latest],
+    };
+    const bytes = encodeAnsiTerminalPatchRepresentation(
+      {
+        historyDelta: { trim: 0, append: [appended] },
+        rows: [{ index: blank.rows - 1, row: latest }],
+      },
+      target,
+      baseline,
+    );
+    const encoded = new TextDecoder().decode(bytes);
+    expect(encoded).toContain("\u001b[5;1H\n");
+    expect(encoded).not.toContain("\u001b[2J");
+    expect(encoded).not.toContain("\u001b[3J");
+    expect(bytes.byteLength).toBeLessThan(256);
+  });
+
+  it("rejects a history-only delta whose canonical viewport did not scroll", () => {
+    const baseline = blankTerminalReplicaSnapshot(20, 5);
+    const appended = baseline.grid[0]!;
+    const target = { ...baseline, history: [...baseline.history, appended] };
+    const encoded = new TextDecoder().decode(
+      encodeAnsiTerminalPatchRepresentation(
+        { historyDelta: { trim: 0, append: [appended] }, rows: [] },
+        target,
+        baseline,
+      ),
+    );
+    expect(encoded).toContain("\u001b[2J");
+    expect(encoded).toContain("\u001b[3J");
+  });
+
+  it("rejects a capped history trim even when its viewport shift is otherwise coherent", () => {
+    const baseline = blankTerminalReplicaSnapshot(20, 5);
+    const latest = baseline.grid[4]!;
+    const target = {
+      ...baseline,
+      history: [baseline.grid[0]!],
+      grid: [...baseline.grid.slice(1), latest],
+    };
+    const encoded = new TextDecoder().decode(
+      encodeAnsiTerminalPatchRepresentation(
+        {
+          historyDelta: { trim: 1, append: [baseline.grid[0]!] },
+          rows: [{ index: 4, row: latest }],
+        },
+        target,
+        baseline,
+      ),
+    );
+    expect(encoded).toContain("\u001b[2J");
+    expect(encoded).toContain("\u001b[3J");
+  });
+
+  it("encodes a proven multi-row shift with only exact bottom replacements", () => {
+    const blank = blankTerminalReplicaSnapshot(8, 4);
+    const row = (text: string) => ({
+      ...blank.grid[0]!,
+      cells: blank.grid[0]!.cells.map((cell, index) => ({
+        ...cell,
+        grapheme: text[index] ?? " ",
+      })),
+    });
+    const baseline = { ...blank, grid: [row("a"), row("b"), row("c"), row("d")] };
+    const bottom = [row("e"), row("f")];
+    const target = {
+      ...baseline,
+      history: [baseline.grid[0]!, baseline.grid[1]!],
+      grid: [baseline.grid[2]!, baseline.grid[3]!, ...bottom],
+    };
+    const encoded = new TextDecoder().decode(
+      encodeAnsiTerminalPatchRepresentation(
+        {
+          historyDelta: { trim: 0, append: baseline.grid.slice(0, 2) },
+          rows: [
+            { index: 2, row: bottom[0]! },
+            { index: 3, row: bottom[1]! },
+          ],
+        },
+        target,
+        baseline,
+      ),
+    );
+    expect(encoded).toContain("\u001b[4;1H\n\n");
+    expect(encoded).not.toContain("\u001b[2J");
+  });
+
+  it("rejects a history delta when any unpatched viewport row is not the exact shift", () => {
+    const blank = blankTerminalReplicaSnapshot(8, 4);
+    const changed = {
+      ...blank.grid[0]!,
+      cells: blank.grid[0]!.cells.map((cell, index) => ({
+        ...cell,
+        grapheme: index === 0 ? "X" : " ",
+      })),
+    };
+    const target = {
+      ...blank,
+      history: [blank.grid[0]!],
+      grid: [changed, blank.grid[2]!, blank.grid[3]!, blank.grid[3]!],
+    };
+    const encoded = new TextDecoder().decode(
+      encodeAnsiTerminalPatchRepresentation(
+        {
+          historyDelta: { trim: 0, append: [blank.grid[0]!] },
+          rows: [{ index: 3, row: blank.grid[3]! }],
+        },
+        target,
+        blank,
+      ),
+    );
+    expect(encoded).toContain("\u001b[2J");
+    expect(encoded).toContain("\u001b[3J");
+  });
+
+  it("projects every input-affecting emulator mode on seed and mode-only patch", () => {
+    const blank = blankTerminalReplicaSnapshot(8, 3);
+    const enabled = {
+      ...blank,
+      modes: {
+        ...blank.modes,
+        applicationCursor: true,
+        applicationKeypad: true,
+        bracketedPaste: true,
+        insert: true,
+        origin: true,
+        mouseTracking: true,
+        mouseProtocol: "drag" as const,
+        mouseEncoding: "sgr" as const,
+        synchronizedOutput: true,
+      },
+    };
+    const seed = new TextDecoder().decode(encodeAnsiTerminalRepresentation(null, enabled));
+    for (const sequence of [
+      "\u001b[?1h",
+      "\u001b=",
+      "\u001b[?2004h",
+      "\u001b[4h",
+      "\u001b[?6h",
+      "\u001b[?1002h",
+      "\u001b[?1006h",
+      "\u001b[?2026h",
+    ])
+      expect(seed).toContain(sequence);
+
+    const reset = {
+      ...enabled,
+      modes: { ...blank.modes, mouseProtocol: "none" as const, mouseEncoding: "default" as const },
+    };
+    const patch = new TextDecoder().decode(
+      encodeAnsiTerminalPatchRepresentation({ rows: [], modes: reset.modes }, reset, enabled),
+    );
+    expect(patch).not.toContain("\u001b[2J");
+    for (const sequence of [
+      "\u001b[?1l",
+      "\u001b>",
+      "\u001b[?2004l",
+      "\u001b[4l",
+      "\u001b[?6l",
+      "\u001b[?1002l",
+      "\u001b[?1006l",
+      "\u001b[?2026l",
+    ])
+      expect(patch).toContain(sequence);
+  });
+
+  it.each([
+    ["x10", "default", "\u001b[?9h", null],
+    ["vt200", "utf8", "\u001b[?1000h", "\u001b[?1005h"],
+    ["drag", "sgr", "\u001b[?1002h", "\u001b[?1006h"],
+    ["any", "sgr-pixels", "\u001b[?1003h", "\u001b[?1016h"],
+  ] as const)(
+    "projects %s mouse tracking with %s encoding",
+    (protocol, encoding, tracking, encoded) => {
+      const blank = blankTerminalReplicaSnapshot(8, 3);
+      const target = {
+        ...blank,
+        modes: {
+          ...blank.modes,
+          mouseTracking: true,
+          mouseProtocol: protocol,
+          mouseEncoding: encoding,
+        },
+      };
+      const seed = new TextDecoder().decode(encodeAnsiTerminalRepresentation(null, target));
+      expect(seed).toContain(tracking);
+      if (encoded) expect(seed).toContain(encoded);
+    },
+  );
+
+  it("repaints an unprovable history delta instead of inventing scrollback", () => {
+    const baseline = blankTerminalReplicaSnapshot(20, 5);
+    const appended = {
+      ...baseline.grid[0]!,
+      cells: baseline.grid[0]!.cells.map((cell, index) => ({
+        ...cell,
+        grapheme: index === 0 ? "X" : " ",
+      })),
+    };
+    const target = { ...baseline, history: [appended] };
+    const encoded = new TextDecoder().decode(
+      encodeAnsiTerminalPatchRepresentation(
+        { historyDelta: { trim: 0, append: [appended] }, rows: [] },
+        target,
+        baseline,
+      ),
+    );
+    expect(encoded).toContain("\u001b[2J");
+    expect(encoded).toContain("\u001b[3J");
+  });
+
   it("encodes ordinary ANSI deltas from dirty rows without inspecting the full grid", () => {
     const snapshot = blankTerminalReplicaSnapshot(4, 3);
     const inaccessibleGrid = new Proxy(snapshot.grid, {
@@ -131,8 +378,8 @@ describe("terminal delivery client", () => {
         wrapped,
       ),
     );
-    expect(enter.startsWith("\u001b[?1049l\u001b[0m\u001b[2J\u001b[H")).toBe(true);
-    expect(leave.startsWith("\u001b[?1049l\u001b[0m\u001b[2J\u001b[H")).toBe(true);
+    expect(enter.startsWith("\u001b[?1049l\u001b[0m\u001b[2J\u001b[3J\u001b[H")).toBe(true);
+    expect(leave.startsWith("\u001b[?1049l\u001b[0m\u001b[2J\u001b[3J\u001b[H")).toBe(true);
   });
 
   it("switches 1049 buffers before a full baseline-aware repaint and restores normal exactly", () => {
@@ -148,20 +395,20 @@ describe("terminal delivery client", () => {
     const leave = new TextDecoder().decode(
       encodeAnsiTerminalPatchRepresentation({ rows: [], modes: normal.modes }, normal, alternate),
     );
-    expect(enter.startsWith("\u001b[?1049h\u001b[0m\u001b[2J\u001b[H")).toBe(true);
-    expect(leave.startsWith("\u001b[?1049l\u001b[0m\u001b[2J\u001b[H")).toBe(true);
+    expect(enter.startsWith("\u001b[?1049h\u001b[0m\u001b[2J\u001b[3J\u001b[H")).toBe(true);
+    expect(leave.startsWith("\u001b[?1049l\u001b[0m\u001b[2J\u001b[3J\u001b[H")).toBe(true);
   });
 
   it("enters 1049 before a seed that begins in the alternate buffer", () => {
     const normal = blankTerminalReplicaSnapshot(2, 1);
     const alternate = { ...normal, modes: { ...normal.modes, alternateScreen: true } };
     const output = new TextDecoder().decode(encodeAnsiTerminalRepresentation(null, alternate));
-    expect(output.startsWith("\u001b[?1049h\u001b[0m\u001b[2J\u001b[H")).toBe(true);
+    expect(output.startsWith("\u001b[?1049h\u001b[0m\u001b[2J\u001b[3J\u001b[H")).toBe(true);
   });
   it("exits 1049 before a normal seed and encodes every DECSCUSR visibility combination", () => {
     const baseline = blankTerminalReplicaSnapshot(2, 1);
     const seed = new TextDecoder().decode(encodeAnsiTerminalRepresentation(null, baseline));
-    expect(seed.startsWith("\u001b[?1049l\u001b[0m\u001b[2J\u001b[H")).toBe(true);
+    expect(seed.startsWith("\u001b[?1049l\u001b[0m\u001b[2J\u001b[3J\u001b[H")).toBe(true);
     const expected = [
       ["block", true, 1],
       ["block", false, 2],

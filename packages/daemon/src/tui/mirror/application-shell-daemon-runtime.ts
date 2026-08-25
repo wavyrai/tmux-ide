@@ -51,7 +51,7 @@ export interface OpenTuiSessionRuntimeLane {
   readonly source: SemanticTerminalRenderSource;
   sendText(semanticPaneId: string, text: string, performanceTraceId?: string): void;
   sendKey(semanticPaneId: string, key: string, performanceTraceId?: string): void;
-  fitViewport(cols: number, rows: number): Promise<void>;
+  fitViewport(cols: number, rows: number): Promise<"ok" | "geometry-authority-conflict">;
   submit(
     intent: SessionRuntimeSemanticIntent,
     operationId?: string,

@@ -1,5 +1,6 @@
 import {
   SessionRuntimeClientIdSchemaZ,
+  SessionRuntimeAuthorityLeaseSchemaZ,
   SessionRuntimeControllerLeaseSchemaZ,
   SessionRuntimeGenerationSchemaZ,
   SessionRuntimeSemanticIntentSchemaZ,
@@ -30,12 +31,15 @@ import {
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type {
+  MirrorLayoutAuthoritySnapshot,
   MirrorLayoutEvent,
   MirrorPaneEvent,
   MirrorSessionDescription,
 } from "../mirror/events.ts";
 import {
   MirrorService,
+  type MirrorAuthoritativeLayoutRequest,
+  type MirrorLayoutSubscription,
   type MirrorServiceOptions,
   type MirrorSubscribeRequest,
   type MirrorSubscription,
@@ -193,6 +197,7 @@ export interface SessionRuntimeConsumer {
     reason: CausalCellFailureReasonV1,
   ): void;
   fitViewport(lease: SessionRuntimeControllerLease, cols: number, rows: number): void;
+  fitViewportWithAuthority(lease: SessionRuntimeAuthorityLease, cols: number, rows: number): void;
   describe(): Promise<MirrorSessionDescription>;
   subscribe(
     semanticPaneId: string,
@@ -685,6 +690,93 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     return await this.#runtime(session).describe();
   }
 
+  async describeSessionAuthority(session: string): Promise<{
+    readonly description: MirrorSessionDescription;
+    readonly runtimeSessionId: string;
+  }> {
+    const runtime = this.#runtime(session);
+    await runtime.whenReady();
+    const authority = await this.#mirror.describeSessionAuthority(session);
+    if (this.#disposed || this.#sessions.get(session) !== runtime) {
+      const error = new Error(`session runtime ${session} changed topology`);
+      error.name = "MirrorTopologyChangedError";
+      throw error;
+    }
+    return authority;
+  }
+
+  async subscribeLayout(
+    session: string,
+    onLayout: (event: MirrorLayoutEvent) => void,
+    authority?: MirrorAuthoritativeLayoutRequest,
+  ): Promise<MirrorLayoutSubscription> {
+    const runtime = this.#runtime(session);
+    await runtime.whenReady();
+    let retired = false;
+    const isCurrent = (): boolean =>
+      !retired && !this.#disposed && this.#sessions.get(session) === runtime;
+    const assertCurrent = (): void => {
+      if (!isCurrent()) {
+        const error = new Error(`session runtime ${session} changed topology`);
+        error.name = "MirrorTopologyChangedError";
+        throw error;
+      }
+    };
+    assertCurrent();
+    const expectedRuntimeSessionId = authority?.expectedRuntimeSessionId;
+    const stagedAuthority: { value: MirrorLayoutAuthoritySnapshot | null } = { value: null };
+    const stagedLayouts: MirrorLayoutEvent[] = [];
+    let layoutOverflow = false;
+    let activated = false;
+    const subscription = await this.#mirror.subscribeLayout(
+      session,
+      (event) => {
+        if (!isCurrent()) return;
+        if (activated) onLayout(event);
+        else if (stagedLayouts.length < 256) stagedLayouts.push(event);
+        else layoutOverflow = true;
+      },
+      authority
+        ? {
+            ...authority,
+            onAuthority: (snapshot) => {
+              if (!isCurrent()) return;
+              if (activated) authority.onAuthority?.(snapshot);
+              else stagedAuthority.value = snapshot;
+            },
+          }
+        : undefined,
+    );
+    try {
+      assertCurrent();
+      if (
+        layoutOverflow ||
+        (authority &&
+          (stagedAuthority.value === null ||
+            stagedAuthority.value.runtimeSessionId !== expectedRuntimeSessionId))
+      ) {
+        const error = new Error(`session runtime ${session} lacks layout authority`);
+        error.name = "MirrorTopologyChangedError";
+        throw error;
+      }
+      activated = true;
+      if (authority?.onAuthority && stagedAuthority.value)
+        authority.onAuthority(stagedAuthority.value);
+      for (const event of stagedLayouts) onLayout(event);
+    } catch (error) {
+      await subscription.close().catch(() => undefined);
+      throw error;
+    }
+    return {
+      session,
+      close: async () => {
+        if (retired) return;
+        retired = true;
+        await subscription.close();
+      },
+    };
+  }
+
   async subscribe(request: MirrorSubscribeRequest): Promise<MirrorSubscription> {
     const runtime = this.#runtime(request.session);
     await runtime.whenReady();
@@ -1033,6 +1125,10 @@ class SessionRuntime {
 
   onAuthoritySnapshot(listener: (snapshot: SessionRuntimeAuthoritySnapshot) => void): () => void {
     this.#authorityListeners.add(listener);
+    // A binding must start from current retained authority truth. Registration
+    // is synchronous and precedes replay, so a re-entrant mutation is observed
+    // after this snapshot and cannot be lost between snapshot and subscribe.
+    listener(this.#authority.snapshot());
     return () => this.#authorityListeners.delete(listener);
   }
 
@@ -1331,6 +1427,32 @@ class SessionRuntime {
       throw new SessionRuntimeControllerLeaseError(
         "invalid-client-capability",
         "The client is not the foreground geometry authority.",
+      );
+    }
+    this.#mirror.setGeometryParticipation(this.session, true);
+    this.#mirror.fitViewport(this.session, cols, rows);
+  }
+
+  fitViewportWithAuthority(
+    clientId: string,
+    lease: SessionRuntimeAuthorityLease,
+    cols: number,
+    rows: number,
+  ): void {
+    const parsed = SessionRuntimeAuthorityLeaseSchemaZ.parse(lease);
+    let exact: SessionRuntimeAuthorityLease;
+    try {
+      exact = this.#authority.assertLease(parsed);
+    } catch {
+      throw new SessionRuntimeControllerLeaseError(
+        "stale-controller-lease",
+        "Geometry authority retired.",
+      );
+    }
+    if (exact.clientId !== clientId || exact.authority !== "geometry") {
+      throw new SessionRuntimeControllerLeaseError(
+        "invalid-client-capability",
+        "The client does not own this geometry authority lease.",
       );
     }
     this.#mirror.setGeometryParticipation(this.session, true);
@@ -1803,6 +1925,11 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
   fitViewport(lease: SessionRuntimeControllerLease, cols: number, rows: number): void {
     this.#assertOpen();
     this.#runtime.fitViewport(this.clientId, lease, cols, rows);
+  }
+
+  fitViewportWithAuthority(lease: SessionRuntimeAuthorityLease, cols: number, rows: number): void {
+    this.#assertOpen();
+    this.#runtime.fitViewportWithAuthority(this.clientId, lease, cols, rows);
   }
 
   async describe(): Promise<MirrorSessionDescription> {

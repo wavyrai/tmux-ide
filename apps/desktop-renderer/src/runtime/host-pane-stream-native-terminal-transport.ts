@@ -8,6 +8,10 @@ import type {
   NativeTerminalTransport,
   NativeTerminalTransportError,
 } from "../terminal/native-terminal-transport.ts";
+import type {
+  PaneStreamResizeResult,
+  PaneStreamTransport,
+} from "../terminal/pane-stream-transport.ts";
 import {
   validateNativeTerminalRequest,
   validateNativeTerminalViewport,
@@ -19,24 +23,136 @@ interface PresenceSession {
   noteActivity?(activity: "focus"): void;
 }
 
-const presenceGroups = new Map<string, Set<PresenceSession>>();
+type Card5AuthorityActivityKind = "focus" | "geometry" | "input";
+type Card5AuthorityActivityOutcome =
+  | "attempt"
+  | "ok"
+  | "geometry-authority-conflict"
+  | "authority-timeout"
+  | "viewport-timeout"
+  | "stream-closed"
+  | "lifecycle-retired"
+  | "failed";
+type Card5AuthorityActivityHost = typeof globalThis & {
+  __TMUX_IDE_CARD5_EVIDENCE_ENABLED__?: boolean;
+  __TMUX_IDE_CARD5_AUTHORITY_ACTIVITY_EVIDENCE__?: () => Readonly<{
+    count: number;
+    overflow: boolean;
+    events: readonly Readonly<{
+      ordinal: number;
+      surface: "web";
+      kind: Card5AuthorityActivityKind;
+      outcome: Card5AuthorityActivityOutcome;
+      operationOrdinal: number | null;
+      cols: number | null;
+      rows: number | null;
+    }>[];
+  }>;
+};
+const authorityActivityEvents: Array<{
+  ordinal: number;
+  surface: "web";
+  kind: Card5AuthorityActivityKind;
+  outcome: Card5AuthorityActivityOutcome;
+  operationOrdinal: number | null;
+  cols: number | null;
+  rows: number | null;
+}> = [];
+let authorityActivityCount = 0;
+let geometryOperationCount = 0;
+
+function recordCard5AuthorityActivity(
+  kind: Card5AuthorityActivityKind,
+  outcome: Card5AuthorityActivityOutcome = "ok",
+  viewport: { readonly cols: number; readonly rows: number } | null = null,
+  operationOrdinal: number | null = null,
+): number | null {
+  const host = globalThis as Card5AuthorityActivityHost;
+  if (host.__TMUX_IDE_CARD5_EVIDENCE_ENABLED__ !== true) return operationOrdinal;
+  if (kind === "geometry" && outcome === "attempt") operationOrdinal = ++geometryOperationCount;
+  authorityActivityCount += 1;
+  authorityActivityEvents.push({
+    ordinal: authorityActivityCount,
+    surface: "web",
+    kind,
+    outcome,
+    operationOrdinal,
+    cols: viewport?.cols ?? null,
+    rows: viewport?.rows ?? null,
+  });
+  if (authorityActivityEvents.length > 64) authorityActivityEvents.shift();
+  host.__TMUX_IDE_CARD5_AUTHORITY_ACTIVITY_EVIDENCE__ ??= () =>
+    Object.freeze({
+      count: Math.min(authorityActivityCount, 0xffff_ffff),
+      overflow: authorityActivityCount > authorityActivityEvents.length,
+      events: Object.freeze(authorityActivityEvents.map((event) => Object.freeze({ ...event }))),
+    });
+  return operationOrdinal;
+}
+
+interface PresenceGroup {
+  readonly sessions: Set<PresenceSession>;
+  leader: PresenceSession | null;
+  foreground: boolean;
+  focusPublished: boolean;
+  focusOwner: string | null | undefined;
+}
+
+const presenceGroups = new Map<string, PresenceGroup>();
 let presenceListenersInstalled = false;
 
 function publishDocumentPresence(): void {
   const foreground = document.visibilityState === "visible" && document.hasFocus();
-  for (const sessions of presenceGroups.values()) {
+  for (const group of presenceGroups.values()) {
     // SessionRuntime transport bindings ref-count pane sockets under the host
     // client. One publisher per workspace principal avoids O(panes) duplicate
     // focus traffic while retaining authority if an individual pane reconnects.
-    const leader = sessions.values().next().value as PresenceSession | undefined;
-    leader?.updatePresence?.(foreground ? "foreground" : "background");
-    if (foreground) leader?.noteActivity?.("focus");
+    const leader = (group.sessions.values().next().value as PresenceSession | undefined) ?? null;
+    const leaderChanged = leader !== group.leader;
+    if (leaderChanged || foreground !== group.foreground) {
+      leader?.updatePresence?.(foreground ? "foreground" : "background");
+      group.leader = leader;
+      group.foreground = foreground;
+      group.focusPublished = false;
+      group.focusOwner = undefined;
+    }
+    if (foreground && leader && !group.focusPublished) {
+      group.focusPublished = true;
+      if (leader.noteActivity) {
+        leader.noteActivity("focus");
+        recordCard5AuthorityActivity("focus");
+      }
+    }
   }
 }
 
+function observePresenceAuthority(
+  key: string,
+  session: PresenceSession,
+  focusOwner: string | null,
+): void {
+  const group = presenceGroups.get(key);
+  if (!group || group.leader !== session) return;
+  const previous = group.focusOwner;
+  group.focusOwner = focusOwner;
+  // Authority observations are evidence, not trusted host-focus transitions.
+  // A competing foreground host may legitimately become owner; automatically
+  // publishing here would make two process-local publishers steal focus back
+  // and forth forever. Only blur→focus or a new binding creates a new epoch.
+  if (previous !== undefined && previous !== focusOwner) group.focusPublished = true;
+}
+
 function registerPresenceSession(key: string, session: PresenceSession): () => void {
-  const group = presenceGroups.get(key) ?? new Set<PresenceSession>();
-  group.add(session);
+  const group =
+    presenceGroups.get(key) ??
+    ({
+      sessions: new Set<PresenceSession>(),
+      leader: null,
+      foreground: false,
+      focusPublished: false,
+      focusOwner: undefined,
+    } satisfies PresenceGroup);
+  group.sessions.add(session);
   presenceGroups.set(key, group);
   if (!presenceListenersInstalled) {
     presenceListenersInstalled = true;
@@ -46,9 +162,14 @@ function registerPresenceSession(key: string, session: PresenceSession): () => v
   }
   queueMicrotask(publishDocumentPresence);
   return () => {
-    group.delete(session);
-    if (group.size === 0) presenceGroups.delete(key);
-    else queueMicrotask(publishDocumentPresence);
+    group.sessions.delete(session);
+    if (group.sessions.size === 0) presenceGroups.delete(key);
+    else if (group.leader === session) {
+      group.leader = null;
+      group.focusPublished = false;
+      group.focusOwner = undefined;
+      queueMicrotask(publishDocumentPresence);
+    }
     if (presenceGroups.size === 0 && presenceListenersInstalled) {
       presenceListenersInstalled = false;
       document.removeEventListener("visibilitychange", publishDocumentPresence);
@@ -63,6 +184,22 @@ const unavailable = (reason: string): NativeTerminalTransportError => ({
   reason,
   retryable: true,
 });
+
+const geometryAuthorityConflict = (): NativeTerminalTransportError => ({
+  code: "geometry-authority-conflict",
+  reason: "Another client controls terminal geometry.",
+  retryable: true,
+});
+
+const fatalResizeError = (
+  code:
+    | "geometry-authority-timeout"
+    | "geometry-viewport-timeout"
+    | "pane-stream-closed"
+    | "geometry-lifecycle-retired"
+    | "geometry-resize-failed",
+  reason: string,
+): NativeTerminalTransportError => ({ code, reason, retryable: false });
 
 /**
  * TerminalSurface exposes bytes while pane-stream input is intentionally a
@@ -91,17 +228,19 @@ export function createPaneStreamInputDecoder(): {
   };
 }
 
-/** Interactive Web terminal adapter over the canonical SessionRuntime pane stream. */
-export function createHostPaneStreamNativeTerminalTransport(
-  host: Pick<HostCapabilities, "daemon">,
-  daemon: DaemonInstanceIdentity,
+/** Interactive terminal adapter over one already-owned SessionRuntime pane stream. */
+export function createPaneStreamNativeTerminalTransport(
+  transport: PaneStreamTransport,
+  presenceKey: string,
 ): NativeTerminalTransport {
-  const transport = createHostPaneStreamTransport(host, daemon);
   return {
     connect: async (rawRequest, listener) => {
       const request = validateNativeTerminalRequest(rawRequest);
       let sourceGrid = request.viewport;
+      let clientViewport = request.viewport;
       let coherent = false;
+      const presenceGroupKey = `${presenceKey}\0${request.target.workspaceName}`;
+      let presenceSession: PresenceSession | null = null;
       const result = await transport.connect(
         {
           workspaceName: request.target.workspaceName,
@@ -119,7 +258,7 @@ export function createHostPaneStreamNativeTerminalTransport(
                   state: "connected",
                   error: null,
                   sourceGrid,
-                  clientViewport: request.viewport,
+                  clientViewport,
                 });
               }
               await listener({
@@ -142,7 +281,15 @@ export function createHostPaneStreamNativeTerminalTransport(
             const pane = layout.panes.find(({ pane }) => pane === request.target.semanticPaneId);
             if (!pane) return;
             sourceGrid = { cols: pane.width, rows: pane.height };
-            void listener({ type: "geometry", sourceGrid, clientViewport: request.viewport });
+            void listener({ type: "geometry", sourceGrid, clientViewport });
+          },
+          onLayoutSnapshot: (snapshot) => {
+            const pane = snapshot.layouts
+              .flatMap((layout) => layout.panes)
+              .find(({ pane }) => pane === request.target.semanticPaneId);
+            if (!pane) return;
+            sourceGrid = { cols: pane.width, rows: pane.height };
+            void listener({ type: "geometry", sourceGrid, clientViewport });
           },
           onEnd: (error) => {
             void listener({
@@ -151,16 +298,19 @@ export function createHostPaneStreamNativeTerminalTransport(
               error: error ? unavailable(error.reason) : null,
             });
           },
+          onAuthoritySnapshot: (snapshot) => {
+            if (presenceSession) {
+              observePresenceAuthority(presenceGroupKey, presenceSession, snapshot.owners.focus);
+            }
+          },
         },
       );
       if (result.status === "error")
         return { status: "error", error: unavailable(result.error.reason) };
       const session = result.session;
+      presenceSession = session;
       const inputDecoder = createPaneStreamInputDecoder();
-      const unregisterPresence = registerPresenceSession(
-        `${daemon.instanceId}\0${request.target.workspaceName}`,
-        session,
-      );
+      const unregisterPresence = registerPresenceSession(presenceGroupKey, session);
       let disposed = false;
       return {
         status: "connected",
@@ -174,6 +324,7 @@ export function createHostPaneStreamNativeTerminalTransport(
                     error: unavailable("Input authority is held by another client."),
                   };
                 }
+                recordCard5AuthorityActivity("input");
               }
               return { status: "ok" };
             } catch {
@@ -185,12 +336,71 @@ export function createHostPaneStreamNativeTerminalTransport(
           },
           resize: async (rawViewport) => {
             const viewport = validateNativeTerminalViewport(rawViewport);
-            return (await session.resize?.(viewport.cols, viewport.rows))
-              ? { status: "ok" }
-              : {
-                  status: "error",
-                  error: unavailable("Geometry authority is held by another client."),
-                };
+            let result: PaneStreamResizeResult | undefined;
+            if (session.resize) {
+              const operationOrdinal = recordCard5AuthorityActivity(
+                "geometry",
+                "attempt",
+                viewport,
+              );
+              result = await session.resize(viewport.cols, viewport.rows);
+              recordCard5AuthorityActivity(
+                "geometry",
+                result ?? "failed",
+                viewport,
+                operationOrdinal,
+              );
+            }
+            if (result === "ok") {
+              clientViewport = viewport;
+              return { status: "ok" };
+            }
+            if (result === "geometry-authority-conflict") {
+              return { status: "error", error: geometryAuthorityConflict() };
+            }
+            if (result === "authority-timeout") {
+              return {
+                status: "error",
+                error: fatalResizeError(
+                  "geometry-authority-timeout",
+                  "Geometry authority did not settle before its deadline.",
+                ),
+              };
+            }
+            if (result === "viewport-timeout") {
+              return {
+                status: "error",
+                error: fatalResizeError(
+                  "geometry-viewport-timeout",
+                  "Terminal geometry did not settle before its deadline.",
+                ),
+              };
+            }
+            if (result === "stream-closed") {
+              return {
+                status: "error",
+                error: fatalResizeError(
+                  "pane-stream-closed",
+                  "The terminal stream closed before geometry settled.",
+                ),
+              };
+            }
+            if (result === "lifecycle-retired") {
+              return {
+                status: "error",
+                error: fatalResizeError(
+                  "geometry-lifecycle-retired",
+                  "The terminal runtime retired before geometry settled.",
+                ),
+              };
+            }
+            return {
+              status: "error",
+              error: fatalResizeError(
+                "geometry-resize-failed",
+                "Terminal geometry was not accepted.",
+              ),
+            };
           },
           dispose: () => {
             if (disposed) return;
@@ -202,4 +412,15 @@ export function createHostPaneStreamNativeTerminalTransport(
       };
     },
   };
+}
+
+/** Host-issued compatibility composition; Web WorkspaceClient passes its shared bridge instead. */
+export function createHostPaneStreamNativeTerminalTransport(
+  host: Pick<HostCapabilities, "daemon">,
+  daemon: DaemonInstanceIdentity,
+): NativeTerminalTransport {
+  return createPaneStreamNativeTerminalTransport(
+    createHostPaneStreamTransport(host, daemon),
+    `${daemon.instanceId}`,
+  );
 }

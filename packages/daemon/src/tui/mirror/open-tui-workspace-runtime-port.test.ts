@@ -19,9 +19,10 @@ import {
   splitTerminalDeliveryChunks,
   type TerminalReplicaState,
 } from "@tmux-ide/core";
-import type {
-  OpenPaneStreamClientOptions,
-  PaneStreamRuntimeClient,
+import {
+  PaneStreamOperationError,
+  type OpenPaneStreamClientOptions,
+  type PaneStreamRuntimeClient,
 } from "@tmux-ide/daemon-client/pane-stream-client";
 import type { WorkspaceClientRuntimeInventory } from "@tmux-ide/daemon-client/workspace-client-types";
 
@@ -231,7 +232,7 @@ function rig(
     sendTerminalInput: vi.fn(async () => "ok" as const),
     sendText: vi.fn(),
     sendKey: vi.fn(),
-    fitViewport: vi.fn(async () => undefined),
+    fitViewport: vi.fn(async (): Promise<"ok" | "geometry-authority-conflict"> => "ok"),
     ack: vi.fn(),
     nack: vi.fn(),
     setVisibility: vi.fn(),
@@ -575,6 +576,27 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
       current: { semanticWindowId: "window.main" },
       windows: [{ semanticWindowId: "window.main" }, { semanticWindowId: "window.logs" }],
     });
+  });
+
+  it("maps only an exact pane-stream geometry rejection to the shared conflict result", async () => {
+    const test = rig();
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+
+    await expect(port.fitViewport(120, 40)).resolves.toBe("ok");
+    test.client.fitViewport.mockResolvedValueOnce("geometry-authority-conflict");
+    await expect(port.fitViewport(139, 45)).resolves.toBe("geometry-authority-conflict");
+    test.client.fitViewport.mockRejectedValueOnce(
+      new PaneStreamOperationError("authority-rejected", "geometry belongs to another client"),
+    );
+    await expect(port.fitViewport(140, 46)).resolves.toBe("geometry-authority-conflict");
+    test.client.fitViewport.mockRejectedValueOnce(
+      new PaneStreamOperationError("operation-timeout", "viewport fit timed out"),
+    );
+    await expect(port.fitViewport(141, 46)).rejects.toMatchObject({ code: "operation-timeout" });
+    await port.close();
   });
 
   it("retains the last coherent live layout across incomplete extra and duplicate updates", async () => {

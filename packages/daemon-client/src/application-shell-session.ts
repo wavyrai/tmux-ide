@@ -356,6 +356,7 @@ export function createApplicationShellSession<
     connect(target, handlers) {
       try {
         const expectedEventGeneration = ++eventGeneration;
+        let supervisorStateObserved = false;
         const isCurrent = (): boolean => expectedEventGeneration === eventGeneration;
         const failCurrent = (failure: ShellFailure): void => {
           if (!isCurrent()) return;
@@ -364,7 +365,9 @@ export function createApplicationShellSession<
         };
         const connection = transport.connectEvents(target, {
           onTransportStateChanged: (state) => {
-            if (isCurrent()) handlers.transportChanged(state);
+            if (!isCurrent()) return;
+            supervisorStateObserved = true;
+            handlers.transportChanged(state);
           },
           onVerifiedOpen: () => {
             if (isCurrent()) handlers.live();
@@ -385,8 +388,13 @@ export function createApplicationShellSession<
             }),
           onMalformedFrame: (reason) => failCurrent({ kind: "event-frame-invalid", reason }),
           onPeerMismatch: (reason) => failCurrent({ kind: "daemon-identity-mismatch", reason }),
-          onClose: () =>
-            failCurrent({ kind: "disconnected", reason: "Daemon event socket disconnected." }),
+          onClose: () => {
+            // A host-owned supervisor keeps this logical subscription and
+            // follows the close with its exact reconnecting/connected states.
+            // Direct transports have no such state owner and still retire.
+            if (!supervisorStateObserved)
+              failCurrent({ kind: "disconnected", reason: "Daemon event socket disconnected." });
+          },
           onError: (reason) => failCurrent({ kind: "disconnected", reason }),
         });
         return {

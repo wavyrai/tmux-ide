@@ -157,6 +157,52 @@ function acceptInteractiveHandshake(socket: FakeSocket): void {
 }
 
 describe("semantic pane-stream runtime client", () => {
+  it("rejects a regressing full-layout topology epoch before publication", async () => {
+    const socket = new FakeSocket();
+    acceptInteractiveHandshake(socket);
+    const layouts: unknown[] = [];
+    const faults: Error[] = [];
+    await openPaneStreamRuntimeClient(
+      options(socket, {
+        requestInitialInputAuthority: false,
+        onLayoutSnapshot: (frame: unknown) => layouts.push(frame),
+        onFault: (error: Error) => faults.push(error),
+      }),
+    );
+    const frame = {
+      type: "layout-snapshot",
+      topologyEpoch: 4,
+      layouts: [
+        {
+          type: "layout",
+          semanticWindowId: "window.one",
+          windowName: "work",
+          currentWindow: true,
+          cols: 80,
+          rows: 24,
+          zoomed: false,
+          paneBorderStatus: "off",
+          panes: [
+            {
+              pane: "pane.editor",
+              left: 0,
+              top: 0,
+              width: 80,
+              height: 24,
+              active: true,
+            },
+          ],
+        },
+      ],
+    };
+    socket.message(frame);
+    expect(layouts).toHaveLength(1);
+    socket.message(frame);
+    expect(layouts).toHaveLength(1);
+    expect(faults).toHaveLength(1);
+    expect(socket.closed).toMatchObject({ code: 1008, reason: "protocol-error" });
+  });
+
   it("calibrates five bounded clock probes before readiness and never exposes raw origins", async () => {
     const socket = new FakeSocket();
     const calibrations: unknown[] = [];
@@ -1367,6 +1413,7 @@ describe("semantic pane-stream runtime client", () => {
     const [one, two] = await Promise.all([reclaimOne, reclaimTwo]);
     expect(one).toEqual(two);
     expect(client.ownsConnectionAuthority("focus")).toBe(true);
+    expect(client.connectionAuthorityClientId("focus")).toBe("tui:one");
     expect(socket.sent.filter((frame) => frame.type === "authority-request")).toHaveLength(2);
     client.close();
   });
@@ -1421,6 +1468,7 @@ describe("semantic pane-stream runtime client", () => {
       },
     });
     expect(client.ownsConnectionAuthority("input")).toBe(false);
+    expect(client.connectionAuthorityClientId("input")).toBeNull();
     socket.message({
       type: "authority-receipt",
       requestId: releaseFrame.requestId,
@@ -1696,9 +1744,12 @@ describe("semantic pane-stream runtime client", () => {
             seq: frame.seq,
             cols: frame.cols,
             rows: frame.rows,
+            outcome: "ok",
+            authorityLease: frame.authorityLease,
           }),
         );
       } else if (frame.type === "authority-request") {
+        const authorityRevision = frame.authority === "geometry" ? 2 : 1;
         queueMicrotask(() =>
           socket.message({
             type: "authority-receipt",
@@ -1711,12 +1762,12 @@ describe("semantic pane-stream runtime client", () => {
               clientId: "tui:one",
               authority: frame.authority,
               token: "55555555-5555-4555-8555-555555555555",
-              revision: 1,
+              revision: authorityRevision,
             },
             snapshot: {
               generation: INSTANCE,
               session: "alpha",
-              revision: 1,
+              revision: authorityRevision,
               nativeGeometryYieldUntilMs: 0,
               owners: {
                 input: "tui:one",
@@ -1844,7 +1895,20 @@ describe("semantic pane-stream runtime client", () => {
           semanticPaneId: "pane.editor",
         },
       },
-      { type: "viewport", seq: 1, cols: 132, rows: 44 },
+      {
+        type: "viewport",
+        seq: 1,
+        cols: 132,
+        rows: 44,
+        authorityLease: {
+          generation: INSTANCE,
+          session: "alpha",
+          clientId: "tui:one",
+          authority: "geometry",
+          token: "55555555-5555-4555-8555-555555555555",
+          revision: 2,
+        },
+      },
     ]);
     socket.message({
       type: "terminal-delivery-chunk",
@@ -1888,6 +1952,7 @@ describe("semantic pane-stream runtime client", () => {
 
   it("requests a connection-local geometry grant when a fresh socket inherits global ownership", async () => {
     const socket = new FakeSocket();
+    let grantRevision = 3;
     socket.onSend = (frame) => {
       if (frame.type === "redeem") {
         queueMicrotask(() =>
@@ -1909,6 +1974,8 @@ describe("semantic pane-stream runtime client", () => {
           }),
         );
       } else if (frame.type === "authority-request") {
+        const revision = grantRevision;
+        grantRevision += 2;
         queueMicrotask(() =>
           socket.message({
             type: "authority-receipt",
@@ -1921,12 +1988,12 @@ describe("semantic pane-stream runtime client", () => {
               clientId: "tui:one",
               authority: "geometry",
               token: "55555555-5555-4555-8555-555555555555",
-              revision: 3,
+              revision,
             },
             snapshot: {
               generation: INSTANCE,
               session: "alpha",
-              revision: 3,
+              revision,
               nativeGeometryYieldUntilMs: 0,
               owners: { input: null, focus: null, geometry: "tui:one" },
               clients: [],
@@ -1940,6 +2007,8 @@ describe("semantic pane-stream runtime client", () => {
             seq: frame.seq,
             cols: frame.cols,
             rows: frame.rows,
+            outcome: "ok",
+            authorityLease: frame.authorityLease,
           }),
         );
       }
@@ -1972,6 +2041,355 @@ describe("semantic pane-stream runtime client", () => {
     await client.fitViewport(122, 42);
     expect(socket.sent.filter((frame) => frame.type === "authority-request")).toHaveLength(2);
     client.close();
+  });
+
+  it("keeps semantic workspace and authenticated authority runtime session distinct", async () => {
+    const socket = new FakeSocket();
+    const runtimeSession = "tmux-runtime-a";
+    let revision = 1;
+    socket.onSend = (frame) => {
+      if (frame.type === "redeem") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "ready",
+            protocolVersion: 1,
+            daemonInstanceId: INSTANCE,
+            requestId: REQUEST,
+            panes: ["pane.editor"],
+            effectiveViewerMode: "interactive",
+            authority: {
+              generation: INSTANCE,
+              session: runtimeSession,
+              revision,
+              nativeGeometryYieldUntilMs: 0,
+              owners: { input: null, focus: null, geometry: null },
+              clients: [],
+            },
+          }),
+        );
+      } else if (frame.type === "authority-request") {
+        revision += 1;
+        const granted = frame.authority === "geometry";
+        const leaseRevision = revision;
+        if (granted) revision += 1;
+        queueMicrotask(() =>
+          socket.message({
+            type: "authority-receipt",
+            requestId: frame.requestId,
+            authority: frame.authority,
+            status: granted ? "granted" : "rejected",
+            lease: granted
+              ? {
+                  generation: INSTANCE,
+                  session: runtimeSession,
+                  clientId: "tui:one",
+                  authority: frame.authority,
+                  token: "55555555-5555-4555-8555-555555555555",
+                  revision: leaseRevision,
+                }
+              : null,
+            snapshot: {
+              generation: INSTANCE,
+              session: runtimeSession,
+              revision,
+              nativeGeometryYieldUntilMs: 0,
+              owners: {
+                input: null,
+                focus: null,
+                geometry: granted ? "tui:one" : null,
+              },
+              clients: [],
+            },
+          }),
+        );
+      } else if (frame.type === "viewport") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "viewport-ack",
+            seq: frame.seq,
+            cols: frame.cols,
+            rows: frame.rows,
+            outcome: "ok",
+            authorityLease: frame.authorityLease,
+          }),
+        );
+      } else if (frame.type === "authority-release") {
+        revision += 1;
+        queueMicrotask(() =>
+          socket.message({
+            type: "authority-receipt",
+            requestId: frame.requestId,
+            authority: frame.authority,
+            status: "released",
+            lease: null,
+            snapshot: {
+              generation: INSTANCE,
+              session: runtimeSession,
+              revision,
+              nativeGeometryYieldUntilMs: 0,
+              owners: { input: null, focus: null, geometry: null },
+              clients: [],
+            },
+          }),
+        );
+      }
+    };
+    const client = await openPaneStreamRuntimeClient(
+      options(socket, { requestInitialInputAuthority: false }),
+    );
+    await expect(client.requestAuthority("focus")).resolves.toBeNull();
+    await expect(client.fitViewport(140, 46)).resolves.toBe("ok");
+    const viewport = socket.sent.find((frame) => frame.type === "viewport");
+    expect(viewport).toMatchObject({
+      cols: 140,
+      rows: 46,
+      authorityLease: { session: runtimeSession, authority: "geometry", revision: 3 },
+    });
+    await expect(client.releaseAuthority("geometry")).resolves.toMatchObject({
+      session: runtimeSession,
+      owners: { geometry: null },
+    });
+    socket.message({
+      type: "authority-snapshot",
+      snapshot: {
+        generation: INSTANCE,
+        session: runtimeSession,
+        revision: revision + 1,
+        nativeGeometryYieldUntilMs: 0,
+        owners: { input: null, focus: null, geometry: null },
+        clients: [],
+      },
+    });
+    expect(socket.closed).toBeNull();
+    socket.message({
+      type: "authority-snapshot",
+      snapshot: {
+        generation: INSTANCE,
+        session: "tmux-runtime-b",
+        revision: revision + 2,
+        nativeGeometryYieldUntilMs: 0,
+        owners: { input: null, focus: null, geometry: null },
+        clients: [],
+      },
+    });
+    expect(socket.closed).toEqual({ code: 1008, reason: "protocol-error" });
+  });
+
+  it("accepts only monotonic or exactly idempotent authority snapshot replay", async () => {
+    const initial = {
+      generation: INSTANCE,
+      session: "tmux-runtime-a",
+      revision: 3,
+      nativeGeometryYieldUntilMs: 0,
+      owners: { input: "tui:one", focus: null, geometry: null },
+      clients: [
+        {
+          clientId: "tui:one",
+          surface: "opentui" as const,
+          state: "foreground" as const,
+          connectedRevision: 1,
+          activityRevision: 2,
+        },
+      ],
+    };
+    const open = async () => {
+      const socket = new FakeSocket();
+      socket.onSend = (frame) => {
+        if (frame.type === "redeem") {
+          queueMicrotask(() =>
+            socket.message({
+              type: "ready",
+              protocolVersion: 1,
+              daemonInstanceId: INSTANCE,
+              requestId: REQUEST,
+              panes: ["pane.editor"],
+              effectiveViewerMode: "interactive",
+              authority: initial,
+            }),
+          );
+        }
+      };
+      const client = await openPaneStreamRuntimeClient(
+        options(socket, { requestInitialInputAuthority: false }),
+      );
+      return { client, socket };
+    };
+
+    const duplicate = await open();
+    duplicate.socket.message({ type: "authority-snapshot", snapshot: initial });
+    expect(duplicate.socket.closed).toBeNull();
+    duplicate.client.close();
+
+    const regressing = await open();
+    regressing.socket.message({
+      type: "authority-snapshot",
+      snapshot: { ...initial, revision: 2 },
+    });
+    expect(regressing.socket.closed).toEqual({ code: 1008, reason: "protocol-error" });
+
+    const conflicting = await open();
+    conflicting.socket.message({
+      type: "authority-snapshot",
+      snapshot: { ...initial, owners: { ...initial.owners, focus: "tui:one" } },
+    });
+    expect(conflicting.socket.closed).toEqual({ code: 1008, reason: "protocol-error" });
+  });
+
+  it.each([
+    ["granted", "regressing"],
+    ["granted", "same-revision-conflict"],
+    ["rejected", "regressing"],
+    ["rejected", "same-revision-conflict"],
+    ["released", "regressing"],
+    ["released", "same-revision-conflict"],
+  ] as const)(
+    "does not continue a %s authority receipt after a %s snapshot",
+    async (status, staleKind) => {
+      const socket = new FakeSocket();
+      const initial = {
+        generation: INSTANCE,
+        session: "tmux-runtime-a",
+        revision: 3,
+        nativeGeometryYieldUntilMs: 0,
+        owners: { input: null, focus: null, geometry: null },
+        clients: [],
+      };
+      socket.onSend = (frame) => {
+        if (frame.type !== "redeem") return;
+        queueMicrotask(() =>
+          socket.message({
+            type: "ready",
+            protocolVersion: 1,
+            daemonInstanceId: INSTANCE,
+            requestId: REQUEST,
+            panes: ["pane.editor"],
+            effectiveViewerMode: "interactive",
+            authority: initial,
+          }),
+        );
+      };
+      const client = await openPaneStreamRuntimeClient(
+        options(socket, { requestInitialInputAuthority: false }),
+      );
+      const operation =
+        status === "released" ? client.releaseAuthority("focus") : client.requestAuthority("focus");
+      void operation.catch(() => undefined);
+      await Promise.resolve();
+      const request = socket.sent.find((frame) =>
+        status === "released"
+          ? frame.type === "authority-release"
+          : frame.type === "authority-request",
+      )!;
+      const granted = status === "granted";
+      const snapshot = {
+        ...initial,
+        revision: staleKind === "regressing" ? 2 : 3,
+        nativeGeometryYieldUntilMs: staleKind === "same-revision-conflict" ? 1 : 0,
+        owners: { ...initial.owners, focus: granted ? "tui:one" : null },
+      };
+      socket.message({
+        type: "authority-receipt",
+        requestId: request.requestId,
+        authority: "focus",
+        status,
+        lease: granted
+          ? {
+              generation: INSTANCE,
+              session: "tmux-runtime-a",
+              clientId: "tui:one",
+              authority: "focus",
+              token: "55555555-5555-4555-8555-555555555555",
+              revision: snapshot.revision,
+            }
+          : null,
+        snapshot,
+      });
+      await expect(operation).rejects.toThrow();
+      expect(socket.closed).toEqual({ code: 1008, reason: "protocol-error" });
+      expect(client.ownsConnectionAuthority("focus")).toBe(false);
+    },
+  );
+
+  it.each([
+    ["geometry-authority-conflict", "55555555-5555-4555-8555-555555555555"],
+    ["ok", "66666666-6666-4666-8666-666666666666"],
+  ] as const)("binds viewport outcome %s to the exact granted lease", async (outcome, token) => {
+    const socket = new FakeSocket();
+    socket.onSend = (frame) => {
+      if (frame.type === "redeem") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "ready",
+            protocolVersion: 1,
+            daemonInstanceId: INSTANCE,
+            requestId: REQUEST,
+            panes: ["pane.editor"],
+            effectiveViewerMode: "interactive",
+          }),
+        );
+      } else if (frame.type === "authority-request") {
+        queueMicrotask(() =>
+          socket.message({
+            type: "authority-receipt",
+            requestId: frame.requestId,
+            authority: "geometry",
+            status: "granted",
+            lease: {
+              generation: INSTANCE,
+              session: "tmux-runtime-a",
+              clientId: "tui:one",
+              authority: "geometry",
+              token: "55555555-5555-4555-8555-555555555555",
+              revision: 1,
+            },
+            snapshot: {
+              generation: INSTANCE,
+              session: "tmux-runtime-a",
+              revision: 1,
+              nativeGeometryYieldUntilMs: 0,
+              owners: { input: null, focus: null, geometry: "tui:one" },
+              clients: [],
+            },
+          }),
+        );
+      } else if (frame.type === "viewport") {
+        queueMicrotask(() => {
+          if (outcome === "geometry-authority-conflict") {
+            socket.message({
+              type: "authority-snapshot",
+              snapshot: {
+                generation: INSTANCE,
+                session: "tmux-runtime-a",
+                revision: 2,
+                nativeGeometryYieldUntilMs: 0,
+                owners: { input: null, focus: null, geometry: null },
+                clients: [],
+              },
+            });
+          }
+          socket.message({
+            type: "viewport-ack",
+            seq: frame.seq,
+            cols: frame.cols,
+            rows: frame.rows,
+            outcome,
+            authorityLease: { ...frame.authorityLease, token },
+          });
+        });
+      }
+    };
+    const client = await openPaneStreamRuntimeClient(
+      options(socket, { requestInitialInputAuthority: false }),
+    );
+    const fitted = client.fitViewport(140, 46);
+    if (outcome === "geometry-authority-conflict") {
+      await expect(fitted).resolves.toBe("geometry-authority-conflict");
+      expect(client.ownsConnectionAuthority("geometry")).toBe(false);
+      expect(socket.closed).toBeNull();
+    } else {
+      await expect(fitted).rejects.toThrow();
+      expect(socket.closed).toEqual({ code: 1008, reason: "protocol-error" });
+    }
   });
 
   it("bounds unacknowledged input and retires every pending write exactly once", async () => {
@@ -2176,6 +2594,28 @@ describe("semantic pane-stream runtime client", () => {
     socket.message({ type: "output", pane: "pane.editor", seq: 1, data: "eA==" });
     expect(onFault).toHaveBeenCalledWith(
       expect.objectContaining({ message: expect.stringContaining("legacy output") }),
+    );
+    expect(socket.closed).toEqual({ code: 1008, reason: "protocol-error" });
+  });
+
+  it("preserves a retryable topology rejection as an exact typed runtime fault", async () => {
+    const socket = new FakeSocket();
+    acceptInteractiveHandshake(socket);
+    const onFault = mock();
+    await openPaneStreamRuntimeClient(options(socket, { onFault }));
+
+    socket.message({
+      type: "error",
+      protocolVersion: 1,
+      code: "topology-changed",
+      retryable: true,
+    });
+
+    expect(onFault).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "PaneStreamOperationError",
+        code: "topology-changed",
+      }),
     );
     expect(socket.closed).toEqual({ code: 1008, reason: "protocol-error" });
   });

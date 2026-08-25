@@ -92,6 +92,15 @@ test("ordinary live session is adopted and semantically prewarmed", async () => 
   assert.equal(result.proof.semanticPaneId, "pane.adopted");
 });
 
+test("renderer host-selection intent cannot cross the daemon handoff boundary", async () => {
+  const coordinator = new WorkspaceOpenHandoffCoordinator(dependencies());
+  await expect(
+    coordinator.prepare(op, generation, "client-a", {
+      source: { kind: "host-selection" },
+    }),
+  ).rejects.toMatchObject({ code: "workspace_prepare_failed" });
+});
+
 test("cancel retires the token without switching", async () => {
   const coordinator = new WorkspaceOpenHandoffCoordinator(dependencies());
   const prepared = await coordinator.prepare(op, generation, "client-a", {

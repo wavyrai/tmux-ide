@@ -130,25 +130,28 @@ const capabilities: HostCapabilities = Object.freeze({
       WorkspaceOpenHostResultSchemaZ.nullable().parse(
         await ipcRenderer.invoke(HOST_IPC.workspaceOpenProjectDirectory),
       ),
-    prepareProjectDirectory: async (previousWorkspaceName?: string | null) =>
+    prepareProjectDirectory: async (previousWorkspaceName?: string | null, operationId?: string) =>
       WorkspaceOpenPreparedHostResultSchemaZ.nullable().parse(
         await ipcRenderer.invoke(
           HOST_IPC.workspacePrepareProjectDirectory,
           previousWorkspaceName ?? null,
+          operationId,
         ),
       ),
-    commitPreparedOpen: async (decision: WorkspaceOpenDecisionArguments) =>
+    commitPreparedOpen: async (decision: WorkspaceOpenDecisionArguments, operationId?: string) =>
       WorkspaceOpenCommittedHostResultSchemaZ.parse(
         await ipcRenderer.invoke(
           HOST_IPC.workspaceCommitPreparedOpen,
           WorkspaceOpenDecisionArgumentsSchemaZ.parse(decision),
+          operationId,
         ),
       ),
-    cancelPreparedOpen: async (decision: WorkspaceOpenDecisionArguments) =>
+    cancelPreparedOpen: async (decision: WorkspaceOpenDecisionArguments, operationId?: string) =>
       WorkspaceOpenCancelledHostResultSchemaZ.parse(
         await ipcRenderer.invoke(
           HOST_IPC.workspaceCancelPreparedOpen,
           WorkspaceOpenDecisionArgumentsSchemaZ.parse(decision),
+          operationId,
         ),
       ),
   }),

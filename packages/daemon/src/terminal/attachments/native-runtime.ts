@@ -22,6 +22,11 @@ import {
 } from "../session-runtime/runtime-observability.ts";
 import { SessionRuntimeTransportBinder } from "../session-runtime/transport-binding.ts";
 import {
+  captureUnixSocketIdentity,
+  revalidateUnixSocketIdentity,
+  type UnixSocketIdentity,
+} from "../../lib/unix-socket-authority.ts";
+import {
   TerminalAttachmentAdmissionCoordinator,
   type TerminalAttachmentAdmissionCoordinatorOptions,
   type TerminalAttachmentAdmissionSnapshot,
@@ -158,6 +163,7 @@ interface CanonicalTmuxAuthority {
   readonly executablePath: string;
   readonly socketSelector: DaemonTmuxSocketSelector;
   readonly socketArgv: readonly string[];
+  readonly socketIdentity: UnixSocketIdentity | null;
   readonly trustedCwd: string;
   readonly environment: NodeJS.ProcessEnv;
 }
@@ -186,10 +192,10 @@ function canonicalAuthority(input: NativeTerminalAttachmentTmuxAuthority): Canon
       throw new Error();
     let socketSelector: DaemonTmuxSocketSelector;
     let socketArgv: readonly string[];
+    let socketIdentity: UnixSocketIdentity | null = null;
     if (input.socketSelector.kind === "path") {
-      if (!isAbsolute(input.socketSelector.path)) throw new Error();
-      const path = realpathSync(input.socketSelector.path);
-      if (!statSync(path).isSocket()) throw new Error();
+      socketIdentity = captureUnixSocketIdentity(input.socketSelector.path);
+      const path = socketIdentity.path;
       socketSelector = { kind: "path", path };
       socketArgv = ["-S", path];
     } else {
@@ -201,12 +207,19 @@ function canonicalAuthority(input: NativeTerminalAttachmentTmuxAuthority): Canon
       executablePath,
       socketSelector: Object.freeze(socketSelector),
       socketArgv: Object.freeze([...socketArgv]),
+      socketIdentity,
       trustedCwd,
       environment: Object.freeze(presentationEnvironment(input.environment ?? process.env)),
     });
   } catch {
     throw new NativeTerminalAttachmentRuntimeError("invalid-authority");
   }
+}
+
+function currentSocketArgv(authority: CanonicalTmuxAuthority): readonly string[] {
+  return authority.socketIdentity
+    ? ["-S", revalidateUnixSocketIdentity(authority.socketIdentity)]
+    : authority.socketArgv;
 }
 
 function defaultCommandExecutor(
@@ -263,7 +276,7 @@ function pinnedRunner(
       try {
         const stdout = execute(
           authority.executablePath,
-          [...authority.socketArgv, ...command.argv],
+          [...currentSocketArgv(authority), ...command.argv],
           {
             cwd: authority.trustedCwd,
             env: authority.environment,
@@ -341,7 +354,7 @@ function pinnedReadRunner(
       try {
         const stdout = await execute(
           authority.executablePath,
-          [...authority.socketArgv, ...command.argv],
+          [...currentSocketArgv(authority), ...command.argv],
           {
             cwd: authority.trustedCwd,
             env: authority.environment,

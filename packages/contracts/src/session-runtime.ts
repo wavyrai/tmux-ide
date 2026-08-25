@@ -264,6 +264,8 @@ export interface TerminalReplicaDeliveryMetadata {
   readonly causalCellProof?: CausalCellProofV1;
   /** Authenticated digest of the exact semantic delivery bytes. */
   readonly representationHash?: string;
+  /** Already-admitted canonical state for renderer adapters; null only for a tombstone. */
+  readonly canonicalSnapshot?: TerminalReplicaSnapshot | null;
 }
 
 export const CanonicalTerminalReplicaSeedSchemaZ = TerminalReplicaFrameMetadataSchemaZ.extend({

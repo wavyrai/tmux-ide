@@ -7,7 +7,7 @@ import {
   type AppWindowDocumentV1,
 } from "@tmux-ide/contracts";
 
-import type { PaneFrameModel } from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
+import type { PaneFrameModel } from "@tmux-ide/presentation/pane-frame";
 
 /**
  * Shared fixture data for the agent-graph canvas overlay. One document with four

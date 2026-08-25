@@ -73,16 +73,22 @@ function relativeFiles(graph: ImportGraph): string[] {
 
 describe("shared workbench dock import DAG", () => {
   it("keeps the intrinsic-free presenter on solid-js alone", () => {
-    const graph = importGraph(resolve(HERE, "presenter.tsx"));
+    const graph = importGraph(
+      resolve(REPO_ROOT, "packages/presentation/src/workbench-dock/presenter.tsx"),
+    );
     expect([...graph.externalSpecifiers].sort()).toEqual(["solid-js"]);
-    expect(relativeFiles(graph)).toEqual(["packages/daemon/src/ui/workbench-dock/presenter.tsx"]);
+    expect(relativeFiles(graph)).toEqual([
+      "packages/presentation/src/workbench-dock/presenter.tsx",
+    ]);
     const source = graph.files.values().next().value!;
     expect(source).not.toMatch(/<[a-z][\w-]*/u);
     expect(source).not.toMatch(/\b(?:document|window|HTMLElement|KeyboardEvent|process)\b/u);
   });
 
   it("keeps the standard DOM host free of OpenTUI and Node runtime imports", () => {
-    const graph = importGraph(resolve(HERE, "web-entry.tsx"));
+    const graph = importGraph(
+      resolve(REPO_ROOT, "packages/presentation/src/workbench-dock/web-entry.tsx"),
+    );
     expect([...graph.externalSpecifiers].some((value) => value === "solid-js/web")).toBe(true);
     expect([...graph.externalSpecifiers].some((value) => value.startsWith("@opentui/"))).toBe(
       false,
@@ -90,11 +96,11 @@ describe("shared workbench dock import DAG", () => {
     expect([...graph.externalSpecifiers].some((value) => value.startsWith("node:"))).toBe(false);
     expect(relativeFiles(graph).some((file) => file.includes("/tui/"))).toBe(false);
     expect(relativeFiles(graph)).toEqual([
-      "packages/daemon/src/ui/workbench-dock/navigation.ts",
-      "packages/daemon/src/ui/workbench-dock/presenter.tsx",
-      "packages/daemon/src/ui/workbench-dock/web-entry.tsx",
-      "packages/daemon/src/ui/workbench-dock/web-host-unstyled.tsx",
-      "packages/daemon/src/ui/workbench-dock/web-host.tsx",
+      "packages/presentation/src/workbench-dock/navigation.ts",
+      "packages/presentation/src/workbench-dock/presenter.tsx",
+      "packages/presentation/src/workbench-dock/web-entry.tsx",
+      "packages/presentation/src/workbench-dock/web-host-unstyled.tsx",
+      "packages/presentation/src/workbench-dock/web-host.tsx",
     ]);
   });
 

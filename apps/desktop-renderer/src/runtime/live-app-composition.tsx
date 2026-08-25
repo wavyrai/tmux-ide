@@ -1,17 +1,21 @@
 import {
   AgentGraphOverlaySchemaZ,
-  AppWindowMutationHostResultSchemaZ,
+  AppWindowMutationResultSchemaZ,
   ApplicationShellProjectionInputV3SchemaZ,
-  WorkspacePaneCreateHostResultSchemaZ,
+  WorkspaceOpenPreparedResultSchemaZ,
+  WorkspaceOpenCommittedResultSchemaZ,
+  WorkspacePaneCreateMutationResultSchemaZ,
   projectApplicationShellV1,
   projectDesktopStartupReadiness,
   type ApplicationShellCommandInvocation,
   type ApplicationShellProjectionInputV1,
   type DaemonInstanceIdentity,
   type DesktopDaemonCapabilityState,
+  type DesktopApplicationShellTarget,
   type DesktopPlatform,
   type DesktopWindowState,
   type HostCapabilities,
+  type SessionRuntimeSemanticIntent,
   type StartupReadinessLadder,
   type WorkspaceChangeResourceId,
   type WorkspaceFileResourceId,
@@ -36,15 +40,19 @@ import {
 import {
   paneFrameTerminalsFromApplicationShellInventory,
   type ApplicationShellTerminalPaneFrame,
-} from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
+} from "@tmux-ide/presentation/pane-frame";
 import type {
   PaneFrameActionIntent,
   PaneFrameActivationSource,
   PaneFrameGripIntent,
-} from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
+} from "@tmux-ide/presentation/pane-frame";
 import { DomApplicationShell } from "../experience/application-shell.tsx";
 import type { AppWindowCanvasCommandInvocation } from "../experience/app-window-canvas-presenter.ts";
 import type { CreatePaneFlowCatalogs } from "../experience/create-pane-flow-presenter.ts";
+import {
+  multiplexerVerbIntent,
+  type MultiplexerVerbAccess,
+} from "../experience/multiplexer-verb-access.ts";
 import { DomIcon } from "../experience/dom-icon.tsx";
 import { FirstRunIntro } from "../experience/first-run-intro.tsx";
 import type { ChangesSurfaceProps } from "../experience/workspace-changes-surface.tsx";
@@ -74,14 +82,15 @@ import {
   tmuxInstallCommand,
 } from "./connection-recovery.ts";
 import type { DesktopApplicationShellResourceState } from "./connection-state.ts";
-import { createSolidDesktopApplicationShellResourceStore } from "./desktop-resource-store.ts";
-import { createHostDaemonTransport } from "./host-daemon-transport.ts";
-import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
-import { AtomicWorkspaceOpenController } from "./atomic-workspace-open.ts";
+import { createSolidWebWorkspaceClient } from "./solid-web-workspace-client.ts";
 import {
-  createSolidDesktopWorkspaceCatalogStore,
-  type DesktopWorkspaceCatalogState,
-} from "./workspace-catalog-store.ts";
+  createWebWorkspaceOwnerActionPort,
+  WebWorkspaceHostActionError,
+  type WebWorkspaceClient,
+} from "./web-workspace-client.ts";
+import { createWorkspaceClientNativeTerminalTransport } from "./workspace-client-native-terminal-transport.ts";
+import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
+import { createSolidDesktopWorkspaceCatalogStore } from "./workspace-catalog-store.ts";
 import {
   createSolidWorkspaceChangeDiffStore,
   createSolidWorkspaceChangesCatalogStore,
@@ -119,11 +128,6 @@ export interface DesktopLiveApplicationProps {
   readonly daemonRecovery?: DesktopDaemonRecoveryPhase;
   readonly onRetryDaemonConnection?: () => void;
   readonly onCommand?: (invocation: ApplicationShellCommandInvocation) => void;
-  readonly onPaneAction?: (
-    intent: PaneFrameActionIntent,
-    source: PaneFrameActivationSource,
-  ) => void;
-  readonly onPaneGrip?: (intent: PaneFrameGripIntent, source: PaneFrameActivationSource) => void;
   readonly onAppWindowCommand?: (
     invocation: AppWindowCanvasCommandInvocation,
   ) => void | Promise<void>;
@@ -133,6 +137,8 @@ export interface DesktopLiveApplicationProps {
   /** Show the first-run intro layer over the first live workspace. */
   readonly introPending?: boolean;
   readonly onAcknowledgeIntro?: () => void;
+  /** Integration observability; never carries host credentials or runtime ids. */
+  readonly onWorkspaceClientChanged?: (client: WebWorkspaceClient | null) => void;
 }
 
 interface DesktopConnectionSurfaceProps {
@@ -526,13 +532,6 @@ export function DesktopConnectionSurface(props: DesktopConnectionSurfaceProps) {
   );
 }
 
-function catalogReason(state: DesktopWorkspaceCatalogState): string | null {
-  if (state.status === "stale" || state.status === "degraded" || state.status === "error") {
-    return state.reason;
-  }
-  return null;
-}
-
 function daemonCapabilityKey(state: DesktopDaemonCapabilityState): string {
   if (state.status !== "connected")
     return `${state.status}\u0000${state.code}\u0000${state.reason}`;
@@ -565,7 +564,10 @@ interface LiveWorkspaceProps extends Omit<DesktopLiveApplicationProps, "daemon">
     readonly daemon: DaemonInstanceIdentity;
     readonly workspaceName: string;
   };
-  readonly catalogState: DesktopWorkspaceCatalogState;
+  readonly onWorkspaceClient?: (client: WebWorkspaceClient, active: boolean) => void;
+  readonly onCatalogSnapshot?: (
+    catalog: ReturnType<WebWorkspaceClient["getSnapshot"]>["catalog"],
+  ) => void;
 }
 
 export type LiveWorkspaceProjection =
@@ -580,6 +582,30 @@ function assertUniqueSemanticIds(label: string, ids: readonly string[]): void {
   if (new Set(ids).size !== ids.length) {
     throw new Error(`Live workspace ${label} identities are incoherent.`);
   }
+}
+
+export function paneFrameSemanticIntent(
+  workspaceName: string,
+  intent: PaneFrameActionIntent | PaneFrameGripIntent,
+): SessionRuntimeSemanticIntent | null {
+  if (intent.kind === "grip") {
+    return {
+      verb: "workspace.pane.select",
+      workspaceName,
+      semanticPaneId: intent.paneId,
+    };
+  }
+  if (
+    intent.commandId !== "workspace.windowMode.maximize.toggle" &&
+    intent.commandId !== "pane.maximize.toggle"
+  )
+    return null;
+  return {
+    verb: "workspace.pane.zoom.toggle",
+    workspaceName,
+    semanticPaneId: intent.paneId,
+    desired: "toggle",
+  };
 }
 
 /**
@@ -632,6 +658,22 @@ function resourceData(state: DesktopApplicationShellResourceState) {
 
 function resourceReason(state: DesktopApplicationShellResourceState): string {
   return "reason" in state ? state.reason : "Reading the live semantic workspace from tmux-ide.";
+}
+
+export function projectWebWorkspaceReceipt(input: {
+  readonly feed: InteractionFeedState;
+  readonly lastReceiptKey: string;
+  readonly receipt: ReturnType<WebWorkspaceClient["getSnapshot"]>["operations"]["lastReceipt"];
+}): { readonly feed: InteractionFeedState; readonly lastReceiptKey: string } {
+  if (!input.receipt) return { feed: input.feed, lastReceiptKey: input.lastReceiptKey };
+  const key = `${input.receipt.operationId}\u0000${input.receipt.phase}`;
+  if (key === input.lastReceiptKey) {
+    return { feed: input.feed, lastReceiptKey: input.lastReceiptKey };
+  }
+  return {
+    feed: reduceInteractionReceipt(input.feed, input.receipt),
+    lastReceiptKey: key,
+  };
 }
 
 function recoveryPresentation(phase: DesktopDaemonRecoveryPhase): {
@@ -700,19 +742,33 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
     initialInteractionFeedState(),
     { equals: false },
   );
-  const store = createSolidDesktopApplicationShellResourceStore({
-    target: props.target,
-    transport: createHostDaemonTransport(props.host),
-    onOperationAcknowledged: ({ operationId }) => {
-      setAcknowledgedOperationIds((current) =>
-        current.includes(operationId) ? current : [...current.slice(-63), operationId],
-      );
-    },
-    onInteractionReceipt: (receipt) => {
-      setInteractionFeed((current) => reduceInteractionReceipt(current, receipt));
-    },
-  });
+  const workspace = createSolidWebWorkspaceClient({ host: props.host, target: props.target });
+  createEffect(() => props.onCatalogSnapshot?.(workspace.snapshot().catalog));
+  const workspaceTerminalTransport =
+    props.terminalTransport ??
+    createWorkspaceClientNativeTerminalTransport(workspace.client, workspace.paneStreamTransport);
+  props.onWorkspaceClient?.(workspace.client, true);
+  onCleanup(() => props.onWorkspaceClient?.(workspace.client, false));
+  const store = {
+    state: () => workspace.snapshot().shell,
+    setTarget: (target: LiveWorkspaceProps["target"]) => void workspace.setTarget(target),
+    refresh: () => workspace.refresh(),
+  };
   createEffect(() => store.setTarget(props.target));
+  let lastReceiptKey = "";
+  createEffect(() => {
+    const operations = workspace.snapshot().operations;
+    setAcknowledgedOperationIds(operations.terminalOperationIds.slice(0, 64));
+    setInteractionFeed((current) => {
+      const projected = projectWebWorkspaceReceipt({
+        feed: current,
+        lastReceiptKey,
+        receipt: operations.lastReceipt,
+      });
+      lastReceiptKey = projected.lastReceiptKey;
+      return projected.feed;
+    });
+  });
 
   // Live Files and Changes read stores, pinned to the same daemon generation as
   // the shell resource. Expansion and selection are renderer-owned; each store
@@ -743,7 +799,7 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
     active: false,
   });
   const resourceTelemetry = createGuiResourceTelemetry([
-    store,
+    workspace,
     filesCatalog,
     filePreview,
     changesCatalog,
@@ -893,6 +949,7 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
   }));
 
   const [mutationError, setMutationError] = createSignal<string | null>(null);
+  const [semanticIntentError, setSemanticIntentError] = createSignal<string | null>(null);
   const [appWindowMutationAvailable, setAppWindowMutationAvailable] = createSignal(false);
   const [appWindowMutationUnavailableReason, setAppWindowMutationUnavailableReason] = createSignal(
     "Checking durable window controls…",
@@ -938,18 +995,18 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
   });
 
   const createPaneCatalogs = createMemo<CreatePaneFlowCatalogs>(() => {
-    const snapshot = props.catalogState.snapshot;
+    const snapshot = workspace.snapshot().catalog;
     return {
-      workspaces: snapshot
+      workspaces: snapshot.daemonInstanceId
         ? {
             status: "ready",
-            items: snapshot.workspaces.map(({ workspaceName }) => ({
+            items: snapshot.intents.map(({ workspaceName, availability }) => ({
               name: workspaceName,
               label: workspaceName,
-              available: workspaceName === props.target.workspaceName,
+              available: availability === "live",
             })),
           }
-        : props.catalogState.status === "loading"
+        : workspace.snapshot().phase === "loading"
           ? { status: "loading" }
           : { status: "unavailable" },
       // These catalogs do not yet exist as reviewed host resources. Keep the
@@ -1011,18 +1068,19 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
     ) {
       throw new Error("The selected workspace is not available for terminal creation.");
     }
-    const result = WorkspacePaneCreateHostResultSchemaZ.parse(
-      await props.host.daemon.createWorkspacePane(invocation),
+    const dispatched = await workspace.client.dispatch({
+      kind: "owner-action",
+      name: "workspace.pane.create",
+      input: invocation.args,
+    });
+    const result = WorkspacePaneCreateMutationResultSchemaZ.parse(
+      dispatched.kind === "owner-action" ? dispatched.result : null,
     );
     if (disposed) throw new Error("The active workspace changed during terminal creation.");
-    if (result.status === "error") {
-      if (result.error.code === "daemon-identity-mismatch") props.onDaemonIdentityMismatch?.();
-      throw new Error(result.error.reason);
-    }
     if (
-      result.result.daemonInstanceId !== props.target.daemon.instanceId ||
-      result.result.resource.workspaceName !== props.target.workspaceName ||
-      result.result.resource.kind !== invocation.args.kind
+      result.daemonInstanceId !== props.target.daemon.instanceId ||
+      result.resource.workspaceName !== props.target.workspaceName ||
+      result.resource.kind !== invocation.args.kind
     ) {
       props.onDaemonIdentityMismatch?.();
       throw new Error("The created terminal does not belong to the active workspace generation.");
@@ -1030,7 +1088,7 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
 
     await new Promise<void>((resolve, reject) => {
       pendingRefresh = {
-        semanticPaneId: result.result.resource.semanticPaneId,
+        semanticPaneId: result.resource.semanticPaneId,
         daemonInstanceId: props.target.daemon.instanceId,
         workspaceName: props.target.workspaceName,
         initialState: store.state(),
@@ -1069,35 +1127,45 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
       try {
         for (let attempt = 0; attempt < 2; attempt += 1) {
           attemptedRevision = current.data.appWindows.revision;
-          const result = AppWindowMutationHostResultSchemaZ.parse(
-            await props.host.daemon.mutateAppWindow({
-              workspaceName: props.target.workspaceName,
-              expectedDocumentRevision: attemptedRevision,
-              command: invocation.command,
-            }),
-          );
-          if (result.status === "error") {
-            if (result.error.code === "daemon-identity-mismatch") {
-              props.onDaemonIdentityMismatch?.();
+          let dispatched;
+          try {
+            dispatched = await workspace.client.dispatch({
+              kind: "owner-action",
+              name: "workspace.app-window.mutate",
+              input: {
+                workspaceName: props.target.workspaceName,
+                expectedDocumentRevision: attemptedRevision,
+                command: invocation.command,
+              },
+            });
+          } catch (error) {
+            if (
+              error instanceof WebWorkspaceHostActionError &&
+              error.code === "resource-changed" &&
+              attempt === 0
+            ) {
+              store.refresh();
+              await waitForAppWindowRevision(attemptedRevision + 1);
+              current = ApplicationShellProjectionInputV3SchemaZ.safeParse(input());
+              if (!current.success) {
+                throw new Error("The refreshed window layout is unavailable.", { cause: error });
+              }
+              continue;
             }
-            if (result.error.code !== "resource-changed" || attempt > 0) {
-              throw new Error(result.error.reason);
-            }
-            store.refresh();
-            await waitForAppWindowRevision(attemptedRevision + 1);
-            current = ApplicationShellProjectionInputV3SchemaZ.safeParse(input());
-            if (!current.success) throw new Error("The refreshed window layout is unavailable.");
-            continue;
+            throw error;
           }
+          const result = AppWindowMutationResultSchemaZ.parse(
+            dispatched.kind === "owner-action" ? dispatched.result : null,
+          );
           if (
-            result.result.daemonInstanceId !== props.target.daemon.instanceId ||
-            result.result.workspaceName !== props.target.workspaceName
+            result.daemonInstanceId !== props.target.daemon.instanceId ||
+            result.workspaceName !== props.target.workspaceName
           ) {
             props.onDaemonIdentityMismatch?.();
             throw new Error("The window layout belongs to a different workspace generation.");
           }
           store.refresh();
-          await waitForAppWindowRevision(result.result.documentRevision);
+          await waitForAppWindowRevision(result.documentRevision);
           setMutationError(null);
           return;
         }
@@ -1179,6 +1247,13 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
   });
 
   const notice = createMemo(() => {
+    if (semanticIntentError()) {
+      return {
+        tone: "degraded" as const,
+        label: "Pane action was not applied",
+        reason: semanticIntentError()!,
+      };
+    }
     const resource = store.state();
     if (resource.status === "stale") {
       return {
@@ -1201,9 +1276,14 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
         reason: mutationError() ?? "Try the window action again.",
       };
     }
-    const reason = catalogReason(props.catalogState);
-    return reason
-      ? { tone: "stale" as const, label: "Workspace catalog is recovering", reason }
+    const catalog = workspace.snapshot().catalog;
+    return catalog.daemonInstanceId !== null &&
+      catalog.daemonInstanceId !== props.target.daemon.instanceId
+      ? {
+          tone: "stale" as const,
+          label: "Workspace catalog is recovering",
+          reason: "The catalog belongs to a retired daemon generation.",
+        }
       : null;
   });
 
@@ -1300,6 +1380,59 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
     return projected?.status === "ready" ? projected : null;
   });
 
+  const dispatchPaneAction = (
+    intent: PaneFrameActionIntent,
+    _source: PaneFrameActivationSource,
+  ): void => {
+    const semantic = paneFrameSemanticIntent(props.target.workspaceName, intent);
+    if (!semantic) return;
+    setSemanticIntentError(null);
+    void workspace.client
+      .dispatch({ kind: "semantic-intent", intent: semantic })
+      .catch(() =>
+        setSemanticIntentError("The workspace authority changed. Try the action again."),
+      );
+  };
+
+  const dispatchMultiplexerVerb: MultiplexerVerbAccess["invoke"] = async (verbId, target, args) => {
+    const intent = multiplexerVerbIntent(verbId, target, args);
+    if (!intent) {
+      return {
+        status: "error",
+        error: { code: "invalid-request", reason: "This action is unavailable for the pane." },
+      };
+    }
+    setSemanticIntentError(null);
+    try {
+      const dispatched = await workspace.client.dispatch({ kind: "semantic-intent", intent });
+      if (dispatched.kind !== "semantic-intent" || !dispatched.result) {
+        throw new Error("The workspace action returned no mutation proof.");
+      }
+      return { status: "ok", result: dispatched.result };
+    } catch {
+      setSemanticIntentError("The workspace authority changed. Try the action again.");
+      return {
+        status: "error",
+        error: { code: "request-failed", reason: "The workspace action was not applied." },
+      };
+    }
+  };
+
+  const dispatchPaneGrip = (
+    intent: PaneFrameGripIntent,
+    _source: PaneFrameActivationSource,
+  ): void => {
+    setSemanticIntentError(null);
+    void workspace.client
+      .dispatch({
+        kind: "semantic-intent",
+        intent: paneFrameSemanticIntent(props.target.workspaceName, intent)!,
+      })
+      .catch(() =>
+        setSemanticIntentError("The workspace authority changed. Try the action again."),
+      );
+  };
+
   return (
     <Show when={readyProjection()} fallback={renderFallback()}>
       {(ready) => (
@@ -1313,7 +1446,8 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
             input={inputWithLazyMissions(ready().input)}
             dataMode="runtime"
             terminalWorkspaceName={props.target.workspaceName}
-            terminalTransport={props.terminalTransport}
+            terminalTransport={workspaceTerminalTransport}
+            paneStreamTransport={workspace.paneStreamTransport}
             reducedMotion={props.reducedMotion}
             terminalThemeKey={props.terminalThemeKey}
             onCommand={props.onCommand}
@@ -1331,8 +1465,9 @@ function LiveWorkspace(props: LiveWorkspaceProps) {
                 )?.model.title ?? "Beside active pane",
               onCommand: createWorkspacePane,
             }}
-            onPaneAction={props.onPaneAction}
-            onPaneGrip={props.onPaneGrip}
+            onPaneAction={dispatchPaneAction}
+            onPaneGrip={dispatchPaneGrip}
+            onMultiplexerVerb={dispatchMultiplexerVerb}
             onAppWindowCommand={
               props.onAppWindowCommand ??
               (appWindowMutationAvailable() ? mutateAppWindow : undefined)
@@ -1383,11 +1518,25 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
   const [openProjectCommand, setOpenProjectCommand] = createSignal<string | null>(null);
   const [pendingWorkspaceName, setPendingWorkspaceName] = createSignal<string | null>(null);
   let openProjectRequest = 0;
-  const atomicWorkspaceOpen = new AtomicWorkspaceOpenController(
-    props.host.workspace,
-    props.daemon.status === "connected" ? props.daemon.identity.instanceId : "unavailable",
-  );
+  let activeWorkspaceClient: WebWorkspaceClient | null = null;
+  const detachedOwnerActions = createWebWorkspaceOwnerActionPort(props.host);
+  let pendingPreparedOpen: {
+    readonly client: WebWorkspaceClient | null;
+    readonly prepareToken: string;
+    readonly preparedRevision: number;
+  } | null = null;
   let discoveryTimer: ReturnType<typeof setTimeout> | null = null;
+  const [liveTarget, setLiveTarget] = createSignal<DesktopApplicationShellTarget | null>(null);
+  const [liveCatalog, setLiveCatalog] = createSignal<
+    ReturnType<WebWorkspaceClient["getSnapshot"]>["catalog"] | null
+  >(null);
+  let bootstrapCatalogActive = true;
+
+  const retireBootstrapCatalog = (): void => {
+    if (!bootstrapCatalogActive) return;
+    bootstrapCatalogActive = false;
+    catalog.dispose();
+  };
 
   const clearDiscoveryTimer = (): void => {
     if (discoveryTimer !== null) clearTimeout(discoveryTimer);
@@ -1395,10 +1544,19 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
   };
 
   const waitForOpenedWorkspace = (workspaceName: string): void => {
+    if ((activeWorkspaceClient || !bootstrapCatalogActive) && props.daemon.status === "connected") {
+      setLiveTarget({ daemon: props.daemon.identity, workspaceName });
+      setPendingWorkspaceName(null);
+      setOpenProjectError(null);
+      setOpenProjectCommand(null);
+      setOpenProjectPhase("idle");
+      retireBootstrapCatalog();
+      return;
+    }
     clearDiscoveryTimer();
     setPendingWorkspaceName(workspaceName);
     setOpenProjectPhase("waiting");
-    catalog.refresh();
+    if (bootstrapCatalogActive) catalog.refresh();
     discoveryTimer = setTimeout(() => {
       if (pendingWorkspaceName() !== workspaceName) return;
       setOpenProjectError(
@@ -1406,6 +1564,35 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
       );
       setOpenProjectPhase("error");
     }, 8_000);
+  };
+
+  const cancelPreparedOpen = async (
+    prepared: NonNullable<typeof pendingPreparedOpen>,
+  ): Promise<void> => {
+    if (pendingPreparedOpen === prepared) pendingPreparedOpen = null;
+    try {
+      const input = {
+        prepareToken: prepared.prepareToken,
+        preparedRevision: prepared.preparedRevision,
+      };
+      if (prepared.client) {
+        await prepared.client.dispatch({
+          kind: "owner-action",
+          name: "workspace.open.cancel",
+          input,
+        });
+      } else if (props.daemon.status === "connected") {
+        await detachedOwnerActions.dispatch({
+          target: { daemon: props.daemon.identity, workspaceName: "workspace-selection" },
+          name: "workspace.open.cancel",
+          operationId: crypto.randomUUID(),
+          input,
+        });
+      }
+    } catch {
+      // The owner action is generation-fenced; cancellation after retirement is
+      // already represented by its typed disposed/authority-lost result.
+    }
   };
 
   const openProject = async (): Promise<void> => {
@@ -1416,22 +1603,85 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
     setOpenProjectCommand(null);
     setOpenProjectPhase("selecting");
     try {
-      const currentSelection = catalog.state().snapshot?.selection;
-      const result = await atomicWorkspaceOpen.open(
-        currentSelection?.view === "workspace" ? currentSelection.workspaceName : null,
-      );
-      if (request !== openProjectRequest) return;
-      if (result.status === "cancelled") {
+      const currentSelection = bootstrapCatalogActive ? catalog.state().snapshot?.selection : null;
+      const client = activeWorkspaceClient;
+      const previousWorkspaceName =
+        liveTarget()?.workspaceName ??
+        (currentSelection?.view === "workspace" ? currentSelection.workspaceName : null);
+      const prepareInput = {
+        source: { kind: "host-selection" } as const,
+        previousWorkspaceName,
+      };
+      const preparedRaw = client
+        ? await (async () => {
+            const dispatch = await client.dispatch({
+              kind: "owner-action",
+              name: "workspace.open.prepare",
+              input: prepareInput,
+            });
+            return dispatch.kind === "owner-action" ? dispatch.result : null;
+          })()
+        : props.daemon.status === "connected"
+          ? await detachedOwnerActions.dispatch({
+              target: {
+                daemon: props.daemon.identity,
+                workspaceName: previousWorkspaceName ?? "workspace-selection",
+              },
+              name: "workspace.open.prepare",
+              operationId: crypto.randomUUID(),
+              input: prepareInput,
+            })
+          : null;
+      if (preparedRaw === null) {
+        if (request !== openProjectRequest) return;
         setOpenProjectPhase("idle");
         return;
       }
-      if (result.status === "error") {
-        setOpenProjectError(result.reason);
-        setOpenProjectPhase("error");
+      const prepared = WorkspaceOpenPreparedResultSchemaZ.parse(preparedRaw);
+      const pending = {
+        client,
+        prepareToken: prepared.prepareToken,
+        preparedRevision: prepared.preparedRevision,
+      };
+      pendingPreparedOpen = pending;
+      if (request !== openProjectRequest || activeWorkspaceClient !== client) {
+        await cancelPreparedOpen(pending);
         return;
       }
-      waitForOpenedWorkspace(result.prepared.workspaceName);
+      const commitInput = {
+        prepareToken: prepared.prepareToken,
+        preparedRevision: prepared.preparedRevision,
+      };
+      const committedRaw = client
+        ? await (async () => {
+            const dispatch = await client.dispatch({
+              kind: "owner-action",
+              name: "workspace.open.commit",
+              input: commitInput,
+            });
+            return dispatch.kind === "owner-action" ? dispatch.result : null;
+          })()
+        : props.daemon.status === "connected"
+          ? await detachedOwnerActions.dispatch({
+              target: { daemon: props.daemon.identity, workspaceName: prepared.workspaceName },
+              name: "workspace.open.commit",
+              operationId: crypto.randomUUID(),
+              input: commitInput,
+            })
+          : null;
+      const committed = WorkspaceOpenCommittedResultSchemaZ.parse(committedRaw);
+      if (pendingPreparedOpen === pending) pendingPreparedOpen = null;
+      if (
+        props.daemon.status !== "connected" ||
+        committed.daemonInstanceId !== props.daemon.identity.instanceId ||
+        committed.workspaceName !== prepared.workspaceName
+      ) {
+        throw new Error("The committed workspace belongs to another authority.");
+      }
+      waitForOpenedWorkspace(prepared.workspaceName);
     } catch {
+      const pending = pendingPreparedOpen;
+      if (pending) await cancelPreparedOpen(pending);
       if (request !== openProjectRequest) return;
       setOpenProjectError("tmux-ide could not open that folder through the verified daemon.");
       setOpenProjectPhase("error");
@@ -1443,13 +1693,15 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
     if (!workspaceName) return;
     setOpenProjectError(null);
     setOpenProjectCommand(null);
-    waitForOpenedWorkspace(workspaceName);
+    if (bootstrapCatalogActive) waitForOpenedWorkspace(workspaceName);
   };
 
   onCleanup(() => {
     openProjectRequest += 1;
     clearDiscoveryTimer();
-    atomicWorkspaceOpen.dispose();
+    const pending = pendingPreparedOpen;
+    if (pending) void cancelPreparedOpen(pending);
+    retireBootstrapCatalog();
   });
   // The constructor already owns the initial daemon. Only a genuinely new
   // capability generation should retire catalog work and start another read.
@@ -1459,11 +1711,15 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
     const nextKey = daemonCapabilityKey(nextDaemon);
     if (nextKey === activeDaemonKey) return;
     activeDaemonKey = nextKey;
-    catalog.setDaemon(nextDaemon);
+    const current = liveTarget();
+    if (current && nextDaemon.status === "connected") {
+      setLiveTarget({ daemon: nextDaemon.identity, workspaceName: current.workspaceName });
+    } else if (bootstrapCatalogActive) catalog.setDaemon(nextDaemon);
   });
 
   let mismatchGeneration = -1;
   createEffect(() => {
+    if (!bootstrapCatalogActive) return;
     const state = catalog.state();
     if (
       state.status === "degraded" &&
@@ -1476,6 +1732,9 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
   });
 
   const selectedTarget = createMemo(() => {
+    const active = liveTarget();
+    if (active) return active;
+    if (!bootstrapCatalogActive) return null;
     const state = catalog.state();
     const selection = state.snapshot?.selection;
     if (!state.daemon || selection?.view !== "workspace") return null;
@@ -1483,6 +1742,7 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
   });
 
   createEffect(() => {
+    if (!bootstrapCatalogActive) return;
     const workspaceName = pendingWorkspaceName();
     const snapshot = catalog.state().snapshot;
     if (
@@ -1503,6 +1763,43 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
   });
 
   const fallback = () => {
+    if (!bootstrapCatalogActive) {
+      const current = liveCatalog();
+      const liveBySession = new Map(
+        current?.liveSessions.map((session) => [session.sessionName, session] as const) ?? [],
+      );
+      return (
+        <DesktopConnectionSurface
+          host={props.host}
+          runtime={props.runtime}
+          platform={props.platform}
+          windowState={props.windowState}
+          state="chooser"
+          eyebrow="Live tmux workspaces"
+          title="Choose a workspace"
+          description="The previous workspace is no longer live. Choose another verified workspace."
+          guidance="Only observed live sessions are attachable"
+          workspaces={(current?.intents ?? []).map((intent) => ({
+            workspaceName: intent.workspaceName,
+            availability: intent.availability,
+            paneCount: liveBySession.get(intent.sessionName)?.paneCount ?? 0,
+          }))}
+          onSelectWorkspace={(workspaceName) => {
+            if (props.daemon.status !== "connected") return;
+            const intent = current?.intents.find(
+              (candidate) =>
+                candidate.workspaceName === workspaceName && candidate.availability === "live",
+            );
+            if (intent) {
+              setLiveTarget({ daemon: props.daemon.identity, workspaceName: intent.workspaceName });
+            }
+          }}
+          onOpenProject={() => void openProject()}
+          openProjectPhase={openProjectPhase()}
+          openProjectError={openProjectError()}
+        />
+      );
+    }
     const state = catalog.state();
     const selection = state.snapshot?.selection;
     if (selection?.view === "onboarding") {
@@ -1624,7 +1921,26 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
         <LiveWorkspace
           host={props.host}
           target={target()}
-          catalogState={catalog.state()}
+          onWorkspaceClient={(client, active) => {
+            if (active) {
+              activeWorkspaceClient = client;
+              setLiveTarget(target());
+              retireBootstrapCatalog();
+              props.onWorkspaceClientChanged?.(client);
+            } else if (activeWorkspaceClient === client) {
+              activeWorkspaceClient = null;
+              props.onWorkspaceClientChanged?.(null);
+            }
+          }}
+          onCatalogSnapshot={(nextCatalog) => {
+            setLiveCatalog(nextCatalog);
+            const currentTarget = liveTarget();
+            if (!currentTarget || nextCatalog.daemonInstanceId === null) return;
+            const currentIntent = nextCatalog.intents.find(
+              (intent) => intent.workspaceName === currentTarget.workspaceName,
+            );
+            if (!currentIntent || currentIntent.availability !== "live") setLiveTarget(null);
+          }}
           runtime={props.runtime}
           platform={props.platform}
           windowState={props.windowState}
@@ -1632,8 +1948,6 @@ export function DesktopLiveApplication(props: DesktopLiveApplicationProps) {
           reducedMotion={props.reducedMotion}
           terminalThemeKey={props.terminalThemeKey}
           onCommand={props.onCommand}
-          onPaneAction={props.onPaneAction}
-          onPaneGrip={props.onPaneGrip}
           onAppWindowCommand={props.onAppWindowCommand}
           onDaemonIdentityMismatch={props.onDaemonIdentityMismatch}
           daemonRecovery={props.daemonRecovery}

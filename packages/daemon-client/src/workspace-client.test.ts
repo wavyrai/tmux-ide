@@ -238,6 +238,7 @@ class FakeRuntime implements WorkspaceClientRuntimePort<string, string> {
   inputGate: Promise<void> | null = null;
   readonly viewportFits: Array<{ cols: number; rows: number }> = [];
   viewportGate: Promise<void> | null = null;
+  viewportResult: "ok" | "geometry-authority-conflict" = "ok";
   authorityGate: Promise<void> | null = null;
   closeGate: Promise<void> | null = null;
   readonly repairRequests: Array<{
@@ -262,9 +263,10 @@ class FakeRuntime implements WorkspaceClientRuntimePort<string, string> {
     this.inputs.push({ target: nextTarget, input, ...(traceId ? { traceId } : {}) });
     return this.inputResult;
   }
-  async fitViewport(cols: number, rows: number): Promise<void> {
+  async fitViewport(cols: number, rows: number): Promise<"ok" | "geometry-authority-conflict"> {
     if (this.viewportGate) await this.viewportGate;
     this.viewportFits.push({ cols, rows });
+    return this.viewportResult;
   }
   async requestAuthority(authority: "input" | "focus" | "geometry") {
     if (this.authorityGate) await this.authorityGate;
@@ -374,6 +376,41 @@ function terminalSeedFor(
 }
 
 describe("WorkspaceClient", () => {
+  it("publishes a bounded degraded state when semantic shell projection rejects", async () => {
+    const valid = shellResource("alpha");
+    const corrupt = {
+      ...valid,
+      workspace: {
+        ...valid.workspace,
+        sidebar: {
+          ...valid.workspace.sidebar,
+          agents: valid.workspace.sidebar.agents.map((agent, index) =>
+            index < 2 ? { ...agent, paneId: "pane.alpha" } : agent,
+          ),
+        },
+      },
+    } as ApplicationShellProjectionInputV3;
+    const shell = shellBroker({ alpha: corrupt });
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async () => new FakeRuntime(ALPHA_DAEMON.instanceId),
+        actions,
+      },
+    });
+
+    await settle();
+    expect(client.getSnapshot().shell).toMatchObject({
+      status: "degraded",
+      code: "schema-invalid",
+      data: null,
+      reason: "The application shell failed semantic projection.",
+    });
+    expect(client.getSnapshot().semantic).toBeNull();
+    await client.dispose();
+  });
+
   it("defers application-shell until terminal authority adopts through runtime staging", async () => {
     const shell = shellBroker({ alpha: shellResource("alpha") });
     const runtime = new FakeRuntime(ALPHA_DAEMON.instanceId);
@@ -528,6 +565,55 @@ describe("WorkspaceClient", () => {
     ).toBe(true);
     await settle();
     expect(refreshes).toBe(2);
+    await client.dispose();
+  });
+
+  it("bounds stale-topology refresh and reopens only the replacement inventory", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha", ["pane.a"]) });
+    const inventories: string[][] = [];
+    let refreshes = 0;
+    let client!: ReturnType<typeof createWorkspaceClient>;
+    client = createWorkspaceClient({
+      target: target("alpha"),
+      deferApplicationShell: true,
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async (_current, inventory) => {
+          inventories.push([...inventory.semanticPaneIds]);
+          if (inventories.length === 1)
+            throw Object.assign(new Error("stale terminal topology"), {
+              code: "topology-changed",
+            });
+          return new FakeRuntime(ALPHA_DAEMON.instanceId);
+        },
+        requestTerminalRuntimeInventoryRefresh: () => {
+          refreshes += 1;
+          shell.byWorkspace.set("alpha", shellResource("alpha", ["pane.b"]));
+          queueMicrotask(() => {
+            client.adoptTerminalRuntimeInventory({
+              workspaceName: "alpha",
+              workspaceId: "workspace.alpha",
+              sessionId: COHESION_FIXTURE_V1.workspace.session.id,
+              resourceRevision: 2,
+              semanticPaneIds: ["pane.b"],
+            });
+          });
+        },
+        actions,
+      },
+    });
+    client.adoptTerminalRuntimeInventory({
+      workspaceName: "alpha",
+      workspaceId: "workspace.alpha",
+      sessionId: COHESION_FIXTURE_V1.workspace.session.id,
+      resourceRevision: 1,
+      semanticPaneIds: ["pane.a"],
+    });
+
+    await settle();
+    await settle();
+    expect(refreshes).toBe(2);
+    expect(inventories).toEqual([["pane.a"], ["pane.b"]]);
     await client.dispose();
   });
 
@@ -1725,6 +1811,23 @@ describe("WorkspaceClient", () => {
     await settle();
   });
 
+  it("preserves an exact geometry-authority conflict from the current runtime", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha") });
+    const runtime = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    runtime.viewportResult = "geometry-authority-conflict";
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      ports: { shell: shell.transport, connectRuntime: async () => runtime, actions },
+    });
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+
+    expect(await client.fitViewport(140, 46)).toBe("geometry-authority-conflict");
+    expect(runtime.viewportFits).toEqual([{ cols: 140, rows: 46 }]);
+    client.dispose();
+    await settle();
+  });
+
   it("rejects an authority grant that settles after its exact runtime was replaced", async () => {
     const shell = shellBroker({ alpha: shellResource("alpha"), beta: shellResource("beta") });
     const alphaRuntime = new FakeRuntime(ALPHA_DAEMON.instanceId);
@@ -2157,6 +2260,62 @@ describe("WorkspaceClient", () => {
     await settle();
   });
 
+  it("cancels a capability whose prepare resolves after its exact target retired", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha"), beta: shellResource("beta") });
+    const pending = deferred<unknown>();
+    const calls: Array<{ name: string; workspaceName: string; input: unknown }> = [];
+    const prepareToken = "81000000-0000-4000-8000-000000000008";
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async (current) => new FakeRuntime(current.daemon.instanceId),
+        actions: {
+          async dispatch(input) {
+            calls.push({
+              name: input.name,
+              workspaceName: input.target.workspaceName,
+              input: input.input,
+            });
+            if (input.name === "workspace.open.prepare") return (await pending.promise) as never;
+            return null as never;
+          },
+        },
+      },
+    });
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+    const preparing = client.dispatch({
+      kind: "owner-action",
+      name: "workspace.open.prepare",
+      input: { source: { kind: "project", projectDir: "/project" } },
+    });
+    client.setTarget(target("beta", BETA_DAEMON));
+    pending.resolve({
+      operationId: "late-prepare",
+      daemonInstanceId: ALPHA_DAEMON.instanceId,
+      phase: "prepared",
+      prepareToken,
+      preparedRevision: 7,
+      outcome: "reopened",
+      workspaceName: "alpha",
+      previousWorkspaceName: null,
+      proof: {
+        semanticPaneId: "pane.alpha",
+        paneCount: 1,
+        terminalRevision: 0,
+        terminalStateHash: "0000000000000000",
+      },
+    });
+    await expect(preparing).rejects.toThrow("retired");
+    expect(calls.at(-1)).toEqual({
+      name: "workspace.open.cancel",
+      workspaceName: "alpha",
+      input: { prepareToken, preparedRevision: 7 },
+    });
+    await client.dispose();
+  });
+
   it("actively cancels a prepared open during idempotent disposal", async () => {
     const shell = shellBroker({ alpha: shellResource("alpha") });
     const runtime = new FakeRuntime(ALPHA_DAEMON.instanceId);
@@ -2207,6 +2366,54 @@ describe("WorkspaceClient", () => {
     expect(calls).toEqual(["workspace.open.prepare", "workspace.open.cancel"]);
     expect(client.getSnapshot().phase).toBe("disposed");
     expect(runtime.closeCount).toBe(1);
+  });
+
+  it("cancels a capability whose prepare resolves after disposal", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha") });
+    const pending = deferred<unknown>();
+    const calls: string[] = [];
+    const prepareToken = "91000000-0000-4000-8000-000000000009";
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async () => new FakeRuntime(ALPHA_DAEMON.instanceId),
+        actions: {
+          async dispatch(input) {
+            calls.push(input.name);
+            if (input.name === "workspace.open.prepare") return (await pending.promise) as never;
+            return null as never;
+          },
+        },
+      },
+    });
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+    const preparing = client.dispatch({
+      kind: "owner-action",
+      name: "workspace.open.prepare",
+      input: { source: { kind: "project", projectDir: "/project" } },
+    });
+    const disposal = client.dispose();
+    pending.resolve({
+      operationId: "late-disposed-prepare",
+      daemonInstanceId: ALPHA_DAEMON.instanceId,
+      phase: "prepared",
+      prepareToken,
+      preparedRevision: 8,
+      outcome: "reopened",
+      workspaceName: "alpha",
+      previousWorkspaceName: null,
+      proof: {
+        semanticPaneId: "pane.alpha",
+        paneCount: 1,
+        terminalRevision: 0,
+        terminalStateHash: "0000000000000000",
+      },
+    });
+    await expect(preparing).rejects.toThrow("retired");
+    await disposal;
+    expect(calls).toEqual(["workspace.open.prepare", "workspace.open.cancel"]);
   });
 
   it("does not settle disposal until the runtime supervisor closes its transport", async () => {

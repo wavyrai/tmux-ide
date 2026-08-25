@@ -9,7 +9,7 @@ import {
   type WorkbenchDockHostMode,
   type WorkbenchDockHostTab,
   type WorkbenchDockHostTabId,
-} from "../../../ui/workbench-dock/presenter.tsx";
+} from "@tmux-ide/presentation/workbench-dock";
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import type { WorkbenchShellProjection } from "./workbench-shell.ts";
 

@@ -1421,5 +1421,8 @@ describe("application terminal interaction controller", () => {
     expect(controller.routeWorkspaceKey({ name: "x", meta: true, ctrl: false, shift: false })).toBe(
       false,
     );
+    expect(controller.routeWorkspaceKey({ name: "o", meta: false, ctrl: true, shift: false })).toBe(
+      false,
+    );
   });
 });

@@ -5,8 +5,8 @@
  * inline <style> element during development, which the Electron renderer's
  * strict `style-src 'self'` policy intentionally rejects.
  */
-@import "../../../packages/daemon/src/ui/pane-frame/web-host.css";
-@import "../../../packages/daemon/src/ui/workbench-dock/web-host.css";
+@import "@tmux-ide/presentation/pane-frame/web.css";
+@import "@tmux-ide/presentation/workbench-dock/web.css";
 @import "./terminal/widgets/widgets.css";
 
 :root {

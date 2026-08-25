@@ -26,18 +26,18 @@ import {
   DesktopLiveApplication,
   type DesktopDaemonRecoveryPhase,
 } from "./runtime/live-app-composition.tsx";
+import type { WebWorkspaceClient } from "./runtime/web-workspace-client.ts";
 import {
   recoveryForDaemonCapability,
   startupReadinessDiagnostics,
 } from "./runtime/connection-recovery.ts";
-import { createHostPaneStreamNativeTerminalTransport } from "./runtime/host-pane-stream-native-terminal-transport.ts";
 import type { NativeTerminalTransport } from "./terminal/native-terminal-transport.ts";
 import type {
   PaneFrameActionIntent,
   PaneFrameActivationSource,
   PaneFrameGripIntent,
   PaneFrameModel,
-} from "../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
+} from "@tmux-ide/presentation/pane-frame";
 import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "./runtime-style.ts";
 import { GuiPerformanceProvider } from "./runtime/gui-performance-context.tsx";
 import { GuiPerformanceHud } from "./runtime/gui-performance-hud.tsx";
@@ -58,6 +58,7 @@ export interface AppProps {
     source: PaneFrameActivationSource,
   ) => void;
   readonly onPaneGrip?: (intent: PaneFrameGripIntent, source: PaneFrameActivationSource) => void;
+  readonly onWorkspaceClientChanged?: (client: WebWorkspaceClient | null) => void;
 }
 
 function daemonCapabilityReason(value: DesktopHostBootstrap["daemon"]): string {
@@ -87,10 +88,6 @@ export function App(props: AppProps = {}) {
   let daemonRefreshFlight: Promise<void> | null = null;
   let disposed = false;
   let appRuntimeStyle: RuntimeStyleBinding | null = null;
-  let productionTerminalAuthority: {
-    readonly key: string;
-    readonly transport: NativeTerminalTransport;
-  } | null = null;
   const performanceTelemetry = new GuiPerformanceTelemetry();
   const [performanceHudOpen, setPerformanceHudOpen] = createSignal(
     typeof window !== "undefined" && guiPerformanceHudRequested(window.location.search),
@@ -237,21 +234,6 @@ export function App(props: AppProps = {}) {
   const bootstrapDaemonGeneration = createMemo(() => {
     const daemon = bootstrap()?.daemon;
     return daemon?.status === "connected" ? daemon.identity.instanceId : undefined;
-  });
-  const productionTerminalTransport = createMemo<NativeTerminalTransport | null>(() => {
-    const daemon = bootstrap()?.daemon;
-    if (!host || browserPreview || daemon?.status !== "connected") return null;
-    const identity = daemon.identity;
-    const key = [
-      identity.protocolVersion,
-      identity.productVersion,
-      identity.instanceId,
-      identity.startedAt,
-    ].join("\u0000");
-    if (productionTerminalAuthority?.key === key) return productionTerminalAuthority.transport;
-    const transport = createHostPaneStreamNativeTerminalTransport(host, identity);
-    productionTerminalAuthority = { key, transport };
-    return transport;
   });
 
   return (
@@ -410,20 +392,15 @@ export function App(props: AppProps = {}) {
                             platform={ready().platform}
                             windowState={effectiveWindow()}
                             daemonRecovery={daemonRecovery()}
-                            terminalTransport={
-                              props.terminalTransport === undefined
-                                ? productionTerminalTransport()
-                                : props.terminalTransport
-                            }
+                            terminalTransport={props.terminalTransport}
                             reducedMotion={experience().accessibility.reducedMotion}
                             terminalThemeKey={terminalThemeKey()}
                             onRetryDaemonConnection={refreshDaemonConnection}
                             onDaemonIdentityMismatch={refreshDaemonConnection}
                             onCommand={props.onCommand}
-                            onPaneAction={props.onPaneAction}
-                            onPaneGrip={props.onPaneGrip}
                             introPending={introPending()}
                             onAcknowledgeIntro={acknowledgeIntro}
+                            onWorkspaceClientChanged={props.onWorkspaceClientChanged}
                           />
                         </Show>
                       )}

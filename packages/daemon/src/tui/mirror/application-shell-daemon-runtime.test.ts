@@ -73,7 +73,7 @@ function runtimeClient(
     releaseAuthority: vi.fn(async () => undefined),
     sendText: vi.fn(),
     sendKey: vi.fn(),
-    fitViewport: vi.fn(async () => undefined),
+    fitViewport: vi.fn(async () => "ok" as const),
     ack: vi.fn(),
     nack: vi.fn(),
     setVisibility: vi.fn(),

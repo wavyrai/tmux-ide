@@ -2,7 +2,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 
-import { DesktopConnectionSurface } from "./live-app-composition.tsx";
+import { initialInteractionFeedState } from "@tmux-ide/core";
+import {
+  DesktopConnectionSurface,
+  paneFrameSemanticIntent,
+  projectWebWorkspaceReceipt,
+} from "./live-app-composition.tsx";
 
 let dispose: (() => void) | null = null;
 
@@ -20,6 +25,78 @@ function mount(node: () => unknown): HTMLElement {
 }
 
 describe("DesktopConnectionSurface recovery command", () => {
+  it("maps production pane actions to exactly workspace-bound semantic intents", () => {
+    expect(
+      paneFrameSemanticIntent("alpha", {
+        kind: "action",
+        paneId: "pane.alpha",
+        actionId: "action.maximize",
+        commandId: "workspace.windowMode.maximize.toggle",
+      }),
+    ).toEqual({
+      verb: "workspace.pane.zoom.toggle",
+      workspaceName: "alpha",
+      semanticPaneId: "pane.alpha",
+      desired: "toggle",
+    });
+    expect(
+      paneFrameSemanticIntent("alpha", {
+        kind: "action",
+        paneId: "pane.alpha",
+        actionId: "maximize-toggle",
+        commandId: "pane.maximize.toggle",
+      }),
+    ).toEqual({
+      verb: "workspace.pane.zoom.toggle",
+      workspaceName: "alpha",
+      semanticPaneId: "pane.alpha",
+      desired: "toggle",
+    });
+    expect(paneFrameSemanticIntent("alpha", { kind: "grip", paneId: "pane.alpha" })).toEqual({
+      verb: "workspace.pane.select",
+      workspaceName: "alpha",
+      semanticPaneId: "pane.alpha",
+    });
+    expect(
+      paneFrameSemanticIntent("alpha", {
+        kind: "action",
+        paneId: "pane.alpha",
+        actionId: "action.menu",
+        commandId: "workspace.pane.menu.open",
+      }),
+    ).toBeNull();
+  });
+
+  it("projects one WorkspaceClient receipt phase exactly once", () => {
+    const receipt = {
+      type: "interaction.receipt" as const,
+      sequence: 1,
+      operationId: "10000000-0000-4000-8000-000000000001",
+      origin: "gui" as const,
+      workspaceName: "alpha",
+      sourceSemanticPaneId: null,
+      target: { kind: "pane" as const, semanticPaneId: "pane.alpha" },
+      operationKind: "workspace.pane.select" as const,
+      phase: "accepted" as const,
+      summary: { operationKind: "workspace.pane.select" as const },
+      proof: null,
+      at: "2026-08-23T20:00:00.000Z",
+      resourceRevision: null,
+    };
+    const first = projectWebWorkspaceReceipt({
+      feed: initialInteractionFeedState(),
+      lastReceiptKey: "",
+      receipt,
+    });
+    const duplicate = projectWebWorkspaceReceipt({
+      feed: first.feed,
+      lastReceiptKey: first.lastReceiptKey,
+      receipt,
+    });
+    expect(first.feed.activity).toHaveLength(1);
+    expect(duplicate.feed).toBe(first.feed);
+  });
+
   it("renders stopped workspace intent as disabled and non-attachable", () => {
     const onSelectWorkspace = vi.fn();
     const root = document.createElement("div");

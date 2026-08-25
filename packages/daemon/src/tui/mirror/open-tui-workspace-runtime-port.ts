@@ -24,7 +24,10 @@ import {
   terminalDeliveryEncodingAccepted,
   type CompactSemanticCommitProfile,
 } from "@tmux-ide/core";
-import type { PaneStreamRuntimeClient } from "@tmux-ide/daemon-client/pane-stream-client";
+import {
+  PaneStreamOperationError,
+  type PaneStreamRuntimeClient,
+} from "@tmux-ide/daemon-client/pane-stream-client";
 import type {
   WorkspaceClientRuntimeInventory,
   WorkspaceClientRuntimePort,
@@ -58,7 +61,7 @@ export interface OpenTuiWorkspaceRuntimePort extends WorkspaceClientRuntimePort<
   getLayout(): OpenTuiWorkspaceLayout | null;
   getLayoutSnapshot(): OpenTuiWorkspaceLayoutSnapshot;
   onLayout(listener: (layout: OpenTuiWorkspaceLayoutSnapshot) => void): () => void;
-  fitViewport(cols: number, rows: number): Promise<void>;
+  fitViewport(cols: number, rows: number): Promise<"ok" | "geometry-authority-conflict">;
 }
 
 export interface ConnectOpenTuiWorkspaceRuntimePortOptions {
@@ -1131,6 +1134,40 @@ export async function connectOpenTuiWorkspaceRuntimePort(
           }
         }
       },
+      onLayoutSnapshot: (snapshot) => {
+        if (closed) return;
+        const replacement = new Map<string, ReturnType<typeof freezeLayout>>();
+        let replacementCurrent: string | null = null;
+        for (const frame of snapshot.layouts) {
+          const retained = freezeLayout(frame);
+          const key = layoutKey(retained);
+          if (key === null || replacement.has(key))
+            return failConnection(new Error("invalid layout snapshot"));
+          replacement.set(key, retained);
+          if (retained.currentWindow) {
+            if (replacementCurrent !== null)
+              return failConnection(new Error("invalid layout snapshot current window"));
+            replacementCurrent = key;
+          }
+        }
+        const candidate = layoutSnapshot(replacement, replacementCurrent);
+        if (!layoutExactlyCoversPanes(candidate, panes))
+          return failConnection(new Error("layout snapshot does not cover terminal inventory"));
+        layoutsByWindow.clear();
+        for (const [key, layout] of replacement) layoutsByWindow.set(key, layout);
+        currentWindowKey = replacementCurrent;
+        lastRejectedLayoutSnapshot = null;
+        if (layoutSnapshotsSemanticallyEqual(candidate, latestLayoutSnapshot)) return;
+        latestLayoutSnapshot = candidate;
+        settleCoherent();
+        for (const listener of [...layoutListeners]) {
+          try {
+            listener(latestLayoutSnapshot);
+          } catch {
+            // Layout observers do not own the stream.
+          }
+        }
+      },
       onAuthoritySnapshot: (snapshot) => {
         if (closed || snapshot.generation !== inventory.daemonGeneration) return;
         latestAuthority = snapshot;
@@ -1236,6 +1273,7 @@ export async function connectOpenTuiWorkspaceRuntimePort(
     setPresence: (state) => opened.setPresence(state),
     noteActivity: (activity) => opened.noteActivity(activity),
     ownsConnectionAuthority: (authority) => opened.ownsConnectionAuthority(authority),
+    connectionAuthorityClientId: (authority) => opened.connectionAuthorityClientId(authority),
     requestAuthority: (authority: SessionRuntimeAuthorityKind) =>
       opened.requestAuthority(authority),
     releaseAuthority: (authority: SessionRuntimeAuthorityKind) =>
@@ -1246,7 +1284,15 @@ export async function connectOpenTuiWorkspaceRuntimePort(
       if (latestAuthority) listener(latestAuthority);
       return () => authorityListeners.delete(listener);
     },
-    fitViewport: (cols, rows) => opened.fitViewport(cols, rows),
+    fitViewport: async (cols, rows) => {
+      try {
+        return await opened.fitViewport(cols, rows);
+      } catch (error) {
+        if (error instanceof PaneStreamOperationError && error.code === "authority-rejected")
+          return "geometry-authority-conflict";
+        throw error;
+      }
+    },
     close: () => close(),
   };
   try {

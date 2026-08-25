@@ -66,6 +66,12 @@ export const AppWindowMutationArgumentsSchemaZ = z
 
 export type AppWindowMutationArguments = z.infer<typeof AppWindowMutationArgumentsSchemaZ>;
 
+/** Host-capability invocation: correlation is separate from semantic intent. */
+export const AppWindowMutationInvocationSchemaZ = z
+  .object({ operationId: z.uuid().optional(), intent: AppWindowMutationArgumentsSchemaZ })
+  .strict();
+export type AppWindowMutationInvocation = z.infer<typeof AppWindowMutationInvocationSchemaZ>;
+
 /** Main-process-authored retry and daemon-generation envelope. */
 export const AppWindowMutationRequestSchemaZ = z
   .object({

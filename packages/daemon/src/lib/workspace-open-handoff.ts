@@ -122,6 +122,9 @@ export class WorkspaceOpenHandoffCoordinator {
       if (previousWorkspaceName && this.#deps.prewarmPrevious) {
         await this.#deps.prewarmPrevious(previousWorkspaceName);
       }
+      if (intent.source.kind === "host-selection") {
+        throw new Error("Host folder selection must resolve before the daemon handoff boundary.");
+      }
       const opened =
         intent.source.kind === "project"
           ? await this.#deps.openProject({

@@ -283,8 +283,13 @@ export const PaneStreamViewportFrameSchemaZ = z
     seq: z.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
     cols: z.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
     rows: z.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
+    authorityLease: SessionRuntimeAuthorityLeaseSchemaZ,
   })
-  .strict();
+  .strict()
+  .refine((frame) => frame.authorityLease.authority === "geometry", {
+    message: "Viewport authority must be a geometry lease.",
+    path: ["authorityLease", "authority"],
+  });
 
 const PaneStreamAuthorityRequestIdSchemaZ = z.uuid();
 const PaneStreamAuthorityGenerationSchemaZ = DaemonInstanceIdentitySchemaZ.shape.instanceId;
@@ -446,6 +451,61 @@ export const PaneStreamLayoutFrameSchemaZ = z
   })
   .strict();
 
+export const PaneStreamLayoutSnapshotFrameSchemaZ = z
+  .object({
+    type: z.literal("layout-snapshot"),
+    topologyEpoch: z.number().int().nonnegative(),
+    layouts: z.array(PaneStreamLayoutFrameSchemaZ).min(1).max(PANE_STREAM_MAX_PANES),
+  })
+  .strict()
+  .superRefine((snapshot, context) => {
+    const windows = new Set<string>();
+    const panes = new Set<string>();
+    let currentWindows = 0;
+    for (const [layoutIndex, layout] of snapshot.layouts.entries()) {
+      if (layout.semanticWindowId === null) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Layout authority snapshots require semantic window identities",
+          path: ["layouts", layoutIndex, "semanticWindowId"],
+        });
+      } else if (windows.has(layout.semanticWindowId)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Layout authority snapshots require unique windows",
+          path: ["layouts", layoutIndex, "semanticWindowId"],
+        });
+      } else {
+        windows.add(layout.semanticWindowId);
+      }
+      if (layout.currentWindow) currentWindows += 1;
+      for (const [paneIndex, pane] of layout.panes.entries()) {
+        if (pane.pane === null) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Layout authority snapshots require semantic pane identities",
+            path: ["layouts", layoutIndex, "panes", paneIndex, "pane"],
+          });
+        } else if (panes.has(pane.pane)) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Layout authority snapshots require unique panes",
+            path: ["layouts", layoutIndex, "panes", paneIndex, "pane"],
+          });
+        } else {
+          panes.add(pane.pane);
+        }
+      }
+    }
+    if (currentWindows !== 1) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Layout authority snapshots require exactly one current window",
+        path: ["layouts"],
+      });
+    }
+  });
+
 export const PaneStreamFlowFrameSchemaZ = z
   .object({
     type: z.literal("flow"),
@@ -563,8 +623,14 @@ export const PaneStreamViewportAckFrameSchemaZ = z
     seq: z.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
     cols: z.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
     rows: z.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
+    outcome: z.enum(["ok", "geometry-authority-conflict"]),
+    authorityLease: SessionRuntimeAuthorityLeaseSchemaZ,
   })
-  .strict();
+  .strict()
+  .refine((frame) => frame.authorityLease.authority === "geometry", {
+    message: "Viewport authority must be a geometry lease.",
+    path: ["authorityLease", "authority"],
+  });
 
 export const PaneStreamAuthoritySnapshotFrameSchemaZ = z
   .object({
@@ -588,6 +654,7 @@ export const PaneStreamErrorFrameCodeSchemaZ = z.enum([
   "ticket-expired",
   "live-capacity-exhausted",
   "stream-unavailable",
+  "topology-changed",
   "input-rejected",
   "protocol-error",
 ]);
@@ -608,6 +675,7 @@ export const PaneStreamServerFrameSchemaZ = z.discriminatedUnion("type", [
   PaneStreamOutputFrameSchemaZ,
   PaneStreamCursorFrameSchemaZ,
   PaneStreamLayoutFrameSchemaZ,
+  PaneStreamLayoutSnapshotFrameSchemaZ,
   PaneStreamFlowFrameSchemaZ,
   PaneStreamClosedFrameSchemaZ,
   PaneStreamInputAckFrameSchemaZ,

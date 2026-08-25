@@ -409,12 +409,31 @@ export function createWorkspaceClient<
     shellState = next;
     const nextInput = "data" in next ? next.data : null;
     if (nextInput !== null) {
-      replay =
-        authorityShell === null || replay === null
-          ? createApplicationShellReplayState(nextInput)
-          : reconcileApplicationShellReplayState(authorityShell, nextInput, replay);
-      authorityShell = nextInput;
-      semantic = projectApplicationShellSession(nextInput, replay);
+      try {
+        replay =
+          authorityShell === null || replay === null
+            ? createApplicationShellReplayState(nextInput)
+            : reconcileApplicationShellReplayState(authorityShell, nextInput, replay);
+        authorityShell = nextInput;
+        semantic = projectApplicationShellSession(nextInput, replay);
+      } catch {
+        shellState = {
+          status: "degraded",
+          generation: next.generation,
+          target: next.target,
+          data: null,
+          updatedAt: null,
+          transport: next.transport ?? null,
+          code: "schema-invalid",
+          reason: "The application shell failed semantic projection.",
+        };
+        authorityShell = null;
+        replay = null;
+        semantic = null;
+        rebuild(["lifecycle", "semantic"]);
+        if (terminalAuthority === null) reconcileRuntimeInventory();
+        return;
+      }
       rebuild(["lifecycle", "semantic"]);
       if (terminalAuthority === null) reconcileRuntimeInventory();
       else if (!shellMatchesTerminalAuthority(nextInput, terminalAuthority)) {
@@ -822,12 +841,38 @@ export function createWorkspaceClient<
             TerminalTombstone
           >,
         ) => prepareRuntimeForOwner(owner, nextRuntime);
-        const nextRuntime = await options.ports.connectRuntime(
-          expectedTarget,
-          inventory,
-          signal,
-          prepare,
-        );
+        let nextRuntime: WorkspaceClientRuntimePort<
+          TerminalSnapshot,
+          TerminalPatch,
+          TerminalTombstone
+        >;
+        try {
+          nextRuntime = await options.ports.connectRuntime(
+            expectedTarget,
+            inventory,
+            signal,
+            prepare,
+          );
+        } catch (error) {
+          const code =
+            typeof error === "object" &&
+            error !== null &&
+            "code" in error &&
+            typeof error.code === "string"
+              ? error.code
+              : null;
+          if (
+            code === "topology-changed" &&
+            !disposed &&
+            generation === expectedGeneration &&
+            target === expectedTarget &&
+            desiredRuntimeKey === key &&
+            candidateRuntimeOwner === owner
+          ) {
+            requestTerminalRefresh(`runtime-topology:${expectedGeneration}:${key}`);
+          }
+          throw error;
+        }
         if (nextRuntime.generation !== expectedTarget.daemon.instanceId) {
           void nextRuntime.close();
           throw new Error("session runtime connected to another daemon generation");
@@ -1036,6 +1081,23 @@ export function createWorkspaceClient<
       throw error;
     }
     if (disposed || generation !== expectedGeneration || target !== expectedTarget) {
+      if (command.name === "workspace.open.prepare" && isPreparedOpen(result)) {
+        try {
+          await options.ports.actions.dispatch({
+            target: expectedTarget,
+            name: "workspace.open.cancel",
+            input: {
+              prepareToken: result.prepareToken,
+              preparedRevision: result.preparedRevision,
+            },
+            operationId: operationId(),
+          });
+        } catch {
+          // The retired owner is the only authority allowed to cancel this
+          // late capability. Its typed failure remains fail-closed.
+        }
+      }
+      ledger.terminal(id, expectedGeneration);
       throw new Error("workspace action completed after its client generation was retired");
     }
     if (command.name === "workspace.open.prepare" && isPreparedOpen(result)) {
@@ -1050,6 +1112,20 @@ export function createWorkspaceClient<
 
   return {
     getSnapshot: () => snapshot,
+    getMetrics: () =>
+      shellSession?.getMetrics() ?? {
+        idleWakeups: 0,
+        activeInterests: 0,
+        fetchesStarted: 0,
+        fetchesSettled: 0,
+        fetchesAborted: 0,
+        lateResultsIgnored: 0,
+        invalidationsObserved: 0,
+        invalidationsCoalesced: 0,
+        subscriptionsOpened: 0,
+        subscriptionsClosed: 0,
+        publications: 0,
+      },
     subscribe(scope, listener) {
       const bucket = listeners.get(scope) ?? new Set<(value: unknown) => void>();
       listeners.set(scope, bucket);
@@ -1256,15 +1332,18 @@ export function createWorkspaceClient<
       }
       return result;
     },
-    async fitViewport(cols: number, rows: number): Promise<"ok" | "authority-lost"> {
+    async fitViewport(
+      cols: number,
+      rows: number,
+    ): Promise<"ok" | "authority-lost" | "geometry-authority-conflict"> {
       const expectedGeneration = generation;
       const expectedRuntime = runtime;
       if (disposed || expectedRuntime === null) return "authority-lost";
-      await expectedRuntime.fitViewport(cols, rows);
+      const result = await expectedRuntime.fitViewport(cols, rows);
       if (disposed || generation !== expectedGeneration || runtime !== expectedRuntime) {
         return "authority-lost";
       }
-      return "ok";
+      return result;
     },
     setPresence(state) {
       runtime?.setPresence?.(state);
@@ -1273,7 +1352,10 @@ export function createWorkspaceClient<
       runtime?.noteActivity?.(activity);
     },
     ownsRuntimeAuthority(authorityKind) {
-      return runtime?.ownsConnectionAuthority?.(authorityKind) === true;
+      return (runtime?.connectionAuthorityClientId?.(authorityKind) ?? null) !== null;
+    },
+    runtimeAuthorityClientId(authorityKind) {
+      return runtime?.connectionAuthorityClientId?.(authorityKind) ?? null;
     },
     async requestAuthority(authorityKind: SessionRuntimeAuthorityKind) {
       const expectedRuntime = runtime;
@@ -1283,9 +1365,16 @@ export function createWorkspaceClient<
     },
     async releaseAuthority(authorityKind: SessionRuntimeAuthorityKind) {
       const expectedRuntime = runtime;
-      if (!expectedRuntime?.releaseAuthority) return null;
+      if (
+        !expectedRuntime?.releaseAuthority ||
+        (expectedRuntime.connectionAuthorityClientId?.(authorityKind) ?? null) === null
+      )
+        return null;
       const snapshot = await expectedRuntime.releaseAuthority(authorityKind);
-      return runtime === expectedRuntime ? snapshot : null;
+      return runtime === expectedRuntime &&
+        (expectedRuntime.connectionAuthorityClientId?.(authorityKind) ?? null) === null
+        ? snapshot
+        : null;
     },
     dispose() {
       if (disposePromise) return disposePromise;

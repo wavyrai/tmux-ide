@@ -203,7 +203,7 @@ export class OpenTuiTerminalWorkspaceAdapter {
     return true;
   }
 
-  fitViewport(cols: number, rows: number): Promise<void> | null {
+  fitViewport(cols: number, rows: number): Promise<"ok" | "geometry-authority-conflict"> | null {
     const lane = this.#lane;
     if (!this.#lifecycle.accepting || !lane?.ownsGeometry) return null;
     return lane.fitViewport(cols, rows);

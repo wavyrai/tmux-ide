@@ -15,6 +15,7 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  lstatSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -37,6 +38,7 @@ import {
 import { classifyProductTuiCommandFailure } from "./lib/product-tui-host-readiness.mjs";
 import {
   buildTestdriveExecCommand,
+  resolveTestdriveCapabilityEnvironment,
   resolvePublicTestdriveEnvironment,
   resolveTestdriveLaunch,
 } from "./lib/tui-testdrive-launch.mjs";
@@ -1491,6 +1493,32 @@ async function start(args) {
   const publicEnvironment = options.publicEntry
     ? resolvePublicTestdriveEnvironment(process.env)
     : null;
+  const controlPrivateRoot = targetSocketPath ? dirname(resolve(targetSocketPath)) : null;
+  const canonicalDaemon = process.env.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON === "1";
+  const testdriveCapabilityEnvironment = resolveTestdriveCapabilityEnvironment({
+    publicEntry: options.publicEntry,
+    canonicalDaemon,
+    environment: process.env,
+    privateRoot: controlPrivateRoot,
+    stateHome,
+    canonicalHome: canonicalDaemonHome(),
+    standaloneRegistryDir: join(runtimeDir, "registry"),
+    standaloneDaemonInfoDir: testdriveDaemonInfoDir,
+    cleanupToken,
+    tmuxSocketName: targetSocketName ?? (targetSocketPath ? null : namespaceSocketName),
+    tmuxSocketPath: targetSocketPath,
+  });
+  const card5ControlRoot = testdriveCapabilityEnvironment.TMUX_IDE_CARD5_HOST_FOCUS_CONTROL_ROOT;
+  if (card5ControlRoot) {
+    const root = lstatSync(card5ControlRoot);
+    if (
+      !root.isDirectory() ||
+      root.isSymbolicLink() ||
+      (root.mode & 0o777) !== 0o700 ||
+      (typeof process.getuid === "function" && root.uid !== process.getuid())
+    )
+      fail("Card5 host-focus control root was not private and owned");
+  }
   if (!existsSync(launch.cwd)) fail(`test-drive cwd does not exist: ${launch.cwd}`);
   if (
     options.publicEntry &&
@@ -1520,18 +1548,7 @@ async function start(args) {
     `TMUX_IDE_CWD=${shQuote(launch.cwd)}`,
     ...(publicEnvironment
       ? Object.entries(publicEnvironment).map(([key, value]) => `${key}=${shQuote(value)}`)
-      : [`TMUX_IDE_HOME=${shQuote(stateHome)}`]),
-    ...(!publicEnvironment && process.env.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON === "1"
-      ? [`TMUX_IDE_DAEMON_INFO_DIR=${shQuote(canonicalDaemonHome())}`]
-      : !publicEnvironment
-        ? [
-            "TMUX_IDE_RUNTIME_MODE=testdrive",
-            `TMUX_IDE_REGISTRY_DIR=${shQuote(join(runtimeDir, "registry"))}`,
-            `TMUX_IDE_DAEMON_INFO_DIR=${shQuote(testdriveDaemonInfoDir)}`,
-            `TMUX_IDE_TMUX_SOCKET_NAME=${shQuote(targetSocketName ?? namespaceSocketName)}`,
-            `TMUX_IDE_CLEANUP_TOKEN=${shQuote(cleanupToken)}`,
-          ]
-        : []),
+      : []),
     `TMUX_IDE_CLI=${shQuote(join(repoRoot, "bin", "cli.js"))}`,
     // The targeted TUI is launched inside the private host tmux. Preserve the
     // exact TMUX value injected by that server so host-local clipboard policy
@@ -1549,6 +1566,9 @@ async function start(args) {
           `TMUX_IDE_PERFORMANCE_TRACE_INPUT_DETAIL=${shQuote(process.env.TMUX_IDE_PERFORMANCE_TRACE_INPUT_DETAIL ?? "0")}`,
         ]
       : []),
+    ...Object.entries(testdriveCapabilityEnvironment).map(
+      ([key, value]) => `${key}=${shQuote(value)}`,
+    ),
     ...(process.env.TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON === "1"
       ? ["TMUX_IDE_TESTDRIVE_USE_CANONICAL_DAEMON=1"]
       : []),
@@ -1564,6 +1584,7 @@ async function start(args) {
         TMUX_IDE_CLI: join(repoRoot, "bin", "cli.js"),
         TMUX_IDE_TUI_PERF_LOG: perfLogPath,
         TMUX_IDE_TUI_LAUNCH_EPOCH_MS: String(launchEpochMs),
+        ...testdriveCapabilityEnvironment,
         ...(process.env.TMUX_IDE_PERFORMANCE_TRACE_LOG
           ? {
               TMUX_IDE_PERFORMANCE_TRACE_LOG: process.env.TMUX_IDE_PERFORMANCE_TRACE_LOG,
@@ -1588,6 +1609,11 @@ async function start(args) {
       // Bun source mode needs the checkout bunfig preload. The standalone
       // binary must run outside that tree or Bun tries to preload Solid again.
       `cd ${shQuote(launch.cwd)}`,
+      ...(publicEnvironment
+        ? []
+        : [
+            "unset TMUX_IDE_RUNTIME_MODE TMUX_IDE_HOME TMUX_IDE_REGISTRY_DIR TMUX_IDE_DAEMON_INFO_DIR TMUX_IDE_CLEANUP_TOKEN TMUX_IDE_TMUX_SOCKET_NAME TMUX_IDE_TMUX_SOCKET_PATH",
+          ]),
       ...(publicEnvironment ? [] : [`export ${environment.join(" ")}`]),
       buildTestdriveExecCommand({
         clean: Boolean(publicEnvironment),

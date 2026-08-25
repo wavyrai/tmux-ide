@@ -37,7 +37,7 @@ import {
 import { TerminalSurface } from "../terminal/terminal-surface.tsx";
 import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
 import type { PaneStreamLayoutEvent } from "../terminal/pane-stream-transport.ts";
-import type { PaneFrameModel } from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
+import type { PaneFrameModel } from "@tmux-ide/presentation/pane-frame";
 import { createRuntimeStyleBinding, type RuntimeStyleBinding } from "../runtime-style.ts";
 import { Icon, type IconArtwork } from "../ui-system/icon.tsx";
 import { DOM_ICON_METADATA } from "./dom-icons.ts";

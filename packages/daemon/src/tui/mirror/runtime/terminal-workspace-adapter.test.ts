@@ -25,7 +25,7 @@ function lane(name: string): OpenTuiSessionRuntimeLane {
     source: new SemanticTerminalRenderSource(),
     sendText: vi.fn(),
     sendKey: vi.fn(),
-    fitViewport: vi.fn(async () => {}),
+    fitViewport: vi.fn(async () => "ok" as const),
     submit: vi.fn(async () => null),
     close: vi.fn(),
   };

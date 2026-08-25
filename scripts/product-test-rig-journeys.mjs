@@ -79,6 +79,8 @@ const GOLDEN_JOURNEYS = Object.freeze(
         "keyboard-pointer-resize",
         "selection-copy-app-mouse",
         "ansi-cursor-alt-screen",
+        "cross-client-handoff",
+        "daemon-restart",
       ].includes(id)
         ? "implemented"
         : "pending",
@@ -722,6 +724,125 @@ export async function runAnsiCursorAltScreenOwnerBoot(operations) {
   });
 }
 
+/** Card5 proof: real adapters first, then authority/isolation, then one daemon replacement. */
+export async function runCrossClientHandoffOwnerBoot(operations) {
+  const atBoundary = async (boundary, operation) => {
+    operations.onBoundary?.(boundary);
+    try {
+      return await operation();
+    } catch (error) {
+      if (error && typeof error === "object" && error.boundary) throw error;
+      const bounded = new Error(error instanceof Error ? error.message : String(error), {
+        cause: error,
+      });
+      bounded.boundary = boundary;
+      bounded.observation =
+        error?.observation ??
+        Object.freeze({
+          operation: "card5-cross-client-live-proof",
+          reason: "operation-failed",
+          boundary,
+        });
+      throw bounded;
+    }
+  };
+  const namespace = await atBoundary(
+    "cross-client-production-hosts",
+    operations.createProductionHosts,
+  );
+  const initial = await atBoundary("cross-client-initial-convergence", () =>
+    operations.waitInitialConvergence(namespace),
+  );
+  const handoff = await atBoundary("cross-client-authority-handoff", () =>
+    operations.driveAuthorityHandoff(namespace, initial),
+  );
+  const geometry = await atBoundary("cross-client-passive-geometry", () =>
+    operations.provePassiveGeometry(namespace, initial, handoff),
+  );
+  const slowWeb = await atBoundary("cross-client-slow-web-isolation", () =>
+    operations.proveSlowWebIsolation(namespace, initial, handoff, geometry),
+  );
+  const restart = await atBoundary("cross-client-daemon-restart", () =>
+    operations.restartDaemon(namespace, initial, slowWeb),
+  );
+  const after = await atBoundary("cross-client-restart-convergence", () =>
+    operations.waitRestartConvergence(namespace, initial, restart),
+  );
+  const nativeObserver = await atBoundary("cross-client-native-observer", () =>
+    operations.proveNativeObserver(namespace, after),
+  );
+  const correlation = await atBoundary("cross-client-correlation-privacy", () =>
+    operations.sealCorrelation(
+      namespace,
+      initial,
+      handoff,
+      geometry,
+      slowWeb,
+      restart,
+      after,
+      nativeObserver,
+    ),
+  );
+  return Object.freeze({
+    namespace,
+    initial,
+    handoff,
+    geometry,
+    slowWeb,
+    restart,
+    after,
+    nativeObserver,
+    correlation,
+  });
+}
+
+/** Card5 restart proof is independent from authority handoff despite shared host setup. */
+export async function runDaemonRestartOwnerBoot(operations) {
+  const atBoundary = async (boundary, operation) => {
+    operations.onBoundary?.(boundary);
+    try {
+      return await operation();
+    } catch (error) {
+      if (error && typeof error === "object" && error.boundary) throw error;
+      const bounded = new Error(error instanceof Error ? error.message : String(error), {
+        cause: error,
+      });
+      bounded.boundary = boundary;
+      bounded.observation =
+        error?.observation ??
+        Object.freeze({
+          operation: "card5-daemon-restart-live-proof",
+          reason: "operation-failed",
+          boundary,
+        });
+      throw bounded;
+    }
+  };
+  const hosts = await atBoundary(
+    "daemon-restart-production-hosts",
+    operations.createProductionHosts,
+  );
+  const before = await atBoundary("daemon-restart-before-convergence", () =>
+    operations.waitBeforeConvergence(hosts),
+  );
+  const replacement = await atBoundary("daemon-restart-generation-replaced", () =>
+    operations.replaceDaemon(hosts, before),
+  );
+  const staleFence = await atBoundary("daemon-restart-stale-authority-rejected", () =>
+    operations.proveStaleFence(hosts, before, replacement),
+  );
+  const reconnect = await atBoundary("daemon-restart-hosts-reconnected", () =>
+    operations.waitHostsReconnected(hosts, replacement, staleFence),
+  );
+  const after = await atBoundary("daemon-restart-canonical-convergence", () =>
+    operations.waitCanonicalConvergence(hosts, replacement, reconnect),
+  );
+  const correlation = await atBoundary("daemon-restart-correlation-privacy", () =>
+    operations.sealRestartCorrelation(hosts, before, replacement, after),
+  );
+  return Object.freeze({ hosts, before, replacement, staleFence, reconnect, after, correlation });
+}
+
 function exactTargetedTuiCwd(runtimeDir, { createMissing, hooks = {} }) {
   const fail = (reason, cause = undefined) => {
     const error = new Error(`targeted TUI isolated cwd preparation failed: ${reason}`, { cause });
@@ -870,6 +991,7 @@ export async function runIsolatedProductJourneyAttempt(entry, operations) {
   let failureBoundary = null;
   let cleanupFailure = null;
   let validationFailure = null;
+  let preCleanupFailureEvidence = null;
   let cleanupReceipt;
   const phase = (value) => operations.onPhase?.(value);
 
@@ -881,6 +1003,45 @@ export async function runIsolatedProductJourneyAttempt(entry, operations) {
   } catch (error) {
     failure = error;
     failureBoundary = productJourneyFailureBoundary(error, operations.currentBoundary());
+  }
+
+  if (failure && operations.captureFailureEvidence) {
+    phase("pre-cleanup-failure-evidence");
+    const captureAbort = new AbortController();
+    const capture = Promise.resolve().then(() =>
+      operations.captureFailureEvidence(failure, failureBoundary, captureAbort.signal),
+    );
+    const settledCapture = capture.then(
+      (value) => ({ status: "captured", value }),
+      () => ({ status: "failed" }),
+    );
+    let timeout;
+    const captureTimeoutMs =
+      Number.isSafeInteger(operations.failureEvidenceTimeoutMs) &&
+      operations.failureEvidenceTimeoutMs >= 1 &&
+      operations.failureEvidenceTimeoutMs <= 1_000
+        ? operations.failureEvidenceTimeoutMs
+        : 1_000;
+    const timeoutCapture = new Promise((resolve) => {
+      timeout = setTimeout(() => resolve({ status: "timeout" }), captureTimeoutMs);
+    });
+    const outcome = await Promise.race([settledCapture, timeoutCapture]);
+    clearTimeout(timeout);
+    if (outcome.status === "timeout") {
+      captureAbort.abort();
+      let cancellationTimeout;
+      await Promise.race([
+        settledCapture,
+        new Promise((resolve) => {
+          cancellationTimeout = setTimeout(resolve, Math.min(captureTimeoutMs, 100));
+        }),
+      ]);
+      clearTimeout(cancellationTimeout);
+    }
+    preCleanupFailureEvidence =
+      outcome.status === "captured"
+        ? outcome.value
+        : Object.freeze({ available: false, reason: `pre-cleanup-${outcome.status}` });
   }
 
   phase("attempt-cleanup");
@@ -918,7 +1079,12 @@ export async function runIsolatedProductJourneyAttempt(entry, operations) {
   }
 
   if (failure) {
-    const failedResult = await operations.prepareFailure(failure, failureBoundary, cleanupReceipt);
+    const failedResult = await operations.prepareFailure(
+      failure,
+      failureBoundary,
+      cleanupReceipt,
+      preCleanupFailureEvidence,
+    );
     if (cleanupFailure) operations.appendCleanupFailure(failedResult, cleanupFailure);
     if (validationFailure) operations.appendValidationFailure?.(failedResult, validationFailure);
     phase("failure-bundle-publication");

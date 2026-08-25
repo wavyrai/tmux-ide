@@ -16,7 +16,12 @@ import {
   type MirrorChannelIo,
   type MirrorOutputTiming,
 } from "./control-channel.ts";
-import type { MirrorLayoutEvent, MirrorPaneEvent, MirrorSessionDescription } from "./events.ts";
+import type {
+  MirrorLayoutAuthoritySnapshot,
+  MirrorLayoutEvent,
+  MirrorPaneEvent,
+  MirrorSessionDescription,
+} from "./events.ts";
 import {
   SessionChannel,
   type MirrorFlowRecoveryObservation,
@@ -101,6 +106,12 @@ export interface MirrorLayoutSubscription {
   close(): Promise<void>;
 }
 
+export interface MirrorAuthoritativeLayoutRequest {
+  readonly expectedSemanticPaneIds: readonly string[];
+  readonly expectedRuntimeSessionId: string;
+  readonly onAuthority?: (snapshot: MirrorLayoutAuthoritySnapshot) => void;
+}
+
 export interface MirrorSessionRetention {
   readonly session: string;
   close(): Promise<void>;
@@ -133,6 +144,19 @@ export class MirrorService {
     const entry = await this.acquire(session);
     try {
       return entry.channel.describe();
+    } finally {
+      this.release(session, entry);
+    }
+  }
+
+  async describeSessionAuthority(session: string): Promise<{
+    readonly description: MirrorSessionDescription;
+    readonly runtimeSessionId: string;
+  }> {
+    const entry = await this.acquire(session);
+    try {
+      const identity = await entry.channel.attachedSessionIdentity();
+      return { description: entry.channel.describe(), runtimeSessionId: identity.runtimeSessionId };
     } finally {
       this.release(session, entry);
     }
@@ -208,11 +232,30 @@ export class MirrorService {
   async subscribeLayout(
     session: string,
     onLayout: (event: MirrorLayoutEvent) => void,
+    authority?: MirrorAuthoritativeLayoutRequest,
   ): Promise<MirrorLayoutSubscription> {
     const entry = await this.acquire(session);
     let handle;
     try {
-      handle = entry.channel.subscribeLayout(onLayout);
+      const identity = await entry.channel.attachedSessionIdentity();
+      if (
+        authority &&
+        (authority.expectedRuntimeSessionId.length === 0 ||
+          identity.runtimeSessionId !== authority.expectedRuntimeSessionId)
+      ) {
+        const error = new Error(`authoritative layout for ${session} changed topology`);
+        error.name = "MirrorTopologyChangedError";
+        throw error;
+      }
+      handle = await entry.channel.subscribeAuthoritativeLayout(
+        onLayout,
+        authority?.expectedSemanticPaneIds,
+        authority?.onAuthority,
+      );
+      if (this.channels.get(session) !== entry || entry.retired) {
+        handle.close();
+        throw new Error(`mirror session ${session} retired during layout subscription`);
+      }
     } catch (cause) {
       this.release(session, entry);
       throw cause;

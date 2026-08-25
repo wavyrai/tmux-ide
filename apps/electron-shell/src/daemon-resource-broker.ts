@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import {
   AppWindowMutationArgumentsSchemaZ,
   AppWindowMutationRequestSchemaZ,
@@ -77,6 +76,7 @@ import {
   type DesktopDaemonEvent,
   type DesktopDaemonCapabilitiesResult,
   type DesktopDaemonFetchApplicationShellResult,
+  type DesktopDaemonFetchWorkspaceCatalogResult,
   type DesktopDaemonFetchWorkspaceChangeDiffResult,
   type DesktopDaemonFetchWorkspaceChangesResult,
   type DesktopDaemonFetchWorkspaceFilePreviewResult,
@@ -115,6 +115,7 @@ import {
 import { z } from "zod";
 
 import { DaemonEventSupervisor } from "./daemon-event-supervisor.ts";
+import { mintDesktopWebHostClientId } from "./web-host-client-id.ts";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 3_000;
 // Promotion is a heavier mutation than open/pane-create: it captures the pane
@@ -578,7 +579,7 @@ export class DaemonResourceBroker {
   readonly #now: () => number;
   readonly #ownerToken: string | null;
   /** Stable for this trusted broker generation; IPC callers normally override per renderer generation. */
-  readonly #brokerHostClientId = randomUUID();
+  readonly #brokerHostClientId = mintDesktopWebHostClientId();
   readonly #controllers = new Set<AbortController>();
   readonly #subscriptions = new Map<number, BrokerSubscription>();
 
@@ -1328,6 +1329,31 @@ export class DaemonResourceBroker {
         signal,
       );
       const parsed = FleetCatalogResourceV1SchemaZ.safeParse(raw);
+      if (!parsed.success) throw new BrokerFailure(daemonCapabilityError("invalid-response"));
+      if (!sameIdentity(parsed.data.daemon, daemonIdentity(this.#daemon))) {
+        throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));
+      }
+      return { status: "ok", envelope: parsed.data };
+    } catch (error) {
+      return { status: "error", error: this.#boundedError(error) };
+    }
+  }
+
+  async fetchWorkspaceCatalog(
+    signal?: AbortSignal,
+  ): Promise<DesktopDaemonFetchWorkspaceCatalogResult> {
+    if (this.#daemon.status !== "connected") return this.#disconnectedResult();
+    if (!this.#ownerToken) {
+      return { status: "error", error: daemonCapabilityError("daemon-unavailable") };
+    }
+    try {
+      const raw = await this.#requestJson(
+        "/api/resources/workspace-catalog?version=2",
+        this.#maxResponseBytes,
+        true,
+        signal,
+      );
+      const parsed = WorkspaceCatalogResourceV2SchemaZ.safeParse(raw);
       if (!parsed.success) throw new BrokerFailure(daemonCapabilityError("invalid-response"));
       if (!sameIdentity(parsed.data.daemon, daemonIdentity(this.#daemon))) {
         throw new BrokerFailure(daemonCapabilityError("daemon-identity-mismatch"));

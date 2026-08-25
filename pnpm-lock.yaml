@@ -114,6 +114,9 @@ importers:
       '@tmux-ide/daemon-client':
         specifier: workspace:*
         version: link:../../packages/daemon-client
+      '@tmux-ide/presentation':
+        specifier: workspace:*
+        version: link:../../packages/presentation
       '@tmux-ide/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
@@ -317,6 +320,9 @@ importers:
       '@tmux-ide/daemon-client':
         specifier: workspace:*
         version: link:../daemon-client
+      '@tmux-ide/presentation':
+        specifier: workspace:*
+        version: link:../presentation
       '@tmux-ide/tmux-bridge':
         specifier: workspace:*
         version: link:../tmux-bridge
@@ -394,6 +400,22 @@ importers:
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
+
+  packages/presentation:
+    dependencies:
+      '@tmux-ide/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      solid-js:
+        specifier: 1.9.12
+        version: 1.9.12
+    devDependencies:
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.0
+        version: 4.1.0(@types/node@25.5.0)(happy-dom@20.8.4)(vite@8.1.4(@types/node@25.5.0)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0))
 
   packages/sdk:
     dependencies:

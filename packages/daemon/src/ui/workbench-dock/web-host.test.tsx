@@ -14,8 +14,9 @@ import {
   EXPECTED_WORKBENCH_DOCK_HOST_TRACE,
   EXPECTED_WORKBENCH_DOCK_KEYBOARD_TRACE,
 } from "./fixture.ts";
-import { WebWorkbenchDock } from "./web-host.tsx";
-import { assertWorkbenchDockHostOrder } from "./presenter.tsx";
+import { WebWorkbenchDock } from "@tmux-ide/presentation/workbench-dock/web";
+import { assertWorkbenchDockHostOrder } from "@tmux-ide/presentation/workbench-dock";
+import "@tmux-ide/presentation/workbench-dock/web.css";
 
 const disposers: Array<() => void> = [];
 

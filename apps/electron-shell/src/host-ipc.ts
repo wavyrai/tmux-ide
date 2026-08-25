@@ -33,15 +33,17 @@ import {
   WorkspaceOpenCommittedHostResultSchemaZ,
   WorkspaceOpenCancelledHostResultSchemaZ,
   WorkspaceOpenDecisionArgumentsSchemaZ,
+  WorkspaceOperationIdSchemaZ,
   WorkspacePromoteHostResultSchemaZ,
   WorkspacePromoteMutationRequestSchemaZ,
   isDaemonResourceKind,
-  type AppWindowMutationArguments,
+  type AppWindowMutationInvocation,
   type DaemonInstanceIdentity,
   type DaemonResourceKind,
   type DesktopDaemonCapabilityState,
   type DesktopDaemonHostSubscriptionResult,
   type DesktopHostBootstrap,
+  type DesktopWebHostClientId,
   type DesktopPlatform,
   type DesktopThemeState,
   type DesktopUpdateStatus,
@@ -62,6 +64,7 @@ import {
   workspacePromotionFailureFromUnknown,
 } from "./daemon-resource-broker.ts";
 import { HOST_INVOKE_CHANNELS, HOST_IPC } from "./ipc-channels.ts";
+import { mintDesktopWebHostClientId } from "./web-host-client-id.ts";
 
 export interface HostIpcDependencies {
   ipcMain: IpcMain;
@@ -216,7 +219,7 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
     readonly window: BrowserWindow;
     readonly webContentsId: number;
     readonly mainFrame: IpcMainInvokeEvent["senderFrame"];
-    readonly hostClientId: string;
+    readonly hostClientId: DesktopWebHostClientId;
   }
   interface DaemonSubscriptionAuthority {
     readonly generation: number;
@@ -264,7 +267,7 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
       window,
       webContentsId: window.webContents.id,
       mainFrame: event.senderFrame,
-      hostClientId: randomUUID(),
+      hostClientId: mintDesktopWebHostClientId(),
     };
     return rendererAuthority;
   };
@@ -410,9 +413,15 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
   });
   handle(
     HOST_IPC.workspacePrepareProjectDirectory,
-    async (event, previousWorkspaceName: unknown) => {
+    async (event, previousWorkspaceName: unknown, requestedOperationId: unknown) => {
       const authority = trustedRendererAuthority(event);
-      if (previousWorkspaceName !== null && typeof previousWorkspaceName !== "string") {
+      const operationId = WorkspaceOperationIdSchemaZ.safeParse(
+        requestedOperationId ?? randomUUID(),
+      );
+      if (
+        (previousWorkspaceName !== null && typeof previousWorkspaceName !== "string") ||
+        !operationId.success
+      ) {
         return WorkspaceOpenPreparedHostResultSchemaZ.parse({
           status: "error",
           error: daemonCapabilityError("invalid-request"),
@@ -428,12 +437,15 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
           error: disconnectedCapabilityError(before),
         });
       try {
-        const result = await deps.daemonResources.prepareWorkspaceOpen(randomUUID(), {
+        const result = await deps.daemonResources.prepareWorkspaceOpen(operationId.data, {
           source: { kind: "project", projectDir: path },
           previousWorkspaceName,
         });
         assertRendererAuthority(event, authority.generation);
-        if (result.daemonInstanceId !== before.identity.instanceId)
+        if (
+          result.operationId !== operationId.data ||
+          result.daemonInstanceId !== before.identity.instanceId
+        )
           throw new Error("generation changed");
         return WorkspaceOpenPreparedHostResultSchemaZ.parse({ status: "ok", result });
       } catch {
@@ -444,36 +456,46 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
       }
     },
   );
-  handle(HOST_IPC.workspaceCommitPreparedOpen, async (event, value: unknown) => {
-    trustedRendererAuthority(event);
-    try {
-      const result = await deps.daemonResources.commitWorkspaceOpen(
-        randomUUID(),
-        WorkspaceOpenDecisionArgumentsSchemaZ.parse(value),
-      );
-      return WorkspaceOpenCommittedHostResultSchemaZ.parse({ status: "ok", result });
-    } catch {
-      return WorkspaceOpenCommittedHostResultSchemaZ.parse({
-        status: "error",
-        error: daemonCapabilityError("request-failed"),
-      });
-    }
-  });
-  handle(HOST_IPC.workspaceCancelPreparedOpen, async (event, value: unknown) => {
-    trustedRendererAuthority(event);
-    try {
-      const result = await deps.daemonResources.cancelWorkspaceOpen(
-        randomUUID(),
-        WorkspaceOpenDecisionArgumentsSchemaZ.parse(value),
-      );
-      return WorkspaceOpenCancelledHostResultSchemaZ.parse({ status: "ok", result });
-    } catch {
-      return WorkspaceOpenCancelledHostResultSchemaZ.parse({
-        status: "error",
-        error: daemonCapabilityError("request-failed"),
-      });
-    }
-  });
+  handle(
+    HOST_IPC.workspaceCommitPreparedOpen,
+    async (event, value: unknown, requestedOperationId: unknown) => {
+      trustedRendererAuthority(event);
+      try {
+        const operationId = WorkspaceOperationIdSchemaZ.parse(requestedOperationId ?? randomUUID());
+        const result = await deps.daemonResources.commitWorkspaceOpen(
+          operationId,
+          WorkspaceOpenDecisionArgumentsSchemaZ.parse(value),
+        );
+        if (result.operationId !== operationId) throw new Error("operation changed");
+        return WorkspaceOpenCommittedHostResultSchemaZ.parse({ status: "ok", result });
+      } catch {
+        return WorkspaceOpenCommittedHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("request-failed"),
+        });
+      }
+    },
+  );
+  handle(
+    HOST_IPC.workspaceCancelPreparedOpen,
+    async (event, value: unknown, requestedOperationId: unknown) => {
+      trustedRendererAuthority(event);
+      try {
+        const operationId = WorkspaceOperationIdSchemaZ.parse(requestedOperationId ?? randomUUID());
+        const result = await deps.daemonResources.cancelWorkspaceOpen(
+          operationId,
+          WorkspaceOpenDecisionArgumentsSchemaZ.parse(value),
+        );
+        if (result.operationId !== operationId) throw new Error("operation changed");
+        return WorkspaceOpenCancelledHostResultSchemaZ.parse({ status: "ok", result });
+      } catch {
+        return WorkspaceOpenCancelledHostResultSchemaZ.parse({
+          status: "error",
+          error: daemonCapabilityError("request-failed"),
+        });
+      }
+    },
+  );
   handle(HOST_IPC.onboardingAcknowledgeIntro, (event, ...args) => {
     trustedRendererAuthority(event);
     if (args.length !== 0) throw new Error("desktop onboarding acknowledge request was invalid");
@@ -544,7 +566,7 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
       });
     }
     const request = WorkspacePaneCreateMutationRequestSchemaZ.parse({
-      operationId: randomUUID(),
+      operationId: invocation.data.operationId ?? randomUUID(),
       expectedDaemonInstanceId: before.identity.instanceId,
       intent: invocation.data.args,
     });
@@ -590,7 +612,7 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
   const mutateAppWindow = async (
     event: IpcMainInvokeEvent,
     authority: RendererAuthority,
-    intent: { data: AppWindowMutationArguments },
+    invocation: { data: AppWindowMutationInvocation },
   ) => {
     const before = deps.daemonResources.state();
     if (before.status !== "connected") {
@@ -600,9 +622,9 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
       });
     }
     const request = AppWindowMutationRequestSchemaZ.parse({
-      operationId: randomUUID(),
+      operationId: invocation.data.operationId ?? randomUUID(),
       expectedDaemonInstanceId: before.identity.instanceId,
-      intent: intent.data,
+      intent: invocation.data.intent,
     });
     try {
       const result = await deps.daemonResources.mutateAppWindow(request);
@@ -654,10 +676,9 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
   /**
    * Run one multiplexer verb on behalf of the renderer.
    *
-   * The renderer authors the intent and nothing else. The operation id is
-   * minted here, in the trusted process, for the same reason pane creation
-   * mints its own: a renderer that could choose it could replay another
-   * window's kill by reusing its id.
+   * The renderer may author only a UUID correlation id in addition to the
+   * intent. It carries no authority: generation and host-client identity are
+   * still supplied here, and daemon replay remains scoped to that authority.
    */
   const invokeVerb = async (
     event: IpcMainInvokeEvent,
@@ -672,7 +693,7 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
       });
     }
     const request = WorkspaceMultiplexerMutationRequestSchemaZ.parse({
-      operationId: randomUUID(),
+      operationId: invocation.data.operationId ?? randomUUID(),
       expectedDaemonInstanceId: before.identity.instanceId,
       intent: invocation.data.intent,
     });
@@ -1009,6 +1030,10 @@ export function registerHostIpc(deps: HostIpcDependencies): RegisteredHostIpc {
         case "fetchFleetCatalog":
           return readResource(event, authority.generation, () =>
             deps.daemonResources.fetchFleetCatalog(controller.signal),
+          );
+        case "fetchWorkspaceCatalog":
+          return readResource(event, authority.generation, () =>
+            deps.daemonResources.fetchWorkspaceCatalog(controller.signal),
           );
         case "fetchWidgetAsset":
           return readResource(event, authority.generation, () =>

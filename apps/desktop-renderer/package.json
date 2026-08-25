@@ -19,6 +19,7 @@
     "@tmux-ide/contracts": "workspace:*",
     "@tmux-ide/core": "workspace:*",
     "@tmux-ide/daemon-client": "workspace:*",
+    "@tmux-ide/presentation": "workspace:*",
     "@tmux-ide/sdk": "workspace:*",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/addon-unicode11": "0.9.0",

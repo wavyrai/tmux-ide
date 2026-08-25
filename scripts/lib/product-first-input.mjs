@@ -1235,6 +1235,137 @@ export function qualifyProductInputDistribution(records, expected) {
   return assessProductInputDistribution(records, expected).qualified;
 }
 
+const PRODUCT_TUI_RUNTIME_PROGRESS_MAX_RECORDS = 32;
+const PRODUCT_TUI_RUNTIME_PHASES = new Set([
+  "stream-open-start",
+  "stream-open-resolved",
+  "physical-ready",
+  "layout",
+  "seed",
+  "coherent",
+]);
+const PRODUCT_TUI_LAYOUT_REJECTIONS = new Set([
+  "ambiguous-window-identity",
+  "incomplete-inventory-coverage",
+]);
+
+export function summarizeProductTuiRuntimeProgress({
+  lifecycleRecords,
+  processId,
+  daemonGeneration,
+}) {
+  const projected = [];
+  let matchingCount = 0;
+  let malformedCount = 0;
+  let currentGeneration = null;
+  const boundedCount = (value, maximum = 513) =>
+    Number.isSafeInteger(value) && value >= 0 && value <= maximum ? value : null;
+  for (const record of lifecycleRecords) {
+    if (record?.processId !== processId || record?.clockId !== "opentui-performance-now") continue;
+    if (record?.phase === "generation-connection-start") {
+      currentGeneration =
+        typeof record.daemonGeneration === "string" ? record.daemonGeneration : null;
+      continue;
+    }
+    if (currentGeneration !== daemonGeneration) continue;
+    let entry = null;
+    if (record?.phase === "generation-runtime-progress") {
+      const runtimePhase = record.runtimePhase;
+      if (!PRODUCT_TUI_RUNTIME_PHASES.has(runtimePhase)) continue;
+      const atMicros = boundedCount(record.monotonicMicros, 60_000_000_000);
+      if (atMicros === null) {
+        malformedCount += 1;
+        continue;
+      }
+      if (runtimePhase === "layout") {
+        const windows = boundedCount(record.windows);
+        const panes = boundedCount(record.panes);
+        const current = typeof record.current === "boolean" ? record.current : null;
+        const rejected =
+          record.rejected === undefined
+            ? null
+            : PRODUCT_TUI_LAYOUT_REJECTIONS.has(record.rejected)
+              ? record.rejected
+              : undefined;
+        if (windows === null || panes === null || current === null || rejected === undefined) {
+          malformedCount += 1;
+          continue;
+        }
+        entry = { phase: runtimePhase, atMicros, windows, panes, current, rejected };
+      } else if (runtimePhase === "seed") {
+        const seededPanes = boundedCount(record.seededPanes);
+        const expectedPanes = boundedCount(record.expectedPanes);
+        if (seededPanes === null || expectedPanes === null || seededPanes > expectedPanes) {
+          malformedCount += 1;
+          continue;
+        }
+        entry = { phase: runtimePhase, atMicros, seededPanes, expectedPanes };
+      } else {
+        const panes = boundedCount(record.panes);
+        if (panes === null) {
+          malformedCount += 1;
+          continue;
+        }
+        entry = {
+          phase: runtimePhase,
+          atMicros,
+          panes,
+          ...(runtimePhase === "coherent"
+            ? {
+                seededPanes: boundedCount(record.seededPanes),
+                windows: boundedCount(record.windows),
+              }
+            : {}),
+        };
+        if (runtimePhase === "coherent" && (entry.seededPanes === null || entry.windows === null)) {
+          malformedCount += 1;
+          continue;
+        }
+      }
+    } else if (record?.phase === "generation-runtime-fault") {
+      entry = {
+        phase: "runtime-fault",
+        atMicros: boundedCount(record.monotonicMicros, 60_000_000_000),
+        reason: "runtime-fault",
+      };
+      if (entry.atMicros === null) {
+        malformedCount += 1;
+        continue;
+      }
+    } else if (record?.phase === "generation-shell-lifecycle") {
+      const clientPhase = [
+        "loading",
+        "live",
+        "stale",
+        "degraded",
+        "unavailable",
+        "error",
+        "disposed",
+      ].includes(record.clientPhase)
+        ? record.clientPhase
+        : null;
+      const inventoryResources = boundedCount(record.inventoryResources);
+      const atMicros = boundedCount(record.monotonicMicros, 60_000_000_000);
+      if (clientPhase === null || inventoryResources === null || atMicros === null) {
+        malformedCount += 1;
+        continue;
+      }
+      entry = { phase: "supervisor", atMicros, clientPhase, inventoryResources };
+    }
+    if (!entry) continue;
+    matchingCount += 1;
+    if (projected.length < PRODUCT_TUI_RUNTIME_PROGRESS_MAX_RECORDS)
+      projected.push(Object.freeze(entry));
+  }
+  return Object.freeze({
+    records: Object.freeze(projected),
+    matchingCount,
+    retainedCount: projected.length,
+    overflowCount: Math.max(0, matchingCount - projected.length),
+    malformedCount,
+  });
+}
+
 export function productCoherentFrameTimeoutObservation({
   lifecycleRecords,
   traceRecords,
@@ -1294,6 +1425,20 @@ export function productCoherentFrameTimeoutObservation({
   );
   const resources = lifecycle.filter((record) => record?.phase === "resource-snapshot").at(-1);
   const finiteMicros = (value) => (Number.isSafeInteger(value) && value >= 0 ? value : null);
+  const runtimeProgress =
+    exactProcessId && exactGeneration
+      ? summarizeProductTuiRuntimeProgress({
+          lifecycleRecords,
+          processId: exactProcessId,
+          daemonGeneration: exactGeneration,
+        })
+      : Object.freeze({
+          records: Object.freeze([]),
+          matchingCount: 0,
+          retainedCount: 0,
+          overflowCount: 0,
+          malformedCount: 0,
+        });
   return Object.freeze({
     version: 1,
     operation: "wait-for-coherent-terminal-frame",
@@ -1328,6 +1473,7 @@ export function productCoherentFrameTimeoutObservation({
         : null,
     lifecycleWriterFailed:
       typeof resources?.diagnostics?.failed === "boolean" ? resources.diagnostics.failed : null,
+    runtimeProgress,
   });
 }
 

@@ -263,20 +263,28 @@ export function createTmuxIdeSdk(candidate: unknown): TmuxIdeSdk {
       host.workspace.commitPreparedOpen &&
       host.workspace.cancelPreparedOpen
         ? {
-            prepareProjectDirectory: async (previousWorkspaceName?: string | null) => {
-              const result = await host.workspace.prepareProjectDirectory!(previousWorkspaceName);
+            prepareProjectDirectory: async (
+              previousWorkspaceName?: string | null,
+              operationId?: string,
+            ) => {
+              const result = await host.workspace.prepareProjectDirectory!(
+                previousWorkspaceName,
+                operationId,
+              );
               return result === null ? null : WorkspaceOpenPreparedHostResultSchemaZ.parse(result);
             },
-            commitPreparedOpen: async (decision) =>
+            commitPreparedOpen: async (decision, operationId) =>
               WorkspaceOpenCommittedHostResultSchemaZ.parse(
                 await host.workspace.commitPreparedOpen!(
                   WorkspaceOpenDecisionArgumentsSchemaZ.parse(decision),
+                  operationId,
                 ),
               ),
-            cancelPreparedOpen: async (decision) =>
+            cancelPreparedOpen: async (decision, operationId) =>
               WorkspaceOpenCancelledHostResultSchemaZ.parse(
                 await host.workspace.cancelPreparedOpen!(
                   WorkspaceOpenDecisionArgumentsSchemaZ.parse(decision),
+                  operationId,
                 ),
               ),
           }

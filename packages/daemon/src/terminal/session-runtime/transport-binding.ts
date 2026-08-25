@@ -32,6 +32,20 @@ const HostClientIdSchemaZ = z
 
 export type SessionRuntimeTransport = z.infer<typeof TransportSchemaZ>;
 
+function sameAuthorityLease(
+  left: SessionRuntimeAuthorityLease,
+  right: SessionRuntimeAuthorityLease,
+): boolean {
+  return (
+    left.generation === right.generation &&
+    left.session === right.session &&
+    left.clientId === right.clientId &&
+    left.authority === right.authority &&
+    left.token === right.token &&
+    left.revision === right.revision
+  );
+}
+
 export interface SessionRuntimeTransportBindingRequest {
   readonly transport: SessionRuntimeTransport;
   readonly transportLeaseId: string;
@@ -122,7 +136,12 @@ export class SessionRuntimeTransportBinding {
   readonly #causalCellProbes = new Map<string, string>();
   #baseHandle: SessionRuntimeExecutionHandle | null;
   #baseHandleLease: SessionRuntimeControllerLease | null;
+  #geometryAuthorityLease: SessionRuntimeAuthorityLease | null = null;
   #closed = false;
+
+  get explicitAuthority(): boolean {
+    return this.#explicitAuthority;
+  }
 
   constructor(
     binder: SessionRuntimeTransportBinder,
@@ -236,11 +255,28 @@ export class SessionRuntimeTransportBinding {
       this.#binder.activateController(this.#shared);
     }
     const lease = this.#shared.consumer.acquireAuthority(authority);
+    if (authority === "geometry") {
+      const previousIndex = this.#shared.geometryTransportLeaseIds.indexOf(this.#transportLeaseId);
+      if (previousIndex >= 0) this.#shared.geometryTransportLeaseIds.splice(previousIndex, 1);
+      this.#geometryAuthorityLease = lease;
+      if (lease) this.#shared.geometryTransportLeaseIds.push(this.#transportLeaseId);
+    }
     return lease;
   }
 
   releaseAuthority(authority: SessionRuntimeAuthorityKind): SessionRuntimeAuthoritySnapshot {
     this.#assertOpen();
+    if (authority === "geometry") {
+      const geometryIndex = this.#shared.geometryTransportLeaseIds.indexOf(this.#transportLeaseId);
+      const wasCurrent =
+        geometryIndex >= 0 && geometryIndex === this.#shared.geometryTransportLeaseIds.length - 1;
+      if (geometryIndex >= 0) this.#shared.geometryTransportLeaseIds.splice(geometryIndex, 1);
+      this.#geometryAuthorityLease = null;
+      if (wasCurrent && this.#shared.geometryTransportLeaseIds.length === 0) {
+        this.#shared.consumer.releaseAuthority("geometry");
+      }
+      return this.#shared.consumer.authoritySnapshot();
+    }
     if (authority === "input" && this.#explicitAuthority && this.#shared.lease) {
       const controller = this.#shared.lease;
       this.#shared.lease = null;
@@ -361,21 +397,31 @@ export class SessionRuntimeTransportBinding {
     }
   }
 
-  fitViewport(cols: number, rows: number): void {
-    this.assertController();
+  fitViewport(expectedLease: SessionRuntimeAuthorityLease, cols: number, rows: number): void {
+    this.#assertOpen();
     if (this.#shared.geometryTransportLeaseIds.at(-1) !== this.#transportLeaseId) {
       throw new SessionRuntimeControllerLeaseError(
         "invalid-client-capability",
         "The transport does not own the live geometry lease.",
       );
     }
-    const lease = this.#shared.lease;
-    if (!lease)
+    if (!this.#explicitAuthority) {
+      const controller = this.#shared.lease;
+      if (!controller)
+        throw new SessionRuntimeControllerLeaseError(
+          "stale-controller-lease",
+          "Geometry authority retired.",
+        );
+      this.#shared.consumer.fitViewport(controller, cols, rows);
+      return;
+    }
+    const lease = this.#geometryAuthorityLease;
+    if (!lease || !sameAuthorityLease(lease, expectedLease))
       throw new SessionRuntimeControllerLeaseError(
         "stale-controller-lease",
         "Geometry authority retired.",
       );
-    this.#shared.consumer.fitViewport(lease, cols, rows);
+    this.#shared.consumer.fitViewportWithAuthority(lease, cols, rows);
   }
 
   executionHandleForSource(semanticPaneId: string): SessionRuntimeExecutionHandle {
@@ -421,7 +467,17 @@ export class SessionRuntimeTransportBinding {
     }
     this.#causalCellProbes.clear();
     const geometryIndex = this.#shared.geometryTransportLeaseIds.indexOf(this.#transportLeaseId);
+    const wasCurrent =
+      geometryIndex >= 0 && geometryIndex === this.#shared.geometryTransportLeaseIds.length - 1;
     if (geometryIndex >= 0) this.#shared.geometryTransportLeaseIds.splice(geometryIndex, 1);
+    this.#geometryAuthorityLease = null;
+    if (wasCurrent && this.#shared.geometryTransportLeaseIds.length === 0) {
+      try {
+        this.#shared.consumer.releaseAuthority("geometry");
+      } catch {
+        // A concurrently retired generation already invalidated this exact lease.
+      }
+    }
     this.#intentHandles.clear();
     await this.#binder.release(this.#shared, this.#contributedSourcePaneIds, this.#interactive);
   }

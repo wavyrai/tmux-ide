@@ -87,6 +87,14 @@ export interface MirrorLayoutEvent {
   panes: MirrorLayoutPane[];
 }
 
+/** Full, incarnation-bound layout authority; replacement semantics remove absent windows. */
+export interface MirrorLayoutAuthoritySnapshot {
+  readonly session: string;
+  readonly runtimeSessionId: string;
+  readonly topologyEpoch: number;
+  readonly layouts: readonly MirrorLayoutEvent[];
+}
+
 /** A pane row of {@link MirrorSessionDescription} — semantic identity only. */
 export interface MirrorPaneDescription {
   semanticPaneId: string;

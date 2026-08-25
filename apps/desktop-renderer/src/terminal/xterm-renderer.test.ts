@@ -1,5 +1,6 @@
 /* @vitest-environment happy-dom */
 import { describe, expect, it, vi } from "vitest";
+import { Terminal } from "@xterm/xterm";
 // @ts-expect-error The production ProductRig helper is intentionally authored as native ESM JavaScript.
 import { captureAnsiCursorWebPresentation } from "../../../../scripts/lib/product-ansi-cursor-alt-screen.mjs";
 import {
@@ -21,6 +22,10 @@ import {
 } from "./xterm-renderer.ts";
 
 vi.mock("../../../../scripts/lib/performance-reference-budgets.mjs", () => ({
+  TUI_CURSOR_PRESENTATION_P99_CEILING_MICROS: 33_000,
+  TUI_EVENT_LOOP_CURRENT_ENDPOINT_CEILING_MICROS: 33_000,
+  TUI_EVENT_LOOP_GENERATION_STICKY_PEAK_CEILING_MICROS: 100_000,
+  TUI_EVENT_LOOP_WORKLOAD_P99_CEILING_MS: 33,
   TUI_HEAP_ABSOLUTE_CEILING_BYTES: 512 * 1024 * 1024,
   TUI_RSS_ABSOLUTE_CEILING_BYTES: 1024 * 1024 * 1024,
 }));
@@ -267,6 +272,120 @@ describe("resolveTerminalFontFamily", () => {
 });
 
 describe("xterm presentation projection", () => {
+  it("restores input modes on a fresh xterm and resets them with a mode-only patch", async () => {
+    const terminal = new Terminal({ cols: 8, rows: 3, screenReaderMode: true });
+    const container = document.body.appendChild(document.createElement("div"));
+    terminal.open(container);
+    const blank = blankTerminalReplicaSnapshot(8, 3);
+    const enabled = {
+      ...blank,
+      modes: {
+        ...blank.modes,
+        applicationCursor: true,
+        applicationKeypad: true,
+        bracketedPaste: true,
+        insert: true,
+        origin: true,
+        mouseTracking: true,
+        mouseProtocol: "drag" as const,
+        mouseEncoding: "sgr" as const,
+        synchronizedOutput: true,
+      },
+    };
+    const write = async (bytes: Uint8Array): Promise<void> =>
+      await new Promise<void>((resolve) => terminal.write(bytes, resolve));
+    await write(encodeAnsiTerminalRepresentation(null, enabled));
+    expect(terminal.modes).toMatchObject({
+      applicationCursorKeysMode: true,
+      applicationKeypadMode: true,
+      bracketedPasteMode: true,
+      insertMode: true,
+      originMode: true,
+      mouseTrackingMode: "drag",
+      synchronizedOutputMode: true,
+    });
+
+    const reset = {
+      ...enabled,
+      modes: { ...blank.modes, mouseProtocol: "none" as const, mouseEncoding: "default" as const },
+    };
+    await write(
+      encodeAnsiTerminalPatchRepresentation({ rows: [], modes: reset.modes }, reset, enabled),
+    );
+    expect(terminal.modes).toMatchObject({
+      applicationCursorKeysMode: false,
+      applicationKeypadMode: false,
+      bracketedPasteMode: false,
+      insertMode: false,
+      originMode: false,
+      mouseTrackingMode: "none",
+      synchronizedOutputMode: false,
+    });
+    terminal.dispose();
+    container.remove();
+  });
+
+  it("preserves a real xterm selection while rolling a 5k canonical history", async () => {
+    const terminal = new Terminal({
+      cols: 8,
+      rows: 3,
+      screenReaderMode: true,
+      scrollback: 10_000,
+    });
+    const container = document.body.appendChild(document.createElement("div"));
+    terminal.open(container);
+    const blank = blankTerminalReplicaSnapshot(8, 3);
+    const row = (text: string) => ({
+      ...blank.grid[0]!,
+      cells: blank.grid[0]!.cells.map((cell, index) => ({
+        ...cell,
+        grapheme: text[index] ?? " ",
+      })),
+    });
+    const history = Array.from({ length: 5_000 }, (_, index) =>
+      row(index === 100 ? "SELECTED" : `h${String(index).padStart(4, "0")}`),
+    );
+    const baseline = {
+      ...blank,
+      history,
+      grid: [row("view-a"), row("view-b"), row("view-c")],
+    };
+    const write = async (bytes: Uint8Array): Promise<void> =>
+      await new Promise<void>((resolve) => terminal.write(bytes, resolve));
+    await write(encodeAnsiTerminalRepresentation(null, baseline));
+    terminal.select(0, 100, 8);
+    expect(terminal.getSelection()).toBe("SELECTED");
+
+    const appended = baseline.grid[0]!;
+    const target = {
+      ...baseline,
+      history: [...history, appended],
+      grid: [row("view-b"), row("view-c"), row("latest")],
+    };
+    const bytes = encodeAnsiTerminalPatchRepresentation(
+      {
+        historyDelta: { trim: 0, append: [appended] },
+        rows: [
+          { index: 0, row: target.grid[0]! },
+          { index: 1, row: target.grid[1]! },
+          { index: 2, row: target.grid[2]! },
+        ],
+      },
+      target,
+      baseline,
+    );
+    expect(new TextDecoder().decode(bytes)).not.toContain("\u001b[2J");
+    expect(new TextDecoder().decode(bytes)).not.toContain("\u001b[3J");
+    expect(bytes.byteLength).toBeLessThan(256);
+    await write(bytes);
+    expect(terminal.getSelection()).toBe("SELECTED");
+    expect(
+      terminal.buffer.active.getLine(terminal.buffer.active.baseY + 2)?.translateToString(false),
+    ).toBe("latest  ");
+    terminal.dispose();
+    container.remove();
+  });
+
   it("binds the exact browser DOM projection to expected cells and cursor geometry", async () => {
     const keyHex = "0d".repeat(32);
     const pane = "pane-dom-proof";

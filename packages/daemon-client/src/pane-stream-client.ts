@@ -46,6 +46,20 @@ type SocketEventType = "open" | "message" | "close" | "error";
 type SocketListener = (event: { readonly data?: unknown }) => void;
 const MAX_PENDING_TERMINAL_INPUTS = 256;
 
+function sameAuthorityLease(
+  left: SessionRuntimeAuthorityLease,
+  right: SessionRuntimeAuthorityLease,
+): boolean {
+  return (
+    left.generation === right.generation &&
+    left.session === right.session &&
+    left.clientId === right.clientId &&
+    left.authority === right.authority &&
+    left.token === right.token &&
+    left.revision === right.revision
+  );
+}
+
 function performanceNowMicros(): number {
   return Math.floor(performance.now() * 1_000);
 }
@@ -251,6 +265,9 @@ export interface OpenPaneStreamClientOptions {
   readonly onClockCalibrationOutcome?: (outcome: PaneStreamClockCalibrationOutcome) => void;
   readonly diagnosticNextTurn?: (callback: () => void) => () => void;
   readonly onLayout?: (frame: Extract<PaneStreamServerFrame, { type: "layout" }>) => void;
+  readonly onLayoutSnapshot?: (
+    frame: Extract<PaneStreamServerFrame, { type: "layout-snapshot" }>,
+  ) => void;
   readonly onInputAck?: (event: {
     readonly pane: string;
     readonly sequence: number;
@@ -291,6 +308,7 @@ export type ConnectIssuedPaneStreamRuntimeClientOptions = Pick<
   | "onClockCalibrationOutcome"
   | "diagnosticNextTurn"
   | "onLayout"
+  | "onLayoutSnapshot"
   | "onInputAck"
   | "onCausalCellProof"
   | "onCausalCellFailure"
@@ -307,6 +325,7 @@ export interface PaneStreamRuntimeClient {
   readonly effectiveViewerMode: PaneStreamIssueDescriptor["effectiveViewerMode"];
   readonly authoritySnapshot: SessionRuntimeAuthoritySnapshot | null;
   ownsConnectionAuthority(authority: SessionRuntimeAuthorityKind): boolean;
+  connectionAuthorityClientId(authority: SessionRuntimeAuthorityKind): string | null;
   setPresence(state: SessionRuntimePresenceState): void;
   noteActivity(activity: SessionRuntimeActivityKind): void;
   requestAuthority(
@@ -323,7 +342,7 @@ export interface PaneStreamRuntimeClient {
   ): Promise<SessionRuntimeTerminalInputResult>;
   sendText(pane: string, text: string, performanceTraceId?: string): void;
   sendKey(pane: string, key: string, performanceTraceId?: string): void;
-  fitViewport(cols: number, rows: number): Promise<void>;
+  fitViewport(cols: number, rows: number): Promise<"ok" | "geometry-authority-conflict">;
   ack(ack: TerminalDeliveryAck): void;
   nack(nack: TerminalDeliveryNack): void;
   setVisibility(
@@ -420,6 +439,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
   };
   let closed = false;
   let verified = false;
+  let layoutTopologyEpoch = -1;
   let resolveReady!: (client: PaneStreamRuntimeClient) => void;
   let rejectReady!: (error: Error) => void;
   const ready = new Promise<PaneStreamRuntimeClient>((resolve, reject) => {
@@ -631,6 +651,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
     }
   >();
   let authoritySnapshot: SessionRuntimeAuthoritySnapshot | null = null;
+  let authorityRuntimeSession: string | null = null;
   // Authority ownership is global to the authenticated client, but explicit
   // authority admission is scoped to this pane-stream connection. A fresh
   // socket must not infer that it has completed the request handshake merely
@@ -679,7 +700,8 @@ export async function connectIssuedPaneStreamRuntimeClient(
     {
       cols: number;
       rows: number;
-      resolve(): void;
+      lease: SessionRuntimeAuthorityLease;
+      resolve(result: "ok" | "geometry-authority-conflict"): void;
       reject(error: Error): void;
       timer: RuntimeTimer;
     }
@@ -727,11 +749,52 @@ export async function connectIssuedPaneStreamRuntimeClient(
     }
     pendingInputs.clear();
   };
-  const applyAuthoritySnapshot = (snapshot: SessionRuntimeAuthoritySnapshot): void => {
-    if (snapshot.generation !== descriptor.daemonInstanceId) {
-      fail("Pane-stream authority snapshot belonged to another daemon generation");
-      return;
+  const acceptAuthoritySnapshotIdentity = (snapshot: SessionRuntimeAuthoritySnapshot): boolean => {
+    if (snapshot.generation !== descriptor.daemonInstanceId) return false;
+    if (authorityRuntimeSession === null) authorityRuntimeSession = snapshot.session;
+    return snapshot.session === authorityRuntimeSession;
+  };
+  const sameAuthoritySnapshot = (
+    left: SessionRuntimeAuthoritySnapshot,
+    right: SessionRuntimeAuthoritySnapshot,
+  ): boolean =>
+    left.generation === right.generation &&
+    left.session === right.session &&
+    left.revision === right.revision &&
+    left.nativeGeometryYieldUntilMs === right.nativeGeometryYieldUntilMs &&
+    left.owners.input === right.owners.input &&
+    left.owners.focus === right.owners.focus &&
+    left.owners.geometry === right.owners.geometry &&
+    left.clients.length === right.clients.length &&
+    left.clients.every((client, index) => {
+      const peer = right.clients[index];
+      return (
+        peer !== undefined &&
+        client.clientId === peer.clientId &&
+        client.surface === peer.surface &&
+        client.state === peer.state &&
+        client.connectedRevision === peer.connectedRevision &&
+        client.activityRevision === peer.activityRevision
+      );
+    });
+  const applyAuthoritySnapshot = (snapshot: SessionRuntimeAuthoritySnapshot): boolean => {
+    if (!acceptAuthoritySnapshotIdentity(snapshot)) {
+      fail("Pane-stream authority snapshot belonged to another runtime session");
+      return false;
     }
+    if (authoritySnapshot && snapshot.revision < authoritySnapshot.revision) {
+      fail("Pane-stream authority snapshot revision regressed");
+      return false;
+    }
+    if (
+      authoritySnapshot &&
+      snapshot.revision === authoritySnapshot.revision &&
+      !sameAuthoritySnapshot(snapshot, authoritySnapshot)
+    ) {
+      fail("Pane-stream authority snapshot changed without advancing its revision");
+      return false;
+    }
+    if (authoritySnapshot && sameAuthoritySnapshot(snapshot, authoritySnapshot)) return true;
     const ownedInput = authoritySnapshot?.owners.input === options.hostClientId;
     authoritySnapshot = snapshot;
     if (snapshot.owners.input !== options.hostClientId) connectionAuthorityGrants.delete("input");
@@ -742,20 +805,22 @@ export async function connectIssuedPaneStreamRuntimeClient(
       retirePendingInputsForAuthorityLoss();
     }
     options.onAuthoritySnapshot?.(snapshot);
+    return true;
   };
   const authorityReceiptMatchesAction = (
     action: "request" | "release",
     frame: Extract<PaneStreamServerFrame, { type: "authority-receipt" }>,
   ): boolean => {
-    if (frame.snapshot.generation !== descriptor.daemonInstanceId) return false;
+    if (!acceptAuthoritySnapshotIdentity(frame.snapshot)) return false;
     if (action === "release") return frame.status === "released" && frame.lease === null;
     if (frame.status === "rejected") return frame.lease === null;
     if (frame.status !== "granted" || frame.lease === null) return false;
     return (
       frame.lease.generation === descriptor.daemonInstanceId &&
-      frame.lease.session === frame.snapshot.session &&
+      frame.lease.session === authorityRuntimeSession &&
       frame.lease.clientId === options.hostClientId &&
       frame.lease.authority === frame.authority &&
+      frame.lease.revision <= frame.snapshot.revision &&
       frame.snapshot.owners[frame.authority] === options.hostClientId
     );
   };
@@ -1183,7 +1248,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
         panes: frame.panes.length,
         effectiveViewerMode: frame.effectiveViewerMode,
       });
-      if (frame.authority) applyAuthoritySnapshot(frame.authority);
+      if (frame.authority && !applyAuthoritySnapshot(frame.authority)) return;
       clearReadyTimer();
       send({
         type: "presence",
@@ -1296,9 +1361,9 @@ export async function connectIssuedPaneStreamRuntimeClient(
         !authorityReceiptMatchesAction(pending.action, frame)
       )
         return fail("Pane-stream authority receipt did not match a request");
+      if (!applyAuthoritySnapshot(frame.snapshot)) return;
       pending.timer.release();
       pendingAuthorities.delete(frame.requestId);
-      applyAuthoritySnapshot(frame.snapshot);
       if (pending.action === "request" && frame.status === "granted" && frame.lease)
         connectionAuthorityGrants.set(frame.authority, frame.lease);
       else connectionAuthorityGrants.delete(frame.authority);
@@ -1307,11 +1372,26 @@ export async function connectIssuedPaneStreamRuntimeClient(
     }
     if (frame.type === "viewport-ack") {
       const pending = pendingViewports.get(frame.seq);
-      if (!pending || pending.cols !== frame.cols || pending.rows !== frame.rows)
+      const granted = connectionAuthorityGrants.get("geometry");
+      if (
+        !pending ||
+        pending.cols !== frame.cols ||
+        pending.rows !== frame.rows ||
+        !sameAuthorityLease(pending.lease, frame.authorityLease) ||
+        (granted !== undefined && !sameAuthorityLease(granted, pending.lease)) ||
+        (frame.outcome === "ok" && granted === undefined)
+      )
         return fail("Pane-stream viewport acknowledgement did not match a request");
       pending.timer.release();
       pendingViewports.delete(frame.seq);
-      pending.resolve();
+      if (
+        frame.outcome === "geometry-authority-conflict" &&
+        granted !== undefined &&
+        sameAuthorityLease(granted, pending.lease)
+      ) {
+        connectionAuthorityGrants.delete("geometry");
+      }
+      pending.resolve(frame.outcome);
       return;
     }
     if (frame.type === "semantic-intent-ack") {
@@ -1342,6 +1422,11 @@ export async function connectIssuedPaneStreamRuntimeClient(
     }
     if (frame.type === "error" && frame.code === "input-rejected") {
       retirePendingInputsForAuthorityLoss();
+    }
+    if (frame.type === "layout-snapshot") {
+      if (frame.topologyEpoch <= layoutTopologyEpoch)
+        return fail("Pane-stream layout topology epoch did not advance");
+      layoutTopologyEpoch = frame.topologyEpoch;
     }
     routeFrame(options, frame, fail);
   };
@@ -1381,6 +1466,8 @@ export async function connectIssuedPaneStreamRuntimeClient(
       return authoritySnapshot;
     },
     ownsConnectionAuthority: (authority) => connectionAuthorityGrants.has(authority),
+    connectionAuthorityClientId: (authority) =>
+      connectionAuthorityGrants.get(authority)?.clientId ?? null,
     setPresence: (state) =>
       send({ type: "presence", generation: descriptor.daemonInstanceId, state }),
     noteActivity: (activity) =>
@@ -1407,8 +1494,9 @@ export async function connectIssuedPaneStreamRuntimeClient(
       );
     },
     fitViewport: async (cols, rows) => {
-      if (!connectionAuthorityGrants.has("geometry")) {
-        const geometry = await requestAuthority("geometry");
+      let geometry = connectionAuthorityGrants.get("geometry") ?? null;
+      if (!geometry) {
+        geometry = await requestAuthority("geometry");
         if (!geometry) {
           throw new PaneStreamOperationError(
             "authority-rejected",
@@ -1418,14 +1506,14 @@ export async function connectIssuedPaneStreamRuntimeClient(
       }
       viewportSequence += 1;
       const seq = viewportSequence;
-      await new Promise<void>((resolve, reject) => {
+      return await new Promise<"ok" | "geometry-authority-conflict">((resolve, reject) => {
         const timer = createRuntimeTimer(() => {
           pendingViewports.delete(seq);
           reject(new PaneStreamOperationError("operation-timeout", "Viewport fit timed out"));
         }, 2_000);
-        pendingViewports.set(seq, { cols, rows, resolve, reject, timer });
+        pendingViewports.set(seq, { cols, rows, lease: geometry, resolve, reject, timer });
         try {
-          send({ type: "viewport", seq, cols, rows });
+          send({ type: "viewport", seq, cols, rows, authorityLease: geometry });
         } catch (error) {
           timer.release();
           pendingViewports.delete(seq);
@@ -1469,7 +1557,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
 function routeFrame(
   options: ConnectIssuedPaneStreamRuntimeClientOptions,
   frame: PaneStreamServerFrame,
-  fail: (message: string) => void,
+  fail: (message: string | Error) => void,
 ): void {
   switch (frame.type) {
     case "terminal-delivery-ready":
@@ -1498,6 +1586,9 @@ function routeFrame(
     case "layout":
       options.onLayout?.(frame);
       return;
+    case "layout-snapshot":
+      options.onLayoutSnapshot?.(frame);
+      return;
     case "semantic-intent-ack":
     case "viewport-ack":
     case "authority-snapshot":
@@ -1508,7 +1599,12 @@ function routeFrame(
       fail("Pane-stream received an unhandled input acknowledgement");
       return;
     case "error":
-      fail(`Pane-stream daemon rejected the connection: ${frame.code}`);
+      fail(
+        new PaneStreamOperationError(
+          frame.code,
+          `Pane-stream daemon rejected the connection: ${frame.code}`,
+        ),
+      );
       return;
     case "ready":
       fail("Pane-stream sent a duplicate ready frame");

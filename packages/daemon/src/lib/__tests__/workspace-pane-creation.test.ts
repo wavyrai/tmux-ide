@@ -7,6 +7,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -15,6 +16,8 @@ import type { WorkspacePaneCreateMutationRequest } from "@tmux-ide/contracts";
 import { _setExecutor } from "@tmux-ide/tmux-bridge";
 
 import {
+  createPinnedWorkspaceTmuxAsyncRunner,
+  createPinnedWorkspaceTmuxRunner,
   resolveWorkspacePaneTmuxAuthority,
   WorkspacePaneCreationAuthority,
   WorkspacePaneCreationError,
@@ -247,6 +250,39 @@ function errorCode(error: unknown): string | undefined {
 }
 
 describe("WorkspacePaneCreationAuthority", () => {
+  it("pins and revalidates an actual Unix socket for sync and async runners", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tmux-ide-pinned-socket-"));
+    roots.push(root);
+    const socketPath = join(root, "t.sock");
+    const executablePath = join(root, "tmux");
+    writeFileSync(executablePath, "#!/bin/sh\nprintf 'ok\\n'\n");
+    chmodSync(executablePath, 0o755);
+    const listen = async () => {
+      const server = createServer();
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(socketPath, resolve);
+      });
+      return server;
+    };
+    const first = await listen();
+    const authority = {
+      executablePath,
+      socketSelector: { kind: "path" as const, path: socketPath },
+    };
+    const sync = createPinnedWorkspaceTmuxRunner(authority);
+    const asyncRunner = createPinnedWorkspaceTmuxAsyncRunner(authority);
+    await expect(asyncRunner(["display-message"])).resolves.toBe("ok");
+    await new Promise<void>((resolve) => first.close(() => resolve()));
+    const second = await listen();
+    try {
+      expect(() => sync(["display-message"])).toThrow(/changed before use/u);
+      expect(() => asyncRunner(["display-message"])).toThrow(/changed before use/u);
+    } finally {
+      await new Promise<void>((resolve) => second.close(() => resolve()));
+    }
+  });
+
   it("creates a terminal from canonical daemon-owned facts and returns semantic identity only", async () => {
     const { authority, fake } = rig();
     const result = await authority.create(request());

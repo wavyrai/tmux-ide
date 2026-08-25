@@ -142,7 +142,7 @@ class FakeControl implements TerminalFastLaneControlPort {
   requestResult = true;
   writeResult: "ok" | "authority-lost" = "ok";
   writeResults: Array<"ok" | "authority-lost"> = [];
-  resizeResult: "ok" | "authority-lost" = "ok";
+  resizeResult: "ok" | "authority-lost" | "geometry-authority-conflict" = "ok";
   writeGate: Promise<void> | null = null;
   writeGates: Promise<void>[] = [];
   resizeGates: Promise<void>[] = [];
@@ -627,6 +627,18 @@ describe("terminal fast lane", () => {
       resizeTransports: 2,
       resizeSuperseded: 1,
     });
+  });
+
+  it("preserves an exact geometry authority conflict without treating it as applied", async () => {
+    const { lane, control } = rig();
+    control.owned.add("geometry");
+    control.resizeResult = "geometry-authority-conflict";
+
+    await expect(lane.resize({ cols: 140, rows: 46 })).resolves.toEqual({
+      status: "geometry-authority-conflict",
+    });
+    expect(control.resizes).toHaveLength(1);
+    expect(lane.counters()).toMatchObject({ resizeAccepted: 1, resizeTransports: 1 });
   });
 
   it("fences an old pane subscription and accepts a fresh generation seed", () => {

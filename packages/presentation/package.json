@@ -1,0 +1,28 @@
+{
+  "name": "@tmux-ide/presentation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./pane-frame": "./src/pane-frame/index.ts",
+    "./pane-frame/web": "./src/pane-frame/web-host-unstyled.tsx",
+    "./pane-frame/web.css": "./src/pane-frame/web-host.css",
+    "./workbench-dock": "./src/workbench-dock/index.ts",
+    "./workbench-dock/web": "./src/workbench-dock/web-host-unstyled.tsx",
+    "./workbench-dock/web.css": "./src/workbench-dock/web-host.css"
+  },
+  "scripts": {
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@tmux-ide/contracts": "workspace:*",
+    "solid-js": "1.9.12"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0"
+  }
+}

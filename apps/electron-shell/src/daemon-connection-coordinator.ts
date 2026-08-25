@@ -23,6 +23,7 @@ import {
   type DesktopDaemonHostState,
   type DesktopDaemonListWorkspacesResult,
   type DesktopDaemonFetchFleetCatalogResult,
+  type DesktopDaemonFetchWorkspaceCatalogResult,
   type DesktopDaemonRefreshConnectionResult,
   type TerminalAttachmentIssueMutationRequest,
   type TerminalAttachmentIssueResult,
@@ -99,6 +100,7 @@ export interface DaemonResourceAuthority {
   ): Promise<PaneStreamIssueResult>;
   listWorkspaces(signal?: AbortSignal): Promise<DesktopDaemonListWorkspacesResult>;
   fetchFleetCatalog(signal?: AbortSignal): Promise<DesktopDaemonFetchFleetCatalogResult>;
+  fetchWorkspaceCatalog(signal?: AbortSignal): Promise<DesktopDaemonFetchWorkspaceCatalogResult>;
   fetchWidgetAsset(request: WidgetAssetRequest, signal?: AbortSignal): Promise<WidgetAssetResult>;
   fetchApplicationShell(
     workspaceName: string,
@@ -582,6 +584,25 @@ export class DaemonConnectionCoordinator implements DaemonConnectionAuthority {
           this.#broker !== broker ? "daemon-identity-mismatch" : "disposed",
         ),
       };
+    }
+    return result;
+  }
+
+  async fetchWorkspaceCatalog(
+    signal?: AbortSignal,
+  ): Promise<DesktopDaemonFetchWorkspaceCatalogResult> {
+    if (signal?.aborted) return { status: "error", error: daemonCapabilityError("disposed") };
+    const broker = this.#broker;
+    if (!broker) return this.#disconnectedResult();
+    const rendererGeneration = this.#rendererGeneration;
+    const result = await broker.fetchWorkspaceCatalog(signal);
+    if (
+      this.#broker !== broker ||
+      rendererGeneration !== this.#rendererGeneration ||
+      this.#disposed ||
+      signal?.aborted
+    ) {
+      return { status: "error", error: daemonCapabilityError("disposed") };
     }
     return result;
   }

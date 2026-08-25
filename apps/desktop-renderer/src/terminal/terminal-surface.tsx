@@ -87,6 +87,34 @@ export type TerminalSurfacePhase =
   | "disconnected"
   | "error";
 
+export type TerminalSurfaceFailureCode =
+  | "none"
+  | "geometry-authority-conflict"
+  | "resize-rejected"
+  | "resize-exception"
+  | "attach-failed"
+  | "input-failed"
+  | "renderer-failed"
+  | "output-failed";
+
+type TerminalSurfaceResizeOutcome =
+  | "none"
+  | "geometry-authority-conflict"
+  | "authority-timeout"
+  | "viewport-timeout"
+  | "stream-closed"
+  | "lifecycle-retired"
+  | "failed";
+
+function resizeOutcomeForError(code: string): Exclude<TerminalSurfaceResizeOutcome, "none"> {
+  if (code === "geometry-authority-conflict") return code;
+  if (code === "geometry-authority-timeout") return "authority-timeout";
+  if (code === "geometry-viewport-timeout") return "viewport-timeout";
+  if (code === "pane-stream-closed") return "stream-closed";
+  if (code === "geometry-lifecycle-retired") return "lifecycle-retired";
+  return "failed";
+}
+
 /**
  * Renderer-local first-attach milestones (m50 follow-up #169).
  *
@@ -315,8 +343,13 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
    * window other clients are attached to.
    */
   const [viewerMode, setViewerMode] = createSignal<TerminalAttachmentViewerMode>("interactive");
+  const [geometryPassive, setGeometryPassive] = createSignal(false);
+  const [resizeOutcome, setResizeOutcome] = createSignal<TerminalSurfaceResizeOutcome>("none");
+  const [resizeOrdinal, setResizeOrdinal] = createSignal(0);
   const effectiveGeometryOwnership = (): TerminalAttachmentGeometryOwnership =>
-    viewerMode() === "read-only" ? "passive" : (props.geometryOwnership ?? "passive");
+    geometryPassive() || viewerMode() === "read-only"
+      ? "passive"
+      : (props.geometryOwnership ?? "passive");
   const ownsGeometry = (): boolean => effectiveGeometryOwnership() === "owner";
   const sizePassive = (): boolean => !ownsGeometry();
   const [phase, setPhase] = createSignal<TerminalSurfacePhase>(
@@ -332,6 +365,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   ]);
   const [attachAttempt, setAttachAttempt] = createSignal(terminalTransport() ? 1 : 0);
   const [reason, setReason] = createSignal<string | null>(null);
+  const [failureCode, setFailureCode] = createSignal<TerminalSurfaceFailureCode>("none");
   const [hasValidatedFrame, setHasValidatedFrame] = createSignal(false);
   const [sourceGrid, setSourceGrid] = createSignal<TerminalAttachmentViewport | null>(null);
   const [clientViewport, setClientViewport] = createSignal<TerminalAttachmentViewport | null>(null);
@@ -355,6 +389,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   let latestMeasuredViewport: TerminalAttachmentViewport | null = null;
   let pendingResize: TerminalAttachmentViewport | null = null;
   let resizeFlight: Promise<void> | null = null;
+  let lastAcknowledgedResize: TerminalAttachmentViewport | null = null;
   let resizeDebounce: ReturnType<typeof setTimeout> | null = null;
   /** True until the first owned resize has been sent, so that one goes at once. */
   let resizeSettled = true;
@@ -505,6 +540,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     resizeSettled = true;
     pendingResize = null;
     resizeFlight = null;
+    lastAcknowledgedResize = null;
     retireInput();
     retireOutput();
     if (active) safelyDispose(active);
@@ -555,17 +591,72 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     }
   };
 
+  const reconnectReadOnlyAfterGeometryConflict = (
+    activeAttachment: NativeTerminalAttachment,
+  ): void => {
+    if (disposed || attachment !== activeAttachment) return;
+    generation += 1;
+    disposeAttachment();
+    cancelConflictRetry();
+    cancelReconnectRetry();
+    conflictAttempt = 0;
+    reconnectAttempt = 0;
+    pendingResize = null;
+    setGeometryPassive(true);
+    setFailureCode("geometry-authority-conflict");
+    setReason("Another client controls terminal geometry. Using its authoritative size.");
+    resetAttachTrace(true);
+    setPhase("measuring");
+    const readOnlyGeneration = generation;
+    queueMicrotask(() => {
+      if (disposed || readOnlyGeneration !== generation || !terminalTransport()) return;
+      const nextViewport = latestMeasuredViewport ?? SIZE_PASSIVE_CONNECT_VIEWPORT;
+      latestMeasuredViewport = nextViewport;
+      connect(nextViewport);
+    });
+  };
+
   const flushResize = (): void => {
-    if (!attachment || !pendingResize || resizeFlight || disposed) return;
+    if (!attachment || !pendingResize || resizeFlight || disposed || geometryPassive()) return;
     const next = pendingResize;
     pendingResize = null;
+    if (lastAcknowledgedResize && sameViewport(lastAcknowledgedResize, next)) return;
     const activeAttachment = attachment;
+    const activeGeneration = generation;
+    if (
+      disposed ||
+      geometryPassive() ||
+      attachment !== activeAttachment ||
+      activeGeneration !== generation
+    ) {
+      return;
+    }
     const operation = activeAttachment
       .resize(validateNativeTerminalViewport(next))
       .then((result) => {
-        if (result.status !== "error" || disposed || attachment !== activeAttachment) {
+        if (
+          disposed ||
+          attachment !== activeAttachment ||
+          activeGeneration !== generation ||
+          geometryPassive()
+        ) {
           return;
         }
+        setResizeOrdinal((ordinal) => ordinal + 1);
+        if (result.status !== "error") {
+          currentViewport = next;
+          lastAcknowledgedResize = next;
+          setClientViewport(next);
+          if (pendingResize && sameViewport(pendingResize, next)) pendingResize = null;
+          setResizeOutcome("none");
+          return;
+        }
+        setResizeOutcome(resizeOutcomeForError(result.error.code));
+        if (result.error.code === "geometry-authority-conflict") {
+          reconnectReadOnlyAfterGeometryConflict(activeAttachment);
+          return;
+        }
+        setFailureCode("resize-rejected");
         setReason(validatedTransportReason(result.error.reason));
         setPhase("error");
         recordAttachPhase("failed");
@@ -573,7 +664,16 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         disposeAttachment();
       })
       .catch(() => {
-        if (disposed || attachment !== activeAttachment) return;
+        if (
+          disposed ||
+          attachment !== activeAttachment ||
+          activeGeneration !== generation ||
+          geometryPassive()
+        )
+          return;
+        setResizeOrdinal((ordinal) => ordinal + 1);
+        setResizeOutcome("failed");
+        setFailureCode("resize-exception");
         setReason("The desktop host could not resize this terminal.");
         setPhase("error");
         recordAttachPhase("failed");
@@ -581,8 +681,10 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         disposeAttachment();
       })
       .finally(() => {
-        if (resizeFlight === operation) resizeFlight = null;
-        flushResize();
+        if (resizeFlight === operation) {
+          resizeFlight = null;
+        }
+        if (!geometryPassive()) flushResize();
       });
     resizeFlight = operation;
   };
@@ -595,6 +697,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     const activeRenderer = renderer;
     const epoch = activeOutputEpoch;
     if (!activeRenderer || epoch.pending >= MAX_PENDING_OUTPUT_WRITES) {
+      setFailureCode("output-failed");
       setReason("The terminal renderer could not keep up with the native output stream.");
       setPhase("error");
       recordAttachPhase("failed");
@@ -664,6 +767,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
           renderer !== activeRenderer ||
           epoch !== activeOutputEpoch;
         if (!retiredOrStale) {
+          setFailureCode("output-failed");
           setReason("The terminal renderer could not consume native output.");
           setPhase("error");
           recordAttachPhase("failed");
@@ -692,6 +796,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     disposeAttachment();
     cancelReconnectRetry();
     setReason(message);
+    setFailureCode("attach-failed");
     setPhase("disconnected");
     recordAttachPhase("disconnected");
     const retryDelay = ATTACHMENT_RECONNECT_RETRY_MS[reconnectAttempt++];
@@ -735,6 +840,9 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     }
     if (event.type === "geometry") {
       currentViewport = event.clientViewport;
+      if (lastAcknowledgedResize && !sameViewport(lastAcknowledgedResize, event.clientViewport)) {
+        lastAcknowledgedResize = null;
+      }
       setSourceGrid(event.sourceGrid);
       setClientViewport(event.clientViewport);
       if (sizePassive()) {
@@ -754,6 +862,9 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     if (event.state === "connected") {
       recordAttachPhase("transport-ready");
       currentViewport = event.clientViewport;
+      if (lastAcknowledgedResize && !sameViewport(lastAcknowledgedResize, event.clientViewport)) {
+        lastAcknowledgedResize = null;
+      }
       setSourceGrid(event.sourceGrid);
       setClientViewport(event.clientViewport);
       if (attachment) {
@@ -787,6 +898,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     generation += 1;
     disposeAttachment();
     setReason(message);
+    setFailureCode("attach-failed");
     setPhase("error");
     recordAttachPhase("failed");
   };
@@ -854,6 +966,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
             disposeAttachment();
             conflictAttempt = 0;
             setViewerMode("read-only");
+            setGeometryPassive(true);
+            setFailureCode("none");
             setReason("Another client controls this tmux window. Viewing read-only.");
             setPhase("measuring");
             const readOnlyGeneration = generation;
@@ -936,6 +1050,10 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     }
     if (!currentViewport) return;
     if (sameViewport(currentViewport, viewport)) return;
+    if (lastAcknowledgedResize && sameViewport(lastAcknowledgedResize, viewport)) {
+      pendingResize = null;
+      return;
+    }
     pendingResize = viewport;
     /*
      * Coalesce, but never on the FIRST size.
@@ -969,6 +1087,10 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     conflictAttempt = 0;
     reconnectAttempt = 0;
     setViewerMode("interactive");
+    setGeometryPassive(false);
+    setResizeOutcome("none");
+    setResizeOrdinal(0);
+    setFailureCode("none");
     generation += 1;
     disposeAttachment();
     disposeRenderer();
@@ -996,6 +1118,8 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     currentViewport = null;
     pendingResize = null;
     setViewerMode("interactive");
+    setGeometryPassive(false);
+    setResizeOutcome("none");
     setReason(null);
     setPhase("measuring");
     scheduleFit();
@@ -1003,6 +1127,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
 
   const failInput = (message: string): void => {
     setReason(message);
+    setFailureCode("input-failed");
     setPhase("error");
     recordAttachPhase("failed");
     generation += 1;
@@ -1136,6 +1261,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       .then(({ createXtermRenderer }) => activateRenderer(createXtermRenderer(options), activeLoad))
       .catch(() => {
         if (disposed || activeLoad !== rendererLoadGeneration) return;
+        setFailureCode("renderer-failed");
         setReason("The native terminal renderer could not be loaded.");
         setPhase("error");
         recordAttachPhase("failed");
@@ -1205,6 +1331,9 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     conflictAttempt = 0;
     reconnectAttempt = 0;
     setViewerMode("interactive");
+    setGeometryPassive(false);
+    setResizeOutcome("none");
+    setResizeOrdinal(0);
     disposeAttachment();
     disposeRenderer();
     currentViewport = null;
@@ -1213,6 +1342,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     setSourceGrid(null);
     setClientViewport(null);
     setReason(null);
+    setFailureCode("none");
     setHasValidatedFrame(false);
     resetAttachTrace(Boolean(nextTransport));
     setPhase(nextTransport ? "measuring" : "unavailable");
@@ -1229,6 +1359,9 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       data-attach-phase={terminalTransport() ? attachPhase() : undefined}
       data-attach-attempt={terminalTransport() ? attachAttempt() : undefined}
       data-attach-trace={terminalTransport() ? JSON.stringify(attachTrace()) : undefined}
+      data-attach-failure-code={terminalTransport() ? failureCode() : undefined}
+      data-resize-outcome={terminalTransport() ? resizeOutcome() : undefined}
+      data-resize-ordinal={terminalTransport() ? resizeOrdinal() : undefined}
       data-focused={props.focused ?? false}
       data-viewer-mode={viewerMode()}
       data-size-passive={sizePassive()}

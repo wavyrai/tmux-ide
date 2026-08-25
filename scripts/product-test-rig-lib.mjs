@@ -9,6 +9,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { createHash, createHmac } from "node:crypto";
 
 import { theilSenSlope } from "./lib/performance-reference-report.mjs";
 
@@ -19,6 +20,8 @@ export const PRODUCT_RIG_STATE_VERSION = 1;
  * large that one diagnostic launch could exhaust the owner process.
  */
 export const PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES = 8 * 1024 * 1024;
+export const PRODUCT_RIG_SOURCE_MANIFEST_ABSOLUTE_MAX_BYTES = 16 * 1024 * 1024;
+export const PRODUCT_RIG_SOURCE_MANIFEST_HASH_CHUNK_BYTES = 64 * 1024;
 export const PRODUCT_RIG_SOURCE_INVENTORY_MAX_BYTES = 1024 * 1024;
 export const PRODUCT_RIG_SOURCE_INVENTORY_MAX_PATHS = 10_000;
 export const PRODUCT_RIG_SOURCE_PATH_MAX_BYTES = 4_096;
@@ -197,6 +200,31 @@ export function createProductJsonlTailReader(
         caughtUp: offset === observedSize && carry.length === 0,
       });
     },
+    confirmCaughtUp() {
+      if (invalidReason !== null) fail(invalidReason);
+      if (closed) fail("closed");
+      if (!open()) fail("missing");
+      let pathMetadata;
+      try {
+        pathMetadata = statSync(path);
+      } catch {
+        fail("missing");
+      }
+      const descriptorMetadata = fstatSync(descriptor);
+      if (
+        !pathMetadata.isFile() ||
+        pathMetadata.dev !== device ||
+        pathMetadata.ino !== inode ||
+        descriptorMetadata.dev !== device ||
+        descriptorMetadata.ino !== inode
+      )
+        fail("replaced");
+      if (pathMetadata.size < offset || descriptorMetadata.size < offset) fail("truncated");
+      observedSize = Math.max(pathMetadata.size, descriptorMetadata.size);
+      return (
+        carry.length === 0 && pathMetadata.size === offset && descriptorMetadata.size === offset
+      );
+    },
     mark() {
       if (invalidReason !== null) fail(invalidReason);
       if (closed) fail("closed");
@@ -211,6 +239,12 @@ export function createProductJsonlTailReader(
       if (!marks.has(mark)) fail("foreign-mark");
       return Object.freeze(records.slice(mark.recordCount));
     },
+    recordsThrough(mark) {
+      if (invalidReason !== null) fail(invalidReason);
+      if (closed) fail("closed");
+      if (!marks.has(mark)) fail("foreign-mark");
+      return Object.freeze(records.slice(0, mark.recordCount));
+    },
     close() {
       if (closed) return;
       closed = true;
@@ -219,6 +253,139 @@ export function createProductJsonlTailReader(
       carry = Buffer.alloc(0);
     },
   });
+}
+
+/** Bounded, fail-closed Card5 projection of daemon pane-stream lifecycle spans. */
+export async function projectProductPaneStreamLifecycle(
+  path,
+  evidenceKey,
+  {
+    maxEvents = 64,
+    readerFactory = createProductJsonlTailReader,
+    yieldTurn = () => new Promise((resolve) => setImmediate(resolve)),
+    signal = null,
+  } = {},
+) {
+  const unavailable = (reason) =>
+    Object.freeze({
+      available: false,
+      reason,
+      count: 0,
+      overflow: 0,
+      events: Object.freeze([]),
+    });
+  if (
+    typeof path !== "string" ||
+    path.length === 0 ||
+    !/^[0-9a-f]{64}$/u.test(evidenceKey ?? "") ||
+    !Number.isSafeInteger(maxEvents) ||
+    maxEvents < 1 ||
+    maxEvents > 64 ||
+    typeof readerFactory !== "function" ||
+    typeof yieldTurn !== "function" ||
+    (signal !== null && typeof signal?.aborted !== "boolean")
+  )
+    return unavailable("identity-unavailable");
+  const reader = readerFactory(path, {
+    maxBytesPerPoll: 64 * 1024,
+    maxRecordsPerPoll: 512,
+    recordKind: "trace",
+  });
+  let records;
+  let sealedStableEof = false;
+  try {
+    let priorOffset = -1;
+    let stableEofSamples = 0;
+    let stableEofCandidate = null;
+    for (let turn = 0; turn < 256; turn += 1) {
+      if (signal?.aborted) return unavailable("read-aborted");
+      records = reader.read();
+      const snapshot = reader.snapshot();
+      if (signal?.aborted) return unavailable("read-aborted");
+      if (snapshot.caughtUp && reader.confirmCaughtUp()) {
+        const candidate = `${snapshot.offset}:${snapshot.recordCount}:${snapshot.retainedRecordBytes}`;
+        if (candidate === stableEofCandidate) stableEofSamples += 1;
+        else {
+          stableEofCandidate = candidate;
+          stableEofSamples = 1;
+        }
+        if (stableEofSamples >= 2) {
+          sealedStableEof = true;
+          break;
+        }
+        await yieldTurn();
+        if (signal?.aborted) return unavailable("read-aborted");
+        continue;
+      }
+      stableEofSamples = 0;
+      stableEofCandidate = null;
+      if (snapshot.offset === priorOffset)
+        return unavailable(snapshot.partialBytes > 0 ? "partial-record" : "reader-stalled");
+      priorOffset = snapshot.offset;
+    }
+    if (!sealedStableEof) return unavailable("reader-budget-exhausted");
+  } catch (error) {
+    const reason =
+      error?.code === "PRODUCT_JSONL_TAIL_INVALID" &&
+      typeof error.reason === "string" &&
+      /^[a-z][a-z0-9-]{0,63}$/u.test(error.reason)
+        ? error.reason
+        : "read-failed";
+    return unavailable(reason);
+  } finally {
+    reader.close();
+  }
+  const stageByOperation = new Map([
+    ["pane-stream-server-ready", "server-ready"],
+    ["pane-stream-layout-staged", "layout-staged"],
+    ["pane-stream-layout-validated", "layout-validated"],
+    ["pane-stream-delivery-open", "delivery-open"],
+    ["pane-stream-first-seed", "first-seed"],
+    ["pane-stream-terminal", "terminal"],
+  ]);
+  const all = records.filter(
+    (record) =>
+      stageByOperation.has(record?.operation) &&
+      typeof record?.traceId === "string" &&
+      typeof record?.authority?.generation === "string",
+  );
+  if (all.length === 0) return unavailable("no-matching-events");
+  const retained = all.slice(-maxEvents).map((record, index) => {
+    const terminal = record.operation === "pane-stream-terminal";
+    const closeCode = record?.terminalDelivery?.paneStreamCloseCode;
+    const closeReason = record?.terminalDelivery?.paneStreamCloseReason;
+    const hmac = (domain, value) =>
+      createHmac("sha256", Buffer.from(evidenceKey, "hex"))
+        .update(`${domain}\0${value}`)
+        .digest("hex");
+    return Object.freeze({
+      ordinal: all.length - retainedLength(all, maxEvents) + index,
+      stage: stageByOperation.get(record.operation),
+      requestHmac: hmac("request", record.traceId),
+      generationHmac: hmac("generation", record.authority.generation),
+      closeCode:
+        terminal && Number.isSafeInteger(closeCode) && closeCode >= 1000 && closeCode <= 4999
+          ? closeCode
+          : null,
+      closeReason:
+        terminal && typeof closeReason === "string" && /^[a-z][a-z0-9-]{0,63}$/u.test(closeReason)
+          ? closeReason
+          : terminal
+            ? "unknown"
+            : "none",
+    });
+  });
+  return Object.freeze({
+    available: true,
+    reason: "available",
+    count: Math.min(all.length, 0xffff_ffff),
+    overflow: Math.max(0, all.length - retained.length),
+    events: Object.freeze(retained),
+  });
+}
+
+function retainedLength(records, maxEvents) {
+  return Math.min(records.length, maxEvents);
 }
 
 const SECRET_KEY = /(?:authorization|bearer|capability|cookie|password|secret|token)/iu;
@@ -366,6 +533,170 @@ export function boundedSourceTraceDiff(diff, maxBytes = PRODUCT_RIG_SOURCE_DIFF_
     throw new Error(`Product rig source diff is ${bytes} bytes; hard ceiling is ${maxBytes} bytes`);
   }
   return diff;
+}
+
+export function deriveProductSourceManifestReadBudget(
+  selectedHeadBytes,
+  deltaAllowance = PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES,
+  absoluteMaxBytes = PRODUCT_RIG_SOURCE_MANIFEST_ABSOLUTE_MAX_BYTES,
+) {
+  if (
+    !Number.isSafeInteger(selectedHeadBytes) ||
+    selectedHeadBytes < 0 ||
+    !Number.isSafeInteger(deltaAllowance) ||
+    deltaAllowance < 0 ||
+    !Number.isSafeInteger(absoluteMaxBytes) ||
+    absoluteMaxBytes < 1
+  )
+    throw new Error("Product rig source manifest budget was invalid");
+  const derived = selectedHeadBytes + deltaAllowance;
+  if (!Number.isSafeInteger(derived))
+    throw new Error("Product rig source manifest budget overflowed");
+  return Math.min(derived, absoluteMaxBytes);
+}
+
+export function productSourceHeadBaselineBytes(objects, expectedCount) {
+  if (
+    !Array.isArray(objects) ||
+    !Number.isSafeInteger(expectedCount) ||
+    expectedCount < 0 ||
+    objects.length !== expectedCount
+  )
+    throw new Error("Product rig source manifest HEAD inventory was incomplete");
+  let bytes = 0;
+  for (const object of objects) {
+    if (typeof object === "string" && object.endsWith(" missing")) continue;
+    const match = typeof object === "string" ? /^blob ([0-9]+)$/u.exec(object) : null;
+    const size = match ? Number(match[1]) : Number.NaN;
+    if (!Number.isSafeInteger(size) || size < 0)
+      throw new Error("Product rig source manifest HEAD inventory was invalid");
+    bytes += size;
+    if (!Number.isSafeInteger(bytes))
+      throw new Error("Product rig source manifest HEAD inventory overflowed");
+  }
+  return bytes;
+}
+
+export function buildProductSourceManifest(
+  paths,
+  { openFile, statFile, readChunk, closeFile },
+  maxBytes,
+) {
+  if (
+    !Array.isArray(paths) ||
+    paths.length > PRODUCT_RIG_SOURCE_INVENTORY_MAX_PATHS ||
+    !Number.isSafeInteger(maxBytes) ||
+    maxBytes < 0 ||
+    maxBytes > PRODUCT_RIG_SOURCE_MANIFEST_ABSOLUTE_MAX_BYTES
+  )
+    throw new Error("Product rig source manifest budget or inventory was invalid");
+  const ordered = [...paths].sort();
+  if (new Set(ordered).size !== ordered.length)
+    throw new Error("Product rig source manifest inventory was malformed");
+  let manifestBytes = 0;
+  const manifest = ordered.map((path) => {
+    if (
+      typeof path !== "string" ||
+      path.length === 0 ||
+      path.startsWith("/") ||
+      path.split("/").includes("..") ||
+      /[\0\r\n]/u.test(path) ||
+      Buffer.byteLength(path) > PRODUCT_RIG_SOURCE_PATH_MAX_BYTES ||
+      !productRigSourceTraceIncludesPath(path)
+    )
+      throw new Error("Product rig source manifest path was malformed");
+    const pathDigest = createHash("sha256").update(path).digest("hex");
+    let descriptor;
+    try {
+      descriptor = openFile(path);
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        let appeared;
+        try {
+          appeared = openFile(path);
+        } catch (confirmationError) {
+          if (confirmationError?.code === "ENOENT") {
+            return Object.freeze({
+              pathDigest,
+              contentDigest: createHash("sha256").update("deleted").digest("hex"),
+              bytes: 0,
+            });
+          }
+          throw new Error("Product rig source changed while building its manifest", {
+            cause: confirmationError,
+          });
+        }
+        try {
+          throw new Error("Product rig source changed while building its manifest", {
+            cause: error,
+          });
+        } finally {
+          closeFile(appeared);
+        }
+      }
+      throw error;
+    }
+    try {
+      const before = statFile(descriptor);
+      if (!before?.isFile?.() || !Number.isSafeInteger(before.size) || before.size < 0)
+        throw new Error("Product rig source manifest encountered a non-regular file");
+      const nextBytes = manifestBytes + before.size;
+      if (!Number.isSafeInteger(nextBytes) || nextBytes > maxBytes)
+        throw new Error("Product rig source manifest exceeded its byte ceiling");
+      const hash = createHash("sha256");
+      const chunk = Buffer.allocUnsafe(
+        Math.max(1, Math.min(PRODUCT_RIG_SOURCE_MANIFEST_HASH_CHUNK_BYTES, before.size || 1)),
+      );
+      let offset = 0;
+      while (offset < before.size) {
+        const requested = Math.min(chunk.length, before.size - offset);
+        const count = readChunk(descriptor, chunk, requested, offset);
+        if (!Number.isSafeInteger(count) || count < 1 || count > requested)
+          throw new Error("Product rig source changed while building its manifest");
+        hash.update(chunk.subarray(0, count));
+        offset += count;
+      }
+      const growthProbe = Buffer.allocUnsafe(1);
+      const grew = readChunk(descriptor, growthProbe, 1, before.size) !== 0;
+      const after = statFile(descriptor);
+      let currentDescriptor;
+      let current;
+      try {
+        currentDescriptor = openFile(path);
+        current = statFile(currentDescriptor);
+      } catch {
+        throw new Error("Product rig source changed while building its manifest");
+      } finally {
+        if (currentDescriptor !== undefined) closeFile(currentDescriptor);
+      }
+      if (
+        offset !== before.size ||
+        grew ||
+        !after?.isFile?.() ||
+        after.size !== before.size ||
+        after.dev !== before.dev ||
+        after.ino !== before.ino ||
+        !current?.isFile?.() ||
+        current.size !== before.size ||
+        current.dev !== before.dev ||
+        current.ino !== before.ino
+      )
+        throw new Error("Product rig source changed while building its manifest");
+      manifestBytes = nextBytes;
+      return Object.freeze({
+        pathDigest,
+        contentDigest: hash.digest("hex"),
+        bytes: before.size,
+      });
+    } finally {
+      closeFile(descriptor);
+    }
+  });
+  return Object.freeze({
+    bytes: manifestBytes,
+    manifest: Object.freeze(manifest),
+    manifestDigest: createHash("sha256").update(JSON.stringify(manifest)).digest("hex"),
+  });
 }
 
 export function buildSourceTracePayload(

@@ -5,17 +5,26 @@ import { DesktopDaemonCapabilityErrorSchemaZ } from "./desktop-host.ts";
 import { FleetSessionIdSchemaZ } from "./fleet-catalog.ts";
 import { TerminalAttachmentSemanticPaneIdSchemaZ } from "./terminal-attachments.ts";
 
+/** Renderer-authored correlation; it carries no daemon or filesystem authority. */
+export const WorkspaceOperationIdSchemaZ = z.uuid();
+
 const ProjectSourceZ = z
   .object({ kind: z.literal("project"), projectDir: z.string().min(1) })
   .strict();
 const LiveSessionSourceZ = z
   .object({ kind: z.literal("live-session"), sessionId: FleetSessionIdSchemaZ })
   .strict();
+/** Desktop owner selects a directory without exposing its path to the renderer. */
+const HostSelectionSourceZ = z.object({ kind: z.literal("host-selection") }).strict();
 
 /** A prepare never changes the caller's selected workspace. */
 export const WorkspaceOpenPrepareArgumentsSchemaZ = z
   .object({
-    source: z.discriminatedUnion("kind", [ProjectSourceZ, LiveSessionSourceZ]),
+    source: z.discriminatedUnion("kind", [
+      ProjectSourceZ,
+      LiveSessionSourceZ,
+      HostSelectionSourceZ,
+    ]),
     previousWorkspaceName: DesktopWorkspaceNameSchemaZ.nullable().optional(),
   })
   .strict();
@@ -32,7 +41,7 @@ export const WorkspaceOpenPreparedProofSchemaZ = z
 
 export const WorkspaceOpenPreparedResultSchemaZ = z
   .object({
-    operationId: z.uuid(),
+    operationId: WorkspaceOperationIdSchemaZ,
     daemonInstanceId: z.uuid(),
     phase: z.literal("prepared"),
     prepareToken: z.uuid(),
@@ -51,7 +60,7 @@ export const WorkspaceOpenDecisionArgumentsSchemaZ = z
 export type WorkspaceOpenDecisionArguments = z.infer<typeof WorkspaceOpenDecisionArgumentsSchemaZ>;
 
 const DecisionBaseZ = z.object({
-  operationId: z.uuid(),
+  operationId: WorkspaceOperationIdSchemaZ,
   daemonInstanceId: z.uuid(),
   prepareToken: z.uuid(),
   preparedRevision: z.number().int().positive(),

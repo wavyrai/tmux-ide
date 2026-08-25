@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   PANE_STREAM_MAX_HELD_DELTAS,
   PANE_STREAM_MAX_OUTPUT_BYTES,
+  PANE_STREAM_MAX_PANES,
   PANE_STREAM_MAX_SEED_BYTES,
   PANE_STREAM_PROTOCOL_VERSION,
   PANE_STREAM_REDEEM_PATH,
@@ -12,6 +13,7 @@ import {
   PaneStreamServerFrameSchemaZ,
   sharedMonotonicMicros,
   type PaneStreamErrorFrameCode,
+  type PaneStreamServerFrame,
   type PaneStreamLeaseRequest,
   type PaneStreamRedeemFrame,
   type PaneStreamViewerMode,
@@ -33,6 +35,7 @@ import {
   type WorkspaceMultiplexerMutationResult,
 } from "@tmux-ide/contracts";
 import type {
+  MirrorLayoutAuthoritySnapshot,
   MirrorLayoutEvent,
   MirrorPaneEvent,
   MirrorSessionDescription,
@@ -54,6 +57,7 @@ import {
 } from "../attachments/admission-util.ts";
 import type { DirectTerminalSocket } from "../attachments/direct-websocket.ts";
 import type { SessionRuntimeObservability } from "../session-runtime/runtime-observability.ts";
+import { SessionRuntimeControllerLeaseError } from "../session-runtime/registry.ts";
 import { terminalDeliveryObservationOrdinal } from "../session-runtime/terminal-delivery-observation-identity.ts";
 import {
   PaneStreamLeaseError,
@@ -132,10 +136,18 @@ const BindingIdSchemaZ = z
 /** The mirror surface the endpoint consumes (MirrorService satisfies it). */
 export interface PaneStreamMirror {
   describeSession(session: string): Promise<MirrorSessionDescription>;
+  describeSessionAuthority?(
+    session: string,
+  ): Promise<{ readonly description: MirrorSessionDescription; readonly runtimeSessionId: string }>;
   subscribe(request: MirrorSubscribeRequest): Promise<MirrorSubscription>;
   subscribeLayout?(
     session: string,
     onLayout: (event: MirrorLayoutEvent) => void,
+    authority?: {
+      readonly expectedSemanticPaneIds: readonly string[];
+      readonly expectedRuntimeSessionId: string;
+      readonly onAuthority?: (snapshot: MirrorLayoutAuthoritySnapshot) => void;
+    },
   ): Promise<MirrorLayoutSubscription>;
 }
 
@@ -253,6 +265,7 @@ export interface SessionRuntimePaneStreamTransportBinding {
   readonly session: string;
   readonly clientId: string;
   readonly surface?: string;
+  readonly explicitAuthority?: boolean;
   readonly deliveryLaneId?: string;
   readonly deliveryRequestId?: string;
   /** Optional only for the bounded v1 transport adapter. New clients require these methods. */
@@ -280,7 +293,7 @@ export interface SessionRuntimePaneStreamTransportBinding {
     causalProbe?: CausalCellProbeV1,
     onCausalResult?: (result: CausalCellLedgerResult) => void,
   ): void;
-  fitViewport(cols: number, rows: number): void;
+  fitViewport(lease: SessionRuntimeAuthorityLease, cols: number, rows: number): void;
   close(): Promise<void>;
 }
 
@@ -455,9 +468,16 @@ export class PaneStreamAdmissionCoordinator {
       // under verified semantic identity NOW. A describe failure is a probe
       // failure and never reads as absence.
       let described: MirrorSessionDescription;
+      let runtimeSessionId: string | null = null;
       try {
         const describeStartedAtMicros = trace ? this.#observability!.nowMicros() : 0;
-        described = await this.#mirror.describeSession(context.sessionName);
+        if (this.#mirror.describeSessionAuthority) {
+          const authority = await this.#mirror.describeSessionAuthority(context.sessionName);
+          described = authority.description;
+          runtimeSessionId = authority.runtimeSessionId;
+        } else {
+          described = await this.#mirror.describeSession(context.sessionName);
+        }
         if (trace)
           this.#observability!.recordSpan(
             "transport",
@@ -486,6 +506,7 @@ export class PaneStreamAdmissionCoordinator {
         requestId,
         projectIdentity,
         sessionName: context.sessionName,
+        ...(runtimeSessionId ? { runtimeSessionId } : {}),
         ...(context.hostClientId ? { hostClientId: context.hostClientId } : {}),
       });
       const descriptor = issued.descriptor;
@@ -494,6 +515,8 @@ export class PaneStreamAdmissionCoordinator {
         TicketPattern.test(ticket) &&
         z.uuid().safeParse(descriptor.leaseId).success &&
         descriptor.requestId === requestId &&
+        (this.#mirror.describeSessionAuthority === undefined ||
+          descriptor.runtimeSessionId === runtimeSessionId) &&
         descriptor.status === "awaiting-redemption" &&
         descriptor.viewerMode === request.viewerMode &&
         descriptor.workspaceName === request.workspaceName &&
@@ -1036,6 +1059,10 @@ export class PaneStreamLiveConnection {
   readonly #diagnosticAfterFrameParse: (() => void) | undefined;
   readonly #onRetire: (connection: PaneStreamLiveConnection) => void;
   readonly #panes = new Map<string, PaneChannel>();
+  readonly #semanticLayouts = new Map<string, MirrorLayoutEvent>();
+  #semanticExpectedPaneIds: readonly string[] | null = null;
+  #semanticRuntimeSessionId: string | null = null;
+  #semanticTopologyEpoch = -1;
   readonly #sendQueue: QueuedSend[] = [];
   readonly #semanticDrainWaiters = new Map<string, Array<() => void>>();
   #layoutSubscription: MirrorLayoutSubscription | null = null;
@@ -1055,6 +1082,72 @@ export class PaneStreamLiveConnection {
   #releasePromise: Promise<unknown> | null = null;
   #stopAuthoritySnapshots: (() => void) | null = null;
   #sharedClockOriginMicros: number | null = null;
+  #diagnosticFirstSeedObserved = false;
+  readonly #diagnosticLifecycleStages: Set<string> | null;
+
+  #recordDiagnosticLifecycle(
+    operation:
+      | "pane-stream-server-ready"
+      | "pane-stream-layout-staged"
+      | "pane-stream-layout-validated"
+      | "pane-stream-delivery-open"
+      | "pane-stream-first-seed"
+      | "pane-stream-terminal",
+    closeCode?: number,
+    closeReason?: string,
+  ): void {
+    if (!this.#observability?.enabled || !this.#diagnosticLifecycleStages) return;
+    if (this.#diagnosticLifecycleStages.has(operation)) return;
+    this.#diagnosticLifecycleStages.add(operation);
+    const trace = this.#observability.beginTrace(
+      "pane-stream-connect",
+      { generation: this.#binding.daemonInstanceId, incarnation: null },
+      this.#binding.requestId,
+    );
+    const atMicros = this.#observability.nowMicros();
+    const legalReason = (
+      new Set([
+        "stream-retired",
+        "stream-unavailable",
+        "stream-closed",
+        "topology-changed",
+        "output-backpressure",
+        "panes-closed",
+        "peer-closed",
+        "daemon-shutdown",
+        "redemption-rejected",
+        "unknown",
+      ]).has(closeReason ?? "")
+        ? closeReason!
+        : closeReason
+          ? "unknown"
+          : "none"
+    ) as
+      | "none"
+      | "stream-retired"
+      | "stream-unavailable"
+      | "stream-closed"
+      | "topology-changed"
+      | "output-backpressure"
+      | "panes-closed"
+      | "peer-closed"
+      | "daemon-shutdown"
+      | "redemption-rejected"
+      | "unknown";
+    this.#observability.recordSpan(
+      "transport",
+      operation,
+      atMicros,
+      atMicros,
+      trace,
+      undefined,
+      Object.freeze({
+        paneStreamCloseCode:
+          Number.isInteger(closeCode) && closeCode! >= 1000 && closeCode! <= 4999 ? closeCode! : 0,
+        paneStreamCloseReason: legalReason,
+      }),
+    );
+  }
 
   #sharedMicros(): number {
     const raw = this.#diagnosticSharedRawMicros!();
@@ -1071,6 +1164,7 @@ export class PaneStreamLiveConnection {
     this.#descriptor = options.descriptor;
     this.#binding = options.binding;
     this.#sessionRuntimeBinding = options.sessionRuntimeBinding;
+    this.#usesExplicitAuthority = options.sessionRuntimeBinding?.explicitAuthority === true;
     if (this.#descriptor.viewerMode === "interactive" && !this.#sessionRuntimeBinding) {
       throw new Error("Interactive pane stream requires SessionRuntime authority");
     }
@@ -1089,6 +1183,7 @@ export class PaneStreamLiveConnection {
     this.#inputWindowStartedAt = this.#now();
     this.#schedule = options.schedule;
     this.#observability = options.observability;
+    this.#diagnosticLifecycleStages = options.observability?.enabled ? new Set() : null;
     this.#diagnosticSharedRawMicros = this.#diagnosticCapabilities.includes("clock-bounds-v1")
       ? (options.diagnosticSharedNowMicros ?? sharedMonotonicMicros)
       : undefined;
@@ -1135,6 +1230,7 @@ export class PaneStreamLiveConnection {
           ? { diagnosticCapabilities: [...this.#diagnosticCapabilities] }
           : {}),
       });
+      this.#recordDiagnosticLifecycle("pane-stream-server-ready");
     } catch {
       this.close(1011, "stream-unavailable");
       return;
@@ -1148,6 +1244,7 @@ export class PaneStreamLiveConnection {
 
   close(code = 1000, reason = "stream-closed"): void {
     if (this.#closed) return;
+    this.#recordDiagnosticLifecycle("pane-stream-terminal", code, reason);
     this.#closed = true;
     this.#cancelDrainTick?.();
     this.#cancelDrainTick = null;
@@ -1261,41 +1358,60 @@ export class PaneStreamLiveConnection {
       this.close(1011, "stream-unavailable");
       return;
     }
-    const channels = [...this.#panes.values()].filter((channel) => {
-      if (known.has(channel.semanticPaneId)) return true;
-      this.#emitClosed(channel);
-      return false;
-    });
+    const expectedPaneIds = [...this.#descriptor.panes].sort();
+    if (expectedPaneIds.some((pane) => !known.has(pane))) {
+      this.#failTopologyChanged();
+      return;
+    }
+    const channels = [...this.#panes.values()];
     if (this.#closed || channels.length === 0) return;
-    const layoutChannel = channels[0]!;
+    let stagedAuthority: MirrorLayoutAuthoritySnapshot | null = null;
+    let authorityMalformed = false;
+    let layoutActivated = false;
     // Establish the single session layout observer first. MirrorService owns
     // this lifecycle and may share native control state with delivery setup;
     // only the independent pane delivery opens below are parallelized.
     try {
-      if (this.#mirror.subscribeLayout) {
-        const subscription = await this.#mirror.subscribeLayout(
-          this.#descriptor.sessionName,
-          (event) => this.#onLayout(event),
-        );
-        if (this.#closed) {
-          await subscription.close().catch(() => undefined);
-          return;
-        }
-        this.#layoutSubscription = subscription;
-      } else {
-        const subscription = await this.#mirror.subscribe({
-          session: this.#descriptor.sessionName,
-          semanticPaneId: layoutChannel.semanticPaneId,
-          onEvent: () => undefined,
-          onLayout: (event) => this.#onLayout(event),
-        });
-        if (this.#closed || layoutChannel.closed) {
-          await subscription.close().catch(() => undefined);
-          return;
-        }
-        layoutChannel.sub = subscription;
+      if (!this.#mirror.subscribeLayout) throw new Error("authoritative layout is unavailable");
+      const subscription = await this.#mirror.subscribeLayout(
+        this.#descriptor.sessionName,
+        () => undefined,
+        {
+          expectedSemanticPaneIds: expectedPaneIds,
+          expectedRuntimeSessionId: this.#descriptor.runtimeSessionId!,
+          onAuthority: (snapshot) => {
+            this.#recordDiagnosticLifecycle("pane-stream-layout-staged");
+            if (snapshot.layouts.length > PANE_STREAM_MAX_PANES) authorityMalformed = true;
+            else if (!layoutActivated) stagedAuthority = snapshot;
+            else this.#onLayoutAuthority(snapshot);
+          },
+        },
+      );
+      if (this.#closed) {
+        await subscription.close().catch(() => undefined);
+        return;
       }
-    } catch {
+      const authority = stagedAuthority as MirrorLayoutAuthoritySnapshot | null;
+      const stagedInitialFrames =
+        authorityMalformed ||
+        authority === null ||
+        authority.session !== this.#descriptor.sessionName ||
+        this.#descriptor.runtimeSessionId === null ||
+        authority.runtimeSessionId !== this.#descriptor.runtimeSessionId ||
+        authority.topologyEpoch < 0
+          ? null
+          : this.#validateInitialLayout(authority.layouts, expectedPaneIds);
+      if (!stagedInitialFrames) {
+        await subscription.close().catch(() => undefined);
+        this.#failTopologyChanged();
+        return;
+      }
+      this.#layoutSubscription = subscription;
+    } catch (cause) {
+      if (cause instanceof Error && cause.name === "MirrorTopologyChangedError") {
+        this.#failTopologyChanged();
+        return;
+      }
       this.close(1011, "stream-unavailable");
       return;
     }
@@ -1340,6 +1456,61 @@ export class PaneStreamLiveConnection {
       return;
     }
 
+    const deliveryIdentityChanged = opened.some(({ channel, delivery, pending }) => {
+      if (!delivery.negotiation.accepted) return true;
+      const negotiated = delivery.negotiation.negotiated;
+      if (negotiated.generation !== this.#binding.daemonInstanceId) return true;
+      let incarnation: string | null = null;
+      for (const message of pending) {
+        if (message.type !== "terminal.delivery") continue;
+        if (
+          message.workspaceName !== this.#descriptor.sessionName ||
+          message.semanticPaneId !== channel.semanticPaneId ||
+          message.generation !== negotiated.generation ||
+          message.deliveryNonce !== negotiated.deliveryNonce ||
+          (incarnation !== null && message.incarnation !== incarnation)
+        )
+          return true;
+        incarnation = message.incarnation;
+      }
+      return false;
+    });
+    if (deliveryIdentityChanged) {
+      await Promise.all(opened.map(({ delivery }) => delivery.close().catch(() => undefined)));
+      this.#failTopologyChanged();
+      return;
+    }
+
+    const authority = stagedAuthority as MirrorLayoutAuthoritySnapshot | null;
+    const initialFrames =
+      authorityMalformed ||
+      authority === null ||
+      authority.session !== this.#descriptor.sessionName ||
+      this.#descriptor.runtimeSessionId === null ||
+      authority.runtimeSessionId !== this.#descriptor.runtimeSessionId ||
+      authority.topologyEpoch < 0
+        ? null
+        : this.#validateInitialLayout(authority.layouts, expectedPaneIds);
+    if (!initialFrames) {
+      await Promise.all(opened.map(({ delivery }) => delivery.close().catch(() => undefined)));
+      this.#failTopologyChanged();
+      return;
+    }
+    this.#recordDiagnosticLifecycle("pane-stream-layout-validated");
+    this.#semanticExpectedPaneIds = expectedPaneIds;
+    this.#semanticRuntimeSessionId = authority!.runtimeSessionId;
+    this.#semanticTopologyEpoch = authority!.topologyEpoch;
+    this.#semanticLayouts.clear();
+    for (const event of authority!.layouts)
+      this.#semanticLayouts.set(event.semanticWindowId as string, event);
+    this.#sendFrame(null, {
+      type: "layout-snapshot",
+      topologyEpoch: authority!.topologyEpoch,
+      layouts: initialFrames,
+    });
+    layoutActivated = true;
+    this.#recordDiagnosticLifecycle("pane-stream-delivery-open");
+
     for (const { channel, delivery, pending, markReady } of opened) {
       if (this.#closed || channel.closed) {
         await delivery.close();
@@ -1369,6 +1540,10 @@ export class PaneStreamLiveConnection {
 
   async #sendTerminalDelivery(pane: string, message: TerminalDeliveryServerMessage): Promise<void> {
     if (message.type === "terminal.delivery") {
+      if (!this.#diagnosticFirstSeedObserved) {
+        this.#diagnosticFirstSeedObserved = true;
+        this.#recordDiagnosticLifecycle("pane-stream-first-seed");
+      }
       const channel = this.#panes.get(pane);
       if (channel?.deliveryAddress) channel.deliveryAddress.incarnation = message.incarnation;
       // SessionRuntime keys canonical replicas by the tmux session, while the
@@ -1617,6 +1792,33 @@ export class PaneStreamLiveConnection {
     this.#ledger.forgetPane(this.#clientId, channel.semanticPaneId);
   }
 
+  #onLayoutAuthority(snapshot: MirrorLayoutAuthoritySnapshot): void {
+    if (this.#closed || !this.#semanticExpectedPaneIds || !this.#semanticRuntimeSessionId) return;
+    if (
+      snapshot.session !== this.#descriptor.sessionName ||
+      snapshot.runtimeSessionId !== this.#semanticRuntimeSessionId ||
+      snapshot.topologyEpoch <= this.#semanticTopologyEpoch ||
+      snapshot.layouts.length > PANE_STREAM_MAX_PANES
+    ) {
+      this.#failTopologyChanged();
+      return;
+    }
+    const frames = this.#validateInitialLayout(snapshot.layouts, this.#semanticExpectedPaneIds);
+    if (!frames) {
+      this.#failTopologyChanged();
+      return;
+    }
+    this.#semanticTopologyEpoch = snapshot.topologyEpoch;
+    this.#semanticLayouts.clear();
+    for (const event of snapshot.layouts)
+      this.#semanticLayouts.set(event.semanticWindowId as string, event);
+    this.#sendFrame(null, {
+      type: "layout-snapshot",
+      topologyEpoch: snapshot.topologyEpoch,
+      layouts: frames,
+    });
+  }
+
   #onLayout(event: MirrorLayoutEvent): void {
     if (this.#closed) return;
     /*
@@ -1633,6 +1835,15 @@ export class PaneStreamLiveConnection {
      * semantic identity by the application-shell inventory. No runtime tmux id,
      * command, cwd or credential appears here.
      */
+    const frame = this.#layoutFrame(event);
+    if (!frame) {
+      this.#failTopologyChanged();
+      return;
+    }
+    this.#sendFrame(null, frame);
+  }
+
+  #layoutFrame(event: MirrorLayoutEvent): PaneStreamServerFrame | null {
     const frame = {
       type: "layout",
       semanticWindowId: event.semanticWindowId,
@@ -1653,8 +1864,56 @@ export class PaneStreamLiveConnection {
     };
     // Layout carries user-authored names and unbounded tmux geometry; gate it
     // through the schema and skip rather than ever sending an invalid frame.
-    if (!PaneStreamServerFrameSchemaZ.safeParse(frame).success) return;
-    this.#sendFrame(null, frame);
+    const parsed = PaneStreamServerFrameSchemaZ.safeParse(frame);
+    return parsed.success ? parsed.data : null;
+  }
+
+  #validateInitialLayout(
+    events: readonly MirrorLayoutEvent[],
+    expectedPaneIds: readonly string[],
+  ): PaneStreamServerFrame[] | null {
+    if (events.length === 0) return null;
+    const windows = new Set<string>();
+    const panes: string[] = [];
+    const frames: PaneStreamServerFrame[] = [];
+    let currentWindows = 0;
+    for (const event of events) {
+      if (
+        event.session !== this.#descriptor.sessionName ||
+        typeof event.semanticWindowId !== "string" ||
+        windows.has(event.semanticWindowId)
+      )
+        return null;
+      windows.add(event.semanticWindowId);
+      if (event.currentWindow) currentWindows += 1;
+      const frame = this.#layoutFrame(event);
+      if (!frame || frame.type !== "layout") return null;
+      frames.push(frame);
+      for (const pane of event.panes) {
+        if (typeof pane.semanticPaneId !== "string") return null;
+        panes.push(pane.semanticPaneId);
+      }
+    }
+    panes.sort();
+    if (
+      currentWindows !== 1 ||
+      new Set(panes).size !== panes.length ||
+      panes.length !== expectedPaneIds.length ||
+      panes.some((pane, index) => pane !== expectedPaneIds[index])
+    )
+      return null;
+    return frames;
+  }
+
+  #failTopologyChanged(): void {
+    if (this.#closed) return;
+    this.#sendFrame(null, {
+      type: "error",
+      protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+      code: "topology-changed",
+      retryable: true,
+    });
+    this.close(1012, "topology-changed");
   }
 
   // ── Send path + flow ledger ───────────────────────────────────────────────
@@ -1932,14 +2191,30 @@ export class PaneStreamLiveConnection {
       if (!this.#prepareInputAuthority(true)) return;
       this.#nextViewportSeq += 1;
       try {
-        this.#sessionRuntimeBinding!.fitViewport(frame.cols, frame.rows);
+        this.#sessionRuntimeBinding!.fitViewport(frame.authorityLease, frame.cols, frame.rows);
         this.#sendFrame(null, {
           type: "viewport-ack",
           seq: frame.seq,
           cols: frame.cols,
           rows: frame.rows,
+          outcome: "ok",
+          authorityLease: frame.authorityLease,
         });
-      } catch {
+      } catch (error) {
+        if (
+          error instanceof SessionRuntimeControllerLeaseError &&
+          (error.code === "invalid-client-capability" || error.code === "stale-controller-lease")
+        ) {
+          this.#sendFrame(null, {
+            type: "viewport-ack",
+            seq: frame.seq,
+            cols: frame.cols,
+            rows: frame.rows,
+            outcome: "geometry-authority-conflict",
+            authorityLease: frame.authorityLease,
+          });
+          return;
+        }
         this.#failProtocol("input-rejected");
       }
       return;

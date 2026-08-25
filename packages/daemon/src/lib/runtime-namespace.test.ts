@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { createServer } from "node:net";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { resolveRuntimeNamespace, runtimeNamespaceEnvironment } from "./runtime-namespace.ts";
@@ -7,6 +10,34 @@ const userHome = "/Users/runtime-test";
 const cwd = "/checkout/tmux-ide";
 
 describe("RuntimeNamespace", () => {
+  it("classifies an actual Unix socket without realpathing its leaf", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tmux-ide-runtime-socket-"));
+    const socketPath = join(root, "t.sock");
+    const server = createServer();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(socketPath, resolve);
+      });
+      expect(
+        resolveRuntimeNamespace({
+          env: {
+            TMUX_IDE_RUNTIME_MODE: "testdrive",
+            TMUX_IDE_HOME: join(root, "state"),
+            TMUX_IDE_REGISTRY_DIR: join(root, "registry"),
+            TMUX_IDE_DAEMON_INFO_DIR: join(root, "daemon"),
+            TMUX_IDE_TMUX_SOCKET_PATH: socketPath,
+            TMUX_IDE_CLEANUP_TOKEN: "runtime:socket:test",
+          },
+          userHome: join(root, "user"),
+          cwd,
+        }).tmuxSocket,
+      ).toEqual({ kind: "path", path: socketPath });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   it("uses canonical authority only for production", () => {
     expect(resolveRuntimeNamespace({ env: {}, userHome, cwd })).toEqual({
       mode: "production",

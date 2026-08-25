@@ -5857,8 +5857,60 @@ var init_workspace_changes_resource = __esm({
   }
 });
 
-// packages/contracts/src/workspace-missions-resource.ts
+// packages/contracts/src/workspace-catalog-resource.ts
 import { z as z34 } from "zod";
+function projectWorkspaceCatalogV2(daemon, intents, liveSessions2) {
+  const observed = new Set(liveSessions2.map(({ sessionName }) => sessionName));
+  return WorkspaceCatalogResourceV2SchemaZ.parse({
+    version: WORKSPACE_CATALOG_RESOURCE_V2_VERSION,
+    daemon,
+    intents: intents.map((intent) => ({
+      ...intent,
+      availability: observed.has(intent.sessionName) ? "live" : "stopped"
+    })),
+    liveSessions: liveSessions2
+  });
+}
+var WORKSPACE_CATALOG_RESOURCE_VERSION, WorkspaceCatalogEntryV1SchemaZ, WorkspaceCatalogResourceV1SchemaZ, WORKSPACE_CATALOG_RESOURCE_V2_VERSION, WorkspaceCatalogIntentV2SchemaZ, WorkspaceCatalogLiveSessionV2SchemaZ, WorkspaceCatalogResourceV2SchemaZ;
+var init_workspace_catalog_resource = __esm({
+  "packages/contracts/src/workspace-catalog-resource.ts"() {
+    "use strict";
+    init_daemon_wire();
+    init_fleet_catalog();
+    WORKSPACE_CATALOG_RESOURCE_VERSION = 1;
+    WorkspaceCatalogEntryV1SchemaZ = z34.object({
+      workspaceName: z34.string().min(1),
+      sessionName: z34.string().min(1)
+    }).strict();
+    WorkspaceCatalogResourceV1SchemaZ = z34.object({
+      version: z34.literal(WORKSPACE_CATALOG_RESOURCE_VERSION),
+      daemon: DaemonInstanceIdentitySchemaZ,
+      workspaces: z34.array(WorkspaceCatalogEntryV1SchemaZ)
+    }).strict();
+    WORKSPACE_CATALOG_RESOURCE_V2_VERSION = 2;
+    WorkspaceCatalogIntentV2SchemaZ = z34.object({
+      workspaceName: z34.string().min(1),
+      sessionName: z34.string().min(1),
+      source: z34.enum(["project", "workspace"]),
+      availability: z34.enum(["live", "stopped"])
+    }).strict();
+    WorkspaceCatalogLiveSessionV2SchemaZ = z34.object({
+      sessionName: z34.string().min(1),
+      /** Daemon-minted promotion identity for this exact observed session. */
+      fleetSessionId: FleetSessionIdSchemaZ,
+      paneCount: z34.number().int().nonnegative()
+    }).strict();
+    WorkspaceCatalogResourceV2SchemaZ = z34.object({
+      version: z34.literal(WORKSPACE_CATALOG_RESOURCE_V2_VERSION),
+      daemon: DaemonInstanceIdentitySchemaZ,
+      intents: z34.array(WorkspaceCatalogIntentV2SchemaZ),
+      liveSessions: z34.array(WorkspaceCatalogLiveSessionV2SchemaZ)
+    }).strict();
+  }
+});
+
+// packages/contracts/src/workspace-missions-resource.ts
+import { z as z35 } from "zod";
 var WORKSPACE_MISSIONS_RESOURCE_VERSION, WorkspaceMissionsResourceV1SchemaZ, WorkspaceMissionsEnvelopeV1SchemaZ;
 var init_workspace_missions_resource = __esm({
   "packages/contracts/src/workspace-missions-resource.ts"() {
@@ -5868,13 +5920,13 @@ var init_workspace_missions_resource = __esm({
     init_desktop_workspace_name();
     init_daemon_wire();
     WORKSPACE_MISSIONS_RESOURCE_VERSION = 1;
-    WorkspaceMissionsResourceV1SchemaZ = z34.object({
+    WorkspaceMissionsResourceV1SchemaZ = z35.object({
       workspaceName: DesktopWorkspaceNameSchemaZ,
       missionWorkspace: DesktopMissionWorkspaceResourceSchemaZ,
       agentGraphOverlay: AgentGraphOverlaySchemaZ.optional()
     }).strict();
-    WorkspaceMissionsEnvelopeV1SchemaZ = z34.object({
-      version: z34.literal(WORKSPACE_MISSIONS_RESOURCE_VERSION),
+    WorkspaceMissionsEnvelopeV1SchemaZ = z35.object({
+      version: z35.literal(WORKSPACE_MISSIONS_RESOURCE_VERSION),
       daemon: DaemonInstanceIdentitySchemaZ,
       resource: WorkspaceMissionsResourceV1SchemaZ
     }).strict();
@@ -5882,7 +5934,7 @@ var init_workspace_missions_resource = __esm({
 });
 
 // packages/contracts/src/daemon-resources.ts
-import { z as z35 } from "zod";
+import { z as z36 } from "zod";
 var DaemonSessionOverviewSchemaZ, DaemonPaneInfoSchemaZ, DaemonSessionsResponseSchemaZ, DaemonProjectResponseSchemaZ, DaemonPanesResponseSchemaZ, DaemonWorkspaceSchemaZ, DaemonWorkspacesResponseSchemaZ, DaemonWorkspaceResponseSchemaZ, DaemonRegisteredProjectSchemaZ, DaemonProjectsResponseSchemaZ, DaemonRegisteredProjectResponseSchemaZ, DaemonProjectTemplateSchemaZ, DaemonProjectTemplatesResponseSchemaZ;
 var init_daemon_resources = __esm({
   "packages/contracts/src/daemon-resources.ts"() {
@@ -5891,55 +5943,55 @@ var init_daemon_resources = __esm({
     init_workspace();
     DaemonSessionOverviewSchemaZ = SessionOverviewSchemaZ.strict();
     DaemonPaneInfoSchemaZ = PaneInfoSchemaZ.strict();
-    DaemonSessionsResponseSchemaZ = z35.object({
-      sessions: z35.array(DaemonSessionOverviewSchemaZ)
+    DaemonSessionsResponseSchemaZ = z36.object({
+      sessions: z36.array(DaemonSessionOverviewSchemaZ)
     }).strict();
-    DaemonProjectResponseSchemaZ = z35.object({
-      session: z35.string(),
-      dir: z35.string(),
-      panes: z35.array(DaemonPaneInfoSchemaZ)
+    DaemonProjectResponseSchemaZ = z36.object({
+      session: z36.string(),
+      dir: z36.string(),
+      panes: z36.array(DaemonPaneInfoSchemaZ)
     }).strict();
-    DaemonPanesResponseSchemaZ = z35.object({
-      panes: z35.array(DaemonPaneInfoSchemaZ)
+    DaemonPanesResponseSchemaZ = z36.object({
+      panes: z36.array(DaemonPaneInfoSchemaZ)
     }).strict();
     DaemonWorkspaceSchemaZ = WorkspaceSchemaZ.strict();
-    DaemonWorkspacesResponseSchemaZ = z35.object({
-      workspaces: z35.array(DaemonWorkspaceSchemaZ)
+    DaemonWorkspacesResponseSchemaZ = z36.object({
+      workspaces: z36.array(DaemonWorkspaceSchemaZ)
     }).strict();
-    DaemonWorkspaceResponseSchemaZ = z35.object({
+    DaemonWorkspaceResponseSchemaZ = z36.object({
       workspace: DaemonWorkspaceSchemaZ
     }).strict();
-    DaemonRegisteredProjectSchemaZ = z35.object({
-      name: z35.string(),
-      dir: z35.string(),
-      hasIdeYml: z35.boolean(),
-      hasWorkspaceConfig: z35.boolean().optional(),
-      configKind: z35.enum(["workspace", "legacy", "none"]).optional(),
-      configPath: z35.string().nullable().optional(),
-      ideConfigPath: z35.string().nullable().optional(),
-      gitOrigin: z35.string().nullable(),
-      gitBranch: z35.string().nullable(),
-      registeredAt: z35.string()
+    DaemonRegisteredProjectSchemaZ = z36.object({
+      name: z36.string(),
+      dir: z36.string(),
+      hasIdeYml: z36.boolean(),
+      hasWorkspaceConfig: z36.boolean().optional(),
+      configKind: z36.enum(["workspace", "legacy", "none"]).optional(),
+      configPath: z36.string().nullable().optional(),
+      ideConfigPath: z36.string().nullable().optional(),
+      gitOrigin: z36.string().nullable(),
+      gitBranch: z36.string().nullable(),
+      registeredAt: z36.string()
     }).strict();
-    DaemonProjectsResponseSchemaZ = z35.object({
-      projects: z35.array(DaemonRegisteredProjectSchemaZ)
+    DaemonProjectsResponseSchemaZ = z36.object({
+      projects: z36.array(DaemonRegisteredProjectSchemaZ)
     }).strict();
-    DaemonRegisteredProjectResponseSchemaZ = z35.object({
+    DaemonRegisteredProjectResponseSchemaZ = z36.object({
       project: DaemonRegisteredProjectSchemaZ
     }).strict();
-    DaemonProjectTemplateSchemaZ = z35.object({
-      id: z35.string(),
-      label: z35.string(),
-      description: z35.string()
+    DaemonProjectTemplateSchemaZ = z36.object({
+      id: z36.string(),
+      label: z36.string(),
+      description: z36.string()
     }).strict();
-    DaemonProjectTemplatesResponseSchemaZ = z35.object({
-      templates: z35.array(DaemonProjectTemplateSchemaZ)
+    DaemonProjectTemplatesResponseSchemaZ = z36.object({
+      templates: z36.array(DaemonProjectTemplateSchemaZ)
     }).strict();
   }
 });
 
 // packages/contracts/src/daemon-events.ts
-import { z as z36 } from "zod";
+import { z as z37 } from "zod";
 var SessionNamesSchemaZ, DaemonEventResourceInterestSchemaZ, DaemonEventResourceInterestsSchemaZ, DaemonEventSubscribeFrameSchemaZ, DaemonEventUnsubscribeFrameSchemaZ, DaemonEventPingFrameSchemaZ, DaemonEventClientFrameSchemaZ, DaemonSessionSnapshotSchemaZ, DaemonEventHelloFrameSchemaZ, DaemonEventSnapshotFrameSchemaZ, DaemonEventSessionsChangedFrameSchemaZ, DaemonEventProjectsChangedFrameSchemaZ, DaemonEventInitOutputFrameSchemaZ, DaemonEventInitErrorFrameSchemaZ, DaemonEventPongFrameSchemaZ, DaemonEventActionCompleteFrameSchemaZ, DaemonEventConfigChangedFrameSchemaZ, DaemonEventTerminalsChangedFrameSchemaZ, DaemonEventResourceKindSchemaZ, DaemonEventResourceChangedFrameSchemaZ, DaemonEventResourceObservedFrameSchemaZ, DaemonEventResourceInterestsAckFrameSchemaZ, DaemonEventSnapshotRequiredFrameSchemaZ, DaemonEventAgentStatusChangedFrameSchemaZ, DaemonEventFleetChangedFrameSchemaZ, DaemonEventAgentTurnCompletedFrameSchemaZ, DaemonEventWorkspacePromotionCompletedFrameSchemaZ, DaemonEventWorkspaceAddedFrameSchemaZ, DaemonEventWorkspaceRemovedFrameSchemaZ, DaemonEventProtocolErrorCodeSchemaZ, DaemonEventProtocolErrorFrameSchemaZ, DaemonEventServerFrameSchemaZ;
 var init_daemon_events = __esm({
   "packages/contracts/src/daemon-events.ts"() {
@@ -5948,14 +6000,14 @@ var init_daemon_events = __esm({
     init_daemon_wire();
     init_desktop_workspace_name();
     init_interaction_receipts();
-    SessionNamesSchemaZ = z36.array(z36.string());
-    DaemonEventResourceInterestSchemaZ = z36.discriminatedUnion("resource", [
-      z36.object({
-        resource: z36.enum(["workspace-catalog", "fleet-catalog"]),
-        workspaceName: z36.null()
+    SessionNamesSchemaZ = z37.array(z37.string());
+    DaemonEventResourceInterestSchemaZ = z37.discriminatedUnion("resource", [
+      z37.object({
+        resource: z37.enum(["workspace-catalog", "fleet-catalog"]),
+        workspaceName: z37.null()
       }).strict(),
-      z36.object({
-        resource: z36.enum([
+      z37.object({
+        resource: z37.enum([
           "application-shell",
           "terminal-runtime-inventory",
           "workspace-files",
@@ -5965,9 +6017,9 @@ var init_daemon_events = __esm({
         workspaceName: DesktopWorkspaceNameSchemaZ
       }).strict()
     ]);
-    DaemonEventResourceInterestsSchemaZ = z36.array(DaemonEventResourceInterestSchemaZ).max(128);
-    DaemonEventSubscribeFrameSchemaZ = z36.object({
-      type: z36.literal("subscribe"),
+    DaemonEventResourceInterestsSchemaZ = z37.array(DaemonEventResourceInterestSchemaZ).max(128);
+    DaemonEventSubscribeFrameSchemaZ = z37.object({
+      type: z37.literal("subscribe"),
       sessions: SessionNamesSchemaZ,
       /**
        * Explicit push/observation demand. Omitted by legacy clients, which keep
@@ -5976,73 +6028,73 @@ var init_daemon_events = __esm({
        */
       interests: DaemonEventResourceInterestsSchemaZ.optional(),
       /** Independently selects broad legacy frame delivery. Omission preserves legacy behaviour. */
-      legacyEvents: z36.boolean().optional(),
+      legacyEvents: z37.boolean().optional(),
       /** Client-owned ordering token for an observer-installation barrier. */
-      interestRevision: z36.number().int().positive().optional(),
+      interestRevision: z37.number().int().positive().optional(),
       /**
        * Last resource-event sequence the client applied for this daemon
        * generation. Omitted by legacy clients. The daemon either replays every
        * later retained event or answers `snapshot-required` when the bounded
        * journal no longer covers the requested cursor.
        */
-      afterSequence: z36.number().int().nonnegative().optional()
+      afterSequence: z37.number().int().nonnegative().optional()
     }).strict();
-    DaemonEventUnsubscribeFrameSchemaZ = z36.object({
-      type: z36.literal("unsubscribe"),
+    DaemonEventUnsubscribeFrameSchemaZ = z37.object({
+      type: z37.literal("unsubscribe"),
       sessions: SessionNamesSchemaZ,
       interests: DaemonEventResourceInterestsSchemaZ.optional(),
-      legacyEvents: z36.boolean().optional(),
-      interestRevision: z36.number().int().positive().optional()
+      legacyEvents: z37.boolean().optional(),
+      interestRevision: z37.number().int().positive().optional()
     }).strict();
-    DaemonEventPingFrameSchemaZ = z36.object({ type: z36.literal("ping") }).strict();
-    DaemonEventClientFrameSchemaZ = z36.discriminatedUnion("type", [
+    DaemonEventPingFrameSchemaZ = z37.object({ type: z37.literal("ping") }).strict();
+    DaemonEventClientFrameSchemaZ = z37.discriminatedUnion("type", [
       DaemonEventSubscribeFrameSchemaZ,
       DaemonEventUnsubscribeFrameSchemaZ,
       DaemonEventPingFrameSchemaZ
     ]);
-    DaemonSessionSnapshotSchemaZ = z36.object({
+    DaemonSessionSnapshotSchemaZ = z37.object({
       project: DaemonProjectResponseSchemaZ
     }).strict();
-    DaemonEventHelloFrameSchemaZ = z36.object({
-      type: z36.literal("hello"),
+    DaemonEventHelloFrameSchemaZ = z37.object({
+      type: z37.literal("hello"),
       daemon: DaemonInstanceIdentitySchemaZ,
-      sessions: z36.array(DaemonSessionOverviewSchemaZ),
+      sessions: z37.array(DaemonSessionOverviewSchemaZ),
       /** Current head of the generation-scoped resource-event journal. */
-      eventSequence: z36.number().int().nonnegative().optional()
+      eventSequence: z37.number().int().nonnegative().optional()
     }).strict();
-    DaemonEventSnapshotFrameSchemaZ = z36.object({
-      type: z36.literal("snapshot"),
-      sessionName: z36.string(),
+    DaemonEventSnapshotFrameSchemaZ = z37.object({
+      type: z37.literal("snapshot"),
+      sessionName: z37.string(),
       data: DaemonSessionSnapshotSchemaZ
     }).strict();
-    DaemonEventSessionsChangedFrameSchemaZ = z36.object({ type: z36.literal("sessions.changed") }).strict();
-    DaemonEventProjectsChangedFrameSchemaZ = z36.object({ type: z36.literal("projects.changed") }).strict();
-    DaemonEventInitOutputFrameSchemaZ = z36.object({
-      type: z36.literal("init.output"),
-      jobId: z36.string(),
-      chunk: z36.string(),
-      done: z36.boolean().optional()
+    DaemonEventSessionsChangedFrameSchemaZ = z37.object({ type: z37.literal("sessions.changed") }).strict();
+    DaemonEventProjectsChangedFrameSchemaZ = z37.object({ type: z37.literal("projects.changed") }).strict();
+    DaemonEventInitOutputFrameSchemaZ = z37.object({
+      type: z37.literal("init.output"),
+      jobId: z37.string(),
+      chunk: z37.string(),
+      done: z37.boolean().optional()
     }).strict();
-    DaemonEventInitErrorFrameSchemaZ = z36.object({
-      type: z36.literal("init.error"),
-      jobId: z36.string(),
-      message: z36.string()
+    DaemonEventInitErrorFrameSchemaZ = z37.object({
+      type: z37.literal("init.error"),
+      jobId: z37.string(),
+      message: z37.string()
     }).strict();
-    DaemonEventPongFrameSchemaZ = z36.object({ type: z36.literal("pong") }).strict();
-    DaemonEventActionCompleteFrameSchemaZ = z36.object({
-      type: z36.literal("action.complete"),
-      name: z36.string(),
-      result: z36.unknown()
+    DaemonEventPongFrameSchemaZ = z37.object({ type: z37.literal("pong") }).strict();
+    DaemonEventActionCompleteFrameSchemaZ = z37.object({
+      type: z37.literal("action.complete"),
+      name: z37.string(),
+      result: z37.unknown()
     }).strict();
-    DaemonEventConfigChangedFrameSchemaZ = z36.object({
-      type: z36.literal("config.changed"),
-      sessionName: z36.string()
+    DaemonEventConfigChangedFrameSchemaZ = z37.object({
+      type: z37.literal("config.changed"),
+      sessionName: z37.string()
     }).strict();
-    DaemonEventTerminalsChangedFrameSchemaZ = z36.object({
-      type: z36.literal("terminals.changed"),
-      sessionName: z36.string()
+    DaemonEventTerminalsChangedFrameSchemaZ = z37.object({
+      type: z37.literal("terminals.changed"),
+      sessionName: z37.string()
     }).strict();
-    DaemonEventResourceKindSchemaZ = z36.enum([
+    DaemonEventResourceKindSchemaZ = z37.enum([
       "workspace-catalog",
       "fleet-catalog",
       "application-shell",
@@ -6051,65 +6103,65 @@ var init_daemon_events = __esm({
       "workspace-changes",
       "workspace-missions"
     ]);
-    DaemonEventResourceChangedFrameSchemaZ = z36.object({
-      type: z36.literal("resource.changed"),
-      sequence: z36.number().int().positive(),
+    DaemonEventResourceChangedFrameSchemaZ = z37.object({
+      type: z37.literal("resource.changed"),
+      sequence: z37.number().int().positive(),
       workspaceName: DesktopWorkspaceNameSchemaZ.nullable(),
       resource: DaemonEventResourceKindSchemaZ,
-      revision: z36.number().int().nonnegative(),
-      causeOperationId: z36.uuid().nullable()
+      revision: z37.number().int().nonnegative(),
+      causeOperationId: z37.uuid().nullable()
     }).strict();
-    DaemonEventResourceObservedFrameSchemaZ = z36.object({
-      type: z36.literal("resource.observed"),
-      sequence: z36.number().int().positive()
+    DaemonEventResourceObservedFrameSchemaZ = z37.object({
+      type: z37.literal("resource.observed"),
+      sequence: z37.number().int().positive()
     }).strict();
-    DaemonEventResourceInterestsAckFrameSchemaZ = z36.object({
-      type: z36.literal("resource.interests-ack"),
-      interestRevision: z36.number().int().positive(),
-      sequence: z36.number().int().nonnegative(),
+    DaemonEventResourceInterestsAckFrameSchemaZ = z37.object({
+      type: z37.literal("resource.interests-ack"),
+      interestRevision: z37.number().int().positive(),
+      sequence: z37.number().int().nonnegative(),
       unavailableInterests: DaemonEventResourceInterestsSchemaZ
     }).strict();
-    DaemonEventSnapshotRequiredFrameSchemaZ = z36.object({
-      type: z36.literal("snapshot-required"),
-      afterSequence: z36.number().int().nonnegative(),
-      oldestAvailableSequence: z36.number().int().positive().nullable(),
-      currentSequence: z36.number().int().nonnegative(),
-      reason: z36.enum(["cursor-ahead", "journal-gap"])
+    DaemonEventSnapshotRequiredFrameSchemaZ = z37.object({
+      type: z37.literal("snapshot-required"),
+      afterSequence: z37.number().int().nonnegative(),
+      oldestAvailableSequence: z37.number().int().positive().nullable(),
+      currentSequence: z37.number().int().nonnegative(),
+      reason: z37.enum(["cursor-ahead", "journal-gap"])
     }).strict();
-    DaemonEventAgentStatusChangedFrameSchemaZ = z36.object({
-      type: z36.literal("agent-status.changed"),
-      sessionName: z36.string()
+    DaemonEventAgentStatusChangedFrameSchemaZ = z37.object({
+      type: z37.literal("agent-status.changed"),
+      sessionName: z37.string()
     }).strict();
-    DaemonEventFleetChangedFrameSchemaZ = z36.object({ type: z36.literal("fleet.changed") }).strict();
-    DaemonEventAgentTurnCompletedFrameSchemaZ = z36.object({
-      type: z36.literal("agent.turn-completed"),
-      sessionName: z36.string(),
-      agentId: z36.string().regex(/^agent\.[0-9a-f]{20}$/u).nullable(),
-      fromStatus: z36.literal("working"),
-      toStatus: z36.enum(["done", "idle"]),
-      at: z36.iso.datetime({ offset: true })
+    DaemonEventFleetChangedFrameSchemaZ = z37.object({ type: z37.literal("fleet.changed") }).strict();
+    DaemonEventAgentTurnCompletedFrameSchemaZ = z37.object({
+      type: z37.literal("agent.turn-completed"),
+      sessionName: z37.string(),
+      agentId: z37.string().regex(/^agent\.[0-9a-f]{20}$/u).nullable(),
+      fromStatus: z37.literal("working"),
+      toStatus: z37.enum(["done", "idle"]),
+      at: z37.iso.datetime({ offset: true })
     }).strict();
-    DaemonEventWorkspacePromotionCompletedFrameSchemaZ = z36.object({
-      type: z36.literal("workspace.promotion-completed"),
+    DaemonEventWorkspacePromotionCompletedFrameSchemaZ = z37.object({
+      type: z37.literal("workspace.promotion-completed"),
       workspaceName: DesktopWorkspaceNameSchemaZ,
-      outcome: z36.enum(["promoted", "replayed"]),
-      at: z36.iso.datetime({ offset: true })
+      outcome: z37.enum(["promoted", "replayed"]),
+      at: z37.iso.datetime({ offset: true })
     }).strict();
-    DaemonEventWorkspaceAddedFrameSchemaZ = z36.object({
-      type: z36.literal("workspace.added"),
+    DaemonEventWorkspaceAddedFrameSchemaZ = z37.object({
+      type: z37.literal("workspace.added"),
       workspace: DaemonWorkspaceSchemaZ
     }).strict();
-    DaemonEventWorkspaceRemovedFrameSchemaZ = z36.object({
-      type: z36.literal("workspace.removed"),
-      name: z36.string()
+    DaemonEventWorkspaceRemovedFrameSchemaZ = z37.object({
+      type: z37.literal("workspace.removed"),
+      name: z37.string()
     }).strict();
-    DaemonEventProtocolErrorCodeSchemaZ = z36.enum(["invalid-json", "invalid-frame"]);
-    DaemonEventProtocolErrorFrameSchemaZ = z36.object({
-      type: z36.literal("protocol.error"),
+    DaemonEventProtocolErrorCodeSchemaZ = z37.enum(["invalid-json", "invalid-frame"]);
+    DaemonEventProtocolErrorFrameSchemaZ = z37.object({
+      type: z37.literal("protocol.error"),
       code: DaemonEventProtocolErrorCodeSchemaZ,
-      message: z36.string()
+      message: z37.string()
     }).strict();
-    DaemonEventServerFrameSchemaZ = z36.discriminatedUnion("type", [
+    DaemonEventServerFrameSchemaZ = z37.discriminatedUnion("type", [
       DaemonEventHelloFrameSchemaZ,
       DaemonEventSnapshotFrameSchemaZ,
       DaemonEventSessionsChangedFrameSchemaZ,
@@ -6137,8 +6189,8 @@ var init_daemon_events = __esm({
 });
 
 // packages/contracts/src/desktop-host.ts
-import { z as z37 } from "zod";
-var DESKTOP_HOST_API_VERSION, DESKTOP_PACKAGED_RENDERER_SCHEME, DESKTOP_PACKAGED_RENDERER_HOST, DESKTOP_PACKAGED_RENDERER_ORIGIN, DESKTOP_PACKAGED_RENDERER_ENTRY_URL, DesktopRuntimeKindSchemaZ, DesktopPlatformSchemaZ, DesktopThemeModeSchemaZ, DesktopThemeStateSchemaZ, DesktopWindowStateSchemaZ, DesktopDaemonLoopbackUrlSchemaZ, DesktopDaemonHostDescriptorSchemaZ, DesktopDaemonSupervisorFatalReasonSchemaZ, DesktopDaemonHostIssueSchemaFields, DesktopDaemonCapabilityIssueSchemaFields, DesktopDaemonHostStateSchemaZ, DesktopDaemonCapabilityStateSchemaZ, DesktopDaemonCapabilityErrorCodeSchemaZ, DesktopDaemonCapabilityErrorSchemaZ, DesktopDaemonWorkspaceSummarySchemaZ, DesktopDaemonListWorkspacesResultSchemaZ, DesktopDaemonCapabilitiesResultSchemaZ, DesktopDaemonFetchApplicationShellRequestSchemaZ, DesktopApplicationShellTargetSchemaZ, DesktopDaemonFetchApplicationShellResultSchemaZ, DesktopDaemonFetchWorkspaceFilesRequestSchemaZ, DesktopDaemonFetchWorkspaceFilesResultSchemaZ, DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ, DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ, DesktopDaemonFetchWorkspaceChangesRequestSchemaZ, DesktopDaemonFetchWorkspaceChangesResultSchemaZ, DesktopDaemonFetchWorkspaceMissionsRequestSchemaZ, DesktopDaemonFetchWorkspaceMissionsResultSchemaZ, DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ, DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ, DesktopDaemonFetchFleetCatalogResultSchemaZ, DesktopDaemonStartupReadinessResultSchemaZ, DesktopDaemonEventSubscriptionRequestSchemaZ, DesktopDaemonSubscriptionIdSchemaZ, DesktopDaemonSubscriptionRequestIdSchemaZ, DesktopDaemonRequestIdSchemaZ, DesktopDaemonTransportStateSchemaZ, DesktopDaemonEventSchemaZ, DesktopDaemonDisconnectedCapabilityStateSchemaZ, DesktopDaemonConnectedCapabilityStateSchemaZ, DesktopDaemonRefreshConnectionResultSchemaZ, DesktopDaemonSubscribeWireResultSchemaZ, DesktopDaemonEventWireEnvelopeSchemaZ, DesktopOnboardingStateSchemaZ, DesktopHostBootstrapSchemaZ, DesktopDirectorySelectionSchemaZ;
+import { z as z38 } from "zod";
+var DESKTOP_HOST_API_VERSION, DESKTOP_PACKAGED_RENDERER_SCHEME, DESKTOP_PACKAGED_RENDERER_HOST, DESKTOP_PACKAGED_RENDERER_ORIGIN, DESKTOP_PACKAGED_RENDERER_ENTRY_URL, DesktopRuntimeKindSchemaZ, DesktopPlatformSchemaZ, DesktopThemeModeSchemaZ, DesktopThemeStateSchemaZ, DesktopWindowStateSchemaZ, DesktopDaemonLoopbackUrlSchemaZ, DesktopDaemonHostDescriptorSchemaZ, DesktopDaemonSupervisorFatalReasonSchemaZ, DesktopDaemonHostIssueSchemaFields, DesktopDaemonCapabilityIssueSchemaFields, DesktopDaemonHostStateSchemaZ, DesktopDaemonCapabilityStateSchemaZ, DesktopDaemonCapabilityErrorCodeSchemaZ, DesktopDaemonCapabilityErrorSchemaZ, DesktopDaemonWorkspaceSummarySchemaZ, DesktopDaemonListWorkspacesResultSchemaZ, DesktopDaemonCapabilitiesResultSchemaZ, DesktopDaemonFetchApplicationShellRequestSchemaZ, DesktopApplicationShellTargetSchemaZ, DesktopDaemonFetchApplicationShellResultSchemaZ, DesktopDaemonFetchWorkspaceFilesRequestSchemaZ, DesktopDaemonFetchWorkspaceFilesResultSchemaZ, DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ, DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ, DesktopDaemonFetchWorkspaceChangesRequestSchemaZ, DesktopDaemonFetchWorkspaceChangesResultSchemaZ, DesktopDaemonFetchWorkspaceMissionsRequestSchemaZ, DesktopDaemonFetchWorkspaceMissionsResultSchemaZ, DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ, DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ, DesktopDaemonFetchFleetCatalogResultSchemaZ, DesktopDaemonFetchWorkspaceCatalogResultSchemaZ, DesktopDaemonStartupReadinessResultSchemaZ, DesktopDaemonEventSubscriptionRequestSchemaZ, DesktopDaemonSubscriptionIdSchemaZ, DesktopDaemonSubscriptionRequestIdSchemaZ, DesktopDaemonRequestIdSchemaZ, DesktopWebHostClientIdSchemaZ, DesktopDaemonTransportStateSchemaZ, DesktopDaemonEventSchemaZ, DesktopDaemonDisconnectedCapabilityStateSchemaZ, DesktopDaemonConnectedCapabilityStateSchemaZ, DesktopDaemonRefreshConnectionResultSchemaZ, DesktopDaemonSubscribeWireResultSchemaZ, DesktopDaemonEventWireEnvelopeSchemaZ, DesktopOnboardingStateSchemaZ, DesktopHostBootstrapSchemaZ, DesktopDirectorySelectionSchemaZ;
 var init_desktop_host = __esm({
   "packages/contracts/src/desktop-host.ts"() {
     "use strict";
@@ -6155,6 +6207,7 @@ var init_desktop_host = __esm({
     init_workspace_changes_resource();
     init_workspace_resource_identity();
     init_fleet_catalog();
+    init_workspace_catalog_resource();
     init_workspace_missions_resource();
     init_daemon_events();
     DESKTOP_HOST_API_VERSION = 13;
@@ -6162,33 +6215,33 @@ var init_desktop_host = __esm({
     DESKTOP_PACKAGED_RENDERER_HOST = "app";
     DESKTOP_PACKAGED_RENDERER_ORIGIN = `${DESKTOP_PACKAGED_RENDERER_SCHEME}://${DESKTOP_PACKAGED_RENDERER_HOST}`;
     DESKTOP_PACKAGED_RENDERER_ENTRY_URL = `${DESKTOP_PACKAGED_RENDERER_ORIGIN}/index.html`;
-    DesktopRuntimeKindSchemaZ = z37.enum(["browser", "electron"]);
-    DesktopPlatformSchemaZ = z37.enum(["darwin", "linux", "win32", "unknown"]);
-    DesktopThemeModeSchemaZ = z37.enum(["light", "dark"]);
-    DesktopThemeStateSchemaZ = z37.object({
+    DesktopRuntimeKindSchemaZ = z38.enum(["browser", "electron"]);
+    DesktopPlatformSchemaZ = z38.enum(["darwin", "linux", "win32", "unknown"]);
+    DesktopThemeModeSchemaZ = z38.enum(["light", "dark"]);
+    DesktopThemeStateSchemaZ = z38.object({
       mode: DesktopThemeModeSchemaZ,
-      highContrast: z37.boolean(),
-      reducedMotion: z37.boolean()
+      highContrast: z38.boolean(),
+      reducedMotion: z38.boolean()
     }).strict();
-    DesktopWindowStateSchemaZ = z37.object({
-      maximized: z37.boolean(),
-      fullscreen: z37.boolean(),
-      focused: z37.boolean()
+    DesktopWindowStateSchemaZ = z38.object({
+      maximized: z38.boolean(),
+      fullscreen: z38.boolean(),
+      focused: z38.boolean()
     }).strict();
-    DesktopDaemonLoopbackUrlSchemaZ = z37.url().refine((value) => {
+    DesktopDaemonLoopbackUrlSchemaZ = z38.url().refine((value) => {
       const url = new URL(value);
       return url.protocol === "http:" && (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]") && url.username.length === 0 && url.password.length === 0 && url.pathname === "/" && url.search.length === 0 && url.hash.length === 0;
     }, "daemon URL must be an uncredentialed loopback HTTP origin");
-    DesktopDaemonHostDescriptorSchemaZ = z37.object({
+    DesktopDaemonHostDescriptorSchemaZ = z38.object({
       apiBaseUrl: DesktopDaemonLoopbackUrlSchemaZ,
-      protocolVersion: z37.number().int().positive(),
-      productVersion: z37.string().trim().min(1),
-      instanceId: z37.uuid(),
-      startedAt: z37.iso.datetime({ offset: true }),
+      protocolVersion: z38.number().int().positive(),
+      productVersion: z38.string().trim().min(1),
+      instanceId: z38.uuid(),
+      startedAt: z38.iso.datetime({ offset: true }),
       /** Stable environment identity; absent until a daemon that mints it runs. */
-      environmentId: z37.uuid().optional()
+      environmentId: z38.uuid().optional()
     }).strict();
-    DesktopDaemonSupervisorFatalReasonSchemaZ = z37.enum([
+    DesktopDaemonSupervisorFatalReasonSchemaZ = z38.enum([
       "protocol-incompatible",
       "record-invalid",
       "endpoint-not-loopback",
@@ -6199,11 +6252,11 @@ var init_desktop_host = __esm({
     ]);
     DesktopDaemonHostIssueSchemaFields = {
       code: DesktopDaemonHostIssueCodeSchemaZ,
-      reason: z37.string().min(1)
+      reason: z38.string().min(1)
     };
     DesktopDaemonCapabilityIssueSchemaFields = {
       code: DesktopDaemonHostIssueCodeSchemaZ,
-      reason: z37.string().min(1).max(240),
+      reason: z38.string().min(1).max(240),
       /**
        * The daemon child's captured last words, when this desktop generation owned
        * a child that produced any. Absent when the daemon was never ours to spawn
@@ -6224,20 +6277,20 @@ var init_desktop_host = __esm({
        */
       startupReadiness: StartupReadinessLadderSchemaZ.optional()
     };
-    DesktopDaemonHostStateSchemaZ = z37.discriminatedUnion("status", [
-      z37.object({
-        status: z37.literal("connected"),
+    DesktopDaemonHostStateSchemaZ = z38.discriminatedUnion("status", [
+      z38.object({
+        status: z38.literal("connected"),
         descriptor: DesktopDaemonHostDescriptorSchemaZ
       }).strict(),
-      z37.object({ status: z37.literal("unavailable"), ...DesktopDaemonHostIssueSchemaFields }).strict(),
-      z37.object({ status: z37.literal("degraded"), ...DesktopDaemonHostIssueSchemaFields }).strict()
+      z38.object({ status: z38.literal("unavailable"), ...DesktopDaemonHostIssueSchemaFields }).strict(),
+      z38.object({ status: z38.literal("degraded"), ...DesktopDaemonHostIssueSchemaFields }).strict()
     ]);
-    DesktopDaemonCapabilityStateSchemaZ = z37.discriminatedUnion("status", [
-      z37.object({ status: z37.literal("connected"), identity: DaemonInstanceIdentitySchemaZ }).strict(),
-      z37.object({ status: z37.literal("unavailable"), ...DesktopDaemonCapabilityIssueSchemaFields }).strict(),
-      z37.object({ status: z37.literal("degraded"), ...DesktopDaemonCapabilityIssueSchemaFields }).strict()
+    DesktopDaemonCapabilityStateSchemaZ = z38.discriminatedUnion("status", [
+      z38.object({ status: z38.literal("connected"), identity: DaemonInstanceIdentitySchemaZ }).strict(),
+      z38.object({ status: z38.literal("unavailable"), ...DesktopDaemonCapabilityIssueSchemaFields }).strict(),
+      z38.object({ status: z38.literal("degraded"), ...DesktopDaemonCapabilityIssueSchemaFields }).strict()
     ]);
-    DesktopDaemonCapabilityErrorCodeSchemaZ = z37.enum([
+    DesktopDaemonCapabilityErrorCodeSchemaZ = z38.enum([
       "preview-only",
       "daemon-unavailable",
       "daemon-degraded",
@@ -6253,102 +6306,106 @@ var init_desktop_host = __esm({
       "protocol-error",
       "disposed"
     ]);
-    DesktopDaemonCapabilityErrorSchemaZ = z37.object({
+    DesktopDaemonCapabilityErrorSchemaZ = z38.object({
       code: DesktopDaemonCapabilityErrorCodeSchemaZ,
-      reason: z37.string().min(1).max(240)
+      reason: z38.string().min(1).max(240)
     }).strict();
-    DesktopDaemonWorkspaceSummarySchemaZ = z37.object({
+    DesktopDaemonWorkspaceSummarySchemaZ = z38.object({
       workspaceName: DesktopWorkspaceNameSchemaZ,
       /** Durable routing intent; absent only for older host fixtures. */
-      sessionName: z37.string().min(1).optional(),
-      source: z37.enum(["project", "workspace"]).optional(),
+      sessionName: z38.string().min(1).optional(),
+      source: z38.enum(["project", "workspace"]).optional(),
       /** Observed tmux truth. A stopped intent is visible but never attachable. */
-      availability: z37.enum(["live", "stopped"]).optional(),
-      paneCount: z37.number().int().nonnegative().optional()
+      availability: z38.enum(["live", "stopped"]).optional(),
+      paneCount: z38.number().int().nonnegative().optional()
     }).strict();
-    DesktopDaemonListWorkspacesResultSchemaZ = z37.discriminatedUnion("status", [
-      z37.object({
-        status: z37.literal("ok"),
+    DesktopDaemonListWorkspacesResultSchemaZ = z38.discriminatedUnion("status", [
+      z38.object({
+        status: z38.literal("ok"),
         daemon: DaemonInstanceIdentitySchemaZ,
-        workspaces: z37.array(DesktopDaemonWorkspaceSummarySchemaZ)
+        workspaces: z38.array(DesktopDaemonWorkspaceSummarySchemaZ)
       }).strict(),
-      z37.object({ status: z37.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+      z38.object({ status: z38.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
-    DesktopDaemonCapabilitiesResultSchemaZ = z37.discriminatedUnion("status", [
-      z37.object({
-        status: z37.literal("ok"),
+    DesktopDaemonCapabilitiesResultSchemaZ = z38.discriminatedUnion("status", [
+      z38.object({
+        status: z38.literal("ok"),
         daemon: DaemonInstanceIdentitySchemaZ,
-        capabilities: z37.object({
+        capabilities: z38.object({
           appWindowMutation: CommandAvailabilitySchemaZ
         }).strict()
       }).strict(),
-      z37.object({ status: z37.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+      z38.object({ status: z38.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
-    DesktopDaemonFetchApplicationShellRequestSchemaZ = z37.object({
+    DesktopDaemonFetchApplicationShellRequestSchemaZ = z38.object({
       workspaceName: DesktopWorkspaceNameSchemaZ,
-      resourceVersion: z37.union([
-        z37.literal(APPLICATION_SHELL_RESOURCE_V2_VERSION),
-        z37.literal(APPLICATION_SHELL_RESOURCE_V3_VERSION)
+      resourceVersion: z38.union([
+        z38.literal(APPLICATION_SHELL_RESOURCE_V2_VERSION),
+        z38.literal(APPLICATION_SHELL_RESOURCE_V3_VERSION)
       ]).optional()
     }).strict();
-    DesktopApplicationShellTargetSchemaZ = z37.object({
+    DesktopApplicationShellTargetSchemaZ = z38.object({
       daemon: DaemonInstanceIdentitySchemaZ,
       workspaceName: DesktopWorkspaceNameSchemaZ
     }).strict();
-    DesktopDaemonFetchApplicationShellResultSchemaZ = z37.discriminatedUnion("status", [
-      z37.object({ status: z37.literal("ok"), envelope: ApplicationShellResourceSchemaZ }).strict(),
-      z37.object({ status: z37.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    DesktopDaemonFetchApplicationShellResultSchemaZ = z38.discriminatedUnion("status", [
+      z38.object({ status: z38.literal("ok"), envelope: ApplicationShellResourceSchemaZ }).strict(),
+      z38.object({ status: z38.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
-    DesktopDaemonFetchWorkspaceFilesRequestSchemaZ = z37.object({
+    DesktopDaemonFetchWorkspaceFilesRequestSchemaZ = z38.object({
       workspaceName: DesktopWorkspaceNameSchemaZ,
       directoryId: WorkspaceFileResourceIdSchemaZ.optional()
     }).strict();
-    DesktopDaemonFetchWorkspaceFilesResultSchemaZ = z37.discriminatedUnion("status", [
-      z37.object({ status: z37.literal("ok"), envelope: WorkspaceFilesCatalogEnvelopeV1SchemaZ }).strict(),
-      z37.object({ status: z37.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    DesktopDaemonFetchWorkspaceFilesResultSchemaZ = z38.discriminatedUnion("status", [
+      z38.object({ status: z38.literal("ok"), envelope: WorkspaceFilesCatalogEnvelopeV1SchemaZ }).strict(),
+      z38.object({ status: z38.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
-    DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ = z37.object({
+    DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ = z38.object({
       workspaceName: DesktopWorkspaceNameSchemaZ,
       fileId: WorkspaceFileResourceIdSchemaZ
     }).strict();
-    DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ = z37.discriminatedUnion("status", [
-      z37.object({ status: z37.literal("ok"), envelope: WorkspaceFilePreviewEnvelopeV1SchemaZ }).strict(),
-      z37.object({ status: z37.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    DesktopDaemonFetchWorkspaceFilePreviewResultSchemaZ = z38.discriminatedUnion("status", [
+      z38.object({ status: z38.literal("ok"), envelope: WorkspaceFilePreviewEnvelopeV1SchemaZ }).strict(),
+      z38.object({ status: z38.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
-    DesktopDaemonFetchWorkspaceChangesRequestSchemaZ = z37.object({ workspaceName: DesktopWorkspaceNameSchemaZ }).strict();
-    DesktopDaemonFetchWorkspaceChangesResultSchemaZ = z37.discriminatedUnion("status", [
-      z37.object({ status: z37.literal("ok"), envelope: WorkspaceChangesCatalogEnvelopeV1SchemaZ }).strict(),
-      z37.object({ status: z37.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    DesktopDaemonFetchWorkspaceChangesRequestSchemaZ = z38.object({ workspaceName: DesktopWorkspaceNameSchemaZ }).strict();
+    DesktopDaemonFetchWorkspaceChangesResultSchemaZ = z38.discriminatedUnion("status", [
+      z38.object({ status: z38.literal("ok"), envelope: WorkspaceChangesCatalogEnvelopeV1SchemaZ }).strict(),
+      z38.object({ status: z38.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
-    DesktopDaemonFetchWorkspaceMissionsRequestSchemaZ = z37.object({ workspaceName: DesktopWorkspaceNameSchemaZ }).strict();
-    DesktopDaemonFetchWorkspaceMissionsResultSchemaZ = z37.discriminatedUnion("status", [
-      z37.object({ status: z37.literal("ok"), envelope: WorkspaceMissionsEnvelopeV1SchemaZ }).strict(),
-      z37.object({ status: z37.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    DesktopDaemonFetchWorkspaceMissionsRequestSchemaZ = z38.object({ workspaceName: DesktopWorkspaceNameSchemaZ }).strict();
+    DesktopDaemonFetchWorkspaceMissionsResultSchemaZ = z38.discriminatedUnion("status", [
+      z38.object({ status: z38.literal("ok"), envelope: WorkspaceMissionsEnvelopeV1SchemaZ }).strict(),
+      z38.object({ status: z38.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
-    DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ = z37.object({
+    DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ = z38.object({
       workspaceName: DesktopWorkspaceNameSchemaZ,
       changeId: WorkspaceChangeResourceIdSchemaZ
     }).strict();
-    DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ = z37.discriminatedUnion("status", [
-      z37.object({ status: z37.literal("ok"), envelope: WorkspaceChangeDiffEnvelopeV1SchemaZ }).strict(),
-      z37.object({ status: z37.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ = z38.discriminatedUnion("status", [
+      z38.object({ status: z38.literal("ok"), envelope: WorkspaceChangeDiffEnvelopeV1SchemaZ }).strict(),
+      z38.object({ status: z38.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
-    DesktopDaemonFetchFleetCatalogResultSchemaZ = z37.discriminatedUnion("status", [
-      z37.object({ status: z37.literal("ok"), envelope: FleetCatalogResourceV1SchemaZ }).strict(),
-      z37.object({ status: z37.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    DesktopDaemonFetchFleetCatalogResultSchemaZ = z38.discriminatedUnion("status", [
+      z38.object({ status: z38.literal("ok"), envelope: FleetCatalogResourceV1SchemaZ }).strict(),
+      z38.object({ status: z38.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
-    DesktopDaemonStartupReadinessResultSchemaZ = z37.discriminatedUnion("status", [
-      z37.object({ status: z37.literal("ok"), ladder: StartupReadinessLadderSchemaZ }).strict(),
-      z37.object({ status: z37.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    DesktopDaemonFetchWorkspaceCatalogResultSchemaZ = z38.discriminatedUnion("status", [
+      z38.object({ status: z38.literal("ok"), envelope: WorkspaceCatalogResourceV2SchemaZ }).strict(),
+      z38.object({ status: z38.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
-    DesktopDaemonEventSubscriptionRequestSchemaZ = z37.object({
+    DesktopDaemonStartupReadinessResultSchemaZ = z38.discriminatedUnion("status", [
+      z38.object({ status: z38.literal("ok"), ladder: StartupReadinessLadderSchemaZ }).strict(),
+      z38.object({ status: z38.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    ]);
+    DesktopDaemonEventSubscriptionRequestSchemaZ = z38.object({
       /**
        * Empty subscribes to catalog/connection invalidations only. Non-empty
        * subscriptions additionally receive events for the named workspaces.
        */
-      workspaceNames: z37.array(DesktopWorkspaceNameSchemaZ).max(64),
+      workspaceNames: z38.array(DesktopWorkspaceNameSchemaZ).max(64),
       /** Optional explicit demand; omission preserves the legacy broad stream. */
-      resourceInterests: z37.array(DaemonEventResourceInterestSchemaZ).max(128).optional()
+      resourceInterests: z38.array(DaemonEventResourceInterestSchemaZ).max(128).optional()
     }).strict().superRefine(({ workspaceNames, resourceInterests }, ctx) => {
       if (new Set(workspaceNames).size !== workspaceNames.length) {
         ctx.addIssue({ code: "custom", message: "workspace names must be unique" });
@@ -6361,25 +6418,26 @@ var init_desktop_host = __esm({
         ctx.addIssue({ code: "custom", message: "resource interests must be unique" });
       }
     });
-    DesktopDaemonSubscriptionIdSchemaZ = z37.string().regex(/^desktop-subscription-[1-9][0-9]{0,9}$/u);
-    DesktopDaemonSubscriptionRequestIdSchemaZ = z37.uuid();
-    DesktopDaemonRequestIdSchemaZ = z37.uuid();
-    DesktopDaemonTransportStateSchemaZ = z37.discriminatedUnion("phase", [
-      z37.object({ phase: z37.literal("idle") }).strict(),
-      z37.object({ phase: z37.literal("connecting") }).strict(),
-      z37.object({ phase: z37.literal("connected") }).strict(),
-      z37.object({ phase: z37.literal("degraded"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
-      z37.object({
-        phase: z37.literal("reconnecting"),
-        attempt: z37.number().int().min(1).max(1e3),
-        maximumAttempts: z37.number().int().min(1).max(1e3),
-        nextRetryAt: z37.number().int().nonnegative(),
+    DesktopDaemonSubscriptionIdSchemaZ = z38.string().regex(/^desktop-subscription-[1-9][0-9]{0,9}$/u);
+    DesktopDaemonSubscriptionRequestIdSchemaZ = z38.uuid();
+    DesktopDaemonRequestIdSchemaZ = z38.uuid();
+    DesktopWebHostClientIdSchemaZ = z38.string().regex(/^web:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+    DesktopDaemonTransportStateSchemaZ = z38.discriminatedUnion("phase", [
+      z38.object({ phase: z38.literal("idle") }).strict(),
+      z38.object({ phase: z38.literal("connecting") }).strict(),
+      z38.object({ phase: z38.literal("connected") }).strict(),
+      z38.object({ phase: z38.literal("degraded"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict(),
+      z38.object({
+        phase: z38.literal("reconnecting"),
+        attempt: z38.number().int().min(1).max(1e3),
+        maximumAttempts: z38.number().int().min(1).max(1e3),
+        nextRetryAt: z38.number().int().nonnegative(),
         error: DesktopDaemonCapabilityErrorSchemaZ
       }).strict(),
-      z37.object({ phase: z37.literal("stopped"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+      z38.object({ phase: z38.literal("stopped"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
-    DesktopDaemonEventSchemaZ = z37.discriminatedUnion("type", [
-      z37.object({ type: z37.literal("workspaces.changed") }).strict(),
+    DesktopDaemonEventSchemaZ = z38.discriminatedUnion("type", [
+      z38.object({ type: z38.literal("workspaces.changed") }).strict(),
       /**
        * The adopted-session fleet changed — its composition (a session adopted or
        * gone) OR the ground-truth agent status of some session in it. Workspace-free
@@ -6388,32 +6446,32 @@ var init_desktop_host = __esm({
        * (`fleet.changed` / `agent-status.changed`); the main-process broker folds
        * both into this single renderer-safe invalidation.
        */
-      z37.object({ type: z37.literal("fleet.changed") }).strict(),
-      z37.object({
-        type: z37.literal("application-shell.changed"),
+      z38.object({ type: z38.literal("fleet.changed") }).strict(),
+      z38.object({
+        type: z38.literal("application-shell.changed"),
         workspaceName: DesktopWorkspaceNameSchemaZ,
         /** Present for ordered v2 resource events; absent for legacy invalidations. */
-        daemonInstanceId: z37.uuid().optional(),
-        sequence: z37.number().int().nonnegative().optional(),
-        revision: z37.number().int().nonnegative().optional(),
-        causeOperationId: z37.uuid().nullable().optional()
+        daemonInstanceId: z38.uuid().optional(),
+        sequence: z38.number().int().nonnegative().optional(),
+        revision: z38.number().int().nonnegative().optional(),
+        causeOperationId: z38.uuid().nullable().optional()
       }).strict(),
-      z37.object({
-        type: z37.enum([
+      z38.object({
+        type: z38.enum([
           "workspace-files.changed",
           "workspace-changes.changed",
           "workspace-missions.changed"
         ]),
         workspaceName: DesktopWorkspaceNameSchemaZ,
-        daemonInstanceId: z37.uuid(),
-        sequence: z37.number().int().nonnegative(),
-        revision: z37.number().int().nonnegative(),
-        causeOperationId: z37.uuid().nullable()
+        daemonInstanceId: z38.uuid(),
+        sequence: z38.number().int().nonnegative(),
+        revision: z38.number().int().nonnegative(),
+        causeOperationId: z38.uuid().nullable()
       }).strict(),
       InteractionReceiptSchemaZ,
-      z37.object({
-        type: z37.literal("connection.changed"),
-        state: z37.enum(["live", "degraded"]),
+      z38.object({
+        type: z38.literal("connection.changed"),
+        state: z38.enum(["live", "degraded"]),
         error: DesktopDaemonCapabilityErrorSchemaZ.nullable()
       }).strict(),
       /**
@@ -6422,140 +6480,141 @@ var init_desktop_host = __esm({
        * while this one carries the full typed machine state (retry attempt,
        * next-retry time, fatal stop) so status displays derive rather than infer.
        */
-      z37.object({
-        type: z37.literal("transport.changed"),
+      z38.object({
+        type: z38.literal("transport.changed"),
         transport: DesktopDaemonTransportStateSchemaZ
       }).strict(),
-      z37.object({
-        type: z37.literal("daemon-generation.changed"),
+      z38.object({
+        type: z38.literal("daemon-generation.changed"),
         previousIdentity: DaemonInstanceIdentitySchemaZ.nullable(),
         daemon: DesktopDaemonCapabilityStateSchemaZ
       }).strict()
     ]);
-    DesktopDaemonDisconnectedCapabilityStateSchemaZ = z37.discriminatedUnion("status", [
-      z37.object({
-        status: z37.literal("unavailable"),
+    DesktopDaemonDisconnectedCapabilityStateSchemaZ = z38.discriminatedUnion("status", [
+      z38.object({
+        status: z38.literal("unavailable"),
         ...DesktopDaemonCapabilityIssueSchemaFields
       }).strict(),
-      z37.object({ status: z37.literal("degraded"), ...DesktopDaemonCapabilityIssueSchemaFields }).strict()
+      z38.object({ status: z38.literal("degraded"), ...DesktopDaemonCapabilityIssueSchemaFields }).strict()
     ]);
-    DesktopDaemonConnectedCapabilityStateSchemaZ = z37.object({ status: z37.literal("connected"), identity: DaemonInstanceIdentitySchemaZ }).strict();
-    DesktopDaemonRefreshConnectionResultSchemaZ = z37.discriminatedUnion("outcome", [
-      z37.object({
-        outcome: z37.literal("unchanged"),
+    DesktopDaemonConnectedCapabilityStateSchemaZ = z38.object({ status: z38.literal("connected"), identity: DaemonInstanceIdentitySchemaZ }).strict();
+    DesktopDaemonRefreshConnectionResultSchemaZ = z38.discriminatedUnion("outcome", [
+      z38.object({
+        outcome: z38.literal("unchanged"),
         daemon: DesktopDaemonCapabilityStateSchemaZ
       }).strict(),
-      z37.object({
-        outcome: z37.literal("generation-replaced"),
+      z38.object({
+        outcome: z38.literal("generation-replaced"),
         previousIdentity: DaemonInstanceIdentitySchemaZ.nullable(),
         daemon: DesktopDaemonConnectedCapabilityStateSchemaZ
       }).strict(),
-      z37.object({
-        outcome: z37.literal("authority-retired"),
+      z38.object({
+        outcome: z38.literal("authority-retired"),
         previousIdentity: DaemonInstanceIdentitySchemaZ,
         daemon: DesktopDaemonDisconnectedCapabilityStateSchemaZ
       }).strict(),
-      z37.object({
-        outcome: z37.literal("state-changed"),
+      z38.object({
+        outcome: z38.literal("state-changed"),
         daemon: DesktopDaemonDisconnectedCapabilityStateSchemaZ
       }).strict(),
-      z37.object({
-        outcome: z37.literal("superseded"),
+      z38.object({
+        outcome: z38.literal("superseded"),
         daemon: DesktopDaemonCapabilityStateSchemaZ
       }).strict()
     ]);
-    DesktopDaemonSubscribeWireResultSchemaZ = z37.discriminatedUnion("status", [
-      z37.object({ status: z37.literal("subscribed"), subscriptionId: DesktopDaemonSubscriptionIdSchemaZ }).strict(),
-      z37.object({ status: z37.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    DesktopDaemonSubscribeWireResultSchemaZ = z38.discriminatedUnion("status", [
+      z38.object({ status: z38.literal("subscribed"), subscriptionId: DesktopDaemonSubscriptionIdSchemaZ }).strict(),
+      z38.object({ status: z38.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
-    DesktopDaemonEventWireEnvelopeSchemaZ = z37.object({
+    DesktopDaemonEventWireEnvelopeSchemaZ = z38.object({
       subscriptionId: DesktopDaemonSubscriptionIdSchemaZ,
       subscriptionRequestId: DesktopDaemonSubscriptionRequestIdSchemaZ,
       event: DesktopDaemonEventSchemaZ
     }).strict();
-    DesktopOnboardingStateSchemaZ = z37.object({ introAcknowledged: z37.boolean() }).strict();
-    DesktopHostBootstrapSchemaZ = z37.object({
-      apiVersion: z37.literal(DESKTOP_HOST_API_VERSION),
+    DesktopOnboardingStateSchemaZ = z38.object({ introAcknowledged: z38.boolean() }).strict();
+    DesktopHostBootstrapSchemaZ = z38.object({
+      apiVersion: z38.literal(DESKTOP_HOST_API_VERSION),
       runtime: DesktopRuntimeKindSchemaZ,
       platform: DesktopPlatformSchemaZ,
-      appVersion: z37.string().min(1),
+      appVersion: z38.string().min(1),
       theme: DesktopThemeStateSchemaZ,
       window: DesktopWindowStateSchemaZ,
       daemon: DesktopDaemonCapabilityStateSchemaZ,
       onboarding: DesktopOnboardingStateSchemaZ
     }).strict();
-    DesktopDirectorySelectionSchemaZ = z37.object({ path: z37.string().min(1) }).strict();
+    DesktopDirectorySelectionSchemaZ = z38.object({ path: z38.string().min(1) }).strict();
   }
 });
 
 // packages/contracts/src/app-window-mutation.ts
-import { z as z38 } from "zod";
-var AppWindowMutationCommandSchemaZ, AppWindowMutationArgumentsSchemaZ, AppWindowMutationRequestSchemaZ, AppWindowMutationResultSchemaZ, AppWindowMutationHostResultSchemaZ;
+import { z as z39 } from "zod";
+var AppWindowMutationCommandSchemaZ, AppWindowMutationArgumentsSchemaZ, AppWindowMutationInvocationSchemaZ, AppWindowMutationRequestSchemaZ, AppWindowMutationResultSchemaZ, AppWindowMutationHostResultSchemaZ;
 var init_app_window_mutation = __esm({
   "packages/contracts/src/app-window-mutation.ts"() {
     "use strict";
     init_app_window_state();
     init_desktop_host();
-    AppWindowMutationCommandSchemaZ = z38.discriminatedUnion("type", [
-      z38.object({
-        type: z38.literal("window.focus"),
+    AppWindowMutationCommandSchemaZ = z39.discriminatedUnion("type", [
+      z39.object({
+        type: z39.literal("window.focus"),
         windowId: AppWindowIdSchemaZ.nullable()
       }).strict(),
-      z38.object({
-        type: z38.literal("window.float"),
+      z39.object({
+        type: z39.literal("window.float"),
         windowId: AppWindowIdSchemaZ,
         rect: AppWindowRectSchemaZ.optional()
       }).strict(),
-      z38.object({
-        type: z38.literal("window.move"),
+      z39.object({
+        type: z39.literal("window.move"),
         windowId: AppWindowIdSchemaZ,
-        x: z38.number().finite(),
-        y: z38.number().finite()
+        x: z39.number().finite(),
+        y: z39.number().finite()
       }).strict(),
-      z38.object({
-        type: z38.literal("window.resize"),
+      z39.object({
+        type: z39.literal("window.resize"),
         windowId: AppWindowIdSchemaZ,
-        width: z38.number().finite().positive(),
-        height: z38.number().finite().positive()
+        width: z39.number().finite().positive(),
+        height: z39.number().finite().positive()
       }).strict(),
-      z38.object({
-        type: z38.literal("window.dock"),
+      z39.object({
+        type: z39.literal("window.dock"),
         windowId: AppWindowIdSchemaZ,
         stackId: AppWindowIdSchemaZ.optional(),
-        index: z38.number().int().nonnegative().optional()
+        index: z39.number().int().nonnegative().optional()
       }).strict(),
-      z38.object({
-        type: z38.literal("stack.activate"),
+      z39.object({
+        type: z39.literal("stack.activate"),
         stackId: AppWindowIdSchemaZ,
         windowId: AppWindowIdSchemaZ
       }).strict()
     ]);
-    AppWindowMutationArgumentsSchemaZ = z38.object({
+    AppWindowMutationArgumentsSchemaZ = z39.object({
       workspaceName: DesktopWorkspaceNameSchemaZ,
-      expectedDocumentRevision: z38.number().int().nonnegative(),
+      expectedDocumentRevision: z39.number().int().nonnegative(),
       command: AppWindowMutationCommandSchemaZ
     }).strict();
-    AppWindowMutationRequestSchemaZ = z38.object({
-      operationId: z38.uuid(),
-      expectedDaemonInstanceId: z38.uuid(),
+    AppWindowMutationInvocationSchemaZ = z39.object({ operationId: z39.uuid().optional(), intent: AppWindowMutationArgumentsSchemaZ }).strict();
+    AppWindowMutationRequestSchemaZ = z39.object({
+      operationId: z39.uuid(),
+      expectedDaemonInstanceId: z39.uuid(),
       intent: AppWindowMutationArgumentsSchemaZ
     }).strict();
-    AppWindowMutationResultSchemaZ = z38.object({
-      operationId: z38.uuid(),
-      daemonInstanceId: z38.uuid(),
-      outcome: z38.enum(["applied", "unchanged", "replayed"]),
+    AppWindowMutationResultSchemaZ = z39.object({
+      operationId: z39.uuid(),
+      daemonInstanceId: z39.uuid(),
+      outcome: z39.enum(["applied", "unchanged", "replayed"]),
       workspaceName: DesktopWorkspaceNameSchemaZ,
-      documentRevision: z38.number().int().nonnegative()
+      documentRevision: z39.number().int().nonnegative()
     }).strict();
-    AppWindowMutationHostResultSchemaZ = z38.discriminatedUnion("status", [
-      z38.object({ status: z38.literal("ok"), result: AppWindowMutationResultSchemaZ }).strict(),
-      z38.object({ status: z38.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    AppWindowMutationHostResultSchemaZ = z39.discriminatedUnion("status", [
+      z39.object({ status: z39.literal("ok"), result: AppWindowMutationResultSchemaZ }).strict(),
+      z39.object({ status: z39.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
   }
 });
 
 // packages/contracts/src/workspace-config.ts
-import { z as z39 } from "zod";
+import { z as z40 } from "zod";
 function validateWorkspaceLayoutTree(root, path2, context) {
   const seen = /* @__PURE__ */ new Map();
   let count = 0;
@@ -6617,11 +6676,11 @@ var init_workspace_config = __esm({
   "packages/contracts/src/workspace-config.ts"() {
     "use strict";
     init_ide_config();
-    NonEmptyStringSchema = z39.string().min(1);
-    ProfileNameSchema = z39.string().min(1);
-    WorkspaceCommandSchemaZ = z39.union([
+    NonEmptyStringSchema = z40.string().min(1);
+    ProfileNameSchema = z40.string().min(1);
+    WorkspaceCommandSchemaZ = z40.union([
       NonEmptyStringSchema,
-      z39.array(NonEmptyStringSchema).min(1)
+      z40.array(NonEmptyStringSchema).min(1)
     ]);
     WorkspaceTerminalPaneSchemaZ = PaneSchema.pick({
       id: true,
@@ -6634,88 +6693,88 @@ var init_workspace_config = __esm({
       focus: true,
       env: true
     }).strict();
-    WorkspaceTerminalRowSchemaZ = z39.strictObject({
+    WorkspaceTerminalRowSchemaZ = z40.strictObject({
       size: RowSchema.shape.size,
-      panes: z39.array(WorkspaceTerminalPaneSchemaZ).min(1)
+      panes: z40.array(WorkspaceTerminalPaneSchemaZ).min(1)
     });
-    WorkspaceTerminalConfigSchemaZ = z39.strictObject({
-      rows: z39.array(WorkspaceTerminalRowSchemaZ).min(1),
+    WorkspaceTerminalConfigSchemaZ = z40.strictObject({
+      rows: z40.array(WorkspaceTerminalRowSchemaZ).min(1),
       theme: ThemeConfigSchema.strict().optional()
     });
-    WorkspacePanelKindSchemaZ = z39.enum(["home", "terminals", "files", "diff", "missions"]);
+    WorkspacePanelKindSchemaZ = z40.enum(["home", "terminals", "files", "diff", "missions"]);
     WorkspaceLayoutIdSchemaZ = NonEmptyStringSchema.max(128);
-    WorkspaceAppLayoutNodeSchemaZ = z39.lazy(
-      () => z39.discriminatedUnion("type", [
-        z39.strictObject({
-          type: z39.literal("panel"),
+    WorkspaceAppLayoutNodeSchemaZ = z40.lazy(
+      () => z40.discriminatedUnion("type", [
+        z40.strictObject({
+          type: z40.literal("panel"),
           id: WorkspaceLayoutIdSchemaZ,
           panel: WorkspacePanelKindSchemaZ,
-          min_size: z39.number().int().positive().optional()
+          min_size: z40.number().int().positive().optional()
         }),
-        z39.strictObject({
-          type: z39.literal("split"),
+        z40.strictObject({
+          type: z40.literal("split"),
           id: WorkspaceLayoutIdSchemaZ,
-          direction: z39.enum(["horizontal", "vertical"]),
-          children: z39.array(WorkspaceAppLayoutNodeSchemaZ).min(2).max(4),
-          weights: z39.array(z39.number().positive()).optional()
+          direction: z40.enum(["horizontal", "vertical"]),
+          children: z40.array(WorkspaceAppLayoutNodeSchemaZ).min(2).max(4),
+          weights: z40.array(z40.number().positive()).optional()
         }),
-        z39.strictObject({
-          type: z39.literal("tabs"),
+        z40.strictObject({
+          type: z40.literal("tabs"),
           id: WorkspaceLayoutIdSchemaZ,
-          children: z39.array(WorkspaceAppLayoutNodeSchemaZ).min(1).max(8),
+          children: z40.array(WorkspaceAppLayoutNodeSchemaZ).min(1).max(8),
           active: WorkspaceLayoutIdSchemaZ.optional()
         })
       ])
     );
-    WorkspaceFullPanelViewSchemaZ = z39.strictObject({
+    WorkspaceFullPanelViewSchemaZ = z40.strictObject({
       id: NonEmptyStringSchema,
       title: NonEmptyStringSchema.optional(),
       panel: WorkspacePanelKindSchemaZ
     });
-    WorkspaceCompositeViewSchemaZ = z39.strictObject({
+    WorkspaceCompositeViewSchemaZ = z40.strictObject({
       id: NonEmptyStringSchema,
       title: NonEmptyStringSchema.optional(),
       layout: WorkspaceAppLayoutNodeSchemaZ
     });
-    WorkspaceAppViewSchemaZ = z39.union([
+    WorkspaceAppViewSchemaZ = z40.union([
       WorkspaceFullPanelViewSchemaZ,
       WorkspaceCompositeViewSchemaZ
     ]);
-    WorkspaceAppConfigSchemaZ = z39.strictObject({
-      views: z39.array(WorkspaceAppViewSchemaZ).min(1)
+    WorkspaceAppConfigSchemaZ = z40.strictObject({
+      views: z40.array(WorkspaceAppViewSchemaZ).min(1)
     });
-    WorkspaceHarnessProfileSchemaZ = z39.strictObject({
+    WorkspaceHarnessProfileSchemaZ = z40.strictObject({
       adapter: NonEmptyStringSchema,
       command: WorkspaceCommandSchemaZ,
-      env: z39.record(NonEmptyStringSchema, z39.string()).optional()
+      env: z40.record(NonEmptyStringSchema, z40.string()).optional()
     });
-    WorkspaceAgentRoleSchemaZ = z39.enum([
+    WorkspaceAgentRoleSchemaZ = z40.enum([
       "manager",
       "implementer",
       "reviewer",
       "researcher",
       "validator"
     ]);
-    WorkspaceAgentProfileSchemaZ = z39.strictObject({
+    WorkspaceAgentProfileSchemaZ = z40.strictObject({
       harness: ProfileNameSchema,
       model: NonEmptyStringSchema.optional(),
       role: WorkspaceAgentRoleSchemaZ
     });
-    WorkspaceMissionDefaultsSchemaZ = z39.strictObject({
+    WorkspaceMissionDefaultsSchemaZ = z40.strictObject({
       manager: ProfileNameSchema.optional(),
-      workers: z39.array(ProfileNameSchema).optional(),
+      workers: z40.array(ProfileNameSchema).optional(),
       reviewer: ProfileNameSchema.optional(),
-      isolation: z39.enum(["shared", "worktree"]).optional(),
-      max_concurrent_tasks: z39.number().int().positive().optional()
+      isolation: z40.enum(["shared", "worktree"]).optional(),
+      max_concurrent_tasks: z40.number().int().positive().optional()
     });
-    WorkspaceConfigV1ObjectSchemaZ = z39.strictObject({
-      version: z39.literal(1),
+    WorkspaceConfigV1ObjectSchemaZ = z40.strictObject({
+      version: z40.literal(1),
       name: NonEmptyStringSchema.optional(),
-      before: z39.string().optional(),
+      before: z40.string().optional(),
       terminal: WorkspaceTerminalConfigSchemaZ.optional(),
       app: WorkspaceAppConfigSchemaZ.optional(),
-      harnesses: z39.record(ProfileNameSchema, WorkspaceHarnessProfileSchemaZ).optional(),
-      agents: z39.record(ProfileNameSchema, WorkspaceAgentProfileSchemaZ).optional(),
+      harnesses: z40.record(ProfileNameSchema, WorkspaceHarnessProfileSchemaZ).optional(),
+      agents: z40.record(ProfileNameSchema, WorkspaceAgentProfileSchemaZ).optional(),
       missions: WorkspaceMissionDefaultsSchemaZ.optional()
     });
     WorkspaceConfigV1SchemaZ = WorkspaceConfigV1ObjectSchemaZ.superRefine(
@@ -6779,7 +6838,7 @@ var init_workspace_config = __esm({
 });
 
 // packages/contracts/src/workspace-pane-creation.ts
-import { z as z40 } from "zod";
+import { z as z41 } from "zod";
 function hasControlCharacters(value) {
   return [...value].some((character) => {
     const code = character.codePointAt(0) ?? 0;
@@ -6801,8 +6860,8 @@ var init_workspace_pane_creation = __esm({
     init_desktop_host();
     init_workspace_config();
     WORKSPACE_PANE_CREATE_COMMAND_ID = "workspace.pane.create";
-    WorkspacePaneCreationReferenceSchemaZ = z40.string().min(1).max(160).refine((value) => value === value.trim(), "reference must not have outer whitespace").refine((value) => !hasControlCharacters(value), "reference must not contain controls").refine((value) => !/[\\/]/u.test(value), "reference must not be a filesystem path").refine((value) => !/^[%$@]/u.test(value), "reference must not use tmux target syntax");
-    WorkspacePaneCreationWorkspaceNameSchemaZ = z40.string().superRefine((raw, context) => {
+    WorkspacePaneCreationReferenceSchemaZ = z41.string().min(1).max(160).refine((value) => value === value.trim(), "reference must not have outer whitespace").refine((value) => !hasControlCharacters(value), "reference must not contain controls").refine((value) => !/[\\/]/u.test(value), "reference must not be a filesystem path").refine((value) => !/^[%$@]/u.test(value), "reference must not use tmux target syntax");
+    WorkspacePaneCreationWorkspaceNameSchemaZ = z41.string().superRefine((raw, context) => {
       const parsed = DesktopWorkspaceNameSchemaZ.safeParse(raw);
       if (!parsed.success) {
         context.addIssue({ code: "custom", message: "invalid desktop workspace name" });
@@ -6815,73 +6874,75 @@ var init_workspace_pane_creation = __esm({
         });
       }
     }).pipe(DesktopWorkspaceNameSchemaZ);
-    WorkspacePaneDisplayTitleSchemaZ = z40.string().min(1).max(80).refine((value) => value === value.trim(), "display title must not have outer whitespace").refine((value) => !hasControlCharacters(value), "display title must not contain controls");
-    WorkspacePaneCreationPlacementSchemaZ = z40.discriminatedUnion("kind", [
-      z40.object({ kind: z40.literal("window") }).strict(),
-      z40.object({
-        kind: z40.literal("split"),
-        direction: z40.enum(["right", "down"]),
+    WorkspacePaneDisplayTitleSchemaZ = z41.string().min(1).max(80).refine((value) => value === value.trim(), "display title must not have outer whitespace").refine((value) => !hasControlCharacters(value), "display title must not contain controls");
+    WorkspacePaneCreationPlacementSchemaZ = z41.discriminatedUnion("kind", [
+      z41.object({ kind: z41.literal("window") }).strict(),
+      z41.object({
+        kind: z41.literal("split"),
+        direction: z41.enum(["right", "down"]),
         targetSemanticPaneId: WorkspacePaneCreationReferenceSchemaZ
       }).strict()
     ]);
-    WorkspacePaneCreationBaseArgumentsSchemaZ = z40.object({
+    WorkspacePaneCreationBaseArgumentsSchemaZ = z41.object({
       workspaceName: WorkspacePaneCreationWorkspaceNameSchemaZ,
       displayTitle: WorkspacePaneDisplayTitleSchemaZ.optional(),
       placement: WorkspacePaneCreationPlacementSchemaZ.optional()
     });
     WorkspaceTerminalCreateArgumentsSchemaZ = WorkspacePaneCreationBaseArgumentsSchemaZ.extend({
-      kind: z40.literal("terminal")
+      kind: z41.literal("terminal")
     }).strict();
     WorkspaceAgentCreateArgumentsSchemaZ = WorkspacePaneCreationBaseArgumentsSchemaZ.extend({
-      kind: z40.literal("agent"),
+      kind: z41.literal("agent"),
       harnessProfileId: WorkspacePaneCreationReferenceSchemaZ,
       role: WorkspaceAgentRoleSchemaZ,
       missionId: WorkspacePaneCreationReferenceSchemaZ.optional()
     }).strict();
-    WorkspacePaneCreateArgumentsSchemaZ = z40.discriminatedUnion("kind", [
+    WorkspacePaneCreateArgumentsSchemaZ = z41.discriminatedUnion("kind", [
       WorkspaceTerminalCreateArgumentsSchemaZ,
       WorkspaceAgentCreateArgumentsSchemaZ
     ]);
-    WorkspacePaneCreateInvocationSchemaZ = z40.object({
-      version: z40.literal(COMMAND_PROTOCOL_VERSION),
-      id: z40.literal(WORKSPACE_PANE_CREATE_COMMAND_ID),
+    WorkspacePaneCreateInvocationSchemaZ = z41.object({
+      version: z41.literal(COMMAND_PROTOCOL_VERSION),
+      id: z41.literal(WORKSPACE_PANE_CREATE_COMMAND_ID),
+      /** Renderer correlation only; daemon authority remains host-issued. */
+      operationId: z41.uuid().optional(),
       source: CommandSourceSchemaZ,
       args: WorkspacePaneCreateArgumentsSchemaZ
     }).strict();
-    WorkspacePaneCreateMutationRequestSchemaZ = z40.object({
-      operationId: z40.uuid(),
-      expectedDaemonInstanceId: z40.uuid(),
+    WorkspacePaneCreateMutationRequestSchemaZ = z41.object({
+      operationId: z41.uuid(),
+      expectedDaemonInstanceId: z41.uuid(),
       intent: WorkspacePaneCreateArgumentsSchemaZ
     }).strict();
-    WorkspacePaneCreatedResourceBaseSchemaZ = z40.object({
-      resourceVersion: z40.literal(1),
+    WorkspacePaneCreatedResourceBaseSchemaZ = z41.object({
+      resourceVersion: z41.literal(1),
       workspaceName: WorkspacePaneCreationWorkspaceNameSchemaZ,
       semanticPaneId: WorkspacePaneCreationReferenceSchemaZ,
       displayTitle: WorkspacePaneDisplayTitleSchemaZ
     });
-    WorkspacePaneCreatedResourceSchemaZ = z40.discriminatedUnion("kind", [
+    WorkspacePaneCreatedResourceSchemaZ = z41.discriminatedUnion("kind", [
       WorkspacePaneCreatedResourceBaseSchemaZ.extend({
-        kind: z40.literal("terminal"),
-        harnessProfileId: z40.null(),
-        role: z40.null(),
-        missionId: z40.null()
+        kind: z41.literal("terminal"),
+        harnessProfileId: z41.null(),
+        role: z41.null(),
+        missionId: z41.null()
       }).strict(),
       WorkspacePaneCreatedResourceBaseSchemaZ.extend({
-        kind: z40.literal("agent"),
+        kind: z41.literal("agent"),
         harnessProfileId: WorkspacePaneCreationReferenceSchemaZ,
         role: WorkspaceAgentRoleSchemaZ,
         missionId: WorkspacePaneCreationReferenceSchemaZ.nullable()
       }).strict()
     ]);
-    WorkspacePaneCreateMutationResultSchemaZ = z40.object({
-      operationId: z40.uuid(),
-      daemonInstanceId: z40.uuid(),
-      outcome: z40.enum(["created", "replayed"]),
+    WorkspacePaneCreateMutationResultSchemaZ = z41.object({
+      operationId: z41.uuid(),
+      daemonInstanceId: z41.uuid(),
+      outcome: z41.enum(["created", "replayed"]),
       resource: WorkspacePaneCreatedResourceSchemaZ
     }).strict();
-    WorkspacePaneCreateHostResultSchemaZ = z40.discriminatedUnion("status", [
-      z40.object({ status: z40.literal("ok"), result: WorkspacePaneCreateMutationResultSchemaZ }).strict(),
-      z40.object({ status: z40.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    WorkspacePaneCreateHostResultSchemaZ = z41.discriminatedUnion("status", [
+      z41.object({ status: z41.literal("ok"), result: WorkspacePaneCreateMutationResultSchemaZ }).strict(),
+      z41.object({ status: z41.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
     WORKSPACE_PANE_CREATE_COMMAND_DESCRIPTOR = deepFreeze3(
       CommandDescriptorSchemaZ.parse({
@@ -6903,42 +6964,42 @@ var init_workspace_pane_creation = __esm({
 });
 
 // packages/contracts/src/workspace-open.ts
-import { z as z41 } from "zod";
+import { z as z42 } from "zod";
 var WorkspaceOpenArgumentsSchemaZ, WorkspaceOpenMutationRequestSchemaZ, WorkspaceOpenedResourceSchemaZ, WorkspaceOpenMutationResultSchemaZ, WorkspaceOpenHostResultSchemaZ;
 var init_workspace_open = __esm({
   "packages/contracts/src/workspace-open.ts"() {
     "use strict";
     init_desktop_host();
     init_pane_appearance();
-    WorkspaceOpenArgumentsSchemaZ = z41.object({
-      projectDir: z41.string().min(1).max(4096).refine((value) => !value.includes("\0"), "project directory must not contain NUL")
+    WorkspaceOpenArgumentsSchemaZ = z42.object({
+      projectDir: z42.string().min(1).max(4096).refine((value) => !value.includes("\0"), "project directory must not contain NUL")
     }).strict();
-    WorkspaceOpenMutationRequestSchemaZ = z41.object({
-      operationId: z41.uuid(),
-      expectedDaemonInstanceId: z41.uuid(),
+    WorkspaceOpenMutationRequestSchemaZ = z42.object({
+      operationId: z42.uuid(),
+      expectedDaemonInstanceId: z42.uuid(),
       intent: WorkspaceOpenArgumentsSchemaZ
     }).strict();
-    WorkspaceOpenedResourceSchemaZ = z41.object({
-      resourceVersion: z41.literal(1),
+    WorkspaceOpenedResourceSchemaZ = z42.object({
+      resourceVersion: z42.literal(1),
       workspaceName: DesktopWorkspaceNameSchemaZ,
       initialPaneId: SemanticProductIdSchemaZ
     }).strict();
-    WorkspaceOpenMutationResultSchemaZ = z41.object({
-      operationId: z41.uuid(),
-      daemonInstanceId: z41.uuid(),
-      outcome: z41.enum(["created", "reopened", "replayed"]),
+    WorkspaceOpenMutationResultSchemaZ = z42.object({
+      operationId: z42.uuid(),
+      daemonInstanceId: z42.uuid(),
+      outcome: z42.enum(["created", "reopened", "replayed"]),
       resource: WorkspaceOpenedResourceSchemaZ
     }).strict();
-    WorkspaceOpenHostResultSchemaZ = z41.discriminatedUnion("status", [
-      z41.object({ status: z41.literal("ok"), result: WorkspaceOpenMutationResultSchemaZ }).strict(),
-      z41.object({ status: z41.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    WorkspaceOpenHostResultSchemaZ = z42.discriminatedUnion("status", [
+      z42.object({ status: z42.literal("ok"), result: WorkspaceOpenMutationResultSchemaZ }).strict(),
+      z42.object({ status: z42.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
   }
 });
 
 // packages/contracts/src/workspace-open-handoff.ts
-import { z as z42 } from "zod";
-var ProjectSourceZ, LiveSessionSourceZ, WorkspaceOpenPrepareArgumentsSchemaZ, WorkspaceOpenPreparedProofSchemaZ, WorkspaceOpenPreparedResultSchemaZ, WorkspaceOpenDecisionArgumentsSchemaZ, DecisionBaseZ, WorkspaceOpenCommittedResultSchemaZ, WorkspaceOpenCancelledResultSchemaZ, WorkspaceOpenPreparedHostResultSchemaZ, WorkspaceOpenCommittedHostResultSchemaZ, WorkspaceOpenCancelledHostResultSchemaZ;
+import { z as z43 } from "zod";
+var WorkspaceOperationIdSchemaZ, ProjectSourceZ, LiveSessionSourceZ, HostSelectionSourceZ, WorkspaceOpenPrepareArgumentsSchemaZ, WorkspaceOpenPreparedProofSchemaZ, WorkspaceOpenPreparedResultSchemaZ, WorkspaceOpenDecisionArgumentsSchemaZ, DecisionBaseZ, WorkspaceOpenCommittedResultSchemaZ, WorkspaceOpenCancelledResultSchemaZ, WorkspaceOpenPreparedHostResultSchemaZ, WorkspaceOpenCommittedHostResultSchemaZ, WorkspaceOpenCancelledHostResultSchemaZ;
 var init_workspace_open_handoff = __esm({
   "packages/contracts/src/workspace-open-handoff.ts"() {
     "use strict";
@@ -6946,86 +7007,92 @@ var init_workspace_open_handoff = __esm({
     init_desktop_host();
     init_fleet_catalog();
     init_terminal_attachments();
-    ProjectSourceZ = z42.object({ kind: z42.literal("project"), projectDir: z42.string().min(1) }).strict();
-    LiveSessionSourceZ = z42.object({ kind: z42.literal("live-session"), sessionId: FleetSessionIdSchemaZ }).strict();
-    WorkspaceOpenPrepareArgumentsSchemaZ = z42.object({
-      source: z42.discriminatedUnion("kind", [ProjectSourceZ, LiveSessionSourceZ]),
+    WorkspaceOperationIdSchemaZ = z43.uuid();
+    ProjectSourceZ = z43.object({ kind: z43.literal("project"), projectDir: z43.string().min(1) }).strict();
+    LiveSessionSourceZ = z43.object({ kind: z43.literal("live-session"), sessionId: FleetSessionIdSchemaZ }).strict();
+    HostSelectionSourceZ = z43.object({ kind: z43.literal("host-selection") }).strict();
+    WorkspaceOpenPrepareArgumentsSchemaZ = z43.object({
+      source: z43.discriminatedUnion("kind", [
+        ProjectSourceZ,
+        LiveSessionSourceZ,
+        HostSelectionSourceZ
+      ]),
       previousWorkspaceName: DesktopWorkspaceNameSchemaZ.nullable().optional()
     }).strict();
-    WorkspaceOpenPreparedProofSchemaZ = z42.object({
+    WorkspaceOpenPreparedProofSchemaZ = z43.object({
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
-      paneCount: z42.number().int().positive(),
-      terminalRevision: z42.number().int().nonnegative(),
-      terminalStateHash: z42.string().regex(/^[0-9a-f]{16}$/u)
+      paneCount: z43.number().int().positive(),
+      terminalRevision: z43.number().int().nonnegative(),
+      terminalStateHash: z43.string().regex(/^[0-9a-f]{16}$/u)
     }).strict();
-    WorkspaceOpenPreparedResultSchemaZ = z42.object({
-      operationId: z42.uuid(),
-      daemonInstanceId: z42.uuid(),
-      phase: z42.literal("prepared"),
-      prepareToken: z42.uuid(),
-      preparedRevision: z42.number().int().positive(),
-      outcome: z42.enum(["created", "reopened", "replayed", "promoted"]),
+    WorkspaceOpenPreparedResultSchemaZ = z43.object({
+      operationId: WorkspaceOperationIdSchemaZ,
+      daemonInstanceId: z43.uuid(),
+      phase: z43.literal("prepared"),
+      prepareToken: z43.uuid(),
+      preparedRevision: z43.number().int().positive(),
+      outcome: z43.enum(["created", "reopened", "replayed", "promoted"]),
       workspaceName: DesktopWorkspaceNameSchemaZ,
       previousWorkspaceName: DesktopWorkspaceNameSchemaZ.nullable(),
       proof: WorkspaceOpenPreparedProofSchemaZ
     }).strict();
-    WorkspaceOpenDecisionArgumentsSchemaZ = z42.object({ prepareToken: z42.uuid(), preparedRevision: z42.number().int().positive() }).strict();
-    DecisionBaseZ = z42.object({
-      operationId: z42.uuid(),
-      daemonInstanceId: z42.uuid(),
-      prepareToken: z42.uuid(),
-      preparedRevision: z42.number().int().positive(),
+    WorkspaceOpenDecisionArgumentsSchemaZ = z43.object({ prepareToken: z43.uuid(), preparedRevision: z43.number().int().positive() }).strict();
+    DecisionBaseZ = z43.object({
+      operationId: WorkspaceOperationIdSchemaZ,
+      daemonInstanceId: z43.uuid(),
+      prepareToken: z43.uuid(),
+      preparedRevision: z43.number().int().positive(),
       workspaceName: DesktopWorkspaceNameSchemaZ,
       previousWorkspaceName: DesktopWorkspaceNameSchemaZ.nullable()
     });
     WorkspaceOpenCommittedResultSchemaZ = DecisionBaseZ.extend({
-      phase: z42.literal("committed")
+      phase: z43.literal("committed")
     }).strict();
     WorkspaceOpenCancelledResultSchemaZ = DecisionBaseZ.extend({
-      phase: z42.literal("cancelled")
+      phase: z43.literal("cancelled")
     }).strict();
-    WorkspaceOpenPreparedHostResultSchemaZ = z42.discriminatedUnion("status", [
-      z42.object({ status: z42.literal("ok"), result: WorkspaceOpenPreparedResultSchemaZ }).strict(),
-      z42.object({ status: z42.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    WorkspaceOpenPreparedHostResultSchemaZ = z43.discriminatedUnion("status", [
+      z43.object({ status: z43.literal("ok"), result: WorkspaceOpenPreparedResultSchemaZ }).strict(),
+      z43.object({ status: z43.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
-    WorkspaceOpenCommittedHostResultSchemaZ = z42.discriminatedUnion("status", [
-      z42.object({ status: z42.literal("ok"), result: WorkspaceOpenCommittedResultSchemaZ }).strict(),
-      z42.object({ status: z42.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    WorkspaceOpenCommittedHostResultSchemaZ = z43.discriminatedUnion("status", [
+      z43.object({ status: z43.literal("ok"), result: WorkspaceOpenCommittedResultSchemaZ }).strict(),
+      z43.object({ status: z43.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
-    WorkspaceOpenCancelledHostResultSchemaZ = z42.discriminatedUnion("status", [
-      z42.object({ status: z42.literal("ok"), result: WorkspaceOpenCancelledResultSchemaZ }).strict(),
-      z42.object({ status: z42.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    WorkspaceOpenCancelledHostResultSchemaZ = z43.discriminatedUnion("status", [
+      z43.object({ status: z43.literal("ok"), result: WorkspaceOpenCancelledResultSchemaZ }).strict(),
+      z43.object({ status: z43.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
   }
 });
 
 // packages/contracts/src/workspace-promotion.ts
-import { z as z43 } from "zod";
+import { z as z44 } from "zod";
 var WorkspacePromoteArgumentsSchemaZ, WorkspacePromoteMutationRequestSchemaZ, WorkspacePromotedResourceSchemaZ, WorkspacePromoteMutationResultSchemaZ, WorkspacePromotionFailureCodeSchemaZ, WorkspacePromotionFailureSchemaZ, WorkspacePromoteHostResultSchemaZ;
 var init_workspace_promotion = __esm({
   "packages/contracts/src/workspace-promotion.ts"() {
     "use strict";
     init_desktop_host();
     init_fleet_catalog();
-    WorkspacePromoteArgumentsSchemaZ = z43.object({
+    WorkspacePromoteArgumentsSchemaZ = z44.object({
       sessionId: FleetSessionIdSchemaZ
     }).strict();
-    WorkspacePromoteMutationRequestSchemaZ = z43.object({
-      operationId: z43.uuid(),
-      expectedDaemonInstanceId: z43.uuid(),
+    WorkspacePromoteMutationRequestSchemaZ = z44.object({
+      operationId: z44.uuid(),
+      expectedDaemonInstanceId: z44.uuid(),
       intent: WorkspacePromoteArgumentsSchemaZ
     }).strict();
-    WorkspacePromotedResourceSchemaZ = z43.object({
-      resourceVersion: z43.literal(1),
+    WorkspacePromotedResourceSchemaZ = z44.object({
+      resourceVersion: z44.literal(1),
       workspaceName: DesktopWorkspaceNameSchemaZ
     }).strict();
-    WorkspacePromoteMutationResultSchemaZ = z43.object({
-      operationId: z43.uuid(),
-      daemonInstanceId: z43.uuid(),
-      outcome: z43.enum(["promoted", "replayed"]),
+    WorkspacePromoteMutationResultSchemaZ = z44.object({
+      operationId: z44.uuid(),
+      daemonInstanceId: z44.uuid(),
+      outcome: z44.enum(["promoted", "replayed"]),
       resource: WorkspacePromotedResourceSchemaZ
     }).strict();
-    WorkspacePromotionFailureCodeSchemaZ = z43.enum([
+    WorkspacePromotionFailureCodeSchemaZ = z44.enum([
       "daemon_instance_mismatch",
       "session_not_found",
       "session_not_adopted",
@@ -7036,23 +7103,23 @@ var init_workspace_promotion = __esm({
       "operation_conflict",
       "operation_capacity"
     ]);
-    WorkspacePromotionFailureSchemaZ = z43.object({
-      kind: z43.literal("promotion"),
+    WorkspacePromotionFailureSchemaZ = z44.object({
+      kind: z44.literal("promotion"),
       code: WorkspacePromotionFailureCodeSchemaZ,
-      reason: z43.string().min(1).max(120).optional()
+      reason: z44.string().min(1).max(120).optional()
     }).strict();
-    WorkspacePromoteHostResultSchemaZ = z43.discriminatedUnion("status", [
-      z43.object({ status: z43.literal("ok"), result: WorkspacePromoteMutationResultSchemaZ }).strict(),
-      z43.object({
-        status: z43.literal("error"),
-        error: z43.union([WorkspacePromotionFailureSchemaZ, DesktopDaemonCapabilityErrorSchemaZ])
+    WorkspacePromoteHostResultSchemaZ = z44.discriminatedUnion("status", [
+      z44.object({ status: z44.literal("ok"), result: WorkspacePromoteMutationResultSchemaZ }).strict(),
+      z44.object({
+        status: z44.literal("error"),
+        error: z44.union([WorkspacePromotionFailureSchemaZ, DesktopDaemonCapabilityErrorSchemaZ])
       }).strict()
     ]);
   }
 });
 
 // packages/contracts/src/workspace-multiplexer.ts
-import { z as z44 } from "zod";
+import { z as z45 } from "zod";
 var WorkspaceMultiplexerWindowTargetSchemaZ, WorkspaceSplitDirectionSchemaZ, WorkspaceMultiplexerNameSchemaZ, WorkspaceScopedSchemaZ, WorkspaceWindowSplitArgumentsSchemaZ, WorkspaceWindowKillArgumentsSchemaZ, WorkspacePaneKillArgumentsSchemaZ, WorkspaceSessionKillArgumentsSchemaZ, WorkspaceRenameArgumentsSchemaZ, WorkspacePaneZoomToggleArgumentsSchemaZ, WorkspacePaneSelectArgumentsSchemaZ, WorkspacePaneSendArgumentsSchemaZ, WorkspacePaneSwapArgumentsSchemaZ, RESIZE_CELL_MAXIMUM, WorkspaceResizeAxisSchemaZ, WorkspacePaneResizeArgumentsSchemaZ, WorkspaceMultiplexerIntentSchemaZ, WorkspaceMultiplexerMutationRequestSchemaZ, MutationEnvelopeSchemaZ, WorkspaceWindowSplitResultSchemaZ, WorkspaceWindowKillResultSchemaZ, WorkspacePaneKillResultSchemaZ, WorkspaceSessionKillResultSchemaZ, WorkspaceRenameResultSchemaZ, WorkspacePaneZoomToggleResultSchemaZ, WorkspacePaneSelectResultSchemaZ, WorkspacePaneSendResultSchemaZ, WorkspacePaneSwapResultSchemaZ, WorkspacePaneResizeResultSchemaZ, WorkspaceMultiplexerMutationResultSchemaZ, WorkspaceMultiplexerHostResultSchemaZ;
 var init_workspace_multiplexer = __esm({
   "packages/contracts/src/workspace-multiplexer.ts"() {
@@ -7061,16 +7128,16 @@ var init_workspace_multiplexer = __esm({
     init_semantic_identity();
     init_workspace_pane_creation();
     init_interaction_receipts();
-    WorkspaceMultiplexerWindowTargetSchemaZ = z44.discriminatedUnion("by", [
-      z44.object({
-        by: z44.literal("window"),
+    WorkspaceMultiplexerWindowTargetSchemaZ = z45.discriminatedUnion("by", [
+      z45.object({
+        by: z45.literal("window"),
         semanticWindowId: TerminalAttachmentSemanticWindowIdSchemaZ
       }).strict(),
-      z44.object({ by: z44.literal("pane"), semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ }).strict()
+      z45.object({ by: z45.literal("pane"), semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ }).strict()
     ]);
-    WorkspaceSplitDirectionSchemaZ = z44.enum(["right", "down"]);
+    WorkspaceSplitDirectionSchemaZ = z45.enum(["right", "down"]);
     WorkspaceMultiplexerNameSchemaZ = WorkspacePaneDisplayTitleSchemaZ;
-    WorkspaceScopedSchemaZ = z44.object({
+    WorkspaceScopedSchemaZ = z45.object({
       workspaceName: WorkspacePaneCreationWorkspaceNameSchemaZ
     });
     WorkspaceWindowSplitArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
@@ -7085,13 +7152,13 @@ var init_workspace_multiplexer = __esm({
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
     }).strict();
     WorkspaceSessionKillArgumentsSchemaZ = WorkspaceScopedSchemaZ.strict();
-    WorkspaceRenameArgumentsSchemaZ = z44.discriminatedUnion("scope", [
+    WorkspaceRenameArgumentsSchemaZ = z45.discriminatedUnion("scope", [
       WorkspaceScopedSchemaZ.extend({
-        scope: z44.literal("session"),
+        scope: z45.literal("session"),
         name: WorkspaceMultiplexerNameSchemaZ
       }).strict(),
       WorkspaceScopedSchemaZ.extend({
-        scope: z44.literal("window"),
+        scope: z45.literal("window"),
         target: WorkspaceMultiplexerWindowTargetSchemaZ,
         name: WorkspaceMultiplexerNameSchemaZ
       }).strict()
@@ -7104,7 +7171,7 @@ var init_workspace_multiplexer = __esm({
        * double-delivered `zoomed` leaves the window zoomed rather than flipping it
        * back, which a blind toggle cannot promise.
        */
-      desired: z44.enum(["toggle", "zoomed", "unzoomed"]).default("toggle")
+      desired: z45.enum(["toggle", "zoomed", "unzoomed"]).default("toggle")
     }).strict();
     WorkspacePaneSelectArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
@@ -7117,8 +7184,8 @@ var init_workspace_multiplexer = __esm({
        */
       sourceSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ.optional(),
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
-      text: z44.string().min(1).max(1048576),
-      submit: z44.boolean().default(true),
+      text: z45.string().min(1).max(1048576),
+      submit: z45.boolean().default(true),
       origin: AuthoredInteractionOriginSchemaZ
     }).strict();
     WorkspacePaneSwapArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
@@ -7126,58 +7193,58 @@ var init_workspace_multiplexer = __esm({
       targetSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
     }).strict();
     RESIZE_CELL_MAXIMUM = 4096;
-    WorkspaceResizeAxisSchemaZ = z44.enum(["cols", "rows"]);
+    WorkspaceResizeAxisSchemaZ = z45.enum(["cols", "rows"]);
     WorkspacePaneResizeArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
       axis: WorkspaceResizeAxisSchemaZ,
-      cells: z44.number().int().min(1).max(RESIZE_CELL_MAXIMUM)
+      cells: z45.number().int().min(1).max(RESIZE_CELL_MAXIMUM)
     }).strict();
-    WorkspaceMultiplexerIntentSchemaZ = z44.discriminatedUnion("verb", [
+    WorkspaceMultiplexerIntentSchemaZ = z45.discriminatedUnion("verb", [
       WorkspaceWindowSplitArgumentsSchemaZ.extend({
-        verb: z44.literal("workspace.window.split")
+        verb: z45.literal("workspace.window.split")
       }).strict(),
-      WorkspaceWindowKillArgumentsSchemaZ.extend({ verb: z44.literal("workspace.window.kill") }).strict(),
-      WorkspacePaneKillArgumentsSchemaZ.extend({ verb: z44.literal("workspace.pane.kill") }).strict(),
+      WorkspaceWindowKillArgumentsSchemaZ.extend({ verb: z45.literal("workspace.window.kill") }).strict(),
+      WorkspacePaneKillArgumentsSchemaZ.extend({ verb: z45.literal("workspace.pane.kill") }).strict(),
       WorkspaceSessionKillArgumentsSchemaZ.extend({
-        verb: z44.literal("workspace.session.kill")
+        verb: z45.literal("workspace.session.kill")
       }).strict(),
-      z44.discriminatedUnion("scope", [
+      z45.discriminatedUnion("scope", [
         WorkspaceScopedSchemaZ.extend({
-          verb: z44.literal("workspace.rename"),
-          scope: z44.literal("session"),
+          verb: z45.literal("workspace.rename"),
+          scope: z45.literal("session"),
           name: WorkspaceMultiplexerNameSchemaZ
         }).strict(),
         WorkspaceScopedSchemaZ.extend({
-          verb: z44.literal("workspace.rename"),
-          scope: z44.literal("window"),
+          verb: z45.literal("workspace.rename"),
+          scope: z45.literal("window"),
           target: WorkspaceMultiplexerWindowTargetSchemaZ,
           name: WorkspaceMultiplexerNameSchemaZ
         }).strict()
       ]),
       WorkspacePaneZoomToggleArgumentsSchemaZ.extend({
-        verb: z44.literal("workspace.pane.zoom.toggle")
+        verb: z45.literal("workspace.pane.zoom.toggle")
       }).strict(),
       WorkspacePaneSelectArgumentsSchemaZ.extend({
-        verb: z44.literal("workspace.pane.select")
+        verb: z45.literal("workspace.pane.select")
       }).strict(),
       WorkspacePaneSendArgumentsSchemaZ.extend({
-        verb: z44.literal("workspace.pane.send")
+        verb: z45.literal("workspace.pane.send")
       }).strict(),
       WorkspacePaneSwapArgumentsSchemaZ.extend({
-        verb: z44.literal("workspace.pane.swap")
+        verb: z45.literal("workspace.pane.swap")
       }).strict(),
       WorkspacePaneResizeArgumentsSchemaZ.extend({
-        verb: z44.literal("workspace.pane.resize")
+        verb: z45.literal("workspace.pane.resize")
       }).strict()
     ]);
-    WorkspaceMultiplexerMutationRequestSchemaZ = z44.object({
-      operationId: z44.uuid(),
-      expectedDaemonInstanceId: z44.uuid(),
+    WorkspaceMultiplexerMutationRequestSchemaZ = z45.object({
+      operationId: z45.uuid(),
+      expectedDaemonInstanceId: z45.uuid(),
       intent: WorkspaceMultiplexerIntentSchemaZ
     }).strict();
-    MutationEnvelopeSchemaZ = z44.object({
-      operationId: z44.uuid(),
-      daemonInstanceId: z44.uuid(),
+    MutationEnvelopeSchemaZ = z45.object({
+      operationId: z45.uuid(),
+      daemonInstanceId: z45.uuid(),
       /**
        * `applied` mutated tmux now; `unchanged` found the world already in the
        * requested state; `replayed` answered a repeat of an operation id that had
@@ -7185,60 +7252,60 @@ var init_workspace_multiplexer = __esm({
        * telling the truth, and one that wants to explain why nothing moved has the
        * distinction available.
        */
-      outcome: z44.enum(["applied", "unchanged", "replayed"]),
+      outcome: z45.enum(["applied", "unchanged", "replayed"]),
       workspaceName: WorkspacePaneCreationWorkspaceNameSchemaZ
     });
     WorkspaceWindowSplitResultSchemaZ = MutationEnvelopeSchemaZ.extend({
-      verb: z44.literal("workspace.window.split"),
+      verb: z45.literal("workspace.window.split"),
       direction: WorkspaceSplitDirectionSchemaZ,
       /** The pane the split produced, stamped and addressable like any created pane. */
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
       displayTitle: WorkspacePaneDisplayTitleSchemaZ
     }).strict();
     WorkspaceWindowKillResultSchemaZ = MutationEnvelopeSchemaZ.extend({
-      verb: z44.literal("workspace.window.kill"),
+      verb: z45.literal("workspace.window.kill"),
       /** Windows remaining in the session after the kill. Never zero: see the refusal. */
-      remainingWindowCount: z44.number().int().positive()
+      remainingWindowCount: z45.number().int().positive()
     }).strict();
     WorkspacePaneKillResultSchemaZ = MutationEnvelopeSchemaZ.extend({
-      verb: z44.literal("workspace.pane.kill"),
+      verb: z45.literal("workspace.pane.kill"),
       /** True when that pane was its window's last, so tmux closed the window too. */
-      windowClosed: z44.boolean(),
-      remainingWindowCount: z44.number().int().positive()
+      windowClosed: z45.boolean(),
+      remainingWindowCount: z45.number().int().positive()
     }).strict();
     WorkspaceSessionKillResultSchemaZ = MutationEnvelopeSchemaZ.extend({
-      verb: z44.literal("workspace.session.kill")
+      verb: z45.literal("workspace.session.kill")
     }).strict();
     WorkspaceRenameResultSchemaZ = MutationEnvelopeSchemaZ.extend({
-      verb: z44.literal("workspace.rename"),
-      scope: z44.enum(["session", "window"]),
+      verb: z45.literal("workspace.rename"),
+      scope: z45.enum(["session", "window"]),
       name: WorkspaceMultiplexerNameSchemaZ
     }).strict();
     WorkspacePaneZoomToggleResultSchemaZ = MutationEnvelopeSchemaZ.extend({
-      verb: z44.literal("workspace.pane.zoom.toggle"),
+      verb: z45.literal("workspace.pane.zoom.toggle"),
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
-      zoomed: z44.boolean()
+      zoomed: z45.boolean()
     }).strict();
     WorkspacePaneSelectResultSchemaZ = MutationEnvelopeSchemaZ.extend({
-      verb: z44.literal("workspace.pane.select"),
+      verb: z45.literal("workspace.pane.select"),
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
     }).strict();
     WorkspacePaneSendResultSchemaZ = MutationEnvelopeSchemaZ.extend({
-      verb: z44.literal("workspace.pane.send"),
+      verb: z45.literal("workspace.pane.send"),
       sourceSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ.nullable(),
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
       origin: AuthoredInteractionOriginSchemaZ,
-      characterCount: z44.number().int().nonnegative().max(1048576),
-      byteCount: z44.number().int().nonnegative().max(4194304),
-      submitted: z44.boolean()
+      characterCount: z45.number().int().nonnegative().max(1048576),
+      byteCount: z45.number().int().nonnegative().max(4194304),
+      submitted: z45.boolean()
     }).strict();
     WorkspacePaneSwapResultSchemaZ = MutationEnvelopeSchemaZ.extend({
-      verb: z44.literal("workspace.pane.swap"),
+      verb: z45.literal("workspace.pane.swap"),
       sourceSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
       targetSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ
     }).strict();
     WorkspacePaneResizeResultSchemaZ = MutationEnvelopeSchemaZ.extend({
-      verb: z44.literal("workspace.pane.resize"),
+      verb: z45.literal("workspace.pane.resize"),
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
       axis: WorkspaceResizeAxisSchemaZ,
       /**
@@ -7247,9 +7314,9 @@ var init_workspace_multiplexer = __esm({
        * surface reports the observed number rather than the requested one, so a drag
        * that hit a floor reads as having stopped there instead of as having worked.
        */
-      cells: z44.number().int().positive()
+      cells: z45.number().int().positive()
     }).strict();
-    WorkspaceMultiplexerMutationResultSchemaZ = z44.discriminatedUnion("verb", [
+    WorkspaceMultiplexerMutationResultSchemaZ = z45.discriminatedUnion("verb", [
       WorkspaceWindowSplitResultSchemaZ,
       WorkspaceWindowKillResultSchemaZ,
       WorkspacePaneKillResultSchemaZ,
@@ -7261,15 +7328,15 @@ var init_workspace_multiplexer = __esm({
       WorkspacePaneSwapResultSchemaZ,
       WorkspacePaneResizeResultSchemaZ
     ]);
-    WorkspaceMultiplexerHostResultSchemaZ = z44.discriminatedUnion("status", [
-      z44.object({ status: z44.literal("ok"), result: WorkspaceMultiplexerMutationResultSchemaZ }).strict(),
-      z44.object({ status: z44.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    WorkspaceMultiplexerHostResultSchemaZ = z45.discriminatedUnion("status", [
+      z45.object({ status: z45.literal("ok"), result: WorkspaceMultiplexerMutationResultSchemaZ }).strict(),
+      z45.object({ status: z45.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
   }
 });
 
 // packages/contracts/src/fleet-lifecycle.ts
-import { z as z45 } from "zod";
+import { z as z46 } from "zod";
 var SafeDisplayNameSchemaZ, OwnerPathSchemaZ, WorkspaceSessionCreateArgumentsSchemaZ, WorkspaceSessionCreateResultSchemaZ, FleetAgentMutateArgumentsSchemaZ, FleetAgentMutateResultSchemaZ, AgentCommandSchemaZ, ExistingFleetProvisionTargetSchemaZ, FreshFleetProvisionTargetSchemaZ, FleetAgentProvisionArgumentsSchemaZ, FleetAgentProvisionResultSchemaZ;
 var init_fleet_lifecycle = __esm({
   "packages/contracts/src/fleet-lifecycle.ts"() {
@@ -7277,78 +7344,78 @@ var init_fleet_lifecycle = __esm({
     init_fleet_catalog();
     init_desktop_workspace_name();
     init_semantic_identity();
-    SafeDisplayNameSchemaZ = z45.string().trim().min(1).max(100).refine(
+    SafeDisplayNameSchemaZ = z46.string().trim().min(1).max(100).refine(
       (value) => [...value].every((character) => {
         const codePoint = character.codePointAt(0) ?? 0;
         return codePoint > 31 && (codePoint < 127 || codePoint > 159);
       }),
       "display name contains control bytes"
     ).refine((value) => !value.startsWith("-"), "display name cannot be parsed as an option");
-    OwnerPathSchemaZ = z45.string().min(1).max(4096).refine((value) => !value.includes("\0"));
-    WorkspaceSessionCreateArgumentsSchemaZ = z45.object({ displayName: SafeDisplayNameSchemaZ, cwd: OwnerPathSchemaZ.optional() }).strict();
-    WorkspaceSessionCreateResultSchemaZ = z45.object({
-      operationId: z45.uuid(),
-      daemonInstanceId: z45.uuid(),
-      outcome: z45.enum(["created", "adopted", "replayed"]),
+    OwnerPathSchemaZ = z46.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    WorkspaceSessionCreateArgumentsSchemaZ = z46.object({ displayName: SafeDisplayNameSchemaZ, cwd: OwnerPathSchemaZ.optional() }).strict();
+    WorkspaceSessionCreateResultSchemaZ = z46.object({
+      operationId: z46.uuid(),
+      daemonInstanceId: z46.uuid(),
+      outcome: z46.enum(["created", "adopted", "replayed"]),
       fleetSessionId: FleetSessionIdSchemaZ,
       /** Canonical registered route; displayName is presentation only. */
       workspaceName: DesktopWorkspaceNameSchemaZ,
       displayName: SafeDisplayNameSchemaZ
     }).strict();
-    FleetAgentMutateArgumentsSchemaZ = z45.object({
+    FleetAgentMutateArgumentsSchemaZ = z46.object({
       fleetSessionId: FleetSessionIdSchemaZ,
       agentId: FleetAgentIdSchemaZ,
       expectedCatalogRevision: FleetCatalogRevisionSchemaZ,
-      mutation: z45.enum(["stop", "restart", "kill"])
+      mutation: z46.enum(["stop", "restart", "kill"])
     }).strict();
-    FleetAgentMutateResultSchemaZ = z45.object({
-      operationId: z45.uuid(),
-      daemonInstanceId: z45.uuid(),
-      outcome: z45.enum(["applied", "replayed"]),
+    FleetAgentMutateResultSchemaZ = z46.object({
+      operationId: z46.uuid(),
+      daemonInstanceId: z46.uuid(),
+      outcome: z46.enum(["applied", "replayed"]),
       fleetSessionId: FleetSessionIdSchemaZ,
       agentId: FleetAgentIdSchemaZ,
       catalogRevision: FleetCatalogRevisionSchemaZ,
-      mutation: z45.enum(["stop", "restart", "kill"])
+      mutation: z46.enum(["stop", "restart", "kill"])
     }).strict();
-    AgentCommandSchemaZ = z45.string().trim().min(1).max(4096).refine(
+    AgentCommandSchemaZ = z46.string().trim().min(1).max(4096).refine(
       (value) => [...value].every((character) => {
         const codePoint = character.codePointAt(0) ?? 0;
         return codePoint >= 32 && codePoint !== 127 && !(codePoint >= 128 && codePoint <= 159);
       }),
       "command contains control bytes"
     );
-    ExistingFleetProvisionTargetSchemaZ = z45.object({
-      kind: z45.literal("existing-session"),
+    ExistingFleetProvisionTargetSchemaZ = z46.object({
+      kind: z46.literal("existing-session"),
       fleetSessionId: FleetSessionIdSchemaZ,
-      placement: z45.enum(["window", "split-h", "split-v"]),
+      placement: z46.enum(["window", "split-h", "split-v"]),
       targetSemanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ.nullable(),
       cwd: OwnerPathSchemaZ.nullable(),
-      inheritTargetCwd: z45.boolean()
+      inheritTargetCwd: z46.boolean()
     }).strict().superRefine((value, context) => {
       if (value.placement !== "window" && value.targetSemanticPaneId === null)
         context.addIssue({ code: "custom", message: "split placement requires a target pane" });
       if (value.inheritTargetCwd && value.targetSemanticPaneId === null)
         context.addIssue({ code: "custom", message: "target cwd requires a target pane" });
     });
-    FreshFleetProvisionTargetSchemaZ = z45.object({
-      kind: z45.literal("new-session"),
+    FreshFleetProvisionTargetSchemaZ = z46.object({
+      kind: z46.literal("new-session"),
       displayName: SafeDisplayNameSchemaZ,
       cwd: OwnerPathSchemaZ
     }).strict();
-    FleetAgentProvisionArgumentsSchemaZ = z45.object({
+    FleetAgentProvisionArgumentsSchemaZ = z46.object({
       expectedCatalogRevision: FleetCatalogRevisionSchemaZ,
       command: AgentCommandSchemaZ,
       harness: SafeDisplayNameSchemaZ,
       displayTitle: SafeDisplayNameSchemaZ,
-      target: z45.discriminatedUnion("kind", [
+      target: z46.discriminatedUnion("kind", [
         ExistingFleetProvisionTargetSchemaZ,
         FreshFleetProvisionTargetSchemaZ
       ])
     }).strict();
-    FleetAgentProvisionResultSchemaZ = z45.object({
-      operationId: z45.uuid(),
-      daemonInstanceId: z45.uuid(),
-      outcome: z45.enum(["created", "replayed"]),
+    FleetAgentProvisionResultSchemaZ = z46.object({
+      operationId: z46.uuid(),
+      daemonInstanceId: z46.uuid(),
+      outcome: z46.enum(["created", "replayed"]),
       fleetSessionId: FleetSessionIdSchemaZ,
       agentId: FleetAgentIdSchemaZ,
       catalogRevision: FleetCatalogRevisionSchemaZ,
@@ -7358,7 +7425,7 @@ var init_fleet_lifecycle = __esm({
 });
 
 // packages/contracts/src/actions-contract.ts
-import { z as z46 } from "zod";
+import { z as z47 } from "zod";
 function isActionName(name) {
   return name in ActionContractsZ;
 }
@@ -7374,123 +7441,123 @@ var init_actions_contract = __esm({
     init_app_window_mutation();
     init_workspace_multiplexer();
     init_fleet_lifecycle();
-    ProjectOpenTerminalInputZ = z46.object({
-      name: z46.string().min(1)
+    ProjectOpenTerminalInputZ = z47.object({
+      name: z47.string().min(1)
     });
-    ProjectOpenTerminalResultZ = z46.object({
-      sessionName: z46.string(),
-      cwd: z46.string().min(1),
-      terminalTabId: z46.string(),
+    ProjectOpenTerminalResultZ = z47.object({
+      sessionName: z47.string(),
+      cwd: z47.string().min(1),
+      terminalTabId: z47.string(),
       /**
        * `true` when the dispatcher had to launch the tmux session as part of
        * resolving the terminal. `false` when the session was already running.
        */
-      launched: z46.boolean()
+      launched: z47.boolean()
     });
-    ProjectLaunchInputZ = z46.object({
-      name: z46.string().min(1)
+    ProjectLaunchInputZ = z47.object({
+      name: z47.string().min(1)
     });
-    ProjectLaunchResultZ = z46.object({
-      sessionName: z46.string(),
+    ProjectLaunchResultZ = z47.object({
+      sessionName: z47.string(),
       /**
        * `false` when the session was already running (idempotent no-op),
        * `true` when this call started a fresh session.
        */
-      started: z46.boolean()
+      started: z47.boolean()
     });
-    ProjectStopInputZ = z46.object({
-      name: z46.string().min(1)
+    ProjectStopInputZ = z47.object({
+      name: z47.string().min(1)
     });
-    ProjectStopResultZ = z46.object({
-      sessionName: z46.string(),
+    ProjectStopResultZ = z47.object({
+      sessionName: z47.string(),
       /**
        * `false` when no session was running (idempotent no-op),
        * `true` when this call killed a session.
        */
-      stopped: z46.boolean()
+      stopped: z47.boolean()
     });
-    ProjectRestartInputZ = z46.object({
-      name: z46.string().min(1)
+    ProjectRestartInputZ = z47.object({
+      name: z47.string().min(1)
     });
-    ProjectRestartResultZ = z46.object({
-      sessionName: z46.string(),
-      restarted: z46.literal(true)
+    ProjectRestartResultZ = z47.object({
+      sessionName: z47.string(),
+      restarted: z47.literal(true)
     });
-    ProjectActivateInputZ = z46.object({
-      name: z46.string().min(1)
+    ProjectActivateInputZ = z47.object({
+      name: z47.string().min(1)
     });
-    ProjectActivateResultZ = z46.object({
-      active: z46.boolean(),
-      projectName: z46.string()
+    ProjectActivateResultZ = z47.object({
+      active: z47.boolean(),
+      projectName: z47.string()
     });
-    TerminalRespawnInputZ = z46.object({
-      sessionName: z46.string().min(1),
-      terminalId: z46.string().min(1),
+    TerminalRespawnInputZ = z47.object({
+      sessionName: z47.string().min(1),
+      terminalId: z47.string().min(1),
       /**
        * Optional cwd override. Omit to respawn at the bridge's current cwd
        * (re-using the `lastCwd` recorded by the PTY bridge).
        */
-      cwd: z46.string().min(1).optional()
+      cwd: z47.string().min(1).optional()
     });
-    TerminalRespawnResultZ = z46.object({
-      respawned: z46.literal(true),
-      cwd: z46.string().min(1)
+    TerminalRespawnResultZ = z47.object({
+      respawned: z47.literal(true),
+      cwd: z47.string().min(1)
     });
-    TerminalStopInputZ = z46.object({
-      sessionName: z46.string().min(1),
-      terminalId: z46.string().min(1)
+    TerminalStopInputZ = z47.object({
+      sessionName: z47.string().min(1),
+      terminalId: z47.string().min(1)
     });
-    TerminalStopResultZ = z46.object({
-      stopped: z46.literal(true)
+    TerminalStopResultZ = z47.object({
+      stopped: z47.literal(true)
     });
-    ConfigSetInputZ = z46.object({
-      projectName: z46.string().min(1).optional(),
-      path: z46.string().min(1),
-      value: z46.unknown()
+    ConfigSetInputZ = z47.object({
+      projectName: z47.string().min(1).optional(),
+      path: z47.string().min(1),
+      value: z47.unknown()
     });
-    ConfigResultZ = z46.object({
+    ConfigResultZ = z47.object({
       config: IdeConfigSchema
     });
     ConfigAddPaneInputZ = PaneSchema.partial().extend({
-      projectName: z46.string().min(1).optional(),
-      rowIndex: z46.number().int().min(0)
+      projectName: z47.string().min(1).optional(),
+      rowIndex: z47.number().int().min(0)
     });
     ConfigAddPaneResultZ = ConfigResultZ;
-    ConfigRemovePaneInputZ = z46.object({
-      projectName: z46.string().min(1).optional(),
-      rowIndex: z46.number().int().min(0),
-      paneIndex: z46.number().int().min(0)
+    ConfigRemovePaneInputZ = z47.object({
+      projectName: z47.string().min(1).optional(),
+      rowIndex: z47.number().int().min(0),
+      paneIndex: z47.number().int().min(0)
     });
     ConfigRemovePaneResultZ = ConfigResultZ;
-    ConfigAddRowInputZ = z46.object({
-      projectName: z46.string().min(1).optional(),
-      size: z46.string().optional()
+    ConfigAddRowInputZ = z47.object({
+      projectName: z47.string().min(1).optional(),
+      size: z47.string().optional()
     });
     ConfigAddRowResultZ = ConfigResultZ;
-    ConfigEnableTeamInputZ = z46.object({
-      projectName: z46.string().min(1).optional(),
-      name: z46.string().min(1).optional()
+    ConfigEnableTeamInputZ = z47.object({
+      projectName: z47.string().min(1).optional(),
+      name: z47.string().min(1).optional()
     });
     ConfigEnableTeamResultZ = ConfigResultZ;
-    ConfigDisableTeamInputZ = z46.object({
-      projectName: z46.string().min(1).optional()
+    ConfigDisableTeamInputZ = z47.object({
+      projectName: z47.string().min(1).optional()
     });
     ConfigDisableTeamResultZ = ConfigResultZ;
-    AppSetRemoteAccessInputZ = z46.object({
-      enabled: z46.boolean()
+    AppSetRemoteAccessInputZ = z47.object({
+      enabled: z47.boolean()
     });
-    AppSetRemoteAccessResultZ = z46.object({
-      enabled: z46.boolean(),
-      url: z46.string().nullable(),
-      token: z46.string().nullable(),
-      qrPayload: z46.string().nullable()
+    AppSetRemoteAccessResultZ = z47.object({
+      enabled: z47.boolean(),
+      url: z47.string().nullable(),
+      token: z47.string().nullable(),
+      qrPayload: z47.string().nullable()
     });
-    DaemonShutdownInputZ = z46.object({
-      reason: z46.string().optional(),
-      expectedInstanceId: z46.uuid().optional()
+    DaemonShutdownInputZ = z47.object({
+      reason: z47.string().optional(),
+      expectedInstanceId: z47.uuid().optional()
     });
-    DaemonShutdownResultZ = z46.object({
-      stopping: z46.literal(true)
+    DaemonShutdownResultZ = z47.object({
+      stopping: z47.literal(true)
     });
     WorkspacePaneCreateInputZ = WorkspacePaneCreateArgumentsSchemaZ;
     WorkspacePaneCreateResultZ = WorkspacePaneCreateMutationResultSchemaZ;
@@ -7680,7 +7747,7 @@ var init_actions_errors = __esm({
 });
 
 // packages/contracts/src/terminals.ts
-import { z as z47 } from "zod";
+import { z as z48 } from "zod";
 async function createScriptTerminalId(args) {
   const scope = args.scopeId ?? args.taskId;
   if (!scope) {
@@ -7695,104 +7762,104 @@ var terminalKindSchema, terminalCreateRequestSchema, terminalRenameRequestSchema
 var init_terminals = __esm({
   "packages/contracts/src/terminals.ts"() {
     "use strict";
-    terminalKindSchema = z47.enum(["shell", "setup", "run", "teardown"]);
-    terminalCreateRequestSchema = z47.object({
-      scopeId: z47.string().trim().min(1).max(256),
-      name: z47.string().trim().min(1).max(120),
+    terminalKindSchema = z48.enum(["shell", "setup", "run", "teardown"]);
+    terminalCreateRequestSchema = z48.object({
+      scopeId: z48.string().trim().min(1).max(256),
+      name: z48.string().trim().min(1).max(120),
       kind: terminalKindSchema.optional(),
       /** Provide for script tabs to opt into deterministic id collapse. */
-      script: z47.string().max(2048).optional(),
+      script: z48.string().max(2048).optional(),
       /** Explicit id wins. Used by the dashboard to reserve a known id
        *  (e.g. the default shell tab derived from session.dir). */
-      id: z47.string().trim().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/u, "id may only contain alphanumerics, '-', '_'").optional()
+      id: z48.string().trim().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/u, "id may only contain alphanumerics, '-', '_'").optional()
     }).refine((v) => v.kind !== void 0 || v.script === void 0, {
       message: "script requires kind",
       path: ["script"]
     });
-    terminalRenameRequestSchema = z47.object({
-      name: z47.string().trim().min(1).max(120)
+    terminalRenameRequestSchema = z48.object({
+      name: z48.string().trim().min(1).max(120)
     });
   }
 });
 
 // packages/contracts/src/terminal-replica.ts
-import { z as z48 } from "zod";
+import { z as z49 } from "zod";
 var TerminalReplicaColorSchemaZ, TerminalReplicaCellAttributesSchemaZ, TerminalReplicaCellSchemaZ, TerminalReplicaRowSchemaZ, TerminalReplicaCursorSchemaZ, TerminalReplicaModesSchemaZ, TerminalReplicaPlacementSchemaZ, TerminalReplicaSnapshotSchemaZ, TerminalReplicaPatchPayloadSchemaZ, TerminalReplicaTombstonePayloadSchemaZ, TERMINAL_REPLICA_ATTRIBUTE;
 var init_terminal_replica = __esm({
   "packages/contracts/src/terminal-replica.ts"() {
     "use strict";
-    TerminalReplicaColorSchemaZ = z48.discriminatedUnion("kind", [
-      z48.object({ kind: z48.literal("default") }).strict(),
-      z48.object({ kind: z48.literal("indexed"), index: z48.number().int().min(0).max(255) }).strict(),
-      z48.object({ kind: z48.literal("rgb"), value: z48.number().int().min(0).max(16777215) }).strict()
+    TerminalReplicaColorSchemaZ = z49.discriminatedUnion("kind", [
+      z49.object({ kind: z49.literal("default") }).strict(),
+      z49.object({ kind: z49.literal("indexed"), index: z49.number().int().min(0).max(255) }).strict(),
+      z49.object({ kind: z49.literal("rgb"), value: z49.number().int().min(0).max(16777215) }).strict()
     ]);
-    TerminalReplicaCellAttributesSchemaZ = z48.number().int().min(0).max(255);
-    TerminalReplicaCellSchemaZ = z48.object({
-      grapheme: z48.string(),
-      width: z48.union([z48.literal(0), z48.literal(1), z48.literal(2)]),
+    TerminalReplicaCellAttributesSchemaZ = z49.number().int().min(0).max(255);
+    TerminalReplicaCellSchemaZ = z49.object({
+      grapheme: z49.string(),
+      width: z49.union([z49.literal(0), z49.literal(1), z49.literal(2)]),
       foreground: TerminalReplicaColorSchemaZ,
       background: TerminalReplicaColorSchemaZ,
       attributes: TerminalReplicaCellAttributesSchemaZ
     }).strict();
-    TerminalReplicaRowSchemaZ = z48.object({ cells: z48.array(TerminalReplicaCellSchemaZ), wrapped: z48.boolean() }).strict();
-    TerminalReplicaCursorSchemaZ = z48.object({
-      x: z48.number().int().nonnegative(),
-      y: z48.number().int().nonnegative(),
-      hidden: z48.boolean(),
-      style: z48.enum(["block", "underline", "bar"]),
-      blink: z48.boolean()
+    TerminalReplicaRowSchemaZ = z49.object({ cells: z49.array(TerminalReplicaCellSchemaZ), wrapped: z49.boolean() }).strict();
+    TerminalReplicaCursorSchemaZ = z49.object({
+      x: z49.number().int().nonnegative(),
+      y: z49.number().int().nonnegative(),
+      hidden: z49.boolean(),
+      style: z49.enum(["block", "underline", "bar"]),
+      blink: z49.boolean()
     }).strict();
-    TerminalReplicaModesSchemaZ = z48.object({
-      alternateScreen: z48.boolean(),
-      applicationCursor: z48.boolean(),
-      applicationKeypad: z48.boolean(),
-      bracketedPaste: z48.boolean(),
-      insert: z48.boolean(),
-      origin: z48.boolean(),
-      wraparound: z48.boolean(),
-      mouseTracking: z48.boolean(),
-      mouseProtocol: z48.enum(["none", "x10", "vt200", "drag", "any"]).optional(),
-      mouseEncoding: z48.enum(["default", "utf8", "sgr", "sgr-pixels"]).optional(),
-      synchronizedOutput: z48.boolean()
+    TerminalReplicaModesSchemaZ = z49.object({
+      alternateScreen: z49.boolean(),
+      applicationCursor: z49.boolean(),
+      applicationKeypad: z49.boolean(),
+      bracketedPaste: z49.boolean(),
+      insert: z49.boolean(),
+      origin: z49.boolean(),
+      wraparound: z49.boolean(),
+      mouseTracking: z49.boolean(),
+      mouseProtocol: z49.enum(["none", "x10", "vt200", "drag", "any"]).optional(),
+      mouseEncoding: z49.enum(["default", "utf8", "sgr", "sgr-pixels"]).optional(),
+      synchronizedOutput: z49.boolean()
     }).strict();
-    TerminalReplicaPlacementSchemaZ = z48.object({
-      id: z48.string().min(1),
-      kind: z48.string().min(1),
-      row: z48.number().int().nonnegative(),
-      column: z48.number().int().nonnegative(),
-      columns: z48.number().int().positive(),
-      rows: z48.number().int().positive(),
-      contentDigest: z48.string().min(1)
+    TerminalReplicaPlacementSchemaZ = z49.object({
+      id: z49.string().min(1),
+      kind: z49.string().min(1),
+      row: z49.number().int().nonnegative(),
+      column: z49.number().int().nonnegative(),
+      columns: z49.number().int().positive(),
+      rows: z49.number().int().positive(),
+      contentDigest: z49.string().min(1)
     }).strict();
-    TerminalReplicaSnapshotSchemaZ = z48.object({
-      cols: z48.number().int().positive(),
-      rows: z48.number().int().positive(),
-      grid: z48.array(TerminalReplicaRowSchemaZ),
-      history: z48.array(TerminalReplicaRowSchemaZ),
+    TerminalReplicaSnapshotSchemaZ = z49.object({
+      cols: z49.number().int().positive(),
+      rows: z49.number().int().positive(),
+      grid: z49.array(TerminalReplicaRowSchemaZ),
+      history: z49.array(TerminalReplicaRowSchemaZ),
       cursor: TerminalReplicaCursorSchemaZ,
       modes: TerminalReplicaModesSchemaZ,
-      placements: z48.array(TerminalReplicaPlacementSchemaZ),
-      bootstrap: z48.object({
-        kind: z48.enum(["painted-capture", "authoritative-stream"]),
-        hiddenState: z48.enum(["unknown", "observed-from-start"])
+      placements: z49.array(TerminalReplicaPlacementSchemaZ),
+      bootstrap: z49.object({
+        kind: z49.enum(["painted-capture", "authoritative-stream"]),
+        hiddenState: z49.enum(["unknown", "observed-from-start"])
       }).strict()
     }).strict();
-    TerminalReplicaPatchPayloadSchemaZ = z48.object({
-      dimensions: z48.object({ cols: z48.number().int().positive(), rows: z48.number().int().positive() }).strict().optional(),
-      rows: z48.array(
-        z48.object({ index: z48.number().int().nonnegative(), row: TerminalReplicaRowSchemaZ }).strict()
+    TerminalReplicaPatchPayloadSchemaZ = z49.object({
+      dimensions: z49.object({ cols: z49.number().int().positive(), rows: z49.number().int().positive() }).strict().optional(),
+      rows: z49.array(
+        z49.object({ index: z49.number().int().nonnegative(), row: TerminalReplicaRowSchemaZ }).strict()
       ),
-      history: z48.array(TerminalReplicaRowSchemaZ).optional(),
-      historyDelta: z48.object({
-        trim: z48.number().int().nonnegative(),
-        append: z48.array(TerminalReplicaRowSchemaZ)
+      history: z49.array(TerminalReplicaRowSchemaZ).optional(),
+      historyDelta: z49.object({
+        trim: z49.number().int().nonnegative(),
+        append: z49.array(TerminalReplicaRowSchemaZ)
       }).strict().optional(),
       cursor: TerminalReplicaCursorSchemaZ.optional(),
       modes: TerminalReplicaModesSchemaZ.optional(),
-      placements: z48.array(TerminalReplicaPlacementSchemaZ).optional(),
+      placements: z49.array(TerminalReplicaPlacementSchemaZ).optional(),
       bootstrap: TerminalReplicaSnapshotSchemaZ.shape.bootstrap.optional()
     }).strict();
-    TerminalReplicaTombstonePayloadSchemaZ = z48.object({ reason: z48.enum(["pane-closed", "session-restarted", "runtime-disposed"]) }).strict();
+    TerminalReplicaTombstonePayloadSchemaZ = z49.object({ reason: z49.enum(["pane-closed", "session-restarted", "runtime-disposed"]) }).strict();
     TERMINAL_REPLICA_ATTRIBUTE = Object.freeze({
       bold: 1,
       dim: 2,
@@ -7807,7 +7874,7 @@ var init_terminal_replica = __esm({
 });
 
 // packages/contracts/src/session-runtime.ts
-import { z as z49 } from "zod";
+import { z as z50 } from "zod";
 var SessionRuntimeGenerationSchemaZ, SessionRuntimeClientIdSchemaZ, SessionRuntimeSessionNameSchemaZ, SessionRuntimeControllerRoleSchemaZ, SessionRuntimeControllerLeaseSchemaZ, SessionRuntimeControllerSnapshotSchemaZ, SessionRuntimeAuthorityKindSchemaZ, SessionRuntimeClientSurfaceSchemaZ, SessionRuntimePresenceStateSchemaZ, SessionRuntimeActivityKindSchemaZ, SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS, SessionRuntimeTerminalKeyNameSchemaZ, SessionRuntimeTerminalTextInputSchemaZ, SessionRuntimeTerminalKeyInputSchemaZ, SessionRuntimeTerminalInputSchemaZ, SessionRuntimeAuthorityLeaseSchemaZ, SessionRuntimeClientPresenceSchemaZ, SessionRuntimeAuthoritySnapshotSchemaZ, TerminalReplicaRevisionSchemaZ, TerminalReplicaFrameMetadataSchemaZ, CanonicalTerminalReplicaSeedSchemaZ, CanonicalTerminalReplicaPatchSchemaZ, CanonicalTerminalReplicaTombstoneSchemaZ, CanonicalTerminalReplicaUpdateSchemaZ, SessionRuntimePaneReadIntentSchemaZ, SessionRuntimeSemanticIntentSchemaZ;
 var init_session_runtime = __esm({
   "packages/contracts/src/session-runtime.ts"() {
@@ -7819,24 +7886,24 @@ var init_session_runtime = __esm({
     init_workspace_state();
     init_terminal_replica();
     SessionRuntimeGenerationSchemaZ = DaemonInstanceIdentitySchemaZ.shape.instanceId;
-    SessionRuntimeClientIdSchemaZ = z49.string().min(1).max(4096).refine((value) => !/[\0\r\n]/u.test(value));
-    SessionRuntimeSessionNameSchemaZ = z49.string().min(1).max(256).refine((value) => !/[\0\r\n]/u.test(value));
-    SessionRuntimeControllerRoleSchemaZ = z49.enum(["controller", "viewer"]);
-    SessionRuntimeControllerLeaseSchemaZ = z49.object({
+    SessionRuntimeClientIdSchemaZ = z50.string().min(1).max(4096).refine((value) => !/[\0\r\n]/u.test(value));
+    SessionRuntimeSessionNameSchemaZ = z50.string().min(1).max(256).refine((value) => !/[\0\r\n]/u.test(value));
+    SessionRuntimeControllerRoleSchemaZ = z50.enum(["controller", "viewer"]);
+    SessionRuntimeControllerLeaseSchemaZ = z50.object({
       generation: SessionRuntimeGenerationSchemaZ,
       session: SessionRuntimeSessionNameSchemaZ,
       clientId: SessionRuntimeClientIdSchemaZ,
-      token: z49.uuid(),
-      revision: z49.number().int().positive()
+      token: z50.uuid(),
+      revision: z50.number().int().positive()
     }).strict();
-    SessionRuntimeControllerSnapshotSchemaZ = z49.object({
+    SessionRuntimeControllerSnapshotSchemaZ = z50.object({
       generation: SessionRuntimeGenerationSchemaZ,
       session: SessionRuntimeSessionNameSchemaZ,
       controllerClientId: SessionRuntimeClientIdSchemaZ.nullable(),
-      revision: z49.number().int().nonnegative()
+      revision: z50.number().int().nonnegative()
     }).strict();
-    SessionRuntimeAuthorityKindSchemaZ = z49.enum(["input", "focus", "geometry"]);
-    SessionRuntimeClientSurfaceSchemaZ = z49.enum([
+    SessionRuntimeAuthorityKindSchemaZ = z50.enum(["input", "focus", "geometry"]);
+    SessionRuntimeClientSurfaceSchemaZ = z50.enum([
       "web",
       "opentui",
       "cli",
@@ -7844,96 +7911,96 @@ var init_session_runtime = __esm({
       "native-tmux",
       "unknown"
     ]);
-    SessionRuntimePresenceStateSchemaZ = z49.enum(["foreground", "background"]);
-    SessionRuntimeActivityKindSchemaZ = z49.enum([
+    SessionRuntimePresenceStateSchemaZ = z50.enum(["foreground", "background"]);
+    SessionRuntimeActivityKindSchemaZ = z50.enum([
       "heartbeat",
       "input",
       "focus",
       "geometry"
     ]);
     SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS = 1024;
-    SessionRuntimeTerminalKeyNameSchemaZ = z49.string().regex(
+    SessionRuntimeTerminalKeyNameSchemaZ = z50.string().regex(
       /^(?:C-|M-|S-){0,3}(?:F1[0-2]|F[1-9]|Enter|Escape|Space|Tab|BTab|BSpace|Home|End|NPage|PPage|PgUp|PgDn|DC|IC|Up|Down|Left|Right|[A-Za-z0-9])$/u
     );
-    SessionRuntimeTerminalTextInputSchemaZ = z49.object({
-      kind: z49.literal("text"),
-      data: z49.string().min(1).max(SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS).refine((value) => !value.includes("\0"), "terminal input text must not contain NUL")
+    SessionRuntimeTerminalTextInputSchemaZ = z50.object({
+      kind: z50.literal("text"),
+      data: z50.string().min(1).max(SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS).refine((value) => !value.includes("\0"), "terminal input text must not contain NUL")
     }).strict();
-    SessionRuntimeTerminalKeyInputSchemaZ = z49.object({
-      kind: z49.literal("key"),
+    SessionRuntimeTerminalKeyInputSchemaZ = z50.object({
+      kind: z50.literal("key"),
       data: SessionRuntimeTerminalKeyNameSchemaZ
     }).strict();
-    SessionRuntimeTerminalInputSchemaZ = z49.discriminatedUnion("kind", [
+    SessionRuntimeTerminalInputSchemaZ = z50.discriminatedUnion("kind", [
       SessionRuntimeTerminalTextInputSchemaZ,
       SessionRuntimeTerminalKeyInputSchemaZ
     ]);
-    SessionRuntimeAuthorityLeaseSchemaZ = z49.object({
+    SessionRuntimeAuthorityLeaseSchemaZ = z50.object({
       generation: SessionRuntimeGenerationSchemaZ,
       session: SessionRuntimeSessionNameSchemaZ,
       clientId: SessionRuntimeClientIdSchemaZ,
       authority: SessionRuntimeAuthorityKindSchemaZ,
-      token: z49.uuid(),
-      revision: z49.number().int().positive()
+      token: z50.uuid(),
+      revision: z50.number().int().positive()
     }).strict();
-    SessionRuntimeClientPresenceSchemaZ = z49.object({
+    SessionRuntimeClientPresenceSchemaZ = z50.object({
       clientId: SessionRuntimeClientIdSchemaZ,
       surface: SessionRuntimeClientSurfaceSchemaZ,
       state: SessionRuntimePresenceStateSchemaZ,
-      connectedRevision: z49.number().int().positive(),
-      activityRevision: z49.number().int().nonnegative()
+      connectedRevision: z50.number().int().positive(),
+      activityRevision: z50.number().int().nonnegative()
     }).strict();
-    SessionRuntimeAuthoritySnapshotSchemaZ = z49.object({
+    SessionRuntimeAuthoritySnapshotSchemaZ = z50.object({
       generation: SessionRuntimeGenerationSchemaZ,
       session: SessionRuntimeSessionNameSchemaZ,
-      revision: z49.number().int().nonnegative(),
-      owners: z49.object({
+      revision: z50.number().int().nonnegative(),
+      owners: z50.object({
         input: SessionRuntimeClientIdSchemaZ.nullable(),
         focus: SessionRuntimeClientIdSchemaZ.nullable(),
         geometry: SessionRuntimeClientIdSchemaZ.nullable()
       }).strict(),
-      nativeGeometryYieldUntilMs: z49.number().nonnegative(),
-      clients: z49.array(SessionRuntimeClientPresenceSchemaZ)
+      nativeGeometryYieldUntilMs: z50.number().nonnegative(),
+      clients: z50.array(SessionRuntimeClientPresenceSchemaZ)
     }).strict();
-    TerminalReplicaRevisionSchemaZ = z49.number().int().nonnegative();
-    TerminalReplicaFrameMetadataSchemaZ = z49.object({
+    TerminalReplicaRevisionSchemaZ = z50.number().int().nonnegative();
+    TerminalReplicaFrameMetadataSchemaZ = z50.object({
       workspaceName: WorkspaceIdSchemaZ,
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
       generation: SessionRuntimeGenerationSchemaZ,
-      incarnation: z49.string().min(1).max(256),
-      cols: z49.number().int().positive(),
-      rows: z49.number().int().positive(),
-      stateHash: z49.string().regex(/^[0-9a-f]{16}$/u),
-      hashAlgorithm: z49.literal("fnv1a64-v1")
+      incarnation: z50.string().min(1).max(256),
+      cols: z50.number().int().positive(),
+      rows: z50.number().int().positive(),
+      stateHash: z50.string().regex(/^[0-9a-f]{16}$/u),
+      hashAlgorithm: z50.literal("fnv1a64-v1")
     }).strict();
     CanonicalTerminalReplicaSeedSchemaZ = TerminalReplicaFrameMetadataSchemaZ.extend({
-      type: z49.literal("terminal.seed"),
+      type: z50.literal("terminal.seed"),
       revision: TerminalReplicaRevisionSchemaZ,
       snapshot: TerminalReplicaSnapshotSchemaZ
     }).strict();
     CanonicalTerminalReplicaPatchSchemaZ = TerminalReplicaFrameMetadataSchemaZ.extend({
-      type: z49.literal("terminal.patch"),
+      type: z50.literal("terminal.patch"),
       baseRevision: TerminalReplicaRevisionSchemaZ,
       revision: TerminalReplicaRevisionSchemaZ,
       patch: TerminalReplicaPatchPayloadSchemaZ
     }).strict();
     CanonicalTerminalReplicaTombstoneSchemaZ = TerminalReplicaFrameMetadataSchemaZ.extend({
-      type: z49.literal("terminal.tombstone"),
+      type: z50.literal("terminal.tombstone"),
       baseRevision: TerminalReplicaRevisionSchemaZ,
       revision: TerminalReplicaRevisionSchemaZ,
       tombstone: TerminalReplicaTombstonePayloadSchemaZ
     }).strict();
-    CanonicalTerminalReplicaUpdateSchemaZ = z49.discriminatedUnion("type", [
+    CanonicalTerminalReplicaUpdateSchemaZ = z50.discriminatedUnion("type", [
       CanonicalTerminalReplicaSeedSchemaZ,
       CanonicalTerminalReplicaPatchSchemaZ,
       CanonicalTerminalReplicaTombstoneSchemaZ
     ]);
-    SessionRuntimePaneReadIntentSchemaZ = z49.object({
-      verb: z49.literal("workspace.pane.read"),
+    SessionRuntimePaneReadIntentSchemaZ = z50.object({
+      verb: z50.literal("workspace.pane.read"),
       workspaceName: WorkspaceIdSchemaZ,
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
       origin: AuthoredInteractionOriginSchemaZ
     }).strict();
-    SessionRuntimeSemanticIntentSchemaZ = z49.union([
+    SessionRuntimeSemanticIntentSchemaZ = z50.union([
       WorkspaceMultiplexerIntentSchemaZ,
       SessionRuntimePaneReadIntentSchemaZ
     ]);
@@ -7941,7 +8008,7 @@ var init_session_runtime = __esm({
 });
 
 // packages/contracts/src/causal-cell.ts
-import { z as z50 } from "zod";
+import { z as z51 } from "zod";
 var CAUSAL_CELL_CAPABILITY_V1, CausalCellCapabilitySchemaZ, CanonicalStateHashSchemaZ, CanonicalRevisionSchemaZ, GridExtentSchemaZ, GridCoordinateSchemaZ, CausalCellGeometryV1SchemaZ, CausalCellBindingShape, CausalCellProbeV1SchemaZ, CausalCellProofV1SchemaZ, CausalCellFailureReasonV1SchemaZ, CausalCellChangedCoordinateV1SchemaZ, CausalCellStructuralDiffV1SchemaZ, CausalCellFailureV1SchemaZ;
 var init_causal_cell = __esm({
   "packages/contracts/src/causal-cell.ts"() {
@@ -7950,12 +8017,12 @@ var init_causal_cell = __esm({
     init_semantic_identity();
     init_terminal_replica();
     CAUSAL_CELL_CAPABILITY_V1 = "causal-cell-v1";
-    CausalCellCapabilitySchemaZ = z50.literal(CAUSAL_CELL_CAPABILITY_V1);
-    CanonicalStateHashSchemaZ = z50.string().regex(/^[0-9a-f]{16}$/u);
-    CanonicalRevisionSchemaZ = z50.number().int().nonnegative().safe();
-    GridExtentSchemaZ = z50.number().int().positive().max(65536);
-    GridCoordinateSchemaZ = z50.number().int().nonnegative().max(65535);
-    CausalCellGeometryV1SchemaZ = z50.object({
+    CausalCellCapabilitySchemaZ = z51.literal(CAUSAL_CELL_CAPABILITY_V1);
+    CanonicalStateHashSchemaZ = z51.string().regex(/^[0-9a-f]{16}$/u);
+    CanonicalRevisionSchemaZ = z51.number().int().nonnegative().safe();
+    GridExtentSchemaZ = z51.number().int().positive().max(65536);
+    GridCoordinateSchemaZ = z51.number().int().nonnegative().max(65535);
+    CausalCellGeometryV1SchemaZ = z51.object({
       cols: GridExtentSchemaZ,
       rows: GridExtentSchemaZ,
       row: GridCoordinateSchemaZ,
@@ -7971,26 +8038,26 @@ var init_causal_cell = __esm({
         });
     });
     CausalCellBindingShape = {
-      version: z50.literal(1),
+      version: z51.literal(1),
       capability: CausalCellCapabilitySchemaZ,
       /** Probe identity is deliberately the performance trace identity. */
-      traceId: z50.uuid(),
+      traceId: z51.uuid(),
       clientId: SessionRuntimeClientIdSchemaZ,
       /** Pane-stream request id; binds the proof to one authenticated transport. */
-      transportNonce: z50.uuid(),
+      transportNonce: z51.uuid(),
       /** Negotiated terminal-delivery nonce; prevents replay across reopen. */
-      deliveryNonce: z50.uuid(),
-      inputSequence: z50.number().int().positive().max(2147483647),
+      deliveryNonce: z51.uuid(),
+      inputSequence: z51.number().int().positive().max(2147483647),
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
       generation: SessionRuntimeGenerationSchemaZ,
-      incarnation: z50.string().min(1).max(256),
+      incarnation: z51.string().min(1).max(256),
       baselineRevision: CanonicalRevisionSchemaZ,
       baselineStateHash: CanonicalStateHashSchemaZ,
       geometry: CausalCellGeometryV1SchemaZ,
       before: TerminalReplicaCellSchemaZ,
       after: TerminalReplicaCellSchemaZ
     };
-    CausalCellProbeV1SchemaZ = z50.object(CausalCellBindingShape).strict().superRefine((value, context) => {
+    CausalCellProbeV1SchemaZ = z51.object(CausalCellBindingShape).strict().superRefine((value, context) => {
       if (value.before.width !== 1 || value.after.width !== 1)
         context.addIssue({
           code: "custom",
@@ -8000,7 +8067,7 @@ var init_causal_cell = __esm({
       if (JSON.stringify(value.before) === JSON.stringify(value.after))
         context.addIssue({ code: "custom", path: ["after"], message: "probe must change one cell" });
     });
-    CausalCellProofV1SchemaZ = z50.object({
+    CausalCellProofV1SchemaZ = z51.object({
       ...CausalCellBindingShape,
       committedRevision: CanonicalRevisionSchemaZ,
       committedStateHash: CanonicalStateHashSchemaZ
@@ -8020,7 +8087,7 @@ var init_causal_cell = __esm({
       if (JSON.stringify(value.before) === JSON.stringify(value.after))
         context.addIssue({ code: "custom", path: ["after"], message: "proof must change one cell" });
     });
-    CausalCellFailureReasonV1SchemaZ = z50.enum([
+    CausalCellFailureReasonV1SchemaZ = z51.enum([
       "busy",
       "baseline-drift",
       "control-rejected",
@@ -8035,34 +8102,34 @@ var init_causal_cell = __esm({
       "authority-lost",
       "transport-closed"
     ]);
-    CausalCellChangedCoordinateV1SchemaZ = z50.object({ row: GridCoordinateSchemaZ, column: GridCoordinateSchemaZ }).strict();
-    CausalCellStructuralDiffV1SchemaZ = z50.object({
-      version: z50.literal(1),
+    CausalCellChangedCoordinateV1SchemaZ = z51.object({ row: GridCoordinateSchemaZ, column: GridCoordinateSchemaZ }).strict();
+    CausalCellStructuralDiffV1SchemaZ = z51.object({
+      version: z51.literal(1),
       baselineRevision: CanonicalRevisionSchemaZ,
       baselineStateHash: CanonicalStateHashSchemaZ,
       candidateRevision: CanonicalRevisionSchemaZ,
       candidateStateHash: CanonicalStateHashSchemaZ,
-      dimensionsChanged: z50.boolean(),
-      changedCellCount: z50.number().int().nonnegative().safe(),
-      changedRowCount: z50.number().int().nonnegative().safe(),
-      changedCoordinates: z50.array(CausalCellChangedCoordinateV1SchemaZ).max(8),
-      coordinatesTruncated: z50.boolean(),
-      changedWrappedRowCount: z50.number().int().nonnegative().safe(),
-      changedWrappedRows: z50.array(GridCoordinateSchemaZ).max(8),
-      wrappedRowsTruncated: z50.boolean(),
-      targetMatched: z50.boolean(),
-      cursorChanged: z50.boolean(),
-      modesChanged: z50.boolean(),
-      historyChanged: z50.boolean(),
-      placementsChanged: z50.boolean(),
-      bootstrapChanged: z50.boolean(),
-      semanticSnapshotMatched: z50.boolean(),
-      serializationOrderOnly: z50.boolean()
+      dimensionsChanged: z51.boolean(),
+      changedCellCount: z51.number().int().nonnegative().safe(),
+      changedRowCount: z51.number().int().nonnegative().safe(),
+      changedCoordinates: z51.array(CausalCellChangedCoordinateV1SchemaZ).max(8),
+      coordinatesTruncated: z51.boolean(),
+      changedWrappedRowCount: z51.number().int().nonnegative().safe(),
+      changedWrappedRows: z51.array(GridCoordinateSchemaZ).max(8),
+      wrappedRowsTruncated: z51.boolean(),
+      targetMatched: z51.boolean(),
+      cursorChanged: z51.boolean(),
+      modesChanged: z51.boolean(),
+      historyChanged: z51.boolean(),
+      placementsChanged: z51.boolean(),
+      bootstrapChanged: z51.boolean(),
+      semanticSnapshotMatched: z51.boolean(),
+      serializationOrderOnly: z51.boolean()
     }).strict();
-    CausalCellFailureV1SchemaZ = z50.object({
-      version: z50.literal(1),
+    CausalCellFailureV1SchemaZ = z51.object({
+      version: z51.literal(1),
       capability: CausalCellCapabilitySchemaZ,
-      traceId: z50.uuid(),
+      traceId: z51.uuid(),
       reason: CausalCellFailureReasonV1SchemaZ,
       diagnostic: CausalCellStructuralDiffV1SchemaZ.optional()
     }).strict();
@@ -8070,7 +8137,7 @@ var init_causal_cell = __esm({
 });
 
 // packages/contracts/src/terminal-delivery.ts
-import { z as z51 } from "zod";
+import { z as z52 } from "zod";
 var TERMINAL_DELIVERY_PROTOCOL_VERSION, TERMINAL_DELIVERY_CHUNK_BYTES, TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES, TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES, TerminalDeliveryEncodingSchemaZ, TerminalDeliveryOfferSchemaZ, TerminalDeliveryNegotiatedSchemaZ, TerminalDeliveryNegotiationResultSchemaZ, DeliveryAddressSchemaZ, TerminalDeliveryEnvelopeSchemaZ, TerminalDeliveryChunkSchemaZ, TerminalDeliveryFaultSchemaZ, TerminalDeliveryAckSchemaZ, TerminalDeliveryNackSchemaZ, TerminalDeliveryVisibilitySchemaZ, TerminalSemanticDeliveryPayloadSchemaZ;
 var init_terminal_delivery = __esm({
   "packages/contracts/src/terminal-delivery.ts"() {
@@ -8084,76 +8151,76 @@ var init_terminal_delivery = __esm({
     TERMINAL_DELIVERY_CHUNK_BYTES = 256 * 1024;
     TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES = 512 * 1024;
     TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES = 16 * 1024 * 1024;
-    TerminalDeliveryEncodingSchemaZ = z51.enum([
+    TerminalDeliveryEncodingSchemaZ = z52.enum([
       "semantic-compact-v1",
       "semantic-v1",
       "ansi-diff-v1",
       "ansi-raw-v1"
     ]);
-    TerminalDeliveryOfferSchemaZ = z51.object({
-      protocolVersions: z51.array(z51.number().int().positive()).min(1).max(8),
-      encodings: z51.array(TerminalDeliveryEncodingSchemaZ).min(1).max(4),
-      richPlacements: z51.boolean()
+    TerminalDeliveryOfferSchemaZ = z52.object({
+      protocolVersions: z52.array(z52.number().int().positive()).min(1).max(8),
+      encodings: z52.array(TerminalDeliveryEncodingSchemaZ).min(1).max(4),
+      richPlacements: z52.boolean()
     }).strict().superRefine((value, context) => {
       if (new Set(value.protocolVersions).size !== value.protocolVersions.length)
         context.addIssue({ code: "custom", message: "protocolVersions must be unique" });
       if (new Set(value.encodings).size !== value.encodings.length)
         context.addIssue({ code: "custom", message: "encodings must be unique" });
     });
-    TerminalDeliveryNegotiatedSchemaZ = z51.object({
-      protocolVersion: z51.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
+    TerminalDeliveryNegotiatedSchemaZ = z52.object({
+      protocolVersion: z52.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
       encoding: TerminalDeliveryEncodingSchemaZ,
-      fallbackEncoding: z51.literal("semantic-v1").nullable().optional(),
-      richPlacements: z51.boolean(),
+      fallbackEncoding: z52.literal("semantic-v1").nullable().optional(),
+      richPlacements: z52.boolean(),
       generation: SessionRuntimeGenerationSchemaZ,
-      deliveryNonce: z51.uuid()
+      deliveryNonce: z52.uuid()
     }).strict().superRefine((value, context) => {
       if (value.fallbackEncoding && value.encoding !== "semantic-compact-v1")
         context.addIssue({ code: "custom", message: "fallback encoding requires compact semantic" });
       if (value.richPlacements && value.encoding !== "semantic-v1" && value.encoding !== "semantic-compact-v1")
         context.addIssue({ code: "custom", message: "rich placements require semantic delivery" });
     });
-    TerminalDeliveryNegotiationResultSchemaZ = z51.discriminatedUnion("accepted", [
-      z51.object({ accepted: z51.literal(true), negotiated: TerminalDeliveryNegotiatedSchemaZ }).strict(),
-      z51.object({
-        accepted: z51.literal(false),
-        reason: z51.enum([
+    TerminalDeliveryNegotiationResultSchemaZ = z52.discriminatedUnion("accepted", [
+      z52.object({ accepted: z52.literal(true), negotiated: TerminalDeliveryNegotiatedSchemaZ }).strict(),
+      z52.object({
+        accepted: z52.literal(false),
+        reason: z52.enum([
           "protocol-version-mismatch",
           "encoding-mismatch",
           "unsupported-capability-combination"
         ])
       }).strict()
     ]);
-    DeliveryAddressSchemaZ = z51.object({
+    DeliveryAddressSchemaZ = z52.object({
       workspaceName: WorkspaceIdSchemaZ,
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
       generation: SessionRuntimeGenerationSchemaZ,
-      incarnation: z51.string().min(1).max(256),
-      deliveryNonce: z51.uuid()
+      incarnation: z52.string().min(1).max(256),
+      deliveryNonce: z52.uuid()
     });
     TerminalDeliveryEnvelopeSchemaZ = DeliveryAddressSchemaZ.extend({
-      type: z51.literal("terminal.delivery"),
-      transactionId: z51.uuid(),
+      type: z52.literal("terminal.delivery"),
+      transactionId: z52.uuid(),
       /**
        * Optional diagnostics-only controlled next-output probe id. It never grants
        * authority, is absent while tracing is disabled, and must not be interpreted
        * as general causality: unrelated external tmux output may consume the probe.
        */
-      performanceTraceId: z51.uuid().optional(),
+      performanceTraceId: z52.uuid().optional(),
       /** Finalized diagnostic proof for this exact canonical revision/hash. */
       causalCellProof: CausalCellProofV1SchemaZ.optional(),
-      protocolVersion: z51.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
+      protocolVersion: z52.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
       encoding: TerminalDeliveryEncodingSchemaZ,
-      frame: z51.enum(["seed", "patch", "tombstone"]),
-      baseRevision: z51.number().int().min(-1).nullable(),
-      canonicalRevision: z51.number().int().nonnegative(),
-      canonicalStateHash: z51.string().regex(/^[0-9a-f]{16}$/u),
-      representationHash: z51.string().regex(/^[0-9a-f]{16}$/u),
-      representationBytes: z51.number().int().nonnegative().max(TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES),
-      chunkCount: z51.number().int().positive().max(256),
-      canonicalEquivalent: z51.boolean(),
-      history: z51.enum(["complete", "truncated", "not-applicable"]),
-      richPlacements: z51.boolean()
+      frame: z52.enum(["seed", "patch", "tombstone"]),
+      baseRevision: z52.number().int().min(-1).nullable(),
+      canonicalRevision: z52.number().int().nonnegative(),
+      canonicalStateHash: z52.string().regex(/^[0-9a-f]{16}$/u),
+      representationHash: z52.string().regex(/^[0-9a-f]{16}$/u),
+      representationBytes: z52.number().int().nonnegative().max(TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES),
+      chunkCount: z52.number().int().positive().max(256),
+      canonicalEquivalent: z52.boolean(),
+      history: z52.enum(["complete", "truncated", "not-applicable"]),
+      richPlacements: z52.boolean()
     }).strict().superRefine((value, context) => {
       const semantic = value.encoding === "semantic-v1" || value.encoding === "semantic-compact-v1";
       const expectedChunks = Math.max(
@@ -8187,29 +8254,29 @@ var init_terminal_delivery = __esm({
       if (!semantic && value.richPlacements)
         context.addIssue({ code: "custom", message: "ANSI cannot carry rich placements" });
     });
-    TerminalDeliveryChunkSchemaZ = z51.object({
-      type: z51.literal("terminal.delivery.chunk"),
-      transactionId: z51.uuid(),
-      index: z51.number().int().nonnegative().max(255),
-      bytes: z51.instanceof(Uint8Array).refine((value) => value.byteLength <= TERMINAL_DELIVERY_CHUNK_BYTES)
+    TerminalDeliveryChunkSchemaZ = z52.object({
+      type: z52.literal("terminal.delivery.chunk"),
+      transactionId: z52.uuid(),
+      index: z52.number().int().nonnegative().max(255),
+      bytes: z52.instanceof(Uint8Array).refine((value) => value.byteLength <= TERMINAL_DELIVERY_CHUNK_BYTES)
     }).strict();
-    TerminalDeliveryFaultSchemaZ = z51.object({
-      type: z51.literal("terminal.delivery.fault"),
-      reason: z51.enum(["state-too-large", "source-closed", "protocol-violation"]),
-      message: z51.string().min(1).max(1024),
-      deliveryNonce: z51.uuid()
+    TerminalDeliveryFaultSchemaZ = z52.object({
+      type: z52.literal("terminal.delivery.fault"),
+      reason: z52.enum(["state-too-large", "source-closed", "protocol-violation"]),
+      message: z52.string().min(1).max(1024),
+      deliveryNonce: z52.uuid()
     }).strict();
     TerminalDeliveryAckSchemaZ = DeliveryAddressSchemaZ.extend({
-      type: z51.literal("terminal.delivery.ack"),
-      transactionId: z51.uuid(),
-      canonicalRevision: z51.number().int().nonnegative(),
-      canonicalStateHash: z51.string().regex(/^[0-9a-f]{16}$/u),
-      representationHash: z51.string().regex(/^[0-9a-f]{16}$/u)
+      type: z52.literal("terminal.delivery.ack"),
+      transactionId: z52.uuid(),
+      canonicalRevision: z52.number().int().nonnegative(),
+      canonicalStateHash: z52.string().regex(/^[0-9a-f]{16}$/u),
+      representationHash: z52.string().regex(/^[0-9a-f]{16}$/u)
     }).strict();
     TerminalDeliveryNackSchemaZ = DeliveryAddressSchemaZ.extend({
-      type: z51.literal("terminal.delivery.nack"),
-      transactionId: z51.uuid().nullable(),
-      reason: z51.enum([
+      type: z52.literal("terminal.delivery.nack"),
+      transactionId: z52.uuid().nullable(),
+      reason: z52.enum([
         "gap",
         "hash-mismatch",
         "decode-failed",
@@ -8217,30 +8284,30 @@ var init_terminal_delivery = __esm({
         "stale-generation",
         "protocol-violation"
       ]),
-      appliedRevision: z51.number().int().min(-1)
+      appliedRevision: z52.number().int().min(-1)
     }).strict();
-    TerminalDeliveryVisibilitySchemaZ = z51.enum([
+    TerminalDeliveryVisibilitySchemaZ = z52.enum([
       "visible",
       "background",
       "hidden",
       "frozen"
     ]);
-    TerminalSemanticDeliveryPayloadSchemaZ = z51.discriminatedUnion("frame", [
-      z51.object({
-        frame: z51.literal("seed"),
-        revision: z51.number().int().nonnegative(),
+    TerminalSemanticDeliveryPayloadSchemaZ = z52.discriminatedUnion("frame", [
+      z52.object({
+        frame: z52.literal("seed"),
+        revision: z52.number().int().nonnegative(),
         snapshot: TerminalReplicaSnapshotSchemaZ
       }).strict(),
-      z51.object({
-        frame: z51.literal("patch"),
-        baseRevision: z51.number().int().nonnegative(),
-        revision: z51.number().int().nonnegative(),
+      z52.object({
+        frame: z52.literal("patch"),
+        baseRevision: z52.number().int().nonnegative(),
+        revision: z52.number().int().nonnegative(),
         patch: TerminalReplicaPatchPayloadSchemaZ
       }).strict().refine((value) => value.revision > value.baseRevision, "patch revision must advance"),
-      z51.object({
-        frame: z51.literal("tombstone"),
-        baseRevision: z51.number().int().nonnegative(),
-        revision: z51.number().int().nonnegative(),
+      z52.object({
+        frame: z52.literal("tombstone"),
+        baseRevision: z52.number().int().nonnegative(),
+        revision: z52.number().int().nonnegative(),
         tombstone: TerminalReplicaTombstonePayloadSchemaZ
       }).strict().refine((value) => value.revision > value.baseRevision, "tombstone revision must advance")
     ]);
@@ -8248,8 +8315,8 @@ var init_terminal_delivery = __esm({
 });
 
 // packages/contracts/src/pane-stream.ts
-import { z as z52 } from "zod";
-var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
+import { z as z53 } from "zod";
+var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamLayoutSnapshotFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
 var init_pane_stream = __esm({
   "packages/contracts/src/pane-stream.ts"() {
     "use strict";
@@ -8263,9 +8330,9 @@ var init_pane_stream = __esm({
     init_session_runtime();
     init_workspace_multiplexer();
     PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1 = "clock-bounds-v1";
-    PaneStreamDiagnosticCapabilitySchemaZ = z52.union([
+    PaneStreamDiagnosticCapabilitySchemaZ = z53.union([
       CausalCellCapabilitySchemaZ,
-      z52.literal(PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1)
+      z53.literal(PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1)
     ]);
     PANE_STREAM_PROTOCOL_VERSION = 1;
     PANE_STREAM_ISSUE_PATH = "/api/v1/terminal/pane-streams/issue";
@@ -8282,65 +8349,65 @@ var init_pane_stream = __esm({
     PANE_STREAM_MAX_INPUT_SEQUENCE = 4294967295;
     PaneStreamSemanticPaneIdSchemaZ = TerminalAttachmentSemanticPaneIdSchemaZ;
     PaneStreamViewerModeSchemaZ = TerminalAttachmentViewerModeSchemaZ;
-    PaneSetSchemaZ = z52.array(PaneStreamSemanticPaneIdSchemaZ).min(1).max(PANE_STREAM_MAX_PANES).refine((panes) => new Set(panes).size === panes.length, "pane set must not repeat a pane");
-    PaneStreamLeaseRequestSchemaZ = z52.object({
-      protocolVersion: z52.literal(PANE_STREAM_PROTOCOL_VERSION),
+    PaneSetSchemaZ = z53.array(PaneStreamSemanticPaneIdSchemaZ).min(1).max(PANE_STREAM_MAX_PANES).refine((panes) => new Set(panes).size === panes.length, "pane set must not repeat a pane");
+    PaneStreamLeaseRequestSchemaZ = z53.object({
+      protocolVersion: z53.literal(PANE_STREAM_PROTOCOL_VERSION),
       workspaceName: WorkspaceIdSchemaZ,
       panes: PaneSetSchemaZ,
       viewerMode: PaneStreamViewerModeSchemaZ,
       /** Explicit semantic-v2 content/authority mode. Omission retains raw v1. */
       terminalDelivery: TerminalDeliveryOfferSchemaZ.optional()
     }).strict();
-    PaneStreamRedemptionTicketSchemaZ = z52.string().regex(/^ps1_[A-Za-z0-9_-]{43}$/u);
-    PaneStreamLoopbackWebSocketUrlSchemaZ = z52.url().max(2048).refine((value) => {
+    PaneStreamRedemptionTicketSchemaZ = z53.string().regex(/^ps1_[A-Za-z0-9_-]{43}$/u);
+    PaneStreamLoopbackWebSocketUrlSchemaZ = z53.url().max(2048).refine((value) => {
       const url = new URL(value);
       return url.protocol === "ws:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) && url.port.length > 0 && url.username.length === 0 && url.password.length === 0 && url.pathname === PANE_STREAM_REDEEM_PATH && url.search.length === 0 && url.hash.length === 0 && url.toString() === value;
     }, "pane-stream URL must be the canonical uncredentialed loopback redemption endpoint");
-    PaneStreamIssueDescriptorSchemaZ = z52.object({
-      protocolVersion: z52.literal(PANE_STREAM_PROTOCOL_VERSION),
+    PaneStreamIssueDescriptorSchemaZ = z53.object({
+      protocolVersion: z53.literal(PANE_STREAM_PROTOCOL_VERSION),
       webSocketUrl: PaneStreamLoopbackWebSocketUrlSchemaZ,
-      subprotocol: z52.literal(PANE_STREAM_WEBSOCKET_SUBPROTOCOL),
+      subprotocol: z53.literal(PANE_STREAM_WEBSOCKET_SUBPROTOCOL),
       redemptionTicket: PaneStreamRedemptionTicketSchemaZ,
       daemonInstanceId: DaemonInstanceIdentitySchemaZ.shape.instanceId,
-      requestId: z52.uuid(),
-      expiresAt: z52.number().int().positive(),
+      requestId: z53.uuid(),
+      expiresAt: z53.number().int().positive(),
       panes: PaneSetSchemaZ,
       effectiveViewerMode: PaneStreamViewerModeSchemaZ
     }).strict();
     PaneStreamIssueErrorSchemaZ = TerminalIssueErrorCompatSchemaZ;
-    PaneStreamIssueResultSchemaZ = z52.discriminatedUnion("status", [
-      z52.object({ status: z52.literal("issued"), descriptor: PaneStreamIssueDescriptorSchemaZ }).strict(),
-      z52.object({ status: z52.literal("error"), error: PaneStreamIssueErrorSchemaZ }).strict()
+    PaneStreamIssueResultSchemaZ = z53.discriminatedUnion("status", [
+      z53.object({ status: z53.literal("issued"), descriptor: PaneStreamIssueDescriptorSchemaZ }).strict(),
+      z53.object({ status: z53.literal("error"), error: PaneStreamIssueErrorSchemaZ }).strict()
     ]);
-    PaneStreamIssueMutationRequestSchemaZ = z52.object({
-      requestId: z52.uuid(),
+    PaneStreamIssueMutationRequestSchemaZ = z53.object({
+      requestId: z53.uuid(),
       expectedDaemonInstanceId: DaemonInstanceIdentitySchemaZ.shape.instanceId,
       stream: PaneStreamLeaseRequestSchemaZ
     }).strict();
-    BoundedIdentitySchemaZ = z52.string().min(1).max(4096).refine((value) => !value.includes("\0"));
-    PaneStreamRedeemFrameSchemaZ = z52.object({
-      type: z52.literal("redeem"),
-      protocolVersion: z52.literal(PANE_STREAM_PROTOCOL_VERSION),
+    BoundedIdentitySchemaZ = z53.string().min(1).max(4096).refine((value) => !value.includes("\0"));
+    PaneStreamRedeemFrameSchemaZ = z53.object({
+      type: z53.literal("redeem"),
+      protocolVersion: z53.literal(PANE_STREAM_PROTOCOL_VERSION),
       ticket: PaneStreamRedemptionTicketSchemaZ,
-      requestId: z52.uuid(),
+      requestId: z53.uuid(),
       daemonInstanceId: BoundedIdentitySchemaZ,
       /**
        * The client commits to sending `consumed` frames, activating the
        * renderer-backlog flow owner from the first delivered frame. Card 3's
        * renderer sets this; simple transcript clients omit it.
        */
-      deliveryAcks: z52.boolean().optional(),
-      diagnosticCapabilities: z52.array(PaneStreamDiagnosticCapabilitySchemaZ).max(2).optional()
+      deliveryAcks: z53.boolean().optional(),
+      diagnosticCapabilities: z53.array(PaneStreamDiagnosticCapabilitySchemaZ).max(2).optional()
     }).strict();
     PaneStreamInputFrameMetadataShape = {
-      type: z52.literal("input"),
+      type: z53.literal("input"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
-      seq: z52.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
+      seq: z53.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
       /** Opt-in controlled next-output probe; not a general causal assertion. */
-      performanceTraceId: z52.uuid().optional(),
+      performanceTraceId: z53.uuid().optional(),
       causalProbe: CausalCellProbeV1SchemaZ.optional()
     };
-    PaneStreamInputFrameSchemaZ = z52.discriminatedUnion("kind", [
+    PaneStreamInputFrameSchemaZ = z53.discriminatedUnion("kind", [
       SessionRuntimeTerminalTextInputSchemaZ.extend(PaneStreamInputFrameMetadataShape),
       SessionRuntimeTerminalKeyInputSchemaZ.extend(PaneStreamInputFrameMetadataShape)
     ]).superRefine((value, context) => {
@@ -8352,15 +8419,15 @@ var init_pane_stream = __esm({
       if (value.pane !== value.causalProbe.semanticPaneId)
         context.addIssue({ code: "custom", message: "causal probe pane mismatch" });
     });
-    PaneStreamConsumedFrameSchemaZ = z52.object({
-      type: z52.literal("consumed"),
+    PaneStreamConsumedFrameSchemaZ = z53.object({
+      type: z53.literal("consumed"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
-      seq: z52.number().int().positive()
+      seq: z53.number().int().positive()
     }).strict();
-    PaneStreamTerminalDeliveryAckFrameSchemaZ = z52.object({ type: z52.literal("terminal-delivery-ack"), ack: TerminalDeliveryAckSchemaZ }).strict();
-    PaneStreamTerminalDeliveryNackFrameSchemaZ = z52.object({ type: z52.literal("terminal-delivery-nack"), nack: TerminalDeliveryNackSchemaZ }).strict();
-    PaneStreamTerminalDeliveryVisibilityFrameSchemaZ = z52.object({
-      type: z52.literal("terminal-delivery-visibility"),
+    PaneStreamTerminalDeliveryAckFrameSchemaZ = z53.object({ type: z53.literal("terminal-delivery-ack"), ack: TerminalDeliveryAckSchemaZ }).strict();
+    PaneStreamTerminalDeliveryNackFrameSchemaZ = z53.object({ type: z53.literal("terminal-delivery-nack"), nack: TerminalDeliveryNackSchemaZ }).strict();
+    PaneStreamTerminalDeliveryVisibilityFrameSchemaZ = z53.object({
+      type: z53.literal("terminal-delivery-visibility"),
       workspaceName: TerminalDeliveryAckSchemaZ.shape.workspaceName,
       pane: PaneStreamSemanticPaneIdSchemaZ,
       generation: TerminalDeliveryAckSchemaZ.shape.generation,
@@ -8368,49 +8435,53 @@ var init_pane_stream = __esm({
       deliveryNonce: TerminalDeliveryAckSchemaZ.shape.deliveryNonce,
       visibility: TerminalDeliveryVisibilitySchemaZ
     }).strict();
-    PaneStreamSemanticIntentFrameSchemaZ = z52.object({
-      type: z52.literal("semantic-intent"),
-      operationId: z52.uuid(),
+    PaneStreamSemanticIntentFrameSchemaZ = z53.object({
+      type: z53.literal("semantic-intent"),
+      operationId: z53.uuid(),
       intent: SessionRuntimeSemanticIntentSchemaZ
     }).strict();
-    PaneStreamViewportFrameSchemaZ = z52.object({
-      type: z52.literal("viewport"),
-      seq: z52.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
-      cols: z52.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
-      rows: z52.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS)
-    }).strict();
-    PaneStreamAuthorityRequestIdSchemaZ = z52.uuid();
+    PaneStreamViewportFrameSchemaZ = z53.object({
+      type: z53.literal("viewport"),
+      seq: z53.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
+      cols: z53.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
+      rows: z53.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
+      authorityLease: SessionRuntimeAuthorityLeaseSchemaZ
+    }).strict().refine((frame) => frame.authorityLease.authority === "geometry", {
+      message: "Viewport authority must be a geometry lease.",
+      path: ["authorityLease", "authority"]
+    });
+    PaneStreamAuthorityRequestIdSchemaZ = z53.uuid();
     PaneStreamAuthorityGenerationSchemaZ = DaemonInstanceIdentitySchemaZ.shape.instanceId;
-    PaneStreamPresenceFrameSchemaZ = z52.object({
-      type: z52.literal("presence"),
+    PaneStreamPresenceFrameSchemaZ = z53.object({
+      type: z53.literal("presence"),
       generation: PaneStreamAuthorityGenerationSchemaZ,
       state: SessionRuntimePresenceStateSchemaZ
     }).strict();
-    PaneStreamActivityFrameSchemaZ = z52.object({
-      type: z52.literal("activity"),
+    PaneStreamActivityFrameSchemaZ = z53.object({
+      type: z53.literal("activity"),
       generation: PaneStreamAuthorityGenerationSchemaZ,
       activity: SessionRuntimeActivityKindSchemaZ
     }).strict();
-    PaneStreamAuthorityRequestFrameSchemaZ = z52.object({
-      type: z52.literal("authority-request"),
+    PaneStreamAuthorityRequestFrameSchemaZ = z53.object({
+      type: z53.literal("authority-request"),
       generation: PaneStreamAuthorityGenerationSchemaZ,
       requestId: PaneStreamAuthorityRequestIdSchemaZ,
       authority: SessionRuntimeAuthorityKindSchemaZ
     }).strict();
-    PaneStreamAuthorityReleaseFrameSchemaZ = z52.object({
-      type: z52.literal("authority-release"),
+    PaneStreamAuthorityReleaseFrameSchemaZ = z53.object({
+      type: z53.literal("authority-release"),
       generation: PaneStreamAuthorityGenerationSchemaZ,
       requestId: PaneStreamAuthorityRequestIdSchemaZ,
       authority: SessionRuntimeAuthorityKindSchemaZ
     }).strict();
-    SharedMonotonicMicrosSchemaZ = z52.number().int().nonnegative().safe();
-    PaneStreamClockProbeFrameSchemaZ = z52.object({
-      type: z52.literal("clock-probe"),
-      requestId: z52.uuid(),
-      probe: z52.number().int().min(1).max(5),
+    SharedMonotonicMicrosSchemaZ = z53.number().int().nonnegative().safe();
+    PaneStreamClockProbeFrameSchemaZ = z53.object({
+      type: z53.literal("clock-probe"),
+      requestId: z53.uuid(),
+      probe: z53.number().int().min(1).max(5),
       clientSendMicros: SharedMonotonicMicrosSchemaZ
     }).strict();
-    PaneStreamClientFrameSchemaZ = z52.union([
+    PaneStreamClientFrameSchemaZ = z53.union([
       PaneStreamInputFrameSchemaZ,
       PaneStreamConsumedFrameSchemaZ,
       PaneStreamTerminalDeliveryAckFrameSchemaZ,
@@ -8424,127 +8495,178 @@ var init_pane_stream = __esm({
       PaneStreamAuthorityReleaseFrameSchemaZ,
       PaneStreamClockProbeFrameSchemaZ
     ]);
-    Base64SchemaZ = (maxChars) => z52.string().max(maxChars).regex(/^[A-Za-z0-9+/]*={0,2}$/u, "payload must be standard base64");
-    ServerSeqSchemaZ = z52.number().int().positive();
-    GridCellSchemaZ = z52.number().int().min(1).max(PANE_STREAM_MAX_GRID_CELLS);
-    CellCoordinateSchemaZ = z52.number().int().min(0).max(PANE_STREAM_MAX_GRID_CELLS);
-    PaneStreamReadyFrameSchemaZ = z52.object({
-      type: z52.literal("ready"),
-      protocolVersion: z52.literal(PANE_STREAM_PROTOCOL_VERSION),
+    Base64SchemaZ = (maxChars) => z53.string().max(maxChars).regex(/^[A-Za-z0-9+/]*={0,2}$/u, "payload must be standard base64");
+    ServerSeqSchemaZ = z53.number().int().positive();
+    GridCellSchemaZ = z53.number().int().min(1).max(PANE_STREAM_MAX_GRID_CELLS);
+    CellCoordinateSchemaZ = z53.number().int().min(0).max(PANE_STREAM_MAX_GRID_CELLS);
+    PaneStreamReadyFrameSchemaZ = z53.object({
+      type: z53.literal("ready"),
+      protocolVersion: z53.literal(PANE_STREAM_PROTOCOL_VERSION),
       daemonInstanceId: BoundedIdentitySchemaZ,
-      requestId: z52.uuid(),
+      requestId: z53.uuid(),
       panes: PaneSetSchemaZ,
       effectiveViewerMode: PaneStreamViewerModeSchemaZ,
       authority: SessionRuntimeAuthoritySnapshotSchemaZ.optional(),
-      diagnosticCapabilities: z52.array(PaneStreamDiagnosticCapabilitySchemaZ).max(2).optional()
+      diagnosticCapabilities: z53.array(PaneStreamDiagnosticCapabilitySchemaZ).max(2).optional()
     }).strict();
-    PaneStreamSeedBatchFrameSchemaZ = z52.object({
-      type: z52.literal("seed-batch"),
+    PaneStreamSeedBatchFrameSchemaZ = z53.object({
+      type: z53.literal("seed-batch"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ,
-      reset: z52.object({ cols: GridCellSchemaZ, rows: GridCellSchemaZ }).strict().nullable(),
+      reset: z53.object({ cols: GridCellSchemaZ, rows: GridCellSchemaZ }).strict().nullable(),
       seed: Base64SchemaZ(PANE_STREAM_MAX_SEED_BASE64_CHARS),
-      held: z52.array(Base64SchemaZ(PANE_STREAM_MAX_OUTPUT_BASE64_CHARS)).max(PANE_STREAM_MAX_HELD_DELTAS),
-      cursor: z52.object({ x: CellCoordinateSchemaZ, y: CellCoordinateSchemaZ }).strict().nullable()
+      held: z53.array(Base64SchemaZ(PANE_STREAM_MAX_OUTPUT_BASE64_CHARS)).max(PANE_STREAM_MAX_HELD_DELTAS),
+      cursor: z53.object({ x: CellCoordinateSchemaZ, y: CellCoordinateSchemaZ }).strict().nullable()
     }).strict();
-    PaneStreamOutputFrameSchemaZ = z52.object({
-      type: z52.literal("output"),
+    PaneStreamOutputFrameSchemaZ = z53.object({
+      type: z53.literal("output"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ,
       data: Base64SchemaZ(PANE_STREAM_MAX_OUTPUT_BASE64_CHARS)
     }).strict();
-    PaneStreamCursorFrameSchemaZ = z52.object({
-      type: z52.literal("cursor"),
+    PaneStreamCursorFrameSchemaZ = z53.object({
+      type: z53.literal("cursor"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ,
       x: CellCoordinateSchemaZ,
       y: CellCoordinateSchemaZ
     }).strict();
-    BoundedDisplayNameSchemaZ = z52.string().max(256).refine((value) => !/[\0\r\n]/u.test(value));
-    PaneStreamLayoutFrameSchemaZ = z52.object({
-      type: z52.literal("layout"),
+    BoundedDisplayNameSchemaZ = z53.string().max(256).refine((value) => !/[\0\r\n]/u.test(value));
+    PaneStreamLayoutFrameSchemaZ = z53.object({
+      type: z53.literal("layout"),
       /** Durable `@tmux_ide_window_id` stamp; null while the join is unverified. */
       semanticWindowId: WorkspaceIdSchemaZ.nullable(),
       windowName: BoundedDisplayNameSchemaZ.nullable(),
-      currentWindow: z52.boolean(),
+      currentWindow: z53.boolean(),
       cols: GridCellSchemaZ,
       rows: GridCellSchemaZ,
-      zoomed: z52.boolean(),
+      zoomed: z53.boolean(),
       /** Backward-compatible while older daemons are still in the reconnect window. */
-      paneBorderStatus: z52.enum(["top", "bottom", "off"]).default("off"),
-      panes: z52.array(
-        z52.object({
+      paneBorderStatus: z53.enum(["top", "bottom", "off"]).default("off"),
+      panes: z53.array(
+        z53.object({
           /** Null while the pane's semantic identity join is unverified. */
           pane: PaneStreamSemanticPaneIdSchemaZ.nullable(),
           left: CellCoordinateSchemaZ,
           top: CellCoordinateSchemaZ,
           width: GridCellSchemaZ,
           height: GridCellSchemaZ,
-          active: z52.boolean()
+          active: z53.boolean()
         }).strict()
       ).max(PANE_STREAM_MAX_LAYOUT_PANES)
     }).strict();
-    PaneStreamFlowFrameSchemaZ = z52.object({
-      type: z52.literal("flow"),
+    PaneStreamLayoutSnapshotFrameSchemaZ = z53.object({
+      type: z53.literal("layout-snapshot"),
+      topologyEpoch: z53.number().int().nonnegative(),
+      layouts: z53.array(PaneStreamLayoutFrameSchemaZ).min(1).max(PANE_STREAM_MAX_PANES)
+    }).strict().superRefine((snapshot, context) => {
+      const windows = /* @__PURE__ */ new Set();
+      const panes = /* @__PURE__ */ new Set();
+      let currentWindows = 0;
+      for (const [layoutIndex, layout] of snapshot.layouts.entries()) {
+        if (layout.semanticWindowId === null) {
+          context.addIssue({
+            code: z53.ZodIssueCode.custom,
+            message: "Layout authority snapshots require semantic window identities",
+            path: ["layouts", layoutIndex, "semanticWindowId"]
+          });
+        } else if (windows.has(layout.semanticWindowId)) {
+          context.addIssue({
+            code: z53.ZodIssueCode.custom,
+            message: "Layout authority snapshots require unique windows",
+            path: ["layouts", layoutIndex, "semanticWindowId"]
+          });
+        } else {
+          windows.add(layout.semanticWindowId);
+        }
+        if (layout.currentWindow) currentWindows += 1;
+        for (const [paneIndex, pane] of layout.panes.entries()) {
+          if (pane.pane === null) {
+            context.addIssue({
+              code: z53.ZodIssueCode.custom,
+              message: "Layout authority snapshots require semantic pane identities",
+              path: ["layouts", layoutIndex, "panes", paneIndex, "pane"]
+            });
+          } else if (panes.has(pane.pane)) {
+            context.addIssue({
+              code: z53.ZodIssueCode.custom,
+              message: "Layout authority snapshots require unique panes",
+              path: ["layouts", layoutIndex, "panes", paneIndex, "pane"]
+            });
+          } else {
+            panes.add(pane.pane);
+          }
+        }
+      }
+      if (currentWindows !== 1) {
+        context.addIssue({
+          code: z53.ZodIssueCode.custom,
+          message: "Layout authority snapshots require exactly one current window",
+          path: ["layouts"]
+        });
+      }
+    });
+    PaneStreamFlowFrameSchemaZ = z53.object({
+      type: z53.literal("flow"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ,
-      state: z52.enum(["paused", "resumed"]),
-      reason: z52.enum(["backpressure", "requested"])
+      state: z53.enum(["paused", "resumed"]),
+      reason: z53.enum(["backpressure", "requested"])
     }).strict();
-    PaneStreamClosedFrameSchemaZ = z52.object({
-      type: z52.literal("closed"),
+    PaneStreamClosedFrameSchemaZ = z53.object({
+      type: z53.literal("closed"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       seq: ServerSeqSchemaZ
     }).strict();
-    PaneStreamInputAckFrameSchemaZ = z52.object({
-      type: z52.literal("input-ack"),
+    PaneStreamInputAckFrameSchemaZ = z53.object({
+      type: z53.literal("input-ack"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
-      seq: z52.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE)
+      seq: z53.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE)
     }).strict();
-    PaneStreamClockProbeAckFrameSchemaZ = z52.object({
-      type: z52.literal("clock-probe-ack"),
-      requestId: z52.uuid(),
+    PaneStreamClockProbeAckFrameSchemaZ = z53.object({
+      type: z53.literal("clock-probe-ack"),
+      requestId: z53.uuid(),
       daemonInstanceId: DaemonInstanceIdentitySchemaZ.shape.instanceId,
-      probe: z52.number().int().min(1).max(5),
+      probe: z53.number().int().min(1).max(5),
       clientSendMicros: SharedMonotonicMicrosSchemaZ,
       daemonReceiveMicros: SharedMonotonicMicrosSchemaZ,
       daemonSendMicros: SharedMonotonicMicrosSchemaZ
     }).strict();
-    PaneStreamCausalCellProofFrameSchemaZ = z52.object({ type: z52.literal("causal-cell-proof"), proof: CausalCellProofV1SchemaZ }).strict();
-    PaneStreamCausalCellFailureFrameSchemaZ = z52.object({ type: z52.literal("causal-cell-failure"), failure: CausalCellFailureV1SchemaZ }).strict();
-    PaneStreamTerminalDeliveryReadyFrameSchemaZ = z52.object({
-      type: z52.literal("terminal-delivery-ready"),
+    PaneStreamCausalCellProofFrameSchemaZ = z53.object({ type: z53.literal("causal-cell-proof"), proof: CausalCellProofV1SchemaZ }).strict();
+    PaneStreamCausalCellFailureFrameSchemaZ = z53.object({ type: z53.literal("causal-cell-failure"), failure: CausalCellFailureV1SchemaZ }).strict();
+    PaneStreamTerminalDeliveryReadyFrameSchemaZ = z53.object({
+      type: z53.literal("terminal-delivery-ready"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       negotiation: TerminalDeliveryNegotiationResultSchemaZ
     }).strict();
-    PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ = z52.object({
-      type: z52.literal("terminal-delivery-envelope"),
+    PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ = z53.object({
+      type: z53.literal("terminal-delivery-envelope"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       envelope: TerminalDeliveryEnvelopeSchemaZ
     }).strict();
-    PaneStreamTerminalDeliveryChunkFrameSchemaZ = z52.object({
-      type: z52.literal("terminal-delivery-chunk"),
+    PaneStreamTerminalDeliveryChunkFrameSchemaZ = z53.object({
+      type: z53.literal("terminal-delivery-chunk"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
-      transactionId: z52.uuid(),
-      index: z52.number().int().nonnegative().max(255),
+      transactionId: z53.uuid(),
+      index: z53.number().int().nonnegative().max(255),
       data: Base64SchemaZ(Math.ceil(TERMINAL_DELIVERY_CHUNK_BYTES / 3) * 4)
     }).strict();
-    PaneStreamTerminalDeliveryFaultFrameSchemaZ = z52.object({
-      type: z52.literal("terminal-delivery-fault"),
+    PaneStreamTerminalDeliveryFaultFrameSchemaZ = z53.object({
+      type: z53.literal("terminal-delivery-fault"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
       fault: TerminalDeliveryFaultSchemaZ
     }).strict();
-    PaneStreamSemanticIntentAckFrameSchemaZ = z52.object({
-      type: z52.literal("semantic-intent-ack"),
-      operationId: z52.uuid(),
-      outcome: z52.discriminatedUnion("status", [
-        z52.object({
-          status: z52.literal("applied"),
+    PaneStreamSemanticIntentAckFrameSchemaZ = z53.object({
+      type: z53.literal("semantic-intent-ack"),
+      operationId: z53.uuid(),
+      outcome: z53.discriminatedUnion("status", [
+        z53.object({
+          status: z53.literal("applied"),
           result: WorkspaceMultiplexerMutationResultSchemaZ.nullable()
         }).strict(),
-        z52.object({
-          status: z52.literal("rejected"),
-          code: z52.enum([
+        z53.object({
+          status: z53.literal("rejected"),
+          code: z53.enum([
             "controller-conflict",
             "controller-target-unavailable",
             "stale-controller-lease",
@@ -8558,48 +8680,55 @@ var init_pane_stream = __esm({
             "pane_not_active",
             "stream-unavailable"
           ]),
-          message: z52.string().min(1).max(512)
+          message: z53.string().min(1).max(512)
         }).strict()
       ])
     }).strict();
-    PaneStreamViewportAckFrameSchemaZ = z52.object({
-      type: z52.literal("viewport-ack"),
-      seq: z52.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
-      cols: z52.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
-      rows: z52.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS)
-    }).strict();
-    PaneStreamAuthoritySnapshotFrameSchemaZ = z52.object({
-      type: z52.literal("authority-snapshot"),
+    PaneStreamViewportAckFrameSchemaZ = z53.object({
+      type: z53.literal("viewport-ack"),
+      seq: z53.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
+      cols: z53.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
+      rows: z53.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
+      outcome: z53.enum(["ok", "geometry-authority-conflict"]),
+      authorityLease: SessionRuntimeAuthorityLeaseSchemaZ
+    }).strict().refine((frame) => frame.authorityLease.authority === "geometry", {
+      message: "Viewport authority must be a geometry lease.",
+      path: ["authorityLease", "authority"]
+    });
+    PaneStreamAuthoritySnapshotFrameSchemaZ = z53.object({
+      type: z53.literal("authority-snapshot"),
       snapshot: SessionRuntimeAuthoritySnapshotSchemaZ
     }).strict();
-    PaneStreamAuthorityReceiptFrameSchemaZ = z52.object({
-      type: z52.literal("authority-receipt"),
+    PaneStreamAuthorityReceiptFrameSchemaZ = z53.object({
+      type: z53.literal("authority-receipt"),
       requestId: PaneStreamAuthorityRequestIdSchemaZ,
       authority: SessionRuntimeAuthorityKindSchemaZ,
-      status: z52.enum(["granted", "released", "rejected"]),
+      status: z53.enum(["granted", "released", "rejected"]),
       lease: SessionRuntimeAuthorityLeaseSchemaZ.nullable(),
       snapshot: SessionRuntimeAuthoritySnapshotSchemaZ
     }).strict();
-    PaneStreamErrorFrameCodeSchemaZ = z52.enum([
+    PaneStreamErrorFrameCodeSchemaZ = z53.enum([
       "redemption-rejected",
       "ticket-expired",
       "live-capacity-exhausted",
       "stream-unavailable",
+      "topology-changed",
       "input-rejected",
       "protocol-error"
     ]);
-    PaneStreamErrorFrameSchemaZ = z52.object({
-      type: z52.literal("error"),
-      protocolVersion: z52.literal(PANE_STREAM_PROTOCOL_VERSION),
+    PaneStreamErrorFrameSchemaZ = z53.object({
+      type: z53.literal("error"),
+      protocolVersion: z53.literal(PANE_STREAM_PROTOCOL_VERSION),
       code: PaneStreamErrorFrameCodeSchemaZ,
-      retryable: z52.boolean()
+      retryable: z53.boolean()
     }).strict();
-    PaneStreamServerFrameSchemaZ = z52.discriminatedUnion("type", [
+    PaneStreamServerFrameSchemaZ = z53.discriminatedUnion("type", [
       PaneStreamReadyFrameSchemaZ,
       PaneStreamSeedBatchFrameSchemaZ,
       PaneStreamOutputFrameSchemaZ,
       PaneStreamCursorFrameSchemaZ,
       PaneStreamLayoutFrameSchemaZ,
+      PaneStreamLayoutSnapshotFrameSchemaZ,
       PaneStreamFlowFrameSchemaZ,
       PaneStreamClosedFrameSchemaZ,
       PaneStreamInputAckFrameSchemaZ,
@@ -8620,84 +8749,84 @@ var init_pane_stream = __esm({
 });
 
 // packages/contracts/src/control.ts
-import { z as z53 } from "zod";
+import { z as z54 } from "zod";
 var CONTROL_PROTOCOL_VERSION, controlIdSchema, agentStatusSchema, controlRequestSchema, controlErrorSchema, controlResponseSchema, controlEventSchema, agentStatusEventSchema, agentsParamsSchema, sendParamsSchema, CONTROL_WAIT_MAX_TIMEOUT_MS, waitTimeoutSchema, waitParamsSchema, spawnPlacementSchema, spawnParamsSchema, restartAgentParamsSchema, stopAgentParamsSchema, explainParamsSchema, subscribeParamsSchema;
 var init_control = __esm({
   "packages/contracts/src/control.ts"() {
     "use strict";
     CONTROL_PROTOCOL_VERSION = 1;
-    controlIdSchema = z53.union([z53.string(), z53.number()]);
-    agentStatusSchema = z53.enum(["blocked", "working", "done", "idle", "unknown"]);
-    controlRequestSchema = z53.object({
-      v: z53.literal(CONTROL_PROTOCOL_VERSION),
+    controlIdSchema = z54.union([z54.string(), z54.number()]);
+    agentStatusSchema = z54.enum(["blocked", "working", "done", "idle", "unknown"]);
+    controlRequestSchema = z54.object({
+      v: z54.literal(CONTROL_PROTOCOL_VERSION),
       id: controlIdSchema,
-      verb: z53.string().min(1),
-      params: z53.record(z53.string(), z53.unknown()).optional()
+      verb: z54.string().min(1),
+      params: z54.record(z54.string(), z54.unknown()).optional()
     });
-    controlErrorSchema = z53.object({
-      code: z53.string(),
-      message: z53.string()
+    controlErrorSchema = z54.object({
+      code: z54.string(),
+      message: z54.string()
     });
-    controlResponseSchema = z53.discriminatedUnion("ok", [
-      z53.object({
-        v: z53.literal(CONTROL_PROTOCOL_VERSION),
+    controlResponseSchema = z54.discriminatedUnion("ok", [
+      z54.object({
+        v: z54.literal(CONTROL_PROTOCOL_VERSION),
         id: controlIdSchema.nullable(),
-        ok: z53.literal(true),
-        data: z53.unknown()
+        ok: z54.literal(true),
+        data: z54.unknown()
       }),
-      z53.object({
-        v: z53.literal(CONTROL_PROTOCOL_VERSION),
+      z54.object({
+        v: z54.literal(CONTROL_PROTOCOL_VERSION),
         id: controlIdSchema.nullable(),
-        ok: z53.literal(false),
+        ok: z54.literal(false),
         error: controlErrorSchema
       })
     ]);
-    controlEventSchema = z53.object({
-      v: z53.literal(CONTROL_PROTOCOL_VERSION),
-      event: z53.string().min(1),
-      data: z53.unknown()
+    controlEventSchema = z54.object({
+      v: z54.literal(CONTROL_PROTOCOL_VERSION),
+      event: z54.string().min(1),
+      data: z54.unknown()
     });
-    agentStatusEventSchema = z53.object({
-      ts: z53.string(),
-      session: z53.string(),
+    agentStatusEventSchema = z54.object({
+      ts: z54.string(),
+      session: z54.string(),
       from: agentStatusSchema.nullable(),
       to: agentStatusSchema
     });
-    agentsParamsSchema = z53.object({
-      session: z53.string().optional()
+    agentsParamsSchema = z54.object({
+      session: z54.string().optional()
     });
-    sendParamsSchema = z53.object({
-      session: z53.string().min(1),
-      target: z53.string().min(1),
-      message: z53.string().min(1),
-      noEnter: z53.boolean().optional(),
-      dir: z53.string().optional()
+    sendParamsSchema = z54.object({
+      session: z54.string().min(1),
+      target: z54.string().min(1),
+      message: z54.string().min(1),
+      noEnter: z54.boolean().optional(),
+      dir: z54.string().optional()
     });
     CONTROL_WAIT_MAX_TIMEOUT_MS = 6e5;
-    waitTimeoutSchema = z53.number().int().positive().max(CONTROL_WAIT_MAX_TIMEOUT_MS).optional();
-    waitParamsSchema = z53.discriminatedUnion("kind", [
-      z53.object({
-        kind: z53.literal("agent-status"),
-        session: z53.string().min(1),
+    waitTimeoutSchema = z54.number().int().positive().max(CONTROL_WAIT_MAX_TIMEOUT_MS).optional();
+    waitParamsSchema = z54.discriminatedUnion("kind", [
+      z54.object({
+        kind: z54.literal("agent-status"),
+        session: z54.string().min(1),
         status: agentStatusSchema,
         timeoutMs: waitTimeoutSchema
       }),
-      z53.object({
-        kind: z53.literal("output"),
-        target: z53.string().min(1),
-        match: z53.string().min(1),
+      z54.object({
+        kind: z54.literal("output"),
+        target: z54.string().min(1),
+        match: z54.string().min(1),
         timeoutMs: waitTimeoutSchema
       })
     ]);
-    spawnPlacementSchema = z53.enum(["window", "split-h", "split-v"]);
-    spawnParamsSchema = z53.object({
-      kind: z53.string().min(1).optional(),
-      command: z53.string().min(1).optional(),
-      session: z53.string().min(1).optional(),
-      sessionName: z53.string().min(1).optional(),
-      dir: z53.string().optional(),
+    spawnPlacementSchema = z54.enum(["window", "split-h", "split-v"]);
+    spawnParamsSchema = z54.object({
+      kind: z54.string().min(1).optional(),
+      command: z54.string().min(1).optional(),
+      session: z54.string().min(1).optional(),
+      sessionName: z54.string().min(1).optional(),
+      dir: z54.string().optional(),
       placement: spawnPlacementSchema.optional(),
-      paneId: z53.string().optional()
+      paneId: z54.string().optional()
     }).refine((p) => Boolean(p.kind) !== Boolean(p.command), {
       message: "exactly one of `kind` or `command` is required"
     }).refine((p) => Boolean(p.session) || Boolean(p.sessionName), {
@@ -8705,25 +8834,25 @@ var init_control = __esm({
     }).refine((p) => !(p.placement && p.placement !== "window") || Boolean(p.paneId), {
       message: "split placements need `paneId`"
     });
-    restartAgentParamsSchema = z53.object({
-      paneId: z53.string().min(1),
-      kind: z53.string().min(1).optional(),
-      command: z53.string().min(1).optional()
+    restartAgentParamsSchema = z54.object({
+      paneId: z54.string().min(1),
+      kind: z54.string().min(1).optional(),
+      command: z54.string().min(1).optional()
     }).refine((p) => Boolean(p.kind) || Boolean(p.command), {
       message: "`kind` or `command` is required"
     });
-    stopAgentParamsSchema = z53.object({
-      paneId: z53.string().min(1)
+    stopAgentParamsSchema = z54.object({
+      paneId: z54.string().min(1)
     });
-    explainParamsSchema = z53.object({
-      target: z53.string().min(1)
+    explainParamsSchema = z54.object({
+      target: z54.string().min(1)
     });
-    subscribeParamsSchema = z53.object({}).loose();
+    subscribeParamsSchema = z54.object({}).loose();
   }
 });
 
 // packages/contracts/src/multiplexer-verbs.ts
-import { z as z54 } from "zod";
+import { z as z55 } from "zod";
 function deepFreeze4(value) {
   if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
     Object.freeze(value);
@@ -8739,20 +8868,20 @@ var init_multiplexer_verbs = __esm({
     init_app_window_mutation();
     init_workspace_multiplexer();
     MULTIPLEXER_VERB_TABLE_VERSION = 1;
-    MultiplexerVerbIdSchemaZ = z54.string().min(3).max(64).regex(/^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$/u, "verb id must be a dot-namespaced identifier");
-    MultiplexerVerbScopeSchemaZ = z54.enum(["session", "window", "pane"]);
-    ActionNameSchemaZ = z54.enum(
+    MultiplexerVerbIdSchemaZ = z55.string().min(3).max(64).regex(/^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$/u, "verb id must be a dot-namespaced identifier");
+    MultiplexerVerbScopeSchemaZ = z55.enum(["session", "window", "pane"]);
+    ActionNameSchemaZ = z55.enum(
       Object.keys(ActionContractsZ)
     );
-    AppWindowCommandTypeSchemaZ = z54.enum(
+    AppWindowCommandTypeSchemaZ = z55.enum(
       AppWindowMutationCommandSchemaZ.options.map((option) => option.shape.type.value)
     );
-    MultiplexerVerbExecutionSchemaZ = z54.discriminatedUnion("kind", [
-      z54.object({ kind: z54.literal("daemon-action"), action: ActionNameSchemaZ }).strict(),
-      z54.object({ kind: z54.literal("app-window"), command: AppWindowCommandTypeSchemaZ }).strict(),
-      z54.object({ kind: z54.literal("renderer") }).strict()
+    MultiplexerVerbExecutionSchemaZ = z55.discriminatedUnion("kind", [
+      z55.object({ kind: z55.literal("daemon-action"), action: ActionNameSchemaZ }).strict(),
+      z55.object({ kind: z55.literal("app-window"), command: AppWindowCommandTypeSchemaZ }).strict(),
+      z55.object({ kind: z55.literal("renderer") }).strict()
     ]);
-    MultiplexerVerbAvailabilityInputSchemaZ = z54.enum([
+    MultiplexerVerbAvailabilityInputSchemaZ = z55.enum([
       "workspaceConnected",
       "sessionWindowCount",
       "windowPaneCount",
@@ -8760,21 +8889,21 @@ var init_multiplexer_verbs = __esm({
       "targetIsActivePane",
       "targetIsDockedStackMember"
     ]);
-    MultiplexerVerbEntrySchemaZ = z54.object({
-      version: z54.literal(MULTIPLEXER_VERB_TABLE_VERSION),
+    MultiplexerVerbEntrySchemaZ = z55.object({
+      version: z55.literal(MULTIPLEXER_VERB_TABLE_VERSION),
       id: MultiplexerVerbIdSchemaZ,
-      label: z54.string().min(1).max(80),
-      description: z54.string().min(1).max(240),
+      label: z55.string().min(1).max(80),
+      description: z55.string().min(1).max(240),
       scope: MultiplexerVerbScopeSchemaZ,
       execution: MultiplexerVerbExecutionSchemaZ,
-      availabilityInputs: z54.array(MultiplexerVerbAvailabilityInputSchemaZ).readonly(),
+      availabilityInputs: z55.array(MultiplexerVerbAvailabilityInputSchemaZ).readonly(),
       /** Destructive verbs must be confirmed before dispatch; no surface may skip it. */
-      destructive: z54.boolean(),
+      destructive: z55.boolean(),
       /**
        * The user's real tmux binding, when the keybinding bridge can read it.
        * Null everywhere today — see the module comment on why a guess is worse.
        */
-      tmuxKeyHint: z54.string().min(1).max(40).nullable()
+      tmuxKeyHint: z55.string().min(1).max(40).nullable()
     }).strict();
     ENTRIES = [
       {
@@ -8957,7 +9086,9 @@ var init_multiplexer_verbs = __esm({
       MULTIPLEXER_VERB_TABLE.map((entry) => entry.id)
     );
     AVAILABLE = Object.freeze({ available: true });
-    MultiplexerVerbInvocationSchemaZ = z54.object({
+    MultiplexerVerbInvocationSchemaZ = z55.object({
+      /** Renderer correlation only; daemon generation authority is host-issued. */
+      operationId: z55.uuid().optional(),
       verbId: MultiplexerVerbIdSchemaZ,
       intent: WorkspaceMultiplexerIntentSchemaZ
     }).strict().superRefine((value, context) => {
@@ -8981,13 +9112,13 @@ var init_multiplexer_verbs = __esm({
 });
 
 // packages/contracts/src/widget-asset.ts
-import { z as z55 } from "zod";
+import { z as z56 } from "zod";
 var WidgetAssetIdSchemaZ, WIDGET_ASSET_MEDIA_TYPES, WidgetAssetMediaTypeSchemaZ, WidgetAssetRequestSchemaZ, WidgetAssetSchemaZ, WidgetAssetResultSchemaZ;
 var init_widget_asset = __esm({
   "packages/contracts/src/widget-asset.ts"() {
     "use strict";
     init_desktop_host();
-    WidgetAssetIdSchemaZ = z55.string().regex(/^[0-9a-f]{64}$/u);
+    WidgetAssetIdSchemaZ = z56.string().regex(/^[0-9a-f]{64}$/u);
     WIDGET_ASSET_MEDIA_TYPES = [
       "text/markdown",
       "image/png",
@@ -8996,24 +9127,24 @@ var init_widget_asset = __esm({
       "image/webp",
       "image/avif"
     ];
-    WidgetAssetMediaTypeSchemaZ = z55.enum(WIDGET_ASSET_MEDIA_TYPES);
-    WidgetAssetRequestSchemaZ = z55.object({ assetId: WidgetAssetIdSchemaZ }).strict();
-    WidgetAssetSchemaZ = z55.object({
+    WidgetAssetMediaTypeSchemaZ = z56.enum(WIDGET_ASSET_MEDIA_TYPES);
+    WidgetAssetRequestSchemaZ = z56.object({ assetId: WidgetAssetIdSchemaZ }).strict();
+    WidgetAssetSchemaZ = z56.object({
       assetId: WidgetAssetIdSchemaZ,
       media: WidgetAssetMediaTypeSchemaZ,
-      name: z55.string().min(1).max(200),
+      name: z56.string().min(1).max(200),
       /** Standard base64. The renderer builds a data URL only after validation. */
-      data: z55.string().min(1).max(24 * 1024 * 1024).regex(/^[A-Za-z0-9+/]+={0,2}$/u)
+      data: z56.string().min(1).max(24 * 1024 * 1024).regex(/^[A-Za-z0-9+/]+={0,2}$/u)
     }).strict();
-    WidgetAssetResultSchemaZ = z55.discriminatedUnion("status", [
-      z55.object({ status: z55.literal("ok"), asset: WidgetAssetSchemaZ }).strict(),
-      z55.object({ status: z55.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
+    WidgetAssetResultSchemaZ = z56.discriminatedUnion("status", [
+      z56.object({ status: z56.literal("ok"), asset: WidgetAssetSchemaZ }).strict(),
+      z56.object({ status: z56.literal("error"), error: DesktopDaemonCapabilityErrorSchemaZ }).strict()
     ]);
   }
 });
 
 // packages/contracts/src/daemon-resource-request.ts
-import { z as z56 } from "zod";
+import { z as z57 } from "zod";
 var DaemonResourceRequestSchemaZ, DAEMON_RESOURCE_RESULT_SCHEMAS, DAEMON_RESOURCE_KINDS, DAEMON_RESOURCE_KIND_SET, CANCELLABLE_DAEMON_RESOURCE_KINDS, CANCELLABLE_DAEMON_RESOURCE_KIND_SET;
 var init_daemon_resource_request = __esm({
   "packages/contracts/src/daemon-resource-request.ts"() {
@@ -9027,58 +9158,60 @@ var init_daemon_resource_request = __esm({
     init_workspace_multiplexer();
     init_pane_stream();
     init_widget_asset();
-    DaemonResourceRequestSchemaZ = z56.discriminatedUnion("resource", [
-      z56.object({ resource: z56.literal("capabilities") }).strict(),
-      z56.object({ resource: z56.literal("refreshConnection") }).strict(),
-      z56.object({ resource: z56.literal("listWorkspaces") }).strict(),
-      z56.object({ resource: z56.literal("fetchFleetCatalog") }).strict(),
-      z56.object({ resource: z56.literal("startupReadiness") }).strict(),
-      z56.object({
-        resource: z56.literal("fetchApplicationShell"),
+    DaemonResourceRequestSchemaZ = z57.discriminatedUnion("resource", [
+      z57.object({ resource: z57.literal("capabilities") }).strict(),
+      z57.object({ resource: z57.literal("refreshConnection") }).strict(),
+      z57.object({ resource: z57.literal("listWorkspaces") }).strict(),
+      z57.object({ resource: z57.literal("fetchFleetCatalog") }).strict(),
+      z57.object({ resource: z57.literal("fetchWorkspaceCatalog") }).strict(),
+      z57.object({ resource: z57.literal("startupReadiness") }).strict(),
+      z57.object({
+        resource: z57.literal("fetchApplicationShell"),
         request: DesktopDaemonFetchApplicationShellRequestSchemaZ
       }).strict(),
-      z56.object({
-        resource: z56.literal("fetchWorkspaceFiles"),
+      z57.object({
+        resource: z57.literal("fetchWorkspaceFiles"),
         request: DesktopDaemonFetchWorkspaceFilesRequestSchemaZ
       }).strict(),
-      z56.object({
-        resource: z56.literal("fetchWorkspaceFilePreview"),
+      z57.object({
+        resource: z57.literal("fetchWorkspaceFilePreview"),
         request: DesktopDaemonFetchWorkspaceFilePreviewRequestSchemaZ
       }).strict(),
-      z56.object({
-        resource: z56.literal("fetchWorkspaceChanges"),
+      z57.object({
+        resource: z57.literal("fetchWorkspaceChanges"),
         request: DesktopDaemonFetchWorkspaceChangesRequestSchemaZ
       }).strict(),
-      z56.object({
-        resource: z56.literal("fetchWorkspaceMissions"),
+      z57.object({
+        resource: z57.literal("fetchWorkspaceMissions"),
         request: DesktopDaemonFetchWorkspaceMissionsRequestSchemaZ
       }).strict(),
-      z56.object({
-        resource: z56.literal("fetchWorkspaceChangeDiff"),
+      z57.object({
+        resource: z57.literal("fetchWorkspaceChangeDiff"),
         request: DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ
       }).strict(),
-      z56.object({ resource: z56.literal("promoteWorkspace"), request: WorkspacePromoteArgumentsSchemaZ }).strict(),
-      z56.object({
-        resource: z56.literal("createWorkspacePane"),
+      z57.object({ resource: z57.literal("promoteWorkspace"), request: WorkspacePromoteArgumentsSchemaZ }).strict(),
+      z57.object({
+        resource: z57.literal("createWorkspacePane"),
         request: WorkspacePaneCreateInvocationSchemaZ
       }).strict(),
-      z56.object({ resource: z56.literal("mutateAppWindow"), request: AppWindowMutationArgumentsSchemaZ }).strict(),
+      z57.object({ resource: z57.literal("mutateAppWindow"), request: AppWindowMutationInvocationSchemaZ }).strict(),
       // One resource for every tmux verb rather than one per route: see
       // MultiplexerVerbInvocation for why the invocation carries both the verb the
       // user clicked and the intent the daemon executes.
-      z56.object({ resource: z56.literal("invokeVerb"), request: MultiplexerVerbInvocationSchemaZ }).strict(),
-      z56.object({
-        resource: z56.literal("issueTerminalAttachment"),
+      z57.object({ resource: z57.literal("invokeVerb"), request: MultiplexerVerbInvocationSchemaZ }).strict(),
+      z57.object({
+        resource: z57.literal("issueTerminalAttachment"),
         request: TerminalAttachRequestSchemaZ
       }).strict(),
-      z56.object({ resource: z56.literal("issuePaneStream"), request: PaneStreamLeaseRequestSchemaZ }).strict(),
-      z56.object({ resource: z56.literal("fetchWidgetAsset"), request: WidgetAssetRequestSchemaZ }).strict()
+      z57.object({ resource: z57.literal("issuePaneStream"), request: PaneStreamLeaseRequestSchemaZ }).strict(),
+      z57.object({ resource: z57.literal("fetchWidgetAsset"), request: WidgetAssetRequestSchemaZ }).strict()
     ]);
     DAEMON_RESOURCE_RESULT_SCHEMAS = {
       capabilities: DesktopDaemonCapabilitiesResultSchemaZ,
       refreshConnection: DesktopDaemonRefreshConnectionResultSchemaZ,
       listWorkspaces: DesktopDaemonListWorkspacesResultSchemaZ,
       fetchFleetCatalog: DesktopDaemonFetchFleetCatalogResultSchemaZ,
+      fetchWorkspaceCatalog: DesktopDaemonFetchWorkspaceCatalogResultSchemaZ,
       startupReadiness: DesktopDaemonStartupReadinessResultSchemaZ,
       fetchApplicationShell: DesktopDaemonFetchApplicationShellResultSchemaZ,
       fetchWorkspaceFiles: DesktopDaemonFetchWorkspaceFilesResultSchemaZ,
@@ -9102,6 +9235,7 @@ var init_daemon_resource_request = __esm({
       "capabilities",
       "listWorkspaces",
       "fetchFleetCatalog",
+      "fetchWorkspaceCatalog",
       "startupReadiness",
       "fetchApplicationShell",
       "fetchWorkspaceFiles",
@@ -9118,7 +9252,7 @@ var init_daemon_resource_request = __esm({
 });
 
 // packages/contracts/src/terminal-runtime-inventory.ts
-import { z as z57 } from "zod";
+import { z as z58 } from "zod";
 var TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION, TerminalRuntimeInventoryProjectionV1SchemaZ, TerminalRuntimeInventoryResourceV1SchemaZ;
 var init_terminal_runtime_inventory = __esm({
   "packages/contracts/src/terminal-runtime-inventory.ts"() {
@@ -9129,73 +9263,21 @@ var init_terminal_runtime_inventory = __esm({
     init_fleet_catalog();
     init_pane_appearance();
     TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION = 1;
-    TerminalRuntimeInventoryProjectionV1SchemaZ = z57.object({
+    TerminalRuntimeInventoryProjectionV1SchemaZ = z58.object({
       workspaceName: DesktopWorkspaceNameSchemaZ,
       workspaceId: SemanticProductIdSchemaZ,
       sessionId: FleetSessionIdSchemaZ,
       /** Daemon-scoped revision observed by the terminal-runtime event lane. */
-      resourceRevision: z57.number().int().nonnegative(),
-      semanticPaneIds: z57.array(TerminalAttachmentSemanticPaneIdSchemaZ).max(256).refine((values2) => new Set(values2).size === values2.length, "pane ids must be unique").refine(
+      resourceRevision: z58.number().int().nonnegative(),
+      semanticPaneIds: z58.array(TerminalAttachmentSemanticPaneIdSchemaZ).max(256).refine((values2) => new Set(values2).size === values2.length, "pane ids must be unique").refine(
         (values2) => values2.every((value, index) => index === 0 || values2[index - 1] < value),
         "pane ids must be sorted"
       )
     }).strict();
-    TerminalRuntimeInventoryResourceV1SchemaZ = z57.object({
-      version: z57.literal(TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION),
+    TerminalRuntimeInventoryResourceV1SchemaZ = z58.object({
+      version: z58.literal(TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION),
       daemon: DaemonInstanceIdentitySchemaZ,
       resource: TerminalRuntimeInventoryProjectionV1SchemaZ
-    }).strict();
-  }
-});
-
-// packages/contracts/src/workspace-catalog-resource.ts
-import { z as z58 } from "zod";
-function projectWorkspaceCatalogV2(daemon, intents, liveSessions2) {
-  const observed = new Set(liveSessions2.map(({ sessionName }) => sessionName));
-  return WorkspaceCatalogResourceV2SchemaZ.parse({
-    version: WORKSPACE_CATALOG_RESOURCE_V2_VERSION,
-    daemon,
-    intents: intents.map((intent) => ({
-      ...intent,
-      availability: observed.has(intent.sessionName) ? "live" : "stopped"
-    })),
-    liveSessions: liveSessions2
-  });
-}
-var WORKSPACE_CATALOG_RESOURCE_VERSION, WorkspaceCatalogEntryV1SchemaZ, WorkspaceCatalogResourceV1SchemaZ, WORKSPACE_CATALOG_RESOURCE_V2_VERSION, WorkspaceCatalogIntentV2SchemaZ, WorkspaceCatalogLiveSessionV2SchemaZ, WorkspaceCatalogResourceV2SchemaZ;
-var init_workspace_catalog_resource = __esm({
-  "packages/contracts/src/workspace-catalog-resource.ts"() {
-    "use strict";
-    init_daemon_wire();
-    init_fleet_catalog();
-    WORKSPACE_CATALOG_RESOURCE_VERSION = 1;
-    WorkspaceCatalogEntryV1SchemaZ = z58.object({
-      workspaceName: z58.string().min(1),
-      sessionName: z58.string().min(1)
-    }).strict();
-    WorkspaceCatalogResourceV1SchemaZ = z58.object({
-      version: z58.literal(WORKSPACE_CATALOG_RESOURCE_VERSION),
-      daemon: DaemonInstanceIdentitySchemaZ,
-      workspaces: z58.array(WorkspaceCatalogEntryV1SchemaZ)
-    }).strict();
-    WORKSPACE_CATALOG_RESOURCE_V2_VERSION = 2;
-    WorkspaceCatalogIntentV2SchemaZ = z58.object({
-      workspaceName: z58.string().min(1),
-      sessionName: z58.string().min(1),
-      source: z58.enum(["project", "workspace"]),
-      availability: z58.enum(["live", "stopped"])
-    }).strict();
-    WorkspaceCatalogLiveSessionV2SchemaZ = z58.object({
-      sessionName: z58.string().min(1),
-      /** Daemon-minted promotion identity for this exact observed session. */
-      fleetSessionId: FleetSessionIdSchemaZ,
-      paneCount: z58.number().int().nonnegative()
-    }).strict();
-    WorkspaceCatalogResourceV2SchemaZ = z58.object({
-      version: z58.literal(WORKSPACE_CATALOG_RESOURCE_V2_VERSION),
-      daemon: DaemonInstanceIdentitySchemaZ,
-      intents: z58.array(WorkspaceCatalogIntentV2SchemaZ),
-      liveSessions: z58.array(WorkspaceCatalogLiveSessionV2SchemaZ)
     }).strict();
   }
 });
@@ -13258,7 +13340,7 @@ function readProcessTable() {
   }
 }
 function readProcessTableAsync(signal) {
-  return new Promise((resolve37) => {
+  return new Promise((resolve38) => {
     execFile2(
       "ps",
       ["-axo", "pid=,ppid=,command="],
@@ -13267,7 +13349,7 @@ function readProcessTableAsync(signal) {
         timeout: 2e3,
         signal
       },
-      (error, stdout) => resolve37(error ? [] : parsePsOutput(stdout))
+      (error, stdout) => resolve38(error ? [] : parsePsOutput(stdout))
     );
   });
 }
@@ -13314,29 +13396,66 @@ var init_process_tree = __esm({
   }
 });
 
+// packages/daemon/src/lib/unix-socket-authority.ts
+import { lstatSync, realpathSync as realpathSync4 } from "node:fs";
+import { basename as basename5, dirname as dirname7, isAbsolute as isAbsolute2, join as join7, resolve as resolve7 } from "node:path";
+function validSocketPath(path2) {
+  return isAbsolute2(path2) && resolve7(path2) === path2 && Buffer.byteLength(path2) <= MAX_SOCKET_PATH_BYTES && !/[\0\r\n]/u.test(path2);
+}
+function captureUnixSocketIdentity(path2) {
+  if (!validSocketPath(path2)) throw new TypeError("Unix socket path is invalid");
+  const sourceParent = lstatSync(dirname7(path2));
+  const source = lstatSync(path2);
+  if (!sourceParent.isDirectory() || sourceParent.isSymbolicLink() || !source.isSocket())
+    throw new TypeError("Unix socket authority is invalid");
+  const canonicalPath = join7(realpathSync4(dirname7(path2)), basename5(path2));
+  const canonical = lstatSync(canonicalPath);
+  if (!canonical.isSocket() || canonical.dev !== source.dev || canonical.ino !== source.ino)
+    throw new TypeError("Unix socket authority changed while resolving");
+  return Object.freeze({ path: canonicalPath, dev: canonical.dev, ino: canonical.ino });
+}
+function revalidateUnixSocketIdentity(identity) {
+  if (!validSocketPath(identity.path) || !Number.isSafeInteger(identity.dev) || identity.dev < 0 || !Number.isSafeInteger(identity.ino) || identity.ino < 0)
+    throw new TypeError("Unix socket identity is invalid");
+  const current = lstatSync(identity.path);
+  if (!current.isSocket() || current.dev !== identity.dev || current.ino !== identity.ino)
+    throw new TypeError("Unix socket authority changed before use");
+  return identity.path;
+}
+var MAX_SOCKET_PATH_BYTES;
+var init_unix_socket_authority = __esm({
+  "packages/daemon/src/lib/unix-socket-authority.ts"() {
+    "use strict";
+    MAX_SOCKET_PATH_BYTES = 4096;
+  }
+});
+
 // packages/daemon/src/lib/runtime-namespace.ts
 import { homedir as homedir4 } from "node:os";
-import { existsSync as existsSync7, realpathSync as realpathSync4 } from "node:fs";
-import { basename as basename5, dirname as dirname7, isAbsolute as isAbsolute2, join as join7, relative as relative2, resolve as resolve7, sep as sep2 } from "node:path";
+import { existsSync as existsSync7, lstatSync as lstatSync2, realpathSync as realpathSync5 } from "node:fs";
+import { basename as basename6, dirname as dirname8, isAbsolute as isAbsolute3, join as join8, relative as relative2, resolve as resolve8, sep as sep2 } from "node:path";
 function nonEmpty(env, key) {
   const value = env[key]?.trim();
   return value ? value : void 0;
 }
 function absolutePath(value, cwd, key) {
-  const path2 = isAbsolute2(value) ? value : resolve7(cwd, value);
-  if (!isAbsolute2(path2)) throw new TypeError(`${key} must resolve to an absolute path`);
+  const path2 = isAbsolute3(value) ? value : resolve8(cwd, value);
+  if (!isAbsolute3(path2)) throw new TypeError(`${key} must resolve to an absolute path`);
   return path2;
 }
 function pathIdentity(path2) {
-  let cursor = resolve7(path2);
+  let cursor = resolve8(path2);
   const suffix = [];
   while (!existsSync7(cursor)) {
-    const parent = dirname7(cursor);
+    const parent = dirname8(cursor);
     if (parent === cursor) break;
-    suffix.unshift(basename5(cursor));
+    suffix.unshift(basename6(cursor));
     cursor = parent;
   }
-  return resolve7(existsSync7(cursor) ? realpathSync4(cursor) : cursor, ...suffix);
+  if (existsSync7(cursor) && lstatSync2(cursor).isSocket()) {
+    return resolve8(captureUnixSocketIdentity(cursor).path, ...suffix);
+  }
+  return resolve8(existsSync7(cursor) ? realpathSync5(cursor) : cursor, ...suffix);
 }
 function isInsideOrEqual(path2, parent) {
   const child = pathIdentity(path2);
@@ -13357,7 +13476,7 @@ function resolveRuntimeNamespace(options = {}) {
   const cwd = options.cwd ?? process.cwd();
   const mode = runtimeMode(env);
   const isolated = ISOLATED_MODES.has(mode);
-  const canonicalHome = join7(userHome, ".tmux-ide");
+  const canonicalHome = join8(userHome, ".tmux-ide");
   const configuredHome = nonEmpty(env, STATE_HOME_ENV);
   if (isolated && !configuredHome) {
     throw new TypeError(`${mode} runtime requires an explicit ${STATE_HOME_ENV}`);
@@ -13412,8 +13531,8 @@ function resolveRuntimeNamespace(options = {}) {
     stateHome: stateHome2,
     registryDir: registryDir2,
     daemonInfoDir,
-    controlSocketPath: join7(stateHome2, "control.sock"),
-    eventLogPath: join7(stateHome2, "events.jsonl"),
+    controlSocketPath: join8(stateHome2, "control.sock"),
+    eventLogPath: join8(stateHome2, "events.jsonl"),
     tmuxSocket,
     cleanupToken,
     namespaceId: isolated ? cleanupToken : "canonical",
@@ -13425,6 +13544,7 @@ var RUNTIME_MODE_ENV, STATE_HOME_ENV, REGISTRY_DIR_ENV, DAEMON_INFO_DIR_ENV, TMU
 var init_runtime_namespace = __esm({
   "packages/daemon/src/lib/runtime-namespace.ts"() {
     "use strict";
+    init_unix_socket_authority();
     RUNTIME_MODE_ENV = "TMUX_IDE_RUNTIME_MODE";
     STATE_HOME_ENV = "TMUX_IDE_HOME";
     REGISTRY_DIR_ENV = "TMUX_IDE_REGISTRY_DIR";
@@ -13465,7 +13585,7 @@ import {
   fchmodSync,
   fstatSync,
   linkSync as linkSync2,
-  lstatSync,
+  lstatSync as lstatSync3,
   mkdirSync as mkdirSync4,
   openSync,
   readFileSync as readFileSync7,
@@ -13474,12 +13594,12 @@ import {
   writeFileSync as writeFileSync4
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { dirname as dirname8, join as join8 } from "node:path";
+import { dirname as dirname9, join as join9 } from "node:path";
 function getCanonicalDaemonInfoPath() {
-  return join8(resolveRuntimeNamespace().daemonInfoDir, DAEMON_INFO_FILE);
+  return join9(resolveRuntimeNamespace().daemonInfoDir, DAEMON_INFO_FILE);
 }
 function getCanonicalDaemonClaimPath() {
-  return join8(dirname8(getCanonicalDaemonInfoPath()), DAEMON_CLAIM_DIR);
+  return join9(dirname9(getCanonicalDaemonInfoPath()), DAEMON_CLAIM_DIR);
 }
 function observation(stat2) {
   return { dev: stat2.dev, ino: stat2.ino, size: stat2.size, mtimeMs: stat2.mtimeMs };
@@ -13501,7 +13621,7 @@ function prepareCanonicalDaemonRoot(root) {
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
     }
-    const pathStat = lstatSync(root);
+    const pathStat = lstatSync3(root);
     if (pathStat.isSymbolicLink()) {
       throw canonicalDaemonRootError("must not be a symbolic link");
     }
@@ -13521,7 +13641,7 @@ function prepareCanonicalDaemonRoot(root) {
     }
     fchmodSync(descriptor2, 448);
     const hardenedStat = fstatSync(descriptor2);
-    const currentPathStat = lstatSync(root);
+    const currentPathStat = lstatSync3(root);
     if (!hardenedStat.isDirectory() || !sameFileIdentity(openedStat, hardenedStat) || typeof process.getuid === "function" && hardenedStat.uid !== process.getuid() || (hardenedStat.mode & 63) !== 0 || currentPathStat.isSymbolicLink() || !currentPathStat.isDirectory() || !sameFileIdentity(hardenedStat, currentPathStat) || typeof process.getuid === "function" && currentPathStat.uid !== process.getuid() || (currentPathStat.mode & 63) !== 0) {
       throw canonicalDaemonRootError("changed or became unsafe while it was hardened");
     }
@@ -13540,9 +13660,9 @@ function ownerPidFromRaw(raw) {
 function inspectCanonicalDaemonInfoPath(path2) {
   let descriptor2;
   try {
-    const pathStat = lstatSync(path2);
+    const pathStat = lstatSync3(path2);
     const pathObservation = observation(pathStat);
-    const parentStat = lstatSync(dirname8(path2));
+    const parentStat = lstatSync3(dirname9(path2));
     if (parentStat.isSymbolicLink()) {
       return invalidState(
         "parent-symlink",
@@ -13613,7 +13733,7 @@ function inspectCanonicalDaemonInfoPath(path2) {
     descriptor2 = openSync(path2, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const openedStat = fstatSync(descriptor2);
     const openedObservation = observation(openedStat);
-    const reopenedParentStat = lstatSync(dirname8(path2));
+    const reopenedParentStat = lstatSync3(dirname9(path2));
     if (!openedStat.isFile() || !sameObservation(pathObservation, openedObservation) || !sameFileIdentity(parentStat, reopenedParentStat) || !reopenedParentStat.isDirectory() || typeof process.getuid === "function" && openedStat.uid !== process.getuid() || (openedStat.mode & 63) !== 0 || typeof process.getuid === "function" && reopenedParentStat.uid !== process.getuid() || (reopenedParentStat.mode & 63) !== 0) {
       return invalidState(
         "changed-while-opening",
@@ -13656,7 +13776,7 @@ function inspectCanonicalDaemonInfoPath(path2) {
 function inspectCanonicalDaemonClaimPath(path2) {
   let descriptor2;
   try {
-    const claimStat = lstatSync(path2);
+    const claimStat = lstatSync3(path2);
     if (claimStat.isSymbolicLink() || !claimStat.isDirectory()) {
       return { status: "invalid", detail: "daemon claim must be a real directory" };
     }
@@ -13666,8 +13786,8 @@ function inspectCanonicalDaemonClaimPath(path2) {
     if ((claimStat.mode & 63) !== 0) {
       return { status: "invalid", detail: "daemon claim directory is not owner-only" };
     }
-    const ownerPath = join8(path2, DAEMON_CLAIM_OWNER_FILE);
-    const ownerStat = lstatSync(ownerPath);
+    const ownerPath = join9(path2, DAEMON_CLAIM_OWNER_FILE);
+    const ownerStat = lstatSync3(ownerPath);
     if (ownerStat.isSymbolicLink() || !ownerStat.isFile()) {
       return { status: "invalid", detail: "daemon claim owner must be a real file" };
     }
@@ -13732,7 +13852,7 @@ function retireCanonicalClaimIfMatches(expected) {
 }
 function tryAcquireCanonicalDaemonClaim() {
   const path2 = getCanonicalDaemonClaimPath();
-  const root = dirname8(path2);
+  const root = dirname9(path2);
   try {
     prepareCanonicalDaemonRoot(root);
   } catch (error) {
@@ -13749,7 +13869,7 @@ function tryAcquireCanonicalDaemonClaim() {
     };
     const candidate = `${path2}.${claim.claimId}.candidate`;
     mkdirSync4(candidate, { mode: 448 });
-    writeFileSync4(join8(candidate, DAEMON_CLAIM_OWNER_FILE), `${JSON.stringify(claim, null, 2)}
+    writeFileSync4(join9(candidate, DAEMON_CLAIM_OWNER_FILE), `${JSON.stringify(claim, null, 2)}
 `, {
       encoding: "utf-8",
       mode: 384
@@ -13795,7 +13915,7 @@ function releaseCanonicalDaemonClaim(claim) {
 function writeCanonicalDaemonInfo(info, claim) {
   assertCanonicalDaemonClaimHeld(claim);
   const path2 = getCanonicalDaemonInfoPath();
-  prepareCanonicalDaemonRoot(dirname8(path2));
+  prepareCanonicalDaemonRoot(dirname9(path2));
   const tmpPath = `${path2}.${claim.claimId}.${randomUUID()}.tmp`;
   const persisted = {
     pid: info.pid,
@@ -13844,7 +13964,7 @@ function clearCanonicalDaemonInfoIfUnchanged(state, claim) {
   const captured = captureCanonicalDaemonInfo(claim);
   if (!captured) return false;
   try {
-    const current = observation(lstatSync(captured));
+    const current = observation(lstatSync3(captured));
     if (sameObservation(state.observation, current)) {
       rmSync2(captured, { recursive: true, force: true });
       return true;
@@ -13882,7 +14002,7 @@ function pidLiveness(pid) {
 function canonicalDaemonClaimAllowsStartupAttempt() {
   const claimPath = getCanonicalDaemonClaimPath();
   try {
-    const root = lstatSync(dirname8(claimPath));
+    const root = lstatSync3(dirname9(claimPath));
     if (root.isSymbolicLink() || !root.isDirectory() || typeof process.getuid === "function" && root.uid !== process.getuid() || (root.mode & 63) !== 0) {
       return false;
     }
@@ -14412,7 +14532,7 @@ __export(app_config_exports, {
 });
 import { existsSync as existsSync8, mkdirSync as mkdirSync5, readFileSync as readFileSync8, renameSync as renameSync3, writeFileSync as writeFileSync5 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { dirname as dirname9, join as join9 } from "node:path";
+import { dirname as dirname10, join as join10 } from "node:path";
 function asObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
@@ -14523,7 +14643,7 @@ function parseAppConfig(input) {
   };
 }
 function appConfigPath() {
-  return process.env.TMUX_IDE_CONFIG ?? join9(homedir5(), ".tmux-ide", "config.json");
+  return process.env.TMUX_IDE_CONFIG ?? join10(homedir5(), ".tmux-ide", "config.json");
 }
 function loadAppConfig() {
   const path2 = appConfigPath();
@@ -14572,7 +14692,7 @@ function mergeConfigPatch(raw, patch) {
 function updateAppConfig(patch) {
   const path2 = appConfigPath();
   const merged = mergeConfigPatch(loadRawAppConfig(), patch);
-  mkdirSync5(dirname9(path2), { recursive: true });
+  mkdirSync5(dirname10(path2), { recursive: true });
   const tmp = `${path2}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync5(tmp, `${JSON.stringify(merged, null, 2)}
 `, "utf-8");
@@ -14647,7 +14767,7 @@ __export(manifest_pack_exports, {
   validateManifestPack: () => validateManifestPack
 });
 import { mkdirSync as mkdirSync6, readFileSync as readFileSync9, renameSync as renameSync4, writeFileSync as writeFileSync6 } from "node:fs";
-import { dirname as dirname10, join as join10 } from "node:path";
+import { dirname as dirname11, join as join11 } from "node:path";
 import { fileURLToPath } from "node:url";
 function manifestPackUrl(version = getCurrentVersion()) {
   const v = version.startsWith("v") ? version.slice(1) : version;
@@ -14695,10 +14815,10 @@ function validateManifestPack(value) {
   };
 }
 function packDir() {
-  return join10(overrideDir(), "pack");
+  return join11(overrideDir(), "pack");
 }
 function packPath() {
-  return join10(packDir(), "manifest-pack.json");
+  return join11(packDir(), "manifest-pack.json");
 }
 async function fetchManifestPack(url, timeoutMs = 5e3) {
   if (!isAllowedPackUrl(url)) {
@@ -14737,7 +14857,7 @@ async function fetchManifestPack(url, timeoutMs = 5e3) {
   return verdict.pack;
 }
 function installManifestPack(pack, dest = packPath()) {
-  mkdirSync6(dirname10(dest), { recursive: true });
+  mkdirSync6(dirname11(dest), { recursive: true });
   const tmp = `${dest}.${process.pid}.tmp`;
   writeFileSync6(tmp, JSON.stringify(pack, null, 2));
   renameSync4(tmp, dest);
@@ -14796,7 +14916,7 @@ __export(update_check_exports, {
 });
 import { existsSync as existsSync9, mkdirSync as mkdirSync7, readFileSync as readFileSync10, writeFileSync as writeFileSync7 } from "node:fs";
 import { homedir as homedir6 } from "node:os";
-import { dirname as dirname11, join as join11 } from "node:path";
+import { dirname as dirname12, join as join12 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 function parseSemver(version) {
   const core = version.trim().replace(/^v/i, "").split("+")[0] ?? "";
@@ -14845,8 +14965,8 @@ function deriveStatus(latest, currentVersion) {
   };
 }
 function updateCachePath() {
-  const home = process.env.TMUX_IDE_HOME ?? join11(homedir6(), ".tmux-ide");
-  return join11(home, "update-check.json");
+  const home = process.env.TMUX_IDE_HOME ?? join12(homedir6(), ".tmux-ide");
+  return join12(home, "update-check.json");
 }
 function readUpdateCache() {
   const path2 = updateCachePath();
@@ -14866,7 +14986,7 @@ function readUpdateCache() {
 function writeUpdateCache(cache3) {
   const path2 = updateCachePath();
   try {
-    mkdirSync7(dirname11(path2), { recursive: true });
+    mkdirSync7(dirname12(path2), { recursive: true });
     writeFileSync7(path2, JSON.stringify(cache3));
   } catch {
   }
@@ -14885,11 +15005,11 @@ async function fetchLatestVersion(timeoutMs = 3e3) {
   }
 }
 function getCurrentVersion() {
-  const here = dirname11(fileURLToPath2(import.meta.url));
+  const here = dirname12(fileURLToPath2(import.meta.url));
   const candidates = [
-    join11(here, "../package.json"),
+    join12(here, "../package.json"),
     // bundled bin/cli.js → repo root
-    join11(here, "../../../../package.json")
+    join12(here, "../../../../package.json")
     // dev src/lib → repo root
   ];
   for (const candidate of candidates) {
@@ -14963,7 +15083,7 @@ __export(tui_binary_exports, {
 });
 import { chmodSync as chmodSync3, existsSync as existsSync10, mkdirSync as mkdirSync8, renameSync as renameSync5, writeFileSync as writeFileSync8 } from "node:fs";
 import { homedir as homedir7 } from "node:os";
-import { dirname as dirname12, join as join12 } from "node:path";
+import { dirname as dirname13, join as join13 } from "node:path";
 import { gunzipSync } from "node:zlib";
 function tuiPlatformTag(platform = process.platform, arch = process.arch) {
   return SUPPORTED[`${platform}-${arch}`] ?? null;
@@ -14981,10 +15101,10 @@ function releaseAssetUrl(version, tag) {
   return `https://github.com/${RELEASE_REPO}/releases/download/v${normalizeVersion(version)}/${releaseAssetName(tag)}`;
 }
 function downloadedTuiPath(home, tag, version) {
-  return join12(home, "bin", `tmux-ide-tui-${tag}-${normalizeVersion(version)}`);
+  return join13(home, "bin", `tmux-ide-tui-${tag}-${normalizeVersion(version)}`);
 }
 function tuiStateHome() {
-  return process.env.TMUX_IDE_HOME ?? join12(homedir7(), ".tmux-ide");
+  return process.env.TMUX_IDE_HOME ?? join13(homedir7(), ".tmux-ide");
 }
 function findDownloadedTui(version = getCurrentVersion()) {
   const tag = tuiPlatformTag();
@@ -15004,7 +15124,7 @@ async function downloadTuiBinary(opts = {}) {
   }
   const url = releaseAssetUrl(version, tag);
   const dest = downloadedTuiPath(tuiStateHome(), tag, version);
-  mkdirSync8(dirname12(dest), { recursive: true });
+  mkdirSync8(dirname13(dest), { recursive: true });
   log(`downloading ${url}`);
   const res = await fetch(url);
   if (!res.ok) {
@@ -15046,7 +15166,7 @@ var init_tui_binary = __esm({
 // packages/daemon/src/tui/compiled.ts
 import { existsSync as existsSync11, mkdirSync as mkdirSync9 } from "node:fs";
 import { homedir as homedir8 } from "node:os";
-import { dirname as dirname13, join as join13, resolve as resolve8 } from "node:path";
+import { dirname as dirname14, join as join14, resolve as resolve9 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 import { execFileSync as execFileSync5 } from "node:child_process";
 function resolveTuiLaunch(input) {
@@ -15077,11 +15197,11 @@ function findCompiledTui() {
   const override = process.env.TMUX_IDE_TUI_BIN;
   if (override) return existsSync11(override) ? override : null;
   const anchors = [];
-  if (process.argv[1]) anchors.push(dirname13(process.argv[1]));
+  if (process.argv[1]) anchors.push(dirname14(process.argv[1]));
   anchors.push(__dirname);
   for (const anchor of anchors) {
     for (const rel of BINARY_RELS) {
-      const candidate = resolve8(anchor, rel);
+      const candidate = resolve9(anchor, rel);
       if (existsSync11(candidate)) return candidate;
     }
   }
@@ -15096,7 +15216,7 @@ function isBunAvailable() {
   }
 }
 function compiledTuiRuntimeDir(home = homedir8()) {
-  return join13(home, ".tmux-ide", "runtime", "compiled-tui");
+  return join14(home, ".tmux-ide", "runtime", "compiled-tui");
 }
 function ensureCompiledTuiRuntimeDir(home = homedir8()) {
   const dir = compiledTuiRuntimeDir(home);
@@ -15108,7 +15228,7 @@ var init_compiled = __esm({
   "packages/daemon/src/tui/compiled.ts"() {
     "use strict";
     init_tui_binary();
-    __dirname = dirname13(fileURLToPath3(import.meta.url));
+    __dirname = dirname14(fileURLToPath3(import.meta.url));
     BINARY_RELS = [
       "../packages/daemon/dist/tui/tmux-ide-tui",
       "../../dist/tui/tmux-ide-tui",
@@ -15137,12 +15257,12 @@ __export(sidebar_exports, {
   sidebarWidgetScript: () => sidebarWidgetScript
 });
 import { existsSync as existsSync12 } from "node:fs";
-import { dirname as dirname14, resolve as resolve9 } from "node:path";
+import { dirname as dirname15, resolve as resolve10 } from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 function sidebarWidgetScript() {
   const candidates = [
-    resolve9(__dirname2, "../../widgets/sidebar/index.tsx"),
-    resolve9(__dirname2, "../packages/daemon/src/widgets/sidebar/index.tsx")
+    resolve10(__dirname2, "../../widgets/sidebar/index.tsx"),
+    resolve10(__dirname2, "../packages/daemon/src/widgets/sidebar/index.tsx")
   ];
   return candidates.find((p) => existsSync12(p)) ?? candidates[0];
 }
@@ -15234,7 +15354,7 @@ var init_sidebar = __esm({
     init_shell();
     init_sessions2();
     init_compiled();
-    __dirname2 = dirname14(fileURLToPath4(import.meta.url));
+    __dirname2 = dirname15(fileURLToPath4(import.meta.url));
     SIDEBAR_KEY = "M-b";
     DEFAULT_SIDEBAR_WIDTH = 30;
   }
@@ -15247,13 +15367,13 @@ __export(resolve_exports, {
   resolveWidgetCommand: () => resolveWidgetCommand,
   resolveWidgetSpawn: () => resolveWidgetSpawn
 });
-import { resolve as resolve10, dirname as dirname15 } from "node:path";
+import { resolve as resolve11, dirname as dirname16 } from "node:path";
 import { existsSync as existsSync13 } from "node:fs";
 import { fileURLToPath as fileURLToPath5 } from "node:url";
 function widgetEntryPath(entry) {
-  const sibling = resolve10(__dirname3, entry);
+  const sibling = resolve11(__dirname3, entry);
   if (existsSync13(sibling)) return sibling;
-  return resolve10(__dirname3, "../packages/daemon/src/widgets", entry);
+  return resolve11(__dirname3, "../packages/daemon/src/widgets", entry);
 }
 function widgetArgs(opts) {
   const args = [`--session=${opts.session}`, `--dir=${opts.dir}`];
@@ -15308,7 +15428,7 @@ var init_resolve = __esm({
     "use strict";
     init_shell();
     init_compiled();
-    __dirname3 = dirname15(fileURLToPath5(import.meta.url));
+    __dirname3 = dirname16(fileURLToPath5(import.meta.url));
     WIDGET_ENTRY_POINTS = {
       explorer: "explorer/index.tsx",
       changes: "changes/index.tsx",
@@ -15317,7 +15437,7 @@ var init_resolve = __esm({
       config: "config/index.tsx",
       sidebar: "sidebar/index.tsx"
     };
-    REPO_ROOT = existsSync13(resolve10(__dirname3, "explorer/index.tsx")) ? resolve10(__dirname3, "../../../..") : resolve10(__dirname3, "..");
+    REPO_ROOT = existsSync13(resolve11(__dirname3, "explorer/index.tsx")) ? resolve11(__dirname3, "../../../..") : resolve11(__dirname3, "..");
     WIDGET_TYPES = Object.keys(WIDGET_ENTRY_POINTS);
   }
 });
@@ -15325,7 +15445,7 @@ var init_resolve = __esm({
 // packages/daemon/src/tui/team/keymap.ts
 import { existsSync as existsSync14, readFileSync as readFileSync11 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
-import { join as join14 } from "node:path";
+import { join as join15 } from "node:path";
 var ACTION_ORDER, DEFAULT_KEYMAP;
 var init_keymap = __esm({
   "packages/daemon/src/tui/team/keymap.ts"() {
@@ -15756,13 +15876,13 @@ __export(welcome_exports, {
 import { spawn as spawn2 } from "node:child_process";
 import { existsSync as existsSync15, mkdirSync as mkdirSync10, writeFileSync as writeFileSync9 } from "node:fs";
 import { homedir as homedir10 } from "node:os";
-import { dirname as dirname16, join as join15 } from "node:path";
+import { dirname as dirname17, join as join16 } from "node:path";
 function renderKey2(tmuxKey) {
   return tmuxKey.replace(/M-/g, "\u2325").replace(/C-/g, "^").replace(/S-/g, "\u21E7");
 }
 function welcomeMarkerPath() {
-  const home = process.env.TMUX_IDE_HOME ?? join15(homedir10(), ".tmux-ide");
-  return join15(home, "welcomed");
+  const home = process.env.TMUX_IDE_HOME ?? join16(homedir10(), ".tmux-ide");
+  return join16(home, "welcomed");
 }
 function shouldShowWelcome() {
   return !existsSync15(welcomeMarkerPath()) && getAppConfig().welcome.show;
@@ -15770,7 +15890,7 @@ function shouldShowWelcome() {
 function markWelcomed() {
   const path2 = welcomeMarkerPath();
   try {
-    mkdirSync10(dirname16(path2), { recursive: true });
+    mkdirSync10(dirname17(path2), { recursive: true });
     writeFileSync9(path2, (/* @__PURE__ */ new Date()).toISOString());
   } catch {
   }
@@ -15827,10 +15947,10 @@ __export(offer_exports, {
 import { execFileSync as execFileSync6, spawn as spawn3 } from "node:child_process";
 import { existsSync as existsSync16, mkdirSync as mkdirSync11, writeFileSync as writeFileSync10 } from "node:fs";
 import { homedir as homedir11 } from "node:os";
-import { dirname as dirname17, join as join16 } from "node:path";
+import { dirname as dirname18, join as join17 } from "node:path";
 function integrationOfferMarkerPath() {
-  const home = process.env.TMUX_IDE_HOME ?? join16(homedir11(), ".tmux-ide");
-  return join16(home, "integration-offered");
+  const home = process.env.TMUX_IDE_HOME ?? join17(homedir11(), ".tmux-ide");
+  return join17(home, "integration-offered");
 }
 function shouldOfferIntegration(input) {
   return input.claudeOnPath && !input.integrationInstalled && !input.markerPresent && input.offerEnabled;
@@ -15838,7 +15958,7 @@ function shouldOfferIntegration(input) {
 function markIntegrationOffered() {
   const path2 = integrationOfferMarkerPath();
   try {
-    mkdirSync11(dirname17(path2), { recursive: true });
+    mkdirSync11(dirname18(path2), { recursive: true });
     writeFileSync10(path2, (/* @__PURE__ */ new Date()).toISOString());
   } catch {
   }
@@ -15953,7 +16073,7 @@ import { execFileSync as execFileSync7 } from "node:child_process";
 import { createHash as createHash3 } from "node:crypto";
 import { readdirSync as readdirSync2, readFileSync as readFileSync12, readlinkSync, statSync } from "node:fs";
 import { homedir as homedir12 } from "node:os";
-import { join as join17 } from "node:path";
+import { join as join18 } from "node:path";
 function codexIdFromOpenFiles(paths) {
   for (const path2 of paths) {
     const match = CODEX_ROLLOUT_RE.exec(path2);
@@ -16009,7 +16129,7 @@ function codexIdFromStateDir(root, paneCwd, startMs, io, nowMs = Date.now()) {
   for (let offset = 0; offset <= MAX_SCAN_DAYS; offset++) {
     const day = new Date(nowMs - offset * 864e5);
     if (day.getTime() < cutoff - 864e5) break;
-    const dir = join17(
+    const dir = join18(
       root,
       String(day.getFullYear()),
       String(day.getMonth() + 1).padStart(2, "0"),
@@ -16018,7 +16138,7 @@ function codexIdFromStateDir(root, paneCwd, startMs, io, nowMs = Date.now()) {
     for (const name of io.listDir(dir)) {
       const parsed = parseCodexRolloutName(name);
       if (parsed && parsed.tsMs >= cutoff && parsed.tsMs <= nowMs + START_SLACK_MS) {
-        candidates.push({ tsMs: parsed.tsMs, path: join17(dir, name), id: parsed.id });
+        candidates.push({ tsMs: parsed.tsMs, path: join18(dir, name), id: parsed.id });
       }
     }
   }
@@ -16042,12 +16162,12 @@ function codexIdFromStateDir(root, paneCwd, startMs, io, nowMs = Date.now()) {
   return null;
 }
 function cursorIdFromStateDir(chatsRoot, paneCwd, startMs, io) {
-  const hashed = join17(chatsRoot, createHash3("md5").update(paneCwd).digest("hex"));
+  const hashed = join18(chatsRoot, createHash3("md5").update(paneCwd).digest("hex"));
   const cutoff = startMs - START_SLACK_MS;
   let best = null;
   for (const name of io.listDir(hashed)) {
     if (!SAFE_SESSION_ID.test(name)) continue;
-    const mtime = io.mtimeMs(join17(hashed, name));
+    const mtime = io.mtimeMs(join18(hashed, name));
     if (mtime === null || mtime < cutoff) continue;
     if (!best || mtime > best.mtime) best = { name, mtime };
   }
@@ -16102,7 +16222,7 @@ function readOpenFiles(pid) {
     const paths = [];
     for (const name of names) {
       try {
-        const target = readlinkSync(join17(fdDir, name));
+        const target = readlinkSync(join18(fdDir, name));
         if (target.startsWith("/")) paths.push(target);
       } catch {
       }
@@ -16140,8 +16260,8 @@ function liveProbeIo() {
     openFiles: readOpenFiles,
     processStartMs: (pid) => processStartMs(pid),
     stateDir: liveStateDirIo,
-    codexSessionsRoot: () => process.env.TMUX_IDE_CODEX_SESSIONS ?? join17(homedir12(), ".codex", "sessions"),
-    cursorChatsRoot: () => process.env.TMUX_IDE_CURSOR_CHATS ?? join17(homedir12(), ".cursor", "chats"),
+    codexSessionsRoot: () => process.env.TMUX_IDE_CODEX_SESSIONS ?? join18(homedir12(), ".codex", "sessions"),
+    cursorChatsRoot: () => process.env.TMUX_IDE_CURSOR_CHATS ?? join18(homedir12(), ".cursor", "chats"),
     now: () => Date.now()
   };
 }
@@ -16218,19 +16338,19 @@ var init_registry = __esm({
 });
 
 // packages/daemon/src/lib/project-probe.ts
-import { basename as basename6, isAbsolute as isAbsolute3, resolve as resolve11 } from "node:path";
+import { basename as basename7, isAbsolute as isAbsolute4, resolve as resolve12 } from "node:path";
 function sanitizeName(raw) {
   return raw.trim().replace(/\s+/g, "-").replace(/[^A-Za-z0-9._-]/g, "").replace(/^-+|-+$/g, "");
 }
 async function probeProject(dir, io = realIo) {
-  const absoluteDir = isAbsolute3(dir) ? dir : resolve11(dir);
+  const absoluteDir = isAbsolute4(dir) ? dir : resolve12(dir);
   const resolution = await resolveProject(dir, {
     // Existing injected ProbeIo values predate canonicalization. Treat their
     // paths as canonical unless they explicitly provide a realpath operation,
     // so the probe remains a fully injected seam rather than touching real fs.
     io: { ...io, realpath: io.realpath ?? ((path2) => path2) }
   });
-  const rawName = basename6(absoluteDir);
+  const rawName = basename7(absoluteDir);
   const sanitized = sanitizeName(rawName);
   const name = sanitized.length > 0 ? sanitized : "project";
   const [gitOrigin, gitBranch] = await Promise.all([
@@ -16272,7 +16392,7 @@ var init_project_probe = __esm({
 // packages/daemon/src/lib/project-registry.ts
 import { EventEmitter } from "node:events";
 import { existsSync as existsSync17, mkdirSync as mkdirSync12, readFileSync as readFileSync13, renameSync as renameSync6, writeFileSync as writeFileSync11 } from "node:fs";
-import { dirname as dirname18, isAbsolute as isAbsolute4, join as join18, resolve as resolve12 } from "node:path";
+import { dirname as dirname19, isAbsolute as isAbsolute5, join as join19, resolve as resolve13 } from "node:path";
 import { z as z65 } from "zod";
 function applyAction(state, action) {
   switch (action.type) {
@@ -16309,7 +16429,7 @@ function registryDir() {
   return resolveRuntimeNamespace().registryDir;
 }
 function registryPath() {
-  return join18(registryDir(), "projects.json");
+  return join19(registryDir(), "projects.json");
 }
 function readDisk() {
   const path2 = registryPath();
@@ -16336,7 +16456,7 @@ function readDisk() {
 }
 function writeDisk(projects) {
   const path2 = registryPath();
-  const dir = dirname18(path2);
+  const dir = dirname19(path2);
   mkdirSync12(dir, { recursive: true });
   const file = { version: 1, projects };
   const tmpPath = `${path2}.tmp`;
@@ -16371,7 +16491,7 @@ function isProjectVolatile(name) {
 }
 async function registerProject(input) {
   const exists = input.exists ?? existsSync17;
-  const absoluteDir = isAbsolute4(input.dir) ? input.dir : resolve12(input.dir);
+  const absoluteDir = isAbsolute5(input.dir) ? input.dir : resolve13(input.dir);
   if (!exists(absoluteDir)) {
     throw new ProjectDirNotFoundError(absoluteDir);
   }
@@ -16612,7 +16732,7 @@ __export(events_exports, {
   shouldRotate: () => shouldRotate
 });
 import { appendFileSync, existsSync as existsSync18, mkdirSync as mkdirSync13, renameSync as renameSync7, statSync as statSync2 } from "node:fs";
-import { join as join19 } from "node:path";
+import { join as join20 } from "node:path";
 function diffFleet(prev, next) {
   const state = /* @__PURE__ */ new Map();
   const events = [];
@@ -16639,7 +16759,7 @@ function formatEventLine(ev, paint = (_s, t) => t) {
   return `${isoTime(ev.ts)} ${ev.session} ${from} \u2192 ${paint(ev.to, ev.to)}`;
 }
 function eventsPath() {
-  return join19(stateHome(), "events.jsonl");
+  return join20(stateHome(), "events.jsonl");
 }
 function appendEvents(events, now = () => (/* @__PURE__ */ new Date()).toISOString()) {
   if (events.length === 0) return;
@@ -16750,7 +16870,7 @@ var init_notify_prefs = __esm({
 
 // packages/daemon/src/tui/chrome/notify.ts
 import { execFileSync as execFileSync8, spawn as spawn4 } from "node:child_process";
-import { dirname as dirname19, resolve as resolve13 } from "node:path";
+import { dirname as dirname20, resolve as resolve14 } from "node:path";
 import { fileURLToPath as fileURLToPath6 } from "node:url";
 import {
   closeSync as closeSync2,
@@ -16971,15 +17091,15 @@ function resolveNativeMacosNotifierPath(io = {}) {
   const exists = io.exists ?? existsSync19;
   const cliPath = io.cliPath === void 0 ? process.env.TMUX_IDE_CLI : io.cliPath;
   const modulePath = io.modulePath ?? fileURLToPath6(import.meta.url);
-  const anchors = [cliPath, modulePath].filter((path2) => Boolean(path2)).map((path2) => dirname19(resolve13(path2)));
+  const anchors = [cliPath, modulePath].filter((path2) => Boolean(path2)).map((path2) => dirname20(resolve14(path2)));
   const visited = /* @__PURE__ */ new Set();
   for (const anchor of anchors) {
     let directory = anchor;
     while (!visited.has(directory)) {
       visited.add(directory);
-      const candidate = resolve13(directory, NATIVE_MACOS_NOTIFIER_RELATIVE_PATH);
-      if (exists(resolve13(candidate, NATIVE_MACOS_NOTIFIER_EXECUTABLE))) return candidate;
-      const parent = dirname19(directory);
+      const candidate = resolve14(directory, NATIVE_MACOS_NOTIFIER_RELATIVE_PATH);
+      if (exists(resolve14(candidate, NATIVE_MACOS_NOTIFIER_EXECUTABLE))) return candidate;
+      const parent = dirname20(directory);
       if (parent === directory) break;
       directory = parent;
     }
@@ -17152,9 +17272,9 @@ var init_notify = __esm({
 
 // packages/daemon/src/tui/chrome/notify-state.ts
 import { existsSync as existsSync20, mkdirSync as mkdirSync14, readFileSync as readFileSync15, writeFileSync as writeFileSync12 } from "node:fs";
-import { join as join20 } from "node:path";
+import { join as join21 } from "node:path";
 function notifyStatePath() {
-  return join20(stateHome(), "notify-state.json");
+  return join21(stateHome(), "notify-state.json");
 }
 function serializeLastNotified(map, nowMs) {
   const lastNotified = {};
@@ -17206,7 +17326,7 @@ var init_notify_state = __esm({
 // packages/daemon/src/tui/chrome/snapshot.ts
 import { existsSync as existsSync21, mkdirSync as mkdirSync15, readFileSync as readFileSync16, renameSync as renameSync8, writeFileSync as writeFileSync13 } from "node:fs";
 import { homedir as homedir13 } from "node:os";
-import { dirname as dirname20, join as join21 } from "node:path";
+import { dirname as dirname21, join as join22 } from "node:path";
 import { z as z66 } from "zod";
 function isBareShell(cmd) {
   return /^-?(zsh|bash|sh|fish|dash|ksh|tcsh|csh|nu)$/.test(cmd.trim());
@@ -17321,12 +17441,12 @@ function collectFleetSnapshot(io = defaultIo) {
   return buildSnapshot(rawPanes, rawSessions, io.processTable());
 }
 function snapshotPath() {
-  return join21(homedir13(), ".tmux-ide", "snapshot.json");
+  return join22(homedir13(), ".tmux-ide", "snapshot.json");
 }
 function writeSnapshot(snapshot) {
   const path2 = snapshotPath();
   try {
-    mkdirSync15(dirname20(path2), { recursive: true });
+    mkdirSync15(dirname21(path2), { recursive: true });
     const tmp = `${path2}.tmp`;
     writeFileSync13(tmp, JSON.stringify(snapshot, null, 2) + "\n");
     if (existsSync21(path2)) {
@@ -18135,7 +18255,7 @@ __export(launch_exports, {
   launchRuntimeDir: () => launchRuntimeDir,
   waitForPaneCommand: () => waitForPaneCommand
 });
-import { resolve as resolve14 } from "node:path";
+import { resolve as resolve15 } from "node:path";
 import { execSync } from "node:child_process";
 import { createHash as createHash4 } from "node:crypto";
 function stripWidgetPanes(rows) {
@@ -18195,7 +18315,7 @@ function buildPaneMap(rows, dir, rootPaneId, splitPaneFn) {
     for (let paneIdx = 1; paneIdx < panes.length; paneIdx++) {
       const pane = panes[paneIdx];
       const targetPane = rowPanes[paneIdx - 1];
-      const paneDir = pane.dir ? resolve14(dir, pane.dir) : dir;
+      const paneDir = pane.dir ? resolve15(dir, pane.dir) : dir;
       const newPaneId = splitPaneFn({
         targetPane,
         direction: "horizontal",
@@ -18253,7 +18373,7 @@ async function launch(targetDir, {
   attach: attach2 = true,
   sessionName
 } = {}) {
-  const inputDir = resolve14(targetDir ?? ".");
+  const inputDir = resolve15(targetDir ?? ".");
   const context = await resolveProjectConfigContext(inputDir);
   const dir = launchRuntimeDir(context);
   const config2 = await loadLaunchConfig(context, json3);
@@ -18396,14 +18516,14 @@ var init_yaml_io = __esm({
 });
 
 // packages/daemon/src/detect.ts
-import { resolve as resolve15, basename as basename7 } from "node:path";
+import { resolve as resolve16, basename as basename8 } from "node:path";
 import { readFileSync as readFileSync17, existsSync as existsSync22 } from "node:fs";
 function fileExists(dir, name) {
-  return existsSync22(resolve15(dir, name));
+  return existsSync22(resolve16(dir, name));
 }
 function readJson(dir, name) {
   try {
-    return JSON.parse(readFileSync17(resolve15(dir, name), "utf-8"));
+    return JSON.parse(readFileSync17(resolve16(dir, name), "utf-8"));
   } catch {
     return null;
   }
@@ -18465,7 +18585,7 @@ function detectStack(dir) {
     detected.language = detected.language ?? "python";
     detected.reasons.push('Detected Python from "pyproject.toml" or "requirements.txt".');
     try {
-      const pyproject = readFileSync17(resolve15(dir, "pyproject.toml"), "utf-8");
+      const pyproject = readFileSync17(resolve16(dir, "pyproject.toml"), "utf-8");
       if (pyproject.includes("fastapi"))
         pushFramework(detected, "fastapi", 'Found "fastapi" in pyproject.toml.');
       else if (pyproject.includes("django"))
@@ -18498,7 +18618,7 @@ function detectStack(dir) {
   return detected;
 }
 function suggestConfig(dir, detected) {
-  const name = basename7(dir);
+  const name = basename8(dir);
   const pm = detected.packageManager ?? "npm";
   const run = pm === "npm" ? "npm run" : pm;
   const config2 = {
@@ -18553,7 +18673,7 @@ function suggestConfig(dir, detected) {
   return config2;
 }
 async function detect(targetDir, { json: json3, write } = {}) {
-  const inputDir = resolve15(targetDir ?? ".");
+  const inputDir = resolve16(targetDir ?? ".");
   const context = write ? await resolveProjectConfigContext(inputDir) : null;
   const dir = context?.configWriteRoot ?? inputDir;
   const detected = detectStack(dir);
@@ -18619,23 +18739,23 @@ __export(skill_sync_exports, {
 });
 import { existsSync as existsSync24, mkdirSync as mkdirSync17, readFileSync as readFileSync19, writeFileSync as writeFileSync15 } from "node:fs";
 import { homedir as homedir14 } from "node:os";
-import { dirname as dirname22, join as join23 } from "node:path";
+import { dirname as dirname23, join as join24 } from "node:path";
 import { fileURLToPath as fileURLToPath8 } from "node:url";
 function claudeDir() {
-  return process.env.TMUX_IDE_CLAUDE_DIR ?? join23(homedir14(), ".claude");
+  return process.env.TMUX_IDE_CLAUDE_DIR ?? join24(homedir14(), ".claude");
 }
 function skillTargetDir() {
-  return join23(claudeDir(), "skills", "tmux-ide");
+  return join24(claudeDir(), "skills", "tmux-ide");
 }
 function skillTargetFile() {
-  return join23(skillTargetDir(), "SKILL.md");
+  return join24(skillTargetDir(), "SKILL.md");
 }
 function defaultSkillSource() {
-  const here = dirname22(fileURLToPath8(import.meta.url));
+  const here = dirname23(fileURLToPath8(import.meta.url));
   const candidates = [
-    join23(here, "../skill/SKILL.md"),
+    join24(here, "../skill/SKILL.md"),
     // bundled bin/cli.js → repo root
-    join23(here, "../../../../skill/SKILL.md")
+    join24(here, "../../../../skill/SKILL.md")
     // dev src/lib → repo root
   ];
   return candidates.find((c) => existsSync24(c)) ?? candidates[0];
@@ -18652,7 +18772,7 @@ function rewriteVersionMarker(content, version) {
   return content.replace(VERSION_MARKER_RE, versionMarker(version));
 }
 function installedSkillVersion(dir = skillTargetDir()) {
-  const file = join23(dir, "SKILL.md");
+  const file = join24(dir, "SKILL.md");
   if (!existsSync24(file)) return null;
   try {
     return parseSkillVersion(readFileSync19(file, "utf-8"));
@@ -18666,7 +18786,7 @@ function syncSkill({
 } = {}) {
   const rendered = rewriteVersionMarker(readFileSync19(source, "utf-8"), version);
   const dir = skillTargetDir();
-  const target = join23(dir, "SKILL.md");
+  const target = join24(dir, "SKILL.md");
   const existing = existsSync24(target) ? readFileSync19(target, "utf-8") : null;
   if (existing === rendered) {
     return { action: "unchanged", path: target, to: version };
@@ -18769,11 +18889,11 @@ var init_bootstrap_coordinator = __esm({
         this.cause = options.cause;
       }
     };
-    defaultSleep = (milliseconds) => new Promise((resolve37) => {
+    defaultSleep = (milliseconds) => new Promise((resolve38) => {
       const releaseTimer = acquireRuntimeResource("runtime-timer");
       setTimeout(() => {
         releaseTimer();
-        resolve37();
+        resolve38();
       }, milliseconds);
     });
     defaultPollMs = (poll) => Math.min(25 * 2 ** poll, 200);
@@ -18939,7 +19059,7 @@ var init_bootstrap_coordinator = __esm({
 
 // packages/daemon/src/lib/canonical-daemon-bootstrap.ts
 import { spawn as spawn5 } from "node:child_process";
-import { resolve as resolve22 } from "node:path";
+import { resolve as resolve23 } from "node:path";
 function spawnOwner(entryPath, cwd) {
   return new Promise((resolveSpawn, reject) => {
     let child;
@@ -19044,7 +19164,7 @@ function createCanonicalDaemonBootstrapCoordinator(options, dependencies = {}) {
   const deps2 = { ...defaultDependencies, ...dependencies };
   return new DaemonBootstrapCoordinator({
     probe: () => probeCanonical(deps2),
-    spawn: () => deps2.spawnOwner(resolve22(options.entryPath), resolve22(options.cwd ?? process.cwd())),
+    spawn: () => deps2.spawnOwner(resolve23(options.entryPath), resolve23(options.cwd ?? process.cwd())),
     timeoutMs: options.timeoutMs,
     onPhaseChanged: options.onPhaseChanged
   });
@@ -19110,10 +19230,10 @@ async function reconcilePaneSourceCredentialsAtStartup(authority, sessions, time
   const reconciliation = Promise.allSettled(
     uniqueSessions.map((session) => authority.reconcileSessionAsync(session, controller.signal))
   );
-  const deadline = new Promise((resolve37) => {
+  const deadline = new Promise((resolve38) => {
     timeout = setTimeout(() => {
       controller.abort();
-      resolve37("timed-out");
+      resolve38("timed-out");
     }, timeoutMs);
   });
   const result = await Promise.race([reconciliation.then(() => "complete"), deadline]);
@@ -19270,14 +19390,14 @@ var init_pane_source_credentials = __esm({
 // packages/daemon/src/lib/cli-action-bridge.ts
 import { createRequire } from "node:module";
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { basename as basename9, dirname as dirname24, resolve as resolve23 } from "node:path";
+import { basename as basename10, dirname as dirname25, resolve as resolve24 } from "node:path";
 import { fileURLToPath as fileURLToPath10 } from "node:url";
 import { z as z67 } from "zod";
 function defaultCliEntryPath() {
-  if (process.env.TMUX_IDE_CLI) return resolve23(process.env.TMUX_IDE_CLI);
+  if (process.env.TMUX_IDE_CLI) return resolve24(process.env.TMUX_IDE_CLI);
   const current = fileURLToPath10(import.meta.url);
-  if (basename9(current) === "cli.js" && basename9(dirname24(current)) === "bin") return current;
-  return resolve23(dirname24(current), "../../../../bin/cli.js");
+  if (basename10(current) === "cli.js" && basename10(dirname25(current)) === "bin") return current;
+  return resolve24(dirname25(current), "../../../../bin/cli.js");
 }
 function timeoutSignal2(ms) {
   const controller = new AbortController();
@@ -19426,7 +19546,7 @@ var init_cli_action_bridge = __esm({
 });
 
 // packages/daemon/src/config.ts
-import { resolve as resolve24 } from "node:path";
+import { resolve as resolve25 } from "node:path";
 function readConfigSafe(dir) {
   let cfg;
   try {
@@ -19560,7 +19680,7 @@ function configDisableTeam(dir) {
   }).config;
 }
 async function config(targetDir, { json: json3, action, args } = {}) {
-  const dir = resolve24(targetDir ?? ".");
+  const dir = resolve25(targetDir ?? ".");
   if (await tryDispatchConfigAction(dir, { json: json3, action, args: args ?? [] })) return;
   const configContext = await resolveProjectConfigContext(dir);
   if (!configContext.configExists) {
@@ -19889,9 +20009,9 @@ var init_config = __esm({
 });
 
 // packages/daemon/src/restart.ts
-import { resolve as resolve26 } from "node:path";
+import { resolve as resolve27 } from "node:path";
 async function restart(targetDir, { json: json3, attach: attach2 } = {}) {
-  const dir = resolve26(targetDir ?? ".");
+  const dir = resolve27(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
   stopSessionMonitor(session);
   const result = killSession(session);
@@ -20009,7 +20129,7 @@ var init_pane_comms = __esm({
 // packages/daemon/src/lib/workspace-registry.ts
 import { EventEmitter as EventEmitter2 } from "node:events";
 import { existsSync as existsSync26, mkdirSync as mkdirSync18, readFileSync as readFileSync20, renameSync as renameSync9, writeFileSync as writeFileSync16 } from "node:fs";
-import { dirname as dirname26, join as join24 } from "node:path";
+import { dirname as dirname27, join as join25 } from "node:path";
 import { z as z68 } from "zod";
 function getDefaultWorkspaceRegistry() {
   const namespaceKey = resolveRuntimeNamespace().registryDir;
@@ -20175,7 +20295,7 @@ var init_workspace_registry = __esm({
       }
       // ----------------- io -----------------
       filePath() {
-        return join24(this.dir, "workspaces.json");
+        return join25(this.dir, "workspaces.json");
       }
       readDisk() {
         const path2 = this.filePath();
@@ -20192,7 +20312,7 @@ var init_workspace_registry = __esm({
       }
       writeDisk() {
         const path2 = this.filePath();
-        mkdirSync18(dirname26(path2), { recursive: true });
+        mkdirSync18(dirname27(path2), { recursive: true });
         const file = {
           version: 1,
           workspaces: this.workspaces.filter(({ name }) => !this.volatileNames.has(name))
@@ -20214,15 +20334,15 @@ var init_workspace_registry = __esm({
 // packages/daemon/src/send.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
 import { execFileSync as execFileSync11 } from "node:child_process";
-import { resolve as resolve27, join as join25 } from "node:path";
+import { resolve as resolve28, join as join26 } from "node:path";
 import { existsSync as existsSync27, mkdirSync as mkdirSync19, writeFileSync as writeFileSync17 } from "node:fs";
 function writeDispatchFile(dir, paneId, message) {
   if (message.length <= LONG_MESSAGE_THRESHOLD) return null;
-  const dispatchDir = join25(dir, ".tasks", "dispatch");
+  const dispatchDir = join26(dir, ".tasks", "dispatch");
   if (!existsSync27(dispatchDir)) mkdirSync19(dispatchDir, { recursive: true });
   const paneSlug = paneId.replace("%", "");
   const filename = `send-${paneSlug}-${Date.now()}-${randomUUID4().slice(0, 8)}.md`;
-  const filePath = join25(dispatchDir, filename);
+  const filePath = join26(dispatchDir, filename);
   writeFileSync17(filePath, message);
   return { filePath, triggerCmd: `Read and execute: .tasks/dispatch/${filename}` };
 }
@@ -20396,7 +20516,7 @@ async function deliverMessageThroughDaemon(opts) {
   };
 }
 async function send(targetDir, opts) {
-  const dir = resolve27(targetDir ?? ".");
+  const dir = resolve28(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
   const { json: json3, to: target, message: rawMessage, noEnter } = opts;
   if (!target) {
@@ -20618,7 +20738,7 @@ var init_MonotonicPtyInput = __esm({
 
 // packages/daemon/src/terminal/NodePtyAdapter.ts
 import { chmodSync as chmodSync4, existsSync as existsSync28, statSync as statSync3 } from "node:fs";
-import { dirname as dirname27, join as join26 } from "node:path";
+import { dirname as dirname28, join as join27 } from "node:path";
 import { createRequire as createRequire2 } from "node:module";
 import * as pty from "node-pty";
 function candidateSpawnHelperPaths() {
@@ -20629,11 +20749,11 @@ function candidateSpawnHelperPaths() {
   } catch {
     return [];
   }
-  const pkgDir = dirname27(pkgJsonPath);
+  const pkgDir = dirname28(pkgJsonPath);
   return [
-    join26(pkgDir, "build", "Release", "spawn-helper"),
-    join26(pkgDir, "build", "Debug", "spawn-helper"),
-    join26(pkgDir, "prebuilds", `${process.platform}-${process.arch}`, "spawn-helper")
+    join27(pkgDir, "build", "Release", "spawn-helper"),
+    join27(pkgDir, "build", "Debug", "spawn-helper"),
+    join27(pkgDir, "prebuilds", `${process.platform}-${process.arch}`, "spawn-helper")
   ];
 }
 function ensureNodePtySpawnHelperExecutable(options = {}) {
@@ -21832,12 +21952,12 @@ function parseAgentStateFacts(raw) {
   return result;
 }
 function execTmux(args) {
-  return new Promise((resolve37) => {
+  return new Promise((resolve38) => {
     execFile4(
       "tmux",
       [...args],
       { encoding: "utf8", maxBuffer: 1024 * 1024 },
-      (error, stdout) => resolve37(error ? null : stdout.trim())
+      (error, stdout) => resolve38(error ? null : stdout.trim())
     );
   });
 }
@@ -21900,8 +22020,8 @@ var init_daemon_fleet_facts_observer = __esm({
           }
         }
         let resolveReady;
-        const ready = new Promise((resolve37) => {
-          resolveReady = resolve37;
+        const ready = new Promise((resolve38) => {
+          resolveReady = resolve38;
         });
         const waiter = { demands: unique, resolve: resolveReady };
         this.#waiters.add(waiter);
@@ -22168,7 +22288,7 @@ var init_semantic_resource_id = __esm({
 
 // packages/daemon/src/command-center/resources/fleet-catalog.ts
 import { createHash as createHash6 } from "node:crypto";
-import { basename as basename10 } from "node:path";
+import { basename as basename11 } from "node:path";
 function digest(value) {
   return createHash6("sha256").update(value).digest("hex").slice(0, 20);
 }
@@ -22200,7 +22320,7 @@ function fleetLabel(value, fallback) {
   return normalized || fallback;
 }
 function fleetProjectLabel(cwd, fallback) {
-  const base = basename10(cwd).replace(/[/\\]/gu, "");
+  const base = basename11(cwd).replace(/[/\\]/gu, "");
   return fleetLabel(base, fallback);
 }
 function toPresentationPane(pane, index) {
@@ -22276,7 +22396,7 @@ var init_fleet_catalog2 = __esm({
 
 // packages/daemon/src/command-center/resources/application-shell.ts
 import { hostname } from "node:os";
-import { basename as basename11 } from "node:path";
+import { basename as basename12 } from "node:path";
 function agentIdForPaneStamp(stamp) {
   return semanticResourceId("agent", stamp);
 }
@@ -22538,7 +22658,7 @@ function deepFreeze5(value) {
 }
 function projectApplicationShellResourceV1Core(session, paneIds, nowSec) {
   const sessionName = label(session.name, "tmux session");
-  const rootLabel = label(basename11(session.dir), sessionName);
+  const rootLabel = label(basename12(session.dir), sessionName);
   const projectId = semanticResourceId("project", session.dir);
   const sessionId = semanticResourceId("session", session.name);
   const focusedIndex = session.panes.findIndex((pane) => pane.active);
@@ -22804,7 +22924,7 @@ import { createHash as createHash7, randomUUID as randomUUID5 } from "node:crypt
 import {
   closeSync as closeSync3,
   fsyncSync,
-  lstatSync as lstatSync2,
+  lstatSync as lstatSync4,
   mkdirSync as mkdirSync20,
   openSync as openSync3,
   readFileSync as readFileSync21,
@@ -22813,7 +22933,7 @@ import {
   unlinkSync as unlinkSync2,
   writeFileSync as writeFileSync18
 } from "node:fs";
-import { isAbsolute as isAbsolute5, join as join27, relative as relative3, resolve as resolve28, sep as sep3, win32 } from "node:path";
+import { isAbsolute as isAbsolute6, join as join28, relative as relative3, resolve as resolve29, sep as sep3, win32 } from "node:path";
 function createProjectRuntimeRepository(resolution, options = {}) {
   return new ProjectRuntimeRepository(resolution, options);
 }
@@ -22882,7 +23002,7 @@ function sleepSync(milliseconds) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 }
 function assertLockDirectory(path2) {
-  const stat2 = lstatSync2(path2);
+  const stat2 = lstatSync4(path2);
   if (stat2.isSymbolicLink())
     throw new InvalidRuntimePathError(path2, "symbolic links are not allowed");
   if (!stat2.isDirectory())
@@ -23014,7 +23134,7 @@ function validateSafeStreamId(value) {
 }
 function isWithinDirectory(path2, root) {
   const fromRoot = relative3(root, path2);
-  return fromRoot === "" || fromRoot !== ".." && !fromRoot.startsWith(`..${sep3}`) && !isAbsolute5(fromRoot);
+  return fromRoot === "" || fromRoot !== ".." && !fromRoot.startsWith(`..${sep3}`) && !isAbsolute6(fromRoot);
 }
 function safeTempId(value) {
   return value.replace(/[^A-Za-z0-9_-]/g, "_");
@@ -23167,7 +23287,7 @@ var init_project_runtime_repository = __esm({
       unlink: unlinkSync2,
       isSymbolicLink: (path2) => {
         try {
-          return lstatSync2(path2).isSymbolicLink();
+          return lstatSync4(path2).isSymbolicLink();
         } catch (error) {
           if (isNodeError(error) && error.code === "ENOENT") return false;
           throw error;
@@ -23186,8 +23306,8 @@ var init_project_runtime_repository = __esm({
         validateSafeId(resolution.identityKey, "identity key");
         this.resolution = resolution;
         this.io = { ...defaultIo2, ...options.io };
-        this.runtimeRoot = join27(
-          resolve28(options.home ?? options.stateHome ?? stateHome()),
+        this.runtimeRoot = join28(
+          resolve29(options.home ?? options.stateHome ?? stateHome()),
           "projects",
           resolution.identityKey
         );
@@ -23393,7 +23513,7 @@ var init_project_runtime_repository = __esm({
         } catch (error) {
           try {
             rmdirSync(recovery.target);
-            this.io.fsyncDirectory(resolve28(recovery.target, ".."));
+            this.io.fsyncDirectory(resolve29(recovery.target, ".."));
           } catch {
           }
           throw error;
@@ -23483,7 +23603,7 @@ var init_project_runtime_repository = __esm({
         if (path2.includes("\\")) {
           throw new InvalidRuntimePathError(path2, "path must use forward slashes");
         }
-        if (isAbsolute5(path2) || win32.isAbsolute(path2)) {
+        if (isAbsolute6(path2) || win32.isAbsolute(path2)) {
           throw new InvalidRuntimePathError(path2, "path must be relative");
         }
         const parts = path2.split("/");
@@ -23493,7 +23613,7 @@ var init_project_runtime_repository = __esm({
         if (!allowEventNamespace && parts[0] === "events") {
           throw new InvalidRuntimePathError(path2, "the events namespace is reserved for event streams");
         }
-        const target = resolve28(this.runtimeRoot, ...parts);
+        const target = resolve29(this.runtimeRoot, ...parts);
         if (!isWithinDirectory(target, this.runtimeRoot)) {
           throw new InvalidRuntimePathError(path2, "path escapes the runtime root");
         }
@@ -23507,7 +23627,7 @@ var init_project_runtime_repository = __esm({
       assertNoSymbolicLink(displayPath, parts) {
         let current = this.runtimeRoot;
         for (const part of parts) {
-          current = join27(current, part);
+          current = join28(current, part);
           try {
             if (this.io.isSymbolicLink(current)) {
               throw new InvalidRuntimePathError(displayPath, "symbolic links are not allowed");
@@ -23527,9 +23647,9 @@ var init_project_runtime_repository = __esm({
         }
       }
       atomicWrite(target, data, displayPath) {
-        const destinationDir = resolve28(target, "..");
+        const destinationDir = resolve29(target, "..");
         this.io.mkdir(destinationDir);
-        const tempPath = join27(
+        const tempPath = join28(
           destinationDir,
           `.tmp-${process.pid}-${tempCounter++}-${safeTempId(this.io.randomId())}`
         );
@@ -23549,9 +23669,9 @@ var init_project_runtime_repository = __esm({
         }
       }
       atomicWriteBytes(target, data, displayPath, durable) {
-        const destinationDir = resolve28(target, "..");
+        const destinationDir = resolve29(target, "..");
         this.io.mkdir(destinationDir);
-        const tempPath = join27(
+        const tempPath = join28(
           destinationDir,
           `.tmp-${process.pid}-${tempCounter++}-${safeTempId(this.io.randomId())}`
         );
@@ -23576,8 +23696,8 @@ var init_project_runtime_repository = __esm({
       acquireWriterLock(options) {
         const timeoutMs = normalizeLockDuration(options?.timeoutMs, 2e3, 0, 6e4, "timeoutMs");
         const pollMs = normalizeLockDuration(options?.pollMs, 10, 1, 250, "pollMs");
-        const lockPath = join27(this.runtimeRoot, PROJECT_RUNTIME_WRITER_LOCK_FILENAME);
-        const lockDirectory = resolve28(lockPath, "..");
+        const lockPath = join28(this.runtimeRoot, PROJECT_RUNTIME_WRITER_LOCK_FILENAME);
+        const lockDirectory = resolve29(lockPath, "..");
         this.io.mkdir(this.runtimeRoot);
         assertLockDirectory(this.runtimeRoot);
         this.io.mkdir(lockDirectory);
@@ -23603,7 +23723,7 @@ var init_project_runtime_repository = __esm({
             fsyncSync(descriptor2);
             closeSync3(descriptor2);
             descriptor2 = null;
-            const installed = lstatSync2(lockPath);
+            const installed = lstatSync4(lockPath);
             installedIdentity = { device: installed.dev, inode: installed.ino };
             this.io.fsyncDirectory(lockDirectory);
             break;
@@ -23632,19 +23752,19 @@ var init_project_runtime_repository = __esm({
         }
         return () => {
           try {
-            const before = lstatSync2(lockPath);
+            const before = lstatSync4(lockPath);
             if (!installedIdentity || before.dev !== installedIdentity.device || before.ino !== installedIdentity.inode || !before.isFile() || before.isSymbolicLink()) {
               throw new Error("writer lock filesystem identity changed before release");
             }
             const currentOwner = readFileSync21(lockPath, "utf-8");
-            const afterRead = lstatSync2(lockPath);
+            const afterRead = lstatSync4(lockPath);
             const parsed = JSON.parse(currentOwner);
             if (afterRead.dev !== before.dev || afterRead.ino !== before.ino || parsed.token !== token || parsed.processInstanceId !== PROJECT_RUNTIME_PROCESS_INSTANCE_ID) {
               throw new Error("writer lock ownership changed before release");
             }
             const releasedPath = `${lockPath}.released-${token}`;
             renameSync10(lockPath, releasedPath);
-            const moved = lstatSync2(releasedPath);
+            const moved = lstatSync4(releasedPath);
             if (moved.dev !== before.dev || moved.ino !== before.ino) {
               throw new Error("writer lock filesystem identity changed while releasing");
             }
@@ -23658,7 +23778,7 @@ var init_project_runtime_repository = __esm({
       reserveRecoveryOperation(path2, rawToken) {
         const recoveryRoot = this.resolveRuntimePath("recovery");
         this.io.mkdir(recoveryRoot);
-        this.io.fsyncDirectory(resolve28(recoveryRoot, ".."));
+        this.io.fsyncDirectory(resolve29(recoveryRoot, ".."));
         for (let attempt = 0; attempt < 16; attempt += 1) {
           const operationId = safeTempId(this.io.randomId());
           const relativePath = `recovery/${sha256(path2)}-${rawToken}-${operationId}`;
@@ -23684,7 +23804,7 @@ var init_project_runtime_repository = __esm({
 
 // packages/daemon/src/lib/directory-watcher.ts
 import { watch as fsWatch } from "node:fs";
-import { join as join28, sep as sep4 } from "node:path";
+import { join as join29, sep as sep4 } from "node:path";
 async function loadParcel() {
   if (parcel !== void 0) return parcel;
   try {
@@ -23713,7 +23833,7 @@ function fsWatchDirectory(dir, onChange, ignore2, debounceMs, requireInstalled, 
       const rel = filename.toString();
       if (rel.split(sep4).some((part) => ignoreSet.has(part))) return;
       if (timeout) clearTimeout(timeout);
-      timeout = setTimeout(() => onChange([{ type: "update", path: join28(dir, rel) }]), debounceMs);
+      timeout = setTimeout(() => onChange([{ type: "update", path: join29(dir, rel) }]), debounceMs);
     });
     handle.on("error", reportUnavailable);
     handle.on("close", () => {
@@ -23778,7 +23898,7 @@ var init_directory_watcher = __esm({
 
 // packages/daemon/src/command-center/workspace-resource-observer.ts
 import { execFileSync as execFileSync14 } from "node:child_process";
-import { isAbsolute as isAbsolute6, resolve as resolve29 } from "node:path";
+import { isAbsolute as isAbsolute7, resolve as resolve30 } from "node:path";
 function slot() {
   return {
     epoch: 0,
@@ -23801,7 +23921,7 @@ function resolveGitDirectory(projectDir) {
       env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" }
     }).trim();
     if (!value) return null;
-    return isAbsolute6(value) ? value : resolve29(projectDir, value);
+    return isAbsolute7(value) ? value : resolve30(projectDir, value);
   } catch {
     return null;
   }
@@ -24873,13 +24993,13 @@ var init_auth_token = __esm({
 
 // packages/daemon/src/lib/app-settings.ts
 import { existsSync as existsSync29, mkdirSync as mkdirSync21, readFileSync as readFileSync22, renameSync as renameSync11, writeFileSync as writeFileSync19 } from "node:fs";
-import { dirname as dirname28, join as join29 } from "node:path";
+import { dirname as dirname29, join as join30 } from "node:path";
 import { homedir as homedir15 } from "node:os";
 function settingsDir() {
-  return process.env.TMUX_IDE_SETTINGS_DIR ?? join29(homedir15(), ".tmux-ide");
+  return process.env.TMUX_IDE_SETTINGS_DIR ?? join30(homedir15(), ".tmux-ide");
 }
 function appSettingsPath() {
-  return join29(settingsDir(), "app-settings.json");
+  return join30(settingsDir(), "app-settings.json");
 }
 function normalizeSettings(value) {
   if (!value || typeof value !== "object") return structuredClone(DEFAULT_SETTINGS);
@@ -24901,7 +25021,7 @@ function readAppSettings() {
 }
 function writeAppSettings(next) {
   const path2 = appSettingsPath();
-  mkdirSync21(dirname28(path2), { recursive: true });
+  mkdirSync21(dirname29(path2), { recursive: true });
   const tmp = `${path2}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync19(tmp, `${JSON.stringify(normalizeSettings(next), null, 2)}
 `, "utf-8");
@@ -25088,8 +25208,8 @@ var init_project_readiness = __esm({
 
 // packages/daemon/src/lib/project-readiness-probe.ts
 import { execFile as execFile5 } from "node:child_process";
-import { accessSync as accessSync2, constants as constants3, existsSync as existsSync30, realpathSync as realpathSync5, statSync as statSync5 } from "node:fs";
-import { delimiter, isAbsolute as isAbsolute7, basename as basename12, resolve as resolve30, sep as sep5 } from "node:path";
+import { accessSync as accessSync2, constants as constants3, existsSync as existsSync30, realpathSync as realpathSync6, statSync as statSync5 } from "node:fs";
+import { delimiter, isAbsolute as isAbsolute8, basename as basename13, resolve as resolve31, sep as sep5 } from "node:path";
 function errorCode(error) {
   if (!error || typeof error !== "object" || !("code" in error)) return void 0;
   const code = error.code;
@@ -25109,7 +25229,7 @@ function safeCall(operation, fallback) {
   }
 }
 function isValidAbsolutePath(path2) {
-  return isAbsolute7(path2) && path2.trim().length > 0 && !path2.includes("\0") && !/[\r\n]/u.test(path2);
+  return isAbsolute8(path2) && path2.trim().length > 0 && !path2.includes("\0") && !/[\r\n]/u.test(path2);
 }
 function normalizeCommandResult(value) {
   if (!value || typeof value !== "object" || !("status" in value)) {
@@ -25160,8 +25280,8 @@ function locateExecutable(executable, cwd, environment, io) {
   if (!hasValidExecutableToken(executable)) {
     return { availability: "missing", path: null };
   }
-  if (isAbsolute7(executable) || executable.includes(sep5) || executable.includes("/") || executable.includes("\\")) {
-    const candidate = isAbsolute7(executable) ? executable : resolve30(cwd, executable);
+  if (isAbsolute8(executable) || executable.includes(sep5) || executable.includes("/") || executable.includes("\\")) {
+    const candidate = isAbsolute8(executable) ? executable : resolve31(cwd, executable);
     const availability = inspectExecutableCandidate(candidate, io);
     return {
       availability,
@@ -25173,8 +25293,8 @@ function locateExecutable(executable, cwd, environment, io) {
   let sawUnknown = false;
   for (const entry of pathValue.split(delimiter)) {
     if (entry.length === 0) continue;
-    const directory = isAbsolute7(entry) ? entry : resolve30(cwd, entry);
-    const candidate = resolve30(directory, executable);
+    const directory = isAbsolute8(entry) ? entry : resolve31(cwd, entry);
+    const candidate = resolve31(directory, executable);
     const availability = inspectExecutableCandidate(candidate, io);
     if (availability === "available") {
       return { availability, path: canonicalExecutable(candidate, io) };
@@ -25252,7 +25372,7 @@ async function probeProjectReadiness(requestedPath, options = {}) {
     arch: process.arch
   });
   const baseCwd = safeCall(() => io.cwd(), process.cwd());
-  const absoluteRequestedPath = isAbsolute7(requestedPath) ? requestedPath : resolve30(baseCwd, requestedPath);
+  const absoluteRequestedPath = isAbsolute8(requestedPath) ? requestedPath : resolve31(baseCwd, requestedPath);
   const pathKind = safeCall(() => io.inspectPath(absoluteRequestedPath), "unknown");
   const exists = pathKind === "directory" || pathKind === "other";
   const isDirectory = pathKind === "directory";
@@ -25305,7 +25425,7 @@ async function probeProjectReadiness(requestedPath, options = {}) {
   const identityKey = validResolution?.identityKey ?? null;
   const identitySource = validResolution?.identitySource ?? null;
   const projectNameSource = projectRoot ?? validCanonicalInput ?? absoluteRequestedPath;
-  const sanitizedName = sanitizeName(basename12(projectNameSource));
+  const sanitizedName = sanitizeName(basename13(projectNameSource));
   const [gitVersion, tmuxVersion, repositoryResult, ...harnesses] = await Promise.all([
     probeVersion(io, gitLocated, ["--version"], commandOptions),
     probeVersion(io, tmuxLocated, ["-V"], commandOptions),
@@ -25408,7 +25528,7 @@ var init_project_readiness_probe = __esm({
         }
       },
       exists: existsSync30,
-      realpath: realpathSync5,
+      realpath: realpathSync6,
       inspectExecutable: (path2) => {
         try {
           return statSync5(path2).isFile() ? "file" : "other";
@@ -26430,17 +26550,17 @@ var init_mission_repository = __esm({
 
 // packages/daemon/src/lib/workspace-pane-creation.ts
 import { execFile as execFile6 } from "node:child_process";
-import { accessSync as accessSync3, constants as constants4, realpathSync as realpathSync6, statSync as statSync6 } from "node:fs";
-import { delimiter as delimiter2, isAbsolute as isAbsolute8, join as join30, relative as relative4, sep as sep6 } from "node:path";
+import { accessSync as accessSync3, constants as constants4, realpathSync as realpathSync7, statSync as statSync6 } from "node:fs";
+import { delimiter as delimiter2, isAbsolute as isAbsolute9, join as join31, relative as relative4, sep as sep6 } from "node:path";
 function canonicalProjectDir(path2) {
-  const canonical = realpathSync6(path2);
+  const canonical = realpathSync7(path2);
   if (!statSync6(canonical).isDirectory()) throw new Error("project root is not a directory");
   return canonical;
 }
 function canonicalWorkspaceFile(workspace, canonicalRoot, candidate, source) {
   let canonicalConfig;
   try {
-    canonicalConfig = realpathSync6(candidate);
+    canonicalConfig = realpathSync7(candidate);
     if (!statSync6(canonicalConfig).isFile()) throw new Error("config is not a file");
   } catch (cause) {
     throw new WorkspacePaneCreationError(
@@ -26453,7 +26573,7 @@ function canonicalWorkspaceFile(workspace, canonicalRoot, candidate, source) {
     );
   }
   const ownedRelativePath = relative4(canonicalRoot, canonicalConfig);
-  if (ownedRelativePath === "" || ownedRelativePath === ".." || ownedRelativePath.startsWith(`..${sep6}`) || isAbsolute8(ownedRelativePath)) {
+  if (ownedRelativePath === "" || ownedRelativePath === ".." || ownedRelativePath.startsWith(`..${sep6}`) || isAbsolute9(ownedRelativePath)) {
     throw new WorkspacePaneCreationError("workspace_unavailable", {
       workspaceName: workspace.name,
       reason: `${source}_config_outside_workspace`
@@ -26481,12 +26601,12 @@ function assertEffectiveConfigProvenance(workspace, canonicalRoot, source) {
 }
 function resolveTmuxExecutable() {
   const configured = process.env.TMUX_IDE_TMUX_BIN;
-  const candidates = configured ? [configured] : (process.env.PATH ?? "").split(delimiter2).filter((entry) => entry.length > 0 && isAbsolute8(entry)).map((entry) => join30(entry, "tmux"));
+  const candidates = configured ? [configured] : (process.env.PATH ?? "").split(delimiter2).filter((entry) => entry.length > 0 && isAbsolute9(entry)).map((entry) => join31(entry, "tmux"));
   for (const candidate of candidates) {
     try {
-      if (!isAbsolute8(candidate)) continue;
+      if (!isAbsolute9(candidate)) continue;
       accessSync3(candidate, constants4.X_OK);
-      const canonical = realpathSync6(candidate);
+      const canonical = realpathSync7(candidate);
       if (statSync6(canonical).isFile()) return canonical;
     } catch {
     }
@@ -26516,78 +26636,80 @@ function resolveWorkspacePaneTmuxAuthority() {
   const executablePath = resolveTmuxExecutable();
   const environmentSocket = tmuxSocketFromEnvironment();
   if (environmentSocket) {
-    const path2 = realpathSync6(environmentSocket);
-    if (!statSync6(path2).isSocket()) {
-      throw new WorkspacePaneCreationError("workspace_unavailable", {
-        reason: "tmux_socket_unavailable"
-      });
+    let socket;
+    try {
+      socket = captureUnixSocketIdentity(environmentSocket);
+    } catch (error) {
+      throw new WorkspacePaneCreationError(
+        "workspace_unavailable",
+        {
+          reason: "tmux_socket_unavailable"
+        },
+        error
+      );
     }
     return Object.freeze({
       executablePath,
-      socketSelector: { kind: "path", path: path2 }
+      socketSelector: { kind: "path", path: socket.path }
     });
   }
   return Object.freeze({ executablePath, socketSelector: resolveRuntimeNamespace().tmuxSocket });
 }
 function createPinnedWorkspaceTmuxRunner(authority) {
-  const executablePath = realpathSync6(authority.executablePath);
+  const executablePath = realpathSync7(authority.executablePath);
   accessSync3(executablePath, constants4.X_OK);
-  if (!isAbsolute8(executablePath) || !statSync6(executablePath).isFile()) {
+  if (!isAbsolute9(executablePath) || !statSync6(executablePath).isFile()) {
     throw new TypeError("Pinned tmux executable is invalid.");
   }
-  const socketArgv = authority.socketSelector.kind === "path" ? (() => {
-    const path2 = realpathSync6(authority.socketSelector.path);
-    if (!isAbsolute8(path2) || !statSync6(path2).isSocket()) {
-      throw new TypeError("Pinned tmux socket is invalid.");
-    }
-    return ["-S", path2];
-  })() : /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(authority.socketSelector.name) ? ["-L", authority.socketSelector.name] : (() => {
+  const socketIdentity = authority.socketSelector.kind === "path" ? captureUnixSocketIdentity(authority.socketSelector.path) : null;
+  if (socketIdentity === null && (authority.socketSelector.kind !== "name" || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(authority.socketSelector.name)))
     throw new TypeError("Pinned tmux socket is invalid.");
-  })();
+  const socketArgv = socketIdentity ? ["-S", socketIdentity.path] : ["-L", authority.socketSelector.kind === "name" ? authority.socketSelector.name : ""];
   const environment = Object.freeze(tmuxClientEnvironment(process.env));
-  return (args) => String(
-    runTmuxBinary(executablePath, [...socketArgv, ...args], {
-      encoding: "utf8",
-      env: environment,
-      maxBuffer: TMUX_OUTPUT_BYTES,
-      stdio: ["ignore", "pipe", "pipe"]
-    })
-  ).replace(/(?:\r?\n)+$/u, "");
-}
-function createPinnedWorkspaceTmuxAsyncRunner(authority) {
-  const executablePath = realpathSync6(authority.executablePath);
-  accessSync3(executablePath, constants4.X_OK);
-  if (!isAbsolute8(executablePath) || !statSync6(executablePath).isFile()) {
-    throw new TypeError("Pinned tmux executable is invalid.");
-  }
-  const socketArgv = authority.socketSelector.kind === "path" ? (() => {
-    const path2 = realpathSync6(authority.socketSelector.path);
-    if (!isAbsolute8(path2) || !statSync6(path2).isSocket()) {
-      throw new TypeError("Pinned tmux socket is invalid.");
-    }
-    return ["-S", path2];
-  })() : /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(authority.socketSelector.name) ? ["-L", authority.socketSelector.name] : (() => {
-    throw new TypeError("Pinned tmux socket is invalid.");
-  })();
-  const environment = Object.freeze(tmuxClientEnvironment(process.env));
-  return (args, signal) => new Promise((resolve37, reject) => {
-    execFile6(
-      executablePath,
-      [...socketArgv, ...args],
-      {
+  return (args) => {
+    const selector = socketIdentity ? ["-S", revalidateUnixSocketIdentity(socketIdentity)] : socketArgv;
+    return String(
+      runTmuxBinary(executablePath, [...selector, ...args], {
         encoding: "utf8",
         env: environment,
         maxBuffer: TMUX_OUTPUT_BYTES,
-        timeout: 5e3,
-        ...signal ? { signal } : {},
-        windowsHide: true
-      },
-      (error, stdout) => {
-        if (error) reject(error);
-        else resolve37(stdout.replace(/(?:\r?\n)+$/u, ""));
-      }
-    );
-  });
+        stdio: ["ignore", "pipe", "pipe"]
+      })
+    ).replace(/(?:\r?\n)+$/u, "");
+  };
+}
+function createPinnedWorkspaceTmuxAsyncRunner(authority) {
+  const executablePath = realpathSync7(authority.executablePath);
+  accessSync3(executablePath, constants4.X_OK);
+  if (!isAbsolute9(executablePath) || !statSync6(executablePath).isFile()) {
+    throw new TypeError("Pinned tmux executable is invalid.");
+  }
+  const socketIdentity = authority.socketSelector.kind === "path" ? captureUnixSocketIdentity(authority.socketSelector.path) : null;
+  if (socketIdentity === null && (authority.socketSelector.kind !== "name" || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(authority.socketSelector.name)))
+    throw new TypeError("Pinned tmux socket is invalid.");
+  const socketArgv = socketIdentity ? ["-S", socketIdentity.path] : ["-L", authority.socketSelector.kind === "name" ? authority.socketSelector.name : ""];
+  const environment = Object.freeze(tmuxClientEnvironment(process.env));
+  return (args, signal) => {
+    const selector = socketIdentity ? ["-S", revalidateUnixSocketIdentity(socketIdentity)] : socketArgv;
+    return new Promise((resolve38, reject) => {
+      execFile6(
+        executablePath,
+        [...selector, ...args],
+        {
+          encoding: "utf8",
+          env: environment,
+          maxBuffer: TMUX_OUTPUT_BYTES,
+          timeout: 5e3,
+          ...signal ? { signal } : {},
+          windowsHide: true
+        },
+        (error, stdout) => {
+          if (error) reject(error);
+          else resolve38(stdout.replace(/(?:\r?\n)+$/u, ""));
+        }
+      );
+    });
+  };
 }
 function profileCommand(profile) {
   return Array.isArray(profile.command) ? [...profile.command] : ["/bin/sh", "-lc", profile.command];
@@ -26811,6 +26933,7 @@ var init_workspace_pane_creation2 = __esm({
     init_shell();
     init_mission_repository();
     init_runtime_namespace();
+    init_unix_socket_authority();
     MAX_LIVE_OR_UNSAFE_OPERATIONS = 128;
     MAX_REPLAYABLE_FAILURES = 64;
     MAX_COMMAND_ARGUMENTS = 64;
@@ -27683,8 +27806,8 @@ var init_semantic_pane_catalog = __esm({
 
 // packages/daemon/src/lib/workspace-open.ts
 import { createHash as createHash8 } from "node:crypto";
-import { realpathSync as realpathSync7, statSync as statSync7 } from "node:fs";
-import { basename as basename13, isAbsolute as isAbsolute9 } from "node:path";
+import { realpathSync as realpathSync8, statSync as statSync7 } from "node:fs";
+import { basename as basename14, isAbsolute as isAbsolute10 } from "node:path";
 function boundedAuthorityLimit2(value, fallback) {
   if (value === void 0) return fallback;
   if (!Number.isInteger(value) || value < 1 || value > MAX_OPERATIONS) {
@@ -27699,7 +27822,7 @@ function boundedTmuxOutput(value) {
   return value.replace(/(?:\r?\n)+$/u, "");
 }
 function safeBaseName(projectDir) {
-  const value = basename13(projectDir).normalize("NFKD").replace(/[\u0300-\u036f]/gu, "").toLowerCase().replace(/[^a-z0-9_-]+/gu, "-").replace(/-+/gu, "-").replace(/^[-_]+|[-_]+$/gu, "").slice(0, 72);
+  const value = basename14(projectDir).normalize("NFKD").replace(/[\u0300-\u036f]/gu, "").toLowerCase().replace(/[^a-z0-9_-]+/gu, "-").replace(/-+/gu, "-").replace(/^[-_]+|[-_]+$/gu, "").slice(0, 72);
   return value || "workspace";
 }
 function deriveWorkspaceOpenIdentity(canonicalProjectDir3) {
@@ -27714,14 +27837,14 @@ function deriveWorkspaceOpenIdentity(canonicalProjectDir3) {
   });
 }
 async function resolveConfigFreeProjectDir(projectDir) {
-  if (!isAbsolute9(projectDir)) {
+  if (!isAbsolute10(projectDir)) {
     throw new WorkspaceOpenError("workspace_unavailable", {
       reason: "project_directory_not_absolute"
     });
   }
   let selected;
   try {
-    selected = realpathSync7(projectDir);
+    selected = realpathSync8(projectDir);
     if (!statSync7(selected).isDirectory()) throw new Error("not a directory");
   } catch (cause) {
     throw new WorkspaceOpenError(
@@ -27746,7 +27869,7 @@ async function resolveConfigFreeProjectDir(projectDir) {
     });
   }
   try {
-    const canonicalRoot = realpathSync7(context.projectRoot);
+    const canonicalRoot = realpathSync8(context.projectRoot);
     if (!statSync7(canonicalRoot).isDirectory()) throw new Error("not a directory");
     return canonicalRoot;
   } catch (cause) {
@@ -27904,7 +28027,7 @@ var init_workspace_open2 = __esm({
     };
     DEFAULT_IO2 = {
       resolveConfigFreeProjectDir,
-      canonicalRegisteredProjectDir: (projectDir) => realpathSync7(projectDir),
+      canonicalRegisteredProjectDir: (projectDir) => realpathSync8(projectDir),
       isMissingTmuxTarget: (error) => error instanceof TmuxError && error.code === "SESSION_NOT_FOUND",
       isTmuxUnavailable: (error) => error instanceof TmuxError && error.code === "TMUX_UNAVAILABLE"
     };
@@ -28413,7 +28536,7 @@ var init_workspace_open2 = __esm({
 
 // packages/daemon/src/lib/workspace-promotion.ts
 import { createHash as createHash9 } from "node:crypto";
-import { realpathSync as realpathSync8, statSync as statSync8 } from "node:fs";
+import { realpathSync as realpathSync9, statSync as statSync8 } from "node:fs";
 function boundedAuthorityLimit3(value, fallback) {
   if (value === void 0) return fallback;
   if (!Number.isInteger(value) || value < 1 || value > MAX_OPERATIONS2) {
@@ -28628,7 +28751,7 @@ var init_workspace_promotion2 = __esm({
     RESERVED_DISCOVERED_PREFIX = "terminal.discovered.";
     DEFAULT_IO3 = {
       canonicalProjectDir: (path2) => {
-        const canonical = realpathSync8(path2);
+        const canonical = realpathSync9(path2);
         if (!statSync8(canonical).isDirectory()) throw new Error("project root is not a directory");
         return canonical;
       },
@@ -29173,6 +29296,9 @@ var init_workspace_open_handoff2 = __esm({
           if (previousWorkspaceName && this.#deps.prewarmPrevious) {
             await this.#deps.prewarmPrevious(previousWorkspaceName);
           }
+          if (intent.source.kind === "host-selection") {
+            throw new Error("Host folder selection must resolve before the daemon handoff boundary.");
+          }
           const opened = intent.source.kind === "project" ? await this.#deps.openProject({
             operationId,
             expectedDaemonInstanceId,
@@ -29355,8 +29481,8 @@ function launchCommandForHarness(harness) {
 }
 function paneStartHostsShell(startCommand) {
   const token = startCommand.trim().split(/\s+/u)[0] ?? "";
-  const basename19 = token.replace(/^-/, "").replace(/\\/gu, "/").split("/").pop()?.toLowerCase() ?? "";
-  return basename19 === "" || SHELLS.has(basename19.replace(/\.exe$/u, ""));
+  const basename20 = token.replace(/^-/, "").replace(/\\/gu, "/").split("/").pop()?.toLowerCase() ?? "";
+  return basename20 === "" || SHELLS.has(basename20.replace(/\.exe$/u, ""));
 }
 function interruptArgs(paneId) {
   return ["send-keys", "-t", paneId, "C-c"];
@@ -29421,7 +29547,7 @@ var init_fleet_agent_lifecycle = __esm({
 
 // packages/daemon/src/lib/fleet-lifecycle-authority.ts
 import { createHash as createHash10, randomUUID as randomUUID8 } from "node:crypto";
-import { isAbsolute as isAbsolute10, resolve as resolve31 } from "node:path";
+import { isAbsolute as isAbsolute11, resolve as resolve32 } from "node:path";
 import { realpath, stat } from "node:fs/promises";
 var MAX_REPLAY_OPERATIONS, sleep, FleetLifecycleAuthorityError, FleetLifecycleAuthority;
 var init_fleet_lifecycle_authority = __esm({
@@ -29433,7 +29559,7 @@ var init_fleet_lifecycle_authority = __esm({
     init_chrome_front_door();
     init_fleet_agent_lifecycle();
     MAX_REPLAY_OPERATIONS = 128;
-    sleep = (milliseconds) => new Promise((resolve37) => setTimeout(resolve37, milliseconds));
+    sleep = (milliseconds) => new Promise((resolve38) => setTimeout(resolve38, milliseconds));
     FleetLifecycleAuthorityError = class extends Error {
       constructor(code, message) {
         super(message);
@@ -29730,8 +29856,8 @@ var init_fleet_lifecycle_authority = __esm({
       async #exclusive(run) {
         const predecessor = this.#tail;
         let release;
-        this.#tail = new Promise((resolve37) => {
-          release = resolve37;
+        this.#tail = new Promise((resolve38) => {
+          release = resolve38;
         });
         await predecessor;
         try {
@@ -29809,9 +29935,9 @@ var init_fleet_lifecycle_authority = __esm({
         this.#tryTmux(respawnArgs(paneId, command2, live.path || null));
       }
       async #canonicalDir(value) {
-        if (!isAbsolute10(value))
+        if (!isAbsolute11(value))
           throw new FleetLifecycleAuthorityError("invalid_path", "cwd must be absolute");
-        const canonical = await realpath(resolve31(value));
+        const canonical = await realpath(resolve32(value));
         if (!(await stat(canonical)).isDirectory())
           throw new FleetLifecycleAuthorityError("invalid_path", "cwd must be a directory");
         return canonical;
@@ -29821,7268 +29947,6 @@ var init_fleet_lifecycle_authority = __esm({
         const key = createHash10("sha256").update("tmux-ide.workspace.session.create.v1\0", "utf8").update(displayName, "utf8").update("\0", "utf8").update(cwd, "utf8").digest("hex").slice(0, 20);
         const workspaceName = `${slug}-${key}`;
         return { workspaceName, sessionName: workspaceName };
-      }
-    };
-  }
-});
-
-// packages/daemon/src/lib/app-window-state.ts
-function emptyAppWindowDocument(updatedAt) {
-  const timestamp = AppWindowTimestampSchemaZ.parse(updatedAt);
-  return AppWindowDocumentV1SchemaZ.parse({
-    version: APP_WINDOW_DOCUMENT_VERSION,
-    revision: 0,
-    updatedAt: timestamp,
-    windows: {},
-    dockRoot: null,
-    dockState: { mode: "open", preferredHeight: null, focusZone: "canvas" },
-    floatingOrder: [],
-    focusedWindowId: null,
-    activeLayoutId: null,
-    layouts: {}
-  });
-}
-function stableAppWindowInstanceId(source, ordinal = 0) {
-  const parsed = AppWindowSourceSchemaZ.parse(source);
-  if (!Number.isInteger(ordinal) || ordinal < 0 || ordinal >= APP_WINDOW_MAX_WINDOWS) {
-    throw new Error("app window ordinal must be a bounded nonnegative integer");
-  }
-  const sourceKey = parsed.kind === "terminal" ? `terminal:${parsed.terminalSourceId}` : `native:${parsed.surface}:${parsed.resourceId === null ? "null" : `id:${parsed.resourceId}`}`;
-  const slug = sourceKey.toLowerCase().replace(/[^a-z0-9._-]+/gu, "-").replace(/^-+|-+$/gu, "").slice(0, 72);
-  return AppWindowIdSchemaZ.parse(`window-${slug || "surface"}-${ordinal}-${fnv1a(sourceKey)}`);
-}
-function parseAppWindowDocument(value, fallbackTimestamp) {
-  const fallback = emptyAppWindowDocument(fallbackTimestamp);
-  if (!isRecord2(value)) {
-    return {
-      document: fallback,
-      diagnostics: [diagnostic("MALFORMED", "$", "app window document must be an object")],
-      writeProtected: false
-    };
-  }
-  const version = ownValue(value, "version");
-  if (version !== APP_WINDOW_DOCUMENT_VERSION) {
-    return {
-      document: fallback,
-      diagnostics: [
-        diagnostic(
-          "UNSUPPORTED_VERSION",
-          "$.version",
-          `unsupported app window document version ${String(version)}`
-        )
-      ],
-      writeProtected: typeof version === "number" && version > APP_WINDOW_DOCUMENT_VERSION
-    };
-  }
-  const parsed = AppWindowDocumentV1SchemaZ.safeParse(value);
-  if (parsed.success) {
-    return { document: canonicalDocument(parsed.data), diagnostics: [], writeProtected: false };
-  }
-  return {
-    document: fallback,
-    diagnostics: parsed.error.issues.map(
-      (issue) => diagnostic(
-        "INVALID_FIELD",
-        issue.path.length === 0 ? "$" : `$.${issue.path.map(String).join(".")}`,
-        issue.message
-      )
-    ),
-    writeProtected: true
-  };
-}
-function migrateWorkspaceUiStateV2ToAppWindowDocument(value, options) {
-  const migratedAt = AppWindowTimestampSchemaZ.parse(options.migratedAt);
-  if (!isRecord2(value) || ownValue(value, "version") !== 2) {
-    throw new Error("WorkspaceUiStateV2 is required for app window migration");
-  }
-  const diagnostics = [
-    diagnostic("MIGRATED", "$", "migrated WorkspaceUiStateV2 to app window document V1")
-  ];
-  const activeValue = ownValue(value, "active");
-  const active2 = isRecord2(activeValue) ? activeValue : null;
-  const activeViewId = ownString(active2, "viewId");
-  const activePanelValue = ownValue(active2, "panel");
-  const activePanel = typeof activePanelValue === "string" && LEGACY_PANELS.has(activePanelValue) ? activePanelValue : "terminals";
-  const dockValue = ownValue(value, "dock");
-  const dock = isRecord2(dockValue) ? dockValue : null;
-  const dockTabValue = ownValue(dock, "activeTab");
-  const requestedDockTab = typeof dockTabValue === "string" && LEGACY_DOCK_TABS.has(dockTabValue) ? dockTabValue : "files";
-  const dockMode = legacyDockMode(ownValue(dock, "mode"), diagnostics);
-  const preferredHeight = legacyPreferredHeight(ownValue(dock, "preferredHeight"), diagnostics);
-  const focusZone = legacyFocusZone(ownValue(dock, "focusZone"), diagnostics);
-  const terminalSourceIds = cleanTerminalSourceIds(options.terminalSourceIds ?? []);
-  const focusedTerminalSourceId = cleanFocusedTerminalSourceId(
-    terminalSourceIds,
-    options.focusedTerminalSourceId
-  );
-  if (activePanel === "terminals" && terminalSourceIds.length === 0) {
-    diagnostics.push(
-      diagnostic(
-        "TERMINAL_SOURCE_REQUIRED",
-        "$.active",
-        "terminal canvas was not persisted because no durable terminal source id was supplied"
-      )
-    );
-  }
-  const windows = {};
-  const dockWindowIds = NATIVE_DOCK_ORDER.map((surface, index) => {
-    const source = { kind: "native", surface, resourceId: null };
-    const id = stableAppWindowInstanceId(source);
-    windows[id] = dockedWindow(id, source, nativeTitle(surface), "stack-native-dock", index);
-    return id;
-  });
-  const requestedDockWindowId = dockWindowIds[NATIVE_DOCK_ORDER.indexOf(requestedDockTab)];
-  const canvasWindowIds = [];
-  const windowIdByViewId = /* @__PURE__ */ new Map();
-  const deferredViewIds = /* @__PURE__ */ new Set();
-  const viewsValue = ownValue(value, "views");
-  const views = isRecord2(viewsValue) ? viewsValue : {};
-  for (const [viewId, rawView] of Object.entries(views).sort(
-    ([left], [right]) => left.localeCompare(right)
-  )) {
-    if (!isRecord2(rawView)) continue;
-    const surface = legacyNativeSurface(ownValue(rawView, "panel"));
-    if (!surface) continue;
-    if (Object.hasOwn(rawView, "layout")) {
-      deferredViewIds.add(viewId);
-      diagnostics.push(
-        diagnostic(
-          "COMPOSITE_LAYOUT_DEFERRED",
-          `$.views.${viewId}.layout`,
-          "composite layout state needs its configured layout tree before app-window migration"
-        )
-      );
-      continue;
-    }
-    const source = {
-      kind: "native",
-      surface,
-      resourceId: stableLegacyResourceId(viewId)
-    };
-    const id = stableAppWindowInstanceId(source);
-    windows[id] = dockedWindow(
-      id,
-      source,
-      nativeTitle(surface),
-      "stack-canvas",
-      canvasWindowIds.length
-    );
-    canvasWindowIds.push(id);
-    windowIdByViewId.set(viewId, id);
-  }
-  const activeNativeSurface = legacyNativeSurface(activePanel);
-  if (activeNativeSurface && activeViewId && !windowIdByViewId.has(activeViewId) && !deferredViewIds.has(activeViewId)) {
-    const source = {
-      kind: "native",
-      surface: activeNativeSurface,
-      resourceId: stableLegacyResourceId(activeViewId)
-    };
-    const id = stableAppWindowInstanceId(source);
-    windows[id] = dockedWindow(
-      id,
-      source,
-      nativeTitle(activeNativeSurface),
-      "stack-canvas",
-      canvasWindowIds.length
-    );
-    canvasWindowIds.push(id);
-    windowIdByViewId.set(activeViewId, id);
-  }
-  const terminalWindowIdBySourceId2 = /* @__PURE__ */ new Map();
-  for (const terminalSourceId of terminalSourceIds) {
-    const source = { kind: "terminal", terminalSourceId };
-    const id = stableAppWindowInstanceId(source);
-    windows[id] = dockedWindow(id, source, null, "stack-canvas", canvasWindowIds.length);
-    canvasWindowIds.push(id);
-    terminalWindowIdBySourceId2.set(terminalSourceId, id);
-  }
-  const preferredCanvasWindowId = activePanel === "terminals" ? focusedTerminalSourceId ? terminalWindowIdBySourceId2.get(focusedTerminalSourceId) : void 0 : activeViewId ? windowIdByViewId.get(activeViewId) : void 0;
-  const activeCanvasWindowId = preferredCanvasWindowId ?? canvasWindowIds[0];
-  const nativeDock = {
-    type: "stack",
-    id: "stack-native-dock",
-    windowIds: dockWindowIds,
-    activeWindowId: requestedDockWindowId
-  };
-  const dockRoot = canvasWindowIds.length === 0 ? nativeDock : {
-    type: "split",
-    id: "split-workbench",
-    axis: "vertical",
-    children: [
-      {
-        type: "stack",
-        id: "stack-canvas",
-        windowIds: canvasWindowIds,
-        activeWindowId: activeCanvasWindowId
-      },
-      nativeDock
-    ],
-    weights: [3, 1]
-  };
-  const focusedWindowId = focusZone === "dock-tabs" || focusZone === "dock-body" ? requestedDockWindowId : preferredCanvasWindowId ?? null;
-  const scene = {
-    windows,
-    dockRoot,
-    dockState: { mode: dockMode, preferredHeight, focusZone },
-    floatingOrder: [],
-    focusedWindowId
-  };
-  const layoutId = "layout-migrated-workspace";
-  const layout = {
-    id: layoutId,
-    name: "Migrated workspace",
-    description: "Initial app-window layout migrated from WorkspaceUiStateV2",
-    revision: 1,
-    createdAt: migratedAt,
-    updatedAt: migratedAt,
-    scene: cloneScene(scene)
-  };
-  const document = AppWindowDocumentV1SchemaZ.parse({
-    version: APP_WINDOW_DOCUMENT_VERSION,
-    revision: 0,
-    updatedAt: migratedAt,
-    ...scene,
-    activeLayoutId: layoutId,
-    layouts: { [layoutId]: layout }
-  });
-  return { document: canonicalDocument(document), diagnostics };
-}
-function saveAppWindowNamedLayout(document, input) {
-  const current = AppWindowDocumentV1SchemaZ.parse(document);
-  const id = AppWindowIdSchemaZ.parse(input.id);
-  const updatedAt = AppWindowTimestampSchemaZ.parse(input.updatedAt);
-  requireNondecreasingTimestamp(current.updatedAt, updatedAt);
-  const previous = Object.hasOwn(current.layouts, id) ? current.layouts[id] : void 0;
-  const nextLayout = {
-    id,
-    name: input.name,
-    description: input.description ?? null,
-    revision: (previous?.revision ?? 0) + 1,
-    createdAt: previous?.createdAt ?? updatedAt,
-    updatedAt,
-    scene: cloneScene(current)
-  };
-  return canonicalDocument(
-    AppWindowDocumentV1SchemaZ.parse({
-      ...current,
-      revision: current.revision + 1,
-      updatedAt,
-      activeLayoutId: id,
-      layouts: { ...current.layouts, [id]: nextLayout }
-    })
-  );
-}
-function restoreAppWindowNamedLayout(document, layoutId, updatedAt) {
-  const current = AppWindowDocumentV1SchemaZ.parse(document);
-  const id = AppWindowIdSchemaZ.parse(layoutId);
-  const timestamp = AppWindowTimestampSchemaZ.parse(updatedAt);
-  requireNondecreasingTimestamp(current.updatedAt, timestamp);
-  const layout = Object.hasOwn(current.layouts, id) ? current.layouts[id] : void 0;
-  if (!layout) throw new Error(`unknown app window layout "${id}"`);
-  return canonicalDocument(
-    AppWindowDocumentV1SchemaZ.parse({
-      ...current,
-      ...cloneScene(layout.scene),
-      revision: current.revision + 1,
-      updatedAt: timestamp,
-      activeLayoutId: id
-    })
-  );
-}
-function focusAppWindow(document, windowId, updatedAt) {
-  const current = AppWindowDocumentV1SchemaZ.parse(document);
-  const id = windowId === null ? null : AppWindowIdSchemaZ.parse(windowId);
-  const timestamp = AppWindowTimestampSchemaZ.parse(updatedAt);
-  requireNondecreasingTimestamp(current.updatedAt, timestamp);
-  if (id && !Object.hasOwn(current.windows, id)) throw new Error(`unknown app window "${id}"`);
-  const floatingOrder = id && current.windows[id]?.placement.mode === "floating" ? [...current.floatingOrder.filter((candidate) => candidate !== id), id] : current.floatingOrder;
-  const dockRoot = id ? activateDockedWindow(current.dockRoot, id) : current.dockRoot;
-  return canonicalDocument(
-    AppWindowDocumentV1SchemaZ.parse({
-      ...current,
-      revision: current.revision + 1,
-      updatedAt: timestamp,
-      focusedWindowId: id,
-      floatingOrder,
-      dockRoot
-    })
-  );
-}
-function serializeAppWindowDocument(document) {
-  return `${JSON.stringify(canonicalDocument(AppWindowDocumentV1SchemaZ.parse(document)), null, 2)}
-`;
-}
-function dockedWindow(id, source, title, stackId, index) {
-  return {
-    id,
-    source,
-    title,
-    placement: {
-      mode: "docked",
-      docked: { stackId, index },
-      floating: null
-    }
-  };
-}
-function cleanTerminalSourceIds(values2) {
-  if (values2.length > APP_WINDOW_MAX_WINDOWS - NATIVE_DOCK_ORDER.length) {
-    throw new Error("terminal source id limit exceeded");
-  }
-  const seen = /* @__PURE__ */ new Set();
-  const result = [];
-  for (const value of values2) {
-    const sourceId = AppWindowIdSchemaZ.parse(value);
-    if (seen.has(sourceId)) continue;
-    seen.add(sourceId);
-    result.push(sourceId);
-  }
-  return result;
-}
-function cleanFocusedTerminalSourceId(terminalSourceIds, value) {
-  if (value === null || value === void 0) return terminalSourceIds[0] ?? null;
-  const sourceId = AppWindowIdSchemaZ.parse(value);
-  if (!terminalSourceIds.includes(sourceId)) {
-    throw new Error("focused terminal source id must belong to terminalSourceIds");
-  }
-  return sourceId;
-}
-function legacyNativeSurface(value) {
-  if (value === "home" || value === "files" || value === "missions") return value;
-  if (value === "diff") return "changes";
-  return null;
-}
-function stableLegacyResourceId(viewId) {
-  const direct = AppWindowIdSchemaZ.safeParse(viewId);
-  if (direct.success) return direct.data;
-  const slug = viewId.toLowerCase().replace(/[^a-z0-9._-]+/gu, "-").replace(/^-+|-+$/gu, "").slice(0, 80);
-  return AppWindowIdSchemaZ.parse(`view-${slug || "resource"}-${fnv1a(viewId)}`);
-}
-function legacyDockMode(value, diagnostics) {
-  if (value === "collapsed" || value === "open" || value === "maximized") return value;
-  diagnostics.push(
-    diagnostic("FIELD_DEFAULTED", "$.dock.mode", "invalid dock mode defaulted to open")
-  );
-  return "open";
-}
-function legacyPreferredHeight(value, diagnostics) {
-  if (value === null) return null;
-  if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 1e6) {
-    return value;
-  }
-  diagnostics.push(
-    diagnostic(
-      "FIELD_DEFAULTED",
-      "$.dock.preferredHeight",
-      "invalid preferred dock height defaulted to automatic"
-    )
-  );
-  return null;
-}
-function legacyFocusZone(value, diagnostics) {
-  if (value === "canvas" || value === "dock-tabs" || value === "dock-body") return value;
-  diagnostics.push(
-    diagnostic("FIELD_DEFAULTED", "$.dock.focusZone", "invalid focus zone defaulted to canvas")
-  );
-  return "canvas";
-}
-function activateDockedWindow(node, windowId) {
-  if (!node) return null;
-  if (node.type === "stack") {
-    return node.windowIds.includes(windowId) ? { ...node, activeWindowId: windowId } : node;
-  }
-  return {
-    ...node,
-    children: node.children.map((child) => activateDockedWindow(child, windowId))
-  };
-}
-function nativeTitle(surface) {
-  if (surface === "changes") return "Changes";
-  return `${surface[0].toUpperCase()}${surface.slice(1)}`;
-}
-function cloneScene(scene) {
-  return {
-    windows: structuredClone(scene.windows),
-    dockRoot: structuredClone(scene.dockRoot),
-    dockState: { ...scene.dockState },
-    floatingOrder: [...scene.floatingOrder],
-    focusedWindowId: scene.focusedWindowId
-  };
-}
-function canonicalDocument(document) {
-  const layouts = Object.fromEntries(
-    Object.entries(document.layouts).sort(([left], [right]) => left.localeCompare(right)).map(([id, layout]) => [id, { ...layout, scene: canonicalScene(layout.scene) }])
-  );
-  return AppWindowDocumentV1SchemaZ.parse({
-    ...document,
-    ...canonicalScene(document),
-    layouts
-  });
-}
-function canonicalScene(scene) {
-  return {
-    windows: Object.fromEntries(
-      Object.entries(scene.windows).sort(([left], [right]) => left.localeCompare(right))
-    ),
-    dockRoot: structuredClone(scene.dockRoot),
-    dockState: { ...scene.dockState },
-    floatingOrder: [...scene.floatingOrder],
-    focusedWindowId: scene.focusedWindowId
-  };
-}
-function diagnostic(code, path2, message) {
-  return { code, path: path2, message };
-}
-function isRecord2(value) {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-function ownValue(record, key) {
-  return record && Object.hasOwn(record, key) ? record[key] : void 0;
-}
-function ownString(record, key) {
-  const value = ownValue(record, key);
-  return typeof value === "string" && value.length > 0 ? value : null;
-}
-function requireNondecreasingTimestamp(previous, next) {
-  if (Date.parse(next) < Date.parse(previous)) {
-    throw new Error("app window mutation timestamp must not move backwards");
-  }
-}
-function fnv1a(value) {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619) >>> 0;
-  }
-  return hash.toString(36).padStart(7, "0");
-}
-var NATIVE_DOCK_ORDER, LEGACY_DOCK_TABS, LEGACY_PANELS;
-var init_app_window_state2 = __esm({
-  "packages/daemon/src/lib/app-window-state.ts"() {
-    "use strict";
-    init_src();
-    NATIVE_DOCK_ORDER = ["files", "changes", "missions", "activity"];
-    LEGACY_DOCK_TABS = new Set(NATIVE_DOCK_ORDER);
-    LEGACY_PANELS = /* @__PURE__ */ new Set(["home", "terminals", "files", "diff", "missions"]);
-  }
-});
-
-// packages/daemon/src/lib/app-window-kernel.ts
-function applyAppWindowCommand(document, command2, timestamp) {
-  const current = requireDocument(document);
-  const at2 = requireTimestamp(current.updatedAt, timestamp);
-  switch (command2.type) {
-    case "window.focus":
-      if (command2.windowId !== null) requireWindowId(current, command2.windowId);
-      try {
-        return focusAppWindow(current, command2.windowId, at2);
-      } catch (error) {
-        throw translateStateError(error, command2.windowId ? `$.windows.${command2.windowId}` : "$");
-      }
-    case "window.float":
-      return floatWindow(current, command2, at2);
-    case "window.dock":
-      return dockWindow(current, command2, at2);
-    case "window.move":
-      return moveFloatingWindow(current, command2, at2);
-    case "window.resize":
-      return resizeFloatingWindow(current, command2, at2);
-    case "stack.activate":
-      return activateStackWindow(current, command2, at2);
-    case "stack.reorder":
-      return reorderStackWindow(current, command2, at2);
-    case "layout.save":
-      try {
-        return saveAppWindowNamedLayout(current, {
-          id: command2.layoutId,
-          name: command2.name,
-          description: command2.description,
-          updatedAt: at2
-        });
-      } catch (error) {
-        throw translateStateError(error, `$.layouts.${command2.layoutId}`);
-      }
-    case "layout.restore":
-      try {
-        return restoreAppWindowNamedLayout(current, command2.layoutId, at2);
-      } catch (error) {
-        if (error.message.includes("unknown app window layout")) {
-          throw new AppWindowKernelError(
-            "LAYOUT_NOT_FOUND",
-            `$.layouts.${command2.layoutId}`,
-            error.message
-          );
-        }
-        throw translateStateError(error, `$.layouts.${command2.layoutId}`);
-      }
-    case "layout.rename":
-      return renameLayout(current, command2.layoutId, command2.name, at2);
-    case "layout.delete":
-      return deleteLayout(current, command2.layoutId, at2);
-  }
-}
-function isAppWindowCommandSatisfied(document, command2) {
-  const current = requireDocument(document);
-  switch (command2.type) {
-    case "window.focus": {
-      if (command2.windowId === null) return current.focusedWindowId === null;
-      const id = requireWindowId(current, command2.windowId);
-      if (current.focusedWindowId !== id) return false;
-      const window2 = current.windows[id];
-      if (window2.placement.mode === "floating") return current.floatingOrder.at(-1) === id;
-      const stack = window2.placement.docked ? findStack(current.dockRoot, window2.placement.docked.stackId) : null;
-      return stack?.activeWindowId === id;
-    }
-    case "window.float": {
-      const id = requireWindowId(current, command2.windowId);
-      const window2 = current.windows[id];
-      if (window2.placement.mode !== "floating" || !window2.placement.floating || current.focusedWindowId !== id || current.floatingOrder.at(-1) !== id) {
-        return false;
-      }
-      return command2.rect === void 0 ? true : sameRect(window2.placement.floating, normalizeRect(command2.rect));
-    }
-    case "window.dock": {
-      const id = requireWindowId(current, command2.windowId);
-      const window2 = current.windows[id];
-      if (window2.placement.mode !== "docked" || !window2.placement.docked) return false;
-      if (command2.stackId !== void 0) {
-        const stackId = requireId(command2.stackId, "$.stackId");
-        if (!findStack(current.dockRoot, stackId)) {
-          throw new AppWindowKernelError(
-            "STACK_NOT_FOUND",
-            `$.dockRoot.${stackId}`,
-            `unknown app window stack "${stackId}"`
-          );
-        }
-        if (window2.placement.docked.stackId !== stackId) return false;
-      }
-      const stack = findStack(current.dockRoot, window2.placement.docked.stackId);
-      if (!stack || stack.activeWindowId !== id || current.focusedWindowId !== id) return false;
-      if (command2.index === void 0) return true;
-      requireNonnegativeIndex(command2.index, "$.index", "dock index must be nonnegative");
-      return stack.windowIds.indexOf(id) === Math.min(command2.index, stack.windowIds.length - 1);
-    }
-    case "window.move": {
-      const [, , rect] = requireFloatingWindow(current, command2.windowId);
-      return rect.x === boundedCoordinate(command2.x, "$.x") && rect.y === boundedCoordinate(command2.y, "$.y");
-    }
-    case "window.resize": {
-      const [, , rect] = requireFloatingWindow(current, command2.windowId);
-      return rect.width === boundedExtent(command2.width, APP_WINDOW_FLOAT_MIN_WIDTH, "$.width") && rect.height === boundedExtent(command2.height, APP_WINDOW_FLOAT_MIN_HEIGHT, "$.height");
-    }
-    case "stack.activate": {
-      const stackId = requireId(command2.stackId, "$.stackId");
-      const windowId = requireWindowId(current, command2.windowId);
-      const stack = requireStack(current.dockRoot, stackId);
-      if (!stack.windowIds.includes(windowId)) {
-        throw new AppWindowKernelError(
-          "WINDOW_NOT_IN_STACK",
-          `$.dockRoot.${stackId}`,
-          `window "${windowId}" is not in stack "${stackId}"`
-        );
-      }
-      return stack.activeWindowId === windowId && current.focusedWindowId === windowId;
-    }
-    case "stack.reorder": {
-      const stackId = requireId(command2.stackId, "$.stackId");
-      const windowId = requireWindowId(current, command2.windowId);
-      const stack = requireStack(current.dockRoot, stackId);
-      if (!stack.windowIds.includes(windowId)) {
-        throw new AppWindowKernelError(
-          "WINDOW_NOT_IN_STACK",
-          `$.dockRoot.${stackId}`,
-          `window "${windowId}" is not in stack "${stackId}"`
-        );
-      }
-      requireNonnegativeIndex(command2.index, "$.index", "index must be nonnegative");
-      return stack.windowIds.indexOf(windowId) === Math.min(command2.index, stack.windowIds.length - 1);
-    }
-    case "layout.save": {
-      const id = requireId(command2.layoutId, "$.layoutId");
-      const layout = Object.hasOwn(current.layouts, id) ? current.layouts[id] : null;
-      return Boolean(
-        layout && layout.name === command2.name && layout.description === (command2.description ?? null) && current.activeLayoutId === id && sameScene(layout.scene, current)
-      );
-    }
-    case "layout.restore": {
-      const id = requireId(command2.layoutId, "$.layoutId");
-      const layout = Object.hasOwn(current.layouts, id) ? current.layouts[id] : null;
-      if (!layout) return false;
-      return current.activeLayoutId === id && sameScene(layout.scene, current);
-    }
-    case "layout.rename": {
-      const id = requireId(command2.layoutId, "$.layoutId");
-      const layout = Object.hasOwn(current.layouts, id) ? current.layouts[id] : null;
-      return layout?.name === command2.name;
-    }
-    case "layout.delete": {
-      const id = requireId(command2.layoutId, "$.layoutId");
-      return !Object.hasOwn(current.layouts, id);
-    }
-  }
-}
-function floatWindow(current, command2, timestamp) {
-  const id = requireWindowId(current, command2.windowId);
-  const window2 = current.windows[id];
-  const rect = normalizeRect(
-    command2.rect ?? window2.placement.floating ?? { x: 2, y: 2, width: 80, height: 24 }
-  );
-  const windows = structuredClone(current.windows);
-  windows[id] = {
-    ...window2,
-    placement: {
-      mode: "floating",
-      docked: window2.placement.docked,
-      floating: rect
-    }
-  };
-  const dockRoot = removeDockWindow(current.dockRoot, id);
-  syncDockMemories(windows, dockRoot);
-  return finalize(current, timestamp, {
-    windows,
-    dockRoot,
-    floatingOrder: [...current.floatingOrder.filter((candidate) => candidate !== id), id],
-    focusedWindowId: id
-  });
-}
-function dockWindow(current, command2, timestamp) {
-  const id = requireWindowId(current, command2.windowId);
-  const window2 = current.windows[id];
-  const requestedStackId = command2.stackId !== void 0 ? requireId(command2.stackId, "$.stackId") : window2.placement.docked?.stackId;
-  if (command2.stackId !== void 0 && !findStack(current.dockRoot, requestedStackId)) {
-    throw new AppWindowKernelError(
-      "STACK_NOT_FOUND",
-      `$.dockRoot.${requestedStackId}`,
-      `unknown app window stack "${requestedStackId}"`
-    );
-  }
-  const dockRootWithoutWindow = removeDockWindow(current.dockRoot, id);
-  const existingFallback = firstStackId(dockRootWithoutWindow);
-  const removedFromRequestedStack = window2.placement.mode === "docked" && window2.placement.docked?.stackId === requestedStackId;
-  const targetStackId = (requestedStackId && findStack(dockRootWithoutWindow, requestedStackId) ? requestedStackId : removedFromRequestedStack ? requestedStackId : existingFallback) ?? uniqueRootStackId(dockRootWithoutWindow);
-  const rememberedIndex = command2.index ?? window2.placement.docked?.index ?? Number.MAX_SAFE_INTEGER;
-  if (!Number.isInteger(rememberedIndex) || rememberedIndex < 0) {
-    throw new AppWindowKernelError(
-      "INVALID_INPUT",
-      "$.index",
-      "dock index must be a nonnegative integer"
-    );
-  }
-  const windows = structuredClone(current.windows);
-  windows[id] = {
-    ...window2,
-    placement: {
-      mode: "docked",
-      docked: { stackId: targetStackId, index: 0 },
-      floating: window2.placement.floating
-    }
-  };
-  let dockRoot = dockRootWithoutWindow ? insertDockWindow(dockRootWithoutWindow, targetStackId, id, rememberedIndex) : {
-    type: "stack",
-    id: targetStackId,
-    windowIds: [id],
-    activeWindowId: id
-  };
-  dockRoot = activateDockWindow(dockRoot, targetStackId, id);
-  syncDockMemories(windows, dockRoot);
-  return finalize(current, timestamp, {
-    windows,
-    dockRoot,
-    floatingOrder: current.floatingOrder.filter((candidate) => candidate !== id),
-    focusedWindowId: id
-  });
-}
-function moveFloatingWindow(current, command2, timestamp) {
-  const [id, window2, rect] = requireFloatingWindow(current, command2.windowId);
-  return updateFloatingRect(
-    current,
-    id,
-    window2,
-    {
-      ...rect,
-      x: boundedCoordinate(command2.x, "$.x"),
-      y: boundedCoordinate(command2.y, "$.y")
-    },
-    timestamp
-  );
-}
-function resizeFloatingWindow(current, command2, timestamp) {
-  const [id, window2, rect] = requireFloatingWindow(current, command2.windowId);
-  return updateFloatingRect(
-    current,
-    id,
-    window2,
-    {
-      ...rect,
-      width: boundedExtent(command2.width, APP_WINDOW_FLOAT_MIN_WIDTH, "$.width"),
-      height: boundedExtent(command2.height, APP_WINDOW_FLOAT_MIN_HEIGHT, "$.height")
-    },
-    timestamp
-  );
-}
-function activateStackWindow(current, command2, timestamp) {
-  const stackId = requireId(command2.stackId, "$.stackId");
-  const windowId = requireWindowId(current, command2.windowId);
-  const stack = requireStack(current.dockRoot, stackId);
-  if (!stack.windowIds.includes(windowId)) {
-    throw new AppWindowKernelError(
-      "WINDOW_NOT_IN_STACK",
-      `$.dockRoot.${stackId}`,
-      `window "${windowId}" is not in stack "${stackId}"`
-    );
-  }
-  return finalize(current, timestamp, {
-    dockRoot: activateDockWindow(current.dockRoot, stackId, windowId),
-    focusedWindowId: windowId
-  });
-}
-function reorderStackWindow(current, command2, timestamp) {
-  const stackId = requireId(command2.stackId, "$.stackId");
-  const windowId = requireWindowId(current, command2.windowId);
-  const stack = requireStack(current.dockRoot, stackId);
-  if (!stack.windowIds.includes(windowId)) {
-    throw new AppWindowKernelError(
-      "WINDOW_NOT_IN_STACK",
-      `$.dockRoot.${stackId}`,
-      `window "${windowId}" is not in stack "${stackId}"`
-    );
-  }
-  if (!Number.isInteger(command2.index) || command2.index < 0) {
-    throw new AppWindowKernelError("INVALID_INPUT", "$.index", "index must be nonnegative");
-  }
-  const ids = stack.windowIds.filter((candidate) => candidate !== windowId);
-  ids.splice(Math.min(command2.index, ids.length), 0, windowId);
-  const dockRoot = replaceStack(current.dockRoot, stackId, { ...stack, windowIds: ids });
-  const windows = structuredClone(current.windows);
-  syncDockMemories(windows, dockRoot);
-  return finalize(current, timestamp, { windows, dockRoot });
-}
-function renameLayout(current, layoutId, name, timestamp) {
-  const id = requireId(layoutId, "$.layoutId");
-  const layout = Object.hasOwn(current.layouts, id) ? current.layouts[id] : null;
-  if (!layout) {
-    throw new AppWindowKernelError(
-      "LAYOUT_NOT_FOUND",
-      `$.layouts.${id}`,
-      `unknown app window layout "${id}"`
-    );
-  }
-  return finalize(current, timestamp, {
-    layouts: {
-      ...current.layouts,
-      [id]: { ...layout, name, revision: layout.revision + 1, updatedAt: timestamp }
-    }
-  });
-}
-function deleteLayout(current, layoutId, timestamp) {
-  const id = requireId(layoutId, "$.layoutId");
-  if (!Object.hasOwn(current.layouts, id)) {
-    throw new AppWindowKernelError(
-      "LAYOUT_NOT_FOUND",
-      `$.layouts.${id}`,
-      `unknown app window layout "${id}"`
-    );
-  }
-  const layouts = { ...current.layouts };
-  delete layouts[id];
-  return finalize(current, timestamp, {
-    layouts,
-    activeLayoutId: current.activeLayoutId === id ? null : current.activeLayoutId
-  });
-}
-function updateFloatingRect(current, id, window2, rect, timestamp) {
-  return finalize(current, timestamp, {
-    windows: {
-      ...current.windows,
-      [id]: { ...window2, placement: { ...window2.placement, floating: rect } }
-    }
-  });
-}
-function requireWindowId(current, value) {
-  const id = requireId(value, "$.windowId");
-  if (!Object.hasOwn(current.windows, id)) {
-    throw new AppWindowKernelError(
-      "WINDOW_NOT_FOUND",
-      `$.windows.${id}`,
-      `unknown app window "${id}"`
-    );
-  }
-  return id;
-}
-function requireFloatingWindow(current, value) {
-  const id = requireWindowId(current, value);
-  const window2 = current.windows[id];
-  if (window2.placement.mode !== "floating" || !window2.placement.floating) {
-    throw new AppWindowKernelError(
-      "INVALID_PLACEMENT",
-      `$.windows.${id}.placement`,
-      `window "${id}" is not floating`
-    );
-  }
-  return [id, window2, window2.placement.floating];
-}
-function requireStack(root, stackId) {
-  const stack = findStack(root, stackId);
-  if (!stack) {
-    throw new AppWindowKernelError(
-      "STACK_NOT_FOUND",
-      `$.dockRoot.${stackId}`,
-      `unknown app window stack "${stackId}"`
-    );
-  }
-  return stack;
-}
-function findStack(node, stackId) {
-  if (!node) return null;
-  if (node.type === "stack") return node.id === stackId ? node : null;
-  for (const child of node.children) {
-    const found = findStack(child, stackId);
-    if (found) return found;
-  }
-  return null;
-}
-function firstStackId(node) {
-  if (!node) return null;
-  if (node.type === "stack") return node.id;
-  return firstStackId(node.children[0] ?? null);
-}
-function removeDockWindow(node, windowId) {
-  if (!node) return null;
-  if (node.type === "stack") {
-    const index = node.windowIds.indexOf(windowId);
-    if (index < 0) return node;
-    const windowIds = node.windowIds.filter((candidate) => candidate !== windowId);
-    if (windowIds.length === 0) return null;
-    return {
-      ...node,
-      windowIds,
-      activeWindowId: node.activeWindowId === windowId ? windowIds[Math.min(index, windowIds.length - 1)] : node.activeWindowId
-    };
-  }
-  const pairs = node.children.map((child, index) => ({
-    child: removeDockWindow(child, windowId),
-    weight: node.weights[index]
-  })).filter(
-    (pair) => pair.child !== null
-  );
-  if (pairs.length === 0) return null;
-  if (pairs.length === 1) return pairs[0].child;
-  return {
-    ...node,
-    children: pairs.map((pair) => pair.child),
-    weights: pairs.map((pair) => pair.weight)
-  };
-}
-function insertDockWindow(node, stackId, windowId, index) {
-  if (node.type === "stack") {
-    if (node.id !== stackId) return node;
-    const windowIds = [...node.windowIds];
-    windowIds.splice(Math.min(index, windowIds.length), 0, windowId);
-    return { ...node, windowIds };
-  }
-  return {
-    ...node,
-    children: node.children.map((child) => insertDockWindow(child, stackId, windowId, index))
-  };
-}
-function activateDockWindow(node, stackId, windowId) {
-  if (node.type === "stack") {
-    return node.id === stackId ? { ...node, activeWindowId: windowId } : node;
-  }
-  return {
-    ...node,
-    children: node.children.map((child) => activateDockWindow(child, stackId, windowId))
-  };
-}
-function replaceStack(node, stackId, replacement) {
-  if (node.type === "stack") return node.id === stackId ? replacement : node;
-  return {
-    ...node,
-    children: node.children.map((child) => replaceStack(child, stackId, replacement))
-  };
-}
-function syncDockMemories(windows, node) {
-  if (!node) return;
-  if (node.type === "split") {
-    for (const child of node.children) syncDockMemories(windows, child);
-    return;
-  }
-  for (const [index, id] of node.windowIds.entries()) {
-    const window2 = Object.hasOwn(windows, id) ? windows[id] : null;
-    if (!window2 || window2.placement.mode !== "docked") continue;
-    windows[id] = {
-      ...window2,
-      placement: { ...window2.placement, docked: { stackId: node.id, index } }
-    };
-  }
-}
-function uniqueRootStackId(root) {
-  let ordinal = 0;
-  while (true) {
-    const candidate = ordinal === 0 ? "stack-root" : `stack-root-${ordinal}`;
-    if (!findStack(root, candidate)) return candidate;
-    ordinal += 1;
-  }
-}
-function normalizeRect(rect) {
-  return {
-    x: boundedCoordinate(rect.x, "$.rect.x"),
-    y: boundedCoordinate(rect.y, "$.rect.y"),
-    width: boundedExtent(rect.width, APP_WINDOW_FLOAT_MIN_WIDTH, "$.rect.width"),
-    height: boundedExtent(rect.height, APP_WINDOW_FLOAT_MIN_HEIGHT, "$.rect.height")
-  };
-}
-function sameRect(left, right) {
-  return left.x === right.x && left.y === right.y && left.width === right.width && left.height === right.height;
-}
-function sameScene(left, right) {
-  return JSON.stringify({
-    windows: left.windows,
-    dockRoot: left.dockRoot,
-    dockState: left.dockState,
-    floatingOrder: left.floatingOrder,
-    focusedWindowId: left.focusedWindowId
-  }) === JSON.stringify({
-    windows: right.windows,
-    dockRoot: right.dockRoot,
-    dockState: right.dockState,
-    floatingOrder: right.floatingOrder,
-    focusedWindowId: right.focusedWindowId
-  });
-}
-function requireNonnegativeIndex(value, path2, message) {
-  if (!Number.isInteger(value) || value < 0) {
-    throw new AppWindowKernelError("INVALID_INPUT", path2, message);
-  }
-}
-function boundedCoordinate(value, path2) {
-  if (!Number.isFinite(value)) {
-    throw new AppWindowKernelError("INVALID_INPUT", path2, "coordinate must be finite");
-  }
-  return Math.max(-APP_WINDOW_COORDINATE_LIMIT, Math.min(APP_WINDOW_COORDINATE_LIMIT, value));
-}
-function boundedExtent(value, minimum, path2) {
-  if (!Number.isFinite(value)) {
-    throw new AppWindowKernelError("INVALID_INPUT", path2, "extent must be finite");
-  }
-  return Math.max(minimum, Math.min(APP_WINDOW_COORDINATE_LIMIT, value));
-}
-function requireTimestamp(previous, value) {
-  let timestamp;
-  try {
-    timestamp = AppWindowTimestampSchemaZ.parse(value);
-  } catch (error) {
-    throw translateStateError(error, "$.timestamp");
-  }
-  if (Date.parse(timestamp) < Date.parse(previous)) {
-    throw new AppWindowKernelError(
-      "TIMESTAMP_REGRESSION",
-      "$.updatedAt",
-      "app window mutation timestamp must not move backwards"
-    );
-  }
-  return timestamp;
-}
-function requireDocument(value) {
-  try {
-    return AppWindowDocumentV1SchemaZ.parse(value);
-  } catch (error) {
-    throw translateStateError(error, "$");
-  }
-}
-function requireId(value, path2) {
-  try {
-    return AppWindowIdSchemaZ.parse(value);
-  } catch (error) {
-    throw translateStateError(error, path2);
-  }
-}
-function finalize(current, timestamp, patch) {
-  try {
-    return AppWindowDocumentV1SchemaZ.parse({
-      ...current,
-      ...patch,
-      version: current.version,
-      revision: current.revision + 1,
-      updatedAt: timestamp
-    });
-  } catch (error) {
-    throw translateStateError(error, "$");
-  }
-}
-function translateStateError(error, path2) {
-  if (error instanceof AppWindowKernelError) return error;
-  const message = error.message;
-  return new AppWindowKernelError("INVALID_INPUT", path2, message);
-}
-var APP_WINDOW_FLOAT_MIN_WIDTH, APP_WINDOW_FLOAT_MIN_HEIGHT, APP_WINDOW_COORDINATE_LIMIT, AppWindowKernelError;
-var init_app_window_kernel = __esm({
-  "packages/daemon/src/lib/app-window-kernel.ts"() {
-    "use strict";
-    init_src();
-    init_app_window_state2();
-    APP_WINDOW_FLOAT_MIN_WIDTH = 20;
-    APP_WINDOW_FLOAT_MIN_HEIGHT = 6;
-    APP_WINDOW_COORDINATE_LIMIT = 1e6;
-    AppWindowKernelError = class extends Error {
-      code;
-      path;
-      constructor(code, path2, message) {
-        super(message);
-        this.name = "AppWindowKernelError";
-        this.code = code;
-        this.path = path2;
-      }
-    };
-  }
-});
-
-// packages/daemon/src/lib/app-window-repository.ts
-function loadAppWindowDocument(repository, options) {
-  return loadAppWindowDocumentInternal(repository, options);
-}
-function loadAppWindowDocumentInternal(repository, options, writer) {
-  let runtimeDocument;
-  try {
-    runtimeDocument = repository.readDocument(APP_WINDOW_DOCUMENT_PATH);
-  } catch (error) {
-    return protectedReadFailure(repository, options.loadedAt, error);
-  }
-  if (!runtimeDocument.found) {
-    if (options.migrateLegacy !== false) {
-      const migration = writer ? attemptFirstMigrationLocked(repository, writer, options) : attemptFirstMigration(repository, options);
-      if (migration) return migration;
-    }
-    return {
-      document: emptyAppWindowDocument(options.loadedAt),
-      revision: null,
-      writeProtected: false,
-      diagnostics: [diagnostic2("MISSING", APP_WINDOW_DOCUMENT_PATH, "app window state is absent")],
-      recoveryToken: null
-    };
-  }
-  const parsed = parseAppWindowDocument(runtimeDocument.payload, options.loadedAt);
-  const diagnostics = parsed.diagnostics.map((entry) => ({ ...entry }));
-  const writeProtected = parsed.writeProtected || diagnostics.length > 0;
-  return {
-    document: parsed.document,
-    revision: runtimeDocument.revision,
-    writeProtected,
-    diagnostics,
-    ...writeProtected ? { preservedPayload: structuredClone(runtimeDocument.payload) } : {},
-    recoveryToken: safeRecoveryToken(repository)
-  };
-}
-function writeAppWindowDocument(repository, expectedRevision, document) {
-  return withAppWindowWriterLock(
-    repository,
-    void 0,
-    (writer) => writeAppWindowDocumentLocked(repository, writer, expectedRevision, document)
-  );
-}
-function writeAppWindowDocumentLocked(repository, writer, expectedRevision, document) {
-  const validation = AppWindowDocumentV1SchemaZ.safeParse(document);
-  if (!validation.success) {
-    throw new AppWindowRepositoryError(
-      "INVALID_DOCUMENT",
-      validation.error.issues.map((issue) => issue.message).join("; ")
-    );
-  }
-  const loaded = loadAppWindowDocument(repository, {
-    loadedAt: validation.data.updatedAt,
-    migrateLegacy: false
-  });
-  assertWritable(loaded);
-  if (loaded.revision !== expectedRevision) throw revisionError(expectedRevision, loaded.revision);
-  assertNextDocumentRevision(loaded, validation.data);
-  try {
-    const payload = JSON.parse(serializeAppWindowDocument(validation.data));
-    const written = writer.writeDocument(APP_WINDOW_DOCUMENT_PATH, payload, {
-      expectedRevision
-    });
-    return {
-      document: validation.data,
-      revision: written.revision,
-      writeProtected: false,
-      diagnostics: [],
-      recoveryToken: safeRecoveryToken(repository)
-    };
-  } catch (error) {
-    if (error instanceof RevisionConflictError) {
-      throw revisionError(error.expectedRevision, error.actualRevision, error);
-    }
-    throw new AppWindowRepositoryError(
-      "WRITE_FAILED",
-      `app window state could not be written: ${error.message}`,
-      [diagnostic2("WRITE_FAILED", APP_WINDOW_DOCUMENT_PATH, error.message)],
-      error
-    );
-  }
-}
-function resetAppWindowDocumentLocked(repository, writer, request) {
-  const loaded = loadAppWindowDocument(repository, {
-    loadedAt: request.resetAt,
-    migrateLegacy: false
-  });
-  if (!loaded.writeProtected) {
-    throw new AppWindowRepositoryError(
-      "RECOVERY_NOT_REQUIRED",
-      "app window state is valid; normal revision CAS must be used"
-    );
-  }
-  if (!loaded.recoveryToken || loaded.recoveryToken !== request.expectedRecoveryToken) {
-    throw new AppWindowRepositoryError(
-      "RECOVERY_CONFLICT",
-      "app window recovery token no longer matches the preserved document"
-    );
-  }
-  let resetDocument = request.document;
-  if (resetDocument === void 0) {
-    try {
-      resetDocument = emptyAppWindowDocument(request.resetAt);
-    } catch (error) {
-      throw new AppWindowRepositoryError(
-        "INVALID_DOCUMENT",
-        `resetAt must be a valid app window timestamp: ${error.message}`,
-        [],
-        error
-      );
-    }
-  }
-  const validation = AppWindowDocumentV1SchemaZ.safeParse(resetDocument);
-  if (!validation.success) {
-    throw new AppWindowRepositoryError(
-      "INVALID_DOCUMENT",
-      validation.error.issues.map((issue) => issue.message).join("; ")
-    );
-  }
-  const document = validation.data;
-  try {
-    const payload = JSON.parse(serializeAppWindowDocument(document));
-    const recovered = writer.recoverDocument(APP_WINDOW_DOCUMENT_PATH, payload, {
-      expectedRawSha256: request.expectedRecoveryToken,
-      reason: request.reason,
-      details: {
-        diagnostics: loaded.diagnostics.map((entry) => ({ ...entry }))
-      }
-    });
-    return {
-      document,
-      revision: recovered.revision,
-      writeProtected: false,
-      diagnostics: [
-        diagnostic2(
-          "RECOVERED",
-          APP_WINDOW_DOCUMENT_PATH,
-          `app window state was explicitly reset; prior bytes preserved at ${recovered.backupPath}`
-        )
-      ],
-      recoveryToken: safeRecoveryToken(repository),
-      backupPath: recovered.backupPath,
-      metadataPath: recovered.metadataPath,
-      reason: recovered.reason
-    };
-  } catch (error) {
-    if (error instanceof RevisionConflictError) {
-      throw new AppWindowRepositoryError(
-        "RECOVERY_CONFLICT",
-        "app window document changed before explicit recovery",
-        [],
-        error
-      );
-    }
-    throw new AppWindowRepositoryError(
-      "WRITE_FAILED",
-      `app window recovery failed: ${error.message}`,
-      [],
-      error
-    );
-  }
-}
-function assertNextDocumentRevision(loaded, next) {
-  if (loaded.revision === null) {
-    if (next.revision === 0 || next.revision === 1) return;
-    throw new AppWindowRepositoryError(
-      "INVALID_DOCUMENT",
-      "a new app window document must start at domain revision 0 or 1"
-    );
-  }
-  if (next.revision !== loaded.document.revision + 1) {
-    throw new AppWindowRepositoryError(
-      "INVALID_DOCUMENT",
-      `app window domain revision must advance exactly once from ${loaded.document.revision}`
-    );
-  }
-  if (Date.parse(next.updatedAt) < Date.parse(loaded.document.updatedAt)) {
-    throw new AppWindowRepositoryError(
-      "INVALID_DOCUMENT",
-      "app window updatedAt must not move backwards"
-    );
-  }
-}
-function withAppWindowWriterLock(repository, options, action) {
-  try {
-    return repository.withWriterLock(options, action);
-  } catch (error) {
-    if (error instanceof AppWindowRepositoryError || error instanceof AppWindowKernelError) {
-      throw error;
-    }
-    throw new AppWindowRepositoryError(
-      "WRITE_FAILED",
-      `app window writer lock failed: ${error.message}`,
-      [diagnostic2("WRITE_FAILED", APP_WINDOW_DOCUMENT_PATH, error.message)],
-      error
-    );
-  }
-}
-function attemptFirstMigration(repository, options) {
-  try {
-    return withAppWindowWriterLock(
-      repository,
-      void 0,
-      (writer) => attemptFirstMigrationLocked(repository, writer, options)
-    );
-  } catch (error) {
-    return migrationFailure(
-      repository,
-      options,
-      error,
-      "legacy migration lock could not be acquired"
-    );
-  }
-}
-function attemptFirstMigrationLocked(repository, writer, options) {
-  let current;
-  try {
-    current = repository.readDocument(APP_WINDOW_DOCUMENT_PATH);
-  } catch (error) {
-    return protectedReadFailure(repository, options.loadedAt, error);
-  }
-  if (current.found) {
-    return loadAppWindowDocumentInternal(repository, { ...options, migrateLegacy: false }, writer);
-  }
-  let legacy;
-  try {
-    legacy = repository.readDocument(LEGACY_WORKSPACE_UI_PATH);
-  } catch (error) {
-    return migrationFailure(
-      repository,
-      options,
-      error,
-      "legacy workspace UI state could not be read"
-    );
-  }
-  if (!legacy.found) return null;
-  try {
-    const migrated = migrateWorkspaceUiStateV2ToAppWindowDocument(legacy.payload, {
-      migratedAt: options.migratedAt ?? options.loadedAt,
-      terminalSourceIds: options.terminalSourceIds,
-      focusedTerminalSourceId: options.focusedTerminalSourceId
-    });
-    const payload = JSON.parse(serializeAppWindowDocument(migrated.document));
-    const written = writer.writeDocument(APP_WINDOW_DOCUMENT_PATH, payload, {
-      expectedRevision: null
-    });
-    return {
-      document: migrated.document,
-      revision: written.revision,
-      writeProtected: false,
-      diagnostics: migrated.diagnostics,
-      recoveryToken: safeRecoveryToken(repository)
-    };
-  } catch (error) {
-    if (error instanceof RevisionConflictError) {
-      return loadAppWindowDocumentInternal(
-        repository,
-        { ...options, migrateLegacy: false },
-        writer
-      );
-    }
-    return migrationFailure(
-      repository,
-      options,
-      error,
-      "legacy workspace UI state was not migrated"
-    );
-  }
-}
-function migrationFailure(repository, options, error, context) {
-  const optOut = validateMigrationFailureOptOut(options.migrationFailureOptOut);
-  const suffix = optOut ? `; explicit migration opt-out accepted: ${optOut}` : "; writes remain protected until an explicit migration opt-out reason is supplied";
-  return {
-    document: emptyAppWindowDocument(options.loadedAt),
-    revision: null,
-    writeProtected: optOut === null,
-    diagnostics: [
-      diagnostic2(
-        "MIGRATION_FAILED",
-        LEGACY_WORKSPACE_UI_PATH,
-        `${context}: ${error.message}${suffix}`
-      )
-    ],
-    recoveryToken: safeRecoveryToken(repository)
-  };
-}
-function validateMigrationFailureOptOut(value) {
-  if (value === void 0) return null;
-  const reason = value.reason.trim();
-  if (reason.length === 0 || reason.length > 512 || reason.includes("\0")) return null;
-  return reason;
-}
-function protectedReadFailure(repository, loadedAt, error) {
-  return {
-    document: emptyAppWindowDocument(loadedAt),
-    revision: null,
-    writeProtected: true,
-    diagnostics: [
-      diagnostic2(
-        "READ_FAILED",
-        APP_WINDOW_DOCUMENT_PATH,
-        `app window state could not be read safely: ${error.message}`
-      )
-    ],
-    recoveryToken: safeRecoveryToken(repository)
-  };
-}
-function assertWritable(loaded) {
-  if (!loaded.writeProtected) return;
-  throw new AppWindowRepositoryError(
-    "WRITE_PROTECTED",
-    "app window state is not safe to overwrite without explicit recovery",
-    [
-      ...loaded.diagnostics,
-      diagnostic2(
-        "WRITE_PROTECTED",
-        APP_WINDOW_DOCUMENT_PATH,
-        "preserved current app window bytes without writing"
-      )
-    ]
-  );
-}
-function safeRecoveryToken(repository) {
-  try {
-    return repository.documentRecoveryToken(APP_WINDOW_DOCUMENT_PATH);
-  } catch {
-    return null;
-  }
-}
-function revisionError(expected, actual, cause) {
-  return new AppWindowRepositoryError(
-    "REVISION_CONFLICT",
-    `app window revision conflict: expected ${String(expected)}, actual ${String(actual)}`,
-    [
-      diagnostic2(
-        "REVISION_CONFLICT",
-        APP_WINDOW_DOCUMENT_PATH,
-        `expected ${String(expected)}, actual ${String(actual)}`
-      )
-    ],
-    cause
-  );
-}
-function boundedRetries(value) {
-  if (value === void 0) return 2;
-  if (!Number.isInteger(value) || value < 0 || value > 8) {
-    throw new AppWindowRepositoryError(
-      "INVALID_DOCUMENT",
-      "maxRetries must be an integer between 0 and 8"
-    );
-  }
-  return value;
-}
-function validateExpectedRevision(value) {
-  if (value === void 0 || value === null) return value;
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new AppWindowRepositoryError(
-      "INVALID_DOCUMENT",
-      "expectedRevision must be null or a nonnegative safe integer"
-    );
-  }
-  return value;
-}
-function diagnostic2(code, path2, message) {
-  return { code, path: path2, message };
-}
-var APP_WINDOW_DOCUMENT_PATH, LEGACY_WORKSPACE_UI_PATH, AppWindowRepositoryError, AppWindowService;
-var init_app_window_repository = __esm({
-  "packages/daemon/src/lib/app-window-repository.ts"() {
-    "use strict";
-    init_src();
-    init_project_runtime_repository();
-    init_app_window_kernel();
-    init_app_window_state2();
-    APP_WINDOW_DOCUMENT_PATH = "ui/app-windows.json";
-    LEGACY_WORKSPACE_UI_PATH = "ui/workspace.json";
-    AppWindowRepositoryError = class extends Error {
-      code;
-      diagnostics;
-      cause;
-      constructor(code, message, diagnostics = [], cause) {
-        super(message);
-        this.name = "AppWindowRepositoryError";
-        this.code = code;
-        this.diagnostics = diagnostics;
-        this.cause = cause;
-      }
-    };
-    AppWindowService = class {
-      #runtime;
-      #now;
-      #migration;
-      #writerLock;
-      constructor(runtime, options = {}) {
-        this.#runtime = runtime;
-        this.#now = options.now ?? (() => (/* @__PURE__ */ new Date()).toISOString());
-        this.#migration = options.migration ? {
-          terminalSourceIds: options.migration.terminalSourceIds,
-          focusedTerminalSourceId: options.migration.focusedTerminalSourceId,
-          migrationFailureOptOut: options.migration.migrationFailureOptOut
-        } : void 0;
-        this.#writerLock = options.writerLock;
-      }
-      load() {
-        const timestamp = this.#now();
-        return loadAppWindowDocument(this.#runtime, {
-          loadedAt: timestamp,
-          migratedAt: timestamp,
-          ...this.#migration
-        });
-      }
-      execute(command2, options = {}) {
-        const expectedRevision = validateExpectedRevision(options.expectedRevision);
-        return withAppWindowWriterLock(this.#runtime, this.#writerLock, (writer) => {
-          const retries = boundedRetries(options.maxRetries);
-          for (let attempt = 0; attempt <= retries; attempt += 1) {
-            const timestamp = this.#now();
-            const loaded = loadAppWindowDocumentInternal(
-              this.#runtime,
-              {
-                loadedAt: timestamp,
-                migratedAt: timestamp,
-                ...this.#migration
-              },
-              writer
-            );
-            assertWritable(loaded);
-            if (expectedRevision !== void 0 && expectedRevision !== loaded.revision) {
-              throw revisionError(expectedRevision, loaded.revision);
-            }
-            if (isAppWindowCommandSatisfied(loaded.document, command2)) return loaded;
-            const clock = this.#now();
-            const commandTimestamp = Date.parse(clock) < Date.parse(loaded.document.updatedAt) ? loaded.document.updatedAt : clock;
-            const next = applyAppWindowCommand(loaded.document, command2, commandTimestamp);
-            try {
-              return writeAppWindowDocumentLocked(this.#runtime, writer, loaded.revision, next);
-            } catch (error) {
-              if (error instanceof AppWindowRepositoryError && error.code === "REVISION_CONFLICT" && expectedRevision === void 0 && attempt < retries) {
-                continue;
-              }
-              throw error;
-            }
-          }
-          throw new Error("unreachable app-window retry exhaustion");
-        });
-      }
-      reset(request) {
-        return withAppWindowWriterLock(
-          this.#runtime,
-          this.#writerLock,
-          (writer) => resetAppWindowDocumentLocked(this.#runtime, writer, request)
-        );
-      }
-    };
-  }
-});
-
-// packages/daemon/src/lib/app-window-mutation.ts
-function boundedOperationLimit(value) {
-  if (value === void 0) return MAX_OPERATIONS3;
-  if (!Number.isInteger(value) || value < 1 || value > MAX_OPERATIONS3) {
-    throw new TypeError(
-      `app-window operation limit must be an integer from 1 to ${MAX_OPERATIONS3}`
-    );
-  }
-  return value;
-}
-function translateMutationError(error) {
-  if (error instanceof AppWindowMutationError) return error;
-  if (error instanceof AppWindowRepositoryError) {
-    if (error.code === "REVISION_CONFLICT") {
-      return new AppWindowMutationError("revision_conflict", {}, error);
-    }
-    if (error.code === "WRITE_PROTECTED" || error.code === "READ_FAILED") {
-      return new AppWindowMutationError("document_unavailable", {}, error);
-    }
-    return new AppWindowMutationError("mutation_failed", {}, error);
-  }
-  if (error instanceof AppWindowKernelError) {
-    return new AppWindowMutationError("mutation_failed", { path: error.path }, error);
-  }
-  return new AppWindowMutationError("workspace_unavailable", {}, error);
-}
-var MAX_OPERATIONS3, ERROR_MESSAGES4, AppWindowMutationError, AppWindowMutationAuthority;
-var init_app_window_mutation2 = __esm({
-  "packages/daemon/src/lib/app-window-mutation.ts"() {
-    "use strict";
-    init_src();
-    init_app_window_kernel();
-    init_app_window_repository();
-    init_project_runtime_repository();
-    MAX_OPERATIONS3 = 256;
-    ERROR_MESSAGES4 = {
-      daemon_instance_mismatch: "The daemon generation changed before the app window was updated.",
-      workspace_not_found: "The requested workspace is not registered.",
-      workspace_unavailable: "The requested workspace is unavailable for app-window mutation.",
-      revision_conflict: "The app-window document changed before this command was applied.",
-      operation_conflict: "The operation id was already used for a different app-window command.",
-      operation_capacity: "The daemon has reached its bounded app-window operation capacity.",
-      document_unavailable: "The durable app-window document is unavailable.",
-      mutation_failed: "The durable app-window command could not be applied."
-    };
-    AppWindowMutationError = class extends Error {
-      constructor(code, context = {}, cause) {
-        super(ERROR_MESSAGES4[code], cause === void 0 ? void 0 : { cause });
-        this.code = code;
-        this.context = context;
-        this.name = "AppWindowMutationError";
-      }
-    };
-    AppWindowMutationAuthority = class {
-      #daemonInstanceId;
-      #registry;
-      #openRuntime;
-      #maxOperations;
-      #operations = /* @__PURE__ */ new Map();
-      #disposed = false;
-      constructor(options) {
-        this.#daemonInstanceId = options.daemonInstanceId;
-        this.#registry = options.registry;
-        this.#openRuntime = options.openRuntime ?? openProjectRuntimeRepository;
-        this.#maxOperations = boundedOperationLimit(options.maxOperations);
-      }
-      async mutate(rawRequest) {
-        if (this.#disposed) throw new AppWindowMutationError("workspace_unavailable");
-        const request = AppWindowMutationRequestSchemaZ.parse(rawRequest);
-        if (request.expectedDaemonInstanceId !== this.#daemonInstanceId) {
-          throw new AppWindowMutationError("daemon_instance_mismatch");
-        }
-        const fingerprint2 = JSON.stringify(request);
-        const existing = this.#operations.get(request.operationId);
-        if (existing) {
-          if (existing.fingerprint !== fingerprint2) {
-            throw new AppWindowMutationError("operation_conflict");
-          }
-          const result2 = await existing.result;
-          return AppWindowMutationResultSchemaZ.parse({ ...result2, outcome: "replayed" });
-        }
-        if (this.#operations.size >= this.#maxOperations) {
-          const settled = [...this.#operations].find(([, record2]) => record2.settled);
-          if (!settled) throw new AppWindowMutationError("operation_capacity");
-          this.#operations.delete(settled[0]);
-        }
-        const result = this.#execute(request);
-        const record = { fingerprint: fingerprint2, result, settled: false };
-        this.#operations.set(request.operationId, record);
-        try {
-          return await result;
-        } catch (error) {
-          this.#operations.delete(request.operationId);
-          throw error;
-        } finally {
-          record.settled = true;
-        }
-      }
-      dispose() {
-        this.#disposed = true;
-        this.#operations.clear();
-      }
-      async #execute(request) {
-        try {
-          const workspace = this.#registry.get(request.intent.workspaceName);
-          if (!workspace) throw new AppWindowMutationError("workspace_not_found");
-          const runtime = await this.#openRuntime(workspace.projectDir);
-          if (this.#disposed) throw new AppWindowMutationError("workspace_unavailable");
-          const service = new AppWindowService(runtime);
-          const loaded = service.load();
-          if (loaded.writeProtected) throw new AppWindowMutationError("document_unavailable");
-          if (loaded.document.revision !== request.intent.expectedDocumentRevision) {
-            throw new AppWindowMutationError("revision_conflict", {
-              expectedRevision: String(request.intent.expectedDocumentRevision),
-              actualRevision: String(loaded.document.revision)
-            });
-          }
-          const next = service.execute(request.intent.command, { expectedRevision: loaded.revision });
-          const unchanged = next.document.revision === loaded.document.revision;
-          return AppWindowMutationResultSchemaZ.parse({
-            operationId: request.operationId,
-            daemonInstanceId: this.#daemonInstanceId,
-            outcome: unchanged ? "unchanged" : "applied",
-            workspaceName: request.intent.workspaceName,
-            documentRevision: next.document.revision
-          });
-        } catch (error) {
-          throw translateMutationError(error);
-        }
-      }
-    };
-  }
-});
-
-// packages/daemon/src/lib/tmux-external-interaction-observer.ts
-import { execFile as execFile7 } from "node:child_process";
-import { z as z70 } from "zod";
-function socketArguments(authority) {
-  return authority.socketSelector.kind === "path" ? ["-S", authority.socketSelector.path] : ["-L", authority.socketSelector.name];
-}
-function defaultWaiter(authority) {
-  const prefix = socketArguments(authority);
-  return (channel, signal) => new Promise((resolve37, reject) => {
-    execFile7(
-      authority.executablePath,
-      [...prefix, "wait-for", channel],
-      { signal, encoding: "utf8", windowsHide: true },
-      (error) => {
-        if (!error) resolve37();
-        else if (signal.aborted) resolve37();
-        else reject(error);
-      }
-    );
-  });
-}
-function abortableDelay(milliseconds, signal) {
-  if (signal.aborted) return Promise.resolve();
-  return new Promise((resolve37) => {
-    const timer = setTimeout(done, milliseconds);
-    function done() {
-      signal.removeEventListener("abort", done);
-      clearTimeout(timer);
-      resolve37();
-    }
-    signal.addEventListener("abort", done, { once: true });
-  });
-}
-function internalInteractionOperationMarker(daemonInstanceId2, operationId) {
-  return `${daemonInstanceId2}:${operationId}`;
-}
-function parseTmuxInputHookRecords(raw) {
-  const records = [];
-  for (const encoded of raw.split(EVENT_SEPARATOR)) {
-    if (!encoded) continue;
-    const fields = encoded.split(FIELD_SEPARATOR);
-    if (fields.length !== 3 || !RUNTIME_PANE.test(fields[0])) continue;
-    const marker = fields[1];
-    if (marker.length > 160 || /[\r\n]/u.test(marker)) continue;
-    const operationKind = fields[2];
-    if (operationKind !== "workspace.pane.send" && operationKind !== "workspace.pane.read") {
-      continue;
-    }
-    records.push({
-      runtimePaneId: fields[0],
-      operationMarker: marker || null,
-      operationKind
-    });
-  }
-  return records;
-}
-function hookIndexes(output, hookName) {
-  const row = new RegExp(`^${hookName}\\[([0-9]+)\\]\\s+(.+)$`, "u");
-  const indexes = [];
-  for (const line of output.split("\n")) {
-    const match = row.exec(line);
-    if (match && match[2].includes(OWNED_HOOK_MARKER)) indexes.push(Number(match[1]));
-  }
-  return indexes;
-}
-var HOOK_MARKER, OWNED_HOOK_MARKER, FIELD_SEPARATOR, EVENT_SEPARATOR, RUNTIME_PANE, RETRY_MS, HOOK_HEALTHCHECK_MS, TmuxExternalInteractionObserver;
-var init_tmux_external_interaction_observer = __esm({
-  "packages/daemon/src/lib/tmux-external-interaction-observer.ts"() {
-    "use strict";
-    init_src();
-    init_workspace_pane_creation2();
-    init_workspace_registry();
-    init_tmux_interaction_options();
-    HOOK_MARKER = "tmux-ide-interaction-v2";
-    OWNED_HOOK_MARKER = "tmux-ide-interaction-v";
-    FIELD_SEPARATOR = "|tmux-ide-input-field-v1|";
-    EVENT_SEPARATOR = "|tmux-ide-input-event-v1|";
-    RUNTIME_PANE = /^%[0-9]+$/u;
-    RETRY_MS = 1e3;
-    HOOK_HEALTHCHECK_MS = 1e3;
-    TmuxExternalInteractionObserver = class {
-      #daemonInstanceId;
-      #registry;
-      #io;
-      #onObserved;
-      #bufferName;
-      #signalChannel;
-      #abort = new AbortController();
-      #active = false;
-      #installed = false;
-      #loop = null;
-      #starting = null;
-      #hookHealthcheck = null;
-      #drainSequence = 0;
-      #tmuxWork = Promise.resolve();
-      #reconcile = null;
-      #diagnostics;
-      #diagnosticActiveOperations = 0;
-      #authenticatedInternalReads;
-      constructor(options) {
-        this.#daemonInstanceId = options.daemonInstanceId;
-        this.#registry = options.registry ?? getDefaultWorkspaceRegistry();
-        this.#onObserved = options.onObserved;
-        this.#authenticatedInternalReads = new AuthenticatedInternalReadVerifier({
-          daemonInstanceId: options.daemonInstanceId,
-          ownerToken: options.internalReadOwnerToken
-        });
-        this.#bufferName = `${HOOK_MARKER}-${options.daemonInstanceId}`;
-        this.#signalChannel = `${this.#bufferName}-ready`;
-        this.#diagnostics = options.diagnostics ?? null;
-        this.#io = {
-          runTmux: options.io?.runTmux ?? createPinnedWorkspaceTmuxAsyncRunner(options.tmuxAuthority),
-          waitForSignal: options.io?.waitForSignal ?? defaultWaiter(options.tmuxAuthority),
-          delay: options.io?.delay ?? abortableDelay
-        };
-      }
-      /** Private synchronous equivalent of the installed after-capture hook.
-       * Recovery hook bodies run with NOHOOKS, so they append this exact bounded
-       * record and signal the already-owned observer drain explicitly. */
-      internalReadHookEmission(runtimePaneId, marker) {
-        if (!RUNTIME_PANE.test(runtimePaneId))
-          throw new TypeError("internal read hook emission requires a runtime pane id");
-        if (!/^[A-Za-z0-9:._-]{16,256}$/u.test(marker))
-          throw new TypeError("internal read hook emission requires a bounded marker");
-        return Object.freeze({
-          bufferName: this.#bufferName,
-          signalChannel: this.#signalChannel,
-          record: `${runtimePaneId}${FIELD_SEPARATOR}${marker}${FIELD_SEPARATOR}workspace.pane.read${EVENT_SEPARATOR}`
-        });
-      }
-      start() {
-        if (this.#starting) return this.#starting;
-        if (this.#active) return Promise.resolve();
-        const work = this.#start();
-        const settled = work.finally(() => {
-          if (this.#starting === settled) this.#starting = null;
-        });
-        this.#starting = settled;
-        return settled;
-      }
-      async #start() {
-        this.#active = true;
-        try {
-          await this.install();
-        } catch (error) {
-          this.#active = false;
-          await this.#serializeTmux(async () => {
-            await this.#removeOwnedHooks();
-            await this.#deleteBuffer(this.#bufferName);
-          });
-          throw error;
-        }
-        if (!this.#active || this.#abort.signal.aborted) {
-          await this.#serializeTmux(async () => {
-            await this.#removeOwnedHooks();
-            await this.#deleteBuffer(this.#bufferName);
-          });
-          throw new Error("tmux external interaction observer was disposed during startup");
-        }
-        this.#loop = this.#run();
-        this.#hookHealthcheck = setInterval(() => void this.reconcileHooks(), HOOK_HEALTHCHECK_MS);
-        this.#hookHealthcheck.unref?.();
-      }
-      setDiagnostics(diagnostics) {
-        this.#diagnostics = diagnostics;
-      }
-      async dispose() {
-        if (!this.#active && !this.#loop && !this.#starting) return;
-        const starting = this.#starting;
-        this.#active = false;
-        this.#abort.abort();
-        if (this.#hookHealthcheck) clearInterval(this.#hookHealthcheck);
-        this.#hookHealthcheck = null;
-        await Promise.allSettled([starting, this.#loop]);
-        this.#loop = null;
-        await this.#serializeTmux(async () => {
-          await this.#removeOwnedHooks();
-          await this.#deleteBuffer(this.#bufferName);
-        });
-      }
-      /** Install the hook once. Public for hermetic lifecycle tests. */
-      install() {
-        return this.#serializeTmux(() => this.#install(this.#abort.signal));
-      }
-      async #install(signal) {
-        await this.#removeOwnedHooks(signal);
-        await this.#deleteOwnedBuffers(signal);
-        signal?.throwIfAborted();
-        const hook = (operationKind, markerOption, consumeMarker) => {
-          const data = `#{pane_id}${FIELD_SEPARATOR}#{q:${markerOption}}${FIELD_SEPARATOR}${operationKind}${EVENT_SEPARATOR}`;
-          const publish = `run-shell -b -C "set-buffer -a -b '${this.#bufferName}' '${data}' ; wait-for -S '${this.#signalChannel}'"`;
-          const consume = consumeMarker ? ` ; set-option -pu '${markerOption}'` : "";
-          return `${publish}${consume}`;
-        };
-        await this.#io.runTmux(
-          [
-            "set-hook",
-            "-ag",
-            "after-send-keys",
-            hook("workspace.pane.send", INTERNAL_SEND_OPERATION_OPTION, true)
-          ],
-          signal
-        );
-        signal?.throwIfAborted();
-        await this.#io.runTmux(
-          [
-            "set-hook",
-            "-ag",
-            "after-capture-pane",
-            hook("workspace.pane.read", INTERNAL_READ_OPERATION_OPTION, true)
-          ],
-          signal
-        );
-        signal?.throwIfAborted();
-        this.#installed = true;
-      }
-      /**
-       * Restore product hooks when external tmux configuration removed them.
-       * Public only so the lifecycle is hermetically testable; the production
-       * observer invokes it from a cheap one-second health check.
-       */
-      reconcileHooks(options = {}) {
-        if (!this.#active && options.allowInactive !== true) return Promise.resolve();
-        if (this.#reconcile) return this.#reconcile;
-        const work = this.#serializeTmux(async () => {
-          const finish = this.#beginDiagnostic("healthcheck");
-          try {
-            if (await this.#ownedHooksPresent(this.#abort.signal)) {
-              finish(true);
-              return;
-            }
-            this.#installed = false;
-            try {
-              await this.#install(this.#abort.signal);
-            } catch {
-              this.#installed = false;
-            }
-            finish(this.#installed);
-          } catch (error) {
-            finish(false);
-            throw error;
-          }
-        });
-        const settled = work.finally(() => {
-          if (this.#reconcile === settled) this.#reconcile = null;
-        });
-        this.#reconcile = settled;
-        return settled;
-      }
-      /** Atomically detach and drain the current event buffer. */
-      drain() {
-        return this.#serializeTmux(() => this.#drain());
-      }
-      async #drain() {
-        const finish = this.#beginDiagnostic("drain");
-        const drainName = `${this.#bufferName}-drain-${++this.#drainSequence}`;
-        try {
-          await this.#io.runTmux(
-            ["set-buffer", "-b", this.#bufferName, "-n", drainName],
-            this.#abort.signal
-          );
-        } catch {
-          finish(false);
-          return false;
-        }
-        let raw;
-        try {
-          raw = await this.#io.runTmux(["show-buffer", "-b", drainName], this.#abort.signal);
-        } catch {
-          finish(false);
-          return false;
-        } finally {
-          await this.#deleteBuffer(drainName);
-        }
-        let consumed = false;
-        try {
-          for (const record of parseTmuxInputHookRecords(raw)) {
-            consumed = await this.#project(record) || consumed;
-          }
-        } catch (error) {
-          finish(false);
-          throw error;
-        }
-        finish(true);
-        return consumed;
-      }
-      async #run() {
-        while (this.#active && !this.#abort.signal.aborted) {
-          try {
-            if (!this.#installed) await this.install();
-            await this.#io.waitForSignal(this.#signalChannel, this.#abort.signal);
-            if (!this.#active || this.#abort.signal.aborted) break;
-            await this.drain();
-          } catch {
-            this.#installed = false;
-            await this.#io.delay(RETRY_MS, this.#abort.signal);
-          }
-        }
-      }
-      async #project(record) {
-        if (consumeInternalReadOperation(
-          record.operationMarker,
-          record.runtimePaneId,
-          record.operationKind
-        ) || this.#authenticatedInternalReads.consume(
-          record.operationMarker,
-          record.runtimePaneId,
-          record.operationKind
-        )) {
-          return true;
-        }
-        const ownPrefix = `${this.#daemonInstanceId}:`;
-        const authoredOperationId = record.operationMarker?.startsWith(ownPrefix) ? record.operationMarker.slice(ownPrefix.length) : null;
-        const operationId = z70.uuid().safeParse(authoredOperationId);
-        let identity;
-        try {
-          identity = await this.#io.runTmux(
-            [
-              "display-message",
-              "-p",
-              "-t",
-              record.runtimePaneId,
-              `#{session_name}	#{${"@tmux_ide_pane_id"}}`
-            ],
-            this.#abort.signal
-          );
-        } catch {
-          return false;
-        }
-        const separator = identity.indexOf("	");
-        if (separator < 1) return false;
-        const sessionName = identity.slice(0, separator);
-        const semanticPaneId3 = identity.slice(separator + 1);
-        if (!WorkspacePaneCreationReferenceSchemaZ.safeParse(semanticPaneId3).success) return false;
-        const workspace = this.#registry.list().find((entry) => entry.sessionName === sessionName);
-        if (!workspace) return false;
-        return this.#onObserved({
-          workspaceName: workspace.name,
-          semanticPaneId: semanticPaneId3,
-          operationKind: record.operationKind,
-          operationId: operationId.success ? operationId.data : null
-        });
-      }
-      async #removeOwnedHooks(signal) {
-        for (const hookName of ["after-send-keys", "after-capture-pane"]) {
-          let output;
-          try {
-            output = await this.#io.runTmux(["show-hooks", "-g", hookName], signal);
-          } catch {
-            continue;
-          }
-          for (const index of hookIndexes(output, hookName)) {
-            try {
-              await this.#io.runTmux(["set-hook", "-gu", `${hookName}[${index}]`], signal);
-            } catch {
-            }
-          }
-        }
-        this.#installed = false;
-      }
-      async #ownedHooksPresent(signal) {
-        for (const hookName of ["after-send-keys", "after-capture-pane"]) {
-          let output;
-          try {
-            output = await this.#io.runTmux(["show-hooks", "-g", hookName], signal);
-          } catch {
-            return false;
-          }
-          if (!output.includes(this.#bufferName)) return false;
-        }
-        return true;
-      }
-      async #deleteOwnedBuffers(signal) {
-        let output;
-        try {
-          output = await this.#io.runTmux(["list-buffers", "-F", "#{buffer_name}"], signal);
-        } catch {
-          return;
-        }
-        for (const name of output.split("\n")) {
-          if (name.startsWith(OWNED_HOOK_MARKER)) await this.#deleteBuffer(name, signal);
-        }
-      }
-      async #deleteBuffer(name, signal) {
-        try {
-          await this.#io.runTmux(["delete-buffer", "-b", name], signal);
-        } catch {
-        }
-      }
-      #serializeTmux(operation) {
-        const next = this.#tmuxWork.then(operation, operation);
-        this.#tmuxWork = next.then(
-          () => void 0,
-          () => void 0
-        );
-        return next;
-      }
-      #beginDiagnostic(operation) {
-        const diagnostics = this.#diagnostics;
-        if (!diagnostics) return () => void 0;
-        let traceId;
-        let startedAtMicros;
-        try {
-          traceId = diagnostics.createTraceId();
-          startedAtMicros = diagnostics.nowMicros();
-        } catch {
-          return () => void 0;
-        }
-        this.#diagnosticActiveOperations += 1;
-        const publish = (phase, atMicros, succeeded) => {
-          try {
-            diagnostics.publish({
-              operation,
-              phase,
-              traceId,
-              processId: `daemon:${process.pid}`,
-              clockId: "node-performance-now",
-              clockKind: "performance-now",
-              atMicros,
-              activeOperations: this.#diagnosticActiveOperations,
-              ...succeeded === void 0 ? {} : { succeeded }
-            });
-          } catch {
-          }
-        };
-        publish("begin", startedAtMicros);
-        try {
-          (diagnostics.queueMicrotask ?? queueMicrotask)(() => {
-            try {
-              publish("event-loop-sentinel", diagnostics.nowMicros());
-            } catch {
-            }
-          });
-        } catch {
-        }
-        let finished = false;
-        return (succeeded) => {
-          if (finished) return;
-          finished = true;
-          let atMicros = startedAtMicros;
-          try {
-            atMicros = diagnostics.nowMicros();
-          } catch {
-          }
-          publish("end", atMicros, succeeded);
-          this.#diagnosticActiveOperations = Math.max(0, this.#diagnosticActiveOperations - 1);
-        };
-      }
-    };
-  }
-});
-
-// packages/daemon/src/lib/workspace-multiplexer-verbs.ts
-import { realpathSync as realpathSync9, statSync as statSync9 } from "node:fs";
-function boundedCacheIdentity(value) {
-  if (value.length === 0 || value.length > 256) return false;
-  for (const character of value) {
-    const codePoint = character.codePointAt(0);
-    if (codePoint < 32 || codePoint === 127) return false;
-  }
-  return true;
-}
-function parseMultiplexerPaneRows(output) {
-  if (output === "") return [];
-  const rows = [];
-  for (const line of output.split("\n")) {
-    const fields = line.split("	");
-    if (fields.length !== 9) {
-      throw new WorkspaceMultiplexerError("workspace_unavailable", {
-        reason: "pane_listing_shape"
-      });
-    }
-    const [
-      paneId,
-      paneIndex,
-      windowId,
-      paneStamp,
-      windowStamp,
-      paneCount,
-      zoomed,
-      active2,
-      creationId
-    ] = fields;
-    if (!RUNTIME_PANE2.test(paneId) || !RUNTIME_WINDOW.test(windowId)) {
-      throw new WorkspaceMultiplexerError("workspace_unavailable", {
-        reason: "pane_listing_shape"
-      });
-    }
-    const count = Number(paneCount);
-    const index = Number(paneIndex);
-    if (!Number.isInteger(count) || count < 1 || !Number.isInteger(index) || index < 0) {
-      throw new WorkspaceMultiplexerError("workspace_unavailable", {
-        reason: "pane_listing_shape"
-      });
-    }
-    rows.push({
-      paneId,
-      paneIndex: index,
-      windowId,
-      semanticPaneId: paneStamp === "" ? null : paneStamp,
-      semanticWindowId: windowStamp === "" ? null : windowStamp,
-      windowPaneCount: count,
-      windowZoomed: zoomed === "1",
-      paneActive: active2 === "1",
-      creationId: creationId === "" ? null : creationId
-    });
-  }
-  return rows;
-}
-function windowIdsOf(rows) {
-  return [...new Set(rows.map((row) => row.windowId))];
-}
-function resolvePaneRow(rows, semanticPaneId3) {
-  const matches = rows.filter((row) => row.semanticPaneId === semanticPaneId3);
-  if (matches.length === 0) {
-    throw new WorkspaceMultiplexerError("pane_not_found", { semanticPaneId: semanticPaneId3 });
-  }
-  if (matches.length > 1) {
-    throw new WorkspaceMultiplexerError("ambiguous_target", { semanticPaneId: semanticPaneId3 });
-  }
-  return matches[0];
-}
-function resolveWindowId(rows, target) {
-  if (target.by === "pane") {
-    return resolvePaneRow(rows, target.semanticPaneId).windowId;
-  }
-  const matches = new Set(
-    rows.filter((row) => row.semanticWindowId === target.semanticWindowId).map((row) => row.windowId)
-  );
-  if (matches.size === 0) {
-    throw new WorkspaceMultiplexerError("window_not_found", {
-      semanticWindowId: target.semanticWindowId
-    });
-  }
-  if (matches.size > 1) {
-    throw new WorkspaceMultiplexerError("ambiguous_target", {
-      semanticWindowId: target.semanticWindowId
-    });
-  }
-  return [...matches][0];
-}
-function tmuxFormatLiteral2(value) {
-  return value.replaceAll("#", "##");
-}
-function canonicalProjectDir2(path2) {
-  const canonical = realpathSync9(path2);
-  if (!statSync9(canonical).isDirectory()) throw new Error("project root is not a directory");
-  return canonical;
-}
-var CREATION_OPTION2, SEMANTIC_PANE_OPTION4, SEMANTIC_WINDOW_OPTION3, DISPLAY_TITLE_OPTION, ERROR_MESSAGES5, WorkspaceMultiplexerError, PANE_FIELDS, RUNTIME_PANE2, RUNTIME_WINDOW, DEFAULT_IO4, MAX_CACHED_SESSIONS, WorkspaceMultiplexerAuthority;
-var init_workspace_multiplexer_verbs = __esm({
-  "packages/daemon/src/lib/workspace-multiplexer-verbs.ts"() {
-    "use strict";
-    init_src();
-    init_src2();
-    init_workspace_pane_creation2();
-    init_workspace_registry();
-    init_tmux_external_interaction_observer();
-    init_tmux_interaction_options();
-    CREATION_OPTION2 = "@tmux_ide_creation_id";
-    SEMANTIC_PANE_OPTION4 = "@tmux_ide_pane_id";
-    SEMANTIC_WINDOW_OPTION3 = "@tmux_ide_window_id";
-    DISPLAY_TITLE_OPTION = "@ide_name";
-    ERROR_MESSAGES5 = {
-      daemon_instance_mismatch: "The daemon generation changed before the verb ran.",
-      workspace_not_found: "The requested workspace is not registered.",
-      workspace_unavailable: "The requested workspace is not available for multiplexer verbs.",
-      pane_not_found: "No pane in this workspace carries the requested semantic identity.",
-      window_not_found: "No window in this workspace carries the requested identity.",
-      ambiguous_target: "The requested identity names more than one live tmux object.",
-      last_window_refused: "This is the session's last window. Close the session instead if that is what you mean.",
-      last_pane_refused: "This is the session's last pane. Close the session instead if that is what you mean.",
-      mutation_failed: "tmux refused the requested change.",
-      mutation_unverified: "tmux accepted the change but the result could not be verified.",
-      operation_conflict: "Another live controller owns this workspace mutation.",
-      single_pane_window: "This window has only one pane, so it has no border to move.",
-      zoomed_window_refused: "Unzoom this window before resizing its panes.",
-      different_window_refused: "Panes can only be swapped inside the same window."
-    };
-    WorkspaceMultiplexerError = class extends Error {
-      code;
-      context;
-      constructor(code, context = {}, cause) {
-        super(ERROR_MESSAGES5[code], cause === void 0 ? void 0 : { cause });
-        this.name = "WorkspaceMultiplexerError";
-        this.code = code;
-        this.context = Object.freeze({ ...context });
-      }
-    };
-    PANE_FIELDS = [
-      "#{pane_id}",
-      "#{pane_index}",
-      "#{window_id}",
-      `#{${SEMANTIC_PANE_OPTION4}}`,
-      `#{${SEMANTIC_WINDOW_OPTION3}}`,
-      "#{window_panes}",
-      "#{?window_zoomed_flag,1,0}",
-      "#{?pane_active,1,0}",
-      `#{${CREATION_OPTION2}}`
-    ].join("	");
-    RUNTIME_PANE2 = /^%(?:0|[1-9][0-9]*)$/u;
-    RUNTIME_WINDOW = /^@(?:0|[1-9][0-9]*)$/u;
-    DEFAULT_IO4 = {
-      canonicalProjectDir: canonicalProjectDir2,
-      isMissingTmuxTarget: (error) => error instanceof TmuxError && (error.code === "SESSION_NOT_FOUND" || error.code === "TMUX_UNAVAILABLE")
-    };
-    MAX_CACHED_SESSIONS = 512;
-    WorkspaceMultiplexerAuthority = class {
-      #daemonInstanceId;
-      #registry;
-      #io;
-      #paneIdentityCache = /* @__PURE__ */ new Map();
-      #disposed = false;
-      constructor(options) {
-        this.#daemonInstanceId = options.daemonInstanceId;
-        this.#registry = options.registry ?? getDefaultWorkspaceRegistry();
-        this.#io = {
-          ...DEFAULT_IO4,
-          ...options.io,
-          runTmux: options.io?.runTmux ?? createPinnedWorkspaceTmuxRunner(
-            options.tmuxAuthority ?? resolveWorkspacePaneTmuxAuthority()
-          )
-        };
-      }
-      /**
-       * Execute immediately in the caller's already-serialized semantic lane.
-       * The returned promise is only an API envelope: no second queue or replay
-       * ledger is allowed below SessionSemanticMutationExecutor.
-       */
-      mutate(raw, timing) {
-        return this.#mutate(raw, timing);
-      }
-      /**
-       * Capture a semantically addressed pane for an authored read. The tmux
-       * after-capture hook is the completion authority; this method only performs
-       * the command-list and verifies that its semantic target survived it.
-       * SessionRuntimeRegistry serializes this lane with authored sends.
-       */
-      readPane(operationId, intent) {
-        if (this.#disposed) {
-          throw new WorkspaceMultiplexerError("workspace_unavailable", {
-            reason: "authority_disposed"
-          });
-        }
-        const workspace = this.#registry.get(intent.workspaceName);
-        if (!workspace) {
-          throw new WorkspaceMultiplexerError("workspace_not_found", {
-            operationId,
-            workspaceName: intent.workspaceName
-          });
-        }
-        const pane = resolvePaneRow(this.#panes(workspace.sessionName), intent.semanticPaneId);
-        try {
-          this.#io.runTmux([
-            "set-option",
-            "-p",
-            "-t",
-            pane.paneId,
-            INTERNAL_READ_OPERATION_OPTION,
-            internalInteractionOperationMarker(this.#daemonInstanceId, operationId),
-            ";",
-            "capture-pane",
-            "-p",
-            "-e",
-            "-J",
-            "-S",
-            "-2000",
-            "-t",
-            pane.paneId
-          ]);
-        } catch (error) {
-          try {
-            this.#io.runTmux(["set-option", "-pu", "-t", pane.paneId, INTERNAL_READ_OPERATION_OPTION]);
-          } catch {
-          }
-          throw error;
-        }
-        const observed = resolvePaneRow(this.#panes(workspace.sessionName), intent.semanticPaneId);
-        if (observed.paneId !== pane.paneId) {
-          throw new WorkspaceMultiplexerError("mutation_unverified", {
-            operationId,
-            reason: "pane_identity_changed_during_read"
-          });
-        }
-      }
-      dispose() {
-        this.#disposed = true;
-        this.#paneIdentityCache.clear();
-        return Promise.resolve();
-      }
-      /**
-       * Adopt one complete, generation-owned inventory projection. Selection never
-       * performs discovery itself: a missing candidate is a pre-effect refusal.
-       */
-      adoptPaneInventory(rows) {
-        if (this.#disposed) return;
-        const bySession = /* @__PURE__ */ new Map();
-        for (const row of rows) {
-          const current = bySession.get(row.sessionName);
-          if (current) current.push(row);
-          else bySession.set(row.sessionName, [row]);
-        }
-        this.#paneIdentityCache.clear();
-        for (const [sessionName, sessionRows] of bySession) {
-          const identities = /* @__PURE__ */ new Map();
-          const ambiguous = /* @__PURE__ */ new Set();
-          for (const row of sessionRows) {
-            if (row.semanticPaneId === null) continue;
-            if (identities.has(row.semanticPaneId)) {
-              identities.delete(row.semanticPaneId);
-              ambiguous.add(row.semanticPaneId);
-            } else if (!ambiguous.has(row.semanticPaneId)) {
-              identities.set(
-                row.semanticPaneId,
-                Object.freeze({ paneId: row.runtimePaneId, windowId: row.windowId })
-              );
-            }
-          }
-          this.#setPaneIdentities(sessionName, identities);
-        }
-      }
-      /**
-       * Replace one exact session's generation-owned inventory without evicting
-       * unrelated sessions. Trusted retained-mirror projections use this path;
-       * malformed or ambiguous projections invalidate only the target session.
-       */
-      adoptSessionPaneInventory(sessionName, rows) {
-        if (this.#disposed || !boundedCacheIdentity(sessionName)) return false;
-        const refuse = () => {
-          this.#paneIdentityCache.delete(sessionName);
-          return false;
-        };
-        if (rows.length === 0 || rows.length > 512) return refuse();
-        const identities = /* @__PURE__ */ new Map();
-        const runtimePaneIds = /* @__PURE__ */ new Set();
-        for (const row of rows) {
-          if (row.sessionName !== sessionName || typeof row.semanticPaneId !== "string" || !boundedCacheIdentity(row.semanticPaneId) || !/^%(0|[1-9][0-9]*)$/u.test(row.runtimePaneId) || !/^@(0|[1-9][0-9]*)$/u.test(row.windowId) || identities.has(row.semanticPaneId) || runtimePaneIds.has(row.runtimePaneId))
-            return refuse();
-          identities.set(
-            row.semanticPaneId,
-            Object.freeze({ paneId: row.runtimePaneId, windowId: row.windowId })
-          );
-          runtimePaneIds.add(row.runtimePaneId);
-        }
-        this.#setPaneIdentities(sessionName, identities);
-        return true;
-      }
-      #setPaneIdentities(sessionName, identities) {
-        this.#paneIdentityCache.delete(sessionName);
-        this.#paneIdentityCache.set(sessionName, identities);
-        while (this.#paneIdentityCache.size > MAX_CACHED_SESSIONS) {
-          const oldest = this.#paneIdentityCache.keys().next().value;
-          if (typeof oldest !== "string") break;
-          this.#paneIdentityCache.delete(oldest);
-        }
-      }
-      #mutate(raw, timing) {
-        if (this.#disposed) {
-          throw new WorkspaceMultiplexerError("workspace_unavailable", {
-            reason: "authority_disposed"
-          });
-        }
-        const request = WorkspaceMultiplexerMutationRequestSchemaZ.parse(raw);
-        if (request.expectedDaemonInstanceId !== this.#daemonInstanceId) {
-          throw new WorkspaceMultiplexerError("daemon_instance_mismatch", {
-            operationId: request.operationId
-          });
-        }
-        const workspace = this.#registry.get(request.intent.workspaceName);
-        if (!workspace) {
-          throw new WorkspaceMultiplexerError("workspace_not_found", {
-            operationId: request.operationId,
-            workspaceName: request.intent.workspaceName
-          });
-        }
-        try {
-          return WorkspaceMultiplexerMutationResultSchemaZ.parse(
-            this.#perform(request, workspace, timing)
-          );
-        } catch (error) {
-          const mapped = error instanceof WorkspaceMultiplexerError ? error : new WorkspaceMultiplexerError(
-            "mutation_failed",
-            {
-              operationId: request.operationId,
-              workspaceName: request.intent.workspaceName
-            },
-            error
-          );
-          throw mapped;
-        }
-      }
-      #panes(sessionName) {
-        let output;
-        try {
-          output = this.#io.runTmux(["list-panes", "-s", "-t", `=${sessionName}`, "-F", PANE_FIELDS]);
-        } catch (cause) {
-          throw new WorkspaceMultiplexerError(
-            "workspace_unavailable",
-            { sessionName, reason: "session_unreachable" },
-            cause
-          );
-        }
-        const rows = parseMultiplexerPaneRows(output);
-        const identities = /* @__PURE__ */ new Map();
-        const ambiguous = /* @__PURE__ */ new Set();
-        for (const row of rows) {
-          if (row.semanticPaneId === null) continue;
-          if (identities.has(row.semanticPaneId)) {
-            identities.delete(row.semanticPaneId);
-            ambiguous.add(row.semanticPaneId);
-          } else if (!ambiguous.has(row.semanticPaneId)) {
-            identities.set(
-              row.semanticPaneId,
-              Object.freeze({ paneId: row.paneId, windowId: row.windowId })
-            );
-          }
-        }
-        this.#setPaneIdentities(sessionName, identities);
-        return rows;
-      }
-      #perform(request, workspace, timing) {
-        const intent = request.intent;
-        const sessionName = workspace.sessionName;
-        const envelope = {
-          operationId: request.operationId,
-          daemonInstanceId: this.#daemonInstanceId,
-          workspaceName: intent.workspaceName
-        };
-        switch (intent.verb) {
-          case "workspace.window.split":
-            return this.#split(request, workspace, envelope);
-          case "workspace.window.kill":
-            return this.#killWindow(intent, sessionName, envelope);
-          case "workspace.pane.kill":
-            return this.#killPane(intent, sessionName, envelope);
-          case "workspace.session.kill":
-            return this.#killSession(sessionName, envelope);
-          case "workspace.rename":
-            return this.#rename(intent, workspace, envelope);
-          case "workspace.pane.zoom.toggle":
-            return this.#zoom(intent, sessionName, envelope);
-          case "workspace.pane.select":
-            return this.#select(intent, sessionName, envelope, timing);
-          case "workspace.pane.send":
-            return this.#send(intent, sessionName, envelope);
-          case "workspace.pane.swap":
-            return this.#swap(intent, sessionName, envelope);
-          case "workspace.pane.resize":
-            return this.#resize(intent, sessionName, envelope);
-        }
-      }
-      // -------------------------------------------------------------------------
-      // split
-      // -------------------------------------------------------------------------
-      #split(request, workspace, envelope) {
-        const intent = request.intent;
-        if (intent.verb !== "workspace.window.split") throw new TypeError("wrong intent");
-        const sessionName = workspace.sessionName;
-        const semanticPaneId3 = semanticPaneIdForOperation(request.operationId);
-        const displayTitle = intent.displayTitle ?? "Terminal";
-        const rows = this.#panes(sessionName);
-        const already = rows.find((row) => row.creationId === request.operationId);
-        if (already) {
-          return {
-            ...envelope,
-            verb: "workspace.window.split",
-            outcome: "replayed",
-            direction: intent.direction,
-            semanticPaneId: semanticPaneId3,
-            displayTitle
-          };
-        }
-        const source = resolvePaneRow(rows, intent.semanticPaneId);
-        const canonicalRoot = this.#io.canonicalProjectDir(workspace.projectDir);
-        const created = this.#io.runTmux([
-          "split-window",
-          intent.direction === "right" ? "-h" : "-v",
-          "-d",
-          "-P",
-          "-F",
-          "#{pane_id}	#{window_id}",
-          "-t",
-          source.paneId,
-          "-c",
-          canonicalRoot
-        ]);
-        const match = /^(%[0-9]+)\t(@[0-9]+)$/u.exec(created);
-        if (!match) {
-          throw new WorkspaceMultiplexerError("mutation_unverified", {
-            operationId: request.operationId,
-            reason: "split_output_unparseable"
-          });
-        }
-        const paneId = match[1];
-        try {
-          for (const [option, value] of [
-            [CREATION_OPTION2, request.operationId],
-            [SEMANTIC_PANE_OPTION4, semanticPaneId3],
-            ["@ide_type", "shell"],
-            ["@ide_role", "shell"],
-            [DISPLAY_TITLE_OPTION, displayTitle]
-          ]) {
-            this.#io.runTmux(["set-option", "-p", "-t", paneId, option, value]);
-          }
-          const inspected = this.#io.runTmux([
-            "display-message",
-            "-p",
-            "-t",
-            paneId,
-            [
-              "#{pane_id}",
-              `#{${SEMANTIC_PANE_OPTION4}}`,
-              `#{${CREATION_OPTION2}}`,
-              `#{${DISPLAY_TITLE_OPTION}}`
-            ].join("	")
-          ]);
-          if (inspected !== [paneId, semanticPaneId3, request.operationId, displayTitle].join("	")) {
-            throw new WorkspaceMultiplexerError("mutation_unverified", {
-              operationId: request.operationId,
-              reason: "split_stamp_mismatch"
-            });
-          }
-        } catch (error) {
-          this.#cleanupOwnedPane(paneId, request.operationId);
-          throw error;
-        }
-        return {
-          ...envelope,
-          verb: "workspace.window.split",
-          outcome: "applied",
-          direction: intent.direction,
-          semanticPaneId: semanticPaneId3,
-          displayTitle
-        };
-      }
-      #cleanupOwnedPane(paneId, operationId) {
-        try {
-          const proof = this.#io.runTmux([
-            "display-message",
-            "-p",
-            "-t",
-            paneId,
-            `#{pane_id}	#{${CREATION_OPTION2}}`
-          ]);
-          if (proof !== `${paneId}	${operationId}`) return;
-          this.#io.runTmux(["kill-pane", "-t", paneId]);
-        } catch {
-        }
-      }
-      // -------------------------------------------------------------------------
-      // kill
-      // -------------------------------------------------------------------------
-      #killWindow(intent, sessionName, envelope) {
-        const rows = this.#panes(sessionName);
-        const windowId = resolveWindowId(rows, intent.target);
-        const windows = windowIdsOf(rows);
-        if (windows.length <= 1) {
-          throw new WorkspaceMultiplexerError("last_window_refused", {
-            operationId: envelope.operationId,
-            workspaceName: envelope.workspaceName
-          });
-        }
-        this.#io.runTmux(["kill-window", "-t", windowId]);
-        const after = windowIdsOf(this.#panes(sessionName));
-        if (after.includes(windowId)) {
-          throw new WorkspaceMultiplexerError("mutation_unverified", {
-            operationId: envelope.operationId,
-            reason: "window_still_present"
-          });
-        }
-        return {
-          ...envelope,
-          verb: "workspace.window.kill",
-          outcome: "applied",
-          remainingWindowCount: after.length
-        };
-      }
-      #killPane(intent, sessionName, envelope) {
-        const rows = this.#panes(sessionName);
-        const pane = resolvePaneRow(rows, intent.semanticPaneId);
-        const windows = windowIdsOf(rows);
-        const closesWindow = pane.windowPaneCount === 1;
-        if (closesWindow && windows.length <= 1) {
-          throw new WorkspaceMultiplexerError("last_pane_refused", {
-            operationId: envelope.operationId,
-            workspaceName: envelope.workspaceName
-          });
-        }
-        this.#io.runTmux(["kill-pane", "-t", pane.paneId]);
-        const after = this.#panes(sessionName);
-        if (after.some((row) => row.paneId === pane.paneId)) {
-          throw new WorkspaceMultiplexerError("mutation_unverified", {
-            operationId: envelope.operationId,
-            reason: "pane_still_present"
-          });
-        }
-        return {
-          ...envelope,
-          verb: "workspace.pane.kill",
-          outcome: "applied",
-          windowClosed: closesWindow,
-          remainingWindowCount: windowIdsOf(after).length
-        };
-      }
-      #killSession(sessionName, envelope) {
-        let existed = true;
-        try {
-          this.#io.runTmux(["has-session", "-t", `=${sessionName}`]);
-        } catch (error) {
-          if (!this.#io.isMissingTmuxTarget(error)) throw error;
-          existed = false;
-        }
-        if (existed) {
-          this.#io.runTmux(["kill-session", "-t", `=${sessionName}`]);
-          let stillPresent = true;
-          try {
-            this.#io.runTmux(["has-session", "-t", `=${sessionName}`]);
-          } catch {
-            stillPresent = false;
-          }
-          if (stillPresent) {
-            throw new WorkspaceMultiplexerError("mutation_unverified", {
-              operationId: envelope.operationId,
-              reason: "session_still_present"
-            });
-          }
-        }
-        this.#paneIdentityCache.delete(sessionName);
-        return {
-          ...envelope,
-          verb: "workspace.session.kill",
-          // `unchanged` is the honest answer for a session that was already gone:
-          // the user's goal holds, but this call is not what achieved it.
-          outcome: existed ? "applied" : "unchanged"
-        };
-      }
-      // -------------------------------------------------------------------------
-      // rename
-      // -------------------------------------------------------------------------
-      #rename(intent, workspace, envelope) {
-        const sessionName = workspace.sessionName;
-        if (intent.scope === "session") {
-          if (sessionName === intent.name) {
-            return {
-              ...envelope,
-              verb: "workspace.rename",
-              outcome: "unchanged",
-              scope: "session",
-              name: intent.name
-            };
-          }
-          this.#io.runTmux(["rename-session", "-t", `=${sessionName}`, tmuxFormatLiteral2(intent.name)]);
-          const observed2 = this.#io.runTmux([
-            "display-message",
-            "-p",
-            "-t",
-            `=${intent.name}:`,
-            "#{session_name}"
-          ]);
-          if (observed2 !== intent.name) {
-            throw new WorkspaceMultiplexerError("mutation_unverified", {
-              operationId: envelope.operationId,
-              reason: "session_name_mismatch"
-            });
-          }
-          this.#registry.renameSession(workspace.name, intent.name);
-          const cached2 = this.#paneIdentityCache.get(sessionName);
-          this.#paneIdentityCache.delete(sessionName);
-          if (cached2) this.#paneIdentityCache.set(intent.name, cached2);
-          return {
-            ...envelope,
-            verb: "workspace.rename",
-            outcome: "applied",
-            scope: "session",
-            name: intent.name
-          };
-        }
-        const rows = this.#panes(sessionName);
-        const windowId = resolveWindowId(rows, intent.target);
-        this.#io.runTmux(["rename-window", "-t", windowId, tmuxFormatLiteral2(intent.name)]);
-        const observed = this.#io.runTmux(["display-message", "-p", "-t", windowId, "#{window_name}"]);
-        if (observed !== intent.name) {
-          throw new WorkspaceMultiplexerError("mutation_unverified", {
-            operationId: envelope.operationId,
-            reason: "window_name_mismatch"
-          });
-        }
-        const panesOfWindow = rows.filter((row) => row.windowId === windowId);
-        if (panesOfWindow.length === 1) {
-          this.#io.runTmux([
-            "set-option",
-            "-p",
-            "-t",
-            panesOfWindow[0].paneId,
-            DISPLAY_TITLE_OPTION,
-            intent.name
-          ]);
-        }
-        return {
-          ...envelope,
-          verb: "workspace.rename",
-          outcome: "applied",
-          scope: "window",
-          name: intent.name
-        };
-      }
-      // -------------------------------------------------------------------------
-      // zoom / select
-      // -------------------------------------------------------------------------
-      #zoom(intent, sessionName, envelope) {
-        const rows = this.#panes(sessionName);
-        const pane = resolvePaneRow(rows, intent.semanticPaneId);
-        const target = intent.desired === "toggle" ? !pane.windowZoomed : intent.desired === "zoomed";
-        if (target === pane.windowZoomed) {
-          return {
-            ...envelope,
-            verb: "workspace.pane.zoom.toggle",
-            outcome: "unchanged",
-            semanticPaneId: intent.semanticPaneId,
-            zoomed: pane.windowZoomed
-          };
-        }
-        this.#io.runTmux(["resize-pane", "-Z", "-t", pane.paneId]);
-        const observed = this.#io.runTmux([
-          "display-message",
-          "-p",
-          "-t",
-          pane.paneId,
-          "#{?window_zoomed_flag,1,0}"
-        ]);
-        const zoomed = observed === "1";
-        if (zoomed !== target) {
-          throw new WorkspaceMultiplexerError("mutation_unverified", {
-            operationId: envelope.operationId,
-            reason: "zoom_state_mismatch"
-          });
-        }
-        return {
-          ...envelope,
-          verb: "workspace.pane.zoom.toggle",
-          outcome: "applied",
-          semanticPaneId: intent.semanticPaneId,
-          zoomed
-        };
-      }
-      #select(intent, sessionName, envelope, timing) {
-        const timed = (operation, run) => {
-          if (!timing) return run();
-          let startedAtMicros;
-          try {
-            startedAtMicros = timing.nowMicros();
-          } catch {
-            return run();
-          }
-          try {
-            return run();
-          } finally {
-            try {
-              timing.record(operation, startedAtMicros, timing.nowMicros());
-            } catch {
-            }
-          }
-        };
-        const cached2 = timed(
-          "semantic-pane-inventory-lookup",
-          () => this.#paneIdentityCache.get(sessionName)?.get(intent.semanticPaneId)
-        );
-        const pane = timed("semantic-pane-resolution", () => cached2);
-        if (!pane) {
-          throw new WorkspaceMultiplexerError("workspace_unavailable", {
-            operationId: envelope.operationId,
-            reason: "pane_inventory_not_ready"
-          });
-        }
-        const semanticMatchPaneIdsFormat = `#{W:#{P:#{?#{==:#{${SEMANTIC_PANE_OPTION4}},${tmuxFormatLiteral2(intent.semanticPaneId)}},#{pane_id},}}}`;
-        const precondition = [
-          pane.paneId,
-          pane.windowId,
-          intent.semanticPaneId,
-          // One matching pane expands to its cached native ID. Missing, duplicate,
-          // or remapped stamps cannot satisfy the in-server mutation guard.
-          pane.paneId
-        ].join("	");
-        const preconditionFormat = [
-          "#{pane_id}",
-          "#{window_id}",
-          `#{${SEMANTIC_PANE_OPTION4}}`,
-          semanticMatchPaneIdsFormat
-        ].join("	");
-        const selectCommand = `select-window -t ${pane.windowId} ; select-pane -t ${pane.paneId}`;
-        const observations = timed(
-          "tmux-selection-effect-proof",
-          () => this.#io.runTmux([
-            "display-message",
-            "-p",
-            "-t",
-            pane.paneId,
-            `${preconditionFormat}	#{?pane_active,1,0}	#{?window_active,1,0}`,
-            ";",
-            // Resolve once from an authoritative inventory, then keep the semantic
-            // stamp and both native IDs as an exact in-server precondition. A stale
-            // cache entry may observe, but it cannot mutate.
-            "if-shell",
-            "-F",
-            "-t",
-            pane.paneId,
-            `#{==:${preconditionFormat},${tmuxFormatLiteral2(precondition)}}`,
-            selectCommand,
-            "",
-            ";",
-            "display-message",
-            "-p",
-            "-t",
-            pane.paneId,
-            `${preconditionFormat}	#{?pane_active,1,0}	#{?window_active,1,0}`
-          ])
-        );
-        const [before = "", observed = ""] = observations.split("\n");
-        if (!before.startsWith(`${precondition}	`)) {
-          this.#paneIdentityCache.delete(sessionName);
-          throw new WorkspaceMultiplexerError("mutation_unverified", {
-            operationId: envelope.operationId,
-            reason: "pane_identity_changed_before_select"
-          });
-        }
-        const wasActive = before === `${precondition}	1	1`;
-        if (observed !== `${precondition}	1	1`) {
-          this.#paneIdentityCache.delete(sessionName);
-          throw new WorkspaceMultiplexerError("mutation_unverified", {
-            operationId: envelope.operationId,
-            reason: "pane_not_active"
-          });
-        }
-        return {
-          ...envelope,
-          verb: "workspace.pane.select",
-          outcome: wasActive ? "unchanged" : "applied",
-          semanticPaneId: intent.semanticPaneId
-        };
-      }
-      // -------------------------------------------------------------------------
-      // send
-      // -------------------------------------------------------------------------
-      /**
-       * Deliver literal bytes to a semantically addressed pane. A successful tmux
-       * command plus a post-send identity read-back proves that the resolved pane
-       * survived the operation; terminal output remains the independent observation
-       * lane and is intentionally not parsed for prompt content.
-       */
-      #send(intent, sessionName, envelope) {
-        const before = this.#panes(sessionName);
-        const pane = resolvePaneRow(before, intent.semanticPaneId);
-        const sourcePane = intent.sourceSemanticPaneId ? resolvePaneRow(before, intent.sourceSemanticPaneId) : null;
-        const marker = internalInteractionOperationMarker(this.#daemonInstanceId, envelope.operationId);
-        if (intent.submit) {
-          const buffer = `tmux-ide-send-${envelope.operationId}`;
-          try {
-            this.#io.runTmux([
-              "set-buffer",
-              "-b",
-              buffer,
-              "--",
-              intent.text,
-              ";",
-              "paste-buffer",
-              "-d",
-              "-b",
-              buffer,
-              "-t",
-              pane.paneId,
-              ";",
-              "set-option",
-              "-p",
-              "-t",
-              pane.paneId,
-              INTERNAL_SEND_OPERATION_OPTION,
-              marker,
-              ";",
-              "send-keys",
-              "-t",
-              pane.paneId,
-              "Enter"
-            ]);
-          } catch (error) {
-            try {
-              this.#io.runTmux(["delete-buffer", "-b", buffer]);
-            } catch {
-            }
-            try {
-              this.#io.runTmux([
-                "set-option",
-                "-pu",
-                "-t",
-                pane.paneId,
-                INTERNAL_SEND_OPERATION_OPTION
-              ]);
-            } catch {
-            }
-            throw error;
-          }
-        } else {
-          try {
-            this.#io.runTmux([
-              "set-option",
-              "-p",
-              "-t",
-              pane.paneId,
-              INTERNAL_SEND_OPERATION_OPTION,
-              marker,
-              ";",
-              "send-keys",
-              "-t",
-              pane.paneId,
-              "-l",
-              "--",
-              intent.text
-            ]);
-          } catch (error) {
-            try {
-              this.#io.runTmux([
-                "set-option",
-                "-pu",
-                "-t",
-                pane.paneId,
-                INTERNAL_SEND_OPERATION_OPTION
-              ]);
-            } catch {
-            }
-            throw error;
-          }
-        }
-        const observed = resolvePaneRow(this.#panes(sessionName), intent.semanticPaneId);
-        if (observed.paneId !== pane.paneId) {
-          throw new WorkspaceMultiplexerError("mutation_unverified", {
-            operationId: envelope.operationId,
-            reason: "pane_identity_changed_during_send"
-          });
-        }
-        return {
-          ...envelope,
-          verb: "workspace.pane.send",
-          outcome: "applied",
-          sourceSemanticPaneId: sourcePane?.semanticPaneId ?? null,
-          semanticPaneId: intent.semanticPaneId,
-          origin: intent.origin,
-          characterCount: Array.from(intent.text).length,
-          byteCount: Buffer.byteLength(intent.text, "utf8"),
-          submitted: intent.submit
-        };
-      }
-      // -------------------------------------------------------------------------
-      // swap
-      // -------------------------------------------------------------------------
-      /** Exchange two semantic panes without exposing a tmux target to the caller. */
-      #swap(intent, sessionName, envelope) {
-        const rows = this.#panes(sessionName);
-        const source = resolvePaneRow(rows, intent.sourceSemanticPaneId);
-        const target = resolvePaneRow(rows, intent.targetSemanticPaneId);
-        if (source.paneId === target.paneId) {
-          return {
-            ...envelope,
-            verb: "workspace.pane.swap",
-            outcome: "unchanged",
-            sourceSemanticPaneId: intent.sourceSemanticPaneId,
-            targetSemanticPaneId: intent.targetSemanticPaneId
-          };
-        }
-        if (source.windowId !== target.windowId) {
-          throw new WorkspaceMultiplexerError("different_window_refused", {
-            sourceSemanticPaneId: intent.sourceSemanticPaneId,
-            targetSemanticPaneId: intent.targetSemanticPaneId
-          });
-        }
-        this.#io.runTmux(["swap-pane", "-s", source.paneId, "-t", target.paneId]);
-        const after = this.#panes(sessionName);
-        const sourceAfter = resolvePaneRow(after, intent.sourceSemanticPaneId);
-        const targetAfter = resolvePaneRow(after, intent.targetSemanticPaneId);
-        if (sourceAfter.paneId !== source.paneId || targetAfter.paneId !== target.paneId || sourceAfter.windowId !== source.windowId || targetAfter.windowId !== target.windowId || sourceAfter.paneIndex !== target.paneIndex || targetAfter.paneIndex !== source.paneIndex) {
-          throw new WorkspaceMultiplexerError("mutation_unverified", {
-            operationId: envelope.operationId,
-            reason: "pane_positions_not_swapped"
-          });
-        }
-        return {
-          ...envelope,
-          verb: "workspace.pane.swap",
-          outcome: "applied",
-          sourceSemanticPaneId: intent.sourceSemanticPaneId,
-          targetSemanticPaneId: intent.targetSemanticPaneId
-        };
-      }
-      // -------------------------------------------------------------------------
-      // resize
-      // -------------------------------------------------------------------------
-      /** The pane's own size on one axis, in cells, read straight from tmux. */
-      #paneCells(paneId, axis) {
-        const observed = this.#io.runTmux([
-          "display-message",
-          "-p",
-          "-t",
-          paneId,
-          axis === "cols" ? "#{pane_width}" : "#{pane_height}"
-        ]);
-        const cells = Number(observed);
-        if (!Number.isInteger(cells) || cells < 1) {
-          throw new WorkspaceMultiplexerError("mutation_unverified", { reason: "pane_size_shape" });
-        }
-        return cells;
-      }
-      /**
-       * Move one pane border.
-       *
-       * The result reports what tmux SETTLED ON rather than what was asked for. A
-       * layout has a per-pane minimum and a fixed total, so tmux clamps constantly —
-       * and a drag that hit a floor has to read as having stopped there. Reporting
-       * the requested number instead would make the view disagree with the layout
-       * frame that arrives a moment later, which is the class of divergence this
-       * whole view exists to remove.
-       */
-      #resize(intent, sessionName, envelope) {
-        const rows = this.#panes(sessionName);
-        const pane = resolvePaneRow(rows, intent.semanticPaneId);
-        if (pane.windowPaneCount < 2) {
-          throw new WorkspaceMultiplexerError("single_pane_window", {
-            semanticPaneId: intent.semanticPaneId
-          });
-        }
-        if (pane.windowZoomed) {
-          throw new WorkspaceMultiplexerError("zoomed_window_refused", {
-            semanticPaneId: intent.semanticPaneId
-          });
-        }
-        const before = this.#paneCells(pane.paneId, intent.axis);
-        if (before === intent.cells) {
-          return {
-            ...envelope,
-            verb: "workspace.pane.resize",
-            outcome: "unchanged",
-            semanticPaneId: intent.semanticPaneId,
-            axis: intent.axis,
-            cells: before
-          };
-        }
-        this.#io.runTmux([
-          "resize-pane",
-          "-t",
-          pane.paneId,
-          intent.axis === "cols" ? "-x" : "-y",
-          String(intent.cells)
-        ]);
-        const after = this.#paneCells(pane.paneId, intent.axis);
-        return {
-          ...envelope,
-          verb: "workspace.pane.resize",
-          outcome: after === before ? "unchanged" : "applied",
-          semanticPaneId: intent.semanticPaneId,
-          axis: intent.axis,
-          cells: after
-        };
-      }
-    };
-  }
-});
-
-// packages/daemon/src/terminal/session-runtime/runtime-observability.ts
-import { randomUUID as randomUUID9 } from "node:crypto";
-import { z as z71 } from "zod";
-function createSessionRuntimeObservability(options = {}) {
-  const capacity = options.capacity ?? 1024;
-  if (!Number.isInteger(capacity) || capacity < 1 || capacity > 65536)
-    throw new TypeError("Runtime observability capacity must be in [1, 65536]");
-  const nowMicros = options.nowMicros ?? (() => Math.floor(performance.now() * 1e3));
-  const processId = options.processId ?? `daemon:${process.pid}`;
-  const clockId = options.clockId ?? "node-performance-now";
-  const clockKind = options.clockKind ?? "performance-now";
-  const createTraceId = options.createTraceId ?? randomUUID9;
-  const spans = [];
-  let cursor = 0;
-  let droppedSpans = 0;
-  return Object.freeze({
-    enabled: true,
-    nowMicros,
-    beginTrace(scenario, authority, traceId) {
-      return Object.freeze({
-        traceId: z71.uuid().parse(traceId ?? createTraceId()),
-        scenario,
-        authority
-      });
-    },
-    recordSpan(stage, operation, startedAtMicros, endedAtMicros, trace = null, shared, terminalDelivery) {
-      const span = Object.freeze({
-        traceId: trace?.traceId ?? null,
-        scenario: trace?.scenario ?? null,
-        authority: trace?.authority ?? null,
-        stage,
-        processId,
-        clockId,
-        clockKind,
-        operation,
-        startedAtMicros,
-        endedAtMicros,
-        ...shared ? {
-          sharedStartedAtMicros: shared.startedAtMicros,
-          sharedEndedAtMicros: shared.endedAtMicros
-        } : {},
-        ...terminalDelivery ? { terminalDelivery: Object.freeze({ ...terminalDelivery }) } : {}
-      });
-      if (spans.length < capacity) spans.push(span);
-      else {
-        spans[cursor] = span;
-        cursor = (cursor + 1) % capacity;
-        droppedSpans += 1;
-      }
-      options.onSpan?.(span);
-    },
-    snapshot() {
-      const ordered = spans.length < capacity || cursor === 0 ? [...spans] : [...spans.slice(cursor), ...spans.slice(0, cursor)];
-      return Object.freeze({ spans: Object.freeze(ordered), droppedSpans });
-    }
-  });
-}
-var EMPTY_SNAPSHOT, DISABLED_SESSION_RUNTIME_OBSERVABILITY;
-var init_runtime_observability = __esm({
-  "packages/daemon/src/terminal/session-runtime/runtime-observability.ts"() {
-    "use strict";
-    EMPTY_SNAPSHOT = Object.freeze({
-      spans: Object.freeze([]),
-      droppedSpans: 0
-    });
-    DISABLED_SESSION_RUNTIME_OBSERVABILITY = Object.freeze({
-      enabled: false,
-      nowMicros: () => 0,
-      beginTrace: () => null,
-      recordSpan: () => void 0,
-      snapshot: () => EMPTY_SNAPSHOT
-    });
-  }
-});
-
-// packages/daemon/src/terminal/protocol/control.ts
-function decodeControlBytes(escaped) {
-  const out = new Uint8Array(escaped.length);
-  let n10 = 0;
-  for (let i = 0; i < escaped.length; i++) {
-    const ch = escaped.charCodeAt(i);
-    if (ch === 92 && // backslash
-    i + 3 < escaped.length + 1 && isOctal(escaped.charCodeAt(i + 1)) && isOctal(escaped.charCodeAt(i + 2)) && isOctal(escaped.charCodeAt(i + 3))) {
-      out[n10++] = parseInt(escaped.slice(i + 1, i + 4), 8) & 255;
-      i += 3;
-    } else {
-      out[n10++] = ch & 255;
-    }
-  }
-  return out.subarray(0, n10);
-}
-function isOctal(code) {
-  return code !== void 0 && code >= 48 && code <= 55;
-}
-function parseControlLine(line, insideReply) {
-  if (line.startsWith("%end ") || line.startsWith("%error ")) {
-    const isError = line.startsWith("%error ");
-    const parts = line.split(" ");
-    const num = Number(parts[2] ?? -1);
-    const flags = Number(parts[3] ?? -1);
-    return { kind: isError ? "error" : "end", num, flags };
-  }
-  if (insideReply) return { kind: "reply-line", line };
-  if (line.startsWith("%begin ")) {
-    const parts = line.split(" ");
-    return {
-      kind: "begin",
-      num: Number(parts[2] ?? -1),
-      flags: Number(parts[3] ?? -1)
-    };
-  }
-  if (line.startsWith("%output ")) {
-    const rest = line.slice("%output ".length);
-    const space = rest.indexOf(" ");
-    const pane = space === -1 ? rest : rest.slice(0, space);
-    const payload = space === -1 ? "" : rest.slice(space + 1);
-    return { kind: "output", pane, data: decodeControlBytes(payload) };
-  }
-  if (line.startsWith("%extended-output ")) {
-    const rest = line.slice("%extended-output ".length);
-    const space = rest.indexOf(" ");
-    const pane = space === -1 ? rest : rest.slice(0, space);
-    const tail = space === -1 ? "" : rest.slice(space + 1);
-    const sep10 = tail.indexOf(" : ");
-    const meta = sep10 === -1 ? tail : tail.slice(0, sep10);
-    const payload = sep10 === -1 ? "" : tail.slice(sep10 + 3);
-    const age = Number(meta.trim().split(/\s+/)[0]);
-    return {
-      kind: "extended-output",
-      pane,
-      ageMs: Number.isFinite(age) ? age : null,
-      data: decodeControlBytes(payload)
-    };
-  }
-  if (line.startsWith("%exit")) {
-    const reason = line.length > "%exit ".length ? line.slice("%exit ".length) : null;
-    return { kind: "exit", reason };
-  }
-  if (line.startsWith("%")) {
-    const space = line.indexOf(" ");
-    const name = space === -1 ? line.slice(1) : line.slice(1, space);
-    return { kind: "notify", name, rest: space === -1 ? "" : line.slice(space + 1) };
-  }
-  return { kind: "reply-line", line };
-}
-function textToHexKeys(text) {
-  const bytes = new TextEncoder().encode(text);
-  const hex = [];
-  for (const b of bytes) hex.push(b.toString(16).padStart(2, "0"));
-  return hex;
-}
-var init_control2 = __esm({
-  "packages/daemon/src/terminal/protocol/control.ts"() {
-    "use strict";
-  }
-});
-
-// packages/daemon/src/terminal/mirror/control-channel.ts
-import { spawn as spawn7 } from "node:child_process";
-function mirrorControlAttachArgs(options, pauseAfterSeconds = DEFAULT_PAUSE_AFTER_SECONDS) {
-  return [
-    ...options.socketPath ? ["-S", options.socketPath] : options.socketName ? ["-L", options.socketName] : [],
-    ...options.configFile ? ["-f", options.configFile] : [],
-    "-C",
-    "attach",
-    "-t",
-    options.session,
-    "-f",
-    `ignore-size,pause-after=${pauseAfterSeconds},active-pane`
-  ];
-}
-function waitForExit(proc, timeoutMs) {
-  if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve(true);
-  return new Promise((resolve37) => {
-    const timer = setTimeout(() => {
-      proc.off("exit", onExit);
-      resolve37(false);
-    }, timeoutMs);
-    timer.unref?.();
-    const onExit = () => {
-      clearTimeout(timer);
-      resolve37(true);
-    };
-    proc.once("exit", onExit);
-  });
-}
-var ATOMIC_CAPTURE_BYTE_HARD_CAP, ATOMIC_CAPTURE_LINE_HARD_CAP, ATOMIC_CURSOR_BYTE_HARD_CAP, ControlChannelCore, DEFAULT_PAUSE_AFTER_SECONDS, MirrorControlChannel;
-var init_control_channel = __esm({
-  "packages/daemon/src/terminal/mirror/control-channel.ts"() {
-    "use strict";
-    init_control2();
-    ATOMIC_CAPTURE_BYTE_HARD_CAP = 16 * 1024 * 1024;
-    ATOMIC_CAPTURE_LINE_HARD_CAP = 8192;
-    ATOMIC_CURSOR_BYTE_HARD_CAP = 1024;
-    ControlChannelCore = class {
-      constructor(handlers, nowMicros) {
-        this.handlers = handlers;
-        this.nowMicros = nowMicros;
-      }
-      buffer = "";
-      bufferReceivedAtMicros = null;
-      inReply = false;
-      currentReplyNum = null;
-      currentReplyFlags = null;
-      /** The greeting is the sole flags=0 block that belongs to pending work.
-       *  Subsequent flags=0 blocks are tmux hook command results, emitted on the
-       *  initiating control client but not caused by an input line. */
-      awaitingGreeting = true;
-      currentReplyConsumesPending = false;
-      pending = [];
-      discardedErrors = 0;
-      failed = false;
-      atomicCollector = null;
-      push(sink) {
-        this.pending.push(sink);
-      }
-      pushCommandList(replyCount, resultIndex, onReply) {
-        const state = { resultIndex, onReply, lines: [], settled: false };
-        for (let index = 0; index < replyCount; index += 1)
-          this.pending.push({ kind: "command-list", state, index });
-      }
-      get inputErrorCount() {
-        return this.discardedErrors;
-      }
-      get pendingCount() {
-        return this.pending.length;
-      }
-      armAtomicPaneSnapshotCollector(spec) {
-        if (this.failed || this.atomicCollector) return false;
-        if (!/^[0-9a-f]{32,128}$/.test(spec.nonce) || !/^%\d+$/.test(spec.runtimePaneId)) return false;
-        if (!Number.isSafeInteger(spec.maxCaptureBytes) || spec.maxCaptureBytes < 1 || spec.maxCaptureBytes > ATOMIC_CAPTURE_BYTE_HARD_CAP || !Number.isSafeInteger(spec.maxCaptureLines) || spec.maxCaptureLines < 1 || spec.maxCaptureLines > ATOMIC_CAPTURE_LINE_HARD_CAP || !Number.isSafeInteger(spec.maxCursorBytes) || spec.maxCursorBytes < 1 || spec.maxCursorBytes > ATOMIC_CURSOR_BYTE_HARD_CAP || !Number.isSafeInteger(spec.observerCommandCount) || spec.observerCommandCount < 0 || spec.observerCommandCount > 4)
-          return false;
-        this.atomicCollector = {
-          spec,
-          started: false,
-          blockOrdinal: -1,
-          blockContentCount: 0,
-          captureLines: [],
-          captureBytes: 0,
-          totalLines: 0,
-          totalBytes: 0,
-          cursorLine: null,
-          continueObserved: false,
-          statusObserved: false,
-          observerEmissionObserved: false,
-          lastCompletedOrdinal: -1,
-          failureReason: null
-        };
-        return true;
-      }
-      retireAtomicPaneSnapshotCollector(nonce, reason = "retired") {
-        const collector = this.atomicCollector;
-        if (!collector || collector.spec.nonce !== nonce) return false;
-        this.atomicCollector = null;
-        collector.spec.onSettled(
-          Object.freeze({
-            ok: false,
-            captureLines: Object.freeze([]),
-            cursorLine: null,
-            continueObserved: collector.continueObserved,
-            statusObserved: collector.statusObserved,
-            observerEmissionObserved: collector.observerEmissionObserved,
-            started: collector.started,
-            lastCompletedOrdinal: collector.lastCompletedOrdinal,
-            captureLineCount: collector.captureLines.length,
-            captureByteCount: collector.captureBytes,
-            failureReason: collector.failureReason ?? reason
-          })
-        );
-        return true;
-      }
-      feed(chunk, receivedAtMicros) {
-        if (this.buffer.length === 0 && receivedAtMicros !== void 0)
-          this.bufferReceivedAtMicros = receivedAtMicros;
-        this.buffer += chunk;
-        let nl;
-        while ((nl = this.buffer.indexOf("\n")) !== -1) {
-          let line = this.buffer.slice(0, nl);
-          if (line.endsWith("\r")) line = line.slice(0, -1);
-          this.buffer = this.buffer.slice(nl + 1);
-          const lineReceivedAtMicros = this.bufferReceivedAtMicros;
-          this.bufferReceivedAtMicros = this.buffer.length > 0 ? receivedAtMicros ?? null : null;
-          this.handleLine(line, lineReceivedAtMicros);
-        }
-      }
-      /** The stream died: settle every pending sink so no caller hangs. */
-      fail(reason) {
-        if (this.failed) return;
-        this.failed = true;
-        if (this.atomicCollector)
-          this.retireAtomicPaneSnapshotCollector(this.atomicCollector.spec.nonce, "channel-exit");
-        for (const sink of this.pending.splice(0)) {
-          if (sink.kind === "promise") sink.reject(new Error(reason));
-          else if (sink.kind === "inline") sink.onReply({ ok: false, lines: [reason] });
-          else if (sink.kind === "command-list" && !sink.state.settled) {
-            sink.state.settled = true;
-            sink.state.onReply({ ok: false, lines: [reason] });
-          }
-        }
-      }
-      handleLine(line, receivedAtMicros) {
-        if (this.consumeAtomicPaneSnapshotLine(line)) return;
-        const event = parseControlLine(line, this.inReply);
-        const timing = receivedAtMicros !== null && this.nowMicros ? Object.freeze({
-          receivedAtMicros,
-          parsedAtMicros: this.nowMicros()
-        }) : void 0;
-        switch (event.kind) {
-          case "begin":
-            this.inReply = true;
-            this.currentReplyNum = event.num;
-            this.currentReplyFlags = event.flags;
-            this.currentReplyConsumesPending = this.awaitingGreeting || event.flags !== 0;
-            break;
-          case "reply-line": {
-            const head3 = this.currentReplyConsumesPending ? this.pending[0] : void 0;
-            if (head3?.kind === "promise" || head3?.kind === "inline") head3.lines.push(event.line);
-            else if (head3?.kind === "command-list" && head3.index === head3.state.resultIndex)
-              head3.state.lines.push(event.line);
-            break;
-          }
-          case "end":
-          case "error": {
-            this.inReply = false;
-            this.currentReplyNum = null;
-            this.currentReplyFlags = null;
-            if (!this.currentReplyConsumesPending) {
-              this.currentReplyConsumesPending = false;
-              break;
-            }
-            this.currentReplyConsumesPending = false;
-            this.awaitingGreeting = false;
-            const sink = this.pending.shift();
-            if (!sink) break;
-            if (sink.kind === "command-list") {
-              if (event.kind === "error" && sink.index !== sink.state.resultIndex)
-                this.discardedErrors += 1;
-              if (event.kind === "error" && sink.index === 0) {
-                while (this.pending[0]?.kind === "command-list" && this.pending[0].state === sink.state)
-                  this.pending.shift();
-                if (!sink.state.settled) {
-                  sink.state.settled = true;
-                  sink.state.onReply({ ok: false, lines: sink.state.lines });
-                }
-              } else if (sink.index === sink.state.resultIndex && !sink.state.settled) {
-                sink.state.settled = true;
-                sink.state.onReply({ ok: event.kind === "end", lines: sink.state.lines });
-              }
-              break;
-            }
-            if (sink.kind === "discard") {
-              if (event.kind === "error") this.discardedErrors++;
-              sink.onReply?.({ ok: event.kind === "end", lines: [] });
-              break;
-            }
-            if (sink.kind === "inline") {
-              sink.onReply({ ok: event.kind === "end", lines: sink.lines });
-              break;
-            }
-            if (event.kind === "error") {
-              sink.reject(new Error(sink.lines.join("\n") || "tmux command failed"));
-            } else {
-              sink.resolve(sink.lines);
-            }
-            break;
-          }
-          case "output":
-            this.handlers.onOutput(event.pane, event.data, null, timing);
-            break;
-          case "extended-output":
-            this.handlers.onOutput(event.pane, event.data, event.ageMs, timing);
-            break;
-          case "exit":
-            this.handlers.onExit(event.reason);
-            break;
-          case "notify":
-            this.handlers.onNotify(event.name, event.rest);
-            break;
-        }
-      }
-      consumeAtomicPaneSnapshotLine(line) {
-        const collector = this.atomicCollector;
-        if (!collector) return false;
-        const prefix = "%tmux-ide-atomic-v1 ";
-        const ownPrefix = `${prefix}${collector.spec.nonce} `;
-        if (line.startsWith(prefix) && !line.startsWith(ownPrefix)) {
-          collector.failureReason ??= "foreign-sentinel";
-          return true;
-        }
-        const token = line.startsWith(ownPrefix) ? line.slice(ownPrefix.length) : null;
-        if (!collector.started) {
-          if (token === null) return false;
-          if (token !== "start" || !this.inReply || this.currentReplyFlags !== 0 || this.currentReplyNum === null) {
-            collector.failureReason ??= "sentinel-order";
-            return true;
-          }
-          collector.started = true;
-          collector.blockOrdinal = 0;
-          collector.blockContentCount = 1;
-          this.reportAtomicPaneSnapshotProgress(collector);
-          return true;
-        }
-        collector.totalLines += 1;
-        collector.totalBytes += Buffer.byteLength(line, "latin1") + 1;
-        if (collector.totalLines > collector.spec.maxCaptureLines + 64)
-          collector.failureReason ??= "capture-line-cap";
-        if (collector.totalBytes > collector.spec.maxCaptureBytes + 64 * 1024)
-          collector.failureReason ??= "capture-byte-cap";
-        const guard = parseControlLine(line, this.inReply);
-        if (guard.kind === "begin") {
-          if (guard.flags !== 0 || this.inReply) collector.failureReason ??= "sentinel-order";
-          this.inReply = true;
-          this.currentReplyNum = guard.num;
-          this.currentReplyFlags = guard.flags;
-          collector.blockOrdinal += 1;
-          collector.blockContentCount = 0;
-          return true;
-        }
-        if (guard.kind === "end" || guard.kind === "error") {
-          const guardInvalid = !this.inReply || guard.flags !== 0 || this.currentReplyFlags !== 0 || guard.num !== this.currentReplyNum;
-          if (guardInvalid) collector.failureReason ??= "sentinel-order";
-          if (guard.kind === "error") collector.failureReason ??= "sentinel-order";
-          const markerBranchOrdinal2 = 7 + collector.spec.observerCommandCount;
-          const statusOrdinal2 = 8 + collector.spec.observerCommandCount;
-          const completeOrdinal2 = 10 + collector.spec.observerCommandCount;
-          const contentRequired = /* @__PURE__ */ new Set([0, 2, 3, 4, statusOrdinal2, completeOrdinal2]);
-          const contentSilent = collector.blockOrdinal !== 1 && collector.blockOrdinal !== markerBranchOrdinal2 && !contentRequired.has(collector.blockOrdinal);
-          const markerBranchValid = collector.blockOrdinal !== markerBranchOrdinal2 || collector.blockContentCount <= 1;
-          if (contentRequired.has(collector.blockOrdinal) && collector.blockContentCount !== 1 || contentSilent && collector.blockContentCount !== 0 || !markerBranchValid)
-            collector.failureReason ??= "sentinel-order";
-          if (guard.kind === "end" && !guardInvalid && collector.spec.observerCommandCount > 0 && collector.blockOrdinal === 5 + collector.spec.observerCommandCount)
-            collector.observerEmissionObserved = true;
-          if (!guardInvalid && guard.kind === "end") {
-            collector.lastCompletedOrdinal = collector.blockOrdinal;
-            this.reportAtomicPaneSnapshotProgress(collector);
-          }
-          this.inReply = false;
-          this.currentReplyNum = null;
-          this.currentReplyFlags = null;
-          if (collector.blockOrdinal === completeOrdinal2) {
-            this.atomicCollector = null;
-            const ok2 = collector.failureReason === null && collector.cursorLine !== null && collector.statusObserved;
-            collector.spec.onSettled(
-              Object.freeze({
-                ok: ok2,
-                captureLines: Object.freeze(ok2 ? [...collector.captureLines] : []),
-                cursorLine: ok2 ? collector.cursorLine : null,
-                continueObserved: collector.continueObserved,
-                statusObserved: collector.statusObserved,
-                observerEmissionObserved: collector.observerEmissionObserved,
-                started: collector.started,
-                lastCompletedOrdinal: collector.lastCompletedOrdinal,
-                captureLineCount: collector.captureLines.length,
-                captureByteCount: collector.captureBytes,
-                failureReason: ok2 ? null : collector.failureReason ?? "sentinel-order"
-              })
-            );
-          }
-          return true;
-        }
-        if (line === `%continue ${collector.spec.runtimePaneId}` && collector.blockOrdinal === 5) {
-          if (collector.continueObserved) collector.failureReason ??= "duplicate-sentinel";
-          collector.continueObserved = true;
-          return true;
-        }
-        if (!this.inReply && (line === "%exit" || line.startsWith("%exit "))) {
-          this.retireAtomicPaneSnapshotCollector(collector.spec.nonce, "channel-exit");
-          return false;
-        }
-        if (!this.inReply) {
-          collector.failureReason ??= "unexpected-post-line";
-          return true;
-        }
-        const markerBranchOrdinal = 7 + collector.spec.observerCommandCount;
-        const statusOrdinal = 8 + collector.spec.observerCommandCount;
-        const completeOrdinal = 10 + collector.spec.observerCommandCount;
-        collector.blockContentCount += 1;
-        if (collector.blockOrdinal === 1) {
-          collector.captureBytes += Buffer.byteLength(line, "latin1") + 1;
-          if (collector.captureBytes > collector.spec.maxCaptureBytes)
-            collector.failureReason ??= "capture-byte-cap";
-          if (collector.captureLines.length >= collector.spec.maxCaptureLines)
-            collector.failureReason ??= "capture-line-cap";
-          else collector.captureLines.push(line);
-          this.reportAtomicPaneSnapshotProgress(collector);
-          return true;
-        }
-        if (collector.blockOrdinal === 3) {
-          if (collector.cursorLine !== null) collector.failureReason ??= "cursor-cardinality";
-          else if (Buffer.byteLength(line, "latin1") > collector.spec.maxCursorBytes)
-            collector.failureReason ??= "cursor-byte-cap";
-          else collector.cursorLine = line;
-          return true;
-        }
-        const markerRejected = `marker-rejected`;
-        if (collector.blockOrdinal === markerBranchOrdinal) {
-          collector.failureReason ??= token === markerRejected ? "marker-rejected" : "sentinel-order";
-          return true;
-        }
-        const expectedToken = collector.blockOrdinal === 2 ? "capture-end" : collector.blockOrdinal === 4 ? "cursor-end" : collector.blockOrdinal === statusOrdinal ? "status-ok" : collector.blockOrdinal === completeOrdinal ? "complete" : null;
-        if (expectedToken === null || token !== expectedToken)
-          collector.failureReason ??= token === "start" ? "duplicate-sentinel" : "sentinel-order";
-        if (collector.blockOrdinal === statusOrdinal && token === "status-ok") {
-          if (collector.statusObserved) collector.failureReason ??= "duplicate-sentinel";
-          collector.statusObserved = true;
-        }
-        return true;
-      }
-      reportAtomicPaneSnapshotProgress(collector) {
-        if (collector.failureReason !== null) return;
-        collector.spec.onProgress?.(
-          Object.freeze({
-            started: collector.started,
-            lastCompletedOrdinal: collector.lastCompletedOrdinal,
-            captureLineCount: Math.min(collector.captureLines.length, ATOMIC_CAPTURE_LINE_HARD_CAP),
-            captureByteCount: Math.min(collector.captureBytes, ATOMIC_CAPTURE_BYTE_HARD_CAP),
-            continueObserved: collector.continueObserved,
-            statusObserved: collector.statusObserved,
-            observerEmissionObserved: collector.observerEmissionObserved
-          })
-        );
-      }
-    };
-    DEFAULT_PAUSE_AFTER_SECONDS = 2;
-    MirrorControlChannel = class {
-      proc = null;
-      core;
-      opts;
-      exited = false;
-      atomicCollectorTimer = null;
-      constructor(opts) {
-        this.opts = opts;
-        this.core = new ControlChannelCore(
-          {
-            ...opts.handlers,
-            onExit: (reason) => this.noteExit(reason)
-          },
-          opts.nowMicros
-        );
-      }
-      start() {
-        const pauseAfter = this.opts.pauseAfterSeconds ?? DEFAULT_PAUSE_AFTER_SECONDS;
-        const args = mirrorControlAttachArgs(this.opts, pauseAfter);
-        const proc = spawn7(this.opts.executable ?? "tmux", args, {
-          stdio: ["pipe", "pipe", "pipe"],
-          env: { ...process.env, TMUX: "" }
-        });
-        this.proc = proc;
-        proc.stdin?.on("error", () => {
-        });
-        proc.stdout.on("error", () => {
-        });
-        proc.stderr?.on("error", () => {
-        });
-        proc.stdout.setEncoding("latin1");
-        proc.stdout.on("data", (chunk) => this.core.feed(chunk, this.opts.nowMicros?.()));
-        proc.on("exit", () => {
-          this.core.fail("control channel exited");
-          this.noteExit(null);
-        });
-        return new Promise((resolve37, reject) => {
-          this.core.push({ kind: "promise", resolve: () => resolve37(), reject, lines: [] });
-          proc.on("error", (err) => {
-            this.core.fail(String(err));
-            reject(err);
-          });
-        });
-      }
-      request(cmd) {
-        const proc = this.proc;
-        if (!proc?.stdin?.writable) return Promise.reject(new Error("control channel not running"));
-        return new Promise((resolve37, reject) => {
-          this.core.push({ kind: "promise", resolve: resolve37, reject, lines: [] });
-          proc.stdin.write(`${cmd}
-`);
-        });
-      }
-      commandInline(cmd, onReply) {
-        const proc = this.proc;
-        if (!proc?.stdin?.writable) {
-          onReply({ ok: false, lines: ["control channel not running"] });
-          return;
-        }
-        this.core.push({ kind: "inline", onReply, lines: [] });
-        proc.stdin.write(`${cmd}
-`);
-      }
-      commandListInline(cmd, replyCount, resultIndex, onReply) {
-        const proc = this.proc;
-        if (!proc?.stdin?.writable) {
-          onReply({ ok: false, lines: ["control channel not running"] });
-          return;
-        }
-        if (replyCount < 1 || resultIndex < 0 || resultIndex >= replyCount) {
-          onReply({ ok: false, lines: ["invalid control command-list reply selection"] });
-          return;
-        }
-        this.core.pushCommandList(replyCount, resultIndex, onReply);
-        proc.stdin.write(`${cmd}
-`);
-      }
-      armAtomicPaneSnapshotCollector(spec, timeoutMs) {
-        if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 5e3) return false;
-        const wrapped = {
-          ...spec,
-          onSettled: (result) => {
-            if (this.atomicCollectorTimer) clearTimeout(this.atomicCollectorTimer);
-            this.atomicCollectorTimer = null;
-            spec.onSettled(result);
-          }
-        };
-        if (!this.core.armAtomicPaneSnapshotCollector(wrapped)) return false;
-        this.atomicCollectorTimer = setTimeout(() => {
-          this.atomicCollectorTimer = null;
-          this.core.retireAtomicPaneSnapshotCollector(spec.nonce, "timeout");
-        }, timeoutMs);
-        this.atomicCollectorTimer.unref?.();
-        return true;
-      }
-      retireAtomicPaneSnapshotCollector(nonce, reason = "retired") {
-        if (!this.core.retireAtomicPaneSnapshotCollector(nonce, reason)) return;
-        if (this.atomicCollectorTimer) clearTimeout(this.atomicCollectorTimer);
-        this.atomicCollectorTimer = null;
-      }
-      send(cmd, onReply) {
-        const proc = this.proc;
-        if (!proc?.stdin?.writable) return;
-        this.core.push({ kind: "discard", ...onReply ? { onReply } : {} });
-        proc.stdin.write(`${cmd}
-`);
-      }
-      get inputErrorCount() {
-        return this.core.inputErrorCount;
-      }
-      get pendingCount() {
-        return this.core.pendingCount;
-      }
-      /**
-       * Detach-before-kill hygiene: resume a stalled reader (the server must be
-       * able to flush), ask tmux to detach us, and drain until the process exits;
-       * signals are a fallback, never the first move (wedged-server hazard).
-       */
-      async dispose() {
-        if (this.atomicCollectorTimer) clearTimeout(this.atomicCollectorTimer);
-        this.atomicCollectorTimer = null;
-        const proc = this.proc;
-        this.proc = null;
-        if (!proc) return;
-        try {
-          proc.stdout?.resume();
-        } catch {
-        }
-        try {
-          proc.stdin?.write("detach-client\n");
-        } catch {
-        }
-        if (await waitForExit(proc, 750)) return;
-        try {
-          proc.kill();
-        } catch {
-        }
-        if (await waitForExit(proc, 500)) return;
-        try {
-          proc.kill("SIGKILL");
-        } catch {
-        }
-        await waitForExit(proc, 250);
-      }
-      noteExit(reason) {
-        if (this.exited) return;
-        this.exited = true;
-        this.opts.handlers.onExit(reason);
-      }
-    };
-  }
-});
-
-// packages/daemon/src/terminal/protocol/chunk-bytes.ts
-function chunkByBytes(text, maxBytes) {
-  const enc = new TextEncoder();
-  const chunks = [];
-  let cur = "";
-  let curBytes = 0;
-  for (const ch of text) {
-    const b = enc.encode(ch).length;
-    if (curBytes + b > maxBytes && cur.length > 0) {
-      chunks.push(cur);
-      cur = "";
-      curBytes = 0;
-    }
-    cur += ch;
-    curBytes += b;
-  }
-  if (cur.length > 0) chunks.push(cur);
-  return chunks;
-}
-var init_chunk_bytes = __esm({
-  "packages/daemon/src/terminal/protocol/chunk-bytes.ts"() {
-    "use strict";
-  }
-});
-
-// packages/daemon/src/terminal/protocol/input-coalescer.ts
-var SEND_KEYS_CHUNK_BYTES, MAX_INPUT_TRACE_IDS, InputCoalescer;
-var init_input_coalescer = __esm({
-  "packages/daemon/src/terminal/protocol/input-coalescer.ts"() {
-    "use strict";
-    init_chunk_bytes();
-    SEND_KEYS_CHUNK_BYTES = 256;
-    MAX_INPUT_TRACE_IDS = 256;
-    InputCoalescer = class {
-      constructor(emit, schedule, maxChunkBytes = SEND_KEYS_CHUNK_BYTES) {
-        this.emit = emit;
-        this.schedule = schedule;
-        this.maxChunkBytes = maxChunkBytes;
-      }
-      pane = "";
-      buf = "";
-      scheduled = false;
-      traceIds = [];
-      /** Buffer literal text for `pane`; a pending run for ANOTHER pane flushes
-       *  first so cross-pane order is preserved. Schedules an auto-flush once per
-       *  pending run. */
-      literal(pane, text, traceId) {
-        if (!pane || !text) return;
-        if (this.buf.length > 0 && this.pane !== pane) this.flush();
-        this.pane = pane;
-        this.buf += text;
-        if (traceId && this.traceIds.length < MAX_INPUT_TRACE_IDS && !this.traceIds.includes(traceId))
-          this.traceIds.push(traceId);
-        if (!this.scheduled) {
-          this.scheduled = true;
-          this.schedule(() => {
-            this.scheduled = false;
-            this.flush();
-          });
-        }
-      }
-      /** Emit a named tmux key (Enter, C-c, Up, …) — pending literals flush first
-       *  (synchronously) so the key can never overtake buffered characters. */
-      key(pane, key, traceId) {
-        if (!pane || !key) return;
-        this.flush();
-        this.emit({ kind: "key", pane, key, ...traceId ? { traceIds: [traceId] } : {} });
-      }
-      /** Drain the pending literal run now (chunked under the byte cap). Also the
-       *  ordering barrier callers place before reply-matched structural commands. */
-      flush() {
-        if (this.buf.length === 0) return;
-        const pane = this.pane;
-        const text = this.buf;
-        const traceIds = this.traceIds;
-        this.buf = "";
-        this.traceIds = [];
-        for (const chunk of chunkByBytes(text, this.maxChunkBytes)) {
-          this.emit({
-            kind: "literal",
-            pane,
-            text: chunk,
-            ...traceIds.length > 0 ? { traceIds: [...traceIds] } : {}
-          });
-        }
-      }
-      /** Buffered-but-unflushed character count (tests/introspection only). */
-      pending() {
-        return this.buf.length;
-      }
-    };
-  }
-});
-
-// packages/daemon/src/terminal/protocol/layout-parse.ts
-function parseLayout(layout) {
-  if (!/^[0-9a-fA-F]{4},/.test(layout)) return null;
-  const s = layout.slice(5);
-  const leaves = [];
-  const root = parseCell(s, 0, leaves);
-  if (!root || root.pos !== s.length) return null;
-  return { width: root.width, height: root.height, leaves };
-}
-function parseCell(s, pos, leaves) {
-  const dims = readDims(s, pos);
-  if (!dims) return null;
-  const { width, height, left, top } = dims;
-  pos = dims.pos;
-  const ch = s[pos];
-  if (ch === ",") {
-    const id = readInt(s, pos + 1);
-    if (!id) return null;
-    leaves.push({ id: `%${id.value}`, left, top, width, height });
-    return { width, height, pos: id.pos };
-  }
-  if (ch === "{" || ch === "[") {
-    const close = ch === "{" ? "}" : "]";
-    pos++;
-    for (; ; ) {
-      const child = parseCell(s, pos, leaves);
-      if (!child) return null;
-      pos = child.pos;
-      if (s[pos] === ",") {
-        pos++;
-        continue;
-      }
-      if (s[pos] === close) return { width, height, pos: pos + 1 };
-      return null;
-    }
-  }
-  return null;
-}
-function readDims(s, pos) {
-  const w = readInt(s, pos);
-  if (!w || s[w.pos] !== "x") return null;
-  const h = readInt(s, w.pos + 1);
-  if (!h || s[h.pos] !== ",") return null;
-  const x = readInt(s, h.pos + 1);
-  if (!x || s[x.pos] !== ",") return null;
-  const y = readInt(s, x.pos + 1);
-  if (!y) return null;
-  return { width: w.value, height: h.value, left: x.value, top: y.value, pos: y.pos };
-}
-function readInt(s, pos) {
-  let end = pos;
-  while (end < s.length && s.charCodeAt(end) >= 48 && s.charCodeAt(end) <= 57) end++;
-  if (end === pos) return null;
-  return { value: Number(s.slice(pos, end)), pos: end };
-}
-function parseLayoutChange(rest) {
-  const parts = rest.trim().split(/\s+/);
-  const [windowId = "", layout = "", visible = "", flags = ""] = parts;
-  if (parts.length < 3 || !windowId.startsWith("@")) return null;
-  return { windowId, layout, visible, zoomed: flags.includes("Z") };
-}
-function parseWindowPaneChanged(rest) {
-  const [windowId = "", paneId = ""] = rest.trim().split(/\s+/);
-  if (!windowId.startsWith("@") || !paneId.startsWith("%")) return null;
-  return { windowId, paneId };
-}
-function parseSessionWindowChanged(rest) {
-  const [, windowId = ""] = rest.trim().split(/\s+/);
-  if (!windowId.startsWith("@")) return null;
-  return { windowId };
-}
-var init_layout_parse = __esm({
-  "packages/daemon/src/terminal/protocol/layout-parse.ts"() {
-    "use strict";
-  }
-});
-
-// packages/daemon/src/terminal/protocol/session-descriptor-discovery.ts
-function decodeTmuxArgument(value) {
-  const encoded = value.length >= 2 && (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'")) ? value.slice(1, -1) : value;
-  let decoded = "";
-  for (let index = 0; index < encoded.length; index += 1) {
-    const current = encoded[index];
-    if (current !== "\\" || index + 1 >= encoded.length) {
-      decoded += current;
-      continue;
-    }
-    const escaped = encoded[++index];
-    if (escaped === "e") decoded += "\x1B";
-    else if (escaped === "n") decoded += "\n";
-    else if (escaped === "r") decoded += "\r";
-    else if (escaped === "t") decoded += "	";
-    else if (/[0-7]/u.test(escaped)) {
-      let octal = escaped;
-      while (octal.length < 3 && /[0-7]/u.test(encoded[index + 1] ?? "")) {
-        octal += encoded[++index];
-      }
-      decoded += String.fromCodePoint(Number.parseInt(octal, 8));
-    } else if (escaped === "u") {
-      const remaining = encoded.slice(index + 1);
-      const unicode = remaining.match(/^(?:[0-9A-Fa-f]{8}|[0-9A-Fa-f]{4})/u)?.[0];
-      if (unicode) {
-        decoded += String.fromCodePoint(Number.parseInt(unicode, 16));
-        index += unicode.length;
-      } else {
-        decoded += "u";
-      }
-    } else {
-      decoded += escaped;
-    }
-  }
-  return decoded;
-}
-function parseSessionPaneDescriptorReply(lines) {
-  const descriptors = [];
-  let malformedUtf8Records = 0;
-  if (lines.length > 4096 || lines.reduce((bytes, line) => bytes + Buffer.byteLength(line, "latin1") + 1, 0) > 128 * 1024) {
-    return { descriptors, malformedUtf8Records };
-  }
-  for (const line of lines) {
-    const utf8Line = decodeControlReplyUtf8(line);
-    if (utf8Line === null) {
-      malformedUtf8Records += 1;
-      continue;
-    }
-    const encoded = utf8Line.split("	");
-    if (encoded.length !== 20) continue;
-    const [
-      runtimePaneId = "",
-      semanticPaneId3 = "",
-      role = "",
-      type = "",
-      currentCommand = "",
-      cwd = "",
-      windowIndexRaw = "",
-      windowName = "",
-      windowId = "",
-      title = "",
-      runtimeSessionId = "",
-      paneIndexRaw = "",
-      name = "",
-      missionStamp = "",
-      paneActiveRaw = "",
-      windowActiveRaw = "",
-      semanticWindowId = "",
-      sessionName = "",
-      windowPaneCountRaw = "",
-      sessionWindowCountRaw = ""
-    ] = encoded.map(decodeTmuxArgument);
-    if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtimePaneId) || runtimePaneId.length > 32) continue;
-    if (!/^\$(?:0|[1-9][0-9]*)$/u.test(runtimeSessionId) || runtimeSessionId.length > 32) continue;
-    const parsedWindowIndex = Number(windowIndexRaw);
-    const windowIndex = Number.isSafeInteger(parsedWindowIndex) && parsedWindowIndex >= 0 ? parsedWindowIndex : null;
-    const paneIndex = Number(paneIndexRaw);
-    const windowPaneCount = Number(windowPaneCountRaw);
-    const sessionWindowCount = Number(sessionWindowCountRaw);
-    if (!/^(?:0|[1-9][0-9]*)$/u.test(paneIndexRaw) || !Number.isSafeInteger(paneIndex)) continue;
-    if (!/^[1-9][0-9]*$/u.test(windowPaneCountRaw) || !Number.isSafeInteger(windowPaneCount) || !/^[1-9][0-9]*$/u.test(sessionWindowCountRaw) || !Number.isSafeInteger(sessionWindowCount) || windowPaneCount < 1 || sessionWindowCount < 1)
-      continue;
-    if (!["0", "1"].includes(paneActiveRaw) || !["0", "1"].includes(windowActiveRaw)) continue;
-    const bounded2 = (value, maximum) => value.length <= maximum && !/[\0\r\n\t]/u.test(value);
-    if (!bounded2(semanticPaneId3, 256) || !bounded2(role, 256) || !bounded2(type, 256) || !bounded2(currentCommand, 512) || !bounded2(cwd, 4096) || !bounded2(title, 1024) || !bounded2(windowName, 1024) || !bounded2(name, 256) || !bounded2(missionStamp, 256) || !bounded2(semanticWindowId, 256) || !bounded2(sessionName, 160) || sessionName.length === 0 || windowId.length > 32) {
-      continue;
-    }
-    descriptors.push({
-      sessionName,
-      runtimePaneId,
-      runtimeSessionId,
-      semanticPaneId: nonempty(semanticPaneId3),
-      role: nonempty(role),
-      type: nonempty(type),
-      currentCommand: nonempty(currentCommand),
-      cwd: nonempty(cwd),
-      title: nonempty(title),
-      windowIndex,
-      windowName: nonempty(windowName),
-      windowId: /^@(?:0|[1-9][0-9]*)$/u.test(windowId) ? windowId : null,
-      semanticWindowId: nonempty(semanticWindowId),
-      paneIndex,
-      name: nonempty(name),
-      missionStamp: nonempty(missionStamp),
-      paneActive: paneActiveRaw === "1",
-      windowActive: windowActiveRaw === "1",
-      windowPaneCount,
-      sessionWindowCount
-    });
-  }
-  return { descriptors, malformedUtf8Records };
-}
-function nonempty(value) {
-  return value.length > 0 ? value : null;
-}
-function decodeControlReplyUtf8(value) {
-  try {
-    return STRICT_UTF8_DECODER.decode(Buffer.from(value, "latin1"));
-  } catch {
-    return null;
-  }
-}
-function positiveInteger3(value, fallback) {
-  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
-}
-var SESSION_PANE_DESCRIPTOR_FORMAT, SessionDescriptorDiscovery, STRICT_UTF8_DECODER;
-var init_session_descriptor_discovery = __esm({
-  "packages/daemon/src/terminal/protocol/session-descriptor-discovery.ts"() {
-    "use strict";
-    SESSION_PANE_DESCRIPTOR_FORMAT = [
-      "#{pane_id}",
-      "#{qa:@tmux_ide_pane_id}",
-      "#{qa:@ide_role}",
-      "#{qa:@ide_type}",
-      "#{qa:pane_current_command}",
-      "#{qa:pane_current_path}",
-      "#{window_index}",
-      "#{qa:window_name}",
-      "#{window_id}",
-      "#{qa:pane_title}",
-      "#{session_id}",
-      "#{pane_index}",
-      "#{qa:@ide_name}",
-      "#{qa:@tmux_ide_mission}",
-      "#{pane_active}",
-      "#{?window_active,1,0}",
-      "#{qa:@tmux_ide_window_id}",
-      "#{qa:session_name}",
-      "#{window_panes}",
-      "#{session_windows}"
-    ].join("	");
-    SessionDescriptorDiscovery = class {
-      options;
-      epoch = 0;
-      cancelScheduled = null;
-      disposed = false;
-      constructor(options) {
-        this.options = {
-          ...options,
-          maxAttempts: positiveInteger3(options.maxAttempts, 3),
-          baseDelayMs: positiveInteger3(options.baseDelayMs, 50),
-          schedule: options.schedule ?? ((callback, delayMs) => {
-            const timer = setTimeout(callback, delayMs);
-            return () => clearTimeout(timer);
-          })
-        };
-      }
-      discover(listedRuntimePaneIds) {
-        if (this.disposed) return;
-        this.invalidatePending();
-        const epoch = this.epoch;
-        this.attempt(epoch, new Set(listedRuntimePaneIds), 1);
-      }
-      invalidate() {
-        if (this.disposed) return;
-        this.invalidatePending();
-        this.options.onStatus?.(null);
-      }
-      dispose() {
-        if (this.disposed) return;
-        this.invalidatePending();
-        this.disposed = true;
-      }
-      invalidatePending() {
-        this.epoch += 1;
-        this.cancelScheduled?.();
-        this.cancelScheduled = null;
-      }
-      attempt(epoch, listed, attempt) {
-        void this.options.query().then((lines) => {
-          if (!this.isCurrent(epoch)) return;
-          const parsed = parseSessionPaneDescriptorReply(lines);
-          const descriptorByRuntimePane = new Map(
-            parsed.descriptors.filter((descriptor2) => listed.has(descriptor2.runtimePaneId)).map((descriptor2) => [descriptor2.runtimePaneId, descriptor2])
-          );
-          const descriptors = [...descriptorByRuntimePane.values()];
-          if (listed.size > 0 && descriptors.length === 0) {
-            const malformedDetail = parsed.malformedUtf8Records > 0 ? `; ${parsed.malformedUtf8Records} malformed UTF-8 record${parsed.malformedUtf8Records === 1 ? " was" : "s were"} omitted` : "";
-            throw new Error(
-              `descriptor reply covered 0 of ${listed.size} live panes${malformedDetail}`
-            );
-          }
-          if (descriptors.length !== listed.size || parsed.malformedUtf8Records > 0) {
-            const malformedDetail = parsed.malformedUtf8Records > 0 ? `; omitted ${parsed.malformedUtf8Records} malformed UTF-8 record${parsed.malformedUtf8Records === 1 ? "" : "s"}` : "";
-            this.options.onStatus?.({
-              status: "partial",
-              degraded: true,
-              attempt,
-              maxAttempts: this.options.maxAttempts,
-              retryInMs: null,
-              message: `Pane descriptor discovery published ${descriptors.length} of ${listed.size} live panes${malformedDetail}.`
-            });
-          } else {
-            this.options.onStatus?.(null);
-          }
-          this.options.onDescriptors(descriptors, listed);
-        }).catch((cause) => {
-          if (!this.isCurrent(epoch)) return;
-          const detail = cause instanceof Error ? cause.message : String(cause);
-          if (attempt >= this.options.maxAttempts) {
-            this.options.onStatus?.({
-              status: "failed",
-              degraded: true,
-              attempt,
-              maxAttempts: this.options.maxAttempts,
-              retryInMs: null,
-              message: `Pane descriptor discovery failed after ${attempt} attempts: ${detail}`
-            });
-            return;
-          }
-          const retryInMs = this.options.baseDelayMs * 2 ** (attempt - 1);
-          this.options.onStatus?.({
-            status: "retrying",
-            degraded: true,
-            attempt,
-            maxAttempts: this.options.maxAttempts,
-            retryInMs,
-            message: `Pane descriptor discovery attempt ${attempt} failed: ${detail}`
-          });
-          this.cancelScheduled = this.options.schedule(() => {
-            this.cancelScheduled = null;
-            if (this.isCurrent(epoch)) this.attempt(epoch, listed, attempt + 1);
-          }, retryInMs);
-        });
-      }
-      isCurrent(epoch) {
-        return !this.disposed && epoch === this.epoch;
-      }
-    };
-    STRICT_UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
-  }
-});
-
-// packages/daemon/src/terminal/protocol/workspace-tmux-adapter.ts
-function planWorkspaceTmuxReconciliation(input) {
-  const diagnostics = [];
-  const panes = [];
-  const runtimeIds = /* @__PURE__ */ new Set();
-  for (const pane of input.panes) {
-    if (!RUNTIME_PANE_ID.test(pane.runtimePaneId)) {
-      diagnostics.push(
-        diagnostic3(
-          "INVALID_RUNTIME_PANE",
-          null,
-          pane.semanticPaneId,
-          `Ignored invalid live tmux pane address ${JSON.stringify(pane.runtimePaneId)}.`,
-          true
-        )
-      );
-      continue;
-    }
-    if (runtimeIds.has(pane.runtimePaneId)) {
-      diagnostics.push(
-        diagnostic3(
-          "DUPLICATE_RUNTIME_PANE",
-          pane.runtimePaneId,
-          pane.semanticPaneId,
-          `Ignored duplicate live tmux pane address ${pane.runtimePaneId}.`,
-          true
-        )
-      );
-      continue;
-    }
-    runtimeIds.add(pane.runtimePaneId);
-    panes.push(pane);
-  }
-  const validStampCounts = /* @__PURE__ */ new Map();
-  for (const pane of panes) {
-    if (!validSemanticPaneId(pane.semanticPaneId)) continue;
-    validStampCounts.set(pane.semanticPaneId, (validStampCounts.get(pane.semanticPaneId) ?? 0) + 1);
-  }
-  const claimedSemanticIds = new Set(validStampCounts.keys());
-  const priorByRuntime = previousBindingsByRuntime(input.previousBindings);
-  const reconciled = [];
-  const stampEffects = [];
-  const maxAttempts = normalizeAttempts(input.maxGenerationAttempts);
-  for (const pane of panes) {
-    const rawStamp = pane.semanticPaneId;
-    const stampIsValid = validSemanticPaneId(rawStamp);
-    const stampIsUnique = stampIsValid && validStampCounts.get(rawStamp) === 1;
-    const priorSemanticId = priorByRuntime.get(pane.runtimePaneId) ?? null;
-    if (priorSemanticId && priorSemanticId !== (stampIsUnique ? rawStamp : null)) {
-      diagnostics.push(
-        diagnostic3(
-          "STALE_RUNTIME_BINDING_IGNORED",
-          pane.runtimePaneId,
-          priorSemanticId,
-          `Ignored persisted binding ${priorSemanticId} -> ${pane.runtimePaneId}; runtime pane ids are reusable addresses, not identity.`,
-          false
-        )
-      );
-    }
-    if (stampIsUnique) {
-      reconciled.push({
-        ...pane,
-        semanticPaneId: rawStamp,
-        identitySource: "stamp",
-        requiresStampBack: false
-      });
-      continue;
-    }
-    if (rawStamp === null || rawStamp.length === 0) {
-      diagnostics.push(
-        diagnostic3(
-          "MISSING_SEMANTIC_STAMP",
-          pane.runtimePaneId,
-          null,
-          `Pane ${pane.runtimePaneId} has no semantic identity stamp; a fresh id will be stamped back.`,
-          false
-        )
-      );
-    } else if (!stampIsValid) {
-      diagnostics.push(
-        diagnostic3(
-          "INVALID_SEMANTIC_STAMP",
-          pane.runtimePaneId,
-          rawStamp,
-          `Pane ${pane.runtimePaneId} has an invalid semantic identity stamp; a fresh id will be stamped back.`,
-          false
-        )
-      );
-    } else {
-      diagnostics.push(
-        diagnostic3(
-          "DUPLICATE_SEMANTIC_STAMP",
-          pane.runtimePaneId,
-          rawStamp,
-          `Pane ${pane.runtimePaneId} shares semantic identity ${rawStamp}; every duplicate will be restamped.`,
-          false
-        )
-      );
-    }
-    const generated = generateUnclaimedSemanticPaneId(
-      input.generateSemanticPaneId,
-      claimedSemanticIds,
-      maxAttempts
-    );
-    if (!generated) {
-      diagnostics.push(
-        diagnostic3(
-          "SEMANTIC_ID_GENERATION_FAILED",
-          pane.runtimePaneId,
-          rawStamp,
-          `Could not generate a valid unique semantic identity for ${pane.runtimePaneId}.`,
-          true
-        )
-      );
-      continue;
-    }
-    claimedSemanticIds.add(generated);
-    reconciled.push({
-      ...pane,
-      semanticPaneId: generated,
-      identitySource: "generated",
-      requiresStampBack: true
-    });
-    stampEffects.push({
-      kind: "set-pane-option",
-      runtimePaneId: pane.runtimePaneId,
-      option: WORKSPACE_SEMANTIC_PANE_OPTION,
-      value: generated
-    });
-  }
-  return {
-    panes: reconciled,
-    stampEffects,
-    diagnostics,
-    degraded: diagnostics.some((item) => item.degraded)
-  };
-}
-function finalizeWorkspaceTmuxReconciliation(plan, outcomes) {
-  const byRuntime = new Map(outcomes.map((outcome) => [outcome.runtimePaneId, outcome]));
-  const diagnostics = [...plan.diagnostics];
-  const panes = [];
-  for (const pane of plan.panes) {
-    if (!pane.requiresStampBack) {
-      panes.push(pane);
-      continue;
-    }
-    const outcome = byRuntime.get(pane.runtimePaneId);
-    if (outcome?.ok) {
-      panes.push(pane);
-      continue;
-    }
-    const reason = outcome?.error?.trim();
-    diagnostics.push(
-      diagnostic3(
-        "SEMANTIC_STAMP_BACK_FAILED",
-        pane.runtimePaneId,
-        pane.semanticPaneId,
-        `Could not stamp semantic identity ${pane.semanticPaneId} onto ${pane.runtimePaneId}${reason ? `: ${reason}` : "."}`,
-        true
-      )
-    );
-  }
-  return {
-    panes,
-    diagnostics,
-    degraded: diagnostics.some((item) => item.degraded)
-  };
-}
-function validSemanticPaneId(value) {
-  return value !== null && WorkspaceIdSchemaZ.safeParse(value).success;
-}
-function normalizeAttempts(value) {
-  return Number.isSafeInteger(value) && value > 0 ? value : DEFAULT_GENERATION_ATTEMPTS;
-}
-function generateUnclaimedSemanticPaneId(generate, claimed, maxAttempts) {
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const candidate = generate();
-    if (validSemanticPaneId(candidate) && !claimed.has(candidate)) return candidate;
-  }
-  return null;
-}
-function previousBindingsByRuntime(bindings) {
-  const byRuntime = /* @__PURE__ */ new Map();
-  for (const binding of Object.values(bindings ?? {})) {
-    if (RUNTIME_PANE_ID.test(binding.runtimePaneId)) {
-      byRuntime.set(binding.runtimePaneId, binding.semanticPaneId);
-    }
-  }
-  return byRuntime;
-}
-function diagnostic3(code, runtimePaneId, semanticPaneId3, message, degraded) {
-  return { code, runtimePaneId, semanticPaneId: semanticPaneId3, message, degraded };
-}
-var RUNTIME_PANE_ID, DEFAULT_GENERATION_ATTEMPTS;
-var init_workspace_tmux_adapter = __esm({
-  "packages/daemon/src/terminal/protocol/workspace-tmux-adapter.ts"() {
-    "use strict";
-    init_src();
-    RUNTIME_PANE_ID = /^%[0-9]+$/u;
-    DEFAULT_GENERATION_ATTEMPTS = 32;
-  }
-});
-
-// packages/daemon/src/terminal/mirror/flow-ledger.ts
-var FlowLedger;
-var init_flow_ledger = __esm({
-  "packages/daemon/src/terminal/mirror/flow-ledger.ts"() {
-    "use strict";
-    FlowLedger = class {
-      /** Panes tmux told us it paused (`%pause`). */
-      backpressured = /* @__PURE__ */ new Set();
-      /** Panes WE asked tmux to pause (every subscriber frozen). */
-      requested = /* @__PURE__ */ new Set();
-      notePause(pane) {
-        this.backpressured.add(pane);
-      }
-      /** A continue was issued (or tmux reported `%continue`). */
-      noteContinued(pane) {
-        this.backpressured.delete(pane);
-      }
-      requestPause(pane) {
-        this.requested.add(pane);
-      }
-      clearRequest(pane) {
-        this.requested.delete(pane);
-      }
-      forget(pane) {
-        this.backpressured.delete(pane);
-        this.requested.delete(pane);
-      }
-      isBackpressured(pane) {
-        return this.backpressured.has(pane);
-      }
-      isRequested(pane) {
-        return this.requested.has(pane);
-      }
-      /** Every pane a sticky recovery must continue+reseed: backpressure-paused
-       *  and not deliberately frozen by its subscribers. */
-      stickyRecoverySet() {
-        return [...this.backpressured].filter((pane) => !this.requested.has(pane));
-      }
-      /** Detached snapshot for telemetry/tests. */
-      snapshot() {
-        return { backpressured: [...this.backpressured], requested: [...this.requested] };
-      }
-    };
-  }
-});
-
-// packages/daemon/src/terminal/mirror/pane-feed.ts
-function parseCursorProbe(line) {
-  const [x, y, cols, rows] = line.trim().split(/\s+/).map(Number);
-  if (![x, y, cols, rows].every((n10) => Number.isInteger(n10) && n10 !== void 0 && n10 >= 0) || !cols || !rows) {
-    return null;
-  }
-  return { x, y, cols, rows };
-}
-function seedBytesFromCapture(lines) {
-  return Buffer.from(lines.join("\r\n"), "latin1");
-}
-var PaneFeed;
-var init_pane_feed = __esm({
-  "packages/daemon/src/terminal/mirror/pane-feed.ts"() {
-    "use strict";
-    PaneFeed = class _PaneFeed {
-      static MAX_HELD_CHUNKS = 512;
-      static MAX_HELD_BYTES = 1024 * 1024;
-      state = "live";
-      epoch = 0;
-      seedLines = null;
-      held = [];
-      heldBytes = 0;
-      overflowed = false;
-      currentState() {
-        return this.state;
-      }
-      /** Arm a reseed. Returns the epoch token the two reply hooks must present;
-       *  an in-flight older reseed is invalidated wholesale. */
-      beginReseed() {
-        this.epoch += 1;
-        this.state = "awaiting-capture";
-        this.seedLines = null;
-        this.held = [];
-        this.heldBytes = 0;
-        this.overflowed = false;
-        return this.epoch;
-      }
-      /** Route one live output delta. Discarded while a capture is pending (the
-       *  bytes are in the capture), held while the cursor probe is pending, and a
-       *  plain delta event otherwise. */
-      delta(data) {
-        if (this.state === "live") return [{ type: "delta", data }];
-        if (this.state === "quarantined") return [];
-        if (this.state === "awaiting-cursor") {
-          if (this.held.length >= _PaneFeed.MAX_HELD_CHUNKS || this.heldBytes + data.byteLength > _PaneFeed.MAX_HELD_BYTES) {
-            this.state = "quarantined";
-            this.seedLines = null;
-            this.held = [];
-            this.heldBytes = 0;
-            this.overflowed = true;
-            return [];
-          }
-          this.held.push(data);
-          this.heldBytes += data.byteLength;
-        }
-        return [];
-      }
-      takeOverflowed() {
-        const overflowed = this.overflowed;
-        this.overflowed = false;
-        return overflowed;
-      }
-      /** The capture reply landed (synchronously, in channel read order). */
-      captureReply(epoch, lines) {
-        if (epoch !== this.epoch || this.state !== "awaiting-capture") return;
-        this.seedLines = lines;
-        this.state = "awaiting-cursor";
-      }
-      /**
-       * The cursor/size probe reply landed — emit the atomic seed batch:
-       * `reset, seed, …held deltas, cursor`. On a malformed probe line the batch
-       * degrades honestly: with `fallbackSize` known the reset still happens (no
-       * cursor event); with nothing to size the emulator by, only seed + held
-       * deltas flow (the consumer keeps its previous grid).
-       */
-      cursorReply(epoch, line, fallbackSize = null) {
-        if (epoch !== this.epoch || this.state !== "awaiting-cursor") return [];
-        const seed = seedBytesFromCapture(this.seedLines ?? []);
-        const held = this.held;
-        this.state = "live";
-        this.seedLines = null;
-        this.held = [];
-        this.heldBytes = 0;
-        const probe = parseCursorProbe(line);
-        const events = [];
-        if (probe) events.push({ type: "reset", cols: probe.cols, rows: probe.rows });
-        else if (fallbackSize) {
-          events.push({ type: "reset", cols: fallbackSize.cols, rows: fallbackSize.rows });
-        }
-        events.push({ type: "seed", data: seed });
-        for (const data of held) events.push({ type: "delta", data });
-        if (probe) events.push({ type: "cursor", x: probe.x, y: probe.y });
-        return events;
-      }
-      /** A probe errored (pane raced away, channel died). Quarantine subsequent
-       *  deltas until a new authoritative seed succeeds or the owner retires it. */
-      abort(epoch) {
-        if (epoch !== this.epoch || this.state === "live") return;
-        this.state = "quarantined";
-        this.seedLines = null;
-        this.held = [];
-        this.heldBytes = 0;
-        this.overflowed = false;
-      }
-      abortCurrent() {
-        this.epoch += 1;
-        this.state = "quarantined";
-        this.seedLines = null;
-        this.held = [];
-        this.heldBytes = 0;
-        this.overflowed = false;
-      }
-      /** Keep a completed authoritative snapshot as the recovery candidate while
-       * dropping later raw deltas until the owner proves convergence. */
-      quarantine(epoch) {
-        if (epoch !== this.epoch || this.state !== "live") return;
-        this.state = "quarantined";
-      }
-      /** Recovery owner only: the published candidate has passed its independent
-       * confirmation proof, so subsequent deltas may flow again. */
-      releaseQuarantine() {
-        if (this.state === "quarantined") this.state = "live";
-      }
-    };
-  }
-});
-
-// packages/daemon/src/terminal/mirror/session-channel.ts
-import { createHash as createHash11, randomBytes as randomBytes4 } from "node:crypto";
-function snapshotFingerprint2(captureLines, cursorLine, fallbackSize) {
-  const hash = createHash11("sha256");
-  const append = (bytes) => {
-    const length = Buffer.allocUnsafe(4);
-    length.writeUInt32BE(bytes.byteLength);
-    hash.update(length);
-    hash.update(bytes);
-  };
-  hash.update("tmux-ide/recovery-snapshot/v1\0");
-  const count = Buffer.allocUnsafe(4);
-  count.writeUInt32BE(captureLines.length);
-  hash.update(count);
-  for (const line of captureLines) append(Buffer.from(line, "latin1"));
-  append(Buffer.from(cursorLine, "utf8"));
-  append(
-    Buffer.from(
-      fallbackSize ? `${fallbackSize.cols}x${fallbackSize.rows}` : "no-layout-fallback",
-      "ascii"
-    )
-  );
-  return hash.digest("hex");
-}
-function tmuxSingleQuote(value) {
-  return `'${value.replaceAll("'", "''")}'`;
-}
-function defaultMirrorPaneId() {
-  return `pane.mirror.${randomBytes4(8).toString("hex")}`;
-}
-function defaultMirrorWindowId() {
-  return `window.mirror.${randomBytes4(8).toString("hex")}`;
-}
-var STRUCTURAL_NOTIFICATIONS, NATIVE_CLIENT_NOTIFICATIONS, NATIVE_CLIENT_SUBSCRIPTION, DEFAULT_HISTORY_LINES, SYNC_DEBOUNCE_MS, RECOVERY_QUIET_MS, RECOVERY_COMMAND_DEADLINE_MS, RECOVERY_NO_PROGRESS_DEADLINE_MS, RECOVERY_ABSOLUTE_DEADLINE_MS, RECOVERY_MAX_ATTEMPTS, RECOVERY_CAPTURE_MAX_BYTES, RECOVERY_CAPTURE_MAX_LINES, RECOVERY_CURSOR_MAX_BYTES, MAX_CONTINUE_NOTIFICATION_QUEUE, MAX_CONTINUE_NOTIFICATION_DEBT, RECOVERY_CURSOR_PROBE_FORMAT, FAILED_RESEED_RESULT, SessionChannel;
-var init_session_channel = __esm({
-  "packages/daemon/src/terminal/mirror/session-channel.ts"() {
-    "use strict";
-    init_src();
-    init_control2();
-    init_input_coalescer();
-    init_layout_parse();
-    init_session_descriptor_discovery();
-    init_workspace_tmux_adapter();
-    init_flow_ledger();
-    init_pane_feed();
-    init_tmux_interaction_options();
-    STRUCTURAL_NOTIFICATIONS = /* @__PURE__ */ new Set([
-      "window-add",
-      "window-close",
-      "window-renamed",
-      "unlinked-window-close"
-    ]);
-    NATIVE_CLIENT_NOTIFICATIONS = /* @__PURE__ */ new Set([
-      "client-attached",
-      "client-detached",
-      "client-resized",
-      "client-session-changed",
-      "subscription-changed"
-    ]);
-    NATIVE_CLIENT_SUBSCRIPTION = "tmux-ide-native-clients";
-    DEFAULT_HISTORY_LINES = 2e3;
-    SYNC_DEBOUNCE_MS = 40;
-    RECOVERY_QUIET_MS = 40;
-    RECOVERY_COMMAND_DEADLINE_MS = 500;
-    RECOVERY_NO_PROGRESS_DEADLINE_MS = 3e3;
-    RECOVERY_ABSOLUTE_DEADLINE_MS = 5e3;
-    RECOVERY_MAX_ATTEMPTS = 4;
-    RECOVERY_CAPTURE_MAX_BYTES = 16 * 1024 * 1024;
-    RECOVERY_CAPTURE_MAX_LINES = 8192;
-    RECOVERY_CURSOR_MAX_BYTES = 1024;
-    MAX_CONTINUE_NOTIFICATION_QUEUE = 32;
-    MAX_CONTINUE_NOTIFICATION_DEBT = 65536;
-    RECOVERY_CURSOR_PROBE_FORMAT = [
-      "#{cursor_x}",
-      "#{cursor_y}",
-      "#{pane_width}",
-      "#{pane_height}",
-      "#{alternate_on}",
-      "#{cursor_flag}",
-      "#{insert_flag}",
-      "#{keypad_cursor_flag}",
-      "#{keypad_flag}",
-      "#{mouse_any_flag}",
-      "#{mouse_button_flag}",
-      "#{mouse_standard_flag}",
-      "#{origin_flag}",
-      "#{wrap_flag}"
-    ].join(" ");
-    FAILED_RESEED_RESULT = Object.freeze({
-      ok: false,
-      fingerprint: null,
-      publish: () => false,
-      hold: () => {
-      }
-    });
-    SessionChannel = class {
-      opts;
-      io;
-      ledger = new FlowLedger();
-      discovery;
-      panesByRuntime = /* @__PURE__ */ new Map();
-      panesBySemantic = /* @__PURE__ */ new Map();
-      windowsByRuntime = /* @__PURE__ */ new Map();
-      layoutByWindow = /* @__PURE__ */ new Map();
-      activePaneByWindow = /* @__PURE__ */ new Map();
-      layoutSubscribers = /* @__PURE__ */ new Set();
-      truthActive = /* @__PURE__ */ new Map();
-      truthWindow = /* @__PURE__ */ new Map();
-      currentWindow = "";
-      diagnostics = [];
-      degraded = false;
-      ageByRuntime = /* @__PURE__ */ new Map();
-      maxAgeMs = 0;
-      geometryParticipating = false;
-      cancelSync = null;
-      disposed = false;
-      nativeClientProbePending = false;
-      paneIncarnation = 0;
-      recoveryOrdinal = 0;
-      outputOrdinals = /* @__PURE__ */ new Map();
-      recoveries = /* @__PURE__ */ new Map();
-      continueNotificationQueues = /* @__PURE__ */ new Map();
-      trustedInventoryFlight = null;
-      trustedInventoryFlightSessionId = null;
-      attachedIdentity = null;
-      /** Settles once the FIRST identity join lands (or is proven impossible), so
-       *  `start()` returns a channel whose semantic ids are subscribable. */
-      resolveFirstJoin = null;
-      firstJoin = new Promise((resolve37) => {
-        this.resolveFirstJoin = resolve37;
-      });
-      input = new InputCoalescer(
-        (action) => {
-          const startedAtMicros = action.traceIds?.length ? Math.floor(performance.now() * 1e3) : 0;
-          const pendingBeforeSend = action.traceIds?.length ? this.io.pendingCount ?? 0 : 0;
-          const onReply = action.traceIds?.length ? (reply) => this.opts.onInputAccepted?.(action, Math.floor(performance.now() * 1e3), reply.ok) : void 0;
-          if (action.kind === "literal") {
-            this.io.send(
-              `send-keys -t ${action.pane} -H ${textToHexKeys(action.text).join(" ")}`,
-              onReply
-            );
-          } else {
-            this.io.send(`send-keys -t ${action.pane} ${action.key}`, onReply);
-          }
-          if (action.traceIds?.length)
-            this.opts.onInputWrite?.(
-              action,
-              startedAtMicros,
-              Math.floor(performance.now() * 1e3),
-              pendingBeforeSend
-            );
-        },
-        (flush) => queueMicrotask(flush)
-      );
-      constructor(opts) {
-        this.opts = opts;
-        this.io = opts.createIo({
-          onOutput: (pane, data, ageMs, timing) => this.onOutput(pane, data, ageMs, timing),
-          onNotify: (name, rest) => this.onNotify(name, rest),
-          onExit: () => this.onChannelExit()
-        });
-        this.discovery = new SessionDescriptorDiscovery({
-          query: () => this.io.request(
-            `list-panes -s -t "${this.opts.session}" -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`
-          ),
-          onDescriptors: (descriptors, listed) => {
-            void this.reconcileIdentity(descriptors, listed).catch(() => {
-            });
-          },
-          onStatus: (status2) => {
-            if (status2) {
-              this.pushDiagnostic({
-                code: `DESCRIPTOR_${status2.status.toUpperCase()}`,
-                message: status2.message,
-                degraded: status2.degraded
-              });
-              if (status2.status === "failed") this.settleFirstJoin();
-            }
-          }
-        });
-      }
-      async start() {
-        await this.io.start();
-        await this.captureAttachedSessionIdentity();
-        if (this.opts.onNativeClientActivity) {
-          this.io.send(`refresh-client -B '${NATIVE_CLIENT_SUBSCRIPTION}::#{session_attached}'`);
-        }
-        await this.syncNow();
-        await this.firstJoin;
-      }
-      // ── Public surface (semantic ids only) ──────────────────────────────────
-      describe() {
-        const panes = [...this.panesBySemantic.values()].map((pane) => ({
-          semanticPaneId: pane.semanticId,
-          semanticWindowId: pane.windowRuntimeId ? this.windowsByRuntime.get(pane.windowRuntimeId)?.semanticId ?? null : null,
-          role: pane.descriptor?.role ?? null,
-          paneType: pane.descriptor?.type ?? null,
-          currentCommand: pane.descriptor?.currentCommand ?? null,
-          cwd: pane.descriptor?.cwd ?? null,
-          title: pane.descriptor?.title ?? null,
-          windowName: pane.descriptor?.windowName ?? null,
-          active: pane.active
-        }));
-        return {
-          session: this.opts.session,
-          panes,
-          diagnostics: [...this.diagnostics],
-          degraded: this.degraded
-        };
-      }
-      /**
-       * Strict daemon-internal inventory from this channel's current tmux truth.
-       * Unlike the background discovery path, this query awaits descriptor
-       * reconciliation before projecting and rejects incomplete identity rather
-       * than returning the previous descriptor snapshot.
-       */
-      describeTrustedInventory(expectedRuntimeSessionId) {
-        if (this.disposed) {
-          return Promise.reject(new Error(`mirror session ${this.opts.session} is disposed`));
-        }
-        if (this.trustedInventoryFlight) {
-          return this.trustedInventoryFlightSessionId === expectedRuntimeSessionId ? this.trustedInventoryFlight : Promise.reject(new Error(`trusted inventory identity changed for ${this.opts.session}`));
-        }
-        const flight = this.refreshTrustedInventory(expectedRuntimeSessionId).finally(() => {
-          if (this.trustedInventoryFlight === flight) {
-            this.trustedInventoryFlight = null;
-            this.trustedInventoryFlightSessionId = null;
-          }
-        });
-        this.trustedInventoryFlight = flight;
-        this.trustedInventoryFlightSessionId = expectedRuntimeSessionId;
-        return flight;
-      }
-      /** Read-only proof of the session this control client is actually attached to. */
-      async attachedSessionIdentity() {
-        if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
-        if (!this.attachedIdentity)
-          throw new Error(`mirror session ${this.opts.session} identity is absent`);
-        return this.attachedIdentity;
-      }
-      async captureAttachedSessionIdentity() {
-        const lines = await this.io.request(`display-message -p "#{qa:session_name}	#{session_id}"`);
-        if (lines.length !== 1)
-          throw new Error(`mirror session ${this.opts.session} identity is absent`);
-        const decodedLine = decodeControlReplyUtf8(lines[0]);
-        if (decodedLine === null)
-          throw new Error(`mirror session ${this.opts.session} identity is malformed`);
-        const [encodedName = "", runtimeSessionId = ""] = decodedLine.split("	");
-        const sessionName = decodeTmuxArgument(encodedName);
-        if (sessionName.length === 0 || sessionName.length > 160 || !/^\$(?:0|[1-9][0-9]*)$/u.test(runtimeSessionId) || runtimeSessionId.length > 32) {
-          throw new Error(`mirror session ${this.opts.session} identity is malformed`);
-        }
-        this.attachedIdentity = Object.freeze({ sessionName, runtimeSessionId });
-      }
-      subscribePane(semanticPaneId3, onEvent, onLayout) {
-        const pane = this.panesBySemantic.get(semanticPaneId3);
-        if (!pane) {
-          throw new Error(`unknown semantic pane ${semanticPaneId3} in session ${this.opts.session}`);
-        }
-        const sub = {
-          feed: new PaneFeed(),
-          onEvent,
-          onLayout: onLayout ?? null,
-          pane,
-          frozen: false,
-          closed: false
-        };
-        pane.subs.add(sub);
-        const recoveryReason = this.ledger.isRequested(pane.runtimeId) ? "requested" : this.ledger.isBackpressured(pane.runtimeId) ? "backpressure" : null;
-        if (recoveryReason) this.beginRecovery(pane, recoveryReason);
-        else this.reseedPlain(sub);
-        this.emitLayoutSnapshot(sub);
-        return {
-          semanticPaneId: semanticPaneId3,
-          freeze: () => this.freeze(sub),
-          thaw: () => this.thaw(sub),
-          reseed: () => this.reseedPlain(sub),
-          sendText: (text) => {
-            if (!sub.closed) this.input.literal(sub.pane.runtimeId, text);
-          },
-          sendKey: (key) => {
-            if (!sub.closed) this.input.key(sub.pane.runtimeId, key);
-          },
-          close: () => this.closeSub(sub)
-        };
-      }
-      /** Session geometry without a dummy pane feed or terminal-content seed. */
-      subscribeLayout(onLayout) {
-        if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
-        this.layoutSubscribers.add(onLayout);
-        for (const windowRuntimeId of this.layoutByWindow.keys()) {
-          const event = this.layoutEventFor(windowRuntimeId);
-          if (event) onLayout(event);
-        }
-        let closed = false;
-        return {
-          close: () => {
-            if (closed) return;
-            closed = true;
-            this.layoutSubscribers.delete(onLayout);
-          }
-        };
-      }
-      /** Controller-authorized input fast path. It deliberately reuses the one
-       * session InputCoalescer, so literal/key ordering and tmux application-mode
-       * named-key semantics are identical for GUI, TUI and direct subscribers. */
-      sendText(semanticPaneId3, text, performanceTraceId, isolated = false) {
-        const pane = this.panesBySemantic.get(semanticPaneId3);
-        if (!pane)
-          throw new Error(`unknown semantic pane ${semanticPaneId3} in session ${this.opts.session}`);
-        if (isolated) this.input.flush();
-        this.input.literal(pane.runtimeId, text, performanceTraceId);
-        if (isolated) this.input.flush();
-      }
-      sendKey(semanticPaneId3, key, performanceTraceId) {
-        const pane = this.panesBySemantic.get(semanticPaneId3);
-        if (!pane)
-          throw new Error(`unknown semantic pane ${semanticPaneId3} in session ${this.opts.session}`);
-        this.input.key(pane.runtimeId, key, performanceTraceId);
-      }
-      fitViewport(cols, rows) {
-        if (!Number.isSafeInteger(cols) || !Number.isSafeInteger(rows) || cols < 2 || rows < 2) {
-          throw new RangeError("viewport must contain positive bounded terminal cells");
-        }
-        this.input.flush();
-        this.io.send(`refresh-client -C ${cols}x${rows}`);
-      }
-      /** Toggle whether the retained control client participates in tmux sizing. */
-      setGeometryParticipation(active2) {
-        if (this.geometryParticipating === active2) return;
-        this.geometryParticipating = active2;
-        this.input.flush();
-        this.io.send(`refresh-client -f ${active2 ? "!ignore-size" : "ignore-size"}`);
-      }
-      subscriberCount() {
-        let count = 0;
-        for (const pane of this.panesByRuntime.values()) count += pane.subs.size;
-        return count;
-      }
-      /** Fall-behind telemetry from the `%extended-output` age field. */
-      ageTelemetry() {
-        const byPane = {};
-        for (const [runtime, age] of this.ageByRuntime) {
-          const semantic = this.panesByRuntime.get(runtime)?.semanticId;
-          if (semantic) byPane[semantic] = age;
-        }
-        return { maxAgeMs: this.maxAgeMs, byPane };
-      }
-      flowSnapshot() {
-        const toSemantic = (runtime) => this.panesByRuntime.get(runtime)?.semanticId ?? "(unidentified)";
-        const snapshot = this.ledger.snapshot();
-        return {
-          backpressured: snapshot.backpressured.map(toSemantic),
-          requested: snapshot.requested.map(toSemantic)
-        };
-      }
-      async dispose() {
-        if (this.disposed) return;
-        this.disposed = true;
-        this.settleFirstJoin();
-        this.cancelSync?.();
-        this.cancelSync = null;
-        for (const runtime of [...this.recoveries.keys()]) this.cancelRecovery(runtime);
-        this.continueNotificationQueues.clear();
-        this.discovery.dispose();
-        this.input.flush();
-        for (const pane of this.panesByRuntime.values()) {
-          for (const sub of pane.subs) {
-            if (!sub.closed) {
-              sub.closed = true;
-              sub.onEvent({ type: "closed" });
-            }
-          }
-          pane.subs.clear();
-        }
-        this.layoutSubscribers.clear();
-        await this.io.dispose();
-      }
-      // ── Byte routing ─────────────────────────────────────────────────────────
-      onOutput(runtimePane, data, ageMs, timing) {
-        if (ageMs !== null) {
-          this.ageByRuntime.set(runtimePane, ageMs);
-          if (ageMs > this.maxAgeMs) this.maxAgeMs = ageMs;
-        }
-        const pane = this.panesByRuntime.get(runtimePane);
-        if (!pane) return;
-        const outputOrdinal = (this.outputOrdinals.get(runtimePane) ?? 0) + 1;
-        this.outputOrdinals.set(runtimePane, outputOrdinal);
-        this.opts.onOutputObserved?.(pane.semanticId, ageMs, timing);
-        let overflowed = false;
-        for (const sub of pane.subs) {
-          if (sub.frozen || sub.closed) continue;
-          for (const event of sub.feed.delta(data)) sub.onEvent(event);
-          if (sub.feed.takeOverflowed()) overflowed = true;
-        }
-        if (overflowed) this.restartRecoveryAfterOutputOverflow(pane);
-        this.noteRecoveryOutput(pane, outputOrdinal);
-      }
-      // ── Seed / reseed (the atomic recipe) ────────────────────────────────────
-      reseed(sub, onSettled, deferPublish = false) {
-        if (sub.closed || sub.frozen || this.disposed) {
-          onSettled?.(FAILED_RESEED_RESULT);
-          return;
-        }
-        const runtime = sub.pane.runtimeId;
-        const epoch = sub.feed.beginReseed();
-        let settled = false;
-        let captureSucceeded = false;
-        let markerRetired = false;
-        let captureLines = null;
-        const settle = (result) => {
-          if (settled) return;
-          settled = true;
-          onSettled?.(result);
-        };
-        this.input.flush();
-        const history = this.opts.historyLines ?? DEFAULT_HISTORY_LINES;
-        const internalReadMarker = registerInternalReadOperation(runtime);
-        const retireMarker = () => {
-          if (markerRetired) return;
-          markerRetired = true;
-          this.retireInternalReadMarker(runtime, internalReadMarker);
-        };
-        this.io.commandListInline(
-          `set-option -p -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p -e -J -S -${history} -t ${runtime}`,
-          2,
-          1,
-          (reply) => {
-            if (!reply.ok) {
-              retireMarker();
-              sub.feed.abort(epoch);
-              settle(FAILED_RESEED_RESULT);
-              return;
-            }
-            captureSucceeded = true;
-            if (sub.closed || sub.frozen || this.disposed) {
-              sub.feed.abort(epoch);
-              settle(FAILED_RESEED_RESULT);
-              return;
-            }
-            captureLines = [...reply.lines];
-            sub.feed.captureReply(epoch, reply.lines);
-          }
-        );
-        this.io.commandInline(
-          `display-message -p -t ${runtime} "${RECOVERY_CURSOR_PROBE_FORMAT}"`,
-          (reply) => {
-            if (sub.closed || sub.frozen || this.disposed) {
-              sub.feed.abort(epoch);
-              settle(FAILED_RESEED_RESULT);
-              return;
-            }
-            if (!reply.ok) {
-              if (!captureSucceeded) retireMarker();
-              sub.feed.abort(epoch);
-              settle(FAILED_RESEED_RESULT);
-              return;
-            }
-            const cursorLine = reply.lines[0] ?? "";
-            const fallbackSize = this.layoutSizeFor(runtime);
-            const events = sub.feed.cursorReply(epoch, cursorLine, fallbackSize);
-            let published = false;
-            const publish = () => {
-              if (published) return true;
-              if (sub.closed || sub.frozen || this.disposed) return false;
-              published = true;
-              for (const event of events) sub.onEvent(event);
-              return true;
-            };
-            const ok2 = events.length > 0 && !sub.closed && captureLines !== null;
-            const result = {
-              ok: ok2,
-              fingerprint: ok2 ? snapshotFingerprint2(captureLines, cursorLine, fallbackSize) : null,
-              publish,
-              hold: () => sub.feed.quarantine(epoch)
-            };
-            if (!deferPublish) publish();
-            settle(result);
-          }
-        );
-      }
-      reseedPlain(sub) {
-        this.reseed(sub, ({ ok: ok2 }) => {
-          if (ok2 || sub.closed || sub.frozen || this.disposed || this.recoveries.has(sub.pane.runtimeId) || this.panesByRuntime.get(sub.pane.runtimeId) !== sub.pane)
-            return;
-          this.beginLocalOverflowRecovery(sub.pane);
-        });
-      }
-      retireInternalReadMarker(runtime, marker) {
-        if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtime))
-          throw new TypeError("internal read cleanup requires a runtime pane id");
-        retireInternalReadOperation(marker, runtime);
-        this.io.send(
-          `if-shell -t ${runtime} -F "#{==:#{${INTERNAL_READ_OPERATION_OPTION}},${marker}}" "set-option -pu -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION}" ""`
-        );
-      }
-      layoutSizeFor(runtime) {
-        for (const layout of this.layoutByWindow.values()) {
-          const leaf = layout.leaves.find((candidate) => candidate.id === runtime);
-          if (leaf) return { cols: leaf.width, rows: leaf.height };
-        }
-        return null;
-      }
-      // ── Flow control ─────────────────────────────────────────────────────────
-      freeze(sub) {
-        if (sub.frozen || sub.closed) return;
-        sub.frozen = true;
-        sub.onEvent({ type: "flow", state: "paused", reason: "requested" });
-        const pane = sub.pane;
-        const allFrozen = [...pane.subs].every((candidate) => candidate.frozen || candidate.closed);
-        if (allFrozen) {
-          this.cancelRecovery(pane.runtimeId);
-          this.ledger.requestPause(pane.runtimeId);
-          this.io.send(`refresh-client -A '${pane.runtimeId}:pause'`);
-        }
-      }
-      thaw(sub) {
-        if (!sub.frozen || sub.closed) return;
-        sub.frozen = false;
-        const runtime = sub.pane.runtimeId;
-        if (this.ledger.isRequested(runtime) || this.ledger.isBackpressured(runtime))
-          this.beginRecovery(sub.pane, "requested");
-        else this.reseedPlain(sub);
-        this.recoverSticky();
-      }
-      continuePane(runtime) {
-        this.io.send(`refresh-client -A '${runtime}:continue'`);
-        this.ledger.noteContinued(runtime);
-      }
-      scheduleRecovery(callback, delayMs) {
-        if (this.opts.scheduleRecovery) return this.opts.scheduleRecovery(callback, delayMs);
-        const timer = setTimeout(callback, delayMs);
-        return () => clearTimeout(timer);
-      }
-      observeRecovery(pane, recovery, phase, failureReason = null, fingerprintExact = null) {
-        const elapsedMicros = Math.min(
-          RECOVERY_ABSOLUTE_DEADLINE_MS * 1e3,
-          Math.max(0, Math.floor((this.recoveryNowMs() - recovery.startedAtMs) * 1e3))
-        );
-        this.opts.onFlowRecoveryObserved?.(
-          Object.freeze({
-            semanticPaneId: pane.semanticId,
-            phase,
-            recoveryOrdinal: recovery.ordinal,
-            paneIncarnation: recovery.paneIncarnation,
-            outputOrdinal: this.outputOrdinals.get(recovery.runtimeId) ?? 0,
-            failureReason,
-            elapsedMicros,
-            fingerprintExact,
-            confirmationOrdinal: recovery.confirmationOrdinal,
-            collectorStarted: recovery.collectorStarted,
-            collectorLastCompletedOrdinal: recovery.collectorLastCompletedOrdinal,
-            collectorCaptureLineCount: recovery.collectorCaptureLineCount,
-            collectorCaptureByteCount: recovery.collectorCaptureByteCount,
-            collectorContinueObserved: recovery.collectorContinueObserved,
-            collectorStatusObserved: recovery.collectorStatusObserved,
-            collectorObserverEmissionObserved: recovery.collectorObserverEmissionObserved,
-            collectorFailureReason: recovery.collectorFailureReason
-          })
-        );
-      }
-      recoveryNowMs() {
-        return this.opts.recoveryNowMs?.() ?? performance.now();
-      }
-      recoveryPane(recovery) {
-        const pane = this.panesByRuntime.get(recovery.runtimeId);
-        return !this.disposed && this.recoveries.get(recovery.runtimeId) === recovery && pane?.incarnation === recovery.paneIncarnation ? !recovery.retired ? pane : null : null;
-      }
-      cancelRecovery(runtime) {
-        const recovery = this.recoveries.get(runtime);
-        if (!recovery) return;
-        recovery.retired = true;
-        recovery.cancelQuiet?.();
-        recovery.cancelCommandDeadline?.();
-        recovery.cancelNoProgressDeadline?.();
-        recovery.cancelAbsoluteDeadline?.();
-        if (recovery.atomicCollectorNonce)
-          this.io.retireAtomicPaneSnapshotCollector?.(recovery.atomicCollectorNonce, "retired");
-        recovery.atomicCollectorNonce = null;
-        this.recoveries.delete(runtime);
-        this.retireContinueNotificationOwner(recovery);
-        const pane = this.panesByRuntime.get(runtime);
-        if (pane?.incarnation === recovery.paneIncarnation)
-          for (const sub of pane.subs) sub.feed.abortCurrent();
-      }
-      beginRecovery(pane, reason) {
-        const runtime = pane.runtimeId;
-        this.cancelRecovery(runtime);
-        const recovery = {
-          ordinal: ++this.recoveryOrdinal,
-          runtimeId: runtime,
-          paneIncarnation: pane.incarnation,
-          reason,
-          startedAtMs: this.recoveryNowMs(),
-          retired: false,
-          continueReply: false,
-          continueNotify: false,
-          stage: "continue",
-          attempts: 0,
-          reseedOrdinal: 0,
-          outputOrdinal: this.outputOrdinals.get(runtime) ?? 0,
-          candidateFingerprint: null,
-          confirmationFingerprint: null,
-          confirmationOrdinal: 0,
-          atomicCollectorNonce: null,
-          collectorStarted: false,
-          collectorLastCompletedOrdinal: -1,
-          collectorCaptureLineCount: 0,
-          collectorCaptureByteCount: 0,
-          collectorContinueObserved: false,
-          collectorStatusObserved: false,
-          collectorObserverEmissionObserved: false,
-          collectorFailureReason: null,
-          cancelQuiet: null,
-          cancelCommandDeadline: null,
-          cancelNoProgressDeadline: null,
-          cancelAbsoluteDeadline: null
-        };
-        this.recoveries.set(runtime, recovery);
-        for (const sub of pane.subs) {
-          if (!sub.frozen && !sub.closed) sub.feed.abortCurrent();
-        }
-        this.observeRecovery(pane, recovery, "pause");
-        this.observeRecovery(pane, recovery, "continue-request");
-        recovery.cancelCommandDeadline = this.scheduleRecovery(() => {
-          if (this.recoveryPane(recovery) && !recovery.continueReply)
-            this.failRecovery(recovery, "command-timeout");
-        }, RECOVERY_COMMAND_DEADLINE_MS);
-        const queue = this.continueNotificationQueues.get(runtime) ?? [];
-        if (queue.length >= MAX_CONTINUE_NOTIFICATION_QUEUE) {
-          this.failRecovery(recovery, "notification-queue-overflow");
-          return;
-        }
-        queue.push({ kind: "owner", recovery });
-        this.continueNotificationQueues.set(runtime, queue);
-        this.io.send(`refresh-client -A '${runtime}:continue'`, (reply) => {
-          const current = this.recoveryPane(recovery);
-          if (!reply.ok) {
-            this.removeContinueNotificationOwner(recovery);
-            if (current) this.failRecovery(recovery, "command-error");
-            return;
-          }
-          recovery.continueReply = true;
-          if (!current) {
-            this.retireContinueNotificationOwner(recovery);
-            return;
-          }
-          recovery.cancelCommandDeadline?.();
-          recovery.cancelCommandDeadline = null;
-          this.beginRecoveryConvergence(recovery);
-          this.observeRecovery(current, recovery, "continue-reply");
-          this.noteRecoveryProgress(recovery);
-          this.beginFinalRecovery(recovery);
-        });
-      }
-      beginLocalOverflowRecovery(pane) {
-        const runtime = pane.runtimeId;
-        this.cancelRecovery(runtime);
-        const recovery = {
-          ordinal: ++this.recoveryOrdinal,
-          runtimeId: runtime,
-          paneIncarnation: pane.incarnation,
-          reason: "backpressure",
-          startedAtMs: this.recoveryNowMs(),
-          retired: false,
-          continueReply: true,
-          continueNotify: true,
-          stage: "continue",
-          attempts: 0,
-          reseedOrdinal: 0,
-          outputOrdinal: this.outputOrdinals.get(runtime) ?? 0,
-          candidateFingerprint: null,
-          confirmationFingerprint: null,
-          confirmationOrdinal: 0,
-          atomicCollectorNonce: null,
-          collectorStarted: false,
-          collectorLastCompletedOrdinal: -1,
-          collectorCaptureLineCount: 0,
-          collectorCaptureByteCount: 0,
-          collectorContinueObserved: false,
-          collectorStatusObserved: false,
-          collectorObserverEmissionObserved: false,
-          collectorFailureReason: null,
-          cancelQuiet: null,
-          cancelCommandDeadline: null,
-          cancelNoProgressDeadline: null,
-          cancelAbsoluteDeadline: null
-        };
-        this.recoveries.set(runtime, recovery);
-        for (const sub of pane.subs) {
-          if (!sub.frozen && !sub.closed)
-            sub.onEvent({ type: "flow", state: "paused", reason: "backpressure" });
-        }
-        this.observeRecovery(pane, recovery, "pause");
-        this.beginRecoveryConvergence(recovery);
-        this.beginFinalRecovery(recovery);
-      }
-      beginRecoveryConvergence(recovery) {
-        if (recovery.cancelAbsoluteDeadline) return;
-        recovery.cancelAbsoluteDeadline = this.scheduleRecovery(() => {
-          if (this.recoveryPane(recovery)) this.failRecovery(recovery, "absolute-deadline");
-        }, RECOVERY_ABSOLUTE_DEADLINE_MS);
-        this.noteRecoveryProgress(recovery);
-      }
-      noteRecoveryProgress(recovery) {
-        if (!this.recoveryPane(recovery) || !recovery.cancelAbsoluteDeadline) return;
-        recovery.cancelNoProgressDeadline?.();
-        recovery.cancelNoProgressDeadline = this.scheduleRecovery(() => {
-          if (this.recoveryPane(recovery)) this.failRecovery(recovery, "no-progress");
-        }, RECOVERY_NO_PROGRESS_DEADLINE_MS);
-      }
-      noteAtomicCollectorProgress(recovery, nonce, progress) {
-        if (this.recoveryPane(recovery) === null || recovery.atomicCollectorNonce !== nonce || !progress.started)
-          return;
-        recovery.collectorStarted = true;
-        recovery.collectorLastCompletedOrdinal = Math.max(
-          recovery.collectorLastCompletedOrdinal,
-          progress.lastCompletedOrdinal
-        );
-        recovery.collectorCaptureLineCount = Math.max(
-          recovery.collectorCaptureLineCount,
-          progress.captureLineCount
-        );
-        recovery.collectorCaptureByteCount = Math.max(
-          recovery.collectorCaptureByteCount,
-          progress.captureByteCount
-        );
-        recovery.collectorContinueObserved ||= progress.continueObserved;
-        recovery.collectorStatusObserved ||= progress.statusObserved;
-        recovery.collectorObserverEmissionObserved ||= progress.observerEmissionObserved;
-        this.noteRecoveryProgress(recovery);
-      }
-      reseedRecoverySubscribers(pane, recovery, done, deferPublish = false) {
-        if (this.io.armAtomicPaneSnapshotCollector && this.io.retireAtomicPaneSnapshotCollector) {
-          this.reseedRecoverySubscribersAtomic(pane, recovery, done, deferPublish);
-          return;
-        }
-        const live = [...pane.subs].filter((sub) => !sub.frozen && !sub.closed);
-        if (live.length === 0) {
-          done(FAILED_RESEED_RESULT);
-          return;
-        }
-        const participants = live.map((sub) => Object.freeze({ sub, epoch: sub.feed.beginReseed() }));
-        const reseedOrdinal = ++recovery.reseedOrdinal;
-        let settled = false;
-        let captureSucceeded = false;
-        let markerRetired = false;
-        let captureLines = null;
-        this.input.flush();
-        const history = this.opts.historyLines ?? DEFAULT_HISTORY_LINES;
-        const internalReadMarker = registerInternalReadOperation(pane.runtimeId);
-        const participantsExact = () => {
-          if (this.recoveryPane(recovery) !== pane || recovery.reseedOrdinal !== reseedOrdinal || participants.some(
-            ({ sub }) => sub.closed || sub.frozen || sub.pane !== pane || !pane.subs.has(sub)
-          ))
-            return false;
-          const current = [...pane.subs].filter((sub) => !sub.frozen && !sub.closed);
-          return current.length === participants.length && current.every((sub) => participants.some((participant) => participant.sub === sub));
-        };
-        const retireMarker = () => {
-          if (markerRetired) return;
-          markerRetired = true;
-          this.retireInternalReadMarker(pane.runtimeId, internalReadMarker);
-        };
-        const fail2 = () => {
-          if (settled) return;
-          settled = true;
-          if (!captureSucceeded) retireMarker();
-          for (const { sub } of participants) sub.feed.abortCurrent();
-          done(FAILED_RESEED_RESULT);
-        };
-        this.io.commandListInline(
-          `set-option -p -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p -e -J -S -${history} -t ${pane.runtimeId}`,
-          2,
-          1,
-          (reply) => {
-            if (!reply.ok) {
-              fail2();
-              return;
-            }
-            captureSucceeded = true;
-            if (!participantsExact()) {
-              fail2();
-              return;
-            }
-            captureLines = Object.freeze([...reply.lines]);
-            for (const { sub, epoch } of participants) sub.feed.captureReply(epoch, captureLines);
-          }
-        );
-        this.io.commandInline(
-          `display-message -p -t ${pane.runtimeId} "${RECOVERY_CURSOR_PROBE_FORMAT}"`,
-          (reply) => {
-            if (settled) return;
-            if (!participantsExact() || captureLines === null || !reply.ok) {
-              fail2();
-              return;
-            }
-            const cursorLine = reply.lines[0] ?? "";
-            const fallbackSize = this.layoutSizeFor(pane.runtimeId);
-            const deliveries = participants.map(({ sub, epoch }) => ({
-              sub,
-              epoch,
-              events: sub.feed.cursorReply(epoch, cursorLine, fallbackSize)
-            }));
-            if (!participantsExact() || deliveries.some(({ events }) => events.length === 0)) {
-              fail2();
-              return;
-            }
-            let published = false;
-            const publish = () => {
-              if (published) return true;
-              if (!participantsExact()) return false;
-              published = true;
-              for (const { sub, events } of deliveries) for (const event of events) sub.onEvent(event);
-              return participantsExact();
-            };
-            if (!deferPublish && !publish()) {
-              fail2();
-              return;
-            }
-            for (const { sub, epoch } of deliveries) sub.feed.quarantine(epoch);
-            settled = true;
-            done({
-              ok: true,
-              fingerprint: snapshotFingerprint2(captureLines, cursorLine, fallbackSize),
-              publish,
-              hold: () => {
-              }
-            });
-          }
-        );
-      }
-      reseedRecoverySubscribersAtomic(pane, recovery, done, deferPublish) {
-        const live = [...pane.subs].filter((sub) => !sub.frozen && !sub.closed);
-        if (live.length === 0) {
-          done(FAILED_RESEED_RESULT);
-          return;
-        }
-        const participants = live.map((sub) => Object.freeze({ sub, epoch: sub.feed.beginReseed() }));
-        const reseedOrdinal = ++recovery.reseedOrdinal;
-        const nonce = this.opts.generateAtomicHookNonce?.() ?? randomBytes4(24).toString("hex");
-        if (!/^[0-9a-f]{32,128}$/u.test(nonce)) {
-          for (const { sub } of participants) sub.feed.abortCurrent();
-          done(FAILED_RESEED_RESULT);
-          return;
-        }
-        const hookName = `@tmux_ide_atomic_${nonce}`;
-        const expectedName = `@tmux_ide_atomic_expected_${nonce}`;
-        const ownerName = `@tmux_ide_atomic_owner_${nonce}`;
-        const internalReadMarker = registerInternalReadOperation(pane.runtimeId);
-        recovery.atomicCollectorNonce = nonce;
-        recovery.collectorStarted = false;
-        recovery.collectorLastCompletedOrdinal = -1;
-        recovery.collectorCaptureLineCount = 0;
-        recovery.collectorCaptureByteCount = 0;
-        recovery.collectorContinueObserved = false;
-        recovery.collectorStatusObserved = false;
-        recovery.collectorObserverEmissionObserved = false;
-        recovery.collectorFailureReason = null;
-        const participantsExact = () => {
-          if (this.recoveryPane(recovery) !== pane || recovery.reseedOrdinal !== reseedOrdinal || participants.some(
-            ({ sub }) => sub.closed || sub.frozen || sub.pane !== pane || !pane.subs.has(sub)
-          ))
-            return false;
-          const current = [...pane.subs].filter((sub) => !sub.frozen && !sub.closed);
-          return current.length === participants.length && current.every((sub) => participants.some((participant) => participant.sub === sub));
-        };
-        let settled = false;
-        let observerEmitted = false;
-        const hookOwned = `#{==:#{${ownerName}},${nonce}}`;
-        const hookUnchanged = `#{==:#{${hookName}},#{${expectedName}}}`;
-        const cleanupHook = () => {
-          this.io.commandListInline(
-            `if-shell -t ${pane.runtimeId} -F "#{&&:${hookOwned},${hookUnchanged}}" ${tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${hookName}`)} ` + tmuxSingleQuote(
-              `display-message -p -t ${pane.runtimeId} tmux-ide-atomic-cleanup-hook-skip-v1:${nonce}`
-            ),
-            2,
-            1,
-            () => {
-            }
-          );
-          this.io.commandListInline(
-            `if-shell -t ${pane.runtimeId} -F "${hookOwned}" ` + tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${expectedName}`) + ` ${tmuxSingleQuote(
-              `display-message -p -t ${pane.runtimeId} tmux-ide-atomic-cleanup-expected-skip-v1:${nonce}`
-            )}`,
-            2,
-            1,
-            () => {
-            }
-          );
-          this.io.commandListInline(
-            `if-shell -t ${pane.runtimeId} -F "${hookOwned}" ` + tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${ownerName}`) + ` ${tmuxSingleQuote(
-              `display-message -p -t ${pane.runtimeId} tmux-ide-atomic-cleanup-owner-skip-v1:${nonce}`
-            )}`,
-            2,
-            1,
-            () => {
-            }
-          );
-        };
-        const fail2 = (statusObserved = false) => {
-          if (settled) return;
-          settled = true;
-          if (recovery.atomicCollectorNonce === nonce) recovery.atomicCollectorNonce = null;
-          cleanupHook();
-          if (!statusObserved && !observerEmitted)
-            this.retireInternalReadMarker(pane.runtimeId, internalReadMarker);
-          for (const { sub } of participants) sub.feed.abortCurrent();
-          done(FAILED_RESEED_RESULT);
-        };
-        let observer;
-        try {
-          observer = this.opts.internalReadHookEmission?.(pane.runtimeId, internalReadMarker) ?? null;
-        } catch {
-          fail2();
-          return;
-        }
-        const safeObserver = observer !== null && /^[A-Za-z0-9._-]{1,256}$/u.test(observer.bufferName) && /^[A-Za-z0-9._-]{1,256}$/u.test(observer.signalChannel) && /^[A-Za-z0-9%:._|-]{1,1024}$/u.test(observer.record);
-        if (!safeObserver) {
-          fail2();
-          return;
-        }
-        const sentinel = (kind) => `display-message -p -t ${pane.runtimeId} "%tmux-ide-atomic-v1 ${nonce} ${kind}"`;
-        const observerCommands = ` ; set-buffer -a -b ${observer.bufferName} ${observer.record} ; wait-for -S ${observer.signalChannel}`;
-        const body = `set-option -po -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; ${sentinel("start")} ; capture-pane -p -e -J -S -${this.opts.historyLines ?? DEFAULT_HISTORY_LINES} -t ${pane.runtimeId} ; ${sentinel("capture-end")} ; display-message -p -t ${pane.runtimeId} "${RECOVERY_CURSOR_PROBE_FORMAT}" ; ${sentinel("cursor-end")} ; refresh-client -A ${pane.runtimeId}:continue` + observerCommands + ` ; if-shell -t ${pane.runtimeId} -F "#{==:#{${INTERNAL_READ_OPERATION_OPTION}},${internalReadMarker}}" ` + tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION}`) + ` ${tmuxSingleQuote(`${sentinel("marker-rejected")}`)} ; ${sentinel("status-ok")} ; set-option -pu -t ${pane.runtimeId} ${hookName} ; ${sentinel("complete")}`;
-        this.input.flush();
-        const invoke = (reply) => {
-          if (!reply.ok || !participantsExact()) {
-            fail2();
-            return;
-          }
-          const remaining = Math.floor(
-            RECOVERY_ABSOLUTE_DEADLINE_MS - (this.recoveryNowMs() - recovery.startedAtMs)
-          );
-          if (remaining <= 0) {
-            fail2();
-            return;
-          }
-          const armed = this.io.armAtomicPaneSnapshotCollector(
-            {
-              nonce,
-              runtimePaneId: pane.runtimeId,
-              maxCaptureBytes: RECOVERY_CAPTURE_MAX_BYTES,
-              maxCaptureLines: RECOVERY_CAPTURE_MAX_LINES,
-              maxCursorBytes: RECOVERY_CURSOR_MAX_BYTES,
-              observerCommandCount: 2,
-              onProgress: (progress) => this.noteAtomicCollectorProgress(recovery, nonce, progress),
-              onSettled: (result) => {
-                if (recovery.atomicCollectorNonce === nonce) recovery.atomicCollectorNonce = null;
-                recovery.collectorStarted ||= result.started;
-                recovery.collectorLastCompletedOrdinal = Math.max(
-                  recovery.collectorLastCompletedOrdinal,
-                  result.lastCompletedOrdinal
-                );
-                recovery.collectorCaptureLineCount = Math.max(
-                  recovery.collectorCaptureLineCount,
-                  result.captureLineCount
-                );
-                recovery.collectorCaptureByteCount = Math.max(
-                  recovery.collectorCaptureByteCount,
-                  result.captureByteCount
-                );
-                recovery.collectorContinueObserved ||= result.continueObserved;
-                recovery.collectorStatusObserved ||= result.statusObserved;
-                recovery.collectorObserverEmissionObserved ||= result.observerEmissionObserved;
-                recovery.collectorFailureReason = result.failureReason;
-                observerEmitted = result.observerEmissionObserved && safeObserver;
-                cleanupHook();
-                if (settled) return;
-                if (!result.ok || !participantsExact() || result.cursorLine === null) {
-                  fail2(result.statusObserved);
-                  return;
-                }
-                const captureLines = Object.freeze([...result.captureLines]);
-                for (const { sub, epoch } of participants) sub.feed.captureReply(epoch, captureLines);
-                const fallbackSize = this.layoutSizeFor(pane.runtimeId);
-                const deliveries = participants.map(({ sub, epoch }) => ({
-                  sub,
-                  epoch,
-                  events: sub.feed.cursorReply(epoch, result.cursorLine, fallbackSize)
-                }));
-                if (!participantsExact() || deliveries.some(({ events }) => events.length === 0)) {
-                  fail2(true);
-                  return;
-                }
-                let published = false;
-                const publish = () => {
-                  if (published) return true;
-                  if (!participantsExact()) return false;
-                  published = true;
-                  for (const { sub, events } of deliveries)
-                    for (const event of events) sub.onEvent(event);
-                  return participantsExact();
-                };
-                if (!deferPublish && !publish()) {
-                  fail2(true);
-                  return;
-                }
-                for (const { sub, epoch } of deliveries) sub.feed.quarantine(epoch);
-                settled = true;
-                done({
-                  ok: true,
-                  fingerprint: snapshotFingerprint2(captureLines, result.cursorLine, fallbackSize),
-                  publish,
-                  hold: () => {
-                  }
-                });
-              }
-            },
-            remaining
-          );
-          if (!armed) {
-            fail2();
-            return;
-          }
-          const rejected = `tmux-ide-atomic-invoke-rejected-v1:${nonce}`;
-          this.io.commandListInline(
-            `if-shell -t ${pane.runtimeId} -F "#{&&:${hookOwned},${hookUnchanged}}" ${tmuxSingleQuote(`set-hook -Rp -t ${pane.runtimeId} ${hookName}`)} ` + tmuxSingleQuote(`display-message -p -t ${pane.runtimeId} ${rejected}`),
-            2,
-            1,
-            (hookReply) => {
-              if (!hookReply.ok || hookReply.lines.length > 0) {
-                this.io.retireAtomicPaneSnapshotCollector?.(nonce, "retired");
-                fail2();
-              }
-            }
-          );
-        };
-        this.io.commandInline(
-          `set-option -po -t ${pane.runtimeId} ${ownerName} ${nonce}`,
-          (ownerReply) => {
-            if (!ownerReply.ok || !participantsExact()) {
-              fail2();
-              return;
-            }
-            this.io.commandInline(
-              `set-option -po -t ${pane.runtimeId} ${expectedName} ${tmuxSingleQuote(body)}`,
-              (expectedReply) => {
-                if (!expectedReply.ok || !participantsExact()) {
-                  fail2();
-                  return;
-                }
-                this.io.commandInline(
-                  `set-option -po -t ${pane.runtimeId} ${hookName} ${tmuxSingleQuote(body)}`,
-                  invoke
-                );
-              }
-            );
-          }
-        );
-      }
-      armRecoveryQuiet(recovery, callback) {
-        recovery.cancelQuiet?.();
-        recovery.cancelQuiet = this.scheduleRecovery(() => {
-          recovery.cancelQuiet = null;
-          if (this.recoveryPane(recovery)) callback();
-        }, RECOVERY_QUIET_MS);
-      }
-      beginFinalRecovery(recovery) {
-        const pane = this.recoveryPane(recovery);
-        if (!pane) return;
-        if (recovery.attempts >= RECOVERY_MAX_ATTEMPTS) {
-          this.failRecovery(recovery, "attempts-exhausted");
-          return;
-        }
-        recovery.attempts += 1;
-        recovery.stage = "final";
-        this.noteRecoveryProgress(recovery);
-        this.reseedRecoverySubscribers(
-          pane,
-          recovery,
-          ({ ok: ok2, fingerprint: fingerprint2 }) => {
-            const current = this.recoveryPane(recovery);
-            if (!current) return;
-            if (!ok2 || fingerprint2 === null) {
-              this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
-              return;
-            }
-            recovery.outputOrdinal = this.outputOrdinals.get(recovery.runtimeId) ?? 0;
-            recovery.candidateFingerprint = fingerprint2;
-            recovery.confirmationFingerprint = null;
-            recovery.confirmationOrdinal = 0;
-            recovery.stage = "confirm";
-            this.observeRecovery(current, recovery, "final-reseed");
-            this.noteRecoveryProgress(recovery);
-            this.armRecoveryQuiet(recovery, () => this.confirmRecovery(recovery));
-          },
-          true
-        );
-      }
-      confirmRecovery(recovery) {
-        const pane = this.recoveryPane(recovery);
-        if (!pane) return;
-        if ((this.outputOrdinals.get(recovery.runtimeId) ?? 0) !== recovery.outputOrdinal) {
-          this.beginFinalRecovery(recovery);
-          return;
-        }
-        recovery.stage = "final";
-        this.noteRecoveryProgress(recovery);
-        this.reseedRecoverySubscribers(
-          pane,
-          recovery,
-          ({ ok: ok2, fingerprint: fingerprint2, publish }) => {
-            const current = this.recoveryPane(recovery);
-            if (!current) return;
-            if (!ok2 || fingerprint2 === null) {
-              this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
-              return;
-            }
-            const outputOrdinal = this.outputOrdinals.get(recovery.runtimeId) ?? 0;
-            const ordinalExact = outputOrdinal === recovery.outputOrdinal;
-            const candidateExact = ordinalExact && fingerprint2 === recovery.candidateFingerprint;
-            const consecutiveExact = candidateExact && recovery.confirmationFingerprint !== null && fingerprint2 === recovery.confirmationFingerprint;
-            recovery.confirmationOrdinal += 1;
-            this.observeRecovery(current, recovery, "confirmation-reseed", null, consecutiveExact);
-            this.noteRecoveryProgress(recovery);
-            if (!ordinalExact) {
-              recovery.stage = "confirm";
-              this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
-              return;
-            }
-            if (!candidateExact) {
-              if (recovery.attempts >= RECOVERY_MAX_ATTEMPTS) {
-                this.failRecovery(recovery, "attempts-exhausted");
-                return;
-              }
-              recovery.attempts += 1;
-              recovery.candidateFingerprint = fingerprint2;
-              recovery.confirmationFingerprint = null;
-              recovery.outputOrdinal = outputOrdinal;
-              recovery.stage = "confirm";
-              this.armRecoveryQuiet(recovery, () => this.confirmRecovery(recovery));
-              return;
-            }
-            if (!consecutiveExact) {
-              recovery.confirmationFingerprint = fingerprint2;
-              recovery.outputOrdinal = outputOrdinal;
-              recovery.stage = "confirm";
-              this.armRecoveryQuiet(recovery, () => this.confirmRecovery(recovery));
-              return;
-            }
-            if (!publish()) {
-              recovery.stage = "confirm";
-              this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
-              return;
-            }
-            this.convergeRecovery(current, recovery);
-          },
-          true
-        );
-      }
-      convergeRecovery(pane, recovery) {
-        recovery.cancelCommandDeadline?.();
-        recovery.cancelCommandDeadline = null;
-        recovery.cancelNoProgressDeadline?.();
-        recovery.cancelNoProgressDeadline = null;
-        recovery.cancelAbsoluteDeadline?.();
-        recovery.cancelAbsoluteDeadline = null;
-        this.recoveries.delete(recovery.runtimeId);
-        recovery.retired = true;
-        this.retireContinueNotificationOwner(recovery);
-        this.ledger.noteContinued(recovery.runtimeId);
-        if (recovery.reason === "requested") this.ledger.clearRequest(recovery.runtimeId);
-        for (const sub of pane.subs) {
-          if (!sub.frozen && !sub.closed) {
-            sub.feed.releaseQuarantine();
-            sub.onEvent({ type: "flow", state: "resumed", reason: recovery.reason });
-          }
-        }
-        this.observeRecovery(pane, recovery, "converged", null, true);
-      }
-      noteRecoveryOutput(pane, outputOrdinal) {
-        const recovery = this.recoveries.get(pane.runtimeId);
-        if (!recovery || recovery.paneIncarnation !== pane.incarnation) return;
-        recovery.outputOrdinal = outputOrdinal;
-        if (recovery.continueReply) this.noteRecoveryProgress(recovery);
-        if (recovery.stage === "quiet")
-          this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
-        else if (recovery.stage === "confirm")
-          this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
-      }
-      restartRecoveryAfterOutputOverflow(pane) {
-        const recovery = this.recoveries.get(pane.runtimeId);
-        if (recovery?.paneIncarnation === pane.incarnation) {
-          if (recovery.stage === "quiet" || recovery.stage === "confirm")
-            this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
-          return;
-        }
-        this.beginLocalOverflowRecovery(pane);
-      }
-      failRecovery(recovery, failureReason) {
-        const pane = this.recoveryPane(recovery);
-        if (!pane) return;
-        recovery.cancelQuiet?.();
-        recovery.cancelQuiet = null;
-        recovery.cancelCommandDeadline?.();
-        recovery.cancelCommandDeadline = null;
-        recovery.cancelNoProgressDeadline?.();
-        recovery.cancelNoProgressDeadline = null;
-        recovery.cancelAbsoluteDeadline?.();
-        recovery.cancelAbsoluteDeadline = null;
-        recovery.retired = true;
-        const collectorNonce = recovery.atomicCollectorNonce;
-        recovery.atomicCollectorNonce = null;
-        if (collectorNonce) this.io.retireAtomicPaneSnapshotCollector?.(collectorNonce, "retired");
-        this.recoveries.delete(recovery.runtimeId);
-        this.retireContinueNotificationOwner(recovery);
-        for (const sub of pane.subs) sub.feed.abortCurrent();
-        this.observeRecovery(pane, recovery, "nonconverged", failureReason);
-      }
-      removeContinueNotificationOwner(recovery) {
-        const queue = this.continueNotificationQueues.get(recovery.runtimeId);
-        if (!queue) return;
-        const index = queue.findIndex((entry) => entry.kind === "owner" && entry.recovery === recovery);
-        if (index < 0) return;
-        queue.splice(index, 1);
-        this.compactContinueNotificationQueue(recovery.runtimeId, queue);
-      }
-      retireContinueNotificationOwner(recovery) {
-        if (!recovery.continueReply) return;
-        const queue = this.continueNotificationQueues.get(recovery.runtimeId);
-        if (!queue) return;
-        const index = queue.findIndex((entry) => entry.kind === "owner" && entry.recovery === recovery);
-        if (index < 0) return;
-        queue.splice(index, 1, { kind: "debt", count: 1, saturated: false });
-        this.compactContinueNotificationQueue(recovery.runtimeId, queue);
-      }
-      compactContinueNotificationQueue(runtime, queue) {
-        for (let index = 1; index < queue.length; ) {
-          const previous = queue[index - 1];
-          const current = queue[index];
-          if (previous?.kind !== "debt" || current?.kind !== "debt") {
-            index += 1;
-            continue;
-          }
-          const total = previous.count + current.count;
-          previous.count = Math.min(total, MAX_CONTINUE_NOTIFICATION_DEBT);
-          previous.saturated = previous.saturated || current.saturated || total > MAX_CONTINUE_NOTIFICATION_DEBT;
-          queue.splice(index, 1);
-        }
-        if (queue.length === 0) this.continueNotificationQueues.delete(runtime);
-        else this.continueNotificationQueues.set(runtime, queue);
-      }
-      /** Continue + reseed EVERY backpressure-paused pane that still has an
-       *  unfrozen subscriber. %pause is sticky and hits quiet panes after any
-       *  stall — recovering only the noisy pane leaves siblings dark. */
-      recoverSticky() {
-        for (const runtime of this.ledger.stickyRecoverySet()) {
-          if (this.recoveries.has(runtime)) continue;
-          const pane = this.panesByRuntime.get(runtime);
-          const live = pane ? [...pane.subs].filter((sub) => !sub.frozen && !sub.closed) : [];
-          if (live.length === 0) continue;
-          this.beginRecovery(pane, "backpressure");
-        }
-      }
-      closeSub(sub) {
-        if (sub.closed) return;
-        sub.closed = true;
-        const pane = sub.pane;
-        pane.subs.delete(sub);
-        if ([...pane.subs].every((candidate) => candidate.closed || candidate.frozen))
-          this.cancelRecovery(pane.runtimeId);
-        if (pane.subs.size === 0 && this.ledger.isRequested(pane.runtimeId)) {
-          this.ledger.clearRequest(pane.runtimeId);
-          this.continuePane(pane.runtimeId);
-        }
-      }
-      // ── Notifications (channel order is the invariant) ──────────────────────
-      onNotify(name, rest) {
-        if (this.opts.onNativeClientActivity && (NATIVE_CLIENT_NOTIFICATIONS.has(name) || name === "layout-change")) {
-          this.probeNativeClientActivity();
-        }
-        if (name === "pause") {
-          const runtime = rest.trim().split(/\s+/)[0] ?? "";
-          if (!runtime.startsWith("%")) return;
-          this.cancelRecovery(runtime);
-          this.ledger.notePause(runtime);
-          const pane = this.panesByRuntime.get(runtime);
-          if (pane) {
-            for (const sub of pane.subs) {
-              if (!sub.frozen && !sub.closed) {
-                sub.onEvent({ type: "flow", state: "paused", reason: "backpressure" });
-              }
-            }
-          }
-          this.recoverSticky();
-          return;
-        }
-        if (name === "continue") {
-          const runtime = rest.trim().split(/\s+/)[0] ?? "";
-          if (runtime.startsWith("%")) {
-            const queue = this.continueNotificationQueues.get(runtime);
-            const entry = queue?.[0] ?? null;
-            if (entry?.kind === "debt") {
-              if (!entry.saturated) {
-                entry.count -= 1;
-                if (entry.count === 0) queue.shift();
-              }
-              this.compactContinueNotificationQueue(runtime, queue);
-            } else if (entry?.kind === "owner") {
-              queue.shift();
-              this.compactContinueNotificationQueue(runtime, queue);
-              const owner = entry.recovery;
-              const pane = this.recoveryPane(owner);
-              owner.continueNotify = true;
-              if (pane) {
-                this.observeRecovery(pane, owner, "continue-notify");
-              }
-            }
-          }
-          return;
-        }
-        if (name === "layout-change") {
-          const change = parseLayoutChange(rest);
-          if (!change) return;
-          const parsed = parseLayout(change.visible);
-          if (!parsed) {
-            this.scheduleSync();
-            return;
-          }
-          this.layoutByWindow.set(change.windowId, { ...parsed, zoomed: change.zoomed });
-          const leafIds = new Set(parsed.leaves.map((leaf) => leaf.id));
-          const knownPaneVanished = [...this.panesByRuntime.values()].some(
-            (pane) => pane.windowRuntimeId === change.windowId && !leafIds.has(pane.runtimeId)
-          );
-          if (parsed.leaves.some((leaf) => !this.panesByRuntime.has(leaf.id)) || knownPaneVanished) {
-            this.scheduleSync();
-          }
-          this.emitLayout(change.windowId);
-          return;
-        }
-        if (name === "window-pane-changed") {
-          const change = parseWindowPaneChanged(rest);
-          if (!change) return;
-          this.activePaneByWindow.set(change.windowId, change.paneId);
-          for (const pane of this.panesByRuntime.values()) {
-            if (pane.windowRuntimeId === change.windowId)
-              pane.active = pane.runtimeId === change.paneId;
-          }
-          this.emitLayout(change.windowId);
-          return;
-        }
-        if (name === "session-window-changed") {
-          const change = parseSessionWindowChanged(rest);
-          if (!change) return;
-          const previous = this.currentWindow;
-          this.currentWindow = change.windowId;
-          if (previous === change.windowId) return;
-          if (previous) this.emitLayout(previous);
-          this.emitLayout(change.windowId);
-          return;
-        }
-        if (STRUCTURAL_NOTIFICATIONS.has(name)) this.scheduleSync();
-      }
-      probeNativeClientActivity() {
-        if (this.nativeClientProbePending || this.disposed) return;
-        this.nativeClientProbePending = true;
-        void this.io.request(
-          `list-clients -t "${this.opts.session}" -F "#{client_control_mode}	#{client_activity}"`
-        ).then((lines) => {
-          if (lines.some((line) => /^0\t\d+$/u.test(line.trim()))) {
-            this.opts.onNativeClientActivity?.();
-          }
-        }).catch(() => void 0).finally(() => {
-          this.nativeClientProbePending = false;
-        });
-      }
-      emitLayout(windowRuntimeId) {
-        const event = this.layoutEventFor(windowRuntimeId);
-        if (!event) return;
-        for (const subscriber of this.layoutSubscribers) subscriber(event);
-        for (const pane of this.panesByRuntime.values()) {
-          if (pane.windowRuntimeId !== windowRuntimeId) continue;
-          for (const sub of pane.subs) {
-            if (!sub.closed && sub.onLayout) sub.onLayout(event);
-          }
-        }
-      }
-      /**
-       * Hand ONE new subscriber the geometry of its owning window.
-       *
-       * Without it a subscriber's first layout frame arrives only when a layout
-       * happens to change, so a view built from these frames opens empty and stays
-       * empty until the user moves something — which reads as the app failing to
-       * find the session's windows at all.
-       */
-      emitLayoutSnapshot(sub) {
-        if (!sub.onLayout) return;
-        const windowRuntimeId = sub.pane.windowRuntimeId;
-        if (windowRuntimeId === null) return;
-        const event = this.layoutEventFor(windowRuntimeId);
-        if (!sub.closed && event) sub.onLayout(event);
-      }
-      layoutEventFor(windowRuntimeId) {
-        const layout = this.layoutByWindow.get(windowRuntimeId);
-        if (!layout) return null;
-        const windowRecord = this.windowsByRuntime.get(windowRuntimeId) ?? null;
-        const activePane = this.activePaneByWindow.get(windowRuntimeId) ?? "";
-        const event = {
-          type: "layout",
-          session: this.opts.session,
-          semanticWindowId: windowRecord?.semanticId ?? null,
-          windowName: windowRecord?.name ?? null,
-          currentWindow: windowRuntimeId === this.currentWindow,
-          cols: layout.width,
-          rows: layout.height,
-          zoomed: layout.zoomed,
-          paneBorderStatus: windowRecord?.paneBorderStatus ?? "off",
-          panes: layout.leaves.map((leaf) => ({
-            semanticPaneId: this.panesByRuntime.get(leaf.id)?.semanticId ?? null,
-            left: leaf.left,
-            top: leaf.top,
-            width: leaf.width,
-            height: leaf.height,
-            active: leaf.id === activePane
-          }))
-        };
-        return event;
-      }
-      // ── Truth sync + identity join ───────────────────────────────────────────
-      scheduleSync() {
-        if (this.cancelSync || this.disposed) return;
-        const schedule = this.opts.scheduleSync ?? ((callback, delayMs) => {
-          const timer = setTimeout(callback, delayMs);
-          return () => clearTimeout(timer);
-        });
-        this.cancelSync = schedule(() => {
-          this.cancelSync = null;
-          void this.syncNow().catch(() => {
-          });
-        }, SYNC_DEBOUNCE_MS);
-      }
-      async syncNow() {
-        if (this.disposed) return;
-        const lines = await this.io.request(
-          `list-panes -s -t "${this.opts.session}" -F "#{pane_id}	#{pane_active}	#{window_id}	#{?window_active,1,0}"`
-        );
-        const truth = [];
-        for (const line of lines) {
-          const [runtime = "", active2 = "", windowId = "", windowActive = ""] = line.split("	");
-          if (!/^%[0-9]+$/u.test(runtime)) continue;
-          truth.push({
-            runtimePaneId: runtime,
-            active: active2 === "1",
-            runtimeWindowId: windowId,
-            windowActive: windowActive === "1"
-          });
-        }
-        const { listed, movedWindowRuntimeIds } = this.applyPaneTruth(truth);
-        await this.syncWindows(this.opts.session, movedWindowRuntimeIds);
-        this.discovery.discover(listed);
-      }
-      applyPaneTruth(truth) {
-        const listed = /* @__PURE__ */ new Set();
-        const movedWindowRuntimeIds = /* @__PURE__ */ new Set();
-        this.truthActive.clear();
-        this.truthWindow.clear();
-        this.activePaneByWindow.clear();
-        for (const row of truth) {
-          listed.add(row.runtimePaneId);
-          this.truthActive.set(row.runtimePaneId, row.active);
-          this.truthWindow.set(row.runtimePaneId, row.runtimeWindowId);
-          if (row.active) this.activePaneByWindow.set(row.runtimeWindowId, row.runtimePaneId);
-          if (row.windowActive) this.currentWindow = row.runtimeWindowId;
-        }
-        for (const [runtime, pane] of [...this.panesByRuntime]) {
-          if (listed.has(runtime)) {
-            pane.active = this.truthActive.get(runtime) ?? pane.active;
-            const nextWindowRuntimeId = this.truthWindow.get(runtime) ?? pane.windowRuntimeId;
-            if (nextWindowRuntimeId !== pane.windowRuntimeId && nextWindowRuntimeId !== null)
-              movedWindowRuntimeIds.add(nextWindowRuntimeId);
-            pane.windowRuntimeId = nextWindowRuntimeId;
-            continue;
-          }
-          this.cancelRecovery(runtime);
-          this.continueNotificationQueues.delete(runtime);
-          this.panesByRuntime.delete(runtime);
-          this.outputOrdinals.delete(runtime);
-          this.panesBySemantic.delete(pane.semanticId);
-          this.ledger.forget(runtime);
-          this.ageByRuntime.delete(runtime);
-          for (const sub of pane.subs) {
-            if (!sub.closed) {
-              sub.closed = true;
-              sub.onEvent({ type: "closed" });
-            }
-          }
-          pane.subs.clear();
-        }
-        return { listed, movedWindowRuntimeIds };
-      }
-      async refreshTrustedInventory(expectedRuntimeSessionId, attempt = 0) {
-        const beforeLines = await this.io.request(
-          `list-panes -s -t "${expectedRuntimeSessionId}" -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`
-        );
-        if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
-        const parsed = parseSessionPaneDescriptorReply(beforeLines);
-        if (parsed.malformedUtf8Records !== 0 || parsed.descriptors.length === 0 || parsed.descriptors.length !== beforeLines.length) {
-          throw new Error(`trusted inventory for ${this.opts.session} is malformed`);
-        }
-        const descriptors = parsed.descriptors;
-        const runtimePaneIds = new Set(descriptors.map((pane) => pane.runtimePaneId));
-        const runtimeSessionIds = new Set(descriptors.map((pane) => pane.runtimeSessionId));
-        const activeWindowIds = new Set(
-          descriptors.filter((pane) => pane.windowActive).map((pane) => pane.windowId)
-        );
-        const globallyActivePanes = descriptors.filter((pane) => pane.paneActive && pane.windowActive);
-        if (runtimePaneIds.size !== descriptors.length || runtimeSessionIds.size !== 1 || runtimeSessionIds.values().next().value !== expectedRuntimeSessionId || descriptors.some((pane) => pane.sessionName !== this.opts.session) || descriptors.some((pane) => pane.windowId === null) || activeWindowIds.size !== 1 || globallyActivePanes.length !== 1) {
-          throw new Error(`trusted inventory for ${this.opts.session} is inconsistent`);
-        }
-        const computedWindowCounts = /* @__PURE__ */ new Map();
-        for (const descriptor2 of descriptors) {
-          const runtimeWindowId = descriptor2.windowId;
-          computedWindowCounts.set(
-            runtimeWindowId,
-            (computedWindowCounts.get(runtimeWindowId) ?? 0) + 1
-          );
-        }
-        if (descriptors.some(
-          (pane) => pane.windowPaneCount !== computedWindowCounts.get(pane.windowId) || pane.sessionWindowCount !== computedWindowCounts.size
-        )) {
-          throw new Error(`trusted inventory for ${this.opts.session} has incomplete counts`);
-        }
-        const { listed, movedWindowRuntimeIds } = this.applyPaneTruth(
-          descriptors.map((pane) => ({
-            runtimePaneId: pane.runtimePaneId,
-            active: pane.paneActive,
-            runtimeWindowId: pane.windowId,
-            windowActive: pane.windowActive
-          }))
-        );
-        const repairedWindows = await this.syncWindows(expectedRuntimeSessionId, movedWindowRuntimeIds);
-        const repairedPanes = await this.reconcileIdentity(descriptors, listed);
-        const afterLines = await this.io.request(
-          `list-panes -s -t "${expectedRuntimeSessionId}" -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`
-        );
-        const coherent = beforeLines.length === afterLines.length && beforeLines.every((line, index) => line === afterLines[index]);
-        if (repairedWindows || repairedPanes || !coherent) {
-          if (attempt >= 1)
-            throw new Error(`trusted inventory for ${this.opts.session} did not settle`);
-          return await this.refreshTrustedInventory(expectedRuntimeSessionId, attempt + 1);
-        }
-        if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
-        if (this.degraded || this.panesByRuntime.size !== descriptors.length || this.windowsByRuntime.size !== computedWindowCounts.size || [...computedWindowCounts.keys()].some(
-          (runtimeWindowId) => !this.windowsByRuntime.has(runtimeWindowId)
-        )) {
-          throw new Error(`trusted inventory for ${this.opts.session} is degraded`);
-        }
-        const windowCounts = computedWindowCounts;
-        const sessionWindowCount = computedWindowCounts.size;
-        const panes = descriptors.map((descriptor2) => {
-          const record = this.panesByRuntime.get(descriptor2.runtimePaneId);
-          const runtimeWindowId = descriptor2.windowId;
-          const window2 = this.windowsByRuntime.get(runtimeWindowId);
-          if (!record || record.windowRuntimeId !== descriptor2.windowId || !window2?.semanticId || descriptor2.semanticPaneId !== record.semanticId || descriptor2.semanticWindowId !== window2.semanticId || !WorkspaceIdSchemaZ.safeParse(record.semanticId).success || !WorkspaceIdSchemaZ.safeParse(window2.semanticId).success) {
-            throw new Error(`trusted inventory for ${this.opts.session} lacks verified identity`);
-          }
-          return Object.freeze({
-            runtimeSessionId: descriptor2.runtimeSessionId,
-            runtimeWindowId,
-            runtimePaneId: descriptor2.runtimePaneId,
-            semanticWindowId: window2.semanticId,
-            semanticPaneId: record.semanticId,
-            windowPaneCount: windowCounts.get(runtimeWindowId),
-            sessionWindowCount,
-            paneIndex: descriptor2.paneIndex,
-            title: descriptor2.title ?? "",
-            currentCommand: descriptor2.currentCommand ?? "",
-            active: descriptor2.paneActive && descriptor2.windowActive,
-            role: descriptor2.role,
-            name: descriptor2.name,
-            type: descriptor2.type,
-            missionStamp: descriptor2.missionStamp,
-            dir: descriptor2.cwd ?? ""
-          });
-        });
-        return Object.freeze({
-          sessionName: this.opts.session,
-          runtimeSessionId: descriptors[0].runtimeSessionId,
-          panes: Object.freeze(panes)
-        });
-      }
-      async syncWindows(target = this.opts.session, requiredLayoutEmits = /* @__PURE__ */ new Set()) {
-        const lines = await this.io.request(
-          `list-windows -t "${target}" -F "#{window_id}	#{qa:@tmux_ide_window_id}	#{qa:window_name}	#{window_active}	#{window_visible_layout}	#{?window_zoomed_flag,1,0}	#{pane-border-status}"`
-        );
-        const rows = [];
-        for (const raw of lines) {
-          const line = Buffer.from(raw, "latin1").toString("utf8");
-          const parts = line.split("	");
-          if (parts.length < 6) continue;
-          const [
-            runtimeId = "",
-            stampRaw = "",
-            nameRaw = "",
-            active2 = "",
-            visible = "",
-            zoomed = "",
-            borderStatus = "off"
-          ] = parts;
-          if (!/^@[0-9]+$/u.test(runtimeId)) continue;
-          const stamp = decodeTmuxArgument(stampRaw);
-          const name = decodeTmuxArgument(nameRaw);
-          rows.push({
-            runtimeId,
-            stamp: stamp.length > 0 ? stamp : null,
-            name: name.length > 0 ? name : null,
-            active: active2 === "1",
-            visible,
-            zoomed: zoomed === "1",
-            paneBorderStatus: borderStatus === "top" || borderStatus === "bottom" ? borderStatus : "off"
-          });
-        }
-        const stampCounts = /* @__PURE__ */ new Map();
-        for (const row of rows) {
-          if (row.stamp && WorkspaceIdSchemaZ.safeParse(row.stamp).success) {
-            stampCounts.set(row.stamp, (stampCounts.get(row.stamp) ?? 0) + 1);
-          }
-        }
-        const claimed = new Set(stampCounts.keys());
-        const generateWindowId = this.opts.generateWindowId ?? defaultMirrorWindowId;
-        let repairedIdentity = false;
-        const next = /* @__PURE__ */ new Map();
-        for (const row of rows) {
-          if (row.active) this.currentWindow = row.runtimeId;
-          const parsed = parseLayout(row.visible);
-          if (parsed) this.layoutByWindow.set(row.runtimeId, { ...parsed, zoomed: row.zoomed });
-          let semanticId = null;
-          if (row.stamp && stampCounts.get(row.stamp) === 1) {
-            semanticId = row.stamp;
-          } else {
-            repairedIdentity = true;
-            let candidate = null;
-            for (let attempt = 0; attempt < 32 && !candidate; attempt += 1) {
-              const generated = generateWindowId();
-              if (WorkspaceIdSchemaZ.safeParse(generated).success && !claimed.has(generated)) {
-                candidate = generated;
-              }
-            }
-            if (candidate) {
-              claimed.add(candidate);
-              const ok2 = await this.io.request(
-                `set-option -w -t ${row.runtimeId} ${WORKSPACE_SEMANTIC_WINDOW_OPTION} "${candidate}"`
-              ).then(
-                () => true,
-                () => false
-              );
-              if (ok2) semanticId = candidate;
-              else {
-                this.pushDiagnostic({
-                  code: "WINDOW_STAMP_BACK_FAILED",
-                  message: `Could not stamp semantic window identity ${candidate}.`,
-                  degraded: true
-                });
-              }
-            }
-          }
-          next.set(row.runtimeId, {
-            runtimeId: row.runtimeId,
-            semanticId,
-            name: row.name,
-            paneBorderStatus: row.paneBorderStatus
-          });
-        }
-        const changed = [...next].some(([runtimeId, record]) => {
-          const previous = this.windowsByRuntime.get(runtimeId);
-          return !previous || previous.name !== record.name || previous.semanticId !== record.semanticId || previous.paneBorderStatus !== record.paneBorderStatus;
-        });
-        this.windowsByRuntime.clear();
-        for (const [key, value] of next) this.windowsByRuntime.set(key, value);
-        const layoutEmits = changed ? new Set(next.keys()) : new Set([...requiredLayoutEmits].filter((runtimeId) => next.has(runtimeId)));
-        for (const runtimeId of layoutEmits) this.emitLayout(runtimeId);
-        return repairedIdentity;
-      }
-      async reconcileIdentity(descriptors, listed) {
-        if (this.disposed) return false;
-        const snapshots = descriptors.filter((descriptor2) => listed.has(descriptor2.runtimePaneId)).map((descriptor2) => ({
-          runtimePaneId: descriptor2.runtimePaneId,
-          semanticPaneId: descriptor2.semanticPaneId,
-          role: descriptor2.role,
-          type: descriptor2.type,
-          currentCommand: descriptor2.currentCommand,
-          cwd: descriptor2.cwd,
-          title: descriptor2.title,
-          rect: this.rectFor(descriptor2.runtimePaneId),
-          active: this.truthActive.get(descriptor2.runtimePaneId) ?? false
-        }));
-        const plan = planWorkspaceTmuxReconciliation({
-          panes: snapshots,
-          generateSemanticPaneId: this.opts.generatePaneId ?? defaultMirrorPaneId
-        });
-        const outcomes = await Promise.all(
-          plan.stampEffects.map(
-            (effect) => this.io.request(
-              `set-option -p -t ${effect.runtimePaneId} ${WORKSPACE_SEMANTIC_PANE_OPTION} "${effect.value}"`
-            ).then(
-              () => ({ runtimePaneId: effect.runtimePaneId, ok: true }),
-              (cause) => ({
-                runtimePaneId: effect.runtimePaneId,
-                ok: false,
-                error: cause instanceof Error ? cause.message : String(cause)
-              })
-            )
-          )
-        );
-        if (this.disposed) return plan.stampEffects.length > 0;
-        const reconciliation = finalizeWorkspaceTmuxReconciliation(plan, outcomes);
-        const descriptorByRuntime = new Map(descriptors.map((d) => [d.runtimePaneId, d]));
-        for (const verified of reconciliation.panes) {
-          if (!listed.has(verified.runtimePaneId)) continue;
-          const descriptor2 = descriptorByRuntime.get(verified.runtimePaneId) ?? null;
-          const windowRuntimeId = this.truthWindow.get(verified.runtimePaneId) ?? descriptor2?.windowId ?? null;
-          const existingBySemantic = this.panesBySemantic.get(verified.semanticPaneId);
-          const existingByRuntime = this.panesByRuntime.get(verified.runtimePaneId);
-          if (existingBySemantic && existingBySemantic.runtimeId !== verified.runtimePaneId) {
-            const retiredRuntime = existingBySemantic.runtimeId;
-            this.cancelRecovery(retiredRuntime);
-            this.continueNotificationQueues.delete(retiredRuntime);
-            this.panesByRuntime.delete(retiredRuntime);
-            this.outputOrdinals.delete(retiredRuntime);
-            this.ledger.forget(retiredRuntime);
-            existingBySemantic.runtimeId = verified.runtimePaneId;
-            existingBySemantic.incarnation = ++this.paneIncarnation;
-            existingBySemantic.descriptor = descriptor2;
-            existingBySemantic.active = verified.active;
-            existingBySemantic.windowRuntimeId = windowRuntimeId;
-            this.panesByRuntime.set(verified.runtimePaneId, existingBySemantic);
-            for (const sub of existingBySemantic.subs) {
-              if (!sub.closed && !sub.frozen) this.reseedPlain(sub);
-            }
-            continue;
-          }
-          if (existingByRuntime && existingByRuntime.semanticId === verified.semanticPaneId) {
-            existingByRuntime.descriptor = descriptor2;
-            existingByRuntime.active = verified.active;
-            existingByRuntime.windowRuntimeId = windowRuntimeId;
-            continue;
-          }
-          if (existingByRuntime) {
-            this.panesBySemantic.delete(existingByRuntime.semanticId);
-            this.cancelRecovery(existingByRuntime.runtimeId);
-            this.continueNotificationQueues.delete(existingByRuntime.runtimeId);
-            this.ledger.forget(existingByRuntime.runtimeId);
-            this.outputOrdinals.delete(existingByRuntime.runtimeId);
-            for (const sub of existingByRuntime.subs) {
-              if (sub.closed) continue;
-              sub.closed = true;
-              sub.feed.abortCurrent();
-              sub.onEvent({ type: "closed" });
-            }
-            existingByRuntime.subs.clear();
-            existingByRuntime.incarnation = ++this.paneIncarnation;
-            existingByRuntime.semanticId = verified.semanticPaneId;
-            existingByRuntime.descriptor = descriptor2;
-            existingByRuntime.active = verified.active;
-            existingByRuntime.windowRuntimeId = windowRuntimeId;
-            this.panesBySemantic.set(verified.semanticPaneId, existingByRuntime);
-            continue;
-          }
-          const record = {
-            runtimeId: verified.runtimePaneId,
-            semanticId: verified.semanticPaneId,
-            descriptor: descriptor2,
-            active: verified.active,
-            windowRuntimeId,
-            subs: /* @__PURE__ */ new Set(),
-            incarnation: ++this.paneIncarnation
-          };
-          this.panesByRuntime.set(record.runtimeId, record);
-          this.panesBySemantic.set(record.semanticId, record);
-        }
-        const semanticByRuntime = new Map(
-          reconciliation.panes.map((pane) => [pane.runtimePaneId, pane.semanticPaneId])
-        );
-        this.diagnostics = reconciliation.diagnostics.map((diagnostic4) => ({
-          code: diagnostic4.code,
-          message: diagnostic4.message.replace(
-            /%[0-9]+/gu,
-            (runtime) => semanticByRuntime.get(runtime) ?? "(unidentified pane)"
-          ),
-          degraded: diagnostic4.degraded
-        }));
-        this.degraded = reconciliation.degraded;
-        for (const runtimeId of this.layoutByWindow.keys()) this.emitLayout(runtimeId);
-        this.settleFirstJoin();
-        return plan.stampEffects.length > 0;
-      }
-      settleFirstJoin() {
-        this.resolveFirstJoin?.();
-        this.resolveFirstJoin = null;
-      }
-      rectFor(runtime) {
-        for (const layout of this.layoutByWindow.values()) {
-          const leaf = layout.leaves.find((candidate) => candidate.id === runtime);
-          if (leaf) return { left: leaf.left, top: leaf.top, width: leaf.width, height: leaf.height };
-        }
-        return { left: 0, top: 0, width: 1, height: 1 };
-      }
-      pushDiagnostic(diagnostic4) {
-        this.diagnostics = [...this.diagnostics.slice(-31), diagnostic4];
-        if (diagnostic4.degraded) this.degraded = true;
-      }
-      onChannelExit() {
-        if (this.disposed) return;
-        this.settleFirstJoin();
-        for (const runtime of [...this.recoveries.keys()]) this.cancelRecovery(runtime);
-        this.continueNotificationQueues.clear();
-        for (const pane of this.panesByRuntime.values()) {
-          for (const sub of pane.subs) {
-            if (!sub.closed) {
-              sub.closed = true;
-              sub.onEvent({ type: "closed" });
-            }
-          }
-          pane.subs.clear();
-        }
-        this.opts.onExit?.();
-      }
-    };
-  }
-});
-
-// packages/daemon/src/terminal/mirror/control-mode-ownership.ts
-function controlModeAuthorityKey(session, selector) {
-  const server = selector.socketPath ? `path:${selector.socketPath}` : `name:${selector.socketName ?? "default"}`;
-  return `${server}/session:${session}`;
-}
-var ControlModeOwnershipRegistry, processControlModeOwnershipRegistry;
-var init_control_mode_ownership = __esm({
-  "packages/daemon/src/terminal/mirror/control-mode-ownership.ts"() {
-    "use strict";
-    ControlModeOwnershipRegistry = class {
-      #owners = /* @__PURE__ */ new Map();
-      claim(authorityKey, owner) {
-        const existing = this.#owners.get(authorityKey);
-        if (existing) {
-          throw new Error(`control-mode authority already exists for ${authorityKey}`);
-        }
-        this.#owners.set(authorityKey, owner);
-        let released = false;
-        return () => {
-          if (released) return;
-          released = true;
-          if (this.#owners.get(authorityKey) === owner) this.#owners.delete(authorityKey);
-        };
-      }
-    };
-    processControlModeOwnershipRegistry = new ControlModeOwnershipRegistry();
-  }
-});
-
-// packages/daemon/src/terminal/mirror/mirror-service.ts
-var MirrorService;
-var init_mirror_service = __esm({
-  "packages/daemon/src/terminal/mirror/mirror-service.ts"() {
-    "use strict";
-    init_control_channel();
-    init_session_channel();
-    init_control_mode_ownership();
-    MirrorService = class {
-      opts;
-      channels = /* @__PURE__ */ new Map();
-      pendingDisposals = /* @__PURE__ */ new Set();
-      drainingChannels = /* @__PURE__ */ new Map();
-      sessionExitListeners = /* @__PURE__ */ new Set();
-      owner = /* @__PURE__ */ Symbol("MirrorService control-mode owner");
-      disposed = false;
-      constructor(opts = {}) {
-        this.opts = opts;
-      }
-      /** Enumerate a session's panes under semantic identity (spinning the
-       *  channel up if needed; it is released again when no subscription holds it). */
-      async describeSession(session) {
-        const entry = await this.acquire(session);
-        try {
-          return entry.channel.describe();
-        } finally {
-          this.release(session, entry);
-        }
-      }
-      /**
-       * Daemon-private raw inventory from an already-retained channel. This seam
-       * never creates or starts authority; a retirement race returns null.
-       */
-      async describeTrustedInventory(session, expectedRuntimeSessionId) {
-        const entry = this.channels.get(session);
-        if (!entry || entry.retired) return null;
-        await entry.started;
-        if (this.channels.get(session) !== entry || entry.retired) return null;
-        const inventory = await entry.channel.describeTrustedInventory(expectedRuntimeSessionId);
-        if (this.channels.get(session) !== entry || entry.retired) return null;
-        return inventory;
-      }
-      hasRetainedSession(session) {
-        const entry = this.channels.get(session);
-        return entry !== void 0 && !entry.retired;
-      }
-      async retainedSessionIdentity(session) {
-        const entry = this.channels.get(session);
-        if (!entry || entry.retired) return null;
-        await entry.started;
-        if (this.channels.get(session) !== entry || entry.retired) return null;
-        const identity = await entry.channel.attachedSessionIdentity();
-        if (this.channels.get(session) !== entry || entry.retired) return null;
-        return identity;
-      }
-      async subscribe(request) {
-        const entry = await this.acquire(request.session);
-        let handle;
-        try {
-          handle = entry.channel.subscribePane(
-            request.semanticPaneId,
-            request.onEvent,
-            request.onLayout
-          );
-        } catch (cause) {
-          this.release(request.session, entry);
-          throw cause;
-        }
-        let closed = false;
-        return {
-          session: request.session,
-          semanticPaneId: request.semanticPaneId,
-          freeze: () => handle.freeze(),
-          thaw: () => handle.thaw(),
-          reseed: () => handle.reseed(),
-          sendText: (text) => handle.sendText(text),
-          sendKey: (key) => handle.sendKey(key),
-          close: async () => {
-            if (closed) return;
-            closed = true;
-            handle.close();
-            this.release(request.session, entry);
-            await Promise.allSettled([...this.pendingDisposals]);
-          }
-        };
-      }
-      /** Retain one session channel for layout only; no pane feed or seed is created. */
-      async subscribeLayout(session, onLayout) {
-        const entry = await this.acquire(session);
-        let handle;
-        try {
-          handle = entry.channel.subscribeLayout(onLayout);
-        } catch (cause) {
-          this.release(session, entry);
-          throw cause;
-        }
-        let closed = false;
-        return {
-          session,
-          close: async () => {
-            if (closed) return;
-            closed = true;
-            handle.close();
-            this.release(session, entry);
-            await Promise.allSettled([...this.pendingDisposals]);
-          }
-        };
-      }
-      /** Synchronous hot input on an already-retained SessionRuntime channel. */
-      sendText(session, semanticPaneId3, text, performanceTraceId, isolated = false) {
-        const entry = this.channels.get(session);
-        if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
-        entry.channel.sendText(semanticPaneId3, text, performanceTraceId, isolated);
-      }
-      sendKey(session, semanticPaneId3, key, performanceTraceId) {
-        const entry = this.channels.get(session);
-        if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
-        entry.channel.sendKey(semanticPaneId3, key, performanceTraceId);
-      }
-      fitViewport(session, cols, rows) {
-        const entry = this.channels.get(session);
-        if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
-        entry.channel.fitViewport(cols, rows);
-      }
-      /** Keep the retained control client passive unless the arbiter elects it. */
-      setGeometryParticipation(session, active2) {
-        const entry = this.channels.get(session);
-        if (!entry || entry.retired) return;
-        entry.channel.setGeometryParticipation(active2);
-      }
-      /**
-       * Keep one session channel alive independently of renderer subscriptions.
-       * The daemon SessionRuntime registry owns this retention; clients never do.
-       */
-      async retainSession(session) {
-        const entry = await this.acquire(session);
-        let closed = false;
-        return {
-          session,
-          close: async () => {
-            if (closed) return;
-            closed = true;
-            this.release(session, entry);
-            await Promise.allSettled([...this.pendingDisposals]);
-          }
-        };
-      }
-      /** SessionRuntime's reconnect seam; runtime addresses never cross it. */
-      onSessionExit(listener) {
-        if (this.disposed) throw new Error("MirrorService is disposed");
-        this.sessionExitListeners.add(listener);
-        return () => this.sessionExitListeners.delete(listener);
-      }
-      /** Fall-behind telemetry for an ACTIVE session channel; null when no
-       *  channel is running for the session. */
-      ageTelemetry(session) {
-        return this.channels.get(session)?.channel.ageTelemetry() ?? null;
-      }
-      /** Flow-ledger snapshot (semantic ids) for an ACTIVE session channel. */
-      flowSnapshot(session) {
-        return this.channels.get(session)?.channel.flowSnapshot() ?? null;
-      }
-      activeChannelCount() {
-        return this.channels.size;
-      }
-      async dispose() {
-        this.disposed = true;
-        this.sessionExitListeners.clear();
-        const entries = [...this.channels.values()];
-        this.channels.clear();
-        await Promise.allSettled(
-          entries.map(async (entry) => {
-            entry.retired = true;
-            try {
-              await entry.channel.dispose();
-            } finally {
-              entry.releaseAuthority();
-            }
-          })
-        );
-        await Promise.allSettled([...this.pendingDisposals]);
-      }
-      async acquire(session) {
-        if (this.disposed) throw new Error("MirrorService is disposed");
-        await this.drainingChannels.get(session);
-        if (this.disposed) throw new Error("MirrorService is disposed");
-        let entry = this.channels.get(session);
-        if (!entry) {
-          const releaseAuthority = (this.opts.controlModeOwnershipRegistry ?? processControlModeOwnershipRegistry).claim(
-            controlModeAuthorityKey(session, {
-              socketName: this.opts.socketName,
-              socketPath: this.opts.socketPath
-            }),
-            this.owner
-          );
-          let channel;
-          try {
-            const channelOptions = {
-              session,
-              createIo: (handlers) => this.opts.createIo?.(session, handlers) ?? new MirrorControlChannel({
-                session,
-                handlers,
-                socketName: this.opts.socketName,
-                socketPath: this.opts.socketPath,
-                executable: this.opts.executable,
-                configFile: this.opts.configFile,
-                pauseAfterSeconds: this.opts.pauseAfterSeconds,
-                nowMicros: this.opts.nowMicros
-              }),
-              historyLines: this.opts.historyLines,
-              internalReadHookEmission: this.opts.internalReadHookEmission,
-              generatePaneId: this.opts.generatePaneId,
-              generateWindowId: this.opts.generateWindowId,
-              onExit: () => {
-                const active2 = this.channels.get(session);
-                if (active2?.channel === channel) {
-                  this.retire(session, active2);
-                  for (const listener of this.sessionExitListeners) listener(session);
-                }
-              },
-              onNativeClientActivity: () => this.opts.onNativeClientActivity?.(session),
-              onInputWrite: (action, startedAtMicros, endedAtMicros, pendingBeforeSend) => this.opts.onInputWrite?.(
-                session,
-                action,
-                startedAtMicros,
-                endedAtMicros,
-                pendingBeforeSend
-              ),
-              onInputAccepted: (action, acceptedAtMicros, ok2) => this.opts.onInputAccepted?.(session, action, acceptedAtMicros, ok2),
-              onOutputObserved: (semanticPaneId3, ageMs, timing) => this.opts.onOutputObserved?.(session, semanticPaneId3, ageMs, timing),
-              onFlowRecoveryObserved: (observation2) => this.opts.onFlowRecoveryObserved?.(session, observation2)
-            };
-            channel = new SessionChannel(channelOptions);
-          } catch (cause) {
-            releaseAuthority();
-            throw cause;
-          }
-          entry = {
-            channel,
-            started: channel.start(),
-            refs: 0,
-            releaseAuthority,
-            retired: false
-          };
-          this.channels.set(session, entry);
-        }
-        entry.refs += 1;
-        try {
-          await entry.started;
-        } catch (cause) {
-          this.release(session, entry);
-          throw cause;
-        }
-        if (entry.retired) {
-          this.release(session, entry);
-          return await this.acquire(session);
-        }
-        return entry;
-      }
-      release(session, entry) {
-        entry.refs -= 1;
-        if (entry.refs > 0) return;
-        this.retire(session, entry);
-      }
-      retire(session, entry) {
-        if (entry.retired) return;
-        entry.retired = true;
-        if (this.channels.get(session) === entry) this.channels.delete(session);
-        const disposal = entry.channel.dispose().catch(() => {
-        }).finally(() => entry.releaseAuthority());
-        this.drainingChannels.set(session, disposal);
-        this.pendingDisposals.add(disposal);
-        void disposal.finally(() => {
-          this.pendingDisposals.delete(disposal);
-          if (this.drainingChannels.get(session) === disposal) this.drainingChannels.delete(session);
-        });
-      }
-    };
-  }
-});
-
-// packages/daemon/src/terminal/session-runtime/interaction-receipt-facts.ts
-function sessionRuntimeInteractionFacts(intent) {
-  switch (intent.verb) {
-    case "workspace.window.split":
-      return {
-        target: { kind: "pane", semanticPaneId: intent.semanticPaneId },
-        summary: { operationKind: intent.verb, direction: intent.direction }
-      };
-    case "workspace.window.kill":
-      return {
-        target: { kind: "window", target: intent.target },
-        summary: { operationKind: intent.verb }
-      };
-    case "workspace.pane.kill":
-      return {
-        target: { kind: "pane", semanticPaneId: intent.semanticPaneId },
-        summary: { operationKind: intent.verb }
-      };
-    case "workspace.session.kill":
-      return { target: { kind: "session" }, summary: { operationKind: intent.verb } };
-    case "workspace.rename":
-      return intent.scope === "session" ? {
-        target: { kind: "session" },
-        summary: { operationKind: intent.verb, scope: intent.scope }
-      } : {
-        target: { kind: "window", target: intent.target },
-        summary: { operationKind: intent.verb, scope: intent.scope }
-      };
-    case "workspace.pane.zoom.toggle":
-      return {
-        target: { kind: "pane", semanticPaneId: intent.semanticPaneId },
-        summary: { operationKind: intent.verb, desired: intent.desired }
-      };
-    case "workspace.pane.select":
-      return {
-        target: { kind: "pane", semanticPaneId: intent.semanticPaneId },
-        summary: { operationKind: intent.verb }
-      };
-    case "workspace.pane.send":
-      return {
-        target: { kind: "pane", semanticPaneId: intent.semanticPaneId },
-        summary: {
-          operationKind: intent.verb,
-          characterCount: Array.from(intent.text).length,
-          byteCount: Buffer.byteLength(intent.text, "utf8"),
-          submitted: intent.submit
-        }
-      };
-    case "workspace.pane.swap":
-      return {
-        target: { kind: "pane", semanticPaneId: intent.sourceSemanticPaneId },
-        summary: {
-          operationKind: intent.verb,
-          targetSemanticPaneId: intent.targetSemanticPaneId
-        }
-      };
-    case "workspace.pane.resize":
-      return {
-        target: { kind: "pane", semanticPaneId: intent.semanticPaneId },
-        summary: { operationKind: intent.verb, axis: intent.axis, cells: intent.cells }
-      };
-    case "workspace.pane.read":
-      return {
-        target: { kind: "pane", semanticPaneId: intent.semanticPaneId },
-        summary: { operationKind: intent.verb, observedOnly: true }
-      };
-  }
-}
-function sessionRuntimeObservedProof(intent, rawResult) {
-  if (intent.verb === "workspace.pane.read") {
-    if (rawResult !== void 0) throw new TypeError("Pane read returned an unexpected result");
-    return { operationKind: intent.verb, observed: true, semanticPaneId: intent.semanticPaneId };
-  }
-  const result = WorkspaceMultiplexerMutationResultSchemaZ.parse(rawResult);
-  if (result.verb !== intent.verb)
-    throw new TypeError("Mutation result verb does not match intent");
-  switch (result.verb) {
-    case "workspace.window.split":
-      return {
-        operationKind: result.verb,
-        outcome: result.outcome,
-        direction: result.direction,
-        semanticPaneId: result.semanticPaneId
-      };
-    case "workspace.window.kill":
-      return {
-        operationKind: result.verb,
-        outcome: result.outcome,
-        remainingWindowCount: result.remainingWindowCount
-      };
-    case "workspace.pane.kill":
-      return {
-        operationKind: result.verb,
-        outcome: result.outcome,
-        semanticPaneId: intent.semanticPaneId,
-        windowClosed: result.windowClosed,
-        remainingWindowCount: result.remainingWindowCount
-      };
-    case "workspace.session.kill":
-      return { operationKind: result.verb, outcome: result.outcome };
-    case "workspace.rename":
-      return { operationKind: result.verb, outcome: result.outcome, scope: result.scope };
-    case "workspace.pane.zoom.toggle":
-      return {
-        operationKind: result.verb,
-        outcome: result.outcome,
-        semanticPaneId: result.semanticPaneId,
-        zoomed: result.zoomed
-      };
-    case "workspace.pane.select":
-      return {
-        operationKind: result.verb,
-        outcome: result.outcome,
-        semanticPaneId: result.semanticPaneId
-      };
-    case "workspace.pane.send":
-      return { operationKind: result.verb, observed: true, semanticPaneId: result.semanticPaneId };
-    case "workspace.pane.swap":
-      return {
-        operationKind: result.verb,
-        outcome: result.outcome,
-        sourceSemanticPaneId: result.sourceSemanticPaneId,
-        targetSemanticPaneId: result.targetSemanticPaneId
-      };
-    case "workspace.pane.resize":
-      return {
-        operationKind: result.verb,
-        outcome: result.outcome,
-        semanticPaneId: result.semanticPaneId,
-        axis: result.axis,
-        cells: result.cells
-      };
-  }
-}
-function sessionRuntimeIntentNeedsTmuxObservation(intent) {
-  return intent.verb === "workspace.pane.send" || intent.verb === "workspace.pane.read";
-}
-var init_interaction_receipt_facts = __esm({
-  "packages/daemon/src/terminal/session-runtime/interaction-receipt-facts.ts"() {
-    "use strict";
-    init_src();
-  }
-});
-
-// packages/daemon/src/terminal/session-runtime/runtime-scheduler.ts
-var SYSTEM_SESSION_RUNTIME_SCHEDULER;
-var init_runtime_scheduler = __esm({
-  "packages/daemon/src/terminal/session-runtime/runtime-scheduler.ts"() {
-    "use strict";
-    SYSTEM_SESSION_RUNTIME_SCHEDULER = Object.freeze({
-      nowMs: () => performance.now(),
-      createId: () => crypto.randomUUID(),
-      microtask: (task) => queueMicrotask(task),
-      timer: (task, delayMs) => {
-        const handle = setTimeout(task, delayMs);
-        handle.unref?.();
-        return { cancel: () => clearTimeout(handle) };
-      }
-    });
-  }
-});
-
-// packages/daemon/src/terminal/session-runtime/semantic-mutation-resource-changes.ts
-function semanticMutationResourceChanges(raw) {
-  const parsed = WorkspaceMultiplexerMutationResultSchemaZ.safeParse(raw);
-  if (!parsed.success || parsed.data.outcome !== "applied") return [];
-  const result = parsed.data;
-  if (result.verb === "workspace.pane.send") return [];
-  const base = {
-    workspaceName: result.workspaceName,
-    causeOperationId: result.operationId
-  };
-  const changes = [
-    { ...base, resource: "application-shell" },
-    { ...base, resource: "workspace-missions" }
-  ];
-  if (result.verb === "workspace.window.split" || result.verb === "workspace.window.kill" || result.verb === "workspace.pane.kill" || result.verb === "workspace.session.kill") {
-    changes.push({ ...base, workspaceName: null, resource: "fleet-catalog" });
-  }
-  if (result.verb === "workspace.session.kill") {
-    changes.push({ ...base, workspaceName: null, resource: "workspace-catalog" });
-  }
-  if (result.verb === "workspace.rename" && result.scope === "session") {
-    changes.push({ ...base, workspaceName: null, resource: "fleet-catalog" });
-    changes.push({ ...base, workspaceName: null, resource: "workspace-catalog" });
-  }
-  return Object.freeze(changes.map((change) => Object.freeze(change)));
-}
-var init_semantic_mutation_resource_changes = __esm({
-  "packages/daemon/src/terminal/session-runtime/semantic-mutation-resource-changes.ts"() {
-    "use strict";
-    init_src();
-  }
-});
-
-// packages/daemon/src/terminal/session-runtime/semantic-mutation-executor.ts
-import { z as z72 } from "zod";
-function replayedResult(result) {
-  return result === void 0 ? void 0 : { ...result, outcome: "replayed" };
-}
-var SessionRuntimeIntentError, SESSION_RUNTIME_OBSERVATION_TIMEOUT_MS, SESSION_RUNTIME_OPERATION_LEDGER_CAPACITY, MISSING_SESSION_LEDGER, SessionSemanticMutationExecutor;
-var init_semantic_mutation_executor = __esm({
-  "packages/daemon/src/terminal/session-runtime/semantic-mutation-executor.ts"() {
-    "use strict";
-    init_src();
-    init_interaction_receipt_facts();
-    init_runtime_scheduler();
-    init_runtime_observability();
-    init_semantic_mutation_resource_changes();
-    SessionRuntimeIntentError = class extends Error {
-      constructor(outcome, message, options) {
-        super(message, options);
-        this.outcome = outcome;
-        this.name = "SessionRuntimeIntentError";
-      }
-    };
-    SESSION_RUNTIME_OBSERVATION_TIMEOUT_MS = 1e4;
-    SESSION_RUNTIME_OPERATION_LEDGER_CAPACITY = 256;
-    MISSING_SESSION_LEDGER = /* @__PURE__ */ Symbol("missing-session-ledger");
-    SessionSemanticMutationExecutor = class {
-      #options;
-      #scheduler;
-      #observability;
-      #tails = /* @__PURE__ */ new Map();
-      #pending = /* @__PURE__ */ new Map();
-      #operations = /* @__PURE__ */ new Map();
-      #listeners = /* @__PURE__ */ new Set();
-      #disposed = false;
-      #accepted = 0;
-      #observed = 0;
-      #rejected = 0;
-      #timedOut = 0;
-      constructor(options) {
-        this.#options = options;
-        this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
-        this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
-      }
-      metrics() {
-        return Object.freeze({
-          accepted: this.#accepted,
-          observed: this.#observed,
-          rejected: this.#rejected,
-          timedOut: this.#timedOut,
-          pendingObservations: [...this.#pending.values()].reduce(
-            (sum, pending) => sum + pending.size,
-            0
-          ),
-          activeSessionLanes: this.#tails.size,
-          ledgerEntries: [...this.#operations.values()].reduce((sum, ledger2) => sum + ledger2.size, 0)
-        });
-      }
-      submit(rawOperationId, rawIntent, authority) {
-        if (this.#disposed) {
-          return Promise.reject(
-            new SessionRuntimeIntentError("rejected", "Session semantic mutation executor is disposed")
-          );
-        }
-        const operationId = z72.uuid().parse(rawOperationId);
-        let intent = SessionRuntimeSemanticIntentSchemaZ.parse(rawIntent);
-        if (intent.verb === "workspace.pane.send" || intent.verb === "workspace.pane.read") {
-          intent = { ...intent, origin: authority.origin };
-        }
-        const authenticatedSourceSemanticPaneId = authority.authenticatedSourceSemanticPaneId ?? null;
-        const session = this.#options.resolveSession(intent.workspaceName);
-        const ledger2 = this.#ledger(session ?? MISSING_SESSION_LEDGER);
-        const origin = authority.origin;
-        const fingerprint2 = JSON.stringify([intent, authenticatedSourceSemanticPaneId, origin]);
-        const existing = ledger2.get(operationId);
-        if (existing) {
-          if (existing.fingerprint !== fingerprint2) {
-            return Promise.reject(
-              new SessionRuntimeIntentError(
-                "rejected",
-                "Operation id was already used for a different semantic interaction"
-              )
-            );
-          }
-          return existing.status === "active" ? existing.promise : existing.promise.then(replayedResult);
-        }
-        if (!this.#makeOperationRoom(ledger2)) {
-          return Promise.reject(
-            new SessionRuntimeIntentError(
-              "rejected",
-              "All session semantic mutation ledger slots are active"
-            )
-          );
-        }
-        this.#publish(operationId, intent, "accepted", null, void 0, origin);
-        if (session === null) {
-          const error = new SessionRuntimeIntentError(
-            "rejected",
-            `Workspace ${intent.workspaceName} has no live tmux session`
-          );
-          this.#publish(operationId, intent, "rejected", null, void 0, origin);
-          const rejected = Promise.reject(error);
-          this.#remember(ledger2, operationId, fingerprint2, rejected);
-          return rejected;
-        }
-        const previous = this.#tails.get(session) ?? Promise.resolve();
-        const result = previous.then(
-          () => this.#run(
-            session,
-            operationId,
-            intent,
-            authenticatedSourceSemanticPaneId,
-            authority.authorizeBeforeEffect,
-            origin
-          ),
-          () => this.#run(
-            session,
-            operationId,
-            intent,
-            authenticatedSourceSemanticPaneId,
-            authority.authorizeBeforeEffect,
-            origin
-          )
-        );
-        const tail = result.then(
-          () => void 0,
-          () => void 0
-        );
-        this.#tails.set(session, tail);
-        this.#remember(ledger2, operationId, fingerprint2, result);
-        void tail.finally(() => {
-          if (this.#tails.get(session) === tail) this.#tails.delete(session);
-        });
-        return result;
-      }
-      observe(observation2) {
-        const session = this.#options.resolveSession(observation2.workspaceName);
-        if (session === null) return false;
-        const pending = this.#pending.get(session)?.get(observation2.operationId);
-        if (!pending) return false;
-        const expected = pending.expected;
-        if (expected.workspaceName !== observation2.workspaceName || expected.semanticPaneId !== observation2.semanticPaneId || expected.operationKind !== observation2.operationKind) {
-          return false;
-        }
-        pending.resolve();
-        return true;
-      }
-      onReceipt(listener) {
-        this.#listeners.add(listener);
-        return () => this.#listeners.delete(listener);
-      }
-      async dispose() {
-        if (this.#disposed) return;
-        this.#disposed = true;
-        const error = new SessionRuntimeIntentError(
-          "rejected",
-          "Session semantic mutation executor shut down"
-        );
-        for (const sessionPending of this.#pending.values()) {
-          for (const pending of sessionPending.values()) pending.reject(error);
-        }
-        await Promise.allSettled(this.#tails.values());
-        this.#pending.clear();
-        this.#tails.clear();
-        this.#listeners.clear();
-        this.#operations.clear();
-      }
-      #ledger(key) {
-        const existing = this.#operations.get(key);
-        if (existing) return existing;
-        const ledger2 = /* @__PURE__ */ new Map();
-        this.#operations.set(key, ledger2);
-        return ledger2;
-      }
-      #remember(ledger2, operationId, fingerprint2, promise) {
-        const record = { fingerprint: fingerprint2, promise, status: "active" };
-        ledger2.set(operationId, record);
-        void promise.then(
-          () => {
-            record.status = "settled";
-          },
-          () => {
-            record.status = "settled";
-          }
-        );
-      }
-      /**
-       * Keep exact replay/conflict protection inside the bounded settled ledger
-       * horizon. A new unique operation may retire the oldest settled record, but
-       * pending work is never evicted or duplicated. This matches the daemon's
-       * bounded replay journal rather than imposing a lifetime mutation ceiling.
-       */
-      #makeOperationRoom(ledger2) {
-        if (ledger2.size < SESSION_RUNTIME_OPERATION_LEDGER_CAPACITY) return true;
-        for (const [operationId, record] of ledger2) {
-          if (record.status !== "settled") continue;
-          ledger2.delete(operationId);
-          return true;
-        }
-        return false;
-      }
-      async #run(session, operationId, intent, authenticatedSourceSemanticPaneId, authorizeBeforeEffect, origin = "sdk") {
-        if (this.#disposed) {
-          const error = new SessionRuntimeIntentError(
-            "rejected",
-            "Session semantic mutation executor shut down before execution"
-          );
-          this.#publish(operationId, intent, "rejected", null, void 0, origin);
-          throw error;
-        }
-        const needsTmuxObservation = sessionRuntimeIntentNeedsTmuxObservation(intent);
-        let observed = null;
-        if (needsTmuxObservation) {
-          let settleObservation;
-          let rejectObservation;
-          observed = new Promise((resolve37, reject) => {
-            settleObservation = resolve37;
-            rejectObservation = reject;
-          });
-          let sessionPending = this.#pending.get(session);
-          if (!sessionPending) {
-            sessionPending = /* @__PURE__ */ new Map();
-            this.#pending.set(session, sessionPending);
-          }
-          sessionPending.set(operationId, {
-            expected: {
-              operationId,
-              workspaceName: intent.workspaceName,
-              semanticPaneId: intent.semanticPaneId,
-              operationKind: intent.verb
-            },
-            resolve: settleObservation,
-            reject: rejectObservation
-          });
-        }
-        let result;
-        let trace = null;
-        if (this.#observability.enabled && this.#options.traceAuthority) {
-          try {
-            trace = this.#observability.beginTrace(
-              intent.verb === "workspace.pane.select" ? "window-switch" : "semantic-mutation",
-              this.#options.traceAuthority,
-              operationId
-            );
-          } catch {
-            trace = null;
-          }
-        }
-        const timing = trace ? {
-          nowMicros: () => this.#observability.nowMicros(),
-          record: (operation, startedAtMicros, endedAtMicros) => {
-            try {
-              this.#observability.recordSpan(
-                "tmux",
-                operation,
-                startedAtMicros,
-                endedAtMicros,
-                trace
-              );
-            } catch {
-            }
-          }
-        } : void 0;
-        let tmuxStarted = null;
-        if (this.#observability.enabled) {
-          try {
-            tmuxStarted = this.#observability.nowMicros();
-          } catch {
-            tmuxStarted = null;
-          }
-        }
-        try {
-          authorizeBeforeEffect?.();
-          result = this.#options.execute(operationId, intent, timing);
-        } catch (cause) {
-          if (needsTmuxObservation) this.#deletePending(session, operationId);
-          const error = new SessionRuntimeIntentError(
-            "rejected",
-            "tmux rejected the semantic interaction",
-            { cause }
-          );
-          this.#publish(operationId, intent, "rejected", null, void 0, origin);
-          throw error;
-        } finally {
-          if (tmuxStarted !== null)
-            try {
-              const tmuxEnded = this.#observability.nowMicros();
-              this.#observability.recordSpan(
-                "tmux",
-                "semantic-mutation-effect",
-                tmuxStarted,
-                tmuxEnded,
-                trace
-              );
-            } catch {
-            }
-        }
-        try {
-          sessionRuntimeObservedProof(intent, result);
-        } catch (cause) {
-          if (needsTmuxObservation) this.#deletePending(session, operationId);
-          const error = new SessionRuntimeIntentError(
-            "rejected",
-            "tmux returned invalid semantic mutation proof",
-            { cause }
-          );
-          this.#publish(operationId, intent, "rejected", null, void 0, origin);
-          throw error;
-        }
-        if (needsTmuxObservation) {
-          const timeoutMs = this.#options.observationTimeoutMs ?? SESSION_RUNTIME_OBSERVATION_TIMEOUT_MS;
-          let timeout;
-          try {
-            await Promise.race([
-              observed,
-              new Promise((_, reject) => {
-                timeout = this.#scheduler.timer(
-                  () => reject(
-                    new SessionRuntimeIntentError(
-                      "timed-out",
-                      "tmux did not expose the interaction through its observation hook in time"
-                    )
-                  ),
-                  timeoutMs
-                );
-              })
-            ]);
-          } catch (cause) {
-            const error = cause instanceof SessionRuntimeIntentError ? cause : new SessionRuntimeIntentError("rejected", "Interaction observation was cancelled", {
-              cause
-            });
-            this.#publish(operationId, intent, error.outcome, null, void 0, origin);
-            throw error;
-          } finally {
-            timeout?.cancel();
-            this.#deletePending(session, operationId);
-          }
-        }
-        this.#publish(
-          operationId,
-          intent,
-          "observed",
-          authenticatedSourceSemanticPaneId,
-          result,
-          origin
-        );
-        for (const change of semanticMutationResourceChanges(result)) {
-          try {
-            this.#options.publishResourceChange?.(change);
-          } catch {
-          }
-        }
-        return result;
-      }
-      #deletePending(session, operationId) {
-        const pending = this.#pending.get(session);
-        pending?.delete(operationId);
-        if (pending?.size === 0) this.#pending.delete(session);
-      }
-      #publish(operationId, intent, phase, authenticatedSourceSemanticPaneId = null, result, authenticatedOrigin) {
-        const facts = sessionRuntimeInteractionFacts(intent);
-        const origin = authenticatedOrigin ?? ("origin" in intent ? intent.origin : "sdk");
-        const receipt = InteractionReceiptSchemaZ.parse(
-          this.#options.publishReceipt({
-            operationId,
-            origin,
-            workspaceName: intent.workspaceName,
-            sourceSemanticPaneId: phase === "observed" ? authenticatedSourceSemanticPaneId : null,
-            target: facts.target,
-            operationKind: intent.verb,
-            phase,
-            summary: facts.summary,
-            proof: phase === "observed" ? sessionRuntimeObservedProof(intent, result) : null,
-            at: (this.#options.now ?? (() => /* @__PURE__ */ new Date()))().toISOString(),
-            resourceRevision: null
-          })
-        );
-        if (phase === "accepted") this.#accepted += 1;
-        else if (phase === "observed") this.#observed += 1;
-        else if (phase === "rejected") this.#rejected += 1;
-        else this.#timedOut += 1;
-        for (const listener of this.#listeners) {
-          this.#scheduler.microtask(() => {
-            try {
-              listener(receipt);
-            } catch {
-            }
-          });
-        }
       }
     };
   }
@@ -38477,14 +31341,17 @@ function encodeAnsiTerminalRepresentation(baseline, target) {
   const alternateScreenChanged = baseline === null || baseline.modes.alternateScreen !== target.modes.alternateScreen;
   if (alternateScreenChanged)
     output += target.modes.alternateScreen ? "\x1B[?1049h" : "\x1B[?1049l";
-  if (!baseline || baseline.cols !== target.cols || baseline.rows !== target.rows || alternateScreenChanged) {
-    output += "\x1B[0m\x1B[2J\x1B[H";
-    output += prepareAnsiTopWrappedRow(target);
-    output += renderAnsiRowChains(
-      target,
-      target.grid.map((_, index) => index),
-      false
-    );
+  if (!baseline || baseline.cols !== target.cols || baseline.rows !== target.rows || alternateScreenChanged || !historyEqual(baseline.history, target.history)) {
+    output += "\x1B[0m\x1B[2J\x1B[3J\x1B[H";
+    if (target.history.length > 0) output += renderAnsiSeedRows(target);
+    else {
+      output += prepareAnsiTopWrappedRow(target);
+      output += renderAnsiRowChains(
+        target,
+        target.grid.map((_, index) => index),
+        false
+      );
+    }
   } else {
     const changedRows = /* @__PURE__ */ new Map();
     for (let row = 0; row < target.rows; row += 1) {
@@ -38497,10 +31364,21 @@ function encodeAnsiTerminalRepresentation(baseline, target) {
     if (changedRows.size === 0 && baseline.modes.wraparound !== target.modes.wraparound)
       output += ansiWraparoundPresentation(target);
   }
+  output += ansiInputModesPresentation(target, baseline);
   output += ansiCursorPresentation(target);
   const bytes = new TextEncoder().encode(output);
   assertRepresentationSize(bytes);
   return bytes;
+}
+function renderAnsiSeedRows(target) {
+  const rows = [...target.history, ...target.grid];
+  let output = "\x1B[?7h";
+  rows.forEach((row, index) => {
+    if (index > 0 && !row.wrapped) output += "\r\n";
+    output += renderAnsiRow(row);
+  });
+  output += ansiWraparoundPresentation(target);
+  return output;
 }
 function renderAnsiPatchRows(target, patchedRows) {
   const affectedRows = new Set(patchedRows.keys());
@@ -38524,6 +31402,47 @@ function ansiCursorPresentation(target) {
 }
 function ansiWraparoundPresentation(target) {
   return target.modes.wraparound ? "\x1B[?7h" : "\x1B[?7l";
+}
+function ansiInputModesPresentation(target, baseline) {
+  const prior = baseline?.modes;
+  const modes = target.modes;
+  let output = "";
+  const decMode = (code, enabled) => `\x1B[?${code}${enabled ? "h" : "l"}`;
+  const ansiMode = (code, enabled) => `\x1B[${code}${enabled ? "h" : "l"}`;
+  if (!prior || prior.applicationCursor !== modes.applicationCursor)
+    output += decMode(1, modes.applicationCursor);
+  if (!prior || prior.applicationKeypad !== modes.applicationKeypad)
+    output += modes.applicationKeypad ? "\x1B=" : "\x1B>";
+  if (!prior || prior.bracketedPaste !== modes.bracketedPaste)
+    output += decMode(2004, modes.bracketedPaste);
+  if (!prior || prior.insert !== modes.insert) output += ansiMode(4, modes.insert);
+  if (!prior || prior.origin !== modes.origin) output += decMode(6, modes.origin);
+  const mouseChanged = !prior || prior.mouseTracking !== modes.mouseTracking || prior.mouseProtocol !== modes.mouseProtocol || prior.mouseEncoding !== modes.mouseEncoding;
+  if (mouseChanged) {
+    output += decMode(9, false);
+    output += decMode(1e3, false);
+    output += decMode(1002, false);
+    output += decMode(1003, false);
+    output += decMode(1005, false);
+    output += decMode(1006, false);
+    output += decMode(1016, false);
+    if (modes.mouseTracking) {
+      const protocol = modes.mouseProtocol ?? "vt200";
+      if (protocol === "x10") output += decMode(9, true);
+      else if (protocol === "drag") output += decMode(1002, true);
+      else if (protocol === "any") output += decMode(1003, true);
+      else if (protocol !== "none") output += decMode(1e3, true);
+    }
+    if (modes.mouseEncoding === "utf8") output += decMode(1005, true);
+    else if (modes.mouseEncoding === "sgr") output += decMode(1006, true);
+    else if (modes.mouseEncoding === "sgr-pixels") output += decMode(1016, true);
+  }
+  if (!prior || prior.synchronizedOutput !== modes.synchronizedOutput)
+    output += decMode(2026, modes.synchronizedOutput);
+  return output;
+}
+function historyEqual(left, right) {
+  return left === right || left.length === right.length && left.every((row, index) => terminalReplicaRowsEqual(row, right[index]));
 }
 function renderAnsiRow(row) {
   let output = "\x1B[0m";
@@ -38727,6 +31646,31 @@ var init_optimistic_projection_conformance = __esm({
   }
 });
 
+// packages/core/src/app-window-identity.ts
+function fnv1a(value) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return hash.toString(36).padStart(7, "0");
+}
+function stableAppWindowInstanceId(source, ordinal = 0) {
+  const parsed = AppWindowSourceSchemaZ.parse(source);
+  if (!Number.isInteger(ordinal) || ordinal < 0 || ordinal >= APP_WINDOW_MAX_WINDOWS) {
+    throw new Error("app window ordinal must be a bounded nonnegative integer");
+  }
+  const sourceKey = parsed.kind === "terminal" ? `terminal:${parsed.terminalSourceId}` : `native:${parsed.surface}:${parsed.resourceId === null ? "null" : `id:${parsed.resourceId}`}`;
+  const slug = sourceKey.toLowerCase().replace(/[^a-z0-9._-]+/gu, "-").replace(/^-+|-+$/gu, "").slice(0, 72);
+  return AppWindowIdSchemaZ.parse(`window-${slug || "surface"}-${ordinal}-${fnv1a(sourceKey)}`);
+}
+var init_app_window_identity = __esm({
+  "packages/core/src/app-window-identity.ts"() {
+    "use strict";
+    init_src();
+  }
+});
+
 // packages/core/src/index.ts
 var init_src3 = __esm({
   "packages/core/src/index.ts"() {
@@ -38745,6 +31689,7521 @@ var init_src3 = __esm({
     init_optimistic_projection();
     init_optimistic_projection_store();
     init_optimistic_projection_conformance();
+    init_app_window_identity();
+  }
+});
+
+// packages/daemon/src/lib/app-window-state.ts
+function emptyAppWindowDocument(updatedAt) {
+  const timestamp = AppWindowTimestampSchemaZ.parse(updatedAt);
+  return AppWindowDocumentV1SchemaZ.parse({
+    version: APP_WINDOW_DOCUMENT_VERSION,
+    revision: 0,
+    updatedAt: timestamp,
+    windows: {},
+    dockRoot: null,
+    dockState: { mode: "open", preferredHeight: null, focusZone: "canvas" },
+    floatingOrder: [],
+    focusedWindowId: null,
+    activeLayoutId: null,
+    layouts: {}
+  });
+}
+function parseAppWindowDocument(value, fallbackTimestamp) {
+  const fallback = emptyAppWindowDocument(fallbackTimestamp);
+  if (!isRecord2(value)) {
+    return {
+      document: fallback,
+      diagnostics: [diagnostic("MALFORMED", "$", "app window document must be an object")],
+      writeProtected: false
+    };
+  }
+  const version = ownValue(value, "version");
+  if (version !== APP_WINDOW_DOCUMENT_VERSION) {
+    return {
+      document: fallback,
+      diagnostics: [
+        diagnostic(
+          "UNSUPPORTED_VERSION",
+          "$.version",
+          `unsupported app window document version ${String(version)}`
+        )
+      ],
+      writeProtected: typeof version === "number" && version > APP_WINDOW_DOCUMENT_VERSION
+    };
+  }
+  const parsed = AppWindowDocumentV1SchemaZ.safeParse(value);
+  if (parsed.success) {
+    return { document: canonicalDocument(parsed.data), diagnostics: [], writeProtected: false };
+  }
+  return {
+    document: fallback,
+    diagnostics: parsed.error.issues.map(
+      (issue) => diagnostic(
+        "INVALID_FIELD",
+        issue.path.length === 0 ? "$" : `$.${issue.path.map(String).join(".")}`,
+        issue.message
+      )
+    ),
+    writeProtected: true
+  };
+}
+function migrateWorkspaceUiStateV2ToAppWindowDocument(value, options) {
+  const migratedAt = AppWindowTimestampSchemaZ.parse(options.migratedAt);
+  if (!isRecord2(value) || ownValue(value, "version") !== 2) {
+    throw new Error("WorkspaceUiStateV2 is required for app window migration");
+  }
+  const diagnostics = [
+    diagnostic("MIGRATED", "$", "migrated WorkspaceUiStateV2 to app window document V1")
+  ];
+  const activeValue = ownValue(value, "active");
+  const active2 = isRecord2(activeValue) ? activeValue : null;
+  const activeViewId = ownString(active2, "viewId");
+  const activePanelValue = ownValue(active2, "panel");
+  const activePanel = typeof activePanelValue === "string" && LEGACY_PANELS.has(activePanelValue) ? activePanelValue : "terminals";
+  const dockValue = ownValue(value, "dock");
+  const dock = isRecord2(dockValue) ? dockValue : null;
+  const dockTabValue = ownValue(dock, "activeTab");
+  const requestedDockTab = typeof dockTabValue === "string" && LEGACY_DOCK_TABS.has(dockTabValue) ? dockTabValue : "files";
+  const dockMode = legacyDockMode(ownValue(dock, "mode"), diagnostics);
+  const preferredHeight = legacyPreferredHeight(ownValue(dock, "preferredHeight"), diagnostics);
+  const focusZone = legacyFocusZone(ownValue(dock, "focusZone"), diagnostics);
+  const terminalSourceIds = cleanTerminalSourceIds(options.terminalSourceIds ?? []);
+  const focusedTerminalSourceId = cleanFocusedTerminalSourceId(
+    terminalSourceIds,
+    options.focusedTerminalSourceId
+  );
+  if (activePanel === "terminals" && terminalSourceIds.length === 0) {
+    diagnostics.push(
+      diagnostic(
+        "TERMINAL_SOURCE_REQUIRED",
+        "$.active",
+        "terminal canvas was not persisted because no durable terminal source id was supplied"
+      )
+    );
+  }
+  const windows = {};
+  const dockWindowIds = NATIVE_DOCK_ORDER.map((surface, index) => {
+    const source = { kind: "native", surface, resourceId: null };
+    const id = stableAppWindowInstanceId(source);
+    windows[id] = dockedWindow(id, source, nativeTitle(surface), "stack-native-dock", index);
+    return id;
+  });
+  const requestedDockWindowId = dockWindowIds[NATIVE_DOCK_ORDER.indexOf(requestedDockTab)];
+  const canvasWindowIds = [];
+  const windowIdByViewId = /* @__PURE__ */ new Map();
+  const deferredViewIds = /* @__PURE__ */ new Set();
+  const viewsValue = ownValue(value, "views");
+  const views = isRecord2(viewsValue) ? viewsValue : {};
+  for (const [viewId, rawView] of Object.entries(views).sort(
+    ([left], [right]) => left.localeCompare(right)
+  )) {
+    if (!isRecord2(rawView)) continue;
+    const surface = legacyNativeSurface(ownValue(rawView, "panel"));
+    if (!surface) continue;
+    if (Object.hasOwn(rawView, "layout")) {
+      deferredViewIds.add(viewId);
+      diagnostics.push(
+        diagnostic(
+          "COMPOSITE_LAYOUT_DEFERRED",
+          `$.views.${viewId}.layout`,
+          "composite layout state needs its configured layout tree before app-window migration"
+        )
+      );
+      continue;
+    }
+    const source = {
+      kind: "native",
+      surface,
+      resourceId: stableLegacyResourceId(viewId)
+    };
+    const id = stableAppWindowInstanceId(source);
+    windows[id] = dockedWindow(
+      id,
+      source,
+      nativeTitle(surface),
+      "stack-canvas",
+      canvasWindowIds.length
+    );
+    canvasWindowIds.push(id);
+    windowIdByViewId.set(viewId, id);
+  }
+  const activeNativeSurface = legacyNativeSurface(activePanel);
+  if (activeNativeSurface && activeViewId && !windowIdByViewId.has(activeViewId) && !deferredViewIds.has(activeViewId)) {
+    const source = {
+      kind: "native",
+      surface: activeNativeSurface,
+      resourceId: stableLegacyResourceId(activeViewId)
+    };
+    const id = stableAppWindowInstanceId(source);
+    windows[id] = dockedWindow(
+      id,
+      source,
+      nativeTitle(activeNativeSurface),
+      "stack-canvas",
+      canvasWindowIds.length
+    );
+    canvasWindowIds.push(id);
+    windowIdByViewId.set(activeViewId, id);
+  }
+  const terminalWindowIdBySourceId2 = /* @__PURE__ */ new Map();
+  for (const terminalSourceId of terminalSourceIds) {
+    const source = { kind: "terminal", terminalSourceId };
+    const id = stableAppWindowInstanceId(source);
+    windows[id] = dockedWindow(id, source, null, "stack-canvas", canvasWindowIds.length);
+    canvasWindowIds.push(id);
+    terminalWindowIdBySourceId2.set(terminalSourceId, id);
+  }
+  const preferredCanvasWindowId = activePanel === "terminals" ? focusedTerminalSourceId ? terminalWindowIdBySourceId2.get(focusedTerminalSourceId) : void 0 : activeViewId ? windowIdByViewId.get(activeViewId) : void 0;
+  const activeCanvasWindowId = preferredCanvasWindowId ?? canvasWindowIds[0];
+  const nativeDock = {
+    type: "stack",
+    id: "stack-native-dock",
+    windowIds: dockWindowIds,
+    activeWindowId: requestedDockWindowId
+  };
+  const dockRoot = canvasWindowIds.length === 0 ? nativeDock : {
+    type: "split",
+    id: "split-workbench",
+    axis: "vertical",
+    children: [
+      {
+        type: "stack",
+        id: "stack-canvas",
+        windowIds: canvasWindowIds,
+        activeWindowId: activeCanvasWindowId
+      },
+      nativeDock
+    ],
+    weights: [3, 1]
+  };
+  const focusedWindowId = focusZone === "dock-tabs" || focusZone === "dock-body" ? requestedDockWindowId : preferredCanvasWindowId ?? null;
+  const scene = {
+    windows,
+    dockRoot,
+    dockState: { mode: dockMode, preferredHeight, focusZone },
+    floatingOrder: [],
+    focusedWindowId
+  };
+  const layoutId = "layout-migrated-workspace";
+  const layout = {
+    id: layoutId,
+    name: "Migrated workspace",
+    description: "Initial app-window layout migrated from WorkspaceUiStateV2",
+    revision: 1,
+    createdAt: migratedAt,
+    updatedAt: migratedAt,
+    scene: cloneScene(scene)
+  };
+  const document = AppWindowDocumentV1SchemaZ.parse({
+    version: APP_WINDOW_DOCUMENT_VERSION,
+    revision: 0,
+    updatedAt: migratedAt,
+    ...scene,
+    activeLayoutId: layoutId,
+    layouts: { [layoutId]: layout }
+  });
+  return { document: canonicalDocument(document), diagnostics };
+}
+function saveAppWindowNamedLayout(document, input) {
+  const current = AppWindowDocumentV1SchemaZ.parse(document);
+  const id = AppWindowIdSchemaZ.parse(input.id);
+  const updatedAt = AppWindowTimestampSchemaZ.parse(input.updatedAt);
+  requireNondecreasingTimestamp(current.updatedAt, updatedAt);
+  const previous = Object.hasOwn(current.layouts, id) ? current.layouts[id] : void 0;
+  const nextLayout = {
+    id,
+    name: input.name,
+    description: input.description ?? null,
+    revision: (previous?.revision ?? 0) + 1,
+    createdAt: previous?.createdAt ?? updatedAt,
+    updatedAt,
+    scene: cloneScene(current)
+  };
+  return canonicalDocument(
+    AppWindowDocumentV1SchemaZ.parse({
+      ...current,
+      revision: current.revision + 1,
+      updatedAt,
+      activeLayoutId: id,
+      layouts: { ...current.layouts, [id]: nextLayout }
+    })
+  );
+}
+function restoreAppWindowNamedLayout(document, layoutId, updatedAt) {
+  const current = AppWindowDocumentV1SchemaZ.parse(document);
+  const id = AppWindowIdSchemaZ.parse(layoutId);
+  const timestamp = AppWindowTimestampSchemaZ.parse(updatedAt);
+  requireNondecreasingTimestamp(current.updatedAt, timestamp);
+  const layout = Object.hasOwn(current.layouts, id) ? current.layouts[id] : void 0;
+  if (!layout) throw new Error(`unknown app window layout "${id}"`);
+  return canonicalDocument(
+    AppWindowDocumentV1SchemaZ.parse({
+      ...current,
+      ...cloneScene(layout.scene),
+      revision: current.revision + 1,
+      updatedAt: timestamp,
+      activeLayoutId: id
+    })
+  );
+}
+function focusAppWindow(document, windowId, updatedAt) {
+  const current = AppWindowDocumentV1SchemaZ.parse(document);
+  const id = windowId === null ? null : AppWindowIdSchemaZ.parse(windowId);
+  const timestamp = AppWindowTimestampSchemaZ.parse(updatedAt);
+  requireNondecreasingTimestamp(current.updatedAt, timestamp);
+  if (id && !Object.hasOwn(current.windows, id)) throw new Error(`unknown app window "${id}"`);
+  const floatingOrder = id && current.windows[id]?.placement.mode === "floating" ? [...current.floatingOrder.filter((candidate) => candidate !== id), id] : current.floatingOrder;
+  const dockRoot = id ? activateDockedWindow(current.dockRoot, id) : current.dockRoot;
+  return canonicalDocument(
+    AppWindowDocumentV1SchemaZ.parse({
+      ...current,
+      revision: current.revision + 1,
+      updatedAt: timestamp,
+      focusedWindowId: id,
+      floatingOrder,
+      dockRoot
+    })
+  );
+}
+function serializeAppWindowDocument(document) {
+  return `${JSON.stringify(canonicalDocument(AppWindowDocumentV1SchemaZ.parse(document)), null, 2)}
+`;
+}
+function dockedWindow(id, source, title, stackId, index) {
+  return {
+    id,
+    source,
+    title,
+    placement: {
+      mode: "docked",
+      docked: { stackId, index },
+      floating: null
+    }
+  };
+}
+function cleanTerminalSourceIds(values2) {
+  if (values2.length > APP_WINDOW_MAX_WINDOWS - NATIVE_DOCK_ORDER.length) {
+    throw new Error("terminal source id limit exceeded");
+  }
+  const seen = /* @__PURE__ */ new Set();
+  const result = [];
+  for (const value of values2) {
+    const sourceId = AppWindowIdSchemaZ.parse(value);
+    if (seen.has(sourceId)) continue;
+    seen.add(sourceId);
+    result.push(sourceId);
+  }
+  return result;
+}
+function cleanFocusedTerminalSourceId(terminalSourceIds, value) {
+  if (value === null || value === void 0) return terminalSourceIds[0] ?? null;
+  const sourceId = AppWindowIdSchemaZ.parse(value);
+  if (!terminalSourceIds.includes(sourceId)) {
+    throw new Error("focused terminal source id must belong to terminalSourceIds");
+  }
+  return sourceId;
+}
+function legacyNativeSurface(value) {
+  if (value === "home" || value === "files" || value === "missions") return value;
+  if (value === "diff") return "changes";
+  return null;
+}
+function stableLegacyResourceId(viewId) {
+  const direct = AppWindowIdSchemaZ.safeParse(viewId);
+  if (direct.success) return direct.data;
+  const slug = viewId.toLowerCase().replace(/[^a-z0-9._-]+/gu, "-").replace(/^-+|-+$/gu, "").slice(0, 80);
+  return AppWindowIdSchemaZ.parse(`view-${slug || "resource"}-${fnv1a2(viewId)}`);
+}
+function legacyDockMode(value, diagnostics) {
+  if (value === "collapsed" || value === "open" || value === "maximized") return value;
+  diagnostics.push(
+    diagnostic("FIELD_DEFAULTED", "$.dock.mode", "invalid dock mode defaulted to open")
+  );
+  return "open";
+}
+function legacyPreferredHeight(value, diagnostics) {
+  if (value === null) return null;
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 1e6) {
+    return value;
+  }
+  diagnostics.push(
+    diagnostic(
+      "FIELD_DEFAULTED",
+      "$.dock.preferredHeight",
+      "invalid preferred dock height defaulted to automatic"
+    )
+  );
+  return null;
+}
+function legacyFocusZone(value, diagnostics) {
+  if (value === "canvas" || value === "dock-tabs" || value === "dock-body") return value;
+  diagnostics.push(
+    diagnostic("FIELD_DEFAULTED", "$.dock.focusZone", "invalid focus zone defaulted to canvas")
+  );
+  return "canvas";
+}
+function activateDockedWindow(node, windowId) {
+  if (!node) return null;
+  if (node.type === "stack") {
+    return node.windowIds.includes(windowId) ? { ...node, activeWindowId: windowId } : node;
+  }
+  return {
+    ...node,
+    children: node.children.map((child) => activateDockedWindow(child, windowId))
+  };
+}
+function nativeTitle(surface) {
+  if (surface === "changes") return "Changes";
+  return `${surface[0].toUpperCase()}${surface.slice(1)}`;
+}
+function cloneScene(scene) {
+  return {
+    windows: structuredClone(scene.windows),
+    dockRoot: structuredClone(scene.dockRoot),
+    dockState: { ...scene.dockState },
+    floatingOrder: [...scene.floatingOrder],
+    focusedWindowId: scene.focusedWindowId
+  };
+}
+function canonicalDocument(document) {
+  const layouts = Object.fromEntries(
+    Object.entries(document.layouts).sort(([left], [right]) => left.localeCompare(right)).map(([id, layout]) => [id, { ...layout, scene: canonicalScene(layout.scene) }])
+  );
+  return AppWindowDocumentV1SchemaZ.parse({
+    ...document,
+    ...canonicalScene(document),
+    layouts
+  });
+}
+function canonicalScene(scene) {
+  return {
+    windows: Object.fromEntries(
+      Object.entries(scene.windows).sort(([left], [right]) => left.localeCompare(right))
+    ),
+    dockRoot: structuredClone(scene.dockRoot),
+    dockState: { ...scene.dockState },
+    floatingOrder: [...scene.floatingOrder],
+    focusedWindowId: scene.focusedWindowId
+  };
+}
+function diagnostic(code, path2, message) {
+  return { code, path: path2, message };
+}
+function isRecord2(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+function ownValue(record, key) {
+  return record && Object.hasOwn(record, key) ? record[key] : void 0;
+}
+function ownString(record, key) {
+  const value = ownValue(record, key);
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+function requireNondecreasingTimestamp(previous, next) {
+  if (Date.parse(next) < Date.parse(previous)) {
+    throw new Error("app window mutation timestamp must not move backwards");
+  }
+}
+function fnv1a2(value) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return hash.toString(36).padStart(7, "0");
+}
+var NATIVE_DOCK_ORDER, LEGACY_DOCK_TABS, LEGACY_PANELS;
+var init_app_window_state2 = __esm({
+  "packages/daemon/src/lib/app-window-state.ts"() {
+    "use strict";
+    init_src();
+    init_src3();
+    init_src3();
+    NATIVE_DOCK_ORDER = ["files", "changes", "missions", "activity"];
+    LEGACY_DOCK_TABS = new Set(NATIVE_DOCK_ORDER);
+    LEGACY_PANELS = /* @__PURE__ */ new Set(["home", "terminals", "files", "diff", "missions"]);
+  }
+});
+
+// packages/daemon/src/lib/app-window-kernel.ts
+function applyAppWindowCommand(document, command2, timestamp) {
+  const current = requireDocument(document);
+  const at2 = requireTimestamp(current.updatedAt, timestamp);
+  switch (command2.type) {
+    case "window.focus":
+      if (command2.windowId !== null) requireWindowId(current, command2.windowId);
+      try {
+        return focusAppWindow(current, command2.windowId, at2);
+      } catch (error) {
+        throw translateStateError(error, command2.windowId ? `$.windows.${command2.windowId}` : "$");
+      }
+    case "window.float":
+      return floatWindow(current, command2, at2);
+    case "window.dock":
+      return dockWindow(current, command2, at2);
+    case "window.move":
+      return moveFloatingWindow(current, command2, at2);
+    case "window.resize":
+      return resizeFloatingWindow(current, command2, at2);
+    case "stack.activate":
+      return activateStackWindow(current, command2, at2);
+    case "stack.reorder":
+      return reorderStackWindow(current, command2, at2);
+    case "layout.save":
+      try {
+        return saveAppWindowNamedLayout(current, {
+          id: command2.layoutId,
+          name: command2.name,
+          description: command2.description,
+          updatedAt: at2
+        });
+      } catch (error) {
+        throw translateStateError(error, `$.layouts.${command2.layoutId}`);
+      }
+    case "layout.restore":
+      try {
+        return restoreAppWindowNamedLayout(current, command2.layoutId, at2);
+      } catch (error) {
+        if (error.message.includes("unknown app window layout")) {
+          throw new AppWindowKernelError(
+            "LAYOUT_NOT_FOUND",
+            `$.layouts.${command2.layoutId}`,
+            error.message
+          );
+        }
+        throw translateStateError(error, `$.layouts.${command2.layoutId}`);
+      }
+    case "layout.rename":
+      return renameLayout(current, command2.layoutId, command2.name, at2);
+    case "layout.delete":
+      return deleteLayout(current, command2.layoutId, at2);
+  }
+}
+function isAppWindowCommandSatisfied(document, command2) {
+  const current = requireDocument(document);
+  switch (command2.type) {
+    case "window.focus": {
+      if (command2.windowId === null) return current.focusedWindowId === null;
+      const id = requireWindowId(current, command2.windowId);
+      if (current.focusedWindowId !== id) return false;
+      const window2 = current.windows[id];
+      if (window2.placement.mode === "floating") return current.floatingOrder.at(-1) === id;
+      const stack = window2.placement.docked ? findStack(current.dockRoot, window2.placement.docked.stackId) : null;
+      return stack?.activeWindowId === id;
+    }
+    case "window.float": {
+      const id = requireWindowId(current, command2.windowId);
+      const window2 = current.windows[id];
+      if (window2.placement.mode !== "floating" || !window2.placement.floating || current.focusedWindowId !== id || current.floatingOrder.at(-1) !== id) {
+        return false;
+      }
+      return command2.rect === void 0 ? true : sameRect(window2.placement.floating, normalizeRect(command2.rect));
+    }
+    case "window.dock": {
+      const id = requireWindowId(current, command2.windowId);
+      const window2 = current.windows[id];
+      if (window2.placement.mode !== "docked" || !window2.placement.docked) return false;
+      if (command2.stackId !== void 0) {
+        const stackId = requireId(command2.stackId, "$.stackId");
+        if (!findStack(current.dockRoot, stackId)) {
+          throw new AppWindowKernelError(
+            "STACK_NOT_FOUND",
+            `$.dockRoot.${stackId}`,
+            `unknown app window stack "${stackId}"`
+          );
+        }
+        if (window2.placement.docked.stackId !== stackId) return false;
+      }
+      const stack = findStack(current.dockRoot, window2.placement.docked.stackId);
+      if (!stack || stack.activeWindowId !== id || current.focusedWindowId !== id) return false;
+      if (command2.index === void 0) return true;
+      requireNonnegativeIndex(command2.index, "$.index", "dock index must be nonnegative");
+      return stack.windowIds.indexOf(id) === Math.min(command2.index, stack.windowIds.length - 1);
+    }
+    case "window.move": {
+      const [, , rect] = requireFloatingWindow(current, command2.windowId);
+      return rect.x === boundedCoordinate(command2.x, "$.x") && rect.y === boundedCoordinate(command2.y, "$.y");
+    }
+    case "window.resize": {
+      const [, , rect] = requireFloatingWindow(current, command2.windowId);
+      return rect.width === boundedExtent(command2.width, APP_WINDOW_FLOAT_MIN_WIDTH, "$.width") && rect.height === boundedExtent(command2.height, APP_WINDOW_FLOAT_MIN_HEIGHT, "$.height");
+    }
+    case "stack.activate": {
+      const stackId = requireId(command2.stackId, "$.stackId");
+      const windowId = requireWindowId(current, command2.windowId);
+      const stack = requireStack(current.dockRoot, stackId);
+      if (!stack.windowIds.includes(windowId)) {
+        throw new AppWindowKernelError(
+          "WINDOW_NOT_IN_STACK",
+          `$.dockRoot.${stackId}`,
+          `window "${windowId}" is not in stack "${stackId}"`
+        );
+      }
+      return stack.activeWindowId === windowId && current.focusedWindowId === windowId;
+    }
+    case "stack.reorder": {
+      const stackId = requireId(command2.stackId, "$.stackId");
+      const windowId = requireWindowId(current, command2.windowId);
+      const stack = requireStack(current.dockRoot, stackId);
+      if (!stack.windowIds.includes(windowId)) {
+        throw new AppWindowKernelError(
+          "WINDOW_NOT_IN_STACK",
+          `$.dockRoot.${stackId}`,
+          `window "${windowId}" is not in stack "${stackId}"`
+        );
+      }
+      requireNonnegativeIndex(command2.index, "$.index", "index must be nonnegative");
+      return stack.windowIds.indexOf(windowId) === Math.min(command2.index, stack.windowIds.length - 1);
+    }
+    case "layout.save": {
+      const id = requireId(command2.layoutId, "$.layoutId");
+      const layout = Object.hasOwn(current.layouts, id) ? current.layouts[id] : null;
+      return Boolean(
+        layout && layout.name === command2.name && layout.description === (command2.description ?? null) && current.activeLayoutId === id && sameScene(layout.scene, current)
+      );
+    }
+    case "layout.restore": {
+      const id = requireId(command2.layoutId, "$.layoutId");
+      const layout = Object.hasOwn(current.layouts, id) ? current.layouts[id] : null;
+      if (!layout) return false;
+      return current.activeLayoutId === id && sameScene(layout.scene, current);
+    }
+    case "layout.rename": {
+      const id = requireId(command2.layoutId, "$.layoutId");
+      const layout = Object.hasOwn(current.layouts, id) ? current.layouts[id] : null;
+      return layout?.name === command2.name;
+    }
+    case "layout.delete": {
+      const id = requireId(command2.layoutId, "$.layoutId");
+      return !Object.hasOwn(current.layouts, id);
+    }
+  }
+}
+function floatWindow(current, command2, timestamp) {
+  const id = requireWindowId(current, command2.windowId);
+  const window2 = current.windows[id];
+  const rect = normalizeRect(
+    command2.rect ?? window2.placement.floating ?? { x: 2, y: 2, width: 80, height: 24 }
+  );
+  const windows = structuredClone(current.windows);
+  windows[id] = {
+    ...window2,
+    placement: {
+      mode: "floating",
+      docked: window2.placement.docked,
+      floating: rect
+    }
+  };
+  const dockRoot = removeDockWindow(current.dockRoot, id);
+  syncDockMemories(windows, dockRoot);
+  return finalize(current, timestamp, {
+    windows,
+    dockRoot,
+    floatingOrder: [...current.floatingOrder.filter((candidate) => candidate !== id), id],
+    focusedWindowId: id
+  });
+}
+function dockWindow(current, command2, timestamp) {
+  const id = requireWindowId(current, command2.windowId);
+  const window2 = current.windows[id];
+  const requestedStackId = command2.stackId !== void 0 ? requireId(command2.stackId, "$.stackId") : window2.placement.docked?.stackId;
+  if (command2.stackId !== void 0 && !findStack(current.dockRoot, requestedStackId)) {
+    throw new AppWindowKernelError(
+      "STACK_NOT_FOUND",
+      `$.dockRoot.${requestedStackId}`,
+      `unknown app window stack "${requestedStackId}"`
+    );
+  }
+  const dockRootWithoutWindow = removeDockWindow(current.dockRoot, id);
+  const existingFallback = firstStackId(dockRootWithoutWindow);
+  const removedFromRequestedStack = window2.placement.mode === "docked" && window2.placement.docked?.stackId === requestedStackId;
+  const targetStackId = (requestedStackId && findStack(dockRootWithoutWindow, requestedStackId) ? requestedStackId : removedFromRequestedStack ? requestedStackId : existingFallback) ?? uniqueRootStackId(dockRootWithoutWindow);
+  const rememberedIndex = command2.index ?? window2.placement.docked?.index ?? Number.MAX_SAFE_INTEGER;
+  if (!Number.isInteger(rememberedIndex) || rememberedIndex < 0) {
+    throw new AppWindowKernelError(
+      "INVALID_INPUT",
+      "$.index",
+      "dock index must be a nonnegative integer"
+    );
+  }
+  const windows = structuredClone(current.windows);
+  windows[id] = {
+    ...window2,
+    placement: {
+      mode: "docked",
+      docked: { stackId: targetStackId, index: 0 },
+      floating: window2.placement.floating
+    }
+  };
+  let dockRoot = dockRootWithoutWindow ? insertDockWindow(dockRootWithoutWindow, targetStackId, id, rememberedIndex) : {
+    type: "stack",
+    id: targetStackId,
+    windowIds: [id],
+    activeWindowId: id
+  };
+  dockRoot = activateDockWindow(dockRoot, targetStackId, id);
+  syncDockMemories(windows, dockRoot);
+  return finalize(current, timestamp, {
+    windows,
+    dockRoot,
+    floatingOrder: current.floatingOrder.filter((candidate) => candidate !== id),
+    focusedWindowId: id
+  });
+}
+function moveFloatingWindow(current, command2, timestamp) {
+  const [id, window2, rect] = requireFloatingWindow(current, command2.windowId);
+  return updateFloatingRect(
+    current,
+    id,
+    window2,
+    {
+      ...rect,
+      x: boundedCoordinate(command2.x, "$.x"),
+      y: boundedCoordinate(command2.y, "$.y")
+    },
+    timestamp
+  );
+}
+function resizeFloatingWindow(current, command2, timestamp) {
+  const [id, window2, rect] = requireFloatingWindow(current, command2.windowId);
+  return updateFloatingRect(
+    current,
+    id,
+    window2,
+    {
+      ...rect,
+      width: boundedExtent(command2.width, APP_WINDOW_FLOAT_MIN_WIDTH, "$.width"),
+      height: boundedExtent(command2.height, APP_WINDOW_FLOAT_MIN_HEIGHT, "$.height")
+    },
+    timestamp
+  );
+}
+function activateStackWindow(current, command2, timestamp) {
+  const stackId = requireId(command2.stackId, "$.stackId");
+  const windowId = requireWindowId(current, command2.windowId);
+  const stack = requireStack(current.dockRoot, stackId);
+  if (!stack.windowIds.includes(windowId)) {
+    throw new AppWindowKernelError(
+      "WINDOW_NOT_IN_STACK",
+      `$.dockRoot.${stackId}`,
+      `window "${windowId}" is not in stack "${stackId}"`
+    );
+  }
+  return finalize(current, timestamp, {
+    dockRoot: activateDockWindow(current.dockRoot, stackId, windowId),
+    focusedWindowId: windowId
+  });
+}
+function reorderStackWindow(current, command2, timestamp) {
+  const stackId = requireId(command2.stackId, "$.stackId");
+  const windowId = requireWindowId(current, command2.windowId);
+  const stack = requireStack(current.dockRoot, stackId);
+  if (!stack.windowIds.includes(windowId)) {
+    throw new AppWindowKernelError(
+      "WINDOW_NOT_IN_STACK",
+      `$.dockRoot.${stackId}`,
+      `window "${windowId}" is not in stack "${stackId}"`
+    );
+  }
+  if (!Number.isInteger(command2.index) || command2.index < 0) {
+    throw new AppWindowKernelError("INVALID_INPUT", "$.index", "index must be nonnegative");
+  }
+  const ids = stack.windowIds.filter((candidate) => candidate !== windowId);
+  ids.splice(Math.min(command2.index, ids.length), 0, windowId);
+  const dockRoot = replaceStack(current.dockRoot, stackId, { ...stack, windowIds: ids });
+  const windows = structuredClone(current.windows);
+  syncDockMemories(windows, dockRoot);
+  return finalize(current, timestamp, { windows, dockRoot });
+}
+function renameLayout(current, layoutId, name, timestamp) {
+  const id = requireId(layoutId, "$.layoutId");
+  const layout = Object.hasOwn(current.layouts, id) ? current.layouts[id] : null;
+  if (!layout) {
+    throw new AppWindowKernelError(
+      "LAYOUT_NOT_FOUND",
+      `$.layouts.${id}`,
+      `unknown app window layout "${id}"`
+    );
+  }
+  return finalize(current, timestamp, {
+    layouts: {
+      ...current.layouts,
+      [id]: { ...layout, name, revision: layout.revision + 1, updatedAt: timestamp }
+    }
+  });
+}
+function deleteLayout(current, layoutId, timestamp) {
+  const id = requireId(layoutId, "$.layoutId");
+  if (!Object.hasOwn(current.layouts, id)) {
+    throw new AppWindowKernelError(
+      "LAYOUT_NOT_FOUND",
+      `$.layouts.${id}`,
+      `unknown app window layout "${id}"`
+    );
+  }
+  const layouts = { ...current.layouts };
+  delete layouts[id];
+  return finalize(current, timestamp, {
+    layouts,
+    activeLayoutId: current.activeLayoutId === id ? null : current.activeLayoutId
+  });
+}
+function updateFloatingRect(current, id, window2, rect, timestamp) {
+  return finalize(current, timestamp, {
+    windows: {
+      ...current.windows,
+      [id]: { ...window2, placement: { ...window2.placement, floating: rect } }
+    }
+  });
+}
+function requireWindowId(current, value) {
+  const id = requireId(value, "$.windowId");
+  if (!Object.hasOwn(current.windows, id)) {
+    throw new AppWindowKernelError(
+      "WINDOW_NOT_FOUND",
+      `$.windows.${id}`,
+      `unknown app window "${id}"`
+    );
+  }
+  return id;
+}
+function requireFloatingWindow(current, value) {
+  const id = requireWindowId(current, value);
+  const window2 = current.windows[id];
+  if (window2.placement.mode !== "floating" || !window2.placement.floating) {
+    throw new AppWindowKernelError(
+      "INVALID_PLACEMENT",
+      `$.windows.${id}.placement`,
+      `window "${id}" is not floating`
+    );
+  }
+  return [id, window2, window2.placement.floating];
+}
+function requireStack(root, stackId) {
+  const stack = findStack(root, stackId);
+  if (!stack) {
+    throw new AppWindowKernelError(
+      "STACK_NOT_FOUND",
+      `$.dockRoot.${stackId}`,
+      `unknown app window stack "${stackId}"`
+    );
+  }
+  return stack;
+}
+function findStack(node, stackId) {
+  if (!node) return null;
+  if (node.type === "stack") return node.id === stackId ? node : null;
+  for (const child of node.children) {
+    const found = findStack(child, stackId);
+    if (found) return found;
+  }
+  return null;
+}
+function firstStackId(node) {
+  if (!node) return null;
+  if (node.type === "stack") return node.id;
+  return firstStackId(node.children[0] ?? null);
+}
+function removeDockWindow(node, windowId) {
+  if (!node) return null;
+  if (node.type === "stack") {
+    const index = node.windowIds.indexOf(windowId);
+    if (index < 0) return node;
+    const windowIds = node.windowIds.filter((candidate) => candidate !== windowId);
+    if (windowIds.length === 0) return null;
+    return {
+      ...node,
+      windowIds,
+      activeWindowId: node.activeWindowId === windowId ? windowIds[Math.min(index, windowIds.length - 1)] : node.activeWindowId
+    };
+  }
+  const pairs = node.children.map((child, index) => ({
+    child: removeDockWindow(child, windowId),
+    weight: node.weights[index]
+  })).filter(
+    (pair) => pair.child !== null
+  );
+  if (pairs.length === 0) return null;
+  if (pairs.length === 1) return pairs[0].child;
+  return {
+    ...node,
+    children: pairs.map((pair) => pair.child),
+    weights: pairs.map((pair) => pair.weight)
+  };
+}
+function insertDockWindow(node, stackId, windowId, index) {
+  if (node.type === "stack") {
+    if (node.id !== stackId) return node;
+    const windowIds = [...node.windowIds];
+    windowIds.splice(Math.min(index, windowIds.length), 0, windowId);
+    return { ...node, windowIds };
+  }
+  return {
+    ...node,
+    children: node.children.map((child) => insertDockWindow(child, stackId, windowId, index))
+  };
+}
+function activateDockWindow(node, stackId, windowId) {
+  if (node.type === "stack") {
+    return node.id === stackId ? { ...node, activeWindowId: windowId } : node;
+  }
+  return {
+    ...node,
+    children: node.children.map((child) => activateDockWindow(child, stackId, windowId))
+  };
+}
+function replaceStack(node, stackId, replacement) {
+  if (node.type === "stack") return node.id === stackId ? replacement : node;
+  return {
+    ...node,
+    children: node.children.map((child) => replaceStack(child, stackId, replacement))
+  };
+}
+function syncDockMemories(windows, node) {
+  if (!node) return;
+  if (node.type === "split") {
+    for (const child of node.children) syncDockMemories(windows, child);
+    return;
+  }
+  for (const [index, id] of node.windowIds.entries()) {
+    const window2 = Object.hasOwn(windows, id) ? windows[id] : null;
+    if (!window2 || window2.placement.mode !== "docked") continue;
+    windows[id] = {
+      ...window2,
+      placement: { ...window2.placement, docked: { stackId: node.id, index } }
+    };
+  }
+}
+function uniqueRootStackId(root) {
+  let ordinal = 0;
+  while (true) {
+    const candidate = ordinal === 0 ? "stack-root" : `stack-root-${ordinal}`;
+    if (!findStack(root, candidate)) return candidate;
+    ordinal += 1;
+  }
+}
+function normalizeRect(rect) {
+  return {
+    x: boundedCoordinate(rect.x, "$.rect.x"),
+    y: boundedCoordinate(rect.y, "$.rect.y"),
+    width: boundedExtent(rect.width, APP_WINDOW_FLOAT_MIN_WIDTH, "$.rect.width"),
+    height: boundedExtent(rect.height, APP_WINDOW_FLOAT_MIN_HEIGHT, "$.rect.height")
+  };
+}
+function sameRect(left, right) {
+  return left.x === right.x && left.y === right.y && left.width === right.width && left.height === right.height;
+}
+function sameScene(left, right) {
+  return JSON.stringify({
+    windows: left.windows,
+    dockRoot: left.dockRoot,
+    dockState: left.dockState,
+    floatingOrder: left.floatingOrder,
+    focusedWindowId: left.focusedWindowId
+  }) === JSON.stringify({
+    windows: right.windows,
+    dockRoot: right.dockRoot,
+    dockState: right.dockState,
+    floatingOrder: right.floatingOrder,
+    focusedWindowId: right.focusedWindowId
+  });
+}
+function requireNonnegativeIndex(value, path2, message) {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new AppWindowKernelError("INVALID_INPUT", path2, message);
+  }
+}
+function boundedCoordinate(value, path2) {
+  if (!Number.isFinite(value)) {
+    throw new AppWindowKernelError("INVALID_INPUT", path2, "coordinate must be finite");
+  }
+  return Math.max(-APP_WINDOW_COORDINATE_LIMIT, Math.min(APP_WINDOW_COORDINATE_LIMIT, value));
+}
+function boundedExtent(value, minimum, path2) {
+  if (!Number.isFinite(value)) {
+    throw new AppWindowKernelError("INVALID_INPUT", path2, "extent must be finite");
+  }
+  return Math.max(minimum, Math.min(APP_WINDOW_COORDINATE_LIMIT, value));
+}
+function requireTimestamp(previous, value) {
+  let timestamp;
+  try {
+    timestamp = AppWindowTimestampSchemaZ.parse(value);
+  } catch (error) {
+    throw translateStateError(error, "$.timestamp");
+  }
+  if (Date.parse(timestamp) < Date.parse(previous)) {
+    throw new AppWindowKernelError(
+      "TIMESTAMP_REGRESSION",
+      "$.updatedAt",
+      "app window mutation timestamp must not move backwards"
+    );
+  }
+  return timestamp;
+}
+function requireDocument(value) {
+  try {
+    return AppWindowDocumentV1SchemaZ.parse(value);
+  } catch (error) {
+    throw translateStateError(error, "$");
+  }
+}
+function requireId(value, path2) {
+  try {
+    return AppWindowIdSchemaZ.parse(value);
+  } catch (error) {
+    throw translateStateError(error, path2);
+  }
+}
+function finalize(current, timestamp, patch) {
+  try {
+    return AppWindowDocumentV1SchemaZ.parse({
+      ...current,
+      ...patch,
+      version: current.version,
+      revision: current.revision + 1,
+      updatedAt: timestamp
+    });
+  } catch (error) {
+    throw translateStateError(error, "$");
+  }
+}
+function translateStateError(error, path2) {
+  if (error instanceof AppWindowKernelError) return error;
+  const message = error.message;
+  return new AppWindowKernelError("INVALID_INPUT", path2, message);
+}
+var APP_WINDOW_FLOAT_MIN_WIDTH, APP_WINDOW_FLOAT_MIN_HEIGHT, APP_WINDOW_COORDINATE_LIMIT, AppWindowKernelError;
+var init_app_window_kernel = __esm({
+  "packages/daemon/src/lib/app-window-kernel.ts"() {
+    "use strict";
+    init_src();
+    init_app_window_state2();
+    APP_WINDOW_FLOAT_MIN_WIDTH = 20;
+    APP_WINDOW_FLOAT_MIN_HEIGHT = 6;
+    APP_WINDOW_COORDINATE_LIMIT = 1e6;
+    AppWindowKernelError = class extends Error {
+      code;
+      path;
+      constructor(code, path2, message) {
+        super(message);
+        this.name = "AppWindowKernelError";
+        this.code = code;
+        this.path = path2;
+      }
+    };
+  }
+});
+
+// packages/daemon/src/lib/app-window-repository.ts
+function loadAppWindowDocument(repository, options) {
+  return loadAppWindowDocumentInternal(repository, options);
+}
+function loadAppWindowDocumentInternal(repository, options, writer) {
+  let runtimeDocument;
+  try {
+    runtimeDocument = repository.readDocument(APP_WINDOW_DOCUMENT_PATH);
+  } catch (error) {
+    return protectedReadFailure(repository, options.loadedAt, error);
+  }
+  if (!runtimeDocument.found) {
+    if (options.migrateLegacy !== false) {
+      const migration = writer ? attemptFirstMigrationLocked(repository, writer, options) : attemptFirstMigration(repository, options);
+      if (migration) return migration;
+    }
+    return {
+      document: emptyAppWindowDocument(options.loadedAt),
+      revision: null,
+      writeProtected: false,
+      diagnostics: [diagnostic2("MISSING", APP_WINDOW_DOCUMENT_PATH, "app window state is absent")],
+      recoveryToken: null
+    };
+  }
+  const parsed = parseAppWindowDocument(runtimeDocument.payload, options.loadedAt);
+  const diagnostics = parsed.diagnostics.map((entry) => ({ ...entry }));
+  const writeProtected = parsed.writeProtected || diagnostics.length > 0;
+  return {
+    document: parsed.document,
+    revision: runtimeDocument.revision,
+    writeProtected,
+    diagnostics,
+    ...writeProtected ? { preservedPayload: structuredClone(runtimeDocument.payload) } : {},
+    recoveryToken: safeRecoveryToken(repository)
+  };
+}
+function writeAppWindowDocument(repository, expectedRevision, document) {
+  return withAppWindowWriterLock(
+    repository,
+    void 0,
+    (writer) => writeAppWindowDocumentLocked(repository, writer, expectedRevision, document)
+  );
+}
+function writeAppWindowDocumentLocked(repository, writer, expectedRevision, document) {
+  const validation = AppWindowDocumentV1SchemaZ.safeParse(document);
+  if (!validation.success) {
+    throw new AppWindowRepositoryError(
+      "INVALID_DOCUMENT",
+      validation.error.issues.map((issue) => issue.message).join("; ")
+    );
+  }
+  const loaded = loadAppWindowDocument(repository, {
+    loadedAt: validation.data.updatedAt,
+    migrateLegacy: false
+  });
+  assertWritable(loaded);
+  if (loaded.revision !== expectedRevision) throw revisionError(expectedRevision, loaded.revision);
+  assertNextDocumentRevision(loaded, validation.data);
+  try {
+    const payload = JSON.parse(serializeAppWindowDocument(validation.data));
+    const written = writer.writeDocument(APP_WINDOW_DOCUMENT_PATH, payload, {
+      expectedRevision
+    });
+    return {
+      document: validation.data,
+      revision: written.revision,
+      writeProtected: false,
+      diagnostics: [],
+      recoveryToken: safeRecoveryToken(repository)
+    };
+  } catch (error) {
+    if (error instanceof RevisionConflictError) {
+      throw revisionError(error.expectedRevision, error.actualRevision, error);
+    }
+    throw new AppWindowRepositoryError(
+      "WRITE_FAILED",
+      `app window state could not be written: ${error.message}`,
+      [diagnostic2("WRITE_FAILED", APP_WINDOW_DOCUMENT_PATH, error.message)],
+      error
+    );
+  }
+}
+function resetAppWindowDocumentLocked(repository, writer, request) {
+  const loaded = loadAppWindowDocument(repository, {
+    loadedAt: request.resetAt,
+    migrateLegacy: false
+  });
+  if (!loaded.writeProtected) {
+    throw new AppWindowRepositoryError(
+      "RECOVERY_NOT_REQUIRED",
+      "app window state is valid; normal revision CAS must be used"
+    );
+  }
+  if (!loaded.recoveryToken || loaded.recoveryToken !== request.expectedRecoveryToken) {
+    throw new AppWindowRepositoryError(
+      "RECOVERY_CONFLICT",
+      "app window recovery token no longer matches the preserved document"
+    );
+  }
+  let resetDocument = request.document;
+  if (resetDocument === void 0) {
+    try {
+      resetDocument = emptyAppWindowDocument(request.resetAt);
+    } catch (error) {
+      throw new AppWindowRepositoryError(
+        "INVALID_DOCUMENT",
+        `resetAt must be a valid app window timestamp: ${error.message}`,
+        [],
+        error
+      );
+    }
+  }
+  const validation = AppWindowDocumentV1SchemaZ.safeParse(resetDocument);
+  if (!validation.success) {
+    throw new AppWindowRepositoryError(
+      "INVALID_DOCUMENT",
+      validation.error.issues.map((issue) => issue.message).join("; ")
+    );
+  }
+  const document = validation.data;
+  try {
+    const payload = JSON.parse(serializeAppWindowDocument(document));
+    const recovered = writer.recoverDocument(APP_WINDOW_DOCUMENT_PATH, payload, {
+      expectedRawSha256: request.expectedRecoveryToken,
+      reason: request.reason,
+      details: {
+        diagnostics: loaded.diagnostics.map((entry) => ({ ...entry }))
+      }
+    });
+    return {
+      document,
+      revision: recovered.revision,
+      writeProtected: false,
+      diagnostics: [
+        diagnostic2(
+          "RECOVERED",
+          APP_WINDOW_DOCUMENT_PATH,
+          `app window state was explicitly reset; prior bytes preserved at ${recovered.backupPath}`
+        )
+      ],
+      recoveryToken: safeRecoveryToken(repository),
+      backupPath: recovered.backupPath,
+      metadataPath: recovered.metadataPath,
+      reason: recovered.reason
+    };
+  } catch (error) {
+    if (error instanceof RevisionConflictError) {
+      throw new AppWindowRepositoryError(
+        "RECOVERY_CONFLICT",
+        "app window document changed before explicit recovery",
+        [],
+        error
+      );
+    }
+    throw new AppWindowRepositoryError(
+      "WRITE_FAILED",
+      `app window recovery failed: ${error.message}`,
+      [],
+      error
+    );
+  }
+}
+function assertNextDocumentRevision(loaded, next) {
+  if (loaded.revision === null) {
+    if (next.revision === 0 || next.revision === 1) return;
+    throw new AppWindowRepositoryError(
+      "INVALID_DOCUMENT",
+      "a new app window document must start at domain revision 0 or 1"
+    );
+  }
+  if (next.revision !== loaded.document.revision + 1) {
+    throw new AppWindowRepositoryError(
+      "INVALID_DOCUMENT",
+      `app window domain revision must advance exactly once from ${loaded.document.revision}`
+    );
+  }
+  if (Date.parse(next.updatedAt) < Date.parse(loaded.document.updatedAt)) {
+    throw new AppWindowRepositoryError(
+      "INVALID_DOCUMENT",
+      "app window updatedAt must not move backwards"
+    );
+  }
+}
+function withAppWindowWriterLock(repository, options, action) {
+  try {
+    return repository.withWriterLock(options, action);
+  } catch (error) {
+    if (error instanceof AppWindowRepositoryError || error instanceof AppWindowKernelError) {
+      throw error;
+    }
+    throw new AppWindowRepositoryError(
+      "WRITE_FAILED",
+      `app window writer lock failed: ${error.message}`,
+      [diagnostic2("WRITE_FAILED", APP_WINDOW_DOCUMENT_PATH, error.message)],
+      error
+    );
+  }
+}
+function attemptFirstMigration(repository, options) {
+  try {
+    return withAppWindowWriterLock(
+      repository,
+      void 0,
+      (writer) => attemptFirstMigrationLocked(repository, writer, options)
+    );
+  } catch (error) {
+    return migrationFailure(
+      repository,
+      options,
+      error,
+      "legacy migration lock could not be acquired"
+    );
+  }
+}
+function attemptFirstMigrationLocked(repository, writer, options) {
+  let current;
+  try {
+    current = repository.readDocument(APP_WINDOW_DOCUMENT_PATH);
+  } catch (error) {
+    return protectedReadFailure(repository, options.loadedAt, error);
+  }
+  if (current.found) {
+    return loadAppWindowDocumentInternal(repository, { ...options, migrateLegacy: false }, writer);
+  }
+  let legacy;
+  try {
+    legacy = repository.readDocument(LEGACY_WORKSPACE_UI_PATH);
+  } catch (error) {
+    return migrationFailure(
+      repository,
+      options,
+      error,
+      "legacy workspace UI state could not be read"
+    );
+  }
+  if (!legacy.found) return null;
+  try {
+    const migrated = migrateWorkspaceUiStateV2ToAppWindowDocument(legacy.payload, {
+      migratedAt: options.migratedAt ?? options.loadedAt,
+      terminalSourceIds: options.terminalSourceIds,
+      focusedTerminalSourceId: options.focusedTerminalSourceId
+    });
+    const payload = JSON.parse(serializeAppWindowDocument(migrated.document));
+    const written = writer.writeDocument(APP_WINDOW_DOCUMENT_PATH, payload, {
+      expectedRevision: null
+    });
+    return {
+      document: migrated.document,
+      revision: written.revision,
+      writeProtected: false,
+      diagnostics: migrated.diagnostics,
+      recoveryToken: safeRecoveryToken(repository)
+    };
+  } catch (error) {
+    if (error instanceof RevisionConflictError) {
+      return loadAppWindowDocumentInternal(
+        repository,
+        { ...options, migrateLegacy: false },
+        writer
+      );
+    }
+    return migrationFailure(
+      repository,
+      options,
+      error,
+      "legacy workspace UI state was not migrated"
+    );
+  }
+}
+function migrationFailure(repository, options, error, context) {
+  const optOut = validateMigrationFailureOptOut(options.migrationFailureOptOut);
+  const suffix = optOut ? `; explicit migration opt-out accepted: ${optOut}` : "; writes remain protected until an explicit migration opt-out reason is supplied";
+  return {
+    document: emptyAppWindowDocument(options.loadedAt),
+    revision: null,
+    writeProtected: optOut === null,
+    diagnostics: [
+      diagnostic2(
+        "MIGRATION_FAILED",
+        LEGACY_WORKSPACE_UI_PATH,
+        `${context}: ${error.message}${suffix}`
+      )
+    ],
+    recoveryToken: safeRecoveryToken(repository)
+  };
+}
+function validateMigrationFailureOptOut(value) {
+  if (value === void 0) return null;
+  const reason = value.reason.trim();
+  if (reason.length === 0 || reason.length > 512 || reason.includes("\0")) return null;
+  return reason;
+}
+function protectedReadFailure(repository, loadedAt, error) {
+  return {
+    document: emptyAppWindowDocument(loadedAt),
+    revision: null,
+    writeProtected: true,
+    diagnostics: [
+      diagnostic2(
+        "READ_FAILED",
+        APP_WINDOW_DOCUMENT_PATH,
+        `app window state could not be read safely: ${error.message}`
+      )
+    ],
+    recoveryToken: safeRecoveryToken(repository)
+  };
+}
+function assertWritable(loaded) {
+  if (!loaded.writeProtected) return;
+  throw new AppWindowRepositoryError(
+    "WRITE_PROTECTED",
+    "app window state is not safe to overwrite without explicit recovery",
+    [
+      ...loaded.diagnostics,
+      diagnostic2(
+        "WRITE_PROTECTED",
+        APP_WINDOW_DOCUMENT_PATH,
+        "preserved current app window bytes without writing"
+      )
+    ]
+  );
+}
+function safeRecoveryToken(repository) {
+  try {
+    return repository.documentRecoveryToken(APP_WINDOW_DOCUMENT_PATH);
+  } catch {
+    return null;
+  }
+}
+function revisionError(expected, actual, cause) {
+  return new AppWindowRepositoryError(
+    "REVISION_CONFLICT",
+    `app window revision conflict: expected ${String(expected)}, actual ${String(actual)}`,
+    [
+      diagnostic2(
+        "REVISION_CONFLICT",
+        APP_WINDOW_DOCUMENT_PATH,
+        `expected ${String(expected)}, actual ${String(actual)}`
+      )
+    ],
+    cause
+  );
+}
+function boundedRetries(value) {
+  if (value === void 0) return 2;
+  if (!Number.isInteger(value) || value < 0 || value > 8) {
+    throw new AppWindowRepositoryError(
+      "INVALID_DOCUMENT",
+      "maxRetries must be an integer between 0 and 8"
+    );
+  }
+  return value;
+}
+function validateExpectedRevision(value) {
+  if (value === void 0 || value === null) return value;
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new AppWindowRepositoryError(
+      "INVALID_DOCUMENT",
+      "expectedRevision must be null or a nonnegative safe integer"
+    );
+  }
+  return value;
+}
+function diagnostic2(code, path2, message) {
+  return { code, path: path2, message };
+}
+var APP_WINDOW_DOCUMENT_PATH, LEGACY_WORKSPACE_UI_PATH, AppWindowRepositoryError, AppWindowService;
+var init_app_window_repository = __esm({
+  "packages/daemon/src/lib/app-window-repository.ts"() {
+    "use strict";
+    init_src();
+    init_project_runtime_repository();
+    init_app_window_kernel();
+    init_app_window_state2();
+    APP_WINDOW_DOCUMENT_PATH = "ui/app-windows.json";
+    LEGACY_WORKSPACE_UI_PATH = "ui/workspace.json";
+    AppWindowRepositoryError = class extends Error {
+      code;
+      diagnostics;
+      cause;
+      constructor(code, message, diagnostics = [], cause) {
+        super(message);
+        this.name = "AppWindowRepositoryError";
+        this.code = code;
+        this.diagnostics = diagnostics;
+        this.cause = cause;
+      }
+    };
+    AppWindowService = class {
+      #runtime;
+      #now;
+      #migration;
+      #writerLock;
+      constructor(runtime, options = {}) {
+        this.#runtime = runtime;
+        this.#now = options.now ?? (() => (/* @__PURE__ */ new Date()).toISOString());
+        this.#migration = options.migration ? {
+          terminalSourceIds: options.migration.terminalSourceIds,
+          focusedTerminalSourceId: options.migration.focusedTerminalSourceId,
+          migrationFailureOptOut: options.migration.migrationFailureOptOut
+        } : void 0;
+        this.#writerLock = options.writerLock;
+      }
+      load() {
+        const timestamp = this.#now();
+        return loadAppWindowDocument(this.#runtime, {
+          loadedAt: timestamp,
+          migratedAt: timestamp,
+          ...this.#migration
+        });
+      }
+      execute(command2, options = {}) {
+        const expectedRevision = validateExpectedRevision(options.expectedRevision);
+        return withAppWindowWriterLock(this.#runtime, this.#writerLock, (writer) => {
+          const retries = boundedRetries(options.maxRetries);
+          for (let attempt = 0; attempt <= retries; attempt += 1) {
+            const timestamp = this.#now();
+            const loaded = loadAppWindowDocumentInternal(
+              this.#runtime,
+              {
+                loadedAt: timestamp,
+                migratedAt: timestamp,
+                ...this.#migration
+              },
+              writer
+            );
+            assertWritable(loaded);
+            if (expectedRevision !== void 0 && expectedRevision !== loaded.revision) {
+              throw revisionError(expectedRevision, loaded.revision);
+            }
+            if (isAppWindowCommandSatisfied(loaded.document, command2)) return loaded;
+            const clock = this.#now();
+            const commandTimestamp = Date.parse(clock) < Date.parse(loaded.document.updatedAt) ? loaded.document.updatedAt : clock;
+            const next = applyAppWindowCommand(loaded.document, command2, commandTimestamp);
+            try {
+              return writeAppWindowDocumentLocked(this.#runtime, writer, loaded.revision, next);
+            } catch (error) {
+              if (error instanceof AppWindowRepositoryError && error.code === "REVISION_CONFLICT" && expectedRevision === void 0 && attempt < retries) {
+                continue;
+              }
+              throw error;
+            }
+          }
+          throw new Error("unreachable app-window retry exhaustion");
+        });
+      }
+      reset(request) {
+        return withAppWindowWriterLock(
+          this.#runtime,
+          this.#writerLock,
+          (writer) => resetAppWindowDocumentLocked(this.#runtime, writer, request)
+        );
+      }
+    };
+  }
+});
+
+// packages/daemon/src/lib/app-window-mutation.ts
+function boundedOperationLimit(value) {
+  if (value === void 0) return MAX_OPERATIONS3;
+  if (!Number.isInteger(value) || value < 1 || value > MAX_OPERATIONS3) {
+    throw new TypeError(
+      `app-window operation limit must be an integer from 1 to ${MAX_OPERATIONS3}`
+    );
+  }
+  return value;
+}
+function translateMutationError(error) {
+  if (error instanceof AppWindowMutationError) return error;
+  if (error instanceof AppWindowRepositoryError) {
+    if (error.code === "REVISION_CONFLICT") {
+      return new AppWindowMutationError("revision_conflict", {}, error);
+    }
+    if (error.code === "WRITE_PROTECTED" || error.code === "READ_FAILED") {
+      return new AppWindowMutationError("document_unavailable", {}, error);
+    }
+    return new AppWindowMutationError("mutation_failed", {}, error);
+  }
+  if (error instanceof AppWindowKernelError) {
+    return new AppWindowMutationError("mutation_failed", { path: error.path }, error);
+  }
+  return new AppWindowMutationError("workspace_unavailable", {}, error);
+}
+var MAX_OPERATIONS3, ERROR_MESSAGES4, AppWindowMutationError, AppWindowMutationAuthority;
+var init_app_window_mutation2 = __esm({
+  "packages/daemon/src/lib/app-window-mutation.ts"() {
+    "use strict";
+    init_src();
+    init_app_window_kernel();
+    init_app_window_repository();
+    init_project_runtime_repository();
+    MAX_OPERATIONS3 = 256;
+    ERROR_MESSAGES4 = {
+      daemon_instance_mismatch: "The daemon generation changed before the app window was updated.",
+      workspace_not_found: "The requested workspace is not registered.",
+      workspace_unavailable: "The requested workspace is unavailable for app-window mutation.",
+      revision_conflict: "The app-window document changed before this command was applied.",
+      operation_conflict: "The operation id was already used for a different app-window command.",
+      operation_capacity: "The daemon has reached its bounded app-window operation capacity.",
+      document_unavailable: "The durable app-window document is unavailable.",
+      mutation_failed: "The durable app-window command could not be applied."
+    };
+    AppWindowMutationError = class extends Error {
+      constructor(code, context = {}, cause) {
+        super(ERROR_MESSAGES4[code], cause === void 0 ? void 0 : { cause });
+        this.code = code;
+        this.context = context;
+        this.name = "AppWindowMutationError";
+      }
+    };
+    AppWindowMutationAuthority = class {
+      #daemonInstanceId;
+      #registry;
+      #openRuntime;
+      #maxOperations;
+      #operations = /* @__PURE__ */ new Map();
+      #disposed = false;
+      constructor(options) {
+        this.#daemonInstanceId = options.daemonInstanceId;
+        this.#registry = options.registry;
+        this.#openRuntime = options.openRuntime ?? openProjectRuntimeRepository;
+        this.#maxOperations = boundedOperationLimit(options.maxOperations);
+      }
+      async mutate(rawRequest) {
+        if (this.#disposed) throw new AppWindowMutationError("workspace_unavailable");
+        const request = AppWindowMutationRequestSchemaZ.parse(rawRequest);
+        if (request.expectedDaemonInstanceId !== this.#daemonInstanceId) {
+          throw new AppWindowMutationError("daemon_instance_mismatch");
+        }
+        const fingerprint2 = JSON.stringify(request);
+        const existing = this.#operations.get(request.operationId);
+        if (existing) {
+          if (existing.fingerprint !== fingerprint2) {
+            throw new AppWindowMutationError("operation_conflict");
+          }
+          const result2 = await existing.result;
+          return AppWindowMutationResultSchemaZ.parse({ ...result2, outcome: "replayed" });
+        }
+        if (this.#operations.size >= this.#maxOperations) {
+          const settled = [...this.#operations].find(([, record2]) => record2.settled);
+          if (!settled) throw new AppWindowMutationError("operation_capacity");
+          this.#operations.delete(settled[0]);
+        }
+        const result = this.#execute(request);
+        const record = { fingerprint: fingerprint2, result, settled: false };
+        this.#operations.set(request.operationId, record);
+        try {
+          return await result;
+        } catch (error) {
+          this.#operations.delete(request.operationId);
+          throw error;
+        } finally {
+          record.settled = true;
+        }
+      }
+      dispose() {
+        this.#disposed = true;
+        this.#operations.clear();
+      }
+      async #execute(request) {
+        try {
+          const workspace = this.#registry.get(request.intent.workspaceName);
+          if (!workspace) throw new AppWindowMutationError("workspace_not_found");
+          const runtime = await this.#openRuntime(workspace.projectDir);
+          if (this.#disposed) throw new AppWindowMutationError("workspace_unavailable");
+          const service = new AppWindowService(runtime);
+          const loaded = service.load();
+          if (loaded.writeProtected) throw new AppWindowMutationError("document_unavailable");
+          if (loaded.document.revision !== request.intent.expectedDocumentRevision) {
+            throw new AppWindowMutationError("revision_conflict", {
+              expectedRevision: String(request.intent.expectedDocumentRevision),
+              actualRevision: String(loaded.document.revision)
+            });
+          }
+          const next = service.execute(request.intent.command, { expectedRevision: loaded.revision });
+          const unchanged = next.document.revision === loaded.document.revision;
+          return AppWindowMutationResultSchemaZ.parse({
+            operationId: request.operationId,
+            daemonInstanceId: this.#daemonInstanceId,
+            outcome: unchanged ? "unchanged" : "applied",
+            workspaceName: request.intent.workspaceName,
+            documentRevision: next.document.revision
+          });
+        } catch (error) {
+          throw translateMutationError(error);
+        }
+      }
+    };
+  }
+});
+
+// packages/daemon/src/lib/tmux-external-interaction-observer.ts
+import { execFile as execFile7 } from "node:child_process";
+import { z as z70 } from "zod";
+function socketArguments(authority) {
+  return authority.socketSelector.kind === "path" ? ["-S", authority.socketSelector.path] : ["-L", authority.socketSelector.name];
+}
+function defaultWaiter(authority) {
+  const prefix = socketArguments(authority);
+  return (channel, signal) => new Promise((resolve38, reject) => {
+    execFile7(
+      authority.executablePath,
+      [...prefix, "wait-for", channel],
+      { signal, encoding: "utf8", windowsHide: true },
+      (error) => {
+        if (!error) resolve38();
+        else if (signal.aborted) resolve38();
+        else reject(error);
+      }
+    );
+  });
+}
+function abortableDelay(milliseconds, signal) {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve38) => {
+    const timer = setTimeout(done, milliseconds);
+    function done() {
+      signal.removeEventListener("abort", done);
+      clearTimeout(timer);
+      resolve38();
+    }
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+function internalInteractionOperationMarker(daemonInstanceId2, operationId) {
+  return `${daemonInstanceId2}:${operationId}`;
+}
+function parseTmuxInputHookRecords(raw) {
+  const records = [];
+  for (const encoded of raw.split(EVENT_SEPARATOR)) {
+    if (!encoded) continue;
+    const fields = encoded.split(FIELD_SEPARATOR);
+    if (fields.length !== 3 || !RUNTIME_PANE.test(fields[0])) continue;
+    const marker = fields[1];
+    if (marker.length > 160 || /[\r\n]/u.test(marker)) continue;
+    const operationKind = fields[2];
+    if (operationKind !== "workspace.pane.send" && operationKind !== "workspace.pane.read") {
+      continue;
+    }
+    records.push({
+      runtimePaneId: fields[0],
+      operationMarker: marker || null,
+      operationKind
+    });
+  }
+  return records;
+}
+function hookIndexes(output, hookName) {
+  const row = new RegExp(`^${hookName}\\[([0-9]+)\\]\\s+(.+)$`, "u");
+  const indexes = [];
+  for (const line of output.split("\n")) {
+    const match = row.exec(line);
+    if (match && match[2].includes(OWNED_HOOK_MARKER)) indexes.push(Number(match[1]));
+  }
+  return indexes;
+}
+var HOOK_MARKER, OWNED_HOOK_MARKER, FIELD_SEPARATOR, EVENT_SEPARATOR, RUNTIME_PANE, RETRY_MS, HOOK_HEALTHCHECK_MS, TmuxExternalInteractionObserver;
+var init_tmux_external_interaction_observer = __esm({
+  "packages/daemon/src/lib/tmux-external-interaction-observer.ts"() {
+    "use strict";
+    init_src();
+    init_workspace_pane_creation2();
+    init_workspace_registry();
+    init_tmux_interaction_options();
+    HOOK_MARKER = "tmux-ide-interaction-v2";
+    OWNED_HOOK_MARKER = "tmux-ide-interaction-v";
+    FIELD_SEPARATOR = "|tmux-ide-input-field-v1|";
+    EVENT_SEPARATOR = "|tmux-ide-input-event-v1|";
+    RUNTIME_PANE = /^%[0-9]+$/u;
+    RETRY_MS = 1e3;
+    HOOK_HEALTHCHECK_MS = 1e3;
+    TmuxExternalInteractionObserver = class {
+      #daemonInstanceId;
+      #registry;
+      #io;
+      #onObserved;
+      #bufferName;
+      #signalChannel;
+      #abort = new AbortController();
+      #active = false;
+      #installed = false;
+      #loop = null;
+      #starting = null;
+      #hookHealthcheck = null;
+      #drainSequence = 0;
+      #tmuxWork = Promise.resolve();
+      #reconcile = null;
+      #diagnostics;
+      #diagnosticActiveOperations = 0;
+      #authenticatedInternalReads;
+      constructor(options) {
+        this.#daemonInstanceId = options.daemonInstanceId;
+        this.#registry = options.registry ?? getDefaultWorkspaceRegistry();
+        this.#onObserved = options.onObserved;
+        this.#authenticatedInternalReads = new AuthenticatedInternalReadVerifier({
+          daemonInstanceId: options.daemonInstanceId,
+          ownerToken: options.internalReadOwnerToken
+        });
+        this.#bufferName = `${HOOK_MARKER}-${options.daemonInstanceId}`;
+        this.#signalChannel = `${this.#bufferName}-ready`;
+        this.#diagnostics = options.diagnostics ?? null;
+        this.#io = {
+          runTmux: options.io?.runTmux ?? createPinnedWorkspaceTmuxAsyncRunner(options.tmuxAuthority),
+          waitForSignal: options.io?.waitForSignal ?? defaultWaiter(options.tmuxAuthority),
+          delay: options.io?.delay ?? abortableDelay
+        };
+      }
+      /** Private synchronous equivalent of the installed after-capture hook.
+       * Recovery hook bodies run with NOHOOKS, so they append this exact bounded
+       * record and signal the already-owned observer drain explicitly. */
+      internalReadHookEmission(runtimePaneId, marker) {
+        if (!RUNTIME_PANE.test(runtimePaneId))
+          throw new TypeError("internal read hook emission requires a runtime pane id");
+        if (!/^[A-Za-z0-9:._-]{16,256}$/u.test(marker))
+          throw new TypeError("internal read hook emission requires a bounded marker");
+        return Object.freeze({
+          bufferName: this.#bufferName,
+          signalChannel: this.#signalChannel,
+          record: `${runtimePaneId}${FIELD_SEPARATOR}${marker}${FIELD_SEPARATOR}workspace.pane.read${EVENT_SEPARATOR}`
+        });
+      }
+      start() {
+        if (this.#starting) return this.#starting;
+        if (this.#active) return Promise.resolve();
+        const work = this.#start();
+        const settled = work.finally(() => {
+          if (this.#starting === settled) this.#starting = null;
+        });
+        this.#starting = settled;
+        return settled;
+      }
+      async #start() {
+        this.#active = true;
+        try {
+          await this.install();
+        } catch (error) {
+          this.#active = false;
+          await this.#serializeTmux(async () => {
+            await this.#removeOwnedHooks();
+            await this.#deleteBuffer(this.#bufferName);
+          });
+          throw error;
+        }
+        if (!this.#active || this.#abort.signal.aborted) {
+          await this.#serializeTmux(async () => {
+            await this.#removeOwnedHooks();
+            await this.#deleteBuffer(this.#bufferName);
+          });
+          throw new Error("tmux external interaction observer was disposed during startup");
+        }
+        this.#loop = this.#run();
+        this.#hookHealthcheck = setInterval(() => void this.reconcileHooks(), HOOK_HEALTHCHECK_MS);
+        this.#hookHealthcheck.unref?.();
+      }
+      setDiagnostics(diagnostics) {
+        this.#diagnostics = diagnostics;
+      }
+      async dispose() {
+        if (!this.#active && !this.#loop && !this.#starting) return;
+        const starting = this.#starting;
+        this.#active = false;
+        this.#abort.abort();
+        if (this.#hookHealthcheck) clearInterval(this.#hookHealthcheck);
+        this.#hookHealthcheck = null;
+        await Promise.allSettled([starting, this.#loop]);
+        this.#loop = null;
+        await this.#serializeTmux(async () => {
+          await this.#removeOwnedHooks();
+          await this.#deleteBuffer(this.#bufferName);
+        });
+      }
+      /** Install the hook once. Public for hermetic lifecycle tests. */
+      install() {
+        return this.#serializeTmux(() => this.#install(this.#abort.signal));
+      }
+      async #install(signal) {
+        await this.#removeOwnedHooks(signal);
+        await this.#deleteOwnedBuffers(signal);
+        signal?.throwIfAborted();
+        const hook = (operationKind, markerOption, consumeMarker) => {
+          const data = `#{pane_id}${FIELD_SEPARATOR}#{q:${markerOption}}${FIELD_SEPARATOR}${operationKind}${EVENT_SEPARATOR}`;
+          const publish = `run-shell -b -C "set-buffer -a -b '${this.#bufferName}' '${data}' ; wait-for -S '${this.#signalChannel}'"`;
+          const consume = consumeMarker ? ` ; set-option -pu '${markerOption}'` : "";
+          return `${publish}${consume}`;
+        };
+        await this.#io.runTmux(
+          [
+            "set-hook",
+            "-ag",
+            "after-send-keys",
+            hook("workspace.pane.send", INTERNAL_SEND_OPERATION_OPTION, true)
+          ],
+          signal
+        );
+        signal?.throwIfAborted();
+        await this.#io.runTmux(
+          [
+            "set-hook",
+            "-ag",
+            "after-capture-pane",
+            hook("workspace.pane.read", INTERNAL_READ_OPERATION_OPTION, true)
+          ],
+          signal
+        );
+        signal?.throwIfAborted();
+        this.#installed = true;
+      }
+      /**
+       * Restore product hooks when external tmux configuration removed them.
+       * Public only so the lifecycle is hermetically testable; the production
+       * observer invokes it from a cheap one-second health check.
+       */
+      reconcileHooks(options = {}) {
+        if (!this.#active && options.allowInactive !== true) return Promise.resolve();
+        if (this.#reconcile) return this.#reconcile;
+        const work = this.#serializeTmux(async () => {
+          const finish = this.#beginDiagnostic("healthcheck");
+          try {
+            if (await this.#ownedHooksPresent(this.#abort.signal)) {
+              finish(true);
+              return;
+            }
+            this.#installed = false;
+            try {
+              await this.#install(this.#abort.signal);
+            } catch {
+              this.#installed = false;
+            }
+            finish(this.#installed);
+          } catch (error) {
+            finish(false);
+            throw error;
+          }
+        });
+        const settled = work.finally(() => {
+          if (this.#reconcile === settled) this.#reconcile = null;
+        });
+        this.#reconcile = settled;
+        return settled;
+      }
+      /** Atomically detach and drain the current event buffer. */
+      drain() {
+        return this.#serializeTmux(() => this.#drain());
+      }
+      async #drain() {
+        const finish = this.#beginDiagnostic("drain");
+        const drainName = `${this.#bufferName}-drain-${++this.#drainSequence}`;
+        try {
+          await this.#io.runTmux(
+            ["set-buffer", "-b", this.#bufferName, "-n", drainName],
+            this.#abort.signal
+          );
+        } catch {
+          finish(false);
+          return false;
+        }
+        let raw;
+        try {
+          raw = await this.#io.runTmux(["show-buffer", "-b", drainName], this.#abort.signal);
+        } catch {
+          finish(false);
+          return false;
+        } finally {
+          await this.#deleteBuffer(drainName);
+        }
+        let consumed = false;
+        try {
+          for (const record of parseTmuxInputHookRecords(raw)) {
+            consumed = await this.#project(record) || consumed;
+          }
+        } catch (error) {
+          finish(false);
+          throw error;
+        }
+        finish(true);
+        return consumed;
+      }
+      async #run() {
+        while (this.#active && !this.#abort.signal.aborted) {
+          try {
+            if (!this.#installed) await this.install();
+            await this.#io.waitForSignal(this.#signalChannel, this.#abort.signal);
+            if (!this.#active || this.#abort.signal.aborted) break;
+            await this.drain();
+          } catch {
+            this.#installed = false;
+            await this.#io.delay(RETRY_MS, this.#abort.signal);
+          }
+        }
+      }
+      async #project(record) {
+        if (consumeInternalReadOperation(
+          record.operationMarker,
+          record.runtimePaneId,
+          record.operationKind
+        ) || this.#authenticatedInternalReads.consume(
+          record.operationMarker,
+          record.runtimePaneId,
+          record.operationKind
+        )) {
+          return true;
+        }
+        const ownPrefix = `${this.#daemonInstanceId}:`;
+        const authoredOperationId = record.operationMarker?.startsWith(ownPrefix) ? record.operationMarker.slice(ownPrefix.length) : null;
+        const operationId = z70.uuid().safeParse(authoredOperationId);
+        let identity;
+        try {
+          identity = await this.#io.runTmux(
+            [
+              "display-message",
+              "-p",
+              "-t",
+              record.runtimePaneId,
+              `#{session_name}	#{${"@tmux_ide_pane_id"}}`
+            ],
+            this.#abort.signal
+          );
+        } catch {
+          return false;
+        }
+        const separator = identity.indexOf("	");
+        if (separator < 1) return false;
+        const sessionName = identity.slice(0, separator);
+        const semanticPaneId3 = identity.slice(separator + 1);
+        if (!WorkspacePaneCreationReferenceSchemaZ.safeParse(semanticPaneId3).success) return false;
+        const workspace = this.#registry.list().find((entry) => entry.sessionName === sessionName);
+        if (!workspace) return false;
+        return this.#onObserved({
+          workspaceName: workspace.name,
+          semanticPaneId: semanticPaneId3,
+          operationKind: record.operationKind,
+          operationId: operationId.success ? operationId.data : null
+        });
+      }
+      async #removeOwnedHooks(signal) {
+        for (const hookName of ["after-send-keys", "after-capture-pane"]) {
+          let output;
+          try {
+            output = await this.#io.runTmux(["show-hooks", "-g", hookName], signal);
+          } catch {
+            continue;
+          }
+          for (const index of hookIndexes(output, hookName)) {
+            try {
+              await this.#io.runTmux(["set-hook", "-gu", `${hookName}[${index}]`], signal);
+            } catch {
+            }
+          }
+        }
+        this.#installed = false;
+      }
+      async #ownedHooksPresent(signal) {
+        for (const hookName of ["after-send-keys", "after-capture-pane"]) {
+          let output;
+          try {
+            output = await this.#io.runTmux(["show-hooks", "-g", hookName], signal);
+          } catch {
+            return false;
+          }
+          if (!output.includes(this.#bufferName)) return false;
+        }
+        return true;
+      }
+      async #deleteOwnedBuffers(signal) {
+        let output;
+        try {
+          output = await this.#io.runTmux(["list-buffers", "-F", "#{buffer_name}"], signal);
+        } catch {
+          return;
+        }
+        for (const name of output.split("\n")) {
+          if (name.startsWith(OWNED_HOOK_MARKER)) await this.#deleteBuffer(name, signal);
+        }
+      }
+      async #deleteBuffer(name, signal) {
+        try {
+          await this.#io.runTmux(["delete-buffer", "-b", name], signal);
+        } catch {
+        }
+      }
+      #serializeTmux(operation) {
+        const next = this.#tmuxWork.then(operation, operation);
+        this.#tmuxWork = next.then(
+          () => void 0,
+          () => void 0
+        );
+        return next;
+      }
+      #beginDiagnostic(operation) {
+        const diagnostics = this.#diagnostics;
+        if (!diagnostics) return () => void 0;
+        let traceId;
+        let startedAtMicros;
+        try {
+          traceId = diagnostics.createTraceId();
+          startedAtMicros = diagnostics.nowMicros();
+        } catch {
+          return () => void 0;
+        }
+        this.#diagnosticActiveOperations += 1;
+        const publish = (phase, atMicros, succeeded) => {
+          try {
+            diagnostics.publish({
+              operation,
+              phase,
+              traceId,
+              processId: `daemon:${process.pid}`,
+              clockId: "node-performance-now",
+              clockKind: "performance-now",
+              atMicros,
+              activeOperations: this.#diagnosticActiveOperations,
+              ...succeeded === void 0 ? {} : { succeeded }
+            });
+          } catch {
+          }
+        };
+        publish("begin", startedAtMicros);
+        try {
+          (diagnostics.queueMicrotask ?? queueMicrotask)(() => {
+            try {
+              publish("event-loop-sentinel", diagnostics.nowMicros());
+            } catch {
+            }
+          });
+        } catch {
+        }
+        let finished = false;
+        return (succeeded) => {
+          if (finished) return;
+          finished = true;
+          let atMicros = startedAtMicros;
+          try {
+            atMicros = diagnostics.nowMicros();
+          } catch {
+          }
+          publish("end", atMicros, succeeded);
+          this.#diagnosticActiveOperations = Math.max(0, this.#diagnosticActiveOperations - 1);
+        };
+      }
+    };
+  }
+});
+
+// packages/daemon/src/lib/workspace-multiplexer-verbs.ts
+import { realpathSync as realpathSync10, statSync as statSync9 } from "node:fs";
+function boundedCacheIdentity(value) {
+  if (value.length === 0 || value.length > 256) return false;
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint < 32 || codePoint === 127) return false;
+  }
+  return true;
+}
+function parseMultiplexerPaneRows(output) {
+  if (output === "") return [];
+  const rows = [];
+  for (const line of output.split("\n")) {
+    const fields = line.split("	");
+    if (fields.length !== 9) {
+      throw new WorkspaceMultiplexerError("workspace_unavailable", {
+        reason: "pane_listing_shape"
+      });
+    }
+    const [
+      paneId,
+      paneIndex,
+      windowId,
+      paneStamp,
+      windowStamp,
+      paneCount,
+      zoomed,
+      active2,
+      creationId
+    ] = fields;
+    if (!RUNTIME_PANE2.test(paneId) || !RUNTIME_WINDOW.test(windowId)) {
+      throw new WorkspaceMultiplexerError("workspace_unavailable", {
+        reason: "pane_listing_shape"
+      });
+    }
+    const count = Number(paneCount);
+    const index = Number(paneIndex);
+    if (!Number.isInteger(count) || count < 1 || !Number.isInteger(index) || index < 0) {
+      throw new WorkspaceMultiplexerError("workspace_unavailable", {
+        reason: "pane_listing_shape"
+      });
+    }
+    rows.push({
+      paneId,
+      paneIndex: index,
+      windowId,
+      semanticPaneId: paneStamp === "" ? null : paneStamp,
+      semanticWindowId: windowStamp === "" ? null : windowStamp,
+      windowPaneCount: count,
+      windowZoomed: zoomed === "1",
+      paneActive: active2 === "1",
+      creationId: creationId === "" ? null : creationId
+    });
+  }
+  return rows;
+}
+function windowIdsOf(rows) {
+  return [...new Set(rows.map((row) => row.windowId))];
+}
+function resolvePaneRow(rows, semanticPaneId3) {
+  const matches = rows.filter((row) => row.semanticPaneId === semanticPaneId3);
+  if (matches.length === 0) {
+    throw new WorkspaceMultiplexerError("pane_not_found", { semanticPaneId: semanticPaneId3 });
+  }
+  if (matches.length > 1) {
+    throw new WorkspaceMultiplexerError("ambiguous_target", { semanticPaneId: semanticPaneId3 });
+  }
+  return matches[0];
+}
+function resolveWindowId(rows, target) {
+  if (target.by === "pane") {
+    return resolvePaneRow(rows, target.semanticPaneId).windowId;
+  }
+  const matches = new Set(
+    rows.filter((row) => row.semanticWindowId === target.semanticWindowId).map((row) => row.windowId)
+  );
+  if (matches.size === 0) {
+    throw new WorkspaceMultiplexerError("window_not_found", {
+      semanticWindowId: target.semanticWindowId
+    });
+  }
+  if (matches.size > 1) {
+    throw new WorkspaceMultiplexerError("ambiguous_target", {
+      semanticWindowId: target.semanticWindowId
+    });
+  }
+  return [...matches][0];
+}
+function tmuxFormatLiteral2(value) {
+  return value.replaceAll("#", "##");
+}
+function canonicalProjectDir2(path2) {
+  const canonical = realpathSync10(path2);
+  if (!statSync9(canonical).isDirectory()) throw new Error("project root is not a directory");
+  return canonical;
+}
+var CREATION_OPTION2, SEMANTIC_PANE_OPTION4, SEMANTIC_WINDOW_OPTION3, DISPLAY_TITLE_OPTION, ERROR_MESSAGES5, WorkspaceMultiplexerError, PANE_FIELDS, RUNTIME_PANE2, RUNTIME_WINDOW, DEFAULT_IO4, MAX_CACHED_SESSIONS, WorkspaceMultiplexerAuthority;
+var init_workspace_multiplexer_verbs = __esm({
+  "packages/daemon/src/lib/workspace-multiplexer-verbs.ts"() {
+    "use strict";
+    init_src();
+    init_src2();
+    init_workspace_pane_creation2();
+    init_workspace_registry();
+    init_tmux_external_interaction_observer();
+    init_tmux_interaction_options();
+    CREATION_OPTION2 = "@tmux_ide_creation_id";
+    SEMANTIC_PANE_OPTION4 = "@tmux_ide_pane_id";
+    SEMANTIC_WINDOW_OPTION3 = "@tmux_ide_window_id";
+    DISPLAY_TITLE_OPTION = "@ide_name";
+    ERROR_MESSAGES5 = {
+      daemon_instance_mismatch: "The daemon generation changed before the verb ran.",
+      workspace_not_found: "The requested workspace is not registered.",
+      workspace_unavailable: "The requested workspace is not available for multiplexer verbs.",
+      pane_not_found: "No pane in this workspace carries the requested semantic identity.",
+      window_not_found: "No window in this workspace carries the requested identity.",
+      ambiguous_target: "The requested identity names more than one live tmux object.",
+      last_window_refused: "This is the session's last window. Close the session instead if that is what you mean.",
+      last_pane_refused: "This is the session's last pane. Close the session instead if that is what you mean.",
+      mutation_failed: "tmux refused the requested change.",
+      mutation_unverified: "tmux accepted the change but the result could not be verified.",
+      operation_conflict: "Another live controller owns this workspace mutation.",
+      single_pane_window: "This window has only one pane, so it has no border to move.",
+      zoomed_window_refused: "Unzoom this window before resizing its panes.",
+      different_window_refused: "Panes can only be swapped inside the same window."
+    };
+    WorkspaceMultiplexerError = class extends Error {
+      code;
+      context;
+      constructor(code, context = {}, cause) {
+        super(ERROR_MESSAGES5[code], cause === void 0 ? void 0 : { cause });
+        this.name = "WorkspaceMultiplexerError";
+        this.code = code;
+        this.context = Object.freeze({ ...context });
+      }
+    };
+    PANE_FIELDS = [
+      "#{pane_id}",
+      "#{pane_index}",
+      "#{window_id}",
+      `#{${SEMANTIC_PANE_OPTION4}}`,
+      `#{${SEMANTIC_WINDOW_OPTION3}}`,
+      "#{window_panes}",
+      "#{?window_zoomed_flag,1,0}",
+      "#{?pane_active,1,0}",
+      `#{${CREATION_OPTION2}}`
+    ].join("	");
+    RUNTIME_PANE2 = /^%(?:0|[1-9][0-9]*)$/u;
+    RUNTIME_WINDOW = /^@(?:0|[1-9][0-9]*)$/u;
+    DEFAULT_IO4 = {
+      canonicalProjectDir: canonicalProjectDir2,
+      isMissingTmuxTarget: (error) => error instanceof TmuxError && (error.code === "SESSION_NOT_FOUND" || error.code === "TMUX_UNAVAILABLE")
+    };
+    MAX_CACHED_SESSIONS = 512;
+    WorkspaceMultiplexerAuthority = class {
+      #daemonInstanceId;
+      #registry;
+      #io;
+      #paneIdentityCache = /* @__PURE__ */ new Map();
+      #disposed = false;
+      constructor(options) {
+        this.#daemonInstanceId = options.daemonInstanceId;
+        this.#registry = options.registry ?? getDefaultWorkspaceRegistry();
+        this.#io = {
+          ...DEFAULT_IO4,
+          ...options.io,
+          runTmux: options.io?.runTmux ?? createPinnedWorkspaceTmuxRunner(
+            options.tmuxAuthority ?? resolveWorkspacePaneTmuxAuthority()
+          )
+        };
+      }
+      /**
+       * Execute immediately in the caller's already-serialized semantic lane.
+       * The returned promise is only an API envelope: no second queue or replay
+       * ledger is allowed below SessionSemanticMutationExecutor.
+       */
+      mutate(raw, timing) {
+        return this.#mutate(raw, timing);
+      }
+      /**
+       * Capture a semantically addressed pane for an authored read. The tmux
+       * after-capture hook is the completion authority; this method only performs
+       * the command-list and verifies that its semantic target survived it.
+       * SessionRuntimeRegistry serializes this lane with authored sends.
+       */
+      readPane(operationId, intent) {
+        if (this.#disposed) {
+          throw new WorkspaceMultiplexerError("workspace_unavailable", {
+            reason: "authority_disposed"
+          });
+        }
+        const workspace = this.#registry.get(intent.workspaceName);
+        if (!workspace) {
+          throw new WorkspaceMultiplexerError("workspace_not_found", {
+            operationId,
+            workspaceName: intent.workspaceName
+          });
+        }
+        const pane = resolvePaneRow(this.#panes(workspace.sessionName), intent.semanticPaneId);
+        try {
+          this.#io.runTmux([
+            "set-option",
+            "-p",
+            "-t",
+            pane.paneId,
+            INTERNAL_READ_OPERATION_OPTION,
+            internalInteractionOperationMarker(this.#daemonInstanceId, operationId),
+            ";",
+            "capture-pane",
+            "-p",
+            "-e",
+            "-J",
+            "-S",
+            "-2000",
+            "-t",
+            pane.paneId
+          ]);
+        } catch (error) {
+          try {
+            this.#io.runTmux(["set-option", "-pu", "-t", pane.paneId, INTERNAL_READ_OPERATION_OPTION]);
+          } catch {
+          }
+          throw error;
+        }
+        const observed = resolvePaneRow(this.#panes(workspace.sessionName), intent.semanticPaneId);
+        if (observed.paneId !== pane.paneId) {
+          throw new WorkspaceMultiplexerError("mutation_unverified", {
+            operationId,
+            reason: "pane_identity_changed_during_read"
+          });
+        }
+      }
+      dispose() {
+        this.#disposed = true;
+        this.#paneIdentityCache.clear();
+        return Promise.resolve();
+      }
+      /**
+       * Adopt one complete, generation-owned inventory projection. Selection never
+       * performs discovery itself: a missing candidate is a pre-effect refusal.
+       */
+      adoptPaneInventory(rows) {
+        if (this.#disposed) return;
+        const bySession = /* @__PURE__ */ new Map();
+        for (const row of rows) {
+          const current = bySession.get(row.sessionName);
+          if (current) current.push(row);
+          else bySession.set(row.sessionName, [row]);
+        }
+        this.#paneIdentityCache.clear();
+        for (const [sessionName, sessionRows] of bySession) {
+          const identities = /* @__PURE__ */ new Map();
+          const ambiguous = /* @__PURE__ */ new Set();
+          for (const row of sessionRows) {
+            if (row.semanticPaneId === null) continue;
+            if (identities.has(row.semanticPaneId)) {
+              identities.delete(row.semanticPaneId);
+              ambiguous.add(row.semanticPaneId);
+            } else if (!ambiguous.has(row.semanticPaneId)) {
+              identities.set(
+                row.semanticPaneId,
+                Object.freeze({ paneId: row.runtimePaneId, windowId: row.windowId })
+              );
+            }
+          }
+          this.#setPaneIdentities(sessionName, identities);
+        }
+      }
+      /**
+       * Replace one exact session's generation-owned inventory without evicting
+       * unrelated sessions. Trusted retained-mirror projections use this path;
+       * malformed or ambiguous projections invalidate only the target session.
+       */
+      adoptSessionPaneInventory(sessionName, rows) {
+        if (this.#disposed || !boundedCacheIdentity(sessionName)) return false;
+        const refuse = () => {
+          this.#paneIdentityCache.delete(sessionName);
+          return false;
+        };
+        if (rows.length === 0 || rows.length > 512) return refuse();
+        const identities = /* @__PURE__ */ new Map();
+        const runtimePaneIds = /* @__PURE__ */ new Set();
+        for (const row of rows) {
+          if (row.sessionName !== sessionName || typeof row.semanticPaneId !== "string" || !boundedCacheIdentity(row.semanticPaneId) || !/^%(0|[1-9][0-9]*)$/u.test(row.runtimePaneId) || !/^@(0|[1-9][0-9]*)$/u.test(row.windowId) || identities.has(row.semanticPaneId) || runtimePaneIds.has(row.runtimePaneId))
+            return refuse();
+          identities.set(
+            row.semanticPaneId,
+            Object.freeze({ paneId: row.runtimePaneId, windowId: row.windowId })
+          );
+          runtimePaneIds.add(row.runtimePaneId);
+        }
+        this.#setPaneIdentities(sessionName, identities);
+        return true;
+      }
+      #setPaneIdentities(sessionName, identities) {
+        this.#paneIdentityCache.delete(sessionName);
+        this.#paneIdentityCache.set(sessionName, identities);
+        while (this.#paneIdentityCache.size > MAX_CACHED_SESSIONS) {
+          const oldest = this.#paneIdentityCache.keys().next().value;
+          if (typeof oldest !== "string") break;
+          this.#paneIdentityCache.delete(oldest);
+        }
+      }
+      #mutate(raw, timing) {
+        if (this.#disposed) {
+          throw new WorkspaceMultiplexerError("workspace_unavailable", {
+            reason: "authority_disposed"
+          });
+        }
+        const request = WorkspaceMultiplexerMutationRequestSchemaZ.parse(raw);
+        if (request.expectedDaemonInstanceId !== this.#daemonInstanceId) {
+          throw new WorkspaceMultiplexerError("daemon_instance_mismatch", {
+            operationId: request.operationId
+          });
+        }
+        const workspace = this.#registry.get(request.intent.workspaceName);
+        if (!workspace) {
+          throw new WorkspaceMultiplexerError("workspace_not_found", {
+            operationId: request.operationId,
+            workspaceName: request.intent.workspaceName
+          });
+        }
+        try {
+          return WorkspaceMultiplexerMutationResultSchemaZ.parse(
+            this.#perform(request, workspace, timing)
+          );
+        } catch (error) {
+          const mapped = error instanceof WorkspaceMultiplexerError ? error : new WorkspaceMultiplexerError(
+            "mutation_failed",
+            {
+              operationId: request.operationId,
+              workspaceName: request.intent.workspaceName
+            },
+            error
+          );
+          throw mapped;
+        }
+      }
+      #panes(sessionName) {
+        let output;
+        try {
+          output = this.#io.runTmux(["list-panes", "-s", "-t", `=${sessionName}`, "-F", PANE_FIELDS]);
+        } catch (cause) {
+          throw new WorkspaceMultiplexerError(
+            "workspace_unavailable",
+            { sessionName, reason: "session_unreachable" },
+            cause
+          );
+        }
+        const rows = parseMultiplexerPaneRows(output);
+        const identities = /* @__PURE__ */ new Map();
+        const ambiguous = /* @__PURE__ */ new Set();
+        for (const row of rows) {
+          if (row.semanticPaneId === null) continue;
+          if (identities.has(row.semanticPaneId)) {
+            identities.delete(row.semanticPaneId);
+            ambiguous.add(row.semanticPaneId);
+          } else if (!ambiguous.has(row.semanticPaneId)) {
+            identities.set(
+              row.semanticPaneId,
+              Object.freeze({ paneId: row.paneId, windowId: row.windowId })
+            );
+          }
+        }
+        this.#setPaneIdentities(sessionName, identities);
+        return rows;
+      }
+      #perform(request, workspace, timing) {
+        const intent = request.intent;
+        const sessionName = workspace.sessionName;
+        const envelope = {
+          operationId: request.operationId,
+          daemonInstanceId: this.#daemonInstanceId,
+          workspaceName: intent.workspaceName
+        };
+        switch (intent.verb) {
+          case "workspace.window.split":
+            return this.#split(request, workspace, envelope);
+          case "workspace.window.kill":
+            return this.#killWindow(intent, sessionName, envelope);
+          case "workspace.pane.kill":
+            return this.#killPane(intent, sessionName, envelope);
+          case "workspace.session.kill":
+            return this.#killSession(sessionName, envelope);
+          case "workspace.rename":
+            return this.#rename(intent, workspace, envelope);
+          case "workspace.pane.zoom.toggle":
+            return this.#zoom(intent, sessionName, envelope);
+          case "workspace.pane.select":
+            return this.#select(intent, sessionName, envelope, timing);
+          case "workspace.pane.send":
+            return this.#send(intent, sessionName, envelope);
+          case "workspace.pane.swap":
+            return this.#swap(intent, sessionName, envelope);
+          case "workspace.pane.resize":
+            return this.#resize(intent, sessionName, envelope);
+        }
+      }
+      // -------------------------------------------------------------------------
+      // split
+      // -------------------------------------------------------------------------
+      #split(request, workspace, envelope) {
+        const intent = request.intent;
+        if (intent.verb !== "workspace.window.split") throw new TypeError("wrong intent");
+        const sessionName = workspace.sessionName;
+        const semanticPaneId3 = semanticPaneIdForOperation(request.operationId);
+        const displayTitle = intent.displayTitle ?? "Terminal";
+        const rows = this.#panes(sessionName);
+        const already = rows.find((row) => row.creationId === request.operationId);
+        if (already) {
+          return {
+            ...envelope,
+            verb: "workspace.window.split",
+            outcome: "replayed",
+            direction: intent.direction,
+            semanticPaneId: semanticPaneId3,
+            displayTitle
+          };
+        }
+        const source = resolvePaneRow(rows, intent.semanticPaneId);
+        const canonicalRoot = this.#io.canonicalProjectDir(workspace.projectDir);
+        const created = this.#io.runTmux([
+          "split-window",
+          intent.direction === "right" ? "-h" : "-v",
+          "-d",
+          "-P",
+          "-F",
+          "#{pane_id}	#{window_id}",
+          "-t",
+          source.paneId,
+          "-c",
+          canonicalRoot
+        ]);
+        const match = /^(%[0-9]+)\t(@[0-9]+)$/u.exec(created);
+        if (!match) {
+          throw new WorkspaceMultiplexerError("mutation_unverified", {
+            operationId: request.operationId,
+            reason: "split_output_unparseable"
+          });
+        }
+        const paneId = match[1];
+        try {
+          for (const [option, value] of [
+            [CREATION_OPTION2, request.operationId],
+            [SEMANTIC_PANE_OPTION4, semanticPaneId3],
+            ["@ide_type", "shell"],
+            ["@ide_role", "shell"],
+            [DISPLAY_TITLE_OPTION, displayTitle]
+          ]) {
+            this.#io.runTmux(["set-option", "-p", "-t", paneId, option, value]);
+          }
+          const inspected = this.#io.runTmux([
+            "display-message",
+            "-p",
+            "-t",
+            paneId,
+            [
+              "#{pane_id}",
+              `#{${SEMANTIC_PANE_OPTION4}}`,
+              `#{${CREATION_OPTION2}}`,
+              `#{${DISPLAY_TITLE_OPTION}}`
+            ].join("	")
+          ]);
+          if (inspected !== [paneId, semanticPaneId3, request.operationId, displayTitle].join("	")) {
+            throw new WorkspaceMultiplexerError("mutation_unverified", {
+              operationId: request.operationId,
+              reason: "split_stamp_mismatch"
+            });
+          }
+        } catch (error) {
+          this.#cleanupOwnedPane(paneId, request.operationId);
+          throw error;
+        }
+        return {
+          ...envelope,
+          verb: "workspace.window.split",
+          outcome: "applied",
+          direction: intent.direction,
+          semanticPaneId: semanticPaneId3,
+          displayTitle
+        };
+      }
+      #cleanupOwnedPane(paneId, operationId) {
+        try {
+          const proof = this.#io.runTmux([
+            "display-message",
+            "-p",
+            "-t",
+            paneId,
+            `#{pane_id}	#{${CREATION_OPTION2}}`
+          ]);
+          if (proof !== `${paneId}	${operationId}`) return;
+          this.#io.runTmux(["kill-pane", "-t", paneId]);
+        } catch {
+        }
+      }
+      // -------------------------------------------------------------------------
+      // kill
+      // -------------------------------------------------------------------------
+      #killWindow(intent, sessionName, envelope) {
+        const rows = this.#panes(sessionName);
+        const windowId = resolveWindowId(rows, intent.target);
+        const windows = windowIdsOf(rows);
+        if (windows.length <= 1) {
+          throw new WorkspaceMultiplexerError("last_window_refused", {
+            operationId: envelope.operationId,
+            workspaceName: envelope.workspaceName
+          });
+        }
+        this.#io.runTmux(["kill-window", "-t", windowId]);
+        const after = windowIdsOf(this.#panes(sessionName));
+        if (after.includes(windowId)) {
+          throw new WorkspaceMultiplexerError("mutation_unverified", {
+            operationId: envelope.operationId,
+            reason: "window_still_present"
+          });
+        }
+        return {
+          ...envelope,
+          verb: "workspace.window.kill",
+          outcome: "applied",
+          remainingWindowCount: after.length
+        };
+      }
+      #killPane(intent, sessionName, envelope) {
+        const rows = this.#panes(sessionName);
+        const pane = resolvePaneRow(rows, intent.semanticPaneId);
+        const windows = windowIdsOf(rows);
+        const closesWindow = pane.windowPaneCount === 1;
+        if (closesWindow && windows.length <= 1) {
+          throw new WorkspaceMultiplexerError("last_pane_refused", {
+            operationId: envelope.operationId,
+            workspaceName: envelope.workspaceName
+          });
+        }
+        this.#io.runTmux(["kill-pane", "-t", pane.paneId]);
+        const after = this.#panes(sessionName);
+        if (after.some((row) => row.paneId === pane.paneId)) {
+          throw new WorkspaceMultiplexerError("mutation_unverified", {
+            operationId: envelope.operationId,
+            reason: "pane_still_present"
+          });
+        }
+        return {
+          ...envelope,
+          verb: "workspace.pane.kill",
+          outcome: "applied",
+          windowClosed: closesWindow,
+          remainingWindowCount: windowIdsOf(after).length
+        };
+      }
+      #killSession(sessionName, envelope) {
+        let existed = true;
+        try {
+          this.#io.runTmux(["has-session", "-t", `=${sessionName}`]);
+        } catch (error) {
+          if (!this.#io.isMissingTmuxTarget(error)) throw error;
+          existed = false;
+        }
+        if (existed) {
+          this.#io.runTmux(["kill-session", "-t", `=${sessionName}`]);
+          let stillPresent = true;
+          try {
+            this.#io.runTmux(["has-session", "-t", `=${sessionName}`]);
+          } catch {
+            stillPresent = false;
+          }
+          if (stillPresent) {
+            throw new WorkspaceMultiplexerError("mutation_unverified", {
+              operationId: envelope.operationId,
+              reason: "session_still_present"
+            });
+          }
+        }
+        this.#paneIdentityCache.delete(sessionName);
+        return {
+          ...envelope,
+          verb: "workspace.session.kill",
+          // `unchanged` is the honest answer for a session that was already gone:
+          // the user's goal holds, but this call is not what achieved it.
+          outcome: existed ? "applied" : "unchanged"
+        };
+      }
+      // -------------------------------------------------------------------------
+      // rename
+      // -------------------------------------------------------------------------
+      #rename(intent, workspace, envelope) {
+        const sessionName = workspace.sessionName;
+        if (intent.scope === "session") {
+          if (sessionName === intent.name) {
+            return {
+              ...envelope,
+              verb: "workspace.rename",
+              outcome: "unchanged",
+              scope: "session",
+              name: intent.name
+            };
+          }
+          this.#io.runTmux(["rename-session", "-t", `=${sessionName}`, tmuxFormatLiteral2(intent.name)]);
+          const observed2 = this.#io.runTmux([
+            "display-message",
+            "-p",
+            "-t",
+            `=${intent.name}:`,
+            "#{session_name}"
+          ]);
+          if (observed2 !== intent.name) {
+            throw new WorkspaceMultiplexerError("mutation_unverified", {
+              operationId: envelope.operationId,
+              reason: "session_name_mismatch"
+            });
+          }
+          this.#registry.renameSession(workspace.name, intent.name);
+          const cached2 = this.#paneIdentityCache.get(sessionName);
+          this.#paneIdentityCache.delete(sessionName);
+          if (cached2) this.#paneIdentityCache.set(intent.name, cached2);
+          return {
+            ...envelope,
+            verb: "workspace.rename",
+            outcome: "applied",
+            scope: "session",
+            name: intent.name
+          };
+        }
+        const rows = this.#panes(sessionName);
+        const windowId = resolveWindowId(rows, intent.target);
+        this.#io.runTmux(["rename-window", "-t", windowId, tmuxFormatLiteral2(intent.name)]);
+        const observed = this.#io.runTmux(["display-message", "-p", "-t", windowId, "#{window_name}"]);
+        if (observed !== intent.name) {
+          throw new WorkspaceMultiplexerError("mutation_unverified", {
+            operationId: envelope.operationId,
+            reason: "window_name_mismatch"
+          });
+        }
+        const panesOfWindow = rows.filter((row) => row.windowId === windowId);
+        if (panesOfWindow.length === 1) {
+          this.#io.runTmux([
+            "set-option",
+            "-p",
+            "-t",
+            panesOfWindow[0].paneId,
+            DISPLAY_TITLE_OPTION,
+            intent.name
+          ]);
+        }
+        return {
+          ...envelope,
+          verb: "workspace.rename",
+          outcome: "applied",
+          scope: "window",
+          name: intent.name
+        };
+      }
+      // -------------------------------------------------------------------------
+      // zoom / select
+      // -------------------------------------------------------------------------
+      #zoom(intent, sessionName, envelope) {
+        const rows = this.#panes(sessionName);
+        const pane = resolvePaneRow(rows, intent.semanticPaneId);
+        const target = intent.desired === "toggle" ? !pane.windowZoomed : intent.desired === "zoomed";
+        if (target === pane.windowZoomed) {
+          return {
+            ...envelope,
+            verb: "workspace.pane.zoom.toggle",
+            outcome: "unchanged",
+            semanticPaneId: intent.semanticPaneId,
+            zoomed: pane.windowZoomed
+          };
+        }
+        this.#io.runTmux(["resize-pane", "-Z", "-t", pane.paneId]);
+        const observed = this.#io.runTmux([
+          "display-message",
+          "-p",
+          "-t",
+          pane.paneId,
+          "#{?window_zoomed_flag,1,0}"
+        ]);
+        const zoomed = observed === "1";
+        if (zoomed !== target) {
+          throw new WorkspaceMultiplexerError("mutation_unverified", {
+            operationId: envelope.operationId,
+            reason: "zoom_state_mismatch"
+          });
+        }
+        return {
+          ...envelope,
+          verb: "workspace.pane.zoom.toggle",
+          outcome: "applied",
+          semanticPaneId: intent.semanticPaneId,
+          zoomed
+        };
+      }
+      #select(intent, sessionName, envelope, timing) {
+        const timed = (operation, run) => {
+          if (!timing) return run();
+          let startedAtMicros;
+          try {
+            startedAtMicros = timing.nowMicros();
+          } catch {
+            return run();
+          }
+          try {
+            return run();
+          } finally {
+            try {
+              timing.record(operation, startedAtMicros, timing.nowMicros());
+            } catch {
+            }
+          }
+        };
+        const cached2 = timed(
+          "semantic-pane-inventory-lookup",
+          () => this.#paneIdentityCache.get(sessionName)?.get(intent.semanticPaneId)
+        );
+        const pane = timed("semantic-pane-resolution", () => cached2);
+        if (!pane) {
+          throw new WorkspaceMultiplexerError("workspace_unavailable", {
+            operationId: envelope.operationId,
+            reason: "pane_inventory_not_ready"
+          });
+        }
+        const semanticMatchPaneIdsFormat = `#{W:#{P:#{?#{==:#{${SEMANTIC_PANE_OPTION4}},${tmuxFormatLiteral2(intent.semanticPaneId)}},#{pane_id},}}}`;
+        const precondition = [
+          pane.paneId,
+          pane.windowId,
+          intent.semanticPaneId,
+          // One matching pane expands to its cached native ID. Missing, duplicate,
+          // or remapped stamps cannot satisfy the in-server mutation guard.
+          pane.paneId
+        ].join("	");
+        const preconditionFormat = [
+          "#{pane_id}",
+          "#{window_id}",
+          `#{${SEMANTIC_PANE_OPTION4}}`,
+          semanticMatchPaneIdsFormat
+        ].join("	");
+        const selectCommand = `select-window -t ${pane.windowId} ; select-pane -t ${pane.paneId}`;
+        const observations = timed(
+          "tmux-selection-effect-proof",
+          () => this.#io.runTmux([
+            "display-message",
+            "-p",
+            "-t",
+            pane.paneId,
+            `${preconditionFormat}	#{?pane_active,1,0}	#{?window_active,1,0}`,
+            ";",
+            // Resolve once from an authoritative inventory, then keep the semantic
+            // stamp and both native IDs as an exact in-server precondition. A stale
+            // cache entry may observe, but it cannot mutate.
+            "if-shell",
+            "-F",
+            "-t",
+            pane.paneId,
+            `#{==:${preconditionFormat},${tmuxFormatLiteral2(precondition)}}`,
+            selectCommand,
+            "",
+            ";",
+            "display-message",
+            "-p",
+            "-t",
+            pane.paneId,
+            `${preconditionFormat}	#{?pane_active,1,0}	#{?window_active,1,0}`
+          ])
+        );
+        const [before = "", observed = ""] = observations.split("\n");
+        if (!before.startsWith(`${precondition}	`)) {
+          this.#paneIdentityCache.delete(sessionName);
+          throw new WorkspaceMultiplexerError("mutation_unverified", {
+            operationId: envelope.operationId,
+            reason: "pane_identity_changed_before_select"
+          });
+        }
+        const wasActive = before === `${precondition}	1	1`;
+        if (observed !== `${precondition}	1	1`) {
+          this.#paneIdentityCache.delete(sessionName);
+          throw new WorkspaceMultiplexerError("mutation_unverified", {
+            operationId: envelope.operationId,
+            reason: "pane_not_active"
+          });
+        }
+        return {
+          ...envelope,
+          verb: "workspace.pane.select",
+          outcome: wasActive ? "unchanged" : "applied",
+          semanticPaneId: intent.semanticPaneId
+        };
+      }
+      // -------------------------------------------------------------------------
+      // send
+      // -------------------------------------------------------------------------
+      /**
+       * Deliver literal bytes to a semantically addressed pane. A successful tmux
+       * command plus a post-send identity read-back proves that the resolved pane
+       * survived the operation; terminal output remains the independent observation
+       * lane and is intentionally not parsed for prompt content.
+       */
+      #send(intent, sessionName, envelope) {
+        const before = this.#panes(sessionName);
+        const pane = resolvePaneRow(before, intent.semanticPaneId);
+        const sourcePane = intent.sourceSemanticPaneId ? resolvePaneRow(before, intent.sourceSemanticPaneId) : null;
+        const marker = internalInteractionOperationMarker(this.#daemonInstanceId, envelope.operationId);
+        if (intent.submit) {
+          const buffer = `tmux-ide-send-${envelope.operationId}`;
+          try {
+            this.#io.runTmux([
+              "set-buffer",
+              "-b",
+              buffer,
+              "--",
+              intent.text,
+              ";",
+              "paste-buffer",
+              "-d",
+              "-b",
+              buffer,
+              "-t",
+              pane.paneId,
+              ";",
+              "set-option",
+              "-p",
+              "-t",
+              pane.paneId,
+              INTERNAL_SEND_OPERATION_OPTION,
+              marker,
+              ";",
+              "send-keys",
+              "-t",
+              pane.paneId,
+              "Enter"
+            ]);
+          } catch (error) {
+            try {
+              this.#io.runTmux(["delete-buffer", "-b", buffer]);
+            } catch {
+            }
+            try {
+              this.#io.runTmux([
+                "set-option",
+                "-pu",
+                "-t",
+                pane.paneId,
+                INTERNAL_SEND_OPERATION_OPTION
+              ]);
+            } catch {
+            }
+            throw error;
+          }
+        } else {
+          try {
+            this.#io.runTmux([
+              "set-option",
+              "-p",
+              "-t",
+              pane.paneId,
+              INTERNAL_SEND_OPERATION_OPTION,
+              marker,
+              ";",
+              "send-keys",
+              "-t",
+              pane.paneId,
+              "-l",
+              "--",
+              intent.text
+            ]);
+          } catch (error) {
+            try {
+              this.#io.runTmux([
+                "set-option",
+                "-pu",
+                "-t",
+                pane.paneId,
+                INTERNAL_SEND_OPERATION_OPTION
+              ]);
+            } catch {
+            }
+            throw error;
+          }
+        }
+        const observed = resolvePaneRow(this.#panes(sessionName), intent.semanticPaneId);
+        if (observed.paneId !== pane.paneId) {
+          throw new WorkspaceMultiplexerError("mutation_unverified", {
+            operationId: envelope.operationId,
+            reason: "pane_identity_changed_during_send"
+          });
+        }
+        return {
+          ...envelope,
+          verb: "workspace.pane.send",
+          outcome: "applied",
+          sourceSemanticPaneId: sourcePane?.semanticPaneId ?? null,
+          semanticPaneId: intent.semanticPaneId,
+          origin: intent.origin,
+          characterCount: Array.from(intent.text).length,
+          byteCount: Buffer.byteLength(intent.text, "utf8"),
+          submitted: intent.submit
+        };
+      }
+      // -------------------------------------------------------------------------
+      // swap
+      // -------------------------------------------------------------------------
+      /** Exchange two semantic panes without exposing a tmux target to the caller. */
+      #swap(intent, sessionName, envelope) {
+        const rows = this.#panes(sessionName);
+        const source = resolvePaneRow(rows, intent.sourceSemanticPaneId);
+        const target = resolvePaneRow(rows, intent.targetSemanticPaneId);
+        if (source.paneId === target.paneId) {
+          return {
+            ...envelope,
+            verb: "workspace.pane.swap",
+            outcome: "unchanged",
+            sourceSemanticPaneId: intent.sourceSemanticPaneId,
+            targetSemanticPaneId: intent.targetSemanticPaneId
+          };
+        }
+        if (source.windowId !== target.windowId) {
+          throw new WorkspaceMultiplexerError("different_window_refused", {
+            sourceSemanticPaneId: intent.sourceSemanticPaneId,
+            targetSemanticPaneId: intent.targetSemanticPaneId
+          });
+        }
+        this.#io.runTmux(["swap-pane", "-s", source.paneId, "-t", target.paneId]);
+        const after = this.#panes(sessionName);
+        const sourceAfter = resolvePaneRow(after, intent.sourceSemanticPaneId);
+        const targetAfter = resolvePaneRow(after, intent.targetSemanticPaneId);
+        if (sourceAfter.paneId !== source.paneId || targetAfter.paneId !== target.paneId || sourceAfter.windowId !== source.windowId || targetAfter.windowId !== target.windowId || sourceAfter.paneIndex !== target.paneIndex || targetAfter.paneIndex !== source.paneIndex) {
+          throw new WorkspaceMultiplexerError("mutation_unverified", {
+            operationId: envelope.operationId,
+            reason: "pane_positions_not_swapped"
+          });
+        }
+        return {
+          ...envelope,
+          verb: "workspace.pane.swap",
+          outcome: "applied",
+          sourceSemanticPaneId: intent.sourceSemanticPaneId,
+          targetSemanticPaneId: intent.targetSemanticPaneId
+        };
+      }
+      // -------------------------------------------------------------------------
+      // resize
+      // -------------------------------------------------------------------------
+      /** The pane's own size on one axis, in cells, read straight from tmux. */
+      #paneCells(paneId, axis) {
+        const observed = this.#io.runTmux([
+          "display-message",
+          "-p",
+          "-t",
+          paneId,
+          axis === "cols" ? "#{pane_width}" : "#{pane_height}"
+        ]);
+        const cells = Number(observed);
+        if (!Number.isInteger(cells) || cells < 1) {
+          throw new WorkspaceMultiplexerError("mutation_unverified", { reason: "pane_size_shape" });
+        }
+        return cells;
+      }
+      /**
+       * Move one pane border.
+       *
+       * The result reports what tmux SETTLED ON rather than what was asked for. A
+       * layout has a per-pane minimum and a fixed total, so tmux clamps constantly —
+       * and a drag that hit a floor has to read as having stopped there. Reporting
+       * the requested number instead would make the view disagree with the layout
+       * frame that arrives a moment later, which is the class of divergence this
+       * whole view exists to remove.
+       */
+      #resize(intent, sessionName, envelope) {
+        const rows = this.#panes(sessionName);
+        const pane = resolvePaneRow(rows, intent.semanticPaneId);
+        if (pane.windowPaneCount < 2) {
+          throw new WorkspaceMultiplexerError("single_pane_window", {
+            semanticPaneId: intent.semanticPaneId
+          });
+        }
+        if (pane.windowZoomed) {
+          throw new WorkspaceMultiplexerError("zoomed_window_refused", {
+            semanticPaneId: intent.semanticPaneId
+          });
+        }
+        const before = this.#paneCells(pane.paneId, intent.axis);
+        if (before === intent.cells) {
+          return {
+            ...envelope,
+            verb: "workspace.pane.resize",
+            outcome: "unchanged",
+            semanticPaneId: intent.semanticPaneId,
+            axis: intent.axis,
+            cells: before
+          };
+        }
+        this.#io.runTmux([
+          "resize-pane",
+          "-t",
+          pane.paneId,
+          intent.axis === "cols" ? "-x" : "-y",
+          String(intent.cells)
+        ]);
+        const after = this.#paneCells(pane.paneId, intent.axis);
+        return {
+          ...envelope,
+          verb: "workspace.pane.resize",
+          outcome: after === before ? "unchanged" : "applied",
+          semanticPaneId: intent.semanticPaneId,
+          axis: intent.axis,
+          cells: after
+        };
+      }
+    };
+  }
+});
+
+// packages/daemon/src/terminal/session-runtime/runtime-observability.ts
+import { randomUUID as randomUUID9 } from "node:crypto";
+import { z as z71 } from "zod";
+function createSessionRuntimeObservability(options = {}) {
+  const capacity = options.capacity ?? 1024;
+  if (!Number.isInteger(capacity) || capacity < 1 || capacity > 65536)
+    throw new TypeError("Runtime observability capacity must be in [1, 65536]");
+  const nowMicros = options.nowMicros ?? (() => Math.floor(performance.now() * 1e3));
+  const processId = options.processId ?? `daemon:${process.pid}`;
+  const clockId = options.clockId ?? "node-performance-now";
+  const clockKind = options.clockKind ?? "performance-now";
+  const createTraceId = options.createTraceId ?? randomUUID9;
+  const spans = [];
+  let cursor = 0;
+  let droppedSpans = 0;
+  return Object.freeze({
+    enabled: true,
+    nowMicros,
+    beginTrace(scenario, authority, traceId) {
+      return Object.freeze({
+        traceId: z71.uuid().parse(traceId ?? createTraceId()),
+        scenario,
+        authority
+      });
+    },
+    recordSpan(stage, operation, startedAtMicros, endedAtMicros, trace = null, shared, terminalDelivery) {
+      const span = Object.freeze({
+        traceId: trace?.traceId ?? null,
+        scenario: trace?.scenario ?? null,
+        authority: trace?.authority ?? null,
+        stage,
+        processId,
+        clockId,
+        clockKind,
+        operation,
+        startedAtMicros,
+        endedAtMicros,
+        ...shared ? {
+          sharedStartedAtMicros: shared.startedAtMicros,
+          sharedEndedAtMicros: shared.endedAtMicros
+        } : {},
+        ...terminalDelivery ? { terminalDelivery: Object.freeze({ ...terminalDelivery }) } : {}
+      });
+      if (spans.length < capacity) spans.push(span);
+      else {
+        spans[cursor] = span;
+        cursor = (cursor + 1) % capacity;
+        droppedSpans += 1;
+      }
+      options.onSpan?.(span);
+    },
+    snapshot() {
+      const ordered = spans.length < capacity || cursor === 0 ? [...spans] : [...spans.slice(cursor), ...spans.slice(0, cursor)];
+      return Object.freeze({ spans: Object.freeze(ordered), droppedSpans });
+    }
+  });
+}
+var EMPTY_SNAPSHOT, DISABLED_SESSION_RUNTIME_OBSERVABILITY;
+var init_runtime_observability = __esm({
+  "packages/daemon/src/terminal/session-runtime/runtime-observability.ts"() {
+    "use strict";
+    EMPTY_SNAPSHOT = Object.freeze({
+      spans: Object.freeze([]),
+      droppedSpans: 0
+    });
+    DISABLED_SESSION_RUNTIME_OBSERVABILITY = Object.freeze({
+      enabled: false,
+      nowMicros: () => 0,
+      beginTrace: () => null,
+      recordSpan: () => void 0,
+      snapshot: () => EMPTY_SNAPSHOT
+    });
+  }
+});
+
+// packages/daemon/src/terminal/protocol/control.ts
+function decodeControlBytes(escaped) {
+  const out = new Uint8Array(escaped.length);
+  let n10 = 0;
+  for (let i = 0; i < escaped.length; i++) {
+    const ch = escaped.charCodeAt(i);
+    if (ch === 92 && // backslash
+    i + 3 < escaped.length + 1 && isOctal(escaped.charCodeAt(i + 1)) && isOctal(escaped.charCodeAt(i + 2)) && isOctal(escaped.charCodeAt(i + 3))) {
+      out[n10++] = parseInt(escaped.slice(i + 1, i + 4), 8) & 255;
+      i += 3;
+    } else {
+      out[n10++] = ch & 255;
+    }
+  }
+  return out.subarray(0, n10);
+}
+function isOctal(code) {
+  return code !== void 0 && code >= 48 && code <= 55;
+}
+function parseControlLine(line, insideReply) {
+  if (line.startsWith("%end ") || line.startsWith("%error ")) {
+    const isError = line.startsWith("%error ");
+    const parts = line.split(" ");
+    const num = Number(parts[2] ?? -1);
+    const flags = Number(parts[3] ?? -1);
+    return { kind: isError ? "error" : "end", num, flags };
+  }
+  if (insideReply) return { kind: "reply-line", line };
+  if (line.startsWith("%begin ")) {
+    const parts = line.split(" ");
+    return {
+      kind: "begin",
+      num: Number(parts[2] ?? -1),
+      flags: Number(parts[3] ?? -1)
+    };
+  }
+  if (line.startsWith("%output ")) {
+    const rest = line.slice("%output ".length);
+    const space = rest.indexOf(" ");
+    const pane = space === -1 ? rest : rest.slice(0, space);
+    const payload = space === -1 ? "" : rest.slice(space + 1);
+    return { kind: "output", pane, data: decodeControlBytes(payload) };
+  }
+  if (line.startsWith("%extended-output ")) {
+    const rest = line.slice("%extended-output ".length);
+    const space = rest.indexOf(" ");
+    const pane = space === -1 ? rest : rest.slice(0, space);
+    const tail = space === -1 ? "" : rest.slice(space + 1);
+    const sep10 = tail.indexOf(" : ");
+    const meta = sep10 === -1 ? tail : tail.slice(0, sep10);
+    const payload = sep10 === -1 ? "" : tail.slice(sep10 + 3);
+    const age = Number(meta.trim().split(/\s+/)[0]);
+    return {
+      kind: "extended-output",
+      pane,
+      ageMs: Number.isFinite(age) ? age : null,
+      data: decodeControlBytes(payload)
+    };
+  }
+  if (line.startsWith("%exit")) {
+    const reason = line.length > "%exit ".length ? line.slice("%exit ".length) : null;
+    return { kind: "exit", reason };
+  }
+  if (line.startsWith("%")) {
+    const space = line.indexOf(" ");
+    const name = space === -1 ? line.slice(1) : line.slice(1, space);
+    return { kind: "notify", name, rest: space === -1 ? "" : line.slice(space + 1) };
+  }
+  return { kind: "reply-line", line };
+}
+function textToHexKeys(text) {
+  const bytes = new TextEncoder().encode(text);
+  const hex = [];
+  for (const b of bytes) hex.push(b.toString(16).padStart(2, "0"));
+  return hex;
+}
+var init_control2 = __esm({
+  "packages/daemon/src/terminal/protocol/control.ts"() {
+    "use strict";
+  }
+});
+
+// packages/daemon/src/terminal/mirror/control-channel.ts
+import { spawn as spawn7 } from "node:child_process";
+function mirrorControlAttachArgs(options, pauseAfterSeconds = DEFAULT_PAUSE_AFTER_SECONDS) {
+  return [
+    ...options.socketPath ? ["-S", options.socketPath] : options.socketName ? ["-L", options.socketName] : [],
+    ...options.configFile ? ["-f", options.configFile] : [],
+    "-C",
+    "attach",
+    "-t",
+    options.session,
+    "-f",
+    `ignore-size,pause-after=${pauseAfterSeconds},active-pane`
+  ];
+}
+function waitForExit(proc, timeoutMs) {
+  if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolve38) => {
+    const timer = setTimeout(() => {
+      proc.off("exit", onExit);
+      resolve38(false);
+    }, timeoutMs);
+    timer.unref?.();
+    const onExit = () => {
+      clearTimeout(timer);
+      resolve38(true);
+    };
+    proc.once("exit", onExit);
+  });
+}
+var ATOMIC_CAPTURE_BYTE_HARD_CAP, ATOMIC_CAPTURE_LINE_HARD_CAP, ATOMIC_CURSOR_BYTE_HARD_CAP, ControlChannelCore, DEFAULT_PAUSE_AFTER_SECONDS, MirrorControlChannel;
+var init_control_channel = __esm({
+  "packages/daemon/src/terminal/mirror/control-channel.ts"() {
+    "use strict";
+    init_control2();
+    ATOMIC_CAPTURE_BYTE_HARD_CAP = 16 * 1024 * 1024;
+    ATOMIC_CAPTURE_LINE_HARD_CAP = 8192;
+    ATOMIC_CURSOR_BYTE_HARD_CAP = 1024;
+    ControlChannelCore = class {
+      constructor(handlers, nowMicros) {
+        this.handlers = handlers;
+        this.nowMicros = nowMicros;
+      }
+      buffer = "";
+      bufferReceivedAtMicros = null;
+      inReply = false;
+      currentReplyNum = null;
+      currentReplyFlags = null;
+      /** The greeting is the sole flags=0 block that belongs to pending work.
+       *  Subsequent flags=0 blocks are tmux hook command results, emitted on the
+       *  initiating control client but not caused by an input line. */
+      awaitingGreeting = true;
+      currentReplyConsumesPending = false;
+      pending = [];
+      discardedErrors = 0;
+      failed = false;
+      atomicCollector = null;
+      push(sink) {
+        this.pending.push(sink);
+      }
+      pushCommandList(replyCount, resultIndex, onReply) {
+        const state = { resultIndex, onReply, lines: [], settled: false };
+        for (let index = 0; index < replyCount; index += 1)
+          this.pending.push({ kind: "command-list", state, index });
+      }
+      get inputErrorCount() {
+        return this.discardedErrors;
+      }
+      get pendingCount() {
+        return this.pending.length;
+      }
+      armAtomicPaneSnapshotCollector(spec) {
+        if (this.failed || this.atomicCollector) return false;
+        if (!/^[0-9a-f]{32,128}$/.test(spec.nonce) || !/^%\d+$/.test(spec.runtimePaneId)) return false;
+        if (!Number.isSafeInteger(spec.maxCaptureBytes) || spec.maxCaptureBytes < 1 || spec.maxCaptureBytes > ATOMIC_CAPTURE_BYTE_HARD_CAP || !Number.isSafeInteger(spec.maxCaptureLines) || spec.maxCaptureLines < 1 || spec.maxCaptureLines > ATOMIC_CAPTURE_LINE_HARD_CAP || !Number.isSafeInteger(spec.maxCursorBytes) || spec.maxCursorBytes < 1 || spec.maxCursorBytes > ATOMIC_CURSOR_BYTE_HARD_CAP || !Number.isSafeInteger(spec.observerCommandCount) || spec.observerCommandCount < 0 || spec.observerCommandCount > 4)
+          return false;
+        this.atomicCollector = {
+          spec,
+          started: false,
+          blockOrdinal: -1,
+          blockContentCount: 0,
+          captureLines: [],
+          captureBytes: 0,
+          totalLines: 0,
+          totalBytes: 0,
+          cursorLine: null,
+          continueObserved: false,
+          statusObserved: false,
+          observerEmissionObserved: false,
+          lastCompletedOrdinal: -1,
+          failureReason: null
+        };
+        return true;
+      }
+      retireAtomicPaneSnapshotCollector(nonce, reason = "retired") {
+        const collector = this.atomicCollector;
+        if (!collector || collector.spec.nonce !== nonce) return false;
+        this.atomicCollector = null;
+        collector.spec.onSettled(
+          Object.freeze({
+            ok: false,
+            captureLines: Object.freeze([]),
+            cursorLine: null,
+            continueObserved: collector.continueObserved,
+            statusObserved: collector.statusObserved,
+            observerEmissionObserved: collector.observerEmissionObserved,
+            started: collector.started,
+            lastCompletedOrdinal: collector.lastCompletedOrdinal,
+            captureLineCount: collector.captureLines.length,
+            captureByteCount: collector.captureBytes,
+            failureReason: collector.failureReason ?? reason
+          })
+        );
+        return true;
+      }
+      feed(chunk, receivedAtMicros) {
+        if (this.buffer.length === 0 && receivedAtMicros !== void 0)
+          this.bufferReceivedAtMicros = receivedAtMicros;
+        this.buffer += chunk;
+        let nl;
+        while ((nl = this.buffer.indexOf("\n")) !== -1) {
+          let line = this.buffer.slice(0, nl);
+          if (line.endsWith("\r")) line = line.slice(0, -1);
+          this.buffer = this.buffer.slice(nl + 1);
+          const lineReceivedAtMicros = this.bufferReceivedAtMicros;
+          this.bufferReceivedAtMicros = this.buffer.length > 0 ? receivedAtMicros ?? null : null;
+          this.handleLine(line, lineReceivedAtMicros);
+        }
+      }
+      /** The stream died: settle every pending sink so no caller hangs. */
+      fail(reason) {
+        if (this.failed) return;
+        this.failed = true;
+        if (this.atomicCollector)
+          this.retireAtomicPaneSnapshotCollector(this.atomicCollector.spec.nonce, "channel-exit");
+        for (const sink of this.pending.splice(0)) {
+          if (sink.kind === "promise") sink.reject(new Error(reason));
+          else if (sink.kind === "inline") sink.onReply({ ok: false, lines: [reason] });
+          else if (sink.kind === "command-list" && !sink.state.settled) {
+            sink.state.settled = true;
+            sink.state.onReply({ ok: false, lines: [reason] });
+          }
+        }
+      }
+      handleLine(line, receivedAtMicros) {
+        if (this.consumeAtomicPaneSnapshotLine(line)) return;
+        const event = parseControlLine(line, this.inReply);
+        const timing = receivedAtMicros !== null && this.nowMicros ? Object.freeze({
+          receivedAtMicros,
+          parsedAtMicros: this.nowMicros()
+        }) : void 0;
+        switch (event.kind) {
+          case "begin":
+            this.inReply = true;
+            this.currentReplyNum = event.num;
+            this.currentReplyFlags = event.flags;
+            this.currentReplyConsumesPending = this.awaitingGreeting || event.flags !== 0;
+            break;
+          case "reply-line": {
+            const head3 = this.currentReplyConsumesPending ? this.pending[0] : void 0;
+            if (head3?.kind === "promise" || head3?.kind === "inline") head3.lines.push(event.line);
+            else if (head3?.kind === "command-list" && head3.index === head3.state.resultIndex)
+              head3.state.lines.push(event.line);
+            break;
+          }
+          case "end":
+          case "error": {
+            this.inReply = false;
+            this.currentReplyNum = null;
+            this.currentReplyFlags = null;
+            if (!this.currentReplyConsumesPending) {
+              this.currentReplyConsumesPending = false;
+              break;
+            }
+            this.currentReplyConsumesPending = false;
+            this.awaitingGreeting = false;
+            const sink = this.pending.shift();
+            if (!sink) break;
+            if (sink.kind === "command-list") {
+              if (event.kind === "error" && sink.index !== sink.state.resultIndex)
+                this.discardedErrors += 1;
+              if (event.kind === "error" && sink.index === 0) {
+                while (this.pending[0]?.kind === "command-list" && this.pending[0].state === sink.state)
+                  this.pending.shift();
+                if (!sink.state.settled) {
+                  sink.state.settled = true;
+                  sink.state.onReply({ ok: false, lines: sink.state.lines });
+                }
+              } else if (sink.index === sink.state.resultIndex && !sink.state.settled) {
+                sink.state.settled = true;
+                sink.state.onReply({ ok: event.kind === "end", lines: sink.state.lines });
+              }
+              break;
+            }
+            if (sink.kind === "discard") {
+              if (event.kind === "error") this.discardedErrors++;
+              sink.onReply?.({ ok: event.kind === "end", lines: [] });
+              break;
+            }
+            if (sink.kind === "inline") {
+              sink.onReply({ ok: event.kind === "end", lines: sink.lines });
+              break;
+            }
+            if (event.kind === "error") {
+              sink.reject(new Error(sink.lines.join("\n") || "tmux command failed"));
+            } else {
+              sink.resolve(sink.lines);
+            }
+            break;
+          }
+          case "output":
+            this.handlers.onOutput(event.pane, event.data, null, timing);
+            break;
+          case "extended-output":
+            this.handlers.onOutput(event.pane, event.data, event.ageMs, timing);
+            break;
+          case "exit":
+            this.handlers.onExit(event.reason);
+            break;
+          case "notify":
+            this.handlers.onNotify(event.name, event.rest);
+            break;
+        }
+      }
+      consumeAtomicPaneSnapshotLine(line) {
+        const collector = this.atomicCollector;
+        if (!collector) return false;
+        const prefix = "%tmux-ide-atomic-v1 ";
+        const ownPrefix = `${prefix}${collector.spec.nonce} `;
+        if (line.startsWith(prefix) && !line.startsWith(ownPrefix)) {
+          collector.failureReason ??= "foreign-sentinel";
+          return true;
+        }
+        const token = line.startsWith(ownPrefix) ? line.slice(ownPrefix.length) : null;
+        if (!collector.started) {
+          if (token === null) return false;
+          if (token !== "start" || !this.inReply || this.currentReplyFlags !== 0 || this.currentReplyNum === null) {
+            collector.failureReason ??= "sentinel-order";
+            return true;
+          }
+          collector.started = true;
+          collector.blockOrdinal = 0;
+          collector.blockContentCount = 1;
+          this.reportAtomicPaneSnapshotProgress(collector);
+          return true;
+        }
+        collector.totalLines += 1;
+        collector.totalBytes += Buffer.byteLength(line, "latin1") + 1;
+        if (collector.totalLines > collector.spec.maxCaptureLines + 64)
+          collector.failureReason ??= "capture-line-cap";
+        if (collector.totalBytes > collector.spec.maxCaptureBytes + 64 * 1024)
+          collector.failureReason ??= "capture-byte-cap";
+        const guard = parseControlLine(line, this.inReply);
+        if (guard.kind === "begin") {
+          if (guard.flags !== 0 || this.inReply) collector.failureReason ??= "sentinel-order";
+          this.inReply = true;
+          this.currentReplyNum = guard.num;
+          this.currentReplyFlags = guard.flags;
+          collector.blockOrdinal += 1;
+          collector.blockContentCount = 0;
+          return true;
+        }
+        if (guard.kind === "end" || guard.kind === "error") {
+          const guardInvalid = !this.inReply || guard.flags !== 0 || this.currentReplyFlags !== 0 || guard.num !== this.currentReplyNum;
+          if (guardInvalid) collector.failureReason ??= "sentinel-order";
+          if (guard.kind === "error") collector.failureReason ??= "sentinel-order";
+          const markerBranchOrdinal2 = 7 + collector.spec.observerCommandCount;
+          const statusOrdinal2 = 8 + collector.spec.observerCommandCount;
+          const completeOrdinal2 = 10 + collector.spec.observerCommandCount;
+          const contentRequired = /* @__PURE__ */ new Set([0, 2, 3, 4, statusOrdinal2, completeOrdinal2]);
+          const contentSilent = collector.blockOrdinal !== 1 && collector.blockOrdinal !== markerBranchOrdinal2 && !contentRequired.has(collector.blockOrdinal);
+          const markerBranchValid = collector.blockOrdinal !== markerBranchOrdinal2 || collector.blockContentCount <= 1;
+          if (contentRequired.has(collector.blockOrdinal) && collector.blockContentCount !== 1 || contentSilent && collector.blockContentCount !== 0 || !markerBranchValid)
+            collector.failureReason ??= "sentinel-order";
+          if (guard.kind === "end" && !guardInvalid && collector.spec.observerCommandCount > 0 && collector.blockOrdinal === 5 + collector.spec.observerCommandCount)
+            collector.observerEmissionObserved = true;
+          if (!guardInvalid && guard.kind === "end") {
+            collector.lastCompletedOrdinal = collector.blockOrdinal;
+            this.reportAtomicPaneSnapshotProgress(collector);
+          }
+          this.inReply = false;
+          this.currentReplyNum = null;
+          this.currentReplyFlags = null;
+          if (collector.blockOrdinal === completeOrdinal2) {
+            this.atomicCollector = null;
+            const ok2 = collector.failureReason === null && collector.cursorLine !== null && collector.statusObserved;
+            collector.spec.onSettled(
+              Object.freeze({
+                ok: ok2,
+                captureLines: Object.freeze(ok2 ? [...collector.captureLines] : []),
+                cursorLine: ok2 ? collector.cursorLine : null,
+                continueObserved: collector.continueObserved,
+                statusObserved: collector.statusObserved,
+                observerEmissionObserved: collector.observerEmissionObserved,
+                started: collector.started,
+                lastCompletedOrdinal: collector.lastCompletedOrdinal,
+                captureLineCount: collector.captureLines.length,
+                captureByteCount: collector.captureBytes,
+                failureReason: ok2 ? null : collector.failureReason ?? "sentinel-order"
+              })
+            );
+          }
+          return true;
+        }
+        if (line === `%continue ${collector.spec.runtimePaneId}` && collector.blockOrdinal === 5) {
+          if (collector.continueObserved) collector.failureReason ??= "duplicate-sentinel";
+          collector.continueObserved = true;
+          return true;
+        }
+        if (!this.inReply && (line === "%exit" || line.startsWith("%exit "))) {
+          this.retireAtomicPaneSnapshotCollector(collector.spec.nonce, "channel-exit");
+          return false;
+        }
+        if (!this.inReply) {
+          collector.failureReason ??= "unexpected-post-line";
+          return true;
+        }
+        const markerBranchOrdinal = 7 + collector.spec.observerCommandCount;
+        const statusOrdinal = 8 + collector.spec.observerCommandCount;
+        const completeOrdinal = 10 + collector.spec.observerCommandCount;
+        collector.blockContentCount += 1;
+        if (collector.blockOrdinal === 1) {
+          collector.captureBytes += Buffer.byteLength(line, "latin1") + 1;
+          if (collector.captureBytes > collector.spec.maxCaptureBytes)
+            collector.failureReason ??= "capture-byte-cap";
+          if (collector.captureLines.length >= collector.spec.maxCaptureLines)
+            collector.failureReason ??= "capture-line-cap";
+          else collector.captureLines.push(line);
+          this.reportAtomicPaneSnapshotProgress(collector);
+          return true;
+        }
+        if (collector.blockOrdinal === 3) {
+          if (collector.cursorLine !== null) collector.failureReason ??= "cursor-cardinality";
+          else if (Buffer.byteLength(line, "latin1") > collector.spec.maxCursorBytes)
+            collector.failureReason ??= "cursor-byte-cap";
+          else collector.cursorLine = line;
+          return true;
+        }
+        const markerRejected = `marker-rejected`;
+        if (collector.blockOrdinal === markerBranchOrdinal) {
+          collector.failureReason ??= token === markerRejected ? "marker-rejected" : "sentinel-order";
+          return true;
+        }
+        const expectedToken = collector.blockOrdinal === 2 ? "capture-end" : collector.blockOrdinal === 4 ? "cursor-end" : collector.blockOrdinal === statusOrdinal ? "status-ok" : collector.blockOrdinal === completeOrdinal ? "complete" : null;
+        if (expectedToken === null || token !== expectedToken)
+          collector.failureReason ??= token === "start" ? "duplicate-sentinel" : "sentinel-order";
+        if (collector.blockOrdinal === statusOrdinal && token === "status-ok") {
+          if (collector.statusObserved) collector.failureReason ??= "duplicate-sentinel";
+          collector.statusObserved = true;
+        }
+        return true;
+      }
+      reportAtomicPaneSnapshotProgress(collector) {
+        if (collector.failureReason !== null) return;
+        collector.spec.onProgress?.(
+          Object.freeze({
+            started: collector.started,
+            lastCompletedOrdinal: collector.lastCompletedOrdinal,
+            captureLineCount: Math.min(collector.captureLines.length, ATOMIC_CAPTURE_LINE_HARD_CAP),
+            captureByteCount: Math.min(collector.captureBytes, ATOMIC_CAPTURE_BYTE_HARD_CAP),
+            continueObserved: collector.continueObserved,
+            statusObserved: collector.statusObserved,
+            observerEmissionObserved: collector.observerEmissionObserved
+          })
+        );
+      }
+    };
+    DEFAULT_PAUSE_AFTER_SECONDS = 2;
+    MirrorControlChannel = class {
+      proc = null;
+      core;
+      opts;
+      exited = false;
+      atomicCollectorTimer = null;
+      constructor(opts) {
+        this.opts = opts;
+        this.core = new ControlChannelCore(
+          {
+            ...opts.handlers,
+            onExit: (reason) => this.noteExit(reason)
+          },
+          opts.nowMicros
+        );
+      }
+      start() {
+        const pauseAfter = this.opts.pauseAfterSeconds ?? DEFAULT_PAUSE_AFTER_SECONDS;
+        const args = mirrorControlAttachArgs(this.opts, pauseAfter);
+        const proc = spawn7(this.opts.executable ?? "tmux", args, {
+          stdio: ["pipe", "pipe", "pipe"],
+          env: { ...process.env, TMUX: "" }
+        });
+        this.proc = proc;
+        proc.stdin?.on("error", () => {
+        });
+        proc.stdout.on("error", () => {
+        });
+        proc.stderr?.on("error", () => {
+        });
+        proc.stdout.setEncoding("latin1");
+        proc.stdout.on("data", (chunk) => this.core.feed(chunk, this.opts.nowMicros?.()));
+        proc.on("exit", () => {
+          this.core.fail("control channel exited");
+          this.noteExit(null);
+        });
+        return new Promise((resolve38, reject) => {
+          this.core.push({ kind: "promise", resolve: () => resolve38(), reject, lines: [] });
+          proc.on("error", (err) => {
+            this.core.fail(String(err));
+            reject(err);
+          });
+        });
+      }
+      request(cmd) {
+        const proc = this.proc;
+        if (!proc?.stdin?.writable) return Promise.reject(new Error("control channel not running"));
+        return new Promise((resolve38, reject) => {
+          this.core.push({ kind: "promise", resolve: resolve38, reject, lines: [] });
+          proc.stdin.write(`${cmd}
+`);
+        });
+      }
+      commandInline(cmd, onReply) {
+        const proc = this.proc;
+        if (!proc?.stdin?.writable) {
+          onReply({ ok: false, lines: ["control channel not running"] });
+          return;
+        }
+        this.core.push({ kind: "inline", onReply, lines: [] });
+        proc.stdin.write(`${cmd}
+`);
+      }
+      commandListInline(cmd, replyCount, resultIndex, onReply) {
+        const proc = this.proc;
+        if (!proc?.stdin?.writable) {
+          onReply({ ok: false, lines: ["control channel not running"] });
+          return;
+        }
+        if (replyCount < 1 || resultIndex < 0 || resultIndex >= replyCount) {
+          onReply({ ok: false, lines: ["invalid control command-list reply selection"] });
+          return;
+        }
+        this.core.pushCommandList(replyCount, resultIndex, onReply);
+        proc.stdin.write(`${cmd}
+`);
+      }
+      armAtomicPaneSnapshotCollector(spec, timeoutMs) {
+        if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 5e3) return false;
+        const wrapped = {
+          ...spec,
+          onSettled: (result) => {
+            if (this.atomicCollectorTimer) clearTimeout(this.atomicCollectorTimer);
+            this.atomicCollectorTimer = null;
+            spec.onSettled(result);
+          }
+        };
+        if (!this.core.armAtomicPaneSnapshotCollector(wrapped)) return false;
+        this.atomicCollectorTimer = setTimeout(() => {
+          this.atomicCollectorTimer = null;
+          this.core.retireAtomicPaneSnapshotCollector(spec.nonce, "timeout");
+        }, timeoutMs);
+        this.atomicCollectorTimer.unref?.();
+        return true;
+      }
+      retireAtomicPaneSnapshotCollector(nonce, reason = "retired") {
+        if (!this.core.retireAtomicPaneSnapshotCollector(nonce, reason)) return;
+        if (this.atomicCollectorTimer) clearTimeout(this.atomicCollectorTimer);
+        this.atomicCollectorTimer = null;
+      }
+      send(cmd, onReply) {
+        const proc = this.proc;
+        if (!proc?.stdin?.writable) return;
+        this.core.push({ kind: "discard", ...onReply ? { onReply } : {} });
+        proc.stdin.write(`${cmd}
+`);
+      }
+      get inputErrorCount() {
+        return this.core.inputErrorCount;
+      }
+      get pendingCount() {
+        return this.core.pendingCount;
+      }
+      /**
+       * Detach-before-kill hygiene: resume a stalled reader (the server must be
+       * able to flush), ask tmux to detach us, and drain until the process exits;
+       * signals are a fallback, never the first move (wedged-server hazard).
+       */
+      async dispose() {
+        if (this.atomicCollectorTimer) clearTimeout(this.atomicCollectorTimer);
+        this.atomicCollectorTimer = null;
+        const proc = this.proc;
+        this.proc = null;
+        if (!proc) return;
+        try {
+          proc.stdout?.resume();
+        } catch {
+        }
+        try {
+          proc.stdin?.write("detach-client\n");
+        } catch {
+        }
+        if (await waitForExit(proc, 750)) return;
+        try {
+          proc.kill();
+        } catch {
+        }
+        if (await waitForExit(proc, 500)) return;
+        try {
+          proc.kill("SIGKILL");
+        } catch {
+        }
+        await waitForExit(proc, 250);
+      }
+      noteExit(reason) {
+        if (this.exited) return;
+        this.exited = true;
+        this.opts.handlers.onExit(reason);
+      }
+    };
+  }
+});
+
+// packages/daemon/src/terminal/protocol/chunk-bytes.ts
+function chunkByBytes(text, maxBytes) {
+  const enc = new TextEncoder();
+  const chunks = [];
+  let cur = "";
+  let curBytes = 0;
+  for (const ch of text) {
+    const b = enc.encode(ch).length;
+    if (curBytes + b > maxBytes && cur.length > 0) {
+      chunks.push(cur);
+      cur = "";
+      curBytes = 0;
+    }
+    cur += ch;
+    curBytes += b;
+  }
+  if (cur.length > 0) chunks.push(cur);
+  return chunks;
+}
+var init_chunk_bytes = __esm({
+  "packages/daemon/src/terminal/protocol/chunk-bytes.ts"() {
+    "use strict";
+  }
+});
+
+// packages/daemon/src/terminal/protocol/input-coalescer.ts
+var SEND_KEYS_CHUNK_BYTES, MAX_INPUT_TRACE_IDS, InputCoalescer;
+var init_input_coalescer = __esm({
+  "packages/daemon/src/terminal/protocol/input-coalescer.ts"() {
+    "use strict";
+    init_chunk_bytes();
+    SEND_KEYS_CHUNK_BYTES = 256;
+    MAX_INPUT_TRACE_IDS = 256;
+    InputCoalescer = class {
+      constructor(emit, schedule, maxChunkBytes = SEND_KEYS_CHUNK_BYTES) {
+        this.emit = emit;
+        this.schedule = schedule;
+        this.maxChunkBytes = maxChunkBytes;
+      }
+      pane = "";
+      buf = "";
+      scheduled = false;
+      traceIds = [];
+      /** Buffer literal text for `pane`; a pending run for ANOTHER pane flushes
+       *  first so cross-pane order is preserved. Schedules an auto-flush once per
+       *  pending run. */
+      literal(pane, text, traceId) {
+        if (!pane || !text) return;
+        if (this.buf.length > 0 && this.pane !== pane) this.flush();
+        this.pane = pane;
+        this.buf += text;
+        if (traceId && this.traceIds.length < MAX_INPUT_TRACE_IDS && !this.traceIds.includes(traceId))
+          this.traceIds.push(traceId);
+        if (!this.scheduled) {
+          this.scheduled = true;
+          this.schedule(() => {
+            this.scheduled = false;
+            this.flush();
+          });
+        }
+      }
+      /** Emit a named tmux key (Enter, C-c, Up, …) — pending literals flush first
+       *  (synchronously) so the key can never overtake buffered characters. */
+      key(pane, key, traceId) {
+        if (!pane || !key) return;
+        this.flush();
+        this.emit({ kind: "key", pane, key, ...traceId ? { traceIds: [traceId] } : {} });
+      }
+      /** Drain the pending literal run now (chunked under the byte cap). Also the
+       *  ordering barrier callers place before reply-matched structural commands. */
+      flush() {
+        if (this.buf.length === 0) return;
+        const pane = this.pane;
+        const text = this.buf;
+        const traceIds = this.traceIds;
+        this.buf = "";
+        this.traceIds = [];
+        for (const chunk of chunkByBytes(text, this.maxChunkBytes)) {
+          this.emit({
+            kind: "literal",
+            pane,
+            text: chunk,
+            ...traceIds.length > 0 ? { traceIds: [...traceIds] } : {}
+          });
+        }
+      }
+      /** Buffered-but-unflushed character count (tests/introspection only). */
+      pending() {
+        return this.buf.length;
+      }
+    };
+  }
+});
+
+// packages/daemon/src/terminal/protocol/layout-parse.ts
+function parseLayout(layout) {
+  if (!/^[0-9a-fA-F]{4},/.test(layout)) return null;
+  const s = layout.slice(5);
+  const leaves = [];
+  const root = parseCell(s, 0, leaves);
+  if (!root || root.pos !== s.length) return null;
+  return { width: root.width, height: root.height, leaves };
+}
+function parseCell(s, pos, leaves) {
+  const dims = readDims(s, pos);
+  if (!dims) return null;
+  const { width, height, left, top } = dims;
+  pos = dims.pos;
+  const ch = s[pos];
+  if (ch === ",") {
+    const id = readInt(s, pos + 1);
+    if (!id) return null;
+    leaves.push({ id: `%${id.value}`, left, top, width, height });
+    return { width, height, pos: id.pos };
+  }
+  if (ch === "{" || ch === "[") {
+    const close = ch === "{" ? "}" : "]";
+    pos++;
+    for (; ; ) {
+      const child = parseCell(s, pos, leaves);
+      if (!child) return null;
+      pos = child.pos;
+      if (s[pos] === ",") {
+        pos++;
+        continue;
+      }
+      if (s[pos] === close) return { width, height, pos: pos + 1 };
+      return null;
+    }
+  }
+  return null;
+}
+function readDims(s, pos) {
+  const w = readInt(s, pos);
+  if (!w || s[w.pos] !== "x") return null;
+  const h = readInt(s, w.pos + 1);
+  if (!h || s[h.pos] !== ",") return null;
+  const x = readInt(s, h.pos + 1);
+  if (!x || s[x.pos] !== ",") return null;
+  const y = readInt(s, x.pos + 1);
+  if (!y) return null;
+  return { width: w.value, height: h.value, left: x.value, top: y.value, pos: y.pos };
+}
+function readInt(s, pos) {
+  let end = pos;
+  while (end < s.length && s.charCodeAt(end) >= 48 && s.charCodeAt(end) <= 57) end++;
+  if (end === pos) return null;
+  return { value: Number(s.slice(pos, end)), pos: end };
+}
+function parseLayoutChange(rest) {
+  const parts = rest.trim().split(/\s+/);
+  const [windowId = "", layout = "", visible = "", flags = ""] = parts;
+  if (parts.length < 3 || !windowId.startsWith("@")) return null;
+  return { windowId, layout, visible, zoomed: flags.includes("Z") };
+}
+function parseWindowPaneChanged(rest) {
+  const [windowId = "", paneId = ""] = rest.trim().split(/\s+/);
+  if (!windowId.startsWith("@") || !paneId.startsWith("%")) return null;
+  return { windowId, paneId };
+}
+function parseSessionWindowChanged(rest) {
+  const [, windowId = ""] = rest.trim().split(/\s+/);
+  if (!windowId.startsWith("@")) return null;
+  return { windowId };
+}
+var init_layout_parse = __esm({
+  "packages/daemon/src/terminal/protocol/layout-parse.ts"() {
+    "use strict";
+  }
+});
+
+// packages/daemon/src/terminal/protocol/session-descriptor-discovery.ts
+function decodeTmuxArgument(value) {
+  const encoded = value.length >= 2 && (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'")) ? value.slice(1, -1) : value;
+  let decoded = "";
+  for (let index = 0; index < encoded.length; index += 1) {
+    const current = encoded[index];
+    if (current !== "\\" || index + 1 >= encoded.length) {
+      decoded += current;
+      continue;
+    }
+    const escaped = encoded[++index];
+    if (escaped === "e") decoded += "\x1B";
+    else if (escaped === "n") decoded += "\n";
+    else if (escaped === "r") decoded += "\r";
+    else if (escaped === "t") decoded += "	";
+    else if (/[0-7]/u.test(escaped)) {
+      let octal = escaped;
+      while (octal.length < 3 && /[0-7]/u.test(encoded[index + 1] ?? "")) {
+        octal += encoded[++index];
+      }
+      decoded += String.fromCodePoint(Number.parseInt(octal, 8));
+    } else if (escaped === "u") {
+      const remaining = encoded.slice(index + 1);
+      const unicode = remaining.match(/^(?:[0-9A-Fa-f]{8}|[0-9A-Fa-f]{4})/u)?.[0];
+      if (unicode) {
+        decoded += String.fromCodePoint(Number.parseInt(unicode, 16));
+        index += unicode.length;
+      } else {
+        decoded += "u";
+      }
+    } else {
+      decoded += escaped;
+    }
+  }
+  return decoded;
+}
+function parseSessionPaneDescriptorReply(lines) {
+  const descriptors = [];
+  let malformedUtf8Records = 0;
+  if (lines.length > 4096 || lines.reduce((bytes, line) => bytes + Buffer.byteLength(line, "latin1") + 1, 0) > 128 * 1024) {
+    return { descriptors, malformedUtf8Records };
+  }
+  for (const line of lines) {
+    const utf8Line = decodeControlReplyUtf8(line);
+    if (utf8Line === null) {
+      malformedUtf8Records += 1;
+      continue;
+    }
+    const encoded = utf8Line.split("	");
+    if (encoded.length !== 20) continue;
+    const [
+      runtimePaneId = "",
+      semanticPaneId3 = "",
+      role = "",
+      type = "",
+      currentCommand = "",
+      cwd = "",
+      windowIndexRaw = "",
+      windowName = "",
+      windowId = "",
+      title = "",
+      runtimeSessionId = "",
+      paneIndexRaw = "",
+      name = "",
+      missionStamp = "",
+      paneActiveRaw = "",
+      windowActiveRaw = "",
+      semanticWindowId = "",
+      sessionName = "",
+      windowPaneCountRaw = "",
+      sessionWindowCountRaw = ""
+    ] = encoded.map(decodeTmuxArgument);
+    if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtimePaneId) || runtimePaneId.length > 32) continue;
+    if (!/^\$(?:0|[1-9][0-9]*)$/u.test(runtimeSessionId) || runtimeSessionId.length > 32) continue;
+    const parsedWindowIndex = Number(windowIndexRaw);
+    const windowIndex = Number.isSafeInteger(parsedWindowIndex) && parsedWindowIndex >= 0 ? parsedWindowIndex : null;
+    const paneIndex = Number(paneIndexRaw);
+    const windowPaneCount = Number(windowPaneCountRaw);
+    const sessionWindowCount = Number(sessionWindowCountRaw);
+    if (!/^(?:0|[1-9][0-9]*)$/u.test(paneIndexRaw) || !Number.isSafeInteger(paneIndex)) continue;
+    if (!/^[1-9][0-9]*$/u.test(windowPaneCountRaw) || !Number.isSafeInteger(windowPaneCount) || !/^[1-9][0-9]*$/u.test(sessionWindowCountRaw) || !Number.isSafeInteger(sessionWindowCount) || windowPaneCount < 1 || sessionWindowCount < 1)
+      continue;
+    if (!["0", "1"].includes(paneActiveRaw) || !["0", "1"].includes(windowActiveRaw)) continue;
+    const bounded2 = (value, maximum) => value.length <= maximum && !/[\0\r\n\t]/u.test(value);
+    if (!bounded2(semanticPaneId3, 256) || !bounded2(role, 256) || !bounded2(type, 256) || !bounded2(currentCommand, 512) || !bounded2(cwd, 4096) || !bounded2(title, 1024) || !bounded2(windowName, 1024) || !bounded2(name, 256) || !bounded2(missionStamp, 256) || !bounded2(semanticWindowId, 256) || !bounded2(sessionName, 160) || sessionName.length === 0 || windowId.length > 32) {
+      continue;
+    }
+    descriptors.push({
+      sessionName,
+      runtimePaneId,
+      runtimeSessionId,
+      semanticPaneId: nonempty(semanticPaneId3),
+      role: nonempty(role),
+      type: nonempty(type),
+      currentCommand: nonempty(currentCommand),
+      cwd: nonempty(cwd),
+      title: nonempty(title),
+      windowIndex,
+      windowName: nonempty(windowName),
+      windowId: /^@(?:0|[1-9][0-9]*)$/u.test(windowId) ? windowId : null,
+      semanticWindowId: nonempty(semanticWindowId),
+      paneIndex,
+      name: nonempty(name),
+      missionStamp: nonempty(missionStamp),
+      paneActive: paneActiveRaw === "1",
+      windowActive: windowActiveRaw === "1",
+      windowPaneCount,
+      sessionWindowCount
+    });
+  }
+  return { descriptors, malformedUtf8Records };
+}
+function nonempty(value) {
+  return value.length > 0 ? value : null;
+}
+function decodeControlReplyUtf8(value) {
+  try {
+    return STRICT_UTF8_DECODER.decode(Buffer.from(value, "latin1"));
+  } catch {
+    return null;
+  }
+}
+function positiveInteger3(value, fallback) {
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+var SESSION_PANE_DESCRIPTOR_FORMAT, SessionDescriptorDiscovery, STRICT_UTF8_DECODER;
+var init_session_descriptor_discovery = __esm({
+  "packages/daemon/src/terminal/protocol/session-descriptor-discovery.ts"() {
+    "use strict";
+    SESSION_PANE_DESCRIPTOR_FORMAT = [
+      "#{pane_id}",
+      "#{qa:@tmux_ide_pane_id}",
+      "#{qa:@ide_role}",
+      "#{qa:@ide_type}",
+      "#{qa:pane_current_command}",
+      "#{qa:pane_current_path}",
+      "#{window_index}",
+      "#{qa:window_name}",
+      "#{window_id}",
+      "#{qa:pane_title}",
+      "#{session_id}",
+      "#{pane_index}",
+      "#{qa:@ide_name}",
+      "#{qa:@tmux_ide_mission}",
+      "#{pane_active}",
+      "#{?window_active,1,0}",
+      "#{qa:@tmux_ide_window_id}",
+      "#{qa:session_name}",
+      "#{window_panes}",
+      "#{session_windows}"
+    ].join("	");
+    SessionDescriptorDiscovery = class {
+      options;
+      epoch = 0;
+      cancelScheduled = null;
+      disposed = false;
+      constructor(options) {
+        this.options = {
+          ...options,
+          maxAttempts: positiveInteger3(options.maxAttempts, 3),
+          baseDelayMs: positiveInteger3(options.baseDelayMs, 50),
+          schedule: options.schedule ?? ((callback, delayMs) => {
+            const timer = setTimeout(callback, delayMs);
+            return () => clearTimeout(timer);
+          })
+        };
+      }
+      discover(listedRuntimePaneIds) {
+        if (this.disposed) return;
+        this.invalidatePending();
+        const epoch = this.epoch;
+        this.attempt(epoch, new Set(listedRuntimePaneIds), 1);
+      }
+      invalidate() {
+        if (this.disposed) return;
+        this.invalidatePending();
+        this.options.onStatus?.(null);
+      }
+      dispose() {
+        if (this.disposed) return;
+        this.invalidatePending();
+        this.disposed = true;
+      }
+      invalidatePending() {
+        this.epoch += 1;
+        this.cancelScheduled?.();
+        this.cancelScheduled = null;
+      }
+      attempt(epoch, listed, attempt) {
+        void this.options.query().then((lines) => {
+          if (!this.isCurrent(epoch)) return;
+          const parsed = parseSessionPaneDescriptorReply(lines);
+          const descriptorByRuntimePane = new Map(
+            parsed.descriptors.filter((descriptor2) => listed.has(descriptor2.runtimePaneId)).map((descriptor2) => [descriptor2.runtimePaneId, descriptor2])
+          );
+          const descriptors = [...descriptorByRuntimePane.values()];
+          if (listed.size > 0 && descriptors.length === 0) {
+            const malformedDetail = parsed.malformedUtf8Records > 0 ? `; ${parsed.malformedUtf8Records} malformed UTF-8 record${parsed.malformedUtf8Records === 1 ? " was" : "s were"} omitted` : "";
+            throw new Error(
+              `descriptor reply covered 0 of ${listed.size} live panes${malformedDetail}`
+            );
+          }
+          if (descriptors.length !== listed.size || parsed.malformedUtf8Records > 0) {
+            const malformedDetail = parsed.malformedUtf8Records > 0 ? `; omitted ${parsed.malformedUtf8Records} malformed UTF-8 record${parsed.malformedUtf8Records === 1 ? "" : "s"}` : "";
+            this.options.onStatus?.({
+              status: "partial",
+              degraded: true,
+              attempt,
+              maxAttempts: this.options.maxAttempts,
+              retryInMs: null,
+              message: `Pane descriptor discovery published ${descriptors.length} of ${listed.size} live panes${malformedDetail}.`
+            });
+          } else {
+            this.options.onStatus?.(null);
+          }
+          this.options.onDescriptors(descriptors, listed);
+        }).catch((cause) => {
+          if (!this.isCurrent(epoch)) return;
+          const detail = cause instanceof Error ? cause.message : String(cause);
+          if (attempt >= this.options.maxAttempts) {
+            this.options.onStatus?.({
+              status: "failed",
+              degraded: true,
+              attempt,
+              maxAttempts: this.options.maxAttempts,
+              retryInMs: null,
+              message: `Pane descriptor discovery failed after ${attempt} attempts: ${detail}`
+            });
+            return;
+          }
+          const retryInMs = this.options.baseDelayMs * 2 ** (attempt - 1);
+          this.options.onStatus?.({
+            status: "retrying",
+            degraded: true,
+            attempt,
+            maxAttempts: this.options.maxAttempts,
+            retryInMs,
+            message: `Pane descriptor discovery attempt ${attempt} failed: ${detail}`
+          });
+          this.cancelScheduled = this.options.schedule(() => {
+            this.cancelScheduled = null;
+            if (this.isCurrent(epoch)) this.attempt(epoch, listed, attempt + 1);
+          }, retryInMs);
+        });
+      }
+      isCurrent(epoch) {
+        return !this.disposed && epoch === this.epoch;
+      }
+    };
+    STRICT_UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
+  }
+});
+
+// packages/daemon/src/terminal/protocol/workspace-tmux-adapter.ts
+function planWorkspaceTmuxReconciliation(input) {
+  const diagnostics = [];
+  const panes = [];
+  const runtimeIds = /* @__PURE__ */ new Set();
+  for (const pane of input.panes) {
+    if (!RUNTIME_PANE_ID.test(pane.runtimePaneId)) {
+      diagnostics.push(
+        diagnostic3(
+          "INVALID_RUNTIME_PANE",
+          null,
+          pane.semanticPaneId,
+          `Ignored invalid live tmux pane address ${JSON.stringify(pane.runtimePaneId)}.`,
+          true
+        )
+      );
+      continue;
+    }
+    if (runtimeIds.has(pane.runtimePaneId)) {
+      diagnostics.push(
+        diagnostic3(
+          "DUPLICATE_RUNTIME_PANE",
+          pane.runtimePaneId,
+          pane.semanticPaneId,
+          `Ignored duplicate live tmux pane address ${pane.runtimePaneId}.`,
+          true
+        )
+      );
+      continue;
+    }
+    runtimeIds.add(pane.runtimePaneId);
+    panes.push(pane);
+  }
+  const validStampCounts = /* @__PURE__ */ new Map();
+  for (const pane of panes) {
+    if (!validSemanticPaneId(pane.semanticPaneId)) continue;
+    validStampCounts.set(pane.semanticPaneId, (validStampCounts.get(pane.semanticPaneId) ?? 0) + 1);
+  }
+  const claimedSemanticIds = new Set(validStampCounts.keys());
+  const priorByRuntime = previousBindingsByRuntime(input.previousBindings);
+  const reconciled = [];
+  const stampEffects = [];
+  const maxAttempts = normalizeAttempts(input.maxGenerationAttempts);
+  for (const pane of panes) {
+    const rawStamp = pane.semanticPaneId;
+    const stampIsValid = validSemanticPaneId(rawStamp);
+    const stampIsUnique = stampIsValid && validStampCounts.get(rawStamp) === 1;
+    const priorSemanticId = priorByRuntime.get(pane.runtimePaneId) ?? null;
+    if (priorSemanticId && priorSemanticId !== (stampIsUnique ? rawStamp : null)) {
+      diagnostics.push(
+        diagnostic3(
+          "STALE_RUNTIME_BINDING_IGNORED",
+          pane.runtimePaneId,
+          priorSemanticId,
+          `Ignored persisted binding ${priorSemanticId} -> ${pane.runtimePaneId}; runtime pane ids are reusable addresses, not identity.`,
+          false
+        )
+      );
+    }
+    if (stampIsUnique) {
+      reconciled.push({
+        ...pane,
+        semanticPaneId: rawStamp,
+        identitySource: "stamp",
+        requiresStampBack: false
+      });
+      continue;
+    }
+    if (rawStamp === null || rawStamp.length === 0) {
+      diagnostics.push(
+        diagnostic3(
+          "MISSING_SEMANTIC_STAMP",
+          pane.runtimePaneId,
+          null,
+          `Pane ${pane.runtimePaneId} has no semantic identity stamp; a fresh id will be stamped back.`,
+          false
+        )
+      );
+    } else if (!stampIsValid) {
+      diagnostics.push(
+        diagnostic3(
+          "INVALID_SEMANTIC_STAMP",
+          pane.runtimePaneId,
+          rawStamp,
+          `Pane ${pane.runtimePaneId} has an invalid semantic identity stamp; a fresh id will be stamped back.`,
+          false
+        )
+      );
+    } else {
+      diagnostics.push(
+        diagnostic3(
+          "DUPLICATE_SEMANTIC_STAMP",
+          pane.runtimePaneId,
+          rawStamp,
+          `Pane ${pane.runtimePaneId} shares semantic identity ${rawStamp}; every duplicate will be restamped.`,
+          false
+        )
+      );
+    }
+    const generated = generateUnclaimedSemanticPaneId(
+      input.generateSemanticPaneId,
+      claimedSemanticIds,
+      maxAttempts
+    );
+    if (!generated) {
+      diagnostics.push(
+        diagnostic3(
+          "SEMANTIC_ID_GENERATION_FAILED",
+          pane.runtimePaneId,
+          rawStamp,
+          `Could not generate a valid unique semantic identity for ${pane.runtimePaneId}.`,
+          true
+        )
+      );
+      continue;
+    }
+    claimedSemanticIds.add(generated);
+    reconciled.push({
+      ...pane,
+      semanticPaneId: generated,
+      identitySource: "generated",
+      requiresStampBack: true
+    });
+    stampEffects.push({
+      kind: "set-pane-option",
+      runtimePaneId: pane.runtimePaneId,
+      option: WORKSPACE_SEMANTIC_PANE_OPTION,
+      value: generated
+    });
+  }
+  return {
+    panes: reconciled,
+    stampEffects,
+    diagnostics,
+    degraded: diagnostics.some((item) => item.degraded)
+  };
+}
+function finalizeWorkspaceTmuxReconciliation(plan, outcomes) {
+  const byRuntime = new Map(outcomes.map((outcome) => [outcome.runtimePaneId, outcome]));
+  const diagnostics = [...plan.diagnostics];
+  const panes = [];
+  for (const pane of plan.panes) {
+    if (!pane.requiresStampBack) {
+      panes.push(pane);
+      continue;
+    }
+    const outcome = byRuntime.get(pane.runtimePaneId);
+    if (outcome?.ok) {
+      panes.push(pane);
+      continue;
+    }
+    const reason = outcome?.error?.trim();
+    diagnostics.push(
+      diagnostic3(
+        "SEMANTIC_STAMP_BACK_FAILED",
+        pane.runtimePaneId,
+        pane.semanticPaneId,
+        `Could not stamp semantic identity ${pane.semanticPaneId} onto ${pane.runtimePaneId}${reason ? `: ${reason}` : "."}`,
+        true
+      )
+    );
+  }
+  return {
+    panes,
+    diagnostics,
+    degraded: diagnostics.some((item) => item.degraded)
+  };
+}
+function validSemanticPaneId(value) {
+  return value !== null && WorkspaceIdSchemaZ.safeParse(value).success;
+}
+function normalizeAttempts(value) {
+  return Number.isSafeInteger(value) && value > 0 ? value : DEFAULT_GENERATION_ATTEMPTS;
+}
+function generateUnclaimedSemanticPaneId(generate, claimed, maxAttempts) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const candidate = generate();
+    if (validSemanticPaneId(candidate) && !claimed.has(candidate)) return candidate;
+  }
+  return null;
+}
+function previousBindingsByRuntime(bindings) {
+  const byRuntime = /* @__PURE__ */ new Map();
+  for (const binding of Object.values(bindings ?? {})) {
+    if (RUNTIME_PANE_ID.test(binding.runtimePaneId)) {
+      byRuntime.set(binding.runtimePaneId, binding.semanticPaneId);
+    }
+  }
+  return byRuntime;
+}
+function diagnostic3(code, runtimePaneId, semanticPaneId3, message, degraded) {
+  return { code, runtimePaneId, semanticPaneId: semanticPaneId3, message, degraded };
+}
+var RUNTIME_PANE_ID, DEFAULT_GENERATION_ATTEMPTS;
+var init_workspace_tmux_adapter = __esm({
+  "packages/daemon/src/terminal/protocol/workspace-tmux-adapter.ts"() {
+    "use strict";
+    init_src();
+    RUNTIME_PANE_ID = /^%[0-9]+$/u;
+    DEFAULT_GENERATION_ATTEMPTS = 32;
+  }
+});
+
+// packages/daemon/src/terminal/mirror/flow-ledger.ts
+var FlowLedger;
+var init_flow_ledger = __esm({
+  "packages/daemon/src/terminal/mirror/flow-ledger.ts"() {
+    "use strict";
+    FlowLedger = class {
+      /** Panes tmux told us it paused (`%pause`). */
+      backpressured = /* @__PURE__ */ new Set();
+      /** Panes WE asked tmux to pause (every subscriber frozen). */
+      requested = /* @__PURE__ */ new Set();
+      notePause(pane) {
+        this.backpressured.add(pane);
+      }
+      /** A continue was issued (or tmux reported `%continue`). */
+      noteContinued(pane) {
+        this.backpressured.delete(pane);
+      }
+      requestPause(pane) {
+        this.requested.add(pane);
+      }
+      clearRequest(pane) {
+        this.requested.delete(pane);
+      }
+      forget(pane) {
+        this.backpressured.delete(pane);
+        this.requested.delete(pane);
+      }
+      isBackpressured(pane) {
+        return this.backpressured.has(pane);
+      }
+      isRequested(pane) {
+        return this.requested.has(pane);
+      }
+      /** Every pane a sticky recovery must continue+reseed: backpressure-paused
+       *  and not deliberately frozen by its subscribers. */
+      stickyRecoverySet() {
+        return [...this.backpressured].filter((pane) => !this.requested.has(pane));
+      }
+      /** Detached snapshot for telemetry/tests. */
+      snapshot() {
+        return { backpressured: [...this.backpressured], requested: [...this.requested] };
+      }
+    };
+  }
+});
+
+// packages/daemon/src/terminal/mirror/pane-feed.ts
+function parseCursorProbe(line) {
+  const [x, y, cols, rows] = line.trim().split(/\s+/).map(Number);
+  if (![x, y, cols, rows].every((n10) => Number.isInteger(n10) && n10 !== void 0 && n10 >= 0) || !cols || !rows) {
+    return null;
+  }
+  return { x, y, cols, rows };
+}
+function seedBytesFromCapture(lines) {
+  return Buffer.from(lines.join("\r\n"), "latin1");
+}
+var PaneFeed;
+var init_pane_feed = __esm({
+  "packages/daemon/src/terminal/mirror/pane-feed.ts"() {
+    "use strict";
+    PaneFeed = class _PaneFeed {
+      static MAX_HELD_CHUNKS = 512;
+      static MAX_HELD_BYTES = 1024 * 1024;
+      state = "live";
+      epoch = 0;
+      seedLines = null;
+      held = [];
+      heldBytes = 0;
+      overflowed = false;
+      currentState() {
+        return this.state;
+      }
+      /** Arm a reseed. Returns the epoch token the two reply hooks must present;
+       *  an in-flight older reseed is invalidated wholesale. */
+      beginReseed() {
+        this.epoch += 1;
+        this.state = "awaiting-capture";
+        this.seedLines = null;
+        this.held = [];
+        this.heldBytes = 0;
+        this.overflowed = false;
+        return this.epoch;
+      }
+      /** Route one live output delta. Discarded while a capture is pending (the
+       *  bytes are in the capture), held while the cursor probe is pending, and a
+       *  plain delta event otherwise. */
+      delta(data) {
+        if (this.state === "live") return [{ type: "delta", data }];
+        if (this.state === "quarantined") return [];
+        if (this.state === "awaiting-cursor") {
+          if (this.held.length >= _PaneFeed.MAX_HELD_CHUNKS || this.heldBytes + data.byteLength > _PaneFeed.MAX_HELD_BYTES) {
+            this.state = "quarantined";
+            this.seedLines = null;
+            this.held = [];
+            this.heldBytes = 0;
+            this.overflowed = true;
+            return [];
+          }
+          this.held.push(data);
+          this.heldBytes += data.byteLength;
+        }
+        return [];
+      }
+      takeOverflowed() {
+        const overflowed = this.overflowed;
+        this.overflowed = false;
+        return overflowed;
+      }
+      /** The capture reply landed (synchronously, in channel read order). */
+      captureReply(epoch, lines) {
+        if (epoch !== this.epoch || this.state !== "awaiting-capture") return;
+        this.seedLines = lines;
+        this.state = "awaiting-cursor";
+      }
+      /**
+       * The cursor/size probe reply landed — emit the atomic seed batch:
+       * `reset, seed, …held deltas, cursor`. On a malformed probe line the batch
+       * degrades honestly: with `fallbackSize` known the reset still happens (no
+       * cursor event); with nothing to size the emulator by, only seed + held
+       * deltas flow (the consumer keeps its previous grid).
+       */
+      cursorReply(epoch, line, fallbackSize = null) {
+        if (epoch !== this.epoch || this.state !== "awaiting-cursor") return [];
+        const seed = seedBytesFromCapture(this.seedLines ?? []);
+        const held = this.held;
+        this.state = "live";
+        this.seedLines = null;
+        this.held = [];
+        this.heldBytes = 0;
+        const probe = parseCursorProbe(line);
+        const events = [];
+        if (probe) events.push({ type: "reset", cols: probe.cols, rows: probe.rows });
+        else if (fallbackSize) {
+          events.push({ type: "reset", cols: fallbackSize.cols, rows: fallbackSize.rows });
+        }
+        events.push({ type: "seed", data: seed });
+        for (const data of held) events.push({ type: "delta", data });
+        if (probe) events.push({ type: "cursor", x: probe.x, y: probe.y });
+        return events;
+      }
+      /** A probe errored (pane raced away, channel died). Quarantine subsequent
+       *  deltas until a new authoritative seed succeeds or the owner retires it. */
+      abort(epoch) {
+        if (epoch !== this.epoch || this.state === "live") return;
+        this.state = "quarantined";
+        this.seedLines = null;
+        this.held = [];
+        this.heldBytes = 0;
+        this.overflowed = false;
+      }
+      abortCurrent() {
+        this.epoch += 1;
+        this.state = "quarantined";
+        this.seedLines = null;
+        this.held = [];
+        this.heldBytes = 0;
+        this.overflowed = false;
+      }
+      /** Keep a completed authoritative snapshot as the recovery candidate while
+       * dropping later raw deltas until the owner proves convergence. */
+      quarantine(epoch) {
+        if (epoch !== this.epoch || this.state !== "live") return;
+        this.state = "quarantined";
+      }
+      /** Recovery owner only: the published candidate has passed its independent
+       * confirmation proof, so subsequent deltas may flow again. */
+      releaseQuarantine() {
+        if (this.state === "quarantined") this.state = "live";
+      }
+    };
+  }
+});
+
+// packages/daemon/src/terminal/mirror/session-channel.ts
+import { createHash as createHash11, randomBytes as randomBytes4 } from "node:crypto";
+function snapshotFingerprint2(captureLines, cursorLine, fallbackSize) {
+  const hash = createHash11("sha256");
+  const append = (bytes) => {
+    const length = Buffer.allocUnsafe(4);
+    length.writeUInt32BE(bytes.byteLength);
+    hash.update(length);
+    hash.update(bytes);
+  };
+  hash.update("tmux-ide/recovery-snapshot/v1\0");
+  const count = Buffer.allocUnsafe(4);
+  count.writeUInt32BE(captureLines.length);
+  hash.update(count);
+  for (const line of captureLines) append(Buffer.from(line, "latin1"));
+  append(Buffer.from(cursorLine, "utf8"));
+  append(
+    Buffer.from(
+      fallbackSize ? `${fallbackSize.cols}x${fallbackSize.rows}` : "no-layout-fallback",
+      "ascii"
+    )
+  );
+  return hash.digest("hex");
+}
+function tmuxSingleQuote(value) {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+function defaultMirrorPaneId() {
+  return `pane.mirror.${randomBytes4(8).toString("hex")}`;
+}
+function defaultMirrorWindowId() {
+  return `window.mirror.${randomBytes4(8).toString("hex")}`;
+}
+var STRUCTURAL_NOTIFICATIONS, NATIVE_CLIENT_NOTIFICATIONS, NATIVE_CLIENT_SUBSCRIPTION, DEFAULT_HISTORY_LINES, SYNC_DEBOUNCE_MS, RECOVERY_QUIET_MS, RECOVERY_COMMAND_DEADLINE_MS, RECOVERY_NO_PROGRESS_DEADLINE_MS, RECOVERY_ABSOLUTE_DEADLINE_MS, RECOVERY_MAX_ATTEMPTS, RECOVERY_CAPTURE_MAX_BYTES, RECOVERY_CAPTURE_MAX_LINES, RECOVERY_CURSOR_MAX_BYTES, MAX_CONTINUE_NOTIFICATION_QUEUE, MAX_CONTINUE_NOTIFICATION_DEBT, RECOVERY_CURSOR_PROBE_FORMAT, FAILED_RESEED_RESULT, SessionChannel;
+var init_session_channel = __esm({
+  "packages/daemon/src/terminal/mirror/session-channel.ts"() {
+    "use strict";
+    init_src();
+    init_control2();
+    init_input_coalescer();
+    init_layout_parse();
+    init_session_descriptor_discovery();
+    init_workspace_tmux_adapter();
+    init_flow_ledger();
+    init_pane_feed();
+    init_tmux_interaction_options();
+    STRUCTURAL_NOTIFICATIONS = /* @__PURE__ */ new Set([
+      "window-add",
+      "window-close",
+      "window-renamed",
+      "unlinked-window-close"
+    ]);
+    NATIVE_CLIENT_NOTIFICATIONS = /* @__PURE__ */ new Set([
+      "client-attached",
+      "client-detached",
+      "client-resized",
+      "client-session-changed",
+      "subscription-changed"
+    ]);
+    NATIVE_CLIENT_SUBSCRIPTION = "tmux-ide-native-clients";
+    DEFAULT_HISTORY_LINES = 2e3;
+    SYNC_DEBOUNCE_MS = 40;
+    RECOVERY_QUIET_MS = 40;
+    RECOVERY_COMMAND_DEADLINE_MS = 500;
+    RECOVERY_NO_PROGRESS_DEADLINE_MS = 3e3;
+    RECOVERY_ABSOLUTE_DEADLINE_MS = 5e3;
+    RECOVERY_MAX_ATTEMPTS = 4;
+    RECOVERY_CAPTURE_MAX_BYTES = 16 * 1024 * 1024;
+    RECOVERY_CAPTURE_MAX_LINES = 8192;
+    RECOVERY_CURSOR_MAX_BYTES = 1024;
+    MAX_CONTINUE_NOTIFICATION_QUEUE = 32;
+    MAX_CONTINUE_NOTIFICATION_DEBT = 65536;
+    RECOVERY_CURSOR_PROBE_FORMAT = [
+      "#{cursor_x}",
+      "#{cursor_y}",
+      "#{pane_width}",
+      "#{pane_height}",
+      "#{alternate_on}",
+      "#{cursor_flag}",
+      "#{insert_flag}",
+      "#{keypad_cursor_flag}",
+      "#{keypad_flag}",
+      "#{mouse_any_flag}",
+      "#{mouse_button_flag}",
+      "#{mouse_standard_flag}",
+      "#{origin_flag}",
+      "#{wrap_flag}"
+    ].join(" ");
+    FAILED_RESEED_RESULT = Object.freeze({
+      ok: false,
+      fingerprint: null,
+      publish: () => false,
+      hold: () => {
+      }
+    });
+    SessionChannel = class {
+      opts;
+      io;
+      ledger = new FlowLedger();
+      discovery;
+      panesByRuntime = /* @__PURE__ */ new Map();
+      panesBySemantic = /* @__PURE__ */ new Map();
+      windowsByRuntime = /* @__PURE__ */ new Map();
+      layoutByWindow = /* @__PURE__ */ new Map();
+      activePaneByWindow = /* @__PURE__ */ new Map();
+      layoutSubscribers = /* @__PURE__ */ new Set();
+      layoutAuthoritySubscribers = /* @__PURE__ */ new Set();
+      layoutTopologyEpoch = 0;
+      truthActive = /* @__PURE__ */ new Map();
+      truthWindow = /* @__PURE__ */ new Map();
+      currentWindow = "";
+      diagnostics = [];
+      degraded = false;
+      ageByRuntime = /* @__PURE__ */ new Map();
+      maxAgeMs = 0;
+      geometryParticipating = false;
+      cancelSync = null;
+      disposed = false;
+      nativeClientProbePending = false;
+      windowAuthorityOrdinal = 0;
+      paneIncarnation = 0;
+      recoveryOrdinal = 0;
+      outputOrdinals = /* @__PURE__ */ new Map();
+      recoveries = /* @__PURE__ */ new Map();
+      continueNotificationQueues = /* @__PURE__ */ new Map();
+      trustedInventoryFlight = null;
+      trustedInventoryFlightSessionId = null;
+      attachedIdentity = null;
+      /** Settles once the FIRST identity join lands (or is proven impossible), so
+       *  `start()` returns a channel whose semantic ids are subscribable. */
+      resolveFirstJoin = null;
+      firstJoin = new Promise((resolve38) => {
+        this.resolveFirstJoin = resolve38;
+      });
+      input = new InputCoalescer(
+        (action) => {
+          const startedAtMicros = action.traceIds?.length ? Math.floor(performance.now() * 1e3) : 0;
+          const pendingBeforeSend = action.traceIds?.length ? this.io.pendingCount ?? 0 : 0;
+          const onReply = action.traceIds?.length ? (reply) => this.opts.onInputAccepted?.(action, Math.floor(performance.now() * 1e3), reply.ok) : void 0;
+          if (action.kind === "literal") {
+            this.io.send(
+              `send-keys -t ${action.pane} -H ${textToHexKeys(action.text).join(" ")}`,
+              onReply
+            );
+          } else {
+            this.io.send(`send-keys -t ${action.pane} ${action.key}`, onReply);
+          }
+          if (action.traceIds?.length)
+            this.opts.onInputWrite?.(
+              action,
+              startedAtMicros,
+              Math.floor(performance.now() * 1e3),
+              pendingBeforeSend
+            );
+        },
+        (flush) => queueMicrotask(flush)
+      );
+      constructor(opts) {
+        this.opts = opts;
+        this.io = opts.createIo({
+          onOutput: (pane, data, ageMs, timing) => this.onOutput(pane, data, ageMs, timing),
+          onNotify: (name, rest) => this.onNotify(name, rest),
+          onExit: () => this.onChannelExit()
+        });
+        this.discovery = new SessionDescriptorDiscovery({
+          query: () => this.io.request(
+            `list-panes -s -t "${this.opts.session}" -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`
+          ),
+          onDescriptors: (descriptors, listed) => {
+            void this.reconcileIdentity(descriptors, listed).catch(() => {
+            });
+          },
+          onStatus: (status2) => {
+            if (status2) {
+              this.pushDiagnostic({
+                code: `DESCRIPTOR_${status2.status.toUpperCase()}`,
+                message: status2.message,
+                degraded: status2.degraded
+              });
+              if (status2.status === "failed") this.settleFirstJoin();
+            }
+          }
+        });
+      }
+      async start() {
+        await this.io.start();
+        await this.captureAttachedSessionIdentity();
+        if (this.opts.onNativeClientActivity) {
+          this.io.send(`refresh-client -B '${NATIVE_CLIENT_SUBSCRIPTION}::#{session_attached}'`);
+        }
+        await this.syncNow();
+        await this.firstJoin;
+      }
+      // ── Public surface (semantic ids only) ──────────────────────────────────
+      describe() {
+        const panes = [...this.panesBySemantic.values()].map((pane) => ({
+          semanticPaneId: pane.semanticId,
+          semanticWindowId: pane.windowRuntimeId ? this.windowsByRuntime.get(pane.windowRuntimeId)?.semanticId ?? null : null,
+          role: pane.descriptor?.role ?? null,
+          paneType: pane.descriptor?.type ?? null,
+          currentCommand: pane.descriptor?.currentCommand ?? null,
+          cwd: pane.descriptor?.cwd ?? null,
+          title: pane.descriptor?.title ?? null,
+          windowName: pane.descriptor?.windowName ?? null,
+          active: pane.active
+        }));
+        return {
+          session: this.opts.session,
+          panes,
+          diagnostics: [...this.diagnostics],
+          degraded: this.degraded
+        };
+      }
+      /**
+       * Strict daemon-internal inventory from this channel's current tmux truth.
+       * Unlike the background discovery path, this query awaits descriptor
+       * reconciliation before projecting and rejects incomplete identity rather
+       * than returning the previous descriptor snapshot.
+       */
+      describeTrustedInventory(expectedRuntimeSessionId) {
+        if (this.disposed) {
+          return Promise.reject(new Error(`mirror session ${this.opts.session} is disposed`));
+        }
+        if (this.trustedInventoryFlight) {
+          return this.trustedInventoryFlightSessionId === expectedRuntimeSessionId ? this.trustedInventoryFlight : Promise.reject(new Error(`trusted inventory identity changed for ${this.opts.session}`));
+        }
+        const flight = this.refreshTrustedInventory(expectedRuntimeSessionId).finally(() => {
+          if (this.trustedInventoryFlight === flight) {
+            this.trustedInventoryFlight = null;
+            this.trustedInventoryFlightSessionId = null;
+          }
+        });
+        this.trustedInventoryFlight = flight;
+        this.trustedInventoryFlightSessionId = expectedRuntimeSessionId;
+        return flight;
+      }
+      /** Read-only proof of the session this control client is actually attached to. */
+      async attachedSessionIdentity() {
+        if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
+        if (!this.attachedIdentity)
+          throw new Error(`mirror session ${this.opts.session} identity is absent`);
+        return this.attachedIdentity;
+      }
+      async captureAttachedSessionIdentity() {
+        const lines = await this.io.request(`display-message -p "#{qa:session_name}	#{session_id}"`);
+        if (lines.length !== 1)
+          throw new Error(`mirror session ${this.opts.session} identity is absent`);
+        const decodedLine = decodeControlReplyUtf8(lines[0]);
+        if (decodedLine === null)
+          throw new Error(`mirror session ${this.opts.session} identity is malformed`);
+        const [encodedName = "", runtimeSessionId = ""] = decodedLine.split("	");
+        const sessionName = decodeTmuxArgument(encodedName);
+        if (sessionName.length === 0 || sessionName.length > 160 || !/^\$(?:0|[1-9][0-9]*)$/u.test(runtimeSessionId) || runtimeSessionId.length > 32) {
+          throw new Error(`mirror session ${this.opts.session} identity is malformed`);
+        }
+        this.attachedIdentity = Object.freeze({ sessionName, runtimeSessionId });
+      }
+      subscribePane(semanticPaneId3, onEvent, onLayout) {
+        const pane = this.panesBySemantic.get(semanticPaneId3);
+        if (!pane) {
+          throw new Error(`unknown semantic pane ${semanticPaneId3} in session ${this.opts.session}`);
+        }
+        const sub = {
+          feed: new PaneFeed(),
+          onEvent,
+          onLayout: onLayout ?? null,
+          pane,
+          frozen: false,
+          closed: false
+        };
+        pane.subs.add(sub);
+        const recoveryReason = this.ledger.isRequested(pane.runtimeId) ? "requested" : this.ledger.isBackpressured(pane.runtimeId) ? "backpressure" : null;
+        if (recoveryReason) this.beginRecovery(pane, recoveryReason);
+        else this.reseedPlain(sub);
+        this.emitLayoutSnapshot(sub);
+        return {
+          semanticPaneId: semanticPaneId3,
+          freeze: () => this.freeze(sub),
+          thaw: () => this.thaw(sub),
+          reseed: () => this.reseedPlain(sub),
+          sendText: (text) => {
+            if (!sub.closed) this.input.literal(sub.pane.runtimeId, text);
+          },
+          sendKey: (key) => {
+            if (!sub.closed) this.input.key(sub.pane.runtimeId, key);
+          },
+          close: () => this.closeSub(sub)
+        };
+      }
+      /** Session geometry without a dummy pane feed or terminal-content seed. */
+      subscribeLayout(onLayout) {
+        if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
+        this.layoutSubscribers.add(onLayout);
+        for (const windowRuntimeId of this.layoutByWindow.keys()) {
+          const event = this.layoutEventFor(windowRuntimeId);
+          if (event) onLayout(event);
+        }
+        let closed = false;
+        return {
+          close: () => {
+            if (closed) return;
+            closed = true;
+            this.layoutSubscribers.delete(onLayout);
+          }
+        };
+      }
+      /**
+       * Refresh all session/window authority before exposing a global layout
+       * subscription. A cached control-mode channel may have been retained while
+       * only the current window had emitted geometry; replaying that cache would
+       * strand a multi-window renderer behind its exact inventory-coverage gate.
+       */
+      async subscribeAuthoritativeLayout(onLayout, expectedSemanticPaneIds, onAuthority) {
+        if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
+        const identity = await this.attachedSessionIdentity();
+        const inventory = await this.describeTrustedInventory(identity.runtimeSessionId);
+        if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
+        const expectedByWindow = /* @__PURE__ */ new Map();
+        for (const pane of inventory.panes) {
+          const expected = expectedByWindow.get(pane.runtimeWindowId) ?? /* @__PURE__ */ new Set();
+          expected.add(pane.semanticPaneId);
+          expectedByWindow.set(pane.runtimeWindowId, expected);
+        }
+        if (expectedSemanticPaneIds) {
+          const requested = [...expectedSemanticPaneIds].sort();
+          const authoritative = inventory.panes.map(({ semanticPaneId: semanticPaneId3 }) => semanticPaneId3).sort();
+          if (requested.length === 0 || new Set(requested).size !== requested.length || requested.length !== authoritative.length || requested.some((pane, index) => pane !== authoritative[index])) {
+            const error = new Error(`authoritative layout for ${this.opts.session} changed topology`);
+            error.name = "MirrorTopologyChangedError";
+            throw error;
+          }
+        }
+        if (expectedByWindow.size !== inventory.panes[0].sessionWindowCount || expectedByWindow.size !== this.windowsByRuntime.size) {
+          throw new Error(`authoritative layout for ${this.opts.session} has incomplete windows`);
+        }
+        for (const [runtimeWindowId, expectedPanes] of expectedByWindow) {
+          const event = this.layoutEventFor(runtimeWindowId);
+          if (!event)
+            throw new Error(`authoritative layout for ${this.opts.session} has incomplete panes`);
+          const observed = event.panes.flatMap(
+            ({ semanticPaneId: semanticPaneId3 }) => typeof semanticPaneId3 === "string" ? [semanticPaneId3] : []
+          );
+          if (observed.length !== event.panes.length || observed.length !== expectedPanes.size || new Set(observed).size !== observed.length || observed.some((pane) => !expectedPanes.has(pane))) {
+            throw new Error(`authoritative layout for ${this.opts.session} has incomplete panes`);
+          }
+        }
+        const handle = this.subscribeLayout(onLayout);
+        if (onAuthority) {
+          this.layoutAuthoritySubscribers.add(onAuthority);
+          this.emitLayoutAuthorityTo(onAuthority, identity.runtimeSessionId);
+        }
+        return {
+          close: () => {
+            handle.close();
+            if (onAuthority) this.layoutAuthoritySubscribers.delete(onAuthority);
+          }
+        };
+      }
+      /** Controller-authorized input fast path. It deliberately reuses the one
+       * session InputCoalescer, so literal/key ordering and tmux application-mode
+       * named-key semantics are identical for GUI, TUI and direct subscribers. */
+      sendText(semanticPaneId3, text, performanceTraceId, isolated = false) {
+        const pane = this.panesBySemantic.get(semanticPaneId3);
+        if (!pane)
+          throw new Error(`unknown semantic pane ${semanticPaneId3} in session ${this.opts.session}`);
+        if (isolated) this.input.flush();
+        this.input.literal(pane.runtimeId, text, performanceTraceId);
+        if (isolated) this.input.flush();
+      }
+      sendKey(semanticPaneId3, key, performanceTraceId) {
+        const pane = this.panesBySemantic.get(semanticPaneId3);
+        if (!pane)
+          throw new Error(`unknown semantic pane ${semanticPaneId3} in session ${this.opts.session}`);
+        this.input.key(pane.runtimeId, key, performanceTraceId);
+      }
+      fitViewport(cols, rows) {
+        if (!Number.isSafeInteger(cols) || !Number.isSafeInteger(rows) || cols < 2 || rows < 2) {
+          throw new RangeError("viewport must contain positive bounded terminal cells");
+        }
+        this.input.flush();
+        this.io.send(`refresh-client -C ${cols}x${rows}`);
+      }
+      /** Toggle whether the retained control client participates in tmux sizing. */
+      setGeometryParticipation(active2) {
+        if (this.geometryParticipating === active2) return;
+        this.geometryParticipating = active2;
+        this.input.flush();
+        this.io.send(`refresh-client -f ${active2 ? "!ignore-size" : "ignore-size"}`);
+      }
+      subscriberCount() {
+        let count = 0;
+        for (const pane of this.panesByRuntime.values()) count += pane.subs.size;
+        return count;
+      }
+      /** Fall-behind telemetry from the `%extended-output` age field. */
+      ageTelemetry() {
+        const byPane = {};
+        for (const [runtime, age] of this.ageByRuntime) {
+          const semantic = this.panesByRuntime.get(runtime)?.semanticId;
+          if (semantic) byPane[semantic] = age;
+        }
+        return { maxAgeMs: this.maxAgeMs, byPane };
+      }
+      flowSnapshot() {
+        const toSemantic = (runtime) => this.panesByRuntime.get(runtime)?.semanticId ?? "(unidentified)";
+        const snapshot = this.ledger.snapshot();
+        return {
+          backpressured: snapshot.backpressured.map(toSemantic),
+          requested: snapshot.requested.map(toSemantic)
+        };
+      }
+      async dispose() {
+        if (this.disposed) return;
+        this.disposed = true;
+        this.settleFirstJoin();
+        this.cancelSync?.();
+        this.cancelSync = null;
+        for (const runtime of [...this.recoveries.keys()]) this.cancelRecovery(runtime);
+        this.continueNotificationQueues.clear();
+        this.discovery.dispose();
+        this.input.flush();
+        for (const pane of this.panesByRuntime.values()) {
+          for (const sub of pane.subs) {
+            if (!sub.closed) {
+              sub.closed = true;
+              sub.onEvent({ type: "closed" });
+            }
+          }
+          pane.subs.clear();
+        }
+        this.layoutSubscribers.clear();
+        this.layoutAuthoritySubscribers.clear();
+        await this.io.dispose();
+      }
+      // ── Byte routing ─────────────────────────────────────────────────────────
+      onOutput(runtimePane, data, ageMs, timing) {
+        if (ageMs !== null) {
+          this.ageByRuntime.set(runtimePane, ageMs);
+          if (ageMs > this.maxAgeMs) this.maxAgeMs = ageMs;
+        }
+        const pane = this.panesByRuntime.get(runtimePane);
+        if (!pane) return;
+        const outputOrdinal = (this.outputOrdinals.get(runtimePane) ?? 0) + 1;
+        this.outputOrdinals.set(runtimePane, outputOrdinal);
+        this.opts.onOutputObserved?.(pane.semanticId, ageMs, timing);
+        let overflowed = false;
+        for (const sub of pane.subs) {
+          if (sub.frozen || sub.closed) continue;
+          for (const event of sub.feed.delta(data)) sub.onEvent(event);
+          if (sub.feed.takeOverflowed()) overflowed = true;
+        }
+        if (overflowed) this.restartRecoveryAfterOutputOverflow(pane);
+        this.noteRecoveryOutput(pane, outputOrdinal);
+      }
+      // ── Seed / reseed (the atomic recipe) ────────────────────────────────────
+      reseed(sub, onSettled, deferPublish = false) {
+        if (sub.closed || sub.frozen || this.disposed) {
+          onSettled?.(FAILED_RESEED_RESULT);
+          return;
+        }
+        const runtime = sub.pane.runtimeId;
+        const epoch = sub.feed.beginReseed();
+        let settled = false;
+        let captureSucceeded = false;
+        let markerRetired = false;
+        let captureLines = null;
+        const settle = (result) => {
+          if (settled) return;
+          settled = true;
+          onSettled?.(result);
+        };
+        this.input.flush();
+        const history = this.opts.historyLines ?? DEFAULT_HISTORY_LINES;
+        const internalReadMarker = registerInternalReadOperation(runtime);
+        const retireMarker = () => {
+          if (markerRetired) return;
+          markerRetired = true;
+          this.retireInternalReadMarker(runtime, internalReadMarker);
+        };
+        this.io.commandListInline(
+          `set-option -p -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p -e -J -S -${history} -t ${runtime}`,
+          2,
+          1,
+          (reply) => {
+            if (!reply.ok) {
+              retireMarker();
+              sub.feed.abort(epoch);
+              settle(FAILED_RESEED_RESULT);
+              return;
+            }
+            captureSucceeded = true;
+            if (sub.closed || sub.frozen || this.disposed) {
+              sub.feed.abort(epoch);
+              settle(FAILED_RESEED_RESULT);
+              return;
+            }
+            captureLines = [...reply.lines];
+            sub.feed.captureReply(epoch, reply.lines);
+          }
+        );
+        this.io.commandInline(
+          `display-message -p -t ${runtime} "${RECOVERY_CURSOR_PROBE_FORMAT}"`,
+          (reply) => {
+            if (sub.closed || sub.frozen || this.disposed) {
+              sub.feed.abort(epoch);
+              settle(FAILED_RESEED_RESULT);
+              return;
+            }
+            if (!reply.ok) {
+              if (!captureSucceeded) retireMarker();
+              sub.feed.abort(epoch);
+              settle(FAILED_RESEED_RESULT);
+              return;
+            }
+            const cursorLine = reply.lines[0] ?? "";
+            const fallbackSize = this.layoutSizeFor(runtime);
+            const events = sub.feed.cursorReply(epoch, cursorLine, fallbackSize);
+            let published = false;
+            const publish = () => {
+              if (published) return true;
+              if (sub.closed || sub.frozen || this.disposed) return false;
+              published = true;
+              for (const event of events) sub.onEvent(event);
+              return true;
+            };
+            const ok2 = events.length > 0 && !sub.closed && captureLines !== null;
+            const result = {
+              ok: ok2,
+              fingerprint: ok2 ? snapshotFingerprint2(captureLines, cursorLine, fallbackSize) : null,
+              publish,
+              hold: () => sub.feed.quarantine(epoch)
+            };
+            if (!deferPublish) publish();
+            settle(result);
+          }
+        );
+      }
+      reseedPlain(sub) {
+        this.reseed(sub, ({ ok: ok2 }) => {
+          if (ok2 || sub.closed || sub.frozen || this.disposed || this.recoveries.has(sub.pane.runtimeId) || this.panesByRuntime.get(sub.pane.runtimeId) !== sub.pane)
+            return;
+          this.beginLocalOverflowRecovery(sub.pane);
+        });
+      }
+      retireInternalReadMarker(runtime, marker) {
+        if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtime))
+          throw new TypeError("internal read cleanup requires a runtime pane id");
+        retireInternalReadOperation(marker, runtime);
+        this.io.send(
+          `if-shell -t ${runtime} -F "#{==:#{${INTERNAL_READ_OPERATION_OPTION}},${marker}}" "set-option -pu -t ${runtime} ${INTERNAL_READ_OPERATION_OPTION}" ""`
+        );
+      }
+      layoutSizeFor(runtime) {
+        for (const layout of this.layoutByWindow.values()) {
+          const leaf = layout.leaves.find((candidate) => candidate.id === runtime);
+          if (leaf) return { cols: leaf.width, rows: leaf.height };
+        }
+        return null;
+      }
+      // ── Flow control ─────────────────────────────────────────────────────────
+      freeze(sub) {
+        if (sub.frozen || sub.closed) return;
+        sub.frozen = true;
+        sub.onEvent({ type: "flow", state: "paused", reason: "requested" });
+        const pane = sub.pane;
+        const allFrozen = [...pane.subs].every((candidate) => candidate.frozen || candidate.closed);
+        if (allFrozen) {
+          this.cancelRecovery(pane.runtimeId);
+          this.ledger.requestPause(pane.runtimeId);
+          this.io.send(`refresh-client -A '${pane.runtimeId}:pause'`);
+        }
+      }
+      thaw(sub) {
+        if (!sub.frozen || sub.closed) return;
+        sub.frozen = false;
+        const runtime = sub.pane.runtimeId;
+        if (this.ledger.isRequested(runtime) || this.ledger.isBackpressured(runtime))
+          this.beginRecovery(sub.pane, "requested");
+        else this.reseedPlain(sub);
+        this.recoverSticky();
+      }
+      continuePane(runtime) {
+        this.io.send(`refresh-client -A '${runtime}:continue'`);
+        this.ledger.noteContinued(runtime);
+      }
+      scheduleRecovery(callback, delayMs) {
+        if (this.opts.scheduleRecovery) return this.opts.scheduleRecovery(callback, delayMs);
+        const timer = setTimeout(callback, delayMs);
+        return () => clearTimeout(timer);
+      }
+      observeRecovery(pane, recovery, phase, failureReason = null, fingerprintExact = null) {
+        const elapsedMicros = Math.min(
+          RECOVERY_ABSOLUTE_DEADLINE_MS * 1e3,
+          Math.max(0, Math.floor((this.recoveryNowMs() - recovery.startedAtMs) * 1e3))
+        );
+        this.opts.onFlowRecoveryObserved?.(
+          Object.freeze({
+            semanticPaneId: pane.semanticId,
+            phase,
+            recoveryOrdinal: recovery.ordinal,
+            paneIncarnation: recovery.paneIncarnation,
+            outputOrdinal: this.outputOrdinals.get(recovery.runtimeId) ?? 0,
+            failureReason,
+            elapsedMicros,
+            fingerprintExact,
+            confirmationOrdinal: recovery.confirmationOrdinal,
+            collectorStarted: recovery.collectorStarted,
+            collectorLastCompletedOrdinal: recovery.collectorLastCompletedOrdinal,
+            collectorCaptureLineCount: recovery.collectorCaptureLineCount,
+            collectorCaptureByteCount: recovery.collectorCaptureByteCount,
+            collectorContinueObserved: recovery.collectorContinueObserved,
+            collectorStatusObserved: recovery.collectorStatusObserved,
+            collectorObserverEmissionObserved: recovery.collectorObserverEmissionObserved,
+            collectorFailureReason: recovery.collectorFailureReason
+          })
+        );
+      }
+      recoveryNowMs() {
+        return this.opts.recoveryNowMs?.() ?? performance.now();
+      }
+      recoveryPane(recovery) {
+        const pane = this.panesByRuntime.get(recovery.runtimeId);
+        return !this.disposed && this.recoveries.get(recovery.runtimeId) === recovery && pane?.incarnation === recovery.paneIncarnation ? !recovery.retired ? pane : null : null;
+      }
+      cancelRecovery(runtime) {
+        const recovery = this.recoveries.get(runtime);
+        if (!recovery) return;
+        recovery.retired = true;
+        recovery.cancelQuiet?.();
+        recovery.cancelCommandDeadline?.();
+        recovery.cancelNoProgressDeadline?.();
+        recovery.cancelAbsoluteDeadline?.();
+        if (recovery.atomicCollectorNonce)
+          this.io.retireAtomicPaneSnapshotCollector?.(recovery.atomicCollectorNonce, "retired");
+        recovery.atomicCollectorNonce = null;
+        this.recoveries.delete(runtime);
+        this.retireContinueNotificationOwner(recovery);
+        const pane = this.panesByRuntime.get(runtime);
+        if (pane?.incarnation === recovery.paneIncarnation)
+          for (const sub of pane.subs) sub.feed.abortCurrent();
+      }
+      beginRecovery(pane, reason) {
+        const runtime = pane.runtimeId;
+        this.cancelRecovery(runtime);
+        const recovery = {
+          ordinal: ++this.recoveryOrdinal,
+          runtimeId: runtime,
+          paneIncarnation: pane.incarnation,
+          reason,
+          startedAtMs: this.recoveryNowMs(),
+          retired: false,
+          continueReply: false,
+          continueNotify: false,
+          stage: "continue",
+          attempts: 0,
+          reseedOrdinal: 0,
+          outputOrdinal: this.outputOrdinals.get(runtime) ?? 0,
+          candidateFingerprint: null,
+          confirmationFingerprint: null,
+          confirmationOrdinal: 0,
+          atomicCollectorNonce: null,
+          collectorStarted: false,
+          collectorLastCompletedOrdinal: -1,
+          collectorCaptureLineCount: 0,
+          collectorCaptureByteCount: 0,
+          collectorContinueObserved: false,
+          collectorStatusObserved: false,
+          collectorObserverEmissionObserved: false,
+          collectorFailureReason: null,
+          cancelQuiet: null,
+          cancelCommandDeadline: null,
+          cancelNoProgressDeadline: null,
+          cancelAbsoluteDeadline: null
+        };
+        this.recoveries.set(runtime, recovery);
+        for (const sub of pane.subs) {
+          if (!sub.frozen && !sub.closed) sub.feed.abortCurrent();
+        }
+        this.observeRecovery(pane, recovery, "pause");
+        this.observeRecovery(pane, recovery, "continue-request");
+        recovery.cancelCommandDeadline = this.scheduleRecovery(() => {
+          if (this.recoveryPane(recovery) && !recovery.continueReply)
+            this.failRecovery(recovery, "command-timeout");
+        }, RECOVERY_COMMAND_DEADLINE_MS);
+        const queue = this.continueNotificationQueues.get(runtime) ?? [];
+        if (queue.length >= MAX_CONTINUE_NOTIFICATION_QUEUE) {
+          this.failRecovery(recovery, "notification-queue-overflow");
+          return;
+        }
+        queue.push({ kind: "owner", recovery });
+        this.continueNotificationQueues.set(runtime, queue);
+        this.io.send(`refresh-client -A '${runtime}:continue'`, (reply) => {
+          const current = this.recoveryPane(recovery);
+          if (!reply.ok) {
+            this.removeContinueNotificationOwner(recovery);
+            if (current) this.failRecovery(recovery, "command-error");
+            return;
+          }
+          recovery.continueReply = true;
+          if (!current) {
+            this.retireContinueNotificationOwner(recovery);
+            return;
+          }
+          recovery.cancelCommandDeadline?.();
+          recovery.cancelCommandDeadline = null;
+          this.beginRecoveryConvergence(recovery);
+          this.observeRecovery(current, recovery, "continue-reply");
+          this.noteRecoveryProgress(recovery);
+          this.beginFinalRecovery(recovery);
+        });
+      }
+      beginLocalOverflowRecovery(pane) {
+        const runtime = pane.runtimeId;
+        this.cancelRecovery(runtime);
+        const recovery = {
+          ordinal: ++this.recoveryOrdinal,
+          runtimeId: runtime,
+          paneIncarnation: pane.incarnation,
+          reason: "backpressure",
+          startedAtMs: this.recoveryNowMs(),
+          retired: false,
+          continueReply: true,
+          continueNotify: true,
+          stage: "continue",
+          attempts: 0,
+          reseedOrdinal: 0,
+          outputOrdinal: this.outputOrdinals.get(runtime) ?? 0,
+          candidateFingerprint: null,
+          confirmationFingerprint: null,
+          confirmationOrdinal: 0,
+          atomicCollectorNonce: null,
+          collectorStarted: false,
+          collectorLastCompletedOrdinal: -1,
+          collectorCaptureLineCount: 0,
+          collectorCaptureByteCount: 0,
+          collectorContinueObserved: false,
+          collectorStatusObserved: false,
+          collectorObserverEmissionObserved: false,
+          collectorFailureReason: null,
+          cancelQuiet: null,
+          cancelCommandDeadline: null,
+          cancelNoProgressDeadline: null,
+          cancelAbsoluteDeadline: null
+        };
+        this.recoveries.set(runtime, recovery);
+        for (const sub of pane.subs) {
+          if (!sub.frozen && !sub.closed)
+            sub.onEvent({ type: "flow", state: "paused", reason: "backpressure" });
+        }
+        this.observeRecovery(pane, recovery, "pause");
+        this.beginRecoveryConvergence(recovery);
+        this.beginFinalRecovery(recovery);
+      }
+      beginRecoveryConvergence(recovery) {
+        if (recovery.cancelAbsoluteDeadline) return;
+        recovery.cancelAbsoluteDeadline = this.scheduleRecovery(() => {
+          if (this.recoveryPane(recovery)) this.failRecovery(recovery, "absolute-deadline");
+        }, RECOVERY_ABSOLUTE_DEADLINE_MS);
+        this.noteRecoveryProgress(recovery);
+      }
+      noteRecoveryProgress(recovery) {
+        if (!this.recoveryPane(recovery) || !recovery.cancelAbsoluteDeadline) return;
+        recovery.cancelNoProgressDeadline?.();
+        recovery.cancelNoProgressDeadline = this.scheduleRecovery(() => {
+          if (this.recoveryPane(recovery)) this.failRecovery(recovery, "no-progress");
+        }, RECOVERY_NO_PROGRESS_DEADLINE_MS);
+      }
+      noteAtomicCollectorProgress(recovery, nonce, progress) {
+        if (this.recoveryPane(recovery) === null || recovery.atomicCollectorNonce !== nonce || !progress.started)
+          return;
+        recovery.collectorStarted = true;
+        recovery.collectorLastCompletedOrdinal = Math.max(
+          recovery.collectorLastCompletedOrdinal,
+          progress.lastCompletedOrdinal
+        );
+        recovery.collectorCaptureLineCount = Math.max(
+          recovery.collectorCaptureLineCount,
+          progress.captureLineCount
+        );
+        recovery.collectorCaptureByteCount = Math.max(
+          recovery.collectorCaptureByteCount,
+          progress.captureByteCount
+        );
+        recovery.collectorContinueObserved ||= progress.continueObserved;
+        recovery.collectorStatusObserved ||= progress.statusObserved;
+        recovery.collectorObserverEmissionObserved ||= progress.observerEmissionObserved;
+        this.noteRecoveryProgress(recovery);
+      }
+      reseedRecoverySubscribers(pane, recovery, done, deferPublish = false) {
+        if (this.io.armAtomicPaneSnapshotCollector && this.io.retireAtomicPaneSnapshotCollector) {
+          this.reseedRecoverySubscribersAtomic(pane, recovery, done, deferPublish);
+          return;
+        }
+        const live = [...pane.subs].filter((sub) => !sub.frozen && !sub.closed);
+        if (live.length === 0) {
+          done(FAILED_RESEED_RESULT);
+          return;
+        }
+        const participants = live.map((sub) => Object.freeze({ sub, epoch: sub.feed.beginReseed() }));
+        const reseedOrdinal = ++recovery.reseedOrdinal;
+        let settled = false;
+        let captureSucceeded = false;
+        let markerRetired = false;
+        let captureLines = null;
+        this.input.flush();
+        const history = this.opts.historyLines ?? DEFAULT_HISTORY_LINES;
+        const internalReadMarker = registerInternalReadOperation(pane.runtimeId);
+        const participantsExact = () => {
+          if (this.recoveryPane(recovery) !== pane || recovery.reseedOrdinal !== reseedOrdinal || participants.some(
+            ({ sub }) => sub.closed || sub.frozen || sub.pane !== pane || !pane.subs.has(sub)
+          ))
+            return false;
+          const current = [...pane.subs].filter((sub) => !sub.frozen && !sub.closed);
+          return current.length === participants.length && current.every((sub) => participants.some((participant) => participant.sub === sub));
+        };
+        const retireMarker = () => {
+          if (markerRetired) return;
+          markerRetired = true;
+          this.retireInternalReadMarker(pane.runtimeId, internalReadMarker);
+        };
+        const fail2 = () => {
+          if (settled) return;
+          settled = true;
+          if (!captureSucceeded) retireMarker();
+          for (const { sub } of participants) sub.feed.abortCurrent();
+          done(FAILED_RESEED_RESULT);
+        };
+        this.io.commandListInline(
+          `set-option -p -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; capture-pane -p -e -J -S -${history} -t ${pane.runtimeId}`,
+          2,
+          1,
+          (reply) => {
+            if (!reply.ok) {
+              fail2();
+              return;
+            }
+            captureSucceeded = true;
+            if (!participantsExact()) {
+              fail2();
+              return;
+            }
+            captureLines = Object.freeze([...reply.lines]);
+            for (const { sub, epoch } of participants) sub.feed.captureReply(epoch, captureLines);
+          }
+        );
+        this.io.commandInline(
+          `display-message -p -t ${pane.runtimeId} "${RECOVERY_CURSOR_PROBE_FORMAT}"`,
+          (reply) => {
+            if (settled) return;
+            if (!participantsExact() || captureLines === null || !reply.ok) {
+              fail2();
+              return;
+            }
+            const cursorLine = reply.lines[0] ?? "";
+            const fallbackSize = this.layoutSizeFor(pane.runtimeId);
+            const deliveries = participants.map(({ sub, epoch }) => ({
+              sub,
+              epoch,
+              events: sub.feed.cursorReply(epoch, cursorLine, fallbackSize)
+            }));
+            if (!participantsExact() || deliveries.some(({ events }) => events.length === 0)) {
+              fail2();
+              return;
+            }
+            let published = false;
+            const publish = () => {
+              if (published) return true;
+              if (!participantsExact()) return false;
+              published = true;
+              for (const { sub, events } of deliveries) for (const event of events) sub.onEvent(event);
+              return participantsExact();
+            };
+            if (!deferPublish && !publish()) {
+              fail2();
+              return;
+            }
+            for (const { sub, epoch } of deliveries) sub.feed.quarantine(epoch);
+            settled = true;
+            done({
+              ok: true,
+              fingerprint: snapshotFingerprint2(captureLines, cursorLine, fallbackSize),
+              publish,
+              hold: () => {
+              }
+            });
+          }
+        );
+      }
+      reseedRecoverySubscribersAtomic(pane, recovery, done, deferPublish) {
+        const live = [...pane.subs].filter((sub) => !sub.frozen && !sub.closed);
+        if (live.length === 0) {
+          done(FAILED_RESEED_RESULT);
+          return;
+        }
+        const participants = live.map((sub) => Object.freeze({ sub, epoch: sub.feed.beginReseed() }));
+        const reseedOrdinal = ++recovery.reseedOrdinal;
+        const nonce = this.opts.generateAtomicHookNonce?.() ?? randomBytes4(24).toString("hex");
+        if (!/^[0-9a-f]{32,128}$/u.test(nonce)) {
+          for (const { sub } of participants) sub.feed.abortCurrent();
+          done(FAILED_RESEED_RESULT);
+          return;
+        }
+        const hookName = `@tmux_ide_atomic_${nonce}`;
+        const expectedName = `@tmux_ide_atomic_expected_${nonce}`;
+        const ownerName = `@tmux_ide_atomic_owner_${nonce}`;
+        const internalReadMarker = registerInternalReadOperation(pane.runtimeId);
+        recovery.atomicCollectorNonce = nonce;
+        recovery.collectorStarted = false;
+        recovery.collectorLastCompletedOrdinal = -1;
+        recovery.collectorCaptureLineCount = 0;
+        recovery.collectorCaptureByteCount = 0;
+        recovery.collectorContinueObserved = false;
+        recovery.collectorStatusObserved = false;
+        recovery.collectorObserverEmissionObserved = false;
+        recovery.collectorFailureReason = null;
+        const participantsExact = () => {
+          if (this.recoveryPane(recovery) !== pane || recovery.reseedOrdinal !== reseedOrdinal || participants.some(
+            ({ sub }) => sub.closed || sub.frozen || sub.pane !== pane || !pane.subs.has(sub)
+          ))
+            return false;
+          const current = [...pane.subs].filter((sub) => !sub.frozen && !sub.closed);
+          return current.length === participants.length && current.every((sub) => participants.some((participant) => participant.sub === sub));
+        };
+        let settled = false;
+        let observerEmitted = false;
+        const hookOwned = `#{==:#{${ownerName}},${nonce}}`;
+        const hookUnchanged = `#{==:#{${hookName}},#{${expectedName}}}`;
+        const cleanupHook = () => {
+          this.io.commandListInline(
+            `if-shell -t ${pane.runtimeId} -F "#{&&:${hookOwned},${hookUnchanged}}" ${tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${hookName}`)} ` + tmuxSingleQuote(
+              `display-message -p -t ${pane.runtimeId} tmux-ide-atomic-cleanup-hook-skip-v1:${nonce}`
+            ),
+            2,
+            1,
+            () => {
+            }
+          );
+          this.io.commandListInline(
+            `if-shell -t ${pane.runtimeId} -F "${hookOwned}" ` + tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${expectedName}`) + ` ${tmuxSingleQuote(
+              `display-message -p -t ${pane.runtimeId} tmux-ide-atomic-cleanup-expected-skip-v1:${nonce}`
+            )}`,
+            2,
+            1,
+            () => {
+            }
+          );
+          this.io.commandListInline(
+            `if-shell -t ${pane.runtimeId} -F "${hookOwned}" ` + tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${ownerName}`) + ` ${tmuxSingleQuote(
+              `display-message -p -t ${pane.runtimeId} tmux-ide-atomic-cleanup-owner-skip-v1:${nonce}`
+            )}`,
+            2,
+            1,
+            () => {
+            }
+          );
+        };
+        const fail2 = (statusObserved = false) => {
+          if (settled) return;
+          settled = true;
+          if (recovery.atomicCollectorNonce === nonce) recovery.atomicCollectorNonce = null;
+          cleanupHook();
+          if (!statusObserved && !observerEmitted)
+            this.retireInternalReadMarker(pane.runtimeId, internalReadMarker);
+          for (const { sub } of participants) sub.feed.abortCurrent();
+          done(FAILED_RESEED_RESULT);
+        };
+        let observer;
+        try {
+          observer = this.opts.internalReadHookEmission?.(pane.runtimeId, internalReadMarker) ?? null;
+        } catch {
+          fail2();
+          return;
+        }
+        const safeObserver = observer !== null && /^[A-Za-z0-9._-]{1,256}$/u.test(observer.bufferName) && /^[A-Za-z0-9._-]{1,256}$/u.test(observer.signalChannel) && /^[A-Za-z0-9%:._|-]{1,1024}$/u.test(observer.record);
+        if (!safeObserver) {
+          fail2();
+          return;
+        }
+        const sentinel = (kind) => `display-message -p -t ${pane.runtimeId} "%tmux-ide-atomic-v1 ${nonce} ${kind}"`;
+        const observerCommands = ` ; set-buffer -a -b ${observer.bufferName} ${observer.record} ; wait-for -S ${observer.signalChannel}`;
+        const body = `set-option -po -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; ${sentinel("start")} ; capture-pane -p -e -J -S -${this.opts.historyLines ?? DEFAULT_HISTORY_LINES} -t ${pane.runtimeId} ; ${sentinel("capture-end")} ; display-message -p -t ${pane.runtimeId} "${RECOVERY_CURSOR_PROBE_FORMAT}" ; ${sentinel("cursor-end")} ; refresh-client -A ${pane.runtimeId}:continue` + observerCommands + ` ; if-shell -t ${pane.runtimeId} -F "#{==:#{${INTERNAL_READ_OPERATION_OPTION}},${internalReadMarker}}" ` + tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION}`) + ` ${tmuxSingleQuote(`${sentinel("marker-rejected")}`)} ; ${sentinel("status-ok")} ; set-option -pu -t ${pane.runtimeId} ${hookName} ; ${sentinel("complete")}`;
+        this.input.flush();
+        const invoke = (reply) => {
+          if (!reply.ok || !participantsExact()) {
+            fail2();
+            return;
+          }
+          const remaining = Math.floor(
+            RECOVERY_ABSOLUTE_DEADLINE_MS - (this.recoveryNowMs() - recovery.startedAtMs)
+          );
+          if (remaining <= 0) {
+            fail2();
+            return;
+          }
+          const armed = this.io.armAtomicPaneSnapshotCollector(
+            {
+              nonce,
+              runtimePaneId: pane.runtimeId,
+              maxCaptureBytes: RECOVERY_CAPTURE_MAX_BYTES,
+              maxCaptureLines: RECOVERY_CAPTURE_MAX_LINES,
+              maxCursorBytes: RECOVERY_CURSOR_MAX_BYTES,
+              observerCommandCount: 2,
+              onProgress: (progress) => this.noteAtomicCollectorProgress(recovery, nonce, progress),
+              onSettled: (result) => {
+                if (recovery.atomicCollectorNonce === nonce) recovery.atomicCollectorNonce = null;
+                recovery.collectorStarted ||= result.started;
+                recovery.collectorLastCompletedOrdinal = Math.max(
+                  recovery.collectorLastCompletedOrdinal,
+                  result.lastCompletedOrdinal
+                );
+                recovery.collectorCaptureLineCount = Math.max(
+                  recovery.collectorCaptureLineCount,
+                  result.captureLineCount
+                );
+                recovery.collectorCaptureByteCount = Math.max(
+                  recovery.collectorCaptureByteCount,
+                  result.captureByteCount
+                );
+                recovery.collectorContinueObserved ||= result.continueObserved;
+                recovery.collectorStatusObserved ||= result.statusObserved;
+                recovery.collectorObserverEmissionObserved ||= result.observerEmissionObserved;
+                recovery.collectorFailureReason = result.failureReason;
+                observerEmitted = result.observerEmissionObserved && safeObserver;
+                cleanupHook();
+                if (settled) return;
+                if (!result.ok || !participantsExact() || result.cursorLine === null) {
+                  fail2(result.statusObserved);
+                  return;
+                }
+                const captureLines = Object.freeze([...result.captureLines]);
+                for (const { sub, epoch } of participants) sub.feed.captureReply(epoch, captureLines);
+                const fallbackSize = this.layoutSizeFor(pane.runtimeId);
+                const deliveries = participants.map(({ sub, epoch }) => ({
+                  sub,
+                  epoch,
+                  events: sub.feed.cursorReply(epoch, result.cursorLine, fallbackSize)
+                }));
+                if (!participantsExact() || deliveries.some(({ events }) => events.length === 0)) {
+                  fail2(true);
+                  return;
+                }
+                let published = false;
+                const publish = () => {
+                  if (published) return true;
+                  if (!participantsExact()) return false;
+                  published = true;
+                  for (const { sub, events } of deliveries)
+                    for (const event of events) sub.onEvent(event);
+                  return participantsExact();
+                };
+                if (!deferPublish && !publish()) {
+                  fail2(true);
+                  return;
+                }
+                for (const { sub, epoch } of deliveries) sub.feed.quarantine(epoch);
+                settled = true;
+                done({
+                  ok: true,
+                  fingerprint: snapshotFingerprint2(captureLines, result.cursorLine, fallbackSize),
+                  publish,
+                  hold: () => {
+                  }
+                });
+              }
+            },
+            remaining
+          );
+          if (!armed) {
+            fail2();
+            return;
+          }
+          const rejected = `tmux-ide-atomic-invoke-rejected-v1:${nonce}`;
+          this.io.commandListInline(
+            `if-shell -t ${pane.runtimeId} -F "#{&&:${hookOwned},${hookUnchanged}}" ${tmuxSingleQuote(`set-hook -Rp -t ${pane.runtimeId} ${hookName}`)} ` + tmuxSingleQuote(`display-message -p -t ${pane.runtimeId} ${rejected}`),
+            2,
+            1,
+            (hookReply) => {
+              if (!hookReply.ok || hookReply.lines.length > 0) {
+                this.io.retireAtomicPaneSnapshotCollector?.(nonce, "retired");
+                fail2();
+              }
+            }
+          );
+        };
+        this.io.commandInline(
+          `set-option -po -t ${pane.runtimeId} ${ownerName} ${nonce}`,
+          (ownerReply) => {
+            if (!ownerReply.ok || !participantsExact()) {
+              fail2();
+              return;
+            }
+            this.io.commandInline(
+              `set-option -po -t ${pane.runtimeId} ${expectedName} ${tmuxSingleQuote(body)}`,
+              (expectedReply) => {
+                if (!expectedReply.ok || !participantsExact()) {
+                  fail2();
+                  return;
+                }
+                this.io.commandInline(
+                  `set-option -po -t ${pane.runtimeId} ${hookName} ${tmuxSingleQuote(body)}`,
+                  invoke
+                );
+              }
+            );
+          }
+        );
+      }
+      armRecoveryQuiet(recovery, callback) {
+        recovery.cancelQuiet?.();
+        recovery.cancelQuiet = this.scheduleRecovery(() => {
+          recovery.cancelQuiet = null;
+          if (this.recoveryPane(recovery)) callback();
+        }, RECOVERY_QUIET_MS);
+      }
+      beginFinalRecovery(recovery) {
+        const pane = this.recoveryPane(recovery);
+        if (!pane) return;
+        if (recovery.attempts >= RECOVERY_MAX_ATTEMPTS) {
+          this.failRecovery(recovery, "attempts-exhausted");
+          return;
+        }
+        recovery.attempts += 1;
+        recovery.stage = "final";
+        this.noteRecoveryProgress(recovery);
+        this.reseedRecoverySubscribers(
+          pane,
+          recovery,
+          ({ ok: ok2, fingerprint: fingerprint2 }) => {
+            const current = this.recoveryPane(recovery);
+            if (!current) return;
+            if (!ok2 || fingerprint2 === null) {
+              this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
+              return;
+            }
+            recovery.outputOrdinal = this.outputOrdinals.get(recovery.runtimeId) ?? 0;
+            recovery.candidateFingerprint = fingerprint2;
+            recovery.confirmationFingerprint = null;
+            recovery.confirmationOrdinal = 0;
+            recovery.stage = "confirm";
+            this.observeRecovery(current, recovery, "final-reseed");
+            this.noteRecoveryProgress(recovery);
+            this.armRecoveryQuiet(recovery, () => this.confirmRecovery(recovery));
+          },
+          true
+        );
+      }
+      confirmRecovery(recovery) {
+        const pane = this.recoveryPane(recovery);
+        if (!pane) return;
+        if ((this.outputOrdinals.get(recovery.runtimeId) ?? 0) !== recovery.outputOrdinal) {
+          this.beginFinalRecovery(recovery);
+          return;
+        }
+        recovery.stage = "final";
+        this.noteRecoveryProgress(recovery);
+        this.reseedRecoverySubscribers(
+          pane,
+          recovery,
+          ({ ok: ok2, fingerprint: fingerprint2, publish }) => {
+            const current = this.recoveryPane(recovery);
+            if (!current) return;
+            if (!ok2 || fingerprint2 === null) {
+              this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
+              return;
+            }
+            const outputOrdinal = this.outputOrdinals.get(recovery.runtimeId) ?? 0;
+            const ordinalExact = outputOrdinal === recovery.outputOrdinal;
+            const candidateExact = ordinalExact && fingerprint2 === recovery.candidateFingerprint;
+            const consecutiveExact = candidateExact && recovery.confirmationFingerprint !== null && fingerprint2 === recovery.confirmationFingerprint;
+            recovery.confirmationOrdinal += 1;
+            this.observeRecovery(current, recovery, "confirmation-reseed", null, consecutiveExact);
+            this.noteRecoveryProgress(recovery);
+            if (!ordinalExact) {
+              recovery.stage = "confirm";
+              this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
+              return;
+            }
+            if (!candidateExact) {
+              if (recovery.attempts >= RECOVERY_MAX_ATTEMPTS) {
+                this.failRecovery(recovery, "attempts-exhausted");
+                return;
+              }
+              recovery.attempts += 1;
+              recovery.candidateFingerprint = fingerprint2;
+              recovery.confirmationFingerprint = null;
+              recovery.outputOrdinal = outputOrdinal;
+              recovery.stage = "confirm";
+              this.armRecoveryQuiet(recovery, () => this.confirmRecovery(recovery));
+              return;
+            }
+            if (!consecutiveExact) {
+              recovery.confirmationFingerprint = fingerprint2;
+              recovery.outputOrdinal = outputOrdinal;
+              recovery.stage = "confirm";
+              this.armRecoveryQuiet(recovery, () => this.confirmRecovery(recovery));
+              return;
+            }
+            if (!publish()) {
+              recovery.stage = "confirm";
+              this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
+              return;
+            }
+            this.convergeRecovery(current, recovery);
+          },
+          true
+        );
+      }
+      convergeRecovery(pane, recovery) {
+        recovery.cancelCommandDeadline?.();
+        recovery.cancelCommandDeadline = null;
+        recovery.cancelNoProgressDeadline?.();
+        recovery.cancelNoProgressDeadline = null;
+        recovery.cancelAbsoluteDeadline?.();
+        recovery.cancelAbsoluteDeadline = null;
+        this.recoveries.delete(recovery.runtimeId);
+        recovery.retired = true;
+        this.retireContinueNotificationOwner(recovery);
+        this.ledger.noteContinued(recovery.runtimeId);
+        if (recovery.reason === "requested") this.ledger.clearRequest(recovery.runtimeId);
+        for (const sub of pane.subs) {
+          if (!sub.frozen && !sub.closed) {
+            sub.feed.releaseQuarantine();
+            sub.onEvent({ type: "flow", state: "resumed", reason: recovery.reason });
+          }
+        }
+        this.observeRecovery(pane, recovery, "converged", null, true);
+      }
+      noteRecoveryOutput(pane, outputOrdinal) {
+        const recovery = this.recoveries.get(pane.runtimeId);
+        if (!recovery || recovery.paneIncarnation !== pane.incarnation) return;
+        recovery.outputOrdinal = outputOrdinal;
+        if (recovery.continueReply) this.noteRecoveryProgress(recovery);
+        if (recovery.stage === "quiet")
+          this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
+        else if (recovery.stage === "confirm")
+          this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
+      }
+      restartRecoveryAfterOutputOverflow(pane) {
+        const recovery = this.recoveries.get(pane.runtimeId);
+        if (recovery?.paneIncarnation === pane.incarnation) {
+          if (recovery.stage === "quiet" || recovery.stage === "confirm")
+            this.armRecoveryQuiet(recovery, () => this.beginFinalRecovery(recovery));
+          return;
+        }
+        this.beginLocalOverflowRecovery(pane);
+      }
+      failRecovery(recovery, failureReason) {
+        const pane = this.recoveryPane(recovery);
+        if (!pane) return;
+        recovery.cancelQuiet?.();
+        recovery.cancelQuiet = null;
+        recovery.cancelCommandDeadline?.();
+        recovery.cancelCommandDeadline = null;
+        recovery.cancelNoProgressDeadline?.();
+        recovery.cancelNoProgressDeadline = null;
+        recovery.cancelAbsoluteDeadline?.();
+        recovery.cancelAbsoluteDeadline = null;
+        recovery.retired = true;
+        const collectorNonce = recovery.atomicCollectorNonce;
+        recovery.atomicCollectorNonce = null;
+        if (collectorNonce) this.io.retireAtomicPaneSnapshotCollector?.(collectorNonce, "retired");
+        this.recoveries.delete(recovery.runtimeId);
+        this.retireContinueNotificationOwner(recovery);
+        for (const sub of pane.subs) sub.feed.abortCurrent();
+        this.observeRecovery(pane, recovery, "nonconverged", failureReason);
+      }
+      removeContinueNotificationOwner(recovery) {
+        const queue = this.continueNotificationQueues.get(recovery.runtimeId);
+        if (!queue) return;
+        const index = queue.findIndex((entry) => entry.kind === "owner" && entry.recovery === recovery);
+        if (index < 0) return;
+        queue.splice(index, 1);
+        this.compactContinueNotificationQueue(recovery.runtimeId, queue);
+      }
+      retireContinueNotificationOwner(recovery) {
+        if (!recovery.continueReply) return;
+        const queue = this.continueNotificationQueues.get(recovery.runtimeId);
+        if (!queue) return;
+        const index = queue.findIndex((entry) => entry.kind === "owner" && entry.recovery === recovery);
+        if (index < 0) return;
+        queue.splice(index, 1, { kind: "debt", count: 1, saturated: false });
+        this.compactContinueNotificationQueue(recovery.runtimeId, queue);
+      }
+      compactContinueNotificationQueue(runtime, queue) {
+        for (let index = 1; index < queue.length; ) {
+          const previous = queue[index - 1];
+          const current = queue[index];
+          if (previous?.kind !== "debt" || current?.kind !== "debt") {
+            index += 1;
+            continue;
+          }
+          const total = previous.count + current.count;
+          previous.count = Math.min(total, MAX_CONTINUE_NOTIFICATION_DEBT);
+          previous.saturated = previous.saturated || current.saturated || total > MAX_CONTINUE_NOTIFICATION_DEBT;
+          queue.splice(index, 1);
+        }
+        if (queue.length === 0) this.continueNotificationQueues.delete(runtime);
+        else this.continueNotificationQueues.set(runtime, queue);
+      }
+      /** Continue + reseed EVERY backpressure-paused pane that still has an
+       *  unfrozen subscriber. %pause is sticky and hits quiet panes after any
+       *  stall — recovering only the noisy pane leaves siblings dark. */
+      recoverSticky() {
+        for (const runtime of this.ledger.stickyRecoverySet()) {
+          if (this.recoveries.has(runtime)) continue;
+          const pane = this.panesByRuntime.get(runtime);
+          const live = pane ? [...pane.subs].filter((sub) => !sub.frozen && !sub.closed) : [];
+          if (live.length === 0) continue;
+          this.beginRecovery(pane, "backpressure");
+        }
+      }
+      closeSub(sub) {
+        if (sub.closed) return;
+        sub.closed = true;
+        const pane = sub.pane;
+        pane.subs.delete(sub);
+        if ([...pane.subs].every((candidate) => candidate.closed || candidate.frozen))
+          this.cancelRecovery(pane.runtimeId);
+        if (pane.subs.size === 0 && this.ledger.isRequested(pane.runtimeId)) {
+          this.ledger.clearRequest(pane.runtimeId);
+          this.continuePane(pane.runtimeId);
+        }
+      }
+      // ── Notifications (channel order is the invariant) ──────────────────────
+      onNotify(name, rest) {
+        if (name === "layout-change" || name === "window-pane-changed" || name === "session-window-changed" || STRUCTURAL_NOTIFICATIONS.has(name)) {
+          this.windowAuthorityOrdinal += 1;
+        }
+        if (this.opts.onNativeClientActivity && (NATIVE_CLIENT_NOTIFICATIONS.has(name) || name === "layout-change")) {
+          this.probeNativeClientActivity();
+        }
+        if (name === "pause") {
+          const runtime = rest.trim().split(/\s+/)[0] ?? "";
+          if (!runtime.startsWith("%")) return;
+          this.cancelRecovery(runtime);
+          this.ledger.notePause(runtime);
+          const pane = this.panesByRuntime.get(runtime);
+          if (pane) {
+            for (const sub of pane.subs) {
+              if (!sub.frozen && !sub.closed) {
+                sub.onEvent({ type: "flow", state: "paused", reason: "backpressure" });
+              }
+            }
+          }
+          this.recoverSticky();
+          return;
+        }
+        if (name === "continue") {
+          const runtime = rest.trim().split(/\s+/)[0] ?? "";
+          if (runtime.startsWith("%")) {
+            const queue = this.continueNotificationQueues.get(runtime);
+            const entry = queue?.[0] ?? null;
+            if (entry?.kind === "debt") {
+              if (!entry.saturated) {
+                entry.count -= 1;
+                if (entry.count === 0) queue.shift();
+              }
+              this.compactContinueNotificationQueue(runtime, queue);
+            } else if (entry?.kind === "owner") {
+              queue.shift();
+              this.compactContinueNotificationQueue(runtime, queue);
+              const owner = entry.recovery;
+              const pane = this.recoveryPane(owner);
+              owner.continueNotify = true;
+              if (pane) {
+                this.observeRecovery(pane, owner, "continue-notify");
+              }
+            }
+          }
+          return;
+        }
+        if (name === "layout-change") {
+          const change = parseLayoutChange(rest);
+          if (!change) return;
+          const parsed = parseLayout(change.visible);
+          if (!parsed) {
+            this.scheduleSync();
+            return;
+          }
+          this.layoutByWindow.set(change.windowId, { ...parsed, zoomed: change.zoomed });
+          const leafIds = new Set(parsed.leaves.map((leaf) => leaf.id));
+          const knownPaneVanished = [...this.panesByRuntime.values()].some(
+            (pane) => pane.windowRuntimeId === change.windowId && !leafIds.has(pane.runtimeId)
+          );
+          if (parsed.leaves.some((leaf) => !this.panesByRuntime.has(leaf.id)) || knownPaneVanished) {
+            this.scheduleSync();
+          }
+          this.emitLayout(change.windowId);
+          this.emitLayoutAuthority();
+          return;
+        }
+        if (name === "window-pane-changed") {
+          const change = parseWindowPaneChanged(rest);
+          if (!change) return;
+          this.activePaneByWindow.set(change.windowId, change.paneId);
+          for (const pane of this.panesByRuntime.values()) {
+            if (pane.windowRuntimeId === change.windowId)
+              pane.active = pane.runtimeId === change.paneId;
+          }
+          this.emitLayout(change.windowId);
+          this.emitLayoutAuthority();
+          return;
+        }
+        if (name === "session-window-changed") {
+          const change = parseSessionWindowChanged(rest);
+          if (!change) return;
+          const previous = this.currentWindow;
+          this.currentWindow = change.windowId;
+          if (previous === change.windowId) return;
+          if (previous) this.emitLayout(previous);
+          this.emitLayout(change.windowId);
+          this.emitLayoutAuthority();
+          return;
+        }
+        if (STRUCTURAL_NOTIFICATIONS.has(name)) this.scheduleSync();
+      }
+      probeNativeClientActivity() {
+        if (this.nativeClientProbePending || this.disposed) return;
+        this.nativeClientProbePending = true;
+        void this.io.request(
+          `list-clients -t "${this.opts.session}" -F "#{client_control_mode}	#{client_activity}"`
+        ).then((lines) => {
+          if (lines.some((line) => /^0\t\d+$/u.test(line.trim()))) {
+            this.opts.onNativeClientActivity?.();
+          }
+        }).catch(() => void 0).finally(() => {
+          this.nativeClientProbePending = false;
+        });
+      }
+      emitLayout(windowRuntimeId) {
+        const event = this.layoutEventFor(windowRuntimeId);
+        if (!event) return;
+        for (const subscriber of this.layoutSubscribers) subscriber(event);
+        for (const pane of this.panesByRuntime.values()) {
+          if (pane.windowRuntimeId !== windowRuntimeId) continue;
+          for (const sub of pane.subs) {
+            if (!sub.closed && sub.onLayout) sub.onLayout(event);
+          }
+        }
+      }
+      emitLayoutAuthority() {
+        const runtimeSessionId = this.attachedIdentity?.runtimeSessionId;
+        if (!runtimeSessionId || this.layoutAuthoritySubscribers.size === 0) return;
+        this.layoutTopologyEpoch += 1;
+        for (const subscriber of this.layoutAuthoritySubscribers)
+          this.emitLayoutAuthorityTo(subscriber, runtimeSessionId);
+      }
+      emitLayoutAuthorityTo(subscriber, runtimeSessionId) {
+        const layouts = [...this.layoutByWindow.keys()].map((runtimeId) => this.layoutEventFor(runtimeId)).filter((event) => event !== null);
+        subscriber({
+          session: this.opts.session,
+          runtimeSessionId,
+          topologyEpoch: this.layoutTopologyEpoch,
+          layouts
+        });
+      }
+      /**
+       * Hand ONE new subscriber the geometry of its owning window.
+       *
+       * Without it a subscriber's first layout frame arrives only when a layout
+       * happens to change, so a view built from these frames opens empty and stays
+       * empty until the user moves something — which reads as the app failing to
+       * find the session's windows at all.
+       */
+      emitLayoutSnapshot(sub) {
+        if (!sub.onLayout) return;
+        const windowRuntimeId = sub.pane.windowRuntimeId;
+        if (windowRuntimeId === null) return;
+        const event = this.layoutEventFor(windowRuntimeId);
+        if (!sub.closed && event) sub.onLayout(event);
+      }
+      layoutEventFor(windowRuntimeId) {
+        const layout = this.layoutByWindow.get(windowRuntimeId);
+        if (!layout) return null;
+        const windowRecord = this.windowsByRuntime.get(windowRuntimeId) ?? null;
+        const activePane = this.activePaneByWindow.get(windowRuntimeId) ?? "";
+        const event = {
+          type: "layout",
+          session: this.opts.session,
+          semanticWindowId: windowRecord?.semanticId ?? null,
+          windowName: windowRecord?.name ?? null,
+          currentWindow: windowRuntimeId === this.currentWindow,
+          cols: layout.width,
+          rows: layout.height,
+          zoomed: layout.zoomed,
+          paneBorderStatus: windowRecord?.paneBorderStatus ?? "off",
+          panes: layout.leaves.map((leaf) => ({
+            semanticPaneId: this.panesByRuntime.get(leaf.id)?.semanticId ?? null,
+            left: leaf.left,
+            top: leaf.top,
+            width: leaf.width,
+            height: leaf.height,
+            active: leaf.id === activePane
+          }))
+        };
+        return event;
+      }
+      // ── Truth sync + identity join ───────────────────────────────────────────
+      scheduleSync() {
+        if (this.cancelSync || this.disposed) return;
+        const schedule = this.opts.scheduleSync ?? ((callback, delayMs) => {
+          const timer = setTimeout(callback, delayMs);
+          return () => clearTimeout(timer);
+        });
+        this.cancelSync = schedule(() => {
+          this.cancelSync = null;
+          void this.syncNow().catch(() => {
+          });
+        }, SYNC_DEBOUNCE_MS);
+      }
+      async syncNow() {
+        if (this.disposed) return;
+        const lines = await this.io.request(
+          `list-panes -s -t "${this.opts.session}" -F "#{pane_id}	#{pane_active}	#{window_id}	#{?window_active,1,0}"`
+        );
+        const truth = [];
+        for (const line of lines) {
+          const [runtime = "", active2 = "", windowId = "", windowActive = ""] = line.split("	");
+          if (!/^%[0-9]+$/u.test(runtime)) continue;
+          truth.push({
+            runtimePaneId: runtime,
+            active: active2 === "1",
+            runtimeWindowId: windowId,
+            windowActive: windowActive === "1"
+          });
+        }
+        const { listed, movedWindowRuntimeIds } = this.applyPaneTruth(truth);
+        await this.syncWindows(this.opts.session, movedWindowRuntimeIds);
+        this.discovery.discover(listed);
+      }
+      applyPaneTruth(truth) {
+        const listed = /* @__PURE__ */ new Set();
+        const movedWindowRuntimeIds = /* @__PURE__ */ new Set();
+        this.truthActive.clear();
+        this.truthWindow.clear();
+        this.activePaneByWindow.clear();
+        for (const row of truth) {
+          listed.add(row.runtimePaneId);
+          this.truthActive.set(row.runtimePaneId, row.active);
+          this.truthWindow.set(row.runtimePaneId, row.runtimeWindowId);
+          if (row.active) this.activePaneByWindow.set(row.runtimeWindowId, row.runtimePaneId);
+          if (row.windowActive) this.currentWindow = row.runtimeWindowId;
+        }
+        for (const [runtime, pane] of [...this.panesByRuntime]) {
+          if (listed.has(runtime)) {
+            pane.active = this.truthActive.get(runtime) ?? pane.active;
+            const nextWindowRuntimeId = this.truthWindow.get(runtime) ?? pane.windowRuntimeId;
+            if (nextWindowRuntimeId !== pane.windowRuntimeId && nextWindowRuntimeId !== null)
+              movedWindowRuntimeIds.add(nextWindowRuntimeId);
+            pane.windowRuntimeId = nextWindowRuntimeId;
+            continue;
+          }
+          this.cancelRecovery(runtime);
+          this.continueNotificationQueues.delete(runtime);
+          this.panesByRuntime.delete(runtime);
+          this.outputOrdinals.delete(runtime);
+          this.panesBySemantic.delete(pane.semanticId);
+          this.ledger.forget(runtime);
+          this.ageByRuntime.delete(runtime);
+          for (const sub of pane.subs) {
+            if (!sub.closed) {
+              sub.closed = true;
+              sub.onEvent({ type: "closed" });
+            }
+          }
+          pane.subs.clear();
+        }
+        return { listed, movedWindowRuntimeIds };
+      }
+      async refreshTrustedInventory(expectedRuntimeSessionId, attempt = 0) {
+        const authorityOrdinal = this.windowAuthorityOrdinal;
+        const beforeLines = await this.io.request(
+          `list-panes -s -t "${expectedRuntimeSessionId}" -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`
+        );
+        if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
+        const parsed = parseSessionPaneDescriptorReply(beforeLines);
+        if (parsed.malformedUtf8Records !== 0 || parsed.descriptors.length === 0 || parsed.descriptors.length !== beforeLines.length) {
+          throw new Error(`trusted inventory for ${this.opts.session} is malformed`);
+        }
+        const descriptors = parsed.descriptors;
+        const runtimePaneIds = new Set(descriptors.map((pane) => pane.runtimePaneId));
+        const runtimeSessionIds = new Set(descriptors.map((pane) => pane.runtimeSessionId));
+        const activeWindowIds = new Set(
+          descriptors.filter((pane) => pane.windowActive).map((pane) => pane.windowId)
+        );
+        const globallyActivePanes = descriptors.filter((pane) => pane.paneActive && pane.windowActive);
+        if (runtimePaneIds.size !== descriptors.length || runtimeSessionIds.size !== 1 || runtimeSessionIds.values().next().value !== expectedRuntimeSessionId || descriptors.some((pane) => pane.sessionName !== this.opts.session) || descriptors.some((pane) => pane.windowId === null) || activeWindowIds.size !== 1 || globallyActivePanes.length !== 1) {
+          throw new Error(`trusted inventory for ${this.opts.session} is inconsistent`);
+        }
+        const computedWindowCounts = /* @__PURE__ */ new Map();
+        for (const descriptor2 of descriptors) {
+          const runtimeWindowId = descriptor2.windowId;
+          computedWindowCounts.set(
+            runtimeWindowId,
+            (computedWindowCounts.get(runtimeWindowId) ?? 0) + 1
+          );
+        }
+        if (descriptors.some(
+          (pane) => pane.windowPaneCount !== computedWindowCounts.get(pane.windowId) || pane.sessionWindowCount !== computedWindowCounts.size
+        )) {
+          throw new Error(`trusted inventory for ${this.opts.session} has incomplete counts`);
+        }
+        const windowStage = await this.stageWindows(expectedRuntimeSessionId);
+        const repairedPanes = await this.repairTrustedPaneIdentity(descriptors, windowStage.layouts);
+        const afterLines = await this.io.request(
+          `list-panes -s -t "${expectedRuntimeSessionId}" -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`
+        );
+        const confirmedWindowStage = await this.stageWindows(expectedRuntimeSessionId);
+        const coherent = beforeLines.length === afterLines.length && beforeLines.every((line, index) => line === afterLines[index]);
+        if (windowStage.repairedIdentity || confirmedWindowStage.repairedIdentity || repairedPanes || !coherent || !this.windowStagesEqual(windowStage, confirmedWindowStage) || authorityOrdinal !== this.windowAuthorityOrdinal) {
+          if (attempt >= 1)
+            throw new Error(`trusted inventory for ${this.opts.session} did not settle`);
+          return await this.refreshTrustedInventory(expectedRuntimeSessionId, attempt + 1);
+        }
+        if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
+        const activeWindowId = activeWindowIds.values().next().value;
+        const descriptorWindowByPane = new Map(
+          descriptors.map((descriptor2) => [descriptor2.runtimePaneId, descriptor2.windowId])
+        );
+        const stagedPaneIds = /* @__PURE__ */ new Set();
+        let stagedPaneCount = 0;
+        let stagedPaneMembershipExact = true;
+        for (const [runtimeWindowId, layout] of confirmedWindowStage.layouts) {
+          if (layout.leaves.length !== computedWindowCounts.get(runtimeWindowId)) {
+            stagedPaneMembershipExact = false;
+            break;
+          }
+          for (const leaf of layout.leaves) {
+            stagedPaneCount += 1;
+            if (stagedPaneIds.has(leaf.id) || descriptorWindowByPane.get(leaf.id) !== runtimeWindowId) {
+              stagedPaneMembershipExact = false;
+              break;
+            }
+            stagedPaneIds.add(leaf.id);
+          }
+          if (!stagedPaneMembershipExact) break;
+        }
+        if (confirmedWindowStage.currentWindow !== activeWindowId || confirmedWindowStage.windows.size !== computedWindowCounts.size || !stagedPaneMembershipExact || stagedPaneCount !== descriptors.length || stagedPaneIds.size !== descriptors.length || [...computedWindowCounts.keys()].some(
+          (runtimeWindowId) => !confirmedWindowStage.windows.has(runtimeWindowId)
+        ) || descriptors.some((descriptor2) => {
+          const pane = this.panesByRuntime.get(descriptor2.runtimePaneId);
+          const window2 = confirmedWindowStage.windows.get(descriptor2.windowId);
+          return !pane || !window2?.semanticId || descriptor2.semanticPaneId !== pane.semanticId || descriptor2.semanticWindowId !== window2.semanticId || !WorkspaceIdSchemaZ.safeParse(pane.semanticId).success || !WorkspaceIdSchemaZ.safeParse(window2.semanticId).success;
+        })) {
+          throw new Error(`trusted inventory for ${this.opts.session} lacks verified identity`);
+        }
+        const previousCurrentWindow = this.currentWindow;
+        const { movedWindowRuntimeIds } = this.applyPaneTruth(
+          descriptors.map((pane) => ({
+            runtimePaneId: pane.runtimePaneId,
+            active: pane.paneActive,
+            runtimeWindowId: pane.windowId,
+            windowActive: pane.windowActive
+          }))
+        );
+        for (const descriptor2 of descriptors) {
+          const pane = this.panesByRuntime.get(descriptor2.runtimePaneId);
+          pane.descriptor = descriptor2;
+          pane.active = descriptor2.paneActive;
+        }
+        this.commitWindowStage(confirmedWindowStage, movedWindowRuntimeIds, previousCurrentWindow);
+        if (this.degraded || this.panesByRuntime.size !== descriptors.length || this.windowsByRuntime.size !== computedWindowCounts.size || [...computedWindowCounts.keys()].some(
+          (runtimeWindowId) => !this.windowsByRuntime.has(runtimeWindowId)
+        )) {
+          throw new Error(`trusted inventory for ${this.opts.session} is degraded`);
+        }
+        const windowCounts = computedWindowCounts;
+        const sessionWindowCount = computedWindowCounts.size;
+        const panes = descriptors.map((descriptor2) => {
+          const record = this.panesByRuntime.get(descriptor2.runtimePaneId);
+          const runtimeWindowId = descriptor2.windowId;
+          const window2 = this.windowsByRuntime.get(runtimeWindowId);
+          if (!record || record.windowRuntimeId !== descriptor2.windowId || !window2?.semanticId || descriptor2.semanticPaneId !== record.semanticId || descriptor2.semanticWindowId !== window2.semanticId || !WorkspaceIdSchemaZ.safeParse(record.semanticId).success || !WorkspaceIdSchemaZ.safeParse(window2.semanticId).success) {
+            throw new Error(`trusted inventory for ${this.opts.session} lacks verified identity`);
+          }
+          return Object.freeze({
+            runtimeSessionId: descriptor2.runtimeSessionId,
+            runtimeWindowId,
+            runtimePaneId: descriptor2.runtimePaneId,
+            semanticWindowId: window2.semanticId,
+            semanticPaneId: record.semanticId,
+            windowPaneCount: windowCounts.get(runtimeWindowId),
+            sessionWindowCount,
+            paneIndex: descriptor2.paneIndex,
+            title: descriptor2.title ?? "",
+            currentCommand: descriptor2.currentCommand ?? "",
+            active: descriptor2.paneActive && descriptor2.windowActive,
+            role: descriptor2.role,
+            name: descriptor2.name,
+            type: descriptor2.type,
+            missionStamp: descriptor2.missionStamp,
+            dir: descriptor2.cwd ?? ""
+          });
+        });
+        return Object.freeze({
+          sessionName: this.opts.session,
+          runtimeSessionId: descriptors[0].runtimeSessionId,
+          panes: Object.freeze(panes)
+        });
+      }
+      async syncWindows(target = this.opts.session, requiredLayoutEmits = /* @__PURE__ */ new Set()) {
+        const stage = await this.stageWindows(target);
+        this.commitWindowStage(stage, requiredLayoutEmits);
+        return stage.repairedIdentity;
+      }
+      commitWindowStage(stage, requiredLayoutEmits = /* @__PURE__ */ new Set(), previousCurrentWindow = this.currentWindow) {
+        const changedWindows = /* @__PURE__ */ new Set();
+        for (const [runtimeId, record] of stage.windows) {
+          const previous = this.windowsByRuntime.get(runtimeId);
+          const previousLayout = this.layoutByWindow.get(runtimeId);
+          const nextLayout = stage.layouts.get(runtimeId);
+          if (!previous || previous.name !== record.name || previous.semanticId !== record.semanticId || previous.paneBorderStatus !== record.paneBorderStatus || !previousLayout || previousLayout.zoomed !== nextLayout.zoomed || previousLayout.width !== nextLayout.width || previousLayout.height !== nextLayout.height || previousLayout.leaves.length !== nextLayout.leaves.length || previousLayout.leaves.some((leaf, index) => {
+            const candidate = nextLayout.leaves[index];
+            return !candidate || leaf.id !== candidate.id || leaf.left !== candidate.left || leaf.top !== candidate.top || leaf.width !== candidate.width || leaf.height !== candidate.height;
+          })) {
+            changedWindows.add(runtimeId);
+          }
+        }
+        const windowSetChanged = stage.windows.size !== this.windowsByRuntime.size;
+        if (previousCurrentWindow !== stage.currentWindow) {
+          if (stage.windows.has(previousCurrentWindow)) changedWindows.add(previousCurrentWindow);
+          if (stage.windows.has(stage.currentWindow)) changedWindows.add(stage.currentWindow);
+        }
+        this.currentWindow = stage.currentWindow;
+        this.windowsByRuntime.clear();
+        for (const [key, value] of stage.windows) this.windowsByRuntime.set(key, value);
+        this.layoutByWindow.clear();
+        for (const [key, value] of stage.layouts) this.layoutByWindow.set(key, value);
+        const layoutEmits = windowSetChanged ? new Set(stage.windows.keys()) : new Set(
+          [...changedWindows, ...requiredLayoutEmits].filter(
+            (runtimeId) => stage.windows.has(runtimeId)
+          )
+        );
+        for (const runtimeId of layoutEmits) this.emitLayout(runtimeId);
+        this.emitLayoutAuthority();
+      }
+      windowStagesEqual(left, right) {
+        if (left.currentWindow !== right.currentWindow || left.windows.size !== right.windows.size || left.layouts.size !== right.layouts.size) {
+          return false;
+        }
+        for (const [runtimeId, leftWindow] of left.windows) {
+          const rightWindow = right.windows.get(runtimeId);
+          const leftLayout = left.layouts.get(runtimeId);
+          const rightLayout = right.layouts.get(runtimeId);
+          if (!rightWindow || !leftLayout || !rightLayout || leftWindow.semanticId !== rightWindow.semanticId || leftWindow.name !== rightWindow.name || leftWindow.paneBorderStatus !== rightWindow.paneBorderStatus || leftLayout.zoomed !== rightLayout.zoomed || leftLayout.width !== rightLayout.width || leftLayout.height !== rightLayout.height || leftLayout.leaves.length !== rightLayout.leaves.length || leftLayout.leaves.some((leaf, index) => {
+            const candidate = rightLayout.leaves[index];
+            return !candidate || leaf.id !== candidate.id || leaf.left !== candidate.left || leaf.top !== candidate.top || leaf.width !== candidate.width || leaf.height !== candidate.height;
+          })) {
+            return false;
+          }
+        }
+        return true;
+      }
+      async stageWindows(target = this.opts.session) {
+        const lines = await this.io.request(
+          `list-windows -t "${target}" -F "#{window_id}	#{qa:@tmux_ide_window_id}	#{qa:window_name}	#{window_active}	#{window_visible_layout}	#{?window_zoomed_flag,1,0}	#{pane-border-status}"`
+        );
+        const rows = [];
+        const seenRuntimeIds = /* @__PURE__ */ new Set();
+        for (const raw of lines) {
+          const line = Buffer.from(raw, "latin1").toString("utf8");
+          const parts = line.split("	");
+          if (parts.length !== 7) {
+            throw new Error(`window layout truth for ${this.opts.session} is malformed`);
+          }
+          const [
+            runtimeId = "",
+            stampRaw = "",
+            nameRaw = "",
+            active2 = "",
+            visible = "",
+            zoomed = "",
+            borderStatus = "off"
+          ] = parts;
+          if (!/^@[0-9]+$/u.test(runtimeId) || seenRuntimeIds.has(runtimeId) || active2 !== "0" && active2 !== "1" || zoomed !== "0" && zoomed !== "1" || borderStatus !== "top" && borderStatus !== "bottom" && borderStatus !== "off") {
+            throw new Error(`window layout truth for ${this.opts.session} is malformed`);
+          }
+          seenRuntimeIds.add(runtimeId);
+          const stamp = decodeTmuxArgument(stampRaw);
+          const name = decodeTmuxArgument(nameRaw);
+          rows.push({
+            runtimeId,
+            stamp: stamp.length > 0 ? stamp : null,
+            name: name.length > 0 ? name : null,
+            active: active2 === "1",
+            visible,
+            zoomed: zoomed === "1",
+            paneBorderStatus: borderStatus
+          });
+        }
+        if (rows.length === 0) {
+          throw new Error(`window layout truth for ${this.opts.session} is missing`);
+        }
+        const activeRows = rows.filter(({ active: active2 }) => active2);
+        if (activeRows.length !== 1) {
+          throw new Error(
+            `window layout truth for ${this.opts.session} has inconsistent active window`
+          );
+        }
+        const nextLayoutByWindow = /* @__PURE__ */ new Map();
+        for (const row of rows) {
+          const parsed = parseLayout(row.visible);
+          if (!parsed) {
+            throw new Error(`window layout truth for ${this.opts.session} is malformed`);
+          }
+          nextLayoutByWindow.set(row.runtimeId, { ...parsed, zoomed: row.zoomed });
+        }
+        const stampCounts = /* @__PURE__ */ new Map();
+        for (const row of rows) {
+          if (row.stamp && WorkspaceIdSchemaZ.safeParse(row.stamp).success) {
+            stampCounts.set(row.stamp, (stampCounts.get(row.stamp) ?? 0) + 1);
+          }
+        }
+        const claimed = new Set(stampCounts.keys());
+        const generateWindowId = this.opts.generateWindowId ?? defaultMirrorWindowId;
+        let repairedIdentity = false;
+        const next = /* @__PURE__ */ new Map();
+        let nextCurrentWindow = "";
+        for (const row of rows) {
+          if (row.active) nextCurrentWindow = row.runtimeId;
+          let semanticId = null;
+          if (row.stamp && stampCounts.get(row.stamp) === 1) {
+            semanticId = row.stamp;
+          } else {
+            repairedIdentity = true;
+            let candidate = null;
+            for (let attempt = 0; attempt < 32 && !candidate; attempt += 1) {
+              const generated = generateWindowId();
+              if (WorkspaceIdSchemaZ.safeParse(generated).success && !claimed.has(generated)) {
+                candidate = generated;
+              }
+            }
+            if (candidate) {
+              claimed.add(candidate);
+              const ok2 = await this.io.request(
+                `set-option -w -t ${row.runtimeId} ${WORKSPACE_SEMANTIC_WINDOW_OPTION} "${candidate}"`
+              ).then(
+                () => true,
+                () => false
+              );
+              if (ok2) semanticId = candidate;
+              else {
+                this.pushDiagnostic({
+                  code: "WINDOW_STAMP_BACK_FAILED",
+                  message: `Could not stamp semantic window identity ${candidate}.`,
+                  degraded: true
+                });
+              }
+            }
+          }
+          next.set(row.runtimeId, {
+            runtimeId: row.runtimeId,
+            semanticId,
+            name: row.name,
+            paneBorderStatus: row.paneBorderStatus
+          });
+        }
+        return {
+          windows: next,
+          layouts: nextLayoutByWindow,
+          currentWindow: nextCurrentWindow,
+          repairedIdentity
+        };
+      }
+      async reconcileIdentity(descriptors, listed) {
+        if (this.disposed) return false;
+        const snapshots = descriptors.filter((descriptor2) => listed.has(descriptor2.runtimePaneId)).map((descriptor2) => ({
+          runtimePaneId: descriptor2.runtimePaneId,
+          semanticPaneId: descriptor2.semanticPaneId,
+          role: descriptor2.role,
+          type: descriptor2.type,
+          currentCommand: descriptor2.currentCommand,
+          cwd: descriptor2.cwd,
+          title: descriptor2.title,
+          rect: this.rectFor(descriptor2.runtimePaneId),
+          active: this.truthActive.get(descriptor2.runtimePaneId) ?? false
+        }));
+        const plan = planWorkspaceTmuxReconciliation({
+          panes: snapshots,
+          generateSemanticPaneId: this.opts.generatePaneId ?? defaultMirrorPaneId
+        });
+        const outcomes = await Promise.all(
+          plan.stampEffects.map(
+            (effect) => this.io.request(
+              `set-option -p -t ${effect.runtimePaneId} ${WORKSPACE_SEMANTIC_PANE_OPTION} "${effect.value}"`
+            ).then(
+              () => ({ runtimePaneId: effect.runtimePaneId, ok: true }),
+              (cause) => ({
+                runtimePaneId: effect.runtimePaneId,
+                ok: false,
+                error: cause instanceof Error ? cause.message : String(cause)
+              })
+            )
+          )
+        );
+        if (this.disposed) return plan.stampEffects.length > 0;
+        const reconciliation = finalizeWorkspaceTmuxReconciliation(plan, outcomes);
+        const descriptorByRuntime = new Map(descriptors.map((d) => [d.runtimePaneId, d]));
+        for (const verified of reconciliation.panes) {
+          if (!listed.has(verified.runtimePaneId)) continue;
+          const descriptor2 = descriptorByRuntime.get(verified.runtimePaneId) ?? null;
+          const windowRuntimeId = this.truthWindow.get(verified.runtimePaneId) ?? descriptor2?.windowId ?? null;
+          const existingBySemantic = this.panesBySemantic.get(verified.semanticPaneId);
+          const existingByRuntime = this.panesByRuntime.get(verified.runtimePaneId);
+          if (existingBySemantic && existingBySemantic.runtimeId !== verified.runtimePaneId) {
+            const retiredRuntime = existingBySemantic.runtimeId;
+            this.cancelRecovery(retiredRuntime);
+            this.continueNotificationQueues.delete(retiredRuntime);
+            this.panesByRuntime.delete(retiredRuntime);
+            this.outputOrdinals.delete(retiredRuntime);
+            this.ledger.forget(retiredRuntime);
+            existingBySemantic.runtimeId = verified.runtimePaneId;
+            existingBySemantic.incarnation = ++this.paneIncarnation;
+            existingBySemantic.descriptor = descriptor2;
+            existingBySemantic.active = verified.active;
+            existingBySemantic.windowRuntimeId = windowRuntimeId;
+            this.panesByRuntime.set(verified.runtimePaneId, existingBySemantic);
+            for (const sub of existingBySemantic.subs) {
+              if (!sub.closed && !sub.frozen) this.reseedPlain(sub);
+            }
+            continue;
+          }
+          if (existingByRuntime && existingByRuntime.semanticId === verified.semanticPaneId) {
+            existingByRuntime.descriptor = descriptor2;
+            existingByRuntime.active = verified.active;
+            existingByRuntime.windowRuntimeId = windowRuntimeId;
+            continue;
+          }
+          if (existingByRuntime) {
+            this.panesBySemantic.delete(existingByRuntime.semanticId);
+            this.cancelRecovery(existingByRuntime.runtimeId);
+            this.continueNotificationQueues.delete(existingByRuntime.runtimeId);
+            this.ledger.forget(existingByRuntime.runtimeId);
+            this.outputOrdinals.delete(existingByRuntime.runtimeId);
+            for (const sub of existingByRuntime.subs) {
+              if (sub.closed) continue;
+              sub.closed = true;
+              sub.feed.abortCurrent();
+              sub.onEvent({ type: "closed" });
+            }
+            existingByRuntime.subs.clear();
+            existingByRuntime.incarnation = ++this.paneIncarnation;
+            existingByRuntime.semanticId = verified.semanticPaneId;
+            existingByRuntime.descriptor = descriptor2;
+            existingByRuntime.active = verified.active;
+            existingByRuntime.windowRuntimeId = windowRuntimeId;
+            this.panesBySemantic.set(verified.semanticPaneId, existingByRuntime);
+            continue;
+          }
+          const record = {
+            runtimeId: verified.runtimePaneId,
+            semanticId: verified.semanticPaneId,
+            descriptor: descriptor2,
+            active: verified.active,
+            windowRuntimeId,
+            subs: /* @__PURE__ */ new Set(),
+            incarnation: ++this.paneIncarnation
+          };
+          this.panesByRuntime.set(record.runtimeId, record);
+          this.panesBySemantic.set(record.semanticId, record);
+        }
+        const semanticByRuntime = new Map(
+          reconciliation.panes.map((pane) => [pane.runtimePaneId, pane.semanticPaneId])
+        );
+        this.diagnostics = reconciliation.diagnostics.map((diagnostic4) => ({
+          code: diagnostic4.code,
+          message: diagnostic4.message.replace(
+            /%[0-9]+/gu,
+            (runtime) => semanticByRuntime.get(runtime) ?? "(unidentified pane)"
+          ),
+          degraded: diagnostic4.degraded
+        }));
+        this.degraded = reconciliation.degraded;
+        for (const runtimeId of this.layoutByWindow.keys()) this.emitLayout(runtimeId);
+        this.emitLayoutAuthority();
+        this.settleFirstJoin();
+        return plan.stampEffects.length > 0;
+      }
+      async repairTrustedPaneIdentity(descriptors, layouts) {
+        const rectForRuntime = (runtimePaneId) => {
+          for (const layout of layouts.values()) {
+            const leaf = layout.leaves.find(({ id }) => id === runtimePaneId);
+            if (leaf) {
+              return {
+                left: leaf.left,
+                top: leaf.top,
+                width: leaf.width,
+                height: leaf.height
+              };
+            }
+          }
+          return { left: 0, top: 0, width: 1, height: 1 };
+        };
+        const plan = planWorkspaceTmuxReconciliation({
+          panes: descriptors.map((descriptor2) => ({
+            runtimePaneId: descriptor2.runtimePaneId,
+            semanticPaneId: descriptor2.semanticPaneId,
+            role: descriptor2.role,
+            type: descriptor2.type,
+            currentCommand: descriptor2.currentCommand,
+            cwd: descriptor2.cwd,
+            title: descriptor2.title,
+            rect: rectForRuntime(descriptor2.runtimePaneId),
+            active: descriptor2.paneActive && descriptor2.windowActive
+          })),
+          generateSemanticPaneId: this.opts.generatePaneId ?? defaultMirrorPaneId
+        });
+        if (plan.stampEffects.length === 0) return false;
+        const outcomes = await Promise.all(
+          plan.stampEffects.map(
+            (effect) => this.io.request(
+              `set-option -p -t ${effect.runtimePaneId} ${WORKSPACE_SEMANTIC_PANE_OPTION} "${effect.value}"`
+            ).then(
+              () => true,
+              () => false
+            )
+          )
+        );
+        if (outcomes.some((ok2) => !ok2)) {
+          throw new Error(`trusted inventory for ${this.opts.session} could not repair identity`);
+        }
+        return true;
+      }
+      settleFirstJoin() {
+        this.resolveFirstJoin?.();
+        this.resolveFirstJoin = null;
+      }
+      rectFor(runtime) {
+        for (const layout of this.layoutByWindow.values()) {
+          const leaf = layout.leaves.find((candidate) => candidate.id === runtime);
+          if (leaf) return { left: leaf.left, top: leaf.top, width: leaf.width, height: leaf.height };
+        }
+        return { left: 0, top: 0, width: 1, height: 1 };
+      }
+      pushDiagnostic(diagnostic4) {
+        this.diagnostics = [...this.diagnostics.slice(-31), diagnostic4];
+        if (diagnostic4.degraded) this.degraded = true;
+      }
+      onChannelExit() {
+        if (this.disposed) return;
+        this.settleFirstJoin();
+        for (const runtime of [...this.recoveries.keys()]) this.cancelRecovery(runtime);
+        this.continueNotificationQueues.clear();
+        for (const pane of this.panesByRuntime.values()) {
+          for (const sub of pane.subs) {
+            if (!sub.closed) {
+              sub.closed = true;
+              sub.onEvent({ type: "closed" });
+            }
+          }
+          pane.subs.clear();
+        }
+        this.opts.onExit?.();
+      }
+    };
+  }
+});
+
+// packages/daemon/src/terminal/mirror/control-mode-ownership.ts
+function controlModeAuthorityKey(session, selector) {
+  const server = selector.socketPath ? `path:${selector.socketPath}` : `name:${selector.socketName ?? "default"}`;
+  return `${server}/session:${session}`;
+}
+var ControlModeOwnershipRegistry, processControlModeOwnershipRegistry;
+var init_control_mode_ownership = __esm({
+  "packages/daemon/src/terminal/mirror/control-mode-ownership.ts"() {
+    "use strict";
+    ControlModeOwnershipRegistry = class {
+      #owners = /* @__PURE__ */ new Map();
+      claim(authorityKey, owner) {
+        const existing = this.#owners.get(authorityKey);
+        if (existing) {
+          throw new Error(`control-mode authority already exists for ${authorityKey}`);
+        }
+        this.#owners.set(authorityKey, owner);
+        let released = false;
+        return () => {
+          if (released) return;
+          released = true;
+          if (this.#owners.get(authorityKey) === owner) this.#owners.delete(authorityKey);
+        };
+      }
+    };
+    processControlModeOwnershipRegistry = new ControlModeOwnershipRegistry();
+  }
+});
+
+// packages/daemon/src/terminal/mirror/mirror-service.ts
+var MirrorService;
+var init_mirror_service = __esm({
+  "packages/daemon/src/terminal/mirror/mirror-service.ts"() {
+    "use strict";
+    init_control_channel();
+    init_session_channel();
+    init_control_mode_ownership();
+    MirrorService = class {
+      opts;
+      channels = /* @__PURE__ */ new Map();
+      pendingDisposals = /* @__PURE__ */ new Set();
+      drainingChannels = /* @__PURE__ */ new Map();
+      sessionExitListeners = /* @__PURE__ */ new Set();
+      owner = /* @__PURE__ */ Symbol("MirrorService control-mode owner");
+      disposed = false;
+      constructor(opts = {}) {
+        this.opts = opts;
+      }
+      /** Enumerate a session's panes under semantic identity (spinning the
+       *  channel up if needed; it is released again when no subscription holds it). */
+      async describeSession(session) {
+        const entry = await this.acquire(session);
+        try {
+          return entry.channel.describe();
+        } finally {
+          this.release(session, entry);
+        }
+      }
+      async describeSessionAuthority(session) {
+        const entry = await this.acquire(session);
+        try {
+          const identity = await entry.channel.attachedSessionIdentity();
+          return { description: entry.channel.describe(), runtimeSessionId: identity.runtimeSessionId };
+        } finally {
+          this.release(session, entry);
+        }
+      }
+      /**
+       * Daemon-private raw inventory from an already-retained channel. This seam
+       * never creates or starts authority; a retirement race returns null.
+       */
+      async describeTrustedInventory(session, expectedRuntimeSessionId) {
+        const entry = this.channels.get(session);
+        if (!entry || entry.retired) return null;
+        await entry.started;
+        if (this.channels.get(session) !== entry || entry.retired) return null;
+        const inventory = await entry.channel.describeTrustedInventory(expectedRuntimeSessionId);
+        if (this.channels.get(session) !== entry || entry.retired) return null;
+        return inventory;
+      }
+      hasRetainedSession(session) {
+        const entry = this.channels.get(session);
+        return entry !== void 0 && !entry.retired;
+      }
+      async retainedSessionIdentity(session) {
+        const entry = this.channels.get(session);
+        if (!entry || entry.retired) return null;
+        await entry.started;
+        if (this.channels.get(session) !== entry || entry.retired) return null;
+        const identity = await entry.channel.attachedSessionIdentity();
+        if (this.channels.get(session) !== entry || entry.retired) return null;
+        return identity;
+      }
+      async subscribe(request) {
+        const entry = await this.acquire(request.session);
+        let handle;
+        try {
+          handle = entry.channel.subscribePane(
+            request.semanticPaneId,
+            request.onEvent,
+            request.onLayout
+          );
+        } catch (cause) {
+          this.release(request.session, entry);
+          throw cause;
+        }
+        let closed = false;
+        return {
+          session: request.session,
+          semanticPaneId: request.semanticPaneId,
+          freeze: () => handle.freeze(),
+          thaw: () => handle.thaw(),
+          reseed: () => handle.reseed(),
+          sendText: (text) => handle.sendText(text),
+          sendKey: (key) => handle.sendKey(key),
+          close: async () => {
+            if (closed) return;
+            closed = true;
+            handle.close();
+            this.release(request.session, entry);
+            await Promise.allSettled([...this.pendingDisposals]);
+          }
+        };
+      }
+      /** Retain one session channel for layout only; no pane feed or seed is created. */
+      async subscribeLayout(session, onLayout, authority) {
+        const entry = await this.acquire(session);
+        let handle;
+        try {
+          const identity = await entry.channel.attachedSessionIdentity();
+          if (authority && (authority.expectedRuntimeSessionId.length === 0 || identity.runtimeSessionId !== authority.expectedRuntimeSessionId)) {
+            const error = new Error(`authoritative layout for ${session} changed topology`);
+            error.name = "MirrorTopologyChangedError";
+            throw error;
+          }
+          handle = await entry.channel.subscribeAuthoritativeLayout(
+            onLayout,
+            authority?.expectedSemanticPaneIds,
+            authority?.onAuthority
+          );
+          if (this.channels.get(session) !== entry || entry.retired) {
+            handle.close();
+            throw new Error(`mirror session ${session} retired during layout subscription`);
+          }
+        } catch (cause) {
+          this.release(session, entry);
+          throw cause;
+        }
+        let closed = false;
+        return {
+          session,
+          close: async () => {
+            if (closed) return;
+            closed = true;
+            handle.close();
+            this.release(session, entry);
+            await Promise.allSettled([...this.pendingDisposals]);
+          }
+        };
+      }
+      /** Synchronous hot input on an already-retained SessionRuntime channel. */
+      sendText(session, semanticPaneId3, text, performanceTraceId, isolated = false) {
+        const entry = this.channels.get(session);
+        if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
+        entry.channel.sendText(semanticPaneId3, text, performanceTraceId, isolated);
+      }
+      sendKey(session, semanticPaneId3, key, performanceTraceId) {
+        const entry = this.channels.get(session);
+        if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
+        entry.channel.sendKey(semanticPaneId3, key, performanceTraceId);
+      }
+      fitViewport(session, cols, rows) {
+        const entry = this.channels.get(session);
+        if (!entry || entry.retired) throw new Error(`Mirror session ${session} is unavailable`);
+        entry.channel.fitViewport(cols, rows);
+      }
+      /** Keep the retained control client passive unless the arbiter elects it. */
+      setGeometryParticipation(session, active2) {
+        const entry = this.channels.get(session);
+        if (!entry || entry.retired) return;
+        entry.channel.setGeometryParticipation(active2);
+      }
+      /**
+       * Keep one session channel alive independently of renderer subscriptions.
+       * The daemon SessionRuntime registry owns this retention; clients never do.
+       */
+      async retainSession(session) {
+        const entry = await this.acquire(session);
+        let closed = false;
+        return {
+          session,
+          close: async () => {
+            if (closed) return;
+            closed = true;
+            this.release(session, entry);
+            await Promise.allSettled([...this.pendingDisposals]);
+          }
+        };
+      }
+      /** SessionRuntime's reconnect seam; runtime addresses never cross it. */
+      onSessionExit(listener) {
+        if (this.disposed) throw new Error("MirrorService is disposed");
+        this.sessionExitListeners.add(listener);
+        return () => this.sessionExitListeners.delete(listener);
+      }
+      /** Fall-behind telemetry for an ACTIVE session channel; null when no
+       *  channel is running for the session. */
+      ageTelemetry(session) {
+        return this.channels.get(session)?.channel.ageTelemetry() ?? null;
+      }
+      /** Flow-ledger snapshot (semantic ids) for an ACTIVE session channel. */
+      flowSnapshot(session) {
+        return this.channels.get(session)?.channel.flowSnapshot() ?? null;
+      }
+      activeChannelCount() {
+        return this.channels.size;
+      }
+      async dispose() {
+        this.disposed = true;
+        this.sessionExitListeners.clear();
+        const entries = [...this.channels.values()];
+        this.channels.clear();
+        await Promise.allSettled(
+          entries.map(async (entry) => {
+            entry.retired = true;
+            try {
+              await entry.channel.dispose();
+            } finally {
+              entry.releaseAuthority();
+            }
+          })
+        );
+        await Promise.allSettled([...this.pendingDisposals]);
+      }
+      async acquire(session) {
+        if (this.disposed) throw new Error("MirrorService is disposed");
+        await this.drainingChannels.get(session);
+        if (this.disposed) throw new Error("MirrorService is disposed");
+        let entry = this.channels.get(session);
+        if (!entry) {
+          const releaseAuthority = (this.opts.controlModeOwnershipRegistry ?? processControlModeOwnershipRegistry).claim(
+            controlModeAuthorityKey(session, {
+              socketName: this.opts.socketName,
+              socketPath: this.opts.socketPath
+            }),
+            this.owner
+          );
+          let channel;
+          try {
+            const channelOptions = {
+              session,
+              createIo: (handlers) => this.opts.createIo?.(session, handlers) ?? new MirrorControlChannel({
+                session,
+                handlers,
+                socketName: this.opts.socketName,
+                socketPath: this.opts.socketPath,
+                executable: this.opts.executable,
+                configFile: this.opts.configFile,
+                pauseAfterSeconds: this.opts.pauseAfterSeconds,
+                nowMicros: this.opts.nowMicros
+              }),
+              historyLines: this.opts.historyLines,
+              internalReadHookEmission: this.opts.internalReadHookEmission,
+              generatePaneId: this.opts.generatePaneId,
+              generateWindowId: this.opts.generateWindowId,
+              onExit: () => {
+                const active2 = this.channels.get(session);
+                if (active2?.channel === channel) {
+                  this.retire(session, active2);
+                  for (const listener of this.sessionExitListeners) listener(session);
+                }
+              },
+              onNativeClientActivity: () => this.opts.onNativeClientActivity?.(session),
+              onInputWrite: (action, startedAtMicros, endedAtMicros, pendingBeforeSend) => this.opts.onInputWrite?.(
+                session,
+                action,
+                startedAtMicros,
+                endedAtMicros,
+                pendingBeforeSend
+              ),
+              onInputAccepted: (action, acceptedAtMicros, ok2) => this.opts.onInputAccepted?.(session, action, acceptedAtMicros, ok2),
+              onOutputObserved: (semanticPaneId3, ageMs, timing) => this.opts.onOutputObserved?.(session, semanticPaneId3, ageMs, timing),
+              onFlowRecoveryObserved: (observation2) => this.opts.onFlowRecoveryObserved?.(session, observation2)
+            };
+            channel = new SessionChannel(channelOptions);
+          } catch (cause) {
+            releaseAuthority();
+            throw cause;
+          }
+          entry = {
+            channel,
+            started: channel.start(),
+            refs: 0,
+            releaseAuthority,
+            retired: false
+          };
+          this.channels.set(session, entry);
+        }
+        entry.refs += 1;
+        try {
+          await entry.started;
+        } catch (cause) {
+          this.release(session, entry);
+          throw cause;
+        }
+        if (entry.retired) {
+          this.release(session, entry);
+          return await this.acquire(session);
+        }
+        return entry;
+      }
+      release(session, entry) {
+        entry.refs -= 1;
+        if (entry.refs > 0) return;
+        this.retire(session, entry);
+      }
+      retire(session, entry) {
+        if (entry.retired) return;
+        entry.retired = true;
+        if (this.channels.get(session) === entry) this.channels.delete(session);
+        const disposal = entry.channel.dispose().catch(() => {
+        }).finally(() => entry.releaseAuthority());
+        this.drainingChannels.set(session, disposal);
+        this.pendingDisposals.add(disposal);
+        void disposal.finally(() => {
+          this.pendingDisposals.delete(disposal);
+          if (this.drainingChannels.get(session) === disposal) this.drainingChannels.delete(session);
+        });
+      }
+    };
+  }
+});
+
+// packages/daemon/src/terminal/session-runtime/interaction-receipt-facts.ts
+function sessionRuntimeInteractionFacts(intent) {
+  switch (intent.verb) {
+    case "workspace.window.split":
+      return {
+        target: { kind: "pane", semanticPaneId: intent.semanticPaneId },
+        summary: { operationKind: intent.verb, direction: intent.direction }
+      };
+    case "workspace.window.kill":
+      return {
+        target: { kind: "window", target: intent.target },
+        summary: { operationKind: intent.verb }
+      };
+    case "workspace.pane.kill":
+      return {
+        target: { kind: "pane", semanticPaneId: intent.semanticPaneId },
+        summary: { operationKind: intent.verb }
+      };
+    case "workspace.session.kill":
+      return { target: { kind: "session" }, summary: { operationKind: intent.verb } };
+    case "workspace.rename":
+      return intent.scope === "session" ? {
+        target: { kind: "session" },
+        summary: { operationKind: intent.verb, scope: intent.scope }
+      } : {
+        target: { kind: "window", target: intent.target },
+        summary: { operationKind: intent.verb, scope: intent.scope }
+      };
+    case "workspace.pane.zoom.toggle":
+      return {
+        target: { kind: "pane", semanticPaneId: intent.semanticPaneId },
+        summary: { operationKind: intent.verb, desired: intent.desired }
+      };
+    case "workspace.pane.select":
+      return {
+        target: { kind: "pane", semanticPaneId: intent.semanticPaneId },
+        summary: { operationKind: intent.verb }
+      };
+    case "workspace.pane.send":
+      return {
+        target: { kind: "pane", semanticPaneId: intent.semanticPaneId },
+        summary: {
+          operationKind: intent.verb,
+          characterCount: Array.from(intent.text).length,
+          byteCount: Buffer.byteLength(intent.text, "utf8"),
+          submitted: intent.submit
+        }
+      };
+    case "workspace.pane.swap":
+      return {
+        target: { kind: "pane", semanticPaneId: intent.sourceSemanticPaneId },
+        summary: {
+          operationKind: intent.verb,
+          targetSemanticPaneId: intent.targetSemanticPaneId
+        }
+      };
+    case "workspace.pane.resize":
+      return {
+        target: { kind: "pane", semanticPaneId: intent.semanticPaneId },
+        summary: { operationKind: intent.verb, axis: intent.axis, cells: intent.cells }
+      };
+    case "workspace.pane.read":
+      return {
+        target: { kind: "pane", semanticPaneId: intent.semanticPaneId },
+        summary: { operationKind: intent.verb, observedOnly: true }
+      };
+  }
+}
+function sessionRuntimeObservedProof(intent, rawResult) {
+  if (intent.verb === "workspace.pane.read") {
+    if (rawResult !== void 0) throw new TypeError("Pane read returned an unexpected result");
+    return { operationKind: intent.verb, observed: true, semanticPaneId: intent.semanticPaneId };
+  }
+  const result = WorkspaceMultiplexerMutationResultSchemaZ.parse(rawResult);
+  if (result.verb !== intent.verb)
+    throw new TypeError("Mutation result verb does not match intent");
+  switch (result.verb) {
+    case "workspace.window.split":
+      return {
+        operationKind: result.verb,
+        outcome: result.outcome,
+        direction: result.direction,
+        semanticPaneId: result.semanticPaneId
+      };
+    case "workspace.window.kill":
+      return {
+        operationKind: result.verb,
+        outcome: result.outcome,
+        remainingWindowCount: result.remainingWindowCount
+      };
+    case "workspace.pane.kill":
+      return {
+        operationKind: result.verb,
+        outcome: result.outcome,
+        semanticPaneId: intent.semanticPaneId,
+        windowClosed: result.windowClosed,
+        remainingWindowCount: result.remainingWindowCount
+      };
+    case "workspace.session.kill":
+      return { operationKind: result.verb, outcome: result.outcome };
+    case "workspace.rename":
+      return { operationKind: result.verb, outcome: result.outcome, scope: result.scope };
+    case "workspace.pane.zoom.toggle":
+      return {
+        operationKind: result.verb,
+        outcome: result.outcome,
+        semanticPaneId: result.semanticPaneId,
+        zoomed: result.zoomed
+      };
+    case "workspace.pane.select":
+      return {
+        operationKind: result.verb,
+        outcome: result.outcome,
+        semanticPaneId: result.semanticPaneId
+      };
+    case "workspace.pane.send":
+      return { operationKind: result.verb, observed: true, semanticPaneId: result.semanticPaneId };
+    case "workspace.pane.swap":
+      return {
+        operationKind: result.verb,
+        outcome: result.outcome,
+        sourceSemanticPaneId: result.sourceSemanticPaneId,
+        targetSemanticPaneId: result.targetSemanticPaneId
+      };
+    case "workspace.pane.resize":
+      return {
+        operationKind: result.verb,
+        outcome: result.outcome,
+        semanticPaneId: result.semanticPaneId,
+        axis: result.axis,
+        cells: result.cells
+      };
+  }
+}
+function sessionRuntimeIntentNeedsTmuxObservation(intent) {
+  return intent.verb === "workspace.pane.send" || intent.verb === "workspace.pane.read";
+}
+var init_interaction_receipt_facts = __esm({
+  "packages/daemon/src/terminal/session-runtime/interaction-receipt-facts.ts"() {
+    "use strict";
+    init_src();
+  }
+});
+
+// packages/daemon/src/terminal/session-runtime/runtime-scheduler.ts
+var SYSTEM_SESSION_RUNTIME_SCHEDULER;
+var init_runtime_scheduler = __esm({
+  "packages/daemon/src/terminal/session-runtime/runtime-scheduler.ts"() {
+    "use strict";
+    SYSTEM_SESSION_RUNTIME_SCHEDULER = Object.freeze({
+      nowMs: () => performance.now(),
+      createId: () => crypto.randomUUID(),
+      microtask: (task) => queueMicrotask(task),
+      timer: (task, delayMs) => {
+        const handle = setTimeout(task, delayMs);
+        handle.unref?.();
+        return { cancel: () => clearTimeout(handle) };
+      }
+    });
+  }
+});
+
+// packages/daemon/src/terminal/session-runtime/semantic-mutation-resource-changes.ts
+function semanticMutationResourceChanges(raw) {
+  const parsed = WorkspaceMultiplexerMutationResultSchemaZ.safeParse(raw);
+  if (!parsed.success || parsed.data.outcome !== "applied") return [];
+  const result = parsed.data;
+  if (result.verb === "workspace.pane.send") return [];
+  const base = {
+    workspaceName: result.workspaceName,
+    causeOperationId: result.operationId
+  };
+  const changes = [
+    { ...base, resource: "application-shell" },
+    { ...base, resource: "workspace-missions" }
+  ];
+  if (result.verb === "workspace.window.split" || result.verb === "workspace.window.kill" || result.verb === "workspace.pane.kill" || result.verb === "workspace.session.kill") {
+    changes.push({ ...base, workspaceName: null, resource: "fleet-catalog" });
+  }
+  if (result.verb === "workspace.session.kill") {
+    changes.push({ ...base, workspaceName: null, resource: "workspace-catalog" });
+  }
+  if (result.verb === "workspace.rename" && result.scope === "session") {
+    changes.push({ ...base, workspaceName: null, resource: "fleet-catalog" });
+    changes.push({ ...base, workspaceName: null, resource: "workspace-catalog" });
+  }
+  return Object.freeze(changes.map((change) => Object.freeze(change)));
+}
+var init_semantic_mutation_resource_changes = __esm({
+  "packages/daemon/src/terminal/session-runtime/semantic-mutation-resource-changes.ts"() {
+    "use strict";
+    init_src();
+  }
+});
+
+// packages/daemon/src/terminal/session-runtime/semantic-mutation-executor.ts
+import { z as z72 } from "zod";
+function replayedResult(result) {
+  return result === void 0 ? void 0 : { ...result, outcome: "replayed" };
+}
+var SessionRuntimeIntentError, SESSION_RUNTIME_OBSERVATION_TIMEOUT_MS, SESSION_RUNTIME_OPERATION_LEDGER_CAPACITY, MISSING_SESSION_LEDGER, SessionSemanticMutationExecutor;
+var init_semantic_mutation_executor = __esm({
+  "packages/daemon/src/terminal/session-runtime/semantic-mutation-executor.ts"() {
+    "use strict";
+    init_src();
+    init_interaction_receipt_facts();
+    init_runtime_scheduler();
+    init_runtime_observability();
+    init_semantic_mutation_resource_changes();
+    SessionRuntimeIntentError = class extends Error {
+      constructor(outcome, message, options) {
+        super(message, options);
+        this.outcome = outcome;
+        this.name = "SessionRuntimeIntentError";
+      }
+    };
+    SESSION_RUNTIME_OBSERVATION_TIMEOUT_MS = 1e4;
+    SESSION_RUNTIME_OPERATION_LEDGER_CAPACITY = 256;
+    MISSING_SESSION_LEDGER = /* @__PURE__ */ Symbol("missing-session-ledger");
+    SessionSemanticMutationExecutor = class {
+      #options;
+      #scheduler;
+      #observability;
+      #tails = /* @__PURE__ */ new Map();
+      #pending = /* @__PURE__ */ new Map();
+      #operations = /* @__PURE__ */ new Map();
+      #listeners = /* @__PURE__ */ new Set();
+      #disposed = false;
+      #accepted = 0;
+      #observed = 0;
+      #rejected = 0;
+      #timedOut = 0;
+      constructor(options) {
+        this.#options = options;
+        this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
+        this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
+      }
+      metrics() {
+        return Object.freeze({
+          accepted: this.#accepted,
+          observed: this.#observed,
+          rejected: this.#rejected,
+          timedOut: this.#timedOut,
+          pendingObservations: [...this.#pending.values()].reduce(
+            (sum, pending) => sum + pending.size,
+            0
+          ),
+          activeSessionLanes: this.#tails.size,
+          ledgerEntries: [...this.#operations.values()].reduce((sum, ledger2) => sum + ledger2.size, 0)
+        });
+      }
+      submit(rawOperationId, rawIntent, authority) {
+        if (this.#disposed) {
+          return Promise.reject(
+            new SessionRuntimeIntentError("rejected", "Session semantic mutation executor is disposed")
+          );
+        }
+        const operationId = z72.uuid().parse(rawOperationId);
+        let intent = SessionRuntimeSemanticIntentSchemaZ.parse(rawIntent);
+        if (intent.verb === "workspace.pane.send" || intent.verb === "workspace.pane.read") {
+          intent = { ...intent, origin: authority.origin };
+        }
+        const authenticatedSourceSemanticPaneId = authority.authenticatedSourceSemanticPaneId ?? null;
+        const session = this.#options.resolveSession(intent.workspaceName);
+        const ledger2 = this.#ledger(session ?? MISSING_SESSION_LEDGER);
+        const origin = authority.origin;
+        const fingerprint2 = JSON.stringify([intent, authenticatedSourceSemanticPaneId, origin]);
+        const existing = ledger2.get(operationId);
+        if (existing) {
+          if (existing.fingerprint !== fingerprint2) {
+            return Promise.reject(
+              new SessionRuntimeIntentError(
+                "rejected",
+                "Operation id was already used for a different semantic interaction"
+              )
+            );
+          }
+          return existing.status === "active" ? existing.promise : existing.promise.then(replayedResult);
+        }
+        if (!this.#makeOperationRoom(ledger2)) {
+          return Promise.reject(
+            new SessionRuntimeIntentError(
+              "rejected",
+              "All session semantic mutation ledger slots are active"
+            )
+          );
+        }
+        this.#publish(operationId, intent, "accepted", null, void 0, origin);
+        if (session === null) {
+          const error = new SessionRuntimeIntentError(
+            "rejected",
+            `Workspace ${intent.workspaceName} has no live tmux session`
+          );
+          this.#publish(operationId, intent, "rejected", null, void 0, origin);
+          const rejected = Promise.reject(error);
+          this.#remember(ledger2, operationId, fingerprint2, rejected);
+          return rejected;
+        }
+        const previous = this.#tails.get(session) ?? Promise.resolve();
+        const result = previous.then(
+          () => this.#run(
+            session,
+            operationId,
+            intent,
+            authenticatedSourceSemanticPaneId,
+            authority.authorizeBeforeEffect,
+            origin
+          ),
+          () => this.#run(
+            session,
+            operationId,
+            intent,
+            authenticatedSourceSemanticPaneId,
+            authority.authorizeBeforeEffect,
+            origin
+          )
+        );
+        const tail = result.then(
+          () => void 0,
+          () => void 0
+        );
+        this.#tails.set(session, tail);
+        this.#remember(ledger2, operationId, fingerprint2, result);
+        void tail.finally(() => {
+          if (this.#tails.get(session) === tail) this.#tails.delete(session);
+        });
+        return result;
+      }
+      observe(observation2) {
+        const session = this.#options.resolveSession(observation2.workspaceName);
+        if (session === null) return false;
+        const pending = this.#pending.get(session)?.get(observation2.operationId);
+        if (!pending) return false;
+        const expected = pending.expected;
+        if (expected.workspaceName !== observation2.workspaceName || expected.semanticPaneId !== observation2.semanticPaneId || expected.operationKind !== observation2.operationKind) {
+          return false;
+        }
+        pending.resolve();
+        return true;
+      }
+      onReceipt(listener) {
+        this.#listeners.add(listener);
+        return () => this.#listeners.delete(listener);
+      }
+      async dispose() {
+        if (this.#disposed) return;
+        this.#disposed = true;
+        const error = new SessionRuntimeIntentError(
+          "rejected",
+          "Session semantic mutation executor shut down"
+        );
+        for (const sessionPending of this.#pending.values()) {
+          for (const pending of sessionPending.values()) pending.reject(error);
+        }
+        await Promise.allSettled(this.#tails.values());
+        this.#pending.clear();
+        this.#tails.clear();
+        this.#listeners.clear();
+        this.#operations.clear();
+      }
+      #ledger(key) {
+        const existing = this.#operations.get(key);
+        if (existing) return existing;
+        const ledger2 = /* @__PURE__ */ new Map();
+        this.#operations.set(key, ledger2);
+        return ledger2;
+      }
+      #remember(ledger2, operationId, fingerprint2, promise) {
+        const record = { fingerprint: fingerprint2, promise, status: "active" };
+        ledger2.set(operationId, record);
+        void promise.then(
+          () => {
+            record.status = "settled";
+          },
+          () => {
+            record.status = "settled";
+          }
+        );
+      }
+      /**
+       * Keep exact replay/conflict protection inside the bounded settled ledger
+       * horizon. A new unique operation may retire the oldest settled record, but
+       * pending work is never evicted or duplicated. This matches the daemon's
+       * bounded replay journal rather than imposing a lifetime mutation ceiling.
+       */
+      #makeOperationRoom(ledger2) {
+        if (ledger2.size < SESSION_RUNTIME_OPERATION_LEDGER_CAPACITY) return true;
+        for (const [operationId, record] of ledger2) {
+          if (record.status !== "settled") continue;
+          ledger2.delete(operationId);
+          return true;
+        }
+        return false;
+      }
+      async #run(session, operationId, intent, authenticatedSourceSemanticPaneId, authorizeBeforeEffect, origin = "sdk") {
+        if (this.#disposed) {
+          const error = new SessionRuntimeIntentError(
+            "rejected",
+            "Session semantic mutation executor shut down before execution"
+          );
+          this.#publish(operationId, intent, "rejected", null, void 0, origin);
+          throw error;
+        }
+        const needsTmuxObservation = sessionRuntimeIntentNeedsTmuxObservation(intent);
+        let observed = null;
+        if (needsTmuxObservation) {
+          let settleObservation;
+          let rejectObservation;
+          observed = new Promise((resolve38, reject) => {
+            settleObservation = resolve38;
+            rejectObservation = reject;
+          });
+          let sessionPending = this.#pending.get(session);
+          if (!sessionPending) {
+            sessionPending = /* @__PURE__ */ new Map();
+            this.#pending.set(session, sessionPending);
+          }
+          sessionPending.set(operationId, {
+            expected: {
+              operationId,
+              workspaceName: intent.workspaceName,
+              semanticPaneId: intent.semanticPaneId,
+              operationKind: intent.verb
+            },
+            resolve: settleObservation,
+            reject: rejectObservation
+          });
+        }
+        let result;
+        let trace = null;
+        if (this.#observability.enabled && this.#options.traceAuthority) {
+          try {
+            trace = this.#observability.beginTrace(
+              intent.verb === "workspace.pane.select" ? "window-switch" : "semantic-mutation",
+              this.#options.traceAuthority,
+              operationId
+            );
+          } catch {
+            trace = null;
+          }
+        }
+        const timing = trace ? {
+          nowMicros: () => this.#observability.nowMicros(),
+          record: (operation, startedAtMicros, endedAtMicros) => {
+            try {
+              this.#observability.recordSpan(
+                "tmux",
+                operation,
+                startedAtMicros,
+                endedAtMicros,
+                trace
+              );
+            } catch {
+            }
+          }
+        } : void 0;
+        let tmuxStarted = null;
+        if (this.#observability.enabled) {
+          try {
+            tmuxStarted = this.#observability.nowMicros();
+          } catch {
+            tmuxStarted = null;
+          }
+        }
+        try {
+          authorizeBeforeEffect?.();
+          result = this.#options.execute(operationId, intent, timing);
+        } catch (cause) {
+          if (needsTmuxObservation) this.#deletePending(session, operationId);
+          const error = new SessionRuntimeIntentError(
+            "rejected",
+            "tmux rejected the semantic interaction",
+            { cause }
+          );
+          this.#publish(operationId, intent, "rejected", null, void 0, origin);
+          throw error;
+        } finally {
+          if (tmuxStarted !== null)
+            try {
+              const tmuxEnded = this.#observability.nowMicros();
+              this.#observability.recordSpan(
+                "tmux",
+                "semantic-mutation-effect",
+                tmuxStarted,
+                tmuxEnded,
+                trace
+              );
+            } catch {
+            }
+        }
+        try {
+          sessionRuntimeObservedProof(intent, result);
+        } catch (cause) {
+          if (needsTmuxObservation) this.#deletePending(session, operationId);
+          const error = new SessionRuntimeIntentError(
+            "rejected",
+            "tmux returned invalid semantic mutation proof",
+            { cause }
+          );
+          this.#publish(operationId, intent, "rejected", null, void 0, origin);
+          throw error;
+        }
+        if (needsTmuxObservation) {
+          const timeoutMs = this.#options.observationTimeoutMs ?? SESSION_RUNTIME_OBSERVATION_TIMEOUT_MS;
+          let timeout;
+          try {
+            await Promise.race([
+              observed,
+              new Promise((_, reject) => {
+                timeout = this.#scheduler.timer(
+                  () => reject(
+                    new SessionRuntimeIntentError(
+                      "timed-out",
+                      "tmux did not expose the interaction through its observation hook in time"
+                    )
+                  ),
+                  timeoutMs
+                );
+              })
+            ]);
+          } catch (cause) {
+            const error = cause instanceof SessionRuntimeIntentError ? cause : new SessionRuntimeIntentError("rejected", "Interaction observation was cancelled", {
+              cause
+            });
+            this.#publish(operationId, intent, error.outcome, null, void 0, origin);
+            throw error;
+          } finally {
+            timeout?.cancel();
+            this.#deletePending(session, operationId);
+          }
+        }
+        this.#publish(
+          operationId,
+          intent,
+          "observed",
+          authenticatedSourceSemanticPaneId,
+          result,
+          origin
+        );
+        for (const change of semanticMutationResourceChanges(result)) {
+          try {
+            this.#options.publishResourceChange?.(change);
+          } catch {
+          }
+        }
+        return result;
+      }
+      #deletePending(session, operationId) {
+        const pending = this.#pending.get(session);
+        pending?.delete(operationId);
+        if (pending?.size === 0) this.#pending.delete(session);
+      }
+      #publish(operationId, intent, phase, authenticatedSourceSemanticPaneId = null, result, authenticatedOrigin) {
+        const facts = sessionRuntimeInteractionFacts(intent);
+        const origin = authenticatedOrigin ?? ("origin" in intent ? intent.origin : "sdk");
+        const receipt = InteractionReceiptSchemaZ.parse(
+          this.#options.publishReceipt({
+            operationId,
+            origin,
+            workspaceName: intent.workspaceName,
+            sourceSemanticPaneId: phase === "observed" ? authenticatedSourceSemanticPaneId : null,
+            target: facts.target,
+            operationKind: intent.verb,
+            phase,
+            summary: facts.summary,
+            proof: phase === "observed" ? sessionRuntimeObservedProof(intent, result) : null,
+            at: (this.#options.now ?? (() => /* @__PURE__ */ new Date()))().toISOString(),
+            resourceRevision: null
+          })
+        );
+        if (phase === "accepted") this.#accepted += 1;
+        else if (phase === "observed") this.#observed += 1;
+        else if (phase === "rejected") this.#rejected += 1;
+        else this.#timedOut += 1;
+        for (const listener of this.#listeners) {
+          this.#scheduler.microtask(() => {
+            try {
+              listener(receipt);
+            } catch {
+            }
+          });
+        }
+      }
+    };
   }
 });
 
@@ -45132,7 +45591,7 @@ var init_xterm_terminal_interpreter_backend = __esm({
         return this.#terminal.rows;
       }
       write(data) {
-        return new Promise((resolve37) => this.#terminal.write(data, resolve37));
+        return new Promise((resolve38) => this.#terminal.write(data, resolve38));
       }
       prioritizeNextWrite() {
         this.#terminal.prioritizeNextWrite();
@@ -45610,8 +46069,8 @@ var init_terminal_replica_interpreter = __esm({
           scrollback: this.#scrollback
         });
         this.#snapshot = blankTerminalReplicaSnapshot(options.cols, options.rows);
-        this.#seedReady = new Promise((resolve37, reject) => {
-          this.#resolveSeedReady = resolve37;
+        this.#seedReady = new Promise((resolve38, reject) => {
+          this.#resolveSeedReady = resolve38;
           this.#rejectSeedReady = reject;
         });
         void this.#seedReady.catch(() => void 0);
@@ -45628,8 +46087,8 @@ var init_terminal_replica_interpreter = __esm({
           const pendingTrace = this.#pendingWrites[0]?.trace ?? null;
           if (this.#pendingWrites.length > 0 && (pendingTrace?.traceId ?? null) !== (trace?.traceId ?? null))
             this.#flushWrites();
-          const promise = new Promise((resolve37, reject) => {
-            this.#pendingWrites.push({ data, trace, resolve: resolve37, reject });
+          const promise = new Promise((resolve38, reject) => {
+            this.#pendingWrites.push({ data, trace, resolve: resolve38, reject });
           });
           if (!this.#writeFlushScheduled) {
             this.#writeFlushScheduled = true;
@@ -47965,10 +48424,10 @@ import { z as z74 } from "zod";
 async function abortable(promise, signal) {
   if (!signal) return promise;
   signal.throwIfAborted();
-  return new Promise((resolve37, reject) => {
+  return new Promise((resolve38, reject) => {
     const onAbort = () => reject(signal.reason);
     signal.addEventListener("abort", onAbort, { once: true });
-    void promise.then(resolve37, reject).then(
+    void promise.then(resolve38, reject).then(
       () => signal.removeEventListener("abort", onAbort),
       () => signal.removeEventListener("abort", onAbort)
     );
@@ -48357,6 +48816,76 @@ var init_registry2 = __esm({
       async describeSession(session) {
         return await this.#runtime(session).describe();
       }
+      async describeSessionAuthority(session) {
+        const runtime = this.#runtime(session);
+        await runtime.whenReady();
+        const authority = await this.#mirror.describeSessionAuthority(session);
+        if (this.#disposed || this.#sessions.get(session) !== runtime) {
+          const error = new Error(`session runtime ${session} changed topology`);
+          error.name = "MirrorTopologyChangedError";
+          throw error;
+        }
+        return authority;
+      }
+      async subscribeLayout(session, onLayout, authority) {
+        const runtime = this.#runtime(session);
+        await runtime.whenReady();
+        let retired = false;
+        const isCurrent = () => !retired && !this.#disposed && this.#sessions.get(session) === runtime;
+        const assertCurrent = () => {
+          if (!isCurrent()) {
+            const error = new Error(`session runtime ${session} changed topology`);
+            error.name = "MirrorTopologyChangedError";
+            throw error;
+          }
+        };
+        assertCurrent();
+        const expectedRuntimeSessionId = authority?.expectedRuntimeSessionId;
+        const stagedAuthority = { value: null };
+        const stagedLayouts = [];
+        let layoutOverflow = false;
+        let activated = false;
+        const subscription = await this.#mirror.subscribeLayout(
+          session,
+          (event) => {
+            if (!isCurrent()) return;
+            if (activated) onLayout(event);
+            else if (stagedLayouts.length < 256) stagedLayouts.push(event);
+            else layoutOverflow = true;
+          },
+          authority ? {
+            ...authority,
+            onAuthority: (snapshot) => {
+              if (!isCurrent()) return;
+              if (activated) authority.onAuthority?.(snapshot);
+              else stagedAuthority.value = snapshot;
+            }
+          } : void 0
+        );
+        try {
+          assertCurrent();
+          if (layoutOverflow || authority && (stagedAuthority.value === null || stagedAuthority.value.runtimeSessionId !== expectedRuntimeSessionId)) {
+            const error = new Error(`session runtime ${session} lacks layout authority`);
+            error.name = "MirrorTopologyChangedError";
+            throw error;
+          }
+          activated = true;
+          if (authority?.onAuthority && stagedAuthority.value)
+            authority.onAuthority(stagedAuthority.value);
+          for (const event of stagedLayouts) onLayout(event);
+        } catch (error) {
+          await subscription.close().catch(() => void 0);
+          throw error;
+        }
+        return {
+          session,
+          close: async () => {
+            if (retired) return;
+            retired = true;
+            await subscription.close();
+          }
+        };
+      }
       async subscribe(request) {
         const runtime = this.#runtime(request.session);
         await runtime.whenReady();
@@ -48625,6 +49154,7 @@ var init_registry2 = __esm({
       }
       onAuthoritySnapshot(listener) {
         this.#authorityListeners.add(listener);
+        listener(this.#authority.snapshot());
         return () => this.#authorityListeners.delete(listener);
       }
       ownsConsumer(candidate) {
@@ -48855,6 +49385,26 @@ var init_registry2 = __esm({
           throw new SessionRuntimeControllerLeaseError(
             "invalid-client-capability",
             "The client is not the foreground geometry authority."
+          );
+        }
+        this.#mirror.setGeometryParticipation(this.session, true);
+        this.#mirror.fitViewport(this.session, cols, rows);
+      }
+      fitViewportWithAuthority(clientId, lease, cols, rows) {
+        const parsed = SessionRuntimeAuthorityLeaseSchemaZ.parse(lease);
+        let exact;
+        try {
+          exact = this.#authority.assertLease(parsed);
+        } catch {
+          throw new SessionRuntimeControllerLeaseError(
+            "stale-controller-lease",
+            "Geometry authority retired."
+          );
+        }
+        if (exact.clientId !== clientId || exact.authority !== "geometry") {
+          throw new SessionRuntimeControllerLeaseError(
+            "invalid-client-capability",
+            "The client does not own this geometry authority lease."
           );
         }
         this.#mirror.setGeometryParticipation(this.session, true);
@@ -49232,6 +49782,10 @@ var init_registry2 = __esm({
       fitViewport(lease, cols, rows) {
         this.#assertOpen();
         this.#runtime.fitViewport(this.clientId, lease, cols, rows);
+      }
+      fitViewportWithAuthority(lease, cols, rows) {
+        this.#assertOpen();
+        this.#runtime.fitViewportWithAuthority(this.clientId, lease, cols, rows);
       }
       async describe() {
         this.#assertOpen();
@@ -51418,6 +51972,7 @@ var init_lease_manager2 = __esm({
             hostClientId,
             request: parsedRequest,
             sessionName,
+            runtimeSessionId: typeof context.runtimeSessionId === "string" ? context.runtimeSessionId : null,
             status: "awaiting-redemption",
             issuedAt,
             expiresAt: issuedAt + this.#ticketTtlMs,
@@ -51534,6 +52089,7 @@ var init_lease_manager2 = __esm({
           hostClientId: state.hostClientId,
           workspaceName: state.request.workspaceName,
           sessionName: state.sessionName,
+          runtimeSessionId: state.runtimeSessionId,
           panes: [...state.request.panes],
           viewerMode: state.request.viewerMode,
           terminalDelivery: state.request.terminalDelivery ?? null,
@@ -51734,6 +52290,7 @@ var init_pane_stream_websocket = __esm({
     "use strict";
     init_src();
     init_admission_util();
+    init_registry2();
     init_terminal_delivery_observation_identity();
     init_lease_manager2();
     init_wire_ledger();
@@ -51856,9 +52413,16 @@ var init_pane_stream_websocket = __esm({
             );
           }
           let described;
+          let runtimeSessionId = null;
           try {
             const describeStartedAtMicros = trace ? this.#observability.nowMicros() : 0;
-            described = await this.#mirror.describeSession(context.sessionName);
+            if (this.#mirror.describeSessionAuthority) {
+              const authority = await this.#mirror.describeSessionAuthority(context.sessionName);
+              described = authority.description;
+              runtimeSessionId = authority.runtimeSessionId;
+            } else {
+              described = await this.#mirror.describeSession(context.sessionName);
+            }
             if (trace)
               this.#observability.recordSpan(
                 "transport",
@@ -51886,11 +52450,12 @@ var init_pane_stream_websocket = __esm({
             requestId,
             projectIdentity,
             sessionName: context.sessionName,
+            ...runtimeSessionId ? { runtimeSessionId } : {},
             ...context.hostClientId ? { hostClientId: context.hostClientId } : {}
           });
           const descriptor2 = issued.descriptor;
           const ticket = issued.redemptionTicket;
-          const valid = TicketPattern3.test(ticket) && z83.uuid().safeParse(descriptor2.leaseId).success && descriptor2.requestId === requestId && descriptor2.status === "awaiting-redemption" && descriptor2.viewerMode === request.viewerMode && descriptor2.workspaceName === request.workspaceName && descriptor2.panes.length === request.panes.length && descriptor2.panes.every((pane, index) => pane === request.panes[index]) && descriptor2.expiresAt > this.#now();
+          const valid = TicketPattern3.test(ticket) && z83.uuid().safeParse(descriptor2.leaseId).success && descriptor2.requestId === requestId && (this.#mirror.describeSessionAuthority === void 0 || descriptor2.runtimeSessionId === runtimeSessionId) && descriptor2.status === "awaiting-redemption" && descriptor2.viewerMode === request.viewerMode && descriptor2.workspaceName === request.workspaceName && descriptor2.panes.length === request.panes.length && descriptor2.panes.every((pane, index) => pane === request.panes[index]) && descriptor2.expiresAt > this.#now();
           const ticketDigest = digestSecret(ticket);
           const duplicate = [...this.#pending.values()].some(
             (pending2) => digestsEqual(pending2.ticketDigest, ticketDigest)
@@ -52297,6 +52862,10 @@ var init_pane_stream_websocket = __esm({
       #diagnosticAfterFrameParse;
       #onRetire;
       #panes = /* @__PURE__ */ new Map();
+      #semanticLayouts = /* @__PURE__ */ new Map();
+      #semanticExpectedPaneIds = null;
+      #semanticRuntimeSessionId = null;
+      #semanticTopologyEpoch = -1;
       #sendQueue = [];
       #semanticDrainWaiters = /* @__PURE__ */ new Map();
       #layoutSubscription = null;
@@ -52316,6 +52885,43 @@ var init_pane_stream_websocket = __esm({
       #releasePromise = null;
       #stopAuthoritySnapshots = null;
       #sharedClockOriginMicros = null;
+      #diagnosticFirstSeedObserved = false;
+      #diagnosticLifecycleStages;
+      #recordDiagnosticLifecycle(operation, closeCode, closeReason) {
+        if (!this.#observability?.enabled || !this.#diagnosticLifecycleStages) return;
+        if (this.#diagnosticLifecycleStages.has(operation)) return;
+        this.#diagnosticLifecycleStages.add(operation);
+        const trace = this.#observability.beginTrace(
+          "pane-stream-connect",
+          { generation: this.#binding.daemonInstanceId, incarnation: null },
+          this.#binding.requestId
+        );
+        const atMicros = this.#observability.nowMicros();
+        const legalReason = (/* @__PURE__ */ new Set([
+          "stream-retired",
+          "stream-unavailable",
+          "stream-closed",
+          "topology-changed",
+          "output-backpressure",
+          "panes-closed",
+          "peer-closed",
+          "daemon-shutdown",
+          "redemption-rejected",
+          "unknown"
+        ])).has(closeReason ?? "") ? closeReason : closeReason ? "unknown" : "none";
+        this.#observability.recordSpan(
+          "transport",
+          operation,
+          atMicros,
+          atMicros,
+          trace,
+          void 0,
+          Object.freeze({
+            paneStreamCloseCode: Number.isInteger(closeCode) && closeCode >= 1e3 && closeCode <= 4999 ? closeCode : 0,
+            paneStreamCloseReason: legalReason
+          })
+        );
+      }
       #sharedMicros() {
         const raw = this.#diagnosticSharedRawMicros();
         this.#sharedClockOriginMicros ??= raw;
@@ -52330,6 +52936,7 @@ var init_pane_stream_websocket = __esm({
         this.#descriptor = options.descriptor;
         this.#binding = options.binding;
         this.#sessionRuntimeBinding = options.sessionRuntimeBinding;
+        this.#usesExplicitAuthority = options.sessionRuntimeBinding?.explicitAuthority === true;
         if (this.#descriptor.viewerMode === "interactive" && !this.#sessionRuntimeBinding) {
           throw new Error("Interactive pane stream requires SessionRuntime authority");
         }
@@ -52348,6 +52955,7 @@ var init_pane_stream_websocket = __esm({
         this.#inputWindowStartedAt = this.#now();
         this.#schedule = options.schedule;
         this.#observability = options.observability;
+        this.#diagnosticLifecycleStages = options.observability?.enabled ? /* @__PURE__ */ new Set() : null;
         this.#diagnosticSharedRawMicros = this.#diagnosticCapabilities.includes("clock-bounds-v1") ? options.diagnosticSharedNowMicros ?? sharedMonotonicMicros : void 0;
         this.#diagnosticAfterFrameParse = options.diagnosticAfterFrameParse;
         this.#onRetire = options.onRetire;
@@ -52388,6 +52996,7 @@ var init_pane_stream_websocket = __esm({
             effectiveViewerMode: this.#descriptor.viewerMode,
             ...this.#diagnosticCapabilities.length > 0 ? { diagnosticCapabilities: [...this.#diagnosticCapabilities] } : {}
           });
+          this.#recordDiagnosticLifecycle("pane-stream-server-ready");
         } catch {
           this.close(1011, "stream-unavailable");
           return;
@@ -52399,13 +53008,14 @@ var init_pane_stream_websocket = __esm({
       }
       close(code = 1e3, reason = "stream-closed") {
         if (this.#closed) return;
+        this.#recordDiagnosticLifecycle("pane-stream-terminal", code, reason);
         this.#closed = true;
         this.#cancelDrainTick?.();
         this.#cancelDrainTick = null;
         this.#ledger.forceReturnClient(this.#clientId);
         this.#sendQueue.length = 0;
         for (const waiters of this.#semanticDrainWaiters.values())
-          for (const resolve37 of waiters) resolve37();
+          for (const resolve38 of waiters) resolve38();
         this.#semanticDrainWaiters.clear();
         this.#socket.off("message", this.#onMessage);
         this.#socket.off("close", this.#onSocketClose);
@@ -52504,38 +53114,49 @@ var init_pane_stream_websocket = __esm({
           this.close(1011, "stream-unavailable");
           return;
         }
-        const channels = [...this.#panes.values()].filter((channel) => {
-          if (known.has(channel.semanticPaneId)) return true;
-          this.#emitClosed(channel);
-          return false;
-        });
+        const expectedPaneIds = [...this.#descriptor.panes].sort();
+        if (expectedPaneIds.some((pane) => !known.has(pane))) {
+          this.#failTopologyChanged();
+          return;
+        }
+        const channels = [...this.#panes.values()];
         if (this.#closed || channels.length === 0) return;
-        const layoutChannel = channels[0];
+        let stagedAuthority = null;
+        let authorityMalformed = false;
+        let layoutActivated = false;
         try {
-          if (this.#mirror.subscribeLayout) {
-            const subscription = await this.#mirror.subscribeLayout(
-              this.#descriptor.sessionName,
-              (event) => this.#onLayout(event)
-            );
-            if (this.#closed) {
-              await subscription.close().catch(() => void 0);
-              return;
+          if (!this.#mirror.subscribeLayout) throw new Error("authoritative layout is unavailable");
+          const subscription = await this.#mirror.subscribeLayout(
+            this.#descriptor.sessionName,
+            () => void 0,
+            {
+              expectedSemanticPaneIds: expectedPaneIds,
+              expectedRuntimeSessionId: this.#descriptor.runtimeSessionId,
+              onAuthority: (snapshot) => {
+                this.#recordDiagnosticLifecycle("pane-stream-layout-staged");
+                if (snapshot.layouts.length > PANE_STREAM_MAX_PANES) authorityMalformed = true;
+                else if (!layoutActivated) stagedAuthority = snapshot;
+                else this.#onLayoutAuthority(snapshot);
+              }
             }
-            this.#layoutSubscription = subscription;
-          } else {
-            const subscription = await this.#mirror.subscribe({
-              session: this.#descriptor.sessionName,
-              semanticPaneId: layoutChannel.semanticPaneId,
-              onEvent: () => void 0,
-              onLayout: (event) => this.#onLayout(event)
-            });
-            if (this.#closed || layoutChannel.closed) {
-              await subscription.close().catch(() => void 0);
-              return;
-            }
-            layoutChannel.sub = subscription;
+          );
+          if (this.#closed) {
+            await subscription.close().catch(() => void 0);
+            return;
           }
-        } catch {
+          const authority2 = stagedAuthority;
+          const stagedInitialFrames = authorityMalformed || authority2 === null || authority2.session !== this.#descriptor.sessionName || this.#descriptor.runtimeSessionId === null || authority2.runtimeSessionId !== this.#descriptor.runtimeSessionId || authority2.topologyEpoch < 0 ? null : this.#validateInitialLayout(authority2.layouts, expectedPaneIds);
+          if (!stagedInitialFrames) {
+            await subscription.close().catch(() => void 0);
+            this.#failTopologyChanged();
+            return;
+          }
+          this.#layoutSubscription = subscription;
+        } catch (cause) {
+          if (cause instanceof Error && cause.name === "MirrorTopologyChangedError") {
+            this.#failTopologyChanged();
+            return;
+          }
           this.close(1011, "stream-unavailable");
           return;
         }
@@ -52570,6 +53191,45 @@ var init_pane_stream_websocket = __esm({
           if (!this.#closed) this.close(1011, "stream-unavailable");
           return;
         }
+        const deliveryIdentityChanged = opened.some(({ channel, delivery, pending }) => {
+          if (!delivery.negotiation.accepted) return true;
+          const negotiated = delivery.negotiation.negotiated;
+          if (negotiated.generation !== this.#binding.daemonInstanceId) return true;
+          let incarnation = null;
+          for (const message of pending) {
+            if (message.type !== "terminal.delivery") continue;
+            if (message.workspaceName !== this.#descriptor.sessionName || message.semanticPaneId !== channel.semanticPaneId || message.generation !== negotiated.generation || message.deliveryNonce !== negotiated.deliveryNonce || incarnation !== null && message.incarnation !== incarnation)
+              return true;
+            incarnation = message.incarnation;
+          }
+          return false;
+        });
+        if (deliveryIdentityChanged) {
+          await Promise.all(opened.map(({ delivery }) => delivery.close().catch(() => void 0)));
+          this.#failTopologyChanged();
+          return;
+        }
+        const authority = stagedAuthority;
+        const initialFrames = authorityMalformed || authority === null || authority.session !== this.#descriptor.sessionName || this.#descriptor.runtimeSessionId === null || authority.runtimeSessionId !== this.#descriptor.runtimeSessionId || authority.topologyEpoch < 0 ? null : this.#validateInitialLayout(authority.layouts, expectedPaneIds);
+        if (!initialFrames) {
+          await Promise.all(opened.map(({ delivery }) => delivery.close().catch(() => void 0)));
+          this.#failTopologyChanged();
+          return;
+        }
+        this.#recordDiagnosticLifecycle("pane-stream-layout-validated");
+        this.#semanticExpectedPaneIds = expectedPaneIds;
+        this.#semanticRuntimeSessionId = authority.runtimeSessionId;
+        this.#semanticTopologyEpoch = authority.topologyEpoch;
+        this.#semanticLayouts.clear();
+        for (const event of authority.layouts)
+          this.#semanticLayouts.set(event.semanticWindowId, event);
+        this.#sendFrame(null, {
+          type: "layout-snapshot",
+          topologyEpoch: authority.topologyEpoch,
+          layouts: initialFrames
+        });
+        layoutActivated = true;
+        this.#recordDiagnosticLifecycle("pane-stream-delivery-open");
         for (const { channel, delivery, pending, markReady } of opened) {
           if (this.#closed || channel.closed) {
             await delivery.close();
@@ -52596,6 +53256,10 @@ var init_pane_stream_websocket = __esm({
       }
       async #sendTerminalDelivery(pane, message) {
         if (message.type === "terminal.delivery") {
+          if (!this.#diagnosticFirstSeedObserved) {
+            this.#diagnosticFirstSeedObserved = true;
+            this.#recordDiagnosticLifecycle("pane-stream-first-seed");
+          }
           const channel = this.#panes.get(pane);
           if (channel?.deliveryAddress) channel.deliveryAddress.incarnation = message.incarnation;
           const detailedDeliveryObservation = this.#observability?.enabled === true;
@@ -52682,9 +53346,9 @@ var init_pane_stream_websocket = __esm({
       }
       #awaitSemanticCredit(pane) {
         if (!this.#ledger.isStalled(this.#clientId, pane)) return Promise.resolve();
-        return new Promise((resolve37) => {
+        return new Promise((resolve38) => {
           const waiters = this.#semanticDrainWaiters.get(pane) ?? [];
-          waiters.push(resolve37);
+          waiters.push(resolve38);
           this.#semanticDrainWaiters.set(pane, waiters);
           this.#ensureDrainTick();
         });
@@ -52813,8 +53477,37 @@ var init_pane_stream_websocket = __esm({
         });
         this.#ledger.forgetPane(this.#clientId, channel.semanticPaneId);
       }
+      #onLayoutAuthority(snapshot) {
+        if (this.#closed || !this.#semanticExpectedPaneIds || !this.#semanticRuntimeSessionId) return;
+        if (snapshot.session !== this.#descriptor.sessionName || snapshot.runtimeSessionId !== this.#semanticRuntimeSessionId || snapshot.topologyEpoch <= this.#semanticTopologyEpoch || snapshot.layouts.length > PANE_STREAM_MAX_PANES) {
+          this.#failTopologyChanged();
+          return;
+        }
+        const frames = this.#validateInitialLayout(snapshot.layouts, this.#semanticExpectedPaneIds);
+        if (!frames) {
+          this.#failTopologyChanged();
+          return;
+        }
+        this.#semanticTopologyEpoch = snapshot.topologyEpoch;
+        this.#semanticLayouts.clear();
+        for (const event of snapshot.layouts)
+          this.#semanticLayouts.set(event.semanticWindowId, event);
+        this.#sendFrame(null, {
+          type: "layout-snapshot",
+          topologyEpoch: snapshot.topologyEpoch,
+          layouts: frames
+        });
+      }
       #onLayout(event) {
         if (this.#closed) return;
+        const frame = this.#layoutFrame(event);
+        if (!frame) {
+          this.#failTopologyChanged();
+          return;
+        }
+        this.#sendFrame(null, frame);
+      }
+      #layoutFrame(event) {
         const frame = {
           type: "layout",
           semanticWindowId: event.semanticWindowId,
@@ -52833,8 +53526,42 @@ var init_pane_stream_websocket = __esm({
             active: pane.active
           }))
         };
-        if (!PaneStreamServerFrameSchemaZ.safeParse(frame).success) return;
-        this.#sendFrame(null, frame);
+        const parsed = PaneStreamServerFrameSchemaZ.safeParse(frame);
+        return parsed.success ? parsed.data : null;
+      }
+      #validateInitialLayout(events, expectedPaneIds) {
+        if (events.length === 0) return null;
+        const windows = /* @__PURE__ */ new Set();
+        const panes = [];
+        const frames = [];
+        let currentWindows = 0;
+        for (const event of events) {
+          if (event.session !== this.#descriptor.sessionName || typeof event.semanticWindowId !== "string" || windows.has(event.semanticWindowId))
+            return null;
+          windows.add(event.semanticWindowId);
+          if (event.currentWindow) currentWindows += 1;
+          const frame = this.#layoutFrame(event);
+          if (!frame || frame.type !== "layout") return null;
+          frames.push(frame);
+          for (const pane of event.panes) {
+            if (typeof pane.semanticPaneId !== "string") return null;
+            panes.push(pane.semanticPaneId);
+          }
+        }
+        panes.sort();
+        if (currentWindows !== 1 || new Set(panes).size !== panes.length || panes.length !== expectedPaneIds.length || panes.some((pane, index) => pane !== expectedPaneIds[index]))
+          return null;
+        return frames;
+      }
+      #failTopologyChanged() {
+        if (this.#closed) return;
+        this.#sendFrame(null, {
+          type: "error",
+          protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+          code: "topology-changed",
+          retryable: true
+        });
+        this.close(1012, "topology-changed");
       }
       // ── Send path + flow ledger ───────────────────────────────────────────────
       #nextSeq(channel) {
@@ -52916,7 +53643,7 @@ var init_pane_stream_websocket = __esm({
           const waiters = this.#semanticDrainWaiters.get(pane);
           if (waiters && this.#ledger.shouldResume(this.#clientId, pane)) {
             this.#semanticDrainWaiters.delete(pane);
-            for (const resolve37 of waiters) resolve37();
+            for (const resolve38 of waiters) resolve38();
           }
         }
       }
@@ -53077,14 +53804,27 @@ var init_pane_stream_websocket = __esm({
           if (!this.#prepareInputAuthority(true)) return;
           this.#nextViewportSeq += 1;
           try {
-            this.#sessionRuntimeBinding.fitViewport(frame.cols, frame.rows);
+            this.#sessionRuntimeBinding.fitViewport(frame.authorityLease, frame.cols, frame.rows);
             this.#sendFrame(null, {
               type: "viewport-ack",
               seq: frame.seq,
               cols: frame.cols,
-              rows: frame.rows
+              rows: frame.rows,
+              outcome: "ok",
+              authorityLease: frame.authorityLease
             });
-          } catch {
+          } catch (error) {
+            if (error instanceof SessionRuntimeControllerLeaseError && (error.code === "invalid-client-capability" || error.code === "stale-controller-lease")) {
+              this.#sendFrame(null, {
+                type: "viewport-ack",
+                seq: frame.seq,
+                cols: frame.cols,
+                rows: frame.rows,
+                outcome: "geometry-authority-conflict",
+                authorityLease: frame.authorityLease
+              });
+              return;
+            }
             this.#failProtocol("input-rejected");
           }
           return;
@@ -53544,12 +54284,12 @@ var init_schemas = __esm({
 
 // packages/daemon/src/lib/terminals-store.ts
 import { existsSync as existsSync31, mkdirSync as mkdirSync23, readFileSync as readFileSync24, renameSync as renameSync12, writeFileSync as writeFileSync21 } from "node:fs";
-import { dirname as dirname30, join as join33 } from "node:path";
+import { dirname as dirname31, join as join34 } from "node:path";
 function path(dir) {
-  return join33(dir, TERMINALS_FILE);
+  return join34(dir, TERMINALS_FILE);
 }
 function ensureDir(dir) {
-  mkdirSync23(dirname30(path(dir)), { recursive: true });
+  mkdirSync23(dirname31(path(dir)), { recursive: true });
 }
 function loadTerminals(dir) {
   const file = path(dir);
@@ -53635,7 +54375,7 @@ __export(auth_service_exports, {
 });
 import * as crypto2 from "node:crypto";
 import { readFileSync as readFileSync25, existsSync as existsSync32 } from "node:fs";
-import { join as join34 } from "node:path";
+import { join as join35 } from "node:path";
 import { homedir as homedir16 } from "node:os";
 function base64url(buf) {
   const b = typeof buf === "string" ? Buffer.from(buf) : buf;
@@ -53779,7 +54519,7 @@ var init_auth_service = __esm({
       checkSSHKeyAuthorization(userId, publicKey) {
         try {
           const home = userId === process.env.USER ? homedir16() : `/home/${userId}`;
-          const authKeysPath = join34(home, ".ssh", "authorized_keys");
+          const authKeysPath = join35(home, ".ssh", "authorized_keys");
           if (!existsSync32(authKeysPath)) return false;
           const authorizedKeys = readFileSync25(authKeysPath, "utf-8");
           const parts = publicKey.trim().split(" ");
@@ -55475,9 +56215,9 @@ var init_inspect = __esm({
 });
 
 // packages/daemon/src/lib/filesystem-browser.ts
-import { realpathSync as realpathSync12, readdirSync as readdirSync4, statSync as statSync12 } from "node:fs";
+import { realpathSync as realpathSync13, readdirSync as readdirSync4, statSync as statSync12 } from "node:fs";
 import { homedir as homedir17 } from "node:os";
-import { isAbsolute as isAbsolute13, join as join35, resolve as resolve32, sep as sep7 } from "node:path";
+import { isAbsolute as isAbsolute14, join as join36, resolve as resolve33, sep as sep7 } from "node:path";
 function isUnderRoot(canonical, root) {
   if (canonical === root) return true;
   const prefix = root.endsWith(sep7) ? root : root + sep7;
@@ -55507,7 +56247,7 @@ var init_filesystem_browser = __esm({
 
 // packages/daemon/src/lib/project-inspect.ts
 import { existsSync as existsSync33 } from "node:fs";
-import { isAbsolute as isAbsolute14, resolve as resolve33 } from "node:path";
+import { isAbsolute as isAbsolute15, resolve as resolve34 } from "node:path";
 function narrowPackageManager(raw) {
   if (!raw) return null;
   return KNOWN_PACKAGE_MANAGERS.has(raw) ? raw : null;
@@ -55518,7 +56258,7 @@ function inferTestCommand(packageManager) {
 }
 async function inspectProject(dir, io = {}) {
   const exists = io.exists ?? existsSync33;
-  const absoluteDir = isAbsolute14(dir) ? dir : resolve33(dir);
+  const absoluteDir = isAbsolute15(dir) ? dir : resolve34(dir);
   if (!exists(absoluteDir)) {
     throw new InspectDirNotFoundError(absoluteDir);
   }
@@ -55735,8 +56475,8 @@ var init_workspace_resource_ids = __esm({
 });
 
 // packages/daemon/src/command-center/resources/workspace-files-authority.ts
-import { lstatSync as lstatSync3, readdirSync as readdirSync5, readFileSync as readFileSync26, realpathSync as realpathSync13 } from "node:fs";
-import { basename as basename14, dirname as dirname31, resolve as resolvePath, sep as sep8 } from "node:path";
+import { lstatSync as lstatSync5, readdirSync as readdirSync5, readFileSync as readFileSync26, realpathSync as realpathSync14 } from "node:fs";
+import { basename as basename15, dirname as dirname32, resolve as resolvePath, sep as sep8 } from "node:path";
 import ignore from "ignore";
 function extensionOf(name) {
   const dot = name.lastIndexOf(".");
@@ -55902,7 +56642,7 @@ var init_workspace_files_authority = __esm({
       catalog(directoryId) {
         let realRoot;
         try {
-          realRoot = realpathSync13(this.root);
+          realRoot = realpathSync14(this.root);
         } catch {
           return this.catalogUnavailable(
             "workspace-unavailable",
@@ -55928,7 +56668,7 @@ var init_workspace_files_authority = __esm({
         const absCandidate = relPath === "" ? realRoot : resolvePath(realRoot, relPath);
         let absReal;
         try {
-          absReal = realpathSync13(absCandidate);
+          absReal = realpathSync14(absCandidate);
         } catch (error) {
           const code = error.code;
           if (code === "EACCES" || code === "EPERM") {
@@ -55947,7 +56687,7 @@ var init_workspace_files_authority = __esm({
         }
         let dirents;
         try {
-          const stat2 = lstatSync3(absReal);
+          const stat2 = lstatSync5(absReal);
           if (!stat2.isDirectory()) {
             return this.catalogUnavailable("directory-not-found", "The resource is not a directory.");
           }
@@ -55987,7 +56727,7 @@ var init_workspace_files_authority = __esm({
           if (WorkspaceFileEntrySafe(entry)) entries.push(entry);
         }
         const truncated = totalEntries > entries.length;
-        const rootLabel = safeName(basename14(realRoot), "workspace");
+        const rootLabel = safeName(basename15(realRoot), "workspace");
         const revision = filesRevision(
           JSON.stringify({ dir: relPath, entries: entries.map((e) => `${e.name}:${e.kind}`) })
         );
@@ -55997,7 +56737,7 @@ var init_workspace_files_authority = __esm({
         }
         const directory = relPath === "" ? { id: rootId, name: rootLabel, relativePath: null, parentId: null } : {
           id: targetId,
-          name: safeName(basename14(relPath), rootLabel),
+          name: safeName(basename15(relPath), rootLabel),
           relativePath: relPath,
           parentId: this.parentId(rootId, relPath)
         };
@@ -56027,13 +56767,13 @@ var init_workspace_files_authority = __esm({
       rootEntryCount() {
         let realRoot;
         try {
-          realRoot = realpathSync13(this.root);
+          realRoot = realpathSync14(this.root);
         } catch {
           return null;
         }
         let dirents;
         try {
-          if (!lstatSync3(realRoot).isDirectory()) return null;
+          if (!lstatSync5(realRoot).isDirectory()) return null;
           dirents = readdirSync5(realRoot, { withFileTypes: true });
         } catch {
           return null;
@@ -56050,7 +56790,7 @@ var init_workspace_files_authority = __esm({
       preview(fileId) {
         let realRoot;
         try {
-          realRoot = realpathSync13(this.root);
+          realRoot = realpathSync14(this.root);
         } catch {
           return this.previewWorkspaceUnavailable(fileId);
         }
@@ -56061,7 +56801,7 @@ var init_workspace_files_authority = __esm({
         const abs = resolvePath(realRoot, relPath);
         let stat2;
         try {
-          stat2 = lstatSync3(abs);
+          stat2 = lstatSync5(abs);
         } catch (error) {
           const code = error.code;
           if (code === "EACCES" || code === "EPERM") {
@@ -56082,7 +56822,7 @@ var init_workspace_files_authority = __esm({
         }
         let realParent;
         try {
-          realParent = realpathSync13(dirname31(abs));
+          realParent = realpathSync14(dirname32(abs));
         } catch {
           return this.previewUnavailable(
             fileId,
@@ -56090,7 +56830,7 @@ var init_workspace_files_authority = __esm({
             "The requested file is unavailable."
           );
         }
-        if (!isWithin2(realRoot, resolvePath(realParent, basename14(abs)))) {
+        if (!isWithin2(realRoot, resolvePath(realParent, basename15(abs)))) {
           return this.previewUnavailable(
             fileId,
             "outside-workspace",
@@ -56100,7 +56840,7 @@ var init_workspace_files_authority = __esm({
         if (stat2.isDirectory() || !stat2.isFile()) {
           return this.previewUnavailable(fileId, "not-a-file", "The resource is not a regular file.");
         }
-        const name = basename14(relPath);
+        const name = basename15(relPath);
         const catalogRevision = filesRevision(`${relPath}:${stat2.size}:${stat2.mtimeMs}`);
         const totalBytes = stat2.size;
         if (totalBytes > WORKSPACE_FILE_PREVIEW_MAX_CHARACTERS) {
@@ -56407,8 +57147,8 @@ var init_workspace_changes_git = __esm({
 
 // packages/daemon/src/command-center/resources/workspace-changes-authority.ts
 import { spawnSync } from "node:child_process";
-import { readFileSync as readFileSync27, realpathSync as realpathSync14, statSync as statSync13 } from "node:fs";
-import { basename as basename15, isAbsolute as isAbsolute15, relative as relative5, resolve as resolvePath2 } from "node:path";
+import { readFileSync as readFileSync27, realpathSync as realpathSync15, statSync as statSync13 } from "node:fs";
+import { basename as basename16, isAbsolute as isAbsolute16, relative as relative5, resolve as resolvePath2 } from "node:path";
 function runGit(args, cwd) {
   const result = spawnSync("git", args, {
     cwd,
@@ -56452,7 +57192,7 @@ function confineToWorkspace(realRoot, repoRoot, gitPath) {
   if (gitPath.length === 0 || gitPath.includes("\0")) return null;
   const abs = resolvePath2(repoRoot, gitPath);
   const rel = relative5(realRoot, abs);
-  if (rel.length === 0 || rel.startsWith("..") || isAbsolute15(rel)) return null;
+  if (rel.length === 0 || rel.startsWith("..") || isAbsolute16(rel)) return null;
   const display = rel.split(/[\\/]+/u).join("/");
   return WorkspaceRelativeDisplayPathSchemaZ.safeParse(display).success ? display : null;
 }
@@ -56462,7 +57202,7 @@ function buildChangeEntry(raw, displayPath, originPath, counts) {
     id: changeResourceId(raw.group, displayPath),
     group: raw.group,
     status: raw.status,
-    name: basename15(displayPath),
+    name: basename16(displayPath),
     relativePath: displayPath,
     originPath: carriesOrigin ? originPath ?? null : null,
     binary: counts.binary,
@@ -56712,7 +57452,7 @@ var init_workspace_changes_authority = __esm({
       resolveRepo() {
         let realRoot;
         try {
-          realRoot = realpathSync14(this.root);
+          realRoot = realpathSync15(this.root);
         } catch {
           return {
             reason: "workspace-unavailable",
@@ -58766,7 +59506,7 @@ import { createHash as createHash17, randomUUID as randomUUID16 } from "node:cry
 import {
   chmodSync as chmodSync5,
   existsSync as existsSync34,
-  lstatSync as lstatSync4,
+  lstatSync as lstatSync6,
   mkdirSync as mkdirSync24,
   readFileSync as readFileSync28,
   readdirSync as readdirSync6,
@@ -58774,9 +59514,9 @@ import {
   rmSync as rmSync4,
   writeFileSync as writeFileSync22
 } from "node:fs";
-import { join as join36 } from "node:path";
+import { join as join37 } from "node:path";
 function assetRoot() {
-  return join36(stateHome(), ASSET_DIRECTORY);
+  return join37(stateHome(), ASSET_DIRECTORY);
 }
 function ensureAssetRoot() {
   const root = assetRoot();
@@ -58796,8 +59536,8 @@ function safeName2(name) {
 }
 function assetPaths(root, assetId) {
   return {
-    data: join36(root, `${assetId}.bin`),
-    metadata: join36(root, `${assetId}.json`)
+    data: join37(root, `${assetId}.bin`),
+    metadata: join37(root, `${assetId}.json`)
   };
 }
 function parseMetadata(raw) {
@@ -58822,9 +59562,9 @@ function parseMetadata(raw) {
 }
 function pruneAssets(root, now = Date.now()) {
   const metadataFiles = readdirSync6(root).filter((name) => /^[0-9a-f]{64}\.json$/u.test(name)).map((name) => {
-    const path2 = join36(root, name);
+    const path2 = join37(root, name);
     try {
-      const stat2 = lstatSync4(path2);
+      const stat2 = lstatSync6(path2);
       return stat2.isFile() && !stat2.isSymbolicLink() ? { name, mtimeMs: stat2.mtimeMs } : null;
     } catch {
       return null;
@@ -58833,8 +59573,8 @@ function pruneAssets(root, now = Date.now()) {
   for (const [index, entry] of metadataFiles.entries()) {
     if (index < MAX_ASSET_FILES && now - entry.mtimeMs <= WIDGET_ASSET_RETENTION_MS) continue;
     const assetId = entry.name.slice(0, -".json".length);
-    rmSync4(join36(root, `${assetId}.json`), { force: true });
-    rmSync4(join36(root, `${assetId}.bin`), { force: true });
+    rmSync4(join37(root, `${assetId}.json`), { force: true });
+    rmSync4(join37(root, `${assetId}.bin`), { force: true });
   }
 }
 function publishWidgetAsset(bytes, options) {
@@ -58863,11 +59603,11 @@ function publishWidgetAsset(bytes, options) {
     createdAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   if (!existsSync34(paths.data)) {
-    const temporary = join36(root, `.${assetId}.${randomUUID16()}.bin`);
+    const temporary = join37(root, `.${assetId}.${randomUUID16()}.bin`);
     writeFileSync22(temporary, bytes, { mode: 384, flag: "wx" });
     renameSync13(temporary, paths.data);
   }
-  const metadataTemporary = join36(root, `.${assetId}.${randomUUID16()}.json`);
+  const metadataTemporary = join37(root, `.${assetId}.${randomUUID16()}.json`);
   writeFileSync22(metadataTemporary, `${JSON.stringify(metadata)}
 `, { mode: 384, flag: "wx" });
   renameSync13(metadataTemporary, paths.metadata);
@@ -58880,8 +59620,8 @@ function readWidgetAsset(assetIdInput) {
   const root = assetRoot();
   const paths = assetPaths(root, parsedId.data);
   try {
-    const metadataStat = lstatSync4(paths.metadata);
-    const dataStat = lstatSync4(paths.data);
+    const metadataStat = lstatSync6(paths.metadata);
+    const dataStat = lstatSync6(paths.data);
     if (metadataStat.isSymbolicLink() || dataStat.isSymbolicLink() || !metadataStat.isFile() || !dataStat.isFile() || dataStat.size < 1 || dataStat.size > WIDGET_ASSET_MAX_BYTES) {
       return null;
     }
@@ -58927,16 +59667,16 @@ __export(server_exports, {
 import { execFile as execFile9 } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync as existsSync35, readdirSync as readdirSync7 } from "node:fs";
-import { join as join37, dirname as dirname32, basename as basename16 } from "node:path";
+import { join as join38, dirname as dirname33, basename as basename17 } from "node:path";
 import { fileURLToPath as fileURLToPath11 } from "node:url";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
 import { zValidator } from "@hono/zod-validator";
 import { z as z86 } from "zod";
-import { realpathSync as realpathSync15 } from "node:fs";
+import { realpathSync as realpathSync16 } from "node:fs";
 import { homedir as homedir18 } from "node:os";
-import { isAbsolute as isAbsolute16, resolve as pathResolve } from "node:path";
+import { isAbsolute as isAbsolute17, resolve as pathResolve } from "node:path";
 import { randomUUID as randomUUID17 } from "node:crypto";
 import { WebSocketServer as WebSocketServer3 } from "ws";
 function bearerToken(authHeader) {
@@ -59042,13 +59782,13 @@ function sandboxResolveDir(rawDir) {
   } else if (candidate.startsWith("~/")) {
     candidate = `${home.replace(/\/+$/, "")}/${candidate.slice(2)}`;
   }
-  if (!isAbsolute16(candidate)) {
+  if (!isAbsolute17(candidate)) {
     return { error: "invalid-path", message: "Path must be absolute", status: 400 };
   }
   const resolved2 = pathResolve(candidate);
   let canonical;
   try {
-    canonical = realpathSync15(resolved2);
+    canonical = realpathSync16(resolved2);
   } catch (err) {
     const code = err.code;
     if (code === "ENOENT" || code === "ENOTDIR") {
@@ -59292,7 +60032,7 @@ function createApp(options = {}) {
   app.post("/api/workspaces", zValidator("json", AddWorkspaceRequestSchemaZ), async (c) => {
     const body = c.req.valid("json");
     const registry = getDefaultWorkspaceRegistry();
-    const name = body.name ?? basename16(body.projectDir);
+    const name = body.name ?? basename17(body.projectDir);
     if (!name || name.length === 0) {
       return c.json({ error: "Cannot derive workspace name from projectDir" }, 400);
     }
@@ -60122,9 +60862,9 @@ function createApp(options = {}) {
 }
 function listAvailableTemplates() {
   const __filename = fileURLToPath11(import.meta.url);
-  const __dir = dirname32(__filename);
+  const __dir = dirname33(__filename);
   const configuredTemplatesDir = process.env.TMUX_IDE_TEMPLATES_DIR;
-  const templatesDir = configuredTemplatesDir && isAbsolute16(configuredTemplatesDir) ? configuredTemplatesDir : join37(__dir, "..", "..", "..", "..", "templates");
+  const templatesDir = configuredTemplatesDir && isAbsolute17(configuredTemplatesDir) ? configuredTemplatesDir : join38(__dir, "..", "..", "..", "..", "templates");
   if (!existsSync35(templatesDir)) return [];
   const labels = {
     default: { label: "Default", description: "Single Claude pane + dev/shell row" },
@@ -60337,6 +61077,8 @@ var require_package = __commonJS({
         "packages/contracts/src",
         "packages/daemon-client/src",
         "packages/daemon-client/package.json",
+        "packages/presentation/src",
+        "packages/presentation/package.json",
         "packages/tmux-bridge/src",
         "packages/tmux-bridge/package.json",
         "packages/contracts/package.json",
@@ -60361,10 +61103,10 @@ var require_package = __commonJS({
         format: "prettier --write .",
         "format:check": "prettier --check .",
         "build:workspace": "turbo run build",
-        "build:workbench-dock-web": "pnpm --filter @tmux-ide/daemon run build:workbench-dock-web",
-        "build:pane-frame-web": "pnpm --filter @tmux-ide/daemon run build:pane-frame-web",
-        "test:workbench-dock-package": "pnpm --filter @tmux-ide/daemon run test:workbench-dock-package",
-        "test:pane-frame-package": "pnpm --filter @tmux-ide/daemon run test:pane-frame-package",
+        "build:workbench-dock-web": "pnpm --filter @tmux-ide/presentation run typecheck",
+        "build:pane-frame-web": "pnpm --filter @tmux-ide/presentation run typecheck",
+        "test:workbench-dock-package": "pnpm --filter @tmux-ide/presentation run test",
+        "test:pane-frame-package": "pnpm --filter @tmux-ide/presentation run test",
         "typecheck:workspace": "turbo run typecheck",
         "docs:build": "turbo run build --filter=@tmux-ide/docs",
         "pack:check": "pnpm build:web && node scripts/pack-web-check.mjs",
@@ -61008,8 +61750,8 @@ var init_agent_lifecycle = __esm({
 // packages/daemon/src/control/lifecycle.ts
 import { execFile as execFile10 } from "node:child_process";
 function tmuxRun(args) {
-  return new Promise((resolve37, reject) => {
-    execFile10("tmux", args, (err, stdout) => err ? reject(err) : resolve37(stdout.trimEnd()));
+  return new Promise((resolve38, reject) => {
+    execFile10("tmux", args, (err, stdout) => err ? reject(err) : resolve38(stdout.trimEnd()));
   });
 }
 async function tmuxTry(args) {
@@ -61183,7 +61925,7 @@ __export(server_exports2, {
 });
 import { chmodSync as chmodSync6, existsSync as existsSync36, mkdirSync as mkdirSync25, statSync as statSync14, unlinkSync as unlinkSync3 } from "node:fs";
 import { createServer as createServer2, connect } from "node:net";
-import { dirname as dirname33 } from "node:path";
+import { dirname as dirname34 } from "node:path";
 function defaultControlSocketPath() {
   return resolveRuntimeNamespace().controlSocketPath;
 }
@@ -61195,11 +61937,11 @@ async function claimSocketPath(path2) {
       { code: "USAGE", exitCode: 1 }
     );
   }
-  const alive = await new Promise((resolve37) => {
+  const alive = await new Promise((resolve38) => {
     const probe = connect(path2);
     const done = (result) => {
       probe.destroy();
-      resolve37(result);
+      resolve38(result);
     };
     probe.once("connect", () => done(true));
     probe.once("error", () => done(false));
@@ -61218,7 +61960,7 @@ async function startControlServer(opts = {}) {
   const log = opts.log ?? (() => {
   });
   const tickMs = opts.tickMs ?? TICK_MS;
-  mkdirSync25(dirname33(socketPath), { recursive: true });
+  mkdirSync25(dirname34(socketPath), { recursive: true });
   await claimSocketPath(socketPath);
   const tracker = createStatusTracker();
   const handlers = createVerbHandlers({ tracker });
@@ -61281,7 +62023,7 @@ async function startControlServer(opts = {}) {
     conn.on("error", () => {
     });
   });
-  await new Promise((resolve37, reject) => {
+  await new Promise((resolve38, reject) => {
     server.once("error", (err) => {
       if ((err.code === "EINVAL" || err.code === "ENAMETOOLONG") && socketPath.length > 100) {
         reject(
@@ -61297,14 +62039,14 @@ Pass a shorter path: tmux-ide serve --socket /tmp/tmux-ide-control.sock`,
     });
     server.listen(socketPath, () => {
       server.removeAllListeners("error");
-      resolve37();
+      resolve38();
     });
   });
   chmodSync6(socketPath, 384);
   log(`listening on ${socketPath}`);
   return {
     socketPath,
-    close: () => new Promise((resolve37) => {
+    close: () => new Promise((resolve38) => {
       if (timer) clearInterval(timer);
       timer = null;
       for (const conn of connections) conn.destroy();
@@ -61313,7 +62055,7 @@ Pass a shorter path: tmux-ide serve --socket /tmp/tmux-ide-control.sock`,
           unlinkSync3(socketPath);
         } catch {
         }
-        resolve37();
+        resolve38();
       });
     })
   };
@@ -61344,12 +62086,12 @@ __export(client_exports, {
 import { connect as connect2 } from "node:net";
 function connectControl(opts = {}) {
   const path2 = opts.socketPath ?? defaultControlSocketPath();
-  return new Promise((resolve37, reject) => {
+  return new Promise((resolve38, reject) => {
     const socket = connect2(path2);
     socket.once("error", reject);
     socket.once("connect", () => {
       socket.removeListener("error", reject);
-      resolve37(wrap(socket));
+      resolve38(wrap(socket));
     });
   });
 }
@@ -61401,12 +62143,12 @@ function wrap(socket) {
   });
   const request = (verb, params) => {
     const id = nextId++;
-    return new Promise((resolve37, reject) => {
+    return new Promise((resolve38, reject) => {
       if (socket.destroyed) {
         reject(new ControlRequestError("disconnected", "control socket closed"));
         return;
       }
-      pending.set(id, { resolve: resolve37, reject });
+      pending.set(id, { resolve: resolve38, reject });
       socket.write(encodeFrame({ v: CONTROL_PROTOCOL_VERSION, id, verb, params }));
     });
   };
@@ -61482,7 +62224,7 @@ async function waitForAgentStatusViaReceipts(session, want, opts = {}) {
   } catch {
     return null;
   }
-  return new Promise((resolve37) => {
+  return new Promise((resolve38) => {
     let settled = false;
     let lastStatus = null;
     let deadlineTimer = null;
@@ -61496,7 +62238,7 @@ async function waitForAgentStatusViaReceipts(session, want, opts = {}) {
         socket.close();
       } catch {
       }
-      resolve37(result);
+      resolve38(result);
     };
     connectTimer = setTimeout(() => settle(null), connectTimeoutMs);
     connectTimer.unref?.();
@@ -61567,7 +62309,7 @@ __export(worktree_exports, {
   worktreeSessionName: () => worktreeSessionName
 });
 import { execFileSync as execFileSync18 } from "node:child_process";
-import { basename as basename17, dirname as dirname34, isAbsolute as isAbsolute17, join as join38, resolve as resolve34 } from "node:path";
+import { basename as basename18, dirname as dirname35, isAbsolute as isAbsolute18, join as join39, resolve as resolve35 } from "node:path";
 function sanitizeForTmux(part) {
   return part.replace(/[.:/\s]+/g, "-");
 }
@@ -61575,12 +62317,12 @@ function worktreeSessionName(project, branch) {
   return `${sanitizeForTmux(project)}@${sanitizeForTmux(branch)}`;
 }
 function defaultWorktreeBaseDir(repoDir) {
-  const abs = resolve34(repoDir);
-  return join38(dirname34(abs), `${basename17(abs)}-worktrees`);
+  const abs = resolve35(repoDir);
+  return join39(dirname35(abs), `${basename18(abs)}-worktrees`);
 }
 function worktreePath(repoDir, branch, configuredDir) {
-  const base = configuredDir && configuredDir.length > 0 ? isAbsolute17(configuredDir) ? configuredDir : resolve34(repoDir, configuredDir) : defaultWorktreeBaseDir(repoDir);
-  return join38(base, branch);
+  const base = configuredDir && configuredDir.length > 0 ? isAbsolute18(configuredDir) ? configuredDir : resolve35(repoDir, configuredDir) : defaultWorktreeBaseDir(repoDir);
+  return join39(base, branch);
 }
 function parseWorktreeList(porcelain) {
   const entries = [];
@@ -61725,7 +62467,7 @@ __export(update_exports, {
 });
 import { execSync as execSync4 } from "node:child_process";
 import { existsSync as existsSync37 } from "node:fs";
-import { dirname as dirname35, join as join39 } from "node:path";
+import { dirname as dirname36, join as join40 } from "node:path";
 function detectPackageManager(cliPath) {
   const p = cliPath.toLowerCase();
   if (/(^|\/)\.?bun(\/|$)/.test(p)) return "bun";
@@ -61771,8 +62513,8 @@ function renderPlan(plan, { current, latest, dryRun }) {
 function findGitCheckoutRoot(startDir) {
   let dir = startDir;
   for (; ; ) {
-    if (existsSync37(join39(dir, ".git"))) return dir;
-    const parent = dirname35(dir);
+    if (existsSync37(join40(dir, ".git"))) return dir;
+    const parent = dirname36(dir);
     if (parent === dir) return null;
     dir = parent;
   }
@@ -61818,7 +62560,7 @@ __export(pane_widget_exports, {
   paneWidgetId: () => paneWidgetId,
   paneWidgetIdForFile: () => paneWidgetIdForFile
 });
-import { basename as basename18, extname } from "node:path";
+import { basename as basename19, extname } from "node:path";
 function imageMediaTypeFor(fileName) {
   return IMAGE_MEDIA_BY_EXTENSION.get(extname(fileName).toLowerCase()) ?? null;
 }
@@ -61836,7 +62578,7 @@ function buildMarkdownAnnouncement(text, title) {
   }
 }
 function buildImageAnnouncement(bytes, filePath) {
-  const name = basename18(filePath);
+  const name = basename19(filePath);
   const media = imageMediaTypeFor(name);
   if (media === null) {
     throw new PaneWidgetRefusal(
@@ -61890,7 +62632,7 @@ function paneWidgetIdForFile(fileName) {
   if ([".md", ".markdown"].includes(extension)) return "markdown";
   if (IMAGE_MEDIA_BY_EXTENSION.has(extension)) return "image";
   if (extension === ".json") return "card";
-  const name = basename18(fileName) || fileName || "input";
+  const name = basename19(fileName) || fileName || "input";
   throw new PaneWidgetRefusal(
     "unsupported-source",
     `tmux-ide cannot infer how to show "${name}". Supported: Markdown (.md, .markdown), raster images (${[...IMAGE_MEDIA_BY_EXTENSION.keys()].join(", ")}), and declarative cards (.json).`
@@ -62043,10 +62785,10 @@ var init_dev_native_folder_host = __esm({
 
 // apps/desktop-renderer/scripts/generation-gateway.ts
 import { randomUUID as randomUUID20, timingSafeEqual as timingSafeEqual7 } from "node:crypto";
-import { closeSync as closeSync4, constants as constants7, fstatSync as fstatSync2, lstatSync as lstatSync5, openSync as openSync4, readFileSync as readFileSync29 } from "node:fs";
+import { closeSync as closeSync4, constants as constants7, fstatSync as fstatSync2, lstatSync as lstatSync7, openSync as openSync4, readFileSync as readFileSync29 } from "node:fs";
 import { createServer as createServer3, request as httpRequest } from "node:http";
 import { connect as connectTcp } from "node:net";
-import { dirname as dirname36 } from "node:path";
+import { dirname as dirname37 } from "node:path";
 async function startGenerationGateway(daemonInfoPath, expected) {
   const bearer = randomUUID20();
   const server = createServer3((incoming, response3) => {
@@ -62109,21 +62851,21 @@ async function startGenerationGateway(daemonInfoPath, expected) {
     upstream.on("error", () => downstream.destroy());
     downstream.on("error", () => upstream.destroy());
   });
-  await new Promise((resolve37, reject) => {
+  await new Promise((resolve38, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve37);
+    server.listen(0, "127.0.0.1", resolve38);
   });
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("generation gateway did not bind");
   return {
     origin: `http://127.0.0.1:${address.port}`,
     bearer,
-    stop: () => new Promise((resolve37) => server.close(() => resolve37()))
+    stop: () => new Promise((resolve38) => server.close(() => resolve38()))
   };
 }
 function trustedRecord(path2, expected) {
-  const parent = lstatSync5(dirname36(path2));
-  const pathStat = lstatSync5(path2);
+  const parent = lstatSync7(dirname37(path2));
+  const pathStat = lstatSync7(path2);
   if (!parent.isDirectory() || parent.isSymbolicLink() || !pathStat.isFile() || pathStat.isSymbolicLink() || pathStat.size > MAX_RECORD_BYTES) {
     throw new Error("canonical daemon publication is not a bounded regular file");
   }
@@ -62181,13 +62923,13 @@ __export(production_web_server_exports, {
   startProductionWebServer: () => startProductionWebServer
 });
 import { randomUUID as randomUUID21 } from "node:crypto";
-import { createReadStream, lstatSync as lstatSync6, readFileSync as readFileSync30, realpathSync as realpathSync16 } from "node:fs";
+import { createReadStream, lstatSync as lstatSync8, readFileSync as readFileSync30, realpathSync as realpathSync17 } from "node:fs";
 import {
   createServer as createServer4,
   request as httpRequest2
 } from "node:http";
 import { connect as connectTcp2 } from "node:net";
-import { extname as extname2, resolve as resolve35, sep as sep9 } from "node:path";
+import { extname as extname2, resolve as resolve36, sep as sep9 } from "node:path";
 function json(response3, status2, payload) {
   response3.writeHead(status2, {
     ...SECURITY_HEADERS,
@@ -62231,14 +62973,14 @@ function safeStaticFile(staticRoot, pathname) {
   }
   if (decoded.includes("\0") || decoded.includes("\\")) return null;
   const relative6 = decoded === "/" ? "index.html" : decoded.replace(/^\/+/, "");
-  const root = realpathSync16(staticRoot);
-  const candidate = resolve35(root, relative6);
+  const root = realpathSync17(staticRoot);
+  const candidate = resolve36(root, relative6);
   if (candidate !== root && !candidate.startsWith(`${root}${sep9}`)) return null;
   let stat2;
   let canonical;
   try {
-    stat2 = lstatSync6(candidate);
-    canonical = realpathSync16(candidate);
+    stat2 = lstatSync8(candidate);
+    canonical = realpathSync17(candidate);
   } catch {
     return null;
   }
@@ -62309,7 +63051,7 @@ function requestBody(source) {
   });
 }
 async function startProductionWebServer(options) {
-  const staticRoot = realpathSync16(options.staticRoot);
+  const staticRoot = realpathSync17(options.staticRoot);
   const indexPath = safeStaticFile(staticRoot, "/");
   if (!indexPath) throw new Error(`packaged Web GUI is missing ${staticRoot}/index.html`);
   const bootstrap = options.ensureDaemon ?? (() => ensureCanonicalDaemon({
@@ -62601,10 +63343,10 @@ async function startCommandCenter(options = {}) {
   const app = createApp(appOpts);
   const listener = getRequestListener(app.fetch);
   const server = createServer5(listener);
-  return new Promise((resolve37) => {
+  return new Promise((resolve38) => {
     server.listen(port, hostname3, () => {
       console.log(`Command Center API on http://${hostname3}:${port}`);
-      resolve37(server);
+      resolve38(server);
     });
   });
 }
@@ -62657,21 +63399,21 @@ async function start(port) {
       handlePtyWebSocket(ws, id);
     });
   });
-  await new Promise((resolve37, reject) => {
+  await new Promise((resolve38, reject) => {
     server.once("error", reject);
     server.listen(resolvedPort, "0.0.0.0", () => {
       server.off("error", reject);
-      resolve37();
+      resolve38();
     });
   });
   console.log(`tmux-ide server listening on http://0.0.0.0:${resolvedPort}`);
   return {
     port: resolvedPort,
     server,
-    close: () => new Promise((resolve37, reject) => {
+    close: () => new Promise((resolve38, reject) => {
       shutdownPtyBridges();
       ptyWss.close();
-      server.close((err) => err ? reject(err) : resolve37());
+      server.close((err) => err ? reject(err) : resolve38());
     })
   };
 }
@@ -62687,7 +63429,7 @@ var init_server3 = __esm({
 // bin/cli.ts
 init_launch();
 import { parseArgs } from "node:util";
-import { resolve as resolve36, dirname as dirname37, join as join40 } from "node:path";
+import { resolve as resolve37, dirname as dirname38, join as join41 } from "node:path";
 import { execFileSync as execFileSync19 } from "node:child_process";
 import { appendFileSync as appendFileSync2, existsSync as existsSync38, mkdirSync as mkdirSync26, writeFileSync as writeFileSync23 } from "node:fs";
 import { fileURLToPath as fileURLToPath12 } from "node:url";
@@ -62722,30 +63464,30 @@ import {
   readdirSync as readdirSync3,
   copyFileSync as copyFileSync2
 } from "node:fs";
-import { resolve as resolve16, join as join22, basename as basename8, dirname as dirname21 } from "node:path";
+import { resolve as resolve17, join as join23, basename as basename9, dirname as dirname22 } from "node:path";
 import { fileURLToPath as fileURLToPath7 } from "node:url";
-var __dirname4 = dirname21(fileURLToPath7(import.meta.url));
+var __dirname4 = dirname22(fileURLToPath7(import.meta.url));
 function copyTemplateSkills(targetDir) {
   const created = [];
-  const templateSkillsDir = resolve16(__dirname4, "..", "..", "..", "templates", "skills");
+  const templateSkillsDir = resolve17(__dirname4, "..", "..", "..", "templates", "skills");
   if (!existsSync23(templateSkillsDir)) return created;
   mkdirSync16(targetDir, { recursive: true });
   for (const file of readdirSync3(templateSkillsDir)) {
     if (!file.endsWith(".md")) continue;
-    const destination = join22(targetDir, file);
-    copyFileSync2(join22(templateSkillsDir, file), destination);
+    const destination = join23(targetDir, file);
+    copyFileSync2(join23(templateSkillsDir, file), destination);
     created.push(destination);
   }
   return created;
 }
 function scaffoldLibraryStubs(dir) {
   const created = [];
-  const libraryDir = join22(dir, ".tmux-ide", "library");
+  const libraryDir = join23(dir, ".tmux-ide", "library");
   if (!existsSync23(libraryDir)) {
     mkdirSync16(libraryDir, { recursive: true });
     created.push(libraryDir);
   }
-  const archPath = join22(libraryDir, "architecture.md");
+  const archPath = join23(libraryDir, "architecture.md");
   if (!existsSync23(archPath)) {
     writeFileSync14(
       archPath,
@@ -62753,7 +63495,7 @@ function scaffoldLibraryStubs(dir) {
     );
     created.push(archPath);
   }
-  const learningsPath = join22(libraryDir, "learnings.md");
+  const learningsPath = join23(libraryDir, "learnings.md");
   if (!existsSync23(learningsPath)) {
     writeFileSync14(
       learningsPath,
@@ -62765,11 +63507,11 @@ function scaffoldLibraryStubs(dir) {
 }
 function scaffoldValidationContract(dir) {
   const created = [];
-  const tasksDir = join22(dir, ".tasks");
+  const tasksDir = join23(dir, ".tasks");
   if (!existsSync23(tasksDir)) {
     mkdirSync16(tasksDir, { recursive: true });
   }
-  const contractPath = join22(tasksDir, "validation-contract.md");
+  const contractPath = join23(tasksDir, "validation-contract.md");
   if (!existsSync23(contractPath)) {
     writeFileSync14(
       contractPath,
@@ -62781,9 +63523,9 @@ function scaffoldValidationContract(dir) {
 }
 function scaffoldAgentsMd(dir, name) {
   const created = [];
-  const agentsTemplatePath = resolve16(__dirname4, "..", "..", "..", "templates", "AGENTS.md");
+  const agentsTemplatePath = resolve17(__dirname4, "..", "..", "..", "templates", "AGENTS.md");
   if (existsSync23(agentsTemplatePath)) {
-    const agentsPath = join22(dir, "AGENTS.md");
+    const agentsPath = join23(dir, "AGENTS.md");
     if (!existsSync23(agentsPath)) {
       const content = readFileSync18(agentsTemplatePath, "utf-8").replace(/{{name}}/g, name);
       writeFileSync14(agentsPath, content);
@@ -62804,7 +63546,7 @@ function scaffoldTeamWorkspace(dir, name) {
 }
 function scaffoldMissionsWorkspace(dir, name) {
   const created = [];
-  const skillsDir = join22(dir, ".tmux-ide", "skills");
+  const skillsDir = join23(dir, ".tmux-ide", "skills");
   created.push(...copyTemplateSkills(skillsDir));
   created.push(...scaffoldTeamWorkspace(dir, name));
   return created;
@@ -62820,12 +63562,12 @@ async function init({
     outputError(`workspace config already exists at ${context.configPath}`, "EXISTS");
   }
   if (template) {
-    const templatePath = resolve16(__dirname4, "..", "..", "..", "templates", `${template}.yml`);
+    const templatePath = resolve17(__dirname4, "..", "..", "..", "templates", `${template}.yml`);
     if (!existsSync23(templatePath)) {
       outputError(`Template "${template}" not found`, "NOT_FOUND");
     }
     let content = readFileSync18(templatePath, "utf-8");
-    const name2 = basename8(dir);
+    const name2 = basename9(dir);
     content = content.replace(/^name: .+/m, `name: ${name2}`);
     const yaml6 = (await import("js-yaml")).default;
     const workspace = WorkspaceConfigV1SchemaZ.parse(yaml6.load(content));
@@ -62836,11 +63578,11 @@ async function init({
       created = scaffoldMissionsWorkspace(dir, name2);
     } else if (isTeamTemplate(template)) {
       created = [
-        ...copyTemplateSkills(join22(dir, ".tmux-ide", "skills")),
+        ...copyTemplateSkills(join23(dir, ".tmux-ide", "skills")),
         ...scaffoldTeamWorkspace(dir, name2)
       ];
     } else {
-      created = copyTemplateSkills(join22(dir, ".tmux-ide", "skills"));
+      created = copyTemplateSkills(join23(dir, ".tmux-ide", "skills"));
     }
     if (json3) {
       console.log(JSON.stringify({ created: true, template, name: name2, paths: created }));
@@ -62854,7 +63596,7 @@ async function init({
     return;
   }
   const detected = detectStack(dir);
-  const name = basename8(dir);
+  const name = basename9(dir);
   if (detected.frameworks.length > 0) {
     const config2 = suggestConfig(dir, detected);
     writeConfig(dir, config2);
@@ -62867,7 +63609,7 @@ async function init({
       console.log("Edit it to customize, then run: tmux-ide");
     }
   } else {
-    const templatePath = resolve16(__dirname4, "..", "..", "..", "templates", "default.yml");
+    const templatePath = resolve17(__dirname4, "..", "..", "..", "templates", "default.yml");
     let content = readFileSync18(templatePath, "utf-8");
     content = content.replace(/^name: .+/m, `name: ${name}`);
     const yaml6 = (await import("js-yaml")).default;
@@ -62882,7 +63624,7 @@ async function init({
       console.log("Edit it to configure your workspace, then run: tmux-ide");
     }
   }
-  const skillsDir = join22(dir, ".tmux-ide", "skills");
+  const skillsDir = join23(dir, ".tmux-ide", "skills");
   if (!existsSync23(skillsDir)) {
     const created = copyTemplateSkills(skillsDir);
     if (created.length > 0 && !json3) {
@@ -62895,9 +63637,9 @@ async function init({
 init_output();
 init_src2();
 init_config_context();
-import { resolve as resolve17 } from "node:path";
+import { resolve as resolve18 } from "node:path";
 async function stop(targetDir, { json: json3 } = {}) {
-  const dir = resolve17(targetDir ?? ".");
+  const dir = resolve18(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
   stopSessionMonitor(session);
   const result = killSession(session);
@@ -62916,9 +63658,9 @@ async function stop(targetDir, { json: json3 } = {}) {
 init_output();
 init_src2();
 init_config_context();
-import { resolve as resolve18 } from "node:path";
+import { resolve as resolve19 } from "node:path";
 async function attach(targetDir, { json: _json } = {}) {
-  const dir = resolve18(targetDir ?? ".");
+  const dir = resolve19(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
   const state = getSessionState(session);
   if (!state.running) {
@@ -62975,7 +63717,7 @@ init_notify();
 init_resolved_config();
 import { execSync as execSync3 } from "node:child_process";
 import { accessSync, constants as constants2, existsSync as existsSync25 } from "node:fs";
-import { resolve as resolve19, dirname as dirname23 } from "node:path";
+import { resolve as resolve20, dirname as dirname24 } from "node:path";
 import { fileURLToPath as fileURLToPath9 } from "node:url";
 function agentIntegrationRows(agents) {
   return presentAgents(agents).map((agent) => {
@@ -63086,7 +63828,7 @@ async function doctor({
   checks.push(
     await (async () => {
       try {
-        const resolved2 = await resolveConfig(resolve19("."));
+        const resolved2 = await resolveConfig(resolve20("."));
         if (resolved2.kind === "none") throw new Error("not found in current directory");
         return {
           label: "workspace config exists",
@@ -63108,10 +63850,10 @@ async function doctor({
     check(
       "TUI surfaces (cockpit / widgets)",
       () => {
-        const here = dirname23(fileURLToPath9(import.meta.url));
+        const here = dirname24(fileURLToPath9(import.meta.url));
         const checkoutEntry = [
-          resolve19(here, "../packages/daemon/src/tui/team/index.tsx"),
-          resolve19(here, "tui/team/index.tsx")
+          resolve20(here, "../packages/daemon/src/tui/team/index.tsx"),
+          resolve20(here, "tui/team/index.tsx")
         ].find(existsSync25);
         const binary = findCompiledTui();
         if (checkoutEntry && isBunAvailable()) return "dev checkout (bun)";
@@ -63153,9 +63895,9 @@ async function doctor({
     (() => {
       const settingsPath = claudeSettingsPath();
       const fileExists2 = existsSync25(settingsPath);
-      let probe = fileExists2 ? settingsPath : dirname23(settingsPath);
+      let probe = fileExists2 ? settingsPath : dirname24(settingsPath);
       while (!existsSync25(probe)) {
-        const parent = dirname23(probe);
+        const parent = dirname24(probe);
         if (parent === probe) break;
         probe = parent;
       }
@@ -63220,9 +63962,9 @@ async function doctor({
 init_src2();
 init_canonical_daemon();
 init_config_context();
-import { resolve as resolve20 } from "node:path";
+import { resolve as resolve21 } from "node:path";
 async function status(targetDir, { json: json3 } = {}) {
-  const dir = resolve20(targetDir ?? ".");
+  const dir = resolve21(targetDir ?? ".");
   const context = await resolveProjectConfigContext(dir);
   const session = context.sessionName;
   const state = getSessionState(session);
@@ -63277,7 +64019,7 @@ init_output();
 init_errors2();
 init_src2();
 init_config_context();
-import { resolve as resolve21 } from "node:path";
+import { resolve as resolve22 } from "node:path";
 function buildInspection(dir, {
   config: config2,
   configPath,
@@ -63335,7 +64077,7 @@ function buildInspection(dir, {
   };
 }
 async function inspect(targetDir, { json: json3 } = {}) {
-  const dir = resolve21(targetDir ?? ".");
+  const dir = resolve22(targetDir ?? ".");
   let config2;
   let configPath;
   let configKind;
@@ -63429,7 +64171,7 @@ init_legacy_config_adapter();
 init_project_resolver();
 init_errors2();
 import { execFileSync as execFileSync9 } from "node:child_process";
-import { dirname as dirname25, resolve as resolve25 } from "node:path";
+import { dirname as dirname26, resolve as resolve26 } from "node:path";
 function gitIgnoresWorkspace(dir) {
   try {
     execFileSync9("git", ["-C", dir, "check-ignore", "-q", ".tmux-ide/workspace.yml"], {
@@ -63475,7 +64217,7 @@ async function migrate(targetDir, {
   write,
   onAfterRead
 } = {}) {
-  const dir = resolve25(targetDir ?? ".");
+  const dir = resolve26(targetDir ?? ".");
   if (!dryRun && !write) dryRun = true;
   if (dryRun && write) outputError("Use either --dry-run or --write, not both", "USAGE");
   try {
@@ -63487,7 +64229,7 @@ async function migrate(targetDir, {
       outputError("No resolved legacy ide.yml found to migrate", "CONFIG_NOT_FOUND");
     }
     const legacyPath = resolution.config.path;
-    const writeRoot = dirname25(legacyPath);
+    const writeRoot = dirname26(legacyPath);
     const workspacePath = workspaceConfigPath(writeRoot);
     const { raw, config: config2 } = readLegacyForMigration(legacyPath);
     await onAfterRead?.();
@@ -64073,14 +64815,14 @@ function execTmuxAsync(args, signal) {
   return execMonitorCommandAsync("tmux", args, signal);
 }
 function execMonitorCommandAsync(executable, args, signal) {
-  return new Promise((resolve37, reject) => {
+  return new Promise((resolve38, reject) => {
     execFile3(
       executable,
       [...args],
       { encoding: "utf8", maxBuffer: 1024 * 1024, signal },
       (error, stdout) => {
         if (error) reject(error);
-        else resolve37(stdout.trim());
+        else resolve38(stdout.trim());
       }
     );
   });
@@ -64138,9 +64880,9 @@ init_tmux_external_interaction_observer();
 init_src();
 init_src2();
 init_runtime_observability();
-import { accessSync as accessSync5, constants as constants6, realpathSync as realpathSync11, statSync as statSync11 } from "node:fs";
+import { accessSync as accessSync5, constants as constants6, realpathSync as realpathSync12, statSync as statSync11 } from "node:fs";
 import { execFile as execFile8 } from "node:child_process";
-import { isAbsolute as isAbsolute12 } from "node:path";
+import { isAbsolute as isAbsolute13 } from "node:path";
 import { z as z81 } from "zod";
 
 // packages/daemon/src/terminal/session-runtime/transport-binding.ts
@@ -64150,6 +64892,9 @@ import { z as z75 } from "zod";
 var TransportSchemaZ = z75.enum(["terminal-attachment", "pane-stream"]);
 var LeaseIdSchemaZ = z75.uuid();
 var HostClientIdSchemaZ = z75.string().min(1).max(4096).refine((v) => !/[\0\r\n]/u.test(v));
+function sameAuthorityLease(left, right) {
+  return left.generation === right.generation && left.session === right.session && left.clientId === right.clientId && left.authority === right.authority && left.token === right.token && left.revision === right.revision;
+}
 function assertLiveScope(shared, lease, semanticPaneId3) {
   if (shared.interactiveRefs <= 0 || shared.lease !== lease) {
     throw new SessionRuntimeControllerLeaseError(
@@ -64196,7 +64941,11 @@ var SessionRuntimeTransportBinding = class {
   #causalCellProbes = /* @__PURE__ */ new Map();
   #baseHandle;
   #baseHandleLease;
+  #geometryAuthorityLease = null;
   #closed = false;
+  get explicitAuthority() {
+    return this.#explicitAuthority;
+  }
   constructor(binder, shared, allowedSourcePaneIds, contributedSourcePaneIds, interactive, transportLeaseId, diagnosticRequestId, ownsGeometry, explicitAuthority) {
     this.#binder = binder;
     this.#shared = shared;
@@ -64280,10 +65029,26 @@ var SessionRuntimeTransportBinding = class {
       this.#binder.activateController(this.#shared);
     }
     const lease = this.#shared.consumer.acquireAuthority(authority);
+    if (authority === "geometry") {
+      const previousIndex = this.#shared.geometryTransportLeaseIds.indexOf(this.#transportLeaseId);
+      if (previousIndex >= 0) this.#shared.geometryTransportLeaseIds.splice(previousIndex, 1);
+      this.#geometryAuthorityLease = lease;
+      if (lease) this.#shared.geometryTransportLeaseIds.push(this.#transportLeaseId);
+    }
     return lease;
   }
   releaseAuthority(authority) {
     this.#assertOpen();
+    if (authority === "geometry") {
+      const geometryIndex = this.#shared.geometryTransportLeaseIds.indexOf(this.#transportLeaseId);
+      const wasCurrent = geometryIndex >= 0 && geometryIndex === this.#shared.geometryTransportLeaseIds.length - 1;
+      if (geometryIndex >= 0) this.#shared.geometryTransportLeaseIds.splice(geometryIndex, 1);
+      this.#geometryAuthorityLease = null;
+      if (wasCurrent && this.#shared.geometryTransportLeaseIds.length === 0) {
+        this.#shared.consumer.releaseAuthority("geometry");
+      }
+      return this.#shared.consumer.authoritySnapshot();
+    }
     if (authority === "input" && this.#explicitAuthority && this.#shared.lease) {
       const controller = this.#shared.lease;
       this.#shared.lease = null;
@@ -64385,21 +65150,31 @@ var SessionRuntimeTransportBinding = class {
       throw error;
     }
   }
-  fitViewport(cols, rows) {
-    this.assertController();
+  fitViewport(expectedLease, cols, rows) {
+    this.#assertOpen();
     if (this.#shared.geometryTransportLeaseIds.at(-1) !== this.#transportLeaseId) {
       throw new SessionRuntimeControllerLeaseError(
         "invalid-client-capability",
         "The transport does not own the live geometry lease."
       );
     }
-    const lease = this.#shared.lease;
-    if (!lease)
+    if (!this.#explicitAuthority) {
+      const controller = this.#shared.lease;
+      if (!controller)
+        throw new SessionRuntimeControllerLeaseError(
+          "stale-controller-lease",
+          "Geometry authority retired."
+        );
+      this.#shared.consumer.fitViewport(controller, cols, rows);
+      return;
+    }
+    const lease = this.#geometryAuthorityLease;
+    if (!lease || !sameAuthorityLease(lease, expectedLease))
       throw new SessionRuntimeControllerLeaseError(
         "stale-controller-lease",
         "Geometry authority retired."
       );
-    this.#shared.consumer.fitViewport(lease, cols, rows);
+    this.#shared.consumer.fitViewportWithAuthority(lease, cols, rows);
   }
   executionHandleForSource(semanticPaneId3) {
     this.assertController(semanticPaneId3);
@@ -64438,7 +65213,15 @@ var SessionRuntimeTransportBinding = class {
     }
     this.#causalCellProbes.clear();
     const geometryIndex = this.#shared.geometryTransportLeaseIds.indexOf(this.#transportLeaseId);
+    const wasCurrent = geometryIndex >= 0 && geometryIndex === this.#shared.geometryTransportLeaseIds.length - 1;
     if (geometryIndex >= 0) this.#shared.geometryTransportLeaseIds.splice(geometryIndex, 1);
+    this.#geometryAuthorityLease = null;
+    if (wasCurrent && this.#shared.geometryTransportLeaseIds.length === 0) {
+      try {
+        this.#shared.consumer.releaseAuthority("geometry");
+      } catch {
+      }
+    }
     this.#intentHandles.clear();
     await this.#binder.release(this.#shared, this.#contributedSourcePaneIds, this.#interactive);
   }
@@ -64603,6 +65386,7 @@ var SessionRuntimeTransportBinder = class {
 };
 
 // packages/daemon/src/terminal/attachments/native-runtime.ts
+init_unix_socket_authority();
 init_direct_websocket();
 init_grouped_tmux();
 init_lease_manager();
@@ -64610,8 +65394,8 @@ init_lease_manager();
 // packages/daemon/src/terminal/attachments/pty-tmux-attachment-launcher.ts
 init_NodePtyAdapter();
 init_grouped_tmux();
-import { accessSync as accessSync4, constants as constants5, realpathSync as realpathSync10, statSync as statSync10 } from "node:fs";
-import { delimiter as delimiter3, isAbsolute as isAbsolute11, join as join31 } from "node:path";
+import { accessSync as accessSync4, constants as constants5, realpathSync as realpathSync11, statSync as statSync10 } from "node:fs";
+import { delimiter as delimiter3, isAbsolute as isAbsolute12, join as join32 } from "node:path";
 import { randomUUID as randomUUID12 } from "node:crypto";
 import { execFileSync as execFileSync15 } from "node:child_process";
 
@@ -65358,26 +66142,26 @@ function selectorArgv(selector) {
     }
     return ["-L", selector.name];
   }
-  if (selector.kind !== "path" || !isAbsolute11(selector.path) || selector.path.length > 4096 || /[\0\r\n]/u.test(selector.path)) {
+  if (selector.kind !== "path" || !isAbsolute12(selector.path) || selector.path.length > 4096 || /[\0\r\n]/u.test(selector.path)) {
     throw new TypeError("tmux socket path is invalid");
   }
   return ["-S", selector.path];
 }
 function resolveTmuxExecutable2(pathValue = process.env.PATH) {
   for (const directory of (pathValue ?? "").split(delimiter3)) {
-    if (!directory || !isAbsolute11(directory)) continue;
-    const candidate = join31(directory, "tmux");
+    if (!directory || !isAbsolute12(directory)) continue;
+    const candidate = join32(directory, "tmux");
     try {
       accessSync4(candidate, constants5.X_OK);
       if (!statSync10(candidate).isFile()) continue;
-      return realpathSync10(candidate);
+      return realpathSync11(candidate);
     } catch {
     }
   }
   throw new TypeError("tmux executable could not be resolved");
 }
 function validateTmuxExecutable(value) {
-  if (!isAbsolute11(value) || value.length > 4096 || /[\0\r\n]/u.test(value)) {
+  if (!isAbsolute12(value) || value.length > 4096 || /[\0\r\n]/u.test(value)) {
     throw new TypeError("tmux executable must be an absolute daemon-owned path");
   }
   return value;
@@ -65466,7 +66250,7 @@ var PtyTmuxAttachmentLauncher = class {
       options.tmuxExecutable ?? resolveTmuxExecutable2(options.environment?.PATH)
     );
     this.#socketArgv = selectorArgv(options.socketSelector);
-    if (!isAbsolute11(options.trustedCwd) || /[\0\r\n]/u.test(options.trustedCwd)) {
+    if (!isAbsolute12(options.trustedCwd) || /[\0\r\n]/u.test(options.trustedCwd)) {
       throw new TypeError("trusted cwd must be an absolute daemon-owned path");
     }
     this.#trustedCwd = options.trustedCwd;
@@ -65516,8 +66300,8 @@ var PtyTmuxAttachmentLauncher = class {
     const lifecycleEpoch = this.#lifecycleEpoch;
     const attemptId = randomUUID12();
     let resolveOutcome;
-    const outcome = new Promise((resolve37) => {
-      resolveOutcome = resolve37;
+    const outcome = new Promise((resolve38) => {
+      resolveOutcome = resolve38;
     });
     const earlyFrames = [];
     let earlyBytes = 0;
@@ -65924,18 +66708,18 @@ function presentationEnvironment(source) {
 }
 function canonicalAuthority(input) {
   try {
-    if (!isAbsolute12(input.executablePath) || !isAbsolute12(input.trustedCwd)) throw new Error();
-    const executablePath = realpathSync11(input.executablePath);
-    const trustedCwd = realpathSync11(input.trustedCwd);
+    if (!isAbsolute13(input.executablePath) || !isAbsolute13(input.trustedCwd)) throw new Error();
+    const executablePath = realpathSync12(input.executablePath);
+    const trustedCwd = realpathSync12(input.trustedCwd);
     accessSync5(executablePath, constants6.X_OK);
     if (!statSync11(executablePath).isFile() || !statSync11(trustedCwd).isDirectory())
       throw new Error();
     let socketSelector;
     let socketArgv;
+    let socketIdentity = null;
     if (input.socketSelector.kind === "path") {
-      if (!isAbsolute12(input.socketSelector.path)) throw new Error();
-      const path2 = realpathSync11(input.socketSelector.path);
-      if (!statSync11(path2).isSocket()) throw new Error();
+      socketIdentity = captureUnixSocketIdentity(input.socketSelector.path);
+      const path2 = socketIdentity.path;
       socketSelector = { kind: "path", path: path2 };
       socketArgv = ["-S", path2];
     } else {
@@ -65947,12 +66731,16 @@ function canonicalAuthority(input) {
       executablePath,
       socketSelector: Object.freeze(socketSelector),
       socketArgv: Object.freeze([...socketArgv]),
+      socketIdentity,
       trustedCwd,
       environment: Object.freeze(presentationEnvironment(input.environment ?? process.env))
     });
   } catch {
     throw new NativeTerminalAttachmentRuntimeError("invalid-authority");
   }
+}
+function currentSocketArgv(authority) {
+  return authority.socketIdentity ? ["-S", revalidateUnixSocketIdentity(authority.socketIdentity)] : authority.socketArgv;
 }
 function defaultCommandExecutor(executable, argv, options) {
   return runTmuxBinary(executable, [...argv], {
@@ -65965,7 +66753,7 @@ function defaultCommandExecutor(executable, argv, options) {
   });
 }
 function defaultReadCommandExecutor(executable, argv, options) {
-  return new Promise((resolve37, reject) => {
+  return new Promise((resolve38, reject) => {
     execFile8(
       executable,
       [...argv],
@@ -65978,7 +66766,7 @@ function defaultReadCommandExecutor(executable, argv, options) {
         signal: options.signal,
         windowsHide: true
       },
-      (error, stdout) => error ? reject(error) : resolve37(stdout)
+      (error, stdout) => error ? reject(error) : resolve38(stdout)
     );
   });
 }
@@ -65989,7 +66777,7 @@ function pinnedRunner(authority, execute, startupPolicy) {
       try {
         const stdout = execute(
           authority.executablePath,
-          [...authority.socketArgv, ...command2.argv],
+          [...currentSocketArgv(authority), ...command2.argv],
           {
             cwd: authority.trustedCwd,
             env: authority.environment,
@@ -66042,7 +66830,7 @@ function pinnedReadRunner(authority, execute) {
       try {
         const stdout = await execute(
           authority.executablePath,
-          [...authority.socketArgv, ...command2.argv],
+          [...currentSocketArgv(authority), ...command2.argv],
           {
             cwd: authority.trustedCwd,
             env: authority.environment,
@@ -67509,13 +68297,13 @@ function createTmuxAgentStatusProbe(deps2) {
       );
       if (!signal) return result;
       if (signal.aborted) return Promise.reject(signal.reason);
-      return new Promise((resolve37, reject) => {
+      return new Promise((resolve38, reject) => {
         const aborted = () => reject(signal.reason);
         signal.addEventListener("abort", aborted, { once: true });
         void result.then(
           (value) => {
             signal.removeEventListener("abort", aborted);
-            resolve37(value);
+            resolve38(value);
           },
           (error) => {
             signal.removeEventListener("abort", aborted);
@@ -67633,7 +68421,7 @@ function attachTerminalAttachmentWebSocket(server, coordinatorOrProvider) {
     close: async () => {
       server.off("upgrade", upgrade);
       await coordinator(false)?.shutdown();
-      await new Promise((resolve37) => wss.close(() => resolve37()));
+      await new Promise((resolve38) => wss.close(() => resolve38()));
     }
   };
 }
@@ -67738,7 +68526,7 @@ function attachPaneStreamWebSocket(server, coordinator) {
     close: async () => {
       server.off("upgrade", upgrade);
       await coordinator.shutdown();
-      await new Promise((resolve37) => wss.close(() => resolve37()));
+      await new Promise((resolve38) => wss.close(() => resolve38()));
     }
   };
 }
@@ -67935,10 +68723,10 @@ init_active_projects();
 init_state_home();
 import { randomUUID as randomUUID14 } from "node:crypto";
 import { linkSync as linkSync3, mkdirSync as mkdirSync22, readFileSync as readFileSync23, rmSync as rmSync3, writeFileSync as writeFileSync20 } from "node:fs";
-import { dirname as dirname29, join as join32 } from "node:path";
+import { dirname as dirname30, join as join33 } from "node:path";
 var UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 function environmentIdentityPath() {
-  return join32(stateHome(), "environment.json");
+  return join33(stateHome(), "environment.json");
 }
 function readPersistedEnvironmentId(path2) {
   try {
@@ -67953,7 +68741,7 @@ function readPersistedEnvironmentId(path2) {
 function persistEnvironmentId(path2, environmentId) {
   const temporary = `${path2}.${process.pid}.${randomUUID14()}.tmp`;
   try {
-    mkdirSync22(dirname29(path2), { recursive: true });
+    mkdirSync22(dirname30(path2), { recursive: true });
     writeFileSync20(
       temporary,
       `${JSON.stringify({ environmentId, mintedAt: (/* @__PURE__ */ new Date()).toISOString() }, null, 2)}
@@ -68079,13 +68867,13 @@ async function retireTerminalAttachmentTransport(runtime, boundary) {
 }
 async function pickFreePort(hostname3) {
   const probe = createServer();
-  return await new Promise((resolve37, reject) => {
+  return await new Promise((resolve38, reject) => {
     probe.once("error", reject);
     probe.listen(0, hostname3, () => {
       const address = probe.address();
       const port = typeof address === "object" && address ? address.port : null;
       probe.close(() => {
-        if (port) resolve37(port);
+        if (port) resolve38(port);
         else reject(new DaemonStartupError("Could not allocate daemon port", "bind_failed"));
       });
     });
@@ -68176,21 +68964,21 @@ function attachWebSockets(server, opts) {
           ws.terminate();
         }
       }
-      const closeWss = (wss) => Promise.race([new Promise((resolve37) => wss.close(() => resolve37())), delay(100)]);
+      const closeWss = (wss) => Promise.race([new Promise((resolve38) => wss.close(() => resolve38())), delay(100)]);
       await Promise.all([closeWss(eventsWss), closeWss(ptyWss)]);
     }
   };
 }
 function waitForServerClose(server) {
-  return new Promise((resolve37, reject) => {
+  return new Promise((resolve38, reject) => {
     server.close((err) => {
       if (err) reject(err);
-      else resolve37();
+      else resolve38();
     });
   });
 }
 function delay(ms) {
-  return new Promise((resolve37) => setTimeout(resolve37, ms));
+  return new Promise((resolve38) => setTimeout(resolve38, ms));
 }
 function generateLocalBypassToken() {
   return randomBytes8(32).toString("base64url");
@@ -68223,13 +69011,13 @@ function assertTakeoverDeadline(deadline, message) {
 async function waitForTakeoverPoll(deadline) {
   assertTakeoverDeadline(deadline, "Canonical daemon did not quiesce before the takeover deadline");
   const waitMs = Math.min(TAKEOVER_POLL_MS, deadline.remainingMs());
-  await new Promise((resolve37) => {
+  await new Promise((resolve38) => {
     const timer = setTimeout(finish, waitMs);
     const onAbort = () => finish();
     function finish() {
       clearTimeout(timer);
       deadline.signal.removeEventListener("abort", onAbort);
-      resolve37();
+      resolve38();
     }
     deadline.signal.addEventListener("abort", onAbort, { once: true });
   });
@@ -68496,7 +69284,7 @@ async function startHttpServer({
   );
   const paneStreamBoundary = attachPaneStreamWebSocket(server, paneStreamRuntime.coordinator);
   try {
-    await new Promise((resolve37, reject) => {
+    await new Promise((resolve38, reject) => {
       const onError = (err) => {
         server.off("listening", onListening);
         if (err.code === "EADDRINUSE") {
@@ -68522,7 +69310,7 @@ async function startHttpServer({
             `[daemon] Command Center on http://${bindHostname}:${requestedPort} (session: ${sessionName})`
           );
         }
-        resolve37();
+        resolve38();
       };
       server.once("error", onError);
       server.once("listening", onListening);
@@ -68725,7 +69513,7 @@ async function startEmbeddedDaemon(opts) {
       const stream = runtimeTraceStream;
       runtimeTraceStream = null;
       if (!stream || stream.closed || stream.destroyed) return;
-      await new Promise((resolve37) => stream.end(resolve37));
+      await new Promise((resolve38) => stream.end(resolve38));
     };
     let startedServer;
     try {
@@ -68832,7 +69620,7 @@ async function startEmbeddedDaemon(opts) {
               );
             }
             const semanticPaneId3 = layout.panes.find((pane) => pane.semanticPaneId === preferredPaneId)?.semanticPaneId ?? layout.panes.find((pane) => pane.active)?.semanticPaneId ?? layout.panes[0].semanticPaneId;
-            const seed = await new Promise((resolve37, reject) => {
+            const seed = await new Promise((resolve38, reject) => {
               const timeout = setTimeout(
                 () => reject(new Error("Timed out awaiting first coherent terminal seed.")),
                 5e3
@@ -68840,7 +69628,7 @@ async function startEmbeddedDaemon(opts) {
               void consumer.subscribeReplica(semanticPaneId3, (update) => {
                 if (update.type !== "terminal.seed") return;
                 clearTimeout(timeout);
-                resolve37({ revision: update.revision, stateHash: update.stateHash });
+                resolve38({ revision: update.revision, stateHash: update.stateHash });
               }).catch((error) => {
                 clearTimeout(timeout);
                 reject(error);
@@ -69369,7 +70157,7 @@ async function findLiveCanonicalDaemon(deps2, options) {
   return existing.info;
 }
 function delay2(ms) {
-  return new Promise((resolve37) => setTimeout(resolve37, ms));
+  return new Promise((resolve38) => setTimeout(resolve38, ms));
 }
 var DAEMON_ATTACHABILITY_TIMEOUT_MS = 15e3;
 var DAEMON_ATTACHABILITY_POLL_MS = 25;
@@ -69467,8 +70255,8 @@ async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies2) {
       });
     }
     let resolveStopped;
-    const stopped = new Promise((resolve37) => {
-      resolveStopped = resolve37;
+    const stopped = new Promise((resolve38) => {
+      resolveStopped = resolve38;
     });
     let stopFailure;
     const originalStop = handle.stop.bind(handle);
@@ -69534,9 +70322,9 @@ async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies2) {
 init_canonical_daemon_bootstrap();
 init_state_home();
 init_hosted();
-var __dirname5 = dirname37(fileURLToPath12(import.meta.url));
+var __dirname5 = dirname38(fileURLToPath12(import.meta.url));
 var selfPath = fileURLToPath12(import.meta.url);
-var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve36(__dirname5, "cli.js");
+var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve37(__dirname5, "cli.js");
 var { positionals, values } = parseArgs({
   allowPositionals: true,
   strict: false,
@@ -69781,9 +70569,9 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
   let automaticDiagnosticLog;
   if (surface === "app" && !process.env.TMUX_IDE_TUI_PERF_LOG) {
     try {
-      const logDirectory = join40(stateHome(), "logs");
+      const logDirectory = join41(stateHome(), "logs");
       mkdirSync26(logDirectory, { recursive: true, mode: 448 });
-      automaticDiagnosticLog = join40(logDirectory, "tui-latest.jsonl");
+      automaticDiagnosticLog = join41(logDirectory, "tui-latest.jsonl");
       writeFileSync23(
         automaticDiagnosticLog,
         `${JSON.stringify({
@@ -69831,7 +70619,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
     if (launch2.mode === "bun") {
       execFileSync19(launch2.bin, launch2.argv, {
         stdio: "inherit",
-        cwd: resolve36(__dirname5, ".."),
+        cwd: resolve37(__dirname5, ".."),
         env
       });
       markChildExited();
@@ -69888,7 +70676,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
     exists = false;
   }
   if (!exists) {
-    const cwd = launch2.mode === "bun" ? resolve36(__dirname5, "..") : ensureCompiledTuiRuntimeDir();
+    const cwd = launch2.mode === "bun" ? resolve37(__dirname5, "..") : ensureCompiledTuiRuntimeDir();
     const commandLine = hostedCommandLine(
       launch2.bin,
       launch2.argv,
@@ -69934,8 +70722,8 @@ async function waitOverSocket(params) {
     client.close();
   }
 }
-var teamScriptPath = resolve36(__dirname5, "../packages/daemon/src/tui/team/index.tsx");
-var appScriptPath = resolve36(__dirname5, "../packages/daemon/src/tui/mirror/app.tsx");
+var teamScriptPath = resolve37(__dirname5, "../packages/daemon/src/tui/team/index.tsx");
+var appScriptPath = resolve37(__dirname5, "../packages/daemon/src/tui/mirror/app.tsx");
 function launchTeamCockpit() {
   execBunWidget("team", teamScriptPath, [], "team");
 }
@@ -69985,7 +70773,7 @@ try {
         } catch {
         }
       }
-      const targetDir = resolve36(startTargetDir || ".");
+      const targetDir = resolve37(startTargetDir || ".");
       if (startTargetDir && !existsSync38(targetDir)) {
         throw new IdeError(
           `No workspace config found in ${targetDir}. Run "tmux-ide init" or "tmux-ide detect --write" to create one.`,
@@ -70085,11 +70873,11 @@ try {
         action = "disable-team";
         configArgs = [];
       } else if (sub === "edit") {
-        const scriptPath = resolve36(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
+        const scriptPath = resolve37(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
         execBunWidget(
           "setup",
           scriptPath,
-          ["--dir=" + resolve36(startTargetDir || "."), "--edit"],
+          ["--dir=" + resolve37(startTargetDir || "."), "--edit"],
           "config edit"
         );
         break;
@@ -70098,8 +70886,8 @@ try {
       break;
     }
     case "setup": {
-      const scriptPath = resolve36(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
-      const setupArgs = ["--dir=" + resolve36(startTargetDir || ".")];
+      const scriptPath = resolve37(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
+      const setupArgs = ["--dir=" + resolve37(startTargetDir || ".")];
       if (positionals[1] === "--edit" || values.edit) setupArgs.push("--edit");
       if (positionals[1] === "--wizard" || values.wizard) setupArgs.push("--wizard");
       execBunWidget("setup", scriptPath, setupArgs, "setup");
@@ -70117,8 +70905,8 @@ try {
       break;
     }
     case "settings": {
-      const scriptPath = resolve36(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
-      execBunWidget("config", scriptPath, ["--dir=" + resolve36(startTargetDir || ".")], "settings");
+      const scriptPath = resolve37(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
+      execBunWidget("config", scriptPath, ["--dir=" + resolve37(startTargetDir || ".")], "settings");
       break;
     }
     case "team": {
@@ -70467,13 +71255,13 @@ try {
             console.log(forcedKey);
             act(forcedKey);
           } else {
-            const key = await new Promise((resolve37) => {
+            const key = await new Promise((resolve38) => {
               try {
                 process.stdin.setRawMode?.(true);
                 process.stdin.resume();
-                process.stdin.once("data", (data) => resolve37(data.toString()));
+                process.stdin.once("data", (data) => resolve38(data.toString()));
               } catch {
-                resolve37("");
+                resolve38("");
               }
             });
             try {
@@ -70672,7 +71460,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
           { code: "USAGE", exitCode: 1 }
         );
       }
-      const scriptPath = resolve36(__dirname5, "../packages/daemon/src/widgets", widget, "index.tsx");
+      const scriptPath = resolve37(__dirname5, "../packages/daemon/src/widgets", widget, "index.tsx");
       let popupSession = "";
       try {
         popupSession = execFileSync19("tmux", ["display-message", "-p", "#{session_name}"], {
@@ -70988,7 +71776,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
       } = await Promise.resolve().then(() => (init_pane_widget(), pane_widget_exports));
       const { publishWidgetAsset: publishWidgetAsset2, WidgetAssetStoreError: WidgetAssetStoreError2 } = await Promise.resolve().then(() => (init_widget_asset_store(), widget_asset_store_exports));
       const { readFileSync: readFileSync31, watchFile, unwatchFile } = await import("node:fs");
-      const { basename: basename19 } = await import("node:path");
+      const { basename: basename20 } = await import("node:path");
       const readStdin = async () => {
         const chunks = [];
         for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
@@ -71009,9 +71797,9 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
             const publish = () => {
               const asset = publishWidgetAsset2(readFileSync31(file), {
                 media: "text/markdown",
-                name: basename19(file)
+                name: basename20(file)
               });
-              return buildMarkdownAssetAnnouncement2(asset.assetId, basename19(file));
+              return buildMarkdownAssetAnnouncement2(asset.assetId, basename20(file));
             };
             announcement = publish();
             watchedFile = file;
@@ -71026,14 +71814,14 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
             if (!media) {
               throw new PaneWidgetRefusal2(
                 "unsupported-media",
-                `"${basename19(file)}" is not a supported raster image.`
+                `"${basename20(file)}" is not a supported raster image.`
               );
             }
             const asset = publishWidgetAsset2(readFileSync31(file), {
               media,
-              name: basename19(file)
+              name: basename20(file)
             });
-            return buildImageAssetAnnouncement2(asset.assetId, { name: basename19(file) });
+            return buildImageAssetAnnouncement2(asset.assetId, { name: basename20(file) });
           };
           announcement = publish();
           watchedFile = file;
@@ -71112,7 +71900,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
       }
       const { startProductionWebServer: startProductionWebServer2 } = await Promise.resolve().then(() => (init_production_web_server(), production_web_server_exports));
       const web = await startProductionWebServer2({
-        staticRoot: resolve36(__dirname5, "../apps/desktop-renderer/dist"),
+        staticRoot: resolve37(__dirname5, "../apps/desktop-renderer/dist"),
         cliEntryPath: nodeCliPath,
         cwd: process.cwd(),
         ...webPort === void 0 ? {} : { port: webPort }
@@ -71138,7 +71926,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
     }
     case "server": {
       if ("bun" in process.versions) {
-        const scriptPath = resolve36(__dirname5, "../packages/daemon/src/server/standalone.ts");
+        const scriptPath = resolve37(__dirname5, "../packages/daemon/src/server/standalone.ts");
         const serverArgs = ["--experimental-strip-types", scriptPath];
         if (values.port) serverArgs.push("--port", values.port);
         execFileSync19("node", serverArgs, { stdio: "inherit" });

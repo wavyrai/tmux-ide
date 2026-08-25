@@ -3,7 +3,6 @@ import {
   APP_WINDOW_MAX_WINDOWS,
   AppWindowDocumentV1SchemaZ,
   AppWindowIdSchemaZ,
-  AppWindowSourceSchemaZ,
   AppWindowTimestampSchemaZ,
   type AppWindowDockNodeShape,
   type AppWindowDocumentV1,
@@ -13,6 +12,9 @@ import {
   type AppWindowScene,
   type AppWindowSource,
 } from "@tmux-ide/contracts";
+import { stableAppWindowInstanceId } from "@tmux-ide/core";
+
+export { stableAppWindowInstanceId } from "@tmux-ide/core";
 
 /**
  * Standalone durable kernel seam; it intentionally does not replace the
@@ -77,28 +79,6 @@ export function emptyAppWindowDocument(updatedAt: string): AppWindowDocumentV1 {
     activeLayoutId: null,
     layouts: {},
   });
-}
-
-/**
- * Deterministic instance identity derived only from durable source identity.
- * A caller-provided ordinal distinguishes deliberate duplicate views without
- * coupling identity to mutable titles, layout coordinates, or runtime handles.
- */
-export function stableAppWindowInstanceId(source: AppWindowSource, ordinal = 0): string {
-  const parsed = AppWindowSourceSchemaZ.parse(source);
-  if (!Number.isInteger(ordinal) || ordinal < 0 || ordinal >= APP_WINDOW_MAX_WINDOWS) {
-    throw new Error("app window ordinal must be a bounded nonnegative integer");
-  }
-  const sourceKey =
-    parsed.kind === "terminal"
-      ? `terminal:${parsed.terminalSourceId}`
-      : `native:${parsed.surface}:${parsed.resourceId === null ? "null" : `id:${parsed.resourceId}`}`;
-  const slug = sourceKey
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/gu, "-")
-    .replace(/^-+|-+$/gu, "")
-    .slice(0, 72);
-  return AppWindowIdSchemaZ.parse(`window-${slug || "surface"}-${ordinal}-${fnv1a(sourceKey)}`);
 }
 
 /**

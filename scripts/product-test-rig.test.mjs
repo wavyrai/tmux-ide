@@ -20,6 +20,8 @@ import { devServerProcessIsRunning } from "../apps/desktop-renderer/e2e/fixtures
 import {
   PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES,
   PRODUCT_RIG_SOURCE_INVENTORY_MAX_PATHS,
+  PRODUCT_RIG_SOURCE_MANIFEST_ABSOLUTE_MAX_BYTES,
+  PRODUCT_RIG_SOURCE_MANIFEST_HASH_CHUNK_BYTES,
   PRODUCT_RIG_SOURCE_PATH_MAX_BYTES,
   PRODUCT_RIG_STATE_VERSION,
   PRODUCT_RIG_WEB_DIAGNOSTIC_LIMITS,
@@ -31,6 +33,7 @@ import {
   awaitWebDiagnosticWithDeadline,
   boundedSourceTraceDiff,
   buildSourceTracePayload,
+  buildProductSourceManifest,
   buildProductDiagnosticReport,
   buildWebStartupEvidence,
   causalFixtureBaselineReadiness,
@@ -44,8 +47,10 @@ import {
   coherentReadiness,
   coherentGenerationDuration,
   createProductJsonlTailReader,
+  projectProductPaneStreamLifecycle,
   createProductRigAttemptTimelineClock,
   compareProductSourceProvenance,
+  deriveProductSourceManifestReadBudget,
   inputPaintSamples,
   paneBodyRegion,
   paneGeometryIdentity,
@@ -54,6 +59,7 @@ import {
   productRigHostHeartbeatObservation,
   productRigSourceTraceDiffArgs,
   productRigSourceTraceUntrackedArgs,
+  productSourceHeadBaselineBytes,
   readBoundedSourceTraceFiles,
   productResourceCycleCommands,
   productResourceCyclePlan,
@@ -76,6 +82,178 @@ import {
 import { sourceArchitectureInventory } from "./architecture-debt-inventory.mjs";
 import { buildTuiHostPublicationEvidence } from "./lib/tui-host-publication.mjs";
 import { acquireProductRigSleepAssertion } from "./lib/product-rig-sleep-assertion.mjs";
+import { selectCard5TuiHostFocusBinding } from "./lib/product-cross-client-host-evidence.mjs";
+
+test("Card5 tails join delayed phase-only lifecycle and source-shaped reference records", () => {
+  const root = mkdtempSync(join(tmpdir(), "product-card5-dual-tail-"));
+  const lifecyclePath = join(root, "performance.jsonl");
+  const referencePath = join(root, "performance-trace.jsonl");
+  const key = "ab".repeat(32);
+  const owners = { input: "opentui:42", focus: "opentui:42", geometry: "opentui:42" };
+  const presence = {
+    clientId: "opentui:42",
+    state: "foreground",
+    connectedRevision: 1,
+    activityRevision: 9,
+  };
+  const authority = {
+    generation: "generation-a",
+    session: "runtime-a",
+    revision: 9,
+    owners,
+    clients: [
+      {
+        clientId: "web:a",
+        surface: "web",
+        state: "background",
+        connectedRevision: 1,
+        activityRevision: 1,
+      },
+      {
+        clientId: "web:b",
+        surface: "web",
+        state: "background",
+        connectedRevision: 2,
+        activityRevision: 2,
+      },
+      {
+        clientId: "opentui:42",
+        surface: "opentui",
+        state: "foreground",
+        connectedRevision: 1,
+        activityRevision: 9,
+      },
+    ],
+  };
+  const expectedCanonical = {
+    semanticPaneId: "pane-a",
+    processId: "opentui:42",
+    clockId: "opentui-performance-now",
+    generation: "generation-a",
+    incarnation: "generation-a:0",
+    revision: 5,
+    canonicalStateHash: "a".repeat(16),
+  };
+  const select = (lifecycleReader, referenceReader) =>
+    selectCard5TuiHostFocusBinding({
+      lifecycleRecords: lifecycleReader.read(),
+      referenceRecords: referenceReader.read(),
+      expectedCanonical,
+      expectedAuthority: authority,
+      expectedWorkspaceName: "workspace-a",
+      expectedTuiClientId: "opentui:42",
+      evidenceKey: key,
+    });
+  try {
+    writeFileSync(lifecyclePath, "");
+    writeFileSync(referencePath, "");
+    const lifecycleReader = createProductJsonlTailReader(lifecyclePath, {
+      recordKind: "lifecycle",
+    });
+    const referenceReader = createProductJsonlTailReader(referencePath);
+    assert.equal(select(lifecycleReader, referenceReader).passed, false);
+    appendFileSync(
+      lifecyclePath,
+      `${JSON.stringify({ phase: "terminal-host-focus-claim-attempt", claimOrdinal: 1 })}\n`,
+    );
+    assert.equal(select(lifecycleReader, referenceReader).passed, false);
+    appendFileSync(
+      referencePath,
+      `${JSON.stringify({
+        version: 1,
+        type: "performance.terminal-frame-fence",
+        semanticPaneId: "pane-a",
+        processId: "opentui:42",
+        clockId: "opentui-performance-now",
+        generation: "generation-a",
+        incarnation: "generation-a:0",
+        revision: 5,
+        stateHash: "a".repeat(16),
+        rendererEpoch: 3,
+      })}\n`,
+    );
+    assert.equal(select(lifecycleReader, referenceReader).passed, false);
+    appendFileSync(
+      lifecyclePath,
+      `${JSON.stringify({
+        phase: "terminal-host-focus-control-gate-ready",
+        elapsedMs: 9,
+        at: "2026-08-24T20:00:00.000Z",
+        capability: true,
+        detail: true,
+        path: true,
+        root: true,
+        key: true,
+        trace: true,
+        enabled: true,
+        monotonicMicros: 90,
+        processId: "opentui:42",
+        clockId: "opentui-performance-now",
+      })}\n`,
+    );
+    assert.equal(select(lifecycleReader, referenceReader).passed, false);
+    appendFileSync(
+      lifecyclePath,
+      `${JSON.stringify({
+        phase: "terminal-host-focus-control-binding-ready",
+        elapsedMs: 10,
+        at: "2026-08-24T20:00:00.000Z",
+        bindingEpoch: 1,
+        processId: "opentui:42",
+        clockId: "opentui-performance-now",
+        daemonInstanceId: "generation-a",
+        authorityGeneration: "generation-a",
+        runtimeSession: "runtime-a",
+        workspaceName: "workspace-a",
+        clientId: "opentui:42",
+        clientPhase: "live",
+        rendererEpoch: 3,
+        clientGeneration: 7,
+        monotonicMicros: 100,
+      })}\n`,
+    );
+    assert.equal(select(lifecycleReader, referenceReader).passed, true);
+    appendFileSync(
+      lifecyclePath,
+      `${JSON.stringify({
+        phase: "terminal-host-focus-authority-reconcile",
+        diagnosticEpoch: null,
+        status: "applied",
+        processId: "opentui:42",
+        clockId: "opentui-performance-now",
+        daemonInstanceId: "generation-a",
+        authorityGeneration: "generation-a",
+        runtimeSession: "runtime-a",
+        workspaceName: "workspace-a",
+        clientPhase: "live",
+        rendererEpoch: 3,
+        clientGeneration: 7,
+        authorityRevision: 9,
+        authorityOwners: owners,
+        opentuiPresence: presence,
+        receipts: ["input", "focus", "geometry"].map((authorityKind) => ({
+          authority: authorityKind,
+          status: "fulfilled",
+          granted: true,
+          exact: true,
+        })),
+      })}\n`,
+    );
+    const exact = select(lifecycleReader, referenceReader);
+    assert.equal(exact.passed, true);
+    assert.equal(exact.observation.epochMismatch, false);
+    assert.equal(exact.observation.clientGenerationMismatch, false);
+    assert.equal(
+      lifecycleReader.read().filter(({ phase }) => phase === "terminal-host-focus-claim-attempt")
+        .length,
+      1,
+    );
+    lifecycleReader.close();
+    referenceReader.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("incremental JSONL tail parses each bounded append exactly once", () => {
   const root = mkdtempSync(join(tmpdir(), "product-jsonl-tail-"));
@@ -111,6 +289,9 @@ test("incremental JSONL tail parses each bounded append exactly once", () => {
     assert.equal(reader.read().length, values.length);
     assert.ok(maxPollMs < 33, `incremental observer poll blocked ${maxPollMs.toFixed(3)}ms`);
     assert.equal(reader.snapshot().offset, bytes.length);
+    const exactPrefixMark = reader.mark();
+    assert.equal(reader.recordsThrough(exactPrefixMark).length, values.length);
+    assert.deepEqual(reader.recordsSince(exactPrefixMark), []);
     assert.equal(new Set(reader.read().map(({ ordinal }) => ordinal)).size, values.length);
     assert.throws(() => {
       reader.read()[0].nested.exact = false;
@@ -127,6 +308,16 @@ test("incremental JSONL tail parses each bounded append exactly once", () => {
     assert.ok(
       maxQualificationPollMs < 33,
       `integrated observer qualification blocked ${maxQualificationPollMs.toFixed(3)}ms`,
+    );
+    appendFileSync(
+      path,
+      `${JSON.stringify({ version: 1, type: "performance.test", ordinal: 2_560 })}\n`,
+    );
+    reader.read();
+    assert.equal(reader.recordsThrough(exactPrefixMark).length, values.length);
+    assert.deepEqual(
+      reader.recordsSince(exactPrefixMark).map(({ ordinal }) => ordinal),
+      [2_560],
     );
     reader.close();
   } finally {
@@ -176,6 +367,154 @@ test("incremental JSONL tail preserves partial UTF-8 and fails closed on source 
     rmSync(path);
     assert.throws(() => deleted.read(), { code: "PRODUCT_JSONL_TAIL_INVALID" });
     deleted.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Card5 daemon lifecycle projection is bounded, keyed, and fails closed on causal gaps", async () => {
+  const root = mkdtempSync(join(tmpdir(), "product-pane-stream-lifecycle-"));
+  const path = join(root, "daemon.jsonl");
+  const evidenceKey = "ab".repeat(32);
+  const record = (ordinal, operation = "pane-stream-terminal") => ({
+    version: 1,
+    type: "performance.stage",
+    traceId: `private-request-${ordinal}`,
+    authority: { generation: "private-generation", incarnation: null },
+    operation,
+    terminalDelivery: {
+      paneStreamCloseCode: 1012,
+      paneStreamCloseReason: "topology-changed",
+    },
+  });
+  try {
+    writeFileSync(
+      path,
+      `${Array.from({ length: 80 }, (_, ordinal) => JSON.stringify(record(ordinal))).join("\n")}\n`,
+    );
+    const projected = await projectProductPaneStreamLifecycle(path, evidenceKey);
+    assert.equal(projected.available, true);
+    assert.equal(projected.count, 80);
+    assert.equal(projected.overflow, 16);
+    assert.equal(projected.events.length, 64);
+    assert.equal(projected.events[0].ordinal, 16);
+    assert.equal(projected.events.at(-1).closeReason, "topology-changed");
+    assert.match(projected.events[0].requestHmac, /^[0-9a-f]{64}$/u);
+    assert.doesNotMatch(JSON.stringify(projected), /private-request|private-generation/u);
+
+    writeFileSync(path, `${JSON.stringify(record(0, "pane-stream-server-ready"))}\n`);
+    let appendedDuringDrain = false;
+    let appendRaceConfirmations = 0;
+    const appended = await projectProductPaneStreamLifecycle(path, evidenceKey, {
+      readerFactory: (readerPath, options) => {
+        const reader = createProductJsonlTailReader(readerPath, options);
+        return {
+          read: () => reader.read(),
+          snapshot: () => reader.snapshot(),
+          confirmCaughtUp: () => {
+            appendRaceConfirmations += 1;
+            if (!appendedDuringDrain) {
+              appendedDuringDrain = true;
+              setImmediate(() => appendFileSync(readerPath, `${JSON.stringify(record(1))}\n`));
+            }
+            return reader.confirmCaughtUp();
+          },
+          close: () => reader.close(),
+        };
+      },
+    });
+    assert.equal(appendedDuringDrain, true);
+    assert.equal(appendRaceConfirmations, 3);
+    assert.equal(appended.available, true);
+    assert.deepEqual(
+      appended.events.map(({ stage, ordinal }) => ({ stage, ordinal })),
+      [
+        { stage: "server-ready", ordinal: 0 },
+        { stage: "terminal", ordinal: 1 },
+      ],
+    );
+
+    writeFileSync(path, `${JSON.stringify(record(0, "pane-stream-server-ready"))}\n`);
+    let growthOrdinal = 1;
+    const perpetualGrowth = await projectProductPaneStreamLifecycle(path, evidenceKey, {
+      readerFactory: (readerPath, options) => {
+        const reader = createProductJsonlTailReader(readerPath, options);
+        return {
+          read: () => reader.read(),
+          snapshot: () => reader.snapshot(),
+          confirmCaughtUp: () => {
+            appendFileSync(readerPath, `${JSON.stringify(record(growthOrdinal))}\n`);
+            growthOrdinal += 1;
+            return reader.confirmCaughtUp();
+          },
+          close: () => reader.close(),
+        };
+      },
+    });
+    assert.deepEqual(perpetualGrowth, {
+      available: false,
+      reason: "reader-budget-exhausted",
+      count: 0,
+      overflow: 0,
+      events: [],
+    });
+    assert.equal(growthOrdinal, 257);
+
+    writeFileSync(path, `${JSON.stringify(record(0))}\n`);
+    const abort = new AbortController();
+    let abortedReads = 0;
+    let abortedCloses = 0;
+    const aborted = await projectProductPaneStreamLifecycle(path, evidenceKey, {
+      signal: abort.signal,
+      readerFactory: (readerPath, options) => {
+        const reader = createProductJsonlTailReader(readerPath, options);
+        return {
+          read: () => {
+            abortedReads += 1;
+            return reader.read();
+          },
+          snapshot: () => reader.snapshot(),
+          confirmCaughtUp: () => reader.confirmCaughtUp(),
+          close: () => {
+            abortedCloses += 1;
+            reader.close();
+          },
+        };
+      },
+      yieldTurn: async () => abort.abort(),
+    });
+    assert.deepEqual(aborted, {
+      available: false,
+      reason: "read-aborted",
+      count: 0,
+      overflow: 0,
+      events: [],
+    });
+    assert.equal(abortedReads, 1);
+    assert.equal(abortedCloses, 1);
+
+    writeFileSync(path, `${JSON.stringify(record(0, "unrelated"))}\n`);
+    assert.deepEqual(await projectProductPaneStreamLifecycle(path, evidenceKey), {
+      available: false,
+      reason: "no-matching-events",
+      count: 0,
+      overflow: 0,
+      events: [],
+    });
+    writeFileSync(path, "{malformed}\n");
+    assert.equal((await projectProductPaneStreamLifecycle(path, evidenceKey)).available, false);
+    assert.equal(
+      (await projectProductPaneStreamLifecycle(path, evidenceKey)).reason,
+      "malformed-record",
+    );
+    writeFileSync(path, JSON.stringify(record(0)));
+    assert.deepEqual(await projectProductPaneStreamLifecycle(path, evidenceKey), {
+      available: false,
+      reason: "partial-record",
+      count: 0,
+      overflow: 0,
+      events: [],
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -537,6 +876,230 @@ test("source provenance manifest reports stable and bounded between-run drift", 
   assert.equal(assessment.treeExact, false);
   assert.equal(assessment.changedCount, 1);
   assert.deepEqual(assessment.changedPathDigests, ["3".repeat(64)]);
+});
+
+test("source manifest uses a derived bounded budget and fixed-memory exact hashing", () => {
+  const makeFile = (content, ino, declaredSize = content.length) => ({
+    content: Buffer.from(content),
+    declaredSize,
+    dev: 7,
+    ino,
+    regular: true,
+  });
+  const build = (entries, maxBytes, onRead = () => undefined) => {
+    const files = new Map(entries);
+    let maxRequested = 0;
+    const result = buildProductSourceManifest(
+      [...files.keys()],
+      {
+        openFile(path) {
+          const file = files.get(path);
+          if (file?.symlink) throw Object.assign(new Error("symlink"), { code: "ELOOP" });
+          if (!file) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+          return { path, file };
+        },
+        statFile(descriptor) {
+          return {
+            isFile: () => descriptor.file.regular,
+            size: descriptor.file.declaredSize,
+            dev: descriptor.file.dev,
+            ino: descriptor.file.ino,
+          };
+        },
+        readChunk(descriptor, buffer, requested, position) {
+          maxRequested = Math.max(maxRequested, requested);
+          onRead({ descriptor, files, position, requested });
+          const available = Math.max(
+            0,
+            Math.min(requested, descriptor.file.content.length - position),
+          );
+          descriptor.file.content.copy(buffer, 0, position, position + available);
+          return available;
+        },
+        closeFile() {},
+      },
+      maxBytes,
+    );
+    return { ...result, maxRequested };
+  };
+
+  const currentBytes = 8_409_153;
+  assert.equal(productSourceHeadBaselineBytes(["blob 7534884", "HEAD:new missing"], 2), 7_534_884);
+  assert.throws(() => productSourceHeadBaselineBytes(["tree 1"], 1), /invalid/u);
+  assert.throws(
+    () => productSourceHeadBaselineBytes([`blob ${Number.MAX_SAFE_INTEGER}`, "blob 1"], 2),
+    /overflowed/u,
+  );
+  const currentBudget = deriveProductSourceManifestReadBudget(7_534_884);
+  assert.equal(currentBudget, 15_923_492);
+  const current = build(
+    [["bin/current-source.js", makeFile(Buffer.alloc(currentBytes, 0x61), 1)]],
+    currentBudget,
+  );
+  assert.equal(current.bytes, currentBytes);
+  assert.ok(current.maxRequested <= PRODUCT_RIG_SOURCE_MANIFEST_HASH_CHUNK_BYTES);
+
+  const exactBudget = deriveProductSourceManifestReadBudget(10, 5, 100);
+  assert.equal(build([["scripts/exact.mjs", makeFile("x".repeat(15), 2)]], exactBudget).bytes, 15);
+  assert.throws(
+    () => build([["scripts/over.mjs", makeFile("x".repeat(16), 3)]], exactBudget),
+    /byte ceiling/u,
+  );
+  assert.equal(
+    deriveProductSourceManifestReadBudget(
+      PRODUCT_RIG_SOURCE_MANIFEST_ABSOLUTE_MAX_BYTES,
+      PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES,
+    ),
+    PRODUCT_RIG_SOURCE_MANIFEST_ABSOLUTE_MAX_BYTES,
+  );
+  assert.throws(
+    () =>
+      build(
+        [
+          [
+            "scripts/hard-over.mjs",
+            makeFile("", 4, PRODUCT_RIG_SOURCE_MANIFEST_ABSOLUTE_MAX_BYTES + 1),
+          ],
+        ],
+        PRODUCT_RIG_SOURCE_MANIFEST_ABSOLUTE_MAX_BYTES,
+      ),
+    /byte ceiling/u,
+  );
+  assert.throws(
+    () => deriveProductSourceManifestReadBudget(Number.MAX_SAFE_INTEGER, 1),
+    /overflowed/u,
+  );
+
+  const children = build(
+    [
+      ["scripts/a.mjs", makeFile("alpha", 5)],
+      ["scripts/b.mjs", makeFile("beta", 6)],
+    ],
+    100,
+  );
+  assert.equal(
+    children.manifest[0].contentDigest,
+    createHash("sha256").update("alpha").digest("hex"),
+  );
+  assert.equal(
+    children.manifestDigest,
+    createHash("sha256").update(JSON.stringify(children.manifest)).digest("hex"),
+  );
+});
+
+test("source manifest fails closed on symlink, growth, truncation, and path replacement", () => {
+  const file = (content, ino) => ({
+    content: Buffer.from(content),
+    declaredSize: Buffer.byteLength(content),
+    dev: 8,
+    ino,
+    regular: true,
+  });
+  const run = (initial, mutate) => {
+    const files = new Map([["scripts/source.mjs", initial]]);
+    return buildProductSourceManifest(
+      ["scripts/source.mjs"],
+      {
+        openFile(path) {
+          const current = files.get(path);
+          if (current?.symlink) throw Object.assign(new Error("symlink"), { code: "ELOOP" });
+          if (!current) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+          return { path, file: current };
+        },
+        statFile: ({ file: current }) => ({
+          isFile: () => current.regular,
+          size: current.declaredSize,
+          dev: current.dev,
+          ino: current.ino,
+        }),
+        readChunk(descriptor, buffer, requested, position) {
+          mutate({ descriptor, files, position });
+          const count = Math.max(0, Math.min(requested, descriptor.file.content.length - position));
+          descriptor.file.content.copy(buffer, 0, position, position + count);
+          return count;
+        },
+        closeFile() {},
+      },
+      1_024,
+    );
+  };
+
+  assert.throws(() => run({ ...file("x", 1), symlink: true }, () => undefined), /symlink/u);
+  let missingOpens = 0;
+  const deleted = buildProductSourceManifest(
+    ["scripts/deleted.mjs"],
+    {
+      openFile() {
+        missingOpens += 1;
+        throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      },
+      statFile: () => assert.fail("deleted file must not be statted"),
+      readChunk: () => assert.fail("deleted file must not be read"),
+      closeFile: () => assert.fail("deleted file must not be closed"),
+    },
+    1_024,
+  );
+  assert.equal(missingOpens, 2);
+  assert.equal(deleted.manifest[0].bytes, 0);
+  let appearingOpens = 0;
+  assert.throws(
+    () =>
+      buildProductSourceManifest(
+        ["scripts/appeared.mjs"],
+        {
+          openFile() {
+            appearingOpens += 1;
+            if (appearingOpens === 1) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+            return { file: file("x", 10) };
+          },
+          statFile: ({ file: current }) => ({
+            isFile: () => current.regular,
+            size: current.declaredSize,
+            dev: current.dev,
+            ino: current.ino,
+          }),
+          readChunk: () => 0,
+          closeFile() {},
+        },
+        1_024,
+      ),
+    /changed while building/u,
+  );
+  let grew = false;
+  assert.throws(
+    () =>
+      run(file("abc", 2), ({ descriptor, position }) => {
+        if (!grew && position === 3) {
+          grew = true;
+          descriptor.file.content = Buffer.from("abcd");
+          descriptor.file.declaredSize = 4;
+        }
+      }),
+    /changed while building/u,
+  );
+  let truncated = false;
+  assert.throws(
+    () =>
+      run(file("abcdef", 3), ({ descriptor, position }) => {
+        if (!truncated && position === 0) {
+          truncated = true;
+          descriptor.file.content = Buffer.from("abc");
+          descriptor.file.declaredSize = 3;
+        }
+      }),
+    /changed while building/u,
+  );
+  let replaced = false;
+  assert.throws(
+    () =>
+      run(file("abc", 4), ({ files, position }) => {
+        if (!replaced && position === 3) {
+          replaced = true;
+          files.set("scripts/source.mjs", file("abc", 5));
+        }
+      }),
+    /changed while building/u,
+  );
 });
 
 test("source provenance rejects oversized untracked input before reading content", () => {
@@ -2079,6 +2642,30 @@ test("window failure preparation seals relocated structural runtime evidence in 
     failure,
     /clientState: \{ \.\.\.correlation\.clientState, failureObservation, partialRuntime \}/u,
   );
+});
+
+test("Card5 owner seals keyed daemon lifecycle before cleanup and controller only reuses it", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const ownerCatch = source.slice(
+    source.indexOf("  } catch (error) {", source.indexOf("async function owner")),
+    source.indexOf("\n  }\n}\n\nconst [command", source.indexOf("async function owner")),
+  );
+  assert.match(
+    ownerCatch,
+    /daemonPaneStreamLifecycle: await card5DaemonPaneStreamLifecycle\(state\)[\s\S]*?publish\(terminalFailure\)[\s\S]*?settleInternalProductRigCleanup/u,
+  );
+  const execute = source.slice(
+    source.indexOf("async function executeDiagnosticAttempt"),
+    source.indexOf(
+      "async function diagnose",
+      source.indexOf("async function executeDiagnosticAttempt"),
+    ),
+  );
+  assert.match(
+    execute,
+    /state\?\.failureObservation\?\.daemonPaneStreamLifecycle[\s\S]*?state\.failureObservation\.daemonPaneStreamLifecycle/u,
+  );
+  assert.doesNotMatch(ownerCatch, /publish\([^)]*card5InputFingerprintKey/u);
 });
 
 test("window switch selection rejection fails immediately with its bounded predicate", () => {
