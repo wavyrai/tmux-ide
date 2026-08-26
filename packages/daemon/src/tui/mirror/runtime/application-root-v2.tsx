@@ -2,7 +2,6 @@
 import { createCliRenderer } from "@opentui/core";
 import type { CommandSource } from "@tmux-ide/contracts";
 import { batch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import { runtimeResourceSnapshot } from "@tmux-ide/daemon-client/runtime-resource-ledger";
 import { render, useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
 import { publishTuiInputReady } from "../../readiness.ts";
 import { prepareOpenTuiApplicationShellConnection } from "../application-shell-daemon-connection.ts";
@@ -10,9 +9,9 @@ import {
   createPaneSurfaceHostFocusTransitionOwner,
   registerPaneSurface,
 } from "../pane-surface.tsx";
-import { currentTuiPerformanceEventSink, detailedWindowFrame } from "../performance-events.ts";
+import { currentTuiPerformanceEventSink } from "../performance-events.ts";
 import { createSemanticThemeSnapshot, createTerminalPaletteProjection } from "../theme.ts";
-import { startTuiApplication, observeTuiRootFailure } from "./application-bootstrap.ts";
+import { startTuiApplication } from "./application-bootstrap.ts";
 import {
   applicationShellBindingRenderSignature,
   createApplicationShellBinding,
@@ -25,22 +24,24 @@ import {
 } from "./application-root-configuration.ts";
 import { ApplicationShellView, applicationShellKeyAction } from "./application-shell-view.tsx";
 import {
+  applicationPaletteKeyboardDisposition,
+  applicationPaletteOwnsInput,
+} from "./application-palette-input.ts";
+import { createApplicationPaletteCommandOwner } from "./application-palette-command-owner.ts";
+import {
   createApplicationTerminalInteractionController,
   type ApplicationTerminalInteractionController,
 } from "./application-terminal-interaction-controller.ts";
-import {
-  createApplicationHostFocusPresentation,
-  type HostFocusRendererSource,
-} from "./application-host-focus-presentation.ts";
+import type { HostFocusRendererSource } from "./application-host-focus-presentation.ts";
 import { resolveApplicationHostFocusControlCapability } from "./application-host-focus-control-capability.ts";
 import { createApplicationHostFocusControlBindingObserver } from "./application-host-focus-control-binding.ts";
 import {
-  closeTuiPerfMarks,
   tuiPerfCriticalMark,
   tuiPerfDiagnostics,
   tuiPerfMark,
   tuiPerfStream,
 } from "./application-performance-log.ts";
+import { installApplicationPostRenderRuntime } from "./application-post-render-runtime.ts";
 import { createOpenTuiHostLocalTmuxAdapter } from "./host-local-tmux-adapter.ts";
 import {
   createOpenTuiGenerationHost,
@@ -51,6 +52,8 @@ import { TUI_RENDERER_CADENCE } from "./renderer-cadence.ts";
 import { createOpenTuiRuntimeLayoutPresentation } from "./runtime-layout-presentation.ts";
 import { OpenTuiTerminalHostFocus } from "./terminal-host-focus.ts";
 import { createApplicationTerminalFrameReadinessOwner } from "./application-terminal-frame-readiness-owner.ts";
+import { createApplicationSessionFocusOwner } from "./application-session-focus-owner.ts";
+import type { ApplicationSessionFocusOwner } from "./application-session-focus-owner.ts";
 import {
   applicationMousePointerIngressCapability,
   createApplicationTerminalSelectionOwner,
@@ -115,6 +118,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         requestRender: () => renderer.requestRender(),
       });
       let interaction!: ApplicationTerminalInteractionController;
+      let sessionFocusOwner: ApplicationSessionFocusOwner | null = null;
       let setRendererFocused: ((focused: boolean) => void) | null = null;
       let getRendererFocused: (() => boolean) | null = null;
       let getFocusedPane: (() => string | null) | null = null;
@@ -218,6 +222,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             interaction?.adoptGeneration(snapshot);
             setGeneration(snapshot);
             shellBinding.adoptGeneration(snapshot);
+            sessionFocusOwner?.adopt();
             const nextAuthorityClient =
               snapshot?.status === "live" ? snapshot.authorityClient : null;
             terminalHostFocus.adopt(nextAuthorityClient);
@@ -265,11 +270,17 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           requestRender: () => renderer.requestRender(),
         });
         interaction.adoptGeneration(sessionOwner?.snapshot() ?? null);
+        sessionFocusOwner = createApplicationSessionFocusOwner({
+          generation,
+          layout: layoutSnapshot,
+          focusTerminalPane: shellBinding.focusTerminalPane,
+        });
         const stopLayout = presentation.subscribeWindows((snapshot) => {
           batch(() => {
             interaction.adoptLayout(snapshot);
             setLayoutSnapshot(snapshot);
           });
+          sessionFocusOwner?.adopt();
           tuiPerfMark("layout-publication", {
             windows: snapshot.windows.length,
             panes: snapshot.current?.panes.length ?? 0,
@@ -289,6 +300,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           const snapshot = sessionOwner!.snapshot();
           if (result.opened && snapshot) {
             if (!result.activated) setSurface("terminals");
+            sessionFocusOwner?.request(commandSource(source, "application-bar"));
             setBootstrapNote(null);
           } else {
             setBootstrapNote(`${sessionName} could not attach`);
@@ -299,21 +311,21 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           stopLayout();
           stopShell();
           shellBinding.dispose();
+          sessionFocusOwner?.dispose();
         });
         const commandSource = (
           source: "keyboard" | "mouse",
           surfaceName: "application-bar" | "command-palette",
         ): CommandSource => ({ kind: source, surface: surfaceName });
-        const openSurface = (next: "home" | "terminals", source: "keyboard" | "mouse"): void => {
-          void shellBinding
-            .openSurface(next, commandSource(source, "application-bar"))
-            .then((dispatched) => {
-              if (!dispatched) setSurface(next);
-            });
-        };
-        const setCommandPaletteOpen = (open: boolean, source: "keyboard" | "mouse"): void => {
-          void shellBinding.setPaletteOpen(open, commandSource(source, "command-palette"));
-        };
+        const paletteCommands = createApplicationPaletteCommandOwner({
+          activeSurface,
+          binding: shellBinding,
+          commandSource: (source, surfaceName) => commandSource(source, surfaceName),
+          setSurface,
+          setNote: setBootstrapNote,
+          splitPane: interaction.splitPane,
+          closePane: interaction.closePane,
+        });
         createEffect(() => {
           renderer.setBackgroundColor(theme.roles.surfaces.canvas);
           const currentShell = shell();
@@ -323,17 +335,40 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           const name = event.name.toLowerCase();
           if (selectionOwner.handleKey(name)) return;
           if (event.ctrl && name === "q") {
-            void hostLocal.putAway().finally(() => lifecycle.shutdown("keyboard"));
+            if (hostLocal.hosted) {
+              void hostLocal
+                .putAway()
+                .catch((error) =>
+                  setBootstrapNote(
+                    `Could not put away: ${error instanceof Error ? error.message : String(error)}`,
+                  ),
+                );
+            } else {
+              void lifecycle.shutdown("keyboard");
+            }
             return;
           }
-          const chromeAction = applicationShellKeyAction(
-            event,
+          const isPaletteOpen = applicationPaletteOwnsInput(
             Boolean(shell().semantic?.focus.palette.open || shell().localPaletteOpen),
           );
+          const paletteAction = applicationPaletteKeyboardDisposition(
+            event,
+            isPaletteOpen,
+            paletteCommands.selection(),
+          );
+          if (paletteAction) {
+            if (paletteAction.kind === "select") {
+              paletteCommands.select(paletteAction.index);
+            } else if (paletteAction.kind === "activate")
+              paletteCommands.activate(paletteAction.command, "keyboard");
+            else if (paletteAction.kind === "close") paletteCommands.setOpen(false, "keyboard");
+            return;
+          }
+          const chromeAction = applicationShellKeyAction(event, false);
           if (chromeAction) {
             if (chromeAction === "home" || chromeAction === "terminals")
-              openSurface(chromeAction, "keyboard");
-            else setCommandPaletteOpen(chromeAction === "palette-open", "keyboard");
+              paletteCommands.openSurface(chromeAction, "keyboard");
+            else paletteCommands.setOpen(chromeAction === "palette-open", "keyboard");
             return;
           }
           if (activeSurface() === "home" && config.sessions.length > 0) {
@@ -371,6 +406,12 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           );
         });
         usePaste((event) => {
+          if (
+            applicationPaletteOwnsInput(
+              Boolean(shell().semantic?.focus.palette.open || shell().localPaletteOpen),
+            )
+          )
+            return;
           const active = generation();
           const lane = active?.status === "live" ? active.fastLane : null;
           if (activeSurface() !== "terminals" || !lane || !focusedPane()) return;
@@ -400,6 +441,8 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             selectedSession={selectedSession}
             bootstrapNote={bootstrapNote}
             paletteOpen={() => shell().semantic?.focus.palette.open ?? shell().localPaletteOpen}
+            paletteSelection={paletteCommands.selection}
+            paletteCloseArmed={paletteCommands.closeArmed}
             terminalRendererSource={terminalRendererSource}
             terminalGestureRuntime={terminalGestureRuntime}
             onApplicationMousePointerIngress={applicationMouseIngress}
@@ -409,9 +452,10 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             hostFocusTransitionOwner={hostFocusTransitionOwner ?? undefined}
             theme={theme}
             palette={palette}
-            onOpenSurface={openSurface}
+            onOpenSurface={paletteCommands.openSurface}
             onOpenSession={(sessionName) => void startGeneration(sessionName, false, "mouse")}
-            onSetPaletteOpen={setCommandPaletteOpen}
+            onSetPaletteOpen={paletteCommands.setOpen}
+            onPaletteActivate={paletteCommands.activate}
             onSelectPane={interaction.selectPane}
             onResizePreview={interaction.previewPaneResize}
             onResizePane={interaction.resizePane}
@@ -426,115 +470,27 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           />
         );
       }, renderer);
-      observeTuiRootFailure(root, {
-        rejectReadiness: rejectReady,
-        shutdown: () => lifecycle.shutdown("bootstrap-error"),
-      });
-      const observeTerminalFrame = () => terminalFrameReadiness?.observeFrame();
-      if (terminalFrameReadiness) renderer.on("frame", observeTerminalFrame);
-      let firstFrameMarked = false;
-      const observeFirstFrame = () => {
-        if (firstFrameMarked) return;
-        firstFrameMarked = true;
-        tuiPerfMark("first-frame");
-      };
-      if (tuiPerfStream) renderer.on("frame", observeFirstFrame);
-      const diagnosticFrameSink = currentTuiPerformanceEventSink();
-      let previousObservedFrameAt = diagnosticFrameSink ? performance.now() : 0;
-      const observeDiagnosticFrame = diagnosticFrameSink
-        ? () => {
-            const now = performance.now();
-            diagnosticFrameSink.frame(
-              now - previousObservedFrameAt,
-              detailedWindowFrame(diagnosticFrameSink, interaction.observeDiagnosticWindowFrame),
-            );
-            previousObservedFrameAt = now;
-          }
-        : null;
-      if (observeDiagnosticFrame) renderer.on("frame", observeDiagnosticFrame);
-      const observeWindowSwitchFrame = () => interaction.settleWindowSwitchFrame();
-      if (tuiPerfStream) renderer.on("frame", observeWindowSwitchFrame);
-      const observeResizeGuideFrame = () => interaction.settleResizeGuideFrame();
-      if (tuiPerfStream) renderer.on("frame", observeResizeGuideFrame);
-      const hostFocusPresentation = createApplicationHostFocusPresentation({
+      const postRender = installApplicationPostRenderRuntime({
         renderer,
-        owner: hostFocusTransitionOwner,
-        sink: frameDiagnosticSink,
-        hostFocus: terminalHostFocus,
+        root,
+        rejectReady,
+        shutdown: () => lifecycle.shutdown("bootstrap-error"),
+        terminalFrameReadiness,
+        interaction,
+        hostFocusTransitionOwner,
+        frameDiagnosticSink,
+        terminalHostFocus,
         focusedPane: () => getFocusedPane?.() ?? null,
         rendererFocused: () => getRendererFocused?.() ?? true,
         setRendererFocused: (focused) => setRendererFocused?.(focused),
         rendererSource: () => getTerminalRendererSource?.() ?? null,
+        hostFocusControlCapability,
+        hostFocusBindingObserver,
+        sessionOwner: () => sessionOwner,
+        presentation,
+        retireDiagnosticHandoff: () => options.initialPreparation?.diagnosticHandoff?.retire(),
       });
-      const hostFocusControl = hostFocusControlCapability.enabled
-        ? import("./application-host-focus-test-control.ts").then(async (module) => {
-            const control = module.createApplicationHostFocusTestControl({
-              path: hostFocusControlCapability.path!,
-              runtimeRoot: hostFocusControlCapability.runtimeRoot!,
-              key: hostFocusControlCapability.key!,
-              driveFocusState: hostFocusPresentation.driveFocusState,
-              currentBinding: () => {
-                const observed = hostFocusBindingObserver.current();
-                const pane = getFocusedPane?.() ?? null;
-                if (
-                  observed === null ||
-                  typeof pane !== "string" ||
-                  !Number.isSafeInteger(observed.clientGeneration)
-                )
-                  return null;
-                return Object.freeze({
-                  generation: observed.authorityGeneration,
-                  runtimeSession: observed.runtimeSession,
-                  workspaceName: observed.workspaceName,
-                  semanticPaneId: pane,
-                  clientId: observed.clientId,
-                  rendererEpoch: observed.rendererEpoch,
-                  clientGeneration: observed.clientGeneration,
-                  bindingEpoch: observed.bindingEpoch,
-                  processId: `opentui:${process.pid}`,
-                  rendererFocused: getRendererFocused?.() ?? true,
-                });
-              },
-            });
-            await control.ready;
-            return control;
-          })
-        : null;
-      void hostFocusControl?.catch(() => undefined);
-      return {
-        root,
-        ready,
-        close: async () => {
-          if (hostFocusControl) await (await hostFocusControl).close();
-          hostFocusBindingObserver.dispose();
-          hostFocusPresentation.dispose();
-          hostFocusTransitionOwner?.dispose();
-          tuiPerfMark("resource-snapshot", {
-            boundary: "pre-close",
-            resources: runtimeResourceSnapshot(),
-          });
-          if (terminalFrameReadiness) renderer.off("frame", observeTerminalFrame);
-          terminalFrameReadiness?.dispose();
-          if (tuiPerfStream) renderer.off("frame", observeFirstFrame);
-          if (observeDiagnosticFrame) renderer.off("frame", observeDiagnosticFrame);
-          if (tuiPerfStream) renderer.off("frame", observeWindowSwitchFrame);
-          if (tuiPerfStream) renderer.off("frame", observeResizeGuideFrame);
-          terminalHostFocus.dispose();
-          await sessionOwner?.dispose();
-          presentation.dispose();
-          tuiPerfMark("resource-snapshot", {
-            boundary: "post-close",
-            resources: runtimeResourceSnapshot(),
-            diagnostics: tuiPerfDiagnostics(),
-          });
-          if (process.env.TMUX_IDE_PERFORMANCE_TRACE_LOG)
-            await (
-              await import("../reference-performance-trace.ts")
-            ).closeReferencePerformanceTraceCollector();
-          options.initialPreparation?.diagnosticHandoff?.retire();
-          await closeTuiPerfMarks();
-        },
-      };
+      return { root, ready, close: postRender.close };
     },
     publishReady() {
       publishTuiInputReady("app");

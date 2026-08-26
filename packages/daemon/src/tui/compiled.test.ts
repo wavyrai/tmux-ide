@@ -10,6 +10,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   compiledTuiRuntimeDir,
+  ensureTuiLaunchAvailable,
   ensureCompiledTuiRuntimeDir,
   resolveTuiLaunch,
 } from "./compiled.ts";
@@ -116,6 +117,100 @@ describe("resolveTuiLaunch — fast binary with an explicit source override", ()
   });
 });
 
+describe("ensureTuiLaunchAvailable — installed first run", () => {
+  it("does not acquire when an exact-version binary is already present", async () => {
+    let downloads = 0;
+    const launch = await ensureTuiLaunchAvailable(
+      {
+        ...base,
+        checkoutExists: false,
+        bunAvailable: false,
+        compiledBinary: "/installed/tmux-ide-tui",
+      },
+      {
+        download: async () => {
+          downloads += 1;
+          return { path: "/downloaded/tmux-ide-tui", bytes: 20_000_000 };
+        },
+      },
+    );
+
+    expect(downloads).toBe(0);
+    expect(launch).toEqual({
+      mode: "binary",
+      bin: "/installed/tmux-ide-tui",
+      argv: [base.surface, ...base.args],
+    });
+  });
+
+  it("keeps a Bun-backed development checkout entirely local", async () => {
+    let downloads = 0;
+    const launch = await ensureTuiLaunchAvailable(
+      {
+        ...base,
+        checkoutExists: true,
+        bunAvailable: true,
+        compiledBinary: null,
+      },
+      {
+        download: async () => {
+          downloads += 1;
+          return { path: "/downloaded/tmux-ide-tui", bytes: 20_000_000 };
+        },
+      },
+    );
+
+    expect(downloads).toBe(0);
+    expect(launch.mode).toBe("bun");
+  });
+
+  it("acquires the release runtime when a clean install has no Bun or binary", async () => {
+    const messages: string[] = [];
+    const launch = await ensureTuiLaunchAvailable(
+      {
+        ...base,
+        checkoutExists: true,
+        bunAvailable: false,
+        compiledBinary: null,
+      },
+      {
+        log: (message) => messages.push(message),
+        download: async ({ log }) => {
+          log?.("downloading exact runtime");
+          return { path: "/downloaded/tmux-ide-tui", bytes: 20_000_000 };
+        },
+      },
+    );
+
+    expect(messages).toEqual(["downloading exact runtime"]);
+    expect(launch).toEqual({
+      mode: "binary",
+      bin: "/downloaded/tmux-ide-tui",
+      argv: [base.surface, ...base.args],
+    });
+  });
+
+  it("names the failed boundary and the explicit retry command", async () => {
+    await expect(
+      ensureTuiLaunchAvailable(
+        {
+          ...base,
+          checkoutExists: true,
+          bunAvailable: false,
+          compiledBinary: null,
+        },
+        {
+          download: async () => {
+            throw new Error("release asset returned HTTP 404");
+          },
+        },
+      ),
+    ).rejects.toThrow(
+      /Automatic OpenTUI runtime acquisition failed: release asset returned HTTP 404[\s\S]*tmux-ide update --tui-binary/u,
+    );
+  });
+});
+
 describe("build-tui script — CI-safe smoke (contract, not a real compile)", () => {
   const script = resolve(repoRoot, "scripts/build-tui.mjs");
 
@@ -139,6 +234,24 @@ describe("build-tui script — CI-safe smoke (contract, not a real compile)", ()
 
 describe("packed-install OpenTUI gate", () => {
   const script = resolve(repoRoot, "scripts/pack-check-run.mjs");
+  const cli = readFileSync(resolve(repoRoot, "bin/cli.ts"), "utf8");
+
+  it("prepares the renderer before creating a persistent daemon", () => {
+    const runApp = cli.slice(
+      cli.indexOf("async function runApp"),
+      cli.indexOf("function launchApp"),
+    );
+    expect(runApp.indexOf("ensureTuiLaunchAvailable")).toBeGreaterThanOrEqual(0);
+    expect(runApp.indexOf("ensureCanonicalDaemon")).toBeGreaterThan(
+      runApp.indexOf("ensureTuiLaunchAvailable"),
+    );
+  });
+
+  it("keeps the deferred Web GUI out of the OpenTUI beta command graph", () => {
+    expect(cli).toContain("The Web GUI is not included in the OpenTUI beta");
+    expect(cli).not.toContain("production-web-server.ts");
+    expect(cli).not.toMatch(/tmux-ide web.*Serve the packaged Web GUI/u);
+  });
 
   it("launches the installed CLI against an ordinary configless tmux session", () => {
     const src = readFileSync(script, "utf-8");
@@ -161,6 +274,9 @@ describe("packed-install OpenTUI gate", () => {
     expect(src).toContain("processIdentity(pid) !== identity");
     expect(src).toMatch(/preload not found/);
     expect(src).toMatch(/NODE_PATH: ""/);
+    expect(src).toMatch(/Automatic OpenTUI runtime acquisition failed/);
+    expect(src).toMatch(/TMUX_IDE_PACK_FETCH_MODE/);
+    expect(src).toMatch(/mock release channel/);
   });
 
   it("cannot leak a host-only compiled binary into the universal tarball", () => {

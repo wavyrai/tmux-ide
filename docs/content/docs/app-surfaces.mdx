@@ -96,17 +96,19 @@ tmux-ide cheatsheet
 ## The unified app — `tmux-ide app`
 
 The surfaces above float over your real session. `tmux-ide app` is the other
-shape: a full-screen IDE over the whole fleet, with tabs across the top
-(**F1 Home** · **F2 Terminal** · **F3 Files** · **F4 Diff** · **F5 palette**).
-tmux still owns the PTYs and layout; the app renders them. See
-[What's new in 2.7](/docs/release-2-7-0) for the full tour.
+shape: a full-screen client over the fleet. The current OpenTUI beta exposes
+**F1 Home**, **F2 Terminals**, and a focused **F5 command palette**. tmux still
+owns the PTYs and layout; the app renders them. Files, Diff, settings, missions,
+rich media, and the web/native clients remain deferred from this beta. See the
+[OpenTUI beta release notes](/docs/release-2-9-0-beta-1).
 
 ### The Terminal surface
 
 The Terminal tab is a live mirror of your panes, and it's agent-aware:
 
-- **Status chips** — an agent pane wears a chip (`● claude`); a blocked agent
-  turns bold red with its wait time (`● claude · blocked 4m`).
+- **Textual agent state** — sidebar, window, and pane chrome show `IDLE`,
+  `WORKING`, `BLOCKED`, `DONE`, `FAILED`, or `UNKNOWN`; state is never conveyed
+  by color alone.
 - **A focus hairline** — the focused pane gets a quiet accent border, so you
   always know where keystrokes land.
 - **Select & copy in agent panes** — a pane running a full-screen app (Claude
@@ -118,10 +120,11 @@ The Terminal tab is a live mirror of your panes, and it's agent-aware:
   manual window-size override is released when the app exits so other attached
   tmux clients regain normal ownership.
 
-### Rich pane content
+### Rich pane content (deferred from the beta)
 
-A pane can opt into a host-native document surface without ceasing to be a real
-tmux pane:
+The repository retains experiments for host-native documents, but they are not
+part of the supported OpenTUI beta cut. The commands below remain lower-level
+development surfaces and should not be treated as the beta workflow:
 
 ```bash
 tmux-ide widget markdown README.md
@@ -129,23 +132,14 @@ tmux-ide widget image demo.gif
 printf '%s' '{"title":"Build","items":[{"type":"progress","value":72}]}' | tmux-ide widget card
 ```
 
-Markdown renders through OpenTUI in the terminal app and semantic components in
-the web/Electron GUI. Raster images and animated GIFs render in the GUI; a
-generic terminal gets an explicit fallback until tmux-ide has negotiated a
-pixel-image protocol. Cards select trusted, registered host components. Raw HTML
-or React source is never executed from pane output—the tmuxy-style boundary is
-strict data selecting code that shipped with the host. Press **Ctrl-C** to clear
-the document and return to the underlying terminal.
+The renderer-neutral daemon contract leaves room for these surfaces later; the
+beta keeps them off the cold path.
 
-### Home v2
+### Home
 
-The app's Home tab greets first-run users with a plain-language welcome instead
-of an empty grid. **Open folder…** is a real filesystem picker — choose a
-directory and the app opens it as a terminal workspace, optionally remembering it
-as a project. Recently opened folders are one click away, and bare `tmux-ide`
-opens this app by default; `app.frontDoor: false` restores the historical
-cockpit entry if desired. See
-[Getting started](/docs/getting-started#start-anywhere-with-the-app).
+Home shows the live session catalog and agent summary without pretending to own
+workspace state before the daemon connects. Choose a session with the pointer or
+arrow keys and Enter; once live, focus moves to the active terminal pane.
 
 ### Keep it running — even from your phone
 
@@ -167,7 +161,7 @@ Two things change in this mode:
 
 - **^q detaches** instead of quitting — the app keeps running in the
   background. If you launched from inside tmux, ^q returns you to the session
-  you came from. To actually stop the cockpit, press **F5** and run **Quit**.
+  you came from. Stop the host later with the normal tmux session controls.
 - If two terminals of different sizes are attached at once, tmux sizes the
   cockpit to the one you used last (the smaller view wins while you're on it —
   standard tmux behavior). The cockpit follows the terminal you're actually
@@ -177,16 +171,15 @@ Two things change in this mode:
 Set `app.detachable: true` in `~/.tmux-ide/config.json` to make plain
 `tmux-ide app` (and the `app.frontDoor` entry) always work this way.
 
-### Settings without JSON
+### Settings UI (deferred from the beta)
 
-There's no settings screen and no JSON to hand-edit for the common cases. Press
-**F5** and type "settings" for a palette command per setting — accent color (with
-a live preview), notifications and quiet hours, update cadence, crash restore, a
-keyboard-shortcut viewer, and a guarded reset. Changes persist atomically to
-`~/.tmux-ide/config.json`. See [workspace configuration](/docs/configuration).
+The beta F5 palette is intentionally limited to navigation, split, and confirmed
+pane close. Continue to use configuration files and CLI commands for settings;
+an interactive settings surface is future work. See
+[workspace configuration](/docs/configuration).
 
 ## See also
 
-- [What's new in 2.7](/docs/release-2-7-0) — the unified app in full
+- [OpenTUI beta](/docs/release-2-9-0-beta-1) — install, controls, and limitations
 - [The dock & keys](/docs/the-dock) — the triggers that open these surfaces
 - [Theming & config](/docs/theming) — rebind every key

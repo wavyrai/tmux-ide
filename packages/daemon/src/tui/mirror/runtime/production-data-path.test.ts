@@ -173,8 +173,8 @@ describe("production OpenTUI v2 data path", () => {
       "packages/daemon/src/tui/mirror/runtime/application-shell-view.tsx",
       "packages/daemon/src/tui/mirror/runtime/application-terminal-workspace.tsx",
       "packages/daemon/src/tui/mirror/runtime/pane-scoped-terminal-surface.tsx",
-      "packages/daemon/src/tui/mirror/workspace/application-shell.tsx",
-      "packages/daemon/src/tui/mirror/shell-chrome.tsx",
+      "packages/daemon/src/tui/mirror/workspace/application-shell-view.tsx",
+      "packages/daemon/src/tui/mirror/shell-chrome-view.tsx",
     ]) {
       const renderer = productionGraph.sourceByFile.get(path);
       expect(renderer, `production graph is missing pure renderer ${path}`).toBeDefined();

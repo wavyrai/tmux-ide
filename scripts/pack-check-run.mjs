@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -11,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { gzipSync } from "node:zlib";
 
 const root = process.cwd();
 const tmpRoot = mkdtempSync(join(tmpdir(), "tmux-ide-pack-run-"));
@@ -18,6 +20,11 @@ const tarballDir = join(tmpRoot, "tarballs");
 const projectDir = join(tmpRoot, "project");
 const launchDir = join(tmpRoot, "configless-cwd");
 const homeDir = join(tmpRoot, "home");
+const mockReleaseDir = join(tmpRoot, "mock-release");
+const mockReleaseBinaryPath = join(mockReleaseDir, "tmux-ide-tui");
+const mockReleaseAssetPath = join(mockReleaseDir, "tmux-ide-tui.gz");
+const mockReleaseManifestPath = join(mockReleaseDir, "tmux-ide-tui.gz.sha256");
+const mockFetchPreloadPath = join(tmpRoot, "mock-release-fetch.mjs");
 // tmux's AF_UNIX path ceiling is only ~104 bytes on macOS. tmpdir() expands to
 // a long /var/folders path there, so keep this one disposable socket root under
 // the deliberately short /tmp spelling.
@@ -28,7 +35,37 @@ mkdirSync(tarballDir, { recursive: true });
 mkdirSync(projectDir, { recursive: true });
 mkdirSync(homeDir, { recursive: true });
 mkdirSync(launchDir, { recursive: true });
+mkdirSync(mockReleaseDir, { recursive: true });
 chmodSync(tmuxTmpDir, 0o700);
+writeFileSync(
+  mockFetchPreloadPath,
+  `import { readFileSync } from "node:fs";
+
+const nativeFetch = globalThis.fetch;
+globalThis.fetch = async (resource, init) => {
+  const url = typeof resource === "string" ? resource : resource instanceof URL ? resource.href : resource.url;
+  if (!url.includes("/releases/download/")) {
+    return nativeFetch(resource, init);
+  }
+  const mode = process.env.TMUX_IDE_PACK_FETCH_MODE ?? "success";
+  if (mode === "offline") throw new TypeError("mock release channel offline");
+  if (mode === "timeout") throw new Error("mock release channel timed out");
+  if (mode === "http-error") {
+    return new Response("unavailable", { status: 503, statusText: "Mock Unavailable" });
+  }
+  if (mode !== "success") throw new Error(\`unknown mock release channel mode: \${mode}\`);
+  if (url.endsWith(".sha256")) {
+    return new Response(readFileSync(process.env.TMUX_IDE_PACK_TUI_MANIFEST), { status: 200 });
+  }
+  if (!url.endsWith(".gz")) throw new Error(\`unexpected mock release asset: \${url}\`);
+  return new Response(readFileSync(process.env.TMUX_IDE_PACK_TUI_ASSET), {
+    status: 200,
+    headers: { "content-type": "application/gzip" },
+  });
+};
+`,
+  { mode: 0o600 },
+);
 
 function run(command, args, opts = {}) {
   const res = spawnSync(command, args, {
@@ -54,7 +91,7 @@ function shQuote(value) {
   return `'${String(value).replaceAll("'", `'\\''`)}'`;
 }
 
-function tmuxEnv(runtimePath) {
+function tmuxEnv(runtimePath, fetchMode = "success") {
   const tmuxPath = run("sh", ["-c", "command -v tmux"]).stdout.trim();
   return {
     HOME: homeDir,
@@ -66,6 +103,10 @@ function tmuxEnv(runtimePath) {
     TMUX_IDE_HOME: join(homeDir, ".tmux-ide"),
     NODE_PATH: "",
     BUN_INSTALL: "",
+    NODE_OPTIONS: `--import=${mockFetchPreloadPath}`,
+    TMUX_IDE_PACK_FETCH_MODE: fetchMode,
+    TMUX_IDE_PACK_TUI_ASSET: mockReleaseAssetPath,
+    TMUX_IDE_PACK_TUI_MANIFEST: mockReleaseManifestPath,
     // Do not let the installed smoke accidentally resolve tools from this
     // checkout's node_modules/.bin. The compiled TUI needs neither Bun nor the
     // repository after it has been built.
@@ -78,7 +119,7 @@ function tmuxEnv(runtimePath) {
 async function waitUntil(predicate, timeoutMs, description, diagnostics) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (predicate()) return;
+    if (await predicate()) return;
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
   }
   const detail = (() => {
@@ -154,18 +195,39 @@ async function runInstalledTuiGate(installedCli) {
     throw new Error(`Installed TUI gate has no release binary for ${platformTag}`);
   }
 
-  // Model the real release/download layout rather than smuggling a checkout
-  // path through TMUX_IDE_TUI_BIN. The installed CLI must discover this exact
-  // versioned binary from its clean HOME by itself.
+  // Build a real compiled dispatcher, but expose it only as a gzipped mock
+  // release asset. The installed CLI starts with an empty state HOME and must
+  // exercise its automatic fetch, inflate, verify, chmod, and exact-version
+  // discovery path rather than receiving TMUX_IDE_TUI_BIN or a pre-seeded file.
   const downloadedTui = join(
     homeDir,
     ".tmux-ide",
     "bin",
     `tmux-ide-tui-${platformTag}-${packageVersion}`,
   );
-  run("bun", ["scripts/build-tui.mjs", "--outfile", downloadedTui], { stdio: "inherit" });
+  run("bun", ["scripts/build-tui.mjs", "--outfile", mockReleaseBinaryPath], {
+    stdio: "inherit",
+  });
+  const mockBinary = readFileSync(mockReleaseBinaryPath);
+  const mockAsset = gzipSync(mockBinary);
+  writeFileSync(mockReleaseAssetPath, mockAsset);
+  const assetName = `tmux-ide-tui-${platformTag}.gz`;
+  writeFileSync(
+    mockReleaseManifestPath,
+    [
+      `${createHash("sha256").update(mockAsset).digest("hex")}  ${assetName}`,
+      `${createHash("sha256").update(mockBinary).digest("hex")}  ${assetName.slice(0, -3)}`,
+      `version ${packageVersion}`,
+      `platform ${platformTag}`,
+      `commit ${"0".repeat(40)}`,
+      "",
+    ].join("\n"),
+  );
+  if (existsSync(downloadedTui)) {
+    throw new Error("Installed TUI gate was not a clean automatic-acquisition first run");
+  }
 
-  const treeSitterSmoke = spawnSync(downloadedTui, ["__tree-sitter-smoke"], {
+  const treeSitterSmoke = spawnSync(mockReleaseBinaryPath, ["__tree-sitter-smoke"], {
     cwd: launchDir,
     env: { ...process.env, ...tmuxEnv(dirname(installedCli)) },
     encoding: "utf8",
@@ -320,7 +382,7 @@ async function runInstalledTuiGate(installedCli) {
         if (existsSync(statusPath)) {
           const earlyStatus = readFileSync(statusPath, "utf8").trim();
           throw new Error(
-            `Installed configless TUI exited ${earlyStatus} before terminal readiness`,
+            `Installed configless TUI exited ${earlyStatus} before terminal readiness\n${gateDiagnostics()}`,
           );
         }
         const frame = tmuxResult(["capture-pane", "-p", "-t", `=${hostSession}:0.0`]);
@@ -419,10 +481,547 @@ async function runInstalledTuiGate(installedCli) {
     if (/preload not found|@opentui\/solid\/preload/iu.test(transcript)) {
       throw new Error(`Installed configless TUI attempted a checkout preload:\n${transcript}`);
     }
+    if (!existsSync(downloadedTui)) {
+      throw new Error("Installed configless TUI did not persist its automatic release runtime");
+    }
+    if (
+      !/downloading checksum manifest https:\/\/github\.com\/.+tmux-ide-tui-.+\.gz\.sha256/iu.test(
+        stderr,
+      ) ||
+      !/installed .+tmux-ide-tui-.+\([^)]+commit [a-f0-9]{12}\)/iu.test(stderr)
+    ) {
+      throw new Error(
+        `Installed configless TUI did not report verified automatic acquisition:\n${stderr}`,
+      );
+    }
   } finally {
     await terminateLaunchedTui();
     tmuxResult(["kill-server"]);
   }
+}
+
+async function runPackedGoldenJourney(installedCli, initialOwner) {
+  const runtimeEnv = tmuxEnv(dirname(installedCli));
+  const tmuxArgs = (...args) => ["-S", installedTmuxSocketPath, ...args];
+  const tmuxResult = (args, options = {}) =>
+    spawnSync("tmux", tmuxArgs(...args), {
+      cwd: launchDir,
+      env: { ...process.env, ...runtimeEnv },
+      encoding: "utf8",
+      ...options,
+    });
+  const observations = [];
+  const observe = async (name, timeoutMs, operation, diagnostics) => {
+    const startedAt = performance.now();
+    await waitUntil(operation, timeoutMs, name, diagnostics);
+    observations.push({ name, elapsedMs: Math.round(performance.now() - startedAt), timeoutMs });
+  };
+  const sessionNames = () => {
+    const result = tmuxResult(["list-sessions", "-F", "#{session_name}"]);
+    return result.status === 0 ? result.stdout.trim().split("\n").filter(Boolean) : [];
+  };
+  const daemonSessionNames = async () => {
+    const infoPath = join(homeDir, ".tmux-ide", "daemon.json");
+    if (!existsSync(infoPath)) return [];
+    const info = JSON.parse(readFileSync(infoPath, "utf8"));
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${info.port}/api/resources/workspace-catalog?version=2`,
+      );
+      if (!response.ok) return [];
+      const catalog = await response.json();
+      return Array.isArray(catalog.liveSessions)
+        ? catalog.liveSessions.map(({ sessionName }) => sessionName).filter(Boolean)
+        : [];
+    } catch {
+      return [];
+    }
+  };
+  const paneCount = (session) => {
+    const result = tmuxResult(["list-panes", "-t", `=${session}`, "-F", "#{pane_id}"]);
+    return result.status === 0 ? result.stdout.trim().split("\n").filter(Boolean).length : 0;
+  };
+  const windowCount = (session) => {
+    const result = tmuxResult(["list-windows", "-t", `=${session}`, "-F", "#{window_id}"]);
+    return result.status === 0 ? result.stdout.trim().split("\n").filter(Boolean).length : 0;
+  };
+  const activePane = (session) => {
+    // `display-message` expects a pane target; the trailing colon selects the
+    // active pane in the session's active window while preserving exact-name
+    // session matching.
+    const result = tmuxResult(["display-message", "-p", "-t", `=${session}:`, "#{pane_id}"]);
+    return result.status === 0 && result.stdout.trim() ? result.stdout.trim() : null;
+  };
+  const paneWidth = (pane) => {
+    const result = tmuxResult(["display-message", "-p", "-t", pane, "#{pane_width}"]);
+    return result.status === 0 ? Number(result.stdout.trim()) : null;
+  };
+  const capture = (target) => {
+    const result = tmuxResult(["capture-pane", "-p", "-t", target]);
+    return result.status === 0 ? result.stdout : result.stderr;
+  };
+  let launchIndex = 0;
+  const launchApp = async ({ target = null, hosted = false } = {}) => {
+    launchIndex += 1;
+    const hostSession = `_tmux-ide-pack-journey-${launchIndex}`;
+    const stem = join(tmpRoot, `journey-${launchIndex}`);
+    const statusPath = `${stem}.status`;
+    const readyPath = `${stem}.ready.json`;
+    const performancePath = `${stem}.performance.jsonl`;
+    const stderrPath = `${stem}.stderr`;
+    const launcherPath = `${stem}.sh`;
+    const args = ["app", ...(target ? [target] : [])];
+    writeFileSync(
+      launcherPath,
+      [
+        "#!/bin/sh",
+        `export TMUX_IDE_TUI_READY_FILE=${shQuote(readyPath)}`,
+        `export TMUX_IDE_TUI_PERF_LOG=${shQuote(performancePath)}`,
+        ...(hosted ? ["export TMUX_IDE_HOSTED=1"] : []),
+        `${shQuote(installedCli)} ${args.map(shQuote).join(" ")} 2>${shQuote(stderrPath)}`,
+        "status=$?",
+        `printf '%s\\n' "$status" > ${shQuote(statusPath)}`,
+        'exit "$status"',
+        "",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    const created = tmuxResult([
+      "new-session",
+      "-d",
+      "-s",
+      hostSession,
+      "-x",
+      "120",
+      "-y",
+      "36",
+      "-c",
+      launchDir,
+      launcherPath,
+    ]);
+    if (created.status !== 0) throw new Error(`Could not launch ${hostSession}: ${created.stderr}`);
+    const targetPane = `=${hostSession}:0.0`;
+    const diagnostics = () =>
+      [
+        `sessions: ${sessionNames().join(", ") || "(none)"}`,
+        `host: ${hostSession}`,
+        `frame:\n${capture(targetPane)}`,
+        `stderr:\n${existsSync(stderrPath) ? readFileSync(stderrPath, "utf8") : "(missing)"}`,
+      ].join("\n");
+    await observe(
+      `${hosted ? "hosted " : ""}app ${target ?? "chooser"} input-ready`,
+      20_000,
+      () => {
+        if (existsSync(statusPath))
+          throw new Error(`Packed app exited before readiness\n${diagnostics()}`);
+        return existsSync(readyPath) && capture(targetPane).includes("tmux-ide");
+      },
+      diagnostics,
+    );
+    return {
+      hostSession,
+      targetPane,
+      statusPath,
+      readyPath,
+      performancePath,
+      stderrPath,
+      diagnostics,
+    };
+  };
+  const send = (app, ...keys) => {
+    const result = tmuxResult(["send-keys", "-t", app.targetPane, ...keys]);
+    if (result.status !== 0) throw new Error(`Could not send ${keys.join(" ")}: ${result.stderr}`);
+  };
+  const typeCommand = (app, command) => {
+    const literal = tmuxResult(["send-keys", "-l", "-t", app.targetPane, command]);
+    if (literal.status !== 0) throw new Error(`Could not type packed input: ${literal.stderr}`);
+    send(app, "Enter");
+  };
+  const cleanQuit = async (app) => {
+    send(app, "C-q");
+    await observe("clean quit", 10_000, () => existsSync(app.statusPath), app.diagnostics);
+    const status = readFileSync(app.statusPath, "utf8").trim();
+    if (status !== "0") throw new Error(`Packed app quit with ${status}\n${app.diagnostics()}`);
+  };
+  const createSession = (name) => {
+    const result = tmuxResult([
+      "new-session",
+      "-d",
+      "-s",
+      name,
+      "-x",
+      "100",
+      "-y",
+      "30",
+      "-c",
+      launchDir,
+    ]);
+    if (result.status !== 0) throw new Error(`Could not create ${name}: ${result.stderr}`);
+  };
+
+  // The preceding first-run gate killed the isolated tmux server. Its host
+  // sessions were deliberately `_tmux-ide-*`, so the catalog starts truly empty.
+  const empty = await launchApp();
+  await observe(
+    "no-session chooser",
+    10_000,
+    () => capture(empty.targetPane).includes("no workspace authority"),
+    empty.diagnostics,
+  );
+  await cleanQuit(empty);
+
+  for (const name of ["journey-alpha", "journey-beta", "journey-gamma"]) createSession(name);
+  // The first-run gate intentionally killed and recreated the isolated tmux
+  // server. Restart the installed daemon so its tmux observer is bound to the
+  // new server generation before asserting catalog-driven chooser behavior.
+  initialOwner.kill("SIGTERM");
+  await waitForChild(initialOwner);
+  const catalogOwner = spawnInstalledCli(installedCli);
+  await observe(
+    "daemon binds recreated tmux server",
+    20_000,
+    () => {
+      const infoPath = join(homeDir, ".tmux-ide", "daemon.json");
+      if (!existsSync(infoPath)) return false;
+      return JSON.parse(readFileSync(infoPath, "utf8")).pid === catalogOwner.pid;
+    },
+    () => `tmux sessions: ${sessionNames().join(", ")}`,
+  );
+  await observe(
+    "daemon discovers many sessions",
+    10_000,
+    async () => {
+      const discovered = await daemonSessionNames();
+      return ["journey-alpha", "journey-beta", "journey-gamma"].every((name) =>
+        discovered.includes(name),
+      );
+    },
+    () => `tmux sessions: ${sessionNames().join(", ")}`,
+  );
+  const many = await launchApp();
+  await observe(
+    "many-session chooser",
+    10_000,
+    () =>
+      ["journey-alpha", "journey-beta", "journey-gamma"].every((name) =>
+        capture(many.targetPane).includes(name),
+      ),
+    many.diagnostics,
+  );
+  send(many, "Down", "Enter");
+  const chooserMarker = `PACK_CHOOSER_${process.pid}`;
+  await observe(
+    "chooser opens selected session",
+    10_000,
+    () => capture(many.targetPane).includes("journey-beta"),
+    many.diagnostics,
+  );
+  let stableTerminalFocusFrames = 0;
+  await observe(
+    "chooser terminal focus settles",
+    5_000,
+    () => {
+      if (!capture(many.targetPane).includes("focus terminal")) {
+        stableTerminalFocusFrames = 0;
+        return false;
+      }
+      stableTerminalFocusFrames += 1;
+      return stableTerminalFocusFrames >= 5;
+    },
+    many.diagnostics,
+  );
+  typeCommand(many, `printf '${chooserMarker}\\n'`);
+  await observe(
+    "chooser keyboard input",
+    10_000,
+    () => capture("=journey-beta:0.0").includes(chooserMarker),
+    many.diagnostics,
+  );
+  await cleanQuit(many);
+
+  for (const name of ["journey-alpha", "journey-gamma"])
+    tmuxResult(["kill-session", "-t", `=${name}`]);
+  await observe(
+    "daemon discovers one session",
+    10_000,
+    async () => {
+      const discovered = await daemonSessionNames();
+      return discovered.length === 1 && discovered[0] === "journey-beta";
+    },
+    () => `tmux sessions: ${sessionNames().join(", ")}`,
+  );
+  const preparedWindow = tmuxResult([
+    "new-window",
+    "-d",
+    "-n",
+    "pack-window",
+    "-t",
+    "=journey-beta",
+    "-c",
+    launchDir,
+  ]);
+  if (preparedWindow.status !== 0)
+    throw new Error(`Could not prepare second window: ${preparedWindow.stderr}`);
+  const one = await launchApp();
+  await observe(
+    "one-session automatic open",
+    10_000,
+    () => capture(one.targetPane).includes("journey-beta"),
+    one.diagnostics,
+  );
+  let stableOneSessionFocusFrames = 0;
+  await observe(
+    "one-session terminal focus settles",
+    5_000,
+    () => {
+      if (!capture(one.targetPane).includes("focus terminal")) {
+        stableOneSessionFocusFrames = 0;
+        return false;
+      }
+      stableOneSessionFocusFrames += 1;
+      return stableOneSessionFocusFrames >= 5;
+    },
+    one.diagnostics,
+  );
+
+  const keyboardMarker = `PACK_KEYBOARD_${process.pid}`;
+  typeCommand(one, `printf '${keyboardMarker}\\n'`);
+  await observe(
+    "keyboard input",
+    10_000,
+    () => capture("=journey-beta:0.0").includes(keyboardMarker),
+    one.diagnostics,
+  );
+
+  const pasteMarker = `PACK_PASTE_${process.pid}`;
+  const setBuffer = tmuxResult([
+    "set-buffer",
+    "-b",
+    "pack-journey-paste",
+    `printf '${pasteMarker}\\n'`,
+  ]);
+  if (setBuffer.status !== 0) throw new Error(`Could not prepare paste: ${setBuffer.stderr}`);
+  const paste = tmuxResult([
+    "paste-buffer",
+    "-p",
+    "-b",
+    "pack-journey-paste",
+    "-t",
+    one.targetPane,
+  ]);
+  if (paste.status !== 0) throw new Error(`Could not paste into packed TUI: ${paste.stderr}`);
+  send(one, "Enter");
+  await observe(
+    "bracketed paste input",
+    10_000,
+    () => capture("=journey-beta:0.0").includes(pasteMarker),
+    one.diagnostics,
+  );
+
+  send(one, "F5", "Down", "Enter");
+  await observe("split pane right", 10_000, () => paneCount("journey-beta") === 2, one.diagnostics);
+  let stableSplitFrames = 0;
+  await observe(
+    "split pane semantic publication settles",
+    10_000,
+    () => {
+      const semanticPanes = capture(one.targetPane).match(/pane\.[a-z0-9.]+/giu) ?? [];
+      if (new Set(semanticPanes).size < 2) {
+        stableSplitFrames = 0;
+        return false;
+      }
+      stableSplitFrames += 1;
+      return stableSplitFrames >= 3;
+    },
+    one.diagnostics,
+  );
+  const beforeFocus = activePane("journey-beta");
+  send(one, "C-o");
+  await observe(
+    "keyboard pane focus cycle",
+    10_000,
+    () => Boolean(activePane("journey-beta") && activePane("journey-beta") !== beforeFocus),
+    one.diagnostics,
+  );
+  const focused = activePane("journey-beta");
+  if (!focused) throw new Error(`No focused pane after Ctrl+O\n${one.diagnostics()}`);
+  const focusMarker = `PACK_FOCUS_${process.pid}`;
+  typeCommand(one, `printf '${focusMarker}\\n'`);
+  await observe(
+    "focused-pane input",
+    10_000,
+    () => capture(focused).includes(focusMarker),
+    one.diagnostics,
+  );
+
+  const widthBefore = paneWidth(focused);
+  send(one, "M-Right");
+  await observe(
+    "keyboard pane resize",
+    10_000,
+    () => widthBefore !== null && paneWidth(focused) !== widthBefore,
+    one.diagnostics,
+  );
+
+  send(one, "C-t");
+  await observe(
+    "keyboard window switch",
+    10_000,
+    () => windowCount("journey-beta") === 2 && activePane("journey-beta") !== focused,
+    one.diagnostics,
+  );
+
+  // Close is intentionally two activations: the first arms the destructive
+  // palette row; only the second dispatches the daemon mutation.
+  send(one, "F5", "Down", "Down", "Down", "Enter");
+  await observe(
+    "close confirmation armed",
+    5_000,
+    () => capture(one.targetPane).includes("Confirm close pane"),
+    one.diagnostics,
+  );
+  send(one, "Enter");
+  await observe(
+    "confirmed pane close",
+    10_000,
+    () => windowCount("journey-beta") === 1,
+    one.diagnostics,
+  );
+
+  const oldInstanceId = JSON.parse(
+    readFileSync(join(homeDir, ".tmux-ide", "daemon.json"), "utf8"),
+  ).instanceId;
+  catalogOwner.kill("SIGTERM");
+  await waitForChild(catalogOwner);
+  const replacement = spawnInstalledCli(installedCli);
+  await observe(
+    "daemon replacement",
+    20_000,
+    () => {
+      if (!existsSync(join(homeDir, ".tmux-ide", "daemon.json"))) return false;
+      const next = JSON.parse(readFileSync(join(homeDir, ".tmux-ide", "daemon.json"), "utf8"));
+      return next.instanceId !== oldInstanceId && next.pid === replacement.pid;
+    },
+    one.diagnostics,
+  );
+  let stableReconnectFocusFrames = 0;
+  await observe(
+    "TUI replacement generation focus settles",
+    20_000,
+    () => {
+      const frame = capture(one.targetPane);
+      if (!frame.includes(" live") || !frame.includes("focus terminal")) {
+        stableReconnectFocusFrames = 0;
+        return false;
+      }
+      stableReconnectFocusFrames += 1;
+      return stableReconnectFocusFrames >= 5;
+    },
+    one.diagnostics,
+  );
+  const reconnectMarker = `PACK_RECONNECT_${process.pid}`;
+  typeCommand(one, `printf '${reconnectMarker}\\n'`);
+  await observe(
+    "TUI daemon reconnect input",
+    20_000,
+    () => capture(focused).includes(reconnectMarker),
+    one.diagnostics,
+  );
+  await cleanQuit(one);
+
+  // Exercise hosted put-away with a real isolated tmux client. Control mode is
+  // terminal-independent but still owns a genuine client/session stack.
+  createSession("_tmux-ide-pack-return-seed");
+  const hosted = await launchApp({ target: "journey-beta", hosted: true });
+  const controlClient = spawn(
+    "tmux",
+    tmuxArgs("-C", "attach-session", "-t", "=_tmux-ide-pack-return-seed"),
+    { env: { ...process.env, ...runtimeEnv }, stdio: ["pipe", "pipe", "pipe"] },
+  );
+  children.push(controlClient);
+  childExits.set(
+    controlClient,
+    new Promise((resolveExit) =>
+      controlClient.once("exit", (code, signal) => resolveExit({ code, signal })),
+    ),
+  );
+  childOutput.set(controlClient, { stdout: "", stderr: "" });
+  const controlClientTarget = () => {
+    const clients = tmuxResult([
+      "list-clients",
+      "-F",
+      "#{client_name}\t#{client_pid}\t#{session_name}",
+    ]);
+    if (clients.status !== 0) return null;
+    const row = clients.stdout
+      .trim()
+      .split("\n")
+      .map((line) => line.split("\t"))
+      .find(([, , session]) => session === "_tmux-ide-pack-return-seed");
+    return row?.[0] || null;
+  };
+  const switchTo = (session) => {
+    const client = controlClientTarget();
+    if (!client) throw new Error("Could not resolve the isolated control client name.");
+    const result = tmuxResult(["switch-client", "-c", client, "-t", `=${session}`]);
+    if (result.status !== 0) throw new Error(`Could not switch control client: ${result.stderr}`);
+  };
+  await observe(
+    "hosted client attached",
+    10_000,
+    () => controlClientTarget() !== null,
+    hosted.diagnostics,
+  );
+  switchTo(hosted.hostSession);
+  send(hosted, "C-q");
+  await observe(
+    "hosted put-away preserves app",
+    10_000,
+    () => {
+      const client = controlClientTarget();
+      const clients = tmuxResult(["list-clients", "-F", "#{client_name}:#{session_name}"]);
+      return (
+        client !== null &&
+        clients.status === 0 &&
+        clients.stdout.includes(`${client}:_tmux-ide-pack-return-seed`) &&
+        !existsSync(hosted.statusPath)
+      );
+    },
+    hosted.diagnostics,
+  );
+  switchTo(hosted.hostSession);
+  let stableReturnFocusFrames = 0;
+  await observe(
+    "hosted return focus settles",
+    10_000,
+    () => {
+      const frame = capture(hosted.targetPane);
+      const clients = tmuxResult(["list-clients", "-F", "#{session_name}"]);
+      if (
+        clients.status !== 0 ||
+        !clients.stdout.split("\n").includes(hosted.hostSession) ||
+        !frame.includes("focus terminal")
+      ) {
+        stableReturnFocusFrames = 0;
+        return false;
+      }
+      stableReturnFocusFrames += 1;
+      return stableReturnFocusFrames >= 5;
+    },
+    hosted.diagnostics,
+  );
+  const returnMarker = `PACK_RETURN_${process.pid}`;
+  typeCommand(hosted, `printf '${returnMarker}\\n'`);
+  await observe(
+    "hosted return preserves workspace",
+    10_000,
+    () => capture(focused).includes(returnMarker),
+    hosted.diagnostics,
+  );
+  tmuxResult(["kill-session", "-t", `=${hosted.hostSession}`]);
+  controlClient.kill("SIGTERM");
+
+  console.log(`packed OpenTUI journey latency ${JSON.stringify(observations)}`);
 }
 
 try {
@@ -440,6 +1039,66 @@ try {
   run("npx", ["tmux-ide", "--version"], { cwd: projectDir, stdio: "inherit" });
 
   const installedCli = join(projectDir, "node_modules", ".bin", "tmux-ide");
+  const daemonInfo = join(homeDir, ".tmux-ide", "daemon.json");
+  const installedCommand = (args, fetchMode = "success", timeout = 10_000) =>
+    spawnSync(installedCli, args, {
+      cwd: launchDir,
+      env: {
+        ...process.env,
+        ...tmuxEnv(dirname(installedCli), fetchMode),
+        npm_config_cache: join(tmpRoot, "npm-cache"),
+      },
+      encoding: "utf8",
+      timeout,
+    });
+
+  const web = installedCommand(["web"]);
+  if (
+    web.status === 0 ||
+    !`${web.stdout ?? ""}\n${web.stderr ?? ""}`.includes(
+      "The Web GUI is not included in the OpenTUI beta",
+    )
+  ) {
+    throw new Error(
+      `Installed OpenTUI beta did not fail honestly for the deferred Web GUI:\n${web.stdout ?? ""}${web.stderr ?? ""}`,
+    );
+  }
+
+  for (const [mode, expected] of [
+    ["offline", "mock release channel offline"],
+    ["timeout", "mock release channel timed out"],
+    ["http-error", "HTTP 503 Mock Unavailable"],
+  ]) {
+    const failed = installedCommand(["app", installedTargetSession], mode);
+    if (failed.error) {
+      throw new Error(
+        `Installed first-run ${mode} proof did not exit cleanly: ${failed.error.message}`,
+      );
+    }
+    const transcript = `${failed.stdout ?? ""}\n${failed.stderr ?? ""}`;
+    if (
+      failed.status === 0 ||
+      !transcript.includes("Automatic OpenTUI runtime acquisition failed") ||
+      !transcript.includes(expected) ||
+      !transcript.includes("tmux-ide update --tui-binary")
+    ) {
+      throw new Error(
+        `Installed first-run ${mode} failure was not bounded and actionable (${failed.status}):\n${transcript}`,
+      );
+    }
+    if (existsSync(daemonInfo)) {
+      throw new Error(`Installed first-run ${mode} failure started a persistent daemon`);
+    }
+  }
+
+  const downloadedDir = join(homeDir, ".tmux-ide", "bin");
+  if (
+    existsSync(downloadedDir) &&
+    readdirSync(downloadedDir).some((name) => name.startsWith("tmux-ide-tui-"))
+  ) {
+    throw new Error("Failed automatic acquisition left a runtime in the clean install HOME");
+  }
+
   const target = spawnSync(
     "tmux",
     [
@@ -491,16 +1150,15 @@ try {
     "SessionSemanticMutationExecutor",
     "registerInternalReadOperation",
     "Semantic mutation requires a live host, pane, or owner principal",
+    "Automatic OpenTUI runtime acquisition failed",
+    "tmux-ide update --tui-binary",
   ]) {
     if (!installedBundle.includes(required)) {
-      throw new Error(
-        `Installed CLI is missing authenticated provenance architecture: ${required}`,
-      );
+      throw new Error(`Installed CLI is missing required release contract: ${required}`);
     }
   }
   const contenders = Array.from({ length: 12 }, () => spawnInstalledCli(installedCli));
 
-  const daemonInfo = join(homeDir, ".tmux-ide", "daemon.json");
   const deadline = Date.now() + 10_000;
   while (!existsSync(daemonInfo) && Date.now() < deadline) {
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 150));
@@ -588,6 +1246,7 @@ try {
   // persistent canonical daemon; running it before this section would make the
   // election warm and leave an untracked detached owner outside `children`.
   await runInstalledTuiGate(installedCli);
+  await runPackedGoldenJourney(installedCli, owner);
 } finally {
   spawnSync("tmux", ["-S", installedTmuxSocketPath, "kill-server"], {
     env: { ...process.env, TMUX: "" },
@@ -617,8 +1276,8 @@ try {
       cleanupError = new Error("Installed headless contender did not exit after SIGTERM");
     }
   }
-  rmSync(tmpRoot, { recursive: true, force: true });
-  rmSync(tmuxTmpDir, { recursive: true, force: true });
+  rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  rmSync(tmuxTmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
 
 if (cleanupError) throw cleanupError;

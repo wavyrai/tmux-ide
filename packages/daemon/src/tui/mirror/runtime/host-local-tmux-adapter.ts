@@ -4,6 +4,7 @@ import { closeSync, openSync, writeSync } from "node:fs";
 import { osc52Sequence } from "../selection.ts";
 
 export interface OpenTuiHostLocalTmuxAdapter {
+  readonly hosted: boolean;
   configureClipboard(): Promise<boolean>;
   copyText(text: string): boolean;
   putAway(): Promise<void>;
@@ -81,6 +82,7 @@ export function createOpenTuiHostLocalTmuxAdapter(
   let clipboardConfigured = false;
   let clipboardConfiguration: Promise<boolean> | null = null;
   return {
+    hosted,
     configureClipboard() {
       clipboardConfiguration ??= Promise.all([
         boundedClipboardPolicyRun(run, ["set-option", "-gq", "set-clipboard", "on"]),

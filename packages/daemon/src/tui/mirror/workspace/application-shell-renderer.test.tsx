@@ -15,7 +15,7 @@ import {
   stableFrame,
 } from "../testing/renderer-harness.test.ts";
 import { applicationShellHitTest, projectApplicationShell } from "./application-shell.ts";
-import { ApplicationShell } from "./application-shell.tsx";
+import { ApplicationShell } from "./application-shell-view.tsx";
 import {
   projectOpenTuiApplicationShell,
   type OpenTuiApplicationShellEffect,

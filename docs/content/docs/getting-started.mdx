@@ -7,7 +7,8 @@ description: Install tmux-ide and adopt your first session in under a minute
 
 - **tmux** — 3.2+ recommended (`doctor` requires ≥ 3.0; 3.6 is the smoothest)
 - **Node.js** — ≥ 20
-- **Bun** — only needed for the TUI surfaces (home cockpit, sidebar, floating panels)
+- **Bun** — only needed for development checkouts; installed OpenTUI releases
+  download a verified native runtime on first explicit app launch
 
 The Homebrew install resolves tmux and Node.js for you — with it, there are no
 prerequisites to install by hand.
@@ -46,6 +47,17 @@ tmux-ide integration install claude   # Claude Code hooks + skill sync
 ```bash
 npm i -g tmux-ide
 ```
+
+To install the focused OpenTUI beta without changing your stable dist-tag:
+
+```bash
+npm i -g tmux-ide@beta
+tmux-ide app
+```
+
+The beta supports macOS and Linux on arm64 and x64. Its first app launch needs
+network access to fetch the exact-version runtime; later launches use the
+verified cache. Run `tmux-ide update --tui-binary` to retry a failed download.
 
 Global install also registers the bundled Claude Code skill and enables
 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in `~/.claude/settings.json` if Claude
@@ -90,17 +102,19 @@ detection layers and the self-report contract any agent can use.
 
 ## Start anywhere with the app
 
-Bare `tmux-ide` opens the unified app — a full-screen IDE over your fleet. It works
-from **any folder with no tmux server running**, a genuine cold start:
+`tmux-ide app` opens the OpenTUI client over ordinary tmux sessions. It works
+from any folder and can start with no tmux server running:
 
 ```bash
-tmux-ide              # from any directory; no YAML required
-tmux-ide app          # explicit equivalent
+tmux-ide app           # choose a session from Home
+tmux-ide app work      # open a named live session directly
 ```
 
-A first-run welcome greets you, and **Open folder…** is a real filesystem picker:
-choose a directory and the app opens it as a terminal workspace, optionally
-remembering it as a project. Recently opened folders stay one click away.
+The beta intentionally exposes only **F1 Home**, **F2 Terminals**, and a small
+**F5 command palette**. Agent state is textual in the sidebar, window tabs, and
+pane chrome. Use `Ctrl+O` to cycle panes, `Ctrl+T` to cycle windows, and the F5
+palette to split or confirm closing a pane. The web client, Files/Diff surfaces,
+settings UI, and mission UI are deferred from this beta.
 
 This is the default. To use the historical cockpit as the bare-command entry,
 opt out in `~/.tmux-ide/config.json` (or run `tmux-ide team` directly):
@@ -111,7 +125,7 @@ opt out in `~/.tmux-ide/config.json` (or run `tmux-ide team` directly):
 
 Project config auto-launch and `tmux-ide team` are unaffected. See
 [Home, sidebar & panels](/docs/app-surfaces#the-unified-app--tmux-ide-app) and
-[What's new in 2.7](/docs/release-2-7-0).
+[OpenTUI beta release notes](/docs/release-2-9-0-beta-1).
 
 ## Optional: describe a layout with workspace.yml
 

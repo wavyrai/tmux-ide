@@ -2,7 +2,7 @@ import {
   APPLICATION_SHELL_COMMAND_IDS,
   type ApplicationShellProjectionV1,
 } from "@tmux-ide/contracts";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 
 import { projectOpenTuiApplicationShell } from "../workspace/application-shell-controller.ts";
 import type { OpenTuiProductionWorkspaceClient } from "./open-tui-generation-host.ts";
@@ -102,6 +102,52 @@ describe("application shell binding", () => {
       APPLICATION_SHELL_COMMAND_IDS.activateMode,
       APPLICATION_SHELL_COMMAND_IDS.moveFocus,
     ]);
+  });
+
+  it("dispatches palette activation then close as one command-palette transaction", async () => {
+    const fake = fakeClient(semantic("home", "main", true));
+    const binding = createApplicationShellBinding();
+    binding.adoptGeneration({ status: "live", client: fake.client });
+    const paletteSource = { kind: "keyboard" as const, surface: "command-palette" as const };
+
+    expect(await binding.activatePaletteSurface("terminals", paletteSource)).toBe(true);
+    expect(fake.dispatched.map((command) => command.invocation.id)).toEqual([
+      APPLICATION_SHELL_COMMAND_IDS.activateMode,
+      APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+      APPLICATION_SHELL_COMMAND_IDS.closePalette,
+    ]);
+    expect(fake.dispatched.map((command) => command.invocation.source)).toEqual([
+      paletteSource,
+      paletteSource,
+      paletteSource,
+    ]);
+  });
+
+  it("moves chooser-opened focus to the live terminal pane", async () => {
+    const fake = fakeClient(semantic("terminals"));
+    const binding = createApplicationShellBinding();
+    binding.adoptGeneration({ status: "live", client: fake.client });
+    const keyboard = { kind: "keyboard" as const, surface: "application-bar" as const };
+
+    expect(await binding.focusTerminalPane("pane.main", keyboard)).toBe(true);
+    expect(fake.dispatched.at(-1)?.invocation).toMatchObject({
+      id: APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+      args: { target: { kind: "pane", paneId: "pane.main", input: "terminal" } },
+      source: keyboard,
+    });
+  });
+
+  it("does not resurrect a catalog-local palette after semantic authority arrives", async () => {
+    const fake = fakeClient(semantic("home", "main", false), "live");
+    const binding = createApplicationShellBinding();
+    binding.adoptGeneration({ status: "connecting", client: null });
+    expect(await binding.setPaletteOpen(true, source)).toBe(false);
+    expect(binding.getSnapshot()).toMatchObject({ semantic: null, localPaletteOpen: true });
+
+    binding.adoptGeneration({ status: "live", client: fake.client });
+    expect(binding.getSnapshot().localPaletteOpen).toBe(false);
+    binding.adoptGeneration({ status: "unavailable", client: null });
+    expect(binding.getSnapshot()).toMatchObject({ semantic: null, localPaletteOpen: false });
   });
 
   it("opens Terminals canonically even when the requested session is already current", async () => {

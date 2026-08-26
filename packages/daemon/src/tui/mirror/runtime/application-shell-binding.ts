@@ -3,6 +3,10 @@ import type {
   CommandSource,
   ProductSurfaceId,
 } from "@tmux-ide/contracts";
+import {
+  APPLICATION_SHELL_COMMAND_IDS,
+  applicationShellCommandInvocation,
+} from "@tmux-ide/contracts";
 
 import { OPEN_TUI_HOST_CLIENT_ID } from "../open-tui-workspace-runtime-port.ts";
 import {
@@ -126,6 +130,8 @@ export interface ApplicationShellBinding {
   adoptGeneration(generation: ApplicationShellBindingGeneration | null): void;
   openSurface(surface: ProductSurfaceId, source: CommandSource): Promise<boolean>;
   setPaletteOpen(open: boolean, source: CommandSource): Promise<boolean>;
+  activatePaletteSurface(surface: ProductSurfaceId, source: CommandSource): Promise<boolean>;
+  focusTerminalPane(paneId: string, source: CommandSource): Promise<boolean>;
   openSession(
     sessionName: string,
     source: CommandSource,
@@ -185,7 +191,10 @@ export function createApplicationShellBinding(
     // last coherent shell mounted until this client publishes its first
     // non-null semantic projection; unsafe terminal states clear it in
     // adoptGeneration instead.
-    if (current.semantic !== null) retainedSemantic = current.semantic;
+    if (current.semantic !== null) {
+      retainedSemantic = current.semantic;
+      localPaletteOpen = false;
+    }
     const adoptAuthority = (authority: typeof current.authority): void => {
       if (fence !== epoch) return;
       readOnly =
@@ -199,6 +208,7 @@ export function createApplicationShellBinding(
       next.subscribe("semantic", (semantic) => {
         if (fence !== epoch || semantic === null) return;
         retainedSemantic = semantic;
+        localPaletteOpen = false;
         publish();
       }),
       next.subscribe("lifecycle", (lifecycle) => {
@@ -262,6 +272,7 @@ export function createApplicationShellBinding(
       ) {
         unbind();
         retainedSemantic = null;
+        localPaletteOpen = false;
       } else if (next.client) {
         bind(next.client);
       } else if (next.status !== "rebinding") {
@@ -277,10 +288,41 @@ export function createApplicationShellBinding(
         publish();
         return Promise.resolve(false);
       }
+      localPaletteOpen = false;
       return dispatch([
         {
           kind: "application-shell",
           invocation: applicationShellPaletteInvocation(retainedSemantic, open, source),
+        },
+      ]);
+    },
+    activatePaletteSurface(surface, source) {
+      if (!retainedSemantic) {
+        localPaletteOpen = false;
+        publish();
+        return Promise.resolve(false);
+      }
+      localPaletteOpen = false;
+      return dispatch([
+        ...applicationShellSurfaceInvocations(retainedSemantic, surface, source).map(
+          (invocation) => ({ kind: "application-shell" as const, invocation }),
+        ),
+        {
+          kind: "application-shell",
+          invocation: applicationShellPaletteInvocation(retainedSemantic, false, source),
+        },
+      ]);
+    },
+    focusTerminalPane(paneId: string, source: CommandSource) {
+      if (!retainedSemantic) return Promise.resolve(false);
+      return dispatch([
+        {
+          kind: "application-shell",
+          invocation: applicationShellCommandInvocation(
+            APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+            { target: { kind: "pane", paneId, input: "terminal" } },
+            source,
+          ),
         },
       ]);
     },
@@ -292,6 +334,7 @@ export function createApplicationShellBinding(
     dispose() {
       unbind();
       retainedSemantic = null;
+      localPaletteOpen = false;
       listeners.clear();
     },
   };

@@ -12,11 +12,17 @@ import { projectOpenTuiApplicationShell } from "../workspace/application-shell-c
 import { createApplicationShellBinding } from "./application-shell-binding.ts";
 import type { OpenTuiProductionWorkspaceClient } from "./open-tui-generation-host.ts";
 import type { PaneScopedTerminalAdapter } from "./pane-scoped-terminal-surface.tsx";
-import { ApplicationShellView, applicationShellKeyAction } from "./application-shell-view.tsx";
+import {
+  ApplicationShellView,
+  applicationPaletteKeyAction,
+  applicationShellKeyAction,
+} from "./application-shell-view.tsx";
 import { applicationMousePointerIngressCapability } from "./application-terminal-selection-owner.ts";
 import { beginApplicationMouseIngress } from "./application-terminal-workspace.tsx";
 import {
+  terminalAgentStatusLabel,
   terminalPaneChromeLabel,
+  terminalWindowStripLabel,
   terminalWindowStripSlotWidth,
 } from "./application-terminal-workspace.tsx";
 import type { OpenTuiWorkspaceLayoutSnapshot } from "../open-tui-workspace-runtime-port.ts";
@@ -41,6 +47,19 @@ function terminalLayout() {
   return { current, windows: [current] };
 }
 
+function shellChromeSnapshot(frame: string): string {
+  const rows = frame.split("\n").map((row) => row.trimEnd());
+  return [...rows.slice(0, 10), "…", ...rows.slice(-3)].join("\n").trimEnd();
+}
+
+function trimFrameRight(frame: string): string {
+  return frame
+    .split("\n")
+    .map((row) => row.trimEnd())
+    .join("\n")
+    .trimEnd();
+}
+
 function twoWindowLayout() {
   const main = terminalLayout().current;
   const logs = {
@@ -51,6 +70,18 @@ function twoWindowLayout() {
     panes: [{ pane: "pane.logs", left: 0, top: 0, width: 40, height: 12, active: true }],
   };
   return { current: main, windows: [main, logs] };
+}
+
+function mixedAgentLayout() {
+  const current = {
+    ...terminalLayout().current,
+    cols: 80,
+    panes: [
+      { pane: "pane.main", left: 0, top: 0, width: 40, height: 12, active: true },
+      { pane: "pane.secondary", left: 40, top: 0, width: 40, height: 12, active: false },
+    ],
+  };
+  return { current, windows: [current] };
 }
 
 const focusPaneId = "pane.promoted.4d2e6ef021a27f2ffc19";
@@ -88,6 +119,7 @@ function semantic() {
     ],
     activeSession: "main",
     agents: [{ paneId: "pane.main", name: "Codex", kind: "codex", status: "working" }],
+    paneIdentities: [{ runtimePaneId: "pane.main", semanticPaneId: "pane.main" }],
     notification: "ready",
   });
 }
@@ -317,9 +349,11 @@ describe("production ApplicationShellView", () => {
       expect(frame).toContain("Agents");
       expect(frame).toContain("Codex");
       expect(frame).toContain("main");
-      expect(frame).toContain("● pane.main");
+      expect(frame).toContain("● Codex [WORKING]");
+      expect(frame).toContain("● main [WORKING]");
       expect(frame).toContain("CANONICAL-CELL");
       expect(frame).not.toContain("Missions");
+      expect(shellChromeSnapshot(frame)).toMatchSnapshot();
       setup.renderer.destroy();
     },
   );
@@ -999,6 +1033,141 @@ describe("production ApplicationShellView", () => {
     setup.renderer.destroy();
   });
 
+  it("activates the selected minimal palette destination by pointer", async () => {
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const palette = createTerminalPaletteProjection(theme);
+    const activated: string[] = [];
+    const setup = await renderForTest(
+      () => (
+        <ApplicationShellView
+          dimensions={() => ({ width: 120, height: 40 })}
+          surface={() => "home"}
+          semantic={() => semantic()}
+          generationStatus={() => "live"}
+          sessions={["main"]}
+          selectedSession={() => 0}
+          bootstrapNote={() => null}
+          paletteOpen={() => true}
+          paletteSelection={() => 1}
+          terminalRendererSource={() => null}
+          layout={() => ({ current: null, windows: [] })}
+          focusedPane={() => null}
+          theme={theme}
+          palette={palette}
+          onOpenSurface={() => undefined}
+          onOpenSession={() => undefined}
+          onSetPaletteOpen={() => undefined}
+          onPaletteActivate={(surface, source) => activated.push(`${source}:${surface}`)}
+          onSelectPane={() => undefined}
+          onResizePreview={() => undefined}
+          onResizePane={() => undefined}
+        />
+      ),
+      { width: 120, height: 40 },
+    );
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("› F2 Terminals");
+    await setup.mockMouse.click(33, 17, MouseButtons.LEFT);
+    expect(activated).toEqual(["mouse:terminals"]);
+    setup.renderer.destroy();
+  });
+
+  it("closes on an outside pointer without leaking through to terminal or shell chrome", async () => {
+    registerPaneSurface();
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const palette = createTerminalPaletteProjection(theme);
+    const events: string[] = [];
+    const selected: string[] = [];
+    const terminalInputs: unknown[] = [];
+    const setup = await renderForTest(
+      () => (
+        <ApplicationShellView
+          dimensions={() => ({ width: 120, height: 40 })}
+          surface={() => "terminals"}
+          semantic={() => semantic()}
+          generationStatus={() => "live"}
+          sessions={["main"]}
+          selectedSession={() => 0}
+          bootstrapNote={() => null}
+          paletteOpen={() => true}
+          paletteSelection={() => 0}
+          terminalRendererSource={() => ({ adapter: adapter(), rendererEpoch: 1 })}
+          layout={terminalLayout}
+          focusedPane={() => "pane.main"}
+          theme={theme}
+          palette={palette}
+          onOpenSurface={(surface, source) => events.push(`${source}:${surface}`)}
+          onOpenSession={() => undefined}
+          onSetPaletteOpen={(open, source) => events.push(`${source}:palette:${open}`)}
+          onPaletteActivate={(surface, source) => events.push(`${source}:activate:${surface}`)}
+          onSelectPane={(paneId) => selected.push(paneId)}
+          onResizePreview={() => undefined}
+          onResizePane={() => undefined}
+          onTerminalInput={(_paneId, input) => terminalInputs.push(input)}
+        />
+      ),
+      { width: 120, height: 40 },
+    );
+    await setup.renderOnce();
+    await setup.mockMouse.click(30, 10, MouseButtons.LEFT);
+    expect(events).toEqual(["mouse:palette:false"]);
+    expect(selected).toEqual([]);
+    expect(terminalInputs).toEqual([]);
+    setup.renderer.destroy();
+  });
+
+  it("reacts palette geometry through narrow live resizes", async () => {
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const palette = createTerminalPaletteProjection(theme);
+    let setDimensions!: (value: { width: number; height: number }) => void;
+    const setup = await renderForTest(
+      () => {
+        const [dimensions, setDimensionsSignal] = createSignal({ width: 28, height: 9 });
+        setDimensions = setDimensionsSignal;
+        return (
+          <ApplicationShellView
+            dimensions={dimensions}
+            surface={() => "home"}
+            semantic={() => semantic("home")}
+            generationStatus={() => "live"}
+            sessions={["main"]}
+            selectedSession={() => 0}
+            bootstrapNote={() => null}
+            paletteOpen={() => true}
+            paletteSelection={() => 0}
+            terminalRendererSource={() => null}
+            layout={() => ({ current: null, windows: [] })}
+            focusedPane={() => null}
+            theme={theme}
+            palette={palette}
+            onOpenSurface={() => undefined}
+            onOpenSession={() => undefined}
+            onSetPaletteOpen={() => undefined}
+            onSelectPane={() => undefined}
+            onResizePreview={() => undefined}
+            onResizePane={() => undefined}
+          />
+        );
+      },
+      { width: 28, height: 9 },
+    );
+    await setup.renderOnce();
+    const initial = setup.captureCharFrame();
+    expectFrameBounds(initial, 28, 9);
+    expect(initial).toContain("Command palette");
+    expect(trimFrameRight(initial)).toMatchSnapshot();
+
+    setDimensions({ width: 20, height: 7 });
+    setup.renderer.resize(20, 7);
+    await setup.renderOnce();
+    const resized = setup.captureCharFrame();
+    expectFrameBounds(resized, 20, 7);
+    expect(resized).toContain("Commands");
+    expect(resized).toContain("F2 Terminals");
+    expect(trimFrameRight(resized)).toMatchSnapshot();
+    setup.renderer.destroy();
+  });
+
   it("maps the production chrome keyboard contract without consuming terminal keys", () => {
     expect(applicationShellKeyAction({ name: "f1" }, false)).toBe("home");
     expect(applicationShellKeyAction({ name: "F2" }, false)).toBe("terminals");
@@ -1006,6 +1175,112 @@ describe("production ApplicationShellView", () => {
     expect(applicationShellKeyAction({ name: "escape" }, true)).toBe("palette-close");
     expect(applicationShellKeyAction({ name: "escape" }, false)).toBeNull();
     expect(applicationShellKeyAction({ name: "a" }, false)).toBeNull();
+    expect(applicationPaletteKeyAction({ name: "down" }, true, 0)).toEqual({
+      kind: "select",
+      index: 1,
+    });
+    expect(applicationPaletteKeyAction({ name: "up" }, true, 1)).toEqual({
+      kind: "select",
+      index: 0,
+    });
+    expect(applicationPaletteKeyAction({ name: "up" }, true, 0)).toEqual({
+      kind: "select",
+      index: 4,
+    });
+    expect(applicationPaletteKeyAction({ name: "enter" }, true, 1)).toEqual({
+      kind: "activate",
+      command: "terminals",
+    });
+    expect(applicationPaletteKeyAction({ name: "escape" }, true, 1)).toEqual({ kind: "close" });
+    expect(applicationPaletteKeyAction({ name: "a" }, true, 1)).toBeNull();
+  });
+
+  it("keeps canonical agent status textual in narrow pane and window chrome", () => {
+    expect(terminalAgentStatusLabel("running")).toBe("WORKING");
+    expect(terminalAgentStatusLabel("waiting")).toBe("BLOCKED");
+    expect(terminalAgentStatusLabel("complete")).toBe("DONE");
+    expect(terminalAgentStatusLabel("failed")).toBe("FAILED");
+    expect(terminalAgentStatusLabel("disconnected")).toBe("UNKNOWN");
+    expect(
+      terminalPaneChromeLabel("pane.main", true, 22, {
+        name: "Codex",
+        activity: "running",
+        attention: false,
+      }),
+    ).toBe("● Codex [WORKING]");
+    expect(terminalWindowStripLabel("main", false, 22, "waiting", true)).toBe("○ main ! [BLOCKED]");
+    expect(
+      terminalPaneChromeLabel("pane.main", false, 9, {
+        name: "Codex",
+        activity: "disconnected",
+        attention: false,
+      }),
+    ).toBe("○ UNKNOWN");
+  });
+
+  it("preserves canonical attention while prioritizing mixed window activity", async () => {
+    registerPaneSurface();
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const palette = createTerminalPaletteProjection(theme);
+    const base = semantic();
+    const mixed = {
+      ...base,
+      sidebar: {
+        ...base.sidebar,
+        agents: [
+          {
+            id: "agent.codex",
+            name: "Codex",
+            harness: "codex" as const,
+            activity: "running" as const,
+            paneId: "pane.main",
+            attention: false,
+          },
+          {
+            id: "agent.scout",
+            name: "Scout",
+            harness: "claude-code" as const,
+            activity: "idle" as const,
+            paneId: "pane.secondary",
+            attention: true,
+          },
+        ],
+      },
+    };
+    const setup = await renderForTest(
+      () => (
+        <ApplicationShellView
+          dimensions={() => ({ width: 120, height: 40 })}
+          surface={() => "terminals"}
+          semantic={() => mixed}
+          generationStatus={() => "live"}
+          sessions={["main"]}
+          selectedSession={() => 0}
+          bootstrapNote={() => null}
+          paletteOpen={() => false}
+          terminalRendererSource={() => ({ adapter: adapter(), rendererEpoch: 1 })}
+          layout={mixedAgentLayout}
+          focusedPane={() => "pane.main"}
+          theme={theme}
+          palette={palette}
+          onOpenSurface={() => undefined}
+          onOpenSession={() => undefined}
+          onSetPaletteOpen={() => undefined}
+          onSelectPane={() => undefined}
+          onResizePreview={() => undefined}
+          onResizePane={() => undefined}
+        />
+      ),
+      { width: 120, height: 40 },
+    );
+    await setup.renderOnce();
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("● main ! [WORKING]");
+    expect(frame).toContain("○ Scout ! [IDLE]");
+    expect(frame).toContain("• Codex [WORKING]");
+    expect(frame).toContain("! Scout ! [IDLE]");
+    expect(shellChromeSnapshot(frame)).toMatchSnapshot();
+    setup.renderer.destroy();
   });
 
   it("routes a production window-strip click to the canonical pane selector", async () => {

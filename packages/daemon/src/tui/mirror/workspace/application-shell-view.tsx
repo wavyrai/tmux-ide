@@ -1,6 +1,6 @@
 /* @jsxImportSource @opentui/solid */
 import type { JSX } from "solid-js";
-import { ShellMiniSidebar, ShellStatusStrip, ShellTabBar } from "../shell-chrome.tsx";
+import { ShellMiniSidebar, ShellStatusStrip, ShellTabBar } from "../shell-chrome-view.tsx";
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import type { ApplicationShellProjection } from "./application-shell.ts";
 

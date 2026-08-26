@@ -5,17 +5,24 @@ import { For, Show, createMemo } from "solid-js";
 
 import { shellChromeLayout } from "../shell-chrome.ts";
 import { clipTerminal } from "../terminal-text.ts";
-import { ApplicationShell } from "../workspace/application-shell.tsx";
+import { ApplicationShell } from "../workspace/application-shell-view.tsx";
 import {
   applicationShellHitTest,
   projectApplicationShell,
 } from "../workspace/application-shell.ts";
-import { ApplicationTerminalWorkspace } from "./application-terminal-workspace.tsx";
+import {
+  ApplicationTerminalWorkspace,
+  terminalAgentStatusLabel,
+  type ApplicationTerminalAgentIndicator,
+} from "./application-terminal-workspace.tsx";
+import type { ApplicationPaletteCommand } from "./application-palette-input.ts";
+import { applicationShellViewport } from "./application-shell-viewport.ts";
+export { applicationPaletteKeyAction } from "./application-palette-input.ts";
+export { applicationShellViewport } from "./application-shell-viewport.ts";
 
 type TerminalWorkspaceProps = ComponentProps<typeof ApplicationTerminalWorkspace>;
-type RootSurface = "home" | "terminals";
+export type RootSurface = "home" | "terminals";
 type InputSource = "keyboard" | "mouse";
-
 export type ApplicationShellKeyAction = "home" | "terminals" | "palette-open" | "palette-close";
 
 export function applicationShellKeyAction(
@@ -39,6 +46,7 @@ export interface ApplicationShellViewProps {
   readonly selectedSession: Accessor<number>;
   readonly bootstrapNote: Accessor<string | null>;
   readonly paletteOpen: Accessor<boolean>;
+  readonly paletteSelection?: Accessor<number>;
   readonly terminalRendererSource: Accessor<{
     readonly adapter: TerminalWorkspaceProps["adapter"];
     readonly rendererEpoch: TerminalWorkspaceProps["rendererEpoch"];
@@ -52,6 +60,8 @@ export interface ApplicationShellViewProps {
   readonly onOpenSurface: (surface: RootSurface, source: InputSource) => void;
   readonly onOpenSession: (sessionName: string, source: InputSource) => void;
   readonly onSetPaletteOpen: (open: boolean, source: InputSource) => void;
+  readonly onPaletteActivate?: (command: ApplicationPaletteCommand, source: InputSource) => void;
+  readonly paletteCloseArmed?: Accessor<boolean>;
   readonly onSelectPane: TerminalWorkspaceProps["onSelectPane"];
   readonly onResizePreview: TerminalWorkspaceProps["onResizePreview"];
   readonly onResizePane: TerminalWorkspaceProps["onResizePane"];
@@ -65,29 +75,16 @@ export interface ApplicationShellViewProps {
   readonly onWindowPresented?: TerminalWorkspaceProps["onWindowPresented"];
 }
 
-/** The one physical terminal viewport after production shell chrome. */
-export function applicationShellViewport(
-  dimensions: { readonly width: number; readonly height: number },
-  hasSemanticShell: boolean,
-): { readonly width: number; readonly height: number } {
-  if (!hasSemanticShell)
-    return {
-      width: Math.max(1, dimensions.width),
-      height: Math.max(2, dimensions.height - 2),
-    };
-  const shell = shellChromeLayout(dimensions.width, dimensions.height, 28);
-  return {
-    width: Math.max(1, shell.main.width),
-    height: Math.max(2, shell.main.height - shell.status.height - 1),
-  };
-}
-
 function HomeSurface(props: {
   readonly project: string;
   readonly status: string;
   readonly note: string | null;
+  readonly session?: string | null;
+  readonly agents?: readonly ApplicationTerminalAgentIndicator[];
   readonly theme: ApplicationShellViewProps["theme"];
 }): JSX.Element {
+  const working = () => props.agents?.filter((agent) => agent.activity === "running").length ?? 0;
+  const attention = () => props.agents?.filter((agent) => agent.attention).length ?? 0;
   return (
     <box flexDirection="column" paddingLeft={2} paddingTop={2} gap={1}>
       <text fg={props.theme.roles.text.primary}>
@@ -96,7 +93,12 @@ function HomeSurface(props: {
       <text fg={props.theme.roles.text.secondary}>
         A visual client for the tmux sessions you already own.
       </text>
+      <text
+        fg={props.theme.roles.text.secondary}
+        content={`Session ${props.session ?? "none selected"} · ${working()} working · ${attention()} need attention`}
+      />
       <text fg={props.theme.roles.text.muted}>{`Workspace state: ${props.status}`}</text>
+      <text fg={props.theme.roles.text.link} content="F2 open terminals · F5 commands" />
       <Show when={props.note}>
         {(note) => <text fg={props.theme.roles.text.link}>{note()}</text>}
       </Show>
@@ -106,30 +108,98 @@ function HomeSurface(props: {
 
 function MinimalPalette(props: {
   readonly width: number;
+  readonly height: number;
+  readonly selected: number;
+  readonly closeArmed: boolean;
   readonly theme: ApplicationShellViewProps["theme"];
+  readonly onActivate: (command: ApplicationPaletteCommand) => void;
+  readonly onClose: () => void;
 }): JSX.Element {
-  const width = Math.max(32, Math.min(58, props.width - 4));
+  const horizontalInset = () => (props.width >= 8 ? 2 : 0);
+  const verticalInset = () => (props.height >= 6 ? 1 : 0);
+  const width = () => Math.max(1, Math.min(58, props.width - horizontalInset() * 2));
+  const height = () => Math.max(3, Math.min(11, props.height - verticalInset() * 2));
+  const innerWidth = () => Math.max(1, width() - 2);
+  const homeLabel = () =>
+    `${props.selected === 0 ? "› " : ""}F1 Home${innerWidth() >= 32 ? " · sessions and agent state" : ""}`;
+  const terminalsLabel = () =>
+    `${props.selected === 1 ? "› " : ""}F2 Terminals${innerWidth() >= 32 ? " · control the live tmux session" : ""}`;
+  const commandRows = () => [
+    { command: "home" as const, label: homeLabel() },
+    { command: "terminals" as const, label: terminalsLabel() },
+    {
+      command: "split-right" as const,
+      label: `${props.selected === 2 ? "› " : ""}Split pane right`,
+    },
+    { command: "split-down" as const, label: `${props.selected === 3 ? "› " : ""}Split pane down` },
+    {
+      command: "close-pane" as const,
+      label: `${props.selected === 4 ? "› " : ""}${props.closeArmed ? "Confirm close pane" : "Close pane…"}`,
+    },
+  ];
   return (
     <box
       position="absolute"
-      left={Math.max(2, Math.floor((props.width - width) / 2))}
-      top={3}
-      width={width}
-      height={7}
+      left={0}
+      top={0}
+      width={props.width}
+      height={props.height}
       zIndex={100}
-      border
-      borderStyle="rounded"
-      borderColor={props.theme.roles.borders.focused}
-      backgroundColor={props.theme.roles.surfaces.panelRaised}
-      flexDirection="column"
-      paddingLeft={1}
+      onMouseDown={(event) => {
+        event.stopPropagation();
+        props.onClose();
+      }}
     >
-      <text fg={props.theme.roles.text.primary}>
-        <strong>Command palette</strong>
-      </text>
-      <text fg={props.theme.roles.text.link}>F1 Home</text>
-      <text fg={props.theme.roles.text.link}>F2 Terminals</text>
-      <text fg={props.theme.roles.text.muted}>Esc close</text>
+      <box
+        position="absolute"
+        left={Math.max(0, Math.floor((props.width - width()) / 2))}
+        top={Math.max(0, Math.floor((props.height - height()) / 2))}
+        width={width()}
+        height={height()}
+        border
+        borderStyle="rounded"
+        borderColor={props.theme.roles.borders.focused}
+        backgroundColor={props.theme.roles.surfaces.panelRaised}
+        flexDirection="column"
+        paddingLeft={1}
+        overflow="hidden"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <text width={innerWidth()} fg={props.theme.roles.text.primary} overflow="hidden">
+          <strong>{innerWidth() >= 15 ? "Command palette" : "Commands"}</strong>
+        </text>
+        <For each={commandRows()}>
+          {(row, index) => (
+            <text
+              width={innerWidth()}
+              height={1}
+              overflow="hidden"
+              content={row.label}
+              fg={
+                props.closeArmed && index() === 4
+                  ? props.theme.roles.statusTone.warning
+                  : props.selected === index()
+                    ? props.theme.roles.selection.selectionText
+                    : props.theme.roles.text.secondary
+              }
+              bg={
+                props.selected === index()
+                  ? props.theme.roles.selection.selection
+                  : props.theme.roles.surfaces.panelRaised
+              }
+              onMouseDown={() => props.onActivate(row.command)}
+            />
+          )}
+        </For>
+        <Show when={height() >= 9}>
+          <text
+            width={innerWidth()}
+            overflow="hidden"
+            fg={props.theme.roles.text.muted}
+            content="↑↓ choose · Enter open · Esc close"
+          />
+        </Show>
+      </box>
     </box>
   );
 }
@@ -197,20 +267,25 @@ function ProductionSidebar(props: {
           </text>
         </box>
         <For each={props.shell.semantic.sidebar.agents}>
-          {(agent) => (
-            <box height={1} flexDirection="row">
-              <text fg={activityTone(agent.activity)}>{agent.attention ? "!" : "•"}</text>
-              <text
-                fg={
-                  agent.attention
-                    ? props.theme.roles.statusTone.warning
-                    : props.theme.roles.text.secondary
-                }
-              >
-                {clipTerminal(` ${agent.name}`, Math.max(0, width() - 1))}
-              </text>
-            </box>
-          )}
+          {(agent) => {
+            const status = () => terminalAgentStatusLabel(agent.activity);
+            const suffix = () => ` ${agent.attention ? "! " : ""}[${status()}]`;
+            const titleWidth = () => Math.max(1, width() - 2 - suffix().length);
+            return (
+              <box height={1} flexDirection="row">
+                <text fg={activityTone(agent.activity)}>{agent.attention ? "!" : "•"}</text>
+                <text
+                  fg={
+                    agent.attention
+                      ? props.theme.roles.statusTone.warning
+                      : props.theme.roles.text.secondary
+                  }
+                >
+                  {` ${clipTerminal(agent.name, titleWidth())}${suffix()}`}
+                </text>
+              </box>
+            );
+          }}
         </For>
       </Show>
       <box flexGrow={1} />
@@ -338,7 +413,19 @@ function CatalogShell(props: ApplicationShellViewProps): JSX.Element {
         </box>
       </box>
       <Show when={props.paletteOpen()}>
-        <MinimalPalette width={props.dimensions().width} theme={props.theme} />
+        <MinimalPalette
+          width={props.dimensions().width}
+          height={props.dimensions().height}
+          selected={props.paletteSelection?.() ?? 0}
+          closeArmed={props.paletteCloseArmed?.() ?? false}
+          theme={props.theme}
+          onActivate={(command) => {
+            if (props.onPaletteActivate) props.onPaletteActivate(command, "mouse");
+            else if (command === "home" || command === "terminals")
+              props.onOpenSurface(command, "mouse");
+          }}
+          onClose={() => props.onSetPaletteOpen(false, "mouse")}
+        />
       </Show>
     </box>
   );
@@ -371,6 +458,25 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
     get: (_target, property) => Reflect.get(projection()!, property),
   });
   const projectionOwner = createMemo(() => (projection() ? retainedProjection : null));
+  const agentIndicators = createMemo<ReadonlyMap<string, ApplicationTerminalAgentIndicator>>(
+    () =>
+      new Map(
+        (props.semantic()?.sidebar.agents ?? []).flatMap((agent) =>
+          agent.paneId
+            ? [
+                [
+                  agent.paneId,
+                  {
+                    name: agent.name,
+                    activity: agent.activity,
+                    attention: agent.attention,
+                  },
+                ] as const,
+              ]
+            : [],
+        ),
+      ),
+  );
   const routeChromePointer = (x: number, y: number): void => {
     const shell = projection();
     if (!shell) return;
@@ -393,7 +499,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
           <ApplicationShell
             theme={props.theme}
             projection={shell}
-            help="F5 palette · F1 Home · F2 Terminals · ^q quit"
+            help="^o pane · ^t window · F5 split/close · ^q put away"
             note={props.generationStatus()}
             showToolStatus={false}
             sidebar={<ProductionSidebar shell={shell} theme={props.theme} />}
@@ -405,6 +511,8 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                   project={shell.semantic.project.name}
                   status={props.generationStatus()}
                   note={props.bootstrapNote()}
+                  session={shell.activeSession}
+                  agents={[...agentIndicators().values()]}
                   theme={props.theme}
                 />
               }
@@ -442,6 +550,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                       hostFocusTransitionOwner={props.hostFocusTransitionOwner}
                       theme={props.theme}
                       palette={props.palette}
+                      agentIndicators={agentIndicators}
                       onSelectPane={props.onSelectPane}
                       onResizePreview={props.onResizePreview}
                       onResizePane={props.onResizePane}
@@ -460,7 +569,19 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
             </Show>
           </ApplicationShell>
           <Show when={props.paletteOpen()}>
-            <MinimalPalette width={props.dimensions().width} theme={props.theme} />
+            <MinimalPalette
+              width={props.dimensions().width}
+              height={props.dimensions().height}
+              selected={props.paletteSelection?.() ?? 0}
+              closeArmed={props.paletteCloseArmed?.() ?? false}
+              theme={props.theme}
+              onActivate={(command) => {
+                if (props.onPaletteActivate) props.onPaletteActivate(command, "mouse");
+                else if (command === "home" || command === "terminals")
+                  props.onOpenSurface(command, "mouse");
+              }}
+              onClose={() => props.onSetPaletteOpen(false, "mouse")}
+            />
           </Show>
         </box>
       )}

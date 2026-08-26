@@ -28,7 +28,105 @@ function layout(currentIndex = 0): OpenTuiWorkspaceLayoutSnapshot {
   return Object.freeze({ current: windows[currentIndex]!, windows: Object.freeze(windows) });
 }
 
+function splitLayout(): OpenTuiWorkspaceLayoutSnapshot {
+  const current = {
+    ...layout(0).current!,
+    panes: [
+      { pane: "pane.main", left: 0, top: 0, width: 10, height: 8, active: true },
+      { pane: "pane.peer", left: 10, top: 0, width: 10, height: 8, active: false },
+    ],
+  };
+  return Object.freeze({ current, windows: Object.freeze([current]) });
+}
+
 describe("application terminal interaction controller", () => {
+  it("routes Ctrl+O through canonical pane selection", async () => {
+    const dispatch = vi.fn(async (command) => ({
+      kind: "semantic-intent",
+      operationId: command.operationId ?? "focus-next",
+      result: {
+        verb: "workspace.pane.select",
+        semanticPaneId: "pane.peer",
+        workspaceName: "workspace.alpha",
+        daemonInstanceId: "generation-a",
+        operationId: command.operationId ?? "focus-next",
+        outcome: "applied",
+      },
+    }));
+    const generation = {
+      status: "live",
+      daemonGeneration: "generation-a",
+      connection: { workspaceName: "workspace.alpha" },
+      client: {
+        ownsRuntimeAuthority: () => true,
+        requestAuthority: async () => ({}),
+        dispatch,
+      },
+    };
+    const controller = createApplicationTerminalInteractionController({
+      generation: () => generation as never,
+      layout: splitLayout,
+      focusedPane: () => "pane.main",
+      setFocusedPane: () => undefined,
+      diagnosticsEnabled: false,
+      diagnose: () => undefined,
+      createOperationId: () => "focus-next",
+    });
+
+    expect(controller.routeWorkspaceKey({ name: "o", meta: false, ctrl: true, shift: false })).toBe(
+      true,
+    );
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledOnce());
+    expect(dispatch.mock.calls[0]![0]).toMatchObject({
+      kind: "semantic-intent",
+      intent: { verb: "workspace.pane.select", semanticPaneId: "pane.peer" },
+    });
+  });
+
+  it("dispatches split and confirmed close through the active generation owner", async () => {
+    const dispatch = vi.fn(async (command) => ({
+      kind: "owner-action",
+      operationId: command.operationId ?? "operation-a",
+      result: { applied: true },
+    }));
+    const generation = {
+      status: "live",
+      daemonGeneration: "generation-a",
+      connection: { workspaceName: "workspace.alpha" },
+      client: { dispatch },
+    };
+    const controller = createApplicationTerminalInteractionController({
+      generation: () => generation as never,
+      layout: splitLayout,
+      focusedPane: () => "pane.main",
+      setFocusedPane: () => undefined,
+      diagnosticsEnabled: false,
+      diagnose: () => undefined,
+      createOperationId: () => "operation-a",
+    });
+
+    await expect(controller.splitPane("right")).resolves.toBe("split pane right");
+    await expect(controller.closePane()).resolves.toBe("closed pane");
+    expect(dispatch.mock.calls.map(([command]) => command)).toEqual([
+      {
+        kind: "owner-action",
+        name: "workspace.window.split",
+        input: {
+          workspaceName: "workspace.alpha",
+          semanticPaneId: "pane.main",
+          direction: "right",
+        },
+        operationId: "operation-a",
+      },
+      {
+        kind: "owner-action",
+        name: "workspace.pane.kill",
+        input: { workspaceName: "workspace.alpha", semanticPaneId: "pane.main" },
+        operationId: "operation-a",
+      },
+    ]);
+  });
+
   it("does zero phase clock, trace-id, or diagnostic work when diagnostics are disabled", async () => {
     const nowMicros = vi.fn(() => {
       throw new Error("clock must stay cold");
@@ -1419,9 +1517,6 @@ describe("application terminal interaction controller", () => {
       controller.routeWorkspaceKey({ name: "right", meta: false, ctrl: true, shift: true }),
     ).toBe(false);
     expect(controller.routeWorkspaceKey({ name: "x", meta: true, ctrl: false, shift: false })).toBe(
-      false,
-    );
-    expect(controller.routeWorkspaceKey({ name: "o", meta: false, ctrl: true, shift: false })).toBe(
       false,
     );
   });

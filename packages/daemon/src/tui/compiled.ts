@@ -21,7 +21,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import { findDownloadedTui } from "../lib/tui-binary.ts";
+import { downloadTuiBinary, findDownloadedTui } from "../lib/tui-binary.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -45,6 +45,51 @@ export interface TuiResolveInput {
   compiledBinary: string | null;
   /** Explicit development override; ordinary launches prefer the fast binary. */
   preferSource?: boolean;
+}
+
+export interface TuiLaunchAcquisitionOptions {
+  readonly log?: (message: string) => void;
+  readonly download?: (options: {
+    readonly log?: (message: string) => void;
+  }) => Promise<{ readonly path: string; readonly bytes: number }>;
+}
+
+/**
+ * Ensure an installed OpenTUI app has a runnable native dispatcher.
+ *
+ * Development checkouts with Bun and installs that already have an exact-version
+ * binary stay entirely local. Only the otherwise-unavailable installed path
+ * acquires the matching release artifact. Keeping this decision beside
+ * {@link resolveTuiLaunch} prevents the CLI and package gate from inventing a
+ * second launch policy.
+ */
+export async function ensureTuiLaunchAvailable(
+  input: TuiResolveInput,
+  options: TuiLaunchAcquisitionOptions = {},
+): Promise<TuiLaunch> {
+  const current = resolveTuiLaunch(input);
+  if (current.mode !== "unavailable") return current;
+
+  let downloaded: { readonly path: string; readonly bytes: number };
+  try {
+    downloaded = await (options.download ?? downloadTuiBinary)({ log: options.log });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Automatic OpenTUI runtime acquisition failed: ${message}\n` +
+        "Retry with `tmux-ide update --tui-binary`, then run `tmux-ide app` again.",
+      { cause: error },
+    );
+  }
+
+  const prepared = resolveTuiLaunch({ ...input, compiledBinary: downloaded.path });
+  if (prepared.mode === "unavailable") {
+    throw new Error(
+      "OpenTUI runtime was downloaded but could not be selected. " +
+        "Run `tmux-ide doctor`, then retry `tmux-ide update --tui-binary`.",
+    );
+  }
+  return prepared;
 }
 
 /**

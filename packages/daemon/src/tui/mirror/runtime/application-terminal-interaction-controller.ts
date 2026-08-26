@@ -106,7 +106,10 @@ export interface ApplicationTerminalInteractionController {
   routeWorkspaceKey(
     event: Readonly<{ name: string; meta: boolean; ctrl: boolean; shift: boolean }>,
   ): boolean;
+  cyclePane(): void;
   cycleWindow(): void;
+  splitPane(direction: "right" | "down"): Promise<string>;
+  closePane(): Promise<string>;
   observeWindowPresentation(semanticWindowId: string, paneId: string, windowName?: string): void;
   observeDiagnosticWindowFrame():
     | import("../performance-events.ts").TuiWindowPresentationFrameEvidence
@@ -1043,6 +1046,10 @@ export function createApplicationTerminalInteractionController(
     },
     routeWorkspaceKey(event) {
       const name = event.name.toLowerCase();
+      if (event.ctrl && !event.meta && !event.shift && name === "o") {
+        this.cyclePane();
+        return true;
+      }
       if (event.ctrl && !event.meta && !event.shift && name === "t") {
         this.cycleWindow();
         return true;
@@ -1058,6 +1065,16 @@ export function createApplicationTerminalInteractionController(
       const direction = name === "left" || name === "up" ? -1 : 1;
       this.keyboardResize(axis, direction);
       return true;
+    },
+    cyclePane() {
+      const panes = options.layout().current?.panes.filter(({ pane }) => Boolean(pane)) ?? [];
+      if (panes.length < 2) return;
+      const focused = options.focusedPane?.() ?? null;
+      const activeIndex = panes.findIndex(({ pane }) => pane === focused);
+      const fallbackIndex = panes.findIndex(({ active }) => active);
+      const currentIndex = activeIndex >= 0 ? activeIndex : fallbackIndex;
+      const next = panes[(Math.max(0, currentIndex) + 1) % panes.length]?.pane;
+      if (next) paneInput.selectPane(next);
     },
     cycleWindow() {
       const windows = options.layout().windows;
@@ -1117,6 +1134,50 @@ export function createApplicationTerminalInteractionController(
         }
       }
       paneInput.selectPane(pane, { presentOptimistically: false });
+    },
+    async splitPane(direction) {
+      const active = options.generation();
+      const semanticPaneId = options.focusedPane?.() ?? null;
+      const workspaceName = active?.connection?.workspaceName ?? null;
+      if (active?.status !== "live" || !active.client || !workspaceName || !semanticPaneId)
+        return "split unavailable: terminal workspace is reconnecting";
+      try {
+        const response = await active.client.dispatch({
+          kind: "owner-action",
+          name: "workspace.window.split",
+          input: { workspaceName, semanticPaneId, direction },
+          operationId: createOperationId(),
+        });
+        if (options.generation() !== active)
+          return "split not confirmed: terminal workspace reconnected";
+        if (response.kind !== "owner-action" || response.result === null)
+          return "split not confirmed by the daemon";
+        return direction === "right" ? "split pane right" : "split pane down";
+      } catch (error) {
+        return `split unavailable: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    },
+    async closePane() {
+      const active = options.generation();
+      const semanticPaneId = options.focusedPane?.() ?? null;
+      const workspaceName = active?.connection?.workspaceName ?? null;
+      if (active?.status !== "live" || !active.client || !workspaceName || !semanticPaneId)
+        return "close unavailable: terminal workspace is reconnecting";
+      try {
+        const response = await active.client.dispatch({
+          kind: "owner-action",
+          name: "workspace.pane.kill",
+          input: { workspaceName, semanticPaneId },
+          operationId: createOperationId(),
+        });
+        if (options.generation() !== active)
+          return "close not confirmed: terminal workspace reconnected";
+        if (response.kind !== "owner-action" || response.result === null)
+          return "close not confirmed by the daemon";
+        return "closed pane";
+      } catch (error) {
+        return `close unavailable: ${error instanceof Error ? error.message : String(error)}`;
+      }
     },
     observeWindowPresentation(semanticWindowId, paneId, windowName) {
       const rename = pendingWindowRename;

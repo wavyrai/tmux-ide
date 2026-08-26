@@ -1,7 +1,7 @@
 import type { ApplicationShellProjectionV1 } from "@tmux-ide/contracts";
 
 import type { OpenTuiGenerationHostSnapshot } from "./open-tui-generation-host.ts";
-import { applicationShellViewport } from "./application-shell-view.tsx";
+import { applicationShellViewport } from "./application-shell-viewport.ts";
 
 type Dimensions = Readonly<{ width: number; height: number }>;
 

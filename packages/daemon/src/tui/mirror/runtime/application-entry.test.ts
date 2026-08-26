@@ -103,15 +103,18 @@ describe("production OpenTUI entry boundary", () => {
 
   it("attaches before root work and closes the shared stream after connection retirement", () => {
     const root = read("packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx");
+    const postRender = read(
+      "packages/daemon/src/tui/mirror/runtime/application-post-render-runtime.ts",
+    );
     expect(root.indexOf("diagnosticHandoff?.attach(tuiPerfMark)")).toBeLessThan(
       root.indexOf("await startTuiApplication"),
     );
-    expect(root.indexOf("await sessionOwner?.dispose()")).toBeGreaterThan(0);
-    expect(root.indexOf("await sessionOwner?.dispose()")).toBeLessThan(
-      root.indexOf("diagnosticHandoff?.retire()"),
+    expect(postRender.indexOf("await options.sessionOwner()?.dispose()")).toBeGreaterThan(0);
+    expect(postRender.indexOf("await options.sessionOwner()?.dispose()")).toBeLessThan(
+      postRender.indexOf("options.retireDiagnosticHandoff()"),
     );
-    expect(root.indexOf("diagnosticHandoff?.retire()")).toBeLessThan(
-      root.indexOf("await closeTuiPerfMarks()"),
+    expect(postRender.indexOf("options.retireDiagnosticHandoff()")).toBeLessThan(
+      postRender.indexOf("await closeTuiPerfMarks()"),
     );
   });
 
@@ -138,11 +141,14 @@ describe("production OpenTUI entry boundary", () => {
 
   it("installs frame readiness only for an explicit lifecycle or detailed diagnostic sink", () => {
     const root = read("packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx");
+    const postRender = read(
+      "packages/daemon/src/tui/mirror/runtime/application-post-render-runtime.ts",
+    );
     expect(root).toContain("createApplicationTerminalFrameReadinessOwner({");
     expect(root).toContain("enabled: tuiPerfStream,");
     expect(root).toContain("sink: frameDiagnosticSink,");
-    expect(root).toContain(
-      'if (terminalFrameReadiness) renderer.on("frame", observeTerminalFrame)',
+    expect(postRender).toContain(
+      'if (options.terminalFrameReadiness) options.renderer.on("frame", observeTerminalFrame)',
     );
   });
 

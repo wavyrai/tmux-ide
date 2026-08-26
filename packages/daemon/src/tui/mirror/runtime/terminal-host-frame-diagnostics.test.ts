@@ -30,6 +30,7 @@ describe("publishCanonicalHostFrameDiagnostics", () => {
         drains += 1;
         return { identities: [identity], dropped: 0 };
       },
+      sampleResourceAfterFence: () => undefined,
     };
     const published = publishCanonicalHostFrameDiagnostics(
       adapter as never,

@@ -36,6 +36,7 @@ describe("host-local tmux adapter boundary", () => {
       calls.push([...args]);
       if (args[0] === "switch-client") throw new Error("no prior client");
     });
+    expect(adapter.hosted).toBe(true);
     await expect(adapter.configureClipboard()).resolves.toBe(true);
     await adapter.putAway();
     expect(calls).toEqual([
@@ -111,6 +112,7 @@ describe("host-local tmux adapter boundary", () => {
     const adapter = createOpenTuiHostLocalTmuxAdapter(false, async (args) => {
       calls.push([...args]);
     });
+    expect(adapter.hosted).toBe(false);
     await adapter.putAway();
     expect(calls).toEqual([]);
   });

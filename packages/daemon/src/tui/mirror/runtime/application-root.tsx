@@ -354,7 +354,7 @@ import {
   applicationShellHitTest,
   projectApplicationShell,
 } from "../workspace/application-shell.ts";
-import { ApplicationShell } from "../workspace/application-shell.tsx";
+import { ApplicationShell } from "../workspace/application-shell-view.tsx";
 import {
   applicationShellReplayState,
   openTuiApplicationShellAuthorityInput,

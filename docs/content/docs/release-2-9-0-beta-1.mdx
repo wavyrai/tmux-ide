@@ -1,0 +1,61 @@
+---
+title: OpenTUI beta 2.9.0-beta.1
+description: A focused, installable visual tmux client with agent-aware chrome
+---
+
+This beta deliberately ships one product path: a polished OpenTUI client around
+ordinary tmux sessions. tmux continues to own the PTYs, layout, and persistence;
+the daemon publishes renderer-neutral workspace state, and OpenTUI renders it.
+
+## Install
+
+```bash
+npm install -g tmux-ide@beta
+tmux-ide app
+```
+
+Pass a session name to bypass the Home chooser:
+
+```bash
+tmux-ide app work
+```
+
+Supported release binaries are macOS arm64/x64 and Linux arm64/x64. Node.js 20+
+and tmux 3.2+ are recommended. Bun is not required for an npm-installed beta.
+The first app launch downloads the exact-version runtime, verifies bounded
+compressed and executable SHA-256 digests plus version/platform/commit metadata,
+and caches it under `~/.tmux-ide/bin`.
+
+## What is in the cut
+
+- F1 Home and F2 Terminals over live, ordinary tmux sessions.
+- Textual `IDLE`, `WORKING`, `BLOCKED`, `DONE`, `FAILED`, and `UNKNOWN` agent
+  state in the sidebar, window tabs, and pane chrome.
+- Keyboard and pointer session/window/pane selection, terminal input and paste,
+  pane resize, pane split, confirmed pane close, and clean return/quit behavior.
+- A renderer-neutral daemon boundary retained for a future web client.
+
+Useful controls:
+
+- `F1` Home; `F2` Terminals; `F5` commands.
+- `Ctrl+O` cycles panes; `Ctrl+T` cycles windows.
+- `Meta+Arrow` resizes the focused pane.
+- In hosted mode, `Ctrl+Q` puts the app away and leaves it available to return
+  to. In ordinary foreground mode, `Ctrl+Q` exits cleanly.
+
+## Known limitations
+
+- The web client is deferred and `tmux-ide web` exits with an explicit message.
+- Files, Diff, settings, missions, rich media, and the native desktop client are
+  not supported beta surfaces.
+- Agent state is strongest when an integration or pane self-report publishes
+  lifecycle state; otherwise the daemon may report `UNKNOWN`.
+- External tmux topology changes made while the app is open can temporarily
+  leave the view rebinding; reopen the session if focus does not recover.
+- The first launch needs GitHub release access. If it fails, run
+  `tmux-ide update --tui-binary` and retry `tmux-ide app`.
+
+Please report bugs and small workflow paper cuts through
+[GitHub Issues](https://github.com/wavyrai/tmux-ide/issues). Include your OS,
+architecture, tmux version, `tmux-ide doctor --json`, and the shortest sequence
+that reproduces the problem.

@@ -8,10 +8,12 @@ import {
   onCleanup,
   type Accessor,
 } from "solid-js";
+import type { AgentActivity } from "@tmux-ide/contracts";
 
 import type { OpenTuiWorkspaceLayoutSnapshot } from "../open-tui-workspace-runtime-port.ts";
 import type { SemanticThemeSnapshot, TerminalPaletteProjection } from "../theme.ts";
 import type { PaneSurfaceHostFocusTransitionOwner } from "../pane-surface.tsx";
+import { clipTerminal } from "../terminal-text.ts";
 import type { PaneScopedTerminalAdapter } from "./pane-scoped-terminal-surface.tsx";
 import { PaneScopedTerminalSurface } from "./pane-scoped-terminal-surface.tsx";
 import { projectOpenTuiPaneFrames, type OpenTuiPaneFrame } from "./terminal-layout-projection.ts";
@@ -118,6 +120,8 @@ export interface ApplicationTerminalWorkspaceProps {
   readonly rendererFocused?: boolean;
   readonly theme: SemanticThemeSnapshot;
   readonly palette: TerminalPaletteProjection;
+  /** Daemon-authored semantic agent state, keyed by durable pane identity. */
+  readonly agentIndicators?: Accessor<ReadonlyMap<string, ApplicationTerminalAgentIndicator>>;
   readonly onSelectPane: (paneId: string) => void;
   readonly onResizePreview?: (preview: ApplicationPaneResizePreview) => void;
   readonly onResizePane?: (preview: ApplicationPaneResizePreview) => void;
@@ -165,12 +169,80 @@ export interface ApplicationTerminalWorkspaceProps {
   ) => void;
 }
 
-export function terminalPaneChromeLabel(paneId: string, focused: boolean, width: number): string {
-  return `${focused ? "●" : "○"} ${paneId}`.slice(0, Math.max(0, width));
+export interface ApplicationTerminalAgentIndicator {
+  readonly name: string;
+  readonly activity: AgentActivity;
+  readonly attention: boolean;
+}
+
+const EMPTY_AGENT_INDICATORS: ReadonlyMap<string, ApplicationTerminalAgentIndicator> = new Map();
+
+export function terminalAgentStatusLabel(activity: AgentActivity): string {
+  switch (activity) {
+    case "running":
+      return "WORKING";
+    case "waiting":
+      return "BLOCKED";
+    case "complete":
+      return "DONE";
+    case "failed":
+      return "FAILED";
+    case "disconnected":
+      return "UNKNOWN";
+    case "idle":
+      return "IDLE";
+  }
+}
+
+function labelWithReservedStatus(
+  marker: string,
+  title: string,
+  status: string | null,
+  attention: boolean,
+  width: number,
+): string {
+  const safeWidth = Math.max(0, Math.floor(width));
+  if (safeWidth === 0) return "";
+  if (!status) return clipTerminal(`${marker} ${title}`, safeWidth);
+  const suffix = `${attention ? " !" : ""} [${status}]`;
+  if (safeWidth <= suffix.length + 2) return clipTerminal(`${marker} ${status}`, safeWidth);
+  const titleWidth = Math.max(1, safeWidth - marker.length - 1 - suffix.length);
+  return clipTerminal(`${marker} ${clipTerminal(title, titleWidth)}${suffix}`, safeWidth);
+}
+
+export function terminalPaneChromeLabel(
+  paneId: string,
+  focused: boolean,
+  width: number,
+  indicator?: ApplicationTerminalAgentIndicator,
+): string {
+  return labelWithReservedStatus(
+    focused ? "●" : "○",
+    indicator?.name.trim() || paneId,
+    indicator ? terminalAgentStatusLabel(indicator.activity) : null,
+    indicator?.attention === true,
+    width,
+  );
 }
 
 export function terminalWindowStripSlotWidth(width: number, windowCount: number): number {
   return Math.max(1, Math.min(32, Math.floor(width / Math.max(1, windowCount))));
+}
+
+export function terminalWindowStripLabel(
+  title: string,
+  active: boolean,
+  width: number,
+  activity?: AgentActivity,
+  attention = false,
+): string {
+  return labelWithReservedStatus(
+    active ? "●" : "○",
+    title,
+    activity ? terminalAgentStatusLabel(activity) : null,
+    attention,
+    width,
+  );
 }
 
 export const ACTIVE_RESIZE_GUIDE_CELL = Object.freeze({ cols: "╎", rows: "╌" });
@@ -191,6 +263,36 @@ function retainedWindowKey(
   layout: OpenTuiWorkspaceLayoutSnapshot["windows"][number],
 ): string | null {
   return layout.semanticWindowId ?? paneForWindow(layout);
+}
+
+const AGENT_ACTIVITY_PRIORITY: Readonly<Record<AgentActivity, number>> = Object.freeze({
+  failed: 6,
+  waiting: 5,
+  running: 4,
+  disconnected: 3,
+  complete: 2,
+  idle: 1,
+});
+
+function windowAgentIndicator(
+  window: OpenTuiWorkspaceLayoutSnapshot["windows"][number],
+  indicators: ReadonlyMap<string, ApplicationTerminalAgentIndicator>,
+): Pick<ApplicationTerminalAgentIndicator, "activity" | "attention"> | undefined {
+  let selected: AgentActivity | undefined;
+  let attention = false;
+  for (const pane of window.panes) {
+    if (!pane.pane) continue;
+    const indicator = indicators.get(pane.pane);
+    const activity = indicator?.activity;
+    attention ||= indicator?.attention === true;
+    if (
+      activity &&
+      (selected === undefined ||
+        AGENT_ACTIVITY_PRIORITY[activity] > AGENT_ACTIVITY_PRIORITY[selected])
+    )
+      selected = activity;
+  }
+  return selected ? { activity: selected, attention } : undefined;
 }
 
 function separatorAt(
@@ -329,6 +431,7 @@ function previewFor(
  */
 export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspaceProps) {
   const layout = props.layout;
+  const agentIndicators = () => props.agentIndicators?.() ?? EMPTY_AGENT_INDICATORS;
   const topOffset = () => Math.max(1, Math.floor(props.topOffset ?? 2));
   // Immutable layout publications may be fresh objects with identical pane
   // geometry. Retain the frame items so Solid's keyed-by-reference <For>
@@ -1004,22 +1107,42 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
                 () =>
                   layout().windows.find((candidate) => retainedWindowKey(candidate) === windowId)!,
               );
+              const indicator = createMemo(() => windowAgentIndicator(window(), agentIndicators()));
               return (
                 <text
                   width={terminalWindowStripSlotWidth(props.width, retainedWindowIds().length)}
                   height={1}
-                  content={` ${titleOf(window())} `}
                   fg={
                     window().currentWindow
                       ? props.theme.roles.text.link
                       : props.theme.roles.text.secondary
                   }
-                  attributes={window().currentWindow ? 1 : 0}
                   onMouseDown={() => {
                     const pane = paneForWindow(window());
                     if (pane) props.onSelectPane(pane);
                   }}
-                />
+                >
+                  <Show
+                    when={window().currentWindow}
+                    fallback={terminalWindowStripLabel(
+                      titleOf(window()),
+                      false,
+                      terminalWindowStripSlotWidth(props.width, retainedWindowIds().length),
+                      indicator()?.activity,
+                      indicator()?.attention,
+                    )}
+                  >
+                    <strong>
+                      {terminalWindowStripLabel(
+                        titleOf(window()),
+                        true,
+                        terminalWindowStripSlotWidth(props.width, retainedWindowIds().length),
+                        indicator()?.activity,
+                        indicator()?.attention,
+                      )}
+                    </strong>
+                  </Show>
+                </text>
               );
             }}
           </For>
@@ -1062,6 +1185,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
                     frame().paneId,
                     props.focusedPane === frame().paneId,
                     frame().width,
+                    agentIndicators().get(frame().paneId),
                   ).slice(1)}`}
                 </text>
               </box>

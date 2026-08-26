@@ -24,6 +24,7 @@ permissions:
 jobs:
   build_macos_notifier:
     name: Build native macOS notifier
+    if: ${{ !contains(github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name, '-') }}
     runs-on: macos-26
 
     steps:
@@ -79,6 +80,7 @@ jobs:
   publish_npm:
     name: Publish to npm
     needs: build_macos_notifier
+    if: ${{ always() && (needs.build_macos_notifier.result == 'success' || needs.build_macos_notifier.result == 'skipped') }}
     runs-on: ubuntu-24.04
     environment: npm
 
@@ -104,19 +106,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Download native macOS notifier
-        uses: actions/download-artifact@v4
-        with:
-          name: tmux-ide-macos-notifier
-          path: ${{ runner.temp }}/tmux-ide-macos-notifier
-
-      - name: Add native notifier to npm payload
-        run: |
-          mkdir -p packages/daemon/dist/native
-          tar -xzf "$RUNNER_TEMP/tmux-ide-macos-notifier/tmux-ide-macos-notifier.tar.gz" \
-            -C packages/daemon/dist/native
-          test -x packages/daemon/dist/native/TmuxIdeNotifier.app/Contents/MacOS/tmux-ide-notifier
-
       - name: Resolve release version
         id: release
         shell: bash
@@ -137,13 +126,116 @@ jobs:
         run: |
           node -e "const fs=require('node:fs'); for (const p of ['package.json','packages/daemon/package.json']) { const pkg=JSON.parse(fs.readFileSync(p,'utf8')); pkg.version=process.argv[1]; fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n'); }" "${{ steps.release.outputs.version }}"
 
-      - name: Run quality checks
-        # `pnpm check` runs lint + format + typecheck + unit tests +
-        # docs build + dry-run pack validation + an install-from-tarball
-        # canonical-headless smoke. The integration test relies on a
-        # live tmux server that isn't available in CI; rename it to
-        # `.skip` so the unit-test stage stays green here without
-        # touching the suite's behaviour locally.
+      - name: Resolve npm dist-tag
+        id: npm
+        shell: bash
+        run: |
+          tag="$(node scripts/lib/npm-release-tag.mjs "${{ steps.release.outputs.version }}")"
+          echo "Publishing ${{ steps.release.outputs.version }} on npm dist-tag '$tag'."
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Download native macOS notifier for stable release
+        if: steps.npm.outputs.tag == 'latest'
+        uses: actions/download-artifact@v4
+        with:
+          name: tmux-ide-macos-notifier
+          path: ${{ runner.temp }}/tmux-ide-macos-notifier
+
+      - name: Add native notifier to stable npm payload
+        if: steps.npm.outputs.tag == 'latest'
+        run: |
+          mkdir -p packages/daemon/dist/native
+          tar -xzf "$RUNNER_TEMP/tmux-ide-macos-notifier/tmux-ide-macos-notifier.tar.gz" \
+            -C packages/daemon/dist/native
+          test -x packages/daemon/dist/native/TmuxIdeNotifier.app/Contents/MacOS/tmux-ide-notifier
+
+      - name: Wait for OpenTUI runtime assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          tag="v${{ steps.release.outputs.version }}"
+          expected=(
+            tmux-ide-tui-darwin-arm64.gz
+            tmux-ide-tui-darwin-arm64.gz.sha256
+            tmux-ide-tui-darwin-x64.gz
+            tmux-ide-tui-darwin-x64.gz.sha256
+            tmux-ide-tui-linux-arm64.gz
+            tmux-ide-tui-linux-arm64.gz.sha256
+            tmux-ide-tui-linux-x64.gz
+            tmux-ide-tui-linux-x64.gz.sha256
+          )
+          for attempt in $(seq 1 60); do
+            assets="$(gh release view "$tag" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+            missing=0
+            for name in "${expected[@]}"; do
+              grep -Fxq "$name" <<<"$assets" || missing=1
+            done
+            if [[ "$missing" -eq 0 ]]; then
+              echo "All exact-version OpenTUI runtimes are available for $tag."
+              exit 0
+            fi
+            echo "OpenTUI runtimes not complete yet (attempt $attempt/60); retrying in 10s."
+            sleep 10
+          done
+          echo "OpenTUI runtime assets are incomplete for $tag; refusing to publish npm." >&2
+          exit 1
+
+      - name: Verify OpenTUI runtime release provenance
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.release.outputs.version }}"
+          tag="v${version}"
+          expected_commit="$(git rev-parse HEAD)"
+          refs="$(git ls-remote origin "refs/tags/${tag}" "refs/tags/${tag}^{}")"
+          direct="$(awk -v ref="refs/tags/${tag}" '$2 == ref { print $1; exit }' <<< "$refs")"
+          peeled="$(awk -v ref="refs/tags/${tag}^{}" '$2 == ref { print $1; exit }' <<< "$refs")"
+          tag_commit="${peeled:-$direct}"
+          if [[ -z "$tag_commit" || "$tag_commit" != "$expected_commit" ]]; then
+            echo "Refusing npm publish: $tag resolves to ${tag_commit:-unknown}, not checked-out commit $expected_commit." >&2
+            exit 1
+          fi
+
+          manifests="$(mktemp -d)"
+          trap 'rm -rf "$manifests"' EXIT
+          gh release download "$tag" --pattern '*.gz.sha256' --dir "$manifests"
+          for platform in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
+            manifest="$manifests/tmux-ide-tui-${platform}.gz.sha256"
+            test -s "$manifest" || {
+              echo "Missing checksum manifest for $platform." >&2
+              exit 1
+            }
+            grep -Fx "version $version" "$manifest" >/dev/null || {
+              echo "Checksum manifest for $platform does not identify version $version." >&2
+              exit 1
+            }
+            grep -Fx "platform $platform" "$manifest" >/dev/null || {
+              echo "Checksum manifest for $platform has the wrong platform identity." >&2
+              exit 1
+            }
+            grep -Fx "commit $expected_commit" "$manifest" >/dev/null || {
+              echo "Checksum manifest for $platform does not identify checked-out commit $expected_commit." >&2
+              exit 1
+            }
+          done
+          echo "Verified $tag and all OpenTUI manifests at $expected_commit."
+
+      - name: Run focused OpenTUI release checks
+        if: steps.npm.outputs.tag != 'latest'
+        # The complete contributor gate remains `pnpm check`. Publishing the
+        # OpenTUI beta deliberately gates only its CLI/daemon/package journey;
+        # deferred Web GUI, desktop, native notifier, and product-rig breadth
+        # cannot block this package cut.
+        run: pnpm run release:opentui:check
+
+      - name: Run full stable release checks
+        if: steps.npm.outputs.tag == 'latest'
+        # Stable releases retain the complete historical quality gate and
+        # native payload. The integration test relies on a live tmux server
+        # unavailable in CI, so keep its established CI-only skip.
         run: |
           mv src/integration.test.ts src/integration.test.ts.skip 2>/dev/null || true
           pnpm run check
@@ -156,7 +248,7 @@ jobs:
         run: pnpm exec tsc -p tsconfig.json
 
       - name: Publish tmux-ide
-        run: pnpm publish --access public --no-git-checks
+        run: pnpm publish --access public --no-git-checks --tag "${{ steps.npm.outputs.tag }}"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -182,17 +274,6 @@ jobs:
 
       - name: Gate on tap secret
         id: gate
-        run: |
-          if [[ -z "${TAP_PUSH_TOKEN}" ]]; then
-            echo "TAP_PUSH_TOKEN not set — skipping tap bump (create wavyrai/homebrew-tap and add the secret to enable)."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Resolve release version
-        if: steps.gate.outputs.enabled == 'true'
-        id: release
         shell: bash
         run: |
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
@@ -201,18 +282,24 @@ jobs:
             raw="${GITHUB_REF_NAME}"
           fi
           version="${raw#v}"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Invalid release version: $raw" >&2
-            exit 1
-          fi
+          npm_tag="$(node scripts/lib/npm-release-tag.mjs "$version")"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$npm_tag" != "latest" ]]; then
+            echo "Prerelease v$version uses npm dist-tag '$npm_tag'; leaving stable Homebrew unchanged."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          elif [[ -z "${TAP_PUSH_TOKEN}" ]]; then
+            echo "TAP_PUSH_TOKEN not set — skipping tap bump (create wavyrai/homebrew-tap and add the secret to enable)."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Wait for the npm tarball and compute its sha256
         if: steps.gate.outputs.enabled == 'true'
         id: tarball
         shell: bash
         run: |
-          version="${{ steps.release.outputs.version }}"
+          version="${{ steps.gate.outputs.version }}"
           url="https://registry.npmjs.org/tmux-ide/-/tmux-ide-${version}.tgz"
           # The registry can lag the publish by a little; poll up to 5 minutes.
           for i in $(seq 1 30); do
@@ -230,7 +317,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${{ steps.release.outputs.version }}"
+          version="${{ steps.gate.outputs.version }}"
           url="${{ steps.tarball.outputs.url }}"
           sha="${{ steps.tarball.outputs.sha256 }}"
           if ! git clone --depth 1 "https://x-access-token:${TAP_PUSH_TOKEN}@github.com/wavyrai/homebrew-tap.git" tap; then

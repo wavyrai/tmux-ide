@@ -1,0 +1,87 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`production ApplicationShellView retains shell, window strip, pane chrome, and canvas at %sx%s 1`] = `
+"  ⌂  ●❯                                                                    live
+  tmux              ● main [WORKING]
+ ● main             ● Codex [WORKING]
+ ○ website          CANONICAL-CELL
+
+ Agents
+ • Codex [WORKING]
+
+
+
+…
+
+  F5 · ^q quit       Terminals · terminal · ready · ^o pane"
+`;
+
+exports[`production ApplicationShellView retains shell, window strip, pane chrome, and canvas at %sx%s 2`] = `
+"   workspace   ⌂ Home  ●❯ Terminals                                                                                live
+  tmux-ide                  ● main [WORKING]
+ ● main                     ● Codex [WORKING]
+ ○ website                  CANONICAL-CELL
+
+ Agents
+ • Codex [WORKING]
+
+
+
+…
+
+  F5 palette · ^q quit       Terminals · focus terminal · ready · ^o pane · ^t window · F5 split/close · ^q put away"
+`;
+
+exports[`production ApplicationShellView retains shell, window strip, pane chrome, and canvas at %sx%s 3`] = `
+"   workspace  F1  ⌂ Home  F2 ●❯ Terminals                                                                                                                                                          live
+  tmux-ide                  ● main [WORKING]
+ ● main                     ● Codex [WORKING]
+ ○ website                  CANONICAL-CELL
+
+ Agents
+ • Codex [WORKING]
+
+
+
+…
+
+  F5 palette · ^q quit       tmux-ide · workspace Terminals · focus terminal · ready · ^o pane · ^t window · F5 split/close · ^q put away"
+`;
+
+exports[`production ApplicationShellView reacts palette geometry through narrow live resizes 1`] = `
+"  ⌂  ●❯                live
+  ╭──────────────────────╮
+ ●│ Command palette      │
+ ○│ › F1 Home            │
+  │ F2 Terminals         │
+ A│ Split pane right     │
+ •│ Split pane down      │e
+  ╰──────────────────────╯
+  F5 · ^q quit   Terminals …"
+`;
+
+exports[`production ApplicationShellView reacts palette geometry through narrow live resizes 2`] = `
+"  ⌂  ●❯        live
+ ●╭──────────────╮
+ ○│ Commands     │
+  │ › F1 Home    │tm
+ A│ F2 Terminals │A
+ •╰──────────────╯Se
+  F5 · ^q quit    Wo"
+`;
+
+exports[`production ApplicationShellView preserves canonical attention while prioritizing mixed window activity 1`] = `
+"   workspace   ⌂ Home  ●❯ Terminals                                                                                live
+  tmux-ide                  ● main ! [WORKING]
+ ● main                     ● Codex [WORKING]                       ○ Scout ! [IDLE]
+ ○ website                  CANONICAL-CELL                          CANONICAL-CELL
+
+ Agents
+ • Codex [WORKING]
+ ! Scout ! [IDLE]
+
+
+…
+
+  F5 palette · ^q quit       Terminals · focus terminal · ready · ^o pane · ^t window · F5 split/close · ^q put away"
+`;

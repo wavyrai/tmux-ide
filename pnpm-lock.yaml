@@ -49,6 +49,9 @@ importers:
       solid-js:
         specifier: 1.9.12
         version: 1.9.12
+      string-width:
+        specifier: ^7.2.0
+        version: 7.2.0
       ws:
         specifier: ^8.21.0
         version: 8.21.0
@@ -86,6 +89,9 @@ importers:
       prettier:
         specifier: ^3.8.1
         version: 3.8.1
+      tsx:
+        specifier: ^4.20.7
+        version: 4.21.0
       turbo:
         specifier: ^2.3.3
         version: 2.8.17

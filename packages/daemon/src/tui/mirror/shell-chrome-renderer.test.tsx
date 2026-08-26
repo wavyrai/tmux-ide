@@ -9,7 +9,7 @@ import {
   ShellMiniSidebar,
   ShellStatusStrip,
   ShellTabBar,
-} from "./shell-chrome.tsx";
+} from "./shell-chrome-view.tsx";
 import {
   shellChromeLayout,
   shellNavigationPresentation,

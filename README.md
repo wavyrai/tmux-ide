@@ -21,6 +21,24 @@
   <a href="https://github.com/wavyrai/tmux-ide/actions/workflows/ci.yml"><img src="https://github.com/wavyrai/tmux-ide/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
 </p>
 
+## OpenTUI beta
+
+The current beta is deliberately focused on a great visual client for ordinary
+tmux sessions. It ships Home and Terminals, textual agent state in the sidebar,
+window tabs and pane chrome, and direct pane/window control. The web client and
+the broader experimental surface catalog are deferred while this path hardens.
+
+```bash
+npm install -g tmux-ide@beta
+tmux-ide app
+```
+
+The first explicit app launch downloads the exact-version OpenTUI runtime for
+macOS or Linux, verifies its release metadata and SHA-256 digests, and caches it
+under `~/.tmux-ide/bin`. Your tmux server, panes, and PTYs remain the source of
+truth. Report beta problems through
+[GitHub Issues](https://github.com/wavyrai/tmux-ide/issues).
+
 Other tools rebuild the terminal to understand agents. tmux-ide teaches the terminal you already use to understand them. One command adds a native chrome to any tmux session: a fleet of tabs with live agent-status glyphs, ground-truth working/blocked/done detection, notifications when an agent needs you, and a crash-proof restore that rebuilds your whole fleet — including your Claude conversations. It's built _around_ tmux, so there's nothing to migrate and nothing to lock into.
 
 ## Install
@@ -139,9 +157,9 @@ tmux-ide also has a `worktree` flow (a git worktree plus an adopted session per 
 
 - **tmux** — 3.2+ recommended (`tmux-ide doctor` requires ≥ 3.0; 3.6 is the smoothest)
 - **Node.js** — ≥ 20
-- **Bun** — only needed for the TUI surfaces (home cockpit, sidebar, floating
-  panels) **when running from a dev checkout**. Installed releases ship a
-  compiled `tmux-ide-tui` binary instead, so no bun runtime is required.
+- **Bun** — only needed when running or compiling the TUI from a development
+  checkout. Installed releases use a verified per-platform runtime, so users do
+  not need Bun.
 
 Run `tmux-ide doctor` to check your machine — the "TUI surfaces" row reports
 whether they resolve via a dev checkout (bun) or the compiled binary.
@@ -164,14 +182,15 @@ compiled binary, then a per-platform binary downloaded on demand.
 
 **Per-platform binaries.** The npm tarball does _not_ carry the ~70MB binary (a
 surprise on every install). Instead each release publishes one per platform
-(darwin-arm64, darwin-x64, linux-x64, linux-arm64) as a GitHub release asset. On
-a machine with no `bun` and no shipped binary, fetch the right one on demand:
+(darwin-arm64, darwin-x64, linux-x64, linux-arm64) as a GitHub release asset.
+The first `tmux-ide app` launch downloads and verifies the exact release asset.
+The explicit command remains available as a retry path:
 
 ```bash
-tmux-ide update --tui-binary   # downloads it to ~/.tmux-ide/bin/ (verified, chmod +x)
+tmux-ide update --tui-binary   # retry the verified download
 ```
 
-Nothing is downloaded automatically on install. `tmux-ide doctor`'s "TUI
+Nothing is downloaded by `npm install` itself. `tmux-ide doctor`'s "TUI
 surfaces" row spells out how surfaces currently resolve on your machine.
 
 ## Contributor workflow

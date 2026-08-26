@@ -24,6 +24,7 @@ import { resolveConfig } from "../packages/daemon/src/lib/resolved-config.ts";
 import { resolveProjectConfigContext } from "../packages/daemon/src/lib/config-context.ts";
 import {
   ensureCompiledTuiRuntimeDir,
+  ensureTuiLaunchAvailable,
   resolveTuiLaunch,
   findCompiledTui,
   isBunAvailable,
@@ -235,7 +236,6 @@ ${bold("Usage:")}
   ${cyan("tmux-ide popup")} <widget>     ${dim("Open a widget as a floating panel (explorer/changes/config; ⌥e/⌥g/⌥,)")}
   ${cyan("tmux-ide widget")} <markdown|image|card> [file]  ${dim("Render rich live content in the current pane")}
   ${cyan("tmux-ide show")} <file>          ${dim("Show Markdown, images, GIFs, or cards by file type")}
-  ${cyan("tmux-ide web")} [--port N]       ${dim("Serve the packaged Web GUI on loopback (ephemeral port by default)")}
   ${cyan("tmux-ide sidebar-toggle")} [--session S]  ${dim("Toggle the app nav column (⌥b on adopted sessions)")}
   ${cyan("tmux-ide worktree create")} <branch> [--from <ref>] [--dir <path>] [--no-session]
                               ${dim("Add a git worktree (new branch) + open a session in it")}
@@ -538,8 +538,26 @@ function launchTeamCockpit(): void {
 // else runs the app in this terminal as before. The HOSTED_ENV guard keeps the
 // app INSIDE the host session from re-hosting itself.
 async function runApp(appArgs: string[]): Promise<void> {
+  // A clean npm install has neither a checkout runtime nor Bun. Acquire the
+  // exact-version OpenTUI release artifact on the first explicit app launch so
+  // users never need a hidden setup command. This must complete before daemon
+  // election: a failed/offline download must not leave a persistent background
+  // process behind. Existing binaries and Bun-backed development checkouts
+  // return without network work.
+  await ensureTuiLaunchAvailable(
+    {
+      surface: "app",
+      scriptPath: appScriptPath,
+      args: appArgs,
+      checkoutExists: existsSync(appScriptPath),
+      bunAvailable: isBunAvailable(),
+      compiledBinary: findCompiledTui(),
+      preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1",
+    },
+    { log: (message) => process.stderr.write(`[tmux-ide] ${message}\n`) },
+  );
   // The app is a thin client. Establish the one persistent daemon generation
-  // before OpenTUI mounts so its first frame never races manual daemon startup.
+  // only after its renderer is known-runnable, then mount against that owner.
   await ensureCanonicalDaemon({ entryPath: nodeCliPath });
   const hosted = wantsHostedApp({
     flagDetachable: values.detachable === true,
@@ -2042,36 +2060,10 @@ try {
     }
 
     case "web": {
-      const rawPort = values.port;
-      const webPort = rawPort === undefined ? undefined : Number(rawPort);
-      if (
-        webPort !== undefined &&
-        (!Number.isInteger(webPort) || webPort < 0 || webPort > 65_535)
-      ) {
-        throw new IdeError(`Invalid Web GUI port: ${rawPort}`, {
-          code: "USAGE",
-          exitCode: 1,
-        });
-      }
-      const { startProductionWebServer } =
-        await import("../apps/desktop-renderer/scripts/production-web-server.ts");
-      const web = await startProductionWebServer({
-        staticRoot: resolve(__dirname, "../apps/desktop-renderer/dist"),
-        cliEntryPath: nodeCliPath,
-        cwd: process.cwd(),
-        ...(webPort === undefined ? {} : { port: webPort }),
-      });
-      process.stdout.write(`${web.url}\n`);
-      let closing = false;
-      const shutdown = (): void => {
-        if (closing) return;
-        closing = true;
-        void web.stop().then(() => process.exit(0));
-      };
-      process.once("SIGINT", shutdown);
-      process.once("SIGTERM", shutdown);
-      await new Promise(() => {});
-      break;
+      throw new IdeError(
+        "The Web GUI is not included in the OpenTUI beta. Run `tmux-ide app` for the supported interface.",
+        { code: "WEB_GUI_NOT_INCLUDED", exitCode: 1 },
+      );
     }
 
     case "command-center": {
