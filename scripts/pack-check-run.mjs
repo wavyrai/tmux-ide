@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { gzipSync } from "node:zlib";
+import { frameShowsTerminalFocus } from "./lib/packed-opentui-frame.mjs";
 
 const root = process.cwd();
 const tmpRoot = mkdtempSync(join(tmpdir(), "tmux-ide-pack-run-"));
@@ -721,7 +722,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     "chooser terminal focus settles",
     5_000,
     () => {
-      if (!capture(many.targetPane).includes("focus terminal")) {
+      if (!frameShowsTerminalFocus(capture(many.targetPane))) {
         stableTerminalFocusFrames = 0;
         return false;
       }
@@ -774,7 +775,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     "one-session terminal focus settles",
     5_000,
     () => {
-      if (!capture(one.targetPane).includes("focus terminal")) {
+      if (!frameShowsTerminalFocus(capture(one.targetPane))) {
         stableOneSessionFocusFrames = 0;
         return false;
       }
@@ -910,7 +911,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     20_000,
     () => {
       const frame = capture(one.targetPane);
-      if (!frame.includes(" live") || !frame.includes("focus terminal")) {
+      if (!frame.includes(" live") || !frameShowsTerminalFocus(frame)) {
         stableReconnectFocusFrames = 0;
         return false;
       }
@@ -1000,7 +1001,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       if (
         clients.status !== 0 ||
         !clients.stdout.split("\n").includes(hosted.hostSession) ||
-        !frame.includes("focus terminal")
+        !frameShowsTerminalFocus(frame)
       ) {
         stableReturnFocusFrames = 0;
         return false;

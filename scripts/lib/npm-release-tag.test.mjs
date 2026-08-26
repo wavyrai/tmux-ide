@@ -64,6 +64,8 @@ test("binary releases bind manual tags, builds, and manifests to one resolved co
     workflow,
     /if \[\[ "\$version" == \*-\* \]\]; then[\s\S]+release_flags\+=\(--prerelease\)/u,
   );
+  assert.match(workflow, /version="\$\{\{ steps\.resolve\.outputs\.version \}\}"/u);
+  assert.match(workflow, /actual_prerelease=.*gh release view.*isPrerelease/u);
   assert.match(workflow, /ref: \$\{\{ needs\.release\.outputs\.commit \}\}/u);
   assert.match(workflow, /RELEASE_VERSION: \$\{\{ needs\.release\.outputs\.version \}\}/u);
   assert.match(workflow, /printf 'commit %s\\n' "\$\{\{ needs\.release\.outputs\.commit \}\}"/u);

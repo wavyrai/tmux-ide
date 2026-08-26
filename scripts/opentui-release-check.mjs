@@ -18,6 +18,8 @@ const checks = [
       "scripts/prepublish-opentui-check.mjs",
       "scripts/lib/npm-release-tag.mjs",
       "scripts/lib/npm-release-tag.test.mjs",
+      "scripts/lib/packed-opentui-frame.mjs",
+      "scripts/lib/packed-opentui-frame.test.mjs",
     ],
   },
   {
@@ -38,7 +40,14 @@ const checks = [
       "scripts/prepublish-opentui-check.mjs",
       "scripts/lib/npm-release-tag.mjs",
       "scripts/lib/npm-release-tag.test.mjs",
+      "scripts/lib/packed-opentui-frame.mjs",
+      "scripts/lib/packed-opentui-frame.test.mjs",
     ],
+  },
+  {
+    boundary: "OpenTUI journey predicate tests",
+    command: "node",
+    args: ["--test", "scripts/lib/packed-opentui-frame.test.mjs"],
   },
   {
     boundary: "OpenTUI daemon typecheck",

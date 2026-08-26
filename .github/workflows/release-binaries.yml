@@ -66,6 +66,7 @@ jobs:
         shell: bash
         run: |
           tag="${{ steps.resolve.outputs.tag }}"
+          version="${{ steps.resolve.outputs.version }}"
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             expected_commit="${{ steps.resolve.outputs.commit }}"
             verify_dispatch_tag() {
@@ -117,6 +118,16 @@ jobs:
               verify_dispatch_tag required
             fi
             echo "Release $tag already exists — reusing it."
+          fi
+
+          expected_prerelease=false
+          if [[ "$version" == *-* ]]; then
+            expected_prerelease=true
+          fi
+          actual_prerelease="$(gh release view "$tag" --json isPrerelease --jq '.isPrerelease')"
+          if [[ "$actual_prerelease" != "$expected_prerelease" ]]; then
+            echo "Release $tag prerelease classification is $actual_prerelease; expected $expected_prerelease." >&2
+            exit 1
           fi
 
   binaries:
