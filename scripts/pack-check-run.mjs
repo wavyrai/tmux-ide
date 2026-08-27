@@ -2,6 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -14,17 +15,49 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { frameShowsTerminalFocus } from "./lib/packed-opentui-frame.mjs";
+import { assertCleanEvidenceSource, releaseSourceState } from "./lib/release-source-state.mjs";
 
 const root = process.cwd();
+const packageVersion = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
+const daemonPackageVersion = JSON.parse(
+  readFileSync(join(root, "packages/daemon/package.json"), "utf8"),
+).version;
+if (packageVersion !== daemonPackageVersion) {
+  throw new Error(
+    `Release package versions disagree: tmux-ide=${packageVersion}, @tmux-ide/daemon=${daemonPackageVersion}`,
+  );
+}
+const releaseCommitResult = spawnSync("git", ["rev-parse", "HEAD"], {
+  cwd: root,
+  encoding: "utf8",
+});
+const releaseCommit = releaseCommitResult.stdout?.trim() ?? "";
+if (releaseCommitResult.status !== 0 || !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u.test(releaseCommit)) {
+  throw new Error(
+    `Could not resolve canonical release commit: ${releaseCommitResult.stderr ?? ""}`,
+  );
+}
+const platformTag = `${process.platform}-${process.arch}`;
+const evidenceDir = process.env.TMUX_IDE_PACK_EVIDENCE_DIR
+  ? join(process.env.TMUX_IDE_PACK_EVIDENCE_DIR)
+  : null;
+const sourceState = releaseSourceState(
+  spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], {
+    cwd: root,
+    encoding: "utf8",
+  }).stdout ?? "",
+);
+if (evidenceDir) assertCleanEvidenceSource(sourceState);
 const tmpRoot = mkdtempSync(join(tmpdir(), "tmux-ide-pack-run-"));
 const tarballDir = join(tmpRoot, "tarballs");
 const projectDir = join(tmpRoot, "project");
 const launchDir = join(tmpRoot, "configless-cwd");
 const homeDir = join(tmpRoot, "home");
 const mockReleaseDir = join(tmpRoot, "mock-release");
-const mockReleaseBinaryPath = join(mockReleaseDir, "tmux-ide-tui");
-const mockReleaseAssetPath = join(mockReleaseDir, "tmux-ide-tui.gz");
-const mockReleaseManifestPath = join(mockReleaseDir, "tmux-ide-tui.gz.sha256");
+const runtimeName = `tmux-ide-tui-${platformTag}`;
+const mockReleaseBinaryPath = join(mockReleaseDir, runtimeName);
+const mockReleaseAssetPath = join(mockReleaseDir, `${runtimeName}.gz`);
+const mockReleaseManifestPath = join(mockReleaseDir, `${runtimeName}.gz.sha256`);
 const mockFetchPreloadPath = join(tmpRoot, "mock-release-fetch.mjs");
 // tmux's AF_UNIX path ceiling is only ~104 bytes on macOS. tmpdir() expands to
 // a long /var/folders path there, so keep this one disposable socket root under
@@ -145,6 +178,16 @@ const children = [];
 const childOutput = new Map();
 const childExits = new Map();
 let cleanupError = null;
+let rootTarball = null;
+let installedCliPath = null;
+let installedVersion = null;
+let runtimeEvidence = null;
+let journeyObservations = null;
+let proofCompleted = false;
+
+function sha256File(path) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
 
 function spawnInstalledCli(installedCli) {
   const child = spawn(installedCli, ["--headless", "--json"], {
@@ -190,8 +233,6 @@ async function waitForChild(child, timeoutMs = 20_000) {
 }
 
 async function runInstalledTuiGate(installedCli) {
-  const packageVersion = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
-  const platformTag = `${process.platform}-${process.arch}`;
   if (!new Set(["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"]).has(platformTag)) {
     throw new Error(`Installed TUI gate has no release binary for ${platformTag}`);
   }
@@ -209,6 +250,28 @@ async function runInstalledTuiGate(installedCli) {
   run("bun", ["scripts/build-tui.mjs", "--outfile", mockReleaseBinaryPath], {
     stdio: "inherit",
   });
+  const runtimeProvenanceResult = spawnSync(mockReleaseBinaryPath, ["__release-provenance"], {
+    cwd: launchDir,
+    env: { ...process.env, ...tmuxEnv(dirname(installedCli)) },
+    encoding: "utf8",
+  });
+  if (runtimeProvenanceResult.status !== 0) {
+    throw new Error(
+      `Compiled runtime provenance failed (${runtimeProvenanceResult.status}):\n${runtimeProvenanceResult.stdout}${runtimeProvenanceResult.stderr}`,
+    );
+  }
+  const runtimeProvenance = JSON.parse(runtimeProvenanceResult.stdout.trim());
+  const expectedProvenance = {
+    version: packageVersion,
+    commit: releaseCommit,
+    platform: platformTag,
+    sourceState,
+  };
+  if (JSON.stringify(runtimeProvenance) !== JSON.stringify(expectedProvenance)) {
+    throw new Error(
+      `Compiled runtime provenance disagrees: ${JSON.stringify(runtimeProvenance)} != ${JSON.stringify(expectedProvenance)}`,
+    );
+  }
   const mockBinary = readFileSync(mockReleaseBinaryPath);
   const mockAsset = gzipSync(mockBinary);
   writeFileSync(mockReleaseAssetPath, mockAsset);
@@ -220,7 +283,7 @@ async function runInstalledTuiGate(installedCli) {
       `${createHash("sha256").update(mockBinary).digest("hex")}  ${assetName.slice(0, -3)}`,
       `version ${packageVersion}`,
       `platform ${platformTag}`,
-      `commit ${"0".repeat(40)}`,
+      `commit ${releaseCommit}`,
       "",
     ].join("\n"),
   );
@@ -517,6 +580,14 @@ async function runInstalledTuiGate(installedCli) {
     await terminateLaunchedTui();
     tmuxResult(["kill-server"]);
   }
+  return {
+    provenance: runtimeProvenance,
+    binarySha256: createHash("sha256").update(mockBinary).digest("hex"),
+    compressedSha256: createHash("sha256").update(mockAsset).digest("hex"),
+    manifestSha256: createHash("sha256")
+      .update(readFileSync(mockReleaseManifestPath))
+      .digest("hex"),
+  };
 }
 
 async function runPackedGoldenJourney(installedCli, initialOwner) {
@@ -668,6 +739,16 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     const result = tmuxResult(["send-keys", "-t", app.targetPane, ...keys]);
     if (result.status !== 0) throw new Error(`Could not send ${keys.join(" ")}: ${result.stderr}`);
   };
+  const clickText = (app, text) => {
+    const lines = capture(app.targetPane).split("\n");
+    const row = lines.findIndex((line) => line.includes(text));
+    if (row === -1) throw new Error(`Could not find ${JSON.stringify(text)} to click`);
+    const x = 2;
+    const y = row + 1;
+    const sequence = `\u001b[<0;${x};${y}M\u001b[<0;${x};${y}m`;
+    const result = tmuxResult(["send-keys", "-l", "-t", app.targetPane, sequence]);
+    if (result.status !== 0) throw new Error(`Could not click ${text}: ${result.stderr}`);
+  };
   const typeCommand = (app, command) => {
     const literal = tmuxResult(["send-keys", "-l", "-t", app.targetPane, command]);
     if (literal.status !== 0) throw new Error(`Could not type packed input: ${literal.stderr}`);
@@ -798,6 +879,30 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   ]);
   if (preparedWindow.status !== 0)
     throw new Error(`Could not prepare second window: ${preparedWindow.stderr}`);
+  const preparedAgentPaneResult = tmuxResult([
+    "list-panes",
+    "-t",
+    "=journey-beta:pack-window",
+    "-F",
+    "#{pane_id}",
+  ]);
+  const preparedAgentPane = preparedAgentPaneResult.stdout.trim();
+  if (preparedAgentPaneResult.status !== 0 || !preparedAgentPane.startsWith("%")) {
+    throw new Error(`Could not resolve prepared agent pane: ${preparedAgentPaneResult.stderr}`);
+  }
+  const agentDisplayName = `Pack Navigator ${process.pid}`;
+  const agentClickLabel = "Pack Navigator";
+  const nowSec = Math.floor(Date.now() / 1000);
+  for (const [option, value] of [
+    ["@agent_hint", "codex"],
+    ["@agent_state", `idle:${nowSec}`],
+    ["@agent_display_name", agentDisplayName],
+  ]) {
+    const stamped = tmuxResult(["set-option", "-p", "-t", preparedAgentPane, option, value]);
+    if (stamped.status !== 0) {
+      throw new Error(`Could not stamp ${option} on ${preparedAgentPane}: ${stamped.stderr}`);
+    }
+  }
   const one = await launchApp();
   await observe(
     "one-session automatic open",
@@ -817,6 +922,49 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       stableOneSessionFocusFrames += 1;
       return stableOneSessionFocusFrames >= 5;
     },
+    one.diagnostics,
+  );
+
+  const paneBeforeAgentJump = activePane("journey-beta");
+  if (!paneBeforeAgentJump || paneBeforeAgentJump === preparedAgentPane) {
+    throw new Error(`Could not establish a distinct source pane for installed agent navigation`);
+  }
+  await observe(
+    "installed agent row publication",
+    10_000,
+    () => capture(one.targetPane).includes(agentClickLabel),
+    one.diagnostics,
+  );
+  const semanticAgentPane = tmuxResult([
+    "show-options",
+    "-p",
+    "-v",
+    "-t",
+    preparedAgentPane,
+    "@tmux_ide_pane_id",
+  ]).stdout.trim();
+  if (!semanticAgentPane.startsWith("pane.")) {
+    throw new Error(
+      `Agent pane ${preparedAgentPane} has no durable semantic identity: ${semanticAgentPane}`,
+    );
+  }
+  clickText(one, agentClickLabel);
+  const agentJumpMarker = `PACK_AGENT_JUMP_${process.pid}`;
+  typeCommand(one, `printf '${agentJumpMarker}\\n'`);
+  await observe(
+    "sidebar agent exact-pane navigation and immediate input",
+    10_000,
+    () =>
+      activePane("journey-beta") === preparedAgentPane &&
+      capture(preparedAgentPane).includes(agentJumpMarker) &&
+      !capture(paneBeforeAgentJump).includes(agentJumpMarker),
+    one.diagnostics,
+  );
+  send(one, "C-t");
+  await observe(
+    "return from agent window",
+    10_000,
+    () => activePane("journey-beta") === paneBeforeAgentJump,
     one.diagnostics,
   );
 
@@ -871,6 +1019,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     },
     one.diagnostics,
   );
+
   const beforeFocus = activePane("journey-beta");
   send(one, "C-o");
   await observe(
@@ -1083,6 +1232,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   controlClient.kill("SIGTERM");
 
   console.log(`packed OpenTUI journey latency ${JSON.stringify(observations)}`);
+  return observations;
 }
 
 try {
@@ -1093,13 +1243,26 @@ try {
   run("pnpm", ["build:cli"], { stdio: "inherit" });
   run("pnpm", ["pack", "--pack-destination", tarballDir], { stdio: "inherit" });
 
-  const rootTarball = findTarball("tmux-ide-");
+  rootTarball = findTarball("tmux-ide-");
   run("npm", ["init", "-y"], { cwd: projectDir });
   run("npm", ["install", rootTarball], { cwd: projectDir, stdio: "inherit" });
 
-  run("npx", ["tmux-ide", "--version"], { cwd: projectDir, stdio: "inherit" });
-
   const installedCli = join(projectDir, "node_modules", ".bin", "tmux-ide");
+  installedCliPath = installedCli;
+  installedVersion = run(installedCli, ["--version"], { cwd: projectDir })
+    .stdout.trim()
+    .replace(/^tmux-ide v/u, "");
+  if (installedVersion !== packageVersion) {
+    throw new Error(`Installed CLI version ${installedVersion} disagrees with ${packageVersion}`);
+  }
+  const installedRootVersion = JSON.parse(
+    readFileSync(join(projectDir, "node_modules", "tmux-ide", "package.json"), "utf8"),
+  ).version;
+  if (installedRootVersion !== packageVersion) {
+    throw new Error(
+      `Installed package version ${installedRootVersion} disagrees with ${packageVersion}`,
+    );
+  }
   const daemonInfo = join(homeDir, ".tmux-ide", "daemon.json");
   const installedCommand = (args, fetchMode = "success", timeout = 10_000) =>
     spawnSync(installedCli, args, {
@@ -1306,8 +1469,9 @@ try {
   // The app is now a thin client which intentionally ensures and reuses the
   // persistent canonical daemon; running it before this section would make the
   // election warm and leave an untracked detached owner outside `children`.
-  await runInstalledTuiGate(installedCli);
-  await runPackedGoldenJourney(installedCli, owner);
+  runtimeEvidence = await runInstalledTuiGate(installedCli);
+  journeyObservations = await runPackedGoldenJourney(installedCli, owner);
+  proofCompleted = true;
 } finally {
   spawnSync("tmux", ["-S", installedTmuxSocketPath, "kill-server"], {
     env: { ...process.env, TMUX: "" },
@@ -1336,6 +1500,66 @@ try {
       }
       cleanupError = new Error("Installed headless contender did not exit after SIGTERM");
     }
+  }
+  if (evidenceDir) {
+    mkdirSync(evidenceDir, { recursive: true, mode: 0o700 });
+    const copied = [];
+    for (const source of [
+      rootTarball,
+      mockReleaseBinaryPath,
+      mockReleaseAssetPath,
+      mockReleaseManifestPath,
+      installedCliPath ? join(projectDir, "node_modules", "tmux-ide", "bin", "cli.js") : null,
+    ]) {
+      if (!source || !existsSync(source)) continue;
+      const name = source.endsWith("/cli.js") ? "tmux-ide-cli.js" : source.split("/").at(-1);
+      const destination = join(evidenceDir, name);
+      copyFileSync(source, destination);
+      copied.push({
+        name,
+        bytes: readFileSync(destination).byteLength,
+        sha256: sha256File(destination),
+      });
+    }
+    writeFileSync(
+      join(evidenceDir, "proof.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          completed: proofCompleted,
+          version: packageVersion,
+          commit: releaseCommit,
+          platform: platformTag,
+          sourceState,
+          installedVersion,
+          runtime: runtimeEvidence,
+          artifacts: copied,
+          journey: journeyObservations,
+          isolation: {
+            emptyHome: true,
+            emptyCwd: true,
+            repositoryNodeModulesOnPath: false,
+            sourceOverride: false,
+            preseededRuntime: false,
+            privateTmuxSocket: true,
+          },
+          platformMatrix: Object.fromEntries(
+            ["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"].map((platform) => [
+              platform,
+              platform === platformTag
+                ? proofCompleted
+                  ? "passed-local"
+                  : "failed-local"
+                : platform.startsWith("linux-")
+                  ? "requires-ci"
+                  : "not-tested-locally",
+            ]),
+          ),
+        },
+        null,
+        2,
+      )}\n`,
+    );
   }
   rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   rmSync(tmuxTmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
