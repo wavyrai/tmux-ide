@@ -1012,8 +1012,10 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     "split pane UI publication settles",
     10_000,
     () => {
-      const paneActionRails = capture(one.targetPane).match(/\[→\]\[↓\]\[×\]\[⋯\]/gu) ?? [];
-      if (paneActionRails.length < 2) {
+      // Every pane retains its menu chrome at compact widths; only the active
+      // pane is guaranteed enough room for the expanded split/close rail.
+      const paneMenus = capture(one.targetPane).match(/\[⋯\]/gu) ?? [];
+      if (paneMenus.length < 2) {
         stableSplitFrames = 0;
         return false;
       }
