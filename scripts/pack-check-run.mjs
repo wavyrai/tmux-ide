@@ -890,8 +890,11 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   if (preparedAgentPaneResult.status !== 0 || !preparedAgentPane.startsWith("%")) {
     throw new Error(`Could not resolve prepared agent pane: ${preparedAgentPaneResult.stderr}`);
   }
-  const agentDisplayName = `Pack Navigator ${process.pid}`;
-  const agentClickLabel = "Pack Navigator";
+  // Keep the synthetic identity inside the compact sidebar's guaranteed text
+  // budget so the cross-platform journey clicks the rendered row rather than
+  // depending on whether a host truncates the longer display name.
+  const agentDisplayName = "PackNav";
+  const agentClickLabel = agentDisplayName;
   const nowSec = Math.floor(Date.now() / 1000);
   for (const [option, value] of [
     ["@agent_hint", "codex"],
