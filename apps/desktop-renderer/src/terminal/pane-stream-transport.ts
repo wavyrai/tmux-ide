@@ -82,6 +82,41 @@ const WS_CONNECTING = 0;
 const WS_OPEN = 1;
 const WS_CLOSING = 2;
 
+type Card5InputOperationGlobals = typeof globalThis & {
+  __TMUX_IDE_CARD5_INPUT_OPERATION_RECORD__?: (event: {
+    readonly stage: "authority-request" | "authority-result" | "input-send" | "input-ack";
+    readonly outcome:
+      | "attempt"
+      | "sent"
+      | "send-failed"
+      | "granted"
+      | "rejected"
+      | "authority-timeout"
+      | "ack-timeout"
+      | "closed"
+      | "unavailable"
+      | "ok";
+    readonly generation: string;
+    readonly lifecycleRequestId: string;
+    readonly authorityRequestId?: string;
+    readonly clientId?: string | null;
+    readonly pane?: string;
+    readonly seq?: number;
+  }) => void;
+};
+
+function recordCard5InputOperation(
+  event: Parameters<
+    NonNullable<Card5InputOperationGlobals["__TMUX_IDE_CARD5_INPUT_OPERATION_RECORD__"]>
+  >[0],
+): void {
+  try {
+    (globalThis as Card5InputOperationGlobals).__TMUX_IDE_CARD5_INPUT_OPERATION_RECORD__?.(event);
+  } catch {
+    // Detailed evidence cannot alter transport truth.
+  }
+}
+
 type SocketEventType = "open" | "message" | "close" | "error";
 
 export interface PaneStreamSocketEvent {
@@ -256,6 +291,8 @@ export interface PaneStreamSessionListeners {
 
 export interface PaneStreamSessionHandle {
   dispose(): void;
+  /** Daemon-authenticated identity of this exact redeemed physical connection. */
+  connectionClientId?(): string | null;
   updatePresence?(state: SessionRuntimePresenceState): void;
   noteActivity?(activity: SessionRuntimeActivityKind): void;
   /** Exact authenticated client identity for authority held by this connection. */
@@ -268,6 +305,23 @@ export interface PaneStreamSessionHandle {
   releaseAuthority?(
     authority: SessionRuntimeAuthorityKind,
   ): Promise<SessionRuntimeAuthoritySnapshot | null>;
+  /** Detailed-only identity of the retained physical WorkspaceClient stream. */
+  card5PhysicalBinding?(): Card5PhysicalPaneStreamBinding | null;
+  /** Detailed-only, identity-fenced physical lifecycle subscription. */
+  subscribeCard5PhysicalBinding?(
+    listener: (binding: Card5PhysicalPaneStreamBinding | null) => void,
+  ): () => void;
+}
+
+export interface Card5PhysicalPaneStreamBinding {
+  readonly physicalEpoch: number;
+  readonly generation: string;
+  readonly requestId: string;
+  readonly runtimeSession: string;
+  readonly workspaceName: string;
+  readonly semanticPaneIds: readonly string[];
+  readonly clientId: string;
+  readonly stage: "first-seed";
 }
 
 export type PaneStreamResizeResult =
@@ -563,6 +617,7 @@ class PaneStreamSession {
   #inboundFrames = 0;
   #clientSequence = 0;
   #authorityRuntimeSession: string | null = null;
+  #connectionClientId: string | null = null;
   #layoutTopologyEpoch = -1;
   #firstSeedObserved = false;
   readonly #authorityWaiters = new Map<
@@ -583,7 +638,7 @@ class PaneStreamSession {
       }) => void;
     }
   >();
-  readonly #inputWaiters = new Map<number, () => void>();
+  readonly #inputWaiters = new Map<number, (accepted: boolean) => void>();
   readonly #viewportWaiters = new Map<
     number,
     {
@@ -714,15 +769,55 @@ class PaneStreamSession {
     const accepted = new Promise<boolean>((resolve) => {
       const cancel = this.#schedule(() => {
         this.#inputWaiters.delete(seq);
+        recordCard5InputOperation({
+          stage: "input-ack",
+          outcome: "ack-timeout",
+          generation: this.#descriptor.daemonInstanceId,
+          lifecycleRequestId: this.#descriptor.requestId,
+          clientId: this.#connectionClientId,
+          pane,
+          seq,
+        });
         resolve(false);
       }, 2_000);
-      this.#inputWaiters.set(seq, () => {
+      this.#inputWaiters.set(seq, (didAccept) => {
         cancel();
-        resolve(true);
+        resolve(didAccept);
       });
     });
     const typed = typeof input === "string" ? { kind: "text" as const, data: input } : input;
-    this.#sendControl({ type: "input", pane, seq, ...typed });
+    recordCard5InputOperation({
+      stage: "input-send",
+      outcome: "attempt",
+      generation: this.#descriptor.daemonInstanceId,
+      lifecycleRequestId: this.#descriptor.requestId,
+      clientId: this.#connectionClientId,
+      pane,
+      seq,
+    });
+    if (!this.#sendControl({ type: "input", pane, seq, ...typed })) {
+      this.#inputWaiters.get(seq)?.(false);
+      this.#inputWaiters.delete(seq);
+      recordCard5InputOperation({
+        stage: "input-send",
+        outcome: "send-failed",
+        generation: this.#descriptor.daemonInstanceId,
+        lifecycleRequestId: this.#descriptor.requestId,
+        clientId: this.#connectionClientId,
+        pane,
+        seq,
+      });
+      return false;
+    }
+    recordCard5InputOperation({
+      stage: "input-send",
+      outcome: "sent",
+      generation: this.#descriptor.daemonInstanceId,
+      lifecycleRequestId: this.#descriptor.requestId,
+      clientId: this.#connectionClientId,
+      pane,
+      seq,
+    });
     this.noteActivity("input");
     const didAccept = await accepted;
     if (didAccept && this.#listeners.onInputAckObserved) {
@@ -814,12 +909,30 @@ class PaneStreamSession {
       return { lease: null, status: "closed" };
     }
     const requestId = globalThis.crypto.randomUUID();
+    if (authority === "input")
+      recordCard5InputOperation({
+        stage: "authority-request",
+        outcome: "attempt",
+        generation: this.#descriptor.daemonInstanceId,
+        lifecycleRequestId: this.#descriptor.requestId,
+        authorityRequestId: requestId,
+        clientId: this.#connectionClientId,
+      });
     const result = new Promise<{
       readonly lease: SessionRuntimeAuthorityLease | null;
       readonly status: "granted" | "rejected" | "unavailable" | "authority-timeout" | "closed";
     }>((resolve) => {
       const cancel = this.#schedule(() => {
         this.#authorityWaiters.delete(requestId);
+        if (authority === "input")
+          recordCard5InputOperation({
+            stage: "authority-result",
+            outcome: "authority-timeout",
+            generation: this.#descriptor.daemonInstanceId,
+            lifecycleRequestId: this.#descriptor.requestId,
+            authorityRequestId: requestId,
+            clientId: this.#connectionClientId,
+          });
         resolve({ lease: null, status: "authority-timeout" });
       }, 2_000);
       this.#authorityWaiters.set(requestId, {
@@ -827,6 +940,21 @@ class PaneStreamSession {
         operation: "request",
         settle: ({ lease, status }) => {
           cancel();
+          if (authority === "input")
+            recordCard5InputOperation({
+              stage: "authority-result",
+              outcome:
+                status === "granted" ||
+                status === "rejected" ||
+                status === "closed" ||
+                status === "unavailable"
+                  ? status
+                  : "authority-timeout",
+              generation: this.#descriptor.daemonInstanceId,
+              lifecycleRequestId: this.#descriptor.requestId,
+              authorityRequestId: requestId,
+              clientId: lease?.clientId ?? this.#connectionClientId,
+            });
           resolve({
             lease,
             status:
@@ -840,12 +968,39 @@ class PaneStreamSession {
         },
       });
     });
-    this.#sendControl({
-      type: "authority-request",
-      generation: this.#descriptor.daemonInstanceId,
-      requestId,
-      authority,
-    });
+    if (
+      !this.#sendControl({
+        type: "authority-request",
+        generation: this.#descriptor.daemonInstanceId,
+        requestId,
+        authority,
+      })
+    ) {
+      this.#authorityWaiters.get(requestId)?.settle({
+        lease: null,
+        snapshot: null,
+        status: "closed",
+      });
+      this.#authorityWaiters.delete(requestId);
+      if (authority === "input")
+        recordCard5InputOperation({
+          stage: "authority-request",
+          outcome: "send-failed",
+          generation: this.#descriptor.daemonInstanceId,
+          lifecycleRequestId: this.#descriptor.requestId,
+          authorityRequestId: requestId,
+          clientId: this.#connectionClientId,
+        });
+    } else if (authority === "input") {
+      recordCard5InputOperation({
+        stage: "authority-request",
+        outcome: "sent",
+        generation: this.#descriptor.daemonInstanceId,
+        lifecycleRequestId: this.#descriptor.requestId,
+        authorityRequestId: requestId,
+        clientId: this.#connectionClientId,
+      });
+    }
     return await result;
   }
 
@@ -901,12 +1056,21 @@ class PaneStreamSession {
       : null;
   };
 
-  #sendControl(frame: object): void {
-    if (this.#phase !== "live" || this.#socket.readyState !== WS_OPEN) return;
+  readonly connectionClientId = (): string | null =>
+    this.#phase === "live" ? this.#connectionClientId : null;
+
+  #sendControl(frame: object): boolean {
+    if (this.#phase !== "live" || this.#socket.readyState !== WS_OPEN) return false;
     try {
       this.#socket.send(JSON.stringify(frame));
+      return true;
     } catch {
-      /* transport retirement owns socket failure */
+      this.#retire(
+        transportError("socket-unavailable", "The pane-stream WebSocket became unavailable.", true),
+        1011,
+        "socket-unavailable",
+      );
+      return false;
     }
   }
 
@@ -1069,6 +1233,7 @@ class PaneStreamSession {
         this.#protocolFailure();
         return;
       }
+      this.#connectionClientId = frame.connectionClientId ?? null;
       if (frame.authority && !this.#applyAuthoritySnapshot(frame.authority)) return;
       this.#phase = "live";
       this.#recordDiagnostic("server-ready");
@@ -1093,6 +1258,7 @@ class PaneStreamSession {
           dispose: this.dispose,
           updatePresence: this.updatePresence,
           noteActivity: this.noteActivity,
+          connectionClientId: this.connectionClientId,
           connectionAuthorityClientId: this.connectionAuthorityClientId,
           write: this.write,
           resize: this.resize,
@@ -1160,7 +1326,16 @@ class PaneStreamSession {
         return;
       }
       this.#inputWaiters.delete(frame.seq);
-      settle();
+      recordCard5InputOperation({
+        stage: "input-ack",
+        outcome: "ok",
+        generation: this.#descriptor.daemonInstanceId,
+        lifecycleRequestId: this.#descriptor.requestId,
+        clientId: this.#connectionClientId,
+        pane: frame.pane,
+        seq: frame.seq,
+      });
+      settle(true);
       return;
     }
     if (frame.type === "authority-snapshot") {
@@ -1737,6 +1912,8 @@ class PaneStreamSession {
     this.#authorityWaiters.clear();
     for (const waiter of this.#viewportWaiters.values()) waiter.settle("stream-closed");
     this.#viewportWaiters.clear();
+    for (const settle of this.#inputWaiters.values()) settle(false);
+    this.#inputWaiters.clear();
     this.#socket.removeEventListener("open", this.#onOpen);
     this.#socket.removeEventListener("message", this.#onMessage);
     this.#socket.removeEventListener("close", this.#onClose);

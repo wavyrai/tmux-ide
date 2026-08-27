@@ -833,6 +833,12 @@ export function createWorkspaceClient<
       WorkspaceClientRuntimePort<TerminalSnapshot, TerminalPatch, TerminalTombstone>
     >({
       wait: (delayMs, signal) => waitWithClock(clock, delayMs, signal),
+      retryable: () =>
+        !disposed &&
+        generation === expectedGeneration &&
+        target === expectedTarget &&
+        desiredRuntimeKey === key &&
+        (activeRuntimeOwner === owner || candidateRuntimeOwner === owner),
       connect: async ({ signal }) => {
         const prepare = (
           nextRuntime: WorkspaceClientRuntimePort<

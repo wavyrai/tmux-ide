@@ -103,6 +103,7 @@ export class SemanticSessionView {
         semanticWindowId: resource.windowResourceId ?? null,
         paneIndex: 0,
         name: null,
+        nameSource: null,
         missionStamp: null,
         paneActive: false,
         windowActive: false,

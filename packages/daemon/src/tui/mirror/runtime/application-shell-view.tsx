@@ -15,7 +15,11 @@ import {
   terminalAgentStatusLabel,
   type ApplicationTerminalAgentIndicator,
 } from "./application-terminal-workspace.tsx";
-import type { ApplicationPaletteCommand } from "./application-palette-input.ts";
+import {
+  applicationPaletteCommands,
+  type ApplicationPaletteCommand,
+} from "./application-palette-input.ts";
+import type { ApplicationPaneRenameDraft } from "./application-pane-rename-input.ts";
 import { applicationShellViewport } from "./application-shell-viewport.ts";
 export { applicationPaletteKeyAction } from "./application-palette-input.ts";
 export { applicationShellViewport } from "./application-shell-viewport.ts";
@@ -46,7 +50,9 @@ export interface ApplicationShellViewProps {
   readonly selectedSession: Accessor<number>;
   readonly bootstrapNote: Accessor<string | null>;
   readonly paletteOpen: Accessor<boolean>;
+  readonly paneRenameDialog?: Accessor<ApplicationPaneRenameDraft | null>;
   readonly paletteSelection?: Accessor<number>;
+  readonly paletteCommands?: Accessor<readonly ApplicationPaletteCommand[]>;
   readonly terminalRendererSource: Accessor<{
     readonly adapter: TerminalWorkspaceProps["adapter"];
     readonly rendererEpoch: TerminalWorkspaceProps["rendererEpoch"];
@@ -59,8 +65,16 @@ export interface ApplicationShellViewProps {
   readonly palette: TerminalWorkspaceProps["palette"];
   readonly onOpenSurface: (surface: RootSurface, source: InputSource) => void;
   readonly onOpenSession: (sessionName: string, source: InputSource) => void;
+  readonly onOpenAgent?: (sessionName: string, paneId: string, source: InputSource) => void;
   readonly onSetPaletteOpen: (open: boolean, source: InputSource) => void;
-  readonly onPaletteActivate?: (command: ApplicationPaletteCommand, source: InputSource) => void;
+  readonly onPaletteActivate?: (
+    command: ApplicationPaletteCommand,
+    source: InputSource,
+    confirmed?: boolean,
+  ) => void;
+  readonly onCreateWindow?: () => void;
+  readonly onBeginPaneRename?: (paneId: string, currentName: string) => void;
+  readonly onCancelPaneRename?: () => void;
   readonly paletteCloseArmed?: Accessor<boolean>;
   readonly onSelectPane: TerminalWorkspaceProps["onSelectPane"];
   readonly onResizePreview: TerminalWorkspaceProps["onResizePreview"];
@@ -73,6 +87,7 @@ export interface ApplicationShellViewProps {
   readonly onSelectionCopyOwner?: TerminalWorkspaceProps["onSelectionCopyOwner"];
   readonly onSelectionKeyOwner?: TerminalWorkspaceProps["onSelectionKeyOwner"];
   readonly onWindowPresented?: TerminalWorkspaceProps["onWindowPresented"];
+  readonly onInteraction?: () => void;
 }
 
 function HomeSurface(props: {
@@ -106,11 +121,68 @@ function HomeSurface(props: {
   );
 }
 
+function PaneRenameDialog(props: {
+  readonly draft: ApplicationPaneRenameDraft;
+  readonly width: number;
+  readonly height: number;
+  readonly theme: ApplicationShellViewProps["theme"];
+  readonly onCancel: () => void;
+}): JSX.Element {
+  const width = () => Math.max(1, Math.min(52, props.width - (props.width >= 8 ? 4 : 0)));
+  const fieldWidth = () => Math.max(1, width() - 4);
+  return (
+    <box
+      position="absolute"
+      left={0}
+      top={0}
+      width={props.width}
+      height={props.height}
+      zIndex={120}
+      onMouseDown={(event) => {
+        event.stopPropagation();
+        props.onCancel();
+      }}
+    >
+      <box
+        position="absolute"
+        left={Math.max(0, Math.floor((props.width - width()) / 2))}
+        top={Math.max(0, Math.floor((props.height - 7) / 2))}
+        width={width()}
+        height={7}
+        border
+        borderStyle="rounded"
+        borderColor={props.theme.roles.borders.focused}
+        backgroundColor={props.theme.roles.surfaces.panelRaised}
+        flexDirection="column"
+        paddingLeft={1}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <text fg={props.theme.roles.text.primary}>
+          <strong>Rename pane</strong>
+        </text>
+        <text
+          width={fieldWidth()}
+          overflow="hidden"
+          fg={props.theme.roles.text.link}
+          content={clipTerminal(`${props.draft.value}▏`, fieldWidth())}
+        />
+        <text
+          width={fieldWidth()}
+          overflow="hidden"
+          fg={props.theme.roles.text.muted}
+          content="Enter save · Esc cancel"
+        />
+      </box>
+    </box>
+  );
+}
+
 function MinimalPalette(props: {
   readonly width: number;
   readonly height: number;
   readonly selected: number;
   readonly closeArmed: boolean;
+  readonly commands: readonly ApplicationPaletteCommand[];
   readonly theme: ApplicationShellViewProps["theme"];
   readonly onActivate: (command: ApplicationPaletteCommand) => void;
   readonly onClose: () => void;
@@ -118,25 +190,37 @@ function MinimalPalette(props: {
   const horizontalInset = () => (props.width >= 8 ? 2 : 0);
   const verticalInset = () => (props.height >= 6 ? 1 : 0);
   const width = () => Math.max(1, Math.min(58, props.width - horizontalInset() * 2));
-  const height = () => Math.max(3, Math.min(11, props.height - verticalInset() * 2));
+  const height = () =>
+    Math.max(3, Math.min(16, props.commands.length + 4, props.height - verticalInset() * 2));
   const innerWidth = () => Math.max(1, width() - 2);
-  const homeLabel = () =>
-    `${props.selected === 0 ? "› " : ""}F1 Home${innerWidth() >= 32 ? " · sessions and agent state" : ""}`;
-  const terminalsLabel = () =>
-    `${props.selected === 1 ? "› " : ""}F2 Terminals${innerWidth() >= 32 ? " · control the live tmux session" : ""}`;
-  const commandRows = () => [
-    { command: "home" as const, label: homeLabel() },
-    { command: "terminals" as const, label: terminalsLabel() },
-    {
-      command: "split-right" as const,
-      label: `${props.selected === 2 ? "› " : ""}Split pane right`,
-    },
-    { command: "split-down" as const, label: `${props.selected === 3 ? "› " : ""}Split pane down` },
-    {
-      command: "close-pane" as const,
-      label: `${props.selected === 4 ? "› " : ""}${props.closeArmed ? "Confirm close pane" : "Close pane…"}`,
-    },
-  ];
+  const commandLabel = (command: ApplicationPaletteCommand): string => {
+    if (typeof command === "object") return `Jump to ${command.label} · ${command.sessionName}`;
+    if (command === "home")
+      return `F1 Home${innerWidth() >= 32 ? " · sessions and agent state" : ""}`;
+    if (command === "terminals")
+      return `F2 Terminals${innerWidth() >= 32 ? " · control the live tmux session" : ""}`;
+    if (command === "new-window") return "New terminal window";
+    if (command === "split-right") return "Split pane right";
+    if (command === "split-down") return "Split pane down";
+    return props.closeArmed ? "Confirm close pane" : "Close pane…";
+  };
+  // OpenTUI clips the final row against the lower border at very small
+  // viewports; retain the existing four-command 20x7 presentation while
+  // scrolling longer agent lists only when they exceed the rendered body.
+  const visibleCapacity = () => Math.max(1, height() - 1);
+  const firstVisible = () =>
+    Math.max(0, Math.min(props.selected, props.commands.length - visibleCapacity()));
+  const commandRows = () =>
+    props.commands
+      .slice(firstVisible(), firstVisible() + visibleCapacity())
+      .map((command, offset) => {
+        const index = firstVisible() + offset;
+        return {
+          command,
+          index,
+          label: `${props.selected === index ? "› " : ""}${commandLabel(command)}`,
+        };
+      });
   return (
     <box
       position="absolute"
@@ -169,21 +253,21 @@ function MinimalPalette(props: {
           <strong>{innerWidth() >= 15 ? "Command palette" : "Commands"}</strong>
         </text>
         <For each={commandRows()}>
-          {(row, index) => (
+          {(row) => (
             <text
               width={innerWidth()}
               height={1}
               overflow="hidden"
               content={row.label}
               fg={
-                props.closeArmed && index() === 4
+                props.closeArmed && row.command === "close-pane"
                   ? props.theme.roles.statusTone.warning
-                  : props.selected === index()
+                  : props.selected === row.index
                     ? props.theme.roles.selection.selectionText
                     : props.theme.roles.text.secondary
               }
               bg={
-                props.selected === index()
+                props.selected === row.index
                   ? props.theme.roles.selection.selection
                   : props.theme.roles.surfaces.panelRaised
               }
@@ -207,6 +291,7 @@ function MinimalPalette(props: {
 function ProductionSidebar(props: {
   readonly shell: ReturnType<typeof projectApplicationShell>;
   readonly theme: ApplicationShellViewProps["theme"];
+  readonly onOpenAgent?: ApplicationShellViewProps["onOpenAgent"];
 }): JSX.Element {
   const width = () => props.shell.layout.sidebar.width;
   const sessionTone = (state: string) =>
@@ -272,7 +357,15 @@ function ProductionSidebar(props: {
             const suffix = () => ` ${agent.attention ? "! " : ""}[${status()}]`;
             const titleWidth = () => Math.max(1, width() - 2 - suffix().length);
             return (
-              <box height={1} flexDirection="row">
+              <box
+                height={1}
+                flexDirection="row"
+                onMouseDown={(event) => {
+                  if (!agent.paneId) return;
+                  event.stopPropagation();
+                  props.onOpenAgent?.(props.shell.activeSession, agent.paneId, "mouse");
+                }}
+              >
                 <text fg={activityTone(agent.activity)}>{agent.attention ? "!" : "•"}</text>
                 <text
                   fg={
@@ -418,6 +511,7 @@ function CatalogShell(props: ApplicationShellViewProps): JSX.Element {
           height={props.dimensions().height}
           selected={props.paletteSelection?.() ?? 0}
           closeArmed={props.paletteCloseArmed?.() ?? false}
+          commands={props.paletteCommands?.() ?? applicationPaletteCommands(null)}
           theme={props.theme}
           onActivate={(command) => {
             if (props.onPaletteActivate) props.onPaletteActivate(command, "mouse");
@@ -494,15 +588,24 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
           height={props.dimensions().height}
           position="relative"
           overflow="hidden"
-          onMouseDown={(event) => routeChromePointer(event.x, event.y)}
+          onMouseDown={(event) => {
+            props.onInteraction?.();
+            routeChromePointer(event.x, event.y);
+          }}
         >
           <ApplicationShell
             theme={props.theme}
             projection={shell}
             help="^o pane · ^t window · F5 split/close · ^q put away"
-            note={props.generationStatus()}
+            note={props.bootstrapNote() ?? props.generationStatus()}
             showToolStatus={false}
-            sidebar={<ProductionSidebar shell={shell} theme={props.theme} />}
+            sidebar={
+              <ProductionSidebar
+                shell={shell}
+                theme={props.theme}
+                onOpenAgent={props.onOpenAgent}
+              />
+            }
           >
             <Show
               when={props.surface() === "terminals"}
@@ -552,6 +655,12 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                       palette={props.palette}
                       agentIndicators={agentIndicators}
                       onSelectPane={props.onSelectPane}
+                      onCreateWindow={props.onCreateWindow}
+                      onPaneContextAction={(paneId, action, currentName) => {
+                        if (action === "rename-pane")
+                          props.onBeginPaneRename?.(paneId, currentName);
+                        else props.onPaletteActivate?.(action, "mouse", true);
+                      }}
                       onResizePreview={props.onResizePreview}
                       onResizePane={props.onResizePane}
                       onResizePointerIngress={props.onResizePointerIngress}
@@ -574,6 +683,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
               height={props.dimensions().height}
               selected={props.paletteSelection?.() ?? 0}
               closeArmed={props.paletteCloseArmed?.() ?? false}
+              commands={props.paletteCommands?.() ?? applicationPaletteCommands(props.semantic())}
               theme={props.theme}
               onActivate={(command) => {
                 if (props.onPaletteActivate) props.onPaletteActivate(command, "mouse");
@@ -582,6 +692,17 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
               }}
               onClose={() => props.onSetPaletteOpen(false, "mouse")}
             />
+          </Show>
+          <Show when={props.paneRenameDialog?.()} keyed>
+            {(draft) => (
+              <PaneRenameDialog
+                draft={draft}
+                width={props.dimensions().width}
+                height={props.dimensions().height}
+                theme={props.theme}
+                onCancel={() => props.onCancelPaneRename?.()}
+              />
+            )}
           </Show>
         </box>
       )}

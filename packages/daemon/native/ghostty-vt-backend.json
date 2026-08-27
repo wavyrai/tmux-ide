@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "status": "published-wrapper-blocked-on-canonical-capabilities",
+  "upstream": {
+    "binding": "@coder/libghostty-vt-node",
+    "bindingVersionEvaluated": "0.1.0-beta.1",
+    "bindingGitCommit": "08607e8029e0e30c7975018e64156b9b34d7f450",
+    "ghosttyGitCommit": "48ccec182a932c2ec04c344d45a5fc553861cb13",
+    "zigVersion": "0.15.2",
+    "buildMode": "ReleaseFast",
+    "simd": false
+  },
+  "capabilityScope": "published-wrapper-only",
+  "isolatedOwnedProof": {
+    "directory": "packages/daemon/native/ghostty-vt",
+    "status": "qualification-failed-not-integrated",
+    "productionImported": false,
+    "addonAbi": "ghostty-vt-48ccec182a93+tmuxide.cursor-history-dirty.v3+napi9",
+    "pinnedApiPatches": 3,
+    "sharedCanonicalFixtures": { "passed": 10, "total": 10, "strictSchemaAndHashEquality": true },
+    "performanceGate": "failed",
+    "kittyGraphics": "deferred-unimplemented"
+  },
+  "runtimeOwner": "daemon-session-runtime",
+  "defaultBackend": "xterm",
+  "requiredCanonicalCapabilities": {
+    "denseCellsIncludingWidthZeroSpacers": false,
+    "rowWrapState": false,
+    "sourceColorKindsAndPaletteIndices": false,
+    "allEightCellAttributes": false,
+    "underlineStyleAndColor": false,
+    "cursorVisibilityStyleAndBlink": false,
+    "terminalModes": false,
+    "styledScrollbackRows": false,
+    "dirtyRowOrRenderStateDelta": false,
+    "hyperlinksAndKittyPlacements": false,
+    "idempotentDispose": true,
+    "incrementalByteFeed": true,
+    "resize": true,
+    "alternateScreenIdentity": true
+  },
+  "publishedArtifactsObserved": ["darwin-arm64", "linux-arm64-gnu", "linux-x64-gnu"],
+  "missingAdvertisedArtifactsObserved": ["darwin-x64"],
+  "promotionRequires": [
+    "hash-identical canonical snapshots for the full conformance corpus",
+    "identical patch order and generation fencing under write, resize, reseed, and dispose",
+    "zero unsupported canonical capability flags",
+    "clean 30-cycle lifecycle and packaged-install gates on every advertised target",
+    "material ProductRig improvement with unchanged fidelity and performance budgets",
+    "runtime pin verification and fail-closed xterm fallback"
+  ]
+}

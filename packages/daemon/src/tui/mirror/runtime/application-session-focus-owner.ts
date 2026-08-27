@@ -41,7 +41,6 @@ export function createApplicationSessionFocusOwner(options: {
         inFlight = false;
         if (pending?.token !== request.token) return;
         if (focused) pending = null;
-        else settle();
       },
       () => {
         inFlight = false;

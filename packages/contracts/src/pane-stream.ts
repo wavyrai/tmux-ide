@@ -369,6 +369,8 @@ export const PaneStreamReadyFrameSchemaZ = z
     protocolVersion: z.literal(PANE_STREAM_PROTOCOL_VERSION),
     daemonInstanceId: BoundedIdentitySchemaZ,
     requestId: z.uuid(),
+    /** Daemon-authenticated identity of this exact redeemed physical connection. */
+    connectionClientId: BoundedIdentitySchemaZ.optional(),
     panes: PaneSetSchemaZ,
     effectiveViewerMode: PaneStreamViewerModeSchemaZ,
     authority: SessionRuntimeAuthoritySnapshotSchemaZ.optional(),
@@ -421,6 +423,15 @@ const BoundedDisplayNameSchemaZ = z
   .max(256)
   .refine((value) => !/[\0\r\n]/u.test(value));
 
+export const PaneDisplayNameSourceSchemaZ = z.enum([
+  "manual",
+  "agent",
+  "process",
+  "title",
+  "generated",
+]);
+export type PaneDisplayNameSource = z.infer<typeof PaneDisplayNameSourceSchemaZ>;
+
 export const PaneStreamLayoutFrameSchemaZ = z
   .object({
     type: z.literal("layout"),
@@ -439,6 +450,9 @@ export const PaneStreamLayoutFrameSchemaZ = z
           .object({
             /** Null while the pane's semantic identity join is unverified. */
             pane: PaneStreamSemanticPaneIdSchemaZ.nullable(),
+            /** Optional for compatibility with an older daemon during reconnect. */
+            displayName: BoundedDisplayNameSchemaZ.nullable().optional(),
+            displayNameSource: PaneDisplayNameSourceSchemaZ.nullable().optional(),
             left: CellCoordinateSchemaZ,
             top: CellCoordinateSchemaZ,
             width: GridCellSchemaZ,

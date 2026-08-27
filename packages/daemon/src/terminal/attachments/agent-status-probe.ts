@@ -14,9 +14,9 @@
  * a synchronous spawn on the daemon event loop, so scrape cost must never scale
  * with the number of authority-less panes per read.
  *
- *  - A fresh authority stamp skips scraping entirely, and a pane whose command
- *    resolves to no agent (or the `shell` catch-all) is classified "unknown"
- *    WITHOUT a capture round-trip.
+ *  - A fresh authority stamp skips screen scraping entirely. Wrapped agents
+ *    whose shallow command is version-shaped may pay one cached process-tree
+ *    identity lookup; subsequent authority reads reuse that identity.
  *  - Scrape verdicts and the shared `ps` process table are cached for
  *    {@link SCRAPE_CACHE_TTL_SECONDS}: one scrape serves every read inside the
  *    window, so a steady-state read costs a single `list-panes`.
@@ -130,6 +130,13 @@ interface ScrapeCacheEntry {
   readonly scrapedAtSec: number;
 }
 
+interface AgentKindCacheEntry {
+  readonly command: string;
+  readonly pid: number;
+  readonly agentKind: string;
+  readonly observedAtSec: number;
+}
+
 const RUNTIME_PANE_ID = /^%(?:0|[1-9][0-9]*)$/u;
 
 function emptyToNull(value: string): string | null {
@@ -222,6 +229,7 @@ export function createTmuxAgentStatusProbe(deps: TmuxAgentStatusProbeDeps): Agen
   const captureBudget = deps.scrapeCaptureBudget ?? SCRAPE_CAPTURE_BUDGET;
 
   const verdictCache = new Map<string, ScrapeCacheEntry>();
+  const agentKindCache = new Map<string, AgentKindCacheEntry>();
   let tableCache: { readonly table: ProcEntry[]; readonly readAtSec: number } | null = null;
 
   // Cache mutation is deliberately serialized. Concurrent application-shell
@@ -248,6 +256,7 @@ export function createTmuxAgentStatusProbe(deps: TmuxAgentStatusProbeDeps): Agen
     // or process-table refresh becomes visible until every pane has completed
     // and the final abort fence passes.
     const stagedVerdicts = new Map(verdictCache);
+    const stagedAgentKinds = new Map(agentKindCache);
     let stagedTableCache = tableCache;
 
     const optionsStdout = await deps.run(
@@ -259,8 +268,12 @@ export function createTmuxAgentStatusProbe(deps: TmuxAgentStatusProbeDeps): Agen
 
     // The `ps` read is shared across every scraped pane and across reads
     // inside the TTL window — taken at most once per probe.
-    const table = async (): Promise<ProcEntry[]> => {
-      if (stagedTableCache === null || input.nowSec - stagedTableCache.readAtSec > ttlSeconds) {
+    const table = async (forceRefresh = false): Promise<ProcEntry[]> => {
+      if (
+        forceRefresh ||
+        stagedTableCache === null ||
+        input.nowSec - stagedTableCache.readAtSec > ttlSeconds
+      ) {
         const next = await readProcessTable(signal);
         throwIfAborted(signal);
         stagedTableCache = { table: next, readAtSec: input.nowSec };
@@ -302,7 +315,42 @@ export function createTmuxAgentStatusProbe(deps: TmuxAgentStatusProbeDeps): Agen
           ...(raw?.hint ? { hint: raw.hint } : {}),
           ...(deps.manifests ? { manifests: deps.manifests } : {}),
         }).manifest;
-        emit(pane, raw, null, direct && direct.id !== "shell" ? direct.id : null);
+        const cachedKind = stagedAgentKinds.get(pane.runtimePaneId);
+        const panePid = raw?.pid ?? 0;
+        let agentKind = direct && direct.id !== "shell" ? direct.id : null;
+        if (
+          agentKind === null &&
+          cachedKind !== undefined &&
+          cachedKind.command === pane.currentCommand &&
+          cachedKind.pid === panePid
+        ) {
+          agentKind = cachedKind.agentKind;
+        }
+        if (agentKind === null) {
+          const processIdentityChanged =
+            cachedKind !== undefined &&
+            (cachedKind.command !== pane.currentCommand || cachedKind.pid !== panePid);
+          if (processIdentityChanged) stagedAgentKinds.delete(pane.runtimePaneId);
+          const resolved = resolveAgentCommand(
+            pane.currentCommand,
+            panePid,
+            await table(processIdentityChanged),
+            {
+              ...(raw?.hint ? { hint: raw.hint } : {}),
+              ...(deps.manifests ? { manifests: deps.manifests } : {}),
+            },
+          ).manifest;
+          if (resolved && resolved.id !== "shell") agentKind = resolved.id;
+        }
+        if (agentKind !== null) {
+          stagedAgentKinds.set(pane.runtimePaneId, {
+            command: pane.currentCommand,
+            pid: panePid,
+            agentKind,
+            observedAtSec: input.nowSec,
+          });
+        }
+        emit(pane, raw, null, agentKind);
         continue;
       }
       const cached = stagedVerdicts.get(pane.runtimePaneId);
@@ -344,6 +392,12 @@ export function createTmuxAgentStatusProbe(deps: TmuxAgentStatusProbeDeps): Agen
         emit(pane, raw, "unknown", null);
         continue;
       }
+      stagedAgentKinds.set(pane.runtimePaneId, {
+        command: pane.currentCommand,
+        pid: raw?.pid ?? 0,
+        agentKind: manifest.id,
+        observedAtSec: input.nowSec,
+      });
       if (capturesUsed >= captureBudget) {
         // Budget exhausted: reuse the pane's previous verdict when one exists
         // (a few seconds stale beats flapping), otherwise report the honest
@@ -375,9 +429,19 @@ export function createTmuxAgentStatusProbe(deps: TmuxAgentStatusProbeDeps): Agen
         stagedVerdicts.delete(paneId);
       }
     }
+    if (stagedAgentKinds.size > SCRAPE_CACHE_MAX_ENTRIES) {
+      const byAge = [...stagedAgentKinds.entries()].sort(
+        (a, b) => a[1].observedAtSec - b[1].observedAtSec,
+      );
+      for (const [paneId] of byAge.slice(0, stagedAgentKinds.size - SCRAPE_CACHE_MAX_ENTRIES)) {
+        stagedAgentKinds.delete(paneId);
+      }
+    }
     throwIfAborted(signal);
     verdictCache.clear();
     for (const [paneId, verdict] of stagedVerdicts) verdictCache.set(paneId, verdict);
+    agentKindCache.clear();
+    for (const [paneId, kind] of stagedAgentKinds) agentKindCache.set(paneId, kind);
     tableCache = stagedTableCache;
     return facts;
   };

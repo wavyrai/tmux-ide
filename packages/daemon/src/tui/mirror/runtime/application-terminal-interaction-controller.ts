@@ -108,7 +108,9 @@ export interface ApplicationTerminalInteractionController {
   ): boolean;
   cyclePane(): void;
   cycleWindow(): void;
+  newWindow(): Promise<string>;
   splitPane(direction: "right" | "down"): Promise<string>;
+  renamePane(semanticPaneId: string, name: string): Promise<string>;
   closePane(): Promise<string>;
   observeWindowPresentation(semanticWindowId: string, paneId: string, windowName?: string): void;
   observeDiagnosticWindowFrame():
@@ -1155,6 +1157,49 @@ export function createApplicationTerminalInteractionController(
         return direction === "right" ? "split pane right" : "split pane down";
       } catch (error) {
         return `split unavailable: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    },
+    async newWindow() {
+      const active = options.generation();
+      const workspaceName = active?.connection?.workspaceName ?? null;
+      if (active?.status !== "live" || !active.client || !workspaceName)
+        return "new window unavailable: terminal workspace is reconnecting";
+      try {
+        const response = await active.client.dispatch({
+          kind: "owner-action",
+          name: "workspace.pane.create",
+          input: { workspaceName, kind: "terminal", placement: { kind: "window" } },
+          operationId: createOperationId(),
+        });
+        if (options.generation() !== active)
+          return "new window not confirmed: terminal workspace reconnected";
+        if (response.kind !== "owner-action" || response.result === null)
+          return "new window not confirmed by the daemon";
+        return "created terminal window";
+      } catch (error) {
+        return `new window unavailable: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    },
+    async renamePane(semanticPaneId, name) {
+      const active = options.generation();
+      const workspaceName = active?.connection?.workspaceName ?? null;
+      const nextName = name.trim();
+      if (active?.status !== "live" || !active.client || !workspaceName || !nextName)
+        return "rename unavailable: terminal workspace is reconnecting";
+      try {
+        const response = await active.client.dispatch({
+          kind: "owner-action",
+          name: "workspace.rename",
+          input: { workspaceName, scope: "pane", semanticPaneId, name: nextName },
+          operationId: createOperationId(),
+        });
+        if (options.generation() !== active)
+          return "rename not confirmed: terminal workspace reconnected";
+        if (response.kind !== "owner-action" || response.result === null)
+          return "rename not confirmed by the daemon";
+        return `renamed pane to ${nextName}`;
+      } catch (error) {
+        return `rename unavailable: ${error instanceof Error ? error.message : String(error)}`;
       }
     },
     async closePane() {

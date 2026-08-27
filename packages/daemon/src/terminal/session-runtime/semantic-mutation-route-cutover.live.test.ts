@@ -218,6 +218,26 @@ describe.skipIf(!hasTmux).sequential("semantic mutation production cutover, live
     expect(created).toMatchObject({ ok: true, result: { outcome: "created" } });
     const createdPane = created.result?.resource as { semanticPaneId?: string };
     expect(createdPane.semanticPaneId).toMatch(/^pane\./u);
+    const inventory = run([
+      "list-panes",
+      "-s",
+      "-t",
+      `=${session}`,
+      "-F",
+      "#{session_name}\t#{@tmux_ide_pane_id}\t#{pane_id}\t#{window_id}",
+    ])
+      .trim()
+      .split("\n")
+      .map((row) => {
+        const [sessionName, semanticPaneId, runtimePaneId, windowId] = row.split("\t");
+        return {
+          sessionName: sessionName!,
+          semanticPaneId: semanticPaneId!,
+          runtimePaneId: runtimePaneId!,
+          windowId: windowId!,
+        };
+      });
+    expect(authority.adoptSessionPaneInventory(session, inventory)).toBe(true);
     const binding = new SessionRuntimeTransportBinder(registry).bind({
       transport: "pane-stream",
       transportLeaseId: randomUUID(),
@@ -230,12 +250,14 @@ describe.skipIf(!hasTmux).sequential("semantic mutation production cutover, live
     expect(binding.requestAuthority("input")).not.toBeNull();
     const authorityBeforeActions = binding.authoritySnapshot();
     const selectId = randomUUID();
-    expect(
-      await post("workspace.pane.select", selectId, {
-        workspaceName,
-        semanticPaneId: createdPane.semanticPaneId,
-      }),
-    ).toMatchObject({ ok: true, result: { outcome: "applied" } });
+    const selected = await post("workspace.pane.select", selectId, {
+      workspaceName,
+      semanticPaneId: createdPane.semanticPaneId,
+    });
+    expect(selected, JSON.stringify(selected)).toMatchObject({
+      ok: true,
+      result: { outcome: "applied" },
+    });
     expect(resourceChanges).toEqual([
       { workspaceName, resource: "application-shell", causeOperationId: selectId },
       { workspaceName, resource: "workspace-missions", causeOperationId: selectId },

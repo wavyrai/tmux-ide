@@ -25,6 +25,7 @@ import type {
   PaneStreamResizeResult,
   PaneStreamLayoutEvent,
   PaneStreamLayoutSnapshotEvent,
+  Card5PhysicalPaneStreamBinding,
   PaneStreamSessionHandle,
   PaneStreamTransport,
 } from "../terminal/pane-stream-transport.ts";
@@ -43,6 +44,16 @@ export type WebWorkspaceRuntimePort = WorkspaceClientRuntimePort<
   TerminalReplicaPatchPayload,
   TerminalReplicaTombstonePayload
 >;
+
+let physicalBindingEpoch = 0;
+
+function allocatePhysicalBindingEpoch(): number {
+  if (!Number.isSafeInteger(physicalBindingEpoch + 1)) {
+    throw new Error("The physical pane-stream binding epoch overflowed.");
+  }
+  physicalBindingEpoch += 1;
+  return physicalBindingEpoch;
+}
 
 function runtimeTerminalCode(
   reason: unknown,
@@ -153,28 +164,66 @@ function replaySeed(
 export async function connectWebWorkspaceRuntime(
   options: WebWorkspaceRuntimeOptions,
 ): Promise<WebWorkspaceRuntimePort> {
+  const runtimePhysicalEpoch = allocatePhysicalBindingEpoch();
   const recordCard5Envelope = createCard5EnvelopeEvidenceRecorder();
   const recordCard5Ack = createCard5EnvelopeAckRecorder();
   const recordCard5InputReceipt = createCard5InputReceiptRecorder();
   const recordCard5GeometryReceipt = createCard5GeometryReceiptRecorder();
-  const recordCard5Descriptor = createCard5DescriptorRecorder();
   const recordCard5Lifecycle = createCard5PaneStreamLifecycleRecorder({
     workspaceName: options.inventory.workspaceName,
     semanticPaneIds: options.inventory.semanticPaneIds,
+    physicalEpoch: runtimePhysicalEpoch,
   });
+  const recordCard5Descriptor = createCard5DescriptorRecorder(
+    recordCard5Lifecycle?.physicalEpoch ?? null,
+  );
   let lifecycleIdentity: { generation: string; requestId: string } | null = null;
+  let lifecycleActive = false;
   let terminalLifecycleObserved = false;
+  const physicalBindingListeners = new Set<
+    (binding: Card5PhysicalPaneStreamBinding | null) => void
+  >();
   const subscriptions = new Map<string, Set<PaneSubscription>>();
   const replicas = new Map<string, ReplicaReplay>();
   const receipts = new Set<(receipt: InteractionReceipt) => void>();
   const authorityListeners = new Set<(snapshot: SessionRuntimeAuthoritySnapshot) => void>();
   let authority: SessionRuntimeAuthoritySnapshot | null = null;
   let session: PaneStreamSessionHandle | null = null;
+  let physicalSession: PaneStreamSessionHandle | null = null;
   let closed = false;
   let settleClosed!: (reason?: unknown) => void;
   const closedPromise = new Promise<unknown>((resolve) => {
     settleClosed = resolve;
   });
+  const currentPhysicalBinding = (): Card5PhysicalPaneStreamBinding | null => {
+    if (
+      closed ||
+      !lifecycleActive ||
+      !lifecycleIdentity ||
+      physicalSession === null ||
+      authority === null ||
+      authority.generation !== lifecycleIdentity.generation ||
+      typeof authority.session !== "string" ||
+      authority.session.length === 0
+    )
+      return null;
+    const physicalClientId = physicalSession.connectionClientId?.() ?? null;
+    if (physicalClientId === null) return null;
+    return Object.freeze({
+      physicalEpoch: runtimePhysicalEpoch,
+      generation: lifecycleIdentity.generation,
+      requestId: lifecycleIdentity.requestId,
+      runtimeSession: authority.session,
+      workspaceName: options.inventory.workspaceName,
+      semanticPaneIds: Object.freeze([...options.inventory.semanticPaneIds].sort()),
+      clientId: physicalClientId,
+      stage: "first-seed",
+    });
+  };
+  const publishPhysicalBinding = (): void => {
+    const binding = currentPhysicalBinding();
+    for (const listener of physicalBindingListeners) listener(binding);
+  };
 
   const finish = (
     reason?: unknown,
@@ -182,6 +231,7 @@ export async function connectWebWorkspaceRuntime(
   ): void => {
     if (closed) return;
     closed = true;
+    lifecycleActive = false;
     options.signal.removeEventListener("abort", abort);
     if (recordCard5Lifecycle && lifecycleIdentity && !terminalLifecycleObserved) {
       terminalLifecycleObserved = true;
@@ -197,6 +247,8 @@ export async function connectWebWorkspaceRuntime(
     recordCard5SocketLifecycle(options.inventory.daemonGeneration, session ? "closed" : "failed");
     session?.dispose();
     session = null;
+    physicalSession = null;
+    publishPhysicalBinding();
     options.onSession?.(null);
     options.onEnd?.(reason);
     settleClosed(reason);
@@ -292,30 +344,30 @@ export async function connectWebWorkspaceRuntime(
       },
       onAuthoritySnapshot(snapshot) {
         authority = snapshot;
+        publishPhysicalBinding();
         for (const listener of authorityListeners) listener(snapshot);
       },
       ...(recordCard5Ack ? { onDeliveryAckSent: recordCard5Ack } : {}),
       ...(recordCard5InputReceipt ? { onInputAckObserved: recordCard5InputReceipt } : {}),
       ...(recordCard5GeometryReceipt ? { onViewportAckObserved: recordCard5GeometryReceipt } : {}),
       ...(recordCard5Descriptor ? { onDescriptorIssued: recordCard5Descriptor } : {}),
-      ...(recordCard5Lifecycle
-        ? {
-            onDiagnosticLifecycle: (event) => {
-              if (event.stage === "issued") {
-                lifecycleIdentity = {
-                  generation: event.generation,
-                  requestId: event.requestId,
-                };
-                terminalLifecycleObserved = false;
-              }
-              if (event.stage === "terminal") {
-                if (terminalLifecycleObserved) return;
-                terminalLifecycleObserved = true;
-              }
-              recordCard5Lifecycle(event);
-            },
-          }
-        : {}),
+      onDiagnosticLifecycle(event) {
+        if (event.stage === "issued") {
+          lifecycleIdentity = {
+            generation: event.generation,
+            requestId: event.requestId,
+          };
+          terminalLifecycleObserved = false;
+        }
+        if (event.stage === "first-seed") lifecycleActive = true;
+        if (event.stage === "terminal") {
+          if (terminalLifecycleObserved) return;
+          terminalLifecycleObserved = true;
+          lifecycleActive = false;
+        }
+        recordCard5Lifecycle?.(event);
+        publishPhysicalBinding();
+      },
       onEnd(error) {
         finish(error, "unknown");
       },
@@ -329,7 +381,45 @@ export async function connectWebWorkspaceRuntime(
     result.session.dispose();
     throw new Error("The Web workspace runtime was retired before it connected.");
   }
-  session = result.session;
+  physicalSession = result.session;
+  const retainedPhysicalSession = result.session;
+  session = {
+    dispose: () => retainedPhysicalSession.dispose(),
+    ...(retainedPhysicalSession.connectionClientId
+      ? { connectionClientId: () => retainedPhysicalSession.connectionClientId?.() ?? null }
+      : {}),
+    ...(retainedPhysicalSession.updatePresence
+      ? { updatePresence: (state) => retainedPhysicalSession.updatePresence?.(state) }
+      : {}),
+    ...(retainedPhysicalSession.noteActivity
+      ? { noteActivity: (activity) => retainedPhysicalSession.noteActivity?.(activity) }
+      : {}),
+    ...(retainedPhysicalSession.connectionAuthorityClientId
+      ? {
+          connectionAuthorityClientId: (kind) =>
+            retainedPhysicalSession.connectionAuthorityClientId?.(kind) ?? null,
+        }
+      : {}),
+    ...(retainedPhysicalSession.write
+      ? { write: (pane, input) => retainedPhysicalSession.write!(pane, input) }
+      : {}),
+    ...(retainedPhysicalSession.resize
+      ? { resize: (cols, rows) => retainedPhysicalSession.resize!(cols, rows) }
+      : {}),
+    ...(retainedPhysicalSession.requestAuthority
+      ? { requestAuthority: (kind) => retainedPhysicalSession.requestAuthority!(kind) }
+      : {}),
+    ...(retainedPhysicalSession.releaseAuthority
+      ? { releaseAuthority: (kind) => retainedPhysicalSession.releaseAuthority!(kind) }
+      : {}),
+    card5PhysicalBinding: currentPhysicalBinding,
+    subscribeCard5PhysicalBinding(listener) {
+      physicalBindingListeners.add(listener);
+      listener(currentPhysicalBinding());
+      return () => physicalBindingListeners.delete(listener);
+    },
+  };
+  publishPhysicalBinding();
   recordCard5SocketLifecycle(options.inventory.daemonGeneration, "open");
   options.onSession?.(session);
 

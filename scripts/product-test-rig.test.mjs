@@ -56,6 +56,7 @@ import {
   paneGeometryIdentity,
   productInputQueuesSettled,
   productRigSourceTraceIncludesPath,
+  productRigGitBlobObjectId,
   productRigHostHeartbeatObservation,
   productRigSourceTraceDiffArgs,
   productRigSourceTraceUntrackedArgs,
@@ -856,6 +857,31 @@ test("source provenance deterministically binds sorted untracked paths and bytes
   );
 });
 
+test("source provenance computes the exact bounded Git blob id without a stdin subprocess", (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "tmux-ide-git-blob-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const buffers = [
+    Buffer.alloc(0),
+    Buffer.from([0, 1, 0, 255]),
+    Buffer.alloc(64 * 1024, 0x61),
+    Buffer.alloc(1024 * 1024 + 17, 0x62),
+    Buffer.alloc(PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES, 0x63),
+  ];
+  for (const [ordinal, buffer] of buffers.entries()) {
+    const path = join(directory, `payload-${ordinal}.bin`);
+    writeFileSync(path, buffer);
+    const expected = execFileSync("git", ["hash-object", path], {
+      encoding: "utf8",
+    }).trim();
+    assert.equal(productRigGitBlobObjectId(buffer), expected);
+    assert.equal(productRigGitBlobObjectId(Buffer.from(buffer)), expected);
+  }
+  assert.throws(
+    () => productRigGitBlobObjectId(Buffer.alloc(PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES + 1)),
+    /bounded byte ceiling/u,
+  );
+});
+
 test("source provenance manifest reports stable and bounded between-run drift", () => {
   const expected = {
     commit: "a".repeat(40),
@@ -1548,6 +1574,69 @@ test("root-v2 projects all 40 tmux content rows below separate semantic chrome",
   });
   assert.equal(paneBodyRegion(frame, pane).split("\n").length, 40);
   assert.match(paneBodyRegion(frame, pane), /body-39/u);
+});
+
+test("anchors memorable pane-name chrome to its canonical semantic layout identity", () => {
+  const frame = [
+    " tmux-ide",
+    " ordinary",
+    "● amber-forest".padEnd(50) + " " + "○ quiet-river".padEnd(50),
+    "left body".padEnd(50) + " " + "__right_memorable_marker__".padEnd(50),
+    "left row two".padEnd(50) + " " + "right row two".padEnd(50),
+  ].join("\n");
+  const pane = {
+    semanticPaneId: "pane.promoted.right",
+    displayName: "node",
+    canonicalDisplayNames: ["node", "quiet-river"],
+    left: 51,
+    top: 0,
+    width: 50,
+    height: 2,
+  };
+
+  assert.deepEqual(resolvePaneBodyRect(frame, pane), {
+    left: 51,
+    firstBodyRow: 3,
+    width: 50,
+    bodyRows: 2,
+    origin: "semantic-pane-chrome",
+    valid: true,
+    semanticChromeMatches: 1,
+  });
+  assert.match(paneBodyRegion(frame, pane), /__right_memorable_marker__/u);
+  assert.doesNotMatch(paneBodyRegion(frame, pane), /left body/u);
+
+  const duplicate = frame.replace("amber-forest", "quiet-river");
+  assert.deepEqual(resolvePaneBodyRect(duplicate, pane), {
+    left: 51,
+    firstBodyRow: 3,
+    width: 50,
+    bodyRows: 0,
+    origin: "semantic-pane-chrome-ambiguous",
+    valid: false,
+    semanticChromeMatches: 2,
+  });
+});
+
+test("pane body evidence fails closed without a canonical semantic identity", () => {
+  assert.deepEqual(
+    resolvePaneBodyRect("● memorable-pane\nbody", {
+      displayName: "memorable-pane",
+      left: 0,
+      top: 0,
+      width: 40,
+      height: 1,
+    }),
+    {
+      left: 0,
+      firstBodyRow: 3,
+      width: 40,
+      bodyRows: 0,
+      origin: "semantic-pane-identity-missing",
+      valid: false,
+      semanticChromeMatches: 0,
+    },
+  );
 });
 
 test("focus framebuffer proof has no synchronous target tmux reads and fences native capture", () => {
@@ -2320,15 +2409,30 @@ test("extracts proof only from the pane body rectangle", () => {
   const frame = [
     "header",
     "tabs",
-    "chrome A",
+    "● pane.left".padEnd(13) + "○ pane.right",
     "left-marker   sibling",
     "left-second   sibling-clean",
   ].join("\n");
   assert.equal(
-    paneBodyRegion(frame, { left: 0, top: 0, width: 12, height: 2 }),
+    paneBodyRegion(frame, {
+      semanticPaneId: "pane.left",
+      left: 0,
+      top: 0,
+      width: 12,
+      height: 2,
+    }),
     "left-marker \nleft-second ",
   );
-  assert.doesNotMatch(paneBodyRegion(frame, { left: 13, top: 0, width: 7, height: 2 }), /marker/u);
+  assert.doesNotMatch(
+    paneBodyRegion(frame, {
+      semanticPaneId: "pane.right",
+      left: 13,
+      top: 0,
+      width: 7,
+      height: 2,
+    }),
+    /marker/u,
+  );
 });
 
 test("resource evidence requires a distribution and proves queues settle", () => {

@@ -35,15 +35,20 @@ export function sessionRuntimeInteractionFacts(
     case "workspace.session.kill":
       return { target: { kind: "session" }, summary: { operationKind: intent.verb } };
     case "workspace.rename":
-      return intent.scope === "session"
-        ? {
-            target: { kind: "session" },
-            summary: { operationKind: intent.verb, scope: intent.scope },
-          }
-        : {
-            target: { kind: "window", target: intent.target },
-            summary: { operationKind: intent.verb, scope: intent.scope },
-          };
+      if (intent.scope === "session")
+        return {
+          target: { kind: "session" },
+          summary: { operationKind: intent.verb, scope: intent.scope },
+        };
+      if (intent.scope === "pane")
+        return {
+          target: { kind: "pane", semanticPaneId: intent.semanticPaneId },
+          summary: { operationKind: intent.verb, scope: intent.scope },
+        };
+      return {
+        target: { kind: "window", target: intent.target },
+        summary: { operationKind: intent.verb, scope: intent.scope },
+      };
     case "workspace.pane.zoom.toggle":
       return {
         target: { kind: "pane", semanticPaneId: intent.semanticPaneId },

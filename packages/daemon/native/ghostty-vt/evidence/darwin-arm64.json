@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "artifact": "Mach-O 64-bit arm64 Node-API addon",
+  "target": "aarch64-macos.15.0",
+  "buildHost": "linux-arm64",
+  "testHost": "darwin-arm64 macOS 26.5.2",
+  "node": "24.2.0",
+  "runtimeNodeApi": 10,
+  "compiledNodeApi": 9,
+  "addonAbi": "ghostty-vt-48ccec182a93+tmuxide.cursor-history-dirty.v3+napi9",
+  "ghosttyCommit": "48ccec182a932c2ec04c344d45a5fc553861cb13",
+  "zig": "0.15.2",
+  "build": {
+    "network": "disabled-after-prefetch",
+    "optimization": "ReleaseFast",
+    "simd": false,
+    "staticLibghostty": true,
+    "warningsAsErrors": true,
+    "passed": true
+  },
+  "conformance": {
+    "passed": true,
+    "authoritativeCursorDrivesSubsequentWrites": true,
+    "authoritativeCursorPreservesDecomMarginsAndSavedCursor": true,
+    "unsupportedNodeApiGuardDoesNotLoadNativeCode": true,
+    "canonicalBlankAndWrapFixtures": true,
+    "transactionalDirtyFailureRecovery": true,
+    "incrementalHistoryCaps": [0, 100, 500, 5000],
+    "multiLineScrollAndCapRotation": true,
+    "steadyHistoryRowsReadAtCap5000": 1,
+    "workerEnvironments": 12,
+    "workerModes": ["explicit-dispose", "gc-finalizer", "retained-until-env-cleanup"],
+    "sharedStrictSchemaFixtures": 10,
+    "sharedHashIdenticalFixtures": 10,
+    "allocationAndWrapFailureInjection": true,
+    "atomicDirtyAcknowledgementFailureRecovery": true,
+    "historyCountersUnchangedOnFailedWrite": true,
+    "compiledSourceAndAddonMutationRejected": true,
+    "strictNumericAndWriteCaps": true,
+    "lifecycleCycles": 30,
+    "remainingLiveHandles": 0
+  },
+  "benchmarks": {
+    "iterations": 500,
+    "workload": "120x40 incremental write plus transactional projection",
+    "history0": {
+      "p50Ms": 5.319582999999966,
+      "p95Ms": 5.595166000000063,
+      "p99Ms": 5.8705830000000105,
+      "maxMs": 7.007292000000007
+    },
+    "history100": {
+      "p50Ms": 5.4496250000001965,
+      "p95Ms": 5.6192080000000715,
+      "p99Ms": 5.940292000000227,
+      "maxMs": 6.025749999999789
+    },
+    "history500": {
+      "p50Ms": 5.454083999999966,
+      "p95Ms": 5.744915999999648,
+      "p99Ms": 6.001250000000255,
+      "maxMs": 6.555750000000444
+    },
+    "qualification": {
+      "verdict": "no-promotion",
+      "maxGeometry512x256": {
+        "nativeSeedMs": 193.323,
+        "nativeDeltaP50Ms": 1.178083,
+        "nativeDeltaP95Ms": 1.253417,
+        "nativeDeltaMaxMs": 2.736541,
+        "nativeRssDeltaBytes": 150323200,
+        "nativeLastDeltaStats": {
+          "fullWalks": 0,
+          "gridRowsRead": 2,
+          "historyRowsRead": 0,
+          "cellsRead": 1024
+        },
+        "xtermSeedMs": 1.883084,
+        "xtermDeltaP50Ms": 1.751458,
+        "xtermDeltaP95Ms": 2.154083,
+        "xtermDeltaMaxMs": 3.044583,
+        "xtermRssDeltaBytes": 2473984
+      },
+      "historyCap5000": {
+        "nativeSeedMs": 86.3515,
+        "nativeDeltaP50Ms": 2.229042,
+        "nativeDeltaP95Ms": 2.527667,
+        "nativeDeltaMaxMs": 2.710291,
+        "nativeRssDeltaBytes": 9977856,
+        "nativeLastDeltaStats": {
+          "fullWalks": 0,
+          "gridRowsRead": 24,
+          "historyRowsRead": 1,
+          "cellsRead": 2000
+        },
+        "xtermSeedMs": 5.254,
+        "xtermDeltaP50Ms": 1.296042,
+        "xtermDeltaP95Ms": 1.364292,
+        "xtermDeltaMaxMs": 1.405833,
+        "xtermRssDeltaBytes": 6668288
+      }
+    }
+  },
+  "artifactIdentity": {
+    "addonSha256": "a411e0a98ab45b340a8b6cfd1c45af1c03523671bb1e17dd945ca9d35484dba9",
+    "byteReproducible": false,
+    "reason": "Zig Mach links contain a per-link LC_UUID, current-time nlist record, and dependent ad-hoc signature.",
+    "releaseRequirement": "Sign and publish the actual checksum, SBOM, builder identity, and provenance for every prebuild."
+  },
+  "nativeHostBuildBlocker": {
+    "phase": "Zig generated build-runner link before Ghostty compilation",
+    "attempted": ["SDKROOT=Xcode26SDK", "MACOSX_DEPLOYMENT_TARGET=15.0", "SYSTEM_VERSION_COMPAT=1"],
+    "representativeUndefinedSymbols": [
+      "__availability_version_check",
+      "_abort",
+      "_arc4random_buf",
+      "_dispatch_queue_create",
+      "_fork",
+      "_malloc_size",
+      "_sysctlbyname"
+    ]
+  }
+}

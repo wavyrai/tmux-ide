@@ -49,7 +49,7 @@ export function installApplicationPostRenderRuntime(options: {
   readonly sessionOwner: () => OpenTuiSessionOwner | null;
   readonly presentation: ReturnType<typeof createOpenTuiRuntimeLayoutPresentation>;
   readonly retireDiagnosticHandoff: () => void;
-}): { readonly close: () => Promise<void> } {
+}): { readonly noteInteraction: () => void; readonly close: () => Promise<void> } {
   observeTuiRootFailure(options.root, {
     rejectReadiness: options.rejectReady,
     shutdown: options.shutdown,
@@ -126,6 +126,7 @@ export function installApplicationPostRenderRuntime(options: {
     : null;
   void hostFocusControl?.catch(() => undefined);
   return {
+    noteInteraction: hostFocusPresentation.noteInteraction,
     close: async () => {
       if (hostFocusControl) await (await hostFocusControl).close();
       options.hostFocusBindingObserver.dispose();

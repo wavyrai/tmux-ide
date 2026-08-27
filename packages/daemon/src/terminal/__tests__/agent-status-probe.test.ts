@@ -103,6 +103,45 @@ describe("createTmuxAgentStatusProbe", () => {
     expect(processTableReads).toBe(0);
   });
 
+  it("keeps a version-shaped authoritative agent identity without steady-state ps reads", async () => {
+    let pid = 4242;
+    let processTableReads = 0;
+    const captures: string[] = [];
+    const probe = createTmuxAgentStatusProbe({
+      run: (argv) =>
+        argv[0] === "list-panes"
+          ? optionsLine("%3", { state: `done:${NOW}`, pid: String(pid) }) + "\n"
+          : "",
+      capture: (paneId) => {
+        captures.push(paneId);
+        return "";
+      },
+      readProcessTable: () => {
+        processTableReads += 1;
+        return pid === 4242
+          ? [{ pid: 4242, ppid: 1, command: "claude" }]
+          : [{ pid, ppid: 1, command: "zsh" }];
+      },
+      manifests: MANIFESTS,
+    });
+    const panes = [{ runtimePaneId: "%3", currentCommand: "2.1.247", title: "Claude" }];
+
+    const first = await probe.probe({ sessionId: "$1", panes, nowSec: NOW });
+    const second = await probe.probe({ sessionId: "$1", panes, nowSec: NOW + 1 });
+
+    expect(first.get("%3")).toMatchObject({ agentKind: "claude", agentScrapeState: null });
+    expect(second.get("%3")).toMatchObject({ agentKind: "claude", agentScrapeState: null });
+    expect(captures).toEqual([]);
+    expect(processTableReads).toBe(1);
+
+    // Reusing the pane id and shallow version-shaped command must not preserve
+    // Claude identity after tmux replaces the underlying process.
+    pid = 5252;
+    const replacement = await probe.probe({ sessionId: "$1", panes, nowSec: NOW + 2 });
+    expect(replacement.get("%3")).toMatchObject({ agentKind: null, agentScrapeState: null });
+    expect(processTableReads).toBe(2);
+  });
+
   it("scrapes a recognized agent when authority is absent or stale", async () => {
     const table: ProcEntry[] = [{ pid: 4242, ppid: 1, command: "node /x/bin/claude --foo" }];
     let processTableReads = 0;

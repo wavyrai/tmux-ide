@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "host": "linux-arm64",
+  "node": ["20.20.2", "22.23.1", "24.19.0"],
+  "runtimeNodeApi": [9, 10, 10],
+  "compiledNodeApi": 9,
+  "addonAbi": "ghostty-vt-48ccec182a93+tmuxide.cursor-history-dirty.v3+napi9",
+  "ghosttyCommit": "48ccec182a932c2ec04c344d45a5fc553861cb13",
+  "zig": "0.15.2",
+  "build": {
+    "network": "disabled-after-prefetch",
+    "optimization": "ReleaseFast",
+    "simd": false,
+    "strip": true,
+    "postLinkStrip": true,
+    "warningsAsErrors": true,
+    "passed": true
+  },
+  "conformance": {
+    "passed": true,
+    "authoritativeCursorDrivesSubsequentWrites": true,
+    "authoritativeCursorPreservesDecomMarginsAndSavedCursor": true,
+    "unsupportedNodeApiGuardDoesNotLoadNativeCode": true,
+    "canonicalBlankAndWrapFixtures": true,
+    "transactionalDirtyFailureRecovery": true,
+    "incrementalHistoryCaps": [0, 100, 500, 5000],
+    "multiLineScrollAndCapRotation": true,
+    "steadyHistoryRowsReadAtCap5000": 1,
+    "workerEnvironments": 12,
+    "workerModes": ["explicit-dispose", "gc-finalizer", "retained-until-env-cleanup"],
+    "allocationAndWrapFailureInjection": true,
+    "atomicDirtyAcknowledgementFailureRecovery": true,
+    "historyCountersUnchangedOnFailedWrite": true,
+    "compiledSourceAndAddonMutationRejected": true,
+    "strictNumericAndWriteCaps": true,
+    "lifecycleCycles": 30,
+    "remainingLiveHandles": 0
+  },
+  "benchmarks": {
+    "iterations": 500,
+    "workload": "120x40 incremental write plus transactional projection",
+    "history0": {
+      "p50Ms": 5.294292000000041,
+      "p95Ms": 5.826250000000016,
+      "p99Ms": 6.313874999999939,
+      "maxMs": 7.153374999999869
+    },
+    "history100": {
+      "p50Ms": 5.432208000000173,
+      "p95Ms": 5.606332999999722,
+      "p99Ms": 6.122333000000253,
+      "maxMs": 6.529125000000022
+    },
+    "history500": {
+      "p50Ms": 5.463249999999789,
+      "p95Ms": 5.8680420000000595,
+      "p99Ms": 6.412625000000844,
+      "maxMs": 7.25525000000016
+    }
+  },
+  "artifact": {
+    "addonSha256": "31c34b577c006cb03d04cd970aca99dff1ee42122e0230704f50406b34e59794",
+    "libghosttySharedSha256": "0ae1a768d0dbe23b25c0b83c3951f3a1b8bdb5b148f84b02fd068c4cd74a4e85",
+    "staticLibghostty": false
+  }
+}

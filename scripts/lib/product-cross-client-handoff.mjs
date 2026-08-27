@@ -2,6 +2,15 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 const HASH = /^[0-9a-f]{16}$/u;
 const HMAC = /^[0-9a-f]{64}$/u;
+const CARD5_HANDOFF_MARKER = /^CARD5_HANDOFF_[0-2]_[0-9a-f]{8}$/u;
+
+export function card5HandoffInputPayload(marker) {
+  if (!CARD5_HANDOFF_MARKER.test(marker ?? "")) return null;
+  return Object.freeze({
+    text: marker,
+    sha256: createHash("sha256").update(marker).digest("hex"),
+  });
+}
 
 function evidenceHmac(evidenceKey, domain, value) {
   if (!HMAC.test(evidenceKey ?? "")) return null;

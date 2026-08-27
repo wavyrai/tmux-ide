@@ -10,6 +10,12 @@ import {
 
 import {
   activateCard5ExactTerminalSurface,
+  boundedCard5InputGuardAxes,
+  boundedCard5InputReceiptAxes,
+  boundedCard5InputReceiptStartAxes,
+  boundedCard5PointerDispatchAxes,
+  card5InputGuardFailureReason,
+  card5PointerDispatchFailureReason,
   createCard5ProductionWebHostLease,
   issueCard5PredecessorDescriptor,
   launchCard5ProductionWebHosts,
@@ -38,7 +44,17 @@ function pageHarness(events, name) {
         ? "workspace-b"
         : attribute === "data-semantic-pane-id"
           ? "pane-b"
-          : null,
+          : attribute === "data-phase"
+            ? "connected"
+            : attribute === "data-preserves-frame"
+              ? "true"
+              : null,
+    get isConnected() {
+      return true;
+    },
+    get ownerDocument() {
+      return globalThis.document;
+    },
     dispose: async () => events.push([name, "qualified-surface-disposed"]),
   };
   return {
@@ -85,6 +101,319 @@ function pageHarness(events, name) {
     context: () => ({ newCDPSession: async () => session }),
   };
 }
+
+test("input guard diagnostics classify every strict conjunct in acceptance order", () => {
+  const passingOutcome = {
+    beforeInputCount: 1,
+    inputCount: 1,
+    eventCount: 2,
+    eventOverflow: false,
+    mutationCount: 0,
+    mutationOverflow: false,
+    trusted: true,
+    exactTarget: true,
+    exactData: true,
+    exactInputType: true,
+    cancelableBeforeInput: true,
+    restorationExact: true,
+    rejected: false,
+    exact: true,
+  };
+  const axes = boundedCard5InputGuardAxes(passingOutcome, {
+    deadlineValid: true,
+    settled: true,
+  });
+  assert.deepEqual(Object.keys(axes), [
+    "beforeInputCount",
+    "beforeInputCountOverflow",
+    "inputCount",
+    "inputCountOverflow",
+    "eventCount",
+    "eventCountOverflow",
+    "eventOverflow",
+    "mutationCount",
+    "mutationCountOverflow",
+    "mutationOverflow",
+    "trusted",
+    "exactTarget",
+    "exactData",
+    "exactInputType",
+    "cancelableBeforeInput",
+    "restorationExact",
+    "rejected",
+    "currentExact",
+    "deadlineValid",
+    "settled",
+  ]);
+  assert.equal(card5InputGuardFailureReason(axes), null);
+
+  for (const [field, value, reason] of [
+    ["inputCount", 0, "input-count-invalid"],
+    ["beforeInputCount", 0, "beforeinput-count-invalid"],
+    ["eventCount", 3, "event-count-invalid"],
+    ["eventOverflow", true, "event-overflow"],
+    ["mutationCount", 1, "mutation-count-invalid"],
+    ["mutationOverflow", true, "mutation-overflow"],
+    ["trusted", false, "event-untrusted"],
+    ["exactTarget", false, "event-target-invalid"],
+    ["exactData", false, "event-data-invalid"],
+    ["exactInputType", false, "event-input-type-invalid"],
+    ["cancelableBeforeInput", false, "beforeinput-not-cancelable"],
+    ["restorationExact", false, "restoration-invalid"],
+    ["rejected", true, "guard-rejected"],
+    ["exact", false, "guard-current-invalid"],
+  ]) {
+    const observed = boundedCard5InputGuardAxes(
+      { ...passingOutcome, [field]: value },
+      { deadlineValid: true, settled: true },
+    );
+    assert.equal(card5InputGuardFailureReason(observed), reason, field);
+  }
+
+  const prioritized = boundedCard5InputGuardAxes({
+    ...passingOutcome,
+    inputCount: 0,
+    mutationCount: 1,
+    rejected: true,
+  });
+  assert.equal(card5InputGuardFailureReason(prioritized), "input-count-invalid");
+  const capped = boundedCard5InputGuardAxes({
+    ...passingOutcome,
+    beforeInputCount: 9,
+    inputCount: 9,
+    eventCount: 17,
+    mutationCount: 65,
+  });
+  assert.deepEqual(
+    {
+      beforeInputCount: capped.beforeInputCount,
+      beforeInputCountOverflow: capped.beforeInputCountOverflow,
+      inputCount: capped.inputCount,
+      inputCountOverflow: capped.inputCountOverflow,
+      eventCount: capped.eventCount,
+      eventCountOverflow: capped.eventCountOverflow,
+      mutationCount: capped.mutationCount,
+      mutationCountOverflow: capped.mutationCountOverflow,
+    },
+    {
+      beforeInputCount: 8,
+      beforeInputCountOverflow: true,
+      inputCount: 8,
+      inputCountOverflow: true,
+      eventCount: 16,
+      eventCountOverflow: true,
+      mutationCount: 64,
+      mutationCountOverflow: true,
+    },
+  );
+  assert.equal(
+    boundedCard5InputGuardAxes({ ...passingOutcome, inputCount: Number.NaN }).inputCount,
+    null,
+  );
+});
+
+test("pointer dispatch diagnostics are fixed, bounded, raw-free, and prioritized", () => {
+  const passing = {
+    dispatched: true,
+    trusted: true,
+    buttonExact: true,
+    pathExact: true,
+    allowed: true,
+    rejected: false,
+    eventCount: 1,
+    eventOverflow: false,
+    mutationCount: 0,
+    mutationOverflow: false,
+    mutationCategories: {
+      identityNode: 0,
+      areaDescendant: 0,
+      terminalAttribute: 0,
+      paneAttribute: 0,
+      childList: 0,
+      inspectionOverflow: 0,
+    },
+    mutationTail: [],
+    current: {
+      areaConnected: true,
+      surfaceConnected: true,
+      targetConnected: true,
+      surfaceAreaExact: true,
+      targetAreaExact: true,
+      surfaceCardinalityExact: true,
+      compositorExact: true,
+      topologyExact: true,
+    },
+  };
+  const axes = boundedCard5PointerDispatchAxes(passing);
+  assert.deepEqual(Object.keys(axes), [
+    "dispatched",
+    "trusted",
+    "buttonExact",
+    "pathExact",
+    "allowed",
+    "rejected",
+    "eventCount",
+    "eventOverflow",
+    "mutationCount",
+    "mutationOverflow",
+    "mutationCategories",
+    "mutationTail",
+    "current",
+  ]);
+  assert.equal(card5PointerDispatchFailureReason(axes), null);
+  for (const [path, value, reason] of [
+    ["dispatched", false, "pointer-not-dispatched"],
+    ["trusted", false, "pointer-untrusted"],
+    ["buttonExact", false, "pointer-button-invalid"],
+    ["pathExact", false, "pointer-path-invalid"],
+    ["eventOverflow", true, "pointer-event-overflow"],
+    ["mutationOverflow", true, "pointer-mutation-overflow"],
+    ["mutationCount", 1, "pointer-mutation-detected"],
+    ["current.areaConnected", false, "pointer-area-disconnected"],
+    ["current.surfaceConnected", false, "pointer-surface-disconnected"],
+    ["current.targetConnected", false, "pointer-target-disconnected"],
+    ["current.surfaceAreaExact", false, "pointer-surface-area-changed"],
+    ["current.targetAreaExact", false, "pointer-target-area-changed"],
+    ["current.surfaceCardinalityExact", false, "pointer-surface-cardinality-changed"],
+    ["current.compositorExact", false, "pointer-compositor-changed"],
+    ["current.topologyExact", false, "pointer-topology-changed"],
+    ["allowed", false, "pointer-not-allowed"],
+    ["rejected", true, "pointer-rejected"],
+  ]) {
+    const changed = path.startsWith("current.")
+      ? { ...passing, current: { ...passing.current, [path.slice(8)]: value } }
+      : { ...passing, [path]: value };
+    assert.equal(
+      card5PointerDispatchFailureReason(boundedCard5PointerDispatchAxes(changed)),
+      reason,
+    );
+  }
+  const capped = boundedCard5PointerDispatchAxes({
+    ...passing,
+    eventCount: 9,
+    mutationCount: 65,
+    mutationCategories: Object.fromEntries(
+      Object.keys(passing.mutationCategories).map((key) => [key, 65]),
+    ),
+    mutationTail: [
+      { type: "childList", attribute: null, relevanceHmac: "a".repeat(64) },
+      { type: "attributes", attribute: "data-pane", relevanceHmac: "b".repeat(64) },
+      { type: "raw-private", attribute: "x".repeat(33), relevanceHmac: "raw" },
+    ],
+  });
+  assert.equal(capped.eventCount, 8);
+  assert.equal(capped.mutationCount, 64);
+  assert.deepEqual(Object.values(capped.mutationCategories), [64, 64, 64, 64, 64, 64]);
+  assert.deepEqual(capped.mutationTail, [
+    { type: "attributes", attribute: "data-pane", relevanceHmac: "b".repeat(64) },
+    { type: "invalid", attribute: null, relevanceHmac: null },
+  ]);
+  const prioritized = boundedCard5PointerDispatchAxes({
+    ...passing,
+    dispatched: false,
+    mutationOverflow: true,
+    rejected: true,
+  });
+  assert.equal(card5PointerDispatchFailureReason(prioritized), "pointer-not-dispatched");
+});
+
+test("input receipt waiter start diagnostics are fixed, bounded, and typed", () => {
+  const initial = Object.fromEntries(
+    [
+      "surfaceExact",
+      "textareaExact",
+      "focusExact",
+      "bindingEpochExact",
+      "bindingGenerationExact",
+      "bindingSessionExact",
+      "bindingWorkspaceExact",
+      "bindingPaneExact",
+      "bindingPaneSetHmacExact",
+      "bindingStageExact",
+      "bindingClientExact",
+      "bindingRequestExact",
+      "authorityGenerationExact",
+      "authoritySessionExact",
+      "clientGenerationExact",
+      "targetExact",
+      "baselineCountSafe",
+      "currentCountSafe",
+      "currentCountExact",
+      "operationBoundarySafe",
+    ].map((field) => [field, true]),
+  );
+  const axes = boundedCard5InputReceiptStartAxes({
+    status: "started",
+    settledStatus: "pending",
+    fixedDeadlineInstalled: true,
+    fixedDeadlineFinite: true,
+    browserRemainingMs: 4_250.9,
+    reserveMs: 4_250,
+    dispatchFresh: true,
+    initial,
+  });
+  assert.deepEqual(Object.keys(axes), [
+    "status",
+    "settledStatus",
+    "fixedDeadlineInstalled",
+    "fixedDeadlineFinite",
+    "browserRemainingMs",
+    "reserveMs",
+    "dispatchFresh",
+    "initial",
+  ]);
+  assert.equal(axes.browserRemainingMs, 4_250);
+  assert.deepEqual(Object.values(axes.initial), Array(20).fill(true));
+  for (const status of [
+    "started",
+    "initial-invalid",
+    "already-started",
+    "deadline-invalid",
+    "reserve-insufficient",
+  ])
+    assert.equal(boundedCard5InputReceiptStartAxes({ status, initial }).status, status);
+  const invalid = boundedCard5InputReceiptStartAxes({
+    status: "private-status",
+    settledStatus: "x".repeat(33),
+    browserRemainingMs: 10_001,
+    reserveMs: Number.NaN,
+    initial: { ...initial, focusExact: "yes" },
+  });
+  assert.equal(invalid.status, "invalid");
+  assert.equal(invalid.settledStatus, "invalid");
+  assert.equal(invalid.browserRemainingMs, 10_000);
+  assert.equal(invalid.reserveMs, null);
+  assert.equal(invalid.initial.focusExact, null);
+});
+
+test("input receipt diagnostics preserve exact long statuses and hash bounded stage identity", () => {
+  const axes = boundedCard5InputReceiptAxes(
+    {
+      status: "input-authority-unobserved-timeout",
+      operationCount: 1,
+      operationOverflow: false,
+      operationTail: [
+        {
+          ordinal: 7,
+          stage: "authority-request",
+          outcome: "sent",
+          generation: "generation-a",
+          lifecycleRequestId: "lifecycle-a",
+          authorityRequestId: "authority-a",
+          clientId: "client-a",
+          pane: "pane-a",
+          seq: null,
+        },
+      ],
+    },
+    "ab".repeat(32),
+  );
+  assert.equal(axes.status, "input-authority-unobserved-timeout");
+  assert.equal(axes.operationCount, 1);
+  assert.equal(axes.operationOverflow, false);
+  assert.match(axes.operationTail[0].identityHmac, /^[0-9a-f]{64}$/u);
+  assert.equal(JSON.stringify(axes).includes("authority-a"), false);
+});
 
 function launchInput(overrides = {}) {
   const events = [];
@@ -199,6 +528,7 @@ test("launches Chromium and the production Electron main/preload broker with own
 });
 
 test("canonical capture stays bound to the exact terminal qualified at readiness", async () => {
+  const daemonGeneration = "550e8400-e29b-41d4-a716-446655440000";
   const harness = launchInput();
   const owner = await launchCard5ProductionWebHosts(harness.input);
   const exactSurface = harness.electronPage.qualifiedSurfaceHandle;
@@ -208,10 +538,19 @@ test("canonical capture stays bound to the exact terminal qualified at readiness
   };
   let qualifiedSurface = exactSurface;
   let replaceDuringProbe = false;
+  let restoreDuringProbe = false;
+  let queuedMutationsDuringProbe = 0;
+  let probeSurface = exactSurface;
+  let probeGeneration = daemonGeneration;
+  let activeMutationObserver = null;
+  let replacePhysicalBindingAfterRead = null;
+  let replacementPhysicalBinding = undefined;
+  let envelopeReadCount = 0;
   let documentVisibility = "visible";
   let activeLifecycleRequests = [
     {
-      generation: "g1",
+      physicalEpoch: 1,
+      generation: daemonGeneration,
       requestId: "private-active-request",
       firstSeedOrdinal: 4,
       workspaceName: "workspace-b",
@@ -220,20 +559,38 @@ test("canonical capture stays bound to the exact terminal qualified at readiness
   ];
   let descriptorEvents = [
     {
-      generation: "g1",
+      physicalEpoch: 1,
+      generation: daemonGeneration,
       requestId: "private-active-request",
       socketUrl: "ws://127.0.0.1/private-socket",
     },
     {
-      generation: "g1",
+      physicalEpoch: 2,
+      generation: daemonGeneration,
       requestId: "private-unused-candidate",
       socketUrl: "ws://127.0.0.1/private-unused",
     },
   ];
+  let clientSnapshotGeneration = 7;
+  let authorityDaemonGeneration = daemonGeneration;
+  let targetDaemonGeneration = daemonGeneration;
+  let workspaceReadCount = 0;
+  let replaceClientGenerationAfterRead = null;
+  const exactPhysicalBinding = {
+    physicalEpoch: 1,
+    generation: daemonGeneration,
+    requestId: "private-active-request",
+    runtimeSession: "runtime-a",
+    workspaceName: "workspace-b",
+    semanticPaneIds: ["pane-b"],
+    clientId: "web-client-a",
+    stage: "first-seed",
+  };
+  let currentPhysicalBinding = exactPhysicalBinding;
   globalThis.__TMUX_IDE_CARD5_EVIDENCE_ENABLED__ = true;
   createCard5EnvelopeEvidenceRecorder();
   createCard5GeometryReceiptRecorder()?.({
-    generation: "g1",
+    generation: daemonGeneration,
     pane: "pane-b",
     cols: 140,
     rows: 46,
@@ -252,16 +609,88 @@ test("canonical capture stays bound to the exact terminal qualified at readiness
       envelope: globalThis.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__,
       workspace: globalThis.__TMUX_IDE_CARD5_WORKSPACE_EVIDENCE__,
       activity: globalThis.__TMUX_IDE_CARD5_AUTHORITY_ACTIVITY_EVIDENCE__,
+      MutationObserver: globalThis.MutationObserver,
+      Element: globalThis.Element,
+      CSS: globalThis.CSS,
     };
-    globalThis.document = { visibilityState: documentVisibility, querySelectorAll: () => [] };
+    class ElementStub {
+      contains(node) {
+        return node === this;
+      }
+      matches() {
+        return this === exactSurface || this === replacementSurface;
+      }
+      querySelector() {
+        return null;
+      }
+    }
+    Object.setPrototypeOf(exactSurface, ElementStub.prototype);
+    Object.setPrototypeOf(replacementSurface, ElementStub.prototype);
+    globalThis.Element = ElementStub;
+    globalThis.CSS = { escape: (text) => String(text) };
+    globalThis.MutationObserver = class {
+      constructor(callback) {
+        this.callback = callback;
+        this.records = [];
+        activeMutationObserver = this;
+      }
+      observe() {}
+      takeRecords() {
+        return this.records.splice(0);
+      }
+      disconnect() {
+        if (activeMutationObserver === this) activeMutationObserver = null;
+      }
+      deliver(records) {
+        this.callback(records);
+      }
+    };
+    globalThis.document = {
+      visibilityState: documentVisibility,
+      defaultView: globalThis,
+      documentElement: {},
+      querySelectorAll: () => [],
+    };
     globalThis.__TMUX_IDE_CARD5_QUALIFIED_TERMINAL__ = (mode = "readiness") =>
       documentVisibility === "hidden" && mode === "readiness" ? null : qualifiedSurface;
     globalThis.__TMUX_IDE_PROBE_TERMINAL_RENDITION__ = async (paneId) => {
-      if (replaceDuringProbe) qualifiedSurface = replacementSurface;
+      if (replaceDuringProbe) {
+        qualifiedSurface = replacementSurface;
+        activeMutationObserver?.deliver([
+          {
+            type: "childList",
+            target: globalThis.document.documentElement,
+            addedNodes: [replacementSurface],
+            removedNodes: [exactSurface],
+          },
+        ]);
+        if (restoreDuringProbe) {
+          qualifiedSurface = exactSurface;
+          activeMutationObserver?.deliver([
+            {
+              type: "childList",
+              target: globalThis.document.documentElement,
+              addedNodes: [exactSurface],
+              removedNodes: [replacementSurface],
+            },
+          ]);
+        }
+      }
+      if (queuedMutationsDuringProbe > 0) {
+        activeMutationObserver?.records.push(
+          ...Array.from({ length: queuedMutationsDuringProbe }, (_, index) => ({
+            type: "childList",
+            target: globalThis.document.documentElement,
+            addedNodes: [index % 2 === 0 ? replacementSurface : exactSurface],
+            removedNodes: [index % 2 === 0 ? exactSurface : replacementSurface],
+          })),
+        );
+      }
       return {
+        surface: probeSurface,
         canonical: {
           incarnation: "incarnation-b",
-          generation: "g1",
+          generation: probeGeneration,
           revision: 2,
           cols: 160,
           rows: 44,
@@ -271,26 +700,39 @@ test("canonical capture stays bound to the exact terminal qualified at readiness
       };
     };
     const baseEnvelope = recordedEnvelopeEvidence();
-    globalThis.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__ = () => ({
-      ...baseEnvelope,
-      acceptedCount: 1,
-      ackSentCount: 1,
-      activeLifecycleRequests,
-      activeLifecycleRequestOverflowGenerations: [],
-      descriptorEvents,
-      descriptorEventCount: descriptorEvents.length,
-      events: [],
-      replacementCount: 0,
-      replacementBoundary: null,
-      predecessorAcceptedAfterReplacement: 0,
-      socketEvents: [],
-      socketEventCount: 0,
-      ackEvents: [],
-      inputReceipts: [],
-      inputReceiptCount: 0,
-      geometryReceipts: baseEnvelope.geometryReceipts,
-      geometryReceiptCount: baseEnvelope.geometryReceiptCount,
-    });
+    envelopeReadCount = 0;
+    workspaceReadCount = 0;
+    globalThis.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__ = () => {
+      envelopeReadCount += 1;
+      const binding =
+        replacePhysicalBindingAfterRead !== null &&
+        envelopeReadCount >= replacePhysicalBindingAfterRead
+          ? replacementPhysicalBinding === undefined
+            ? { ...currentPhysicalBinding, generation: "g-foreign" }
+            : replacementPhysicalBinding
+          : currentPhysicalBinding;
+      return {
+        ...baseEnvelope,
+        acceptedCount: 1,
+        ackSentCount: 1,
+        activeLifecycleRequests,
+        activeLifecycleRequestOverflowGenerations: [],
+        currentPhysicalBinding: binding,
+        descriptorEvents,
+        descriptorEventCount: descriptorEvents.length,
+        events: [],
+        replacementCount: 0,
+        replacementBoundary: null,
+        predecessorAcceptedAfterReplacement: 0,
+        socketEvents: [],
+        socketEventCount: 0,
+        ackEvents: [],
+        inputReceipts: [],
+        inputReceiptCount: 0,
+        geometryReceipts: baseEnvelope.geometryReceipts,
+        geometryReceiptCount: baseEnvelope.geometryReceiptCount,
+      };
+    };
     globalThis.__TMUX_IDE_CARD5_AUTHORITY_ACTIVITY_EVIDENCE__ = () => ({
       count: 2,
       overflow: false,
@@ -315,17 +757,31 @@ test("canonical capture stays bound to the exact terminal qualified at readiness
         },
       ],
     });
-    globalThis.__TMUX_IDE_CARD5_WORKSPACE_EVIDENCE__ = () => ({
-      snapshot: {
-        generation: "g1",
-        phase: "live",
-        target: null,
-        authority: null,
-        operations: [],
-      },
-      authorityRecords: [],
-      authorityRecordCount: 0,
-    });
+    globalThis.__TMUX_IDE_CARD5_WORKSPACE_EVIDENCE__ = () => {
+      workspaceReadCount += 1;
+      return {
+        snapshot: {
+          generation:
+            replaceClientGenerationAfterRead !== null &&
+            workspaceReadCount >= replaceClientGenerationAfterRead
+              ? clientSnapshotGeneration + 1
+              : clientSnapshotGeneration,
+          phase: "live",
+          target:
+            targetDaemonGeneration === null
+              ? null
+              : { daemon: { instanceId: targetDaemonGeneration }, workspaceName: "workspace-b" },
+          authority: {
+            generation: authorityDaemonGeneration,
+            session: "runtime-a",
+            clients: [{ clientId: "web-client-a", surface: "web" }],
+          },
+          operations: [],
+        },
+        authorityRecords: [],
+        authorityRecordCount: 0,
+      };
+    };
     try {
       return await callback(value);
     } finally {
@@ -335,6 +791,9 @@ test("canonical capture stays bound to the exact terminal qualified at readiness
       globalThis.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__ = previous.envelope;
       globalThis.__TMUX_IDE_CARD5_WORKSPACE_EVIDENCE__ = previous.workspace;
       globalThis.__TMUX_IDE_CARD5_AUTHORITY_ACTIVITY_EVIDENCE__ = previous.activity;
+      globalThis.MutationObserver = previous.MutationObserver;
+      globalThis.Element = previous.Element;
+      globalThis.CSS = previous.CSS;
     }
   };
   const stable = await observeCard5WebCanonical(
@@ -342,17 +801,48 @@ test("canonical capture stays bound to the exact terminal qualified at readiness
     harness.input.evidenceKey,
     owner.electronProcessIdentity,
   );
+  const stableEnvelopeReadCount = envelopeReadCount;
+  assert.ok(stableEnvelopeReadCount > 4);
   assert.equal(stable?.semanticPaneId, "pane-b");
+  assert.deepEqual(stable?.surfaceProbeIdentity, {
+    qualifiedSurfaceExact: true,
+    probeSurfaceExact: true,
+    connected: true,
+    documentExact: true,
+    workspaceExact: true,
+    paneExact: true,
+    phaseExact: true,
+    framePreserved: true,
+    mutationCount: 0,
+    mutationOverflow: false,
+    physicalBindingStable: true,
+    workspaceSnapshotStable: true,
+    workspaceHmac: stable.surfaceProbeIdentity.workspaceHmac,
+    paneHmac: stable.surfaceProbeIdentity.paneHmac,
+  });
+  assert.match(stable.surfaceProbeIdentity.workspaceHmac, /^[0-9a-f]{64}$/u);
+  assert.match(stable.surfaceProbeIdentity.paneHmac, /^[0-9a-f]{64}$/u);
   const lightweightExact = await observeCard5WebAuthorityReceipt(
     harness.electronPage,
     harness.input.evidenceKey,
     owner.electronProcessIdentity,
   );
   assert.equal(lightweightExact?.semanticPaneId, "pane-b");
+  assert.equal(stable?.workspaceEvidence?.generation, 7);
+  assert.equal(lightweightExact?.generation, daemonGeneration);
   assert.deepEqual(
     {
-      ...lightweightExact?.runtimeReplacement?.currentLifecycleRequest,
+      status: lightweightExact?.runtimeReplacement?.currentLifecycleRequest?.status,
       requestHmac: "<hmac>",
+      activeCount: lightweightExact?.runtimeReplacement?.currentLifecycleRequest?.activeCount,
+      descriptorCount:
+        lightweightExact?.runtimeReplacement?.currentLifecycleRequest?.descriptorCount,
+      overflow: lightweightExact?.runtimeReplacement?.currentLifecycleRequest?.overflow,
+      physicalBindingExact:
+        lightweightExact?.runtimeReplacement?.currentLifecycleRequest?.physicalBindingExact,
+      physicalEpochHmacValid: /^[0-9a-f]{64}$/u.test(
+        lightweightExact?.runtimeReplacement?.currentLifecycleRequest?.physicalEpochHmac ?? "",
+      ),
     },
     {
       status: "exact",
@@ -360,24 +850,241 @@ test("canonical capture stays bound to the exact terminal qualified at readiness
       activeCount: 1,
       descriptorCount: 1,
       overflow: false,
+      physicalBindingExact: true,
+      physicalEpochHmacValid: true,
     },
   );
+  for (const observed of [stable, lightweightExact]) {
+    const lifecycle = observed.runtimeReplacement.currentLifecycleRequest;
+    assert.deepEqual(lifecycle.physicalBindingAxes, {
+      present: true,
+      epochSafe: true,
+      generationExact: true,
+      runtimeSessionExact: true,
+      workspaceExact: true,
+      paneExact: true,
+      stageExact: true,
+      clientExact: true,
+      epochActiveCount: 1,
+      bindingRequestExact: true,
+      descriptorExact: true,
+    });
+    assert.equal(lifecycle.bindingRequestHmac, lifecycle.requestHmac);
+    assert.match(lifecycle.bindingClientHmac, /^[0-9a-f]{64}$/u);
+    assert.equal(lifecycle.activeTail.length, 1);
+    assert.deepEqual(Object.keys(lifecycle.activeTail[0]).sort(), [
+      "epochHmac",
+      "generationHmac",
+      "ordinal",
+      "paneSetHmac",
+      "requestHmac",
+      "workspaceHmac",
+    ]);
+    assert.doesNotMatch(JSON.stringify(lifecycle), /private-active-request|workspace-b|pane-b/u);
+  }
+  for (const malformedGeneration of [
+    "g1",
+    "a".repeat(129),
+    "550e8400-e29b-01d4-a716-446655440000",
+    "550e8400-e29b-41d4-7716-446655440000",
+  ]) {
+    probeGeneration = malformedGeneration;
+    authorityDaemonGeneration = malformedGeneration;
+    targetDaemonGeneration = malformedGeneration;
+    currentPhysicalBinding = { ...exactPhysicalBinding, generation: malformedGeneration };
+    activeLifecycleRequests = activeLifecycleRequests.map((request) => ({
+      ...request,
+      generation: malformedGeneration,
+    }));
+    descriptorEvents = descriptorEvents.map((descriptor) => ({
+      ...descriptor,
+      generation: malformedGeneration,
+    }));
+    const malformedCanonical = await observeCard5WebCanonical(
+      harness.electronPage,
+      harness.input.evidenceKey,
+      owner.electronProcessIdentity,
+    );
+    const malformedLightweight = await observeCard5WebAuthorityReceipt(
+      harness.electronPage,
+      harness.input.evidenceKey,
+      owner.electronProcessIdentity,
+    );
+    assert.equal(
+      malformedCanonical?.runtimeReplacement?.currentLifecycleRequest?.physicalBindingExact,
+      false,
+    );
+    assert.equal(malformedLightweight?.generation, null);
+    assert.equal(
+      malformedLightweight?.runtimeReplacement?.currentLifecycleRequest?.physicalBindingExact,
+      false,
+    );
+  }
+  probeGeneration = daemonGeneration;
+  authorityDaemonGeneration = daemonGeneration;
+  targetDaemonGeneration = daemonGeneration;
+  currentPhysicalBinding = exactPhysicalBinding;
+  activeLifecycleRequests = activeLifecycleRequests.map((request) => ({
+    ...request,
+    generation: daemonGeneration,
+  }));
+  descriptorEvents = descriptorEvents.map((descriptor) => ({
+    ...descriptor,
+    generation: daemonGeneration,
+  }));
+  const uppercaseGeneration = daemonGeneration.toUpperCase();
+  probeGeneration = uppercaseGeneration;
+  authorityDaemonGeneration = uppercaseGeneration;
+  targetDaemonGeneration = uppercaseGeneration;
+  currentPhysicalBinding = { ...exactPhysicalBinding, generation: uppercaseGeneration };
+  activeLifecycleRequests = activeLifecycleRequests.map((request) => ({
+    ...request,
+    generation: uppercaseGeneration,
+  }));
+  descriptorEvents = descriptorEvents.map((descriptor) => ({
+    ...descriptor,
+    generation: uppercaseGeneration,
+  }));
+  assert.equal(
+    (
+      await observeCard5WebAuthorityReceipt(
+        harness.electronPage,
+        harness.input.evidenceKey,
+        owner.electronProcessIdentity,
+      )
+    )?.generation,
+    uppercaseGeneration,
+  );
+  probeGeneration = daemonGeneration;
+  authorityDaemonGeneration = daemonGeneration;
+  targetDaemonGeneration = daemonGeneration;
+  currentPhysicalBinding = exactPhysicalBinding;
+  activeLifecycleRequests = activeLifecycleRequests.map((request) => ({
+    ...request,
+    generation: daemonGeneration,
+  }));
+  descriptorEvents = descriptorEvents.map((descriptor) => ({
+    ...descriptor,
+    generation: daemonGeneration,
+  }));
+  for (const [authorityGeneration, targetGeneration] of [
+    ["", daemonGeneration],
+    [daemonGeneration, null],
+    [daemonGeneration, "g-foreign"],
+  ]) {
+    authorityDaemonGeneration = authorityGeneration;
+    targetDaemonGeneration = targetGeneration;
+    for (const observe of [observeCard5WebCanonical, observeCard5WebAuthorityReceipt]) {
+      const rejected = await observe(
+        harness.electronPage,
+        harness.input.evidenceKey,
+        owner.electronProcessIdentity,
+      );
+      assert.equal(
+        rejected?.runtimeReplacement?.currentLifecycleRequest?.physicalBindingExact,
+        false,
+      );
+      assert.equal(
+        rejected?.runtimeReplacement?.currentLifecycleRequest?.physicalBindingAxes?.generationExact,
+        false,
+      );
+    }
+  }
+  authorityDaemonGeneration = daemonGeneration;
+  targetDaemonGeneration = daemonGeneration;
+  activeLifecycleRequests = activeLifecycleRequests.map((request) => ({
+    ...request,
+    generation: "g-foreign",
+  }));
+  for (const observe of [observeCard5WebCanonical, observeCard5WebAuthorityReceipt]) {
+    const rejected = await observe(
+      harness.electronPage,
+      harness.input.evidenceKey,
+      owner.electronProcessIdentity,
+    );
+    assert.equal(rejected?.runtimeReplacement?.currentLifecycleRequest?.status, "missing");
+    assert.equal(rejected?.runtimeReplacement?.currentLifecycleRequest?.rawActiveCount, 0);
+  }
+  activeLifecycleRequests = activeLifecycleRequests.map((request) => ({
+    ...request,
+    generation: daemonGeneration,
+  }));
+  descriptorEvents = descriptorEvents.map((descriptor) => ({
+    ...descriptor,
+    generation: "g-foreign",
+  }));
+  for (const observe of [observeCard5WebCanonical, observeCard5WebAuthorityReceipt]) {
+    const rejected = await observe(
+      harness.electronPage,
+      harness.input.evidenceKey,
+      owner.electronProcessIdentity,
+    );
+    assert.equal(rejected?.runtimeReplacement?.currentLifecycleRequest?.status, "exact");
+    assert.equal(rejected?.runtimeReplacement?.currentLifecycleRequest?.descriptorCount, 0);
+  }
+  descriptorEvents = descriptorEvents.map((descriptor) => ({
+    ...descriptor,
+    generation: daemonGeneration,
+  }));
+  replaceClientGenerationAfterRead = 2;
+  await assert.rejects(
+    observeCard5WebCanonical(
+      harness.electronPage,
+      harness.input.evidenceKey,
+      owner.electronProcessIdentity,
+    ),
+    (error) =>
+      error.observation?.reason === "surface-probe-identity-invalid" &&
+      error.observation.surfaceProbeIdentity?.workspaceSnapshotStable === false,
+    "numeric WorkspaceClient generation churn must invalidate one canonical observation",
+  );
+  replaceClientGenerationAfterRead = null;
+  for (const mismatchedBinding of [
+    { ...exactPhysicalBinding, requestId: "private-spliced-request" },
+    { ...exactPhysicalBinding, physicalEpoch: 2 },
+    { ...exactPhysicalBinding, runtimeSession: "runtime-foreign" },
+    { ...exactPhysicalBinding, workspaceName: "workspace-foreign" },
+    { ...exactPhysicalBinding, semanticPaneIds: ["pane-foreign"] },
+    { ...exactPhysicalBinding, clientId: "web-client-foreign" },
+  ]) {
+    currentPhysicalBinding = mismatchedBinding;
+    for (const observe of [observeCard5WebCanonical, observeCard5WebAuthorityReceipt]) {
+      const rejected = await observe(
+        harness.electronPage,
+        harness.input.evidenceKey,
+        owner.electronProcessIdentity,
+      );
+      assert.equal(rejected?.runtimeReplacement?.currentLifecycleRequest?.status, "missing");
+    }
+  }
+  currentPhysicalBinding = exactPhysicalBinding;
   activeLifecycleRequests = [];
   const lightweightMissing = await observeCard5WebAuthorityReceipt(
     harness.electronPage,
     harness.input.evidenceKey,
     owner.electronProcessIdentity,
   );
-  assert.deepEqual(lightweightMissing?.runtimeReplacement?.currentLifecycleRequest, {
-    status: "missing",
-    requestHmac: null,
-    activeCount: 0,
-    descriptorCount: 0,
-    overflow: false,
-  });
+  assert.deepEqual(
+    {
+      status: lightweightMissing?.runtimeReplacement?.currentLifecycleRequest?.status,
+      requestHmac: lightweightMissing?.runtimeReplacement?.currentLifecycleRequest?.requestHmac,
+      activeCount: lightweightMissing?.runtimeReplacement?.currentLifecycleRequest?.activeCount,
+      descriptorCount:
+        lightweightMissing?.runtimeReplacement?.currentLifecycleRequest?.descriptorCount,
+      overflow: lightweightMissing?.runtimeReplacement?.currentLifecycleRequest?.overflow,
+    },
+    {
+      status: "missing",
+      requestHmac: null,
+      activeCount: 0,
+      descriptorCount: 0,
+      overflow: false,
+    },
+  );
   activeLifecycleRequests = [
     {
-      generation: "g1",
+      physicalEpoch: 1,
+      generation: daemonGeneration,
       requestId: "private-active-request",
       firstSeedOrdinal: 4,
       workspaceName: "workspace-b",
@@ -402,8 +1109,13 @@ test("canonical capture stays bound to the exact terminal qualified at readiness
   );
   assert.deepEqual(
     {
-      ...lightweightRetainedRingLoss?.runtimeReplacement?.currentLifecycleRequest,
+      status: lightweightRetainedRingLoss?.runtimeReplacement?.currentLifecycleRequest?.status,
       requestHmac: "<hmac>",
+      activeCount:
+        lightweightRetainedRingLoss?.runtimeReplacement?.currentLifecycleRequest?.activeCount,
+      descriptorCount:
+        lightweightRetainedRingLoss?.runtimeReplacement?.currentLifecycleRequest?.descriptorCount,
+      overflow: lightweightRetainedRingLoss?.runtimeReplacement?.currentLifecycleRequest?.overflow,
     },
     {
       status: "exact",
@@ -416,7 +1128,7 @@ test("canonical capture stays bound to the exact terminal qualified at readiness
   );
   descriptorEvents = [
     {
-      generation: "g1",
+      generation: daemonGeneration,
       requestId: "private-active-request",
       socketUrl: "ws://127.0.0.1/private-socket",
     },
@@ -429,9 +1141,13 @@ test("canonical capture stays bound to the exact terminal qualified at readiness
   assert.equal(stable.workspaceEvidence.authorityActivity.geometrySettlements[0].ordinal, 0);
   assert.deepEqual(
     {
-      ...stable?.runtimeReplacement?.currentLifecycleRequest,
+      status: stable?.runtimeReplacement?.currentLifecycleRequest?.status,
       requestHmac: "<hmac>",
       socketHmac: "<hmac>",
+      activeCount: stable?.runtimeReplacement?.currentLifecycleRequest?.activeCount,
+      overflow: stable?.runtimeReplacement?.currentLifecycleRequest?.overflow,
+      descriptorCount: stable?.runtimeReplacement?.currentLifecycleRequest?.descriptorCount,
+      firstSeedOrdinal: stable?.runtimeReplacement?.currentLifecycleRequest?.firstSeedOrdinal,
     },
     {
       status: "exact",
@@ -445,6 +1161,10 @@ test("canonical capture stays bound to the exact terminal qualified at readiness
   );
   assert.match(stable.runtimeReplacement.currentLifecycleRequest.requestHmac, /^[0-9a-f]{64}$/u);
   assert.match(stable.runtimeReplacement.currentLifecycleRequest.socketHmac, /^[0-9a-f]{64}$/u);
+  assert.match(
+    stable.runtimeReplacement.currentLifecycleRequest.deliveryClientHmac,
+    /^[0-9a-f]{64}$/u,
+  );
   assert.doesNotMatch(
     JSON.stringify(stable.runtimeReplacement.currentLifecycleRequest),
     /private-/u,
@@ -452,7 +1172,8 @@ test("canonical capture stays bound to the exact terminal qualified at readiness
   activeLifecycleRequests = [
     ...activeLifecycleRequests,
     {
-      generation: "g1",
+      physicalEpoch: 1,
+      generation: daemonGeneration,
       requestId: "private-second-active",
       firstSeedOrdinal: 9,
       workspaceName: "workspace-b",
@@ -482,7 +1203,7 @@ test("canonical capture stays bound to the exact terminal qualified at readiness
   );
   activeLifecycleRequests = [
     {
-      generation: "g1",
+      generation: daemonGeneration,
       requestId: "private-other-pane",
       firstSeedOrdinal: 10,
       workspaceName: "workspace-b",
@@ -502,7 +1223,7 @@ test("canonical capture stays bound to the exact terminal qualified at readiness
   );
   activeLifecycleRequests = [
     {
-      generation: "g1",
+      generation: daemonGeneration,
       requestId: "private-active-request",
       firstSeedOrdinal: 4,
       workspaceName: "workspace-b",
@@ -510,24 +1231,44 @@ test("canonical capture stays bound to the exact terminal qualified at readiness
     },
   ];
   qualifiedSurface = replacementSurface;
-  assert.equal(
-    await observeCard5WebCanonical(
+  await assert.rejects(
+    observeCard5WebCanonical(
       harness.electronPage,
       harness.input.evidenceKey,
       owner.electronProcessIdentity,
     ),
-    null,
-    "a same-workspace/same-pane element replacement must not be captured",
+    (error) =>
+      error.observation?.reason === "surface-probe-identity-invalid" &&
+      JSON.stringify(Object.keys(error.observation.surfaceProbeIdentity).sort()) ===
+        JSON.stringify(
+          [
+            "connected",
+            "documentExact",
+            "framePreserved",
+            "mutationCount",
+            "mutationOverflow",
+            "paneExact",
+            "paneHmac",
+            "phaseExact",
+            "physicalBindingStable",
+            "probeSurfaceExact",
+            "qualifiedSurfaceExact",
+            "workspaceExact",
+            "workspaceHmac",
+            "workspaceSnapshotStable",
+          ].sort(),
+        ) &&
+      error.observation.surfaceProbeIdentity.workspaceHmac === null &&
+      error.observation.surfaceProbeIdentity.paneHmac === null,
   );
   qualifiedSurface = null;
-  assert.equal(
-    await observeCard5WebCanonical(
+  await assert.rejects(
+    observeCard5WebCanonical(
       harness.electronPage,
       harness.input.evidenceKey,
       owner.electronProcessIdentity,
     ),
-    null,
-    "a hidden or removed qualified element must not be captured",
+    (error) => error.observation?.reason === "surface-probe-identity-invalid",
   );
   qualifiedSurface = exactSurface;
   assert.equal(
@@ -554,16 +1295,122 @@ test("canonical capture stays bound to the exact terminal qualified at readiness
     "the exact latched surface remains observable while its document is hidden",
   );
   documentVisibility = "visible";
-  replaceDuringProbe = true;
-  assert.equal(
-    await observeCard5WebCanonical(
+  probeSurface = replacementSurface;
+  probeGeneration = "g-foreign";
+  await assert.rejects(
+    observeCard5WebCanonical(
       harness.electronPage,
       harness.input.evidenceKey,
       owner.electronProcessIdentity,
     ),
-    null,
-    "a same-identity replacement while the rendition probe is pending must not be captured",
+    (error) =>
+      error.observation?.reason === "surface-probe-identity-invalid" &&
+      error.observation.surfaceProbeIdentity?.probeSurfaceExact === false,
   );
+  probeSurface = exactSurface;
+  probeGeneration = daemonGeneration;
+  replacePhysicalBindingAfterRead = 2;
+  await assert.rejects(
+    observeCard5WebCanonical(
+      harness.electronPage,
+      harness.input.evidenceKey,
+      owner.electronProcessIdentity,
+    ),
+    (error) =>
+      error.observation?.reason === "surface-probe-identity-invalid" &&
+      error.observation.surfaceProbeIdentity?.physicalBindingStable === false,
+    "a physical binding swap during observation must fail before correlation",
+  );
+  replacePhysicalBindingAfterRead = null;
+  replacementPhysicalBinding = undefined;
+  currentPhysicalBinding = null;
+  replacePhysicalBindingAfterRead = 4;
+  replacementPhysicalBinding = exactPhysicalBinding;
+  await assert.rejects(
+    observeCard5WebCanonical(
+      harness.electronPage,
+      harness.input.evidenceKey,
+      owner.electronProcessIdentity,
+    ),
+    (error) =>
+      error.observation?.reason === "surface-probe-identity-invalid" &&
+      error.observation.surfaceProbeIdentity?.physicalBindingStable === false,
+    "a captured null physical binding cannot become exact during later HMAC work",
+  );
+  replacePhysicalBindingAfterRead = 5;
+  replacementPhysicalBinding = { ...exactPhysicalBinding, generation: "g-foreign" };
+  await assert.rejects(
+    observeCard5WebCanonical(
+      harness.electronPage,
+      harness.input.evidenceKey,
+      owner.electronProcessIdentity,
+    ),
+    (error) =>
+      error.observation?.reason === "surface-probe-identity-invalid" &&
+      error.observation.surfaceProbeIdentity?.physicalBindingStable === false,
+    "a captured null physical binding cannot become foreign during final observation",
+  );
+  currentPhysicalBinding = exactPhysicalBinding;
+  replacePhysicalBindingAfterRead = null;
+  replacementPhysicalBinding = undefined;
+  replaceDuringProbe = true;
+  await assert.rejects(
+    observeCard5WebCanonical(
+      harness.electronPage,
+      harness.input.evidenceKey,
+      owner.electronProcessIdentity,
+    ),
+    (error) =>
+      error.observation?.reason === "surface-probe-identity-invalid" &&
+      /^[0-9a-f]{64}$/u.test(error.observation.surfaceProbeIdentity?.workspaceHmac ?? "") &&
+      /^[0-9a-f]{64}$/u.test(error.observation.surfaceProbeIdentity?.paneHmac ?? "") &&
+      error.observation.surfaceProbeIdentity?.workspaceExact === true &&
+      error.observation.surfaceProbeIdentity?.paneExact === true,
+  );
+  qualifiedSurface = exactSurface;
+  replaceDuringProbe = true;
+  restoreDuringProbe = true;
+  await assert.rejects(
+    observeCard5WebCanonical(
+      harness.electronPage,
+      harness.input.evidenceKey,
+      owner.electronProcessIdentity,
+    ),
+    (error) =>
+      error.observation?.reason === "surface-probe-identity-invalid" &&
+      error.observation.surfaceProbeIdentity?.mutationCount === 2,
+    "a callback-delivered A-to-B-to-A replacement must remain sticky",
+  );
+  replaceDuringProbe = false;
+  restoreDuringProbe = false;
+  qualifiedSurface = exactSurface;
+  queuedMutationsDuringProbe = 2;
+  await assert.rejects(
+    observeCard5WebCanonical(
+      harness.electronPage,
+      harness.input.evidenceKey,
+      owner.electronProcessIdentity,
+    ),
+    (error) =>
+      error.observation?.reason === "surface-probe-identity-invalid" &&
+      error.observation.surfaceProbeIdentity?.mutationCount === 2 &&
+      error.observation.surfaceProbeIdentity?.mutationOverflow === false,
+    "a takeRecords-only A-to-B-to-A replacement must retain truthful mutation axes",
+  );
+  queuedMutationsDuringProbe = 65;
+  await assert.rejects(
+    observeCard5WebCanonical(
+      harness.electronPage,
+      harness.input.evidenceKey,
+      owner.electronProcessIdentity,
+    ),
+    (error) =>
+      error.observation?.reason === "surface-probe-identity-invalid" &&
+      error.observation.surfaceProbeIdentity?.mutationCount === 64 &&
+      error.observation.surfaceProbeIdentity?.mutationOverflow === true,
+    "takeRecords-only mutation overflow must remain bounded and truthful",
+  );
+  queuedMutationsDuringProbe = 0;
   await owner.close();
   await assert.rejects(
     observeCard5WebCanonical(
@@ -580,6 +1427,22 @@ test("canonical capture stays bound to the exact terminal qualified at readiness
 });
 
 test("trusted Card5 terminal activation requires pointer click, xterm focus, and stable binding", async () => {
+  const daemonGeneration = "550e8400-e29b-41d4-a716-446655440000";
+  const evidenceKey = "ab".repeat(32);
+  const paneSetHmac = (paneIds) =>
+    createHmac("sha256", Buffer.from(evidenceKey, "hex"))
+      .update(
+        `pane-set\0${paneIds.length}\0${[...paneIds]
+          .sort()
+          .map((paneId) => `${paneId.length}\0${paneId}`)
+          .join("")}`,
+      )
+      .digest("hex");
+  assert.notEqual(
+    paneSetHmac(["a", "b\0c"]),
+    paneSetHmac(["a", "b", "c"]),
+    "length framing must prevent delimiter aliases even before pane-id validation",
+  );
   const previous = {
     document: globalThis.document,
     Element: globalThis.Element,
@@ -588,9 +1451,13 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
     Node: globalThis.Node,
     MutationObserver: globalThis.MutationObserver,
     getComputedStyle: globalThis.getComputedStyle,
+    envelopeEvidence: globalThis.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__,
+    workspaceEvidence: globalThis.__TMUX_IDE_CARD5_WORKSPACE_EVIDENCE__,
+    qualifiedTerminal: globalThis.__TMUX_IDE_CARD5_QUALIFIED_TERMINAL__,
   };
   class ElementStub {
     children = [];
+    isConnected = true;
     contains(value) {
       return this.children.some((child) => child === value || child.contains?.(value));
     }
@@ -605,6 +1472,16 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
   let targetVisibility = "visible";
   class TextAreaStub extends ElementStub {
     classList = { contains: (value) => value === "xterm-helper-textarea" };
+    value = "";
+    readOnly = false;
+    selectionStart = 0;
+    selectionEnd = 0;
+    throwOnSelectionRestore = false;
+    setSelectionRange(start, end) {
+      if (this.throwOnSelectionRestore) throw new Error("selection restore rejected");
+      this.selectionStart = start;
+      this.selectionEnd = end;
+    }
   }
   class SurfaceStub extends ElementStub {
     isConnected = true;
@@ -614,6 +1491,7 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
     getAttribute(name) {
       if (name === "data-semantic-pane-id") return this.pane;
       if (name === "data-phase") return this.phase;
+      if (name === "data-workspace-name") return "workspace-b";
       return null;
     }
     contains(value) {
@@ -684,16 +1562,29 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
   let clickFailure = null;
   let clickBlockMs = 0;
   let insertBlockMs = 0;
+  let insertDispatchDelayMs = 0;
+  let insertNeverSettles = false;
+  let releaseNeverSettlingInsert = null;
+  let exactPageCloseCount = 0;
+  let exactPageClosed = false;
+  let exactPageCloseFailure = null;
   let insertCount = 0;
+  let downstreamInputCount = 0;
   let clearFocusDuringInsert = false;
   let detachTargetDuringClick = false;
   let beforeHandleClick = null;
   let beforeFinalTargetCheck = null;
   let afterPreInsertObservation = null;
   let beforeKeyboardInsert = null;
+  let keyboardEventPlan = null;
+  let inputReceiptPlan = null;
+  let receiptWaiterAwaitNeverSettles = false;
+  let receiptWaiterRendererBlocked = false;
+  let receiptWaiterBlockedResolvers = [];
   let disposedHandleCount = 0;
   let elementHandlesDelayMs = 0;
   let evaluateHandleDelayMs = 0;
+  let inputGuardArmRequestDelayMs = 0;
   let evaluateHandleCallCount = 0;
   let observationSequence = [];
   let observationCallCount = 0;
@@ -732,14 +1623,23 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
       mutationObservers.delete(this);
     }
   }
-  const dispatchBrowserEvent = ({ type, node, trusted = true, data = null }) => {
+  const dispatchBrowserEvent = ({
+    type,
+    node,
+    trusted = true,
+    data = null,
+    cancelable = type === "beforeinput",
+    inputType = type === "beforeinput" || type === "input" ? "insertText" : undefined,
+  }) => {
     let prevented = false;
     let stopped = false;
     documentCaptureListeners.get(type)?.({
+      type,
       button: 0,
       target: node,
       data,
-      inputType: type === "beforeinput" || type === "input" ? "insertText" : undefined,
+      inputType,
+      cancelable,
       isTrusted: trusted,
       composedPath: () => [node],
       preventDefault: () => {
@@ -751,6 +1651,7 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
     });
     if (!stopped && type === "pointerdown") paneSelectionCount += 1;
     if (!stopped && type === "pointerup") focusRequestCount += 1;
+    if (!stopped && type === "input") downstreamInputCount += 1;
     return { prevented, stopped };
   };
   const dispatchPointer = ({ node, trusted = true }) =>
@@ -759,20 +1660,50 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
     workspaceName: "workspace-b",
     semanticPaneId: "pane-b",
     processIdentity: "chromium:1",
-    generation: "g1",
+    generation: daemonGeneration,
     runtimeReplacement: {
       inputReceipts: [],
       inputReceiptCount: 0,
       currentLifecycleRequest: {
         status: "exact",
         requestHmac: "aa".repeat(32),
+        paneSetHmac: paneSetHmac(["pane-b"]),
+        physicalBindingExact: true,
+        physicalEpochHmac: "bb".repeat(32),
         activeCount: 1,
         descriptorCount: 1,
         overflow: false,
       },
     },
-    workspaceEvidence: { target: { session: "session-a" } },
+    workspaceEvidence: {
+      generation: 7,
+      target: { session: "session-a", daemon: { instanceId: daemonGeneration } },
+      authority: {
+        generation: daemonGeneration,
+        session: "session-a",
+        owners: { input: null, focus: null, geometry: null },
+        clients: [{ clientId: "web-a", surface: "web" }],
+      },
+    },
   });
+  const physicalBinding = {
+    physicalEpoch: 1,
+    generation: daemonGeneration,
+    runtimeSession: "session-a",
+    workspaceName: "workspace-b",
+    semanticPaneIds: ["pane-b"],
+    stage: "first-seed",
+    clientId: "web-a",
+    requestId: "request-a",
+  };
+  let envelopeEvidence = {
+    currentPhysicalBinding: physicalBinding,
+    inputReceiptCount: 0,
+    inputReceipts: [],
+    inputOperationCount: 0,
+    inputOperations: [],
+  };
+  let workspaceSnapshot = binding.workspaceEvidence;
   const unwrapHandleArgument = (value) => {
     if (value instanceof HandleStub) return value.node;
     if (Array.isArray(value)) return value.map(unwrapHandleArgument);
@@ -806,17 +1737,31 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
     globalThis.document.activeElement = textarea;
   };
   class HandleStub {
-    constructor(node) {
+    constructor(node, kind = null) {
       this.node = node;
+      this.kind = kind;
     }
     evaluate(callback, value) {
+      if (
+        receiptWaiterAwaitNeverSettles &&
+        this.kind === "input-receipt-waiter" &&
+        (receiptWaiterRendererBlocked || callback.toString().includes("awaitOutcome"))
+      ) {
+        receiptWaiterRendererBlocked = true;
+        return new Promise((resolve) => receiptWaiterBlockedResolvers.push(resolve));
+      }
       return callback(this.node, unwrapHandleArgument(value));
     }
     async evaluateHandle(callback, value) {
       evaluateHandleCallCount += 1;
       if (evaluateHandleDelayMs > 0)
         await new Promise((resolve) => setTimeout(resolve, evaluateHandleDelayMs));
-      return new HandleStub(callback(this.node, unwrapHandleArgument(value)));
+      if (inputGuardArmRequestDelayMs > 0 && callback.toString().includes("browserArmSample"))
+        await new Promise((resolve) => setTimeout(resolve, inputGuardArmRequestDelayMs));
+      return new HandleStub(
+        await callback(this.node, unwrapHandleArgument(value)),
+        callback.toString().includes("expectedClientGeneration") ? "input-receipt-waiter" : null,
+      );
     }
     asElement() {
       return this.node instanceof ElementStub ? this : null;
@@ -830,6 +1775,17 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
   }
   const page = {
     bringToFront: async () => {},
+    close: async () => {
+      exactPageCloseCount += 1;
+      if (exactPageCloseFailure) throw exactPageCloseFailure;
+      exactPageClosed = true;
+      releaseNeverSettlingInsert?.();
+      releaseNeverSettlingInsert = null;
+      receiptWaiterAwaitNeverSettles = false;
+      receiptWaiterRendererBlocked = false;
+      for (const resolveWaiter of receiptWaiterBlockedResolvers) resolveWaiter(null);
+      receiptWaiterBlockedResolvers = [];
+    },
     locator: () => ({
       evaluateAll: async (callback, value) => callback(nodes, value),
       elementHandles: async () => {
@@ -840,19 +1796,172 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
     }),
     keyboard: {
       insertText: async (text) => {
+        if (insertNeverSettles) {
+          await new Promise((resolve) => {
+            releaseNeverSettlingInsert = resolve;
+          });
+          if (exactPageClosed) return;
+        }
+        if (insertDispatchDelayMs > 0)
+          await new Promise((resolve) => setTimeout(resolve, insertDispatchDelayMs));
+        if (exactPageClosed) return;
         beforeKeyboardInsert?.();
         beforeKeyboardInsert = null;
         const inputTarget = globalThis.document.activeElement;
-        const beforeInput = dispatchBrowserEvent({
-          type: "beforeinput",
-          node: inputTarget,
-          data: text,
-        });
+        const plan = keyboardEventPlan ?? {};
+        keyboardEventPlan = null;
+        const beforeInputs = Array.from({ length: plan.beforeInputCount ?? 1 }, () =>
+          dispatchBrowserEvent({
+            type: "beforeinput",
+            node: plan.beforeInputTarget ?? inputTarget,
+            data: Object.hasOwn(plan, "beforeInputData") ? plan.beforeInputData : text,
+            trusted: plan.beforeInputTrusted ?? true,
+            cancelable: plan.beforeInputCancelable ?? true,
+            inputType: plan.beforeInputType ?? "insertText",
+          }),
+        );
+        if (beforeInputs.some(({ prevented, stopped }) => prevented || stopped)) return;
         if (clearFocusDuringInsert) globalThis.document.activeElement = null;
-        const input = dispatchBrowserEvent({ type: "input", node: inputTarget, data: text });
-        if (beforeInput.prevented || beforeInput.stopped || input.prevented || input.stopped)
+        if (typeof inputTarget?.value === "string" && inputTarget.readOnly !== true)
+          inputTarget.value += text;
+        const inputs = Array.from({ length: plan.inputCount ?? 1 }, () =>
+          dispatchBrowserEvent({
+            type: "input",
+            node: plan.inputTarget ?? inputTarget,
+            data: Object.hasOwn(plan, "inputData") ? plan.inputData : text,
+            trusted: plan.inputTrusted ?? true,
+            cancelable: false,
+            inputType: plan.inputType ?? "insertText",
+          }),
+        );
+        if (inputs.length !== 1 || inputs.some(({ prevented, stopped }) => prevented || stopped))
           return;
         insertCount += 1;
+        const receiptPlan = inputReceiptPlan ?? {};
+        inputReceiptPlan = null;
+        const baseline = envelopeEvidence.inputReceiptCount;
+        const operationBoundary = envelopeEvidence.inputOperationCount;
+        workspaceSnapshot = receiptPlan.workspaceSnapshot ?? {
+          ...workspaceSnapshot,
+          authority: {
+            ...workspaceSnapshot.authority,
+            owners: {
+              ...workspaceSnapshot.authority.owners,
+              input: Object.hasOwn(receiptPlan, "authorityOwner")
+                ? receiptPlan.authorityOwner
+                : "web-a",
+            },
+          },
+        };
+        envelopeEvidence = {
+          ...envelopeEvidence,
+          currentPhysicalBinding: receiptPlan.binding ?? envelopeEvidence.currentPhysicalBinding,
+          inputReceiptCount: receiptPlan.count ?? baseline + 1,
+          inputReceipts: receiptPlan.receipts ?? [
+            ...envelopeEvidence.inputReceipts,
+            {
+              ordinal: baseline,
+              generation: daemonGeneration,
+              pane: "pane-b",
+              inputSha256: "ef".repeat(32),
+              requestId: "request-a",
+              authorityClientId: "web-a",
+            },
+          ],
+          inputOperationCount: receiptPlan.operationCount ?? operationBoundary + 10,
+          inputOperations: receiptPlan.operations ?? [
+            ...envelopeEvidence.inputOperations,
+            {
+              physicalEpoch: 1,
+              generation: daemonGeneration,
+              lifecycleRequestId: "request-a",
+              authorityRequestId: null,
+              clientId: "web-a",
+              pane: "pane-b",
+              seq: null,
+              stage: "xterm-enqueue",
+              outcome: "ok",
+              ordinal: operationBoundary,
+            },
+            {
+              physicalEpoch: 1,
+              generation: daemonGeneration,
+              lifecycleRequestId: "request-a",
+              authorityRequestId: null,
+              clientId: "web-a",
+              pane: "pane-b",
+              seq: null,
+              stage: "surface-write",
+              outcome: "attempt",
+              ordinal: operationBoundary + 1,
+            },
+            {
+              physicalEpoch: 1,
+              generation: daemonGeneration,
+              lifecycleRequestId: "request-a",
+              authorityRequestId: "authority-a",
+              clientId: "web-a",
+              pane: null,
+              seq: null,
+              stage: "authority-request",
+              outcome: "attempt",
+              ordinal: operationBoundary + 2,
+            },
+            {
+              physicalEpoch: 1,
+              generation: daemonGeneration,
+              lifecycleRequestId: "request-a",
+              authorityRequestId: "authority-a",
+              clientId: "web-a",
+              pane: null,
+              seq: null,
+              stage: "authority-request",
+              outcome: "sent",
+              ordinal: operationBoundary + 3,
+            },
+            {
+              physicalEpoch: 1,
+              generation: daemonGeneration,
+              lifecycleRequestId: "request-a",
+              authorityRequestId: "authority-a",
+              clientId: "web-a",
+              pane: null,
+              seq: null,
+              stage: "authority-result",
+              outcome: "granted",
+              ordinal: operationBoundary + 4,
+            },
+            ...[
+              ["input-send", "attempt"],
+              ["input-send", "sent"],
+              ["input-ack", "ok"],
+              ["receipt-published", "ok"],
+            ].map(([stage, outcome], index) => ({
+              physicalEpoch: 1,
+              generation: daemonGeneration,
+              lifecycleRequestId: "request-a",
+              authorityRequestId: null,
+              clientId: "web-a",
+              pane: "pane-b",
+              seq: 1,
+              stage,
+              outcome,
+              ordinal: operationBoundary + index + 5,
+            })),
+            {
+              physicalEpoch: 1,
+              generation: daemonGeneration,
+              lifecycleRequestId: "request-a",
+              authorityRequestId: null,
+              clientId: "web-a",
+              pane: "pane-b",
+              seq: null,
+              stage: "surface-write",
+              outcome: "ok",
+              ordinal: operationBoundary + 9,
+            },
+          ],
+        };
         const blockedUntil = performance.now() + insertBlockMs;
         while (performance.now() < blockedUntil) {
           // Deliberately block timer delivery to test the post-settlement clock fence.
@@ -863,10 +1972,23 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
   const activate = (sequence = [binding, binding, binding, binding], input = null) => {
     observationSequence = [...sequence];
     observationCallCount = 0;
+    if (input?.inputText !== undefined) {
+      const initial = sequence.find((entry) => entry?.runtimeReplacement)?.runtimeReplacement;
+      envelopeEvidence = {
+        currentPhysicalBinding: physicalBinding,
+        inputReceiptCount: initial?.inputReceiptCount ?? 0,
+        inputReceipts: initial?.inputReceipts ?? [],
+        inputOperationCount: 0,
+        inputOperations: [],
+      };
+      workspaceSnapshot =
+        sequence.find((entry) => entry?.workspaceEvidence)?.workspaceEvidence ??
+        binding.workspaceEvidence;
+    }
     return activateCard5ExactTerminalSurface({
       mode: input === null || input?.inputText === undefined ? "focus" : "input",
       page,
-      keyHex: "ab".repeat(32),
+      keyHex: evidenceKey,
       processIdentity: "chromium:1",
       expectedPane: "pane-b",
       expectedPaneHmac: "cd".repeat(32),
@@ -916,6 +2038,9 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
         documentCaptureListeners.delete(type);
     },
   };
+  globalThis.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__ = () => envelopeEvidence;
+  globalThis.__TMUX_IDE_CARD5_WORKSPACE_EVIDENCE__ = () => ({ snapshot: workspaceSnapshot });
+  globalThis.__TMUX_IDE_CARD5_QUALIFIED_TERMINAL__ = () => surface;
   try {
     await activate();
     assert.equal(clickCount, 1, "activation must use the trusted locator click path");
@@ -934,10 +2059,22 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
       composedBodies = [body, otherBody];
       recordIdentityMutation(area);
     };
-    await assert.rejects(
-      activate(),
-      (error) => error.observation?.reason === "trusted-pointer-topology-rejected",
-    );
+    await assert.rejects(activate(), (error) => {
+      assert.equal(error.observation?.reason, "trusted-pointer-topology-rejected");
+      assert.equal(error.observation.pointerDispatchReason, "pointer-mutation-detected");
+      assert.equal(error.observation.pointerDispatchAxes?.mutationCount, 1);
+      assert.equal(error.observation.pointerDispatchAxes?.mutationCategories.identityNode, 1);
+      assert.equal(error.observation.pointerDispatchAxes?.mutationTail.length, 1);
+      assert.match(
+        error.observation.pointerDispatchAxes?.mutationTail[0]?.relevanceHmac ?? "",
+        /^[0-9a-f]{64}$/u,
+      );
+      assert.equal(
+        Object.hasOwn(error.observation.pointerDispatchAxes?.mutationTail[0] ?? {}, "relevance"),
+        false,
+      );
+      return true;
+    });
     assert.equal(clickCount, clicksBeforeReorder, "a dispatch-window reorder must not click");
     composedBodies = [otherBody, body];
     const insertedForeignBody = new BodyStub();
@@ -1275,6 +2412,67 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
       missingLifecycleBinding,
       missingLifecycleBinding,
     ]);
+    const clicksBeforeInvalidGeneration = clickCount;
+    const inputsBeforeInvalidGeneration = insertCount;
+    for (const invalidGenerationBinding of [
+      { ...missingLifecycleBinding, generation: null },
+      {
+        ...missingLifecycleBinding,
+        workspaceEvidence: { ...binding.workspaceEvidence, authority: null },
+      },
+      {
+        ...missingLifecycleBinding,
+        workspaceEvidence: {
+          ...binding.workspaceEvidence,
+          authority: { generation: "g-foreign" },
+        },
+      },
+      {
+        ...missingLifecycleBinding,
+        workspaceEvidence: {
+          ...binding.workspaceEvidence,
+          target: { ...binding.workspaceEvidence.target, daemon: { instanceId: "g-foreign" } },
+        },
+      },
+      ...[
+        "g1",
+        "a".repeat(129),
+        "550e8400-e29b-01d4-a716-446655440000",
+        "550e8400-e29b-41d4-7716-446655440000",
+      ].map((malformedGeneration) => ({
+        ...missingLifecycleBinding,
+        generation: malformedGeneration,
+        workspaceEvidence: {
+          ...binding.workspaceEvidence,
+          authority: { generation: malformedGeneration },
+          target: {
+            ...binding.workspaceEvidence.target,
+            daemon: { instanceId: malformedGeneration },
+          },
+        },
+      })),
+    ]) {
+      await assert.rejects(
+        activate([invalidGenerationBinding]),
+        (error) => error.observation?.reason === "activation-lifecycle-invalid",
+      );
+    }
+    assert.equal(clickCount, clicksBeforeInvalidGeneration);
+    assert.equal(insertCount, inputsBeforeInvalidGeneration);
+    const clientGenerationChanged = {
+      ...binding,
+      workspaceEvidence: { ...binding.workspaceEvidence, generation: 8 },
+    };
+    await assert.rejects(
+      activate([binding, clientGenerationChanged], {
+        inputText: "payload\n",
+        inputSha256: "ef".repeat(32),
+        deadline: performance.now() + 100,
+      }),
+      (error) => error.observation?.reason === "input-activation-binding-changed",
+    );
+    assert.equal(clickCount, clicksBeforeInvalidGeneration);
+    assert.equal(insertCount, inputsBeforeInvalidGeneration);
     const ambiguousLifecycleBinding = {
       ...binding,
       runtimeReplacement: {
@@ -1318,11 +2516,8 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
       runtimeReplacement: {
         ...binding.runtimeReplacement,
         currentLifecycleRequest: {
-          status: "exact",
+          ...binding.runtimeReplacement.currentLifecycleRequest,
           requestHmac: "bb".repeat(32),
-          activeCount: 1,
-          descriptorCount: 1,
-          overflow: false,
         },
       },
     };
@@ -1396,7 +2591,7 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
     clearFocusAfterBindingObservation = false;
     const receipt = {
       ordinal: 0,
-      generation: "g1",
+      generation: daemonGeneration,
       pane: "pane-b",
       inputSha256: "ef".repeat(32),
       requestId: "request-a",
@@ -1412,6 +2607,9 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
         currentLifecycleRequest: {
           status: "exact",
           requestHmac,
+          paneSetHmac: paneSetHmac(["pane-b"]),
+          physicalBindingExact: true,
+          physicalEpochHmac: "bb".repeat(32),
           activeCount: 1,
           descriptorCount: 1,
           overflow: false,
@@ -1426,6 +2624,28 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
         inputReceiptCount: 1,
       },
     };
+    const changedPaneSetBinding = {
+      ...requestBinding,
+      runtimeReplacement: {
+        ...requestBinding.runtimeReplacement,
+        currentLifecycleRequest: {
+          ...requestBinding.runtimeReplacement.currentLifecycleRequest,
+          paneSetHmac: paneSetHmac(["pane-b", "pane-foreign"]),
+        },
+      },
+    };
+    const clicksBeforePaneSetChurn = clickCount;
+    const insertsBeforePaneSetChurn = insertCount;
+    await assert.rejects(
+      activate([requestBinding, changedPaneSetBinding, requestBinding], {
+        inputText: "payload\n",
+        inputSha256: "ef".repeat(32),
+        deadline: performance.now() + 5_000,
+      }),
+      (error) => error.observation?.reason === "input-activation-pane-set-changed",
+    );
+    assert.equal(clickCount, clicksBeforePaneSetChurn);
+    assert.equal(insertCount, insertsBeforePaneSetChurn);
     compositor = true;
     composedBodies = [otherBody, body];
     hitTarget = bodyHit;
@@ -1472,7 +2692,7 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
       {
         inputText: "payload\n",
         inputSha256: "ef".repeat(32),
-        deadline: performance.now() + 100,
+        deadline: performance.now() + 5_000,
       },
     );
     assert.equal(transientReady.requestHmac, requestHmac);
@@ -1623,9 +2843,11 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
     assert.equal(insertCount, insertsBeforeFinalFocusFence);
     globalThis.document.activeElement = textarea;
     const insertsBeforeDispatchGap = insertCount;
+    const foreignTextarea = new TextAreaStub();
+    foreignTextarea.value = "foreign-before";
     beforeKeyboardInsert = () => {
       dispatchBrowserEvent({ type: "focusout", node: textarea });
-      globalThis.document.activeElement = new TextAreaStub();
+      globalThis.document.activeElement = foreignTextarea;
       dispatchBrowserEvent({ type: "focusin", node: globalThis.document.activeElement });
     };
     await assert.rejects(
@@ -1641,15 +2863,170 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
         {
           inputText: "payload\n",
           inputSha256: "ef".repeat(32),
-          deadline: performance.now() + 100,
+          deadline: performance.now() + 5_000,
         },
       ),
-      (error) => error.observation?.reason === "input-dispatch-rejected",
+      (error) => {
+        assert.equal(error.observation?.reason, "input-dispatch-rejected");
+        assert.equal(error.observation?.inputGuardReason, "input-count-invalid");
+        assert.deepEqual(error.observation?.inputGuardAxes, {
+          beforeInputCount: 0,
+          beforeInputCountOverflow: false,
+          inputCount: 0,
+          inputCountOverflow: false,
+          eventCount: 1,
+          eventCountOverflow: false,
+          eventOverflow: false,
+          mutationCount: 0,
+          mutationCountOverflow: false,
+          mutationOverflow: false,
+          trusted: true,
+          exactTarget: false,
+          exactData: true,
+          exactInputType: true,
+          cancelableBeforeInput: true,
+          restorationExact: true,
+          rejected: true,
+          currentExact: false,
+          deadlineValid: true,
+          settled: true,
+        });
+        return true;
+      },
     );
     assert.equal(
       insertCount,
       insertsBeforeDispatchGap,
       "dispatch-window focus loss must block input",
+    );
+    assert.equal(foreignTextarea.value, "foreign-before");
+    globalThis.document.activeElement = textarea;
+    keyboardEventPlan = { beforeInputCount: 0 };
+    beforeKeyboardInsert = () => {
+      dispatchBrowserEvent({ type: "focusout", node: textarea });
+      globalThis.document.activeElement = foreignTextarea;
+      dispatchBrowserEvent({ type: "focusin", node: foreignTextarea });
+    };
+    await assert.rejects(
+      activate(
+        [
+          requestBinding,
+          requestBinding,
+          requestBinding,
+          requestBinding,
+          requestBinding,
+          requestBinding,
+        ],
+        {
+          inputText: "payload\n",
+          inputSha256: "ef".repeat(32),
+          deadline: performance.now() + 5_000,
+        },
+      ),
+      (error) => error.observation?.reason === "input-dispatch-rejected",
+    );
+    assert.equal(insertCount, insertsBeforeDispatchGap);
+    assert.equal(
+      foreignTextarea.value,
+      "foreign-before",
+      "a no-beforeinput foreign mutation must be restored before product input",
+    );
+    for (const foreign of [
+      Object.assign(new TextAreaStub(), { value: "x".repeat(16_385) }),
+      Object.assign(new TextAreaStub(), {
+        value: "selection-before",
+        throwOnSelectionRestore: true,
+      }),
+    ]) {
+      globalThis.document.activeElement = textarea;
+      keyboardEventPlan = { beforeInputCount: 0 };
+      const beforeValue = foreign.value;
+      beforeKeyboardInsert = () => {
+        dispatchBrowserEvent({ type: "focusout", node: textarea });
+        globalThis.document.activeElement = foreign;
+        dispatchBrowserEvent({ type: "focusin", node: foreign });
+      };
+      await assert.rejects(
+        activate(
+          [
+            requestBinding,
+            requestBinding,
+            requestBinding,
+            requestBinding,
+            requestBinding,
+            requestBinding,
+          ],
+          {
+            inputText: "payload\n",
+            inputSha256: "ef".repeat(32),
+            deadline: performance.now() + 5_000,
+          },
+        ),
+        (error) => error.observation?.reason === "input-dispatch-rejected",
+      );
+      assert.equal(foreign.value, beforeValue);
+      assert.equal(foreign.readOnly, false);
+    }
+    for (const plan of [
+      { beforeInputCount: 2 },
+      { beforeInputTrusted: false },
+      { beforeInputCancelable: false },
+      { beforeInputTarget: foreignTextarea },
+      { beforeInputData: "wrong" },
+      { beforeInputData: null },
+      { inputCount: 0 },
+      { inputData: "wrong" },
+      { inputData: null },
+    ]) {
+      globalThis.document.activeElement = textarea;
+      const textareaValue = textarea.value;
+      keyboardEventPlan = plan;
+      await assert.rejects(
+        activate(
+          [
+            requestBinding,
+            requestBinding,
+            requestBinding,
+            requestBinding,
+            requestBinding,
+            requestBinding,
+          ],
+          {
+            inputText: "payload\n",
+            inputSha256: "ef".repeat(32),
+            deadline: performance.now() + 5_000,
+          },
+        ),
+        (error) => error.observation?.reason === "input-dispatch-rejected",
+      );
+      assert.equal(insertCount, insertsBeforeDispatchGap);
+      assert.equal(textarea.value, textareaValue);
+    }
+    globalThis.document.activeElement = textarea;
+    keyboardEventPlan = { inputCount: 2 };
+    const downstreamBeforeDuplicate = downstreamInputCount;
+    await assert.rejects(
+      activate(
+        [
+          requestBinding,
+          requestBinding,
+          requestBinding,
+          requestBinding,
+          requestBinding,
+          requestBinding,
+        ],
+        {
+          inputText: "payload\n",
+          inputSha256: "ef".repeat(32),
+          deadline: performance.now() + 5_000,
+        },
+      ),
+      (error) => error.observation?.reason === "input-dispatch-rejected",
+    );
+    assert.equal(
+      downstreamInputCount,
+      downstreamBeforeDuplicate + 1,
+      "the synthetic duplicate adversary must expose the irreversible first downstream event",
     );
     globalThis.document.activeElement = textarea;
     beforeKeyboardInsert = () => {
@@ -1681,7 +3058,7 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
         {
           inputText: "payload\n",
           inputSha256: "ef".repeat(32),
-          deadline: performance.now() + 100,
+          deadline: performance.now() + 5_000,
         },
       ),
       (error) => error.observation?.reason === "input-dispatch-rejected",
@@ -1704,11 +3081,304 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
       {
         inputText: "payload\n",
         inputSha256: "ef".repeat(32),
-        deadline: performance.now() + 100,
+        deadline: performance.now() + 5_000,
       },
     );
     assert.equal(inserted.authorityClientId, "web-a");
     assert.equal(inserted.requestHmac, requestHmac);
+    const insertsBeforeMultiPane = insertCount;
+    physicalBinding.semanticPaneIds = ["pane-a", "pane-b"];
+    const multiPaneRequestBinding = {
+      ...requestBinding,
+      runtimeReplacement: {
+        ...requestBinding.runtimeReplacement,
+        currentLifecycleRequest: {
+          ...requestBinding.runtimeReplacement.currentLifecycleRequest,
+          paneSetHmac: paneSetHmac(["pane-a", "pane-b"]),
+        },
+      },
+    };
+    const multiPaneInserted = await activate(
+      [
+        multiPaneRequestBinding,
+        multiPaneRequestBinding,
+        multiPaneRequestBinding,
+        multiPaneRequestBinding,
+        multiPaneRequestBinding,
+      ],
+      {
+        inputText: "payload\n",
+        inputSha256: "ef".repeat(32),
+        deadline: performance.now() + 5_000,
+      },
+    );
+    assert.equal(multiPaneInserted.authorityClientId, "web-a");
+    assert.equal(
+      insertCount,
+      insertsBeforeMultiPane + 1,
+      "the exact full physical pane inventory must admit one input",
+    );
+    for (const paneIds of [
+      ["pane-b", "pane-foreign"],
+      ["pane-a"],
+      ["pane-b", "pane-b"],
+      ["pane-b", "pane-a"],
+      ["pane-b", 7],
+      ["", "pane-b"],
+      ["pane b", "pane-b"],
+      ["pane-b", "pane\0foreign"],
+      ["__proto__", "pane-b"],
+      ["pane-b", "terminal.discovered.foreign"],
+      ["pane-b", "päné"],
+      ["pane-b", `p${"x".repeat(128)}`],
+      ["pane-b", "x".repeat(513)],
+      [],
+      [
+        ...Array.from({ length: 64 }, (_, index) => `pane-${String(index).padStart(2, "0")}`),
+        "pane-b",
+      ].sort(),
+    ]) {
+      const insertsBeforeInvalidPaneSet = insertCount;
+      physicalBinding.semanticPaneIds = paneIds;
+      await assert.rejects(
+        activate(
+          [
+            multiPaneRequestBinding,
+            multiPaneRequestBinding,
+            multiPaneRequestBinding,
+            multiPaneRequestBinding,
+            multiPaneRequestBinding,
+          ],
+          {
+            inputText: "payload\n",
+            inputSha256: "ef".repeat(32),
+            deadline: performance.now() + 5_000,
+          },
+        ),
+        (error) =>
+          error.observation?.reason === "input-receipt-invalid" &&
+          error.observation?.inputReceiptStartAxes?.status === "initial-invalid" &&
+          (error.observation?.inputReceiptStartAxes?.initial?.bindingPaneExact === false ||
+            error.observation?.inputReceiptStartAxes?.initial?.bindingPaneSetHmacExact === false),
+      );
+      assert.equal(insertCount, insertsBeforeInvalidPaneSet);
+    }
+    physicalBinding.semanticPaneIds = ["pane-b"];
+    const closesBeforeHungReceiptWaiter = exactPageCloseCount;
+    receiptWaiterAwaitNeverSettles = true;
+    await assert.rejects(
+      activate([requestBinding, requestBinding, requestBinding, requestBinding, requestBinding], {
+        inputText: "payload\n",
+        inputSha256: "ef".repeat(32),
+        deadline: performance.now() + 4_500,
+      }),
+      (error) => error.observation?.reason === "input-receipt-timeout",
+    );
+    assert.equal(exactPageCloseCount, closesBeforeHungReceiptWaiter + 1);
+    assert.equal(receiptWaiterBlockedResolvers.length, 0);
+    exactPageClosed = false;
+    const disposedBeforeRejectedClose = disposedHandleCount;
+    exactPageCloseFailure = new Error("exact page close rejected");
+    receiptWaiterAwaitNeverSettles = true;
+    await assert.rejects(
+      activate([requestBinding, requestBinding, requestBinding, requestBinding, requestBinding], {
+        inputText: "payload\n",
+        inputSha256: "ef".repeat(32),
+        deadline: performance.now() + 4_500,
+      }),
+      (error) => error.observation?.reason === "input-receipt-timeout",
+    );
+    exactPageCloseFailure = null;
+    receiptWaiterAwaitNeverSettles = false;
+    receiptWaiterRendererBlocked = false;
+    for (const resolveWaiter of receiptWaiterBlockedResolvers) resolveWaiter(null);
+    receiptWaiterBlockedResolvers = [];
+    await new Promise((resolveWait) => setImmediate(resolveWait));
+    await new Promise((resolveWait) => setImmediate(resolveWait));
+    assert.ok(
+      disposedHandleCount > disposedBeforeRejectedClose,
+      "late waiter settlement must dispose handles after an exact page-close rejection",
+    );
+    for (const [field, changedSnapshot] of [
+      ["clientGenerationExact", { ...requestBinding.workspaceEvidence, generation: 8 }],
+      [
+        "targetExact",
+        {
+          ...requestBinding.workspaceEvidence,
+          target: { ...requestBinding.workspaceEvidence.target, session: "session-b" },
+        },
+      ],
+    ]) {
+      inputReceiptPlan = { workspaceSnapshot: changedSnapshot };
+      await assert.rejects(
+        activate([requestBinding, requestBinding, requestBinding, requestBinding, requestBinding], {
+          inputText: "payload\n",
+          inputSha256: "ef".repeat(32),
+          deadline: performance.now() + 5_000,
+        }),
+        (error) =>
+          error.observation?.reason === "input-receipt-invalid" &&
+          error.observation?.inputReceiptAxes?.[field] === false,
+      );
+    }
+    inputReceiptPlan = { receipts: [receipt, { ...receipt }] };
+    await assert.rejects(
+      activate([requestBinding, requestBinding, requestBinding, requestBinding, requestBinding], {
+        inputText: "payload\n",
+        inputSha256: "ef".repeat(32),
+        deadline: performance.now() + 5_000,
+      }),
+      (error) =>
+        error.observation?.reason === "input-receipt-invalid" &&
+        error.observation?.inputReceiptAxes?.candidateCount === 2,
+    );
+    inputReceiptPlan = {
+      operationCount: 65,
+      operations: Array.from({ length: 64 }, (_, index) => ({
+        physicalEpoch: 1,
+        generation: daemonGeneration,
+        lifecycleRequestId: "request-a",
+        authorityRequestId: null,
+        clientId: "web-a",
+        pane: "pane-b",
+        seq: null,
+        stage: "xterm-enqueue",
+        outcome: "ok",
+        ordinal: index + 1,
+      })),
+    };
+    await assert.rejects(
+      activate([requestBinding, requestBinding, requestBinding, requestBinding, requestBinding], {
+        inputText: "payload\n",
+        inputSha256: "ef".repeat(32),
+        deadline: performance.now() + 5_000,
+      }),
+      (error) =>
+        error.observation?.reason === "input-receipt-invalid" &&
+        error.observation?.inputReceiptAxes?.operationOverflow === true,
+    );
+    const splicedOperations = [
+      ["xterm-enqueue", "ok", null, null, "pane-b"],
+      ["surface-write", "attempt", null, null, "pane-b"],
+      ["authority-request", "attempt", "authority-a", null, null],
+      ["authority-request", "sent", "authority-a", null, null],
+      ["authority-result", "granted", "authority-b", null, null],
+    ].map(([stage, outcome, authorityRequestId, seq, pane], ordinal) => ({
+      physicalEpoch: 1,
+      generation: daemonGeneration,
+      lifecycleRequestId: "request-a",
+      authorityRequestId,
+      clientId: "web-a",
+      pane,
+      seq,
+      stage,
+      outcome,
+      ordinal,
+    }));
+    inputReceiptPlan = {
+      operationCount: splicedOperations.length,
+      operations: splicedOperations,
+    };
+    await assert.rejects(
+      activate([requestBinding, requestBinding, requestBinding, requestBinding, requestBinding], {
+        inputText: "payload\n",
+        inputSha256: "ef".repeat(32),
+        deadline: performance.now() + 5_000,
+      }),
+      (error) =>
+        error.observation?.reason === "input-receipt-invalid" &&
+        error.observation?.inputReceiptAxes?.operationOverflow === true,
+    );
+    for (const tokens of [
+      [
+        ["xterm-enqueue", "ok"],
+        ["surface-write", "attempt"],
+        ["surface-write", "ok"],
+      ],
+      [
+        ["xterm-enqueue", "ok"],
+        ["surface-write", "attempt"],
+        ["authority-request", "attempt"],
+        ["authority-request", "sent"],
+        ["authority-request", "send-failed"],
+      ],
+      [
+        ["xterm-enqueue", "ok"],
+        ["surface-write", "attempt"],
+        ["authority-request", "attempt"],
+        ["authority-request", "sent"],
+        ["authority-result", "granted"],
+        ["authority-result", "rejected"],
+      ],
+      [
+        ["xterm-enqueue", "ok"],
+        ["surface-write", "attempt"],
+        ["input-send", "attempt"],
+        ["input-send", "sent"],
+        ["input-ack", "ok"],
+        ["input-ack", "ack-timeout"],
+      ],
+    ]) {
+      const operations = tokens.map(([stage, outcome], ordinal) => ({
+        physicalEpoch: 1,
+        generation: daemonGeneration,
+        lifecycleRequestId: "request-a",
+        authorityRequestId: stage.startsWith("authority-") ? "authority-a" : null,
+        clientId: "web-a",
+        pane: stage.startsWith("authority-") ? null : "pane-b",
+        seq: ["input-send", "input-ack", "receipt-published"].includes(stage) ? 1 : null,
+        stage,
+        outcome,
+        ordinal,
+      }));
+      inputReceiptPlan = { operationCount: operations.length, operations };
+      await assert.rejects(
+        activate([requestBinding, requestBinding, requestBinding, requestBinding, requestBinding], {
+          inputText: "payload\n",
+          inputSha256: "ef".repeat(32),
+          deadline: performance.now() + 5_000,
+        }),
+        (error) =>
+          error.observation?.reason === "input-receipt-invalid" &&
+          error.observation?.inputReceiptAxes?.operationOverflow === true,
+      );
+    }
+    const lostAuthorityAfterAck = [
+      ["xterm-enqueue", "ok"],
+      ["surface-write", "attempt"],
+      ["input-send", "attempt"],
+      ["input-send", "sent"],
+      ["input-ack", "ok"],
+      ["surface-write", "failed"],
+    ].map(([stage, outcome], ordinal) => ({
+      physicalEpoch: 1,
+      generation: daemonGeneration,
+      lifecycleRequestId: "request-a",
+      authorityRequestId: null,
+      clientId: "web-a",
+      pane: "pane-b",
+      seq: ["input-send", "input-ack"].includes(stage) ? 1 : null,
+      stage,
+      outcome,
+      ordinal,
+    }));
+    inputReceiptPlan = {
+      count: 0,
+      receipts: [],
+      operationCount: lostAuthorityAfterAck.length,
+      operations: lostAuthorityAfterAck,
+    };
+    await assert.rejects(
+      activate([requestBinding, requestBinding, requestBinding, requestBinding, requestBinding], {
+        inputText: "payload\n",
+        inputSha256: "ef".repeat(32),
+        deadline: performance.now() + 5_000,
+      }),
+      (error) =>
+        error.observation?.reason === "input-receipt-invalid" &&
+        error.observation?.inputReceiptAxes?.operationOverflow === false &&
+        error.observation?.inputReceiptAxes?.operationTail?.at(-1)?.stage === "surface-write",
+    );
     const gappedAfterInput = {
       ...afterInput,
       runtimeReplacement: {
@@ -1716,6 +3386,10 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
         inputReceipts: [{ ...receipt, ordinal: 1 }],
         inputReceiptCount: 2,
       },
+    };
+    inputReceiptPlan = {
+      count: 2,
+      receipts: [{ ...receipt, ordinal: 1 }],
     };
     await assert.rejects(
       activate(
@@ -1730,10 +3404,12 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
         {
           inputText: "payload\n",
           inputSha256: "ef".repeat(32),
-          deadline: performance.now() + 100,
+          deadline: performance.now() + 5_000,
         },
       ),
-      (error) => error.observation?.reason === "post-input-receipt-count-advanced",
+      (error) =>
+        error.observation?.reason === "input-receipt-invalid" &&
+        error.observation?.inputReceiptAxes?.countAdvanced === true,
     );
     const priorReceiptBoundary = {
       ...requestBinding,
@@ -1750,6 +3426,10 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
         inputReceiptCount: 2,
       },
     };
+    inputReceiptPlan = {
+      count: 2,
+      receipts: [receipt],
+    };
     await assert.rejects(
       activate(
         [
@@ -1763,10 +3443,10 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
         {
           inputText: "payload\n",
           inputSha256: "ef".repeat(32),
-          deadline: performance.now() + 100,
+          deadline: performance.now() + 5_000,
         },
       ),
-      (error) => error.observation?.reason === "input-receipt-mismatch",
+      (error) => error.observation?.reason === "input-receipt-invalid",
     );
     clearFocusDuringInsert = true;
     await assert.rejects(
@@ -1782,12 +3462,15 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
         {
           inputText: "payload\n",
           inputSha256: "ef".repeat(32),
-          deadline: performance.now() + 100,
+          deadline: performance.now() + 5_000,
         },
       ),
       (error) => error.observation?.reason === "input-dispatch-rejected",
     );
     clearFocusDuringInsert = false;
+    inputReceiptPlan = {
+      binding: { ...physicalBinding, generation: "660e8400-e29b-41d4-a716-446655440000" },
+    };
     await assert.rejects(
       activate(
         [
@@ -1801,10 +3484,12 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
         {
           inputText: "payload\n",
           inputSha256: "ef".repeat(32),
-          deadline: performance.now() + 100,
+          deadline: performance.now() + 5_000,
         },
       ),
-      (error) => error.observation?.reason === "post-input-binding-changed",
+      (error) =>
+        error.observation?.reason === "input-receipt-invalid" &&
+        error.observation?.inputReceiptAxes?.bindingExact === false,
     );
     await assert.rejects(
       activateCard5ExactTerminalSurface({
@@ -1843,9 +3528,90 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
           deadline: performance.now() + 50,
         },
       ),
-      (error) => error.observation?.reason === "input-insertion-timeout",
+      (error) => error.observation?.reason === "input-product-path-reserve-insufficient",
     );
     insertBlockMs = 0;
+    const downstreamBeforeLateDispatch = downstreamInputCount;
+    insertDispatchDelayMs = 120;
+    await assert.rejects(
+      activate(
+        [
+          requestBinding,
+          requestBinding,
+          requestBinding,
+          requestBinding,
+          requestBinding,
+          requestBinding,
+        ],
+        {
+          inputText: "payload\n",
+          inputSha256: "ef".repeat(32),
+          deadline: performance.now() + 80,
+        },
+      ),
+      (error) => error.observation?.reason === "input-product-path-reserve-insufficient",
+    );
+    insertDispatchDelayMs = 0;
+    assert.equal(downstreamInputCount, downstreamBeforeLateDispatch);
+    assert.equal(documentCaptureListeners.size, 0);
+    assert.equal(mutationObservers.size, 0);
+    const downstreamBeforeDelayedGuardArm = downstreamInputCount;
+    exactPageClosed = false;
+    inputGuardArmRequestDelayMs = 60;
+    insertDispatchDelayMs = 165;
+    await assert.rejects(
+      activate(
+        [
+          requestBinding,
+          requestBinding,
+          requestBinding,
+          requestBinding,
+          requestBinding,
+          requestBinding,
+        ],
+        {
+          inputText: "payload\n",
+          inputSha256: "ef".repeat(32),
+          deadline: performance.now() + 220,
+        },
+      ),
+      (error) => error.observation?.reason === "input-product-path-reserve-insufficient",
+    );
+    inputGuardArmRequestDelayMs = 0;
+    insertDispatchDelayMs = 0;
+    assert.equal(
+      downstreamInputCount,
+      downstreamBeforeDelayedGuardArm,
+      "a dispatch after the Node deadline must be blocked despite delayed guard-arm IPC",
+    );
+    assert.equal(documentCaptureListeners.size, 0);
+    assert.equal(mutationObservers.size, 0);
+    const closesBeforeNeverSettlingInsert = exactPageCloseCount;
+    exactPageClosed = false;
+    insertNeverSettles = true;
+    await assert.rejects(
+      activate(
+        [
+          requestBinding,
+          requestBinding,
+          requestBinding,
+          requestBinding,
+          requestBinding,
+          requestBinding,
+        ],
+        {
+          inputText: "payload\n",
+          inputSha256: "ef".repeat(32),
+          deadline: performance.now() + 80,
+        },
+      ),
+      (error) => error.observation?.reason === "input-product-path-reserve-insufficient",
+    );
+    insertNeverSettles = false;
+    assert.equal(exactPageCloseCount, closesBeforeNeverSettlingInsert);
+    assert.equal(documentCaptureListeners.size, 0);
+    assert.equal(mutationObservers.size, 0);
+    exactPageClosed = false;
     await assert.rejects(
       activateCard5ExactTerminalSurface({
         mode: "focus",
@@ -1901,7 +3667,214 @@ test("trusted Card5 terminal activation requires pointer click, xterm focus, and
     globalThis.Node = previous.Node;
     globalThis.MutationObserver = previous.MutationObserver;
     globalThis.getComputedStyle = previous.getComputedStyle;
+    globalThis.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__ = previous.envelopeEvidence;
+    globalThis.__TMUX_IDE_CARD5_WORKSPACE_EVIDENCE__ = previous.workspaceEvidence;
+    globalThis.__TMUX_IDE_CARD5_QUALIFIED_TERMINAL__ = previous.qualifiedTerminal;
   }
+});
+
+test("the pinned Chromium insertText route emits one trusted beforeinput and one input", async (t) => {
+  const { chromium } = await import(
+    new URL("../../apps/desktop-renderer/node_modules/playwright/index.mjs", import.meta.url)
+  );
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent("<textarea id='target'></textarea>");
+  await page.locator("#target").focus();
+  await page.evaluate(() => {
+    const target = globalThis.document.querySelector("#target");
+    globalThis.__card5PinnedInsertEvents = [];
+    for (const type of ["beforeinput", "input"]) {
+      target.addEventListener(type, (event) => {
+        globalThis.__card5PinnedInsertEvents.push({
+          type,
+          trusted: event.isTrusted,
+          cancelable: event.cancelable,
+          inputType: event.inputType,
+          data: event.data,
+        });
+      });
+    }
+  });
+  await page.keyboard.insertText("card5-pinned-input");
+  assert.deepEqual(await page.evaluate(() => globalThis.__card5PinnedInsertEvents), [
+    {
+      type: "beforeinput",
+      trusted: true,
+      cancelable: true,
+      inputType: "insertText",
+      data: "card5-pinned-input",
+    },
+    {
+      type: "input",
+      trusted: true,
+      cancelable: false,
+      inputType: "insertText",
+      data: "card5-pinned-input",
+    },
+  ]);
+  const playwrightInputSource = readFileSync(
+    new URL(
+      "../../node_modules/.pnpm/playwright-core@1.59.1/node_modules/playwright-core/lib/server/input.js",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const chromiumInputSource = readFileSync(
+    new URL(
+      "../../node_modules/.pnpm/playwright-core@1.59.1/node_modules/playwright-core/lib/server/chromium/crInput.js",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(
+    playwrightInputSource,
+    /async _insertText\(progress, text\) \{\s*await this\._raw\.sendText\(progress, text\);/u,
+  );
+  assert.match(
+    chromiumInputSource,
+    /async sendText\(progress, text\) \{\s*await progress\.race\(this\._client\.send\("Input\.insertText", \{ text \}\)\);/u,
+  );
+});
+
+test("the pinned Chromium insertText route emits one exact xterm marker-only input", async (t) => {
+  const { chromium } = await import(
+    new URL("../../apps/desktop-renderer/node_modules/playwright/index.mjs", import.meta.url)
+  );
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent("<div id='terminal' style='width:800px;height:400px'></div>");
+  await page.addStyleTag({
+    path: new URL(
+      "../../node_modules/.pnpm/@xterm+xterm@6.0.0/node_modules/@xterm/xterm/css/xterm.css",
+      import.meta.url,
+    ).pathname,
+  });
+  await page.addScriptTag({
+    path: new URL(
+      "../../node_modules/.pnpm/@xterm+xterm@6.0.0/node_modules/@xterm/xterm/lib/xterm.js",
+      import.meta.url,
+    ).pathname,
+  });
+  await page.evaluate(() => {
+    const terminal = new globalThis.Terminal();
+    terminal.open(globalThis.document.querySelector("#terminal"));
+    globalThis.__card5PinnedXtermData = [];
+    terminal.onData((data) => globalThis.__card5PinnedXtermData.push(data));
+    terminal.focus();
+    const target = globalThis.document.querySelector(".xterm-helper-textarea");
+    globalThis.__card5PinnedXtermEvents = [];
+    for (const type of ["beforeinput", "input"]) {
+      target.addEventListener(
+        type,
+        (event) => {
+          globalThis.__card5PinnedXtermEvents.push({
+            type,
+            trusted: event.isTrusted,
+            cancelable: event.cancelable,
+            inputType: event.inputType,
+            data: event.data,
+          });
+        },
+        true,
+      );
+    }
+  });
+  const marker = "CARD5_HANDOFF_1_0123abcd";
+  await page.keyboard.insertText(marker);
+  assert.deepEqual(await page.evaluate(() => globalThis.__card5PinnedXtermEvents), [
+    {
+      type: "beforeinput",
+      trusted: true,
+      cancelable: true,
+      inputType: "insertText",
+      data: marker,
+    },
+    {
+      type: "input",
+      trusted: true,
+      cancelable: false,
+      inputType: "insertText",
+      data: marker,
+    },
+  ]);
+  assert.deepEqual(await page.evaluate(() => globalThis.__card5PinnedXtermData), [marker]);
+});
+
+test("the pinned Chromium insertText route exposes real xterm marker-newline composition", async (t) => {
+  const { chromium } = await import(
+    new URL("../../apps/desktop-renderer/node_modules/playwright/index.mjs", import.meta.url)
+  );
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent("<div id='terminal' style='width:800px;height:400px'></div>");
+  await page.addStyleTag({
+    path: new URL(
+      "../../node_modules/.pnpm/@xterm+xterm@6.0.0/node_modules/@xterm/xterm/css/xterm.css",
+      import.meta.url,
+    ).pathname,
+  });
+  await page.addScriptTag({
+    path: new URL(
+      "../../node_modules/.pnpm/@xterm+xterm@6.0.0/node_modules/@xterm/xterm/lib/xterm.js",
+      import.meta.url,
+    ).pathname,
+  });
+  await page.evaluate(() => {
+    const terminal = new globalThis.Terminal();
+    terminal.open(globalThis.document.querySelector("#terminal"));
+    globalThis.__card5PinnedXtermData = [];
+    terminal.onData((data) => globalThis.__card5PinnedXtermData.push(data));
+    terminal.focus();
+    const target = globalThis.document.querySelector(".xterm-helper-textarea");
+    globalThis.__card5PinnedXtermEvents = [];
+    for (const type of ["beforeinput", "input"]) {
+      target.addEventListener(
+        type,
+        (event) => {
+          globalThis.__card5PinnedXtermEvents.push({
+            type,
+            trusted: event.isTrusted,
+            cancelable: event.cancelable,
+            inputType: event.inputType,
+            data: event.data,
+          });
+        },
+        true,
+      );
+    }
+  });
+  const marker = "card5-pinned-marker\n";
+  await page.keyboard.insertText(marker);
+  assert.deepEqual(await page.evaluate(() => globalThis.__card5PinnedXtermEvents), [
+    {
+      type: "beforeinput",
+      trusted: true,
+      cancelable: true,
+      inputType: "insertText",
+      data: marker,
+    },
+    {
+      type: "input",
+      trusted: true,
+      cancelable: false,
+      inputType: "insertText",
+      data: "card5-pinned-marker",
+    },
+    {
+      type: "input",
+      trusted: true,
+      cancelable: false,
+      inputType: "insertText",
+      data: null,
+    },
+  ]);
+  assert.deepEqual(await page.evaluate(() => globalThis.__card5PinnedXtermData), [
+    "card5-pinned-marker",
+  ]);
 });
 
 test("predecessor issuance is exact-generation and exact-pane bound", async () => {
@@ -2457,6 +4430,12 @@ test("graceful hang escalates only direct acquired process handles and leaves un
     closeTermMs: 1,
     sleep: async () => {},
     processAlive: (pid) => live.has(pid),
+    signalProcess: (pid, signal) => {
+      signals.push([pid, signal]);
+      live.delete(pid);
+      if (pid === 111) live.delete(112);
+      if (pid === 222) live.delete(223);
+    },
     processRows: () => [
       { pid: 111, ppid: 1, pgid: 111, startToken: "a", command: "chromium" },
       { pid: 112, ppid: 111, pgid: 111, startToken: "b", command: "chromium helper" },
@@ -2501,12 +4480,193 @@ test("graceful hang escalates only direct acquired process handles and leaves un
   const receipt = await owner.close();
   assert.equal(receipt.chromiumRetired, true);
   assert.equal(receipt.electronRetired, true);
-  assert.deepEqual(new Set(signals.map(([pid]) => pid)), new Set([111, 222]));
+  assert.deepEqual(new Set(signals.map(([pid]) => pid)), new Set([111, 112, 222, 223]));
   assert.equal(live.has(999), true);
   assert.equal(
     signals.some(([pid]) => pid === 999),
     false,
   );
+});
+
+test("cleanup escalates retained identities when Playwright handles are marked exited", async () => {
+  const { input, browser, electronProcess } = launchInput();
+  const live = new Set([111, 222]);
+  const signals = [];
+  browser.process = () => ({ pid: 111, exitCode: 0, signalCode: null });
+  electronProcess.exitCode = 0;
+  input.cleanupRuntime = {
+    closeGraceMs: 1,
+    closeTermMs: 1,
+    sleep: async () => {},
+    processAlive: (pid) => live.has(pid),
+    processRows: () => [
+      { pid: 111, ppid: 1, pgid: 111, state: "S", startToken: "a", command: "chromium" },
+      {
+        pid: 222,
+        ppid: 1,
+        pgid: 222,
+        state: "S",
+        startToken: "b",
+        command: "electron --user-data-dir=/tmp/card5-owner/electron",
+      },
+    ],
+    signalProcess: (pid, signal) => {
+      signals.push([pid, signal]);
+      live.delete(pid);
+    },
+    lsofCount: () => 0,
+  };
+  const owner = await launchCard5ProductionWebHosts(input);
+  const receipt = await owner.close();
+  assert.equal(receipt.chromiumRetired, true);
+  assert.equal(receipt.electronRetired, true);
+  assert.deepEqual(new Set(signals.map(([pid]) => pid)), new Set([111, 222]));
+});
+
+test("cleanup signals exact descendants before roots and escalates TERM-resistant identities", async () => {
+  const { input } = launchInput();
+  const live = new Set([111, 112, 222, 223]);
+  const signals = [];
+  input.cleanupRuntime = {
+    closeGraceMs: 1,
+    closeTermMs: 1,
+    sleep: async () => {},
+    processAlive: (pid) => live.has(pid),
+    processRows: () => [
+      { pid: 111, ppid: 1, pgid: 111, state: "S", startToken: "a", command: "chromium" },
+      { pid: 112, ppid: 111, pgid: 111, state: "S", startToken: "b", command: "chromium helper" },
+      {
+        pid: 222,
+        ppid: 1,
+        pgid: 222,
+        state: "S",
+        startToken: "c",
+        command: "electron --user-data-dir=/tmp/card5-owner/electron",
+      },
+      {
+        pid: 223,
+        ppid: 222,
+        pgid: 222,
+        state: "S",
+        startToken: "d",
+        command: "electron helper /tmp/card5-owner/electron",
+      },
+    ],
+    signalProcess: (pid, signal) => {
+      signals.push([pid, signal]);
+      if (signal === "SIGKILL") live.delete(pid);
+    },
+    lsofCount: () => 0,
+  };
+  const owner = await launchCard5ProductionWebHosts(input);
+  const receipt = await owner.close();
+  assert.equal(receipt.chromiumRetired, true);
+  assert.equal(receipt.electronRetired, true);
+  assert.deepEqual(
+    signals.filter(([, signal]) => signal === "SIGTERM").map(([pid]) => pid),
+    [112, 223, 111, 222],
+  );
+  assert.deepEqual(
+    signals.filter(([, signal]) => signal === "SIGKILL").map(([pid]) => pid),
+    [112, 223, 111, 222],
+  );
+});
+
+test("cleanup accepts an exact TERM-to-E transition without sending KILL", async () => {
+  const { input } = launchInput();
+  const live = new Set([222]);
+  const signals = [];
+  let state = "S";
+  input.cleanupRuntime = {
+    closeGraceMs: 1,
+    closeTermMs: 1,
+    sleep: async () => {},
+    processAlive: (pid) => live.has(pid),
+    processRows: () => [
+      {
+        pid: 222,
+        ppid: 1,
+        pgid: 222,
+        state,
+        startToken: "transition",
+        command: "electron --user-data-dir=/tmp/card5-owner/electron",
+      },
+    ],
+    signalProcess: (pid, signal) => {
+      signals.push([pid, signal]);
+      if (pid === 222 && signal === "SIGTERM") state = "?Es";
+    },
+    lsofCount: () => 0,
+  };
+  const owner = await launchCard5ProductionWebHosts(input);
+  const receipt = await owner.close();
+  assert.equal(receipt.electronRetired, true);
+  assert.equal(receipt.electronTerminalProcessCount, 1);
+  assert.deepEqual(signals, [[222, "SIGTERM"]]);
+});
+
+test("terminal E process is quiescent only with zero process resources", async () => {
+  const { input } = launchInput();
+  const live = new Set([222]);
+  let handleCount = 0;
+  input.cleanupRuntime = {
+    closeGraceMs: 1,
+    closeTermMs: 1,
+    sleep: async () => {},
+    processAlive: (pid) => live.has(pid),
+    processRows: () => [
+      {
+        pid: 222,
+        ppid: 1,
+        pgid: 222,
+        state: "?Es",
+        startToken: "e",
+        command: "electron --user-data-dir=/tmp/card5-owner/electron",
+      },
+    ],
+    signalProcess: () => assert.fail("terminal process must not be signaled again"),
+    lsofCount: (args) => (args.includes("-iTCP") ? 0 : handleCount),
+  };
+  const lease = createCard5ProductionWebHostLease(input);
+  await lease.ready;
+  const clean = await lease.close();
+  assert.equal(clean.electronRetired, true);
+  assert.equal(clean.electronProcessCount, 0);
+  assert.equal(clean.electronTerminalProcessCount, 1);
+  assert.match(clean.electronProcessEvidence[0].identityHmac, /^[0-9a-f]{64}$/u);
+
+  handleCount = 1;
+  const dirty = lease.snapshot();
+  assert.equal(dirty.electronRetired, false);
+  assert.equal(dirty.electronOpenHandleCount, 1);
+});
+
+test("active zero-resource process never qualifies as quiescent", async () => {
+  const { input } = launchInput();
+  const live = new Set([222]);
+  input.cleanupRuntime = {
+    closeGraceMs: 1,
+    closeTermMs: 1,
+    sleep: async () => {},
+    processAlive: (pid) => live.has(pid),
+    processRows: () => [
+      {
+        pid: 222,
+        ppid: 1,
+        pgid: 222,
+        state: "S",
+        startToken: "s",
+        command: "electron --user-data-dir=/tmp/card5-owner/electron",
+      },
+    ],
+    signalProcess: () => {},
+    lsofCount: () => 0,
+  };
+  const owner = await launchCard5ProductionWebHosts(input);
+  const receipt = await owner.close();
+  assert.equal(receipt.electronRetired, false);
+  assert.equal(receipt.electronProcessCount, 1);
+  assert.equal(receipt.electronTerminalProcessCount, 0);
 });
 
 test("late Electron acquisition remains owned and a retry retires its direct handle", async () => {
@@ -2523,6 +4683,10 @@ test("late Electron acquisition remains owned and a retry retires its direct han
     closeTermMs: 1,
     sleep: async () => {},
     processAlive: (pid) => live.has(pid),
+    signalProcess: (pid, signal) => {
+      signals.push([pid, signal]);
+      live.delete(pid);
+    },
     processRows: () => [
       {
         pid: 222,
@@ -2585,6 +4749,7 @@ test("PID identity reuse is rejected immediately before escalation", async () =>
     closeTermMs: 1,
     sleep: async () => {},
     processAlive: (pid) => live.has(pid),
+    signalProcess: (pid, signal) => signals.push([pid, signal]),
     processRows: () => [{ pid: 111, ppid: 1, pgid: 111, startToken, command }],
   };
   const owner = await launchCard5ProductionWebHosts(input);
@@ -2593,6 +4758,44 @@ test("PID identity reuse is rejected immediately before escalation", async () =>
   assert.equal(receipt.chromiumRetired, true);
   assert.deepEqual(signals, []);
   assert.equal(live.has(111), true);
+});
+
+test("each TERM revalidates identity after an earlier owned signal causes PID reuse", async () => {
+  const { input } = launchInput();
+  const live = new Set([111, 222]);
+  let electronStart = "electron-owned";
+  const signals = [];
+  input.cleanupRuntime = {
+    closeGraceMs: 1,
+    closeTermMs: 1,
+    sleep: async () => {},
+    processAlive: (pid) => live.has(pid),
+    processRows: () => [
+      { pid: 111, ppid: 1, pgid: 111, state: "S", startToken: "chromium", command: "chromium" },
+      {
+        pid: 222,
+        ppid: 1,
+        pgid: 222,
+        state: "S",
+        startToken: electronStart,
+        command: "electron --user-data-dir=/tmp/card5-owner/electron",
+      },
+    ],
+    signalProcess: (pid, signal) => {
+      signals.push([pid, signal]);
+      if (pid === 111) {
+        live.delete(111);
+        electronStart = "electron-reused";
+      }
+    },
+    lsofCount: () => 0,
+  };
+  const owner = await launchCard5ProductionWebHosts(input);
+  const receipt = await owner.close();
+  assert.equal(receipt.chromiumRetired, true);
+  assert.equal(receipt.electronRetired, true);
+  assert.deepEqual(signals, [[111, "SIGTERM"]]);
+  assert.equal(live.has(222), true);
 });
 
 test("abort after Chromium acquisition never retires an unknown hung process inventory", async () => {

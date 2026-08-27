@@ -18,13 +18,21 @@ export function createSemanticShellViewportResizeOwner(): Readonly<{
   dispose(): void;
 }> {
   let disposed = false;
-  let last: Readonly<{
+  type ResizeIdentity = Readonly<{
     lane: NonNullable<OpenTuiGenerationHostSnapshot["fastLane"]>;
     daemonGeneration: string;
     rendererEpoch: number;
     cols: number;
     rows: number;
-  }> | null = null;
+  }>;
+  let applied: ResizeIdentity | null = null;
+  let pending: ResizeIdentity | null = null;
+  const same = (left: ResizeIdentity | null, right: ResizeIdentity): boolean =>
+    left?.lane === right.lane &&
+    left.daemonGeneration === right.daemonGeneration &&
+    left.rendererEpoch === right.rendererEpoch &&
+    left.cols === right.cols &&
+    left.rows === right.rows;
 
   return Object.freeze({
     adopt(dimensions, semantic, generation) {
@@ -35,31 +43,36 @@ export function createSemanticShellViewportResizeOwner(): Readonly<{
         generation.daemonGeneration === null ||
         generation.fastLane === null
       ) {
-        last = null;
+        applied = null;
+        pending = null;
         return;
       }
       const viewport = applicationShellViewport(dimensions, true);
       const lane = generation.fastLane;
-      if (
-        last?.lane === lane &&
-        last.daemonGeneration === generation.daemonGeneration &&
-        last.rendererEpoch === generation.rendererEpoch &&
-        last.cols === viewport.width &&
-        last.rows === viewport.height
-      )
-        return;
-      last = Object.freeze({
+      const target = Object.freeze({
         lane,
         daemonGeneration: generation.daemonGeneration,
         rendererEpoch: generation.rendererEpoch,
         cols: viewport.width,
         rows: viewport.height,
       });
-      void lane.lane.resize({ cols: viewport.width, rows: viewport.height });
+      if (same(applied, target) || same(pending, target)) return;
+      pending = target;
+      void lane.lane.resize({ cols: viewport.width, rows: viewport.height }).then(
+        (outcome) => {
+          if (disposed || pending !== target) return;
+          pending = null;
+          if (outcome.status === "applied") applied = target;
+        },
+        () => {
+          if (pending === target) pending = null;
+        },
+      );
     },
     dispose() {
       disposed = true;
-      last = null;
+      applied = null;
+      pending = null;
     },
   });
 }

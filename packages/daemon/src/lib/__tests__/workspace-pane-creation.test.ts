@@ -24,6 +24,7 @@ import {
   type WorkspacePaneCreationIo,
 } from "../workspace-pane-creation.ts";
 import { WorkspaceRegistry } from "../workspace-registry.ts";
+import { memorablePaneName } from "../../terminal/protocol/pane-display-name.ts";
 
 const DAEMON = "20000000-0000-4000-8000-000000000002";
 const OPERATION = "10000000-0000-4000-8000-000000000001";
@@ -71,6 +72,8 @@ class FakeTmux {
     this.calls.push(owned);
     switch (args[0]) {
       case "has-session":
+        return "";
+      case "set-environment":
         return "";
       case "new-window":
         this.creations += 1;
@@ -286,6 +289,7 @@ describe("WorkspacePaneCreationAuthority", () => {
   it("creates a terminal from canonical daemon-owned facts and returns semantic identity only", async () => {
     const { authority, fake } = rig();
     const result = await authority.create(request());
+    const generatedName = memorablePaneName("pane.10000000000040008000000000000001");
 
     expect(result).toEqual({
       operationId: OPERATION,
@@ -296,7 +300,7 @@ describe("WorkspacePaneCreationAuthority", () => {
         workspaceName: "workspace.alpha",
         semanticPaneId: "pane.10000000000040008000000000000001",
         kind: "terminal",
-        displayTitle: "Terminal",
+        displayTitle: generatedName,
         harnessProfileId: null,
         role: null,
         missionId: null,
@@ -315,6 +319,21 @@ describe("WorkspacePaneCreationAuthority", () => {
       "-n",
       "tmux-ide-100000000000400080000000",
     ]);
+    expect(fake.calls).toContainEqual([
+      "set-environment",
+      "-u",
+      "-t",
+      "=runtime-session",
+      "NO_COLOR",
+    ]);
+    expect(fake.calls).toContainEqual([
+      "set-environment",
+      "-t",
+      "=runtime-session",
+      "COLORTERM",
+      "truecolor",
+    ]);
+    expect(fake.options.get("@tmux_ide_name_source")).toBe("generated");
     expect(JSON.stringify(result)).not.toMatch(/paneId|windowId|sessionName|cwd|argv|env/u);
   });
 

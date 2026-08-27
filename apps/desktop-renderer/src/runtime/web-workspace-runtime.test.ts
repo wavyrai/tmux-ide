@@ -7,9 +7,11 @@ import {
 } from "@tmux-ide/core";
 
 import type {
+  PaneStreamSessionHandle,
   PaneStreamSessionListeners,
   PaneStreamTransport,
 } from "../terminal/pane-stream-transport.ts";
+import { createWebWorkspacePaneStreamBridge } from "./web-workspace-pane-stream-bridge.ts";
 import { connectWebWorkspaceRuntime } from "./web-workspace-runtime.ts";
 
 const GENERATION = "20000000-0000-4000-8000-000000000001";
@@ -33,6 +35,295 @@ function seed(revision: number): CanonicalTerminalReplicaUpdate {
 }
 
 describe("Web WorkspaceClient runtime adapter", () => {
+  it("activates an ordinary off-mode physical session without Card5 globals", async () => {
+    const globals = globalThis as typeof globalThis & Record<string, unknown>;
+    delete globals.__TMUX_IDE_CARD5_EVIDENCE_ENABLED__;
+    delete globals.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__;
+    delete globals.__TMUX_IDE_CARD5_ENVELOPE_STORE__;
+    let listeners!: PaneStreamSessionListeners;
+    let physicalSession: PaneStreamSessionHandle | null = null;
+    let paneEvent:
+      | Parameters<NonNullable<Parameters<typeof connectWebWorkspaceRuntime>[0]["onPaneEvent"]>>[1]
+      | null = null;
+    let retainedLayout:
+      | Parameters<NonNullable<Parameters<typeof connectWebWorkspaceRuntime>[0]["onLayout"]>>[0]
+      | null = null;
+    const bridge = createWebWorkspacePaneStreamBridge("workspace-a");
+    const delivered = vi.fn();
+    await bridge.connect(
+      { workspaceName: "workspace-a", panes: [PANE], viewerMode: "interactive" },
+      { onPaneEvent: delivered, onEnd: vi.fn() },
+    );
+    const runtime = await connectWebWorkspaceRuntime({
+      transport: {
+        connect: async (_request, next) => {
+          listeners = next;
+          next.onAuthoritySnapshot?.({
+            generation: GENERATION,
+            session: "runtime-a",
+            revision: 1,
+            owners: { input: null, focus: null, geometry: null },
+            nativeGeometryYieldUntilMs: 0,
+            clients: [
+              {
+                clientId: "client-a",
+                surface: "web",
+                state: "background",
+                connectedRevision: 1,
+                activityRevision: 1,
+              },
+            ],
+          });
+          return {
+            status: "connected",
+            session: { dispose: vi.fn(), connectionClientId: () => "client-a" },
+          };
+        },
+      },
+      inventory: {
+        workspaceName: "workspace-a",
+        workspaceId: "workspace-a",
+        sessionId: "session-a",
+        daemonGeneration: GENERATION,
+        shellGeneration: 1,
+        semanticPaneIds: [PANE],
+      },
+      signal: new AbortController().signal,
+      onSession: (session) => (physicalSession = session),
+      onPaneEvent: (_pane, event) => (paneEvent = event),
+      onLayout: (next) => (retainedLayout = next),
+    });
+    const requestId = "10000000-0000-4000-8000-000000000077";
+    listeners.onDiagnosticLifecycle?.({
+      generation: GENERATION,
+      requestId,
+      stage: "issued",
+      code: "none",
+      origin: "client",
+      closeCode: null,
+      closeReason: "none",
+    });
+    listeners.onDiagnosticLifecycle?.({
+      generation: GENERATION,
+      requestId,
+      stage: "first-seed",
+      code: "none",
+      origin: "client",
+      closeCode: null,
+      closeReason: "none",
+    });
+    const update = seed(1);
+    await listeners.onPaneEvent(PANE, {
+      type: "seed-batch",
+      batch: { reset: null, seed: new Uint8Array([1]), held: [], cursor: null },
+      canonicalUpdate: update,
+      canonicalSnapshot: update.type === "terminal.seed" ? update.snapshot : undefined,
+      canonical: {
+        deliveryRequestId: requestId,
+        generation: GENERATION,
+        incarnation: update.incarnation,
+        revision: update.revision,
+        stateHash: update.stateHash,
+        cols: update.cols,
+        rows: update.rows,
+        sourceEpoch: 1,
+        alternateScreen: false,
+        cursor: { x: 0, y: 0, hidden: false, style: "block", blink: false },
+        gridRowsRead: update.rows,
+        gridCellsRead: update.cols * update.rows,
+        fullGridWalks: 1,
+      },
+    });
+    listeners.onLayout?.({
+      semanticWindowId: "window-a",
+      windowName: "main",
+      currentWindow: true,
+      cols: 80,
+      rows: 24,
+      zoomed: false,
+      paneBorderStatus: "off",
+      panes: [],
+    });
+    const session = physicalSession as PaneStreamSessionHandle | null;
+    expect(session?.card5PhysicalBinding?.()).toMatchObject({ requestId, clientId: "client-a" });
+    await expect(
+      bridge.activateRuntime({
+        session: session!,
+        workspaceName: "workspace-a",
+        generation: GENERATION,
+        panes: new Set([PANE]),
+        paneEvents: new Map([[PANE, paneEvent!]]),
+        layout: retainedLayout,
+        layoutSnapshot: null,
+        isCurrent: () => true,
+        commit: () => true,
+      }),
+    ).resolves.toBe(true);
+    expect(delivered).toHaveBeenCalledTimes(1);
+    expect(globals.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__).toBeUndefined();
+    expect(globals.__TMUX_IDE_CARD5_SINK_CONTROL__).toBeUndefined();
+    runtime.close();
+  });
+
+  it("projects the exact retained physical descriptor lifecycle through its session handle", async () => {
+    const globals = globalThis as typeof globalThis & Record<string, unknown>;
+    globals.__TMUX_IDE_CARD5_EVIDENCE_ENABLED__ = true;
+    let listeners: PaneStreamSessionListeners | null = null;
+    let retainedSession:
+      | import("../terminal/pane-stream-transport.ts").PaneStreamSessionHandle
+      | null = null;
+    const requestId = "10000000-0000-4000-8000-000000000099";
+    const runtime = await connectWebWorkspaceRuntime({
+      transport: {
+        connect: async (_request, next) => {
+          listeners = next;
+          next.onDescriptorIssued?.({
+            daemonInstanceId: GENERATION,
+            requestId,
+            webSocketUrl: "ws://127.0.0.1/physical",
+            subprotocol: "tmux-ide-pane-stream.v1",
+          });
+          next.onDiagnosticLifecycle?.({
+            generation: GENERATION,
+            requestId,
+            stage: "issued",
+            code: "none",
+            origin: "client",
+            closeCode: null,
+            closeReason: "none",
+          });
+          next.onAuthoritySnapshot?.({
+            generation: GENERATION,
+            session: "runtime-a",
+            revision: 1,
+            owners: { input: null, focus: null, geometry: null },
+            nativeGeometryYieldUntilMs: 0,
+            clients: [
+              {
+                clientId: "client-a",
+                surface: "web",
+                state: "background",
+                connectedRevision: 1,
+                activityRevision: 1,
+              },
+              {
+                clientId: "client-b",
+                surface: "web",
+                state: "foreground",
+                connectedRevision: 1,
+                activityRevision: 1,
+              },
+            ],
+          });
+          return {
+            status: "connected",
+            session: {
+              dispose: vi.fn(),
+              connectionClientId: () => "client-a",
+              connectionAuthorityClientId: () => null,
+            },
+          };
+        },
+      },
+      inventory: {
+        workspaceName: "workspace-a",
+        workspaceId: "workspace-a",
+        sessionId: "session-a",
+        daemonGeneration: GENERATION,
+        shellGeneration: 1,
+        semanticPaneIds: [PANE],
+      },
+      signal: new AbortController().signal,
+      onSession: (session) => (retainedSession = session),
+    });
+    const exactSession = retainedSession as PaneStreamSessionHandle | null;
+    expect(exactSession?.card5PhysicalBinding?.()).toBeNull();
+    listeners!.onDiagnosticLifecycle?.({
+      generation: GENERATION,
+      requestId,
+      stage: "first-seed",
+      code: "none",
+      origin: "client",
+      closeCode: null,
+      closeReason: "none",
+    });
+    expect(exactSession?.card5PhysicalBinding?.()).toMatchObject({
+      generation: GENERATION,
+      requestId,
+      runtimeSession: "runtime-a",
+      workspaceName: "workspace-a",
+      semanticPaneIds: [PANE],
+      clientId: "client-a",
+      stage: "first-seed",
+    });
+    const observed = vi.fn();
+    exactSession?.subscribeCard5PhysicalBinding?.(observed);
+    expect(observed).toHaveBeenLastCalledWith(expect.objectContaining({ requestId }));
+    listeners!.onAuthoritySnapshot?.({
+      generation: GENERATION,
+      session: "runtime-a",
+      revision: 2,
+      owners: { input: "client-a", focus: null, geometry: null },
+      nativeGeometryYieldUntilMs: 0,
+      clients: [
+        {
+          clientId: "client-a",
+          surface: "web",
+          state: "foreground",
+          connectedRevision: 1,
+          activityRevision: 2,
+        },
+        {
+          clientId: "client-b",
+          surface: "web",
+          state: "background",
+          connectedRevision: 1,
+          activityRevision: 1,
+        },
+      ],
+    });
+    listeners!.onAuthoritySnapshot?.({
+      generation: GENERATION,
+      session: "runtime-a",
+      revision: 3,
+      owners: { input: null, focus: null, geometry: null },
+      nativeGeometryYieldUntilMs: 0,
+      clients: [
+        {
+          clientId: "client-a",
+          surface: "web",
+          state: "background",
+          connectedRevision: 1,
+          activityRevision: 3,
+        },
+        {
+          clientId: "client-b",
+          surface: "web",
+          state: "foreground",
+          connectedRevision: 1,
+          activityRevision: 1,
+        },
+      ],
+    });
+    expect(observed).toHaveBeenLastCalledWith(
+      expect.objectContaining({ requestId, clientId: "client-a" }),
+    );
+    listeners!.onDiagnosticLifecycle?.({
+      generation: GENERATION,
+      requestId,
+      stage: "terminal",
+      code: "disposed",
+      origin: "dispose",
+      closeCode: 1000,
+      closeReason: "renderer-disposed",
+    });
+    expect(observed).toHaveBeenLastCalledWith(null);
+    runtime.close();
+    delete globals.__TMUX_IDE_CARD5_EVIDENCE_ENABLED__;
+    delete globals.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__;
+    delete globals.__TMUX_IDE_CARD5_ENVELOPE_STORE__;
+  });
+
   it("reports authority only when the exact physical connection holds its lease", async () => {
     let localClientId: string | null = null;
     const runtime = await connectWebWorkspaceRuntime({

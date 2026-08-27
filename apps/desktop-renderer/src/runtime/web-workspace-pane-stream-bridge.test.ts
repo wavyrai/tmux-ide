@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { createCard5EnvelopeEvidenceRecorder } from "./card5-envelope-evidence.ts";
 import { createWebWorkspacePaneStreamBridge } from "./web-workspace-pane-stream-bridge.ts";
 
 function deferred<T>() {
@@ -12,7 +13,292 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+const activationLayout = {
+  semanticWindowId: "window-a",
+  windowName: "main",
+  currentWindow: true,
+  cols: 80,
+  rows: 24,
+  zoomed: false,
+  paneBorderStatus: "off" as const,
+  panes: [],
+};
+
+const activationSeed = (generation: string, byte: number) => ({
+  type: "seed-batch" as const,
+  batch: { reset: null, seed: new Uint8Array([byte]), held: [], cursor: null },
+  canonical: {
+    deliveryRequestId: `delivery-${byte}`,
+    generation,
+    incarnation: "incarnation-a",
+    revision: byte,
+    stateHash: String(byte).padStart(64, "0"),
+    cols: 80,
+    rows: 24,
+    sourceEpoch: 1,
+    alternateScreen: false,
+    cursor: { x: 0, y: 0, hidden: false, style: "block" as const, blink: false },
+    gridRowsRead: 24,
+    gridCellsRead: 1_920,
+    fullGridWalks: 1,
+  },
+});
+
+const activationSession = (generation: string, epoch: number, clientId: string) => ({
+  dispose: vi.fn(),
+  write: vi.fn(async () => true),
+  connectionClientId: () => clientId,
+  card5PhysicalBinding: () => ({
+    physicalEpoch: epoch,
+    generation,
+    requestId: `request-${generation}`,
+    runtimeSession: "runtime-a",
+    workspaceName: "workspace-a",
+    semanticPaneIds: ["pane.a"],
+    clientId,
+    stage: "first-seed" as const,
+  }),
+});
+
 describe("Web WorkspaceClient compositor bridge", () => {
+  it("keeps binding null until the exact consumer applies the replacement seed", async () => {
+    const globals = globalThis as typeof globalThis & Record<string, unknown>;
+    globals.__TMUX_IDE_CARD5_EVIDENCE_ENABLED__ = true;
+    createCard5EnvelopeEvidenceRecorder();
+    const bridge = createWebWorkspacePaneStreamBridge("workspace-a");
+    const oldSession = activationSession("generation-a", 1, "client-a");
+    bridge.bindSession(oldSession);
+    const read = globals.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__ as () => {
+      currentPhysicalBinding: { generation: string } | null;
+    };
+    expect(read().currentPhysicalBinding?.generation).toBe("generation-a");
+    const consumer = deferred<void>();
+    const applied: number[] = [];
+    const connected = await bridge.connect(
+      { workspaceName: "workspace-a", panes: ["pane.a"], viewerMode: "interactive" },
+      {
+        async onPaneEvent(_pane, event) {
+          if (event.type === "seed-batch") applied.push(event.batch.seed[0] ?? -1);
+          await consumer.promise;
+        },
+        onEnd: vi.fn(),
+      },
+    );
+    if (connected.status !== "connected") throw new Error("bridge did not connect");
+    const replacement = activationSession("generation-b", 2, "client-b");
+    const committing = bridge.activateRuntime({
+      session: replacement,
+      workspaceName: "workspace-a",
+      generation: "generation-b",
+      panes: new Set(["pane.a"]),
+      paneEvents: new Map([["pane.a", activationSeed("generation-b", 2)]]),
+      layout: activationLayout,
+      layoutSnapshot: null,
+      isCurrent: () => true,
+      commit: () => true,
+    });
+    expect(read().currentPhysicalBinding).toBeNull();
+    expect(connected.session.connectionClientId?.()).toBeNull();
+    await expect(connected.session.write?.("pane.a", "x")).resolves.toBe(false);
+    expect(oldSession.write).not.toHaveBeenCalled();
+    expect(replacement.write).not.toHaveBeenCalled();
+    consumer.resolve();
+    await expect(committing).resolves.toBe(true);
+    expect(applied).toEqual([2]);
+    expect(read().currentPhysicalBinding?.generation).toBe("generation-b");
+    expect(connected.session.connectionClientId?.()).toBe("client-b");
+
+    const wrongGeneration = activationSession("generation-c", 3, "client-c");
+    await expect(
+      bridge.activateRuntime({
+        session: wrongGeneration,
+        workspaceName: "workspace-a",
+        generation: "generation-c",
+        panes: new Set(["pane.a"]),
+        paneEvents: new Map([["pane.a", activationSeed("generation-foreign", 3)]]),
+        layout: activationLayout,
+        layoutSnapshot: null,
+        isCurrent: () => true,
+        commit: () => true,
+      }),
+    ).resolves.toBe(false);
+    expect(read().currentPhysicalBinding?.generation).toBe("generation-b");
+    delete globals.__TMUX_IDE_CARD5_EVIDENCE_ENABLED__;
+    delete globals.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__;
+    delete globals.__TMUX_IDE_CARD5_ENVELOPE_STORE__;
+  });
+
+  it("fences a delayed B acknowledgement when A-to-B-to-A activation wins", async () => {
+    const globals = globalThis as typeof globalThis & Record<string, unknown>;
+    globals.__TMUX_IDE_CARD5_EVIDENCE_ENABLED__ = true;
+    createCard5EnvelopeEvidenceRecorder();
+    const bridge = createWebWorkspacePaneStreamBridge("workspace-a");
+    bridge.bindSession(activationSession("generation-a", 1, "client-a"));
+    const delayedB = deferred<void>();
+    const applied: number[] = [];
+    await bridge.connect(
+      { workspaceName: "workspace-a", panes: ["pane.a"], viewerMode: "interactive" },
+      {
+        async onPaneEvent(_pane, event) {
+          if (event.type !== "seed-batch") return;
+          const byte = event.batch.seed[0] ?? -1;
+          applied.push(byte);
+          if (byte === 2) await delayedB.promise;
+        },
+        onEnd: vi.fn(),
+      },
+    );
+    const read = globals.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__ as () => {
+      currentPhysicalBinding: { generation: string } | null;
+    };
+    let current = "b";
+    const b = bridge.activateRuntime({
+      session: activationSession("generation-b", 2, "client-b"),
+      workspaceName: "workspace-a",
+      generation: "generation-b",
+      panes: new Set(["pane.a"]),
+      paneEvents: new Map([["pane.a", activationSeed("generation-b", 2)]]),
+      layout: activationLayout,
+      layoutSnapshot: null,
+      isCurrent: () => current === "b",
+      commit: () => true,
+    });
+    await Promise.resolve();
+    expect(read().currentPhysicalBinding).toBeNull();
+    current = "a";
+    const a = bridge.activateRuntime({
+      session: activationSession("generation-a", 3, "client-a-2"),
+      workspaceName: "workspace-a",
+      generation: "generation-a",
+      panes: new Set(["pane.a"]),
+      paneEvents: new Map([["pane.a", activationSeed("generation-a", 3)]]),
+      layout: activationLayout,
+      layoutSnapshot: null,
+      isCurrent: () => current === "a",
+      commit: () => true,
+    });
+    delayedB.resolve();
+    await expect(b).resolves.toBe(false);
+    await expect(a).resolves.toBe(true);
+    expect(applied).toEqual([2, 3]);
+    expect(read().currentPhysicalBinding?.generation).toBe("generation-a");
+    delete globals.__TMUX_IDE_CARD5_EVIDENCE_ENABLED__;
+    delete globals.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__;
+    delete globals.__TMUX_IDE_CARD5_ENVELOPE_STORE__;
+  });
+
+  it("fails closed when the exact consumer rejects or retires before seed settlement", async () => {
+    const bridge = createWebWorkspacePaneStreamBridge("workspace-a");
+    bridge.bindSession(activationSession("generation-a", 1, "client-a"));
+    await bridge.connect(
+      { workspaceName: "workspace-a", panes: ["pane.a"], viewerMode: "interactive" },
+      {
+        onPaneEvent: async () => {
+          throw new Error("consumer rejected seed");
+        },
+        onEnd: vi.fn(),
+      },
+    );
+    await expect(
+      bridge.activateRuntime({
+        session: activationSession("generation-b", 2, "client-b"),
+        workspaceName: "workspace-a",
+        generation: "generation-b",
+        panes: new Set(["pane.a"]),
+        paneEvents: new Map([["pane.a", activationSeed("generation-b", 2)]]),
+        layout: activationLayout,
+        layoutSnapshot: null,
+        isCurrent: () => true,
+        commit: () => true,
+      }),
+    ).resolves.toBe(false);
+
+    const globals = globalThis as typeof globalThis & Record<string, unknown>;
+    globals.__TMUX_IDE_CARD5_EVIDENCE_ENABLED__ = true;
+    const blockedBridge = createWebWorkspacePaneStreamBridge("workspace-a");
+    const control = globals.__TMUX_IDE_CARD5_SINK_CONTROL__ as {
+      setBlocked(value: boolean): void;
+    };
+    control.setBlocked(true);
+    const connected = await blockedBridge.connect(
+      { workspaceName: "workspace-a", panes: ["pane.a"], viewerMode: "interactive" },
+      { onPaneEvent: vi.fn(), onEnd: vi.fn() },
+    );
+    if (connected.status !== "connected") throw new Error("bridge did not connect");
+    const committing = blockedBridge.activateRuntime({
+      session: activationSession("generation-b", 2, "client-b"),
+      workspaceName: "workspace-a",
+      generation: "generation-b",
+      panes: new Set(["pane.a"]),
+      paneEvents: new Map([["pane.a", activationSeed("generation-b", 2)]]),
+      layout: activationLayout,
+      layoutSnapshot: null,
+      isCurrent: () => true,
+      commit: () => true,
+    });
+    await Promise.resolve();
+    connected.session.dispose();
+    await expect(committing).resolves.toBe(false);
+    delete globals.__TMUX_IDE_CARD5_EVIDENCE_ENABLED__;
+    delete globals.__TMUX_IDE_CARD5_SINK_CONTROL__;
+  });
+
+  it("projects only the current identity-fenced physical binding across A to B", () => {
+    const globals = globalThis as typeof globalThis & Record<string, unknown>;
+    globals.__TMUX_IDE_CARD5_EVIDENCE_ENABLED__ = true;
+    createCard5EnvelopeEvidenceRecorder();
+    const bridge = createWebWorkspacePaneStreamBridge("workspace-a");
+    const binding = (physicalEpoch: number, clientId: string) => ({
+      physicalEpoch,
+      generation: "g1",
+      requestId: "same-request",
+      runtimeSession: "runtime-a",
+      workspaceName: "workspace-a",
+      semanticPaneIds: ["pane.a"],
+      clientId,
+      stage: "first-seed" as const,
+    });
+    let publishA!: (value: ReturnType<typeof binding> | null) => void;
+    let publishB!: (value: ReturnType<typeof binding> | null) => void;
+    let publishA2!: (value: ReturnType<typeof binding> | null) => void;
+    const session = (publish: "a" | "b") => ({
+      dispose: vi.fn(),
+      subscribeCard5PhysicalBinding(listener: typeof publishA) {
+        if (publish === "a") publishA = listener;
+        else publishB = listener;
+        listener(binding(publish === "a" ? 1 : 2, `client-${publish}`));
+        return vi.fn();
+      },
+    });
+    const read = globals.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__ as () => {
+      currentPhysicalBinding: ReturnType<typeof binding> | null;
+    };
+    bridge.bindSession(session("a"));
+    expect(read().currentPhysicalBinding?.physicalEpoch).toBe(1);
+    bridge.bindSession(session("b"));
+    expect(read().currentPhysicalBinding?.physicalEpoch).toBe(2);
+    publishA(null);
+    publishA(binding(1, "client-a"));
+    expect(read().currentPhysicalBinding?.physicalEpoch).toBe(2);
+    publishB(null);
+    expect(read().currentPhysicalBinding).toBeNull();
+    bridge.bindSession({
+      dispose: vi.fn(),
+      subscribeCard5PhysicalBinding(listener) {
+        publishA2 = listener;
+        listener(binding(3, "client-a"));
+        return vi.fn();
+      },
+    });
+    publishB(binding(2, "client-b"));
+    expect(read().currentPhysicalBinding?.physicalEpoch).toBe(3);
+    publishA2(null);
+    expect(read().currentPhysicalBinding).toBeNull();
+    delete globals.__TMUX_IDE_CARD5_EVIDENCE_ENABLED__;
+    delete globals.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__;
+    delete globals.__TMUX_IDE_CARD5_ENVELOPE_STORE__;
+  });
+
   it("exposes a detailed-only deterministic one-slot sink blocker", async () => {
     const globals = globalThis as typeof globalThis & Record<string, unknown>;
     globals.__TMUX_IDE_CARD5_EVIDENCE_ENABLED__ = true;

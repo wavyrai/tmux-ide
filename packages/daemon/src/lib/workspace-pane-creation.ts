@@ -21,6 +21,7 @@ import {
   type WorkspaceConfigSourceMetadata,
 } from "./workspace-config-loader.ts";
 import { getDefaultWorkspaceRegistry, type WorkspaceRegistry } from "./workspace-registry.ts";
+import { memorablePaneName } from "../terminal/protocol/pane-display-name.ts";
 import { shellEscape } from "./shell.ts";
 import { MissionRepository } from "./mission-repository.ts";
 import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
@@ -42,6 +43,20 @@ const CREATION_OPTION = "@tmux_ide_creation_id";
 const HARNESS_OPTION = "@tmux_ide_harness";
 const MISSION_OPTION = "@tmux_ide_mission";
 const SEMANTIC_PANE_OPTION = "@tmux_ide_pane_id";
+
+/**
+ * New tmux panes inherit the session environment, which may contain NO_COLOR
+ * when tmux-ide itself was launched by a headless host. Remove that inherited
+ * opt-out and advertise the truecolor surface before creating a user pane.
+ * Existing processes are intentionally untouched.
+ */
+export function prepareWorkspaceTerminalColorEnvironment(
+  runTmux: (args: readonly string[]) => string,
+  sessionName: string,
+): void {
+  runTmux(["set-environment", "-u", "-t", `=${sessionName}`, "NO_COLOR"]);
+  runTmux(["set-environment", "-t", `=${sessionName}`, "COLORTERM", "truecolor"]);
+}
 
 export type WorkspacePaneCreationErrorCode =
   | "daemon_instance_mismatch"
@@ -567,12 +582,18 @@ function parseCreatedRuntime(
 }
 
 function defaultTitle(
-  intent: WorkspacePaneCreateMutationRequest["intent"],
+  request: WorkspacePaneCreateMutationRequest,
   harness: ResolvedHarnessLaunch | null,
 ): string {
+  const intent = request.intent;
   if (intent.displayTitle) return intent.displayTitle;
   if (intent.kind === "agent") return (harness?.label ?? intent.harnessProfileId).slice(0, 80);
-  return "Terminal";
+  return memorablePaneName(semanticPaneId(request.operationId));
+}
+
+function nameSource(intent: WorkspacePaneCreateMutationRequest["intent"]): string {
+  if (intent.displayTitle) return "manual";
+  return intent.kind === "agent" ? "agent" : "generated";
 }
 
 function resourceFor(
@@ -799,7 +820,7 @@ export class WorkspacePaneCreationAuthority {
           ? await this.#io.resolveMission(trustedWorkspace, canonicalRoot, request.intent.missionId)
           : null;
       this.#assertActive(request.operationId);
-      const title = defaultTitle(request.intent, harness);
+      const title = defaultTitle(request, harness);
       const resource = resourceFor(request, title, resolvedMissionId);
       const placement = request.intent.placement ?? ({ kind: "window" } as const);
       const runtimeScope = placement.kind === "window" ? "window" : "pane";
@@ -857,6 +878,7 @@ export class WorkspacePaneCreationAuthority {
             workspaceName: workspace.name,
           });
         }
+        prepareWorkspaceTerminalColorEnvironment(this.#io.runTmux, workspace.sessionName);
         const createArgs =
           placement.kind === "window"
             ? [
@@ -948,6 +970,7 @@ export class WorkspacePaneCreationAuthority {
         ["@ide_type", resource.kind === "agent" ? "agent" : "shell"],
         ["@ide_role", resource.role ?? "shell"],
         ["@ide_name", resource.displayTitle],
+        ["@tmux_ide_name_source", nameSource(request.intent)],
         ["@agent_hint", agentHintForCommand(harness?.command.join(" ")) ?? ""],
         [HARNESS_OPTION, resource.harnessProfileId ?? ""],
         [MISSION_OPTION, resource.missionId ?? ""],

@@ -290,22 +290,20 @@ async function runInstalledTuiGate(installedCli) {
     const identity = observed.status === 0 ? observed.stdout.trim() : "";
     return identity && identity.includes(downloadedTui) ? identity : null;
   };
-  const terminateLaunchedTui = async () => {
-    if (!existsSync(readyPath)) return;
-    let readiness;
-    try {
-      readiness = JSON.parse(readFileSync(readyPath, "utf8"));
-    } catch {
-      return;
-    }
-    if (
-      readiness?.version !== 1 ||
-      readiness.phase !== "input-ready" ||
-      readiness.surface !== "app"
-    )
-      return;
-    const pid = readiness.pid;
-    if (!Number.isSafeInteger(pid) || pid <= 1) return;
+  const launchedTuiPids = () => {
+    const observed = spawnSync("ps", ["-axo", "pid=,command="], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    if (observed.status !== 0) return [];
+    return observed.stdout
+      .split("\n")
+      .map((line) => /^\s*(\d+)\s+(.+)$/.exec(line))
+      .filter((match) => match?.[2]?.includes(downloadedTui))
+      .map((match) => Number(match[1]))
+      .filter((pid) => Number.isSafeInteger(pid) && pid > 1);
+  };
+  const terminateExactTui = async (pid) => {
     const identity = processIdentity(pid);
     if (!identity) return;
     try {
@@ -324,6 +322,26 @@ async function runInstalledTuiGate(installedCli) {
     } catch {
       // The exact hosted TUI exited between the final probe and escalation.
     }
+  };
+  const terminateLaunchedTui = async () => {
+    const pids = new Set(launchedTuiPids());
+    if (existsSync(readyPath)) {
+      try {
+        const readiness = JSON.parse(readFileSync(readyPath, "utf8"));
+        if (
+          readiness?.version === 1 &&
+          readiness.phase === "input-ready" &&
+          readiness.surface === "app" &&
+          Number.isSafeInteger(readiness.pid) &&
+          readiness.pid > 1
+        ) {
+          pids.add(readiness.pid);
+        }
+      } catch {
+        // A partial readiness write must not prevent exact-binary cleanup.
+      }
+    }
+    await Promise.all([...pids].map(terminateExactTui));
   };
 
   for (const forbidden of ["bunfig.toml", "node_modules", join(".tmux-ide", "workspace.yml")]) {
@@ -608,6 +626,23 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
         `host: ${hostSession}`,
         `frame:\n${capture(targetPane)}`,
         `stderr:\n${existsSync(stderrPath) ? readFileSync(stderrPath, "utf8") : "(missing)"}`,
+        `performance tail:\n${
+          existsSync(performancePath)
+            ? readFileSync(performancePath, "utf8")
+                .trim()
+                .split("\n")
+                .filter(
+                  (line) =>
+                    line.includes('"phase":"terminal-host-') ||
+                    line.includes('"phase":"terminal-input-gate-') ||
+                    line.includes('"phase":"generation-status"') ||
+                    line.includes('"phase":"generation-host-internal-snapshot-publication"') ||
+                    line.includes('"scenario":"terminal-input-to-paint"'),
+                )
+                .slice(-80)
+                .join("\n")
+            : "(missing)"
+        }`,
       ].join("\n");
     await observe(
       `${hosted ? "hosted " : ""}app ${target ?? "chooser"} input-ready`,
@@ -819,15 +854,15 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     one.diagnostics,
   );
 
-  send(one, "F5", "Down", "Enter");
+  send(one, "F5", "Down", "Down", "Enter");
   await observe("split pane right", 10_000, () => paneCount("journey-beta") === 2, one.diagnostics);
   let stableSplitFrames = 0;
   await observe(
-    "split pane semantic publication settles",
+    "split pane UI publication settles",
     10_000,
     () => {
-      const semanticPanes = capture(one.targetPane).match(/pane\.[a-z0-9.]+/giu) ?? [];
-      if (new Set(semanticPanes).size < 2) {
+      const paneActionRails = capture(one.targetPane).match(/\[→\]\[↓\]\[×\]\[⋯\]/gu) ?? [];
+      if (paneActionRails.length < 2) {
         stableSplitFrames = 0;
         return false;
       }
@@ -874,7 +909,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
 
   // Close is intentionally two activations: the first arms the destructive
   // palette row; only the second dispatches the daemon mutation.
-  send(one, "F5", "Down", "Down", "Down", "Enter");
+  send(one, "F5", "Down", "Down", "Down", "Down", "Enter");
   await observe(
     "close confirmation armed",
     5_000,
@@ -895,13 +930,16 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   catalogOwner.kill("SIGTERM");
   await waitForChild(catalogOwner);
   const replacement = spawnInstalledCli(installedCli);
+  let replacementInstanceId = null;
   await observe(
     "daemon replacement",
     20_000,
     () => {
       if (!existsSync(join(homeDir, ".tmux-ide", "daemon.json"))) return false;
       const next = JSON.parse(readFileSync(join(homeDir, ".tmux-ide", "daemon.json"), "utf8"));
-      return next.instanceId !== oldInstanceId && next.pid === replacement.pid;
+      if (next.instanceId === oldInstanceId || next.pid !== replacement.pid) return false;
+      replacementInstanceId = next.instanceId;
+      return true;
     },
     one.diagnostics,
   );
@@ -911,7 +949,26 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     20_000,
     () => {
       const frame = capture(one.targetPane);
-      if (!frame.includes(" live") || !frameShowsTerminalFocus(frame)) {
+      if (!frame.includes("Live tmux session discovered") || !frameShowsTerminalFocus(frame)) {
+        stableReconnectFocusFrames = 0;
+        return false;
+      }
+      const replacementIsLive = readFileSync(one.performancePath, "utf8")
+        .trim()
+        .split("\n")
+        .some((line) => {
+          try {
+            const event = JSON.parse(line);
+            return (
+              event.phase === "generation-status" &&
+              event.status === "live" &&
+              event.daemonGeneration === replacementInstanceId
+            );
+          } catch {
+            return false;
+          }
+        });
+      if (!replacementIsLive) {
         stableReconnectFocusFrames = 0;
         return false;
       }
@@ -921,11 +978,14 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     one.diagnostics,
   );
   const reconnectMarker = `PACK_RECONNECT_${process.pid}`;
+  const reconnectPane = activePane("journey-beta");
+  if (!reconnectPane)
+    throw new Error(`No focused pane after daemon replacement\n${one.diagnostics()}`);
   typeCommand(one, `printf '${reconnectMarker}\\n'`);
   await observe(
     "TUI daemon reconnect input",
     20_000,
-    () => capture(focused).includes(reconnectMarker),
+    () => capture(reconnectPane).includes(reconnectMarker),
     one.diagnostics,
   );
   await cleanQuit(one);

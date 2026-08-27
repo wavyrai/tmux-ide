@@ -7,8 +7,10 @@ import {
   advanceCard5PostInputAuthorityPreconditionHistory,
   advanceCard5CanonicalStability,
   advanceCard5FocusedConvergenceStability,
+  advanceCard5WebPhysicalLifecycleStability,
   advanceCard5RetainedFocusStability,
   assessCard5WebAuthorityRelease,
+  assessCard5WebPhysicalLifecycle,
   assessCard5NullAuthorityPair,
   assessCard5TuiFocusAuthority,
   assessCard5TuiFocusedPane,
@@ -41,7 +43,135 @@ import {
   sealCard5TuiFocusAuthority,
   selectCard5TuiHostFocusBinding,
   sealCard5ProductionClientObservation,
+  sameCard5WebPhysicalLifecycleEvidence,
 } from "./product-cross-client-host-evidence.mjs";
+
+test("Card5 Web physical lifecycle proof requires one exact current epoch and descriptor", () => {
+  const hash = (byte) => byte.repeat(64);
+  const exact = {
+    semanticPaneId: "pane-a",
+    generation: "generation-a",
+    runtimeReplacement: {
+      currentLifecycleRequest: {
+        status: "exact",
+        requestHmac: hash("a"),
+        physicalBindingExact: true,
+        physicalEpochHmac: hash("b"),
+        bindingRequestHmac: hash("a"),
+        bindingClientHmac: hash("c"),
+        activeCount: 1,
+        descriptorCount: 1,
+        overflow: false,
+        rawActiveCount: 1,
+        rawDescriptorCount: 1,
+        firstSeedOrdinal: 4,
+        physicalBindingAxes: {
+          present: true,
+          epochSafe: true,
+          generationExact: true,
+          runtimeSessionExact: true,
+          workspaceExact: true,
+          paneExact: true,
+          stageExact: true,
+          clientExact: true,
+          epochActiveCount: 1,
+          bindingRequestExact: true,
+          descriptorExact: true,
+        },
+      },
+    },
+  };
+  assert.equal(assessCard5WebPhysicalLifecycle(exact, "pane-a", "generation-a").valid, true);
+  const changes = [
+    (value) => (value.runtimeReplacement.currentLifecycleRequest.status = "missing"),
+    (value) => (value.runtimeReplacement.currentLifecycleRequest.activeCount = 0),
+    (value) => (value.runtimeReplacement.currentLifecycleRequest.descriptorCount = 0),
+    (value) => (value.runtimeReplacement.currentLifecycleRequest.descriptorCount = 2),
+    (value) => (value.runtimeReplacement.currentLifecycleRequest.overflow = true),
+    (value) => (value.runtimeReplacement.currentLifecycleRequest.bindingRequestHmac = hash("d")),
+    (value) =>
+      (value.runtimeReplacement.currentLifecycleRequest.physicalBindingAxes.clientExact = false),
+    (value) =>
+      (value.runtimeReplacement.currentLifecycleRequest.physicalBindingAxes.epochActiveCount = 2),
+    (value) => (value.semanticPaneId = "pane-b"),
+    (value) => (value.generation = "generation-b"),
+  ];
+  for (const change of changes) {
+    const value = structuredClone(exact);
+    change(value);
+    assert.equal(assessCard5WebPhysicalLifecycle(value, "pane-a", "generation-a").valid, false);
+  }
+  const key = "1".repeat(64);
+  const canonicalDigest = "2".repeat(64);
+  const evidence = assessCard5WebPhysicalLifecycle(exact, "pane-a", "generation-a").evidence;
+  const electronEvidence = Object.freeze({
+    ...evidence,
+    requestHmac: "4".repeat(64),
+    clientHmac: "5".repeat(64),
+  });
+  const pair = Object.freeze({ chromium: evidence, electron: electronEvidence });
+  const first = advanceCard5WebPhysicalLifecycleStability(null, canonicalDigest, pair, key);
+  assert.equal(first.stable, false);
+  assert.match(first.digest, /^[0-9a-f]{64}$/u);
+  assert.equal(
+    advanceCard5WebPhysicalLifecycleStability(first.digest, canonicalDigest, pair, key).stable,
+    true,
+  );
+  assert.equal(
+    advanceCard5WebPhysicalLifecycleStability(
+      first.digest,
+      canonicalDigest,
+      { chromium: evidence, electron: null },
+      key,
+    ).digest,
+    null,
+    "one Web host without an exact lifecycle can never form a stable sample",
+  );
+  const rebound = {
+    chromium: { ...evidence, physicalEpochHmac: "3".repeat(64) },
+    electron: electronEvidence,
+  };
+  assert.equal(
+    advanceCard5WebPhysicalLifecycleStability(first.digest, canonicalDigest, rebound, key).stable,
+    false,
+    "between-sample physical epoch churn must reset convergence",
+  );
+  assert.equal(sameCard5WebPhysicalLifecycleEvidence(pair, structuredClone(pair)), true);
+  assert.equal(
+    sameCard5WebPhysicalLifecycleEvidence(pair, rebound),
+    false,
+    "a convergence-to-preflight rebind must reject",
+  );
+  for (const aliased of [
+    { chromium: evidence, electron: { ...electronEvidence, requestHmac: evidence.requestHmac } },
+    { chromium: evidence, electron: { ...electronEvidence, clientHmac: evidence.clientHmac } },
+    {
+      chromium: evidence,
+      electron: {
+        ...electronEvidence,
+        requestHmac: evidence.requestHmac,
+        clientHmac: evidence.clientHmac,
+      },
+    },
+  ]) {
+    assert.equal(
+      advanceCard5WebPhysicalLifecycleStability(null, canonicalDigest, aliased, key).digest,
+      null,
+      "two Web views cannot alias one physical request or client",
+    );
+  }
+  const swapped = Object.freeze({ chromium: electronEvidence, electron: evidence });
+  assert.equal(
+    advanceCard5WebPhysicalLifecycleStability(first.digest, canonicalDigest, swapped, key).stable,
+    false,
+    "a positional host swap resets two-sample stability",
+  );
+  assert.equal(
+    sameCard5WebPhysicalLifecycleEvidence(pair, swapped),
+    false,
+    "a positional host swap fails the convergence-to-preflight join",
+  );
+});
 
 test("Card5 post-input precondition history preserves success across terminal timeouts", () => {
   const informative = Object.freeze({ reason: "receipt-missing", axes: Object.freeze({}) });

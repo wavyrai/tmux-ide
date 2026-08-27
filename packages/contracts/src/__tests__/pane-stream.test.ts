@@ -365,11 +365,32 @@ describe("pane-stream server frames", () => {
       rows: 50,
       zoomed: false,
       panes: [
-        { pane: "pane.editor", left: 0, top: 0, width: 100, height: 50, active: true },
+        {
+          pane: "pane.editor",
+          displayName: "macmon",
+          displayNameSource: "process",
+          left: 0,
+          top: 0,
+          width: 100,
+          height: 50,
+          active: true,
+        },
         { pane: null, left: 100, top: 0, width: 100, height: 50, active: false },
       ],
     };
     expect(PaneStreamServerFrameSchemaZ.safeParse(layout).success).toBe(true);
+    expect(
+      PaneStreamServerFrameSchemaZ.safeParse({
+        ...layout,
+        panes: [{ ...layout.panes[0], displayNameSource: "guessed" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      PaneStreamServerFrameSchemaZ.safeParse({
+        ...layout,
+        panes: [{ ...layout.panes[0], displayName: "bad\nname" }],
+      }).success,
+    ).toBe(false);
     expect(
       PaneStreamServerFrameSchemaZ.safeParse({
         ...layout,

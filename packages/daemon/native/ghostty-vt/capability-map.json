@@ -1,0 +1,198 @@
+{
+  "schemaVersion": 1,
+  "ghosttyCommit": "48ccec182a932c2ec04c344d45a5fc553861cb13",
+  "capabilities": {
+    "denseCellsIncludingWidthZeroSpacers": {
+      "implementable": true,
+      "symbols": [
+        "ghostty_render_state_row_cells_next",
+        "ghostty_render_state_row_cells_get",
+        "ghostty_cell_get"
+      ],
+      "types": [
+        "GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW",
+        "GHOSTTY_CELL_DATA_WIDE",
+        "GHOSTTY_CELL_WIDE_SPACER_TAIL",
+        "GHOSTTY_CELL_WIDE_SPACER_HEAD"
+      ]
+    },
+    "rowWrapState": {
+      "implementable": true,
+      "symbols": ["ghostty_render_state_row_get", "ghostty_row_get"],
+      "types": [
+        "GHOSTTY_RENDER_STATE_ROW_DATA_RAW",
+        "GHOSTTY_ROW_DATA_WRAP",
+        "GHOSTTY_ROW_DATA_WRAP_CONTINUATION"
+      ]
+    },
+    "sourceColorKindsAndPaletteIndices": {
+      "implementable": true,
+      "symbols": [
+        "ghostty_render_state_row_cells_get",
+        "ghostty_grid_ref_style",
+        "ghostty_cell_get"
+      ],
+      "types": [
+        "GhosttyStyleColor",
+        "GHOSTTY_STYLE_COLOR_NONE",
+        "GHOSTTY_STYLE_COLOR_PALETTE",
+        "GHOSTTY_STYLE_COLOR_RGB",
+        "GHOSTTY_CELL_DATA_CONTENT_TAG",
+        "GHOSTTY_CELL_DATA_COLOR_PALETTE",
+        "GHOSTTY_CELL_DATA_COLOR_RGB"
+      ]
+    },
+    "allEightCellAttributes": {
+      "implementable": true,
+      "symbols": ["ghostty_render_state_row_cells_get", "ghostty_grid_ref_style"],
+      "types": [
+        "GhosttyStyle.bold",
+        "GhosttyStyle.faint",
+        "GhosttyStyle.italic",
+        "GhosttyStyle.underline",
+        "GhosttyStyle.blink",
+        "GhosttyStyle.inverse",
+        "GhosttyStyle.invisible",
+        "GhosttyStyle.strikethrough"
+      ]
+    },
+    "underlineStyleAndColor": {
+      "implementable": true,
+      "symbols": ["ghostty_render_state_row_cells_get", "ghostty_grid_ref_style"],
+      "types": ["GhosttyStyle.underline", "GhosttyStyle.underline_color"]
+    },
+    "cursorVisibilityStyleAndBlink": {
+      "implementable": true,
+      "symbols": ["ghostty_render_state_get"],
+      "types": [
+        "GHOSTTY_RENDER_STATE_DATA_CURSOR_VISIBLE",
+        "GHOSTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE",
+        "GHOSTTY_RENDER_STATE_DATA_CURSOR_BLINKING",
+        "GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X",
+        "GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y"
+      ]
+    },
+    "terminalModes": {
+      "implementable": true,
+      "symbols": ["ghostty_terminal_mode_get", "ghostty_terminal_get"],
+      "types": [
+        "GHOSTTY_MODE_DECCKM",
+        "GHOSTTY_MODE_KEYPAD_KEYS",
+        "GHOSTTY_MODE_BRACKETED_PASTE",
+        "GHOSTTY_MODE_INSERT",
+        "GHOSTTY_MODE_ORIGIN",
+        "GHOSTTY_MODE_WRAPAROUND",
+        "GHOSTTY_MODE_SYNC_OUTPUT",
+        "GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN",
+        "GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING"
+      ]
+    },
+    "styledScrollbackRows": {
+      "implementable": true,
+      "symbols": [
+        "ghostty_terminal_get",
+        "ghostty_terminal_grid_ref",
+        "ghostty_grid_ref_row",
+        "ghostty_grid_ref_cell",
+        "ghostty_grid_ref_graphemes",
+        "ghostty_grid_ref_style"
+      ],
+      "types": ["GHOSTTY_TERMINAL_DATA_SCROLLBACK_ROWS", "GHOSTTY_POINT_TAG_HISTORY"]
+    },
+    "dirtyRowOrRenderStateDelta": {
+      "implementable": true,
+      "symbols": [
+        "ghostty_render_state_update",
+        "ghostty_render_state_get",
+        "ghostty_render_state_row_get",
+        "ghostty_render_state_dirty_clear"
+      ],
+      "types": ["GHOSTTY_RENDER_STATE_DATA_DIRTY", "GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY"]
+    },
+    "hyperlinks": {
+      "implementable": true,
+      "projectedByProof": true,
+      "symbols": ["ghostty_grid_ref_hyperlink_uri"]
+    },
+    "kittyPlacements": {
+      "implementable": false,
+      "projectedByProof": false,
+      "status": "deferred",
+      "symbols": [
+        "ghostty_terminal_get",
+        "ghostty_kitty_graphics_placement_iterator_new",
+        "ghostty_kitty_graphics_get",
+        "ghostty_kitty_graphics_placement_next",
+        "ghostty_kitty_graphics_placement_get",
+        "ghostty_kitty_graphics_image",
+        "ghostty_kitty_graphics_image_get"
+      ],
+      "types": [
+        "GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS",
+        "GHOSTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR"
+      ],
+      "reason": "Canonical image-content digesting, resource bounds, and placement lifecycle are not defined by this parser-only proof; no Kitty parity is claimed."
+    },
+    "idempotentDispose": {
+      "implementable": true,
+      "symbols": [
+        "ghostty_render_state_row_cells_free",
+        "ghostty_render_state_row_iterator_free",
+        "ghostty_render_state_free",
+        "ghostty_terminal_free"
+      ],
+      "adapterPolicy": "null every owned handle after the first ordered free"
+    },
+    "incrementalByteFeed": {
+      "implementable": true,
+      "symbols": ["ghostty_terminal_vt_write"]
+    },
+    "resize": {
+      "implementable": true,
+      "symbols": ["ghostty_terminal_resize"]
+    },
+    "alternateScreenIdentity": {
+      "implementable": true,
+      "symbols": ["ghostty_terminal_get"],
+      "types": [
+        "GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN",
+        "GHOSTTY_TERMINAL_SCREEN_PRIMARY",
+        "GHOSTTY_TERMINAL_SCREEN_ALTERNATE"
+      ]
+    },
+    "logicalHistoryDelta": {
+      "implementableWithPinnedPatch": true,
+      "implementableWithUnmodifiedPublicApi": false,
+      "symbols": ["ghostty_terminal_get"],
+      "types": [
+        "GHOSTTY_TERMINAL_DATA_HISTORY_GENERATION",
+        "GHOSTTY_TERMINAL_DATA_HISTORY_ROWS_APPENDED",
+        "GHOSTTY_TERMINAL_DATA_HISTORY_ROWS_TRIMMED"
+      ],
+      "patch": "patches/0002-add-logical-history-generation.patch"
+    }
+  },
+  "integrationBlockers": {
+    "authoritativeCursor": {
+      "implementableWithPinnedPatch": true,
+      "implementableWithUnmodifiedPublicApi": false,
+      "symbol": "ghostty_terminal_cursor_set_absolute",
+      "patch": "patches/0001-add-absolute-viewport-cursor-api.patch",
+      "implementation": "Move the active-screen cursor with Screen.cursorAbsolute and clear pending-wrap; do not inject CUP.",
+      "safety": "Absolute viewport coordinates bypass DECOM and margins while leaving modes, scrolling margins, and saved cursor state unchanged."
+    },
+    "incrementalHistory": {
+      "implementableWithPinnedPatch": true,
+      "implementableWithUnmodifiedPublicApi": false,
+      "patch": "patches/0002-add-logical-history-generation.patch",
+      "implementation": "Monotonic generation and cumulative append/trim counters allow tail-only history reads and exact consumer-cap rotation without O(history*cells) rescans."
+    },
+    "atomicDirtyAcknowledgement": {
+      "implementableWithPinnedPatch": true,
+      "implementableWithUnmodifiedPublicApi": false,
+      "symbol": "ghostty_render_state_dirty_clear",
+      "patch": "patches/0003-add-atomic-dirty-ack.patch",
+      "implementation": "Clear global and all row dirty bits in one infallible operation only after the full projection object has been constructed."
+    }
+  }
+}

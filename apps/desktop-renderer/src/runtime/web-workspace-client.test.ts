@@ -29,12 +29,69 @@ const TARGET = {
   workspaceName: "workspace-a",
 } satisfies DesktopApplicationShellTarget;
 
+function physicalSession(
+  generation: string,
+  workspaceName: string,
+  panes: readonly string[],
+  clientId = "web-client-a",
+) {
+  return {
+    dispose: vi.fn(),
+    card5PhysicalBinding: () => ({
+      physicalEpoch: 1,
+      generation,
+      requestId: `request-${clientId}`,
+      runtimeSession: "runtime-a",
+      workspaceName,
+      semanticPaneIds: [...panes],
+      clientId,
+      stage: "first-seed" as const,
+    }),
+  };
+}
+
+function canonical(generation: string, revision: number) {
+  return {
+    deliveryRequestId: `delivery-${revision}`,
+    generation,
+    incarnation: "incarnation-a",
+    revision,
+    stateHash: String(revision).padStart(64, "0"),
+    cols: 80,
+    rows: 24,
+    sourceEpoch: 1,
+    alternateScreen: false,
+    cursor: { x: 0, y: 0, hidden: false, style: "block" as const, blink: false },
+    gridRowsRead: 24,
+    gridCellsRead: 1_920,
+    fullGridWalks: 1,
+  };
+}
+
+const layout = {
+  semanticWindowId: "window-a",
+  windowName: "main",
+  currentWindow: true,
+  cols: 80,
+  rows: 24,
+  zoomed: false,
+  paneBorderStatus: "off" as const,
+  panes: [],
+};
+
 describe("Web WorkspaceClient owner action binding", () => {
   it("activates a candidate from one authoritative replay and retires prior panes", async () => {
     const bridge = createWebWorkspacePaneStreamBridge("workspace-a");
     const captures: WebWorkspaceRuntimeOptions[] = [];
     const connect = vi.fn(async (options: WebWorkspaceRuntimeOptions) => {
       captures.push(options);
+      options.onSession?.(
+        physicalSession(
+          options.inventory.daemonGeneration,
+          options.inventory.workspaceName,
+          options.inventory.semanticPaneIds,
+        ),
+      );
       return {
         generation: GENERATION,
         closed: new Promise<unknown>(() => undefined),
@@ -63,7 +120,9 @@ describe("Web WorkspaceClient owner action binding", () => {
     captures[0]!.onPaneEvent?.("pane.primary", {
       type: "seed-batch",
       batch: { reset: null, seed: new Uint8Array([1]), held: [], cursor: null },
+      canonical: canonical(GENERATION, 1),
     });
+    captures[0]!.onLayout?.(layout);
     ports.didActivateRuntime?.(a, inventory);
     const events: Array<{ pane: string; type: string; byte: number | undefined }> = [];
     await bridge.connect(
@@ -97,12 +156,15 @@ describe("Web WorkspaceClient owner action binding", () => {
     captures[1]!.onPaneEvent?.("pane.primary", {
       type: "seed-batch",
       batch: { reset: null, seed: new Uint8Array([2]), held: [], cursor: null },
+      canonical: canonical(GENERATION, 2),
     });
     captures[1]!.onPaneEvent?.("pane.primary", {
       type: "output",
       bytes: new Uint8Array([9]),
       replay: () => ({ reset: null, seed: new Uint8Array([3]), held: [], cursor: null }),
+      canonical: canonical(GENERATION, 3),
     });
+    captures[1]!.onLayout?.(layout);
     captures[1]!.onPaneEvent?.("pane.primary", { type: "cursor", x: 7, y: 8 });
     captures[1]!.onPaneEvent?.("pane.primary", {
       type: "flow",
@@ -128,7 +190,9 @@ describe("Web WorkspaceClient owner action binding", () => {
     captures[2]!.onPaneEvent?.("pane.secondary", {
       type: "seed-batch",
       batch: { reset: null, seed: new Uint8Array([4]), held: [], cursor: null },
+      canonical: canonical(GENERATION, 4),
     });
+    captures[2]!.onLayout?.(layout);
     ports.didActivateRuntime?.(c, removed);
     await Promise.resolve();
     await Promise.resolve();
@@ -152,7 +216,15 @@ describe("Web WorkspaceClient owner action binding", () => {
       runtimes.push(runtime);
       const updatePresence = vi.fn();
       sessionPresence.push(updatePresence);
-      options.onSession?.({ dispose: vi.fn(), updatePresence });
+      options.onSession?.({
+        ...physicalSession(
+          options.inventory.daemonGeneration,
+          options.inventory.workspaceName,
+          options.inventory.semanticPaneIds,
+          `web-client-${captures.length}`,
+        ),
+        updatePresence,
+      });
       return runtime;
     });
     const ports = createWebWorkspaceRuntimeBridgePorts({
@@ -174,6 +246,12 @@ describe("Web WorkspaceClient owner action binding", () => {
       new AbortController().signal,
       async () => undefined,
     );
+    captures[0]?.onPaneEvent?.("pane.primary", {
+      type: "seed-batch",
+      batch: { reset: null, seed: new Uint8Array([1]), held: [], cursor: null },
+      canonical: canonical(GENERATION, 1),
+    });
+    captures[0]?.onLayout?.(layout);
     ports.didActivateRuntime?.(a, inventory);
     const b = await ports.connectRuntime(
       TARGET,
@@ -181,15 +259,27 @@ describe("Web WorkspaceClient owner action binding", () => {
       new AbortController().signal,
       async () => undefined,
     );
+    captures[1]?.onPaneEvent?.("pane.primary", {
+      type: "seed-batch",
+      batch: { reset: null, seed: new Uint8Array([2]), held: [], cursor: null },
+      canonical: canonical(GENERATION, 2),
+    });
+    captures[1]?.onLayout?.(layout);
     ports.didActivateRuntime?.(b, inventory);
+    await Promise.resolve();
+    await Promise.resolve();
     captures[0]?.onEnd?.(new Error("late A"));
     const paneEvent = vi.fn();
-    const layout = vi.fn();
+    const layoutListener = vi.fn();
     const connected = await bridge.connect(
       { workspaceName: "workspace-a", panes: ["pane.primary"] },
-      { onPaneEvent: paneEvent, onLayout: layout, onEnd: vi.fn() },
+      { onPaneEvent: paneEvent, onLayout: layoutListener, onEnd: vi.fn() },
     );
     expect(connected).toMatchObject({ status: "connected" });
+    await Promise.resolve();
+    await Promise.resolve();
+    paneEvent.mockClear();
+    layoutListener.mockClear();
     captures[0]?.onPaneEvent?.("pane.primary", {
       type: "seed-batch",
       batch: { reset: null, seed: new Uint8Array([8]), held: [], cursor: null },
@@ -208,7 +298,7 @@ describe("Web WorkspaceClient owner action binding", () => {
     captures[0]?.onSession?.({ dispose: vi.fn(), updatePresence: latePresence });
     await Promise.resolve();
     expect(paneEvent).not.toHaveBeenCalled();
-    expect(layout).not.toHaveBeenCalled();
+    expect(layoutListener).not.toHaveBeenCalled();
     if (connected.status !== "connected") throw new Error("bridge did not connect");
     connected.session.updatePresence?.("background");
     expect(sessionPresence[1]).toHaveBeenCalledWith("background");
@@ -220,6 +310,429 @@ describe("Web WorkspaceClient owner action binding", () => {
       }),
     ).rejects.toThrow("prepare rejected");
     expect(runtimes.at(-1)?.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("publishes no binding for incomplete, duplicate, wrong-generation, or overflow candidates", async () => {
+    for (const invalid of [
+      "missing",
+      "duplicate-seed",
+      "duplicate-layout",
+      "duplicate-session",
+      "wrong-generation",
+      "overflow",
+    ] as const) {
+      const bridge = createWebWorkspacePaneStreamBridge("workspace-a");
+      const bindSession = vi.spyOn(bridge, "bindSession");
+      const activateRuntime = vi.spyOn(bridge, "activateRuntime");
+      let capture!: WebWorkspaceRuntimeOptions;
+      const close = vi.fn();
+      const ports = createWebWorkspaceRuntimeBridgePorts({
+        host: { daemon: {}, workspace: {} } as unknown as HostCapabilities,
+        bridge,
+        connect: vi.fn(async (options: WebWorkspaceRuntimeOptions) => {
+          capture = options;
+          options.onSession?.(
+            physicalSession(
+              options.inventory.daemonGeneration,
+              options.inventory.workspaceName,
+              options.inventory.semanticPaneIds,
+            ),
+          );
+          return {
+            generation: GENERATION,
+            closed: new Promise<unknown>(() => undefined),
+            close,
+          } as unknown as WebWorkspaceRuntimePort;
+        }),
+      });
+      const inventory = {
+        workspaceName: "workspace-a",
+        workspaceId: "workspace-a",
+        sessionId: "session-a",
+        daemonGeneration: GENERATION,
+        shellGeneration: 1,
+        semanticPaneIds: ["pane.primary"],
+      };
+      const controller = new AbortController();
+      const runtime = await ports.connectRuntime(
+        TARGET,
+        inventory,
+        controller.signal,
+        async () => undefined,
+      );
+      const seedCount = invalid === "missing" ? 0 : invalid === "duplicate-seed" ? 2 : 1;
+      for (let index = 0; index < seedCount; index += 1) {
+        capture.onPaneEvent?.("pane.primary", {
+          type: "seed-batch",
+          batch: { reset: null, seed: new Uint8Array([index]), held: [], cursor: null },
+          canonical: canonical(
+            invalid === "wrong-generation" ? "generation-foreign" : GENERATION,
+            index + 1,
+          ),
+        });
+      }
+      capture.onLayout?.(layout);
+      if (invalid === "duplicate-layout") capture.onLayout?.(layout);
+      if (invalid === "duplicate-session")
+        capture.onSession?.(physicalSession(GENERATION, "workspace-a", ["pane.primary"]));
+      if (invalid === "overflow") {
+        for (let index = 0; index < 8_193; index += 1)
+          capture.onPaneEvent?.("pane.primary", { type: "cursor", x: index, y: 0 });
+      }
+      ports.didActivateRuntime?.(runtime, inventory);
+      expect(bindSession).toHaveBeenCalledWith(null, "workspace-a");
+      expect(activateRuntime).not.toHaveBeenCalled();
+      if (invalid === "missing") {
+        expect(close).not.toHaveBeenCalled();
+        controller.abort();
+      }
+      expect(close).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("treats activation as intent and commits once after every delayed readiness permutation", async () => {
+    const permutations = [
+      ["session", "layout", "seed"],
+      ["session", "seed", "layout"],
+      ["layout", "session", "seed"],
+      ["layout", "seed", "session"],
+      ["seed", "session", "layout"],
+      ["seed", "layout", "session"],
+    ] as const;
+    for (const order of permutations) {
+      const sourceShapedOutputSeed = order === permutations[0];
+      const bridge = createWebWorkspacePaneStreamBridge("workspace-a");
+      const activateRuntime = vi.spyOn(bridge, "activateRuntime");
+      let capture!: WebWorkspaceRuntimeOptions;
+      const close = vi.fn();
+      const ports = createWebWorkspaceRuntimeBridgePorts({
+        host: { daemon: {}, workspace: {} } as unknown as HostCapabilities,
+        bridge,
+        connect: vi.fn(async (options: WebWorkspaceRuntimeOptions) => {
+          capture = options;
+          return {
+            generation: GENERATION,
+            closed: new Promise<unknown>(() => undefined),
+            close,
+          } as unknown as WebWorkspaceRuntimePort;
+        }),
+      });
+      const inventory = {
+        workspaceName: "workspace-a",
+        workspaceId: "workspace-a",
+        sessionId: "session-a",
+        daemonGeneration: GENERATION,
+        shellGeneration: 1,
+        semanticPaneIds: ["pane.primary"],
+      };
+      const runtime = await ports.connectRuntime(
+        TARGET,
+        inventory,
+        new AbortController().signal,
+        async () => undefined,
+      );
+      ports.didActivateRuntime?.(runtime, inventory);
+      expect(activateRuntime).not.toHaveBeenCalled();
+      for (const [index, stage] of order.entries()) {
+        if (stage === "session")
+          capture.onSession?.(physicalSession(GENERATION, "workspace-a", ["pane.primary"]));
+        else if (stage === "layout") capture.onLayout?.(layout);
+        else if (sourceShapedOutputSeed)
+          capture.onPaneEvent?.("pane.primary", {
+            type: "output",
+            bytes: new Uint8Array([1]),
+            replay: () => ({ reset: null, seed: new Uint8Array([1]), held: [], cursor: null }),
+            canonical: canonical(GENERATION, 1),
+            canonicalUpdate: { type: "terminal.seed", generation: GENERATION } as never,
+          });
+        else
+          capture.onPaneEvent?.("pane.primary", {
+            type: "seed-batch",
+            batch: { reset: null, seed: new Uint8Array([1]), held: [], cursor: null },
+            canonical: canonical(GENERATION, 1),
+          });
+        if (index < order.length - 1) expect(activateRuntime).not.toHaveBeenCalled();
+      }
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(activateRuntime).toHaveBeenCalledTimes(1);
+      expect(close).not.toHaveBeenCalled();
+    }
+  });
+
+  it("closes an activation intent once when readiness misses its hard deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const bridge = createWebWorkspacePaneStreamBridge("workspace-a");
+      let capture!: WebWorkspaceRuntimeOptions;
+      const close = vi.fn();
+      const ports = createWebWorkspaceRuntimeBridgePorts({
+        host: { daemon: {}, workspace: {} } as unknown as HostCapabilities,
+        bridge,
+        connect: vi.fn(async (options: WebWorkspaceRuntimeOptions) => {
+          capture = options;
+          return {
+            generation: GENERATION,
+            closed: new Promise<unknown>(() => undefined),
+            close,
+          } as unknown as WebWorkspaceRuntimePort;
+        }),
+      });
+      const inventory = {
+        workspaceName: "workspace-a",
+        workspaceId: "workspace-a",
+        sessionId: "session-a",
+        daemonGeneration: GENERATION,
+        shellGeneration: 1,
+        semanticPaneIds: ["pane.primary"],
+      };
+      const runtime = await ports.connectRuntime(
+        TARGET,
+        inventory,
+        new AbortController().signal,
+        async () => undefined,
+      );
+      capture.onSession?.(physicalSession(GENERATION, "workspace-a", ["pane.primary"]));
+      ports.didActivateRuntime?.(runtime, inventory);
+      expect(close).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails closed on invalid or regressing readiness clocks", async () => {
+    for (const clockValues of [[Number.NaN], [100, 99], ["throw"], [100, "throw"]] as const) {
+      let index = 0;
+      const clock = vi.spyOn(performance, "now").mockImplementation(() => {
+        const value = clockValues[Math.min(index++, clockValues.length - 1)]!;
+        if (value === "throw") throw new Error("clock unavailable");
+        return value;
+      });
+      try {
+        const bridge = createWebWorkspacePaneStreamBridge("workspace-a");
+        let capture!: WebWorkspaceRuntimeOptions;
+        const close = vi.fn();
+        const ports = createWebWorkspaceRuntimeBridgePorts({
+          host: { daemon: {}, workspace: {} } as unknown as HostCapabilities,
+          bridge,
+          connect: vi.fn(async (options: WebWorkspaceRuntimeOptions) => {
+            capture = options;
+            options.onSession?.(physicalSession(GENERATION, "workspace-a", ["pane.primary"]));
+            return {
+              generation: GENERATION,
+              closed: new Promise<unknown>(() => undefined),
+              close,
+            } as unknown as WebWorkspaceRuntimePort;
+          }),
+        });
+        const inventory = {
+          workspaceName: "workspace-a",
+          workspaceId: "workspace-a",
+          sessionId: "session-a",
+          daemonGeneration: GENERATION,
+          shellGeneration: 1,
+          semanticPaneIds: ["pane.primary"],
+        };
+        const runtime = await ports.connectRuntime(
+          TARGET,
+          inventory,
+          new AbortController().signal,
+          async () => undefined,
+        );
+        capture.onPaneEvent?.("pane.primary", {
+          type: "seed-batch",
+          batch: { reset: null, seed: new Uint8Array([1]), held: [], cursor: null },
+          canonical: canonical(GENERATION, 1),
+        });
+        capture.onLayout?.(layout);
+        ports.didActivateRuntime?.(runtime, inventory);
+        expect(close).toHaveBeenCalledTimes(1);
+      } finally {
+        clock.mockRestore();
+      }
+    }
+  });
+
+  it("keeps the hard deadline through consumer settlement and fences a late acknowledgement", async () => {
+    vi.useFakeTimers();
+    let browserNow = 100;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => browserNow);
+    const globals = globalThis as typeof globalThis & Record<string, unknown>;
+    globals.__TMUX_IDE_CARD5_EVIDENCE_ENABLED__ = true;
+    try {
+      const bridge = createWebWorkspacePaneStreamBridge("workspace-a");
+      const activation = vi.spyOn(bridge, "activateRuntime");
+      const control = globals.__TMUX_IDE_CARD5_SINK_CONTROL__ as {
+        setBlocked(value: boolean): void;
+      };
+      let capture!: WebWorkspaceRuntimeOptions;
+      const close = vi.fn();
+      const ports = createWebWorkspaceRuntimeBridgePorts({
+        host: { daemon: {}, workspace: {} } as unknown as HostCapabilities,
+        bridge,
+        connect: vi.fn(async (options: WebWorkspaceRuntimeOptions) => {
+          capture = options;
+          options.onSession?.(physicalSession(GENERATION, "workspace-a", ["pane.primary"]));
+          return {
+            generation: GENERATION,
+            closed: new Promise<unknown>(() => undefined),
+            close,
+          } as unknown as WebWorkspaceRuntimePort;
+        }),
+      });
+      const inventory = {
+        workspaceName: "workspace-a",
+        workspaceId: "workspace-a",
+        sessionId: "session-a",
+        daemonGeneration: GENERATION,
+        shellGeneration: 1,
+        semanticPaneIds: ["pane.primary"],
+      };
+      const connected = await bridge.connect(
+        { workspaceName: "workspace-a", panes: ["pane.primary"], viewerMode: "interactive" },
+        { onPaneEvent: vi.fn(), onEnd: vi.fn() },
+      );
+      if (connected.status !== "connected") throw new Error("bridge did not connect");
+      const runtime = await ports.connectRuntime(
+        TARGET,
+        inventory,
+        new AbortController().signal,
+        async () => undefined,
+      );
+      capture.onPaneEvent?.("pane.primary", {
+        type: "seed-batch",
+        batch: { reset: null, seed: new Uint8Array([1]), held: [], cursor: null },
+        canonical: canonical(GENERATION, 1),
+      });
+      capture.onLayout?.(layout);
+      control.setBlocked(true);
+      ports.didActivateRuntime?.(runtime, inventory);
+      await Promise.resolve();
+      expect(connected.session.connectionClientId?.()).toBeNull();
+      browserNow += 15_001;
+      control.setBlocked(false);
+      await Promise.all(
+        activation.mock.results.map(({ value }) => value as unknown as Promise<boolean>),
+      );
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(connected.session.connectionClientId?.()).toBeNull();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(close).toHaveBeenCalledTimes(1);
+      expect(connected.session.connectionClientId?.()).toBeNull();
+      connected.session.dispose();
+      bridge.end({ code: "workspace-client-closed", reason: "test", retryable: false });
+    } finally {
+      delete globals.__TMUX_IDE_CARD5_EVIDENCE_ENABLED__;
+      delete globals.__TMUX_IDE_CARD5_SINK_CONTROL__;
+      clock.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("aborts a blocked candidate when its session, contract, or signal changes", async () => {
+    for (const churn of ["session", "foreign-pane", "abort"] as const) {
+      const globals = globalThis as typeof globalThis & Record<string, unknown>;
+      globals.__TMUX_IDE_CARD5_EVIDENCE_ENABLED__ = true;
+      const bridge = createWebWorkspacePaneStreamBridge("workspace-a");
+      const activation = vi.spyOn(bridge, "activateRuntime");
+      const control = globals.__TMUX_IDE_CARD5_SINK_CONTROL__ as {
+        setBlocked(value: boolean): void;
+      };
+      const captures: WebWorkspaceRuntimeOptions[] = [];
+      const closes: Array<ReturnType<typeof vi.fn>> = [];
+      const ports = createWebWorkspaceRuntimeBridgePorts({
+        host: { daemon: {}, workspace: {} } as unknown as HostCapabilities,
+        bridge,
+        connect: vi.fn(async (options: WebWorkspaceRuntimeOptions) => {
+          captures.push(options);
+          const close = vi.fn();
+          closes.push(close);
+          options.onSession?.(
+            physicalSession(
+              options.inventory.daemonGeneration,
+              options.inventory.workspaceName,
+              options.inventory.semanticPaneIds,
+              `client-${captures.length}`,
+            ),
+          );
+          return {
+            generation: GENERATION,
+            closed: new Promise<unknown>(() => undefined),
+            close,
+          } as unknown as WebWorkspaceRuntimePort;
+        }),
+      });
+      const inventory = {
+        workspaceName: "workspace-a",
+        workspaceId: "workspace-a",
+        sessionId: "session-a",
+        daemonGeneration: GENERATION,
+        shellGeneration: 1,
+        semanticPaneIds: ["pane.primary"],
+      };
+      const stage = (capture: WebWorkspaceRuntimeOptions, byte: number): void => {
+        capture.onPaneEvent?.("pane.primary", {
+          type: "seed-batch",
+          batch: { reset: null, seed: new Uint8Array([byte]), held: [], cursor: null },
+          canonical: canonical(GENERATION, byte),
+        });
+        capture.onLayout?.(layout);
+      };
+      const first = await ports.connectRuntime(
+        TARGET,
+        inventory,
+        new AbortController().signal,
+        async () => undefined,
+      );
+      stage(captures[0]!, 1);
+      ports.didActivateRuntime?.(first, inventory);
+      await Promise.resolve();
+      await Promise.resolve();
+      const connected = await bridge.connect(
+        { workspaceName: "workspace-a", panes: ["pane.primary"], viewerMode: "interactive" },
+        { onPaneEvent: vi.fn(), onEnd: vi.fn() },
+      );
+      if (connected.status !== "connected") throw new Error("bridge did not connect");
+      control.setBlocked(true);
+      const secondController = new AbortController();
+      const second = await ports.connectRuntime(
+        TARGET,
+        inventory,
+        secondController.signal,
+        async () => undefined,
+      );
+      stage(captures[1]!, 2);
+      ports.didActivateRuntime?.(second, inventory);
+      await Promise.resolve();
+      expect(connected.session.connectionClientId?.()).toBeNull();
+      if (churn === "session") {
+        captures[1]!.onSession?.(
+          physicalSession(GENERATION, "workspace-a", ["pane.primary"], "replacement"),
+        );
+      } else if (churn === "foreign-pane") {
+        captures[1]!.onPaneEvent?.("pane.foreign", {
+          type: "seed-batch",
+          batch: { reset: null, seed: new Uint8Array([9]), held: [], cursor: null },
+          canonical: canonical(GENERATION, 9),
+        });
+      } else secondController.abort();
+      control.setBlocked(false);
+      await Promise.all(
+        activation.mock.results.map(({ value }) => value as unknown as Promise<boolean>),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(closes[1]).toHaveBeenCalledTimes(1);
+      expect(connected.session.connectionClientId?.()).toBeNull();
+      connected.session.dispose();
+      bridge.end({ code: "workspace-client-closed", reason: "test", retryable: false });
+      delete globals.__TMUX_IDE_CARD5_EVIDENCE_ENABLED__;
+      delete globals.__TMUX_IDE_CARD5_SINK_CONTROL__;
+    }
   });
 
   it("reads one coherent catalog and invalidates only its exact global resource", async () => {

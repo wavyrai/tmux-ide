@@ -51,7 +51,7 @@ const ACTION_COMMAND_METADATA: Record<ActionName, ActionCommandMetadata> = {
   "workspace.window.kill": { label: "Close window", category: "workspace", dangerous: true },
   "workspace.pane.kill": { label: "Close pane", category: "workspace", dangerous: true },
   "workspace.session.kill": { label: "Close session", category: "workspace", dangerous: true },
-  "workspace.rename": { label: "Rename session or window", category: "workspace" },
+  "workspace.rename": { label: "Rename session, window, or pane", category: "workspace" },
   "workspace.pane.zoom.toggle": { label: "Toggle pane zoom", category: "workspace" },
   "workspace.pane.select": { label: "Focus pane", category: "workspace" },
   "workspace.pane.send": { label: "Send pane input", category: "workspace" },

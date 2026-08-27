@@ -83,7 +83,7 @@ describe("application terminal interaction controller", () => {
     });
   });
 
-  it("dispatches split and confirmed close through the active generation owner", async () => {
+  it("dispatches create, split, rename, and confirmed close through the active generation owner", async () => {
     const dispatch = vi.fn(async (command) => ({
       kind: "owner-action",
       operationId: command.operationId ?? "operation-a",
@@ -105,9 +105,23 @@ describe("application terminal interaction controller", () => {
       createOperationId: () => "operation-a",
     });
 
+    await expect(controller.newWindow()).resolves.toBe("created terminal window");
     await expect(controller.splitPane("right")).resolves.toBe("split pane right");
+    await expect(controller.renamePane("pane.main", "Monitor")).resolves.toBe(
+      "renamed pane to Monitor",
+    );
     await expect(controller.closePane()).resolves.toBe("closed pane");
     expect(dispatch.mock.calls.map(([command]) => command)).toEqual([
+      {
+        kind: "owner-action",
+        name: "workspace.pane.create",
+        input: {
+          workspaceName: "workspace.alpha",
+          kind: "terminal",
+          placement: { kind: "window" },
+        },
+        operationId: "operation-a",
+      },
       {
         kind: "owner-action",
         name: "workspace.window.split",
@@ -115,6 +129,17 @@ describe("application terminal interaction controller", () => {
           workspaceName: "workspace.alpha",
           semanticPaneId: "pane.main",
           direction: "right",
+        },
+        operationId: "operation-a",
+      },
+      {
+        kind: "owner-action",
+        name: "workspace.rename",
+        input: {
+          workspaceName: "workspace.alpha",
+          scope: "pane",
+          semanticPaneId: "pane.main",
+          name: "Monitor",
         },
         operationId: "operation-a",
       },

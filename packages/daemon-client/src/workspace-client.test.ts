@@ -907,6 +907,46 @@ describe("WorkspaceClient", () => {
     await settle();
   });
 
+  it("does not reconnect a closed incumbent after a replacement inventory is desired", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha", ["pane.alpha"]) });
+    const clock = new FakeClock();
+    const incumbent = new ClosableFakeRuntime(ALPHA_DAEMON.instanceId);
+    const replacement = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const replacementGate = deferred<FakeRuntime>();
+    const inventories: WorkspaceClientRuntimeInventory[] = [];
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      clock,
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async (_current, inventory) => {
+          inventories.push(inventory);
+          return inventories.length === 1 ? incumbent : replacementGate.promise;
+        },
+        actions,
+      },
+    });
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+    expect(inventories).toHaveLength(1);
+
+    shell.byWorkspace.set("alpha", shellResource("alpha", ["pane.alpha", "pane.beta"]));
+    shell.connections[0]!.handlers.onInvalidate();
+    await settle();
+    expect(inventories).toHaveLength(2);
+
+    incumbent.fail();
+    await settle();
+    clock.advance(30_000);
+    await settle();
+    expect(inventories).toHaveLength(2);
+    expect(clock.timers.size).toBe(0);
+
+    replacementGate.resolve(replacement);
+    await settle();
+    await client.dispose();
+  });
+
   it("converges a rebound runtime select receipt with the invalidated active shell inventory", async () => {
     const shell = shellBroker({ alpha: shellResource("alpha", ["pane.alpha"]) });
     const first = new FakeRuntime(ALPHA_DAEMON.instanceId);

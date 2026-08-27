@@ -750,6 +750,16 @@ export function buildSourceTracePayload(
   return Buffer.concat(chunks, totalBytes);
 }
 
+export function productRigGitBlobObjectId(payload, maxBytes = PRODUCT_RIG_SOURCE_DIFF_MAX_BYTES) {
+  const bytes = Buffer.isBuffer(payload) ? payload : Buffer.from(payload ?? "");
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || bytes.length > maxBytes)
+    throw new Error("Product rig Git blob payload exceeded its bounded byte ceiling");
+  return createHash("sha1")
+    .update(Buffer.from(`blob ${bytes.length}\0`))
+    .update(bytes)
+    .digest("hex");
+}
+
 export function readBoundedSourceTraceFiles(
   trackedDiff,
   paths,
@@ -1285,20 +1295,48 @@ export function resolvePaneBodyRect(frame, pane) {
     valid: true,
     semanticChromeMatches: 0,
   });
-  if (typeof pane.semanticPaneId !== "string" || pane.semanticPaneId.length === 0) return fallback;
-
-  const matches = [];
-  for (let row = 0; row < lines.length; row += 1) {
-    const line = lines[row];
-    let index = line.indexOf(pane.semanticPaneId);
-    while (index >= 0) {
-      const prefix = line.slice(Math.max(0, index - 2), index);
-      const suffix = line[index + pane.semanticPaneId.length];
-      if ((prefix === "● " || prefix === "○ ") && (suffix === undefined || suffix === " "))
-        matches.push({ row, left: index - 2 });
-      index = line.indexOf(pane.semanticPaneId, index + 1);
-    }
+  if (typeof pane.semanticPaneId !== "string" || pane.semanticPaneId.length === 0) {
+    return Object.freeze({
+      ...fallback,
+      bodyRows: 0,
+      origin: "semantic-pane-identity-missing",
+      valid: false,
+    });
   }
+
+  const chromeMatches = (identity) => {
+    if (typeof identity !== "string" || identity.length === 0) return [];
+    const matches = [];
+    for (let row = 0; row < lines.length; row += 1) {
+      const line = lines[row];
+      let index = line.indexOf(identity);
+      while (index >= 0) {
+        const prefix = line.slice(Math.max(0, index - 2), index);
+        const suffix = line[index + identity.length];
+        if ((prefix === "● " || prefix === "○ ") && (suffix === undefined || suffix === " "))
+          matches.push({ row, left: index - 2 });
+        index = line.indexOf(identity, index + 1);
+      }
+    }
+    return matches;
+  };
+  // Older frames exposed the durable pane id in their title. The release UI
+  // now presents the daemon-authored display name instead, so carry that
+  // canonical layout fact into the evidence input and use it only when the
+  // legacy semantic-id anchor is absent. Duplicate visible names still fail
+  // closed rather than letting evidence attach a body to the wrong pane.
+  const semanticMatches = chromeMatches(pane.semanticPaneId);
+  const displayIdentities = [pane.displayName, ...(pane.canonicalDisplayNames ?? [])]
+    .map((identity) => identity?.trim())
+    .filter((identity, index, identities) => identity && identities.indexOf(identity) === index);
+  const displayMatches = [
+    ...new Map(
+      displayIdentities
+        .flatMap(chromeMatches)
+        .map((match) => [`${match.row}:${match.left}`, match]),
+    ).values(),
+  ];
+  const matches = semanticMatches.length > 0 ? semanticMatches : displayMatches;
   if (matches.length !== 1) {
     return Object.freeze({
       ...fallback,

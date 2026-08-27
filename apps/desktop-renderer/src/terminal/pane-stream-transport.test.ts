@@ -119,6 +119,7 @@ class FakeSocket implements PaneStreamWebSocket {
   binaryType: BinaryType = "blob";
   readonly sent: string[] = [];
   readonly closes: { code?: number; reason?: string }[] = [];
+  failSends = false;
   readonly #listeners = new Map<string, Set<PaneStreamSocketListener>>();
 
   addEventListener(type: string, listener: PaneStreamSocketListener): void {
@@ -132,6 +133,7 @@ class FakeSocket implements PaneStreamWebSocket {
   }
 
   send(data: string): void {
+    if (this.failSends) throw new Error("socket send failed");
     this.sent.push(data);
   }
 
@@ -244,6 +246,7 @@ async function liveHarness(
     protocolVersion: 1,
     daemonInstanceId: DAEMON_INSTANCE_ID,
     requestId: REQUEST_ID,
+    connectionClientId: "client-a",
     panes: [...(options.panes ?? [PANE_A, PANE_B])],
     effectiveViewerMode: options.viewerMode ?? "read-only",
   });
@@ -955,11 +958,37 @@ describe("pane-stream transport demultiplexing", () => {
     await expect(pending).resolves.toBe(true);
   });
 
+  it("retires immediately when an input authority control send throws", async () => {
+    const h = await liveHarness({
+      viewerMode: "interactive",
+      descriptorOverrides: { effectiveViewerMode: "interactive" },
+    });
+    h.socket.failSends = true;
+    const pending = h.result.session.write?.(PANE_A, "hello");
+    await expect(pending).resolves.toBe(false);
+    expect(h.ends).toEqual([
+      expect.objectContaining({ code: "socket-unavailable", retryable: true }),
+    ]);
+    expect(h.socket.closes.at(-1)).toEqual({ code: 4011, reason: "socket-unavailable" });
+  });
+
+  it("does not dispatch input when the socket is no longer open", async () => {
+    const h = await liveHarness({
+      viewerMode: "interactive",
+      descriptorOverrides: { effectiveViewerMode: "interactive" },
+    });
+    const sentBefore = h.socket.sent.length;
+    h.socket.readyState = 3;
+    await expect(h.result.session.write?.(PANE_A, "hello")).resolves.toBe(false);
+    expect(h.socket.sent).toHaveLength(sentBefore);
+  });
+
   it("exposes and releases only this connection's exact held authority once", async () => {
     const h = await liveHarness({
       viewerMode: "interactive",
       descriptorOverrides: { effectiveViewerMode: "interactive" },
     });
+    expect(h.result.session.connectionClientId?.()).toBe("client-a");
     const requested = h.result.session.requestAuthority!("geometry");
     await flushMicrotasks();
     const request = JSON.parse(h.socket.sent.at(-1)!);
@@ -1013,6 +1042,7 @@ describe("pane-stream transport demultiplexing", () => {
     });
     await expect(released).resolves.toMatchObject({ revision: 2 });
     h.result.session.dispose();
+    expect(h.result.session.connectionClientId?.()).toBeNull();
     expect(h.result.session.connectionAuthorityClientId!("geometry")).toBeNull();
   });
 
@@ -1233,6 +1263,12 @@ describe("pane-stream transport demultiplexing", () => {
   });
 
   it("distinguishes an explicit geometry authority rejection from transport failure", async () => {
+    const inputOperations: unknown[] = [];
+    const evidenceGlobals = globalThis as typeof globalThis & {
+      __TMUX_IDE_CARD5_INPUT_OPERATION_RECORD__?: (event: unknown) => void;
+    };
+    evidenceGlobals.__TMUX_IDE_CARD5_INPUT_OPERATION_RECORD__ = (event) =>
+      inputOperations.push(event);
     const h = await liveHarness({
       viewerMode: "interactive",
       descriptorOverrides: { effectiveViewerMode: "interactive" },
@@ -1258,9 +1294,11 @@ describe("pane-stream transport demultiplexing", () => {
     });
     await expect(pending).resolves.toBe("geometry-authority-conflict");
     expect(h.socket.sent.some((frame) => JSON.parse(frame).type === "viewport")).toBe(false);
+    expect(inputOperations).toEqual([]);
 
     h.result.session.dispose();
     await expect(h.result.session.resize?.(140, 46)).resolves.toBe("lifecycle-retired");
+    delete evidenceGlobals.__TMUX_IDE_CARD5_INPUT_OPERATION_RECORD__;
   });
 
   it.each(["unknown-request", "cross-authority"] as const)(

@@ -1224,6 +1224,9 @@ export class PaneStreamLiveConnection {
         protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
         daemonInstanceId: this.#binding.daemonInstanceId,
         requestId: this.#binding.requestId,
+        ...(this.#sessionRuntimeBinding
+          ? { connectionClientId: this.#sessionRuntimeBinding.clientId }
+          : {}),
         panes: [...this.#descriptor.panes],
         effectiveViewerMode: this.#descriptor.viewerMode,
         ...(this.#diagnosticCapabilities.length > 0
@@ -1232,7 +1235,7 @@ export class PaneStreamLiveConnection {
       });
       this.#recordDiagnosticLifecycle("pane-stream-server-ready");
     } catch {
-      this.close(1011, "stream-unavailable");
+      this.close(1011, "stream-unavailable-describe");
       return;
     }
     this.#stopAuthoritySnapshots =
@@ -1855,6 +1858,8 @@ export class PaneStreamLiveConnection {
       paneBorderStatus: event.paneBorderStatus,
       panes: event.panes.map((pane) => ({
         pane: pane.semanticPaneId,
+        displayName: pane.displayName,
+        displayNameSource: pane.displayNameSource,
         left: pane.left,
         top: pane.top,
         width: pane.width,

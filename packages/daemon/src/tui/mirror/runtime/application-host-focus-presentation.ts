@@ -19,6 +19,31 @@ export type HostFocusRendererSource = Readonly<{
   clientGeneration: number;
 }>;
 
+export interface ApplicationHostFocusRecovery {
+  <TArgs extends unknown[], TResult>(
+    interaction: (...args: TArgs) => TResult,
+  ): (...args: TArgs) => TResult;
+  optional<TArgs extends unknown[], TResult>(
+    interaction: ((...args: TArgs) => TResult) | undefined,
+  ): ((...args: TArgs) => TResult) | undefined;
+}
+
+export function createApplicationHostFocusRecovery(
+  noteInteraction: () => void,
+): ApplicationHostFocusRecovery {
+  const recover =
+    <TArgs extends unknown[], TResult>(interaction: (...args: TArgs) => TResult) =>
+    (...args: TArgs): TResult => {
+      noteInteraction();
+      return interaction(...args);
+    };
+  return Object.assign(recover, {
+    optional: <TArgs extends unknown[], TResult>(
+      interaction: ((...args: TArgs) => TResult) | undefined,
+    ) => (interaction ? recover(interaction) : undefined),
+  });
+}
+
 export function createApplicationHostFocusPresentation(
   options: Readonly<{
     renderer: FrameRenderer;
@@ -35,6 +60,7 @@ export function createApplicationHostFocusPresentation(
     changed: boolean;
     diagnosticEpoch: number | null;
   }>;
+  noteInteraction(): void;
   dispose(): void;
 }> {
   let pendingFrame: { readonly token: number; readonly listener: () => void } | null = null;
@@ -136,6 +162,11 @@ export function createApplicationHostFocusPresentation(
   options.renderer.on("blur", blur);
   return Object.freeze({
     driveFocusState,
+    // Some terminal hosts emit blur when another tab/window takes over but do
+    // not reliably emit the matching focus-in sequence on return. Receiving a
+    // user interaction is itself authoritative evidence that this renderer is
+    // foreground, so repair the missed edge before routing that interaction.
+    noteInteraction: focus,
     dispose() {
       cancelPending();
       options.renderer.off("focus", focus);

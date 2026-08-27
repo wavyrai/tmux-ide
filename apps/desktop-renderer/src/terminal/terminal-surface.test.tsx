@@ -1223,11 +1223,237 @@ describe("TerminalSurface", () => {
     dispose();
   });
 
+  it("reconnects once when a viewport resize crosses a retired physical lifecycle", async () => {
+    const retired = attachmentHarness({
+      resize: vi.fn(async () => ({
+        status: "error" as const,
+        error: {
+          code: "geometry-lifecycle-retired",
+          reason: "the physical runtime was replaced",
+          retryable: false,
+        },
+      })),
+    });
+    const replacement = attachmentHarness();
+    let attempt = 0;
+    const transport = transportHarness(async (_request, listener) => {
+      attempt += 1;
+      await listener(connectedState({ cols: 39, rows: 24 }, { cols: 39, rows: 24 }));
+      return { status: "connected", attachment: attempt === 1 ? retired : replacement };
+    });
+    const renderer = rendererHarness({ cols: 140, rows: 46 });
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Electron"
+          transport={transport}
+          geometryOwnership="owner"
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(replacement.resize).toHaveBeenCalledOnce());
+    expect(retired.dispose).toHaveBeenCalledOnce();
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("connected");
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-attach-failure-code")).toBe(
+      "none",
+    );
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-resize-outcome")).toBe(
+      "none",
+    );
+    dispose();
+  });
+
+  it("completes lifecycle recovery on the replacement first frame when no resize is needed", async () => {
+    const retired = attachmentHarness({
+      resize: vi.fn(async () => ({
+        status: "error" as const,
+        error: {
+          code: "geometry-lifecycle-retired",
+          reason: "runtime A retired",
+          retryable: false,
+        },
+      })),
+    });
+    const replacement = attachmentHarness({
+      resize: vi.fn(async () => ({
+        status: "error" as const,
+        error: {
+          code: "geometry-lifecycle-retired",
+          reason: "a later independent runtime retired",
+          retryable: false,
+        },
+      })),
+    });
+    const finalAttachment = attachmentHarness();
+    const attachments = [retired, replacement, finalAttachment];
+    let attempt = 0;
+    const transport = transportHarness(async (_request, listener) => {
+      const index = attempt++;
+      const replacementFrame = index > 0;
+      await listener(
+        connectedState(
+          replacementFrame ? { cols: 140, rows: 46 } : { cols: 39, rows: 24 },
+          replacementFrame ? { cols: 140, rows: 46 } : { cols: 39, rows: 24 },
+        ),
+      );
+      if (replacementFrame) await listener({ type: "output", bytes: new Uint8Array([65]) });
+      return { status: "connected", attachment: attachments[index]! };
+    });
+    const renderer = rendererHarness({ cols: 140, rows: 46 });
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Electron"
+          transport={transport}
+          geometryOwnership="owner"
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledTimes(2));
+    expect(replacement.resize).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(
+        root.querySelector(".terminal-surface")?.getAttribute("data-attach-failure-code"),
+      ).toBe("none"),
+    );
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-resize-outcome")).toBe(
+      "none",
+    );
+
+    renderer.setViewport({ cols: 150, rows: 50 });
+    ResizeObserverHarness.active.at(-1)?.trigger();
+    await vi.waitFor(() => expect(replacement.resize).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledTimes(3));
+    expect(finalAttachment.dispose).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("gives a replacement target its own lifecycle retry and ignores late A", async () => {
+    const lateA = deferred<Awaited<ReturnType<NativeTerminalAttachment["resize"]>>>();
+    const attachmentA = attachmentHarness({ resize: vi.fn(() => lateA.promise) });
+    const attachmentB = attachmentHarness({
+      resize: vi.fn(async () => ({
+        status: "error" as const,
+        error: {
+          code: "geometry-lifecycle-retired",
+          reason: "runtime B retired",
+          retryable: false,
+        },
+      })),
+    });
+    const replacementB = attachmentHarness();
+    const attachments = [attachmentA, attachmentB, replacementB];
+    let attempt = 0;
+    const transport = transportHarness(async (_request, listener) => {
+      await listener(connectedState({ cols: 39, rows: 24 }, { cols: 39, rows: 24 }));
+      await listener({ type: "output", bytes: new Uint8Array([65]) });
+      return { status: "connected", attachment: attachments[attempt++]! };
+    });
+    const [target, setTarget] = createSignal(TARGET_A);
+    const renderer = rendererHarness({ cols: 140, rows: 46 });
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={target()}
+          title="Electron"
+          transport={transport}
+          geometryOwnership="owner"
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() => expect(attachmentA.resize).toHaveBeenCalledOnce());
+    setTarget(TARGET_B);
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledTimes(2));
+    renderer.setViewport({ cols: 150, rows: 50 });
+    ResizeObserverHarness.active.at(-1)?.trigger();
+    await vi.waitFor(() => expect(attachmentB.resize).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(transport.connect).toHaveBeenCalledTimes(3));
+    lateA.resolve({
+      status: "error",
+      error: {
+        code: "geometry-lifecycle-retired",
+        reason: "late retired A",
+        retryable: false,
+      },
+    });
+    await Promise.resolve();
+    expect(transport.connect).toHaveBeenCalledTimes(3);
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("connected");
+    dispose();
+  });
+
+  it("keeps a second lifecycle retirement fatal instead of looping across A-to-B-to-A churn", async () => {
+    const attachments = [
+      attachmentHarness({
+        resize: vi.fn(async () => ({
+          status: "error" as const,
+          error: {
+            code: "geometry-lifecycle-retired",
+            reason: "runtime A retired",
+            retryable: false,
+          },
+        })),
+      }),
+      attachmentHarness({
+        resize: vi.fn(async () => ({
+          status: "error" as const,
+          error: {
+            code: "geometry-lifecycle-retired",
+            reason: "replacement B retired",
+            retryable: false,
+          },
+        })),
+      }),
+    ];
+    let attempt = 0;
+    const transport = transportHarness(async (_request, listener) => {
+      await listener(connectedState({ cols: 39, rows: 24 }, { cols: 39, rows: 24 }));
+      await listener({ type: "output", bytes: new Uint8Array([65]) });
+      return { status: "connected", attachment: attachments[attempt++]! };
+    });
+    const renderer = rendererHarness({ cols: 140, rows: 46 });
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <TerminalSurface
+          target={TARGET_A}
+          title="Electron"
+          transport={transport}
+          geometryOwnership="owner"
+          rendererFactory={renderer.factory}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() =>
+      expect(root.querySelector(".terminal-surface")?.getAttribute("data-phase")).toBe("error"),
+    );
+    expect(transport.connect).toHaveBeenCalledTimes(2);
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-resize-outcome")).toBe(
+      "lifecycle-retired",
+    );
+    expect(root.querySelector(".terminal-surface")?.getAttribute("data-attach-failure-code")).toBe(
+      "resize-rejected",
+    );
+    dispose();
+  });
+
   it.each([
     ["geometry-authority-timeout", "authority-timeout"],
     ["geometry-viewport-timeout", "viewport-timeout"],
     ["pane-stream-closed", "stream-closed"],
-    ["geometry-lifecycle-retired", "lifecycle-retired"],
   ] as const)("keeps %s fatal and exposes only its bounded outcome", async (code, outcome) => {
     const attachment = attachmentHarness({
       resize: vi.fn(async () => ({

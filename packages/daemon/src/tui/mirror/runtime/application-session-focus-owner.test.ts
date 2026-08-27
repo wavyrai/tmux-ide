@@ -31,6 +31,30 @@ describe("application session focus owner", () => {
     expect(focusTerminalPane).toHaveBeenCalledWith("pane.active", source);
   });
 
+  it("waits for an external publication before retrying unavailable shell focus", async () => {
+    let focusAvailable = false;
+    const focusTerminalPane = vi.fn(async () => focusAvailable);
+    const source = { kind: "keyboard" as const, surface: "application-bar" as const };
+    const owner = createApplicationSessionFocusOwner({
+      generation: () =>
+        ({ status: "live", daemonGeneration: "daemon-a", rendererEpoch: 1 }) as never,
+      layout: () =>
+        ({ current: { panes: [{ pane: "pane.active", active: true }] }, windows: [] }) as never,
+      focusTerminalPane,
+    });
+
+    owner.request(source);
+    await vi.waitFor(() => expect(focusTerminalPane).toHaveBeenCalledOnce());
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(focusTerminalPane).toHaveBeenCalledOnce();
+
+    focusAvailable = true;
+    owner.adopt();
+    await vi.waitFor(() => expect(focusTerminalPane).toHaveBeenCalledTimes(2));
+    expect(focusTerminalPane).toHaveBeenLastCalledWith("pane.active", source);
+  });
+
   it("restores terminal focus after a replacement daemon generation becomes live", async () => {
     let snapshot = { status: "live", daemonGeneration: "daemon-a", rendererEpoch: 1 };
     const focusTerminalPane = vi.fn(async () => true);

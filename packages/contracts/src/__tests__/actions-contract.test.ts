@@ -37,6 +37,22 @@ describe("daemon action contract", () => {
     }
   });
 
+  it("renames panes through semantic identity only", () => {
+    const input = {
+      workspaceName: "workspace.alpha",
+      scope: "pane",
+      semanticPaneId: "pane.main",
+      name: "Build monitor",
+    } as const;
+    expect(ActionContractsZ["workspace.rename"].input.parse(input)).toEqual(input);
+    expect(
+      ActionContractsZ["workspace.rename"].input.safeParse({
+        ...input,
+        semanticPaneId: "%42",
+      }).success,
+    ).toBe(false);
+  });
+
   it("keeps config-free workspace admission semantic and its result browser-safe", () => {
     expect(ActionContractsZ["workspace.open"].input.parse({ projectDir: "/tmp/project" })).toEqual({
       projectDir: "/tmp/project",

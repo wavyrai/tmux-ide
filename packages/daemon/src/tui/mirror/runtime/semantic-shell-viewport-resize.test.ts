@@ -23,8 +23,8 @@ function live(resize: ReturnType<typeof vi.fn>, overrides = {}) {
 
 describe("semantic shell viewport resize owner", () => {
   it("waits for semantic authority, dedupes dimensions, and fences generation replacement", () => {
-    const firstResize = vi.fn(async () => "ok" as const);
-    const secondResize = vi.fn(async () => "ok" as const);
+    const firstResize = vi.fn(async () => ({ status: "applied" as const }));
+    const secondResize = vi.fn(async () => ({ status: "applied" as const }));
     const first = live(firstResize);
     const second = live(secondResize, {
       rendererEpoch: 2,
@@ -62,12 +62,37 @@ describe("semantic shell viewport resize owner", () => {
   });
 
   it("requires semantic authority again after it disappears", () => {
-    const resize = vi.fn(async () => "ok" as const);
+    const resize = vi.fn(async () => ({ status: "applied" as const }));
     const generation = live(resize);
     const owner = createSemanticShellViewportResizeOwner();
     owner.adopt({ width: 160, height: 44 }, {} as never, generation);
     owner.adopt({ width: 160, height: 44 }, null, generation);
     owner.adopt({ width: 160, height: 44 }, {} as never, generation);
+    expect(resize).toHaveBeenCalledTimes(2);
+  });
+
+  it("dedupes an in-flight fit but retries the final geometry after a transient refusal", async () => {
+    let settleFirst!: (value: { status: "failed" }) => void;
+    const resize = vi
+      .fn()
+      .mockImplementationOnce(
+        () => new Promise<{ status: "failed" }>((resolve) => (settleFirst = resolve)),
+      )
+      .mockResolvedValue({ status: "applied" });
+    const generation = live(resize);
+    const semantic = {} as never;
+    const owner = createSemanticShellViewportResizeOwner();
+
+    owner.adopt({ width: 160, height: 44 }, semantic, generation);
+    owner.adopt({ width: 160, height: 44 }, semantic, generation);
+    expect(resize).toHaveBeenCalledOnce();
+
+    settleFirst({ status: "failed" });
+    await Promise.resolve();
+    owner.adopt({ width: 160, height: 44 }, semantic, generation);
+    expect(resize).toHaveBeenCalledTimes(2);
+    await Promise.resolve();
+    owner.adopt({ width: 160, height: 44 }, semantic, generation);
     expect(resize).toHaveBeenCalledTimes(2);
   });
 });

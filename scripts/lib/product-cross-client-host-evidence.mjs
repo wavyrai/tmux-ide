@@ -3917,6 +3917,124 @@ export function sealCard5ProductionClientObservation(raw, evidenceKey) {
   });
 }
 
+/** Exact current physical Web lifecycle proof used at convergence and handoff boundaries. */
+export function assessCard5WebPhysicalLifecycle(observed, expectedPane, expectedGeneration) {
+  const lifecycle = observed?.runtimeReplacement?.currentLifecycleRequest;
+  const axes = lifecycle?.physicalBindingAxes;
+  const exactAxisKeys = [
+    "present",
+    "epochSafe",
+    "generationExact",
+    "runtimeSessionExact",
+    "workspaceExact",
+    "paneExact",
+    "stageExact",
+    "clientExact",
+    "epochActiveCount",
+    "bindingRequestExact",
+    "descriptorExact",
+  ];
+  if (
+    typeof expectedPane !== "string" ||
+    expectedPane.length < 1 ||
+    expectedPane.length > 256 ||
+    !GENERATION.test(expectedGeneration ?? "") ||
+    observed?.semanticPaneId !== expectedPane ||
+    observed?.generation !== expectedGeneration ||
+    lifecycle?.status !== "exact" ||
+    lifecycle.physicalBindingExact !== true ||
+    lifecycle.activeCount !== 1 ||
+    lifecycle.descriptorCount !== 1 ||
+    lifecycle.overflow !== false ||
+    !Number.isSafeInteger(lifecycle.rawActiveCount) ||
+    lifecycle.rawActiveCount < 1 ||
+    lifecycle.rawActiveCount > 8 ||
+    !Number.isSafeInteger(lifecycle.rawDescriptorCount) ||
+    lifecycle.rawDescriptorCount < 1 ||
+    lifecycle.rawDescriptorCount > 8 ||
+    !HMAC.test(lifecycle.requestHmac ?? "") ||
+    !HMAC.test(lifecycle.physicalEpochHmac ?? "") ||
+    lifecycle.bindingRequestHmac !== lifecycle.requestHmac ||
+    !HMAC.test(lifecycle.bindingClientHmac ?? "") ||
+    !axes ||
+    Object.keys(axes).sort().join("\0") !== [...exactAxisKeys].sort().join("\0") ||
+    exactAxisKeys.slice(0, 8).some((key) => axes[key] !== true) ||
+    axes.epochActiveCount !== 1 ||
+    axes.bindingRequestExact !== true ||
+    axes.descriptorExact !== true
+  ) {
+    return Object.freeze({ valid: false, evidence: null });
+  }
+  return Object.freeze({
+    valid: true,
+    evidence: Object.freeze({
+      requestHmac: lifecycle.requestHmac,
+      physicalEpochHmac: lifecycle.physicalEpochHmac,
+      clientHmac: lifecycle.bindingClientHmac,
+      firstSeedOrdinal: Number.isSafeInteger(lifecycle.firstSeedOrdinal)
+        ? lifecycle.firstSeedOrdinal
+        : null,
+    }),
+  });
+}
+
+function exactCard5WebPhysicalLifecyclePair(pair) {
+  const exactEvidence = (evidence) =>
+    evidence &&
+    Object.keys(evidence).sort().join("\0") ===
+      ["clientHmac", "firstSeedOrdinal", "physicalEpochHmac", "requestHmac"].sort().join("\0") &&
+    HMAC.test(evidence.requestHmac ?? "") &&
+    HMAC.test(evidence.physicalEpochHmac ?? "") &&
+    HMAC.test(evidence.clientHmac ?? "") &&
+    (evidence.firstSeedOrdinal === null ||
+      (Number.isSafeInteger(evidence.firstSeedOrdinal) && evidence.firstSeedOrdinal >= 0));
+  return (
+    pair &&
+    Object.keys(pair).sort().join("\0") === ["chromium", "electron"].sort().join("\0") &&
+    exactEvidence(pair.chromium) &&
+    exactEvidence(pair.electron) &&
+    pair.chromium.clientHmac !== pair.electron.clientHmac &&
+    pair.chromium.requestHmac !== pair.electron.requestHmac
+  );
+}
+
+export function advanceCard5WebPhysicalLifecycleStability(
+  previousDigest,
+  canonicalDigest,
+  pair,
+  evidenceKey,
+) {
+  if (
+    !HMAC.test(canonicalDigest ?? "") ||
+    !HMAC.test(evidenceKey ?? "") ||
+    !exactCard5WebPhysicalLifecyclePair(pair)
+  ) {
+    return Object.freeze({ stable: false, digest: null, evidence: null });
+  }
+  const digest = createHmac("sha256", Buffer.from(evidenceKey, "hex"))
+    .update("focused-convergence-with-physical-lifecycle\0")
+    .update(canonicalDigest)
+    .update("\0")
+    .update(JSON.stringify(pair))
+    .digest("hex");
+  return Object.freeze({
+    stable: previousDigest === digest,
+    digest,
+    evidence: Object.freeze({
+      chromium: Object.freeze({ ...pair.chromium }),
+      electron: Object.freeze({ ...pair.electron }),
+    }),
+  });
+}
+
+export function sameCard5WebPhysicalLifecycleEvidence(accepted, current) {
+  return (
+    exactCard5WebPhysicalLifecyclePair(accepted) &&
+    exactCard5WebPhysicalLifecyclePair(current) &&
+    JSON.stringify(accepted) === JSON.stringify(current)
+  );
+}
+
 /** Two equal complete samples are required before a cross-host hash is called stable. */
 export function advanceCard5CanonicalStability(previousDigest, observations) {
   if (!Array.isArray(observations) || observations.length !== 3) {

@@ -121,8 +121,12 @@ describe("real SessionRuntime qualification", () => {
     );
     const sinks = clients.map(() => [] as TerminalDeliveryServerMessage[]);
     const openings = clients.map((client, index) =>
-      client.openTerminalDelivery(`delivery:${index}`, "pane.alpha", OFFER, (message) =>
-        sinks[index]!.push(message),
+      client.openTerminalDelivery(
+        `delivery:${index}`,
+        `request:${index}`,
+        "pane.alpha",
+        OFFER,
+        (message) => sinks[index]!.push(message),
       ),
     );
     await waitForDriver(drivers);
@@ -181,8 +185,12 @@ describe("real SessionRuntime qualification", () => {
     const { registry, drivers } = rig();
     const client = registry.connect("zz-sim", "opentui", "client:trace");
     const messages: TerminalDeliveryServerMessage[] = [];
-    const opening = client.openTerminalDelivery("delivery:trace", "pane.alpha", OFFER, (message) =>
-      messages.push(message),
+    const opening = client.openTerminalDelivery(
+      "delivery:trace",
+      "request:trace",
+      "pane.alpha",
+      OFFER,
+      (message) => messages.push(message),
     );
     await waitForDriver(drivers);
     await drivers[0]!.settleUntil(
@@ -233,6 +241,7 @@ describe("real SessionRuntime qualification", () => {
     expect(spans.map(({ operation }) => operation).sort()).toEqual(
       [
         "raw-input-command",
+        "control-command-accepted",
         "control-write",
         "control-queue-empty-at-send",
         "first-output-observed",
@@ -300,6 +309,7 @@ describe("real SessionRuntime qualification", () => {
     const messages: TerminalDeliveryServerMessage[] = [];
     const opening = client.openTerminalDelivery(
       "delivery:disabled-trace",
+      "request:disabled-trace",
       "pane.alpha",
       OFFER,
       (message) => messages.push(message),
@@ -406,13 +416,17 @@ describe("real SessionRuntime qualification", () => {
     let releaseSlow!: () => void;
     let held: Promise<void> | null = null;
     const openings = [
-      fast.openTerminalDelivery("delivery:fast", "pane.alpha", OFFER, (message) =>
+      fast.openTerminalDelivery("delivery:fast", "request:fast", "pane.alpha", OFFER, (message) =>
         fastSink.push(message),
       ),
-      hidden.openTerminalDelivery("delivery:hidden", "pane.alpha", OFFER, (message) =>
-        hiddenSink.push(message),
+      hidden.openTerminalDelivery(
+        "delivery:hidden",
+        "request:hidden",
+        "pane.alpha",
+        OFFER,
+        (message) => hiddenSink.push(message),
       ),
-      slow.openTerminalDelivery("delivery:slow", "pane.alpha", OFFER, (message) => {
+      slow.openTerminalDelivery("delivery:slow", "request:slow", "pane.alpha", OFFER, (message) => {
         slowSink.push(message);
         return held;
       }),

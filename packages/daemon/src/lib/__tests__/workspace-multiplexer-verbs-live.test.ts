@@ -130,6 +130,7 @@ describe.skipIf(!hasTmux)("multiplexer verbs against live tmux", () => {
     tmux(["list-windows", "-t", `=${sessionName}`, "-F", "#{window_name}"]).split("\n");
 
   it("splits a window right and the new pane carries a working stamp", async () => {
+    tmux(["set-environment", "-t", `=${sessionName}`, "NO_COLOR", "1"]);
     const before = panesOf("editor");
     const result = (await mutate({
       verb: "workspace.window.split",
@@ -149,6 +150,25 @@ describe.skipIf(!hasTmux)("multiplexer verbs against live tmux", () => {
     );
     expect(tmux(["display-message", "-p", "-t", created, "#{@ide_name}"])).toBe("Logs");
     expect(tmux(["display-message", "-p", "-t", created, "#{@ide_type}"])).toBe("shell");
+    expect(tmux(["show-environment", "-t", `=${sessionName}`, "COLORTERM"])).toBe(
+      "COLORTERM=truecolor",
+    );
+    expect(
+      spawnSync(
+        "tmux",
+        [
+          "-L",
+          socketName,
+          "-f",
+          "/dev/null",
+          "show-environment",
+          "-t",
+          `=${sessionName}`,
+          "NO_COLOR",
+        ],
+        { stdio: "ignore" },
+      ).status,
+    ).not.toBe(0);
 
     // Right means side by side: same row, different column.
     const [sourceTop, createdTop] = [before[0]!, created].map((pane) =>
@@ -256,6 +276,57 @@ describe.skipIf(!hasTmux)("multiplexer verbs against live tmux", () => {
     expect(tmux(["display-message", "-p", "-t", shellWindow, "#{@ide_name}"])).toBe(
       "#{pane_id} #{session_name}",
     );
+  });
+
+  it("renames one pane without changing its window or leaking a tmux format", async () => {
+    const name = "Build #{pane_id} monitor";
+    const result = await mutate({
+      verb: "workspace.rename",
+      scope: "pane",
+      semanticPaneId: "pane.editor",
+      name,
+    });
+
+    expect(result).toMatchObject({ outcome: "applied", scope: "pane", name });
+    expect(tmux(["display-message", "-p", "-t", editorWindow, "#{window_name}"])).toBe("editor");
+    expect(
+      tmux([
+        "display-message",
+        "-p",
+        "-t",
+        `=${sessionName}:editor.0`,
+        "#{@ide_name}\t#{@tmux_ide_name_source}\t#{pane_title}",
+      ]),
+    ).toBe(`${name}\tmanual\t${name}`);
+  });
+
+  it("resizes a live split and reports the geometry tmux actually settled on", async () => {
+    await mutate({
+      verb: "workspace.window.split",
+      semanticPaneId: "pane.editor",
+      direction: "right",
+    });
+    const before = Number(
+      tmux(["display-message", "-p", "-t", `=${sessionName}:editor.0`, "#{pane_width}"]),
+    );
+    const requested = before + 3;
+    const result = await mutate({
+      verb: "workspace.pane.resize",
+      semanticPaneId: "pane.editor",
+      axis: "cols",
+      cells: requested,
+    });
+    const settled = Number(
+      tmux(["display-message", "-p", "-t", `=${sessionName}:editor.0`, "#{pane_width}"]),
+    );
+
+    expect(result).toMatchObject({
+      verb: "workspace.pane.resize",
+      outcome: "applied",
+      axis: "cols",
+      cells: settled,
+    });
+    expect(settled).toBe(requested);
   });
 
   it("zooms and unzooms a split window through tmux's own flag", async () => {

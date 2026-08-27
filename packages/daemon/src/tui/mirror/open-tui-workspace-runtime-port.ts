@@ -169,6 +169,8 @@ function layoutFrameSemanticallyEqual(
       return (
         candidate !== undefined &&
         pane.pane === candidate.pane &&
+        pane.displayName === candidate.displayName &&
+        pane.displayNameSource === candidate.displayNameSource &&
         pane.left === candidate.left &&
         pane.top === candidate.top &&
         pane.width === candidate.width &&
@@ -792,6 +794,10 @@ export async function connectOpenTuiWorkspaceRuntimePort(
     resolveCoherent = resolve;
     rejectCoherent = reject;
   });
+  // A topology replacement may retire this candidate before the generation
+  // host has attached its await. Observe that lifecycle race locally while
+  // preserving the rejection for every consumer of `coherent`.
+  void coherent.catch(() => undefined);
   let resolveClosed!: (reason?: unknown) => void;
   const closedPromise = new Promise<unknown>((resolve) => {
     resolveClosed = resolve;

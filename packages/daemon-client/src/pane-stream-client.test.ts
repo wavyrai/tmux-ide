@@ -216,6 +216,7 @@ describe("semantic pane-stream runtime client", () => {
             protocolVersion: 1,
             daemonInstanceId: INSTANCE,
             requestId: REQUEST,
+            connectionClientId: "tui:one",
             panes: ["pane.editor"],
             effectiveViewerMode: "interactive",
             diagnosticCapabilities: ["clock-bounds-v1"],
@@ -1202,6 +1203,7 @@ describe("semantic pane-stream runtime client", () => {
             protocolVersion: 1,
             daemonInstanceId: INSTANCE,
             requestId: REQUEST,
+            connectionClientId: "tui:one",
             panes: ["pane.editor"],
             effectiveViewerMode: "interactive",
           }),
@@ -1214,6 +1216,7 @@ describe("semantic pane-stream runtime client", () => {
     );
     await Bun.sleep(0);
     const client = await opening;
+    expect(client.connectionClientId).toBe("tui:one");
     expect(authorityRequest).toBeNull();
     expect(
       await client.sendTerminalInput(
@@ -2536,6 +2539,28 @@ describe("semantic pane-stream runtime client", () => {
     };
     await expect(openPaneStreamRuntimeClient(options(socket))).rejects.toThrow(
       "peer identity did not match",
+    );
+    expect(socket.closed).toEqual({ code: 1008, reason: "protocol-error" });
+  });
+
+  it("rejects a daemon ready identity for another redeemed client", async () => {
+    const socket = new FakeSocket();
+    socket.onSend = (frame) => {
+      if (frame.type !== "redeem") return;
+      queueMicrotask(() =>
+        socket.message({
+          type: "ready",
+          protocolVersion: 1,
+          daemonInstanceId: INSTANCE,
+          requestId: REQUEST,
+          connectionClientId: "web:foreign",
+          panes: ["pane.editor"],
+          effectiveViewerMode: "interactive",
+        }),
+      );
+    };
+    await expect(openPaneStreamRuntimeClient(options(socket))).rejects.toThrow(
+      "peer client identity did not match",
     );
     expect(socket.closed).toEqual({ code: 1008, reason: "protocol-error" });
   });

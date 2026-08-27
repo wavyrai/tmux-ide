@@ -18,8 +18,10 @@ export function createApplicationPaletteCommandOwner(options: {
   ) => CommandSource;
   readonly setSurface: (surface: "home" | "terminals") => void;
   readonly setNote: (note: string | null) => void;
+  readonly newWindow: () => Promise<string>;
   readonly splitPane: (direction: "right" | "down") => Promise<string>;
   readonly closePane: () => Promise<string>;
+  readonly openAgent: (sessionName: string, paneId: string, source: Source) => Promise<boolean>;
 }) {
   const [selection, setSelection] = createSignal(options.activeSurface() === "home" ? 0 : 1);
   const [closeArmed, setCloseArmed] = createSignal(false);
@@ -28,7 +30,17 @@ export function createApplicationPaletteCommandOwner(options: {
     if (open) setSelection(options.activeSurface() === "home" ? 0 : 1);
     void options.binding.setPaletteOpen(open, options.commandSource(source, "command-palette"));
   };
-  const activate = (command: ApplicationPaletteCommand, source: Source): void => {
+  const activate = (
+    command: ApplicationPaletteCommand,
+    source: Source,
+    confirmed = false,
+  ): void => {
+    if (typeof command === "object" && command.kind === "jump-agent") {
+      setCloseArmed(false);
+      setOpen(false, source);
+      void options.openAgent(command.sessionName, command.paneId, source);
+      return;
+    }
     if (command === "home" || command === "terminals") {
       setCloseArmed(false);
       void options.binding
@@ -38,7 +50,7 @@ export function createApplicationPaletteCommandOwner(options: {
         });
       return;
     }
-    if (command === "close-pane" && !closeArmed()) {
+    if (command === "close-pane" && !confirmed && !closeArmed()) {
       setCloseArmed(true);
       options.setNote("Close pane is destructive · activate again to confirm");
       return;
@@ -47,7 +59,9 @@ export function createApplicationPaletteCommandOwner(options: {
     void (
       command === "close-pane"
         ? options.closePane()
-        : options.splitPane(command === "split-right" ? "right" : "down")
+        : command === "new-window"
+          ? options.newWindow()
+          : options.splitPane(command === "split-right" ? "right" : "down")
     ).then((message) => {
       options.setNote(message);
       setOpen(false, source);

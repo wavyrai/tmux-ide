@@ -21,6 +21,7 @@ function lifecycle(client, surface, ordinal, event = "open") {
       deliveryLifecycleEvent: event,
       deliveryPurpose: "terminal-surface",
       canonicalGeneration: GENERATION,
+      canonicalIncarnation: "incarnation-card5",
       semanticPaneId: PANE,
       deliverySurface: surface,
       deliveryRequestId: `request-${client}`,
@@ -53,6 +54,7 @@ function webEvidence(client) {
         status: "exact",
         requestHmac: digest("request", requestId),
         socketHmac: digest("socket", `${socketUrl}\0${requestId}`),
+        deliveryClientHmac: digest("client", `client-${client}`),
         activeCount: 1,
         overflow: false,
         descriptorCount: 1,
@@ -635,8 +637,11 @@ test("Card5 lifecycle classifies generation, close, duplicate, and extra-active 
 
   const duplicateLane = structuredClone(exact);
   duplicateLane[2].terminalDelivery.deliveryLaneId = "lane-web-a";
+  assert.equal(assess(duplicateLane).observation.lifecycleFsmReason, "duplicate-open");
   assert.ok(
-    assess(duplicateLane).observation.clients.every(({ reason }) => reason === "duplicate-lane"),
+    assess(duplicateLane).observation.clients.every(
+      ({ reason }) => reason === "lifecycle-fsm-invalid",
+    ),
   );
 
   const extra = [...exact, lifecycle("extra", "web", 4)];
@@ -767,7 +772,14 @@ test("Card5 lifecycle exposes every missing-field reason as a fixed enum", () =>
   ]) {
     const records = structuredClone(base);
     records[1].terminalDelivery[field] = value;
-    assert.equal(assess(records).observation.clients[1].reason, reason);
+    const observation = assess(records).observation;
+    assert.equal(observation.clients[1].reason, "lifecycle-fsm-invalid", reason);
+    assert.equal(
+      observation.lifecycleFsmReason,
+      field === "deliveryLifecycleOrdinal"
+        ? "lifecycle-ordinal-invalid"
+        : "lifecycle-shape-invalid",
+    );
   }
 
   for (const [field, descriptorField, reason] of [
@@ -787,9 +799,130 @@ test("Card5 lifecycle exposes every missing-field reason as a fixed enum", () =>
         .update(`request\0${requestId}`)
         .digest("hex");
     }
-    assert.equal(assess(records, web).observation.clients[1].reason, reason);
-    assert.equal(assess(records, web).observation.clients[2].reason, reason);
+    if (field === "deliveryClientId") {
+      web[1].runtimeReplacement.currentLifecycleRequest.deliveryClientHmac = createHmac(
+        "sha256",
+        Buffer.from(EVIDENCE_KEY, "hex"),
+      )
+        .update(`client\0${records[2].terminalDelivery.deliveryClientId}`)
+        .digest("hex");
+    }
+    const observation = assess(records, web).observation;
+    if (field === "deliveryClientId") {
+      assert.equal(observation.clients[1].reason, reason);
+      assert.equal(observation.clients[2].reason, reason);
+      assert.equal(observation.lifecycleFsmReason, null);
+    } else {
+      assert.equal(observation.clients[1].reason, "lifecycle-fsm-invalid", reason);
+      assert.equal(observation.clients[2].reason, "lifecycle-fsm-invalid", reason);
+      assert.ok(new Set(["duplicate-open", "request-reuse"]).has(observation.lifecycleFsmReason));
+    }
   }
+});
+
+test("Card5 lifecycle permits exact retired predecessors and seals their bounded identities", () => {
+  const records = [
+    lifecycle("opentui-old", "opentui", 1),
+    lifecycle("opentui-old", "opentui", 2, "close"),
+    lifecycle("web-a-old", "web", 3),
+    lifecycle("web-a-old", "web", 4, "close"),
+    lifecycle("opentui", "opentui", 5),
+    lifecycle("web-a", "web", 6),
+    lifecycle("web-b", "web", 7),
+  ];
+  const result = assess(records);
+  assert.equal(result.passed, true);
+  assert.equal(result.observation.lifecycleFsmReason, null);
+  assert.equal(result.observation.retiredCount, 2);
+  assert.equal(result.observation.retiredOverflow, false);
+  assert.equal(result.observation.retired.length, 2);
+  assert.deepEqual(
+    result.observation.retired.map(({ openOrdinal, closeOrdinal }) => [openOrdinal, closeOrdinal]),
+    [
+      [1, 2],
+      [3, 4],
+    ],
+  );
+  assert.ok(
+    result.observation.retired.every(
+      ({ requestHmac, laneHmac, clientHmac }) =>
+        /^[0-9a-f]{64}$/u.test(requestHmac) &&
+        /^[0-9a-f]{64}$/u.test(laneHmac) &&
+        /^[0-9a-f]{64}$/u.test(clientHmac),
+    ),
+  );
+  assert.doesNotMatch(JSON.stringify(result.observation), /opentui-old|web-a-old/u);
+});
+
+test("Card5 lifecycle rejects malformed predecessor retirement and identity reuse", () => {
+  const predecessorOpen = lifecycle("opentui-old", "opentui", 1);
+  const exactClose = lifecycle("opentui-old", "opentui", 2, "close");
+  const current = [
+    lifecycle("opentui", "opentui", 3),
+    lifecycle("web-a", "web", 4),
+    lifecycle("web-b", "web", 5),
+  ];
+  const reason = (records) => assess(records).observation.lifecycleFsmReason;
+
+  assert.equal(reason([exactClose, ...current]), "close-before-open");
+  const duplicateClose = structuredClone(exactClose);
+  duplicateClose.terminalDelivery.deliveryLifecycleOrdinal = 3;
+  assert.equal(
+    reason([predecessorOpen, exactClose, duplicateClose, ...current]),
+    "duplicate-close",
+  );
+  for (const field of [
+    "canonicalGeneration",
+    "semanticPaneId",
+    "canonicalIncarnation",
+    "deliveryPurpose",
+    "deliverySurface",
+    "deliveryRequestId",
+    "deliveryClientId",
+  ]) {
+    const close = structuredClone(exactClose);
+    close.terminalDelivery[field] = `${close.terminalDelivery[field]}-foreign`;
+    if (field === "canonicalGeneration" || field === "semanticPaneId") continue;
+    assert.equal(
+      reason([predecessorOpen, close, ...current]),
+      new Set(["deliveryPurpose", "deliverySurface"]).has(field)
+        ? "lifecycle-shape-invalid"
+        : "close-identity-mismatch",
+      field,
+    );
+  }
+
+  const ordinalReplay = structuredClone(exactClose);
+  ordinalReplay.terminalDelivery.deliveryLifecycleOrdinal = 1;
+  assert.equal(reason([predecessorOpen, ordinalReplay, ...current]), "lifecycle-ordinal-invalid");
+
+  const duplicateOpen = lifecycle("opentui-old", "opentui", 2);
+  assert.equal(reason([predecessorOpen, duplicateOpen, ...current]), "duplicate-open");
+
+  const reopened = lifecycle("opentui-old", "opentui", 3);
+  assert.equal(reason([predecessorOpen, exactClose, reopened, ...current]), "lane-reuse");
+
+  const reusedRequest = lifecycle("opentui-next", "opentui", 3);
+  reusedRequest.terminalDelivery.deliveryRequestId =
+    predecessorOpen.terminalDelivery.deliveryRequestId;
+  assert.equal(reason([predecessorOpen, exactClose, reusedRequest, ...current]), "request-reuse");
+
+  const wrongLaneClose = structuredClone(exactClose);
+  wrongLaneClose.terminalDelivery.deliveryLaneId = "lane-foreign";
+  assert.equal(reason([predecessorOpen, wrongLaneClose, ...current]), "close-before-open");
+
+  const selectedClose = [...current, lifecycle("web-b", "web", 6, "close")];
+  assert.equal(assess(selectedClose).observation.clients[2].reason, "closed");
+
+  const unmatched = [...current, lifecycle("foreign", "web", 6)];
+  assert.equal(assess(unmatched).passed, false);
+  assert.equal(assess(unmatched).observation.unmatchedActiveRequestHmacs.length, 1);
+
+  const clientMismatchWeb = [webEvidence("web-a"), webEvidence("web-b")];
+  clientMismatchWeb[1].runtimeReplacement.currentLifecycleRequest.deliveryClientHmac = "cd".repeat(
+    32,
+  );
+  assert.equal(assess(current, clientMismatchWeb).observation.clients[2].reason, "client-mismatch");
 });
 
 test("Card5 lifecycle labels replacement failures and reports capped-count overflow truthfully", () => {
@@ -838,11 +971,17 @@ test("Card5 cleanup requires every owned host and zero observer/path residue", (
   const zeroResidue = {
     chromiumProcessCount: 0,
     chromiumDescendantCount: 0,
+    chromiumTerminalProcessCount: 0,
+    chromiumProcessEvidence: [],
+    chromiumProcessEvidenceOverflow: false,
     chromiumPageCount: 0,
     chromiumContextCount: 0,
     chromiumListenerCount: 0,
     electronProcessCount: 0,
     electronDescendantCount: 0,
+    electronTerminalProcessCount: 0,
+    electronProcessEvidence: [],
+    electronProcessEvidenceOverflow: false,
     electronWindowCount: 0,
     electronListenerCount: 0,
     electronOpenHandleCount: 0,
@@ -860,7 +999,49 @@ test("Card5 cleanup requires every owned host and zero observer/path residue", (
     ),
     Object.fromEntries(Object.keys(entries).map((name) => [name, [true, true]])),
   );
-  for (const [name, value] of Object.entries(zeroResidue)) assert.equal(clean[name], value);
+  for (const [name, value] of Object.entries(zeroResidue)) assert.deepEqual(clean[name], value);
+  const terminalIdentity = {
+    identityHmac: "a".repeat(64),
+    terminalState: true,
+  };
+  assert.equal(
+    card5HostCleanupStatus({
+      entries,
+      ...zeroResidue,
+      electronTerminalProcessCount: 1,
+      electronProcessEvidence: [terminalIdentity],
+    }).passed,
+    true,
+  );
+  assert.equal(
+    card5HostCleanupStatus({
+      entries,
+      ...zeroResidue,
+      electronTerminalProcessCount: 1,
+      electronProcessEvidence: [terminalIdentity],
+      electronOpenHandleCount: 1,
+    }).passed,
+    false,
+  );
+  assert.equal(
+    card5HostCleanupStatus({
+      entries,
+      ...zeroResidue,
+      electronTerminalProcessCount: 1,
+      electronProcessEvidence: [{ ...terminalIdentity, terminalState: false }],
+    }).passed,
+    false,
+  );
+  assert.equal(
+    card5HostCleanupStatus({
+      entries,
+      ...zeroResidue,
+      electronTerminalProcessCount: 1,
+      electronProcessEvidence: [terminalIdentity],
+      pathResidueCount: 1,
+    }).passed,
+    false,
+  );
   assert.equal(
     card5HostCleanupStatus({
       entries: { ...entries, electron: { owned: true, retired: false } },

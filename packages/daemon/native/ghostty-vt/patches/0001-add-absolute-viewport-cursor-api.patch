@@ -1,0 +1,87 @@
+diff --git a/include/ghostty/vt/terminal.h b/include/ghostty/vt/terminal.h
+index 0e6d048e1..ff0b69ede 100644
+--- a/include/ghostty/vt/terminal.h
++++ b/include/ghostty/vt/terminal.h
+@@ -937,6 +937,25 @@ GHOSTTY_API GhosttyResult ghostty_terminal_resize(GhosttyTerminal terminal,
+                                       uint32_t cell_width_px,
+                                       uint32_t cell_height_px);
+ 
++/**
++ * Set the active-screen cursor to an absolute viewport position.
++ *
++ * This bypasses origin mode and scrolling margins. It is intended for
++ * synchronizing an authoritative cursor supplied alongside a terminal byte
++ * stream, not for implementing a VT cursor-positioning sequence. Pending wrap
++ * is cleared. Saved cursor state, modes, and scrolling margins are unchanged.
++ *
++ * @param terminal The terminal handle (NULL returns GHOSTTY_INVALID_VALUE)
++ * @param x Zero-based absolute viewport column (must be within bounds)
++ * @param y Zero-based absolute viewport row (must be within bounds)
++ * @return GHOSTTY_SUCCESS on success, or GHOSTTY_INVALID_VALUE
++ *
++ * @ingroup terminal
++ */
++GHOSTTY_API GhosttyResult ghostty_terminal_cursor_set_absolute(GhosttyTerminal terminal,
++                                                    uint16_t x,
++                                                    uint16_t y);
++
+ /**
+  * Set an option on the terminal.
+  *
+diff --git a/src/lib_vt.zig b/src/lib_vt.zig
+index ae0c87b1e..f4ef59d04 100644
+--- a/src/lib_vt.zig
++++ b/src/lib_vt.zig
+@@ -232,6 +232,7 @@ comptime {
+         @export(&c.terminal_free, .{ .name = "ghostty_terminal_free" });
+         @export(&c.terminal_reset, .{ .name = "ghostty_terminal_reset" });
+         @export(&c.terminal_resize, .{ .name = "ghostty_terminal_resize" });
++        @export(&c.terminal_cursor_set_absolute, .{ .name = "ghostty_terminal_cursor_set_absolute" });
+         @export(&c.terminal_set, .{ .name = "ghostty_terminal_set" });
+         @export(&c.terminal_vt_write, .{ .name = "ghostty_terminal_vt_write" });
+         @export(&c.terminal_scroll_viewport, .{ .name = "ghostty_terminal_scroll_viewport" });
+diff --git a/src/terminal/c/main.zig b/src/terminal/c/main.zig
+index 126b66401..39499b57a 100644
+--- a/src/terminal/c/main.zig
++++ b/src/terminal/c/main.zig
+@@ -162,6 +162,7 @@ pub const terminal_new = terminal.new;
+ pub const terminal_free = terminal.free;
+ pub const terminal_reset = terminal.reset;
+ pub const terminal_resize = terminal.resize;
++pub const terminal_cursor_set_absolute = terminal.cursor_set_absolute;
+ pub const terminal_set = terminal.set;
+ pub const terminal_vt_write = terminal.vt_write;
+ pub const terminal_scroll_viewport = terminal.scroll_viewport;
+diff --git a/src/terminal/c/terminal.zig b/src/terminal/c/terminal.zig
+index 670c2aea3..f4fa30e10 100644
+--- a/src/terminal/c/terminal.zig
++++ b/src/terminal/c/terminal.zig
+@@ -504,6 +504,28 @@ pub fn resize(
+     return .success;
+ }
+ 
++/// Set the active-screen cursor to an absolute viewport position.
++///
++/// This intentionally bypasses origin mode and scrolling margins. It is for
++/// synchronizing an authoritative cursor supplied alongside a terminal byte
++/// stream, not for implementing a VT cursor-positioning sequence. Saved cursor
++/// state, modes, and scrolling margins are left untouched.
++pub fn cursor_set_absolute(
++    terminal_: Terminal,
++    x: size.CellCountInt,
++    y: size.CellCountInt,
++) callconv(lib.calling_conv) Result {
++    const t: *ZigTerminal = (terminal_ orelse return .invalid_value).terminal;
++    if (x >= t.cols or y >= t.rows) return .invalid_value;
++
++    const screen = t.screens.active;
++    screen.cursorMarkDirty();
++    screen.cursorAbsolute(x, y);
++    screen.cursor.pending_wrap = false;
++    screen.cursorMarkDirty();
++    return .success;
++}
++
+ pub fn reset(terminal_: Terminal) callconv(lib.calling_conv) void {
+     const t: *ZigTerminal = (terminal_ orelse return).terminal;
+     t.fullReset();

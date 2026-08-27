@@ -698,6 +698,36 @@ describe("flow control", () => {
     await rig.channel.dispose();
   });
 
+  it("resumes a locally frozen subscriber after its private reseed", async () => {
+    const rig = await startedRig();
+    const first = collect();
+    const second = collect();
+    const firstHandle = rig.channel.subscribePane("pane.beta", first.onEvent);
+    rig.sim.reply(["first-seed"]);
+    rig.sim.reply(["0 0 99 50"]);
+    rig.channel.subscribePane("pane.beta", second.onEvent);
+    rig.sim.reply(["second-seed"]);
+    rig.sim.reply(["0 0 99 50"]);
+    first.events.length = 0;
+    second.events.length = 0;
+
+    firstHandle.freeze();
+    expect(rig.sim.written.some((cmd) => cmd === "refresh-client -A '%2:pause'")).toBe(false);
+    rig.sim.output("%2", "SIBLING-ONLY");
+    expect(bytesOf(first.events)).toEqual([]);
+    expect(bytesOf(second.events)).toEqual(["SIBLING-ONLY"]);
+
+    firstHandle.thaw();
+    rig.sim.reply(["private-reseed"]);
+    rig.sim.reply(["0 0 99 50"]);
+    expect(first.events.filter((event) => event.type === "flow")).toEqual([
+      { type: "flow", state: "paused", reason: "requested" },
+      { type: "flow", state: "resumed", reason: "requested" },
+    ]);
+    expect(bytesOf(first.events)).toEqual(["private-reseed"]);
+    await rig.channel.dispose();
+  });
+
   it("returns the pause ticket when a frozen pane's last subscriber departs", async () => {
     const rig = await startedRig();
     const alpha = collect();

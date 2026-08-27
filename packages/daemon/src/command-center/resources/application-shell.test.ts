@@ -130,6 +130,79 @@ describe("application-shell resource projector", () => {
     ).toBe("codex");
   });
 
+  it("projects a process-tree detected version-shaped Claude pane into the sidebar", () => {
+    const session = {
+      ...liveSession(),
+      panes: [
+        {
+          ...liveSession().panes[0],
+          currentCommand: "2.1.247",
+          title: "Claude Code",
+          role: "shell",
+          name: "api-server-2",
+          type: "shell",
+          agentKind: "claude",
+          agentScrapeState: "working" as const,
+        },
+      ],
+    };
+
+    expect(isAgentPane(session.panes[0])).toBe(true);
+    const result = projectApplicationShellResource(session);
+    expect(result.workspace.sidebar.agents).toEqual([
+      expect.objectContaining({
+        name: "api-server-2",
+        harness: "claude-code",
+        activity: "running",
+        paneId: "pane.pm",
+      }),
+    ]);
+    expect(result.terminalInventory.resources[0]).toEqual(
+      expect.objectContaining({ id: "pane.pm", kind: "agent" }),
+    );
+  });
+
+  it("replaces provisional Terminal labels after process-tree agent detection", () => {
+    const session = {
+      ...liveSession(),
+      catalogIssue: null,
+      panes: [
+        {
+          ...liveSession().panes[0],
+          semanticPaneId: "pane.codex",
+          currentCommand: "node",
+          title: "host.example.test",
+          role: "shell",
+          name: "Terminal",
+          type: "shell",
+          agentKind: "codex",
+          agentScrapeState: "idle" as const,
+        },
+        {
+          ...liveSession().panes[1],
+          semanticPaneId: "pane.claude",
+          currentCommand: "2.1.247",
+          title: "Claude Code",
+          role: "shell",
+          name: "Terminal",
+          type: "shell",
+          agentKind: "claude",
+          agentScrapeState: "idle" as const,
+        },
+      ],
+    };
+
+    const result = projectApplicationShellResource(session);
+    expect(result.workspace.sidebar.agents.map(({ name, harness }) => [name, harness])).toEqual([
+      ["Codex", "codex"],
+      ["Claude Code", "claude-code"],
+    ]);
+    expect(result.terminalInventory.resources.map(({ title, kind }) => [title, kind])).toEqual([
+      ["Codex", "agent"],
+      ["Claude Code", "agent"],
+    ]);
+  });
+
   it("builds one immutable canonical input with correlated terminal resources", () => {
     const first = projectApplicationShellResource(liveSession());
     const second = projectApplicationShellResource(liveSession());

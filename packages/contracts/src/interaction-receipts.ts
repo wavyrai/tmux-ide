@@ -73,7 +73,10 @@ export const InteractionSafeSummarySchemaZ = z.union([
   z.object({ operationKind: z.literal("workspace.pane.kill") }).strict(),
   z.object({ operationKind: z.literal("workspace.session.kill") }).strict(),
   z
-    .object({ operationKind: z.literal("workspace.rename"), scope: z.enum(["session", "window"]) })
+    .object({
+      operationKind: z.literal("workspace.rename"),
+      scope: z.enum(["session", "window", "pane"]),
+    })
     .strict(),
   z
     .object({
@@ -160,7 +163,7 @@ export const InteractionProofSchemaZ = z.discriminatedUnion("operationKind", [
     .object({
       operationKind: z.literal("workspace.rename"),
       outcome: MutationOutcomeSchemaZ,
-      scope: z.enum(["session", "window"]),
+      scope: z.enum(["session", "window", "pane"]),
     })
     .strict(),
   z

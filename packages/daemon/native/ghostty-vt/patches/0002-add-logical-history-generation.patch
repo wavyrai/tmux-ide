@@ -1,0 +1,124 @@
+diff --git a/include/ghostty/vt/terminal.h b/include/ghostty/vt/terminal.h
+index ff0b69ede..1f8a10bbf 100644
+--- a/include/ghostty/vt/terminal.h
++++ b/include/ghostty/vt/terminal.h
+@@ -868,6 +868,15 @@ typedef enum GHOSTTY_ENUM_TYPED {
+    * Output type: GhosttyKittyGraphics *
+    */
+   GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS = 30,
++
++  /** Monotonic active-screen scrollback mutation generation. Output: uint64_t *. */
++  GHOSTTY_TERMINAL_DATA_HISTORY_GENERATION = 31,
++
++  /** Monotonic logical rows appended to active-screen history. Output: uint64_t *. */
++  GHOSTTY_TERMINAL_DATA_HISTORY_ROWS_APPENDED = 32,
++
++  /** Monotonic logical rows trimmed from active-screen history. Output: uint64_t *. */
++  GHOSTTY_TERMINAL_DATA_HISTORY_ROWS_TRIMMED = 33,
+   GHOSTTY_TERMINAL_DATA_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
+ } GhosttyTerminalData;
+ 
+diff --git a/src/terminal/Screen.zig b/src/terminal/Screen.zig
+index 39fdd6109..8bb54cd5c 100644
+--- a/src/terminal/Screen.zig
++++ b/src/terminal/Screen.zig
+@@ -80,6 +80,13 @@ semantic_prompt: SemanticPrompt = .disabled,
+ /// Dirty flags for the renderer.
+ dirty: Dirty = .{},
+ 
++/// Monotonic scrollback mutation counters for incremental consumers. These
++/// count logical rows, not backing pages, so capped page rotation remains
++/// observable without rescanning history.
++history_generation: u64 = 0,
++history_rows_appended: u64 = 0,
++history_rows_trimmed: u64 = 0,
++
+ /// See Terminal.Dirty. This behaves the same way.
+ pub const Dirty = packed struct {
+     /// Set when the selection is set or unset, regardless of if the
+@@ -907,6 +914,7 @@ pub fn cursorDownScroll(self: *Screen) !void {
+ /// This scrolls the active area at and above the cursor.
+ /// The lines below the cursor are not scrolled.
+ pub fn cursorScrollAbove(self: *Screen) !void {
++    const history_before = self.pages.total_rows - self.pages.rows;
+     // We unconditionally mark the cursor row as dirty here because
+     // the cursor always changes page rows inside this function, and
+     // when that happens it can mean the text in the old row needs to
+@@ -916,7 +924,9 @@ pub fn cursorScrollAbove(self: *Screen) !void {
+     // If the cursor is on the bottom of the screen, its faster to use
+     // our specialized function for that case.
+     if (self.cursor.y == self.pages.rows - 1) {
+-        return try self.cursorDownScroll();
++        try self.cursorDownScroll();
++        self.recordHistoryScroll(history_before);
++        return;
+     }
+ 
+     defer self.assertIntegrity();
+@@ -1000,6 +1010,15 @@ pub fn cursorScrollAbove(self: *Screen) !void {
+             @memset(cells[0..self.pages.cols], blank_cell);
+         }
+     }
++    self.recordHistoryScroll(history_before);
++}
++
++fn recordHistoryScroll(self: *Screen, history_before: usize) void {
++    if (self.no_scrollback) return;
++    const history_after = self.pages.total_rows - self.pages.rows;
++    self.history_generation +%= 1;
++    self.history_rows_appended +%= 1;
++    self.history_rows_trimmed +%= history_before + 1 - history_after;
+ }
+ 
+ fn cursorScrollAboveRotate(self: *Screen) !void {
+@@ -1317,7 +1336,13 @@ pub inline fn eraseHistory(
+     bl: ?point.Point,
+ ) void {
+     defer self.assertIntegrity();
++    const history_before = self.pages.total_rows - self.pages.rows;
+     self.pages.eraseHistory(bl);
++    const history_after = self.pages.total_rows - self.pages.rows;
++    if (history_after != history_before) {
++        self.history_generation +%= 1;
++        self.history_rows_trimmed +%= history_before - history_after;
++    }
+     self.cursorReload();
+ }
+ 
+diff --git a/src/terminal/c/terminal.zig b/src/terminal/c/terminal.zig
+index f4fa30e10..42b987978 100644
+--- a/src/terminal/c/terminal.zig
++++ b/src/terminal/c/terminal.zig
+@@ -597,6 +597,9 @@ pub const TerminalData = enum(c_int) {
+     kitty_image_medium_temp_file = 28,
+     kitty_image_medium_shared_mem = 29,
+     kitty_graphics = 30,
++    history_generation = 31,
++    history_rows_appended = 32,
++    history_rows_trimmed = 33,
+ 
+     /// Output type expected for querying the data of the given kind.
+     pub fn OutType(comptime self: TerminalData) type {
+@@ -619,7 +622,11 @@ pub const TerminalData = enum(c_int) {
+             .color_cursor_default,
+             => color.RGB.C,
+             .color_palette, .color_palette_default => color.PaletteC,
+-            .kitty_image_storage_limit => u64,
++            .kitty_image_storage_limit,
++            .history_generation,
++            .history_rows_appended,
++            .history_rows_trimmed,
++            => u64,
+             .kitty_image_medium_file,
+             .kitty_image_medium_temp_file,
+             .kitty_image_medium_shared_mem,
+@@ -704,6 +711,9 @@ fn getTyped(
+         },
+         .total_rows => out.* = t.screens.active.pages.total_rows,
+         .scrollback_rows => out.* = t.screens.active.pages.total_rows - t.rows,
++        .history_generation => out.* = t.screens.active.history_generation,
++        .history_rows_appended => out.* = t.screens.active.history_rows_appended,
++        .history_rows_trimmed => out.* = t.screens.active.history_rows_trimmed,
+         .width_px => out.* = t.width_px,
+         .height_px => out.* = t.height_px,
+         .color_foreground => out.* = (t.colors.foreground.get() orelse return .no_value).cval(),

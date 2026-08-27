@@ -263,6 +263,8 @@ function coalesceCandidatePaneEvent(
   return current && replayable(current) ? current : next;
 }
 
+const WEB_RUNTIME_CANDIDATE_READY_TIMEOUT_MS = 15_000;
+
 /** Shared candidate/activation fence between WorkspaceClient and the local compositor. */
 export function createWebWorkspaceRuntimeBridgePorts(input: {
   readonly host: HostCapabilities;
@@ -273,20 +275,88 @@ export function createWebWorkspaceRuntimeBridgePorts(input: {
   const connect = input.connect ?? connectWebWorkspaceRuntime;
   const activateRuntime = new WeakMap<WebWorkspaceRuntimePort, () => void>();
   let activeRuntime: WebWorkspaceRuntimePort | null = null;
+  let cancelPendingCandidate: (() => void) | null = null;
   return {
     async connectRuntime(runtimeTarget, inventory, signal, prepare) {
       const stagedPanes = new Map<
         string,
         Parameters<WebWorkspacePaneStreamBridge["publishPane"]>[1]
       >();
+      const stagedSeedCounts = new Map<string, number>();
       let stagedPaneEvents = 0;
+      let stagedContractInvalid = false;
+      let stagedLayoutCount = 0;
+      let stagedSessionCount = 0;
       let stagedLayout: Parameters<WebWorkspacePaneStreamBridge["publishLayout"]>[0] | null = null;
       let stagedLayoutSnapshot:
         | Parameters<WebWorkspacePaneStreamBridge["publishLayoutSnapshot"]>[0]
         | null = null;
       let stagedSession: Parameters<WebWorkspacePaneStreamBridge["bindSession"]>[0] = null;
+      let candidateMutationEpoch = 0;
       let activated = false;
+      let activationStarted = false;
+      let activationCommitted = false;
+      let candidateClosed = false;
+      let predecessorGeneration: string | null = null;
+      let readyTimer: ReturnType<typeof setTimeout> | null = null;
+      let readyDeadlineMs: number | null = null;
+      let lastReadyClockMs: number | null = null;
+      const readReadyClock = (): number | null => {
+        try {
+          const now = globalThis.performance?.now();
+          return typeof now === "number" && Number.isFinite(now) && now >= 0 ? now : null;
+        } catch {
+          return null;
+        }
+      };
+      const withinReadyDeadline = (): boolean => {
+        const now = readReadyClock();
+        if (
+          now === null ||
+          readyDeadlineMs === null ||
+          now >= readyDeadlineMs ||
+          (lastReadyClockMs !== null && now < lastReadyClockMs)
+        )
+          return false;
+        lastReadyClockMs = now;
+        return true;
+      };
       let runtime!: WebWorkspaceRuntimePort;
+      const clearReadyTimer = (): void => {
+        if (readyTimer !== null) clearTimeout(readyTimer);
+        readyTimer = null;
+      };
+      const closeCandidate = (): void => {
+        if (candidateClosed || activationCommitted) return;
+        candidateClosed = true;
+        clearReadyTimer();
+        signal.removeEventListener("abort", closeCandidate);
+        if (activeRuntime === runtime) {
+          activeRuntime = null;
+          bridge.bindSession(null, inventory.workspaceName);
+        }
+        runtime.close();
+      };
+      const candidateSeed = (
+        event: Parameters<WebWorkspacePaneStreamBridge["publishPane"]>[1],
+      ): boolean =>
+        ("canonicalUpdate" in event && event.canonicalUpdate?.type === "terminal.seed") ||
+        (event.type === "seed-batch" && event.canonicalUpdate === undefined);
+      const candidateReady = (): boolean =>
+        stagedSession !== null &&
+        stagedSessionCount === 1 &&
+        stagedLayoutCount === 1 &&
+        (stagedLayout !== null || stagedLayoutSnapshot !== null) &&
+        !stagedContractInvalid &&
+        inventory.semanticPaneIds.every((pane) => {
+          const event = stagedPanes.get(pane);
+          return (
+            stagedSeedCounts.get(pane) === 1 &&
+            event !== undefined &&
+            (event.type === "seed-batch" || (event.type === "output" && event.replay !== undefined))
+          );
+        });
+      let attemptActivation = (): void => undefined;
       runtime = await connect({
         transport: createHostPaneStreamTransport(host, runtimeTarget.daemon),
         inventory,
@@ -300,31 +370,73 @@ export function createWebWorkspaceRuntimeBridgePorts(input: {
             intent,
           ),
         onPaneEvent: (pane, event) => {
-          if (activated) {
+          if (activated && activationCommitted) {
             if (activeRuntime === runtime) bridge.publishPane(pane, event);
           } else {
+            candidateMutationEpoch += 1;
             if (++stagedPaneEvents > 8_192) {
-              throw new Error("candidate pane staging exceeded its bounded event count");
+              stagedContractInvalid = true;
+              attemptActivation();
+              return;
+            }
+            if (!inventory.semanticPaneIds.includes(pane)) stagedContractInvalid = true;
+            if (
+              "canonical" in event &&
+              event.canonical?.generation !== undefined &&
+              event.canonical.generation !== inventory.daemonGeneration
+            )
+              stagedContractInvalid = true;
+            if (
+              "canonicalUpdate" in event &&
+              event.canonicalUpdate?.generation !== undefined &&
+              event.canonicalUpdate.generation !== inventory.daemonGeneration
+            )
+              stagedContractInvalid = true;
+            if (candidateSeed(event)) {
+              stagedSeedCounts.set(pane, (stagedSeedCounts.get(pane) ?? 0) + 1);
+              if ((stagedSeedCounts.get(pane) ?? 0) > 1) stagedContractInvalid = true;
             }
             stagedPanes.set(pane, coalesceCandidatePaneEvent(stagedPanes.get(pane), event));
+            attemptActivation();
           }
         },
         onLayout: (layout) => {
-          if (activated) {
+          if (activated && activationCommitted) {
             if (activeRuntime === runtime) bridge.publishLayout(layout);
-          } else stagedLayout = layout;
+          } else {
+            candidateMutationEpoch += 1;
+            stagedLayoutCount += 1;
+            if (stagedLayoutCount > 1 || stagedLayoutSnapshot !== null)
+              stagedContractInvalid = true;
+            stagedLayout = layout;
+            attemptActivation();
+          }
         },
         onLayoutSnapshot: (snapshot) => {
-          if (activated) {
+          if (activated && activationCommitted) {
             if (activeRuntime === runtime) bridge.publishLayoutSnapshot(snapshot);
-          } else stagedLayoutSnapshot = snapshot;
+          } else {
+            candidateMutationEpoch += 1;
+            stagedLayoutCount += 1;
+            if (stagedLayoutCount > 1 || stagedLayout !== null) stagedContractInvalid = true;
+            stagedLayoutSnapshot = snapshot;
+            attemptActivation();
+          }
         },
         onSession: (session) => {
-          if (activated) {
+          if (activated && activationCommitted) {
             if (activeRuntime === runtime) bridge.bindSession(session, inventory.workspaceName);
-          } else stagedSession = session;
+          } else {
+            candidateMutationEpoch += 1;
+            stagedSessionCount += 1;
+            if (stagedSessionCount > 1 || session === null) stagedContractInvalid = true;
+            stagedSession = session;
+            attemptActivation();
+          }
         },
         onEnd: () => {
+          if (!activationCommitted) candidateMutationEpoch += 1;
+          if (activated && !activationCommitted) closeCandidate();
           if (activated && activeRuntime === runtime) {
             activeRuntime = null;
             bridge.end(null);
@@ -337,17 +449,36 @@ export function createWebWorkspaceRuntimeBridgePorts(input: {
         runtime.close();
         throw error;
       }
-      activateRuntime.set(runtime, () => {
-        if (activated || signal.aborted) return;
-        activated = true;
-        recordCard5RuntimeReplacement(activeRuntime?.generation ?? null, runtime.generation);
-        activeRuntime = runtime;
-        bridge.bindSession(stagedSession, inventory.workspaceName);
-        bridge.replacePaneSet(new Set(inventory.semanticPaneIds));
-        if (stagedLayoutSnapshot) bridge.publishLayoutSnapshot(stagedLayoutSnapshot);
-        else if (stagedLayout) bridge.publishLayout(stagedLayout);
-        for (const [pane, event] of stagedPanes) {
-          const authoritative =
+      attemptActivation = () => {
+        if (
+          !activated ||
+          activationStarted ||
+          activationCommitted ||
+          candidateClosed ||
+          signal.aborted
+        )
+          return;
+        if (!withinReadyDeadline()) {
+          closeCandidate();
+          return;
+        }
+        if (stagedContractInvalid) {
+          closeCandidate();
+          return;
+        }
+        if (!candidateReady()) return;
+        activationStarted = true;
+        const activationSession = stagedSession;
+        const activationLayout = stagedLayout;
+        const activationLayoutSnapshot = stagedLayoutSnapshot;
+        const activationPanes = new Map(stagedPanes);
+        const activationCandidateEpoch = candidateMutationEpoch;
+        stagedPanes.clear();
+        stagedLayout = null;
+        stagedLayoutSnapshot = null;
+        const authoritativePanes = new Map(
+          [...activationPanes].map(([pane, event]) => [
+            pane,
             event.type === "output" && event.replay
               ? {
                   type: "seed-batch" as const,
@@ -358,12 +489,80 @@ export function createWebWorkspaceRuntimeBridgePorts(input: {
                     ? { canonicalSnapshot: event.canonicalSnapshot }
                     : {}),
                 }
-              : event;
-          bridge.publishPane(pane, authoritative);
+              : event,
+          ]),
+        );
+        void bridge
+          .activateRuntime({
+            session: activationSession!,
+            workspaceName: inventory.workspaceName,
+            generation: inventory.daemonGeneration,
+            panes: new Set(inventory.semanticPaneIds),
+            paneEvents: authoritativePanes,
+            layout: activationLayout,
+            layoutSnapshot: activationLayoutSnapshot,
+            isCurrent: () =>
+              activeRuntime === runtime &&
+              !signal.aborted &&
+              withinReadyDeadline() &&
+              candidateMutationEpoch === activationCandidateEpoch &&
+              stagedSession === activationSession &&
+              !stagedContractInvalid,
+            commit: () => {
+              if (
+                activeRuntime !== runtime ||
+                signal.aborted ||
+                !withinReadyDeadline() ||
+                candidateMutationEpoch !== activationCandidateEpoch ||
+                stagedSession !== activationSession ||
+                stagedContractInvalid
+              )
+                return false;
+              activationCommitted = true;
+              recordCard5RuntimeReplacement(predecessorGeneration, runtime.generation);
+              clearReadyTimer();
+              signal.removeEventListener("abort", closeCandidate);
+              if (cancelPendingCandidate === closeCandidate) cancelPendingCandidate = null;
+              return true;
+            },
+          })
+          .then((committed) => {
+            if (!committed || activeRuntime !== runtime || signal.aborted) {
+              if (activeRuntime === runtime) closeCandidate();
+              return;
+            }
+            if (stagedLayoutSnapshot) bridge.publishLayoutSnapshot(stagedLayoutSnapshot);
+            else if (stagedLayout) bridge.publishLayout(stagedLayout);
+            for (const [pane, event] of stagedPanes) bridge.publishPane(pane, event);
+            stagedPanes.clear();
+            stagedLayout = null;
+            stagedLayoutSnapshot = null;
+          })
+          .catch(() => {
+            if (activeRuntime === runtime) closeCandidate();
+          });
+      };
+      activateRuntime.set(runtime, () => {
+        if (activated || signal.aborted) return;
+        activated = true;
+        predecessorGeneration = activeRuntime?.generation ?? null;
+        cancelPendingCandidate?.();
+        cancelPendingCandidate = closeCandidate;
+        activeRuntime = runtime;
+        bridge.bindSession(null, inventory.workspaceName);
+        signal.addEventListener("abort", closeCandidate, { once: true });
+        const now = readReadyClock();
+        if (
+          now === null ||
+          !Number.isSafeInteger(Math.ceil(now + WEB_RUNTIME_CANDIDATE_READY_TIMEOUT_MS))
+        ) {
+          closeCandidate();
+          return;
         }
-        stagedPanes.clear();
-        stagedLayout = null;
-        stagedLayoutSnapshot = null;
+        lastReadyClockMs = now;
+        readyDeadlineMs = now + WEB_RUNTIME_CANDIDATE_READY_TIMEOUT_MS;
+        readyTimer = setTimeout(closeCandidate, WEB_RUNTIME_CANDIDATE_READY_TIMEOUT_MS);
+        attemptActivation();
       });
       return runtime;
     },

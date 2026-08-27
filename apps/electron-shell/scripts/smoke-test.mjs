@@ -419,23 +419,31 @@ async function proveAttachability(client) {
 
 /** The shared attachability assertion: at least one pane must be available. */
 async function assertPanesAttachable(client, rung) {
-  const shell = await client.get(
-    `/api/project/${encodeURIComponent(SESSION_NAME)}/application-shell?version=3`,
-  );
-  if (shell.status !== 200) {
+  let latestStatus = 0;
+  let latestReport = attachabilityReport([]);
+  const report = await pollUntil({
+    probe: async () => {
+      const shell = await client.get(
+        `/api/project/${encodeURIComponent(SESSION_NAME)}/application-shell?version=3`,
+      );
+      latestStatus = shell.status;
+      if (shell.status !== 200) return null;
+      latestReport = attachabilityReport(shell.body?.resource?.terminalInventory?.resources);
+      return latestReport.available.length > 0 ? latestReport : null;
+    },
+    detail: "the application-shell resource to publish an attachable pane",
+    timeoutMs: FLEET_TIMEOUT_MS,
+    intervalMs: 200,
+  }).catch((error) => {
+    const state =
+      latestStatus === 200
+        ? `${latestReport.total} pane(s), refused: ${dominantRefusalReasons(latestReport).join(", ") || "none"}`
+        : `latest HTTP status ${latestStatus}`;
     throw new RungFailure(
       rung,
-      `application-shell resource was unavailable (HTTP ${shell.status})`,
+      `${error instanceof Error ? error.message : String(error)} (${state})`,
     );
-  }
-  const report = attachabilityReport(shell.body?.resource?.terminalInventory?.resources);
-  if (report.available.length === 0) {
-    throw new RungFailure(
-      rung,
-      `no promoted pane reached attachability "available" — ${report.total} pane(s) refused: ` +
-        `${dominantRefusalReasons(report).join(", ")}`,
-    );
-  }
+  });
   log(
     `attachability: ${report.available.length}/${report.total} panes available` +
       (report.unavailable.length > 0
@@ -604,6 +612,34 @@ async function proveByteRoundTrip(client, canonical, { workspaceName, paneId }) 
     intervalMs: 50,
   });
   log(`pane-stream seeded ${paneId}`);
+
+  const authorityRequestId = randomUUID();
+  stream.socket.send(
+    JSON.stringify({
+      type: "authority-request",
+      generation: canonical.instanceId,
+      requestId: authorityRequestId,
+      authority: "input",
+    }),
+  );
+  await pollUntil({
+    probe: () => {
+      const receipt = stream.frames.find(
+        (frame) => frame.type === "authority-receipt" && frame.requestId === authorityRequestId,
+      );
+      if (!receipt) return null;
+      if (receipt.status !== "granted") {
+        throw new RungFailure(
+          "c (byte round-trip)",
+          `pane-stream input authority was ${receipt.status}`,
+        );
+      }
+      return true;
+    },
+    detail: "the pane stream to acquire input authority",
+    timeoutMs: STREAM_TIMEOUT_MS,
+    intervalMs: 50,
+  });
 
   const marker = `SMOKE_${randomUUID().slice(0, 8).toUpperCase()}`;
   stream.socket.send(

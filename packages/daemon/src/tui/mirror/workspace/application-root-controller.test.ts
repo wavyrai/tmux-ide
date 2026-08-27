@@ -256,12 +256,12 @@ describe("production application root controller", () => {
     expect(release).toBeGreaterThan(commit);
     expect(actionCall).toBeGreaterThan(-1);
     expect(verb).toBeGreaterThan(-1);
-    expect(root).toContain("onResizePreview={interaction.previewPaneResize}");
-    expect(root).toContain("onResizePane={interaction.resizePane}");
+    expect(root).toContain("onResizePreview={recoverHostFocus(interaction.previewPaneResize)}");
+    expect(root).toContain("onResizePane={recoverHostFocus(interaction.resizePane)}");
     expect(root).toContain(
       "const resizeIngress = tuiPerfStream ? interaction.beginResizePointerIngress : undefined",
     );
-    expect(root).toContain("onResizePointerIngress={resizeIngress}");
+    expect(root).toContain("onResizePointerIngress={recoverHostFocus.optional(resizeIngress)}");
     expect(app).not.toContain("routeSidebarResizePointer");
   });
 });

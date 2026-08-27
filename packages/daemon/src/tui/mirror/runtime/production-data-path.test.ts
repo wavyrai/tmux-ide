@@ -124,7 +124,10 @@ describe("production OpenTUI v2 data path", () => {
       /const applicationMouseIngress = applicationMousePointerIngressCapability\(\s*tuiPerfStream,\s*selectionOwner\.beginPointerIngress,\s*\)/u,
     );
     expect(applicationRootSource).toContain(
-      "onApplicationMousePointerIngress={applicationMouseIngress}",
+      "onApplicationMousePointerIngress={focusedApplicationMouseIngress}",
+    );
+    expect(applicationRootSource).toMatch(
+      /const focusedApplicationMouseIngress = recoverHostFocus\.optional\(applicationMouseIngress\)/u,
     );
     expect(applicationRootSource).not.toContain(
       "onApplicationMousePointerIngress={selectionOwner.beginPointerIngress}",

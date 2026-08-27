@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import test from "node:test";
 
 import {
@@ -11,6 +11,7 @@ import {
   card5AuthorityReleaseBindingHmac,
   card5CrossClientFailureObservation,
   card5DaemonRestartFailureObservation,
+  card5HandoffInputPayload,
 } from "./product-cross-client-handoff.mjs";
 
 const HASH = "a".repeat(16);
@@ -20,6 +21,33 @@ const evidenceHmac = (key, domain, value) =>
   createHmac("sha256", Buffer.from(key, "hex")).update(`${domain}\0${value}`).digest("hex");
 const assessCard5CrossClientEvidence = (input) =>
   assessCard5CrossClientEvidenceRaw({ ...input, evidenceKey: input.evidenceKey ?? KEY });
+
+test("Card5 handoff producers share one exact marker-only payload fingerprint", () => {
+  for (const ordinal of [0, 1, 2]) {
+    const marker = `CARD5_HANDOFF_${ordinal}_0123abcd`;
+    const payload = card5HandoffInputPayload(marker);
+    assert.deepEqual(payload, {
+      text: marker,
+      sha256: createHash("sha256").update(marker).digest("hex"),
+    });
+    const producerPayloads = [payload.text, payload.text, payload.text];
+    assert.equal(new Set(producerPayloads).size, 1);
+    assert.equal(
+      new Set(producerPayloads.map((value) => createHash("sha256").update(value).digest("hex")))
+        .size,
+      1,
+    );
+  }
+  for (const invalid of [
+    null,
+    "CARD5_HANDOFF_0_0123abcd\n",
+    "CARD5_HANDOFF_0_0123abcd\r",
+    "CARD5_HANDOFF_0_0123abc",
+    "CARD5_HANDOFF_3_0123abcd",
+    "CARD5_HANDOFF_0_0123ABCD",
+  ])
+    assert.equal(card5HandoffInputPayload(invalid), null);
+});
 const hostLedger = () =>
   ["opentui", "web-a", "web-b"].map((client, openOrdinal) => ({
     client,

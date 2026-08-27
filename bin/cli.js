@@ -4933,7 +4933,10 @@ var init_interaction_receipts = __esm({
       z30.object({ operationKind: z30.literal("workspace.window.kill") }).strict(),
       z30.object({ operationKind: z30.literal("workspace.pane.kill") }).strict(),
       z30.object({ operationKind: z30.literal("workspace.session.kill") }).strict(),
-      z30.object({ operationKind: z30.literal("workspace.rename"), scope: z30.enum(["session", "window"]) }).strict(),
+      z30.object({
+        operationKind: z30.literal("workspace.rename"),
+        scope: z30.enum(["session", "window", "pane"])
+      }).strict(),
       z30.object({
         operationKind: z30.literal("workspace.pane.zoom.toggle"),
         desired: z30.enum(["toggle", "zoomed", "unzoomed"])
@@ -4983,7 +4986,7 @@ var init_interaction_receipts = __esm({
       z30.object({
         operationKind: z30.literal("workspace.rename"),
         outcome: MutationOutcomeSchemaZ,
-        scope: z30.enum(["session", "window"])
+        scope: z30.enum(["session", "window", "pane"])
       }).strict(),
       z30.object({
         operationKind: z30.literal("workspace.pane.zoom.toggle"),
@@ -7161,6 +7164,11 @@ var init_workspace_multiplexer = __esm({
         scope: z45.literal("window"),
         target: WorkspaceMultiplexerWindowTargetSchemaZ,
         name: WorkspaceMultiplexerNameSchemaZ
+      }).strict(),
+      WorkspaceScopedSchemaZ.extend({
+        scope: z45.literal("pane"),
+        semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+        name: WorkspaceMultiplexerNameSchemaZ
       }).strict()
     ]);
     WorkspacePaneZoomToggleArgumentsSchemaZ = WorkspaceScopedSchemaZ.extend({
@@ -7218,6 +7226,12 @@ var init_workspace_multiplexer = __esm({
           verb: z45.literal("workspace.rename"),
           scope: z45.literal("window"),
           target: WorkspaceMultiplexerWindowTargetSchemaZ,
+          name: WorkspaceMultiplexerNameSchemaZ
+        }).strict(),
+        WorkspaceScopedSchemaZ.extend({
+          verb: z45.literal("workspace.rename"),
+          scope: z45.literal("pane"),
+          semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
           name: WorkspaceMultiplexerNameSchemaZ
         }).strict()
       ]),
@@ -7278,7 +7292,7 @@ var init_workspace_multiplexer = __esm({
     }).strict();
     WorkspaceRenameResultSchemaZ = MutationEnvelopeSchemaZ.extend({
       verb: z45.literal("workspace.rename"),
-      scope: z45.enum(["session", "window"]),
+      scope: z45.enum(["session", "window", "pane"]),
       name: WorkspaceMultiplexerNameSchemaZ
     }).strict();
     WorkspacePaneZoomToggleResultSchemaZ = MutationEnvelopeSchemaZ.extend({
@@ -8316,7 +8330,7 @@ var init_terminal_delivery = __esm({
 
 // packages/contracts/src/pane-stream.ts
 import { z as z53 } from "zod";
-var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamLayoutSnapshotFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
+var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneDisplayNameSourceSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamLayoutSnapshotFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
 var init_pane_stream = __esm({
   "packages/contracts/src/pane-stream.ts"() {
     "use strict";
@@ -8504,6 +8518,8 @@ var init_pane_stream = __esm({
       protocolVersion: z53.literal(PANE_STREAM_PROTOCOL_VERSION),
       daemonInstanceId: BoundedIdentitySchemaZ,
       requestId: z53.uuid(),
+      /** Daemon-authenticated identity of this exact redeemed physical connection. */
+      connectionClientId: BoundedIdentitySchemaZ.optional(),
       panes: PaneSetSchemaZ,
       effectiveViewerMode: PaneStreamViewerModeSchemaZ,
       authority: SessionRuntimeAuthoritySnapshotSchemaZ.optional(),
@@ -8532,6 +8548,13 @@ var init_pane_stream = __esm({
       y: CellCoordinateSchemaZ
     }).strict();
     BoundedDisplayNameSchemaZ = z53.string().max(256).refine((value) => !/[\0\r\n]/u.test(value));
+    PaneDisplayNameSourceSchemaZ = z53.enum([
+      "manual",
+      "agent",
+      "process",
+      "title",
+      "generated"
+    ]);
     PaneStreamLayoutFrameSchemaZ = z53.object({
       type: z53.literal("layout"),
       /** Durable `@tmux_ide_window_id` stamp; null while the join is unverified. */
@@ -8547,6 +8570,9 @@ var init_pane_stream = __esm({
         z53.object({
           /** Null while the pane's semantic identity join is unverified. */
           pane: PaneStreamSemanticPaneIdSchemaZ.nullable(),
+          /** Optional for compatibility with an older daemon during reconnect. */
+          displayName: BoundedDisplayNameSchemaZ.nullable().optional(),
+          displayNameSource: PaneDisplayNameSourceSchemaZ.nullable().optional(),
           left: CellCoordinateSchemaZ,
           top: CellCoordinateSchemaZ,
           width: GridCellSchemaZ,
@@ -9503,10 +9529,10 @@ function decodeWidgetMarkerLine(line) {
   if (payload !== EMPTY_PAYLOAD && !BASE64URL_PATTERN.test(payload)) return null;
   if (widgetMarkerDigest(id, payload) !== digest3) return null;
   if (payload === EMPTY_PAYLOAD) return { id, args: null };
-  const json3 = decodeBase64Url(payload);
-  if (json3 === null) return null;
+  const json2 = decodeBase64Url(payload);
+  if (json2 === null) return null;
   try {
-    return { id, args: JSON.parse(json3) };
+    return { id, args: JSON.parse(json2) };
   } catch {
     return null;
   }
@@ -11619,8 +11645,8 @@ function printLayout(config2) {
 function outputError(message, code, { exitCode = 1 } = {}) {
   throw new IdeError(message, { code, exitCode });
 }
-function printCommandError(error, { json: json3 = false } = {}) {
-  if (json3) {
+function printCommandError(error, { json: json2 = false } = {}) {
+  if (json2) {
     console.error(JSON.stringify(error.toJSON(), null, 2));
   } else {
     console.error(error.message);
@@ -12315,7 +12341,7 @@ function mapZodIssue(issue, config2) {
   }
   return `${display}: ${issue.message ?? "invalid value"}`;
 }
-async function validate(targetDir, { json: json3 } = {}) {
+async function validate(targetDir, { json: json2 } = {}) {
   const dir = resolve6(targetDir ?? ".");
   const resolved2 = await resolveConfig(dir);
   const config2 = resolved2.launchConfig;
@@ -12325,7 +12351,7 @@ async function validate(targetDir, { json: json3 } = {}) {
   }
   const errors = validateConfig(config2);
   const valid = errors.length === 0;
-  if (json3) {
+  if (json2) {
     console.log(
       JSON.stringify(
         {
@@ -13001,10 +13027,10 @@ __export(classify_exports, {
 });
 function parseAuthority(raw, nowSec) {
   if (!raw) return null;
-  const sep10 = raw.lastIndexOf(":");
-  if (sep10 === -1) return null;
-  const state = raw.slice(0, sep10);
-  const epoch = Number(raw.slice(sep10 + 1));
+  const sep9 = raw.lastIndexOf(":");
+  if (sep9 === -1) return null;
+  const state = raw.slice(0, sep9);
+  const epoch = Number(raw.slice(sep9 + 1));
   if (!AUTHORITY_STATES.has(state) || !Number.isFinite(epoch)) return null;
   if ((state === "working" || state === "blocked") && nowSec - epoch > AUTHORITY_STALE_SECONDS) {
     return null;
@@ -13020,9 +13046,9 @@ function sanitizeAgentText(raw) {
 }
 function parseAuthorityEpoch(raw) {
   if (!raw) return null;
-  const sep10 = raw.lastIndexOf(":");
-  if (sep10 === -1) return null;
-  const epoch = Number(raw.slice(sep10 + 1));
+  const sep9 = raw.lastIndexOf(":");
+  if (sep9 === -1) return null;
+  const epoch = Number(raw.slice(sep9 + 1));
   return Number.isFinite(epoch) ? epoch : null;
 }
 function classifyInstant(snapshot, manifest) {
@@ -13340,7 +13366,7 @@ function readProcessTable() {
   }
 }
 function readProcessTableAsync(signal) {
-  return new Promise((resolve38) => {
+  return new Promise((resolve37) => {
     execFile2(
       "ps",
       ["-axo", "pid=,ppid=,command="],
@@ -13349,7 +13375,7 @@ function readProcessTableAsync(signal) {
         timeout: 2e3,
         signal
       },
-      (error, stdout) => resolve38(error ? [] : parsePsOutput(stdout))
+      (error, stdout) => resolve37(error ? [] : parsePsOutput(stdout))
     );
   });
 }
@@ -14948,9 +14974,9 @@ function shouldCheck(lastCheckedAt, nowMs) {
   if (lastCheckedAt === null) return true;
   return nowMs - lastCheckedAt >= CHECK_INTERVAL_MS;
 }
-function parseRegistryResponse(json3) {
+function parseRegistryResponse(json2) {
   try {
-    const parsed = JSON.parse(json3);
+    const parsed = JSON.parse(json2);
     if (!parsed || typeof parsed !== "object") return null;
     const version = parsed.version;
     return typeof version === "string" && version.length > 0 ? version : null;
@@ -15069,19 +15095,38 @@ var init_update_check = __esm({
 // packages/daemon/src/lib/tui-binary.ts
 var tui_binary_exports = {};
 __export(tui_binary_exports, {
+  MAX_TUI_BINARY_BYTES: () => MAX_TUI_BINARY_BYTES,
+  MAX_TUI_COMPRESSED_BYTES: () => MAX_TUI_COMPRESSED_BYTES,
   MIN_TUI_BINARY_BYTES: () => MIN_TUI_BINARY_BYTES,
   RELEASE_REPO: () => RELEASE_REPO,
+  TUI_DOWNLOAD_TIMEOUT_MS: () => TUI_DOWNLOAD_TIMEOUT_MS,
   bunTargetForTag: () => bunTargetForTag,
   downloadTuiBinary: () => downloadTuiBinary,
   downloadedTuiPath: () => downloadedTuiPath,
   findDownloadedTui: () => findDownloadedTui,
   normalizeVersion: () => normalizeVersion,
+  releaseAssetChecksumName: () => releaseAssetChecksumName,
+  releaseAssetChecksumUrl: () => releaseAssetChecksumUrl,
   releaseAssetName: () => releaseAssetName,
   releaseAssetUrl: () => releaseAssetUrl,
   tuiPlatformTag: () => tuiPlatformTag,
   tuiStateHome: () => tuiStateHome
 });
-import { chmodSync as chmodSync3, existsSync as existsSync10, mkdirSync as mkdirSync8, renameSync as renameSync5, writeFileSync as writeFileSync8 } from "node:fs";
+import { createHash as createHash3, randomUUID as randomUUID3 } from "node:crypto";
+import {
+  accessSync,
+  chmodSync as chmodSync3,
+  closeSync as closeSync2,
+  constants as fsConstants,
+  existsSync as existsSync10,
+  mkdirSync as mkdirSync8,
+  openSync as openSync2,
+  readFileSync as readFileSync11,
+  renameSync as renameSync5,
+  statSync,
+  unlinkSync as unlinkSync2,
+  writeFileSync as writeFileSync8
+} from "node:fs";
 import { homedir as homedir7 } from "node:os";
 import { dirname as dirname13, join as join13 } from "node:path";
 import { gunzipSync } from "node:zlib";
@@ -15094,11 +15139,17 @@ function bunTargetForTag(tag) {
 function releaseAssetName(tag) {
   return `tmux-ide-tui-${tag}.gz`;
 }
+function releaseAssetChecksumName(tag) {
+  return `${releaseAssetName(tag)}.sha256`;
+}
 function normalizeVersion(version) {
   return version.startsWith("v") ? version.slice(1) : version;
 }
 function releaseAssetUrl(version, tag) {
   return `https://github.com/${RELEASE_REPO}/releases/download/v${normalizeVersion(version)}/${releaseAssetName(tag)}`;
+}
+function releaseAssetChecksumUrl(version, tag) {
+  return `https://github.com/${RELEASE_REPO}/releases/download/v${normalizeVersion(version)}/${releaseAssetChecksumName(tag)}`;
 }
 function downloadedTuiPath(home, tag, version) {
   return join13(home, "bin", `tmux-ide-tui-${tag}-${normalizeVersion(version)}`);
@@ -15106,54 +15157,280 @@ function downloadedTuiPath(home, tag, version) {
 function tuiStateHome() {
   return process.env.TMUX_IDE_HOME ?? join13(homedir7(), ".tmux-ide");
 }
-function findDownloadedTui(version = getCurrentVersion()) {
-  const tag = tuiPlatformTag();
+function findDownloadedTui(version = getCurrentVersion(), options = {}) {
+  const tag = options.tag === void 0 ? tuiPlatformTag() : options.tag;
   if (!tag) return null;
-  const path2 = downloadedTuiPath(tuiStateHome(), tag, version);
-  return existsSync10(path2) ? path2 : null;
+  const path2 = downloadedTuiPath(options.home ?? tuiStateHome(), tag, version);
+  const cached2 = inspectCachedBinary(path2, tag, normalizeVersion(version), options.limits);
+  if (cached2) return path2;
+  if (!existsSync10(downloadLockPath(path2))) purgeCachedBinary(path2);
+  return null;
+}
+function checksumPath(path2) {
+  return `${path2}.sha256`;
+}
+function downloadLockPath(path2) {
+  return `${path2}.lock`;
+}
+function sha256(bytes) {
+  return createHash3("sha256").update(bytes).digest("hex");
+}
+function parseChecksumLine(line, expectedName, label2) {
+  const match = /^([a-f0-9]{64}) {2}(.+)$/u.exec(line);
+  if (!match || match[2] !== expectedName) {
+    throw new Error(`invalid ${label2} checksum entry for ${expectedName}`);
+  }
+  return match[1];
+}
+function parseChecksumManifest(bytes, expected) {
+  if (bytes.byteLength > MAX_CHECKSUM_MANIFEST_BYTES) {
+    throw new Error(`checksum manifest exceeds ${MAX_CHECKSUM_MANIFEST_BYTES} bytes`);
+  }
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  const lines = text.trimEnd().split(/\r?\n/u);
+  if (lines.length !== 5) throw new Error("checksum manifest must contain exactly five lines");
+  const asset = releaseAssetName(expected.tag);
+  const binary = asset.slice(0, -3);
+  const compressedSha256 = parseChecksumLine(lines[0], asset, "compressed artifact");
+  const binarySha256 = parseChecksumLine(lines[1], binary, "executable");
+  const fields = /* @__PURE__ */ new Map();
+  for (const line of lines.slice(2)) {
+    const match = /^(version|platform|commit) ([^\s]+)$/u.exec(line);
+    if (!match || fields.has(match[1])) throw new Error("checksum manifest metadata is invalid");
+    fields.set(match[1], match[2]);
+  }
+  const version = fields.get("version");
+  const platform = fields.get("platform");
+  const commit2 = fields.get("commit");
+  if (version !== expected.version)
+    throw new Error(`checksum manifest version mismatch: ${version}`);
+  if (platform !== expected.tag)
+    throw new Error(`checksum manifest platform mismatch: ${platform}`);
+  if (!commit2 || !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u.test(commit2)) {
+    throw new Error("checksum manifest commit is not a canonical Git object ID");
+  }
+  return {
+    compressedSha256,
+    binarySha256,
+    asset,
+    binary,
+    version,
+    platform: expected.tag,
+    commit: commit2
+  };
+}
+function inspectCachedBinary(path2, tag, version, limits = {
+  minBinaryBytes: MIN_TUI_BINARY_BYTES,
+  maxBinaryBytes: MAX_TUI_BINARY_BYTES
+}) {
+  try {
+    const stat2 = statSync(path2);
+    if (!stat2.isFile() || stat2.size < limits.minBinaryBytes || stat2.size > limits.maxBinaryBytes || (stat2.mode & 73) === 0) {
+      return null;
+    }
+    accessSync(path2, fsConstants.X_OK);
+    const manifestBytes = readFileSync11(checksumPath(path2));
+    const manifest = parseChecksumManifest(manifestBytes, { version, tag });
+    const binary = readFileSync11(path2);
+    if (sha256(binary) !== manifest.binarySha256) return null;
+    return { bytes: stat2.size, manifest };
+  } catch {
+    return null;
+  }
+}
+function purgeCachedBinary(path2) {
+  for (const candidate of [path2, checksumPath(path2)]) {
+    try {
+      unlinkSync2(candidate);
+    } catch {
+    }
+  }
+}
+async function readBoundedResponse(fetchImpl, url, maxBytes, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response3 = await fetchImpl(url, { signal: controller.signal });
+    if (!response3.ok) {
+      throw new Error(`HTTP ${response3.status} ${response3.statusText}`);
+    }
+    const declaredLength = Number(response3.headers.get("content-length"));
+    if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+      throw new Error(`declared size ${declaredLength} exceeds ${maxBytes} bytes`);
+    }
+    if (!response3.body) throw new Error("response has no body");
+    const chunks = [];
+    let total = 0;
+    const reader = response3.body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > maxBytes) {
+          await reader.cancel();
+          throw new Error(`download exceeds ${maxBytes} bytes`);
+        }
+        chunks.push(Buffer.from(value));
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    return Buffer.concat(chunks, total);
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`download timed out after ${timeoutMs}ms`, { cause: error });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function acquireDownloadLock(path2, waitMs) {
+  const lock = downloadLockPath(path2);
+  const deadline = Date.now() + waitMs;
+  while (true) {
+    try {
+      const fd = openSync2(lock, "wx", 384);
+      try {
+        writeFileSync8(fd, `${process.pid}
+`);
+      } catch (error) {
+        closeSync2(fd);
+        try {
+          unlinkSync2(lock);
+        } catch {
+        }
+        throw error;
+      }
+      return () => {
+        try {
+          closeSync2(fd);
+        } finally {
+          try {
+            unlinkSync2(lock);
+          } catch {
+          }
+        }
+      };
+    } catch (error) {
+      const code = error instanceof Error && "code" in error ? error.code : void 0;
+      if (code !== "EEXIST") throw error;
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > STALE_DOWNLOAD_LOCK_MS) {
+          unlinkSync2(lock);
+          continue;
+        }
+      } catch {
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error("timed out waiting for another TUI download", { cause: error });
+      }
+      await new Promise((resolve37) => setTimeout(resolve37, 50));
+    }
+  }
 }
 async function downloadTuiBinary(opts = {}) {
   const log = opts.log ?? (() => {
   });
   const version = normalizeVersion(opts.version ?? getCurrentVersion());
-  const tag = tuiPlatformTag();
+  const tag = opts.tag === void 0 ? tuiPlatformTag() : opts.tag;
   if (!tag) {
     throw new Error(
       `no prebuilt TUI binary is published for ${process.platform}-${process.arch} \u2014 install bun (https://bun.sh) to run the TUI surfaces from source instead`
     );
   }
   const url = releaseAssetUrl(version, tag);
-  const dest = downloadedTuiPath(tuiStateHome(), tag, version);
+  const checksumUrl = releaseAssetChecksumUrl(version, tag);
+  const dest = downloadedTuiPath(opts.home ?? tuiStateHome(), tag, version);
+  const limits = {
+    minBinaryBytes: opts.limits?.minBinaryBytes ?? MIN_TUI_BINARY_BYTES,
+    maxCompressedBytes: opts.limits?.maxCompressedBytes ?? MAX_TUI_COMPRESSED_BYTES,
+    maxBinaryBytes: opts.limits?.maxBinaryBytes ?? MAX_TUI_BINARY_BYTES,
+    timeoutMs: opts.timeoutMs ?? TUI_DOWNLOAD_TIMEOUT_MS
+  };
   mkdirSync8(dirname13(dest), { recursive: true });
-  log(`downloading ${url}`);
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(
-      `could not download the TUI binary (${url} \u2192 HTTP ${res.status} ${res.statusText}). Check that release v${version} exists and published its assets.`
-    );
+  const releaseLock = await acquireDownloadLock(dest, limits.timeoutMs * 2 + 5e3);
+  const suffix = `${process.pid}.${randomUUID3()}.tmp`;
+  const binaryTmp = `${dest}.${suffix}`;
+  const checksumTmp = `${checksumPath(dest)}.${suffix}`;
+  try {
+    const cached2 = inspectCachedBinary(dest, tag, version, limits);
+    if (cached2) return { path: dest, bytes: cached2.bytes };
+    purgeCachedBinary(dest);
+    const fetchImpl = opts.fetch ?? globalThis.fetch;
+    log(`downloading checksum manifest ${checksumUrl}`);
+    let manifestBytes;
+    let gz;
+    try {
+      manifestBytes = await readBoundedResponse(
+        fetchImpl,
+        checksumUrl,
+        MAX_CHECKSUM_MANIFEST_BYTES,
+        limits.timeoutMs
+      );
+      gz = await readBoundedResponse(fetchImpl, url, limits.maxCompressedBytes, limits.timeoutMs);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `could not download the TUI binary and checksum for v${version} (${message}). Check that the release published both exact-version assets.`,
+        { cause: error }
+      );
+    }
+    const manifest = parseChecksumManifest(manifestBytes, { version, tag });
+    if (sha256(gz) !== manifest.compressedSha256) {
+      throw new Error(`SHA-256 mismatch for ${manifest.asset}; refusing to install it`);
+    }
+    let bin;
+    try {
+      bin = gunzipSync(gz, { maxOutputLength: limits.maxBinaryBytes });
+    } catch (error) {
+      throw new Error(`could not safely decompress ${manifest.asset}`, { cause: error });
+    }
+    if (bin.byteLength < limits.minBinaryBytes || bin.byteLength > limits.maxBinaryBytes) {
+      throw new Error(
+        `the downloaded TUI binary is ${bin.byteLength} bytes (expected ${limits.minBinaryBytes}-${limits.maxBinaryBytes})`
+      );
+    }
+    if (sha256(bin) !== manifest.binarySha256) {
+      throw new Error(`SHA-256 mismatch for ${manifest.binary}; refusing to install it`);
+    }
+    writeFileSync8(binaryTmp, bin, { mode: 493 });
+    chmodSync3(binaryTmp, 493);
+    writeFileSync8(checksumTmp, manifestBytes, { mode: 384 });
+    renameSync5(checksumTmp, checksumPath(dest));
+    renameSync5(binaryTmp, dest);
+    const installed = inspectCachedBinary(dest, tag, version, limits);
+    if (!installed) {
+      purgeCachedBinary(dest);
+      throw new Error("installed TUI binary failed its post-install integrity check");
+    }
+    const mb = (bin.byteLength / 1024 / 1024).toFixed(1);
+    log(`installed ${dest} (${mb} MB, commit ${manifest.commit.slice(0, 12)})`);
+    return { path: dest, bytes: bin.byteLength };
+  } finally {
+    for (const temporary of [binaryTmp, checksumTmp]) {
+      try {
+        unlinkSync2(temporary);
+      } catch {
+      }
+    }
+    releaseLock();
   }
-  const gz = Buffer.from(await res.arrayBuffer());
-  const bin = gunzipSync(gz);
-  if (bin.byteLength < MIN_TUI_BINARY_BYTES) {
-    throw new Error(
-      `the downloaded TUI binary is only ${bin.byteLength} bytes (expected >10MB) \u2014 treating it as corrupt and leaving the previous binary (if any) in place`
-    );
-  }
-  const tmp = `${dest}.${process.pid}.tmp`;
-  writeFileSync8(tmp, bin, { mode: 493 });
-  chmodSync3(tmp, 493);
-  renameSync5(tmp, dest);
-  const mb = (bin.byteLength / 1024 / 1024).toFixed(1);
-  log(`installed ${dest} (${mb} MB)`);
-  return { path: dest, bytes: bin.byteLength };
 }
-var RELEASE_REPO, MIN_TUI_BINARY_BYTES, SUPPORTED;
+var RELEASE_REPO, MIN_TUI_BINARY_BYTES, MAX_TUI_COMPRESSED_BYTES, MAX_TUI_BINARY_BYTES, TUI_DOWNLOAD_TIMEOUT_MS, MAX_CHECKSUM_MANIFEST_BYTES, STALE_DOWNLOAD_LOCK_MS, SUPPORTED;
 var init_tui_binary = __esm({
   "packages/daemon/src/lib/tui-binary.ts"() {
     "use strict";
     init_update_check();
     RELEASE_REPO = "wavyrai/tmux-ide";
     MIN_TUI_BINARY_BYTES = 10 * 1024 * 1024;
+    MAX_TUI_COMPRESSED_BYTES = 128 * 1024 * 1024;
+    MAX_TUI_BINARY_BYTES = 256 * 1024 * 1024;
+    TUI_DOWNLOAD_TIMEOUT_MS = 3e4;
+    MAX_CHECKSUM_MANIFEST_BYTES = 4 * 1024;
+    STALE_DOWNLOAD_LOCK_MS = 5 * 6e4;
     SUPPORTED = {
       "darwin-arm64": "darwin-arm64",
       "darwin-x64": "darwin-x64",
@@ -15169,6 +15446,28 @@ import { homedir as homedir8 } from "node:os";
 import { dirname as dirname14, join as join14, resolve as resolve9 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 import { execFileSync as execFileSync5 } from "node:child_process";
+async function ensureTuiLaunchAvailable(input, options = {}) {
+  const current = resolveTuiLaunch(input);
+  if (current.mode !== "unavailable") return current;
+  let downloaded;
+  try {
+    downloaded = await (options.download ?? downloadTuiBinary)({ log: options.log });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Automatic OpenTUI runtime acquisition failed: ${message}
+Retry with \`tmux-ide update --tui-binary\`, then run \`tmux-ide app\` again.`,
+      { cause: error }
+    );
+  }
+  const prepared = resolveTuiLaunch({ ...input, compiledBinary: downloaded.path });
+  if (prepared.mode === "unavailable") {
+    throw new Error(
+      "OpenTUI runtime was downloaded but could not be selected. Run `tmux-ide doctor`, then retry `tmux-ide update --tui-binary`."
+    );
+  }
+  return prepared;
+}
 function resolveTuiLaunch(input) {
   if (input.compiledBinary && !input.preferSource) {
     return { mode: "binary", bin: input.compiledBinary, argv: [input.surface, ...input.args] };
@@ -15443,7 +15742,7 @@ var init_resolve = __esm({
 });
 
 // packages/daemon/src/tui/team/keymap.ts
-import { existsSync as existsSync14, readFileSync as readFileSync11 } from "node:fs";
+import { existsSync as existsSync14, readFileSync as readFileSync12 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
 import { join as join15 } from "node:path";
 var ACTION_ORDER, DEFAULT_KEYMAP;
@@ -16070,8 +16369,8 @@ var init_front_door = __esm({
 
 // packages/daemon/src/tui/detect/session-id.ts
 import { execFileSync as execFileSync7 } from "node:child_process";
-import { createHash as createHash3 } from "node:crypto";
-import { readdirSync as readdirSync2, readFileSync as readFileSync12, readlinkSync, statSync } from "node:fs";
+import { createHash as createHash4 } from "node:crypto";
+import { readdirSync as readdirSync2, readFileSync as readFileSync13, readlinkSync, statSync as statSync2 } from "node:fs";
 import { homedir as homedir12 } from "node:os";
 import { join as join18 } from "node:path";
 function codexIdFromOpenFiles(paths) {
@@ -16162,7 +16461,7 @@ function codexIdFromStateDir(root, paneCwd, startMs, io, nowMs = Date.now()) {
   return null;
 }
 function cursorIdFromStateDir(chatsRoot, paneCwd, startMs, io) {
-  const hashed = join18(chatsRoot, createHash3("md5").update(paneCwd).digest("hex"));
+  const hashed = join18(chatsRoot, createHash4("md5").update(paneCwd).digest("hex"));
   const cutoff = startMs - START_SLACK_MS;
   let best = null;
   for (const name of io.listDir(hashed)) {
@@ -16299,14 +16598,14 @@ var init_session_id = __esm({
       },
       mtimeMs: (path2) => {
         try {
-          return statSync(path2).mtimeMs;
+          return statSync2(path2).mtimeMs;
         } catch {
           return null;
         }
       },
       readFirstLine: (path2) => {
         try {
-          const fd = readFileSync12(path2, { encoding: "utf8", flag: "r" });
+          const fd = readFileSync13(path2, { encoding: "utf8", flag: "r" });
           const newline = fd.indexOf("\n");
           return newline === -1 ? fd : fd.slice(0, newline);
         } catch {
@@ -16391,7 +16690,7 @@ var init_project_probe = __esm({
 
 // packages/daemon/src/lib/project-registry.ts
 import { EventEmitter } from "node:events";
-import { existsSync as existsSync17, mkdirSync as mkdirSync12, readFileSync as readFileSync13, renameSync as renameSync6, writeFileSync as writeFileSync11 } from "node:fs";
+import { existsSync as existsSync17, mkdirSync as mkdirSync12, readFileSync as readFileSync14, renameSync as renameSync6, writeFileSync as writeFileSync11 } from "node:fs";
 import { dirname as dirname19, isAbsolute as isAbsolute5, join as join19, resolve as resolve13 } from "node:path";
 import { z as z65 } from "zod";
 function applyAction(state, action) {
@@ -16434,7 +16733,7 @@ function registryPath() {
 function readDisk() {
   const path2 = registryPath();
   if (!existsSync17(path2)) return [];
-  const raw = readFileSync13(path2, "utf-8");
+  const raw = readFileSync14(path2, "utf-8");
   if (raw.trim().length === 0) return [];
   let parsed;
   try {
@@ -16731,7 +17030,7 @@ __export(events_exports, {
   formatEventLine: () => formatEventLine,
   shouldRotate: () => shouldRotate
 });
-import { appendFileSync, existsSync as existsSync18, mkdirSync as mkdirSync13, renameSync as renameSync7, statSync as statSync2 } from "node:fs";
+import { appendFileSync, existsSync as existsSync18, mkdirSync as mkdirSync13, renameSync as renameSync7, statSync as statSync3 } from "node:fs";
 import { join as join20 } from "node:path";
 function diffFleet(prev, next) {
   const state = /* @__PURE__ */ new Map();
@@ -16766,7 +17065,7 @@ function appendEvents(events, now = () => (/* @__PURE__ */ new Date()).toISOStri
   const path2 = eventsPath();
   try {
     mkdirSync13(stateHome(), { recursive: true });
-    if (existsSync18(path2) && shouldRotate(statSync2(path2).size)) {
+    if (existsSync18(path2) && shouldRotate(statSync3(path2).size)) {
       renameSync7(path2, `${path2}.1`);
     }
     const ts = now();
@@ -16873,11 +17172,11 @@ import { execFileSync as execFileSync8, spawn as spawn4 } from "node:child_proce
 import { dirname as dirname20, resolve as resolve14 } from "node:path";
 import { fileURLToPath as fileURLToPath6 } from "node:url";
 import {
-  closeSync as closeSync2,
-  constants as fsConstants,
+  closeSync as closeSync3,
+  constants as fsConstants2,
   existsSync as existsSync19,
-  openSync as openSync2,
-  readFileSync as readFileSync14,
+  openSync as openSync3,
+  readFileSync as readFileSync15,
   writeSync
 } from "node:fs";
 function statusPhrase(to) {
@@ -17037,13 +17336,13 @@ function decideTtyWrites(n10, clients, prefs) {
 function writeClientTty(write) {
   let fd = null;
   try {
-    fd = openSync2(write.tty, fsConstants.O_WRONLY | fsConstants.O_NOCTTY | fsConstants.O_NONBLOCK);
+    fd = openSync3(write.tty, fsConstants2.O_WRONLY | fsConstants2.O_NOCTTY | fsConstants2.O_NONBLOCK);
     writeSync(fd, write.data);
   } catch {
   } finally {
     if (fd !== null) {
       try {
-        closeSync2(fd);
+        closeSync3(fd);
       } catch {
       }
     }
@@ -17229,7 +17528,7 @@ function readRawConfig() {
   const path2 = appConfigPath();
   if (!existsSync19(path2)) return void 0;
   try {
-    return JSON.parse(readFileSync14(path2, "utf-8"));
+    return JSON.parse(readFileSync15(path2, "utf-8"));
   } catch {
     return void 0;
   }
@@ -17271,7 +17570,7 @@ var init_notify = __esm({
 });
 
 // packages/daemon/src/tui/chrome/notify-state.ts
-import { existsSync as existsSync20, mkdirSync as mkdirSync14, readFileSync as readFileSync15, writeFileSync as writeFileSync12 } from "node:fs";
+import { existsSync as existsSync20, mkdirSync as mkdirSync14, readFileSync as readFileSync16, writeFileSync as writeFileSync12 } from "node:fs";
 import { join as join21 } from "node:path";
 function notifyStatePath() {
   return join21(stateHome(), "notify-state.json");
@@ -17283,10 +17582,10 @@ function serializeLastNotified(map, nowMs) {
   }
   return JSON.stringify({ lastNotified });
 }
-function parseLastNotified(json3, nowMs) {
+function parseLastNotified(json2, nowMs) {
   const out = /* @__PURE__ */ new Map();
   try {
-    const parsed = JSON.parse(json3);
+    const parsed = JSON.parse(json2);
     const raw = parsed?.lastNotified;
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
     for (const [key, ts] of Object.entries(raw)) {
@@ -17303,7 +17602,7 @@ function loadLastNotified(nowMs = Date.now()) {
   const path2 = notifyStatePath();
   if (!existsSync20(path2)) return /* @__PURE__ */ new Map();
   try {
-    return parseLastNotified(readFileSync15(path2, "utf-8"), nowMs);
+    return parseLastNotified(readFileSync16(path2, "utf-8"), nowMs);
   } catch {
     return /* @__PURE__ */ new Map();
   }
@@ -17324,7 +17623,7 @@ var init_notify_state = __esm({
 });
 
 // packages/daemon/src/tui/chrome/snapshot.ts
-import { existsSync as existsSync21, mkdirSync as mkdirSync15, readFileSync as readFileSync16, renameSync as renameSync8, writeFileSync as writeFileSync13 } from "node:fs";
+import { existsSync as existsSync21, mkdirSync as mkdirSync15, readFileSync as readFileSync17, renameSync as renameSync8, writeFileSync as writeFileSync13 } from "node:fs";
 import { homedir as homedir13 } from "node:os";
 import { dirname as dirname21, join as join22 } from "node:path";
 import { z as z66 } from "zod";
@@ -17463,7 +17762,7 @@ function readSnapshot() {
   const path2 = snapshotPath();
   try {
     if (!existsSync21(path2)) return null;
-    const raw = readFileSync16(path2, "utf-8");
+    const raw = readFileSync17(path2, "utf-8");
     if (raw.trim().length === 0) return null;
     const result = FleetSnapshotSchemaZ.safeParse(JSON.parse(raw));
     return result.success ? result.data : null;
@@ -18257,7 +18556,7 @@ __export(launch_exports, {
 });
 import { resolve as resolve15 } from "node:path";
 import { execSync } from "node:child_process";
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 function stripWidgetPanes(rows) {
   return rows.map((row) => ({
     ...row,
@@ -18268,7 +18567,7 @@ function sleepMs(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 function configHash(config2) {
-  return createHash4("sha256").update(JSON.stringify(config2)).digest("hex").slice(0, 12);
+  return createHash5("sha256").update(JSON.stringify(config2)).digest("hex").slice(0, 12);
 }
 function waitForPaneCommand(targetPane, expectedCommands, {
   attempts = 20,
@@ -18328,7 +18627,7 @@ function buildPaneMap(rows, dir, rootPaneId, splitPaneFn) {
   }
   return { paneMap, firstPanesOfRows };
 }
-async function loadLaunchConfig(context, json3) {
+async function loadLaunchConfig(context, json2) {
   const config2 = context.resolved?.launchConfig ?? null;
   if (!config2) {
     outputError(
@@ -18344,7 +18643,7 @@ async function loadLaunchConfig(context, json3) {
       "INVALID_CONFIG"
     );
   }
-  if (context.resolved?.migrationHint && !json3 && !process.env.TMUX_IDE_SUPPRESS_MIGRATION_HINT) {
+  if (context.resolved?.migrationHint && !json2 && !process.env.TMUX_IDE_SUPPRESS_MIGRATION_HINT) {
     console.log(context.resolved.migrationHint);
   }
   return config2;
@@ -18369,14 +18668,14 @@ function launchRuntimeDir(context) {
   return context.configWriteRoot;
 }
 async function launch(targetDir, {
-  json: json3 = false,
+  json: json2 = false,
   attach: attach2 = true,
   sessionName
 } = {}) {
   const inputDir = resolve15(targetDir ?? ".");
   const context = await resolveProjectConfigContext(inputDir);
   const dir = launchRuntimeDir(context);
-  const config2 = await loadLaunchConfig(context, json3);
+  const config2 = await loadLaunchConfig(context, json2);
   const session = sessionName ?? config2.name ?? context.sessionName;
   const headless = config2.orchestrator?.widgets === false;
   const rows = headless ? stripWidgetPanes(config2.rows) : config2.rows;
@@ -18387,7 +18686,7 @@ async function launch(targetDir, {
     const currentHash = configHash(config2);
     const storedHash = getSessionVariable(session, "@config_hash");
     const configChanged = Boolean(storedHash && currentHash !== storedHash);
-    if (json3) {
+    if (json2) {
       console.log(JSON.stringify({ session, running: true, configChanged }));
     } else if (configChanged) {
       console.log(`Session "${session}" is running but workspace config has changed.`);
@@ -18517,13 +18816,13 @@ var init_yaml_io = __esm({
 
 // packages/daemon/src/detect.ts
 import { resolve as resolve16, basename as basename8 } from "node:path";
-import { readFileSync as readFileSync17, existsSync as existsSync22 } from "node:fs";
+import { readFileSync as readFileSync18, existsSync as existsSync22 } from "node:fs";
 function fileExists(dir, name) {
   return existsSync22(resolve16(dir, name));
 }
 function readJson(dir, name) {
   try {
-    return JSON.parse(readFileSync17(resolve16(dir, name), "utf-8"));
+    return JSON.parse(readFileSync18(resolve16(dir, name), "utf-8"));
   } catch {
     return null;
   }
@@ -18585,7 +18884,7 @@ function detectStack(dir) {
     detected.language = detected.language ?? "python";
     detected.reasons.push('Detected Python from "pyproject.toml" or "requirements.txt".');
     try {
-      const pyproject = readFileSync17(resolve16(dir, "pyproject.toml"), "utf-8");
+      const pyproject = readFileSync18(resolve16(dir, "pyproject.toml"), "utf-8");
       if (pyproject.includes("fastapi"))
         pushFramework(detected, "fastapi", 'Found "fastapi" in pyproject.toml.');
       else if (pyproject.includes("django"))
@@ -18672,7 +18971,7 @@ function suggestConfig(dir, detected) {
   bottom.push({ id: "shell", title: "Shell" });
   return config2;
 }
-async function detect(targetDir, { json: json3, write } = {}) {
+async function detect(targetDir, { json: json2, write } = {}) {
   const inputDir = resolve16(targetDir ?? ".");
   const context = write ? await resolveProjectConfigContext(inputDir) : null;
   const dir = context?.configWriteRoot ?? inputDir;
@@ -18680,7 +18979,7 @@ async function detect(targetDir, { json: json3, write } = {}) {
   const suggested = suggestConfig(dir, detected);
   if (write) {
     writeConfig(dir, suggested);
-    if (json3) {
+    if (json2) {
       console.log(JSON.stringify({ detected, suggestedConfig: suggested, written: true }, null, 2));
     } else {
       const desc = detected.frameworks.length > 0 ? detected.frameworks.join(" + ") : detected.language ?? "generic project";
@@ -18692,7 +18991,7 @@ async function detect(targetDir, { json: json3, write } = {}) {
     }
     return;
   }
-  if (json3) {
+  if (json2) {
     console.log(JSON.stringify({ detected, suggestedConfig: suggested }, null, 2));
     return;
   }
@@ -18737,7 +19036,7 @@ __export(skill_sync_exports, {
   syncSkill: () => syncSkill,
   versionMarker: () => versionMarker
 });
-import { existsSync as existsSync24, mkdirSync as mkdirSync17, readFileSync as readFileSync19, writeFileSync as writeFileSync15 } from "node:fs";
+import { existsSync as existsSync24, mkdirSync as mkdirSync17, readFileSync as readFileSync20, writeFileSync as writeFileSync15 } from "node:fs";
 import { homedir as homedir14 } from "node:os";
 import { dirname as dirname23, join as join24 } from "node:path";
 import { fileURLToPath as fileURLToPath8 } from "node:url";
@@ -18775,7 +19074,7 @@ function installedSkillVersion(dir = skillTargetDir()) {
   const file = join24(dir, "SKILL.md");
   if (!existsSync24(file)) return null;
   try {
-    return parseSkillVersion(readFileSync19(file, "utf-8"));
+    return parseSkillVersion(readFileSync20(file, "utf-8"));
   } catch {
     return null;
   }
@@ -18784,10 +19083,10 @@ function syncSkill({
   source = defaultSkillSource(),
   version = getCurrentVersion()
 } = {}) {
-  const rendered = rewriteVersionMarker(readFileSync19(source, "utf-8"), version);
+  const rendered = rewriteVersionMarker(readFileSync20(source, "utf-8"), version);
   const dir = skillTargetDir();
   const target = join24(dir, "SKILL.md");
-  const existing = existsSync24(target) ? readFileSync19(target, "utf-8") : null;
+  const existing = existsSync24(target) ? readFileSync20(target, "utf-8") : null;
   if (existing === rendered) {
     return { action: "unchanged", path: target, to: version };
   }
@@ -18889,11 +19188,11 @@ var init_bootstrap_coordinator = __esm({
         this.cause = options.cause;
       }
     };
-    defaultSleep = (milliseconds) => new Promise((resolve38) => {
+    defaultSleep = (milliseconds) => new Promise((resolve37) => {
       const releaseTimer = acquireRuntimeResource("runtime-timer");
       setTimeout(() => {
         releaseTimer();
-        resolve38();
+        resolve37();
       }, milliseconds);
     });
     defaultPollMs = (poll) => Math.min(25 * 2 ** poll, 200);
@@ -19230,10 +19529,10 @@ async function reconcilePaneSourceCredentialsAtStartup(authority, sessions, time
   const reconciliation = Promise.allSettled(
     uniqueSessions.map((session) => authority.reconcileSessionAsync(session, controller.signal))
   );
-  const deadline = new Promise((resolve38) => {
+  const deadline = new Promise((resolve37) => {
     timeout = setTimeout(() => {
       controller.abort();
-      resolve38("timed-out");
+      resolve37("timed-out");
     }, timeoutMs);
   });
   const result = await Promise.race([reconciliation.then(() => "complete"), deadline]);
@@ -19389,7 +19688,7 @@ var init_pane_source_credentials = __esm({
 
 // packages/daemon/src/lib/cli-action-bridge.ts
 import { createRequire } from "node:module";
-import { randomUUID as randomUUID3 } from "node:crypto";
+import { randomUUID as randomUUID4 } from "node:crypto";
 import { basename as basename10, dirname as dirname25, resolve as resolve24 } from "node:path";
 import { fileURLToPath as fileURLToPath10 } from "node:url";
 import { z as z67 } from "zod";
@@ -19453,7 +19752,7 @@ async function tryDispatchAction(name, input, options = {}) {
   if (!daemon) return null;
   const contract = ActionContractsZ[name];
   const parsedInput = contract.input.parse(input);
-  const operationId = RETRY_SAFE_OWNER_ACTIONS.has(name) ? options.operationId ?? randomUUID3() : null;
+  const operationId = RETRY_SAFE_OWNER_ACTIONS.has(name) ? options.operationId ?? randomUUID4() : null;
   if (operationId && !daemon.ownerToken) {
     return null;
   }
@@ -19679,9 +19978,9 @@ function configDisableTeam(dir) {
     }
   }).config;
 }
-async function config(targetDir, { json: json3, action, args } = {}) {
+async function config(targetDir, { json: json2, action, args } = {}) {
   const dir = resolve25(targetDir ?? ".");
-  if (await tryDispatchConfigAction(dir, { json: json3, action, args: args ?? [] })) return;
+  if (await tryDispatchConfigAction(dir, { json: json2, action, args: args ?? [] })) return;
   const configContext = await resolveProjectConfigContext(dir);
   if (!configContext.configExists) {
     outputError(
@@ -19692,27 +19991,27 @@ async function config(targetDir, { json: json3, action, args } = {}) {
   const configDir = configContext.configWriteRoot;
   switch (action) {
     case "dump":
-      return dumpConfig(configDir, { json: json3 });
+      return dumpConfig(configDir, { json: json2 });
     case "set":
-      return setConfig(configDir, args ?? [], { json: json3 });
+      return setConfig(configDir, args ?? [], { json: json2 });
     case "add-pane":
-      return addPane(configDir, args ?? [], { json: json3 });
+      return addPane(configDir, args ?? [], { json: json2 });
     case "remove-pane":
-      return removePane(configDir, args ?? [], { json: json3 });
+      return removePane(configDir, args ?? [], { json: json2 });
     case "add-row":
-      return addRow(configDir, args ?? [], { json: json3 });
+      return addRow(configDir, args ?? [], { json: json2 });
     case "enable-team":
-      return enableTeam(configDir, args ?? [], { json: json3 });
+      return enableTeam(configDir, args ?? [], { json: json2 });
     case "disable-team":
-      return disableTeam(configDir, { json: json3 });
+      return disableTeam(configDir, { json: json2 });
     default:
-      return dumpConfig(configDir, { json: json3 });
+      return dumpConfig(configDir, { json: json2 });
   }
 }
-function dumpConfig(dir, { json: json3 }) {
+function dumpConfig(dir, { json: json2 }) {
   const cfg = readConfigSafe(dir);
   if (cfg === void 0) return;
-  if (json3) {
+  if (json2) {
     console.log(JSON.stringify(cfg, null, 2));
   } else {
     console.log(JSON.stringify(cfg, null, 2));
@@ -19730,7 +20029,7 @@ function coerceConfigValue(raw) {
   if (/^\d+$/.test(raw)) return parseInt(raw);
   return raw;
 }
-async function tryDispatchConfigAction(dir, { json: json3, action, args }) {
+async function tryDispatchConfigAction(dir, { json: json2, action, args }) {
   try {
     if (action === "set") {
       const [dotpath, ...rest] = args;
@@ -19738,7 +20037,7 @@ async function tryDispatchConfigAction(dir, { json: json3, action, args }) {
       const value = coerceConfigValue(rest.join(" "));
       const result = await tryDispatchAction("config.set", { path: dotpath, value }, { cwd: dir });
       if (!result) return false;
-      if (json3) console.log(JSON.stringify({ ok: true, path: dotpath, value }, null, 2));
+      if (json2) console.log(JSON.stringify({ ok: true, path: dotpath, value }, null, 2));
       else console.log(`Set ${dotpath} = ${JSON.stringify(value)}`);
       return true;
     }
@@ -19754,7 +20053,7 @@ async function tryDispatchConfigAction(dir, { json: json3, action, args }) {
       );
       if (!result) return false;
       const pane = { title, command: command2, size };
-      if (json3) console.log(JSON.stringify({ ok: true, row: rowIndex, pane }, null, 2));
+      if (json2) console.log(JSON.stringify({ ok: true, row: rowIndex, pane }, null, 2));
       else console.log(`Added pane "${title ?? "untitled"}" to row ${rowIndex}`);
       return true;
     }
@@ -19772,7 +20071,7 @@ async function tryDispatchConfigAction(dir, { json: json3, action, args }) {
         { cwd: dir }
       );
       if (!result) return false;
-      if (json3) {
+      if (json2) {
         console.log(JSON.stringify({ ok: true, row: rowIndex, pane: paneIndex, removed }, null, 2));
       } else {
         console.log(`Removed pane ${paneIndex} from row ${rowIndex}`);
@@ -19784,7 +20083,7 @@ async function tryDispatchConfigAction(dir, { json: json3, action, args }) {
       const result = await tryDispatchAction("config.addRow", { size }, { cwd: dir });
       if (!result) return false;
       const row = result.config.rows.length - 1;
-      if (json3) console.log(JSON.stringify({ ok: true, row, size: size ?? null }, null, 2));
+      if (json2) console.log(JSON.stringify({ ok: true, row, size: size ?? null }, null, 2));
       else console.log(`Added row ${row}${size ? ` (${size})` : ""}`);
       return true;
     }
@@ -19793,14 +20092,14 @@ async function tryDispatchConfigAction(dir, { json: json3, action, args }) {
       const result = await tryDispatchAction("config.enableTeam", { name }, { cwd: dir });
       if (!result) return false;
       const teamName = result.config.team?.name ?? name ?? result.config.name ?? "my-team";
-      if (json3) console.log(JSON.stringify({ ok: true, team: result.config.team }, null, 2));
+      if (json2) console.log(JSON.stringify({ ok: true, team: result.config.team }, null, 2));
       else console.log(`Enabled agent team "${teamName}"`);
       return true;
     }
     if (action === "disable-team") {
       const result = await tryDispatchAction("config.disableTeam", {}, { cwd: dir });
       if (!result) return false;
-      if (json3) console.log(JSON.stringify({ ok: true, disabled: true }, null, 2));
+      if (json2) console.log(JSON.stringify({ ok: true, disabled: true }, null, 2));
       else console.log("Disabled agent team");
       return true;
     }
@@ -19809,7 +20108,7 @@ async function tryDispatchConfigAction(dir, { json: json3, action, args }) {
   }
   return false;
 }
-function setConfig(dir, args, { json: json3 }) {
+function setConfig(dir, args, { json: json2 }) {
   const [dotpath, ...rest] = args;
   if (!dotpath || rest.length === 0) {
     outputError("Usage: tmux-ide config set <dotpath> <value>", "USAGE");
@@ -19819,13 +20118,13 @@ function setConfig(dir, args, { json: json3 }) {
   withConfig(dir, (cfg) => {
     setByPath(cfg, dotpath, value);
   });
-  if (json3) {
+  if (json2) {
     console.log(JSON.stringify({ ok: true, path: dotpath, value }, null, 2));
   } else {
     console.log(`Set ${dotpath} = ${JSON.stringify(value)}`);
   }
 }
-function addPane(dir, args, { json: json3 }) {
+function addPane(dir, args, { json: json2 }) {
   const { row, title, command: command2, size } = parseNamedArgs(args);
   if (row === void 0) {
     outputError(
@@ -19855,13 +20154,13 @@ function addPane(dir, args, { json: json3 }) {
     }
     cfg.rows[rowIdx].panes.push(pane);
   });
-  if (json3) {
+  if (json2) {
     console.log(JSON.stringify({ ok: true, row: rowIdx, pane }, null, 2));
   } else {
     console.log(`Added pane "${title ?? "untitled"}" to row ${rowIdx}`);
   }
 }
-function removePane(dir, args, { json: json3 }) {
+function removePane(dir, args, { json: json2 }) {
   const { row, pane } = parseNamedArgs(args);
   if (row === void 0 || pane === void 0) {
     outputError("Usage: tmux-ide config remove-pane --row <N> --pane <M>", "USAGE");
@@ -19886,13 +20185,13 @@ function removePane(dir, args, { json: json3 }) {
     }
     removed = cfg.rows[rowIdx].panes.splice(paneIdx, 1)[0];
   });
-  if (json3) {
+  if (json2) {
     console.log(JSON.stringify({ ok: true, row: rowIdx, pane: paneIdx, removed }, null, 2));
   } else {
     console.log(`Removed pane ${paneIdx} ("${removed?.title ?? "untitled"}") from row ${rowIdx}`);
   }
 }
-function addRow(dir, args, { json: json3 }) {
+function addRow(dir, args, { json: json2 }) {
   const { size } = parseNamedArgs(args);
   let rowIdx;
   withConfig(dir, (cfg) => {
@@ -19905,13 +20204,13 @@ function addRow(dir, args, { json: json3 }) {
     cfg.rows.push(row);
     rowIdx = cfg.rows.length - 1;
   });
-  if (json3) {
+  if (json2) {
     console.log(JSON.stringify({ ok: true, row: rowIdx, size: size ?? null }, null, 2));
   } else {
     console.log(`Added row ${rowIdx}${size ? ` (${size})` : ""}`);
   }
 }
-function enableTeam(dir, args, { json: json3 }) {
+function enableTeam(dir, args, { json: json2 }) {
   const { name } = parseNamedArgs(args);
   let teamName;
   let result;
@@ -19940,13 +20239,13 @@ function enableTeam(dir, args, { json: json3 }) {
     }
     result = { team: cfg.team, roles: summarizeRoles(cfg) };
   });
-  if (json3) {
+  if (json2) {
     console.log(JSON.stringify({ ok: true, ...result }, null, 2));
   } else {
     console.log(`Enabled agent team "${teamName}"`);
   }
 }
-function disableTeam(dir, { json: json3 }) {
+function disableTeam(dir, { json: json2 }) {
   withConfig(dir, (cfg) => {
     if (cfg.rows !== void 0 && !Array.isArray(cfg.rows)) {
       outputError("Invalid project config: 'rows' must be an array", "INVALID_CONFIG");
@@ -19960,7 +20259,7 @@ function disableTeam(dir, { json: json3 }) {
       }
     }
   });
-  if (json3) {
+  if (json2) {
     console.log(JSON.stringify({ ok: true, disabled: true }, null, 2));
   } else {
     console.log("Disabled agent team");
@@ -20010,7 +20309,7 @@ var init_config = __esm({
 
 // packages/daemon/src/restart.ts
 import { resolve as resolve27 } from "node:path";
-async function restart(targetDir, { json: json3, attach: attach2 } = {}) {
+async function restart(targetDir, { json: json2, attach: attach2 } = {}) {
   const dir = resolve27(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
   stopSessionMonitor(session);
@@ -20018,7 +20317,7 @@ async function restart(targetDir, { json: json3, attach: attach2 } = {}) {
   if (result.stopped) {
     console.log(`Stopped session "${session}"`);
   }
-  await launch(dir, { json: json3, attach: attach2 });
+  await launch(dir, { json: json2, attach: attach2 });
 }
 var init_restart = __esm({
   "packages/daemon/src/restart.ts"() {
@@ -20128,7 +20427,7 @@ var init_pane_comms = __esm({
 
 // packages/daemon/src/lib/workspace-registry.ts
 import { EventEmitter as EventEmitter2 } from "node:events";
-import { existsSync as existsSync26, mkdirSync as mkdirSync18, readFileSync as readFileSync20, renameSync as renameSync9, writeFileSync as writeFileSync16 } from "node:fs";
+import { existsSync as existsSync26, mkdirSync as mkdirSync18, readFileSync as readFileSync21, renameSync as renameSync9, writeFileSync as writeFileSync16 } from "node:fs";
 import { dirname as dirname27, join as join25 } from "node:path";
 import { z as z68 } from "zod";
 function getDefaultWorkspaceRegistry() {
@@ -20302,7 +20601,7 @@ var init_workspace_registry = __esm({
         if (!existsSync26(path2)) return [];
         let parsed;
         try {
-          parsed = JSON.parse(readFileSync20(path2, "utf-8"));
+          parsed = JSON.parse(readFileSync21(path2, "utf-8"));
         } catch {
           return [];
         }
@@ -20332,7 +20631,7 @@ var init_workspace_registry = __esm({
 });
 
 // packages/daemon/src/send.ts
-import { randomUUID as randomUUID4 } from "node:crypto";
+import { randomUUID as randomUUID5 } from "node:crypto";
 import { execFileSync as execFileSync11 } from "node:child_process";
 import { resolve as resolve28, join as join26 } from "node:path";
 import { existsSync as existsSync27, mkdirSync as mkdirSync19, writeFileSync as writeFileSync17 } from "node:fs";
@@ -20341,7 +20640,7 @@ function writeDispatchFile(dir, paneId, message) {
   const dispatchDir = join26(dir, ".tasks", "dispatch");
   if (!existsSync27(dispatchDir)) mkdirSync19(dispatchDir, { recursive: true });
   const paneSlug = paneId.replace("%", "");
-  const filename = `send-${paneSlug}-${Date.now()}-${randomUUID4().slice(0, 8)}.md`;
+  const filename = `send-${paneSlug}-${Date.now()}-${randomUUID5().slice(0, 8)}.md`;
   const filePath = join26(dispatchDir, filename);
   writeFileSync17(filePath, message);
   return { filePath, triggerCmd: `Read and execute: .tasks/dispatch/${filename}` };
@@ -20479,7 +20778,7 @@ async function deliverMessageThroughDaemon(opts) {
   const prepared = prepareMessage(opts.message, busyStatus);
   const dispatch = opts.noEnter ? null : writeDispatchFile(opts.dir, pane.id, prepared);
   const actualText = dispatch?.triggerCmd ?? prepared;
-  const operationId = randomUUID4();
+  const operationId = randomUUID5();
   const sourceSemanticPaneId = cliSourceSemanticPaneId(opts.session);
   const sourcePaneCredential = cliPaneSourceCredential();
   const outcome = await tryDispatchAction(
@@ -20518,7 +20817,7 @@ async function deliverMessageThroughDaemon(opts) {
 async function send(targetDir, opts) {
   const dir = resolve28(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
-  const { json: json3, to: target, message: rawMessage, noEnter } = opts;
+  const { json: json2, to: target, message: rawMessage, noEnter } = opts;
   if (!target) {
     throw new IdeError("Missing target. Usage: tmux-ide send <target> <message>", {
       code: "USAGE"
@@ -20532,7 +20831,7 @@ async function send(targetDir, opts) {
   const result = await deliverMessageThroughDaemon({ session, target, message: rawMessage, noEnter, dir }) ?? deliverMessage({ session, target, message: rawMessage, noEnter, dir });
   const { message, busyStatus } = result;
   const pane = result.target;
-  if (json3) {
+  if (json2) {
     console.log(JSON.stringify(result, null, 2));
     return;
   }
@@ -20737,7 +21036,7 @@ var init_MonotonicPtyInput = __esm({
 });
 
 // packages/daemon/src/terminal/NodePtyAdapter.ts
-import { chmodSync as chmodSync4, existsSync as existsSync28, statSync as statSync3 } from "node:fs";
+import { chmodSync as chmodSync4, existsSync as existsSync28, statSync as statSync4 } from "node:fs";
 import { dirname as dirname28, join as join27 } from "node:path";
 import { createRequire as createRequire2 } from "node:module";
 import * as pty from "node-pty";
@@ -20887,7 +21186,7 @@ var init_NodePtyAdapter = __esm({
       boundedInputLimits;
       constructor(options = {}) {
         this.spawnPty = options.spawnPty ?? pty.spawn;
-        this.statCwd = options.statCwd ?? statSync3;
+        this.statCwd = options.statCwd ?? statSync4;
         this.skipHelperEnsure = options.skipHelperEnsure ?? false;
         this.boundedInputLimits = validatePtyInputLimits(
           options.boundedInputLimits ?? DEFAULT_PTY_INPUT_LIMITS
@@ -21952,12 +22251,12 @@ function parseAgentStateFacts(raw) {
   return result;
 }
 function execTmux(args) {
-  return new Promise((resolve38) => {
+  return new Promise((resolve37) => {
     execFile4(
       "tmux",
       [...args],
       { encoding: "utf8", maxBuffer: 1024 * 1024 },
-      (error, stdout) => resolve38(error ? null : stdout.trim())
+      (error, stdout) => resolve37(error ? null : stdout.trim())
     );
   });
 }
@@ -22020,8 +22319,8 @@ var init_daemon_fleet_facts_observer = __esm({
           }
         }
         let resolveReady;
-        const ready = new Promise((resolve38) => {
-          resolveReady = resolve38;
+        const ready = new Promise((resolve37) => {
+          resolveReady = resolve37;
         });
         const waiter = { demands: unique, resolve: resolveReady };
         this.#waiters.add(waiter);
@@ -22273,9 +22572,9 @@ var init_daemon_fleet_facts_observer = __esm({
 });
 
 // packages/daemon/src/lib/semantic-resource-id.ts
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash6 } from "node:crypto";
 function semanticResourceDigest(value) {
-  return createHash5("sha256").update(value).digest("hex").slice(0, 20);
+  return createHash6("sha256").update(value).digest("hex").slice(0, 20);
 }
 function semanticResourceId(namespace, value) {
   return `${namespace}.${semanticResourceDigest(value)}`;
@@ -22287,10 +22586,10 @@ var init_semantic_resource_id = __esm({
 });
 
 // packages/daemon/src/command-center/resources/fleet-catalog.ts
-import { createHash as createHash6 } from "node:crypto";
+import { createHash as createHash7 } from "node:crypto";
 import { basename as basename11 } from "node:path";
 function digest(value) {
-  return createHash6("sha256").update(value).digest("hex").slice(0, 20);
+  return createHash7("sha256").update(value).digest("hex").slice(0, 20);
 }
 function paneIncarnationKey(pane) {
   return pane.semanticPaneId ? `semantic:${pane.semanticPaneId}\0${pane.incarnation}` : `runtime:${pane.runtimePaneId}\0${pane.incarnation}`;
@@ -22559,10 +22858,29 @@ function harnessForPane(pane) {
   if (executable.includes("claude")) return "claude-code";
   return "custom";
 }
+function isGenericPaneLabel(value) {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  return normalized.length === 0 || GENERIC_PANE_LABELS.has(normalized);
+}
+function resolvedAgentLabel(pane, presentation, index) {
+  if (presentation.displayName !== void 0) {
+    return label(presentation.displayName, `Agent ${index + 1}`);
+  }
+  if (!isGenericPaneLabel(pane.name)) return label(pane.name, `Agent ${index + 1}`);
+  const harness = harnessForPane(pane);
+  if (harness === "codex") return "Codex";
+  if (harness === "claude-code") return "Claude Code";
+  if (!isGenericPaneLabel(pane.title) && !isHostNameTitle(pane.title, hostname())) {
+    return label(pane.title, `Agent ${index + 1}`);
+  }
+  return `Agent ${index + 1}`;
+}
 function isAgentPane(pane) {
   if (pane.agentStateRaw != null && AGENT_STATE_STAMP.test(pane.agentStateRaw.trim())) {
     return true;
   }
+  const detectedKind = pane.agentKind?.trim().toLowerCase();
+  if (detectedKind && detectedKind !== "shell") return true;
   const metadata = `${pane.currentCommand} ${pane.type ?? ""}`.toLowerCase();
   return metadata.includes("codex") || metadata.includes("claude") || metadata.includes("opencode") || pane.type === "agent" || pane.role === "lead" || pane.role === "teammate" || pane.role === "planner" || pane.role === "validator" || pane.role === "researcher";
 }
@@ -22671,8 +22989,9 @@ function projectApplicationShellResourceV1Core(session, paneIds, nowSec) {
       {
         id: semanticResourceId("agent", paneId),
         // A fresh authority stamp's sanitized display name outranks the raw pane
-        // title; both pass through label()'s control-strip/clamp before the wire.
-        name: label(presentation.displayName ?? pane.name ?? pane.title, `Agent ${index + 1}`),
+        // title. Process-tree identity also replaces provisional promotion
+        // labels such as `Terminal` with the canonical harness name.
+        name: resolvedAgentLabel(pane, presentation, index),
         harness: harnessForPane(pane),
         activity: presentation.activity,
         paneId,
@@ -22758,10 +23077,13 @@ function projectApplicationShellResource(session, opts = {}) {
   const focusedPaneId = core.focus.appFocusedPaneId;
   const terminalResources = session.panes.map((pane, index) => {
     const identity = identities[index];
+    const agent = core.workspace.sidebar.agents.find(
+      ({ paneId }) => paneId === identity.resourceId
+    );
     return {
       id: identity.resourceId,
       title: label(
-        pane.name ?? (isHostNameTitle(pane.title, hostname()) ? null : pane.title),
+        agent?.name ?? pane.name ?? (isHostNameTitle(pane.title, hostname()) ? null : pane.title),
         `Terminal ${index + 1}`
       ),
       kind: isAgentPane(pane) ? "agent" : "terminal",
@@ -22874,7 +23196,7 @@ function projectDeprecatedStandaloneApplicationShellResourceV1(session) {
     )
   );
 }
-var AGENT_STATE_STAMP;
+var GENERIC_PANE_LABELS, AGENT_STATE_STAMP;
 var init_application_shell2 = __esm({
   "packages/daemon/src/command-center/resources/application-shell.ts"() {
     "use strict";
@@ -22883,6 +23205,7 @@ var init_application_shell2 = __esm({
     init_classify();
     init_agent_resolution();
     init_fleet_catalog2();
+    GENERIC_PANE_LABELS = /* @__PURE__ */ new Set(["shell", "terminal", "tmux"]);
     AGENT_STATE_STAMP = /^(?:working|blocked|done|idle):\d+$/u;
   }
 });
@@ -22920,17 +23243,17 @@ var init_project_runtime_errors = __esm({
 });
 
 // packages/daemon/src/lib/project-runtime-repository.ts
-import { createHash as createHash7, randomUUID as randomUUID5 } from "node:crypto";
+import { createHash as createHash8, randomUUID as randomUUID6 } from "node:crypto";
 import {
-  closeSync as closeSync3,
+  closeSync as closeSync4,
   fsyncSync,
   lstatSync as lstatSync4,
   mkdirSync as mkdirSync20,
-  openSync as openSync3,
-  readFileSync as readFileSync21,
+  openSync as openSync4,
+  readFileSync as readFileSync22,
   renameSync as renameSync10,
   rmdirSync,
-  unlinkSync as unlinkSync2,
+  unlinkSync as unlinkSync3,
   writeFileSync as writeFileSync18
 } from "node:fs";
 import { isAbsolute as isAbsolute6, join as join28, relative as relative3, resolve as resolve29, sep as sep3, win32 } from "node:path";
@@ -22969,8 +23292,8 @@ function parseDocumentEnvelope(path2, raw) {
     payload: cloneJson(value.payload)
   };
 }
-function sha256(value) {
-  return createHash7("sha256").update(value).digest("hex");
+function sha2562(value) {
+  return createHash8("sha256").update(value).digest("hex");
 }
 function encodeUtf8(value) {
   return Buffer.from(value, "utf-8");
@@ -23161,7 +23484,7 @@ var init_project_runtime_repository = __esm({
     EVENT_ENVELOPE_VERSION = 1;
     SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
     PROJECT_RUNTIME_WRITER_LOCK_FILENAME = "workspace/.state.lock";
-    PROJECT_RUNTIME_PROCESS_INSTANCE_ID = randomUUID5();
+    PROJECT_RUNTIME_PROCESS_INSTANCE_ID = randomUUID6();
     InvalidRuntimePathError = class extends ProjectRuntimeRepositoryError {
       path;
       constructor(path2, reason) {
@@ -23262,29 +23585,29 @@ var init_project_runtime_repository = __esm({
       }
     };
     defaultIo2 = {
-      readFile: (path2) => readFileSync21(path2, "utf-8"),
+      readFile: (path2) => readFileSync22(path2, "utf-8"),
       writeFile: (path2, data) => writeFileSync18(path2, data, "utf-8"),
-      readBytes: (path2) => readFileSync21(path2),
+      readBytes: (path2) => readFileSync22(path2),
       writeBytes: (path2, data) => writeFileSync18(path2, data),
       fsyncFile: (path2) => {
-        const descriptor2 = openSync3(path2, "r");
+        const descriptor2 = openSync4(path2, "r");
         try {
           fsyncSync(descriptor2);
         } finally {
-          closeSync3(descriptor2);
+          closeSync4(descriptor2);
         }
       },
       fsyncDirectory: (path2) => {
-        const descriptor2 = openSync3(path2, "r");
+        const descriptor2 = openSync4(path2, "r");
         try {
           fsyncSync(descriptor2);
         } finally {
-          closeSync3(descriptor2);
+          closeSync4(descriptor2);
         }
       },
       mkdir: (path2) => mkdirSync20(path2, { recursive: true }),
       rename: renameSync10,
-      unlink: unlinkSync2,
+      unlink: unlinkSync3,
       isSymbolicLink: (path2) => {
         try {
           return lstatSync4(path2).isSymbolicLink();
@@ -23294,7 +23617,7 @@ var init_project_runtime_repository = __esm({
         }
       },
       now: () => /* @__PURE__ */ new Date(),
-      randomId: randomUUID5
+      randomId: randomUUID6
     };
     tempCounter = 0;
     ProjectRuntimeRepository = class {
@@ -23443,7 +23766,7 @@ var init_project_runtime_repository = __esm({
       documentRecoveryToken(path2) {
         const target = this.resolveRuntimePath(path2);
         const raw = this.readOptionalBytes(target, path2);
-        return raw === null ? null : sha256(raw);
+        return raw === null ? null : sha2562(raw);
       }
       /**
        * Explicit destructive recovery. The exact prior bytes are atomically copied
@@ -23470,7 +23793,7 @@ var init_project_runtime_repository = __esm({
         const target = this.resolveRuntimePath(path2);
         const raw = this.readOptionalBytes(target, path2);
         if (raw === null) throw new MissingRuntimeDocumentError(path2);
-        const actualToken = sha256(raw);
+        const actualToken = sha2562(raw);
         if (actualToken !== options.expectedRawSha256) {
           throw new RevisionConflictError(path2, null, null);
         }
@@ -23501,7 +23824,7 @@ var init_project_runtime_repository = __esm({
           path: path2,
           backupPath,
           previousRawSha256: actualToken,
-          replacementRawSha256: sha256(replacement),
+          replacementRawSha256: sha2562(replacement),
           replacementRevision: envelope.revision,
           reason,
           recoveredAt: recoveredAt.toISOString(),
@@ -23526,7 +23849,7 @@ var init_project_runtime_repository = __esm({
           true
         );
         const recheckedRaw = this.readOptionalBytes(target, path2);
-        if (recheckedRaw === null || sha256(recheckedRaw) !== actualToken) {
+        if (recheckedRaw === null || sha2562(recheckedRaw) !== actualToken) {
           throw new RevisionConflictError(path2, null, null);
         }
         this.atomicWriteBytes(target, replacement, path2, true);
@@ -23702,7 +24025,7 @@ var init_project_runtime_repository = __esm({
         assertLockDirectory(this.runtimeRoot);
         this.io.mkdir(lockDirectory);
         assertLockDirectory(lockDirectory);
-        const token = randomUUID5();
+        const token = randomUUID6();
         const owner = `${JSON.stringify({
           version: 1,
           token,
@@ -23717,11 +24040,11 @@ var init_project_runtime_repository = __esm({
           let descriptor2 = null;
           let created = false;
           try {
-            descriptor2 = openSync3(lockPath, "wx", 384);
+            descriptor2 = openSync4(lockPath, "wx", 384);
             created = true;
             writeFileSync18(descriptor2, owner, "utf-8");
             fsyncSync(descriptor2);
-            closeSync3(descriptor2);
+            closeSync4(descriptor2);
             descriptor2 = null;
             const installed = lstatSync4(lockPath);
             installedIdentity = { device: installed.dev, inode: installed.ino };
@@ -23730,13 +24053,13 @@ var init_project_runtime_repository = __esm({
           } catch (error) {
             if (descriptor2 !== null) {
               try {
-                closeSync3(descriptor2);
+                closeSync4(descriptor2);
               } catch {
               }
             }
             if (created) {
               try {
-                unlinkSync2(lockPath);
+                unlinkSync3(lockPath);
                 this.io.fsyncDirectory(lockDirectory);
               } catch {
               }
@@ -23756,7 +24079,7 @@ var init_project_runtime_repository = __esm({
             if (!installedIdentity || before.dev !== installedIdentity.device || before.ino !== installedIdentity.inode || !before.isFile() || before.isSymbolicLink()) {
               throw new Error("writer lock filesystem identity changed before release");
             }
-            const currentOwner = readFileSync21(lockPath, "utf-8");
+            const currentOwner = readFileSync22(lockPath, "utf-8");
             const afterRead = lstatSync4(lockPath);
             const parsed = JSON.parse(currentOwner);
             if (afterRead.dev !== before.dev || afterRead.ino !== before.ino || parsed.token !== token || parsed.processInstanceId !== PROJECT_RUNTIME_PROCESS_INSTANCE_ID) {
@@ -23768,7 +24091,7 @@ var init_project_runtime_repository = __esm({
             if (moved.dev !== before.dev || moved.ino !== before.ino) {
               throw new Error("writer lock filesystem identity changed while releasing");
             }
-            unlinkSync2(releasedPath);
+            unlinkSync3(releasedPath);
             this.io.fsyncDirectory(lockDirectory);
           } catch (error) {
             throw new ProjectRuntimeIoError(PROJECT_RUNTIME_WRITER_LOCK_FILENAME, "release", error);
@@ -23781,7 +24104,7 @@ var init_project_runtime_repository = __esm({
         this.io.fsyncDirectory(resolve29(recoveryRoot, ".."));
         for (let attempt = 0; attempt < 16; attempt += 1) {
           const operationId = safeTempId(this.io.randomId());
-          const relativePath = `recovery/${sha256(path2)}-${rawToken}-${operationId}`;
+          const relativePath = `recovery/${sha2562(path2)}-${rawToken}-${operationId}`;
           const target = this.resolveRuntimePath(relativePath);
           try {
             mkdirSync20(target, { mode: 448 });
@@ -24992,7 +25315,7 @@ var init_auth_token = __esm({
 });
 
 // packages/daemon/src/lib/app-settings.ts
-import { existsSync as existsSync29, mkdirSync as mkdirSync21, readFileSync as readFileSync22, renameSync as renameSync11, writeFileSync as writeFileSync19 } from "node:fs";
+import { existsSync as existsSync29, mkdirSync as mkdirSync21, readFileSync as readFileSync23, renameSync as renameSync11, writeFileSync as writeFileSync19 } from "node:fs";
 import { dirname as dirname29, join as join30 } from "node:path";
 import { homedir as homedir15 } from "node:os";
 function settingsDir() {
@@ -25014,7 +25337,7 @@ function readAppSettings() {
   const path2 = appSettingsPath();
   if (!existsSync29(path2)) return structuredClone(DEFAULT_SETTINGS);
   try {
-    return normalizeSettings(JSON.parse(readFileSync22(path2, "utf-8")));
+    return normalizeSettings(JSON.parse(readFileSync23(path2, "utf-8")));
   } catch {
     return structuredClone(DEFAULT_SETTINGS);
   }
@@ -25208,7 +25531,7 @@ var init_project_readiness = __esm({
 
 // packages/daemon/src/lib/project-readiness-probe.ts
 import { execFile as execFile5 } from "node:child_process";
-import { accessSync as accessSync2, constants as constants3, existsSync as existsSync30, realpathSync as realpathSync6, statSync as statSync5 } from "node:fs";
+import { accessSync as accessSync3, constants as constants3, existsSync as existsSync30, realpathSync as realpathSync6, statSync as statSync6 } from "node:fs";
 import { delimiter, isAbsolute as isAbsolute8, basename as basename13, resolve as resolve31, sep as sep5 } from "node:path";
 function errorCode(error) {
   if (!error || typeof error !== "object" || !("code" in error)) return void 0;
@@ -25521,7 +25844,7 @@ var init_project_readiness_probe = __esm({
       platform: () => ({ os: process.platform, arch: process.arch }),
       inspectPath: (path2) => {
         try {
-          return statSync5(path2).isDirectory() ? "directory" : "other";
+          return statSync6(path2).isDirectory() ? "directory" : "other";
         } catch (error) {
           const code = errorCode(error);
           return code === "ENOENT" || code === "ENOTDIR" ? "missing" : "unknown";
@@ -25531,7 +25854,7 @@ var init_project_readiness_probe = __esm({
       realpath: realpathSync6,
       inspectExecutable: (path2) => {
         try {
-          return statSync5(path2).isFile() ? "file" : "other";
+          return statSync6(path2).isFile() ? "file" : "other";
         } catch (error) {
           const code = errorCode(error);
           return code === "ENOENT" || code === "ENOTDIR" ? "missing" : "unknown";
@@ -25539,7 +25862,7 @@ var init_project_readiness_probe = __esm({
       },
       isExecutable: (path2) => {
         try {
-          accessSync2(path2, constants3.X_OK);
+          accessSync3(path2, constants3.X_OK);
           return "available";
         } catch (error) {
           const code = errorCode(error);
@@ -25585,8 +25908,147 @@ var init_project_readiness_probe = __esm({
   }
 });
 
+// packages/daemon/src/terminal/protocol/pane-display-name.ts
+function boundedName(value) {
+  const name = value?.trim() ?? "";
+  return name.length > 0 && name.length <= 80 && !/[\0\r\n\t]/u.test(name) ? name : null;
+}
+function commandBasename(value) {
+  const command2 = boundedName(value);
+  if (!command2) return null;
+  const basename20 = command2.split("/").at(-1)?.trim() ?? "";
+  return basename20.length > 0 ? basename20 : null;
+}
+function stableHash(value) {
+  let hash = 2166136261;
+  for (const character of value) {
+    hash ^= character.codePointAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+function memorablePaneName(seed) {
+  const first = stableHash(seed);
+  const second = stableHash(`${seed}:noun`);
+  return `${ADJECTIVES[first % ADJECTIVES.length]}-${NOUNS[second % NOUNS.length]}`;
+}
+function meaningfulTitle(value, currentCommand) {
+  const title = boundedName(value);
+  if (!title || GENERIC_TITLES.has(title.toLowerCase())) return null;
+  if (title.startsWith("/") || title.startsWith("~") || title.includes("@")) return null;
+  if (currentCommand && GENERIC_SHELLS.has(currentCommand.toLowerCase()) && /^[a-z0-9][a-z0-9.-]*\.[a-z0-9-]{2,}$/iu.test(title))
+    return null;
+  return title;
+}
+function resolvePaneDisplayName(input) {
+  const configuredName = boundedName(input.configuredName);
+  const configuredSource = input.configuredNameSource?.trim().toLowerCase() ?? "";
+  const generatedName = memorablePaneName(input.semanticPaneId);
+  const legacyConfiguredName = configuredName && configuredName !== generatedName && !GENERIC_TITLES.has(configuredName.toLowerCase()) ? configuredName : null;
+  if (configuredName && configuredSource === "manual")
+    return { name: configuredName, source: "manual" };
+  if (configuredName && (configuredSource === "agent" || input.paneType === "agent"))
+    return { name: configuredName, source: "agent" };
+  if (legacyConfiguredName && configuredSource !== "generated")
+    return { name: legacyConfiguredName, source: "manual" };
+  const command2 = commandBasename(input.currentCommand);
+  if (command2 && !GENERIC_SHELLS.has(command2.toLowerCase()))
+    return { name: command2, source: "process" };
+  const title = meaningfulTitle(input.title, command2);
+  if (title) return { name: title, source: "title" };
+  return {
+    name: configuredName && configuredSource === "generated" ? configuredName : generatedName,
+    source: "generated"
+  };
+}
+var ADJECTIVES, NOUNS, GENERIC_SHELLS, GENERIC_TITLES;
+var init_pane_display_name = __esm({
+  "packages/daemon/src/terminal/protocol/pane-display-name.ts"() {
+    "use strict";
+    ADJECTIVES = Object.freeze([
+      "amber",
+      "brave",
+      "bright",
+      "calm",
+      "clever",
+      "cosmic",
+      "curious",
+      "daring",
+      "eager",
+      "electric",
+      "gentle",
+      "golden",
+      "happy",
+      "lively",
+      "lucky",
+      "merry",
+      "nimble",
+      "patient",
+      "quiet",
+      "rapid",
+      "shiny",
+      "steady",
+      "stellar",
+      "swift",
+      "talented",
+      "tidy",
+      "vivid",
+      "warm",
+      "witty",
+      "zesty"
+    ]);
+    NOUNS = Object.freeze([
+      "badger",
+      "beacon",
+      "comet",
+      "condor",
+      "coral",
+      "dolphin",
+      "falcon",
+      "fern",
+      "firefly",
+      "gecko",
+      "harbor",
+      "heron",
+      "jaguar",
+      "lantern",
+      "lemur",
+      "lynx",
+      "meteor",
+      "nebula",
+      "octopus",
+      "otter",
+      "panda",
+      "phoenix",
+      "puffin",
+      "quasar",
+      "raven",
+      "redwood",
+      "satellite",
+      "sparrow",
+      "toucan",
+      "willow"
+    ]);
+    GENERIC_SHELLS = /* @__PURE__ */ new Set([
+      "bash",
+      "dash",
+      "elvish",
+      "fish",
+      "ksh",
+      "nu",
+      "pwsh",
+      "sh",
+      "tcsh",
+      "tmux",
+      "xonsh",
+      "zsh"
+    ]);
+    GENERIC_TITLES = /* @__PURE__ */ new Set(["shell", "terminal", "tmux"]);
+  }
+});
+
 // packages/daemon/src/lib/mission-repository.ts
-import { randomUUID as randomUUID6 } from "node:crypto";
+import { randomUUID as randomUUID7 } from "node:crypto";
 function replayMissionEvents(events) {
   const state = { sequence: 0, missions: {} };
   for (const runtimeEvent of events) {
@@ -26068,7 +26530,7 @@ function pushUnique(values2, value) {
   if (!values2.includes(value)) values2.push(value);
 }
 function makeId(prefix) {
-  return `${prefix}_${randomUUID6()}`;
+  return `${prefix}_${randomUUID7()}`;
 }
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -26550,18 +27012,22 @@ var init_mission_repository = __esm({
 
 // packages/daemon/src/lib/workspace-pane-creation.ts
 import { execFile as execFile6 } from "node:child_process";
-import { accessSync as accessSync3, constants as constants4, realpathSync as realpathSync7, statSync as statSync6 } from "node:fs";
+import { accessSync as accessSync4, constants as constants4, realpathSync as realpathSync7, statSync as statSync7 } from "node:fs";
 import { delimiter as delimiter2, isAbsolute as isAbsolute9, join as join31, relative as relative4, sep as sep6 } from "node:path";
+function prepareWorkspaceTerminalColorEnvironment(runTmux2, sessionName) {
+  runTmux2(["set-environment", "-u", "-t", `=${sessionName}`, "NO_COLOR"]);
+  runTmux2(["set-environment", "-t", `=${sessionName}`, "COLORTERM", "truecolor"]);
+}
 function canonicalProjectDir(path2) {
   const canonical = realpathSync7(path2);
-  if (!statSync6(canonical).isDirectory()) throw new Error("project root is not a directory");
+  if (!statSync7(canonical).isDirectory()) throw new Error("project root is not a directory");
   return canonical;
 }
 function canonicalWorkspaceFile(workspace, canonicalRoot, candidate, source) {
   let canonicalConfig;
   try {
     canonicalConfig = realpathSync7(candidate);
-    if (!statSync6(canonicalConfig).isFile()) throw new Error("config is not a file");
+    if (!statSync7(canonicalConfig).isFile()) throw new Error("config is not a file");
   } catch (cause) {
     throw new WorkspacePaneCreationError(
       "workspace_unavailable",
@@ -26605,9 +27071,9 @@ function resolveTmuxExecutable() {
   for (const candidate of candidates) {
     try {
       if (!isAbsolute9(candidate)) continue;
-      accessSync3(candidate, constants4.X_OK);
+      accessSync4(candidate, constants4.X_OK);
       const canonical = realpathSync7(candidate);
-      if (statSync6(canonical).isFile()) return canonical;
+      if (statSync7(canonical).isFile()) return canonical;
     } catch {
     }
   }
@@ -26657,8 +27123,8 @@ function resolveWorkspacePaneTmuxAuthority() {
 }
 function createPinnedWorkspaceTmuxRunner(authority) {
   const executablePath = realpathSync7(authority.executablePath);
-  accessSync3(executablePath, constants4.X_OK);
-  if (!isAbsolute9(executablePath) || !statSync6(executablePath).isFile()) {
+  accessSync4(executablePath, constants4.X_OK);
+  if (!isAbsolute9(executablePath) || !statSync7(executablePath).isFile()) {
     throw new TypeError("Pinned tmux executable is invalid.");
   }
   const socketIdentity = authority.socketSelector.kind === "path" ? captureUnixSocketIdentity(authority.socketSelector.path) : null;
@@ -26680,8 +27146,8 @@ function createPinnedWorkspaceTmuxRunner(authority) {
 }
 function createPinnedWorkspaceTmuxAsyncRunner(authority) {
   const executablePath = realpathSync7(authority.executablePath);
-  accessSync3(executablePath, constants4.X_OK);
-  if (!isAbsolute9(executablePath) || !statSync6(executablePath).isFile()) {
+  accessSync4(executablePath, constants4.X_OK);
+  if (!isAbsolute9(executablePath) || !statSync7(executablePath).isFile()) {
     throw new TypeError("Pinned tmux executable is invalid.");
   }
   const socketIdentity = authority.socketSelector.kind === "path" ? captureUnixSocketIdentity(authority.socketSelector.path) : null;
@@ -26691,7 +27157,7 @@ function createPinnedWorkspaceTmuxAsyncRunner(authority) {
   const environment = Object.freeze(tmuxClientEnvironment(process.env));
   return (args, signal) => {
     const selector = socketIdentity ? ["-S", revalidateUnixSocketIdentity(socketIdentity)] : socketArgv;
-    return new Promise((resolve38, reject) => {
+    return new Promise((resolve37, reject) => {
       execFile6(
         executablePath,
         [...selector, ...args],
@@ -26705,7 +27171,7 @@ function createPinnedWorkspaceTmuxAsyncRunner(authority) {
         },
         (error, stdout) => {
           if (error) reject(error);
-          else resolve38(stdout.replace(/(?:\r?\n)+$/u, ""));
+          else resolve37(stdout.replace(/(?:\r?\n)+$/u, ""));
         }
       );
     });
@@ -26846,10 +27312,15 @@ function parseCreatedRuntime(output, creationId, scope, provisionalName) {
     ownershipProof: "create-output"
   };
 }
-function defaultTitle(intent, harness) {
+function defaultTitle(request, harness) {
+  const intent = request.intent;
   if (intent.displayTitle) return intent.displayTitle;
   if (intent.kind === "agent") return (harness?.label ?? intent.harnessProfileId).slice(0, 80);
-  return "Terminal";
+  return memorablePaneName(semanticPaneId2(request.operationId));
+}
+function nameSource(intent) {
+  if (intent.displayTitle) return "manual";
+  return intent.kind === "agent" ? "agent" : "generated";
 }
 function resourceFor(request, title, resolvedMissionId) {
   const intent = request.intent;
@@ -26930,6 +27401,7 @@ var init_workspace_pane_creation2 = __esm({
     init_agent_kind();
     init_workspace_config_loader();
     init_workspace_registry();
+    init_pane_display_name();
     init_shell();
     init_mission_repository();
     init_runtime_namespace();
@@ -27090,7 +27562,7 @@ var init_workspace_pane_creation2 = __esm({
           if (harness) assertBoundedLaunch(harness);
           const resolvedMissionId = request.intent.kind === "agent" && request.intent.missionId ? await this.#io.resolveMission(trustedWorkspace, canonicalRoot, request.intent.missionId) : null;
           this.#assertActive(request.operationId);
-          const title = defaultTitle(request.intent, harness);
+          const title = defaultTitle(request, harness);
           const resource3 = resourceFor(request, title, resolvedMissionId);
           const placement = request.intent.placement ?? { kind: "window" };
           const runtimeScope = placement.kind === "window" ? "window" : "pane";
@@ -27143,6 +27615,7 @@ var init_workspace_pane_creation2 = __esm({
                 workspaceName: workspace.name
               });
             }
+            prepareWorkspaceTerminalColorEnvironment(this.#io.runTmux, workspace.sessionName);
             const createArgs = placement.kind === "window" ? [
               "new-window",
               "-d",
@@ -27222,6 +27695,7 @@ var init_workspace_pane_creation2 = __esm({
             ["@ide_type", resource3.kind === "agent" ? "agent" : "shell"],
             ["@ide_role", resource3.role ?? "shell"],
             ["@ide_name", resource3.displayTitle],
+            ["@tmux_ide_name_source", nameSource(request.intent)],
             ["@agent_hint", agentHintForCommand(harness?.command.join(" ")) ?? ""],
             [HARNESS_OPTION, resource3.harnessProfileId ?? ""],
             [MISSION_OPTION, resource3.missionId ?? ""]
@@ -27805,8 +28279,8 @@ var init_semantic_pane_catalog = __esm({
 });
 
 // packages/daemon/src/lib/workspace-open.ts
-import { createHash as createHash8 } from "node:crypto";
-import { realpathSync as realpathSync8, statSync as statSync7 } from "node:fs";
+import { createHash as createHash9 } from "node:crypto";
+import { realpathSync as realpathSync8, statSync as statSync8 } from "node:fs";
 import { basename as basename14, isAbsolute as isAbsolute10 } from "node:path";
 function boundedAuthorityLimit2(value, fallback) {
   if (value === void 0) return fallback;
@@ -27826,7 +28300,7 @@ function safeBaseName(projectDir) {
   return value || "workspace";
 }
 function deriveWorkspaceOpenIdentity(canonicalProjectDir3) {
-  const projectKey = createHash8("sha256").update("tmux-ide.workspace.open.v1\0", "utf8").update(canonicalProjectDir3, "utf8").digest("hex").slice(0, 32);
+  const projectKey = createHash9("sha256").update("tmux-ide.workspace.open.v1\0", "utf8").update(canonicalProjectDir3, "utf8").digest("hex").slice(0, 32);
   const name = `${safeBaseName(canonicalProjectDir3).slice(0, 64)}-${projectKey}`;
   return Object.freeze({
     workspaceName: name,
@@ -27845,7 +28319,7 @@ async function resolveConfigFreeProjectDir(projectDir) {
   let selected;
   try {
     selected = realpathSync8(projectDir);
-    if (!statSync7(selected).isDirectory()) throw new Error("not a directory");
+    if (!statSync8(selected).isDirectory()) throw new Error("not a directory");
   } catch (cause) {
     throw new WorkspaceOpenError(
       "workspace_unavailable",
@@ -27870,7 +28344,7 @@ async function resolveConfigFreeProjectDir(projectDir) {
   }
   try {
     const canonicalRoot = realpathSync8(context.projectRoot);
-    if (!statSync7(canonicalRoot).isDirectory()) throw new Error("not a directory");
+    if (!statSync8(canonicalRoot).isDirectory()) throw new Error("not a directory");
     return canonicalRoot;
   } catch (cause) {
     throw new WorkspaceOpenError(
@@ -28535,8 +29009,8 @@ var init_workspace_open2 = __esm({
 });
 
 // packages/daemon/src/lib/workspace-promotion.ts
-import { createHash as createHash9 } from "node:crypto";
-import { realpathSync as realpathSync9, statSync as statSync8 } from "node:fs";
+import { createHash as createHash10 } from "node:crypto";
+import { realpathSync as realpathSync9, statSync as statSync9 } from "node:fs";
 function boundedAuthorityLimit3(value, fallback) {
   if (value === void 0) return fallback;
   if (!Number.isInteger(value) || value < 1 || value > MAX_OPERATIONS2) {
@@ -28571,7 +29045,7 @@ function hasValidPaneStamp(value) {
   return value.length > 0 && value.length <= 128 && VALID_SEMANTIC_PANE_ID.test(value) && !value.startsWith(RESERVED_DISCOVERED_PREFIX);
 }
 function derivePromotionIdentity(sessionName) {
-  const key = createHash9("sha256").update("tmux-ide.workspace.promote.v1\0", "utf8").update(sessionName, "utf8").digest("hex").slice(0, 32);
+  const key = createHash10("sha256").update("tmux-ide.workspace.promote.v1\0", "utf8").update(sessionName, "utf8").digest("hex").slice(0, 32);
   return Object.freeze({
     workspaceName: `${safeBaseName2(sessionName)}-${key}`,
     sessionName
@@ -28663,7 +29137,7 @@ function requestFingerprint2(request) {
   return JSON.stringify(request);
 }
 function digest2(value) {
-  return createHash9("sha256").update(value).digest("hex").slice(0, 20);
+  return createHash10("sha256").update(value).digest("hex").slice(0, 20);
 }
 var MAX_OPERATIONS2, MAX_REPLAYABLE_FAILURES3, MAX_TMUX_OUTPUT_BYTES2, ADOPTED_OPTION2, SESSION_PROMOTED_MARKER_OPTION, SESSION_WORKSPACE_OPTION2, SESSION_OPERATION_OPTION2, SEMANTIC_PANE_OPTION3, SEMANTIC_WINDOW_OPTION2, FIELD, SENTINEL, SESSION_FORMAT2, PANE_SCAN_FORMAT, PANE_VERIFY_FORMAT, ERROR_MESSAGES3, WorkspacePromotionError, VALID_SEMANTIC_PANE_ID, RESERVED_DISCOVERED_PREFIX, DEFAULT_IO3, WorkspacePromotionAuthority;
 var init_workspace_promotion2 = __esm({
@@ -28752,7 +29226,7 @@ var init_workspace_promotion2 = __esm({
     DEFAULT_IO3 = {
       canonicalProjectDir: (path2) => {
         const canonical = realpathSync9(path2);
-        if (!statSync8(canonical).isDirectory()) throw new Error("project root is not a directory");
+        if (!statSync9(canonical).isDirectory()) throw new Error("project root is not a directory");
         return canonical;
       },
       isMissingTmuxTarget: (error) => error instanceof TmuxError && error.code === "SESSION_NOT_FOUND",
@@ -29249,7 +29723,7 @@ var init_workspace_promotion2 = __esm({
 });
 
 // packages/daemon/src/lib/workspace-open-handoff.ts
-import { randomUUID as randomUUID7 } from "node:crypto";
+import { randomUUID as randomUUID8 } from "node:crypto";
 var WorkspaceOpenHandoffError, WorkspaceOpenHandoffCoordinator;
 var init_workspace_open_handoff2 = __esm({
   "packages/daemon/src/lib/workspace-open-handoff.ts"() {
@@ -29313,7 +29787,7 @@ var init_workspace_open_handoff2 = __esm({
           const preferredPaneId = "initialPaneId" in opened.resource ? opened.resource.initialPaneId : void 0;
           const proof = await this.#deps.prepareRuntime(workspaceName, preferredPaneId);
           this.#assertCurrent(ownerClientId, revision, expectedDaemonInstanceId);
-          const token = randomUUID7();
+          const token = randomUUID8();
           const result = {
             operationId,
             daemonInstanceId: this.#deps.daemonInstanceId,
@@ -29546,7 +30020,7 @@ var init_fleet_agent_lifecycle = __esm({
 });
 
 // packages/daemon/src/lib/fleet-lifecycle-authority.ts
-import { createHash as createHash10, randomUUID as randomUUID8 } from "node:crypto";
+import { createHash as createHash11, randomUUID as randomUUID9 } from "node:crypto";
 import { isAbsolute as isAbsolute11, resolve as resolve32 } from "node:path";
 import { realpath, stat } from "node:fs/promises";
 var MAX_REPLAY_OPERATIONS, sleep, FleetLifecycleAuthorityError, FleetLifecycleAuthority;
@@ -29559,7 +30033,7 @@ var init_fleet_lifecycle_authority = __esm({
     init_chrome_front_door();
     init_fleet_agent_lifecycle();
     MAX_REPLAY_OPERATIONS = 128;
-    sleep = (milliseconds) => new Promise((resolve38) => setTimeout(resolve38, milliseconds));
+    sleep = (milliseconds) => new Promise((resolve37) => setTimeout(resolve37, milliseconds));
     FleetLifecycleAuthorityError = class extends Error {
       constructor(code, message) {
         super(message);
@@ -29799,7 +30273,7 @@ var init_fleet_lifecycle_authority = __esm({
             "tmux did not return a pane identity."
           );
         }
-        const semanticPaneId3 = `pane.agent.${randomUUID8()}`;
+        const semanticPaneId3 = `pane.agent.${randomUUID9()}`;
         try {
           this.#runTmux(["set-option", "-p", "-t", paneId, "@tmux_ide_pane_id", semanticPaneId3]);
           this.#runTmux(["set-option", "-p", "-t", paneId, "@agent_launch", input.command]);
@@ -29856,8 +30330,8 @@ var init_fleet_lifecycle_authority = __esm({
       async #exclusive(run) {
         const predecessor = this.#tail;
         let release;
-        this.#tail = new Promise((resolve38) => {
-          release = resolve38;
+        this.#tail = new Promise((resolve37) => {
+          release = resolve37;
         });
         await predecessor;
         try {
@@ -29944,7 +30418,7 @@ var init_fleet_lifecycle_authority = __esm({
       }
       #sessionIdentity(displayName, cwd) {
         const slug = displayName.normalize("NFKD").replace(/[\u0300-\u036f]/gu, "").toLowerCase().replace(/[^a-z0-9_-]+/gu, "-").replace(/-+/gu, "-").replace(/^[-_]+|[-_]+$/gu, "").slice(0, 56) || "session";
-        const key = createHash10("sha256").update("tmux-ide.workspace.session.create.v1\0", "utf8").update(displayName, "utf8").update("\0", "utf8").update(cwd, "utf8").digest("hex").slice(0, 20);
+        const key = createHash11("sha256").update("tmux-ide.workspace.session.create.v1\0", "utf8").update(displayName, "utf8").update("\0", "utf8").update(cwd, "utf8").digest("hex").slice(0, 20);
         const workspaceName = `${slug}-${key}`;
         return { workspaceName, sessionName: workspaceName };
       }
@@ -33295,14 +33769,14 @@ function socketArguments(authority) {
 }
 function defaultWaiter(authority) {
   const prefix = socketArguments(authority);
-  return (channel, signal) => new Promise((resolve38, reject) => {
+  return (channel, signal) => new Promise((resolve37, reject) => {
     execFile7(
       authority.executablePath,
       [...prefix, "wait-for", channel],
       { signal, encoding: "utf8", windowsHide: true },
       (error) => {
-        if (!error) resolve38();
-        else if (signal.aborted) resolve38();
+        if (!error) resolve37();
+        else if (signal.aborted) resolve37();
         else reject(error);
       }
     );
@@ -33310,12 +33784,12 @@ function defaultWaiter(authority) {
 }
 function abortableDelay(milliseconds, signal) {
   if (signal.aborted) return Promise.resolve();
-  return new Promise((resolve38) => {
+  return new Promise((resolve37) => {
     const timer = setTimeout(done, milliseconds);
     function done() {
       signal.removeEventListener("abort", done);
       clearTimeout(timer);
-      resolve38();
+      resolve37();
     }
     signal.addEventListener("abort", done, { once: true });
   });
@@ -33740,7 +34214,7 @@ var init_tmux_external_interaction_observer = __esm({
 });
 
 // packages/daemon/src/lib/workspace-multiplexer-verbs.ts
-import { realpathSync as realpathSync10, statSync as statSync9 } from "node:fs";
+import { realpathSync as realpathSync10, statSync as statSync10 } from "node:fs";
 function boundedCacheIdentity(value) {
   if (value.length === 0 || value.length > 256) return false;
   for (const character of value) {
@@ -33833,10 +34307,10 @@ function tmuxFormatLiteral2(value) {
 }
 function canonicalProjectDir2(path2) {
   const canonical = realpathSync10(path2);
-  if (!statSync9(canonical).isDirectory()) throw new Error("project root is not a directory");
+  if (!statSync10(canonical).isDirectory()) throw new Error("project root is not a directory");
   return canonical;
 }
-var CREATION_OPTION2, SEMANTIC_PANE_OPTION4, SEMANTIC_WINDOW_OPTION3, DISPLAY_TITLE_OPTION, ERROR_MESSAGES5, WorkspaceMultiplexerError, PANE_FIELDS, RUNTIME_PANE2, RUNTIME_WINDOW, DEFAULT_IO4, MAX_CACHED_SESSIONS, WorkspaceMultiplexerAuthority;
+var CREATION_OPTION2, SEMANTIC_PANE_OPTION4, SEMANTIC_WINDOW_OPTION3, DISPLAY_TITLE_OPTION, DISPLAY_NAME_SOURCE_OPTION, ERROR_MESSAGES5, WorkspaceMultiplexerError, PANE_FIELDS, RUNTIME_PANE2, RUNTIME_WINDOW, DEFAULT_IO4, MAX_CACHED_SESSIONS, WorkspaceMultiplexerAuthority;
 var init_workspace_multiplexer_verbs = __esm({
   "packages/daemon/src/lib/workspace-multiplexer-verbs.ts"() {
     "use strict";
@@ -33846,10 +34320,12 @@ var init_workspace_multiplexer_verbs = __esm({
     init_workspace_registry();
     init_tmux_external_interaction_observer();
     init_tmux_interaction_options();
+    init_pane_display_name();
     CREATION_OPTION2 = "@tmux_ide_creation_id";
     SEMANTIC_PANE_OPTION4 = "@tmux_ide_pane_id";
     SEMANTIC_WINDOW_OPTION3 = "@tmux_ide_window_id";
     DISPLAY_TITLE_OPTION = "@ide_name";
+    DISPLAY_NAME_SOURCE_OPTION = "@tmux_ide_name_source";
     ERROR_MESSAGES5 = {
       daemon_instance_mismatch: "The daemon generation changed before the verb ran.",
       workspace_not_found: "The requested workspace is not registered.",
@@ -34146,7 +34622,8 @@ var init_workspace_multiplexer_verbs = __esm({
         if (intent.verb !== "workspace.window.split") throw new TypeError("wrong intent");
         const sessionName = workspace.sessionName;
         const semanticPaneId3 = semanticPaneIdForOperation(request.operationId);
-        const displayTitle = intent.displayTitle ?? "Terminal";
+        const displayTitle = intent.displayTitle ?? memorablePaneName(semanticPaneId3);
+        const displayNameSource = intent.displayTitle ? "manual" : "generated";
         const rows = this.#panes(sessionName);
         const already = rows.find((row) => row.creationId === request.operationId);
         if (already) {
@@ -34161,6 +34638,7 @@ var init_workspace_multiplexer_verbs = __esm({
         }
         const source = resolvePaneRow(rows, intent.semanticPaneId);
         const canonicalRoot = this.#io.canonicalProjectDir(workspace.projectDir);
+        prepareWorkspaceTerminalColorEnvironment(this.#io.runTmux, sessionName);
         const created = this.#io.runTmux([
           "split-window",
           intent.direction === "right" ? "-h" : "-v",
@@ -34187,7 +34665,8 @@ var init_workspace_multiplexer_verbs = __esm({
             [SEMANTIC_PANE_OPTION4, semanticPaneId3],
             ["@ide_type", "shell"],
             ["@ide_role", "shell"],
-            [DISPLAY_TITLE_OPTION, displayTitle]
+            [DISPLAY_TITLE_OPTION, displayTitle],
+            [DISPLAY_NAME_SOURCE_OPTION, displayNameSource]
           ]) {
             this.#io.runTmux(["set-option", "-p", "-t", paneId, option, value]);
           }
@@ -34200,10 +34679,11 @@ var init_workspace_multiplexer_verbs = __esm({
               "#{pane_id}",
               `#{${SEMANTIC_PANE_OPTION4}}`,
               `#{${CREATION_OPTION2}}`,
-              `#{${DISPLAY_TITLE_OPTION}}`
+              `#{${DISPLAY_TITLE_OPTION}}`,
+              `#{${DISPLAY_NAME_SOURCE_OPTION}}`
             ].join("	")
           ]);
-          if (inspected !== [paneId, semanticPaneId3, request.operationId, displayTitle].join("	")) {
+          if (inspected !== [paneId, semanticPaneId3, request.operationId, displayTitle, displayNameSource].join("	")) {
             throw new WorkspaceMultiplexerError("mutation_unverified", {
               operationId: request.operationId,
               reason: "split_stamp_mismatch"
@@ -34364,6 +34844,39 @@ var init_workspace_multiplexer_verbs = __esm({
             name: intent.name
           };
         }
+        if (intent.scope === "pane") {
+          const pane = resolvePaneRow(this.#panes(sessionName), intent.semanticPaneId);
+          this.#io.runTmux(["set-option", "-p", "-t", pane.paneId, DISPLAY_TITLE_OPTION, intent.name]);
+          this.#io.runTmux([
+            "set-option",
+            "-p",
+            "-t",
+            pane.paneId,
+            DISPLAY_NAME_SOURCE_OPTION,
+            "manual"
+          ]);
+          this.#io.runTmux(["select-pane", "-t", pane.paneId, "-T", tmuxFormatLiteral2(intent.name)]);
+          const observed2 = this.#io.runTmux([
+            "display-message",
+            "-p",
+            "-t",
+            pane.paneId,
+            `#{${DISPLAY_TITLE_OPTION}}	#{${DISPLAY_NAME_SOURCE_OPTION}}	#{pane_title}`
+          ]);
+          if (observed2 !== `${intent.name}	manual	${intent.name}`) {
+            throw new WorkspaceMultiplexerError("mutation_unverified", {
+              operationId: envelope.operationId,
+              reason: "pane_name_mismatch"
+            });
+          }
+          return {
+            ...envelope,
+            verb: "workspace.rename",
+            outcome: "applied",
+            scope: "pane",
+            name: intent.name
+          };
+        }
         const rows = this.#panes(sessionName);
         const windowId = resolveWindowId(rows, intent.target);
         this.#io.runTmux(["rename-window", "-t", windowId, tmuxFormatLiteral2(intent.name)]);
@@ -34383,6 +34896,14 @@ var init_workspace_multiplexer_verbs = __esm({
             panesOfWindow[0].paneId,
             DISPLAY_TITLE_OPTION,
             intent.name
+          ]);
+          this.#io.runTmux([
+            "set-option",
+            "-p",
+            "-t",
+            panesOfWindow[0].paneId,
+            DISPLAY_NAME_SOURCE_OPTION,
+            "manual"
           ]);
         }
         return {
@@ -34752,7 +35273,7 @@ var init_workspace_multiplexer_verbs = __esm({
 });
 
 // packages/daemon/src/terminal/session-runtime/runtime-observability.ts
-import { randomUUID as randomUUID9 } from "node:crypto";
+import { randomUUID as randomUUID10 } from "node:crypto";
 import { z as z71 } from "zod";
 function createSessionRuntimeObservability(options = {}) {
   const capacity = options.capacity ?? 1024;
@@ -34762,7 +35283,7 @@ function createSessionRuntimeObservability(options = {}) {
   const processId = options.processId ?? `daemon:${process.pid}`;
   const clockId = options.clockId ?? "node-performance-now";
   const clockKind = options.clockKind ?? "performance-now";
-  const createTraceId = options.createTraceId ?? randomUUID9;
+  const createTraceId = options.createTraceId ?? randomUUID10;
   const spans = [];
   let cursor = 0;
   let droppedSpans = 0;
@@ -34874,9 +35395,9 @@ function parseControlLine(line, insideReply) {
     const space = rest.indexOf(" ");
     const pane = space === -1 ? rest : rest.slice(0, space);
     const tail = space === -1 ? "" : rest.slice(space + 1);
-    const sep10 = tail.indexOf(" : ");
-    const meta = sep10 === -1 ? tail : tail.slice(0, sep10);
-    const payload = sep10 === -1 ? "" : tail.slice(sep10 + 3);
+    const sep9 = tail.indexOf(" : ");
+    const meta = sep9 === -1 ? tail : tail.slice(0, sep9);
+    const payload = sep9 === -1 ? "" : tail.slice(sep9 + 3);
     const age = Number(meta.trim().split(/\s+/)[0]);
     return {
       kind: "extended-output",
@@ -34924,15 +35445,15 @@ function mirrorControlAttachArgs(options, pauseAfterSeconds = DEFAULT_PAUSE_AFTE
 }
 function waitForExit(proc, timeoutMs) {
   if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve(true);
-  return new Promise((resolve38) => {
+  return new Promise((resolve37) => {
     const timer = setTimeout(() => {
       proc.off("exit", onExit);
-      resolve38(false);
+      resolve37(false);
     }, timeoutMs);
     timer.unref?.();
     const onExit = () => {
       clearTimeout(timer);
-      resolve38(true);
+      resolve37(true);
     };
     proc.once("exit", onExit);
   });
@@ -35311,8 +35832,8 @@ var init_control_channel = __esm({
           this.core.fail("control channel exited");
           this.noteExit(null);
         });
-        return new Promise((resolve38, reject) => {
-          this.core.push({ kind: "promise", resolve: () => resolve38(), reject, lines: [] });
+        return new Promise((resolve37, reject) => {
+          this.core.push({ kind: "promise", resolve: () => resolve37(), reject, lines: [] });
           proc.on("error", (err) => {
             this.core.fail(String(err));
             reject(err);
@@ -35322,8 +35843,8 @@ var init_control_channel = __esm({
       request(cmd) {
         const proc = this.proc;
         if (!proc?.stdin?.writable) return Promise.reject(new Error("control channel not running"));
-        return new Promise((resolve38, reject) => {
-          this.core.push({ kind: "promise", resolve: resolve38, reject, lines: [] });
+        return new Promise((resolve37, reject) => {
+          this.core.push({ kind: "promise", resolve: resolve37, reject, lines: [] });
           proc.stdin.write(`${cmd}
 `);
         });
@@ -35702,6 +36223,9 @@ function parseSessionPaneDescriptorReply(lines) {
       semanticWindowId: nonempty(semanticWindowId),
       paneIndex,
       name: nonempty(name),
+      // Source metadata is persisted for mutations, while this hot inventory
+      // stays wire-compatible. Generated names are recognized deterministically.
+      nameSource: null,
       missionStamp: nonempty(missionStamp),
       paneActive: paneActiveRaw === "1",
       windowActive: windowActiveRaw === "1",
@@ -36230,9 +36754,9 @@ var init_pane_feed = __esm({
 });
 
 // packages/daemon/src/terminal/mirror/session-channel.ts
-import { createHash as createHash11, randomBytes as randomBytes4 } from "node:crypto";
+import { createHash as createHash12, randomBytes as randomBytes4 } from "node:crypto";
 function snapshotFingerprint2(captureLines, cursorLine, fallbackSize) {
-  const hash = createHash11("sha256");
+  const hash = createHash12("sha256");
   const append = (bytes) => {
     const length = Buffer.allocUnsafe(4);
     length.writeUInt32BE(bytes.byteLength);
@@ -36262,7 +36786,7 @@ function defaultMirrorPaneId() {
 function defaultMirrorWindowId() {
   return `window.mirror.${randomBytes4(8).toString("hex")}`;
 }
-var STRUCTURAL_NOTIFICATIONS, NATIVE_CLIENT_NOTIFICATIONS, NATIVE_CLIENT_SUBSCRIPTION, DEFAULT_HISTORY_LINES, SYNC_DEBOUNCE_MS, RECOVERY_QUIET_MS, RECOVERY_COMMAND_DEADLINE_MS, RECOVERY_NO_PROGRESS_DEADLINE_MS, RECOVERY_ABSOLUTE_DEADLINE_MS, RECOVERY_MAX_ATTEMPTS, RECOVERY_CAPTURE_MAX_BYTES, RECOVERY_CAPTURE_MAX_LINES, RECOVERY_CURSOR_MAX_BYTES, MAX_CONTINUE_NOTIFICATION_QUEUE, MAX_CONTINUE_NOTIFICATION_DEBT, RECOVERY_CURSOR_PROBE_FORMAT, FAILED_RESEED_RESULT, SessionChannel;
+var STRUCTURAL_NOTIFICATIONS, NATIVE_CLIENT_NOTIFICATIONS, NATIVE_CLIENT_SUBSCRIPTION, DEFAULT_HISTORY_LINES, SYNC_DEBOUNCE_MS, DISPLAY_NAME_SYNC_INTERVAL_MS, RECOVERY_QUIET_MS, RECOVERY_COMMAND_DEADLINE_MS, RECOVERY_NO_PROGRESS_DEADLINE_MS, RECOVERY_ABSOLUTE_DEADLINE_MS, RECOVERY_MAX_ATTEMPTS, RECOVERY_CAPTURE_MAX_BYTES, RECOVERY_CAPTURE_MAX_LINES, RECOVERY_CURSOR_MAX_BYTES, MAX_CONTINUE_NOTIFICATION_QUEUE, MAX_CONTINUE_NOTIFICATION_DEBT, RECOVERY_CURSOR_PROBE_FORMAT, FAILED_RESEED_RESULT, SessionChannel;
 var init_session_channel = __esm({
   "packages/daemon/src/terminal/mirror/session-channel.ts"() {
     "use strict";
@@ -36271,6 +36795,7 @@ var init_session_channel = __esm({
     init_input_coalescer();
     init_layout_parse();
     init_session_descriptor_discovery();
+    init_pane_display_name();
     init_workspace_tmux_adapter();
     init_flow_ledger();
     init_pane_feed();
@@ -36291,6 +36816,7 @@ var init_session_channel = __esm({
     NATIVE_CLIENT_SUBSCRIPTION = "tmux-ide-native-clients";
     DEFAULT_HISTORY_LINES = 2e3;
     SYNC_DEBOUNCE_MS = 40;
+    DISPLAY_NAME_SYNC_INTERVAL_MS = 750;
     RECOVERY_QUIET_MS = 40;
     RECOVERY_COMMAND_DEADLINE_MS = 500;
     RECOVERY_NO_PROGRESS_DEADLINE_MS = 3e3;
@@ -36346,6 +36872,7 @@ var init_session_channel = __esm({
       maxAgeMs = 0;
       geometryParticipating = false;
       cancelSync = null;
+      lastDisplayNameSyncAtMs = 0;
       disposed = false;
       nativeClientProbePending = false;
       windowAuthorityOrdinal = 0;
@@ -36360,8 +36887,8 @@ var init_session_channel = __esm({
       /** Settles once the FIRST identity join lands (or is proven impossible), so
        *  `start()` returns a channel whose semantic ids are subscribable. */
       resolveFirstJoin = null;
-      firstJoin = new Promise((resolve38) => {
-        this.resolveFirstJoin = resolve38;
+      firstJoin = new Promise((resolve37) => {
+        this.resolveFirstJoin = resolve37;
       });
       input = new InputCoalescer(
         (action) => {
@@ -36424,17 +36951,29 @@ var init_session_channel = __esm({
       }
       // ── Public surface (semantic ids only) ──────────────────────────────────
       describe() {
-        const panes = [...this.panesBySemantic.values()].map((pane) => ({
-          semanticPaneId: pane.semanticId,
-          semanticWindowId: pane.windowRuntimeId ? this.windowsByRuntime.get(pane.windowRuntimeId)?.semanticId ?? null : null,
-          role: pane.descriptor?.role ?? null,
-          paneType: pane.descriptor?.type ?? null,
-          currentCommand: pane.descriptor?.currentCommand ?? null,
-          cwd: pane.descriptor?.cwd ?? null,
-          title: pane.descriptor?.title ?? null,
-          windowName: pane.descriptor?.windowName ?? null,
-          active: pane.active
-        }));
+        const panes = [...this.panesBySemantic.values()].map((pane) => {
+          const display = resolvePaneDisplayName({
+            semanticPaneId: pane.semanticId,
+            configuredName: pane.descriptor?.name,
+            configuredNameSource: pane.descriptor?.nameSource,
+            currentCommand: pane.descriptor?.currentCommand,
+            title: pane.descriptor?.title,
+            paneType: pane.descriptor?.type
+          });
+          return {
+            semanticPaneId: pane.semanticId,
+            semanticWindowId: pane.windowRuntimeId ? this.windowsByRuntime.get(pane.windowRuntimeId)?.semanticId ?? null : null,
+            role: pane.descriptor?.role ?? null,
+            paneType: pane.descriptor?.type ?? null,
+            currentCommand: pane.descriptor?.currentCommand ?? null,
+            cwd: pane.descriptor?.cwd ?? null,
+            title: pane.descriptor?.title ?? null,
+            displayName: display.name,
+            displayNameSource: display.source,
+            windowName: pane.descriptor?.windowName ?? null,
+            active: pane.active
+          };
+        });
         return {
           session: this.opts.session,
           panes,
@@ -36665,6 +37204,11 @@ var init_session_channel = __esm({
       }
       // ── Byte routing ─────────────────────────────────────────────────────────
       onOutput(runtimePane, data, ageMs, timing) {
+        const now = Date.now();
+        if (now - this.lastDisplayNameSyncAtMs >= DISPLAY_NAME_SYNC_INTERVAL_MS) {
+          this.lastDisplayNameSyncAtMs = now;
+          this.scheduleSync();
+        }
         if (ageMs !== null) {
           this.ageByRuntime.set(runtimePane, ageMs);
           if (ageMs > this.maxAgeMs) this.maxAgeMs = ageMs;
@@ -36766,9 +37310,14 @@ var init_session_channel = __esm({
           }
         );
       }
-      reseedPlain(sub) {
+      reseedPlain(sub, resumeReason = null) {
         this.reseed(sub, ({ ok: ok2 }) => {
-          if (ok2 || sub.closed || sub.frozen || this.disposed || this.recoveries.has(sub.pane.runtimeId) || this.panesByRuntime.get(sub.pane.runtimeId) !== sub.pane)
+          if (ok2) {
+            if (resumeReason && !sub.closed && !sub.frozen)
+              sub.onEvent({ type: "flow", state: "resumed", reason: resumeReason });
+            return;
+          }
+          if (sub.closed || sub.frozen || this.disposed || this.recoveries.has(sub.pane.runtimeId) || this.panesByRuntime.get(sub.pane.runtimeId) !== sub.pane)
             return;
           this.beginLocalOverflowRecovery(sub.pane);
         });
@@ -36807,7 +37356,7 @@ var init_session_channel = __esm({
         const runtime = sub.pane.runtimeId;
         if (this.ledger.isRequested(runtime) || this.ledger.isBackpressured(runtime))
           this.beginRecovery(sub.pane, "requested");
-        else this.reseedPlain(sub);
+        else this.reseedPlain(sub, "requested");
         this.recoverSticky();
       }
       continuePane(runtime) {
@@ -37715,14 +38264,27 @@ var init_session_channel = __esm({
           rows: layout.height,
           zoomed: layout.zoomed,
           paneBorderStatus: windowRecord?.paneBorderStatus ?? "off",
-          panes: layout.leaves.map((leaf) => ({
-            semanticPaneId: this.panesByRuntime.get(leaf.id)?.semanticId ?? null,
-            left: leaf.left,
-            top: leaf.top,
-            width: leaf.width,
-            height: leaf.height,
-            active: leaf.id === activePane
-          }))
+          panes: layout.leaves.map((leaf) => {
+            const pane = this.panesByRuntime.get(leaf.id) ?? null;
+            const display = pane ? resolvePaneDisplayName({
+              semanticPaneId: pane.semanticId,
+              configuredName: pane.descriptor?.name,
+              configuredNameSource: pane.descriptor?.nameSource,
+              currentCommand: pane.descriptor?.currentCommand,
+              title: pane.descriptor?.title,
+              paneType: pane.descriptor?.type
+            }) : null;
+            return {
+              semanticPaneId: pane?.semanticId ?? null,
+              displayName: display?.name ?? null,
+              displayNameSource: display?.source ?? null,
+              left: leaf.left,
+              top: leaf.top,
+              width: leaf.width,
+              height: leaf.height,
+              active: leaf.id === activePane
+            };
+          })
         };
         return event;
       }
@@ -38641,10 +39203,17 @@ function sessionRuntimeInteractionFacts(intent) {
     case "workspace.session.kill":
       return { target: { kind: "session" }, summary: { operationKind: intent.verb } };
     case "workspace.rename":
-      return intent.scope === "session" ? {
-        target: { kind: "session" },
-        summary: { operationKind: intent.verb, scope: intent.scope }
-      } : {
+      if (intent.scope === "session")
+        return {
+          target: { kind: "session" },
+          summary: { operationKind: intent.verb, scope: intent.scope }
+        };
+      if (intent.scope === "pane")
+        return {
+          target: { kind: "pane", semanticPaneId: intent.semanticPaneId },
+          summary: { operationKind: intent.verb, scope: intent.scope }
+        };
+      return {
         target: { kind: "window", target: intent.target },
         summary: { operationKind: intent.verb, scope: intent.scope }
       };
@@ -39028,8 +39597,8 @@ var init_semantic_mutation_executor = __esm({
         if (needsTmuxObservation) {
           let settleObservation;
           let rejectObservation;
-          observed = new Promise((resolve38, reject) => {
-            settleObservation = resolve38;
+          observed = new Promise((resolve37, reject) => {
+            settleObservation = resolve37;
             rejectObservation = reject;
           });
           let sessionPending = this.#pending.get(session);
@@ -45591,7 +46160,7 @@ var init_xterm_terminal_interpreter_backend = __esm({
         return this.#terminal.rows;
       }
       write(data) {
-        return new Promise((resolve38) => this.#terminal.write(data, resolve38));
+        return new Promise((resolve37) => this.#terminal.write(data, resolve37));
       }
       prioritizeNextWrite() {
         this.#terminal.prioritizeNextWrite();
@@ -46069,8 +46638,8 @@ var init_terminal_replica_interpreter = __esm({
           scrollback: this.#scrollback
         });
         this.#snapshot = blankTerminalReplicaSnapshot(options.cols, options.rows);
-        this.#seedReady = new Promise((resolve38, reject) => {
-          this.#resolveSeedReady = resolve38;
+        this.#seedReady = new Promise((resolve37, reject) => {
+          this.#resolveSeedReady = resolve37;
           this.#rejectSeedReady = reject;
         });
         void this.#seedReady.catch(() => void 0);
@@ -46087,8 +46656,8 @@ var init_terminal_replica_interpreter = __esm({
           const pendingTrace = this.#pendingWrites[0]?.trace ?? null;
           if (this.#pendingWrites.length > 0 && (pendingTrace?.traceId ?? null) !== (trace?.traceId ?? null))
             this.#flushWrites();
-          const promise = new Promise((resolve38, reject) => {
-            this.#pendingWrites.push({ data, trace, resolve: resolve38, reject });
+          const promise = new Promise((resolve37, reject) => {
+            this.#pendingWrites.push({ data, trace, resolve: resolve37, reject });
           });
           if (!this.#writeFlushScheduled) {
             this.#writeFlushScheduled = true;
@@ -48419,15 +48988,15 @@ var init_authority_arbiter = __esm({
 });
 
 // packages/daemon/src/terminal/session-runtime/registry.ts
-import { randomUUID as randomUUID10 } from "node:crypto";
+import { randomUUID as randomUUID11 } from "node:crypto";
 import { z as z74 } from "zod";
 async function abortable(promise, signal) {
   if (!signal) return promise;
   signal.throwIfAborted();
-  return new Promise((resolve38, reject) => {
+  return new Promise((resolve37, reject) => {
     const onAbort = () => reject(signal.reason);
     signal.addEventListener("abort", onAbort, { once: true });
-    void promise.then(resolve38, reject).then(
+    void promise.then(resolve37, reject).then(
       () => signal.removeEventListener("abort", onAbort),
       () => signal.removeEventListener("abort", onAbort)
     );
@@ -48581,7 +49150,7 @@ var init_registry2 = __esm({
           observability: options.semanticMutations.observability ?? this.#observability
         }) : null;
         this.#resolveSession = options.semanticMutations?.resolveSession ?? null;
-        this.#createControllerToken = options.createControllerToken ?? randomUUID10;
+        this.#createControllerToken = options.createControllerToken ?? randomUUID11;
         this.#nativeGeometryHysteresisMs = options.nativeGeometryHysteresisMs;
         this.#stopExitObserver = this.#mirror.onSessionExit((session) => {
           this.#sessions.get(session)?.noteControlExit();
@@ -49884,7 +50453,7 @@ var init_registry2 = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/admission-util.ts
-import { createHash as createHash12, timingSafeEqual as timingSafeEqual3 } from "node:crypto";
+import { createHash as createHash13, timingSafeEqual as timingSafeEqual3 } from "node:crypto";
 function canonicalOriginOrNull(value) {
   if (typeof value !== "string" || value.length < 4 || value.length > 2048 || value === "null" || value === "*" || /[\0\r\n\t ]/u.test(value)) {
     return null;
@@ -49932,7 +50501,7 @@ function safeCloseSocket(socket, code, reason) {
   }
 }
 function digestSecret(secret) {
-  return createHash12("sha256").update(secret, "utf8").digest();
+  return createHash13("sha256").update(secret, "utf8").digest();
 }
 function digestsEqual(left, right) {
   return left.byteLength === right.byteLength && timingSafeEqual3(left, right);
@@ -50159,7 +50728,7 @@ var init_grouped_tmux = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/lease-manager.ts
-import { createHash as createHash13, randomBytes as randomBytes5, randomUUID as randomUUID11, timingSafeEqual as timingSafeEqual4 } from "node:crypto";
+import { createHash as createHash14, randomBytes as randomBytes5, randomUUID as randomUUID12, timingSafeEqual as timingSafeEqual4 } from "node:crypto";
 import { z as z78 } from "zod";
 function positiveDuration(value, fallback, label2) {
   const resolved2 = value ?? fallback;
@@ -50169,7 +50738,7 @@ function positiveDuration(value, fallback, label2) {
   return resolved2;
 }
 function hashTicket(ticket) {
-  return createHash13("sha256").update(ticket, "utf8").digest();
+  return createHash14("sha256").update(ticket, "utf8").digest();
 }
 function constantTimeDigestMatch(left, right) {
   return left.byteLength === right.byteLength && timingSafeEqual4(left, right);
@@ -50232,7 +50801,7 @@ var init_lease_manager = __esm({
         this.#viewExecutor = options.viewExecutor;
         this.#now = options.now ?? Date.now;
         this.#randomBytes = options.randomBytes ?? randomBytes5;
-        this.#createId = options.createId ?? randomUUID11;
+        this.#createId = options.createId ?? randomUUID12;
         this.#ticketTtlMs = positiveDuration(options.ticketTtlMs, 15e3, "ticketTtlMs");
         this.#leaseTtlMs = positiveDuration(options.leaseTtlMs, 6e4, "leaseTtlMs");
         this.#maxLeaseTtlMs = positiveDuration(
@@ -51882,7 +52451,7 @@ var init_direct_websocket = __esm({
 });
 
 // packages/daemon/src/terminal/pane-stream/lease-manager.ts
-import { createHash as createHash14, randomBytes as randomBytes6, randomUUID as randomUUID13, timingSafeEqual as timingSafeEqual5 } from "node:crypto";
+import { createHash as createHash15, randomBytes as randomBytes6, randomUUID as randomUUID14, timingSafeEqual as timingSafeEqual5 } from "node:crypto";
 import { z as z82 } from "zod";
 function positiveDuration2(value, fallback, label2) {
   const resolved2 = value ?? fallback;
@@ -51892,7 +52461,7 @@ function positiveDuration2(value, fallback, label2) {
   return resolved2;
 }
 function hashTicket2(ticket) {
-  return createHash14("sha256").update(ticket, "utf8").digest();
+  return createHash15("sha256").update(ticket, "utf8").digest();
 }
 function digestsMatch(left, right) {
   return left.byteLength === right.byteLength && timingSafeEqual5(left, right);
@@ -51935,7 +52504,7 @@ var init_lease_manager2 = __esm({
         this.#instanceId = BindingIdSchemaZ3.parse(options.daemonInstanceId);
         this.#now = options.now ?? Date.now;
         this.#randomBytes = options.randomBytes ?? randomBytes6;
-        this.#createId = options.createId ?? randomUUID13;
+        this.#createId = options.createId ?? randomUUID14;
         this.#ticketTtlMs = positiveDuration2(options.ticketTtlMs, 15e3, "ticketTtlMs");
         this.#redemptionProcessingTtlMs = positiveDuration2(
           options.redemptionProcessingTtlMs,
@@ -52992,13 +53561,14 @@ var init_pane_stream_websocket = __esm({
             protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
             daemonInstanceId: this.#binding.daemonInstanceId,
             requestId: this.#binding.requestId,
+            ...this.#sessionRuntimeBinding ? { connectionClientId: this.#sessionRuntimeBinding.clientId } : {},
             panes: [...this.#descriptor.panes],
             effectiveViewerMode: this.#descriptor.viewerMode,
             ...this.#diagnosticCapabilities.length > 0 ? { diagnosticCapabilities: [...this.#diagnosticCapabilities] } : {}
           });
           this.#recordDiagnosticLifecycle("pane-stream-server-ready");
         } catch {
-          this.close(1011, "stream-unavailable");
+          this.close(1011, "stream-unavailable-describe");
           return;
         }
         this.#stopAuthoritySnapshots = this.#sessionRuntimeBinding?.onAuthoritySnapshot?.(
@@ -53015,7 +53585,7 @@ var init_pane_stream_websocket = __esm({
         this.#ledger.forceReturnClient(this.#clientId);
         this.#sendQueue.length = 0;
         for (const waiters of this.#semanticDrainWaiters.values())
-          for (const resolve38 of waiters) resolve38();
+          for (const resolve37 of waiters) resolve37();
         this.#semanticDrainWaiters.clear();
         this.#socket.off("message", this.#onMessage);
         this.#socket.off("close", this.#onSocketClose);
@@ -53346,9 +53916,9 @@ var init_pane_stream_websocket = __esm({
       }
       #awaitSemanticCredit(pane) {
         if (!this.#ledger.isStalled(this.#clientId, pane)) return Promise.resolve();
-        return new Promise((resolve38) => {
+        return new Promise((resolve37) => {
           const waiters = this.#semanticDrainWaiters.get(pane) ?? [];
-          waiters.push(resolve38);
+          waiters.push(resolve37);
           this.#semanticDrainWaiters.set(pane, waiters);
           this.#ensureDrainTick();
         });
@@ -53519,6 +54089,8 @@ var init_pane_stream_websocket = __esm({
           paneBorderStatus: event.paneBorderStatus,
           panes: event.panes.map((pane) => ({
             pane: pane.semanticPaneId,
+            displayName: pane.displayName,
+            displayNameSource: pane.displayNameSource,
             left: pane.left,
             top: pane.top,
             width: pane.width,
@@ -53643,7 +54215,7 @@ var init_pane_stream_websocket = __esm({
           const waiters = this.#semanticDrainWaiters.get(pane);
           if (waiters && this.#ledger.shouldResume(this.#clientId, pane)) {
             this.#semanticDrainWaiters.delete(pane);
-            for (const resolve38 of waiters) resolve38();
+            for (const resolve37 of waiters) resolve37();
           }
         }
       }
@@ -54283,7 +54855,7 @@ var init_schemas = __esm({
 });
 
 // packages/daemon/src/lib/terminals-store.ts
-import { existsSync as existsSync31, mkdirSync as mkdirSync23, readFileSync as readFileSync24, renameSync as renameSync12, writeFileSync as writeFileSync21 } from "node:fs";
+import { existsSync as existsSync31, mkdirSync as mkdirSync23, readFileSync as readFileSync25, renameSync as renameSync12, writeFileSync as writeFileSync21 } from "node:fs";
 import { dirname as dirname31, join as join34 } from "node:path";
 function path(dir) {
   return join34(dir, TERMINALS_FILE);
@@ -54295,7 +54867,7 @@ function loadTerminals(dir) {
   const file = path(dir);
   if (!existsSync31(file)) return [];
   try {
-    const body = readFileSync24(file, "utf-8");
+    const body = readFileSync25(file, "utf-8");
     const parsed = JSON.parse(body);
     if (!parsed.terminals || !Array.isArray(parsed.terminals)) return [];
     return parsed.terminals.filter((t) => isTerminal(t)).map((t) => ({ ...t }));
@@ -54374,7 +54946,7 @@ __export(auth_service_exports, {
   AuthService: () => AuthService
 });
 import * as crypto2 from "node:crypto";
-import { readFileSync as readFileSync25, existsSync as existsSync32 } from "node:fs";
+import { readFileSync as readFileSync26, existsSync as existsSync32 } from "node:fs";
 import { join as join35 } from "node:path";
 import { homedir as homedir16 } from "node:os";
 function base64url(buf) {
@@ -54469,8 +55041,8 @@ var init_auth_service = __esm({
         if (!this.verifySSHSignature(challenge.challenge, sigBuf, auth.publicKey)) {
           return { success: false, error: "Invalid SSH key signature" };
         }
-        const authorized2 = this.checkSSHKeyAuthorization(challenge.userId, auth.publicKey);
-        if (!authorized2) {
+        const authorized = this.checkSSHKeyAuthorization(challenge.userId, auth.publicKey);
+        if (!authorized) {
           return { success: false, error: "SSH key not authorized for this user" };
         }
         this.challenges.delete(auth.challengeId);
@@ -54521,7 +55093,7 @@ var init_auth_service = __esm({
           const home = userId === process.env.USER ? homedir16() : `/home/${userId}`;
           const authKeysPath = join35(home, ".ssh", "authorized_keys");
           if (!existsSync32(authKeysPath)) return false;
-          const authorizedKeys = readFileSync25(authKeysPath, "utf-8");
+          const authorizedKeys = readFileSync26(authKeysPath, "utf-8");
           const parts = publicKey.trim().split(" ");
           const keyData = parts.length > 1 ? parts[1] : parts[0];
           return authorizedKeys.includes(keyData);
@@ -55742,7 +56314,7 @@ var init_command_definitions = __esm({
       "workspace.window.kill": { label: "Close window", category: "workspace", dangerous: true },
       "workspace.pane.kill": { label: "Close pane", category: "workspace", dangerous: true },
       "workspace.session.kill": { label: "Close session", category: "workspace", dangerous: true },
-      "workspace.rename": { label: "Rename session or window", category: "workspace" },
+      "workspace.rename": { label: "Rename session, window, or pane", category: "workspace" },
       "workspace.pane.zoom.toggle": { label: "Toggle pane zoom", category: "workspace" },
       "workspace.pane.select": { label: "Focus pane", category: "workspace" },
       "workspace.pane.send": { label: "Send pane input", category: "workspace" },
@@ -56215,7 +56787,7 @@ var init_inspect = __esm({
 });
 
 // packages/daemon/src/lib/filesystem-browser.ts
-import { realpathSync as realpathSync13, readdirSync as readdirSync4, statSync as statSync12 } from "node:fs";
+import { realpathSync as realpathSync13, readdirSync as readdirSync4, statSync as statSync13 } from "node:fs";
 import { homedir as homedir17 } from "node:os";
 import { isAbsolute as isAbsolute14, join as join36, resolve as resolve33, sep as sep7 } from "node:path";
 function isUnderRoot(canonical, root) {
@@ -56418,9 +56990,9 @@ var init_terminal_runtime_inventory2 = __esm({
 });
 
 // packages/daemon/src/command-center/resources/workspace-resource-ids.ts
-import { createHash as createHash15 } from "node:crypto";
+import { createHash as createHash16 } from "node:crypto";
 function opaqueDigest(...parts) {
-  const hash = createHash15("sha256");
+  const hash = createHash16("sha256");
   for (const part of parts) {
     hash.update(part, "utf8");
     hash.update("\0");
@@ -56475,7 +57047,7 @@ var init_workspace_resource_ids = __esm({
 });
 
 // packages/daemon/src/command-center/resources/workspace-files-authority.ts
-import { lstatSync as lstatSync5, readdirSync as readdirSync5, readFileSync as readFileSync26, realpathSync as realpathSync14 } from "node:fs";
+import { lstatSync as lstatSync5, readdirSync as readdirSync5, readFileSync as readFileSync27, realpathSync as realpathSync14 } from "node:fs";
 import { basename as basename15, dirname as dirname32, resolve as resolvePath, sep as sep8 } from "node:path";
 import ignore from "ignore";
 function extensionOf(name) {
@@ -56542,7 +57114,7 @@ function directoryHasChildren(absDir) {
 function buildIgnore(root) {
   const ig = ignore();
   try {
-    ig.add(readFileSync26(resolvePath(root, ".gitignore"), "utf8"));
+    ig.add(readFileSync27(resolvePath(root, ".gitignore"), "utf8"));
   } catch {
   }
   return ig;
@@ -56857,7 +57429,7 @@ var init_workspace_files_authority = __esm({
         }
         let buffer;
         try {
-          buffer = readFileSync26(abs);
+          buffer = readFileSync27(abs);
         } catch (error) {
           const code = error.code;
           if (code === "EACCES" || code === "EPERM") {
@@ -57147,7 +57719,7 @@ var init_workspace_changes_git = __esm({
 
 // packages/daemon/src/command-center/resources/workspace-changes-authority.ts
 import { spawnSync } from "node:child_process";
-import { readFileSync as readFileSync27, realpathSync as realpathSync15, statSync as statSync13 } from "node:fs";
+import { readFileSync as readFileSync28, realpathSync as realpathSync15, statSync as statSync14 } from "node:fs";
 import { basename as basename16, isAbsolute as isAbsolute16, relative as relative5, resolve as resolvePath2 } from "node:path";
 function runGit(args, cwd) {
   const result = spawnSync("git", args, {
@@ -57400,7 +57972,7 @@ var init_workspace_changes_authority = __esm({
       untrackedDiff(changeId, base, absPath) {
         let buffer;
         try {
-          const stat2 = statSync13(absPath);
+          const stat2 = statSync14(absPath);
           if (stat2.size > DIFF_MAX_BYTES) {
             return this.diffParse(changeId, {
               status: "too-large",
@@ -57409,7 +57981,7 @@ var init_workspace_changes_authority = __esm({
               limitBytes: DIFF_MAX_BYTES
             });
           }
-          buffer = readFileSync27(absPath);
+          buffer = readFileSync28(absPath);
         } catch {
           return this.diffUnavailable(changeId, "io-error", "The file could not be read.");
         }
@@ -57541,7 +58113,7 @@ var init_workspace_changes_authority = __esm({
       countsFor(raw, repoRoot, staged, unstaged) {
         if (raw.group === "untracked") {
           try {
-            const buffer = readFileSync27(resolvePath2(repoRoot, raw.path));
+            const buffer = readFileSync28(resolvePath2(repoRoot, raw.path));
             if (looksBinary(buffer)) return { additions: null, deletions: null, binary: true };
             const text = buffer.toString("utf8");
             const lines = text.length === 0 ? 0 : text.replace(/\n$/u, "").split("\n").length;
@@ -58986,7 +59558,7 @@ var init_fleet_resource_route = __esm({
 });
 
 // packages/daemon/src/command-center/resources/agent-graph-overlay.ts
-import { createHash as createHash16 } from "node:crypto";
+import { createHash as createHash17 } from "node:crypto";
 function pairKey(a, b) {
   return a < b ? `${a}\0${b}` : `${b}\0${a}`;
 }
@@ -59002,7 +59574,7 @@ function nodeLabel(value) {
   return normalized.length > 0 ? normalized : null;
 }
 function groupId(missionId) {
-  const token = createHash16("sha256").update(missionId).digest("hex").slice(0, 32);
+  const token = createHash17("sha256").update(missionId).digest("hex").slice(0, 32);
   return `group.${token}`;
 }
 function projectApplicationShellAgentGraphOverlay(input) {
@@ -59502,13 +60074,13 @@ __export(widget_asset_store_exports, {
   publishWidgetAsset: () => publishWidgetAsset,
   readWidgetAsset: () => readWidgetAsset
 });
-import { createHash as createHash17, randomUUID as randomUUID16 } from "node:crypto";
+import { createHash as createHash18, randomUUID as randomUUID17 } from "node:crypto";
 import {
   chmodSync as chmodSync5,
   existsSync as existsSync34,
   lstatSync as lstatSync6,
   mkdirSync as mkdirSync24,
-  readFileSync as readFileSync28,
+  readFileSync as readFileSync29,
   readdirSync as readdirSync6,
   renameSync as renameSync13,
   rmSync as rmSync4,
@@ -59592,7 +60164,7 @@ function publishWidgetAsset(bytes, options) {
     throw new WidgetAssetStoreError("unsupported-media", "The widget asset media type is unsafe.");
   }
   const root = ensureAssetRoot();
-  const assetId = createHash17("sha256").update(bytes).digest("hex");
+  const assetId = createHash18("sha256").update(bytes).digest("hex");
   const paths = assetPaths(root, assetId);
   const metadata = {
     version: 1,
@@ -59603,11 +60175,11 @@ function publishWidgetAsset(bytes, options) {
     createdAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   if (!existsSync34(paths.data)) {
-    const temporary = join37(root, `.${assetId}.${randomUUID16()}.bin`);
+    const temporary = join37(root, `.${assetId}.${randomUUID17()}.bin`);
     writeFileSync22(temporary, bytes, { mode: 384, flag: "wx" });
     renameSync13(temporary, paths.data);
   }
-  const metadataTemporary = join37(root, `.${assetId}.${randomUUID16()}.json`);
+  const metadataTemporary = join37(root, `.${assetId}.${randomUUID17()}.json`);
   writeFileSync22(metadataTemporary, `${JSON.stringify(metadata)}
 `, { mode: 384, flag: "wx" });
   renameSync13(metadataTemporary, paths.metadata);
@@ -59625,12 +60197,12 @@ function readWidgetAsset(assetIdInput) {
     if (metadataStat.isSymbolicLink() || dataStat.isSymbolicLink() || !metadataStat.isFile() || !dataStat.isFile() || dataStat.size < 1 || dataStat.size > WIDGET_ASSET_MAX_BYTES) {
       return null;
     }
-    const metadata = parseMetadata(readFileSync28(paths.metadata, "utf8"));
+    const metadata = parseMetadata(readFileSync29(paths.metadata, "utf8"));
     if (!metadata || metadata.assetId !== parsedId.data || metadata.byteLength !== dataStat.size || Date.now() - Date.parse(metadata.createdAt) > WIDGET_ASSET_RETENTION_MS) {
       return null;
     }
-    const bytes = readFileSync28(paths.data);
-    if (createHash17("sha256").update(bytes).digest("hex") !== parsedId.data) return null;
+    const bytes = readFileSync29(paths.data);
+    if (createHash18("sha256").update(bytes).digest("hex") !== parsedId.data) return null;
     return { ...metadata, bytes };
   } catch {
     return null;
@@ -59677,7 +60249,7 @@ import { z as z86 } from "zod";
 import { realpathSync as realpathSync16 } from "node:fs";
 import { homedir as homedir18 } from "node:os";
 import { isAbsolute as isAbsolute17, resolve as pathResolve } from "node:path";
-import { randomUUID as randomUUID17 } from "node:crypto";
+import { randomUUID as randomUUID18 } from "node:crypto";
 import { WebSocketServer as WebSocketServer3 } from "ws";
 function bearerToken(authHeader) {
   if (!authHeader?.startsWith("Bearer ")) return null;
@@ -59815,7 +60387,7 @@ function createApp(options = {}) {
   const authService = options.authService ?? new AuthService();
   const daemonIdentity = options.daemonIdentity ?? {
     productVersion: "0.0.0",
-    instanceId: randomUUID17(),
+    instanceId: randomUUID18(),
     startedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   const daemonInstanceIdentity = DaemonInstanceIdentitySchemaZ.parse({
@@ -60314,7 +60886,7 @@ function createApp(options = {}) {
         });
         scripted = true;
       }
-      if (!id) id = randomUUID17();
+      if (!id) id = randomUUID18();
       try {
         const upsertInput = {
           id,
@@ -60759,7 +61331,7 @@ function createApp(options = {}) {
     if (!existsSync35(parsed.data.dir)) {
       return c.json({ error: `Directory "${parsed.data.dir}" does not exist` }, 400);
     }
-    const jobId = randomUUID17();
+    const jobId = randomUUID18();
     const command2 = process.env.TMUX_IDE_INIT_COMMAND ?? "tmux-ide";
     void (async () => {
       try {
@@ -61081,17 +61653,17 @@ var require_package = __commonJS({
         "packages/presentation/package.json",
         "packages/tmux-bridge/src",
         "packages/tmux-bridge/package.json",
-        "packages/contracts/package.json",
-        "apps/desktop-renderer/dist"
+        "packages/contracts/package.json"
       ],
       scripts: {
-        build: "pnpm build:web && pnpm build:cli",
+        build: "pnpm build:cli",
         "build:web": "pnpm --filter @tmux-ide/desktop-renderer run build:web",
         "build:cli": "node scripts/build-cli.mjs",
         "build:macos-notifier": "node scripts/build-macos-notifier.mjs",
         "build:tui": "bun scripts/build-tui.mjs",
-        prepack: "pnpm build:web && pnpm build:cli",
-        prepublishOnly: "pnpm check && node scripts/prepublish-check.mjs",
+        prepack: "pnpm build:cli",
+        prepublishOnly: "pnpm release:opentui:check && node scripts/prepublish-opentui-check.mjs",
+        "prepublish:full:check": "pnpm check && node scripts/prepublish-check.mjs",
         typecheck: 'echo "root typecheck deferred to per-package turbo run"',
         dev: "node bin/cli.js",
         "dev:web": "node scripts/dev-web.mjs",
@@ -61109,8 +61681,10 @@ var require_package = __commonJS({
         "test:pane-frame-package": "pnpm --filter @tmux-ide/presentation run test",
         "typecheck:workspace": "turbo run typecheck",
         "docs:build": "turbo run build --filter=@tmux-ide/docs",
-        "pack:check": "pnpm build:web && node scripts/pack-web-check.mjs",
+        "pack:check": "node --test scripts/lib/npm-release-tag.test.mjs && node scripts/pack-tui-check.mjs",
+        "pack:web:check": "pnpm build:web && node scripts/pack-web-check.mjs",
         "test:pack-installed": "node scripts/pack-check-run.mjs",
+        "release:opentui:check": "node scripts/opentui-release-check.mjs",
         "check:native-deps": "node packages/daemon/scripts/check-native-deps.mjs",
         check: "pnpm run lint:workspace && pnpm run check:control-bytes && pnpm run format:check && pnpm run typecheck:workspace && pnpm run test:portable-release-contract && pnpm run test:unit && pnpm run test:tui-testdrive && pnpm run test:product-test-rig && pnpm run test:daemon-bun && pnpm run test:tui-renderer && pnpm run test:workbench-dock-package && pnpm run test:pane-frame-package && pnpm run docs:build && pnpm run pack:check && pnpm run test:pack-installed && pnpm run check:native-deps && pnpm run smoke:desktop",
         postinstall: "node scripts/postinstall.js",
@@ -61168,6 +61742,7 @@ var require_package = __commonJS({
         "js-yaml": "^4.3.1",
         "node-pty": "1.2.0-beta.12",
         "solid-js": "1.9.12",
+        "string-width": "^7.2.0",
         ws: "^8.21.0",
         zod: "^4.3.6"
       },
@@ -61183,6 +61758,7 @@ var require_package = __commonJS({
         globals: "^17.4.0",
         prettier: "^3.8.1",
         turbo: "^2.3.3",
+        tsx: "^4.20.7",
         typescript: "^5.9.3",
         vitest: "^4.1.0"
       },
@@ -61408,10 +61984,10 @@ function buildReport(target) {
   let ageSeconds = null;
   let stale = false;
   if (authRaw) {
-    const sep10 = authRaw.lastIndexOf(":");
-    if (sep10 !== -1) {
-      authState = authRaw.slice(0, sep10);
-      const epoch = Number(authRaw.slice(sep10 + 1));
+    const sep9 = authRaw.lastIndexOf(":");
+    if (sep9 !== -1) {
+      authState = authRaw.slice(0, sep9);
+      const epoch = Number(authRaw.slice(sep9 + 1));
       if (Number.isFinite(epoch)) {
         authEpoch = epoch;
         ageSeconds = nowSec - epoch;
@@ -61750,8 +62326,8 @@ var init_agent_lifecycle = __esm({
 // packages/daemon/src/control/lifecycle.ts
 import { execFile as execFile10 } from "node:child_process";
 function tmuxRun(args) {
-  return new Promise((resolve38, reject) => {
-    execFile10("tmux", args, (err, stdout) => err ? reject(err) : resolve38(stdout.trimEnd()));
+  return new Promise((resolve37, reject) => {
+    execFile10("tmux", args, (err, stdout) => err ? reject(err) : resolve37(stdout.trimEnd()));
   });
 }
 async function tmuxTry(args) {
@@ -61923,7 +62499,7 @@ __export(server_exports2, {
   defaultControlSocketPath: () => defaultControlSocketPath,
   startControlServer: () => startControlServer
 });
-import { chmodSync as chmodSync6, existsSync as existsSync36, mkdirSync as mkdirSync25, statSync as statSync14, unlinkSync as unlinkSync3 } from "node:fs";
+import { chmodSync as chmodSync6, existsSync as existsSync36, mkdirSync as mkdirSync25, statSync as statSync15, unlinkSync as unlinkSync4 } from "node:fs";
 import { createServer as createServer2, connect } from "node:net";
 import { dirname as dirname34 } from "node:path";
 function defaultControlSocketPath() {
@@ -61931,17 +62507,17 @@ function defaultControlSocketPath() {
 }
 async function claimSocketPath(path2) {
   if (!existsSync36(path2)) return;
-  if (!statSync14(path2).isSocket()) {
+  if (!statSync15(path2).isSocket()) {
     throw new IdeError(
       `${path2} exists and is not a socket \u2014 refusing to remove it. Pass a different --socket path.`,
       { code: "USAGE", exitCode: 1 }
     );
   }
-  const alive = await new Promise((resolve38) => {
+  const alive = await new Promise((resolve37) => {
     const probe = connect(path2);
     const done = (result) => {
       probe.destroy();
-      resolve38(result);
+      resolve37(result);
     };
     probe.once("connect", () => done(true));
     probe.once("error", () => done(false));
@@ -61953,7 +62529,7 @@ async function claimSocketPath(path2) {
       exitCode: 1
     });
   }
-  unlinkSync3(path2);
+  unlinkSync4(path2);
 }
 async function startControlServer(opts = {}) {
   const socketPath = opts.socketPath ?? defaultControlSocketPath();
@@ -62023,7 +62599,7 @@ async function startControlServer(opts = {}) {
     conn.on("error", () => {
     });
   });
-  await new Promise((resolve38, reject) => {
+  await new Promise((resolve37, reject) => {
     server.once("error", (err) => {
       if ((err.code === "EINVAL" || err.code === "ENAMETOOLONG") && socketPath.length > 100) {
         reject(
@@ -62039,23 +62615,23 @@ Pass a shorter path: tmux-ide serve --socket /tmp/tmux-ide-control.sock`,
     });
     server.listen(socketPath, () => {
       server.removeAllListeners("error");
-      resolve38();
+      resolve37();
     });
   });
   chmodSync6(socketPath, 384);
   log(`listening on ${socketPath}`);
   return {
     socketPath,
-    close: () => new Promise((resolve38) => {
+    close: () => new Promise((resolve37) => {
       if (timer) clearInterval(timer);
       timer = null;
       for (const conn of connections) conn.destroy();
       server.close(() => {
         try {
-          unlinkSync3(socketPath);
+          unlinkSync4(socketPath);
         } catch {
         }
-        resolve38();
+        resolve37();
       });
     })
   };
@@ -62086,12 +62662,12 @@ __export(client_exports, {
 import { connect as connect2 } from "node:net";
 function connectControl(opts = {}) {
   const path2 = opts.socketPath ?? defaultControlSocketPath();
-  return new Promise((resolve38, reject) => {
+  return new Promise((resolve37, reject) => {
     const socket = connect2(path2);
     socket.once("error", reject);
     socket.once("connect", () => {
       socket.removeListener("error", reject);
-      resolve38(wrap(socket));
+      resolve37(wrap(socket));
     });
   });
 }
@@ -62143,12 +62719,12 @@ function wrap(socket) {
   });
   const request = (verb, params) => {
     const id = nextId++;
-    return new Promise((resolve38, reject) => {
+    return new Promise((resolve37, reject) => {
       if (socket.destroyed) {
         reject(new ControlRequestError("disconnected", "control socket closed"));
         return;
       }
-      pending.set(id, { resolve: resolve38, reject });
+      pending.set(id, { resolve: resolve37, reject });
       socket.write(encodeFrame({ v: CONTROL_PROTOCOL_VERSION, id, verb, params }));
     });
   };
@@ -62224,7 +62800,7 @@ async function waitForAgentStatusViaReceipts(session, want, opts = {}) {
   } catch {
     return null;
   }
-  return new Promise((resolve38) => {
+  return new Promise((resolve37) => {
     let settled = false;
     let lastStatus = null;
     let deadlineTimer = null;
@@ -62238,7 +62814,7 @@ async function waitForAgentStatusViaReceipts(session, want, opts = {}) {
         socket.close();
       } catch {
       }
-      resolve38(result);
+      resolve37(result);
     };
     connectTimer = setTimeout(() => settle(null), connectTimeoutMs);
     connectTimer.unref?.();
@@ -62666,673 +63242,12 @@ var init_pane_widget = __esm({
   }
 });
 
-// apps/desktop-renderer/src/runtime/dev-web-host-config.ts
-function consumeDevelopmentWebSocketSession(requestUrl) {
-  if (!requestUrl) return null;
-  let parsed;
-  try {
-    parsed = new URL(requestUrl, "http://dev-gateway.invalid");
-  } catch {
-    return null;
-  }
-  const tokens = parsed.searchParams.getAll(DEV_HOST_SESSION_QUERY_PARAMETER);
-  if (tokens.length !== 1 || !DEV_HOST_SESSION_TOKEN.test(tokens[0])) return null;
-  parsed.searchParams.delete(DEV_HOST_SESSION_QUERY_PARAMETER);
-  const daemonParameters = [...parsed.searchParams];
-  const semanticEvents = parsed.pathname === "/ws/events" && daemonParameters.length === 1 && daemonParameters[0]?.[0] === "mode" && daemonParameters[0]?.[1] === "semantic";
-  if (daemonParameters.length > 0 && !semanticEvents || parsed.hash) return null;
-  return { token: tokens[0], forwardPath: `${parsed.pathname}${parsed.search}` };
-}
-var DEV_HOST_SESSION_QUERY_PARAMETER, DEV_HOST_SESSION_TOKEN;
-var init_dev_web_host_config = __esm({
-  "apps/desktop-renderer/src/runtime/dev-web-host-config.ts"() {
-    "use strict";
-    DEV_HOST_SESSION_QUERY_PARAMETER = "__tmux_ide_dev_host_session";
-    DEV_HOST_SESSION_TOKEN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-  }
-});
-
-// apps/desktop-renderer/scripts/dev-native-folder-host.ts
-import { execFile as execFile11 } from "node:child_process";
-import { randomUUID as randomUUID19 } from "node:crypto";
-function executeFile(executable, args) {
-  return new Promise((resolveOutput, reject) => {
-    execFile11(executable, [...args], { encoding: "utf8", maxBuffer: 64 * 1024 }, (error, stdout) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolveOutput(stdout.trim());
-    });
-  });
-}
-function pickerWasCancelled(error) {
-  if (!error || typeof error !== "object") return false;
-  const candidate = error;
-  const detail = `${String(candidate.stderr ?? "")} ${String(candidate.message ?? "")}`;
-  return candidate.code === 1 && /cancel(?:ed|led)|-128/iu.test(detail);
-}
-async function selectNativeProjectDirectory() {
-  try {
-    if (process.platform === "darwin") {
-      return await executeFile("osascript", [
-        "-e",
-        'POSIX path of (choose folder with prompt "Open project in tmux-ide")'
-      ]);
-    }
-    if (process.platform === "win32") {
-      return await executeFile("powershell.exe", [
-        "-NoProfile",
-        "-STA",
-        "-Command",
-        "Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; $dialog.Description = 'Open project in tmux-ide'; if ($dialog.ShowDialog() -eq 'OK') { [Console]::Write($dialog.SelectedPath) }"
-      ]);
-    }
-    return await executeFile("zenity", [
-      "--file-selection",
-      "--directory",
-      "--title=Open project in tmux-ide"
-    ]);
-  } catch (error) {
-    if (pickerWasCancelled(error)) return null;
-    throw error;
-  }
-}
-async function openSelectedDevelopmentProject(options, dependencies = {}) {
-  const deps2 = { ...defaults, ...dependencies };
-  const projectDir = await deps2.selectDirectory();
-  if (!projectDir) return null;
-  const operationId = deps2.createOperationId();
-  const daemonResponse = await deps2.request(
-    `${options.daemonOrigin}/api/v2/action/workspace.open.prepare`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${options.ownerToken}`,
-        "Content-Type": "application/json",
-        "X-Tmux-Ide-Host-Client-Id": options.hostClientId,
-        "X-Tmux-Ide-Operation-Id": operationId
-      },
-      body: JSON.stringify({ source: { kind: "project", projectDir } })
-    }
-  );
-  const payload = await daemonResponse.json().catch(() => null);
-  if (!daemonResponse.ok || payload?.ok !== true) {
-    return requestFailed("The selected project could not be opened.");
-  }
-  const result = WorkspaceOpenPreparedResultSchemaZ.safeParse(payload.result);
-  if (!result.success || result.data.operationId !== operationId) {
-    return requestFailed("The daemon returned an invalid workspace-open result.");
-  }
-  return { status: "ok", result: result.data };
-}
-var defaults, requestFailed;
-var init_dev_native_folder_host = __esm({
-  "apps/desktop-renderer/scripts/dev-native-folder-host.ts"() {
-    "use strict";
-    init_src();
-    defaults = {
-      selectDirectory: selectNativeProjectDirectory,
-      request: fetch,
-      createOperationId: randomUUID19
-    };
-    requestFailed = (reason) => ({
-      status: "error",
-      error: { code: "request-failed", reason }
-    });
-  }
-});
-
-// apps/desktop-renderer/scripts/generation-gateway.ts
-import { randomUUID as randomUUID20, timingSafeEqual as timingSafeEqual7 } from "node:crypto";
-import { closeSync as closeSync4, constants as constants7, fstatSync as fstatSync2, lstatSync as lstatSync7, openSync as openSync4, readFileSync as readFileSync29 } from "node:fs";
-import { createServer as createServer3, request as httpRequest } from "node:http";
-import { connect as connectTcp } from "node:net";
-import { dirname as dirname37 } from "node:path";
-async function startGenerationGateway(daemonInfoPath, expected) {
-  const bearer = randomUUID20();
-  const server = createServer3((incoming, response3) => {
-    if (!authorized(incoming.headers.authorization, bearer)) {
-      response3.writeHead(401, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-      response3.end(JSON.stringify({ code: "generation_gateway_unauthorized" }));
-      return;
-    }
-    let daemon;
-    try {
-      daemon = trustedRecord(daemonInfoPath, expected);
-    } catch {
-      response3.writeHead(503, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-      response3.end(JSON.stringify({ code: "canonical_daemon_unavailable" }));
-      return;
-    }
-    const upstream = httpRequest({
-      hostname: "127.0.0.1",
-      port: daemon.port,
-      method: incoming.method,
-      path: incoming.url,
-      headers: forwardedHeaders(incoming.headers, daemon)
-    });
-    upstream.on("response", (source) => {
-      response3.writeHead(source.statusCode ?? 502, source.headers);
-      source.pipe(response3);
-    });
-    upstream.on("error", () => {
-      if (!response3.headersSent) response3.writeHead(502);
-      response3.end();
-    });
-    incoming.pipe(upstream);
-  });
-  server.on("upgrade", (incoming, downstream, head3) => {
-    if (!authorized(incoming.headers.authorization, bearer)) {
-      downstream.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
-      return;
-    }
-    let daemon;
-    try {
-      daemon = trustedRecord(daemonInfoPath, expected);
-    } catch {
-      downstream.end("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
-      return;
-    }
-    const upstream = connectTcp(daemon.port, "127.0.0.1");
-    upstream.once("connect", () => {
-      const headers = forwardedHeaders(incoming.headers, daemon);
-      upstream.write(`${incoming.method ?? "GET"} ${incoming.url ?? "/"} HTTP/1.1\r
-`);
-      for (const [name, value] of Object.entries(headers)) {
-        if (value === void 0) continue;
-        upstream.write(`${name}: ${Array.isArray(value) ? value.join(", ") : value}\r
-`);
-      }
-      upstream.write("\r\n");
-      if (head3.length > 0) upstream.write(head3);
-      downstream.pipe(upstream).pipe(downstream);
-    });
-    upstream.on("error", () => downstream.destroy());
-    downstream.on("error", () => upstream.destroy());
-  });
-  await new Promise((resolve38, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve38);
-  });
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("generation gateway did not bind");
-  return {
-    origin: `http://127.0.0.1:${address.port}`,
-    bearer,
-    stop: () => new Promise((resolve38) => server.close(() => resolve38()))
-  };
-}
-function trustedRecord(path2, expected) {
-  const parent = lstatSync7(dirname37(path2));
-  const pathStat = lstatSync7(path2);
-  if (!parent.isDirectory() || parent.isSymbolicLink() || !pathStat.isFile() || pathStat.isSymbolicLink() || pathStat.size > MAX_RECORD_BYTES) {
-    throw new Error("canonical daemon publication is not a bounded regular file");
-  }
-  if (typeof process.getuid === "function" && (parent.uid !== process.getuid() || pathStat.uid !== process.getuid())) {
-    throw new Error("canonical daemon publication has another owner");
-  }
-  if ((parent.mode & 63) !== 0 || (pathStat.mode & 63) !== 0) {
-    throw new Error("canonical daemon publication permissions are unsafe");
-  }
-  const descriptor2 = openSync4(path2, constants7.O_RDONLY | (constants7.O_NOFOLLOW ?? 0));
-  let daemon;
-  try {
-    const opened = fstatSync2(descriptor2);
-    if (!opened.isFile() || opened.dev !== pathStat.dev || opened.ino !== pathStat.ino || opened.size !== pathStat.size || opened.mtimeMs !== pathStat.mtimeMs || typeof process.getuid === "function" && opened.uid !== process.getuid() || (opened.mode & 63) !== 0) {
-      throw new Error("canonical daemon publication changed while opening");
-    }
-    daemon = CanonicalDaemonInfoSchema.parse(JSON.parse(readFileSync29(descriptor2, "utf8")));
-  } finally {
-    closeSync4(descriptor2);
-  }
-  if (daemon.bindHostname !== "127.0.0.1" || daemon.authToken === null) {
-    throw new Error("canonical daemon record is not a local owner endpoint");
-  }
-  if (daemon.protocolVersion !== expected.protocolVersion || daemon.productVersion !== expected.productVersion || expected.environmentId !== void 0 && daemon.environmentId !== expected.environmentId) {
-    throw new Error("canonical daemon record changed product or environment authority");
-  }
-  return daemon;
-}
-function forwardedHeaders(headers, daemon) {
-  return {
-    ...headers,
-    host: `127.0.0.1:${daemon.port}`,
-    authorization: `Bearer ${daemon.authToken}`,
-    connection: headers.connection
-  };
-}
-function authorized(value, bearer) {
-  if (!value?.startsWith("Bearer ")) return false;
-  const received = Buffer.from(value.slice("Bearer ".length));
-  const expected = Buffer.from(bearer);
-  return received.length === expected.length && timingSafeEqual7(received, expected);
-}
-var MAX_RECORD_BYTES;
-var init_generation_gateway = __esm({
-  "apps/desktop-renderer/scripts/generation-gateway.ts"() {
-    "use strict";
-    init_src();
-    MAX_RECORD_BYTES = 64 * 1024;
-  }
-});
-
-// apps/desktop-renderer/scripts/production-web-server.ts
-var production_web_server_exports = {};
-__export(production_web_server_exports, {
-  startProductionWebServer: () => startProductionWebServer
-});
-import { randomUUID as randomUUID21 } from "node:crypto";
-import { createReadStream, lstatSync as lstatSync8, readFileSync as readFileSync30, realpathSync as realpathSync17 } from "node:fs";
-import {
-  createServer as createServer4,
-  request as httpRequest2
-} from "node:http";
-import { connect as connectTcp2 } from "node:net";
-import { extname as extname2, resolve as resolve36, sep as sep9 } from "node:path";
-function json(response3, status2, payload) {
-  response3.writeHead(status2, {
-    ...SECURITY_HEADERS,
-    "Cache-Control": "no-store",
-    "Content-Type": "application/json; charset=utf-8"
-  });
-  response3.end(JSON.stringify(payload));
-}
-function exactOrigin(request, origin) {
-  return request.headers.origin === origin;
-}
-function mimeType(path2) {
-  switch (extname2(path2)) {
-    case ".css":
-      return "text/css; charset=utf-8";
-    case ".html":
-      return "text/html; charset=utf-8";
-    case ".js":
-    case ".mjs":
-      return "text/javascript; charset=utf-8";
-    case ".json":
-      return "application/json; charset=utf-8";
-    case ".svg":
-      return "image/svg+xml";
-    case ".png":
-      return "image/png";
-    case ".gif":
-      return "image/gif";
-    case ".woff2":
-      return "font/woff2";
-    default:
-      return "application/octet-stream";
-  }
-}
-function safeStaticFile(staticRoot, pathname) {
-  let decoded;
-  try {
-    decoded = decodeURIComponent(pathname);
-  } catch {
-    return null;
-  }
-  if (decoded.includes("\0") || decoded.includes("\\")) return null;
-  const relative6 = decoded === "/" ? "index.html" : decoded.replace(/^\/+/, "");
-  const root = realpathSync17(staticRoot);
-  const candidate = resolve36(root, relative6);
-  if (candidate !== root && !candidate.startsWith(`${root}${sep9}`)) return null;
-  let stat2;
-  let canonical;
-  try {
-    stat2 = lstatSync8(candidate);
-    canonical = realpathSync17(candidate);
-  } catch {
-    return null;
-  }
-  if (!stat2.isFile() || stat2.isSymbolicLink()) return null;
-  if (canonical !== root && !canonical.startsWith(`${root}${sep9}`)) return null;
-  return canonical;
-}
-function proxyRequestHeaders(request) {
-  const headers = {};
-  for (const [name, value] of Object.entries(request.headers)) {
-    if (value === void 0 || HOP_BY_HOP_HEADERS.has(name.toLowerCase())) continue;
-    headers[name] = value;
-  }
-  delete headers["x-tmux-ide-dev-host-session"];
-  delete headers["x-tmux-ide-dev-original-method"];
-  delete headers["content-length"];
-  return headers;
-}
-function proxyResponseHeaders(source, payload) {
-  const headers = {};
-  for (const [name, value] of Object.entries(source.headers)) {
-    if (value === void 0 || HOP_BY_HOP_HEADERS.has(name.toLowerCase()) || name.toLowerCase() === "content-length")
-      continue;
-    headers[name] = value;
-  }
-  headers["content-length"] = String(payload.length);
-  return headers;
-}
-function generationGatewayUnavailable(status2, payload) {
-  if (status2 === 502 && payload.length === 0) return true;
-  if (status2 !== 503) return false;
-  try {
-    return JSON.parse(payload.toString("utf8")).code === "canonical_daemon_unavailable";
-  } catch {
-    return false;
-  }
-}
-function responseBody(source) {
-  return new Promise((resolveBody, reject) => {
-    const chunks = [];
-    let size = 0;
-    source.on("data", (chunk) => {
-      size += chunk.length;
-      if (size > MAX_PROXY_RESPONSE_BYTES) {
-        source.destroy(new Error("gateway response is too large"));
-        return;
-      }
-      chunks.push(chunk);
-    });
-    source.once("end", () => resolveBody(Buffer.concat(chunks)));
-    source.once("error", reject);
-  });
-}
-function requestBody(source) {
-  return new Promise((resolveBody, reject) => {
-    const chunks = [];
-    let size = 0;
-    source.on("data", (chunk) => {
-      size += chunk.length;
-      if (size > MAX_PROXY_REQUEST_BYTES) {
-        source.destroy(new Error("gateway request is too large"));
-        return;
-      }
-      chunks.push(chunk);
-    });
-    source.once("end", () => resolveBody(Buffer.concat(chunks)));
-    source.once("error", reject);
-  });
-}
-async function startProductionWebServer(options) {
-  const staticRoot = realpathSync17(options.staticRoot);
-  const indexPath = safeStaticFile(staticRoot, "/");
-  if (!indexPath) throw new Error(`packaged Web GUI is missing ${staticRoot}/index.html`);
-  const bootstrap = options.ensureDaemon ?? (() => ensureCanonicalDaemon({
-    entryPath: options.cliEntryPath,
-    cwd: options.cwd
-  }));
-  const openProject = options.openProject ?? openSelectedDevelopmentProject;
-  let daemon = (await bootstrap()).candidate;
-  if (!daemon.authToken) throw new Error("canonical daemon did not publish an owner credential");
-  const gateway = options.gateway ?? await startGenerationGateway(options.daemonInfoPath ?? getCanonicalDaemonInfoPath(), {
-    protocolVersion: daemon.protocolVersion,
-    productVersion: daemon.productVersion,
-    ...daemon.environmentId ? { environmentId: daemon.environmentId } : {}
-  });
-  const gatewayUrl = new URL(gateway.origin);
-  const sessions = /* @__PURE__ */ new Map();
-  const sockets = /* @__PURE__ */ new Set();
-  let ensureInFlight = null;
-  let stopped = false;
-  const ensureDaemon = () => {
-    if (ensureInFlight) return ensureInFlight;
-    const pending = bootstrap().then(({ candidate }) => {
-      daemon = candidate;
-    });
-    const tracked = pending.finally(() => {
-      if (ensureInFlight === tracked) ensureInFlight = null;
-    });
-    ensureInFlight = tracked;
-    return tracked;
-  };
-  const expireSessions = () => {
-    const now = Date.now();
-    for (const [token, session] of sessions) {
-      if (session.expiresAt <= now) sessions.delete(token);
-    }
-    while (sessions.size >= DOCUMENT_SESSION_LIMIT) {
-      const oldest = sessions.keys().next().value;
-      if (!oldest) break;
-      sessions.delete(oldest);
-    }
-  };
-  const mintSession = () => {
-    expireSessions();
-    const token = randomUUID21();
-    sessions.set(token, {
-      hostClientId: `web:${randomUUID21()}`,
-      expiresAt: Date.now() + DOCUMENT_SESSION_TTL_MS
-    });
-    return token;
-  };
-  const resolveSession = (request) => {
-    const token = request.headers["x-tmux-ide-dev-host-session"];
-    if (typeof token !== "string") return null;
-    expireSessions();
-    return sessions.get(token) ?? null;
-  };
-  let pageOrigin = "";
-  const proxyHttp = async (request, response3, session, requestPayload, retry = true) => {
-    const originalMethod = request.headers["x-tmux-ide-dev-original-method"];
-    const method = originalMethod === "GET" && request.method === "POST" ? "GET" : request.method;
-    const headers = proxyRequestHeaders(request);
-    headers.authorization = `Bearer ${gateway.bearer}`;
-    headers["x-tmux-ide-host-client-id"] = session.hostClientId;
-    headers.host = gatewayUrl.host;
-    if (method !== "GET" && method !== "HEAD" && requestPayload.length > 0) {
-      headers["content-length"] = String(requestPayload.length);
-    }
-    const upstream = httpRequest2({
-      hostname: gatewayUrl.hostname,
-      port: Number(gatewayUrl.port),
-      method,
-      path: request.url,
-      headers
-    });
-    upstream.end(method === "GET" || method === "HEAD" ? void 0 : requestPayload);
-    try {
-      const source = await new Promise((resolveSource, reject) => {
-        upstream.once("response", resolveSource);
-        upstream.once("error", reject);
-      });
-      const responsePayload = await responseBody(source);
-      if (retry && generationGatewayUnavailable(source.statusCode, responsePayload)) {
-        await ensureDaemon();
-        await proxyHttp(request, response3, session, requestPayload, false);
-        return;
-      }
-      response3.writeHead(source.statusCode ?? 502, {
-        ...proxyResponseHeaders(source, responsePayload),
-        ...SECURITY_HEADERS,
-        "Cache-Control": "no-store"
-      });
-      response3.end(responsePayload);
-    } catch {
-      if (retry) {
-        await ensureDaemon();
-        await proxyHttp(request, response3, session, requestPayload, false);
-        return;
-      }
-      json(response3, 502, { code: "generation_gateway_unavailable" });
-    }
-  };
-  const server = createServer4((request, response3) => {
-    void (async () => {
-      const url = new URL(request.url ?? "/", pageOrigin || "http://127.0.0.1");
-      if (url.pathname === "/api/dev/host-session") {
-        if (request.method !== "POST" || !exactOrigin(request, pageOrigin)) {
-          json(response3, 404, { code: "not_found" });
-          return;
-        }
-        json(response3, 200, { token: mintSession() });
-        return;
-      }
-      if (url.pathname === "/api/dev/open-project-directory") {
-        const session = resolveSession(request);
-        if (request.method !== "POST" || !session || !exactOrigin(request, pageOrigin)) {
-          json(response3, session ? 404 : 401, { code: "dev_host_session_invalid" });
-          return;
-        }
-        await ensureDaemon();
-        const result = await openProject({
-          daemonOrigin: gateway.origin,
-          ownerToken: gateway.bearer,
-          hostClientId: session.hostClientId
-        });
-        json(response3, 200, result);
-        return;
-      }
-      if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/v1/terminal/")) {
-        const session = resolveSession(request);
-        if (!session || !exactOrigin(request, pageOrigin)) {
-          json(response3, 401, { code: "dev_host_session_invalid" });
-          return;
-        }
-        await proxyHttp(request, response3, session, await requestBody(request));
-        return;
-      }
-      if (request.method !== "GET" && request.method !== "HEAD") {
-        json(response3, 405, { code: "method_not_allowed" });
-        return;
-      }
-      const file = safeStaticFile(staticRoot, url.pathname);
-      if (!file) {
-        json(response3, 404, { code: "not_found" });
-        return;
-      }
-      if (file === indexPath) {
-        const capability = mintSession();
-        const html = readFileSync30(indexPath, "utf8").replace(
-          "</head>",
-          `<meta name="tmux-ide-dev-host-session" content="${capability}"></head>`
-        );
-        response3.writeHead(200, {
-          ...SECURITY_HEADERS,
-          "Cache-Control": "no-store",
-          "Content-Type": "text/html; charset=utf-8"
-        });
-        response3.end(request.method === "HEAD" ? void 0 : html);
-        return;
-      }
-      response3.writeHead(200, {
-        ...SECURITY_HEADERS,
-        "Cache-Control": url.pathname.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache",
-        "Content-Type": mimeType(file)
-      });
-      if (request.method === "HEAD") response3.end();
-      else createReadStream(file).pipe(response3);
-    })().catch(() => {
-      if (!response3.headersSent) json(response3, 500, { code: "web_host_failed" });
-      else response3.end();
-    });
-  });
-  server.on("connection", (socket) => {
-    sockets.add(socket);
-    socket.once("close", () => sockets.delete(socket));
-  });
-  server.on("upgrade", (request, downstream, head3) => {
-    void (async () => {
-      const capability = consumeDevelopmentWebSocketSession(request.url);
-      expireSessions();
-      const session = capability ? sessions.get(capability.token) : void 0;
-      if (!capability || !session || request.headers.origin && request.headers.origin !== pageOrigin) {
-        downstream.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
-        return;
-      }
-      await ensureDaemon();
-      const upstream = connectTcp2(Number(gatewayUrl.port), gatewayUrl.hostname);
-      sockets.add(upstream);
-      upstream.once("close", () => sockets.delete(upstream));
-      upstream.once("connect", () => {
-        const headers = proxyRequestHeaders(request);
-        headers.host = gatewayUrl.host;
-        headers.authorization = `Bearer ${gateway.bearer}`;
-        headers["x-tmux-ide-host-client-id"] = session.hostClientId;
-        headers.connection = "Upgrade";
-        headers.upgrade = "websocket";
-        upstream.write(`${request.method ?? "GET"} ${capability.forwardPath} HTTP/1.1\r
-`);
-        for (const [name, value] of Object.entries(headers)) {
-          if (value === void 0) continue;
-          upstream.write(`${name}: ${Array.isArray(value) ? value.join(", ") : value}\r
-`);
-        }
-        upstream.write("\r\n");
-        if (head3.length > 0) upstream.write(head3);
-        downstream.pipe(upstream).pipe(downstream);
-      });
-      upstream.once("error", () => downstream.destroy());
-      downstream.once("error", () => upstream.destroy());
-    })().catch(() => downstream.destroy());
-  });
-  await new Promise((resolveListen, reject) => {
-    server.once("error", reject);
-    server.listen(options.port ?? 0, "127.0.0.1", resolveListen);
-  });
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Web GUI did not bind");
-  pageOrigin = `http://127.0.0.1:${address.port}`;
-  return {
-    url: `${pageOrigin}/`,
-    stop: async () => {
-      if (stopped) return;
-      stopped = true;
-      for (const socket of sockets) socket.destroy();
-      await new Promise((resolveClose) => server.close(() => resolveClose()));
-      if (!options.gateway) await gateway.stop();
-    }
-  };
-}
-var DOCUMENT_SESSION_TTL_MS, DOCUMENT_SESSION_LIMIT, MAX_PROXY_RESPONSE_BYTES, MAX_PROXY_REQUEST_BYTES, SECURITY_HEADERS, HOP_BY_HOP_HEADERS;
-var init_production_web_server = __esm({
-  "apps/desktop-renderer/scripts/production-web-server.ts"() {
-    "use strict";
-    init_canonical_daemon_bootstrap();
-    init_canonical_daemon();
-    init_dev_web_host_config();
-    init_dev_native_folder_host();
-    init_generation_gateway();
-    DOCUMENT_SESSION_TTL_MS = 8 * 60 * 60 * 1e3;
-    DOCUMENT_SESSION_LIMIT = 128;
-    MAX_PROXY_RESPONSE_BYTES = 16 * 1024 * 1024;
-    MAX_PROXY_REQUEST_BYTES = 16 * 1024 * 1024;
-    SECURITY_HEADERS = Object.freeze({
-      "Content-Security-Policy": [
-        "default-src 'self'",
-        "script-src 'self'",
-        "style-src 'self'",
-        "style-src-elem 'self' 'unsafe-inline'",
-        "style-src-attr 'unsafe-inline'",
-        "img-src 'self' data:",
-        "font-src 'self'",
-        "connect-src 'self'",
-        "object-src 'none'",
-        "base-uri 'none'",
-        "frame-ancestors 'none'",
-        "form-action 'none'"
-      ].join("; "),
-      "Cross-Origin-Opener-Policy": "same-origin",
-      "Cross-Origin-Resource-Policy": "same-origin",
-      "Referrer-Policy": "no-referrer",
-      "X-Content-Type-Options": "nosniff"
-    });
-    HOP_BY_HOP_HEADERS = /* @__PURE__ */ new Set([
-      "connection",
-      "keep-alive",
-      "proxy-authenticate",
-      "proxy-authorization",
-      "proxy-connection",
-      "te",
-      "trailer",
-      "transfer-encoding",
-      "upgrade"
-    ]);
-  }
-});
-
 // packages/daemon/src/command-center/index.ts
 var command_center_exports = {};
 __export(command_center_exports, {
   startCommandCenter: () => startCommandCenter
 });
-import { createServer as createServer5 } from "node:http";
+import { createServer as createServer3 } from "node:http";
 import { getRequestListener } from "@hono/node-server";
 async function startCommandCenter(options = {}) {
   const port = options.port ?? 6060;
@@ -63342,11 +63257,11 @@ async function startCommandCenter(options = {}) {
   if (options.authConfig) appOpts.authConfig = options.authConfig;
   const app = createApp(appOpts);
   const listener = getRequestListener(app.fetch);
-  const server = createServer5(listener);
-  return new Promise((resolve38) => {
+  const server = createServer3(listener);
+  return new Promise((resolve37) => {
     server.listen(port, hostname3, () => {
       console.log(`Command Center API on http://${hostname3}:${port}`);
-      resolve38(server);
+      resolve37(server);
     });
   });
 }
@@ -63364,7 +63279,7 @@ __export(server_exports3, {
   resolvePort: () => resolvePort,
   start: () => start
 });
-import { createServer as createServer6 } from "node:http";
+import { createServer as createServer4 } from "node:http";
 import { parse as parse2 } from "node:url";
 import { Hono as Hono2 } from "hono";
 import { getRequestListener as getRequestListener2 } from "@hono/node-server";
@@ -63385,7 +63300,7 @@ function createApp2() {
 async function start(port) {
   const resolvedPort = resolvePort(port);
   const app = createApp2();
-  const server = createServer6(getRequestListener2(app.fetch));
+  const server = createServer4(getRequestListener2(app.fetch));
   const ptyWss = new WebSocketServer5({ noServer: true });
   server.on("upgrade", (req, socket, head3) => {
     const { pathname } = parse2(req.url ?? "/", true);
@@ -63399,21 +63314,21 @@ async function start(port) {
       handlePtyWebSocket(ws, id);
     });
   });
-  await new Promise((resolve38, reject) => {
+  await new Promise((resolve37, reject) => {
     server.once("error", reject);
     server.listen(resolvedPort, "0.0.0.0", () => {
       server.off("error", reject);
-      resolve38();
+      resolve37();
     });
   });
   console.log(`tmux-ide server listening on http://0.0.0.0:${resolvedPort}`);
   return {
     port: resolvedPort,
     server,
-    close: () => new Promise((resolve38, reject) => {
+    close: () => new Promise((resolve37, reject) => {
       shutdownPtyBridges();
       ptyWss.close();
-      server.close((err) => err ? reject(err) : resolve38());
+      server.close((err) => err ? reject(err) : resolve37());
     })
   };
 }
@@ -63429,7 +63344,7 @@ var init_server3 = __esm({
 // bin/cli.ts
 init_launch();
 import { parseArgs } from "node:util";
-import { resolve as resolve37, dirname as dirname38, join as join41 } from "node:path";
+import { resolve as resolve36, dirname as dirname37, join as join41 } from "node:path";
 import { execFileSync as execFileSync19 } from "node:child_process";
 import { appendFileSync as appendFileSync2, existsSync as existsSync38, mkdirSync as mkdirSync26, writeFileSync as writeFileSync23 } from "node:fs";
 import { fileURLToPath as fileURLToPath12 } from "node:url";
@@ -63458,7 +63373,7 @@ init_config_context();
 init_src();
 import {
   existsSync as existsSync23,
-  readFileSync as readFileSync18,
+  readFileSync as readFileSync19,
   writeFileSync as writeFileSync14,
   mkdirSync as mkdirSync16,
   readdirSync as readdirSync3,
@@ -63527,7 +63442,7 @@ function scaffoldAgentsMd(dir, name) {
   if (existsSync23(agentsTemplatePath)) {
     const agentsPath = join23(dir, "AGENTS.md");
     if (!existsSync23(agentsPath)) {
-      const content = readFileSync18(agentsTemplatePath, "utf-8").replace(/{{name}}/g, name);
+      const content = readFileSync19(agentsTemplatePath, "utf-8").replace(/{{name}}/g, name);
       writeFileSync14(agentsPath, content);
       created.push(agentsPath);
     }
@@ -63553,7 +63468,7 @@ function scaffoldMissionsWorkspace(dir, name) {
 }
 async function init({
   template,
-  json: json3
+  json: json2
 } = {}) {
   const inputDir = process.cwd();
   const context = await resolveProjectConfigContext(inputDir);
@@ -63566,7 +63481,7 @@ async function init({
     if (!existsSync23(templatePath)) {
       outputError(`Template "${template}" not found`, "NOT_FOUND");
     }
-    let content = readFileSync18(templatePath, "utf-8");
+    let content = readFileSync19(templatePath, "utf-8");
     const name2 = basename9(dir);
     content = content.replace(/^name: .+/m, `name: ${name2}`);
     const yaml6 = (await import("js-yaml")).default;
@@ -63584,7 +63499,7 @@ async function init({
     } else {
       created = copyTemplateSkills(join23(dir, ".tmux-ide", "skills"));
     }
-    if (json3) {
+    if (json2) {
       console.log(JSON.stringify({ created: true, template, name: name2, paths: created }));
     } else {
       console.log(`Created .tmux-ide/workspace.yml from "${template}" template for "${name2}"`);
@@ -63601,7 +63516,7 @@ async function init({
     const config2 = suggestConfig(dir, detected);
     writeConfig(dir, config2);
     const desc = detected.frameworks.join(" + ");
-    if (json3) {
+    if (json2) {
       console.log(JSON.stringify({ created: true, detected: detected.frameworks, name }));
     } else {
       console.log(`Detected ${desc}. Created .tmux-ide/workspace.yml for "${name}".`);
@@ -63610,13 +63525,13 @@ async function init({
     }
   } else {
     const templatePath = resolve17(__dirname4, "..", "..", "..", "templates", "default.yml");
-    let content = readFileSync18(templatePath, "utf-8");
+    let content = readFileSync19(templatePath, "utf-8");
     content = content.replace(/^name: .+/m, `name: ${name}`);
     const yaml6 = (await import("js-yaml")).default;
     const workspace = WorkspaceConfigV1SchemaZ.parse(yaml6.load(content));
     const config2 = workspaceConfigToLegacyProjection(workspace);
     writeConfig(dir, config2);
-    if (json3) {
+    if (json2) {
       console.log(JSON.stringify({ created: true, template: "default", name }));
     } else {
       console.log(`Created .tmux-ide/workspace.yml for "${name}"`);
@@ -63627,7 +63542,7 @@ async function init({
   const skillsDir = join23(dir, ".tmux-ide", "skills");
   if (!existsSync23(skillsDir)) {
     const created = copyTemplateSkills(skillsDir);
-    if (created.length > 0 && !json3) {
+    if (created.length > 0 && !json2) {
       console.log("Copied built-in skill templates to .tmux-ide/skills/");
     }
   }
@@ -63638,13 +63553,13 @@ init_output();
 init_src2();
 init_config_context();
 import { resolve as resolve18 } from "node:path";
-async function stop(targetDir, { json: json3 } = {}) {
+async function stop(targetDir, { json: json2 } = {}) {
   const dir = resolve18(targetDir ?? ".");
   const { sessionName: session } = await resolveProjectConfigContext(dir);
   stopSessionMonitor(session);
   const result = killSession(session);
   if (result.stopped) {
-    if (json3) {
+    if (json2) {
       console.log(JSON.stringify({ stopped: session }));
     } else {
       console.log(`Stopped session "${session}"`);
@@ -63672,7 +63587,7 @@ async function attach(targetDir, { json: _json } = {}) {
 
 // packages/daemon/src/ls.ts
 import { execSync as execSync2 } from "node:child_process";
-async function ls({ json: json3 } = {}) {
+async function ls({ json: json2 } = {}) {
   let raw;
   try {
     raw = execSync2(
@@ -63680,7 +63595,7 @@ async function ls({ json: json3 } = {}) {
       { encoding: "utf-8" }
     ).trim();
   } catch {
-    if (json3) {
+    if (json2) {
       console.log(JSON.stringify({ sessions: [] }));
     } else {
       console.log("No tmux sessions running.");
@@ -63695,7 +63610,7 @@ async function ls({ json: json3 } = {}) {
       attached: attached !== "0"
     };
   });
-  if (json3) {
+  if (json2) {
     console.log(JSON.stringify({ sessions }, null, 2));
     return;
   }
@@ -63716,7 +63631,7 @@ init_claude();
 init_notify();
 init_resolved_config();
 import { execSync as execSync3 } from "node:child_process";
-import { accessSync, constants as constants2, existsSync as existsSync25 } from "node:fs";
+import { accessSync as accessSync2, constants as constants2, existsSync as existsSync25 } from "node:fs";
 import { resolve as resolve20, dirname as dirname24 } from "node:path";
 import { fileURLToPath as fileURLToPath9 } from "node:url";
 function agentIntegrationRows(agents) {
@@ -63782,7 +63697,7 @@ function check(label2, fn, { optional = false } = {}) {
   }
 }
 async function doctor({
-  json: json3
+  json: json2
 } = {}) {
   const checks = [];
   checks.push(
@@ -63903,7 +63818,7 @@ async function doctor({
       }
       let writable = false;
       try {
-        accessSync(probe, constants2.W_OK);
+        accessSync2(probe, constants2.W_OK);
         writable = true;
       } catch {
       }
@@ -63946,7 +63861,7 @@ async function doctor({
   }
   checks.push(...agentIntegrationRows(discoverAgents()));
   const allPass = checks.every((c) => c.pass || c.optional);
-  if (json3) {
+  if (json2) {
     console.log(JSON.stringify({ ok: allPass, checks }, null, 2));
     return;
   }
@@ -63963,7 +63878,7 @@ init_src2();
 init_canonical_daemon();
 init_config_context();
 import { resolve as resolve21 } from "node:path";
-async function status(targetDir, { json: json3 } = {}) {
+async function status(targetDir, { json: json2 } = {}) {
   const dir = resolve21(targetDir ?? ".");
   const context = await resolveProjectConfigContext(dir);
   const session = context.sessionName;
@@ -63989,7 +63904,7 @@ async function status(targetDir, { json: json3 } = {}) {
       healthy
     }
   };
-  if (json3) {
+  if (json2) {
     console.log(JSON.stringify(data, null, 2));
     return;
   }
@@ -64076,7 +63991,7 @@ function buildInspection(dir, {
     }
   };
 }
-async function inspect(targetDir, { json: json3 } = {}) {
+async function inspect(targetDir, { json: json2 } = {}) {
   const dir = resolve22(targetDir ?? ".");
   let config2;
   let configPath;
@@ -64112,7 +64027,7 @@ async function inspect(targetDir, { json: json3 } = {}) {
     running: state.running,
     panes
   });
-  if (json3) {
+  if (json2) {
     console.log(JSON.stringify(data, null, 2));
     return;
   }
@@ -64212,7 +64127,7 @@ function readLegacyForMigration(legacyPath) {
   }
 }
 async function migrate(targetDir, {
-  json: json3,
+  json: json2,
   dryRun,
   write,
   onAfterRead
@@ -64251,7 +64166,7 @@ async function migrate(targetDir, {
       workspace: result.workspace,
       workspaceYaml
     };
-    if (json3) {
+    if (json2) {
       console.log(JSON.stringify(payload, null, 2));
       return;
     }
@@ -64429,7 +64344,7 @@ function liveSessions() {
   }
 }
 async function restore({
-  json: json3 = false,
+  json: json2 = false,
   dryRun = false,
   runCommands = false,
   resumeAgents = false
@@ -64445,7 +64360,7 @@ async function restore({
   const plan = buildRestorePlan(snapshot, liveSessions(), ideBackedProjects());
   if (dryRun) {
     reportPlan(plan, snapshot, {
-      json: json3,
+      json: json2,
       dryRun: true,
       restored: [],
       launched: [],
@@ -64463,7 +64378,7 @@ async function restore({
   for (const action of plan.actions) {
     if (action.kind === "skip") continue;
     if (action.kind === "launch") {
-      const ok2 = await launchProject(action.dir, json3);
+      const ok2 = await launchProject(action.dir, json2);
       if (ok2) launched.push(action.session);
       else {
         const snap = snapshot.sessions.find((s) => s.name === action.session);
@@ -64483,7 +64398,7 @@ async function restore({
     restored.push(action.session.name);
   }
   reportPlan(plan, snapshot, {
-    json: json3,
+    json: json2,
     dryRun: false,
     restored,
     launched,
@@ -64497,9 +64412,9 @@ function safeAdopt(session) {
   } catch {
   }
 }
-async function launchProject(dir, json3) {
+async function launchProject(dir, json2) {
   const restoreLog = console.log;
-  if (json3) console.log = () => {
+  if (json2) console.log = () => {
   };
   try {
     const { launch: launch2 } = await Promise.resolve().then(() => (init_launch(), launch_exports));
@@ -64511,12 +64426,12 @@ async function launchProject(dir, json3) {
     console.log = restoreLog;
   }
 }
-function reportPlan(plan, snapshot, { json: json3, dryRun, restored, launched, resumed, resumeAgents }) {
+function reportPlan(plan, snapshot, { json: json2, dryRun, restored, launched, resumed, resumeAgents }) {
   const skipped = plan.actions.filter((a) => a.kind === "skip").map((a) => a.session);
   const willLaunch = plan.actions.filter((a) => a.kind === "launch").map((a) => a.session);
   const willRebuild = plan.actions.filter((a) => a.kind === "rebuild").map((a) => a.session.name);
   const resumedPanes = resumed.reduce((n10, r) => n10 + r.panes.length, 0);
-  if (json3) {
+  if (json2) {
     console.log(
       JSON.stringify(
         {
@@ -64581,7 +64496,7 @@ init_src();
 init_owner_authority();
 init_src();
 import { execFileSync as execFileSync16 } from "node:child_process";
-import { randomBytes as randomBytes8, randomUUID as randomUUID18 } from "node:crypto";
+import { randomBytes as randomBytes8, randomUUID as randomUUID19 } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { createServer } from "node:http";
 import { createRequire as createRequire3 } from "node:module";
@@ -64815,14 +64730,14 @@ function execTmuxAsync(args, signal) {
   return execMonitorCommandAsync("tmux", args, signal);
 }
 function execMonitorCommandAsync(executable, args, signal) {
-  return new Promise((resolve38, reject) => {
+  return new Promise((resolve37, reject) => {
     execFile3(
       executable,
       [...args],
       { encoding: "utf8", maxBuffer: 1024 * 1024, signal },
       (error, stdout) => {
         if (error) reject(error);
-        else resolve38(stdout.trim());
+        else resolve37(stdout.trim());
       }
     );
   });
@@ -64880,7 +64795,7 @@ init_tmux_external_interaction_observer();
 init_src();
 init_src2();
 init_runtime_observability();
-import { accessSync as accessSync5, constants as constants6, realpathSync as realpathSync12, statSync as statSync11 } from "node:fs";
+import { accessSync as accessSync6, constants as constants6, realpathSync as realpathSync12, statSync as statSync12 } from "node:fs";
 import { execFile as execFile8 } from "node:child_process";
 import { isAbsolute as isAbsolute13 } from "node:path";
 import { z as z81 } from "zod";
@@ -65394,9 +65309,9 @@ init_lease_manager();
 // packages/daemon/src/terminal/attachments/pty-tmux-attachment-launcher.ts
 init_NodePtyAdapter();
 init_grouped_tmux();
-import { accessSync as accessSync4, constants as constants5, realpathSync as realpathSync11, statSync as statSync10 } from "node:fs";
+import { accessSync as accessSync5, constants as constants5, realpathSync as realpathSync11, statSync as statSync11 } from "node:fs";
 import { delimiter as delimiter3, isAbsolute as isAbsolute12, join as join32 } from "node:path";
-import { randomUUID as randomUUID12 } from "node:crypto";
+import { randomUUID as randomUUID13 } from "node:crypto";
 import { execFileSync as execFileSync15 } from "node:child_process";
 
 // packages/daemon/src/terminal/attachments/tmux-view-executor.ts
@@ -66152,8 +66067,8 @@ function resolveTmuxExecutable2(pathValue = process.env.PATH) {
     if (!directory || !isAbsolute12(directory)) continue;
     const candidate = join32(directory, "tmux");
     try {
-      accessSync4(candidate, constants5.X_OK);
-      if (!statSync10(candidate).isFile()) continue;
+      accessSync5(candidate, constants5.X_OK);
+      if (!statSync11(candidate).isFile()) continue;
       return realpathSync11(candidate);
     } catch {
     }
@@ -66298,10 +66213,10 @@ var PtyTmuxAttachmentLauncher = class {
     if (existing) this.#dispose(existing);
     this.#reservedAttachments.add(request.identity.attachmentId);
     const lifecycleEpoch = this.#lifecycleEpoch;
-    const attemptId = randomUUID12();
+    const attemptId = randomUUID13();
     let resolveOutcome;
-    const outcome = new Promise((resolve38) => {
-      resolveOutcome = resolve38;
+    const outcome = new Promise((resolve37) => {
+      resolveOutcome = resolve37;
     });
     const earlyFrames = [];
     let earlyBytes = 0;
@@ -66711,8 +66626,8 @@ function canonicalAuthority(input) {
     if (!isAbsolute13(input.executablePath) || !isAbsolute13(input.trustedCwd)) throw new Error();
     const executablePath = realpathSync12(input.executablePath);
     const trustedCwd = realpathSync12(input.trustedCwd);
-    accessSync5(executablePath, constants6.X_OK);
-    if (!statSync11(executablePath).isFile() || !statSync11(trustedCwd).isDirectory())
+    accessSync6(executablePath, constants6.X_OK);
+    if (!statSync12(executablePath).isFile() || !statSync12(trustedCwd).isDirectory())
       throw new Error();
     let socketSelector;
     let socketArgv;
@@ -66753,7 +66668,7 @@ function defaultCommandExecutor(executable, argv, options) {
   });
 }
 function defaultReadCommandExecutor(executable, argv, options) {
-  return new Promise((resolve38, reject) => {
+  return new Promise((resolve37, reject) => {
     execFile8(
       executable,
       [...argv],
@@ -66766,7 +66681,7 @@ function defaultReadCommandExecutor(executable, argv, options) {
         signal: options.signal,
         windowsHide: true
       },
-      (error, stdout) => error ? reject(error) : resolve38(stdout)
+      (error, stdout) => error ? reject(error) : resolve37(stdout)
     );
   });
 }
@@ -68181,6 +68096,7 @@ function createTmuxAgentStatusProbe(deps2) {
   const ttlSeconds = deps2.scrapeCacheTtlSeconds ?? SCRAPE_CACHE_TTL_SECONDS;
   const captureBudget = deps2.scrapeCaptureBudget ?? SCRAPE_CAPTURE_BUDGET;
   const verdictCache = /* @__PURE__ */ new Map();
+  const agentKindCache = /* @__PURE__ */ new Map();
   let tableCache = null;
   let probeTail = Promise.resolve();
   const throwIfAborted = (signal) => {
@@ -68192,6 +68108,7 @@ function createTmuxAgentStatusProbe(deps2) {
     const facts = /* @__PURE__ */ new Map();
     if (input.panes.length === 0) return facts;
     const stagedVerdicts = new Map(verdictCache);
+    const stagedAgentKinds = new Map(agentKindCache);
     let stagedTableCache = tableCache;
     const optionsStdout = await deps2.run(
       ["list-panes", "-s", "-t", input.sessionId, "-F", AGENT_OPTIONS_FORMAT],
@@ -68199,8 +68116,8 @@ function createTmuxAgentStatusProbe(deps2) {
     );
     throwIfAborted(signal);
     const options = optionsStdout === null ? /* @__PURE__ */ new Map() : parseAgentOptions(optionsStdout);
-    const table = async () => {
-      if (stagedTableCache === null || input.nowSec - stagedTableCache.readAtSec > ttlSeconds) {
+    const table = async (forceRefresh = false) => {
+      if (forceRefresh || stagedTableCache === null || input.nowSec - stagedTableCache.readAtSec > ttlSeconds) {
         const next = await readProcessTable2(signal);
         throwIfAborted(signal);
         stagedTableCache = { table: next, readAtSec: input.nowSec };
@@ -68226,7 +68143,35 @@ function createTmuxAgentStatusProbe(deps2) {
           ...raw?.hint ? { hint: raw.hint } : {},
           ...deps2.manifests ? { manifests: deps2.manifests } : {}
         }).manifest;
-        emit(pane, raw, null, direct && direct.id !== "shell" ? direct.id : null);
+        const cachedKind = stagedAgentKinds.get(pane.runtimePaneId);
+        const panePid = raw?.pid ?? 0;
+        let agentKind = direct && direct.id !== "shell" ? direct.id : null;
+        if (agentKind === null && cachedKind !== void 0 && cachedKind.command === pane.currentCommand && cachedKind.pid === panePid) {
+          agentKind = cachedKind.agentKind;
+        }
+        if (agentKind === null) {
+          const processIdentityChanged = cachedKind !== void 0 && (cachedKind.command !== pane.currentCommand || cachedKind.pid !== panePid);
+          if (processIdentityChanged) stagedAgentKinds.delete(pane.runtimePaneId);
+          const resolved2 = resolveAgentCommand(
+            pane.currentCommand,
+            panePid,
+            await table(processIdentityChanged),
+            {
+              ...raw?.hint ? { hint: raw.hint } : {},
+              ...deps2.manifests ? { manifests: deps2.manifests } : {}
+            }
+          ).manifest;
+          if (resolved2 && resolved2.id !== "shell") agentKind = resolved2.id;
+        }
+        if (agentKind !== null) {
+          stagedAgentKinds.set(pane.runtimePaneId, {
+            command: pane.currentCommand,
+            pid: panePid,
+            agentKind,
+            observedAtSec: input.nowSec
+          });
+        }
+        emit(pane, raw, null, agentKind);
         continue;
       }
       const cached2 = stagedVerdicts.get(pane.runtimePaneId);
@@ -68257,6 +68202,12 @@ function createTmuxAgentStatusProbe(deps2) {
         emit(pane, raw, "unknown", null);
         continue;
       }
+      stagedAgentKinds.set(pane.runtimePaneId, {
+        command: pane.currentCommand,
+        pid: raw?.pid ?? 0,
+        agentKind: manifest.id,
+        observedAtSec: input.nowSec
+      });
       if (capturesUsed >= captureBudget) {
         emit(pane, raw, priorEntry?.verdict ?? "unknown", manifest.id);
         continue;
@@ -68282,9 +68233,19 @@ function createTmuxAgentStatusProbe(deps2) {
         stagedVerdicts.delete(paneId);
       }
     }
+    if (stagedAgentKinds.size > SCRAPE_CACHE_MAX_ENTRIES) {
+      const byAge = [...stagedAgentKinds.entries()].sort(
+        (a, b) => a[1].observedAtSec - b[1].observedAtSec
+      );
+      for (const [paneId] of byAge.slice(0, stagedAgentKinds.size - SCRAPE_CACHE_MAX_ENTRIES)) {
+        stagedAgentKinds.delete(paneId);
+      }
+    }
     throwIfAborted(signal);
     verdictCache.clear();
     for (const [paneId, verdict] of stagedVerdicts) verdictCache.set(paneId, verdict);
+    agentKindCache.clear();
+    for (const [paneId, kind] of stagedAgentKinds) agentKindCache.set(paneId, kind);
     tableCache = stagedTableCache;
     return facts;
   };
@@ -68297,13 +68258,13 @@ function createTmuxAgentStatusProbe(deps2) {
       );
       if (!signal) return result;
       if (signal.aborted) return Promise.reject(signal.reason);
-      return new Promise((resolve38, reject) => {
+      return new Promise((resolve37, reject) => {
         const aborted = () => reject(signal.reason);
         signal.addEventListener("abort", aborted, { once: true });
         void result.then(
           (value) => {
             signal.removeEventListener("abort", aborted);
-            resolve38(value);
+            resolve37(value);
           },
           (error) => {
             signal.removeEventListener("abort", aborted);
@@ -68421,7 +68382,7 @@ function attachTerminalAttachmentWebSocket(server, coordinatorOrProvider) {
     close: async () => {
       server.off("upgrade", upgrade);
       await coordinator(false)?.shutdown();
-      await new Promise((resolve38) => wss.close(() => resolve38()));
+      await new Promise((resolve37) => wss.close(() => resolve37()));
     }
   };
 }
@@ -68526,7 +68487,7 @@ function attachPaneStreamWebSocket(server, coordinator) {
     close: async () => {
       server.off("upgrade", upgrade);
       await coordinator.shutdown();
-      await new Promise((resolve38) => wss.close(() => resolve38()));
+      await new Promise((resolve37) => wss.close(() => resolve37()));
     }
   };
 }
@@ -68721,8 +68682,8 @@ init_active_projects();
 
 // packages/daemon/src/lib/environment-identity.ts
 init_state_home();
-import { randomUUID as randomUUID14 } from "node:crypto";
-import { linkSync as linkSync3, mkdirSync as mkdirSync22, readFileSync as readFileSync23, rmSync as rmSync3, writeFileSync as writeFileSync20 } from "node:fs";
+import { randomUUID as randomUUID15 } from "node:crypto";
+import { linkSync as linkSync3, mkdirSync as mkdirSync22, readFileSync as readFileSync24, rmSync as rmSync3, writeFileSync as writeFileSync20 } from "node:fs";
 import { dirname as dirname30, join as join33 } from "node:path";
 var UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 function environmentIdentityPath() {
@@ -68730,7 +68691,7 @@ function environmentIdentityPath() {
 }
 function readPersistedEnvironmentId(path2) {
   try {
-    const parsed = JSON.parse(readFileSync23(path2, "utf-8"));
+    const parsed = JSON.parse(readFileSync24(path2, "utf-8"));
     if (!parsed || typeof parsed !== "object") return null;
     const id = parsed.environmentId;
     return typeof id === "string" && UUID_PATTERN.test(id) ? id : null;
@@ -68739,7 +68700,7 @@ function readPersistedEnvironmentId(path2) {
   }
 }
 function persistEnvironmentId(path2, environmentId) {
-  const temporary = `${path2}.${process.pid}.${randomUUID14()}.tmp`;
+  const temporary = `${path2}.${process.pid}.${randomUUID15()}.tmp`;
   try {
     mkdirSync22(dirname30(path2), { recursive: true });
     writeFileSync20(
@@ -68765,7 +68726,7 @@ function readOrMintEnvironmentId() {
     rmSync3(path2, { force: true });
   } catch {
   }
-  const minted = randomUUID14();
+  const minted = randomUUID15();
   persistEnvironmentId(path2, minted);
   return readPersistedEnvironmentId(path2) ?? minted;
 }
@@ -68867,13 +68828,13 @@ async function retireTerminalAttachmentTransport(runtime, boundary) {
 }
 async function pickFreePort(hostname3) {
   const probe = createServer();
-  return await new Promise((resolve38, reject) => {
+  return await new Promise((resolve37, reject) => {
     probe.once("error", reject);
     probe.listen(0, hostname3, () => {
       const address = probe.address();
       const port = typeof address === "object" && address ? address.port : null;
       probe.close(() => {
-        if (port) resolve38(port);
+        if (port) resolve37(port);
         else reject(new DaemonStartupError("Could not allocate daemon port", "bind_failed"));
       });
     });
@@ -68964,21 +68925,21 @@ function attachWebSockets(server, opts) {
           ws.terminate();
         }
       }
-      const closeWss = (wss) => Promise.race([new Promise((resolve38) => wss.close(() => resolve38())), delay(100)]);
+      const closeWss = (wss) => Promise.race([new Promise((resolve37) => wss.close(() => resolve37())), delay(100)]);
       await Promise.all([closeWss(eventsWss), closeWss(ptyWss)]);
     }
   };
 }
 function waitForServerClose(server) {
-  return new Promise((resolve38, reject) => {
+  return new Promise((resolve37, reject) => {
     server.close((err) => {
       if (err) reject(err);
-      else resolve38();
+      else resolve37();
     });
   });
 }
 function delay(ms) {
-  return new Promise((resolve38) => setTimeout(resolve38, ms));
+  return new Promise((resolve37) => setTimeout(resolve37, ms));
 }
 function generateLocalBypassToken() {
   return randomBytes8(32).toString("base64url");
@@ -69011,13 +68972,13 @@ function assertTakeoverDeadline(deadline, message) {
 async function waitForTakeoverPoll(deadline) {
   assertTakeoverDeadline(deadline, "Canonical daemon did not quiesce before the takeover deadline");
   const waitMs = Math.min(TAKEOVER_POLL_MS, deadline.remainingMs());
-  await new Promise((resolve38) => {
+  await new Promise((resolve37) => {
     const timer = setTimeout(finish, waitMs);
     const onAbort = () => finish();
     function finish() {
       clearTimeout(timer);
       deadline.signal.removeEventListener("abort", onAbort);
-      resolve38();
+      resolve37();
     }
     deadline.signal.addEventListener("abort", onAbort, { once: true });
   });
@@ -69284,7 +69245,7 @@ async function startHttpServer({
   );
   const paneStreamBoundary = attachPaneStreamWebSocket(server, paneStreamRuntime.coordinator);
   try {
-    await new Promise((resolve38, reject) => {
+    await new Promise((resolve37, reject) => {
       const onError = (err) => {
         server.off("listening", onListening);
         if (err.code === "EADDRINUSE") {
@@ -69310,7 +69271,7 @@ async function startHttpServer({
             `[daemon] Command Center on http://${bindHostname}:${requestedPort} (session: ${sessionName})`
           );
         }
-        resolve38();
+        resolve37();
       };
       server.once("error", onError);
       server.once("listening", onListening);
@@ -69397,7 +69358,7 @@ async function startEmbeddedDaemon(opts) {
     validatePort(port);
     const dir = process.cwd();
     const productVersion = resolveDaemonProductVersion(opts.productVersion);
-    const instanceId = randomUUID18();
+    const instanceId = randomUUID19();
     const startedAt = (/* @__PURE__ */ new Date()).toISOString();
     const environmentId = readOrMintEnvironmentId();
     const workspaceRegistry = getDefaultWorkspaceRegistry();
@@ -69487,7 +69448,7 @@ async function startEmbeddedDaemon(opts) {
         try {
           broadcastInteractionReceipt(
             {
-              operationId: randomUUID18(),
+              operationId: randomUUID19(),
               origin: "external",
               workspaceName,
               target: { kind: "pane", semanticPaneId: semanticPaneId3 },
@@ -69513,7 +69474,7 @@ async function startEmbeddedDaemon(opts) {
       const stream = runtimeTraceStream;
       runtimeTraceStream = null;
       if (!stream || stream.closed || stream.destroyed) return;
-      await new Promise((resolve38) => stream.end(resolve38));
+      await new Promise((resolve37) => stream.end(resolve37));
     };
     let startedServer;
     try {
@@ -69569,7 +69530,7 @@ async function startEmbeddedDaemon(opts) {
         };
         const diagnostics = {
           nowMicros: () => Math.floor(performance2.now() * 1e3),
-          createTraceId: randomUUID18,
+          createTraceId: randomUUID19,
           publish: publishObserverDiagnostic
         };
         externalInteractionObserver.setDiagnostics(diagnostics);
@@ -69610,7 +69571,7 @@ async function startEmbeddedDaemon(opts) {
           const consumer = sessionRuntimeRegistry.connect(
             record.sessionName,
             "workspace-open-prepare",
-            `workspace-open-${randomUUID18()}`
+            `workspace-open-${randomUUID19()}`
           );
           try {
             const layout = await consumer.describe();
@@ -69620,7 +69581,7 @@ async function startEmbeddedDaemon(opts) {
               );
             }
             const semanticPaneId3 = layout.panes.find((pane) => pane.semanticPaneId === preferredPaneId)?.semanticPaneId ?? layout.panes.find((pane) => pane.active)?.semanticPaneId ?? layout.panes[0].semanticPaneId;
-            const seed = await new Promise((resolve38, reject) => {
+            const seed = await new Promise((resolve37, reject) => {
               const timeout = setTimeout(
                 () => reject(new Error("Timed out awaiting first coherent terminal seed.")),
                 5e3
@@ -69628,7 +69589,7 @@ async function startEmbeddedDaemon(opts) {
               void consumer.subscribeReplica(semanticPaneId3, (update) => {
                 if (update.type !== "terminal.seed") return;
                 clearTimeout(timeout);
-                resolve38({ revision: update.revision, stateHash: update.stateHash });
+                resolve37({ revision: update.revision, stateHash: update.stateHash });
               }).catch((error) => {
                 clearTimeout(timeout);
                 reject(error);
@@ -70075,9 +70036,9 @@ function parsePort(value) {
   }
   return port;
 }
-function emitStatus(deps2, json3, status2, info) {
+function emitStatus(deps2, json2, status2, info) {
   const apiBaseUrl = canonicalDaemonUrl("http", info.bindHostname, info.port);
-  if (json3) {
+  if (json2) {
     deps2.writeStdout(JSON.stringify({ status: status2, pid: info.pid, port: info.port, apiBaseUrl }));
     return;
   }
@@ -70157,7 +70118,7 @@ async function findLiveCanonicalDaemon(deps2, options) {
   return existing.info;
 }
 function delay2(ms) {
-  return new Promise((resolve38) => setTimeout(resolve38, ms));
+  return new Promise((resolve37) => setTimeout(resolve37, ms));
 }
 var DAEMON_ATTACHABILITY_TIMEOUT_MS = 15e3;
 var DAEMON_ATTACHABILITY_POLL_MS = 25;
@@ -70255,8 +70216,8 @@ async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies2) {
       });
     }
     let resolveStopped;
-    const stopped = new Promise((resolve38) => {
-      resolveStopped = resolve38;
+    const stopped = new Promise((resolve37) => {
+      resolveStopped = resolve37;
     });
     let stopFailure;
     const originalStop = handle.stop.bind(handle);
@@ -70322,9 +70283,9 @@ async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies2) {
 init_canonical_daemon_bootstrap();
 init_state_home();
 init_hosted();
-var __dirname5 = dirname38(fileURLToPath12(import.meta.url));
+var __dirname5 = dirname37(fileURLToPath12(import.meta.url));
 var selfPath = fileURLToPath12(import.meta.url);
-var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve37(__dirname5, "cli.js");
+var nodeCliPath = selfPath.endsWith(".js") ? selfPath : resolve36(__dirname5, "cli.js");
 var { positionals, values } = parseArgs({
   allowPositionals: true,
   strict: false,
@@ -70447,7 +70408,7 @@ var resolved = firstPositional;
 var hasKnownCommand = resolved ? knownCommands.has(resolved) : false;
 var command = hasKnownCommand ? resolved : "start";
 var startTargetDir = hasKnownCommand ? positionals[1] : firstPositional;
-var json2 = values.json ?? false;
+var json = values.json ?? false;
 var noColor = "NO_COLOR" in process.env;
 var bold3 = (s) => noColor ? s : `\x1B[1m${s}\x1B[22m`;
 var cyan2 = (s) => noColor ? s : `\x1B[36m${s}\x1B[39m`;
@@ -70494,7 +70455,6 @@ ${bold3("Usage:")}
   ${cyan2("tmux-ide popup")} <widget>     ${dim3("Open a widget as a floating panel (explorer/changes/config; \u2325e/\u2325g/\u2325,)")}
   ${cyan2("tmux-ide widget")} <markdown|image|card> [file]  ${dim3("Render rich live content in the current pane")}
   ${cyan2("tmux-ide show")} <file>          ${dim3("Show Markdown, images, GIFs, or cards by file type")}
-  ${cyan2("tmux-ide web")} [--port N]       ${dim3("Serve the packaged Web GUI on loopback (ephemeral port by default)")}
   ${cyan2("tmux-ide sidebar-toggle")} [--session S]  ${dim3("Toggle the app nav column (\u2325b on adopted sessions)")}
   ${cyan2("tmux-ide worktree create")} <branch> [--from <ref>] [--dir <path>] [--no-session]
                               ${dim3("Add a git worktree (new branch) + open a session in it")}
@@ -70619,7 +70579,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
     if (launch2.mode === "bun") {
       execFileSync19(launch2.bin, launch2.argv, {
         stdio: "inherit",
-        cwd: resolve37(__dirname5, ".."),
+        cwd: resolve36(__dirname5, ".."),
         env
       });
       markChildExited();
@@ -70676,7 +70636,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
     exists = false;
   }
   if (!exists) {
-    const cwd = launch2.mode === "bun" ? resolve37(__dirname5, "..") : ensureCompiledTuiRuntimeDir();
+    const cwd = launch2.mode === "bun" ? resolve36(__dirname5, "..") : ensureCompiledTuiRuntimeDir();
     const commandLine = hostedCommandLine(
       launch2.bin,
       launch2.argv,
@@ -70722,12 +70682,25 @@ async function waitOverSocket(params) {
     client.close();
   }
 }
-var teamScriptPath = resolve37(__dirname5, "../packages/daemon/src/tui/team/index.tsx");
-var appScriptPath = resolve37(__dirname5, "../packages/daemon/src/tui/mirror/app.tsx");
+var teamScriptPath = resolve36(__dirname5, "../packages/daemon/src/tui/team/index.tsx");
+var appScriptPath = resolve36(__dirname5, "../packages/daemon/src/tui/mirror/app.tsx");
 function launchTeamCockpit() {
   execBunWidget("team", teamScriptPath, [], "team");
 }
 async function runApp(appArgs) {
+  await ensureTuiLaunchAvailable(
+    {
+      surface: "app",
+      scriptPath: appScriptPath,
+      args: appArgs,
+      checkoutExists: existsSync38(appScriptPath),
+      bunAvailable: isBunAvailable(),
+      compiledBinary: findCompiledTui(),
+      preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1"
+    },
+    { log: (message) => process.stderr.write(`[tmux-ide] ${message}
+`) }
+  );
   await ensureCanonicalDaemon({ entryPath: nodeCliPath });
   const hosted = wantsHostedApp({
     flagDetachable: values.detachable === true,
@@ -70752,7 +70725,7 @@ try {
     const pkg = await Promise.resolve().then(() => __toESM(require_package(), 1));
     await runHeadlessDaemon({
       port: values.port,
-      json: json2,
+      json,
       expectedVersion: pkg.version
     });
     await new Promise((resolveFlush) => process.stdout.write("", resolveFlush));
@@ -70760,7 +70733,7 @@ try {
   }
   switch (command) {
     case "start": {
-      if (!json2) {
+      if (!json) {
         try {
           const { getUpdateStatus: getUpdateStatus2 } = await Promise.resolve().then(() => (init_update_check(), update_check_exports));
           const { latest, updateAvailable } = getUpdateStatus2();
@@ -70773,7 +70746,7 @@ try {
         } catch {
         }
       }
-      const targetDir = resolve37(startTargetDir || ".");
+      const targetDir = resolve36(startTargetDir || ".");
       if (startTargetDir && !existsSync38(targetDir)) {
         throw new IdeError(
           `No workspace config found in ${targetDir}. Run "tmux-ide init" or "tmux-ide detect --write" to create one.`,
@@ -70790,7 +70763,7 @@ try {
         frontDoor: loadAppConfig().app.frontDoor
       });
       if (entry !== "project") {
-        if (json2) {
+        if (json) {
           await printFleetJson();
           break;
         }
@@ -70798,49 +70771,49 @@ try {
         else launchTeamCockpit();
         break;
       }
-      await launch(startTargetDir, { json: json2 });
+      await launch(startTargetDir, { json });
       break;
     }
     case "init":
-      await init({ template: values.template, json: json2 });
+      await init({ template: values.template, json });
       break;
     case "stop":
-      await stop(positionals[1], { json: json2 });
+      await stop(positionals[1], { json });
       break;
     case "attach":
-      await attach(positionals[1], { json: json2 });
+      await attach(positionals[1], { json });
       break;
     case "restart":
-      await restart(positionals[1], { json: json2 });
+      await restart(positionals[1], { json });
       break;
     case "restore":
       await restore({
-        json: json2,
+        json,
         dryRun: values["dry-run"] === true,
         runCommands: values["run-commands"] === true,
         resumeAgents: values["resume-agents"] === true
       });
       break;
     case "ls":
-      await ls({ json: json2 });
+      await ls({ json });
       break;
     case "doctor":
-      await doctor({ json: json2 });
+      await doctor({ json });
       break;
     case "status":
-      await status(positionals[1], { json: json2 });
+      await status(positionals[1], { json });
       break;
     case "inspect":
-      await inspect(positionals[1], { json: json2 });
+      await inspect(positionals[1], { json });
       break;
     case "validate":
-      await validate(positionals[1], { json: json2 });
+      await validate(positionals[1], { json });
       break;
     case "detect":
-      await detect(positionals[1], { json: json2, write: values.write });
+      await detect(positionals[1], { json, write: values.write });
       break;
     case "migrate":
-      await migrate(positionals[1], { json: json2, dryRun: values["dry-run"], write: values.write });
+      await migrate(positionals[1], { json, dryRun: values["dry-run"], write: values.write });
       break;
     case "config": {
       const sub = positionals[1];
@@ -70873,21 +70846,21 @@ try {
         action = "disable-team";
         configArgs = [];
       } else if (sub === "edit") {
-        const scriptPath = resolve37(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
+        const scriptPath = resolve36(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
         execBunWidget(
           "setup",
           scriptPath,
-          ["--dir=" + resolve37(startTargetDir || "."), "--edit"],
+          ["--dir=" + resolve36(startTargetDir || "."), "--edit"],
           "config edit"
         );
         break;
       }
-      await config(null, { json: json2, action, args: configArgs });
+      await config(null, { json, action, args: configArgs });
       break;
     }
     case "setup": {
-      const scriptPath = resolve37(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
-      const setupArgs = ["--dir=" + resolve37(startTargetDir || ".")];
+      const scriptPath = resolve36(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
+      const setupArgs = ["--dir=" + resolve36(startTargetDir || ".")];
       if (positionals[1] === "--edit" || values.edit) setupArgs.push("--edit");
       if (positionals[1] === "--wizard" || values.wizard) setupArgs.push("--wizard");
       execBunWidget("setup", scriptPath, setupArgs, "setup");
@@ -70898,19 +70871,19 @@ try {
       const messageStart = values.to ? 1 : 2;
       let message = positionals.slice(messageStart).join(" ");
       if (!message && !process.stdin.isTTY) {
-        const { readFileSync: readFileSync31 } = await import("node:fs");
-        message = readFileSync31(0, "utf-8").trim();
+        const { readFileSync: readFileSync30 } = await import("node:fs");
+        message = readFileSync30(0, "utf-8").trim();
       }
-      await send(null, { json: json2, to: target, message, noEnter: values["no-enter"] });
+      await send(null, { json, to: target, message, noEnter: values["no-enter"] });
       break;
     }
     case "settings": {
-      const scriptPath = resolve37(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
-      execBunWidget("config", scriptPath, ["--dir=" + resolve37(startTargetDir || ".")], "settings");
+      const scriptPath = resolve36(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
+      execBunWidget("config", scriptPath, ["--dir=" + resolve36(startTargetDir || ".")], "settings");
       break;
     }
     case "team": {
-      if (json2) {
+      if (json) {
         await printFleetJson();
         break;
       }
@@ -70967,7 +70940,7 @@ try {
             process.exit(1);
           }
           const hit = viaSocket2.data.matched;
-          if (json2) console.log(JSON.stringify({ matched: hit }));
+          if (json) console.log(JSON.stringify({ matched: hit }));
           else console.log(hit);
           process.exit(0);
         }
@@ -70979,7 +70952,7 @@ try {
           );
           process.exit(1);
         }
-        if (json2) console.log(JSON.stringify({ matched: result2.matched }));
+        if (json) console.log(JSON.stringify({ matched: result2.matched }));
         else console.log(result2.matched);
         process.exit(0);
       }
@@ -71006,7 +70979,7 @@ try {
           );
           process.exit(1);
         }
-        if (json2) console.log(JSON.stringify({ session: sessionName, status: want, ok: true }));
+        if (json) console.log(JSON.stringify({ session: sessionName, status: want, ok: true }));
         else console.log(`${sessionName} reached status: ${want}`);
         process.exit(0);
       }
@@ -71023,7 +70996,7 @@ try {
           );
           process.exit(1);
         }
-        if (json2) {
+        if (json) {
           console.log(
             JSON.stringify({ session: sessionName, status: viaReceipts.status, ok: true })
           );
@@ -71044,7 +71017,7 @@ try {
         );
         process.exit(1);
       }
-      if (json2) {
+      if (json) {
         console.log(JSON.stringify({ session: sessionName, status: result.status, ok: true }));
       } else {
         console.log(`${sessionName} reached status: ${result.status}`);
@@ -71053,7 +71026,7 @@ try {
       break;
     }
     case "events": {
-      const { readFileSync: readFileSync31, existsSync: existsSync39, statSync: statSync15, openSync: openSync5, readSync, closeSync: closeSync5 } = await import("node:fs");
+      const { readFileSync: readFileSync30, existsSync: existsSync39, statSync: statSync16, openSync: openSync5, readSync, closeSync: closeSync5 } = await import("node:fs");
       const { eventsPath: eventsPath2, formatEventLine: formatEventLine2 } = await Promise.resolve().then(() => (init_events(), events_exports));
       const path2 = eventsPath2();
       const paintStatus = (status2, text) => {
@@ -71062,7 +71035,7 @@ try {
         return `\x1B[38;5;${code}m${text}\x1B[39m`;
       };
       const printLine = (raw) => {
-        if (json2) {
+        if (json) {
           console.log(raw);
           return;
         }
@@ -71079,7 +71052,7 @@ try {
         }).catch(() => null);
         if (client) {
           if (existsSync39(path2)) {
-            const backlog = readFileSync31(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
+            const backlog = readFileSync30(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
             for (const line of backlog.slice(-50)) printLine(line);
           }
           await client.subscribe((frame) => {
@@ -71097,15 +71070,15 @@ try {
         console.log("no events yet \u2014 is a session adopted? (the chrome updater writes events)");
         break;
       }
-      const allLines = readFileSync31(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
+      const allLines = readFileSync30(path2, "utf8").split("\n").filter((l) => l.trim().length > 0);
       for (const line of allLines.slice(-50)) printLine(line);
       if (!values.follow) break;
-      let offset = statSync15(path2).size;
+      let offset = statSync16(path2).size;
       let leftover = "";
       const timer = setInterval(() => {
         let size;
         try {
-          size = statSync15(path2).size;
+          size = statSync16(path2).size;
         } catch {
           return;
         }
@@ -71195,7 +71168,7 @@ try {
         process.exit(1);
       }
       const { agentExplain: agentExplain2 } = await Promise.resolve().then(() => (init_agent_explain(), agent_explain_exports));
-      agentExplain2(target, { json: json2 });
+      agentExplain2(target, { json });
       break;
     }
     case "integration": {
@@ -71255,13 +71228,13 @@ try {
             console.log(forcedKey);
             act(forcedKey);
           } else {
-            const key = await new Promise((resolve38) => {
+            const key = await new Promise((resolve37) => {
               try {
                 process.stdin.setRawMode?.(true);
                 process.stdin.resume();
-                process.stdin.once("data", (data) => resolve38(data.toString()));
+                process.stdin.once("data", (data) => resolve37(data.toString()));
               } catch {
-                resolve38("");
+                resolve37("");
               }
             });
             try {
@@ -71321,7 +71294,7 @@ install failed: ${e.message}`);
       } else {
         const { discoverAgents: discoverAgents2 } = await Promise.resolve().then(() => (init_agent_discovery(), agent_discovery_exports));
         const agents = discoverAgents2();
-        if (json2) {
+        if (json) {
           console.log(JSON.stringify({ agents }, null, 2));
           break;
         }
@@ -71460,7 +71433,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
           { code: "USAGE", exitCode: 1 }
         );
       }
-      const scriptPath = resolve37(__dirname5, "../packages/daemon/src/widgets", widget, "index.tsx");
+      const scriptPath = resolve36(__dirname5, "../packages/daemon/src/widgets", widget, "index.tsx");
       let popupSession = "";
       try {
         popupSession = execFileSync19("tmux", ["display-message", "-p", "#{session_name}"], {
@@ -71598,7 +71571,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
         if (!values["no-session"]) {
           await openWorktreeSession(wtPath, sessionName);
         }
-        if (json2) {
+        if (json) {
           console.log(
             JSON.stringify({
               branch,
@@ -71632,7 +71605,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
         const sessionName = worktreeSessionName2(projectName, branch);
         const already = hasSession2(sessionName);
         if (!already) await openWorktreeSession(entry.path, sessionName);
-        if (json2) {
+        if (json) {
           console.log(
             JSON.stringify({ branch, path: entry.path, session: sessionName, created: !already })
           );
@@ -71660,7 +71633,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
         removeWorktree2(repoDir, entry.path, { force: values.force === true });
         const sessionName = worktreeSessionName2(projectName, branch);
         const killed = hasSession2(sessionName) ? killSession2(sessionName).stopped : false;
-        if (json2) {
+        if (json) {
           console.log(
             JSON.stringify({ branch, path: entry.path, sessionKilled: killed, removed: true })
           );
@@ -71687,7 +71660,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
           status: match?.status ?? null
         };
       });
-      if (json2) {
+      if (json) {
         console.log(JSON.stringify({ repo: mainPath, worktrees: rows }, null, 2));
       } else if (rows.length === 0) {
         console.log("No worktrees.");
@@ -71706,7 +71679,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
         const { updateManifestPack: updateManifestPack2 } = await Promise.resolve().then(() => (init_manifest_pack(), manifest_pack_exports));
         try {
           const r = await updateManifestPack2({ log: (m) => console.error(m) });
-          if (json2) {
+          if (json) {
             console.log(JSON.stringify({ ok: true, ...r }, null, 2));
           } else {
             console.log(
@@ -71718,7 +71691,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          if (json2) console.log(JSON.stringify({ ok: false, error: message }, null, 2));
+          if (json) console.log(JSON.stringify({ ok: false, error: message }, null, 2));
           else console.error(`manifest pack NOT installed: ${message}`);
           process.exitCode = 1;
         }
@@ -71727,7 +71700,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
       if (values["tui-binary"] === true) {
         const { downloadTuiBinary: downloadTuiBinary2 } = await Promise.resolve().then(() => (init_tui_binary(), tui_binary_exports));
         const { path: path2 } = await downloadTuiBinary2({ log: (m) => console.error(m) });
-        if (json2) {
+        if (json) {
           console.log(JSON.stringify({ ok: true, path: path2 }, null, 2));
         } else {
           console.log(`TUI binary ready: ${path2}`);
@@ -71753,7 +71726,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
     case "skill-sync": {
       const { syncSkill: syncSkill2 } = await Promise.resolve().then(() => (init_skill_sync(), skill_sync_exports));
       const result = syncSkill2();
-      if (json2) {
+      if (json) {
         console.log(JSON.stringify(result, null, 2));
       } else {
         const detail = result.action === "updated" && result.from ? ` (v${result.from} \u2192 v${result.to})` : ` (v${result.to})`;
@@ -71775,7 +71748,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
         paneWidgetIdForFile: paneWidgetIdForFile2
       } = await Promise.resolve().then(() => (init_pane_widget(), pane_widget_exports));
       const { publishWidgetAsset: publishWidgetAsset2, WidgetAssetStoreError: WidgetAssetStoreError2 } = await Promise.resolve().then(() => (init_widget_asset_store(), widget_asset_store_exports));
-      const { readFileSync: readFileSync31, watchFile, unwatchFile } = await import("node:fs");
+      const { readFileSync: readFileSync30, watchFile, unwatchFile } = await import("node:fs");
       const { basename: basename20 } = await import("node:path");
       const readStdin = async () => {
         const chunks = [];
@@ -71795,7 +71768,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
         if (id === "markdown") {
           if (file) {
             const publish = () => {
-              const asset = publishWidgetAsset2(readFileSync31(file), {
+              const asset = publishWidgetAsset2(readFileSync30(file), {
                 media: "text/markdown",
                 name: basename20(file)
               });
@@ -71817,7 +71790,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
                 `"${basename20(file)}" is not a supported raster image.`
               );
             }
-            const asset = publishWidgetAsset2(readFileSync31(file), {
+            const asset = publishWidgetAsset2(readFileSync30(file), {
               media,
               name: basename20(file)
             });
@@ -71827,19 +71800,19 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
           watchedFile = file;
           refreshAnnouncement = publish;
         } else {
-          const source = file ? readFileSync31(file, "utf8") : await readStdin();
+          const source = file ? readFileSync30(file, "utf8") : await readStdin();
           announcement = buildCardAnnouncement2(JSON.parse(source));
         }
       } catch (error) {
         const message = error instanceof PaneWidgetRefusal2 || error instanceof WidgetAssetStoreError2 ? error.message : `The widget input could not be read: ${error.message}`;
-        if (json2) {
+        if (json) {
           console.log(JSON.stringify({ ok: false, error: message }, null, 2));
         } else {
           console.error(message);
         }
         process.exit(1);
       }
-      if (json2) {
+      if (json) {
         console.log(JSON.stringify({ ok: true, announcement }, null, 2));
         break;
       }
@@ -71890,34 +71863,10 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
       break;
     }
     case "web": {
-      const rawPort = values.port;
-      const webPort = rawPort === void 0 ? void 0 : Number(rawPort);
-      if (webPort !== void 0 && (!Number.isInteger(webPort) || webPort < 0 || webPort > 65535)) {
-        throw new IdeError(`Invalid Web GUI port: ${rawPort}`, {
-          code: "USAGE",
-          exitCode: 1
-        });
-      }
-      const { startProductionWebServer: startProductionWebServer2 } = await Promise.resolve().then(() => (init_production_web_server(), production_web_server_exports));
-      const web = await startProductionWebServer2({
-        staticRoot: resolve37(__dirname5, "../apps/desktop-renderer/dist"),
-        cliEntryPath: nodeCliPath,
-        cwd: process.cwd(),
-        ...webPort === void 0 ? {} : { port: webPort }
-      });
-      process.stdout.write(`${web.url}
-`);
-      let closing = false;
-      const shutdown = () => {
-        if (closing) return;
-        closing = true;
-        void web.stop().then(() => process.exit(0));
-      };
-      process.once("SIGINT", shutdown);
-      process.once("SIGTERM", shutdown);
-      await new Promise(() => {
-      });
-      break;
+      throw new IdeError(
+        "The Web GUI is not included in the OpenTUI beta. Run `tmux-ide app` for the supported interface.",
+        { code: "WEB_GUI_NOT_INCLUDED", exitCode: 1 }
+      );
     }
     case "command-center": {
       const { startCommandCenter: startCommandCenter2 } = await Promise.resolve().then(() => (init_command_center(), command_center_exports));
@@ -71926,7 +71875,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
     }
     case "server": {
       if ("bun" in process.versions) {
-        const scriptPath = resolve37(__dirname5, "../packages/daemon/src/server/standalone.ts");
+        const scriptPath = resolve36(__dirname5, "../packages/daemon/src/server/standalone.ts");
         const serverArgs = ["--experimental-strip-types", scriptPath];
         if (values.port) serverArgs.push("--port", values.port);
         execFileSync19("node", serverArgs, { stdio: "inherit" });
@@ -71948,7 +71897,7 @@ Run "tmux-ide help" for usage.`, {
   }
 } catch (error) {
   if (error instanceof IdeError) {
-    printCommandError(error, { json: json2 });
+    printCommandError(error, { json });
   } else {
     throw error;
   }

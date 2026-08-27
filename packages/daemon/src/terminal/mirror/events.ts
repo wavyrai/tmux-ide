@@ -58,6 +58,9 @@ export type MirrorPaneEvent =
 export interface MirrorLayoutPane {
   /** Null while the pane's semantic identity join is still unverified. */
   semanticPaneId: string | null;
+  /** Daemon-authored presentation; clients never infer this from terminal bytes. */
+  displayName: string | null;
+  displayNameSource: "manual" | "agent" | "process" | "title" | "generated" | null;
   left: number;
   top: number;
   width: number;
@@ -104,6 +107,8 @@ export interface MirrorPaneDescription {
   currentCommand: string | null;
   cwd: string | null;
   title: string | null;
+  displayName: string;
+  displayNameSource: "manual" | "agent" | "process" | "title" | "generated";
   windowName: string | null;
   active: boolean;
 }

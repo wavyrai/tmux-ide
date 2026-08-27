@@ -14,6 +14,7 @@ export interface SessionPaneDescriptor {
   semanticWindowId: string | null;
   paneIndex: number;
   name: string | null;
+  nameSource: string | null;
   missionStamp: string | null;
   paneActive: boolean;
   windowActive: boolean;
@@ -204,6 +205,9 @@ export function parseSessionPaneDescriptorReply(
       semanticWindowId: nonempty(semanticWindowId),
       paneIndex,
       name: nonempty(name),
+      // Source metadata is persisted for mutations, while this hot inventory
+      // stays wire-compatible. Generated names are recognized deterministically.
+      nameSource: null,
       missionStamp: nonempty(missionStamp),
       paneActive: paneActiveRaw === "1",
       windowActive: windowActiveRaw === "1",

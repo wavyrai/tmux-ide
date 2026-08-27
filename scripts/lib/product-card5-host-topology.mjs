@@ -23,12 +23,26 @@ const CARD5_LIFECYCLE_REASONS = new Set([
   "request-missing",
   "lane-missing",
   "client-missing",
+  "client-mismatch",
   "ordinal-invalid",
   "duplicate-request",
   "duplicate-lane",
   "duplicate-client",
   "extra-active",
   "closed",
+  "lifecycle-fsm-invalid",
+]);
+
+const CARD5_LIFECYCLE_FSM_REASONS = new Set([
+  "lifecycle-shape-invalid",
+  "lifecycle-ordinal-invalid",
+  "duplicate-open",
+  "close-before-open",
+  "close-identity-mismatch",
+  "duplicate-close",
+  "lane-reuse",
+  "request-reuse",
+  "lifecycle-overflow",
 ]);
 
 function lifecycleHmac(domain, value, key) {
@@ -59,27 +73,87 @@ export function assessCard5ObservedHostLifecycle({
   ) {
     throw new TypeError("Card5 lifecycle assessment identity is malformed");
   }
-  const opens = daemonRecords.filter(
+  const lifecycle = daemonRecords.filter(
     (record) =>
       record?.operation === "terminal-delivery-subscriber-lifecycle" &&
-      record.terminalDelivery?.deliveryLifecycleEvent === "open" &&
-      record.terminalDelivery?.deliveryPurpose === "terminal-surface" &&
       record.terminalDelivery?.canonicalGeneration === generation &&
       record.terminalDelivery?.semanticPaneId === pane,
   );
-  const closeRecords = daemonRecords.filter(
-    (record) =>
-      record?.operation === "terminal-delivery-subscriber-lifecycle" &&
-      record.terminalDelivery?.deliveryLifecycleEvent === "close" &&
-      record.terminalDelivery?.canonicalGeneration === generation &&
-      record.terminalDelivery?.semanticPaneId === pane,
+  const opens = lifecycle.filter(
+    (record) => record.terminalDelivery?.deliveryLifecycleEvent === "open",
   );
-  const closes = new Set(
-    closeRecords.map(({ terminalDelivery }) => terminalDelivery.deliveryRequestId),
+  const closeRecords = lifecycle.filter(
+    (record) => record.terminalDelivery?.deliveryLifecycleEvent === "close",
   );
-  const active = opens.filter(
-    ({ terminalDelivery }) => !closes.has(terminalDelivery.deliveryRequestId),
-  );
+  const activeByLane = new Map();
+  const retired = [];
+  const usedLanes = new Set();
+  const usedRequests = new Set();
+  const retiredLanes = new Set();
+  let previousOrdinal = -1;
+  let lifecycleFsmReason = lifecycle.length > 128 ? "lifecycle-overflow" : null;
+  const exactDeliveryIdentity = (left, right) =>
+    [
+      "canonicalGeneration",
+      "semanticPaneId",
+      "canonicalIncarnation",
+      "deliveryPurpose",
+      "deliverySurface",
+      "deliveryRequestId",
+      "deliveryLaneId",
+      "deliveryClientId",
+    ].every((field) => left?.[field] === right?.[field]);
+  for (const record of lifecycle.slice(0, 128)) {
+    if (lifecycleFsmReason !== null) break;
+    const delivery = record.terminalDelivery;
+    const shapeExact =
+      boundedIdentity(delivery?.canonicalIncarnation) &&
+      delivery.deliveryPurpose === "terminal-surface" &&
+      new Set(["opentui", "web"]).has(delivery.deliverySurface) &&
+      boundedIdentity(delivery.deliveryRequestId) &&
+      boundedIdentity(delivery.deliveryLaneId) &&
+      boundedIdentity(delivery.deliveryClientId) &&
+      new Set(["open", "close"]).has(delivery.deliveryLifecycleEvent);
+    if (!shapeExact) {
+      lifecycleFsmReason = "lifecycle-shape-invalid";
+      break;
+    }
+    if (
+      !Number.isSafeInteger(delivery.deliveryLifecycleOrdinal) ||
+      delivery.deliveryLifecycleOrdinal <= previousOrdinal
+    ) {
+      lifecycleFsmReason = "lifecycle-ordinal-invalid";
+      break;
+    }
+    previousOrdinal = delivery.deliveryLifecycleOrdinal;
+    if (delivery.deliveryLifecycleEvent === "open") {
+      if (activeByLane.has(delivery.deliveryLaneId)) lifecycleFsmReason = "duplicate-open";
+      else if (usedLanes.has(delivery.deliveryLaneId)) lifecycleFsmReason = "lane-reuse";
+      else if (usedRequests.has(delivery.deliveryRequestId)) lifecycleFsmReason = "request-reuse";
+      else {
+        activeByLane.set(delivery.deliveryLaneId, record);
+        usedLanes.add(delivery.deliveryLaneId);
+        usedRequests.add(delivery.deliveryRequestId);
+      }
+      continue;
+    }
+    const opened = activeByLane.get(delivery.deliveryLaneId);
+    if (!opened) {
+      lifecycleFsmReason = retiredLanes.has(delivery.deliveryLaneId)
+        ? "duplicate-close"
+        : "close-before-open";
+    } else if (!exactDeliveryIdentity(opened.terminalDelivery, delivery)) {
+      lifecycleFsmReason = "close-identity-mismatch";
+    } else {
+      activeByLane.delete(delivery.deliveryLaneId);
+      retiredLanes.add(delivery.deliveryLaneId);
+      retired.push(Object.freeze({ open: opened, close: record }));
+    }
+  }
+  if (lifecycleFsmReason !== null && !CARD5_LIFECYCLE_FSM_REASONS.has(lifecycleFsmReason)) {
+    lifecycleFsmReason = "lifecycle-shape-invalid";
+  }
+  const active = [...activeByLane.values()];
   const currentRequest = (entry) => entry?.runtimeReplacement?.currentLifecycleRequest ?? null;
   const validCurrentRequest = (request) => {
     if (!request || !new Set(["exact", "missing", "ambiguous", "overflow"]).has(request.status))
@@ -105,6 +179,7 @@ export function assessCard5ObservedHostLifecycle({
       request.activeCount === 1 &&
       request.overflow === false &&
       request.descriptorCount === 1 &&
+      /^[0-9a-f]{64}$/u.test(request.deliveryClientHmac ?? "") &&
       Number.isSafeInteger(request.firstSeedOrdinal) &&
       request.firstSeedOrdinal >= 0
     );
@@ -118,19 +193,28 @@ export function assessCard5ObservedHostLifecycle({
       descriptor: null,
       record: active.find(({ terminalDelivery }) => terminalDelivery.deliverySurface === "opentui"),
     },
-    ...webRequests.map((request, index) => ({
-      client: index === 0 ? "web-a" : "web-b",
-      processIdentity: web[index]?.processIdentity,
-      socketIdentity: request?.socketHmac,
-      descriptor: request,
-      record: active.find(
+    ...webRequests.map((request, index) => {
+      const requestRecord = active.find(
         ({ terminalDelivery }) =>
           terminalDelivery.deliverySurface === "web" &&
           boundedIdentity(terminalDelivery.deliveryRequestId) &&
           lifecycleHmac("request", terminalDelivery.deliveryRequestId, evidenceKey) ===
             request?.requestHmac,
-      ),
-    })),
+      );
+      return {
+        client: index === 0 ? "web-a" : "web-b",
+        processIdentity: web[index]?.processIdentity,
+        socketIdentity: request?.socketHmac,
+        descriptor: request,
+        requestRecord,
+        record:
+          requestRecord &&
+          lifecycleHmac("client", requestRecord.terminalDelivery.deliveryClientId, evidenceKey) ===
+            request?.deliveryClientHmac
+            ? requestRecord
+            : undefined,
+      };
+    }),
   ];
   const duplicate = (field) => {
     const values = exact.map(({ record }) => record?.terminalDelivery?.[field]).filter(Boolean);
@@ -139,76 +223,82 @@ export function assessCard5ObservedHostLifecycle({
   const duplicateRequest = duplicate("deliveryRequestId");
   const duplicateLane = duplicate("deliveryLaneId");
   const duplicateClient = duplicate("deliveryClientId");
-  const clients = exact.map(({ client, processIdentity, socketIdentity, descriptor, record }) => {
-    const delivery = record?.terminalDelivery;
-    let reason = null;
-    if (client !== "opentui" && !descriptor) reason = "descriptor-missing";
-    else if (client !== "opentui" && web[client === "web-a" ? 0 : 1]?.generation !== generation)
-      reason = "generation-mismatch";
-    else if (client !== "opentui" && !validCurrentRequest(descriptor))
-      reason = "activated-request-invalid";
-    else if (client !== "opentui" && descriptor.status === "missing")
-      reason = "activated-request-missing";
-    else if (client !== "opentui" && descriptor.status === "ambiguous")
-      reason = "activated-request-ambiguous";
-    else if (client !== "opentui" && descriptor.status === "overflow")
-      reason = "activated-request-overflow";
-    else if (!boundedIdentity(processIdentity)) reason = "process-missing";
-    else if (client !== "opentui" && !/^[0-9a-f]{64}$/u.test(socketIdentity ?? ""))
-      reason = "socket-missing";
-    else if (client !== "opentui" && !/^[0-9a-f]{64}$/u.test(descriptor?.requestHmac ?? ""))
-      reason = "request-missing";
-    else if (
-      client !== "opentui" &&
-      closeRecords.some(
-        ({ terminalDelivery }) =>
-          boundedIdentity(terminalDelivery.deliveryRequestId) &&
-          lifecycleHmac("request", terminalDelivery.deliveryRequestId, evidenceKey) ===
-            descriptor.requestHmac,
+  const clients = exact.map(
+    ({ client, processIdentity, socketIdentity, descriptor, requestRecord, record }) => {
+      const delivery = record?.terminalDelivery;
+      let reason = null;
+      if (client !== "opentui" && !descriptor) reason = "descriptor-missing";
+      else if (client !== "opentui" && web[client === "web-a" ? 0 : 1]?.generation !== generation)
+        reason = "generation-mismatch";
+      else if (client !== "opentui" && !validCurrentRequest(descriptor))
+        reason = "activated-request-invalid";
+      else if (client !== "opentui" && descriptor.status === "missing")
+        reason = "activated-request-missing";
+      else if (client !== "opentui" && descriptor.status === "ambiguous")
+        reason = "activated-request-ambiguous";
+      else if (client !== "opentui" && descriptor.status === "overflow")
+        reason = "activated-request-overflow";
+      else if (!boundedIdentity(processIdentity)) reason = "process-missing";
+      else if (client !== "opentui" && !/^[0-9a-f]{64}$/u.test(socketIdentity ?? ""))
+        reason = "socket-missing";
+      else if (client !== "opentui" && !/^[0-9a-f]{64}$/u.test(descriptor?.requestHmac ?? ""))
+        reason = "request-missing";
+      else if (lifecycleFsmReason !== null) reason = "lifecycle-fsm-invalid";
+      else if (client !== "opentui" && requestRecord && !record) reason = "client-mismatch";
+      else if (
+        !record &&
+        client !== "opentui" &&
+        retired.some(
+          ({ open }) =>
+            boundedIdentity(open.terminalDelivery.deliveryRequestId) &&
+            lifecycleHmac("request", open.terminalDelivery.deliveryRequestId, evidenceKey) ===
+              descriptor.requestHmac,
+        )
       )
-    )
-      reason = "closed";
-    else if (
-      client === "opentui" &&
-      closeRecords.some(({ terminalDelivery }) => terminalDelivery.deliverySurface === "opentui")
-    )
-      reason = "closed";
-    else if (!record) reason = "request-no-active-open";
-    else if (!boundedIdentity(delivery?.deliveryRequestId)) reason = "request-missing";
-    else if (!boundedIdentity(delivery?.deliveryLaneId)) reason = "lane-missing";
-    else if (!boundedIdentity(delivery?.deliveryClientId)) reason = "client-missing";
-    else if (
-      !Number.isSafeInteger(delivery?.deliveryLifecycleOrdinal) ||
-      delivery.deliveryLifecycleOrdinal < 0
-    )
-      reason = "ordinal-invalid";
-    else if (duplicateRequest) reason = "duplicate-request";
-    else if (duplicateLane) reason = "duplicate-lane";
-    else if (duplicateClient) reason = "duplicate-client";
-    else if (active.length > 3) reason = "extra-active";
-    else if (closeRecords.length > 0) reason = "closed";
-    if (reason !== null && !CARD5_LIFECYCLE_REASONS.has(reason)) reason = "request-no-active-open";
-    return Object.freeze({
-      client,
-      reason,
-      assessed: true,
-      descriptorObserved: descriptor?.descriptorCount === 1 || client === "opentui",
-      activeOpenObserved: record !== undefined,
-      candidateRequestHmac:
-        client !== "opentui" && /^[0-9a-f]{64}$/u.test(descriptor?.requestHmac ?? "")
-          ? descriptor.requestHmac
+        reason = "closed";
+      else if (
+        !record &&
+        client === "opentui" &&
+        retired.some(({ open }) => open.terminalDelivery.deliverySurface === "opentui")
+      )
+        reason = "closed";
+      else if (!record) reason = "request-no-active-open";
+      else if (!boundedIdentity(delivery?.deliveryRequestId)) reason = "request-missing";
+      else if (!boundedIdentity(delivery?.deliveryLaneId)) reason = "lane-missing";
+      else if (!boundedIdentity(delivery?.deliveryClientId)) reason = "client-missing";
+      else if (
+        !Number.isSafeInteger(delivery?.deliveryLifecycleOrdinal) ||
+        delivery.deliveryLifecycleOrdinal < 0
+      )
+        reason = "ordinal-invalid";
+      else if (duplicateRequest) reason = "duplicate-request";
+      else if (duplicateLane) reason = "duplicate-lane";
+      else if (duplicateClient) reason = "duplicate-client";
+      else if (active.length > 3) reason = "extra-active";
+      if (reason !== null && !CARD5_LIFECYCLE_REASONS.has(reason))
+        reason = "request-no-active-open";
+      return Object.freeze({
+        client,
+        reason,
+        assessed: true,
+        descriptorObserved: descriptor?.descriptorCount === 1 || client === "opentui",
+        activeOpenObserved: record !== undefined,
+        candidateRequestHmac:
+          client !== "opentui" && /^[0-9a-f]{64}$/u.test(descriptor?.requestHmac ?? "")
+            ? descriptor.requestHmac
+            : null,
+        requestHmac: boundedIdentity(delivery?.deliveryRequestId)
+          ? lifecycleHmac("request", delivery.deliveryRequestId, evidenceKey)
           : null,
-      requestHmac: boundedIdentity(delivery?.deliveryRequestId)
-        ? lifecycleHmac("request", delivery.deliveryRequestId, evidenceKey)
-        : null,
-      laneHmac: boundedIdentity(delivery?.deliveryLaneId)
-        ? lifecycleHmac("lane", delivery.deliveryLaneId, evidenceKey)
-        : null,
-      clientHmac: boundedIdentity(delivery?.deliveryClientId)
-        ? lifecycleHmac("client", delivery.deliveryClientId, evidenceKey)
-        : null,
-    });
-  });
+        laneHmac: boundedIdentity(delivery?.deliveryLaneId)
+          ? lifecycleHmac("lane", delivery.deliveryLaneId, evidenceKey)
+          : null,
+        clientHmac: boundedIdentity(delivery?.deliveryClientId)
+          ? lifecycleHmac("client", delivery.deliveryClientId, evidenceKey)
+          : null,
+      });
+    },
+  );
   const matchedRequests = new Set(
     exact
       .map(({ record }) => record?.terminalDelivery?.deliveryRequestId)
@@ -217,7 +307,15 @@ export function assessCard5ObservedHostLifecycle({
   const unmatchedActive = active.filter(
     ({ terminalDelivery }) => !matchedRequests.has(terminalDelivery?.deliveryRequestId),
   );
-  const passed = active.length === 3 && clients.every(({ reason }) => reason === null);
+  const openOverflow = opens.length > 64;
+  const closeOverflow = closeRecords.length > 64;
+  const passed =
+    lifecycleFsmReason === null &&
+    !openOverflow &&
+    !closeOverflow &&
+    active.length === 3 &&
+    unmatchedActive.length === 0 &&
+    clients.every(({ reason }) => reason === null);
   const observation = Object.freeze({
     operation: "card5-host-lifecycle",
     stage,
@@ -225,9 +323,28 @@ export function assessCard5ObservedHostLifecycle({
     generationHmac: lifecycleHmac("generation", generation, evidenceKey),
     paneHmac: lifecycleHmac("pane", pane, evidenceKey),
     openCount: Math.min(opens.length, 64),
-    openOverflow: opens.length > 64,
+    openOverflow,
     closeCount: Math.min(closeRecords.length, 64),
-    closeOverflow: closeRecords.length > 64,
+    closeOverflow,
+    retiredCount: Math.min(retired.length, 64),
+    retiredOverflow: retired.length > 64,
+    lifecycleFsmReason,
+    lifecycleOrdinal: previousOrdinal,
+    retired: Object.freeze(
+      retired.slice(-8).map(({ open, close }) =>
+        Object.freeze({
+          requestHmac: lifecycleHmac(
+            "request",
+            open.terminalDelivery.deliveryRequestId,
+            evidenceKey,
+          ),
+          laneHmac: lifecycleHmac("lane", open.terminalDelivery.deliveryLaneId, evidenceKey),
+          clientHmac: lifecycleHmac("client", open.terminalDelivery.deliveryClientId, evidenceKey),
+          openOrdinal: open.terminalDelivery.deliveryLifecycleOrdinal,
+          closeOrdinal: close.terminalDelivery.deliveryLifecycleOrdinal,
+        }),
+      ),
+    ),
     activeCount: Math.min(active.length, 64),
     activeOverflow: active.length > 64,
     unmatchedActiveRequestHmacs: Object.freeze(
@@ -309,6 +426,11 @@ export async function waitForCard5ObservedHostLifecycle({
       openOverflow: null,
       closeCount: null,
       closeOverflow: null,
+      retiredCount: null,
+      retiredOverflow: null,
+      lifecycleFsmReason: null,
+      lifecycleOrdinal: null,
+      retired: Object.freeze([]),
       activeCount: null,
       activeOverflow: null,
       unmatchedActiveRequestHmacs: Object.freeze([]),
@@ -630,6 +752,18 @@ export function validateCard5NativeObserverCommand(argv) {
 export function card5HostCleanupStatus(input) {
   const exact = ["chromium", "electron", "opentui", "daemon", "namespace"];
   const entries = input?.entries;
+  const exactProcessEvidence = (value, expectedCount, terminalCount, overflow) =>
+    Array.isArray(value) &&
+    overflow === false &&
+    value.length === expectedCount &&
+    value.filter((entry) => entry?.terminalState === true).length === terminalCount &&
+    value.every(
+      (entry) =>
+        entry &&
+        Object.keys(entry).sort().join("\0") === "identityHmac\0terminalState" &&
+        /^[0-9a-f]{64}$/u.test(entry.identityHmac ?? "") &&
+        typeof entry.terminalState === "boolean",
+    );
   const passed =
     entries &&
     Object.keys(entries).sort().join("\0") === [...exact].sort().join("\0") &&
@@ -641,11 +775,31 @@ export function card5HostCleanupStatus(input) {
     ) &&
     input.chromiumProcessCount === 0 &&
     input.chromiumDescendantCount === 0 &&
+    Number.isSafeInteger(input.chromiumTerminalProcessCount) &&
+    input.chromiumTerminalProcessCount >= 0 &&
+    exactProcessEvidence(
+      input.chromiumProcessEvidence,
+      input.chromiumProcessCount +
+        input.chromiumDescendantCount +
+        input.chromiumTerminalProcessCount,
+      input.chromiumTerminalProcessCount,
+      input.chromiumProcessEvidenceOverflow,
+    ) &&
     input.chromiumPageCount === 0 &&
     input.chromiumContextCount === 0 &&
     input.chromiumListenerCount === 0 &&
     input.electronProcessCount === 0 &&
     input.electronDescendantCount === 0 &&
+    Number.isSafeInteger(input.electronTerminalProcessCount) &&
+    input.electronTerminalProcessCount >= 0 &&
+    exactProcessEvidence(
+      input.electronProcessEvidence,
+      input.electronProcessCount +
+        input.electronDescendantCount +
+        input.electronTerminalProcessCount,
+      input.electronTerminalProcessCount,
+      input.electronProcessEvidenceOverflow,
+    ) &&
     input.electronWindowCount === 0 &&
     input.electronListenerCount === 0 &&
     input.electronOpenHandleCount === 0 &&
@@ -676,11 +830,39 @@ export function card5HostCleanupStatus(input) {
     ),
     chromiumProcessCount: boundedCount(input?.chromiumProcessCount, 32),
     chromiumDescendantCount: boundedCount(input?.chromiumDescendantCount, 256),
+    chromiumTerminalProcessCount: boundedCount(input?.chromiumTerminalProcessCount, 32),
+    chromiumProcessEvidence: Object.freeze(
+      Array.isArray(input?.chromiumProcessEvidence)
+        ? input.chromiumProcessEvidence.slice(0, 32).map((entry) =>
+            Object.freeze({
+              identityHmac: /^[0-9a-f]{64}$/u.test(entry?.identityHmac ?? "")
+                ? entry.identityHmac
+                : null,
+              terminalState: entry?.terminalState === true,
+            }),
+          )
+        : [],
+    ),
+    chromiumProcessEvidenceOverflow: input?.chromiumProcessEvidenceOverflow === true,
     chromiumPageCount: boundedCount(input?.chromiumPageCount, 32),
     chromiumContextCount: boundedCount(input?.chromiumContextCount, 32),
     chromiumListenerCount: boundedCount(input?.chromiumListenerCount, 64),
     electronProcessCount: boundedCount(input?.electronProcessCount, 32),
     electronDescendantCount: boundedCount(input?.electronDescendantCount, 256),
+    electronTerminalProcessCount: boundedCount(input?.electronTerminalProcessCount, 32),
+    electronProcessEvidence: Object.freeze(
+      Array.isArray(input?.electronProcessEvidence)
+        ? input.electronProcessEvidence.slice(0, 32).map((entry) =>
+            Object.freeze({
+              identityHmac: /^[0-9a-f]{64}$/u.test(entry?.identityHmac ?? "")
+                ? entry.identityHmac
+                : null,
+              terminalState: entry?.terminalState === true,
+            }),
+          )
+        : [],
+    ),
+    electronProcessEvidenceOverflow: input?.electronProcessEvidenceOverflow === true,
     electronWindowCount: boundedCount(input?.electronWindowCount, 32),
     electronListenerCount: boundedCount(input?.electronListenerCount, 64),
     electronOpenHandleCount: boundedCount(input?.electronOpenHandleCount, 256),

@@ -16,6 +16,7 @@ afterEach(() => {
   delete globals.__TMUX_IDE_CARD5_EVIDENCE_ENABLED__;
   delete globals.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__;
   delete globals.__TMUX_IDE_CARD5_ENVELOPE_STORE__;
+  delete globals.__TMUX_IDE_CARD5_INPUT_OPERATION_RECORD__;
 });
 
 describe("Card5 envelope evidence", () => {
@@ -194,10 +195,117 @@ describe("Card5 envelope evidence", () => {
       closeCode: null,
       closeReason: "none",
     });
+    expect(read().activeLifecycleRequests).toHaveLength(9);
+    expect(read().activeLifecycleRequests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ generation: "g1", requestId: "overflow-0" }),
+        expect.objectContaining({ generation: "g2", requestId: "replacement" }),
+      ]),
+    );
+    expect(read().activeLifecycleRequestOverflowGenerations).toEqual(["g1"]);
+  });
+
+  it("retains incumbent and candidate generations under global and per-generation caps", () => {
+    globals.__TMUX_IDE_CARD5_EVIDENCE_ENABLED__ = true;
+    createCard5EnvelopeEvidenceRecorder();
+    const read = globals.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__ as () => {
+      activeLifecycleRequests: readonly {
+        generation: string;
+        requestId: string;
+        physicalEpoch: number;
+      }[];
+      activeLifecycleRequestOverflowGenerations: readonly string[];
+      activeLifecycleRequestGlobalOverflow: boolean;
+    };
+    const recorders = Array.from(
+      { length: 18 },
+      (_, ordinal) =>
+        createCard5PaneStreamLifecycleRecorder({
+          workspaceName: ordinal === 17 ? "workspace-b" : "workspace-a",
+          semanticPaneIds: [ordinal === 17 ? "pane-b" : "pane-a"],
+        })!,
+    );
+    const emit = (ordinal: number, stage: "first-seed" | "terminal") =>
+      recorders[ordinal]!({
+        generation: ordinal < 8 ? "incumbent" : ordinal < 16 ? "candidate" : "overflow",
+        requestId: `request-${ordinal}`,
+        stage,
+        code: stage === "terminal" ? "disposed" : "none",
+        origin: stage === "terminal" ? "dispose" : "client",
+        closeCode: stage === "terminal" ? 1000 : null,
+        closeReason: stage === "terminal" ? "renderer-disposed" : "none",
+      });
+
+    for (let ordinal = 0; ordinal < 16; ordinal += 1) emit(ordinal, "first-seed");
+    expect(read().activeLifecycleRequests).toHaveLength(16);
+    expect(new Set(read().activeLifecycleRequests.map(({ generation }) => generation))).toEqual(
+      new Set(["incumbent", "candidate"]),
+    );
+    emit(16, "first-seed");
+    expect(read().activeLifecycleRequests).toHaveLength(16);
+    expect(read().activeLifecycleRequestOverflowGenerations).toContain("overflow");
+    emit(0, "terminal");
+    expect(read().activeLifecycleRequests).toHaveLength(15);
+    expect(read().activeLifecycleRequests.some(({ requestId }) => requestId === "request-8")).toBe(
+      true,
+    );
+    emit(17, "first-seed");
+    expect(read().activeLifecycleRequests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ generation: "candidate", requestId: "request-8" }),
+        expect.objectContaining({ generation: "overflow", requestId: "request-17" }),
+      ]),
+    );
+    for (let ordinal = 0; ordinal < 17; ordinal += 1) {
+      const overflow = createCard5PaneStreamLifecycleRecorder({
+        workspaceName: "workspace-a",
+        semanticPaneIds: ["pane-a"],
+      })!;
+      overflow({
+        generation: `overflow-generation-${ordinal}`,
+        requestId: `overflow-request-${ordinal}`,
+        stage: "first-seed",
+        code: "none",
+        origin: "client",
+        closeCode: null,
+        closeReason: "none",
+      });
+    }
+    expect(read().activeLifecycleRequestOverflowGenerations).toHaveLength(16);
+    expect(read().activeLifecycleRequestGlobalOverflow).toBe(true);
+  });
+
+  it("keeps a replacement physical epoch active when a stale same-request terminal arrives", () => {
+    globals.__TMUX_IDE_CARD5_EVIDENCE_ENABLED__ = true;
+    createCard5EnvelopeEvidenceRecorder();
+    const binding = { workspaceName: "workspace-a", semanticPaneIds: ["pane-a"] };
+    const first = createCard5PaneStreamLifecycleRecorder(binding)!;
+    const replacement = createCard5PaneStreamLifecycleRecorder(binding)!;
+    const event = (record: typeof first, stage: "first-seed" | "terminal") =>
+      record({
+        generation: "g1",
+        requestId: "same-request",
+        stage,
+        code: stage === "terminal" ? "disposed" : "none",
+        origin: stage === "terminal" ? "dispose" : "client",
+        closeCode: stage === "terminal" ? 1000 : null,
+        closeReason: stage === "terminal" ? "renderer-disposed" : "none",
+      });
+    event(first, "first-seed");
+    event(replacement, "first-seed");
+    const read = globals.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__ as () => {
+      activeLifecycleRequests: readonly { physicalEpoch: number; requestId: string }[];
+    };
+    expect(read().activeLifecycleRequests).toHaveLength(2);
+    event(first, "terminal");
     expect(read().activeLifecycleRequests).toEqual([
-      expect.objectContaining({ generation: "g2", requestId: "replacement" }),
+      expect.objectContaining({
+        physicalEpoch: replacement.physicalEpoch,
+        requestId: "same-request",
+      }),
     ]);
-    expect(read().activeLifecycleRequestOverflowGenerations).toEqual([]);
+    event(replacement, "terminal");
+    expect(read().activeLifecycleRequests).toEqual([]);
   });
 
   it("records the exact semantic ACK only after the socket-send seam reports it", () => {
@@ -288,6 +396,8 @@ describe("Card5 envelope evidence", () => {
     const read = globals.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__ as () => {
       inputReceiptCount: number;
       inputReceipts: readonly Record<string, unknown>[];
+      inputOperationCount: number;
+      inputOperations: readonly Record<string, unknown>[];
     };
     expect(read().inputReceiptCount).toBe(1);
     expect(read().inputReceipts[0]).toMatchObject({
@@ -300,5 +410,33 @@ describe("Card5 envelope evidence", () => {
       ordinal: 0,
     });
     expect(JSON.stringify(read())).not.toContain("private marker");
+    expect(read().inputOperationCount).toBe(1);
+    expect(read().inputOperations).toEqual([
+      expect.objectContaining({
+        stage: "receipt-published",
+        outcome: "ok",
+        lifecycleRequestId: "10000000-0000-4000-8000-000000000009",
+        clientId: "web-client-a",
+        pane: "pane-a",
+        seq: 9,
+        ordinal: 0,
+      }),
+    ]);
+  });
+
+  it("bounds input operation evidence while preserving the total count", () => {
+    globals.__TMUX_IDE_CARD5_EVIDENCE_ENABLED__ = true;
+    createCard5EnvelopeEvidenceRecorder();
+    const record = globals.__TMUX_IDE_CARD5_INPUT_OPERATION_RECORD__ as (event: unknown) => void;
+    for (let ordinal = 0; ordinal < 70; ordinal += 1)
+      record({ stage: "xterm-enqueue", outcome: "ok", pane: "pane-a" });
+    const read = globals.__TMUX_IDE_CARD5_ENVELOPE_EVIDENCE__ as () => {
+      inputOperationCount: number;
+      inputOperations: readonly { ordinal: number }[];
+    };
+    expect(read().inputOperationCount).toBe(70);
+    expect(read().inputOperations).toHaveLength(64);
+    expect(read().inputOperations[0]?.ordinal).toBe(6);
+    expect(read().inputOperations.at(-1)?.ordinal).toBe(69);
   });
 });

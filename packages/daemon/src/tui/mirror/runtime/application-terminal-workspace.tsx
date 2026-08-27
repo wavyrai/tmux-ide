@@ -59,6 +59,21 @@ export interface ApplicationResizePointerIngress {
   readonly atMicros: number;
 }
 
+export type ApplicationPaneContextAction =
+  | "rename-pane"
+  | "split-right"
+  | "split-down"
+  | "close-pane";
+
+interface ApplicationPaneContextMenuState {
+  readonly paneId: string;
+  readonly displayName: string;
+  readonly left: number;
+  readonly top: number;
+  readonly selected: number;
+  readonly closeArmed: boolean;
+}
+
 export interface ApplicationMousePointerIngress {
   readonly gestureId: string;
   readonly action: "down" | "drag" | "move" | "up" | "wheel-up" | "wheel-down";
@@ -123,6 +138,12 @@ export interface ApplicationTerminalWorkspaceProps {
   /** Daemon-authored semantic agent state, keyed by durable pane identity. */
   readonly agentIndicators?: Accessor<ReadonlyMap<string, ApplicationTerminalAgentIndicator>>;
   readonly onSelectPane: (paneId: string) => void;
+  readonly onCreateWindow?: () => void;
+  readonly onPaneContextAction?: (
+    paneId: string,
+    action: ApplicationPaneContextAction,
+    currentName: string,
+  ) => void;
   readonly onResizePreview?: (preview: ApplicationPaneResizePreview) => void;
   readonly onResizePane?: (preview: ApplicationPaneResizePreview) => void;
   readonly onResizePointerIngress?: (input: {
@@ -177,6 +198,36 @@ export interface ApplicationTerminalAgentIndicator {
 
 const EMPTY_AGENT_INDICATORS: ReadonlyMap<string, ApplicationTerminalAgentIndicator> = new Map();
 
+const PANE_CONTEXT_MENU_WIDTH = 30;
+const PANE_CONTEXT_MENU_ITEMS = Object.freeze([
+  Object.freeze({ id: "select-text" as const, label: "Select text…", shortcut: "Enter" }),
+  Object.freeze({ id: "rename-pane" as const, label: "Rename pane…", shortcut: "R" }),
+  Object.freeze({ id: "split-right" as const, label: "Split pane right", shortcut: "→" }),
+  Object.freeze({ id: "split-down" as const, label: "Split pane down", shortcut: "↓" }),
+  Object.freeze({ id: "close-pane" as const, label: "Close pane…", shortcut: "×" }),
+]);
+
+const PANE_HEADER_ACTIONS = Object.freeze([
+  Object.freeze({ id: "split-right" as const, label: "→" }),
+  Object.freeze({ id: "split-down" as const, label: "↓" }),
+  Object.freeze({ id: "close-pane" as const, label: "×" }),
+  Object.freeze({ id: "menu" as const, label: "⋯" }),
+]);
+
+export function applicationPaneHeaderActionCount(width: number): number {
+  if (width >= 36) return PANE_HEADER_ACTIONS.length;
+  if (width >= 8) return 1;
+  return 0;
+}
+
+function applicationPaneHeaderActions(
+  width: number,
+): readonly (typeof PANE_HEADER_ACTIONS)[number][] {
+  const count = applicationPaneHeaderActionCount(width);
+  if (count === 1) return PANE_HEADER_ACTIONS.slice(-1);
+  return PANE_HEADER_ACTIONS.slice(0, count);
+}
+
 export function terminalAgentStatusLabel(activity: AgentActivity): string {
   switch (activity) {
     case "running":
@@ -215,10 +266,18 @@ export function terminalPaneChromeLabel(
   focused: boolean,
   width: number,
   indicator?: ApplicationTerminalAgentIndicator,
+  displayName?: string | null,
+  displayNameSource?: "manual" | "agent" | "process" | "title" | "generated" | null,
 ): string {
+  const presentedName = displayName?.trim() || paneId;
+  const title = indicator
+    ? displayNameSource === "manual" && presentedName !== indicator.name.trim()
+      ? `${presentedName} · ${indicator.name.trim()}`
+      : indicator.name.trim() || presentedName
+    : presentedName;
   return labelWithReservedStatus(
     focused ? "●" : "○",
-    indicator?.name.trim() || paneId,
+    title,
     indicator ? terminalAgentStatusLabel(indicator.activity) : null,
     indicator?.attention === true,
     width,
@@ -516,7 +575,8 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     lease: TerminalGestureLease;
   }> | null>(null);
   const [selectModePane, setSelectModePane] = createSignal<string | null>(null);
-  const [selectMenuPane, setSelectMenuPane] = createSignal<string | null>(null);
+  const [paneContextMenu, setPaneContextMenu] =
+    createSignal<ApplicationPaneContextMenuState | null>(null);
   let selecting: {
     readonly paneId: string;
     readonly anchor: TerminalSelectionRange["start"];
@@ -541,6 +601,48 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     x: event.x - (props.originX ?? 0),
     y: event.y - (props.originY ?? 0) - topOffset(),
   });
+  const paneContextMenuWidth = () => Math.max(1, Math.min(PANE_CONTEXT_MENU_WIDTH, props.width));
+  const paneContextMenuHeight = () => PANE_CONTEXT_MENU_ITEMS.length + 3;
+  const openPaneContextMenu = (
+    paneId: string,
+    event: Pick<WorkspaceMouseEvent, "x" | "y">,
+    selected = 0,
+  ): void => {
+    props.onSelectPane(paneId);
+    const pane = layout()
+      .windows.flatMap((window) => window.panes)
+      .find((item) => item.pane === paneId);
+    const localX = event.x - (props.originX ?? 0);
+    const localY = event.y - (props.originY ?? 0);
+    const width = paneContextMenuWidth();
+    const height = paneContextMenuHeight();
+    const bottom = topOffset() + props.height;
+    setPaneContextMenu({
+      paneId,
+      displayName: pane?.displayName?.trim() || paneId,
+      left: Math.max(0, Math.min(localX, props.width - width)),
+      top: localY + 1 + height <= bottom ? localY + 1 : Math.max(topOffset(), localY - height),
+      selected: Math.max(0, Math.min(PANE_CONTEXT_MENU_ITEMS.length - 1, selected)),
+      closeArmed: false,
+    });
+  };
+  const activatePaneContextItem = (index: number): void => {
+    const menu = paneContextMenu();
+    const item = PANE_CONTEXT_MENU_ITEMS[index];
+    if (!menu || !item) return;
+    if (item.id === "close-pane" && !menu.closeArmed) {
+      setPaneContextMenu({ ...menu, selected: index, closeArmed: true });
+      return;
+    }
+    setPaneContextMenu(null);
+    if (item.id === "select-text") {
+      setSelectModePane(menu.paneId);
+      setSelection(null);
+      setCommittedSelection(null);
+      return;
+    }
+    props.onPaneContextAction?.(menu.paneId, item.id, menu.displayName);
+  };
   const globalPreview = (preview: ApplicationPaneResizePreview): ApplicationPaneResizePreview =>
     Object.freeze({
       ...preview,
@@ -745,15 +847,24 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
   });
   props.onSelectionCopyOwner?.(copySelection);
   const handleSelectionKey = (name: string): boolean => {
-    const paneId = selectMenuPane();
-    if (!paneId) return false;
-    if (name === "escape") setSelectMenuPane(null);
-    else if (name === "return" || name === "enter") {
-      setSelectMenuPane(null);
-      setSelectModePane(paneId);
-      setSelection(null);
-      setCommittedSelection(null);
-    }
+    const menu = paneContextMenu();
+    if (!menu) return false;
+    if (name === "escape") setPaneContextMenu(null);
+    else if (name === "up" || name === "k")
+      setPaneContextMenu({
+        ...menu,
+        selected:
+          (menu.selected - 1 + PANE_CONTEXT_MENU_ITEMS.length) % PANE_CONTEXT_MENU_ITEMS.length,
+        closeArmed: false,
+      });
+    else if (name === "down" || name === "j")
+      setPaneContextMenu({
+        ...menu,
+        selected: (menu.selected + 1) % PANE_CONTEXT_MENU_ITEMS.length,
+        closeArmed: false,
+      });
+    else if (name === "return" || name === "enter") activatePaneContextItem(menu.selected);
+    else return false;
     return true;
   };
   props.onSelectionKeyOwner?.(handleSelectionKey);
@@ -989,7 +1100,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       const appMouse = terminalMouseActionSupported(snapshot, "down");
       if (event.button === 2 && event.type === "down") {
         event.stopPropagation?.();
-        setSelectMenuPane(appMouse ? hit.frame.paneId : null);
+        openPaneContextMenu(hit.frame.paneId, event);
         return;
       }
       const localSelection =
@@ -998,7 +1109,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       if (event.type === "down") {
         event.stopPropagation?.();
         props.onSelectPane(hit.frame.paneId);
-        setSelectMenuPane(null);
+        setPaneContextMenu(null);
         if (forward) {
           setSelection(null);
           setCommittedSelection(null);
@@ -1147,11 +1258,37 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
             }}
           </For>
         </Show>
+        <text
+          position="absolute"
+          right={0}
+          top={0}
+          width={4}
+          height={1}
+          zIndex={4}
+          content=" [+]"
+          fg={props.theme.roles.text.link}
+          bg={props.theme.roles.surfaces.panel}
+          onMouseDown={(event) => {
+            event.stopPropagation();
+            props.onCreateWindow?.();
+          }}
+        />
       </box>
       <For each={retainedPaneIds()}>
         {(paneId) => {
           const frame = createMemo(
             () => projectedFrames().find((candidate) => candidate.paneId === paneId)!,
+          );
+          const headerActions = createMemo(() => applicationPaneHeaderActions(frame().width));
+          const headerActionsWidth = createMemo(() => headerActions().length * 3);
+          const headerTitleWidth = createMemo(() =>
+            Math.max(1, frame().width - headerActionsWidth()),
+          );
+          const headerActionsLabel = createMemo(
+            () =>
+              headerActions()
+                .map((action) => `[${action.label}]`)
+                .join("") || " ",
           );
           return (
             <box
@@ -1172,22 +1309,52 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
                 height={1}
                 zIndex={2}
                 backgroundColor={props.theme.roles.surfaces.command}
-                onMouseDown={() => props.onSelectPane(frame().paneId)}
+                onMouseDown={(event) => {
+                  if (event.button === 2) {
+                    event.stopPropagation();
+                    openPaneContextMenu(frame().paneId, event);
+                    return;
+                  }
+                  props.onSelectPane(frame().paneId);
+                }}
               >
                 <text
+                  width={headerTitleWidth()}
+                  height={1}
+                  overflow="hidden"
+                  content={terminalPaneChromeLabel(
+                    frame().paneId,
+                    props.focusedPane === frame().paneId,
+                    headerTitleWidth(),
+                    agentIndicators().get(frame().paneId),
+                    layout()
+                      .windows.flatMap((window) => window.panes)
+                      .find((pane) => pane.pane === frame().paneId)?.displayName,
+                    layout()
+                      .windows.flatMap((window) => window.panes)
+                      .find((pane) => pane.pane === frame().paneId)?.displayNameSource,
+                  )}
                   fg={
                     props.focusedPane === frame().paneId
                       ? props.theme.roles.text.link
                       : props.theme.roles.text.secondary
                   }
-                >
-                  {` ${terminalPaneChromeLabel(
-                    frame().paneId,
-                    props.focusedPane === frame().paneId,
-                    frame().width,
-                    agentIndicators().get(frame().paneId),
-                  ).slice(1)}`}
-                </text>
+                />
+                <text
+                  position="absolute"
+                  right={0}
+                  top={0}
+                  width={Math.max(1, headerActionsWidth())}
+                  height={1}
+                  zIndex={4}
+                  content={headerActionsLabel()}
+                  fg={props.theme.roles.text.link}
+                  bg={props.theme.roles.surfaces.command}
+                  onMouseDown={(event) => {
+                    event.stopPropagation();
+                    openPaneContextMenu(frame().paneId, event);
+                  }}
+                />
               </box>
               <box
                 position="absolute"
@@ -1266,20 +1433,71 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           />
         )}
       </For>
-      <Show when={selectMenuPane()}>
-        <box
-          position="absolute"
-          left={2}
-          top={topOffset() + 2}
-          width={24}
-          height={3}
-          zIndex={20}
-          border
-          backgroundColor={props.theme.roles.surfaces.panelRaised}
-        >
-          <text fg={props.theme.roles.text.primary}>Select text…</text>
-        </box>
-      </Show>
+      <For each={paneContextMenu() ? [paneContextMenu()!] : []}>
+        {(menu) => (
+          <box
+            position="absolute"
+            left={menu.left}
+            top={menu.top}
+            width={paneContextMenuWidth()}
+            height={paneContextMenuHeight()}
+            zIndex={20}
+            border
+            borderStyle="rounded"
+            borderColor={props.theme.roles.borders.focused}
+            backgroundColor={props.theme.roles.surfaces.panelRaised}
+            flexDirection="column"
+            overflow="hidden"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <text
+              height={1}
+              fg={props.theme.roles.text.primary}
+              content={clipTerminal(` ${menu.displayName}`, paneContextMenuWidth() - 2)}
+            />
+            <For each={PANE_CONTEXT_MENU_ITEMS}>
+              {(item, index) => {
+                const selected = () => paneContextMenu()?.selected === index();
+                const closeArmed = () =>
+                  item.id === "close-pane" && paneContextMenu()?.closeArmed === true;
+                const label = () =>
+                  closeArmed()
+                    ? "Confirm close pane"
+                    : `${item.label}${" ".repeat(
+                        Math.max(
+                          1,
+                          paneContextMenuWidth() - item.label.length - item.shortcut.length - 4,
+                        ),
+                      )}${item.shortcut}`;
+                return (
+                  <text
+                    height={1}
+                    width={Math.max(1, paneContextMenuWidth() - 2)}
+                    overflow="hidden"
+                    content={`${selected() ? "›" : " "} ${label()}`}
+                    fg={
+                      closeArmed()
+                        ? props.theme.roles.statusTone.warning
+                        : selected()
+                          ? props.theme.roles.selection.selectionText
+                          : props.theme.roles.text.secondary
+                    }
+                    bg={
+                      selected()
+                        ? props.theme.roles.selection.selection
+                        : props.theme.roles.surfaces.panelRaised
+                    }
+                    onMouseDown={(event) => {
+                      event.stopPropagation();
+                      activatePaneContextItem(index());
+                    }}
+                  />
+                );
+              }}
+            </For>
+          </box>
+        )}
+      </For>
       <Show when={selectModePane()}>
         <text
           position="absolute"

@@ -27,6 +27,7 @@ import { INTERNAL_SEND_OPERATION_OPTION } from "./tmux-external-interaction-obse
 interface FakePane {
   id: string;
   windowId: string;
+  title: string;
   options: Map<string, string>;
   active: boolean;
   /** Cells, as tmux reports them. Panes of a window share the window's total. */
@@ -81,6 +82,7 @@ class FakeTmux {
     const pane: FakePane = {
       id: `%${this.#nextPane++}`,
       windowId,
+      title: "Shell",
       options: new Map(),
       active: !this.panes.some((p) => p.windowId === windowId),
       width: WINDOW_COLS,
@@ -132,6 +134,8 @@ class FakeTmux {
         return window.active ? "1" : "0";
       case "#{session_name}":
         return this.sessionName;
+      case "#{pane_title}":
+        return pane.title;
       default: {
         if (field.startsWith("#{W:#{P:")) {
           const semanticPaneId = /@tmux_ide_pane_id\},([A-Za-z0-9._-]+)/u.exec(field)?.[1];
@@ -294,6 +298,8 @@ class FakeTmux {
         const pane = this.addPane(source.windowId);
         return `${pane.id}\t${source.windowId}`;
       }
+      case "set-environment":
+        return "";
       case "kill-window": {
         const window = this.#window(args[2]!);
         this.windows = this.windows.filter((w) => w.id !== window.id);
@@ -354,6 +360,7 @@ class FakeTmux {
       }
       case "select-pane": {
         const pane = this.#pane(args[2]!);
+        if (args[3] === "-T") pane.title = args[4]!.replaceAll("##", "#");
         for (const other of this.panes) {
           if (other.windowId === pane.windowId) other.active = other.id === pane.id;
         }
@@ -556,13 +563,25 @@ describe("the multiplexer authority", () => {
         "-c",
         dir,
       ]);
+      expect(tmux.calls).toContainEqual(["set-environment", "-u", "-t", "=work", "NO_COLOR"]);
+      expect(tmux.calls).toContainEqual([
+        "set-environment",
+        "-t",
+        "=work",
+        "COLORTERM",
+        "truecolor",
+      ]);
       const created = tmux.panes.find((pane) => pane.id === "%2")!;
       expect(created.windowId).toBe("@0");
       expect(created.options.get("@tmux_ide_pane_id")).toBe(
         (result as { semanticPaneId: string }).semanticPaneId,
       );
       expect(created.options.get("@ide_type")).toBe("shell");
-      expect(created.options.get("@ide_name")).toBe("Terminal");
+      expect(created.options.get("@ide_name")).toBe(
+        (result as { displayTitle: string }).displayTitle,
+      );
+      expect(created.options.get("@ide_name")).toMatch(/^[a-z]+-[a-z]+$/u);
+      expect(created.options.get("@tmux_ide_name_source")).toBe("generated");
     });
 
     it("splits down with the vertical flag", async () => {
@@ -576,6 +595,9 @@ describe("the multiplexer authority", () => {
       );
       expect(tmux.calls.find((args) => args[0] === "split-window")![1]).toBe("-v");
       expect(tmux.panes.find((pane) => pane.id === "%2")!.options.get("@ide_name")).toBe("Logs");
+      expect(
+        tmux.panes.find((pane) => pane.id === "%2")!.options.get("@tmux_ide_name_source"),
+      ).toBe("manual");
     });
 
     it("kills the pane it made when stamping cannot be verified", async () => {
@@ -802,6 +824,33 @@ describe("the multiplexer authority", () => {
   });
 
   describe("rename", () => {
+    it("renames a pane by semantic identity and marks the name as manual", async () => {
+      const name = "Build #{pane_id} monitor";
+      const result = await authority.mutate(
+        request({
+          verb: "workspace.rename",
+          scope: "pane",
+          semanticPaneId: "pane.one",
+          name,
+        }),
+      );
+      expect(result).toMatchObject({
+        outcome: "applied",
+        scope: "pane",
+        name,
+      });
+      expect(tmux.panes[0]!.options.get("@ide_name")).toBe(name);
+      expect(tmux.panes[0]!.options.get("@tmux_ide_name_source")).toBe("manual");
+      expect(tmux.panes[0]!.title).toBe(name);
+      expect(tmux.calls).toContainEqual([
+        "select-pane",
+        "-t",
+        "%0",
+        "-T",
+        "Build ##{pane_id} monitor",
+      ]);
+    });
+
     it("renames the session and moves the registry with it", async () => {
       const result = await authority.mutate(
         request({ verb: "workspace.rename", scope: "session", name: "rebuilt" }),

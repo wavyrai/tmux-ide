@@ -15,7 +15,7 @@ import {
   rmSync,
   writeSync,
 } from "node:fs";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 
 export const PRODUCT_DIAGNOSTIC_BUNDLE_VERSION = 1;
@@ -1398,7 +1398,7 @@ export function validateProductRigCleanupReceipt(receipt, runId) {
 export function productRigCleanupBarrierFailures(
   state,
   requestId,
-  { processAlive: isAlive, pathExists = existsSync },
+  { processAlive: isAlive, pathExists = existsSync, retainedProcessIdentityStatus = null },
 ) {
   const failures = [];
   if (!state || typeof state !== "object") return Object.freeze(["state-missing"]);
@@ -1414,6 +1414,19 @@ export function productRigCleanupBarrierFailures(
     failures.push("owner-process-live");
   if (Number.isInteger(state.daemon?.pid) && isAlive(state.daemon.pid))
     failures.push("daemon-process-live");
+  const terminalHostProcessCount = Math.max(
+    (state.cleanup?.card5?.chromiumTerminalProcessCount ?? 0) +
+      (state.cleanup?.card5?.electronTerminalProcessCount ?? 0),
+    state.cleanup?.processReap?.terminalIdentityCount ?? 0,
+  );
+  if (terminalHostProcessCount > 0) {
+    const status =
+      typeof retainedProcessIdentityStatus === "function"
+        ? retainedProcessIdentityStatus()
+        : "invalid";
+    if (status === "invalid") failures.push("owner-child-reap-unverified");
+    else if (status !== "absent") failures.push("owner-child-process-live");
+  }
   for (const [name, path] of [
     ["runtime-root", state.runtimeNamespace?.root],
     ["tmux-socket", state.runtimeNamespace?.tmuxSocketPath],
@@ -1423,6 +1436,792 @@ export function productRigCleanupBarrierFailures(
   ])
     if (typeof path === "string" && pathExists(path)) failures.push(`${name}-present`);
   return Object.freeze(failures);
+}
+
+export function assessProductRigRetainedProcessAbsence(identities, rows) {
+  const exactIdentity = (value) =>
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Number.isSafeInteger(value.pid) &&
+    value.pid > 0 &&
+    Number.isSafeInteger(value.pgid) &&
+    value.pgid > 0 &&
+    typeof value.startToken === "string" &&
+    value.startToken.length > 0 &&
+    value.startToken.length <= 64;
+  if (
+    !Array.isArray(identities) ||
+    identities.length < 1 ||
+    identities.length > 65 ||
+    !identities.every(exactIdentity) ||
+    new Set(identities.map(({ pid }) => pid)).size !== identities.length ||
+    !Array.isArray(rows) ||
+    !rows.every(exactIdentity)
+  )
+    return "invalid";
+  return identities.some((identity) =>
+    rows.some(
+      (row) =>
+        row.pid === identity.pid &&
+        row.pgid === identity.pgid &&
+        row.startToken === identity.startToken,
+    ),
+  )
+    ? "live"
+    : "absent";
+}
+
+export function isProductRigPendingReapAck(state, request, journeyId) {
+  return (
+    request?.requestId === state?.cleanup?.requestId &&
+    request?.ownerPid === state?.ownerPid &&
+    request?.ownerToken === state?.ownerToken &&
+    request?.cleanupToken === state?.runtimeNamespace?.cleanupToken &&
+    state?.cleanup?.status === "passed" &&
+    state?.cleanup?.processReap?.version === 1 &&
+    ["cross-client-handoff", "daemon-restart"].includes(journeyId)
+  );
+}
+
+export function retireProductRigCleanupProofFiles({ removeAck, removeLedger }) {
+  if (typeof removeAck !== "function" || typeof removeLedger !== "function")
+    throw new TypeError("ProductRig cleanup proof retirement contract was invalid");
+  removeAck();
+  removeLedger();
+}
+
+const exactLegacyProcessRow = (row) =>
+  row !== null &&
+  typeof row === "object" &&
+  !Array.isArray(row) &&
+  Number.isSafeInteger(row.pid) &&
+  row.pid > 0 &&
+  Number.isSafeInteger(row.ppid) &&
+  row.ppid >= 0 &&
+  Number.isSafeInteger(row.pgid) &&
+  row.pgid > 0 &&
+  typeof row.state === "string" &&
+  row.state.length > 0 &&
+  row.state.length <= 16 &&
+  typeof row.startToken === "string" &&
+  row.startToken.length > 0 &&
+  row.startToken.length <= 64 &&
+  typeof row.command === "string" &&
+  row.command.length > 0 &&
+  row.command.length <= 4096;
+
+const exactLegacyProcessRoutingRow = (row) =>
+  row !== null &&
+  typeof row === "object" &&
+  !Array.isArray(row) &&
+  Number.isSafeInteger(row.pid) &&
+  row.pid > 0 &&
+  Number.isSafeInteger(row.ppid) &&
+  row.ppid >= 0 &&
+  Number.isSafeInteger(row.pgid) &&
+  row.pgid > 0 &&
+  typeof row.state === "string" &&
+  typeof row.startToken === "string" &&
+  typeof row.command === "string";
+
+const sameLegacyProcessIdentity = (left, right) =>
+  left.pid === right.pid &&
+  left.ppid === right.ppid &&
+  left.pgid === right.pgid &&
+  left.startToken === right.startToken &&
+  left.command === right.command &&
+  left.ownership === right.ownership;
+
+export function assessLegacyProductRigOwnerRetryCompatibility(
+  state,
+  authorization,
+  firstRows,
+  secondRows,
+  { processAlive, pathExists },
+) {
+  const card5 = state?.cleanup?.card5;
+  const exactRows = (rows) =>
+    Array.isArray(rows) &&
+    rows.length <= 4096 &&
+    rows.every(exactLegacyProcessRoutingRow) &&
+    new Set(rows.map(({ pid }) => pid)).size === rows.length;
+  const selectOwner = (rows) => {
+    const owner = rows.filter(({ pid }) => pid === state?.ownerPid);
+    if (owner.length !== 1 || !exactLegacyProcessRow(owner[0])) return null;
+    if (
+      rows.some(
+        (row) =>
+          row.pid !== owner[0].pid &&
+          (row.ppid === owner[0].pid ||
+            (row.pgid === owner[0].pgid && row.command.includes(authorization.runtimeRoot))),
+      )
+    )
+      return null;
+    return { ...owner[0], ownership: "owner" };
+  };
+  const firstOwner = exactRows(firstRows) ? selectOwner(firstRows) : null;
+  const secondOwner = exactRows(secondRows) ? selectOwner(secondRows) : null;
+  const paths = [
+    state?.runtimeNamespace?.root,
+    state?.runtimeNamespace?.tmuxSocketPath,
+    state?.runtimeNamespace?.hostTmuxSocketPath,
+    state?.runtimeNamespace?.daemonInfoDir,
+    ...(Array.isArray(state?.ownedTuiRuntimeDirs) ? state.ownedTuiRuntimeDirs : []),
+  ];
+  const exact =
+    state?.status === "cleanup-failed" &&
+    /^legacy-[0-9a-f]{24}$/u.test(authorization?.requestId ?? "") &&
+    /^[0-9a-f]{48}$/u.test(authorization?.ownerToken ?? "") &&
+    /^\/tmp\/tmi-e2e-[A-Za-z0-9._-]{1,160}$/u.test(authorization?.runtimeRoot ?? "") &&
+    state?.diagnosticAttempt?.runId === authorization?.runId &&
+    state?.ownerToken === authorization?.ownerToken &&
+    state?.runtimeNamespace?.root === authorization?.runtimeRoot &&
+    state?.diagnosticAttempt?.sourceProvenance?.commit === authorization?.commit &&
+    state?.diagnosticAttempt?.sourceProvenance?.tree === authorization?.tree &&
+    state?.diagnosticAttempt?.sourceProvenance?.manifestDigest === authorization?.manifestDigest &&
+    state?.cleanup?.status === "failed" &&
+    state.cleanup.failures?.length === 1 &&
+    state.cleanup.failures[0]?.subsystem === "card5-cleanup-ledger" &&
+    card5?.passed === false &&
+    card5?.chromiumProcessCount === 0 &&
+    card5?.chromiumDescendantCount === 0 &&
+    (card5?.chromiumTerminalProcessCount ?? 0) === 0 &&
+    card5?.electronProcessCount === 1 &&
+    card5?.electronDescendantCount === 0 &&
+    (card5?.electronTerminalProcessCount ?? 0) === 0 &&
+    card5?.owners?.electron?.owned === true &&
+    card5?.owners?.electron?.retired === false &&
+    card5?.owners?.chromium?.retired === true &&
+    card5?.owners?.opentui?.retired === true &&
+    card5?.owners?.daemon?.retired === true &&
+    card5?.owners?.namespace?.retired === true &&
+    [
+      "chromiumPageCount",
+      "chromiumContextCount",
+      "chromiumListenerCount",
+      "electronWindowCount",
+      "electronListenerCount",
+      "electronOpenHandleCount",
+      "socketResidueCount",
+      "nativeObserverProcessCount",
+      "pathResidueCount",
+    ].every((key) => card5?.[key] === 0) &&
+    firstOwner !== null &&
+    secondOwner !== null &&
+    sameLegacyProcessIdentity(firstOwner, secondOwner) &&
+    typeof processAlive === "function" &&
+    !processAlive(state?.daemon?.pid) &&
+    typeof pathExists === "function" &&
+    paths.every((path) => typeof path !== "string" || !pathExists(path));
+  return Object.freeze({
+    passed: exact === true,
+    reason: exact ? null : "legacy-owner-retry-invalid",
+  });
+}
+
+export function createLegacyProductRigOwnerRetryIntent(state, authorization, ownerIdentity) {
+  if (
+    !/^legacy-[0-9a-f]{24}$/u.test(authorization?.requestId ?? "") ||
+    !/^[0-9a-f]{48}$/u.test(authorization?.ownerToken ?? "") ||
+    state?.ownerToken !== authorization.ownerToken ||
+    !exactLegacyProcessRow(ownerIdentity) ||
+    ownerIdentity.pid !== state.ownerPid
+  )
+    return null;
+  const payload = {
+    version: 1,
+    mode: "legacy-owner-retry-v1",
+    requestId: authorization.requestId,
+    runId: authorization.runId,
+    ownerPid: state.ownerPid,
+    ownerIdentity: {
+      pid: ownerIdentity.pid,
+      ppid: ownerIdentity.ppid,
+      pgid: ownerIdentity.pgid,
+      startToken: ownerIdentity.startToken,
+      command: ownerIdentity.command,
+    },
+    cleanupToken: state.runtimeNamespace?.cleanupToken,
+    provenance: {
+      commit: authorization.commit,
+      tree: authorization.tree,
+      manifestDigest: authorization.manifestDigest,
+    },
+    runtimeRoot: authorization.runtimeRoot,
+    initialCleanupHmac: createHmac("sha256", Buffer.from(authorization.ownerToken, "hex"))
+      .update(JSON.stringify(state.cleanup))
+      .digest("hex"),
+  };
+  return Object.freeze({
+    ...payload,
+    intentHmac: createHmac("sha256", Buffer.from(authorization.ownerToken, "hex"))
+      .update(JSON.stringify(payload))
+      .digest("hex"),
+  });
+}
+
+export function acquireLegacyProductRigOwnerRetryIntent(authorization, intent) {
+  if (
+    intent?.version !== 1 ||
+    intent?.mode !== "legacy-owner-retry-v1" ||
+    intent.requestId !== authorization?.requestId ||
+    intent.runId !== authorization?.runId ||
+    intent.runtimeRoot !== authorization?.runtimeRoot ||
+    intent.provenance?.commit !== authorization?.commit ||
+    intent.provenance?.tree !== authorization?.tree ||
+    intent.provenance?.manifestDigest !== authorization?.manifestDigest ||
+    !Number.isSafeInteger(intent.ownerPid) ||
+    intent.ownerPid < 1 ||
+    !exactLegacyProcessRow({ ...intent.ownerIdentity, state: "S" }) ||
+    intent.ownerIdentity.pid !== intent.ownerPid ||
+    typeof intent.cleanupToken !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(intent.initialCleanupHmac ?? "") ||
+    !/^[0-9a-f]{64}$/u.test(intent.intentHmac ?? "") ||
+    !/^[0-9a-f]{48}$/u.test(authorization?.ownerToken ?? "")
+  )
+    return null;
+  const { intentHmac, ...payload } = intent;
+  const expected = createHmac("sha256", Buffer.from(authorization.ownerToken, "hex"))
+    .update(JSON.stringify(payload))
+    .digest("hex");
+  return expected === intentHmac ? Object.freeze({ ...intent }) : null;
+}
+
+export function legacyProductRigOwnerRetryIntentMatchesOwnerRows(intent, rows) {
+  if (!Array.isArray(rows) || !intent?.ownerIdentity) return false;
+  const matches = rows.filter(({ pid }) => pid === intent.ownerPid);
+  if (matches.length !== 1 || !exactLegacyProcessRow(matches[0])) return false;
+  const identity = {
+    pid: matches[0].pid,
+    ppid: matches[0].ppid,
+    pgid: matches[0].pgid,
+    startToken: matches[0].startToken,
+    command: matches[0].command,
+  };
+  return JSON.stringify(identity) === JSON.stringify(intent.ownerIdentity);
+}
+
+export function legacyProductRigOwnerRetryIntentMatchesState(state, authorization, intent) {
+  const acquired = acquireLegacyProductRigOwnerRetryIntent(authorization, intent);
+  if (
+    acquired === null ||
+    state?.status !== "cleanup-failed" ||
+    state?.ownerPid !== acquired.ownerPid ||
+    state?.ownerToken !== authorization?.ownerToken ||
+    state?.diagnosticAttempt?.runId !== acquired.runId ||
+    state?.runtimeNamespace?.root !== acquired.runtimeRoot ||
+    state?.runtimeNamespace?.cleanupToken !== acquired.cleanupToken ||
+    state?.diagnosticAttempt?.sourceProvenance?.commit !== acquired.provenance.commit ||
+    state?.diagnosticAttempt?.sourceProvenance?.tree !== acquired.provenance.tree ||
+    state?.diagnosticAttempt?.sourceProvenance?.manifestDigest !==
+      acquired.provenance.manifestDigest
+  )
+    return false;
+  const cleanupHmac = createHmac("sha256", Buffer.from(authorization.ownerToken, "hex"))
+    .update(JSON.stringify(state.cleanup))
+    .digest("hex");
+  return cleanupHmac === acquired.initialCleanupHmac;
+}
+
+export function createLegacyProductRigOwnerRetryShutdownRequest(state, authorization, intent) {
+  if (!legacyProductRigOwnerRetryIntentMatchesState(state, authorization, intent)) return null;
+  return Object.freeze({
+    version: 1,
+    requestId: authorization.requestId,
+    attempt: 1,
+    ownerPid: state.ownerPid,
+    ownerToken: state.ownerToken,
+    cleanupToken: state.runtimeNamespace.cleanupToken,
+  });
+}
+
+export function createLegacyProductRigOwnerRetryReceipt(intent, authorization) {
+  const acquired = acquireLegacyProductRigOwnerRetryIntent(authorization, intent);
+  if (acquired === null) return null;
+  const payload = {
+    version: 1,
+    mode: "legacy-owner-retry-v1",
+    requestId: acquired.requestId,
+    runId: acquired.runId,
+    ownerPid: acquired.ownerPid,
+    provenance: acquired.provenance,
+    runtimeRoot: acquired.runtimeRoot,
+    intentHmac: acquired.intentHmac,
+    status: "absent",
+  };
+  return Object.freeze({
+    ...payload,
+    receiptHmac: createHmac("sha256", Buffer.from(authorization.ownerToken, "hex"))
+      .update(JSON.stringify(payload))
+      .digest("hex"),
+  });
+}
+
+export function acquireLegacyProductRigOwnerRetryReceipt(authorization, receipt, intent = null) {
+  if (
+    receipt?.version !== 1 ||
+    receipt?.mode !== "legacy-owner-retry-v1" ||
+    receipt.requestId !== authorization?.requestId ||
+    receipt.runId !== authorization?.runId ||
+    receipt.runtimeRoot !== authorization?.runtimeRoot ||
+    receipt.provenance?.commit !== authorization?.commit ||
+    receipt.provenance?.tree !== authorization?.tree ||
+    receipt.provenance?.manifestDigest !== authorization?.manifestDigest ||
+    !Number.isSafeInteger(receipt.ownerPid) ||
+    receipt.ownerPid < 1 ||
+    !/^[0-9a-f]{64}$/u.test(receipt.intentHmac ?? "") ||
+    receipt.status !== "absent" ||
+    !/^[0-9a-f]{64}$/u.test(receipt.receiptHmac ?? "") ||
+    !/^[0-9a-f]{48}$/u.test(authorization?.ownerToken ?? "")
+  )
+    return null;
+  if (intent !== null) {
+    const acquiredIntent = acquireLegacyProductRigOwnerRetryIntent(authorization, intent);
+    if (acquiredIntent === null || acquiredIntent.intentHmac !== receipt.intentHmac) return null;
+  }
+  const { receiptHmac, ...payload } = receipt;
+  const expected = createHmac("sha256", Buffer.from(authorization.ownerToken, "hex"))
+    .update(JSON.stringify(payload))
+    .digest("hex");
+  return expected === receiptHmac ? Object.freeze({ ...receipt }) : null;
+}
+
+export function assessLegacyProductRigOwnerRetryCompletion(
+  initialState,
+  finalState,
+  requestId,
+  { processAlive, pathExists, processRows },
+) {
+  const card5 = finalState?.cleanup?.card5;
+  const owners = card5?.owners;
+  const paths = [
+    finalState?.runtimeNamespace?.root,
+    finalState?.runtimeNamespace?.tmuxSocketPath,
+    finalState?.runtimeNamespace?.hostTmuxSocketPath,
+    finalState?.runtimeNamespace?.daemonInfoDir,
+    ...(Array.isArray(finalState?.ownedTuiRuntimeDirs) ? finalState.ownedTuiRuntimeDirs : []),
+  ];
+  const requiredZeroAxes = [
+    "chromiumProcessCount",
+    "chromiumDescendantCount",
+    "chromiumPageCount",
+    "chromiumContextCount",
+    "chromiumListenerCount",
+    "electronProcessCount",
+    "electronDescendantCount",
+    "electronWindowCount",
+    "electronListenerCount",
+    "electronOpenHandleCount",
+    "socketResidueCount",
+    "nativeObserverProcessCount",
+    "pathResidueCount",
+  ];
+  const exact =
+    typeof requestId === "string" &&
+    requestId.length > 0 &&
+    finalState?.ownerPid === initialState?.ownerPid &&
+    finalState?.ownerToken === initialState?.ownerToken &&
+    finalState?.runtimeNamespace?.root === initialState?.runtimeNamespace?.root &&
+    finalState?.runtimeNamespace?.cleanupToken === initialState?.runtimeNamespace?.cleanupToken &&
+    finalState?.cleanup?.requestId === requestId &&
+    finalState.cleanup.cleanupToken === initialState.runtimeNamespace.cleanupToken &&
+    finalState.cleanup.status === "passed" &&
+    Array.isArray(finalState.cleanup.failures) &&
+    finalState.cleanup.failures.length === 0 &&
+    ["failed", "stopped"].includes(finalState.status) &&
+    card5?.passed === true &&
+    requiredZeroAxes.every((key) => card5?.[key] === 0) &&
+    ["chromiumTerminalProcessCount", "electronTerminalProcessCount"].every(
+      (key) => card5?.[key] === undefined || card5[key] === 0,
+    ) &&
+    owners &&
+    ["chromium", "electron", "opentui", "daemon", "namespace"].every(
+      (name) => owners[name]?.retired === true,
+    ) &&
+    typeof processAlive === "function" &&
+    !processAlive(finalState.ownerPid) &&
+    !processAlive(finalState.daemon?.pid) &&
+    Array.isArray(processRows) &&
+    processRows.length <= 4096 &&
+    processRows.every(exactLegacyProcessRoutingRow) &&
+    new Set(processRows.map(({ pid }) => pid)).size === processRows.length &&
+    !processRows.some(
+      (row) =>
+        row.pid === finalState.ownerPid ||
+        row.ppid === finalState.ownerPid ||
+        row.pgid === finalState.ownerPid ||
+        row.command === "(Electron)" ||
+        row.command.includes(finalState.runtimeNamespace.root),
+    ) &&
+    typeof pathExists === "function" &&
+    paths.every((path) => typeof path !== "string" || !pathExists(path));
+  return Object.freeze({
+    passed: exact === true,
+    reason: exact ? null : "legacy-owner-retry-incomplete",
+  });
+}
+
+export function finalizeLegacyProductRigOwnerRetry(
+  state,
+  authorization,
+  intent,
+  existingReceipt,
+  { processAlive, pathExists, processRows, writeReceipt, writeState, removeAck, removeIntent },
+) {
+  const receipt = existingReceipt
+    ? acquireLegacyProductRigOwnerRetryReceipt(authorization, existingReceipt, intent)
+    : intent
+      ? createLegacyProductRigOwnerRetryReceipt(intent, authorization)
+      : null;
+  if (receipt === null)
+    return Object.freeze({ passed: false, reason: "legacy-owner-retry-receipt-invalid" });
+  const completion = assessLegacyProductRigOwnerRetryCompletion(
+    {
+      ownerPid: receipt.ownerPid,
+      ownerToken: authorization?.ownerToken,
+      runtimeNamespace: {
+        root: receipt.runtimeRoot,
+        cleanupToken: state?.runtimeNamespace?.cleanupToken,
+      },
+    },
+    state,
+    receipt.requestId,
+    { processAlive, pathExists, processRows },
+  );
+  if (!completion.passed) return completion;
+  if (typeof writeReceipt !== "function" || typeof writeState !== "function")
+    return Object.freeze({ passed: false, reason: "legacy-owner-retry-writer-invalid" });
+  if (!existingReceipt) writeReceipt(receipt);
+  const completed = Object.freeze({
+    ...state,
+    cleanup: {
+      ...state.cleanup,
+      legacyOwnerRetry: {
+        version: 1,
+        requestId: receipt.requestId,
+        intentHmac: receipt.intentHmac,
+        receiptHmac: receipt.receiptHmac,
+        status: "absent",
+      },
+    },
+  });
+  writeState(completed);
+  retireProductRigCleanupProofFiles({ removeAck, removeLedger: removeIntent });
+  return Object.freeze({ passed: true, reason: null, state: completed, receipt });
+}
+
+export async function captureLegacyProductRigCleanupLedger(
+  state,
+  authorization,
+  { readProcessRows, yieldTurn = () => Promise.resolve() },
+) {
+  const provenance = state?.diagnosticAttempt?.sourceProvenance;
+  if (
+    state?.status !== "cleanup-failed" ||
+    state?.diagnosticAttempt?.runId !== authorization?.runId ||
+    state?.ownerToken !== authorization?.ownerToken ||
+    state?.runtimeNamespace?.root !== authorization?.runtimeRoot ||
+    provenance?.commit !== authorization?.commit ||
+    provenance?.tree !== authorization?.tree ||
+    provenance?.manifestDigest !== authorization?.manifestDigest ||
+    !/^\/tmp\/tmi-e2e-[A-Za-z0-9._-]{1,160}$/u.test(authorization?.runtimeRoot ?? "") ||
+    !/^legacy-[0-9a-f]{24}$/u.test(authorization?.requestId ?? "") ||
+    !/^[0-9a-f]{48}$/u.test(authorization?.ownerToken ?? "") ||
+    typeof readProcessRows !== "function"
+  )
+    return null;
+  const select = (rows) => {
+    if (
+      !Array.isArray(rows) ||
+      rows.length > 4096 ||
+      !rows.every(exactLegacyProcessRoutingRow) ||
+      new Set(rows.map(({ pid }) => pid)).size !== rows.length
+    )
+      return null;
+    const owner = rows.filter(({ pid }) => pid === state.ownerPid);
+    if (owner.length !== 1 || !exactLegacyProcessRow(owner[0])) return null;
+    const selected = new Map([[owner[0].pid, { ...owner[0], ownership: "owner" }]]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const row of rows) {
+        if (!selected.has(row.pid) && selected.has(row.ppid)) {
+          if (!exactLegacyProcessRow(row)) return null;
+          selected.set(row.pid, { ...row, ownership: "descendant" });
+          changed = true;
+        }
+      }
+    }
+    for (const row of rows)
+      if (
+        !selected.has(row.pid) &&
+        row.pgid === owner[0].pgid &&
+        row.command.includes(authorization.runtimeRoot)
+      ) {
+        if (!exactLegacyProcessRow(row)) return null;
+        selected.set(row.pid, { ...row, ownership: "scoped-pgid" });
+      }
+    const identities = [...selected.values()].sort((a, b) => a.pid - b.pid);
+    if (
+      identities.length > 65 ||
+      new Set(identities.map(({ pid }) => pid)).size !== identities.length
+    )
+      return null;
+    return identities;
+  };
+  const first = select(readProcessRows());
+  if (!first) return null;
+  const expectedHostCount = [
+    "chromiumProcessCount",
+    "chromiumDescendantCount",
+    "chromiumTerminalProcessCount",
+    "electronProcessCount",
+    "electronDescendantCount",
+    "electronTerminalProcessCount",
+  ].reduce((sum, key) => sum + (state.cleanup?.card5?.[key] ?? 0), 0);
+  if (first.length < 1 + expectedHostCount) return null;
+  await yieldTurn();
+  const second = select(readProcessRows());
+  if (
+    !second ||
+    second.length > first.length ||
+    !second.every((identity) => {
+      const prior = first.find(({ pid }) => pid === identity.pid);
+      return prior && sameLegacyProcessIdentity(prior, identity);
+    }) ||
+    !second.some(({ ownership }) => ownership === "owner")
+  )
+    return null;
+  const identityHmac = createHmac("sha256", Buffer.from(authorization.ownerToken, "hex"))
+    .update(JSON.stringify(first))
+    .digest("hex");
+  return Object.freeze({
+    version: 1,
+    mode: "legacy-cleanup-v1",
+    requestId: authorization.requestId,
+    runId: authorization.runId,
+    ownerPid: state.ownerPid,
+    cleanupToken: state.runtimeNamespace.cleanupToken,
+    provenance: Object.freeze({ ...provenance }),
+    runtimeRoot: authorization.runtimeRoot,
+    identities: Object.freeze(first.map((identity) => Object.freeze(identity))),
+    identityHmac,
+  });
+}
+
+export function acquireLegacyProductRigCleanupLedger(state, authorization, ledger) {
+  const provenance = state?.diagnosticAttempt?.sourceProvenance;
+  const cleanupFailed =
+    ["cleanup-failed", "failed"].includes(state?.status) && state?.cleanup?.status === "failed";
+  const cleanupCompleted =
+    state?.status === "failed" &&
+    state?.cleanup?.status === "passed" &&
+    state?.cleanup?.card5?.passed === true &&
+    Array.isArray(state?.cleanup?.failures) &&
+    state.cleanup.failures.length === 0 &&
+    state?.cleanup?.processReap?.version === 1 &&
+    state.cleanup.processReap.identityCount === ledger?.identities?.length &&
+    state.cleanup.processReap.terminalIdentityCount === ledger?.identities?.length - 1 &&
+    state.cleanup.processReap.identityHmac === ledger?.identityHmac;
+  if (
+    (!cleanupFailed && !cleanupCompleted) ||
+    state?.diagnosticAttempt?.runId !== authorization?.runId ||
+    state?.ownerToken !== authorization?.ownerToken ||
+    state?.runtimeNamespace?.root !== authorization?.runtimeRoot ||
+    ledger?.version !== 1 ||
+    ledger?.mode !== "legacy-cleanup-v1" ||
+    ledger.requestId !== authorization?.requestId ||
+    ledger.runId !== authorization?.runId ||
+    ledger.ownerPid !== state?.ownerPid ||
+    ledger.cleanupToken !== state?.runtimeNamespace?.cleanupToken ||
+    ledger.runtimeRoot !== authorization?.runtimeRoot ||
+    ledger.provenance?.commit !== authorization?.commit ||
+    ledger.provenance?.tree !== authorization?.tree ||
+    ledger.provenance?.manifestDigest !== authorization?.manifestDigest ||
+    provenance?.commit !== authorization?.commit ||
+    provenance?.tree !== authorization?.tree ||
+    provenance?.manifestDigest !== authorization?.manifestDigest ||
+    !/^legacy-[0-9a-f]{24}$/u.test(authorization?.requestId ?? "") ||
+    !Array.isArray(ledger.identities) ||
+    ledger.identities.length < 1 ||
+    ledger.identities.length > 65 ||
+    !ledger.identities.every(
+      (identity) =>
+        exactLegacyProcessRow(identity) &&
+        ["owner", "descendant", "scoped-pgid"].includes(identity.ownership),
+    ) ||
+    ledger.identities.filter(({ ownership }) => ownership === "owner").length !== 1 ||
+    ledger.identities.find(({ ownership }) => ownership === "owner")?.pid !== state?.ownerPid ||
+    new Set(ledger.identities.map(({ pid }) => pid)).size !== ledger.identities.length ||
+    !/^[0-9a-f]{48}$/u.test(authorization?.ownerToken ?? "")
+  )
+    return null;
+  const identityHmac = createHmac("sha256", Buffer.from(authorization.ownerToken, "hex"))
+    .update(JSON.stringify(ledger.identities))
+    .digest("hex");
+  return identityHmac === ledger.identityHmac
+    ? Object.freeze({
+        ...ledger,
+        provenance: Object.freeze({ ...ledger.provenance }),
+        identities: Object.freeze(
+          ledger.identities.map((identity) => Object.freeze({ ...identity })),
+        ),
+      })
+    : null;
+}
+
+export function assessLegacyProductRigCleanupAdmission(
+  state,
+  ledger,
+  { processAlive, pathExists },
+) {
+  const cleanup = state?.cleanup;
+  const card5 = cleanup?.card5;
+  const owners = card5?.owners;
+  const failure = cleanup?.failures?.[0];
+  const hostCount = (host) => {
+    const values = [
+      card5?.[`${host}ProcessCount`],
+      card5?.[`${host}DescendantCount`],
+      card5?.[`${host}TerminalProcessCount`] ?? 0,
+    ];
+    return values.every((value) => Number.isSafeInteger(value) && value >= 0)
+      ? values.reduce((sum, value) => sum + value, 0)
+      : -1;
+  };
+  const paths = [
+    state?.runtimeNamespace?.root,
+    state?.runtimeNamespace?.tmuxSocketPath,
+    state?.runtimeNamespace?.hostTmuxSocketPath,
+    state?.runtimeNamespace?.daemonInfoDir,
+    ...(Array.isArray(state?.ownedTuiRuntimeDirs) ? state.ownedTuiRuntimeDirs : []),
+  ];
+  const exactOwners = ["chromium", "electron", "opentui", "daemon", "namespace"];
+  const valid =
+    acquireLegacyProductRigCleanupLedger(
+      state,
+      {
+        requestId: ledger?.requestId,
+        runId: ledger?.runId,
+        ownerToken: state?.ownerToken,
+        commit: ledger?.provenance?.commit,
+        tree: ledger?.provenance?.tree,
+        manifestDigest: ledger?.provenance?.manifestDigest,
+        runtimeRoot: ledger?.runtimeRoot,
+      },
+      ledger,
+    ) !== null &&
+    cleanup?.status === "failed" &&
+    Array.isArray(cleanup.failures) &&
+    cleanup.failures.length === 1 &&
+    failure?.subsystem === "card5-cleanup-ledger" &&
+    typeof failure?.detail === "string" &&
+    failure.detail.length > 0 &&
+    failure.detail.length <= 256 &&
+    card5?.passed === false &&
+    owners &&
+    Object.keys(owners).sort().join("\0") === [...exactOwners].sort().join("\0") &&
+    exactOwners.every(
+      (name) =>
+        typeof owners[name]?.owned === "boolean" && typeof owners[name]?.retired === "boolean",
+    ) &&
+    owners.opentui.retired === true &&
+    owners.daemon.retired === true &&
+    owners.namespace.retired === true &&
+    ["chromium", "electron"].every((host) => {
+      const count = hostCount(host);
+      return (
+        count >= 0 && (count > 0 ? owners[host].owned === true : owners[host].retired === true)
+      );
+    }) &&
+    [
+      "chromiumPageCount",
+      "chromiumContextCount",
+      "chromiumListenerCount",
+      "electronWindowCount",
+      "electronListenerCount",
+      "electronOpenHandleCount",
+      "socketResidueCount",
+      "nativeObserverProcessCount",
+      "pathResidueCount",
+    ].every((key) => card5?.[key] === 0) &&
+    typeof processAlive === "function" &&
+    !processAlive(state?.daemon?.pid) &&
+    typeof pathExists === "function" &&
+    paths.every((path) => typeof path !== "string" || !pathExists(path));
+  return Object.freeze({
+    passed: valid === true,
+    reason: valid ? null : "legacy-admission-invalid",
+  });
+}
+
+export async function retireLegacyProductRigCleanupIdentities(
+  ledger,
+  { readProcessRows, signalProcess, sleep, termWaitMs = 2_000, killWaitMs = 500 },
+) {
+  if (
+    ledger?.version !== 1 ||
+    ledger?.mode !== "legacy-cleanup-v1" ||
+    !Array.isArray(ledger.identities) ||
+    ledger.identities.length < 1 ||
+    ledger.identities.length > 65 ||
+    typeof readProcessRows !== "function" ||
+    typeof signalProcess !== "function" ||
+    typeof sleep !== "function"
+  )
+    return Object.freeze({ passed: false, reason: "legacy-ledger-invalid" });
+  const same = (identity, row) =>
+    row &&
+    identity.pid === row.pid &&
+    identity.ppid === row.ppid &&
+    identity.pgid === row.pgid &&
+    identity.startToken === row.startToken &&
+    identity.command === row.command;
+  const current = (identity) => {
+    const rows = readProcessRows();
+    if (!Array.isArray(rows) || !rows.every(exactLegacyProcessRow)) return "unavailable";
+    const row = rows.find(({ pid }) => pid === identity.pid);
+    return row ? (same(identity, row) ? row : "reused") : null;
+  };
+  const depth = (identity) => {
+    let value = 0;
+    let parent = identity.ppid;
+    while (
+      ledger.identities.some(({ pid }) => pid === parent) &&
+      value <= ledger.identities.length
+    ) {
+      value += 1;
+      parent = ledger.identities.find(({ pid }) => pid === parent)?.ppid;
+    }
+    return value;
+  };
+  const childrenFirst = [...ledger.identities].sort((a, b) => depth(b) - depth(a));
+  const signalExact = (signal) => {
+    for (const identity of childrenFirst) {
+      const row = current(identity);
+      if (row === "unavailable") return false;
+      if (row === null || row === "reused" || /[EZ]/u.test(row.state)) continue;
+      try {
+        signalProcess(identity.pid, signal);
+      } catch {
+        // A retained process may retire after its immediate identity check.
+      }
+    }
+    return true;
+  };
+  if (!signalExact("SIGTERM"))
+    return Object.freeze({ passed: false, reason: "legacy-identity-unavailable" });
+  await sleep(termWaitMs);
+  if (!signalExact("SIGKILL"))
+    return Object.freeze({ passed: false, reason: "legacy-identity-unavailable" });
+  await sleep(killWaitMs);
+  const rows = readProcessRows();
+  const absence = assessProductRigRetainedProcessAbsence(ledger.identities, rows);
+  return Object.freeze({
+    passed: absence === "absent",
+    reason: absence === "absent" ? null : `legacy-identity-${absence}`,
+  });
 }
 
 /**

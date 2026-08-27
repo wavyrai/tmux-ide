@@ -60,6 +60,7 @@ import {
   compareProductSourceProvenance,
   deriveProductSourceManifestReadBudget,
   productRigSourceTraceIncludesPath,
+  productRigGitBlobObjectId,
   productRigHostHeartbeatObservation,
   productRigSourceTraceDiffArgs,
   productRigSourceTraceUntrackedArgs,
@@ -134,6 +135,21 @@ import {
   prepareProductDiagnosticBundlePublication,
   productRigCleanupAcknowledgesRequest,
   productRigCleanupBarrierFailures,
+  assessProductRigRetainedProcessAbsence,
+  acquireLegacyProductRigCleanupLedger,
+  assessLegacyProductRigCleanupAdmission,
+  assessLegacyProductRigOwnerRetryCompatibility,
+  createLegacyProductRigOwnerRetryIntent,
+  acquireLegacyProductRigOwnerRetryIntent,
+  legacyProductRigOwnerRetryIntentMatchesState,
+  legacyProductRigOwnerRetryIntentMatchesOwnerRows,
+  createLegacyProductRigOwnerRetryShutdownRequest,
+  acquireLegacyProductRigOwnerRetryReceipt,
+  finalizeLegacyProductRigOwnerRetry,
+  isProductRigPendingReapAck,
+  retireProductRigCleanupProofFiles,
+  captureLegacyProductRigCleanupLedger,
+  retireLegacyProductRigCleanupIdentities,
   isCleanLegacyStoppedProductRigState,
   resolveProductJourneyPlan,
   runConfiglessProductJourneyOwnerBoot,
@@ -243,6 +259,7 @@ import {
   card5AuthorityReleaseBindingHmac,
   card5CrossClientFailureObservation,
   card5DaemonRestartFailureObservation,
+  card5HandoffInputPayload,
 } from "./lib/product-cross-client-handoff.mjs";
 import {
   activateCard5ExactTerminalSurface,
@@ -257,8 +274,10 @@ import {
   advanceCard5AuthorityReleaseStability,
   advanceCard5PostInputAuthorityPreconditionHistory,
   advanceCard5FocusedConvergenceStability,
+  advanceCard5WebPhysicalLifecycleStability,
   advanceCard5RetainedFocusStability,
   assessCard5PostHandoffAuthority,
+  assessCard5WebPhysicalLifecycle,
   assessCard5WebAuthorityRelease,
   assessCard5NullAuthorityPair,
   assessCard5TuiFocusAuthority,
@@ -287,6 +306,7 @@ import {
   sealCard5TuiFocusAuthority,
   sealCard5CorrelationEvidence,
   sealCard5ProductionClientObservation,
+  sameCard5WebPhysicalLifecycleEvidence,
 } from "./lib/product-cross-client-host-evidence.mjs";
 import {
   assessCard5ObservedHostLifecycle,
@@ -323,6 +343,11 @@ import { runBoundedFocusTmux } from "./lib/product-focus-tmux.mjs";
 import { readBoundedDiagnosticTail } from "./lib/bounded-diagnostic-tail.mjs";
 import { parseLayout } from "../packages/daemon/src/terminal/protocol/layout-parse.ts";
 import {
+  memorablePaneName,
+  resolvePaneDisplayName,
+} from "../packages/daemon/src/terminal/protocol/pane-display-name.ts";
+import { decodeTmuxArgument } from "../packages/daemon/src/terminal/protocol/session-descriptor-discovery.ts";
+import {
   assessFirstKeyPasteBoundaries,
   assessProductFirstInput,
   assessProductInputDistribution,
@@ -357,6 +382,9 @@ const statePath = join(rigRoot, "state.json");
 const timelinePath = join(rigRoot, "timeline.jsonl");
 const ownerLogPath = join(rigRoot, "owner.log");
 const shutdownRequestPath = join(rigRoot, "shutdown-request.json");
+const cleanupProcessLedgerPath = join(rigRoot, "cleanup-process-ledger.json");
+const cleanupReapAckPath = join(rigRoot, "cleanup-reap-ack.json");
+const cleanupReapReceiptPath = join(rigRoot, "cleanup-reap-receipt.json");
 const artifactDir = join(rigRoot, "artifacts");
 const diagnosticRoot = resolve(
   process.env.TMUX_IDE_PRODUCT_DIAGNOSTIC_DIR || join(repoRoot, ".tasks", "product-diagnostics"),
@@ -367,6 +395,39 @@ let diagnosticFrozenProvenance = null;
 const activeTuiCommandPids = new Set();
 const activeCard5NativeObserverPids = new Set();
 const productInputFingerprintKeys = new Map();
+
+function cleanupProcessRows() {
+  try {
+    return execFileSync("ps", ["-axo", "pid=,ppid=,pgid=,stat=,lstart=,command="], {
+      encoding: "utf8",
+    })
+      .trim()
+      .split("\n")
+      .map((line) =>
+        /^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\w{3}\s+\w{3}\s+\d+\s+\d+:\d+:\d+\s+\d+)\s+(.*)$/u.exec(
+          line.trim(),
+        ),
+      )
+      .filter(Boolean)
+      .map((match) => ({
+        pid: Number(match[1]),
+        ppid: Number(match[2]),
+        pgid: Number(match[3]),
+        state: match[4],
+        startToken: match[5],
+        command: match[6],
+      }));
+  } catch {
+    return null;
+  }
+}
+
+function cleanupIdentityAttestation(ownerToken, identities) {
+  if (!/^[0-9a-f]{48}$/u.test(ownerToken ?? "")) return null;
+  return createHmac("sha256", Buffer.from(ownerToken, "hex"))
+    .update(JSON.stringify(identities))
+    .digest("hex");
+}
 const UNAVAILABLE_WEB_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64",
@@ -788,11 +849,7 @@ function sourceTraceProvenance() {
     closeFile: closeSync,
   });
   const payload = buildSourceTracePayload(diff, untrackedFiles);
-  const tree = execFileSync("git", ["hash-object", "--stdin"], {
-    cwd: repoRoot,
-    input: payload,
-    encoding: "utf8",
-  }).trim();
+  const tree = productRigGitBlobObjectId(payload);
   const trackedPaths = execFileSync(
     "git",
     [
@@ -1137,7 +1194,7 @@ function sessionPaneGeometry(state) {
       "-t",
       `=${state.session}`,
       "-F",
-      "#{session_name}|#{session_id}|#{pane_id}|#{pane_created}|#{window_active}|#{@tmux_ide_pane_id}|#{pane_left}|#{pane_top}|#{pane_width}|#{pane_height}",
+      "#{qa:session_name}\t#{session_id}\t#{pane_id}\t#{pane_created}\t#{window_active}\t#{qa:@tmux_ide_pane_id}\t#{qa:@ide_name}\t#{qa:@tmux_ide_name_source}\t#{qa:pane_current_command}\t#{qa:pane_title}\t#{qa:@ide_type}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}",
     ],
     { encoding: "utf8" },
   )
@@ -1152,17 +1209,44 @@ function sessionPaneGeometry(state) {
         paneCreated,
         windowActive,
         semanticPaneId,
+        configuredName,
+        configuredNameSource,
+        currentCommand,
+        title,
+        paneType,
         left,
         top,
         width,
         height,
-      ] = line.split("|");
+      ] = line.split("\t");
+      const decodedSemanticPaneId = decodeTmuxArgument(semanticPaneId);
+      const display = resolvePaneDisplayName({
+        semanticPaneId: decodedSemanticPaneId,
+        configuredName: decodeTmuxArgument(configuredName),
+        configuredNameSource: decodeTmuxArgument(configuredNameSource),
+        currentCommand: decodeTmuxArgument(currentCommand),
+        title: decodeTmuxArgument(title),
+        paneType: decodeTmuxArgument(paneType),
+      });
+      const canonicalDisplayNames = Object.freeze(
+        [
+          ...new Set([
+            display.name,
+            ...(display.source === "process" || display.source === "title"
+              ? [memorablePaneName(decodedSemanticPaneId)]
+              : []),
+          ]),
+        ].filter(Boolean),
+      );
       return {
-        sessionName,
+        sessionName: decodeTmuxArgument(sessionName),
         sessionId,
         paneId,
         paneCreated: Number(paneCreated),
-        semanticPaneId,
+        semanticPaneId: decodedSemanticPaneId,
+        displayName: display.name,
+        canonicalDisplayNames,
+        displayNameSource: display.source,
         windowActive: windowActive === "1",
         left: Number(left),
         top: Number(top),
@@ -3240,6 +3324,16 @@ async function waitForCard5ProductionClientConvergence(
         : null;
     if (performance.now() >= deadline) break;
     const tui = exactPaneId === null ? null : latestCard5TuiCanonical(tuiEvidence, exactPaneId);
+    const webPhysicalLifecycleEvidence =
+      tui === null
+        ? null
+        : Object.freeze({
+            chromium: assessCard5WebPhysicalLifecycle(webA, exactPaneId, tui.generation).evidence,
+            electron: assessCard5WebPhysicalLifecycle(webB, exactPaneId, tui.generation).evidence,
+          });
+    const webPhysicalLifecycleExact =
+      webPhysicalLifecycleEvidence?.chromium !== null &&
+      webPhysicalLifecycleEvidence?.electron !== null;
     if (performance.now() >= deadline) break;
     const canonicalAssessmentA =
       tui === null
@@ -3398,7 +3492,7 @@ async function waitForCard5ProductionClientConvergence(
     const queueCandidates = [webA?.queuePeak, webB?.queuePeak].filter(Number.isSafeInteger);
     queuePeak = queueCandidates.length > 0 ? Math.max(...queueCandidates) : null;
     if (performance.now() >= deadline) break;
-    if (tui && webA && webB && focusAssessment?.passed === true) {
+    if (tui && webA && webB && focusAssessment?.passed === true && webPhysicalLifecycleExact) {
       previousAuthorityRevision = currentAuthorityRevision;
       const connectElapsedMs = Math.max(1, performance.now() - startedAt);
       const currentTuiAuthorityClient = webA?.workspaceEvidence?.authority?.clients?.find(
@@ -3452,12 +3546,24 @@ async function waitForCard5ProductionClientConvergence(
         ),
       ];
       if (performance.now() >= deadline) break;
-      const stability = advanceCard5FocusedConvergenceStability(
-        previousDigest,
+      const canonicalStability = advanceCard5FocusedConvergenceStability(
+        null,
         observations,
         focusAssessment.evidence,
         evidenceKey,
       );
+      const physicalLifecycleStability = advanceCard5WebPhysicalLifecycleStability(
+        previousDigest,
+        canonicalStability.digest,
+        webPhysicalLifecycleEvidence,
+        evidenceKey,
+      );
+      const stability = Object.freeze({
+        ...canonicalStability,
+        digest: physicalLifecycleStability.digest,
+        stable: physicalLifecycleStability.stable,
+        reason: physicalLifecycleStability.stable ? null : canonicalStability.reason,
+      });
       if (performance.now() >= deadline) break;
       divergenceAxes = stability.axes;
       if (stability.candidate) {
@@ -3473,6 +3579,7 @@ async function waitForCard5ProductionClientConvergence(
           generation: observations[0].generation,
           semanticPaneId: exactPaneId,
           focusedPaneEvidence: focusAssessment.evidence,
+          webPhysicalLifecycleEvidence,
           clients: Object.freeze(
             Object.fromEntries(observations.map((entry) => [entry.client, entry])),
           ),
@@ -3534,6 +3641,7 @@ function card5Percentile(samples, percentile) {
 
 async function driveCard5AuthorityHandoff(state, daemon, hosts) {
   const expectedPane = hosts.expectedPane;
+  const acceptedWebPhysicalLifecycleEvidence = hosts.webPhysicalLifecycleEvidence;
   const acceptedFocusEvidence = hosts.focusedPaneEvidence;
   const acceptedAuthorityEvidence = Object.freeze({
     authorityHmac: acceptedFocusEvidence?.authorityHmac ?? null,
@@ -3542,6 +3650,56 @@ async function driveCard5AuthorityHandoff(state, daemon, hosts) {
     authorityTopologyHmac: acceptedFocusEvidence?.authorityTopologyHmac ?? null,
     authorityMutationHmac: acceptedFocusEvidence?.authorityMutationHmac ?? null,
   });
+  const preflightDeadline = performance.now() + 1_000;
+  const preflight = await observeCard5WithinDeadline(
+    () =>
+      Promise.all([
+        observeCard5WebCanonical(
+          hosts.chromiumPage,
+          hosts.evidenceKey,
+          hosts.chromiumProcessIdentity,
+        ),
+        observeCard5WebCanonical(
+          hosts.electronPage,
+          hosts.evidenceKey,
+          hosts.electronProcessIdentity,
+        ),
+      ]),
+    { deadline: preflightDeadline },
+  );
+  const [preflightA, preflightB] = preflight.status === "ok" ? preflight.value : [null, null];
+  const preflightGeneration =
+    preflightA?.generation === preflightB?.generation ? preflightA?.generation : null;
+  const currentWebPhysicalLifecycleEvidence =
+    preflightGeneration === null
+      ? null
+      : Object.freeze({
+          chromium: assessCard5WebPhysicalLifecycle(preflightA, expectedPane, preflightGeneration)
+            .evidence,
+          electron: assessCard5WebPhysicalLifecycle(preflightB, expectedPane, preflightGeneration)
+            .evidence,
+        });
+  if (
+    performance.now() >= preflightDeadline ||
+    currentWebPhysicalLifecycleEvidence?.chromium === null ||
+    currentWebPhysicalLifecycleEvidence?.electron === null ||
+    !sameCard5WebPhysicalLifecycleEvidence(
+      acceptedWebPhysicalLifecycleEvidence,
+      currentWebPhysicalLifecycleEvidence,
+    )
+  ) {
+    const error = new Error("Card5 Web physical lifecycle changed before authority handoff");
+    error.observation = Object.freeze({
+      operation: "card5-web-physical-lifecycle-preflight",
+      reason: preflight.status === "ok" ? "physical-binding-changed" : "observation-timeout",
+      chromiumExact: currentWebPhysicalLifecycleEvidence?.chromium !== null,
+      electronExact: currentWebPhysicalLifecycleEvidence?.electron !== null,
+      acceptedExact:
+        acceptedWebPhysicalLifecycleEvidence?.chromium !== null &&
+        acceptedWebPhysicalLifecycleEvidence?.electron !== null,
+    });
+    throw error;
+  }
   await exactAttachablePane(daemon, state.session, expectedPane);
   const observeTmuxPaneBinding = () =>
     selectExactCard5TmuxPaneBinding(activeWindowPaneGeometry(state), expectedPane, state.session);
@@ -3618,26 +3776,26 @@ async function driveCard5AuthorityHandoff(state, daemon, hosts) {
     }
   };
   const steps = [
-    async (marker) => {
+    async (input) => {
       return JSON.parse(
         tuiCommand(state, [
           "input",
-          JSON.stringify({ version: 1, kind: "paste", text: `${marker}\n` }),
+          JSON.stringify({ version: 1, kind: "paste", text: input.text }),
         ]),
       );
     },
-    async (marker, inputDeadline) => {
+    async (input, inputDeadline) => {
       return clickExactSurface(hosts.chromiumPage, {
-        text: `${marker}\n`,
-        sha256: createHash("sha256").update(`${marker}\n`).digest("hex"),
+        text: input.text,
+        sha256: input.sha256,
         deadline: inputDeadline,
         ordinal: 1,
       });
     },
-    async (marker, inputDeadline) => {
+    async (input, inputDeadline) => {
       return clickExactSurface(hosts.electronPage, {
-        text: `${marker}\n`,
-        sha256: createHash("sha256").update(`${marker}\n`).digest("hex"),
+        text: input.text,
+        sha256: input.sha256,
         deadline: inputDeadline,
         ordinal: 2,
       });
@@ -4380,7 +4538,9 @@ async function driveCard5AuthorityHandoff(state, daemon, hosts) {
     );
     hosts.tuiEvidence.drain();
     const inputFencesBefore = hosts.tuiEvidence.inputFenceCount();
-    const inputSha256 = createHash("sha256").update(`${marker}\n`).digest("hex");
+    const handoffInput = card5HandoffInputPayload(marker);
+    if (handoffInput === null) throw new Error("Card5 handoff input payload was invalid");
+    const inputSha256 = handoffInput.sha256;
     if (ordinal === 0) {
       hosts.tuiEvidence.drain();
       focusReferenceMark = hosts.tuiEvidence.reader.mark();
@@ -4663,8 +4823,11 @@ async function driveCard5AuthorityHandoff(state, daemon, hosts) {
       });
     }
     if (ordinal !== 0) hosts.tuiEvidence.drain();
-    const inputDeadline = performance.now() + 3_000;
-    const tuiInputReceipt = await step(marker, inputDeadline);
+    // The Web transport has two independent source-defined 2s phases:
+    // authority settlement and the input acknowledgement. Activation reserves
+    // both before dispatch and uses the remainder only for exact preflight.
+    const inputDeadline = performance.now() + 6_000;
+    const tuiInputReceipt = await step(handoffInput, inputDeadline);
     const receiptBoundary = ordinal === 0 ? null : tuiInputReceipt?.receiptBoundary;
     if (
       ordinal > 0 &&
@@ -4917,7 +5080,7 @@ async function driveCard5AuthorityHandoff(state, daemon, hosts) {
         assessment = assessCard5TuiHandoffInput({
           records: hosts.tuiEvidence.reader.recordsSince(tuiInputMark),
           hostReceipt: tuiInputReceipt,
-          payload: `${marker}\n`,
+          payload: handoffInput.text,
           expectedPane,
           expectedCanonical: tuiCanonicalBeforeInput,
           inputFingerprintKey: hosts.inputFingerprintKey,
@@ -5867,11 +6030,374 @@ async function start(json, quiet = false, planEntry = null) {
   return state;
 }
 
+function acquireCleanupReapProof(state, requestId, acknowledge = false) {
+  const ledger = readJson(cleanupProcessLedgerPath);
+  const evidence = state?.cleanup?.processReap;
+  if (
+    !ledger ||
+    ledger.version !== 1 ||
+    ledger.requestId !== requestId ||
+    ledger.ownerPid !== state?.ownerPid ||
+    ledger.cleanupToken !== state?.runtimeNamespace?.cleanupToken ||
+    !Array.isArray(ledger.identities) ||
+    ledger.identities.length < 1 ||
+    ledger.identities.length > 65 ||
+    evidence?.version !== 1 ||
+    evidence.identityCount !== ledger.identities.length ||
+    evidence.terminalIdentityCount !== ledger.identities.length - 1 ||
+    cleanupIdentityAttestation(state?.ownerToken, ledger.identities) !== ledger.identityHmac ||
+    evidence.identityHmac !== ledger.identityHmac
+  )
+    return null;
+  const exact = ledger.identities.every(
+    (identity, index) =>
+      identity &&
+      Object.keys(identity).sort().join("\0") === "kind\0pgid\0pid\0startToken" &&
+      (index === 0
+        ? identity.kind === "owner" && identity.pid === state.ownerPid
+        : ["chromium", "electron"].includes(identity.kind)) &&
+      Number.isSafeInteger(identity.pid) &&
+      identity.pid > 0 &&
+      Number.isSafeInteger(identity.pgid) &&
+      identity.pgid > 0 &&
+      typeof identity.startToken === "string" &&
+      identity.startToken.length > 0 &&
+      identity.startToken.length <= 64,
+  );
+  if (!exact || new Set(ledger.identities.map(({ pid }) => pid)).size !== ledger.identities.length)
+    return null;
+  if (acknowledge)
+    writeJsonAtomic(cleanupReapAckPath, {
+      version: 1,
+      requestId,
+      ownerPid: state.ownerPid,
+      ownerToken: state.ownerToken,
+      identityHmac: ledger.identityHmac,
+    });
+  return Object.freeze(ledger.identities.map((identity) => Object.freeze({ ...identity })));
+}
+
+function cleanupReapStatus(identities, state, requestId) {
+  const rows = cleanupProcessRows();
+  if (Array.isArray(identities)) return assessProductRigRetainedProcessAbsence(identities, rows);
+  const receipt = readJson(cleanupReapReceiptPath);
+  return receipt?.version === 1 &&
+    receipt.requestId === requestId &&
+    receipt.ownerPid === state?.ownerPid &&
+    receipt.identityHmac === state?.cleanup?.processReap?.identityHmac &&
+    receipt.status === "absent"
+    ? "absent"
+    : "invalid";
+}
+
+function finalizeCleanupReapProof(state, requestId, identities) {
+  const status = cleanupReapStatus(identities, state, requestId);
+  if (status !== "absent" || !Array.isArray(identities)) return status;
+  writeJsonAtomic(cleanupReapReceiptPath, {
+    version: 1,
+    requestId,
+    ownerPid: state.ownerPid,
+    identityHmac: state.cleanup.processReap.identityHmac,
+    status: "absent",
+  });
+  retireProductRigCleanupProofFiles({
+    removeAck: () => rmSync(cleanupReapAckPath, { force: true }),
+    removeLedger: () => rmSync(cleanupProcessLedgerPath, { force: true }),
+  });
+  return "absent";
+}
+
+function legacyCleanupAuthorization() {
+  if (process.env.TMUX_IDE_PRODUCT_LEGACY_CLEANUP_ONLY !== "1") return null;
+  const ownerToken = process.env.TMUX_IDE_PRODUCT_LEGACY_CLEANUP_OWNER_TOKEN;
+  const runId = process.env.TMUX_IDE_PRODUCT_LEGACY_CLEANUP_RUN_ID;
+  const requestId =
+    /^[0-9a-f]{48}$/u.test(ownerToken ?? "") && typeof runId === "string"
+      ? `legacy-${createHmac("sha256", Buffer.from(ownerToken, "hex"))
+          .update(runId)
+          .digest("hex")
+          .slice(0, 24)}`
+      : null;
+  return Object.freeze({
+    requestId,
+    runId,
+    ownerToken,
+    commit: process.env.TMUX_IDE_PRODUCT_LEGACY_CLEANUP_COMMIT,
+    tree: process.env.TMUX_IDE_PRODUCT_LEGACY_CLEANUP_TREE,
+    manifestDigest: process.env.TMUX_IDE_PRODUCT_LEGACY_CLEANUP_MANIFEST,
+    runtimeRoot: process.env.TMUX_IDE_PRODUCT_LEGACY_CLEANUP_RUNTIME_ROOT,
+  });
+}
+
 async function stop(json, { quiet = false, strict = false, maxAttempts = 2 } = {}) {
   let state = readJson(statePath);
+  let retainedCleanupIdentities = null;
+  let legacyLedger = null;
+  let legacyOwnerRetryOnly = false;
+  let legacyOwnerRetryInitialState = null;
   if (!state) {
     if (!quiet) emit(json ? publicRigStatus(state) : "Product rig stopped", json);
     return null;
+  }
+  const legacyAuthorization = legacyCleanupAuthorization();
+  const rawLegacyLedger = legacyAuthorization ? readJson(cleanupProcessLedgerPath) : null;
+  const rawLegacyOwnerRetryIntent =
+    rawLegacyLedger?.mode === "legacy-owner-retry-v1" ? rawLegacyLedger : null;
+  const legacyOwnerRetryIntent = rawLegacyOwnerRetryIntent
+    ? acquireLegacyProductRigOwnerRetryIntent(legacyAuthorization, rawLegacyOwnerRetryIntent)
+    : null;
+  const finalizeLegacyOwnerRetry = (current, intent = null) => {
+    const existingReceipt = readJson(cleanupReapReceiptPath);
+    const result = finalizeLegacyProductRigOwnerRetry(
+      current,
+      legacyAuthorization,
+      intent,
+      existingReceipt,
+      {
+        processAlive,
+        pathExists: existsSync,
+        processRows: cleanupProcessRows(),
+        writeReceipt: (receipt) => writeJsonAtomic(cleanupReapReceiptPath, receipt),
+        writeState: (completed) => writeJsonAtomic(statePath, completed),
+        removeAck: () => rmSync(cleanupReapAckPath, { force: true }),
+        removeIntent: () => rmSync(cleanupProcessLedgerPath, { force: true }),
+      },
+    );
+    if (!result.passed)
+      throw new Error(`ProductRig legacy owner retry barrier failed: ${result.reason}`);
+    return result.state;
+  };
+  if (legacyAuthorization && state.cleanup?.status === "passed") {
+    const ownerRetryReceipt = acquireLegacyProductRigOwnerRetryReceipt(
+      legacyAuthorization,
+      readJson(cleanupReapReceiptPath),
+      legacyOwnerRetryIntent,
+    );
+    if (legacyOwnerRetryIntent || ownerRetryReceipt) {
+      if (rawLegacyOwnerRetryIntent && legacyOwnerRetryIntent === null)
+        throw new Error("ProductRig legacy owner retry intent authentication failed");
+      const completed = finalizeLegacyOwnerRetry(state, legacyOwnerRetryIntent);
+      if (!quiet) emit(json ? publicRigStatus(completed) : "Product rig stopped", json);
+      return completed;
+    }
+  }
+  if (legacyAuthorization && state.cleanup?.status === "passed") {
+    const provenance = state.diagnosticAttempt?.sourceProvenance;
+    const authorizationExact =
+      state.status === "failed" &&
+      state.diagnosticAttempt?.runId === legacyAuthorization.runId &&
+      state.ownerToken === legacyAuthorization.ownerToken &&
+      state.runtimeNamespace?.root === legacyAuthorization.runtimeRoot &&
+      provenance?.commit === legacyAuthorization.commit &&
+      provenance?.tree === legacyAuthorization.tree &&
+      provenance?.manifestDigest === legacyAuthorization.manifestDigest &&
+      state.cleanup.requestId === legacyAuthorization.requestId &&
+      state.cleanup.card5?.passed === true &&
+      state.cleanup.processReap?.version === 1 &&
+      Array.isArray(state.cleanup.failures) &&
+      state.cleanup.failures.length === 0;
+    legacyLedger = rawLegacyLedger
+      ? acquireLegacyProductRigCleanupLedger(state, legacyAuthorization, rawLegacyLedger)
+      : null;
+    const receiptStatus = cleanupReapStatus(null, state, legacyAuthorization.requestId);
+    const identityStatus = legacyLedger
+      ? cleanupReapStatus(legacyLedger.identities, state, legacyAuthorization.requestId)
+      : receiptStatus;
+    const failures = productRigCleanupBarrierFailures(state, legacyAuthorization.requestId, {
+      processAlive,
+      pathExists: existsSync,
+      retainedProcessIdentityStatus: () => identityStatus,
+    });
+    if (
+      !authorizationExact ||
+      (rawLegacyLedger !== null && legacyLedger === null) ||
+      receiptStatus !== "absent" ||
+      identityStatus !== "absent" ||
+      failures.length > 0
+    )
+      throw new Error("ProductRig completed legacy cleanup recovery failed exact revalidation");
+    retireProductRigCleanupProofFiles({
+      removeAck: () => rmSync(cleanupReapAckPath, { force: true }),
+      removeLedger: () => rmSync(cleanupProcessLedgerPath, { force: true }),
+    });
+    if (!quiet) emit(json ? publicRigStatus(state) : "Product rig stopped", json);
+    return state;
+  }
+  if (legacyAuthorization) {
+    if (rawLegacyOwnerRetryIntent && legacyOwnerRetryIntent === null)
+      throw new Error("ProductRig legacy owner retry intent authentication failed");
+    if (legacyOwnerRetryIntent) {
+      if (
+        !legacyProductRigOwnerRetryIntentMatchesState(
+          state,
+          legacyAuthorization,
+          legacyOwnerRetryIntent,
+        )
+      )
+        throw new Error("ProductRig legacy owner retry intent no longer matched failed state");
+      if (!processAlive(state.ownerPid))
+        throw new Error("ProductRig legacy owner retry owner exited without a passed response");
+      const firstRows = cleanupProcessRows();
+      await new Promise((resolveWait) => setImmediate(resolveWait));
+      const secondRows = cleanupProcessRows();
+      legacyOwnerRetryOnly = assessLegacyProductRigOwnerRetryCompatibility(
+        state,
+        legacyAuthorization,
+        firstRows,
+        secondRows,
+        { processAlive, pathExists: existsSync },
+      ).passed;
+      if (
+        !legacyOwnerRetryOnly ||
+        !legacyProductRigOwnerRetryIntentMatchesOwnerRows(legacyOwnerRetryIntent, firstRows) ||
+        !legacyProductRigOwnerRetryIntentMatchesOwnerRows(legacyOwnerRetryIntent, secondRows)
+      )
+        throw new Error("ProductRig legacy owner retry compatibility revalidation failed");
+      legacyOwnerRetryInitialState = state;
+    } else {
+      legacyLedger = acquireLegacyProductRigCleanupLedger(
+        state,
+        legacyAuthorization,
+        rawLegacyLedger,
+      );
+    }
+    if (!legacyLedger && processAlive(state.ownerPid)) {
+      legacyLedger = await captureLegacyProductRigCleanupLedger(state, legacyAuthorization, {
+        readProcessRows: cleanupProcessRows,
+        yieldTurn: () => new Promise((resolveWait) => setImmediate(resolveWait)),
+      });
+      if (!legacyLedger) {
+        const firstRows = cleanupProcessRows();
+        await new Promise((resolveWait) => setImmediate(resolveWait));
+        const secondRows = cleanupProcessRows();
+        legacyOwnerRetryOnly = assessLegacyProductRigOwnerRetryCompatibility(
+          state,
+          legacyAuthorization,
+          firstRows,
+          secondRows,
+          { processAlive, pathExists: existsSync },
+        ).passed;
+        if (legacyOwnerRetryOnly) {
+          legacyOwnerRetryInitialState = state;
+          const intent = createLegacyProductRigOwnerRetryIntent(
+            state,
+            legacyAuthorization,
+            firstRows.find(({ pid }) => pid === state.ownerPid),
+          );
+          if (intent === null)
+            throw new Error("ProductRig legacy owner retry intent could not be authenticated");
+          writeJsonAtomic(cleanupProcessLedgerPath, intent);
+        }
+      }
+    }
+    if (!legacyLedger && !legacyOwnerRetryOnly)
+      throw new Error("ProductRig legacy cleanup identity preflight did not stabilize");
+    if (legacyLedger) writeJsonAtomic(cleanupProcessLedgerPath, legacyLedger);
+  }
+  const finalizeLegacyCleanup = async (current) => {
+    if (!legacyLedger) return null;
+    const admission = assessLegacyProductRigCleanupAdmission(current, legacyLedger, {
+      processAlive,
+      pathExists: existsSync,
+    });
+    if (!admission.passed)
+      throw new Error(`ProductRig legacy cleanup failed closed: ${admission.reason}`);
+    const retired = await retireLegacyProductRigCleanupIdentities(legacyLedger, {
+      readProcessRows: cleanupProcessRows,
+      signalProcess: (pid, signal) => process.kill(pid, signal),
+      sleep: (milliseconds) => new Promise((resolveWait) => setTimeout(resolveWait, milliseconds)),
+    });
+    if (!retired.passed)
+      throw new Error(`ProductRig legacy cleanup failed closed: ${retired.reason}`);
+    const finalAdmission = assessLegacyProductRigCleanupAdmission(current, legacyLedger, {
+      processAlive,
+      pathExists: existsSync,
+    });
+    if (!finalAdmission.passed)
+      throw new Error(`ProductRig legacy cleanup final reobserve failed: ${finalAdmission.reason}`);
+    const retainedStatus = cleanupReapStatus(
+      legacyLedger.identities,
+      current,
+      legacyLedger.requestId,
+    );
+    if (retainedStatus !== "absent")
+      throw new Error(`ProductRig legacy cleanup retained identity status: ${retainedStatus}`);
+    const previousCard5 = current.cleanup.card5;
+    const cleanOwner = (name) => ({
+      owned: previousCard5.owners[name].owned,
+      retired: true,
+      reason: previousCard5.owners[name].owned ? "legacy-exact-reap" : "not-acquired",
+    });
+    const card5 = card5HostCleanupStatus({
+      entries: Object.fromEntries(
+        ["chromium", "electron", "opentui", "daemon", "namespace"].map((name) => [
+          name,
+          cleanOwner(name),
+        ]),
+      ),
+      chromiumProcessCount: 0,
+      chromiumDescendantCount: 0,
+      chromiumTerminalProcessCount: 0,
+      chromiumProcessEvidence: [],
+      chromiumProcessEvidenceOverflow: false,
+      chromiumPageCount: previousCard5.chromiumPageCount,
+      chromiumContextCount: previousCard5.chromiumContextCount,
+      chromiumListenerCount: previousCard5.chromiumListenerCount,
+      electronProcessCount: 0,
+      electronDescendantCount: 0,
+      electronTerminalProcessCount: 0,
+      electronProcessEvidence: [],
+      electronProcessEvidenceOverflow: false,
+      electronWindowCount: previousCard5.electronWindowCount,
+      electronListenerCount: previousCard5.electronListenerCount,
+      electronOpenHandleCount: previousCard5.electronOpenHandleCount,
+      socketResidueCount: previousCard5.socketResidueCount,
+      nativeObserverProcessCount: previousCard5.nativeObserverProcessCount,
+      pathResidueCount: previousCard5.pathResidueCount,
+      launchStage: previousCard5.launchStage,
+    });
+    if (!card5.passed)
+      throw new Error("ProductRig legacy cleanup sanitized Card5 receipt was invalid");
+    const processReap = {
+      version: 1,
+      identityCount: legacyLedger.identities.length,
+      terminalIdentityCount: legacyLedger.identities.length - 1,
+      identityHmac: legacyLedger.identityHmac,
+    };
+    const completed = {
+      ...current,
+      status: "failed",
+      stoppedAt: new Date().toISOString(),
+      cleanup: {
+        version: 1,
+        requestId: legacyLedger.requestId,
+        attempt: 1,
+        status: "passed",
+        cleanupToken: current.runtimeNamespace?.cleanupToken ?? null,
+        failures: [],
+        card5,
+        processReap,
+        completedAt: new Date().toISOString(),
+      },
+    };
+    writeJsonAtomic(cleanupReapReceiptPath, {
+      version: 1,
+      requestId: legacyLedger.requestId,
+      ownerPid: current.ownerPid,
+      identityHmac: legacyLedger.identityHmac,
+      status: "absent",
+    });
+    writeJsonAtomic(statePath, completed);
+    retireProductRigCleanupProofFiles({
+      removeAck: () => rmSync(cleanupReapAckPath, { force: true }),
+      removeLedger: () => rmSync(cleanupProcessLedgerPath, { force: true }),
+    });
+    return completed;
+  };
+  if (legacyLedger && !processAlive(state.ownerPid)) {
+    const completed = await finalizeLegacyCleanup(state);
+    if (!quiet) emit(json ? publicRigStatus(completed) : "Product rig stopped", json);
+    return completed;
   }
   if (!processAlive(state.ownerPid)) {
     if (strict) {
@@ -5885,9 +6411,16 @@ async function stop(json, { quiet = false, strict = false, maxAttempts = 2 } = {
         return state;
       }
       const priorRequest = state.cleanup?.requestId ?? "missing-cleanup-request";
+      retainedCleanupIdentities = acquireCleanupReapProof(state, priorRequest);
+      const retainedStatus = finalizeCleanupReapProof(
+        state,
+        priorRequest,
+        retainedCleanupIdentities,
+      );
       const failures = productRigCleanupBarrierFailures(state, priorRequest, {
         processAlive,
         pathExists: existsSync,
+        retainedProcessIdentityStatus: () => retainedStatus,
       });
       if (failures.length > 0)
         throw new Error(`ProductRig stale owner residue: ${failures.join(", ")}`);
@@ -5900,15 +6433,22 @@ async function stop(json, { quiet = false, strict = false, maxAttempts = 2 } = {
     ["stopped", "failed"].includes(state.status) &&
     typeof state.cleanup.requestId === "string"
   ) {
+    retainedCleanupIdentities = acquireCleanupReapProof(state, state.cleanup.requestId, true);
     const deathDeadline = Date.now() + 5_000;
     while (processAlive(state.ownerPid) && Date.now() < deathDeadline)
       await new Promise((resolveWait) => setTimeout(resolveWait, 25));
     state = readJson(statePath) ?? state;
     if (!processAlive(state.ownerPid)) {
+      const retainedStatus = finalizeCleanupReapProof(
+        state,
+        state.cleanup.requestId,
+        retainedCleanupIdentities,
+      );
       if (strict) {
         const failures = productRigCleanupBarrierFailures(state, state.cleanup.requestId, {
           processAlive,
           pathExists: existsSync,
+          retainedProcessIdentityStatus: () => retainedStatus,
         });
         if (failures.length > 0)
           throw new Error(`ProductRig cleanup barrier failed: ${failures.join(", ")}`);
@@ -5922,16 +6462,31 @@ async function stop(json, { quiet = false, strict = false, maxAttempts = 2 } = {
 
   let finalState = state;
   let requestId = null;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    requestId = `${Date.now()}-${randomBytes(6).toString("hex")}`;
-    writeJsonAtomic(shutdownRequestPath, {
-      version: 1,
-      requestId,
-      attempt,
-      ownerPid: state.ownerPid,
-      ownerToken: state.ownerToken,
-      cleanupToken: state.runtimeNamespace?.cleanupToken ?? null,
-    });
+  const cleanupAttempts = legacyOwnerRetryOnly ? 1 : maxAttempts;
+  for (let attempt = 1; attempt <= cleanupAttempts; attempt += 1) {
+    requestId = legacyOwnerRetryOnly
+      ? legacyAuthorization.requestId
+      : `${Date.now()}-${randomBytes(6).toString("hex")}`;
+    const shutdownRequest = legacyOwnerRetryOnly
+      ? createLegacyProductRigOwnerRetryShutdownRequest(
+          state,
+          legacyAuthorization,
+          acquireLegacyProductRigOwnerRetryIntent(
+            legacyAuthorization,
+            readJson(cleanupProcessLedgerPath),
+          ),
+        )
+      : {
+          version: 1,
+          requestId,
+          attempt,
+          ownerPid: state.ownerPid,
+          ownerToken: state.ownerToken,
+          cleanupToken: state.runtimeNamespace?.cleanupToken ?? null,
+        };
+    if (shutdownRequest === null)
+      throw new Error("ProductRig legacy owner retry durable request was unavailable");
+    writeJsonAtomic(shutdownRequestPath, shutdownRequest);
     try {
       finalState = await waitForState(
         (candidate) =>
@@ -5942,14 +6497,25 @@ async function stop(json, { quiet = false, strict = false, maxAttempts = 2 } = {
         { allowTerminalFailure: true },
       );
     } catch (error) {
-      if (attempt === maxAttempts || !strict) throw error;
+      if (attempt === cleanupAttempts || !strict) throw error;
       continue;
     }
     if (finalState.cleanup?.status === "passed") {
+      if (
+        legacyOwnerRetryOnly &&
+        (finalState.cleanup.requestId !== requestId ||
+          finalState.cleanup.cleanupToken !== state.runtimeNamespace?.cleanupToken ||
+          finalState.ownerPid !== state.ownerPid ||
+          finalState.ownerToken !== state.ownerToken)
+      )
+        throw new Error("ProductRig legacy owner retry response identity was invalid");
       requestId = finalState.cleanup.requestId;
+      retainedCleanupIdentities = legacyOwnerRetryOnly
+        ? null
+        : acquireCleanupReapProof(finalState, requestId, true);
       break;
     }
-    if (attempt === maxAttempts)
+    if (attempt === cleanupAttempts && !legacyLedger)
       throw new Error(
         `ProductRig cleanup failed after bounded retry: ${(finalState.cleanup?.failures ?? [])
           .map(({ subsystem, detail }) => `${subsystem}:${detail}`)
@@ -5957,13 +6523,42 @@ async function stop(json, { quiet = false, strict = false, maxAttempts = 2 } = {
       );
   }
 
+  if (legacyLedger && finalState.cleanup?.status !== "passed") {
+    finalState = await finalizeLegacyCleanup(finalState);
+    requestId = finalState.cleanup.requestId;
+    retainedCleanupIdentities = null;
+  }
+
   const deathDeadline = Date.now() + 5_000;
   while (processAlive(finalState.ownerPid) && Date.now() < deathDeadline)
     await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  let retainedStatus = legacyLedger
+    ? cleanupReapStatus(null, finalState, requestId)
+    : legacyOwnerRetryOnly
+      ? "absent"
+      : finalizeCleanupReapProof(finalState, requestId, retainedCleanupIdentities);
+  if (legacyOwnerRetryOnly) {
+    const persistedIntent = acquireLegacyProductRigOwnerRetryIntent(
+      legacyAuthorization,
+      readJson(cleanupProcessLedgerPath),
+    );
+    if (
+      persistedIntent === null ||
+      !legacyProductRigOwnerRetryIntentMatchesState(
+        legacyOwnerRetryInitialState,
+        legacyAuthorization,
+        persistedIntent,
+      )
+    )
+      throw new Error("ProductRig legacy owner retry durable intent was unavailable");
+    finalState = finalizeLegacyOwnerRetry(finalState, persistedIntent);
+    retainedStatus = "absent";
+  }
   if (strict) {
     const failures = productRigCleanupBarrierFailures(finalState, requestId, {
       processAlive,
       pathExists: existsSync,
+      retainedProcessIdentityStatus: () => retainedStatus,
     });
     if (failures.length > 0)
       throw new Error(`ProductRig cleanup barrier failed: ${failures.join(", ")}`);
@@ -6167,6 +6762,47 @@ function exactResizeBlockerCommand(marker = "") {
     "if(process.argv[1])process.stdout.write(process.argv[1]+'\\n');setInterval(()=>{},2147483647)";
   const quote = (value) => `'${value.replaceAll("'", `'\\''`)}'`;
   return `exec ${[process.execPath, "-e", script, marker].map(quote).join(" ")}`;
+}
+
+async function conditionExactSinglePaneTmuxFixture(socketPath, session, paneId, timeoutMs = 5_000) {
+  const deadline = performance.now() + timeoutMs;
+  const target = `=${session}:=one`;
+  const run = (args) => runBoundedFocusTmux({ socketPath, args, deadline });
+  await run(["set-option", "-w", "-t", target, "pane-border-status", "top"]);
+  await run(["resize-window", "-t", target, "-x", "132", "-y", "41"]);
+  let previousDigest = null;
+  let stableSamples = 0;
+  while (performance.now() < deadline) {
+    const stdout = await run([
+      "list-panes",
+      "-t",
+      target,
+      "-F",
+      "#{pane-border-status}\t#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}",
+    ]);
+    const rows = stdout.trimEnd().split("\n").filter(Boolean);
+    const fields = rows[0]?.split("\t") ?? [];
+    const geometry = Object.freeze({
+      paneId: fields[1] ?? null,
+      left: Number(fields[2]),
+      top: Number(fields[3]),
+      width: Number(fields[4]),
+      height: Number(fields[5]),
+    });
+    const exact =
+      rows.length === 1 &&
+      fields[0] === "top" &&
+      geometry.paneId === paneId &&
+      geometry.left === 0 &&
+      geometry.width === 132 &&
+      geometry.height === 40;
+    const digest = exact ? JSON.stringify(geometry) : null;
+    stableSamples = digest !== null && digest === previousDigest ? stableSamples + 1 : 0;
+    previousDigest = digest;
+    if (stableSamples >= 2) return geometry;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
+  throw new Error("single-pane tmux fixture did not settle at hosted TUI geometry");
 }
 
 async function conditionExactResizeTmuxFixture(socketPath, session, seed, timeoutMs = 5_000) {
@@ -6738,14 +7374,26 @@ async function proveHostTerminalPublication(state, label, timeoutMs = 5_000) {
   }
 }
 
-async function provePreseededPanePublication(state, seed, timeoutMs = 5_000) {
+async function provePreseededPanePublication(state, seed, canonicalResources, timeoutMs = 5_000) {
   const count = (value, token) => value.split(token).length - 1;
   const deadline = performance.now() + timeoutMs;
   let sample = null;
   while (performance.now() < deadline) {
     const geometryBefore = activeWindowPaneGeometry(state);
-    const target = geometryBefore.find(({ paneId }) => paneId === seed.paneId);
-    if (!target?.semanticPaneId) throw new Error("preseed pane lost its canonical semantic id");
+    const paneGeometry = geometryBefore.find(({ paneId }) => paneId === seed.paneId);
+    if (!paneGeometry?.semanticPaneId)
+      throw new Error("preseed pane lost its canonical semantic id");
+    const resourceMatches = canonicalResources.filter(
+      ({ semanticPaneId }) => semanticPaneId === paneGeometry.semanticPaneId,
+    );
+    if (resourceMatches.length !== 1)
+      throw new Error("preseed pane lost its unique canonical application-shell identity");
+    const target = Object.freeze({
+      ...paneGeometry,
+      canonicalDisplayNames: Object.freeze([
+        ...new Set([...paneGeometry.canonicalDisplayNames, resourceMatches[0].resourceTitle]),
+      ]),
+    });
     const nativeByPane = new Map(
       sessionPaneGeometry(state).map(({ paneId }) => [
         paneId,
@@ -9409,6 +10057,72 @@ async function owner() {
           });
         }
       }
+      let processReap = null;
+      if (["cross-client-handoff", "daemon-restart"].includes(journeyId)) {
+        const rows = cleanupProcessRows();
+        const ownerIdentity = rows?.find(({ pid }) => pid === process.pid) ?? null;
+        const retained = card5WebCleanupReceipt?.retainedProcessIdentities;
+        const terminalIdentities = Array.isArray(retained)
+          ? retained
+              .filter(
+                (entry) =>
+                  ["chromium", "electron"].includes(entry?.host) &&
+                  Number.isSafeInteger(entry?.pid) &&
+                  entry.pid > 0 &&
+                  Number.isSafeInteger(entry?.pgid) &&
+                  entry.pgid > 0 &&
+                  typeof entry?.startToken === "string" &&
+                  entry.startToken.length > 0 &&
+                  entry.startToken.length <= 64,
+              )
+              .map(({ host, pid, pgid, startToken }) => ({
+                kind: host,
+                pid,
+                pgid,
+                startToken,
+              }))
+          : [];
+        const expectedTerminalCount =
+          (card5Cleanup?.chromiumTerminalProcessCount ?? 0) +
+          (card5Cleanup?.electronTerminalProcessCount ?? 0);
+        if (
+          !ownerIdentity ||
+          !Array.isArray(retained) ||
+          retained.length !== terminalIdentities.length ||
+          terminalIdentities.length !== expectedTerminalCount ||
+          terminalIdentities.length > 64
+        ) {
+          failures.push({
+            subsystem: "card5-process-reap-ledger",
+            detail: "exact retained process identities were unavailable",
+          });
+        } else {
+          const identities = [
+            {
+              kind: "owner",
+              pid: ownerIdentity.pid,
+              pgid: ownerIdentity.pgid,
+              startToken: ownerIdentity.startToken,
+            },
+            ...terminalIdentities,
+          ];
+          const identityHmac = cleanupIdentityAttestation(ownerToken, identities);
+          writeJsonAtomic(cleanupProcessLedgerPath, {
+            version: 1,
+            requestId,
+            ownerPid: process.pid,
+            cleanupToken: state.runtimeNamespace?.cleanupToken ?? null,
+            identities,
+            identityHmac,
+          });
+          processReap = Object.freeze({
+            version: 1,
+            identityCount: identities.length,
+            terminalIdentityCount: terminalIdentities.length,
+            identityHmac,
+          });
+        }
+      }
       const passed = failures.length === 0;
       const ownerFailed = state.status === "failed" || typeof state.failure === "string";
       publish({
@@ -9422,6 +10136,7 @@ async function owner() {
           cleanupToken: state.runtimeNamespace?.cleanupToken ?? null,
           failures,
           ...(card5Cleanup ? { card5: card5Cleanup } : {}),
+          ...(processReap ? { processReap } : {}),
           completedAt: new Date().toISOString(),
         },
         web: null,
@@ -9446,21 +10161,42 @@ async function owner() {
   const shutdownPoller = setInterval(() => {
     if (handlingShutdownRequest) return;
     const request = readJson(shutdownRequestPath);
+    const pendingReapAck = isProductRigPendingReapAck(state, request, journeyId);
     if (
       !request ||
       request.ownerPid !== process.pid ||
       request.ownerToken !== ownerToken ||
       (state.runtimeNamespace?.cleanupToken &&
         request.cleanupToken !== state.runtimeNamespace.cleanupToken) ||
-      request.requestId === state.cleanup?.requestId
+      (request.requestId === state.cleanup?.requestId && !pendingReapAck)
     )
       return;
     handlingShutdownRequest = true;
-    void cleanup(request)
-      .then((result) => {
+    void (pendingReapAck ? Promise.resolve({ passed: true, failures: [] }) : cleanup(request))
+      .then(async (result) => {
         if (result.passed) {
+          if (["cross-client-handoff", "daemon-restart"].includes(journeyId)) {
+            const deadline = Date.now() + 5_000;
+            let acknowledged = false;
+            while (Date.now() < deadline) {
+              const ack = readJson(cleanupReapAckPath);
+              if (
+                ack?.version === 1 &&
+                ack.requestId === request.requestId &&
+                ack.ownerPid === process.pid &&
+                ack.ownerToken === ownerToken &&
+                ack.identityHmac === state.cleanup?.processReap?.identityHmac
+              ) {
+                acknowledged = true;
+                break;
+              }
+              await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+            }
+            if (!acknowledged) return;
+          }
           clearInterval(shutdownPoller);
           rmSync(shutdownRequestPath, { force: true });
+          rmSync(cleanupReapAckPath, { force: true });
           process.exit(typeof state.failure === "string" ? 1 : 0);
         }
       })
@@ -10330,7 +11066,6 @@ async function owner() {
           });
         },
         proveBaseline: async (namespace, runningDaemon, identity, process, host) => {
-          const publication = await provePreseededPanePublication(state, namespace.seed);
           const shell = await waitForProductApplicationShell(
             runningDaemon,
             namespace.session,
@@ -10339,6 +11074,7 @@ async function owner() {
             1,
           );
           const resources = productWindowResources(shell);
+          const publication = await provePreseededPanePublication(state, namespace.seed, resources);
           const selected = resources[0];
           if (!selected?.active || selected.semanticPaneId !== publication.semanticPaneId)
             throw new Error("selection baseline did not join the exact active pane");
@@ -11971,7 +12707,6 @@ async function owner() {
           });
         },
         proveNormalBaseline: async (namespace, runningDaemon, identity, process, host) => {
-          const publication = await provePreseededPanePublication(state, namespace.seed);
           const shell = await waitForProductApplicationShell(
             runningDaemon,
             namespace.session,
@@ -11980,6 +12715,7 @@ async function owner() {
             1,
           );
           const resources = productWindowResources(shell);
+          const publication = await provePreseededPanePublication(state, namespace.seed, resources);
           const selected = resources[0];
           if (!selected?.active || selected.semanticPaneId !== publication.semanticPaneId)
             throw new Error("ANSI baseline did not join the active pane");
@@ -15210,11 +15946,6 @@ async function owner() {
           return Object.freeze({ processId: launched.processId, launchId: launched.launchId });
         },
         proveResizeBaseline: async (namespace, runningDaemon, identity, process) => {
-          const publication = await provePreseededPanePublication(state, {
-            marker: namespace.marker,
-            paneId: namespace.seed.paneId,
-            geometry: namespace.seed,
-          });
           const shell = await waitForProductApplicationShell(
             runningDaemon,
             namespace.session,
@@ -15223,6 +15954,15 @@ async function owner() {
             2,
           );
           const resources = productWindowResources(shell);
+          const publication = await provePreseededPanePublication(
+            state,
+            {
+              marker: namespace.marker,
+              paneId: namespace.seed.paneId,
+              geometry: namespace.seed,
+            },
+            resources,
+          );
           const panes = await readExactResizeTmuxPanes(state);
           const active = panes.find(({ active }) => active);
           const selected = resources.find(
@@ -15794,6 +16534,11 @@ async function owner() {
             });
             throw error;
           }
+          const conditionedPane = await conditionExactSinglePaneTmuxFixture(
+            fleet.socketPath,
+            session,
+            initialPane.paneId,
+          );
           const runtimeNamespace = {
             root: fleet.root,
             home: fleet.environment.HOME,
@@ -15827,10 +16572,15 @@ async function owner() {
             paneId: initialPane.paneId,
             windows: initialWindows.length,
             panes: initialPaneCount,
+            geometry: conditionedPane,
           });
           return Object.freeze({
             session,
-            seed: { marker, paneId: initialPane.paneId, geometry: initialPane },
+            seed: {
+              marker,
+              paneId: initialPane.paneId,
+              geometry: Object.freeze({ ...initialPane, ...conditionedPane }),
+            },
             runtimeNamespace,
             tui,
           });
@@ -16001,7 +16751,6 @@ async function owner() {
           });
         },
         proveWindowBaseline: async (namespace, runningDaemon, identity, process) => {
-          const publication = await provePreseededPanePublication(state, namespace.seed);
           const shell = await waitForProductApplicationShell(
             runningDaemon,
             namespace.session,
@@ -16010,6 +16759,11 @@ async function owner() {
             1,
           );
           const shellResources = productWindowResources(shell);
+          const publication = await provePreseededPanePublication(
+            state,
+            namespace.seed,
+            shellResources,
+          );
           const shellSelected = shellResources[0];
           if (!shellSelected || shellSelected.semanticPaneId !== publication.semanticPaneId)
             throw new Error("window baseline resource did not match the canonical pane");
@@ -16847,7 +17601,18 @@ async function owner() {
           });
         },
         proveFocusBaseline: async (namespace, runningDaemon, identity, process) => {
-          const publication = await provePreseededPanePublication(state, namespace.seed);
+          const shell = await waitForProductApplicationShell(
+            runningDaemon,
+            namespace.session,
+            (candidate) => productWindowResources(candidate).length === 1,
+            10_000,
+            1,
+          );
+          const publication = await provePreseededPanePublication(
+            state,
+            namespace.seed,
+            productWindowResources(shell),
+          );
           const lifecycle = readJsonLines(join(namespace.tui.runtimeDir, "performance.jsonl"));
           if (lifecycle.some(({ phase }) => phase?.startsWith("terminal-host-")))
             throw new Error("focus journey observed hosted focus input before its exact baseline");
@@ -17295,7 +18060,18 @@ async function owner() {
         },
         proveCoherentPublication: async (namespace, runningDaemon, identity, _targetedProcess) => {
           await waitForCoherentTui(state);
-          const publication = await provePreseededPanePublication(state, namespace.seed);
+          const shell = await waitForProductApplicationShell(
+            runningDaemon,
+            namespace.session,
+            (candidate) => productWindowResources(candidate).length === 1,
+            10_000,
+            1,
+          );
+          const publication = await provePreseededPanePublication(
+            state,
+            namespace.seed,
+            productWindowResources(shell),
+          );
           const workspaceClient = await waitForQualifiedWorkspaceClientState(
             () => readJsonLines(join(namespace.tui.runtimeDir, "performance.jsonl")),
             {
@@ -17521,7 +18297,18 @@ async function owner() {
           proveCoherentPublication: async (namespace, _electedDaemon, adopted) => {
             await waitForReadinessLadder(daemon);
             await waitForCoherentTui(state);
-            const publication = await provePreseededPanePublication(state, namespace.seed);
+            const shell = await waitForProductApplicationShell(
+              daemon,
+              namespace.session,
+              (candidate) => productWindowResources(candidate).length === 1,
+              10_000,
+              1,
+            );
+            const publication = await provePreseededPanePublication(
+              state,
+              namespace.seed,
+              productWindowResources(shell),
+            );
             const workspaceClient = await waitForQualifiedWorkspaceClientState(
               () => readJsonLines(join(namespace.tui.runtimeDir, "performance.jsonl")),
               {
@@ -18160,6 +18947,7 @@ async function owner() {
               hostIdentity: launchedTui.hostIdentity,
               expectedPane: acceptedConvergencePaneId,
               focusedPaneEvidence: initial.focusedPaneEvidence,
+              webPhysicalLifecycleEvidence: initial.webPhysicalLifecycleEvidence,
               inputFingerprintKey: card5InputFingerprintKey,
               recordNativeMarker: (marker) => {
                 card5NativeExpectedMarker = marker;

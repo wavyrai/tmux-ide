@@ -51,6 +51,7 @@ import {
   parseSessionPaneDescriptorReply,
   type SessionPaneDescriptor,
 } from "../protocol/session-descriptor-discovery.ts";
+import { resolvePaneDisplayName } from "../protocol/pane-display-name.ts";
 import {
   finalizeWorkspaceTmuxReconciliation,
   planWorkspaceTmuxReconciliation,
@@ -103,6 +104,8 @@ const NATIVE_CLIENT_SUBSCRIPTION = "tmux-ide-native-clients";
 
 const DEFAULT_HISTORY_LINES = 2000;
 const SYNC_DEBOUNCE_MS = 40;
+/** Foreground-command labels follow output, but never turn a busy pane into a probe loop. */
+const DISPLAY_NAME_SYNC_INTERVAL_MS = 750;
 const RECOVERY_QUIET_MS = 40;
 const RECOVERY_COMMAND_DEADLINE_MS = 500;
 const RECOVERY_NO_PROGRESS_DEADLINE_MS = 3_000;
@@ -376,6 +379,7 @@ export class SessionChannel {
   private maxAgeMs = 0;
   private geometryParticipating = false;
   private cancelSync: (() => void) | null = null;
+  private lastDisplayNameSyncAtMs = 0;
   private disposed = false;
   private nativeClientProbePending = false;
   private windowAuthorityOrdinal = 0;
@@ -467,19 +471,31 @@ export class SessionChannel {
   // ── Public surface (semantic ids only) ──────────────────────────────────
 
   describe(): MirrorSessionDescription {
-    const panes = [...this.panesBySemantic.values()].map((pane) => ({
-      semanticPaneId: pane.semanticId,
-      semanticWindowId: pane.windowRuntimeId
-        ? (this.windowsByRuntime.get(pane.windowRuntimeId)?.semanticId ?? null)
-        : null,
-      role: pane.descriptor?.role ?? null,
-      paneType: pane.descriptor?.type ?? null,
-      currentCommand: pane.descriptor?.currentCommand ?? null,
-      cwd: pane.descriptor?.cwd ?? null,
-      title: pane.descriptor?.title ?? null,
-      windowName: pane.descriptor?.windowName ?? null,
-      active: pane.active,
-    }));
+    const panes = [...this.panesBySemantic.values()].map((pane) => {
+      const display = resolvePaneDisplayName({
+        semanticPaneId: pane.semanticId,
+        configuredName: pane.descriptor?.name,
+        configuredNameSource: pane.descriptor?.nameSource,
+        currentCommand: pane.descriptor?.currentCommand,
+        title: pane.descriptor?.title,
+        paneType: pane.descriptor?.type,
+      });
+      return {
+        semanticPaneId: pane.semanticId,
+        semanticWindowId: pane.windowRuntimeId
+          ? (this.windowsByRuntime.get(pane.windowRuntimeId)?.semanticId ?? null)
+          : null,
+        role: pane.descriptor?.role ?? null,
+        paneType: pane.descriptor?.type ?? null,
+        currentCommand: pane.descriptor?.currentCommand ?? null,
+        cwd: pane.descriptor?.cwd ?? null,
+        title: pane.descriptor?.title ?? null,
+        displayName: display.name,
+        displayNameSource: display.source,
+        windowName: pane.descriptor?.windowName ?? null,
+        active: pane.active,
+      };
+    });
     return {
       session: this.opts.session,
       panes,
@@ -774,6 +790,11 @@ export class SessionChannel {
     ageMs: number | null,
     timing?: MirrorOutputTiming,
   ): void {
+    const now = Date.now();
+    if (now - this.lastDisplayNameSyncAtMs >= DISPLAY_NAME_SYNC_INTERVAL_MS) {
+      this.lastDisplayNameSyncAtMs = now;
+      this.scheduleSync();
+    }
     if (ageMs !== null) {
       this.ageByRuntime.set(runtimePane, ageMs);
       if (ageMs > this.maxAgeMs) this.maxAgeMs = ageMs;
@@ -887,10 +908,14 @@ export class SessionChannel {
     );
   }
 
-  private reseedPlain(sub: SubRecord): void {
+  private reseedPlain(sub: SubRecord, resumeReason: "requested" | null = null): void {
     this.reseed(sub, ({ ok }) => {
+      if (ok) {
+        if (resumeReason && !sub.closed && !sub.frozen)
+          sub.onEvent({ type: "flow", state: "resumed", reason: resumeReason });
+        return;
+      }
       if (
-        ok ||
         sub.closed ||
         sub.frozen ||
         this.disposed ||
@@ -943,7 +968,7 @@ export class SessionChannel {
     const runtime = sub.pane.runtimeId;
     if (this.ledger.isRequested(runtime) || this.ledger.isBackpressured(runtime))
       this.beginRecovery(sub.pane, "requested");
-    else this.reseedPlain(sub);
+    else this.reseedPlain(sub, "requested");
     this.recoverSticky();
   }
 
@@ -2022,14 +2047,29 @@ export class SessionChannel {
       rows: layout.height,
       zoomed: layout.zoomed,
       paneBorderStatus: windowRecord?.paneBorderStatus ?? "off",
-      panes: layout.leaves.map((leaf) => ({
-        semanticPaneId: this.panesByRuntime.get(leaf.id)?.semanticId ?? null,
-        left: leaf.left,
-        top: leaf.top,
-        width: leaf.width,
-        height: leaf.height,
-        active: leaf.id === activePane,
-      })),
+      panes: layout.leaves.map((leaf) => {
+        const pane = this.panesByRuntime.get(leaf.id) ?? null;
+        const display = pane
+          ? resolvePaneDisplayName({
+              semanticPaneId: pane.semanticId,
+              configuredName: pane.descriptor?.name,
+              configuredNameSource: pane.descriptor?.nameSource,
+              currentCommand: pane.descriptor?.currentCommand,
+              title: pane.descriptor?.title,
+              paneType: pane.descriptor?.type,
+            })
+          : null;
+        return {
+          semanticPaneId: pane?.semanticId ?? null,
+          displayName: display?.name ?? null,
+          displayNameSource: display?.source ?? null,
+          left: leaf.left,
+          top: leaf.top,
+          width: leaf.width,
+          height: leaf.height,
+          active: leaf.id === activePane,
+        };
+      }),
     };
     return event;
   }

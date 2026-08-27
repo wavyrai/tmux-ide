@@ -32,6 +32,7 @@ import { TmuxError } from "@tmux-ide/tmux-bridge";
 
 import {
   createPinnedWorkspaceTmuxRunner,
+  prepareWorkspaceTerminalColorEnvironment,
   resolveWorkspacePaneTmuxAuthority,
   semanticPaneIdForOperation,
   type WorkspacePaneTmuxAuthority,
@@ -42,11 +43,13 @@ import {
   INTERNAL_READ_OPERATION_OPTION,
   INTERNAL_SEND_OPERATION_OPTION,
 } from "./tmux-interaction-options.ts";
+import { memorablePaneName } from "../terminal/protocol/pane-display-name.ts";
 
 const CREATION_OPTION = "@tmux_ide_creation_id";
 const SEMANTIC_PANE_OPTION = "@tmux_ide_pane_id";
 const SEMANTIC_WINDOW_OPTION = "@tmux_ide_window_id";
 const DISPLAY_TITLE_OPTION = "@ide_name";
+const DISPLAY_NAME_SOURCE_OPTION = "@tmux_ide_name_source";
 
 function boundedCacheIdentity(value: string): boolean {
   if (value.length === 0 || value.length > 256) return false;
@@ -604,7 +607,8 @@ export class WorkspaceMultiplexerAuthority {
     if (intent.verb !== "workspace.window.split") throw new TypeError("wrong intent");
     const sessionName = workspace.sessionName;
     const semanticPaneId = semanticPaneIdForOperation(request.operationId);
-    const displayTitle = intent.displayTitle ?? "Terminal";
+    const displayTitle = intent.displayTitle ?? memorablePaneName(semanticPaneId);
+    const displayNameSource = intent.displayTitle ? "manual" : "generated";
 
     const rows = this.#panes(sessionName);
     // Crash recovery: a split whose stamping completed but whose answer never
@@ -623,6 +627,7 @@ export class WorkspaceMultiplexerAuthority {
 
     const source = resolvePaneRow(rows, intent.semanticPaneId);
     const canonicalRoot = this.#io.canonicalProjectDir(workspace.projectDir);
+    prepareWorkspaceTerminalColorEnvironment(this.#io.runTmux, sessionName);
     const created = this.#io.runTmux([
       "split-window",
       intent.direction === "right" ? "-h" : "-v",
@@ -653,6 +658,7 @@ export class WorkspaceMultiplexerAuthority {
         ["@ide_type", "shell"],
         ["@ide_role", "shell"],
         [DISPLAY_TITLE_OPTION, displayTitle],
+        [DISPLAY_NAME_SOURCE_OPTION, displayNameSource],
       ] as const) {
         this.#io.runTmux(["set-option", "-p", "-t", paneId, option, value]);
       }
@@ -666,9 +672,13 @@ export class WorkspaceMultiplexerAuthority {
           `#{${SEMANTIC_PANE_OPTION}}`,
           `#{${CREATION_OPTION}}`,
           `#{${DISPLAY_TITLE_OPTION}}`,
+          `#{${DISPLAY_NAME_SOURCE_OPTION}}`,
         ].join("\t"),
       ]);
-      if (inspected !== [paneId, semanticPaneId, request.operationId, displayTitle].join("\t")) {
+      if (
+        inspected !==
+        [paneId, semanticPaneId, request.operationId, displayTitle, displayNameSource].join("\t")
+      ) {
         throw new WorkspaceMultiplexerError("mutation_unverified", {
           operationId: request.operationId,
           reason: "split_stamp_mismatch",
@@ -864,6 +874,40 @@ export class WorkspaceMultiplexerAuthority {
       };
     }
 
+    if (intent.scope === "pane") {
+      const pane = resolvePaneRow(this.#panes(sessionName), intent.semanticPaneId);
+      this.#io.runTmux(["set-option", "-p", "-t", pane.paneId, DISPLAY_TITLE_OPTION, intent.name]);
+      this.#io.runTmux([
+        "set-option",
+        "-p",
+        "-t",
+        pane.paneId,
+        DISPLAY_NAME_SOURCE_OPTION,
+        "manual",
+      ]);
+      this.#io.runTmux(["select-pane", "-t", pane.paneId, "-T", tmuxFormatLiteral(intent.name)]);
+      const observed = this.#io.runTmux([
+        "display-message",
+        "-p",
+        "-t",
+        pane.paneId,
+        `#{${DISPLAY_TITLE_OPTION}}\t#{${DISPLAY_NAME_SOURCE_OPTION}}\t#{pane_title}`,
+      ]);
+      if (observed !== `${intent.name}\tmanual\t${intent.name}`) {
+        throw new WorkspaceMultiplexerError("mutation_unverified", {
+          operationId: envelope.operationId,
+          reason: "pane_name_mismatch",
+        });
+      }
+      return {
+        ...envelope,
+        verb: "workspace.rename",
+        outcome: "applied",
+        scope: "pane",
+        name: intent.name,
+      };
+    }
+
     const rows = this.#panes(sessionName);
     const windowId = resolveWindowId(rows, intent.target);
     this.#io.runTmux(["rename-window", "-t", windowId, tmuxFormatLiteral(intent.name)]);
@@ -887,6 +931,14 @@ export class WorkspaceMultiplexerAuthority {
         panesOfWindow[0]!.paneId,
         DISPLAY_TITLE_OPTION,
         intent.name,
+      ]);
+      this.#io.runTmux([
+        "set-option",
+        "-p",
+        "-t",
+        panesOfWindow[0]!.paneId,
+        DISPLAY_NAME_SOURCE_OPTION,
+        "manual",
       ]);
     }
     return {

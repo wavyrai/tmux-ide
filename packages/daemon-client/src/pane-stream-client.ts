@@ -43,7 +43,11 @@ import {
 import { acquireRuntimeResource } from "./runtime-resource-ledger.ts";
 
 type SocketEventType = "open" | "message" | "close" | "error";
-type SocketListener = (event: { readonly data?: unknown }) => void;
+type SocketListener = (event: {
+  readonly data?: unknown;
+  readonly code?: number;
+  readonly reason?: string | Uint8Array;
+}) => void;
 const MAX_PENDING_TERMINAL_INPUTS = 256;
 
 function sameAuthorityLease(
@@ -324,6 +328,7 @@ export interface PaneStreamRuntimeClient {
   readonly requestId: string;
   readonly effectiveViewerMode: PaneStreamIssueDescriptor["effectiveViewerMode"];
   readonly authoritySnapshot: SessionRuntimeAuthoritySnapshot | null;
+  readonly connectionClientId: string | null;
   ownsConnectionAuthority(authority: SessionRuntimeAuthorityKind): boolean;
   connectionAuthorityClientId(authority: SessionRuntimeAuthorityKind): string | null;
   setPresence(state: SessionRuntimePresenceState): void;
@@ -446,6 +451,10 @@ export async function connectIssuedPaneStreamRuntimeClient(
     resolveReady = resolve;
     rejectReady = reject;
   });
+  // The transport can fail synchronously before its caller has received and
+  // started awaiting this promise. Keep the rejection observed during that
+  // ownership hand-off; returning `ready` still preserves the exact failure.
+  void ready.catch(() => undefined);
   const readyTimer = createRuntimeTimer(
     () => fail("Pane-stream runtime handshake timed out"),
     2_000,
@@ -651,6 +660,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
     }
   >();
   let authoritySnapshot: SessionRuntimeAuthoritySnapshot | null = null;
+  let connectionClientId: string | null = null;
   let authorityRuntimeSession: string | null = null;
   // Authority ownership is global to the authenticated client, but explicit
   // authority admission is scoped to this pane-stream connection. A fresh
@@ -1242,6 +1252,12 @@ export async function connectIssuedPaneStreamRuntimeClient(
       ) {
         return fail("Pane-stream peer identity did not match the issued capability");
       }
+      if (
+        frame.connectionClientId !== undefined &&
+        frame.connectionClientId !== options.hostClientId
+      )
+        return fail("Pane-stream peer client identity did not match the redeemed connection");
+      connectionClientId = frame.connectionClientId ?? null;
       verified = true;
       options.onConnectionDiagnostic?.("ready-frame", {
         requestId: descriptor.requestId,
@@ -1430,7 +1446,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
     }
     routeFrame(options, frame, fail);
   };
-  const onClose: SocketListener = () => {
+  const onClose: SocketListener = (event) => {
     if (closed) return;
     closed = true;
     clearReadyTimer();
@@ -1438,7 +1454,16 @@ export async function connectIssuedPaneStreamRuntimeClient(
     detachAbortListener();
     detachSocketListeners();
     releaseSocketResource();
-    const error = new Error("Pane-stream runtime connection closed");
+    const reason =
+      typeof event.reason === "string"
+        ? event.reason
+        : event.reason instanceof Uint8Array
+          ? new TextDecoder().decode(event.reason)
+          : "";
+    const detail = [Number.isSafeInteger(event.code) ? String(event.code) : "", reason]
+      .filter(Boolean)
+      .join(" ");
+    const error = new Error(`Pane-stream runtime connection closed${detail ? ` (${detail})` : ""}`);
     rejectPending(error);
     rejectReady(error);
     options.onFault?.(error);
@@ -1464,6 +1489,9 @@ export async function connectIssuedPaneStreamRuntimeClient(
     effectiveViewerMode: descriptor.effectiveViewerMode,
     get authoritySnapshot() {
       return authoritySnapshot;
+    },
+    get connectionClientId() {
+      return closed ? null : connectionClientId;
     },
     ownsConnectionAuthority: (authority) => connectionAuthorityGrants.has(authority),
     connectionAuthorityClientId: (authority) =>

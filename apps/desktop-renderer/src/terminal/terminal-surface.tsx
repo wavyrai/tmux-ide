@@ -48,6 +48,30 @@ type AnsiProbeGlobals = typeof globalThis & {
   >;
 };
 
+type Card5InputOperationGlobals = typeof globalThis & {
+  __TMUX_IDE_CARD5_INPUT_OPERATION_RECORD__?: (event: {
+    readonly stage: "xterm-enqueue" | "surface-write";
+    readonly outcome: "attempt" | "ok" | "failed";
+    readonly pane: string;
+  }) => void;
+};
+
+function recordCard5SurfaceInputOperation(
+  stage: "xterm-enqueue" | "surface-write",
+  outcome: "attempt" | "ok" | "failed",
+  pane: string,
+): void {
+  try {
+    (globalThis as Card5InputOperationGlobals).__TMUX_IDE_CARD5_INPUT_OPERATION_RECORD__?.({
+      stage,
+      outcome,
+      pane,
+    });
+  } catch {
+    // Detailed evidence cannot alter terminal input.
+  }
+}
+
 type DetailedAnsiProbe = Readonly<{
   surface: HTMLElement;
   presentation: NonNullable<ReturnType<NonNullable<TerminalRenderer["readPresentation"]>>>;
@@ -434,6 +458,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
   let conflictAttempt = 0;
   let reconnectRetry: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempt = 0;
+  let lifecycleRetiredResizeRetryUsed = false;
   let attachTraceStartedAt = monotonicNow();
 
   /**
@@ -601,6 +626,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     cancelReconnectRetry();
     conflictAttempt = 0;
     reconnectAttempt = 0;
+    lifecycleRetiredResizeRetryUsed = false;
     pendingResize = null;
     setGeometryPassive(true);
     setFailureCode("geometry-authority-conflict");
@@ -644,6 +670,12 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         }
         setResizeOrdinal((ordinal) => ordinal + 1);
         if (result.status !== "error") {
+          const recoveredLifecycleRetirement = lifecycleRetiredResizeRetryUsed;
+          lifecycleRetiredResizeRetryUsed = false;
+          if (recoveredLifecycleRetirement) {
+            setFailureCode("none");
+            setReason(null);
+          }
           currentViewport = next;
           lastAcknowledgedResize = next;
           setClientViewport(next);
@@ -654,6 +686,14 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         setResizeOutcome(resizeOutcomeForError(result.error.code));
         if (result.error.code === "geometry-authority-conflict") {
           reconnectReadOnlyAfterGeometryConflict(activeAttachment);
+          return;
+        }
+        if (
+          result.error.code === "geometry-lifecycle-retired" &&
+          !lifecycleRetiredResizeRetryUsed
+        ) {
+          lifecycleRetiredResizeRetryUsed = true;
+          reconnectAfter(validatedTransportReason(result.error.reason), activeGeneration);
           return;
         }
         setFailureCode("resize-rejected");
@@ -832,6 +872,18 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       }
       return queueOutput(event.bytes, activeGeneration, event.canonical).then(() => {
         if (!disposed && activeGeneration === generation) {
+          if (
+            lifecycleRetiredResizeRetryUsed &&
+            !sizePassive() &&
+            currentViewport !== null &&
+            latestMeasuredViewport !== null &&
+            sameViewport(currentViewport, latestMeasuredViewport)
+          ) {
+            lifecycleRetiredResizeRetryUsed = false;
+            setFailureCode("none");
+            setReason(null);
+            setResizeOutcome("none");
+          }
           reconnectAttempt = 0;
           setHasValidatedFrame(true);
           recordAttachPhase("live");
@@ -1086,6 +1138,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     cancelReconnectRetry();
     conflictAttempt = 0;
     reconnectAttempt = 0;
+    lifecycleRetiredResizeRetryUsed = false;
     setViewerMode("interactive");
     setGeometryPassive(false);
     setResizeOutcome("none");
@@ -1163,9 +1216,15 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
         ) {
           return null;
         }
+        recordCard5SurfaceInputOperation("surface-write", "attempt", props.target.semanticPaneId);
         return activeAttachment.write(payload);
       })
       .then((result) => {
+        recordCard5SurfaceInputOperation(
+          "surface-write",
+          result?.status === "ok" ? "ok" : "failed",
+          props.target.semanticPaneId,
+        );
         if (
           !result ||
           result.status !== "error" ||
@@ -1218,6 +1277,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
       return;
     }
     const payload = bytes.slice();
+    recordCard5SurfaceInputOperation("xterm-enqueue", "ok", props.target.semanticPaneId);
     epoch.queue.push(payload);
     epoch.pendingEntries += 1;
     epoch.pendingBytes += payload.byteLength;
@@ -1330,6 +1390,7 @@ export function TerminalSurface(props: TerminalSurfaceProps) {
     cancelReconnectRetry();
     conflictAttempt = 0;
     reconnectAttempt = 0;
+    lifecycleRetiredResizeRetryUsed = false;
     setViewerMode("interactive");
     setGeometryPassive(false);
     setResizeOutcome("none");

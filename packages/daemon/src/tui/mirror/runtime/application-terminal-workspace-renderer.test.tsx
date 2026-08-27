@@ -243,6 +243,66 @@ describe("ApplicationTerminalWorkspace", () => {
     setup.renderer.destroy();
   });
 
+  it("keeps quiet terminal contents painted when canonical pane geometry changes", async () => {
+    registerPaneSurface();
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const palette = createTerminalPaletteProjection(theme);
+    const blits: string[] = [];
+    const initial = {
+      type: "layout" as const,
+      semanticWindowId: "window.main",
+      windowName: "main",
+      currentWindow: true,
+      cols: 30,
+      rows: 9,
+      zoomed: false,
+      paneBorderStatus: "off" as const,
+      panes: [
+        { pane: "pane.a", left: 0, top: 0, width: 14, height: 9, active: true },
+        { pane: "pane.b", left: 15, top: 0, width: 15, height: 9, active: false },
+      ],
+    };
+    const resized = {
+      ...initial,
+      panes: [
+        { pane: "pane.a", left: 0, top: 0, width: 19, height: 9, active: true },
+        { pane: "pane.b", left: 20, top: 0, width: 10, height: 9, active: false },
+      ],
+    };
+    const [workspaceLayout, setWorkspaceLayout] = createSignal<OpenTuiWorkspaceLayoutSnapshot>({
+      current: initial,
+      windows: [initial],
+    });
+    const setup = await renderForTest(
+      () => (
+        <ApplicationTerminalWorkspace
+          layout={workspaceLayout}
+          adapter={adapter({ "pane.a": "A", "pane.b": "B" }, blits)}
+          rendererEpoch={1}
+          width={30}
+          height={9}
+          focusedPane="pane.a"
+          theme={theme}
+          palette={palette}
+          onSelectPane={() => undefined}
+        />
+      ),
+      { width: 30, height: 11 },
+    );
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("A");
+    expect(setup.captureCharFrame()).toContain("B");
+
+    blits.length = 0;
+    setWorkspaceLayout({ current: resized, windows: [resized] });
+    await setup.renderOnce();
+
+    expect(new Set(blits)).toEqual(new Set(["pane.a", "pane.b"]));
+    expect(setup.captureCharFrame()).toContain("A");
+    expect(setup.captureCharFrame()).toContain("B");
+    setup.renderer.destroy();
+  });
+
   it("fully repaints generation B seed v1 over generation A seed v1", async () => {
     registerPaneSurface();
     const theme = createSemanticThemeSnapshot({ mode: "dark" });
@@ -509,6 +569,7 @@ describe("ApplicationTerminalWorkspace", () => {
     };
     const forwarded: string[] = [];
     const copied: Array<{ text: string; bytes: number }> = [];
+    const paneActions: Array<{ paneId: string; action: string }> = [];
     let handleSelectionKey: ((name: string) => boolean) | null = null;
     let copyCurrent: (() => boolean) | null = null;
     let canonicalRevision = 1;
@@ -551,6 +612,7 @@ describe("ApplicationTerminalWorkspace", () => {
           theme={theme}
           palette={palette}
           onSelectPane={() => undefined}
+          onPaneContextAction={(paneId, action) => paneActions.push({ paneId, action })}
           onTerminalInput={(_paneId, input) => forwarded.push(input.data)}
           onCopyText={(text, evidence) => {
             copied.push({ text, bytes: evidence.bytes });
@@ -592,7 +654,9 @@ describe("ApplicationTerminalWorkspace", () => {
     expect(copied).toEqual([]);
 
     await setup.mockMouse.click(2, 3, MouseButtons.RIGHT);
+    await setup.renderOnce();
     expect(handleSelectionKey?.("enter")).toBe(true);
+    await setup.renderOnce();
 
     forwarded.length = 0;
     await setup.mockMouse.pressDown(1, 3, MouseButtons.LEFT);
@@ -612,6 +676,12 @@ describe("ApplicationTerminalWorkspace", () => {
     canonicalRevision += 1;
     expect(copyCurrent?.()).toBe(false);
     expect(copied).toHaveLength(2);
+
+    await setup.mockMouse.click(2, 3, MouseButtons.RIGHT);
+    expect(handleSelectionKey?.("down")).toBe(true);
+    expect(handleSelectionKey?.("down")).toBe(true);
+    expect(handleSelectionKey?.("enter")).toBe(true);
+    expect(paneActions).toEqual([{ paneId: "pane.a", action: "split-right" }]);
     setup.renderer.destroy();
   });
 });

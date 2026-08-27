@@ -9,6 +9,7 @@ import type {
   PaneStreamTransport,
   PaneStreamTransportError,
 } from "../terminal/pane-stream-transport.ts";
+import { recordCard5PhysicalBridgeBinding } from "./card5-envelope-evidence.ts";
 
 interface BridgeConnection {
   readonly workspaceName: string;
@@ -16,10 +17,16 @@ interface BridgeConnection {
   readonly panes: ReadonlySet<string>;
   readonly interactive: boolean;
   readonly listeners: PaneStreamSessionListeners;
-  readonly lanes: Map<string, { running: boolean; pending: PaneMirrorEvent | null }>;
+  readonly lanes: Map<string, { running: boolean; pending: QueuedPaneEvent | null }>;
+  readonly retireWaiters: Set<() => void>;
   active: boolean;
   epoch: number;
 }
+
+type QueuedPaneEvent = {
+  readonly event: PaneMirrorEvent;
+  readonly settle: (applied: boolean) => void;
+};
 
 type Card5SinkControl = {
   blocked: boolean;
@@ -48,6 +55,17 @@ export interface WebWorkspacePaneStreamBridge extends PaneStreamTransport {
   replacePaneSet(panes: ReadonlySet<string>): void;
   end(error: PaneStreamTransportError | null): void;
   bindSession(session: PaneStreamSessionHandle | null, workspaceName?: string): void;
+  activateRuntime(input: {
+    readonly session: PaneStreamSessionHandle;
+    readonly workspaceName: string;
+    readonly generation: string;
+    readonly panes: ReadonlySet<string>;
+    readonly paneEvents: ReadonlyMap<string, PaneMirrorEvent>;
+    readonly layout: PaneStreamLayoutEvent | null;
+    readonly layoutSnapshot: PaneStreamLayoutSnapshotEvent | null;
+    readonly isCurrent: () => boolean;
+    readonly commit: () => boolean;
+  }): Promise<boolean>;
 }
 
 export function createWebWorkspacePaneStreamBridge(
@@ -96,6 +114,8 @@ export function createWebWorkspacePaneStreamBridge(
   let boundWorkspaceName = initialWorkspaceName;
   let targetEpoch = 0;
   let sessionEpoch = 0;
+  let activationEpoch = 0;
+  let unsubscribePhysicalBinding: (() => void) | null = null;
   let ended: PaneStreamTransportError | null | undefined;
   const replaySeed = (event: PaneMirrorEvent): PaneMirrorEvent =>
     event.type === "output" && event.replay
@@ -120,13 +140,20 @@ export function createWebWorkspacePaneStreamBridge(
     if (next.type === "closed" || isReplayAuthority(next)) return next;
     return pending && isReplayAuthority(pending) ? pending : next;
   };
-  const enqueue = (connection: BridgeConnection, pane: string, event: PaneMirrorEvent): void => {
+  const enqueue = (
+    connection: BridgeConnection,
+    pane: string,
+    event: PaneMirrorEvent,
+  ): Promise<boolean> => {
+    let settle!: (applied: boolean) => void;
+    const applied = new Promise<boolean>((resolve) => (settle = resolve));
+    const queued: QueuedPaneEvent = { event, settle };
     if (
       !connection.active ||
       connection.targetEpoch !== targetEpoch ||
       connection.workspaceName !== boundWorkspaceName
     )
-      return;
+      return Promise.resolve(false);
     if (sinkControl) sinkControl.offeredCount += 1;
     let lane = connection.lanes.get(pane);
     if (!lane) {
@@ -136,17 +163,23 @@ export function createWebWorkspacePaneStreamBridge(
     if (lane.running) {
       // A renderer-local consumer owns no upstream ACK. Retain only the latest
       // replayable authority while its current paint is in flight.
-      lane.pending = coalescePending(lane.pending, event);
+      const retained = coalescePending(lane.pending?.event ?? null, event);
+      if (retained === event) {
+        lane.pending?.settle(false);
+        lane.pending = queued;
+      } else {
+        settle(false);
+      }
       if (sinkControl) sinkControl.coalescedCount += 1;
       if (sinkControl) {
         sinkControl.pendingCurrent = 1;
         sinkControl.pendingPeak = 1;
       }
-      return;
+      return applied;
     }
     lane.running = true;
-    const drain = async (first: PaneMirrorEvent, startsCoalesced: boolean): Promise<void> => {
-      let current: PaneMirrorEvent | null = first;
+    const drain = async (first: QueuedPaneEvent, startsCoalesced: boolean): Promise<void> => {
+      let current: QueuedPaneEvent | null = first;
       let coalesced = startsCoalesced;
       try {
         while (
@@ -156,10 +189,26 @@ export function createWebWorkspacePaneStreamBridge(
           current
         ) {
           if (sinkControl?.blocked) {
-            await new Promise<void>((resolve) => sinkControl.waiters.add(resolve));
+            await new Promise<void>((resolve) => {
+              const release = (): void => {
+                sinkControl.waiters.delete(release);
+                connection.retireWaiters.delete(release);
+                resolve();
+              };
+              sinkControl.waiters.add(release);
+              connection.retireWaiters.add(release);
+            });
           }
           if (!connection.active) break;
-          await connection.listeners.onPaneEvent(pane, coalesced ? replaySeed(current) : current);
+          await connection.listeners.onPaneEvent(
+            pane,
+            coalesced ? replaySeed(current.event) : current.event,
+          );
+          current.settle(
+            connection.active &&
+              connection.targetEpoch === targetEpoch &&
+              connection.workspaceName === boundWorkspaceName,
+          );
           if (sinkControl) sinkControl.deliveredCount += 1;
           current = lane!.pending;
           lane!.pending = null;
@@ -167,9 +216,11 @@ export function createWebWorkspacePaneStreamBridge(
           coalesced = true;
         }
       } catch {
+        current?.settle(false);
         // A renderer-local listener cannot reject the shared physical stream.
         // Any authority queued behind it is restarted as a replay seed below.
       } finally {
+        current?.settle(false);
         lane!.running = false;
         const pending = lane!.pending;
         lane!.pending = null;
@@ -188,19 +239,80 @@ export function createWebWorkspacePaneStreamBridge(
         }
       }
     };
-    void drain(event, false);
+    void drain(queued, false);
+    return applied;
   };
-  const publishPane = (pane: string, event: PaneMirrorEvent): void => {
+  const retireConnection = (connection: BridgeConnection): void => {
+    connection.epoch += 1;
+    connection.active = false;
+    for (const release of connection.retireWaiters) release();
+    connection.retireWaiters.clear();
+    for (const lane of connection.lanes.values()) lane.pending?.settle(false);
+    connection.lanes.clear();
+    connections.delete(connection);
+  };
+  const publishPane = (pane: string, event: PaneMirrorEvent): readonly Promise<boolean>[] => {
     if (event.type === "seed-batch") latest.set(pane, event);
     else if (event.type === "output" && event.replay) latest.set(pane, event);
     else if (event.type === "closed") latest.delete(pane);
+    const settlements: Promise<boolean>[] = [];
     for (const connection of connections) {
       if (
         connection.targetEpoch === targetEpoch &&
         connection.workspaceName === boundWorkspaceName &&
         connection.panes.has(pane)
       )
-        enqueue(connection, pane, event);
+        settlements.push(enqueue(connection, pane, event));
+    }
+    return settlements;
+  };
+  const bindPhysicalSession = (
+    next: PaneStreamSessionHandle | null,
+    workspaceName = boundWorkspaceName,
+  ): void => {
+    if (next) ended = undefined;
+    unsubscribePhysicalBinding?.();
+    unsubscribePhysicalBinding = null;
+    recordCard5PhysicalBridgeBinding(null);
+    sessionEpoch += 1;
+    const retired: BridgeConnection[] = [];
+    if (workspaceName !== boundWorkspaceName) {
+      targetEpoch += 1;
+      for (const connection of [...connections]) {
+        retireConnection(connection);
+        retired.push(connection);
+      }
+      latest.clear();
+      layout = null;
+      layoutSnapshot = null;
+    }
+    boundWorkspaceName = workspaceName;
+    session = next;
+    if (next?.subscribeCard5PhysicalBinding) {
+      const retainedSession = next;
+      const retainedEpoch = sessionEpoch;
+      unsubscribePhysicalBinding = next.subscribeCard5PhysicalBinding((binding) => {
+        if (
+          session !== retainedSession ||
+          sessionEpoch !== retainedEpoch ||
+          (binding !== null && binding.workspaceName !== boundWorkspaceName)
+        )
+          return;
+        recordCard5PhysicalBridgeBinding(binding);
+      });
+    } else {
+      recordCard5PhysicalBridgeBinding(next?.card5PhysicalBinding?.() ?? null);
+    }
+    for (const connection of retired) {
+      try {
+        connection.listeners.onEnd({
+          code: "workspace-client-target-mismatch",
+          reason: "The local terminal target is no longer current.",
+          retryable: true,
+        });
+      } catch {
+        // A retired renderer-local listener cannot interrupt the target swap.
+      }
     }
   };
   return {
@@ -230,6 +342,7 @@ export function createWebWorkspacePaneStreamBridge(
         interactive: request.viewerMode === "interactive",
         listeners,
         lanes: new Map(),
+        retireWaiters: new Set(),
         active: true,
         epoch: 0,
       };
@@ -293,10 +406,7 @@ export function createWebWorkspacePaneStreamBridge(
           dispose() {
             if (disposed) return;
             disposed = true;
-            connection.epoch += 1;
-            connection.active = false;
-            connections.delete(connection);
-            connection.lanes.clear();
+            retireConnection(connection);
           },
           updatePresence(state: SessionRuntimePresenceState) {
             if (!connection.active || disposed || connection.workspaceName !== boundWorkspaceName)
@@ -307,6 +417,30 @@ export function createWebWorkspacePaneStreamBridge(
             if (!connection.active || disposed || connection.workspaceName !== boundWorkspaceName)
               return;
             session?.noteActivity?.(activity);
+          },
+          connectionClientId() {
+            const physical = session;
+            const epoch = connection.epoch;
+            const physicalEpoch = sessionEpoch;
+            if (
+              !connection.active ||
+              disposed ||
+              connection.workspaceName !== boundWorkspaceName ||
+              connection.epoch !== epoch ||
+              sessionEpoch !== physicalEpoch ||
+              session !== physical ||
+              !physical?.connectionClientId
+            )
+              return null;
+            const clientId = physical.connectionClientId();
+            return connection.active &&
+              !disposed &&
+              connection.workspaceName === boundWorkspaceName &&
+              connection.epoch === epoch &&
+              sessionEpoch === physicalEpoch &&
+              session === physical
+              ? clientId
+              : null;
           },
           connectionAuthorityClientId(authority) {
             const physical = session;
@@ -531,15 +665,17 @@ export function createWebWorkspacePaneStreamBridge(
       // a renderer-owned reconnect signal. Keep local bridge sessions alive;
       // the winning runtime will replace panes/layout and resume publication.
       if (error === null) {
+        unsubscribePhysicalBinding?.();
+        unsubscribePhysicalBinding = null;
+        recordCard5PhysicalBridgeBinding(null);
         sessionEpoch += 1;
         session = null;
         return;
       }
       if (ended !== undefined) return;
       ended = error;
-      for (const connection of connections) {
-        connection.active = false;
-        connection.lanes.clear();
+      for (const connection of [...connections]) {
+        retireConnection(connection);
         connection.listeners.onEnd(error);
       }
       connections.clear();
@@ -555,38 +691,107 @@ export function createWebWorkspacePaneStreamBridge(
       layout = null;
       layoutSnapshot = null;
       sessionEpoch += 1;
+      unsubscribePhysicalBinding?.();
+      unsubscribePhysicalBinding = null;
+      recordCard5PhysicalBridgeBinding(null);
       session = null;
     },
     bindSession(next, workspaceName = boundWorkspaceName) {
-      if (next) ended = undefined;
-      sessionEpoch += 1;
-      const retired: BridgeConnection[] = [];
-      if (workspaceName !== boundWorkspaceName) {
-        targetEpoch += 1;
-        for (const connection of [...connections]) {
-          connection.epoch += 1;
-          connection.active = false;
-          connection.lanes.clear();
-          connections.delete(connection);
-          retired.push(connection);
+      activationEpoch += 1;
+      bindPhysicalSession(next, workspaceName);
+    },
+    async activateRuntime(input) {
+      const transactionEpoch = ++activationEpoch;
+      const startingTargetEpoch = targetEpoch;
+      const initial = connections.size === 0;
+      const retainedConsumers = [...connections];
+      const panes = [...input.panes].sort();
+      const binding = input.session.card5PhysicalBinding?.() ?? null;
+      if (
+        input.workspaceName !== boundWorkspaceName ||
+        !input.isCurrent() ||
+        !binding ||
+        binding.generation !== input.generation ||
+        binding.workspaceName !== input.workspaceName ||
+        binding.stage !== "first-seed" ||
+        JSON.stringify([...binding.semanticPaneIds].sort()) !== JSON.stringify(panes) ||
+        (input.layout === null && input.layoutSnapshot === null) ||
+        input.paneEvents.size !== panes.length ||
+        panes.some((pane) => {
+          const event = input.paneEvents.get(pane);
+          return (
+            (event?.type !== "seed-batch" && !(event?.type === "output" && event.replay)) ||
+            event.canonical?.generation !== input.generation
+          );
+        })
+      )
+        return false;
+      bindPhysicalSession(null, input.workspaceName);
+      if (
+        activationEpoch !== transactionEpoch ||
+        targetEpoch !== startingTargetEpoch ||
+        connections.size !== retainedConsumers.length ||
+        retainedConsumers.some((connection) => !connections.has(connection)) ||
+        !input.isCurrent()
+      )
+        return false;
+      for (const pane of [...latest.keys()]) {
+        if (!input.panes.has(pane)) {
+          const settlements = publishPane(pane, { type: "closed" });
+          if (
+            !initial &&
+            (settlements.length === 0 || !(await Promise.all(settlements)).every(Boolean))
+          )
+            return false;
         }
-        latest.clear();
+      }
+      if (input.layoutSnapshot) {
+        layoutSnapshot = input.layoutSnapshot;
         layout = null;
-        layoutSnapshot = null;
+        for (const connection of connections)
+          connection.listeners.onLayoutSnapshot?.(input.layoutSnapshot);
+      } else if (input.layout) {
+        layout = input.layout;
+        for (const connection of connections) connection.listeners.onLayout?.(input.layout);
       }
-      boundWorkspaceName = workspaceName;
-      session = next;
-      for (const connection of retired) {
-        try {
-          connection.listeners.onEnd({
-            code: "workspace-client-target-mismatch",
-            reason: "The local terminal target is no longer current.",
-            retryable: true,
-          });
-        } catch {
-          // A retired renderer-local listener cannot interrupt the target swap.
-        }
+      for (const pane of panes) {
+        const settlements = publishPane(pane, input.paneEvents.get(pane)!);
+        if (
+          !initial &&
+          (settlements.length === 0 || !(await Promise.all(settlements)).every(Boolean))
+        )
+          return false;
+        if (
+          activationEpoch !== transactionEpoch ||
+          targetEpoch !== startingTargetEpoch ||
+          connections.size !== retainedConsumers.length ||
+          retainedConsumers.some((connection) => !connections.has(connection)) ||
+          !input.isCurrent()
+        )
+          return false;
       }
+      const finalBinding = input.session.card5PhysicalBinding?.() ?? null;
+      if (
+        activationEpoch !== transactionEpoch ||
+        targetEpoch !== startingTargetEpoch ||
+        connections.size !== retainedConsumers.length ||
+        retainedConsumers.some((connection) => !connections.has(connection)) ||
+        !input.isCurrent() ||
+        !finalBinding ||
+        JSON.stringify(finalBinding) !== JSON.stringify(binding)
+      )
+        return false;
+      bindPhysicalSession(input.session, input.workspaceName);
+      if (
+        activationEpoch !== transactionEpoch ||
+        session !== input.session ||
+        !input.isCurrent() ||
+        !input.commit()
+      ) {
+        if (session === input.session) bindPhysicalSession(null, input.workspaceName);
+        return false;
+      }
+      return true;
     },
   };
 }

@@ -2,8 +2,8 @@
 
 exports[`production ApplicationShellView retains shell, window strip, pane chrome, and canvas at %sx%s 1`] = `
 "  ⌂  ●❯                                                                    live
-  tmux              ● main [WORKING]
- ● main             ● Codex [WORKING]
+  tmux              ● main [WORKING]                                         [+]
+ ● main             ● Codex [WORKING]           [→][↓][×][⋯]
  ○ website          CANONICAL-CELL
 
  Agents
@@ -18,8 +18,8 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
 
 exports[`production ApplicationShellView retains shell, window strip, pane chrome, and canvas at %sx%s 2`] = `
 "   workspace   ⌂ Home  ●❯ Terminals                                                                                live
-  tmux-ide                  ● main [WORKING]
- ● main                     ● Codex [WORKING]
+  tmux-ide                  ● main [WORKING]                                                                         [+]
+ ● main                     ● Codex [WORKING]           [→][↓][×][⋯]
  ○ website                  CANONICAL-CELL
 
  Agents
@@ -34,8 +34,8 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
 
 exports[`production ApplicationShellView retains shell, window strip, pane chrome, and canvas at %sx%s 3`] = `
 "   workspace  F1  ⌂ Home  F2 ●❯ Terminals                                                                                                                                                          live
-  tmux-ide                  ● main [WORKING]
- ● main                     ● Codex [WORKING]
+  tmux-ide                  ● main [WORKING]                                                                                                                                                         [+]
+ ● main                     ● Codex [WORKING]           [→][↓][×][⋯]
  ○ website                  CANONICAL-CELL
 
  Agents
@@ -54,8 +54,8 @@ exports[`production ApplicationShellView reacts palette geometry through narrow 
  ●│ Command palette      │
  ○│ › F1 Home            │
   │ F2 Terminals         │
- A│ Split pane right     │
- •│ Split pane down      │e
+ A│ New terminal window  │
+ •│ Split pane right     │e
   ╰──────────────────────╯
   F5 · ^q quit   Terminals …"
 `;
@@ -72,8 +72,8 @@ exports[`production ApplicationShellView reacts palette geometry through narrow 
 
 exports[`production ApplicationShellView preserves canonical attention while prioritizing mixed window activity 1`] = `
 "   workspace   ⌂ Home  ●❯ Terminals                                                                                live
-  tmux-ide                  ● main ! [WORKING]
- ● main                     ● Codex [WORKING]                       ○ Scout ! [IDLE]
+  tmux-ide                  ● main ! [WORKING]                                                                       [+]
+ ● main                     ● Codex [WORKING]           [→][↓][×][⋯]○ Scout ! [IDLE]            [→][↓][×][⋯]
  ○ website                  CANONICAL-CELL                          CANONICAL-CELL
 
  Agents

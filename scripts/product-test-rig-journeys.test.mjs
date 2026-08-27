@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHmac } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -30,6 +31,20 @@ import {
   PRODUCT_JOURNEY_REGISTRY,
   ProductJourneyAttemptError,
   auditProductJourneyScope,
+  acquireLegacyProductRigCleanupLedger,
+  assessLegacyProductRigCleanupAdmission,
+  assessLegacyProductRigOwnerRetryCompatibility,
+  assessLegacyProductRigOwnerRetryCompletion,
+  createLegacyProductRigOwnerRetryIntent,
+  acquireLegacyProductRigOwnerRetryIntent,
+  legacyProductRigOwnerRetryIntentMatchesState,
+  legacyProductRigOwnerRetryIntentMatchesOwnerRows,
+  createLegacyProductRigOwnerRetryShutdownRequest,
+  createLegacyProductRigOwnerRetryReceipt,
+  acquireLegacyProductRigOwnerRetryReceipt,
+  finalizeLegacyProductRigOwnerRetry,
+  assessProductRigRetainedProcessAbsence,
+  captureLegacyProductRigCleanupLedger,
   bufferOwnedTuiRuntimeEvidence,
   collectProductRigCleanupFailures,
   createProductRigCleanupReceipt,
@@ -38,6 +53,7 @@ import {
   dispatchProductJourneyExecutor,
   expandProductJourneyEntries,
   isCleanLegacyStoppedProductRigState,
+  isProductRigPendingReapAck,
   parseProductDiagnoseOptions,
   prepareIsolatedTargetedTuiCwd,
   prepareOwnedTuiRuntime,
@@ -48,6 +64,8 @@ import {
   productRigTerminalFailureError,
   productRigTerminalFailureState,
   resolveProductJourneyPlan,
+  retireLegacyProductRigCleanupIdentities,
+  retireProductRigCleanupProofFiles,
   runIsolatedProductJourneyAttempt,
   runConfiglessProductJourneyOwnerBoot,
   runCoherentFirstPaneOwnerBoot,
@@ -2820,6 +2838,800 @@ test("cleanup barrier rejects stopped publication before exact owner death and o
     ),
     [],
   );
+});
+
+test("cleanup barrier externally reobserves terminal host children after tokened owner exit", () => {
+  const root = "/tmp/tmi-e2e-terminal-reap-proof";
+  const state = {
+    status: "failed",
+    ownerPid: 778,
+    daemon: { pid: 779 },
+    runtimeNamespace: {
+      root,
+      tmuxSocketPath: `${root}/t.sock`,
+      hostTmuxSocketPath: `${root}/host.sock`,
+      daemonInfoDir: `${root}/daemon`,
+      cleanupToken: "product-test-rig:terminal-reap",
+    },
+    cleanup: {
+      requestId: "terminal-reap-request",
+      status: "passed",
+      cleanupToken: "product-test-rig:terminal-reap",
+      failures: [],
+      card5: { chromiumTerminalProcessCount: 0, electronTerminalProcessCount: 1 },
+    },
+  };
+  const base = { processAlive: () => false, pathExists: () => false };
+  assert.deepEqual(
+    productRigCleanupBarrierFailures(state, "terminal-reap-request", {
+      ...base,
+      retainedProcessIdentityStatus: () => "live",
+    }),
+    ["owner-child-process-live"],
+  );
+  assert.deepEqual(productRigCleanupBarrierFailures(state, "terminal-reap-request", base), [
+    "owner-child-reap-unverified",
+  ]);
+  assert.deepEqual(
+    productRigCleanupBarrierFailures(state, "terminal-reap-request", {
+      ...base,
+      retainedProcessIdentityStatus: () => "absent",
+    }),
+    [],
+  );
+});
+
+test("retained process absence is exact for rootless zombies, disappearance, and PID reuse", () => {
+  const identities = [
+    { kind: "owner", pid: 700, pgid: 700, startToken: "owner-start" },
+    { kind: "electron", pid: 701, pgid: 700, startToken: "electron-start" },
+  ];
+  assert.equal(
+    assessProductRigRetainedProcessAbsence(identities, [
+      { pid: 701, pgid: 700, startToken: "electron-start", command: "(Electron)" },
+    ]),
+    "live",
+  );
+  assert.equal(assessProductRigRetainedProcessAbsence(identities, []), "absent");
+  assert.equal(
+    assessProductRigRetainedProcessAbsence(identities, [
+      { pid: 701, pgid: 700, startToken: "reused-start", command: "unrelated" },
+    ]),
+    "absent",
+  );
+  assert.equal(assessProductRigRetainedProcessAbsence(identities, null), "invalid");
+});
+
+test("a passed owner keeps accepting its exact reap acknowledgement request after timeout", () => {
+  const request = {
+    requestId: "request-a",
+    ownerPid: 700,
+    ownerToken: "a".repeat(48),
+    cleanupToken: "cleanup-token",
+  };
+  const state = {
+    ownerPid: request.ownerPid,
+    ownerToken: request.ownerToken,
+    runtimeNamespace: { cleanupToken: request.cleanupToken },
+    cleanup: {
+      requestId: request.requestId,
+      status: "passed",
+      processReap: { version: 1 },
+    },
+  };
+  assert.equal(isProductRigPendingReapAck(state, request, "cross-client-handoff"), true);
+  assert.equal(isProductRigPendingReapAck(state, request, "cross-client-handoff"), true);
+  assert.equal(
+    isProductRigPendingReapAck(state, { ...request, requestId: "foreign" }, "cross-client-handoff"),
+    false,
+  );
+  assert.equal(
+    isProductRigPendingReapAck(
+      state,
+      { ...request, ownerToken: "b".repeat(48) },
+      "cross-client-handoff",
+    ),
+    false,
+  );
+});
+
+test("cleanup proof retirement removes the token ack before the recovery ledger", () => {
+  const files = new Set(["ack", "ledger"]);
+  assert.throws(() =>
+    retireProductRigCleanupProofFiles({
+      removeAck: () => files.delete("ack"),
+      removeLedger: () => {
+        throw new Error("controller-crash");
+      },
+    }),
+  );
+  assert.deepEqual([...files], ["ledger"]);
+  retireProductRigCleanupProofFiles({
+    removeAck: () => files.delete("ack"),
+    removeLedger: () => files.delete("ledger"),
+  });
+  assert.deepEqual([...files], []);
+});
+
+test("legacy cleanup captures a stable authorized owner and rootless descendant ledger", async () => {
+  const root = "/tmp/tmi-e2e-legacy-recovery";
+  const state = {
+    status: "cleanup-failed",
+    ownerPid: 700,
+    ownerToken: "a".repeat(48),
+    diagnosticAttempt: {
+      runId: "legacy-run",
+      sourceProvenance: {
+        commit: "b".repeat(40),
+        tree: "c".repeat(40),
+        manifestDigest: "d".repeat(64),
+      },
+    },
+    runtimeNamespace: { root, cleanupToken: "cleanup-token" },
+    cleanup: { status: "failed", card5: { electronProcessCount: 1 } },
+  };
+  const authorization = {
+    requestId: `legacy-${"e".repeat(24)}`,
+    runId: "legacy-run",
+    ownerToken: state.ownerToken,
+    commit: "b".repeat(40),
+    tree: "c".repeat(40),
+    manifestDigest: "d".repeat(64),
+    runtimeRoot: root,
+  };
+  const rows = [
+    { pid: 700, ppid: 1, pgid: 700, state: "S", startToken: "owner", command: "node owner" },
+    { pid: 701, ppid: 700, pgid: 700, state: "?Es", startToken: "child", command: "(Electron)" },
+  ];
+  const ledger = await captureLegacyProductRigCleanupLedger(state, authorization, {
+    readProcessRows: () => structuredClone(rows),
+    yieldTurn: async () => {},
+  });
+  assert.equal(ledger.identities.length, 2);
+  assert.equal(ledger.identities[1].command, "(Electron)");
+  assert.match(ledger.identityHmac, /^[0-9a-f]{64}$/u);
+  assert.deepEqual(
+    acquireLegacyProductRigCleanupLedger(state, authorization, structuredClone(ledger)),
+    ledger,
+  );
+  const completedState = {
+    ...state,
+    status: "failed",
+    cleanup: {
+      status: "passed",
+      failures: [],
+      card5: { passed: true },
+      processReap: {
+        version: 1,
+        identityCount: ledger.identities.length,
+        terminalIdentityCount: ledger.identities.length - 1,
+        identityHmac: ledger.identityHmac,
+      },
+    },
+  };
+  assert.deepEqual(
+    acquireLegacyProductRigCleanupLedger(completedState, authorization, structuredClone(ledger)),
+    ledger,
+  );
+  assert.equal(
+    acquireLegacyProductRigCleanupLedger(
+      {
+        ...completedState,
+        cleanup: {
+          ...completedState.cleanup,
+          processReap: { ...completedState.cleanup.processReap, identityHmac: "0".repeat(64) },
+        },
+      },
+      authorization,
+      structuredClone(ledger),
+    ),
+    null,
+  );
+  assert.equal(
+    acquireLegacyProductRigCleanupLedger(
+      state,
+      { ...authorization, ownerToken: "f".repeat(48) },
+      structuredClone(ledger),
+    ),
+    null,
+  );
+  assert.equal(
+    acquireLegacyProductRigCleanupLedger(
+      state,
+      { ...authorization, manifestDigest: "0".repeat(64) },
+      structuredClone(ledger),
+    ),
+    null,
+  );
+  assert.equal(
+    acquireLegacyProductRigCleanupLedger(
+      { ...state, runtimeNamespace: { ...state.runtimeNamespace, root: "/tmp/tmi-e2e-other" } },
+      authorization,
+      structuredClone(ledger),
+    ),
+    null,
+  );
+  assert.equal(
+    await captureLegacyProductRigCleanupLedger(
+      state,
+      { ...authorization, runId: "wrong-run" },
+      { readProcessRows: () => rows },
+    ),
+    null,
+  );
+  let turn = 0;
+  assert.equal(
+    await captureLegacyProductRigCleanupLedger(state, authorization, {
+      readProcessRows: () =>
+        turn++ === 0 ? rows : [{ ...rows[0] }, { ...rows[1], startToken: "replacement" }],
+      yieldTurn: async () => {},
+    }),
+    null,
+  );
+  const capturePair = async (first, second) => {
+    let read = 0;
+    return captureLegacyProductRigCleanupLedger(state, authorization, {
+      readProcessRows: () => structuredClone(read++ === 0 ? first : second),
+      yieldTurn: async () => {},
+    });
+  };
+  const unrelated = {
+    pid: 900,
+    ppid: 1,
+    pgid: 900,
+    state: "S",
+    startToken: "unrelated",
+    command: "x".repeat(8_000),
+  };
+  const emptyUnrelated = { ...unrelated, pid: 901, pgid: 901, command: "" };
+  assert.equal(
+    (await capturePair([...rows, unrelated, emptyUnrelated], [...rows, unrelated, emptyUnrelated]))
+      .identities.length,
+    2,
+  );
+  const disappeared = await capturePair(rows, [rows[0]]);
+  assert.equal(disappeared.identities.length, 2);
+  assert.equal(disappeared.identities[1].pid, 701);
+  assert.equal(
+    (await capturePair(rows, [{ ...rows[0], state: "R" }, rows[1]])).identities.length,
+    2,
+  );
+  assert.equal(
+    await capturePair(rows, [...rows, { ...rows[1], pid: 702, startToken: "new-child" }]),
+    null,
+  );
+  assert.equal(
+    await capturePair(rows, [{ ...rows[0] }, { ...rows[1], command: "x".repeat(5_000) }]),
+    null,
+  );
+  assert.equal(await capturePair([rows[0]], [rows[0]]), null);
+});
+
+test("legacy cleanup revalidates every signal and retains failure until exact absence", async () => {
+  const base = {
+    version: 1,
+    mode: "legacy-cleanup-v1",
+    identities: [
+      {
+        pid: 700,
+        ppid: 1,
+        pgid: 700,
+        state: "S",
+        startToken: "owner",
+        command: "node owner",
+        ownership: "owner",
+      },
+      {
+        pid: 701,
+        ppid: 700,
+        pgid: 700,
+        state: "S",
+        startToken: "child",
+        command: "(Electron)",
+        ownership: "descendant",
+      },
+    ],
+  };
+  let rows = structuredClone(base.identities);
+  const signals = [];
+  const passed = await retireLegacyProductRigCleanupIdentities(base, {
+    readProcessRows: () => structuredClone(rows),
+    signalProcess: (pid, signal) => {
+      signals.push([pid, signal]);
+      if (signal === "SIGKILL") rows = rows.filter((row) => row.pid !== pid);
+    },
+    sleep: async () => {},
+  });
+  assert.equal(passed.passed, true);
+  assert.deepEqual(signals, [
+    [701, "SIGTERM"],
+    [700, "SIGTERM"],
+    [701, "SIGKILL"],
+    [700, "SIGKILL"],
+  ]);
+
+  rows = structuredClone(base.identities);
+  const reusedSignals = [];
+  const reused = await retireLegacyProductRigCleanupIdentities(base, {
+    readProcessRows: () => structuredClone(rows),
+    signalProcess: (pid, signal) => {
+      reusedSignals.push([pid, signal]);
+      if (pid === 701) {
+        rows = rows.filter((row) => row.pid !== 701);
+        rows[0].startToken = "owner-reused";
+      }
+    },
+    sleep: async () => {},
+  });
+  assert.equal(reused.passed, true);
+  assert.deepEqual(reusedSignals, [[701, "SIGTERM"]]);
+  assert.equal(rows[0].startToken, "owner-reused");
+
+  rows = [{ ...base.identities[1], ppid: 1 }];
+  const childPersists = await retireLegacyProductRigCleanupIdentities(base, {
+    readProcessRows: () => structuredClone(rows),
+    signalProcess: () => {},
+    sleep: async () => {},
+  });
+  assert.equal(childPersists.passed, false);
+  assert.equal(childPersists.reason, "legacy-identity-live");
+
+  rows = [{ ...base.identities[1], ppid: 1 }];
+  const firstRetry = await retireLegacyProductRigCleanupIdentities(base, {
+    readProcessRows: () => structuredClone(rows),
+    signalProcess: () => {},
+    sleep: async () => {},
+  });
+  assert.equal(firstRetry.passed, false);
+  rows = [];
+  const secondRetry = await retireLegacyProductRigCleanupIdentities(base, {
+    readProcessRows: () => structuredClone(rows),
+    signalProcess: () => assert.fail("an absent original identity must never be signalled"),
+    sleep: async () => {},
+  });
+  assert.equal(secondRetry.passed, true);
+});
+
+test("legacy cleanup admits only isolated Card5 host residue with every other axis clean", () => {
+  const root = "/tmp/tmi-e2e-legacy-admission";
+  const state = {
+    status: "cleanup-failed",
+    ownerPid: 700,
+    ownerToken: "a".repeat(48),
+    daemon: { pid: 702 },
+    diagnosticAttempt: {
+      runId: "legacy-run",
+      sourceProvenance: {
+        commit: "b".repeat(40),
+        tree: "c".repeat(40),
+        manifestDigest: "d".repeat(64),
+      },
+    },
+    runtimeNamespace: { root, cleanupToken: "cleanup-token" },
+    cleanup: {
+      status: "failed",
+      failures: [{ subsystem: "card5-cleanup-ledger", detail: "owned host residue remained" }],
+      card5: {
+        passed: false,
+        owners: Object.fromEntries(
+          ["chromium", "electron", "opentui", "daemon", "namespace"].map((name) => [
+            name,
+            { owned: true, retired: name !== "electron" },
+          ]),
+        ),
+        chromiumProcessCount: 0,
+        chromiumDescendantCount: 0,
+        chromiumTerminalProcessCount: 0,
+        chromiumPageCount: 0,
+        chromiumContextCount: 0,
+        chromiumListenerCount: 0,
+        electronProcessCount: 0,
+        electronDescendantCount: 0,
+        electronTerminalProcessCount: 1,
+        electronWindowCount: 0,
+        electronListenerCount: 0,
+        electronOpenHandleCount: 0,
+        socketResidueCount: 0,
+        nativeObserverProcessCount: 0,
+        pathResidueCount: 0,
+      },
+    },
+  };
+  const identities = [
+    {
+      pid: 700,
+      ppid: 1,
+      pgid: 700,
+      state: "S",
+      startToken: "owner",
+      command: "node owner",
+      ownership: "owner",
+    },
+    {
+      pid: 701,
+      ppid: 700,
+      pgid: 700,
+      state: "?Es",
+      startToken: "child",
+      command: "(Electron)",
+      ownership: "descendant",
+    },
+  ];
+  const ledger = {
+    version: 1,
+    mode: "legacy-cleanup-v1",
+    requestId: `legacy-${"e".repeat(24)}`,
+    runId: "legacy-run",
+    ownerPid: 700,
+    cleanupToken: "cleanup-token",
+    provenance: state.diagnosticAttempt.sourceProvenance,
+    runtimeRoot: root,
+    identities,
+    identityHmac: createHmac("sha256", Buffer.from(state.ownerToken, "hex"))
+      .update(JSON.stringify(identities))
+      .digest("hex"),
+  };
+  const clean = { processAlive: () => false, pathExists: () => false };
+  assert.equal(assessLegacyProductRigCleanupAdmission(state, ledger, clean).passed, true);
+  const oldShape = structuredClone(state);
+  oldShape.cleanup.card5.electronProcessCount = 1;
+  delete oldShape.cleanup.card5.electronTerminalProcessCount;
+  assert.equal(assessLegacyProductRigCleanupAdmission(oldShape, ledger, clean).passed, true);
+  for (const changed of [
+    { cleanup: { ...state.cleanup, failures: [{ subsystem: "daemon", detail: "live" }] } },
+    { cleanup: { ...state.cleanup, card5: { ...state.cleanup.card5, pathResidueCount: 1 } } },
+    {
+      cleanup: {
+        ...state.cleanup,
+        card5: { ...state.cleanup.card5, nativeObserverProcessCount: 1 },
+      },
+    },
+  ])
+    assert.equal(
+      assessLegacyProductRigCleanupAdmission({ ...state, ...changed }, ledger, clean).passed,
+      false,
+    );
+  assert.equal(
+    assessLegacyProductRigCleanupAdmission(state, ledger, {
+      processAlive: (pid) => pid === state.daemon.pid,
+      pathExists: () => false,
+    }).passed,
+    false,
+  );
+  assert.equal(
+    assessLegacyProductRigCleanupAdmission(state, ledger, {
+      processAlive: () => false,
+      pathExists: (path) => path === root,
+    }).passed,
+    false,
+  );
+});
+
+test("legacy owner retry admits only the exact vanished sole Electron residue", () => {
+  const root = "/tmp/tmi-e2e-legacy-owner-retry";
+  const authorization = {
+    requestId: `legacy-${"e".repeat(24)}`,
+    runId: "legacy-run",
+    ownerToken: "a".repeat(48),
+    commit: "b".repeat(40),
+    tree: "c".repeat(40),
+    manifestDigest: "d".repeat(64),
+    runtimeRoot: root,
+  };
+  const state = {
+    status: "cleanup-failed",
+    ownerPid: 700,
+    ownerToken: authorization.ownerToken,
+    daemon: { pid: 702 },
+    diagnosticAttempt: {
+      runId: authorization.runId,
+      sourceProvenance: {
+        commit: authorization.commit,
+        tree: authorization.tree,
+        manifestDigest: authorization.manifestDigest,
+      },
+    },
+    runtimeNamespace: { root, cleanupToken: "cleanup-token" },
+    cleanup: {
+      status: "failed",
+      failures: [{ subsystem: "card5-cleanup-ledger", detail: "owned host residue remained" }],
+      card5: {
+        passed: false,
+        owners: {
+          chromium: { owned: true, retired: true },
+          electron: { owned: true, retired: false },
+          opentui: { owned: false, retired: true },
+          daemon: { owned: true, retired: true },
+          namespace: { owned: true, retired: true },
+        },
+        chromiumProcessCount: 0,
+        chromiumDescendantCount: 0,
+        electronProcessCount: 1,
+        electronDescendantCount: 0,
+        chromiumPageCount: 0,
+        chromiumContextCount: 0,
+        chromiumListenerCount: 0,
+        electronWindowCount: 0,
+        electronListenerCount: 0,
+        electronOpenHandleCount: 0,
+        socketResidueCount: 0,
+        nativeObserverProcessCount: 0,
+        pathResidueCount: 0,
+      },
+    },
+  };
+  const owner = {
+    pid: 700,
+    ppid: 1,
+    pgid: 700,
+    state: "S",
+    startToken: "owner-start",
+    command: "node owner",
+  };
+  const clean = { processAlive: () => false, pathExists: () => false };
+  assert.equal(
+    assessLegacyProductRigOwnerRetryCompatibility(
+      state,
+      authorization,
+      [owner],
+      [{ ...owner, state: "R" }],
+      clean,
+    ).passed,
+    true,
+  );
+  const child = {
+    pid: 701,
+    ppid: 700,
+    pgid: 701,
+    state: "?Es",
+    startToken: "child",
+    command: "(Electron)",
+  };
+  assert.equal(
+    assessLegacyProductRigOwnerRetryCompatibility(
+      state,
+      authorization,
+      [owner, child],
+      [owner, child],
+      clean,
+    ).passed,
+    false,
+  );
+  assert.equal(
+    assessLegacyProductRigOwnerRetryCompatibility(
+      { ...state, cleanup: { ...state.cleanup, failures: [{ subsystem: "daemon" }] } },
+      authorization,
+      [owner],
+      [owner],
+      clean,
+    ).passed,
+    false,
+  );
+  assert.equal(
+    assessLegacyProductRigOwnerRetryCompatibility(
+      state,
+      authorization,
+      [owner],
+      [{ ...owner, startToken: "reused" }],
+      clean,
+    ).passed,
+    false,
+  );
+  const passedCard5 = {
+    ...state.cleanup.card5,
+    passed: true,
+    owners: Object.fromEntries(
+      ["chromium", "electron", "opentui", "daemon", "namespace"].map((name) => [
+        name,
+        { ...state.cleanup.card5.owners[name], retired: true },
+      ]),
+    ),
+    electronProcessCount: 0,
+  };
+  const finalState = {
+    ...state,
+    status: "failed",
+    cleanup: {
+      requestId: "exact-owner-response",
+      cleanupToken: state.runtimeNamespace.cleanupToken,
+      status: "passed",
+      failures: [],
+      card5: passedCard5,
+    },
+  };
+  assert.equal(
+    assessLegacyProductRigOwnerRetryCompletion(state, finalState, "exact-owner-response", {
+      ...clean,
+      processRows: [],
+    }).passed,
+    true,
+  );
+  for (const changed of [
+    { cleanup: { ...finalState.cleanup, requestId: "foreign-response" } },
+    {
+      cleanup: {
+        ...finalState.cleanup,
+        card5: { ...passedCard5, electronProcessCount: 1 },
+      },
+    },
+  ])
+    assert.equal(
+      assessLegacyProductRigOwnerRetryCompletion(
+        state,
+        { ...finalState, ...changed },
+        "exact-owner-response",
+        { ...clean, processRows: [] },
+      ).passed,
+      false,
+    );
+  assert.equal(
+    assessLegacyProductRigOwnerRetryCompletion(state, finalState, "exact-owner-response", {
+      processAlive: (pid) => pid === state.ownerPid,
+      pathExists: () => false,
+      processRows: [],
+    }).passed,
+    false,
+  );
+  assert.equal(
+    assessLegacyProductRigOwnerRetryCompletion(state, finalState, "exact-owner-response", {
+      ...clean,
+      processRows: [
+        {
+          pid: 701,
+          ppid: 1,
+          pgid: 701,
+          state: "?Es",
+          startToken: "child",
+          command: "(Electron)",
+        },
+      ],
+    }).passed,
+    false,
+  );
+
+  const intent = createLegacyProductRigOwnerRetryIntent(state, authorization, owner);
+  assert.ok(intent);
+  assert.deepEqual(acquireLegacyProductRigOwnerRetryIntent(authorization, intent), intent);
+  assert.equal(legacyProductRigOwnerRetryIntentMatchesState(state, authorization, intent), true);
+  assert.equal(
+    legacyProductRigOwnerRetryIntentMatchesOwnerRows(intent, [{ ...owner, state: "R" }]),
+    true,
+  );
+  assert.equal(
+    legacyProductRigOwnerRetryIntentMatchesOwnerRows(intent, [{ ...owner, startToken: "reused" }]),
+    false,
+  );
+  assert.equal(
+    legacyProductRigOwnerRetryIntentMatchesState(
+      { ...state, cleanup: { ...state.cleanup, attempt: 2 } },
+      authorization,
+      intent,
+    ),
+    false,
+  );
+  assert.equal(
+    acquireLegacyProductRigOwnerRetryIntent({ ...authorization, tree: "f".repeat(40) }, intent),
+    null,
+  );
+  const shutdownRequest = createLegacyProductRigOwnerRetryShutdownRequest(
+    state,
+    authorization,
+    intent,
+  );
+  assert.deepEqual(shutdownRequest, {
+    version: 1,
+    requestId: authorization.requestId,
+    attempt: 1,
+    ownerPid: state.ownerPid,
+    ownerToken: state.ownerToken,
+    cleanupToken: state.runtimeNamespace.cleanupToken,
+  });
+  assert.deepEqual(
+    createLegacyProductRigOwnerRetryShutdownRequest(state, authorization, intent),
+    shutdownRequest,
+  );
+  const retryFinalState = {
+    ...finalState,
+    cleanup: { ...finalState.cleanup, requestId: authorization.requestId },
+  };
+  const receipt = createLegacyProductRigOwnerRetryReceipt(intent, authorization);
+  assert.ok(receipt);
+  assert.deepEqual(
+    acquireLegacyProductRigOwnerRetryReceipt(authorization, receipt, intent),
+    receipt,
+  );
+  assert.equal(
+    acquireLegacyProductRigOwnerRetryReceipt(
+      authorization,
+      { ...receipt, ownerPid: receipt.ownerPid + 1 },
+      intent,
+    ),
+    null,
+  );
+
+  const exactCompletionDependencies = (events, overrides = {}) => ({
+    ...clean,
+    processRows: [],
+    writeReceipt: () => events.push("receipt"),
+    writeState: () => events.push("state"),
+    removeAck: () => events.push("ack"),
+    removeIntent: () => events.push("intent"),
+    ...overrides,
+  });
+  const events = [];
+  const finalized = finalizeLegacyProductRigOwnerRetry(
+    retryFinalState,
+    authorization,
+    intent,
+    null,
+    exactCompletionDependencies(events),
+  );
+  assert.equal(finalized.passed, true);
+  assert.deepEqual(events, ["receipt", "state", "ack", "intent"]);
+  assert.equal(finalized.state.cleanup.legacyOwnerRetry.receiptHmac, receipt.receiptHmac);
+
+  let durableReceipt = null;
+  assert.throws(
+    () =>
+      finalizeLegacyProductRigOwnerRetry(
+        retryFinalState,
+        authorization,
+        intent,
+        null,
+        exactCompletionDependencies([], {
+          writeReceipt: (value) => {
+            durableReceipt = value;
+          },
+          writeState: () => {
+            throw new Error("controller-crash-after-receipt");
+          },
+        }),
+      ),
+    /controller-crash-after-receipt/u,
+  );
+  const recoveredEvents = [];
+  assert.equal(
+    finalizeLegacyProductRigOwnerRetry(
+      retryFinalState,
+      authorization,
+      intent,
+      durableReceipt,
+      exactCompletionDependencies(recoveredEvents),
+    ).passed,
+    true,
+  );
+  assert.deepEqual(recoveredEvents, ["state", "ack", "intent"]);
+
+  const interruptedDeletes = [];
+  assert.throws(
+    () =>
+      finalizeLegacyProductRigOwnerRetry(
+        retryFinalState,
+        authorization,
+        intent,
+        receipt,
+        exactCompletionDependencies(interruptedDeletes, {
+          removeIntent: () => {
+            interruptedDeletes.push("intent");
+            throw new Error("controller-crash-before-intent-commit");
+          },
+        }),
+      ),
+    /controller-crash-before-intent-commit/u,
+  );
+  assert.deepEqual(interruptedDeletes, ["state", "ack", "intent"]);
+  const noIntentEvents = [];
+  assert.equal(
+    finalizeLegacyProductRigOwnerRetry(
+      retryFinalState,
+      authorization,
+      null,
+      receipt,
+      exactCompletionDependencies(noIntentEvents),
+    ).passed,
+    true,
+  );
+  assert.deepEqual(noIntentEvents, ["state", "ack", "intent"]);
 });
 
 test("legacy stopped preclean admits only the exact dead and residue-free v1 shape", () => {
