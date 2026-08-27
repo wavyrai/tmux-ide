@@ -2518,8 +2518,12 @@ describe("WorkspaceClient", () => {
   it("fences and closes a terminal subscription that resolves after disposal settled", async () => {
     const shell = shellBroker({ alpha: shellResource("alpha") });
     const runtime = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const subscriptionStarted = deferred<void>();
     const subscriptionReady = deferred<FakeTerminalSubscription>();
-    runtime.subscribeTerminal = async () => subscriptionReady.promise;
+    runtime.subscribeTerminal = async () => {
+      subscriptionStarted.resolve();
+      return subscriptionReady.promise;
+    };
     const client = createWorkspaceClient({
       target: target("alpha"),
       ports: { shell: shell.transport, connectRuntime: async () => runtime, actions },
@@ -2529,21 +2533,26 @@ describe("WorkspaceClient", () => {
       () => undefined,
     );
     shell.connections[0]!.handlers.onVerifiedOpen();
-    await settle();
+    await subscriptionStarted.promise;
 
-    let disposed = false;
-    const disposal = client.dispose().then(() => (disposed = true));
-    await settle();
-    expect(disposed).toBe(false);
+    await client.dispose();
+    expect(client.getSnapshot().phase).toBe("disposed");
+
+    const closeStarted = deferred<void>();
+    const closeFinished = deferred<void>();
     const late = new FakeTerminalSubscription(ALPHA_DAEMON.instanceId);
     const closeGate = deferred<void>();
-    late.closeGate = closeGate.promise;
+    late.close = async () => {
+      late.closeCount += 1;
+      closeStarted.resolve();
+      await closeGate.promise;
+      closeFinished.resolve();
+    };
     subscriptionReady.resolve(late);
-    await settle();
+    await closeStarted.promise;
     expect(late.closeCount).toBe(1);
-    expect(disposed).toBe(true);
     closeGate.resolve();
-    await disposal;
-    expect(disposed).toBe(true);
+    await closeFinished.promise;
+    expect(late.closeCount).toBe(1);
   });
 });
