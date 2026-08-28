@@ -542,8 +542,13 @@ export function createOpenTuiGenerationHost(
       // WorkspaceClient may replace its terminal inventory without changing
       // daemon/client generation. Adopt that runtime atomically into the live
       // owner instead of dropping it merely because candidate activation has
-      // already completed. Presentation retains the last coherent layout until
-      // the replacement publishes, and the retired subscription is fenced.
+      // already completed. The canonical fast lane retains pane snapshots, but
+      // the native PaneSurface framebuffers belong to the retired runtime's
+      // paint epoch. Advance the renderer epoch so every resident surface takes
+      // one full repaint from retained canonical state after the replacement;
+      // otherwise a topology rebind can leave live panes permanently blank.
+      // Presentation retains the last coherent layout until the replacement
+      // publishes, and the retired subscription is fenced.
       // The WorkspaceClient has already detached the prior runtime and made
       // this exact replacement current. Publish a retained-frame suspension
       // first so runtime-scoped authority owners yield and then replay their
@@ -557,11 +562,13 @@ export function createOpenTuiGenerationHost(
       diagnose?.("host-internal-snapshot-publication", {
         publicationPhase: runtime ? "active-runtime-replaced" : "active-runtime-retired",
         daemonGeneration: owner.bundle.connection.target.daemon.instanceId,
-        rendererEpoch,
+        rendererEpoch: runtime ? rendererEpoch + 1 : rendererEpoch,
       });
+      if (runtime) rendererEpoch += 1;
       publish({
         ...snapshot,
         status: runtime ? "live" : "empty",
+        rendererEpoch,
         authorityClient: owner.authorityClient,
       });
       return;

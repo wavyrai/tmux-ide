@@ -500,7 +500,7 @@ describe("OpenTUI generation host", () => {
     expect(host.getSnapshot()).toMatchObject({
       status: "live",
       daemonGeneration: "daemon-a",
-      rendererEpoch,
+      rendererEpoch: rendererEpoch + 1,
     });
     expect(view.adopt).toHaveBeenCalledTimes(2);
     expect(view.clear).not.toHaveBeenCalled();
