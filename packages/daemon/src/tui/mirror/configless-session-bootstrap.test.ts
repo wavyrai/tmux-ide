@@ -107,7 +107,7 @@ describe("configless OpenTUI session bootstrap", () => {
     expect(await discoverOpenTuiLiveSessions(test.overrides)).toEqual(["alpha", "beta"]);
   });
 
-  it("accepts an existing routed live session without promotion", async () => {
+  it("reconciles an existing route because a re-created tmux session may have lost its stamps", async () => {
     const test = dependencies({
       routing: routing({
         intents: [
@@ -124,7 +124,9 @@ describe("configless OpenTUI session bootstrap", () => {
 
     await expect(ensureOpenTuiSessionWorkspace("alpha", test.overrides)).resolves.toBe(true);
     expect(test.request).not.toHaveBeenCalled();
-    expect(test.promote).not.toHaveBeenCalled();
+    expect(test.promote).toHaveBeenCalledWith(
+      expect.objectContaining({ input: { sessionId: ALPHA_ID } }),
+    );
   });
 
   it("promotes an ordinary live session with the fleet's opaque session id", async () => {

@@ -81,6 +81,32 @@ class FakeHost implements OpenTuiGenerationHost {
 }
 
 describe("OpenTUI session owner", () => {
+  it("lets the generation host promote a fresh ordinary tmux session after a null prewarm", async () => {
+    let host!: FakeHost;
+    const prepareConnection = vi.fn(async () => null);
+    const createHost = vi.fn(
+      (sessionName: string, initialConnection: OpenTuiApplicationShellConnection | null) => {
+        expect(initialConnection).toBeNull();
+        return (host = new FakeHost(sessionName));
+      },
+    );
+    const owner = createOpenTuiSessionOwner({
+      prepareConnection,
+      createHost,
+      onSnapshot: vi.fn(),
+    });
+
+    const opening = owner.open("ordinary");
+    await flush();
+    expect(prepareConnection).toHaveBeenCalledWith("ordinary");
+    expect(createHost).toHaveBeenCalledOnce();
+
+    host.finish(true);
+    await expect(opening).resolves.toBe(true);
+    expect(owner.sessionName()).toBe("ordinary");
+    await owner.dispose();
+  });
+
   it("fully resets a failed host so the same session can retry", async () => {
     const hosts: FakeHost[] = [];
     const owner = createOpenTuiSessionOwner({

@@ -325,23 +325,20 @@ export async function resolveOpenTuiApplicationShellConnection(
 /**
  * Prepare the first generation connection once at the session-owner boundary.
  *
- * The common warm path performs one daemon liveness check and one catalog
- * lookup. Ordinary, not-yet-promoted tmux sessions retain the old guarded
- * fallback: promote through the owner action, then resolve the newly-created
- * workspace route before constructing any client transport.
+ * Every open crosses the idempotent promotion boundary before resolving its
+ * route. This is required even when a registry route already exists: registry
+ * identity survives a tmux server restart, while the replacement panes do not
+ * retain their semantic stamps. Promotion reconciles that exact live inventory
+ * without overwriting healthy stamps, after which the connection is resolved
+ * against current daemon truth.
  */
 export async function prepareOpenTuiApplicationShellConnection(
   sessionName: string,
   overrides: Partial<OpenTuiApplicationShellConnectionDependencies> = {},
 ): Promise<OpenTuiApplicationShellConnection | null> {
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...overrides };
-  const routed = await resolveOpenTuiApplicationShellConnection(sessionName, dependencies);
-  if (routed) {
-    void routed.prepareTerminalRuntimeInventory();
-    return routed;
-  }
   if (!(await dependencies.ensureSessionWorkspace(sessionName))) return null;
-  const promoted = await resolveOpenTuiApplicationShellConnection(sessionName, dependencies);
-  if (promoted) void promoted.prepareTerminalRuntimeInventory();
-  return promoted;
+  const reconciled = await resolveOpenTuiApplicationShellConnection(sessionName, dependencies);
+  if (reconciled) void reconciled.prepareTerminalRuntimeInventory();
+  return reconciled;
 }

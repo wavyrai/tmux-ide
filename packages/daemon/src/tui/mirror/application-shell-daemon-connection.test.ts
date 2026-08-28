@@ -520,7 +520,7 @@ describe("OpenTUI canonical daemon connection", () => {
     expect(createTransport).not.toHaveBeenCalled();
   });
 
-  it("prepares an already-routed warm session with one liveness and catalog read", async () => {
+  it("reconciles an already-routed warm session before preparing its connection", async () => {
     const isCanonicalDaemonAlive = vi.fn(async () => true);
     const fetchCanonicalWorkspaceRouting = vi.fn(async () => catalog);
     const ensureSessionWorkspace = vi.fn(async () => true);
@@ -537,16 +537,12 @@ describe("OpenTUI canonical daemon connection", () => {
     expect(prepared?.workspaceName).toBe("workspace.alpha");
     expect(isCanonicalDaemonAlive).toHaveBeenCalledOnce();
     expect(fetchCanonicalWorkspaceRouting).toHaveBeenCalledOnce();
-    expect(ensureSessionWorkspace).not.toHaveBeenCalled();
+    expect(ensureSessionWorkspace).toHaveBeenCalledOnce();
     expect(createTransport).toHaveBeenCalledOnce();
   });
 
-  it("retains promote-then-resolve fallback for an ordinary live session", async () => {
-    const unrouted = { ...catalog, intents: [] } satisfies WorkspaceCatalogResourceV2;
-    const fetchCanonicalWorkspaceRouting = vi
-      .fn<() => Promise<WorkspaceCatalogResourceV2>>()
-      .mockResolvedValueOnce(unrouted)
-      .mockResolvedValueOnce(catalog);
+  it("promotes an ordinary live session before resolving its new route", async () => {
+    const fetchCanonicalWorkspaceRouting = vi.fn(async () => catalog);
     const ensureSessionWorkspace = vi.fn(async () => true);
     const createTransport = vi.fn(() => transport());
 
@@ -559,9 +555,29 @@ describe("OpenTUI canonical daemon connection", () => {
     });
 
     expect(prepared?.workspaceName).toBe("workspace.alpha");
-    expect(fetchCanonicalWorkspaceRouting).toHaveBeenCalledTimes(2);
+    expect(fetchCanonicalWorkspaceRouting).toHaveBeenCalledOnce();
     expect(ensureSessionWorkspace).toHaveBeenCalledOnce();
+    expect(ensureSessionWorkspace.mock.invocationCallOrder[0]).toBeLessThan(
+      fetchCanonicalWorkspaceRouting.mock.invocationCallOrder[0]!,
+    );
     expect(createTransport).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed before route or transport allocation when reconciliation fails", async () => {
+    const fetchCanonicalWorkspaceRouting = vi.fn(async () => catalog);
+    const createTransport = vi.fn(() => transport());
+
+    const prepared = await prepareOpenTuiApplicationShellConnection("alpha", {
+      readCanonicalDaemonInfo: () => daemon,
+      isCanonicalDaemonAlive: async () => true,
+      fetchCanonicalWorkspaceRouting,
+      ensureSessionWorkspace: async () => false,
+      createTransport,
+    });
+
+    expect(prepared).toBeNull();
+    expect(fetchCanonicalWorkspaceRouting).not.toHaveBeenCalled();
+    expect(createTransport).not.toHaveBeenCalled();
   });
 
   it("fails closed on stale routing without allocating a transport", async () => {

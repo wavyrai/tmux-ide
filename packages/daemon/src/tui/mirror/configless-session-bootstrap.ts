@@ -7,10 +7,7 @@ import {
   isCanonicalDaemonAlive,
   readCanonicalDaemonInfo,
 } from "../../lib/canonical-daemon.ts";
-import {
-  fetchCanonicalWorkspaceRouting,
-  workspaceNameForLiveSession,
-} from "./canonical-workspace-routing.ts";
+import { fetchCanonicalWorkspaceRouting } from "./canonical-workspace-routing.ts";
 import { OPEN_TUI_HOST_CLIENT_ID } from "./open-tui-workspace-runtime-port.ts";
 
 export interface OpenTuiSessionBootstrapDependencies {
@@ -61,7 +58,12 @@ export async function ensureOpenTuiSessionWorkspace(
   if (routing.daemon.instanceId !== daemon.instanceId) return false;
   const liveSession = routing.liveSessions.find((session) => session.sessionName === sessionName);
   if (!liveSession) return false;
-  if (workspaceNameForLiveSession(routing, sessionName)) return true;
+  // A registry entry outlives the tmux server and can therefore point at a
+  // newly re-created session whose panes have none of the old semantic stamps.
+  // Promotion is intentionally idempotent: replaying it reconciles missing
+  // pane/window stamps without overwriting valid intent. Always pass through
+  // that repair boundary instead of treating a routed name as proof that this
+  // exact live pane inventory is attachable.
   const promoted = await dependencies.promote({
     baseUrl: canonicalDaemonUrl("http", daemon.bindHostname, daemon.port),
     ownerToken: daemon.authToken ?? "",

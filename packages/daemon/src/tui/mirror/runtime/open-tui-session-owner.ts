@@ -116,7 +116,12 @@ export function createOpenTuiSessionOwner(
         if (current?.sessionName === sessionName) return true;
         const initialConnection = workspacePrepared ? null : await prepareConnection(sessionName);
         if (initialConnection === PREPARATION_DISPOSED) return false;
-        if (!workspacePrepared && !initialConnection) return false;
+        // A fresh ordinary tmux session is deliberately absent from workspace
+        // routing until the generation host promotes it. A null prewarm is
+        // therefore not a terminal failure: hand it to the host, whose
+        // generation-fenced resolver performs the exact-live-session check and
+        // promotion before publishing anything. Truly missing sessions still
+        // fail closed when host.start() cannot resolve them.
         if (disposed) {
           initialConnection?.dispose();
           return false;
