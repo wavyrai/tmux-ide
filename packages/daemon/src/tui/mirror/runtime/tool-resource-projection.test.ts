@@ -117,6 +117,7 @@ describe("TUI fleet resource projection", () => {
       currentCommand: null,
       cwd: null,
       title: null,
+      name: null,
       windowIndex: 3,
       windowName: null,
       windowId: null,
@@ -150,7 +151,11 @@ describe("TUI fleet resource projection", () => {
     });
 
     expect(rows).toEqual([
-      expect.objectContaining({ paneId: "%7", windowIndex: 3, displayName: "Editor" }),
+      expect.objectContaining({
+        paneId: "%7",
+        windowIndex: 3,
+        displayName: "Editor",
+      }),
     ]);
     expect(JSON.stringify(rows)).not.toMatch(/pane\.|terminal\.discovered/u);
   });

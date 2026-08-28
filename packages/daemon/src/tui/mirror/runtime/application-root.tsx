@@ -487,6 +487,8 @@ import {
   agentsHeaderLabel,
   agentAgeLabel,
   agentDisplayKind,
+  reconcileClosedAgentPaneIds,
+  visibleAgentRows,
   sidebarHit,
   AGENTS_ADD_CHIP,
   AGENTS_EMPTY_LINE,
@@ -1531,14 +1533,20 @@ const mountTuiRoot = () => {
           (session, index, all) =>
             all.findIndex((candidate) => candidate.name === session.name) === index,
         );
+    const [closedAgentPaneIds, setClosedAgentPaneIds] = createSignal<ReadonlySet<string>>(
+      new Set(),
+    );
     const fleetAgents = createMemo<AgentRowInput[]>(() =>
-      sortAgentRows(
-        projectsData()
-          .flatMap((project) => project.sessions.flatMap((session) => session.agents ?? []))
-          .filter(
-            (agent, index, all) =>
-              all.findIndex((candidate) => candidate.paneId === agent.paneId) === index,
-          ),
+      visibleAgentRows(
+        sortAgentRows(
+          projectsData()
+            .flatMap((project) => project.sessions.flatMap((session) => session.agents ?? []))
+            .filter(
+              (agent, index, all) =>
+                all.findIndex((candidate) => candidate.paneId === agent.paneId) === index,
+            ),
+        ),
+        closedAgentPaneIds(),
       ),
     );
     const [status, setStatus] = createSignal(bareHome ? "home" : "attaching…");
@@ -4214,11 +4222,21 @@ const mountTuiRoot = () => {
     const closeAgentPane = (
       a: Pick<
         AgentRowInput,
-        "paneId" | "kind" | "fleetSessionId" | "fleetAgentId" | "fleetCatalogRevision"
+        | "paneId"
+        | "kind"
+        | "displayName"
+        | "fleetSessionId"
+        | "fleetAgentId"
+        | "fleetCatalogRevision"
       >,
     ) => {
       void mutateAgentViaAuthority(a, "kill").then((applied) => {
-        if (applied) setStatusNote(`closed ${a.kind}'s pane`);
+        if (!applied) return;
+        // If authority already published the removal while the mutation was
+        // awaiting its receipt, there is no stale row left to tombstone.
+        if (fleetAgents().some((candidate) => candidate.paneId === a.paneId))
+          setClosedAgentPaneIds((current) => new Set([...current, a.paneId]));
+        setStatusNote(`closed ${agentDisplayKind(a)}'s pane`);
       });
     };
 
@@ -5385,6 +5403,14 @@ const mountTuiRoot = () => {
         projects: latestProjectCatalog,
         authoritativeAgents: latestAuthoritativeAgents,
       });
+      setClosedAgentPaneIds((current) =>
+        reconcileClosedAgentPaneIds(
+          current,
+          projects.flatMap((project) =>
+            project.sessions.flatMap((session) => session.agents ?? []),
+          ),
+        ),
+      );
       setProjectsData(projects);
       noteAttention(projects);
       if (startupWorkspaceReconciled) return;
@@ -6088,7 +6114,7 @@ const mountTuiRoot = () => {
           if (!a) return null;
           return {
             region: "agent",
-            title: `${a.kind} · ${a.session}`,
+            title: `${agentDisplayKind(a)} · ${a.session}`,
             items: MENU_ITEMS.agent,
             agent: a,
           };
@@ -6265,7 +6291,16 @@ const mountTuiRoot = () => {
         const a = m.agent!;
         closeMenu();
         if (id === "jump") jumpToAgent(a);
-        else if (id === "restart") void restartAgentFlow(a);
+        else if (id === "rename" && val) {
+          void executeSharedMultiplexerAction(
+            { kind: "rename-pane", name: val },
+            { sessionName: a.session, runtimePaneId: a.paneId },
+          ).then((result) => {
+            if (result.status === "error") return;
+            toolResources.session.refresh("fleet");
+            toolResources.session.refresh("catalog");
+          });
+        } else if (id === "restart") void restartAgentFlow(a);
         else if (id === "stop") void stopAgentFlow(a);
         else if (id === "close") closeAgentPane(a);
         return;
@@ -7774,6 +7809,13 @@ const mountTuiRoot = () => {
           e.y - TABBAR_H,
         );
         if (shellHit?.kind === "canvas") x = terminalRouteX(e.x);
+      }
+      // The sidebar is app chrome even while a hosted canvas is input-inert.
+      // Give its right-click lifecycle menus priority over that early-return
+      // branch; left-click continues to jump directly to the agent pane.
+      if (type === "down" && e.button === 2 && x < sidebarW()) {
+        openMenu(x, y, screenX);
+        return;
       }
       if (isHostedPanelInert(activePanel())) {
         if (type === "out") {

@@ -92,6 +92,9 @@ export function projectAuthoritativeAgentRows(input: {
         kind: agent.harness,
         state: stateByActivity[agent.activity],
         since: null,
+        // ApplicationShell already resolves a non-generic durable pane name
+        // (`@ide_name`) into the canonical agent label. Keep that one label so
+        // the sidebar, fleet identity, and future web consumers stay aligned.
         displayName: agent.name,
       },
     ];

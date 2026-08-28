@@ -237,6 +237,37 @@ describe("TUI multiplexer action executor", () => {
     );
   });
 
+  it("renames an agent through its durable semantic pane identity", async () => {
+    const dispatchAction = vi.fn(async () => ({ outcome: "applied" }));
+
+    await expect(
+      executeTuiMultiplexerAction(
+        { kind: "rename-pane", name: "focused-fox" },
+        context(),
+        vi.fn(),
+        {
+          readCanonicalDaemonInfo: () => canonical,
+          isCanonicalDaemonAlive: async () => true,
+          fetch: vi.fn(async () => catalog()) as typeof fetch,
+          dispatchAction: dispatchAction as never,
+          operationId: () => OPERATION,
+        },
+      ),
+    ).resolves.toEqual({ status: "daemon", message: "renamed pane → focused-fox" });
+
+    expect(dispatchAction).toHaveBeenCalledWith(
+      canonical,
+      "workspace.rename",
+      {
+        workspaceName: "project-stable-identity",
+        scope: "pane",
+        semanticPaneId: "pane.source",
+        name: "focused-fox",
+      },
+      { operationId: OPERATION, autostart: false },
+    );
+  });
+
   it("surfaces a typed daemon refusal without bypassing it locally", async () => {
     const runLocal = vi.fn(async () => undefined);
     const dispatchAction = vi.fn(async () => {

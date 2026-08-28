@@ -14,7 +14,13 @@ import {
 describe("MENU_ITEMS", () => {
   it("names one fixed list per region", () => {
     expect(MENU_ITEMS.session.map((i) => i.id)).toEqual(["attach", "new-agent", "rename", "kill"]);
-    expect(MENU_ITEMS.agent.map((i) => i.id)).toEqual(["jump", "restart", "stop", "close"]);
+    expect(MENU_ITEMS.agent.map((i) => i.id)).toEqual([
+      "jump",
+      "rename",
+      "restart",
+      "stop",
+      "close",
+    ]);
     expect(MENU_ITEMS.file.map((i) => i.id)).toEqual(["open", "newfile", "rename", "delete"]);
     expect(MENU_ITEMS.difffile.map((i) => i.id)).toEqual(["open", "copypath"]);
     expect(MENU_ITEMS.pane.map((i) => i.id)).toEqual([
@@ -41,6 +47,7 @@ describe("MENU_ITEMS", () => {
     // interrupt, pane survives) confirms via DialogConfirm instead.
     expect(MENU_ITEMS.agent.find((i) => i.id === "close")?.danger).toBe(true);
     expect(MENU_ITEMS.agent.find((i) => i.id === "stop")?.danger).toBeUndefined();
+    expect(MENU_ITEMS.agent.find((i) => i.id === "rename")?.input).toBe("rename to");
     expect(MENU_ITEMS.session.find((i) => i.id === "rename")?.input).toBe("rename to");
     expect(MENU_ITEMS.file.find((i) => i.id === "newfile")?.input).toBe("new file");
     expect(MENU_ITEMS.window.find((i) => i.id === "rename")?.input).toBe("rename to");

@@ -46,6 +46,22 @@ describe("semantic mutation resource changes", () => {
         ...base,
         verb: "workspace.rename",
         outcome: "applied",
+        scope: "pane",
+        name: "named-agent",
+      }),
+    ).toEqual([
+      { workspaceName: "alpha", resource: "application-shell", causeOperationId: base.operationId },
+      {
+        workspaceName: "alpha",
+        resource: "workspace-missions",
+        causeOperationId: base.operationId,
+      },
+    ]);
+    expect(
+      semanticMutationResourceChanges({
+        ...base,
+        verb: "workspace.rename",
+        outcome: "applied",
         scope: "session",
         name: "renamed-session",
       }).map(({ workspaceName, resource }) => [workspaceName, resource]),
