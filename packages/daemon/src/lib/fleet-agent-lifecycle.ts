@@ -1,4 +1,6 @@
 /** Engine-neutral lifecycle model for daemon-owned fleet mutations. */
+import { TMUX_TRUECOLOR_ENVIRONMENT_ARGS, truecolorShellCommand } from "./tmux-terminal-color.ts";
+
 const LAUNCH_COMMANDS: Readonly<Record<string, string>> = {
   claude: "claude",
   codex: "codex",
@@ -52,13 +54,13 @@ export function interruptArgs(paneId: string): string[] {
 
 export function relaunchArgs(paneId: string, command: string): string[][] {
   return [
-    ["send-keys", "-t", paneId, "-l", command],
+    ["send-keys", "-t", paneId, "-l", truecolorShellCommand(command)],
     ["send-keys", "-t", paneId, "Enter"],
   ];
 }
 
 export function respawnArgs(paneId: string, command: string, dir: string | null): string[] {
-  const args = ["respawn-pane", "-k", "-t", paneId];
+  const args = ["respawn-pane", "-k", "-t", paneId, ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS];
   if (dir) args.push("-c", dir);
   args.push(command);
   return args;

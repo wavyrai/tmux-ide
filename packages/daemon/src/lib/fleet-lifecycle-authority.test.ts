@@ -57,7 +57,11 @@ function rig() {
     // executable exists in this test, so any ambient `tmux` call would fail.
     runTmux: (args) => {
       calls.push([...args]);
-      if (args[0] === "new-session" && args[3]) liveSessions.add(args[3]);
+      if (args[0] === "new-session") {
+        const sessionFlag = args.indexOf("-s");
+        const sessionName = sessionFlag < 0 ? undefined : args[sessionFlag + 1];
+        if (sessionName) liveSessions.add(sessionName);
+      }
       if (args[0] === "has-session") {
         const target = args[2]?.replace(/^=/u, "");
         if (!target || !liveSessions.has(target)) throw new Error("session absent");
@@ -87,7 +91,18 @@ describe("FleetLifecycleAuthority", () => {
         projectDir: canonicalCwd,
       }),
     ]);
-    expect(calls[0]).toEqual(["new-session", "-d", "-s", result.workspaceName, "-c", canonicalCwd]);
+    expect(calls[0]).toEqual([
+      "new-session",
+      "-d",
+      "-e",
+      "NO_COLOR",
+      "-e",
+      "COLORTERM=truecolor",
+      "-s",
+      result.workspaceName,
+      "-c",
+      canonicalCwd,
+    ]);
     expect(calls).toContainEqual([
       "new-session",
       "-d",
@@ -277,6 +292,8 @@ describe("FleetLifecycleAuthority", () => {
       cwd,
       "claude",
     ]);
+    expect(calls).toContainEqual(["set-environment", "-u", "-t", "=demo", "NO_COLOR"]);
+    expect(calls).toContainEqual(["set-environment", "-t", "=demo", "COLORTERM", "truecolor"]);
     expect(calls.some((args) => args.includes("@tmux_ide_pane_id"))).toBe(true);
     expect(panes).toHaveLength(2);
   });
@@ -315,6 +332,22 @@ describe("FleetLifecycleAuthority", () => {
       }),
     ).rejects.toThrow("decoration failed");
     expect(workspaces).toEqual([]);
+    expect(calls.find((args) => args[0] === "new-session")).toEqual([
+      "new-session",
+      "-d",
+      "-e",
+      "NO_COLOR",
+      "-e",
+      "COLORTERM=truecolor",
+      "-s",
+      expect.stringMatching(/^review-/u),
+      "-P",
+      "-F",
+      "#{pane_id}",
+      "-c",
+      realpathSync(cwd),
+      "claude",
+    ]);
     expect(calls).toContainEqual(["kill-session", "-t", expect.stringMatching(/^review-/u)]);
   });
 });

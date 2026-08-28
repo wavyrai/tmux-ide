@@ -370,11 +370,25 @@ describe("respawnArgs", () => {
       "-k",
       "-t",
       "%7",
+      "-e",
+      "NO_COLOR",
+      "-e",
+      "COLORTERM=truecolor",
       "-c",
       "/proj",
       "claude",
     ]);
-    expect(respawnArgs("%7", "claude", null)).toEqual(["respawn-pane", "-k", "-t", "%7", "claude"]);
+    expect(respawnArgs("%7", "claude", null)).toEqual([
+      "respawn-pane",
+      "-k",
+      "-t",
+      "%7",
+      "-e",
+      "NO_COLOR",
+      "-e",
+      "COLORTERM=truecolor",
+      "claude",
+    ]);
   });
 });
 
@@ -385,7 +399,7 @@ describe("stop/restart argv", () => {
 
   it("relaunches as literal text then a real Enter key (two calls — -l must not eat Enter)", () => {
     expect(relaunchArgs("%7", "claude --resume")).toEqual([
-      ["send-keys", "-t", "%7", "-l", "claude --resume"],
+      ["send-keys", "-t", "%7", "-l", "env -u NO_COLOR COLORTERM=truecolor claude --resume"],
       ["send-keys", "-t", "%7", "Enter"],
     ]);
   });

@@ -32,11 +32,11 @@ import { TmuxError } from "@tmux-ide/tmux-bridge";
 
 import {
   createPinnedWorkspaceTmuxRunner,
-  prepareWorkspaceTerminalColorEnvironment,
   resolveWorkspacePaneTmuxAuthority,
   semanticPaneIdForOperation,
   type WorkspacePaneTmuxAuthority,
 } from "./workspace-pane-creation.ts";
+import { prepareTmuxTruecolorEnvironment } from "./tmux-terminal-color.ts";
 import { getDefaultWorkspaceRegistry, type WorkspaceRegistry } from "./workspace-registry.ts";
 import { internalInteractionOperationMarker } from "./tmux-external-interaction-observer.ts";
 import {
@@ -627,7 +627,7 @@ export class WorkspaceMultiplexerAuthority {
 
     const source = resolvePaneRow(rows, intent.semanticPaneId);
     const canonicalRoot = this.#io.canonicalProjectDir(workspace.projectDir);
-    prepareWorkspaceTerminalColorEnvironment(this.#io.runTmux, sessionName);
+    prepareTmuxTruecolorEnvironment(this.#io.runTmux, sessionName);
     const created = this.#io.runTmux([
       "split-window",
       intent.direction === "right" ? "-h" : "-v",

@@ -67,6 +67,7 @@ describe("hostedEnvVars", () => {
       [HOSTED_ENV]: "1",
       TMUX_IDE_CWD: "/work",
       TMUX_IDE_CLI: "/repo/bin/cli.js",
+      COLORTERM: "truecolor",
     });
   });
 
@@ -93,7 +94,7 @@ describe("hostedCommandLine", () => {
       TMUX_IDE_CWD: "/work dir",
     });
     expect(line).toBe(
-      `exec env TMUX_IDE_HOSTED='1' TMUX_IDE_CWD='/work dir' 'bun' '/repo/app.tsx' '--target=web'`,
+      `exec env -u NO_COLOR TMUX_IDE_HOSTED='1' TMUX_IDE_CWD='/work dir' 'bun' '/repo/app.tsx' '--target=web'`,
     );
   });
 });

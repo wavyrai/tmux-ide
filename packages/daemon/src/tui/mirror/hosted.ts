@@ -79,6 +79,7 @@ export function hostedEnvVars(base: {
     [HOSTED_ENV]: "1",
     TMUX_IDE_CWD: base.cwd,
     TMUX_IDE_CLI: base.cli,
+    COLORTERM: "truecolor",
   };
   if (base.path) env.PATH = base.path;
   if (base.home) env.TMUX_IDE_HOME = base.home;
@@ -98,7 +99,15 @@ export function hostedCommandLine(
   env: Record<string, string>,
 ): string {
   const assigns = Object.entries(env).map(([k, v]) => `${k}=${shellQuote(v)}`);
-  return ["exec", "env", ...assigns, shellQuote(bin), ...argv.map(shellQuote)].join(" ");
+  return [
+    "exec",
+    "env",
+    "-u",
+    "NO_COLOR",
+    ...assigns,
+    shellQuote(bin),
+    ...argv.map(shellQuote),
+  ].join(" ");
 }
 
 /** PURE — exact-match existence probe (`=` prefix: `has-session -t` would

@@ -25,6 +25,7 @@ import { memorablePaneName } from "../terminal/protocol/pane-display-name.ts";
 import { shellEscape } from "./shell.ts";
 import { MissionRepository } from "./mission-repository.ts";
 import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
+import { prepareTmuxTruecolorEnvironment } from "./tmux-terminal-color.ts";
 import {
   captureUnixSocketIdentity,
   revalidateUnixSocketIdentity,
@@ -43,20 +44,6 @@ const CREATION_OPTION = "@tmux_ide_creation_id";
 const HARNESS_OPTION = "@tmux_ide_harness";
 const MISSION_OPTION = "@tmux_ide_mission";
 const SEMANTIC_PANE_OPTION = "@tmux_ide_pane_id";
-
-/**
- * New tmux panes inherit the session environment, which may contain NO_COLOR
- * when tmux-ide itself was launched by a headless host. Remove that inherited
- * opt-out and advertise the truecolor surface before creating a user pane.
- * Existing processes are intentionally untouched.
- */
-export function prepareWorkspaceTerminalColorEnvironment(
-  runTmux: (args: readonly string[]) => string,
-  sessionName: string,
-): void {
-  runTmux(["set-environment", "-u", "-t", `=${sessionName}`, "NO_COLOR"]);
-  runTmux(["set-environment", "-t", `=${sessionName}`, "COLORTERM", "truecolor"]);
-}
 
 export type WorkspacePaneCreationErrorCode =
   | "daemon_instance_mismatch"
@@ -878,7 +865,7 @@ export class WorkspacePaneCreationAuthority {
             workspaceName: workspace.name,
           });
         }
-        prepareWorkspaceTerminalColorEnvironment(this.#io.runTmux, workspace.sessionName);
+        prepareTmuxTruecolorEnvironment(this.#io.runTmux, workspace.sessionName);
         const createArgs =
           placement.kind === "window"
             ? [

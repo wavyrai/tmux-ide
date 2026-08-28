@@ -30,6 +30,10 @@ import {
   relaunchArgs,
   respawnArgs,
 } from "./fleet-agent-lifecycle.ts";
+import {
+  prepareTmuxTruecolorEnvironment,
+  TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
+} from "./tmux-terminal-color.ts";
 
 const MAX_REPLAY_OPERATIONS = 128;
 const sleep = (milliseconds: number) =>
@@ -113,6 +117,7 @@ export class FleetLifecycleAuthority {
         );
       try {
         this.#runTmux(["has-session", "-t", `=${existing.sessionName}`]);
+        prepareTmuxTruecolorEnvironment(this.#runTmux, existing.sessionName);
         const result: WorkspaceSessionCreateResult = {
           operationId,
           daemonInstanceId: this.#daemonInstanceId,
@@ -129,7 +134,15 @@ export class FleetLifecycleAuthority {
     }
     let created = false;
     try {
-      this.#runTmux(["new-session", "-d", "-s", identity.sessionName, "-c", cwd]);
+      this.#runTmux([
+        "new-session",
+        "-d",
+        ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
+        "-s",
+        identity.sessionName,
+        "-c",
+        cwd,
+      ]);
       created = true;
       this.#runTmux(["set-environment", "-t", identity.sessionName, "TMUX_IDE", "1"]);
       this.#runTmux(adoptMarkArgv(identity.sessionName));
@@ -214,6 +227,7 @@ export class FleetLifecycleAuthority {
       );
     if (input.mutation === "stop") await this.#stopAgent(pane.runtimePaneId);
     else if (input.mutation === "restart") {
+      prepareTmuxTruecolorEnvironment(this.#runTmux, session.name);
       const catalogSession = resource.sessions.find(
         (item) => item.sessionId === input.fleetSessionId,
       )!;
@@ -276,6 +290,7 @@ export class FleetLifecycleAuthority {
       paneId = this.#runTmux([
         "new-session",
         "-d",
+        ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
         "-s",
         sessionName,
         "-P",
@@ -299,6 +314,7 @@ export class FleetLifecycleAuthority {
           "Fleet session is no longer live.",
         );
       sessionName = session.name;
+      prepareTmuxTruecolorEnvironment(this.#runTmux, sessionName);
       workspaceName =
         this.#registry.list().find((workspace) => workspace.sessionName === sessionName)?.name ??
         sessionName;

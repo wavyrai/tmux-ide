@@ -17096,7 +17096,8 @@ function hostedEnvVars(base) {
   const env = {
     [HOSTED_ENV]: "1",
     TMUX_IDE_CWD: base.cwd,
-    TMUX_IDE_CLI: base.cli
+    TMUX_IDE_CLI: base.cli,
+    COLORTERM: "truecolor"
   };
   if (base.path) env.PATH = base.path;
   if (base.home) env.TMUX_IDE_HOME = base.home;
@@ -17106,7 +17107,15 @@ function hostedEnvVars(base) {
 }
 function hostedCommandLine(bin, argv, env) {
   const assigns = Object.entries(env).map(([k2, v]) => `${k2}=${shellQuote(v)}`);
-  return ["exec", "env", ...assigns, shellQuote(bin), ...argv.map(shellQuote)].join(" ");
+  return [
+    "exec",
+    "env",
+    "-u",
+    "NO_COLOR",
+    ...assigns,
+    shellQuote(bin),
+    ...argv.map(shellQuote)
+  ].join(" ");
 }
 function hostExistsArgv() {
   return ["has-session", "-t", `=${APP_HOST_SESSION}`];
@@ -27010,14 +27019,31 @@ var init_mission_repository = __esm({
   }
 });
 
+// packages/daemon/src/lib/tmux-terminal-color.ts
+function prepareTmuxTruecolorEnvironment(runTmux2, sessionName) {
+  runTmux2(["set-environment", "-u", "-t", `=${sessionName}`, "NO_COLOR"]);
+  runTmux2(["set-environment", "-t", `=${sessionName}`, "COLORTERM", "truecolor"]);
+}
+function truecolorShellCommand(command2) {
+  return `env -u NO_COLOR COLORTERM=truecolor ${command2}`;
+}
+var TMUX_TRUECOLOR_ENVIRONMENT_ARGS;
+var init_tmux_terminal_color = __esm({
+  "packages/daemon/src/lib/tmux-terminal-color.ts"() {
+    "use strict";
+    TMUX_TRUECOLOR_ENVIRONMENT_ARGS = [
+      "-e",
+      "NO_COLOR",
+      "-e",
+      "COLORTERM=truecolor"
+    ];
+  }
+});
+
 // packages/daemon/src/lib/workspace-pane-creation.ts
 import { execFile as execFile6 } from "node:child_process";
 import { accessSync as accessSync4, constants as constants4, realpathSync as realpathSync7, statSync as statSync7 } from "node:fs";
 import { delimiter as delimiter2, isAbsolute as isAbsolute9, join as join31, relative as relative4, sep as sep6 } from "node:path";
-function prepareWorkspaceTerminalColorEnvironment(runTmux2, sessionName) {
-  runTmux2(["set-environment", "-u", "-t", `=${sessionName}`, "NO_COLOR"]);
-  runTmux2(["set-environment", "-t", `=${sessionName}`, "COLORTERM", "truecolor"]);
-}
 function canonicalProjectDir(path2) {
   const canonical = realpathSync7(path2);
   if (!statSync7(canonical).isDirectory()) throw new Error("project root is not a directory");
@@ -27405,6 +27431,7 @@ var init_workspace_pane_creation2 = __esm({
     init_shell();
     init_mission_repository();
     init_runtime_namespace();
+    init_tmux_terminal_color();
     init_unix_socket_authority();
     MAX_LIVE_OR_UNSAFE_OPERATIONS = 128;
     MAX_REPLAYABLE_FAILURES = 64;
@@ -27615,7 +27642,7 @@ var init_workspace_pane_creation2 = __esm({
                 workspaceName: workspace.name
               });
             }
-            prepareWorkspaceTerminalColorEnvironment(this.#io.runTmux, workspace.sessionName);
+            prepareTmuxTruecolorEnvironment(this.#io.runTmux, workspace.sessionName);
             const createArgs = placement.kind === "window" ? [
               "new-window",
               "-d",
@@ -29963,12 +29990,12 @@ function interruptArgs(paneId) {
 }
 function relaunchArgs(paneId, command2) {
   return [
-    ["send-keys", "-t", paneId, "-l", command2],
+    ["send-keys", "-t", paneId, "-l", truecolorShellCommand(command2)],
     ["send-keys", "-t", paneId, "Enter"]
   ];
 }
 function respawnArgs(paneId, command2, dir) {
-  const args = ["respawn-pane", "-k", "-t", paneId];
+  const args = ["respawn-pane", "-k", "-t", paneId, ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS];
   if (dir) args.push("-c", dir);
   args.push(command2);
   return args;
@@ -29983,6 +30010,7 @@ var LAUNCH_COMMANDS, SHELLS, INTERRUPT_TAP_GAP_MS, RESTART_GRACE_MS;
 var init_fleet_agent_lifecycle = __esm({
   "packages/daemon/src/lib/fleet-agent-lifecycle.ts"() {
     "use strict";
+    init_tmux_terminal_color();
     LAUNCH_COMMANDS = {
       claude: "claude",
       codex: "codex",
@@ -30032,6 +30060,7 @@ var init_fleet_lifecycle_authority = __esm({
     init_fleet_catalog2();
     init_chrome_front_door();
     init_fleet_agent_lifecycle();
+    init_tmux_terminal_color();
     MAX_REPLAY_OPERATIONS = 128;
     sleep = (milliseconds) => new Promise((resolve37) => setTimeout(resolve37, milliseconds));
     FleetLifecycleAuthorityError = class extends Error {
@@ -30087,6 +30116,7 @@ var init_fleet_lifecycle_authority = __esm({
             );
           try {
             this.#runTmux(["has-session", "-t", `=${existing.sessionName}`]);
+            prepareTmuxTruecolorEnvironment(this.#runTmux, existing.sessionName);
             const result2 = {
               operationId,
               daemonInstanceId: this.#daemonInstanceId,
@@ -30102,7 +30132,15 @@ var init_fleet_lifecycle_authority = __esm({
         }
         let created = false;
         try {
-          this.#runTmux(["new-session", "-d", "-s", identity.sessionName, "-c", cwd]);
+          this.#runTmux([
+            "new-session",
+            "-d",
+            ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
+            "-s",
+            identity.sessionName,
+            "-c",
+            cwd
+          ]);
           created = true;
           this.#runTmux(["set-environment", "-t", identity.sessionName, "TMUX_IDE", "1"]);
           this.#runTmux(adoptMarkArgv(identity.sessionName));
@@ -30176,6 +30214,7 @@ var init_fleet_lifecycle_authority = __esm({
           );
         if (input.mutation === "stop") await this.#stopAgent(pane.runtimePaneId);
         else if (input.mutation === "restart") {
+          prepareTmuxTruecolorEnvironment(this.#runTmux, session.name);
           const catalogSession = resource3.sessions.find(
             (item) => item.sessionId === input.fleetSessionId
           );
@@ -30226,6 +30265,7 @@ var init_fleet_lifecycle_authority = __esm({
           paneId = this.#runTmux([
             "new-session",
             "-d",
+            ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
             "-s",
             sessionName,
             "-P",
@@ -30249,6 +30289,7 @@ var init_fleet_lifecycle_authority = __esm({
               "Fleet session is no longer live."
             );
           sessionName = session.name;
+          prepareTmuxTruecolorEnvironment(this.#runTmux, sessionName);
           workspaceName = this.#registry.list().find((workspace) => workspace.sessionName === sessionName)?.name ?? sessionName;
           const targetPane = target.targetSemanticPaneId ? session.panes.find((pane) => pane.semanticPaneId === target.targetSemanticPaneId) : void 0;
           if (target.placement !== "window" && !targetPane)
@@ -34317,6 +34358,7 @@ var init_workspace_multiplexer_verbs = __esm({
     init_src();
     init_src2();
     init_workspace_pane_creation2();
+    init_tmux_terminal_color();
     init_workspace_registry();
     init_tmux_external_interaction_observer();
     init_tmux_interaction_options();
@@ -34638,7 +34680,7 @@ var init_workspace_multiplexer_verbs = __esm({
         }
         const source = resolvePaneRow(rows, intent.semanticPaneId);
         const canonicalRoot = this.#io.canonicalProjectDir(workspace.projectDir);
-        prepareWorkspaceTerminalColorEnvironment(this.#io.runTmux, sessionName);
+        prepareTmuxTruecolorEnvironment(this.#io.runTmux, sessionName);
         const created = this.#io.runTmux([
           "split-window",
           intent.direction === "right" ? "-h" : "-v",
@@ -62269,14 +62311,22 @@ function paneHostsShell(startCommand, manifests) {
   return isShellCommand(first, manifests);
 }
 function respawnArgs2(paneId, command2, dir) {
-  return ["respawn-pane", "-k", "-t", paneId, ...dir ? ["-c", dir] : [], command2];
+  return [
+    "respawn-pane",
+    "-k",
+    "-t",
+    paneId,
+    ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
+    ...dir ? ["-c", dir] : [],
+    command2
+  ];
 }
 function interruptArgs2(paneId) {
   return ["send-keys", "-t", paneId, "C-c"];
 }
 function relaunchArgs2(paneId, command2) {
   return [
-    ["send-keys", "-t", paneId, "-l", command2],
+    ["send-keys", "-t", paneId, "-l", truecolorShellCommand(command2)],
     ["send-keys", "-t", paneId, "Enter"]
   ];
 }
@@ -62291,6 +62341,7 @@ var init_agent_lifecycle = __esm({
   "packages/daemon/src/tui/mirror/agent-lifecycle.ts"() {
     "use strict";
     init_agent_rows();
+    init_tmux_terminal_color();
     AGENT_LAUNCH_COMMANDS = {
       claude: "claude",
       codex: "codex",
