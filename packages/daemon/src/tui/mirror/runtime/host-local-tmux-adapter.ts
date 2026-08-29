@@ -7,7 +7,6 @@ export interface OpenTuiHostLocalTmuxAdapter {
   readonly hosted: boolean;
   configureClipboard(): Promise<boolean>;
   copyText(text: string): boolean;
-  putAway(): Promise<void>;
 }
 
 function runTmux(args: readonly string[]): Promise<void> {
@@ -54,10 +53,9 @@ export function writeAllSync(
 /**
  * The only direct tmux capability retained by the OpenTUI renderer.
  *
- * Workspace/session/window/pane mutation belongs to the daemon. These calls
- * affect only the terminal client hosting this renderer, plus tmux's clipboard
- * passthrough policy, and therefore cannot be represented as shared workspace
- * state.
+ * Workspace/session/window/pane and hosted-client lifecycle mutation belongs
+ * outside the shared renderer. This adapter retains only tmux's clipboard
+ * passthrough policy and the renderer's controlling-TTY OSC52 write.
  */
 export function createOpenTuiHostLocalTmuxAdapter(
   hosted = process.env.TMUX_IDE_HOSTED === "1",
@@ -101,14 +99,6 @@ export function createOpenTuiHostLocalTmuxAdapter(
         return writeClipboard(osc52Sequence(Buffer.from(text, "utf8").toString("base64")));
       } catch {
         return false;
-      }
-    },
-    async putAway() {
-      if (!hosted) return;
-      try {
-        await run(["switch-client", "-l"]);
-      } catch {
-        await run(["detach-client"]);
       }
     },
   };

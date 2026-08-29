@@ -2,7 +2,7 @@
 import { createCliRenderer } from "@opentui/core";
 import type { CommandSource } from "@tmux-ide/contracts";
 import { batch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import { render, useKeyboard, usePaste, useTerminalDimensions } from "@opentui/solid";
+import { useKeyboard, usePaste } from "@opentui/solid";
 import { publishTuiInputReady } from "../../readiness.ts";
 import { prepareOpenTuiApplicationShellConnection } from "../application-shell-daemon-connection.ts";
 import {
@@ -71,6 +71,8 @@ import {
 } from "./application-terminal-selection-owner.ts";
 import { createApplicationTerminalRendererSources } from "./application-terminal-renderer-sources.ts";
 import { createSemanticShellViewportResizeOwner } from "./semantic-shell-viewport-resize.ts";
+import { installHostedRuntimeOwnership } from "./hosted-tty-size-bridge.ts";
+import { renderWithTerminalDimensions } from "./terminal-dimensions-owner.ts";
 import {
   sendApplicationTerminalKey,
   sendApplicationTerminalPaste,
@@ -109,6 +111,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
     },
     mountRoot({ config }) {
       const hostLocal = createOpenTuiHostLocalTmuxAdapter();
+      installHostedRuntimeOwnership({ lifecycle, hosted: hostLocal.hosted, renderer });
       const clipboardReady = applicationClipboardReadiness(
         hostLocal.configureClipboard,
         Boolean(process.env.TMUX),
@@ -152,10 +155,9 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
       });
       let getTerminalRendererSource: (() => HostFocusRendererSource | null) | null = null;
       const terminalHostFocus = createApplicationTerminalHostFocus(() => sessionOwner);
-      const root = render(() => {
+      const root = renderWithTerminalDimensions(renderer)((dimensions) => {
         tuiPerfMark("solid-root-evaluate");
         registerPaneSurface();
-        const dimensions = useTerminalDimensions();
         const theme = createSemanticThemeSnapshot(config.app.theme, renderer.themeMode);
         const palette = createTerminalPaletteProjection(theme);
         const [surface, setSurface] = createSignal<"home" | "terminals">(
@@ -325,17 +327,9 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           if (paneRename.handleKey(event)) return;
           if (selectionOwner.handleKey(name)) return;
           if (event.ctrl && name === "q") {
-            if (hostLocal.hosted) {
-              void hostLocal
-                .putAway()
-                .catch((error) =>
-                  setBootstrapNote(
-                    `Could not put away: ${error instanceof Error ? error.message : String(error)}`,
-                  ),
-                );
-            } else {
-              void lifecycle.shutdown("keyboard");
-            }
+            // tmux owns real hosted Ctrl-Q with exact client context. A direct
+            // pane injection has no identity, so consume it fail-closed.
+            if (!hostLocal.hosted) void lifecycle.shutdown("keyboard");
             return;
           }
           const isPaletteOpen = applicationPaletteOwnsInput(
@@ -474,7 +468,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             onInteraction={() => noteHostInteraction()}
           />
         );
-      }, renderer);
+      });
       const postRender = installApplicationPostRenderRuntime({
         renderer,
         root,

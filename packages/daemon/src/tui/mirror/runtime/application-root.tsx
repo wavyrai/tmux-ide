@@ -8,10 +8,10 @@
  * (60fps structural publication + 60fps renderer target / 120fps invalidation ceiling)
  * rendering, ^o pane focus cycle, ^t window cycle, ^q quits (session
  * untouched) — except HOSTED (M23.2): launched by `tmux-ide app --detachable`
- * inside the internal `_tmux-ide-app` session (TMUX_IDE_HOSTED=1), ^q puts the
- * cockpit away and the app keeps running (switch-client -l back to where the
- * client came from, else detach); the palette's "Quit" verb remains the real
- * exit (ending the pane command ends the host session).
+ * inside the internal `_tmux-ide-app` session (TMUX_IDE_HOSTED=1), tmux owns
+ * ^q while the exact invoking client is known (switch back to where that client
+ * came from, else detach); the palette's "Quit" verb remains the real exit
+ * (ending the pane command ends the host session).
  *
  * SELECT MODE (M22.9): forwarding normally wins on app-mouse panes, so those
  * panes (exactly the agent panes users copy from) could never drag-select.
@@ -417,6 +417,7 @@ import { TuiCleanupRegistry, resolveInputLayer } from "../input-lifecycle.ts";
 import {
   TuiApplicationLifecycle,
   createApplicationLifecycleInputExecutor,
+  installTuiHostSignalShutdown,
 } from "./application-lifecycle.ts";
 import { observeTuiRootFailure, startTuiApplication } from "./application-bootstrap.ts";
 import { createOpenTuiHostLocalTmuxAdapter } from "./host-local-tmux-adapter.ts";
@@ -4695,16 +4696,15 @@ const mountTuiRoot = () => {
       paletteController.switchWorkspace(identity);
     });
     const hostLocalTmux = createOpenTuiHostLocalTmuxAdapter();
-    const lifecycleExecutor = createApplicationLifecycleInputExecutor(applicationLifecycle, {
-      // Renderer destruction disposes the Solid root first, so the shared
-      // onCleanup path owns mirrors/buffers and the host-mode guard restores
-      // DECAWM after OpenTUI's native terminal teardown.
-      // HOSTED (M23.2): put the cockpit away and keep running. A client that
-      // came here via switch-client bounces BACK to its last session; a plain
-      // terminal attach has no last session, so switch-client -l fails and the
-      // fallback detaches.
-      putAway: () => hostLocalTmux.putAway(),
+    const hostSignals = installTuiHostSignalShutdown(applicationLifecycle, {
+      hosted: hostLocalTmux.hosted,
     });
+    applicationLifecycle.registerCloser("host-death-signals", hostSignals.dispose);
+    // Renderer destruction disposes the Solid root first, so the shared
+    // onCleanup path owns mirrors/buffers and the host-mode guard restores
+    // DECAWM after OpenTUI's native terminal teardown. Hosted Ctrl-Q is a tmux
+    // root binding; direct pane injection is consumed by this executor.
+    const lifecycleExecutor = createApplicationLifecycleInputExecutor(applicationLifecycle);
     const ensurePerformanceHud = async () => {
       const existing = performanceHudSession();
       if (existing) return existing;

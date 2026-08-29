@@ -653,7 +653,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   let launchIndex = 0;
   const launchApp = async ({ target = null, hosted = false } = {}) => {
     launchIndex += 1;
-    const hostSession = `_tmux-ide-pack-journey-${launchIndex}`;
+    const hostSession = hosted ? "_tmux-ide-app" : `_tmux-ide-pack-journey-${launchIndex}`;
     const stem = join(tmpRoot, `journey-${launchIndex}`);
     const statusPath = `${stem}.status`;
     const readyPath = `${stem}.ready.json`;
@@ -690,6 +690,21 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       launcherPath,
     ]);
     if (created.status !== 0) throw new Error(`Could not launch ${hostSession}: ${created.stderr}`);
+    if (hosted) {
+      const binding = tmuxResult([
+        "bind-key",
+        "-T",
+        "root",
+        "C-q",
+        "if-shell",
+        "-F",
+        "#{==:#{session_name},_tmux-ide-app}",
+        "if-shell -F '#{client_last_session}' 'switch-client -l' 'detach-client'",
+        "send-keys C-q",
+      ]);
+      if (binding.status !== 0)
+        throw new Error(`Could not install hosted Ctrl-Q binding: ${binding.stderr}`);
+    }
     const targetPane = `=${hostSession}:0.0`;
     const diagnostics = () =>
       [
@@ -1187,8 +1202,12 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     () => controlClientTarget() !== null,
     hosted.diagnostics,
   );
+  const invokingHostedClient = controlClientTarget();
+  if (!invokingHostedClient) throw new Error("Could not retain the hosted control client name.");
   switchTo(hosted.hostSession);
-  send(hosted, "C-q");
+  const putAway = tmuxResult(["send-keys", "-K", "-c", invokingHostedClient, "C-q"]);
+  if (putAway.status !== 0)
+    throw new Error(`Could not route hosted Ctrl-Q from its client: ${putAway.stderr}`);
   await observe(
     "hosted put-away preserves app",
     10_000,
@@ -1233,8 +1252,66 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     () => capture(focused).includes(returnMarker),
     hosted.diagnostics,
   );
+  const hostedRendererPidResult = tmuxResult([
+    "display-message",
+    "-p",
+    "-t",
+    `=${hosted.hostSession}:0.0`,
+    "#{pane_pid}",
+  ]);
+  const hostedRendererPid = Number(hostedRendererPidResult.stdout.trim());
+  const hostedRendererIdentity = Number.isSafeInteger(hostedRendererPid)
+    ? spawnSync("ps", ["-p", String(hostedRendererPid), "-o", "lstart=", "-o", "command="], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).stdout.trim()
+    : "";
   tmuxResult(["kill-session", "-t", `=${hosted.hostSession}`]);
   controlClient.kill("SIGTERM");
+  // The hosted renderer belongs to this pane. Killing the isolated host must
+  // therefore make the exact compiled process exit through its lifecycle.
+  // Keep an identity-checked reaper as defense-in-depth so a failed gate never
+  // leaks the process it created or targets any ambient tmux-ide process.
+  if (hostedRendererIdentity) {
+    const stillExactRenderer = () => {
+      const observed = spawnSync(
+        "ps",
+        ["-p", String(hostedRendererPid), "-o", "lstart=", "-o", "command="],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+      );
+      return observed.status === 0 && observed.stdout.trim() === hostedRendererIdentity;
+    };
+    let naturalExit = false;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (!stillExactRenderer()) {
+        naturalExit = true;
+        break;
+      }
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+    }
+    if (!naturalExit && stillExactRenderer()) {
+      try {
+        process.kill(hostedRendererPid, "SIGTERM");
+      } catch {
+        // It exited after the identity probe.
+      }
+    }
+    for (let attempt = 0; attempt < 20 && stillExactRenderer(); attempt += 1) {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+    }
+    if (stillExactRenderer()) {
+      try {
+        process.kill(hostedRendererPid, "SIGKILL");
+      } catch {
+        // It exited after the final identity probe.
+      }
+    }
+    if (!naturalExit) {
+      throw new Error(
+        `Hosted renderer ${hostedRendererPid} did not exit naturally after its tmux host died.`,
+      );
+    }
+  }
 
   console.log(`packed OpenTUI journey latency ${JSON.stringify(observations)}`);
   return observations;

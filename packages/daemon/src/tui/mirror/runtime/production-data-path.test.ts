@@ -156,7 +156,7 @@ describe("production OpenTUI v2 data path", () => {
     expect(source).not.toContain("process.exit(");
   });
 
-  it("keeps direct tmux calls isolated to the explicit host-local adapter", () => {
+  it("keeps renderer-local tmux calls isolated to clipboard policy", () => {
     const directTmuxOwners = productionGraph.files.filter((path) =>
       productionGraph.sourceByFile.get(path)?.match(/execFile\(\s*["']tmux["']/u),
     );
@@ -164,11 +164,11 @@ describe("production OpenTUI v2 data path", () => {
       "packages/daemon/src/tui/mirror/runtime/host-local-tmux-adapter.ts",
     ]);
     const adapterSource = productionGraph.sourceByFile.get(directTmuxOwners[0]!)!;
-    expect(adapterSource).toContain('["switch-client", "-l"]');
-    expect(adapterSource).toContain('["detach-client"]');
     expect(adapterSource).toContain('["set-option", "-gq", "set-clipboard", "on"]');
     expect(adapterSource).toContain('["set-option", "-gq", "allow-passthrough", "on"]');
-    expect(adapterSource).not.toMatch(/(?:select|resize|new|kill)-(?:pane|window|session)/u);
+    expect(adapterSource).not.toMatch(
+      /(?:switch|detach)-client|(?:select|resize|new|kill)-(?:pane|window|session)/u,
+    );
   });
 
   it("keeps pure renderer composition free of host IO and authority owners", () => {

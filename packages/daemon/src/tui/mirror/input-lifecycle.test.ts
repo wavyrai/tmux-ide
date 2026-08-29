@@ -282,7 +282,6 @@ describe("input lifecycle boundary", () => {
     const calls: string[] = [];
     const executor = createTuiLifecycleExecutor({
       destroyRenderer: () => calls.push("destroy"),
-      putAway: () => calls.push("put-away"),
     });
 
     executor.run({ kind: "destroy-renderer", source: "keyboard" });
@@ -291,24 +290,22 @@ describe("input lifecycle boundary", () => {
     expect(calls).toEqual(["destroy"]);
   });
 
-  it("delegates hosted put-away exactly once to the host-local adapter", () => {
+  it("consumes direct pane-injected hosted detach without mutating a client", () => {
     const calls: string[] = [];
     const executor = createTuiLifecycleExecutor({
       destroyRenderer: () => calls.push("destroy"),
-      putAway: () => calls.push("put-away"),
     });
 
     executor.run({ kind: "hosted-detach", source: "keyboard" });
     executor.run({ kind: "hosted-detach", source: "keyboard" });
 
-    expect(calls).toEqual(["put-away"]);
+    expect(calls).toEqual([]);
   });
 
   it("executes hosted palette quit as destroy once", () => {
     const calls: string[] = [];
     const executor = createTuiLifecycleExecutor({
       destroyRenderer: () => calls.push("destroy"),
-      putAway: () => calls.push("put-away"),
     });
 
     executor.run(resolveQuitLifecycleCommand({ hosted: true }, "palette"));

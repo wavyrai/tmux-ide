@@ -10,14 +10,14 @@ const source = readFileSync(
 );
 
 describe("host-local tmux adapter boundary", () => {
-  it("contains only client-local put-away and clipboard policy commands", () => {
-    expect(source.match(/run\(\[/gu)).toHaveLength(2);
+  it("contains only clipboard policy commands", () => {
+    expect(source.match(/run\(\[/gu)).toBeNull();
     expect(source.match(/boundedClipboardPolicyRun\(run,/gu)).toHaveLength(2);
-    expect(source).toContain('["switch-client", "-l"]');
-    expect(source).toContain('["detach-client"]');
     expect(source).toContain('["set-option", "-gq", "set-clipboard", "on"]');
     expect(source).toContain('["set-option", "-gq", "allow-passthrough", "on"]');
     for (const forbidden of [
+      "switch-client",
+      "detach-client",
       "new-session",
       "new-window",
       "split-window",
@@ -30,20 +30,14 @@ describe("host-local tmux adapter boundary", () => {
     }
   });
 
-  it("owns switch-back fallback and clipboard policy behind one capability", async () => {
+  it("owns clipboard policy behind one capability", async () => {
     const calls: string[][] = [];
-    const adapter = createOpenTuiHostLocalTmuxAdapter(true, async (args) => {
-      calls.push([...args]);
-      if (args[0] === "switch-client") throw new Error("no prior client");
-    });
+    const adapter = createOpenTuiHostLocalTmuxAdapter(true, async (args) => calls.push([...args]));
     expect(adapter.hosted).toBe(true);
     await expect(adapter.configureClipboard()).resolves.toBe(true);
-    await adapter.putAway();
     expect(calls).toEqual([
       ["set-option", "-gq", "set-clipboard", "on"],
       ["set-option", "-gq", "allow-passthrough", "on"],
-      ["switch-client", "-l"],
-      ["detach-client"],
     ]);
   });
 
@@ -107,13 +101,9 @@ describe("host-local tmux adapter boundary", () => {
     }
   });
 
-  it("does not mutate a host client when the app is not hosted", async () => {
-    const calls: string[][] = [];
-    const adapter = createOpenTuiHostLocalTmuxAdapter(false, async (args) => {
-      calls.push([...args]);
-    });
+  it("retains the hosted marker without exposing client mutation", () => {
+    const adapter = createOpenTuiHostLocalTmuxAdapter(false);
     expect(adapter.hosted).toBe(false);
-    await adapter.putAway();
-    expect(calls).toEqual([]);
+    expect(adapter).not.toHaveProperty("putAway");
   });
 });

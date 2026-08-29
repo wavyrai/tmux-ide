@@ -33,6 +33,14 @@ npm install -g tmux-ide@beta
 tmux-ide app
 ```
 
+Use `tmux-ide app --detachable [session]` for a persistent cockpit. `Ctrl-Q`
+puts away only the viewer that pressed it: a client switched in from another
+tmux session returns there, while a directly attached client detaches. The
+hosted renderer keeps running; use the command palette's Quit action when you
+intend to stop it. tmux-ide never overwrites an existing root `C-q` binding and
+will explain the conflict instead. This routing requires tmux 3.0 or newer and
+works over ordinary local or SSH tmux clients.
+
 The first explicit app launch downloads the exact-version OpenTUI runtime for
 macOS or Linux, verifies its release metadata and SHA-256 digests, and caches it
 under `~/.tmux-ide/bin`. Your tmux server, panes, and PTYs remain the source of

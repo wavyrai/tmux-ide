@@ -49,7 +49,10 @@ for (const required of [
   "packages/daemon/src/tui/compiled.ts",
   "packages/daemon/src/lib/tui-binary.ts",
   "packages/daemon/src/tui/mirror/app.tsx",
+  "packages/daemon/src/tui/mirror/hosted.ts",
   "packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx",
+  "packages/daemon/src/tui/mirror/runtime/hosted-tty-size-bridge.ts",
+  "packages/daemon/src/tui/mirror/runtime/terminal-dimensions-owner.ts",
 ]) {
   if (!files.has(required))
     throw new Error(`npm package is missing OpenTUI runtime file ${required}`);

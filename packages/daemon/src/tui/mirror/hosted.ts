@@ -6,22 +6,27 @@
  * running the app full-screen, then attaches the terminal to it. ^q under
  * hosting DETACHES the client (the app keeps running); re-invocation from any
  * terminal — including a phone over ssh — reattaches the SAME cockpit with
- * scroll positions, dialogs, and workspace context intact.
+ * scroll positions, dialogs, and workspace context intact. Ctrl-Q is bound at
+ * tmux's root input table so it puts away only the client which pressed it.
  *
  * These are the PURE pieces of that contract: the entry decision, the tmux
  * argv builders, and the shell quoting for the host pane's command line. The
  * io (spawning tmux, resolving bun vs the compiled binary) stays in the CLI;
- * the app side only reads {@link HOSTED_ENV} to flip ^q from quit to detach.
+ * the app side reads {@link HOSTED_ENV} to keep direct pane-injected Ctrl-Q
+ * from destroying the resident renderer.
  */
 
 /** The internal host session. `_`-prefixed so every fleet surface (team --json,
  *  sidebar, home) and the snapshot/restore path already filter it out. */
 export const APP_HOST_SESSION = "_tmux-ide-app";
 
-/** The env marker the launcher sets on the hosted app process. The app flips
- *  ^q from "quit" to "detach the client" when it sees `=1`; the CLI treats it
- *  as a recursion guard (a hosted app never re-hosts). */
+/** The env marker the launcher sets on the hosted app process. The app consumes
+ *  renderer-delivered Ctrl-Q when it sees `=1`; real client Ctrl-Q is handled
+ *  by tmux before reaching the pane. The CLI also uses it as a recursion guard. */
 export const HOSTED_ENV = "TMUX_IDE_HOSTED";
+
+/** Hosted put-away is a tmux client action, never a renderer action. */
+export const HOSTED_PUT_AWAY_KEY = "C-q" as const;
 
 /** Everything the entry decision reads — flags, config, and the guard. */
 export interface HostedEntryInput {
@@ -211,4 +216,71 @@ export function hostAttachArgv(insideTmux: boolean): string[] {
   return insideTmux
     ? ["switch-client", "-t", `=${APP_HOST_SESSION}`]
     : ["attach-session", "-t", `=${APP_HOST_SESSION}`];
+}
+
+/**
+ * tmux 3.0 (the supported floor) cannot query one binding or format
+ * `list-keys`, so inspect the bounded root-table listing in-process.
+ */
+export function hostRootBindingsArgv(): string[] {
+  return ["list-keys", "-T", "root"];
+}
+
+/**
+ * Install Ctrl-Q at tmux's input boundary. A bound `detach-client` and
+ * `switch-client` execute with the key's exact client as their current client;
+ * a command launched by the shared renderer pane does not have that identity.
+ *
+ * The outer session guard preserves ordinary Ctrl-Q input everywhere else.
+ * A client which switched into the host returns to its own prior session; a
+ * plain attachment, which has no prior session, detaches only itself.
+ */
+export function hostPutAwayBindingArgv(): string[] {
+  return [
+    "bind-key",
+    "-T",
+    "root",
+    HOSTED_PUT_AWAY_KEY,
+    "if-shell",
+    "-F",
+    `#{==:#{session_name},${APP_HOST_SESSION}}`,
+    "if-shell -F '#{client_last_session}' 'switch-client -l' 'detach-client'",
+    `send-keys ${HOSTED_PUT_AWAY_KEY}`,
+  ];
+}
+
+export type HostedPutAwayBindingState = "absent" | "owned" | "conflict";
+
+const HOSTED_PUT_AWAY_LISTING_COMMAND =
+  `if-shell -F "#{==:#{session_name},${APP_HOST_SESSION}}" ` +
+  `"if-shell -F '#{client_last_session}' 'switch-client -l' 'detach-client'" ` +
+  `"send-keys ${HOSTED_PUT_AWAY_KEY}"`;
+
+function rootCtrlQBindingCommands(rootBindings: string): readonly string[] {
+  if (
+    typeof rootBindings !== "string" ||
+    rootBindings.includes("\0") ||
+    Buffer.byteLength(rootBindings, "utf8") > 1024 * 1024
+  ) {
+    return ["invalid-root-binding-list"];
+  }
+  return rootBindings
+    .split(/\r?\n/u)
+    .map(
+      (line) =>
+        line.match(/^\s*bind-key\s+-T\s+root\s+C-q\s+(?<command>.+?)\s*$/u)?.groups?.command,
+    )
+    .filter((command): command is string => command !== undefined);
+}
+
+/**
+ * Classify the existing root Ctrl-Q binding without evaluating or embedding a
+ * user-authored tmux command. Anything other than our exact canonical shape is
+ * a conflict and must remain untouched.
+ */
+export function hostedPutAwayBindingState(rootBindings: string): HostedPutAwayBindingState {
+  const matches = rootCtrlQBindingCommands(rootBindings);
+  if (matches.length === 0) return "absent";
+  if (matches.length !== 1) return "conflict";
+  return matches[0] === HOSTED_PUT_AWAY_LISTING_COMMAND ? "owned" : "conflict";
 }

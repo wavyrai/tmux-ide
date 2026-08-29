@@ -229,10 +229,8 @@ export interface TuiLifecycleExecutor {
 
 export function createTuiLifecycleExecutor(deps: {
   destroyRenderer: () => void;
-  putAway: () => void;
 }): TuiLifecycleExecutor {
   let destroyRequested = false;
-  let hostedDetachRequested = false;
 
   return {
     run(command) {
@@ -242,9 +240,9 @@ export function createTuiLifecycleExecutor(deps: {
         deps.destroyRenderer();
         return;
       }
-      if (hostedDetachRequested) return;
-      hostedDetachRequested = true;
-      deps.putAway();
+      // Hosted detach belongs to tmux's root key binding, where the invoking
+      // client is still known. A command injected directly into the shared
+      // renderer pane is deliberately consumed without client mutation.
     },
   };
 }

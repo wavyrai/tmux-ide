@@ -56,6 +56,9 @@ import {
   hostCreateArgv,
   hostSetupArgvs,
   hostAttachArgv,
+  hostRootBindingsArgv,
+  hostPutAwayBindingArgv,
+  hostedPutAwayBindingState,
   HOSTED_ENV,
 } from "../packages/daemon/src/tui/mirror/hosted.ts";
 
@@ -422,8 +425,8 @@ function execBunWidget(
 // The detachable cockpit (M23.2): instead of running the app in THIS terminal,
 // ensure the internal `_tmux-ide-app` session exists running it full-screen
 // (status off, window-size latest — see hostSetupArgvs), then attach here.
-// Re-invocation from any terminal reattaches the SAME cockpit; ^q inside a
-// hosted app detaches (the HOSTED_ENV marker on the pane command flips it).
+// Re-invocation from any terminal reattaches the SAME cockpit; tmux handles ^q
+// with the exact invoking client as context while the resident app stays alive.
 // Inside tmux the client switch-clients instead of nesting an attach.
 function launchHostedApp(scriptPath: string, appArgs: string[]): void {
   const launch = resolveTuiLaunch({
@@ -474,6 +477,29 @@ function launchHostedApp(scriptPath: string, appArgs: string[]): void {
   // `resize-window` flipped to manual — the measured way a cockpit gets stuck
   // at a departed client's size.
   for (const args of hostSetupArgvs()) execFileSync("tmux", args, { stdio: "ignore" });
+  // Ctrl-Q must be resolved by tmux while the exact input client is still the
+  // command context. The shared renderer pane cannot identify which of several
+  // attached terminals supplied a key. Never replace a user-owned root bind:
+  // tmux 3.0 has no single-key/formatted list-keys query, so classify its
+  // bounded canonical root-table listing in-process.
+  const rootBindings = execFileSync("tmux", hostRootBindingsArgv(), {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 1_500,
+    maxBuffer: 1024 * 1024,
+  });
+  const putAwayBinding = hostedPutAwayBindingState(rootBindings);
+  if (putAwayBinding === "conflict") {
+    throw new IdeError(
+      "Cannot enable hosted Ctrl-Q because tmux's root C-q key is already user-bound. " +
+        "tmux-ide left that binding unchanged. Unbind or remap it, then run the app again; " +
+        "tmux prefix+d remains available for detaching.",
+      { code: "USAGE", exitCode: 1 },
+    );
+  }
+  if (putAwayBinding === "absent") {
+    execFileSync("tmux", hostPutAwayBindingArgv(), { stdio: "ignore" });
+  }
   execFileSync("tmux", hostAttachArgv(Boolean(process.env.TMUX)), { stdio: "inherit" });
 }
 

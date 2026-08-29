@@ -17135,17 +17135,49 @@ function hostSetupArgvs() {
 function hostAttachArgv(insideTmux) {
   return insideTmux ? ["switch-client", "-t", `=${APP_HOST_SESSION}`] : ["attach-session", "-t", `=${APP_HOST_SESSION}`];
 }
-var APP_HOST_SESSION, HOSTED_ENV, HOST_RESIZE_HOOKS;
+function hostRootBindingsArgv() {
+  return ["list-keys", "-T", "root"];
+}
+function hostPutAwayBindingArgv() {
+  return [
+    "bind-key",
+    "-T",
+    "root",
+    HOSTED_PUT_AWAY_KEY,
+    "if-shell",
+    "-F",
+    `#{==:#{session_name},${APP_HOST_SESSION}}`,
+    "if-shell -F '#{client_last_session}' 'switch-client -l' 'detach-client'",
+    `send-keys ${HOSTED_PUT_AWAY_KEY}`
+  ];
+}
+function rootCtrlQBindingCommands(rootBindings) {
+  if (typeof rootBindings !== "string" || rootBindings.includes("\0") || Buffer.byteLength(rootBindings, "utf8") > 1024 * 1024) {
+    return ["invalid-root-binding-list"];
+  }
+  return rootBindings.split(/\r?\n/u).map(
+    (line) => line.match(/^\s*bind-key\s+-T\s+root\s+C-q\s+(?<command>.+?)\s*$/u)?.groups?.command
+  ).filter((command2) => command2 !== void 0);
+}
+function hostedPutAwayBindingState(rootBindings) {
+  const matches = rootCtrlQBindingCommands(rootBindings);
+  if (matches.length === 0) return "absent";
+  if (matches.length !== 1) return "conflict";
+  return matches[0] === HOSTED_PUT_AWAY_LISTING_COMMAND ? "owned" : "conflict";
+}
+var APP_HOST_SESSION, HOSTED_ENV, HOSTED_PUT_AWAY_KEY, HOST_RESIZE_HOOKS, HOSTED_PUT_AWAY_LISTING_COMMAND;
 var init_hosted = __esm({
   "packages/daemon/src/tui/mirror/hosted.ts"() {
     "use strict";
     APP_HOST_SESSION = "_tmux-ide-app";
     HOSTED_ENV = "TMUX_IDE_HOSTED";
+    HOSTED_PUT_AWAY_KEY = "C-q";
     HOST_RESIZE_HOOKS = [
       "client-attached",
       "client-focus-in",
       "client-session-changed"
     ];
+    HOSTED_PUT_AWAY_LISTING_COMMAND = `if-shell -F "#{==:#{session_name},${APP_HOST_SESSION}}" "if-shell -F '#{client_last_session}' 'switch-client -l' 'detach-client'" "send-keys ${HOSTED_PUT_AWAY_KEY}"`;
   }
 });
 
@@ -70703,6 +70735,22 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
     execFileSync19("tmux", hostCreateArgv({ cwd, commandLine }), { stdio: "ignore" });
   }
   for (const args of hostSetupArgvs()) execFileSync19("tmux", args, { stdio: "ignore" });
+  const rootBindings = execFileSync19("tmux", hostRootBindingsArgv(), {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 1500,
+    maxBuffer: 1024 * 1024
+  });
+  const putAwayBinding = hostedPutAwayBindingState(rootBindings);
+  if (putAwayBinding === "conflict") {
+    throw new IdeError(
+      "Cannot enable hosted Ctrl-Q because tmux's root C-q key is already user-bound. tmux-ide left that binding unchanged. Unbind or remap it, then run the app again; tmux prefix+d remains available for detaching.",
+      { code: "USAGE", exitCode: 1 }
+    );
+  }
+  if (putAwayBinding === "absent") {
+    execFileSync19("tmux", hostPutAwayBindingArgv(), { stdio: "ignore" });
+  }
   execFileSync19("tmux", hostAttachArgv(Boolean(process.env.TMUX)), { stdio: "inherit" });
 }
 async function printFleetJson() {
