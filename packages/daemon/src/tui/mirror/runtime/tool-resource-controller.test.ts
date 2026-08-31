@@ -3,6 +3,7 @@ import type {
   PushResourceSessionOptions,
 } from "@tmux-ide/daemon-client/push-resource-session";
 import { createPushResourceSession } from "@tmux-ide/daemon-client/push-resource-session";
+import { runtimeResourceSnapshot } from "@tmux-ide/daemon-client/runtime-resource-ledger";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -252,6 +253,40 @@ class FakeSocket {
 }
 
 describe("OpenTUI semantic event adapter", () => {
+  it("reads and generation-validates the additive V3 live Home catalog", async () => {
+    const fetch = vi.fn(async () =>
+      Response.json({
+        version: 3,
+        daemon: {
+          protocolVersion: DAEMON.protocolVersion,
+          productVersion: DAEMON.productVersion,
+          instanceId: DAEMON.instanceId,
+          startedAt: DAEMON.startedAt,
+        },
+        intents: [],
+        liveSessions: [
+          {
+            liveSessionId: "live-session.aaaaaaaaaaaaaaaaaaaa",
+            sessionName: "alpha",
+            fleetSessionId: "session.bbbbbbbbbbbbbbbbbbbb",
+            paneCount: 2,
+          },
+        ],
+      }),
+    );
+    const adapter = createTuiToolResourceAdapter({ fetch });
+    const result = await adapter.fetch(TARGET, "live-catalog", new AbortController().signal);
+
+    expect(fetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:4040/api/resources/workspace-catalog?version=3",
+      expect.objectContaining({ cache: "no-store", credentials: "omit" }),
+    );
+    expect(result).toMatchObject({
+      status: "ok",
+      resource: { kind: "live-catalog", value: { version: 3 } },
+    });
+  });
+
   it("installs the combined global catalogs before their first reads", async () => {
     const socket = new FakeSocket();
     const fetched: string[] = [];
@@ -409,6 +444,55 @@ describe("OpenTUI semantic event adapter", () => {
     );
     expect(invalidate).toHaveBeenCalledExactlyOnceWith(["files"]);
     if (connected.status === "connected") connected.close();
+  });
+
+  it("releases the transport supervisor subscription when its session aborts first", async () => {
+    const baseline = runtimeResourceSnapshot();
+    const socket = new FakeSocket();
+    const adapter = createTuiToolResourceAdapter({ createSocket: () => socket });
+    const controller = new AbortController();
+    const connecting = adapter.connect(
+      TARGET,
+      new Set(["workspace-files"]),
+      { invalidate: vi.fn() },
+      controller.signal,
+    );
+    socket.emit(
+      "message",
+      JSON.stringify({
+        type: "hello",
+        daemon: {
+          protocolVersion: 1,
+          productVersion: "test",
+          instanceId: DAEMON.instanceId,
+          startedAt: DAEMON.startedAt,
+        },
+        sessions: [],
+        eventSequence: 0,
+      }),
+    );
+    await settle();
+    socket.emit(
+      "message",
+      JSON.stringify({
+        type: "resource.interests-ack",
+        interestRevision: 1,
+        sequence: 0,
+        unavailableInterests: [],
+      }),
+    );
+    await expect(connecting).resolves.toMatchObject({ status: "connected" });
+    expect(runtimeResourceSnapshot()["runtime-subscription"].active).toBe(
+      baseline["runtime-subscription"].active + 1,
+    );
+
+    controller.abort();
+
+    await vi.waitFor(() => {
+      const settled = runtimeResourceSnapshot();
+      expect(settled["runtime-subscription"].active).toBe(baseline["runtime-subscription"].active);
+      expect(settled["runtime-supervisor"].active).toBe(baseline["runtime-supervisor"].active);
+    });
   });
 
   it("serializes and coalesces rapid interest replacements", async () => {

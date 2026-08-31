@@ -4,6 +4,7 @@ import {
   DaemonProjectsResponseSchemaZ,
   DaemonSessionsResponseSchemaZ,
   FleetCatalogResourceV1SchemaZ,
+  WorkspaceCatalogResourceV3SchemaZ,
   WorkspaceChangesCatalogEnvelopeV1SchemaZ,
   WorkspaceFilesCatalogEnvelopeV1SchemaZ,
   WorkspaceMissionsEnvelopeV1SchemaZ,
@@ -11,6 +12,7 @@ import {
   type DaemonProjectsResponse,
   type DaemonSessionsResponse,
   type FleetCatalogResourceV1,
+  type WorkspaceCatalogResourceV3,
   type WorkspaceChangesCatalogEnvelopeV1,
   type WorkspaceFilesCatalogEnvelopeV1,
   type WorkspaceMissionsEnvelopeV1,
@@ -34,6 +36,7 @@ import { canonicalDaemonUrl } from "../../../lib/canonical-daemon.ts";
 export type TuiToolResourceKey =
   | "fleet"
   | "catalog"
+  | "live-catalog"
   | "sessions"
   | "projects"
   | "files"
@@ -44,6 +47,7 @@ export type TuiDockResourceKey = "files" | "changes" | "missions";
 export type TuiToolResource =
   | { readonly kind: "fleet"; readonly value: FleetCatalogResourceV1 }
   | { readonly kind: "catalog"; readonly value: WorkspaceCatalogV2State }
+  | { readonly kind: "live-catalog"; readonly value: WorkspaceCatalogResourceV3 }
   | { readonly kind: "sessions"; readonly value: DaemonSessionsResponse }
   | { readonly kind: "projects"; readonly value: DaemonProjectsResponse }
   | { readonly kind: "files"; readonly value: WorkspaceFilesCatalogEnvelopeV1 }
@@ -116,6 +120,7 @@ export interface TuiToolResourceAdapterDependencies {
 const INTEREST_BY_KEY = {
   fleet: "fleet-catalog",
   catalog: "workspace-catalog",
+  "live-catalog": "workspace-catalog",
   sessions: "workspace-catalog",
   projects: "workspace-catalog",
   files: "workspace-files",
@@ -124,7 +129,7 @@ const INTEREST_BY_KEY = {
 } as const;
 
 const keysForInterest = (interest: string): readonly TuiToolResourceKey[] => {
-  if (interest === "workspace-catalog") return ["catalog", "sessions", "projects"];
+  if (interest === "workspace-catalog") return ["catalog", "live-catalog", "sessions", "projects"];
   const match = Object.entries(INTEREST_BY_KEY).find(([, value]) => value === interest);
   return match ? [match[0] as TuiToolResourceKey] : [];
 };
@@ -149,6 +154,7 @@ function resourceUrl(target: TuiToolResourceTarget, key: TuiToolResourceKey): st
   const base = canonicalDaemonUrl("http", target.daemon.bindHostname, target.daemon.port);
   if (key === "fleet") return `${base}/api/resources/fleet-catalog`;
   if (key === "catalog") return `${base}/api/resources/workspace-catalog?version=2`;
+  if (key === "live-catalog") return `${base}/api/resources/workspace-catalog?version=3`;
   if (key === "sessions") return `${base}/api/sessions`;
   if (key === "projects") return `${base}/api/projects`;
   const workspace = encodeURIComponent(target.workspaceName);
@@ -268,6 +274,8 @@ export function createTuiToolResourceAdapter(
         } catch {
           parsed = { success: false };
         }
+      } else if (key === "live-catalog") {
+        parsed = WorkspaceCatalogResourceV3SchemaZ.safeParse(body);
       } else {
         parsed =
           key === "fleet"
@@ -290,7 +298,9 @@ export function createTuiToolResourceAdapter(
             (parsed.data as { readonly daemon: FleetCatalogResourceV1["daemon"] }).daemon,
           )) ||
         (key === "catalog" &&
-          (parsed.data as WorkspaceCatalogV2State).daemonInstanceId !== target.daemon.instanceId)
+          (parsed.data as WorkspaceCatalogV2State).daemonInstanceId !== target.daemon.instanceId) ||
+        (key === "live-catalog" &&
+          !sameDaemon(target.daemon, (parsed.data as WorkspaceCatalogResourceV3).daemon))
       ) {
         return {
           status: "failed",
@@ -605,6 +615,7 @@ export function createTuiToolResourceAdapter(
         rejectFirstLive(new Error("TUI resource session aborted."));
         rejectPendingAcks("TUI resource session aborted.");
         rejectOfflineInterestWaiters("TUI resource session aborted.");
+        unsubscribe();
         void supervisor.stop();
       };
       signal.addEventListener("abort", onSessionAbort, { once: true });

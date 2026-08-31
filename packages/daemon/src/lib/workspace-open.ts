@@ -24,6 +24,10 @@ import {
   type AddWorkspaceInput,
 } from "./workspace-registry.ts";
 import { analyzeTrustedSemanticPaneCatalog } from "../terminal/attachments/semantic-pane-catalog.ts";
+import {
+  prepareTmuxTruecolorEnvironment,
+  TMUX_TRUECOLOR_INTERACTIVE_SHELL_COMMAND,
+} from "./tmux-terminal-color.ts";
 
 const MAX_OPERATIONS = 128;
 const MAX_REPLAYABLE_FAILURES = 64;
@@ -746,6 +750,7 @@ export class WorkspaceOpenAuthority {
         canonicalRoot,
         "-n",
         "Terminal",
+        TMUX_TRUECOLOR_INTERACTIVE_SHELL_COMMAND,
       ]);
     } catch (cause) {
       try {
@@ -762,6 +767,10 @@ export class WorkspaceOpenAuthority {
     }
     const runtime = parseCreatedRuntime(output, identity.sessionName);
     try {
+      // The initial shell cleared NO_COLOR in its command because tmux cannot
+      // express removal with new-session -e. Persist the removal tombstone for
+      // every window, split, respawn, and agent created after it.
+      prepareTmuxTruecolorEnvironment(this.#io.runTmux, identity.sessionName);
       for (const [option, value] of [
         [SESSION_OPERATION_OPTION, request.operationId],
         [SESSION_MARKER_OPTION, identity.projectKey],

@@ -7,6 +7,7 @@
  * plumbing around it, so the socket drives the SAME lifecycle path as the app.
  */
 import { execFile } from "node:child_process";
+import { sanitizeTmuxClientEnvironment } from "@tmux-ide/tmux-bridge";
 import {
   INTERRUPT_TAP_GAP_MS,
   RESTART_GRACE_MS,
@@ -22,14 +23,21 @@ import {
 } from "../tui/mirror/agent-lifecycle.ts";
 import { getManifests } from "../tui/detect/manifest-loader.ts";
 import { ControlVerbError } from "./dispatch.ts";
+import { tmuxTruecolorEnvironmentCommands } from "../lib/tmux-terminal-color.ts";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /** One tmux call; resolves stdout, rejects on a tmux error. */
 function tmuxRun(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("tmux", args, (err, stdout) => (err ? reject(err) : resolve(stdout.trimEnd())));
+    execFile("tmux", args, { env: sanitizeTmuxClientEnvironment() }, (err, stdout) =>
+      err ? reject(err) : resolve(stdout.trimEnd()),
+    );
   });
+}
+
+async function prepareSessionColorEnvironment(session: string): Promise<void> {
+  for (const args of tmuxTruecolorEnvironmentCommands(session)) await tmuxRun([...args]);
 }
 
 /** Like {@link tmuxRun} but errors are swallowed — for best-effort steps
@@ -66,6 +74,7 @@ export async function spawnAgent(params: {
   placement?: SpawnPlacement;
   paneId?: string;
 }): Promise<SpawnOutcome> {
+  if (params.session) await prepareSessionColorEnvironment(params.session);
   const dir = params.dir ?? null;
   const argv = params.session
     ? spawnAgentArgs(
@@ -84,7 +93,10 @@ export async function spawnAgent(params: {
   }
   const session = params.session ?? params.sessionName!;
   // Mark a fresh session as ours (mirrors the app's spawn flow).
-  if (!params.session) await tmuxTry(["set-environment", "-t", session, "TMUX_IDE", "1"]);
+  if (!params.session) {
+    await prepareSessionColorEnvironment(session);
+    await tmuxTry(["set-environment", "-t", session, "TMUX_IDE", "1"]);
+  }
   return {
     paneId,
     session,

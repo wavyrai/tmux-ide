@@ -81,6 +81,7 @@ const GOLDEN_JOURNEYS = Object.freeze(
         "ansi-cursor-alt-screen",
         "cross-client-handoff",
         "daemon-restart",
+        "session-recreate",
       ].includes(id)
         ? "implemented"
         : "pending",
@@ -841,6 +842,144 @@ export async function runDaemonRestartOwnerBoot(operations) {
     operations.sealRestartCorrelation(hosts, before, replacement, after),
   );
   return Object.freeze({ hosts, before, replacement, staleFence, reconnect, after, correlation });
+}
+
+/** Ordinary-session reincarnation: retire G1 completely before admitting same-name G2. */
+export async function runSessionRecreateOwnerBoot(operations) {
+  const atBoundary = async (boundary, operation) => {
+    operations.onBoundary?.(boundary);
+    try {
+      return await operation();
+    } catch (error) {
+      if (error && typeof error === "object" && error.boundary) throw error;
+      const bounded = new Error(error instanceof Error ? error.message : String(error), {
+        cause: error,
+      });
+      bounded.boundary = boundary;
+      bounded.observation =
+        error?.observation ??
+        Object.freeze({
+          operation: "product-session-recreate",
+          reason: "operation-failed",
+          boundary,
+        });
+      throw bounded;
+    }
+  };
+  const namespace = await atBoundary(
+    "session-recreate-namespace-ready",
+    operations.createNamespace,
+  );
+  const daemon = await atBoundary("session-recreate-daemon-ready", () =>
+    operations.startDaemon(namespace),
+  );
+  const identity = await atBoundary("session-recreate-workspace-ready", () =>
+    operations.openWorkspace(namespace, daemon),
+  );
+  await atBoundary("session-recreate-tui-build", () => operations.build(namespace));
+  const process = await atBoundary("session-recreate-tui-started", () =>
+    operations.launch(namespace, daemon, identity),
+  );
+  const before = await atBoundary("session-recreate-before-coherent", () =>
+    operations.proveBefore(namespace, daemon, identity, process),
+  );
+  const killed = await atBoundary("session-recreate-session-killed", () =>
+    operations.killSession(namespace, daemon, identity, process, before),
+  );
+  const retired = await atBoundary("session-recreate-old-retired", () =>
+    operations.proveRetired(namespace, daemon, identity, process, before, killed),
+  );
+  const staleInput = await atBoundary("session-recreate-old-input-rejected", () =>
+    operations.proveOldInputRejected(namespace, daemon, identity, process, before, killed, retired),
+  );
+  const recreated = await atBoundary("session-recreate-same-name-created", () =>
+    operations.recreateSession(namespace, daemon, identity, process, before, retired, staleInput),
+  );
+  const recovered = await atBoundary("session-recreate-new-generation-live", () =>
+    operations.proveRecovered(namespace, daemon, identity, process, before, retired, recreated),
+  );
+  const acceptedInput = await atBoundary("session-recreate-new-input-once", () =>
+    operations.proveNewInputOnce(namespace, daemon, process, before, recreated, recovered),
+  );
+  const residue = await atBoundary("session-recreate-no-stale-residue", () =>
+    operations.proveNoStaleResidue(
+      namespace,
+      daemon,
+      process,
+      before,
+      retired,
+      recreated,
+      recovered,
+      acceptedInput,
+    ),
+  );
+  return Object.freeze({
+    namespace,
+    identity,
+    process,
+    before,
+    killed,
+    retired,
+    staleInput,
+    recreated,
+    recovered,
+    acceptedInput,
+    residue,
+  });
+}
+
+export function assessProductSessionRecreateEvidence(evidence) {
+  const before = evidence?.before;
+  const retired = evidence?.retired;
+  const recreated = evidence?.recreated;
+  const recovered = evidence?.recovered;
+  const acceptedInput = evidence?.acceptedInput;
+  const residue = evidence?.residue;
+  const checks = Object.freeze({
+    oldIdentityExact:
+      typeof before?.sessionId === "string" &&
+      typeof before?.paneId === "string" &&
+      typeof before?.semanticPaneId === "string",
+    exactRetirement:
+      retired?.catalogAbsent === true &&
+      retired?.workspaceUnavailable === true &&
+      retired?.oldPaneAbsent === true,
+    staleInputRejected:
+      evidence?.staleInput?.submittedWhileRetired === true &&
+      recovered?.staleInputRejected === true,
+    reincarnated:
+      recreated?.sessionName === before?.sessionName &&
+      recreated?.sessionId !== before?.sessionId &&
+      recreated?.paneId !== before?.paneId &&
+      recreated?.cwd !== before?.cwd,
+    recoveredExact:
+      recovered?.status === "live" &&
+      recovered?.semanticPaneId === recreated?.semanticPaneId &&
+      recovered?.oldSemanticPanePresent === false &&
+      recovered?.styledContentRestored === true,
+    newInputOnce:
+      acceptedInput?.occurrences === 1 &&
+      acceptedInput?.semanticPaneId === recreated?.semanticPaneId,
+    noResidue:
+      residue?.oldRegistryEntries === 0 &&
+      residue?.oldSidebarEntries === 0 &&
+      residue?.oldProcessAlive === false,
+    daemonSigkillRecovered:
+      evidence?.hostile?.daemonSigkill?.predecessorDead === true &&
+      evidence?.hostile?.daemonSigkill?.staleRecordRetained === true &&
+      evidence?.hostile?.daemonSigkill?.generationChanged === true &&
+      evidence?.hostile?.daemonSigkill?.status === "live" &&
+      evidence?.hostile?.daemonSigkill?.inputOccurrences === 1,
+    tmuxServerRecreateRecovered:
+      evidence?.hostile?.tmuxServerRecreate?.predecessorFenced === true &&
+      evidence?.hostile?.tmuxServerRecreate?.oldPaneDead === true &&
+      evidence?.hostile?.tmuxServerRecreate?.sessionIdChanged === true &&
+      evidence?.hostile?.tmuxServerRecreate?.daemonGenerationChanged === true &&
+      evidence?.hostile?.tmuxServerRecreate?.status === "live" &&
+      evidence?.hostile?.tmuxServerRecreate?.inputOccurrences === 1,
+  });
+  const firstFailed = Object.entries(checks).find(([, passed]) => !passed)?.[0] ?? null;
+  return Object.freeze({ passed: firstFailed === null, firstFailed, checks });
 }
 
 function exactTargetedTuiCwd(runtimeDir, { createMissing, hooks = {} }) {

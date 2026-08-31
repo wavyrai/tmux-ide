@@ -51,9 +51,10 @@ function connection(sessionName: string, dispose = vi.fn()): OpenTuiApplicationS
 }
 
 class FakeHost implements OpenTuiGenerationHost {
-  readonly startGate = deferred<boolean>();
+  readonly startGates: Array<ReturnType<typeof deferred<boolean>>> = [];
   readonly listeners = new Set<(value: OpenTuiGenerationHostSnapshot) => void>();
   readonly dispose = vi.fn(async () => undefined);
+  starts = 0;
   current: OpenTuiGenerationHostSnapshot;
   constructor(readonly sessionName: string) {
     this.current = snapshot(sessionName, "connecting");
@@ -67,12 +68,15 @@ class FakeHost implements OpenTuiGenerationHost {
     return () => this.listeners.delete(listener);
   }
   start(): Promise<boolean> {
-    return this.startGate.promise;
+    this.starts += 1;
+    const gate = deferred<boolean>();
+    this.startGates.push(gate);
+    return gate.promise;
   }
   finish(started: boolean): void {
     this.current = snapshot(this.sessionName, started ? "live" : "unavailable");
     for (const listener of this.listeners) listener(this.current);
-    this.startGate.resolve(started);
+    this.startGates.at(-1)?.resolve(started);
   }
   emit(value: OpenTuiGenerationHostSnapshot): void {
     this.current = value;
@@ -130,6 +134,35 @@ describe("OpenTUI session owner", () => {
     hosts[1]!.finish(true);
     expect(await retry).toBe(true);
     expect(owner.sessionName()).toBe("alpha");
+    await owner.dispose();
+  });
+
+  it("retries the current degraded session until its generation is genuinely usable", async () => {
+    let host!: FakeHost;
+    const owner = createOpenTuiSessionOwner({
+      prepareConnection: vi.fn(async (sessionName) => connection(sessionName)),
+      createHost: (sessionName) => (host = new FakeHost(sessionName)),
+      onSnapshot: vi.fn(),
+    });
+    const initial = owner.open("alpha");
+    await flush();
+    host.finish(true);
+    await expect(initial).resolves.toBe(true);
+
+    host.emit(snapshot("alpha", "unavailable"));
+    const firstRetry = owner.open("alpha");
+    await flush();
+    expect(host.starts).toBe(2);
+    host.finish(false);
+    await expect(firstRetry).resolves.toBe(false);
+    expect(owner.sessionName()).toBe("alpha");
+
+    const secondRetry = owner.open("alpha");
+    await flush();
+    expect(host.starts).toBe(3);
+    host.finish(true);
+    await expect(secondRetry).resolves.toBe(true);
+    expect(owner.snapshot()?.status).toBe("live");
     await owner.dispose();
   });
 

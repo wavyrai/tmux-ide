@@ -95,13 +95,19 @@ describe("FleetLifecycleAuthority", () => {
       "new-session",
       "-d",
       "-e",
-      "NO_COLOR",
-      "-e",
       "COLORTERM=truecolor",
       "-s",
       result.workspaceName,
       "-c",
       canonicalCwd,
+      'exec env -u NO_COLOR COLORTERM=truecolor "${SHELL:-/bin/sh}" -l',
+    ]);
+    expect(calls).toContainEqual([
+      "set-environment",
+      "-r",
+      "-t",
+      `=${result.workspaceName}`,
+      "NO_COLOR",
     ]);
     expect(calls).toContainEqual([
       "new-session",
@@ -288,11 +294,13 @@ describe("FleetLifecycleAuthority", () => {
       "-P",
       "-F",
       "#{pane_id}",
+      "-e",
+      "COLORTERM=truecolor",
       "-c",
       cwd,
-      "claude",
+      "env -u NO_COLOR COLORTERM=truecolor claude",
     ]);
-    expect(calls).toContainEqual(["set-environment", "-u", "-t", "=demo", "NO_COLOR"]);
+    expect(calls).toContainEqual(["set-environment", "-r", "-t", "=demo", "NO_COLOR"]);
     expect(calls).toContainEqual(["set-environment", "-t", "=demo", "COLORTERM", "truecolor"]);
     expect(calls.some((args) => args.includes("@tmux_ide_pane_id"))).toBe(true);
     expect(panes).toHaveLength(2);
@@ -336,8 +344,6 @@ describe("FleetLifecycleAuthority", () => {
       "new-session",
       "-d",
       "-e",
-      "NO_COLOR",
-      "-e",
       "COLORTERM=truecolor",
       "-s",
       expect.stringMatching(/^review-/u),
@@ -346,7 +352,7 @@ describe("FleetLifecycleAuthority", () => {
       "#{pane_id}",
       "-c",
       realpathSync(cwd),
-      "claude",
+      "env -u NO_COLOR COLORTERM=truecolor claude",
     ]);
     expect(calls).toContainEqual(["kill-session", "-t", expect.stringMatching(/^review-/u)]);
   });

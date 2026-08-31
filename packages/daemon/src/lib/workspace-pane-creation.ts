@@ -243,7 +243,6 @@ function resolveTmuxExecutable(): string {
 }
 
 const SAFE_TERMINAL_VALUE = /^(?:xterm|screen|tmux|rxvt|vt100|ansi)[A-Za-z0-9+._-]{0,58}$/u;
-const SAFE_COLOR_TERMINAL_VALUE = /^(?:truecolor|24bit)$/u;
 const SAFE_LOCALE_VALUE = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$/u;
 
 /**
@@ -255,10 +254,11 @@ const SAFE_LOCALE_VALUE = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$/u;
 function tmuxClientEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {
     TERM: SAFE_TERMINAL_VALUE.test(source.TERM ?? "") ? source.TERM : "xterm-256color",
+    // A pinned runner may be the first tmux client and therefore create the
+    // server. Never let a headless parent (`TERM=dumb`, `NO_COLOR=1`) become
+    // the global environment inherited by every later interactive child.
+    COLORTERM: "truecolor",
   };
-  if (SAFE_COLOR_TERMINAL_VALUE.test(source.COLORTERM ?? "")) {
-    environment.COLORTERM = source.COLORTERM;
-  }
   for (const name of ["LANG", "LC_ALL", "LC_CTYPE"] as const) {
     const value = source[name];
     if (value && SAFE_LOCALE_VALUE.test(value)) environment[name] = value;
@@ -301,11 +301,18 @@ export function resolveWorkspacePaneTmuxAuthority(): WorkspacePaneTmuxAuthority 
 /** Execute mutations only through the daemon-generation-pinned tmux authority. */
 export function createPinnedWorkspaceTmuxRunner(
   authority: WorkspacePaneTmuxAuthority,
+  options: Readonly<{ timeoutMs?: number }> = {},
 ): (args: readonly string[]) => string {
   const executablePath = realpathSync(authority.executablePath);
   accessSync(executablePath, constants.X_OK);
   if (!isAbsolute(executablePath) || !statSync(executablePath).isFile()) {
     throw new TypeError("Pinned tmux executable is invalid.");
+  }
+  if (
+    options.timeoutMs !== undefined &&
+    (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1)
+  ) {
+    throw new TypeError("Pinned tmux timeout is invalid.");
   }
   const socketIdentity =
     authority.socketSelector.kind === "path"
@@ -331,6 +338,7 @@ export function createPinnedWorkspaceTmuxRunner(
         env: environment,
         maxBuffer: TMUX_OUTPUT_BYTES,
         stdio: ["ignore", "pipe", "pipe"],
+        ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
       }),
     ).replace(/(?:\r?\n)+$/u, "");
   };
@@ -896,6 +904,10 @@ export class WorkspacePaneCreationAuthority {
         for (const [key, value] of Object.entries(harness?.environment ?? {}).sort(([a], [b]) =>
           a.localeCompare(b),
         )) {
+          // Terminal presentation is owned by tmux-ide. In particular an
+          // inherited/profile NO_COLOR must not override the removal tombstone
+          // installed immediately above, and TERM remains tmux-owned.
+          if (key === "NO_COLOR" || key === "COLORTERM" || key === "TERM") continue;
           createArgs.push("-e", `${key}=${value}`);
         }
         if (harness) createArgs.push(harness.command.map(shellEscape).join(" "));

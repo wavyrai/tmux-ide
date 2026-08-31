@@ -16,8 +16,12 @@ import { discoverSessions, buildOverviews, buildProjectDetail } from "./discover
 import type { AgentTurnCompletion } from "./agent-status-watch.ts";
 import {
   DaemonFleetFactsObserver,
+  AGENT_STATE_TMUX_ARGS,
+  parseAgentStateFacts,
+  parseSessionCompositionFacts,
   readAgentStateFacts,
   readSessionCompositionFacts,
+  SESSION_COMPOSITION_TMUX_ARGS,
   type DaemonFleetFactsObserverOptions,
   type DaemonFleetFactsObserverDiagnostic,
 } from "./daemon-fleet-facts-observer.ts";
@@ -222,6 +226,8 @@ let fleetFactsReaderOverride: Pick<
   DaemonFleetFactsObserverOptions,
   "readSessions" | "readAgents"
 > | null = null;
+let sessionCompositionReaderOverride: DaemonFleetFactsObserverOptions["readSessions"] | null = null;
+let agentStateReaderOverride: DaemonFleetFactsObserverOptions["readAgents"] | null = null;
 let sessionsObserverRefs = 0;
 let projectRegistryObserverRefs = 0;
 let agentStatusObserverRefs = 0;
@@ -267,6 +273,13 @@ function broadcastSessionCompositionChanged(): void {
 
 function broadcastTerminalTopologyChanged(): void {
   if (!resourceEventGeneration) return;
+  // Pane counts and the V3 tmux-incarnation identity are catalog facts even
+  // when the visible session name is unchanged (for example, same-name
+  // session recreation after a tmux server restart).
+  broadcastResourceChanged(
+    { workspaceName: null, resource: "workspace-catalog" },
+    resourceEventGeneration,
+  );
   broadcastResourceChanged(
     { workspaceName: null, resource: "terminal-runtime-inventory" },
     resourceEventGeneration,
@@ -376,8 +389,8 @@ function broadcastAdoptedCompositionChanged(): void {
 
 function ensureFleetFactsObserver(): DaemonFleetFactsObserver {
   const readers = fleetFactsReaderOverride ?? {
-    readSessions: readSessionCompositionFacts,
-    readAgents: readAgentStateFacts,
+    readSessions: sessionCompositionReaderOverride ?? readSessionCompositionFacts,
+    readAgents: agentStateReaderOverride ?? readAgentStateFacts,
   };
   fleetFactsObserver ??= new DaemonFleetFactsObserver({
     ...readers,
@@ -402,6 +415,31 @@ export function setFleetFactsObserverDiagnostics(
   } | null,
 ): void {
   fleetFactsDiagnostics = diagnostics ?? undefined;
+}
+
+/** Pin fleet invalidations to the same tmux authority as catalog HTTP reads. */
+export function setFleetFactsTmuxRunner(
+  runTmux: ((args: readonly string[]) => string) | null,
+): void {
+  stopFleetFactsObserver();
+  sessionCompositionReaderOverride = runTmux
+    ? async () => {
+        try {
+          return parseSessionCompositionFacts(runTmux(SESSION_COMPOSITION_TMUX_ARGS));
+        } catch {
+          return null;
+        }
+      }
+    : null;
+  agentStateReaderOverride = runTmux
+    ? async () => {
+        try {
+          return parseAgentStateFacts(runTmux(AGENT_STATE_TMUX_ARGS));
+        } catch {
+          return null;
+        }
+      }
+    : null;
 }
 
 interface ResourceObservationHandle {
@@ -987,11 +1025,15 @@ export function _detachProjectRegistryListenerForTests(): void {
 
 /** Test-only hook to retire and reset the unified fleet facts observer. */
 export function _stopFleetFactsObserverForTests(): void {
+  stopFleetFactsObserver();
+}
+
+function stopFleetFactsObserver(): void {
   fleetFactsObserver?.stop();
   fleetFactsObserver = null;
 }
 
-/** Test-only reader seam; production always uses async tmux subprocesses. */
+/** Test-only full reader seam; it takes precedence over the production session pin. */
 export function _setFleetFactsReadersForTests(
   readers: Pick<DaemonFleetFactsObserverOptions, "readSessions" | "readAgents"> | null,
 ): void {

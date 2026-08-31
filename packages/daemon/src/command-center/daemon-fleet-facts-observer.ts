@@ -404,13 +404,18 @@ export function parseAgentStateFacts(raw: string): AgentStateReading {
   const result = new Map<string, Map<string, AgentPaneStateReading>>();
   for (const line of raw.split("\n")) {
     const fields = line.split("\t");
-    if (fields.length !== 4 || !fields[0] || !/^%[0-9]+$/u.test(fields[1] ?? "")) continue;
+    if (fields.length < 4 || fields.length > 5 || !fields[0] || !/^%[0-9]+$/u.test(fields[1] ?? ""))
+      continue;
     let panes = result.get(fields[0]);
     if (!panes) {
       panes = new Map();
       result.set(fields[0], panes);
     }
-    panes.set(fields[1]!, { paneStamp: fields[2] || null, state: fields[3] ?? "" });
+    panes.set(fields[1]!, {
+      paneStamp: fields[2] || null,
+      state: fields[3] ?? "",
+      command: fields[4] ?? "",
+    });
   }
   return result;
 }
@@ -430,7 +435,9 @@ export const SESSION_COMPOSITION_TMUX_ARGS = [
   [
     "#{session_name}",
     "#{@tmux_ide_adopted}",
+    "#{pid}",
     "#{session_id}",
+    "#{session_created}",
     "#{window_id}",
     "#{pane_id}",
     "#{window_panes}",
@@ -445,12 +452,14 @@ export async function readSessionCompositionFacts(): Promise<SessionCompositionF
   return raw === null ? null : parseSessionCompositionFacts(raw);
 }
 
+export const AGENT_STATE_TMUX_ARGS = [
+  "list-panes",
+  "-a",
+  "-F",
+  "#{session_name}\t#{pane_id}\t#{@tmux_ide_pane_id}\t#{@agent_state}\t#{pane_current_command}",
+] as const;
+
 export async function readAgentStateFacts(): Promise<AgentStateReading | null> {
-  const raw = await execTmux([
-    "list-panes",
-    "-a",
-    "-F",
-    "#{session_name}\t#{pane_id}\t#{@tmux_ide_pane_id}\t#{@agent_state}",
-  ]);
+  const raw = await execTmux(AGENT_STATE_TMUX_ARGS);
   return raw === null ? null : parseAgentStateFacts(raw);
 }

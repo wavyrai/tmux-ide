@@ -105,11 +105,56 @@ describe("application generation starter", () => {
     staleOpen.resolve({ opened: true, activated: true });
 
     await expect(first).resolves.toEqual({
-      opened: true,
+      opened: false,
       sessionName: "first",
       generationKey: null,
+      failure: "superseded",
     });
     expect(focusOwner.request).toHaveBeenCalledTimes(1);
+  });
+
+  it("terminalizes a rejected open flight so detached UI handlers cannot leak a rejection", async () => {
+    const notes: Array<string | null> = [];
+    const owner = sessionOwner({ sessionName: null, snapshot: null });
+    const start = createApplicationGenerationStarter({
+      binding: {
+        openSession: async () => {
+          throw new Error("promotion route failed");
+        },
+      },
+      sessionOwner: () => owner,
+      focusOwner: () => null,
+      setNote: (note) => notes.push(note),
+      setSurface: vi.fn(),
+    });
+
+    await expect(start("alpha")).resolves.toEqual({
+      opened: false,
+      sessionName: "alpha",
+      generationKey: null,
+      failure: "attach-failed",
+    });
+    expect(notes).toEqual(["opening alpha", "alpha could not attach"]);
+  });
+
+  it("does not claim success before the owner publishes a usable generation snapshot", async () => {
+    const owner = sessionOwner({ sessionName: "alpha", snapshot: null });
+    const start = createApplicationGenerationStarter({
+      binding: {
+        openSession: async () => ({ opened: true, activated: true }),
+      },
+      sessionOwner: () => owner,
+      focusOwner: () => null,
+      setNote: vi.fn(),
+      setSurface: vi.fn(),
+    });
+
+    await expect(start("alpha")).resolves.toEqual({
+      opened: false,
+      sessionName: "alpha",
+      generationKey: null,
+      failure: "generation-not-ready",
+    });
   });
 });
 

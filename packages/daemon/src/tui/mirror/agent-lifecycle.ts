@@ -266,8 +266,17 @@ export function spawnAgentArgs(
   command: string,
 ): string[] {
   const cd = dir ? ["-c", dir] : [];
+  const launch = truecolorShellCommand(command);
   if (placement === "window") {
-    return ["new-window", "-t", `${target.session}:`, ...PRINT_PANE_ID, ...cd, command];
+    return [
+      "new-window",
+      "-t",
+      `${target.session}:`,
+      ...PRINT_PANE_ID,
+      ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
+      ...cd,
+      launch,
+    ];
   }
   const flag = placement === "split-h" ? "-h" : "-v";
   return [
@@ -276,8 +285,9 @@ export function spawnAgentArgs(
     "-t",
     target.paneId ?? `${target.session}:`,
     ...PRINT_PANE_ID,
+    ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
     ...cd,
-    command,
+    launch,
   ];
 }
 
@@ -288,7 +298,16 @@ export function spawnAgentArgs(
  * {@link spawnAgentArgs}.
  */
 export function spawnSessionArgs(name: string, dir: string | null, command: string): string[] {
-  return ["new-session", "-d", "-s", name, ...PRINT_PANE_ID, ...(dir ? ["-c", dir] : []), command];
+  return [
+    "new-session",
+    "-d",
+    "-s",
+    name,
+    ...PRINT_PANE_ID,
+    ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
+    ...(dir ? ["-c", dir] : []),
+    truecolorShellCommand(command),
+  ];
 }
 
 /** PURE — title the spawned pane after its agent (`select-pane -T`), so the
@@ -408,7 +427,7 @@ export function respawnArgs(paneId: string, command: string, dir: string | null)
     paneId,
     ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
     ...(dir ? ["-c", dir] : []),
-    command,
+    truecolorShellCommand(command),
   ];
 }
 

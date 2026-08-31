@@ -33,6 +33,8 @@ import {
 import {
   prepareTmuxTruecolorEnvironment,
   TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
+  TMUX_TRUECOLOR_INTERACTIVE_SHELL_COMMAND,
+  truecolorShellCommand,
 } from "./tmux-terminal-color.ts";
 
 const MAX_REPLAY_OPERATIONS = 128;
@@ -142,8 +144,10 @@ export class FleetLifecycleAuthority {
         identity.sessionName,
         "-c",
         cwd,
+        TMUX_TRUECOLOR_INTERACTIVE_SHELL_COMMAND,
       ]);
       created = true;
+      prepareTmuxTruecolorEnvironment(this.#runTmux, identity.sessionName);
       this.#runTmux(["set-environment", "-t", identity.sessionName, "TMUX_IDE", "1"]);
       this.#runTmux(adoptMarkArgv(identity.sessionName));
       try {
@@ -298,9 +302,10 @@ export class FleetLifecycleAuthority {
         "#{pane_id}",
         "-c",
         cwd,
-        input.command,
+        truecolorShellCommand(input.command),
       ]).trim();
       createdSession = true;
+      prepareTmuxTruecolorEnvironment(this.#runTmux, sessionName);
       this.#runTmux(["set-environment", "-t", sessionName, "TMUX_IDE", "1"]);
       this.#runTmux(adoptMarkArgv(sessionName));
     } else {
@@ -338,7 +343,13 @@ export class FleetLifecycleAuthority {
               "-F",
               "#{pane_id}",
             ];
-      paneId = this.#runTmux([...command, "-c", cwd, input.command]).trim();
+      paneId = this.#runTmux([
+        ...command,
+        ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
+        "-c",
+        cwd,
+        truecolorShellCommand(input.command),
+      ]).trim();
       this.#runTmux(adoptMarkArgv(sessionName));
     }
 

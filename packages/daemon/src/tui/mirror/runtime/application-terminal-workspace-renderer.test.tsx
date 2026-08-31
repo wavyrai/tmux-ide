@@ -4,7 +4,11 @@ import { MouseButtons } from "@opentui/core/testing";
 import { createSignal, type Accessor, type Setter } from "solid-js";
 
 import { registerPaneSurface, type TerminalPaneRenderSource } from "../pane-surface.tsx";
-import { createSemanticThemeSnapshot, createTerminalPaletteProjection } from "../theme.ts";
+import {
+  colorToThemeBytes,
+  createSemanticThemeSnapshot,
+  createTerminalPaletteProjection,
+} from "../theme.ts";
 import { renderForTest } from "../testing/renderer-harness.test.ts";
 import type { OpenTuiWorkspaceLayoutSnapshot } from "../open-tui-workspace-runtime-port.ts";
 import {
@@ -300,6 +304,149 @@ describe("ApplicationTerminalWorkspace", () => {
     expect(new Set(blits)).toEqual(new Set(["pane.a", "pane.b"]));
     expect(setup.captureCharFrame()).toContain("A");
     expect(setup.captureCharFrame()).toContain("B");
+    setup.renderer.destroy();
+  });
+
+  it("never presents a blank rich terminal frame during pointer, rapid canonical resize, or window return", async () => {
+    registerPaneSurface();
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const palette = createTerminalPaletteProjection(theme);
+    const blits: string[] = [];
+    const cursor = { x: 2, y: 3, hidden: false, style: "bar" as const, blink: true };
+    const writeColor = (channels: Uint16Array, cell: number, packed: number) =>
+      channels.set([(packed >> 16) & 0xff, (packed >> 8) & 0xff, packed & 0xff, 0xff], cell * 4);
+    const writeRow = (
+      buffers: Parameters<TerminalPaneRenderSource["blitPane"]>[1],
+      width: number,
+      row: number,
+      text: string,
+      foreground: number,
+      background: number,
+    ) => {
+      for (let column = 0; column < Math.min(width, text.length); column += 1) {
+        const cell = row * width + column;
+        buffers.char[cell] = text.codePointAt(column)!;
+        writeColor(buffers.fg, cell, foreground);
+        writeColor(buffers.bg, cell, background);
+      }
+    };
+    const richAdapter: PaneScopedTerminalAdapter = {
+      renderSource: {
+        scrollbackDepth: () => 0,
+        cursorState: (paneId) => (paneId === "pane.a" ? cursor : null),
+        blitPane: (paneId, buffers, width, height, _scroll, defaultFg, defaultBg, options) => {
+          blits.push(paneId);
+          buffers.char.fill(32);
+          buffers.attributes.fill(0);
+          for (let cell = 0; cell < width * height; cell += 1) {
+            writeColor(buffers.fg, cell, defaultFg);
+            writeColor(buffers.bg, cell, defaultBg);
+          }
+          if (paneId === "pane.a") {
+            writeRow(buffers, width, 0, "NORMAL", defaultFg, defaultBg);
+            writeRow(buffers, width, 1, "INDEXED", palette.ansiForeground[196]!, defaultBg);
+            writeRow(buffers, width, 2, "TRUECOLOR", 0x010203, 0x040506);
+            writeRow(buffers, width, 3, "ALT_SCREEN", defaultFg, defaultBg);
+          } else {
+            writeRow(buffers, width, 0, "SECONDARY", defaultFg, defaultBg);
+          }
+          for (let row = 0; row < height; row += 1) options.dirtyRows.push(row);
+          return null;
+        },
+      },
+      paneVersion: () => 1,
+      paneSourceEpoch: () => 1,
+      subscribePaneVersion: () => () => undefined,
+      paneSelectionSnapshot: () => null,
+    };
+    const windowA = {
+      type: "layout" as const,
+      semanticWindowId: "window.rich",
+      windowName: "rich",
+      currentWindow: true,
+      cols: 30,
+      rows: 9,
+      zoomed: false,
+      paneBorderStatus: "off" as const,
+      panes: [
+        { pane: "pane.a", left: 0, top: 0, width: 14, height: 9, active: true },
+        { pane: "pane.b", left: 15, top: 0, width: 15, height: 9, active: false },
+      ],
+    };
+    const windowB = {
+      ...windowA,
+      semanticWindowId: "window.other",
+      windowName: "other",
+      currentWindow: false,
+      panes: [{ pane: "pane.c", left: 0, top: 0, width: 30, height: 9, active: true }],
+    };
+    const [workspaceLayout, setWorkspaceLayout] = createSignal<OpenTuiWorkspaceLayoutSnapshot>({
+      current: windowA,
+      windows: [windowA, windowB],
+    });
+    const setup = await renderForTest(
+      () => (
+        <ApplicationTerminalWorkspace
+          layout={workspaceLayout}
+          adapter={richAdapter}
+          rendererEpoch={1}
+          width={30}
+          height={9}
+          focusedPane="pane.a"
+          theme={theme}
+          palette={palette}
+          onSelectPane={() => undefined}
+        />
+      ),
+      { width: 30, height: 11 },
+    );
+    const expectRichFrame = () => {
+      const frame = setup.captureCharFrame();
+      for (const marker of ["NORMAL", "INDEXED", "TRUECOLOR", "ALT_SCREEN"])
+        expect(frame, `${marker} must survive the coherent frame`).toContain(marker);
+      const spans = setup.captureSpans().lines.flatMap((line) => line.spans);
+      const indexed = spans.find((span) => span.text.includes("INDEXED"));
+      const truecolor = spans.find((span) => span.text.includes("TRUECOLOR"));
+      expect(indexed).toBeDefined();
+      expect(truecolor).toBeDefined();
+      expect(colorToThemeBytes(indexed!.fg)).toEqual([255, 0, 0, 255]);
+      expect(colorToThemeBytes(truecolor!.fg)).toEqual([1, 2, 3, 255]);
+      expect(colorToThemeBytes(truecolor!.bg)).toEqual([4, 5, 6, 255]);
+      expect(richAdapter.renderSource.cursorState("pane.a")).toEqual(cursor);
+    };
+
+    await setup.renderOnce();
+    expectRichFrame();
+
+    // Pointer preview must remain an overlay; it cannot erase terminal cells.
+    await setup.mockMouse.pressDown(14, 6, MouseButtons.LEFT);
+    await setup.mockMouse.moveTo(16, 6);
+    await setup.renderOnce();
+    expectRichFrame();
+    await setup.mockMouse.release(16, 6, MouseButtons.LEFT);
+
+    for (const width of [18, 10, 16, 12]) {
+      const resized = {
+        ...windowA,
+        panes: [
+          { pane: "pane.a", left: 0, top: 0, width, height: 9, active: true },
+          { pane: "pane.b", left: width + 1, top: 0, width: 29 - width, height: 9, active: false },
+        ],
+      };
+      setWorkspaceLayout({ current: resized, windows: [resized, windowB] });
+      await setup.renderOnce();
+      expectRichFrame();
+    }
+
+    const hiddenA = { ...windowA, currentWindow: false };
+    const visibleB = { ...windowB, currentWindow: true };
+    setWorkspaceLayout({ current: visibleB, windows: [hiddenA, visibleB] });
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("SECONDARY");
+    setWorkspaceLayout({ current: windowA, windows: [windowA, windowB] });
+    await setup.renderOnce();
+    expectRichFrame();
+    expect(new Set(blits)).toEqual(new Set(["pane.a", "pane.b", "pane.c"]));
     setup.renderer.destroy();
   });
 

@@ -35,6 +35,7 @@ import {
   assessLegacyProductRigCleanupAdmission,
   assessLegacyProductRigOwnerRetryCompatibility,
   assessLegacyProductRigOwnerRetryCompletion,
+  assessProductSessionRecreateEvidence,
   createLegacyProductRigOwnerRetryIntent,
   acquireLegacyProductRigOwnerRetryIntent,
   legacyProductRigOwnerRetryIntentMatchesState,
@@ -76,6 +77,7 @@ import {
   runAnsiCursorAltScreenOwnerBoot,
   runCrossClientHandoffOwnerBoot,
   runDaemonRestartOwnerBoot,
+  runSessionRecreateOwnerBoot,
   runWindowLifecycleOwnerBoot,
   runProductJourneyPlan,
   settleInternalProductRigCleanup,
@@ -168,22 +170,169 @@ test("golden registry enables only accepted direct journey executors", () => {
     golden.map(({ id }) => id),
     expected,
   );
-  assert.ok(golden.slice(0, 10).every(({ implementation }) => implementation === "implemented"));
-  assert.ok(golden.slice(10).every(({ implementation }) => implementation === "pending"));
+  assert.ok(golden.every(({ implementation }) => implementation === "implemented"));
   assert.deepEqual(auditProductJourneyScope(), {
-    complete: false,
+    complete: true,
     declarationComplete: true,
-    executableComplete: false,
+    executableComplete: true,
     missing: [],
-    pendingJourneyIds: ["session-recreate"],
+    pendingJourneyIds: [],
   });
   assert.deepEqual(auditProductJourneyScope(golden.slice(1)), {
     complete: false,
     declarationComplete: false,
-    executableComplete: false,
+    executableComplete: true,
     missing: ["configless", "cold-start"],
-    pendingJourneyIds: ["session-recreate"],
+    pendingJourneyIds: [],
   });
+});
+
+test("session recreate owner fences G1 before same-name G2 and accepts new input last", async () => {
+  const calls = [];
+  const value = (name) => Object.freeze({ name });
+  const operation = (name) => async () => (calls.push(name), value(name));
+  const operations = {
+    onBoundary: (boundary) => calls.push(`boundary:${boundary}`),
+    createNamespace: operation("namespace"),
+    startDaemon: operation("daemon"),
+    openWorkspace: operation("workspace"),
+    build: operation("build"),
+    launch: operation("launch"),
+    proveBefore: operation("before"),
+    killSession: operation("kill"),
+    proveRetired: operation("retired"),
+    proveOldInputRejected: operation("stale-input"),
+    recreateSession: operation("recreate"),
+    proveRecovered: operation("recovered"),
+    proveNewInputOnce: operation("new-input"),
+    proveNoStaleResidue: operation("residue"),
+  };
+  const result = await runSessionRecreateOwnerBoot(operations);
+  assert.equal("daemon" in result, false);
+  assert.deepEqual(calls, [
+    "boundary:session-recreate-namespace-ready",
+    "namespace",
+    "boundary:session-recreate-daemon-ready",
+    "daemon",
+    "boundary:session-recreate-workspace-ready",
+    "workspace",
+    "boundary:session-recreate-tui-build",
+    "build",
+    "boundary:session-recreate-tui-started",
+    "launch",
+    "boundary:session-recreate-before-coherent",
+    "before",
+    "boundary:session-recreate-session-killed",
+    "kill",
+    "boundary:session-recreate-old-retired",
+    "retired",
+    "boundary:session-recreate-old-input-rejected",
+    "stale-input",
+    "boundary:session-recreate-same-name-created",
+    "recreate",
+    "boundary:session-recreate-new-generation-live",
+    "recovered",
+    "boundary:session-recreate-new-input-once",
+    "new-input",
+    "boundary:session-recreate-no-stale-residue",
+    "residue",
+  ]);
+  for (const method of Object.keys(operations).filter((key) => key !== "onBoundary")) {
+    await assert.rejects(
+      runSessionRecreateOwnerBoot({
+        ...operations,
+        [method]: async () => {
+          throw new Error(`failed ${method}`);
+        },
+      }),
+      /failed/u,
+    );
+  }
+});
+
+test("session recreate assessment rejects identity reuse, stale input, and restart residue", () => {
+  const passing = {
+    before: {
+      sessionName: "ordinary",
+      sessionId: "$1",
+      paneId: "%1",
+      semanticPaneId: "pane.old",
+      cwd: "/tmp/old",
+    },
+    retired: { catalogAbsent: true, workspaceUnavailable: true, oldPaneAbsent: true },
+    staleInput: { submittedWhileRetired: true },
+    recreated: {
+      sessionName: "ordinary",
+      sessionId: "$2",
+      paneId: "%2",
+      semanticPaneId: "pane.new",
+      cwd: "/tmp/new",
+    },
+    recovered: {
+      status: "live",
+      semanticPaneId: "pane.new",
+      oldSemanticPanePresent: false,
+      styledContentRestored: true,
+      staleInputRejected: true,
+    },
+    acceptedInput: { occurrences: 1, semanticPaneId: "pane.new" },
+    residue: { oldRegistryEntries: 0, oldSidebarEntries: 0, oldProcessAlive: false },
+    hostile: {
+      daemonSigkill: {
+        predecessorDead: true,
+        staleRecordRetained: true,
+        generationChanged: true,
+        status: "live",
+        inputOccurrences: 1,
+      },
+      tmuxServerRecreate: {
+        predecessorFenced: true,
+        oldPaneDead: true,
+        sessionIdChanged: true,
+        daemonGenerationChanged: true,
+        status: "live",
+        inputOccurrences: 1,
+      },
+    },
+  };
+  assert.deepEqual(assessProductSessionRecreateEvidence(passing), {
+    passed: true,
+    firstFailed: null,
+    checks: {
+      oldIdentityExact: true,
+      exactRetirement: true,
+      staleInputRejected: true,
+      reincarnated: true,
+      recoveredExact: true,
+      newInputOnce: true,
+      noResidue: true,
+      daemonSigkillRecovered: true,
+      tmuxServerRecreateRecovered: true,
+    },
+  });
+  for (const mutation of [
+    { recreated: { ...passing.recreated, sessionId: "$1" } },
+    { recovered: { ...passing.recovered, staleInputRejected: false } },
+    { acceptedInput: { occurrences: 2, semanticPaneId: "pane.new" } },
+    { residue: { ...passing.residue, oldSidebarEntries: 1 } },
+    {
+      hostile: {
+        ...passing.hostile,
+        daemonSigkill: { ...passing.hostile.daemonSigkill, staleRecordRetained: false },
+      },
+    },
+    {
+      hostile: {
+        ...passing.hostile,
+        tmuxServerRecreate: {
+          ...passing.hostile.tmuxServerRecreate,
+          predecessorFenced: false,
+        },
+      },
+    },
+  ]) {
+    assert.equal(assessProductSessionRecreateEvidence({ ...passing, ...mutation }).passed, false);
+  }
 });
 
 test("Card5 owner drives production clients through exact restart/correlation boundaries", async () => {
@@ -1507,15 +1656,15 @@ test("repeat runner drives every planned journey sequentially and stops at the f
   assert.deepEqual(failedCalls, [1, 2]);
 });
 
-test("implemented Card5, pending, all, unknown, and invalid selections are fail closed", () => {
+test("implemented Card5, all, unknown, and invalid selections are fail closed", () => {
   assert.equal(
     resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "cross-client-handoff"]))[0]
       .journey.id,
     "cross-client-handoff",
   );
-  assert.throws(
-    () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "all"])),
-    /not implemented: session-recreate/u,
+  assert.equal(
+    resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "all"])).length,
+    12,
   );
   assert.throws(
     () => resolveProductJourneyPlan(parseProductDiagnoseOptions(["--journey", "imaginary"])),
@@ -1538,36 +1687,6 @@ test("implemented Card5, pending, all, unknown, and invalid selections are fail 
       ),
     /all cannot be combined/u,
   );
-});
-
-test("CLI rejects session-recreate before creating ProductRig state", () => {
-  const temporary = mkdtempSync(join(tmpdir(), "product-rig-cli-plan-"));
-  try {
-    const rigRoot = join(temporary, "rig");
-    const diagnosticRoot = join(temporary, "diagnostics");
-    const result = spawnSync(
-      process.execPath,
-      ["scripts/product-test-rig.mjs", "diagnose", "--journey", "session-recreate", "--json"],
-      {
-        cwd: process.cwd(),
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          TMUX_IDE_PRODUCT_RIG_DIR: rigRoot,
-          TMUX_IDE_PRODUCT_DIAGNOSTIC_DIR: diagnosticRoot,
-        },
-      },
-    );
-    assert.equal(result.status, 1);
-    assert.match(
-      result.stderr,
-      /not implemented: session-recreate; missing evidence is a failure/u,
-    );
-    assert.equal(existsSync(join(rigRoot, "state.json")), false);
-    assert.equal(existsSync(diagnosticRoot), false);
-  } finally {
-    removeTestTree(temporary);
-  }
 });
 
 test("run ids are deterministic, bounded, and path safe", () => {

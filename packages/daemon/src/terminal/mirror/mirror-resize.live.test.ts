@@ -55,6 +55,11 @@ function textOf(events: readonly MirrorPaneEvent[]): string {
     .join("");
 }
 
+function cursorOf(events: readonly MirrorPaneEvent[]): { x: number; y: number } | null {
+  const cursor = events.findLast((event) => event.type === "cursor");
+  return cursor?.type === "cursor" ? { x: cursor.x, y: cursor.y } : null;
+}
+
 function windowWidth(session: string): string {
   return runTmux(["display-message", "-p", "-t", `${session}:0`, "#{window_width}"]);
 }
@@ -131,6 +136,35 @@ describe.skipIf(!hasTmux)("a mirror subscriber survives a window resize", () => 
     );
   }
 
+  /** Emit protocol-significant cells, not merely a printable liveness token. */
+  async function requireRichStreaming(
+    session: string,
+    events: readonly MirrorPaneEvent[],
+    label: string,
+  ): Promise<void> {
+    const suffix = randomUUID().slice(0, 6).toUpperCase();
+    const normal = `NORMAL_${label}_${suffix}`;
+    const indexed = `INDEXED_${label}_${suffix}`;
+    const truecolor = `TRUECOLOR_${label}_${suffix}`;
+    const alternate = `ALT_${label}_${suffix}`;
+    const command =
+      `printf '\\033[2J\\033[H${normal}\\n` +
+      `\\033[38;5;196m${indexed}\\033[0m\\n` +
+      `\\033[38;2;1;2;3m${truecolor}\\033[0m` +
+      `\\033[?1049h\\033[4;7H${alternate}\\033[?1049l\\033[4;7H'`;
+    runTmux(["send-keys", "-t", `${session}:0.0`, command, "Enter"]);
+    await vi.waitFor(
+      () => {
+        const bytes = textOf(events);
+        expect(bytes).toContain(normal);
+        expect(bytes).toContain(`\u001b[38;5;196m${indexed}\u001b[0m`);
+        expect(bytes).toContain(`\u001b[38;2;1;2;3m${truecolor}\u001b[0m`);
+        expect(bytes).toContain(`\u001b[?1049h\u001b[4;7H${alternate}\u001b[?1049l`);
+      },
+      { timeout: 20_000, interval: 100 },
+    );
+  }
+
   it("keeps streaming while an owning client resizes the window under it", async () => {
     const session = "zz-resize-owned";
     const { service, semanticPaneId } = await world(session);
@@ -184,6 +218,72 @@ describe.skipIf(!hasTmux)("a mirror subscriber survives a window resize", () => 
     await requireStreaming(session, events, "AGAIN");
 
     await sub.close();
+  });
+
+  it("retains normal, indexed, truecolor, cursor, and alternate-screen bytes across rapid resize and resubscribe", async () => {
+    const session = "zz-resize-rich";
+    const { service, semanticPaneId } = await world(session);
+    const owner = attachClient(session, 150, 42);
+    await vi.waitFor(() => expect(windowWidth(session)).toBe("150"), {
+      timeout: 20_000,
+      interval: 100,
+    });
+
+    const firstEvents: MirrorPaneEvent[] = [];
+    const first = await service.subscribe({
+      session,
+      semanticPaneId,
+      onEvent: (event) => firstEvents.push(event),
+    });
+    await requireRichStreaming(session, firstEvents, "BEFORE");
+
+    for (const [cols, rows] of [
+      [118, 33],
+      [92, 28],
+      [136, 38],
+      [104, 31],
+    ] as const) {
+      owner.resize(cols, rows);
+      await vi.waitFor(() => expect(windowWidth(session)).toBe(String(cols)), {
+        timeout: 20_000,
+        interval: 50,
+      });
+      await requireRichStreaming(session, firstEvents, `${cols}x${rows}`);
+    }
+    expect(cursorOf(firstEvents)).not.toBeNull();
+    await first.close();
+
+    // Enter and retain the alternate buffer before the fresh subscription. A
+    // correct reseed must paint this current screen instead of a blank frame.
+    const alternate = `ALT_RESUBSCRIBE_${randomUUID().slice(0, 6).toUpperCase()}`;
+    runTmux([
+      "send-keys",
+      "-t",
+      `${session}:0.0`,
+      `printf '\\033[?1049h\\033[3;5H\\033[38;2;9;8;7m${alternate}\\033[0m'; sleep 30`,
+      "Enter",
+    ]);
+    const secondEvents: MirrorPaneEvent[] = [];
+    const second = await service.subscribe({
+      session,
+      semanticPaneId,
+      onEvent: (event) => secondEvents.push(event),
+    });
+    await vi.waitFor(
+      () => {
+        const seed = secondEvents
+          .filter((event) => event.type === "seed")
+          .map((event) => dec.decode(event.data))
+          .join("");
+        expect(seed).toContain(alternate);
+        expect(seed).toContain("\u001b[38;2;9;8;7m");
+        expect(cursorOf(secondEvents)).toEqual({ x: 4 + alternate.length, y: 2 });
+      },
+      { timeout: 20_000, interval: 100 },
+    );
+    runTmux(["send-keys", "-t", `${session}:0.0`, "C-c"]);
+    runTmux(["send-keys", "-t", `${session}:0.0`, "printf '\\033[?1049l'", "Enter"]);
+    await second.close();
   });
 
   it("keeps streaming when the resize lands WHILE it is subscribing", async () => {

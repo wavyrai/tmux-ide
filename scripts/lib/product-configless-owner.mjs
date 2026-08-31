@@ -731,6 +731,7 @@ export function qualifyCoherentFrameCausality(
   canonicalSeedPaint,
   generation,
   canonicalRecords = [],
+  { resizedPresentation = null } = {},
 ) {
   const starts = lifecycle.filter(
     (record) =>
@@ -765,15 +766,28 @@ export function qualifyCoherentFrameCausality(
     record.sourceEpoch === paint.sourceEpoch &&
     record.viewportCols === paint.viewportCols &&
     record.viewportRows === paint.viewportRows;
+  const exactPresentationSource = (record) =>
+    resizedPresentation !== null &&
+    record?.processId === paint?.processId &&
+    record.clockId === paint.clockId &&
+    record.clockKind === "performance-now" &&
+    record.semanticPaneId === paint.semanticPaneId &&
+    record.generation === paint.generation &&
+    record.sourceEpoch === paint.sourceEpoch &&
+    record.cols === resizedPresentation.canonicalCols &&
+    record.rows === resizedPresentation.canonicalRows &&
+    record.viewportCols === resizedPresentation.viewportCols &&
+    record.viewportRows === resizedPresentation.viewportRows;
   const canonicalHostFrames = canonicalRecords.filter(
     (record) =>
-      record?.type === "performance.terminal-canonical-host-frame" && exactPaintIdentity(record),
+      record?.type === "performance.terminal-canonical-host-frame" &&
+      (resizedPresentation === null ? exactPaintIdentity(record) : exactPresentationSource(record)),
   );
   const fences = canonicalRecords.filter(
     (record) =>
       record?.type === "performance.terminal-frame-fence" &&
       record.daemonGeneration === generation &&
-      exactPaintIdentity(record),
+      (resizedPresentation === null ? exactPaintIdentity(record) : exactPresentationSource(record)),
   );
   let failureReason = "unknown";
   let predicates = Object.freeze({});
@@ -799,6 +813,24 @@ export function qualifyCoherentFrameCausality(
     }
     const hostFrame = canonicalHostFrames[0];
     const fence = fences[0];
+    const presentationKeys = [
+      "processId",
+      "clockId",
+      "clockKind",
+      "semanticPaneId",
+      "generation",
+      "incarnation",
+      "revision",
+      "stateHash",
+      "cols",
+      "rows",
+      "sourceEpoch",
+      "viewportCols",
+      "viewportRows",
+      "acceptedUpdateType",
+      "acceptedRevision",
+    ];
+    const fenceIdentityExact = presentationKeys.every((key) => hostFrame[key] === fence[key]);
     const sameClock = [start, connection, internalPublication, hostFrame].every(
       (record) =>
         record.processId === paint?.processId &&
@@ -816,7 +848,12 @@ export function qualifyCoherentFrameCausality(
     predicates = Object.freeze({
       sameClock,
       sameEpoch,
-      paintIdentity: paint?.generation === generation && exactPaintIdentity(hostFrame),
+      paintIdentity:
+        paint?.generation === generation &&
+        (resizedPresentation === null
+          ? exactPaintIdentity(hostFrame)
+          : exactPresentationSource(hostFrame)) &&
+        fenceIdentityExact,
       startBeforeConnection: start.monotonicMicros <= connection.monotonicMicros,
       connectionBeforePublication:
         connection.monotonicMicros <= internalPublication.monotonicMicros,
@@ -854,7 +891,7 @@ export function qualifyCoherentFrameCausality(
     }
     const progressedBeforeFrame = canonicalRecords
       .slice(paintIndex + 1, fenceIndex)
-      .some(
+      .filter(
         (record) =>
           record?.type === "performance.terminal-canonical-update" &&
           record.updateType === "terminal.patch" &&
@@ -866,11 +903,30 @@ export function qualifyCoherentFrameCausality(
           Number.isFinite(record.atMicros) &&
           record.atMicros >= paint.atMicros,
       );
+    const acceptedResize =
+      resizedPresentation !== null &&
+      !exactPaintIdentity(hostFrame) &&
+      hostFrame.acceptedUpdateType === "terminal.patch" &&
+      hostFrame.acceptedRevision === hostFrame.revision &&
+      progressedBeforeFrame.length === 1 &&
+      [
+        "processId",
+        "clockId",
+        "clockKind",
+        "semanticPaneId",
+        "generation",
+        "incarnation",
+        "revision",
+        "stateHash",
+        "cols",
+        "rows",
+        "sourceEpoch",
+      ].every((key) => progressedBeforeFrame[0][key] === hostFrame[key]);
     predicates = Object.freeze({
       ...predicates,
-      noCanonicalUpdateBeforeHostFrame: !progressedBeforeFrame,
+      noCanonicalUpdateBeforeHostFrame: progressedBeforeFrame.length === 0 || acceptedResize,
     });
-    if (progressedBeforeFrame) {
+    if (progressedBeforeFrame.length > 0 && !acceptedResize) {
       failureReason = "canonical-update-before-host-frame";
       throw new Error("coherent frame followed a later canonical update before host publication");
     }
@@ -937,24 +993,78 @@ export function qualifyCoherentFrameCausality(
   }
 }
 
-export function qualifyAutomaticConfiglessSelection(records, sessionName) {
-  const phases = ["session-discovery-start", "session-discovery-end", "config-load-end"];
-  let previous = -1;
-  const selected = phases.map((phase) => {
-    const index = records.findIndex(
-      (record, candidate) => candidate > previous && record?.phase === phase,
-    );
-    if (index <= previous) throw new Error(`missing ordered public TUI ${phase} diagnostic`);
-    previous = index;
-    return records[index];
+export function qualifyPostMountConfiglessHomeCatalog(
+  records,
+  catalog,
+  { daemonInstanceId, expectedSessionNames },
+) {
+  if (!Array.isArray(records)) throw new Error("public TUI lifecycle diagnostics are malformed");
+  const configuredIndex = records.findIndex((record) => record?.phase === "config-load-end");
+  const mountedIndex = records.findIndex(
+    (record, candidate) => candidate > configuredIndex && record?.phase === "solid-mounted",
+  );
+  if (configuredIndex < 0 || mountedIndex <= configuredIndex)
+    throw new Error("public TUI did not mount chrome after config load");
+  const configured = records[configuredIndex];
+  const mounted = records[mountedIndex];
+  if (configured.target !== null)
+    throw new Error("configless Home launch unexpectedly retained an explicit target");
+  if (
+    typeof configured.processId !== "string" ||
+    typeof configured.clockId !== "string" ||
+    mounted.processId !== configured.processId ||
+    mounted.clockId !== configured.clockId
+  )
+    throw new Error("public TUI mount diagnostics crossed a process or clock boundary");
+  if (
+    catalog?.version !== 3 ||
+    catalog.daemon?.instanceId !== daemonInstanceId ||
+    !Array.isArray(catalog.intents) ||
+    !Array.isArray(catalog.liveSessions)
+  )
+    throw new Error("post-mount Home catalog is not the elected daemon V3 resource");
+  if (!Array.isArray(expectedSessionNames))
+    throw new Error("expected Home catalog session names are malformed");
+
+  const sessions = catalog.liveSessions
+    .map((session) => {
+      if (
+        typeof session?.sessionName !== "string" ||
+        !/^live-session\.[a-f0-9]{20}$/u.test(session.liveSessionId ?? "") ||
+        typeof session.fleetSessionId !== "string" ||
+        !Number.isSafeInteger(session.paneCount) ||
+        session.paneCount < 0
+      )
+        throw new Error("post-mount Home catalog contains a malformed live session");
+      return Object.freeze({
+        liveSessionId: session.liveSessionId,
+        sessionName: session.sessionName,
+        fleetSessionId: session.fleetSessionId,
+        paneCount: session.paneCount,
+      });
+    })
+    .sort((left, right) => left.sessionName.localeCompare(right.sessionName));
+  if (
+    new Set(sessions.map(({ liveSessionId }) => liveSessionId)).size !== sessions.length ||
+    new Set(sessions.map(({ sessionName }) => sessionName)).size !== sessions.length
+  )
+    throw new Error("post-mount Home catalog contains duplicate live session identity");
+  const expected = [...expectedSessionNames].sort((left, right) => left.localeCompare(right));
+  if (
+    sessions.length !== expected.length ||
+    sessions.some(({ sessionName }, index) => sessionName !== expected[index])
+  )
+    throw new Error("post-mount Home catalog did not publish the exact expected live sessions");
+
+  return Object.freeze({
+    configured,
+    mounted,
+    catalogVersion: 3,
+    daemonInstanceId,
+    sessions: Object.freeze(sessions),
+    automaticTarget: sessions.length === 1 ? sessions[0].sessionName : null,
+    surface: sessions.length === 1 ? "automatic-open-eligible" : "home",
   });
-  const [start, end, configured] = selected;
-  if (end.sessions !== 1 || configured.sessions !== 1 || configured.target !== sessionName)
-    throw new Error("public TUI did not automatically select the sole discovered session");
-  for (const record of selected)
-    if (record.processId !== start.processId || record.clockId !== start.clockId)
-      throw new Error("public TUI discovery diagnostics crossed a process or clock boundary");
-  return Object.freeze({ start, end, configured });
 }
 
 const boundedPromotionValue = (value) => {
@@ -1394,18 +1504,25 @@ export function createConfiglessProductJourneyOwnerOperations(ports) {
       return ports.observeElectedDaemon(namespace, publicProcess);
     },
     async observeOrdinarySessionDiscovery(namespace, daemon) {
-      const publicLifecycle = qualifyAutomaticConfiglessSelection(
-        await ports.readPublicLifecycle(namespace),
-        namespace.session,
-      );
       const discovered = await ports.poll("ordinary-session-discovery", async () => {
         const catalog = await ports.readWorkspaceCatalog(daemon);
-        if (catalog.daemon?.instanceId !== daemon.record.instanceId) return null;
-        const sessions = catalog.liveSessions?.filter(
-          ({ sessionName }) => sessionName === namespace.session,
-        );
-        const session = sessions?.length === 1 ? sessions[0] : null;
-        return session?.fleetSessionId ? { ...session, publicLifecycle } : null;
+        let publicLifecycle;
+        try {
+          publicLifecycle = qualifyPostMountConfiglessHomeCatalog(
+            await ports.readPublicLifecycle(namespace),
+            catalog,
+            {
+              daemonInstanceId: daemon.record.instanceId,
+              expectedSessionNames: [namespace.session],
+            },
+          );
+        } catch {
+          return null;
+        }
+        const session = publicLifecycle.sessions[0];
+        return publicLifecycle.automaticTarget === namespace.session && session?.fleetSessionId
+          ? { ...session, publicLifecycle }
+          : null;
       });
       await ports.recordBoundary("ordinary-session-discovery", discovered);
       return discovered;

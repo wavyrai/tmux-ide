@@ -9,6 +9,7 @@ import {
   WORKSPACE_REGISTRY_TMUX_TIMEOUT_MS,
   _setDefaultWorkspaceRegistryForTests,
   listTmuxSessionsForWorkspaceRegistry,
+  readWorkspaceRegistrySessionInventory,
 } from "./workspace-registry.ts";
 
 let dir: string;
@@ -122,6 +123,31 @@ describe("WorkspaceRegistry — add/list/get/remove round-trip", () => {
 });
 
 describe("WorkspaceRegistry — reconcile against tmux list-sessions", () => {
+  it("distinguishes an authoritative empty inventory from unavailable and ambiguous reads", () => {
+    expect(readWorkspaceRegistrySessionInventory(() => "")).toEqual({
+      status: "authoritative",
+      sessions: [],
+    });
+    expect(
+      readWorkspaceRegistrySessionInventory(() => {
+        throw Object.assign(new Error("no server running on /private/socket"), {
+          code: "TMUX_UNAVAILABLE",
+        });
+      }),
+    ).toEqual({
+      status: "unavailable",
+      detail: "no server running on /private/socket",
+    });
+    expect(
+      readWorkspaceRegistrySessionInventory(() => {
+        throw new TypeError("Unix socket authority changed before use");
+      }),
+    ).toEqual({
+      status: "ambiguous",
+      detail: "Unix socket authority changed before use",
+    });
+  });
+
   it("bounds default tmux discovery and preserves durable rows on timeout", async () => {
     const seed = new WorkspaceRegistry({ dir, listSessions: () => ["alpha"] });
     await seed.load();
@@ -177,6 +203,46 @@ describe("WorkspaceRegistry — reconcile against tmux list-sessions", () => {
     });
     await reg.load();
     expect(reg.list().map((w) => w.name)).toEqual(["alpha"]);
+  });
+
+  it("preserves durable rows on explicit unavailable and ambiguous inventories", async () => {
+    const seed = new WorkspaceRegistry({ dir, listSessions: () => ["alpha"] });
+    await seed.load();
+    seed.add({ name: "alpha", projectDir: "/tmp/alpha", now });
+
+    for (const inventory of [
+      { status: "unavailable" as const, detail: "private socket is down" },
+      { status: "ambiguous" as const, detail: "socket identity changed" },
+    ]) {
+      const registry = new WorkspaceRegistry({ dir, listSessions: () => inventory });
+      await expect(registry.load()).resolves.toEqual({
+        status: "preserved",
+        reason: inventory.status,
+      });
+      expect(registry.list().map((workspace) => workspace.name)).toEqual(["alpha"]);
+      expect(
+        JSON.parse(readFileSync(join(dir, "workspaces.json"), "utf8")).workspaces.map(
+          (workspace: { name: string }) => workspace.name,
+        ),
+      ).toEqual(["alpha"]);
+    }
+  });
+
+  it("treats a successful empty inventory as authoritative cleanup", async () => {
+    const seed = new WorkspaceRegistry({ dir, listSessions: () => ["alpha"] });
+    await seed.load();
+    seed.add({ name: "alpha", projectDir: "/tmp/alpha", now });
+
+    const registry = new WorkspaceRegistry({
+      dir,
+      listSessions: () => ({ status: "authoritative", sessions: [] }),
+    });
+    await expect(registry.load()).resolves.toEqual({
+      status: "authoritative",
+      sessions: [],
+      removed: ["alpha"],
+    });
+    expect(registry.list()).toEqual([]);
   });
 
   it("file write is atomic — no .tmp file lingering after add()", async () => {

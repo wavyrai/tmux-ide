@@ -213,9 +213,11 @@ describe("spawnAgentArgs", () => {
       "-P",
       "-F",
       "#{pane_id}",
+      "-e",
+      "COLORTERM=truecolor",
       "-c",
       "/proj",
-      "claude",
+      "env -u NO_COLOR COLORTERM=truecolor claude",
     ]);
     expect(spawnAgentArgs("window", { session: "web" }, null, "claude")).toEqual([
       "new-window",
@@ -224,7 +226,9 @@ describe("spawnAgentArgs", () => {
       "-P",
       "-F",
       "#{pane_id}",
-      "claude",
+      "-e",
+      "COLORTERM=truecolor",
+      "env -u NO_COLOR COLORTERM=truecolor claude",
     ]);
   });
 
@@ -237,9 +241,11 @@ describe("spawnAgentArgs", () => {
       "-P",
       "-F",
       "#{pane_id}",
+      "-e",
+      "COLORTERM=truecolor",
       "-c",
       "/proj",
-      "codex",
+      "env -u NO_COLOR COLORTERM=truecolor codex",
     ]);
     expect(spawnAgentArgs("split-v", { session: "web" }, null, "codex")).toEqual([
       "split-window",
@@ -249,7 +255,9 @@ describe("spawnAgentArgs", () => {
       "-P",
       "-F",
       "#{pane_id}",
-      "codex",
+      "-e",
+      "COLORTERM=truecolor",
+      "env -u NO_COLOR COLORTERM=truecolor codex",
     ]);
   });
 });
@@ -264,9 +272,11 @@ describe("spawnSessionArgs", () => {
       "-P",
       "-F",
       "#{pane_id}",
+      "-e",
+      "COLORTERM=truecolor",
       "-c",
       "/proj",
-      "claude",
+      "env -u NO_COLOR COLORTERM=truecolor claude",
     ]);
     expect(spawnSessionArgs("api", null, "claude")).toEqual([
       "new-session",
@@ -276,7 +286,9 @@ describe("spawnSessionArgs", () => {
       "-P",
       "-F",
       "#{pane_id}",
-      "claude",
+      "-e",
+      "COLORTERM=truecolor",
+      "env -u NO_COLOR COLORTERM=truecolor claude",
     ]);
   });
 });
@@ -371,12 +383,10 @@ describe("respawnArgs", () => {
       "-t",
       "%7",
       "-e",
-      "NO_COLOR",
-      "-e",
       "COLORTERM=truecolor",
       "-c",
       "/proj",
-      "claude",
+      "env -u NO_COLOR COLORTERM=truecolor claude",
     ]);
     expect(respawnArgs("%7", "claude", null)).toEqual([
       "respawn-pane",
@@ -384,10 +394,8 @@ describe("respawnArgs", () => {
       "-t",
       "%7",
       "-e",
-      "NO_COLOR",
-      "-e",
       "COLORTERM=truecolor",
-      "claude",
+      "env -u NO_COLOR COLORTERM=truecolor claude",
     ]);
   });
 });

@@ -39,6 +39,10 @@ type ConnectionPreparationOutcome =
 
 const PREPARATION_DISPOSED = Symbol("open-tui-session-owner-preparation-disposed");
 
+function isUsableHostSnapshot(snapshot: OpenTuiGenerationHostSnapshot): boolean {
+  return snapshot.status === "live" || snapshot.status === "empty";
+}
+
 /**
  * Serial, target-aware application owner for fixed-session generation hosts.
  * A replacement prepares while the active host retains its painted frame,
@@ -113,7 +117,17 @@ export function createOpenTuiSessionOwner(
     open(sessionName, workspacePrepared = false) {
       return serial(async () => {
         if (disposed) return false;
-        if (current?.sessionName === sessionName) return true;
+        if (current?.sessionName === sessionName) {
+          if (isUsableHostSnapshot(current.latest)) return true;
+          // A retained owner can become unavailable after daemon/tmux churn.
+          // Re-opening that exact session must drive its generation host again
+          // instead of reporting success solely because the name matches.
+          const retrying = current;
+          const restarted = await retrying.host.start().catch(() => false);
+          return (
+            !disposed && current === retrying && restarted && isUsableHostSnapshot(retrying.latest)
+          );
+        }
         const initialConnection = workspacePrepared ? null : await prepareConnection(sessionName);
         if (initialConnection === PREPARATION_DISPOSED) return false;
         // A fresh ordinary tmux session is deliberately absent from workspace

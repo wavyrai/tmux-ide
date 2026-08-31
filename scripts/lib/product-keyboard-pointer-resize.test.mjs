@@ -8,6 +8,7 @@ import {
   assessResizePostPromotionCommands,
   assessKeyboardPointerResizeJourneyBoundaries,
   assessProductKeyboardPointerResize,
+  inspectResizeContentContinuity,
   inspectResizeGuideFramebuffer,
 } from "./product-keyboard-pointer-resize.mjs";
 
@@ -97,6 +98,14 @@ const expected = Object.freeze({
   semanticPaneId: "pane.main",
 });
 const health = Object.freeze({ droppedRecords: 0, failed: false, pendingCriticalRecords: 0 });
+const contentContinuity = () => ({
+  exact: true,
+  reason: null,
+  markerCount: 1,
+  nonBlankCells: 32,
+  markerHash: "d".repeat(64),
+  frameDigest: "e".repeat(64),
+});
 const delivery = (kind, action, point = { x: 66, y: 3 }) => ({
   version: 1,
   kind,
@@ -132,6 +141,7 @@ const target = (source, operationId) => ({
     identityExact: true,
     presentationChanged: true,
     presentationDigest: "b".repeat(64),
+    contentContinuity: contentContinuity(),
   },
   fence: { writerHealth: health },
   delivery: delivery(
@@ -164,6 +174,7 @@ function evidence() {
             matchCount: 40,
             frameDigest: "c".repeat(64),
           },
+          contentContinuity: contentContinuity(),
         },
         fence: { writerHealth: health },
         delivery: delivery("application-mouse", "drag"),
@@ -265,6 +276,23 @@ test("framebuffer guide inspector rejects missing, duplicate, overdraw, and wron
     );
 });
 
+test("content continuity inspector rejects blank, missing, duplicate, and non-rectangular marker frames", () => {
+  const marker = "RIG_RESIZE_MARKER";
+  const frame = (line) => `${line.padEnd(24)}\n${" ".repeat(24)}`;
+  const exact = inspectResizeContentContinuity({
+    plain: frame(marker),
+    cols: 24,
+    rows: 2,
+    marker,
+  });
+  assert.equal(exact.exact, true);
+  assert.equal(exact.markerCount, 1);
+  assert.match(exact.markerHash, /^[0-9a-f]{64}$/u);
+  assert.match(exact.frameDigest, /^[0-9a-f]{64}$/u);
+  for (const plain of [frame(""), frame(`${marker}${marker}`), `${marker}\n`])
+    assert.equal(inspectResizeContentContinuity({ plain, cols: 24, rows: 2, marker }).exact, false);
+});
+
 test("fails closed on missing, duplicate, slow, stale, or unhealthy preview evidence", () => {
   for (const mutate of [
     (value) => value.pointerPreviews.pop(),
@@ -274,6 +302,7 @@ test("fails closed on missing, duplicate, slow, stale, or unhealthy preview evid
       value.pointerPreviews[29].durationMs = 17;
     },
     (value) => (value.pointerPreviews[0].actualFrame.guideDigest = "b".repeat(64)),
+    (value) => (value.pointerPreviews[0].actualFrame.contentContinuity.markerCount = 0),
     (value) => (value.pointerPreviews[0].fence.writerHealth.droppedRecords = 1),
   ]) {
     const value = structuredClone(evidence());
@@ -290,6 +319,7 @@ test("fails closed on malformed keyboard/release lineage and incomplete correlat
     (value) => (value.keyboard.receipt.operationId = UUID),
     (value) => (value.pointerRelease.layout.cells = 65),
     (value) => (value.pointerRelease.frame.presentationChanged = false),
+    (value) => (value.keyboard.frame.contentContinuity.exact = false),
     (value) => (value.workspaceClient.lastReceiptOperationId = UUID),
     (value) => (value.correlation.web = false),
   ]) {

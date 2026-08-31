@@ -5874,7 +5874,19 @@ function projectWorkspaceCatalogV2(daemon, intents, liveSessions2) {
     liveSessions: liveSessions2
   });
 }
-var WORKSPACE_CATALOG_RESOURCE_VERSION, WorkspaceCatalogEntryV1SchemaZ, WorkspaceCatalogResourceV1SchemaZ, WORKSPACE_CATALOG_RESOURCE_V2_VERSION, WorkspaceCatalogIntentV2SchemaZ, WorkspaceCatalogLiveSessionV2SchemaZ, WorkspaceCatalogResourceV2SchemaZ;
+function projectWorkspaceCatalogV3(daemon, intents, liveSessions2) {
+  const observed = new Set(liveSessions2.map(({ sessionName }) => sessionName));
+  return WorkspaceCatalogResourceV3SchemaZ.parse({
+    version: WORKSPACE_CATALOG_RESOURCE_V3_VERSION,
+    daemon,
+    intents: intents.map((intent) => ({
+      ...intent,
+      availability: observed.has(intent.sessionName) ? "live" : "stopped"
+    })),
+    liveSessions: liveSessions2
+  });
+}
+var WORKSPACE_CATALOG_RESOURCE_VERSION, WorkspaceCatalogEntryV1SchemaZ, WorkspaceCatalogResourceV1SchemaZ, WORKSPACE_CATALOG_RESOURCE_V2_VERSION, WorkspaceCatalogIntentV2SchemaZ, WorkspaceCatalogLiveSessionV2SchemaZ, WorkspaceCatalogResourceV2SchemaZ, WORKSPACE_CATALOG_RESOURCE_V3_VERSION, WorkspaceCatalogLiveSessionIdSchemaZ, WorkspaceCatalogLiveSessionV3SchemaZ, WorkspaceCatalogResourceV3SchemaZ;
 var init_workspace_catalog_resource = __esm({
   "packages/contracts/src/workspace-catalog-resource.ts"() {
     "use strict";
@@ -5909,6 +5921,38 @@ var init_workspace_catalog_resource = __esm({
       intents: z34.array(WorkspaceCatalogIntentV2SchemaZ),
       liveSessions: z34.array(WorkspaceCatalogLiveSessionV2SchemaZ)
     }).strict();
+    WORKSPACE_CATALOG_RESOURCE_V3_VERSION = 3;
+    WorkspaceCatalogLiveSessionIdSchemaZ = z34.string().regex(/^live-session\.[a-f0-9]{20}$/u);
+    WorkspaceCatalogLiveSessionV3SchemaZ = WorkspaceCatalogLiveSessionV2SchemaZ.extend({
+      liveSessionId: WorkspaceCatalogLiveSessionIdSchemaZ
+    }).strict();
+    WorkspaceCatalogResourceV3SchemaZ = z34.object({
+      version: z34.literal(WORKSPACE_CATALOG_RESOURCE_V3_VERSION),
+      daemon: DaemonInstanceIdentitySchemaZ,
+      intents: z34.array(WorkspaceCatalogIntentV2SchemaZ),
+      liveSessions: z34.array(WorkspaceCatalogLiveSessionV3SchemaZ)
+    }).strict().superRefine((resource3, context) => {
+      const names = /* @__PURE__ */ new Set();
+      const identities = /* @__PURE__ */ new Set();
+      for (const [index, session] of resource3.liveSessions.entries()) {
+        if (names.has(session.sessionName)) {
+          context.addIssue({
+            code: "custom",
+            message: "duplicate live session name",
+            path: ["liveSessions", index, "sessionName"]
+          });
+        }
+        if (identities.has(session.liveSessionId)) {
+          context.addIssue({
+            code: "custom",
+            message: "duplicate live session identity",
+            path: ["liveSessions", index, "liveSessionId"]
+          });
+        }
+        names.add(session.sessionName);
+        identities.add(session.liveSessionId);
+      }
+    });
   }
 });
 
@@ -10540,13 +10584,19 @@ function _getSpawner() {
 function runTmux(args, options = {}) {
   return runTmuxBinary("tmux", args, options);
 }
+function sanitizeTmuxClientEnvironment(source = process.env) {
+  const environment = { ...source, COLORTERM: "truecolor" };
+  delete environment.NO_COLOR;
+  return environment;
+}
 function runTmuxBinary(executable, args, options = {}) {
   if (DEBUG || globalThis.__tmuxIdeVerbose) {
     console.error(`  [tmux] ${args.join(" ")}`);
   }
   const execOptions = {
     stdio: ["ignore", "pipe", "pipe"],
-    ...options
+    ...options,
+    env: sanitizeTmuxClientEnvironment(options.env ?? process.env)
   };
   try {
     return _executor(executable, args, execOptions);
@@ -10666,7 +10716,7 @@ function killSession(session) {
   }
 }
 function createDetachedSession(session, cwd, { cols, lines } = {}) {
-  return runTmux(
+  const paneId = runTmux(
     [
       "new-session",
       "-d",
@@ -10680,10 +10730,14 @@ function createDetachedSession(session, cwd, { cols, lines } = {}) {
       "-x",
       String(cols ?? 200),
       "-y",
-      String(lines ?? 50)
+      String(lines ?? 50),
+      'exec env -u NO_COLOR COLORTERM=truecolor "${SHELL:-/bin/sh}" -l'
     ],
     { encoding: "utf-8" }
   ).trim();
+  runTmux(["set-environment", "-r", "-t", `=${session}`, "NO_COLOR"]);
+  runTmux(["set-environment", "-t", `=${session}`, "COLORTERM", "truecolor"]);
+  return paneId;
 }
 function setSessionEnvironment(session, key, value) {
   runTmux(["set-environment", "-t", session, key, String(value)]);
@@ -10947,6 +11001,7 @@ __export(src_exports, {
   runSessionCommand: () => runSessionCommand,
   runTmux: () => runTmux,
   runTmuxBinary: () => runTmuxBinary,
+  sanitizeTmuxClientEnvironment: () => sanitizeTmuxClientEnvironment,
   selectPane: () => selectPane,
   sendKeys: () => sendKeys,
   sendLiteral: () => sendLiteral,
@@ -20471,6 +20526,9 @@ import { EventEmitter as EventEmitter2 } from "node:events";
 import { existsSync as existsSync26, mkdirSync as mkdirSync18, readFileSync as readFileSync21, renameSync as renameSync9, writeFileSync as writeFileSync16 } from "node:fs";
 import { dirname as dirname27, join as join25 } from "node:path";
 import { z as z68 } from "zod";
+function isSessionInventory(value) {
+  return !Array.isArray(value);
+}
 function getDefaultWorkspaceRegistry() {
   const namespaceKey = resolveRuntimeNamespace().registryDir;
   if (!_default || _defaultNamespaceKey !== namespaceKey) {
@@ -20479,6 +20537,43 @@ function getDefaultWorkspaceRegistry() {
   }
   return _default;
 }
+function errorDetail2(error) {
+  if (typeof error !== "object" || error === null) return String(error);
+  const stderr = "stderr" in error ? error.stderr : null;
+  if (typeof stderr === "string" && stderr.length > 0) return stderr;
+  if (Buffer.isBuffer(stderr) && stderr.length > 0) return stderr.toString("utf8");
+  return error instanceof Error ? error.message : String(error);
+}
+function workspaceRegistryInventoryFailure(error) {
+  const chain = [];
+  let cursor = error;
+  while (chain.length < 5 && cursor !== null && cursor !== void 0) {
+    chain.push(cursor);
+    cursor = typeof cursor === "object" && cursor !== null && "cause" in cursor ? cursor.cause : void 0;
+  }
+  const codes = new Set(
+    chain.flatMap(
+      (candidate) => typeof candidate === "object" && candidate !== null && "code" in candidate ? [String(candidate.code)] : []
+    )
+  );
+  const detail = errorDetail2(error);
+  const normalized = chain.map(errorDetail2).join("\n").toLowerCase();
+  if (codes.has("ETIMEDOUT") || codes.has("ENOENT") || codes.has("TMUX_UNAVAILABLE") || normalized.includes("failed to connect to server") || normalized.includes("no server running") || normalized.includes("error connecting to") || normalized.includes("connection refused")) {
+    return { status: "unavailable", detail };
+  }
+  return { status: "ambiguous", detail };
+}
+function readWorkspaceRegistrySessionInventory(runTmux2) {
+  try {
+    const raw = runTmux2(["list-sessions", "-F", "#{session_name}"]);
+    return {
+      status: "authoritative",
+      sessions: raw.split("\n").filter(Boolean)
+    };
+  } catch (error) {
+    return workspaceRegistryInventoryFailure(error);
+  }
+}
 function listTmuxSessionsForWorkspaceRegistry(run) {
   try {
     const raw = run("tmux", ["list-sessions", "-F", "#{session_name}"], {
@@ -20486,12 +20581,12 @@ function listTmuxSessionsForWorkspaceRegistry(run) {
       stdio: ["ignore", "pipe", "pipe"],
       timeout: WORKSPACE_REGISTRY_TMUX_TIMEOUT_MS
     });
-    return raw.split("\n").filter(Boolean);
+    return {
+      status: "authoritative",
+      sessions: raw.split("\n").filter(Boolean)
+    };
   } catch (error) {
-    if (typeof error === "object" && error !== null && "code" in error && error.code === "ETIMEDOUT") {
-      throw error;
-    }
-    return [];
+    return workspaceRegistryInventoryFailure(error);
   }
 }
 function defaultListSessions() {
@@ -20542,20 +20637,29 @@ var init_workspace_registry = __esm({
        *
        * Safe to call repeatedly; subsequent calls re-reconcile.
        */
-      async load() {
+      async load(listSessions = this.listSessions) {
         const fromDisk = this.readDisk();
-        let live;
+        let inventory;
         try {
-          live = new Set(this.listSessions());
-        } catch {
-          live = new Set(fromDisk.map((w) => w.sessionName));
+          const observed = listSessions();
+          inventory = isSessionInventory(observed) ? observed : { status: "authoritative", sessions: observed };
+        } catch (error) {
+          inventory = workspaceRegistryInventoryFailure(error);
         }
+        if (inventory.status !== "authoritative") {
+          this.workspaces = fromDisk;
+          this.loaded = true;
+          return { status: "preserved", reason: inventory.status };
+        }
+        const live = new Set(inventory.sessions);
         const reconciled = fromDisk.filter((w) => live.has(w.sessionName));
+        const removed = fromDisk.filter((workspace) => !live.has(workspace.sessionName)).map((workspace) => workspace.name);
         this.workspaces = reconciled;
         this.loaded = true;
         if (reconciled.length !== fromDisk.length) {
           this.writeDisk();
         }
+        return { status: "authoritative", sessions: [...inventory.sessions], removed };
       }
       list() {
         return [...this.workspaces];
@@ -22016,6 +22120,7 @@ var init_ws_route = __esm({
 
 // packages/daemon/src/command-center/discovery.ts
 import { execFileSync as execFileSync13 } from "node:child_process";
+import { createHash as createHash6 } from "node:crypto";
 function tmuxSilent(args) {
   try {
     return _tmuxRunner(args);
@@ -22042,21 +22147,38 @@ function listTmuxSessions() {
   if (!raw) return [];
   return raw.split("\n").filter(Boolean);
 }
+function liveSessionId(serverPid, sessionId, sessionCreated) {
+  const digest3 = createHash6("sha256").update(`${serverPid}\0${sessionId}\0${sessionCreated}`).digest("hex").slice(0, 20);
+  return `live-session.${digest3}`;
+}
 function discoverLiveSessionSummaries(runTmux2 = _tmuxRunner) {
   let raw;
   try {
-    raw = runTmux2(["list-panes", "-a", "-F", "#{session_name}"]);
+    raw = runTmux2([
+      "list-panes",
+      "-a",
+      "-F",
+      "#{pid}	#{session_id}	#{session_created}	#{session_name}"
+    ]);
   } catch {
     return [];
   }
   if (!raw) return [];
-  const paneCounts = /* @__PURE__ */ new Map();
+  const sessions = /* @__PURE__ */ new Map();
   for (const line of raw.split("\n")) {
-    const sessionName = line.trim();
+    const [serverPid = "", sessionId = "", sessionCreated = "", sessionName = ""] = line.split("	");
+    if (!/^\d+$/u.test(serverPid) || !/^\$\d+$/u.test(sessionId) || !/^\d+$/u.test(sessionCreated))
+      continue;
     if (!sessionName || !isVisibleFleetSession(sessionName)) continue;
-    paneCounts.set(sessionName, (paneCounts.get(sessionName) ?? 0) + 1);
+    const identity = liveSessionId(serverPid, sessionId, sessionCreated);
+    const previous = sessions.get(identity);
+    sessions.set(identity, {
+      liveSessionId: identity,
+      sessionName,
+      paneCount: (previous?.paneCount ?? 0) + 1
+    });
   }
-  return [...paneCounts].map(([sessionName, paneCount]) => ({ sessionName, paneCount }));
+  return [...sessions.values()];
 }
 function getSessionCwd2(session) {
   return tmuxSilent(["display-message", "-t", session, "-p", "#{pane_current_path}"]);
@@ -22213,7 +22335,7 @@ function sessionStateWordsChanged(previous, next) {
   if (previous.size !== next.size) return true;
   for (const [paneId, reading] of next) {
     const prior = previous.get(paneId);
-    if (prior === void 0 || agentStateWord(prior.state) !== agentStateWord(reading.state)) {
+    if (prior === void 0 || agentStateWord(prior.state) !== agentStateWord(reading.state) || prior.paneStamp !== reading.paneStamp || (prior.command ?? "") !== (reading.command ?? "")) {
       return true;
     }
   }
@@ -22281,13 +22403,18 @@ function parseAgentStateFacts(raw) {
   const result = /* @__PURE__ */ new Map();
   for (const line of raw.split("\n")) {
     const fields = line.split("	");
-    if (fields.length !== 4 || !fields[0] || !/^%[0-9]+$/u.test(fields[1] ?? "")) continue;
+    if (fields.length < 4 || fields.length > 5 || !fields[0] || !/^%[0-9]+$/u.test(fields[1] ?? ""))
+      continue;
     let panes = result.get(fields[0]);
     if (!panes) {
       panes = /* @__PURE__ */ new Map();
       result.set(fields[0], panes);
     }
-    panes.set(fields[1], { paneStamp: fields[2] || null, state: fields[3] ?? "" });
+    panes.set(fields[1], {
+      paneStamp: fields[2] || null,
+      state: fields[3] ?? "",
+      command: fields[4] ?? ""
+    });
   }
   return result;
 }
@@ -22306,15 +22433,10 @@ async function readSessionCompositionFacts() {
   return raw === null ? null : parseSessionCompositionFacts(raw);
 }
 async function readAgentStateFacts() {
-  const raw = await execTmux([
-    "list-panes",
-    "-a",
-    "-F",
-    "#{session_name}	#{pane_id}	#{@tmux_ide_pane_id}	#{@agent_state}"
-  ]);
+  const raw = await execTmux(AGENT_STATE_TMUX_ARGS);
   return raw === null ? null : parseAgentStateFacts(raw);
 }
-var DaemonFleetFactsObserver, SESSION_COMPOSITION_TMUX_ARGS;
+var DaemonFleetFactsObserver, SESSION_COMPOSITION_TMUX_ARGS, AGENT_STATE_TMUX_ARGS;
 var init_daemon_fleet_facts_observer = __esm({
   "packages/daemon/src/command-center/daemon-fleet-facts-observer.ts"() {
     "use strict";
@@ -22600,7 +22722,9 @@ var init_daemon_fleet_facts_observer = __esm({
       [
         "#{session_name}",
         "#{@tmux_ide_adopted}",
+        "#{pid}",
         "#{session_id}",
+        "#{session_created}",
         "#{window_id}",
         "#{pane_id}",
         "#{window_panes}",
@@ -22609,13 +22733,19 @@ var init_daemon_fleet_facts_observer = __esm({
         "#{@tmux_ide_window_id}"
       ].join("	")
     ];
+    AGENT_STATE_TMUX_ARGS = [
+      "list-panes",
+      "-a",
+      "-F",
+      "#{session_name}	#{pane_id}	#{@tmux_ide_pane_id}	#{@agent_state}	#{pane_current_command}"
+    ];
   }
 });
 
 // packages/daemon/src/lib/semantic-resource-id.ts
-import { createHash as createHash6 } from "node:crypto";
+import { createHash as createHash7 } from "node:crypto";
 function semanticResourceDigest(value) {
-  return createHash6("sha256").update(value).digest("hex").slice(0, 20);
+  return createHash7("sha256").update(value).digest("hex").slice(0, 20);
 }
 function semanticResourceId(namespace, value) {
   return `${namespace}.${semanticResourceDigest(value)}`;
@@ -22627,10 +22757,10 @@ var init_semantic_resource_id = __esm({
 });
 
 // packages/daemon/src/command-center/resources/fleet-catalog.ts
-import { createHash as createHash7 } from "node:crypto";
+import { createHash as createHash8 } from "node:crypto";
 import { basename as basename11 } from "node:path";
 function digest(value) {
-  return createHash7("sha256").update(value).digest("hex").slice(0, 20);
+  return createHash8("sha256").update(value).digest("hex").slice(0, 20);
 }
 function paneIncarnationKey(pane) {
   return pane.semanticPaneId ? `semantic:${pane.semanticPaneId}\0${pane.incarnation}` : `runtime:${pane.runtimePaneId}\0${pane.incarnation}`;
@@ -23284,7 +23414,7 @@ var init_project_runtime_errors = __esm({
 });
 
 // packages/daemon/src/lib/project-runtime-repository.ts
-import { createHash as createHash8, randomUUID as randomUUID6 } from "node:crypto";
+import { createHash as createHash9, randomUUID as randomUUID6 } from "node:crypto";
 import {
   closeSync as closeSync4,
   fsyncSync,
@@ -23334,7 +23464,7 @@ function parseDocumentEnvelope(path2, raw) {
   };
 }
 function sha2562(value) {
-  return createHash8("sha256").update(value).digest("hex");
+  return createHash9("sha256").update(value).digest("hex");
 }
 function encodeUtf8(value) {
   return Buffer.from(value, "utf-8");
@@ -24752,6 +24882,10 @@ function broadcastSessionCompositionChanged() {
 function broadcastTerminalTopologyChanged() {
   if (!resourceEventGeneration) return;
   broadcastResourceChanged(
+    { workspaceName: null, resource: "workspace-catalog" },
+    resourceEventGeneration
+  );
+  broadcastResourceChanged(
     { workspaceName: null, resource: "terminal-runtime-inventory" },
     resourceEventGeneration
   );
@@ -24830,8 +24964,8 @@ function broadcastAdoptedCompositionChanged() {
 }
 function ensureFleetFactsObserver() {
   const readers = fleetFactsReaderOverride ?? {
-    readSessions: readSessionCompositionFacts,
-    readAgents: readAgentStateFacts
+    readSessions: sessionCompositionReaderOverride ?? readSessionCompositionFacts,
+    readAgents: agentStateReaderOverride ?? readAgentStateFacts
   };
   fleetFactsObserver ??= new DaemonFleetFactsObserver({
     ...readers,
@@ -24849,6 +24983,23 @@ function ensureFleetFactsObserver() {
 }
 function setFleetFactsObserverDiagnostics(diagnostics) {
   fleetFactsDiagnostics = diagnostics ?? void 0;
+}
+function setFleetFactsTmuxRunner(runTmux2) {
+  stopFleetFactsObserver();
+  sessionCompositionReaderOverride = runTmux2 ? async () => {
+    try {
+      return parseSessionCompositionFacts(runTmux2(SESSION_COMPOSITION_TMUX_ARGS));
+    } catch {
+      return null;
+    }
+  } : null;
+  agentStateReaderOverride = runTmux2 ? async () => {
+    try {
+      return parseAgentStateFacts(runTmux2(AGENT_STATE_TMUX_ARGS));
+    } catch {
+      return null;
+    }
+  } : null;
 }
 function acquireGlobalObserver(kind) {
   let releaseAuthority;
@@ -25298,6 +25449,9 @@ function _detachProjectRegistryListenerForTests() {
   workspaceRegistryListenerReleases = [];
 }
 function _stopFleetFactsObserverForTests() {
+  stopFleetFactsObserver();
+}
+function stopFleetFactsObserver() {
   fleetFactsObserver?.stop();
   fleetFactsObserver = null;
 }
@@ -25312,7 +25466,7 @@ async function shutdownWsEventObservation() {
   workspaceResourceObserver = null;
   await observer?.dispose();
 }
-var WS_OPEN2, KEEPALIVE_INTERVAL_MS, allClients, RESOURCE_EVENT_JOURNAL_LIMIT, resourceEventGeneration, resourceEventSequence, resourceEventJournal, resourceRevisions, projectRegistryListener, workspaceRegistryListenerReleases, fleetFactsObserver, fleetFactsDiagnostics, fleetFactsReaderOverride, sessionsObserverRefs, projectRegistryObserverRefs, agentStatusObserverRefs, fleetObserverRefs, workspaceResourceObserver, resourceObservationOverride;
+var WS_OPEN2, KEEPALIVE_INTERVAL_MS, allClients, RESOURCE_EVENT_JOURNAL_LIMIT, resourceEventGeneration, resourceEventSequence, resourceEventJournal, resourceRevisions, projectRegistryListener, workspaceRegistryListenerReleases, fleetFactsObserver, fleetFactsDiagnostics, fleetFactsReaderOverride, sessionCompositionReaderOverride, agentStateReaderOverride, sessionsObserverRefs, projectRegistryObserverRefs, agentStatusObserverRefs, fleetObserverRefs, workspaceResourceObserver, resourceObservationOverride;
 var init_ws_events = __esm({
   "packages/daemon/src/command-center/ws-events.ts"() {
     "use strict";
@@ -25335,6 +25489,8 @@ var init_ws_events = __esm({
     workspaceRegistryListenerReleases = [];
     fleetFactsObserver = null;
     fleetFactsReaderOverride = null;
+    sessionCompositionReaderOverride = null;
+    agentStateReaderOverride = null;
     sessionsObserverRefs = 0;
     projectRegistryObserverRefs = 0;
     agentStatusObserverRefs = 0;
@@ -27052,23 +27208,24 @@ var init_mission_repository = __esm({
 });
 
 // packages/daemon/src/lib/tmux-terminal-color.ts
+function tmuxTruecolorEnvironmentCommands(sessionName) {
+  return [
+    ["set-environment", "-r", "-t", `=${sessionName}`, "NO_COLOR"],
+    ["set-environment", "-t", `=${sessionName}`, "COLORTERM", "truecolor"]
+  ];
+}
 function prepareTmuxTruecolorEnvironment(runTmux2, sessionName) {
-  runTmux2(["set-environment", "-u", "-t", `=${sessionName}`, "NO_COLOR"]);
-  runTmux2(["set-environment", "-t", `=${sessionName}`, "COLORTERM", "truecolor"]);
+  for (const args of tmuxTruecolorEnvironmentCommands(sessionName)) runTmux2(args);
 }
 function truecolorShellCommand(command2) {
   return `env -u NO_COLOR COLORTERM=truecolor ${command2}`;
 }
-var TMUX_TRUECOLOR_ENVIRONMENT_ARGS;
+var TMUX_TRUECOLOR_ENVIRONMENT_ARGS, TMUX_TRUECOLOR_INTERACTIVE_SHELL_COMMAND;
 var init_tmux_terminal_color = __esm({
   "packages/daemon/src/lib/tmux-terminal-color.ts"() {
     "use strict";
-    TMUX_TRUECOLOR_ENVIRONMENT_ARGS = [
-      "-e",
-      "NO_COLOR",
-      "-e",
-      "COLORTERM=truecolor"
-    ];
+    TMUX_TRUECOLOR_ENVIRONMENT_ARGS = ["-e", "COLORTERM=truecolor"];
+    TMUX_TRUECOLOR_INTERACTIVE_SHELL_COMMAND = 'exec env -u NO_COLOR COLORTERM=truecolor "${SHELL:-/bin/sh}" -l';
   }
 });
 
@@ -27141,11 +27298,12 @@ function resolveTmuxExecutable() {
 }
 function tmuxClientEnvironment(source) {
   const environment = {
-    TERM: SAFE_TERMINAL_VALUE.test(source.TERM ?? "") ? source.TERM : "xterm-256color"
+    TERM: SAFE_TERMINAL_VALUE.test(source.TERM ?? "") ? source.TERM : "xterm-256color",
+    // A pinned runner may be the first tmux client and therefore create the
+    // server. Never let a headless parent (`TERM=dumb`, `NO_COLOR=1`) become
+    // the global environment inherited by every later interactive child.
+    COLORTERM: "truecolor"
   };
-  if (SAFE_COLOR_TERMINAL_VALUE.test(source.COLORTERM ?? "")) {
-    environment.COLORTERM = source.COLORTERM;
-  }
   for (const name of ["LANG", "LC_ALL", "LC_CTYPE"]) {
     const value = source[name];
     if (value && SAFE_LOCALE_VALUE.test(value)) environment[name] = value;
@@ -27179,11 +27337,14 @@ function resolveWorkspacePaneTmuxAuthority() {
   }
   return Object.freeze({ executablePath, socketSelector: resolveRuntimeNamespace().tmuxSocket });
 }
-function createPinnedWorkspaceTmuxRunner(authority) {
+function createPinnedWorkspaceTmuxRunner(authority, options = {}) {
   const executablePath = realpathSync7(authority.executablePath);
   accessSync4(executablePath, constants4.X_OK);
   if (!isAbsolute9(executablePath) || !statSync7(executablePath).isFile()) {
     throw new TypeError("Pinned tmux executable is invalid.");
+  }
+  if (options.timeoutMs !== void 0 && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1)) {
+    throw new TypeError("Pinned tmux timeout is invalid.");
   }
   const socketIdentity = authority.socketSelector.kind === "path" ? captureUnixSocketIdentity(authority.socketSelector.path) : null;
   if (socketIdentity === null && (authority.socketSelector.kind !== "name" || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(authority.socketSelector.name)))
@@ -27197,7 +27358,8 @@ function createPinnedWorkspaceTmuxRunner(authority) {
         encoding: "utf8",
         env: environment,
         maxBuffer: TMUX_OUTPUT_BYTES,
-        stdio: ["ignore", "pipe", "pipe"]
+        stdio: ["ignore", "pipe", "pipe"],
+        ...options.timeoutMs === void 0 ? {} : { timeout: options.timeoutMs }
       })
     ).replace(/(?:\r?\n)+$/u, "");
   };
@@ -27449,7 +27611,7 @@ function boundedAuthorityLimit(value, fallback) {
   }
   return value;
 }
-var MAX_LIVE_OR_UNSAFE_OPERATIONS, MAX_REPLAYABLE_FAILURES, MAX_COMMAND_ARGUMENTS, MAX_COMMAND_ARGUMENT_BYTES, MAX_COMMAND_BYTES, MAX_ENVIRONMENT_ENTRIES, MAX_ENVIRONMENT_BYTES, TMUX_OUTPUT_BYTES, CREATION_OPTION, HARNESS_OPTION, MISSION_OPTION, SEMANTIC_PANE_OPTION, ERROR_MESSAGES, WorkspacePaneCreationError, SAFE_TERMINAL_VALUE, SAFE_COLOR_TERMINAL_VALUE, SAFE_LOCALE_VALUE, DEFAULT_IO, WorkspacePaneCreationAuthority;
+var MAX_LIVE_OR_UNSAFE_OPERATIONS, MAX_REPLAYABLE_FAILURES, MAX_COMMAND_ARGUMENTS, MAX_COMMAND_ARGUMENT_BYTES, MAX_COMMAND_BYTES, MAX_ENVIRONMENT_ENTRIES, MAX_ENVIRONMENT_BYTES, TMUX_OUTPUT_BYTES, CREATION_OPTION, HARNESS_OPTION, MISSION_OPTION, SEMANTIC_PANE_OPTION, ERROR_MESSAGES, WorkspacePaneCreationError, SAFE_TERMINAL_VALUE, SAFE_LOCALE_VALUE, DEFAULT_IO, WorkspacePaneCreationAuthority;
 var init_workspace_pane_creation2 = __esm({
   "packages/daemon/src/lib/workspace-pane-creation.ts"() {
     "use strict";
@@ -27503,7 +27665,6 @@ var init_workspace_pane_creation2 = __esm({
       }
     };
     SAFE_TERMINAL_VALUE = /^(?:xterm|screen|tmux|rxvt|vt100|ansi)[A-Za-z0-9+._-]{0,58}$/u;
-    SAFE_COLOR_TERMINAL_VALUE = /^(?:truecolor|24bit)$/u;
     SAFE_LOCALE_VALUE = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$/u;
     DEFAULT_IO = {
       canonicalProjectDir,
@@ -27702,6 +27863,7 @@ var init_workspace_pane_creation2 = __esm({
             for (const [key, value] of Object.entries(harness?.environment ?? {}).sort(
               ([a], [b]) => a.localeCompare(b)
             )) {
+              if (key === "NO_COLOR" || key === "COLORTERM" || key === "TERM") continue;
               createArgs.push("-e", `${key}=${value}`);
             }
             if (harness) createArgs.push(harness.command.map(shellEscape).join(" "));
@@ -28338,7 +28500,7 @@ var init_semantic_pane_catalog = __esm({
 });
 
 // packages/daemon/src/lib/workspace-open.ts
-import { createHash as createHash9 } from "node:crypto";
+import { createHash as createHash10 } from "node:crypto";
 import { realpathSync as realpathSync8, statSync as statSync8 } from "node:fs";
 import { basename as basename14, isAbsolute as isAbsolute10 } from "node:path";
 function boundedAuthorityLimit2(value, fallback) {
@@ -28359,7 +28521,7 @@ function safeBaseName(projectDir) {
   return value || "workspace";
 }
 function deriveWorkspaceOpenIdentity(canonicalProjectDir3) {
-  const projectKey = createHash9("sha256").update("tmux-ide.workspace.open.v1\0", "utf8").update(canonicalProjectDir3, "utf8").digest("hex").slice(0, 32);
+  const projectKey = createHash10("sha256").update("tmux-ide.workspace.open.v1\0", "utf8").update(canonicalProjectDir3, "utf8").digest("hex").slice(0, 32);
   const name = `${safeBaseName(canonicalProjectDir3).slice(0, 64)}-${projectKey}`;
   return Object.freeze({
     workspaceName: name,
@@ -28508,6 +28670,7 @@ var init_workspace_open2 = __esm({
     init_workspace_pane_creation2();
     init_workspace_registry();
     init_semantic_pane_catalog();
+    init_tmux_terminal_color();
     MAX_OPERATIONS = 128;
     MAX_REPLAYABLE_FAILURES2 = 64;
     MAX_TMUX_OUTPUT_BYTES = 128 * 1024;
@@ -28869,7 +29032,8 @@ var init_workspace_open2 = __esm({
             "-c",
             canonicalRoot,
             "-n",
-            "Terminal"
+            "Terminal",
+            TMUX_TRUECOLOR_INTERACTIVE_SHELL_COMMAND
           ]);
         } catch (cause) {
           try {
@@ -28886,6 +29050,7 @@ var init_workspace_open2 = __esm({
         }
         const runtime = parseCreatedRuntime2(output, identity.sessionName);
         try {
+          prepareTmuxTruecolorEnvironment(this.#io.runTmux, identity.sessionName);
           for (const [option, value] of [
             [SESSION_OPERATION_OPTION, request.operationId],
             [SESSION_MARKER_OPTION, identity.projectKey],
@@ -29068,7 +29233,7 @@ var init_workspace_open2 = __esm({
 });
 
 // packages/daemon/src/lib/workspace-promotion.ts
-import { createHash as createHash10 } from "node:crypto";
+import { createHash as createHash11 } from "node:crypto";
 import { realpathSync as realpathSync9, statSync as statSync9 } from "node:fs";
 function boundedAuthorityLimit3(value, fallback) {
   if (value === void 0) return fallback;
@@ -29104,7 +29269,7 @@ function hasValidPaneStamp(value) {
   return value.length > 0 && value.length <= 128 && VALID_SEMANTIC_PANE_ID.test(value) && !value.startsWith(RESERVED_DISCOVERED_PREFIX);
 }
 function derivePromotionIdentity(sessionName) {
-  const key = createHash10("sha256").update("tmux-ide.workspace.promote.v1\0", "utf8").update(sessionName, "utf8").digest("hex").slice(0, 32);
+  const key = createHash11("sha256").update("tmux-ide.workspace.promote.v1\0", "utf8").update(sessionName, "utf8").digest("hex").slice(0, 32);
   return Object.freeze({
     workspaceName: `${safeBaseName2(sessionName)}-${key}`,
     sessionName
@@ -29196,7 +29361,7 @@ function requestFingerprint2(request) {
   return JSON.stringify(request);
 }
 function digest2(value) {
-  return createHash10("sha256").update(value).digest("hex").slice(0, 20);
+  return createHash11("sha256").update(value).digest("hex").slice(0, 20);
 }
 var MAX_OPERATIONS2, MAX_REPLAYABLE_FAILURES3, MAX_TMUX_OUTPUT_BYTES2, ADOPTED_OPTION2, SESSION_PROMOTED_MARKER_OPTION, SESSION_WORKSPACE_OPTION2, SESSION_OPERATION_OPTION2, SEMANTIC_PANE_OPTION3, SEMANTIC_WINDOW_OPTION2, FIELD, SENTINEL, SESSION_FORMAT2, PANE_SCAN_FORMAT, PANE_VERIFY_FORMAT, ERROR_MESSAGES3, WorkspacePromotionError, VALID_SEMANTIC_PANE_ID, RESERVED_DISCOVERED_PREFIX, DEFAULT_IO3, WorkspacePromotionAuthority;
 var init_workspace_promotion2 = __esm({
@@ -30029,7 +30194,7 @@ function relaunchArgs(paneId, command2) {
 function respawnArgs(paneId, command2, dir) {
   const args = ["respawn-pane", "-k", "-t", paneId, ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS];
   if (dir) args.push("-c", dir);
-  args.push(command2);
+  args.push(truecolorShellCommand(command2));
   return args;
 }
 function clearAuthorityArgs(paneId) {
@@ -30080,7 +30245,7 @@ var init_fleet_agent_lifecycle = __esm({
 });
 
 // packages/daemon/src/lib/fleet-lifecycle-authority.ts
-import { createHash as createHash11, randomUUID as randomUUID9 } from "node:crypto";
+import { createHash as createHash12, randomUUID as randomUUID9 } from "node:crypto";
 import { isAbsolute as isAbsolute11, resolve as resolve32 } from "node:path";
 import { realpath, stat } from "node:fs/promises";
 var MAX_REPLAY_OPERATIONS, sleep, FleetLifecycleAuthorityError, FleetLifecycleAuthority;
@@ -30171,9 +30336,11 @@ var init_fleet_lifecycle_authority = __esm({
             "-s",
             identity.sessionName,
             "-c",
-            cwd
+            cwd,
+            TMUX_TRUECOLOR_INTERACTIVE_SHELL_COMMAND
           ]);
           created = true;
+          prepareTmuxTruecolorEnvironment(this.#runTmux, identity.sessionName);
           this.#runTmux(["set-environment", "-t", identity.sessionName, "TMUX_IDE", "1"]);
           this.#runTmux(adoptMarkArgv(identity.sessionName));
           try {
@@ -30305,9 +30472,10 @@ var init_fleet_lifecycle_authority = __esm({
             "#{pane_id}",
             "-c",
             cwd,
-            input.command
+            truecolorShellCommand(input.command)
           ]).trim();
           createdSession = true;
+          prepareTmuxTruecolorEnvironment(this.#runTmux, sessionName);
           this.#runTmux(["set-environment", "-t", sessionName, "TMUX_IDE", "1"]);
           this.#runTmux(adoptMarkArgv(sessionName));
         } else {
@@ -30336,7 +30504,13 @@ var init_fleet_lifecycle_authority = __esm({
             "-F",
             "#{pane_id}"
           ];
-          paneId = this.#runTmux([...command2, "-c", cwd, input.command]).trim();
+          paneId = this.#runTmux([
+            ...command2,
+            ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
+            "-c",
+            cwd,
+            truecolorShellCommand(input.command)
+          ]).trim();
           this.#runTmux(adoptMarkArgv(sessionName));
         }
         if (!/^%[0-9]+$/u.test(paneId)) {
@@ -30491,7 +30665,7 @@ var init_fleet_lifecycle_authority = __esm({
       }
       #sessionIdentity(displayName, cwd) {
         const slug = displayName.normalize("NFKD").replace(/[\u0300-\u036f]/gu, "").toLowerCase().replace(/[^a-z0-9_-]+/gu, "-").replace(/-+/gu, "-").replace(/^[-_]+|[-_]+$/gu, "").slice(0, 56) || "session";
-        const key = createHash11("sha256").update("tmux-ide.workspace.session.create.v1\0", "utf8").update(displayName, "utf8").update("\0", "utf8").update(cwd, "utf8").digest("hex").slice(0, 20);
+        const key = createHash12("sha256").update("tmux-ide.workspace.session.create.v1\0", "utf8").update(displayName, "utf8").update("\0", "utf8").update(cwd, "utf8").digest("hex").slice(0, 20);
         const workspaceName = `${slug}-${key}`;
         return { workspaceName, sessionName: workspaceName };
       }
@@ -36828,9 +37002,9 @@ var init_pane_feed = __esm({
 });
 
 // packages/daemon/src/terminal/mirror/session-channel.ts
-import { createHash as createHash12, randomBytes as randomBytes4 } from "node:crypto";
+import { createHash as createHash13, randomBytes as randomBytes4 } from "node:crypto";
 function snapshotFingerprint2(captureLines, cursorLine, fallbackSize) {
-  const hash = createHash12("sha256");
+  const hash = createHash13("sha256");
   const append = (bytes) => {
     const length = Buffer.allocUnsafe(4);
     length.writeUInt32BE(bytes.byteLength);
@@ -50527,7 +50701,7 @@ var init_registry2 = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/admission-util.ts
-import { createHash as createHash13, timingSafeEqual as timingSafeEqual3 } from "node:crypto";
+import { createHash as createHash14, timingSafeEqual as timingSafeEqual3 } from "node:crypto";
 function canonicalOriginOrNull(value) {
   if (typeof value !== "string" || value.length < 4 || value.length > 2048 || value === "null" || value === "*" || /[\0\r\n\t ]/u.test(value)) {
     return null;
@@ -50575,7 +50749,7 @@ function safeCloseSocket(socket, code, reason) {
   }
 }
 function digestSecret(secret) {
-  return createHash13("sha256").update(secret, "utf8").digest();
+  return createHash14("sha256").update(secret, "utf8").digest();
 }
 function digestsEqual(left, right) {
   return left.byteLength === right.byteLength && timingSafeEqual3(left, right);
@@ -50802,7 +50976,7 @@ var init_grouped_tmux = __esm({
 });
 
 // packages/daemon/src/terminal/attachments/lease-manager.ts
-import { createHash as createHash14, randomBytes as randomBytes5, randomUUID as randomUUID12, timingSafeEqual as timingSafeEqual4 } from "node:crypto";
+import { createHash as createHash15, randomBytes as randomBytes5, randomUUID as randomUUID12, timingSafeEqual as timingSafeEqual4 } from "node:crypto";
 import { z as z78 } from "zod";
 function positiveDuration(value, fallback, label2) {
   const resolved2 = value ?? fallback;
@@ -50812,7 +50986,7 @@ function positiveDuration(value, fallback, label2) {
   return resolved2;
 }
 function hashTicket(ticket) {
-  return createHash14("sha256").update(ticket, "utf8").digest();
+  return createHash15("sha256").update(ticket, "utf8").digest();
 }
 function constantTimeDigestMatch(left, right) {
   return left.byteLength === right.byteLength && timingSafeEqual4(left, right);
@@ -52525,7 +52699,7 @@ var init_direct_websocket = __esm({
 });
 
 // packages/daemon/src/terminal/pane-stream/lease-manager.ts
-import { createHash as createHash15, randomBytes as randomBytes6, randomUUID as randomUUID14, timingSafeEqual as timingSafeEqual5 } from "node:crypto";
+import { createHash as createHash16, randomBytes as randomBytes6, randomUUID as randomUUID14, timingSafeEqual as timingSafeEqual5 } from "node:crypto";
 import { z as z82 } from "zod";
 function positiveDuration2(value, fallback, label2) {
   const resolved2 = value ?? fallback;
@@ -52535,7 +52709,7 @@ function positiveDuration2(value, fallback, label2) {
   return resolved2;
 }
 function hashTicket2(ticket) {
-  return createHash15("sha256").update(ticket, "utf8").digest();
+  return createHash16("sha256").update(ticket, "utf8").digest();
 }
 function digestsMatch(left, right) {
   return left.byteLength === right.byteLength && timingSafeEqual5(left, right);
@@ -57064,9 +57238,9 @@ var init_terminal_runtime_inventory2 = __esm({
 });
 
 // packages/daemon/src/command-center/resources/workspace-resource-ids.ts
-import { createHash as createHash16 } from "node:crypto";
+import { createHash as createHash17 } from "node:crypto";
 function opaqueDigest(...parts) {
-  const hash = createHash16("sha256");
+  const hash = createHash17("sha256");
   for (const part of parts) {
     hash.update(part, "utf8");
     hash.update("\0");
@@ -59632,7 +59806,7 @@ var init_fleet_resource_route = __esm({
 });
 
 // packages/daemon/src/command-center/resources/agent-graph-overlay.ts
-import { createHash as createHash17 } from "node:crypto";
+import { createHash as createHash18 } from "node:crypto";
 function pairKey(a, b) {
   return a < b ? `${a}\0${b}` : `${b}\0${a}`;
 }
@@ -59648,7 +59822,7 @@ function nodeLabel(value) {
   return normalized.length > 0 ? normalized : null;
 }
 function groupId(missionId) {
-  const token = createHash17("sha256").update(missionId).digest("hex").slice(0, 32);
+  const token = createHash18("sha256").update(missionId).digest("hex").slice(0, 32);
   return `group.${token}`;
 }
 function projectApplicationShellAgentGraphOverlay(input) {
@@ -60148,7 +60322,7 @@ __export(widget_asset_store_exports, {
   publishWidgetAsset: () => publishWidgetAsset,
   readWidgetAsset: () => readWidgetAsset
 });
-import { createHash as createHash18, randomUUID as randomUUID17 } from "node:crypto";
+import { createHash as createHash19, randomUUID as randomUUID17 } from "node:crypto";
 import {
   chmodSync as chmodSync5,
   existsSync as existsSync34,
@@ -60238,7 +60412,7 @@ function publishWidgetAsset(bytes, options) {
     throw new WidgetAssetStoreError("unsupported-media", "The widget asset media type is unsafe.");
   }
   const root = ensureAssetRoot();
-  const assetId = createHash18("sha256").update(bytes).digest("hex");
+  const assetId = createHash19("sha256").update(bytes).digest("hex");
   const paths = assetPaths(root, assetId);
   const metadata = {
     version: 1,
@@ -60276,7 +60450,7 @@ function readWidgetAsset(assetIdInput) {
       return null;
     }
     const bytes = readFileSync29(paths.data);
-    if (createHash18("sha256").update(bytes).digest("hex") !== parsedId.data) return null;
+    if (createHash19("sha256").update(bytes).digest("hex") !== parsedId.data) return null;
     return { ...metadata, bytes };
   } catch {
     return null;
@@ -60630,7 +60804,8 @@ function createApp(options = {}) {
   });
   app.get("/api/resources/workspace-catalog", (c) => {
     const registry = getDefaultWorkspaceRegistry();
-    if (c.req.query("version") === String(WORKSPACE_CATALOG_RESOURCE_V2_VERSION)) {
+    const requestedCatalogVersion = c.req.query("version");
+    if (requestedCatalogVersion === String(WORKSPACE_CATALOG_RESOURCE_V2_VERSION) || requestedCatalogVersion === String(WORKSPACE_CATALOG_RESOURCE_V3_VERSION)) {
       const workspaceIntents = registry.list().map(({ name, sessionName }) => ({
         workspaceName: name,
         sessionName,
@@ -60648,12 +60823,26 @@ function createApp(options = {}) {
           }
         ]
       );
-      const liveSessions2 = (options.catalogLiveSessions?.() ?? discoverLiveSessionSummaries()).map(
-        (session) => ({
-          ...session,
-          fleetSessionId: fleetSessionIdForName(session.sessionName)
-        })
-      );
+      const observedSessions = options.catalogLiveSessions?.() ?? discoverLiveSessionSummaries();
+      const liveSessions2 = observedSessions.map(({ sessionName, paneCount }) => ({
+        sessionName,
+        fleetSessionId: fleetSessionIdForName(sessionName),
+        paneCount
+      }));
+      if (requestedCatalogVersion === String(WORKSPACE_CATALOG_RESOURCE_V3_VERSION)) {
+        return c.json(
+          projectWorkspaceCatalogV3(
+            daemonInstanceIdentity,
+            [...workspaceIntents, ...projectIntents],
+            observedSessions.map(({ liveSessionId: liveSessionId2, sessionName, paneCount }) => ({
+              liveSessionId: liveSessionId2,
+              sessionName,
+              fleetSessionId: fleetSessionIdForName(sessionName),
+              paneCount
+            }))
+          )
+        );
+      }
       return c.json(
         projectWorkspaceCatalogV2(
           daemonInstanceIdentity,
@@ -62315,8 +62504,17 @@ function launchCommandFor(kind, manifests) {
 }
 function spawnAgentArgs(placement, target, dir, command2) {
   const cd = dir ? ["-c", dir] : [];
+  const launch2 = truecolorShellCommand(command2);
   if (placement === "window") {
-    return ["new-window", "-t", `${target.session}:`, ...PRINT_PANE_ID, ...cd, command2];
+    return [
+      "new-window",
+      "-t",
+      `${target.session}:`,
+      ...PRINT_PANE_ID,
+      ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
+      ...cd,
+      launch2
+    ];
   }
   const flag = placement === "split-h" ? "-h" : "-v";
   return [
@@ -62325,12 +62523,22 @@ function spawnAgentArgs(placement, target, dir, command2) {
     "-t",
     target.paneId ?? `${target.session}:`,
     ...PRINT_PANE_ID,
+    ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
     ...cd,
-    command2
+    launch2
   ];
 }
 function spawnSessionArgs(name, dir, command2) {
-  return ["new-session", "-d", "-s", name, ...PRINT_PANE_ID, ...dir ? ["-c", dir] : [], command2];
+  return [
+    "new-session",
+    "-d",
+    "-s",
+    name,
+    ...PRINT_PANE_ID,
+    ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
+    ...dir ? ["-c", dir] : [],
+    truecolorShellCommand(command2)
+  ];
 }
 function isShellCommand(command2, manifests) {
   const name = command2.replace(/^-/, "").split("/").pop() ?? command2;
@@ -62350,7 +62558,7 @@ function respawnArgs2(paneId, command2, dir) {
     paneId,
     ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
     ...dir ? ["-c", dir] : [],
-    command2
+    truecolorShellCommand(command2)
   ];
 }
 function interruptArgs2(paneId) {
@@ -62410,8 +62618,16 @@ var init_agent_lifecycle = __esm({
 import { execFile as execFile10 } from "node:child_process";
 function tmuxRun(args) {
   return new Promise((resolve37, reject) => {
-    execFile10("tmux", args, (err, stdout) => err ? reject(err) : resolve37(stdout.trimEnd()));
+    execFile10(
+      "tmux",
+      args,
+      { env: sanitizeTmuxClientEnvironment() },
+      (err, stdout) => err ? reject(err) : resolve37(stdout.trimEnd())
+    );
   });
+}
+async function prepareSessionColorEnvironment(session) {
+  for (const args of tmuxTruecolorEnvironmentCommands(session)) await tmuxRun([...args]);
 }
 async function tmuxTry(args) {
   await tmuxRun(args).catch(() => {
@@ -62422,6 +62638,7 @@ function resolveLaunchCommand(params) {
   return launchCommandFor(params.kind, getManifests());
 }
 async function spawnAgent(params) {
+  if (params.session) await prepareSessionColorEnvironment(params.session);
   const dir = params.dir ?? null;
   const argv = params.session ? spawnAgentArgs(
     params.placement ?? "window",
@@ -62437,7 +62654,10 @@ async function spawnAgent(params) {
     throw new ControlVerbError("not-found", `tmux refused to spawn: ${err.message}`);
   }
   const session = params.session ?? params.sessionName;
-  if (!params.session) await tmuxTry(["set-environment", "-t", session, "TMUX_IDE", "1"]);
+  if (!params.session) {
+    await prepareSessionColorEnvironment(session);
+    await tmuxTry(["set-environment", "-t", session, "TMUX_IDE", "1"]);
+  }
   return {
     paneId,
     session,
@@ -62484,9 +62704,11 @@ var sleep2;
 var init_lifecycle = __esm({
   "packages/daemon/src/control/lifecycle.ts"() {
     "use strict";
+    init_src2();
     init_agent_lifecycle();
     init_manifest_loader();
     init_dispatch();
+    init_tmux_terminal_color();
     sleep2 = (ms) => new Promise((r) => setTimeout(r, ms));
   }
 });
@@ -66664,7 +66886,7 @@ var MAX_DISCOVERED_PANES = 4096;
 var MAX_GEOMETRY_CLIENTS = 32;
 var SAFE_SESSION_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u;
 var SAFE_TERMINAL_VALUE2 = /^(?:xterm|screen|tmux|rxvt|vt100|ansi)[A-Za-z0-9+._-]{0,58}$/u;
-var SAFE_COLOR_TERMINAL_VALUE2 = /^(?:truecolor|24bit)$/u;
+var SAFE_COLOR_TERMINAL_VALUE = /^(?:truecolor|24bit)$/u;
 var SAFE_LOCALE_VALUE2 = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$/u;
 var INTEGER = /^(?:0|[1-9][0-9]*)$/u;
 var VIEW_MISMATCH = "__tmux_ide_geometry_view_mismatch_v1__";
@@ -66695,7 +66917,7 @@ function presentationEnvironment(source) {
   const environment = {
     TERM: SAFE_TERMINAL_VALUE2.test(source.TERM ?? "") ? source.TERM : "xterm-256color"
   };
-  if (SAFE_COLOR_TERMINAL_VALUE2.test(source.COLORTERM ?? "")) {
+  if (SAFE_COLOR_TERMINAL_VALUE.test(source.COLORTERM ?? "")) {
     environment.COLORTERM = source.COLORTERM;
   }
   for (const name of ["LANG", "LC_ALL", "LC_CTYPE"]) {
@@ -68859,9 +69081,9 @@ function tmuxSilent2(...args) {
     return "";
   }
 }
-function assertTmuxSession(sessionName) {
+function assertTmuxSession(sessionName, runTmux2 = (args) => tmux5(...args)) {
   try {
-    tmux5("has-session", "-t", sessionName);
+    runTmux2(["has-session", "-t", sessionName]);
   } catch (err) {
     throw new DaemonStartupError(
       `tmux session "${sessionName}" does not exist`,
@@ -69436,7 +69658,12 @@ async function startEmbeddedDaemon(opts) {
         }
       }
     }
-    if (!sessionless) assertTmuxSession(sessionName);
+    const tmuxAuthority = resolveWorkspacePaneTmuxAuthority();
+    const catalogTmuxRunner = createPinnedWorkspaceTmuxRunner(tmuxAuthority);
+    const registryTmuxRunner = createPinnedWorkspaceTmuxRunner(tmuxAuthority, {
+      timeoutMs: WORKSPACE_REGISTRY_TMUX_TIMEOUT_MS
+    });
+    if (!sessionless) assertTmuxSession(sessionName, catalogTmuxRunner);
     const port = opts.port ?? await pickFreePort(bindHostname);
     validatePort(port);
     const dir = process.cwd();
@@ -69445,7 +69672,7 @@ async function startEmbeddedDaemon(opts) {
     const startedAt = (/* @__PURE__ */ new Date()).toISOString();
     const environmentId = readOrMintEnvironmentId();
     const workspaceRegistry = getDefaultWorkspaceRegistry();
-    await workspaceRegistry.load();
+    await workspaceRegistry.load(() => readWorkspaceRegistrySessionInventory(registryTmuxRunner));
     const paneSourceCredentials = new PaneSourceCredentialAuthority({
       run: (args) => tmuxSilent2(...args),
       runAsync: (args, signal) => execTmuxAsync(args, signal)
@@ -69475,8 +69702,6 @@ async function startEmbeddedDaemon(opts) {
       paneSourceCredentials,
       workspaceRegistry.list().map((workspace) => workspace.sessionName)
     );
-    const tmuxAuthority = resolveWorkspacePaneTmuxAuthority();
-    const catalogTmuxRunner = createPinnedWorkspaceTmuxRunner(tmuxAuthority);
     const workspacePaneCreation = new WorkspacePaneCreationAuthority({
       daemonInstanceId: instanceId,
       registry: workspaceRegistry,
@@ -69729,6 +69954,7 @@ async function startEmbeddedDaemon(opts) {
         resolvePaneSourceCredential: (credential, resolvedSession, claimedSource) => paneSourceCredentials.resolve(credential, resolvedSession, claimedSource)
       });
       await externalInteractionObserver.start();
+      setFleetFactsTmuxRunner(catalogTmuxRunner);
       startedServer = await startHttpServer({
         sessionName,
         requestedPort: port,
@@ -69755,6 +69981,7 @@ async function startEmbeddedDaemon(opts) {
         catalogFleet: () => readAdoptedFleet(workspaceRegistry, catalogTmuxRunner)
       });
     } catch (error) {
+      setFleetFactsTmuxRunner(null);
       await Promise.allSettled([
         Promise.resolve().then(() => terminalAttachmentRuntime?.dispose()),
         Promise.resolve().then(() => terminalInventoryRuntime?.dispose()),
@@ -69792,6 +70019,7 @@ async function startEmbeddedDaemon(opts) {
       );
     };
     const abortStartedServer = async () => {
+      setFleetFactsTmuxRunner(null);
       const terminalFailures = [
         ...await retireTerminalAttachmentTransport(
           terminalAttachmentRuntime,
@@ -70026,6 +70254,7 @@ async function startEmbeddedDaemon(opts) {
             await capture(() => Promise.race([closePromise, delay(100)]));
             await capture(() => closeWsServers());
             await capture(() => shutdownWsEventObservation());
+            await capture(() => setFleetFactsTmuxRunner(null));
             await capture(() => closeRuntimeTraceStream());
             await capture(() => setRemoteAccessRestartBackend(null));
             await capture(() => setDaemonShutdownBackend(null));

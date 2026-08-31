@@ -110,7 +110,15 @@ export async function startDaemon(fleet: ScratchFleet): Promise<RunningDaemon> {
       const parsed = CanonicalDaemonInfoSchema.safeParse(
         JSON.parse(await readFile(join(fleet.daemonInfoDir, "daemon.json"), "utf8")),
       );
-      if (!parsed.success || parsed.data.authToken === null) return null;
+      // A SIGKILL intentionally leaves daemon.json behind. Never let a newly
+      // spawned harness child "become ready" by reading its predecessor's
+      // still-valid record before it has published its own identity.
+      if (
+        !parsed.success ||
+        parsed.data.authToken === null ||
+        parsed.data.pid !== harness.child.pid
+      )
+        return null;
       return parsed.data as CanonicalDaemonRecord;
     },
     detail: "the daemon to publish its canonical record",

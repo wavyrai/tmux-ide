@@ -154,7 +154,18 @@ export function createApplicationShellBinding(
   let localPaletteOpen = false;
   let publishedSignature: ApplicationShellRenderSignature | null = null;
   let stops: readonly (() => void)[] = [];
+  const semanticWaiters = new Set<(ready: boolean) => void>();
   const listeners = new Set<(snapshot: ApplicationShellBindingSnapshot) => void>();
+
+  const settleSemanticWaiters = (ready: boolean): void => {
+    for (const resolve of semanticWaiters) resolve(ready);
+    semanticWaiters.clear();
+  };
+  const waitForSemantic = (): Promise<boolean> => {
+    if (retainedSemantic) return Promise.resolve(true);
+    if (!client) return Promise.resolve(false);
+    return new Promise<boolean>((resolve) => semanticWaiters.add(resolve));
+  };
 
   const status = (): string => {
     if (!generation) return "unavailable";
@@ -173,6 +184,7 @@ export function createApplicationShellBinding(
   };
   const unbind = (): void => {
     epoch += 1;
+    settleSemanticWaiters(false);
     for (const stop of stops) stop();
     stops = [];
     client = null;
@@ -194,6 +206,7 @@ export function createApplicationShellBinding(
     if (current.semantic !== null) {
       retainedSemantic = current.semantic;
       localPaletteOpen = false;
+      settleSemanticWaiters(true);
     }
     const adoptAuthority = (authority: typeof current.authority): void => {
       if (fence !== epoch) return;
@@ -209,6 +222,7 @@ export function createApplicationShellBinding(
         if (fence !== epoch || semantic === null) return;
         retainedSemantic = semantic;
         localPaletteOpen = false;
+        settleSemanticWaiters(true);
         publish();
       }),
       next.subscribe("lifecycle", (lifecycle) => {
@@ -218,6 +232,14 @@ export function createApplicationShellBinding(
           transport && transport.phase !== "connected" && transport.phase !== "idle"
             ? transport.phase
             : lifecycle.phase;
+        if (
+          !retainedSemantic &&
+          (lifecycle.phase === "degraded" ||
+            lifecycle.phase === "unavailable" ||
+            lifecycle.phase === "error" ||
+            lifecycle.phase === "disposed")
+        )
+          settleSemanticWaiters(false);
         publish();
       }),
       next.subscribe("authority", adoptAuthority),
@@ -329,6 +351,8 @@ export function createApplicationShellBinding(
     async openSession(sessionName, source, open) {
       const opened = await open(sessionName);
       if (!opened) return { opened: false, activated: false };
+      if (!retainedSemantic && !(await waitForSemantic()))
+        return { opened: true, activated: false };
       return { opened: true, activated: await openSurface("terminals", source) };
     },
     dispose() {

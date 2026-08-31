@@ -334,7 +334,7 @@ async function runInstalledTuiGate(installedCli) {
     ]);
     const readiness = existsSync(readyPath) ? readFileSync(readyPath, "utf8").trim() : "missing";
     const performance = existsSync(performancePath)
-      ? readFileSync(performancePath, "utf8").trim().split("\n").slice(-20).join("\n")
+      ? readFileSync(performancePath, "utf8").trim().split("\n").slice(-200).join("\n")
       : "missing";
     const stderr = existsSync(stderrPath) ? readFileSync(stderrPath, "utf8").trim() : "";
     return [
@@ -627,6 +627,19 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       return [];
     }
   };
+  const daemonApplicationShell = async (sessionName) => {
+    const infoPath = join(homeDir, ".tmux-ide", "daemon.json");
+    if (!existsSync(infoPath)) return null;
+    const info = JSON.parse(readFileSync(infoPath, "utf8"));
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${info.port}/api/project/${encodeURIComponent(sessionName)}/application-shell?version=3`,
+      );
+      return response.ok ? await response.json() : null;
+    } catch {
+      return null;
+    }
+  };
   const paneCount = (session) => {
     const result = tmuxResult(["list-panes", "-t", `=${session}`, "-F", "#{pane_id}"]);
     return result.status === 0 ? result.stdout.trim().split("\n").filter(Boolean).length : 0;
@@ -882,45 +895,37 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     },
     () => `tmux sessions: ${sessionNames().join(", ")}`,
   );
-  const preparedWindow = tmuxResult([
-    "new-window",
-    "-d",
-    "-n",
-    "pack-window",
-    "-t",
-    "=journey-beta",
-    "-c",
-    launchDir,
-  ]);
-  if (preparedWindow.status !== 0)
-    throw new Error(`Could not prepare second window: ${preparedWindow.stderr}`);
-  const preparedAgentPaneResult = tmuxResult([
-    "list-panes",
-    "-t",
-    "=journey-beta:pack-window",
-    "-F",
-    "#{pane_id}",
-  ]);
-  const preparedAgentPane = preparedAgentPaneResult.stdout.trim();
-  if (preparedAgentPaneResult.status !== 0 || !preparedAgentPane.startsWith("%")) {
-    throw new Error(`Could not resolve prepared agent pane: ${preparedAgentPaneResult.stderr}`);
-  }
-  // Keep the synthetic identity inside the compact sidebar's guaranteed text
-  // budget so the cross-platform journey clicks the rendered row rather than
-  // depending on whether a host truncates the longer display name.
-  const agentDisplayName = "PackNav";
-  const agentClickLabel = agentDisplayName;
-  const nowSec = Math.floor(Date.now() / 1000);
-  for (const [option, value] of [
-    ["@agent_hint", "codex"],
-    ["@agent_state", `idle:${nowSec}`],
-    ["@agent_display_name", agentDisplayName],
-  ]) {
-    const stamped = tmuxResult(["set-option", "-p", "-t", preparedAgentPane, option, value]);
-    if (stamped.status !== 0) {
-      throw new Error(`Could not stamp ${option} on ${preparedAgentPane}: ${stamped.stderr}`);
-    }
-  }
+  // Prove process discovery rather than synthetic @agent_hint metadata. The
+  // already-required Node runtime is copied under a representative manifest
+  // basename and acts as a deterministic stdin/stdout agent fixture.
+  const agentFixtureBinary = join(tmpRoot, "codex");
+  copyFileSync(process.execPath, agentFixtureBinary);
+  chmodSync(agentFixtureBinary, 0o700);
+  const agentFixtureProgram =
+    "process.stdin.on('data',chunk=>process.stdout.write(chunk));process.stdin.resume();setInterval(()=>{},2147483647)";
+  const agentFixtureCommand = `${shQuote(agentFixtureBinary)} -e ${shQuote(agentFixtureProgram)}`;
+  const createPackedAgentWindow = (deferAgentExec = false) => {
+    const created = tmuxResult([
+      "new-window",
+      "-d",
+      "-P",
+      "-F",
+      "#{pane_id}",
+      "-n",
+      "pack-agent",
+      "-t",
+      "=journey-beta:",
+      "-c",
+      launchDir,
+      deferAgentExec ? "exec sh -i" : agentFixtureCommand,
+    ]);
+    const paneId = created.stdout.trim();
+    if (created.status !== 0 || !paneId.startsWith("%"))
+      throw new Error(`Could not create real packed agent pane: ${created.stderr}`);
+    return paneId;
+  };
+  const preparedAgentPane = createPackedAgentWindow();
+  const agentClickLabel = "Codex";
   const one = await launchApp();
   await observe(
     "one-session automatic open",
@@ -948,11 +953,26 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     throw new Error(`Could not establish a distinct source pane for installed agent navigation`);
   }
   await observe(
-    "installed agent row publication",
+    "installed real-process agent row publication",
     10_000,
-    () => capture(one.targetPane).includes(agentClickLabel),
+    () => {
+      const command = tmuxResult([
+        "display-message",
+        "-p",
+        "-t",
+        preparedAgentPane,
+        "#{pane_current_command}",
+      ]).stdout.trim();
+      const frame = capture(one.targetPane);
+      return command === "codex" && frame.split(agentClickLabel).length - 1 === 1;
+    },
     one.diagnostics,
   );
+  for (const option of ["@agent_hint", "@agent_state", "@agent_display_name"]) {
+    const value = tmuxResult(["show-options", "-p", "-v", "-t", preparedAgentPane, option]);
+    if (value.status === 0 && value.stdout.trim().length > 0)
+      throw new Error(`Packed real-process agent unexpectedly depended on ${option}`);
+  }
   const semanticAgentPane = tmuxResult([
     "show-options",
     "-p",
@@ -968,7 +988,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   }
   clickText(one, agentClickLabel);
   const agentJumpMarker = `PACK_AGENT_JUMP_${process.pid}`;
-  typeCommand(one, `printf '${agentJumpMarker}\\n'`);
+  typeCommand(one, agentJumpMarker);
   await observe(
     "sidebar agent exact-pane navigation and immediate input",
     10_000,
@@ -976,6 +996,132 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       activePane("journey-beta") === preparedAgentPane &&
       capture(preparedAgentPane).includes(agentJumpMarker) &&
       !capture(paneBeforeAgentJump).includes(agentJumpMarker),
+    one.diagnostics,
+  );
+
+  // Close the focused agent through the shipped palette's two-step destructive
+  // action. Its sidebar row must retire before a replacement can publish.
+  send(one, "F5", "Down", "Down", "Down", "Down", "Enter");
+  await observe(
+    "installed agent close confirmation armed",
+    5_000,
+    () => capture(one.targetPane).includes("Confirm close pane"),
+    one.diagnostics,
+  );
+  send(one, "Enter");
+  await observe(
+    "installed agent row removed after close",
+    10_000,
+    () => {
+      const livePanes = tmuxResult(["list-panes", "-a", "-F", "#{pane_id}"])
+        .stdout.trim()
+        .split("\n")
+        .filter(Boolean);
+      return (
+        !livePanes.includes(preparedAgentPane) && !capture(one.targetPane).includes(agentClickLabel)
+      );
+    },
+    one.diagnostics,
+  );
+
+  const recreatedAgentPane = createPackedAgentWindow(true);
+  if (recreatedAgentPane === preparedAgentPane)
+    throw new Error(`Packed recreated agent reused stale runtime pane ${preparedAgentPane}`);
+  await observe(
+    "installed V3 shell pane readiness before agent exec",
+    10_000,
+    async () => {
+      const command = tmuxResult([
+        "display-message",
+        "-p",
+        "-t",
+        recreatedAgentPane,
+        "#{pane_current_command}",
+      ]).stdout.trim();
+      const semanticPaneId = tmuxResult([
+        "show-options",
+        "-p",
+        "-v",
+        "-t",
+        recreatedAgentPane,
+        "@tmux_ide_pane_id",
+      ]).stdout.trim();
+      if (!/^(?:ba|z)?sh$/u.test(command) || !semanticPaneId.startsWith("pane.")) return false;
+      const shell = await daemonApplicationShell("journey-beta");
+      const resource = shell?.resource;
+      return (
+        resource?.terminalInventory?.resources?.some(
+          ({ id, kind }) => id === semanticPaneId && kind === "terminal",
+        ) === true &&
+        resource?.workspace?.sidebar?.agents?.every(({ paneId }) => paneId !== semanticPaneId) ===
+          true &&
+        !capture(one.targetPane).includes(agentClickLabel)
+      );
+    },
+    one.diagnostics,
+  );
+  const enterRecreatedAgent = tmuxResult([
+    "send-keys",
+    "-l",
+    "-t",
+    recreatedAgentPane,
+    agentFixtureCommand,
+  ]);
+  const submitRecreatedAgent = tmuxResult(["send-keys", "-t", recreatedAgentPane, "Enter"]);
+  if (enterRecreatedAgent.status !== 0 || submitRecreatedAgent.status !== 0) {
+    throw new Error(
+      `Could not exec recreated packed agent: ${enterRecreatedAgent.stderr || submitRecreatedAgent.stderr}`,
+    );
+  }
+  await observe(
+    "installed recreated agent publishes exactly one row",
+    10_000,
+    () => {
+      const command = tmuxResult([
+        "display-message",
+        "-p",
+        "-t",
+        recreatedAgentPane,
+        "#{pane_current_command}",
+      ]).stdout.trim();
+      return command === "codex" && capture(one.targetPane).split(agentClickLabel).length - 1 === 1;
+    },
+    () => {
+      const paneState = tmuxResult([
+        "list-panes",
+        "-a",
+        "-F",
+        "#{pane_id} command=#{pane_current_command} start=#{pane_start_command} dead=#{pane_dead}",
+      ]).stdout.trim();
+      return `${one.diagnostics()}\npanes:\n${paneState}`;
+    },
+  );
+  const recreatedSemanticAgentPane = tmuxResult([
+    "show-options",
+    "-p",
+    "-v",
+    "-t",
+    recreatedAgentPane,
+    "@tmux_ide_pane_id",
+  ]).stdout.trim();
+  if (
+    !recreatedSemanticAgentPane.startsWith("pane.") ||
+    recreatedSemanticAgentPane === semanticAgentPane
+  ) {
+    throw new Error(
+      `Recreated agent semantic identity was not fresh: ${recreatedSemanticAgentPane}`,
+    );
+  }
+  clickText(one, agentClickLabel);
+  const recreatedAgentMarker = `PACK_AGENT_RECREATED_${process.pid}`;
+  typeCommand(one, recreatedAgentMarker);
+  await observe(
+    "recreated sidebar agent exact-pane navigation and input",
+    10_000,
+    () =>
+      activePane("journey-beta") === recreatedAgentPane &&
+      capture(recreatedAgentPane).includes(recreatedAgentMarker) &&
+      !capture(paneBeforeAgentJump).includes(recreatedAgentMarker),
     one.diagnostics,
   );
   send(one, "C-t");

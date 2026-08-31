@@ -752,6 +752,61 @@ describe("direct application-shell transport version selection", () => {
     transport.disposeEventSupervisor();
   });
 
+  it("backs off when a replacement socket retires before terminal preparation settles", async () => {
+    const sockets: FakeSocket[] = [];
+    const clock = new FakeReconnectClock();
+    const transport = createDirectLoopbackDaemonTransport({
+      descriptor,
+      resolveSessionName: () => "alpha",
+      terminalRuntimeAuthority: true,
+      terminalReconnectClock: clock,
+      createWebSocket: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      fetch: async () =>
+        json({
+          version: 1,
+          daemon,
+          resource: {
+            workspaceName: "workspace.alpha",
+            workspaceId: "workspace.0123456789abcdefabcd",
+            sessionId: "session.0123456789abcdefabcd",
+            resourceRevision: 1,
+            semanticPaneIds: ["pane.1"],
+          },
+        }),
+    }) as TerminalFirstDaemonTransport;
+    const preparation = transport.prepareTerminalRuntimeInventory(
+      target,
+      new AbortController().signal,
+    );
+    sockets[0]!.emit("open");
+    sockets[0]!.frame({ type: "hello", daemon, sessions: [], eventSequence: 0 });
+    await tick();
+    sockets[0]!.frame({
+      type: "resource.interests-ack",
+      interestRevision: 1,
+      sequence: 0,
+      unavailableInterests: [],
+    });
+    const prepared = await preparation;
+    transport.adoptTerminalRuntimeInventory(prepared, () => undefined);
+
+    sockets[0]!.emit("close");
+    await tick();
+    expect(sockets).toHaveLength(2);
+    sockets[1]!.emit("close");
+    await tick();
+
+    expect(sockets).toHaveLength(2);
+    expect(clock.callbacks.size).toBe(1);
+    clock.runNext();
+    expect(sockets).toHaveLength(3);
+    transport.disposeEventSupervisor();
+  });
+
   it("cancels a failed replacement retry without creating a late socket after disposal", async () => {
     const sockets: FakeSocket[] = [];
     const clock = new FakeReconnectClock();

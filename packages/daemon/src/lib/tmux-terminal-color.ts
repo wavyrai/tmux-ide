@@ -1,10 +1,21 @@
-/** tmux `-e` options that remove a hostile inherited opt-out and advertise RGB. */
-export const TMUX_TRUECOLOR_ENVIRONMENT_ARGS = [
-  "-e",
-  "NO_COLOR",
-  "-e",
-  "COLORTERM=truecolor",
-] as const;
+/** tmux `-e` options that advertise RGB for a newly-created child. */
+export const TMUX_TRUECOLOR_ENVIRONMENT_ARGS = ["-e", "COLORTERM=truecolor"] as const;
+
+/**
+ * tmux has no `new-session -e` spelling for removing an inherited variable:
+ * `-e` accepts only `VARIABLE=value`. The first process of a new session must
+ * therefore clear a hostile global `NO_COLOR` in its command environment.
+ */
+export const TMUX_TRUECOLOR_INTERACTIVE_SHELL_COMMAND =
+  'exec env -u NO_COLOR COLORTERM=truecolor "${SHELL:-/bin/sh}" -l';
+
+/** Exact session mutations required before tmux creates another child. */
+export function tmuxTruecolorEnvironmentCommands(sessionName: string): readonly string[][] {
+  return [
+    ["set-environment", "-r", "-t", `=${sessionName}`, "NO_COLOR"],
+    ["set-environment", "-t", `=${sessionName}`, "COLORTERM", "truecolor"],
+  ];
+}
 
 /**
  * Existing tmux sessions keep their own environment snapshot. Normalize it
@@ -15,8 +26,10 @@ export function prepareTmuxTruecolorEnvironment(
   runTmux: (args: readonly string[]) => string,
   sessionName: string,
 ): void {
-  runTmux(["set-environment", "-u", "-t", `=${sessionName}`, "NO_COLOR"]);
-  runTmux(["set-environment", "-t", `=${sessionName}`, "COLORTERM", "truecolor"]);
+  // `-u` merely removes the session override, which exposes a dirty global
+  // value again. `-r` records tmux's removal tombstone and strips the variable
+  // from every child subsequently created in this session.
+  for (const args of tmuxTruecolorEnvironmentCommands(sessionName)) runTmux(args);
 }
 
 /** Run a command from an existing shell without inheriting its NO_COLOR flag. */

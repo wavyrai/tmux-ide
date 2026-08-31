@@ -1,7 +1,6 @@
 import { parseArgs } from "node:util";
 
 import { loadAppConfig, type AppConfig } from "../../../lib/app-config.ts";
-import { discoverOpenTuiLiveSessions } from "../configless-session-bootstrap.ts";
 import type { OpenTuiApplicationShellConnection } from "../application-shell-daemon-connection.ts";
 import { tuiPerfMark } from "./application-performance-log.ts";
 
@@ -12,7 +11,6 @@ export interface ApplicationArgs {
 export interface ApplicationConfig {
   readonly app: AppConfig;
   readonly target: string | null;
-  readonly sessions: readonly string[];
 }
 
 export interface StartApplicationRootOptions {
@@ -42,13 +40,8 @@ export const parseApplicationArgs = (argv: readonly string[]): ApplicationArgs =
 
 export async function loadApplicationConfig(args: ApplicationArgs): Promise<ApplicationConfig> {
   tuiPerfMark("config-load-start", { requestedTarget: args.target });
-  tuiPerfMark("session-discovery-start");
-  const sessions = await discoverOpenTuiLiveSessions().catch(() => Object.freeze([]));
-  tuiPerfMark("session-discovery-end", { sessions: sessions.length });
-  const candidate = args.target ?? (sessions.length === 1 ? sessions[0]! : null);
-  // Availability/promotion is generation work, not renderer bootstrap work.
-  // Mount chrome first, then let startGeneration perform the single guarded
-  // ensure before it creates the generation-bound client.
-  tuiPerfMark("config-load-end", { target: candidate, sessions: sessions.length });
-  return Object.freeze({ app: loadAppConfig(), target: candidate, sessions });
+  // Home discovery is daemon-authoritative and remains live after mount. The
+  // immutable bootstrap config only carries an explicit user target.
+  tuiPerfMark("config-load-end", { target: args.target });
+  return Object.freeze({ app: loadAppConfig(), target: args.target });
 }

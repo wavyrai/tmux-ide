@@ -70,6 +70,60 @@ export type WorkspaceCatalogIntentV2 = z.infer<typeof WorkspaceCatalogIntentV2Sc
 export type WorkspaceCatalogLiveSessionV2 = z.infer<typeof WorkspaceCatalogLiveSessionV2SchemaZ>;
 export type WorkspaceCatalogResourceV2 = z.infer<typeof WorkspaceCatalogResourceV2SchemaZ>;
 
+export const WORKSPACE_CATALOG_RESOURCE_V3_VERSION = 3 as const;
+
+/**
+ * Opaque identity of one observed tmux session incarnation. Unlike the
+ * name-derived fleet mutation id, this value survives a rename and changes
+ * when the same display name is recreated.
+ */
+export const WorkspaceCatalogLiveSessionIdSchemaZ = z
+  .string()
+  .regex(/^live-session\.[a-f0-9]{20}$/u);
+
+export const WorkspaceCatalogLiveSessionV3SchemaZ = WorkspaceCatalogLiveSessionV2SchemaZ.extend({
+  liveSessionId: WorkspaceCatalogLiveSessionIdSchemaZ,
+}).strict();
+
+/**
+ * Live Home catalog. V2 remains available for existing workspace clients;
+ * V3 adds the tmux-incarnation identity needed by a long-lived selector.
+ */
+export const WorkspaceCatalogResourceV3SchemaZ = z
+  .object({
+    version: z.literal(WORKSPACE_CATALOG_RESOURCE_V3_VERSION),
+    daemon: DaemonInstanceIdentitySchemaZ,
+    intents: z.array(WorkspaceCatalogIntentV2SchemaZ),
+    liveSessions: z.array(WorkspaceCatalogLiveSessionV3SchemaZ),
+  })
+  .strict()
+  .superRefine((resource, context) => {
+    const names = new Set<string>();
+    const identities = new Set<string>();
+    for (const [index, session] of resource.liveSessions.entries()) {
+      if (names.has(session.sessionName)) {
+        context.addIssue({
+          code: "custom",
+          message: "duplicate live session name",
+          path: ["liveSessions", index, "sessionName"],
+        });
+      }
+      if (identities.has(session.liveSessionId)) {
+        context.addIssue({
+          code: "custom",
+          message: "duplicate live session identity",
+          path: ["liveSessions", index, "liveSessionId"],
+        });
+      }
+      names.add(session.sessionName);
+      identities.add(session.liveSessionId);
+    }
+  });
+
+export type WorkspaceCatalogLiveSessionId = z.infer<typeof WorkspaceCatalogLiveSessionIdSchemaZ>;
+export type WorkspaceCatalogLiveSessionV3 = z.infer<typeof WorkspaceCatalogLiveSessionV3SchemaZ>;
+export type WorkspaceCatalogResourceV3 = z.infer<typeof WorkspaceCatalogResourceV3SchemaZ>;
+
 export interface WorkspaceCatalogIntentInput {
   readonly workspaceName: string;
   readonly sessionName: string;
@@ -80,6 +134,10 @@ export interface WorkspaceCatalogLiveSessionInput {
   readonly sessionName: string;
   readonly fleetSessionId: FleetSessionId;
   readonly paneCount: number;
+}
+
+export interface WorkspaceCatalogLiveSessionV3Input extends WorkspaceCatalogLiveSessionInput {
+  readonly liveSessionId: WorkspaceCatalogLiveSessionId;
 }
 
 /**
@@ -95,6 +153,23 @@ export function projectWorkspaceCatalogV2(
   const observed = new Set(liveSessions.map(({ sessionName }) => sessionName));
   return WorkspaceCatalogResourceV2SchemaZ.parse({
     version: WORKSPACE_CATALOG_RESOURCE_V2_VERSION,
+    daemon,
+    intents: intents.map((intent) => ({
+      ...intent,
+      availability: observed.has(intent.sessionName) ? "live" : "stopped",
+    })),
+    liveSessions,
+  });
+}
+
+export function projectWorkspaceCatalogV3(
+  daemon: z.input<typeof DaemonInstanceIdentitySchemaZ>,
+  intents: readonly WorkspaceCatalogIntentInput[],
+  liveSessions: readonly WorkspaceCatalogLiveSessionV3Input[],
+): WorkspaceCatalogResourceV3 {
+  const observed = new Set(liveSessions.map(({ sessionName }) => sessionName));
+  return WorkspaceCatalogResourceV3SchemaZ.parse({
+    version: WORKSPACE_CATALOG_RESOURCE_V3_VERSION,
     daemon,
     intents: intents.map((intent) => ({
       ...intent,

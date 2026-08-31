@@ -118,6 +118,22 @@ describe("production OpenTUI entry boundary", () => {
     );
   });
 
+  it("retires the Home catalog through the application lifecycle before post-close evidence", () => {
+    const owner = read("packages/daemon/src/tui/mirror/runtime/application-home-catalog-owner.ts");
+    const bootstrap = read("packages/daemon/src/tui/mirror/runtime/application-bootstrap.ts");
+    const postRender = read(
+      "packages/daemon/src/tui/mirror/runtime/application-post-render-runtime.ts",
+    );
+    const registration = 'options.lifecycle.registerCloser("home-catalog", close)';
+
+    expect(owner).toContain(registration);
+    expect(owner.indexOf(registration)).toBeGreaterThan(owner.indexOf("catalog.subscribe"));
+    expect(bootstrap).toContain('lifecycle.registerCloser("application-root", mounted.close)');
+    expect(postRender.indexOf('boundary: "post-close"')).toBeGreaterThan(
+      postRender.indexOf("await options.sessionOwner()?.dispose()"),
+    );
+  });
+
   it("does not install generation diagnostics when the performance stream is disabled", () => {
     const root = read("packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx");
     const host = read("packages/daemon/src/tui/mirror/runtime/open-tui-generation-host.ts");
@@ -150,6 +166,26 @@ describe("production OpenTUI entry boundary", () => {
     expect(postRender).toContain(
       'if (options.terminalFrameReadiness) options.renderer.on("frame", observeTerminalFrame)',
     );
+  });
+
+  it("keeps chrome responsive while explicit-target input readiness waits for usable authority", () => {
+    const root = read("packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx");
+    const readiness = read("packages/daemon/src/tui/mirror/runtime/application-input-readiness.ts");
+    expect(root).toContain("createApplicationInputReadiness(");
+    expect(readiness).toContain("Promise.all([chromeReady, workspaceReady])");
+    expect(readiness).toContain('snapshot.status === "live" || snapshot.status === "empty"');
+    expect(root).not.toContain("clipboardReady.then(resolveReady");
+  });
+
+  it("queues first terminal input behind an exact generation and focused-pane fence", () => {
+    const root = read("packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx");
+    const ingress = read(
+      "packages/daemon/src/tui/mirror/runtime/application-terminal-input-ingress.ts",
+    );
+    expect(root).toContain("createApplicationTerminalInputIngress(");
+    expect(ingress).toContain("applicationGenerationNavigationKey(owner?.snapshot() ?? null)");
+    expect(ingress).toContain("pending.enqueue(");
+    expect(ingress).toContain("terminal unavailable · ${kind} was not sent");
   });
 
   it("publishes a dedicated detailed host-focus control binding independent of claim outcome", () => {

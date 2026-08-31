@@ -80,7 +80,7 @@ export function createDetachedSession(
   cwd: string,
   { cols, lines }: { cols?: number; lines?: number } = {},
 ): string {
-  return (
+  const paneId = (
     runTmux(
       [
         "new-session",
@@ -96,10 +96,16 @@ export function createDetachedSession(
         String(cols ?? 200),
         "-y",
         String(lines ?? 50),
+        'exec env -u NO_COLOR COLORTERM=truecolor "${SHELL:-/bin/sh}" -l',
       ],
       { encoding: "utf-8" },
     ) as string
   ).trim();
+  // new-session cannot express removal with `-e`; persist tmux's removal
+  // tombstone immediately after the first shell has cleared it itself.
+  runTmux(["set-environment", "-r", "-t", `=${session}`, "NO_COLOR"]);
+  runTmux(["set-environment", "-t", `=${session}`, "COLORTERM", "truecolor"]);
+  return paneId;
 }
 
 export function setSessionEnvironment(session: string, key: string, value: string | number): void {

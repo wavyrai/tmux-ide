@@ -115,8 +115,12 @@ describe("production OpenTUI v2 data path", () => {
   });
 
   it("does not couple viewport fitting to terminal layout publications", () => {
+    const terminalInputIngress = productionGraph.sourceByFile.get(
+      "packages/daemon/src/tui/mirror/runtime/application-terminal-input-ingress.ts",
+    )!;
     expect(applicationRootSource).not.toContain("layoutSnapshot();");
-    expect(applicationRootSource).toContain('active?.status === "live" ? active.fastLane : null');
+    expect(terminalInputIngress).toContain('active?.status === "live"');
+    expect(terminalInputIngress).not.toContain("layoutSnapshot");
   });
 
   it("gates application-mouse ingress diagnostics before the workspace clock boundary", () => {

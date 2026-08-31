@@ -98,7 +98,13 @@ describe("REST /api/workspaces", () => {
     registry.add({ name: "alpha", sessionName: "alpha-live", projectDir: "/tmp/alpha" });
     const app = createApp({
       daemonIdentity: TEST_DAEMON_IDENTITY,
-      catalogLiveSessions: () => [{ sessionName: "alpha-live", paneCount: 3 }],
+      catalogLiveSessions: () => [
+        {
+          liveSessionId: "live-session.aaaaaaaaaaaaaaaaaaaa",
+          sessionName: "alpha-live",
+          paneCount: 3,
+        },
+      ],
     });
     const response = await app.request("/api/resources/workspace-catalog?version=2");
     expect(response.status).toBe(200);
@@ -121,6 +127,29 @@ describe("REST /api/workspaces", () => {
         },
       ],
     });
+  });
+
+  it("V3 adds a rename-stable tmux incarnation id without changing V2", async () => {
+    const app = createApp({
+      daemonIdentity: TEST_DAEMON_IDENTITY,
+      catalogLiveSessions: () => [
+        {
+          liveSessionId: "live-session.aaaaaaaaaaaaaaaaaaaa",
+          sessionName: "ordinary",
+          paneCount: 2,
+        },
+      ],
+    });
+    const response = await app.request("/api/resources/workspace-catalog?version=3");
+    expect(response.status).toBe(200);
+    expect((await response.json()).liveSessions).toEqual([
+      {
+        liveSessionId: "live-session.aaaaaaaaaaaaaaaaaaaa",
+        sessionName: "ordinary",
+        fleetSessionId: fleetSessionIdForName("ordinary"),
+        paneCount: 2,
+      },
+    ]);
   });
 
   it("POST adds a workspace and returns 201 with the new entry", async () => {

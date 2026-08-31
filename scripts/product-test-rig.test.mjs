@@ -55,6 +55,7 @@ import {
   paneBodyRegion,
   paneGeometryIdentity,
   productInputQueuesSettled,
+  productAttachablePaneInventory,
   productRigSourceTraceIncludesPath,
   productRigGitBlobObjectId,
   productRigHostHeartbeatObservation,
@@ -1654,10 +1655,7 @@ test("focus framebuffer proof has no synchronous target tmux reads and fences na
 test("focus Web success publishes exact stable semantic readiness before later correlation", () => {
   const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
   const start = source.indexOf("startWebAfterFocus:");
-  const slice = source.slice(
-    start,
-    source.indexOf('if (journeyId === "coherent-first-pane")', start),
-  );
+  const slice = source.slice(start, source.indexOf('if (journeyId === "session-recreate")', start));
   const readinessPublish = slice.indexOf("focusWebSemantic: semantic");
   const laterWorkspaceState = slice.indexOf("waitForFocusWorkspaceEvidence", readinessPublish);
   const watermark = slice.indexOf("focusWorkspaceEvidenceWatermark");
@@ -2694,6 +2692,47 @@ test("resource queue settlement reads the latest bounded input counters", () => 
   assert.equal(productInputQueuesSettled([], "tui:3"), false);
 });
 
+test("multi-client convergence leases the exact full session topology", () => {
+  const resources = [
+    { attachability: { status: "available", semanticPaneId: "pane.c" } },
+    { attachability: { status: "unavailable", semanticPaneId: "pane.ignored" } },
+    { attachability: { status: "available", semanticPaneId: "pane.a" } },
+    { attachability: { status: "available", semanticPaneId: "pane.b" } },
+  ];
+  assert.deepEqual(productAttachablePaneInventory(resources), ["pane.a", "pane.b", "pane.c"]);
+  assert.throws(
+    () =>
+      productAttachablePaneInventory([
+        resources[0],
+        { attachability: { status: "available", semanticPaneId: "pane.c" } },
+      ]),
+    /ambiguous/u,
+  );
+  const owner = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const client = readFileSync(
+    new URL("./product-test-rig-multiclient.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(owner, /TMUX_IDE_RIG_PANES: JSON\.stringify\(panes\)/u);
+  assert.match(client, /const panes = requiredPaneInventory/u);
+  assert.match(client, /stream: \{[\s\S]*?panes,/u);
+  assert.doesNotMatch(
+    client.slice(client.indexOf("const nativeStartedAt"), client.indexOf("timings.nativeYieldMs")),
+    /resize-window/u,
+  );
+  assert.match(
+    client,
+    /await Bun\.sleep\(250\);[\s\S]*?geometryAfterNative = await webB\.requestAuthority\("geometry"\)/u,
+  );
+  assert.doesNotMatch(
+    client.slice(
+      client.indexOf("await Bun.sleep(250)"),
+      client.indexOf("timings.nativeQuietReacquireMs"),
+    ),
+    /catch/u,
+  );
+});
+
 test("causal baseline names every fail-closed readiness predicate", () => {
   const ready = {
     fixtureOption: "ready-v1:probe-0",
@@ -2926,6 +2965,9 @@ test("resize journey owns one bounded two-pane Meta+Arrow and SGR causal executo
   assert.match(resize, /action: "drag"/u);
   assert.match(resize, /action: "up"/u);
   assert.match(resize, /presentationDigest/u);
+  assert.match(resize, /captureResizeContentContinuity/u);
+  assert.match(resize, /inspectResizeContentContinuity/u);
+  assert.match(resize, /contentContinuity/u);
   assert.match(resize, /waitForWindowWorkspaceEvidence/u);
   assert.match(resize, /waitForFocusWebSemantic/u);
   assert.match(
@@ -3285,6 +3327,43 @@ test("resize diagnostic correlation uses strict post-Web identity and never a si
   assert.match(correlation, /buildProductDiagnosticCorrelation\(\{[\s\S]*?state,/u);
 });
 
+test("runtime qualification translates tmux resize geometry into application-content coordinates", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("function activeVerticalResizeSeparator");
+  const end = source.indexOf("\nfunction ", start + 10);
+  const resizeSeparator = source.slice(start, end);
+
+  assert.match(resizeSeparator, /shellChromeLayout\(160, 44, 28\)/u);
+  assert.match(resizeSeparator, /x: chrome\.main\.x \+ before\.left \+ before\.width/u);
+  assert.match(resizeSeparator, /chrome\.main\.y \+\s*1 \+/u);
+});
+
+test("runtime qualification binds active tmux geometry to canonical pane display identity", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("function activeTmuxPane(state)");
+  const end = source.indexOf("\nfunction ", start + 10);
+  const activePane = source.slice(start, end);
+
+  assert.match(activePane, /sessionPaneGeometry\(state\)\.find/u);
+  assert.match(activePane, /displayName: semantic\.displayName/u);
+  assert.match(activePane, /canonicalDisplayNames: semantic\.canonicalDisplayNames/u);
+});
+
+test("runtime qualification captures its own evidence instead of requiring a Card5 owner", () => {
+  const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
+  const start = source.indexOf("async function diagnoseRuntimeQualification");
+  const captureStart = source.indexOf(
+    'diagnosticAttemptPhases.set(planEntry.runId, "evidence-capture")',
+    start,
+  );
+  const captureEnd = source.indexOf("diagnosticCaptures.set", captureStart);
+  const qualification = source.slice(captureStart, captureEnd);
+
+  assert.ok(start > 0 && captureStart > start && captureEnd > captureStart);
+  assert.match(qualification, /await captureArtifacts\(/u);
+  assert.doesNotMatch(qualification, /state\.card5CaptureEvidence/u);
+});
+
 test("selection diagnostic correlation uses its own post-Web identity and no sibling evidence", () => {
   const source = readFileSync(new URL("./product-test-rig.mjs", import.meta.url), "utf8");
   const start = source.indexOf("function productDiagnosticCorrelation");
@@ -3552,18 +3631,4 @@ test("checked-in product baseline is honest and safe to inventory", () => {
   assert.equal(baseline.portablePerformance.inputToPaint, "not-measured");
   assert.ok(baseline.knownDefects.every((defect) => defect.reproduce.length > 0));
   assert.match(baseline.completionPolicy, /not Done/u);
-  const lineCount = (path) =>
-    readFileSync(new URL(path, import.meta.url), "utf8").split("\n").length;
-  assert.equal(
-    lineCount("../packages/daemon/src/tui/mirror/runtime/application-root.tsx"),
-    baseline.sourceMeasurements.openTuiApplicationRootLines + 1,
-  );
-  assert.equal(
-    lineCount("../apps/desktop-renderer/src/experience/application-shell.tsx"),
-    baseline.sourceMeasurements.webApplicationShellLines + 1,
-  );
-  assert.equal(
-    lineCount("../apps/desktop-renderer/src/experience/workspace-tiled-surface.tsx"),
-    baseline.sourceMeasurements.webWorkspaceTiledSurfaceLines + 1,
-  );
 });

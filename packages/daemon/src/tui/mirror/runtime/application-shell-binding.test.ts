@@ -171,6 +171,40 @@ describe("application shell binding", () => {
     ]);
   });
 
+  it("waits for authoritative V3 semantic readiness before opening Terminals", async () => {
+    const fake = fakeClient(null, "loading");
+    const binding = createApplicationShellBinding();
+    binding.adoptGeneration({ status: "live", client: fake.client });
+    let settled = false;
+
+    const opening = binding
+      .openSession("main", source, async () => true)
+      .finally(() => (settled = true));
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(fake.dispatched).toEqual([]);
+
+    fake.publishSemantic(semantic("home"));
+    await expect(opening).resolves.toEqual({ opened: true, activated: true });
+    expect(fake.dispatched.map((command) => command.invocation.id)).toEqual([
+      APPLICATION_SHELL_COMMAND_IDS.activateMode,
+      APPLICATION_SHELL_COMMAND_IDS.moveFocus,
+    ]);
+  });
+
+  it("releases a delayed semantic open when its generation is unbound", async () => {
+    const fake = fakeClient(null, "loading");
+    const binding = createApplicationShellBinding();
+    binding.adoptGeneration({ status: "live", client: fake.client });
+
+    const opening = binding.openSession("main", source, async () => true);
+    await Promise.resolve();
+    binding.adoptGeneration({ status: "unavailable", client: null });
+
+    await expect(opening).resolves.toEqual({ opened: true, activated: false });
+    expect(fake.dispatched).toEqual([]);
+  });
+
   it("retains one coherent semantic generation through rebinding and clears unsafe states", () => {
     const first = fakeClient(semantic("terminals", "first"));
     const second = fakeClient(null, "loading");

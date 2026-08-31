@@ -474,6 +474,7 @@ export function createDirectLoopbackDaemonTransport(
         fetchTerminalRuntimeInventory(safeTarget, sessionName, signal),
       onRetired: () => {
         if (eventSupervisor !== supervisor) return;
+        const retiredDuringReconnect = terminalReconnectController !== null;
         cancelTerminalReconnect();
         resetCatalogReadiness();
         eventSupervisor = null;
@@ -591,7 +592,14 @@ export function createDirectLoopbackDaemonTransport(
               }, 1_000);
             });
         };
-        queueMicrotask(reconnect);
+        if (retiredDuringReconnect) {
+          terminalReconnectTimer = terminalReconnectClock.setTimeout(() => {
+            terminalReconnectTimer = null;
+            reconnect();
+          }, 1_000);
+        } else {
+          queueMicrotask(reconnect);
+        }
       },
       ...(diagnose ? { onDiagnostic: diagnose } : {}),
     });

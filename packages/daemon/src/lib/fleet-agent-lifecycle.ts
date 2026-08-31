@@ -62,7 +62,7 @@ export function relaunchArgs(paneId: string, command: string): string[][] {
 export function respawnArgs(paneId: string, command: string, dir: string | null): string[] {
   const args = ["respawn-pane", "-k", "-t", paneId, ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS];
   if (dir) args.push("-c", dir);
-  args.push(command);
+  args.push(truecolorShellCommand(command));
   return args;
 }
 

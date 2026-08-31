@@ -7,19 +7,26 @@ describe("live tmux session summaries", () => {
     expect(
       discoverLiveSessionSummaries(() =>
         [
-          "ordinary",
-          "ordinary",
-          "ordinary",
-          "second",
-          "_tmux-ide-chrome",
-          "zz-scratch",
-          "zz-scratch",
+          "41\t$0\t100\tordinary",
+          "41\t$0\t100\tordinary",
+          "41\t$0\t100\tordinary",
+          "41\t$1\t101\tsecond",
+          "41\t$2\t102\t_tmux-ide-chrome",
+          "41\t$3\t103\tzz-scratch",
+          "41\t$3\t103\tzz-scratch",
         ].join("\n"),
       ),
     ).toEqual([
-      { sessionName: "ordinary", paneCount: 3 },
-      { sessionName: "second", paneCount: 1 },
+      expect.objectContaining({ sessionName: "ordinary", paneCount: 3 }),
+      expect.objectContaining({ sessionName: "second", paneCount: 1 }),
     ]);
+  });
+
+  it("keeps an identity across rename and replaces it across recreation", () => {
+    const read = (row: string) => discoverLiveSessionSummaries(() => row)[0]!.liveSessionId;
+    expect(read("41\t$0\t100\tbefore")).toBe(read("41\t$0\t100\tafter"));
+    expect(read("41\t$0\t100\tbefore")).not.toBe(read("41\t$1\t101\tbefore"));
+    expect(read("41\t$0\t100\tbefore")).not.toBe(read("42\t$0\t100\tbefore"));
   });
 
   it("degrades an unavailable tmux server to an empty observed collection", () => {

@@ -39,13 +39,19 @@ import {
   broadcastResourceChanged,
   handleWsEventsConnection,
   setFleetFactsObserverDiagnostics,
+  setFleetFactsTmuxRunner,
   shutdownWsEventObservation,
 } from "../command-center/ws-events.ts";
 import { setRemoteAccessRestartBackend } from "../command-center/actions/handlers/app-set-remote-access.ts";
 import { setDaemonShutdownBackend } from "../command-center/actions/handlers/daemon-shutdown.ts";
 import type { WorkspaceMultiplexerBackend } from "../command-center/actions/handlers/workspace-multiplexer.ts";
 import { readAppSettings } from "./app-settings.ts";
-import { getDefaultWorkspaceRegistry, type WorkspaceRegistry } from "./workspace-registry.ts";
+import {
+  getDefaultWorkspaceRegistry,
+  readWorkspaceRegistrySessionInventory,
+  WORKSPACE_REGISTRY_TMUX_TIMEOUT_MS,
+  type WorkspaceRegistry,
+} from "./workspace-registry.ts";
 import {
   createPinnedWorkspaceTmuxRunner,
   resolveWorkspacePaneTmuxAuthority,
@@ -190,9 +196,12 @@ function tmuxSilent(...args: string[]): string {
   }
 }
 
-function assertTmuxSession(sessionName: string): void {
+function assertTmuxSession(
+  sessionName: string,
+  runTmux: (args: readonly string[]) => string = (args) => tmux(...args),
+): void {
   try {
-    tmux("has-session", "-t", sessionName);
+    runTmux(["has-session", "-t", sessionName]);
   } catch (err) {
     throw new DaemonStartupError(
       `tmux session "${sessionName}" does not exist`,
@@ -747,6 +756,7 @@ async function startHttpServer({
   peekTerminalAttachmentRuntime: () => NativeTerminalAttachmentRuntime | null;
   paneStreamRuntime: PaneStreamRuntime;
   catalogLiveSessions: () => readonly {
+    readonly liveSessionId: `live-session.${string}`;
     readonly sessionName: string;
     readonly paneCount: number;
   }[];
@@ -970,7 +980,16 @@ export async function startEmbeddedDaemon(
         }
       }
     }
-    if (!sessionless) assertTmuxSession(sessionName);
+    // Resolve both tmux selectors before any state read. Registry discovery,
+    // explicit-session validation, catalog reads and later mutations must all
+    // observe one daemon-generation authority rather than whichever server a
+    // caller's ambient TMUX/PATH happens to select.
+    const tmuxAuthority = resolveWorkspacePaneTmuxAuthority();
+    const catalogTmuxRunner = createPinnedWorkspaceTmuxRunner(tmuxAuthority);
+    const registryTmuxRunner = createPinnedWorkspaceTmuxRunner(tmuxAuthority, {
+      timeoutMs: WORKSPACE_REGISTRY_TMUX_TIMEOUT_MS,
+    });
+    if (!sessionless) assertTmuxSession(sessionName, catalogTmuxRunner);
     const port = opts.port ?? (await pickFreePort(bindHostname));
     validatePort(port);
     const dir = process.cwd();
@@ -986,7 +1005,7 @@ export async function startEmbeddedDaemon(
     // a workspace so legacy single-session callers (pre-T068) keep working.
     // The registry is the source of truth for /api/project/:name lookups.
     const workspaceRegistry = getDefaultWorkspaceRegistry();
-    await workspaceRegistry.load();
+    await workspaceRegistry.load(() => readWorkspaceRegistrySessionInventory(registryTmuxRunner));
     const paneSourceCredentials = new PaneSourceCredentialAuthority({
       run: (args) => tmuxSilent(...args),
       runAsync: (args, signal) => execTmuxAsync(args, signal),
@@ -1027,11 +1046,6 @@ export async function startEmbeddedDaemon(
       paneSourceCredentials,
       workspaceRegistry.list().map((workspace) => workspace.sessionName),
     );
-    // Resolve the executable/socket authority once per daemon generation so
-    // pane creation and direct attachment can never drift to different tmux
-    // servers after startup.
-    const tmuxAuthority = resolveWorkspacePaneTmuxAuthority();
-    const catalogTmuxRunner = createPinnedWorkspaceTmuxRunner(tmuxAuthority);
     const workspacePaneCreation = new WorkspacePaneCreationAuthority({
       daemonInstanceId: instanceId,
       registry: workspaceRegistry,
@@ -1315,6 +1329,7 @@ export async function startEmbeddedDaemon(
           paneSourceCredentials.resolve(credential, resolvedSession, claimedSource),
       });
       await externalInteractionObserver.start();
+      setFleetFactsTmuxRunner(catalogTmuxRunner);
       startedServer = await startHttpServer({
         sessionName,
         requestedPort: port,
@@ -1341,6 +1356,7 @@ export async function startEmbeddedDaemon(
         catalogFleet: () => readAdoptedFleet(workspaceRegistry, catalogTmuxRunner),
       });
     } catch (error) {
+      setFleetFactsTmuxRunner(null);
       await Promise.allSettled([
         Promise.resolve().then(() => terminalAttachmentRuntime?.dispose()),
         Promise.resolve().then(() => terminalInventoryRuntime?.dispose()),
@@ -1381,6 +1397,7 @@ export async function startEmbeddedDaemon(
       );
     };
     const abortStartedServer = async (): Promise<void> => {
+      setFleetFactsTmuxRunner(null);
       const terminalFailures = [
         ...(await retireTerminalAttachmentTransport(
           terminalAttachmentRuntime,
@@ -1643,6 +1660,7 @@ export async function startEmbeddedDaemon(
             await capture(() => Promise.race([closePromise, delay(100)]));
             await capture(() => closeWsServers());
             await capture(() => shutdownWsEventObservation());
+            await capture(() => setFleetFactsTmuxRunner(null));
             await capture(() => closeRuntimeTraceStream());
             await capture(() => setRemoteAccessRestartBackend(null));
             await capture(() => setDaemonShutdownBackend(null));

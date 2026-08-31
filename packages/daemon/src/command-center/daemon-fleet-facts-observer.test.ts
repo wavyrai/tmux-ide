@@ -39,9 +39,9 @@ describe("DaemonFleetFactsObserver", () => {
       adopted: ["managed"],
       terminalTopology: ["__tmux_ide_preview\t1", "managed\t1", "work\t0"],
     });
-    expect(parseAgentStateFacts("work\t%1\tpane.editor\tworking:1").get("work")?.get("%1")).toEqual(
-      { paneStamp: "pane.editor", state: "working:1" },
-    );
+    expect(
+      parseAgentStateFacts("work\t%1\tpane.editor\tworking:1\tcodex").get("work")?.get("%1"),
+    ).toEqual({ paneStamp: "pane.editor", state: "working:1", command: "codex" });
   });
 
   it("invalidates agent-free topology when a pane or durable stamp changes", async () => {
@@ -69,6 +69,33 @@ describe("DaemonFleetFactsObserver", () => {
     expect(changed.onTerminalTopologyChanged).toHaveBeenCalledOnce();
     expect(changed.onSessionsChanged).not.toHaveBeenCalled();
     expect(changed.onAgentSessionsChanged).not.toHaveBeenCalled();
+    handle.release();
+  });
+
+  it("invalidates same-name tmux reincarnation through topology identity", async () => {
+    const changed = callbacks();
+    let facts: SessionCompositionFacts = {
+      sessions: ["alpha"],
+      adopted: [],
+      terminalTopology: ["alpha\t0\t41\t$0\t100\t@1\t%1\t1\t1\tpane.a\twindow.a"],
+    };
+    const observer = new DaemonFleetFactsObserver({
+      readSessions: async () => facts,
+      readAgents: async () => new Map(),
+      ...changed,
+      setTimer: vi.fn(() => 1 as unknown as ReturnType<typeof setTimeout>),
+      clearTimer: vi.fn(),
+    });
+    const handle = observer.acquire(["sessions"]);
+    await handle.ready;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    facts = {
+      ...facts,
+      terminalTopology: ["alpha\t0\t42\t$0\t101\t@1\t%1\t1\t1\tpane.a\twindow.a"],
+    };
+    await observer.runOnce();
+    expect(changed.onTerminalTopologyChanged).toHaveBeenCalledOnce();
+    expect(changed.onSessionsChanged).not.toHaveBeenCalled();
     handle.release();
   });
 

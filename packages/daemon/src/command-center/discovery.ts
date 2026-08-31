@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { listSessionPanes } from "../widgets/lib/pane-comms.ts";
 import type { PaneInfo } from "@tmux-ide/contracts";
 import { getDefaultWorkspaceRegistry } from "../lib/workspace-registry.ts";
@@ -73,8 +74,17 @@ export function listTmuxSessions(): string[] {
 }
 
 export interface LiveSessionSummary {
+  readonly liveSessionId: `live-session.${string}`;
   readonly sessionName: string;
   readonly paneCount: number;
+}
+
+function liveSessionId(serverPid: string, sessionId: string, sessionCreated: string) {
+  const digest = createHash("sha256")
+    .update(`${serverPid}\0${sessionId}\0${sessionCreated}`)
+    .digest("hex")
+    .slice(0, 20);
+  return `live-session.${digest}` as const;
 }
 
 /**
@@ -92,28 +102,44 @@ export function discoverLiveSessionSummaries(
 ): LiveSessionSummary[] {
   let raw: string;
   try {
-    raw = runTmux(["list-panes", "-a", "-F", "#{session_name}"]);
+    raw = runTmux([
+      "list-panes",
+      "-a",
+      "-F",
+      "#{pid}\t#{session_id}\t#{session_created}\t#{session_name}",
+    ]);
   } catch {
     return [];
   }
   if (!raw) return [];
-  const paneCounts = new Map<string, number>();
+  const sessions = new Map<string, LiveSessionSummary>();
   for (const line of raw.split("\n")) {
-    const sessionName = line.trim();
+    const [serverPid = "", sessionId = "", sessionCreated = "", sessionName = ""] =
+      line.split("\t");
+    if (!/^\d+$/u.test(serverPid) || !/^\$\d+$/u.test(sessionId) || !/^\d+$/u.test(sessionCreated))
+      continue;
     if (!sessionName || !isVisibleFleetSession(sessionName)) continue;
-    paneCounts.set(sessionName, (paneCounts.get(sessionName) ?? 0) + 1);
+    const identity = liveSessionId(serverPid, sessionId, sessionCreated);
+    const previous = sessions.get(identity);
+    sessions.set(identity, {
+      liveSessionId: identity,
+      sessionName,
+      paneCount: (previous?.paneCount ?? 0) + 1,
+    });
   }
-  return [...paneCounts].map(([sessionName, paneCount]) => ({ sessionName, paneCount }));
+  return [...sessions.values()];
 }
 
 const AGENT_STATE_LINE = /^([^\t]+)\t(%[0-9]+)\t([^\t]*)\t(.*)$/u;
 
-/** One pane's agent-authority reading: the raw state stamp plus the durable identity stamp. */
+/** One pane's agent-discovery reading: authority, identity, and foreground command. */
 export interface AgentPaneStateReading {
   /** Raw `@agent_state` stamp (`"<state>:<epoch>"`, empty when unset). */
   readonly state: string;
   /** Durable `@tmux_ide_pane_id` stamp, or null when unset. Never a runtime `%id`. */
   readonly paneStamp: string | null;
+  /** tmux's current foreground command; changes when a new pane finishes exec'ing its agent. */
+  readonly command?: string;
 }
 
 /**

@@ -13,6 +13,7 @@ const ownerToken = required("TMUX_IDE_RIG_OWNER_TOKEN");
 const generation = required("TMUX_IDE_RIG_GENERATION");
 const workspaceName = required("TMUX_IDE_RIG_WORKSPACE");
 const pane = required("TMUX_IDE_RIG_PANE");
+const panes = requiredPaneInventory("TMUX_IDE_RIG_PANES", pane);
 const session = required("TMUX_IDE_RIG_SESSION");
 const sessionId = required("TMUX_IDE_RIG_SESSION_ID");
 const socketPath = required("TMUX_IDE_RIG_TMUX_SOCKET");
@@ -67,7 +68,7 @@ async function connect(name: "web-a" | "web-b" | "opentui") {
     stream: {
       protocolVersion: 1,
       workspaceName,
-      panes: [pane],
+      panes,
       viewerMode: "interactive",
       terminalDelivery: {
         protocolVersions: [1],
@@ -340,21 +341,6 @@ try {
   const nativeStartedAt = performance.now();
   geometryOwnersSeen.set("web-b", []);
   const nativeInventory = await attachNativeClient();
-  // Make the attached tty's geometry activity explicit. tmux may not emit a
-  // second client notification when the attach happens at an already-matching
-  // size, whereas the ordered layout event plus list-clients inventory is the
-  // daemon's honest, non-polling observation seam.
-  execFileSync("tmux", [
-    "-S",
-    socketPath,
-    "resize-window",
-    "-t",
-    `=${session}:`,
-    "-x",
-    "101",
-    "-y",
-    "31",
-  ]);
   await waitFor(
     "native tmux geometry yield",
     () => geometryOwnersSeen.get("web-b")?.includes(null) === true,
@@ -367,15 +353,17 @@ try {
     () => !tmuxClientInventory().some(({ pid }) => pid === nativeInventory.pid),
     5_000,
   );
-  await waitFor(
-    "geometry reacquisition after native quiet period",
-    // The real hosted OpenTUI is also a foreground geometry participant. The
-    // invariant after native detach is deterministic client authority rather
-    // than one synthetic Web client winning a race against that real client;
-    // Web B ownership was already proven explicitly before native attach.
-    () => typeof webB.authoritySnapshot?.owners.geometry === "string",
-    5_000,
-  );
+  // Native activity deliberately suppresses client geometry claims for a
+  // bounded hysteresis window. Cross that fence before re-submitting the
+  // already-established claim; transport/topology errors reject immediately.
+  // Production's native geometry hysteresis is 180ms. Cross that fence once,
+  // then issue exactly one claim so this proof cannot manufacture an
+  // authority-revision storm by repeatedly re-claiming the same capability.
+  await Bun.sleep(250);
+  const geometryAfterNative = await webB.requestAuthority("geometry");
+  if (!geometryAfterNative || geometryAfterNative.clientId !== "product-rig:web-b") {
+    throw new Error("web-b did not reacquire geometry after the native quiet period");
+  }
   timings.nativeQuietReacquireMs = Math.round((performance.now() - nativeStartedAt) * 100) / 100;
   const retainedControlClients = controlClientCount();
   if (retainedControlClients > 1) {
@@ -421,5 +409,26 @@ try {
 function required(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+function requiredPaneInventory(name: string, activePane: string): string[] {
+  const raw = required(name);
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw new Error(`${name} must be an exact JSON pane inventory`);
+  }
+  if (
+    !Array.isArray(value) ||
+    value.length < 1 ||
+    value.length > 256 ||
+    !value.every((entry) => typeof entry === "string" && entry.length > 0 && entry.length <= 256) ||
+    new Set(value).size !== value.length ||
+    !value.includes(activePane) ||
+    JSON.stringify([...value].sort()) !== JSON.stringify(value)
+  )
+    throw new Error(`${name} must be the sorted, unique session pane inventory`);
   return value;
 }

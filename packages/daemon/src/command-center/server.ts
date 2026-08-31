@@ -44,7 +44,9 @@ import {
   APPLICATION_SHELL_RESOURCE_V3_VERSION,
   WORKSPACE_CATALOG_RESOURCE_VERSION,
   WORKSPACE_CATALOG_RESOURCE_V2_VERSION,
+  WORKSPACE_CATALOG_RESOURCE_V3_VERSION,
   projectWorkspaceCatalogV2,
+  projectWorkspaceCatalogV3,
   DAEMON_WIRE_PROTOCOL_VERSION,
   DaemonInstanceIdentitySchemaZ,
   type ApplicationShellResourceV1,
@@ -54,6 +56,7 @@ import {
   type DesktopMissionWorkspaceResource,
   type WorkspaceCatalogResourceV1,
   type WorkspaceCatalogResourceV2,
+  type WorkspaceCatalogResourceV3,
   TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION,
   type DaemonInstanceIdentity,
   type DaemonPanesResponse,
@@ -198,6 +201,7 @@ export interface CreateAppOptions {
   } | null;
   /** Injectable live tmux projection for catalog tests and alternate hosts. */
   catalogLiveSessions?: () => readonly {
+    readonly liveSessionId: `live-session.${string}`;
     readonly sessionName: string;
     readonly paneCount: number;
   }[];
@@ -735,12 +739,16 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   // and it still sits behind the remote-access gate on a non-loopback bind.
   // Gating it on the owner bearer would break every desktop workspace read
   // without withholding a single fact the owner-gated routes do not already
-  // protect. V2 live rows additionally carry the daemon-minted opaque Fleet
-  // session id so trusted clients never infer mutation identity from a display
-  // label.
+  // protect. V2 live rows carry the daemon-minted opaque Fleet session id;
+  // additive V3 also carries the tmux-incarnation identity used by long-lived
+  // Home selection without changing V2 for existing clients.
   app.get("/api/resources/workspace-catalog", (c) => {
     const registry = getDefaultWorkspaceRegistry();
-    if (c.req.query("version") === String(WORKSPACE_CATALOG_RESOURCE_V2_VERSION)) {
+    const requestedCatalogVersion = c.req.query("version");
+    if (
+      requestedCatalogVersion === String(WORKSPACE_CATALOG_RESOURCE_V2_VERSION) ||
+      requestedCatalogVersion === String(WORKSPACE_CATALOG_RESOURCE_V3_VERSION)
+    ) {
       const workspaceIntents = registry.list().map(({ name, sessionName }) => ({
         workspaceName: name,
         sessionName,
@@ -760,12 +768,26 @@ export function createApp(options: CreateAppOptions = {}): Hono {
               },
             ],
       );
-      const liveSessions = (options.catalogLiveSessions?.() ?? discoverLiveSessionSummaries()).map(
-        (session) => ({
-          ...session,
-          fleetSessionId: fleetSessionIdForName(session.sessionName),
-        }),
-      );
+      const observedSessions = options.catalogLiveSessions?.() ?? discoverLiveSessionSummaries();
+      const liveSessions = observedSessions.map(({ sessionName, paneCount }) => ({
+        sessionName,
+        fleetSessionId: fleetSessionIdForName(sessionName),
+        paneCount,
+      }));
+      if (requestedCatalogVersion === String(WORKSPACE_CATALOG_RESOURCE_V3_VERSION)) {
+        return c.json(
+          projectWorkspaceCatalogV3(
+            daemonInstanceIdentity,
+            [...workspaceIntents, ...projectIntents],
+            observedSessions.map(({ liveSessionId, sessionName, paneCount }) => ({
+              liveSessionId,
+              sessionName,
+              fleetSessionId: fleetSessionIdForName(sessionName),
+              paneCount,
+            })),
+          ) satisfies WorkspaceCatalogResourceV3,
+        );
+      }
       return c.json(
         projectWorkspaceCatalogV2(
           daemonInstanceIdentity,

@@ -563,7 +563,7 @@ describe("the multiplexer authority", () => {
         "-c",
         dir,
       ]);
-      expect(tmux.calls).toContainEqual(["set-environment", "-u", "-t", "=work", "NO_COLOR"]);
+      expect(tmux.calls).toContainEqual(["set-environment", "-r", "-t", "=work", "NO_COLOR"]);
       expect(tmux.calls).toContainEqual([
         "set-environment",
         "-t",

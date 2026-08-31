@@ -1025,6 +1025,24 @@ export function productInputQueuesSettled(records, processId) {
   );
 }
 
+export function productAttachablePaneInventory(resources) {
+  if (!Array.isArray(resources))
+    throw new TypeError("product rig terminal inventory must be an array");
+  const panes = resources
+    .filter(
+      (resource) =>
+        resource?.attachability?.status === "available" &&
+        typeof resource?.attachability?.semanticPaneId === "string" &&
+        resource.attachability.semanticPaneId.length > 0,
+    )
+    .map((resource) => resource.attachability.semanticPaneId)
+    .sort();
+  if (panes.length === 0) throw new Error("product rig found no attachable semantic pane");
+  if (new Set(panes).size !== panes.length)
+    throw new Error("product rig attachable semantic pane inventory was ambiguous");
+  return Object.freeze(panes);
+}
+
 export function productResourceEndpointCandidates(beforeSamples, afterSamples, expected) {
   const baseline = new Set(beforeSamples.map(({ traceId }) => traceId));
   return Object.freeze(
@@ -2017,6 +2035,8 @@ export function buildProductDiagnosticReport({
   resizeGuideSamples = [],
   framebufferEvidence = null,
   idleObservation = null,
+  idleProcessObservations = [],
+  hostedRendererRetirement = null,
   resourceObservation = null,
   qualifyingInputEvidence = [],
 }) {
@@ -2203,6 +2223,29 @@ export function buildProductDiagnosticReport({
         : "no renderer dirty-frame/idle-window sample",
     ),
     classify(
+      "idle-os-cpu-and-singleton-ownership",
+      idleProcessObservations.length < 2
+        ? null
+        : idleProcessObservations.every(({ status }) => status === "passed"),
+      idleProcessObservations.length > 0
+        ? idleProcessObservations
+            .map(
+              ({ label, durationMs, combinedCpuDeltaMs, combinedBudgetMs, ledger, work }) =>
+                `${label}: ${durationMs}ms, CPU ${combinedCpuDeltaMs}/${combinedBudgetMs}ms, ${ledger.filter(({ singleton, identityStable }) => singleton && identityStable).length}/2 exact singleton identities, grid/full/reconnect/pending ${work.gridWork}/${work.fullBlits}/${work.reconnects}/${work.pendingWork}`,
+            )
+            .join("; ")
+        : "no OS CPU/process-ownership idle windows",
+    ),
+    classify(
+      "hosted-renderer-retirement",
+      hostedRendererRetirement?.status === "unmeasured"
+        ? null
+        : hostedRendererRetirement?.status === "passed",
+      hostedRendererRetirement
+        ? `${hostedRendererRetirement.retired ? "retired" : "live"} pid ${hostedRendererRetirement.pid ?? "?"} with exact start/executable fence`
+        : "no exact hosted-renderer retirement proof",
+    ),
+    classify(
       "bounded-queues-memory",
       resourceObservation
         ? resourceObservation.deliverySamples > 0 &&
@@ -2297,6 +2340,11 @@ export function buildProductDiagnosticReport({
     windowSwitchSamples: Object.freeze([...windowSwitchSamples]),
     resizeGuideSamples: Object.freeze([...resizeGuideSamples]),
     idleObservation: idleObservation ? Object.freeze({ ...idleObservation }) : null,
+    idleProcessObservations: Object.freeze(
+      idleProcessObservations.map((observation) => Object.freeze({ ...observation })),
+    ),
+    hostedRendererRetirement:
+      hostedRendererRetirement === null ? null : Object.freeze({ ...hostedRendererRetirement }),
     resourceObservation: resourceObservation ? Object.freeze({ ...resourceObservation }) : null,
     stderr: Object.freeze({
       nonEmptyLines: String(stderr ?? "")

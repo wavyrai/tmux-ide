@@ -373,12 +373,45 @@ describe.skipIf(!hasTmux || !hasBun)("hosted OpenTUI detach and reattach", () =>
         cycle % 2 === 0
           ? { width: 96, height: 28 }
           : { width: 110 + cycle, height: 32 + (cycle % 3) };
+      const changesGeometry = size.width !== 96 || size.height !== 28;
+      const beforeViewer = traceEvents(tracePath);
+      const fullBlitsBeforeViewer = beforeViewer.filter(
+        ({ event, full }) => event === "surface-blit" && full === true,
+      ).length;
+      const viewerResizesBefore = beforeViewer.filter(
+        ({ event, width, height }) =>
+          event === "surface-resize" && width === size.width && height === size.height - 1,
+      ).length;
       const viewer = attach(size.width, size.height);
       await expectPresented(viewer, size);
+      if (changesGeometry) {
+        await vi.waitFor(
+          () => {
+            const presented = traceEvents(tracePath);
+            expect(
+              presented.filter(
+                ({ event, width, height }) =>
+                  event === "surface-resize" && width === size.width && height === size.height - 1,
+              ),
+            ).toHaveLength(viewerResizesBefore + 1);
+            expect(
+              presented.filter(({ event, full }) => event === "surface-blit" && full === true),
+            ).toHaveLength(fullBlitsBeforeViewer + 1);
+          },
+          { timeout: 20_000, interval: 50 },
+        );
+      }
       expect(
         Number(runTmux(["display-message", "-p", "-t", `=${APP_HOST_SESSION}:0.0`, "#{pane_pid}"])),
       ).toBe(rendererPid);
 
+      const beforeViewerDeath = traceEvents(tracePath);
+      const fullBlitsBeforeViewerDeath = beforeViewerDeath.filter(
+        ({ event, full }) => event === "surface-blit" && full === true,
+      ).length;
+      const fallbackResizesBeforeViewerDeath = beforeViewerDeath.filter(
+        ({ event, width, height }) => event === "surface-resize" && width === 96 && height === 27,
+      ).length;
       viewer.client.kill("SIGKILL");
       await vi.waitFor(
         () => {
@@ -391,15 +424,35 @@ describe.skipIf(!hasTmux || !hasBun)("hosted OpenTUI detach and reattach", () =>
         },
         { timeout: 20_000, interval: 50 },
       );
-      await new Promise((resolve) => setTimeout(resolve, 150));
-      const settledFullBlits = traceEvents(tracePath).filter(
+      if (changesGeometry) {
+        // tmux updates pane_grid before the bridge's 125ms authoritative TTY
+        // reconciliation. Wait for the required fallback presentation itself;
+        // treating pane_grid as visual idle made this oracle race that debounce.
+        await vi.waitFor(
+          () => {
+            const presented = traceEvents(tracePath);
+            expect(
+              presented.filter(
+                ({ event, width, height }) =>
+                  event === "surface-resize" && width === 96 && height === 27,
+              ),
+            ).toHaveLength(fallbackResizesBeforeViewerDeath + 1);
+            expect(
+              presented.filter(({ event, full }) => event === "surface-blit" && full === true),
+            ).toHaveLength(fullBlitsBeforeViewerDeath + 1);
+          },
+          { timeout: 20_000, interval: 50 },
+        );
+      }
+      const settled = traceEvents(tracePath);
+      const settledFullBlits = settled.filter(
         ({ event, full }) => event === "surface-blit" && full === true,
       ).length;
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const afterIdle = traceEvents(tracePath);
       expect(
-        traceEvents(tracePath).filter(
-          ({ event, full }) => event === "surface-blit" && full === true,
-        ),
+        afterIdle.filter(({ event, full }) => event === "surface-blit" && full === true),
+        `cycle ${cycle} emitted a full blit after visual idle:\n${JSON.stringify(afterIdle.slice(-40), null, 2)}`,
       ).toHaveLength(settledFullBlits);
       expect(runTmux(["capture-pane", "-p", "-t", `${sourceSession}:0.0`])).toContain(sourceMarker);
     }

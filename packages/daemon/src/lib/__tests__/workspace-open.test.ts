@@ -150,6 +150,9 @@ class FakeTmux {
         };
         return `${this.session.id}\t${this.session.paneId}\t${this.session.windowId}`;
       }
+      case "set-environment":
+        if (!this.session) throw new Error("missing target");
+        return "";
       case "set-option": {
         if (!this.session) throw new Error("missing target");
         const option = args.at(-2)!;
@@ -316,6 +319,21 @@ describe("WorkspaceOpenAuthority", () => {
       CANONICAL_ROOT,
       "-n",
       "Terminal",
+      'exec env -u NO_COLOR COLORTERM=truecolor "${SHELL:-/bin/sh}" -l',
+    ]);
+    expect(tmux.calls).toContainEqual([
+      "set-environment",
+      "-r",
+      "-t",
+      `=${identity.sessionName}`,
+      "NO_COLOR",
+    ]);
+    expect(tmux.calls).toContainEqual([
+      "set-environment",
+      "-t",
+      `=${identity.sessionName}`,
+      "COLORTERM",
+      "truecolor",
     ]);
     expect(tmux.session?.options.get("@tmux_ide_workspace_open_operation")).toBe(OPERATION);
     expect(tmux.session?.paneOptions.get("@tmux_ide_pane_id")).toBe(identity.initialPaneId);

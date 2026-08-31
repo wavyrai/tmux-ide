@@ -21,10 +21,10 @@ import {
   createConfiglessProductJourneyOwnerOperations,
   createFreshFleetCatalogReader,
   parseConfiglessTmuxSessionInventory,
-  qualifyAutomaticConfiglessSelection,
   qualifyCanonicalPromotionAdoption,
   qualifyCanonicalSeedPaint,
   qualifyCoherentFrameCausality,
+  qualifyPostMountConfiglessHomeCatalog,
   qualifyPreseededPaneEvidence,
   qualifySelectedWindowWebSemantic,
   qualifyWorkspaceClientState,
@@ -329,6 +329,114 @@ test("coherent causality ignores a transient first geometry and qualifies the ex
       ]),
     /one exact keyed host frame/u,
   );
+});
+
+test("coherent causality accepts one resize patch between an exact seed paint and final frame", () => {
+  const source = {
+    processId: "opentui:1",
+    clockId: "clock",
+    clockKind: "performance-now",
+    semanticPaneId: "pane.one",
+    generation: "generation",
+    sourceEpoch: 1,
+  };
+  const paint = {
+    ...source,
+    type: "performance.terminal-canonical-paint",
+    incarnation: "generation:0",
+    revision: 0,
+    stateHash: "0123456789abcdef",
+    cols: 80,
+    rows: 24,
+    viewportCols: 80,
+    viewportRows: 23,
+    atMicros: 300,
+  };
+  const resized = {
+    ...source,
+    incarnation: "generation:0",
+    revision: 1,
+    stateHash: "fedcba9876543210",
+    cols: 132,
+    rows: 41,
+  };
+  const patch = {
+    ...resized,
+    type: "performance.terminal-canonical-update",
+    updateType: "terminal.patch",
+    atMicros: 350,
+  };
+  const hostFrame = {
+    ...resized,
+    type: "performance.terminal-canonical-host-frame",
+    rendererEpoch: 2,
+    viewportCols: 132,
+    viewportRows: 40,
+    acceptedUpdateType: "terminal.patch",
+    acceptedRevision: 1,
+    atMicros: 400,
+  };
+  const fence = {
+    ...hostFrame,
+    type: "performance.terminal-frame-fence",
+    daemonGeneration: "generation",
+    atMicros: 410,
+    identityDrops: 0,
+    writerHealth: { droppedRecords: 0, oversizedRecords: 0, failed: false },
+  };
+  const lifecycle = [
+    {
+      phase: "generation-connection-start",
+      daemonGeneration: "generation",
+      processId: "opentui:1",
+      clockId: "clock",
+      monotonicMicros: 50,
+      elapsedMs: 1,
+    },
+    {
+      phase: "generation-connection-resolved",
+      daemonGeneration: "generation",
+      processId: "opentui:1",
+      clockId: "clock",
+      monotonicMicros: 100,
+      elapsedMs: 2,
+    },
+    {
+      phase: "generation-host-internal-snapshot-publication",
+      publicationPhase: "internal-snapshot-published",
+      daemonGeneration: "generation",
+      processId: "opentui:1",
+      clockId: "clock",
+      rendererEpoch: 2,
+      monotonicMicros: 200,
+      elapsedMs: 3,
+    },
+    {
+      phase: "first-terminal-frame",
+      daemonGeneration: "generation",
+      processId: "opentui:1",
+      clockId: "clock",
+      rendererEpoch: 2,
+      monotonicMicros: 390,
+      elapsedMs: 4,
+    },
+  ];
+  const result = qualifyCoherentFrameCausality(
+    lifecycle,
+    { paint },
+    "generation",
+    [paint, patch, hostFrame, fence],
+    {
+      resizedPresentation: {
+        canonicalCols: 132,
+        canonicalRows: 41,
+        viewportCols: 132,
+        viewportRows: 40,
+      },
+    },
+  );
+  assert.equal(result.hostFrame.acceptedRevision, 1);
+  assert.equal(result.connectToCoherentMs, 0.35);
 });
 
 test("coherent fence polling waits for the queued canonical tail", async () => {
@@ -1149,36 +1257,69 @@ test("configless report status passes only with no broken or unmeasured boundary
   );
 });
 
-test("automatic configless selection is one ordered same-process sole-session sequence", () => {
+test("post-mount configless Home catalog proves exact V3 zero, one, and many session behavior", () => {
   const records = [
-    { phase: "session-discovery-start", processId: "opentui:1", clockId: "clock" },
     {
-      phase: "session-discovery-end",
-      sessions: 1,
+      phase: "config-load-end",
+      target: null,
       processId: "opentui:1",
       clockId: "clock",
     },
     {
-      phase: "config-load-end",
-      sessions: 1,
-      target: "ordinary",
+      phase: "solid-mounted",
       processId: "opentui:1",
       clockId: "clock",
     },
   ];
-  assert.equal(
-    qualifyAutomaticConfiglessSelection(records, "ordinary").configured.target,
-    "ordinary",
+  const row = (name, identity) => ({
+    liveSessionId: `live-session.${identity.repeat(20)}`,
+    sessionName: name,
+    fleetSessionId: `session.${identity.repeat(20)}`,
+    paneCount: 1,
+  });
+  const qualify = (liveSessions, expectedSessionNames) =>
+    qualifyPostMountConfiglessHomeCatalog(
+      records,
+      {
+        version: 3,
+        daemon: { instanceId: "daemon-1" },
+        intents: [],
+        liveSessions,
+      },
+      { daemonInstanceId: "daemon-1", expectedSessionNames },
+    );
+
+  const zero = qualify([], []);
+  assert.equal(zero.surface, "home");
+  assert.equal(zero.automaticTarget, null);
+  const one = qualify([row("ordinary", "a")], ["ordinary"]);
+  assert.equal(one.surface, "automatic-open-eligible");
+  assert.equal(one.automaticTarget, "ordinary");
+  const many = qualify([row("zulu", "b"), row("alpha", "c")], ["alpha", "zulu"]);
+  assert.equal(many.surface, "home");
+  assert.equal(many.automaticTarget, null);
+  assert.deepEqual(
+    many.sessions.map(({ sessionName }) => sessionName),
+    ["alpha", "zulu"],
+  );
+
+  assert.throws(
+    () =>
+      qualifyPostMountConfiglessHomeCatalog(
+        records,
+        { version: 2, daemon: { instanceId: "daemon-1" }, intents: [], liveSessions: [] },
+        { daemonInstanceId: "daemon-1", expectedSessionNames: [] },
+      ),
+    /V3 resource/u,
   );
   assert.throws(
     () =>
-      qualifyAutomaticConfiglessSelection(
-        records.map((record) =>
-          record.phase === "session-discovery-end" ? { ...record, sessions: 2 } : record,
-        ),
-        "ordinary",
+      qualifyPostMountConfiglessHomeCatalog(
+        records.slice(0, 1),
+        { version: 3, daemon: { instanceId: "daemon-1" }, intents: [], liveSessions: [] },
+        { daemonInstanceId: "daemon-1", expectedSessionNames: [] },
       ),
-    /sole discovered session/u,
+    /mount chrome after config load/u,
   );
 });
 
@@ -1800,17 +1941,14 @@ test("production configless operations preserve exact public entry and discovery
     },
     observeElectedDaemon: async () => ({ record: { instanceId: "daemon-1" } }),
     readPublicLifecycle: async () => [
-      { phase: "session-discovery-start", processId: "opentui:41", clockId: "clock" },
       {
-        phase: "session-discovery-end",
-        sessions: 1,
+        phase: "config-load-end",
+        target: null,
         processId: "opentui:41",
         clockId: "clock",
       },
       {
-        phase: "config-load-end",
-        sessions: 1,
-        target: "ordinary",
+        phase: "solid-mounted",
         processId: "opentui:41",
         clockId: "clock",
       },
@@ -1826,8 +1964,16 @@ test("production configless operations preserve exact public entry and discovery
       catalogReads += 1;
       if (catalogReads > 1) adopted = true;
       return {
+        version: 3,
         daemon: { instanceId: "daemon-1" },
-        liveSessions: [{ sessionName: "ordinary", fleetSessionId: "opaque-1" }],
+        liveSessions: [
+          {
+            liveSessionId: "live-session.aaaaaaaaaaaaaaaaaaaa",
+            sessionName: "ordinary",
+            fleetSessionId: "opaque-1",
+            paneCount: 1,
+          },
+        ],
         intents: adopted
           ? [
               {

@@ -13,6 +13,7 @@ export interface ApplicationGenerationStartResult {
   readonly opened: boolean;
   readonly sessionName: string;
   readonly generationKey: string | null;
+  readonly failure?: "superseded" | "attach-rejected" | "attach-failed" | "generation-not-ready";
 }
 
 /** Stable identity for one live semantic/input generation. */
@@ -48,12 +49,19 @@ export function createApplicationGenerationStarter(
     const token = ++startToken;
     options.setNote(`opening ${sessionName}`);
     const owner = options.sessionOwner();
-    const result = await options.binding.openSession(sessionName, sourceFor(source), (name) =>
-      owner.open(name, workspacePrepared),
-    );
-    if (token !== startToken) return { opened: result.opened, sessionName, generationKey: null };
+    let result: Awaited<ReturnType<typeof options.binding.openSession>>;
+    try {
+      result = await options.binding.openSession(sessionName, sourceFor(source), (name) =>
+        owner.open(name, workspacePrepared),
+      );
+    } catch {
+      if (token === startToken) options.setNote(`${sessionName} could not attach`);
+      return { opened: false, sessionName, generationKey: null, failure: "attach-failed" };
+    }
+    if (token !== startToken)
+      return { opened: false, sessionName, generationKey: null, failure: "superseded" };
     const snapshot = owner.snapshot();
-    if (result.opened && snapshot) {
+    if (result.opened && snapshot && (snapshot.status === "live" || snapshot.status === "empty")) {
       if (!result.activated) options.setSurface("terminals");
       if (focusFirstPane) options.focusOwner()?.request(sourceFor(source));
       options.setNote(null);
@@ -64,7 +72,12 @@ export function createApplicationGenerationStarter(
       };
     }
     options.setNote(`${sessionName} could not attach`);
-    return { opened: false, sessionName, generationKey: null };
+    return {
+      opened: false,
+      sessionName,
+      generationKey: null,
+      failure: result.opened ? "generation-not-ready" : "attach-rejected",
+    };
   };
 }
 

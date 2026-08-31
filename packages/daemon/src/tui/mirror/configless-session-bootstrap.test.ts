@@ -4,6 +4,7 @@ import type { CanonicalDaemonInfo, WorkspaceCatalogResourceV2 } from "@tmux-ide/
 import {
   discoverOpenTuiLiveSessions,
   ensureOpenTuiSessionWorkspace,
+  ensureOpenTuiSessionWorkspaceResult,
   type OpenTuiSessionBootstrapDependencies,
 } from "./configless-session-bootstrap.ts";
 
@@ -20,6 +21,7 @@ const DAEMON: CanonicalDaemonInfo = {
 
 const ALPHA_ID = "session.aaaaaaaaaaaaaaaaaaaa";
 const BETA_ID = "session.bbbbbbbbbbbbbbbbbbbb";
+const OPERATION_ID = "10000000-0000-4000-8000-000000000001";
 
 function routing(overrides: Partial<WorkspaceCatalogResourceV2> = {}): WorkspaceCatalogResourceV2 {
   return {
@@ -143,8 +145,71 @@ describe("configless OpenTUI session bootstrap", () => {
         name: "workspace.promote",
         input: { sessionId: ALPHA_ID },
         operationId: expect.any(String),
+        timeoutMs: 2_500,
+        maximumAttempts: 4,
+        retryDelayMs: expect.any(Function),
       }),
     );
+  });
+
+  it("recovers a committed first promotion from fresh catalog truth after every response is lost", async () => {
+    const before = routing({ liveSessions: [liveSession("alpha", ALPHA_ID)] });
+    const after = routing({
+      intents: [
+        {
+          workspaceName: "workspace.alpha",
+          sessionName: "alpha",
+          source: "workspace",
+          availability: "live",
+        },
+      ],
+      liveSessions: [liveSession("alpha", ALPHA_ID)],
+    });
+    const test = dependencies({ routing: before });
+    test.fetchRouting.mockResolvedValueOnce(before).mockResolvedValueOnce(after);
+    test.promote.mockResolvedValueOnce(null);
+
+    await expect(
+      ensureOpenTuiSessionWorkspaceResult("alpha", {
+        ...test.overrides,
+        createOperationId: () => OPERATION_ID,
+      }),
+    ).resolves.toEqual({
+      status: "ready",
+      operationId: OPERATION_ID,
+      resolution: "recovered",
+    });
+    expect(test.promote).toHaveBeenCalledWith(
+      expect.objectContaining({ operationId: OPERATION_ID, maximumAttempts: 4 }),
+    );
+  });
+
+  it("does not mistake a stale pre-existing route for proof that stamp repair committed", async () => {
+    const alreadyRouted = routing({
+      intents: [
+        {
+          workspaceName: "workspace.alpha",
+          sessionName: "alpha",
+          source: "workspace",
+          availability: "live",
+        },
+      ],
+      liveSessions: [liveSession("alpha", ALPHA_ID)],
+    });
+    const test = dependencies({ routing: alreadyRouted });
+    test.promote.mockResolvedValueOnce(null);
+
+    await expect(
+      ensureOpenTuiSessionWorkspaceResult("alpha", {
+        ...test.overrides,
+        createOperationId: () => OPERATION_ID,
+      }),
+    ).resolves.toEqual({
+      status: "unavailable",
+      operationId: OPERATION_ID,
+      reason: "promotion-unconfirmed",
+    });
+    expect(test.fetchRouting).toHaveBeenCalledOnce();
   });
 
   it("preserves the explicit target when several live sessions exist", async () => {
@@ -173,13 +238,14 @@ describe("configless OpenTUI session bootstrap", () => {
     expect(stale.fetchRouting).not.toHaveBeenCalled();
   });
 
-  it("propagates generation-fenced routing failure without promotion", async () => {
+  it("returns a typed routing failure without leaking a rejected open flight", async () => {
     const test = dependencies({});
     test.fetchRouting.mockRejectedValue(new Error("daemon generation changed"));
 
-    await expect(ensureOpenTuiSessionWorkspace("alpha", test.overrides)).rejects.toThrow(
-      "daemon generation changed",
-    );
+    await expect(
+      ensureOpenTuiSessionWorkspaceResult("alpha", test.overrides),
+    ).resolves.toMatchObject({ status: "unavailable", reason: "routing-unavailable" });
+    await expect(ensureOpenTuiSessionWorkspace("alpha", test.overrides)).resolves.toBe(false);
     expect(test.request).not.toHaveBeenCalled();
     expect(test.promote).not.toHaveBeenCalled();
   });

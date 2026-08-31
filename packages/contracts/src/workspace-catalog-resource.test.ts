@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { projectWorkspaceCatalogV2 } from "./workspace-catalog-resource.ts";
+import {
+  projectWorkspaceCatalogV2,
+  projectWorkspaceCatalogV3,
+} from "./workspace-catalog-resource.ts";
 
 const daemon = {
   protocolVersion: 1,
@@ -76,5 +79,68 @@ describe("projectWorkspaceCatalogV2", () => {
         [{ sessionName: "alpha-live", fleetSessionId: "$1", paneCount: 2 }],
       ),
     ).toThrow();
+  });
+});
+
+describe("projectWorkspaceCatalogV3", () => {
+  it("adds a strict tmux-incarnation identity without weakening V2 routing", () => {
+    expect(
+      projectWorkspaceCatalogV3(
+        daemon,
+        [],
+        [
+          {
+            liveSessionId: "live-session.bbbbbbbbbbbbbbbbbbbb",
+            sessionName: "alpha-live",
+            fleetSessionId: alphaFleetSessionId,
+            paneCount: 2,
+          },
+        ],
+      ),
+    ).toMatchObject({
+      version: 3,
+      liveSessions: [
+        {
+          liveSessionId: "live-session.bbbbbbbbbbbbbbbbbbbb",
+          sessionName: "alpha-live",
+        },
+      ],
+    });
+
+    expect(() =>
+      projectWorkspaceCatalogV3(
+        daemon,
+        [],
+        [
+          {
+            liveSessionId: "alpha-live",
+            sessionName: "alpha-live",
+            fleetSessionId: alphaFleetSessionId,
+            paneCount: 2,
+          },
+        ],
+      ),
+    ).toThrow();
+
+    expect(() =>
+      projectWorkspaceCatalogV3(
+        daemon,
+        [],
+        [
+          {
+            liveSessionId: "live-session.bbbbbbbbbbbbbbbbbbbb",
+            sessionName: "alpha-live",
+            fleetSessionId: alphaFleetSessionId,
+            paneCount: 1,
+          },
+          {
+            liveSessionId: "live-session.bbbbbbbbbbbbbbbbbbbb",
+            sessionName: "beta-live",
+            fleetSessionId: "session.cccccccccccccccccccc",
+            paneCount: 1,
+          },
+        ],
+      ),
+    ).toThrow("duplicate live session identity");
   });
 });

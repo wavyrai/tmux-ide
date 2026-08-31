@@ -130,6 +130,7 @@ describe.skipIf(!hasTmux)("multiplexer verbs against live tmux", () => {
     tmux(["list-windows", "-t", `=${sessionName}`, "-F", "#{window_name}"]).split("\n");
 
   it("splits a window right and the new pane carries a working stamp", async () => {
+    tmux(["set-environment", "-g", "NO_COLOR", "1"]);
     tmux(["set-environment", "-t", `=${sessionName}`, "NO_COLOR", "1"]);
     const before = panesOf("editor");
     const result = (await mutate({
@@ -153,22 +154,7 @@ describe.skipIf(!hasTmux)("multiplexer verbs against live tmux", () => {
     expect(tmux(["show-environment", "-t", `=${sessionName}`, "COLORTERM"])).toBe(
       "COLORTERM=truecolor",
     );
-    expect(
-      spawnSync(
-        "tmux",
-        [
-          "-L",
-          socketName,
-          "-f",
-          "/dev/null",
-          "show-environment",
-          "-t",
-          `=${sessionName}`,
-          "NO_COLOR",
-        ],
-        { stdio: "ignore" },
-      ).status,
-    ).not.toBe(0);
+    expect(tmux(["show-environment", "-t", `=${sessionName}`, "NO_COLOR"])).toBe("-NO_COLOR");
 
     // Right means side by side: same row, different column.
     const [sourceTop, createdTop] = [before[0]!, created].map((pane) =>

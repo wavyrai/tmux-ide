@@ -46,7 +46,7 @@ export interface ApplicationShellViewProps {
   readonly surface: Accessor<RootSurface>;
   readonly semantic: Accessor<ApplicationShellProjectionV1 | null>;
   readonly generationStatus: Accessor<string>;
-  readonly sessions: readonly string[];
+  readonly sessions: readonly string[] | Accessor<readonly string[]>;
   readonly selectedSession: Accessor<number>;
   readonly bootstrapNote: Accessor<string | null>;
   readonly paletteOpen: Accessor<boolean>;
@@ -395,6 +395,8 @@ function ProductionSidebar(props: {
 
 /** Catalog-backed pre-connection shell. It never pretends to be daemon authority. */
 function CatalogShell(props: ApplicationShellViewProps): JSX.Element {
+  const sessions = (): readonly string[] =>
+    typeof props.sessions === "function" ? props.sessions() : props.sessions;
   const chrome = createMemo(() =>
     shellChromeLayout(props.dimensions().width, props.dimensions().height, 28),
   );
@@ -446,7 +448,7 @@ function CatalogShell(props: ApplicationShellViewProps): JSX.Element {
           backgroundColor={props.theme.roles.surfaces.panel}
         >
           <text fg={props.theme.roles.text.secondary}>Sessions</text>
-          <For each={props.sessions}>
+          <For each={sessions()}>
             {(session, index) => (
               <box
                 height={1}

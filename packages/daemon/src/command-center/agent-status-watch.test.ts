@@ -50,6 +50,14 @@ describe("diffChangedSessions", () => {
     expect(diffChangedSessions(prev, next)).toEqual([]);
   });
 
+  it("invalidates when a new pane finishes exec'ing its foreground agent", () => {
+    const prev = reading({ s1: { "%1": "" } });
+    const next = reading({ s1: { "%1": "" } });
+    prev.get("s1")!.set("%1", { state: "", paneStamp: "pane.agent", command: "zsh" });
+    next.get("s1")!.set("%1", { state: "", paneStamp: "pane.agent", command: "codex" });
+    expect(diffChangedSessions(prev, next)).toEqual(["s1"]);
+  });
+
   it("coalesces many pane flips in one session into a single entry", () => {
     const prev = reading({ s1: { "%1": "idle:1", "%2": "idle:1", "%3": "idle:1" } });
     const next = reading({ s1: { "%1": "working:2", "%2": "blocked:2", "%3": "done:2" } });

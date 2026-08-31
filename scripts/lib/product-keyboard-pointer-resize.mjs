@@ -6,6 +6,43 @@ const MAX_SAMPLES = 512;
 const GUIDE_MARKER = Object.freeze({ cols: "╎", rows: "╌" });
 export const RESIZE_PREVIEW_P95_BUDGET_MS = 16.67;
 
+/** Exact marker proof for a decoded ProductRig framebuffer after a resize fence. */
+export function inspectResizeContentContinuity({ plain, cols, rows, marker }) {
+  const unavailable = (reason) =>
+    Object.freeze({
+      exact: false,
+      reason,
+      markerCount: 0,
+      nonBlankCells: 0,
+      markerHash: null,
+      frameDigest: null,
+    });
+  if (
+    typeof plain !== "string" ||
+    plain.length > 4 * 1024 * 1024 ||
+    !boundedIdentity(marker) ||
+    !Number.isSafeInteger(cols) ||
+    cols < 1 ||
+    !Number.isSafeInteger(rows) ||
+    rows < 1
+  )
+    return unavailable("invalid-frame");
+  const lines = plain.split("\n");
+  if (lines.length !== rows || lines.some((line) => stringWidth(line) !== cols))
+    return unavailable("non-rectangular-frame");
+  const markerCount = plain.split(marker).length - 1;
+  const nonBlankCells = [...plain].filter((value) => value !== " " && value !== "\n").length;
+  const exact = markerCount === 1 && nonBlankCells >= marker.length;
+  return Object.freeze({
+    exact,
+    reason: exact ? null : markerCount !== 1 ? "marker-cardinality" : "blank-frame",
+    markerCount,
+    nonBlankCells: Math.min(nonBlankCells, 4 * 1024 * 1024),
+    markerHash: createHash("sha256").update(marker).digest("hex"),
+    frameDigest: createHash("sha256").update(plain).digest("hex"),
+  });
+}
+
 export function assessResizePostPromotionCommands(commands) {
   if (!Array.isArray(commands) || commands.length < 6 || commands.length > 64) return false;
   const names = commands.map((command) => (Array.isArray(command) ? command[0] : null));
@@ -191,6 +228,18 @@ function exactWriterHealth(value) {
   );
 }
 
+function exactContentContinuity(value) {
+  return (
+    value?.exact === true &&
+    value.reason === null &&
+    value.markerCount === 1 &&
+    Number.isSafeInteger(value.nonBlankCells) &&
+    value.nonBlankCells > 0 &&
+    /^[0-9a-f]{64}$/u.test(value.markerHash ?? "") &&
+    /^[0-9a-f]{64}$/u.test(value.frameDigest ?? "")
+  );
+}
+
 function exactHostedDelivery(value, kind, action, anchor = value) {
   return (
     value?.version === 1 &&
@@ -252,6 +301,7 @@ function qualifyPreviewSample(sample, expected, ordinal, deliveryAnchor) {
     sample.actualFrame?.presentationChanged === true &&
     sample.actualFrame?.identityExact === true &&
     sample.actualFrame?.framebuffer?.exact === true &&
+    exactContentContinuity(sample.actualFrame?.contentContinuity) &&
     sample.actualFrame.framebuffer.matchCount === sample.guide.width * sample.guide.height &&
     /^[0-9a-f]{64}$/u.test(sample.actualFrame.framebuffer.frameDigest ?? "") &&
     exactWriterHealth(sample.fence?.writerHealth)
@@ -300,6 +350,7 @@ export function assessProductKeyboardPointerResize({ evidence, expected }) {
     keyboard.frame?.identityExact === true &&
     /^[0-9a-f]{64}$/u.test(keyboard.frame?.presentationDigest ?? "") &&
     keyboard.frame?.presentationChanged === true &&
+    exactContentContinuity(keyboard.frame?.contentContinuity) &&
     exactWriterHealth(keyboard?.fence?.writerHealth);
   const pointerReleaseExact =
     exactResizeTarget(pointerRelease, expected) &&
@@ -322,6 +373,7 @@ export function assessProductKeyboardPointerResize({ evidence, expected }) {
     pointerRelease.frame?.identityExact === true &&
     /^[0-9a-f]{64}$/u.test(pointerRelease.frame?.presentationDigest ?? "") &&
     pointerRelease.frame?.presentationChanged === true &&
+    exactContentContinuity(pointerRelease.frame?.contentContinuity) &&
     exactWriterHealth(pointerRelease?.fence?.writerHealth);
   const tmuxExact =
     evidence?.tmux?.semanticPaneId === expected?.semanticPaneId &&
@@ -335,6 +387,11 @@ export function assessProductKeyboardPointerResize({ evidence, expected }) {
   const correlationExact = ["daemon", "workspaceClient", "tui", "web", "tmux"].every(
     (key) => evidence?.correlation?.[key] === true,
   );
+  const contentContinuityExact =
+    exactContentContinuity(keyboard?.frame?.contentContinuity) &&
+    exactContentContinuity(pointerRelease?.frame?.contentContinuity) &&
+    samples.length >= 30 &&
+    samples.every((sample) => exactContentContinuity(sample.actualFrame?.contentContinuity));
   const predicates = Object.freeze([
     Object.freeze({
       id: "resize-baseline-identity",
@@ -352,6 +409,7 @@ export function assessProductKeyboardPointerResize({ evidence, expected }) {
       actual: p95Ms,
     }),
     Object.freeze({ id: "resize-pointer-release-causal", passed: pointerReleaseExact }),
+    Object.freeze({ id: "resize-content-continuity", passed: contentContinuityExact }),
     Object.freeze({ id: "resize-tmux-geometry", passed: tmuxExact }),
     Object.freeze({ id: "resize-workspace-client", passed: workspaceClientExact }),
     Object.freeze({ id: "resize-correlation", passed: correlationExact }),

@@ -230,7 +230,13 @@ function rig(
       id: "codex",
       label: "Codex",
       command: ["/opt/bin/codex", "--approval-mode", "safe"],
-      environment: { LANG: "en_US.UTF-8", TMUX_IDE_ROLE: "worker" },
+      environment: {
+        LANG: "en_US.UTF-8",
+        TMUX_IDE_ROLE: "worker",
+        NO_COLOR: "1",
+        COLORTERM: "24bit",
+        TERM: "dumb",
+      },
     }));
   const authority = new WorkspacePaneCreationAuthority({
     daemonInstanceId: DAEMON,
@@ -321,7 +327,7 @@ describe("WorkspacePaneCreationAuthority", () => {
     ]);
     expect(fake.calls).toContainEqual([
       "set-environment",
-      "-u",
+      "-r",
       "-t",
       "=runtime-session",
       "NO_COLOR",
@@ -753,7 +759,8 @@ describe("WorkspacePaneCreationAuthority", () => {
     }) as Parameters<typeof _setExecutor>[0]);
     const hostileEnvironment: NodeJS.ProcessEnv = {
       TERM: "screen-256color",
-      COLORTERM: "truecolor",
+      COLORTERM: "24bit",
+      NO_COLOR: "1",
       LANG: "en_US.UTF-8",
       LC_ALL: "C",
       LC_CTYPE: "../../hostile-locale",
