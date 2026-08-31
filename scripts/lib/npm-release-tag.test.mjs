@@ -19,7 +19,7 @@ test("invalid release versions fail closed", () => {
   assert.throws(() => npmReleaseTag("latest"), /Invalid release version/);
 });
 
-test("release workflow isolates beta without weakening stable releases", () => {
+test("npm release workflow keeps Electron outside both beta and GM gates", () => {
   const workflow = readFileSync(
     new URL("../../.github/workflows/release.yml", import.meta.url),
     "utf8",
@@ -27,8 +27,13 @@ test("release workflow isolates beta without weakening stable releases", () => {
 
   assert.match(workflow, /needs: build_macos_notifier/u);
   assert.match(workflow, /always\(\).*build_macos_notifier\.result == 'skipped'/u);
-  assert.match(workflow, /if: steps\.npm\.outputs\.tag != 'latest'[\s\S]+release:opentui:check/u);
-  assert.match(workflow, /if: steps\.npm\.outputs\.tag == 'latest'[\s\S]+pnpm run check/u);
+  const focusedGate = workflow.indexOf("name: Run focused OpenTUI release checks");
+  const buildDaemon = workflow.indexOf("name: Build daemon");
+  assert.ok(focusedGate >= 0 && focusedGate < buildDaemon);
+  const releaseGate = workflow.slice(focusedGate, buildDaemon);
+  assert.match(releaseGate, /run: pnpm run release:opentui:check/u);
+  assert.doesNotMatch(releaseGate, /pnpm run check|electron-shell|smoke:desktop/u);
+  assert.doesNotMatch(releaseGate, /if: steps\.npm\.outputs\.tag/u);
   assert.match(workflow, /if: steps\.npm\.outputs\.tag == 'latest'[\s\S]+download-artifact/u);
   assert.match(workflow, /if \[\[ "\$npm_tag" != "latest" \]\]; then[\s\S]+enabled=false/u);
 });

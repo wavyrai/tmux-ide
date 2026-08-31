@@ -224,21 +224,13 @@ jobs:
           echo "Verified $tag and all OpenTUI manifests at $expected_commit."
 
       - name: Run focused OpenTUI release checks
-        if: steps.npm.outputs.tag != 'latest'
-        # The complete contributor gate remains `pnpm check`. Publishing the
-        # OpenTUI beta deliberately gates only its CLI/daemon/package journey;
-        # deferred Web GUI, desktop, native notifier, and product-rig breadth
-        # cannot block this package cut.
+        # The complete contributor gate remains `pnpm check`, but npm publishes
+        # the terminal-first CLI/daemon product for both prerelease and stable
+        # tags. Qualify that exact package journey here. Deferred Web GUI,
+        # Electron, and product-rig breadth remain independent CI signals and
+        # cannot block an OpenTUI beta or GM cut. Stable releases still require
+        # the native notifier artifact and exact runtime provenance above.
         run: pnpm run release:opentui:check
-
-      - name: Run full stable release checks
-        if: steps.npm.outputs.tag == 'latest'
-        # Stable releases retain the complete historical quality gate and
-        # native payload. The integration test relies on a live tmux server
-        # unavailable in CI, so keep its established CI-only skip.
-        run: |
-          mv src/integration.test.ts src/integration.test.ts.skip 2>/dev/null || true
-          pnpm run check
 
       - name: Build daemon
         # Compile packages/daemon/src → packages/daemon/dist so the
