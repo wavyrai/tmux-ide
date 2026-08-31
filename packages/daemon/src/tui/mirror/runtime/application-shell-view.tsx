@@ -43,6 +43,8 @@ const APPLICATION_HOME_COMPACT_LOGO = [
   "▀█▀ █▄█ █ █ ▀▄▀ ─ █ █▀▄ █▀▀",
   " █  █ █ █▄█ █ █   █ █▄▀ ██▄",
 ] as const;
+const APPLICATION_HOME_FULL_LOGO_WIDTH = 76;
+const APPLICATION_HOME_COMPACT_LOGO_WIDTH = 29;
 
 export function applicationHomeBrandVariant(
   width: number,
@@ -137,6 +139,12 @@ function HomeSurface(props: {
       : variant() === "compact"
         ? [...APPLICATION_HOME_COMPACT_LOGO]
         : ["tmux-ide"];
+  const brandWidth = () =>
+    variant() === "full"
+      ? APPLICATION_HOME_FULL_LOGO_WIDTH
+      : variant() === "compact"
+        ? APPLICATION_HOME_COMPACT_LOGO_WIDTH
+        : 8;
   const availableWidth = () => Math.max(1, props.width - (props.width >= 8 ? 4 : 0));
   const tagline = () =>
     clipTerminal(
@@ -187,9 +195,13 @@ function HomeSurface(props: {
       gap={variant() === "wordmark" ? 0 : 1}
       overflow="hidden"
     >
-      <box flexDirection="column" alignItems="center">
+      <box width={brandWidth()} flexDirection="column">
         <For each={brandLines()}>
-          {(line) => <text fg={props.theme.roles.text.link}>{line}</text>}
+          {(line) => (
+            <text width={brandWidth()} fg={props.theme.roles.text.link}>
+              {line}
+            </text>
+          )}
         </For>
       </box>
       <Show when={variant() !== "wordmark"}>
