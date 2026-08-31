@@ -112,6 +112,11 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
     return this.#sourceEpoch;
   }
 
+  requestPaneReseed(paneId: string): boolean {
+    if (this.#lane.paneLastAcceptedUpdateType(paneId) === "terminal.tombstone") return false;
+    return this.#lane.requestRepair(paneId, "missing-state");
+  }
+
   paneSelectionSnapshot(paneId: string): TerminalReplicaSnapshot | null {
     return (
       this.#panes.get(paneId)?.state?.snapshot ?? this.#lane.paneState(paneId)?.snapshot ?? null
@@ -566,9 +571,17 @@ export class TerminalFastLaneRendererAdapter implements PaneScopedTerminalAdapte
   ): TerminalPaintTrace | null {
     const interest = this.#panes.get(paneId);
     const snapshot = interest?.state?.snapshot ?? null;
+    if (snapshot === null) {
+      // Never replace a formerly coherent framebuffer with semantic blanks
+      // merely because retained canonical state is temporarily unavailable.
+      // PaneScopedTerminalSurface requests one bounded generation repair; the
+      // next seed will mark its exact rows dirty and repaint them normally.
+      interest?.dirtyRows.clear();
+      return null;
+    }
     const seedPaintDiagnostic = currentTuiPerformanceEventSink()?.terminalCanonicalPaint;
     const forced = options.forceRows ? new Set(options.forceRows) : null;
-    const full = options.full || scrollOffset > 0 || snapshot === null;
+    const full = options.full || scrollOffset > 0;
     let paintedCanonicalChange = false;
     const writtenRows =
       this.#causalCellLedger || (seedPaintDiagnostic && interest?.pendingSeedDiagnostic)

@@ -353,6 +353,25 @@ describe("terminal fast lane", () => {
     });
   });
 
+  it("coalesces an explicit missing-state repair until a canonical seed arrives", () => {
+    const { lane, source, repairs } = rig();
+    lane.subscribePane("pane-a", () => undefined);
+
+    expect(lane.requestRepair("pane-a", "missing-state")).toBe(true);
+    expect(lane.requestRepair("pane-a", "missing-state")).toBe(true);
+    expect(repairs).toHaveLength(1);
+    expect(repairs[0]).toMatchObject({
+      reason: "missing-state",
+      expectedRevision: 0,
+      receivedRevision: 0,
+    });
+
+    source.emit(seed(blankTerminalReplicaSnapshot(4, 2)));
+    expect(lane.requestRepair("pane-a", "missing-state")).toBe(true);
+    expect(repairs).toHaveLength(2);
+    expect(lane.counters()).toMatchObject({ repairs: 2 });
+  });
+
   it("routes 10k updates to exactly one pane and never asks for semantic publication", () => {
     const listeners = new Map<string, (update: CanonicalTerminalReplicaUpdate) => void>();
     let semanticCallbacks = 0;

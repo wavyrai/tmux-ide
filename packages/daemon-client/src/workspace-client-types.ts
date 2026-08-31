@@ -132,7 +132,7 @@ export interface WorkspaceClientRuntimePort<
    */
   requestTerminalRepair?(
     target: TerminalReplicaAddress,
-    reason: "gap" | "conflict" | "wrong-address",
+    reason: "gap" | "conflict" | "wrong-address" | "missing-state",
   ): void;
   close(): void | Promise<void>;
   /** Fits the one shared physical terminal stream, never a renderer-local replica. */
@@ -263,7 +263,7 @@ export interface WorkspaceClient<
   requestTerminalRepair(
     target: TerminalReplicaAddress,
     expectedDaemonGeneration: string,
-    reason: "gap" | "conflict" | "wrong-address",
+    reason: "gap" | "conflict" | "wrong-address" | "missing-state",
   ): void;
   sendTerminalInput(
     target: TerminalReplicaAddress,

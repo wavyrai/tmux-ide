@@ -118,6 +118,12 @@ export interface PaneSurfaceOptions extends RenderableOptions<FrameBufferRendera
   contentVersion?: number;
   /** Bumps when canonical presentation changed without terminal cell damage. */
   presentationVersion?: number;
+  /**
+   * Renderer-owned framebuffer generation. Unlike `contentVersion`, this
+   * changes when retained canonical cells are still current but the native
+   * presentation may have been invalidated by composition or visibility.
+   */
+  presentationGeneration?: string;
   /** Retained-source generation; forces a full blit even when content version restarts equal. */
   sourceEpoch?: number;
   /** Generation-host renderer epoch, distinct from the pane source epoch sum. */
@@ -395,6 +401,7 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
   private _focusedPane = false;
   private _contentVersion = -1;
   private _presentationVersion = -1;
+  private _presentationGeneration = "";
   private _sourceEpoch = -1;
   private _rendererEpoch = -1;
   private _hostFocusTransitionOwner: PaneSurfaceHostFocusTransitionOwner | null = null;
@@ -522,6 +529,15 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
     this._presentationVersion = v;
     this._needsCursorPresentation = true;
     this.requestRender();
+  }
+  set presentationGeneration(v: string) {
+    if (v === this._presentationGeneration) return;
+    this._presentationGeneration = v;
+    // Framebuffer validity is independent from terminal content freshness. A
+    // quiet pane must be able to repaint its retained canonical snapshot after
+    // visibility/composition changes without waiting for another terminal byte.
+    this._forceFull = true;
+    this.invalidate();
   }
   set sourceEpoch(v: number) {
     if (v === this._sourceEpoch) return;

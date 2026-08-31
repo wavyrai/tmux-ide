@@ -254,7 +254,7 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
 
     const version = await waitForExit(spawnCli(["--version"]));
     expect(version.code).toBe(0);
-    expect(version.stdout.trim()).toMatch(/^tmux-ide v\d+\.\d+\.\d+$/);
+    expect(version.stdout.trim()).toBe(`tmux-ide v${packageVersion}`);
 
     const mixed = await waitForExit(spawnCli(["--headless", "status"]));
     expect(mixed.code).toBe(2);

@@ -15,6 +15,7 @@ import {
   ApplicationTerminalWorkspace,
   beginApplicationMouseIngress,
   safeApplicationMouseIngressMicros,
+  type ApplicationTerminalAgentIndicator,
 } from "./application-terminal-workspace.tsx";
 import type { PaneScopedTerminalAdapter } from "./pane-scoped-terminal-surface.tsx";
 import type { TerminalReplicaSnapshot } from "@tmux-ide/contracts";
@@ -188,8 +189,9 @@ describe("ApplicationTerminalWorkspace", () => {
 
     setWorkspaceLayout({ current: windowA, windows: [windowA, windowB] });
     await setup.renderOnce();
-    expect(blits).toEqual([]);
+    expect(blits).toEqual([{ paneId: "pane.a", full: true }]);
     expect(setup.captureCharFrame()).toContain("A");
+    blits.length = 0;
 
     versions.set("pane.b", 2);
     listeners.get("pane.b")?.(2, 1);
@@ -198,16 +200,120 @@ describe("ApplicationTerminalWorkspace", () => {
 
     setWorkspaceLayout({ current: activeB, windows: [inactiveA, activeB] });
     await setup.renderOnce();
-    expect(blits).toEqual([{ paneId: "pane.b", full: false }]);
+    expect(blits).toEqual([{ paneId: "pane.b", full: true }]);
     expect(setup.captureCharFrame()).toContain("X");
     blits.length = 0;
 
     setWorkspaceLayout({ current: windowA, windows: [windowA, windowB] });
     await setup.renderOnce();
+    expect(blits).toEqual([{ paneId: "pane.a", full: true }]);
+    blits.length = 0;
+    await setup.renderOnce();
     expect(blits).toEqual([]);
 
     expect(Object.fromEntries(subscriptions)).toEqual({ "pane.a": 1, "pane.b": 1 });
     expect(Object.fromEntries(unsubscriptions)).toEqual({});
+    setup.renderer.destroy();
+  });
+
+  it("keeps a quiet agent resident through chrome changes without coupling it to a chatty sibling", async () => {
+    registerPaneSurface();
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const palette = createTerminalPaletteProjection(theme);
+    const versions = new Map([
+      ["pane.claude", 1],
+      ["pane.macmon", 1],
+    ]);
+    const listeners = new Map<
+      string,
+      Parameters<PaneScopedTerminalAdapter["subscribePaneVersion"]>[1]
+    >();
+    const blits: Array<{ paneId: string; full: boolean }> = [];
+    const terminalCells = new Map([
+      ["pane.claude", "CLAUDE_QUIET"],
+      ["pane.macmon", "MACMON_TICK_1"],
+    ]);
+    const liveAdapter: PaneScopedTerminalAdapter = {
+      renderSource: {
+        scrollbackDepth: () => 0,
+        cursorState: () => null,
+        blitPane: (paneId, buffers, width, height, _scroll, _fg, _bg, options) => {
+          blits.push({ paneId, full: options.full });
+          buffers.char.fill(32);
+          buffers.attributes.fill(0);
+          const text = terminalCells.get(paneId) ?? "";
+          for (let column = 0; column < Math.min(width, text.length); column += 1)
+            buffers.char[column] = text.codePointAt(column)!;
+          for (let row = 0; row < height; row += 1) options.dirtyRows.push(row);
+          return null;
+        },
+      },
+      paneVersion: (paneId) => versions.get(paneId) ?? 0,
+      paneSourceEpoch: () => 1,
+      subscribePaneVersion: (paneId, listener) => {
+        listeners.set(paneId, listener);
+        return () => listeners.delete(paneId);
+      },
+      paneSelectionSnapshot: () => null,
+    };
+    const current = {
+      type: "layout" as const,
+      semanticWindowId: "window.agents",
+      windowName: "agents",
+      currentWindow: true,
+      cols: 41,
+      rows: 9,
+      zoomed: false,
+      paneBorderStatus: "off" as const,
+      panes: [
+        { pane: "pane.claude", left: 0, top: 0, width: 20, height: 9, active: true },
+        { pane: "pane.macmon", left: 21, top: 0, width: 20, height: 9, active: false },
+      ],
+    };
+    const [indicators, setIndicators] = createSignal<
+      ReadonlyMap<string, ApplicationTerminalAgentIndicator>
+    >(new Map());
+    const setup = await renderForTest(
+      () => (
+        <ApplicationTerminalWorkspace
+          layout={() => ({ current, windows: [current] })}
+          adapter={liveAdapter}
+          rendererEpoch={1}
+          width={41}
+          height={9}
+          focusedPane="pane.claude"
+          theme={theme}
+          palette={palette}
+          agentIndicators={indicators}
+          onSelectPane={() => undefined}
+        />
+      ),
+      { width: 41, height: 11 },
+    );
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("CLAUDE_QUIET");
+    blits.length = 0;
+
+    terminalCells.set("pane.macmon", "MACMON_TICK_2");
+    versions.set("pane.macmon", 2);
+    listeners.get("pane.macmon")?.(2, 1, 0, "content");
+    await setup.renderOnce();
+    expect(blits).toEqual([{ paneId: "pane.macmon", full: false }]);
+    expect(setup.captureCharFrame()).toContain("CLAUDE_QUIET");
+    blits.length = 0;
+
+    setIndicators(
+      new Map([
+        ["pane.claude", { name: "Claude Code", activity: "waiting", attention: true } as const],
+      ]),
+    );
+    await setup.renderOnce();
+    expect(blits).toEqual([]);
+    expect(setup.captureCharFrame()).toContain("CLAUDE_QUIET");
+    blits.length = 0;
+
+    await setup.renderOnce();
+    expect(blits).toEqual([]);
     setup.renderer.destroy();
   });
 

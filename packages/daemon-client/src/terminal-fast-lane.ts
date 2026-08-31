@@ -7,11 +7,7 @@ import type {
   TerminalReplicaAddress,
 } from "@tmux-ide/contracts";
 import { SessionRuntimeTerminalInputSchemaZ } from "@tmux-ide/contracts";
-import {
-  applyTerminalReplicaUpdate,
-  type TerminalReplicaApplyResult,
-  type TerminalReplicaState,
-} from "@tmux-ide/core";
+import { applyTerminalReplicaUpdate, type TerminalReplicaState } from "@tmux-ide/core";
 
 import { FirstLatestCoordinator } from "./first-latest-coordinator.ts";
 
@@ -24,7 +20,7 @@ export interface TerminalFastLanePaneAddress extends TerminalFastLaneGenerationA
   readonly semanticPaneId: string;
 }
 
-export type TerminalFastLaneRepairReason = "gap" | "conflict" | "wrong-address";
+export type TerminalFastLaneRepairReason = "gap" | "conflict" | "wrong-address" | "missing-state";
 
 export interface TerminalFastLaneSourcePort {
   subscribe(
@@ -179,6 +175,8 @@ export interface TerminalFastLane {
   ): () => void;
   paneState(semanticPaneId: string): TerminalReplicaState | null;
   paneLastAcceptedUpdateType(semanticPaneId: string): CanonicalTerminalReplicaUpdate["type"] | null;
+  /** Request one coalesced generation repair for a pane whose retained state vanished. */
+  requestRepair(semanticPaneId: string, reason: TerminalFastLaneRepairReason): boolean;
   sendInput(
     semanticPaneId: string,
     input: SessionRuntimeTerminalInput,
@@ -353,10 +351,10 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
     input.resolve(outcome);
   };
 
-  const requestRepair = (
+  const queueRepair = (
     interest: PaneInterest,
     reason: TerminalFastLaneRepairReason,
-    result: Extract<TerminalReplicaApplyResult, { status: "gap" | "conflict" }>,
+    expectedRevision: number,
     receivedRevision: number,
   ): void => {
     if (interest.repairPending) return;
@@ -367,7 +365,7 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
         options.repair.request({
           address: paneAddress(generationAddress, interest.semanticPaneId),
           reason,
-          expectedRevision: result.expectedRevision,
+          expectedRevision,
           receivedRevision,
         }),
       ).catch(() => undefined);
@@ -401,17 +399,7 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
       update.semanticPaneId !== expected.semanticPaneId
     ) {
       mutableCounters.rejected += 1;
-      requestRepair(
-        interest,
-        "wrong-address",
-        {
-          status: "conflict",
-          state: interest.state,
-          expectedRevision: interest.state?.revision ?? 0,
-          receivedRevision: update.revision,
-        },
-        update.revision,
-      );
+      queueRepair(interest, "wrong-address", interest.state?.revision ?? 0, update.revision);
       return;
     }
     mutableCounters.accepted += 1;
@@ -447,7 +435,7 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
     }
     if (result.status === "gap" || result.status === "conflict") {
       mutableCounters.rejected += 1;
-      requestRepair(interest, result.status, result, update.revision);
+      queueRepair(interest, result.status, result.expectedRevision, update.revision);
       return;
     }
     if (result.status !== "applied") return;
@@ -709,6 +697,14 @@ export function createTerminalFastLane(options: TerminalFastLaneOptions): Termin
     paneState: (semanticPaneId) => panes.get(semanticPaneId)?.state ?? null,
     paneLastAcceptedUpdateType: (semanticPaneId) =>
       panes.get(semanticPaneId)?.lastAcceptedUpdateType ?? null,
+    requestRepair(semanticPaneId, reason) {
+      if (disposed) return false;
+      const interest = panes.get(semanticPaneId);
+      if (!interest || !isRetainedOrStaged(semanticPaneId)) return false;
+      const revision = interest.state?.revision ?? 0;
+      queueRepair(interest, reason, revision, revision);
+      return interest.repairPending;
+    },
     sendInput(semanticPaneId, rawInput, performanceTraceId, causalProbe) {
       if (disposed) return Promise.resolve({ status: "rejected", reason: "disposed" });
       const parsed = SessionRuntimeTerminalInputSchemaZ.safeParse(rawInput);

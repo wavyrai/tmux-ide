@@ -243,7 +243,7 @@ class FakeRuntime implements WorkspaceClientRuntimePort<string, string> {
   closeGate: Promise<void> | null = null;
   readonly repairRequests: Array<{
     target: TerminalReplicaAddress;
-    reason: "gap" | "conflict" | "wrong-address";
+    reason: "gap" | "conflict" | "wrong-address" | "missing-state";
   }> = [];
   constructor(readonly generation: string) {}
   async subscribeTerminal(address: TerminalReplicaAddress): Promise<FakeTerminalSubscription> {
@@ -288,7 +288,7 @@ class FakeRuntime implements WorkspaceClientRuntimePort<string, string> {
   }
   requestTerminalRepair = (
     nextTarget: TerminalReplicaAddress,
-    reason: "gap" | "conflict" | "wrong-address",
+    reason: "gap" | "conflict" | "wrong-address" | "missing-state",
   ): void => {
     this.repairRequests.push({ target: nextTarget, reason });
   };

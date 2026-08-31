@@ -1290,6 +1290,19 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
                 .map((action) => `[${action.label}]`)
                 .join("") || " ",
           );
+          const presentationGeneration = createMemo(() => {
+            const currentFrame = frame();
+            return [
+              props.rendererEpoch,
+              currentFrame.paneId,
+              currentFrame.visible ? 1 : 0,
+              currentFrame.left,
+              currentFrame.top,
+              currentFrame.width,
+              currentFrame.height,
+              currentFrame.contentHeight,
+            ].join(":");
+          });
           return (
             <box
               position="absolute"
@@ -1376,6 +1389,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
                   scrollOffset={0}
                   paneFocused={terminalSurfaceFocused(frame())}
                   active={() => frame().visible}
+                  presentationGeneration={presentationGeneration()}
                   sourceEpoch={props.rendererEpoch}
                   hostFocusTransitionOwner={props.hostFocusTransitionOwner}
                   selRange={

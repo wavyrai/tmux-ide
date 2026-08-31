@@ -24,11 +24,10 @@ export default defineConfig({
   test: {
     css: true,
     environment: "node",
-    // The live suites spawn real daemons/tmux/pty; at unbounded parallelism
-    // those spawns starve their budgets. Four workers leaves enough process and
-    // PTY headroom for the 20-contender election and live terminal suites even
-    // while a developer has the real GUI/TUI stack open beside the test run.
-    maxWorkers: 4,
+    // The hermetic suite still includes several subprocess-heavy compact-state
+    // and takeover proofs. Keep two workers so those fixed lifecycle budgets
+    // remain meaningful while a developer has the real GUI/TUI stack open.
+    maxWorkers: 2,
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     // These import `bun:test` and are run by `bun test` (see the root
     // package.json `test:daemon-bun` / `test:tui-renderer` scripts and the

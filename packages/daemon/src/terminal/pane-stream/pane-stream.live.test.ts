@@ -228,7 +228,12 @@ describe.skipIf(!hasTmux)("pane-stream wire live", () => {
 
     // ── Stall S, then flood ────────────────────────────────────────────────
     clientS.ws.pause();
-    runTmux(["send-keys", "-t", runtimePanes[0]!, "seq 1 999999999", "Enter"]);
+    // Keep the producer finite. An effectively unbounded `seq` can enqueue an
+    // arbitrarily large PTY backlog before the test observes pause under host
+    // load, making the later resume assertion measure drain time rather than
+    // per-client flow isolation. This is still comfortably above the 256 KiB
+    // admission budget while keeping recovery bounded.
+    runTmux(["send-keys", "-t", runtimePanes[0]!, "seq 1 250000", "Enter"]);
     // The daemon parks ONLY S's flood-pane delivery: its ws-send-buffer
     // tickets stay outstanding past the budget.
     await vi.waitFor(

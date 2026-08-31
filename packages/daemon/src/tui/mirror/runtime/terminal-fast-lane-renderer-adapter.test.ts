@@ -7,7 +7,11 @@ import {
   createTerminalFastLane,
   type TerminalFastLaneSourcePort,
 } from "@tmux-ide/daemon-client/terminal-fast-lane";
-import { blankTerminalReplicaSnapshot, hashTerminalReplicaSnapshot } from "@tmux-ide/core";
+import {
+  blankTerminalReplicaSnapshot,
+  hashTerminalReplicaSnapshot,
+  hashTerminalReplicaTombstone,
+} from "@tmux-ide/core";
 
 import { TerminalFastLaneRendererAdapter } from "./terminal-fast-lane-renderer-adapter.ts";
 import { installTuiPerformanceEventSink } from "../performance-events.ts";
@@ -133,6 +137,66 @@ describe("TerminalFastLaneRendererAdapter", () => {
         historyTrim: 0,
       });
       expect(adapter.renderSource.paneCanonicalIdentity?.("pane.missing")).toBeNull();
+    } finally {
+      unsubscribe();
+      adapter.dispose();
+      lane.dispose();
+    }
+  });
+
+  it("preserves the last coherent framebuffer when canonical state is temporarily absent", () => {
+    const source = new Source();
+    const repairs: unknown[] = [];
+    const lane = createTerminalFastLane({
+      address: { workspaceName, generation },
+      source,
+      repair: { request: (request) => repairs.push(request) },
+      control: {
+        owns: () => true,
+        request: async () => true,
+        write: async () => "ok",
+        resize: async () => "ok",
+      },
+    });
+    const adapter = new TerminalFastLaneRendererAdapter(lane);
+    const unsubscribe = adapter.subscribePaneVersion("pane.editor", () => undefined);
+    const cells = 8;
+    const buffers = {
+      char: new Uint32Array(cells),
+      fg: new Uint16Array(cells * 4),
+      bg: new Uint16Array(cells * 4),
+      attributes: new Uint32Array(cells),
+    };
+    try {
+      source.emit("pane.editor", seed("pane.editor", "S"));
+      adapter.renderSource.blitPane("pane.editor", buffers, 4, 2, 0, 0xffffff, 0, {
+        full: true,
+        dirtyRows: [],
+      });
+      expect(buffers.char[0]).toBe("S".codePointAt(0)!);
+
+      source.emit("pane.editor", {
+        type: "terminal.tombstone",
+        workspaceName,
+        semanticPaneId: "pane.editor",
+        generation,
+        incarnation: `${generation}:0`,
+        baseRevision: 0,
+        revision: 1,
+        cols: 4,
+        rows: 2,
+        stateHash: hashTerminalReplicaTombstone("pane-closed"),
+        hashAlgorithm: "fnv1a64-v1",
+        tombstone: { reason: "pane-closed" },
+      });
+      adapter.renderSource.blitPane("pane.editor", buffers, 4, 2, 0, 0xffffff, 0, {
+        full: true,
+        dirtyRows: [],
+      });
+
+      expect(buffers.char[0]).toBe("S".codePointAt(0)!);
+      expect(adapter.requestPaneReseed("pane.editor")).toBe(false);
+      expect(repairs).toEqual([]);
     } finally {
       unsubscribe();
       adapter.dispose();

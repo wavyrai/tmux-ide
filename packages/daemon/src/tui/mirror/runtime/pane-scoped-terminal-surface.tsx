@@ -15,6 +15,8 @@ export interface PaneScopedTerminalAdapter {
   paneVersion(paneId: string): number;
   panePresentationVersion?(paneId: string): number;
   paneSourceEpoch(): number;
+  /** Coalesced exceptional recovery when a formerly coherent snapshot is absent. */
+  requestPaneReseed?(paneId: string): boolean;
   subscribePaneVersion(
     paneId: string,
     listener: (
@@ -40,6 +42,8 @@ export interface PaneScopedTerminalSurfaceProps {
   readonly searchCur: number;
   readonly scrollOffset: number;
   readonly paneFocused: boolean;
+  /** Renderer-owned identity for the current native framebuffer presentation. */
+  readonly presentationGeneration?: string;
   /** Retain inactive-window native surfaces without scheduling hidden paints. */
   readonly active?: boolean | Accessor<boolean>;
   readonly sourceEpoch: number;
@@ -51,8 +55,24 @@ export interface PaneScopedTerminalSurfaceProps {
 /** One Solid owner per terminal pane; terminal output never wakes the root shell. */
 export function PaneScopedTerminalSurface(props: PaneScopedTerminalSurfaceProps) {
   let surface: PaneSurfaceRenderable | undefined;
+  let activationEpoch = 0;
+  let wasActive = false;
+  let hadCanonicalSnapshot = false;
   const isActive = (): boolean =>
     typeof props.active === "function" ? props.active() : props.active !== false;
+  const currentPresentationGeneration = (): string =>
+    `${props.presentationGeneration ?? "stable"}:activation-${activationEpoch}`;
+  const ensureRetainedCanonicalState = (
+    adapter: PaneScopedTerminalAdapter,
+    paneId: string,
+  ): void => {
+    const identity = adapter.renderSource.paneCanonicalIdentity?.(paneId) ?? null;
+    if (identity) {
+      hadCanonicalSnapshot = true;
+      return;
+    }
+    if (hadCanonicalSnapshot) adapter.requestPaneReseed?.(paneId);
+  };
 
   // This subscription is part of renderer ownership, so install it in the
   // synchronous render phase. A deferred effect can miss publications between
@@ -74,16 +94,23 @@ export function PaneScopedTerminalSurface(props: PaneScopedTerminalSurfaceProps)
         if (kind === "presentation") surface.presentationVersion = presentationVersion;
         else surface.contentVersion = version;
         surface.sourceEpoch = rendererEpoch + sourceEpoch;
+        ensureRetainedCanonicalState(adapter, paneId);
       },
     );
     onCleanup(unsubscribe);
   });
 
   createRenderEffect(() => {
-    if (!isActive() || !surface) return;
+    const active = isActive();
+    if (active && !wasActive) activationEpoch += 1;
+    wasActive = active;
+    const presentationGeneration = currentPresentationGeneration();
+    if (!active || !surface) return;
+    surface.presentationGeneration = presentationGeneration;
     surface.contentVersion = props.adapter.paneVersion(props.paneId);
     surface.presentationVersion = props.adapter.panePresentationVersion?.(props.paneId) ?? 0;
     surface.sourceEpoch = props.sourceEpoch + props.adapter.paneSourceEpoch();
+    ensureRetainedCanonicalState(props.adapter, props.paneId);
   });
 
   return (
@@ -93,6 +120,8 @@ export function PaneScopedTerminalSurface(props: PaneScopedTerminalSurfaceProps)
         renderable.contentVersion = props.adapter.paneVersion(props.paneId);
         renderable.presentationVersion = props.adapter.panePresentationVersion?.(props.paneId) ?? 0;
         renderable.sourceEpoch = props.sourceEpoch + props.adapter.paneSourceEpoch();
+        renderable.presentationGeneration = currentPresentationGeneration();
+        ensureRetainedCanonicalState(props.adapter, props.paneId);
       }}
       width={props.width}
       height={props.height}

@@ -788,7 +788,7 @@ describe("production ApplicationShellView", () => {
     });
     await waitForMeasuredFrame(1);
     await expectQuiet(1);
-    expect(tracked.blits).toEqual([]);
+    expect(tracked.blits).toEqual([expect.objectContaining({ full: true })]);
     tracked.blits.length = 0;
 
     measuredStage = "warm-b";
@@ -798,7 +798,7 @@ describe("production ApplicationShellView", () => {
     });
     await waitForMeasuredFrame(2);
     await expectQuiet(2);
-    expect(tracked.blits).toEqual([]);
+    expect(tracked.blits).toEqual([expect.objectContaining({ full: true })]);
     tracked.blits.length = 0;
 
     measuredStage = "rename";
