@@ -62,10 +62,10 @@ exports[`production ApplicationShellView reacts palette geometry through narrow 
 
 exports[`production ApplicationShellView reacts palette geometry through narrow live resizes 2`] = `
 "  ⌂  ●❯        live
- ●╭──────────────╮ux
- ○│ Commands     │de
-  │ › F1 Home    │s…
- A│ F2 Terminals │i…
+ ●╭──────────────╮
+ ○│ Commands     │s…
+  │ › F1 Home    │i…
+ A│ F2 Terminals │
  •╰──────────────╯2
   F5 · ^q quit   F5"
 `;
