@@ -29,6 +29,30 @@ export type RootSurface = "home" | "terminals";
 type InputSource = "keyboard" | "mouse";
 export type ApplicationShellKeyAction = "home" | "terminals" | "palette-open" | "palette-close";
 
+export type ApplicationHomeBrandVariant = "full" | "compact" | "wordmark";
+
+const APPLICATION_HOME_FULL_LOGO = `   ░██                                             ░██       ░██
+   ░██                                                       ░██
+░████████ ░█████████████  ░██    ░██ ░██    ░██    ░██ ░████████  ░███████
+   ░██    ░██   ░██   ░██ ░██    ░██  ░██  ░██     ░██░██    ░██ ░██    ░██
+   ░██    ░██   ░██   ░██ ░██    ░██   ░█████      ░██░██    ░██ ░█████████
+   ░██    ░██   ░██   ░██ ░██   ░███  ░██  ░██     ░██░██   ░███ ░██
+    ░████ ░██   ░██   ░██  ░█████░██ ░██    ░██    ░██ ░█████░██  ░███████`;
+
+const APPLICATION_HOME_COMPACT_LOGO = [
+  "▀█▀ █▄█ █ █ ▀▄▀ ─ █ █▀▄ █▀▀",
+  " █  █ █ █▄█ █ █   █ █▄▀ ██▄",
+] as const;
+
+export function applicationHomeBrandVariant(
+  width: number,
+  height: number,
+): ApplicationHomeBrandVariant {
+  if (width >= 76 && height >= 23) return "full";
+  if (width >= 36 && height >= 13) return "compact";
+  return "wordmark";
+}
+
 export function applicationShellKeyAction(
   key: { readonly name: string },
   paletteOpen: boolean,
@@ -94,28 +118,115 @@ function HomeSurface(props: {
   readonly project: string;
   readonly status: string;
   readonly note: string | null;
+  readonly width: number;
+  readonly height: number;
+  readonly sessionCount: number;
   readonly session?: string | null;
   readonly agents?: readonly ApplicationTerminalAgentIndicator[];
+  readonly branded: boolean;
   readonly theme: ApplicationShellViewProps["theme"];
+  readonly onOpenTerminals: () => void;
+  readonly onOpenCommands: () => void;
 }): JSX.Element {
   const working = () => props.agents?.filter((agent) => agent.activity === "running").length ?? 0;
   const attention = () => props.agents?.filter((agent) => agent.attention).length ?? 0;
+  const variant = () => applicationHomeBrandVariant(props.width, props.height);
+  const brandLines = () =>
+    variant() === "full"
+      ? APPLICATION_HOME_FULL_LOGO.split("\n").map((line) => line.trimEnd())
+      : variant() === "compact"
+        ? [...APPLICATION_HOME_COMPACT_LOGO]
+        : ["tmux-ide"];
+  const availableWidth = () => Math.max(1, props.width - (props.width >= 8 ? 4 : 0));
+  const tagline = () =>
+    clipTerminal(
+      variant() === "full"
+        ? "Your tmux sessions, panes, and coding agents — one resilient workspace."
+        : "Your tmux sessions and agents, in one place.",
+      availableWidth(),
+    );
+  const summary = () =>
+    clipTerminal(
+      `${props.sessionCount} ${props.sessionCount === 1 ? "session" : "sessions"} · ${working()} working · ${attention()} need attention`,
+      availableWidth(),
+    );
+  const context = () =>
+    clipTerminal(`${props.session ?? "No session selected"} · ${props.status}`, availableWidth());
+  const note = () => (props.note ? clipTerminal(props.note, availableWidth()) : null);
+  const actionsInRow = () => props.width >= 42;
+
+  if (!props.branded) {
+    return (
+      <box
+        width={props.width}
+        height={props.height}
+        flexDirection="column"
+        justifyContent="center"
+        alignItems="center"
+        gap={1}
+        overflow="hidden"
+      >
+        <text fg={props.theme.roles.text.primary}>
+          <strong>{clipTerminal(props.project, availableWidth())}</strong>
+        </text>
+        <text fg={props.theme.roles.text.muted}>{context()}</text>
+        <Show when={note()}>
+          {(message) => <text fg={props.theme.roles.text.link}>{message()}</text>}
+        </Show>
+      </box>
+    );
+  }
+
   return (
-    <box flexDirection="column" paddingLeft={2} paddingTop={2} gap={1}>
+    <box
+      width={props.width}
+      height={props.height}
+      flexDirection="column"
+      justifyContent="center"
+      alignItems="center"
+      gap={variant() === "wordmark" ? 0 : 1}
+      overflow="hidden"
+    >
+      <box flexDirection="column" alignItems="center">
+        <For each={brandLines()}>
+          {(line) => <text fg={props.theme.roles.text.link}>{line}</text>}
+        </For>
+      </box>
+      <Show when={variant() !== "wordmark"}>
+        <text fg={props.theme.roles.text.secondary}>{tagline()}</text>
+      </Show>
       <text fg={props.theme.roles.text.primary}>
-        <strong>{props.project}</strong>
+        <strong>{summary()}</strong>
       </text>
-      <text fg={props.theme.roles.text.secondary}>
-        A visual client for the tmux sessions you already own.
-      </text>
-      <text
-        fg={props.theme.roles.text.secondary}
-        content={`Session ${props.session ?? "none selected"} · ${working()} working · ${attention()} need attention`}
-      />
-      <text fg={props.theme.roles.text.muted}>{`Workspace state: ${props.status}`}</text>
-      <text fg={props.theme.roles.text.link} content="F2 open terminals · F5 commands" />
-      <Show when={props.note}>
-        {(note) => <text fg={props.theme.roles.text.link}>{note()}</text>}
+      <text fg={props.theme.roles.text.muted}>{context()}</text>
+      <box
+        flexDirection={actionsInRow() ? "row" : "column"}
+        alignItems="center"
+        gap={actionsInRow() ? 2 : 0}
+      >
+        <box
+          height={1}
+          backgroundColor={props.theme.roles.selection.hover}
+          onMouseDown={(event) => {
+            event.stopPropagation();
+            props.onOpenTerminals();
+          }}
+        >
+          <text fg={props.theme.roles.text.primary}> F2 Open terminals </text>
+        </box>
+        <box
+          height={1}
+          backgroundColor={props.theme.roles.selection.hover}
+          onMouseDown={(event) => {
+            event.stopPropagation();
+            props.onOpenCommands();
+          }}
+        >
+          <text fg={props.theme.roles.text.primary}> F5 Commands </text>
+        </box>
+      </box>
+      <Show when={note()}>
+        {(message) => <text fg={props.theme.roles.text.link}>{message()}</text>}
       </Show>
     </box>
   );
@@ -488,7 +599,14 @@ function CatalogShell(props: ApplicationShellViewProps): JSX.Element {
                   project="Terminals"
                   status={props.generationStatus()}
                   note={props.bootstrapNote() ?? "Select a session from Home to connect."}
+                  width={chrome().main.width}
+                  height={Math.max(1, chrome().main.height - chrome().status.height)}
+                  sessionCount={sessions().length}
+                  session={sessions()[props.selectedSession()] ?? null}
+                  branded={false}
                   theme={props.theme}
+                  onOpenTerminals={() => props.onOpenSurface("terminals", "mouse")}
+                  onOpenCommands={() => props.onSetPaletteOpen(true, "mouse")}
                 />
               }
             >
@@ -496,7 +614,14 @@ function CatalogShell(props: ApplicationShellViewProps): JSX.Element {
                 project="tmux-ide"
                 status={props.generationStatus()}
                 note={props.bootstrapNote()}
+                width={chrome().main.width}
+                height={Math.max(1, chrome().main.height - chrome().status.height)}
+                sessionCount={sessions().length}
+                session={sessions()[props.selectedSession()] ?? null}
+                branded={true}
                 theme={props.theme}
+                onOpenTerminals={() => props.onOpenSurface("terminals", "mouse")}
+                onOpenCommands={() => props.onSetPaletteOpen(true, "mouse")}
               />
             </Show>
           </box>
@@ -616,9 +741,15 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                   project={shell.semantic.project.name}
                   status={props.generationStatus()}
                   note={props.bootstrapNote()}
+                  width={shell.content.width}
+                  height={shell.content.height}
+                  sessionCount={shell.semantic.sidebar.sessions.length}
                   session={shell.activeSession}
                   agents={[...agentIndicators().values()]}
+                  branded={true}
                   theme={props.theme}
+                  onOpenTerminals={() => props.onOpenSurface("terminals", "mouse")}
+                  onOpenCommands={() => props.onSetPaletteOpen(true, "mouse")}
                 />
               }
             >
@@ -636,7 +767,14 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                       project="Terminal workspace"
                       status={props.generationStatus()}
                       note={props.bootstrapNote() ?? "Waiting for a coherent terminal frame."}
+                      width={shell.content.width}
+                      height={shell.content.height}
+                      sessionCount={shell.semantic.sidebar.sessions.length}
+                      session={shell.activeSession}
+                      branded={false}
                       theme={props.theme}
+                      onOpenTerminals={() => props.onOpenSurface("terminals", "mouse")}
+                      onOpenCommands={() => props.onSetPaletteOpen(true, "mouse")}
                     />
                   }
                 >

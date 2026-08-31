@@ -55,19 +55,19 @@ exports[`production ApplicationShellView reacts palette geometry through narrow 
  ○│ › F1 Home            │
   │ F2 Terminals         │
  A│ New terminal window  │
- •│ Split pane right     │e
+ •│ Split pane right     │
   ╰──────────────────────╯
   F5 · ^q quit   Terminals …"
 `;
 
 exports[`production ApplicationShellView reacts palette geometry through narrow live resizes 2`] = `
 "  ⌂  ●❯        live
- ●╭──────────────╮
- ○│ Commands     │
-  │ › F1 Home    │tm
- A│ F2 Terminals │A
- •╰──────────────╯Se
-  F5 · ^q quit    Wo"
+ ●╭──────────────╮ux
+ ○│ Commands     │de
+  │ › F1 Home    │s…
+ A│ F2 Terminals │i…
+ •╰──────────────╯2
+  F5 · ^q quit   F5"
 `;
 
 exports[`production ApplicationShellView preserves canonical attention while prioritizing mixed window activity 1`] = `

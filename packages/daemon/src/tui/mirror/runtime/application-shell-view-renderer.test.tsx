@@ -14,6 +14,7 @@ import type { OpenTuiProductionWorkspaceClient } from "./open-tui-generation-hos
 import type { PaneScopedTerminalAdapter } from "./pane-scoped-terminal-surface.tsx";
 import {
   ApplicationShellView,
+  applicationHomeBrandVariant,
   applicationPaletteKeyAction,
   applicationShellKeyAction,
 } from "./application-shell-view.tsx";
@@ -260,6 +261,73 @@ function rendererShellClient(initial: ReturnType<typeof semantic>) {
 }
 
 describe("production ApplicationShellView", () => {
+  it("selects a deterministic terminal-safe Home brand for each golden viewport", () => {
+    expect(applicationHomeBrandVariant(52, 21)).toBe("compact");
+    expect(applicationHomeBrandVariant(92, 37)).toBe("full");
+    expect(applicationHomeBrandVariant(172, 57)).toBe("full");
+    expect(applicationHomeBrandVariant(24, 10)).toBe("wordmark");
+  });
+
+  it.each([
+    [80, 24, "compact"],
+    [120, 40, "full"],
+    [200, 60, "full"],
+  ] as const)(
+    "renders the responsive Home identity and clickable actions at %sx%s",
+    async (width, height, expectedBrand) => {
+      const theme = createSemanticThemeSnapshot({ mode: "dark" });
+      const palette = createTerminalPaletteProjection(theme);
+      const events: string[] = [];
+      const setup = await renderForTest(
+        () => (
+          <ApplicationShellView
+            dimensions={() => ({ width, height })}
+            surface={() => "home"}
+            semantic={() => semantic()}
+            generationStatus={() => "live"}
+            sessions={["main", "website"]}
+            selectedSession={() => 0}
+            bootstrapNote={() => null}
+            paletteOpen={() => false}
+            terminalRendererSource={() => null}
+            layout={terminalLayout}
+            focusedPane={() => null}
+            theme={theme}
+            palette={palette}
+            onOpenSurface={(surface, source) => events.push(`${source}:surface:${surface}`)}
+            onOpenSession={() => undefined}
+            onSetPaletteOpen={(open, source) => events.push(`${source}:palette:${open}`)}
+            onSelectPane={() => undefined}
+            onResizePreview={() => undefined}
+            onResizePane={() => undefined}
+          />
+        ),
+        { width, height },
+      );
+
+      await setup.renderOnce();
+      const frame = setup.captureCharFrame();
+      expectFrameBounds(frame, width, height);
+      expect(frame).toContain("Your tmux sessions");
+      expect(frame).toContain("2 sessions · 1 working · 0 need attention");
+      expect(frame).toContain("main · live");
+      expect(frame).toContain("F2 Open terminals");
+      expect(frame).toContain("F5 Commands");
+      if (expectedBrand === "full") expect(frame).toContain("░████████");
+      else expect(frame).toContain("▀█▀ █▄█ █ █ ▀▄▀");
+
+      const rows = frame.split("\n");
+      const terminalsY = rows.findIndex((row) => row.includes("F2 Open terminals"));
+      const commandsY = rows.findIndex((row) => row.includes("F5 Commands"));
+      expect(terminalsY).toBeGreaterThanOrEqual(0);
+      expect(commandsY).toBeGreaterThanOrEqual(0);
+      await setup.mockMouse.click(rows[terminalsY]!.indexOf("F2 Open terminals") + 2, terminalsY);
+      await setup.mockMouse.click(rows[commandsY]!.indexOf("F5 Commands") + 2, commandsY);
+      expect(events).toEqual(["mouse:surface:terminals", "mouse:palette:true"]);
+      setup.renderer.destroy();
+    },
+  );
+
   it("renders a catalog-backed configless shell with a real sidebar", async () => {
     const theme = createSemanticThemeSnapshot({ mode: "dark" });
     const palette = createTerminalPaletteProjection(theme);
