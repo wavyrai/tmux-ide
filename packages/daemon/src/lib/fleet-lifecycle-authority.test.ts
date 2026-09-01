@@ -98,6 +98,8 @@ describe("FleetLifecycleAuthority", () => {
       "COLORTERM=truecolor",
       "-s",
       result.workspaceName,
+      "-n",
+      "workspace",
       "-c",
       canonicalCwd,
       'exec env -u NO_COLOR COLORTERM=truecolor "${SHELL:-/bin/sh}" -l',

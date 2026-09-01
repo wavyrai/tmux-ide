@@ -297,6 +297,7 @@ describe("production ApplicationShellView", () => {
             onOpenSurface={(surface, source) => events.push(`${source}:surface:${surface}`)}
             onOpenSession={() => undefined}
             onSetPaletteOpen={(open, source) => events.push(`${source}:palette:${open}`)}
+            onCycleTheme={() => events.push("mouse:theme")}
             onSelectPane={() => undefined}
             onResizePreview={() => undefined}
             onResizePane={() => undefined}
@@ -313,22 +314,27 @@ describe("production ApplicationShellView", () => {
       expect(frame).toContain("main · live");
       expect(frame).toContain("Open terminals F2");
       expect(frame).toContain("Commands F5");
+      expect(frame).toContain("Theme: dark");
+      expect(frame).not.toContain("website");
       if (expectedBrand === "full") expect(frame).toContain("░████████");
       else expect(frame).toContain("▀█▀ █▄█ █ █ ▀▄▀");
 
       const rows = frame.split("\n");
       const terminalsY = rows.findIndex((row) => row.includes("Open terminals F2"));
       const commandsY = rows.findIndex((row) => row.includes("Commands F5"));
+      const themeY = rows.findIndex((row) => row.includes("Theme: dark"));
       expect(terminalsY).toBeGreaterThanOrEqual(0);
       expect(commandsY).toBeGreaterThanOrEqual(0);
+      expect(themeY).toBeGreaterThanOrEqual(0);
       await setup.mockMouse.click(rows[terminalsY]!.indexOf("Open terminals") + 2, terminalsY);
       await setup.mockMouse.click(rows[commandsY]!.indexOf("Commands") + 2, commandsY);
-      expect(events).toEqual(["mouse:surface:terminals", "mouse:palette:true"]);
+      await setup.mockMouse.click(rows[themeY]!.indexOf("Theme") + 2, themeY);
+      expect(events).toEqual(["mouse:surface:terminals", "mouse:palette:true", "mouse:theme"]);
       setup.renderer.destroy();
     },
   );
 
-  it("renders a catalog-backed configless shell with a real sidebar", async () => {
+  it("renders a catalog-backed Home as a focused full-width surface", async () => {
     const theme = createSemanticThemeSnapshot({ mode: "dark" });
     const palette = createTerminalPaletteProjection(theme);
     const setup = await renderForTest(
@@ -362,9 +368,8 @@ describe("production ApplicationShellView", () => {
     const frame = setup.captureCharFrame();
     expect(frame).toContain("F1 Home");
     expect(frame).toContain("F2 Terminals");
-    expect(frame).toContain("Sessions");
-    expect(frame).toContain("ordinary-one");
-    expect(frame).toContain("› ordinary");
+    expect(frame).not.toContain("Sessions");
+    expect(frame).not.toContain("ordinary-one");
     expect(frame).toContain("2 sessions live");
     expect(frame).not.toContain("no workspace authority");
     const footer = frame.trimEnd().split("\n").at(-1)!;
@@ -378,6 +383,7 @@ describe("production ApplicationShellView", () => {
     const theme = createSemanticThemeSnapshot({ mode: "dark" });
     const palette = createTerminalPaletteProjection(theme);
     let createCount = 0;
+    let commandCount = 0;
     const setup = await renderForTest(
       () => (
         <ApplicationShellView
@@ -398,7 +404,9 @@ describe("production ApplicationShellView", () => {
           palette={palette}
           onOpenSurface={() => undefined}
           onOpenSession={() => undefined}
-          onSetPaletteOpen={() => undefined}
+          onSetPaletteOpen={(open) => {
+            if (open) commandCount += 1;
+          }}
           onCreateSession={() => {
             createCount += 1;
           }}
@@ -417,7 +425,8 @@ describe("production ApplicationShellView", () => {
     expect(frame).toContain("Terminals");
     expect(frame).toContain("No tmux sessions are running");
     expect(frame).toContain("New local session N");
-    expect(frame).toContain("N new session · F5 commands");
+    expect(frame).toContain("New session N");
+    expect(frame).toContain("Commands F5");
     expect(frame).not.toContain("Discovering live tmux sessions");
 
     const buttonRow = frame.split("\n").findIndex((line) => line.includes("New local session N"));
@@ -425,6 +434,13 @@ describe("production ApplicationShellView", () => {
     await setup.mockMouse.click(buttonColumn, buttonRow, MouseButtons.LEFT);
     await setup.renderOnce();
     expect(createCount).toBe(1);
+    const rows = frame.split("\n");
+    const footerY = rows.findIndex((line) => line.includes("New session N"));
+    const footer = rows[footerY]!;
+    await setup.mockMouse.click(footer.indexOf("New session") + 2, footerY, MouseButtons.LEFT);
+    await setup.mockMouse.click(footer.indexOf("Commands") + 2, footerY, MouseButtons.LEFT);
+    expect(createCount).toBe(2);
+    expect(commandCount).toBe(1);
     setup.renderer.destroy();
   });
 

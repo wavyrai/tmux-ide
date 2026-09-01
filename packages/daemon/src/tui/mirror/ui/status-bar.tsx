@@ -60,6 +60,49 @@ export interface StatusBarSegmentProps {
   strong?: boolean;
 }
 
+export interface StatusBarActionProps {
+  theme: SemanticThemeSnapshot;
+  label: string;
+  shortcut?: string;
+  width?: number;
+  primary?: boolean;
+  onPress: () => void;
+}
+
+/** A real status-bar control: compact, mouse-addressable, and visually distinct from status text. */
+export function StatusBarAction(props: StatusBarActionProps) {
+  const content = () => ` ${props.label}${props.shortcut ? ` ${props.shortcut}` : ""} `;
+  return (
+    <box
+      id={`ui-status-action:${props.label}`}
+      height={1}
+      width={props.width}
+      backgroundColor={
+        props.primary
+          ? props.theme.roles.selection.selection
+          : props.theme.roles.surfaces.panelRaised
+      }
+      overflow="hidden"
+      onMouseDown={(event) => {
+        if (event.button !== 0) return;
+        event.stopPropagation();
+        props.onPress();
+      }}
+    >
+      <text
+        fg={
+          props.primary
+            ? props.theme.roles.selection.selectionText
+            : props.theme.roles.text.secondary
+        }
+        attributes={props.primary ? 1 : 0}
+      >
+        {clipTerminal(content(), props.width ?? 200)}
+      </text>
+    </box>
+  );
+}
+
 export function StatusBarSegment(props: StatusBarSegmentProps) {
   const foreground = () => {
     if (props.tone === "blocked") return props.theme.roles.statusTone.warning;

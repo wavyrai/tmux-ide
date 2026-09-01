@@ -4,7 +4,7 @@ import type { Accessor, ComponentProps, JSX } from "solid-js";
 import { For, Show, createMemo } from "solid-js";
 
 import { shellChromeLayout, type ShellChromeView } from "../shell-chrome.ts";
-import { clipTerminal } from "../terminal-text.ts";
+import { clipTerminal, friendlySessionLabel } from "../terminal-text.ts";
 import {
   ApplicationCatalogTabBar,
   ApplicationShell,
@@ -26,7 +26,7 @@ import type { ApplicationPaneRenameDraft } from "./application-pane-rename-input
 import { applicationShellViewport } from "./application-shell-viewport.ts";
 import { Button } from "../ui/button.tsx";
 import { Dialog } from "../ui/dialog.tsx";
-import { StatusBar, StatusBarGroup, StatusBarSegment } from "../ui/status-bar.tsx";
+import { StatusBar, StatusBarAction, StatusBarGroup, StatusBarSegment } from "../ui/status-bar.tsx";
 export { applicationPaletteKeyAction } from "./application-palette-input.ts";
 export { applicationShellViewport } from "./application-shell-viewport.ts";
 
@@ -108,6 +108,7 @@ export interface ApplicationShellViewProps {
   ) => void;
   readonly onCreateWindow?: () => void;
   readonly onCreateSession?: () => void;
+  readonly onCycleTheme?: () => void;
   readonly onBeginPaneRename?: (paneId: string, currentName: string) => void;
   readonly onCancelPaneRename?: () => void;
   readonly paletteCloseArmed?: Accessor<boolean>;
@@ -196,6 +197,8 @@ function CatalogStatusStrip(props: {
   readonly sessionCount: number;
   readonly note: string | null;
   readonly theme: ApplicationShellViewProps["theme"];
+  readonly onOpenCommands: () => void;
+  readonly onCreateSession?: () => void;
 }): JSX.Element {
   const context = () => (props.surface === "home" ? "Home" : "Terminals");
   const message = () => {
@@ -206,12 +209,10 @@ function CatalogStatusStrip(props: {
       ? "No sessions running"
       : `${props.sessionCount} ${props.sessionCount === 1 ? "session" : "sessions"} live`;
   };
-  const hints = () =>
-    props.phase === "live" && props.sessionCount === 0
-      ? "N new session · F5 commands"
-      : "F5 commands";
   const contextWidth = () => Math.min(14, Math.max(6, context().length + 2));
-  const hintWidth = () => Math.min(34, Math.max(13, hints().length + 2));
+  const canCreate = () =>
+    props.phase === "live" && props.sessionCount === 0 && Boolean(props.onCreateSession);
+  const actionWidth = () => (canCreate() ? 34 : 15);
   return (
     <StatusBar theme={props.theme} width={props.width}>
       <StatusBarGroup width={contextWidth()}>
@@ -224,8 +225,24 @@ function CatalogStatusStrip(props: {
           tone={props.phase === "unavailable" ? "blocked" : undefined}
         />
       </StatusBarGroup>
-      <StatusBarGroup width={hintWidth()} align="end">
-        <StatusBarSegment theme={props.theme} label={hints()} width={hintWidth()} strong />
+      <StatusBarGroup width={actionWidth()} align="end">
+        <Show when={canCreate()}>
+          <StatusBarAction
+            theme={props.theme}
+            label="New session"
+            shortcut="N"
+            width={19}
+            onPress={props.onCreateSession!}
+          />
+        </Show>
+        <StatusBarAction
+          theme={props.theme}
+          label="Commands"
+          shortcut="F5"
+          width={15}
+          primary
+          onPress={props.onOpenCommands}
+        />
       </StatusBarGroup>
     </StatusBar>
   );
@@ -244,6 +261,7 @@ function HomeSurface(props: {
   readonly theme: ApplicationShellViewProps["theme"];
   readonly onOpenTerminals: () => void;
   readonly onOpenCommands: () => void;
+  readonly onCycleTheme?: () => void;
 }): JSX.Element {
   const working = () => props.agents?.filter((agent) => agent.activity === "running").length ?? 0;
   const attention = () => props.agents?.filter((agent) => agent.attention).length ?? 0;
@@ -339,6 +357,16 @@ function HomeSurface(props: {
           onPress={props.onOpenTerminals}
         />
         <Button theme={props.theme} label="Commands" shortcut="F5" onPress={props.onOpenCommands} />
+        <Show when={props.onCycleTheme}>
+          {(onCycleTheme) => (
+            <Button
+              theme={props.theme}
+              label={`Theme: ${props.theme.setting}`}
+              variant="ghost"
+              onPress={onCycleTheme()}
+            />
+          )}
+        </Show>
       </box>
       <Show when={note()}>
         {(message) => <text fg={props.theme.roles.text.link}>{message()}</text>}
@@ -510,7 +538,7 @@ function ProductionSidebar(props: {
                     : props.theme.roles.text.secondary
                 }
               >
-                {clipTerminal(` ${session.label}`, Math.max(0, width() - 1))}
+                {clipTerminal(` ${friendlySessionLabel(session.label)}`, Math.max(0, width() - 1))}
               </text>
             </box>
           );
@@ -582,6 +610,9 @@ function CatalogShell(props: ApplicationShellViewProps): JSX.Element {
     if (phase() === "unavailable") return " ! reconnecting ";
     return sessions().length === 0 ? " ○ no sessions " : ` ● ${sessions().length} live `;
   };
+  const showCatalogSidebar = () => props.surface() === "terminals";
+  const catalogContentWidth = () =>
+    showCatalogSidebar() ? chrome().main.width : props.dimensions().width;
   return (
     <box
       width={props.dimensions().width}
@@ -610,44 +641,46 @@ function CatalogShell(props: ApplicationShellViewProps): JSX.Element {
         }}
       />
       <box height={chrome().sidebar.height} flexDirection="row" overflow="hidden">
-        <box
-          width={chrome().sidebar.width}
-          height={chrome().sidebar.height}
-          flexDirection="column"
-          paddingLeft={1}
-          backgroundColor={props.theme.roles.surfaces.panel}
-        >
-          <text fg={props.theme.roles.text.secondary}>Sessions</text>
-          <For each={sessions()}>
-            {(session, index) => (
-              <box
-                height={1}
-                backgroundColor={
-                  props.selectedSession() === index()
-                    ? props.theme.roles.selection.selection
-                    : props.theme.roles.surfaces.panel
-                }
-                onMouseDown={() => props.onOpenSession(session, "mouse")}
-              >
-                <text
-                  fg={
+        <Show when={showCatalogSidebar()}>
+          <box
+            width={chrome().sidebar.width}
+            height={chrome().sidebar.height}
+            flexDirection="column"
+            paddingLeft={1}
+            backgroundColor={props.theme.roles.surfaces.panel}
+          >
+            <text fg={props.theme.roles.text.secondary}>Sessions</text>
+            <For each={sessions()}>
+              {(session, index) => (
+                <box
+                  height={1}
+                  backgroundColor={
                     props.selectedSession() === index()
-                      ? props.theme.roles.selection.selectionText
-                      : props.theme.roles.text.secondary
+                      ? props.theme.roles.selection.selection
+                      : props.theme.roles.surfaces.panel
                   }
+                  onMouseDown={() => props.onOpenSession(session, "mouse")}
                 >
-                  {`${props.selectedSession() === index() ? "›" : " "} ${session}`}
-                </text>
-              </box>
-            )}
-          </For>
-          <Show when={sessions().length === 0}>
-            <text fg={props.theme.roles.text.muted}> No sessions yet</text>
-          </Show>
-          <box flexGrow={1} />
-        </box>
+                  <text
+                    fg={
+                      props.selectedSession() === index()
+                        ? props.theme.roles.selection.selectionText
+                        : props.theme.roles.text.secondary
+                    }
+                  >
+                    {`${props.selectedSession() === index() ? "›" : " "} ${friendlySessionLabel(session)}`}
+                  </text>
+                </box>
+              )}
+            </For>
+            <Show when={sessions().length === 0}>
+              <text fg={props.theme.roles.text.muted}> No sessions yet</text>
+            </Show>
+            <box flexGrow={1} />
+          </box>
+        </Show>
         <box
-          width={chrome().main.width}
+          width={catalogContentWidth()}
           height={chrome().main.height}
           flexDirection="column"
           overflow="hidden"
@@ -660,7 +693,7 @@ function CatalogShell(props: ApplicationShellViewProps): JSX.Element {
                   phase={phase()}
                   sessionCount={sessions().length}
                   note={note()}
-                  width={chrome().main.width}
+                  width={catalogContentWidth()}
                   height={Math.max(1, chrome().main.height - chrome().status.height)}
                   theme={props.theme}
                   onCreateSession={props.onCreateSession}
@@ -671,25 +704,32 @@ function CatalogShell(props: ApplicationShellViewProps): JSX.Element {
                 project="tmux-ide"
                 status={homeStatus()}
                 note={note()}
-                width={chrome().main.width}
+                width={catalogContentWidth()}
                 height={Math.max(1, chrome().main.height - chrome().status.height)}
                 sessionCount={sessions().length}
-                session={sessions()[props.selectedSession()] ?? null}
+                session={
+                  sessions()[props.selectedSession()]
+                    ? friendlySessionLabel(sessions()[props.selectedSession()]!)
+                    : null
+                }
                 branded={true}
                 theme={props.theme}
                 onOpenTerminals={() => props.onOpenSurface("terminals", "mouse")}
                 onOpenCommands={() => props.onSetPaletteOpen(true, "mouse")}
+                onCycleTheme={props.onCycleTheme}
               />
             </Show>
           </box>
           <Show when={chrome().status.height > 0}>
             <CatalogStatusStrip
-              width={chrome().status.width}
+              width={catalogContentWidth()}
               surface={props.surface()}
               phase={phase()}
               sessionCount={sessions().length}
               note={note()}
               theme={props.theme}
+              onOpenCommands={() => props.onSetPaletteOpen(true, "mouse")}
+              onCreateSession={props.onCreateSession}
             />
           </Show>
         </box>
@@ -786,8 +826,10 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
             theme={props.theme}
             projection={shell}
             help="F5 commands"
+            onHelp={() => props.onSetPaletteOpen(true, "mouse")}
             note={props.bootstrapNote() ?? props.generationStatus()}
             showToolStatus={false}
+            showSidebar={props.surface() === "terminals"}
             sidebar={
               <ProductionSidebar
                 shell={shell}
@@ -803,15 +845,16 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
                   project={shell.semantic.project.name}
                   status={props.generationStatus()}
                   note={props.bootstrapNote()}
-                  width={shell.content.width}
+                  width={shell.layout.width}
                   height={shell.content.height}
                   sessionCount={shell.semantic.sidebar.sessions.length}
-                  session={shell.activeSession}
+                  session={friendlySessionLabel(shell.activeSession)}
                   agents={[...agentIndicators().values()]}
                   branded={true}
                   theme={props.theme}
                   onOpenTerminals={() => props.onOpenSurface("terminals", "mouse")}
                   onOpenCommands={() => props.onSetPaletteOpen(true, "mouse")}
+                  onCycleTheme={props.onCycleTheme}
                 />
               }
             >

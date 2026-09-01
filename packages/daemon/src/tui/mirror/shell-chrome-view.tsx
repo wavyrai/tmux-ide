@@ -12,7 +12,7 @@ import {
 } from "./shell-chrome.ts";
 import type { SemanticThemeSnapshot } from "./theme.ts";
 import { clipTerminal, terminalDisplayWidth } from "./terminal-text.ts";
-import { StatusBar, StatusBarGroup, StatusBarSegment } from "./ui/status-bar.tsx";
+import { StatusBar, StatusBarAction, StatusBarGroup, StatusBarSegment } from "./ui/status-bar.tsx";
 
 export interface ShellTabBarProps {
   theme: SemanticThemeSnapshot;
@@ -179,6 +179,7 @@ export interface ShellStatusStripProps {
   focus?: string | null;
   notification: string | null;
   help: string;
+  onHelp?: () => void;
 }
 
 export function ShellStatusStrip(props: ShellStatusStripProps) {
@@ -221,12 +222,28 @@ export function ShellStatusStrip(props: ShellStatusStripProps) {
         <StatusBarSegment theme={props.theme} label={presentation().message} />
       </StatusBarGroup>
       <StatusBarGroup width={hintsWidth()} align="end">
-        <StatusBarSegment
-          theme={props.theme}
-          label={presentation().hints}
-          width={hintsWidth()}
-          strong
-        />
+        <Show
+          when={props.onHelp}
+          fallback={
+            <StatusBarSegment
+              theme={props.theme}
+              label={presentation().hints}
+              width={hintsWidth()}
+              strong
+            />
+          }
+        >
+          {(onHelp) => (
+            <StatusBarAction
+              theme={props.theme}
+              label="Commands"
+              shortcut="F5"
+              width={hintsWidth()}
+              primary
+              onPress={onHelp()}
+            />
+          )}
+        </Show>
       </StatusBarGroup>
     </StatusBar>
   );

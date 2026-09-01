@@ -1,6 +1,5 @@
 /* @jsxImportSource @opentui/solid */
 import { createCliRenderer } from "@opentui/core";
-import type { CommandSource } from "@tmux-ide/contracts";
 import { batch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { useKeyboard, usePaste } from "@opentui/solid";
 import { publishTuiInputReady } from "../../readiness.ts";
@@ -10,7 +9,6 @@ import {
   registerPaneSurface,
 } from "../pane-surface.tsx";
 import { currentTuiPerformanceEventSink } from "../performance-events.ts";
-import { createSemanticThemeSnapshot, createTerminalPaletteProjection } from "../theme.ts";
 import { startTuiApplication } from "./application-bootstrap.ts";
 import {
   applicationShellBindingRenderSignature,
@@ -31,11 +29,12 @@ import {
 import { createApplicationInputReadiness } from "./application-input-readiness.ts";
 import {
   applicationPaletteCommands,
+  applicationPaletteCommandSource,
   applicationPaletteKeyboardDisposition,
   applicationPaletteOwnsInput,
 } from "./application-palette-input.ts";
 import { createApplicationPaletteCommandOwner } from "./application-palette-command-owner.ts";
-import { createApplicationPaneRenameOwner } from "./application-pane-rename-owner.ts";
+import { createApplicationPaneRenameOwner as createPaneRenameOwner } from "./application-pane-rename-owner.ts";
 import { createApplicationTerminalInteractionController } from "./application-terminal-interaction-controller.ts";
 import {
   createApplicationHostFocusRecovery,
@@ -73,6 +72,7 @@ import { createApplicationTerminalRendererSources } from "./application-terminal
 import { createSemanticShellViewportResizeOwner } from "./semantic-shell-viewport-resize.ts";
 import { installHostedRuntimeOwnership } from "./hosted-tty-size-bridge.ts";
 import { renderWithTerminalDimensions } from "./terminal-dimensions-owner.ts";
+import { createAppearanceOwner } from "./application-appearance-owner.ts";
 export type { StartApplicationRootOptions } from "./application-root-configuration.ts";
 export async function startApplicationRoot(options: StartApplicationRootOptions = {}) {
   options.initialPreparation?.diagnosticHandoff?.attach(tuiPerfMark);
@@ -160,8 +160,6 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
       const root = renderWithTerminalDimensions(renderer)((dimensions) => {
         tuiPerfMark("solid-root-evaluate");
         registerPaneSurface();
-        const theme = createSemanticThemeSnapshot(config.app.theme, renderer.themeMode);
-        const palette = createTerminalPaletteProjection(theme);
         const [surface, setSurface] = createSignal<"home" | "terminals">(
           config.target ? "terminals" : "home",
         );
@@ -238,7 +236,8 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         const [rendererFocused, setRendererFocusedSignal] = createSignal(true);
         getRendererFocused = rendererFocused;
         setRendererFocused = setRendererFocusedSignal;
-        const [bootstrapNote, setBootstrapNote] = createSignal<string | null>(null);
+        const appearance = createAppearanceOwner(config.app, renderer);
+        const { theme, palette, setTransientNote, cycleTheme } = appearance;
         const semanticViewportResize = createSemanticShellViewportResizeOwner();
         const activeSurface = createMemo<"home" | "terminals">(
           () => shell().semantic?.workspaceCanvas.activeMode ?? surface(),
@@ -283,7 +282,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           binding: shellBinding,
           sessionOwner: () => sessionOwner!,
           focusOwner: () => sessionFocusOwner,
-          setNote: setBootstrapNote,
+          setNote: appearance.setNote,
           setSurface,
         });
         const terminalInputIngress = createApplicationTerminalInputIngress(
@@ -291,14 +290,14 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           generation,
           () => sessionOwner,
           focusedPane,
-          setBootstrapNote,
+          appearance.setNote,
         );
         const startGeneration = terminalInputIngress.wrapStarter(generationStarter);
         const homeCatalog = createApplicationHomeCatalogOwner({
           lifecycle,
           automaticOpen: config.target === null,
           startGeneration,
-          setNote: setBootstrapNote,
+          setNote: appearance.setNote,
         });
         const openAgent = createApplicationAgentNavigator({
           startGeneration: generationStarter,
@@ -311,30 +310,24 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           semanticViewportResize.dispose();
           stopLayout();
           stopShell();
+          appearance.dispose();
           shellBinding.dispose();
           sessionFocusOwner?.dispose();
         });
-        const commandSource = (
-          source: "keyboard" | "mouse",
-          surfaceName: "application-bar" | "command-palette",
-        ): CommandSource => ({ kind: source, surface: surfaceName });
         const paletteCommands = createApplicationPaletteCommandOwner({
           activeSurface,
           binding: shellBinding,
-          commandSource: (source, surfaceName) => commandSource(source, surfaceName),
+          commandSource: applicationPaletteCommandSource,
           setSurface,
-          setNote: setBootstrapNote,
+          setNote: setTransientNote,
           newWindow: interaction.newWindow,
           splitPane: interaction.splitPane,
           closePane: interaction.closePane,
           openAgent,
         });
-        const paneRename = createApplicationPaneRenameOwner(
-          interaction.renamePane,
-          setBootstrapNote,
-        );
+        const paneRename = createPaneRenameOwner(interaction.renamePane, setTransientNote);
         createEffect(() => {
-          renderer.setBackgroundColor(theme.roles.surfaces.canvas);
+          renderer.setBackgroundColor(theme().roles.surfaces.canvas);
           const currentShell = shell();
           semanticViewportResize.adopt(dimensions(), currentShell.semantic, generation());
           focusedPane();
@@ -373,7 +366,12 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             else paletteCommands.setOpen(chromeAction === "palette-open", "keyboard");
             return;
           }
-          if (activeSurface() === "home" && homeCatalog.handleKey(name)) return;
+          if (
+            activeSurface() === "terminals" &&
+            shell().semantic === null &&
+            homeCatalog.handleKey(name)
+          )
+            return;
           if (
             (activeSurface() === "home" || activeSurface() === "terminals") &&
             name === "n" &&
@@ -425,7 +423,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             generationStatus={() => shell().status}
             sessions={homeCatalog.sessionNames}
             selectedSession={homeCatalog.selectedSessionIndex}
-            bootstrapNote={bootstrapNote}
+            bootstrapNote={appearance.note}
             catalogPhase={homeCatalog.phase}
             catalogNote={homeCatalog.note}
             paletteOpen={() => shell().semantic?.focus.palette.open ?? shell().localPaletteOpen}
@@ -440,8 +438,8 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             focusedPane={() => (rendererFocused() ? focusedPane() : null)}
             rendererFocused={rendererFocused}
             hostFocusTransitionOwner={hostFocusTransitionOwner ?? undefined}
-            theme={theme}
-            palette={palette}
+            theme={theme()}
+            palette={palette()}
             onOpenSurface={recoverHostFocus(paletteCommands.openSurface)}
             onOpenSession={recoverHostFocus(
               (sessionName) => void startGeneration(sessionName, false, "mouse"),
@@ -453,6 +451,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             onPaletteActivate={recoverHostFocus(paletteCommands.activate)}
             onCreateWindow={recoverHostFocus(() => paletteCommands.activate("new-window", "mouse"))}
             onCreateSession={recoverHostFocus(() => void homeCatalog.createLocalSession())}
+            onCycleTheme={recoverHostFocus(cycleTheme)}
             onBeginPaneRename={recoverHostFocus(paneRename.begin)}
             onCancelPaneRename={recoverHostFocus(paneRename.cancel)}
             onSelectPane={recoverHostFocus(interaction.selectPane)}

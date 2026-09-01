@@ -1,5 +1,12 @@
 import stringWidth from "string-width";
 
+const GENERATED_SESSION_SUFFIX = /-[a-f0-9]{20}$/u;
+
+/** Keep daemon routing opaque while presenting the name the user actually chose. */
+export function friendlySessionLabel(sessionName: string): string {
+  return sessionName.replace(GENERATED_SESSION_SUFFIX, "");
+}
+
 export function terminalDisplayWidth(text: string): number {
   return stringWidth(text);
 }

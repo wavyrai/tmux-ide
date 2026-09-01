@@ -13,10 +13,12 @@ export interface ApplicationShellProps {
   theme: SemanticThemeSnapshot;
   projection: ApplicationShellProjection;
   help: string;
+  onHelp?: () => void;
   interactionMode?: string | null;
   focusLabel?: string | null;
   note?: string | null;
   showToolStatus?: boolean;
+  showSidebar?: boolean;
   sidebar?: JSX.Element;
   rightChips?: readonly {
     id: string;
@@ -38,6 +40,18 @@ export function ApplicationCatalogTabBar(props: ShellTabBarProps) {
  * renderer lifecycle, tmux connection, filesystem access, or mutable store.
  */
 export function ApplicationShell(props: ApplicationShellProps) {
+  const showSidebar = () => props.showSidebar !== false;
+  const mainWidth = () =>
+    showSidebar() ? props.projection.layout.main.width : props.projection.layout.width;
+  const contentWidth = () =>
+    showSidebar() ? props.projection.content.width : props.projection.layout.width;
+  const statusLayout = () =>
+    showSidebar()
+      ? props.projection.layout
+      : {
+          ...props.projection.layout,
+          status: { ...props.projection.layout.status, width: props.projection.layout.width },
+        };
   return (
     <box
       width={props.projection.layout.width}
@@ -66,24 +80,25 @@ export function ApplicationShell(props: ApplicationShellProps) {
         flexDirection="row"
         overflow="hidden"
       >
-        {props.sidebar ?? (
-          <ShellMiniSidebar
-            theme={props.theme}
-            width={props.projection.layout.sidebar.width}
-            variant={props.projection.layout.variant}
-            sessions={props.projection.sessions}
-            active={props.projection.activeSession}
-            hint={props.projection.sidebarHint}
-          />
-        )}
+        {showSidebar() &&
+          (props.sidebar ?? (
+            <ShellMiniSidebar
+              theme={props.theme}
+              width={props.projection.layout.sidebar.width}
+              variant={props.projection.layout.variant}
+              sessions={props.projection.sessions}
+              active={props.projection.activeSession}
+              hint={props.projection.sidebarHint}
+            />
+          ))}
         <box
-          width={props.projection.layout.main.width}
+          width={mainWidth()}
           height={props.projection.layout.main.height}
           flexDirection="column"
           overflow="hidden"
         >
           <box
-            width={props.projection.content.width}
+            width={contentWidth()}
             height={props.projection.content.height}
             flexDirection="column"
             overflow="hidden"
@@ -92,7 +107,7 @@ export function ApplicationShell(props: ApplicationShellProps) {
           </box>
           <ShellStatusStrip
             theme={props.theme}
-            layout={props.projection.layout}
+            layout={statusLayout()}
             project={props.projection.semantic.project.name}
             mode={
               props.projection.semantic.primaryNavigation.items.find(
@@ -113,6 +128,7 @@ export function ApplicationShell(props: ApplicationShellProps) {
             focus={props.focusLabel ?? applicationShellFocusLabel(props.projection)}
             notification={props.projection.semantic.statusStrip.message}
             help={props.help}
+            onHelp={props.onHelp}
           />
         </box>
       </box>

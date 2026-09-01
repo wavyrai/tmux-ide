@@ -13,7 +13,7 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
 
 …
 
-                     Terminals  ready                               F5 commands"
+                     Terminals  ready                               Commands F5"
 `;
 
 exports[`production ApplicationShellView retains shell, window strip, pane chrome, and canvas at %sx%s 2`] = `
@@ -29,7 +29,7 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
 
 …
 
-                             Terminals / terminal  ready                                                    F5 commands"
+                             Terminals / terminal  ready                                                    Commands F5"
 `;
 
 exports[`production ApplicationShellView retains shell, window strip, pane chrome, and canvas at %sx%s 3`] = `
@@ -45,29 +45,29 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
 
 …
 
-                             tmux-ide / Terminals / terminal  ready                                                                                                                         F5 commands"
+                             tmux-ide / Terminals / terminal  ready                                                                                                                         Commands F5"
 `;
 
 exports[`production ApplicationShellView reacts palette geometry through narrow live resizes 1`] = `
 "  ⌂  ●❯                live
   ╭──────────────────────╮
- ●│ Command palette      │
- ○│ › F1 Home            │
+  │ Command palette      │
+  │ › F1 Home            │
   │ F2 Terminals         │
- A│ New terminal window  │al
- •│ Split pane right     │ F
+  │ New terminal window  │
+  │ Split pane right     │
   ╰──────────────────────╯
-                 Te…    F5 …"
+ Termina… ready  Commands F…"
 `;
 
 exports[`production ApplicationShellView reacts palette geometry through narrow live resizes 2`] = `
 "  ⌂  ●❯        live
   ╭──────────────╮
- ●│ Commands     │s…
- ○│ › F1 Home    │i…
+  │ Commands     │
+  │ › F1 Home    │
   │ F2 Terminals │
- A╰──────────────╯rm
- •Cod… [WORKING]mman"
+ ●╰──────────────╯F2
+    ○ Commands F5"
 `;
 
 exports[`production ApplicationShellView preserves canonical attention while prioritizing mixed window activity 1`] = `
@@ -83,5 +83,5 @@ exports[`production ApplicationShellView preserves canonical attention while pri
 
 …
 
-                             Terminals / terminal  ready                                                    F5 commands"
+                             Terminals / terminal  ready                                                    Commands F5"
 `;

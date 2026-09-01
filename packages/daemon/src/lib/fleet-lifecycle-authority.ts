@@ -142,6 +142,8 @@ export class FleetLifecycleAuthority {
         ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
         "-s",
         identity.sessionName,
+        "-n",
+        "workspace",
         "-c",
         cwd,
         TMUX_TRUECOLOR_INTERACTIVE_SHELL_COMMAND,

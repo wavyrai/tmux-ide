@@ -862,6 +862,9 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     () => `tmux sessions: ${sessionNames().join(", ")}`,
   );
   const many = await launchApp();
+  // Home is intentionally a focused splash surface; session selection lives
+  // in Terminals where the catalog sidebar has a concrete navigation job.
+  send(many, "F2");
   await observe(
     "many-session chooser",
     10_000,

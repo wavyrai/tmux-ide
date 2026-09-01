@@ -1,4 +1,11 @@
-import type { ApplicationShellProjectionV1 } from "@tmux-ide/contracts";
+import type { ApplicationShellProjectionV1, CommandSource } from "@tmux-ide/contracts";
+
+export function applicationPaletteCommandSource(
+  source: "keyboard" | "mouse",
+  surface: "application-bar" | "command-palette",
+): CommandSource {
+  return { kind: source, surface };
+}
 
 export interface ApplicationAgentPaletteCommand {
   readonly kind: "jump-agent";

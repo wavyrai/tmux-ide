@@ -30338,6 +30338,8 @@ var init_fleet_lifecycle_authority = __esm({
             ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
             "-s",
             identity.sessionName,
+            "-n",
+            "workspace",
             "-c",
             cwd,
             TMUX_TRUECOLOR_INTERACTIVE_SHELL_COMMAND
