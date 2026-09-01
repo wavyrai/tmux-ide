@@ -3,9 +3,12 @@ import type { ApplicationShellProjectionV1 } from "@tmux-ide/contracts";
 import type { Accessor, ComponentProps, JSX } from "solid-js";
 import { For, Show, createMemo } from "solid-js";
 
-import { shellChromeLayout } from "../shell-chrome.ts";
+import { shellChromeLayout, type ShellChromeView } from "../shell-chrome.ts";
 import { clipTerminal } from "../terminal-text.ts";
-import { ApplicationShell } from "../workspace/application-shell-view.tsx";
+import {
+  ApplicationCatalogTabBar,
+  ApplicationShell,
+} from "../workspace/application-shell-view.tsx";
 import {
   applicationShellHitTest,
   projectApplicationShell,
@@ -23,6 +26,7 @@ import type { ApplicationPaneRenameDraft } from "./application-pane-rename-input
 import { applicationShellViewport } from "./application-shell-viewport.ts";
 import { Button } from "../ui/button.tsx";
 import { Dialog } from "../ui/dialog.tsx";
+import { StatusBar, StatusBarGroup, StatusBarSegment } from "../ui/status-bar.tsx";
 export { applicationPaletteKeyAction } from "./application-palette-input.ts";
 export { applicationShellViewport } from "./application-shell-viewport.ts";
 
@@ -77,6 +81,8 @@ export interface ApplicationShellViewProps {
   readonly sessions: readonly string[] | Accessor<readonly string[]>;
   readonly selectedSession: Accessor<number>;
   readonly bootstrapNote: Accessor<string | null>;
+  readonly catalogPhase?: Accessor<"loading" | "live" | "unavailable">;
+  readonly catalogNote?: Accessor<string | null>;
   readonly paletteOpen: Accessor<boolean>;
   readonly paneRenameDialog?: Accessor<ApplicationPaneRenameDraft | null>;
   readonly paletteSelection?: Accessor<number>;
@@ -101,6 +107,7 @@ export interface ApplicationShellViewProps {
     confirmed?: boolean,
   ) => void;
   readonly onCreateWindow?: () => void;
+  readonly onCreateSession?: () => void;
   readonly onBeginPaneRename?: (paneId: string, currentName: string) => void;
   readonly onCancelPaneRename?: () => void;
   readonly paletteCloseArmed?: Accessor<boolean>;
@@ -116,6 +123,112 @@ export interface ApplicationShellViewProps {
   readonly onSelectionKeyOwner?: TerminalWorkspaceProps["onSelectionKeyOwner"];
   readonly onWindowPresented?: TerminalWorkspaceProps["onWindowPresented"];
   readonly onInteraction?: () => void;
+}
+
+const CATALOG_VIEWS: readonly ShellChromeView[] = [
+  { id: "home", title: "Home", glyph: "⌂", shortcut: { key: "f1", label: "F1" } },
+  {
+    id: "terminals",
+    title: "Terminals",
+    glyph: "●",
+    shortcut: { key: "f2", label: "F2" },
+  },
+] as const;
+
+function CatalogTerminalSurface(props: {
+  readonly phase: "loading" | "live" | "unavailable";
+  readonly sessionCount: number;
+  readonly note: string | null;
+  readonly width: number;
+  readonly height: number;
+  readonly theme: ApplicationShellViewProps["theme"];
+  readonly onCreateSession?: () => void;
+}): JSX.Element {
+  const title = () => {
+    if (props.phase === "loading") return "Finding tmux sessions…";
+    if (props.phase === "unavailable") return "Reconnecting to tmux-ide…";
+    if (props.sessionCount === 0) return "No tmux sessions are running";
+    return `${props.sessionCount} tmux ${props.sessionCount === 1 ? "session" : "sessions"} available`;
+  };
+  const detail = () => {
+    if (props.note && !props.note.startsWith("Discovering live tmux sessions")) return props.note;
+    if (props.phase === "live" && props.sessionCount === 0)
+      return "Start a local workspace here, or open tmux in another terminal.";
+    if (props.sessionCount > 0) return "Choose a session from the sidebar to open it.";
+    return null;
+  };
+  return (
+    <box
+      width={props.width}
+      height={props.height}
+      flexDirection="column"
+      justifyContent="center"
+      alignItems="center"
+      gap={1}
+      overflow="hidden"
+    >
+      <text fg={props.theme.roles.text.primary}>
+        <strong>Terminals</strong>
+      </text>
+      <text fg={props.theme.roles.text.secondary}>{clipTerminal(title(), props.width - 4)}</text>
+      <Show when={detail()}>
+        {(message) => (
+          <text fg={props.theme.roles.text.muted}>{clipTerminal(message(), props.width - 4)}</text>
+        )}
+      </Show>
+      <Show when={props.phase === "live" && props.sessionCount === 0 && props.onCreateSession}>
+        <Button
+          theme={props.theme}
+          label="New local session"
+          shortcut="N"
+          variant="primary"
+          onPress={props.onCreateSession}
+        />
+      </Show>
+    </box>
+  );
+}
+
+function CatalogStatusStrip(props: {
+  readonly width: number;
+  readonly surface: RootSurface;
+  readonly phase: "loading" | "live" | "unavailable";
+  readonly sessionCount: number;
+  readonly note: string | null;
+  readonly theme: ApplicationShellViewProps["theme"];
+}): JSX.Element {
+  const context = () => (props.surface === "home" ? "Home" : "Terminals");
+  const message = () => {
+    if (props.note && !props.note.startsWith("Discovering live tmux sessions")) return props.note;
+    if (props.phase === "loading") return "Finding tmux sessions";
+    if (props.phase === "unavailable") return "Reconnecting to daemon";
+    return props.sessionCount === 0
+      ? "No sessions running"
+      : `${props.sessionCount} ${props.sessionCount === 1 ? "session" : "sessions"} live`;
+  };
+  const hints = () =>
+    props.phase === "live" && props.sessionCount === 0
+      ? "N new session · F5 commands"
+      : "F5 commands";
+  const contextWidth = () => Math.min(14, Math.max(6, context().length + 2));
+  const hintWidth = () => Math.min(34, Math.max(13, hints().length + 2));
+  return (
+    <StatusBar theme={props.theme} width={props.width}>
+      <StatusBarGroup width={contextWidth()}>
+        <StatusBarSegment theme={props.theme} label={context()} width={contextWidth()} active />
+      </StatusBarGroup>
+      <StatusBarGroup grow>
+        <StatusBarSegment
+          theme={props.theme}
+          label={message()}
+          tone={props.phase === "unavailable" ? "blocked" : undefined}
+        />
+      </StatusBarGroup>
+      <StatusBarGroup width={hintWidth()} align="end">
+        <StatusBarSegment theme={props.theme} label={hints()} width={hintWidth()} strong />
+      </StatusBarGroup>
+    </StatusBar>
+  );
 }
 
 function HomeSurface(props: {
@@ -440,13 +553,6 @@ function ProductionSidebar(props: {
         </For>
       </Show>
       <box flexGrow={1} />
-      <box height={1} width={width()} flexDirection="row" overflow="hidden">
-        <text fg={props.theme.roles.text.muted}>{props.shell.sidebarHint.pre}</text>
-        <text fg={props.theme.roles.text.primary} bg={props.theme.roles.selection.hover}>
-          {props.shell.sidebarHint.btn}
-        </text>
-        <text fg={props.theme.roles.text.muted}>{props.shell.sidebarHint.post}</text>
-      </box>
     </box>
   );
 }
@@ -458,6 +564,24 @@ function CatalogShell(props: ApplicationShellViewProps): JSX.Element {
   const chrome = createMemo(() =>
     shellChromeLayout(props.dimensions().width, props.dimensions().height, 28),
   );
+  // Catalog navigation is the first-run wayfinding surface. Keep its two
+  // labels visible at compact widths; the icon-only terminal chrome is useful
+  // once a workspace needs every column, but is cryptic before one exists.
+  const catalogChromeVariant = () =>
+    chrome().variant === "compact" ? ("standard" as const) : chrome().variant;
+  const phase = (): "loading" | "live" | "unavailable" =>
+    props.catalogPhase?.() ?? (sessions().length > 0 ? "live" : "loading");
+  const note = () => props.bootstrapNote() ?? props.catalogNote?.() ?? null;
+  const homeStatus = () => {
+    if (phase() === "loading") return "finding sessions";
+    if (phase() === "unavailable") return "reconnecting";
+    return sessions().length === 0 ? "ready" : `${sessions().length} available`;
+  };
+  const topStatus = () => {
+    if (phase() === "loading") return " ○ finding sessions ";
+    if (phase() === "unavailable") return " ! reconnecting ";
+    return sessions().length === 0 ? " ○ no sessions " : ` ● ${sessions().length} live `;
+  };
   return (
     <box
       width={props.dimensions().width}
@@ -466,37 +590,25 @@ function CatalogShell(props: ApplicationShellViewProps): JSX.Element {
       overflow="hidden"
       backgroundColor={props.theme.roles.surfaces.canvas}
     >
-      <box
-        height={1}
+      <ApplicationCatalogTabBar
+        theme={props.theme}
         width={props.dimensions().width}
-        flexDirection="row"
-        backgroundColor={props.theme.roles.surfaces.header}
-      >
-        <text fg={props.theme.roles.text.link}>
-          <strong> tmux-ide </strong>
-        </text>
-        <text
-          fg={
-            props.surface() === "home"
-              ? props.theme.roles.selection.selectionText
-              : props.theme.roles.text.muted
-          }
-          onMouseDown={() => props.onOpenSurface("home", "mouse")}
-        >
-          {" F1 Home "}
-        </text>
-        <text
-          fg={
-            props.surface() === "terminals"
-              ? props.theme.roles.selection.selectionText
-              : props.theme.roles.text.muted
-          }
-          onMouseDown={() => props.onOpenSurface("terminals", "mouse")}
-        >
-          {" F2 Terminals "}
-        </text>
-        <text fg={props.theme.roles.text.muted}> catalog · no workspace authority </text>
-      </box>
+        variant={catalogChromeVariant()}
+        views={CATALOG_VIEWS}
+        activeViewId={props.surface()}
+        hoveredIndex={null}
+        rightChips={[
+          {
+            id: "catalog-status",
+            label: topStatus(),
+            attention: phase() === "unavailable",
+            context: phase() === "loading",
+          },
+        ]}
+        onSelectView={(viewId) => {
+          if (viewId === "home" || viewId === "terminals") props.onOpenSurface(viewId, "mouse");
+        }}
+      />
       <box height={chrome().sidebar.height} flexDirection="row" overflow="hidden">
         <box
           width={chrome().sidebar.width}
@@ -529,8 +641,10 @@ function CatalogShell(props: ApplicationShellViewProps): JSX.Element {
               </box>
             )}
           </For>
+          <Show when={sessions().length === 0}>
+            <text fg={props.theme.roles.text.muted}> No sessions yet</text>
+          </Show>
           <box flexGrow={1} />
-          <text fg={props.theme.roles.text.muted}>F5 palette · ^q quit</text>
         </box>
         <box
           width={chrome().main.width}
@@ -542,25 +656,21 @@ function CatalogShell(props: ApplicationShellViewProps): JSX.Element {
             <Show
               when={props.surface() === "home"}
               fallback={
-                <HomeSurface
-                  project="Terminals"
-                  status={props.generationStatus()}
-                  note={props.bootstrapNote() ?? "Select a session from Home to connect."}
+                <CatalogTerminalSurface
+                  phase={phase()}
+                  sessionCount={sessions().length}
+                  note={note()}
                   width={chrome().main.width}
                   height={Math.max(1, chrome().main.height - chrome().status.height)}
-                  sessionCount={sessions().length}
-                  session={sessions()[props.selectedSession()] ?? null}
-                  branded={false}
                   theme={props.theme}
-                  onOpenTerminals={() => props.onOpenSurface("terminals", "mouse")}
-                  onOpenCommands={() => props.onSetPaletteOpen(true, "mouse")}
+                  onCreateSession={props.onCreateSession}
                 />
               }
             >
               <HomeSurface
                 project="tmux-ide"
-                status={props.generationStatus()}
-                note={props.bootstrapNote()}
+                status={homeStatus()}
+                note={note()}
                 width={chrome().main.width}
                 height={Math.max(1, chrome().main.height - chrome().status.height)}
                 sessionCount={sessions().length}
@@ -572,11 +682,16 @@ function CatalogShell(props: ApplicationShellViewProps): JSX.Element {
               />
             </Show>
           </box>
-          <box height={chrome().status.height} backgroundColor={props.theme.roles.surfaces.header}>
-            <text fg={props.theme.roles.text.muted}>
-              {` ${props.generationStatus()} · ↑↓ choose · Enter open`}
-            </text>
-          </box>
+          <Show when={chrome().status.height > 0}>
+            <CatalogStatusStrip
+              width={chrome().status.width}
+              surface={props.surface()}
+              phase={phase()}
+              sessionCount={sessions().length}
+              note={note()}
+              theme={props.theme}
+            />
+          </Show>
         </box>
       </box>
       <Show when={props.paletteOpen()}>
@@ -670,7 +785,7 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
           <ApplicationShell
             theme={props.theme}
             projection={shell}
-            help="^o pane · ^t window · F5 split/close · ^q put away"
+            help="F5 commands"
             note={props.bootstrapNote() ?? props.generationStatus()}
             showToolStatus={false}
             sidebar={

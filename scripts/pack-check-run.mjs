@@ -807,10 +807,28 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   // The preceding first-run gate killed the isolated tmux server. Its host
   // sessions were deliberately `_tmux-ide-*`, so the catalog starts truly empty.
   const empty = await launchApp();
+  // `launchApp` recreates the isolated tmux server in order to host the TUI.
+  // The elected daemon is intentionally pinned to the server generation that
+  // existed before that launch, so restart it before asserting the empty
+  // catalog. This models the product's daemon-generation recovery instead of
+  // weakening socket-authority validation in production code.
+  initialOwner.kill("SIGTERM");
+  await waitForChild(initialOwner);
+  const emptyCatalogOwner = spawnInstalledCli(installedCli);
+  await observe(
+    "daemon binds empty chooser tmux server",
+    20_000,
+    () => {
+      const infoPath = join(homeDir, ".tmux-ide", "daemon.json");
+      if (!existsSync(infoPath)) return false;
+      return JSON.parse(readFileSync(infoPath, "utf8")).pid === emptyCatalogOwner.pid;
+    },
+    empty.diagnostics,
+  );
   await observe(
     "no-session chooser",
     10_000,
-    () => capture(empty.targetPane).includes("no workspace authority"),
+    () => capture(empty.targetPane).includes("No live tmux sessions yet"),
     empty.diagnostics,
   );
   await cleanQuit(empty);
@@ -819,8 +837,8 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   // The first-run gate intentionally killed and recreated the isolated tmux
   // server. Restart the installed daemon so its tmux observer is bound to the
   // new server generation before asserting catalog-driven chooser behavior.
-  initialOwner.kill("SIGTERM");
-  await waitForChild(initialOwner);
+  emptyCatalogOwner.kill("SIGTERM");
+  await waitForChild(emptyCatalogOwner);
   const catalogOwner = spawnInstalledCli(installedCli);
   await observe(
     "daemon binds recreated tmux server",

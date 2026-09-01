@@ -31,6 +31,7 @@ export interface ShellTabBarProps {
     attention?: boolean;
   }[];
   navigationFocused?: boolean;
+  onSelectView?: (viewId: string) => void;
 }
 
 export function ShellTabBar(props: ShellTabBarProps) {
@@ -71,7 +72,16 @@ export function ShellTabBar(props: ShellTabBarProps) {
               attention: tab.attention,
             });
           return (
-            <box height={1} backgroundColor={palette().bg} flexDirection="row">
+            <box
+              height={1}
+              backgroundColor={palette().bg}
+              flexDirection="row"
+              onMouseDown={(event) => {
+                if (event.button !== 0 || !props.onSelectView) return;
+                event.stopPropagation();
+                props.onSelectView(tab.id);
+              }}
+            >
               <Show
                 when={tab.attention && tab.label.includes("!")}
                 fallback={

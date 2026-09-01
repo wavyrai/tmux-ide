@@ -75,6 +75,32 @@ afterEach(() => {
 });
 
 describe("/ws/events fleet composition invalidation", () => {
+  it("publishes an empty catalog baseline before the first tmux server exists", async () => {
+    setFleetFactsTmuxRunner(() => {
+      throw new Error("no server running on /tmp/tmux-501/default");
+    });
+
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity, { mode: "semantic" });
+    socket.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        interests: [{ resource: "workspace-catalog", workspaceName: null }],
+        legacyEvents: false,
+        interestRevision: 1,
+      }),
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(
+      frames(socket).some(
+        (frame) => frame.type === "resource.interests-ack" && frame.interestRevision === 1,
+      ),
+    ).toBe(true);
+    socket.disconnect();
+  });
+
   it("pins Home catalog invalidation to its daemon tmux authority", async () => {
     let sessionRows = "alpha\t0\t41\t$0\t100\t@1\t%1\t1\t1\tpane.a\twindow.a";
     const runTmux = (args: readonly string[]) => {

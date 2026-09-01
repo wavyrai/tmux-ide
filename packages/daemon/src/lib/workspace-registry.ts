@@ -350,6 +350,11 @@ function workspaceRegistryInventoryFailure(error: unknown): WorkspaceRegistrySes
   return { status: "ambiguous", detail };
 }
 
+/** True only when tmux itself (or its pinned socket) is currently absent. */
+export function isTmuxServerUnavailableError(error: unknown): boolean {
+  return workspaceRegistryInventoryFailure(error).status === "unavailable";
+}
+
 /** Read an inventory through a daemon-generation-pinned tmux runner. */
 export function readWorkspaceRegistrySessionInventory(
   runTmux: (args: readonly string[]) => string,

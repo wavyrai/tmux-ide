@@ -1,6 +1,11 @@
 /* @jsxImportSource @opentui/solid */
 import type { JSX } from "solid-js";
-import { ShellMiniSidebar, ShellStatusStrip, ShellTabBar } from "../shell-chrome-view.tsx";
+import {
+  ShellMiniSidebar,
+  ShellStatusStrip,
+  ShellTabBar,
+  type ShellTabBarProps,
+} from "../shell-chrome-view.tsx";
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import type { ApplicationShellProjection } from "./application-shell.ts";
 
@@ -21,6 +26,11 @@ export interface ApplicationShellProps {
     attention?: boolean;
   }[];
   children: JSX.Element;
+}
+
+/** Catalog chrome uses the same canonical tab owner before a workspace exists. */
+export function ApplicationCatalogTabBar(props: ShellTabBarProps) {
+  return <ShellTabBar {...props} />;
 }
 
 /**

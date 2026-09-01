@@ -20563,6 +20563,9 @@ function workspaceRegistryInventoryFailure(error) {
   }
   return { status: "ambiguous", detail };
 }
+function isTmuxServerUnavailableError(error) {
+  return workspaceRegistryInventoryFailure(error).status === "unavailable";
+}
 function readWorkspaceRegistrySessionInventory(runTmux2) {
   try {
     const raw = runTmux2(["list-sessions", "-F", "#{session_name}"]);
@@ -24989,8 +24992,8 @@ function setFleetFactsTmuxRunner(runTmux2) {
   sessionCompositionReaderOverride = runTmux2 ? async () => {
     try {
       return parseSessionCompositionFacts(runTmux2(SESSION_COMPOSITION_TMUX_ARGS));
-    } catch {
-      return null;
+    } catch (error) {
+      return isTmuxServerUnavailableError(error) ? parseSessionCompositionFacts("") : null;
     }
   } : null;
   agentStateReaderOverride = runTmux2 ? async () => {

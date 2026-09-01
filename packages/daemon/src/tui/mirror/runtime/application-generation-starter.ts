@@ -89,6 +89,17 @@ export function createApplicationAgentNavigator(options: {
   let navigationToken = 0;
   return async (sessionName: string, paneId: string, source: Source = "mouse") => {
     const token = ++navigationToken;
+    const currentOwner = options.sessionOwner();
+    if (
+      currentOwner.sessionName() === sessionName &&
+      applicationGenerationNavigationKey(currentOwner.snapshot()) !== null
+    ) {
+      // Sidebar agents belong to the already-live workspace. Select their pane
+      // before returning control to OpenTUI so the very next key cannot leak to
+      // the pane that was focused before the click.
+      options.selectPane(paneId);
+      return true;
+    }
     // Exact agent focus replaces the chooser's generic first-pane focus. This
     // prevents two competing semantic selections from racing after a switch.
     const opened = await options.startGeneration(sessionName, false, source, false);

@@ -165,7 +165,7 @@ export function shellNavigationPresentation(
   focused: boolean,
 ): ShellNavigationPresentation {
   if (variant === "compact") return { label: "", width: 0, focused };
-  const label = ` ${focused ? "▸" : " "} workspace `;
+  const label = ` ${focused ? "▸" : " "} tmux-ide `;
   return { label, width: terminalDisplayWidth(label), focused };
 }
 

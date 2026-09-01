@@ -13,11 +13,11 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
 
 …
 
-  F5 · ^q quit       Terminals  ready                            F5 split/close"
+                     Terminals  ready                               F5 commands"
 `;
 
 exports[`production ApplicationShellView retains shell, window strip, pane chrome, and canvas at %sx%s 2`] = `
-"   workspace   ⌂ Home  ●❯ Terminals                                                                                live
+"   tmux-ide   ⌂ Home  ●❯ Terminals                                                                                 live
   tmux-ide                   0:main [WORKING]                                                              + New window
  ● main                     ● Codex                    [WORKING]  ⋯
  ○ website                  CANONICAL-CELL
@@ -29,11 +29,11 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
 
 …
 
-  F5 palette · ^q quit       Terminals / terminal  ready                                   F5 split/close · ^q put away"
+                             Terminals / terminal  ready                                                    F5 commands"
 `;
 
 exports[`production ApplicationShellView retains shell, window strip, pane chrome, and canvas at %sx%s 3`] = `
-"   workspace  F1  ⌂ Home  F2 ●❯ Terminals                                                                                                                                                          live
+"   tmux-ide  F1  ⌂ Home  F2 ●❯ Terminals                                                                                                                                                           live
   tmux-ide                   0:main [WORKING]                                                                                                                                              + New window
  ● main                     ● Codex                    [WORKING]  ⋯
  ○ website                  CANONICAL-CELL
@@ -45,7 +45,7 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
 
 …
 
-  F5 palette · ^q quit       tmux-ide / Terminals / terminal  ready                                                                                                        F5 split/close · ^q put away"
+                             tmux-ide / Terminals / terminal  ready                                                                                                                         F5 commands"
 `;
 
 exports[`production ApplicationShellView reacts palette geometry through narrow live resizes 1`] = `
@@ -57,21 +57,21 @@ exports[`production ApplicationShellView reacts palette geometry through narrow 
  A│ New terminal window  │al
  •│ Split pane right     │ F
   ╰──────────────────────╯
-  F5 · ^q quit   Te…    F5 …"
+                 Te…    F5 …"
 `;
 
 exports[`production ApplicationShellView reacts palette geometry through narrow live resizes 2`] = `
 "  ⌂  ●❯        live
- ●╭──────────────╮
- ○│ Commands     │s…
-  │ › F1 Home    │i…
- A│ F2 Terminals │
- •╰──────────────╯rm
-  F5 · ^q quit  mman"
+  ╭──────────────╮
+ ●│ Commands     │s…
+ ○│ › F1 Home    │i…
+  │ F2 Terminals │
+ A╰──────────────╯rm
+ •Cod… [WORKING]mman"
 `;
 
 exports[`production ApplicationShellView preserves canonical attention while prioritizing mixed window activity 1`] = `
-"   workspace   ⌂ Home  ●❯ Terminals                                                                                live
+"   tmux-ide   ⌂ Home  ●❯ Terminals                                                                                 live
   tmux-ide                   0:main [WORKING]                                                              + New window
  ● main                     ● Codex                    [WORKING]  ⋯ ○ Scout                       [IDLE]  ⋯
  ○ website                  CANONICAL-CELL                          CANONICAL-CELL
@@ -83,5 +83,5 @@ exports[`production ApplicationShellView preserves canonical attention while pri
 
 …
 
-  F5 palette · ^q quit       Terminals / terminal  ready                                   F5 split/close · ^q put away"
+                             Terminals / terminal  ready                                                    F5 commands"
 `;

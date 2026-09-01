@@ -159,6 +159,22 @@ describe("application generation starter", () => {
 });
 
 describe("application agent navigation", () => {
+  it("selects an agent in the current live session synchronously before the next input", async () => {
+    const snapshot = generation("daemon-main", 3);
+    const startGeneration = vi.fn();
+    const selected: string[] = [];
+    const navigate = createApplicationAgentNavigator({
+      startGeneration,
+      sessionOwner: () => sessionOwner({ sessionName: "main", snapshot }),
+      selectPane: (paneId) => selected.push(paneId),
+    });
+
+    const navigation = navigate("main", "pane.agent");
+    expect(selected).toEqual(["pane.agent"]);
+    await expect(navigation).resolves.toBe(true);
+    expect(startGeneration).not.toHaveBeenCalled();
+  });
+
   it("opens the owning session before selecting the exact semantic pane", async () => {
     const snapshot = generation("daemon-agents", 4);
     const state = {
@@ -234,9 +250,17 @@ describe("application agent navigation", () => {
     const openedGeneration = generation("daemon-a", 8);
     const replacement = generation("daemon-a", 9);
     const selectPane = vi.fn();
+    const state = {
+      sessionName: "main" as string | null,
+      snapshot: generation("daemon-main", 1) as OpenTuiGenerationHostSnapshot | null,
+    };
     const navigate = createApplicationAgentNavigator({
-      startGeneration: async (sessionName) => result(sessionName, openedGeneration),
-      sessionOwner: () => sessionOwner({ sessionName: "agents", snapshot: replacement }),
+      startGeneration: async (sessionName) => {
+        state.sessionName = sessionName;
+        state.snapshot = replacement;
+        return result(sessionName, openedGeneration);
+      },
+      sessionOwner: () => sessionOwner(state),
       selectPane,
     });
 

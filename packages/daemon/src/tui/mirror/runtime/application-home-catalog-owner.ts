@@ -6,13 +6,17 @@ import {
   moveHomeCatalogSelection,
   selectedHomeCatalogIndex,
   type ApplicationHomeCatalog,
+  type ApplicationHomeCatalogSnapshot,
 } from "./application-home-catalog.ts";
+import { createFleetSession } from "./fleet-lifecycle-client.ts";
 
 export interface ApplicationHomeCatalogOwner {
+  readonly phase: Accessor<ApplicationHomeCatalogSnapshot["phase"]>;
   readonly sessionNames: Accessor<readonly string[]>;
   readonly selectedSessionIndex: Accessor<number>;
   readonly note: Accessor<string | null>;
   readonly start: () => void;
+  readonly createLocalSession: () => Promise<void>;
   readonly handleKey: (name: string) => boolean;
 }
 
@@ -20,6 +24,7 @@ export interface ApplicationHomeCatalogOwnerOptions {
   readonly lifecycle: Pick<TuiApplicationLifecycle, "registerCloser">;
   readonly automaticOpen: boolean;
   readonly startGeneration: (sessionName: string) => Promise<unknown> | void;
+  readonly setNote?: (note: string | null) => void;
   readonly catalog?: ApplicationHomeCatalog;
 }
 
@@ -33,6 +38,29 @@ export function createApplicationHomeCatalogOwner(
   const sessionNames = () => sessions().map(({ name }) => name);
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(null);
   const selectedSessionIndex = () => selectedHomeCatalogIndex(sessions(), selectedSessionId());
+  let creatingLocalSession = false;
+  const createLocalSession = async (): Promise<void> => {
+    if (creatingLocalSession) return;
+    creatingLocalSession = true;
+    options.setNote?.("Creating tmux-ide-local…");
+    try {
+      const created = await createFleetSession({
+        displayName: "tmux-ide-local",
+        cwd: process.cwd(),
+      });
+      if (!created) throw new Error("The tmux-ide daemon is unavailable.");
+      options.setNote?.(`Opening ${created.displayName}…`);
+      await options.startGeneration(created.workspaceName);
+    } catch (error) {
+      options.setNote?.(
+        error instanceof Error
+          ? `Could not create a local session: ${error.message}`
+          : "Could not create a local session.",
+      );
+    } finally {
+      creatingLocalSession = false;
+    }
+  };
   let automaticOpen = options.automaticOpen;
   const stop = catalog.subscribe((next) => {
     setSnapshot(next);
@@ -59,10 +87,12 @@ export function createApplicationHomeCatalogOwner(
   onCleanup(close);
 
   return Object.freeze({
+    phase: () => snapshot().phase,
     sessionNames,
     selectedSessionIndex,
     note: () => snapshot().note,
     start: () => catalog.start(),
+    createLocalSession,
     handleKey(name: string) {
       if (sessions().length === 0) return false;
       if (name === "up" || name === "down") {

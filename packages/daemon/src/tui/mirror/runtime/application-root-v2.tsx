@@ -298,6 +298,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           lifecycle,
           automaticOpen: config.target === null,
           startGeneration,
+          setNote: setBootstrapNote,
         });
         const openAgent = createApplicationAgentNavigator({
           startGeneration: generationStarter,
@@ -373,6 +374,15 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             return;
           }
           if (activeSurface() === "home" && homeCatalog.handleKey(name)) return;
+          if (
+            (activeSurface() === "home" || activeSurface() === "terminals") &&
+            name === "n" &&
+            homeCatalog.phase() === "live" &&
+            homeCatalog.sessionNames().length === 0
+          ) {
+            void homeCatalog.createLocalSession();
+            return;
+          }
           if (activeSurface() === "terminals" && interaction.routeWorkspaceKey(event)) return;
           if (
             activeSurface() === "terminals" &&
@@ -415,7 +425,9 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             generationStatus={() => shell().status}
             sessions={homeCatalog.sessionNames}
             selectedSession={homeCatalog.selectedSessionIndex}
-            bootstrapNote={() => bootstrapNote() ?? homeCatalog.note()}
+            bootstrapNote={bootstrapNote}
+            catalogPhase={homeCatalog.phase}
+            catalogNote={homeCatalog.note}
             paletteOpen={() => shell().semantic?.focus.palette.open ?? shell().localPaletteOpen}
             paneRenameDialog={paneRename.draft}
             paletteSelection={paletteCommands.selection}
@@ -440,6 +452,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             onSetPaletteOpen={recoverHostFocus(paletteCommands.setOpen)}
             onPaletteActivate={recoverHostFocus(paletteCommands.activate)}
             onCreateWindow={recoverHostFocus(() => paletteCommands.activate("new-window", "mouse"))}
+            onCreateSession={recoverHostFocus(() => void homeCatalog.createLocalSession())}
             onBeginPaneRename={recoverHostFocus(paneRename.begin)}
             onCancelPaneRename={recoverHostFocus(paneRename.cancel)}
             onSelectPane={recoverHostFocus(interaction.selectPane)}

@@ -365,8 +365,66 @@ describe("production ApplicationShellView", () => {
     expect(frame).toContain("Sessions");
     expect(frame).toContain("ordinary-one");
     expect(frame).toContain("› ordinary");
-    expect(frame).toContain("no workspace authority");
+    expect(frame).toContain("2 sessions live");
+    expect(frame).not.toContain("no workspace authority");
+    const footer = frame.trimEnd().split("\n").at(-1)!;
+    expect(footer).not.toContain("↑↓ choose");
+    expect(footer).not.toContain("Enter open");
     expect(frame).toContain("Command palette");
+    setup.renderer.destroy();
+  });
+
+  it("turns an authoritative empty catalog into an actionable first-run screen", async () => {
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const palette = createTerminalPaletteProjection(theme);
+    let createCount = 0;
+    const setup = await renderForTest(
+      () => (
+        <ApplicationShellView
+          dimensions={() => ({ width: 80, height: 24 })}
+          surface={() => "terminals"}
+          semantic={() => null}
+          generationStatus={() => "unavailable"}
+          sessions={[]}
+          selectedSession={() => 0}
+          bootstrapNote={() => null}
+          catalogPhase={() => "live"}
+          catalogNote={() => null}
+          paletteOpen={() => false}
+          terminalRendererSource={() => null}
+          layout={() => ({ current: null, windows: [] })}
+          focusedPane={() => null}
+          theme={theme}
+          palette={palette}
+          onOpenSurface={() => undefined}
+          onOpenSession={() => undefined}
+          onSetPaletteOpen={() => undefined}
+          onCreateSession={() => {
+            createCount += 1;
+          }}
+          onSelectPane={() => undefined}
+          onResizePreview={() => undefined}
+          onResizePane={() => undefined}
+        />
+      ),
+      { width: 80, height: 24 },
+    );
+
+    await setup.renderOnce();
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("tmux-ide");
+    expect(frame).toContain("Home");
+    expect(frame).toContain("Terminals");
+    expect(frame).toContain("No tmux sessions are running");
+    expect(frame).toContain("New local session N");
+    expect(frame).toContain("N new session · F5 commands");
+    expect(frame).not.toContain("Discovering live tmux sessions");
+
+    const buttonRow = frame.split("\n").findIndex((line) => line.includes("New local session N"));
+    const buttonColumn = frame.split("\n")[buttonRow]!.indexOf("New local session N");
+    await setup.mockMouse.click(buttonColumn, buttonRow, MouseButtons.LEFT);
+    await setup.renderOnce();
+    expect(createCount).toBe(1);
     setup.renderer.destroy();
   });
 

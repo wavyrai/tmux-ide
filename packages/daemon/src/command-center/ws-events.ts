@@ -27,7 +27,10 @@ import {
 } from "./daemon-fleet-facts-observer.ts";
 import { agentIdForPaneStamp } from "./resources/application-shell.ts";
 import { projectRegistryEmitter } from "../lib/project-registry.ts";
-import { getDefaultWorkspaceRegistry } from "../lib/workspace-registry.ts";
+import {
+  getDefaultWorkspaceRegistry,
+  isTmuxServerUnavailableError,
+} from "../lib/workspace-registry.ts";
 import {
   DaemonEventClientFrameSchemaZ,
   DaemonEventResourceChangedFrameSchemaZ,
@@ -426,8 +429,12 @@ export function setFleetFactsTmuxRunner(
     ? async () => {
         try {
           return parseSessionCompositionFacts(runTmux(SESSION_COMPOSITION_TMUX_ARGS));
-        } catch {
-          return null;
+        } catch (error) {
+          // A daemon may legitimately precede the first tmux server. Socket
+          // absence is an authoritative empty fleet baseline, not a failed
+          // observation: catalog clients must be allowed to render their
+          // actionable first-run state while the observer waits for tmux.
+          return isTmuxServerUnavailableError(error) ? parseSessionCompositionFacts("") : null;
         }
       }
     : null;
