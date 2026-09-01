@@ -104,7 +104,7 @@ describe("FleetLifecycleAuthority", () => {
       "workspace",
       "-c",
       canonicalCwd,
-      'exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 "${SHELL:-/bin/sh}" -l',
+      "exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' \"${SHELL:-/bin/sh}\" -l",
     ]);
     expect(calls).toContainEqual([
       "set-environment",
@@ -304,7 +304,7 @@ describe("FleetLifecycleAuthority", () => {
       "COLORFGBG=15;0",
       "-c",
       cwd,
-      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 claude",
+      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' claude",
     ]);
     expect(calls).toContainEqual(["set-environment", "-r", "-t", "=demo", "NO_COLOR"]);
     expect(calls).toContainEqual(["set-environment", "-t", "=demo", "COLORTERM", "truecolor"]);
@@ -361,7 +361,7 @@ describe("FleetLifecycleAuthority", () => {
       "#{pane_id}",
       "-c",
       realpathSync(cwd),
-      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 claude",
+      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' claude",
     ]);
     expect(calls).toContainEqual(["kill-session", "-t", expect.stringMatching(/^review-/u)]);
   });

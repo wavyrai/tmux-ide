@@ -219,7 +219,7 @@ describe("spawnAgentArgs", () => {
       "COLORFGBG=15;0",
       "-c",
       "/proj",
-      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 claude",
+      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' claude",
     ]);
     expect(spawnAgentArgs("window", { session: "web" }, null, "claude")).toEqual([
       "new-window",
@@ -232,7 +232,7 @@ describe("spawnAgentArgs", () => {
       "COLORTERM=truecolor",
       "-e",
       "COLORFGBG=15;0",
-      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 claude",
+      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' claude",
     ]);
   });
 
@@ -251,7 +251,7 @@ describe("spawnAgentArgs", () => {
       "COLORFGBG=15;0",
       "-c",
       "/proj",
-      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 codex",
+      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' codex",
     ]);
     expect(spawnAgentArgs("split-v", { session: "web" }, null, "codex")).toEqual([
       "split-window",
@@ -265,7 +265,7 @@ describe("spawnAgentArgs", () => {
       "COLORTERM=truecolor",
       "-e",
       "COLORFGBG=15;0",
-      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 codex",
+      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' codex",
     ]);
   });
 });
@@ -286,7 +286,7 @@ describe("spawnSessionArgs", () => {
       "COLORFGBG=15;0",
       "-c",
       "/proj",
-      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 claude",
+      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' claude",
     ]);
     expect(spawnSessionArgs("api", null, "claude")).toEqual([
       "new-session",
@@ -300,7 +300,7 @@ describe("spawnSessionArgs", () => {
       "COLORTERM=truecolor",
       "-e",
       "COLORFGBG=15;0",
-      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 claude",
+      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' claude",
     ]);
   });
 });
@@ -400,7 +400,7 @@ describe("respawnArgs", () => {
       "COLORFGBG=15;0",
       "-c",
       "/proj",
-      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 claude",
+      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' claude",
     ]);
     expect(respawnArgs("%7", "claude", null)).toEqual([
       "respawn-pane",
@@ -411,7 +411,7 @@ describe("respawnArgs", () => {
       "COLORTERM=truecolor",
       "-e",
       "COLORFGBG=15;0",
-      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 claude",
+      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' claude",
     ]);
   });
 });
@@ -428,7 +428,7 @@ describe("stop/restart argv", () => {
         "-t",
         "%7",
         "-l",
-        "env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 claude --resume",
+        "env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' claude --resume",
       ],
       ["send-keys", "-t", "%7", "Enter"],
     ]);

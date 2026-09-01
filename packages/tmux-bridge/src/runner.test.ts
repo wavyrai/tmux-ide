@@ -199,7 +199,7 @@ describe("createDetachedSession", () => {
     expect(args.includes("200")).toBeTruthy(); // default cols
     expect(args.includes("50")).toBeTruthy(); // default lines
     expect(args.at(-1)).toBe(
-      'exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 "${SHELL:-/bin/sh}" -l',
+      "exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' \"${SHELL:-/bin/sh}\" -l",
     );
   });
 
@@ -210,7 +210,7 @@ describe("createDetachedSession", () => {
     expect(args.includes("300")).toBeTruthy();
     expect(args.includes("80")).toBeTruthy();
     expect(args.at(-1)).toBe(
-      'exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 "${SHELL:-/bin/sh}" -l',
+      "exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' \"${SHELL:-/bin/sh}\" -l",
     );
   });
 });

@@ -10742,7 +10742,7 @@ function createDetachedSession(session, cwd, { cols, lines } = {}) {
       String(cols ?? 200),
       "-y",
       String(lines ?? 50),
-      'exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 "${SHELL:-/bin/sh}" -l'
+      `exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' "\${SHELL:-/bin/sh}" -l`
     ],
     { encoding: "utf-8" }
   ).trim();
@@ -27243,7 +27243,7 @@ function prepareTmuxTruecolorEnvironment(runTmux2, sessionName) {
   for (const args of tmuxTruecolorEnvironmentCommands(sessionName)) runTmux2(args);
 }
 function truecolorShellCommand(command2) {
-  return `env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 ${command2}`;
+  return `env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' ${command2}`;
 }
 var TMUX_TRUECOLOR_ENVIRONMENT_ARGS, TMUX_TRUECOLOR_INTERACTIVE_SHELL_COMMAND;
 var init_tmux_terminal_color = __esm({
@@ -27255,7 +27255,7 @@ var init_tmux_terminal_color = __esm({
       "-e",
       "COLORFGBG=15;0"
     ];
-    TMUX_TRUECOLOR_INTERACTIVE_SHELL_COMMAND = 'exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 "${SHELL:-/bin/sh}" -l';
+    TMUX_TRUECOLOR_INTERACTIVE_SHELL_COMMAND = `exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' "\${SHELL:-/bin/sh}" -l`;
   }
 });
 

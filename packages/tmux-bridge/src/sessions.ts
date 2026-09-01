@@ -96,7 +96,7 @@ export function createDetachedSession(
         String(cols ?? 200),
         "-y",
         String(lines ?? 50),
-        'exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 "${SHELL:-/bin/sh}" -l',
+        "exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' \"${SHELL:-/bin/sh}\" -l",
       ],
       { encoding: "utf-8" },
     ) as string

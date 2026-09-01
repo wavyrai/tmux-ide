@@ -12,7 +12,7 @@ export const TMUX_TRUECOLOR_ENVIRONMENT_ARGS = [
  * therefore clear a hostile global `NO_COLOR` in its command environment.
  */
 export const TMUX_TRUECOLOR_INTERACTIVE_SHELL_COMMAND =
-  'exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 "${SHELL:-/bin/sh}" -l';
+  "exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' \"${SHELL:-/bin/sh}\" -l";
 
 /** Exact session mutations required before tmux creates another child. */
 export function tmuxTruecolorEnvironmentCommands(sessionName: string): readonly string[][] {
@@ -40,5 +40,5 @@ export function prepareTmuxTruecolorEnvironment(
 
 /** Run a command from an existing shell without inheriting its NO_COLOR flag. */
 export function truecolorShellCommand(command: string): string {
-  return `env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 ${command}`;
+  return `env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' ${command}`;
 }

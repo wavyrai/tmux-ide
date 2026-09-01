@@ -31,10 +31,10 @@ describe("tmux terminal color authority", () => {
 
   it("clears NO_COLOR in both explicit commands and a fresh session's first shell", () => {
     expect(truecolorShellCommand("claude --resume")).toBe(
-      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 claude --resume",
+      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' claude --resume",
     );
     expect(TMUX_TRUECOLOR_INTERACTIVE_SHELL_COMMAND).toBe(
-      'exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 "${SHELL:-/bin/sh}" -l',
+      "exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' \"${SHELL:-/bin/sh}\" -l",
     );
   });
 });
