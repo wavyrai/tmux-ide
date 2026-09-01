@@ -81,6 +81,7 @@ import {
   createApplicationRootReadiness,
   createApplicationRootRenderer,
 } from "./application-root-renderer.ts";
+import { createKeyboardRouteOwner, KeyboardRouteProvider } from "../ui/keyboard-router.tsx";
 export type { StartApplicationRootOptions } from "./application-root-configuration.ts";
 export async function startApplicationRoot(options: StartApplicationRootOptions = {}) {
   options.initialPreparation?.diagnosticHandoff?.attach(tuiPerfMark);
@@ -145,6 +146,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
       const root = renderWithTerminalDimensions(renderer)((dimensions) => {
         tuiPerfMark("solid-root-evaluate");
         registerPaneSurface();
+        const componentKeyboardRoutes = createKeyboardRouteOwner();
         const [surface, setSurface] = createSignal<"home" | "terminals">(
           config.target ? "terminals" : "home",
         );
@@ -301,6 +303,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           stopShell();
           appearance.dispose();
           shellBinding.dispose();
+          componentKeyboardRoutes.dispose();
           sessionFocusOwner?.dispose();
         });
         const paletteCommands = createApplicationPaletteCommandOwner({
@@ -379,6 +382,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             void homeCatalog.createLocalSession();
             return;
           }
+          if (componentKeyboardRoutes.route(event)) return;
           if (activeSurface() === "terminals" && interaction.routeWorkspaceKey(event)) return;
           if (
             activeSurface() === "terminals" &&
@@ -414,58 +418,62 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         );
         const focusedApplicationMouseIngress = recoverHostFocus.optional(applicationMouseIngress);
         return (
-          <ApplicationShellView
-            dimensions={dimensions}
-            surface={activeSurface}
-            semantic={() => shell().semantic}
-            generationStatus={() => shell().status}
-            sessions={homeCatalog.sessionNames}
-            selectedSession={homeCatalog.selectedSessionIndex}
-            bootstrapNote={appearance.note}
-            catalogPhase={homeCatalog.phase}
-            catalogNote={homeCatalog.note}
-            paletteOpen={() => shell().semantic?.focus.palette.open ?? shell().localPaletteOpen}
-            paneRenameDialog={paneRename.draft}
-            paletteSelection={paletteCommands.selection}
-            paletteCloseArmed={paletteCommands.closeArmed}
-            paletteCommands={paletteCommandList}
-            terminalRendererSource={terminalRendererSource}
-            terminalGestureRuntime={terminalGestureRuntime}
-            onApplicationMousePointerIngress={focusedApplicationMouseIngress}
-            layout={layoutSnapshot}
-            focusedPane={() => (rendererFocused() ? focusedPane() : null)}
-            rendererFocused={rendererFocused}
-            hostFocusTransitionOwner={hostFocusTransitionOwner ?? undefined}
-            theme={theme()}
-            palette={palette()}
-            onOpenSurface={recoverHostFocus(paletteCommands.openSurface)}
-            onOpenSession={recoverHostFocus(
-              (sessionName) => void startGeneration(sessionName, false, "mouse"),
-            )}
-            onOpenAgent={recoverHostFocus((sessionName, paneId) => {
-              void openAgent(sessionName, paneId);
-            })}
-            onSetPaletteOpen={recoverHostFocus(paletteCommands.setOpen)}
-            onPaletteActivate={recoverHostFocus(paletteCommands.activate)}
-            onCreateWindow={recoverHostFocus(() => paletteCommands.activate("new-window", "mouse"))}
-            onCreateSession={recoverHostFocus(() => void homeCatalog.createLocalSession())}
-            onCycleTheme={recoverHostFocus(cycleTheme)}
-            onBeginPaneRename={recoverHostFocus(paneRename.begin)}
-            onCancelPaneRename={recoverHostFocus(paneRename.cancel)}
-            onDismissNotification={recoverHostFocus(() => setTransientNote(null))}
-            onSelectPane={recoverHostFocus(interaction.selectPane)}
-            onResizePreview={recoverHostFocus(interaction.previewPaneResize)}
-            onResizePane={recoverHostFocus(interaction.resizePane)}
-            onResizePointerIngress={recoverHostFocus.optional(resizeIngress)}
-            onTerminalInput={recoverHostFocus((paneId, input) =>
-              routeApplicationTerminalPointerInput(interaction, paneId, input),
-            )}
-            onCopyText={selectionOwner.copy}
-            onSelectionCopyOwner={selectionOwner.registerCopy}
-            onSelectionKeyOwner={selectionOwner.registerKey}
-            onWindowPresented={tuiPerfStream ? interaction.observeWindowPresentation : undefined}
-            onInteraction={() => noteHostInteraction()}
-          />
+          <KeyboardRouteProvider owner={componentKeyboardRoutes}>
+            <ApplicationShellView
+              dimensions={dimensions}
+              surface={activeSurface}
+              semantic={() => shell().semantic}
+              generationStatus={() => shell().status}
+              sessions={homeCatalog.sessionNames}
+              selectedSession={homeCatalog.selectedSessionIndex}
+              bootstrapNote={appearance.note}
+              catalogPhase={homeCatalog.phase}
+              catalogNote={homeCatalog.note}
+              paletteOpen={() => shell().semantic?.focus.palette.open ?? shell().localPaletteOpen}
+              paneRenameDialog={paneRename.draft}
+              paletteSelection={paletteCommands.selection}
+              paletteCloseArmed={paletteCommands.closeArmed}
+              paletteCommands={paletteCommandList}
+              terminalRendererSource={terminalRendererSource}
+              terminalGestureRuntime={terminalGestureRuntime}
+              onApplicationMousePointerIngress={focusedApplicationMouseIngress}
+              layout={layoutSnapshot}
+              focusedPane={() => (rendererFocused() ? focusedPane() : null)}
+              rendererFocused={rendererFocused}
+              hostFocusTransitionOwner={hostFocusTransitionOwner ?? undefined}
+              theme={theme()}
+              palette={palette()}
+              onOpenSurface={recoverHostFocus(paletteCommands.openSurface)}
+              onOpenSession={recoverHostFocus(
+                (sessionName) => void startGeneration(sessionName, false, "mouse"),
+              )}
+              onOpenAgent={recoverHostFocus((sessionName, paneId) => {
+                void openAgent(sessionName, paneId);
+              })}
+              onSetPaletteOpen={recoverHostFocus(paletteCommands.setOpen)}
+              onPaletteActivate={recoverHostFocus(paletteCommands.activate)}
+              onCreateWindow={recoverHostFocus(() =>
+                paletteCommands.activate("new-window", "mouse"),
+              )}
+              onCreateSession={recoverHostFocus(() => void homeCatalog.createLocalSession())}
+              onCycleTheme={recoverHostFocus(cycleTheme)}
+              onBeginPaneRename={recoverHostFocus(paneRename.begin)}
+              onCancelPaneRename={recoverHostFocus(paneRename.cancel)}
+              onDismissNotification={recoverHostFocus(() => setTransientNote(null))}
+              onSelectPane={recoverHostFocus(interaction.selectPane)}
+              onResizePreview={recoverHostFocus(interaction.previewPaneResize)}
+              onResizePane={recoverHostFocus(interaction.resizePane)}
+              onResizePointerIngress={recoverHostFocus.optional(resizeIngress)}
+              onTerminalInput={recoverHostFocus((paneId, input) =>
+                routeApplicationTerminalPointerInput(interaction, paneId, input),
+              )}
+              onCopyText={selectionOwner.copy}
+              onSelectionCopyOwner={selectionOwner.registerCopy}
+              onSelectionKeyOwner={selectionOwner.registerKey}
+              onWindowPresented={tuiPerfStream ? interaction.observeWindowPresentation : undefined}
+              onInteraction={() => noteHostInteraction()}
+            />
+          </KeyboardRouteProvider>
         );
       });
       const postRender = installApplicationPostRenderRuntime({

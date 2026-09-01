@@ -4,16 +4,65 @@ import { describe, expect, it } from "bun:test";
 import { registerPaneSurface, type TerminalPaneRenderSource } from "../pane-surface.tsx";
 import { createSemanticThemeSnapshot, createTerminalPaletteProjection } from "../theme.ts";
 import { renderForTest } from "../testing/renderer-harness.test.ts";
-import { PaneScopedTerminalOwner } from "./pane-scoped-terminal-owner.ts";
 import {
   PaneScopedTerminalSurface,
   type PaneScopedTerminalAdapter,
 } from "./pane-scoped-terminal-surface.tsx";
 
+type PaneVersionListener = Parameters<PaneScopedTerminalAdapter["subscribePaneVersion"]>[1];
+
+/** Minimal publisher used to test the surface boundary without reviving the retired runtime owner. */
+class TestPaneVersionPublisher {
+  private generation = 0;
+  private epoch = 1;
+  private readonly versions = new Map<string, number>();
+  private readonly listeners = new Map<string, Set<PaneVersionListener>>();
+
+  beginGeneration(): number {
+    this.generation += 1;
+    return this.generation;
+  }
+
+  version(paneId: string): number {
+    return this.versions.get(paneId) ?? 0;
+  }
+
+  sourceEpoch(): number {
+    return this.epoch;
+  }
+
+  subscribe(paneId: string, listener: PaneVersionListener): () => void {
+    const listeners = this.listeners.get(paneId) ?? new Set<PaneVersionListener>();
+    listeners.add(listener);
+    this.listeners.set(paneId, listeners);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0) this.listeners.delete(paneId);
+    };
+  }
+
+  publish(generation: number, paneId: string, version: number): boolean {
+    if (generation !== this.generation) return false;
+    this.versions.set(paneId, version);
+    for (const listener of this.listeners.get(paneId) ?? []) {
+      listener(version, this.epoch, 0, "content");
+    }
+    return true;
+  }
+
+  replaceSource(): void {
+    this.epoch += 1;
+    for (const [paneId, listeners] of this.listeners) {
+      const version = this.version(paneId);
+      for (const listener of listeners) listener(version, this.epoch, 0, "content");
+    }
+  }
+}
+
 describe("PaneScopedTerminalSurface", () => {
   it("invalidates only the addressed pane and leaves sibling/shell presentation resident", async () => {
     registerPaneSurface();
-    const owner = new PaneScopedTerminalOwner();
+    const owner = new TestPaneVersionPublisher();
     const generation = owner.beginGeneration();
     const blits: string[] = [];
     const renderSource: TerminalPaneRenderSource = {
@@ -30,6 +79,7 @@ describe("PaneScopedTerminalSurface", () => {
       paneVersion: (paneId) => owner.version(paneId),
       paneSourceEpoch: () => owner.sourceEpoch(),
       subscribePaneVersion: (paneId, listener) => owner.subscribe(paneId, listener),
+      paneSelectionSnapshot: () => null,
     };
     const palette = createTerminalPaletteProjection(createSemanticThemeSnapshot({ mode: "dark" }));
     const setup = await renderForTest(
@@ -87,7 +137,7 @@ describe("PaneScopedTerminalSurface", () => {
 
   it("fully repaints generation B even when its pane version equals generation A", async () => {
     registerPaneSurface();
-    const owner = new PaneScopedTerminalOwner();
+    const owner = new TestPaneVersionPublisher();
     const generation = owner.beginGeneration();
     let character = "A";
     const blits: string[] = [];
@@ -108,6 +158,7 @@ describe("PaneScopedTerminalSurface", () => {
       paneVersion: (paneId) => owner.version(paneId),
       paneSourceEpoch: () => owner.sourceEpoch(),
       subscribePaneVersion: (paneId, listener) => owner.subscribe(paneId, listener),
+      paneSelectionSnapshot: () => null,
     };
     const palette = createTerminalPaletteProjection(createSemanticThemeSnapshot({ mode: "dark" }));
     expect(owner.publish(generation, "editor", 1)).toBe(true);

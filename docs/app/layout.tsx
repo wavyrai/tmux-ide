@@ -4,7 +4,6 @@ import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import { GeistPixelSquare } from "geist/font/pixel";
 import { Analytics } from "@vercel/analytics/next";
-import { TopBanner } from "@/components/top-banner";
 import type { Metadata } from "next";
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://tmux.thijsverreck.com";
@@ -12,11 +11,11 @@ const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://tmux.thijsverreck.c
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "tmux-ide — Prepare Claude agent-team layouts in one terminal",
+    default: "tmux-ide — a visual tmux client for coding agents",
     template: "%s | tmux-ide",
   },
   description:
-    "Prepare Claude Code agent-team-ready tmux layouts with lead and teammate panes plus the right environment setup.",
+    "A mouse-friendly OpenTUI for ordinary tmux sessions, with agent status, pane and window controls, durable sessions, and SSH support.",
   keywords: [
     "Claude Code",
     "agent teams",
@@ -36,23 +35,23 @@ export const metadata: Metadata = {
     type: "website",
     locale: "en_US",
     siteName: "tmux-ide",
-    title: "tmux-ide — Prepare Claude agent-team layouts in one terminal",
+    title: "tmux-ide — a visual tmux client for coding agents",
     description:
-      "Prepare Claude Code agent-team-ready tmux layouts with lead and teammate panes plus the right environment setup.",
+      "A mouse-friendly OpenTUI for ordinary tmux sessions, with agent-aware chrome and no multiplexer lock-in.",
     images: [
       {
         url: "/og-image.png",
         width: 1200,
         height: 630,
-        alt: "tmux-ide — Claude agent-team layouts in tmux",
+        alt: "tmux-ide — visual tmux client for coding agents",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "tmux-ide — Prepare Claude agent-team layouts in one terminal",
+    title: "tmux-ide — a visual tmux client for coding agents",
     description:
-      "Prepare Claude Code agent-team-ready tmux layouts with lead and teammate panes plus the right environment setup.",
+      "A mouse-friendly OpenTUI for ordinary tmux sessions, with agent-aware chrome and no multiplexer lock-in.",
     images: ["/og-image.png"],
   },
   robots: {
@@ -76,7 +75,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       suppressHydrationWarning
     >
       <body className="flex flex-col min-h-screen">
-        <TopBanner />
         <RootProvider>{children}</RootProvider>
         <Analytics />
       </body>

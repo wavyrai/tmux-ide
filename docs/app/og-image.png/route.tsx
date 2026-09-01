@@ -54,7 +54,7 @@ export function GET() {
             tmux-ide.com
           </div>
           <div tw="text-2xl" style={{ color: "#6e6e82" }}>
-            Prototyper OSS · MIT
+            OpenTUI · tmux under the hood
           </div>
         </div>
       </div>

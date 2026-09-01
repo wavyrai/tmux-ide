@@ -179,6 +179,13 @@ describe("production OpenTUI v2 data path", () => {
     expect(source).not.toContain("process.exit(");
   });
 
+  it("owns keyboard and paste ingress exactly once at the application root", () => {
+    expect(occurrences(/\buseKeyboard\s*\(/gu)).toBe(1);
+    expect(occurrences(/\busePaste\s*\(/gu)).toBe(1);
+    expect(applicationRootSource).toContain("createKeyboardRouteOwner()");
+    expect(applicationRootSource).toContain("componentKeyboardRoutes.route(event)");
+  });
+
   it("keeps renderer-local tmux calls isolated to clipboard policy", () => {
     const directTmuxOwners = productionGraph.files.filter((path) =>
       productionGraph.sourceByFile.get(path)?.match(/execFile\(\s*["']tmux["']/u),
@@ -212,7 +219,8 @@ describe("production OpenTUI v2 data path", () => {
   });
 
   it("keeps the production root reviewable as a small renderer client", () => {
-    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(500);
+    // Includes the one root-owned keyboard/paste ingress and its provider boundary.
+    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(510);
     // Component leaves are reviewable presentation modules, not authority/data-path
     // owners. Their import boundary is enforced by production-design-system-contract;
     // retain the original budget for the runtime and authority graph itself.

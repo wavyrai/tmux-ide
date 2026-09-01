@@ -1,9 +1,12 @@
 /* @jsxImportSource @opentui/solid */
 import { MouseButtons } from "@opentui/core/testing";
+import { useKeyboard, type JSX } from "@opentui/solid";
 import { describe, expect, it } from "bun:test";
+import { onCleanup } from "solid-js";
 
 import { createSemanticThemeSnapshot, colorToThemeBytes } from "../theme.ts";
 import { renderForTest, stableFrame } from "../testing/renderer-harness.test.ts";
+import { createKeyboardRouteOwner, KeyboardRouteProvider } from "../ui/keyboard-router.tsx";
 import {
   WINDOW_TAB_MAX_WIDTH,
   WINDOW_TAB_MIN_WIDTH,
@@ -22,6 +25,13 @@ const items = (count: number): WindowTabItem[] =>
     attention: index === 2,
     secondaryAction: true,
   }));
+
+function KeyboardRouteTestHost(props: { readonly children: JSX.Element }) {
+  const owner = createKeyboardRouteOwner();
+  onCleanup(() => owner.dispose());
+  useKeyboard((event) => owner.route(event));
+  return <KeyboardRouteProvider owner={owner}>{props.children}</KeyboardRouteProvider>;
+}
 
 describe("WindowTabBar", () => {
   it("uses bounded content widths instead of equal viewport fractions", () => {
@@ -82,17 +92,19 @@ describe("WindowTabBar", () => {
     const theme = createSemanticThemeSnapshot({ mode: "dark" });
     const setup = await renderForTest(
       () => (
-        <WindowTabBar
-          theme={theme}
-          width={72}
-          items={items(2)}
-          activeId="window.0"
-          focused
-          focusedId="window.1"
-          onActivateIntent={(id) => calls.push(`activate:${id}`)}
-          onAddIntent={() => calls.push("add")}
-          onSecondaryIntent={(id) => calls.push(`secondary:${id}`)}
-        />
+        <KeyboardRouteTestHost>
+          <WindowTabBar
+            theme={theme}
+            width={72}
+            items={items(2)}
+            activeId="window.0"
+            focused
+            focusedId="window.1"
+            onActivateIntent={(id) => calls.push(`activate:${id}`)}
+            onAddIntent={() => calls.push("add")}
+            onSecondaryIntent={(id) => calls.push(`secondary:${id}`)}
+          />
+        </KeyboardRouteTestHost>
       ),
       { width: 72, height: 1 },
     );

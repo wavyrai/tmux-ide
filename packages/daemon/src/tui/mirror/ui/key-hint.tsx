@@ -1,9 +1,9 @@
 /* @jsxImportSource @opentui/solid */
-import { useKeyboard } from "@opentui/solid";
 
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal, terminalDisplayWidth } from "../terminal-text.ts";
 import { componentPalette, type ComponentInteractionState } from "./state.ts";
+import { useKeyboardRoute } from "./keyboard-router.tsx";
 
 export interface KeyHintProps extends ComponentInteractionState {
   theme: SemanticThemeSnapshot;
@@ -24,7 +24,7 @@ export function KeyHint(props: KeyHintProps) {
   const activate = () => {
     if (!props.disabled) props.onPress?.();
   };
-  useKeyboard((event) => {
+  useKeyboardRoute((event) => {
     const key = event.name.toLowerCase();
     if (
       !props.focused ||
@@ -33,10 +33,11 @@ export function KeyHint(props: KeyHintProps) {
       event.eventType !== "press" ||
       (key !== "enter" && key !== "return" && key !== "space")
     )
-      return;
+      return false;
     event.preventDefault();
     event.stopPropagation();
     activate();
+    return true;
   });
   return (
     <box

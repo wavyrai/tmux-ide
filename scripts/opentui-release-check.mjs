@@ -63,7 +63,6 @@ const checks = [
       "packages/daemon/src/tui/mirror/input-lifecycle.test.ts",
       "packages/daemon/src/tui/mirror/runtime/application-lifecycle.ts",
       "packages/daemon/src/tui/mirror/runtime/application-lifecycle.test.ts",
-      "packages/daemon/src/tui/mirror/runtime/application-root.tsx",
       "packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx",
       "packages/daemon/src/tui/mirror/runtime/host-local-tmux-adapter.ts",
       "packages/daemon/src/tui/mirror/runtime/host-local-tmux-adapter.test.ts",

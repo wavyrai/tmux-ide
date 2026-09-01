@@ -16,9 +16,9 @@ export const OPENTUI_PRODUCTION_APPLICATION_ROOT =
   "packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx" as const;
 
 /**
- * Runtime modules removed from the production boot graph by the M59.3 cutover.
- * The source files can remain temporarily for isolated compatibility tests, but
- * reaching one from `app.tsx` is a production architecture regression.
+ * Deleted runtime modules from before the M59.3 cutover. Keeping the paths in
+ * the boundary test prevents a future implementation from reviving a parallel
+ * authority, replica, or handoff stack under a familiar legacy filename.
  */
 export const OPENTUI_RETIRED_PRODUCTION_MODULES = [
   "packages/daemon/src/tui/mirror/runtime/application-root.tsx",

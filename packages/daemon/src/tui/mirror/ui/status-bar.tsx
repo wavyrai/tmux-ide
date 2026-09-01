@@ -1,10 +1,10 @@
 /* @jsxImportSource @opentui/solid */
 import type { JSX } from "@opentui/solid";
-import { useKeyboard } from "@opentui/solid";
 
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal } from "../terminal-text.ts";
 import { componentPalette, type ComponentInteractionState, type ComponentTone } from "./state.ts";
+import { useKeyboardRoute } from "./keyboard-router.tsx";
 
 export interface StatusBarProps {
   theme: SemanticThemeSnapshot;
@@ -85,7 +85,7 @@ export function StatusBarAction(props: StatusBarActionProps) {
   const activate = () => {
     if (!props.disabled) props.onPress();
   };
-  useKeyboard((event) => {
+  useKeyboardRoute((event) => {
     const key = event.name.toLowerCase();
     if (
       !props.focused ||
@@ -93,10 +93,11 @@ export function StatusBarAction(props: StatusBarActionProps) {
       event.eventType !== "press" ||
       (key !== "enter" && key !== "return" && key !== "space")
     )
-      return;
+      return false;
     event.preventDefault();
     event.stopPropagation();
     activate();
+    return true;
   });
   return (
     <box
@@ -160,7 +161,7 @@ export function StatusSegment(props: StatusSegmentProps) {
   const activate = () => {
     if (!props.disabled) props.onPress?.();
   };
-  useKeyboard((event) => {
+  useKeyboardRoute((event) => {
     const key = event.name.toLowerCase();
     if (
       !props.focused ||
@@ -169,10 +170,11 @@ export function StatusSegment(props: StatusSegmentProps) {
       event.eventType !== "press" ||
       (key !== "enter" && key !== "return" && key !== "space")
     )
-      return;
+      return false;
     event.preventDefault();
     event.stopPropagation();
     activate();
+    return true;
   });
   return (
     <box

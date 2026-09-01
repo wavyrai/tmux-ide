@@ -6,7 +6,7 @@ import { openPaneStreamRuntimeClient } from "@tmux-ide/daemon-client/pane-stream
 import { dispatchOwnerAction } from "@tmux-ide/daemon-client/owner-action-client";
 import type { SessionRuntimeAuthoritySnapshot } from "@tmux-ide/contracts";
 
-import { createOpenTuiPaneStreamSocket } from "../packages/daemon/src/tui/mirror/application-shell-daemon-runtime.ts";
+import { createOpenTuiPaneStreamSocket } from "../packages/daemon/src/tui/mirror/open-tui-pane-stream-socket.ts";
 
 const baseUrl = required("TMUX_IDE_RIG_BASE_URL");
 const ownerToken = required("TMUX_IDE_RIG_OWNER_TOKEN");

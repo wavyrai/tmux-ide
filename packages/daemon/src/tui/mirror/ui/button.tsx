@@ -1,10 +1,10 @@
 /* @jsxImportSource @opentui/solid */
 import type { RGBA } from "@opentui/core";
-import { useKeyboard } from "@opentui/solid";
 
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal, terminalDisplayWidth } from "../terminal-text.ts";
 import { componentPalette, type ComponentInteractionState } from "./state.ts";
+import { useKeyboardRoute } from "./keyboard-router.tsx";
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 export type ButtonSize = "compact" | "default";
@@ -63,14 +63,15 @@ export function TuiButton(props: TuiButtonProps) {
     props.onPress();
   };
 
-  useKeyboard((event) => {
-    if (!props.focused || props.disabled || props.loading || !props.onPress) return;
+  useKeyboardRoute((event) => {
+    if (!props.focused || props.disabled || props.loading || !props.onPress) return false;
     const key = event.name.toLowerCase();
     if (event.eventType !== "press" || (key !== "enter" && key !== "return" && key !== "space"))
-      return;
+      return false;
     event.preventDefault();
     event.stopPropagation();
     activate();
+    return true;
   });
 
   return (

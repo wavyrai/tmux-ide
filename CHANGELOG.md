@@ -22,6 +22,9 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Consolidated OpenTUI keyboard handling behind one root-owned ingress and semantic component router, removing the distributed listener pattern that could trigger MaxListeners warnings.
+- Deleted the retired 9,000-line OpenTUI root and its parallel authority, terminal adapter, and workspace handoff implementations.
+- Rebuilt the marketing and documentation surface around the actual 2.9 release cut. The non-shipping browser TUI demo and obsolete release-tour pages are no longer part of the site.
 - Replaced the legacy `/tmp`-file performance taps with shared, demand-only OpenTUI and web HUD telemetry plus a deterministic multi-client SessionRuntime qualification gate.
 
 ### Fixed

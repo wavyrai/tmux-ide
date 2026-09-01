@@ -1,6 +1,5 @@
 /* @jsxImportSource @opentui/solid */
 import { For, createMemo, createSignal } from "solid-js";
-import { useKeyboard } from "@opentui/solid";
 import type { Accessor } from "solid-js";
 
 import type { SemanticThemeSnapshot } from "../theme.ts";
@@ -10,6 +9,7 @@ import {
   Surface,
   TuiButton,
   componentPalette,
+  useKeyboardRoute,
   type AgentBadgeStatus,
 } from "../ui/index.ts";
 
@@ -226,15 +226,16 @@ export function WindowTabBar(props: WindowTabBarProps) {
       : controlledHoveredId();
   const focusedId = () => controlledFocusedId() ?? activeId();
 
-  useKeyboard((event) => {
-    if (!props.focused || event.eventType !== "press") return;
+  useKeyboardRoute((event) => {
+    if (!props.focused || event.eventType !== "press") return false;
     const key = event.name.toLowerCase();
-    if (key !== "enter" && key !== "return" && key !== "space") return;
+    if (key !== "enter" && key !== "return" && key !== "space") return false;
     const item = items().find((candidate) => candidate.id === focusedId());
-    if (!item || item.disabled) return;
+    if (!item || item.disabled) return false;
     event.preventDefault();
     event.stopPropagation();
     props.onActivateIntent(item.id);
+    return true;
   });
 
   return (

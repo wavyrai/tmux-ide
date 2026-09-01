@@ -30,11 +30,11 @@
   },
   "devDependencies": {
     "@playwright/test": "1.59.1",
-    "happy-dom": "^20.8.4",
+    "happy-dom": "^20.8.9",
     "playwright": "1.59.1",
     "typescript": "^5.9.3",
     "vite": "^7.2.2",
     "vite-plugin-solid": "^2.11.10",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.6"
   }
 }

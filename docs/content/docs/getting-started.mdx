@@ -1,170 +1,70 @@
 ---
-title: Getting Started
-description: Install tmux-ide and adopt your first session in under a minute
+title: Getting started
+description: Install the OpenTUI beta and open your first tmux session
 ---
 
-## Prerequisites
+# Getting started
 
-- **tmux** — 3.2+ recommended (`doctor` requires ≥ 3.0; 3.6 is the smoothest)
-- **Node.js** — ≥ 20
-- **Bun** — only needed for development checkouts; installed OpenTUI releases
-  download a verified native runtime on first explicit app launch
+## Requirements
 
-The Homebrew install resolves tmux and Node.js for you — with it, there are no
-prerequisites to install by hand.
+- tmux 3.0 or newer; 3.2+ recommended
+- Node.js 20 or newer
+- macOS arm64/x64 or Linux arm64/x64
 
-Check everything at once:
-
-```bash
-tmux-ide doctor
-```
+Installed releases do not require Bun. Development checkouts use Bun to build
+and run the OpenTUI source.
 
 ## Install
 
-{/* PENDING TAP PUBLICATION — the `wavyrai/homebrew-tap` repo is not published yet. */}
-{/* The formula (packaging/homebrew/Formula/tmux-ide.rb) and the seeding script */}
-{/* (scripts/publish-tap.sh) are ready; once the tap exists, this Homebrew block */}
-{/* is the lead install path — delete this comment then. */}
-
-### Homebrew (macOS and Linux)
-
-One command — tmux and Node.js are resolved as dependencies, nothing to
-install first:
-
 ```bash
-brew install wavyrai/tap/tmux-ide
-```
-
-Homebrew skips npm lifecycle scripts, so wire the Claude Code pieces once
-after installing (the npm path below does this automatically):
-
-```bash
-tmux-ide integration install claude   # Claude Code hooks + skill sync
-```
-
-### npm
-
-```bash
-npm i -g tmux-ide
-```
-
-To install the focused OpenTUI beta without changing your stable dist-tag:
-
-```bash
-npm i -g tmux-ide@beta
+npm install -g tmux-ide@beta
 tmux-ide app
 ```
 
-The beta supports macOS and Linux on arm64 and x64. Its first app launch needs
-network access to fetch the exact-version runtime; later launches use the
-verified cache. Run `tmux-ide update --tui-binary` to retry a failed download.
+The first explicit app launch downloads the matching OpenTUI runtime, verifies
+its metadata and SHA-256 digests, and caches it under `~/.tmux-ide/bin`.
 
-Global install also registers the bundled Claude Code skill and enables
-`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in `~/.claude/settings.json` if Claude
-Code is installed locally.
-
-## Adopt a session you already have
-
-The fastest way to see tmux-ide is to point it at a tmux session you're already
-running. `adopt` adds a native chrome row — fleet tabs, live agent glyphs, and
-`[ ⌂ home ] [ ⧉ switch ] [ ? keys ]` triggers — and changes nothing else.
+If the download was interrupted:
 
 ```bash
-tmux-ide adopt work        # adopt the session named "work"
-tmux-ide adopt --all       # adopt every live (non-internal) session
+tmux-ide update --tui-binary
+tmux-ide app
 ```
 
-It's zero-risk by construction: adopt only sets tmux options. To reverse it:
+## Open a session
+
+Home lists the tmux sessions you already own. Select one with the mouse or
+keyboard, or name it directly:
 
 ```bash
-tmux-ide unadopt work
+tmux new-session -s work
+tmux-ide app work
 ```
 
-If tmux-ide ever crashes or is uninstalled, your sessions keep running as plain
-tmux — the chrome is decoration, not a dependency. And because the chrome lives
-server-side, it renders from any client, including over SSH.
+If there are no sessions, press `N` on Home to create one. Closing tmux-ide does
+not kill the tmux session.
 
-## Turn on ground-truth agent status
+## Controls
 
-By default tmux-ide infers agent state from the process tree and screen
-contents. For authoritative status, hook Claude Code's lifecycle so
-working/blocked/done come straight from the agent:
+| Key          | Action                               |
+| ------------ | ------------------------------------ |
+| `F1`         | Home                                 |
+| `F2`         | Terminals                            |
+| `F5`         | Commands                             |
+| `Ctrl+O`     | Cycle panes                          |
+| `Ctrl+T`     | Cycle windows                        |
+| `Meta+Arrow` | Resize the focused pane              |
+| `Ctrl+Q`     | Quit or put away a detachable viewer |
+
+Pane headers and window tabs also expose mouse controls for the supported
+actions.
+
+## Diagnose an install
 
 ```bash
-tmux-ide integration install claude
+tmux-ide doctor --json
+tmux-ide inspect --json
 ```
 
-This writes a small POSIX hook script and registers it in
-`~/.claude/settings.json` (a one-time backup is written next to it, and
-uninstall removes exactly the tmux-ide entries). It takes effect for **new**
-Claude Code sessions. See [Agent detection](/docs/agent-detection) for the two
-detection layers and the self-report contract any agent can use.
-
-## Start anywhere with the app
-
-`tmux-ide app` opens the OpenTUI client over ordinary tmux sessions. It works
-from any folder and can start with no tmux server running:
-
-```bash
-tmux-ide app           # choose a session from Home
-tmux-ide app work      # open a named live session directly
-```
-
-The beta intentionally exposes only **F1 Home**, **F2 Terminals**, and a small
-**F5 command palette**. Agent state is textual in the sidebar, window tabs, and
-pane chrome. Use `Ctrl+O` to cycle panes, `Ctrl+T` to cycle windows, and the F5
-palette to split or confirm closing a pane. The web client, Files/Diff surfaces,
-settings UI, and mission UI are deferred from this beta.
-
-This is the default. To use the historical cockpit as the bare-command entry,
-opt out in `~/.tmux-ide/config.json` (or run `tmux-ide team` directly):
-
-```json
-{ "app": { "frontDoor": false } }
-```
-
-Project config auto-launch and `tmux-ide team` are unaffected. See
-[Home, sidebar & panels](/docs/app-surfaces#the-unified-app--tmux-ide-app) and
-[OpenTUI beta release notes](/docs/release-2-9-0-beta-1).
-
-## Optional: describe a layout with workspace.yml
-
-The app discovers and manages sessions you launch however you like. If you'd rather have
-tmux-ide build the layout, scaffold `.tmux-ide/workspace.yml`:
-
-```bash
-tmux-ide init          # auto-detects your stack and writes .tmux-ide/workspace.yml
-tmux-ide               # launch the session from workspace.yml
-```
-
-A minimal config:
-
-```yaml
-version: 1
-name: my-app
-
-terminal:
-  rows:
-    - size: 70%
-      panes:
-        - title: Claude
-          command: claude
-          focus: true
-        - title: Shell
-    - panes:
-        - title: Dev Server
-          command: pnpm dev
-```
-
-Sessions launched from `.tmux-ide/workspace.yml` are adopted automatically. Legacy
-`ide.yml` files remain compatible; use `tmux-ide migrate --dry-run` to preview
-conversion. See
-[Configuration](/docs/configuration) for the full format.
-
-## Where to go next
-
-- [The dock & keys](/docs/the-dock) — the status bar and every keystroke
-- [Notifications & events](/docs/notifications-events) — the who-needs-me loop
-- [Restore & resume](/docs/restore-resume) — survive a tmux server death
-- [Worktrees](/docs/worktrees) — parallel agents on parallel branches
-- [CLI reference](/docs/commands) — every command
+When reporting an issue, include the output plus the shortest sequence that
+reproduces it.

@@ -1,11 +1,14 @@
 ---
-title: OpenTUI beta 2.9.0-beta.1
-description: A focused, installable visual tmux client with agent-aware chrome
+title: OpenTUI 2.9 beta
+description: The focused visual tmux release with agent-aware chrome
 ---
 
-This beta deliberately ships one product path: a polished OpenTUI client around
-ordinary tmux sessions. tmux continues to own the PTYs, layout, and persistence;
-the daemon publishes renderer-neutral workspace state, and OpenTUI renders it.
+# OpenTUI 2.9 beta
+
+2.9 ships one product path: a polished OpenTUI client around ordinary tmux
+sessions. tmux owns PTYs, processes, topology, persistence, and SSH; the daemon
+publishes semantic workspace state and pane streams; OpenTUI owns presentation
+and input.
 
 ## Install
 
@@ -14,48 +17,34 @@ npm install -g tmux-ide@beta
 tmux-ide app
 ```
 
-Pass a session name to bypass the Home chooser:
+Pass a session name to bypass Home:
 
 ```bash
 tmux-ide app work
 ```
 
-Supported release binaries are macOS arm64/x64 and Linux arm64/x64. Node.js 20+
-and tmux 3.2+ are recommended. Bun is not required for an npm-installed beta.
-The first app launch downloads the exact-version runtime, verifies bounded
-compressed and executable SHA-256 digests plus version/platform/commit metadata,
-and caches it under `~/.tmux-ide/bin`.
+## Included
 
-## What is in the cut
+- F1 Home, F2 Terminals, and F5 Commands.
+- Configless discovery and creation of ordinary tmux sessions.
+- Agent state in the sidebar, window tabs, and pane chrome.
+- Agent-row navigation to the correct pane.
+- Mouse and keyboard pane/window selection and control.
+- Pane splitting, resizing, renaming, creation, and confirmed closing.
+- Memorable names for newly created panes and windows.
+- Indexed and truecolor terminal cells.
+- Retained content through quiet panes, resize, theme changes, daemon
+  replacement, and viewer reattachment.
+- A downloadable, checksummed runtime for macOS and Linux.
 
-- F1 Home and F2 Terminals over live, ordinary tmux sessions.
-- Textual `IDLE`, `WORKING`, `BLOCKED`, `DONE`, `FAILED`, and `UNKNOWN` agent
-  state in the sidebar, window tabs, and pane chrome.
-- Keyboard and pointer session/window/pane selection, terminal input and paste,
-  pane resize, pane split, confirmed pane close, and clean return/quit behavior.
-- A renderer-neutral daemon boundary retained for a future web client.
+## Deliberately deferred
 
-Useful controls:
+The web client, native desktop client, files, diffs, missions, and rich-media
+surfaces are not included in this release. `tmux-ide web` fails with an explicit
+message instead of starting a half-supported product.
 
-- `F1` Home; `F2` Terminals; `F5` commands.
-- `Ctrl+O` cycles panes; `Ctrl+T` cycles windows.
-- `Meta+Arrow` resizes the focused pane.
-- In hosted mode, `Ctrl+Q` puts the app away and leaves it available to return
-  to. In ordinary foreground mode, `Ctrl+Q` exits cleanly.
+## Reporting issues
 
-## Known limitations
-
-- The web client is deferred and `tmux-ide web` exits with an explicit message.
-- Files, Diff, settings, missions, rich media, and the native desktop client are
-  not supported beta surfaces.
-- Agent state is strongest when an integration or pane self-report publishes
-  lifecycle state; otherwise the daemon may report `UNKNOWN`.
-- External tmux topology changes made while the app is open can temporarily
-  leave the view rebinding; reopen the session if focus does not recover.
-- The first launch needs GitHub release access. If it fails, run
-  `tmux-ide update --tui-binary` and retry `tmux-ide app`.
-
-Please report bugs and small workflow paper cuts through
-[GitHub Issues](https://github.com/wavyrai/tmux-ide/issues). Include your OS,
-architecture, tmux version, `tmux-ide doctor --json`, and the shortest sequence
-that reproduces the problem.
+Open a [GitHub issue](https://github.com/wavyrai/tmux-ide/issues) with your OS,
+architecture, tmux version, `tmux-ide doctor --json`, and the shortest
+reproduction sequence.

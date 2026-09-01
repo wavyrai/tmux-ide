@@ -11,11 +11,20 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
   if (typeof require !== "undefined") return require.apply(this, arguments);
   throw Error('Dynamic require of "' + x + '" is not supported');
 });
-var __esm = (fn, res) => function __init() {
-  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+var __esm = (fn, res, err) => function __init() {
+  if (err) throw err[0];
+  try {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  } catch (e) {
+    throw err = [e], e;
+  }
 };
 var __commonJS = (cb, mod) => function __require2() {
-  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  try {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  } catch (e) {
+    throw mod = 0, e;
+  }
 };
 var __export = (target, all) => {
   for (var name in all)
@@ -11559,6 +11568,7 @@ var init_resolved_config = __esm({
         this.diagnostics = diagnostics;
         this.name = "UnsupportedLegacyConfigMutationError";
       }
+      diagnostics;
     };
     LAUNCH_CONFIG_KEYS = /* @__PURE__ */ new Set([
       "name",
@@ -26783,6 +26793,7 @@ var init_mission_repository = __esm({
       constructor(runtime) {
         this.runtime = runtime;
       }
+      runtime;
       static async open(dir, options = {}) {
         return new _MissionRepository(await openProjectRuntimeRepository(dir, options));
       }
@@ -30295,6 +30306,7 @@ var init_fleet_lifecycle_authority = __esm({
         super(message);
         this.code = code;
       }
+      code;
     };
     FleetLifecycleAuthority = class {
       #daemonInstanceId;
@@ -33958,6 +33970,8 @@ var init_app_window_mutation2 = __esm({
         this.context = context;
         this.name = "AppWindowMutationError";
       }
+      code;
+      context;
     };
     AppWindowMutationAuthority = class {
       #daemonInstanceId;
@@ -35776,6 +35790,8 @@ var init_control_channel = __esm({
         this.handlers = handlers;
         this.nowMicros = nowMicros;
       }
+      handlers;
+      nowMicros;
       buffer = "";
       bufferReceivedAtMicros = null;
       inReply = false;
@@ -36293,6 +36309,9 @@ var init_input_coalescer = __esm({
         this.schedule = schedule;
         this.maxChunkBytes = maxChunkBytes;
       }
+      emit;
+      schedule;
+      maxChunkBytes;
       pane = "";
       buf = "";
       scheduled = false;
@@ -39709,6 +39728,7 @@ var init_semantic_mutation_executor = __esm({
         this.outcome = outcome;
         this.name = "SessionRuntimeIntentError";
       }
+      outcome;
     };
     SESSION_RUNTIME_OBSERVATION_TIMEOUT_MS = 1e4;
     SESSION_RUNTIME_OPERATION_LEDGER_CAPACITY = 256;
@@ -47429,6 +47449,9 @@ var init_terminal_replica_owner = __esm({
           this.#upstream = subscription;
         });
       }
+      generation;
+      session;
+      semanticPaneId;
       #interpreter;
       #listeners = /* @__PURE__ */ new Set();
       #rawListeners = /* @__PURE__ */ new Set();
@@ -47989,6 +48012,8 @@ var init_terminal_delivery_hub = __esm({
         this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
         this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
       }
+      generation;
+      workspaceName;
       #ownerForPane;
       #scheduler;
       #observability;
@@ -49332,6 +49357,7 @@ var init_registry2 = __esm({
         this.code = code;
         this.name = "SessionRuntimeControllerLeaseError";
       }
+      code;
     };
     SessionRuntimeRegistry = class {
       generation;
@@ -49945,6 +49971,8 @@ var init_registry2 = __esm({
           { scheduler, observability }
         );
       }
+      generation;
+      session;
       #mirror;
       #consumers = /* @__PURE__ */ new Set();
       #consumersByClientId = /* @__PURE__ */ new Map();
@@ -50582,6 +50610,7 @@ var init_registry2 = __esm({
         this.session = runtime.session;
         this.clientId = clientId;
       }
+      surface;
       #runtime;
       generation;
       session;
@@ -57515,6 +57544,8 @@ var init_workspace_files_authority = __esm({
         this.root = root;
         this.workspaceName = workspaceName;
       }
+      root;
+      workspaceName;
       ids = new WorkspaceFileIdTable();
       catalog(directoryId) {
         let realRoot;
@@ -58153,6 +58184,8 @@ var init_workspace_changes_authority = __esm({
         this.root = root;
         this.workspaceName = workspaceName;
       }
+      root;
+      workspaceName;
       catalog() {
         const context = this.resolveRepo();
         if ("reason" in context) {
@@ -60529,6 +60562,7 @@ var init_widget_asset_store = __esm({
         this.code = code;
         this.name = "WidgetAssetStoreError";
       }
+      code;
     };
   }
 });
@@ -62073,14 +62107,14 @@ var require_package = __commonJS({
         "@typescript-eslint/eslint-plugin": "^8.57.1",
         "@typescript-eslint/parser": "^8.57.1",
         "@vitest/coverage-v8": "^4.1.6",
-        esbuild: "0.27.4",
+        esbuild: "0.28.2",
         eslint: "^10.0.3",
         globals: "^17.4.0",
         prettier: "^3.8.1",
-        turbo: "^2.3.3",
         tsx: "^4.20.7",
+        turbo: "^2.9.14",
         typescript: "^5.9.3",
-        vitest: "^4.1.0"
+        vitest: "^4.1.6"
       },
       optionalDependencies: {
         "@opentui/core-darwin-arm64": "^0.4.3"
@@ -63587,6 +63621,7 @@ var init_pane_widget = __esm({
         this.reason = reason;
         this.name = "PaneWidgetRefusal";
       }
+      reason;
     };
     IMAGE_MEDIA_BY_EXTENSION = /* @__PURE__ */ new Map([
       [".png", "image/png"],
@@ -71881,7 +71916,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
       break;
     }
     case "worktree": {
-      let printSwitchHint = function(name, wtPath) {
+      let printSwitchHint2 = function(name, wtPath) {
         console.log(`Worktree ready: ${wtPath}`);
         console.log(`Session: ${name}`);
         if (process.env.TMUX) {
@@ -71890,7 +71925,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
           console.log(`Attach to it:  tmux attach -t '${name}'`);
         }
       };
-      printSwitchHint2 = printSwitchHint;
+      printSwitchHint = printSwitchHint2;
       const sub = positionals[1];
       const KNOWN_SUBS = /* @__PURE__ */ new Set(["create", "open", "list", "remove"]);
       if (!sub || !KNOWN_SUBS.has(sub)) {
@@ -71967,7 +72002,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
           console.log(`Worktree ready: ${wtPath}`);
           console.log(`Open a session later:  tmux-ide worktree open '${branch}'`);
         } else {
-          printSwitchHint(sessionName, wtPath);
+          printSwitchHint2(sessionName, wtPath);
         }
         break;
       }
@@ -71995,7 +72030,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
           );
         } else {
           if (already) console.log(`Session already running.`);
-          printSwitchHint(sessionName, entry.path);
+          printSwitchHint2(sessionName, entry.path);
         }
         break;
       }
@@ -72286,7 +72321,7 @@ Run "tmux-ide help" for usage.`, {
     throw error;
   }
 }
-var printSwitchHint2;
+var printSwitchHint;
 /*! Bundled license information:
 
 @tmux-ide/xterm-headless/lib-headless/xterm-headless.mjs:

@@ -1,62 +1,63 @@
-# Release Checklist
+# OpenTUI 2.9 release checklist
+
+## Scope
+
+This release ships the OpenTUI Home and Terminals path. The deferred web and
+native desktop clients are not release prerequisites and must not be included in
+the universal npm package.
 
 ## Preflight
 
-1. Confirm `package.json` has the intended version.
-2. Make sure `CHANGELOG.md` is updated under `Unreleased`.
-3. Review `git status` and ensure only intentional changes are present.
+1. Confirm the intended version in `package.json` and the npm dist-tag.
+2. Update `CHANGELOG.md` with only behavior that is in the release cut.
+3. Confirm `git status --short` contains only intentional changes.
+4. Confirm no retired OpenTUI root or parallel session authority is reachable.
 
-## Verification
-
-Run the full release checks from the repo root:
-
-```bash
-pnpm check
-```
-
-If tmux is available locally, also run:
+## Canonical verification
 
 ```bash
-pnpm test:integration
+pnpm release:opentui:check
+pnpm docs:build
+git diff --check
 ```
 
-Recommended manual smoke test:
+The focused gate must prove:
+
+- lint, format, and daemon typecheck;
+- Home and Terminals renderer behavior;
+- one root-owned keyboard ingress;
+- clean first run with no existing daemon or tmux server;
+- session creation, pane input, split, resize, window switching, and agent
+  navigation;
+- quiet-pane retention, daemon replacement, and detachable reattachment;
+- npm package contents and an isolated packed-install user journey.
+
+## Manual test drive
+
+From a clean checkout build:
 
 ```bash
-node bin/cli.js init
-node bin/cli.js inspect --json
-node bin/cli.js
+pnpm build:cli
+pnpm build:tui
+./bin/cli.js app
 ```
 
-In a second shell:
-
-```bash
-node bin/cli.js status --json
-node bin/cli.js stop --json
-```
-
-If you want to verify the global install hook on a machine with Claude Code already configured:
-
-```bash
-npm install -g .
-```
-
-Then confirm:
-
-- `~/.claude/skills/tmux-ide/SKILL.md` exists
-- `~/.claude/settings.json` contains `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`
+Exercise a shell, a full-screen agent, a truecolor program, pane splitting,
+resizing, light/dark switching, closing and reopening the viewer, and one daemon
+replacement. Confirm that terminal content remains visible and tmux sessions
+survive viewer shutdown.
 
 ## Publish
 
-1. Move the `Unreleased` changelog notes into a dated release entry.
-2. Commit the release changes.
-3. Create an annotated tag such as `v1.1.0`.
-4. Push the branch and tag.
-5. Publish with `npm publish`.
-6. Create a GitHub release using the matching changelog notes.
+1. Commit the release changes.
+2. Publish all supported per-platform runtime assets and their manifests.
+3. Run `npm publish --tag beta` for a beta, or the approved stable tag for GM.
+4. Push the branch and annotated version tag.
+5. Create the matching GitHub release.
 
 ## Post-release
 
-1. Verify the npm package page and install command.
-2. Verify the GitHub release notes and tag.
-3. Smoke test `npm install -g tmux-ide` on a clean machine if possible.
+1. Install from npm in an empty user environment.
+2. Run `tmux-ide doctor --json` and `tmux-ide app`.
+3. Verify the npm page, GitHub assets, docs site, and retry path:
+   `tmux-ide update --tui-binary`.

@@ -1,185 +1,42 @@
 ---
-title: Home, Sidebar & Panels
-description: The floating surfaces the dock triggers — the home cockpit, the sidebar nav column, and the widget panels
+title: Home and Terminals
+description: The two product surfaces in the OpenTUI 2.9 release
 ---
 
-# Home, sidebar & panels
+# Home and Terminals
 
-The dock is always on. Everything else is a keystroke or two away and floats over
-whatever you're doing — one interaction grammar (`j`/`k` · `enter` · `/` · `esc`
-· `?`), one theme. These surfaces share the same TUI, so the fleet looks and
-behaves identically whether you open it as the home screen or as a popup.
+## Home
 
-Every surface has two bindings: a **prefix twin** (`prefix` then a letter) that
-works under every keyboard protocol, and an `⌥` fast-path for a single keystroke
-when your terminal allows it. Lead with the prefix; see
-[The dock & keys](/docs/the-dock#why-prefix-first) for why.
+Home is the configless front door. It shows live tmux session count, aggregate
+agent status, the selected session, theme control, and the action to open
+Terminals. It intentionally has no persistent workspace sidebar.
 
-| Surface        | Prefix (always works) | Alt fast-path |
-| -------------- | --------------------- | ------------- |
-| Home cockpit   | `prefix h`            | `⌥h`          |
-| Switch session | `prefix j`            | `⌥p`          |
-| Sidebar        | `prefix b`            | `⌥b`          |
-| File explorer  | `prefix e`            | `⌥e`          |
-| Git changes    | `prefix g`            | `⌥g`          |
-| Config editor  | `prefix v`            | `⌥,`          |
-| Actions menu   | `prefix u`            | `⌥m`          |
-| Cheat sheet    | `prefix k`            | `⌥k`          |
+When no tmux server exists, Home stays useful and offers a new-session action.
+The session list updates as ordinary tmux sessions appear or disappear.
 
-## The home cockpit — `prefix h` (or `⌥h`)
+## Terminals
 
-Running `tmux-ide` bare, with no project config, opens the **home cockpit** — the
-fleet home screen and the product's first surface:
+Terminals is a visual client for the selected tmux session:
 
-- a **fleet tree** of every session and its panes,
-- a **detail** pane for the selection,
-- a **live preview** of the selected pane, and
-- a **rollup header** summarizing fleet-wide status.
+- the left sidebar lists the current session and detected agents;
+- the window strip reflects real tmux windows and creates new ones;
+- every pane has a title, state, and relevant controls;
+- terminal content is mirrored as terminal cells, including indexed and
+  truecolor output;
+- pane clicks and agent rows navigate to the canonical tmux pane;
+- splitting, resizing, renaming, creation, and closing are daemon-owned tmux
+  mutations, not a parallel layout model.
 
-From inside any adopted session, `prefix h` (or `⌥h`) opens the same cockpit as a
-popup over your work — or use the dock's `[ ⌂ home ]` trigger. `esc` closes it.
+The UI retains terminal content through quiet periods, resize, theme switching,
+daemon replacement, and viewer reattachment. tmux remains the source of truth.
 
-## The sidebar — `prefix b` (or `⌥b`)
+## Commands and notifications
 
-The **sidebar** is a fleet nav column you toggle in place, without leaving your
-session. It's the persistent version of the cockpit: keep the fleet in view down
-the side while you work in the main panes.
+`F5` opens the command surface. Transient action notes, such as a successful
+split, dismiss automatically and do not become permanent chrome.
 
-```bash
-tmux-ide sidebar-toggle --session work
-```
+## Deferred surfaces
 
-## The switcher — `prefix j` (or `⌥p`)
-
-A compact session picker. Type to filter, `enter` to switch. It's the fast path
-between sessions and opens from the dock's `[ ⧉ switch ]` trigger too.
-
-## Floating panels
-
-Three widgets open as floating app dialogs — a keystroke to open, `esc` to close:
-
-| Prefix (always works) | Alt fast-path | Panel    | What it is                                          |
-| --------------------- | ------------- | -------- | --------------------------------------------------- |
-| `prefix e`            | `⌥e`          | Explorer | A file-tree navigator for the session's directory   |
-| `prefix g`            | `⌥g`          | Changes  | A git changes / diff view                           |
-| `prefix v`            | `⌥,`          | Config   | An interactive editor for `~/.tmux-ide/config.json` |
-
-You can also open them explicitly:
-
-```bash
-tmux-ide popup explorer
-tmux-ide popup changes
-tmux-ide popup config
-```
-
-The panel keybinds are rebindable under `keys.panels` in the config — see
-[Theming & config](/docs/theming). Rebinding a fast-path key moves its prefix
-twin with it.
-
-## The actions menu — `prefix u` (or `⌥m`)
-
-Right-click any pane or the status bar for a native tmux menu **at the pointer**
-(it opens on button _release_). The same menu is on `prefix u` (or `⌥m`). Same
-actions everywhere, so there's nothing to memorize about which surface owns which
-command.
-
-## The cheat sheet — `prefix k` (or `⌥k`)
-
-Every key on one iPadOS-style sheet. On a fresh install a first-run welcome card
-names the core keys once; press `prefix k` (or `⌥k`, or the dock's `[ ? keys ]`)
-any time to see the full sheet, or print it:
-
-```bash
-tmux-ide cheatsheet
-```
-
-## The unified app — `tmux-ide app`
-
-The surfaces above float over your real session. `tmux-ide app` is the other
-shape: a full-screen client over the fleet. The current OpenTUI beta exposes
-**F1 Home**, **F2 Terminals**, and a focused **F5 command palette**. tmux still
-owns the PTYs and layout; the app renders them. Files, Diff, settings, missions,
-rich media, and the web/native clients remain deferred from this beta. See the
-[OpenTUI beta release notes](/docs/release-2-9-0-beta-1).
-
-### The Terminal surface
-
-The Terminal tab is a live mirror of your panes, and it's agent-aware:
-
-- **Textual agent state** — sidebar, window, and pane chrome show `IDLE`,
-  `WORKING`, `BLOCKED`, `DONE`, `FAILED`, or `UNKNOWN`; state is never conveyed
-  by color alone.
-- **A focus hairline** — the focused pane gets a quiet accent border, so you
-  always know where keystrokes land.
-- **Select & copy in agent panes** — a pane running a full-screen app (Claude
-  Code, vim) captures the mouse. Right-click → **"Select text…"** pauses mouse
-  forwarding so you can drag-select and copy (via SSH-transparent OSC52); the
-  wheel scrolls history while you select.
-- **Immediate size authority** — the first attach claims the measured terminal
-  canvas before the initial pane seed, then follows later terminal resizes. The
-  manual window-size override is released when the app exits so other attached
-  tmux clients regain normal ownership.
-
-### Rich pane content (deferred from the beta)
-
-The repository retains experiments for host-native documents, but they are not
-part of the supported OpenTUI beta cut. The commands below remain lower-level
-development surfaces and should not be treated as the beta workflow:
-
-```bash
-tmux-ide widget markdown README.md
-tmux-ide widget image demo.gif
-printf '%s' '{"title":"Build","items":[{"type":"progress","value":72}]}' | tmux-ide widget card
-```
-
-The renderer-neutral daemon contract leaves room for these surfaces later; the
-beta keeps them off the cold path.
-
-### Home
-
-Home shows the live session catalog and agent summary without pretending to own
-workspace state before the daemon connects. Choose a session with the pointer or
-arrow keys and Enter; once live, focus moves to the active terminal pane.
-
-### Keep it running — even from your phone
-
-Your sessions already survive everything; with `--detachable`, the cockpit does
-too:
-
-```bash
-tmux-ide app --detachable   # or --hosted — same thing
-```
-
-Instead of running in your terminal, the app lives in a tmux session of its own
-and your terminal attaches to it. Close the terminal, lose the ssh connection,
-switch machines — the cockpit keeps running exactly where you left it: same
-tab, same scroll position, same open dialogs. Run the command again from any
-terminal (including your phone: ssh in, run it) and you're back in the same
-cockpit.
-
-Two things change in this mode:
-
-- **^q detaches** instead of quitting — the app keeps running in the
-  background. If you launched from inside tmux, ^q returns you to the session
-  you came from. Stop the host later with the normal tmux session controls.
-- If two terminals of different sizes are attached at once, tmux sizes the
-  cockpit to the one you used last (the smaller view wins while you're on it —
-  standard tmux behavior). The cockpit follows the terminal you're actually
-  using: attach from anywhere — or just come back to a terminal you left
-  attached — and it resizes to you.
-
-Set `app.detachable: true` in `~/.tmux-ide/config.json` to make plain
-`tmux-ide app` (and the `app.frontDoor` entry) always work this way.
-
-### Settings UI (deferred from the beta)
-
-The beta F5 palette is intentionally limited to navigation, split, and confirmed
-pane close. Continue to use configuration files and CLI commands for settings;
-an interactive settings surface is future work. See
-[workspace configuration](/docs/configuration).
-
-## See also
-
-- [OpenTUI beta](/docs/release-2-9-0-beta-1) — install, controls, and limitations
-- [The dock & keys](/docs/the-dock) — the triggers that open these surfaces
-- [Theming & config](/docs/theming) — rebind every key
+Files, diffs, missions, rich media, the web client, and the native desktop
+client are not release surfaces for 2.9. The daemon boundary remains
+renderer-neutral so future clients do not require a second backend.

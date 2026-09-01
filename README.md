@@ -1,136 +1,69 @@
 <p align="center">
   <picture>
-    <source
-      media="(prefers-color-scheme: dark)"
-      srcset="https://raw.githubusercontent.com/wavyrai/tmux-ide/main/.github/assets/icon-dark.png"
-    />
-    <img
-      src="https://raw.githubusercontent.com/wavyrai/tmux-ide/main/.github/assets/icon-light.png"
-      alt="tmux-ide"
-      width="120"
-      height="120"
-    />
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/wavyrai/tmux-ide/main/.github/assets/icon-dark.png" />
+    <img src="https://raw.githubusercontent.com/wavyrai/tmux-ide/main/.github/assets/icon-light.png" alt="tmux-ide" width="112" height="112" />
   </picture>
 </p>
 
 <h1 align="center">tmux-ide</h1>
 
-<p align="center"><strong>The terminal that understands your agents.</strong></p>
+<p align="center"><strong>A visual tmux client designed for working with coding agents.</strong></p>
 
-<p align="center">
-  <a href="https://github.com/wavyrai/tmux-ide/actions/workflows/ci.yml"><img src="https://github.com/wavyrai/tmux-ide/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-</p>
+tmux-ide adds an application shell to ordinary tmux sessions. tmux still owns
+the processes, PTYs, sessions, windows, panes, and persistence; tmux-ide adds
+Home, clickable pane and window chrome, agent indicators, memorable names, and
+direct controls. Close the app and the underlying sessions keep running.
 
-## OpenTUI beta
-
-The current beta is deliberately focused on a great visual client for ordinary
-tmux sessions. It ships Home and Terminals, textual agent state in the sidebar,
-window tabs and pane chrome, and direct pane/window control. The web client and
-the broader experimental surface catalog are deferred while this path hardens.
+## Install the OpenTUI beta
 
 ```bash
 npm install -g tmux-ide@beta
 tmux-ide app
 ```
 
-Use `tmux-ide app --detachable [session]` for a persistent cockpit. `Ctrl-Q`
-puts away only the viewer that pressed it: a client switched in from another
-tmux session returns there, while a directly attached client detaches. The
-hosted renderer keeps running; use the command palette's Quit action when you
-intend to stop it. tmux-ide never overwrites an existing root `C-q` binding and
-will explain the conflict instead. This routing requires tmux 3.0 or newer and
-works over ordinary local or SSH tmux clients.
-
-The first explicit app launch downloads the exact-version OpenTUI runtime for
-macOS or Linux, verifies its release metadata and SHA-256 digests, and caches it
-under `~/.tmux-ide/bin`. Your tmux server, panes, and PTYs remain the source of
-truth. Report beta problems through
-[GitHub Issues](https://github.com/wavyrai/tmux-ide/issues).
-
-Other tools rebuild the terminal to understand agents. tmux-ide teaches the terminal you already use to understand them. One command adds a native chrome to any tmux session: a fleet of tabs with live agent-status glyphs, ground-truth working/blocked/done detection, notifications when an agent needs you, and a crash-proof restore that rebuilds your whole fleet — including your Claude conversations. It's built _around_ tmux, so there's nothing to migrate and nothing to lock into.
-
-## Install
+Open a particular session directly:
 
 ```bash
-npm install -g tmux-ide
+tmux-ide app work
 ```
 
-Global install also registers the bundled Claude Code skill and enables `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in `~/.claude/settings.json` if Claude Code is installed locally.
+The first app launch downloads the exact-version OpenTUI runtime for macOS or
+Linux, verifies its release metadata and SHA-256 digests, and caches it under
+`~/.tmux-ide/bin`. Installed users do not need Bun.
 
-## Quick start
+## What ships in 2.9
 
-```bash
-tmux-ide adopt work                    # add the dock to a session you already have
-tmux-ide integration install claude    # ground-truth agent status via Claude Code hooks
-tmux-ide events --follow               # stream agent-status transitions
-tmux-ide unadopt work                  # revert — it was only tmux options
-```
+- **Home and Terminals** over live tmux sessions, with no project config
+  required.
+- **Agent indicators** in the sidebar, window tabs, and pane chrome.
+- **Keyboard and mouse control** for session, window, and pane selection;
+  splitting, resizing, renaming, creating, and confirmed closing.
+- **Truecolor terminal mirroring** with retained content through quiet periods,
+  resizing, theme changes, daemon replacement, and reattachment.
+- **SSH compatibility** because the source of truth remains ordinary tmux.
+- **A future-proof daemon boundary** that a later web client can reuse. The web
+  client is intentionally not part of this release.
 
-`adopt` is purely additive tmux configuration. If tmux-ide ever crashes or is uninstalled, your sessions keep running as ordinary tmux — no wrapper process, no lock-in. And because the chrome lives server-side, it renders from any client, including over SSH.
+Useful controls:
 
-## The three-beat story
+| Control      | Action                                |
+| ------------ | ------------------------------------- |
+| `F1`         | Home                                  |
+| `F2`         | Terminals                             |
+| `F5`         | Commands                              |
+| `Ctrl+O`     | Next pane                             |
+| `Ctrl+T`     | Next window                           |
+| `Meta+Arrow` | Resize focused pane                   |
+| `Ctrl+Q`     | Quit, or put away a detachable viewer |
 
-**Adopt in place.** `tmux-ide adopt <session>` drops a status bar onto any existing session: clickable fleet tabs, per-agent glyphs, and `[ ⌂ home ] [ ⧉ switch ] [ ? keys ]` triggers.
+## Optional workspace layout
 
-**Know your fleet.** Install the Claude Code integration and working/blocked/done come from the agent's own lifecycle. A toast fires on every attached client the moment an agent goes blocked or done; per-pane border chips read `claude · working`. Any agent can self-report with one pane option:
-
-```bash
-tmux set-option -p @agent_state "working:$(date +%s)"
-```
-
-**Survive anything.** Continuous snapshots mean a tmux server death isn't a lost afternoon. `tmux-ide restore` rebuilds every session, window, layout, cwd, and title; `--resume-agents` revives your Claude conversations from their recorded session ids.
-
-## Teams of any agents
-
-Run a heterogeneous fleet — Claude Code, codex, cursor-agent, aider, anything — in one set of sessions, and let them coordinate. Every agent's status is on a shared bus every other agent can read; one agent can task another by typing into its prompt; and any agent can block until a teammate finishes. It's agent-agnostic by design: Claude Code reports automatically, everyone else self-reports with a one-line pane option.
-
-```bash
-tmux-ide team --json                                   # read the fleet's status
-tmux-ide send %2 "implement /login, then run the tests" # task another agent
-tmux-ide wait output %2 --match "tests passed"          # block until it finishes
-tmux-ide wait agent-status api --status done            # or wait on a whole session
-```
-
-`send` types straight into another agent's prompt (target by pane ID, title, role, or name; long messages auto-route through a dispatch file). `wait` exits `0` on match, `1` on timeout, so it scripts cleanly. See the multi-agent teams docs for a worked lead-dispatches-to-codex example.
-
-## One app, a keystroke away
-
-Once a session is adopted, the whole UI is a keystroke or two away — one interaction grammar (`j`/`k` move, `enter` opens, `/` filters, `esc` backs out, `?` asks) and one theme file (`~/.tmux-ide/config.json`).
-
-Every surface has a **prefix twin** (`prefix` then a letter) that works under every keyboard protocol, plus an `⌥` fast-path for a single keystroke when your terminal allows it. Lead with the prefix — an agent pane can temporarily change how the terminal encodes keys and swallow a root-table `Alt` bind, but the tmux prefix always reaches tmux. Right-click anywhere opens the actions menu at the pointer.
-
-| Surface                                        | Prefix (always works) | Alt fast-path  |
-| ---------------------------------------------- | --------------------- | -------------- |
-| Home cockpit — fleet tree, detail, preview     | `prefix h`            | `⌥h`           |
-| Switch session                                 | `prefix j`            | `⌥p`           |
-| Cheat sheet — every key on one page            | `prefix k`            | `⌥k`           |
-| Actions menu — at the pointer (or right-click) | `prefix u`            | `⌥m`           |
-| Sidebar — a fleet nav column                   | `prefix b`            | `⌥b`           |
-| Panels — explorer / changes / config           | `prefix e` `g` `v`    | `⌥e` `⌥g` `⌥,` |
-
-### Show rich content in a pane
-
-Use the file you already have; tmux-ide selects the renderer from its extension
-and live-refreshes the surface when the file changes:
+tmux-ide works without configuration. To describe a reproducible project
+layout, scaffold `.tmux-ide/workspace.yml`:
 
 ```bash
-tmux-ide show README.md
-tmux-ide show demo.gif
-tmux-ide show build-status.json
-```
-
-Markdown, PNG, JPEG, GIF, WebP, AVIF, and declarative card JSON are
-supported. Press `Ctrl-C` to restore the ordinary terminal. The explicit
-`tmux-ide widget <markdown|image|card>` form remains available as the low-level
-protocol surface for scripts and stdin.
-
-## Optional: describe a layout with workspace.yml
-
-Adopt works on any session. If you'd rather have tmux-ide build the layout, scaffold `.tmux-ide/workspace.yml`:
-
-```bash
-tmux-ide init          # auto-detects your stack
-tmux-ide               # launch (the session is adopted automatically)
+tmux-ide init
+tmux-ide start
 ```
 
 ```yaml
@@ -146,82 +79,54 @@ terminal:
           focus: true
         - title: Shell
     - panes:
-        - title: Dev Server
+        - title: Dev server
           command: pnpm dev
 ```
 
-Existing `ide.yml` files still launch through the compatibility adapter. Run
-`tmux-ide migrate --dry-run` to preview conversion, then `tmux-ide migrate --write`
-to create `.tmux-ide/workspace.yml`.
+Legacy `ide.yml` files still load through a compatibility adapter. Use
+`tmux-ide migrate --dry-run` before writing the current format.
 
-## More
+## Architecture
 
-tmux-ide also has a `worktree` flow (a git worktree plus an adopted session per branch), `wait` coordination primitives, and a `--json` surface on every command. See the docs:
+```mermaid
+flowchart LR
+  T[tmux\nprocesses · PTYs · topology · persistence]
+  D[daemon\ndiscovery · lifecycle · agent state · pane streams]
+  U[OpenTUI\nHome · Terminals · chrome · input]
+  T <--> D
+  D <--> U
+```
 
-- [Getting started](https://github.com/wavyrai/tmux-ide) and the full docs site
-- Run `tmux-ide --help` for the complete command list
+This separation is deliberate: tmux has years of terminal, resize, disconnect,
+shell, and SSH edge-case coverage. tmux-ide does not replace that foundation or
+put your work behind a proprietary session format.
 
 ## Requirements
 
-- **tmux** — 3.2+ recommended (`tmux-ide doctor` requires ≥ 3.0; 3.6 is the smoothest)
-- **Node.js** — ≥ 20
-- **Bun** — only needed when running or compiling the TUI from a development
-  checkout. Installed releases use a verified per-platform runtime, so users do
-  not need Bun.
+- tmux 3.0 or newer; 3.2+ recommended
+- Node.js 20 or newer
+- macOS arm64/x64 or Linux arm64/x64 for the downloadable OpenTUI runtime
+- Bun only when developing or compiling the TUI from a checkout
 
-Run `tmux-ide doctor` to check your machine — the "TUI surfaces" row reports
-whether they resolve via a dev checkout (bun) or the compiled binary.
+Run `tmux-ide doctor --json` for an environment report.
 
-### TUI surfaces & the compiled binary
-
-The cockpit/sidebar/widget surfaces are OpenTUI/Solid (`.tsx`). In a dev checkout
-they run under `bun` (the bunfig preload supplies the JSX transform). For
-installed users there is no checkout and often no bun, so those surfaces run from
-a single self-contained executable built with `bun build --compile`:
-
-```bash
-pnpm build:tui   # → packages/daemon/dist/tui/tmux-ide-tui (requires bun to build)
-```
-
-It bundles every surface behind a `tmux-ide-tui <surface> [flags]` dispatcher,
-embeds the native OpenTUI dylib, and pre-transforms JSX at build time — so it
-needs no runtime. The CLI resolves surfaces checkout-first, then a shipped/local
-compiled binary, then a per-platform binary downloaded on demand.
-
-**Per-platform binaries.** The npm tarball does _not_ carry the ~70MB binary (a
-surprise on every install). Instead each release publishes one per platform
-(darwin-arm64, darwin-x64, linux-x64, linux-arm64) as a GitHub release asset.
-The first `tmux-ide app` launch downloads and verifies the exact release asset.
-The explicit command remains available as a retry path:
-
-```bash
-tmux-ide update --tui-binary   # retry the verified download
-```
-
-Nothing is downloaded by `npm install` itself. `tmux-ide doctor`'s "TUI
-surfaces" row spells out how surfaces currently resolve on your machine.
-
-## Contributor workflow
-
-The repo is a pnpm workspace with a root CLI package and a separate docs app package:
+## Development
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm lint
-pnpm format:check
-pnpm test
+pnpm release:opentui:check
 pnpm docs:build
-pnpm pack:check
 ```
 
-`pnpm check` is the intended local pre-push command and matches the default release checklist.
+The focused OpenTUI release gate builds and checks the package, runs renderer
+and lifecycle tests, and installs the packed tarball into an isolated new-user
+environment.
 
-## Open source project files
-
-- [CONTRIBUTING.md](CONTRIBUTING.md) — local setup and contribution workflow
-- [RELEASE.md](RELEASE.md) — publish checklist
-- [CHANGELOG.md](CHANGELOG.md) — release notes
-- [SECURITY.md](SECURITY.md) — vulnerability reporting
+- [Documentation](https://github.com/wavyrai/tmux-ide/tree/main/docs)
+- [Contributing](CONTRIBUTING.md)
+- [Release checklist](RELEASE.md)
+- [Changelog](CHANGELOG.md)
+- [Security](SECURITY.md)
 
 ## License
 

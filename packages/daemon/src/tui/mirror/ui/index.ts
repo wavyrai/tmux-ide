@@ -12,6 +12,14 @@ export {
 } from "./button.tsx";
 export { Dialog, type DialogProps } from "./dialog.tsx";
 export { KeyHint, type KeyHintProps } from "./key-hint.tsx";
+export {
+  createKeyboardRouteOwner,
+  KeyboardRouteProvider,
+  useKeyboardRoute,
+  type KeyboardRoute,
+  type KeyboardRouteOwner,
+  type RoutedKeyboardEvent,
+} from "./keyboard-router.tsx";
 export { Menu, type MenuItem, type MenuProps } from "./menu.tsx";
 export {
   NavigationRow,

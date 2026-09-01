@@ -93,7 +93,7 @@ class FakeThemeModeSource implements ThemeModeSource {
 }
 
 describe("semantic theme snapshots", () => {
-  it("uses only RGBA.fromInts so docs/tui-web's narrow browser shim remains a drift detector", () => {
+  it("uses only RGBA.fromInts so alternate render hosts can keep a narrow color adapter", () => {
     const source = readFileSync(fileURLToPath(new URL("./theme.ts", import.meta.url)), "utf-8");
     expect(source).toContain("RGBA.fromInts");
     expect(source).not.toMatch(/RGBA\.from(?!Ints\b)/u);

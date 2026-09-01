@@ -1,11 +1,11 @@
 /* @jsxImportSource @opentui/solid */
 import { For, createMemo } from "solid-js";
-import { useKeyboard } from "@opentui/solid";
 
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal, terminalDisplayWidth } from "../terminal-text.ts";
 import { Button } from "./button.tsx";
 import { componentPalette } from "./state.ts";
+import { useKeyboardRoute } from "./keyboard-router.tsx";
 
 export interface TabItem {
   id: string;
@@ -58,16 +58,17 @@ export function Tabs(props: TabsProps) {
     props.variant === "header"
       ? props.theme.roles.surfaces.header
       : props.theme.roles.surfaces.panel;
-  useKeyboard((event) => {
-    if (!props.focused || event.eventType !== "press") return;
+  useKeyboardRoute((event) => {
+    if (!props.focused || event.eventType !== "press") return false;
     const key = event.name.toLowerCase();
-    if (key !== "enter" && key !== "return" && key !== "space") return;
+    if (key !== "enter" && key !== "return" && key !== "space") return false;
     const id = props.focusedId ?? props.activeId;
     const item = id ? props.items.find((candidate) => candidate.id === id) : undefined;
-    if (!item || item.disabled) return;
+    if (!item || item.disabled) return false;
     event.preventDefault();
     event.stopPropagation();
     props.onSelect?.(item.id);
+    return true;
   });
   return (
     <box

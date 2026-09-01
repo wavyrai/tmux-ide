@@ -6,7 +6,7 @@
  * New code should consume {@link SemanticThemeSnapshot} / {@link ThemeStore}
  * instead of inventing per-surface colors.
  *
- * Node-free on purpose: the web host (docs/tui-web) imports this module
+ * Node-free on purpose so render hosts can consume the same semantic tokens
  * verbatim, aliasing @opentui/core to a browser shim that only exposes RGBA.
  */
 import { RGBA } from "@opentui/core";

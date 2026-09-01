@@ -1,10 +1,10 @@
 /* @jsxImportSource @opentui/solid */
-import { useKeyboard } from "@opentui/solid";
 
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal, terminalDisplayWidth } from "../terminal-text.ts";
 import { componentPalette, type ComponentInteractionState, type ComponentTone } from "./state.ts";
 import { Surface } from "./surface.tsx";
+import { useKeyboardRoute } from "./keyboard-router.tsx";
 
 export type NavigationRowInputSource = "keyboard" | "mouse";
 
@@ -52,7 +52,7 @@ export function NavigationRow(props: NavigationRowProps) {
     props.onActivate(source);
   };
 
-  useKeyboard((event) => {
+  useKeyboardRoute((event) => {
     const key = event.name.toLowerCase();
     if (
       !props.focused ||
@@ -61,10 +61,11 @@ export function NavigationRow(props: NavigationRowProps) {
       event.eventType !== "press" ||
       (key !== "enter" && key !== "return" && key !== "space")
     )
-      return;
+      return false;
     event.preventDefault();
     event.stopPropagation();
     activate("keyboard");
+    return true;
   });
 
   return (

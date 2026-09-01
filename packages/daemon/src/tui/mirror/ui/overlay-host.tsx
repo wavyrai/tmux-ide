@@ -1,6 +1,5 @@
 /* @jsxImportSource @opentui/solid */
 import type { JSX } from "@opentui/solid";
-import { useKeyboard } from "@opentui/solid";
 import { For, createEffect, createMemo, onCleanup } from "solid-js";
 
 import {
@@ -9,6 +8,7 @@ import {
   overlayZIndex,
   type OverlayDismissReason,
 } from "./overlay-host.ts";
+import { useKeyboardRoute } from "./keyboard-router.tsx";
 
 export interface OverlayLayerContext {
   readonly active: boolean;
@@ -49,13 +49,14 @@ export function OverlayHost(props: OverlayHostProps) {
     ),
   );
   onCleanup(() => focus.dispose());
-  useKeyboard((event) => {
-    if (props.ownsEscape === false) return;
+  useKeyboardRoute((event) => {
+    if (props.ownsEscape === false) return false;
     const id = overlayEscapeTarget(layers(), event.name);
-    if (!id) return;
+    if (!id) return false;
     event.preventDefault();
     event.stopPropagation();
     props.onDismiss(id, "escape");
+    return true;
   });
   return (
     <For each={layers()}>

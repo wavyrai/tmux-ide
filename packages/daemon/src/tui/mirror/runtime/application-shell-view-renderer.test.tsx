@@ -1,7 +1,8 @@
 /* @jsxImportSource @opentui/solid */
 import { MouseButtons } from "@opentui/core/testing";
+import { useKeyboard, type JSX } from "@opentui/solid";
 import { describe, expect, it } from "bun:test";
-import { batch, createSignal } from "solid-js";
+import { batch, createSignal, onCleanup } from "solid-js";
 import type { TerminalReplicaSnapshot } from "@tmux-ide/contracts";
 
 import { registerPaneSurface, type TerminalPaneRenderSource } from "../pane-surface.tsx";
@@ -15,6 +16,7 @@ import { terminalDisplayWidth } from "../terminal-text.ts";
 import { projectApplicationShell } from "../workspace/application-shell.ts";
 import { projectOpenTuiApplicationShell } from "../workspace/application-shell-controller.ts";
 import { windowTabBarLayout } from "../workspace/terminal-window-strip.tsx";
+import { createKeyboardRouteOwner, KeyboardRouteProvider } from "../ui/keyboard-router.tsx";
 import { createApplicationShellBinding } from "./application-shell-binding.ts";
 import type { OpenTuiProductionWorkspaceClient } from "./open-tui-generation-host.ts";
 import type { PaneScopedTerminalAdapter } from "./pane-scoped-terminal-surface.tsx";
@@ -103,6 +105,13 @@ function mixedAgentLayout() {
 }
 
 const focusPaneId = "pane.promoted.4d2e6ef021a27f2ffc19";
+
+function KeyboardRouteTestHost(props: { readonly children: JSX.Element }) {
+  const owner = createKeyboardRouteOwner();
+  onCleanup(() => owner.dispose());
+  useKeyboard((event) => owner.route(event));
+  return <KeyboardRouteProvider owner={owner}>{props.children}</KeyboardRouteProvider>;
+}
 
 function focusLayout() {
   const current = {
@@ -1414,28 +1423,32 @@ describe("production ApplicationShellView", () => {
       const [projection, setProjection] = createSignal(agentFocused);
       selectProjection = setProjection;
       return (
-        <ApplicationShellView
-          dimensions={() => ({ width: 120, height: 40 })}
-          surface={() => "terminals"}
-          semantic={projection}
-          generationStatus={() => "live"}
-          sessions={["main", "website"]}
-          selectedSession={() => 0}
-          bootstrapNote={() => null}
-          paletteOpen={() => false}
-          terminalRendererSource={() => null}
-          layout={() => ({ current: null, windows: [] })}
-          focusedPane={() => null}
-          theme={theme}
-          palette={palette}
-          onOpenSurface={() => undefined}
-          onOpenSession={(session, source) => events.push(`${source}:session:${session}`)}
-          onOpenAgent={(session, pane, source) => events.push(`${source}:agent:${session}:${pane}`)}
-          onSetPaletteOpen={() => undefined}
-          onSelectPane={() => undefined}
-          onResizePreview={() => undefined}
-          onResizePane={() => undefined}
-        />
+        <KeyboardRouteTestHost>
+          <ApplicationShellView
+            dimensions={() => ({ width: 120, height: 40 })}
+            surface={() => "terminals"}
+            semantic={projection}
+            generationStatus={() => "live"}
+            sessions={["main", "website"]}
+            selectedSession={() => 0}
+            bootstrapNote={() => null}
+            paletteOpen={() => false}
+            terminalRendererSource={() => null}
+            layout={() => ({ current: null, windows: [] })}
+            focusedPane={() => null}
+            theme={theme}
+            palette={palette}
+            onOpenSurface={() => undefined}
+            onOpenSession={(session, source) => events.push(`${source}:session:${session}`)}
+            onOpenAgent={(session, pane, source) =>
+              events.push(`${source}:agent:${session}:${pane}`)
+            }
+            onSetPaletteOpen={() => undefined}
+            onSelectPane={() => undefined}
+            onResizePreview={() => undefined}
+            onResizePane={() => undefined}
+          />
+        </KeyboardRouteTestHost>
       );
     }
     const setup = await renderForTest(() => <Harness />, { width: 120, height: 40 });

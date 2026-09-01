@@ -206,7 +206,9 @@ describe("production OpenTUI entry boundary", () => {
     );
     expect(performanceLog).toContain('"terminal-host-focus-control-gate-ready"');
     expect(performanceLog).toContain('"terminal-host-focus-control-binding-ready"');
-    expect(root).toContain("markTerminalHostFocusControlGate(hostFocusControlCapability.observation)");
+    expect(root).toContain(
+      "markTerminalHostFocusControlGate(hostFocusControlCapability.observation)",
+    );
     expect(root).toContain("publish: markTerminalHostFocusBinding");
     expect(root).toContain("resolveApplicationHostFocusControlCapability(process.env)");
     expect(root).toContain("createApplicationHostFocusControlBindingObserver({");

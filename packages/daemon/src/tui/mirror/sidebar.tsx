@@ -6,7 +6,7 @@
  * same component:
  *
  *   - the terminal app (app.tsx) — OpenTUI's native renderer, over tmux
- *   - the web (docs/tui-web)     — a solid-js universal renderer over DOM
+ *   - future alternate hosts    — through the same semantic projection
  *
  * Consequently: NO node imports, NO tmux, NO app state. The only pointer surface
  * is `onMouse` on the root box, carrying CELL coordinates — the same contract in

@@ -1,7 +1,7 @@
 /* @jsxImportSource @opentui/solid */
 import { MouseButtons } from "@opentui/core/testing";
-import { useKeyboard } from "@opentui/solid";
-import { createSignal } from "solid-js";
+import { useKeyboard, type JSX } from "@opentui/solid";
+import { createSignal, onCleanup } from "solid-js";
 import { describe, expect, it } from "bun:test";
 
 import { createSemanticThemeSnapshot } from "../theme.ts";
@@ -26,6 +26,14 @@ import {
   Tabs,
   TuiButton,
 } from "./index.ts";
+import { createKeyboardRouteOwner, KeyboardRouteProvider } from "./keyboard-router.tsx";
+
+function KeyboardRouteTestHost(props: { readonly children: JSX.Element }) {
+  const owner = createKeyboardRouteOwner();
+  onCleanup(() => owner.dispose());
+  useKeyboard((event) => owner.route(event));
+  return <KeyboardRouteProvider owner={owner}>{props.children}</KeyboardRouteProvider>;
+}
 
 describe("OpenTUI ui primitives", () => {
   const colorKey = (color: Parameters<typeof colorToThemeBytes>[0]) =>
@@ -153,23 +161,25 @@ describe("OpenTUI ui primitives", () => {
     const theme = createSemanticThemeSnapshot({ mode: "dark" });
     const setup = await renderForTest(
       () => (
-        <box width={40} height={3} onMouseDown={() => bubbled++}>
-          <TuiButton
-            theme={theme}
-            label="Create window"
-            focused
-            width={20}
-            onPress={() => calls.push("activate")}
-          />
-          <TuiButton
-            theme={theme}
-            label="Unavailable"
-            disabled
-            focused
-            width={20}
-            onPress={() => calls.push("disabled")}
-          />
-        </box>
+        <KeyboardRouteTestHost>
+          <box width={40} height={3} onMouseDown={() => bubbled++}>
+            <TuiButton
+              theme={theme}
+              label="Create window"
+              focused
+              width={20}
+              onPress={() => calls.push("activate")}
+            />
+            <TuiButton
+              theme={theme}
+              label="Unavailable"
+              disabled
+              focused
+              width={20}
+              onPress={() => calls.push("disabled")}
+            />
+          </box>
+        </KeyboardRouteTestHost>
       ),
       { width: 40, height: 3 },
     );
@@ -188,26 +198,28 @@ describe("OpenTUI ui primitives", () => {
     const theme = createSemanticThemeSnapshot({ mode: "dark" });
     const setup = await renderForTest(
       () => (
-        <box width={40} height={2} flexDirection="column">
-          <NavigationRow
-            theme={theme}
-            id="agent:codex"
-            label="Codex"
-            detail="[WORKING]"
-            width={40}
-            focused
-            status="working"
-            onActivate={(source) => calls.push(source)}
-          />
-          <NavigationRow
-            theme={theme}
-            id="agent:disabled"
-            label="Unavailable"
-            width={40}
-            disabled
-            onActivate={(source) => calls.push(`disabled:${source}`)}
-          />
-        </box>
+        <KeyboardRouteTestHost>
+          <box width={40} height={2} flexDirection="column">
+            <NavigationRow
+              theme={theme}
+              id="agent:codex"
+              label="Codex"
+              detail="[WORKING]"
+              width={40}
+              focused
+              status="working"
+              onActivate={(source) => calls.push(source)}
+            />
+            <NavigationRow
+              theme={theme}
+              id="agent:disabled"
+              label="Unavailable"
+              width={40}
+              disabled
+              onActivate={(source) => calls.push(`disabled:${source}`)}
+            />
+          </box>
+        </KeyboardRouteTestHost>
       ),
       { width: 40, height: 2 },
     );
