@@ -9,6 +9,10 @@
 
 <p align="center"><strong>A visual tmux client designed for working with coding agents.</strong></p>
 
+<p align="center">
+  <img src="./docs/public/tui-demo.svg" alt="Animated tmux-ide OpenTUI demo" width="960" />
+</p>
+
 tmux-ide adds an application shell to ordinary tmux sessions. tmux still owns
 the processes, PTYs, sessions, windows, panes, and persistence; tmux-ide adds
 Home, clickable pane and window chrome, agent indicators, memorable names, and
@@ -121,6 +125,8 @@ pnpm docs:build
 The focused OpenTUI release gate builds and checks the package, runs renderer
 and lifecycle tests, and installs the packed tarball into an isolated new-user
 environment.
+
+Regenerate the production-renderer demo with `pnpm demo:tui`.
 
 - [Documentation](https://github.com/wavyrai/tmux-ide/tree/main/docs)
 - [Contributing](CONTRIBUTING.md)

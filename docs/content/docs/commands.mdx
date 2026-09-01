@@ -10,18 +10,22 @@ the built-in version of this list.
 
 ## Sessions
 
-| Command                             | Description                                                                                         |
-| ----------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `tmux-ide`                          | Launch `.tmux-ide/workspace.yml` or compatible `ide.yml`, or open the home cockpit if there is none |
-| `tmux-ide <path>`                   | Launch from a specific directory (cockpit if no config is found)                                    |
-| `tmux-ide init [--template <name>]` | Scaffold `.tmux-ide/workspace.yml` (auto-detects stack)                                             |
-| `tmux-ide stop`                     | Kill the current IDE session                                                                        |
-| `tmux-ide restart`                  | Stop and relaunch the session                                                                       |
-| `tmux-ide attach`                   | Reattach to a running session                                                                       |
-| `tmux-ide ls`                       | List all tmux sessions                                                                              |
-| `tmux-ide status [--json]`          | Show session status                                                                                 |
+| Command                             | Description                                                         |
+| ----------------------------------- | ------------------------------------------------------------------- |
+| `tmux-ide`                          | Open the visual app; workspace config is optional                   |
+| `tmux-ide app [session]`            | Open Home, or open a particular live tmux session directly          |
+| `tmux-ide <path>`                   | Open the app from a directory and use its optional workspace config |
+| `tmux-ide init [--template <name>]` | Scaffold `.tmux-ide/workspace.yml` (auto-detects stack)             |
+| `tmux-ide stop`                     | Kill the current IDE session                                        |
+| `tmux-ide restart`                  | Stop and relaunch the session                                       |
+| `tmux-ide attach`                   | Reattach to a running session                                       |
+| `tmux-ide ls`                       | List all tmux sessions                                              |
+| `tmux-ide status [--json]`          | Show session status                                                 |
 
-## The dock
+## Retained classic tmux chrome
+
+These commands remain available for existing workflows, but they are not the
+focused Home-and-Terminals path shown in the 2.9 OpenTUI demo.
 
 | Command                                 | Description                                             |
 | --------------------------------------- | ------------------------------------------------------- |
@@ -147,12 +151,13 @@ publishing another daemon:
 {
   "pid": 4312,
   "port": 4010,
-  "protocolVersion": 1,
-  "productVersion": "2.8.0",
+  "protocolVersion": 2,
+  "productVersion": "2.9.0-beta.3",
   "instanceId": "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
   "startedAt": "2026-07-21T00:00:00.000Z",
+  "environmentId": "machine-environment-id",
   "bindHostname": "127.0.0.1",
-  "authToken": null
+  "authToken": "owner-only-token"
 }
 ```
 

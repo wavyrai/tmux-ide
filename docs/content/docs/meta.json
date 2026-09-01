@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "release-2-9-0-beta-1",
+    "demo",
     "getting-started",
     "app-surfaces",
     "agent-detection",

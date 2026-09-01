@@ -5,11 +5,10 @@ description: The optional .tmux-ide/workspace.yml file for describing tmux layou
 
 ## Overview
 
-`.tmux-ide/workspace.yml` is **optional**. `tmux-ide adopt` works on any session
-you launch however you like — but if you want tmux-ide to build the layout,
-describe it in `.tmux-ide/workspace.yml` and run `tmux-ide`. Sessions launched
-from a config are adopted automatically, so the dock and agent detection are on
-from the start.
+`.tmux-ide/workspace.yml` is **optional**. The OpenTUI discovers ordinary tmux
+sessions without it. Use a workspace file when you want tmux-ide to build a
+repeatable layout with named panes, commands, working directories, and
+environment variables.
 
 Legacy `ide.yml` files are still supported through a compatibility adapter.
 Preview migration with `tmux-ide migrate --dry-run`; write the new file with
@@ -117,17 +116,15 @@ use `~/.tmux-ide/config.json` instead — see [Theming & config](/docs/theming).
 
 `.tmux-ide/workspace.yml` describes one project's layout. Product-wide behavior lives in
 `~/.tmux-ide/config.json` (override the path with `TMUX_IDE_CONFIG`) — the same
-file that holds the shared theme. Two things worth knowing for 2.7:
+file that holds the shared theme. Two things worth knowing for 2.9:
 
 - **`app.frontDoor`** controls the default entry point. Bare `tmux-ide` launches
-  the unified visual app by default (`true`); set it to `false` to restore the
-  historical home cockpit. Project config auto-launch and explicit
-  `tmux-ide team` are unaffected.
+  the unified visual app by default (`true`); set it to `false` only when you
+  deliberately need the retained classic entry path.
 - **`app.detachable`** makes plain `tmux-ide app` run hosted: the app lives in
   a tmux session of its own and your terminal attaches to it, so the cockpit
   survives the terminal and reattaches from anywhere (`^q` detaches instead of
-  quitting). Default `false` — same as passing `--detachable` every time. See
-  [the app surfaces](/docs/app-surfaces#keep-it-running--even-from-your-phone).
+  quitting). Default `false` — same as passing `--detachable` every time.
 - **Settings are editable in the app.** Inside `tmux-ide app`, press **F5** and
   type "settings" for a palette command per setting — no JSON required. Edits
   write back to `~/.tmux-ide/config.json` atomically:

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import type { Metadata } from "next";
 
 import { AppIcon } from "@/components/app-icon";
@@ -88,6 +89,37 @@ export default function HomePage() {
             GitHub
           </a>
         </div>
+      </section>
+
+      <section className="mt-20">
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
+            <p className="font-mono text-xs uppercase tracking-[0.2em] text-fd-muted-foreground">
+              The real renderer
+            </p>
+            <h2 className="mt-3 text-3xl tracking-tight text-fd-foreground">
+              Home, terminals, and commands—without leaving tmux.
+            </h2>
+          </div>
+          <Link href="/docs/demo" className="font-mono text-sm text-fd-primary hover:underline">
+            How the demo is made →
+          </Link>
+        </div>
+        <div className="mt-7 overflow-hidden border border-fd-border bg-[#0f0f14] p-1 shadow-2xl shadow-black/10">
+          <Image
+            src="/tui-demo.svg"
+            alt="Animated tmux-ide OpenTUI tour showing Home, an agent-aware terminal workspace, and the Commands palette"
+            width={1344}
+            height={792}
+            unoptimized
+            loading="eager"
+            className="h-auto w-full"
+          />
+        </div>
+        <p className="mt-3 text-sm leading-6 text-fd-muted-foreground">
+          Generated from the production OpenTUI component tree with a deterministic in-memory tmux
+          fixture. Reduced-motion settings show the terminal workspace as a still frame.
+        </p>
       </section>
 
       <section className="mt-24 border-y border-fd-border py-10">
