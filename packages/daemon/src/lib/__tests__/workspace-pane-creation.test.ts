@@ -808,6 +808,7 @@ describe("WorkspacePaneCreationAuthority", () => {
       expect(call.environment).toEqual({
         TERM: "screen-256color",
         COLORTERM: "truecolor",
+        COLORFGBG: "15;0",
         LANG: "en_US.UTF-8",
         LC_ALL: "C",
       });

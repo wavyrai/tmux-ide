@@ -319,7 +319,7 @@ describe("WorkspaceOpenAuthority", () => {
       CANONICAL_ROOT,
       "-n",
       "Terminal",
-      'exec env -u NO_COLOR COLORTERM=truecolor "${SHELL:-/bin/sh}" -l',
+      'exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 "${SHELL:-/bin/sh}" -l',
     ]);
     expect(tmux.calls).toContainEqual([
       "set-environment",

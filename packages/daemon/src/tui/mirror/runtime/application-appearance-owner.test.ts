@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { parseAppConfig } from "../../../lib/app-config.ts";
 import {
+  DARK_THEME,
   colorToPackedRgb,
   colorToThemeBytes,
   type ResolvedThemeMode,
@@ -133,8 +134,8 @@ describe("createAppearanceOwner", () => {
     const after = owner.appearance();
     expect(after.generation - before.generation).toBe(1);
     expect(after.theme.mode).toBe("light");
-    expect(after.palette.background).toBe(colorToPackedRgb(after.theme.roles.surfaces.terminal));
-    expect(after.palette.foreground).toBe(colorToPackedRgb(after.theme.roles.text.primary));
+    expect(after.palette.background).toBe(colorToPackedRgb(DARK_THEME.roles.surfaces.terminal));
+    expect(after.palette.foreground).toBe(colorToPackedRgb(DARK_THEME.roles.text.primary));
     expect(after.theme).toBe(owner.theme());
     expect(after.palette).toBe(owner.palette());
     owner.dispose();
@@ -206,6 +207,8 @@ describe("createAppearanceOwner", () => {
       paletteOwner,
     );
     const initialAnsi = owner.palette().ansiForeground;
+    const initialForeground = owner.palette().foreground;
+    const initialBackground = owner.palette().background;
     const explicitColors = [0x000000, 0x7f3fbf, 0xffffff, 0x123456, 0xfedcba];
 
     for (let cycle = 0; cycle < 25; cycle += 1) {
@@ -213,6 +216,8 @@ describe("createAppearanceOwner", () => {
       owner.cycleTheme();
       owner.cycleTheme();
       expect(owner.palette().ansiForeground).toBe(initialAnsi);
+      expect(owner.palette().foreground).toBe(initialForeground);
+      expect(owner.palette().background).toBe(initialBackground);
       expect(explicitColors.map(owner.palette().resolveForeground)).toEqual(explicitColors);
       expect(explicitColors.map(owner.palette().resolveBackground)).toEqual(explicitColors);
     }
@@ -223,5 +228,24 @@ describe("createAppearanceOwner", () => {
     expect(paletteOwner.disposeCount).toBe(1);
     expect(paletteOwner.listenerCount()).toBe(0);
     expect(renderer.listenerCount("theme_mode")).toBe(0);
+  });
+
+  it("keeps mirrored terminal defaults stable while light chrome and overlays change", () => {
+    useTemporaryConfig();
+    const owner = createAppearanceOwner(
+      parseAppConfig({ theme: { mode: "dark" } }),
+      new ThemeRenderer(),
+      new PaletteOwner(),
+    );
+    const dark = owner.appearance();
+
+    owner.cycleTheme();
+    const light = owner.appearance();
+
+    expect(light.theme.mode).toBe("light");
+    expect(light.palette.foreground).toBe(dark.palette.foreground);
+    expect(light.palette.background).toBe(dark.palette.background);
+    expect(light.palette.searchCurrent).not.toBe(dark.palette.searchCurrent);
+    owner.dispose();
   });
 });

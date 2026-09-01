@@ -10,10 +10,16 @@ import {
 
 describe("tmux terminal color authority", () => {
   it("uses a removal tombstone instead of the invalid new-session -e removal spelling", () => {
-    expect(TMUX_TRUECOLOR_ENVIRONMENT_ARGS).toEqual(["-e", "COLORTERM=truecolor"]);
+    expect(TMUX_TRUECOLOR_ENVIRONMENT_ARGS).toEqual([
+      "-e",
+      "COLORTERM=truecolor",
+      "-e",
+      "COLORFGBG=15;0",
+    ]);
     expect(tmuxTruecolorEnvironmentCommands("demo")).toEqual([
       ["set-environment", "-r", "-t", "=demo", "NO_COLOR"],
       ["set-environment", "-t", "=demo", "COLORTERM", "truecolor"],
+      ["set-environment", "-t", "=demo", "COLORFGBG", "15;0"],
     ]);
 
     const runTmux = vi.fn(() => "");
@@ -25,10 +31,10 @@ describe("tmux terminal color authority", () => {
 
   it("clears NO_COLOR in both explicit commands and a fresh session's first shell", () => {
     expect(truecolorShellCommand("claude --resume")).toBe(
-      "env -u NO_COLOR COLORTERM=truecolor claude --resume",
+      "env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 claude --resume",
     );
     expect(TMUX_TRUECOLOR_INTERACTIVE_SHELL_COMMAND).toBe(
-      'exec env -u NO_COLOR COLORTERM=truecolor "${SHELL:-/bin/sh}" -l',
+      'exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 "${SHELL:-/bin/sh}" -l',
     );
   });
 });

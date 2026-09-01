@@ -2,6 +2,7 @@ import { batch, createSignal, type Accessor } from "solid-js";
 
 import { updateAppConfig, type AppConfig } from "../../../lib/app-config.ts";
 import {
+  DARK_THEME,
   createSemanticThemeStore,
   createTerminalPaletteProjection,
   deriveSystemVisualHostDefaults,
@@ -51,11 +52,16 @@ export function createAppearanceOwner(
     hostDefaults: hostDefaults(initialHostPalette),
   });
   const initialTheme = store.getSnapshot();
+  // Mirrored programs are foreign terminal applications, not semantic app
+  // components. They are launched with tmux-ide's dark terminal contract and
+  // may retain default-colour cells indefinitely. Keep that cell contract
+  // stable while app-owned overlays continue to follow the selected theme.
+  const terminalCellDefaults = DARK_THEME;
   const [appearance, setAppearance] = createSignal<ApplicationAppearanceSnapshot>(
     Object.freeze({
       generation: 0,
       theme: initialTheme,
-      palette: createTerminalPaletteProjection(initialTheme),
+      palette: createTerminalPaletteProjection(initialTheme, terminalCellDefaults),
     }),
   );
   const publishTheme = (): void => {
@@ -64,7 +70,7 @@ export function createAppearanceOwner(
       Object.freeze({
         generation: current.generation + 1,
         theme: nextTheme,
-        palette: createTerminalPaletteProjection(nextTheme),
+        palette: createTerminalPaletteProjection(nextTheme, terminalCellDefaults),
       }),
     );
   };

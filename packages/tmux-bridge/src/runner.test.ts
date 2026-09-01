@@ -198,7 +198,9 @@ describe("createDetachedSession", () => {
     const args = mockExec.mock.calls[0][1];
     expect(args.includes("200")).toBeTruthy(); // default cols
     expect(args.includes("50")).toBeTruthy(); // default lines
-    expect(args.at(-1)).toBe('exec env -u NO_COLOR COLORTERM=truecolor "${SHELL:-/bin/sh}" -l');
+    expect(args.at(-1)).toBe(
+      'exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 "${SHELL:-/bin/sh}" -l',
+    );
   });
 
   it("passes custom dimensions", () => {
@@ -207,7 +209,9 @@ describe("createDetachedSession", () => {
     const args = mockExec.mock.calls[0][1];
     expect(args.includes("300")).toBeTruthy();
     expect(args.includes("80")).toBeTruthy();
-    expect(args.at(-1)).toBe('exec env -u NO_COLOR COLORTERM=truecolor "${SHELL:-/bin/sh}" -l');
+    expect(args.at(-1)).toBe(
+      'exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG=15;0 "${SHELL:-/bin/sh}" -l',
+    );
   });
 });
 
@@ -489,6 +493,7 @@ describe("error classification", () => {
       PATH: "/trusted/bin",
       TERM: "dumb",
       COLORTERM: "truecolor",
+      COLORFGBG: "15;0",
     });
   });
 

@@ -535,15 +535,20 @@ export function deriveSystemVisualHostDefaults(
 
 /** Build the terminal-cell view of a semantic OpenTUI theme. Explicit terminal
  * colors remain protocol-faithful: all 256 xterm slots and 24-bit truecolor pass
- * through unchanged. Only uncolored cells and tmux-ide-owned overlays follow
- * the semantic theme. This keeps applications legible and visually intentional
- * while the pane itself still belongs to the tmux-ide TUI. */
+ * through unchanged. `cellDefaults` owns cells that use SGR 39/49 while
+ * `snapshot` owns tmux-ide overlays such as selection and search.
+ *
+ * Keeping those inputs separate is important for mirrored applications. A
+ * running TUI chose its colours against the terminal defaults it started with;
+ * changing those defaults underneath its retained framebuffer can collapse
+ * contrast even though every source cell is still present. */
 export function createTerminalPaletteProjection(
   snapshot: SemanticThemeSnapshot,
+  cellDefaults: SemanticThemeSnapshot = snapshot,
 ): TerminalPaletteProjection {
   const p = colorToPackedRgb;
-  const foreground = p(snapshot.roles.text.primary);
-  const background = p(snapshot.roles.surfaces.terminal);
+  const foreground = p(cellDefaults.roles.text.primary);
+  const background = p(cellDefaults.roles.surfaces.terminal);
 
   return Object.freeze({
     foreground,

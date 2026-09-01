@@ -64,7 +64,11 @@ export function runTmux(args: string[], options: ExecFileSyncOptions = {}): stri
 export function sanitizeTmuxClientEnvironment(
   source: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
-  const environment: NodeJS.ProcessEnv = { ...source, COLORTERM: "truecolor" };
+  const environment: NodeJS.ProcessEnv = {
+    ...source,
+    COLORTERM: "truecolor",
+    COLORFGBG: "15;0",
+  };
   delete environment.NO_COLOR;
   return environment;
 }
