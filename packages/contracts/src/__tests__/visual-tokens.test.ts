@@ -27,6 +27,15 @@ describe("visual token contracts", () => {
     }
   });
 
+  it("keeps built-in light surfaces clear of the pure-white terminal sentinel", () => {
+    const light = BUILTIN_VISUAL_THEMES.light.surfaces;
+    const pureWhite = rgb(255, 255, 255);
+
+    for (const surface of [light.panel, light.panelRaised, light.terminal, light.command]) {
+      expect(surface).not.toEqual(pureWhite);
+    }
+  });
+
   it("migrates version zero without mutating caller data", () => {
     const source = {
       version: 0,

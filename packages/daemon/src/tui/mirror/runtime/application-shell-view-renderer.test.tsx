@@ -361,6 +361,58 @@ describe("production ApplicationShellView", () => {
     },
   );
 
+  it("repaints every Home control background across a live theme switch", async () => {
+    const dark = createSemanticThemeSnapshot({ mode: "dark" });
+    const light = createSemanticThemeSnapshot({ mode: "light" });
+    let selectTheme!: (theme: typeof dark) => void;
+    function Harness() {
+      const [theme, setTheme] = createSignal(dark);
+      selectTheme = setTheme;
+      return (
+        <ApplicationShellView
+          dimensions={() => ({ width: 120, height: 40 })}
+          surface={() => "home"}
+          semantic={() => semantic()}
+          generationStatus={() => "live"}
+          sessions={["main"]}
+          selectedSession={() => 0}
+          bootstrapNote={() => null}
+          paletteOpen={() => false}
+          terminalRendererSource={() => null}
+          layout={terminalLayout}
+          focusedPane={() => null}
+          theme={theme()}
+          palette={createTerminalPaletteProjection(theme())}
+          onOpenSurface={() => undefined}
+          onOpenSession={() => undefined}
+          onSetPaletteOpen={() => undefined}
+          onCycleTheme={() => undefined}
+          onSelectPane={() => undefined}
+          onResizePreview={() => undefined}
+          onResizePane={() => undefined}
+        />
+      );
+    }
+    const setup = await renderForTest(() => <Harness />, { width: 120, height: 40 });
+    await setup.renderOnce();
+
+    selectTheme(light);
+    await setup.renderOnce();
+    const spans = setup.captureSpans().lines.flatMap((line) => line.spans);
+    const backgroundFor = (label: string) =>
+      spans.find((span) => span.text.includes(label))?.bg ?? null;
+
+    expect({
+      commands: Boolean(backgroundFor("Commands F5")),
+      theme: Boolean(backgroundFor("Theme: light")),
+    }).toEqual({ commands: true, theme: true });
+    expect(colorKey(backgroundFor("Commands F5")!)).toBe(colorKey(light.roles.surfaces.panel));
+    expect(colorKey(backgroundFor("Theme: light")!)).toBe(colorKey(light.roles.surfaces.panel));
+    expect(colorKey(backgroundFor("Commands F5")!)).not.toBe("255,255,255,255");
+    expect(colorKey(backgroundFor("Theme: light")!)).not.toBe("255,255,255,255");
+    setup.renderer.destroy();
+  });
+
   it("repaints terminal chrome and default terminal cells across a live theme switch", async () => {
     registerPaneSurface();
     const dark = createSemanticThemeSnapshot({ mode: "dark" });
