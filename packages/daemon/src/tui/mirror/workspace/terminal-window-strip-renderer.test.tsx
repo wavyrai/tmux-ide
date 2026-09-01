@@ -41,11 +41,11 @@ describe("TerminalWindowStrip", () => {
       { width: 40, height: 2 },
     );
     await setup.renderOnce();
-    expect(stableFrame(setup.captureCharFrame())).toContain("0:Editor   1:Tests   +");
+    expect(stableFrame(setup.captureCharFrame())).toContain("0:Editor  1:Tests  +");
 
-    const firstStart = 1;
-    const secondStart = firstStart + " 0:Editor ".length + 1;
-    const addStart = secondStart + " 1:Tests ".length + 1;
+    const firstStart = 0;
+    const secondStart = firstStart + " 0:Editor ".length;
+    const addStart = secondStart + " 1:Tests ".length;
     await setup.mockMouse.click(firstStart + 1, 0, MouseButtons.LEFT);
     await setup.mockMouse.click(secondStart + 1, 0, MouseButtons.LEFT);
     await setup.mockMouse.click(addStart + 1, 0, MouseButtons.LEFT);

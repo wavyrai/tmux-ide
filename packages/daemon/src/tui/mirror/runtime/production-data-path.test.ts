@@ -194,6 +194,9 @@ describe("production OpenTUI v2 data path", () => {
 
   it("keeps the production root reviewable as a small renderer client", () => {
     expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(500);
-    expect(productionGraph.files.length).toBeLessThan(100);
+    // The explicit ui/* primitive layer adds one small module per component family.
+    // Keep enough headroom for that reviewable structure without admitting the
+    // retired feature/surface graph guarded above.
+    expect(productionGraph.files.length).toBeLessThan(110);
   });
 });

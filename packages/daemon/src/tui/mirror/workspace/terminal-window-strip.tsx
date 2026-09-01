@@ -1,7 +1,8 @@
 /* @jsxImportSource @opentui/solid */
-import { For } from "solid-js";
+import { createMemo } from "solid-js";
 
 import type { SemanticThemeSnapshot } from "../theme.ts";
+import { Tabs } from "../ui/tabs.tsx";
 
 export interface TerminalWindowTab {
   index: number;
@@ -10,17 +11,18 @@ export interface TerminalWindowTab {
   sync: boolean;
   semanticWindowId: string | null;
   activePaneId: string | null;
+  status?: string;
+  attention?: boolean;
 }
 
 export interface TerminalWindowStripProps {
   theme: SemanticThemeSnapshot;
   tabs: readonly TerminalWindowTab[];
   hoveredIndex: number | null;
+  width?: number;
   onActivate: (windowIndex: number) => void;
   onNewWindow: () => void;
 }
-
-const ADD_LABEL = " + ";
 
 /**
  * Retained OpenTUI window tabs with direct pointer ownership.
@@ -31,57 +33,38 @@ const ADD_LABEL = " + ";
  * right-click and pointer motion still bubble to the application shell.
  */
 export function TerminalWindowStrip(props: TerminalWindowStripProps) {
-  const label = (tab: TerminalWindowTab) => ` ${tab.index}:${tab.name} `;
+  const tabId = (tab: TerminalWindowTab) => tab.semanticWindowId ?? `window:${tab.index}`;
+  const items = createMemo(() =>
+    props.tabs.map((tab) => ({
+      id: tabId(tab),
+      label: `${tab.index}:${tab.name}`,
+      badge: tab.status ? `[${tab.status}]` : undefined,
+      attention: tab.attention,
+    })),
+  );
+  const activeId = createMemo(() => {
+    const active = props.tabs.find((tab) => tab.active);
+    return active ? tabId(active) : null;
+  });
+  const hoveredId = createMemo(() => {
+    if (props.hoveredIndex === null) return null;
+    const hovered = props.tabs[props.hoveredIndex];
+    return hovered ? tabId(hovered) : null;
+  });
   return (
-    <box paddingLeft={1} flexDirection="row" gap={1} height={1}>
-      <For each={props.tabs}>
-        {(tab, index) => (
-          <box
-            height={1}
-            width={label(tab).length}
-            backgroundColor={
-              tab.active
-                ? props.theme.roles.selection.selection
-                : props.hoveredIndex === index()
-                  ? props.theme.colors.buttonHover
-                  : props.theme.roles.surfaces.header
-            }
-            onMouseDown={(event) => {
-              if (event.button !== 0) return;
-              event.stopPropagation();
-              props.onActivate(tab.index);
-            }}
-          >
-            <text
-              fg={
-                tab.active
-                  ? props.theme.roles.selection.selectionText
-                  : props.theme.roles.text.secondary
-              }
-            >
-              {label(tab)}
-            </text>
-          </box>
-        )}
-      </For>
-      <box
-        height={1}
-        width={ADD_LABEL.length}
-        backgroundColor={
-          props.hoveredIndex === props.tabs.length
-            ? props.theme.colors.buttonHover
-            : props.theme.roles.surfaces.header
-        }
-        onMouseDown={(event) => {
-          if (event.button !== 0) return;
-          event.stopPropagation();
-          props.onNewWindow();
-        }}
-      >
-        <text fg={props.theme.roles.text.primary} attributes={1}>
-          {ADD_LABEL}
-        </text>
-      </box>
-    </box>
+    <Tabs
+      theme={props.theme}
+      width={props.width}
+      fit={props.width ? "equal" : "content"}
+      items={items()}
+      activeId={activeId()}
+      hoveredId={hoveredId()}
+      addLabel={props.width && props.width >= 72 ? "+ New window" : "+"}
+      onSelect={(id) => {
+        const tab = props.tabs.find((candidate) => tabId(candidate) === id);
+        if (tab) props.onActivate(tab.index);
+      }}
+      onAdd={props.onNewWindow}
+    />
   );
 }

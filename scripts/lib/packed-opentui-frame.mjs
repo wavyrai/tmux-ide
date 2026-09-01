@@ -1,8 +1,13 @@
 /**
  * The responsive shell spells terminal focus as either `focus terminal` or the
- * compact `Terminals · terminal · …`. Both are canonical focus projections;
- * platform glyph widths can choose different variants at the same tmux size.
+ * compact `Terminals · terminal · …`, or the component status bar's
+ * `Terminals / terminal`. All are canonical focus projections; platform glyph
+ * widths can choose different variants at the same tmux size.
  */
 export function frameShowsTerminalFocus(frame) {
-  return frame.includes("focus terminal") || /Terminals\s+·\s+terminal\s+·/u.test(frame);
+  return (
+    frame.includes("focus terminal") ||
+    /Terminals\s+·\s+terminal\s+·/u.test(frame) ||
+    /Terminals\s*\/\s*terminal\b/u.test(frame)
+  );
 }

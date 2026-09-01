@@ -1,8 +1,8 @@
 /* @jsxImportSource @opentui/solid */
 import { For, Show } from "solid-js";
 import {
-  shellStatusLine,
   shellNavigationPresentation,
+  shellStatusPresentation,
   shellSurfaceTabs,
   shellVisualPalette,
   type ShellChromeLayout,
@@ -11,7 +11,8 @@ import {
   type ShellSidebarHint,
 } from "./shell-chrome.ts";
 import type { SemanticThemeSnapshot } from "./theme.ts";
-import { clipTerminal } from "./terminal-text.ts";
+import { clipTerminal, terminalDisplayWidth } from "./terminal-text.ts";
+import { StatusBar, StatusBarGroup, StatusBarSegment } from "./ui/status-bar.tsx";
 
 export interface ShellTabBarProps {
   theme: SemanticThemeSnapshot;
@@ -171,30 +172,53 @@ export interface ShellStatusStripProps {
 }
 
 export function ShellStatusStrip(props: ShellStatusStripProps) {
+  const presentation = () =>
+    shellStatusPresentation(props.layout.variant, {
+      project: props.project,
+      mode: props.mode,
+      inputMode: props.inputMode,
+      focus: props.focus,
+      notification: props.notification,
+      help: props.help,
+    });
+  const contextWidth = () =>
+    Math.max(
+      1,
+      Math.min(
+        terminalDisplayWidth(presentation().context) + 2,
+        Math.floor(props.layout.status.width * 0.34),
+      ),
+    );
+  const hintsWidth = () =>
+    Math.max(
+      1,
+      Math.min(
+        terminalDisplayWidth(presentation().hints) + 2,
+        Math.floor(props.layout.status.width * 0.46),
+      ),
+    );
   return (
-    <box
-      height={props.layout.status.height}
-      width={props.layout.status.width}
-      backgroundColor={props.theme.roles.surfaces.header}
-      overflow="hidden"
-    >
-      <text fg={props.theme.roles.text.muted}>
-        {shellStatusLine(
-          props.layout.variant,
-          {
-            project: props.project,
-            mode: props.mode,
-            inputMode: props.inputMode,
-            tool: props.tool,
-            dockMode: props.dockMode,
-            focus: props.focus,
-            notification: props.notification,
-            help: props.help,
-          },
-          props.layout.status.width,
-        )}
-      </text>
-    </box>
+    <StatusBar theme={props.theme} width={props.layout.status.width}>
+      <StatusBarGroup width={contextWidth()}>
+        <StatusBarSegment
+          theme={props.theme}
+          label={presentation().context}
+          width={contextWidth()}
+          active
+        />
+      </StatusBarGroup>
+      <StatusBarGroup grow>
+        <StatusBarSegment theme={props.theme} label={presentation().message} />
+      </StatusBarGroup>
+      <StatusBarGroup width={hintsWidth()} align="end">
+        <StatusBarSegment
+          theme={props.theme}
+          label={presentation().hints}
+          width={hintsWidth()}
+          strong
+        />
+      </StatusBarGroup>
+    </StatusBar>
   );
 }
 

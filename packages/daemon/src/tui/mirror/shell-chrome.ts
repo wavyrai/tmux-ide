@@ -352,3 +352,44 @@ export function shellStatusLine(
   }
   return `${out}…`;
 }
+
+export interface ShellStatusPresentation {
+  context: string;
+  message: string;
+  hints: string;
+}
+
+/** Responsive status content for the three-zone OpenTUI status bar. */
+export function shellStatusPresentation(
+  variant: ShellChromeVariant,
+  input: {
+    project: string;
+    mode: string;
+    inputMode?: string | null;
+    focus?: string | null;
+    notification: string | null;
+    help: string;
+  },
+): ShellStatusPresentation {
+  const mode = input.inputMode?.trim() || input.mode.trim() || "workspace";
+  const focus = input.focus?.trim();
+  const context =
+    variant === "wide"
+      ? `${input.project} / ${mode}${focus ? ` / ${focus}` : ""}`
+      : `${mode}${variant === "standard" && focus ? ` / ${focus}` : ""}`;
+  const parts = input.help
+    .split(" · ")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const primary =
+    parts.find((part) => part.startsWith("F5")) ??
+    parts.find((part) => !part.startsWith("^q")) ??
+    parts[0] ??
+    "";
+  const exit = parts.find((part) => part.startsWith("^q")) ?? "";
+  return {
+    context,
+    message: input.notification?.trim() || "ready",
+    hints: variant === "compact" ? primary : [primary, exit].filter(Boolean).join(" · "),
+  };
+}

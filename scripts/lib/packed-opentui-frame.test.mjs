@@ -11,6 +11,10 @@ test("accepts the compact responsive terminal-focus footer", () => {
   assert.equal(frameShowsTerminalFocus("Terminals · terminal · Live tmux session"), true);
 });
 
+test("accepts the component status-bar terminal focus", () => {
+  assert.equal(frameShowsTerminalFocus("Terminals / terminal  Live tmux session"), true);
+});
+
 test("rejects non-terminal focus", () => {
   assert.equal(frameShowsTerminalFocus("Home · primary navigation · ready"), false);
 });

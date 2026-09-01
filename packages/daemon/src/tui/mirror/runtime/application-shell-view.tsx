@@ -21,6 +21,8 @@ import {
 } from "./application-palette-input.ts";
 import type { ApplicationPaneRenameDraft } from "./application-pane-rename-input.ts";
 import { applicationShellViewport } from "./application-shell-viewport.ts";
+import { Button } from "../ui/button.tsx";
+import { Dialog } from "../ui/dialog.tsx";
 export { applicationPaletteKeyAction } from "./application-palette-input.ts";
 export { applicationShellViewport } from "./application-shell-viewport.ts";
 
@@ -216,26 +218,14 @@ function HomeSurface(props: {
         alignItems="center"
         gap={actionsInRow() ? 2 : 0}
       >
-        <box
-          height={1}
-          backgroundColor={props.theme.roles.selection.hover}
-          onMouseDown={(event) => {
-            event.stopPropagation();
-            props.onOpenTerminals();
-          }}
-        >
-          <text fg={props.theme.roles.text.primary}> F2 Open terminals </text>
-        </box>
-        <box
-          height={1}
-          backgroundColor={props.theme.roles.selection.hover}
-          onMouseDown={(event) => {
-            event.stopPropagation();
-            props.onOpenCommands();
-          }}
-        >
-          <text fg={props.theme.roles.text.primary}> F5 Commands </text>
-        </box>
+        <Button
+          theme={props.theme}
+          label="Open terminals"
+          shortcut="F2"
+          variant="primary"
+          onPress={props.onOpenTerminals}
+        />
+        <Button theme={props.theme} label="Commands" shortcut="F5" onPress={props.onOpenCommands} />
       </box>
       <Show when={note()}>
         {(message) => <text fg={props.theme.roles.text.link}>{message()}</text>}
@@ -254,49 +244,23 @@ function PaneRenameDialog(props: {
   const width = () => Math.max(1, Math.min(52, props.width - (props.width >= 8 ? 4 : 0)));
   const fieldWidth = () => Math.max(1, width() - 4);
   return (
-    <box
-      position="absolute"
-      left={0}
-      top={0}
-      width={props.width}
-      height={props.height}
-      zIndex={120}
-      onMouseDown={(event) => {
-        event.stopPropagation();
-        props.onCancel();
-      }}
+    <Dialog
+      theme={props.theme}
+      viewportWidth={props.width}
+      viewportHeight={props.height}
+      width={width()}
+      height={7}
+      title="Rename pane"
+      footer="Enter save · Esc cancel"
+      onDismiss={props.onCancel}
     >
-      <box
-        position="absolute"
-        left={Math.max(0, Math.floor((props.width - width()) / 2))}
-        top={Math.max(0, Math.floor((props.height - 7) / 2))}
-        width={width()}
-        height={7}
-        border
-        borderStyle="rounded"
-        borderColor={props.theme.roles.borders.focused}
-        backgroundColor={props.theme.roles.surfaces.panelRaised}
-        flexDirection="column"
-        paddingLeft={1}
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <text fg={props.theme.roles.text.primary}>
-          <strong>Rename pane</strong>
-        </text>
-        <text
-          width={fieldWidth()}
-          overflow="hidden"
-          fg={props.theme.roles.text.link}
-          content={clipTerminal(`${props.draft.value}▏`, fieldWidth())}
-        />
-        <text
-          width={fieldWidth()}
-          overflow="hidden"
-          fg={props.theme.roles.text.muted}
-          content="Enter save · Esc cancel"
-        />
-      </box>
-    </box>
+      <text
+        width={fieldWidth()}
+        overflow="hidden"
+        fg={props.theme.roles.text.link}
+        content={clipTerminal(`${props.draft.value}▏`, fieldWidth())}
+      />
+    </Dialog>
   );
 }
 
@@ -330,7 +294,7 @@ function MinimalPalette(props: {
   // OpenTUI clips the final row against the lower border at very small
   // viewports; retain the existing four-command 20x7 presentation while
   // scrolling longer agent lists only when they exceed the rendered body.
-  const visibleCapacity = () => Math.max(1, height() - 1);
+  const visibleCapacity = () => Math.max(1, height() - (height() >= 9 ? 4 : 3));
   const firstVisible = () =>
     Math.max(0, Math.min(props.selected, props.commands.length - visibleCapacity()));
   const commandRows = () =>
@@ -345,69 +309,40 @@ function MinimalPalette(props: {
         };
       });
   return (
-    <box
-      position="absolute"
-      left={0}
-      top={0}
-      width={props.width}
-      height={props.height}
-      zIndex={100}
-      onMouseDown={(event) => {
-        event.stopPropagation();
-        props.onClose();
-      }}
+    <Dialog
+      theme={props.theme}
+      viewportWidth={props.width}
+      viewportHeight={props.height}
+      width={width()}
+      height={height()}
+      title={innerWidth() >= 15 ? "Command palette" : "Commands"}
+      {...(height() >= 9 ? { footer: "↑↓ choose · Enter open · Esc close" } : {})}
+      onDismiss={props.onClose}
     >
-      <box
-        position="absolute"
-        left={Math.max(0, Math.floor((props.width - width()) / 2))}
-        top={Math.max(0, Math.floor((props.height - height()) / 2))}
-        width={width()}
-        height={height()}
-        border
-        borderStyle="rounded"
-        borderColor={props.theme.roles.borders.focused}
-        backgroundColor={props.theme.roles.surfaces.panelRaised}
-        flexDirection="column"
-        paddingLeft={1}
-        overflow="hidden"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <text width={innerWidth()} fg={props.theme.roles.text.primary} overflow="hidden">
-          <strong>{innerWidth() >= 15 ? "Command palette" : "Commands"}</strong>
-        </text>
-        <For each={commandRows()}>
-          {(row) => (
-            <text
-              width={innerWidth()}
-              height={1}
-              overflow="hidden"
-              content={row.label}
-              fg={
-                props.closeArmed && row.command === "close-pane"
-                  ? props.theme.roles.statusTone.warning
-                  : props.selected === row.index
-                    ? props.theme.roles.selection.selectionText
-                    : props.theme.roles.text.secondary
-              }
-              bg={
-                props.selected === row.index
-                  ? props.theme.roles.selection.selection
-                  : props.theme.roles.surfaces.panelRaised
-              }
-              onMouseDown={() => props.onActivate(row.command)}
-            />
-          )}
-        </For>
-        <Show when={height() >= 9}>
+      <For each={commandRows()}>
+        {(row) => (
           <text
             width={innerWidth()}
+            height={1}
             overflow="hidden"
-            fg={props.theme.roles.text.muted}
-            content="↑↓ choose · Enter open · Esc close"
+            content={row.label}
+            fg={
+              props.closeArmed && row.command === "close-pane"
+                ? props.theme.roles.statusTone.warning
+                : props.selected === row.index
+                  ? props.theme.roles.selection.selectionText
+                  : props.theme.roles.text.secondary
+            }
+            bg={
+              props.selected === row.index
+                ? props.theme.roles.selection.selection
+                : props.theme.roles.surfaces.panelRaised
+            }
+            onMouseDown={() => props.onActivate(row.command)}
           />
-        </Show>
-      </box>
-    </box>
+        )}
+      </For>
+    </Dialog>
   );
 }
 

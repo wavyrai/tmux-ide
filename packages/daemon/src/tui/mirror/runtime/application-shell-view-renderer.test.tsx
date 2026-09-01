@@ -311,18 +311,18 @@ describe("production ApplicationShellView", () => {
       expect(frame).toContain("Your tmux sessions");
       expect(frame).toContain("2 sessions · 1 working · 0 need attention");
       expect(frame).toContain("main · live");
-      expect(frame).toContain("F2 Open terminals");
-      expect(frame).toContain("F5 Commands");
+      expect(frame).toContain("Open terminals F2");
+      expect(frame).toContain("Commands F5");
       if (expectedBrand === "full") expect(frame).toContain("░████████");
       else expect(frame).toContain("▀█▀ █▄█ █ █ ▀▄▀");
 
       const rows = frame.split("\n");
-      const terminalsY = rows.findIndex((row) => row.includes("F2 Open terminals"));
-      const commandsY = rows.findIndex((row) => row.includes("F5 Commands"));
+      const terminalsY = rows.findIndex((row) => row.includes("Open terminals F2"));
+      const commandsY = rows.findIndex((row) => row.includes("Commands F5"));
       expect(terminalsY).toBeGreaterThanOrEqual(0);
       expect(commandsY).toBeGreaterThanOrEqual(0);
-      await setup.mockMouse.click(rows[terminalsY]!.indexOf("F2 Open terminals") + 2, terminalsY);
-      await setup.mockMouse.click(rows[commandsY]!.indexOf("F5 Commands") + 2, commandsY);
+      await setup.mockMouse.click(rows[terminalsY]!.indexOf("Open terminals") + 2, terminalsY);
+      await setup.mockMouse.click(rows[commandsY]!.indexOf("Commands") + 2, commandsY);
       expect(events).toEqual(["mouse:surface:terminals", "mouse:palette:true"]);
       setup.renderer.destroy();
     },
@@ -417,9 +417,11 @@ describe("production ApplicationShellView", () => {
       expect(frame).toContain("Agents");
       expect(frame).toContain("Codex");
       expect(frame).toContain("main");
-      expect(frame).toContain("● Codex [WORKING]");
-      expect(frame).toContain("● main [WORKING]");
-      expect(frame).toContain("[→][↓][×][⋯]");
+      expect(frame).toContain("● Codex");
+      expect(frame).toContain("[WORKING]");
+      expect(frame).toContain("0:main [WORKING]");
+      expect(frame).toContain("⋯");
+      expect(frame).not.toContain("[→][↓][×][⋯]");
       expect(frame).toContain("CANONICAL-CELL");
       expect(frame).not.toContain("Missions");
       expect(shellChromeSnapshot(frame)).toMatchSnapshot();
@@ -1438,8 +1440,10 @@ describe("production ApplicationShellView", () => {
     );
     await setup.renderOnce();
     const frame = setup.captureCharFrame();
-    expect(frame).toContain("● main ! [WORKING]");
-    expect(frame).toContain("○ Scout ! [IDLE]");
+    expect(frame).toContain("0:main [WORKING]");
+    expect(frame).toContain("● Codex");
+    expect(frame).toContain("○ Scout");
+    expect(frame).toContain("[IDLE]");
     expect(frame).toContain("• Codex [WORKING]");
     expect(frame).toContain("! Scout ! [IDLE]");
     expect(shellChromeSnapshot(frame)).toMatchSnapshot();
