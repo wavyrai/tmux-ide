@@ -59,6 +59,26 @@ export function tuiPerfCriticalMark(
   return record !== null && writer !== null && writer.writeCritical(key, record);
 }
 
+export function markTerminalHostFocusControlGate(
+  observation: Readonly<Record<string, unknown>>,
+): boolean {
+  return tuiPerfCriticalMark(
+    "terminal-host-focus-control-gate",
+    "terminal-host-focus-control-gate-ready",
+    observation,
+  );
+}
+
+export function markTerminalHostFocusBinding(
+  identity: Readonly<Record<string, unknown>> & { readonly bindingEpoch: number },
+): boolean {
+  return tuiPerfCriticalMark(
+    `terminal-host-focus-binding:${identity.bindingEpoch}`,
+    "terminal-host-focus-control-binding-ready",
+    identity,
+  );
+}
+
 export function tuiPerfDiagnostics(): Readonly<{
   droppedRecords: number;
   failed: boolean;

@@ -29,6 +29,17 @@ describe("production OpenTUI entry boundary", () => {
     expect(source).not.toMatch(/from\s+["']\.\/application-root(?:-v2)?/u);
   });
 
+  it("owns the terminal palette through the production V2 appearance lifecycle", () => {
+    const root = read("packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx");
+    const appearance = read(
+      "packages/daemon/src/tui/mirror/runtime/application-appearance-owner.ts",
+    );
+    expect(root).toContain("createApplicationTerminalPaletteOwner(renderer");
+    expect(root).toContain("createAppearanceOwner(config.app, renderer, terminalPaletteOwner)");
+    expect(root).toContain("appearance.dispose()");
+    expect(appearance).toContain("terminalPaletteOwner.dispose()");
+  });
+
   it("injects application-shell evidence only when the existing perf writer is enabled", () => {
     const entry = read("packages/daemon/src/tui/mirror/runtime/application-entry.ts");
     const root = read("packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx");
@@ -190,8 +201,13 @@ describe("production OpenTUI entry boundary", () => {
 
   it("publishes a dedicated detailed host-focus control binding independent of claim outcome", () => {
     const root = read("packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx");
-    expect(root).toContain('"terminal-host-focus-control-gate-ready"');
-    expect(root).toContain('"terminal-host-focus-control-binding-ready"');
+    const performanceLog = read(
+      "packages/daemon/src/tui/mirror/runtime/application-performance-log.ts",
+    );
+    expect(performanceLog).toContain('"terminal-host-focus-control-gate-ready"');
+    expect(performanceLog).toContain('"terminal-host-focus-control-binding-ready"');
+    expect(root).toContain("markTerminalHostFocusControlGate(hostFocusControlCapability.observation)");
+    expect(root).toContain("publish: markTerminalHostFocusBinding");
     expect(root).toContain("resolveApplicationHostFocusControlCapability(process.env)");
     expect(root).toContain("createApplicationHostFocusControlBindingObserver({");
     expect(root.indexOf("terminalHostFocus.adopt(nextAuthorityClient)")).toBeLessThan(

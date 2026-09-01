@@ -24,7 +24,7 @@ exports[`ShellChrome OpenTUI renderer renders deterministic %sx%s compact shell 
                     │                                                          │
                     │                                                          │
                     └──────────────────────────────────────────────────────────┘
-  F5 · ^q quit       terminal  ready                                 F5 palette"
+  F5 · ^q quit       web  Live                                               F5"
 `;
 
 exports[`ShellChrome OpenTUI renderer renders deterministic %sx%s standard shell chrome 1`] = `
@@ -67,7 +67,7 @@ exports[`ShellChrome OpenTUI renderer renders deterministic %sx%s standard shell
                             │                                                                                          │
                             │                                                                                          │
                             └──────────────────────────────────────────────────────────────────────────────────────────┘
-  F5 palette · ^q quit       terminal  ready                                                       F5 palette · ^q quit"
+  F5 palette · ^q quit       web  terminal  Live                                                            F5 Commands"
 `;
 
 exports[`ShellChrome OpenTUI renderer renders deterministic %sx%s wide shell chrome 1`] = `
@@ -130,5 +130,5 @@ exports[`ShellChrome OpenTUI renderer renders deterministic %sx%s wide shell chr
                             │                                                                                                                                                                          │
                             │                                                                                                                                                                          │
                             └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-  F5 palette · ^q quit       tmux-ide / terminal  ready                                                                                                                            F5 palette · ^q quit"
+  F5 palette · ^q quit       tmux-ide  web  terminal  Claude Code  Live                                                                                                                     F5 Commands"
 `;

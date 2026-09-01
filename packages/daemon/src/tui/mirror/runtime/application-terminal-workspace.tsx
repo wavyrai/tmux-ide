@@ -8,23 +8,22 @@ import {
   onCleanup,
   type Accessor,
 } from "solid-js";
-import type { AgentActivity } from "@tmux-ide/contracts";
-
 import type { OpenTuiWorkspaceLayoutSnapshot } from "../open-tui-workspace-runtime-port.ts";
 import type { SemanticThemeSnapshot, TerminalPaletteProjection } from "../theme.ts";
 import type { PaneSurfaceHostFocusTransitionOwner } from "../pane-surface.tsx";
-import { clipTerminal } from "../terminal-text.ts";
 import type { PaneScopedTerminalAdapter } from "./pane-scoped-terminal-surface.tsx";
 import { PaneScopedTerminalSurface } from "./pane-scoped-terminal-surface.tsx";
 import { projectOpenTuiPaneFrames, type OpenTuiPaneFrame } from "./terminal-layout-projection.ts";
-import { MIN_PANE, type ResizeGuideRect } from "../resize-model.ts";
-import { nativePaneResizeCells } from "./pane-resize-geometry.ts";
 import {
   TerminalWindowStrip,
   type TerminalWindowTab,
 } from "../workspace/terminal-window-strip.tsx";
-import { TerminalPaneHeader } from "../workspace/terminal-pane-header.tsx";
-import { Menu } from "../ui/menu.tsx";
+import { PaneTitleBar } from "../workspace/terminal-pane-header.tsx";
+import {
+  PANE_ACTION_MENU_ITEMS,
+  PaneActionMenu,
+  type PaneMenuActionId,
+} from "../workspace/pane-action-menu.tsx";
 import {
   extractTerminalSelection,
   terminalMouseActionSupported,
@@ -35,6 +34,27 @@ import {
   type TerminalGestureRuntimeIdentity,
   type TerminalSelectionRange,
 } from "./terminal-selection.ts";
+import {
+  retainedTerminalWindowKey,
+  terminalAgentStatusLabel,
+  terminalPaneDisplayTitle,
+  terminalPaneResizePreview,
+  terminalPaneSeparatorAt,
+  terminalPaneSeparators,
+  terminalWindowAgentIndicator,
+  terminalWindowPane,
+  terminalWindowTitle,
+  type ApplicationPaneResizePreview,
+  type ApplicationPaneSeparator,
+  type ApplicationTerminalAgentIndicator,
+} from "./application-terminal-workspace-policy.ts";
+export {
+  terminalAgentStatusLabel,
+  terminalPaneChromeLabel,
+  terminalPaneDisplayTitle,
+  type ApplicationPaneResizePreview,
+  type ApplicationTerminalAgentIndicator,
+} from "./application-terminal-workspace-policy.ts";
 
 type WorkspaceMouseEvent = {
   readonly type: string;
@@ -45,16 +65,6 @@ type WorkspaceMouseEvent = {
   readonly scroll?: { readonly direction?: "up" | "down" | "left" | "right" };
   stopPropagation?: () => void;
 };
-
-export interface ApplicationPaneResizePreview {
-  readonly semanticPaneId: string;
-  readonly axis: "cols" | "rows";
-  readonly cells: number;
-  readonly guide: ResizeGuideRect;
-  /** Exact renderer-global guide cells after nested shell/canvas projection. */
-  readonly globalGuide?: ResizeGuideRect;
-  readonly pointerIngress?: ApplicationResizePointerIngress;
-}
 
 export interface ApplicationResizePointerIngress {
   readonly gestureId: string;
@@ -86,16 +96,6 @@ export interface ApplicationMousePointerIngress {
   readonly x: number;
   readonly y: number;
   readonly atMicros: number;
-}
-
-interface ApplicationPaneSeparator {
-  readonly axis: "x" | "y";
-  readonly position: number;
-  readonly start: number;
-  readonly end: number;
-  readonly paneId: string;
-  readonly initialCells: number;
-  readonly siblingCells: number;
 }
 
 export function safeApplicationMouseIngressMicros(
@@ -196,287 +196,13 @@ export interface ApplicationTerminalWorkspaceProps {
   ) => void;
 }
 
-export interface ApplicationTerminalAgentIndicator {
-  readonly name: string;
-  readonly activity: AgentActivity;
-  readonly attention: boolean;
-}
-
 const EMPTY_AGENT_INDICATORS: ReadonlyMap<string, ApplicationTerminalAgentIndicator> = new Map();
 
 const PANE_CONTEXT_MENU_WIDTH = 30;
-const PANE_CONTEXT_MENU_ITEMS = Object.freeze([
-  Object.freeze({ id: "select-text" as const, label: "Select text…", shortcut: "Enter" }),
-  Object.freeze({ id: "rename-pane" as const, label: "Rename pane…", shortcut: "R" }),
-  Object.freeze({ id: "split-right" as const, label: "Split pane right", shortcut: "→" }),
-  Object.freeze({ id: "split-down" as const, label: "Split pane down", shortcut: "↓" }),
-  Object.freeze({ id: "close-pane" as const, label: "Close pane…", shortcut: "×" }),
-]);
-
-export function terminalAgentStatusLabel(activity: AgentActivity): string {
-  switch (activity) {
-    case "running":
-      return "WORKING";
-    case "waiting":
-      return "BLOCKED";
-    case "complete":
-      return "DONE";
-    case "failed":
-      return "FAILED";
-    case "disconnected":
-      return "UNKNOWN";
-    case "idle":
-      return "IDLE";
-  }
-}
-
-function labelWithReservedStatus(
-  marker: string,
-  title: string,
-  status: string | null,
-  attention: boolean,
-  width: number,
-): string {
-  const safeWidth = Math.max(0, Math.floor(width));
-  if (safeWidth === 0) return "";
-  if (!status) return clipTerminal(`${marker} ${title}`, safeWidth);
-  const suffix = `${attention ? " !" : ""} [${status}]`;
-  if (safeWidth <= suffix.length + 2) return clipTerminal(`${marker} ${status}`, safeWidth);
-  const titleWidth = Math.max(1, safeWidth - marker.length - 1 - suffix.length);
-  return clipTerminal(`${marker} ${clipTerminal(title, titleWidth)}${suffix}`, safeWidth);
-}
-
-export function terminalPaneChromeLabel(
-  paneId: string,
-  focused: boolean,
-  width: number,
-  indicator?: ApplicationTerminalAgentIndicator,
-  displayName?: string | null,
-  displayNameSource?: "manual" | "agent" | "process" | "title" | "generated" | null,
-): string {
-  const title = terminalPaneDisplayTitle(paneId, indicator, displayName, displayNameSource);
-  return labelWithReservedStatus(
-    focused ? "●" : "○",
-    title,
-    indicator ? terminalAgentStatusLabel(indicator.activity) : null,
-    indicator?.attention === true,
-    width,
-  );
-}
-
-export function terminalPaneDisplayTitle(
-  paneId: string,
-  indicator?: ApplicationTerminalAgentIndicator,
-  displayName?: string | null,
-  displayNameSource?: "manual" | "agent" | "process" | "title" | "generated" | null,
-): string {
-  const presentedName = displayName?.trim() || paneId;
-  return indicator
-    ? displayNameSource === "manual" && presentedName !== indicator.name.trim()
-      ? `${presentedName} · ${indicator.name.trim()}`
-      : indicator.name.trim() || presentedName
-    : presentedName;
-}
-
-export function terminalWindowStripSlotWidth(width: number, windowCount: number): number {
-  return Math.max(1, Math.min(32, Math.floor(width / Math.max(1, windowCount))));
-}
-
-export function terminalWindowStripLabel(
-  title: string,
-  active: boolean,
-  width: number,
-  activity?: AgentActivity,
-  attention = false,
-): string {
-  return labelWithReservedStatus(
-    active ? "●" : "○",
-    title,
-    activity ? terminalAgentStatusLabel(activity) : null,
-    attention,
-    width,
-  );
-}
 
 export const ACTIVE_RESIZE_GUIDE_CELL = Object.freeze({ cols: "╎", rows: "╌" });
 
-function titleOf(layout: OpenTuiWorkspaceLayoutSnapshot["windows"][number]): string {
-  return layout.windowName ?? layout.semanticWindowId ?? "window";
-}
-
-function paneForWindow(layout: OpenTuiWorkspaceLayoutSnapshot["windows"][number]): string | null {
-  return (
-    layout.panes.find((pane) => pane.active && pane.pane)?.pane ??
-    layout.panes.find((pane) => pane.pane)?.pane ??
-    null
-  );
-}
-
-function retainedWindowKey(
-  layout: OpenTuiWorkspaceLayoutSnapshot["windows"][number],
-): string | null {
-  return layout.semanticWindowId ?? paneForWindow(layout);
-}
-
-const AGENT_ACTIVITY_PRIORITY: Readonly<Record<AgentActivity, number>> = Object.freeze({
-  failed: 6,
-  waiting: 5,
-  running: 4,
-  disconnected: 3,
-  complete: 2,
-  idle: 1,
-});
-
-function windowAgentIndicator(
-  window: OpenTuiWorkspaceLayoutSnapshot["windows"][number],
-  indicators: ReadonlyMap<string, ApplicationTerminalAgentIndicator>,
-): Pick<ApplicationTerminalAgentIndicator, "activity" | "attention"> | undefined {
-  let selected: AgentActivity | undefined;
-  let attention = false;
-  for (const pane of window.panes) {
-    if (!pane.pane) continue;
-    const indicator = indicators.get(pane.pane);
-    const activity = indicator?.activity;
-    attention ||= indicator?.attention === true;
-    if (
-      activity &&
-      (selected === undefined ||
-        AGENT_ACTIVITY_PRIORITY[activity] > AGENT_ACTIVITY_PRIORITY[selected])
-    )
-      selected = activity;
-  }
-  return selected ? { activity: selected, attention } : undefined;
-}
-
-function separatorAt(
-  frames: ReturnType<typeof projectOpenTuiPaneFrames>,
-  paneBorderStatus: "top" | "bottom" | "off",
-  x: number,
-  y: number,
-): ApplicationPaneSeparator | null {
-  for (const before of frames) {
-    const after = frames.find(
-      (candidate) =>
-        candidate.left === before.left + before.width + 1 &&
-        y >= Math.max(before.top, candidate.top) &&
-        y < Math.min(before.top + before.height, candidate.top + candidate.height),
-    );
-    if (after && x === before.left + before.width) {
-      return Object.freeze({
-        axis: "x" as const,
-        position: before.left + before.width,
-        start: Math.max(before.top, after.top),
-        end: Math.min(before.top + before.height, after.top + after.height),
-        paneId: before.paneId,
-        initialCells: before.width,
-        siblingCells: after.width,
-      });
-    }
-  }
-  for (const before of frames) {
-    const after = frames.find(
-      (candidate) =>
-        candidate.top === before.top + before.height + 1 &&
-        x >= Math.max(before.left, candidate.left) &&
-        x < Math.min(before.left + before.width, candidate.left + candidate.width),
-    );
-    if (after && y === before.top + before.height) {
-      const initialCells = nativePaneResizeCells(before, "rows", paneBorderStatus);
-      const siblingCells = nativePaneResizeCells(after, "rows", paneBorderStatus);
-      if (initialCells === null || siblingCells === null) return null;
-      return Object.freeze({
-        axis: "y" as const,
-        position: before.top + before.height,
-        start: Math.max(before.left, after.left),
-        end: Math.min(before.left + before.width, after.left + after.width),
-        paneId: before.paneId,
-        initialCells,
-        siblingCells,
-      });
-    }
-  }
-  return null;
-}
-
-function separatorsFor(
-  frames: ReturnType<typeof projectOpenTuiPaneFrames>,
-  paneBorderStatus: "top" | "bottom" | "off",
-): readonly ApplicationPaneSeparator[] {
-  const separators: ApplicationPaneSeparator[] = [];
-  for (const before of frames) {
-    const after = frames.find(
-      (candidate) =>
-        candidate.left === before.left + before.width + 1 &&
-        Math.max(before.top, candidate.top) <
-          Math.min(before.top + before.height, candidate.top + candidate.height),
-    );
-    if (after)
-      separators.push({
-        axis: "x",
-        position: before.left + before.width,
-        start: Math.max(before.top, after.top),
-        end: Math.min(before.top + before.height, after.top + after.height),
-        paneId: before.paneId,
-        initialCells: before.width,
-        siblingCells: after.width,
-      });
-  }
-  for (const before of frames) {
-    const after = frames.find(
-      (candidate) =>
-        candidate.top === before.top + before.height + 1 &&
-        Math.max(before.left, candidate.left) <
-          Math.min(before.left + before.width, candidate.left + candidate.width),
-    );
-    if (!after) continue;
-    const initialCells = nativePaneResizeCells(before, "rows", paneBorderStatus);
-    const siblingCells = nativePaneResizeCells(after, "rows", paneBorderStatus);
-    if (initialCells === null || siblingCells === null) continue;
-    separators.push({
-      axis: "y",
-      position: before.top + before.height,
-      start: Math.max(before.left, after.left),
-      end: Math.min(before.left + before.width, after.left + after.width),
-      paneId: before.paneId,
-      initialCells,
-      siblingCells,
-    });
-  }
-  return Object.freeze(separators);
-}
-
-function previewFor(
-  separator: ApplicationPaneSeparator,
-  pointer: number,
-  origin: number,
-): ApplicationPaneResizePreview {
-  const total = separator.initialCells + separator.siblingCells;
-  const cells = Math.max(
-    MIN_PANE,
-    Math.min(total - MIN_PANE, separator.initialCells + pointer - origin),
-  );
-  const delta = cells - separator.initialCells;
-  return Object.freeze({
-    semanticPaneId: separator.paneId,
-    axis: separator.axis === "x" ? "cols" : "rows",
-    cells,
-    guide:
-      separator.axis === "x"
-        ? Object.freeze({
-            x: separator.position + delta,
-            y: separator.start,
-            width: 1,
-            height: Math.max(1, separator.end - separator.start),
-          })
-        : Object.freeze({
-            x: separator.start,
-            y: separator.position + delta,
-            width: Math.max(1, separator.end - separator.start),
-            height: 1,
-          }),
-  });
-}
-
+/* extracted: pure separator and resize projection lives in application-terminal-workspace-policy */
 /**
  * Renderer-only terminal composition. Canonical layout and terminal cells are
  * supplied by the generation host; this component owns no daemon lifecycle,
@@ -521,7 +247,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     () =>
       Object.freeze(
         layout()
-          .windows.map(retainedWindowKey)
+          .windows.map(retainedTerminalWindowKey)
           .filter((id): id is string => id !== null),
       ),
     undefined,
@@ -533,16 +259,16 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
   const terminalWindowTabs = createMemo<readonly TerminalWindowTab[]>(() =>
     retainedWindowIds().map((windowId, index) => {
       const window = layout().windows.find(
-        (candidate) => retainedWindowKey(candidate) === windowId,
+        (candidate) => retainedTerminalWindowKey(candidate) === windowId,
       )!;
-      const indicator = windowAgentIndicator(window, agentIndicators());
+      const indicator = terminalWindowAgentIndicator(window, agentIndicators());
       return {
         index,
-        name: titleOf(window),
+        name: terminalWindowTitle(window),
         active: window.currentWindow,
         sync: false,
         semanticWindowId: window.semanticWindowId,
-        activePaneId: paneForWindow(window),
+        activePaneId: terminalWindowPane(window),
         status: indicator ? terminalAgentStatusLabel(indicator.activity) : undefined,
         attention: indicator?.attention,
       };
@@ -551,7 +277,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
   if (props.onWindowPresented)
     createRenderEffect(() => {
       const current = layout().current;
-      const pane = current ? paneForWindow(current) : null;
+      const pane = current ? terminalWindowPane(current) : null;
       const semanticWindowId = current?.semanticWindowId ?? current?.windowName;
       const windowName = current?.windowName ?? undefined;
       if (!pane || !semanticWindowId) return;
@@ -614,7 +340,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     y: event.y - (props.originY ?? 0) - topOffset(),
   });
   const paneContextMenuWidth = () => Math.max(1, Math.min(PANE_CONTEXT_MENU_WIDTH, props.width));
-  const paneContextMenuHeight = () => PANE_CONTEXT_MENU_ITEMS.length + 3;
+  const paneContextMenuHeight = () => PANE_ACTION_MENU_ITEMS.length + 3;
   const openPaneContextMenu = (
     paneId: string,
     event: Pick<WorkspaceMouseEvent, "x" | "y">,
@@ -634,13 +360,13 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       displayName: pane?.displayName?.trim() || paneId,
       left: Math.max(0, Math.min(localX, props.width - width)),
       top: localY + 1 + height <= bottom ? localY + 1 : Math.max(topOffset(), localY - height),
-      selected: Math.max(0, Math.min(PANE_CONTEXT_MENU_ITEMS.length - 1, selected)),
+      selected: Math.max(0, Math.min(PANE_ACTION_MENU_ITEMS.length - 1, selected)),
       closeArmed: false,
     });
   };
   const activatePaneContextItem = (index: number): void => {
     const menu = paneContextMenu();
-    const item = PANE_CONTEXT_MENU_ITEMS[index];
+    const item = PANE_ACTION_MENU_ITEMS[index];
     if (!menu || !item) return;
     if (item.id === "close-pane" && !menu.closeArmed) {
       setPaneContextMenu({ ...menu, selected: index, closeArmed: true });
@@ -861,20 +587,26 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
   const handleSelectionKey = (name: string): boolean => {
     const menu = paneContextMenu();
     if (!menu) return false;
+    const activate = (id: PaneMenuActionId) =>
+      activatePaneContextItem(PANE_ACTION_MENU_ITEMS.findIndex((item) => item.id === id));
     if (name === "escape") setPaneContextMenu(null);
     else if (name === "up" || name === "k")
       setPaneContextMenu({
         ...menu,
         selected:
-          (menu.selected - 1 + PANE_CONTEXT_MENU_ITEMS.length) % PANE_CONTEXT_MENU_ITEMS.length,
+          (menu.selected - 1 + PANE_ACTION_MENU_ITEMS.length) % PANE_ACTION_MENU_ITEMS.length,
         closeArmed: false,
       });
     else if (name === "down" || name === "j")
       setPaneContextMenu({
         ...menu,
-        selected: (menu.selected + 1) % PANE_CONTEXT_MENU_ITEMS.length,
+        selected: (menu.selected + 1) % PANE_ACTION_MENU_ITEMS.length,
         closeArmed: false,
       });
+    else if (name === "r") activate("rename-pane");
+    else if (name === "right") activate("split-right");
+    else if (name === "d") activate("split-down");
+    else if (name === "x") activate("close-pane");
     else if (name === "return" || name === "enter") activatePaneContextItem(menu.selected);
     else return false;
     return true;
@@ -934,7 +666,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       const ingress = resizeIngress();
       if (event.type === "drag" || isRelease) {
         const pointer = drag.separator.axis === "x" ? point.x : point.y;
-        const next = previewFor(drag.separator, pointer, drag.origin);
+        const next = terminalPaneResizePreview(drag.separator, pointer, drag.origin);
         if (next.cells !== drag.preview.cells) {
           drag.preview = Object.freeze({
             ...next,
@@ -963,7 +695,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       return;
     }
     if (event.type === "move" || event.type === "over") {
-      const separator = separatorAt(
+      const separator = terminalPaneSeparatorAt(
         visibleFrames(),
         layout().current?.paneBorderStatus ?? "off",
         point.x,
@@ -1007,7 +739,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       return;
     }
     if (event.type === "down" && event.button !== 2) {
-      const separator = separatorAt(
+      const separator = terminalPaneSeparatorAt(
         visibleFrames(),
         layout().current?.paneBorderStatus ?? "off",
         point.x,
@@ -1017,7 +749,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
         event.stopPropagation?.();
         const ingress = resizeIngress();
         const origin = separator.axis === "x" ? point.x : point.y;
-        const preview = previewFor(separator, origin, origin);
+        const preview = terminalPaneResizePreview(separator, origin, origin);
         drag = { separator, origin, preview, gestureId: ingress?.gestureId ?? null };
         setHoveredSeparator(null);
         setResizePreview(preview);
@@ -1179,7 +911,10 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
     if (active) return { rect: active.guide, active: true };
     const hovered = hoveredSeparator();
     return hovered
-      ? { rect: previewFor(hovered, hovered.position, hovered.position).guide, active: false }
+      ? {
+          rect: terminalPaneResizePreview(hovered, hovered.position, hovered.position).guide,
+          active: false,
+        }
       : null;
   });
   const guideCells = createMemo(() => {
@@ -1227,7 +962,7 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           <TerminalWindowStrip
             theme={props.theme}
             width={props.width}
-            tabs={terminalWindowTabs()}
+            tabs={terminalWindowTabs}
             hoveredIndex={null}
             onActivate={(index) => {
               const pane = terminalWindowTabs()[index]?.activePaneId;
@@ -1280,17 +1015,22 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
               backgroundColor={props.theme.roles.surfaces.canvas}
               onMouse={routePointer}
             >
-              <TerminalPaneHeader
+              <PaneTitleBar
                 theme={props.theme}
                 paneId={frame().paneId}
                 title={displayTitle()}
                 width={frame().width}
-                focused={props.focusedPane === frame().paneId}
+                selected={props.focusedPane === frame().paneId}
                 terminalFocused={terminalSurfaceFocused(frame())}
+                keyboardFocused={props.focusedPane === frame().paneId}
                 activity={indicator()?.activity}
                 attention={indicator()?.attention}
-                onSelect={() => props.onSelectPane(frame().paneId)}
-                onOpenMenu={(event) => openPaneContextMenu(frame().paneId, event)}
+                menuAnchor={{
+                  x: (props.originX ?? 0) + frame().left + Math.max(0, frame().width - 1),
+                  y: (props.originY ?? 0) + frame().top + topOffset(),
+                }}
+                onSelectIntent={() => props.onSelectPane(frame().paneId)}
+                onMenuIntent={(anchor) => openPaneContextMenu(frame().paneId, anchor)}
               />
               <box
                 position="absolute"
@@ -1327,35 +1067,9 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
           );
         }}
       </For>
-      {/* PaneSurface is a native renderable. Keep the one-cell focus marker as
-          a workspace-level overlay so its framebuffer cell cannot be cleared
-          by native child composition at the frame origin. */}
-      <For each={retainedPaneIds()}>
-        {(paneId) => {
-          const frame = createMemo(
-            () => projectedFrames().find((candidate) => candidate.paneId === paneId)!,
-          );
-          return (
-            <text
-              position="absolute"
-              left={frame().left}
-              top={frame().top + topOffset()}
-              visible={frame().visible}
-              zIndex={3}
-              selectable={false}
-              onMouseDown={() => props.onSelectPane(frame().paneId)}
-              fg={
-                props.focusedPane === frame().paneId
-                  ? props.theme.roles.text.link
-                  : props.theme.roles.text.secondary
-              }
-            >
-              {props.focusedPane === frame().paneId ? "●" : "○"}
-            </text>
-          );
-        }}
-      </For>
-      <For each={separatorsFor(visibleFrames(), layout().current?.paneBorderStatus ?? "off")}>
+      <For
+        each={terminalPaneSeparators(visibleFrames(), layout().current?.paneBorderStatus ?? "off")}
+      >
         {(separator) => (
           <box
             position="absolute"
@@ -1372,38 +1086,38 @@ export function ApplicationTerminalWorkspace(props: ApplicationTerminalWorkspace
       </For>
       <For each={paneContextMenu() ? [paneContextMenu()!] : []}>
         {(menu) => (
-          <Menu
+          <PaneActionMenu
             theme={props.theme}
             left={menu.left}
             top={menu.top}
             width={paneContextMenuWidth()}
-            title={menu.displayName}
-            selectedId={PANE_CONTEXT_MENU_ITEMS[menu.selected]?.id ?? null}
-            items={PANE_CONTEXT_MENU_ITEMS.map((item) => ({
-              id: item.id,
-              label:
-                item.id === "close-pane" && menu.closeArmed ? "Confirm close pane" : item.label,
-              shortcut: item.shortcut,
-              danger: item.id === "close-pane" && menu.closeArmed,
-            }))}
-            onSelect={(id) => {
-              const index = PANE_CONTEXT_MENU_ITEMS.findIndex((item) => item.id === id);
+            viewportWidth={props.width}
+            viewportHeight={props.height + topOffset()}
+            paneTitle={menu.displayName}
+            active
+            onDismiss={() => setPaneContextMenu(null)}
+            selectedId={PANE_ACTION_MENU_ITEMS[menu.selected]?.id ?? "select-text"}
+            closeArmed={menu.closeArmed}
+            onActionIntent={(id) => {
+              const index = PANE_ACTION_MENU_ITEMS.findIndex((item) => item.id === id);
               if (index >= 0) activatePaneContextItem(index);
             }}
           />
         )}
       </For>
-      <Show when={selectModePane()}>
-        <text
-          position="absolute"
-          right={1}
-          top={topOffset()}
-          zIndex={20}
-          fg={props.theme.roles.text.link}
-        >
-          {" ⧉ select "}
-        </text>
-      </Show>
+      <For each={selectModePane() ? [selectModePane()!] : []}>
+        {() => (
+          <text
+            position="absolute"
+            right={1}
+            top={topOffset()}
+            zIndex={20}
+            fg={props.theme.roles.text.link}
+          >
+            {" ⧉ select "}
+          </text>
+        )}
+      </For>
       <box
         position="absolute"
         left={guide()?.rect.x ?? 0}

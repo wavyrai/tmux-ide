@@ -1,5 +1,6 @@
 /* @jsxImportSource @opentui/solid */
-import { For, Show, createMemo } from "solid-js";
+import { For, createMemo } from "solid-js";
+import { useKeyboard } from "@opentui/solid";
 
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal, terminalDisplayWidth } from "../terminal-text.ts";
@@ -9,6 +10,8 @@ import { componentPalette } from "./state.ts";
 export interface TabItem {
   id: string;
   label: string;
+  /** Exact cell projection for compound chrome that already owns responsive labels. */
+  presentation?: string;
   marker?: string;
   badge?: string;
   attention?: boolean;
@@ -20,14 +23,18 @@ export interface TabsProps {
   items: readonly TabItem[];
   activeId: string | null;
   hoveredId?: string | null;
+  focusedId?: string | null;
+  focused?: boolean;
   width?: number;
   fit?: "content" | "equal";
+  variant?: "panel" | "header";
   addLabel?: string;
-  onSelect: (id: string) => void;
+  onSelect?: (id: string) => void;
   onAdd?: () => void;
 }
 
 function tabText(item: TabItem): string {
+  if (item.presentation !== undefined) return item.presentation;
   const marker = item.marker ? `${item.marker} ` : "";
   const badge = item.badge ? ` ${item.badge}` : "";
   return ` ${marker}${item.label}${badge} `;
@@ -47,6 +54,21 @@ export function Tabs(props: TabsProps) {
     );
   const itemWidth = (item: TabItem) =>
     props.fit === "equal" && props.width ? equalWidth() : terminalDisplayWidth(tabText(item));
+  const background = () =>
+    props.variant === "header"
+      ? props.theme.roles.surfaces.header
+      : props.theme.roles.surfaces.panel;
+  useKeyboard((event) => {
+    if (!props.focused || event.eventType !== "press") return;
+    const key = event.name.toLowerCase();
+    if (key !== "enter" && key !== "return" && key !== "space") return;
+    const id = props.focusedId ?? props.activeId;
+    const item = id ? props.items.find((candidate) => candidate.id === id) : undefined;
+    if (!item || item.disabled) return;
+    event.preventDefault();
+    event.stopPropagation();
+    props.onSelect?.(item.id);
+  });
   return (
     <box
       id="ui-tabs"
@@ -54,7 +76,7 @@ export function Tabs(props: TabsProps) {
       height={1}
       flexDirection="row"
       overflow="hidden"
-      backgroundColor={props.theme.roles.surfaces.panel}
+      backgroundColor={background()}
     >
       <For each={itemIds()}>
         {(id) => {
@@ -63,6 +85,7 @@ export function Tabs(props: TabsProps) {
           const palette = () =>
             componentPalette(props.theme, {
               selected: active(),
+              focused: props.focused && id === (props.focusedId ?? props.activeId),
               hovered: id === props.hoveredId,
               attention: item().attention,
               disabled: item().disabled,
@@ -72,37 +95,73 @@ export function Tabs(props: TabsProps) {
               id={`ui-tab:${id}`}
               height={1}
               width={itemWidth(item())}
+              flexDirection="row"
               backgroundColor={palette().background}
               overflow="hidden"
               onMouseDown={(event) => {
-                if (event.button !== 0 || item().disabled) return;
+                if (event.button !== 0) return;
+                if (item().disabled || !props.onSelect) return;
+                event.preventDefault();
                 event.stopPropagation();
                 props.onSelect(id);
               }}
             >
-              <text
-                fg={palette().foreground}
-                bg={palette().background}
-                attributes={active() ? 1 : 0}
-              >
-                {clipTerminal(tabText(item()), itemWidth(item()))}
-              </text>
+              {(() => {
+                const content = clipTerminal(tabText(item()), itemWidth(item()));
+                const markerIndex = item().attention ? content.indexOf("!") : -1;
+                const before = markerIndex >= 0 ? content.slice(0, markerIndex) : content;
+                const after = markerIndex >= 0 ? content.slice(markerIndex + 1) : "";
+                return (
+                  <>
+                    <text
+                      width={terminalDisplayWidth(before)}
+                      fg={palette().foreground}
+                      bg={palette().background}
+                      attributes={active() ? 1 : 0}
+                    >
+                      {before}
+                    </text>
+                    {markerIndex >= 0 ? (
+                      <text
+                        width={1}
+                        fg={props.theme.roles.statusTone.warning}
+                        bg={palette().background}
+                        attributes={1}
+                      >
+                        !
+                      </text>
+                    ) : null}
+                    <text
+                      width={terminalDisplayWidth(after)}
+                      fg={palette().foreground}
+                      bg={palette().background}
+                      attributes={active() ? 1 : 0}
+                    >
+                      {after}
+                    </text>
+                  </>
+                );
+              })()}
             </box>
           );
         }}
       </For>
-      <Show when={props.onAdd}>
-        <box flexGrow={props.width ? 1 : 0} />
-        <Button
-          theme={props.theme}
-          label={props.addLabel ?? "+"}
-          variant="ghost"
-          size="compact"
-          width={addWidth()}
-          background={props.theme.roles.surfaces.panel}
-          onPress={props.onAdd}
-        />
-      </Show>
+      <For each={props.onAdd ? [props.onAdd] : []}>
+        {(onAdd) => (
+          <>
+            <box flexGrow={props.width ? 1 : 0} />
+            <Button
+              theme={props.theme}
+              label={props.addLabel ?? "+"}
+              variant="ghost"
+              size="compact"
+              width={addWidth()}
+              background={background()}
+              onPress={onAdd}
+            />
+          </>
+        )}
+      </For>
     </box>
   );
 }

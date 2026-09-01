@@ -1,8 +1,9 @@
 /* @jsxImportSource @opentui/solid */
 import type { JSX } from "solid-js";
+import { For } from "solid-js";
 import {
+  ContextStatusBar,
   ShellMiniSidebar,
-  ShellStatusStrip,
   ShellTabBar,
   type ShellTabBarProps,
 } from "../shell-chrome-view.tsx";
@@ -52,6 +53,14 @@ export function ApplicationShell(props: ApplicationShellProps) {
           ...props.projection.layout,
           status: { ...props.projection.layout.status, width: props.projection.layout.width },
         };
+  const activePaneTitle = () => {
+    const inventory = props.projection.semantic.terminalInventory;
+    if (!inventory) return null;
+    return (
+      inventory.resources.find((resource) => resource.id === inventory.activeResourceId)?.title ??
+      null
+    );
+  };
   return (
     <box
       width={props.projection.layout.width}
@@ -80,17 +89,20 @@ export function ApplicationShell(props: ApplicationShellProps) {
         flexDirection="row"
         overflow="hidden"
       >
-        {showSidebar() &&
-          (props.sidebar ?? (
-            <ShellMiniSidebar
-              theme={props.theme}
-              width={props.projection.layout.sidebar.width}
-              variant={props.projection.layout.variant}
-              sessions={props.projection.sessions}
-              active={props.projection.activeSession}
-              hint={props.projection.sidebarHint}
-            />
-          ))}
+        <For each={showSidebar() ? [true] : []}>
+          {() =>
+            props.sidebar ?? (
+              <ShellMiniSidebar
+                theme={props.theme}
+                width={props.projection.layout.sidebar.width}
+                variant={props.projection.layout.variant}
+                sessions={props.projection.sessions}
+                active={props.projection.activeSession}
+                hint={props.projection.sidebarHint}
+              />
+            )
+          }
+        </For>
         <box
           width={mainWidth()}
           height={props.projection.layout.main.height}
@@ -105,10 +117,12 @@ export function ApplicationShell(props: ApplicationShellProps) {
           >
             {props.children}
           </box>
-          <ShellStatusStrip
+          <ContextStatusBar
             theme={props.theme}
             layout={statusLayout()}
             project={props.projection.semantic.project.name}
+            session={props.projection.activeSession}
+            pane={activePaneTitle()}
             mode={
               props.projection.semantic.primaryNavigation.items.find(
                 (item) => item.id === props.projection.semantic.workspaceCanvas.activeMode,
@@ -127,6 +141,8 @@ export function ApplicationShell(props: ApplicationShellProps) {
             }
             focus={props.focusLabel ?? applicationShellFocusLabel(props.projection)}
             notification={props.projection.semantic.statusStrip.message}
+            transient={props.note}
+            connectionState={props.projection.semantic.statusStrip.state}
             help={props.help}
             onHelp={props.onHelp}
           />

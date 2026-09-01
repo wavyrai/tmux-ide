@@ -11,8 +11,12 @@
  */
 import { RGBA } from "@opentui/core";
 import {
+  BUILTIN_VISUAL_THEMES,
   contrastRatio,
   deriveAttentionBlend,
+  deriveFocusedHeader,
+  mixSrgbColors,
+  readableForeground,
   resolveVisualTheme,
   type BorderTokenRole,
   type RendererNeutralColor,
@@ -22,6 +26,8 @@ import {
   type TextTokenRole,
   type ThemeAccessibilityPreferences,
   type ThemeDiagnostic,
+  type VisualHostDefaultsV1,
+  type VisualTokenOverridesV1,
   type VisualTokensV1,
 } from "@tmux-ide/contracts";
 import {
@@ -132,6 +138,7 @@ export interface ThemeStoreOptions {
   mode?: ThemeModeSetting;
   accent?: string;
   rendererMode?: ResolvedThemeMode | null;
+  hostDefaults?: VisualHostDefaultsV1 | null;
 }
 
 export interface ThemeStore {
@@ -139,8 +146,19 @@ export interface ThemeStore {
   subscribe(listener: () => void): () => void;
   setMode(mode: ThemeModeSetting): void;
   setAccent(accent: string | undefined): void;
+  setHostDefaults(defaults: VisualHostDefaultsV1 | null): void;
   configure(config: ThemeConfigInput | undefined): void;
   followRendererThemeMode(source: ThemeModeSource): () => void;
+}
+
+/** The renderer-neutral subset of a terminal palette needed for system theme
+ * derivation. Runtime owners and browser fixtures can both satisfy this
+ * structurally; no OpenTUI runtime type crosses this boundary. */
+export interface SystemTerminalPaletteInput {
+  readonly palette: readonly (string | null)[];
+  readonly defaultForeground: string | null;
+  readonly defaultBackground: string | null;
+  readonly detectedMode?: ResolvedThemeMode;
 }
 
 /** Renderer projection for terminal cells. xterm-headless keeps the original
@@ -333,6 +351,186 @@ function mix(base: RGBA, overlay: RGBA, amount: number, alphaByteOverride?: numb
     channel(baseB, overlayB),
     alphaByte,
   );
+}
+
+function rendererNeutral(red: number, green: number, blue: number): RendererNeutralColor {
+  return {
+    space: "srgb",
+    red: byteChannel(red),
+    green: byteChannel(green),
+    blue: byteChannel(blue),
+    alpha: 255,
+  };
+}
+
+function rendererNeutralFromPacked(color: number): RendererNeutralColor {
+  return rendererNeutral((color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff);
+}
+
+function perceivedLuminance(color: RendererNeutralColor): number {
+  return 0.299 * color.red + 0.587 * color.green + 0.114 * color.blue;
+}
+
+function parseTerminalHostColor(value: string | null | undefined): RendererNeutralColor | null {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  const hex = /^#([\da-f]{3}|[\da-f]{6})$/u.exec(normalized)?.[1];
+  if (hex) {
+    const expanded =
+      hex.length === 3 ? `${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}` : hex;
+    return rendererNeutral(
+      Number.parseInt(expanded.slice(0, 2), 16),
+      Number.parseInt(expanded.slice(2, 4), 16),
+      Number.parseInt(expanded.slice(4, 6), 16),
+    );
+  }
+  // OSC palette replies may use X11's rgb:RR/GG/BB form with one to four
+  // hexadecimal digits per channel. Scale each channel to a byte rather than
+  // truncating high-fidelity replies.
+  const x11 = /^rgb:([\da-f]{1,4})\/([\da-f]{1,4})\/([\da-f]{1,4})$/u.exec(normalized);
+  if (!x11) return null;
+  const channel = (part: string): number => {
+    const maximum = 16 ** part.length - 1;
+    return Math.round((Number.parseInt(part, 16) / maximum) * 255);
+  };
+  return rendererNeutral(channel(x11[1]!), channel(x11[2]!), channel(x11[3]!));
+}
+
+function mostReadable(
+  background: RendererNeutralColor,
+  candidates: readonly RendererNeutralColor[],
+  minimum = 4.5,
+): RendererNeutralColor {
+  const unique = candidates.filter(
+    (candidate, index) =>
+      candidates.findIndex(
+        (other) =>
+          other.red === candidate.red &&
+          other.green === candidate.green &&
+          other.blue === candidate.blue,
+      ) === index,
+  );
+  const passing = unique.find((candidate) => contrastRatio(candidate, background) >= minimum);
+  return (
+    passing ??
+    unique.reduce((best, candidate) =>
+      contrastRatio(candidate, background) > contrastRatio(best, background) ? candidate : best,
+    )
+  );
+}
+
+function mutedHostText(
+  panel: RendererNeutralColor,
+  foreground: RendererNeutralColor,
+): RendererNeutralColor {
+  for (const weight of [0.58, 0.64, 0.7, 0.76, 0.82, 0.9, 1] as const) {
+    const candidate = mixSrgbColors(panel, foreground, weight);
+    if (contrastRatio(candidate, panel) >= 4.5) return candidate;
+  }
+  return foreground;
+}
+
+/**
+ * Derive opaque, semantic app defaults from a real terminal palette.
+ *
+ * Only the 16 host ANSI slots inform semantic accents. Structural surfaces,
+ * borders and neutral text are generated from the measured default background
+ * and foreground, so mutable ANSI slots 8 and 15 can never become chrome.
+ * Missing accent slots fall back to the canonical xterm entries. The returned
+ * value is renderer-neutral and can therefore be shared by the native TUI and
+ * browser fixtures.
+ */
+export function deriveSystemVisualHostDefaults(
+  input: SystemTerminalPaletteInput,
+): VisualHostDefaultsV1 | null {
+  const reportedPalette = Array.from({ length: 16 }, (_, index) =>
+    parseTerminalHostColor(input.palette[index]),
+  );
+  const measuredBackground =
+    parseTerminalHostColor(input.defaultBackground) ?? reportedPalette[0] ?? null;
+  const measuredForeground =
+    parseTerminalHostColor(input.defaultForeground) ?? reportedPalette[7] ?? null;
+  if (!measuredBackground && !measuredForeground && reportedPalette.every((value) => !value))
+    return null;
+
+  const fallbackMode = input.detectedMode ?? "dark";
+  const background = measuredBackground ?? BUILTIN_VISUAL_THEMES[fallbackMode].surfaces.canvas;
+  const black = rendererNeutral(0, 0, 0);
+  const white = rendererNeutral(255, 255, 255);
+  const appearance =
+    measuredBackground === null
+      ? fallbackMode
+      : perceivedLuminance(background) > 127.5
+        ? "light"
+        : "dark";
+  const builtIn = BUILTIN_VISUAL_THEMES[appearance];
+  const structuralTarget = appearance === "dark" ? white : black;
+  const panel = mixSrgbColors(background, structuralTarget, appearance === "dark" ? 0.055 : 0.04);
+  const panelRaised = mixSrgbColors(
+    background,
+    structuralTarget,
+    appearance === "dark" ? 0.1 : 0.075,
+  );
+  const header = mixSrgbColors(background, structuralTarget, appearance === "dark" ? 0.035 : 0.025);
+  const command = mixSrgbColors(
+    background,
+    structuralTarget,
+    appearance === "dark" ? 0.085 : 0.065,
+  );
+  const primary = mostReadable(background, [
+    measuredForeground ?? builtIn.text.primary,
+    builtIn.text.primary,
+    readableForeground(background, black, white),
+  ]);
+  const secondary = mutedHostText(panel, primary);
+  const muted = mutedHostText(panel, mixSrgbColors(panel, primary, 0.9));
+  const ansi = (index: number): RendererNeutralColor =>
+    reportedPalette[index] ?? rendererNeutralFromPacked(XTERM_PALETTE[index]!);
+  const readableAccent = (...candidates: readonly RendererNeutralColor[]) =>
+    mostReadable(panel, [...candidates, builtIn.borders.focused, primary]);
+  const focus = readableAccent(ansi(6), ansi(4));
+  const info = readableAccent(ansi(6), ansi(4));
+  const warning = readableAccent(ansi(3));
+  const danger = readableAccent(ansi(1));
+  const success = readableAccent(ansi(2));
+  const selection = mixSrgbColors(background, focus, appearance === "dark" ? 0.3 : 0.2);
+  const selectionText = mostReadable(selection, [primary, black, white]);
+  const overrides: VisualTokenOverridesV1 = {
+    surfaces: {
+      canvas: background,
+      panel,
+      panelRaised,
+      terminal: background,
+      header,
+      headerActive: deriveFocusedHeader(header, focus),
+      command,
+    },
+    text: {
+      primary,
+      secondary,
+      muted,
+      bright: readableForeground(background, black, white),
+      inverse: mostReadable(primary, [background, black, white]),
+      link: focus,
+    },
+    borders: {
+      subtle: mixSrgbColors(background, structuralTarget, appearance === "dark" ? 0.14 : 0.12),
+      default: mixSrgbColors(background, structuralTarget, appearance === "dark" ? 0.23 : 0.2),
+      focused: focus,
+      selected: readableAccent(ansi(5), focus),
+      attention: warning,
+      danger,
+    },
+    statusTone: { neutral: muted, info, warning, danger, success },
+    selection: {
+      selection,
+      selectionText,
+      hover: mixSrgbColors(background, focus, appearance === "dark" ? 0.12 : 0.08),
+      pressed: mixSrgbColors(background, focus, appearance === "dark" ? 0.22 : 0.14),
+      disabled: mixSrgbColors(background, structuralTarget, appearance === "dark" ? 0.07 : 0.05),
+    },
+  };
+  return Object.freeze({ appearance, overrides });
 }
 
 /** Build the terminal-cell view of a semantic OpenTUI theme. Explicit terminal
@@ -575,8 +773,9 @@ function snapshotFromResolvedTheme(
 function resolvedMode(
   setting: ThemeModeSetting,
   rendererMode: ResolvedThemeMode | null,
+  hostDefaults: VisualHostDefaultsV1 | null,
 ): ResolvedThemeMode {
-  return setting === "system" ? (rendererMode ?? "dark") : setting;
+  return setting === "system" ? (hostDefaults?.appearance ?? rendererMode ?? "dark") : setting;
 }
 
 function withAppThemeConfig(
@@ -691,6 +890,7 @@ function withAppThemeConfig(
 export function createSemanticThemeSnapshot(
   config: ThemeConfigInput | undefined = undefined,
   rendererMode: ResolvedThemeMode | null = null,
+  hostDefaults: VisualHostDefaultsV1 | null = null,
 ): SemanticThemeSnapshot {
   const setting = config?.mode ?? "dark";
   const accessibility = {
@@ -698,8 +898,10 @@ export function createSemanticThemeSnapshot(
     increasedContrast:
       config?.accessibility?.increasedContrast ?? DEFAULT_ACCESSIBILITY.increasedContrast,
   };
+  const mode = resolvedMode(setting, rendererMode, hostDefaults);
   const resolved = resolveVisualTheme({
-    appearance: resolvedMode(setting, rendererMode),
+    appearance: mode,
+    hostDefaults: setting === "system" ? (hostDefaults ?? undefined) : undefined,
     userTheme: config?.userTheme,
     projectTheme: config?.projectTheme,
     accessibility,
@@ -724,11 +926,12 @@ export function createSemanticThemeStore(
     accent: options.accent ?? config?.accent,
   };
   let rendererMode = options.rendererMode ?? null;
-  let snapshot = createSemanticThemeSnapshot(currentConfig, rendererMode);
+  let hostDefaults = options.hostDefaults ?? null;
+  let snapshot = createSemanticThemeSnapshot(currentConfig, rendererMode, hostDefaults);
   const listeners = new Set<() => void>();
 
   const refresh = () => {
-    const next = createSemanticThemeSnapshot(currentConfig, rendererMode);
+    const next = createSemanticThemeSnapshot(currentConfig, rendererMode, hostDefaults);
     if (sameSnapshot(snapshot, next)) return;
     snapshot = next;
     for (const listener of listeners) listener();
@@ -751,6 +954,11 @@ export function createSemanticThemeStore(
       if (currentConfig.accent === accent) return;
       currentConfig = { ...currentConfig, accent };
       refresh();
+    },
+    setHostDefaults(defaults) {
+      if (JSON.stringify(hostDefaults) === JSON.stringify(defaults)) return;
+      hostDefaults = defaults;
+      if (currentConfig.mode === "system") refresh();
     },
     configure(nextConfig) {
       currentConfig = { ...nextConfig, mode: nextConfig?.mode ?? "dark" };

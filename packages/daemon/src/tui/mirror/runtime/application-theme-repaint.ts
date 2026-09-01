@@ -1,4 +1,5 @@
 import type { createCliRenderer } from "@opentui/core";
+import type { SemanticThemeSnapshot } from "../theme.ts";
 
 type Renderer = Awaited<ReturnType<typeof createCliRenderer>>;
 
@@ -22,4 +23,23 @@ export function requestApplicationThemeRepaint(renderer: Renderer): void {
   }
   renderer.suspend();
   renderer.resume();
+}
+
+/** Apply one complete semantic appearance at the renderer boundary.
+ *
+ * Background mutation deliberately precedes the full-frame damage request so
+ * OpenTUI can never repaint new chrome over a stale canvas. The generation is
+ * supplied by the appearance owner, keeping unrelated Solid effects from
+ * producing extra renderer transactions.
+ */
+export function applyApplicationAppearanceToRenderer(
+  renderer: Renderer,
+  theme: SemanticThemeSnapshot,
+  generation: number,
+  paintedGeneration: number | null,
+): number {
+  renderer.setBackgroundColor(theme.roles.surfaces.canvas);
+  if (paintedGeneration !== null && generation !== paintedGeneration)
+    requestApplicationThemeRepaint(renderer);
+  return generation;
 }

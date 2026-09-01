@@ -1,5 +1,6 @@
 /* @jsxImportSource @opentui/solid */
 import type { RGBA } from "@opentui/core";
+import { useKeyboard } from "@opentui/solid";
 
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal, terminalDisplayWidth } from "../terminal-text.ts";
@@ -8,7 +9,7 @@ import { componentPalette, type ComponentInteractionState } from "./state.ts";
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 export type ButtonSize = "compact" | "default";
 
-export interface ButtonProps extends ComponentInteractionState {
+export interface TuiButtonProps extends ComponentInteractionState {
   theme: SemanticThemeSnapshot;
   label: string;
   shortcut?: string;
@@ -20,12 +21,15 @@ export interface ButtonProps extends ComponentInteractionState {
   onPress?: () => void;
 }
 
+/** Compatibility name retained while production callers migrate to `TuiButton`. */
+export type ButtonProps = TuiButtonProps;
+
 function naturalButtonWidth(label: string, shortcut: string | undefined, size: ButtonSize): number {
   const inset = size === "compact" ? 2 : 4;
   return terminalDisplayWidth(label) + (shortcut ? terminalDisplayWidth(shortcut) + 1 : 0) + inset;
 }
 
-export function Button(props: ButtonProps) {
+export function TuiButton(props: TuiButtonProps) {
   const variant = () => props.variant ?? "secondary";
   const size = () => props.size ?? "default";
   const palette = () =>
@@ -37,10 +41,10 @@ export function Button(props: ButtonProps) {
         hovered: props.hovered,
         pressed: props.pressed,
         disabled: props.disabled,
-        attention: props.attention || variant() === "danger",
+        attention: props.attention,
         loading: props.loading,
       },
-      variant() === "danger" ? "blocked" : variant() === "primary" ? "accent" : "neutral",
+      variant() === "danger" ? "destructive" : variant() === "primary" ? "accent" : "neutral",
     );
   const width = () =>
     Math.max(1, Math.floor(props.width ?? naturalButtonWidth(props.label, props.shortcut, size())));
@@ -54,6 +58,20 @@ export function Button(props: ButtonProps) {
     variant() === "ghost" && palette().state === "base"
       ? (props.background ?? props.theme.roles.surfaces.panel)
       : palette().background;
+  const activate = () => {
+    if (props.disabled || props.loading || !props.onPress) return;
+    props.onPress();
+  };
+
+  useKeyboard((event) => {
+    if (!props.focused || props.disabled || props.loading || !props.onPress) return;
+    const key = event.name.toLowerCase();
+    if (event.eventType !== "press" || (key !== "enter" && key !== "return" && key !== "space"))
+      return;
+    event.preventDefault();
+    event.stopPropagation();
+    activate();
+  });
 
   return (
     <box
@@ -63,10 +81,14 @@ export function Button(props: ButtonProps) {
       flexDirection="row"
       backgroundColor={background()}
       overflow="hidden"
+      focusable={Boolean(props.onPress) && !props.disabled}
+      focused={Boolean(props.focused)}
       onMouseDown={(event) => {
-        if (event.button !== 0 || props.disabled || !props.onPress) return;
+        if (event.button !== 0) return;
+        event.preventDefault();
         event.stopPropagation();
-        props.onPress();
+        if (props.disabled || props.loading || !props.onPress) return;
+        activate();
       }}
     >
       <text
@@ -76,22 +98,24 @@ export function Button(props: ButtonProps) {
             ? props.theme.roles.text.muted
             : palette().foreground
         }
-        attributes={variant() === "primary" || props.focused ? 1 : 0}
       >
-        {content()}
+        {variant() === "primary" || props.focused ? <strong>{content()}</strong> : content()}
       </text>
     </box>
   );
 }
 
-export interface IconButtonProps extends Omit<ButtonProps, "label" | "size"> {
+/** @deprecated Prefer the repository-scoped `TuiButton` name for new component work. */
+export const Button = TuiButton;
+
+export interface IconButtonProps extends Omit<TuiButtonProps, "label" | "size"> {
   icon: string;
   label: string;
 }
 
 export function IconButton(props: IconButtonProps) {
   return (
-    <Button
+    <TuiButton
       {...props}
       label={props.icon}
       size="compact"

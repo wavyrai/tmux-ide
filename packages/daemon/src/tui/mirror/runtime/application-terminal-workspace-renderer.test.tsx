@@ -273,10 +273,14 @@ describe("ApplicationTerminalWorkspace", () => {
     const [indicators, setIndicators] = createSignal<
       ReadonlyMap<string, ApplicationTerminalAgentIndicator>
     >(new Map());
+    const [workspaceLayout, setWorkspaceLayout] = createSignal<OpenTuiWorkspaceLayoutSnapshot>({
+      current,
+      windows: [current],
+    });
     const setup = await renderForTest(
       () => (
         <ApplicationTerminalWorkspace
-          layout={() => ({ current, windows: [current] })}
+          layout={workspaceLayout}
           adapter={liveAdapter}
           rendererEpoch={1}
           width={41}
@@ -309,11 +313,24 @@ describe("ApplicationTerminalWorkspace", () => {
     );
     await setup.renderOnce();
     expect(blits).toEqual([]);
+    expect(setup.captureCharFrame()).toContain("Clau");
     expect(setup.captureCharFrame()).toContain("CLAUDE_QUIET");
     blits.length = 0;
 
+    setIndicators(new Map());
+    const renamed = {
+      ...current,
+      panes: current.panes.map((pane) =>
+        pane.pane === "pane.claude"
+          ? { ...pane, displayName: "builder", displayNameSource: "manual" as const }
+          : pane,
+      ),
+    };
+    setWorkspaceLayout({ current: renamed, windows: [renamed] });
     await setup.renderOnce();
     expect(blits).toEqual([]);
+    expect(setup.captureCharFrame()).toContain("builder");
+    expect(setup.captureCharFrame()).toContain("CLAUDE_QUIET");
     setup.renderer.destroy();
   });
 
@@ -415,8 +432,12 @@ describe("ApplicationTerminalWorkspace", () => {
 
   it("never presents a blank rich terminal frame during pointer, rapid canonical resize, or window return", async () => {
     registerPaneSurface();
-    const theme = createSemanticThemeSnapshot({ mode: "dark" });
-    const palette = createTerminalPaletteProjection(theme);
+    const darkTheme = createSemanticThemeSnapshot({ mode: "dark" });
+    const lightTheme = createSemanticThemeSnapshot({ mode: "light" });
+    const [appearance, setAppearance] = createSignal({
+      theme: darkTheme,
+      palette: createTerminalPaletteProjection(darkTheme),
+    });
     const blits: string[] = [];
     const cursor = { x: 2, y: 3, hidden: false, style: "bar" as const, blink: true };
     const writeColor = (channels: Uint16Array, cell: number, packed: number) =>
@@ -450,7 +471,14 @@ describe("ApplicationTerminalWorkspace", () => {
           }
           if (paneId === "pane.a") {
             writeRow(buffers, width, 0, "NORMAL", defaultFg, defaultBg);
-            writeRow(buffers, width, 1, "INDEXED", palette.ansiForeground[196]!, defaultBg);
+            writeRow(
+              buffers,
+              width,
+              1,
+              "INDEXED",
+              appearance().palette.ansiForeground[196]!,
+              defaultBg,
+            );
             writeRow(buffers, width, 2, "TRUECOLOR", 0x010203, 0x040506);
             writeRow(buffers, width, 3, "ALT_SCREEN", defaultFg, defaultBg);
           } else {
@@ -499,8 +527,8 @@ describe("ApplicationTerminalWorkspace", () => {
           width={30}
           height={9}
           focusedPane="pane.a"
-          theme={theme}
-          palette={palette}
+          theme={appearance().theme}
+          palette={appearance().palette}
           onSelectPane={() => undefined}
         />
       ),
@@ -521,6 +549,13 @@ describe("ApplicationTerminalWorkspace", () => {
       expect(richAdapter.renderSource.cursorState("pane.a")).toEqual(cursor);
     };
 
+    await setup.renderOnce();
+    expectRichFrame();
+
+    setAppearance({
+      theme: lightTheme,
+      palette: createTerminalPaletteProjection(lightTheme),
+    });
     await setup.renderOnce();
     expectRichFrame();
 
@@ -883,6 +918,32 @@ describe("ApplicationTerminalWorkspace", () => {
     );
     await setup.renderOnce();
 
+    // The header overflow and keyboard accelerators share the exact pane-scoped
+    // action model; close remains deliberately two-step.
+    await setup.mockMouse.click(8, 2, MouseButtons.LEFT);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("Rename pane…");
+    expect(handleSelectionKey?.("r")).toBe(true);
+    await setup.renderOnce();
+    await setup.mockMouse.click(8, 2, MouseButtons.LEFT);
+    expect(handleSelectionKey?.("right")).toBe(true);
+    await setup.renderOnce();
+    await setup.mockMouse.click(8, 2, MouseButtons.LEFT);
+    expect(handleSelectionKey?.("d")).toBe(true);
+    await setup.renderOnce();
+    await setup.mockMouse.click(8, 2, MouseButtons.LEFT);
+    expect(handleSelectionKey?.("x")).toBe(true);
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toContain("Confirm close pane");
+    expect(paneActions).toEqual([
+      { paneId: "pane.a", action: "rename-pane" },
+      { paneId: "pane.a", action: "split-right" },
+      { paneId: "pane.a", action: "split-down" },
+    ]);
+    expect(handleSelectionKey?.("x")).toBe(true);
+    expect(paneActions.at(-1)).toEqual({ paneId: "pane.a", action: "close-pane" });
+    await setup.renderOnce();
+
     await setup.mockMouse.click(2, 3, MouseButtons.LEFT);
     expect(forwarded).toEqual(["\u001b[<0;3;1M", "\u001b[<0;3;1m"]);
 
@@ -934,7 +995,13 @@ describe("ApplicationTerminalWorkspace", () => {
     expect(handleSelectionKey?.("down")).toBe(true);
     expect(handleSelectionKey?.("down")).toBe(true);
     expect(handleSelectionKey?.("enter")).toBe(true);
-    expect(paneActions).toEqual([{ paneId: "pane.a", action: "split-right" }]);
+    expect(paneActions).toEqual([
+      { paneId: "pane.a", action: "rename-pane" },
+      { paneId: "pane.a", action: "split-right" },
+      { paneId: "pane.a", action: "split-down" },
+      { paneId: "pane.a", action: "close-pane" },
+      { paneId: "pane.a", action: "split-right" },
+    ]);
     setup.renderer.destroy();
   });
 });

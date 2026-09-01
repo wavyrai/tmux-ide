@@ -24,7 +24,7 @@ exports[`production ApplicationShell → WorkbenchShell OpenTUI renderer records
 
 
                       ▤ Files   ± Changes  ●◆ Missions   ◷ Activity       ▴   □
-  F5 · ^q quit       Terminals  ready                                F5 palette"
+  F5 · ^q quit       main  production application root                       F5"
 `;
 
 exports[`production ApplicationShell → WorkbenchShell OpenTUI renderer records the %sx%s open dock acceptance baseline 1`] = `
@@ -67,7 +67,7 @@ exports[`production ApplicationShell → WorkbenchShell OpenTUI renderer records
 
 
 
-  F5 palette · ^q quit       Terminals / canvas  ready                                             F5 palette · ^q quit"
+  F5 palette · ^q quit       main  Terminals  production application root                                   F5 Commands"
 `;
 
 exports[`production ApplicationShell → WorkbenchShell OpenTUI renderer records the %sx%s maximized dock acceptance baseline 1`] = `
@@ -130,5 +130,5 @@ exports[`production ApplicationShell → WorkbenchShell OpenTUI renderer records
 
 
 
-  F5 palette · ^q quit       tmux-ide / Terminals / canvas  ready                                                                                                                  F5 palette · ^q quit"
+  F5 palette · ^q quit       tmux-ide  main  Terminals  production application root                                                                                                         F5 Commands"
 `;

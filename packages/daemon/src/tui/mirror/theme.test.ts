@@ -18,6 +18,7 @@ import {
   createSemanticThemeSnapshot,
   createSemanticThemeStore,
   createTerminalPaletteProjection,
+  deriveSystemVisualHostDefaults,
   readableThemeForeground,
   semanticThemeContrastChecks,
   themeContrastRatio,
@@ -34,6 +35,18 @@ function rgbaKey(color: { r: number; g: number; b: number; a: number }): string 
 
 function rendererNeutralKey(color: RendererNeutralColor): string {
   return [color.red, color.green, color.blue, color.alpha].join(",");
+}
+
+const xterm16 = XTERM_PALETTE.slice(0, 16).map(
+  (color) => `#${color.toString(16).padStart(6, "0")}`,
+);
+
+function hostPalette(
+  defaultBackground: string | null,
+  defaultForeground: string | null,
+  palette: readonly (string | null)[] = xterm16,
+) {
+  return { defaultBackground, defaultForeground, palette } as const;
 }
 
 function expectCanonicalColorProjection(
@@ -137,6 +150,133 @@ describe("semantic theme snapshots", () => {
       expect(checks.every((check) => check.passes)).toBe(true);
       expect(checks.every((check) => check.ratio >= check.minimum)).toBe(true);
     }
+  });
+
+  it("derives system appearance and readable opaque chrome from representative host palettes", () => {
+    const fixtures = [
+      hostPalette("#000000", "#ffffff"),
+      hostPalette("#ffffff", "#000000"),
+      hostPalette("#10243a", "#f1e6d2"),
+      hostPalette(null, "#eeeeee", ["#121212"]),
+      hostPalette("rgb:1111/2222/3333", "rgb:eeee/dddd/cccc"),
+      hostPalette("#111111", "#eeeeee", [
+        ...xterm16.map((value, index) => (index === 8 ? "#ff00ff" : value)),
+        "#123456",
+      ]),
+    ];
+
+    for (const fixture of fixtures) {
+      const defaults = deriveSystemVisualHostDefaults(fixture);
+      expect(defaults).not.toBeNull();
+      const snapshot = createSemanticThemeSnapshot({ mode: "system" }, null, defaults);
+      expect(semanticThemeContrastChecks(snapshot).every((check) => check.passes)).toBe(true);
+      for (const group of Object.values(snapshot.roles))
+        for (const color of Object.values(group)) expect(colorToThemeBytes(color)[3]).toBe(255);
+    }
+
+    expect(deriveSystemVisualHostDefaults(fixtures[0]!)?.appearance).toBe("dark");
+    expect(deriveSystemVisualHostDefaults(fixtures[1]!)?.appearance).toBe("light");
+
+    const derived = deriveSystemVisualHostDefaults(fixtures[2]!)!;
+    const terminal = createTerminalPaletteProjection(
+      createSemanticThemeSnapshot({ mode: "system" }, null, derived),
+    );
+    expect(terminal.ansiForeground).toBe(XTERM_PALETTE);
+    expect(terminal.ansiBackground).toBe(XTERM_PALETTE);
+    expect(terminal.resolveForeground(0x12abef)).toBe(0x12abef);
+    expect(terminal.resolveBackground(0xfedcba)).toBe(0xfedcba);
+  });
+
+  it("uses measured foreground and mode-aware structural grays without ANSI 8 or 15", () => {
+    const defaults = deriveSystemVisualHostDefaults(
+      hostPalette("#101820", "#f0e0d0", [
+        ...xterm16.slice(0, 8),
+        "#123456",
+        ...xterm16.slice(9, 15),
+        "#654321",
+      ]),
+    )!;
+    const snapshot = createSemanticThemeSnapshot({ mode: "system" }, null, defaults);
+
+    expect(rgbaKey(snapshot.roles.text.primary)).toBe("240,224,208,255");
+    for (const color of [
+      snapshot.roles.surfaces.panel,
+      snapshot.roles.surfaces.panelRaised,
+      snapshot.roles.surfaces.command,
+      snapshot.roles.borders.subtle,
+      snapshot.roles.borders.default,
+      snapshot.roles.text.muted,
+    ]) {
+      expect(rgbaKey(color)).not.toBe("18,52,86,255");
+      expect(rgbaKey(color)).not.toBe("101,67,33,255");
+    }
+  });
+
+  it("falls back deterministically for incomplete ANSI accents and ignores extended slots", () => {
+    const short = deriveSystemVisualHostDefaults(hostPalette("#080808", "#f8f8f8", []))!;
+    const extended = deriveSystemVisualHostDefaults(
+      hostPalette("#080808", "#f8f8f8", [
+        ...Array<string | null>(16).fill(null),
+        ...Array<string | null>(240).fill("#abcdef"),
+      ]),
+    )!;
+    expect(extended).toEqual(short);
+    const fallbackYellow = XTERM_PALETTE[3]!;
+    expect(short.overrides.statusTone?.warning).toEqual({
+      space: "srgb",
+      red: (fallbackYellow >> 16) & 0xff,
+      green: (fallbackYellow >> 8) & 0xff,
+      blue: fallbackYellow & 0xff,
+      alpha: 255,
+    });
+  });
+
+  it("keeps user/project/accessibility precedence above terminal host defaults", () => {
+    const defaults = deriveSystemVisualHostDefaults(hostPalette("#050505", "#fafafa"))!;
+    const snapshot = createSemanticThemeSnapshot(
+      {
+        mode: "system",
+        userTheme: {
+          version: 1,
+          id: "host-user",
+          name: "Host user",
+          overrides: {
+            text: { primary: { space: "srgb", red: 220, green: 210, blue: 200, alpha: 255 } },
+          },
+        },
+        projectTheme: {
+          version: 1,
+          id: "host-project",
+          name: "Host project",
+          overrides: {
+            surfaces: { panel: { space: "srgb", red: 20, green: 25, blue: 30, alpha: 255 } },
+          },
+        },
+        accessibility: { increasedContrast: true },
+      },
+      null,
+      defaults,
+    );
+    expect(rgbaKey(snapshot.roles.text.primary)).toBe("220,210,200,255");
+    expect(rgbaKey(snapshot.roles.surfaces.panel)).toBe("20,25,30,255");
+    expect(rgbaKey(snapshot.roles.borders.focused)).toBe("255,255,255,255");
+  });
+
+  it("keeps explicit modes independent of later host-default changes", () => {
+    const store = createSemanticThemeStore({ mode: "light" });
+    const first = store.getSnapshot();
+    let notifications = 0;
+    store.subscribe(() => notifications++);
+    store.setHostDefaults(deriveSystemVisualHostDefaults(hostPalette("#000000", "#ffffff")));
+    expect(store.getSnapshot()).toBe(first);
+    expect(notifications).toBe(0);
+
+    store.setMode("system");
+    expect(store.getSnapshot().mode).toBe("dark");
+    expect(notifications).toBe(1);
+    store.setHostDefaults(deriveSystemVisualHostDefaults(hostPalette("#ffffff", "#000000")));
+    expect(store.getSnapshot().mode).toBe("light");
+    expect(notifications).toBe(2);
   });
 
   it("themes terminal defaults while preserving the complete ANSI and truecolor gamut", () => {

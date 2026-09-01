@@ -359,6 +359,119 @@ export interface ShellStatusPresentation {
   hints: string;
 }
 
+export type ContextStatusTone = "neutral" | "working" | "done" | "blocked" | "warning" | "accent";
+
+export interface ContextStatusLocationSegment {
+  readonly id: "project" | "session" | "mode" | "pane";
+  readonly label: string;
+  readonly essential: boolean;
+}
+
+export interface ContextStatusHint {
+  readonly keys: string;
+  readonly label: string;
+  readonly command: "commands" | null;
+}
+
+export interface ContextStatusPresentation {
+  readonly location: readonly ContextStatusLocationSegment[];
+  readonly activity: {
+    readonly label: string;
+    readonly tone: ContextStatusTone;
+    readonly attention: boolean;
+  };
+  readonly hints: readonly ContextStatusHint[];
+}
+
+function meaningfulStatusMessage(message: string | null | undefined): string | null {
+  const value = message?.trim();
+  if (!value || /^(?:ready|live|connected)$/iu.test(value)) return null;
+  return value;
+}
+
+export function contextStatusTone(
+  message: string,
+  connectionState: string,
+): {
+  readonly tone: ContextStatusTone;
+  readonly attention: boolean;
+} {
+  const value = `${connectionState} ${message}`.toLowerCase();
+  if (/\b(?:attention|blocked|needs? attention|confirm|confirmation)\b/u.test(value))
+    return { tone: "warning", attention: true };
+  if (/\b(?:disconnected|unavailable|degraded|failed|failure|error)\b/u.test(value))
+    return { tone: "blocked", attention: true };
+  if (/\b(?:reconnecting|recovering|retrying)\b/u.test(value))
+    return { tone: "warning", attention: false };
+  if (/\b(?:resiz(?:e|ing|ed)|select(?:ion|ing|ed)?|copying)\b/u.test(value))
+    return { tone: "accent", attention: false };
+  if (/\b(?:created|closed|renamed|split|saved|copied|complete|completed|done)\b/u.test(value))
+    return { tone: "done", attention: false };
+  if (/\b(?:loading|finding|connecting|working|starting|opening|waiting)\b/u.test(value))
+    return { tone: "working", attention: false };
+  return { tone: connectionState === "connected" ? "neutral" : "working", attention: false };
+}
+
+/**
+ * Pure priority model for the production footer. Width tiers deliberately match
+ * the three release-gate viewports: 200x60, 120x40, and 80x24. The view may
+ * clip an individual essential segment, but it never has to guess which whole
+ * segment should disappear first.
+ */
+export function contextStatusPresentation(input: {
+  readonly variant: ShellChromeVariant;
+  readonly project: string;
+  readonly session: string;
+  readonly mode: string;
+  readonly pane?: string | null;
+  readonly focus?: string | null;
+  readonly connectionState: "connected" | "reconnecting" | "disconnected" | "recovering";
+  readonly notification?: string | null;
+  readonly transient?: string | null;
+}): ContextStatusPresentation {
+  const project = input.project.trim() || "tmux-ide";
+  const session = input.session.trim() || "workspace";
+  const mode = input.mode.trim() || "workspace";
+  const pane = input.pane?.trim() || null;
+  const transient = meaningfulStatusMessage(input.transient);
+  const notification = meaningfulStatusMessage(input.notification);
+  const connectionLabel =
+    input.connectionState === "connected"
+      ? "Live"
+      : input.connectionState === "reconnecting"
+        ? "Reconnecting"
+        : input.connectionState === "recovering"
+          ? "Recovering"
+          : "Disconnected";
+  const activityLabel = transient ?? notification ?? connectionLabel;
+  const activityTone = contextStatusTone(activityLabel, input.connectionState);
+  const location: ContextStatusLocationSegment[] =
+    input.variant === "wide"
+      ? [
+          { id: "project", label: project, essential: false },
+          { id: "session", label: session, essential: true },
+          { id: "mode", label: mode, essential: false },
+          ...(pane ? [{ id: "pane" as const, label: pane, essential: false }] : []),
+        ]
+      : input.variant === "standard"
+        ? [
+            { id: "session", label: session, essential: true },
+            { id: "mode", label: mode, essential: false },
+          ]
+        : [{ id: "session", label: session, essential: true }];
+  return {
+    location,
+    activity: { label: activityLabel, ...activityTone },
+    hints: [
+      {
+        keys: "F5",
+        label: input.variant === "compact" ? "" : "Commands",
+        command: "commands",
+      },
+    ],
+  };
+}
+
 /** Responsive status content for the three-zone OpenTUI status bar. */
 export function shellStatusPresentation(
   variant: ShellChromeVariant,

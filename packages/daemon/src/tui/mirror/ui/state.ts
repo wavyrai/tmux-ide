@@ -5,6 +5,8 @@ import type { SemanticThemeSnapshot } from "../theme.ts";
 export type ComponentTone =
   | "neutral"
   | "accent"
+  | "warning"
+  | "destructive"
   | "blocked"
   | "working"
   | "done"
@@ -18,6 +20,8 @@ export interface ComponentInteractionState {
   pressed?: boolean;
   disabled?: boolean;
   attention?: boolean;
+  /** Passive context chip: related scope, but neither selected nor interactive focus. */
+  context?: boolean;
   loading?: boolean;
   empty?: boolean;
   status?: Exclude<ComponentTone, "neutral" | "accent">;
@@ -30,6 +34,7 @@ export type ComponentResolvedState =
   | "focused"
   | "hovered"
   | "attention"
+  | "context"
   | "loading"
   | "empty"
   | "status"
@@ -50,6 +55,7 @@ function resolveComponentState(state: ComponentInteractionState): ComponentResol
   if (state.selected) return "selected";
   if (state.focused) return "focused";
   if (state.attention) return "attention";
+  if (state.context) return "context";
   if (state.hovered) return "hovered";
   if (state.loading) return "loading";
   if (state.empty) return "empty";
@@ -59,6 +65,8 @@ function resolveComponentState(state: ComponentInteractionState): ComponentResol
 
 function toneColor(theme: SemanticThemeSnapshot, tone: ComponentTone | undefined): RGBA {
   switch (tone) {
+    case "warning":
+    case "destructive":
     case "blocked":
       return theme.roles.statusTone.warning;
     case "working":
@@ -85,6 +93,10 @@ export function componentPalette(
 ): ComponentPalette {
   const resolved = resolveComponentState(state);
   const statusAccent = toneColor(theme, state.status ?? tone);
+  const urgent = Boolean(state.attention || tone === "warning" || tone === "destructive");
+  const urgencyBorder = urgent ? theme.roles.borders.attention : undefined;
+  const urgencyAccent = urgent ? theme.roles.statusTone.warning : undefined;
+  const urgencyMarker = urgent ? "!" : undefined;
   if (resolved === "disabled") {
     return {
       state: resolved,
@@ -100,9 +112,9 @@ export function componentPalette(
       state: resolved,
       foreground: theme.roles.selection.selectionText,
       background: theme.roles.selection.pressed,
-      border: theme.roles.borders.focused,
-      accent: theme.roles.borders.focused,
-      marker: "◆",
+      border: urgencyBorder ?? theme.roles.borders.focused,
+      accent: urgencyAccent ?? theme.roles.borders.focused,
+      marker: urgencyMarker ?? "◆",
     };
   }
   if (resolved === "selected") {
@@ -110,9 +122,9 @@ export function componentPalette(
       state: resolved,
       foreground: theme.roles.selection.selectionText,
       background: theme.roles.selection.selection,
-      border: theme.roles.borders.selected,
-      accent: state.status ? statusAccent : theme.roles.borders.focused,
-      marker: theme.glyphs.active,
+      border: urgencyBorder ?? theme.roles.borders.selected,
+      accent: urgencyAccent ?? (state.status ? statusAccent : theme.roles.borders.focused),
+      marker: urgencyMarker ?? theme.glyphs.active,
     };
   }
   if (resolved === "focused") {
@@ -120,9 +132,9 @@ export function componentPalette(
       state: resolved,
       foreground: theme.roles.text.primary,
       background: theme.roles.surfaces.panelRaised,
-      border: theme.roles.borders.focused,
-      accent: state.status ? statusAccent : theme.roles.borders.focused,
-      marker: "›",
+      border: urgencyBorder ?? theme.roles.borders.focused,
+      accent: urgencyAccent ?? (state.status ? statusAccent : theme.roles.borders.focused),
+      marker: urgencyMarker ?? "›",
     };
   }
   if (resolved === "hovered") {
@@ -130,9 +142,9 @@ export function componentPalette(
       state: resolved,
       foreground: theme.roles.text.primary,
       background: theme.roles.selection.hover,
-      border: theme.roles.borders.default,
-      accent: state.status ? statusAccent : theme.roles.text.link,
-      marker: "·",
+      border: urgencyBorder ?? theme.roles.borders.default,
+      accent: urgencyAccent ?? (state.status ? statusAccent : theme.roles.text.link),
+      marker: urgencyMarker ?? "·",
     };
   }
   if (resolved === "attention") {
@@ -143,6 +155,16 @@ export function componentPalette(
       border: theme.roles.borders.attention,
       accent: state.status ? statusAccent : theme.roles.borders.attention,
       marker: "!",
+    };
+  }
+  if (resolved === "context") {
+    return {
+      state: resolved,
+      foreground: theme.roles.text.link,
+      background: theme.roles.surfaces.panelRaised,
+      border: theme.roles.borders.subtle,
+      accent: theme.roles.text.link,
+      marker: "⧉",
     };
   }
   if (resolved === "loading") {
@@ -175,12 +197,22 @@ export function componentPalette(
       marker: theme.glyphs.active,
     };
   }
+  if (tone === "destructive") {
+    return {
+      state: resolved,
+      foreground: theme.roles.text.primary,
+      background: theme.derived.attentionSurface,
+      border: theme.roles.borders.attention,
+      accent: theme.roles.statusTone.warning,
+      marker: "!",
+    };
+  }
   return {
     state: resolved,
     foreground: theme.roles.text.primary,
     background: theme.roles.surfaces.panel,
-    border: theme.roles.borders.default,
-    accent: toneColor(theme, tone),
-    marker: theme.glyphs.inactive,
+    border: urgencyBorder ?? theme.roles.borders.default,
+    accent: urgencyAccent ?? toneColor(theme, tone),
+    marker: urgencyMarker ?? theme.glyphs.inactive,
   };
 }

@@ -17,6 +17,7 @@ const FORBIDDEN_IMPORTS = [
   /^node:/u,
 ];
 const FORBIDDEN_OWNERS = /\b(?:useKeyboard|usePaste|createCliRenderer|process\.exit)\b/u;
+const COMPONENT_KEYBOARD_OWNERS = new Set(["terminal-window-strip.tsx"]);
 
 async function productionFiles(dir = WORKSPACE_DIR): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
@@ -60,7 +61,15 @@ describe("application workspace boundaries", () => {
     const violations: string[] = [];
     for (const file of await productionFiles()) {
       const source = await readFile(file, "utf8");
-      if (FORBIDDEN_OWNERS.test(source)) violations.push(file);
+      if (
+        FORBIDDEN_OWNERS.test(source) &&
+        !(
+          COMPONENT_KEYBOARD_OWNERS.has(file.slice(file.lastIndexOf("/") + 1)) &&
+          /\buseKeyboard\b/u.test(source) &&
+          !/\b(?:usePaste|createCliRenderer|process\.exit)\b/u.test(source)
+        )
+      )
+        violations.push(file);
     }
     expect(violations).toEqual([]);
   });

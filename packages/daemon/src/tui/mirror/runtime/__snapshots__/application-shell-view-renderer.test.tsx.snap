@@ -2,8 +2,8 @@
 
 exports[`production ApplicationShellView retains shell, window strip, pane chrome, and canvas at %sx%s 1`] = `
 "  ⌂  ●❯                                                                    live
-  tmux               0:main [WORKING]                                         +
- ● main             ● Codex                    [WORKING]  ⋯
+  tmux              ● main    ● workin…                                       +
+ ● main               ● Codex                   ● workin… ⋯
  ○ website          CANONICAL-CELL
 
  Agents
@@ -13,13 +13,13 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
 
 …
 
-                     Terminals  ready                               Commands F5"
+                     main  Live                                              F5"
 `;
 
 exports[`production ApplicationShellView retains shell, window strip, pane chrome, and canvas at %sx%s 2`] = `
 "   tmux-ide   ⌂ Home  ●❯ Terminals                                                                                 live
-  tmux-ide                   0:main [WORKING]                                                              + New window
- ● main                     ● Codex                    [WORKING]  ⋯
+  tmux-ide                  ● main    ● workin…                                                            + New window
+ ● main                       ● Codex                   ● workin… ⋯
  ○ website                  CANONICAL-CELL
 
  Agents
@@ -29,13 +29,13 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
 
 …
 
-                             Terminals / terminal  ready                                                    Commands F5"
+                             main  Terminals  Live                                                          F5 Commands"
 `;
 
 exports[`production ApplicationShellView retains shell, window strip, pane chrome, and canvas at %sx%s 3`] = `
 "   tmux-ide  F1  ⌂ Home  F2 ●❯ Terminals                                                                                                                                                           live
-  tmux-ide                   0:main [WORKING]                                                                                                                                              + New window
- ● main                     ● Codex                    [WORKING]  ⋯
+  tmux-ide                  ● main    ● workin…                                                                                                                                            + New window
+ ● main                       ● Codex                   ● workin… ⋯
  ○ website                  CANONICAL-CELL
 
  Agents
@@ -45,7 +45,7 @@ exports[`production ApplicationShellView retains shell, window strip, pane chrom
 
 …
 
-                             tmux-ide / Terminals / terminal  ready                                                                                                                         Commands F5"
+                             tmux-ide  main  Terminals  Live                                                                                                                                F5 Commands"
 `;
 
 exports[`production ApplicationShellView reacts palette geometry through narrow live resizes 1`] = `
@@ -57,7 +57,7 @@ exports[`production ApplicationShellView reacts palette geometry through narrow 
   │ New terminal window  │
   │ Split pane right     │
   ╰──────────────────────╯
- Termina… ready  Commands F…"
+ main  Live              F5"
 `;
 
 exports[`production ApplicationShellView reacts palette geometry through narrow live resizes 2`] = `
@@ -72,8 +72,8 @@ exports[`production ApplicationShellView reacts palette geometry through narrow 
 
 exports[`production ApplicationShellView preserves canonical attention while prioritizing mixed window activity 1`] = `
 "   tmux-ide   ⌂ Home  ●❯ Terminals                                                                                 live
-  tmux-ide                   0:main [WORKING]                                                              + New window
- ● main                     ● Codex                    [WORKING]  ⋯ ○ Scout                       [IDLE]  ⋯
+  tmux-ide                  ! main    ! workin…                                                            + New window
+ ● main                       ● Codex                   ● workin… ⋯   ! Scout                     ! idle  ⋯
  ○ website                  CANONICAL-CELL                          CANONICAL-CELL
 
  Agents
@@ -83,5 +83,5 @@ exports[`production ApplicationShellView preserves canonical attention while pri
 
 …
 
-                             Terminals / terminal  ready                                                    Commands F5"
+                             main  Terminals  Live                                                          F5 Commands"
 `;

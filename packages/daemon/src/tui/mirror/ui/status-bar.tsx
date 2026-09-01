@@ -1,9 +1,10 @@
 /* @jsxImportSource @opentui/solid */
 import type { JSX } from "@opentui/solid";
+import { useKeyboard } from "@opentui/solid";
 
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal } from "../terminal-text.ts";
-import type { ComponentTone } from "./state.ts";
+import { componentPalette, type ComponentInteractionState, type ComponentTone } from "./state.ts";
 
 export interface StatusBarProps {
   theme: SemanticThemeSnapshot;
@@ -51,14 +52,19 @@ export function StatusBarGroup(props: StatusBarGroupProps) {
   );
 }
 
-export interface StatusBarSegmentProps {
+export interface StatusSegmentProps extends ComponentInteractionState {
   theme: SemanticThemeSnapshot;
   label: string;
   width?: number;
   tone?: ComponentTone;
+  marker?: string;
   active?: boolean;
   strong?: boolean;
+  onPress?: () => void;
 }
+
+/** Compatibility props name retained while production callers migrate. */
+export type StatusBarSegmentProps = StatusSegmentProps;
 
 export interface StatusBarActionProps {
   theme: SemanticThemeSnapshot;
@@ -66,6 +72,8 @@ export interface StatusBarActionProps {
   shortcut?: string;
   width?: number;
   primary?: boolean;
+  focused?: boolean;
+  disabled?: boolean;
   onPress: () => void;
 }
 
@@ -74,6 +82,22 @@ export function StatusBarAction(props: StatusBarActionProps) {
   const content = () => ` ${props.label}${props.shortcut ? ` ${props.shortcut}` : ""} `;
   const background = () =>
     props.primary ? props.theme.roles.selection.selection : props.theme.roles.surfaces.panelRaised;
+  const activate = () => {
+    if (!props.disabled) props.onPress();
+  };
+  useKeyboard((event) => {
+    const key = event.name.toLowerCase();
+    if (
+      !props.focused ||
+      props.disabled ||
+      event.eventType !== "press" ||
+      (key !== "enter" && key !== "return" && key !== "space")
+    )
+      return;
+    event.preventDefault();
+    event.stopPropagation();
+    activate();
+  });
   return (
     <box
       id={`ui-status-action:${props.label}`}
@@ -81,10 +105,14 @@ export function StatusBarAction(props: StatusBarActionProps) {
       width={props.width}
       backgroundColor={background()}
       overflow="hidden"
+      focusable={!props.disabled}
+      focused={Boolean(props.focused)}
       onMouseDown={(event) => {
         if (event.button !== 0) return;
+        event.preventDefault();
         event.stopPropagation();
-        props.onPress();
+        if (props.disabled) return;
+        activate();
       }}
     >
       <text
@@ -94,24 +122,58 @@ export function StatusBarAction(props: StatusBarActionProps) {
             ? props.theme.roles.selection.selectionText
             : props.theme.roles.text.secondary
         }
-        attributes={props.primary ? 1 : 0}
       >
-        {clipTerminal(content(), props.width ?? 200)}
+        {props.primary || props.focused ? (
+          <strong>{clipTerminal(content(), props.width ?? 200)}</strong>
+        ) : (
+          clipTerminal(content(), props.width ?? 200)
+        )}
       </text>
     </box>
   );
 }
 
-export function StatusBarSegment(props: StatusBarSegmentProps) {
+export function StatusSegment(props: StatusSegmentProps) {
+  const palette = () =>
+    componentPalette(
+      props.theme,
+      {
+        selected: props.selected || props.active,
+        focused: props.focused,
+        hovered: props.hovered,
+        pressed: props.pressed,
+        disabled: props.disabled,
+        attention: props.attention,
+        loading: props.loading,
+        empty: props.empty,
+      },
+      props.tone,
+    );
   const background = () =>
-    props.active ? props.theme.roles.surfaces.panelRaised : props.theme.roles.surfaces.header;
+    palette().state === "base" ? props.theme.roles.surfaces.header : palette().background;
   const foreground = () => {
-    if (props.tone === "blocked") return props.theme.roles.statusTone.warning;
-    if (props.tone === "working") return props.theme.roles.statusTone.info;
-    if (props.tone === "done") return props.theme.roles.statusTone.success;
-    if (props.active) return props.theme.roles.text.link;
+    if (palette().state !== "base") return palette().foreground;
+    if (props.tone && props.tone !== "neutral") return palette().accent;
     return props.theme.roles.text.muted;
   };
+  const content = () => ` ${props.marker ? `${props.marker} ` : ""}${props.label} `;
+  const activate = () => {
+    if (!props.disabled) props.onPress?.();
+  };
+  useKeyboard((event) => {
+    const key = event.name.toLowerCase();
+    if (
+      !props.focused ||
+      props.disabled ||
+      !props.onPress ||
+      event.eventType !== "press" ||
+      (key !== "enter" && key !== "return" && key !== "space")
+    )
+      return;
+    event.preventDefault();
+    event.stopPropagation();
+    activate();
+  });
   return (
     <box
       id={`ui-status-segment:${props.label}`}
@@ -119,10 +181,26 @@ export function StatusBarSegment(props: StatusBarSegmentProps) {
       width={props.width}
       backgroundColor={background()}
       overflow="hidden"
+      focusable={Boolean(props.onPress) && !props.disabled}
+      focused={Boolean(props.focused)}
+      onMouseDown={(event) => {
+        if (event.button !== 0 || !props.onPress) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (props.disabled) return;
+        activate();
+      }}
     >
-      <text fg={foreground()} bg={background()} attributes={props.strong || props.active ? 1 : 0}>
-        {clipTerminal(` ${props.label} `, props.width ?? 200)}
+      <text fg={foreground()} bg={background()}>
+        {props.strong || props.active || props.focused ? (
+          <strong>{clipTerminal(content(), props.width ?? 200)}</strong>
+        ) : (
+          clipTerminal(content(), props.width ?? 200)
+        )}
       </text>
     </box>
   );
 }
+
+/** @deprecated Prefer `StatusSegment` for new component work. */
+export const StatusBarSegment = StatusSegment;

@@ -15,6 +15,13 @@ test("accepts the component status-bar terminal focus", () => {
   assert.equal(frameShowsTerminalFocus("Terminals / terminal  Live tmux session"), true);
 });
 
+test("accepts the session-scoped component status bar", () => {
+  assert.equal(
+    frameShowsTerminalFocus("journey-beta  Terminals  Live tmux session discovered"),
+    true,
+  );
+});
+
 test("rejects non-terminal focus", () => {
   assert.equal(frameShowsTerminalFocus("Home · primary navigation · ready"), false);
 });

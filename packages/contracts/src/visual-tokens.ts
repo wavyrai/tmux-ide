@@ -276,6 +276,21 @@ const ThemeNameSchemaZ = z.string().min(1).max(120);
 export const ThemeAppearanceSchemaZ = z.enum(["dark", "light"]);
 export type ThemeAppearance = z.infer<typeof ThemeAppearanceSchemaZ>;
 
+/**
+ * Renderer-neutral defaults learned from the current presentation host.
+ *
+ * This is deliberately smaller than a user theme document: host discovery has
+ * no persisted identity and may only supply a base appearance plus semantic
+ * token defaults. User and project documents always layer above it.
+ */
+export const VisualHostDefaultsV1SchemaZ = z
+  .object({
+    appearance: ThemeAppearanceSchemaZ,
+    overrides: VisualTokenOverridesV1SchemaZ,
+  })
+  .strict();
+export type VisualHostDefaultsV1 = z.infer<typeof VisualHostDefaultsV1SchemaZ>;
+
 export const VisualThemeDocumentV1SchemaZ = z
   .object({
     version: z.literal(VISUAL_THEME_VERSION),
@@ -809,6 +824,7 @@ function applyAccessibility(
 
 export interface ResolveVisualThemeInput {
   readonly appearance?: ThemeAppearance;
+  readonly hostDefaults?: VisualHostDefaultsV1;
   readonly userTheme?: unknown;
   readonly projectTheme?: unknown;
   readonly accessibility?: Partial<ThemeAccessibilityPreferences>;
@@ -832,8 +848,17 @@ export function resolveVisualTheme(input: ResolveVisualThemeInput = {}): Resolve
   const readyUser = loadedUser?.status === "ready" ? loadedUser.document : null;
   const readyProject = loadedProject?.status === "ready" ? loadedProject.document : null;
   const appearance =
-    readyProject?.appearance ?? readyUser?.appearance ?? input.appearance ?? "dark";
+    readyProject?.appearance ??
+    readyUser?.appearance ??
+    input.appearance ??
+    input.hostDefaults?.appearance ??
+    "dark";
   let tokens = BUILTIN_VISUAL_THEMES[appearance];
+  // A host palette is a default layer, never an override of an explicit
+  // appearance. This also prevents a stale light palette from contaminating a
+  // user or project theme that explicitly selects dark (and vice versa).
+  if (input.hostDefaults?.appearance === appearance)
+    tokens = applyOverrides(tokens, input.hostDefaults.overrides);
   if (readyUser) tokens = applyOverrides(tokens, readyUser.overrides);
   if (readyProject) tokens = applyOverrides(tokens, readyProject.overrides);
   tokens = applyAccessibility(

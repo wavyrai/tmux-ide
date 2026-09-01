@@ -1,5 +1,4 @@
 /* @jsxImportSource @opentui/solid */
-import { createCliRenderer } from "@opentui/core";
 import { batch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { useKeyboard, usePaste } from "@opentui/solid";
 import { publishTuiInputReady } from "../../readiness.ts";
@@ -27,7 +26,7 @@ import {
   createApplicationGenerationStarter,
 } from "./application-generation-starter.ts";
 import { createApplicationInputReadiness } from "./application-input-readiness.ts";
-import { requestApplicationThemeRepaint } from "./application-theme-repaint.ts";
+import { applyApplicationAppearanceToRenderer } from "./application-theme-repaint.ts";
 import {
   applicationPaletteCommands,
   applicationPaletteCommandSource,
@@ -44,6 +43,8 @@ import {
 import { resolveApplicationHostFocusControlCapability } from "./application-host-focus-control-capability.ts";
 import { createApplicationHostFocusControlBindingObserver } from "./application-host-focus-control-binding.ts";
 import {
+  markTerminalHostFocusBinding,
+  markTerminalHostFocusControlGate,
   tuiPerfCriticalMark,
   tuiPerfDiagnostics,
   tuiPerfMark,
@@ -56,12 +57,13 @@ import {
   openTuiGenerationRenderEqual,
 } from "./open-tui-generation-host.ts";
 import { createOpenTuiSessionOwner, type OpenTuiSessionOwner } from "./open-tui-session-owner.ts";
-import { TUI_RENDERER_CADENCE } from "./renderer-cadence.ts";
 import { createOpenTuiRuntimeLayoutPresentation } from "./runtime-layout-presentation.ts";
 import { createApplicationTerminalHostFocus } from "./application-terminal-host-focus-owner.ts";
 import { createApplicationTerminalFrameReadinessOwner } from "./application-terminal-frame-readiness-owner.ts";
-import { createApplicationSessionFocusOwner } from "./application-session-focus-owner.ts";
-import type { ApplicationSessionFocusOwner } from "./application-session-focus-owner.ts";
+import {
+  createApplicationSessionFocusOwner,
+  type ApplicationSessionFocusOwner,
+} from "./application-session-focus-owner.ts";
 import { createApplicationTerminalInputIngress } from "./application-terminal-input-ingress.ts";
 import {
   applicationMousePointerIngressCapability,
@@ -74,32 +76,23 @@ import { createSemanticShellViewportResizeOwner } from "./semantic-shell-viewpor
 import { installHostedRuntimeOwnership } from "./hosted-tty-size-bridge.ts";
 import { renderWithTerminalDimensions } from "./terminal-dimensions-owner.ts";
 import { createAppearanceOwner } from "./application-appearance-owner.ts";
+import { createApplicationTerminalPaletteOwner } from "./application-terminal-palette-owner.ts";
+import {
+  createApplicationRootReadiness,
+  createApplicationRootRenderer,
+} from "./application-root-renderer.ts";
 export type { StartApplicationRootOptions } from "./application-root-configuration.ts";
 export async function startApplicationRoot(options: StartApplicationRootOptions = {}) {
   options.initialPreparation?.diagnosticHandoff?.attach(tuiPerfMark);
-  let renderer!: Awaited<ReturnType<typeof createCliRenderer>>;
+  let renderer!: Awaited<ReturnType<typeof createApplicationRootRenderer>>;
   let lifecycle!: TuiApplicationLifecycle;
-  let resolveReady!: () => void;
-  let rejectReady!: (error: unknown) => void;
-  const ready = new Promise<void>((resolve, reject) => {
-    resolveReady = resolve;
-    rejectReady = reject;
-  });
+  const { ready, resolveReady, rejectReady } = createApplicationRootReadiness();
   await startTuiApplication({
     argv: process.argv.slice(2),
     parseArgs: parseApplicationArgs,
     loadConfig: loadApplicationConfig,
     async createRenderer({ config }) {
-      tuiPerfMark("renderer-create-start");
-      renderer = await createCliRenderer({
-        exitOnCtrlC: false,
-        autoFocus: false,
-        ...TUI_RENDERER_CADENCE,
-        useKittyKeyboard: config.app.app.kittyKeys ? {} : null,
-        consoleMode: process.env.TMUX_IDE_MIRROR_DEBUG ? "console-overlay" : "disabled",
-        openConsoleOnError: Boolean(process.env.TMUX_IDE_MIRROR_DEBUG),
-      });
-      tuiPerfMark("renderer-create-end");
+      renderer = await createApplicationRootRenderer(config.app.app.kittyKeys);
       return renderer;
     },
     createLifecycle() {
@@ -141,20 +134,11 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
       const recoverHostFocus = createApplicationHostFocusRecovery(() => noteHostInteraction());
       let observedFocusGenerationKey: string | null = null;
       const hostFocusControlCapability = resolveApplicationHostFocusControlCapability(process.env);
-      tuiPerfCriticalMark(
-        "terminal-host-focus-control-gate",
-        "terminal-host-focus-control-gate-ready",
-        hostFocusControlCapability.observation,
-      );
+      markTerminalHostFocusControlGate(hostFocusControlCapability.observation);
       const hostFocusBindingObserver = createApplicationHostFocusControlBindingObserver({
         enabled: hostFocusControlCapability.enabled,
         currentHost: () => sessionOwner?.snapshot() ?? null,
-        publish: (identity) =>
-          tuiPerfCriticalMark(
-            `terminal-host-focus-binding:${identity.bindingEpoch}`,
-            "terminal-host-focus-control-binding-ready",
-            identity,
-          ),
+        publish: markTerminalHostFocusBinding,
       });
       let getTerminalRendererSource: (() => HostFocusRendererSource | null) | null = null;
       const terminalHostFocus = createApplicationTerminalHostFocus(() => sessionOwner);
@@ -237,7 +221,11 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         const [rendererFocused, setRendererFocusedSignal] = createSignal(true);
         getRendererFocused = rendererFocused;
         setRendererFocused = setRendererFocusedSignal;
-        const appearance = createAppearanceOwner(config.app, renderer);
+        let appearance!: ReturnType<typeof createAppearanceOwner>;
+        const terminalPaletteOwner = createApplicationTerminalPaletteOwner(renderer, {
+          isThemeModeUnlocked: () => appearance.theme().setting === "system",
+        });
+        appearance = createAppearanceOwner(config.app, renderer, terminalPaletteOwner);
         const { theme, palette, setTransientNote, cycleTheme } = appearance;
         const semanticViewportResize = createSemanticShellViewportResizeOwner();
         const activeSurface = createMemo<"home" | "terminals">(
@@ -327,12 +315,17 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           openAgent,
         });
         const paneRename = createPaneRenameOwner(interaction.renamePane, setTransientNote);
-        let paintedTheme = theme();
+        let paintedAppearanceGeneration: number | null = null;
         createEffect(() => {
-          const nextTheme = theme();
-          renderer.setBackgroundColor(nextTheme.roles.surfaces.canvas);
-          if (nextTheme !== paintedTheme) requestApplicationThemeRepaint(renderer);
-          paintedTheme = nextTheme;
+          const nextAppearance = appearance.appearance();
+          paintedAppearanceGeneration = applyApplicationAppearanceToRenderer(
+            renderer,
+            nextAppearance.theme,
+            nextAppearance.generation,
+            paintedAppearanceGeneration,
+          );
+        });
+        createEffect(() => {
           const currentShell = shell();
           semanticViewportResize.adopt(dimensions(), currentShell.semantic, generation());
           focusedPane();
@@ -459,6 +452,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             onCycleTheme={recoverHostFocus(cycleTheme)}
             onBeginPaneRename={recoverHostFocus(paneRename.begin)}
             onCancelPaneRename={recoverHostFocus(paneRename.cancel)}
+            onDismissNotification={recoverHostFocus(() => setTransientNote(null))}
             onSelectPane={recoverHostFocus(interaction.selectPane)}
             onResizePreview={recoverHostFocus(interaction.previewPaneResize)}
             onResizePane={recoverHostFocus(interaction.resizePane)}

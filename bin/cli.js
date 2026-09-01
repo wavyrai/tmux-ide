@@ -2632,7 +2632,7 @@ function baseTokens(appearance) {
     }
   });
 }
-var VISUAL_THEME_VERSION, DENSITY_TOKEN_ROLES, SHAPE_TOKEN_ROLES, ELEVATION_TOKEN_ROLES, MOTION_DURATION_ROLES, TYPOGRAPHY_TOKEN_ROLES, WINDOW_ACTIVITY_TOKEN_ROLES, RendererNeutralColorSchemaZ, RhythmValueSchemaZ, RatioValueSchemaZ, DurationValueSchemaZ, ElevationValueSchemaZ, TypographyValueSchemaZ, MotionEasingSchemaZ, WindowActivityValueSchemaZ, SurfacesSchemaZ, TextSchemaZ, BordersSchemaZ, StatusToneSchemaZ, SelectionSchemaZ, DensitySchemaZ, ShapeSchemaZ, ElevationSchemaZ, MotionSchemaZ, TypographySchemaZ, FocusSchemaZ, WindowActivitySchemaZ, VisualTokensV1SchemaZ, VisualTokenOverridesV1SchemaZ, ThemeIdSchemaZ, ThemeNameSchemaZ, ThemeAppearanceSchemaZ, VisualThemeDocumentV1SchemaZ, VisualThemeDocumentV0SchemaZ, ThemeAccessibilityPreferencesSchemaZ, groupSchemas, rhythm, ratio, duration, BUILTIN_VISUAL_THEMES;
+var VISUAL_THEME_VERSION, DENSITY_TOKEN_ROLES, SHAPE_TOKEN_ROLES, ELEVATION_TOKEN_ROLES, MOTION_DURATION_ROLES, TYPOGRAPHY_TOKEN_ROLES, WINDOW_ACTIVITY_TOKEN_ROLES, RendererNeutralColorSchemaZ, RhythmValueSchemaZ, RatioValueSchemaZ, DurationValueSchemaZ, ElevationValueSchemaZ, TypographyValueSchemaZ, MotionEasingSchemaZ, WindowActivityValueSchemaZ, SurfacesSchemaZ, TextSchemaZ, BordersSchemaZ, StatusToneSchemaZ, SelectionSchemaZ, DensitySchemaZ, ShapeSchemaZ, ElevationSchemaZ, MotionSchemaZ, TypographySchemaZ, FocusSchemaZ, WindowActivitySchemaZ, VisualTokensV1SchemaZ, VisualTokenOverridesV1SchemaZ, ThemeIdSchemaZ, ThemeNameSchemaZ, ThemeAppearanceSchemaZ, VisualHostDefaultsV1SchemaZ, VisualThemeDocumentV1SchemaZ, VisualThemeDocumentV0SchemaZ, ThemeAccessibilityPreferencesSchemaZ, groupSchemas, rhythm, ratio, duration, BUILTIN_VISUAL_THEMES;
 var init_visual_tokens = __esm({
   "packages/contracts/src/visual-tokens.ts"() {
     "use strict";
@@ -2790,6 +2790,10 @@ var init_visual_tokens = __esm({
     ThemeIdSchemaZ = z20.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9._-]*$/u);
     ThemeNameSchemaZ = z20.string().min(1).max(120);
     ThemeAppearanceSchemaZ = z20.enum(["dark", "light"]);
+    VisualHostDefaultsV1SchemaZ = z20.object({
+      appearance: ThemeAppearanceSchemaZ,
+      overrides: VisualTokenOverridesV1SchemaZ
+    }).strict();
     VisualThemeDocumentV1SchemaZ = z20.object({
       version: z20.literal(VISUAL_THEME_VERSION),
       id: ThemeIdSchemaZ,

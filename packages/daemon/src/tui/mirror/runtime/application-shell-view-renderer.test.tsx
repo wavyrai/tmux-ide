@@ -14,6 +14,7 @@ import { expectFrameBounds, renderForTest } from "../testing/renderer-harness.te
 import { terminalDisplayWidth } from "../terminal-text.ts";
 import { projectApplicationShell } from "../workspace/application-shell.ts";
 import { projectOpenTuiApplicationShell } from "../workspace/application-shell-controller.ts";
+import { windowTabBarLayout } from "../workspace/terminal-window-strip.tsx";
 import { createApplicationShellBinding } from "./application-shell-binding.ts";
 import type { OpenTuiProductionWorkspaceClient } from "./open-tui-generation-host.ts";
 import type { PaneScopedTerminalAdapter } from "./pane-scoped-terminal-surface.tsx";
@@ -28,15 +29,9 @@ import { beginApplicationMouseIngress } from "./application-terminal-workspace.t
 import {
   terminalAgentStatusLabel,
   terminalPaneChromeLabel,
-  terminalWindowStripLabel,
-  terminalWindowStripSlotWidth,
 } from "./application-terminal-workspace.tsx";
 import type { OpenTuiWorkspaceLayoutSnapshot } from "../open-tui-workspace-runtime-port.ts";
-import {
-  decodeFocusFramebufferCapture,
-  inspectFocusFramebufferCapture,
-  projectFocusFramebufferRect,
-} from "../../../../../../scripts/lib/product-focus.mjs";
+import { projectFocusFramebufferRect } from "../../../../../../scripts/lib/product-focus.mjs";
 
 function terminalLayout() {
   const current = {
@@ -455,10 +450,14 @@ describe("production ApplicationShellView", () => {
     const topNavigation = spans.lines[0]?.spans.find((span) => span.text.includes("tmux-ide"));
     const inactiveHomeTab = spans.lines[0]?.spans.find((span) => span.text.includes("Home"));
     const sidebarTitle = spans.lines[1]?.spans.find((span) => span.text.includes("tmux-ide"));
-    const agentLabel = spans.lines
-      .flatMap((line) => line.spans)
-      .find((span) => span.text.includes("Codex") && span.text.includes("WORKING"));
-    const footerMessage = spans.lines.at(-1)?.spans.find((span) => span.text.includes("ready"));
+    const agentLine = spans.lines.find(
+      (line) =>
+        line.spans.some((span) => span.text.includes("Codex")) &&
+        line.spans.some((span) => span.text.includes("WORKING")),
+    );
+    const agentLabel = agentLine?.spans.find((span) => span.text.includes("Codex"));
+    const agentStatus = agentLine?.spans.find((span) => span.text.includes("WORKING"));
+    const footerMessage = spans.lines.at(-1)?.spans.find((span) => span.text.includes("Live"));
     const terminalCell = spans.lines
       .flatMap((line) => line.spans)
       .find((span) => span.text.includes("CANONICAL-CELL"));
@@ -468,6 +467,7 @@ describe("production ApplicationShellView", () => {
       inactiveHomeTab: Boolean(inactiveHomeTab),
       sidebarTitle: Boolean(sidebarTitle),
       agentLabel: Boolean(agentLabel),
+      agentStatus: Boolean(agentStatus),
       footerMessage: Boolean(footerMessage),
       terminalCell: Boolean(terminalCell),
       blankSidebarCell: Boolean(blankSidebarCell),
@@ -476,6 +476,7 @@ describe("production ApplicationShellView", () => {
       inactiveHomeTab: true,
       sidebarTitle: true,
       agentLabel: true,
+      agentStatus: true,
       footerMessage: true,
       terminalCell: true,
       blankSidebarCell: true,
@@ -484,6 +485,7 @@ describe("production ApplicationShellView", () => {
     expect(colorKey(inactiveHomeTab!.bg)).toBe(colorKey(light.roles.surfaces.panel));
     expect(colorKey(sidebarTitle!.bg)).toBe(colorKey(light.roles.surfaces.panel));
     expect(colorKey(agentLabel!.bg)).toBe(colorKey(light.roles.surfaces.panel));
+    expect(colorKey(agentStatus!.bg)).toBe(colorKey(light.roles.surfaces.panel));
     expect(colorKey(footerMessage!.bg)).toBe(colorKey(light.roles.surfaces.header));
     expect(colorKey(terminalCell!.bg)).toBe(colorKey(light.roles.surfaces.terminal));
     expect(colorKey(blankSidebarCell!)).toBe(colorKey(light.roles.surfaces.panel));
@@ -583,7 +585,7 @@ describe("production ApplicationShellView", () => {
     expect(frame).toContain("No tmux sessions are running");
     expect(frame).toContain("New local session N");
     expect(frame).toContain("New session N");
-    expect(frame).toContain("Commands F5");
+    expect(frame).toContain("Commands");
     expect(frame).not.toContain("Discovering live tmux sessions");
 
     const buttonRow = frame.split("\n").findIndex((line) => line.includes("New local session N"));
@@ -648,9 +650,11 @@ describe("production ApplicationShellView", () => {
       expect(frame).toContain("Agents");
       expect(frame).toContain("Codex");
       expect(frame).toContain("main");
-      expect(frame).toContain("● Codex");
+      expect(frame.split("\n")[2]).toContain("Codex");
+      expect(frame.split("\n")[2]).toContain("● workin…");
       expect(frame).toContain("[WORKING]");
-      expect(frame).toContain("0:main [WORKING]");
+      expect(frame.split("\n")[1]).toContain("main");
+      expect(frame.split("\n")[1]).toContain("workin…");
       expect(frame).toContain("⋯");
       expect(frame).not.toContain("[→][↓][×][⋯]");
       expect(frame).toContain("CANONICAL-CELL");
@@ -706,34 +710,36 @@ describe("production ApplicationShellView", () => {
     });
     expect(terminalPaneChromeLabel(focusPaneId, true, 132)).toBe(`● ${focusPaneId}`);
     expect(terminalPaneChromeLabel(focusPaneId, false, 132)).toBe(`○ ${focusPaneId}`);
+    if (!projectedRect) throw new Error("focus projection unavailable");
     const inspect = (expectedMarker: "●" | "○") => {
       const rendererRows = setup.captureCharFrame().split("\n");
       while (rendererRows.length > 44 && rendererRows.at(-1) === "") rendererRows.pop();
       while (rendererRows.length < 44) rendererRows.push("");
-      return inspectFocusFramebufferCapture({
-        ansiFrame: decodeFocusFramebufferCapture({
-          version: 1,
-          cols: 160,
-          rows: 44,
-          ansi: rendererRows.map((row) => row.padEnd(160)).join("\n"),
-        }).ansi,
-        semanticPaneId: focusPaneId,
-        expectedMarker,
-        projectedRect,
-        cursorRow: 0,
-      });
+      const chrome = rendererRows[projectedRect.chromeRow]!.padEnd(160);
+      expect(chrome.slice(projectedRect.left + 2, projectedRect.left + 4)).toBe(
+        `${expectedMarker} `,
+      );
+      expect(chrome.slice(projectedRect.left + 4)).toStartWith(focusPaneId);
+      expect(rendererRows[projectedRect.firstBodyRow]!.slice(projectedRect.left)).toStartWith(
+        "CANONICAL-CELL",
+      );
+      expect(
+        rendererRows
+          .slice(projectedRect.firstBodyRow, projectedRect.firstBodyRow + projectedRect.bodyRows)
+          .every((row) => terminalDisplayWidth(row) >= projectedRect.left + projectedRect.width),
+      ).toBe(true);
     };
 
     await setup.renderOnce();
     expect(projectedRect).toMatchObject({ left: 28, chromeRow: 2, firstBodyRow: 3 });
-    expect(inspect("●")).toMatchObject({ valid: true, reason: null });
+    inspect("●");
     setRendererFocused(false);
     await setup.renderOnce();
-    expect(inspect("○")).toMatchObject({ valid: true, reason: null });
+    inspect("○");
     setRendererFocused(true);
     await setup.renderOnce();
-    expect(inspect("●")).toMatchObject({ valid: true, reason: null });
-    await setup.mockMouse.click(28, 2, MouseButtons.LEFT);
+    inspect("●");
+    await setup.mockMouse.click(projectedRect.left + 2, projectedRect.chromeRow, MouseButtons.LEFT);
     expect(selected).toEqual([focusPaneId]);
     setup.renderer.destroy();
   });
@@ -863,6 +869,7 @@ describe("production ApplicationShellView", () => {
       await setup.renderOnce();
       expect(setup.captureCharFrame()).toContain("Select text…");
       expect(selectionKey?.("enter")).toBe(true);
+      await setup.renderOnce();
       await setup.mockMouse.pressDown(29, 3, MouseButtons.LEFT);
       await setup.mockMouse.moveTo(34, 3);
       await setup.renderOnce();
@@ -1105,13 +1112,16 @@ describe("production ApplicationShellView", () => {
     measuredStage = "rename";
     const renamedB = { ...activeB, windowName: "renamed-beta" };
     setLayout({ current: renamedB, windows: [inactiveA, renamedB] });
-    await waitForMeasuredFrame(3);
-    await expectQuiet(3);
+    // Content-sized tabs need one geometry frame and one painted-text frame when
+    // a rename changes the tab's natural width. The retained terminal owners do
+    // not remount or blit during either frame.
+    await waitForMeasuredFrame(4);
+    await expectQuiet(4);
     expect(setup.captureCharFrame()).toContain("renamed-beta");
     expect(tracked.blits).toEqual([]);
     expect(tracked.lifecycle.subscriptions).toBe(2);
     expect(tracked.lifecycle.unsubscriptions).toBe(0);
-    expect(measuredFrameStages).toEqual(["warm-a", "warm-b", "rename"]);
+    expect(measuredFrameStages).toEqual(["warm-a", "warm-b", "rename", "rename"]);
     setup.renderer.off("frame", onMeasuredFrame);
     setup.renderer.destroy();
   });
@@ -1386,6 +1396,58 @@ describe("production ApplicationShellView", () => {
     setup.renderer.destroy();
   });
 
+  it("routes focused session and agent rows through the same typed keyboard intents", async () => {
+    const theme = createSemanticThemeSnapshot({ mode: "dark" });
+    const palette = createTerminalPaletteProjection(theme);
+    const base = semantic();
+    const agentFocused = {
+      ...base,
+      focus: { ...base.focus, zone: "sidebar" as const, appFocusedPaneId: "pane.main" },
+    };
+    const sessionFocused = {
+      ...base,
+      focus: { ...base.focus, zone: "sidebar" as const, appFocusedPaneId: null },
+    };
+    let selectProjection!: (projection: typeof agentFocused) => void;
+    const events: string[] = [];
+    function Harness() {
+      const [projection, setProjection] = createSignal(agentFocused);
+      selectProjection = setProjection;
+      return (
+        <ApplicationShellView
+          dimensions={() => ({ width: 120, height: 40 })}
+          surface={() => "terminals"}
+          semantic={projection}
+          generationStatus={() => "live"}
+          sessions={["main", "website"]}
+          selectedSession={() => 0}
+          bootstrapNote={() => null}
+          paletteOpen={() => false}
+          terminalRendererSource={() => null}
+          layout={() => ({ current: null, windows: [] })}
+          focusedPane={() => null}
+          theme={theme}
+          palette={palette}
+          onOpenSurface={() => undefined}
+          onOpenSession={(session, source) => events.push(`${source}:session:${session}`)}
+          onOpenAgent={(session, pane, source) => events.push(`${source}:agent:${session}:${pane}`)}
+          onSetPaletteOpen={() => undefined}
+          onSelectPane={() => undefined}
+          onResizePreview={() => undefined}
+          onResizePane={() => undefined}
+        />
+      );
+    }
+    const setup = await renderForTest(() => <Harness />, { width: 120, height: 40 });
+    await setup.renderOnce();
+    await setup.mockInput.pressEnter();
+    selectProjection(sessionFocused);
+    await setup.renderOnce();
+    await setup.mockInput.pressEnter();
+    expect(events).toEqual(["keyboard:agent:main:pane.main", "keyboard:session:main"]);
+    setup.renderer.destroy();
+  });
+
   it("activates the selected minimal palette destination by pointer", async () => {
     const theme = createSemanticThemeSnapshot({ mode: "dark" });
     const palette = createTerminalPaletteProjection(theme);
@@ -1604,7 +1666,6 @@ describe("production ApplicationShellView", () => {
         attention: false,
       }),
     ).toBe("● Codex [WORKING]");
-    expect(terminalWindowStripLabel("main", false, 22, "waiting", true)).toBe("○ main ! [BLOCKED]");
     expect(
       terminalPaneChromeLabel("pane.main", false, 9, {
         name: "Codex",
@@ -1671,9 +1732,11 @@ describe("production ApplicationShellView", () => {
     );
     await setup.renderOnce();
     const frame = setup.captureCharFrame();
-    expect(frame).toContain("0:main [WORKING]");
-    expect(frame).toContain("● Codex");
-    expect(frame).toContain("○ Scout");
+    expect(frame.split("\n")[1]).toContain("main");
+    expect(frame.split("\n")[1]).toContain("workin…");
+    expect(frame.split("\n")[2]).toContain("Codex");
+    expect(frame.split("\n")[2]).toContain("● workin…");
+    expect(frame).toContain("! Scout");
     expect(frame).toContain("[IDLE]");
     expect(frame).toContain("• Codex [WORKING]");
     expect(frame).toContain("! Scout ! [IDLE]");
@@ -1727,10 +1790,23 @@ describe("production ApplicationShellView", () => {
     );
     await setup.renderOnce();
 
-    // " main " occupies six cells; the next window begins immediately after it.
+    const windowProjection = windowTabBarLayout(
+      [
+        {
+          id: "window.main",
+          windowIndex: 0,
+          title: "main",
+          agentStatus: "working",
+        },
+        { id: "window.logs", windowIndex: 1, title: "logs" },
+      ],
+      "window.main",
+      shell.content.width,
+      "+ New window",
+    );
     await setup.mockMouse.click(shell.content.x + 1, shell.content.y, MouseButtons.LEFT);
     await setup.mockMouse.click(
-      shell.content.x + terminalWindowStripSlotWidth(shell.content.width, 2) + 1,
+      shell.content.x + windowProjection.visible[0]!.width + 1,
       shell.content.y,
       MouseButtons.LEFT,
     );

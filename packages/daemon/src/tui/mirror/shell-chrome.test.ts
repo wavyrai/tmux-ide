@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  contextStatusPresentation,
+  contextStatusTone,
   shellChromeLayout,
   shellChromeVariant,
   shellNavigationPresentation,
@@ -32,6 +34,53 @@ const views = buildHostedPanelViews([
 ]);
 
 describe("shell chrome responsive projection", () => {
+  it.each([
+    ["wide", ["project", "session", "mode", "pane"], "Commands"],
+    ["standard", ["session", "mode"], "Commands"],
+    ["compact", ["session"], ""],
+  ] as const)("prioritizes contextual status segments for %s", (variant, ids, hintLabel) => {
+    const presentation = contextStatusPresentation({
+      variant,
+      project: "tmux-ide",
+      session: "calm-lynx",
+      mode: "Terminals",
+      pane: "Claude Code",
+      connectionState: "connected",
+      notification: "ready",
+    });
+    expect(presentation.location.map((segment) => segment.id)).toEqual(ids);
+    expect(presentation.location.find((segment) => segment.id === "session")?.essential).toBe(true);
+    expect(presentation.activity).toEqual({ label: "Live", tone: "neutral", attention: false });
+    expect(presentation.hints).toEqual([{ keys: "F5", label: hintLabel, command: "commands" }]);
+  });
+
+  it("gives bounded transient activity priority over persistent status", () => {
+    expect(
+      contextStatusPresentation({
+        variant: "wide",
+        project: "tmux-ide",
+        session: "calm-lynx",
+        mode: "Terminals",
+        connectionState: "connected",
+        notification: "Live tmux session discovered",
+        transient: "split pane right",
+      }).activity,
+    ).toEqual({ label: "split pane right", tone: "done", attention: false });
+  });
+
+  it.each([
+    ["connected", "Live", "neutral", false],
+    ["reconnecting", "Reconnecting", "warning", false],
+    ["connected", "daemon degraded", "blocked", true],
+    ["connected", "agent needs attention", "warning", true],
+    ["connected", "resizing pane", "accent", false],
+    ["connected", "selection copied", "accent", false],
+    ["connected", "close pane confirmation", "warning", true],
+    ["connected", "window created", "done", false],
+  ] as const)("maps %s / %s to a deliberate %s status tone", (state, message, tone, attention) => {
+    expect(contextStatusTone(message, state)).toEqual({ tone, attention });
+  });
+
   it.each([
     [80, 24, "compact", 20],
     [120, 40, "standard", 28],

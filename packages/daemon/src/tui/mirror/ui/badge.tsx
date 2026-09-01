@@ -9,23 +9,33 @@ export interface BadgeProps extends ComponentInteractionState {
   tone?: ComponentTone;
   width?: number;
   marker?: string;
+  /** Exact cell projection for compound chrome that already owns spacing. */
+  presentation?: string;
+  surface?: "panel" | "header";
 }
 
 export function Badge(props: BadgeProps) {
   const palette = () => componentPalette(props.theme, props, props.tone);
+  const background = () =>
+    props.surface === "header" && palette().state === "base"
+      ? props.theme.roles.surfaces.header
+      : palette().background;
   const width = () => Math.max(1, Math.floor(props.width ?? terminalDisplayWidth(props.label) + 2));
   const content = () =>
-    clipTerminal(` ${props.marker ? `${props.marker} ` : ""}${props.label} `, width());
+    clipTerminal(
+      props.presentation ?? ` ${props.marker ? `${props.marker} ` : ""}${props.label} `,
+      width(),
+    );
   return (
     <box
       id={`ui-badge:${props.label}`}
       height={1}
       width={width()}
-      backgroundColor={palette().background}
+      backgroundColor={background()}
       overflow="hidden"
     >
-      <text fg={palette().accent} bg={palette().background} attributes={props.attention ? 1 : 0}>
-        {content()}
+      <text fg={palette().accent} bg={background()}>
+        {props.attention ? <strong>{content()}</strong> : content()}
       </text>
     </box>
   );

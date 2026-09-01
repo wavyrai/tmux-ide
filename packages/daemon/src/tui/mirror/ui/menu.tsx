@@ -2,7 +2,8 @@
 import { For } from "solid-js";
 
 import type { SemanticThemeSnapshot } from "../theme.ts";
-import { clipTerminal, terminalDisplayWidth } from "../terminal-text.ts";
+import { OverlayFrame } from "./overlay-frame.tsx";
+import { OverlayListRow } from "./overlay-list-row.tsx";
 
 export interface MenuItem {
   id: string;
@@ -20,77 +21,48 @@ export interface MenuProps {
   left: number;
   top: number;
   width: number;
+  viewportWidth?: number;
+  viewportHeight?: number;
   zIndex?: number;
+  active?: boolean;
+  onDismiss?: () => void;
   onSelect: (id: string) => void;
 }
 
 export function Menu(props: MenuProps) {
   const innerWidth = () => Math.max(1, props.width - 2);
-  const itemLabel = (item: MenuItem) => {
-    const shortcut = item.shortcut ? ` ${item.shortcut}` : "";
-    const labelWidth = Math.max(1, innerWidth() - terminalDisplayWidth(shortcut) - 2);
-    const label = clipTerminal(item.label, labelWidth);
-    const gap = Math.max(1, labelWidth - terminalDisplayWidth(label));
-    return ` ${label}${" ".repeat(gap)}${shortcut}`;
-  };
   return (
-    <box
-      id="ui-menu"
-      position="absolute"
-      left={props.left}
-      top={props.top}
+    <OverlayFrame
+      theme={props.theme}
+      viewportWidth={props.viewportWidth ?? Math.max(props.width, props.left + props.width)}
+      viewportHeight={props.viewportHeight ?? Math.max(3, props.top + props.items.length + 3)}
       width={props.width}
       height={props.items.length + (props.title ? 3 : 2)}
+      placement="anchor"
+      anchor={{ x: props.left, y: props.top }}
       zIndex={props.zIndex ?? 20}
-      border
-      borderStyle="rounded"
-      borderColor={props.theme.roles.borders.focused}
-      backgroundColor={props.theme.roles.surfaces.panelRaised}
-      flexDirection="column"
-      overflow="hidden"
-      onMouseDown={(event) => event.stopPropagation()}
+      active={props.active}
+      title={props.title}
+      onDismiss={props.onDismiss}
     >
-      {props.title ? (
-        <text
-          height={1}
-          fg={props.theme.roles.text.primary}
-          bg={props.theme.roles.surfaces.panelRaised}
-          content={clipTerminal(` ${props.title}`, innerWidth())}
-        />
-      ) : null}
       <For each={props.items}>
         {(item) => {
           const selected = () => props.selectedId === item.id;
           return (
-            <text
-              id={`ui-menu-item:${item.id}`}
-              height={1}
+            <OverlayListRow
+              theme={props.theme}
+              id={item.id}
+              label={item.label}
               width={innerWidth()}
-              overflow="hidden"
-              content={`${selected() ? "›" : " "}${itemLabel(item)}`}
-              fg={
-                item.disabled
-                  ? props.theme.roles.text.muted
-                  : item.danger
-                    ? props.theme.roles.statusTone.warning
-                    : selected()
-                      ? props.theme.roles.selection.selectionText
-                      : props.theme.roles.text.secondary
-              }
-              bg={
-                selected()
-                  ? props.theme.roles.selection.selection
-                  : props.theme.roles.surfaces.panelRaised
-              }
-              onMouseDown={(event) => {
-                if (event.button !== 0 || item.disabled) return;
-                event.stopPropagation();
-                props.onSelect(item.id);
-              }}
+              {...(item.shortcut ? { shortcut: item.shortcut } : {})}
+              selected={selected()}
+              {...(item.disabled !== undefined ? { disabled: item.disabled } : {})}
+              {...(item.danger !== undefined ? { danger: item.danger } : {})}
+              onPress={() => props.onSelect(item.id)}
             />
           );
         }}
       </For>
-    </box>
+    </OverlayFrame>
   );
 }

@@ -1,8 +1,8 @@
 /* @jsxImportSource @opentui/solid */
-import { For, Show } from "solid-js";
+import { For } from "solid-js";
 import {
+  contextStatusPresentation,
   shellNavigationPresentation,
-  shellStatusPresentation,
   shellSurfaceTabs,
   shellVisualPalette,
   type ShellChromeLayout,
@@ -12,7 +12,12 @@ import {
 } from "./shell-chrome.ts";
 import type { SemanticThemeSnapshot } from "./theme.ts";
 import { clipTerminal, terminalDisplayWidth } from "./terminal-text.ts";
-import { StatusBar, StatusBarAction, StatusBarGroup, StatusBarSegment } from "./ui/status-bar.tsx";
+import { Badge } from "./ui/badge.tsx";
+import { KeyHint } from "./ui/key-hint.tsx";
+import { NavigationRow, type NavigationRowInputSource } from "./ui/navigation-row.tsx";
+import { StatusBar, StatusBarGroup, StatusSegment } from "./ui/status-bar.tsx";
+import { Surface } from "./ui/surface.tsx";
+import { Tabs } from "./ui/tabs.tsx";
 
 export interface ShellTabBarProps {
   theme: SemanticThemeSnapshot;
@@ -46,134 +51,77 @@ export function ShellTabBar(props: ShellTabBarProps) {
       props.attentionViewIds,
       { startX: navigation().width, navigationFocused: props.navigationFocused },
     );
+  const tabItems = () =>
+    tabs().map((tab) => ({
+      id: tab.id,
+      label: props.views.find((view) => view.id === tab.id)?.title ?? tab.id,
+      presentation: tab.label,
+      attention: tab.attention,
+    }));
+  const focusedTab = () => tabs().find((tab) => tab.focused)?.id ?? props.activeViewId;
   return (
-    <box
+    <Surface
+      theme={props.theme}
+      variant="header"
       height={1}
       width={props.width}
       flexDirection="row"
-      backgroundColor={props.theme.roles.surfaces.header}
       overflow="hidden"
     >
-      <Show when={navigation().label}>
-        <text
-          fg={navigation().focused ? props.theme.roles.text.link : props.theme.roles.text.secondary}
-          bg={props.theme.roles.surfaces.header}
-          attributes={navigation().focused ? 1 : 0}
-        >
-          {navigation().label}
-        </text>
-      </Show>
-      <For each={tabs()}>
-        {(tab) => {
-          const palette = () =>
-            shellVisualPalette(props.theme, {
-              selected: tab.selected,
-              focused: tab.focused,
-              hovered: tab.hovered,
-              attention: tab.attention,
-            });
-          return (
-            <box
-              height={1}
-              backgroundColor={palette().bg}
-              flexDirection="row"
-              onMouseDown={(event) => {
-                if (event.button !== 0 || !props.onSelectView) return;
-                event.stopPropagation();
-                props.onSelectView(tab.id);
-              }}
-            >
-              <Show
-                when={tab.attention && tab.label.includes("!")}
-                fallback={
-                  <text fg={palette().fg} bg={palette().bg} attributes={palette().attributes}>
-                    {tab.label}
-                  </text>
-                }
-              >
-                {(() => {
-                  const markerIndex = tab.label.indexOf("!");
-                  const before = tab.label.slice(0, markerIndex);
-                  const after = tab.label.slice(markerIndex + 1);
-                  return (
-                    <>
-                      <text fg={palette().fg} bg={palette().bg} attributes={palette().attributes}>
-                        {before}
-                      </text>
-                      <text
-                        fg={props.theme.roles.statusTone.warning}
-                        bg={palette().bg}
-                        attributes={1}
-                      >
-                        !
-                      </text>
-                      <text fg={palette().fg} bg={palette().bg} attributes={palette().attributes}>
-                        {after}
-                      </text>
-                    </>
-                  );
-                })()}
-              </Show>
-            </box>
-          );
-        }}
+      <For each={navigation().width > 0 ? [navigation()] : []}>
+        {(item) => (
+          <Badge
+            theme={props.theme}
+            label={item.label.trim()}
+            width={item.width}
+            presentation={item.label}
+            surface="header"
+            focused={item.focused}
+          />
+        )}
       </For>
+      <Tabs
+        theme={props.theme}
+        variant="header"
+        items={tabItems()}
+        activeId={props.activeViewId}
+        hoveredId={tabs()[props.hoveredIndex ?? -1]?.id ?? null}
+        focusedId={focusedTab()}
+        focused={props.navigationFocused}
+        {...(props.onSelectView ? { onSelect: props.onSelectView } : {})}
+      />
       <box flexGrow={1} />
-      <Show when={props.note}>
-        <text
-          fg={props.theme.roles.text.link}
-          bg={props.theme.roles.surfaces.header}
-          attributes={1}
-        >
-          {clipTerminal(`${props.note} `, Math.max(0, Math.floor(props.width / 3)))}
-        </text>
-      </Show>
-      <For each={props.rightChips ?? []}>
-        {(chip) => {
-          const palette = () =>
-            shellVisualPalette(props.theme, {
-              hovered: chip.hovered,
-              context: chip.context,
-              attention: chip.attention,
-            });
-          return (
-            <>
-              <Show
-                when={chip.attention && chip.label.includes("!")}
-                fallback={
-                  <text fg={palette().fg} bg={palette().bg} attributes={palette().attributes}>
-                    {chip.label}
-                  </text>
-                }
-              >
-                {(() => {
-                  const markerIndex = chip.label.indexOf("!");
-                  const before = chip.label.slice(0, markerIndex);
-                  const after = chip.label.slice(markerIndex + 1);
-                  return (
-                    <>
-                      <text fg={palette().fg} bg={palette().bg} attributes={palette().attributes}>
-                        {before}
-                      </text>
-                      <text
-                        fg={props.theme.roles.statusTone.warning}
-                        bg={palette().bg}
-                        attributes={1}
-                      >
-                        !
-                      </text>
-                      <text fg={palette().fg} bg={palette().bg} attributes={palette().attributes}>
-                        {after}
-                      </text>
-                    </>
-                  );
-                })()}
-              </Show>
-            </>
-          );
-        }}
+      <For each={props.note ? [props.note] : []}>
+        {(note) => (
+          <Badge
+            theme={props.theme}
+            label={clipTerminal(note, Math.max(0, Math.floor(props.width / 3) - 2))}
+            presentation={`${note} `}
+            surface="header"
+            width={Math.max(
+              1,
+              Math.min(Math.floor(props.width / 3), terminalDisplayWidth(note) + 1),
+            )}
+            tone="accent"
+          />
+        )}
       </For>
-    </box>
+      <For each={props.rightChips ?? []}>
+        {(chip) => (
+          <Badge
+            theme={props.theme}
+            label={chip.label.trim()}
+            width={Math.max(1, terminalDisplayWidth(chip.label) + (chip.context ? 1 : 0))}
+            presentation={`${chip.label}${chip.context ? " " : ""}`}
+            surface="header"
+            hovered={chip.hovered}
+            context={chip.context}
+            attention={chip.attention}
+            tone={chip.attention ? "warning" : chip.context ? "accent" : "neutral"}
+          />
+        )}
+      </For>
+    </Surface>
   );
 }
 
@@ -181,82 +129,125 @@ export interface ShellStatusStripProps {
   theme: SemanticThemeSnapshot;
   layout: ShellChromeLayout;
   project: string;
+  session?: string;
+  pane?: string | null;
   mode: string;
   inputMode?: string | null;
   tool?: string | null;
   dockMode?: string | null;
   focus?: string | null;
   notification: string | null;
+  transient?: string | null;
+  connectionState?: "connected" | "reconnecting" | "disconnected" | "recovering";
   help: string;
   onHelp?: () => void;
 }
 
-export function ShellStatusStrip(props: ShellStatusStripProps) {
+export function ContextStatusBar(props: ShellStatusStripProps) {
   const presentation = () =>
-    shellStatusPresentation(props.layout.variant, {
+    contextStatusPresentation({
+      variant: props.layout.variant,
       project: props.project,
+      session: props.session ?? props.project,
       mode: props.mode,
-      inputMode: props.inputMode,
+      pane: props.pane,
       focus: props.focus,
+      connectionState: props.connectionState ?? "connected",
       notification: props.notification,
-      help: props.help,
+      transient: props.transient,
     });
-  const contextWidth = () =>
-    Math.max(
-      1,
-      Math.min(
-        terminalDisplayWidth(presentation().context) + 2,
-        Math.floor(props.layout.status.width * 0.34),
-      ),
-    );
   const hintsWidth = () =>
+    presentation().hints.reduce(
+      (width, hint) =>
+        width + terminalDisplayWidth(`${hint.keys}${hint.label ? ` ${hint.label}` : ""}`) + 2,
+      0,
+    );
+  const locationBudget = () =>
     Math.max(
       1,
       Math.min(
-        terminalDisplayWidth(presentation().hints) + 2,
-        Math.floor(props.layout.status.width * 0.46),
+        Math.floor(props.layout.status.width * (props.layout.variant === "wide" ? 0.5 : 0.4)),
+        props.layout.status.width - hintsWidth() - (props.layout.variant === "compact" ? 10 : 16),
       ),
     );
+  const visibleLocation = () => {
+    const candidates = presentation().location.map((segment, index) => ({
+      segment,
+      index,
+      width: terminalDisplayWidth(segment.label) + 2,
+      priority:
+        segment.id === "session"
+          ? 100
+          : segment.id === "pane"
+            ? 80
+            : segment.id === "mode"
+              ? 60
+              : 40,
+    }));
+    const chosen: typeof candidates = [];
+    let remaining = locationBudget();
+    for (const candidate of [...candidates].sort((a, b) => b.priority - a.priority)) {
+      if (candidate.width <= remaining || candidate.segment.essential) {
+        const width = Math.max(1, Math.min(candidate.width, remaining));
+        if (width <= 0) continue;
+        chosen.push({ ...candidate, width });
+        remaining -= width;
+      }
+      if (remaining <= 0) break;
+    }
+    return chosen.sort((a, b) => a.index - b.index);
+  };
+  const contextWidth = () => visibleLocation().reduce((width, item) => width + item.width, 0);
   return (
     <StatusBar theme={props.theme} width={props.layout.status.width}>
       <StatusBarGroup width={contextWidth()}>
-        <StatusBarSegment
-          theme={props.theme}
-          label={presentation().context}
-          width={contextWidth()}
-          active
-        />
-      </StatusBarGroup>
-      <StatusBarGroup grow>
-        <StatusBarSegment theme={props.theme} label={presentation().message} />
-      </StatusBarGroup>
-      <StatusBarGroup width={hintsWidth()} align="end">
-        <Show
-          when={props.onHelp}
-          fallback={
-            <StatusBarSegment
+        <For each={visibleLocation()}>
+          {(item) => (
+            <StatusSegment
               theme={props.theme}
-              label={presentation().hints}
-              width={hintsWidth()}
-              strong
-            />
-          }
-        >
-          {(onHelp) => (
-            <StatusBarAction
-              theme={props.theme}
-              label="Commands"
-              shortcut="F5"
-              width={hintsWidth()}
-              primary
-              onPress={onHelp()}
+              label={item.segment.label}
+              width={item.width}
+              selected={item.segment.id === "session"}
+              strong={item.segment.essential}
             />
           )}
-        </Show>
+        </For>
+      </StatusBarGroup>
+      <StatusBarGroup grow>
+        <StatusSegment
+          theme={props.theme}
+          label={presentation().activity.label}
+          tone={presentation().activity.tone}
+          attention={presentation().activity.attention}
+          loading={presentation().activity.tone === "working"}
+          marker={
+            presentation().activity.attention
+              ? "!"
+              : presentation().activity.tone === "done"
+                ? "✓"
+                : undefined
+          }
+        />
+      </StatusBarGroup>
+      <StatusBarGroup width={hintsWidth()} align="end">
+        <For each={presentation().hints}>
+          {(hint) => (
+            <KeyHint
+              theme={props.theme}
+              keys={hint.keys}
+              selected={hint.command === "commands"}
+              {...(hint.label ? { label: hint.label } : {})}
+              {...(hint.command === "commands" && props.onHelp ? { onPress: props.onHelp } : {})}
+            />
+          )}
+        </For>
       </StatusBarGroup>
     </StatusBar>
   );
 }
+
+/** @deprecated Production callers should use the contextual name. */
+export const ShellStatusStrip = ContextStatusBar;
 
 export interface ShellCompositeLeafChromeProps {
   theme: SemanticThemeSnapshot;
@@ -297,24 +288,17 @@ export interface ShellMiniSidebarProps {
   }[];
   active: string;
   hint: ShellSidebarHint;
-}
-
-function shellSessionStatusColor(
-  theme: SemanticThemeSnapshot,
-  status: ShellMiniSidebarProps["sessions"][number]["status"],
-) {
-  if (status === "blocked") return theme.roles.statusTone.warning;
-  if (status === "working") return theme.roles.statusTone.info;
-  if (status === "done") return theme.roles.statusTone.success;
-  return theme.roles.statusTone.neutral;
+  focused?: boolean;
+  onSelectSession?: (session: string, source: NavigationRowInputSource) => void;
 }
 
 export function ShellMiniSidebar(props: ShellMiniSidebarProps) {
   return (
-    <box
+    <Surface
+      theme={props.theme}
+      variant="panel"
       width={props.width}
       flexDirection="column"
-      backgroundColor={props.theme.roles.surfaces.panel}
       paddingLeft={1}
       overflow="hidden"
     >
@@ -322,39 +306,41 @@ export function ShellMiniSidebar(props: ShellMiniSidebarProps) {
         {props.variant === "compact" ? " tmux" : " tmux-ide"}
       </text>
       <For each={props.sessions}>
-        {(session) => {
-          const selected = () => session.name === props.active;
-          const palette = () => shellVisualPalette(props.theme, { selected: selected() });
-          return (
-            <box height={1} flexDirection="row" backgroundColor={palette().bg}>
-              <text fg={shellSessionStatusColor(props.theme, session.status)} bg={palette().bg}>
-                {selected() ? "●" : "○"}
-              </text>
-              <text fg={palette().fg} bg={palette().bg}>
-                {clipTerminal(` ${session.name}`, Math.max(0, props.width - 1))}
-              </text>
-            </box>
-          );
-        }}
+        {(session) => (
+          <NavigationRow
+            theme={props.theme}
+            id={`session:${session.name}`}
+            label={session.name}
+            width={Math.max(1, props.width - 1)}
+            marker={session.name === props.active ? "●" : "○"}
+            selected={session.name === props.active}
+            focused={props.focused && session.name === props.active}
+            status={session.status}
+            attention={session.status === "blocked"}
+            onActivate={
+              props.onSelectSession
+                ? (source) => props.onSelectSession?.(session.name, source)
+                : undefined
+            }
+          />
+        )}
       </For>
       <box flexGrow={1} />
-      <box
+      <Surface
+        theme={props.theme}
+        variant="panel"
         height={1}
-        width={props.width}
+        width={Math.max(1, props.width - 1)}
         flexDirection="row"
-        backgroundColor={props.theme.roles.surfaces.panel}
         overflow="hidden"
       >
-        <text fg={props.theme.roles.text.muted} bg={props.theme.roles.surfaces.panel}>
-          {props.hint.pre}
-        </text>
-        <text fg={props.theme.roles.text.primary} bg={props.theme.roles.selection.hover}>
-          {props.hint.btn}
-        </text>
-        <text fg={props.theme.roles.text.muted} bg={props.theme.roles.surfaces.panel}>
-          {props.hint.post}
-        </text>
-      </box>
-    </box>
+        <KeyHint
+          theme={props.theme}
+          keys={props.hint.btn}
+          presentation={` ${props.hint.label}`}
+          width={Math.max(1, props.width - 1)}
+        />
+      </Surface>
+    </Surface>
   );
 }

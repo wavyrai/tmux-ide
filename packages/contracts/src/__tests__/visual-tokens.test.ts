@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BUILTIN_VISUAL_THEMES,
+  VisualHostDefaultsV1SchemaZ,
   VisualThemeDocumentV1SchemaZ,
   VisualTokensV1SchemaZ,
   contrastRatio,
@@ -147,6 +148,54 @@ describe("visual token contracts", () => {
       opacity: { unit: "ratio", value: 1 },
       contrast: { unit: "ratio", value: 1 },
     });
+  });
+
+  it("layers renderer-neutral host defaults below user and project themes", () => {
+    const hostPrimary = rgb(11, 22, 33);
+    const userPrimary = rgb(44, 55, 66);
+    const projectPanel = rgb(77, 88, 99);
+    const hostDefaults = VisualHostDefaultsV1SchemaZ.parse({
+      appearance: "light",
+      overrides: {
+        surfaces: { canvas: rgb(240, 241, 242), panel: rgb(230, 231, 232) },
+        text: { primary: hostPrimary },
+      },
+    });
+    const resolved = resolveVisualTheme({
+      appearance: "light",
+      hostDefaults,
+      userTheme: {
+        version: 1,
+        id: "host-precedence-user",
+        name: "Host precedence user",
+        overrides: { text: { primary: userPrimary } },
+      },
+      projectTheme: {
+        version: 1,
+        id: "host-precedence-project",
+        name: "Host precedence project",
+        overrides: { surfaces: { panel: projectPanel } },
+      },
+      accessibility: { increasedContrast: true },
+    });
+
+    expect(resolved.appearance).toBe("light");
+    expect(resolved.tokens.surfaces.canvas).toEqual(rgb(240, 241, 242));
+    expect(resolved.tokens.surfaces.panel).toEqual(projectPanel);
+    expect(resolved.tokens.text.primary).toEqual(userPrimary);
+    expect(resolved.tokens.borders.focused).toEqual(resolved.tokens.focus.highContrastOutline);
+  });
+
+  it("does not apply host defaults across an explicit appearance boundary", () => {
+    const resolved = resolveVisualTheme({
+      appearance: "dark",
+      hostDefaults: VisualHostDefaultsV1SchemaZ.parse({
+        appearance: "light",
+        overrides: { surfaces: { canvas: rgb(250, 250, 250) } },
+      }),
+    });
+    expect(resolved.appearance).toBe("dark");
+    expect(resolved.tokens).toEqual(BUILTIN_VISUAL_THEMES.dark);
   });
 
   it("derives deterministic renderer-neutral colors and readable foregrounds", () => {
