@@ -51,7 +51,12 @@ export function Dialog(props: DialogProps) {
         onMouseDown={(event) => event.stopPropagation()}
       >
         {props.title ? (
-          <text width={innerWidth()} fg={props.theme.roles.text.primary} overflow="hidden">
+          <text
+            width={innerWidth()}
+            fg={props.theme.roles.text.primary}
+            bg={props.theme.roles.surfaces.panelRaised}
+            overflow="hidden"
+          >
             <strong>{clipTerminal(props.title, innerWidth())}</strong>
           </text>
         ) : null}
@@ -60,6 +65,7 @@ export function Dialog(props: DialogProps) {
           <text
             width={innerWidth()}
             fg={props.theme.roles.text.muted}
+            bg={props.theme.roles.surfaces.panelRaised}
             overflow="hidden"
             content={clipTerminal(props.footer, innerWidth())}
           />

@@ -24,7 +24,7 @@ export function Badge(props: BadgeProps) {
       backgroundColor={palette().background}
       overflow="hidden"
     >
-      <text fg={palette().accent} attributes={props.attention ? 1 : 0}>
+      <text fg={palette().accent} bg={palette().background} attributes={props.attention ? 1 : 0}>
         {content()}
       </text>
     </box>

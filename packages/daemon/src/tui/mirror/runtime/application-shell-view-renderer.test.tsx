@@ -11,6 +11,7 @@ import {
   createTerminalPaletteProjection,
 } from "../theme.ts";
 import { expectFrameBounds, renderForTest } from "../testing/renderer-harness.test.ts";
+import { terminalDisplayWidth } from "../terminal-text.ts";
 import { projectApplicationShell } from "../workspace/application-shell.ts";
 import { projectOpenTuiApplicationShell } from "../workspace/application-shell-controller.ts";
 import { createApplicationShellBinding } from "./application-shell-binding.ts";
@@ -67,6 +68,19 @@ function trimFrameRight(frame: string): string {
 
 function colorKey(color: Parameters<typeof colorToThemeBytes>[0]): string {
   return colorToThemeBytes(color).join(",");
+}
+
+function spanBackgroundAt(
+  line: ReturnType<Awaited<ReturnType<typeof renderForTest>>["captureSpans"]>["lines"][number],
+  column: number,
+) {
+  let offset = 0;
+  for (const span of line.spans) {
+    const width = terminalDisplayWidth(span.text);
+    if (column >= offset && column < offset + width) return span.bg;
+    offset += width;
+  }
+  return null;
 }
 
 function twoWindowLayout() {
@@ -386,14 +400,41 @@ describe("production ApplicationShellView", () => {
     selectTheme(light);
     await setup.renderOnce();
     const spans = setup.captureSpans();
+    const topNavigation = spans.lines[0]?.spans.find((span) => span.text.includes("tmux-ide"));
+    const inactiveHomeTab = spans.lines[0]?.spans.find((span) => span.text.includes("Home"));
     const sidebarTitle = spans.lines[1]?.spans.find((span) => span.text.includes("tmux-ide"));
+    const agentLabel = spans.lines
+      .flatMap((line) => line.spans)
+      .find((span) => span.text.includes("Codex") && span.text.includes("WORKING"));
+    const footerMessage = spans.lines.at(-1)?.spans.find((span) => span.text.includes("ready"));
     const terminalCell = spans.lines
       .flatMap((line) => line.spans)
       .find((span) => span.text.includes("CANONICAL-CELL"));
-    expect(sidebarTitle).toBeDefined();
-    expect(terminalCell).toBeDefined();
+    const blankSidebarCell = spanBackgroundAt(spans.lines[10]!, 2);
+    expect({
+      topNavigation: Boolean(topNavigation),
+      inactiveHomeTab: Boolean(inactiveHomeTab),
+      sidebarTitle: Boolean(sidebarTitle),
+      agentLabel: Boolean(agentLabel),
+      footerMessage: Boolean(footerMessage),
+      terminalCell: Boolean(terminalCell),
+      blankSidebarCell: Boolean(blankSidebarCell),
+    }).toEqual({
+      topNavigation: true,
+      inactiveHomeTab: true,
+      sidebarTitle: true,
+      agentLabel: true,
+      footerMessage: true,
+      terminalCell: true,
+      blankSidebarCell: true,
+    });
+    expect(colorKey(topNavigation!.bg)).toBe(colorKey(light.roles.surfaces.header));
+    expect(colorKey(inactiveHomeTab!.bg)).toBe(colorKey(light.roles.surfaces.panel));
     expect(colorKey(sidebarTitle!.bg)).toBe(colorKey(light.roles.surfaces.panel));
+    expect(colorKey(agentLabel!.bg)).toBe(colorKey(light.roles.surfaces.panel));
+    expect(colorKey(footerMessage!.bg)).toBe(colorKey(light.roles.surfaces.header));
     expect(colorKey(terminalCell!.bg)).toBe(colorKey(light.roles.surfaces.terminal));
+    expect(colorKey(blankSidebarCell!)).toBe(colorKey(light.roles.surfaces.panel));
     expect(terminal.lifecycle).toEqual({ subscriptions: 2, unsubscriptions: 1, fullBlits: 2 });
     setup.renderer.destroy();
   });

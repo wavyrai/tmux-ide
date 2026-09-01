@@ -1,4 +1,6 @@
 /* @jsxImportSource @opentui/solid */
+import type { RGBA } from "@opentui/core";
+
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal, terminalDisplayWidth } from "../terminal-text.ts";
 import { componentPalette, type ComponentInteractionState } from "./state.ts";
@@ -13,6 +15,8 @@ export interface ButtonProps extends ComponentInteractionState {
   variant?: ButtonVariant;
   size?: ButtonSize;
   width?: number;
+  /** Opaque surface used by neutral/ghost controls embedded in custom chrome. */
+  background?: RGBA;
   onPress?: () => void;
 }
 
@@ -47,7 +51,9 @@ export function Button(props: ButtonProps) {
     return clipTerminal(`${" ".repeat(inset)}${marker}${props.label}${shortcut} `, width());
   };
   const background = () =>
-    variant() === "ghost" && palette().state === "base" ? undefined : palette().background;
+    variant() === "ghost" && palette().state === "base"
+      ? (props.background ?? props.theme.roles.surfaces.panel)
+      : palette().background;
 
   return (
     <box
@@ -64,6 +70,7 @@ export function Button(props: ButtonProps) {
       }}
     >
       <text
+        bg={background()}
         fg={
           variant() === "ghost" && palette().state === "base"
             ? props.theme.roles.text.muted

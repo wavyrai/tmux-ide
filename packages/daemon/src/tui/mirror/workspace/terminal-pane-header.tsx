@@ -52,6 +52,10 @@ export function TerminalPaneHeader(props: TerminalPaneHeaderProps) {
     props.width >= actionWidth() + naturalStatusWidth() + 10 ? naturalStatusWidth() : 0;
   const titleWidth = () => Math.max(1, props.width - actionWidth() - statusWidth());
   const title = () => clipTerminal(`${props.focused ? "●" : "○"} ${props.title}`, titleWidth());
+  const background = () =>
+    props.terminalFocused
+      ? props.theme.roles.surfaces.headerActive
+      : props.theme.roles.surfaces.command;
   return (
     <box
       id={`terminal-pane-header:${props.paneId}`}
@@ -62,11 +66,7 @@ export function TerminalPaneHeader(props: TerminalPaneHeaderProps) {
       height={1}
       zIndex={2}
       flexDirection="row"
-      backgroundColor={
-        props.terminalFocused
-          ? props.theme.roles.surfaces.headerActive
-          : props.theme.roles.surfaces.command
-      }
+      backgroundColor={background()}
       overflow="hidden"
       onMouseDown={(event) => {
         if (event.button === 2) {
@@ -82,6 +82,7 @@ export function TerminalPaneHeader(props: TerminalPaneHeaderProps) {
         height={1}
         overflow="hidden"
         fg={props.focused ? props.theme.roles.text.link : props.theme.roles.text.secondary}
+        bg={background()}
         attributes={props.focused ? 1 : 0}
       >
         {title()}
@@ -102,6 +103,7 @@ export function TerminalPaneHeader(props: TerminalPaneHeaderProps) {
           label="Pane actions"
           variant="ghost"
           width={actionWidth()}
+          background={background()}
         />
       ) : null}
       {actionWidth() > 0 ? (

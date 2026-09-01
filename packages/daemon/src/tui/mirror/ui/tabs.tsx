@@ -80,7 +80,11 @@ export function Tabs(props: TabsProps) {
                 props.onSelect(id);
               }}
             >
-              <text fg={palette().foreground} attributes={active() ? 1 : 0}>
+              <text
+                fg={palette().foreground}
+                bg={palette().background}
+                attributes={active() ? 1 : 0}
+              >
                 {clipTerminal(tabText(item()), itemWidth(item()))}
               </text>
             </box>
@@ -95,6 +99,7 @@ export function Tabs(props: TabsProps) {
           variant="ghost"
           size="compact"
           width={addWidth()}
+          background={props.theme.roles.surfaces.panel}
           onPress={props.onAdd}
         />
       </Show>

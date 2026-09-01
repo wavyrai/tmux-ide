@@ -54,6 +54,7 @@ export function Menu(props: MenuProps) {
         <text
           height={1}
           fg={props.theme.roles.text.primary}
+          bg={props.theme.roles.surfaces.panelRaised}
           content={clipTerminal(` ${props.title}`, innerWidth())}
         />
       ) : null}

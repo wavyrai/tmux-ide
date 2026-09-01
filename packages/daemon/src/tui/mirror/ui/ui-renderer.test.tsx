@@ -3,10 +3,14 @@ import { MouseButtons } from "@opentui/core/testing";
 import { describe, expect, it } from "bun:test";
 
 import { createSemanticThemeSnapshot } from "../theme.ts";
+import { colorToThemeBytes } from "../theme.ts";
 import { renderForTest, stableFrame } from "../testing/renderer-harness.test.ts";
 import { Button, Dialog, StatusBar, StatusBarGroup, StatusBarSegment, Tabs } from "./index.ts";
 
 describe("OpenTUI ui primitives", () => {
+  const colorKey = (color: Parameters<typeof colorToThemeBytes>[0]) =>
+    colorToThemeBytes(color).join(",");
+
   it("composes tabs, buttons, and status segments with direct pointer ownership", async () => {
     const calls: string[] = [];
     const theme = createSemanticThemeSnapshot({ mode: "dark" });
@@ -54,6 +58,45 @@ describe("OpenTUI ui primitives", () => {
     expect(calls).toContain("tab:agents");
     expect(calls).toContain("add");
     expect(calls).toContain("button");
+    setup.renderer.destroy();
+  });
+
+  it("paints light-mode glyph cells with the semantic surface owned by each primitive", async () => {
+    const theme = createSemanticThemeSnapshot({ mode: "light" });
+    const setup = await renderForTest(
+      () => (
+        <box width={60} height={4} flexDirection="column">
+          <Tabs
+            theme={theme}
+            width={60}
+            items={[
+              { id: "shell", label: "shell" },
+              { id: "agents", label: "agents" },
+            ]}
+            activeId="shell"
+            onSelect={() => undefined}
+            onAdd={() => undefined}
+          />
+          <Button theme={theme} label="Ghost" variant="ghost" onPress={() => undefined} />
+          <StatusBar theme={theme} width={60}>
+            <StatusBarGroup grow>
+              <StatusBarSegment theme={theme} label="neutral status" />
+            </StatusBarGroup>
+          </StatusBar>
+        </box>
+      ),
+      { width: 60, height: 4 },
+    );
+    await setup.renderOnce();
+    const spans = setup.captureSpans().lines.flatMap((line) => line.spans);
+    const inactiveTab = spans.find((span) => span.text.includes("agents"));
+    const addButton = spans.find((span) => span.text.includes("+"));
+    const ghostButton = spans.find((span) => span.text.includes("Ghost"));
+    const status = spans.find((span) => span.text.includes("neutral status"));
+    expect(colorKey(inactiveTab!.bg)).toBe(colorKey(theme.roles.surfaces.panel));
+    expect(colorKey(addButton!.bg)).toBe(colorKey(theme.roles.surfaces.panel));
+    expect(colorKey(ghostButton!.bg)).toBe(colorKey(theme.roles.surfaces.panel));
+    expect(colorKey(status!.bg)).toBe(colorKey(theme.roles.surfaces.header));
     setup.renderer.destroy();
   });
 

@@ -493,6 +493,7 @@ function ProductionSidebar(props: {
   readonly onOpenAgent?: ApplicationShellViewProps["onOpenAgent"];
 }): JSX.Element {
   const width = () => props.shell.layout.sidebar.width;
+  const panelBackground = () => props.theme.roles.surfaces.panel;
   const sessionTone = (state: string) =>
     state === "reconnecting"
       ? props.theme.roles.statusTone.warning
@@ -512,31 +513,30 @@ function ProductionSidebar(props: {
       width={width()}
       height={props.shell.layout.sidebar.height}
       flexDirection="column"
-      backgroundColor={props.theme.roles.surfaces.panel}
+      backgroundColor={panelBackground()}
       paddingLeft={1}
       overflow="hidden"
     >
-      <text fg={props.theme.roles.text.link}>
+      <text fg={props.theme.roles.text.link} bg={panelBackground()}>
         <strong>{props.shell.layout.variant === "compact" ? " tmux" : " tmux-ide"}</strong>
       </text>
       <For each={props.shell.semantic.sidebar.sessions}>
         {(session) => {
           const active = () => session.id === props.shell.semantic.sidebar.activeSessionId;
+          const background = () =>
+            active() ? props.theme.roles.selection.selection : panelBackground();
           return (
-            <box
-              height={1}
-              flexDirection="row"
-              backgroundColor={
-                active() ? props.theme.roles.selection.selection : props.theme.roles.surfaces.panel
-              }
-            >
-              <text fg={sessionTone(session.state)}>{active() ? "●" : "○"}</text>
+            <box height={1} flexDirection="row" backgroundColor={background()}>
+              <text fg={sessionTone(session.state)} bg={background()}>
+                {active() ? "●" : "○"}
+              </text>
               <text
                 fg={
                   active()
                     ? props.theme.roles.selection.selectionText
                     : props.theme.roles.text.secondary
                 }
+                bg={background()}
               >
                 {clipTerminal(` ${friendlySessionLabel(session.label)}`, Math.max(0, width() - 1))}
               </text>
@@ -545,8 +545,8 @@ function ProductionSidebar(props: {
         }}
       </For>
       <Show when={props.shell.semantic.sidebar.agents.length > 0}>
-        <box height={1} marginTop={1}>
-          <text fg={props.theme.roles.text.secondary}>
+        <box height={1} marginTop={1} backgroundColor={panelBackground()}>
+          <text fg={props.theme.roles.text.secondary} bg={panelBackground()}>
             <strong>Agents</strong>
           </text>
         </box>
@@ -559,19 +559,23 @@ function ProductionSidebar(props: {
               <box
                 height={1}
                 flexDirection="row"
+                backgroundColor={panelBackground()}
                 onMouseDown={(event) => {
                   if (!agent.paneId) return;
                   event.stopPropagation();
                   props.onOpenAgent?.(props.shell.activeSession, agent.paneId, "mouse");
                 }}
               >
-                <text fg={activityTone(agent.activity)}>{agent.attention ? "!" : "•"}</text>
+                <text fg={activityTone(agent.activity)} bg={panelBackground()}>
+                  {agent.attention ? "!" : "•"}
+                </text>
                 <text
                   fg={
                     agent.attention
                       ? props.theme.roles.statusTone.warning
                       : props.theme.roles.text.secondary
                   }
+                  bg={panelBackground()}
                 >
                   {` ${clipTerminal(agent.name, titleWidth())}${suffix()}`}
                 </text>
@@ -649,32 +653,39 @@ function CatalogShell(props: ApplicationShellViewProps): JSX.Element {
             paddingLeft={1}
             backgroundColor={props.theme.roles.surfaces.panel}
           >
-            <text fg={props.theme.roles.text.secondary}>Sessions</text>
+            <text fg={props.theme.roles.text.secondary} bg={props.theme.roles.surfaces.panel}>
+              Sessions
+            </text>
             <For each={sessions()}>
-              {(session, index) => (
-                <box
-                  height={1}
-                  backgroundColor={
-                    props.selectedSession() === index()
-                      ? props.theme.roles.selection.selection
-                      : props.theme.roles.surfaces.panel
-                  }
-                  onMouseDown={() => props.onOpenSession(session, "mouse")}
-                >
-                  <text
-                    fg={
-                      props.selectedSession() === index()
-                        ? props.theme.roles.selection.selectionText
-                        : props.theme.roles.text.secondary
-                    }
+              {(session, index) => {
+                const background = () =>
+                  props.selectedSession() === index()
+                    ? props.theme.roles.selection.selection
+                    : props.theme.roles.surfaces.panel;
+                return (
+                  <box
+                    height={1}
+                    backgroundColor={background()}
+                    onMouseDown={() => props.onOpenSession(session, "mouse")}
                   >
-                    {`${props.selectedSession() === index() ? "›" : " "} ${friendlySessionLabel(session)}`}
-                  </text>
-                </box>
-              )}
+                    <text
+                      fg={
+                        props.selectedSession() === index()
+                          ? props.theme.roles.selection.selectionText
+                          : props.theme.roles.text.secondary
+                      }
+                      bg={background()}
+                    >
+                      {`${props.selectedSession() === index() ? "›" : " "} ${friendlySessionLabel(session)}`}
+                    </text>
+                  </box>
+                );
+              }}
             </For>
             <Show when={sessions().length === 0}>
-              <text fg={props.theme.roles.text.muted}> No sessions yet</text>
+              <text fg={props.theme.roles.text.muted} bg={props.theme.roles.surfaces.panel}>
+                {" No sessions yet"}
+              </text>
             </Show>
             <box flexGrow={1} />
           </box>

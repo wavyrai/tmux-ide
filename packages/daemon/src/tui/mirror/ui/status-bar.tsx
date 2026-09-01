@@ -72,16 +72,14 @@ export interface StatusBarActionProps {
 /** A real status-bar control: compact, mouse-addressable, and visually distinct from status text. */
 export function StatusBarAction(props: StatusBarActionProps) {
   const content = () => ` ${props.label}${props.shortcut ? ` ${props.shortcut}` : ""} `;
+  const background = () =>
+    props.primary ? props.theme.roles.selection.selection : props.theme.roles.surfaces.panelRaised;
   return (
     <box
       id={`ui-status-action:${props.label}`}
       height={1}
       width={props.width}
-      backgroundColor={
-        props.primary
-          ? props.theme.roles.selection.selection
-          : props.theme.roles.surfaces.panelRaised
-      }
+      backgroundColor={background()}
       overflow="hidden"
       onMouseDown={(event) => {
         if (event.button !== 0) return;
@@ -90,6 +88,7 @@ export function StatusBarAction(props: StatusBarActionProps) {
       }}
     >
       <text
+        bg={background()}
         fg={
           props.primary
             ? props.theme.roles.selection.selectionText
@@ -104,6 +103,8 @@ export function StatusBarAction(props: StatusBarActionProps) {
 }
 
 export function StatusBarSegment(props: StatusBarSegmentProps) {
+  const background = () =>
+    props.active ? props.theme.roles.surfaces.panelRaised : props.theme.roles.surfaces.header;
   const foreground = () => {
     if (props.tone === "blocked") return props.theme.roles.statusTone.warning;
     if (props.tone === "working") return props.theme.roles.statusTone.info;
@@ -116,12 +117,10 @@ export function StatusBarSegment(props: StatusBarSegmentProps) {
       id={`ui-status-segment:${props.label}`}
       height={1}
       width={props.width}
-      backgroundColor={
-        props.active ? props.theme.roles.surfaces.panelRaised : props.theme.roles.surfaces.header
-      }
+      backgroundColor={background()}
       overflow="hidden"
     >
-      <text fg={foreground()} attributes={props.strong || props.active ? 1 : 0}>
+      <text fg={foreground()} bg={background()} attributes={props.strong || props.active ? 1 : 0}>
         {clipTerminal(` ${props.label} `, props.width ?? 200)}
       </text>
     </box>
