@@ -2517,12 +2517,15 @@ function baseTokens(appearance) {
   return VisualTokensV1SchemaZ.parse({
     surfaces: {
       canvas: color(dark ? "0e0e12" : "f5f5f7"),
-      panel: color(dark ? "13131a" : "ffffff"),
-      panelRaised: color(dark ? "1b1b24" : "ffffff"),
-      terminal: color(dark ? "0b0b10" : "fbfbfd"),
+      // Stay nearer the extended xterm grayscale ramp than mutable ANSI slot
+      // 15. Embedded 256-colour hosts may redefine that base "bright white"
+      // slot as black; these still read as white while quantizing safely.
+      panel: color(dark ? "13131a" : "eeeeee"),
+      panelRaised: color(dark ? "1b1b24" : "f5f5f7"),
+      terminal: color(dark ? "0b0b10" : "eeeeee"),
       header,
       headerActive: deriveFocusedHeader(header, focus),
-      command: color(dark ? "181821" : "ffffff")
+      command: color(dark ? "181821" : "e4e4e4")
     },
     text: {
       primary: color(dark ? "dedee6" : "202027"),
@@ -15501,6 +15504,15 @@ import { homedir as homedir8 } from "node:os";
 import { dirname as dirname14, join as join14, resolve as resolve9 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 import { execFileSync as execFileSync5 } from "node:child_process";
+function openTuiLaunchEnvironment(inherited, overlay = {}) {
+  const environment = {
+    ...inherited,
+    ...overlay,
+    COLORTERM: "truecolor"
+  };
+  delete environment.NO_COLOR;
+  return environment;
+}
 async function ensureTuiLaunchAvailable(input, options = {}) {
   const current = resolveTuiLaunch(input);
   if (current.mode !== "unavailable") return current;
@@ -70890,8 +70902,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
       automaticDiagnosticLog = void 0;
     }
   }
-  const env = {
-    ...process.env,
+  const env = openTuiLaunchEnvironment(process.env, {
     TMUX_IDE_CWD: process.cwd(),
     TMUX_IDE_CLI: nodeCliPath,
     ...automaticDiagnosticLog ? {
@@ -70899,7 +70910,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
       TMUX_IDE_TUI_LAUNCH_EPOCH_MS: String(launchEpochMs)
     } : {},
     ...extraEnv
-  };
+  });
   const markChildExited = () => {
     if (!automaticDiagnosticLog) return;
     try {
