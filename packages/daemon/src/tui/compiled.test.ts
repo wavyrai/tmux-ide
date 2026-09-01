@@ -12,6 +12,7 @@ import {
   compiledTuiRuntimeDir,
   ensureTuiLaunchAvailable,
   ensureCompiledTuiRuntimeDir,
+  openTuiLaunchEnvironment,
   resolveTuiLaunch,
 } from "./compiled.ts";
 
@@ -114,6 +115,37 @@ describe("resolveTuiLaunch — fast binary with an explicit source override", ()
     expect(launch.reasons.join(" ")).not.toMatch(/sources are absent/);
     expect(launch.reasons.join(" ")).toMatch(/bun/);
     expect(launch.reasons.join(" ")).toMatch(/no compiled `tmux-ide-tui`/);
+  });
+});
+
+describe("openTuiLaunchEnvironment", () => {
+  it("advertises truecolor and removes inherited color suppression", () => {
+    const inherited = {
+      TERM: "xterm-256color",
+      COLORTERM: "",
+      NO_COLOR: "1",
+      PATH: "/usr/bin",
+    };
+
+    const environment = openTuiLaunchEnvironment(inherited, {
+      TMUX_IDE_CWD: "/work",
+      COLORTERM: "ansi",
+      NO_COLOR: "still-no",
+    });
+
+    expect(environment).toMatchObject({
+      TERM: "xterm-256color",
+      COLORTERM: "truecolor",
+      PATH: "/usr/bin",
+      TMUX_IDE_CWD: "/work",
+    });
+    expect(environment).not.toHaveProperty("NO_COLOR");
+    expect(inherited).toEqual({
+      TERM: "xterm-256color",
+      COLORTERM: "",
+      NO_COLOR: "1",
+      PATH: "/usr/bin",
+    });
   });
 });
 

@@ -637,16 +637,15 @@ function baseTokens(appearance: ThemeAppearance): VisualTokensV1 {
   return VisualTokensV1SchemaZ.parse({
     surfaces: {
       canvas: color(dark ? "0e0e12" : "f5f5f7"),
-      // Some embedded terminal hosts reserve exact RGB white as the default
-      // background sentinel and render it as black. Keep light app surfaces
-      // perceptually white while ensuring every emitted cell has an explicit,
-      // host-stable colour.
-      panel: color(dark ? "13131a" : "fbfbfd"),
-      panelRaised: color(dark ? "1b1b24" : "fefeff"),
-      terminal: color(dark ? "0b0b10" : "fbfbfd"),
+      // Stay nearer the extended xterm grayscale ramp than mutable ANSI slot
+      // 15. Embedded 256-colour hosts may redefine that base "bright white"
+      // slot as black; these still read as white while quantizing safely.
+      panel: color(dark ? "13131a" : "eeeeee"),
+      panelRaised: color(dark ? "1b1b24" : "f5f5f7"),
+      terminal: color(dark ? "0b0b10" : "eeeeee"),
       header,
       headerActive: deriveFocusedHeader(header, focus),
-      command: color(dark ? "181821" : "fbfbfd"),
+      command: color(dark ? "181821" : "e4e4e4"),
     },
     text: {
       primary: color(dark ? "dedee6" : "202027"),

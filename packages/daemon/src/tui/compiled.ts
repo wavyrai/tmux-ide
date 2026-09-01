@@ -55,6 +55,29 @@ export interface TuiLaunchAcquisitionOptions {
 }
 
 /**
+ * Build the environment for every standalone OpenTUI surface.
+ *
+ * `TERM=xterm-256color` alone makes OpenTUI synchronize the terminal's mutable
+ * ANSI 0-15 palette. Several embedded hosts remap bright-white slot 15 to their
+ * dark default, turning light semantic surfaces black. The app renders 24-bit
+ * colors, so advertise that capability explicitly and never let an inherited
+ * NO_COLOR disable it. Hosted launches already enforce the same contract in
+ * their shell command line.
+ */
+export function openTuiLaunchEnvironment(
+  inherited: NodeJS.ProcessEnv,
+  overlay: NodeJS.ProcessEnv = {},
+): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {
+    ...inherited,
+    ...overlay,
+    COLORTERM: "truecolor",
+  };
+  delete environment.NO_COLOR;
+  return environment;
+}
+
+/**
  * Ensure an installed OpenTUI app has a runnable native dispatcher.
  *
  * Development checkouts with Bun and installs that already have an exact-version

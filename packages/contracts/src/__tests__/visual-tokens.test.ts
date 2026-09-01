@@ -27,12 +27,16 @@ describe("visual token contracts", () => {
     }
   });
 
-  it("keeps built-in light surfaces clear of the pure-white terminal sentinel", () => {
+  it("keeps built-in light surfaces nearer extended xterm gray than mutable ANSI white", () => {
     const light = BUILTIN_VISUAL_THEMES.light.surfaces;
     const pureWhite = rgb(255, 255, 255);
+    const extendedWhite = rgb(238, 238, 238);
+    const distance = (left: RendererNeutralColor, right: RendererNeutralColor) =>
+      Math.hypot(left.red - right.red, left.green - right.green, left.blue - right.blue);
 
     for (const surface of [light.panel, light.panelRaised, light.terminal, light.command]) {
       expect(surface).not.toEqual(pureWhite);
+      expect(distance(surface, extendedWhite)).toBeLessThan(distance(surface, pureWhite));
     }
   });
 

@@ -28,6 +28,7 @@ import {
   resolveTuiLaunch,
   findCompiledTui,
   isBunAvailable,
+  openTuiLaunchEnvironment,
 } from "../packages/daemon/src/tui/compiled.ts";
 import { init } from "../packages/daemon/src/init.ts";
 import { stop } from "../packages/daemon/src/stop.ts";
@@ -346,8 +347,7 @@ function execBunWidget(
       automaticDiagnosticLog = undefined;
     }
   }
-  const env = {
-    ...process.env,
+  const env = openTuiLaunchEnvironment(process.env, {
     TMUX_IDE_CWD: process.cwd(),
     TMUX_IDE_CLI: nodeCliPath,
     ...(automaticDiagnosticLog
@@ -357,7 +357,7 @@ function execBunWidget(
         }
       : {}),
     ...extraEnv,
-  };
+  });
   const markChildExited = () => {
     if (!automaticDiagnosticLog) return;
     try {
