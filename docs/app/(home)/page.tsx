@@ -7,9 +7,9 @@ import { AsciiLogo } from "./ascii-logo";
 import { CopyButton } from "./copy-button";
 
 export const metadata: Metadata = {
-  title: "tmux-ide — a visual tmux client built for coding agents",
+  title: "tmux-ide — build a dedicated tmux workspace for your coding agents",
   description:
-    "A mouse-friendly OpenTUI for ordinary tmux sessions, with agent status, pane and window controls, durable sessions, and SSH support.",
+    "Turn ordinary tmux sessions into a dedicated workspace for coding agents, with memorable names, live agent indicators, direct navigation, durable sessions, and SSH support.",
   alternates: { canonical: "/" },
 };
 
@@ -17,20 +17,28 @@ const installCommand = "npm install -g tmux-ide@beta";
 
 const capabilities = [
   [
-    "Ordinary tmux",
-    "Open sessions you already own. tmux remains the process, PTY, layout, and persistence authority.",
+    "A workspace for your agents",
+    "Keep coding agents, shells, logs, and dev servers together in one dedicated, navigable workspace.",
   ],
   [
-    "Agent-aware chrome",
-    "See agent state in the sidebar, window tabs, and pane headers, then jump directly to the right pane.",
+    "Memorable names",
+    "Replace pane IDs and generic shell titles with names such as talented-toucan, then rename them whenever you want.",
+  ],
+  [
+    "Live agent indicators",
+    "See which agents are working, idle, need attention, or are done in the sidebar and pane chrome.",
+  ],
+  [
+    "Jump straight to an agent",
+    "Select an agent in the sidebar and tmux-ide takes you directly to its exact window and pane.",
   ],
   [
     "Mouse and keyboard",
     "Create, split, resize, rename, focus, and close panes and windows without giving up terminal-native controls.",
   ],
   [
-    "SSH by construction",
-    "The same tmux sessions remain available from any normal tmux client, locally or over SSH.",
+    "Still ordinary tmux",
+    "tmux remains the process, PTY, layout, and persistence authority, locally or over SSH.",
   ],
 ] as const;
 
@@ -52,12 +60,12 @@ export default function HomePage() {
           OpenTUI beta · tmux under the hood
         </p>
         <h1 className="mt-4 text-balance text-4xl tracking-tight text-fd-foreground md:text-6xl">
-          A visual tmux client designed for working with agents.
+          Build a dedicated workspace for your coding agents.
         </h1>
         <p className="mt-6 max-w-2xl text-pretty text-base leading-7 text-fd-muted-foreground md:text-lg">
-          tmux-ide gives ordinary tmux sessions a polished application shell: clickable panes and
-          windows, agent indicators, memorable names, and controls that work locally or over SSH.
-          Close it and your tmux sessions keep running.
+          tmux-ide turns ordinary tmux sessions into an agent-aware workspace. Give agents and panes
+          memorable names, see what every agent is doing, and jump directly to the one that needs
+          you. Close the app and every session keeps running.
         </p>
 
         <CopyButton
@@ -98,7 +106,7 @@ export default function HomePage() {
               The real renderer
             </p>
             <h2 className="mt-3 text-3xl tracking-tight text-fd-foreground">
-              Home, terminals, and commands—without leaving tmux.
+              Your agents, organized and visible at a glance.
             </h2>
           </div>
           <Link href="/docs/demo" className="font-mono text-sm text-fd-primary hover:underline">
@@ -157,10 +165,12 @@ export default function HomePage() {
       </section>
 
       <section className="mt-20 border border-fd-border bg-fd-card p-8 text-center md:p-12">
-        <h2 className="text-3xl tracking-tight text-fd-foreground">Keep tmux. Add the app.</h2>
+        <h2 className="text-3xl tracking-tight text-fd-foreground">
+          Give your agents a workspace—not a pile of terminals.
+        </h2>
         <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-fd-muted-foreground">
-          The beta is deliberately focused on Home and Terminals. The future web client will use the
-          same daemon boundary; it is not part of this release.
+          Start with the tmux sessions you already use. tmux-ide adds the names, status, navigation,
+          and controls that make a multi-agent setup manageable.
         </p>
         <Link
           href="/docs/getting-started"
