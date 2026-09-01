@@ -197,6 +197,7 @@ import { parseArgs } from "node:util";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, readFileSync, openSync, writeSync, closeSync } from "node:fs";
 import { TUI_RENDERER_CADENCE } from "./renderer-cadence.ts";
+import { requestApplicationThemeRepaint } from "./application-theme-repaint.ts";
 import { ViewportFitCoordinator } from "./viewport-fit-coordinator.ts";
 import { publishSemanticPaneChange } from "./semantic-pane-publication.ts";
 import { TerminalSessionHandoff } from "./terminal-session-handoff.ts";
@@ -915,7 +916,13 @@ const mountTuiRoot = () => {
     // Keep the native clear/background color synchronized with the semantic
     // canvas. This removes transparent/default-color flashes during resize and
     // makes every painted and unpainted cell obey the same theme authority.
-    createEffect(() => appRenderer.setBackgroundColor(semanticTheme().roles.surfaces.canvas));
+    let paintedTheme = semanticTheme();
+    createEffect(() => {
+      const nextTheme = semanticTheme();
+      appRenderer.setBackgroundColor(nextTheme.roles.surfaces.canvas);
+      if (nextTheme !== paintedTheme) requestApplicationThemeRepaint(appRenderer);
+      paintedTheme = nextTheme;
+    });
     const disposeSemanticThemeStore = semanticThemeStore.subscribe(() =>
       setSemanticTheme(semanticThemeStore.getSnapshot()),
     );

@@ -27,6 +27,7 @@ import {
   createApplicationGenerationStarter,
 } from "./application-generation-starter.ts";
 import { createApplicationInputReadiness } from "./application-input-readiness.ts";
+import { requestApplicationThemeRepaint } from "./application-theme-repaint.ts";
 import {
   applicationPaletteCommands,
   applicationPaletteCommandSource,
@@ -326,8 +327,12 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           openAgent,
         });
         const paneRename = createPaneRenameOwner(interaction.renamePane, setTransientNote);
+        let paintedTheme = theme();
         createEffect(() => {
-          renderer.setBackgroundColor(theme().roles.surfaces.canvas);
+          const nextTheme = theme();
+          renderer.setBackgroundColor(nextTheme.roles.surfaces.canvas);
+          if (nextTheme !== paintedTheme) requestApplicationThemeRepaint(renderer);
+          paintedTheme = nextTheme;
           const currentShell = shell();
           semanticViewportResize.adopt(dimensions(), currentShell.semantic, generation());
           focusedPane();
