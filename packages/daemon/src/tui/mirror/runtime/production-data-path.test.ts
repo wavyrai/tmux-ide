@@ -51,6 +51,16 @@ const RETIRED_CONSTRUCTORS = [
   "<ActivitySurface",
 ] as const;
 
+const RAW_RENDER_COLOR = /RGBA\.fromInts\(|#[0-9a-fA-F]{6}\b|\b0x[0-9a-fA-F]{6}\b|colour[0-9]+/u;
+const DESIGN_SYSTEM_COLOR_OWNERS = [
+  // User-facing semantic defaults; not a rendered surface.
+  "packages/daemon/src/lib/app-config.ts",
+  // Native renderable constructor safety before semantic props arrive.
+  "packages/daemon/src/tui/mirror/pane-surface.tsx",
+  // The sole OpenTUI token/palette projection boundary.
+  "packages/daemon/src/tui/mirror/theme.ts",
+] as const;
+
 function occurrences(pattern: RegExp): number {
   return source.match(pattern)?.length ?? 0;
 }
@@ -76,6 +86,13 @@ describe("production OpenTUI v2 data path", () => {
       );
     }
     expect(source).not.toMatch(/\b(?:Missions|Activity|Files|Changes)\b/u);
+  });
+
+  it("keeps raw colors out of every production app-owned surface", () => {
+    const owners = productionGraph.files.filter((path) =>
+      RAW_RENDER_COLOR.test(productionGraph.sourceByFile.get(path) ?? ""),
+    );
+    expect(owners).toEqual([...DESIGN_SYSTEM_COLOR_OWNERS].sort());
   });
 
   it("constructs exactly one WorkspaceClient and one TerminalFastLane owner", () => {

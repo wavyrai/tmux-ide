@@ -5,7 +5,11 @@ import { batch, createSignal } from "solid-js";
 import type { TerminalReplicaSnapshot } from "@tmux-ide/contracts";
 
 import { registerPaneSurface, type TerminalPaneRenderSource } from "../pane-surface.tsx";
-import { createSemanticThemeSnapshot, createTerminalPaletteProjection } from "../theme.ts";
+import {
+  colorToThemeBytes,
+  createSemanticThemeSnapshot,
+  createTerminalPaletteProjection,
+} from "../theme.ts";
 import { expectFrameBounds, renderForTest } from "../testing/renderer-harness.test.ts";
 import { projectApplicationShell } from "../workspace/application-shell.ts";
 import { projectOpenTuiApplicationShell } from "../workspace/application-shell-controller.ts";
@@ -59,6 +63,10 @@ function trimFrameRight(frame: string): string {
     .map((row) => row.trimEnd())
     .join("\n")
     .trimEnd();
+}
+
+function colorKey(color: Parameters<typeof colorToThemeBytes>[0]): string {
+  return colorToThemeBytes(color).join(",");
 }
 
 function twoWindowLayout() {
@@ -129,9 +137,14 @@ function adapter(): PaneScopedTerminalAdapter {
   const renderSource: TerminalPaneRenderSource = {
     scrollbackDepth: () => 0,
     cursorState: () => null,
-    blitPane: (_paneId, buffers, _width, height, _scroll, _fg, _bg, options) => {
+    blitPane: (_paneId, buffers, width, height, _scroll, fg, bg, options) => {
       buffers.char.fill(32);
       buffers.attributes.fill(0);
+      for (let cell = 0; cell < width * height; cell += 1) {
+        const offset = cell * 4;
+        buffers.fg.set([(fg >> 16) & 0xff, (fg >> 8) & 0xff, fg & 0xff, 0xff], offset);
+        buffers.bg.set([(bg >> 16) & 0xff, (bg >> 8) & 0xff, bg & 0xff, 0xff], offset);
+      }
       for (const [index, char] of [..."CANONICAL-CELL"].entries())
         buffers.char[index] = char.codePointAt(0)!;
       for (let row = 0; row < height; row += 1) options.dirtyRows.push(row);
@@ -333,6 +346,57 @@ describe("production ApplicationShellView", () => {
       setup.renderer.destroy();
     },
   );
+
+  it("repaints terminal chrome and default terminal cells across a live theme switch", async () => {
+    registerPaneSurface();
+    const dark = createSemanticThemeSnapshot({ mode: "dark" });
+    const light = createSemanticThemeSnapshot({ mode: "light" });
+    const terminal = trackedAdapter();
+    let selectTheme!: (theme: typeof dark) => void;
+    function Harness() {
+      const [theme, setTheme] = createSignal(dark);
+      selectTheme = setTheme;
+      return (
+        <ApplicationShellView
+          dimensions={() => ({ width: 120, height: 40 })}
+          surface={() => "terminals"}
+          semantic={() => semantic()}
+          generationStatus={() => "live"}
+          sessions={["main"]}
+          selectedSession={() => 0}
+          bootstrapNote={() => null}
+          paletteOpen={() => false}
+          terminalRendererSource={() => ({ adapter: terminal.adapter, rendererEpoch: 1 })}
+          layout={terminalLayout}
+          focusedPane={() => "pane.main"}
+          theme={theme()}
+          palette={createTerminalPaletteProjection(theme())}
+          onOpenSurface={() => undefined}
+          onOpenSession={() => undefined}
+          onSetPaletteOpen={() => undefined}
+          onSelectPane={() => undefined}
+          onResizePreview={() => undefined}
+          onResizePane={() => undefined}
+        />
+      );
+    }
+    const setup = await renderForTest(() => <Harness />, { width: 120, height: 40 });
+    await setup.renderOnce();
+
+    selectTheme(light);
+    await setup.renderOnce();
+    const spans = setup.captureSpans();
+    const sidebarTitle = spans.lines[1]?.spans.find((span) => span.text.includes("tmux-ide"));
+    const terminalCell = spans.lines
+      .flatMap((line) => line.spans)
+      .find((span) => span.text.includes("CANONICAL-CELL"));
+    expect(sidebarTitle).toBeDefined();
+    expect(terminalCell).toBeDefined();
+    expect(colorKey(sidebarTitle!.bg)).toBe(colorKey(light.roles.surfaces.panel));
+    expect(colorKey(terminalCell!.bg)).toBe(colorKey(light.roles.surfaces.terminal));
+    expect(terminal.lifecycle).toEqual({ subscriptions: 2, unsubscriptions: 1, fullBlits: 2 });
+    setup.renderer.destroy();
+  });
 
   it("renders a catalog-backed Home as a focused full-width surface", async () => {
     const theme = createSemanticThemeSnapshot({ mode: "dark" });

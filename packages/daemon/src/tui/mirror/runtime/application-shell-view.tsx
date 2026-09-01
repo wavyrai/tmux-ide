@@ -780,7 +780,26 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
   const retainedProjection = new Proxy({} as NonNullable<ReturnType<typeof projection>>, {
     get: (_target, property) => Reflect.get(projection()!, property),
   });
-  const projectionOwner = createMemo(() => (projection() ? retainedProjection : null));
+  // OpenTUI retains native renderables aggressively. Key the visual shell by
+  // the immutable appearance snapshot so a live theme switch cannot leave
+  // previously painted box/framebuffer backgrounds behind. The daemon,
+  // terminal parser, and renderer adapter stay resident; only presentation is
+  // rebuilt for this rare user action.
+  const projectionOwner = createMemo(
+    () =>
+      projection()
+        ? { shell: retainedProjection, theme: props.theme, palette: props.palette }
+        : null,
+    undefined,
+    {
+      equals: (previous, next) =>
+        previous === next ||
+        (previous !== null &&
+          next !== null &&
+          previous.theme === next.theme &&
+          previous.palette === next.palette),
+    },
+  );
   const agentIndicators = createMemo<ReadonlyMap<string, ApplicationTerminalAgentIndicator>>(
     () =>
       new Map(
@@ -811,146 +830,149 @@ export function ApplicationShellView(props: ApplicationShellViewProps): JSX.Elem
 
   return (
     <Show when={projectionOwner()} keyed fallback={<CatalogShell {...props} />}>
-      {(shell) => (
-        <box
-          width={props.dimensions().width}
-          height={props.dimensions().height}
-          position="relative"
-          overflow="hidden"
-          onMouseDown={(event) => {
-            props.onInteraction?.();
-            routeChromePointer(event.x, event.y);
-          }}
-        >
-          <ApplicationShell
-            theme={props.theme}
-            projection={shell}
-            help="F5 commands"
-            onHelp={() => props.onSetPaletteOpen(true, "mouse")}
-            note={props.bootstrapNote() ?? props.generationStatus()}
-            showToolStatus={false}
-            showSidebar={props.surface() === "terminals"}
-            sidebar={
-              <ProductionSidebar
-                shell={shell}
-                theme={props.theme}
-                onOpenAgent={props.onOpenAgent}
-              />
-            }
+      {(appearance) => {
+        const shell = appearance.shell;
+        return (
+          <box
+            width={props.dimensions().width}
+            height={props.dimensions().height}
+            position="relative"
+            overflow="hidden"
+            onMouseDown={(event) => {
+              props.onInteraction?.();
+              routeChromePointer(event.x, event.y);
+            }}
           >
-            <Show
-              when={props.surface() === "terminals"}
-              fallback={
-                <HomeSurface
-                  project={shell.semantic.project.name}
-                  status={props.generationStatus()}
-                  note={props.bootstrapNote()}
-                  width={shell.layout.width}
-                  height={shell.content.height}
-                  sessionCount={shell.semantic.sidebar.sessions.length}
-                  session={friendlySessionLabel(shell.activeSession)}
-                  agents={[...agentIndicators().values()]}
-                  branded={true}
-                  theme={props.theme}
-                  onOpenTerminals={() => props.onOpenSurface("terminals", "mouse")}
-                  onOpenCommands={() => props.onSetPaletteOpen(true, "mouse")}
-                  onCycleTheme={props.onCycleTheme}
+            <ApplicationShell
+              theme={appearance.theme}
+              projection={shell}
+              help="F5 commands"
+              onHelp={() => props.onSetPaletteOpen(true, "mouse")}
+              note={props.bootstrapNote() ?? props.generationStatus()}
+              showToolStatus={false}
+              showSidebar={props.surface() === "terminals"}
+              sidebar={
+                <ProductionSidebar
+                  shell={shell}
+                  theme={appearance.theme}
+                  onOpenAgent={props.onOpenAgent}
                 />
               }
             >
-              <box
-                position="relative"
-                width={shell.content.width}
-                height={shell.content.height}
-                overflow="hidden"
+              <Show
+                when={props.surface() === "terminals"}
+                fallback={
+                  <HomeSurface
+                    project={shell.semantic.project.name}
+                    status={props.generationStatus()}
+                    note={props.bootstrapNote()}
+                    width={shell.layout.width}
+                    height={shell.content.height}
+                    sessionCount={shell.semantic.sidebar.sessions.length}
+                    session={friendlySessionLabel(shell.activeSession)}
+                    agents={[...agentIndicators().values()]}
+                    branded={true}
+                    theme={appearance.theme}
+                    onOpenTerminals={() => props.onOpenSurface("terminals", "mouse")}
+                    onOpenCommands={() => props.onSetPaletteOpen(true, "mouse")}
+                    onCycleTheme={props.onCycleTheme}
+                  />
+                }
               >
-                <Show
-                  when={terminalRendererSource()}
-                  keyed
-                  fallback={
-                    <HomeSurface
-                      project="Terminal workspace"
-                      status={props.generationStatus()}
-                      note={props.bootstrapNote() ?? "Waiting for a coherent terminal frame."}
-                      width={shell.content.width}
-                      height={shell.content.height}
-                      sessionCount={shell.semantic.sidebar.sessions.length}
-                      session={shell.activeSession}
-                      branded={false}
-                      theme={props.theme}
-                      onOpenTerminals={() => props.onOpenSurface("terminals", "mouse")}
-                      onOpenCommands={() => props.onSetPaletteOpen(true, "mouse")}
-                    />
-                  }
+                <box
+                  position="relative"
+                  width={shell.content.width}
+                  height={shell.content.height}
+                  overflow="hidden"
                 >
-                  {(source) => (
-                    <ApplicationTerminalWorkspace
-                      layout={props.layout}
-                      adapter={source.adapter}
-                      rendererEpoch={source.rendererEpoch}
-                      width={shell.content.width}
-                      height={Math.max(2, shell.content.height - 1)}
-                      topOffset={1}
-                      originX={shell.content.x}
-                      originY={shell.content.y}
-                      focusedPane={props.focusedPane()}
-                      rendererFocused={props.rendererFocused?.() ?? props.focusedPane() !== null}
-                      hostFocusTransitionOwner={props.hostFocusTransitionOwner}
-                      theme={props.theme}
-                      palette={props.palette}
-                      agentIndicators={agentIndicators}
-                      onSelectPane={props.onSelectPane}
-                      onCreateWindow={props.onCreateWindow}
-                      onPaneContextAction={(paneId, action, currentName) => {
-                        if (action === "rename-pane")
-                          props.onBeginPaneRename?.(paneId, currentName);
-                        else props.onPaletteActivate?.(action, "mouse", true);
-                      }}
-                      onResizePreview={props.onResizePreview}
-                      onResizePane={props.onResizePane}
-                      onResizePointerIngress={props.onResizePointerIngress}
-                      onTerminalInput={props.onTerminalInput}
-                      terminalGestureRuntime={props.terminalGestureRuntime}
-                      onApplicationMousePointerIngress={props.onApplicationMousePointerIngress}
-                      onCopyText={props.onCopyText}
-                      onSelectionCopyOwner={props.onSelectionCopyOwner}
-                      onSelectionKeyOwner={props.onSelectionKeyOwner}
-                      onWindowPresented={props.onWindowPresented}
-                    />
-                  )}
-                </Show>
-              </box>
-            </Show>
-          </ApplicationShell>
-          <Show when={props.paletteOpen()}>
-            <MinimalPalette
-              width={props.dimensions().width}
-              height={props.dimensions().height}
-              selected={props.paletteSelection?.() ?? 0}
-              closeArmed={props.paletteCloseArmed?.() ?? false}
-              commands={props.paletteCommands?.() ?? applicationPaletteCommands(props.semantic())}
-              theme={props.theme}
-              onActivate={(command) => {
-                if (props.onPaletteActivate) props.onPaletteActivate(command, "mouse");
-                else if (command === "home" || command === "terminals")
-                  props.onOpenSurface(command, "mouse");
-              }}
-              onClose={() => props.onSetPaletteOpen(false, "mouse")}
-            />
-          </Show>
-          <Show when={props.paneRenameDialog?.()} keyed>
-            {(draft) => (
-              <PaneRenameDialog
-                draft={draft}
+                  <Show
+                    when={terminalRendererSource()}
+                    keyed
+                    fallback={
+                      <HomeSurface
+                        project="Terminal workspace"
+                        status={props.generationStatus()}
+                        note={props.bootstrapNote() ?? "Waiting for a coherent terminal frame."}
+                        width={shell.content.width}
+                        height={shell.content.height}
+                        sessionCount={shell.semantic.sidebar.sessions.length}
+                        session={shell.activeSession}
+                        branded={false}
+                        theme={appearance.theme}
+                        onOpenTerminals={() => props.onOpenSurface("terminals", "mouse")}
+                        onOpenCommands={() => props.onSetPaletteOpen(true, "mouse")}
+                      />
+                    }
+                  >
+                    {(source) => (
+                      <ApplicationTerminalWorkspace
+                        layout={props.layout}
+                        adapter={source.adapter}
+                        rendererEpoch={source.rendererEpoch}
+                        width={shell.content.width}
+                        height={Math.max(2, shell.content.height - 1)}
+                        topOffset={1}
+                        originX={shell.content.x}
+                        originY={shell.content.y}
+                        focusedPane={props.focusedPane()}
+                        rendererFocused={props.rendererFocused?.() ?? props.focusedPane() !== null}
+                        hostFocusTransitionOwner={props.hostFocusTransitionOwner}
+                        theme={appearance.theme}
+                        palette={appearance.palette}
+                        agentIndicators={agentIndicators}
+                        onSelectPane={props.onSelectPane}
+                        onCreateWindow={props.onCreateWindow}
+                        onPaneContextAction={(paneId, action, currentName) => {
+                          if (action === "rename-pane")
+                            props.onBeginPaneRename?.(paneId, currentName);
+                          else props.onPaletteActivate?.(action, "mouse", true);
+                        }}
+                        onResizePreview={props.onResizePreview}
+                        onResizePane={props.onResizePane}
+                        onResizePointerIngress={props.onResizePointerIngress}
+                        onTerminalInput={props.onTerminalInput}
+                        terminalGestureRuntime={props.terminalGestureRuntime}
+                        onApplicationMousePointerIngress={props.onApplicationMousePointerIngress}
+                        onCopyText={props.onCopyText}
+                        onSelectionCopyOwner={props.onSelectionCopyOwner}
+                        onSelectionKeyOwner={props.onSelectionKeyOwner}
+                        onWindowPresented={props.onWindowPresented}
+                      />
+                    )}
+                  </Show>
+                </box>
+              </Show>
+            </ApplicationShell>
+            <Show when={props.paletteOpen()}>
+              <MinimalPalette
                 width={props.dimensions().width}
                 height={props.dimensions().height}
-                theme={props.theme}
-                onCancel={() => props.onCancelPaneRename?.()}
+                selected={props.paletteSelection?.() ?? 0}
+                closeArmed={props.paletteCloseArmed?.() ?? false}
+                commands={props.paletteCommands?.() ?? applicationPaletteCommands(props.semantic())}
+                theme={appearance.theme}
+                onActivate={(command) => {
+                  if (props.onPaletteActivate) props.onPaletteActivate(command, "mouse");
+                  else if (command === "home" || command === "terminals")
+                    props.onOpenSurface(command, "mouse");
+                }}
+                onClose={() => props.onSetPaletteOpen(false, "mouse")}
               />
-            )}
-          </Show>
-        </box>
-      )}
+            </Show>
+            <Show when={props.paneRenameDialog?.()} keyed>
+              {(draft) => (
+                <PaneRenameDialog
+                  draft={draft}
+                  width={props.dimensions().width}
+                  height={props.dimensions().height}
+                  theme={appearance.theme}
+                  onCancel={() => props.onCancelPaneRename?.()}
+                />
+              )}
+            </Show>
+          </box>
+        );
+      }}
     </Show>
   );
 }
