@@ -105,6 +105,35 @@ function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void
   });
 }
 
+function isTmuxServerUnavailable(error: unknown): boolean {
+  const details: string[] = [];
+  const codes = new Set<string>();
+  let cursor: unknown = error;
+  for (let depth = 0; depth < 5 && cursor !== null && cursor !== undefined; depth += 1) {
+    if (cursor instanceof Error) details.push(cursor.message);
+    else details.push(String(cursor));
+    if (typeof cursor === "object" && cursor !== null) {
+      if ("stderr" in cursor) {
+        const stderr = cursor.stderr;
+        if (typeof stderr === "string") details.push(stderr);
+        else if (Buffer.isBuffer(stderr)) details.push(stderr.toString("utf8"));
+      }
+      if ("code" in cursor) codes.add(String(cursor.code));
+      cursor = "cause" in cursor ? cursor.cause : undefined;
+    } else {
+      cursor = undefined;
+    }
+  }
+  const detail = details.join("\n").toLowerCase();
+  return (
+    codes.has("ECONNREFUSED") ||
+    detail.includes("failed to connect to server") ||
+    detail.includes("no server running") ||
+    detail.includes("error connecting to") ||
+    detail.includes("connection refused")
+  );
+}
+
 export function internalInteractionOperationMarker(
   daemonInstanceId: string,
   operationId: string,
@@ -243,12 +272,19 @@ export class TmuxExternalInteractionObserver {
     try {
       await this.install();
     } catch (error) {
-      this.#active = false;
       await this.#serializeTmux(async () => {
         await this.#removeOwnedHooks();
         await this.#deleteBuffer(this.#bufferName);
       });
-      throw error;
+      if (!isTmuxServerUnavailable(error)) {
+        this.#active = false;
+        throw error;
+      }
+      // A configless first run legitimately has no tmux server yet. Keep the
+      // observer alive: its retry loop installs the hooks as soon as the first
+      // session creates the pinned socket. The HTTP control plane must not be
+      // held hostage by optional, currently absent tmux global state.
+      this.#installed = false;
     }
     if (!this.#active || this.#abort.signal.aborted) {
       await this.#serializeTmux(async () => {

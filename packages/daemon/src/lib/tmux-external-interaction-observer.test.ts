@@ -418,6 +418,55 @@ describe("tmux external interaction observer", () => {
     await observer.dispose();
   });
 
+  it("starts without a tmux server and installs hooks when the server appears", async () => {
+    let serverAvailable = false;
+    const hooks = new Map<string, string>();
+    const observer = new TmuxExternalInteractionObserver({
+      daemonInstanceId: DAEMON,
+      tmuxAuthority: {
+        executablePath: "/usr/bin/tmux",
+        socketSelector: { kind: "name", name: "default" },
+      },
+      registry: registry(),
+      io: {
+        runTmux: async (args) => {
+          if (!serverAvailable) {
+            throw Object.assign(new Error("error connecting to tmux socket"), {
+              stderr: "no server running on /private/tmp/tmux/default",
+            });
+          }
+          if (args[0] === "show-hooks") return hooks.get(args[2]!) ?? String(args[2]);
+          if (args[0] === "list-buffers") return "";
+          if (args[0] === "set-hook" && args[1] === "-ag") {
+            hooks.set(args[2]!, `${args[2]}[0] ${args[3]}`);
+          }
+          if (args[0] === "set-hook" && args[1] === "-gu") {
+            hooks.delete(args[2]!.replace(/\[[0-9]+\]$/u, ""));
+          }
+          return "";
+        },
+        waitForSignal: async (_channel, signal) => {
+          await new Promise<void>((resolve) => {
+            signal.addEventListener("abort", () => resolve(), { once: true });
+          });
+        },
+        delay: async (_milliseconds, signal) => {
+          await new Promise<void>((resolve) => {
+            signal.addEventListener("abort", () => resolve(), { once: true });
+          });
+        },
+      },
+      onObserved: () => false,
+    });
+
+    await expect(observer.start()).resolves.toBeUndefined();
+    serverAvailable = true;
+    await observer.reconcileHooks();
+    expect(hooks.get("after-send-keys")).toContain(`tmux-ide-interaction-v2-${DAEMON}`);
+    expect(hooks.get("after-capture-pane")).toContain(`tmux-ide-interaction-v2-${DAEMON}`);
+    await observer.dispose();
+  });
+
   it("aborts a pending async install before disposal and never starts late work", async () => {
     const calls: string[] = [];
     let installEntered!: () => void;

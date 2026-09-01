@@ -34041,6 +34041,28 @@ function abortableDelay(milliseconds, signal) {
     signal.addEventListener("abort", done, { once: true });
   });
 }
+function isTmuxServerUnavailable(error) {
+  const details = [];
+  const codes = /* @__PURE__ */ new Set();
+  let cursor = error;
+  for (let depth = 0; depth < 5 && cursor !== null && cursor !== void 0; depth += 1) {
+    if (cursor instanceof Error) details.push(cursor.message);
+    else details.push(String(cursor));
+    if (typeof cursor === "object" && cursor !== null) {
+      if ("stderr" in cursor) {
+        const stderr = cursor.stderr;
+        if (typeof stderr === "string") details.push(stderr);
+        else if (Buffer.isBuffer(stderr)) details.push(stderr.toString("utf8"));
+      }
+      if ("code" in cursor) codes.add(String(cursor.code));
+      cursor = "cause" in cursor ? cursor.cause : void 0;
+    } else {
+      cursor = void 0;
+    }
+  }
+  const detail = details.join("\n").toLowerCase();
+  return codes.has("ECONNREFUSED") || detail.includes("failed to connect to server") || detail.includes("no server running") || detail.includes("error connecting to") || detail.includes("connection refused");
+}
 function internalInteractionOperationMarker(daemonInstanceId2, operationId) {
   return `${daemonInstanceId2}:${operationId}`;
 }
@@ -34153,12 +34175,15 @@ var init_tmux_external_interaction_observer = __esm({
         try {
           await this.install();
         } catch (error) {
-          this.#active = false;
           await this.#serializeTmux(async () => {
             await this.#removeOwnedHooks();
             await this.#deleteBuffer(this.#bufferName);
           });
-          throw error;
+          if (!isTmuxServerUnavailable(error)) {
+            this.#active = false;
+            throw error;
+          }
+          this.#installed = false;
         }
         if (!this.#active || this.#abort.signal.aborted) {
           await this.#serializeTmux(async () => {
