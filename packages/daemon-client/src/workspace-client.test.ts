@@ -617,6 +617,74 @@ describe("WorkspaceClient", () => {
     await client.dispose();
   });
 
+  it("refreshes stale topology when an active runtime reconnects after ordinary tmux changes", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha", ["pane.a"]) });
+    const clock = new FakeClock();
+    const firstRuntime = new ClosableFakeRuntime(ALPHA_DAEMON.instanceId);
+    const replacementRuntime = new FakeRuntime(ALPHA_DAEMON.instanceId);
+    const inventories: string[][] = [];
+    const activatedInventories: string[][] = [];
+    let refreshes = 0;
+    let client!: ReturnType<typeof createWorkspaceClient>;
+    client = createWorkspaceClient({
+      target: target("alpha"),
+      deferApplicationShell: true,
+      clock,
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async (_current, inventory) => {
+          inventories.push([...inventory.semanticPaneIds]);
+          if (inventories.length === 1) return firstRuntime;
+          if (inventory.semanticPaneIds.includes("pane.a")) {
+            throw Object.assign(new Error("ordinary tmux changed the pane topology"), {
+              code: "topology-changed",
+            });
+          }
+          return replacementRuntime;
+        },
+        requestTerminalRuntimeInventoryRefresh: () => {
+          refreshes += 1;
+          if (refreshes !== 1) return;
+          shell.byWorkspace.set("alpha", shellResource("alpha", ["pane.b"]));
+          shell.connections.at(-1)?.handlers.onInvalidate();
+          queueMicrotask(() => {
+            client.adoptTerminalRuntimeInventory({
+              workspaceName: "alpha",
+              workspaceId: "workspace.alpha",
+              sessionId: COHESION_FIXTURE_V1.workspace.session.id,
+              resourceRevision: 2,
+              semanticPaneIds: ["pane.b"],
+            });
+          });
+        },
+        didActivateRuntime: (_runtime, inventory) => {
+          activatedInventories.push([...inventory.semanticPaneIds]);
+        },
+        actions,
+      },
+    });
+    client.adoptTerminalRuntimeInventory({
+      workspaceName: "alpha",
+      workspaceId: "workspace.alpha",
+      sessionId: COHESION_FIXTURE_V1.workspace.session.id,
+      resourceRevision: 1,
+      semanticPaneIds: ["pane.a"],
+    });
+    await settle();
+    expect(inventories).toEqual([["pane.a"]]);
+
+    firstRuntime.fail();
+    await settle();
+    clock.advance(1_000);
+    await settle();
+    await settle();
+
+    expect(inventories).toEqual([["pane.a"], ["pane.a"], ["pane.b"]]);
+    expect(refreshes).toBe(2);
+    expect(activatedInventories).toEqual([["pane.a"], ["pane.b"]]);
+    await client.dispose();
+  });
+
   it("fails closed when one terminal revision carries conflicting authority", async () => {
     const shell = shellBroker({ alpha: shellResource("alpha", ["pane.a"]) });
     const inventories: WorkspaceClientRuntimeInventory[] = [];

@@ -873,7 +873,7 @@ export function createWorkspaceClient<
             generation === expectedGeneration &&
             target === expectedTarget &&
             desiredRuntimeKey === key &&
-            candidateRuntimeOwner === owner
+            (activeRuntimeOwner === owner || candidateRuntimeOwner === owner)
           ) {
             requestTerminalRefresh(`runtime-topology:${expectedGeneration}:${key}`);
           }
