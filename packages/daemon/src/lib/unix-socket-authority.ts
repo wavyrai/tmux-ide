@@ -7,6 +7,7 @@ export interface UnixSocketIdentity {
   readonly path: string;
   readonly dev: number;
   readonly ino: number;
+  readonly ctimeNs: bigint;
 }
 
 function validSocketPath(path: string): boolean {
@@ -21,14 +22,19 @@ function validSocketPath(path: string): boolean {
 export function captureUnixSocketIdentity(path: string): UnixSocketIdentity {
   if (!validSocketPath(path)) throw new TypeError("Unix socket path is invalid");
   const sourceParent = lstatSync(dirname(path));
-  const source = lstatSync(path);
+  const source = lstatSync(path, { bigint: true });
   if (!sourceParent.isDirectory() || sourceParent.isSymbolicLink() || !source.isSocket())
     throw new TypeError("Unix socket authority is invalid");
   const canonicalPath = join(realpathSync(dirname(path)), basename(path));
-  const canonical = lstatSync(canonicalPath);
+  const canonical = lstatSync(canonicalPath, { bigint: true });
   if (!canonical.isSocket() || canonical.dev !== source.dev || canonical.ino !== source.ino)
     throw new TypeError("Unix socket authority changed while resolving");
-  return Object.freeze({ path: canonicalPath, dev: canonical.dev, ino: canonical.ino });
+  return Object.freeze({
+    path: canonicalPath,
+    dev: Number(canonical.dev),
+    ino: Number(canonical.ino),
+    ctimeNs: canonical.ctimeNs,
+  });
 }
 
 export function revalidateUnixSocketIdentity(identity: UnixSocketIdentity): string {
@@ -37,11 +43,18 @@ export function revalidateUnixSocketIdentity(identity: UnixSocketIdentity): stri
     !Number.isSafeInteger(identity.dev) ||
     identity.dev < 0 ||
     !Number.isSafeInteger(identity.ino) ||
-    identity.ino < 0
+    identity.ino < 0 ||
+    typeof identity.ctimeNs !== "bigint" ||
+    identity.ctimeNs < 0n
   )
     throw new TypeError("Unix socket identity is invalid");
-  const current = lstatSync(identity.path);
-  if (!current.isSocket() || current.dev !== identity.dev || current.ino !== identity.ino)
+  const current = lstatSync(identity.path, { bigint: true });
+  if (
+    !current.isSocket() ||
+    current.dev !== BigInt(identity.dev) ||
+    current.ino !== BigInt(identity.ino) ||
+    current.ctimeNs !== identity.ctimeNs
+  )
     throw new TypeError("Unix socket authority changed before use");
   return identity.path;
 }

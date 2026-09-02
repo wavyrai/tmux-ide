@@ -231,7 +231,10 @@ jobs:
       # numbers so a green main stays green.
       - name: Coverage — daemon
         working-directory: packages/daemon
-        run: pnpm exec vitest run --coverage
+        # Coverage instrumentation makes the compact terminal fixtures much
+        # heavier. Run them serially so their lifecycle assertions measure the
+        # code under test instead of competing instrumented workers.
+        run: pnpm exec vitest run --coverage --maxWorkers=1 --testTimeout=60000
 
       - name: Summarize coverage for PR
         if: always()
