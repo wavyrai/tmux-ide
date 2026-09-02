@@ -183,6 +183,13 @@ describe("createDetachedSession", () => {
     mockExec.mockImplementation(() => "  %0\n");
     const id = createDetachedSession("proj", "/workspace");
     expect(id).toBe("%0");
+    expect(mockExec.mock.calls.map((call) => call[1])).toContainEqual([
+      "set-environment",
+      "-r",
+      "-t",
+      "=proj",
+      "NO_COLOR",
+    ]);
   });
 
   it("uses default dimensions when not specified", () => {
@@ -191,6 +198,9 @@ describe("createDetachedSession", () => {
     const args = mockExec.mock.calls[0][1];
     expect(args.includes("200")).toBeTruthy(); // default cols
     expect(args.includes("50")).toBeTruthy(); // default lines
+    expect(args.at(-1)).toBe(
+      "exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' \"${SHELL:-/bin/sh}\" -l",
+    );
   });
 
   it("passes custom dimensions", () => {
@@ -199,6 +209,9 @@ describe("createDetachedSession", () => {
     const args = mockExec.mock.calls[0][1];
     expect(args.includes("300")).toBeTruthy();
     expect(args.includes("80")).toBeTruthy();
+    expect(args.at(-1)).toBe(
+      "exec env -u NO_COLOR COLORTERM=truecolor COLORFGBG='15;0' \"${SHELL:-/bin/sh}\" -l",
+    );
   });
 });
 
@@ -469,6 +482,19 @@ describe("error classification", () => {
     expect(runTmuxBinary("/trusted/bin/tmux", ["-S", "/trusted/socket", "list-panes"])).toBe("ok");
     expect(mockExec.mock.calls[0][0]).toBe("/trusted/bin/tmux");
     expect(mockExec.mock.calls[0][1]).toEqual(["-S", "/trusted/socket", "list-panes"]);
+  });
+
+  it("sanitizes a hostile client environment before it can cold-start the server", () => {
+    mockExec.mockImplementation(() => "ok");
+    runTmux(["list-sessions"], {
+      env: { PATH: "/trusted/bin", TERM: "dumb", NO_COLOR: "1", COLORTERM: "disabled" },
+    });
+    expect(mockExec.mock.calls[0][2].env).toEqual({
+      PATH: "/trusted/bin",
+      TERM: "dumb",
+      COLORTERM: "truecolor",
+      COLORFGBG: "15;0",
+    });
   });
 
   it('classifies an exact show-environment "unknown variable" separately', () => {

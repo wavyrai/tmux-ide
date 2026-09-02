@@ -17,8 +17,13 @@ import {
 import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../../../../test-support/opentui-production-root-manifest.ts";
 
 const repoRoot = fileURLToPath(new URL("../../../../../../", import.meta.url));
+const APPLICATION_ROOT_OWNER_SOURCES = [
+  ...OPENTUI_PRODUCTION_ROOT_SOURCES,
+  "packages/daemon/src/tui/mirror/runtime/application-terminal-interaction-controller.ts",
+  "packages/daemon/src/tui/mirror/runtime/application-shell-view.tsx",
+] as const;
 const productionRootSource = () =>
-  OPENTUI_PRODUCTION_ROOT_SOURCES.map((path) => readFileSync(join(repoRoot, path), "utf8")).join(
+  APPLICATION_ROOT_OWNER_SOURCES.map((path) => readFileSync(join(repoRoot, path), "utf8")).join(
     "\n",
   );
 
@@ -224,15 +229,39 @@ describe("production application root controller", () => {
     ).toBe("consume");
   });
 
-  it("keeps active resize ownership before status and inactive starts after it in app.tsx", () => {
+  it("keeps resize preview local and commits through one semantic v2 callback", () => {
     const app = productionRootSource();
-    const active = app.indexOf(
-      'if (dragging?.kind === "sidebar" && routeSidebarResizePointer(e, true)) return;',
+    const controller = readFileSync(
+      join(
+        repoRoot,
+        "packages/daemon/src/tui/mirror/runtime/application-terminal-interaction-controller.ts",
+      ),
+      "utf8",
     );
-    const status = app.indexOf('applicationChromeHit?.kind === "status-strip"');
-    const start = app.indexOf("if (routeSidebarResizePointer(e, false)) return;");
-    expect(active).toBeGreaterThan(-1);
-    expect(active).toBeLessThan(status);
-    expect(status).toBeLessThan(start);
+    const root = readFileSync(
+      join(repoRoot, "packages/daemon/src/tui/mirror/runtime/application-root-v2.tsx"),
+      "utf8",
+    );
+    const resizeAction = readFileSync(
+      join(repoRoot, "packages/daemon/src/tui/mirror/runtime/resize-terminal-pane.ts"),
+      "utf8",
+    );
+    const preview = controller.indexOf("previewPaneResize(preview)");
+    const commit = controller.indexOf("resizePane(preview)");
+    const release = controller.indexOf("resizeTransaction.release()", commit);
+    const actionCall = controller.indexOf("resizeTerminalPane(");
+    const verb = resizeAction.indexOf('verb: "workspace.pane.resize"');
+    expect(preview).toBeGreaterThan(-1);
+    expect(commit).toBeGreaterThan(preview);
+    expect(release).toBeGreaterThan(commit);
+    expect(actionCall).toBeGreaterThan(-1);
+    expect(verb).toBeGreaterThan(-1);
+    expect(root).toContain("onResizePreview={recoverHostFocus(interaction.previewPaneResize)}");
+    expect(root).toContain("onResizePane={recoverHostFocus(interaction.resizePane)}");
+    expect(root).toContain(
+      "const resizeIngress = tuiPerfStream ? interaction.beginResizePointerIngress : undefined",
+    );
+    expect(root).toContain("onResizePointerIngress={recoverHostFocus.optional(resizeIngress)}");
+    expect(app).not.toContain("routeSidebarResizePointer");
   });
 });

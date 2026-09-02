@@ -110,7 +110,14 @@ async function registerReferenceProject() {
       authorization: `Bearer ${daemon.authToken}`,
       "content-type": "application/json",
     },
-    body: JSON.stringify({ dir: referenceProjectDir, name: target }),
+    body: JSON.stringify({
+      dir: referenceProjectDir,
+      name: target,
+      // The canonical daemon must see the fixture so this measures the real
+      // product path, but a benchmark crash must never bookmark it for the
+      // user. Volatile registrations are live-only daemon state.
+      persistence: "volatile",
+    }),
   });
   if (!response.ok)
     throw new Error(
@@ -142,13 +149,14 @@ async function launchReferenceWorkspace() {
   let lastApplicationShell = null;
   while (Date.now() < deadline) {
     const catalogResponse = await fetch(
-      `http://${daemon.bindHostname}:${daemon.port}/api/resources/workspace-catalog`,
+      `http://${daemon.bindHostname}:${daemon.port}/api/resources/workspace-catalog?version=2`,
       { headers: { authorization: `Bearer ${daemon.authToken}` } },
     );
     const catalog = await responseJson(catalogResponse);
     lastCatalog = { status: catalogResponse.status, body: catalog };
-    const published = catalog?.workspaces?.some(
-      ({ workspaceName, sessionName }) => workspaceName === target && sessionName === target,
+    const published = catalog?.intents?.some(
+      ({ workspaceName, sessionName, availability }) =>
+        workspaceName === target && sessionName === target && availability === "live",
     );
     if (published) {
       const panesResponse = await fetch(
@@ -307,10 +315,11 @@ async function measureStartup() {
       "44",
     ]);
     const marks = await waitForLifecycleMarks([
-      "module-loaded",
-      "renderer-created",
-      "first-frame",
+      "entry-start",
+      "root-import-end",
+      "renderer-create-end",
       "solid-mounted",
+      "first-frame",
       "first-terminal-frame",
     ]);
     rawSamples.push({
@@ -549,6 +558,8 @@ function measureMemory() {
     summary.heapRobustSlopeBytesPerSample <= budgets.memory.heapRobustSlopeBytesPerSample &&
     summary.rssGrowthBytes <= budgets.memory.rssGrowthCeilingBytes &&
     summary.heapGrowthBytes <= budgets.memory.heapGrowthCeilingBytes &&
+    Math.max(...rss) <= budgets.memory.rssAbsoluteCeilingBytes &&
+    Math.max(...heap) <= budgets.memory.heapAbsoluteCeilingBytes &&
     summary.maxQueueDepth <= budgets.memory.settledQueueDepth &&
     summary.maxRepresentationCacheBytes <= budgets.memory.representationCacheCeilingBytes &&
     summary.maxRawJournalBytes <= budgets.memory.rawJournalCeilingBytes;

@@ -6,7 +6,7 @@ import {
   type PaneVisualStateV1,
   type SemanticProductId,
 } from "@tmux-ide/contracts";
-import type { PaneFrameActionIntent } from "../../../ui/pane-frame/presenter.tsx";
+import type { PaneFrameActionIntent } from "@tmux-ide/presentation/pane-frame";
 import type { PaneInteractionPresenceRole } from "@tmux-ide/core";
 import {
   projectPaneChromeState,

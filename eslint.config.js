@@ -52,6 +52,7 @@ export default [
       "packages/contracts/src/**/*.ts",
       "packages/core/src/**/*.ts",
       "packages/daemon-client/src/**/*.ts",
+      "packages/presentation/src/**/*.{ts,tsx}",
       "packages/sdk/src/**/*.ts",
       "packages/daemon/src/**/*.ts",
       "packages/tmux-bridge/src/**/*.ts",
@@ -111,6 +112,7 @@ export default [
   // ===========================================================================
   // Zone boundaries (ARCHITECTURE.md "Import direction").
   //
+  //   contracts ← core ← daemon-client ← renderers
   //   contracts ← tmux-bridge ← daemon
   //
   // Arrows point in the allowed direction; A ← B means "B may import A".
@@ -192,12 +194,32 @@ export default [
         {
           patterns: [
             {
-              group: ["@tmux-ide/*", "!@tmux-ide/contracts"],
-              message: "daemon-client is renderer-neutral and may only import contracts",
+              group: ["@tmux-ide/*", "!@tmux-ide/contracts", "!@tmux-ide/core"],
+              message: "daemon-client is renderer-neutral and may only import contracts and core",
             },
             {
               group: ["**/packages/*/src/**", "!**/packages/daemon-client/src/**"],
               message: "daemon-client may not reach into another package implementation",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["packages/presentation/src/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@tmux-ide/*", "!@tmux-ide/contracts"],
+              message: "presentation is renderer-neutral and may only import @tmux-ide/contracts",
+            },
+            {
+              group: ["**/packages/*/src/**", "!**/packages/presentation/src/**"],
+              message: "presentation may not reach into another package implementation",
             },
           ],
         },

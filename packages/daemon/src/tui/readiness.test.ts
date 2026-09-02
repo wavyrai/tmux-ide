@@ -40,19 +40,23 @@ describe("TUI input readiness", () => {
     expect(existsSync(`${path}.42.tmp`)).toBe(false);
   });
 
-  it("publishes the app barrier after its root keyboard and paste owners mount", () => {
+  it("publishes the app barrier only after mounted owners return their truthful readiness gate", () => {
     const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
     const source = OPENTUI_PRODUCTION_ROOT_SOURCES.map((path) =>
       readFileSync(join(repoRoot, path), "utf8"),
     ).join("\n");
-    const keyboard = source.indexOf("useKeyboard((evt) =>");
-    const paste = source.indexOf("usePaste((e) =>", keyboard);
-    const inputBarrier = source.indexOf("resolveInputReady()", paste);
-    const ready = source.indexOf('publishTuiInputReady("app")', inputBarrier);
+    const keyboard = source.indexOf("useKeyboard((event) =>");
+    const paste = source.indexOf("usePaste((event) =>", keyboard);
+    const mounted = source.indexOf("onMount(() =>", paste);
+    const mountedRoot = source.indexOf("return { root, ready, close: postRender.close }", mounted);
+    const ready = source.indexOf('publishTuiInputReady("app")', mountedRoot);
 
     expect(keyboard).toBeGreaterThan(-1);
     expect(paste).toBeGreaterThan(keyboard);
-    expect(inputBarrier).toBeGreaterThan(paste);
-    expect(ready).toBeGreaterThan(inputBarrier);
+    expect(mounted).toBeGreaterThan(paste);
+    expect(mountedRoot).toBeGreaterThan(mounted);
+    expect(ready).toBeGreaterThan(mountedRoot);
+    expect(source).toContain("createApplicationInputReadiness(");
+    expect(source).toContain("inputReadiness.adopt(snapshot)");
   });
 });

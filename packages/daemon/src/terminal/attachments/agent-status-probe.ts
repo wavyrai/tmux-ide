@@ -14,9 +14,9 @@
  * a synchronous spawn on the daemon event loop, so scrape cost must never scale
  * with the number of authority-less panes per read.
  *
- *  - A fresh authority stamp skips scraping entirely, and a pane whose command
- *    resolves to no agent (or the `shell` catch-all) is classified "unknown"
- *    WITHOUT a capture round-trip.
+ *  - A fresh authority stamp skips screen scraping entirely. Wrapped agents
+ *    whose shallow command is version-shaped may pay one cached process-tree
+ *    identity lookup; subsequent authority reads reuse that identity.
  *  - Scrape verdicts and the shared `ps` process table are cached for
  *    {@link SCRAPE_CACHE_TTL_SECONDS}: one scrape serves every read inside the
  *    window, so a steady-state read costs a single `list-panes`.
@@ -29,7 +29,7 @@
 import { classifyInstant, parseAuthority, type InstantState } from "../../tui/detect/classify.ts";
 import type { AgentManifest } from "../../tui/detect/manifest.ts";
 import {
-  readProcessTable as defaultReadProcessTable,
+  readProcessTableAsync as defaultReadProcessTable,
   resolveAgentCommand,
   type ProcEntry,
 } from "../../tui/detect/process-tree.ts";
@@ -75,7 +75,10 @@ export interface AgentStatusProbeInput {
 }
 
 export interface AgentStatusProbe {
-  probe(input: AgentStatusProbeInput): ReadonlyMap<string, AgentStatusPaneFacts>;
+  probe(
+    input: AgentStatusProbeInput,
+    signal?: AbortSignal,
+  ): Promise<ReadonlyMap<string, AgentStatusPaneFacts>>;
 }
 
 /** Distinctive multi-char field/line delimiters — collision-resistant against option text. */
@@ -127,6 +130,13 @@ interface ScrapeCacheEntry {
   readonly scrapedAtSec: number;
 }
 
+interface AgentKindCacheEntry {
+  readonly command: string;
+  readonly pid: number;
+  readonly agentKind: string;
+  readonly observedAtSec: number;
+}
+
 const RUNTIME_PANE_ID = /^%(?:0|[1-9][0-9]*)$/u;
 
 function emptyToNull(value: string): string | null {
@@ -157,11 +167,15 @@ function parseAgentOptions(stdout: string): ReadonlyMap<string, RawPaneOptions> 
 
 export interface TmuxAgentStatusProbeDeps {
   /** Pinned tmux runner: returns stdout, or null when the session is gone/unavailable. */
-  readonly run: (argv: readonly string[]) => string | null;
+  readonly run: (argv: readonly string[], signal?: AbortSignal) => Promise<string | null>;
   /** Process-table reader for the scrape fallback (default: real `ps`). */
-  readonly readProcessTable?: () => ProcEntry[];
+  readonly readProcessTable?: (signal?: AbortSignal) => Promise<ProcEntry[]>;
   /** Pane screen capture for the scrape fallback (default: pinned `capture-pane`). */
-  readonly capture?: (runtimePaneId: string, lines: number) => string | null;
+  readonly capture?: (
+    runtimePaneId: string,
+    lines: number,
+    signal?: AbortSignal,
+  ) => Promise<string | null>;
   /** Manifest set for {@link resolveAgentCommand} (default: the loaded bundled+user set). */
   readonly manifests?: AgentManifest[];
   /** Scrape verdict / process-table reuse window (default {@link SCRAPE_CACHE_TTL_SECONDS}). */
@@ -183,25 +197,31 @@ export function createTmuxAgentStatusProbe(deps: TmuxAgentStatusProbeDeps): Agen
   const readProcessTable = deps.readProcessTable ?? defaultReadProcessTable;
   const capture =
     deps.capture ??
-    ((runtimePaneId: string, lines: number) => {
-      const result = deps.run([
-        "set-option",
-        "-p",
-        "-t",
-        runtimePaneId,
-        INTERNAL_READ_OPERATION_OPTION,
-        registerInternalReadOperation(runtimePaneId),
-        ";",
-        "capture-pane",
-        "-p",
-        "-J",
-        "-t",
-        runtimePaneId,
-        "-S",
-        `-${lines}`,
-      ]);
+    (async (runtimePaneId: string, lines: number, signal?: AbortSignal) => {
+      const result = await deps.run(
+        [
+          "set-option",
+          "-p",
+          "-t",
+          runtimePaneId,
+          INTERNAL_READ_OPERATION_OPTION,
+          registerInternalReadOperation(runtimePaneId),
+          ";",
+          "capture-pane",
+          "-p",
+          "-J",
+          "-t",
+          runtimePaneId,
+          "-S",
+          `-${lines}`,
+        ],
+        signal,
+      );
       if (result === null) {
-        deps.run(["set-option", "-pu", "-t", runtimePaneId, INTERNAL_READ_OPERATION_OPTION]);
+        await deps.run(
+          ["set-option", "-pu", "-t", runtimePaneId, INTERNAL_READ_OPERATION_OPTION],
+          signal,
+        );
       }
       return result;
     });
@@ -209,138 +229,246 @@ export function createTmuxAgentStatusProbe(deps: TmuxAgentStatusProbeDeps): Agen
   const captureBudget = deps.scrapeCaptureBudget ?? SCRAPE_CAPTURE_BUDGET;
 
   const verdictCache = new Map<string, ScrapeCacheEntry>();
+  const agentKindCache = new Map<string, AgentKindCacheEntry>();
   let tableCache: { readonly table: ProcEntry[]; readonly readAtSec: number } | null = null;
 
-  return {
-    probe(input): ReadonlyMap<string, AgentStatusPaneFacts> {
-      const facts = new Map<string, AgentStatusPaneFacts>();
-      if (input.panes.length === 0) return facts;
+  // Cache mutation is deliberately serialized. Concurrent application-shell
+  // reads still share ps/capture misses through the cache populated by the
+  // first probe, while an older capture can never complete after a newer
+  // authoritative observation and overwrite it.
+  let probeTail: Promise<void> = Promise.resolve();
 
-      const optionsStdout = deps.run([
-        "list-panes",
-        "-s",
-        "-t",
-        input.sessionId,
-        "-F",
-        AGENT_OPTIONS_FORMAT,
-      ]);
-      const options = optionsStdout === null ? new Map() : parseAgentOptions(optionsStdout);
+  const throwIfAborted = (signal?: AbortSignal): void => {
+    if (!signal?.aborted) return;
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new DOMException("Agent-status probe aborted", "AbortError");
+  };
 
-      // The `ps` read is shared across every scraped pane and across reads
-      // inside the TTL window — taken at most once per probe.
-      const table = (): ProcEntry[] => {
-        if (tableCache === null || input.nowSec - tableCache.readAtSec > ttlSeconds) {
-          tableCache = { table: readProcessTable(), readAtSec: input.nowSec };
-        }
-        return tableCache.table;
-      };
+  const probeExclusive = async (
+    input: AgentStatusProbeInput,
+    signal?: AbortSignal,
+  ): Promise<ReadonlyMap<string, AgentStatusPaneFacts>> => {
+    throwIfAborted(signal);
+    const facts = new Map<string, AgentStatusPaneFacts>();
+    if (input.panes.length === 0) return facts;
+    // A probe is one cache transaction. No pane verdict, authority deletion,
+    // or process-table refresh becomes visible until every pane has completed
+    // and the final abort fence passes.
+    const stagedVerdicts = new Map(verdictCache);
+    const stagedAgentKinds = new Map(agentKindCache);
+    let stagedTableCache = tableCache;
 
-      interface ScrapeCandidate {
-        readonly pane: AgentStatusProbePane;
-        readonly raw: RawPaneOptions | undefined;
-        /** Prior verdict under the SAME command, possibly TTL-expired. */
-        readonly priorEntry: ScrapeCacheEntry | null;
+    const optionsStdout = await deps.run(
+      ["list-panes", "-s", "-t", input.sessionId, "-F", AGENT_OPTIONS_FORMAT],
+      signal,
+    );
+    throwIfAborted(signal);
+    const options = optionsStdout === null ? new Map() : parseAgentOptions(optionsStdout);
+
+    // The `ps` read is shared across every scraped pane and across reads
+    // inside the TTL window — taken at most once per probe.
+    const table = async (forceRefresh = false): Promise<ProcEntry[]> => {
+      if (
+        forceRefresh ||
+        stagedTableCache === null ||
+        input.nowSec - stagedTableCache.readAtSec > ttlSeconds
+      ) {
+        const next = await readProcessTable(signal);
+        throwIfAborted(signal);
+        stagedTableCache = { table: next, readAtSec: input.nowSec };
       }
-      const candidates: ScrapeCandidate[] = [];
-      const emit = (
-        pane: AgentStatusProbePane,
-        raw: RawPaneOptions | undefined,
-        scrape: InstantState | null,
-        agentKind: string | null,
-      ): void => {
-        facts.set(pane.runtimePaneId, {
-          agentKind,
-          agentStateRaw: raw?.stateRaw ?? null,
-          agentStatusTextRaw: raw?.statusTextRaw ?? null,
-          agentDisplayNameRaw: raw?.displayNameRaw ?? null,
-          agentScrapeState: scrape,
-        });
-      };
+      return stagedTableCache.table;
+    };
 
-      for (const pane of input.panes) {
-        const raw = options.get(pane.runtimePaneId);
-        const authority = parseAuthority(raw?.stateRaw ?? undefined, input.nowSec);
-        if (authority !== null) {
-          // Fresh authority outranks scraping — no capture, scrape state is
-          // null. Drop any cached verdict so a later staleness fallback never
-          // resurfaces a reading from before this authoritative report.
-          verdictCache.delete(pane.runtimePaneId);
-          const direct = resolveAgentCommand(pane.currentCommand, raw?.pid ?? 0, [], {
-            ...(raw?.hint ? { hint: raw.hint } : {}),
-            ...(deps.manifests ? { manifests: deps.manifests } : {}),
-          }).manifest;
-          emit(pane, raw, null, direct && direct.id !== "shell" ? direct.id : null);
-          continue;
-        }
-        const cached = verdictCache.get(pane.runtimePaneId);
-        const priorEntry = cached && cached.command === pane.currentCommand ? cached : null;
-        if (priorEntry && input.nowSec - priorEntry.scrapedAtSec <= ttlSeconds) {
-          // Fresh verdict — one scrape serves every read in the window.
-          emit(pane, raw, priorEntry.verdict, priorEntry.agentKind);
-          continue;
-        }
-        candidates.push({ pane, raw, priorEntry });
-      }
+    interface ScrapeCandidate {
+      readonly pane: AgentStatusProbePane;
+      readonly raw: RawPaneOptions | undefined;
+      /** Prior verdict under the SAME command, possibly TTL-expired. */
+      readonly priorEntry: ScrapeCacheEntry | null;
+    }
+    const candidates: ScrapeCandidate[] = [];
+    const emit = (
+      pane: AgentStatusProbePane,
+      raw: RawPaneOptions | undefined,
+      scrape: InstantState | null,
+      agentKind: string | null,
+    ): void => {
+      facts.set(pane.runtimePaneId, {
+        agentKind,
+        agentStateRaw: raw?.stateRaw ?? null,
+        agentStatusTextRaw: raw?.statusTextRaw ?? null,
+        agentDisplayNameRaw: raw?.displayNameRaw ?? null,
+        agentScrapeState: scrape,
+      });
+    };
 
-      // Never-scraped panes first (they have no status at all yet), then the
-      // oldest verdicts — so bounded refresh rotates across successive reads.
-      candidates.sort(
-        (a, b) =>
-          (a.priorEntry?.scrapedAtSec ?? Number.NEGATIVE_INFINITY) -
-          (b.priorEntry?.scrapedAtSec ?? Number.NEGATIVE_INFINITY),
-      );
-
-      let capturesUsed = 0;
-      for (const { pane, raw, priorEntry } of candidates) {
-        // No fresh authority: resolve the real agent from the process tree, then
-        // scrape only when it is a recognized agent (not shell / no match).
-        const manifest = resolveAgentCommand(pane.currentCommand, raw?.pid ?? 0, table(), {
+    for (const pane of input.panes) {
+      const raw = options.get(pane.runtimePaneId);
+      const authority = parseAuthority(raw?.stateRaw ?? undefined, input.nowSec);
+      if (authority !== null) {
+        // Fresh authority outranks scraping — no capture, scrape state is
+        // null. Drop any cached verdict so a later staleness fallback never
+        // resurfaces a reading from before this authoritative report.
+        stagedVerdicts.delete(pane.runtimePaneId);
+        const direct = resolveAgentCommand(pane.currentCommand, raw?.pid ?? 0, [], {
           ...(raw?.hint ? { hint: raw.hint } : {}),
           ...(deps.manifests ? { manifests: deps.manifests } : {}),
         }).manifest;
-        if (!manifest || manifest.id === "shell") {
-          // Free verdict (no capture) — cache it so the pane stops being a
-          // candidate until the TTL lapses or its command changes.
-          verdictCache.set(pane.runtimePaneId, {
-            verdict: "unknown",
-            agentKind: null,
+        const cachedKind = stagedAgentKinds.get(pane.runtimePaneId);
+        const panePid = raw?.pid ?? 0;
+        let agentKind = direct && direct.id !== "shell" ? direct.id : null;
+        if (
+          agentKind === null &&
+          cachedKind !== undefined &&
+          cachedKind.command === pane.currentCommand &&
+          cachedKind.pid === panePid
+        ) {
+          agentKind = cachedKind.agentKind;
+        }
+        if (agentKind === null) {
+          const processIdentityChanged =
+            cachedKind !== undefined &&
+            (cachedKind.command !== pane.currentCommand || cachedKind.pid !== panePid);
+          if (processIdentityChanged) stagedAgentKinds.delete(pane.runtimePaneId);
+          const resolved = resolveAgentCommand(
+            pane.currentCommand,
+            panePid,
+            await table(processIdentityChanged),
+            {
+              ...(raw?.hint ? { hint: raw.hint } : {}),
+              ...(deps.manifests ? { manifests: deps.manifests } : {}),
+            },
+          ).manifest;
+          if (resolved && resolved.id !== "shell") agentKind = resolved.id;
+        }
+        if (agentKind !== null) {
+          stagedAgentKinds.set(pane.runtimePaneId, {
             command: pane.currentCommand,
-            scrapedAtSec: input.nowSec,
+            pid: panePid,
+            agentKind,
+            observedAtSec: input.nowSec,
           });
-          emit(pane, raw, "unknown", null);
-          continue;
         }
-        if (capturesUsed >= captureBudget) {
-          // Budget exhausted: reuse the pane's previous verdict when one exists
-          // (a few seconds stale beats flapping), otherwise report the honest
-          // "unknown". Nothing is cached, so the rotation reaches it next read.
-          emit(pane, raw, priorEntry?.verdict ?? "unknown", manifest.id);
-          continue;
-        }
-        capturesUsed += 1;
-        const captured = capture(pane.runtimePaneId, SCRAPE_LINES);
-        const snapshot = parseSnapshot(captured ?? "", { lines: SCRAPE_LINES });
-        const verdict = classifyInstant({ ...snapshot, title: pane.title }, manifest);
-        verdictCache.set(pane.runtimePaneId, {
-          verdict,
-          agentKind: manifest.id,
+        emit(pane, raw, null, agentKind);
+        continue;
+      }
+      const cached = stagedVerdicts.get(pane.runtimePaneId);
+      const priorEntry = cached && cached.command === pane.currentCommand ? cached : null;
+      if (priorEntry && input.nowSec - priorEntry.scrapedAtSec <= ttlSeconds) {
+        // Fresh verdict — one scrape serves every read in the window.
+        emit(pane, raw, priorEntry.verdict, priorEntry.agentKind);
+        continue;
+      }
+      candidates.push({ pane, raw, priorEntry });
+    }
+
+    // Never-scraped panes first (they have no status at all yet), then the
+    // oldest verdicts — so bounded refresh rotates across successive reads.
+    candidates.sort(
+      (a, b) =>
+        (a.priorEntry?.scrapedAtSec ?? Number.NEGATIVE_INFINITY) -
+        (b.priorEntry?.scrapedAtSec ?? Number.NEGATIVE_INFINITY),
+    );
+
+    let capturesUsed = 0;
+    for (const { pane, raw, priorEntry } of candidates) {
+      // No fresh authority: resolve the real agent from the process tree, then
+      // scrape only when it is a recognized agent (not shell / no match).
+      const manifest = resolveAgentCommand(pane.currentCommand, raw?.pid ?? 0, await table(), {
+        ...(raw?.hint ? { hint: raw.hint } : {}),
+        ...(deps.manifests ? { manifests: deps.manifests } : {}),
+      }).manifest;
+      if (!manifest || manifest.id === "shell") {
+        // Free verdict (no capture) — cache it so the pane stops being a
+        // candidate until the TTL lapses or its command changes.
+        throwIfAborted(signal);
+        stagedVerdicts.set(pane.runtimePaneId, {
+          verdict: "unknown",
+          agentKind: null,
           command: pane.currentCommand,
           scrapedAtSec: input.nowSec,
         });
-        emit(pane, raw, verdict, manifest.id);
+        emit(pane, raw, "unknown", null);
+        continue;
       }
+      stagedAgentKinds.set(pane.runtimePaneId, {
+        command: pane.currentCommand,
+        pid: raw?.pid ?? 0,
+        agentKind: manifest.id,
+        observedAtSec: input.nowSec,
+      });
+      if (capturesUsed >= captureBudget) {
+        // Budget exhausted: reuse the pane's previous verdict when one exists
+        // (a few seconds stale beats flapping), otherwise report the honest
+        // "unknown". Nothing is cached, so the rotation reaches it next read.
+        emit(pane, raw, priorEntry?.verdict ?? "unknown", manifest.id);
+        continue;
+      }
+      capturesUsed += 1;
+      const captured = await capture(pane.runtimePaneId, SCRAPE_LINES, signal);
+      throwIfAborted(signal);
+      const snapshot = parseSnapshot(captured ?? "", { lines: SCRAPE_LINES });
+      const verdict = classifyInstant({ ...snapshot, title: pane.title }, manifest);
+      stagedVerdicts.set(pane.runtimePaneId, {
+        verdict,
+        agentKind: manifest.id,
+        command: pane.currentCommand,
+        scrapedAtSec: input.nowSec,
+      });
+      emit(pane, raw, verdict, manifest.id);
+    }
 
-      // Bound the cache: pane ids are server-unique and never re-probed after a
-      // pane dies, so evict the oldest verdicts past the ceiling.
-      if (verdictCache.size > SCRAPE_CACHE_MAX_ENTRIES) {
-        const byAge = [...verdictCache.entries()].sort(
-          (a, b) => a[1].scrapedAtSec - b[1].scrapedAtSec,
-        );
-        for (const [paneId] of byAge.slice(0, verdictCache.size - SCRAPE_CACHE_MAX_ENTRIES)) {
-          verdictCache.delete(paneId);
-        }
+    // Bound the cache: pane ids are server-unique and never re-probed after a
+    // pane dies, so evict the oldest verdicts past the ceiling.
+    if (stagedVerdicts.size > SCRAPE_CACHE_MAX_ENTRIES) {
+      const byAge = [...stagedVerdicts.entries()].sort(
+        (a, b) => a[1].scrapedAtSec - b[1].scrapedAtSec,
+      );
+      for (const [paneId] of byAge.slice(0, stagedVerdicts.size - SCRAPE_CACHE_MAX_ENTRIES)) {
+        stagedVerdicts.delete(paneId);
       }
-      return facts;
+    }
+    if (stagedAgentKinds.size > SCRAPE_CACHE_MAX_ENTRIES) {
+      const byAge = [...stagedAgentKinds.entries()].sort(
+        (a, b) => a[1].observedAtSec - b[1].observedAtSec,
+      );
+      for (const [paneId] of byAge.slice(0, stagedAgentKinds.size - SCRAPE_CACHE_MAX_ENTRIES)) {
+        stagedAgentKinds.delete(paneId);
+      }
+    }
+    throwIfAborted(signal);
+    verdictCache.clear();
+    for (const [paneId, verdict] of stagedVerdicts) verdictCache.set(paneId, verdict);
+    agentKindCache.clear();
+    for (const [paneId, kind] of stagedAgentKinds) agentKindCache.set(paneId, kind);
+    tableCache = stagedTableCache;
+    return facts;
+  };
+
+  return {
+    probe(input, signal): Promise<ReadonlyMap<string, AgentStatusPaneFacts>> {
+      const result = probeTail.then(() => probeExclusive(input, signal));
+      probeTail = result.then(
+        () => undefined,
+        () => undefined,
+      );
+      if (!signal) return result;
+      if (signal.aborted) return Promise.reject(signal.reason);
+      return new Promise((resolve, reject) => {
+        const aborted = () => reject(signal.reason);
+        signal.addEventListener("abort", aborted, { once: true });
+        void result.then(
+          (value) => {
+            signal.removeEventListener("abort", aborted);
+            resolve(value);
+          },
+          (error: unknown) => {
+            signal.removeEventListener("abort", aborted);
+            reject(error);
+          },
+        );
+      });
     },
   };
 }

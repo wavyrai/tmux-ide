@@ -112,6 +112,8 @@ export const WorkspacePaneCreateInvocationSchemaZ = z
   .object({
     version: z.literal(COMMAND_PROTOCOL_VERSION),
     id: z.literal(WORKSPACE_PANE_CREATE_COMMAND_ID),
+    /** Renderer correlation only; daemon authority remains host-issued. */
+    operationId: z.uuid().optional(),
     source: CommandSourceSchemaZ,
     args: WorkspacePaneCreateArgumentsSchemaZ,
   })
@@ -207,11 +209,13 @@ export const WORKSPACE_PANE_CREATE_COMMAND_DESCRIPTOR: CommandDescriptor = deepF
 export function workspacePaneCreateInvocation(
   args: WorkspacePaneCreateArguments,
   source: CommandSource,
+  operationId?: string,
 ): WorkspacePaneCreateInvocation {
   return deepFreeze(
     WorkspacePaneCreateInvocationSchemaZ.parse({
       version: COMMAND_PROTOCOL_VERSION,
       id: WORKSPACE_PANE_CREATE_COMMAND_ID,
+      ...(operationId === undefined ? {} : { operationId }),
       source,
       args,
     }),

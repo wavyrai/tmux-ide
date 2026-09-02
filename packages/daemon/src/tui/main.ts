@@ -24,6 +24,12 @@ import parserWorkerPath from "tmux-ide:opentui-parser-worker" with { type: "file
 import { existsSync } from "node:fs";
 
 const TREE_SITTER_SMOKE_SURFACE = "__tree-sitter-smoke";
+const RELEASE_PROVENANCE_SURFACE = "__release-provenance";
+
+declare const TMUX_IDE_BUILD_VERSION: string;
+declare const TMUX_IDE_BUILD_COMMIT: string;
+declare const TMUX_IDE_BUILD_PLATFORM: string;
+declare const TMUX_IDE_BUILD_SOURCE_STATE: string;
 
 const SURFACES = [
   "team",
@@ -56,6 +62,18 @@ async function main(): Promise<void> {
   // opt-in profiler turns this into phase timings without IO on normal runs.
   process.env.TMUX_IDE_TUI_LAUNCH_EPOCH_MS ??= String(Date.now());
   const surface = process.argv[2];
+
+  if (surface === RELEASE_PROVENANCE_SURFACE) {
+    process.stdout.write(
+      `${JSON.stringify({
+        version: TMUX_IDE_BUILD_VERSION,
+        commit: TMUX_IDE_BUILD_COMMIT,
+        platform: TMUX_IDE_BUILD_PLATFORM,
+        sourceState: TMUX_IDE_BUILD_SOURCE_STATE,
+      })}\n`,
+    );
+    return;
+  }
 
   // Private release/packaging gate. This exercises the same OpenTUI singleton
   // that Markdown uses, including Worker startup and web-tree-sitter wasm, but

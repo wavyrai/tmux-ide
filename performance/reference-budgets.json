@@ -13,14 +13,48 @@
     "minimumSamples": 30,
     "clockRule": "input and consumed paint share one client performance-now clock"
   },
+  "coherentTerminalFrame": {
+    "webTrackedTargetP95Ms": 3000,
+    "openTuiTrackedTargetP95Ms": 3000,
+    "hardPortabilityCeilingMs": 5000,
+    "minimumWarmSamples": 5,
+    "requiredObserver": "ProductTestRig live terminal frame"
+  },
+  "resizeResponsiveness": {
+    "p95Ms": 250,
+    "maximumMs": 500,
+    "minimumSamples": 20,
+    "boundary": "test-drive command issued through observed host geometry"
+  },
+  "dragResponsiveness": {
+    "p95Ms": 100,
+    "maximumMs": 250,
+    "minimumSamples": 3,
+    "boundary": "pointer input and preview phase share one browser performance-now clock"
+  },
+  "visualDeterminism": {
+    "algorithm": "sha256",
+    "minimumPairs": 3,
+    "boundary": "two idle captures of the same mounted OpenTUI document"
+  },
   "memory": {
     "minimumSamples": 16,
     "rssRobustSlopeBytesPerSample": 262144,
     "heapRobustSlopeBytesPerSample": 131072,
     "rssGrowthCeilingBytes": 67108864,
     "heapGrowthCeilingBytes": 33554432,
+    "rssAbsoluteCeilingBytes": 1073741824,
+    "heapAbsoluteCeilingBytes": 536870912,
     "representationCacheCeilingBytes": 16777216,
     "rawJournalCeilingBytes": 4194304,
     "settledQueueDepth": 0
+  },
+  "eventLoop": {
+    "currentEndpointCeilingMicros": 33000,
+    "generationStickyPeakCeilingMicros": 100000,
+    "workloadP99CeilingMs": 33
+  },
+  "cursorPresentation": {
+    "p99CeilingMicros": 33000
   }
 }

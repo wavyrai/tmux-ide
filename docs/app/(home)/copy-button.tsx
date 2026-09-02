@@ -2,6 +2,26 @@
 
 import { useState, useCallback } from "react";
 
+type CopyStatus = "idle" | "copied" | "error";
+
+function fallbackCopy(text: string): boolean {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+
+  try {
+    textarea.select();
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
 export function CopyButton({
   text,
   className,
@@ -11,27 +31,24 @@ export function CopyButton({
   className?: string;
   children: React.ReactNode;
 }) {
-  const [copied, setCopied] = useState(false);
+  const [status, setStatus] = useState<CopyStatus>("idle");
 
-  const copy = useCallback(() => {
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      });
-    } else {
-      // Fallback for non-HTTPS (e.g. localhost dev server)
-      const textarea = document.createElement("textarea");
-      textarea.value = text;
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand("copy");
-      document.body.removeChild(textarea);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+  const copy = useCallback(async () => {
+    let copied = false;
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        copied = true;
+      } else {
+        copied = fallbackCopy(text);
+      }
+    } catch {
+      copied = fallbackCopy(text);
     }
+
+    setStatus(copied ? "copied" : "error");
+    setTimeout(() => setStatus("idle"), copied ? 2000 : 4000);
   }, [text]);
 
   return (
@@ -39,11 +56,12 @@ export function CopyButton({
       type="button"
       onClick={copy}
       className={className}
-      aria-label={copied ? "Copied!" : "Copy to clipboard"}
+      aria-label={status === "copied" ? "Copied to clipboard" : "Copy install command"}
     >
-      {copied ? (
-        <span className="inline-flex items-center gap-2">
+      {status === "copied" ? (
+        <span className="marketing-feedback-enter inline-flex items-center gap-2">
           <svg
+            aria-hidden="true"
             width="16"
             height="16"
             viewBox="0 0 24 24"
@@ -53,13 +71,20 @@ export function CopyButton({
             strokeLinecap="round"
             strokeLinejoin="round"
           >
-            <polyline points="20 6 9 17 4 12" />
+            <polyline className="copy-check-path" points="20 6 9 17 4 12" />
           </svg>
           Copied!
         </span>
       ) : (
         children
       )}
+      <span className="sr-only" aria-live="polite" aria-atomic="true">
+        {status === "copied"
+          ? "Install command copied to clipboard."
+          : status === "error"
+            ? "Could not copy the install command. Select the command and copy it manually."
+            : ""}
+      </span>
     </button>
   );
 }

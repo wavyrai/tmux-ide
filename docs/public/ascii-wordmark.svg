@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title" viewBox="0 0 630 126">
+  <title id="title">tmux-ide</title>
+  <style>
+    text { fill: #171717; font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size: 13px; white-space: pre; }
+  </style>
+  <text x="0" y="14">   ░██                                             ░██       ░██</text>
+  <text x="0" y="32">   ░██                                                       ░██</text>
+  <text x="0" y="50">░████████ ░█████████████  ░██    ░██ ░██    ░██    ░██ ░████████  ░███████</text>
+  <text x="0" y="68">   ░██    ░██   ░██   ░██ ░██    ░██  ░██  ░██     ░██░██    ░██ ░██    ░██</text>
+  <text x="0" y="86">   ░██    ░██   ░██   ░██ ░██    ░██   ░█████      ░██░██    ░██ ░█████████</text>
+  <text x="0" y="104">   ░██    ░██   ░██   ░██ ░██   ░███  ░██  ░██     ░██░██   ░███ ░██</text>
+  <text x="0" y="122">    ░████ ░██   ░██   ░██  ░█████░██ ░██    ░██    ░██ ░█████░██  ░███████</text>
+</svg>

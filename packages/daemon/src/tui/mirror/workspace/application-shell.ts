@@ -1,16 +1,21 @@
 import type { ApplicationShellProjectionV1 } from "@tmux-ide/contracts";
-import type { HostedPanelView } from "../panel-host.ts";
 import {
   shellChromeLayout,
   shellNavigationPresentation,
   shellSidebarHint,
   shellSurfaceTabs,
   type ShellChromeLayout,
+  type ShellChromeView,
   type ShellSidebarHint,
   type ShellTabPresentation,
 } from "../shell-chrome.ts";
-import type { Rect } from "../recipes.ts";
-import { workspaceIcon } from "./icons.ts";
+
+interface ShellContentRect {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
 
 export interface ApplicationShellInput {
   width: number;
@@ -23,9 +28,9 @@ export interface ApplicationShellInput {
 
 export interface ApplicationShellProjection {
   layout: ShellChromeLayout;
-  content: Rect;
+  content: ShellContentRect;
   semantic: ApplicationShellProjectionV1;
-  views: readonly HostedPanelView[];
+  views: readonly ShellChromeView[];
   tabs: readonly ShellTabPresentation[];
   navigation: ReturnType<typeof shellNavigationPresentation>;
   sidebarHint: ShellSidebarHint;
@@ -58,13 +63,10 @@ export function projectApplicationShell(input: ApplicationShellInput): Applicati
   const navigationFocused = input.shell.focus.zone === "primary-navigation";
   const navigation = shellNavigationPresentation(layout.variant, navigationFocused);
   const contentHeight = Math.max(0, layout.main.height - layout.status.height);
-  const views: HostedPanelView[] = input.shell.primaryNavigation.items.map((surface) => ({
+  const views: ShellChromeView[] = input.shell.primaryNavigation.items.map((surface) => ({
     id: surface.id,
     title: surface.label,
-    panel: surface.id as "home" | "terminals",
-    layout: null,
-    glyph: workspaceIcon(surface.icon),
-    order: surface.order,
+    glyph: surface.icon === "home" ? "⌂" : surface.icon === "terminals" ? "❯" : "•",
     shortcut: {
       key: surface.shortcut.toLowerCase() as `f${number}`,
       label: surface.shortcut as `F${number}`,

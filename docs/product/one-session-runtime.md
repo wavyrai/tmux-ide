@@ -1,6 +1,7 @@
 # ADR: one session runtime, many thin clients
 
-Status: accepted for m56 migration (2026-08-11)
+Status: current daemon authority; client consolidation remains in progress
+(updated for M59 on 2026-08-14)
 
 ## Decision
 
@@ -46,14 +47,41 @@ to an exact m56.4 deletion target. A separate assertion freezes direct
 mislabelled as control ownership. Both migrations retain the current OpenTUI
 framebuffer and input lifecycle.
 
-## Migration
+## Current implementation status
 
-1. m56.1 composes the existing daemon authorities behind one runtime lifecycle.
-2. m56.2 adds bounded seed/patch payloads and gap recovery to this type seam.
-3. A test harness may compare daemon replica fixtures against legacy TUI mirror
-   fixtures during cutover. This is not a production flag or client API.
-4. m56.4 switches OpenTUI to the daemon adapter and deletes its direct control
-   lane. Web then consumes the same runtime truth.
+The daemon-owned `SessionRuntime`, bounded seed/patch delivery, semantic intent
+contracts, authority leases, and generation fencing are implemented. M59.1
+landed one renderer-neutral `WorkspaceClient` for lifecycle and semantic truth.
+M59.2 landed a separate, renderer-neutral terminal fast lane over that client's
+pane subscriptions:
+
+```mermaid
+flowchart LR
+  daemon["daemon SessionRuntime"] --> semantic["WorkspaceClient semantic scopes"]
+  daemon --> terminal["generation-bound terminal subscriptions"]
+  semantic --> shell["small renderer shell"]
+  terminal --> lane["TerminalFastLane"]
+  lane --> paneA["pane A retained surface"]
+  lane --> paneB["pane B retained surface"]
+  input["opaque input bytes"] --> lane
+  resize["final viewport"] --> lane
+  lane --> authority["injected daemon authority port"]
+```
+
+The terminal lane uses the core `applyTerminalReplicaUpdate` reducer; it does
+not define another protocol or decode terminal cells. One pane update wakes
+only that pane. Input is one bounded FIFO of opaque bytes. Resize transport is
+first-plus-latest; renderer-local drag preview never enters shared truth. A gap
+or conflict requests one coalesced seed repair for that pane/generation.
+
+OpenTUI and Web still consume their older receiver/composition adapters in
+production. The OpenTUI viewport-fit path now reuses the shared first-plus-
+latest coordinator, but its direct pane-stream composition,
+`SemanticPaneReplica`, authority-input queue, and `PaneScopedTerminalOwner`
+remain the M59.3 cutover/deletion seam. Web's `pane-stream-transport` receiver,
+pane queue, and write/resize controls remain the M59.5 seam. Until those cuts,
+M59 treats m56 as component-landed, not product-qualified. There is no second
+runtime and no compatibility authority.
 
 ## Non-goals
 

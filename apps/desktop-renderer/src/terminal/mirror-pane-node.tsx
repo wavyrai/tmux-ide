@@ -1,7 +1,7 @@
 import { Match, Show, Switch, createEffect, createSignal, onCleanup, onMount } from "solid-js";
 
 import type { DesktopConnectionHealth } from "../runtime/connection-health.ts";
-import type { MirrorPaneSink, MirrorPaneNodeState } from "./pane-mirror-controller.ts";
+import type { MirrorPaneSink, MirrorPaneNodeState } from "./workspace-pane-compositor.ts";
 import type { PaneMirrorSeedBatch } from "./pane-stream-transport.ts";
 import type {
   MirrorTerminalRenderer,

@@ -2,6 +2,7 @@ import type {
   PaneMirrorEvent,
   PaneStreamConnectResult,
   PaneStreamLayoutEvent,
+  PaneStreamLayoutSnapshotEvent,
   PaneStreamRequest,
   PaneStreamSessionListeners,
   PaneStreamTransport,
@@ -12,6 +13,7 @@ import type {
   MirrorTerminalRendererFactory,
 } from "./mirror-xterm-renderer.ts";
 import type { WidgetCellRow } from "@tmux-ide/contracts";
+import type { SessionRuntimeAuthoritySnapshot } from "@tmux-ide/contracts";
 import type { GridOverlayBox } from "../experience/grid-overlay.ts";
 
 /**
@@ -25,8 +27,12 @@ export interface ScriptedPaneStreamSession {
   readonly request: PaneStreamRequest;
   readonly emit: (pane: string, event: PaneMirrorEvent) => void | Promise<void>;
   readonly layout: (event: PaneStreamLayoutEvent) => void;
+  readonly layoutSnapshot: (event: PaneStreamLayoutSnapshotEvent) => void;
   readonly end: (error: PaneStreamTransportError | null) => void;
+  readonly authority: (snapshot: SessionRuntimeAuthoritySnapshot) => void;
   readonly dispose: () => void;
+  readonly presence: string[];
+  readonly activity: string[];
   disposed: boolean;
 }
 
@@ -47,14 +53,25 @@ export function createScriptedPaneStream(): ScriptedPaneStream {
         request,
         emit: (pane, event) => listeners.onPaneEvent(pane, event),
         layout: (event) => listeners.onLayout?.(event),
+        layoutSnapshot: (event) => listeners.onLayoutSnapshot?.(event),
         end: (error) => listeners.onEnd(error),
+        authority: (snapshot) => listeners.onAuthoritySnapshot?.(snapshot),
         dispose: () => {
           session.disposed = true;
         },
+        presence: [],
+        activity: [],
         disposed: false,
       };
       sessions.push(session);
-      return Promise.resolve({ status: "connected", session: { dispose: session.dispose } });
+      return Promise.resolve({
+        status: "connected",
+        session: {
+          dispose: session.dispose,
+          updatePresence: (state) => session.presence.push(state),
+          noteActivity: (activity) => session.activity.push(activity),
+        },
+      });
     },
   };
   return {

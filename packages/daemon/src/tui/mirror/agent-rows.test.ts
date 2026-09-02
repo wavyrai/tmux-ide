@@ -5,6 +5,8 @@ import {
   agentRowLabel,
   agentsHeaderLabel,
   agentAgeLabel,
+  reconcileClosedAgentPaneIds,
+  visibleAgentRows,
   sidebarHit,
   AGENTS_EMPTY_LINE,
   type AgentRowInput,
@@ -65,6 +67,22 @@ describe("agentDisplayKind", () => {
   it("prefers a stamped display name over the detected kind", () => {
     expect(agentDisplayKind(mk({ displayName: "reviewer" }))).toBe("reviewer");
     expect(agentDisplayKind(mk({}))).toBe("claude");
+  });
+});
+
+describe("visibleAgentRows", () => {
+  it("removes an acknowledged closed pane from a stale fleet snapshot", () => {
+    const rows = [mk({ paneId: "%1" }), mk({ paneId: "%2" })];
+    expect(visibleAgentRows(rows, new Set(["%1"])).map((row) => row.paneId)).toEqual(["%2"]);
+    expect(rows).toHaveLength(2);
+  });
+
+  it("retires a tombstone after authority no longer reports the closed pane", () => {
+    const closed = new Set(["%1", "%2"]);
+    expect([...reconcileClosedAgentPaneIds(closed, [mk({ paneId: "%2" })])]).toEqual(["%2"]);
+    expect(reconcileClosedAgentPaneIds(closed, [mk({ paneId: "%1" }), mk({ paneId: "%2" })])).toBe(
+      closed,
+    );
   });
 });
 

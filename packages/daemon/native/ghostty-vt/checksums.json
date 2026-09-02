@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "ghostty": {
+    "repository": "https://github.com/ghostty-org/ghostty.git",
+    "commit": "48ccec182a932c2ec04c344d45a5fc553861cb13",
+    "archive": "https://github.com/ghostty-org/ghostty/archive/48ccec182a932c2ec04c344d45a5fc553861cb13.tar.gz",
+    "sha256": "7d794072fd52696f0d89ab346da230018ec97f75c77b056c70b20294986f35ec"
+  },
+  "zig": {
+    "version": "0.15.2",
+    "archives": {
+      "darwin-arm64": {
+        "url": "https://ziglang.org/download/0.15.2/zig-aarch64-macos-0.15.2.tar.xz",
+        "sha256": "3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b"
+      },
+      "darwin-x64": {
+        "url": "https://ziglang.org/download/0.15.2/zig-x86_64-macos-0.15.2.tar.xz",
+        "sha256": "375b6909fc1495d16fc2c7db9538f707456bfc3373b14ee83fdd3e22b3d43f7f"
+      },
+      "linux-arm64": {
+        "url": "https://ziglang.org/download/0.15.2/zig-aarch64-linux-0.15.2.tar.xz",
+        "sha256": "958ed7d1e00d0ea76590d27666efbf7a932281b3d7ba0c6b01b0ff26498f667f"
+      },
+      "linux-x64": {
+        "url": "https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz",
+        "sha256": "02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239"
+      }
+    }
+  },
+  "build": {
+    "optimization": "ReleaseFast",
+    "simd": false,
+    "strip": true,
+    "postLinkStrip": true,
+    "libVersionString": "0.1.0",
+    "nodeApi": 9,
+    "addonAbi": "ghostty-vt-48ccec182a93+tmuxide.cursor-history-dirty.v3+napi9",
+    "addonSourceSha256": "b52c636e142775ebc44b3e16ac529859c8b7153f9e21ec79b874122f96ee0c8c",
+    "zigExecutableSha256": {
+      "darwin-arm64": "c65cd34917923f575448cc0603dd7c2326da0af0e5c323043d090662dcdf351c",
+      "darwin-x64": "f76ad95c3f2ba6c8fd2ae0337bfb0fedd27e1223183597cfa0ddc517db1d5b20",
+      "linux-arm64": "931b8e9a9327dac87bc439067f07604219510fa541133ff6e542c6243968cc86",
+      "linux-x64": "2858dc89dbbfdd08cceda1b841e7fd0a793a1a67b49f150bc3d0d1de44ed7f51"
+    },
+    "node2419HeadersSha256": {
+      "node_api.h": "2d4560831e525b47b060ec8a0864ab73993df9e20215ce9f0fe7b24cd31af32a",
+      "node_api_types.h": "a25356630d3058f0a0c8937d9f297e9471e037fda58c2696d8a505c2bd99cb00",
+      "js_native_api.h": "8808ef8899a1691411928ef5dd7dae0537aedc93d3a34e223b2d89692e79c788",
+      "js_native_api_types.h": "4f19cb90d240765cc0961d92a1ee20f65fdc50db7de1ab0a5cb6bc227224e1a0"
+    },
+    "linuxArm64HostToolsSha256": {
+      "gcc12": "dc53dbc5a583d03ae8ed6272ca9afc0f58873f9f9b86dd7d448b17fb3f88a8d0",
+      "binutilsStrip240": "09ea31b5f54325e60310f43ee17fa532b4f816a177a13f4b59f72767d26932bf"
+    },
+    "patchedSourceManifest": {
+      "path": ".tmux-ide-source.sha256",
+      "sha256": "e6384d48450768b319b930b3083272cb0bf7bf36bb3028713fe9b35a021a2c48",
+      "entries": 5706
+    },
+    "dependencyManifest": {
+      "path": "zig-global-cache/.tmux-ide-dependencies.sha256",
+      "sha256": "f166b0d0b201e01fa7d1bab76c21296004938c0b06c652b16f9def2f2db78b58",
+      "entries": 19881
+    },
+    "atomicOutputs": true,
+    "linuxProofImages": {
+      "node20": "node:20.20.2-bookworm@sha256:8f693eaa7e0a8e71560c9a82b55fd54c2ae920a2ba5d2cde28bac7d1c01c9ba5",
+      "node22": "node:22.23.1-bookworm@sha256:5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37",
+      "node24": "node:24.19.0-bookworm@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584"
+    },
+    "linuxProofImage": "node:24.19.0-bookworm@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584"
+  },
+  "patches": {
+    "patchSetSha256": "6468c232df41867773d217459d35404d3c716d6d0560b6be1226b3a46e3f481a",
+    "patches/0001-add-absolute-viewport-cursor-api.patch": {
+      "sha256": "878ca0245dc6c35791eeb06c599d01808b680798c6510ffc22bf76bb0bbba8d6",
+      "upstreamStatus": "not-submitted",
+      "purpose": "Set the active-screen absolute viewport cursor without VT injection; clear pending-wrap while preserving DECOM, margins, and saved cursor state.",
+      "upstreaming": "Submit as a narrowly scoped active-screen cursor API; replace the patch when an equivalent upstream API is pinned."
+    },
+    "patches/0002-add-logical-history-generation.patch": {
+      "sha256": "2abc14c6f0522892352490b78195862694c5d375211417971eb0430054576be0",
+      "upstreamStatus": "not-submitted",
+      "purpose": "Expose monotonic history generation plus exact logical append and trim counters without rescanning scrollback.",
+      "upstreaming": "Submit additive history-generation telemetry; remove the patch when a reliable upstream delta API is pinned."
+    },
+    "patches/0003-add-atomic-dirty-ack.patch": {
+      "sha256": "141771357a3cc07c17c696d0d94daad0f0c2e2a0caf6c47e54bb3baacf847592",
+      "upstreamStatus": "not-submitted",
+      "purpose": "Acknowledge global and per-row render dirty state in one infallible operation after projection construction succeeds.",
+      "upstreaming": "Submit an atomic render-dirty acknowledgement API; remove the patch when equivalent upstream semantics are pinned."
+    }
+  },
+  "postPatchFiles": {
+    "include/ghostty/vt/terminal.h": "39a68061db60a4673d64dce5052d2c2c8d9492b74f583c341886406e91f05335",
+    "include/ghostty/vt/render.h": "9c4d7b1ce20c8dbaa03724d16644880398c1a14e83932ac6d6570a5bf3623573",
+    "src/terminal/Screen.zig": "fdb5a074a58c58ea58cf9028fbc0a2d9a068628bdda6ba577664b6e5701370b7",
+    "src/terminal/c/terminal.zig": "b030719adcbebdc62ac33126a916930bc052a3f2d1435abc3dcbb04e5eb65687",
+    "src/terminal/c/main.zig": "cf914cd8af25156390420ec1fd91109e2f2b8ba8010d59a7e5d46a82a413adb4",
+    "src/terminal/c/render.zig": "f4a0decf3ff831a8fa21749ed4527a45a21bda60d5bcaad10cada1a244b8f685",
+    "src/lib_vt.zig": "6a579bb42851978fb1a4f27f216272191c95b3b7267436b601e79669c07aa703"
+  },
+  "proofArtifacts": {
+    "linux-arm64": {
+      "addonSha256": "31c34b577c006cb03d04cd970aca99dff1ee42122e0230704f50406b34e59794",
+      "libghosttySharedSha256": "0ae1a768d0dbe23b25c0b83c3951f3a1b8bdb5b148f84b02fd068c4cd74a4e85",
+      "staticLibghostty": false
+    },
+    "darwin-arm64": {
+      "addonSha256": "a411e0a98ab45b340a8b6cfd1c45af1c03523671bb1e17dd945ca9d35484dba9",
+      "byteReproducible": false
+    }
+  },
+  "headers": {
+    "include/ghostty/vt/terminal.h": "69b05a66ce08e4da4d49d50ea217f1e75b5684e7d4bf38a944b2e7b16ec2edf9",
+    "include/ghostty/vt/render.h": "9f29a211d20ebdcbbaff3a6de24ea1aedafb33fde62c1b7bab79fd0989c6c17b",
+    "include/ghostty/vt/screen.h": "9efc58ed188d76864b45dc1e89a994055030ec6eafd10490d54f2e7dbe7954ac",
+    "include/ghostty/vt/style.h": "ebb50a1821952dd954dd51d5897f9881c6927abd73b909e2e2f1deb3a52f31a9",
+    "include/ghostty/vt/grid_ref.h": "65acfcf1b9ba255323b96412f0fd9575595a11d8343be7cf1cb73e9e372be396",
+    "include/ghostty/vt/kitty_graphics.h": "4eaedeaeb0f76f3d6b0518fe1cdf1b1725e75ee95b70ac143b64d28914055df1",
+    "include/ghostty/vt/modes.h": "85b9f1a703b22cfd92f61ba5179aa10d5987397d3b05b61c3abc08c51e2a508b"
+  }
+}

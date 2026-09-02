@@ -7,6 +7,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -15,12 +16,15 @@ import type { WorkspacePaneCreateMutationRequest } from "@tmux-ide/contracts";
 import { _setExecutor } from "@tmux-ide/tmux-bridge";
 
 import {
+  createPinnedWorkspaceTmuxAsyncRunner,
+  createPinnedWorkspaceTmuxRunner,
   resolveWorkspacePaneTmuxAuthority,
   WorkspacePaneCreationAuthority,
   WorkspacePaneCreationError,
   type WorkspacePaneCreationIo,
 } from "../workspace-pane-creation.ts";
 import { WorkspaceRegistry } from "../workspace-registry.ts";
+import { memorablePaneName } from "../../terminal/protocol/pane-display-name.ts";
 
 const DAEMON = "20000000-0000-4000-8000-000000000002";
 const OPERATION = "10000000-0000-4000-8000-000000000001";
@@ -68,6 +72,8 @@ class FakeTmux {
     this.calls.push(owned);
     switch (args[0]) {
       case "has-session":
+        return "";
+      case "set-environment":
         return "";
       case "new-window":
         this.creations += 1;
@@ -224,7 +230,13 @@ function rig(
       id: "codex",
       label: "Codex",
       command: ["/opt/bin/codex", "--approval-mode", "safe"],
-      environment: { LANG: "en_US.UTF-8", TMUX_IDE_ROLE: "worker" },
+      environment: {
+        LANG: "en_US.UTF-8",
+        TMUX_IDE_ROLE: "worker",
+        NO_COLOR: "1",
+        COLORTERM: "24bit",
+        TERM: "dumb",
+      },
     }));
   const authority = new WorkspacePaneCreationAuthority({
     daemonInstanceId: DAEMON,
@@ -247,9 +259,43 @@ function errorCode(error: unknown): string | undefined {
 }
 
 describe("WorkspacePaneCreationAuthority", () => {
+  it("pins and revalidates an actual Unix socket for sync and async runners", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tmux-ide-pinned-socket-"));
+    roots.push(root);
+    const socketPath = join(root, "t.sock");
+    const executablePath = join(root, "tmux");
+    writeFileSync(executablePath, "#!/bin/sh\nprintf 'ok\\n'\n");
+    chmodSync(executablePath, 0o755);
+    const listen = async () => {
+      const server = createServer();
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(socketPath, resolve);
+      });
+      return server;
+    };
+    const first = await listen();
+    const authority = {
+      executablePath,
+      socketSelector: { kind: "path" as const, path: socketPath },
+    };
+    const sync = createPinnedWorkspaceTmuxRunner(authority);
+    const asyncRunner = createPinnedWorkspaceTmuxAsyncRunner(authority);
+    await expect(asyncRunner(["display-message"])).resolves.toBe("ok");
+    await new Promise<void>((resolve) => first.close(() => resolve()));
+    const second = await listen();
+    try {
+      expect(() => sync(["display-message"])).toThrow(/changed before use/u);
+      expect(() => asyncRunner(["display-message"])).toThrow(/changed before use/u);
+    } finally {
+      await new Promise<void>((resolve) => second.close(() => resolve()));
+    }
+  });
+
   it("creates a terminal from canonical daemon-owned facts and returns semantic identity only", async () => {
     const { authority, fake } = rig();
     const result = await authority.create(request());
+    const generatedName = memorablePaneName("pane.10000000000040008000000000000001");
 
     expect(result).toEqual({
       operationId: OPERATION,
@@ -260,7 +306,7 @@ describe("WorkspacePaneCreationAuthority", () => {
         workspaceName: "workspace.alpha",
         semanticPaneId: "pane.10000000000040008000000000000001",
         kind: "terminal",
-        displayTitle: "Terminal",
+        displayTitle: generatedName,
         harnessProfileId: null,
         role: null,
         missionId: null,
@@ -279,6 +325,21 @@ describe("WorkspacePaneCreationAuthority", () => {
       "-n",
       "tmux-ide-100000000000400080000000",
     ]);
+    expect(fake.calls).toContainEqual([
+      "set-environment",
+      "-r",
+      "-t",
+      "=runtime-session",
+      "NO_COLOR",
+    ]);
+    expect(fake.calls).toContainEqual([
+      "set-environment",
+      "-t",
+      "=runtime-session",
+      "COLORTERM",
+      "truecolor",
+    ]);
+    expect(fake.options.get("@tmux_ide_name_source")).toBe("generated");
     expect(JSON.stringify(result)).not.toMatch(/paneId|windowId|sessionName|cwd|argv|env/u);
   });
 
@@ -698,7 +759,8 @@ describe("WorkspacePaneCreationAuthority", () => {
     }) as Parameters<typeof _setExecutor>[0]);
     const hostileEnvironment: NodeJS.ProcessEnv = {
       TERM: "screen-256color",
-      COLORTERM: "truecolor",
+      COLORTERM: "24bit",
+      NO_COLOR: "1",
       LANG: "en_US.UTF-8",
       LC_ALL: "C",
       LC_CTYPE: "../../hostile-locale",
@@ -746,6 +808,7 @@ describe("WorkspacePaneCreationAuthority", () => {
       expect(call.environment).toEqual({
         TERM: "screen-256color",
         COLORTERM: "truecolor",
+        COLORFGBG: "15;0",
         LANG: "en_US.UTF-8",
         LC_ALL: "C",
       });

@@ -18,6 +18,7 @@ describe("owner action client", () => {
         "Content-Type": "application/json",
         Authorization: "Bearer owner-token",
         "X-Tmux-Ide-Operation-Id": operationId,
+        "X-Tmux-Ide-Host-Client-Id": "opentui:42",
       });
       return Response.json({
         ok: true,
@@ -42,6 +43,7 @@ describe("owner action client", () => {
           direction: "right",
         },
         operationId,
+        hostClientId: "opentui:42",
         fetch: request as typeof fetch,
       }),
     ).resolves.toMatchObject({ outcome: "applied", verb: "workspace.window.split" });
@@ -74,6 +76,87 @@ describe("owner action client", () => {
       }),
     ).resolves.toMatchObject({ outcome: "applied", verb: "workspace.pane.kill" });
     expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps one operation id across a bounded delayed retry schedule", async () => {
+    const request = mock()
+      .mockRejectedValueOnce(new Error("first deadline"))
+      .mockRejectedValueOnce(new Error("second deadline"))
+      .mockResolvedValueOnce(
+        Response.json({
+          ok: true,
+          result: {
+            ...mutation,
+            verb: "workspace.pane.kill",
+            windowClosed: false,
+            remainingWindowCount: 1,
+          },
+        }),
+      );
+    const waits: number[] = [];
+
+    await expect(
+      dispatchOwnerAction({
+        baseUrl: "http://127.0.0.1:4000",
+        ownerToken: "owner-token",
+        name: "workspace.pane.kill",
+        input: { workspaceName: "project", semanticPaneId: "pane.editor" },
+        operationId,
+        fetch: request as typeof fetch,
+        maximumAttempts: 3,
+        retryDelayMs: (completedAttempts) => completedAttempts * 25,
+        wait: async (delayMs) => {
+          waits.push(delayMs);
+        },
+      }),
+    ).resolves.toMatchObject({ outcome: "applied", verb: "workspace.pane.kill" });
+
+    expect(waits).toEqual([25, 50]);
+    expect(request).toHaveBeenCalledTimes(3);
+    for (const [, init] of request.mock.calls) {
+      expect(init?.headers).toMatchObject({ "X-Tmux-Ide-Operation-Id": operationId });
+    }
+  });
+
+  it("recovers a promotion whose first response outlives the client deadline", async () => {
+    const operationIds: Array<string | undefined> = [];
+    let attempt = 0;
+    const request = mock((_url: string | URL | Request, init?: RequestInit) => {
+      operationIds.push((init?.headers as Record<string, string>)?.["X-Tmux-Ide-Operation-Id"]);
+      attempt += 1;
+      if (attempt === 1)
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), {
+            once: true,
+          });
+        });
+      return Promise.resolve(
+        Response.json({
+          ok: true,
+          result: {
+            operationId,
+            daemonInstanceId,
+            outcome: "replayed",
+            resource: { resourceVersion: 1, workspaceName: "workspace.alpha" },
+          },
+        }),
+      );
+    });
+
+    await expect(
+      dispatchOwnerAction({
+        baseUrl: "http://127.0.0.1:4000",
+        ownerToken: "owner-token",
+        name: "workspace.promote",
+        input: { sessionId: "session.aaaaaaaaaaaaaaaaaaaa" },
+        operationId,
+        fetch: request as typeof fetch,
+        timeoutMs: 5,
+        maximumAttempts: 2,
+        retryDelayMs: () => 1,
+      }),
+    ).resolves.toMatchObject({ operationId, outcome: "replayed" });
+    expect(operationIds).toEqual([operationId, operationId]);
   });
 
   it("surfaces typed daemon refusals", async () => {

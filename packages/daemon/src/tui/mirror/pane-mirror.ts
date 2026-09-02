@@ -33,7 +33,7 @@
  *    lines above the live viewport, `scrollbackDepth()` says how far back
  *    a pane can go.
  */
-import { Terminal } from "@xterm/headless";
+import { Terminal } from "@tmux-ide/xterm-headless";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import {
   writeCell,

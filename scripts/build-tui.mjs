@@ -22,14 +22,31 @@
  */
 
 import { createSolidTransformPlugin } from "@opentui/solid/bun-plugin";
-import { mkdirSync, existsSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { releaseSourceState } from "./lib/release-source-state.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
 const entry = resolve(repoRoot, "packages/daemon/src/tui/main.ts");
 const defaultOutDir = resolve(repoRoot, "packages/daemon/dist/tui");
+const packageVersion = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8")).version;
+
+const sourceCommit = (
+  process.env.TMUX_IDE_RELEASE_COMMIT ??
+  execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim()
+).trim();
+if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/u.test(sourceCommit)) {
+  throw new Error(`[build-tui] invalid release commit: ${sourceCommit}`);
+}
+const sourceState = releaseSourceState(
+  execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  }),
+);
 
 if (!existsSync(entry)) {
   throw new Error(`[build-tui] entry not found: ${entry}`);
@@ -38,6 +55,7 @@ if (!existsSync(entry)) {
 const targetArg = process.argv.indexOf("--target");
 const target =
   targetArg !== -1 ? process.argv[targetArg + 1] : `bun-${process.platform}-${process.arch}`;
+const platformTag = target.replace(/^bun-/u, "");
 
 const outfileArg = process.argv.indexOf("--outfile");
 const outfile =
@@ -82,6 +100,12 @@ const result = await Bun.build({
   // evaluation (the dominant first-frame cost) without changing OpenTUI's
   // native asset or the lazy surface dispatcher.
   minify: true,
+  define: {
+    TMUX_IDE_BUILD_VERSION: JSON.stringify(packageVersion),
+    TMUX_IDE_BUILD_COMMIT: JSON.stringify(sourceCommit),
+    TMUX_IDE_BUILD_PLATFORM: JSON.stringify(platformTag),
+    TMUX_IDE_BUILD_SOURCE_STATE: JSON.stringify(sourceState),
+  },
   plugins: [workerAssetPlugin, createSolidTransformPlugin()],
 });
 
@@ -92,4 +116,6 @@ if (!result.success) {
 
 const bytes = statSync(outfile).size;
 const mb = (bytes / 1024 / 1024).toFixed(1);
-console.log(`[build-tui] wrote ${outfile} (${mb} MB, target ${target}, ${Date.now() - start}ms)`);
+console.log(
+  `[build-tui] wrote ${outfile} (${mb} MB, version ${packageVersion}, commit ${sourceCommit.slice(0, 12)}, source ${sourceState}, target ${target}, ${Date.now() - start}ms)`,
+);

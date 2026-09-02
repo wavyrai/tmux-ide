@@ -1,6 +1,6 @@
 {
   "name": "@tmux-ide/daemon",
-  "version": "0.0.1",
+  "version": "2.9.0-beta.3",
   "private": true,
   "description": "Singleton background daemon for tmux-ide — embeddable workspace registry, command-center API, and chat/codex orchestration.",
   "type": "module",
@@ -32,20 +32,6 @@
     "./codex": {
       "types": "./dist/codex/index.d.ts",
       "default": "./dist/codex/index.js"
-    },
-    "./workbench-dock-web": {
-      "types": "./dist/ui/workbench-dock/web-entry.d.ts",
-      "default": "./dist/ui/workbench-dock/web/workbench-dock-web.js"
-    },
-    "./workbench-dock-web.css": {
-      "default": "./dist/ui/workbench-dock/web/workbench-dock-web.css"
-    },
-    "./pane-frame-web": {
-      "types": "./dist/ui/pane-frame/web-entry.d.ts",
-      "default": "./dist/ui/pane-frame/web/pane-frame-web.js"
-    },
-    "./pane-frame-web.css": {
-      "default": "./dist/ui/pane-frame/web/pane-frame-web.css"
     }
   },
   "files": [
@@ -57,24 +43,16 @@
     "access": "public"
   },
   "scripts": {
-    "build": "pnpm run build:tsc && pnpm run build:workbench-dock-web && pnpm run build:workbench-dock-web-types && pnpm run build:pane-frame-web && pnpm run build:pane-frame-web-types",
+    "build": "pnpm run build:tsc",
     "build:tsc": "tsc -p tsconfig.json",
-    "build:workbench-dock-web": "vite build --config vite.workbench-dock.config.ts",
-    "build:workbench-dock-web-types": "tsc -p tsconfig.workbench-dock-web.types.json",
-    "build:pane-frame-web": "vite build --config vite.pane-frame.config.ts",
-    "build:pane-frame-web-types": "tsc -p tsconfig.pane-frame-web.types.json",
-    "test:workbench-dock-package": "node scripts/check-workbench-dock-package.mjs",
-    "test:pane-frame-package": "pnpm run build:pane-frame-web && pnpm run build:pane-frame-web-types && node scripts/check-pane-frame-package.mjs",
-    "typecheck": "tsc --noEmit && pnpm run typecheck:workbench-dock-opentui && pnpm run typecheck:workbench-dock-web && pnpm run typecheck:pane-frame-web",
+    "typecheck": "tsc --noEmit && pnpm run typecheck:workbench-dock-opentui",
     "typecheck:workbench-dock-opentui": "tsc --noEmit -p tsconfig.workbench-dock-opentui.json",
-    "typecheck:workbench-dock-web": "tsc --noEmit -p tsconfig.workbench-dock-web.json",
-    "typecheck:pane-frame-web": "tsc --noEmit -p tsconfig.pane-frame-web.json",
     "prepack": "pnpm run build",
     "dev": "tsx --watch src/lib/daemon.ts",
     "start": "node dist/lib/daemon.js",
     "lint": "eslint src",
-    "test": "vitest run",
-    "test:vitest": "vitest run"
+    "test": "vitest run && vitest run --config vitest.live.config.ts",
+    "test:vitest": "vitest run && vitest run --config vitest.live.config.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.0",
@@ -85,8 +63,9 @@
     "@tmux-ide/contracts": "workspace:*",
     "@tmux-ide/core": "workspace:*",
     "@tmux-ide/daemon-client": "workspace:*",
+    "@tmux-ide/presentation": "workspace:*",
     "@tmux-ide/tmux-bridge": "workspace:*",
-    "@xterm/headless": "6.0.0",
+    "@tmux-ide/xterm-headless": "https://github.com/wavyrai/xterm.js/releases/download/v6.0.0-tmuxide.2/tmux-ide-xterm-headless-6.0.0-tmuxide.2.tgz",
     "@xterm/addon-unicode11": "0.9.0",
     "hono": "^4.12.34",
     "ignore": "^7.0.5",
@@ -100,11 +79,12 @@
   "devDependencies": {
     "@types/node": "^25.5.0",
     "@types/ws": "^8.18.1",
-    "happy-dom": "^20.8.4",
+    "@xterm/headless-stock": "npm:@xterm/headless@6.0.0",
+    "happy-dom": "^20.8.9",
     "tsx": "^4.20.7",
     "typescript": "^5.9.3",
     "vite": "^8.1.4",
     "vite-plugin-solid": "^2.11.12",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.6"
   }
 }

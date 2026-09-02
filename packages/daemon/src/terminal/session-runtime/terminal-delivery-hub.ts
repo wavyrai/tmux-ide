@@ -1,5 +1,6 @@
 import {
   TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES,
+  TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES,
   TerminalDeliveryEnvelopeSchemaZ,
   TerminalDeliveryAckSchemaZ,
   TerminalDeliveryNackSchemaZ,
@@ -20,10 +21,12 @@ import {
 import {
   TerminalDeliveryStateTooLargeError,
   applyTerminalReplicaUpdate,
+  encodeCompactSemanticTerminalUpdate,
   encodeAnsiTerminalRepresentation,
   encodeSemanticTerminalUpdate,
   hashTerminalDeliveryRepresentation,
   negotiateTerminalDelivery,
+  preaccountSemanticTerminalUpdateBytes,
   type TerminalReplicaState,
 } from "@tmux-ide/core";
 import type {
@@ -40,10 +43,12 @@ import {
   type SessionRuntimeObservability,
   type SessionRuntimeTraceContext,
 } from "./runtime-observability.ts";
+import { registerTerminalDeliveryObservationOrdinal } from "./terminal-delivery-observation-identity.ts";
 
 export const MAX_CANONICAL_REVISIONS = 128;
 export const MAX_RAW_JOURNAL_BYTES = 4 * 1024 * 1024;
-const MAX_REPRESENTATION_CACHE_ENTRIES = 32;
+/** Eight workload conditioning revisions fill the cache before measured samples begin. */
+export const MAX_REPRESENTATION_CACHE_ENTRIES = 8;
 export const MAX_REPRESENTATION_CACHE_BYTES = 16 * 1024 * 1024;
 export const MAX_CLIENTS = 64;
 const MAX_PANES = 32;
@@ -134,6 +139,10 @@ export interface TerminalDeliverySourceOwner {
 interface ClientState {
   readonly key: string;
   readonly clientId: string;
+  readonly diagnosticClientId: string;
+  readonly diagnosticSurface: string;
+  readonly diagnosticLaneId: string;
+  readonly diagnosticRequestId: string;
   readonly paneId: string;
   readonly negotiated: Extract<TerminalDeliveryNegotiationResult, { accepted: true }>["negotiated"];
   readonly accept: (message: TerminalDeliveryServerMessage) => void | Promise<void>;
@@ -143,6 +152,7 @@ interface ClientState {
   reseedRequired: boolean;
   inFlight: {
     envelope: TerminalDeliveryEnvelope;
+    deliveryOrdinal: number;
     bytes: Uint8Array;
     nextChunk: number;
     sentAt: number;
@@ -150,6 +160,7 @@ interface ClientState {
   latestRevision: number | null;
   scheduled: boolean;
   closed: boolean;
+  lifecycleOpenRecorded: boolean;
   readonly outgoing: Array<() => TerminalDeliveryServerMessage>;
   sending: boolean;
   retireAfterDrain: boolean;
@@ -161,10 +172,83 @@ interface ClientState {
 
 interface CachedRepresentation {
   readonly bytes: Uint8Array;
+  readonly encoding?: "semantic-v1" | "semantic-compact-v1";
   readonly frame: "seed" | "patch" | "tombstone";
   readonly canonicalEquivalent: boolean;
   readonly history: "complete" | "truncated" | "not-applicable";
   readonly representationHash?: string;
+  /** Internal reachability metadata; never serialized onto the wire. */
+  readonly cachePaneId?: string;
+  readonly cacheBaseRevision?: number;
+  readonly cacheTargetRevision?: number;
+  readonly selectionObservation?: Readonly<{
+    attemptedPatchBytes: number | null;
+    attemptedSeedBytes: number | null;
+    attemptedLegacyPatchBytes: number | null;
+    attemptedLegacySeedBytes: number | null;
+    attemptedLegacyPatchAtLeastBytes: number | null;
+    attemptedLegacySeedAtLeastBytes: number | null;
+    attemptedLegacyPatchSizeCapped: boolean;
+    attemptedLegacySeedSizeCapped: boolean;
+    attemptedCompactPatchBytes: number | null;
+    attemptedCompactSeedBytes: number | null;
+    selectedEncoding: "semantic-v1" | "semantic-compact-v1";
+    selectionStatus:
+      | "patch-preferred"
+      | "seed-preferred"
+      | "patch-fallback"
+      | "legacy-patch-fallback"
+      | "legacy-seed-fallback"
+      | "direct-seed"
+      | "direct-tombstone";
+  }>;
+}
+
+type SemanticSelectionObservation = NonNullable<CachedRepresentation["selectionObservation"]>;
+
+type ExactSemanticSelectionObservation = Pick<
+  SemanticSelectionObservation,
+  "attemptedPatchBytes" | "attemptedSeedBytes" | "selectionStatus"
+>;
+
+class ExactSemanticRepresentationSelectionError extends TerminalDeliveryStateTooLargeError {
+  readonly selectionObservation: ExactSemanticSelectionObservation;
+
+  constructor(bytes: number, selectionObservation: ExactSemanticSelectionObservation) {
+    super(bytes);
+    this.name = "ExactSemanticRepresentationSelectionError";
+    this.selectionObservation = selectionObservation;
+  }
+}
+
+class TerminalDeliveryRepresentationSelectionError extends TerminalDeliveryStateTooLargeError {
+  readonly selectionObservation: SemanticSelectionObservation;
+  readonly sizeCapped: boolean;
+  readonly atLeastBytes: number | null;
+
+  constructor(bytes: number, selectionObservation: SemanticSelectionObservation) {
+    super(bytes);
+    this.name = "TerminalDeliveryRepresentationSelectionError";
+    this.selectionObservation = selectionObservation;
+    this.atLeastBytes =
+      selectionObservation.attemptedLegacyPatchAtLeastBytes ??
+      selectionObservation.attemptedLegacySeedAtLeastBytes;
+    this.sizeCapped = this.atLeastBytes !== null;
+    if (this.atLeastBytes !== null)
+      this.message = `Terminal delivery representation is at least ${this.atLeastBytes} bytes; maximum is ${TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES}`;
+  }
+}
+
+class TerminalDeliveryPreaccountLimitError extends TerminalDeliveryStateTooLargeError {
+  readonly atLeastBytes: number;
+  readonly sizeCapped = true;
+
+  constructor(atLeastBytes: number) {
+    super(atLeastBytes);
+    this.name = "TerminalDeliveryPreaccountLimitError";
+    this.message = `Terminal delivery representation is at least ${atLeastBytes} bytes; maximum is ${TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES}`;
+    this.atLeastBytes = atLeastBytes;
+  }
 }
 
 /** One bounded, renderer-independent delivery coordinator per SessionRuntime. */
@@ -183,6 +267,9 @@ export class SessionRuntimeTerminalDeliveryHub {
   #nacks = 0;
   #maxSlowClientMs = 0;
   #maxQueueDepth = 0;
+  #deliveryOrdinal = 0;
+  #deliveryLifecycleOrdinal = 0;
+  #deliveryStatusOrdinal = 0;
   #closed = false;
 
   constructor(
@@ -204,6 +291,12 @@ export class SessionRuntimeTerminalDeliveryHub {
     semanticPaneId: string,
     offerInput: TerminalDeliveryOffer,
     accept: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
+    diagnosticIdentity: Readonly<{
+      clientId: string;
+      surface: string;
+      laneId: string;
+      requestId?: string;
+    }> = Object.freeze({ clientId, surface: "direct", laneId: clientId }),
   ): Promise<TerminalDeliveryConnection> {
     if (this.#closed) throw new Error("Terminal delivery hub is closed");
     const offer = TerminalDeliveryOfferSchemaZ.parse(offerInput);
@@ -235,6 +328,10 @@ export class SessionRuntimeTerminalDeliveryHub {
       const client: ClientState = {
         key,
         clientId,
+        diagnosticClientId: diagnosticIdentity.clientId,
+        diagnosticSurface: diagnosticIdentity.surface,
+        diagnosticLaneId: diagnosticIdentity.laneId,
+        diagnosticRequestId: diagnosticIdentity.requestId ?? diagnosticIdentity.laneId,
         paneId: semanticPaneId,
         negotiated: negotiation.negotiated,
         accept,
@@ -246,6 +343,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         latestRevision: pane.latest?.update.revision ?? null,
         scheduled: false,
         closed: false,
+        lifecycleOpenRecorded: false,
         outgoing: [],
         sending: false,
         retireAfterDrain: false,
@@ -254,7 +352,9 @@ export class SessionRuntimeTerminalDeliveryHub {
         backgroundTimer: null,
       };
       this.#clients.set(key, client);
+      client.lifecycleOpenRecorded = this.#recordDeliveryLifecycle(client, pane, "open");
       this.#schedule(client);
+      this.#recordDeliveryStatus(client, pane);
       return {
         negotiation,
         ack: (ack) => this.#ack(client, ack),
@@ -264,6 +364,7 @@ export class SessionRuntimeTerminalDeliveryHub {
           client.visibility = TerminalDeliveryVisibilitySchemaZ.parse(visibilityInput);
           if (client.visibility === "visible" || client.visibility === "background")
             this.#schedule(client);
+          this.#recordDeliveryStatus(client, this.#panes.get(client.paneId));
         },
         close: async () => this.#closeClient(client),
       };
@@ -451,6 +552,8 @@ export class SessionRuntimeTerminalDeliveryHub {
       pane.revisions.delete(pane.revisions.keys().next().value!);
     for (const client of this.#clients.values()) {
       if (client.paneId !== semanticPaneId || client.closed) continue;
+      if (!client.lifecycleOpenRecorded)
+        client.lifecycleOpenRecorded = this.#recordDeliveryLifecycle(client, pane, "open");
       if (
         update.type === "terminal.tombstone" &&
         (client.inFlight !== null || client.visibility !== "visible")
@@ -542,8 +645,13 @@ export class SessionRuntimeTerminalDeliveryHub {
     const target = pane?.latest;
     if (!pane || !target || target.update.revision !== client.latestRevision) return;
     const traceStarted = this.#observability.enabled ? this.#observability.nowMicros() : 0;
+    let encodedRepresentation: CachedRepresentation | null = null;
+    let failedSelectionObservation: SemanticSelectionObservation | null = null;
+    let deliveryEnvelope: TerminalDeliveryEnvelope | null = null;
+    let deliveryOrdinal: number | null = null;
     try {
       const representation = this.#representation(client, pane, target);
+      encodedRepresentation = representation;
       const transactionId = this.#scheduler.createId();
       const chunkCount = Math.max(1, Math.ceil(representation.bytes.byteLength / (256 * 1024)));
       const envelope = TerminalDeliveryEnvelopeSchemaZ.parse({
@@ -556,7 +664,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         transactionId,
         ...(target.trace ? { performanceTraceId: target.trace.traceId } : {}),
         protocolVersion: 1,
-        encoding: client.negotiated.encoding,
+        encoding: representation.encoding ?? client.negotiated.encoding,
         frame: representation.frame,
         baseRevision: representation.frame === "seed" ? null : Math.max(0, client.baselineRevision),
         canonicalRevision: target.update.revision,
@@ -570,32 +678,89 @@ export class SessionRuntimeTerminalDeliveryHub {
         history: representation.history,
         richPlacements: client.negotiated.richPlacements,
       });
+      deliveryEnvelope = envelope;
+      deliveryOrdinal = ++this.#deliveryOrdinal;
+      registerTerminalDeliveryObservationOrdinal(envelope, deliveryOrdinal);
       client.inFlight = {
         envelope,
+        deliveryOrdinal,
         bytes: representation.bytes,
         nextChunk: 0,
         sentAt: this.#scheduler.nowMs(),
       };
       this.#enqueue(client, envelope);
+      this.#recordDeliveryStatus(client, pane);
       if (target.trace?.traceId === pane.pendingDeliveryTrace?.traceId)
         pane.pendingDeliveryTrace = null;
     } catch (error) {
+      failedSelectionObservation = semanticSelectionObservationFromError(error);
       this.#fault(
         client,
         error instanceof TerminalDeliveryStateTooLargeError
           ? "state-too-large"
           : "protocol-violation",
         error instanceof Error ? error.message : String(error),
+        failedSelectionObservation,
       );
     } finally {
       if (this.#observability.enabled)
-        this.#observability.recordSpan(
-          "transport",
-          "terminal-delivery-encode-enqueue",
-          traceStarted,
-          this.#observability.nowMicros(),
-          target.trace,
-        );
+        try {
+          const metrics = this.metrics();
+          this.#observability.recordSpan(
+            "transport",
+            "terminal-delivery-encode-enqueue",
+            traceStarted,
+            this.#observability.nowMicros(),
+            target.trace,
+            undefined,
+            Object.freeze({
+              representationCacheBytes: metrics.representationCacheBytes,
+              rawJournalBytes: metrics.rawJournalBytes,
+              queueDepth: metrics.queueDepth,
+              maxQueueDepth: metrics.maxQueueDepth,
+              inFlight: metrics.inFlight,
+              inFlightBytes: metrics.inFlightBytes,
+              ...(encodedRepresentation
+                ? {
+                    representation: encodedRepresentation.frame,
+                    representationBytes: encodedRepresentation.bytes.byteLength,
+                  }
+                : {}),
+              attemptedPatchBytes:
+                encodedRepresentation?.selectionObservation?.attemptedPatchBytes ??
+                failedSelectionObservation?.attemptedPatchBytes ??
+                null,
+              attemptedSeedBytes:
+                encodedRepresentation?.selectionObservation?.attemptedSeedBytes ??
+                failedSelectionObservation?.attemptedSeedBytes ??
+                null,
+              ...((encodedRepresentation?.selectionObservation ?? failedSelectionObservation)
+                ? terminalSelectionObservation(
+                    encodedRepresentation?.selectionObservation ?? failedSelectionObservation!,
+                  )
+                : {}),
+              ...(deliveryEnvelope && deliveryOrdinal !== null
+                ? {
+                    workspaceName: deliveryEnvelope.workspaceName,
+                    semanticPaneId: deliveryEnvelope.semanticPaneId,
+                    canonicalGeneration: deliveryEnvelope.generation,
+                    canonicalIncarnation: deliveryEnvelope.incarnation,
+                    canonicalRevision: deliveryEnvelope.canonicalRevision,
+                    canonicalStateHash: deliveryEnvelope.canonicalStateHash,
+                    deliveryOrdinal,
+                    transactionId: deliveryEnvelope.transactionId,
+                    deliveryClientId: client.diagnosticClientId,
+                    deliverySurface: client.diagnosticSurface,
+                    deliveryLaneId: client.diagnosticLaneId,
+                    deliveryRequestId: client.diagnosticRequestId,
+                    deliveryNonce: deliveryEnvelope.deliveryNonce,
+                  }
+                : {}),
+            }),
+          );
+        } catch {
+          // Detailed resource diagnostics never own terminal delivery.
+        }
     }
   }
 
@@ -610,6 +775,7 @@ export class SessionRuntimeTerminalDeliveryHub {
       target.update.generation,
       target.update.incarnation,
       client.negotiated.encoding,
+      client.negotiated.fallbackEncoding ?? "no-fallback",
       client.negotiated.richPlacements ? "rich" : "plain",
       client.baselineRevision,
       client.baselineHash ?? "none",
@@ -623,23 +789,253 @@ export class SessionRuntimeTerminalDeliveryHub {
       ? null
       : (pane.revisions.get(client.baselineRevision)?.state.snapshot ?? null);
     const snapshot = target.state.snapshot;
-    let result: CachedRepresentation;
-    if (client.negotiated.encoding === "semantic-v1") {
-      let payload = client.reseedRequired
-        ? semanticSeed(target)
-        : semanticPayload(client.baselineRevision, baseline, target);
-      let bytes = encodeSemanticTerminalUpdate(payload);
-      if (payload.frame === "patch" && bytes.byteLength > TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES) {
-        payload = semanticSeed(target);
-        bytes = encodeSemanticTerminalUpdate(payload);
+    let result: CachedRepresentation | null = null;
+    if (
+      client.negotiated.encoding === "semantic-v1" ||
+      client.negotiated.encoding === "semantic-compact-v1"
+    ) {
+      const encodeSemantic =
+        client.negotiated.encoding === "semantic-compact-v1"
+          ? encodeCompactSemanticTerminalUpdate
+          : encodeSemanticTerminalUpdate;
+      if (client.reseedRequired) {
+        const payload = semanticSeed(target);
+        let bytes: Uint8Array;
+        let actualEncoding = client.negotiated.encoding;
+        let fallbackObservation: SemanticSelectionObservation | null = null;
+        try {
+          bytes = encodeSemantic(payload);
+        } catch (error) {
+          if (!(error instanceof TerminalDeliveryStateTooLargeError)) throw error;
+          if (
+            client.negotiated.encoding === "semantic-compact-v1" &&
+            client.negotiated.fallbackEncoding === "semantic-v1"
+          ) {
+            try {
+              bytes = encodeLegacySemanticCandidate(payload);
+              actualEncoding = "semantic-v1";
+              fallbackObservation = legacyFallbackObservation(
+                "seed",
+                error.bytes,
+                bytes.byteLength,
+              );
+            } catch (legacyError) {
+              if (!(legacyError instanceof TerminalDeliveryStateTooLargeError)) throw legacyError;
+              throw new TerminalDeliveryRepresentationSelectionError(
+                legacyError.bytes,
+                failedCompactAndLegacyObservation("seed", error.bytes, legacyError),
+              );
+            }
+          } else {
+            throw new TerminalDeliveryRepresentationSelectionError(error.bytes, {
+              attemptedPatchBytes: null,
+              attemptedSeedBytes: error.bytes,
+              attemptedLegacyPatchBytes: null,
+              attemptedLegacySeedBytes:
+                client.negotiated.encoding === "semantic-v1" ? error.bytes : null,
+              attemptedLegacyPatchAtLeastBytes: null,
+              attemptedLegacySeedAtLeastBytes: null,
+              attemptedLegacyPatchSizeCapped: false,
+              attemptedLegacySeedSizeCapped: false,
+              attemptedCompactPatchBytes: null,
+              attemptedCompactSeedBytes:
+                client.negotiated.encoding === "semantic-compact-v1" ? error.bytes : null,
+              selectedEncoding: client.negotiated.encoding,
+              selectionStatus: "direct-seed",
+            });
+          }
+        }
+        const selectionObservation =
+          fallbackObservation ??
+          (this.#observability.enabled
+            ? completeSemanticSelectionObservation(
+                {
+                  attemptedPatchBytes: null,
+                  attemptedSeedBytes: bytes.byteLength,
+                  selectionStatus: "direct-seed",
+                },
+                client.negotiated.encoding,
+                null,
+              )
+            : null);
+        result = {
+          bytes,
+          encoding: actualEncoding,
+          frame: payload.frame,
+          canonicalEquivalent: true,
+          history: payload.frame === "tombstone" ? "not-applicable" : "complete",
+          ...(selectionObservation ? { selectionObservation } : {}),
+        };
         this.#reseeds += 1;
+      } else {
+        const patchPayload = semanticPayload(client.baselineRevision, baseline, target);
+        const seedPayload = patchPayload.frame === "tombstone" ? null : semanticSeed(target);
+        const legacyAttempts = null;
+        if (patchPayload.frame !== "patch") {
+          let bytes: Uint8Array;
+          let actualEncoding = client.negotiated.encoding;
+          let fallbackObservation: SemanticSelectionObservation | null = null;
+          try {
+            bytes = encodeSemantic(patchPayload);
+          } catch (error) {
+            if (!(error instanceof TerminalDeliveryStateTooLargeError)) throw error;
+            if (
+              client.negotiated.encoding === "semantic-compact-v1" &&
+              client.negotiated.fallbackEncoding === "semantic-v1" &&
+              patchPayload.frame === "seed"
+            ) {
+              try {
+                bytes = encodeLegacySemanticCandidate(patchPayload);
+                actualEncoding = "semantic-v1";
+                fallbackObservation = legacyFallbackObservation(
+                  "seed",
+                  error.bytes,
+                  bytes.byteLength,
+                );
+              } catch (legacyError) {
+                if (!(legacyError instanceof TerminalDeliveryStateTooLargeError)) throw legacyError;
+                const directObservation = failedCompactAndLegacyObservation(
+                  "seed",
+                  error.bytes,
+                  legacyError,
+                );
+                throw new TerminalDeliveryRepresentationSelectionError(
+                  legacyError.bytes,
+                  directObservation,
+                );
+              }
+            } else {
+              const directObservation = completeSemanticSelectionObservation(
+                {
+                  attemptedPatchBytes: null,
+                  attemptedSeedBytes: patchPayload.frame === "seed" ? error.bytes : null,
+                  selectionStatus:
+                    patchPayload.frame === "seed" ? "direct-seed" : "direct-tombstone",
+                },
+                client.negotiated.encoding,
+                legacyAttempts,
+              );
+              throw new TerminalDeliveryRepresentationSelectionError(
+                error.bytes,
+                directObservation,
+              );
+            }
+          }
+          const directObservation =
+            fallbackObservation ??
+            (this.#observability.enabled
+              ? completeSemanticSelectionObservation(
+                  {
+                    attemptedPatchBytes: null,
+                    attemptedSeedBytes: patchPayload.frame === "seed" ? bytes.byteLength : null,
+                    selectionStatus:
+                      patchPayload.frame === "seed" ? "direct-seed" : "direct-tombstone",
+                  },
+                  client.negotiated.encoding,
+                  legacyAttempts,
+                )
+              : null);
+          if (patchPayload.frame === "seed") this.#reseeds += 1;
+          result = {
+            bytes,
+            encoding: actualEncoding,
+            frame: patchPayload.frame,
+            canonicalEquivalent: true,
+            history: patchPayload.frame === "tombstone" ? "not-applicable" : "complete",
+            ...(directObservation ? { selectionObservation: directObservation } : {}),
+          };
+        } else {
+          let selected: ReturnType<
+            typeof selectExactSemanticRepresentation<TerminalSemanticDeliveryPayload>
+          > | null = null;
+          try {
+            selected = selectExactSemanticRepresentation(
+              () => ({ payload: patchPayload, bytes: encodeSemantic(patchPayload) }),
+              () => {
+                if (!seedPayload) throw new TypeError("Patch has no seed representation");
+                return { payload: seedPayload, bytes: encodeSemantic(seedPayload) };
+              },
+              this.#observability.enabled,
+            );
+          } catch (error) {
+            if (!(error instanceof ExactSemanticRepresentationSelectionError)) throw error;
+            if (
+              client.negotiated.encoding === "semantic-compact-v1" &&
+              client.negotiated.fallbackEncoding === "semantic-v1"
+            ) {
+              try {
+                const legacySelected = selectExactSemanticRepresentation(
+                  () => ({
+                    payload: patchPayload,
+                    bytes: encodeLegacySemanticCandidate(patchPayload),
+                  }),
+                  () => {
+                    if (!seedPayload)
+                      throw new TypeError("Patch has no legacy seed representation");
+                    return {
+                      payload: seedPayload,
+                      bytes: encodeLegacySemanticCandidate(seedPayload),
+                    };
+                  },
+                  true,
+                );
+                const fallbackObservation = legacyFallbackFromSelection(
+                  legacySelected.observation!,
+                  error.selectionObservation,
+                  legacySelected.payload.frame,
+                );
+                if (legacySelected.payload.frame === "seed") this.#reseeds += 1;
+                result = {
+                  bytes: legacySelected.bytes,
+                  encoding: "semantic-v1",
+                  frame: legacySelected.payload.frame,
+                  canonicalEquivalent: true,
+                  history:
+                    legacySelected.payload.frame === "tombstone" ? "not-applicable" : "complete",
+                  selectionObservation: fallbackObservation,
+                };
+              } catch (legacyError) {
+                if (!(legacyError instanceof ExactSemanticRepresentationSelectionError))
+                  throw legacyError;
+                throw new TerminalDeliveryRepresentationSelectionError(
+                  legacyError.bytes,
+                  failedCompactAndLegacySelectionObservation(
+                    error.selectionObservation,
+                    legacyError.selectionObservation,
+                  ),
+                );
+              }
+            } else {
+              throw new TerminalDeliveryRepresentationSelectionError(
+                error.bytes,
+                completeSemanticSelectionObservation(
+                  error.selectionObservation,
+                  client.negotiated.encoding,
+                  legacyAttempts,
+                ),
+              );
+            }
+          }
+          if (selected) {
+            if (selected.payload.frame === "seed") this.#reseeds += 1;
+            const selectionObservation = selected.observation
+              ? completeSemanticSelectionObservation(
+                  selected.observation,
+                  client.negotiated.encoding,
+                  legacyAttempts,
+                )
+              : null;
+            result = {
+              bytes: selected.bytes,
+              encoding: client.negotiated.encoding,
+              frame: selected.payload.frame,
+              canonicalEquivalent: true,
+              history: selected.payload.frame === "tombstone" ? "not-applicable" : "complete",
+              ...(selectionObservation ? { selectionObservation } : {}),
+            };
+          }
+        }
       }
-      result = {
-        bytes,
-        frame: payload.frame,
-        canonicalEquivalent: true,
-        history: payload.frame === "tombstone" ? "not-applicable" : "complete",
-      };
     } else if (client.negotiated.encoding === "ansi-diff-v1") {
       if (!snapshot) result = emptyTombstone();
       else {
@@ -653,9 +1049,13 @@ export class SessionRuntimeTerminalDeliveryHub {
         if (!patch) this.#reseeds += 1;
       }
     } else result = this.#rawRepresentation(client, pane, target);
+    if (!result) throw new TypeError("Terminal delivery representation selection was incomplete");
     const hashed = {
       ...result,
       representationHash: hashTerminalDeliveryRepresentation(result.bytes),
+      cachePaneId: client.paneId,
+      cacheBaseRevision: client.baselineRevision,
+      cacheTargetRevision: target.update.revision,
     };
     this.#cacheSet(key, hashed);
     return hashed;
@@ -748,7 +1148,54 @@ export class SessionRuntimeTerminalDeliveryHub {
     client.inFlight = null;
     client.lastAck = ack;
     if (client.latestRevision === ack.canonicalRevision) client.latestRevision = null;
+    this.#pruneAckSupersededCache(client.paneId);
+    if (this.#observability.enabled)
+      try {
+        const atMicros = this.#observability.nowMicros();
+        const metrics = this.metrics();
+        this.#observability.recordSpan(
+          "transport",
+          "terminal-delivery-settled",
+          atMicros,
+          atMicros,
+          envelope.performanceTraceId
+            ? Object.freeze({
+                traceId: envelope.performanceTraceId,
+                scenario: "terminal-input-to-paint",
+                authority: Object.freeze({
+                  generation: envelope.generation,
+                  incarnation: envelope.incarnation,
+                }),
+              })
+            : null,
+          undefined,
+          Object.freeze({
+            representationCacheBytes: metrics.representationCacheBytes,
+            rawJournalBytes: metrics.rawJournalBytes,
+            queueDepth: metrics.queueDepth,
+            maxQueueDepth: metrics.maxQueueDepth,
+            inFlight: metrics.inFlight,
+            inFlightBytes: metrics.inFlightBytes,
+            workspaceName: envelope.workspaceName,
+            semanticPaneId: envelope.semanticPaneId,
+            canonicalGeneration: envelope.generation,
+            canonicalIncarnation: envelope.incarnation,
+            canonicalRevision: envelope.canonicalRevision,
+            canonicalStateHash: envelope.canonicalStateHash,
+            deliveryOrdinal: flight.deliveryOrdinal,
+            transactionId: envelope.transactionId,
+            deliveryClientId: client.diagnosticClientId,
+            deliverySurface: client.diagnosticSurface,
+            deliveryLaneId: client.diagnosticLaneId,
+            deliveryRequestId: client.diagnosticRequestId,
+            deliveryNonce: envelope.deliveryNonce,
+          }),
+        );
+      } catch {
+        // Detailed settlement diagnostics never own ACK adoption.
+      }
     this.#schedule(client);
+    this.#recordDeliveryStatus(client, this.#panes.get(client.paneId));
   }
 
   #nack(client: ClientState, input: TerminalDeliveryNack): void {
@@ -770,13 +1217,53 @@ export class SessionRuntimeTerminalDeliveryHub {
     client.reseedRequired = true;
     client.inFlight = null;
     this.#schedule(client);
+    this.#recordDeliveryStatus(client, this.#panes.get(client.paneId));
   }
 
   #fault(
     client: ClientState,
     reason: "state-too-large" | "source-closed" | "protocol-violation",
     message: string,
+    selectionObservation: SemanticSelectionObservation | null = null,
   ): void {
+    if (this.#observability.enabled)
+      try {
+        const atMicros = this.#observability.nowMicros();
+        const flight = client.inFlight;
+        const metrics = this.metrics();
+        this.#observability.recordSpan(
+          "transport",
+          "terminal-delivery-fault",
+          atMicros,
+          atMicros,
+          null,
+          undefined,
+          Object.freeze({
+            representationCacheBytes: metrics.representationCacheBytes,
+            rawJournalBytes: metrics.rawJournalBytes,
+            queueDepth: metrics.queueDepth,
+            maxQueueDepth: metrics.maxQueueDepth,
+            inFlight: metrics.inFlight,
+            inFlightBytes: metrics.inFlightBytes,
+            workspaceName: this.workspaceName,
+            semanticPaneId: client.paneId,
+            faultReason: reason,
+            ...(selectionObservation ? terminalSelectionObservation(selectionObservation) : {}),
+            ...(flight
+              ? {
+                  canonicalGeneration: flight.envelope.generation,
+                  canonicalIncarnation: flight.envelope.incarnation,
+                  canonicalRevision: flight.envelope.canonicalRevision,
+                  canonicalStateHash: flight.envelope.canonicalStateHash,
+                  deliveryOrdinal: flight.deliveryOrdinal,
+                  transactionId: flight.envelope.transactionId,
+                }
+              : {}),
+          }),
+        );
+      } catch {
+        // Detailed fault diagnostics never own delivery failure handling.
+      }
     client.outgoing.length = 0;
     if (reason === "source-closed") client.sourceClosedFlight = client.inFlight?.envelope ?? null;
     client.inFlight = null;
@@ -851,6 +1338,8 @@ export class SessionRuntimeTerminalDeliveryHub {
   async #closeClient(client: ClientState): Promise<void> {
     if (client.closed) return;
     client.closed = true;
+    if (client.lifecycleOpenRecorded)
+      this.#recordDeliveryLifecycle(client, this.#panes.get(client.paneId), "close");
     client.backgroundTimer?.cancel();
     client.outgoing.length = 0;
     this.#clients.delete(client.key);
@@ -863,6 +1352,88 @@ export class SessionRuntimeTerminalDeliveryHub {
     }
     await pane?.source?.close().catch(() => undefined);
     this.#clearCache();
+  }
+
+  #recordDeliveryLifecycle(
+    client: ClientState,
+    pane: PaneState | undefined,
+    event: "open" | "close",
+  ): boolean {
+    if (!this.#observability.enabled) return false;
+    const canonical = pane?.latest?.update;
+    if (!canonical) return false;
+    try {
+      const atMicros = this.#observability.nowMicros();
+      this.#observability.recordSpan(
+        "transport",
+        "terminal-delivery-subscriber-lifecycle",
+        atMicros,
+        atMicros,
+        null,
+        undefined,
+        Object.freeze({
+          workspaceName: this.workspaceName,
+          semanticPaneId: client.paneId,
+          canonicalGeneration: this.generation,
+          canonicalIncarnation: canonical.incarnation,
+          canonicalRevision: canonical.revision,
+          canonicalStateHash: canonical.stateHash,
+          deliveryClientId: client.diagnosticClientId,
+          deliverySurface: client.diagnosticSurface,
+          deliveryLaneId: client.diagnosticLaneId,
+          deliveryRequestId: client.diagnosticRequestId,
+          deliveryLifecycleEvent: event,
+          deliveryPurpose: "terminal-surface",
+          deliveryLifecycleOrdinal: ++this.#deliveryLifecycleOrdinal,
+        }),
+      );
+      return true;
+    } catch {
+      // Detailed lifecycle evidence is fail-open for product delivery.
+      return false;
+    }
+  }
+
+  #recordDeliveryStatus(client: ClientState, pane: PaneState | undefined): boolean {
+    if (!this.#observability.enabled || client.closed) return false;
+    const canonical = pane?.latest?.update;
+    if (!canonical) return false;
+    try {
+      const atMicros = this.#observability.nowMicros();
+      this.#observability.recordSpan(
+        "transport",
+        "terminal-delivery-subscriber-status",
+        atMicros,
+        atMicros,
+        null,
+        undefined,
+        Object.freeze({
+          workspaceName: this.workspaceName,
+          semanticPaneId: client.paneId,
+          canonicalGeneration: this.generation,
+          canonicalIncarnation: canonical.incarnation,
+          canonicalRevision: canonical.revision,
+          canonicalStateHash: canonical.stateHash,
+          deliveryClientId: client.diagnosticClientId,
+          deliverySurface: client.diagnosticSurface,
+          deliveryLaneId: client.diagnosticLaneId,
+          deliveryRequestId: client.diagnosticRequestId,
+          deliveryPurpose: "terminal-surface",
+          deliveryStatusOrdinal: ++this.#deliveryStatusOrdinal,
+          deliveryVisibility: client.visibility,
+          deliveryBaselineRevision: client.baselineRevision,
+          deliveryBaselineHash: client.baselineHash,
+          deliveryInFlightRevision: client.inFlight?.envelope.canonicalRevision ?? null,
+          deliveryInFlightHash: client.inFlight?.envelope.canonicalStateHash ?? null,
+          deliveryLatestRevision: client.latestRevision,
+          deliveryClientQueueDepth: client.outgoing.length,
+        }),
+      );
+      return true;
+    } catch {
+      // Detailed readiness evidence never owns terminal delivery.
+      return false;
+    }
   }
 
   async #withDeadline<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
@@ -905,6 +1476,252 @@ export class SessionRuntimeTerminalDeliveryHub {
     this.#cache.clear();
     this.#cacheBytes = 0;
   }
+
+  #pruneAckSupersededCache(paneId: string): void {
+    const clients = [...this.#clients.values()].filter(
+      (candidate) => !candidate.closed && candidate.paneId === paneId,
+    );
+    for (const [key, cached] of this.#cache) {
+      if (cached.cachePaneId !== paneId) continue;
+      const reachable = clients.some(
+        (candidate) =>
+          cached.cacheBaseRevision === candidate.baselineRevision ||
+          (Number.isSafeInteger(cached.cacheTargetRevision) &&
+            cached.cacheTargetRevision! > candidate.baselineRevision) ||
+          cached.cacheTargetRevision === candidate.inFlight?.envelope.canonicalRevision,
+      );
+      if (reachable) continue;
+      this.#cache.delete(key);
+      this.#cacheBytes -= cached.bytes.byteLength;
+    }
+  }
+}
+
+export function selectExactSemanticRepresentation<T extends { readonly frame: string }>(
+  encodePatch: () => { readonly payload: T; readonly bytes: Uint8Array },
+  encodeSeed: () => { readonly payload: T; readonly bytes: Uint8Array },
+  observe = true,
+): {
+  readonly payload: T;
+  readonly bytes: Uint8Array;
+  readonly observation?: Readonly<{
+    attemptedPatchBytes: number | null;
+    attemptedSeedBytes: number | null;
+    selectionStatus:
+      | "patch-preferred"
+      | "seed-preferred"
+      | "patch-fallback"
+      | "legacy-patch-fallback"
+      | "legacy-seed-fallback"
+      | "direct-seed"
+      | "direct-tombstone";
+  }>;
+} {
+  let patch: { readonly payload: T; readonly bytes: Uint8Array };
+  try {
+    patch = encodePatch();
+  } catch (error) {
+    if (!(error instanceof TerminalDeliveryStateTooLargeError)) throw error;
+    let seed;
+    try {
+      seed = encodeSeed();
+    } catch (seedError) {
+      if (!(seedError instanceof TerminalDeliveryStateTooLargeError)) throw seedError;
+      throw new ExactSemanticRepresentationSelectionError(seedError.bytes, {
+        attemptedPatchBytes: error.bytes,
+        attemptedSeedBytes: seedError.bytes,
+        selectionStatus: "seed-preferred",
+      });
+    }
+    if (!observe) return seed;
+    return {
+      ...seed,
+      observation: Object.freeze({
+        attemptedPatchBytes: error.bytes,
+        attemptedSeedBytes: seed.bytes.byteLength,
+        selectionStatus: "seed-preferred" as const,
+      }),
+    };
+  }
+  if (patch.payload.frame !== "patch") {
+    if (!observe) return patch;
+    return {
+      ...patch,
+      observation: Object.freeze({
+        attemptedPatchBytes: null,
+        attemptedSeedBytes: patch.payload.frame === "seed" ? patch.bytes.byteLength : null,
+        selectionStatus:
+          patch.payload.frame === "seed" ? ("direct-seed" as const) : ("direct-tombstone" as const),
+      }),
+    };
+  }
+  if (patch.bytes.byteLength <= TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES) {
+    if (!observe) return patch;
+    return {
+      ...patch,
+      observation: Object.freeze({
+        attemptedPatchBytes: patch.bytes.byteLength,
+        attemptedSeedBytes: null,
+        selectionStatus: "patch-preferred" as const,
+      }),
+    };
+  }
+  try {
+    const seed = encodeSeed();
+    const selected = patch.bytes.byteLength <= seed.bytes.byteLength ? patch : seed;
+    if (!observe) return selected;
+    return {
+      ...selected,
+      observation: Object.freeze({
+        attemptedPatchBytes: patch.bytes.byteLength,
+        attemptedSeedBytes: seed.bytes.byteLength,
+        selectionStatus:
+          selected === patch ? ("patch-preferred" as const) : ("seed-preferred" as const),
+      }),
+    };
+  } catch (error) {
+    if (!(error instanceof TerminalDeliveryStateTooLargeError)) throw error;
+    if (!observe) return patch;
+    return {
+      ...patch,
+      observation: Object.freeze({
+        attemptedPatchBytes: patch.bytes.byteLength,
+        attemptedSeedBytes: error.bytes,
+        selectionStatus: "patch-fallback" as const,
+      }),
+    };
+  }
+}
+
+function completeSemanticSelectionObservation(
+  observation: ExactSemanticSelectionObservation,
+  selectedEncoding: "semantic-v1" | "semantic-compact-v1",
+  legacyAttempts: Readonly<{ patchBytes: number | null; seedBytes: number | null }> | null,
+): SemanticSelectionObservation {
+  const compact = selectedEncoding === "semantic-compact-v1";
+  return Object.freeze({
+    ...observation,
+    attemptedLegacyPatchBytes: compact
+      ? (legacyAttempts?.patchBytes ?? null)
+      : observation.attemptedPatchBytes,
+    attemptedLegacySeedBytes: compact
+      ? (legacyAttempts?.seedBytes ?? null)
+      : observation.attemptedSeedBytes,
+    attemptedLegacyPatchAtLeastBytes: null,
+    attemptedLegacySeedAtLeastBytes: null,
+    attemptedLegacyPatchSizeCapped: false,
+    attemptedLegacySeedSizeCapped: false,
+    attemptedCompactPatchBytes: compact ? observation.attemptedPatchBytes : null,
+    attemptedCompactSeedBytes: compact ? observation.attemptedSeedBytes : null,
+    selectedEncoding,
+  });
+}
+
+function legacyFallbackObservation(
+  frame: "seed" | "patch",
+  compactBytes: number,
+  legacyBytes: number,
+): SemanticSelectionObservation {
+  return Object.freeze({
+    attemptedPatchBytes: frame === "patch" ? legacyBytes : null,
+    attemptedSeedBytes: frame === "seed" ? legacyBytes : null,
+    attemptedLegacyPatchBytes: frame === "patch" ? legacyBytes : null,
+    attemptedLegacySeedBytes: frame === "seed" ? legacyBytes : null,
+    attemptedLegacyPatchAtLeastBytes: null,
+    attemptedLegacySeedAtLeastBytes: null,
+    attemptedLegacyPatchSizeCapped: false,
+    attemptedLegacySeedSizeCapped: false,
+    attemptedCompactPatchBytes: frame === "patch" ? compactBytes : null,
+    attemptedCompactSeedBytes: frame === "seed" ? compactBytes : null,
+    selectedEncoding: "semantic-v1",
+    selectionStatus: frame === "patch" ? "legacy-patch-fallback" : "legacy-seed-fallback",
+  });
+}
+
+function legacyFallbackFromSelection(
+  legacy: ExactSemanticSelectionObservation,
+  compact: ExactSemanticSelectionObservation,
+  frame: string,
+): SemanticSelectionObservation {
+  return Object.freeze({
+    attemptedPatchBytes: legacy.attemptedPatchBytes,
+    attemptedSeedBytes: legacy.attemptedSeedBytes,
+    attemptedLegacyPatchBytes: legacy.attemptedPatchBytes,
+    attemptedLegacySeedBytes: legacy.attemptedSeedBytes,
+    attemptedLegacyPatchAtLeastBytes: null,
+    attemptedLegacySeedAtLeastBytes: null,
+    attemptedLegacyPatchSizeCapped: false,
+    attemptedLegacySeedSizeCapped: false,
+    attemptedCompactPatchBytes: compact.attemptedPatchBytes,
+    attemptedCompactSeedBytes: compact.attemptedSeedBytes,
+    selectedEncoding: "semantic-v1",
+    selectionStatus: frame === "patch" ? "legacy-patch-fallback" : "legacy-seed-fallback",
+  });
+}
+
+function failedCompactAndLegacyObservation(
+  frame: "seed" | "patch",
+  compactBytes: number,
+  legacyError: TerminalDeliveryStateTooLargeError,
+): SemanticSelectionObservation {
+  const capped = legacyError instanceof TerminalDeliveryPreaccountLimitError;
+  return Object.freeze({
+    attemptedPatchBytes: frame === "patch" ? compactBytes : null,
+    attemptedSeedBytes: frame === "seed" ? compactBytes : null,
+    attemptedLegacyPatchBytes: !capped && frame === "patch" ? legacyError.bytes : null,
+    attemptedLegacySeedBytes: !capped && frame === "seed" ? legacyError.bytes : null,
+    attemptedLegacyPatchAtLeastBytes: capped && frame === "patch" ? legacyError.atLeastBytes : null,
+    attemptedLegacySeedAtLeastBytes: capped && frame === "seed" ? legacyError.atLeastBytes : null,
+    attemptedLegacyPatchSizeCapped: capped && frame === "patch",
+    attemptedLegacySeedSizeCapped: capped && frame === "seed",
+    attemptedCompactPatchBytes: frame === "patch" ? compactBytes : null,
+    attemptedCompactSeedBytes: frame === "seed" ? compactBytes : null,
+    selectedEncoding: "semantic-compact-v1",
+    selectionStatus: frame === "patch" ? "patch-preferred" : "direct-seed",
+  });
+}
+
+function failedCompactAndLegacySelectionObservation(
+  compact: ExactSemanticSelectionObservation,
+  legacy: ExactSemanticSelectionObservation,
+): SemanticSelectionObservation {
+  return Object.freeze({
+    attemptedPatchBytes: compact.attemptedPatchBytes,
+    attemptedSeedBytes: compact.attemptedSeedBytes,
+    attemptedLegacyPatchBytes: legacy.attemptedPatchBytes,
+    attemptedLegacySeedBytes: legacy.attemptedSeedBytes,
+    attemptedLegacyPatchAtLeastBytes: null,
+    attemptedLegacySeedAtLeastBytes: null,
+    attemptedLegacyPatchSizeCapped: false,
+    attemptedLegacySeedSizeCapped: false,
+    attemptedCompactPatchBytes: compact.attemptedPatchBytes,
+    attemptedCompactSeedBytes: compact.attemptedSeedBytes,
+    selectedEncoding: "semantic-compact-v1",
+    selectionStatus: compact.selectionStatus,
+  });
+}
+
+function terminalSelectionObservation(observation: SemanticSelectionObservation) {
+  return Object.freeze({
+    selectionStatus: observation.selectionStatus,
+    selectedEncoding: observation.selectedEncoding,
+    attemptedLegacyPatchBytes: observation.attemptedLegacyPatchBytes,
+    attemptedLegacySeedBytes: observation.attemptedLegacySeedBytes,
+    attemptedLegacyPatchAtLeastBytes: observation.attemptedLegacyPatchAtLeastBytes,
+    attemptedLegacySeedAtLeastBytes: observation.attemptedLegacySeedAtLeastBytes,
+    attemptedLegacyPatchSizeCapped: observation.attemptedLegacyPatchSizeCapped,
+    attemptedLegacySeedSizeCapped: observation.attemptedLegacySeedSizeCapped,
+    attemptedCompactPatchBytes: observation.attemptedCompactPatchBytes,
+    attemptedCompactSeedBytes: observation.attemptedCompactSeedBytes,
+  });
+}
+
+function semanticSelectionObservationFromError(
+  error: unknown,
+): SemanticSelectionObservation | null {
+  return error instanceof TerminalDeliveryRepresentationSelectionError
+    ? error.selectionObservation
+    : null;
 }
 
 function semanticPayload(
@@ -932,6 +1749,19 @@ function semanticPayload(
       patch: update.patch,
     };
   return semanticSeed(target);
+}
+
+function encodeLegacySemanticCandidate(payload: TerminalSemanticDeliveryPayload): Uint8Array {
+  const preaccounted = preaccountSemanticTerminalUpdateBytes(
+    payload,
+    TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES,
+  );
+  if (!preaccounted.exact)
+    throw new TerminalDeliveryPreaccountLimitError(preaccounted.atLeastBytes);
+  const bytes = encodeSemanticTerminalUpdate(payload);
+  if (bytes.byteLength !== preaccounted.bytes)
+    throw new TypeError("Legacy semantic byte preaccount did not match encoding");
+  return bytes;
 }
 
 function semanticSeed(target: RevisionRecord): TerminalSemanticDeliveryPayload {

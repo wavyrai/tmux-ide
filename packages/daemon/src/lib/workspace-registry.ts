@@ -15,12 +15,10 @@
 
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { WorkspaceSchemaZ, type Workspace } from "@tmux-ide/contracts";
-
-const REGISTRY_DIR_ENV = "TMUX_IDE_REGISTRY_DIR";
+import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
 
 const RegistryFileSchemaZ = z.object({
   version: z.literal(1),
@@ -29,13 +27,44 @@ const RegistryFileSchemaZ = z.object({
 
 type RegistryFile = z.infer<typeof RegistryFileSchemaZ>;
 
-export type ListSessionsFn = () => readonly string[];
+export type WorkspaceRegistrySessionInventory =
+  | { readonly status: "authoritative"; readonly sessions: readonly string[] }
+  | { readonly status: "unavailable"; readonly detail: string }
+  | { readonly status: "ambiguous"; readonly detail: string };
+
+export type ListSessionsFn = () => readonly string[] | WorkspaceRegistrySessionInventory;
+
+export type WorkspaceRegistryLoadResult =
+  | {
+      readonly status: "authoritative";
+      readonly sessions: readonly string[];
+      readonly removed: readonly string[];
+    }
+  | { readonly status: "preserved"; readonly reason: "unavailable" | "ambiguous" };
+
+export const WORKSPACE_REGISTRY_TMUX_TIMEOUT_MS = 2_000;
+
+type WorkspaceRegistryExecFileSync = (
+  file: string,
+  args: readonly string[],
+  options: {
+    readonly encoding: "utf-8";
+    readonly stdio: readonly ["ignore", "pipe", "pipe"];
+    readonly timeout: number;
+  },
+) => string;
 
 export interface WorkspaceRegistryOptions {
   /** Override registry dir for tests. Defaults to ~/.tmux-ide. */
   dir?: string;
   /** Inject a tmux list-sessions implementation (defaults to bridge). */
   listSessions?: ListSessionsFn;
+}
+
+function isSessionInventory(
+  value: readonly string[] | WorkspaceRegistrySessionInventory,
+): value is WorkspaceRegistrySessionInventory {
+  return !Array.isArray(value);
 }
 
 export interface AddWorkspaceInput {
@@ -48,6 +77,8 @@ export interface AddWorkspaceInput {
   hasWorkspaceConfig?: boolean;
   /** Override Date.now() for deterministic tests. */
   now?: () => Date;
+  /** Live-only workspace; never serialized to workspaces.json. */
+  persistence?: "durable" | "volatile";
 }
 
 export class WorkspaceAlreadyExistsError extends Error {
@@ -79,10 +110,11 @@ export class WorkspaceRegistry {
   private readonly listSessions: ListSessionsFn;
   private readonly emitter = new EventEmitter();
   private workspaces: Workspace[] = [];
+  private readonly volatileNames = new Set<string>();
   private loaded = false;
 
   constructor(options: WorkspaceRegistryOptions = {}) {
-    this.dir = options.dir ?? process.env[REGISTRY_DIR_ENV] ?? join(homedir(), ".tmux-ide");
+    this.dir = options.dir ?? resolveRuntimeNamespace().registryDir;
     this.listSessions = options.listSessions ?? defaultListSessions;
     this.emitter.setMaxListeners(0);
   }
@@ -94,21 +126,38 @@ export class WorkspaceRegistry {
    *
    * Safe to call repeatedly; subsequent calls re-reconcile.
    */
-  async load(): Promise<void> {
+  async load(
+    listSessions: ListSessionsFn = this.listSessions,
+  ): Promise<WorkspaceRegistryLoadResult> {
     const fromDisk = this.readDisk();
-    let live: Set<string>;
+    let inventory: WorkspaceRegistrySessionInventory;
     try {
-      live = new Set(this.listSessions());
-    } catch {
-      // tmux is unavailable — keep all entries; reconcile when we can.
-      live = new Set(fromDisk.map((w) => w.sessionName));
+      const observed = listSessions();
+      inventory = isSessionInventory(observed)
+        ? observed
+        : { status: "authoritative", sessions: observed };
+    } catch (error) {
+      inventory = workspaceRegistryInventoryFailure(error);
     }
+    if (inventory.status !== "authoritative") {
+      // Absence of an authoritative inventory is not proof that a session
+      // died. Preserve the durable rows byte-for-byte until the same tmux
+      // authority can answer successfully.
+      this.workspaces = fromDisk;
+      this.loaded = true;
+      return { status: "preserved", reason: inventory.status };
+    }
+    const live = new Set(inventory.sessions);
     const reconciled = fromDisk.filter((w) => live.has(w.sessionName));
+    const removed = fromDisk
+      .filter((workspace) => !live.has(workspace.sessionName))
+      .map((workspace) => workspace.name);
     this.workspaces = reconciled;
     this.loaded = true;
     if (reconciled.length !== fromDisk.length) {
       this.writeDisk();
     }
+    return { status: "authoritative", sessions: [...inventory.sessions], removed };
   }
 
   list(): Workspace[] {
@@ -140,10 +189,12 @@ export class WorkspaceRegistry {
     };
     const previous = this.workspaces;
     this.workspaces = [...previous, workspace];
+    if (input.persistence === "volatile") this.volatileNames.add(workspace.name);
     try {
       this.writeDisk();
     } catch (error) {
       this.workspaces = previous;
+      this.volatileNames.delete(workspace.name);
       throw error;
     }
     this.emitter.emit("workspace.added", workspace);
@@ -181,6 +232,7 @@ export class WorkspaceRegistry {
       throw new WorkspaceNotFoundError(name);
     }
     this.workspaces = this.workspaces.filter((w) => w.name !== name);
+    this.volatileNames.delete(name);
     this.writeDisk();
     this.emitter.emit("workspace.removed", name);
   }
@@ -221,7 +273,10 @@ export class WorkspaceRegistry {
   private writeDisk(): void {
     const path = this.filePath();
     mkdirSync(dirname(path), { recursive: true });
-    const file: RegistryFile = { version: 1, workspaces: this.workspaces };
+    const file: RegistryFile = {
+      version: 1,
+      workspaces: this.workspaces.filter(({ name }) => !this.volatileNames.has(name)),
+    };
     const tmp = `${path}.tmp`;
     writeFileSync(tmp, JSON.stringify(file, null, 2) + "\n");
     renameSync(tmp, path);
@@ -239,29 +294,104 @@ export class WorkspaceRegistry {
 // ---------------------------------------------------------------------------
 
 let _default: WorkspaceRegistry | null = null;
+let _defaultNamespaceKey: string | null = null;
 
 export function getDefaultWorkspaceRegistry(): WorkspaceRegistry {
-  if (!_default) _default = new WorkspaceRegistry();
+  const namespaceKey = resolveRuntimeNamespace().registryDir;
+  if (!_default || _defaultNamespaceKey !== namespaceKey) {
+    _default = new WorkspaceRegistry({ dir: namespaceKey });
+    _defaultNamespaceKey = namespaceKey;
+  }
   return _default;
 }
 
 /** @internal Test hook: replace the singleton. */
 export function _setDefaultWorkspaceRegistryForTests(registry: WorkspaceRegistry | null): void {
   _default = registry;
+  _defaultNamespaceKey = registry ? resolveRuntimeNamespace().registryDir : null;
 }
 
-function defaultListSessions(): string[] {
+function errorDetail(error: unknown): string {
+  if (typeof error !== "object" || error === null) return String(error);
+  const stderr = "stderr" in error ? error.stderr : null;
+  if (typeof stderr === "string" && stderr.length > 0) return stderr;
+  if (Buffer.isBuffer(stderr) && stderr.length > 0) return stderr.toString("utf8");
+  return error instanceof Error ? error.message : String(error);
+}
+
+function workspaceRegistryInventoryFailure(error: unknown): WorkspaceRegistrySessionInventory {
+  const chain: unknown[] = [];
+  let cursor: unknown = error;
+  while (chain.length < 5 && cursor !== null && cursor !== undefined) {
+    chain.push(cursor);
+    cursor =
+      typeof cursor === "object" && cursor !== null && "cause" in cursor ? cursor.cause : undefined;
+  }
+  const codes = new Set(
+    chain.flatMap((candidate) =>
+      typeof candidate === "object" && candidate !== null && "code" in candidate
+        ? [String(candidate.code)]
+        : [],
+    ),
+  );
+  const detail = errorDetail(error);
+  const normalized = chain.map(errorDetail).join("\n").toLowerCase();
+  if (
+    codes.has("ETIMEDOUT") ||
+    codes.has("ENOENT") ||
+    codes.has("TMUX_UNAVAILABLE") ||
+    normalized.includes("failed to connect to server") ||
+    normalized.includes("no server running") ||
+    normalized.includes("error connecting to") ||
+    normalized.includes("connection refused")
+  ) {
+    return { status: "unavailable", detail };
+  }
+  return { status: "ambiguous", detail };
+}
+
+/** True only when tmux itself (or its pinned socket) is currently absent. */
+export function isTmuxServerUnavailableError(error: unknown): boolean {
+  return workspaceRegistryInventoryFailure(error).status === "unavailable";
+}
+
+/** Read an inventory through a daemon-generation-pinned tmux runner. */
+export function readWorkspaceRegistrySessionInventory(
+  runTmux: (args: readonly string[]) => string,
+): WorkspaceRegistrySessionInventory {
+  try {
+    const raw = runTmux(["list-sessions", "-F", "#{session_name}"]);
+    return {
+      status: "authoritative",
+      sessions: raw.split("\n").filter(Boolean),
+    };
+  } catch (error) {
+    return workspaceRegistryInventoryFailure(error);
+  }
+}
+
+export function listTmuxSessionsForWorkspaceRegistry(
+  run: WorkspaceRegistryExecFileSync,
+): WorkspaceRegistrySessionInventory {
+  try {
+    const raw = run("tmux", ["list-sessions", "-F", "#{session_name}"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: WORKSPACE_REGISTRY_TMUX_TIMEOUT_MS,
+    });
+    return {
+      status: "authoritative",
+      sessions: raw.split("\n").filter(Boolean),
+    };
+  } catch (error) {
+    return workspaceRegistryInventoryFailure(error);
+  }
+}
+
+function defaultListSessions(): WorkspaceRegistrySessionInventory {
   // Lazy import keeps tmux-bridge optional for test environments that
   // don't have tmux available; tests inject a stub instead.
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
-  try {
-    const raw = execFileSync("tmux", ["list-sessions", "-F", "#{session_name}"], {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "pipe"],
-    }) as string;
-    return raw.split("\n").filter(Boolean);
-  } catch {
-    return [];
-  }
+  return listTmuxSessionsForWorkspaceRegistry(execFileSync as WorkspaceRegistryExecFileSync);
 }

@@ -12,7 +12,7 @@ import {
   type PaneFrameRootLeafProps,
   type PaneFrameStatusLeafProps,
   type PaneFrameTitleLeafProps,
-} from "../../../ui/pane-frame/presenter.tsx";
+} from "@tmux-ide/presentation/pane-frame";
 import { ActionChip, Badge, IconButton, StatusChip } from "../recipe-components.tsx";
 import { recipePalette } from "../recipes.ts";
 import type { SemanticThemeSnapshot } from "../theme.ts";

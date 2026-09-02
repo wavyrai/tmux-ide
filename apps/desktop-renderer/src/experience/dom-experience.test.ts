@@ -179,7 +179,7 @@ describe("DOM experience adapter", () => {
 
     expect(experience.appearance).toBe("light");
     expect(experience.variables[DOM_EXPERIENCE_VARIABLE.text.link]).toBe("rgb(12 34 56)");
-    expect(experience.variables[DOM_EXPERIENCE_VARIABLE.surface.panel]).toBe("rgb(255 255 255)");
+    expect(experience.variables[DOM_EXPERIENCE_VARIABLE.surface.panel]).toBe("rgb(238 238 238)");
     expect(experience.diagnostics).toEqual([]);
   });
 

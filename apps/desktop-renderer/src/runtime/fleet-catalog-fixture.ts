@@ -1,4 +1,8 @@
-import type { DaemonInstanceIdentity, FleetCatalogResourceV1 } from "@tmux-ide/contracts";
+import {
+  DAEMON_WIRE_PROTOCOL_VERSION,
+  type DaemonInstanceIdentity,
+  type FleetCatalogResourceV1,
+} from "@tmux-ide/contracts";
 
 /**
  * Shared, contract-valid fleet-catalog fixtures for the fleet store tests and
@@ -7,7 +11,7 @@ import type { DaemonInstanceIdentity, FleetCatalogResourceV1 } from "@tmux-ide/c
  */
 
 export const FLEET_FIXTURE_DAEMON: DaemonInstanceIdentity = {
-  protocolVersion: 1,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "2.8.0",
   instanceId: "b2f4c6d8-0a1b-4c3d-8e5f-60718293a4b5",
   startedAt: "2026-07-21T00:00:00.000Z",

@@ -6,6 +6,7 @@ import {
   APPLICATION_SHELL_RESOURCE_V3_VERSION,
   ApplicationShellProjectionInputV2SchemaZ,
   ApplicationShellProjectionInputV3SchemaZ,
+  DAEMON_WIRE_PROTOCOL_VERSION,
   DESKTOP_HOST_API_VERSION,
   type ApplicationShellProjectionInputV2,
   type ApplicationShellProjectionInputV3,
@@ -20,16 +21,20 @@ const terminalHarness = vi.hoisted(() => {
     connect: ReturnType<typeof vi.fn>;
     attachment: { dispose: ReturnType<typeof vi.fn> };
   }> = [];
-  const create = vi.fn((_host: unknown, daemon: DaemonInstanceIdentity) => {
-    const attachment = {
-      write: vi.fn(async () => ({ status: "ok" as const })),
-      resize: vi.fn(async () => ({ status: "ok" as const })),
-      dispose: vi.fn(),
-    };
-    const connect = vi.fn(async () => ({ status: "connected" as const, attachment }));
-    generations.push({ daemon, connect, attachment });
-    return { connect };
-  });
+  const create = vi.fn(
+    (client: { getSnapshot(): { target: { daemon: DaemonInstanceIdentity } | null } }) => {
+      const daemon = client.getSnapshot().target?.daemon;
+      if (!daemon) throw new Error("terminal client target unavailable");
+      const attachment = {
+        write: vi.fn(async () => ({ status: "ok" as const })),
+        resize: vi.fn(async () => ({ status: "ok" as const })),
+        dispose: vi.fn(),
+      };
+      const connect = vi.fn(async () => ({ status: "connected" as const, attachment }));
+      generations.push({ daemon, connect, attachment });
+      return { connect };
+    },
+  );
   return { create, generations };
 });
 
@@ -47,8 +52,8 @@ const xtermHarness = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock("./runtime/host-terminal-transport.ts", () => ({
-  createHostNativeTerminalTransport: terminalHarness.create,
+vi.mock("./runtime/workspace-client-native-terminal-transport.ts", () => ({
+  createWorkspaceClientNativeTerminalTransport: terminalHarness.create,
 }));
 
 vi.mock("./terminal/xterm-renderer.ts", () => ({
@@ -57,16 +62,17 @@ vi.mock("./terminal/xterm-renderer.ts", () => ({
 
 import { App } from "./App.tsx";
 import { createDefaultDomShellInput } from "./experience/dom-shell.ts";
+import type { WebWorkspaceClient } from "./runtime/web-workspace-client.ts";
 
 const DAEMON_A: DaemonInstanceIdentity = {
-  protocolVersion: 1,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "test-a",
   instanceId: "00000000-0000-4000-8000-000000000001",
   startedAt: "2026-07-22T00:00:00.000Z",
 };
 
 const DAEMON_B: DaemonInstanceIdentity = {
-  protocolVersion: 1,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "test-b",
   instanceId: "00000000-0000-4000-8000-000000000002",
   startedAt: "2026-07-22T00:01:00.000Z",
@@ -260,10 +266,10 @@ function createHostHarness() {
         status: "error" as const,
         error: { code: "preview-only" as const, reason: "test transport" },
       })),
-      createWorkspacePane: vi.fn(async () => ({
+      createWorkspacePane: vi.fn(async (request) => ({
         status: "ok" as const,
         result: {
-          operationId: "00000000-0000-4000-8000-000000000010",
+          operationId: request.operationId!,
           daemonInstanceId: daemon.instanceId,
           outcome: "created" as const,
           resource: {
@@ -303,6 +309,28 @@ function createHostHarness() {
       fetchFleetCatalog: vi.fn(async () => ({
         status: "ok" as const,
         envelope: { version: 1 as const, daemon, sessions: [] },
+      })),
+      fetchWorkspaceCatalog: vi.fn(async () => ({
+        status: "ok" as const,
+        envelope: {
+          version: 2 as const,
+          daemon,
+          intents: [
+            {
+              workspaceName: "alpha",
+              sessionName: "alpha",
+              source: "project" as const,
+              availability: "live" as const,
+            },
+          ],
+          liveSessions: [
+            {
+              sessionName: "alpha",
+              fleetSessionId: "session.00000000000000000000000000000001",
+              paneCount: 1,
+            },
+          ],
+        },
       })),
       promoteWorkspace: vi.fn(async () => ({
         status: "error" as const,
@@ -453,7 +481,7 @@ describe("production terminal composition", () => {
   });
 
   it.each([
-    ["protocolVersion", { protocolVersion: 2 }],
+    ["protocolVersion", { protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION + 1 }],
     ["productVersion", { productVersion: "different-product" }],
     ["instanceId", { instanceId: "00000000-0000-4000-8000-000000000099" }],
     ["startedAt", { startedAt: "2026-07-22T00:00:01.000Z" }],
@@ -512,19 +540,19 @@ describe("production terminal composition", () => {
     const harness = createHostHarness();
     harness.setResource(shellInputV3());
     vi.mocked(harness.host.daemon.mutateAppWindow)
-      .mockImplementationOnce(async () => {
+      .mockImplementationOnce(async (_request) => {
         harness.setResource(shellInputV3AtRevision(1, { x: 44, y: 34, width: 720, height: 440 }));
         return {
           status: "error" as const,
           error: { code: "resource-changed" as const, reason: "The layout changed." },
         };
       })
-      .mockImplementationOnce(async () => {
+      .mockImplementationOnce(async (request) => {
         harness.setResource(shellInputV3AtRevision(2, { x: 12, y: 12, width: 876, height: 516 }));
         return {
           status: "ok" as const,
           result: {
-            operationId: "00000000-0000-4000-8000-000000000020",
+            operationId: request.operationId!,
             daemonInstanceId: DAEMON_A.instanceId,
             outcome: "applied" as const,
             workspaceName: "alpha",
@@ -545,14 +573,16 @@ describe("production terminal composition", () => {
     await vi.waitFor(() => expect(harness.host.daemon.mutateAppWindow).toHaveBeenCalledTimes(2));
     expect(harness.host.daemon.mutateAppWindow).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ expectedDocumentRevision: 0 }),
+      expect.objectContaining({ intent: expect.objectContaining({ expectedDocumentRevision: 0 }) }),
     );
     expect(harness.host.daemon.mutateAppWindow).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ expectedDocumentRevision: 1 }),
+      expect.objectContaining({ intent: expect.objectContaining({ expectedDocumentRevision: 1 }) }),
     );
     expect(
-      vi.mocked(harness.host.daemon.mutateAppWindow).mock.calls.map(([request]) => request.command),
+      vi
+        .mocked(harness.host.daemon.mutateAppWindow)
+        .mock.calls.map(([request]) => request.intent.command),
     ).toEqual([
       expect.objectContaining({ type: "window.float", windowId: "window.shell" }),
       expect.objectContaining({ type: "window.float", windowId: "window.shell" }),
@@ -585,6 +615,28 @@ describe("production terminal composition", () => {
     );
     expect(tabLabels.length).toBeGreaterThanOrEqual(2);
     expect(tabLabels.join(" ")).toContain("Logs shell");
+    const diagnosticWindows = [...root.querySelectorAll<HTMLElement>(".window-tabs__tab")].map(
+      (tab) => ({
+        windowResourceId: tab.dataset.windowResourceId,
+        semanticPaneIds: JSON.parse(tab.dataset.semanticPaneIds ?? "null"),
+        paneCount: tab.dataset.paneCount,
+        active: tab.dataset.active,
+      }),
+    );
+    expect(diagnosticWindows).toEqual([
+      {
+        windowResourceId: "pane.shell",
+        semanticPaneIds: ["pane.shell"],
+        paneCount: "1",
+        active: "true",
+      },
+      {
+        windowResourceId: "pane.logs",
+        semanticPaneIds: ["pane.logs"],
+        paneCount: "1",
+        active: "false",
+      },
+    ]);
     // Bug this catches: an unattachable pane is offered as though it were a
     // window a click could reach, and the click can only fail.
     expect(tabLabels.join(" ")).not.toContain("Unavailable shell");
@@ -593,6 +645,64 @@ describe("production terminal composition", () => {
         expect.objectContaining({ target: { semanticPaneId: "pane.unavailable" } }),
       ]),
     );
+    dispose();
+  });
+
+  it("owns a live pane action once and surfaces a rejected semantic dispatch", async () => {
+    const harness = createHostHarness();
+    window.tmuxIdeHost = harness.host;
+    const legacyObserver = vi.fn();
+    let workspaceClient: WebWorkspaceClient | null = null;
+    const root = document.body.appendChild(document.createElement("div"));
+    const dispose = render(
+      () => (
+        <App
+          onPaneAction={legacyObserver}
+          onWorkspaceClientChanged={(client) => (workspaceClient = client)}
+        />
+      ),
+      root,
+    );
+    await vi.waitFor(() => expect(workspaceClient).not.toBeNull());
+    const dispatch = vi.spyOn(workspaceClient!, "dispatch");
+    const logsTab = await vi.waitFor(() => {
+      const tab = [...root.querySelectorAll<HTMLButtonElement>(".window-tabs__tab")].find((item) =>
+        item.textContent?.includes("Logs shell"),
+      );
+      expect(tab).not.toBeUndefined();
+      return tab!;
+    });
+    logsTab.click();
+    const header = await vi.waitFor(() => {
+      const value = root.querySelector<HTMLElement>(".pane-tile__header");
+      expect(value).not.toBeNull();
+      return value!;
+    });
+    header.setPointerCapture = () => undefined;
+    const pointer = (type: string): PointerEvent => {
+      const event = new MouseEvent(type, { bubbles: true, button: 0 });
+      Object.defineProperties(event, {
+        pointerId: { value: 7 },
+        isPrimary: { value: true },
+        pointerType: { value: "mouse" },
+      });
+      return event as PointerEvent;
+    };
+    header.dispatchEvent(pointer("pointerdown"));
+    header.dispatchEvent(pointer("pointerup"));
+    header.dispatchEvent(pointer("pointerdown"));
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
+    expect(dispatch).toHaveBeenCalledWith({
+      kind: "semantic-intent",
+      intent: {
+        verb: "workspace.pane.zoom.toggle",
+        workspaceName: "alpha",
+        semanticPaneId: "pane.logs",
+        desired: "zoomed",
+      },
+    });
+    expect(legacyObserver).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(root.textContent).toContain("Pane action was not applied"));
     dispose();
   });
 
@@ -648,11 +758,15 @@ describe("production terminal composition", () => {
     dispose();
   });
 
-  it("retires terminal attachments and replaces transport authority on generation change", async () => {
+  it("restamps one terminal client across a daemon generation change", async () => {
     const harness = createHostHarness();
     window.tmuxIdeHost = harness.host;
     const root = document.body.appendChild(document.createElement("div"));
-    const dispose = render(() => <App />, root);
+    let workspaceClient: WebWorkspaceClient | null = null;
+    const dispose = render(
+      () => <App onWorkspaceClientChanged={(client) => (workspaceClient = client)} />,
+      root,
+    );
     await vi.waitFor(() => expect(terminalHarness.generations).toHaveLength(1));
     await vi.waitFor(() => expect(terminalHarness.generations[0]!.connect).toHaveBeenCalled());
 
@@ -662,14 +776,13 @@ describe("production terminal composition", () => {
       previousIdentity: DAEMON_A,
       daemon: { status: "connected", identity: DAEMON_B },
     });
-    await vi.waitFor(() => expect(terminalHarness.generations).toHaveLength(2));
-    expect(terminalHarness.generations.map(({ daemon }) => daemon.instanceId)).toEqual([
-      DAEMON_A.instanceId,
-      DAEMON_B.instanceId,
-    ]);
     await vi.waitFor(() =>
-      expect(terminalHarness.generations[0]!.attachment.dispose).toHaveBeenCalled(),
+      expect(workspaceClient?.getSnapshot().target?.daemon.instanceId).toBe(DAEMON_B.instanceId),
     );
+    expect(terminalHarness.generations).toHaveLength(1);
+    expect(terminalHarness.create).toHaveBeenCalledOnce();
+    expect(terminalHarness.generations[0]!.attachment.dispose).toHaveBeenCalledOnce();
     dispose();
+    expect(terminalHarness.generations[0]!.attachment.dispose).toHaveBeenCalledTimes(2);
   });
 });

@@ -33,17 +33,14 @@ import {
 } from "@hugeicons/core-free-icons";
 
 import { Icon, type IconArtwork } from "../ui-system/icon.tsx";
-import { WebPaneFrame } from "../../../../packages/daemon/src/ui/pane-frame/web-host-unstyled.tsx";
-import type {
-  PaneFrameAction,
-  PaneFrameModel,
-} from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
-import { stableAppWindowInstanceId } from "../../../../packages/daemon/src/lib/app-window-state.ts";
+import { WebPaneFrame } from "@tmux-ide/presentation/pane-frame/web";
+import type { PaneFrameAction, PaneFrameModel } from "@tmux-ide/presentation/pane-frame";
+import { stableAppWindowInstanceId } from "@tmux-ide/core";
 import { TerminalSurface } from "../terminal/terminal-surface.tsx";
 import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
 import type { TerminalRendererFactory } from "../terminal/xterm-renderer.ts";
 import { MirrorPaneNode } from "../terminal/mirror-pane-node.tsx";
-import type { MirrorPaneNodeState, MirrorPaneSink } from "../terminal/pane-mirror-controller.ts";
+import type { MirrorPaneNodeState, MirrorPaneSink } from "../terminal/workspace-pane-compositor.ts";
 import type { MirrorTerminalRendererFactory } from "../terminal/mirror-xterm-renderer.ts";
 import {
   statusStripFromConnectionHealth,
@@ -131,7 +128,7 @@ export interface AppWindowCanvasMirrorProps {
    * a degraded engine). Null when there is no fault or none this build knows.
    */
   readonly faultLabel?: string | null;
-  readonly onRetry: () => void;
+  readonly onRetry?: () => void;
   readonly rendererFactory?: MirrorTerminalRendererFactory;
 }
 

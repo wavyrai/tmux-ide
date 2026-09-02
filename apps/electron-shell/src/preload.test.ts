@@ -31,6 +31,39 @@ beforeAll(async () => {
 });
 
 describe("desktop preload daemon bridge", () => {
+  it("carries an exact WorkspaceClient operation id across atomic open calls", async () => {
+    const capabilities = electron.exposeInMainWorld.mock.calls[0]?.[1] as HostCapabilities;
+    const operationId = "10000000-0000-4000-8000-000000000001";
+    electron.invoke.mockImplementationOnce(async (...args: unknown[]) => {
+      expect(args).toEqual([HOST_IPC.workspacePrepareProjectDirectory, "workspace-a", operationId]);
+      return null;
+    });
+    await expect(
+      capabilities.workspace.prepareProjectDirectory?.("workspace-a", operationId),
+    ).resolves.toBeNull();
+    const decision = {
+      prepareToken: "20000000-0000-4000-8000-000000000001",
+      preparedRevision: 3,
+    };
+    electron.invoke.mockImplementationOnce(async (...args: unknown[]) => {
+      expect(args).toEqual([HOST_IPC.workspaceCancelPreparedOpen, decision, operationId]);
+      return {
+        status: "ok",
+        result: {
+          operationId,
+          daemonInstanceId: "30000000-0000-4000-8000-000000000001",
+          phase: "cancelled",
+          ...decision,
+          workspaceName: "workspace-b",
+          previousWorkspaceName: "workspace-a",
+        },
+      };
+    });
+    await expect(
+      capabilities.workspace.cancelPreparedOpen?.(decision, operationId),
+    ).resolves.toMatchObject({ status: "ok", result: { operationId, ...decision } });
+  });
+
   it("opens a native-selected project without exposing or accepting a filesystem path", async () => {
     const capabilities = electron.exposeInMainWorld.mock.calls[0]?.[1] as HostCapabilities;
     const operationId = "20000000-0000-4000-8000-000000000002";

@@ -32,8 +32,6 @@ const ADAPTER_ROOTS = ["tui", "widgets"] as const;
  *   process-tree resolution, screen manifests). Pure core; the TUI is one of
  *   several consumers.
  * - `tui/integrations/*` — the agent hook installers. Core lifecycle wiring.
- * - `tui/chrome/front-door.ts` — holds `ADOPTED_OPTION`, the tmux option name
- *   that marks an adopted session. A core fact stored in a chrome module.
  * - `widgets/lib/pane-comms.ts` — tmux pane enumeration and messaging helpers.
  *   Core tmux access that predates the `terminal/` engine home.
  * - `widgets/resolve.ts` — the one entry that is a true engine -> adapter call:
@@ -42,7 +40,6 @@ const ADAPTER_ROOTS = ["tui", "widgets"] as const;
  *   registers its spawn recipes with the core), not by moving a file.
  */
 const KNOWN_INVERSIONS: readonly string[] = [
-  "command-center/discovery.ts -> tui/chrome/front-door.ts",
   "command-center/discovery.ts -> widgets/lib/pane-comms.ts",
   "command-center/filesystem.test.ts -> widgets/lib/pane-comms.ts",
   "command-center/projects.test.ts -> widgets/lib/pane-comms.ts",

@@ -18,7 +18,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 
-import type { PaneFrameModel } from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
+import type { PaneFrameModel } from "@tmux-ide/presentation/pane-frame";
 import {
   APP_WINDOW_CANVAS_ACTION_IDS,
   AppWindowCanvas,

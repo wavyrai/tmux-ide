@@ -47,6 +47,8 @@ export const TerminalReplicaModesSchemaZ = z
     origin: z.boolean(),
     wraparound: z.boolean(),
     mouseTracking: z.boolean(),
+    mouseProtocol: z.enum(["none", "x10", "vt200", "drag", "any"]).optional(),
+    mouseEncoding: z.enum(["default", "utf8", "sgr", "sgr-pixels"]).optional(),
     synchronizedOutput: z.boolean(),
   })
   .strict();

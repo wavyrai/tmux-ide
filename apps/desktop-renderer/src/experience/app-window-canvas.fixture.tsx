@@ -6,7 +6,7 @@ import {
 } from "@tmux-ide/contracts";
 import { render } from "solid-js/web";
 
-import type { PaneFrameModel } from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
+import type { PaneFrameModel } from "@tmux-ide/presentation/pane-frame";
 import { AppWindowCanvas } from "./app-window-canvas.tsx";
 import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
 

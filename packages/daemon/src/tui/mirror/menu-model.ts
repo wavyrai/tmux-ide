@@ -47,6 +47,7 @@ export const MENU_ITEMS: Record<MenuRegion, MenuItem[]> = {
   // close — where there is no dialog — uses the inline confirm rearm.
   agent: [
     { id: "jump", label: "Go to agent" },
+    { id: "rename", label: "Rename agent", input: "rename to" },
     { id: "restart", label: "Restart agent" },
     { id: "stop", label: "Stop agent" },
     { id: "close", label: "Close pane", danger: true },

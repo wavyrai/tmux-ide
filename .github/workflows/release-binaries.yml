@@ -3,8 +3,9 @@ name: Release binaries
 # Per-platform prebuilt TUI binaries. The npm tarball ships the `.tsx` surfaces
 # (which need `bun` to run) but NOT the ~70MB compiled binary. This workflow
 # cross-compiles one binary per platform via `bun build --compile --target` and
-# uploads them as release assets, so a clean `npm i -g tmux-ide` with no `bun`
-# can download the right one on demand (`tmux-ide update --tui-binary` — see
+# uploads them as release assets, so the first `tmux-ide app` after a clean
+# `npm i -g tmux-ide` can download the exact-version runtime automatically
+# (`tmux-ide update --tui-binary` remains the explicit retry path — see
 # packages/daemon/src/lib/tui-binary.ts for the asset-name/URL contract).
 #
 # Cross-compile note: `@opentui/core` dynamically imports its platform-specific
@@ -33,6 +34,8 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      commit: ${{ steps.resolve.outputs.commit }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -51,7 +54,11 @@ jobs:
             echo "Invalid release version: $raw" >&2
             exit 1
           fi
+          commit="$(git rev-parse HEAD)"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "Resolved release v$version at $commit"
 
       - name: Ensure GitHub release exists
         env:
@@ -59,10 +66,68 @@ jobs:
         shell: bash
         run: |
           tag="${{ steps.resolve.outputs.tag }}"
+          version="${{ steps.resolve.outputs.version }}"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            expected_commit="${{ steps.resolve.outputs.commit }}"
+            verify_dispatch_tag() {
+              local requirement="$1" refs direct peeled actual
+              refs="$(git ls-remote origin "refs/tags/${tag}" "refs/tags/${tag}^{}")"
+              if [[ -z "$refs" ]]; then
+                if [[ "$requirement" == "required" ]]; then
+                  echo "Release $tag exists but its remote tag cannot be resolved." >&2
+                  exit 1
+                fi
+                return 0
+              fi
+              direct="$(awk -v ref="refs/tags/${tag}" '$2 == ref { print $1; exit }' <<< "$refs")"
+              peeled="$(awk -v ref="refs/tags/${tag}^{}" '$2 == ref { print $1; exit }' <<< "$refs")"
+              actual="${peeled:-$direct}"
+              if [[ -z "$actual" || "$actual" != "$expected_commit" ]]; then
+                echo "Refusing to reuse $tag: tag commit ${actual:-unknown} does not match checked-out commit $expected_commit." >&2
+                exit 1
+              fi
+              echo "Verified $tag resolves to checked-out commit $expected_commit."
+            }
+
+            # Catch a pre-existing tag before `gh release create --target`: the
+            # target flag cannot retarget a tag that already points elsewhere.
+            verify_dispatch_tag optional
+          fi
+
+          release_flags=(--title "$tag" --generate-notes)
+          if [[ "$version" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
+
           if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" --title "$tag" --generate-notes
+            if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+              # A manual version may not have a tag yet. Bind both the new tag
+              # and release to the exact commit this workflow checked out.
+              gh release create "$tag" --target "${{ steps.resolve.outputs.commit }}" "${release_flags[@]}"
+              # Re-resolve after creation to close the check/create race and
+              # prove the release's actual tag identity, not only its request.
+              verify_dispatch_tag required
+            else
+              # Tag-push releases retain GitHub's normal existing-tag behavior.
+              gh release create "$tag" "${release_flags[@]}"
+            fi
           else
+            if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+              # A GitHub release is addressed by its tag; resolving that tag to
+              # the expected commit validates the reused release target.
+              verify_dispatch_tag required
+            fi
             echo "Release $tag already exists — reusing it."
+          fi
+
+          expected_prerelease=false
+          if [[ "$version" == *-* ]]; then
+            expected_prerelease=true
+          fi
+          actual_prerelease="$(gh release view "$tag" --json isPrerelease --jq '.isPrerelease')"
+          if [[ "$actual_prerelease" != "$expected_prerelease" ]]; then
+            echo "Release $tag prerelease classification is $actual_prerelease; expected $expected_prerelease." >&2
+            exit 1
           fi
 
   binaries:
@@ -76,6 +141,23 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.commit }}
+
+      - name: Align compiled package versions with the release
+        env:
+          RELEASE_VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from "node:fs";
+          for (const path of ["package.json", "packages/daemon/package.json"]) {
+            const pkg = JSON.parse(readFileSync(path, "utf8"));
+            pkg.version = process.env.RELEASE_VERSION;
+            writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`);
+          }
+          NODE
+          test "$(node -p "require('./package.json').version")" = "$RELEASE_VERSION"
+          test "$(node -p "require('./packages/daemon/package.json').version")" = "$RELEASE_VERSION"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -136,10 +218,37 @@ jobs:
             exit 1
           fi
 
-      - name: Compress
-        run: gzip -9 -c "dist-bin/tmux-ide-tui-${{ matrix.platform }}" > "tmux-ide-tui-${{ matrix.platform }}.gz"
+      - name: Compress and write integrity manifest
+        shell: bash
+        run: |
+          binary="tmux-ide-tui-${{ matrix.platform }}"
+          asset="${binary}.gz"
+          gzip -9 -c "dist-bin/${binary}" > "$asset"
+          compressed_sha="$(sha256sum "$asset" | cut -d' ' -f1)"
+          binary_sha="$(sha256sum "dist-bin/${binary}" | cut -d' ' -f1)"
+          version="${{ needs.release.outputs.version }}"
+          {
+            printf '%s  %s\n' "$compressed_sha" "$asset"
+            printf '%s  %s\n' "$binary_sha" "$binary"
+            printf 'version %s\n' "$version"
+            printf 'platform %s\n' "${{ matrix.platform }}"
+            printf 'commit %s\n' "${{ needs.release.outputs.commit }}"
+          } > "${asset}.sha256"
+          cat "${asset}.sha256"
+
+          grep -Fx "version $version" "${asset}.sha256"
+          grep -Fx "platform ${{ matrix.platform }}" "${asset}.sha256"
+          grep -Fx "commit ${{ needs.release.outputs.commit }}" "${asset}.sha256"
+          test "$(node -p "require('./package.json').version")" = "$version"
+          test "$(node -p "require('./packages/daemon/package.json').version")" = "$version"
 
       - name: Upload release asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ needs.release.outputs.tag }}" "tmux-ide-tui-${{ matrix.platform }}.gz" --clobber
+        run: |
+          asset="tmux-ide-tui-${{ matrix.platform }}.gz"
+          # Publish the manifest first. The gzip name is the npm workflow's
+          # readiness signal, so observing a new gzip also implies its sidecar
+          # was already accepted by GitHub.
+          gh release upload "${{ needs.release.outputs.tag }}" "${asset}.sha256" --clobber
+          gh release upload "${{ needs.release.outputs.tag }}" "$asset" --clobber

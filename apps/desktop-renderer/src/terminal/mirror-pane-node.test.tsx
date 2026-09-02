@@ -4,10 +4,10 @@ import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { GuiPerformanceProvider } from "../runtime/gui-performance-context.tsx";
 import { GuiPerformanceTelemetry } from "../runtime/gui-performance-telemetry.ts";
-import type { MirrorPaneSink } from "./pane-mirror-controller.ts";
+import type { MirrorPaneSink } from "./workspace-pane-compositor.ts";
 import type { MirrorTerminalRendererFactory } from "./mirror-xterm-renderer.ts";
 
-import { stableAppWindowInstanceId } from "../../../../packages/daemon/src/lib/app-window-state.ts";
+import { stableAppWindowInstanceId } from "@tmux-ide/core";
 import { deriveConnectionHealth } from "../runtime/connection-health.ts";
 import { terminalIssueFaultLabel } from "../runtime/connection-recovery.ts";
 import type { DesktopConnectionHealth } from "../runtime/connection-health.ts";
@@ -17,7 +17,10 @@ import {
   WIDGET_MARKER_CONCEAL_SUFFIX,
   widgetMarkerAnnouncement,
 } from "@tmux-ide/contracts";
-import { PaneMirrorController, type PaneMirrorControllerState } from "./pane-mirror-controller.ts";
+import {
+  WorkspacePaneCompositor,
+  type WorkspacePaneCompositorState,
+} from "./workspace-pane-compositor.ts";
 import {
   createRecordingMirrorRendererFactory,
   createScriptedPaneStream,
@@ -52,10 +55,10 @@ function mountNodeHarness(
 ) {
   const stream = createScriptedPaneStream();
   const rendering = createRecordingMirrorRendererFactory();
-  const [controllerState, setControllerState] = createSignal<PaneMirrorControllerState | null>(
+  const [controllerState, setControllerState] = createSignal<WorkspacePaneCompositorState | null>(
     null,
   );
-  const controller = new PaneMirrorController({
+  const controller = new WorkspacePaneCompositor({
     transport: stream.transport,
     workspaceName: "workspace-a",
     panes: [PANE_A],
@@ -78,7 +81,6 @@ function mountNodeHarness(
           return fault && options.faultLabelFor ? options.faultLabelFor(fault.code) : null;
         })()}
         registerSink={(sink) => controller.registerPaneSink(PANE_A, sink)}
-        onRetry={() => controller.retry()}
         rendererFactory={rendering.factory}
       />
     ),

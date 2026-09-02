@@ -1,6 +1,6 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
-import { Terminal, type ITheme } from "@xterm/xterm";
+import { Terminal, type IBufferCell, type ITheme } from "@xterm/xterm";
 import type { TerminalAttachmentViewport } from "@tmux-ide/contracts";
 import { XTERM_PALETTE_HEX } from "@tmux-ide/core";
 
@@ -19,6 +19,7 @@ export interface TerminalRenderer {
   open(container: HTMLElement): void;
   write(bytes: Uint8Array): Promise<void>;
   focus(): void;
+  /** Measure the DOM-backed grid proposal without mutating the accepted terminal grid. */
   fit(): TerminalAttachmentViewport | null;
   /**
    * Resize the local grid to an explicit window-level viewport WITHOUT measuring
@@ -38,6 +39,32 @@ export interface TerminalRenderer {
    * so the renderer is the only thing that can answer this.
    */
   readCellRows(maxRows: number): WidgetCellRow[];
+  /** Bounded state from this exact xterm instance; no second parser or raw grid. */
+  readPresentation?(): Readonly<{
+    activeBuffer: "normal" | "alternate";
+    cursorX: number;
+    cursorY: number;
+    cursorHidden: boolean;
+    cursorStyle: "block" | "underline" | "bar";
+    cursorBlink: boolean;
+  }>;
+  /** Explicit detailed-only probe; raw cells never leave this renderer. */
+  probeRendition?(keyHex: string): Promise<Readonly<{
+    renditionHmac: string;
+    positionWrappedHmac: string;
+    graphemeWidthHmac: string;
+    colorHmac: string;
+    attributesHmac: string;
+    cellHmacs: readonly string[] | null;
+    defaultForeground: string;
+    defaultBackground: string;
+    rendererCols: number;
+    rendererRows: number;
+    renditionCellCount: number;
+    wideContinuationCount: number;
+    combiningCount: number;
+    styledCellCount: number;
+  }> | null>;
   performanceChannel?(): GuiPerformanceRenderChannel | null;
   dispose(): void;
 }
@@ -202,9 +229,6 @@ export const createXtermRenderer: TerminalRendererFactory = ({
       try {
         const dimensions = fitAddon.proposeDimensions();
         if (!dimensions || dimensions.cols < 1 || dimensions.rows < 1) return null;
-        if (dimensions.cols !== terminal.cols || dimensions.rows !== terminal.rows) {
-          terminal.resize(dimensions.cols, dimensions.rows);
-        }
         return { cols: dimensions.cols, rows: dimensions.rows };
       } catch {
         return null;
@@ -227,6 +251,164 @@ export const createXtermRenderer: TerminalRendererFactory = ({
     },
     readCellRows(maxRows) {
       return readWidgetCellRows(terminal, maxRows);
+    },
+    readPresentation() {
+      const service = (
+        terminal as unknown as {
+          _core?: {
+            coreService?: {
+              isCursorHidden?: boolean;
+              decPrivateModes?: {
+                cursorStyle?: "block" | "underline" | "bar";
+                cursorBlink?: boolean;
+              };
+            };
+          };
+        }
+      )._core?.coreService;
+      return Object.freeze({
+        activeBuffer: terminal.buffer.active.type === "alternate" ? "alternate" : "normal",
+        cursorX: terminal.buffer.active.cursorX,
+        cursorY: terminal.buffer.active.cursorY,
+        cursorHidden: service?.isCursorHidden === true,
+        cursorStyle:
+          service?.decPrivateModes?.cursorStyle ?? terminal.options.cursorStyle ?? "block",
+        cursorBlink: service?.decPrivateModes?.cursorBlink ?? terminal.options.cursorBlink ?? false,
+      });
+    },
+    async probeRendition(keyHex) {
+      if (!/^[0-9a-f]{64}$/u.test(keyHex) || disposed) return null;
+      const active = terminal.buffer.active;
+      const rows = Math.min(256, active.length);
+      const projection: Array<
+        Readonly<{
+          row: number;
+          column: number;
+          chars: string;
+          width: number;
+          wrapped: boolean;
+          foreground: string;
+          background: string;
+          bold: boolean;
+          italic: boolean;
+          underline: boolean;
+        }>
+      > = [];
+      const color = (cell: IBufferCell, foreground: boolean): string => {
+        if (foreground ? cell.isFgDefault() : cell.isBgDefault()) return "default";
+        const value = foreground ? cell.getFgColor() : cell.getBgColor();
+        if (foreground ? cell.isFgRGB() : cell.isBgRGB())
+          return `rgb:${value.toString(16).padStart(6, "0")}`;
+        return `indexed:${value}`;
+      };
+      for (let row = Math.max(0, active.length - rows); row < active.length; row += 1) {
+        const line = active.getLine(row);
+        if (!line) continue;
+        let retainContinuation = false;
+        for (let column = 0; column < line.length; column += 1) {
+          const cell = line.getCell(column);
+          if (!cell) continue;
+          const chars = cell.getChars();
+          const width = cell.getWidth();
+          const foreground = color(cell, true);
+          const background = color(cell, false);
+          const bold = Boolean(cell.isBold());
+          const italic = Boolean(cell.isItalic());
+          const underline = Boolean(cell.isUnderline());
+          if (chars.length === 0 && width !== 0) {
+            retainContinuation = false;
+            continue;
+          }
+          if (width === 0 && !retainContinuation) continue;
+          if (
+            chars === " " &&
+            width === 1 &&
+            foreground === "default" &&
+            background === "default" &&
+            !bold &&
+            !italic &&
+            !underline
+          ) {
+            retainContinuation = false;
+            continue;
+          }
+          projection.push(
+            Object.freeze({
+              row,
+              column,
+              chars,
+              width,
+              wrapped: line.isWrapped,
+              foreground,
+              background,
+              bold,
+              italic,
+              underline,
+            }),
+          );
+          retainContinuation = width === 2;
+        }
+      }
+      try {
+        const key = await crypto.subtle.importKey(
+          "raw",
+          new Uint8Array(keyHex.match(/.{2}/gu)!.map((value) => Number.parseInt(value, 16))),
+          { name: "HMAC", hash: "SHA-256" },
+          false,
+          ["sign"],
+        );
+        const hmac = async (domain: string, value: unknown): Promise<string> => {
+          const digest = await crypto.subtle.sign(
+            "HMAC",
+            key,
+            encoder.encode(`${domain}\0${JSON.stringify(value)}`),
+          );
+          return [...new Uint8Array(digest)]
+            .map((byte) => byte.toString(16).padStart(2, "0"))
+            .join("");
+        };
+        const cellHmacs =
+          projection.length <= 256
+            ? await Promise.all(projection.map((cell) => hmac("web-rendition-cell", cell)))
+            : null;
+        return Object.freeze({
+          renditionHmac: await hmac("web-rendition", projection),
+          positionWrappedHmac: await hmac(
+            "web-rendition-position-wrapped",
+            projection.map(({ row, column, wrapped }) => ({ row, column, wrapped })),
+          ),
+          graphemeWidthHmac: await hmac(
+            "web-rendition-grapheme-width",
+            projection.map(({ chars, width }) => ({ chars, width })),
+          ),
+          colorHmac: await hmac(
+            "web-rendition-color",
+            projection.map(({ foreground, background }) => ({ foreground, background })),
+          ),
+          attributesHmac: await hmac(
+            "web-rendition-attributes",
+            projection.map(({ bold, italic, underline }) => ({ bold, italic, underline })),
+          ),
+          cellHmacs: cellHmacs ? Object.freeze(cellHmacs) : null,
+          defaultForeground:
+            terminal.options.theme?.foreground ?? TERMINAL_THEME_FALLBACK.foreground!,
+          defaultBackground:
+            terminal.options.theme?.background ?? TERMINAL_THEME_FALLBACK.background!,
+          rendererCols: terminal.cols,
+          rendererRows: terminal.rows,
+          renditionCellCount: projection.length,
+          wideContinuationCount: projection.filter(({ width }) => width === 0).length,
+          combiningCount: projection.filter(
+            ({ chars }) => typeof chars === "string" && /\p{Mark}/u.test(chars),
+          ).length,
+          styledCellCount: projection.filter(
+            ({ foreground, background, bold, italic, underline }) =>
+              foreground !== "default" || background !== "default" || bold || italic || underline,
+          ).length,
+        });
+      } catch {
+        return null;
+      }
     },
     performanceChannel() {
       return currentPerformanceChannel();

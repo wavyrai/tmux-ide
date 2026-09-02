@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="140" viewBox="0 0 360 140" role="img" aria-label="An animated cursor performance">
+<style>.mt-cursor{transform:translate(319px,101px)}
+.mt-rip{fill:none;stroke:#087c9f;stroke-width:2;opacity:0;transform-box:fill-box;transform-origin:center}
+@media (prefers-reduced-motion: no-preference){
+.mt-cursor{animation:mt-travel 4000ms linear infinite both}
+.mt-rip{animation:mt-ripple 4000ms linear infinite both}
+}
+@keyframes mt-travel{0%{transform:translate(334px,122px)}5%{transform:translate(333.84px,122px)}6.0417%{transform:translate(332.04px,120.25px)}7.0833%{transform:translate(318.76px,112.26px)}8.125%{transform:translate(289.73px,96.18px)}9.1667%{transform:translate(244.03px,77.7px)}10.2083%{transform:translate(189.38px,61.34px)}11.25%{transform:translate(137.92px,52.47px)}12.2917%{transform:translate(98.59px,49.15px)}13.3333%{transform:translate(75.38px,49.59px)}14.375%{transform:translate(60.26px,50.53px)}15.4167%{transform:translate(56.27px,50.73px)}16.4583%{transform:translate(58.22px,50.86px)}17.5%{transform:translate(62.58px,50.28px)}18.5417%{transform:translate(65.82px,50.07px)}26.25%{transform:translate(66.15px,50.03px)}27.2917%{transform:translate(68.46px,49.47px)}28.3333%{transform:translate(83.74px,47.3px)}29.375%{transform:translate(115.35px,43.92px)}30.4167%{transform:translate(159.38px,44.55px)}31.4583%{transform:translate(209.75px,51.38px)}32.5%{transform:translate(255.17px,65.56px)}33.5417%{transform:translate(289.91px,82.31px)}34.5833%{transform:translate(312.01px,95.9px)}35.625%{transform:translate(324.59px,105.39px)}36.6667%{transform:translate(326.25px,106.13px)}37.7083%{transform:translate(323.9px,104.73px)}38.75%{transform:translate(320.57px,102.02px)}39.7917%{transform:translate(318.99px,100.99px)}100%{transform:translate(319px,101px)}}
+@keyframes mt-ripple{
+0%{opacity:.55;transform:scale(.12)}
+15.5%{opacity:0;transform:scale(1)}
+100%{opacity:0;transform:scale(1)}
+}</style>
+
+<g><circle class="mt-rip" cx="66" cy="50" r="20" style="animation-delay:829.8ms"/><circle class="mt-rip" cx="319" cy="101" r="20" style="animation-delay:1665.6ms"/></g>
+<g class="mt-cursor">
+<g transform="translate(-5,-2.5)">
+<path d="M5 2.5 L5 19.4 L9.2 15.3 L11.9 21.2 L14.6 20 L11.9 14.2 L17.6 14.2 Z" fill="#fff" stroke="rgba(17,17,20,0.92)" stroke-width="1.35" stroke-linejoin="round"/>
+</g>
+</g>
+</svg>

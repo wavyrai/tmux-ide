@@ -40,6 +40,12 @@ export class TerminalToolReadinessGate {
     this.#publish({ phase: "degraded", reason });
   }
 
+  /** Configless Home has no terminal frame; its proven daemon catalog is the readiness boundary. */
+  observeCatalogReady(): void {
+    this.#admit();
+    if (this.#state.phase === "waiting") this.#publish({ phase: "ready" });
+  }
+
   /** A committed native frame observed before geometry does not satisfy the ordering proof. */
   observeTerminalFrameCommitted(): void {
     if (!this.#geometryObserved) return;

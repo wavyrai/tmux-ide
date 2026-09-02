@@ -1,50 +1,359 @@
-import { randomUUID } from "node:crypto";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { createHmac, randomUUID } from "node:crypto";
+import { createWriteStream, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 import {
   installTuiPerformanceEventSink,
   type TuiPerformanceEventSink,
+  type TuiTerminalDeliveryPerformanceEvent,
+  type TuiTerminalCanonicalPaintEvent,
+  type TuiTerminalCanonicalPublicationEvent,
+  type TuiTerminalCanonicalUpdateEvent,
+  type TuiTerminalFocusPaintEvent,
+  type TuiTerminalCanonicalHostFrameEvent,
+  type TuiTerminalFrameFenceEvent,
+  type TuiTerminalCanonicalModeEvent,
+  type TuiTerminalCursorPresentationEvent,
+  type TuiTerminalFramebufferProjectionEvent,
+  type TuiTerminalResourceSampleEvent,
+  type TuiTerminalInputQueueStateEvent,
+  type TuiTerminalInputOriginEvent,
+  type TuiTerminalInputOrigin,
+  type TuiTerminalInputFenceEvent,
+  type TuiTerminalTraceStageEvent,
+  type TuiTerminalClockCalibrationEvent,
   type TuiTerminalTraceSpanEvent,
+  type TuiWindowPresentationFrameEvidence,
 } from "./performance-events.ts";
 
 const TRACE_PATH = process.env.TMUX_IDE_PERFORMANCE_TRACE_LOG;
 const SOURCE_COMMIT = process.env.TMUX_IDE_PERFORMANCE_TRACE_COMMIT;
 const SOURCE_TREE = process.env.TMUX_IDE_PERFORMANCE_TRACE_TREE;
-let installed = false;
+const DETAILED_TRACE = process.env.TMUX_IDE_PERFORMANCE_TRACE_DETAIL === "1";
+const INPUT_ORIGIN_TRACE = process.env.TMUX_IDE_PERFORMANCE_TRACE_INPUT_ORIGIN === "1";
+const INPUT_DETAIL_TRACE = process.env.TMUX_IDE_PERFORMANCE_TRACE_INPUT_DETAIL === "1";
+const INPUT_FINGERPRINT_KEY = process.env.TMUX_IDE_PERFORMANCE_TRACE_INPUT_FINGERPRINT_KEY;
 const MAX_PENDING_INPUTS = 256;
 const INPUT_EXPIRY_MICROS = 5_000_000;
+const MAX_TRACE_RECORD_BYTES = 64 * 1_024;
+const MAX_PENDING_TRACE_BYTES = 1 * 1_024 * 1_024;
+
+export interface ReferenceTraceDroppedRecordKind {
+  readonly type: string | null;
+  readonly stage: string | null;
+  readonly operation: string | null;
+}
+
+export interface ReferenceTraceWriterSnapshot {
+  readonly acceptedRecords: number;
+  readonly droppedRecords: number;
+  readonly oversizedRecords: number;
+  readonly writableLength: number;
+  readonly pendingBytes: number;
+  readonly pendingRecords: number;
+  readonly pendingCriticalRecords: number;
+  readonly pendingStorageSlots: number;
+  readonly peakPendingBytes: number;
+  readonly saturated: boolean;
+  readonly failed: boolean;
+  readonly firstDroppedRecord: ReferenceTraceDroppedRecordKind | null;
+}
+
+export interface ReferenceTraceCollectorReport extends ReferenceTraceWriterSnapshot {
+  readonly pendingInputs: number;
+  readonly droppedInputs: number;
+}
+
+interface ReferencePerformanceTraceSink extends TuiPerformanceEventSink {
+  snapshot(): { readonly pendingInputs: number; readonly droppedInputs: number };
+  close(): { readonly pendingInputs: number; readonly droppedInputs: number };
+}
+
+interface ActiveCollector {
+  readonly sink: ReferencePerformanceTraceSink;
+  readonly writer: ReturnType<typeof createReferenceTraceWriter>;
+  readonly uninstall: () => void;
+  closePromise: Promise<ReferenceTraceCollectorReport> | null;
+}
+
+export interface ReferenceTraceWritable {
+  readonly writableLength: number;
+  readonly destroyed: boolean;
+  on(event: "error" | "drain", listener: () => void): unknown;
+  once(event: "error" | "drain", listener: () => void): unknown;
+  off(event: "error" | "drain", listener: () => void): unknown;
+  write(value: string): boolean;
+  end(value: string, callback: () => void): unknown;
+  destroy(): unknown;
+}
+
+let activeCollector: ActiveCollector | null = null;
 
 /**
- * Installs only for an explicit reference run. The ordinary path returns before
- * constructing a sink, UUID, clock sample, directory, or file descriptor.
+ * Installs only for an explicit reference run. Ordinary production returns
+ * before constructing a sink, clock, UUID, directory, or file descriptor.
  */
 export function installReferencePerformanceTraceCollectorFromEnvironment(): void {
-  if (installed || !TRACE_PATH) return;
+  if (activeCollector || !TRACE_PATH) return;
   if (!SOURCE_COMMIT || !SOURCE_TREE)
     throw new Error("Reference trace collection requires source commit and tree provenance");
-  installed = true;
   mkdirSync(dirname(TRACE_PATH), { recursive: true });
+  const writer = createReferenceTraceWriter(
+    createWriteStream(TRACE_PATH, { flags: "a", highWaterMark: MAX_TRACE_RECORD_BYTES }),
+  );
   const sink = createReferencePerformanceTraceSink({
     commit: SOURCE_COMMIT,
     tree: SOURCE_TREE,
-    append,
+    detailed: DETAILED_TRACE,
+    inputOrigin: INPUT_ORIGIN_TRACE,
+    inputDetail: INPUT_DETAIL_TRACE,
+    inputFingerprintKey: INPUT_FINGERPRINT_KEY,
+    append: writer.append,
+    appendCritical: writer.appendCritical,
+    health: writer.snapshot,
   });
-  installTuiPerformanceEventSink(sink);
+  const uninstall = installTuiPerformanceEventSink(sink);
+  activeCollector = { sink, writer, uninstall, closePromise: null };
+}
+
+/** Awaited shutdown boundary: stop admission, flush/end the stream, and reset. */
+export function closeReferencePerformanceTraceCollector(): Promise<ReferenceTraceCollectorReport | null> {
+  const collector = activeCollector;
+  if (!collector) return Promise.resolve(null);
+  if (collector.closePromise) return collector.closePromise;
+  collector.uninstall();
+  const sink = collector.sink.close();
+  collector.closePromise = collector.writer.close(sink).finally(() => {
+    if (activeCollector === collector) activeCollector = null;
+  });
+  return collector.closePromise;
+}
+
+/** Bounded streaming writer exported only so backpressure can be proven. */
+export function createReferenceTraceWriter(
+  stream: ReferenceTraceWritable,
+  options: { readonly maxPendingBytes?: number } = {},
+): {
+  readonly append: (value: Readonly<Record<string, unknown>>) => void;
+  readonly appendCritical: (value: Readonly<Record<string, unknown>>) => void;
+  readonly snapshot: () => ReferenceTraceWriterSnapshot;
+  readonly close: (sink: {
+    readonly pendingInputs: number;
+    readonly droppedInputs: number;
+  }) => Promise<ReferenceTraceCollectorReport>;
+} {
+  let acceptedRecords = 0;
+  let droppedRecords = 0;
+  let oversizedRecords = 0;
+  let saturated = false;
+  let failed = false;
+  let closed = false;
+  let closePromise: Promise<ReferenceTraceCollectorReport> | null = null;
+  let pendingBytes = 0;
+  let pendingCriticalRecords = 0;
+  let peakPendingBytes = 0;
+  let firstDroppedRecord: ReferenceTraceDroppedRecordKind | null = null;
+  const maxPendingBytes = options.maxPendingBytes ?? MAX_PENDING_TRACE_BYTES;
+  if (!Number.isSafeInteger(maxPendingBytes) || maxPendingBytes <= 0)
+    throw new TypeError("Reference trace pending-byte limit must be a positive safe integer");
+  type PendingRecord = {
+    readonly line: string;
+    readonly bytes: number;
+    readonly kind: ReferenceTraceDroppedRecordKind;
+    readonly critical: boolean;
+  };
+  const pending: Array<PendingRecord | undefined> = [];
+  let pendingIndex = 0;
+  const pendingCount = () => pending.length - pendingIndex;
+  const flushWaiters = new Set<() => void>();
+  const settleFlushWaiters = () => {
+    if (!failed && (saturated || pendingCount() > 0)) return;
+    for (const resolve of flushWaiters) resolve();
+    flushWaiters.clear();
+  };
+  const discardPending = () => {
+    firstDroppedRecord ??= pending[pendingIndex]?.kind ?? null;
+    droppedRecords += pendingCount();
+    pending.length = 0;
+    pendingIndex = 0;
+    pendingBytes = 0;
+    pendingCriticalRecords = 0;
+  };
+  const onError = () => {
+    failed = true;
+    discardPending();
+    settleFlushWaiters();
+  };
+  const writeLine = (line: string): boolean => {
+    saturated = !stream.write(line);
+    acceptedRecords += 1;
+    return !saturated;
+  };
+  const flushPending = () => {
+    if (failed) return;
+    saturated = false;
+    while (pendingIndex < pending.length) {
+      const next = pending[pendingIndex++]!;
+      pending[pendingIndex - 1] = undefined;
+      pendingBytes -= next.bytes;
+      if (next.critical) pendingCriticalRecords -= 1;
+      try {
+        if (!writeLine(next.line)) break;
+      } catch {
+        failed = true;
+        droppedRecords += 1;
+        firstDroppedRecord ??= next.kind;
+        discardPending();
+        break;
+      }
+    }
+    if (pendingIndex === pending.length) {
+      pending.length = 0;
+      pendingIndex = 0;
+    } else if (pendingIndex >= 1_024 || pendingIndex * 2 >= pending.length) {
+      pending.splice(0, pendingIndex);
+      pendingIndex = 0;
+    }
+    settleFlushWaiters();
+  };
+  const onDrain = () => flushPending();
+  stream.on("error", onError);
+  stream.on("drain", onDrain);
+
+  const snapshot = (): ReferenceTraceWriterSnapshot =>
+    Object.freeze({
+      acceptedRecords,
+      droppedRecords,
+      oversizedRecords,
+      writableLength: stream.writableLength,
+      pendingBytes,
+      pendingRecords: pendingCount(),
+      pendingCriticalRecords,
+      pendingStorageSlots: pending.length,
+      peakPendingBytes,
+      saturated,
+      failed,
+      firstDroppedRecord,
+    });
+  const appendValue = (value: Readonly<Record<string, unknown>>, critical: boolean): void => {
+    if (closed || failed) {
+      droppedRecords += 1;
+      firstDroppedRecord ??= droppedRecordKind(value);
+      return;
+    }
+    const line = `${JSON.stringify(value)}\n`;
+    const bytes = Buffer.byteLength(line);
+    if (bytes > MAX_TRACE_RECORD_BYTES) {
+      oversizedRecords += 1;
+      return;
+    }
+    try {
+      if (!saturated && pendingCount() === 0) {
+        writeLine(line);
+        return;
+      }
+      const limit = maxPendingBytes + (critical ? 64 * 1_024 : 0);
+      if (pendingBytes + bytes > limit) {
+        droppedRecords += 1;
+        firstDroppedRecord ??= droppedRecordKind(value);
+        return;
+      }
+      pending.push({ line, bytes, kind: droppedRecordKind(value), critical });
+      if (critical) pendingCriticalRecords += 1;
+      pendingBytes += bytes;
+      peakPendingBytes = Math.max(peakPendingBytes, pendingBytes);
+    } catch {
+      failed = true;
+      droppedRecords += 1;
+      firstDroppedRecord ??= droppedRecordKind(value);
+      discardPending();
+      settleFlushWaiters();
+    }
+  };
+  const append = (value: Readonly<Record<string, unknown>>): void => appendValue(value, false);
+  const appendCritical = (value: Readonly<Record<string, unknown>>): void =>
+    appendValue(value, true);
+  const close = (sink: {
+    readonly pendingInputs: number;
+    readonly droppedInputs: number;
+  }): Promise<ReferenceTraceCollectorReport> => {
+    if (closePromise) return closePromise;
+    closed = true;
+    closePromise = (async () => {
+      if (!failed && (saturated || pendingCount() > 0))
+        await new Promise<void>((resolve) => flushWaiters.add(resolve));
+      let report = Object.freeze({ ...snapshot(), ...sink });
+      if (!failed) {
+        const summary = `${JSON.stringify({
+          version: 1,
+          type: "performance.trace.summary",
+          ...report,
+        })}\n`;
+        await new Promise<void>((resolve) => {
+          let settled = false;
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            stream.off("error", finish);
+            resolve();
+          };
+          stream.once("error", finish);
+          try {
+            stream.end(summary, finish);
+          } catch {
+            failed = true;
+            finish();
+          }
+        });
+        report = Object.freeze({ ...snapshot(), ...sink });
+      }
+      if (failed && !stream.destroyed) {
+        stream.destroy();
+      }
+      stream.off("error", onError);
+      stream.off("drain", onDrain);
+      return report;
+    })();
+    return closePromise;
+  };
+  return Object.freeze({ append, appendCritical, snapshot, close });
+}
+
+function droppedRecordKind(
+  value: Readonly<Record<string, unknown>>,
+): ReferenceTraceDroppedRecordKind {
+  const field = (key: "type" | "stage" | "operation") =>
+    typeof value[key] === "string" ? value[key].slice(0, 64) : null;
+  return Object.freeze({
+    type: field("type"),
+    stage: field("stage"),
+    operation: field("operation"),
+  });
 }
 
 export function createReferencePerformanceTraceSink(options: {
   readonly commit: string;
   readonly tree: string;
   readonly append: (value: Readonly<Record<string, unknown>>) => void;
+  readonly appendCritical?: (value: Readonly<Record<string, unknown>>) => void;
+  readonly health?: () => Pick<
+    ReferenceTraceWriterSnapshot,
+    "droppedRecords" | "oversizedRecords" | "failed" | "pendingCriticalRecords"
+  >;
   readonly nowMicros?: () => number;
   readonly createTraceId?: () => string;
   readonly processId?: string;
   readonly startedAt?: string;
-}): TuiPerformanceEventSink {
+  /** Keep false for the unperturbed input→changed-cell qualification path. */
+  readonly detailed?: boolean;
+  readonly inputOrigin?: boolean;
+  readonly inputDetail?: boolean;
+  readonly inputFingerprintKey?: string;
+}): ReferencePerformanceTraceSink {
   const nowMicros = options.nowMicros ?? (() => Math.floor(performance.now() * 1_000));
   const createTraceId = options.createTraceId ?? randomUUID;
   const processId = options.processId ?? `opentui:${process.pid}`;
+  const detailed = options.detailed ?? false;
   options.append({
     version: 1,
     type: "performance.trace.header",
@@ -63,15 +372,271 @@ export function createReferencePerformanceTraceSink(options: {
       endedAtMicros: number | null;
     }
   >();
+  let droppedInputs = 0;
+  let closed = false;
+  const snapshot = () => Object.freeze({ pendingInputs: inputs.size, droppedInputs });
   return Object.freeze({
-    frame: () => undefined,
-    terminalPaint: () => undefined,
-    terminalDelivery: () => undefined,
-    beginTerminalInput: () => {
+    detailedWindowPresentationFrames: detailed ? true : undefined,
+    frame: (intervalMs: number, window?: TuiWindowPresentationFrameEvidence | null) => {
+      if (!detailed || closed) return;
+      options.append({
+        version: 1,
+        type: "performance.frame",
+        processId,
+        clockId: "opentui-performance-now",
+        atMicros: nowMicros(),
+        intervalMs,
+        window: window ?? null,
+      });
+    },
+    terminalPaint: (dirtyRows: number, durationMs: number) => {
+      if (!detailed || closed) return;
+      options.append({
+        version: 1,
+        type: "performance.terminal-paint",
+        processId,
+        clockId: "opentui-performance-now",
+        atMicros: nowMicros(),
+        dirtyRows,
+        durationMs,
+      });
+    },
+    terminalDelivery: (event: TuiTerminalDeliveryPerformanceEvent) => {
+      if (!detailed || closed) return;
+      options.append({
+        version: 1,
+        type: "performance.terminal-delivery",
+        processId,
+        clockId: "opentui-performance-now",
+        atMicros: nowMicros(),
+        ...event,
+      });
+    },
+    ...(detailed
+      ? {
+          terminalCanonicalPublication: (event: TuiTerminalCanonicalPublicationEvent) => {
+            if (!closed)
+              (options.appendCritical ?? options.append)({
+                version: 1,
+                type: "performance.terminal-canonical-publication",
+                ...event,
+              });
+          },
+          terminalCanonicalPaint: (event: TuiTerminalCanonicalPaintEvent) => {
+            if (!closed)
+              options.append({
+                version: 1,
+                type: "performance.terminal-canonical-paint",
+                ...event,
+              });
+          },
+          terminalCanonicalUpdate: (event: TuiTerminalCanonicalUpdateEvent) => {
+            if (!closed)
+              options.append({
+                version: 1,
+                type: "performance.terminal-canonical-update",
+                ...event,
+              });
+          },
+          terminalFocusPaint: (event: TuiTerminalFocusPaintEvent) => {
+            if (!closed)
+              (options.appendCritical ?? options.append)({
+                version: 1,
+                type: "performance.terminal-focus-paint",
+                ...event,
+              });
+          },
+          terminalFocusFence: (event: TuiTerminalFocusPaintEvent) => {
+            if (!closed) {
+              const health = options.health?.();
+              if (health)
+                (options.appendCritical ?? options.append)({
+                  version: 1,
+                  type: "performance.terminal-focus-fence",
+                  ...event,
+                  writerHealth: health,
+                });
+            }
+          },
+          terminalCanonicalHostFrame: (event: TuiTerminalCanonicalHostFrameEvent) => {
+            if (!closed)
+              options.append({
+                version: 1,
+                type: "performance.terminal-canonical-host-frame",
+                ...event,
+              });
+          },
+          terminalFrameFence: (event: TuiTerminalFrameFenceEvent) => {
+            if (!closed) {
+              const health = options.health?.() ?? null;
+              options.append({
+                version: 1,
+                type: "performance.terminal-frame-fence",
+                processId,
+                clockId: "opentui-performance-now",
+                clockKind: "performance-now",
+                atMicros: nowMicros(),
+                ...event,
+                writerHealth: health
+                  ? Object.freeze({
+                      droppedRecords: health.droppedRecords,
+                      oversizedRecords: health.oversizedRecords,
+                      failed: health.failed,
+                      pendingCriticalRecords: health.pendingCriticalRecords,
+                    })
+                  : null,
+              });
+            }
+          },
+          terminalCanonicalMode: (event: TuiTerminalCanonicalModeEvent) => {
+            if (!closed)
+              options.append({ version: 1, type: "performance.terminal-canonical-mode", ...event });
+          },
+          terminalCursorPresentation: (event: TuiTerminalCursorPresentationEvent) => {
+            if (!closed)
+              options.append({
+                version: 1,
+                type: "performance.terminal-cursor-presentation",
+                ...event,
+              });
+          },
+          ...(typeof options.inputFingerprintKey === "string" &&
+          /^[0-9a-f]{64}$/u.test(options.inputFingerprintKey)
+            ? {
+                terminalFramebufferProjection: (event: TuiTerminalFramebufferProjectionEvent) => {
+                  if (closed) return;
+                  const { projection, ...identity } = event;
+                  options.append({
+                    version: 1,
+                    type: "performance.terminal-framebuffer-projection",
+                    ...identity,
+                    projectionHmac: createHmac(
+                      "sha256",
+                      Buffer.from(options.inputFingerprintKey!, "hex"),
+                    )
+                      .update("opentui-framebuffer\0")
+                      .update(projection)
+                      .digest("hex"),
+                  });
+                },
+              }
+            : {}),
+          terminalResourceSample: (event: TuiTerminalResourceSampleEvent) => {
+            if (!closed)
+              options.append({
+                version: 1,
+                type: "performance.terminal-resource-sample",
+                ...event,
+              });
+          },
+        }
+      : {}),
+    ...(!detailed && options.inputDetail
+      ? {
+          terminalCanonicalPublication: (event: TuiTerminalCanonicalPublicationEvent) => {
+            if (!closed)
+              options.append({
+                version: 1,
+                type: "performance.terminal-canonical-publication",
+                ...event,
+              });
+          },
+          terminalCanonicalPaint: (event: TuiTerminalCanonicalPaintEvent) => {
+            if (!closed)
+              options.append({
+                version: 1,
+                type: "performance.terminal-canonical-paint",
+                ...event,
+              });
+          },
+        }
+      : {}),
+    ...(detailed || options.inputOrigin ? { terminalInputOrigin: true as const } : {}),
+    ...(detailed || options.inputDetail
+      ? {
+          terminalInputQueueState: (event: TuiTerminalInputQueueStateEvent) => {
+            if (!closed)
+              options.append({ version: 1, type: "performance.input-queue-state", ...event });
+          },
+          terminalInputFence: (event: TuiTerminalInputFenceEvent) => {
+            if (closed) return;
+            const health = options.health?.() ?? null;
+            options.append({
+              version: 1,
+              type: "performance.input-fence",
+              ...event,
+              writerHealth: health
+                ? {
+                    droppedRecords: health.droppedRecords,
+                    oversizedRecords: health.oversizedRecords,
+                    failed: health.failed,
+                  }
+                : null,
+            });
+          },
+        }
+      : {}),
+    beginTerminalInput: (origin?: TuiTerminalInputOrigin) => {
       const startedAtMicros = nowMicros();
       expireInputs(inputs, startedAtMicros);
-      while (inputs.size >= MAX_PENDING_INPUTS) inputs.delete(inputs.keys().next().value!);
+      // The transport carries one latest-only performance trace id. Once a
+      // newer input is admitted, an older probe can no longer be attributed to
+      // the exact changed-cell paint without lying. Retire it as superseded;
+      // `droppedInputs` is reserved for actual capacity loss.
+      inputs.clear();
+      while (inputs.size >= MAX_PENDING_INPUTS) {
+        inputs.delete(inputs.keys().next().value!);
+        droppedInputs += 1;
+      }
       const traceId = createTraceId();
+      if (
+        (detailed || options.inputOrigin) &&
+        origin &&
+        !closed &&
+        typeof options.inputFingerprintKey === "string" &&
+        options.inputFingerprintKey.length >= 32
+      ) {
+        const payload = Buffer.from(origin.payload);
+        const event: TuiTerminalInputOriginEvent = {
+          processId,
+          clockId: "opentui-performance-now",
+          clockKind: "performance-now",
+          atMicros:
+            Number.isSafeInteger(origin.ingressAtMicros) &&
+            origin.ingressAtMicros! <= startedAtMicros
+              ? origin.ingressAtMicros!
+              : startedAtMicros,
+          origin: origin.origin,
+          payloadByteCount: payload.byteLength,
+          payloadFingerprint: createHmac("sha256", options.inputFingerprintKey)
+            .update(traceId)
+            .update("\0")
+            .update(payload)
+            .digest("hex"),
+          parserConsumption:
+            origin.origin === "keyboard"
+              ? "keyboard-event"
+              : origin.origin === "bracketed-paste"
+                ? "paste-event"
+                : "pointer-event",
+          ...(origin.gestureId ? { gestureId: origin.gestureId } : {}),
+          ...(origin.pointerAction ? { pointerAction: origin.pointerAction } : {}),
+          ...(Number.isSafeInteger(origin.pointerColumn)
+            ? { pointerColumn: origin.pointerColumn }
+            : {}),
+          ...(Number.isSafeInteger(origin.pointerRow) ? { pointerRow: origin.pointerRow } : {}),
+          ...(origin.pointerButton === null || Number.isSafeInteger(origin.pointerButton)
+            ? { pointerButton: origin.pointerButton }
+            : {}),
+          traceId,
+          semanticPaneId: origin.semanticPaneId,
+          generation: origin.generation,
+          incarnation: origin.incarnation,
+          revision: origin.revision,
+          stateHash: origin.stateHash,
+        };
+        options.append({ version: 1, type: "performance.input-origin", ...event });
+      }
       inputs.set(traceId, {
         startedAtMicros,
         expiresAtMicros: startedAtMicros + INPUT_EXPIRY_MICROS,
@@ -91,6 +656,27 @@ export function createReferencePerformanceTraceSink(options: {
     },
     terminalTraceSpan: (paint: TuiTerminalTraceSpanEvent) =>
       recordCompletedTrace(inputs, paint, options.append),
+    terminalTraceStage: (event: TuiTerminalTraceStageEvent) => {
+      if ((detailed || options.inputDetail) && !closed)
+        options.append({ version: 1, type: "performance.stage", ...event });
+    },
+    ...(detailed || options.inputDetail
+      ? {
+          terminalClockCalibration: (event: TuiTerminalClockCalibrationEvent) => {
+            if (!closed) options.append({ type: "performance.clock-calibration", ...event });
+          },
+        }
+      : {}),
+    snapshot,
+    close: () => {
+      if (closed) return snapshot();
+      closed = true;
+      // Shutdown cancels probes that can no longer observe a future paint.
+      // They are not backpressure loss and must not survive as phantom work in
+      // a closed collector summary.
+      inputs.clear();
+      return snapshot();
+    },
   });
 }
 
@@ -137,8 +723,4 @@ function expireInputs(
     if (input.expiresAtMicros > nowMicros) break;
     inputs.delete(traceId);
   }
-}
-
-function append(value: Readonly<Record<string, unknown>>): void {
-  appendFileSync(TRACE_PATH!, `${JSON.stringify(value)}\n`);
 }

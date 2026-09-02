@@ -97,6 +97,11 @@ export const WorkspaceRenameArgumentsSchemaZ = z.discriminatedUnion("scope", [
     target: WorkspaceMultiplexerWindowTargetSchemaZ,
     name: WorkspaceMultiplexerNameSchemaZ,
   }).strict(),
+  WorkspaceScopedSchemaZ.extend({
+    scope: z.literal("pane"),
+    semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+    name: WorkspaceMultiplexerNameSchemaZ,
+  }).strict(),
 ]);
 export type WorkspaceRenameArguments = z.infer<typeof WorkspaceRenameArgumentsSchemaZ>;
 
@@ -202,6 +207,12 @@ export const WorkspaceMultiplexerIntentSchemaZ = z.discriminatedUnion("verb", [
       target: WorkspaceMultiplexerWindowTargetSchemaZ,
       name: WorkspaceMultiplexerNameSchemaZ,
     }).strict(),
+    WorkspaceScopedSchemaZ.extend({
+      verb: z.literal("workspace.rename"),
+      scope: z.literal("pane"),
+      semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
+      name: WorkspaceMultiplexerNameSchemaZ,
+    }).strict(),
   ]),
   WorkspacePaneZoomToggleArgumentsSchemaZ.extend({
     verb: z.literal("workspace.pane.zoom.toggle"),
@@ -283,7 +294,7 @@ export type WorkspaceSessionKillResult = z.infer<typeof WorkspaceSessionKillResu
 
 export const WorkspaceRenameResultSchemaZ = MutationEnvelopeSchemaZ.extend({
   verb: z.literal("workspace.rename"),
-  scope: z.enum(["session", "window"]),
+  scope: z.enum(["session", "window", "pane"]),
   name: WorkspaceMultiplexerNameSchemaZ,
 }).strict();
 export type WorkspaceRenameResult = z.infer<typeof WorkspaceRenameResultSchemaZ>;

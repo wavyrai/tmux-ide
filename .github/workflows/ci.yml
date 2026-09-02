@@ -145,6 +145,61 @@ jobs:
         if: matrix.node >= 22
         run: pnpm test:pack-installed
 
+  opentui_package_qualification:
+    name: OpenTUI package qualification (Linux)
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Checkout exact release-candidate SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_CANDIDATE_SHA }}
+
+      - name: Verify checkout identity
+        run: test "$(git rev-parse HEAD)" = "$RELEASE_CANDIDATE_SHA"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # This is deliberately independent from the broad CLI, unit, and
+      # performance jobs. It qualifies the exact packaged OpenTUI journey even
+      # when unrelated shared-tree debt fails elsewhere in the workflow.
+      - name: Run focused OpenTUI release gate
+        env:
+          TMUX_IDE_PACK_EVIDENCE_DIR: ${{ runner.temp }}/opentui-package-proof
+        run: pnpm run release:opentui:check
+
+      - name: Upload exact OpenTUI package proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opentui-package-proof-${{ env.RELEASE_CANDIDATE_SHA }}
+          path: |
+            ${{ runner.temp }}/opentui-package-proof/proof.json
+            ${{ runner.temp }}/opentui-package-proof/tmux-ide-*.tgz
+            ${{ runner.temp }}/opentui-package-proof/tmux-ide-cli.js
+            ${{ runner.temp }}/opentui-package-proof/tmux-ide-tui-linux-x64
+            ${{ runner.temp }}/opentui-package-proof/tmux-ide-tui-linux-x64.gz
+            ${{ runner.temp }}/opentui-package-proof/tmux-ide-tui-linux-x64.gz.sha256
+          if-no-files-found: warn
+          retention-days: 30
+
   coverage:
     name: Vitest coverage (per package)
     runs-on: ubuntu-latest
@@ -176,7 +231,10 @@ jobs:
       # numbers so a green main stays green.
       - name: Coverage — daemon
         working-directory: packages/daemon
-        run: pnpm exec vitest run --coverage
+        # Coverage instrumentation makes the compact terminal fixtures much
+        # heavier. Run them serially so their lifecycle assertions measure the
+        # code under test instead of competing instrumented workers.
+        run: pnpm exec vitest run --coverage --maxWorkers=1 --testTimeout=60000
 
       - name: Summarize coverage for PR
         if: always()

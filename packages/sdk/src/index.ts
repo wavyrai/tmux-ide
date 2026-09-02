@@ -11,6 +11,10 @@ import {
   DesktopUpdateStatusSchemaZ,
   DesktopWindowStateSchemaZ,
   WorkspaceOpenHostResultSchemaZ,
+  WorkspaceOpenPreparedHostResultSchemaZ,
+  WorkspaceOpenCommittedHostResultSchemaZ,
+  WorkspaceOpenCancelledHostResultSchemaZ,
+  WorkspaceOpenDecisionArgumentsSchemaZ,
   WorkspacePaneSendArgumentsSchemaZ,
   WorkspacePaneSendResultSchemaZ,
   createDaemonResourceMethods,
@@ -255,6 +259,36 @@ export function createTmuxIdeSdk(candidate: unknown): TmuxIdeSdk {
         const result = await host.workspace.openProjectDirectory();
         return result === null ? null : WorkspaceOpenHostResultSchemaZ.parse(result);
       },
+      ...(host.workspace.prepareProjectDirectory &&
+      host.workspace.commitPreparedOpen &&
+      host.workspace.cancelPreparedOpen
+        ? {
+            prepareProjectDirectory: async (
+              previousWorkspaceName?: string | null,
+              operationId?: string,
+            ) => {
+              const result = await host.workspace.prepareProjectDirectory!(
+                previousWorkspaceName,
+                operationId,
+              );
+              return result === null ? null : WorkspaceOpenPreparedHostResultSchemaZ.parse(result);
+            },
+            commitPreparedOpen: async (decision, operationId) =>
+              WorkspaceOpenCommittedHostResultSchemaZ.parse(
+                await host.workspace.commitPreparedOpen!(
+                  WorkspaceOpenDecisionArgumentsSchemaZ.parse(decision),
+                  operationId,
+                ),
+              ),
+            cancelPreparedOpen: async (decision, operationId) =>
+              WorkspaceOpenCancelledHostResultSchemaZ.parse(
+                await host.workspace.cancelPreparedOpen!(
+                  WorkspaceOpenDecisionArgumentsSchemaZ.parse(decision),
+                  operationId,
+                ),
+              ),
+          }
+        : {}),
     },
     onboarding: {
       acknowledgeIntro: () => host.onboarding.acknowledgeIntro(),

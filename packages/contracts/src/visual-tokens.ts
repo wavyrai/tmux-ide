@@ -276,6 +276,21 @@ const ThemeNameSchemaZ = z.string().min(1).max(120);
 export const ThemeAppearanceSchemaZ = z.enum(["dark", "light"]);
 export type ThemeAppearance = z.infer<typeof ThemeAppearanceSchemaZ>;
 
+/**
+ * Renderer-neutral defaults learned from the current presentation host.
+ *
+ * This is deliberately smaller than a user theme document: host discovery has
+ * no persisted identity and may only supply a base appearance plus semantic
+ * token defaults. User and project documents always layer above it.
+ */
+export const VisualHostDefaultsV1SchemaZ = z
+  .object({
+    appearance: ThemeAppearanceSchemaZ,
+    overrides: VisualTokenOverridesV1SchemaZ,
+  })
+  .strict();
+export type VisualHostDefaultsV1 = z.infer<typeof VisualHostDefaultsV1SchemaZ>;
+
 export const VisualThemeDocumentV1SchemaZ = z
   .object({
     version: z.literal(VISUAL_THEME_VERSION),
@@ -637,12 +652,15 @@ function baseTokens(appearance: ThemeAppearance): VisualTokensV1 {
   return VisualTokensV1SchemaZ.parse({
     surfaces: {
       canvas: color(dark ? "0e0e12" : "f5f5f7"),
-      panel: color(dark ? "13131a" : "ffffff"),
-      panelRaised: color(dark ? "1b1b24" : "ffffff"),
-      terminal: color(dark ? "0b0b10" : "fbfbfd"),
+      // Stay nearer the extended xterm grayscale ramp than mutable ANSI slot
+      // 15. Embedded 256-colour hosts may redefine that base "bright white"
+      // slot as black; these still read as white while quantizing safely.
+      panel: color(dark ? "13131a" : "eeeeee"),
+      panelRaised: color(dark ? "1b1b24" : "f5f5f7"),
+      terminal: color(dark ? "0b0b10" : "eeeeee"),
       header,
       headerActive: deriveFocusedHeader(header, focus),
-      command: color(dark ? "181821" : "ffffff"),
+      command: color(dark ? "181821" : "e4e4e4"),
     },
     text: {
       primary: color(dark ? "dedee6" : "202027"),
@@ -806,6 +824,7 @@ function applyAccessibility(
 
 export interface ResolveVisualThemeInput {
   readonly appearance?: ThemeAppearance;
+  readonly hostDefaults?: VisualHostDefaultsV1;
   readonly userTheme?: unknown;
   readonly projectTheme?: unknown;
   readonly accessibility?: Partial<ThemeAccessibilityPreferences>;
@@ -829,8 +848,17 @@ export function resolveVisualTheme(input: ResolveVisualThemeInput = {}): Resolve
   const readyUser = loadedUser?.status === "ready" ? loadedUser.document : null;
   const readyProject = loadedProject?.status === "ready" ? loadedProject.document : null;
   const appearance =
-    readyProject?.appearance ?? readyUser?.appearance ?? input.appearance ?? "dark";
+    readyProject?.appearance ??
+    readyUser?.appearance ??
+    input.appearance ??
+    input.hostDefaults?.appearance ??
+    "dark";
   let tokens = BUILTIN_VISUAL_THEMES[appearance];
+  // A host palette is a default layer, never an override of an explicit
+  // appearance. This also prevents a stale light palette from contaminating a
+  // user or project theme that explicitly selects dark (and vice versa).
+  if (input.hostDefaults?.appearance === appearance)
+    tokens = applyOverrides(tokens, input.hostDefaults.overrides);
   if (readyUser) tokens = applyOverrides(tokens, readyUser.overrides);
   if (readyProject) tokens = applyOverrides(tokens, readyProject.overrides);
   tokens = applyAccessibility(

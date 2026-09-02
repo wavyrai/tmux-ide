@@ -7,9 +7,11 @@ import {
   _setFleetFactsReadersForTests,
   _stopFleetFactsObserverForTests,
   handleWsEventsConnection,
+  setFleetFactsTmuxRunner,
 } from "../../command-center/ws-events.ts";
 import { _setTmuxRunner } from "../../command-center/discovery.ts";
 import {
+  AGENT_STATE_TMUX_ARGS,
   parseSessionCompositionFacts,
   SESSION_COMPOSITION_TMUX_ARGS,
 } from "../../command-center/daemon-fleet-facts-observer.ts";
@@ -67,16 +69,105 @@ let restoreTmuxRunner: (() => void) | null = null;
 afterEach(() => {
   _stopFleetFactsObserverForTests();
   _detachProjectRegistryListenerForTests();
+  setFleetFactsTmuxRunner(null);
   restoreTmuxRunner?.();
   restoreTmuxRunner = null;
 });
 
 describe("/ws/events fleet composition invalidation", () => {
+  it("publishes an empty catalog baseline before the first tmux server exists", async () => {
+    setFleetFactsTmuxRunner(() => {
+      throw new Error("no server running on /tmp/tmux-501/default");
+    });
+
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity, { mode: "semantic" });
+    socket.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        interests: [{ resource: "workspace-catalog", workspaceName: null }],
+        legacyEvents: false,
+        interestRevision: 1,
+      }),
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(
+      frames(socket).some(
+        (frame) => frame.type === "resource.interests-ack" && frame.interestRevision === 1,
+      ),
+    ).toBe(true);
+    socket.disconnect();
+  });
+
+  it("pins Home catalog invalidation to its daemon tmux authority", async () => {
+    let sessionRows = "alpha\t0\t41\t$0\t100\t@1\t%1\t1\t1\tpane.a\twindow.a";
+    const runTmux = (args: readonly string[]) => {
+      expect(args).toEqual(SESSION_COMPOSITION_TMUX_ARGS);
+      return sessionRows;
+    };
+    setFleetFactsTmuxRunner(runTmux);
+
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity, { mode: "semantic" });
+    socket.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        interests: [{ resource: "workspace-catalog", workspaceName: null }],
+        legacyEvents: false,
+        interestRevision: 1,
+      }),
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    socket.sent.length = 0;
+
+    sessionRows = "alpha\t0\t42\t$0\t101\t@1\t%1\t1\t1\tpane.a\twindow.a";
+    await _pollFleetFactsObserverForTests();
+    expect(
+      frames(socket).filter(
+        (frame) => frame.type === "resource.changed" && frame.resource === "workspace-catalog",
+      ),
+    ).toHaveLength(1);
+    socket.disconnect();
+  });
+
+  it("pins application-shell agent readiness to its daemon tmux authority", async () => {
+    const calls: string[][] = [];
+    setFleetFactsTmuxRunner((args) => {
+      calls.push([...args]);
+      return args === AGENT_STATE_TMUX_ARGS ? "alpha\t%1\tpane.a\tIDLE\tcodex" : "";
+    });
+
+    const socket = new ProtocolWebSocket();
+    handleWsEventsConnection(socket, daemonIdentity, { mode: "semantic" });
+    socket.receive(
+      JSON.stringify({
+        type: "subscribe",
+        sessions: [],
+        interests: [{ resource: "application-shell", workspaceName: "alpha" }],
+        legacyEvents: false,
+        interestRevision: 1,
+      }),
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(calls).toContainEqual([...AGENT_STATE_TMUX_ARGS]);
+    expect(
+      frames(socket).some(
+        (frame) => frame.type === "resource.interests-ack" && frame.interestRevision === 1,
+      ),
+    ).toBe(true);
+    socket.disconnect();
+  });
+
   it("keeps session composition to one compact tmux query", () => {
     expect(SESSION_COMPOSITION_TMUX_ARGS).toEqual([
-      "list-sessions",
+      "list-panes",
+      "-a",
       "-F",
-      "#{session_name}\t#{@tmux_ide_adopted}",
+      "#{session_name}\t#{@tmux_ide_adopted}\t#{pid}\t#{session_id}\t#{session_created}\t#{window_id}\t#{pane_id}\t#{window_panes}\t#{session_windows}\t#{@tmux_ide_pane_id}\t#{@tmux_ide_window_id}",
     ]);
   });
 

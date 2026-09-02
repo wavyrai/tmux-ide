@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "observedAt": "2026-08-14",
+  "baselineParentRevision": "d212607d",
+  "qualification": "not-product-qualified",
+  "defaultProduct": {
+    "primarySurfaces": ["home", "terminals"],
+    "quarantinedSurfaces": ["files", "changes", "missions", "activity"],
+    "preservedImplementation": "packages/daemon/src/tui/mirror/workspace/agent-terminal-canvas-view.tsx"
+  },
+  "authority": {
+    "tmuxOwner": "daemon SessionRuntime",
+    "clients": ["opentui", "web", "cli", "sdk"],
+    "clientContract": "semantic intents plus generation-bound seed/patch resources",
+    "knownClientBypassCount": 0
+  },
+  "sourceMeasurements": {
+    "openTuiApplicationRootLines": 9027,
+    "webApplicationShellLines": 2202,
+    "webWorkspaceTiledSurfaceLines": 2335
+  },
+  "portablePerformance": {
+    "command": "pnpm measure:performance-portable",
+    "isolation": "ephemeral state home and owned non-default tmux socket",
+    "status": "passed-with-limitations",
+    "processColdFirstUsableMs": 761,
+    "warmFirstUsableP95Ms": 605,
+    "resizeP95Ms": 220.05,
+    "resizeMaximumMs": 222.2,
+    "coherentTerminalFrame": "not-measured",
+    "inputToPaint": "not-measured",
+    "dragResponsiveness": "not-measured"
+  },
+  "productDiagnostic": {
+    "observedAt": "2026-08-16",
+    "command": "pnpm product:testdrive diagnose --json",
+    "status": "failed",
+    "report": ".tasks/product-test-rig/artifacts/diagnostic-report.json",
+    "correctness": {
+      "tmuxTruth": "passed: 3 panes / 2 windows",
+      "workspaceClientCommit": "passed: 3 committed resources",
+      "terminalFastLane": "passed: 3/3 coherent pane seeds",
+      "framebufferContent": "passed: 2/2 active-window pane rectangles",
+      "webTuiAuthorityRestart": "passed",
+      "runtimeResourceRetirement": "passed: 20/20",
+      "idleFrameWork": "passed: 0 frames / 0 paints over 10323 ms"
+    },
+    "performance": {
+      "inputEnqueueToCorrelatedPaintP95Ms": 214.105,
+      "inputEnqueueToCorrelatedPaintP99Ms": 244.509,
+      "resizeGuidePreviewP95Ms": 0.527,
+      "warmWindowSwitchP95Ms": 44.276,
+      "warmConnectionToHostPublicationP95Ms": 1566,
+      "warmLaunchToHostPublicationP95Ms": 2955,
+      "boundedQueues": "passed: settled at zero",
+      "memory": "failed: heap growth 86030345 bytes across 16 endpoint samples"
+    }
+  },
+  "knownDefects": [
+    {
+      "id": "tui-composition-root",
+      "severity": "P1",
+      "status": "open",
+      "description": "The 9,027-line legacy OpenTUI root is outside the production boot graph but still contains quarantined feature state and handlers.",
+      "reproduce": "wc -l packages/daemon/src/tui/mirror/runtime/application-root.tsx"
+    },
+    {
+      "id": "warm-terminal-publication-over-budget",
+      "severity": "P1",
+      "status": "open",
+      "description": "The real ProductRig measures coherent terminal publication, but warm connection-to-host p95 is 1566 ms and launch-to-host p95 is 2955 ms.",
+      "reproduce": "pnpm product:testdrive diagnose --json"
+    },
+    {
+      "id": "input-paint-over-budget",
+      "severity": "P1",
+      "status": "open",
+      "description": "The real TUI produced 30/30 correlated changed-cell paints, but p95 is 214.105 ms and p99 is 244.509 ms.",
+      "reproduce": "pnpm product:testdrive diagnose --json"
+    },
+    {
+      "id": "memory-retention-not-qualified",
+      "severity": "P1",
+      "status": "open",
+      "description": "Queues and runtime resources retire to zero, but the bounded memory endpoint series reports 86030345 bytes of heap growth and remains red.",
+      "reproduce": "pnpm product:testdrive diagnose --json"
+    },
+    {
+      "id": "cross-client-journey-not-release-gated",
+      "severity": "P1",
+      "status": "open",
+      "description": "The ProductTestRig can drive TUI and Web convergence and restart, but those journeys are not yet a no-limitations release gate.",
+      "reproduce": "pnpm product:testdrive start --json"
+    }
+  ],
+  "safeEvidenceCommands": [
+    "pnpm product:testdrive inventory --json",
+    "pnpm measure:performance-portable",
+    "pnpm test:product-test-rig",
+    "pnpm test:tui-diagnose"
+  ],
+  "completionPolicy": "A card is not Done when a required metric is unmeasured, evidence is passed-with-limitations, or a known P0/P1 remains open. Unit counts alone never qualify product behavior."
+}

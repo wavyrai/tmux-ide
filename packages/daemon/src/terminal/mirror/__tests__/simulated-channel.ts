@@ -60,19 +60,20 @@ export class SimulatedChannel implements MirrorChannelIo {
     resultIndex: number,
     onReply: (reply: { ok: boolean; lines: string[] }) => void,
   ): void {
-    for (let index = 0; index < replyCount; index++) {
-      this.core.push(
-        index === resultIndex ? { kind: "inline", onReply, lines: [] } : { kind: "discard" },
-      );
-    }
+    this.core.pushCommandList(replyCount, resultIndex, onReply);
     this.written.push(cmd);
-    // The seed command-list is `set-option ; capture-pane`: acknowledge the
-    // marker command now and leave the selected capture reply manual.
+    // Acknowledge the outer command now. Source-shaped fixtures may also
+    // auto-answer the selected branch; capture lists deliberately return null
+    // and leave that second reply manual.
     this.reply([]);
+    const auto = this.autoReply(cmd);
+    if (auto)
+      for (let index = 1; index < replyCount; index += 1)
+        this.reply(index === resultIndex ? auto : []);
   }
 
-  send(cmd: string): void {
-    this.core.push({ kind: "discard" });
+  send(cmd: string, onReply?: (reply: { ok: boolean; lines: string[] }) => void): void {
+    this.core.push({ kind: "discard", ...(onReply ? { onReply } : {}) });
     this.record(cmd);
   }
 
@@ -117,13 +118,13 @@ export const FIXTURE = {
   layoutW2: "bbbb,200x50,0,0,3",
   truthRows: ["%1\t1\t@1\t1", "%2\t0\t@1\t1", "%3\t0\t@2\t0"],
   windowRows: (layoutW1: string, layoutW2: string): string[] => [
-    `@1\twindow.test.one\tmain\t1\t${layoutW1}\t0`,
-    `@2\twindow.test.two\taux\t0\t${layoutW2}\t0`,
+    `@1\twindow.test.one\tmain\t1\t${layoutW1}\t0\toff`,
+    `@2\twindow.test.two\taux\t0\t${layoutW2}\t0\toff`,
   ],
   descriptorRows: [
-    "%1\tpane.alpha\t\t\tzsh\t/tmp/a\t0\tmain\t@1\tAlpha",
-    "%2\tpane.beta\t\t\tzsh\t/tmp/b\t0\tmain\t@1\tBeta",
-    "%3\t\t\t\tzsh\t/tmp/c\t1\taux\t@2\tGamma",
+    "%1\tpane.alpha\t\t\tzsh\t/tmp/a\t0\tmain\t@1\tAlpha\t$1\t0\tAlpha IDE\tmission-a\t1\t1\twindow.test.one\tzz-sim\t2\t2",
+    "%2\tpane.beta\t\t\tzsh\t/tmp/b\t0\tmain\t@1\tBeta\t$1\t1\tBeta IDE\t\t0\t1\twindow.test.one\tzz-sim\t2\t2",
+    "%3\t\t\t\tzsh\t/tmp/c\t1\taux\t@2\tGamma\t$1\t0\tGamma IDE\t\t1\t0\t\tzz-sim\t1\t2",
   ],
 };
 
@@ -137,12 +138,14 @@ export interface FixtureState {
  *  commands, leaves capture/cursor probes (and anything unrecognized) manual. */
 export function fixtureAutoReply(state: FixtureState): AutoReply {
   return (cmd) => {
+    if (cmd.startsWith('display-message -p "#{qa:session_name}')) return ["zz-sim\t$1"];
     if (cmd.includes("qa:@tmux_ide_pane_id")) return state.descriptorRows;
     if (cmd.startsWith("list-panes -s")) return state.truthRows;
     if (cmd.startsWith("list-windows")) return state.windowRows;
     // Product-owned seeds are one atomic `set-option ; capture-pane` command
     // list. The capture reply remains manual just like a bare capture probe.
     if (cmd.includes("capture-pane")) return null;
+    if (cmd.startsWith("if-shell -t")) return [];
     if (cmd.startsWith("set-option")) return [];
     if (cmd.startsWith("send-keys") || cmd.startsWith("refresh-client")) return [];
     return null; // capture-pane / display-message: manual

@@ -1,8 +1,56 @@
 import { describe, expect, it } from "vitest";
+import { EventEmitter } from "node:events";
 
-import { createReferencePerformanceTraceSink } from "./reference-performance-trace.ts";
+import {
+  createReferencePerformanceTraceSink,
+  createReferenceTraceWriter,
+} from "./reference-performance-trace.ts";
+import { emitTuiTerminalFrameFenceFailOpen } from "./performance-events.ts";
 
 describe("reference performance trace", () => {
+  it("persists bounded content-free window presentation evidence only in detailed mode", () => {
+    const records: Readonly<Record<string, unknown>>[] = [];
+    const sink = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      detailed: true,
+      processId: "opentui:test",
+      nowMicros: () => 1_000,
+      append: (record) => records.push(record),
+    });
+    expect(sink.detailedWindowPresentationFrames).toBe(true);
+    sink.frame(16, {
+      kind: "window-switch",
+      traceId: "trace.one",
+      targetIdentityDigest: "c".repeat(64),
+      paneIdentityDigest: "d".repeat(64),
+      daemonGeneration: "daemon.one",
+      clientGeneration: 1,
+      rendererEpoch: 2,
+      sourceEpoch: 3,
+      generation: "terminal.one",
+      incarnation: "incarnation.one",
+      revision: 4,
+      stateHash: "0123456789abcdef",
+      cols: 132,
+      rows: 41,
+      presentationDigest: "e".repeat(64),
+      presentationChanged: true,
+      identityExact: true,
+      targetVisible: true,
+      settledTargetFrame: true,
+    });
+    expect(records[1]).toMatchObject({
+      type: "performance.frame",
+      window: {
+        traceId: "trace.one",
+        presentationDigest: "e".repeat(64),
+        settledTargetFrame: true,
+      },
+    });
+    expect(JSON.stringify(records[1])).not.toContain("pane.one");
+  });
+
   it("pairs local input and consumed framebuffer paint on one OpenTUI clock", () => {
     const records: Readonly<Record<string, unknown>>[] = [];
     const times = [1_000, 1_150];
@@ -28,6 +76,9 @@ describe("reference performance trace", () => {
       endedAtMicros: 1_700,
       generation: "generation-a",
       incarnation: "incarnation-a",
+      semanticPaneId: "pane-a",
+      revision: 1,
+      stateHash: "hash-a",
     });
 
     expect(records).toHaveLength(3);
@@ -68,8 +119,201 @@ describe("reference performance trace", () => {
       endedAtMicros: 1_700,
       generation: "generation-a",
       incarnation: "incarnation-a",
+      semanticPaneId: "pane-a",
+      revision: 1,
+      stateHash: "hash-a",
     });
     expect(records).toHaveLength(1);
+  });
+
+  it("keeps minimal qualification to the header and paired input/paint", () => {
+    const records: Readonly<Record<string, unknown>>[] = [];
+    const times = [1_000, 1_100];
+    const sink = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      createTraceId: () => "00000000-0000-4000-8000-000000000004",
+      nowMicros: () => times.shift()!,
+      append: (record) => records.push(record),
+    });
+    expect(sink.detailedWindowPresentationFrames).toBeUndefined();
+    sink.frame!(16);
+    sink.terminalPaint!(1, 0.1);
+    const input = sink.beginTerminalInput!();
+    input.finish();
+    sink.terminalTraceSpan!({
+      traceId: input.traceId,
+      scenario: "terminal-input-to-paint",
+      stage: "paint",
+      processId: "opentui:test",
+      clockId: "opentui-performance-now",
+      clockKind: "performance-now",
+      startedAtMicros: 1_200,
+      endedAtMicros: 1_300,
+      generation: "generation-a",
+      incarnation: "incarnation-a",
+      semanticPaneId: "pane-a",
+      revision: 1,
+      stateHash: "hash-a",
+    });
+    expect(records.map((record) => record.type)).toEqual([
+      "performance.trace.header",
+      "performance.stage",
+      "performance.stage",
+    ]);
+  });
+
+  it("keys a detailed parser-origin record to the exact input trace and canonical state", () => {
+    const records: Readonly<Record<string, unknown>>[] = [];
+    const traceId = "00000000-0000-4000-8000-000000000005";
+    const sink = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      detailed: true,
+      inputFingerprintKey: "f".repeat(64),
+      processId: "opentui:51",
+      createTraceId: () => traceId,
+      nowMicros: () => 10,
+      append: (record) => records.push(record),
+    });
+    sink.beginTerminalInput!({
+      origin: "keyboard",
+      payload: Buffer.from("x"),
+      semanticPaneId: "pane-a",
+      generation: "generation-a",
+      incarnation: "incarnation-a",
+      revision: 7,
+      stateHash: "hash-a",
+    });
+    expect(records[1]).toMatchObject({
+      type: "performance.input-origin",
+      traceId,
+      origin: "keyboard",
+      parserConsumption: "keyboard-event",
+      payloadByteCount: 1,
+      semanticPaneId: "pane-a",
+      generation: "generation-a",
+      incarnation: "incarnation-a",
+      revision: 7,
+      stateHash: "hash-a",
+    });
+    expect(records[1]).not.toHaveProperty("payloadSha256");
+    expect(records[1]?.payloadFingerprint).toMatch(/^[0-9a-f]{64}$/u);
+    expect(JSON.stringify(records[1])).not.toContain('"payload"');
+  });
+
+  it("retains exact application-mouse ingress metadata with an ephemeral keyed fingerprint", () => {
+    const records: Readonly<Record<string, unknown>>[] = [];
+    const sink = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      inputOrigin: true,
+      inputFingerprintKey: "run-local-key".repeat(4),
+      processId: "opentui:52",
+      createTraceId: () => "00000000-0000-4000-8000-000000000052",
+      nowMicros: () => 20,
+      append: (record) => records.push(record),
+    });
+    sink.beginTerminalInput!({
+      origin: "application-mouse",
+      payload: Buffer.from("\x1b[<0;4;2M"),
+      ingressAtMicros: 10,
+      gestureId: "00000000-0000-4000-8000-000000000051",
+      pointerAction: "down",
+      pointerColumn: 3,
+      pointerRow: 1,
+      pointerButton: 0,
+      semanticPaneId: "pane-a",
+      generation: "generation-a",
+      incarnation: "incarnation-a",
+      revision: 7,
+      stateHash: "hash-a",
+    });
+    expect(records[1]).toMatchObject({
+      type: "performance.input-origin",
+      atMicros: 10,
+      origin: "application-mouse",
+      parserConsumption: "pointer-event",
+      gestureId: "00000000-0000-4000-8000-000000000051",
+      pointerAction: "down",
+      pointerColumn: 3,
+      pointerRow: 1,
+      pointerButton: 0,
+    });
+    expect(records[1]?.payloadFingerprint).toMatch(/^[0-9a-f]{64}$/u);
+    expect(JSON.stringify(records[1])).not.toContain("[<0;4;2M");
+  });
+
+  it("records only bounded parser metadata and omits origin work from minimal traces", () => {
+    const detailedRecords: Readonly<Record<string, unknown>>[] = [];
+    let ordinal = 0;
+    const detailed = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      detailed: true,
+      inputFingerprintKey: "f".repeat(64),
+      createTraceId: () => `00000000-0000-4000-8000-${String(++ordinal).padStart(12, "0")}`,
+      nowMicros: () => ordinal,
+      append: (record) => detailedRecords.push(record),
+    });
+    const origin = {
+      origin: "keyboard" as const,
+      payload: Buffer.from("x"),
+      semanticPaneId: "pane-a",
+      generation: "generation-a",
+      incarnation: "incarnation-a",
+      revision: 1,
+      stateHash: "hash-a",
+    };
+    detailed.beginTerminalInput!(origin);
+    detailed.beginTerminalInput!(origin);
+    const origins = detailedRecords.filter(({ type }) => type === "performance.input-origin");
+    expect(origins).toHaveLength(2);
+    expect(
+      origins.every(
+        (record) =>
+          !("payload" in record) &&
+          !("payloadSha256" in record) &&
+          typeof record.payloadFingerprint === "string",
+      ),
+    ).toBe(true);
+
+    const minimalRecords: Readonly<Record<string, unknown>>[] = [];
+    const minimal = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      append: (record) => minimalRecords.push(record),
+    });
+    expect(minimal.terminalInputOrigin).toBeUndefined();
+    minimal.beginTerminalInput!(origin);
+    expect(minimalRecords).toHaveLength(1);
+  });
+
+  it("keeps the input-detail lane selective while retaining canonical anchor and fence", () => {
+    const records: Readonly<Record<string, unknown>>[] = [];
+    const sink = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      inputDetail: true,
+      inputOrigin: true,
+      inputFingerprintKey: "f".repeat(64),
+      health: () => ({
+        droppedRecords: 0,
+        oversizedRecords: 0,
+        failed: false,
+        pendingCriticalRecords: 0,
+      }),
+      append: (record) => records.push(record),
+    });
+    expect(sink.terminalCanonicalPublication).toBeTypeOf("function");
+    expect(sink.terminalCanonicalPaint).toBeTypeOf("function");
+    expect(sink.terminalInputQueueState).toBeTypeOf("function");
+    expect(sink.terminalInputFence).toBeTypeOf("function");
+    expect(sink.terminalCanonicalHostFrame).toBeUndefined();
+    expect(sink.terminalFrameFence).toBeUndefined();
+    sink.frame(16);
+    sink.terminalPaint(1, 1);
+    expect(records.map(({ type }) => type)).toEqual(["performance.trace.header"]);
   });
 
   it("bounds no-output probes and expires an old completed probe without timers", () => {
@@ -97,6 +341,9 @@ describe("reference performance trace", () => {
       endedAtMicros: 1_700,
       generation: "generation-a",
       incarnation: "incarnation-a",
+      semanticPaneId: "pane-a",
+      revision: 1,
+      stateHash: "hash-a",
     });
     expect(records).toHaveLength(1);
 
@@ -115,7 +362,563 @@ describe("reference performance trace", () => {
       endedAtMicros: clock + 100,
       generation: "generation-a",
       incarnation: "incarnation-a",
+      semanticPaneId: "pane-a",
+      revision: 1,
+      stateHash: "hash-a",
     });
     expect(records).toHaveLength(1);
   });
+
+  it("retires latest-only superseded probes without reporting capacity drops", () => {
+    const records: Readonly<Record<string, unknown>>[] = [];
+    let ordinal = 0;
+    const sink = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      createTraceId: () => `00000000-0000-4000-8000-${String(ordinal++).padStart(12, "0")}`,
+      nowMicros: () => 1_000 + ordinal,
+      append: (record) => records.push(record),
+    });
+    for (let index = 0; index < 300; index += 1) sink.beginTerminalInput!().finish();
+
+    expect(sink.snapshot()).toEqual({ pendingInputs: 1, droppedInputs: 0 });
+    sink.beginTerminalInput!().cancel();
+    expect(sink.snapshot()).toEqual({ pendingInputs: 0, droppedInputs: 0 });
+  });
+
+  it("cancels the final unpainted probe when the collector closes", () => {
+    const sink = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      createTraceId: () => "00000000-0000-4000-8000-000000000009",
+      nowMicros: () => 1_000,
+      append: () => undefined,
+    });
+    sink.beginTerminalInput!().finish();
+    expect(sink.close()).toEqual({ pendingInputs: 0, droppedInputs: 0 });
+  });
+
+  it("exposes canonical mode and fresh queue proof only to the opt-in detailed collector", () => {
+    const quiet = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      append: () => undefined,
+    });
+    expect(quiet.terminalCanonicalMode).toBeUndefined();
+    expect(quiet.terminalCanonicalPublication).toBeUndefined();
+    expect(quiet.terminalCanonicalPaint).toBeUndefined();
+    expect(quiet.terminalCanonicalUpdate).toBeUndefined();
+    expect(quiet.terminalCanonicalHostFrame).toBeUndefined();
+    expect(quiet.terminalFrameFence).toBeUndefined();
+    expect(quiet.terminalFocusPaint).toBeUndefined();
+    expect(quiet.terminalFocusFence).toBeUndefined();
+    expect(quiet.terminalFramebufferProjection).toBeUndefined();
+    expect(quiet.terminalInputQueueState).toBeUndefined();
+    expect(quiet.terminalClockCalibration).toBeUndefined();
+
+    const records: Array<Readonly<Record<string, unknown>>> = [];
+    const detailed = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      detailed: true,
+      health: () => ({
+        droppedRecords: 0,
+        oversizedRecords: 0,
+        failed: false,
+        pendingCriticalRecords: 0,
+      }),
+      append: (record) => records.push(record),
+    });
+    expect(detailed.terminalFramebufferProjection).toBeUndefined();
+    detailed.terminalClockCalibration?.({
+      version: 1,
+      processId: "opentui:1",
+      clockId: "opentui-performance-now",
+      clockKind: "performance-now",
+      atMicros: 11,
+      requestId: "00000000-0000-4000-8000-000000000077",
+      daemonInstanceId: "11111111-1111-4111-8111-111111111111",
+      reason: "timeout-retained-sample",
+      attemptedProbes: 2,
+      receivedProbes: 1,
+      validProbes: 1,
+      selectedProbes: 1,
+      selectedProbe: 1,
+    });
+    expect(records.at(-1)).toMatchObject({
+      type: "performance.clock-calibration",
+      reason: "timeout-retained-sample",
+      attemptedProbes: 2,
+      receivedProbes: 1,
+      validProbes: 1,
+      selectedProbes: 1,
+      selectedProbe: 1,
+    });
+    detailed.terminalCanonicalMode?.({
+      processId: "opentui:1",
+      clockId: "opentui-performance-now",
+      clockKind: "performance-now",
+      atMicros: 12,
+      semanticPaneId: "pane.alpha",
+      generation: "11111111-1111-4111-8111-111111111111",
+      incarnation: "incarnation",
+      revision: 3,
+      stateHash: "hash",
+      wraparound: true,
+      mouseProtocol: "drag",
+      mouseEncoding: "sgr",
+    });
+    expect(records.at(-1)).toMatchObject({
+      type: "performance.terminal-canonical-mode",
+      semanticPaneId: "pane.alpha",
+      revision: 3,
+      wraparound: true,
+      mouseProtocol: "drag",
+      mouseEncoding: "sgr",
+    });
+    detailed.terminalCanonicalUpdate?.({
+      processId: "opentui:1",
+      clockId: "opentui-performance-now",
+      clockKind: "performance-now",
+      atMicros: 12,
+      updateType: "terminal.patch",
+      semanticPaneId: "pane.alpha",
+      generation: "11111111-1111-4111-8111-111111111111",
+      incarnation: "incarnation",
+      revision: 4,
+      stateHash: "next-hash",
+      cols: 80,
+      rows: 24,
+      sourceEpoch: 2,
+    });
+    expect(records.at(-1)).toMatchObject({
+      type: "performance.terminal-canonical-update",
+      updateType: "terminal.patch",
+      semanticPaneId: "pane.alpha",
+      revision: 4,
+      sourceEpoch: 2,
+    });
+    detailed.terminalCanonicalHostFrame?.({
+      processId: "opentui:1",
+      clockId: "opentui-performance-now",
+      clockKind: "performance-now",
+      atMicros: 13,
+      semanticPaneId: "pane.alpha",
+      generation: "11111111-1111-4111-8111-111111111111",
+      incarnation: "incarnation",
+      revision: 4,
+      stateHash: "next-hash",
+      cols: 80,
+      rows: 24,
+      sourceEpoch: 2,
+      viewportCols: 80,
+      viewportRows: 23,
+      rendererEpoch: 4,
+    });
+    expect(records.at(-1)).toMatchObject({
+      type: "performance.terminal-canonical-host-frame",
+      semanticPaneId: "pane.alpha",
+      revision: 4,
+      rendererEpoch: 4,
+    });
+    detailed.terminalFrameFence?.({
+      daemonGeneration: "11111111-1111-4111-8111-111111111111",
+      rendererEpoch: 4,
+    });
+    expect(records.at(-1)).toMatchObject({
+      type: "performance.terminal-frame-fence",
+      daemonGeneration: "11111111-1111-4111-8111-111111111111",
+      rendererEpoch: 4,
+      writerHealth: { droppedRecords: 0, oversizedRecords: 0, failed: false },
+    });
+    const focusPaint = {
+      processId: "opentui:1",
+      clockId: "opentui-performance-now" as const,
+      clockKind: "performance-now" as const,
+      atMicros: 14,
+      semanticPaneId: "pane.alpha",
+      generation: "11111111-1111-4111-8111-111111111111",
+      incarnation: "incarnation",
+      revision: 4,
+      stateHash: "next-hash",
+      cols: 80,
+      rows: 24,
+      viewportCols: 80,
+      viewportRows: 23,
+      focused: false,
+      diagnosticEpoch: 1,
+      full: false,
+      writtenRows: [2],
+    };
+    detailed.terminalFocusPaint?.(focusPaint);
+    detailed.terminalFocusFence?.(focusPaint);
+    expect(records.slice(-2)).toMatchObject([
+      { type: "performance.terminal-focus-paint", diagnosticEpoch: 1, writtenRows: [2] },
+      {
+        type: "performance.terminal-focus-fence",
+        diagnosticEpoch: 1,
+        writerHealth: { droppedRecords: 0, oversizedRecords: 0, failed: false },
+      },
+    ]);
+    detailed.terminalInputQueueState?.({
+      operation: "initialized",
+      processId: "opentui:1",
+      clockId: "opentui-performance-now",
+      clockKind: "performance-now",
+      atMicros: 13,
+      inputPending: 0,
+      inputInFlight: 0,
+      inputPendingBytes: 0,
+      rssBytes: 100,
+      heapUsedBytes: 50,
+    });
+    expect(records.at(-1)).toMatchObject({
+      type: "performance.input-queue-state",
+      operation: "initialized",
+      inputPending: 0,
+      inputInFlight: 0,
+      inputPendingBytes: 0,
+    });
+  });
+
+  it("HMACs detailed framebuffer cells with the run key and never persists raw content", () => {
+    const records: Array<Readonly<Record<string, unknown>>> = [];
+    const sink = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      detailed: true,
+      inputFingerprintKey: "ab".repeat(32),
+      append: (record) => records.push(record),
+    });
+    sink.terminalFramebufferProjection?.({
+      traceId: "trace-a",
+      processId: "opentui:1",
+      clockId: "opentui-performance-now",
+      clockKind: "performance-now",
+      atMicros: 10,
+      semanticPaneId: "pane-a",
+      generation: "generation-a",
+      incarnation: "incarnation-a",
+      revision: 2,
+      stateHash: "state-a",
+      cols: 2,
+      rows: 1,
+      sourceEpoch: 1,
+      rendererEpoch: 1,
+      cellCount: 1,
+      wideContinuationCount: 0,
+      combiningCount: 0,
+      styledCellCount: 1,
+      projection: '[{"chars":"secret"}]',
+    });
+    const projectionRecords = records.filter(
+      ({ type }) => type === "performance.terminal-framebuffer-projection",
+    );
+    expect(projectionRecords).toHaveLength(1);
+    expect(projectionRecords[0]).toMatchObject({
+      type: "performance.terminal-framebuffer-projection",
+      traceId: "trace-a",
+      projectionHmac: expect.stringMatching(/^[0-9a-f]{64}$/u),
+    });
+    expect(JSON.stringify(projectionRecords[0])).not.toContain("secret");
+    expect(projectionRecords[0]).not.toHaveProperty("projection");
+  });
+
+  it("cannot certify a frame fence without writer health and keeps throwing sinks fail-open", () => {
+    const records: Readonly<Record<string, unknown>>[] = [];
+    const sink = createReferencePerformanceTraceSink({
+      commit: "a".repeat(40),
+      tree: "b".repeat(40),
+      detailed: true,
+      append: (record) => records.push(record),
+    });
+    sink.terminalFrameFence?.({ daemonGeneration: "generation", rendererEpoch: 1 });
+    expect(records.at(-1)).toMatchObject({
+      type: "performance.terminal-frame-fence",
+      writerHealth: null,
+    });
+    expect(() =>
+      emitTuiTerminalFrameFenceFailOpen(
+        () => {
+          throw new Error("sink failed");
+        },
+        { daemonGeneration: "generation", rendererEpoch: 1 },
+      ),
+    ).not.toThrow();
+  });
+
+  it("queues and closes a saturated 256-input diagnostic burst in exact order", async () => {
+    class FakeWritable extends EventEmitter {
+      writableLength = 0;
+      destroyed = false;
+      backpressured = true;
+      readonly writes: string[] = [];
+      write(value: string): boolean {
+        this.writes.push(value);
+        this.writableLength += Buffer.byteLength(value);
+        return !this.backpressured;
+      }
+      end(value: string, callback: () => void): void {
+        this.writes.push(value);
+        this.destroyed = true;
+        callback();
+      }
+      destroy(): void {
+        this.destroyed = true;
+      }
+    }
+    const stream = new FakeWritable();
+    const writer = createReferenceTraceWriter(stream);
+    writer.append({ type: "first" });
+    const operations = [
+      "lane-enqueue",
+      "transport-send-start",
+      "pane-stream-frame-enqueued",
+      "pane-stream-socket-send-return",
+      "pane-stream-next-event-loop-turn",
+      "transport-ack",
+    ];
+    for (let input = 0; input < 256; input += 1) {
+      for (let mark = 0; mark < 6; mark += 1) {
+        writer.append({
+          version: 1,
+          type: "performance.stage",
+          traceId: `00000000-0000-4000-8000-${String(input).padStart(12, "0")}`,
+          scenario: "terminal-input-to-paint",
+          stage: "client",
+          operation: operations[mark],
+          processId: "opentui:123456",
+          clockId: "opentui-performance-now",
+          clockKind: "performance-now",
+          atMicros: 123_456_789 + input * 10 + mark,
+          rssBytes: 675_987_456,
+          heapUsedBytes: 271_076_685,
+          inputPending: 256 - input,
+          inputInFlight: Math.min(input, 8),
+          inputPendingBytes: 159,
+          sequence: input + 1,
+        });
+      }
+    }
+    const closing = writer.close({ pendingInputs: 2, droppedInputs: 1 });
+    expect(writer.snapshot()).toMatchObject({
+      acceptedRecords: 1,
+      droppedRecords: 0,
+      saturated: true,
+    });
+    expect(writer.snapshot().pendingBytes).toBeGreaterThan(0);
+    expect(writer.snapshot().peakPendingBytes).toBeGreaterThan(500_000);
+    expect(writer.snapshot().peakPendingBytes).toBeLessThan(1_024 * 1_024);
+    stream.backpressured = false;
+    stream.writableLength = 0;
+    stream.emit("drain");
+    const report = await closing;
+    expect(report).toMatchObject({
+      acceptedRecords: 1 + 256 * 6,
+      droppedRecords: 0,
+      pendingBytes: 0,
+      pendingInputs: 2,
+      droppedInputs: 1,
+      failed: false,
+    });
+    expect(
+      stream.writes.slice(0, -1).map((line) => {
+        const record = JSON.parse(line);
+        return record.operation ? `${record.sequence}:${record.operation}` : "first";
+      }),
+    ).toEqual([
+      "first",
+      ...Array.from({ length: 256 }, (_, input) =>
+        operations.map((operation) => `${input + 1}:${operation}`),
+      ).flat(),
+    ]);
+    expect(stream.writes.at(-1)).toContain('"type":"performance.trace.summary"');
+    expect(stream.destroyed).toBe(true);
+    expect(stream.listenerCount("drain")).toBe(0);
+    expect(stream.listenerCount("error")).toBe(0);
+  });
+
+  it("retains the two bounded focus watermark records beyond ordinary pending capacity", () => {
+    class SaturatedWritable extends EventEmitter {
+      writableLength = 0;
+      destroyed = false;
+      write(): boolean {
+        return false;
+      }
+      end(_value: string, callback: () => void): void {
+        callback();
+      }
+      destroy(): void {
+        this.destroyed = true;
+      }
+    }
+    const writer = createReferenceTraceWriter(new SaturatedWritable(), { maxPendingBytes: 64 });
+    writer.append({ type: "saturate" });
+    writer.append({ type: "ordinary", value: "x".repeat(40) });
+    writer.appendCritical({ type: "performance.terminal-focus-paint", diagnosticEpoch: 1 });
+    writer.appendCritical({ type: "performance.terminal-focus-fence", diagnosticEpoch: 1 });
+    expect(writer.snapshot()).toMatchObject({ droppedRecords: 1, pendingRecords: 2 });
+  });
+
+  it("bounds queued bytes and reports the first overflowed record without payload", async () => {
+    class FakeWritable extends EventEmitter {
+      writableLength = 0;
+      destroyed = false;
+      backpressured = true;
+      readonly writes: string[] = [];
+      write(value: string): boolean {
+        this.writes.push(value);
+        return !this.backpressured;
+      }
+      end(value: string, callback: () => void): void {
+        this.writes.push(value);
+        this.destroyed = true;
+        callback();
+      }
+      destroy(): void {
+        this.destroyed = true;
+      }
+    }
+    const stream = new FakeWritable();
+    const writer = createReferenceTraceWriter(stream, { maxPendingBytes: 1 });
+    writer.append({ type: "first" });
+    writer.append({
+      type: "performance.stage",
+      stage: "client",
+      operation: "transport-ack",
+      payload: "must-not-appear-in-drop-metadata",
+    });
+    const closing = writer.close({ pendingInputs: 0, droppedInputs: 0 });
+    stream.backpressured = false;
+    stream.emit("drain");
+
+    const report = await closing;
+    expect(report).toMatchObject({
+      acceptedRecords: 1,
+      droppedRecords: 1,
+      pendingBytes: 0,
+      firstDroppedRecord: {
+        type: "performance.stage",
+        stage: "client",
+        operation: "transport-ack",
+      },
+    });
+    expect(JSON.stringify(report)).not.toContain("must-not-appear");
+    expect(() => createReferenceTraceWriter(stream, { maxPendingBytes: Infinity })).toThrow(
+      /positive safe integer/u,
+    );
+  });
+
+  it("keeps backing storage bounded across repeated partial drains and refills", async () => {
+    class FakeWritable extends EventEmitter {
+      writableLength = 0;
+      destroyed = false;
+      backpressured = true;
+      readonly writes: string[] = [];
+      write(value: string): boolean {
+        this.writes.push(value);
+        return !this.backpressured;
+      }
+      end(value: string, callback: () => void): void {
+        this.writes.push(value);
+        this.destroyed = true;
+        callback();
+      }
+      destroy(): void {
+        this.destroyed = true;
+      }
+    }
+    const stream = new FakeWritable();
+    const writer = createReferenceTraceWriter(stream);
+    writer.append({ type: "first" });
+    for (let index = 0; index < 100; index += 1)
+      writer.append({ type: "queued", operation: `initial-${index}` });
+
+    for (let index = 0; index < 2_000; index += 1) {
+      stream.emit("drain");
+      writer.append({ type: "queued", operation: `refill-${index}` });
+      const snapshot = writer.snapshot();
+      expect(snapshot.pendingRecords).toBe(100);
+      expect(snapshot.pendingStorageSlots).toBeLessThanOrEqual(snapshot.pendingRecords * 2);
+    }
+
+    stream.backpressured = false;
+    stream.emit("drain");
+    const report = await writer.close({ pendingInputs: 0, droppedInputs: 0 });
+    expect(report).toMatchObject({
+      acceptedRecords: 2_101,
+      droppedRecords: 0,
+      pendingBytes: 0,
+      pendingRecords: 0,
+      pendingStorageSlots: 0,
+    });
+    expect(stream.writes.slice(1, -1).map((line) => JSON.parse(line).operation)).toEqual([
+      ...Array.from({ length: 100 }, (_, index) => `initial-${index}`),
+      ...Array.from({ length: 2_000 }, (_, index) => `refill-${index}`),
+    ]);
+  });
+
+  it("settles a saturated close when the stream fails and releases listeners", async () => {
+    class FakeWritable extends EventEmitter {
+      writableLength = 0;
+      destroyed = false;
+      write(): boolean {
+        return false;
+      }
+      end(_value: string, callback: () => void): void {
+        callback();
+      }
+      destroy(): void {
+        this.destroyed = true;
+      }
+    }
+    const stream = new FakeWritable();
+    const writer = createReferenceTraceWriter(stream);
+    writer.append({ type: "first" });
+    writer.append({ type: "queued", operation: "after-saturation" });
+    const closing = writer.close({ pendingInputs: 0, droppedInputs: 0 });
+    stream.emit("error", new Error("disk failed"));
+
+    await expect(closing).resolves.toMatchObject({
+      acceptedRecords: 1,
+      droppedRecords: 1,
+      failed: true,
+      pendingBytes: 0,
+    });
+    expect(stream.destroyed).toBe(true);
+    expect(stream.listenerCount("drain")).toBe(0);
+    expect(stream.listenerCount("error")).toBe(0);
+  });
+
+  it.each(["emit", "throw"] as const)(
+    "returns failed truth and releases listeners when stream end %s fails",
+    async (failure) => {
+      class FakeWritable extends EventEmitter {
+        writableLength = 0;
+        destroyed = false;
+        write(): boolean {
+          return true;
+        }
+        end(_value: string, _callback: () => void): void {
+          if (failure === "throw") throw new Error("end threw");
+          this.emit("error", new Error("end emitted error"));
+        }
+        destroy(): void {
+          this.destroyed = true;
+        }
+      }
+      const stream = new FakeWritable();
+      const writer = createReferenceTraceWriter(stream);
+      writer.append({ type: "first" });
+
+      await expect(writer.close({ pendingInputs: 0, droppedInputs: 0 })).resolves.toMatchObject({
+        acceptedRecords: 1,
+        droppedRecords: 0,
+        failed: true,
+      });
+      expect(stream.destroyed).toBe(true);
+      expect(stream.listenerCount("drain")).toBe(0);
+      expect(stream.listenerCount("error")).toBe(0);
+    },
+  );
 });

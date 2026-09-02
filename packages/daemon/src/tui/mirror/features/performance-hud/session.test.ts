@@ -14,6 +14,7 @@ const delivery = {
   parseMs: 1,
   queuePeak: 1,
   queueCapacity: 1,
+  settledQueueDepth: 0,
   revisionLagPeak: 1,
   reseed: false,
 } as const;

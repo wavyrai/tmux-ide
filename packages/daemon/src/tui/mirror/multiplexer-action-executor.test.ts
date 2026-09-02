@@ -57,17 +57,26 @@ function context() {
 
 function catalog(instanceId = INSTANCE): Response {
   return Response.json({
-    version: 1,
+    version: 2,
     daemon: {
       protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
       productVersion: "2.8.0",
       instanceId,
       startedAt: canonical.startedAt,
     },
-    workspaces: [
+    intents: [
       {
         workspaceName: "project-stable-identity",
         sessionName: "renamed-session",
+        source: "workspace",
+        availability: "live",
+      },
+    ],
+    liveSessions: [
+      {
+        sessionName: "renamed-session",
+        fleetSessionId: "session.aaaaaaaaaaaaaaaaaaaa",
+        paneCount: 2,
       },
     ],
   });
@@ -223,6 +232,37 @@ describe("TUI multiplexer action executor", () => {
         workspaceName: "project-stable-identity",
         scope: "session",
         name: "fresh-name",
+      },
+      { operationId: OPERATION, autostart: false },
+    );
+  });
+
+  it("renames an agent through its durable semantic pane identity", async () => {
+    const dispatchAction = vi.fn(async () => ({ outcome: "applied" }));
+
+    await expect(
+      executeTuiMultiplexerAction(
+        { kind: "rename-pane", name: "focused-fox" },
+        context(),
+        vi.fn(),
+        {
+          readCanonicalDaemonInfo: () => canonical,
+          isCanonicalDaemonAlive: async () => true,
+          fetch: vi.fn(async () => catalog()) as typeof fetch,
+          dispatchAction: dispatchAction as never,
+          operationId: () => OPERATION,
+        },
+      ),
+    ).resolves.toEqual({ status: "daemon", message: "renamed pane → focused-fox" });
+
+    expect(dispatchAction).toHaveBeenCalledWith(
+      canonical,
+      "workspace.rename",
+      {
+        workspaceName: "project-stable-identity",
+        scope: "pane",
+        semanticPaneId: "pane.source",
+        name: "focused-fox",
       },
       { operationId: OPERATION, autostart: false },
     );

@@ -6,6 +6,7 @@ import {
   type PushResourceFetchResult,
   type PushResourceSessionAdapter,
 } from "./push-resource-session.ts";
+import { runtimeResourceSnapshot } from "./runtime-resource-ledger.ts";
 
 type Key = "fleet" | "files" | "changes" | "terminal";
 interface Target {
@@ -345,6 +346,7 @@ describe("push resource session", () => {
   });
 
   it("reports degraded event authority, retries once, and resynchronizes after installation", async () => {
+    const timerBaseline = runtimeResourceSnapshot()["runtime-timer"].active;
     const clock = new FakeClock();
     let connects = 0;
     let fetches = 0;
@@ -368,18 +370,22 @@ describe("push resource session", () => {
     expect(session.getState().eventPhase).toBe("degraded");
     expect(fetches).toBe(1);
     expect(clock.timers.size).toBe(1);
+    expect(runtimeResourceSnapshot()["runtime-timer"].active).toBe(timerBaseline + 1);
 
     clock.advanceBy(10);
     await turn();
     expect(session.getState().eventPhase).toBe("live");
     expect(fetches).toBe(2);
     expect(clock.timers.size).toBe(0);
+    expect(runtimeResourceSnapshot()["runtime-timer"].active).toBe(timerBaseline);
 
     events!.invalidate(["files"]);
     await turn();
     expect(fetches).toBe(3);
     clock.advanceBy(10 * 60 * 1_000);
     expect(clock.timers.size).toBe(0);
+    session.dispose();
+    expect(runtimeResourceSnapshot()["runtime-timer"].active).toBe(timerBaseline);
   });
 
   it("retires an installed event source, reads through degradation, and reconnects", async () => {

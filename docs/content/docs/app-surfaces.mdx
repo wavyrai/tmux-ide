@@ -1,192 +1,46 @@
 ---
-title: Home, Sidebar & Panels
-description: The floating surfaces the dock triggers — the home cockpit, the sidebar nav column, and the widget panels
+title: App surfaces
+description: Home, Terminals, contextual commands, and optional project views
 ---
 
-# Home, sidebar & panels
+## Home
 
-The dock is always on. Everything else is a keystroke or two away and floats over
-whatever you're doing — one interaction grammar (`j`/`k` · `enter` · `/` · `esc`
-· `?`), one theme. These surfaces share the same TUI, so the fleet looks and
-behaves identically whether you open it as the home screen or as a popup.
+Home is the configless front door. It shows live tmux session count, aggregate
+agent status, the selected session, theme control, and the action to open
+Terminals. It intentionally has no persistent workspace sidebar.
 
-Every surface has two bindings: a **prefix twin** (`prefix` then a letter) that
-works under every keyboard protocol, and an `⌥` fast-path for a single keystroke
-when your terminal allows it. Lead with the prefix; see
-[The dock & keys](/docs/the-dock#why-prefix-first) for why.
+When no tmux server exists, Home stays useful and offers a new-session action.
+The session list updates as ordinary tmux sessions appear or disappear.
 
-| Surface        | Prefix (always works) | Alt fast-path |
-| -------------- | --------------------- | ------------- |
-| Home cockpit   | `prefix h`            | `⌥h`          |
-| Switch session | `prefix j`            | `⌥p`          |
-| Sidebar        | `prefix b`            | `⌥b`          |
-| File explorer  | `prefix e`            | `⌥e`          |
-| Git changes    | `prefix g`            | `⌥g`          |
-| Config editor  | `prefix v`            | `⌥,`          |
-| Actions menu   | `prefix u`            | `⌥m`          |
-| Cheat sheet    | `prefix k`            | `⌥k`          |
+## Terminals
 
-## The home cockpit — `prefix h` (or `⌥h`)
+Terminals is a visual client for the selected tmux session:
 
-Running `tmux-ide` bare, with no project config, opens the **home cockpit** — the
-fleet home screen and the product's first surface:
+- the left sidebar lists the current session and detected agents;
+- the window strip reflects real tmux windows and creates new ones;
+- every pane has a title, state, and relevant controls;
+- terminal content is mirrored as terminal cells, including indexed and
+  truecolor output;
+- pane clicks and agent rows navigate to the canonical tmux pane;
+- splitting, resizing, renaming, creation, and closing are daemon-owned tmux
+  mutations, not a parallel layout model.
 
-- a **fleet tree** of every session and its panes,
-- a **detail** pane for the selection,
-- a **live preview** of the selected pane, and
-- a **rollup header** summarizing fleet-wide status.
+The UI retains terminal content through quiet periods, resize, theme switching,
+daemon replacement, and viewer reattachment. tmux remains the source of truth.
 
-From inside any adopted session, `prefix h` (or `⌥h`) opens the same cockpit as a
-popup over your work — or use the dock's `[ ⌂ home ]` trigger. `esc` closes it.
+## Commands and notifications
 
-## The sidebar — `prefix b` (or `⌥b`)
+`F5` or `Ctrl+P` opens the command surface. Transient action notes, such as a successful
+split, dismiss automatically and do not become permanent chrome.
 
-The **sidebar** is a fleet nav column you toggle in place, without leaving your
-session. It's the persistent version of the cockpit: keep the fleet in view down
-the side while you work in the main panes.
+## Project-defined views
 
-```bash
-tmux-ide sidebar-toggle --session work
-```
+WorkspaceConfigV1 can order full-panel views for `home`, `terminals`, `files`,
+`diff`, and `missions`, or compose them with split and tab layouts. Files,
+changes, dialogs, settings, palettes, and rich previews are loaded as optional
+features so the resident terminal path stays small.
 
-## The switcher — `prefix j` (or `⌥p`)
-
-A compact session picker. Type to filter, `enter` to switch. It's the fast path
-between sessions and opens from the dock's `[ ⧉ switch ]` trigger too.
-
-## Floating panels
-
-Three widgets open as floating app dialogs — a keystroke to open, `esc` to close:
-
-| Prefix (always works) | Alt fast-path | Panel    | What it is                                          |
-| --------------------- | ------------- | -------- | --------------------------------------------------- |
-| `prefix e`            | `⌥e`          | Explorer | A file-tree navigator for the session's directory   |
-| `prefix g`            | `⌥g`          | Changes  | A git changes / diff view                           |
-| `prefix v`            | `⌥,`          | Config   | An interactive editor for `~/.tmux-ide/config.json` |
-
-You can also open them explicitly:
-
-```bash
-tmux-ide popup explorer
-tmux-ide popup changes
-tmux-ide popup config
-```
-
-The panel keybinds are rebindable under `keys.panels` in the config — see
-[Theming & config](/docs/theming). Rebinding a fast-path key moves its prefix
-twin with it.
-
-## The actions menu — `prefix u` (or `⌥m`)
-
-Right-click any pane or the status bar for a native tmux menu **at the pointer**
-(it opens on button _release_). The same menu is on `prefix u` (or `⌥m`). Same
-actions everywhere, so there's nothing to memorize about which surface owns which
-command.
-
-## The cheat sheet — `prefix k` (or `⌥k`)
-
-Every key on one iPadOS-style sheet. On a fresh install a first-run welcome card
-names the core keys once; press `prefix k` (or `⌥k`, or the dock's `[ ? keys ]`)
-any time to see the full sheet, or print it:
-
-```bash
-tmux-ide cheatsheet
-```
-
-## The unified app — `tmux-ide app`
-
-The surfaces above float over your real session. `tmux-ide app` is the other
-shape: a full-screen IDE over the whole fleet, with tabs across the top
-(**F1 Home** · **F2 Terminal** · **F3 Files** · **F4 Diff** · **F5 palette**).
-tmux still owns the PTYs and layout; the app renders them. See
-[What's new in 2.7](/docs/release-2-7-0) for the full tour.
-
-### The Terminal surface
-
-The Terminal tab is a live mirror of your panes, and it's agent-aware:
-
-- **Status chips** — an agent pane wears a chip (`● claude`); a blocked agent
-  turns bold red with its wait time (`● claude · blocked 4m`).
-- **A focus hairline** — the focused pane gets a quiet accent border, so you
-  always know where keystrokes land.
-- **Select & copy in agent panes** — a pane running a full-screen app (Claude
-  Code, vim) captures the mouse. Right-click → **"Select text…"** pauses mouse
-  forwarding so you can drag-select and copy (via SSH-transparent OSC52); the
-  wheel scrolls history while you select.
-- **Immediate size authority** — the first attach claims the measured terminal
-  canvas before the initial pane seed, then follows later terminal resizes. The
-  manual window-size override is released when the app exits so other attached
-  tmux clients regain normal ownership.
-
-### Rich pane content
-
-A pane can opt into a host-native document surface without ceasing to be a real
-tmux pane:
-
-```bash
-tmux-ide widget markdown README.md
-tmux-ide widget image demo.gif
-printf '%s' '{"title":"Build","items":[{"type":"progress","value":72}]}' | tmux-ide widget card
-```
-
-Markdown renders through OpenTUI in the terminal app and semantic components in
-the web/Electron GUI. Raster images and animated GIFs render in the GUI; a
-generic terminal gets an explicit fallback until tmux-ide has negotiated a
-pixel-image protocol. Cards select trusted, registered host components. Raw HTML
-or React source is never executed from pane output—the tmuxy-style boundary is
-strict data selecting code that shipped with the host. Press **Ctrl-C** to clear
-the document and return to the underlying terminal.
-
-### Home v2
-
-The app's Home tab greets first-run users with a plain-language welcome instead
-of an empty grid. **Open folder…** is a real filesystem picker — choose a
-directory and the app opens it as a terminal workspace, optionally remembering it
-as a project. Recently opened folders are one click away, and bare `tmux-ide`
-opens this app by default; `app.frontDoor: false` restores the historical
-cockpit entry if desired. See
-[Getting started](/docs/getting-started#start-anywhere-with-the-app).
-
-### Keep it running — even from your phone
-
-Your sessions already survive everything; with `--detachable`, the cockpit does
-too:
-
-```bash
-tmux-ide app --detachable   # or --hosted — same thing
-```
-
-Instead of running in your terminal, the app lives in a tmux session of its own
-and your terminal attaches to it. Close the terminal, lose the ssh connection,
-switch machines — the cockpit keeps running exactly where you left it: same
-tab, same scroll position, same open dialogs. Run the command again from any
-terminal (including your phone: ssh in, run it) and you're back in the same
-cockpit.
-
-Two things change in this mode:
-
-- **^q detaches** instead of quitting — the app keeps running in the
-  background. If you launched from inside tmux, ^q returns you to the session
-  you came from. To actually stop the cockpit, press **F5** and run **Quit**.
-- If two terminals of different sizes are attached at once, tmux sizes the
-  cockpit to the one you used last (the smaller view wins while you're on it —
-  standard tmux behavior). The cockpit follows the terminal you're actually
-  using: attach from anywhere — or just come back to a terminal you left
-  attached — and it resizes to you.
-
-Set `app.detachable: true` in `~/.tmux-ide/config.json` to make plain
-`tmux-ide app` (and the `app.frontDoor` entry) always work this way.
-
-### Settings without JSON
-
-There's no settings screen and no JSON to hand-edit for the common cases. Press
-**F5** and type "settings" for a palette command per setting — accent color (with
-a live preview), notifications and quiet hours, update cadence, crash restore, a
-keyboard-shortcut viewer, and a guarded reset. Changes persist atomically to
-`~/.tmux-ide/config.json`. See [workspace configuration](/docs/configuration).
-
-## See also
-
-- [What's new in 2.7](/docs/release-2-7-0) — the unified app in full
-- [The dock & keys](/docs/the-dock) — the triggers that open these surfaces
-- [Theming & config](/docs/theming) — rebind every key
+The Missions panel is presentational in this beta. `harnesses`, `agents`, and
+`missions` workspace blocks are validated, but there is no public CLI command
+that dispatches those mission defaults yet. `tmux-ide web` is also explicitly
+unavailable; the daemon remains renderer-neutral for future clients.

@@ -29,11 +29,64 @@ import {
 import { extend } from "@opentui/solid";
 import type { CursorState } from "./pane-mirror.ts";
 import type { BlitOptions } from "./pane-mirror.ts";
-import { swapCells, paintBg, type CellArrays, type GraphemeOverride } from "./blit.ts";
+import {
+  CHAR_CONTINUATION,
+  swapCells,
+  paintBg,
+  type CellArrays,
+  type GraphemeOverride,
+} from "./blit.ts";
 import { rowSelectionRange, visibleSelRows, type Cell } from "./selection.ts";
 import type { SearchMatch } from "./search-model.ts";
 import type { TerminalPaletteProjection } from "./theme.ts";
-import { currentTuiPerformanceEventSink } from "./performance-events.ts";
+import {
+  currentTuiPerformanceEventSink,
+  type TuiTerminalFocusPaintEvent,
+} from "./performance-events.ts";
+
+function framebufferColor(channels: Uint16Array, offset: number, defaultColor: number): string {
+  const value = (channels[offset]! << 16) | (channels[offset + 1]! << 8) | channels[offset + 2]!;
+  return value === defaultColor ? "default" : `rgb:${value.toString(16).padStart(6, "0")}`;
+}
+
+/** Detailed-only normalized projection of the cells actually handed to OpenTUI. */
+export function projectPaneFramebufferCells(
+  buffers: CellArrays,
+  width: number,
+  height: number,
+  graphemes: readonly GraphemeOverride[],
+  defaultFg: number,
+  defaultBg: number,
+): readonly Readonly<Record<string, unknown>>[] {
+  const overrides = new Map(graphemes.map((value) => [`${value.x}:${value.y}`, value.chars]));
+  const projection: Readonly<Record<string, unknown>>[] = [];
+  for (let row = 0; row < height; row += 1) {
+    for (let column = 0; column < width; column += 1) {
+      const index = row * width + column;
+      const codepoint = buffers.char[index]!;
+      const continuation =
+        codepoint === CHAR_CONTINUATION && column > 0 && buffers.char[index - 1] !== 0x20;
+      if (codepoint === 0x20 || (codepoint === CHAR_CONTINUATION && !continuation)) continue;
+      const nextContinuation = column + 1 < width && buffers.char[index + 1] === CHAR_CONTINUATION;
+      const chars = continuation
+        ? ""
+        : (overrides.get(`${column}:${row}`) ?? String.fromCodePoint(codepoint));
+      const colorOffset = index * 4;
+      projection.push(
+        Object.freeze({
+          row,
+          column,
+          chars,
+          width: continuation ? 0 : nextContinuation ? 2 : 1,
+          foreground: framebufferColor(buffers.fg, colorOffset, defaultFg),
+          background: framebufferColor(buffers.bg, colorOffset, defaultBg),
+          attributes: buffers.attributes[index]!,
+        }),
+      );
+    }
+  }
+  return Object.freeze(projection);
+}
 
 /** The scrollback-search highlight payload for one pane: matches keyed by
  *  ABSOLUTE buffer line (mapped to a visible row via `baseY`), the query length,
@@ -63,8 +116,19 @@ export interface PaneSurfaceOptions extends RenderableOptions<FrameBufferRendera
   paneFocused?: boolean;
   /** Bumps (coalesced, once per state tick) when this pane's content changed. */
   contentVersion?: number;
+  /** Bumps when canonical presentation changed without terminal cell damage. */
+  presentationVersion?: number;
+  /**
+   * Renderer-owned framebuffer generation. Unlike `contentVersion`, this
+   * changes when retained canonical cells are still current but the native
+   * presentation may have been invalidated by composition or visibility.
+   */
+  presentationGeneration?: string;
   /** Retained-source generation; forces a full blit even when content version restarts equal. */
   sourceEpoch?: number;
+  /** Generation-host renderer epoch, distinct from the pane source epoch sum. */
+  rendererEpoch?: number;
+  hostFocusTransitionOwner?: PaneSurfaceHostFocusTransitionOwner;
   /** The drag selection on THIS pane (already surface/pane-filtered and
    *  ordered), or null. ABSOLUTE buffer lines (M25.6): the walk maps them to
    *  visible rows per-frame against the pane's live baseY (depth − offset), so
@@ -92,15 +156,213 @@ export interface TerminalPaneRenderSource {
     options: BlitOptions,
   ): TerminalPaintTrace | null;
   releasePane?(paneId: string, consumerId: object): void;
+  /** Called only after the exact canonical cells/cursor have been applied. */
+  acknowledgePresentation?(paneId: string, viewportCols: number, viewportRows: number): void;
+  cursorPresentationTrace?(paneId: string): TerminalPaintTrace | null;
+  paneCanonicalIdentity?(paneId: string): Readonly<{
+    generation: string;
+    incarnation: string;
+    revision: number;
+    stateHash: string;
+    cols: number;
+    rows: number;
+    sourceEpoch: number;
+    /** Generation-local count of canonical history rows trimmed after the retained seed. */
+    historyTrim?: number;
+  }> | null;
 }
 
 export interface TerminalPaintTrace {
   readonly traceId: string;
   readonly generation: string;
   readonly incarnation: string;
+  readonly semanticPaneId: string;
+  readonly revision: number;
+  readonly stateHash: string;
 }
 
 const hardwareCursorOwner = new WeakMap<RenderContext, PaneSurfaceRenderable>();
+export type PaneSurfaceHostFocusTransition = Readonly<{
+  token: number;
+  diagnosticEpoch: number;
+  semanticPaneId: string;
+  focused: boolean;
+  rendererEpoch: number;
+  sourceEpoch: number;
+  generation: string;
+  daemonGeneration: string;
+  clientGeneration: number;
+  incarnation: string;
+  revision: number;
+  stateHash: string;
+  cols: number;
+  rows: number;
+}>;
+
+export interface PaneSurfaceHostFocusTransitionOwner {
+  arm(transition: Omit<PaneSurfaceHostFocusTransition, "token">): number | null;
+  pending(token: number): boolean;
+  cancel(token?: number): void;
+  cancelPane(semanticPaneId: string): void;
+  claim(
+    transition: Omit<
+      PaneSurfaceHostFocusTransition,
+      "token" | "diagnosticEpoch" | "daemonGeneration" | "clientGeneration"
+    >,
+  ): PaneSurfaceHostFocusTransition | null;
+  complete(token: number, event: TuiTerminalFocusPaintEvent): boolean;
+  completed(token: number): Readonly<{
+    transition: PaneSurfaceHostFocusTransition;
+    event: TuiTerminalFocusPaintEvent;
+  }> | null;
+  retire(token: number): void;
+  dispose(): void;
+}
+
+export function qualifiesPaneSurfaceHostFocusFrame(
+  completed: NonNullable<ReturnType<PaneSurfaceHostFocusTransitionOwner["completed"]>>,
+  current: Readonly<{
+    semanticPaneId: string;
+    focused: boolean;
+    rendererEpoch: number;
+    daemonGeneration: string;
+    clientGeneration: number;
+    identity: NonNullable<
+      ReturnType<NonNullable<TerminalPaneRenderSource["paneCanonicalIdentity"]>>
+    >;
+  }>,
+): boolean {
+  const { event, transition } = completed;
+  const { identity } = current;
+  return (
+    current.semanticPaneId === event.semanticPaneId &&
+    current.focused === event.focused &&
+    current.rendererEpoch === event.rendererEpoch &&
+    current.daemonGeneration === transition.daemonGeneration &&
+    current.clientGeneration === transition.clientGeneration &&
+    identity.generation === event.generation &&
+    identity.incarnation === event.incarnation &&
+    identity.revision === event.revision &&
+    identity.stateHash === event.stateHash &&
+    identity.cols === event.cols &&
+    identity.rows === event.rows &&
+    identity.sourceEpoch === event.sourceEpoch
+  );
+}
+
+export function createPaneSurfaceHostFocusTransitionOwner(
+  onCompleted: (() => void) | null = null,
+): PaneSurfaceHostFocusTransitionOwner {
+  let pending: PaneSurfaceHostFocusTransition | null = null;
+  let completed: Readonly<{
+    token: number;
+    transition: PaneSurfaceHostFocusTransition;
+    event: TuiTerminalFocusPaintEvent;
+  }> | null = null;
+  let nextToken = 0;
+  let disposed = false;
+  const exact = (
+    candidate: Omit<
+      PaneSurfaceHostFocusTransition,
+      "token" | "diagnosticEpoch" | "daemonGeneration" | "clientGeneration"
+    >,
+  ) =>
+    pending !== null &&
+    pending.semanticPaneId === candidate.semanticPaneId &&
+    pending.focused === candidate.focused &&
+    pending.rendererEpoch === candidate.rendererEpoch &&
+    pending.sourceEpoch === candidate.sourceEpoch &&
+    pending.generation === candidate.generation &&
+    pending.incarnation === candidate.incarnation &&
+    pending.revision === candidate.revision &&
+    pending.stateHash === candidate.stateHash &&
+    pending.cols === candidate.cols &&
+    pending.rows === candidate.rows;
+  return Object.freeze({
+    arm(transition: Omit<PaneSurfaceHostFocusTransition, "token">) {
+      if (
+        disposed ||
+        !Number.isSafeInteger(transition.diagnosticEpoch) ||
+        transition.diagnosticEpoch <= 0 ||
+        typeof transition.semanticPaneId !== "string" ||
+        transition.semanticPaneId.length === 0 ||
+        transition.semanticPaneId.length > 128 ||
+        !Number.isSafeInteger(transition.rendererEpoch) ||
+        transition.rendererEpoch < 0 ||
+        !Number.isSafeInteger(transition.sourceEpoch) ||
+        transition.sourceEpoch < 0 ||
+        typeof transition.generation !== "string" ||
+        transition.generation.length === 0 ||
+        transition.generation.length > 128 ||
+        transition.daemonGeneration !== transition.generation ||
+        !Number.isSafeInteger(transition.clientGeneration) ||
+        transition.clientGeneration < 0 ||
+        typeof transition.incarnation !== "string" ||
+        transition.incarnation.length === 0 ||
+        transition.incarnation.length > 128 ||
+        !Number.isSafeInteger(transition.revision) ||
+        transition.revision < 0 ||
+        typeof transition.stateHash !== "string" ||
+        !/^[0-9a-f]{16}$/u.test(transition.stateHash) ||
+        !Number.isSafeInteger(transition.cols) ||
+        transition.cols <= 0 ||
+        !Number.isSafeInteger(transition.rows) ||
+        transition.rows <= 0 ||
+        nextToken >= Number.MAX_SAFE_INTEGER
+      )
+        return null;
+      nextToken += 1;
+      completed = null;
+      pending = Object.freeze({ ...transition, token: nextToken });
+      return nextToken;
+    },
+    pending(token: number) {
+      return pending?.token === token;
+    },
+    cancel(token?: number) {
+      if (token === undefined || pending?.token === token) pending = null;
+      if (token === undefined || completed?.token === token) completed = null;
+    },
+    cancelPane(semanticPaneId: string) {
+      if (pending?.semanticPaneId === semanticPaneId) pending = null;
+      if (completed?.event.semanticPaneId === semanticPaneId) completed = null;
+    },
+    claim(
+      candidate: Omit<
+        PaneSurfaceHostFocusTransition,
+        "token" | "diagnosticEpoch" | "daemonGeneration" | "clientGeneration"
+      >,
+    ) {
+      if (!exact(candidate)) return null;
+      return pending;
+    },
+    complete(token: number, event: TuiTerminalFocusPaintEvent) {
+      if (pending?.token !== token) return false;
+      const transition = pending;
+      pending = null;
+      completed = Object.freeze({ token, transition, event });
+      try {
+        onCompleted?.();
+      } catch {
+        // Diagnostic follow-up rendering never owns focus presentation.
+      }
+      return true;
+    },
+    completed(token: number) {
+      return completed?.token === token
+        ? Object.freeze({ transition: completed.transition, event: completed.event })
+        : null;
+    },
+    retire(token: number) {
+      if (completed?.token === token) completed = null;
+    },
+    dispose() {
+      disposed = true;
+      pending = null;
+      completed = null;
+    },
+  });
+}
 
 const rgbaCache = new Map<number, RGBA>();
 function packedRgba(packed: number): RGBA {
@@ -138,10 +400,18 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
   private _scrollOffset = 0;
   private _focusedPane = false;
   private _contentVersion = -1;
+  private _presentationVersion = -1;
+  private _presentationGeneration = "";
   private _sourceEpoch = -1;
+  private _rendererEpoch = -1;
+  private _hostFocusTransitionOwner: PaneSurfaceHostFocusTransitionOwner | null = null;
   private _sel: { start: Cell; end: Cell } | null = null;
   private _search: PaneSearchHighlight | null = null;
   private _needsWalk = true;
+  private _needsCursorPresentation = false;
+  private _gridRowsReadTotal = 0;
+  private _fullWalkTotal = 0;
+  private _presentationCount = 0;
   private readonly _graphemes: GraphemeOverride[] = [];
   // ── Incremental walk state (M21.4) ─────────────────────────────────────────
   /** Force a full repaint next walk (first frame, resize — the framebuffer is
@@ -157,6 +427,7 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
   /** The row an unfocused cursor marker last painted on, so a move/clear repaints
    *  the vacated row (M21.6). */
   private _lastMarkerRow = -1;
+  private _pendingFocusTransition: PaneSurfaceHostFocusTransition | null = null;
 
   constructor(ctx: RenderContext, options: PaneSurfaceOptions) {
     // Default 1×1 — the real size arrives as the width/height layout props (base
@@ -169,6 +440,7 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
   // ── Constant props (delivered via setters post-construction, then stable). ──
   set mirror(v: TerminalPaneRenderSource) {
     if (v === this._mirror) return;
+    this.cancelPendingFocusTransition();
     this._mirror?.releasePane?.(this._paneId, this);
     this._mirror = v;
     this._forceFull = true;
@@ -176,6 +448,7 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
   }
   set paneId(v: string) {
     if (v === this._paneId) return;
+    this.cancelPendingFocusTransition();
     this._mirror?.releasePane?.(this._paneId, this);
     this._paneId = v;
     this._forceFull = true;
@@ -225,6 +498,24 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
   set paneFocused(v: boolean) {
     if (v === this._focusedPane) return;
     this._focusedPane = v;
+    let transition: PaneSurfaceHostFocusTransition | null = null;
+    const focusOwner = this._hostFocusTransitionOwner;
+    if (focusOwner) {
+      try {
+        const identity = this._mirror?.paneCanonicalIdentity?.(this._paneId);
+        transition = identity
+          ? focusOwner.claim({
+              semanticPaneId: this._paneId,
+              focused: v,
+              rendererEpoch: this._rendererEpoch,
+              ...identity,
+            })
+          : null;
+      } catch {
+        // Detailed focus correlation never owns the renderer's focus transition.
+      }
+    }
+    if (transition) this._pendingFocusTransition = transition;
     if (!v) this.releaseHardwareCursor();
     this.invalidate();
   }
@@ -233,11 +524,46 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
     this._contentVersion = v;
     this.invalidate();
   }
+  set presentationVersion(v: number) {
+    if (v === this._presentationVersion) return;
+    this._presentationVersion = v;
+    this._needsCursorPresentation = true;
+    this.requestRender();
+  }
+  set presentationGeneration(v: string) {
+    if (v === this._presentationGeneration) return;
+    this._presentationGeneration = v;
+    // Framebuffer validity is independent from terminal content freshness. A
+    // quiet pane must be able to repaint its retained canonical snapshot after
+    // visibility/composition changes without waiting for another terminal byte.
+    this._forceFull = true;
+    this.invalidate();
+  }
   set sourceEpoch(v: number) {
     if (v === this._sourceEpoch) return;
+    this._pendingFocusTransition = null;
+    try {
+      this._hostFocusTransitionOwner?.cancelPane(this._paneId);
+    } catch {
+      // Detailed focus correlation never owns source replacement.
+    }
     this._sourceEpoch = v;
     this._forceFull = true;
     this.invalidate();
+  }
+  set rendererEpoch(v: number) {
+    if (v === this._rendererEpoch) return;
+    this._pendingFocusTransition = null;
+    try {
+      this._hostFocusTransitionOwner?.cancelPane(this._paneId);
+    } catch {
+      // Detailed focus correlation never owns renderer replacement.
+    }
+    this._rendererEpoch = v;
+  }
+  set hostFocusTransitionOwner(v: PaneSurfaceHostFocusTransitionOwner | null | undefined) {
+    if (v !== this._hostFocusTransitionOwner) this.cancelPendingFocusTransition();
+    this._hostFocusTransitionOwner = v ?? null;
   }
   set selRange(v: { start: Cell; end: Cell } | null) {
     // Objects arrive only when selection() actually changed (or cleared to null).
@@ -269,6 +595,8 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
     if (this._needsWalk) {
       this._needsWalk = false;
       this.walk();
+    } else if (this._needsCursorPresentation) {
+      this.applyCursorOnlyPresentation();
     }
     super.renderSelf(buffer);
   }
@@ -343,6 +671,10 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
         palette: this._terminalPalette,
       },
     );
+    if (performanceSink?.terminalCursorPresentation) {
+      this._gridRowsReadTotal += full ? h : this._dirtyRows.length;
+      if (full) this._fullWalkTotal += 1;
+    }
 
     // Multi-codepoint graphemes (ZWJ/flag emoji, combining marks) — the native
     // setCell handles the full string + its width; rare, so the RGBA is fine.
@@ -392,13 +724,123 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
     this._prevSelRows = newSelRows;
     this._prevSearchRows = newSearchRows;
 
+    const framebufferProjectionSink = performanceSink?.terminalFramebufferProjection;
+    if (framebufferProjectionSink) {
+      try {
+        const identity = this._mirror.paneCanonicalIdentity?.(this._paneId);
+        if (identity) {
+          const projection = projectPaneFramebufferCells(
+            buffers,
+            w,
+            h,
+            this._graphemes,
+            this._defaultFg,
+            this._defaultBg,
+          );
+          framebufferProjectionSink({
+            traceId: paintTrace?.traceId ?? null,
+            processId: `opentui:${process.pid}`,
+            clockId: "opentui-performance-now",
+            clockKind: "performance-now",
+            atMicros: Math.floor(performance.now() * 1_000),
+            semanticPaneId: this._paneId,
+            generation: identity.generation,
+            incarnation: identity.incarnation,
+            revision: identity.revision,
+            stateHash: identity.stateHash,
+            cols: identity.cols,
+            rows: identity.rows,
+            sourceEpoch: identity.sourceEpoch,
+            rendererEpoch: this._rendererEpoch,
+            cellCount: projection.length,
+            wideContinuationCount: projection.filter(({ width }) => width === 0).length,
+            combiningCount: projection.filter(
+              ({ chars }) => typeof chars === "string" && /\p{Mark}/u.test(chars),
+            ).length,
+            styledCellCount: projection.filter(
+              ({ foreground, background, attributes }) =>
+                foreground !== "default" || background !== "default" || attributes !== 0,
+            ).length,
+            projection: JSON.stringify(projection),
+          });
+        }
+      } catch {
+        // Detailed framebuffer evidence never owns native presentation.
+      }
+    }
+
     this.updateHardwareCursor(cur, w, h);
+    this.publishCursorPresentation(
+      cur,
+      w,
+      h,
+      full ? h : this._dirtyRows.length,
+      full,
+      paintTrace?.traceId ?? null,
+    );
+    this._needsCursorPresentation = false;
+    try {
+      this._mirror.acknowledgePresentation?.(this._paneId, w, h);
+    } catch {
+      // A diagnostic acknowledgment can never own framebuffer publication.
+    }
+
+    const focusPaintSink = performanceSink?.terminalFocusPaint;
+    const focusFenceSink = performanceSink?.terminalFocusFence;
+    const focusTransition = this._pendingFocusTransition;
+    if (focusTransition) {
+      this._pendingFocusTransition = null;
+      if (focusPaintSink && focusFenceSink) {
+        try {
+          const identity = this._mirror.paneCanonicalIdentity?.(this._paneId);
+          if (
+            identity &&
+            focusTransition.semanticPaneId === this._paneId &&
+            focusTransition.focused === this._focusedPane &&
+            focusTransition.rendererEpoch === this._rendererEpoch &&
+            focusTransition.sourceEpoch === identity.sourceEpoch &&
+            focusTransition.generation === identity.generation &&
+            focusTransition.incarnation === identity.incarnation &&
+            focusTransition.revision === identity.revision &&
+            focusTransition.stateHash === identity.stateHash &&
+            focusTransition.cols === identity.cols &&
+            focusTransition.rows === identity.rows
+          ) {
+            const event = {
+              processId: `opentui:${process.pid}`,
+              clockId: "opentui-performance-now",
+              clockKind: "performance-now",
+              atMicros: Math.floor(performance.now() * 1_000),
+              semanticPaneId: this._paneId,
+              ...identity,
+              sourceEpoch: identity.sourceEpoch,
+              rendererEpoch: this._rendererEpoch,
+              viewportCols: w,
+              viewportRows: h,
+              focused: this._focusedPane,
+              diagnosticEpoch: focusTransition.diagnosticEpoch,
+              full,
+              writtenRows: Object.freeze([...this._dirtyRows]),
+            } as const;
+            if (this._hostFocusTransitionOwner?.complete(focusTransition.token, event) === true) {
+              try {
+                focusPaintSink(event);
+              } catch {
+                this._hostFocusTransitionOwner.cancel(focusTransition.token);
+              }
+            }
+          }
+        } catch {
+          // Opt-in focus diagnostics never own framebuffer publication.
+        }
+      }
+    }
 
     if (performanceSink) {
       try {
         const paintEndedAt = performance.now();
         performanceSink.terminalPaint(this._dirtyRows.length, paintEndedAt - paintStartedAt);
-        if (paintTrace && performanceSink.terminalTraceSpan)
+        if (paintTrace && performanceSink.terminalTraceSpan) {
           performanceSink.terminalTraceSpan({
             traceId: paintTrace.traceId,
             scenario: "terminal-input-to-paint",
@@ -410,7 +852,24 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
             endedAtMicros: Math.floor(paintEndedAt * 1_000),
             generation: paintTrace.generation,
             incarnation: paintTrace.incarnation,
+            semanticPaneId: paintTrace.semanticPaneId,
+            revision: paintTrace.revision,
+            stateHash: paintTrace.stateHash,
+            paintStateIdentity: "latest-canonical-state-blitted",
           });
+          performanceSink.terminalInputFence?.({
+            traceId: paintTrace.traceId,
+            processId: `opentui:${process.pid}`,
+            clockId: "opentui-performance-now",
+            clockKind: "performance-now",
+            atMicros: Math.floor(performance.now() * 1_000),
+            generation: paintTrace.generation,
+            incarnation: paintTrace.incarnation,
+            semanticPaneId: paintTrace.semanticPaneId,
+            revision: paintTrace.revision,
+            stateHash: paintTrace.stateHash,
+          });
+        }
       } catch {
         // Diagnostics are observational and can never break terminal paint.
       }
@@ -448,14 +907,136 @@ class PaneSurfaceRenderable extends FrameBufferRenderable {
     }
   }
 
+  private applyCursorOnlyPresentation(): void {
+    if (!this._mirror) return;
+    const trace = this._mirror.cursorPresentationTrace?.(this._paneId) ?? null;
+    const startedAt = trace ? performance.now() : 0;
+    const w = this.frameBuffer.width;
+    const h = this.frameBuffer.height;
+    const cursor = this._mirror.cursorState(this._paneId);
+    this.updateHardwareCursor(cursor, w, h);
+    this.publishCursorPresentation(cursor, w, h, 0, false, trace?.traceId ?? null);
+    if (trace) {
+      try {
+        const endedAt = performance.now();
+        const sink = currentTuiPerformanceEventSink();
+        sink?.terminalTraceSpan?.({
+          traceId: trace.traceId,
+          scenario: "terminal-input-to-paint",
+          stage: "paint",
+          processId: `opentui:${process.pid}`,
+          clockId: "opentui-performance-now",
+          clockKind: "performance-now",
+          startedAtMicros: Math.floor(startedAt * 1_000),
+          endedAtMicros: Math.floor(endedAt * 1_000),
+          generation: trace.generation,
+          incarnation: trace.incarnation,
+          semanticPaneId: trace.semanticPaneId,
+          revision: trace.revision,
+          stateHash: trace.stateHash,
+          paintStateIdentity: "latest-canonical-state-blitted",
+        });
+        sink?.terminalInputFence?.({
+          traceId: trace.traceId,
+          processId: `opentui:${process.pid}`,
+          clockId: "opentui-performance-now",
+          clockKind: "performance-now",
+          atMicros: Math.floor(performance.now() * 1_000),
+          generation: trace.generation,
+          incarnation: trace.incarnation,
+          semanticPaneId: trace.semanticPaneId,
+          revision: trace.revision,
+          stateHash: trace.stateHash,
+        });
+      } catch {
+        // Detailed causal timing never owns cursor presentation.
+      }
+    }
+    this._needsCursorPresentation = false;
+    try {
+      this._mirror.acknowledgePresentation?.(this._paneId, w, h);
+    } catch {
+      // A diagnostic acknowledgment can never own cursor presentation.
+    }
+  }
+
+  private publishCursorPresentation(
+    cursor: CursorState | null,
+    width: number,
+    height: number,
+    gridRowsRead: number,
+    fullWalk: boolean,
+    traceId: string | null = null,
+  ): void {
+    const sink = currentTuiPerformanceEventSink()?.terminalCursorPresentation;
+    if (!sink || !cursor || !this._focusedPane || !this._mirror) return;
+    try {
+      const identity = this._mirror.paneCanonicalIdentity?.(this._paneId);
+      if (!identity) return;
+      const inBounds = cursor.x >= 0 && cursor.x < width && cursor.y >= 0 && cursor.y < height;
+      const visible = this._scrollOffset === 0 && inBounds && !cursor.hidden;
+      this._presentationCount += 1;
+      sink({
+        traceId,
+        processId: `opentui:${process.pid}`,
+        clockId: "opentui-performance-now",
+        clockKind: "performance-now",
+        atMicros: Math.floor(performance.now() * 1_000),
+        semanticPaneId: this._paneId,
+        generation: identity.generation,
+        incarnation: identity.incarnation,
+        revision: identity.revision,
+        stateHash: identity.stateHash,
+        cols: identity.cols,
+        rows: identity.rows,
+        sourceEpoch: identity.sourceEpoch,
+        rendererEpoch: this._rendererEpoch,
+        viewportCols: width,
+        viewportRows: height,
+        cursorX: cursor.x,
+        cursorY: cursor.y,
+        screenX: this.x + Math.min(Math.max(cursor.x, 0), Math.max(width - 1, 0)) + 1,
+        screenY: this.y + Math.min(Math.max(cursor.y, 0), Math.max(height - 1, 0)) + 1,
+        visible,
+        style: cursor.style === "bar" ? "line" : cursor.style,
+        blink: cursor.blink,
+        gridWalked: gridRowsRead > 0,
+        gridRowsRead,
+        fullWalk,
+        gridRowsReadTotal: this._gridRowsReadTotal,
+        fullWalkTotal: this._fullWalkTotal,
+        presentationCount: this._presentationCount,
+      });
+    } catch {
+      // Detailed cursor diagnostics are fail-open and never own presentation.
+    }
+  }
+
   private releaseHardwareCursor(): void {
     if (hardwareCursorOwner.get(this._ctx) !== this) return;
     hardwareCursorOwner.delete(this._ctx);
     this._ctx.setCursorPosition(1, 1, false);
   }
 
+  private cancelPendingFocusTransition(): void {
+    const transition = this._pendingFocusTransition;
+    this._pendingFocusTransition = null;
+    if (!transition) return;
+    try {
+      this._hostFocusTransitionOwner?.cancel(transition.token);
+    } catch {
+      // Detailed focus correlation never owns pane replacement or disposal.
+    }
+  }
+
   override destroy(): void {
     this.releaseHardwareCursor();
+    this.cancelPendingFocusTransition();
+    try {
+      this._hostFocusTransitionOwner?.cancelPane(this._paneId);
+    } catch {
+      // Detailed focus correlation never owns pane disposal.
+    }
     this._mirror?.releasePane?.(this._paneId, this);
     super.destroy();
   }

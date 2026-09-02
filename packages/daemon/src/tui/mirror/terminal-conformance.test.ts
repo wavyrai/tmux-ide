@@ -73,6 +73,7 @@ describe("OpenTUI framebuffer terminal conformance", () => {
         for (const chunk of fixture.writes) mirror.write(chunk);
         const needle = fixture.cells
           .filter((cell) => cell.width > 0)
+          .slice(-1)
           .map((cell) => cell.chars)
           .join("");
         await waitForParse(mirror, needle);

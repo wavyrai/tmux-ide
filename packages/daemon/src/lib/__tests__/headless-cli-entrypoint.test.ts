@@ -254,7 +254,7 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
 
     const version = await waitForExit(spawnCli(["--version"]));
     expect(version.code).toBe(0);
-    expect(version.stdout.trim()).toMatch(/^tmux-ide v\d+\.\d+\.\d+$/);
+    expect(version.stdout.trim()).toBe(`tmux-ide v${packageVersion}`);
 
     const mixed = await waitForExit(spawnCli(["--headless", "status"]));
     expect(mixed.code).toBe(2);
@@ -317,7 +317,10 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
 
     const shutdown = await fetch(`http://127.0.0.1:${info.port}/api/v2/action/daemon.shutdown`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        authorization: `Bearer ${info.authToken}`,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({ reason: "entrypoint integration test" }),
     });
     expect(shutdown.ok).toBe(true);
@@ -365,8 +368,9 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
   }, 90_000);
 
   it("refuses takeover of a live daemon with an incompatible protocol", async () => {
-    const port = await listenWithProtocol(2);
-    writeLiveDaemonInfo(port, 2);
+    const incompatibleProtocol = DAEMON_WIRE_PROTOCOL_VERSION + 1;
+    const port = await listenWithProtocol(incompatibleProtocol);
+    writeLiveDaemonInfo(port, incompatibleProtocol);
 
     const result = await waitForExit(spawnCli(["--headless", "--json"]));
 
@@ -375,7 +379,7 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
     expect(JSON.parse(readFileSync(daemonInfoPath(), "utf-8"))).toMatchObject({
       pid: process.pid,
       port,
-      protocolVersion: 2,
+      protocolVersion: incompatibleProtocol,
     });
   });
 

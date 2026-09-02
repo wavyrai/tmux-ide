@@ -11,13 +11,11 @@
 
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import { RegisteredProjectSchemaZ, type RegisteredProject } from "../schemas/registry.ts";
 import { probeProject, sanitizeName, type ProbeIo, type ProjectProbe } from "./project-probe.ts";
-
-const REGISTRY_DIR_ENV = "TMUX_IDE_REGISTRY_DIR";
+import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
 
 const RegistryFileSchemaZ = z.object({
   version: z.literal(1),
@@ -134,9 +132,7 @@ projectRegistryEmitter.setMaxListeners(0);
 // ---------------------------------------------------------------------------
 
 function registryDir(): string {
-  const override = process.env[REGISTRY_DIR_ENV];
-  if (override && override.length > 0) return override;
-  return join(homedir(), ".tmux-ide");
+  return resolveRuntimeNamespace().registryDir;
 }
 
 function registryPath(): string {
@@ -144,6 +140,8 @@ function registryPath(): string {
 }
 
 let cache: RegisteredProject[] | null = null;
+let cacheRegistryPath: string | null = null;
+const volatileProjectNames = new Set<string>();
 
 function readDisk(): RegisteredProject[] {
   const path = registryPath();
@@ -183,6 +181,12 @@ function writeDisk(projects: RegisteredProject[]): void {
 }
 
 function ensureCache(): RegisteredProject[] {
+  const activePath = registryPath();
+  if (cacheRegistryPath !== activePath) {
+    cache = null;
+    cacheRegistryPath = activePath;
+    volatileProjectNames.clear();
+  }
   if (cache !== null) return cache;
   cache = readDisk();
   return cache;
@@ -190,7 +194,7 @@ function ensureCache(): RegisteredProject[] {
 
 function commit(next: RegisteredProject[]): void {
   cache = next;
-  writeDisk(next);
+  writeDisk(next.filter(({ name }) => !volatileProjectNames.has(name)));
   projectRegistryEmitter.emit("change");
 }
 
@@ -207,6 +211,12 @@ export function getProject(name: string): RegisteredProject | null {
   return ensureCache().find((p) => p.name === name) ?? null;
 }
 
+/** True only for live-only registrations in this daemon generation. */
+export function isProjectVolatile(name: string): boolean {
+  ensureCache();
+  return volatileProjectNames.has(name);
+}
+
 export interface RegisterInput {
   dir: string;
   name?: string;
@@ -216,6 +226,12 @@ export interface RegisterInput {
   now?: () => Date;
   /** Override existsSync for the dir-validity check (tests). */
   exists?: (path: string) => boolean;
+  /**
+   * Volatile registrations participate in the live daemon catalog but are
+   * never serialized. Performance/smoke fixtures use this so a crash cannot
+   * leave synthetic projects in the user's durable registry.
+   */
+  persistence?: "durable" | "volatile";
 }
 
 export async function registerProject(input: RegisterInput): Promise<RegisteredProject> {
@@ -251,7 +267,13 @@ export async function registerProject(input: RegisterInput): Promise<RegisteredP
 
   const now = (input.now ?? (() => new Date()))();
   const project = buildRegisteredProject(probe, resolvedName, now.toISOString());
-  commit(applyAction(state, { type: "register", project }));
+  if (input.persistence === "volatile") volatileProjectNames.add(project.name);
+  try {
+    commit(applyAction(state, { type: "register", project }));
+  } catch (error) {
+    volatileProjectNames.delete(project.name);
+    throw error;
+  }
   return project;
 }
 
@@ -260,7 +282,13 @@ export function unregisterProject(name: string): void {
   if (!state.some((p) => p.name === name)) {
     throw new ProjectNotFoundError(name);
   }
-  commit(applyAction(state, { type: "unregister", name }));
+  const wasVolatile = volatileProjectNames.delete(name);
+  try {
+    commit(applyAction(state, { type: "unregister", name }));
+  } catch (error) {
+    if (wasVolatile) volatileProjectNames.add(name);
+    throw error;
+  }
 }
 
 export interface ProbeOptions {
@@ -292,9 +320,13 @@ export async function refreshProject(
 /** Reset the in-memory cache. Tests use this between cases. */
 export function _resetCacheForTests(): void {
   cache = null;
+  cacheRegistryPath = null;
+  volatileProjectNames.clear();
 }
 
 /** Force a re-read from disk on next access. */
 export function _invalidateCacheForTests(): void {
   cache = null;
+  cacheRegistryPath = null;
+  volatileProjectNames.clear();
 }

@@ -392,6 +392,36 @@ describe("Electron canonical daemon supervisor", () => {
     expect(setup.supervisor.snapshot().phase).toBe("attached");
   });
 
+  it("converges on a canonical winner when the local coordinator spawn loses", async () => {
+    const spawnChild = vi.fn((): SpawnedDaemonChild => {
+      throw new Error("local spawn lost the publication race");
+    });
+    const daemonPreflight = preflight([missing, connected(externalInfo)]);
+    const supervisor = new DesktopDaemonSupervisor(
+      {
+        preflight: daemonPreflight,
+        childEntryPath: "/packaged/daemon-child.cjs",
+        productVersion: "2.8.0",
+        probeTimeoutMs: 10,
+      },
+      {
+        claimAllowsStartupAttempt: () => true,
+        inspectCanonical: () => ({ status: "missing" }),
+        ownerProvenDead: async () => true,
+        spawnChild,
+        now: () => 0,
+        sleep: async () => undefined,
+        random: () => 0.5,
+      },
+    );
+
+    await expect(supervisor.start()).resolves.toEqual(connected(externalInfo));
+    expect(spawnChild).toHaveBeenCalledOnce();
+    expect(daemonPreflight.probe).toHaveBeenCalledTimes(2);
+    expect(supervisor.snapshot()).toMatchObject({ phase: "attached", ownedGeneration: null });
+    await supervisor.stopOwned();
+  });
+
   it("attaches to a canonical race winner but stops only its own losing child", async () => {
     const setup = harness({
       states: [missing, connected(externalInfo)],

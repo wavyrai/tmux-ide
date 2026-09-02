@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   PANE_STREAM_MAX_HELD_DELTAS,
   PANE_STREAM_MAX_OUTPUT_BYTES,
+  PANE_STREAM_MAX_PANES,
   PANE_STREAM_MAX_SEED_BYTES,
   PANE_STREAM_PROTOCOL_VERSION,
   PANE_STREAM_REDEEM_PATH,
@@ -10,11 +11,21 @@ import {
   PaneStreamLoopbackWebSocketUrlSchemaZ,
   PaneStreamRedeemFrameSchemaZ,
   PaneStreamServerFrameSchemaZ,
+  sharedMonotonicMicros,
   type PaneStreamErrorFrameCode,
+  type PaneStreamServerFrame,
   type PaneStreamLeaseRequest,
   type PaneStreamRedeemFrame,
   type PaneStreamViewerMode,
+  type PaneStreamDiagnosticCapability,
   type SessionRuntimeSemanticIntent,
+  type SessionRuntimeTerminalInput,
+  type CausalCellProbeV1,
+  type SessionRuntimeActivityKind,
+  type SessionRuntimeAuthorityKind,
+  type SessionRuntimeAuthorityLease,
+  type SessionRuntimeAuthoritySnapshot,
+  type SessionRuntimePresenceState,
   type TerminalDeliveryAck,
   type TerminalDeliveryNack,
   type TerminalDeliveryOffer,
@@ -24,6 +35,7 @@ import {
   type WorkspaceMultiplexerMutationResult,
 } from "@tmux-ide/contracts";
 import type {
+  MirrorLayoutAuthoritySnapshot,
   MirrorLayoutEvent,
   MirrorPaneEvent,
   MirrorSessionDescription,
@@ -33,6 +45,7 @@ import type {
   MirrorSubscribeRequest,
   MirrorSubscription,
 } from "../mirror/mirror-service.ts";
+import type { CausalCellLedgerResult } from "../session-runtime/causal-cell-ledger.ts";
 import {
   canonicalOriginOrNull,
   digestSecret,
@@ -43,6 +56,9 @@ import {
   strictJsonParse,
 } from "../attachments/admission-util.ts";
 import type { DirectTerminalSocket } from "../attachments/direct-websocket.ts";
+import type { SessionRuntimeObservability } from "../session-runtime/runtime-observability.ts";
+import { SessionRuntimeControllerLeaseError } from "../session-runtime/registry.ts";
+import { terminalDeliveryObservationOrdinal } from "../session-runtime/terminal-delivery-observation-identity.ts";
 import {
   PaneStreamLeaseError,
   type IssuedPaneStreamLease,
@@ -75,6 +91,41 @@ export const PANE_STREAM_MAX_CONTROL_BYTES = 4 * 1024;
 export const PANE_STREAM_MAX_REDEMPTION_MS = 1_000;
 
 const WS_OPEN = 1;
+const CANONICAL_KEY_INPUT_FRAME_PREFIX = Buffer.from('{"kind":"key",', "utf8");
+const CANONICAL_TEXT_INPUT_FRAME_PREFIX = Buffer.from('{"kind":"text",', "utf8");
+const SEMANTIC_BACKEND_REFUSALS = new Set([
+  "pane_inventory_not_ready",
+  "pane_identity_changed_before_select",
+  "pane_not_active",
+]);
+
+function semanticBackendRefusal(error: unknown): string | null {
+  let candidate = error;
+  for (let depth = 0; depth < 3; depth += 1) {
+    if (!candidate || typeof candidate !== "object") return null;
+    const context = "context" in candidate ? candidate.context : null;
+    const reason =
+      context && typeof context === "object" && "reason" in context ? context.reason : null;
+    if (typeof reason === "string" && SEMANTIC_BACKEND_REFUSALS.has(reason)) return reason;
+    candidate = "cause" in candidate ? candidate.cause : null;
+  }
+  return null;
+}
+const TYPE_FIRST_INPUT_FRAME_PREFIX = Buffer.from('{"type":"input",', "utf8");
+
+function startsWithBuffer(raw: Buffer, prefix: Buffer): boolean {
+  return (
+    raw.length >= prefix.length && raw.compare(prefix, 0, prefix.length, 0, prefix.length) === 0
+  );
+}
+
+function hasCanonicalInputFramePrefix(raw: Buffer): boolean {
+  return (
+    startsWithBuffer(raw, CANONICAL_KEY_INPUT_FRAME_PREFIX) ||
+    startsWithBuffer(raw, CANONICAL_TEXT_INPUT_FRAME_PREFIX) ||
+    startsWithBuffer(raw, TYPE_FIRST_INPUT_FRAME_PREFIX)
+  );
+}
 const TicketPattern = /^ps1_[A-Za-z0-9_-]{43}$/u;
 const BindingIdSchemaZ = z
   .string()
@@ -85,10 +136,18 @@ const BindingIdSchemaZ = z
 /** The mirror surface the endpoint consumes (MirrorService satisfies it). */
 export interface PaneStreamMirror {
   describeSession(session: string): Promise<MirrorSessionDescription>;
+  describeSessionAuthority?(
+    session: string,
+  ): Promise<{ readonly description: MirrorSessionDescription; readonly runtimeSessionId: string }>;
   subscribe(request: MirrorSubscribeRequest): Promise<MirrorSubscription>;
   subscribeLayout?(
     session: string,
     onLayout: (event: MirrorLayoutEvent) => void,
+    authority?: {
+      readonly expectedSemanticPaneIds: readonly string[];
+      readonly expectedRuntimeSessionId: string;
+      readonly onAuthority?: (snapshot: MirrorLayoutAuthoritySnapshot) => void;
+    },
   ): Promise<MirrorLayoutSubscription>;
 }
 
@@ -193,12 +252,30 @@ export interface PaneStreamAdmissionCoordinatorOptions {
   readonly inputRateWindowMs?: number;
   readonly now?: () => number;
   readonly schedule?: (callback: () => void, delayMs: number) => () => void;
+  /** Opt-in daemon-local timing observer; disabled in normal production. */
+  readonly observability?: SessionRuntimeObservability;
+  /** Test seam consulted only for a negotiated clock-bounds capability. */
+  readonly diagnosticSharedNowMicros?: () => number;
+  /** Test-only parse-delay seam; consulted only with clock diagnostics. */
+  readonly diagnosticAfterFrameParse?: () => void;
 }
 
 export interface SessionRuntimePaneStreamTransportBinding {
   readonly generation: string;
   readonly session: string;
   readonly clientId: string;
+  readonly surface?: string;
+  readonly explicitAuthority?: boolean;
+  readonly deliveryLaneId?: string;
+  readonly deliveryRequestId?: string;
+  /** Optional only for the bounded v1 transport adapter. New clients require these methods. */
+  authoritySnapshot?(): SessionRuntimeAuthoritySnapshot;
+  activateLegacyAuthority?(geometry: boolean): SessionRuntimeAuthoritySnapshot;
+  onAuthoritySnapshot?(listener: (snapshot: SessionRuntimeAuthoritySnapshot) => void): () => void;
+  updatePresence?(state: SessionRuntimePresenceState): SessionRuntimeAuthoritySnapshot;
+  noteActivity?(activity: SessionRuntimeActivityKind): SessionRuntimeAuthoritySnapshot;
+  requestAuthority?(authority: SessionRuntimeAuthorityKind): SessionRuntimeAuthorityLease | null;
+  releaseAuthority?(authority: SessionRuntimeAuthorityKind): SessionRuntimeAuthoritySnapshot;
   assertController(semanticPaneId?: string): void;
   openTerminalDelivery(
     semanticPaneId: string,
@@ -211,11 +288,12 @@ export interface SessionRuntimePaneStreamTransportBinding {
   ): Promise<WorkspaceMultiplexerMutationResult | void>;
   sendInput(
     semanticPaneId: string,
-    kind: "text" | "key",
-    data: string,
+    input: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
+    causalProbe?: CausalCellProbeV1,
+    onCausalResult?: (result: CausalCellLedgerResult) => void,
   ): void;
-  fitViewport(cols: number, rows: number): void;
+  fitViewport(lease: SessionRuntimeAuthorityLease, cols: number, rows: number): void;
   close(): Promise<void>;
 }
 
@@ -302,6 +380,9 @@ export class PaneStreamAdmissionCoordinator {
   readonly #inputRateWindowMs: number;
   readonly #now: () => number;
   readonly #schedule: (callback: () => void, delayMs: number) => () => void;
+  readonly #observability: SessionRuntimeObservability | undefined;
+  readonly #diagnosticSharedNowMicros: (() => number) | undefined;
+  readonly #diagnosticAfterFrameParse: (() => void) | undefined;
   readonly #ledger: PaneStreamWireLedger;
   readonly #pending = new Map<string, PendingTicket>();
   readonly #preAuth = new Set<PreAuthAdmission>();
@@ -339,13 +420,31 @@ export class PaneStreamAdmissionCoordinator {
     this.#inputRateWindowMs = boundedInteger(options.inputRateWindowMs, 1_000, 60_000);
     this.#now = options.now ?? Date.now;
     this.#schedule = options.schedule ?? defaultSchedule;
+    this.#observability = options.observability;
+    this.#diagnosticSharedNowMicros = options.diagnosticSharedNowMicros;
+    this.#diagnosticAfterFrameParse = options.diagnosticAfterFrameParse;
   }
 
   issue(
     request: PaneStreamLeaseRequest,
     context: PaneStreamIssueContext,
   ): Promise<PaneStreamDescriptor> {
+    const trace = this.#observability?.beginTrace(
+      "pane-stream-connect",
+      { generation: this.#instanceId, incarnation: null },
+      context.requestId,
+    );
+    const queuedAtMicros = trace ? this.#observability!.nowMicros() : 0;
     return this.#exclusive(async () => {
+      const admittedAtMicros = trace ? this.#observability!.nowMicros() : 0;
+      if (trace)
+        this.#observability!.recordSpan(
+          "transport",
+          "pane-stream-issue-queue",
+          queuedAtMicros,
+          admittedAtMicros,
+          trace,
+        );
       if (this.#shuttingDown) {
         throw new PaneStreamAdmissionError(
           "daemon-shutting-down",
@@ -369,8 +468,24 @@ export class PaneStreamAdmissionCoordinator {
       // under verified semantic identity NOW. A describe failure is a probe
       // failure and never reads as absence.
       let described: MirrorSessionDescription;
+      let runtimeSessionId: string | null = null;
       try {
-        described = await this.#mirror.describeSession(context.sessionName);
+        const describeStartedAtMicros = trace ? this.#observability!.nowMicros() : 0;
+        if (this.#mirror.describeSessionAuthority) {
+          const authority = await this.#mirror.describeSessionAuthority(context.sessionName);
+          described = authority.description;
+          runtimeSessionId = authority.runtimeSessionId;
+        } else {
+          described = await this.#mirror.describeSession(context.sessionName);
+        }
+        if (trace)
+          this.#observability!.recordSpan(
+            "transport",
+            "pane-stream-describe-session",
+            describeStartedAtMicros,
+            this.#observability!.nowMicros(),
+            trace,
+          );
       } catch {
         throw new PaneStreamAdmissionError(
           "stream-unavailable",
@@ -391,6 +506,7 @@ export class PaneStreamAdmissionCoordinator {
         requestId,
         projectIdentity,
         sessionName: context.sessionName,
+        ...(runtimeSessionId ? { runtimeSessionId } : {}),
         ...(context.hostClientId ? { hostClientId: context.hostClientId } : {}),
       });
       const descriptor = issued.descriptor;
@@ -399,6 +515,8 @@ export class PaneStreamAdmissionCoordinator {
         TicketPattern.test(ticket) &&
         z.uuid().safeParse(descriptor.leaseId).success &&
         descriptor.requestId === requestId &&
+        (this.#mirror.describeSessionAuthority === undefined ||
+          descriptor.runtimeSessionId === runtimeSessionId) &&
         descriptor.status === "awaiting-redemption" &&
         descriptor.viewerMode === request.viewerMode &&
         descriptor.workspaceName === request.workspaceName &&
@@ -437,6 +555,14 @@ export class PaneStreamAdmissionCoordinator {
         Math.max(1, descriptor.expiresAt - this.#now()),
       );
       this.#pending.set(pending.leaseId, pending);
+      if (trace)
+        this.#observability!.recordSpan(
+          "transport",
+          "pane-stream-issue-total",
+          admittedAtMicros,
+          this.#observability!.nowMicros(),
+          trace,
+        );
       return Object.freeze({
         protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
         webSocketUrl: this.#webSocketUrl,
@@ -455,6 +581,7 @@ export class PaneStreamAdmissionCoordinator {
     readonly protocols: readonly string[];
     readonly origin: string | null | undefined;
     readonly hostClientId?: string | undefined;
+    readonly requestId?: string | undefined;
   }): PaneStreamUpgradeDecision {
     if (this.#shuttingDown) {
       return { accepted: false, code: "daemon-shutting-down", httpStatus: 503 };
@@ -475,14 +602,34 @@ export class PaneStreamAdmissionCoordinator {
     if (input.hostClientId && !hostClientId) {
       return { accepted: false, code: "origin-rejected", httpStatus: 403 };
     }
+    const requestId = input.requestId ? z.uuid().safeParse(input.requestId).data : undefined;
+    if (input.requestId && !requestId) {
+      return { accepted: false, code: "origin-rejected", httpStatus: 403 };
+    }
     if (
       ![...this.#pending.values()].some(
         (pending) =>
           pending.origin === origin &&
+          (!requestId || pending.requestId === requestId) &&
           (!hostClientId || pending.descriptor.hostClientId === hostClientId),
       )
     ) {
       return { accepted: false, code: "origin-rejected", httpStatus: 403 };
+    }
+    if (requestId && this.#observability?.enabled) {
+      const trace = this.#observability.beginTrace(
+        "pane-stream-connect",
+        { generation: this.#instanceId, incarnation: null },
+        requestId,
+      );
+      const atMicros = this.#observability.nowMicros();
+      this.#observability.recordSpan(
+        "transport",
+        "pane-stream-upgrade-arrival",
+        atMicros,
+        atMicros,
+        trace,
+      );
     }
     if (this.#preAuth.size >= this.#maxPreAuth) {
       return { accepted: false, code: "preauth-capacity-exhausted", httpStatus: 503 };
@@ -621,6 +768,11 @@ export class PaneStreamAdmissionCoordinator {
             sessionRuntimeBinding,
             binding,
             deliveryAcks: frame.deliveryAcks === true,
+            diagnosticCapabilities: frame.diagnosticCapabilities ?? [],
+            causalCellCapability:
+              descriptor.terminalDelivery !== null &&
+              descriptor.viewerMode === "interactive" &&
+              frame.diagnosticCapabilities?.includes("causal-cell-v1") === true,
             mirror: this.#mirror,
             leaseManager: this.#leaseManager,
             ledger: this.#ledger,
@@ -631,6 +783,9 @@ export class PaneStreamAdmissionCoordinator {
             inputRateWindowMs: this.#inputRateWindowMs,
             now: this.#now,
             schedule: this.#schedule,
+            observability: this.#observability,
+            diagnosticSharedNowMicros: this.#diagnosticSharedNowMicros,
+            diagnosticAfterFrameParse: this.#diagnosticAfterFrameParse,
             onRetire: (connection) => this.#trackRetiringRelease(connection),
           });
         } catch (error) {
@@ -831,6 +986,8 @@ interface LiveConnectionOptions {
   readonly sessionRuntimeBinding: SessionRuntimePaneStreamTransportBinding | null;
   readonly binding: PaneStreamLeaseBinding;
   readonly deliveryAcks: boolean;
+  readonly causalCellCapability: boolean;
+  readonly diagnosticCapabilities: readonly PaneStreamDiagnosticCapability[];
   readonly mirror: PaneStreamMirror;
   readonly leaseManager: PaneStreamLeaseAuthority;
   readonly ledger: PaneStreamWireLedger;
@@ -841,6 +998,9 @@ interface LiveConnectionOptions {
   readonly inputRateWindowMs: number;
   readonly now: () => number;
   readonly schedule: (callback: () => void, delayMs: number) => () => void;
+  readonly observability?: SessionRuntimeObservability;
+  readonly diagnosticSharedNowMicros?: () => number;
+  readonly diagnosticAfterFrameParse?: () => void;
   readonly onRetire: (connection: PaneStreamLiveConnection) => void;
 }
 
@@ -882,6 +1042,8 @@ export class PaneStreamLiveConnection {
   readonly #binding: PaneStreamLeaseBinding;
   readonly #sessionRuntimeBinding: SessionRuntimePaneStreamTransportBinding | null;
   readonly #deliveryAcks: boolean;
+  readonly #causalCellCapability: boolean;
+  readonly #diagnosticCapabilities: readonly PaneStreamDiagnosticCapability[];
   readonly #mirror: PaneStreamMirror;
   readonly #leaseManager: PaneStreamLeaseAuthority;
   readonly #ledger: PaneStreamWireLedger;
@@ -892,8 +1054,15 @@ export class PaneStreamLiveConnection {
   readonly #inputRateWindowMs: number;
   readonly #now: () => number;
   readonly #schedule: (callback: () => void, delayMs: number) => () => void;
+  readonly #observability: SessionRuntimeObservability | undefined;
+  readonly #diagnosticSharedRawMicros: (() => number) | undefined;
+  readonly #diagnosticAfterFrameParse: (() => void) | undefined;
   readonly #onRetire: (connection: PaneStreamLiveConnection) => void;
   readonly #panes = new Map<string, PaneChannel>();
+  readonly #semanticLayouts = new Map<string, MirrorLayoutEvent>();
+  #semanticExpectedPaneIds: readonly string[] | null = null;
+  #semanticRuntimeSessionId: string | null = null;
+  #semanticTopologyEpoch = -1;
   readonly #sendQueue: QueuedSend[] = [];
   readonly #semanticDrainWaiters = new Map<string, Array<() => void>>();
   #layoutSubscription: MirrorLayoutSubscription | null = null;
@@ -904,8 +1073,90 @@ export class PaneStreamLiveConnection {
   #inputWindowFrames = 0;
   #inputWindowBytes = 0;
   #nextViewportSeq = 1;
+  #nextClockProbe = 1;
+  readonly #requestedAuthorities = new Set<SessionRuntimeAuthorityKind>();
+  #usesExplicitAuthority = false;
+  #legacyInputActivated = false;
+  #legacyGeometryActivated = false;
   #closed = false;
   #releasePromise: Promise<unknown> | null = null;
+  #stopAuthoritySnapshots: (() => void) | null = null;
+  #sharedClockOriginMicros: number | null = null;
+  #diagnosticFirstSeedObserved = false;
+  readonly #diagnosticLifecycleStages: Set<string> | null;
+
+  #recordDiagnosticLifecycle(
+    operation:
+      | "pane-stream-server-ready"
+      | "pane-stream-layout-staged"
+      | "pane-stream-layout-validated"
+      | "pane-stream-delivery-open"
+      | "pane-stream-first-seed"
+      | "pane-stream-terminal",
+    closeCode?: number,
+    closeReason?: string,
+  ): void {
+    if (!this.#observability?.enabled || !this.#diagnosticLifecycleStages) return;
+    if (this.#diagnosticLifecycleStages.has(operation)) return;
+    this.#diagnosticLifecycleStages.add(operation);
+    const trace = this.#observability.beginTrace(
+      "pane-stream-connect",
+      { generation: this.#binding.daemonInstanceId, incarnation: null },
+      this.#binding.requestId,
+    );
+    const atMicros = this.#observability.nowMicros();
+    const legalReason = (
+      new Set([
+        "stream-retired",
+        "stream-unavailable",
+        "stream-closed",
+        "topology-changed",
+        "output-backpressure",
+        "panes-closed",
+        "peer-closed",
+        "daemon-shutdown",
+        "redemption-rejected",
+        "unknown",
+      ]).has(closeReason ?? "")
+        ? closeReason!
+        : closeReason
+          ? "unknown"
+          : "none"
+    ) as
+      | "none"
+      | "stream-retired"
+      | "stream-unavailable"
+      | "stream-closed"
+      | "topology-changed"
+      | "output-backpressure"
+      | "panes-closed"
+      | "peer-closed"
+      | "daemon-shutdown"
+      | "redemption-rejected"
+      | "unknown";
+    this.#observability.recordSpan(
+      "transport",
+      operation,
+      atMicros,
+      atMicros,
+      trace,
+      undefined,
+      Object.freeze({
+        paneStreamCloseCode:
+          Number.isInteger(closeCode) && closeCode! >= 1000 && closeCode! <= 4999 ? closeCode! : 0,
+        paneStreamCloseReason: legalReason,
+      }),
+    );
+  }
+
+  #sharedMicros(): number {
+    const raw = this.#diagnosticSharedRawMicros!();
+    this.#sharedClockOriginMicros ??= raw;
+    const elapsed = raw - this.#sharedClockOriginMicros;
+    if (!Number.isSafeInteger(elapsed) || elapsed < 0)
+      throw new Error("Daemon shared monotonic clock regressed");
+    return elapsed;
+  }
 
   constructor(options: LiveConnectionOptions) {
     this.#clientId = options.clientId;
@@ -913,10 +1164,13 @@ export class PaneStreamLiveConnection {
     this.#descriptor = options.descriptor;
     this.#binding = options.binding;
     this.#sessionRuntimeBinding = options.sessionRuntimeBinding;
+    this.#usesExplicitAuthority = options.sessionRuntimeBinding?.explicitAuthority === true;
     if (this.#descriptor.viewerMode === "interactive" && !this.#sessionRuntimeBinding) {
       throw new Error("Interactive pane stream requires SessionRuntime authority");
     }
     this.#deliveryAcks = options.deliveryAcks;
+    this.#causalCellCapability = options.causalCellCapability;
+    this.#diagnosticCapabilities = options.diagnosticCapabilities;
     this.#mirror = options.mirror;
     this.#leaseManager = options.leaseManager;
     this.#ledger = options.ledger;
@@ -928,6 +1182,12 @@ export class PaneStreamLiveConnection {
     this.#now = options.now;
     this.#inputWindowStartedAt = this.#now();
     this.#schedule = options.schedule;
+    this.#observability = options.observability;
+    this.#diagnosticLifecycleStages = options.observability?.enabled ? new Set() : null;
+    this.#diagnosticSharedRawMicros = this.#diagnosticCapabilities.includes("clock-bounds-v1")
+      ? (options.diagnosticSharedNowMicros ?? sharedMonotonicMicros)
+      : undefined;
+    this.#diagnosticAfterFrameParse = options.diagnosticAfterFrameParse;
     this.#onRetire = options.onRetire;
     for (const pane of options.descriptor.panes) {
       this.#panes.set(pane, {
@@ -964,18 +1224,30 @@ export class PaneStreamLiveConnection {
         protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
         daemonInstanceId: this.#binding.daemonInstanceId,
         requestId: this.#binding.requestId,
+        ...(this.#sessionRuntimeBinding
+          ? { connectionClientId: this.#sessionRuntimeBinding.clientId }
+          : {}),
         panes: [...this.#descriptor.panes],
         effectiveViewerMode: this.#descriptor.viewerMode,
+        ...(this.#diagnosticCapabilities.length > 0
+          ? { diagnosticCapabilities: [...this.#diagnosticCapabilities] }
+          : {}),
       });
+      this.#recordDiagnosticLifecycle("pane-stream-server-ready");
     } catch {
-      this.close(1011, "stream-unavailable");
+      this.close(1011, "stream-unavailable-describe");
       return;
     }
+    this.#stopAuthoritySnapshots =
+      this.#sessionRuntimeBinding?.onAuthoritySnapshot?.((snapshot) =>
+        this.#usesExplicitAuthority ? this.#sendAuthoritySnapshot(snapshot) : undefined,
+      ) ?? null;
     void this.#subscribeAll();
   }
 
   close(code = 1000, reason = "stream-closed"): void {
     if (this.#closed) return;
+    this.#recordDiagnosticLifecycle("pane-stream-terminal", code, reason);
     this.#closed = true;
     this.#cancelDrainTick?.();
     this.#cancelDrainTick = null;
@@ -988,6 +1260,8 @@ export class PaneStreamLiveConnection {
     this.#socket.off("message", this.#onMessage);
     this.#socket.off("close", this.#onSocketClose);
     this.#socket.off("error", this.#onSocketClose);
+    this.#stopAuthoritySnapshots?.();
+    this.#stopAuthoritySnapshots = null;
     const closures: Promise<unknown>[] = [];
     const layoutSubscription = this.#layoutSubscription;
     this.#layoutSubscription = null;
@@ -1087,100 +1361,276 @@ export class PaneStreamLiveConnection {
       this.close(1011, "stream-unavailable");
       return;
     }
-    if (this.#mirror.subscribeLayout) {
-      try {
-        const layoutSubscription = await this.#mirror.subscribeLayout(
-          this.#descriptor.sessionName,
-          (event) => this.#onLayout(event),
-        );
-        if (this.#closed) {
-          await layoutSubscription.close().catch(() => undefined);
-          return;
-        }
-        this.#layoutSubscription = layoutSubscription;
-      } catch {
-        this.close(1011, "stream-unavailable");
+    const expectedPaneIds = [...this.#descriptor.panes].sort();
+    if (expectedPaneIds.some((pane) => !known.has(pane))) {
+      this.#failTopologyChanged();
+      return;
+    }
+    const channels = [...this.#panes.values()];
+    if (this.#closed || channels.length === 0) return;
+    let stagedAuthority: MirrorLayoutAuthoritySnapshot | null = null;
+    let authorityMalformed = false;
+    let layoutActivated = false;
+    // Establish the single session layout observer first. MirrorService owns
+    // this lifecycle and may share native control state with delivery setup;
+    // only the independent pane delivery opens below are parallelized.
+    try {
+      if (!this.#mirror.subscribeLayout) throw new Error("authoritative layout is unavailable");
+      const subscription = await this.#mirror.subscribeLayout(
+        this.#descriptor.sessionName,
+        () => undefined,
+        {
+          expectedSemanticPaneIds: expectedPaneIds,
+          expectedRuntimeSessionId: this.#descriptor.runtimeSessionId!,
+          onAuthority: (snapshot) => {
+            this.#recordDiagnosticLifecycle("pane-stream-layout-staged");
+            if (snapshot.layouts.length > PANE_STREAM_MAX_PANES) authorityMalformed = true;
+            else if (!layoutActivated) stagedAuthority = snapshot;
+            else this.#onLayoutAuthority(snapshot);
+          },
+        },
+      );
+      if (this.#closed) {
+        await subscription.close().catch(() => undefined);
         return;
       }
+      const authority = stagedAuthority as MirrorLayoutAuthoritySnapshot | null;
+      const stagedInitialFrames =
+        authorityMalformed ||
+        authority === null ||
+        authority.session !== this.#descriptor.sessionName ||
+        this.#descriptor.runtimeSessionId === null ||
+        authority.runtimeSessionId !== this.#descriptor.runtimeSessionId ||
+        authority.topologyEpoch < 0
+          ? null
+          : this.#validateInitialLayout(authority.layouts, expectedPaneIds);
+      if (!stagedInitialFrames) {
+        await subscription.close().catch(() => undefined);
+        this.#failTopologyChanged();
+        return;
+      }
+      this.#layoutSubscription = subscription;
+    } catch (cause) {
+      if (cause instanceof Error && cause.name === "MirrorTopologyChangedError") {
+        this.#failTopologyChanged();
+        return;
+      }
+      this.close(1011, "stream-unavailable");
+      return;
     }
-    let layoutAttached = this.#layoutSubscription !== null;
-    for (const channel of this.#panes.values()) {
-      if (this.#closed) return;
-      if (!known.has(channel.semanticPaneId)) {
-        this.#emitClosed(channel);
+
+    // Delivery owners are pane-scoped and independent. Open them concurrently,
+    // then publish in descriptor order only after every pane is coherent. This
+    // removes N x attachment latency without allowing a fast pane to make the
+    // session look ready while a sibling is still missing. allSettled is
+    // deliberate: partial success is always closed before the socket retires.
+    const openings = channels.map(async (channel) => {
+      const pending: TerminalDeliveryServerMessage[] = [];
+      let ready = false;
+      const delivery = await binding.openTerminalDelivery(
+        channel.semanticPaneId,
+        offer,
+        (message) => {
+          if (!ready) pending.push(message);
+          else return this.#sendTerminalDelivery(channel.semanticPaneId, message);
+        },
+      );
+      return {
+        channel,
+        delivery,
+        pending,
+        markReady: () => {
+          ready = true;
+        },
+      };
+    });
+    const settled = await Promise.allSettled(openings);
+    const opened = settled.flatMap((result) =>
+      result.status === "fulfilled" ? [result.value] : [],
+    );
+    if (
+      this.#closed ||
+      settled.some(
+        (result) => result.status === "rejected" || !result.value.delivery.negotiation.accepted,
+      )
+    ) {
+      await Promise.all(opened.map(({ delivery }) => delivery.close().catch(() => undefined)));
+      if (!this.#closed) this.close(1011, "stream-unavailable");
+      return;
+    }
+
+    const deliveryIdentityChanged = opened.some(({ channel, delivery, pending }) => {
+      if (!delivery.negotiation.accepted) return true;
+      const negotiated = delivery.negotiation.negotiated;
+      if (negotiated.generation !== this.#binding.daemonInstanceId) return true;
+      let incarnation: string | null = null;
+      for (const message of pending) {
+        if (message.type !== "terminal.delivery") continue;
+        if (
+          message.workspaceName !== this.#descriptor.sessionName ||
+          message.semanticPaneId !== channel.semanticPaneId ||
+          message.generation !== negotiated.generation ||
+          message.deliveryNonce !== negotiated.deliveryNonce ||
+          (incarnation !== null && message.incarnation !== incarnation)
+        )
+          return true;
+        incarnation = message.incarnation;
+      }
+      return false;
+    });
+    if (deliveryIdentityChanged) {
+      await Promise.all(opened.map(({ delivery }) => delivery.close().catch(() => undefined)));
+      this.#failTopologyChanged();
+      return;
+    }
+
+    const authority = stagedAuthority as MirrorLayoutAuthoritySnapshot | null;
+    const initialFrames =
+      authorityMalformed ||
+      authority === null ||
+      authority.session !== this.#descriptor.sessionName ||
+      this.#descriptor.runtimeSessionId === null ||
+      authority.runtimeSessionId !== this.#descriptor.runtimeSessionId ||
+      authority.topologyEpoch < 0
+        ? null
+        : this.#validateInitialLayout(authority.layouts, expectedPaneIds);
+    if (!initialFrames) {
+      await Promise.all(opened.map(({ delivery }) => delivery.close().catch(() => undefined)));
+      this.#failTopologyChanged();
+      return;
+    }
+    this.#recordDiagnosticLifecycle("pane-stream-layout-validated");
+    this.#semanticExpectedPaneIds = expectedPaneIds;
+    this.#semanticRuntimeSessionId = authority!.runtimeSessionId;
+    this.#semanticTopologyEpoch = authority!.topologyEpoch;
+    this.#semanticLayouts.clear();
+    for (const event of authority!.layouts)
+      this.#semanticLayouts.set(event.semanticWindowId as string, event);
+    this.#sendFrame(null, {
+      type: "layout-snapshot",
+      topologyEpoch: authority!.topologyEpoch,
+      layouts: initialFrames,
+    });
+    layoutActivated = true;
+    this.#recordDiagnosticLifecycle("pane-stream-delivery-open");
+
+    for (const { channel, delivery, pending, markReady } of opened) {
+      if (this.#closed || channel.closed) {
+        await delivery.close();
         continue;
       }
-      try {
-        // Layout remains one session-scoped observation on this same socket;
-        // terminal content itself comes exclusively from TerminalDeliveryHub.
-        if (!layoutAttached) {
-          const layoutSub = await this.#mirror.subscribe({
-            session: this.#descriptor.sessionName,
-            semanticPaneId: channel.semanticPaneId,
-            onEvent: () => undefined,
-            onLayout: (event) => this.#onLayout(event),
-          });
-          if (this.#closed || channel.closed) {
-            await layoutSub.close().catch(() => undefined);
-            return;
-          }
-          channel.sub = layoutSub;
-          layoutAttached = true;
-        }
-        const pending: TerminalDeliveryServerMessage[] = [];
-        let ready = false;
-        const delivery = await binding.openTerminalDelivery(
-          channel.semanticPaneId,
-          offer,
-          (message) => {
-            if (!ready) pending.push(message);
-            else return this.#sendTerminalDelivery(channel.semanticPaneId, message);
-          },
-        );
-        if (this.#closed || channel.closed) {
-          await delivery.close();
-          continue;
-        }
-        channel.delivery = delivery;
-        if (!delivery.negotiation.accepted) {
-          await delivery.close();
-          this.close(1008, "stream-unavailable");
-          return;
-        }
-        channel.deliveryAddress = {
-          workspaceName: this.#descriptor.workspaceName,
-          generation: delivery.negotiation.negotiated.generation,
-          incarnation: null,
-          deliveryNonce: delivery.negotiation.negotiated.deliveryNonce,
-        };
-        this.#sendFrame(null, {
-          type: "terminal-delivery-ready",
-          pane: channel.semanticPaneId,
-          negotiation: delivery.negotiation,
-        });
-        ready = true;
-        for (const message of pending)
-          await this.#sendTerminalDelivery(channel.semanticPaneId, message);
-      } catch {
-        this.close(1011, "stream-unavailable");
-        return;
-      }
+      // The rejected case was eliminated above; retain this narrowing at the
+      // publication boundary so an invalid negotiation cannot leak a nonce.
+      if (!delivery.negotiation.accepted) continue;
+      channel.delivery = delivery;
+      channel.deliveryAddress = {
+        workspaceName: this.#descriptor.workspaceName,
+        generation: delivery.negotiation.negotiated.generation,
+        incarnation: null,
+        deliveryNonce: delivery.negotiation.negotiated.deliveryNonce,
+      };
+      this.#sendFrame(null, {
+        type: "terminal-delivery-ready",
+        pane: channel.semanticPaneId,
+        negotiation: delivery.negotiation,
+      });
+      markReady();
+      for (const message of pending)
+        await this.#sendTerminalDelivery(channel.semanticPaneId, message);
     }
     this.#closeIfAllPanesGone();
   }
 
   async #sendTerminalDelivery(pane: string, message: TerminalDeliveryServerMessage): Promise<void> {
     if (message.type === "terminal.delivery") {
+      if (!this.#diagnosticFirstSeedObserved) {
+        this.#diagnosticFirstSeedObserved = true;
+        this.#recordDiagnosticLifecycle("pane-stream-first-seed");
+      }
       const channel = this.#panes.get(pane);
       if (channel?.deliveryAddress) channel.deliveryAddress.incarnation = message.incarnation;
       // SessionRuntime keys canonical replicas by the tmux session, while the
       // public pane-stream lease is keyed by its workspace identity. Translate
       // at this boundary so the renderer has one coherent address vocabulary.
+      const detailedDeliveryObservation = this.#observability?.enabled === true;
+      const trace =
+        message.performanceTraceId && detailedDeliveryObservation
+          ? this.#observability!.beginTrace(
+              "terminal-input-to-paint",
+              { generation: message.generation, incarnation: message.incarnation },
+              message.performanceTraceId,
+            )
+          : null;
+      let startedAtMicros: number | null = null;
+      if (detailedDeliveryObservation)
+        try {
+          startedAtMicros = this.#observability!.nowMicros();
+        } catch {
+          // Detailed delivery timing cannot alter socket delivery.
+        }
+      let startedAtSharedMicros: number | null = null;
+      if (startedAtMicros !== null && this.#diagnosticSharedRawMicros) {
+        try {
+          startedAtSharedMicros = this.#sharedMicros();
+        } catch {
+          // Shared-clock diagnostics cannot alter terminal delivery.
+        }
+      }
       this.#sendFrame(pane, {
         type: "terminal-delivery-envelope",
         pane,
         envelope: { ...message, workspaceName: this.#descriptor.workspaceName },
       });
+      if (startedAtMicros !== null) {
+        let endedAtMicros: number;
+        try {
+          endedAtMicros = this.#observability!.nowMicros();
+        } catch {
+          return;
+        }
+        let endedAtSharedMicros: number | null = null;
+        if (startedAtSharedMicros !== null) {
+          try {
+            endedAtSharedMicros = this.#sharedMicros();
+          } catch {
+            // Preserve the process-local span when shared sampling fails.
+          }
+        }
+        try {
+          this.#observability!.recordSpan(
+            "transport",
+            "pane-stream-socket-send",
+            startedAtMicros,
+            endedAtMicros,
+            trace,
+            startedAtSharedMicros === null || endedAtSharedMicros === null
+              ? undefined
+              : {
+                  startedAtMicros: startedAtSharedMicros,
+                  endedAtMicros: endedAtSharedMicros,
+                },
+            Object.freeze({
+              workspaceName: message.workspaceName,
+              semanticPaneId: message.semanticPaneId,
+              canonicalGeneration: message.generation,
+              canonicalIncarnation: message.incarnation,
+              canonicalRevision: message.canonicalRevision,
+              canonicalStateHash: message.canonicalStateHash,
+              transactionId: message.transactionId,
+              ...(terminalDeliveryObservationOrdinal(message) === null
+                ? {}
+                : { deliveryOrdinal: terminalDeliveryObservationOrdinal(message)! }),
+              deliveryClientId: this.#sessionRuntimeBinding?.clientId ?? this.#clientId,
+              deliverySurface: this.#sessionRuntimeBinding?.surface ?? "unknown",
+              deliveryLaneId: this.#sessionRuntimeBinding?.deliveryLaneId ?? this.#clientId,
+              deliveryRequestId: this.#sessionRuntimeBinding?.deliveryRequestId ?? this.#clientId,
+              deliveryNonce: message.deliveryNonce,
+            }),
+          );
+        } catch {
+          // Diagnostics cannot alter terminal delivery.
+        }
+      }
     } else if (message.type === "terminal.delivery.chunk") {
       this.#sendFrame(pane, {
         type: "terminal-delivery-chunk",
@@ -1345,6 +1795,33 @@ export class PaneStreamLiveConnection {
     this.#ledger.forgetPane(this.#clientId, channel.semanticPaneId);
   }
 
+  #onLayoutAuthority(snapshot: MirrorLayoutAuthoritySnapshot): void {
+    if (this.#closed || !this.#semanticExpectedPaneIds || !this.#semanticRuntimeSessionId) return;
+    if (
+      snapshot.session !== this.#descriptor.sessionName ||
+      snapshot.runtimeSessionId !== this.#semanticRuntimeSessionId ||
+      snapshot.topologyEpoch <= this.#semanticTopologyEpoch ||
+      snapshot.layouts.length > PANE_STREAM_MAX_PANES
+    ) {
+      this.#failTopologyChanged();
+      return;
+    }
+    const frames = this.#validateInitialLayout(snapshot.layouts, this.#semanticExpectedPaneIds);
+    if (!frames) {
+      this.#failTopologyChanged();
+      return;
+    }
+    this.#semanticTopologyEpoch = snapshot.topologyEpoch;
+    this.#semanticLayouts.clear();
+    for (const event of snapshot.layouts)
+      this.#semanticLayouts.set(event.semanticWindowId as string, event);
+    this.#sendFrame(null, {
+      type: "layout-snapshot",
+      topologyEpoch: snapshot.topologyEpoch,
+      layouts: frames,
+    });
+  }
+
   #onLayout(event: MirrorLayoutEvent): void {
     if (this.#closed) return;
     /*
@@ -1361,6 +1838,15 @@ export class PaneStreamLiveConnection {
      * semantic identity by the application-shell inventory. No runtime tmux id,
      * command, cwd or credential appears here.
      */
+    const frame = this.#layoutFrame(event);
+    if (!frame) {
+      this.#failTopologyChanged();
+      return;
+    }
+    this.#sendFrame(null, frame);
+  }
+
+  #layoutFrame(event: MirrorLayoutEvent): PaneStreamServerFrame | null {
     const frame = {
       type: "layout",
       semanticWindowId: event.semanticWindowId,
@@ -1372,6 +1858,8 @@ export class PaneStreamLiveConnection {
       paneBorderStatus: event.paneBorderStatus,
       panes: event.panes.map((pane) => ({
         pane: pane.semanticPaneId,
+        displayName: pane.displayName,
+        displayNameSource: pane.displayNameSource,
         left: pane.left,
         top: pane.top,
         width: pane.width,
@@ -1381,8 +1869,56 @@ export class PaneStreamLiveConnection {
     };
     // Layout carries user-authored names and unbounded tmux geometry; gate it
     // through the schema and skip rather than ever sending an invalid frame.
-    if (!PaneStreamServerFrameSchemaZ.safeParse(frame).success) return;
-    this.#sendFrame(null, frame);
+    const parsed = PaneStreamServerFrameSchemaZ.safeParse(frame);
+    return parsed.success ? parsed.data : null;
+  }
+
+  #validateInitialLayout(
+    events: readonly MirrorLayoutEvent[],
+    expectedPaneIds: readonly string[],
+  ): PaneStreamServerFrame[] | null {
+    if (events.length === 0) return null;
+    const windows = new Set<string>();
+    const panes: string[] = [];
+    const frames: PaneStreamServerFrame[] = [];
+    let currentWindows = 0;
+    for (const event of events) {
+      if (
+        event.session !== this.#descriptor.sessionName ||
+        typeof event.semanticWindowId !== "string" ||
+        windows.has(event.semanticWindowId)
+      )
+        return null;
+      windows.add(event.semanticWindowId);
+      if (event.currentWindow) currentWindows += 1;
+      const frame = this.#layoutFrame(event);
+      if (!frame || frame.type !== "layout") return null;
+      frames.push(frame);
+      for (const pane of event.panes) {
+        if (typeof pane.semanticPaneId !== "string") return null;
+        panes.push(pane.semanticPaneId);
+      }
+    }
+    panes.sort();
+    if (
+      currentWindows !== 1 ||
+      new Set(panes).size !== panes.length ||
+      panes.length !== expectedPaneIds.length ||
+      panes.some((pane, index) => pane !== expectedPaneIds[index])
+    )
+      return null;
+    return frames;
+  }
+
+  #failTopologyChanged(): void {
+    if (this.#closed) return;
+    this.#sendFrame(null, {
+      type: "error",
+      protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+      code: "topology-changed",
+      retryable: true,
+    });
+    this.close(1012, "topology-changed");
   }
 
   // ── Send path + flow ledger ───────────────────────────────────────────────
@@ -1489,20 +2025,134 @@ export class PaneStreamLiveConnection {
     isBinary: boolean,
   ): void => {
     if (this.#closed) return;
+    let callbackAtSharedMicros: number | null = null;
+    let ingressAtSharedMicros: number | null = null;
+    let ingressAtMicros: number | null = null;
+    if (this.#observability?.enabled) {
+      try {
+        ingressAtMicros = this.#observability.nowMicros();
+      } catch {
+        // Diagnostics cannot alter protocol truth.
+      }
+    }
     const byteLength = rawDataByteLength(data, PANE_STREAM_MAX_CONTROL_BYTES);
     if (isBinary || byteLength === 0 || byteLength > PANE_STREAM_MAX_CONTROL_BYTES) {
       this.#failProtocol("protocol-error");
       return;
     }
+    const raw = rawDataToBuffer(data);
+    if (this.#diagnosticSharedRawMicros && hasCanonicalInputFramePrefix(raw)) {
+      try {
+        callbackAtSharedMicros = this.#sharedMicros();
+      } catch {
+        // Preserve the process-local callback timestamp and product traffic.
+      }
+    }
     let frame: z.infer<typeof PaneStreamClientFrameSchemaZ>;
     try {
-      frame = PaneStreamClientFrameSchemaZ.parse(strictJsonParse(rawDataToBuffer(data)));
+      frame = PaneStreamClientFrameSchemaZ.parse(strictJsonParse(raw));
     } catch {
       this.#failProtocol("protocol-error");
       return;
     }
+    if (this.#diagnosticSharedRawMicros) {
+      try {
+        this.#diagnosticAfterFrameParse?.();
+      } catch {
+        // Test-only diagnostics cannot alter protocol truth.
+      }
+      if (frame.type === "input") {
+        try {
+          ingressAtSharedMicros = this.#sharedMicros();
+        } catch {
+          // Preserve callback timing and product traffic without a parse-complete sample.
+        }
+      }
+    }
+    if (frame.type === "clock-probe") {
+      if (
+        !this.#diagnosticCapabilities.includes("clock-bounds-v1") ||
+        frame.requestId !== this.#binding.requestId ||
+        frame.probe !== this.#nextClockProbe
+      )
+        return this.#failProtocol("protocol-error");
+      this.#nextClockProbe += 1;
+      try {
+        ingressAtSharedMicros = this.#sharedMicros();
+      } catch {
+        return;
+      }
+      try {
+        const daemonSendMicros = this.#sharedMicros();
+        this.#sendFrame(null, {
+          type: "clock-probe-ack",
+          requestId: this.#binding.requestId,
+          daemonInstanceId: this.#binding.daemonInstanceId,
+          probe: frame.probe,
+          clientSendMicros: frame.clientSendMicros,
+          daemonReceiveMicros: ingressAtSharedMicros,
+          daemonSendMicros,
+        });
+      } catch {
+        // Client timeout reports calibration unavailable; product traffic continues.
+      }
+      return;
+    }
     if (frame.type === "consumed") {
       this.#acceptConsumed(frame.pane, frame.seq);
+      return;
+    }
+    if (frame.type === "presence") {
+      if (!this.#acceptAuthorityGeneration(frame.generation)) return;
+      this.#usesExplicitAuthority = true;
+      if (!this.#sessionRuntimeBinding?.updatePresence) return this.#failProtocol("protocol-error");
+      const snapshot = this.#sessionRuntimeBinding.updatePresence(frame.state);
+      if (!this.#sessionRuntimeBinding.onAuthoritySnapshot) this.#sendAuthoritySnapshot(snapshot);
+      return;
+    }
+    if (frame.type === "activity") {
+      if (!this.#acceptAuthorityGeneration(frame.generation)) return;
+      this.#usesExplicitAuthority = true;
+      if (!this.#sessionRuntimeBinding?.noteActivity) return this.#failProtocol("protocol-error");
+      const snapshot = this.#sessionRuntimeBinding.noteActivity(frame.activity);
+      if (!this.#sessionRuntimeBinding.onAuthoritySnapshot) this.#sendAuthoritySnapshot(snapshot);
+      return;
+    }
+    if (frame.type === "authority-request") {
+      if (!this.#acceptAuthorityGeneration(frame.generation)) return;
+      this.#usesExplicitAuthority = true;
+      if (
+        !this.#sessionRuntimeBinding?.requestAuthority ||
+        !this.#sessionRuntimeBinding.authoritySnapshot
+      )
+        return this.#failProtocol("protocol-error");
+      const lease = this.#sessionRuntimeBinding.requestAuthority(frame.authority);
+      if (lease) this.#requestedAuthorities.add(frame.authority);
+      this.#sendFrame(null, {
+        type: "authority-receipt",
+        requestId: frame.requestId,
+        authority: frame.authority,
+        status: lease ? "granted" : "rejected",
+        lease,
+        snapshot: this.#sessionRuntimeBinding.authoritySnapshot(),
+      });
+      return;
+    }
+    if (frame.type === "authority-release") {
+      if (!this.#acceptAuthorityGeneration(frame.generation)) return;
+      this.#usesExplicitAuthority = true;
+      this.#requestedAuthorities.delete(frame.authority);
+      if (!this.#sessionRuntimeBinding?.releaseAuthority)
+        return this.#failProtocol("protocol-error");
+      const snapshot = this.#sessionRuntimeBinding.releaseAuthority(frame.authority);
+      this.#sendFrame(null, {
+        type: "authority-receipt",
+        requestId: frame.requestId,
+        authority: frame.authority,
+        status: "released",
+        lease: null,
+        snapshot,
+      });
       return;
     }
     if (frame.type === "terminal-delivery-ack") {
@@ -1537,21 +2187,39 @@ export class PaneStreamLiveConnection {
       if (
         !this.#descriptor.terminalDelivery ||
         this.#descriptor.viewerMode !== "interactive" ||
-        frame.seq !== this.#nextViewportSeq
+        frame.seq !== this.#nextViewportSeq ||
+        (this.#usesExplicitAuthority && !this.#requestedAuthorities.has("geometry"))
       ) {
         this.#failProtocol("input-rejected");
         return;
       }
+      if (!this.#prepareInputAuthority(true)) return;
       this.#nextViewportSeq += 1;
       try {
-        this.#sessionRuntimeBinding!.fitViewport(frame.cols, frame.rows);
+        this.#sessionRuntimeBinding!.fitViewport(frame.authorityLease, frame.cols, frame.rows);
         this.#sendFrame(null, {
           type: "viewport-ack",
           seq: frame.seq,
           cols: frame.cols,
           rows: frame.rows,
+          outcome: "ok",
+          authorityLease: frame.authorityLease,
         });
-      } catch {
+      } catch (error) {
+        if (
+          error instanceof SessionRuntimeControllerLeaseError &&
+          (error.code === "invalid-client-capability" || error.code === "stale-controller-lease")
+        ) {
+          this.#sendFrame(null, {
+            type: "viewport-ack",
+            seq: frame.seq,
+            cols: frame.cols,
+            rows: frame.rows,
+            outcome: "geometry-authority-conflict",
+            authorityLease: frame.authorityLease,
+          });
+          return;
+        }
         this.#failProtocol("input-rejected");
       }
       return;
@@ -1563,8 +2231,47 @@ export class PaneStreamLiveConnection {
       frame.data,
       byteLength,
       frame.performanceTraceId,
+      frame.causalProbe,
+      ingressAtMicros,
+      callbackAtSharedMicros,
+      ingressAtSharedMicros,
     );
   };
+
+  #acceptAuthorityGeneration(generation: string): boolean {
+    if (!this.#sessionRuntimeBinding || generation !== this.#sessionRuntimeBinding.generation) {
+      this.#failProtocol("protocol-error");
+      return false;
+    }
+    return true;
+  }
+
+  #sendAuthoritySnapshot(snapshot: SessionRuntimeAuthoritySnapshot): void {
+    this.#sendFrame(null, { type: "authority-snapshot", snapshot });
+  }
+
+  #prepareInputAuthority(geometry: boolean): boolean {
+    if (this.#usesExplicitAuthority) {
+      const required = geometry ? "geometry" : "input";
+      if (!this.#requestedAuthorities.has(required)) {
+        this.#failProtocol("input-rejected");
+        return false;
+      }
+      return true;
+    }
+    if (this.#legacyInputActivated && (!geometry || this.#legacyGeometryActivated)) return true;
+    try {
+      // A genuine old binding acquired at admission and has no adapter method.
+      // New deferred bindings activate only here, before explicit mode exists.
+      this.#sessionRuntimeBinding?.activateLegacyAuthority?.(geometry);
+      this.#legacyInputActivated = true;
+      if (geometry) this.#legacyGeometryActivated = true;
+      return true;
+    } catch {
+      this.#failProtocol("input-rejected");
+      return false;
+    }
+  }
 
   #deliveryChannel(address: {
     workspaceName: string;
@@ -1581,12 +2288,17 @@ export class PaneStreamLiveConnection {
       expected.workspaceName !== address.workspaceName ||
       expected.generation !== address.generation ||
       expected.deliveryNonce !== address.deliveryNonce ||
-      expected.incarnation === null ||
-      expected.incarnation !== address.incarnation
+      expected.incarnation === null
     ) {
       this.#failProtocol("protocol-error");
       return null;
     }
+    // More than one canonical delivery can legitimately be in flight. The
+    // cached address records only the newest incarnation, so comparing an ACK
+    // against that single value rejects an earlier valid delivery during a
+    // reseed/reconnect burst. Generation + one-use delivery nonce identify the
+    // channel here; the retained delivery owner validates incarnation,
+    // transaction and revision ordering authoritatively below.
     return channel;
   }
 
@@ -1595,6 +2307,7 @@ export class PaneStreamLiveConnection {
       this.#failProtocol("input-rejected");
       return;
     }
+    if (!this.#prepareInputAuthority(false)) return;
     void this.#sessionRuntimeBinding!.submitIntent(operationId, intent)
       .then((result) => {
         this.#sendFrame(null, {
@@ -1604,12 +2317,14 @@ export class PaneStreamLiveConnection {
         });
       })
       .catch((error: unknown) => {
+        const backendRefusal = semanticBackendRefusal(error);
         const rawCode =
-          error && typeof error === "object" && "code" in error
+          backendRefusal ??
+          (error && typeof error === "object" && "code" in error
             ? String(error.code)
             : error && typeof error === "object" && "outcome" in error
               ? `intent-${String(error.outcome)}`
-              : "stream-unavailable";
+              : "stream-unavailable");
         const code = [
           "controller-conflict",
           "controller-target-unavailable",
@@ -1619,6 +2334,9 @@ export class PaneStreamLiveConnection {
           "intent-session-mismatch",
           "intent-rejected",
           "intent-timed-out",
+          "pane_inventory_not_ready",
+          "pane_identity_changed_before_select",
+          "pane_not_active",
         ].includes(rawCode)
           ? rawCode
           : "stream-unavailable";
@@ -1659,6 +2377,10 @@ export class PaneStreamLiveConnection {
     data: string,
     frameBytes: number,
     performanceTraceId?: string,
+    causalProbe?: CausalCellProbeV1,
+    ingressAtMicros: number | null = null,
+    callbackAtSharedMicros: number | null = null,
+    ingressAtSharedMicros: number | null = null,
   ): void {
     if (this.#descriptor.viewerMode !== "interactive") {
       this.#failProtocol("input-rejected");
@@ -1674,6 +2396,23 @@ export class PaneStreamLiveConnection {
     ) {
       this.#failProtocol("input-rejected");
       return;
+    }
+    if (causalProbe) {
+      const address = channel.deliveryAddress;
+      if (
+        !this.#causalCellCapability ||
+        !address ||
+        causalProbe.clientId !== this.#sessionRuntimeBinding?.clientId ||
+        causalProbe.transportNonce !== this.#binding.requestId ||
+        causalProbe.deliveryNonce !== address.deliveryNonce ||
+        causalProbe.inputSequence !== seq ||
+        causalProbe.semanticPaneId !== pane ||
+        causalProbe.generation !== address.generation ||
+        causalProbe.incarnation !== address.incarnation
+      ) {
+        this.#failProtocol("input-rejected");
+        return;
+      }
     }
     const now = this.#now();
     if (
@@ -1691,16 +2430,132 @@ export class PaneStreamLiveConnection {
       this.#failProtocol("input-rejected");
       return;
     }
+    if (!this.#prepareInputAuthority(false)) return;
+    let trace: ReturnType<SessionRuntimeObservability["beginTrace"]> = null;
+    if (performanceTraceId && this.#observability?.enabled) {
+      try {
+        trace = this.#observability.beginTrace(
+          "terminal-input-to-paint",
+          {
+            generation: this.#sessionRuntimeBinding!.generation,
+            incarnation: causalProbe?.incarnation ?? channel.deliveryAddress?.incarnation ?? null,
+          },
+          performanceTraceId,
+        );
+        if (trace && ingressAtMicros !== null) {
+          this.#observability.recordSpan(
+            "transport",
+            "pane-stream-socket-message-callback-entry",
+            ingressAtMicros,
+            ingressAtMicros,
+            trace,
+            callbackAtSharedMicros === null
+              ? undefined
+              : {
+                  startedAtMicros: callbackAtSharedMicros,
+                  endedAtMicros: callbackAtSharedMicros,
+                },
+          );
+          this.#observability.recordSpan(
+            "transport",
+            "pane-stream-input-frame-ingress",
+            ingressAtMicros,
+            ingressAtMicros,
+            trace,
+            ingressAtSharedMicros === null
+              ? undefined
+              : { startedAtMicros: ingressAtSharedMicros, endedAtMicros: ingressAtSharedMicros },
+          );
+        }
+      } catch {
+        trace = null;
+      }
+    }
     this.#inputWindowFrames += 1;
     this.#inputWindowBytes += frameBytes;
     channel.nextInputSeq += 1;
     try {
       this.#sessionRuntimeBinding!.assertController(pane);
       if (semanticDelivery)
-        this.#sessionRuntimeBinding!.sendInput(pane, kind, data, performanceTraceId);
+        this.#sessionRuntimeBinding!.sendInput(
+          pane,
+          { kind, data },
+          performanceTraceId,
+          causalProbe,
+          causalProbe
+            ? (result) => {
+                if (this.#closed) return;
+                if (result.status === "proved") {
+                  this.#sendFrame(null, { type: "causal-cell-proof", proof: result.proof });
+                } else {
+                  this.#sendFrame(null, {
+                    type: "causal-cell-failure",
+                    failure: {
+                      version: 1,
+                      capability: "causal-cell-v1",
+                      traceId: result.traceId,
+                      reason: result.reason,
+                      ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}),
+                    },
+                  });
+                }
+              }
+            : undefined,
+        );
       else if (kind === "text") channel.sub!.sendText(data);
       else channel.sub!.sendKey(data);
+      let ackStartedAtMicros: number | null = null;
+      let ackStartedAtSharedMicros: number | null = null;
+      if (trace) {
+        try {
+          ackStartedAtMicros = this.#observability!.nowMicros();
+        } catch {
+          // Diagnostics cannot alter protocol truth.
+        }
+        if (this.#diagnosticSharedRawMicros) {
+          try {
+            ackStartedAtSharedMicros = this.#sharedMicros();
+          } catch {
+            // Preserve process-local ACK diagnostics.
+          }
+        }
+      }
       sendControl(this.#socket, { type: "input-ack", pane, seq });
+      if (trace && ackStartedAtMicros !== null) {
+        let ackEndedAtMicros: number | null = null;
+        try {
+          ackEndedAtMicros = this.#observability!.nowMicros();
+        } catch {
+          // Diagnostics cannot alter protocol truth.
+        }
+        let ackEndedAtSharedMicros: number | null = null;
+        if (ackStartedAtSharedMicros !== null) {
+          try {
+            ackEndedAtSharedMicros = this.#sharedMicros();
+          } catch {
+            // Preserve process-local ACK diagnostics.
+          }
+        }
+        if (ackEndedAtMicros !== null) {
+          try {
+            this.#observability!.recordSpan(
+              "transport",
+              "pane-stream-input-ack-socket-send",
+              ackStartedAtMicros,
+              ackEndedAtMicros,
+              trace,
+              ackStartedAtSharedMicros === null || ackEndedAtSharedMicros === null
+                ? undefined
+                : {
+                    startedAtMicros: ackStartedAtSharedMicros,
+                    endedAtMicros: ackEndedAtSharedMicros,
+                  },
+            );
+          } catch {
+            // Diagnostics cannot alter protocol truth.
+          }
+        }
+      }
     } catch {
       this.close(1011, "stream-unavailable");
     }

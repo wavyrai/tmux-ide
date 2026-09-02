@@ -29,6 +29,7 @@ export const DaemonEventResourceInterestSchemaZ = z.discriminatedUnion("resource
     .object({
       resource: z.enum([
         "application-shell",
+        "terminal-runtime-inventory",
         "workspace-files",
         "workspace-changes",
         "workspace-missions",
@@ -163,6 +164,7 @@ export const DaemonEventResourceKindSchemaZ = z.enum([
   "workspace-catalog",
   "fleet-catalog",
   "application-shell",
+  "terminal-runtime-inventory",
   "workspace-files",
   "workspace-changes",
   "workspace-missions",

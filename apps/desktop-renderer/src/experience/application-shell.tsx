@@ -39,19 +39,19 @@ import {
   onMount,
 } from "solid-js";
 
-import { WebWorkbenchDock } from "../../../../packages/daemon/src/ui/workbench-dock/web-host-unstyled.tsx";
-import { WebPaneFrame } from "../../../../packages/daemon/src/ui/pane-frame/web-host-unstyled.tsx";
+import { WebWorkbenchDock } from "@tmux-ide/presentation/workbench-dock/web";
+import { WebPaneFrame } from "@tmux-ide/presentation/pane-frame/web";
 import {
   APPLICATION_SHELL_AGENT_TERMINAL_ACTION_IDS,
   agentHarnessIcon,
   type ApplicationShellTerminalPaneFrame,
-} from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
+} from "@tmux-ide/presentation/pane-frame";
 import type {
   PaneFrameActionIntent,
   PaneFrameActivationSource,
   PaneFrameGripIntent,
   PaneFrameModel,
-} from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
+} from "@tmux-ide/presentation/pane-frame";
 import {
   interactionReceiptTargetLabel,
   interactionSummaryLabel,
@@ -61,7 +61,7 @@ import type {
   WorkbenchDockHostActionId,
   WorkbenchDockHostMode,
   WorkbenchDockHostTabId,
-} from "../../../../packages/daemon/src/ui/workbench-dock/presenter.tsx";
+} from "@tmux-ide/presentation/workbench-dock";
 import { CommandPalette } from "./command-palette.tsx";
 import { CreatePaneFlow } from "./create-pane-flow.tsx";
 import { FleetSidebarSection, type FleetPromoteOutcome } from "./fleet-sidebar.tsx";
@@ -83,11 +83,10 @@ import { DomIcon } from "./dom-icon.tsx";
 import { TerminalSurface } from "../terminal/terminal-surface.tsx";
 import type { NativeTerminalTransport } from "../terminal/native-terminal-transport.ts";
 import {
-  PaneMirrorController,
-  type PaneMirrorControllerState,
-} from "../terminal/pane-mirror-controller.ts";
+  WorkspacePaneCompositor,
+  type WorkspacePaneCompositorState,
+} from "../terminal/workspace-pane-compositor.ts";
 import type { PaneStreamTransport } from "../terminal/pane-stream-transport.ts";
-import { createHostPaneStreamTransport } from "../runtime/host-pane-stream-transport.ts";
 import { deriveConnectionHealth } from "../runtime/connection-health.ts";
 import { terminalIssueFaultLabel } from "../runtime/connection-recovery.ts";
 import { PANE_STREAM_MAX_PANES } from "@tmux-ide/contracts";
@@ -105,7 +104,11 @@ import {
   WorkspaceIdentity,
   type ContextMenuSection,
 } from "../ui-system/index.ts";
-import { useVerbTable, type MultiplexerVerbTarget } from "./multiplexer-verb-access.ts";
+import {
+  useVerbTable,
+  type MultiplexerVerbAccess,
+  type MultiplexerVerbTarget,
+} from "./multiplexer-verb-access.ts";
 import { canvasMenuSections, windowCardMenuSections } from "./multiplexer-verb-menu.ts";
 import type { AppWindowCanvasVerbSurface } from "./app-window-canvas.tsx";
 import {
@@ -134,7 +137,6 @@ import {
 import { experimentalSurfacesEnabled, hiddenDockTools } from "./experimental-surfaces.ts";
 import { WorkspaceTiledSurface } from "./workspace-tiled-surface.tsx";
 import { statusStripWithAttachment } from "./terminal-attachment-status.ts";
-import { useGuiPerformanceTelemetry } from "../runtime/gui-performance-context.tsx";
 
 const PALETTE_OVERLAY_ID = "overlay.palette.trace";
 
@@ -181,6 +183,8 @@ export interface DomApplicationShellProps {
     source: PaneFrameActivationSource,
   ) => void;
   readonly onPaneGrip?: (intent: PaneFrameGripIntent, source: PaneFrameActivationSource) => void;
+  /** Live WorkspaceClient override; preview/injected shells keep the host verb table. */
+  readonly onMultiplexerVerb?: MultiplexerVerbAccess["invoke"];
   readonly onAppWindowCommand?: (
     invocation: AppWindowCanvasCommandInvocation,
   ) => void | Promise<void>;
@@ -317,7 +321,6 @@ function activityTone(activity: string): string {
 }
 
 export function DomApplicationShell(props: DomApplicationShellProps) {
-  const performanceTelemetry = useGuiPerformanceTelemetry();
   const fallbackInput = createDefaultDomShellInput();
   const input = createMemo<ApplicationShellProjectionInputV1 | ApplicationShellProjectionInputV3>(
     () => {
@@ -612,7 +615,11 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   // ── Multiplexer verbs (m49.2) ─────────────────────────────────────────────
   // The shell owns the workspace name, the daemon connection and the create
   // flows; the canvas and the sidebar own the pointer. This is the seam.
-  const verbAccess = useVerbTable(props.host);
+  const hostVerbAccess = useVerbTable(props.host);
+  const verbAccess: MultiplexerVerbAccess = {
+    ...hostVerbAccess,
+    invoke: (...args) => (props.onMultiplexerVerb ?? hostVerbAccess.invoke)(...args),
+  };
   const verbWorkspaceName = () => props.terminalWorkspaceName ?? input().workspace.id;
   const workspaceConnected = () =>
     dataMode() === "runtime" && props.daemonState?.status === "connected";
@@ -783,8 +790,10 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
    * than opening a second one.
    */
   const [mirrorEnabled, setMirrorEnabled] = createSignal(false);
-  const [mirrorState, setMirrorState] = createSignal<PaneMirrorControllerState | null>(null);
-  const [mirrorController, setMirrorController] = createSignal<PaneMirrorController | null>(null);
+  const [mirrorState, setMirrorState] = createSignal<WorkspacePaneCompositorState | null>(null);
+  const [mirrorController, setMirrorController] = createSignal<WorkspacePaneCompositor | null>(
+    null,
+  );
   const mirrorPaneIds = createMemo<readonly string[]>(() => {
     const inventory = shell().terminalInventory;
     if (!inventory) return [];
@@ -797,13 +806,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
       .slice(0, PANE_STREAM_MAX_PANES);
   });
   const mirrorTransport = createMemo<PaneStreamTransport | null>(() => {
-    if (props.paneStreamTransport !== undefined) return props.paneStreamTransport;
-    if (dataMode() !== "runtime" || props.daemonState?.status !== "connected") return null;
-    return createHostPaneStreamTransport(
-      props.host,
-      props.daemonState.identity,
-      performanceTelemetry,
-    );
+    return props.paneStreamTransport ?? null;
   });
   /*
    * The layout-faithful terminal surface composes each pane from its pane
@@ -860,7 +863,7 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
     }
     current?.dispose();
     activeMirrorKey = key;
-    const controller = new PaneMirrorController({
+    const controller = new WorkspacePaneCompositor({
       transport,
       workspaceName,
       panes: leased,
@@ -877,9 +880,9 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
   // handed must not change identity on every tick — only when the controller
   // behind it is genuinely replaced (a new lease needs a re-registration).
   let mirrorRegistrars = new Map<string, AppWindowMirrorNodeModel["registerSink"]>();
-  let mirrorRegistrarOwner: PaneMirrorController | null = null;
+  let mirrorRegistrarOwner: WorkspacePaneCompositor | null = null;
   const mirrorRegistrar = (
-    controller: PaneMirrorController,
+    controller: WorkspacePaneCompositor,
     pane: string,
   ): AppWindowMirrorNodeModel["registerSink"] => {
     if (mirrorRegistrarOwner !== controller) {
@@ -918,7 +921,6 @@ export function DomApplicationShell(props: DomApplicationShellProps) {
       // refused pane or a degraded engine reads as itself instead of as the
       // generic transport error the connection health is typed in.
       faultLabel: state?.fault ? terminalIssueFaultLabel(state.fault.code) : null,
-      onRetry: () => mirrorController()?.retry(),
     };
   });
   /**

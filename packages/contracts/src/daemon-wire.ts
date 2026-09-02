@@ -5,7 +5,11 @@ import { z } from "zod";
  * health responses, REST resources, and WebSocket transports. This is
  * intentionally independent from npm/package marketing versions.
  */
-export const DAEMON_WIRE_PROTOCOL_VERSION = 1 as const;
+// v2 makes the daemon-minted fleet session identity mandatory on workspace
+// catalog v2 rows. A v1 daemon can otherwise pass the bootstrap handshake and
+// then fail a current client at the first catalog parse, so this is a real wire
+// boundary rather than an additive package-version change.
+export const DAEMON_WIRE_PROTOCOL_VERSION = 2 as const;
 
 /**
  * Discovery must retain unknown positive versions so a client can report an

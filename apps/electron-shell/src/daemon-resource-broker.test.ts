@@ -38,19 +38,39 @@ const CONNECTED: DesktopDaemonHostState = {
 };
 
 const WORKSPACE_CATALOG = {
-  version: 1,
+  version: 2,
   daemon: IDENTITY,
-  workspaces: [
+  intents: [
     {
       workspaceName: "product workspace",
       sessionName: "server/session:42",
+      source: "project",
+      availability: "live",
     },
     {
       workspaceName: "docs",
       sessionName: "durable-docs",
+      source: "workspace",
+      availability: "live",
+    },
+  ],
+  liveSessions: [
+    {
+      sessionName: "server/session:42",
+      fleetSessionId: "session.aaaaaaaaaaaaaaaaaaaa",
+      paneCount: 3,
+    },
+    {
+      sessionName: "durable-docs",
+      fleetSessionId: "session.bbbbbbbbbbbbbbbbbbbb",
+      paneCount: 1,
     },
   ],
 };
+
+function isWorkspaceCatalogRequest(url: string): boolean {
+  return url.endsWith("/api/resources/workspace-catalog?version=2");
+}
 
 const APPLICATION_SHELL_ENVELOPE = {
   version: APPLICATION_SHELL_RESOURCE_V2_VERSION,
@@ -292,7 +312,7 @@ describe("Electron main daemon resource broker", () => {
       fetch: async (input, init) => {
         const url = input.toString();
         requests.push({ url, init });
-        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        if (isWorkspaceCatalogRequest(url)) return json(WORKSPACE_CATALOG);
         mutationAttempt += 1;
         if (mutationAttempt === 1) throw new Error("transport timeout after commit");
         return json({
@@ -339,7 +359,7 @@ describe("Electron main daemon resource broker", () => {
       fetch: async (input) => {
         const url = input.toString();
         requests.push(url);
-        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        if (isWorkspaceCatalogRequest(url)) return json(WORKSPACE_CATALOG);
         return json({
           ok: false,
           error: {
@@ -523,6 +543,9 @@ describe("Electron main daemon resource broker", () => {
       expect(headers.get("origin")).toBe(rendererOrigin);
       expect(headers.get("x-tmux-ide-request-id")).toBe(requestId);
       expect(headers.get("x-tmux-ide-expected-daemon-instance-id")).toBe(IDENTITY.instanceId);
+      expect(headers.get("x-tmux-ide-host-client-id")).toMatch(
+        /^web:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+      );
       expect(JSON.parse(String(sent.init?.body))).toEqual(mutation);
       expect(JSON.stringify(sent)).not.toContain(descriptor.redemptionTicket);
     },
@@ -703,12 +726,12 @@ describe("Electron main daemon resource broker", () => {
     expect(socket.close).toHaveBeenCalledWith(1000, "renderer released");
   });
 
-  it("resolves a semantic workspace through the typed catalog and exposes no daemon route facts", async () => {
+  it("resolves semantic workspaces through V2 intent and observed live-session truth", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       requests.push({ url, init });
-      if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+      if (isWorkspaceCatalogRequest(url)) return json(WORKSPACE_CATALOG);
       if (url.endsWith("application-shell?version=3")) {
         return json({ error: "Unsupported resource version" }, { status: 400 });
       }
@@ -720,15 +743,30 @@ describe("Electron main daemon resource broker", () => {
     expect(listed).toEqual({
       status: "ok",
       daemon: IDENTITY,
-      workspaces: [{ workspaceName: "product workspace" }, { workspaceName: "docs" }],
+      workspaces: [
+        {
+          workspaceName: "product workspace",
+          sessionName: "server/session:42",
+          source: "project",
+          availability: "live",
+          paneCount: 3,
+        },
+        {
+          workspaceName: "docs",
+          sessionName: "durable-docs",
+          source: "workspace",
+          availability: "live",
+          paneCount: 1,
+        },
+      ],
     });
-    expect(JSON.stringify(listed)).not.toMatch(/sessionName|projectDir|apiBaseUrl|private|token/iu);
+    expect(JSON.stringify(listed)).not.toMatch(/projectDir|apiBaseUrl|private|token/iu);
 
     const resource = await broker.fetchApplicationShell("product workspace");
     expect(resource).toEqual({ status: "ok", envelope: APPLICATION_SHELL_ENVELOPE });
     expect(requests.map(({ url }) => url)).toEqual([
-      "http://127.0.0.1:6060/api/resources/workspace-catalog",
-      "http://127.0.0.1:6060/api/resources/workspace-catalog",
+      "http://127.0.0.1:6060/api/resources/workspace-catalog?version=2",
+      "http://127.0.0.1:6060/api/resources/workspace-catalog?version=2",
       "http://127.0.0.1:6060/api/project/server%2Fsession%3A42/application-shell?version=3",
       "http://127.0.0.1:6060/api/project/server%2Fsession%3A42/application-shell?version=2",
     ]);
@@ -745,7 +783,7 @@ describe("Electron main daemon resource broker", () => {
       fetch: async (input) => {
         const url = input.toString();
         requests.push(url);
-        return url.endsWith("/api/resources/workspace-catalog")
+        return isWorkspaceCatalogRequest(url)
           ? json(WORKSPACE_CATALOG)
           : json(APPLICATION_SHELL_ENVELOPE);
       },
@@ -755,7 +793,7 @@ describe("Electron main daemon resource broker", () => {
       broker.fetchApplicationShell("product workspace", APPLICATION_SHELL_RESOURCE_V2_VERSION),
     ).resolves.toEqual({ status: "ok", envelope: APPLICATION_SHELL_ENVELOPE });
     expect(requests).toEqual([
-      "http://127.0.0.1:6060/api/resources/workspace-catalog",
+      "http://127.0.0.1:6060/api/resources/workspace-catalog?version=2",
       "http://127.0.0.1:6060/api/project/server%2Fsession%3A42/application-shell?version=2",
     ]);
   });
@@ -767,7 +805,7 @@ describe("Electron main daemon resource broker", () => {
       fetch: async (input) => {
         const url = input.toString();
         requests.push(url);
-        return url.endsWith("/api/resources/workspace-catalog")
+        return isWorkspaceCatalogRequest(url)
           ? json(WORKSPACE_CATALOG)
           : json(APPLICATION_SHELL_V3_ENVELOPE);
       },
@@ -791,7 +829,7 @@ describe("Electron main daemon resource broker", () => {
     const broker = new DaemonResourceBroker({
       daemon: CONNECTED,
       fetch: async (input) =>
-        input.toString().endsWith("/api/resources/workspace-catalog")
+        isWorkspaceCatalogRequest(input.toString())
           ? json(WORKSPACE_CATALOG)
           : new Response(serialized, { headers: { "content-type": "application/json" } }),
     });
@@ -825,7 +863,7 @@ describe("Electron main daemon resource broker", () => {
       fetch: async (input) => {
         const url = input.toString();
         requests.push(url);
-        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        if (isWorkspaceCatalogRequest(url)) return json(WORKSPACE_CATALOG);
         return new Response(oversizedBody, { headers: { "content-type": "application/json" } });
       },
     });
@@ -844,7 +882,7 @@ describe("Electron main daemon resource broker", () => {
     const broker = new DaemonResourceBroker({
       daemon: CONNECTED,
       fetch: async (input) =>
-        input.toString().endsWith("/api/resources/workspace-catalog")
+        isWorkspaceCatalogRequest(input.toString())
           ? json(WORKSPACE_CATALOG)
           : new Response("{}", {
               headers: {
@@ -873,9 +911,7 @@ describe("Electron main daemon resource broker", () => {
     const broker = new DaemonResourceBroker({
       daemon: CONNECTED,
       fetch: async (input) =>
-        input.toString().endsWith("/api/resources/workspace-catalog")
-          ? json(WORKSPACE_CATALOG)
-          : json(malformed),
+        isWorkspaceCatalogRequest(input.toString()) ? json(WORKSPACE_CATALOG) : json(malformed),
     });
 
     await expect(
@@ -1981,7 +2017,7 @@ describe("Electron main daemon workspace read resources", () => {
       fetch: async (input, init) => {
         const url = input.toString();
         requests.push({ url, init });
-        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        if (isWorkspaceCatalogRequest(url)) return json(WORKSPACE_CATALOG);
         return json(FILES_CATALOG_ENVELOPE);
       },
     });
@@ -2000,7 +2036,7 @@ describe("Electron main daemon workspace read resources", () => {
       daemon: CONNECTED,
       ownerToken: "owner-only-token",
       fetch: async (input, init) => {
-        if (input.toString().endsWith("/api/resources/workspace-catalog")) {
+        if (isWorkspaceCatalogRequest(input.toString())) {
           return json(WORKSPACE_CATALOG);
         }
         resourceSignal = init?.signal ?? undefined;
@@ -2030,7 +2066,7 @@ describe("Electron main daemon workspace read resources", () => {
       fetch: async (input) => {
         const url = input.toString();
         requests.push(url);
-        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        if (isWorkspaceCatalogRequest(url)) return json(WORKSPACE_CATALOG);
         return json(FILES_CATALOG_ENVELOPE);
       },
     });
@@ -2076,7 +2112,7 @@ describe("Electron main daemon workspace read resources", () => {
       ownerToken: "owner-only-token",
       fetch: async (input) => {
         const url = input.toString();
-        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        if (isWorkspaceCatalogRequest(url)) return json(WORKSPACE_CATALOG);
         return json({
           ...FILES_CATALOG_ENVELOPE,
           daemon: { ...IDENTITY, instanceId: "00000000-0000-4000-8000-000000000099" },
@@ -2094,7 +2130,7 @@ describe("Electron main daemon workspace read resources", () => {
       ownerToken: "owner-only-token",
       fetch: async (input) => {
         const url = input.toString();
-        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        if (isWorkspaceCatalogRequest(url)) return json(WORKSPACE_CATALOG);
         return json({ version: 1, daemon: IDENTITY, resource: { status: "bogus" } });
       },
     });
@@ -2114,7 +2150,7 @@ describe("Electron main daemon workspace read resources", () => {
       fetch: async (input) => {
         const url = input.toString();
         requests.push(url);
-        if (url.endsWith("/api/resources/workspace-catalog")) return json(WORKSPACE_CATALOG);
+        if (isWorkspaceCatalogRequest(url)) return json(WORKSPACE_CATALOG);
         if (url.includes("/file-preview")) return json(FILE_PREVIEW_ENVELOPE);
         if (url.includes("/change-diff")) return json(CHANGE_DIFF_ENVELOPE);
         return json(CHANGES_CATALOG_ENVELOPE);
@@ -2207,6 +2243,37 @@ describe("Electron main daemon workspace read resources", () => {
       error: { code: "daemon-unavailable" },
     });
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("returns the coherent owner-gated workspace intent/live catalog", async () => {
+    const envelope = {
+      version: 2 as const,
+      daemon: IDENTITY,
+      intents: [
+        {
+          workspaceName: "product",
+          sessionName: "product",
+          source: "project" as const,
+          availability: "live" as const,
+        },
+      ],
+      liveSessions: [
+        { sessionName: "product", fleetSessionId: "session.aaaaaaaaaaaaaaaa", paneCount: 2 },
+      ],
+    };
+    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json(envelope));
+    const broker = new DaemonResourceBroker({
+      daemon: CONNECTED,
+      ownerToken: "owner-only-token",
+      fetch,
+    });
+    await expect(broker.fetchWorkspaceCatalog()).resolves.toEqual({
+      status: "ok",
+      envelope,
+    });
+    expect(fetch.mock.calls[0]?.[0].toString()).toBe(
+      "http://127.0.0.1:6060/api/resources/workspace-catalog?version=2",
+    );
   });
 
   it("replays one host-authored workspace promotion across a transport retry", async () => {

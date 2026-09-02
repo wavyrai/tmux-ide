@@ -15,8 +15,20 @@ afterEach(() => {
 });
 
 const CATALOG: readonly DevWorkspaceCatalogEntry[] = [
-  { workspaceName: "alpha", sessionName: "alpha-session" },
-  { workspaceName: "beta", sessionName: "beta-session" },
+  {
+    workspaceName: "alpha",
+    sessionName: "alpha-session",
+    source: "workspace",
+    availability: "live",
+    paneCount: 1,
+  },
+  {
+    workspaceName: "beta",
+    sessionName: "beta-session",
+    source: "workspace",
+    availability: "live",
+    paneCount: 1,
+  },
 ];
 
 const IDENTITY: DaemonInstanceIdentity = {
@@ -196,7 +208,7 @@ describe("development web host route keying", () => {
    * wrong route key is a silent 404 rather than a typed refusal — exactly the
    * failure this proves cannot be chosen per call site any more.
    */
-  function recordingHost() {
+  function recordingHost(catalog: readonly DevWorkspaceCatalogEntry[] = CATALOG) {
     const paths: string[] = [];
     const fetchImpl = vi.fn(async (input: string | URL) => {
       const url = new URL(String(input));
@@ -209,7 +221,24 @@ describe("development web host route keying", () => {
               capabilities: { appWindowMutation: { available: true } },
             }
           : url.pathname === "/api/resources/workspace-catalog"
-            ? { version: 1, daemon: IDENTITY, workspaces: [...CATALOG] }
+            ? {
+                version: 2,
+                daemon: IDENTITY,
+                intents: catalog.map(({ workspaceName, sessionName, source, availability }) => ({
+                  workspaceName,
+                  sessionName,
+                  source,
+                  availability,
+                })),
+                liveSessions: catalog
+                  .filter(({ availability }) => availability === "live")
+                  .map(({ sessionName }, index) => ({
+                    sessionName,
+                    fleetSessionId:
+                      index === 0 ? "session.aaaaaaaaaaaaaaaaaaaa" : "session.bbbbbbbbbbbbbbbbbbbb",
+                    paneCount: 1,
+                  })),
+              }
             : { unreadable: true };
       return {
         ok: true,
@@ -230,6 +259,33 @@ describe("development web host route keying", () => {
     expect(paths.some((path) => path.startsWith("/api/project/alpha/application-shell"))).toBe(
       false,
     );
+    host.dispose();
+  });
+
+  it("preserves the complete generation-fenced V2 workspace summary", async () => {
+    const summaries = [
+      CATALOG[0]!,
+      {
+        ...CATALOG[1]!,
+        source: "project" as const,
+        availability: "stopped" as const,
+        paneCount: 0,
+      },
+    ];
+    const { host } = recordingHost(summaries);
+    await expect(host.daemon.listWorkspaces()).resolves.toEqual({
+      status: "ok",
+      daemon: IDENTITY,
+      workspaces: summaries.map(
+        ({ workspaceName, sessionName, source, availability, paneCount }) => ({
+          workspaceName,
+          sessionName,
+          source,
+          availability,
+          paneCount,
+        }),
+      ),
+    });
     host.dispose();
   });
 
@@ -262,7 +318,22 @@ describe("development web host route keying", () => {
         }
         if (url.pathname === "/api/resources/workspace-catalog") {
           return new Response(
-            JSON.stringify({ version: 1, daemon: IDENTITY, workspaces: [...CATALOG] }),
+            JSON.stringify({
+              version: 2,
+              daemon: IDENTITY,
+              intents: CATALOG.map(({ workspaceName, sessionName, source, availability }) => ({
+                workspaceName,
+                sessionName,
+                source,
+                availability,
+              })),
+              liveSessions: CATALOG.map(({ sessionName }, index) => ({
+                sessionName,
+                fleetSessionId:
+                  index === 0 ? "session.aaaaaaaaaaaaaaaaaaaa" : "session.bbbbbbbbbbbbbbbbbbbb",
+                paneCount: 1,
+              })),
+            }),
             { status: 200, headers: { "Content-Type": "application/json" } },
           );
         }
@@ -303,7 +374,7 @@ describe("development web host route keying", () => {
           headers: (init?.headers ?? {}) as Record<string, string>,
         });
         const body =
-          url.pathname === "/__tmux_ide_host_session"
+          url.pathname === "/api/dev/host-session"
             ? { token: "33333333-3333-4333-8333-333333333333" }
             : url.pathname === "/api/v2/capabilities"
               ? {
@@ -350,6 +421,59 @@ describe("development web host route keying", () => {
     }
     expect(requests.every(({ url }) => url.startsWith(gatewayConfig.daemonOrigin))).toBe(true);
     expect(requests.every(({ headers }) => !("Authorization" in headers))).toBe(true);
+    host.dispose();
+  });
+
+  it("opens a project through the trusted gateway without exposing its path", async () => {
+    const gatewayConfig = {
+      daemonOrigin: "http://127.0.0.1:5173",
+      daemonWebSocketOrigin: "ws://127.0.0.1:5173",
+      ownerToken: null,
+      transport: "same-origin-gateway" as const,
+    };
+    const requests: Array<{ path: string; body: unknown; headers: Headers }> = [];
+    const workspaceResult = {
+      status: "ok" as const,
+      result: {
+        operationId: "22222222-2222-4222-8222-222222222222",
+        daemonInstanceId: IDENTITY.instanceId,
+        outcome: "created" as const,
+        resource: {
+          resourceVersion: 1 as const,
+          workspaceName: "project-00112233445566778899aabbccddeeff",
+          initialPaneId: "pane.workspace.00112233445566778899aabbccddeeff",
+        },
+      },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const url = new URL(String(input), gatewayConfig.daemonOrigin);
+        requests.push({
+          path: url.pathname,
+          body: typeof init?.body === "string" ? JSON.parse(init.body) : null,
+          headers: new Headers(init?.headers),
+        });
+        return new Response(
+          JSON.stringify(
+            url.pathname === "/api/dev/host-session"
+              ? { token: "33333333-3333-4333-8333-333333333333" }
+              : workspaceResult,
+          ),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+
+    const host = createDevWebHostCapabilities(gatewayConfig);
+    await expect(host.workspace.openProjectDirectory()).resolves.toEqual(workspaceResult);
+    const open = requests.find(({ path }) => path === "/api/dev/open-project-directory");
+    expect(open?.body).toEqual({});
+    expect(open?.headers.get("X-Tmux-Ide-Dev-Host-Session")).toBe(
+      "33333333-3333-4333-8333-333333333333",
+    );
+    expect(open?.headers.has("Authorization")).toBe(false);
+    expect(JSON.stringify(requests)).not.toContain("projectDir");
     host.dispose();
   });
 
@@ -425,7 +549,7 @@ describe("development gateway host sessions", () => {
       "fetch",
       vi.fn(async (input: string | URL, init?: RequestInit) => {
         const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
-        expect(pathname).toBe("/__tmux_ide_host_session");
+        expect(pathname).toBe("/api/dev/host-session");
         bootstrapSignal = init?.signal ?? undefined;
         return new Promise<Response>((_resolve, reject) => {
           bootstrapSignal?.addEventListener("abort", () => reject(new Error("aborted")), {
@@ -471,7 +595,7 @@ describe("development gateway host sessions", () => {
       "fetch",
       vi.fn(async (input: string | URL, init?: RequestInit) => {
         const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
-        if (pathname === "/__tmux_ide_host_session") {
+        if (pathname === "/api/dev/host-session") {
           return jsonResponse(200, { token: bootstrapTokens[bootstrapCount++] });
         }
         const headers = init?.headers as Record<string, string>;
@@ -500,7 +624,7 @@ describe("development gateway host sessions", () => {
       "fetch",
       vi.fn(async (input: string | URL) => {
         const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
-        if (pathname === "/__tmux_ide_host_session") {
+        if (pathname === "/api/dev/host-session") {
           bootstrapCount += 1;
           return bootstrapCount === 1
             ? jsonResponse(503, { unavailable: true })
@@ -523,7 +647,7 @@ describe("development gateway host sessions", () => {
       "fetch",
       vi.fn(async (input: string | URL, init?: RequestInit) => {
         const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
-        if (pathname === "/__tmux_ide_host_session") {
+        if (pathname === "/api/dev/host-session") {
           return jsonResponse(200, { token: "77777777-7777-4777-8777-777777777777" });
         }
         apiRequests.push(init ?? {});
@@ -554,7 +678,7 @@ describe("development gateway host sessions", () => {
       "fetch",
       vi.fn(async (input: string | URL, init?: RequestInit) => {
         const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
-        if (pathname === "/__tmux_ide_host_session") {
+        if (pathname === "/api/dev/host-session") {
           bootstrapCount += 1;
           return jsonResponse(200, {
             token:
@@ -616,7 +740,7 @@ describe("development gateway host sessions", () => {
       "fetch",
       vi.fn(async (input: string | URL, init?: RequestInit) => {
         const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
-        if (pathname === "/__tmux_ide_host_session") {
+        if (pathname === "/api/dev/host-session") {
           const index = bootstrapCount++;
           if (index === 1) await refreshGate;
           return jsonResponse(200, { token: tokens[index] });
@@ -651,7 +775,7 @@ describe("development gateway host sessions", () => {
       "fetch",
       vi.fn(async (input: string | URL, init?: RequestInit) => {
         const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
-        if (pathname === "/__tmux_ide_host_session") {
+        if (pathname === "/api/dev/host-session") {
           bootstrapSignal = init?.signal ?? undefined;
           return new Promise<Response>((resolve) => {
             releaseBootstrap = resolve;
@@ -682,7 +806,7 @@ describe("development gateway host sessions", () => {
       "fetch",
       vi.fn(async (input: string | URL, init?: RequestInit) => {
         const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
-        if (pathname === "/__tmux_ide_host_session") {
+        if (pathname === "/api/dev/host-session") {
           bootstrapSignal = init?.signal ?? undefined;
           return new Promise<Response>((resolve) => {
             releaseBootstrap = resolve;
@@ -712,7 +836,7 @@ describe("development gateway host sessions", () => {
       "fetch",
       vi.fn(async (input: string | URL, init?: RequestInit) => {
         const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
-        if (pathname === "/__tmux_ide_host_session") {
+        if (pathname === "/api/dev/host-session") {
           return jsonResponse(200, { token: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" });
         }
         readinessSignal = init?.signal ?? undefined;
@@ -743,7 +867,7 @@ describe("development gateway host sessions", () => {
       "fetch",
       vi.fn(async (input: string | URL) => {
         const pathname = new URL(String(input), CONFIG.daemonOrigin).pathname;
-        if (pathname === "/__tmux_ide_host_session") {
+        if (pathname === "/api/dev/host-session") {
           bootstrapCount += 1;
           return jsonResponse(200, { token: "66666666-6666-4666-8666-666666666666" });
         }
@@ -873,6 +997,47 @@ describe("development event authority barriers", () => {
     expect((await explicit).status).toBe("subscribed");
     host.dispose();
   });
+
+  it("retires generation identity when an established event socket closes", async () => {
+    const nextIdentity = {
+      ...IDENTITY,
+      instanceId: "22222222-2222-4222-8222-222222222222",
+      startedAt: "2026-08-04T00:01:00.000Z",
+    } satisfies DaemonInstanceIdentity;
+    let capabilityReads = 0;
+    const { sockets, host } = eventHost();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        capabilityReads += 1;
+        return new Response(
+          JSON.stringify({
+            status: "ok",
+            daemon: capabilityReads === 1 ? IDENTITY : nextIdentity,
+            capabilities: { appWindowMutation: { available: true } },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+    const subscription = host.daemon.subscribe({ workspaceNames: ["alpha"] }, vi.fn());
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    sockets[0]!.emit("open");
+    sockets[0]!.message({ type: "hello", daemon: IDENTITY, sessions: [], eventSequence: 0 });
+    await expect(subscription).resolves.toMatchObject({ status: "subscribed" });
+    sockets[0]!.emit("close", { code: 1006, reason: "daemon restarted" });
+    await vi.waitFor(() => expect(sockets).toHaveLength(2), { timeout: 3_000 });
+    sockets[1]!.emit("open");
+    sockets[1]!.message({
+      type: "hello",
+      daemon: nextIdentity,
+      sessions: [],
+      eventSequence: 0,
+    });
+    await vi.waitFor(() => expect(capabilityReads).toBeGreaterThanOrEqual(2));
+    expect(sockets[1]!.close).not.toHaveBeenCalledWith(1008, "daemon generation mismatch");
+    host.dispose();
+  }, 5_000);
 
   it("does not forget an unavailable required interest across later revisions", async () => {
     const { sockets, host } = eventHost();

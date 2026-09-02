@@ -4,7 +4,7 @@ The shell chrome boundary is split from app behavior:
 
 - `shell-chrome.ts` owns responsive geometry, tab labels/spans, overlay widths,
   status/help text, and visual state precedence.
-- `shell-chrome.tsx` renders presentational Solid/OpenTUI pieces over the app's
+- `shell-chrome-view.tsx` renders presentational Solid/OpenTUI pieces over the app's
   existing root router. It does not install keyboard handlers in production.
 - `app.tsx` keeps the authoritative input owner, pointer routing, tmux pane
   forwarding, lifecycle, and PaneSurface framebuffer path.

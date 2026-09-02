@@ -92,9 +92,11 @@ function intrinsicJsxNames(source: string): string[] {
 
 describe("shared PaneFrame presenter import DAG", () => {
   it("keeps every transitive runtime dependency intrinsic-free and on solid-js alone", () => {
-    const graph = importGraph(resolve(HERE, "presenter.tsx"));
+    const graph = importGraph(
+      resolve(REPO_ROOT, "packages/presentation/src/pane-frame/presenter.tsx"),
+    );
     expect([...graph.externalSpecifiers].sort()).toEqual(["solid-js"]);
-    expect(relativeFiles(graph)).toEqual(["packages/daemon/src/ui/pane-frame/presenter.tsx"]);
+    expect(relativeFiles(graph)).toEqual(["packages/presentation/src/pane-frame/presenter.tsx"]);
 
     const source = [...graph.files.values()].join("\n");
     expect(intrinsicJsxNames(source)).toEqual([]);

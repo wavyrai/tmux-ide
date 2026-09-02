@@ -5,10 +5,12 @@ import type {
   TerminalDeliveryServerMessage,
 } from "@tmux-ide/contracts";
 import { ControlModeOwnershipRegistry } from "../mirror/control-mode-ownership.ts";
+import { MirrorService } from "../mirror/mirror-service.ts";
 import { ScriptedChannelDriver } from "../mirror/__tests__/scripted-channel.ts";
 import { SessionRuntimeRegistry } from "./registry.ts";
 import { createSessionRuntimeObservability } from "./runtime-observability.ts";
 import { RuntimeTraceCorrelator } from "./runtime-trace-correlator.ts";
+import { SessionRuntimeTerminalReplicaOwner } from "./terminal-replica-owner.ts";
 
 const GENERATION = "11111111-1111-4111-8111-111111111111";
 const OFFER = {
@@ -119,8 +121,12 @@ describe("real SessionRuntime qualification", () => {
     );
     const sinks = clients.map(() => [] as TerminalDeliveryServerMessage[]);
     const openings = clients.map((client, index) =>
-      client.openTerminalDelivery(`delivery:${index}`, "pane.alpha", OFFER, (message) =>
-        sinks[index]!.push(message),
+      client.openTerminalDelivery(
+        `delivery:${index}`,
+        `request:${index}`,
+        "pane.alpha",
+        OFFER,
+        (message) => sinks[index]!.push(message),
       ),
     );
     await waitForDriver(drivers);
@@ -179,8 +185,12 @@ describe("real SessionRuntime qualification", () => {
     const { registry, drivers } = rig();
     const client = registry.connect("zz-sim", "opentui", "client:trace");
     const messages: TerminalDeliveryServerMessage[] = [];
-    const opening = client.openTerminalDelivery("delivery:trace", "pane.alpha", OFFER, (message) =>
-      messages.push(message),
+    const opening = client.openTerminalDelivery(
+      "delivery:trace",
+      "request:trace",
+      "pane.alpha",
+      OFFER,
+      (message) => messages.push(message),
     );
     await waitForDriver(drivers);
     await drivers[0]!.settleUntil(
@@ -193,11 +203,29 @@ describe("real SessionRuntime qualification", () => {
     const traceId = "00000000-0000-4000-8000-000000000099";
     const lease = client.acquireController();
     const commandsBeforeInvalid = drivers[0]!.channel.written.length;
+    const prioritize = vi.spyOn(
+      SessionRuntimeTerminalReplicaOwner.prototype,
+      "prioritizeNextWrite",
+    );
     expect(() =>
-      client.sendInput(lease, "pane.alpha", "text", "must-not-send", "not-a-uuid"),
+      client.sendInput(lease, "pane.alpha", { kind: "text", data: "must-not-send" }, "not-a-uuid"),
     ).toThrow();
     expect(drivers[0]!.channel.written).toHaveLength(commandsBeforeInvalid);
-    client.sendInput(lease, "pane.alpha", "text", "printf TRACE", traceId);
+    expect(prioritize).not.toHaveBeenCalled();
+    const rejectedAdmission = vi
+      .spyOn(MirrorService.prototype, "sendText")
+      .mockImplementationOnce(() => {
+        throw new Error("qualification admission rejected");
+      });
+    expect(() =>
+      client.sendInput(lease, "pane.alpha", { kind: "text", data: "must-not-admit" }, traceId),
+    ).toThrow("qualification admission rejected");
+    expect(prioritize).not.toHaveBeenCalled();
+    rejectedAdmission.mockRestore();
+    client.sendInput(lease, "pane.alpha", { kind: "text", data: "printf TRACE" }, traceId);
+    expect(prioritize).toHaveBeenCalledTimes(1);
+    prioritize.mockRestore();
+    await Promise.resolve();
     // This is deliberately a controlled next-output probe, not general
     // causality: unrelated external output arriving first consumes it.
     drivers[0]!.output("%1", "TRACE");
@@ -210,17 +238,55 @@ describe("real SessionRuntime qualification", () => {
     const spans = registry
       .qualificationSnapshot()
       .observability.spans.filter(({ traceId }) => traceId === envelope.performanceTraceId);
-    expect(spans.map(({ stage }) => stage)).toEqual(["tmux", "parse", "reduce", "transport"]);
+    expect(spans.map(({ operation }) => operation).sort()).toEqual(
+      [
+        "raw-input-command",
+        "control-command-accepted",
+        "control-write",
+        "control-queue-empty-at-send",
+        "first-output-observed",
+        "daemon-event-loop-turn",
+        "terminal-replica-write",
+        "terminal-replica-project-commit",
+        "terminal-delivery-encode-enqueue",
+      ].sort(),
+    );
     expect(new Set(spans.map(({ processId }) => processId)).size).toBe(1);
     expect(new Set(spans.map(({ clockId }) => clockId)).size).toBe(1);
     expect(spans.every(({ clockKind }) => clockKind === "performance-now")).toBe(true);
     expect(spans.every(({ authority }) => authority?.generation === GENERATION)).toBe(true);
     expect(spans[0]!.authority?.incarnation).toBeNull();
     expect(
-      spans.slice(1).every(({ authority }) => authority?.incarnation === envelope.incarnation),
+      spans
+        .filter(({ operation }) =>
+          [
+            "terminal-replica-write",
+            "terminal-replica-project-commit",
+            "terminal-delivery-encode-enqueue",
+          ].includes(operation),
+        )
+        .every(({ authority }) => authority?.incarnation === envelope.incarnation),
     ).toBe(true);
-    for (let index = 1; index < spans.length; index += 1)
-      expect(spans[index - 1]!.endedAtMicros).toBeLessThanOrEqual(spans[index]!.startedAtMicros);
+    const stableCausalChain = [
+      "raw-input-command",
+      "control-write",
+      "first-output-observed",
+      "terminal-replica-write",
+      "terminal-replica-project-commit",
+      "terminal-delivery-encode-enqueue",
+    ] as const;
+    const stableCausalIndices = stableCausalChain.map((operation) =>
+      spans.findIndex((span) => span.operation === operation),
+    );
+    expect(stableCausalIndices.every((index) => index >= 0)).toBe(true);
+    expect(stableCausalIndices).toEqual(
+      [...stableCausalIndices].sort((left, right) => left - right),
+    );
+    const stableCausalSpans = stableCausalIndices.map((index) => spans[index]!);
+    for (let index = 1; index < stableCausalSpans.length; index += 1)
+      expect(stableCausalSpans[index - 1]!.endedAtMicros).toBeLessThanOrEqual(
+        stableCausalSpans[index]!.startedAtMicros,
+      );
     connection.ack(ack(envelope));
     drivers[0]!.output("%1", "INTENDED-LATER");
     await drivers[0]!.settleUntil(
@@ -243,6 +309,7 @@ describe("real SessionRuntime qualification", () => {
     const messages: TerminalDeliveryServerMessage[] = [];
     const opening = client.openTerminalDelivery(
       "delivery:disabled-trace",
+      "request:disabled-trace",
       "pane.alpha",
       OFFER,
       (message) => messages.push(message),
@@ -266,7 +333,7 @@ describe("real SessionRuntime qualification", () => {
     const traceId = "00000000-0000-4000-8000-000000000098";
     const lease = client.acquireController();
     const priorRevision = latest(messages).canonicalRevision;
-    client.sendInput(lease, "pane.alpha", "text", "trace", traceId);
+    client.sendInput(lease, "pane.alpha", { kind: "text", data: "trace" }, traceId);
     drivers[0]!.output("%1", "TRACE");
     await drivers[0]!.settleUntil(
       () => latest(messages).canonicalRevision > priorRevision,
@@ -349,13 +416,17 @@ describe("real SessionRuntime qualification", () => {
     let releaseSlow!: () => void;
     let held: Promise<void> | null = null;
     const openings = [
-      fast.openTerminalDelivery("delivery:fast", "pane.alpha", OFFER, (message) =>
+      fast.openTerminalDelivery("delivery:fast", "request:fast", "pane.alpha", OFFER, (message) =>
         fastSink.push(message),
       ),
-      hidden.openTerminalDelivery("delivery:hidden", "pane.alpha", OFFER, (message) =>
-        hiddenSink.push(message),
+      hidden.openTerminalDelivery(
+        "delivery:hidden",
+        "request:hidden",
+        "pane.alpha",
+        OFFER,
+        (message) => hiddenSink.push(message),
       ),
-      slow.openTerminalDelivery("delivery:slow", "pane.alpha", OFFER, (message) => {
+      slow.openTerminalDelivery("delivery:slow", "request:slow", "pane.alpha", OFFER, (message) => {
         slowSink.push(message);
         return held;
       }),
@@ -439,8 +510,8 @@ describe("real SessionRuntime qualification", () => {
     );
     const subscription = await opening;
     const lease = client.acquireController();
-    client.sendInput(lease, "pane.alpha", "text", "paste界");
-    client.sendInput(lease, "pane.alpha", "key", "Enter");
+    client.sendInput(lease, "pane.alpha", { kind: "text", data: "paste界" });
+    client.sendInput(lease, "pane.alpha", { kind: "key", data: "Enter" });
     await drivers[0]!.settleUntil(
       () =>
         drivers[0]!.channel.written.filter((command) => command.startsWith("send-keys")).length >=

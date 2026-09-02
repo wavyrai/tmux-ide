@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 
 export const PANE_SOURCE_CREDENTIAL_OPTION = "@tmux_ide_source_credential_v1";
 export const PANE_SOURCE_CREDENTIAL_HEADER = "X-Tmux-Ide-Pane-Source-Credential";
+export const STARTUP_PANE_CREDENTIAL_TIMEOUT_MS = 2_000;
 
 export interface PaneSourceCredentialTmux {
   run(args: readonly string[]): string;
@@ -95,6 +96,7 @@ export class PaneSourceCredentialAuthority {
       return;
     }
     for (let attempt = 0; attempt < 3; attempt += 1) {
+      signal?.throwIfAborted();
       const revision = this.#sessionRevisions.get(session) ?? 0;
       const rows = await runAsync(
         [
@@ -107,6 +109,7 @@ export class PaneSourceCredentialAuthority {
         ],
         signal,
       );
+      signal?.throwIfAborted();
       if ((this.#sessionRevisions.get(session) ?? 0) !== revision) continue;
 
       const live = new Set<string>();
@@ -126,6 +129,7 @@ export class PaneSourceCredentialAuthority {
           ["set-option", "-p", "-t", runtimePaneId, PANE_SOURCE_CREDENTIAL_OPTION, token],
           signal,
         );
+        signal?.throwIfAborted();
         if ((this.#sessionRevisions.get(session) ?? 0) !== revision) {
           raced = true;
           break;
@@ -170,4 +174,27 @@ export class PaneSourceCredentialAuthority {
     this.#tokensByPane.clear();
     this.#sessionRevisions.clear();
   }
+}
+
+export async function reconcilePaneSourceCredentialsAtStartup(
+  authority: PaneSourceCredentialAuthority,
+  sessions: readonly string[],
+  timeoutMs = STARTUP_PANE_CREDENTIAL_TIMEOUT_MS,
+): Promise<"complete" | "timed-out"> {
+  const uniqueSessions = [...new Set(sessions)];
+  if (uniqueSessions.length === 0) return "complete";
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const reconciliation = Promise.allSettled(
+    uniqueSessions.map((session) => authority.reconcileSessionAsync(session, controller.signal)),
+  );
+  const deadline = new Promise<"timed-out">((resolve) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      resolve("timed-out");
+    }, timeoutMs);
+  });
+  const result = await Promise.race([reconciliation.then(() => "complete" as const), deadline]);
+  if (timeout !== undefined) clearTimeout(timeout);
+  return result;
 }

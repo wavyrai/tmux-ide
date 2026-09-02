@@ -85,7 +85,9 @@ export class SemanticSessionView {
     this.#inventoryDescriptors = inventory.resources
       .filter((resource) => resource.attachability.status === "available")
       .map((resource) => ({
+        sessionName: this.#options.target,
         runtimePaneId: resource.id,
+        runtimeSessionId: "$0",
         semanticPaneId:
           resource.attachability.status === "available"
             ? resource.attachability.semanticPaneId
@@ -98,6 +100,15 @@ export class SemanticSessionView {
         windowIndex: null,
         windowName: null,
         windowId: resource.windowResourceId ?? null,
+        semanticWindowId: resource.windowResourceId ?? null,
+        paneIndex: 0,
+        name: null,
+        nameSource: null,
+        missionStamp: null,
+        paneActive: false,
+        windowActive: false,
+        windowPaneCount: 1,
+        sessionWindowCount: 1,
       }));
     if (this.#inventoryDescriptors.length === 0) {
       this.#runtimeAuthorityGeneration = null;

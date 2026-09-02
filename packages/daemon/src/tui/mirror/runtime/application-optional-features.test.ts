@@ -11,9 +11,6 @@ describe("application optional feature loaders", () => {
     );
     for (const specifier of [
       "../features/home/feature.tsx",
-      "../features/files/feature.tsx",
-      "../features/changes/feature.tsx",
-      "../features/missions-activity/feature.tsx",
       "../features/dialogs/feature.tsx",
       "../features/settings/feature.ts",
       "../features/palette/feature.ts",
@@ -21,6 +18,14 @@ describe("application optional feature loaders", () => {
       "../features/performance-hud/feature.tsx",
     ]) {
       expect(source).toContain(`() => import("${specifier}")`);
+    }
+    for (const quarantined of ["files", "changes", "missions-activity"]) {
+      expect(source).not.toMatch(
+        new RegExp(
+          `^[ \\t]*${quarantined === "missions-activity" ? "missionsActivity" : quarantined}:[ \\t]*\\(\\)[ \\t]*=>[ \\t]*import\\(`,
+          "mu",
+        ),
+      );
     }
   });
 
@@ -30,67 +35,22 @@ describe("application optional feature loaders", () => {
     registry.dispose();
   });
 
-  it("evaluates and publishes the real Files module exactly once after admission", async () => {
-    const registry = createApplicationOptionalFeatureRegistry();
-    const first = registry.request("files");
-    const second = registry.request("files");
-    expect(first).toBe(second);
-    expect(registry.getMetrics()).toMatchObject({ loadsStarted: 0, retainedIntents: 1 });
-
-    registry.admit();
-    const [left, right] = await Promise.all([first, second]);
-    expect(left).toBe(right);
-    expect(left?.createFilesFeatureSession).toBeTypeOf("function");
-    expect(registry.getMetrics()).toMatchObject({
-      loadsStarted: 1,
-      loadsSucceeded: 1,
-      publications: 1,
-      joinedRequests: 1,
-    });
-    registry.dispose();
-  });
-
-  it("evaluates and publishes the real Changes module exactly once after admission", async () => {
-    const registry = createApplicationOptionalFeatureRegistry();
-    const first = registry.request("changes");
-    const second = registry.request("changes");
-    expect(first).toBe(second);
-    expect(registry.getMetrics()).toMatchObject({ loadsStarted: 0, retainedIntents: 1 });
-
-    registry.admit();
-    const [left, right] = await Promise.all([first, second]);
-    expect(left).toBe(right);
-    expect(left?.createChangesFeatureController).toBeTypeOf("function");
-    expect(registry.getMetrics()).toMatchObject({
-      loadsStarted: 1,
-      loadsSucceeded: 1,
-      publications: 1,
-      joinedRequests: 1,
-    });
-    registry.dispose();
-  });
-
-  it("evaluates and publishes one shared Missions and Activity module exactly once", async () => {
-    const registry = createApplicationOptionalFeatureRegistry();
-    const first = registry.request("missionsActivity");
-    const second = registry.request("missionsActivity");
-    expect(first).toBe(second);
-    expect(registry.getMetrics()).toMatchObject({ loadsStarted: 0, retainedIntents: 1 });
-
-    registry.admit();
-    const [left, right] = await Promise.all([first, second]);
-    expect(left).toBe(right);
-    expect(left?.createMissionsActivityFeatureSession).toBeTypeOf("function");
-    expect(left?.MissionsSurface).toBeTypeOf("function");
-    expect(left?.ActivitySurface).toBeTypeOf("function");
-    expect(registry.getMetrics()).toMatchObject({
-      loadsStarted: 1,
-      loadsSucceeded: 1,
-      publications: 1,
-      joinedRequests: 1,
-    });
-    registry.dispose();
-  });
+  it.each(["files", "changes", "missionsActivity"] as const)(
+    "keeps the quarantined %s feature outside the executable loader graph",
+    async (key) => {
+      const registry = createApplicationOptionalFeatureRegistry();
+      const result = await registry.request(key);
+      registry.admit();
+      expect(result).toBeUndefined();
+      expect(registry.getMetrics()).toMatchObject({
+        requests: 1,
+        unavailableRequests: 1,
+        loadsStarted: 0,
+        publications: 0,
+      });
+      registry.dispose();
+    },
+  );
 
   it.each([
     ["home", "runOpenFolderFlow"],

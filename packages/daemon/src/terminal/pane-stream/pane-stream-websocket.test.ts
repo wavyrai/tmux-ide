@@ -5,11 +5,49 @@ import {
   PANE_STREAM_WEBSOCKET_SUBPROTOCOL,
   PaneStreamServerFrameSchemaZ,
 } from "@tmux-ide/contracts";
-import type { MirrorPaneEvent, MirrorSessionDescription } from "../mirror/events.ts";
+import type {
+  MirrorLayoutEvent,
+  MirrorPaneEvent,
+  MirrorSessionDescription,
+} from "../mirror/events.ts";
+import type { PaneStreamClientFrame } from "@tmux-ide/contracts";
 import type { MirrorSubscribeRequest, MirrorSubscription } from "../mirror/mirror-service.ts";
 import type { DirectTerminalSocket } from "../attachments/direct-websocket.ts";
+import {
+  createSessionRuntimeObservability,
+  type SessionRuntimeObservability,
+} from "../session-runtime/runtime-observability.ts";
+import {
+  connectIssuedPaneStreamRuntimeClient,
+  type PaneStreamClientSocket,
+  type PaneStreamInputTransportStageEvent,
+} from "@tmux-ide/daemon-client/pane-stream-client";
+import {
+  crossProcessOneWayBounds,
+  daemonToClientOneWayBounds,
+  type PaneStreamClockCalibration,
+} from "@tmux-ide/daemon-client/pane-stream-clock-calibration";
+import { WorkspaceMultiplexerError } from "../../lib/workspace-multiplexer-verbs.ts";
+import { SessionRuntimeIntentError } from "../session-runtime/semantic-mutation-executor.ts";
+import { registerTerminalDeliveryObservationOrdinal } from "../session-runtime/terminal-delivery-observation-identity.ts";
+import {
+  SessionRuntimeControllerLeaseError,
+  SessionRuntimeRegistry,
+} from "../session-runtime/registry.ts";
+import { ControlModeOwnershipRegistry } from "../mirror/control-mode-ownership.ts";
+import {
+  SimulatedChannel,
+  fixtureAutoReply,
+  fixtureState,
+  FIXTURE,
+} from "../mirror/__tests__/simulated-channel.ts";
 import { PaneStreamLeaseManager } from "./lease-manager.ts";
-import { PaneStreamAdmissionCoordinator, type PaneStreamMirror } from "./pane-stream-websocket.ts";
+import { createPaneStreamRuntime } from "./runtime.ts";
+import {
+  PaneStreamAdmissionCoordinator,
+  type PaneStreamMirror,
+  type SessionRuntimePaneStreamTransportBinding,
+} from "./pane-stream-websocket.ts";
 
 const INSTANCE = "00000000-0000-4000-8000-000000000099";
 const ORIGIN = "tmux-ide://app";
@@ -27,6 +65,7 @@ class FakeSocket implements DirectTerminalSocket {
   sentBytes = 0;
   drainedBytes = 0;
   readonly frames: unknown[] = [];
+  onTransmit: ((text: string) => void) | null = null;
   closed: { code?: number; reason?: string } | null = null;
   readonly #listeners = new Map<string, Set<(...args: never[]) => void>>();
 
@@ -38,6 +77,7 @@ class FakeSocket implements DirectTerminalSocket {
     const text = typeof data === "string" ? data : data.toString("utf8");
     this.sentBytes += Buffer.byteLength(text, "utf8");
     this.frames.push(JSON.parse(text));
+    this.onTransmit?.(text);
   }
 
   close(code?: number, reason?: string): void {
@@ -82,6 +122,56 @@ class FakeSocket implements DirectTerminalSocket {
   }
 }
 
+class LoopbackClientSocket implements PaneStreamClientSocket {
+  readyState = 0;
+  readonly #listeners = new Map<string, Set<(event: { data?: unknown }) => void>>();
+  readonly #server: FakeSocket;
+  readonly #forward: (frame: Record<string, unknown>) => void;
+
+  constructor(server: FakeSocket, forward: (frame: Record<string, unknown>) => void) {
+    this.#server = server;
+    this.#forward = forward;
+  }
+
+  addEventListener(type: string, listener: (event: { data?: unknown }) => void): void {
+    const listeners = this.#listeners.get(type) ?? new Set();
+    listeners.add(listener);
+    this.#listeners.set(type, listeners);
+  }
+
+  removeEventListener(type: string, listener: (event: { data?: unknown }) => void): void {
+    this.#listeners.get(type)?.delete(listener);
+  }
+
+  send(data: string): void {
+    const frame = JSON.parse(data) as Record<string, unknown>;
+    queueMicrotask(() => {
+      this.#forward(frame);
+      this.#server.emit("message", Buffer.from(data, "utf8"), false);
+    });
+  }
+
+  close(): void {
+    if (this.readyState === 3) return;
+    this.readyState = 3;
+    this.#server.close();
+    this.#emit("close");
+  }
+
+  open(): void {
+    this.readyState = 1;
+    this.#emit("open");
+  }
+
+  message(data: string): void {
+    this.#emit("message", data);
+  }
+
+  #emit(type: string, data?: unknown): void {
+    for (const listener of this.#listeners.get(type) ?? []) listener({ data });
+  }
+}
+
 class FakeSub implements MirrorSubscription {
   readonly session: string;
   readonly semanticPaneId: string;
@@ -122,7 +212,18 @@ class FakeSub implements MirrorSubscription {
 class FakeMirror implements PaneStreamMirror {
   panes: string[];
   readonly subs: FakeSub[] = [];
-  layoutHandlers: Array<(event: never) => void> = [];
+  layoutHandlers: Array<(event: MirrorLayoutEvent) => void> = [];
+  authorityHandlers: Array<
+    (snapshot: {
+      session: string;
+      runtimeSessionId: string;
+      topologyEpoch: number;
+      layouts: readonly MirrorLayoutEvent[];
+    }) => void
+  > = [];
+  initialLayouts: MirrorLayoutEvent[] | null = null;
+  runtimeSessionId = "$1";
+  layoutRuntimeSessionId = "$1";
   describeGate: Promise<void> | null = null;
   describeFailure = false;
 
@@ -151,18 +252,86 @@ class FakeMirror implements PaneStreamMirror {
     };
   }
 
+  async describeSessionAuthority(session: string) {
+    return {
+      description: await this.describeSession(session),
+      runtimeSessionId: this.runtimeSessionId,
+    };
+  }
+
   async subscribe(request: MirrorSubscribeRequest): Promise<MirrorSubscription> {
     if (!this.panes.includes(request.semanticPaneId)) {
       throw new Error(`unknown semantic pane ${request.semanticPaneId}`);
     }
     const sub = new FakeSub(request);
     this.subs.push(sub);
-    if (request.onLayout) this.layoutHandlers.push(request.onLayout as (event: never) => void);
+    if (request.onLayout) this.layoutHandlers.push(request.onLayout);
     return sub;
   }
 
-  async subscribeLayout(_session: string, onLayout: (event: never) => void) {
-    this.layoutHandlers.push(onLayout);
+  async subscribeLayout(
+    _session: string,
+    onLayout: (event: MirrorLayoutEvent) => void,
+    authority?: {
+      readonly expectedSemanticPaneIds: readonly string[];
+      readonly expectedRuntimeSessionId: string;
+      readonly onAuthority?: (snapshot: {
+        session: string;
+        runtimeSessionId: string;
+        topologyEpoch: number;
+        layouts: readonly MirrorLayoutEvent[];
+      }) => void;
+    },
+  ) {
+    if (authority) {
+      const layouts = this.initialLayouts ?? [
+        {
+          type: "layout" as const,
+          session: SESSION,
+          semanticWindowId: "window.mirror.w1",
+          windowName: "main",
+          currentWindow: true,
+          cols: 120,
+          rows: 40,
+          zoomed: false,
+          paneBorderStatus: "off" as const,
+          panes: authority.expectedSemanticPaneIds.map((semanticPaneId, index) => ({
+            semanticPaneId,
+            left: index * 60,
+            top: 0,
+            width: 60,
+            height: 40,
+            active: index === 0,
+          })),
+        },
+      ];
+      const current = new Map(
+        layouts.flatMap((layout) =>
+          layout.semanticWindowId ? [[layout.semanticWindowId, layout] as const] : [],
+        ),
+      );
+      let topologyEpoch = 0;
+      authority.onAuthority?.({
+        session: SESSION,
+        runtimeSessionId: this.layoutRuntimeSessionId,
+        topologyEpoch,
+        layouts: [...current.values()],
+      });
+      if (authority.onAuthority) this.authorityHandlers.push(authority.onAuthority);
+      this.layoutHandlers.push((event) => {
+        onLayout(event);
+        if (event.semanticWindowId) current.set(event.semanticWindowId, event);
+        topologyEpoch += 1;
+        authority.onAuthority?.({
+          session: event.session,
+          runtimeSessionId: this.layoutRuntimeSessionId,
+          topologyEpoch,
+          layouts: [...current.values()],
+        });
+      });
+    } else {
+      this.layoutHandlers.push(onLayout);
+    }
     return { session: SESSION, close: async () => undefined };
   }
 
@@ -172,6 +341,31 @@ class FakeMirror implements PaneStreamMirror {
     if (!sub) throw new Error(`no subscription ${index} for ${pane}`);
     return sub;
   }
+}
+
+function authoritativeLayout(
+  panes: readonly string[],
+  options: { window?: string; current?: boolean; session?: string } = {},
+): MirrorLayoutEvent {
+  return {
+    type: "layout",
+    session: options.session ?? SESSION,
+    semanticWindowId: options.window ?? "window.mirror.w1",
+    windowName: "main",
+    currentWindow: options.current ?? true,
+    cols: 120,
+    rows: 40,
+    zoomed: false,
+    paneBorderStatus: "off",
+    panes: panes.map((semanticPaneId, index) => ({
+      semanticPaneId,
+      left: index * 40,
+      top: 0,
+      width: 40,
+      height: 40,
+      active: index === 0,
+    })),
+  };
 }
 
 interface Timer {
@@ -211,6 +405,11 @@ function harness(
     bindSessionRuntime?: ConstructorParameters<
       typeof PaneStreamAdmissionCoordinator
     >[0]["bindSessionRuntime"];
+    openTerminalDelivery?: SessionRuntimePaneStreamTransportBinding["openTerminalDelivery"];
+    observability?: SessionRuntimeObservability;
+    diagnosticSharedNowMicros?: () => number;
+    diagnosticAfterFrameParse?: () => void;
+    explicitAuthorityReplay?: boolean;
   } = {},
 ) {
   const mirror = new FakeMirror(options.panes ?? ["pane.editor", "pane.shell"]);
@@ -228,37 +427,109 @@ function harness(
   const submitIntent = vi.fn(async () => undefined);
   const sendInput = vi.fn();
   const fitViewport = vi.fn();
+  let authorityRevision = 1;
+  const authorityOwners = { input: "test:interactive", focus: null, geometry: null } as {
+    input: string | null;
+    focus: string | null;
+    geometry: string | null;
+  };
+  const authoritySnapshot = () => ({
+    generation: INSTANCE,
+    session: SESSION,
+    revision: authorityRevision,
+    owners: { ...authorityOwners },
+    nativeGeometryYieldUntilMs: 0,
+    clients: [
+      {
+        clientId: "test:interactive",
+        surface: "unknown" as const,
+        state: "foreground" as const,
+        connectedRevision: 1,
+        activityRevision: authorityRevision,
+      },
+    ],
+  });
+  const activateLegacyAuthority = vi.fn((geometry: boolean) => {
+    authorityOwners.input = "test:interactive";
+    if (geometry) authorityOwners.geometry = "test:interactive";
+    authorityRevision += 1;
+    return authoritySnapshot();
+  });
   const coordinator = new PaneStreamAdmissionCoordinator({
     daemonInstanceId: INSTANCE,
     webSocketUrl: WS_URL,
     leaseManager,
     mirror,
+    observability: options.observability,
+    diagnosticSharedNowMicros: options.diagnosticSharedNowMicros,
+    diagnosticAfterFrameParse: options.diagnosticAfterFrameParse,
     bindSessionRuntime:
       options.bindSessionRuntime ??
-      (() => ({
+      ((descriptor) => ({
         generation: INSTANCE,
         session: SESSION,
         clientId: "test:interactive",
-        assertController: () => undefined,
-        openTerminalDelivery: async (pane, _offer, onMessage) => {
-          deliveryListeners.set(pane, onMessage as (message: never) => void);
-          return {
-            negotiation: {
-              accepted: true as const,
-              negotiated: {
-                protocolVersion: 1 as const,
-                encoding: "semantic-v1" as const,
-                richPlacements: false,
-                generation: INSTANCE,
-                deliveryNonce: "00000000-0000-4000-8000-000000000098",
+        surface: "web" as const,
+        ...(options.explicitAuthorityReplay
+          ? {
+              explicitAuthority: true,
+              onAuthoritySnapshot: (listener) => {
+                listener(authoritySnapshot());
+                return () => undefined;
               },
-            },
-            ack: deliveryAcks,
-            nack: deliveryNacks,
-            setVisibility: deliveryVisibility,
-            close: async () => undefined,
+            }
+          : {}),
+        deliveryLaneId: "test:interactive:lane-1",
+        deliveryRequestId: descriptor.requestId,
+        authoritySnapshot,
+        activateLegacyAuthority,
+        updatePresence: () => {
+          authorityRevision += 1;
+          return authoritySnapshot();
+        },
+        noteActivity: () => {
+          authorityRevision += 1;
+          return authoritySnapshot();
+        },
+        requestAuthority: (authority) => {
+          authorityOwners[authority] = "test:interactive";
+          authorityRevision += 1;
+          return {
+            generation: INSTANCE,
+            session: SESSION,
+            clientId: "test:interactive",
+            authority,
+            token: "00000000-0000-4000-8000-000000000095",
+            revision: authorityRevision,
           };
         },
+        releaseAuthority: (authority) => {
+          authorityOwners[authority] = null;
+          authorityRevision += 1;
+          return authoritySnapshot();
+        },
+        assertController: () => undefined,
+        openTerminalDelivery:
+          options.openTerminalDelivery ??
+          (async (pane, _offer, onMessage) => {
+            deliveryListeners.set(pane, onMessage as (message: never) => void);
+            return {
+              negotiation: {
+                accepted: true as const,
+                negotiated: {
+                  protocolVersion: 1 as const,
+                  encoding: "semantic-v1" as const,
+                  richPlacements: false,
+                  generation: INSTANCE,
+                  deliveryNonce: "00000000-0000-4000-8000-000000000098",
+                },
+              },
+              ack: deliveryAcks,
+              nack: deliveryNacks,
+              setVisibility: deliveryVisibility,
+              close: async () => undefined,
+            };
+          }),
         submitIntent,
         sendInput,
         fitViewport,
@@ -284,6 +555,7 @@ function harness(
     submitIntent,
     sendInput,
     fitViewport,
+    activateLegacyAuthority,
   };
 }
 
@@ -295,6 +567,8 @@ async function connect(
     deliveryAcks?: boolean;
     hostClientId?: string;
     semanticDelivery?: boolean;
+    allowStartupClose?: boolean;
+    diagnosticCapabilities?: readonly ("causal-cell-v1" | "clock-bounds-v1")[];
   } = {},
 ): Promise<{ socket: FakeSocket; requestId: string }> {
   const requestId = freshRequestId();
@@ -337,8 +611,15 @@ async function connect(
     requestId,
     daemonInstanceId: INSTANCE,
     ...(options.deliveryAcks ? { deliveryAcks: true } : {}),
+    ...(options.diagnosticCapabilities
+      ? { diagnosticCapabilities: options.diagnosticCapabilities }
+      : {}),
   });
   await vi.waitFor(() => {
+    if (options.allowStartupClose) {
+      expect(socket.framesOfType("ready")).toHaveLength(1);
+      return;
+    }
     expect({ ready: socket.framesOfType("ready").length, closed: socket.closed }).toEqual({
       ready: 1,
       closed: null,
@@ -352,6 +633,382 @@ async function settled(): Promise<void> {
 }
 
 describe("PaneStreamAdmissionCoordinator", () => {
+  it("composes PaneStreamRuntime with SessionRuntimeRegistry layout authority before semantic seeds", async () => {
+    const state = fixtureState();
+    state.truthRows = ["%1\t1\t@1\t1"];
+    state.windowRows = FIXTURE.windowRows("aaaa,100x50,0,0,1", FIXTURE.layoutW2).slice(0, 1);
+    state.descriptorRows = [state.descriptorRows[0]!.replace(/\t2\t2$/u, "\t1\t1")];
+    const observability = createSessionRuntimeObservability({ nowMicros: () => 1_000 });
+    const registry = new SessionRuntimeRegistry({
+      generation: INSTANCE,
+      observability,
+      mirror: {
+        createIo: (_session, handlers) => {
+          const sim = new SimulatedChannel(handlers, (command) => {
+            const reply = fixtureAutoReply(state)(command);
+            if (reply) return reply;
+            if (command.includes("capture-pane")) return ["seed"];
+            if (command.includes("display-message")) {
+              if (command.includes("-t %2")) return ["0 0 99 50"];
+              if (command.includes("-t %3")) return ["0 0 200 50"];
+              return ["0 0 100 50"];
+            }
+            return [];
+          });
+          return sim;
+        },
+        controlModeOwnershipRegistry: new ControlModeOwnershipRegistry(),
+      },
+    });
+    const runtime = createPaneStreamRuntime({
+      daemonInstanceId: INSTANCE,
+      webSocketUrl: WS_URL,
+      sessionRuntimeRegistry: registry,
+      observability,
+    });
+    const authority = await registry.describeSessionAuthority(FIXTURE.session);
+    expect(authority.runtimeSessionId).toBe("$1");
+    const panes = authority.description.panes.map(({ semanticPaneId }) => semanticPaneId).sort();
+    const requestId = freshRequestId();
+    const descriptor = await runtime.coordinator.issue(
+      {
+        protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+        workspaceName: "workspace.alpha",
+        panes,
+        viewerMode: "read-only",
+        terminalDelivery: {
+          protocolVersions: [1],
+          encodings: ["semantic-v1"],
+          richPlacements: false,
+        },
+      },
+      {
+        requestId,
+        projectIdentity: "workspace.alpha",
+        sessionName: FIXTURE.session,
+        rendererOrigin: ORIGIN,
+        hostClientId: `test-host:${requestId}`,
+      },
+    );
+    const decision = runtime.coordinator.reserveUpgrade({
+      path: PANE_STREAM_REDEEM_PATH,
+      protocols: [PANE_STREAM_WEBSOCKET_SUBPROTOCOL],
+      origin: ORIGIN,
+    });
+    if (!decision.accepted) throw new Error(`upgrade rejected: ${decision.code}`);
+    const socket = new FakeSocket();
+    decision.admission.bind(socket);
+    socket.message({
+      type: "redeem",
+      protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+      ticket: descriptor.redemptionTicket,
+      requestId,
+      daemonInstanceId: INSTANCE,
+    });
+    await vi.waitFor(() =>
+      expect(socket.framesOfType("terminal-delivery-ready").length).toBe(panes.length),
+    );
+    const operations = observability
+      .snapshot()
+      .spans.filter((span) => span.traceId === requestId)
+      .map(({ operation }) => operation);
+    expect(operations).toEqual(
+      expect.arrayContaining([
+        "pane-stream-server-ready",
+        "pane-stream-layout-staged",
+        "pane-stream-layout-validated",
+        "pane-stream-delivery-open",
+        "pane-stream-first-seed",
+      ]),
+    );
+    expect(operations.indexOf("pane-stream-layout-validated")).toBeLessThan(
+      operations.indexOf("pane-stream-delivery-open"),
+    );
+    socket.close();
+    await runtime.dispose();
+    await registry.dispose();
+  });
+
+  it("records request-bound detailed lifecycle stages and a typed peer close", async () => {
+    const observability = createSessionRuntimeObservability({ nowMicros: () => 1_000 });
+    const h = harness({ observability });
+    const { socket, requestId } = await connect(h, { semanticDelivery: true });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2));
+    socket.emit("close");
+    const spans = observability.snapshot().spans.filter((span) => span.traceId === requestId);
+    expect(spans.map(({ operation }) => operation)).toEqual(
+      expect.arrayContaining([
+        "pane-stream-server-ready",
+        "pane-stream-layout-staged",
+        "pane-stream-layout-validated",
+        "pane-stream-delivery-open",
+        "pane-stream-terminal",
+      ]),
+    );
+    expect(spans.find(({ operation }) => operation === "pane-stream-terminal")).toMatchObject({
+      authority: { generation: INSTANCE, incarnation: null },
+      terminalDelivery: { paneStreamCloseCode: 1000, paneStreamCloseReason: "peer-closed" },
+    });
+  });
+
+  it("answers normalized clock probes only on the negotiated authenticated connection", async () => {
+    let raw = 7_000_000_000_000;
+    const shared = vi.fn(() => (raw += 10));
+    const h = harness({ diagnosticSharedNowMicros: shared });
+    const { socket, requestId } = await connect(h, {
+      diagnosticCapabilities: ["clock-bounds-v1"],
+    });
+    for (let probe = 1; probe <= 5; probe += 1)
+      socket.message({ type: "clock-probe", requestId, probe, clientSendMicros: probe - 1 });
+    expect(socket.framesOfType("clock-probe-ack")).toHaveLength(5);
+    expect(socket.framesOfType("clock-probe-ack")[0]).toEqual({
+      type: "clock-probe-ack",
+      requestId,
+      daemonInstanceId: INSTANCE,
+      probe: 1,
+      clientSendMicros: 0,
+      daemonReceiveMicros: 0,
+      daemonSendMicros: 10,
+    });
+    expect(JSON.stringify(socket.frames)).not.toContain("7000000000000");
+    const calls = shared.mock.calls.length;
+    socket.message({ type: "clock-probe", requestId, probe: 5, clientSendMicros: 5 });
+    expect(shared).toHaveBeenCalledTimes(calls);
+    expect(socket.framesOfType("clock-probe-ack")).toHaveLength(5);
+    expect(socket.closed?.reason).toBe("protocol-error");
+  });
+
+  it("handles escaped clock-probe spellings in the parsed bounded handler without a clock read", async () => {
+    let raw = 7_000_000_000_000;
+    const shared = vi.fn(() => (raw += 10));
+    const h = harness({ diagnosticSharedNowMicros: shared });
+    const { socket, requestId } = await connect(h, {
+      diagnosticCapabilities: ["clock-bounds-v1"],
+    });
+    const calls = shared.mock.calls.length;
+    socket.message(
+      `{"ty\\u0070e":"clock\\u002dprobe","requestId":"${requestId}","probe":2,"clientSendMicros":0}`,
+    );
+    expect(shared).toHaveBeenCalledTimes(calls);
+    expect(socket.framesOfType("clock-probe-ack")).toEqual([]);
+    expect(socket.closed?.reason).toBe("protocol-error");
+  });
+
+  it("does no shared-clock work without negotiated clock bounds", async () => {
+    const shared = vi.fn(() => {
+      throw new Error("must not run");
+    });
+    const h = harness({ diagnosticSharedNowMicros: shared });
+    const { socket, requestId } = await connect(h);
+    socket.message({ type: "clock-probe", requestId, probe: 1, clientSendMicros: 0 });
+    expect(shared).not.toHaveBeenCalled();
+    expect(socket.framesOfType("clock-probe-ack")).toEqual([]);
+    expect(socket.closed?.reason).toBe("protocol-error");
+  });
+
+  it("samples shared callback entry before induced frame parsing work", async () => {
+    let sharedRawMicros = 9_000_000_000_000;
+    const observability = createSessionRuntimeObservability({ nowMicros: () => 1_000 });
+    const h = harness({
+      observability,
+      diagnosticSharedNowMicros: () => sharedRawMicros,
+      diagnosticAfterFrameParse: () => {
+        sharedRawMicros += 40_000;
+      },
+    });
+    const { socket } = await connect(h, {
+      viewerMode: "interactive",
+      panes: ["pane.editor"],
+      diagnosticCapabilities: ["clock-bounds-v1"],
+    });
+    await vi.waitFor(() => expect(h.mirror.subs).toHaveLength(1));
+    const traceId = "00000000-0000-4000-8000-000000000091";
+    socket.message({
+      type: "input",
+      kind: "key",
+      pane: "pane.editor",
+      seq: 1,
+      data: "x",
+      performanceTraceId: traceId,
+    });
+
+    expect(h.mirror.subFor("pane.editor").keys).toEqual(["x"]);
+    const spans = observability
+      .snapshot()
+      .spans.filter((span) => span.traceId === traceId && span.sharedStartedAtMicros !== undefined);
+    expect(
+      spans.find((span) => span.operation === "pane-stream-socket-message-callback-entry"),
+    ).toMatchObject({ sharedStartedAtMicros: 0, sharedEndedAtMicros: 0 });
+    expect(
+      spans.find((span) => span.operation === "pane-stream-input-frame-ingress"),
+    ).toMatchObject({ sharedStartedAtMicros: 40_000, sharedEndedAtMicros: 40_000 });
+  });
+
+  it("keeps shared parse diagnostics fail-open for product input", async () => {
+    const h = harness({
+      diagnosticSharedNowMicros: () => 1,
+      diagnosticAfterFrameParse: () => {
+        throw new Error("diagnostic parse observer failed");
+      },
+    });
+    const { socket } = await connect(h, {
+      viewerMode: "interactive",
+      panes: ["pane.editor"],
+      diagnosticCapabilities: ["clock-bounds-v1"],
+    });
+    await vi.waitFor(() => expect(h.mirror.subs).toHaveLength(1));
+    socket.message({ type: "input", kind: "key", pane: "pane.editor", seq: 1, data: "x" });
+    expect(h.mirror.subFor("pane.editor").keys).toEqual(["x"]);
+    expect(socket.framesOfType("input-ack")).toHaveLength(1);
+    expect(socket.closed).toBeNull();
+  });
+
+  it("bounds induced outbound and inbound delay through the production client/server seams", async () => {
+    let worldMicros = 0;
+    const observability = createSessionRuntimeObservability({ nowMicros: () => worldMicros });
+    const h = harness({
+      observability,
+      diagnosticSharedNowMicros: () => 9_000_000_000_000 + worldMicros,
+    });
+    const requestId = freshRequestId();
+    const stream = {
+      protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+      workspaceName: "workspace.alpha",
+      panes: ["pane.editor"],
+      viewerMode: "interactive" as const,
+      terminalDelivery: {
+        protocolVersions: [1],
+        encodings: ["semantic-v1" as const],
+        richPlacements: false,
+      },
+    };
+    const issued = await h.coordinator.issue(stream, {
+      requestId,
+      projectIdentity: "workspace.alpha",
+      sessionName: SESSION,
+      rendererOrigin: ORIGIN,
+      hostClientId: "test:interactive",
+    });
+    const decision = h.coordinator.reserveUpgrade({
+      path: PANE_STREAM_REDEEM_PATH,
+      protocols: [PANE_STREAM_WEBSOCKET_SUBPROTOCOL],
+      origin: ORIGIN,
+    });
+    if (!decision.accepted) throw new Error(`upgrade rejected: ${decision.code}`);
+    const serverSocket = new FakeSocket();
+    decision.admission.bind(serverSocket);
+    const clientFrames: Record<string, unknown>[] = [];
+    const clientSocket = new LoopbackClientSocket(serverSocket, (frame) => {
+      clientFrames.push(frame);
+      worldMicros += frame.type === "input" ? 40_000 : 10;
+    });
+    serverSocket.onTransmit = (text) => {
+      const frame = JSON.parse(text) as { type?: string };
+      queueMicrotask(() => {
+        worldMicros += frame.type === "input-ack" ? 70_000 : 10;
+        clientSocket.message(text);
+      });
+    };
+    const calibrations: Array<PaneStreamClockCalibration | null> = [];
+    const stages: PaneStreamInputTransportStageEvent[] = [];
+    const acknowledgements: Array<{ sharedMicros?: number }> = [];
+    const opening = connectIssuedPaneStreamRuntimeClient(
+      {
+        createSocket: () => {
+          queueMicrotask(() => clientSocket.open());
+          return clientSocket;
+        },
+        origin: ORIGIN,
+        hostClientId: "test:interactive",
+        stream,
+        onNegotiated: () => undefined,
+        onTerminalDelivery: () => undefined,
+        onInputTransportStage: (event) => stages.push(event),
+        diagnosticNowMicros: () => worldMicros,
+        diagnosticSharedNowMicros: () => 8_000_000_000_000 + worldMicros,
+        diagnosticNextTurn: (callback) => {
+          queueMicrotask(callback);
+          return () => undefined;
+        },
+        diagnosticCapabilities: ["clock-bounds-v1"],
+        onClockCalibration: (calibration) => calibrations.push(calibration),
+        onInputAck: (event) => acknowledgements.push(event),
+        onFault: (error) => {
+          throw error;
+        },
+      },
+      issued,
+    );
+    const client = await opening;
+    await expect(client.fitViewport(132, 44)).resolves.toBe("ok");
+    const viewportFrame = clientFrames.find(
+      (frame): frame is Extract<PaneStreamClientFrame, { type: "viewport" }> =>
+        frame.type === "viewport",
+    );
+    expect(viewportFrame).toMatchObject({
+      cols: 132,
+      rows: 44,
+      authorityLease: {
+        generation: issued.daemonInstanceId,
+        session: SESSION,
+        clientId: "test:interactive",
+        authority: "geometry",
+      },
+    });
+    const traceId = "00000000-0000-4000-8000-000000000091";
+    await expect(
+      client.sendTerminalInput(
+        { workspaceName: "workspace.alpha", semanticPaneId: "pane.editor" },
+        { kind: "key", data: "x" },
+        traceId,
+      ),
+    ).resolves.toBe("ok");
+    await vi.waitFor(() =>
+      expect(stages.some((stage) => stage.operation === "pane-stream-socket-send-return")).toBe(
+        true,
+      ),
+    );
+
+    const calibration = calibrations[0];
+    expect(calibration).not.toBeNull();
+    const clientSend = stages.find(
+      (stage) => stage.operation === "pane-stream-socket-send-return",
+    )!;
+    const daemonSpans = observability.snapshot().spans.filter((span) => span.traceId === traceId);
+    const callback = daemonSpans.find(
+      (span) => span.operation === "pane-stream-socket-message-callback-entry",
+    )!;
+    const daemonAck = daemonSpans.find(
+      (span) => span.operation === "pane-stream-input-ack-socket-send",
+    )!;
+    const clientAck = acknowledgements[0]!;
+    const outbound = crossProcessOneWayBounds(
+      calibration!,
+      clientSend.sharedMicros!,
+      callback.sharedStartedAtMicros!,
+    )!;
+    const inbound = daemonToClientOneWayBounds(
+      calibration!,
+      daemonAck.sharedEndedAtMicros!,
+      clientAck.sharedMicros!,
+    )!;
+    expect(
+      outbound,
+      JSON.stringify({ calibration, clientSend, callback, daemonAck, clientAck }),
+    ).not.toBeNull();
+    expect(outbound.lowerMicros).toBeLessThanOrEqual(40_000);
+    expect(outbound.upperMicros).toBeGreaterThanOrEqual(40_000);
+    expect(inbound.lowerMicros).toBeLessThanOrEqual(70_000);
+    expect(inbound.upperMicros).toBeGreaterThanOrEqual(70_000);
+    expect(
+      JSON.stringify({ server: serverSocket.frames, stages, daemonSpans, calibrations }),
+    ).not.toContain("8000000000000");
+    expect(
+      JSON.stringify({ server: serverSocket.frames, stages, daemonSpans, calibrations }),
+    ).not.toContain("9000000000000");
+    client.close();
+  });
+
   it("binds redeemed transport identity to SessionRuntime and closes it with the socket", async () => {
     const close = vi.fn(async () => undefined);
     const bindSessionRuntime = vi.fn((descriptor: { sessionName: string; leaseId: string }) => ({
@@ -708,6 +1365,8 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(h.mirror.subFor("pane.editor").keys).toEqual(["Enter"]);
     const acks = interactive.socket.framesOfType("input-ack");
     expect(acks.map((frame) => frame.seq)).toEqual([1, 2]);
+    expect(h.activateLegacyAuthority).toHaveBeenCalledTimes(1);
+    expect(h.activateLegacyAuthority).toHaveBeenCalledWith(false);
 
     // Out-of-order input closes the connection.
     interactive.socket.message({
@@ -724,6 +1383,94 @@ describe("PaneStreamAdmissionCoordinator", () => {
     readOnly.socket.message({ type: "input", kind: "text", pane: "pane.shell", seq: 1, data: "x" });
     expect(readOnly.socket.framesOfType("error")[0]!.code).toBe("input-rejected");
     expect(readOnly.socket.closed).not.toBeNull();
+  });
+
+  it("does not sample the observability clock for input when diagnostics are disabled", async () => {
+    const nowMicros = vi.fn(() => {
+      throw new Error("disabled observability clock was sampled");
+    });
+    const observability: SessionRuntimeObservability = {
+      enabled: false,
+      nowMicros,
+      beginTrace: vi.fn(() => null),
+      recordSpan: vi.fn(),
+      snapshot: () => ({ spans: [], droppedSpans: 0 }),
+    };
+    const h = harness({ observability });
+    const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2));
+    const beginTraceCallsBeforeInput = vi.mocked(observability.beginTrace).mock.calls.length;
+    const recordSpanCallsBeforeInput = vi.mocked(observability.recordSpan).mock.calls.length;
+    socket.message({
+      type: "input",
+      kind: "key",
+      pane: "pane.editor",
+      seq: 1,
+      data: "Enter",
+      performanceTraceId: "00000000-0000-4000-8000-000000000093",
+    });
+    expect(socket.framesOfType("input-ack").map((frame) => frame.seq)).toEqual([1]);
+    expect(nowMicros).not.toHaveBeenCalled();
+    expect(vi.mocked(observability.beginTrace).mock.calls).toHaveLength(beginTraceCallsBeforeInput);
+    expect(vi.mocked(observability.recordSpan).mock.calls).toHaveLength(recordSpanCallsBeforeInput);
+    await h.deliveryListeners.get("pane.shell")?.({
+      type: "terminal.delivery",
+      workspaceName: SESSION,
+      semanticPaneId: "pane.shell",
+      generation: INSTANCE,
+      incarnation: `${INSTANCE}:0`,
+      deliveryNonce: "00000000-0000-4000-8000-000000000098",
+      transactionId: "00000000-0000-4000-8000-000000000095",
+      protocolVersion: 1,
+      encoding: "semantic-v1",
+      frame: "seed",
+      baseRevision: null,
+      canonicalRevision: 0,
+      canonicalStateHash: "1111111111111111",
+      representationHash: "2222222222222222",
+      representationBytes: 1,
+      chunkCount: 1,
+      canonicalEquivalent: true,
+      history: "complete",
+      richPlacements: false,
+    } as never);
+    expect(nowMicros).not.toHaveBeenCalled();
+    expect(vi.mocked(observability.beginTrace).mock.calls).toHaveLength(beginTraceCallsBeforeInput);
+    expect(vi.mocked(observability.recordSpan).mock.calls).toHaveLength(recordSpanCallsBeforeInput);
+  });
+
+  it("keeps daemon input and ACK fail-open when ingress or ACK observation throws", async () => {
+    for (const failure of ["clock", "ingress-span", "ack-span"] as const) {
+      let now = 0;
+      let records = 0;
+      let armed = false;
+      const observability = createSessionRuntimeObservability({
+        nowMicros: () => {
+          if (armed && failure === "clock") throw new Error("clock failed");
+          return (now += 5);
+        },
+        onSpan: () => {
+          if (!armed) return;
+          records += 1;
+          if (failure === "ingress-span" && records === 1) throw new Error("ingress failed");
+          if (failure === "ack-span" && records === 2) throw new Error("ack failed");
+        },
+      });
+      const h = harness({ observability });
+      const { socket } = await connect(h, { viewerMode: "interactive" });
+      armed = true;
+      socket.message({
+        type: "input",
+        kind: "key",
+        pane: "pane.editor",
+        seq: 1,
+        data: "Enter",
+        performanceTraceId: `00000000-0000-4000-8000-00000000009${failure === "clock" ? 4 : failure === "ingress-span" ? 5 : 6}`,
+      });
+      expect(h.mirror.subFor("pane.editor").keys).toEqual(["Enter"]);
+      expect(socket.framesOfType("input-ack").map((frame) => frame.seq)).toEqual([1]);
+      expect(socket.closed).toBeNull();
+    }
   });
 
   it("keeps healthy long-lived input live across rate windows while bounding a flood", async () => {
@@ -781,8 +1528,12 @@ describe("PaneStreamAdmissionCoordinator", () => {
   });
 
   it("uses one session socket and one runtime binding for semantic delivery, layout and intents", async () => {
-    const h = harness();
-    const { socket } = await connect(h, {
+    let nowMicros = 10_000;
+    const observability = createSessionRuntimeObservability({
+      nowMicros: () => (nowMicros += 5),
+    });
+    const h = harness({ observability });
+    const { socket, requestId } = await connect(h, {
       viewerMode: "interactive",
       semanticDelivery: true,
     });
@@ -814,10 +1565,32 @@ describe("PaneStreamAdmissionCoordinator", () => {
       canonicalEquivalent: true,
       history: "complete",
       richPlacements: false,
+      performanceTraceId: "00000000-0000-4000-8000-000000000096",
     } as never);
     expect(socket.framesOfType("terminal-delivery-envelope")[0]).toMatchObject({
       envelope: { workspaceName: "workspace.alpha" },
     });
+    expect(observability.snapshot().spans).toContainEqual(
+      expect.objectContaining({
+        traceId: "00000000-0000-4000-8000-000000000096",
+        stage: "transport",
+        operation: "pane-stream-socket-send",
+        terminalDelivery: expect.objectContaining({
+          workspaceName: SESSION,
+          semanticPaneId: "pane.shell",
+          canonicalGeneration: INSTANCE,
+          canonicalIncarnation: `${INSTANCE}:0`,
+          canonicalRevision: 0,
+          canonicalStateHash: "1111111111111111",
+          transactionId,
+          deliveryClientId: "test:interactive",
+          deliverySurface: "web",
+          deliveryLaneId: "test:interactive:lane-1",
+          deliveryRequestId: requestId,
+          deliveryNonce: "00000000-0000-4000-8000-000000000098",
+        }),
+      }),
+    );
     socket.message({
       type: "terminal-delivery-ack",
       ack: {
@@ -836,6 +1609,81 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(h.deliveryAcks).toHaveBeenCalledWith(
       expect.objectContaining({ workspaceName: SESSION, transactionId }),
     );
+
+    // The server may publish a replacement incarnation before the client has
+    // applied and ACKed the preceding seed. The address cache contains only
+    // the latest incarnation; the delivery owner must remain the authority for
+    // ordered transaction validation instead of tearing down the whole stream.
+    const untracedReplacement = {
+      type: "terminal.delivery",
+      workspaceName: SESSION,
+      semanticPaneId: "pane.shell",
+      generation: INSTANCE,
+      incarnation: `${INSTANCE}:1`,
+      deliveryNonce: "00000000-0000-4000-8000-000000000098",
+      transactionId: "00000000-0000-4000-8000-000000000094",
+      protocolVersion: 1,
+      encoding: "semantic-v1",
+      frame: "seed",
+      baseRevision: null,
+      canonicalRevision: 0,
+      canonicalStateHash: "3333333333333333",
+      representationHash: "4444444444444444",
+      representationBytes: 1,
+      chunkCount: 1,
+      canonicalEquivalent: true,
+      history: "complete",
+      richPlacements: false,
+    } as const;
+    registerTerminalDeliveryObservationOrdinal(untracedReplacement as never, 77);
+    await h.deliveryListeners.get("pane.shell")?.(untracedReplacement as never);
+    const untracedSocketSpans = observability
+      .snapshot()
+      .spans.filter(
+        (span) =>
+          span.operation === "pane-stream-socket-send" &&
+          span.terminalDelivery?.transactionId === "00000000-0000-4000-8000-000000000094",
+      );
+    expect(untracedSocketSpans).toHaveLength(1);
+    expect(untracedSocketSpans).toContainEqual(
+      expect.objectContaining({
+        traceId: null,
+        scenario: null,
+        stage: "transport",
+        operation: "pane-stream-socket-send",
+        terminalDelivery: expect.objectContaining({
+          workspaceName: SESSION,
+          semanticPaneId: "pane.shell",
+          canonicalGeneration: INSTANCE,
+          canonicalIncarnation: `${INSTANCE}:1`,
+          canonicalRevision: 0,
+          canonicalStateHash: "3333333333333333",
+          deliveryOrdinal: 77,
+          transactionId: "00000000-0000-4000-8000-000000000094",
+          deliveryClientId: "test:interactive",
+          deliverySurface: "web",
+          deliveryLaneId: "test:interactive:lane-1",
+          deliveryRequestId: requestId,
+          deliveryNonce: "00000000-0000-4000-8000-000000000098",
+        }),
+      }),
+    );
+    socket.message({
+      type: "terminal-delivery-ack",
+      ack: {
+        type: "terminal.delivery.ack",
+        workspaceName: "workspace.alpha",
+        semanticPaneId: "pane.shell",
+        generation: INSTANCE,
+        incarnation: `${INSTANCE}:0`,
+        deliveryNonce: "00000000-0000-4000-8000-000000000098",
+        transactionId,
+        canonicalRevision: 0,
+        canonicalStateHash: "1111111111111111",
+        representationHash: "2222222222222222",
+      },
+    });
+    expect(socket.closed).toBeNull();
     h.deliveryListeners.get("pane.editor")?.({
       type: "terminal.delivery.fault",
       reason: "source-closed",
@@ -894,21 +1742,486 @@ describe("PaneStreamAdmissionCoordinator", () => {
     });
     expect(socket.closed).toBeNull();
 
-    // Terminal typing stays on the controller-authorized fast path. Named keys
-    // are not flattened into bytes, preserving tmux application-mode behavior,
-    // and their sequence cannot overtake the preceding literal.
-    socket.message({ type: "input", kind: "text", pane: "pane.editor", seq: 1, data: "x" });
-    socket.message({ type: "input", kind: "key", pane: "pane.editor", seq: 2, data: "Enter" });
+    const inventoryRefusalOperationId = "00000000-0000-4000-8000-000000000095";
+    h.submitIntent.mockRejectedValueOnce(
+      new SessionRuntimeIntentError("rejected", "generic semantic refusal", {
+        cause: new WorkspaceMultiplexerError("workspace_unavailable", {
+          reason: "pane_inventory_not_ready",
+          pane: "%99",
+        }),
+      }),
+    );
+    socket.message({
+      type: "semantic-intent",
+      operationId: inventoryRefusalOperationId,
+      intent: {
+        verb: "workspace.pane.select",
+        workspaceName: "workspace.alpha",
+        semanticPaneId: "pane.editor",
+      },
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("semantic-intent-ack")).toHaveLength(3));
+    expect(socket.framesOfType("semantic-intent-ack")[2]).toEqual({
+      type: "semantic-intent-ack",
+      operationId: inventoryRefusalOperationId,
+      outcome: {
+        status: "rejected",
+        code: "pane_inventory_not_ready",
+        message: "generic semantic refusal",
+      },
+    });
+    expect(JSON.stringify(socket.framesOfType("semantic-intent-ack")[2])).not.toContain("%99");
+
+    // Terminal input stays FIFO and byte-exact across named keys and bracketed
+    // paste while both daemon transport edges retain the originating trace.
+    const keyTrace = "00000000-0000-4000-8000-000000000091";
+    const pasteTrace = "00000000-0000-4000-8000-000000000092";
+    const bracketedPaste = "\u001b[200~alpha\nbeta\u001b[201~";
+    socket.message({
+      type: "input",
+      kind: "key",
+      pane: "pane.editor",
+      seq: 1,
+      data: "Enter",
+      performanceTraceId: keyTrace,
+    });
+    socket.message({
+      type: "input",
+      kind: "text",
+      pane: "pane.editor",
+      seq: 2,
+      data: bracketedPaste,
+      performanceTraceId: pasteTrace,
+    });
     expect(h.sendInput.mock.calls).toEqual([
-      ["pane.editor", "text", "x", undefined],
-      ["pane.editor", "key", "Enter", undefined],
+      ["pane.editor", { kind: "key", data: "Enter" }, keyTrace, undefined, undefined],
+      ["pane.editor", { kind: "text", data: bracketedPaste }, pasteTrace, undefined, undefined],
     ]);
     expect(socket.framesOfType("input-ack").map((frame) => frame.seq)).toEqual([1, 2]);
-    socket.message({ type: "viewport", seq: 1, cols: 132, rows: 44 });
-    expect(h.fitViewport).toHaveBeenCalledWith(132, 44);
+    for (const traceId of [keyTrace, pasteTrace]) {
+      const transportSpans = observability
+        .snapshot()
+        .spans.filter(
+          (span) =>
+            span.traceId === traceId &&
+            [
+              "pane-stream-socket-message-callback-entry",
+              "pane-stream-input-frame-ingress",
+              "pane-stream-input-ack-socket-send",
+            ].includes(span.operation),
+        );
+      expect(transportSpans.map(({ operation }) => operation)).toEqual([
+        "pane-stream-socket-message-callback-entry",
+        "pane-stream-input-frame-ingress",
+        "pane-stream-input-ack-socket-send",
+      ]);
+      expect(transportSpans[0]!.startedAtMicros).toBeLessThanOrEqual(
+        transportSpans[1]!.startedAtMicros,
+      );
+    }
+    const geometryLease = {
+      generation: INSTANCE,
+      session: SESSION,
+      clientId: "test:interactive",
+      authority: "geometry" as const,
+      token: "00000000-0000-4000-8000-000000000095",
+      revision: 1,
+    };
+    socket.message({
+      type: "viewport",
+      seq: 1,
+      cols: 132,
+      rows: 44,
+      authorityLease: geometryLease,
+    });
+    expect(h.fitViewport).toHaveBeenCalledWith(geometryLease, 132, 44);
     expect(socket.framesOfType("viewport-ack")).toEqual([
-      { type: "viewport-ack", seq: 1, cols: 132, rows: 44 },
+      {
+        type: "viewport-ack",
+        seq: 1,
+        cols: 132,
+        rows: 44,
+        outcome: "ok",
+        authorityLease: geometryLease,
+      },
     ]);
+  });
+
+  it("rejects stale semantic topology before any layout, delivery open, or seed escapes", async () => {
+    const h = harness({ panes: ["pane.one", "pane.two", "pane.detached"] });
+    h.mirror.initialLayouts = [authoritativeLayout(["pane.one", "pane.two"])];
+
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two", "pane.detached"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("error")).toHaveLength(1));
+
+    expect(socket.framesOfType("error")).toEqual([
+      {
+        type: "error",
+        protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+        code: "topology-changed",
+        retryable: true,
+      },
+    ]);
+    expect(socket.framesOfType("layout")).toHaveLength(0);
+    expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(0);
+    expect(h.deliveryListeners.size).toBe(0);
+    expect(socket.closed).toEqual({ code: 1012, reason: "topology-changed" });
+  });
+
+  it("rejects a delivery-generation splice before negotiation or seed publication", async () => {
+    const close = vi.fn(async () => undefined);
+    const h = harness({
+      panes: ["pane.one"],
+      openTerminalDelivery: async () => ({
+        negotiation: {
+          accepted: true as const,
+          negotiated: {
+            protocolVersion: 1 as const,
+            encoding: "semantic-v1" as const,
+            richPlacements: false,
+            generation: "99999999-9999-4999-8999-999999999999",
+            deliveryNonce: "00000000-0000-4000-8000-000000000098",
+          },
+        },
+        ack: vi.fn(),
+        nack: vi.fn(),
+        setVisibility: vi.fn(),
+        close,
+      }),
+    });
+    const { socket } = await connect(h, {
+      panes: ["pane.one"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("error")).toHaveLength(1));
+    expect(socket.framesOfType("layout")).toHaveLength(0);
+    expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(0);
+    expect(socket.framesOfType("terminal-delivery-envelope")).toHaveLength(0);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(socket.framesOfType("error")[0]?.code).toBe("topology-changed");
+  });
+
+  it("rejects same-name tmux session recreation against the private issue incarnation", async () => {
+    const h = harness({ panes: ["pane.one"] });
+    h.mirror.layoutRuntimeSessionId = "$2";
+    const { socket } = await connect(h, {
+      panes: ["pane.one"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("error")).toHaveLength(1));
+    expect(socket.framesOfType("layout")).toHaveLength(0);
+    expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(0);
+    expect(socket.framesOfType("error")[0]?.code).toBe("topology-changed");
+  });
+
+  it.each([
+    ["silent", []],
+    ["duplicate pane", [authoritativeLayout(["pane.one", "pane.one", "pane.detached"])]],
+    [
+      "two current windows",
+      [
+        authoritativeLayout(["pane.one", "pane.two"], { window: "window.one" }),
+        authoritativeLayout(["pane.detached"], { window: "window.two" }),
+      ],
+    ],
+    [
+      "generation/session splice",
+      [authoritativeLayout(["pane.one", "pane.two", "pane.detached"], { session: "other" })],
+    ],
+  ] as const)("fails closed on %s initial authoritative replay", async (_name, layouts) => {
+    const h = harness({ panes: ["pane.one", "pane.two", "pane.detached"] });
+    h.mirror.initialLayouts = [...layouts];
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two", "pane.detached"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("error")).toHaveLength(1));
+    expect(socket.framesOfType("error")[0]?.code).toBe("topology-changed");
+    expect(socket.framesOfType("layout")).toHaveLength(0);
+    expect(h.deliveryListeners.size).toBe(0);
+  });
+
+  it("opens every delivery only after a refreshed exact detached-window topology", async () => {
+    const h = harness({ panes: ["pane.one", "pane.two", "pane.detached"] });
+    h.mirror.initialLayouts = [
+      authoritativeLayout(["pane.one", "pane.two"], { window: "window.one" }),
+      authoritativeLayout(["pane.detached"], { window: "window.two", current: false }),
+    ];
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two", "pane.detached"],
+      semanticDelivery: true,
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(3));
+    expect(socket.framesOfType("layout-snapshot")).toHaveLength(1);
+    expect(socket.framesOfType("layout-snapshot")[0]?.layouts).toHaveLength(2);
+    expect(h.deliveryListeners.size).toBe(3);
+    expect(socket.closed).toBeNull();
+  });
+
+  it.each([
+    ["remove", authoritativeLayout(["pane.one"], { window: "window.one" })],
+    ["restamp", authoritativeLayout(["pane.one", "pane.restamped"], { window: "window.one" })],
+    [
+      "add",
+      authoritativeLayout(["pane.one", "pane.two", "pane.extra"], {
+        window: "window.one",
+      }),
+    ],
+    [
+      "move splice",
+      authoritativeLayout(["pane.detached", "pane.two"], {
+        window: "window.two",
+        current: false,
+      }),
+    ],
+    [
+      "session splice",
+      authoritativeLayout(["pane.one", "pane.two"], {
+        window: "window.one",
+        session: "other",
+      }),
+    ],
+  ] as const)("retires a live %s topology change before publishing it", async (_name, changed) => {
+    const h = harness({ panes: ["pane.one", "pane.two", "pane.detached"] });
+    h.mirror.initialLayouts = [
+      authoritativeLayout(["pane.one", "pane.two"], { window: "window.one" }),
+      authoritativeLayout(["pane.detached"], { window: "window.two", current: false }),
+    ];
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two", "pane.detached"],
+      semanticDelivery: true,
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(3));
+
+    h.mirror.layoutHandlers[0]?.(changed);
+
+    expect(socket.framesOfType("layout-snapshot")).toHaveLength(1);
+    expect(socket.framesOfType("error").at(-1)?.code).toBe("topology-changed");
+    expect(socket.closed).toEqual({ code: 1012, reason: "topology-changed" });
+  });
+
+  it("preserves an atomic two-callback current-window switch with exact pane identity", async () => {
+    const h = harness({ panes: ["pane.one", "pane.two", "pane.detached"] });
+    h.mirror.initialLayouts = [
+      authoritativeLayout(["pane.one", "pane.two"], { window: "window.one" }),
+      authoritativeLayout(["pane.detached"], { window: "window.two", current: false }),
+    ];
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two", "pane.detached"],
+      semanticDelivery: true,
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(3));
+
+    h.mirror.authorityHandlers[0]?.({
+      session: SESSION,
+      runtimeSessionId: "$1",
+      topologyEpoch: 1,
+      layouts: [
+        authoritativeLayout(["pane.one", "pane.two"], {
+          window: "window.one",
+          current: false,
+        }),
+        authoritativeLayout(["pane.detached"], { window: "window.two", current: true }),
+      ],
+    });
+
+    expect(
+      socket
+        .framesOfType("layout-snapshot")
+        .flatMap((frame) => frame.layouts.map((layout) => layout.currentWindow)),
+    ).toEqual([true, false, false, true]);
+    expect(socket.framesOfType("error")).toHaveLength(0);
+    expect(socket.closed).toBeNull();
+  });
+
+  it("atomically removes an absent window and rejects a later incomplete current batch", async () => {
+    const h = harness({ panes: ["pane.one", "pane.two", "pane.detached"] });
+    h.mirror.initialLayouts = [
+      authoritativeLayout(["pane.one", "pane.two"], { window: "window.one" }),
+      authoritativeLayout(["pane.detached"], { window: "window.two", current: false }),
+    ];
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two", "pane.detached"],
+      semanticDelivery: true,
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(3));
+    const authority = h.mirror.authorityHandlers[0]!;
+    authority({
+      session: SESSION,
+      runtimeSessionId: "$1",
+      topologyEpoch: 1,
+      layouts: [
+        authoritativeLayout(["pane.one", "pane.two", "pane.detached"], {
+          window: "window.one",
+        }),
+      ],
+    });
+    expect(socket.framesOfType("layout-snapshot")).toHaveLength(2);
+    expect(socket.framesOfType("layout-snapshot").at(-1)?.layouts).toHaveLength(1);
+    expect(socket.framesOfType("layout-snapshot").at(-1)?.layouts[0]?.semanticWindowId).toBe(
+      "window.one",
+    );
+
+    authority({
+      session: SESSION,
+      runtimeSessionId: "$1",
+      topologyEpoch: 2,
+      layouts: [
+        authoritativeLayout(["pane.one", "pane.two", "pane.detached"], {
+          window: "window.one",
+          current: false,
+        }),
+      ],
+    });
+    expect(socket.framesOfType("layout-snapshot")).toHaveLength(2);
+    expect(socket.framesOfType("error").at(-1)?.code).toBe("topology-changed");
+  });
+
+  it("opens pane deliveries concurrently but publishes readiness in descriptor order", async () => {
+    let releaseSlow!: () => void;
+    const slow = new Promise<void>((resolve) => {
+      releaseSlow = resolve;
+    });
+    const opened: string[] = [];
+    const closed: string[] = [];
+    const h = harness({
+      openTerminalDelivery: async (pane) => {
+        opened.push(pane);
+        if (pane === "pane.editor") await slow;
+        return {
+          negotiation: {
+            accepted: true,
+            negotiated: {
+              protocolVersion: 1,
+              encoding: "semantic-v1",
+              richPlacements: false,
+              generation: INSTANCE,
+              deliveryNonce: "00000000-0000-4000-8000-000000000098",
+            },
+          },
+          ack: () => undefined,
+          nack: () => undefined,
+          setVisibility: () => undefined,
+          close: async () => {
+            closed.push(pane);
+          },
+        };
+      },
+    });
+    const { socket } = await connect(h, {
+      viewerMode: "interactive",
+      semanticDelivery: true,
+    });
+    await vi.waitFor(() => expect(opened).toEqual(["pane.editor", "pane.shell"]));
+    // shell opened without waiting for editor, but the document cannot claim
+    // coherent readiness until every requested pane has an accepted delivery.
+    expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(0);
+    releaseSlow();
+    await vi.waitFor(() =>
+      expect(socket.framesOfType("terminal-delivery-ready").map(({ pane }) => pane)).toEqual([
+        "pane.editor",
+        "pane.shell",
+      ]),
+    );
+    socket.close();
+    await vi.waitFor(() => expect(closed.sort()).toEqual(["pane.editor", "pane.shell"]));
+  });
+
+  it("publishes no staged layout when a blocked delivery observes a newer invalid authority", async () => {
+    let releaseEditor!: () => void;
+    const editorGate = new Promise<void>((resolve) => {
+      releaseEditor = resolve;
+    });
+    const h = harness({
+      openTerminalDelivery: async (pane) => {
+        if (pane === "pane.editor") await editorGate;
+        return {
+          negotiation: {
+            accepted: true,
+            negotiated: {
+              protocolVersion: 1,
+              encoding: "semantic-v1",
+              richPlacements: false,
+              generation: INSTANCE,
+              deliveryNonce: "00000000-0000-4000-8000-000000000098",
+            },
+          },
+          ack: () => undefined,
+          nack: () => undefined,
+          setVisibility: () => undefined,
+          close: async () => undefined,
+        };
+      },
+    });
+    const { socket } = await connect(h, {
+      viewerMode: "interactive",
+      semanticDelivery: true,
+    });
+    await vi.waitFor(() => expect(h.mirror.authorityHandlers).toHaveLength(1));
+    const authority = h.mirror.authorityHandlers[0]!;
+    authority({
+      session: SESSION,
+      runtimeSessionId: "$1",
+      topologyEpoch: 1,
+      layouts: [authoritativeLayout(["pane.editor", "pane.shell"])],
+    });
+    authority({
+      session: SESSION,
+      runtimeSessionId: "$1",
+      topologyEpoch: 2,
+      layouts: [authoritativeLayout(["pane.editor"])],
+    });
+    expect(socket.framesOfType("layout-snapshot")).toHaveLength(0);
+    expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(0);
+    releaseEditor();
+    await vi.waitFor(() => expect(socket.framesOfType("error")).toHaveLength(1));
+    expect(socket.framesOfType("error")[0]?.code).toBe("topology-changed");
+    expect(socket.framesOfType("layout-snapshot")).toHaveLength(0);
+    expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(0);
+  });
+
+  it("closes every partial delivery when one concurrent pane open fails", async () => {
+    const closeEditor = vi.fn(async () => undefined);
+    let rejectShell!: (error: Error) => void;
+    const shell = new Promise<never>((_resolve, reject) => {
+      rejectShell = reject;
+    });
+    const h = harness({
+      openTerminalDelivery: async (pane) => {
+        if (pane === "pane.shell") return await shell;
+        return {
+          negotiation: {
+            accepted: true,
+            negotiated: {
+              protocolVersion: 1,
+              encoding: "semantic-v1",
+              richPlacements: false,
+              generation: INSTANCE,
+              deliveryNonce: "00000000-0000-4000-8000-000000000098",
+            },
+          },
+          ack: () => undefined,
+          nack: () => undefined,
+          setVisibility: () => undefined,
+          close: closeEditor,
+        };
+      },
+    });
+    const { socket } = await connect(h, {
+      viewerMode: "interactive",
+      semanticDelivery: true,
+    });
+    rejectShell(new Error("shell unavailable"));
+    await vi.waitFor(() => expect(closeEditor).toHaveBeenCalledOnce());
+    expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(0);
+    expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" });
   });
 
   it("does not park a sibling source-close behind aggregate semantic output pressure", async () => {
@@ -930,6 +2243,108 @@ describe("PaneStreamAdmissionCoordinator", () => {
     } as never) as unknown;
     await expect(Promise.resolve(close)).resolves.toBeUndefined();
     expect(socket.framesOfType("terminal-delivery-fault")).toHaveLength(1);
+  });
+
+  it("generation-fences explicit authority and requires geometry before viewport fit", async () => {
+    const h = harness();
+    const { socket } = await connect(h, {
+      viewerMode: "interactive",
+      semanticDelivery: true,
+    });
+    socket.message({ type: "presence", generation: INSTANCE, state: "foreground" });
+    expect(socket.framesOfType("authority-snapshot")).toHaveLength(1);
+    const requestId = "00000000-0000-4000-8000-000000000094";
+    socket.message({
+      type: "authority-request",
+      generation: INSTANCE,
+      requestId,
+      authority: "geometry",
+    });
+    expect(socket.framesOfType("authority-receipt")).toEqual([
+      expect.objectContaining({ requestId, authority: "geometry", status: "granted" }),
+    ]);
+    const geometryLease = socket.framesOfType("authority-receipt")[0]!.lease;
+    socket.message({
+      type: "viewport",
+      seq: 1,
+      cols: 111,
+      rows: 33,
+      authorityLease: geometryLease,
+    });
+    expect(h.fitViewport).toHaveBeenCalledWith(geometryLease, 111, 33);
+
+    const stale = harness();
+    const staleConnection = await connect(stale, {
+      viewerMode: "interactive",
+      semanticDelivery: true,
+    });
+    staleConnection.socket.message({
+      type: "authority-request",
+      generation: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      requestId: "00000000-0000-4000-8000-000000000093",
+      authority: "geometry",
+    });
+    expect(staleConnection.socket.framesOfType("error")[0]?.code).toBe("protocol-error");
+  });
+
+  it("replays retained authority immediately for an explicit late binding", async () => {
+    const h = harness({ explicitAuthorityReplay: true });
+    const { socket } = await connect(h, {
+      viewerMode: "interactive",
+      semanticDelivery: true,
+    });
+    expect(socket.framesOfType("authority-snapshot")).toEqual([
+      expect.objectContaining({
+        snapshot: expect.objectContaining({ generation: INSTANCE, session: SESSION, revision: 1 }),
+      }),
+    ]);
+  });
+
+  it("returns an exact typed conflict when the granted geometry lease retires before viewport", async () => {
+    const h = harness();
+    const { socket } = await connect(h, {
+      viewerMode: "interactive",
+      semanticDelivery: true,
+    });
+    const requestId = "00000000-0000-4000-8000-000000000084";
+    socket.message({
+      type: "authority-request",
+      generation: INSTANCE,
+      requestId,
+      authority: "geometry",
+    });
+    const lease = socket.framesOfType("authority-receipt")[0]!.lease;
+    h.fitViewport.mockImplementationOnce(() => {
+      throw new SessionRuntimeControllerLeaseError(
+        "stale-controller-lease",
+        "Geometry authority retired.",
+      );
+    });
+    socket.message({ type: "viewport", seq: 1, cols: 140, rows: 46, authorityLease: lease });
+    expect(socket.framesOfType("viewport-ack")).toEqual([
+      {
+        type: "viewport-ack",
+        seq: 1,
+        cols: 140,
+        rows: 46,
+        outcome: "geometry-authority-conflict",
+        authorityLease: lease,
+      },
+    ]);
+    expect(socket.closed).toBeNull();
+  });
+
+  it("permanently disables legacy escalation after the first explicit authority frame", async () => {
+    const h = harness();
+    const { socket } = await connect(h, {
+      viewerMode: "interactive",
+      semanticDelivery: true,
+    });
+    socket.message({ type: "presence", generation: INSTANCE, state: "foreground" });
+    socket.message({ type: "input", kind: "text", pane: "pane.editor", seq: 1, data: "x" });
+    expect(socket.framesOfType("error")[0]?.code).toBe("input-rejected");
+    expect(h.activateLegacyAuthority).not.toHaveBeenCalled();
+    expect(h.sendInput).not.toHaveBeenCalled();
   });
 
   it("meters renderer backlog for acking clients and thaws on consumed frames", async () => {

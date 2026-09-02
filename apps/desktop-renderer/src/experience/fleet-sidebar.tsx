@@ -9,7 +9,7 @@ import { DashboardSquare01Icon } from "@hugeicons/core-free-icons";
 
 import { ContextMenu, Icon, type ContextMenuSection } from "../ui-system/index.ts";
 import { DomIcon } from "./dom-icon.tsx";
-import { agentHarnessIcon } from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
+import { agentHarnessIcon } from "@tmux-ide/presentation/pane-frame";
 import { sessionRowMenuSections, SURFACE_MENU_IDS } from "./multiplexer-verb-menu.ts";
 import type { DesktopFleetCatalogState } from "../runtime/fleet-catalog-store.ts";
 

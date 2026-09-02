@@ -104,6 +104,7 @@ describe
         localBypassToken: ownerToken,
         silent: true,
       });
+      expect(handle.compatibilityTerminalAttachmentRuntimeConstructed()).toBe(false);
       const requestId = randomUUID();
       const response = await fetch(`${handle.apiBaseUrl}${TERMINAL_ATTACHMENT_ISSUE_PATH}`, {
         method: "POST",
@@ -129,6 +130,7 @@ describe
       });
       const result = TerminalAttachmentIssueResultSchemaZ.parse(await response.json());
       expect(result.status).toBe("issued");
+      expect(handle.compatibilityTerminalAttachmentRuntimeConstructed()).toBe(true);
       if (result.status !== "issued") throw new Error(result.error.code);
       const descriptor: TerminalAttachmentIssueDescriptor = result.descriptor;
       expect(descriptor).toMatchObject({

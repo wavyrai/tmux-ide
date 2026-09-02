@@ -1,6 +1,10 @@
 import { COHESION_FIXTURE_V1 } from "@tmux-ide/contracts";
-import type { PaneFrameActionIntent, PaneFrameGripIntent, PaneFrameModel } from "./presenter.js";
-import { paneFrameModelFromCohesionPane } from "./model.js";
+import {
+  paneFrameModelFromCohesionPane,
+  type PaneFrameActionIntent,
+  type PaneFrameGripIntent,
+  type PaneFrameModel,
+} from "@tmux-ide/presentation/pane-frame";
 
 const fixturePane = COHESION_FIXTURE_V1.panes.find((pane) => pane.id === "pane.implementer");
 if (!fixturePane) throw new Error("The cohesion fixture must include the implementer pane");

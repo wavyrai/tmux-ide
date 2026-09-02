@@ -24,12 +24,12 @@ import {
 import type {
   WorkbenchDockHostProjection,
   WorkbenchDockHostTabId,
-} from "../../../../packages/daemon/src/ui/workbench-dock/presenter.tsx";
+} from "@tmux-ide/presentation/workbench-dock";
 import {
   agentHarnessIcon,
   paneFrameModelFromCohesionPane,
-} from "../../../../packages/daemon/src/ui/pane-frame/model.ts";
-import type { PaneFrameModel } from "../../../../packages/daemon/src/ui/pane-frame/presenter.tsx";
+} from "@tmux-ide/presentation/pane-frame";
+import type { PaneFrameModel } from "@tmux-ide/presentation/pane-frame";
 import { NO_HIDDEN_DOCK_TOOLS } from "./experimental-surfaces.ts";
 
 export interface DomViewport {

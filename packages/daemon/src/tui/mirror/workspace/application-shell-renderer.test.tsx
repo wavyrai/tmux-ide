@@ -15,7 +15,7 @@ import {
   stableFrame,
 } from "../testing/renderer-harness.test.ts";
 import { applicationShellHitTest, projectApplicationShell } from "./application-shell.ts";
-import { ApplicationShell } from "./application-shell.tsx";
+import { ApplicationShell } from "./application-shell-view.tsx";
 import {
   projectOpenTuiApplicationShell,
   type OpenTuiApplicationShellEffect,
@@ -294,7 +294,7 @@ describe("production ApplicationShell → WorkbenchShell OpenTUI renderer", () =
     expectFrameBounds(frame, width, height);
     expect(stableFrame(frame)).toMatchSnapshot();
     expect(stableFrame(frame)).toContain("production application");
-    expect(stableFrame(frame)).toContain("F5 palette");
+    expect(stableFrame(frame)).toContain(width === 80 ? "F5" : "F5 Commands");
     expect(harness.dockMode()).toBe(dockMode);
 
     harness.openSurface("terminals", { kind: "keyboard", surface: "workbench" });

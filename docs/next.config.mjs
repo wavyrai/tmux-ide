@@ -13,21 +13,31 @@ const config = {
   turbopack: {
     root: resolve(docsDir, ".."),
   },
+  async headers() {
+    const securityHeaders = [
+      {
+        key: "Strict-Transport-Security",
+        value: "max-age=63072000; includeSubDomains",
+      },
+      { key: "X-Content-Type-Options", value: "nosniff" },
+      { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+      { key: "X-Frame-Options", value: "SAMEORIGIN" },
+      { key: "Content-Security-Policy", value: "frame-ancestors 'self'" },
+      { key: "Cross-Origin-Opener-Policy", value: "same-origin-allow-popups" },
+      { key: "X-DNS-Prefetch-Control", value: "on" },
+      {
+        key: "Permissions-Policy",
+        value:
+          "camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=(), browsing-topics=()",
+      },
+    ];
+    return [{ source: "/:path*", headers: securityHeaders }];
+  },
   async rewrites() {
     return [
       {
         source: "/docs/:path*.mdx",
         destination: "/llms.mdx/docs/:path*",
-      },
-      // The Solid dashboard SPA is built into /public/demo/. Next serves
-      // its assets fine but doesn't know about client-side routes like
-      // /demo/project/<name>. Rewrite any sub-path (that isn't an asset)
-      // to /demo/index.html so the SPA's router picks it up.
-      { source: "/demo", destination: "/demo/index.html" },
-      { source: "/demo/", destination: "/demo/index.html" },
-      {
-        source: "/demo/:path((?!assets/|fonts/|.*\\..+$).*)",
-        destination: "/demo/index.html",
       },
     ];
   },

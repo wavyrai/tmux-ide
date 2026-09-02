@@ -1,269 +1,95 @@
 ---
 title: Templates
-description: Pre-built workspace.yml configs for common stacks
+description: The workspace templates shipped with tmux-ide 2.9.0-beta.3
 ---
 
-tmux-ide ships with templates for common setups. `tmux-ide init --template <name>` writes them to `.tmux-ide/workspace.yml`; adjust the generated file to your needs.
+`tmux-ide init --template <name>` copies a shipped template into
+`.tmux-ide/workspace.yml`, replaces its example name with the current project
+directory, validates it as WorkspaceConfigV1, and then writes it.
 
-## Default
+## Shipped names
 
-A minimal setup with two Claude panels and a shell.
+| Template              | Initial layout                                                                           |
+| --------------------- | ---------------------------------------------------------------------------------------- |
+| `default`             | Two Claude panes; Changes, Dev Server, and Shell below                                   |
+| `nextjs`              | Three Claude panes; Next.js, Changes, and Shell below                                    |
+| `convex`              | Three Claude panes; Next.js, Convex, and Shell below                                     |
+| `vite`                | Two Claude panes; Vite, Changes, and Shell below                                         |
+| `go`                  | Two Claude panes; Go, Changes, and Shell below                                           |
+| `python`              | Two Claude panes; Server, Changes, and Shell below                                       |
+| `agent-team`          | Lead and two teammate panes; Changes, Dev Server, and Shell below                        |
+| `agent-team-nextjs`   | Lead, Frontend, and Backend agents; Next.js, Changes, and Shell below                    |
+| `agent-team-monorepo` | Lead plus agents rooted in `apps/web` and `apps/api`; matching dev panes and Shell below |
+| `missions`            | Lead, Frontend, and Backend above Validator, Researcher, and Shell                       |
 
-```yaml
-version: 1
-name: my-project
-
-terminal:
-  rows:
-    - size: 70%
-      panes:
-        - title: Claude 1
-          command: claude
-        - title: Claude 2
-          command: claude
-    - panes:
-        - title: Dev Server
-        - title: Shell
-```
-
-## Next.js
-
-Three Claude panels with a Next.js dev server.
-
-```yaml
-version: 1
-name: my-app
-before: pnpm install
-
-terminal:
-  rows:
-    - size: 70%
-      panes:
-        - title: Claude 1 — feature
-          command: claude
-        - title: Claude 2 — review
-          command: claude
-        - title: Claude 3 — explore
-          command: claude
-    - panes:
-        - title: Next.js
-          command: pnpm dev
-        - title: Shell
-```
-
-## Next.js + Convex
-
-Full-stack setup with Next.js frontend and Convex backend.
-
-```yaml
-version: 1
-name: my-app
-before: pnpm install
-
-terminal:
-  rows:
-    - size: 70%
-      panes:
-        - title: Claude 1 — feature
-          command: claude
-        - title: Claude 2 — review
-          command: claude
-        - title: Claude 3 — explore
-          command: claude
-    - panes:
-        - title: Next.js
-          command: pnpm dev
-        - title: Convex
-          command: npx convex dev
-        - title: Shell
-```
-
-## Vite
-
-Two Claude panels with a Vite dev server.
-
-```yaml
-version: 1
-name: my-app
-before: pnpm install
-
-terminal:
-  rows:
-    - size: 70%
-      panes:
-        - title: Claude 1
-          command: claude
-        - title: Claude 2
-          command: claude
-    - panes:
-        - title: Vite
-          command: pnpm dev
-        - title: Shell
-          focus: true
-```
-
-## Go
-
-Two Claude panels with a Go server.
-
-```yaml
-version: 1
-name: my-app
-before: go mod download
-
-terminal:
-  rows:
-    - size: 70%
-      panes:
-        - title: Claude 1
-          command: claude
-        - title: Claude 2
-          command: claude
-    - panes:
-        - title: Go
-          command: go run .
-        - title: Shell
-          focus: true
-```
-
-## Agent Team
-
-A lead-focused layout with two teammate-ready Claude panes. Mission runtime wiring is future work for the workspace config model.
-
-```yaml
-version: 1
-name: my-project
-
-terminal:
-  rows:
-    - size: 70%
-      panes:
-        - title: Lead
-          command: claude
-          focus: true
-        - title: Teammate 1
-          command: claude
-        - title: Teammate 2
-          command: claude
-    - panes:
-        - title: Dev Server
-        - title: Shell
-```
-
-## Missions Template
-
-Mission-ready pane layout with a lead, worker panes, validation, research, and shell access. The workspace file declares layout only; mission runtime wiring is future work.
+Run, for example:
 
 ```bash
-tmux-ide init --template missions
+tmux-ide init --template nextjs
+tmux-ide validate --json
+tmux-ide start
 ```
 
-Creates:
+## Representative generated file
 
-- `.tmux-ide/workspace.yml` with 6 panes: Lead, Frontend, Backend, Validator, Researcher, Shell
-- `.tmux-ide/skills/` with 5 skill files
-- `.tmux-ide/library/` for shared architecture and learnings
-- `AGENTS.md` with project boundaries and agent instructions
-
-Full template:
+The shipped `default` template currently produces this structure (the `name`
+is rewritten for your directory):
 
 ```yaml
+name: my-project
 version: 1
-name: project-name
 
 terminal:
   rows:
     - size: 70%
       panes:
-        - title: Lead
+        - id: agent-1
+          title: Claude 1
           command: claude
-          focus: true
-        - title: Frontend
-          command: claude
-        - title: Backend
-          command: claude
-    - size: 30%
-      panes:
-        - title: Validator
-          command: claude
-        - title: Researcher
-          command: claude
-        - title: Shell
-```
-
-## Agent Team — Monorepo
-
-Specialized teammate-ready panes with per-app working directories.
-
-```yaml
-version: 1
-name: my-monorepo
-before: pnpm install
-
-terminal:
-  rows:
-    - size: 70%
-      panes:
-        - title: Lead — Architect
-          command: claude
-          focus: true
-        - title: Frontend Agent
-          command: claude
-          dir: apps/web
-        - title: Backend Agent
-          command: claude
-          dir: apps/api
-    - panes:
-        - title: Frontend
-          command: pnpm dev
-          dir: apps/web
-        - title: Backend
-          command: pnpm dev
-          dir: apps/api
-        - title: Shell
-```
-
-## Custom Examples
-
-### Python / FastAPI
-
-```yaml
-version: 1
-name: my-api
-
-terminal:
-  rows:
-    - size: 70%
-      panes:
-        - title: Claude 1
-          command: claude
-        - title: Claude 2
+        - id: agent-2
+          title: Claude 2
           command: claude
     - panes:
-        - title: FastAPI
-          command: uvicorn main:app --reload
-        - title: Shell
+        - id: changes
+          title: Changes
+          type: changes
+        - id: dev
+          title: Dev Server
+        - id: shell
+          title: Shell
+          focus: true
 ```
 
-### Monorepo
+Stable pane `id` values are included so the daemon can preserve semantic
+identity independently of display titles.
 
-```yaml
-version: 1
-name: my-monorepo
+## Additional team scaffolding
 
-terminal:
-  rows:
-    - size: 60%
-      panes:
-        - title: Claude — frontend
-          command: claude
-        - title: Claude — backend
-          command: claude
-    - size: 40%
-      panes:
-        - title: Frontend
-          command: cd apps/web && pnpm dev
-        - title: Backend
-          command: cd apps/api && pnpm dev
-        - title: Shell
+The `agent-team`, `agent-team-nextjs`, and `agent-team-monorepo` templates also
+copy the bundled skill files and create, when missing:
+
+- `.tmux-ide/library/architecture.md`
+- `.tmux-ide/library/learnings.md`
+- `.tasks/validation-contract.md`
+- `AGENTS.md`
+
+The `missions` template creates the same files plus `.tmux-ide/skills/`.
+Existing files are not overwritten.
+
+These templates create agent-ready pane layouts and project context. They do
+not add a legacy `orchestrator` block or automatically dispatch work. See
+[Workspace layouts](/docs/configuration#agent-profiles-and-mission-defaults) for
+the current declarative agent and mission fields.
+
+## Automatic detection
+
+Without `--template`, `tmux-ide init` detects the stack. Recognized frameworks
+produce a suggested layout; otherwise it falls back to `default`:
+
+```bash
+tmux-ide detect --json
+tmux-ide init
 ```
+
+Use `tmux-ide detect --write` when you want detection to write directly. Both
+commands refuse to overwrite an existing workspace config.

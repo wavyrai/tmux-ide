@@ -3,7 +3,7 @@ import { MouseButtons } from "@opentui/core/testing";
 import { useKeyboard } from "@opentui/solid";
 import { createSignal } from "solid-js";
 import { describe, expect, it } from "bun:test";
-import { WorkbenchDockPresenter } from "../../../ui/workbench-dock/presenter.tsx";
+import { WorkbenchDockPresenter } from "@tmux-ide/presentation/workbench-dock";
 import {
   createWorkbenchDockHostFixture,
   createWorkbenchDockHostTrace,

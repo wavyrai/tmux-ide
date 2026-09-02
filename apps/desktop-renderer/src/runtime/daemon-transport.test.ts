@@ -5,6 +5,7 @@ import {
   ApplicationShellProjectionInputV2SchemaZ,
   ApplicationShellProjectionInputV3SchemaZ,
   COHESION_FIXTURE_V1,
+  DAEMON_WIRE_PROTOCOL_VERSION,
   type DesktopDaemonHostDescriptor,
 } from "@tmux-ide/contracts";
 
@@ -17,7 +18,7 @@ import {
 
 const descriptor: DesktopDaemonHostDescriptor = {
   apiBaseUrl: "http://127.0.0.1:6060",
-  protocolVersion: 1,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "2.8.0",
   instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
   startedAt: "2026-07-21T00:00:00.000Z",
@@ -192,7 +193,7 @@ describe("browser-safe daemon transport", () => {
 
   it("rejects every REST daemon-generation mismatch before returning resource data", async () => {
     const mismatches = [
-      { ...daemonIdentity, protocolVersion: 2 },
+      { ...daemonIdentity, protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION + 1 },
       { ...daemonIdentity, productVersion: "9.9.9" },
       { ...daemonIdentity, instanceId: "3adfc6e2-f1ae-4e63-b9df-7e8eb0ea94d4" },
       { ...daemonIdentity, startedAt: "2026-07-21T00:00:01.000Z" },

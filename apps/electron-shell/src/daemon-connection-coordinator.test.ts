@@ -165,6 +165,10 @@ function brokerHarness(
         status: "ok",
         envelope: { version: 1, daemon: identity, sessions: [] },
       }),
+      fetchWorkspaceCatalog: async () => ({
+        status: "ok",
+        envelope: { version: 2, daemon: identity, intents: [], liveSessions: [] },
+      }),
       fetchApplicationShell: async () => ({
         status: "error",
         error: { code: "workspace-not-found", reason: "not part of this test" },

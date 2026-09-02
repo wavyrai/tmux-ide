@@ -13,6 +13,14 @@ import {
   type PaneStreamServerFrame,
   type TerminalDeliveryAck,
   type TerminalDeliveryOffer,
+  type SessionRuntimeActivityKind,
+  type SessionRuntimePresenceState,
+  type SessionRuntimeTerminalInput,
+  type SessionRuntimeAuthoritySnapshot,
+  type SessionRuntimeAuthorityKind,
+  type SessionRuntimeAuthorityLease,
+  type CanonicalTerminalReplicaUpdate,
+  type TerminalReplicaSnapshot,
 } from "@tmux-ide/contracts";
 import {
   TerminalDeliveryAssembler,
@@ -21,7 +29,6 @@ import {
   commitTerminalDelivery,
   completeTerminalDelivery,
   createTerminalDeliveryClientState,
-  decodeSemanticTerminalUpdate,
   encodeAnsiTerminalPatchRepresentation,
   encodeAnsiTerminalRepresentation,
   type TerminalDeliveryClientState,
@@ -75,10 +82,47 @@ const WS_CONNECTING = 0;
 const WS_OPEN = 1;
 const WS_CLOSING = 2;
 
+type Card5InputOperationGlobals = typeof globalThis & {
+  __TMUX_IDE_CARD5_INPUT_OPERATION_RECORD__?: (event: {
+    readonly stage: "authority-request" | "authority-result" | "input-send" | "input-ack";
+    readonly outcome:
+      | "attempt"
+      | "sent"
+      | "send-failed"
+      | "granted"
+      | "rejected"
+      | "authority-timeout"
+      | "ack-timeout"
+      | "closed"
+      | "unavailable"
+      | "ok";
+    readonly generation: string;
+    readonly lifecycleRequestId: string;
+    readonly authorityRequestId?: string;
+    readonly clientId?: string | null;
+    readonly pane?: string;
+    readonly seq?: number;
+  }) => void;
+};
+
+function recordCard5InputOperation(
+  event: Parameters<
+    NonNullable<Card5InputOperationGlobals["__TMUX_IDE_CARD5_INPUT_OPERATION_RECORD__"]>
+  >[0],
+): void {
+  try {
+    (globalThis as Card5InputOperationGlobals).__TMUX_IDE_CARD5_INPUT_OPERATION_RECORD__?.(event);
+  } catch {
+    // Detailed evidence cannot alter transport truth.
+  }
+}
+
 type SocketEventType = "open" | "message" | "close" | "error";
 
 export interface PaneStreamSocketEvent {
   readonly data?: unknown;
+  readonly code?: number;
+  readonly reason?: string;
 }
 
 export type PaneStreamSocketListener = (event: PaneStreamSocketEvent) => void;
@@ -106,6 +150,25 @@ export interface PaneStreamTransportError {
   readonly retryable: boolean;
 }
 
+export type PaneStreamDiagnosticStage =
+  | "issued"
+  | "socket-open"
+  | "server-ready"
+  | "layout-validated"
+  | "delivery-open"
+  | "first-seed"
+  | "terminal";
+
+export interface PaneStreamDiagnosticLifecycleEvent {
+  readonly generation: string;
+  readonly requestId: string;
+  readonly stage: PaneStreamDiagnosticStage;
+  readonly code: string;
+  readonly origin: "client" | "peer" | "dispose" | "unknown";
+  readonly closeCode: number | null;
+  readonly closeReason: string;
+}
+
 /** One atomic reseed, decoded: apply as ONE paint (reset → seed → held → cursor). */
 export interface PaneMirrorSeedBatch {
   readonly reset: { readonly cols: number; readonly rows: number } | null;
@@ -114,11 +177,42 @@ export interface PaneMirrorSeedBatch {
   readonly cursor: { readonly x: number; readonly y: number } | null;
 }
 
+export interface PaneMirrorCanonicalProjection {
+  readonly deliveryRequestId: string;
+  readonly generation: string;
+  readonly incarnation: string;
+  readonly revision: number;
+  readonly stateHash: string;
+  readonly cols: number;
+  readonly rows: number;
+  readonly sourceEpoch: number;
+  readonly alternateScreen: boolean;
+  readonly cursor: Readonly<{
+    x: number;
+    y: number;
+    hidden: boolean;
+    style: "block" | "underline" | "bar";
+    blink: boolean;
+  }>;
+  readonly gridRowsRead: number;
+  readonly gridCellsRead: number;
+  readonly fullGridWalks: number;
+}
+
 export type PaneMirrorEvent =
-  | { readonly type: "seed-batch"; readonly batch: PaneMirrorSeedBatch }
+  | {
+      readonly type: "seed-batch";
+      readonly batch: PaneMirrorSeedBatch;
+      readonly canonical?: PaneMirrorCanonicalProjection;
+      readonly canonicalUpdate?: CanonicalTerminalReplicaUpdate;
+      readonly canonicalSnapshot?: TerminalReplicaSnapshot;
+    }
   | {
       readonly type: "output";
       readonly bytes: Uint8Array;
+      readonly canonical?: PaneMirrorCanonicalProjection;
+      readonly canonicalUpdate?: CanonicalTerminalReplicaUpdate;
+      readonly canonicalSnapshot?: TerminalReplicaSnapshot;
       /** Lazily materialized canonical repaint retained for sink handoff. */
       readonly replay?: () => PaneMirrorSeedBatch;
     }
@@ -128,7 +222,7 @@ export type PaneMirrorEvent =
       readonly state: "paused" | "resumed";
       readonly reason: "backpressure" | "requested";
     }
-  | { readonly type: "closed" };
+  | { readonly type: "closed"; readonly canonicalUpdate?: CanonicalTerminalReplicaUpdate };
 
 export interface PaneStreamLayoutEvent {
   readonly semanticWindowId: string | null;
@@ -148,6 +242,11 @@ export interface PaneStreamLayoutEvent {
   }[];
 }
 
+export interface PaneStreamLayoutSnapshotEvent {
+  readonly topologyEpoch: number;
+  readonly layouts: readonly PaneStreamLayoutEvent[];
+}
+
 export interface PaneStreamSessionListeners {
   /**
    * Per-pane mirror event, delivered in wire order per pane. The returned
@@ -156,12 +255,96 @@ export interface PaneStreamSessionListeners {
    */
   readonly onPaneEvent: (pane: string, event: PaneMirrorEvent) => void | Promise<void>;
   readonly onLayout?: (layout: PaneStreamLayoutEvent) => void;
+  readonly onLayoutSnapshot?: (snapshot: PaneStreamLayoutSnapshotEvent) => void;
   /** Terminal state of the whole session; null error is a clean end. */
   readonly onEnd: (error: PaneStreamTransportError | null) => void;
+  readonly onAuthoritySnapshot?: (snapshot: SessionRuntimeAuthoritySnapshot) => void;
+  /** Detailed evidence seam invoked only after the exact semantic ACK reaches socket.send. */
+  readonly onDeliveryAckSent?: (ack: TerminalDeliveryAck) => void;
+  /** Detailed-only exact input ACK seam; consumers must not retain raw input. */
+  readonly onInputAckObserved?: (receipt: {
+    readonly generation: string;
+    readonly pane: string;
+    readonly seq: number;
+    readonly input: string;
+    readonly requestId: string;
+    readonly authorityClientId: string;
+  }) => void | Promise<void>;
+  readonly onViewportAckObserved?: (receipt: {
+    readonly generation: string;
+    readonly requestId: string;
+    readonly authorityClientId: string;
+    readonly seq: number;
+    readonly cols: number;
+    readonly rows: number;
+  }) => void;
+  /** Detailed evidence seam for the exact host-issued physical stream descriptor. */
+  readonly onDescriptorIssued?: (
+    descriptor: Pick<
+      PaneStreamIssueDescriptor,
+      "daemonInstanceId" | "requestId" | "webSocketUrl" | "subprotocol"
+    >,
+  ) => void;
+  /** Detailed ProductRig-only causal seam. No payload, pane, URL, or token. */
+  readonly onDiagnosticLifecycle?: (event: PaneStreamDiagnosticLifecycleEvent) => void;
 }
 
 export interface PaneStreamSessionHandle {
   dispose(): void;
+  /** Daemon-authenticated identity of this exact redeemed physical connection. */
+  connectionClientId?(): string | null;
+  updatePresence?(state: SessionRuntimePresenceState): void;
+  noteActivity?(activity: SessionRuntimeActivityKind): void;
+  /** Exact authenticated client identity for authority held by this connection. */
+  connectionAuthorityClientId?(authority: SessionRuntimeAuthorityKind): string | null;
+  write?(pane: string, input: string | SessionRuntimeTerminalInput): Promise<boolean>;
+  resize?(cols: number, rows: number): Promise<PaneStreamResizeResult>;
+  requestAuthority?(
+    authority: SessionRuntimeAuthorityKind,
+  ): Promise<SessionRuntimeAuthorityLease | null>;
+  releaseAuthority?(
+    authority: SessionRuntimeAuthorityKind,
+  ): Promise<SessionRuntimeAuthoritySnapshot | null>;
+  /** Detailed-only identity of the retained physical WorkspaceClient stream. */
+  card5PhysicalBinding?(): Card5PhysicalPaneStreamBinding | null;
+  /** Detailed-only, identity-fenced physical lifecycle subscription. */
+  subscribeCard5PhysicalBinding?(
+    listener: (binding: Card5PhysicalPaneStreamBinding | null) => void,
+  ): () => void;
+}
+
+export interface Card5PhysicalPaneStreamBinding {
+  readonly physicalEpoch: number;
+  readonly generation: string;
+  readonly requestId: string;
+  readonly runtimeSession: string;
+  readonly workspaceName: string;
+  readonly semanticPaneIds: readonly string[];
+  readonly clientId: string;
+  readonly stage: "first-seed";
+}
+
+export type PaneStreamResizeResult =
+  | "ok"
+  | "geometry-authority-conflict"
+  | "authority-timeout"
+  | "viewport-timeout"
+  | "stream-closed"
+  | "lifecycle-retired"
+  | "failed";
+
+function sameAuthorityLease(
+  left: SessionRuntimeAuthorityLease,
+  right: SessionRuntimeAuthorityLease,
+): boolean {
+  return (
+    left.generation === right.generation &&
+    left.session === right.session &&
+    left.clientId === right.clientId &&
+    left.authority === right.authority &&
+    left.token === right.token &&
+    left.revision === right.revision
+  );
 }
 
 export type PaneStreamConnectResult =
@@ -171,6 +354,7 @@ export type PaneStreamConnectResult =
 export interface PaneStreamRequest {
   readonly workspaceName: string;
   readonly panes: readonly string[];
+  readonly viewerMode?: "read-only" | "interactive";
 }
 
 export interface PaneStreamTransport {
@@ -280,6 +464,7 @@ interface SafeStreamDescriptor {
   readonly requestId: string;
   readonly expiresAt: number;
   readonly panes: readonly string[];
+  readonly effectiveViewerMode: "read-only" | "interactive";
   readonly redemptionFrame: string;
 }
 
@@ -322,6 +507,7 @@ function validateIssueDescriptor(
     requestId: descriptor.requestId,
     expiresAt: descriptor.expiresAt,
     panes: descriptor.panes,
+    effectiveViewerMode: descriptor.effectiveViewerMode,
     redemptionFrame,
   };
 }
@@ -331,9 +517,67 @@ const STREAM_ERROR_REASON: Readonly<Record<string, string>> = {
   "ticket-expired": "The pane-stream ticket expired before the daemon received it.",
   "live-capacity-exhausted": "The daemon's live pane-stream capacity is exhausted.",
   "stream-unavailable": "The pane stream is unavailable.",
+  "topology-changed": "The workspace terminal inventory changed while the pane stream opened.",
   "input-rejected": "The daemon rejected pane-stream input.",
   "protocol-error": "The daemon rejected the pane-stream protocol exchange.",
 };
+
+const DIAGNOSTIC_CODES = new Set([
+  "none",
+  "disposed",
+  "stream-expired",
+  "subprotocol-mismatch",
+  "socket-unavailable",
+  "redeem-timeout",
+  "stream-closed",
+  "protocol-error",
+  "invalid-server-frame",
+  "inbound-frame-rate-limit",
+  "connection-lifetime-limit",
+  "redemption-rejected",
+  "ticket-expired",
+  "live-capacity-exhausted",
+  "stream-unavailable",
+  "topology-changed",
+  "input-rejected",
+  "renderer-backpressure",
+  "renderer-consumer-failed",
+]);
+
+const DIAGNOSTIC_CLOSE_REASONS = new Set([
+  "none",
+  "renderer-disposed",
+  "stream-expired",
+  "subprotocol-mismatch",
+  "socket-unavailable",
+  "redeem-timeout",
+  "protocol-error",
+  "invalid-server-frame",
+  "inbound-frame-rate-limit",
+  "connection-lifetime-limit",
+  "redemption-rejected",
+  "ticket-expired",
+  "live-capacity-exhausted",
+  "stream-unavailable",
+  "topology-changed",
+  "input-rejected",
+  "renderer-backpressure",
+  "renderer-consumer-failed",
+  "stream-retired",
+  "stream-closed",
+  "panes-closed",
+  "peer-closed",
+  "output-backpressure",
+  "unknown",
+]);
+
+function diagnosticCode(value: string | null | undefined): string {
+  return value && DIAGNOSTIC_CODES.has(value) ? value : value ? "unknown" : "none";
+}
+
+function diagnosticCloseReason(value: string | null | undefined): string {
+  return value && DIAGNOSTIC_CLOSE_REASONS.has(value) ? value : value ? "unknown" : "none";
+}
 
 interface PaneChannel {
   readonly pane: string;
@@ -349,6 +593,7 @@ interface PaneChannel {
   semanticPhase: "awaiting" | "live" | "faulted";
   semanticDelivery: TerminalDeliveryClientState | null;
   semanticAssembler: TerminalDeliveryAssembler | null;
+  sourceEpoch: number;
 }
 
 class PaneStreamSession {
@@ -370,6 +615,47 @@ class PaneStreamSession {
   #endNotified = false;
   #rateWindowStartedAt: number;
   #inboundFrames = 0;
+  #clientSequence = 0;
+  #authorityRuntimeSession: string | null = null;
+  #connectionClientId: string | null = null;
+  #layoutTopologyEpoch = -1;
+  #firstSeedObserved = false;
+  readonly #authorityWaiters = new Map<
+    string,
+    {
+      readonly authority: SessionRuntimeAuthorityKind;
+      readonly operation: "request" | "release";
+      readonly settle: (result: {
+        readonly lease: SessionRuntimeAuthorityLease | null;
+        readonly snapshot: SessionRuntimeAuthoritySnapshot | null;
+        readonly status:
+          | "granted"
+          | "released"
+          | "rejected"
+          | "unavailable"
+          | "authority-timeout"
+          | "closed";
+      }) => void;
+    }
+  >();
+  readonly #inputWaiters = new Map<number, (accepted: boolean) => void>();
+  readonly #viewportWaiters = new Map<
+    number,
+    {
+      readonly lease: SessionRuntimeAuthorityLease;
+      readonly cols: number;
+      readonly rows: number;
+      readonly settle: (result: "ok" | "geometry-authority-conflict" | "stream-closed") => void;
+    }
+  >();
+  readonly #heldAuthorities = new Set<"input" | "focus" | "geometry">();
+  readonly #authorityClientIds = new Map<"input" | "focus" | "geometry", string>();
+  readonly #authorityLeases = new Map<
+    "input" | "focus" | "geometry",
+    SessionRuntimeAuthorityLease
+  >();
+  #writeTail: Promise<void> = Promise.resolve();
+  #queuedWrites = 0;
 
   constructor(options: {
     readonly descriptor: SafeStreamDescriptor;
@@ -400,6 +686,7 @@ class PaneStreamSession {
         semanticPhase: "awaiting",
         semanticDelivery: null,
         semanticAssembler: null,
+        sourceEpoch: 0,
       });
     }
     this.#connectPromise = new Promise((resolve) => {
@@ -435,8 +722,357 @@ class PaneStreamSession {
   }
 
   readonly dispose = (): void => {
-    this.#retire(null, 1000, "renderer-disposed");
+    // A Web document opens one pane-stream transport per visible pane, while
+    // the daemon deliberately ref-counts them under one host-client principal.
+    // Releasing shared authority from one socket would revoke live siblings.
+    // Closing the transport binding owns ref retirement; the daemon releases
+    // the principal only when its last same-host connection closes.
+    this.#heldAuthorities.clear();
+    this.#authorityClientIds.clear();
+    this.#retire(null, 1000, "renderer-disposed", "dispose");
   };
+
+  readonly updatePresence = (state: SessionRuntimePresenceState): void => {
+    this.#sendControl({ type: "presence", generation: this.#descriptor.daemonInstanceId, state });
+  };
+
+  readonly noteActivity = (activity: SessionRuntimeActivityKind): void => {
+    this.#sendControl({
+      type: "activity",
+      generation: this.#descriptor.daemonInstanceId,
+      activity,
+    });
+  };
+
+  readonly write = async (
+    pane: string,
+    input: string | SessionRuntimeTerminalInput,
+  ): Promise<boolean> => {
+    if (this.#queuedWrites >= 256) return false;
+    this.#queuedWrites += 1;
+    let resolveResult!: (accepted: boolean) => void;
+    const result = new Promise<boolean>((resolve) => {
+      resolveResult = resolve;
+    });
+    this.#writeTail = this.#writeTail
+      .then(async () => resolveResult(await this.#writeNow(pane, input)))
+      .catch(() => resolveResult(false))
+      .finally(() => {
+        this.#queuedWrites -= 1;
+      });
+    return await result;
+  };
+
+  async #writeNow(pane: string, input: string | SessionRuntimeTerminalInput): Promise<boolean> {
+    if (!(await this.#ensureAuthority("input"))) return false;
+    const seq = ++this.#clientSequence;
+    const accepted = new Promise<boolean>((resolve) => {
+      const cancel = this.#schedule(() => {
+        this.#inputWaiters.delete(seq);
+        recordCard5InputOperation({
+          stage: "input-ack",
+          outcome: "ack-timeout",
+          generation: this.#descriptor.daemonInstanceId,
+          lifecycleRequestId: this.#descriptor.requestId,
+          clientId: this.#connectionClientId,
+          pane,
+          seq,
+        });
+        resolve(false);
+      }, 2_000);
+      this.#inputWaiters.set(seq, (didAccept) => {
+        cancel();
+        resolve(didAccept);
+      });
+    });
+    const typed = typeof input === "string" ? { kind: "text" as const, data: input } : input;
+    recordCard5InputOperation({
+      stage: "input-send",
+      outcome: "attempt",
+      generation: this.#descriptor.daemonInstanceId,
+      lifecycleRequestId: this.#descriptor.requestId,
+      clientId: this.#connectionClientId,
+      pane,
+      seq,
+    });
+    if (!this.#sendControl({ type: "input", pane, seq, ...typed })) {
+      this.#inputWaiters.get(seq)?.(false);
+      this.#inputWaiters.delete(seq);
+      recordCard5InputOperation({
+        stage: "input-send",
+        outcome: "send-failed",
+        generation: this.#descriptor.daemonInstanceId,
+        lifecycleRequestId: this.#descriptor.requestId,
+        clientId: this.#connectionClientId,
+        pane,
+        seq,
+      });
+      return false;
+    }
+    recordCard5InputOperation({
+      stage: "input-send",
+      outcome: "sent",
+      generation: this.#descriptor.daemonInstanceId,
+      lifecycleRequestId: this.#descriptor.requestId,
+      clientId: this.#connectionClientId,
+      pane,
+      seq,
+    });
+    this.noteActivity("input");
+    const didAccept = await accepted;
+    if (didAccept && this.#listeners.onInputAckObserved) {
+      const privateInput = typed.kind === "text" ? typed.data : JSON.stringify(typed);
+      const authorityClientId = this.#authorityClientIds.get("input");
+      if (!authorityClientId) return false;
+      await this.#listeners.onInputAckObserved({
+        generation: this.#descriptor.daemonInstanceId,
+        pane,
+        seq,
+        input: privateInput,
+        requestId: this.#descriptor.requestId,
+        authorityClientId,
+      });
+    }
+    return didAccept;
+  }
+
+  readonly resize = async (cols: number, rows: number): Promise<PaneStreamResizeResult> => {
+    if (this.#phase !== "live" || this.#socket.readyState !== WS_OPEN) {
+      return "lifecycle-retired";
+    }
+    if (!this.#heldAuthorities.has("geometry")) {
+      const authority = await this.#requestAuthorityOutcome("geometry");
+      if (authority.status === "rejected") return "geometry-authority-conflict";
+      if (authority.status === "authority-timeout") return "authority-timeout";
+      if (authority.status === "closed") return "stream-closed";
+      if (authority.status !== "granted") return "failed";
+    }
+    const authorityLease = this.#authorityLeases.get("geometry");
+    if (!authorityLease) return "geometry-authority-conflict";
+    const seq = ++this.#clientSequence;
+    const accepted = new Promise<
+      "ok" | "geometry-authority-conflict" | "viewport-timeout" | "stream-closed"
+    >((resolve) => {
+      const cancel = this.#schedule(() => {
+        this.#viewportWaiters.delete(seq);
+        resolve("viewport-timeout");
+      }, 2_000);
+      this.#viewportWaiters.set(seq, {
+        lease: authorityLease,
+        cols,
+        rows,
+        settle: (result) => {
+          cancel();
+          resolve(result);
+        },
+      });
+    });
+    this.#sendControl({ type: "viewport", seq, cols, rows, authorityLease });
+    this.noteActivity("geometry");
+    const didAccept = await accepted;
+    const authorityClientId = this.#authorityClientIds.get("geometry");
+    if (didAccept === "ok" && authorityClientId) {
+      this.#listeners.onViewportAckObserved?.({
+        generation: this.#descriptor.daemonInstanceId,
+        requestId: this.#descriptor.requestId,
+        authorityClientId,
+        seq,
+        cols,
+        rows,
+      });
+    }
+    if (didAccept !== "ok") return didAccept;
+    return authorityClientId !== undefined &&
+      this.#authorityLeases.get("geometry") === authorityLease
+      ? "ok"
+      : "geometry-authority-conflict";
+  };
+
+  async #ensureAuthority(authority: "input" | "geometry"): Promise<boolean> {
+    if (this.#phase !== "live" || this.#socket.readyState !== WS_OPEN) return false;
+    if (this.#heldAuthorities.has(authority)) return true;
+    return (await this.requestAuthority(authority)) !== null;
+  }
+
+  readonly requestAuthority = async (
+    authority: SessionRuntimeAuthorityKind,
+  ): Promise<SessionRuntimeAuthorityLease | null> => {
+    const result = await this.#requestAuthorityOutcome(authority);
+    return result.status === "granted" ? result.lease : null;
+  };
+
+  async #requestAuthorityOutcome(authority: SessionRuntimeAuthorityKind): Promise<{
+    readonly lease: SessionRuntimeAuthorityLease | null;
+    readonly status: "granted" | "rejected" | "unavailable" | "authority-timeout" | "closed";
+  }> {
+    if (this.#phase !== "live" || this.#socket.readyState !== WS_OPEN) {
+      return { lease: null, status: "closed" };
+    }
+    const requestId = globalThis.crypto.randomUUID();
+    if (authority === "input")
+      recordCard5InputOperation({
+        stage: "authority-request",
+        outcome: "attempt",
+        generation: this.#descriptor.daemonInstanceId,
+        lifecycleRequestId: this.#descriptor.requestId,
+        authorityRequestId: requestId,
+        clientId: this.#connectionClientId,
+      });
+    const result = new Promise<{
+      readonly lease: SessionRuntimeAuthorityLease | null;
+      readonly status: "granted" | "rejected" | "unavailable" | "authority-timeout" | "closed";
+    }>((resolve) => {
+      const cancel = this.#schedule(() => {
+        this.#authorityWaiters.delete(requestId);
+        if (authority === "input")
+          recordCard5InputOperation({
+            stage: "authority-result",
+            outcome: "authority-timeout",
+            generation: this.#descriptor.daemonInstanceId,
+            lifecycleRequestId: this.#descriptor.requestId,
+            authorityRequestId: requestId,
+            clientId: this.#connectionClientId,
+          });
+        resolve({ lease: null, status: "authority-timeout" });
+      }, 2_000);
+      this.#authorityWaiters.set(requestId, {
+        authority,
+        operation: "request",
+        settle: ({ lease, status }) => {
+          cancel();
+          if (authority === "input")
+            recordCard5InputOperation({
+              stage: "authority-result",
+              outcome:
+                status === "granted" ||
+                status === "rejected" ||
+                status === "closed" ||
+                status === "unavailable"
+                  ? status
+                  : "authority-timeout",
+              generation: this.#descriptor.daemonInstanceId,
+              lifecycleRequestId: this.#descriptor.requestId,
+              authorityRequestId: requestId,
+              clientId: lease?.clientId ?? this.#connectionClientId,
+            });
+          resolve({
+            lease,
+            status:
+              status === "granted" ||
+              status === "rejected" ||
+              status === "authority-timeout" ||
+              status === "closed"
+                ? status
+                : "unavailable",
+          });
+        },
+      });
+    });
+    if (
+      !this.#sendControl({
+        type: "authority-request",
+        generation: this.#descriptor.daemonInstanceId,
+        requestId,
+        authority,
+      })
+    ) {
+      this.#authorityWaiters.get(requestId)?.settle({
+        lease: null,
+        snapshot: null,
+        status: "closed",
+      });
+      this.#authorityWaiters.delete(requestId);
+      if (authority === "input")
+        recordCard5InputOperation({
+          stage: "authority-request",
+          outcome: "send-failed",
+          generation: this.#descriptor.daemonInstanceId,
+          lifecycleRequestId: this.#descriptor.requestId,
+          authorityRequestId: requestId,
+          clientId: this.#connectionClientId,
+        });
+    } else if (authority === "input") {
+      recordCard5InputOperation({
+        stage: "authority-request",
+        outcome: "sent",
+        generation: this.#descriptor.daemonInstanceId,
+        lifecycleRequestId: this.#descriptor.requestId,
+        authorityRequestId: requestId,
+        clientId: this.#connectionClientId,
+      });
+    }
+    return await result;
+  }
+
+  readonly releaseAuthority = async (
+    authority: SessionRuntimeAuthorityKind,
+  ): Promise<SessionRuntimeAuthoritySnapshot | null> => {
+    if (this.#phase !== "live" || this.#socket.readyState !== WS_OPEN) return null;
+    const authorityClientId = this.connectionAuthorityClientId(authority);
+    if (authorityClientId === null) return null;
+    // Release is authoritative from initiation. No second caller on this
+    // connection may reuse or release the prior lease while the ACK is pending.
+    this.#heldAuthorities.delete(authority);
+    this.#authorityClientIds.delete(authority);
+    this.#authorityLeases.delete(authority);
+    const requestId = globalThis.crypto.randomUUID();
+    const result = new Promise<SessionRuntimeAuthoritySnapshot | null>((resolve) => {
+      const cancel = this.#schedule(() => {
+        this.#authorityWaiters.delete(requestId);
+        resolve(null);
+      }, 2_000);
+      this.#authorityWaiters.set(requestId, {
+        authority,
+        operation: "release",
+        settle: ({ snapshot }) => {
+          cancel();
+          resolve(snapshot);
+        },
+      });
+    });
+    this.#sendControl({
+      type: "authority-release",
+      generation: this.#descriptor.daemonInstanceId,
+      requestId,
+      authority,
+    });
+    return await result;
+  };
+
+  readonly connectionAuthorityClientId = (
+    authority: SessionRuntimeAuthorityKind,
+  ): string | null => {
+    if (this.#phase !== "live" || this.#socket.readyState !== WS_OPEN) return null;
+    const clientId = this.#authorityClientIds.get(authority);
+    const lease = this.#authorityLeases.get(authority);
+    return this.#heldAuthorities.has(authority) &&
+      typeof clientId === "string" &&
+      clientId.length > 0 &&
+      lease?.clientId === clientId &&
+      lease.authority === authority &&
+      lease.generation === this.#descriptor.daemonInstanceId &&
+      lease.session === this.#authorityRuntimeSession
+      ? clientId
+      : null;
+  };
+
+  readonly connectionClientId = (): string | null =>
+    this.#phase === "live" ? this.#connectionClientId : null;
+
+  #sendControl(frame: object): boolean {
+    if (this.#phase !== "live" || this.#socket.readyState !== WS_OPEN) return false;
+    try {
+      this.#socket.send(JSON.stringify(frame));
+      return true;
+    } catch {
+      this.#retire(
+        transportError("socket-unavailable", "The pane-stream WebSocket became unavailable.", true),
+        1011,
+        "socket-unavailable",
+      );
+      return false;
+    }
+  }
 
   readonly #onOpen = (): void => {
     if (this.#phase !== "opening") return;
@@ -466,6 +1102,7 @@ class PaneStreamSession {
     const frame = this.#redemptionFrame;
     this.#redemptionFrame = null;
     this.#phase = "redeeming";
+    this.#recordDiagnostic("socket-open");
     try {
       this.#socket.send(frame);
     } catch {
@@ -496,17 +1133,18 @@ class PaneStreamSession {
     );
   };
 
-  readonly #onClose = (): void => {
+  readonly #onClose = (event: PaneStreamSocketEvent): void => {
     if (this.#phase === "closed") return;
     const allClosed = [...this.#panes.values()].every((channel) => channel.closed);
     if (allClosed && this.#phase === "live") {
-      this.#retire(null);
+      this.#retire(null, event.code, event.reason, "peer");
       return;
     }
     this.#retire(
       transportError("stream-closed", "The pane-stream connection closed.", true),
-      undefined,
-      undefined,
+      event.code,
+      event.reason,
+      "peer",
     );
   };
 
@@ -516,6 +1154,7 @@ class PaneStreamSession {
       transportError("socket-unavailable", "The pane-stream WebSocket became unavailable.", true),
       1011,
       "socket-unavailable",
+      "peer",
     );
   };
 
@@ -587,14 +1226,17 @@ class PaneStreamSession {
         this.#phase !== "redeeming" ||
         frame.daemonInstanceId !== this.#descriptor.daemonInstanceId ||
         frame.requestId !== this.#descriptor.requestId ||
-        frame.effectiveViewerMode !== "read-only" ||
+        frame.effectiveViewerMode !== this.#descriptor.effectiveViewerMode ||
         frame.panes.length !== this.#descriptor.panes.length ||
         frame.panes.some((pane, index) => pane !== this.#descriptor.panes[index])
       ) {
         this.#protocolFailure();
         return;
       }
+      this.#connectionClientId = frame.connectionClientId ?? null;
+      if (frame.authority && !this.#applyAuthoritySnapshot(frame.authority)) return;
       this.#phase = "live";
+      this.#recordDiagnostic("server-ready");
       this.#cancelRedeemResponse?.();
       this.#cancelRedeemResponse = null;
       this.#cancelLifetime = this.#schedule(
@@ -612,7 +1254,17 @@ class PaneStreamSession {
       );
       this.#settleConnect({
         status: "connected",
-        session: Object.freeze({ dispose: this.dispose }),
+        session: Object.freeze({
+          dispose: this.dispose,
+          updatePresence: this.updatePresence,
+          noteActivity: this.noteActivity,
+          connectionClientId: this.connectionClientId,
+          connectionAuthorityClientId: this.connectionAuthorityClientId,
+          write: this.write,
+          resize: this.resize,
+          requestAuthority: this.requestAuthority,
+          releaseAuthority: this.releaseAuthority,
+        }),
       });
       return;
     }
@@ -630,6 +1282,7 @@ class PaneStreamSession {
         ),
         1008,
         frame.code,
+        "peer",
       );
       return;
     }
@@ -648,9 +1301,99 @@ class PaneStreamSession {
       return;
     }
 
+    if (frame.type === "layout-snapshot") {
+      if (frame.topologyEpoch <= this.#layoutTopologyEpoch) {
+        this.#protocolFailure();
+        return;
+      }
+      this.#layoutTopologyEpoch = frame.topologyEpoch;
+      this.#recordDiagnostic("layout-validated");
+      try {
+        this.#listeners.onLayoutSnapshot?.({
+          topologyEpoch: frame.topologyEpoch,
+          layouts: frame.layouts,
+        });
+      } catch {
+        // A layout consumer fault cannot destabilize the byte stream.
+      }
+      return;
+    }
+
     if (frame.type === "input-ack") {
-      // Read-only card: no input frame was ever sent, so an ack is impossible.
-      this.#protocolFailure();
+      const settle = this.#inputWaiters.get(frame.seq);
+      if (!settle) {
+        this.#protocolFailure();
+        return;
+      }
+      this.#inputWaiters.delete(frame.seq);
+      recordCard5InputOperation({
+        stage: "input-ack",
+        outcome: "ok",
+        generation: this.#descriptor.daemonInstanceId,
+        lifecycleRequestId: this.#descriptor.requestId,
+        clientId: this.#connectionClientId,
+        pane: frame.pane,
+        seq: frame.seq,
+      });
+      settle(true);
+      return;
+    }
+    if (frame.type === "authority-snapshot") {
+      this.#applyAuthoritySnapshot(frame.snapshot);
+      return;
+    }
+    if (frame.type === "authority-receipt") {
+      const waiter = this.#authorityWaiters.get(frame.requestId);
+      const lease = frame.status === "granted" ? frame.lease : null;
+      if (
+        !waiter ||
+        waiter.authority !== frame.authority ||
+        (waiter.operation === "request"
+          ? frame.status !== "granted" && frame.status !== "rejected"
+          : frame.status !== "released") ||
+        (frame.status === "granted" ? frame.lease === null : frame.lease !== null) ||
+        !this.#acceptAuthoritySnapshotIdentity(frame.snapshot) ||
+        (lease !== null &&
+          (lease.authority !== waiter.authority ||
+            lease.generation !== this.#descriptor.daemonInstanceId ||
+            lease.session !== this.#authorityRuntimeSession ||
+            lease.revision > frame.snapshot.revision ||
+            frame.snapshot.owners[waiter.authority] !== lease.clientId))
+      ) {
+        this.#protocolFailure();
+        return;
+      }
+      this.#authorityWaiters.delete(frame.requestId);
+      if (frame.status === "granted" && frame.lease) {
+        this.#heldAuthorities.add(frame.authority);
+        this.#authorityClientIds.set(frame.authority, frame.lease.clientId);
+        this.#authorityLeases.set(frame.authority, frame.lease);
+      } else {
+        this.#heldAuthorities.delete(frame.authority);
+        this.#authorityClientIds.delete(frame.authority);
+        this.#authorityLeases.delete(frame.authority);
+      }
+      if (!this.#applyAuthoritySnapshot(frame.snapshot)) return;
+      waiter.settle({
+        lease: frame.status === "granted" ? frame.lease : null,
+        snapshot: frame.snapshot,
+        status: frame.status,
+      });
+      return;
+    }
+    if (frame.type === "viewport-ack") {
+      const waiter = this.#viewportWaiters.get(frame.seq);
+      if (
+        !waiter ||
+        !sameAuthorityLease(waiter.lease, frame.authorityLease) ||
+        waiter.cols !== frame.cols ||
+        waiter.rows !== frame.rows
+      ) {
+        this.#protocolFailure();
+        return;
+      }
+      this.#viewportWaiters.delete(frame.seq);
+      waiter.settle(frame.outcome);
       return;
     }
 
@@ -679,6 +1422,7 @@ class PaneStreamSession {
       );
       channel.semanticPhase = "live";
       channel.semanticAssembler = null;
+      this.#recordDiagnostic("delivery-open");
       return;
     }
     if (frame.type === "terminal-delivery-envelope") {
@@ -737,31 +1481,107 @@ class PaneStreamSession {
           channel.semanticDelivery,
           channel.semanticAssembler,
         );
-        // Decode before commit so malformed semantic payloads retire the lane.
-        const semanticUpdate = decodeSemanticTerminalUpdate(staged.bytes);
+        const deliveryEnvelope = staged.envelope;
         const previousSnapshot = channel.semanticDelivery.canonicalSnapshot;
         const committed = commitTerminalDelivery(channel.semanticDelivery, staged);
+        const semanticUpdate = committed.semanticUpdate;
+        if (!semanticUpdate) throw new TypeError("Semantic delivery did not produce an update");
         channel.semanticDelivery = committed.state;
         if (this.#performanceTelemetry?.enabled) this.#performanceTelemetry.recordRevisionLag(0);
         channel.semanticAssembler = null;
         const snapshot = committed.state.canonicalSnapshot;
+        const dimensions = snapshot ?? previousSnapshot;
+        if (!dimensions) throw new TypeError("Semantic delivery did not retain dimensions");
+        const canonicalUpdate = Object.freeze({
+          workspaceName: deliveryEnvelope.workspaceName,
+          semanticPaneId: deliveryEnvelope.semanticPaneId,
+          generation: deliveryEnvelope.generation,
+          incarnation: deliveryEnvelope.incarnation,
+          cols: dimensions.cols,
+          rows: dimensions.rows,
+          stateHash: deliveryEnvelope.canonicalStateHash,
+          hashAlgorithm: "fnv1a64-v1" as const,
+          ...(semanticUpdate.frame === "seed"
+            ? {
+                type: "terminal.seed" as const,
+                revision: semanticUpdate.revision,
+                snapshot: semanticUpdate.snapshot,
+              }
+            : semanticUpdate.frame === "patch"
+              ? {
+                  type: "terminal.patch" as const,
+                  baseRevision: semanticUpdate.baseRevision,
+                  revision: semanticUpdate.revision,
+                  patch: semanticUpdate.patch,
+                }
+              : {
+                  type: "terminal.tombstone" as const,
+                  baseRevision: semanticUpdate.baseRevision,
+                  revision: semanticUpdate.revision,
+                  tombstone: semanticUpdate.tombstone,
+                }),
+        }) satisfies CanonicalTerminalReplicaUpdate;
         if (!snapshot) {
-          this.#deliverSemantic(channel, { type: "closed" }, committed.ack);
+          this.#deliverSemantic(channel, { type: "closed", canonicalUpdate }, committed.ack);
           return;
         }
+        if (semanticUpdate.frame === "tombstone") {
+          throw new TypeError("Semantic tombstone retained a canonical snapshot");
+        }
+        if (semanticUpdate.frame === "patch" && !previousSnapshot) {
+          throw new TypeError("Semantic patch did not retain its exact canonical baseline");
+        }
+        if (!committed.state.incarnation || !committed.state.appliedHash) {
+          throw new TypeError("Semantic delivery did not retain its exact canonical identity");
+        }
+        if (semanticUpdate.frame === "seed") channel.sourceEpoch += 1;
+        const fullGridWalk =
+          semanticUpdate.frame === "seed" ||
+          semanticUpdate.patch.dimensions !== undefined ||
+          previousSnapshot?.modes.alternateScreen !== snapshot.modes.alternateScreen;
+        const projectedRows =
+          semanticUpdate.frame === "patch" && !fullGridWalk
+            ? semanticUpdate.patch.rows.map(({ row }) => row)
+            : snapshot.grid;
+        const canonical = Object.freeze({
+          deliveryRequestId: this.#descriptor.requestId,
+          generation: committed.state.negotiated.generation,
+          incarnation: committed.state.incarnation,
+          revision: committed.state.appliedRevision,
+          stateHash: committed.state.appliedHash,
+          cols: snapshot.cols,
+          rows: snapshot.rows,
+          sourceEpoch: channel.sourceEpoch,
+          alternateScreen: snapshot.modes.alternateScreen,
+          cursor: Object.freeze({ ...snapshot.cursor }),
+          gridRowsRead: projectedRows.length,
+          gridCellsRead: projectedRows.reduce((total, row) => total + row.cells.length, 0),
+          fullGridWalks: fullGridWalk ? 1 : 0,
+        } satisfies PaneMirrorCanonicalProjection);
         const ansi =
-          semanticUpdate.frame === "patch"
-            ? encodeAnsiTerminalPatchRepresentation(semanticUpdate.patch, snapshot)
+          semanticUpdate.frame === "patch" && previousSnapshot
+            ? encodeAnsiTerminalPatchRepresentation(
+                semanticUpdate.patch,
+                snapshot,
+                previousSnapshot,
+              )
             : encodeAnsiTerminalRepresentation(previousSnapshot, snapshot);
         const requiresAtomicReset =
           !previousSnapshot ||
           previousSnapshot.cols !== snapshot.cols ||
           previousSnapshot.rows !== snapshot.rows;
+        if (!this.#firstSeedObserved) {
+          this.#firstSeedObserved = true;
+          this.#recordDiagnostic("first-seed");
+        }
         this.#deliverSemantic(
           channel,
           requiresAtomicReset
             ? {
                 type: "seed-batch",
+                canonical,
+                canonicalUpdate,
+                canonicalSnapshot: snapshot,
                 batch: {
                   reset: { cols: snapshot.cols, rows: snapshot.rows },
                   seed: ansi,
@@ -772,6 +1592,9 @@ class PaneStreamSession {
             : {
                 type: "output",
                 bytes: ansi,
+                canonical,
+                canonicalUpdate,
+                canonicalSnapshot: snapshot,
                 // Snapshot state already exists for semantic validation. Keep
                 // it by reference and do the full-grid ANSI materialization
                 // only if a replacement sink actually asks for a repaint.
@@ -948,6 +1771,7 @@ class PaneStreamSession {
         await this.#listeners.onPaneEvent(channel.pane, event);
         if (ack && this.#socket.readyState === WS_OPEN) {
           this.#socket.send(JSON.stringify({ type: "terminal-delivery-ack", ack }));
+          this.#listeners.onDeliveryAckSent?.(ack);
         }
       })
       .catch(() => {
@@ -1002,11 +1826,35 @@ class PaneStreamSession {
     }
   }
 
+  #acceptAuthoritySnapshotIdentity(snapshot: SessionRuntimeAuthoritySnapshot): boolean {
+    if (snapshot.generation !== this.#descriptor.daemonInstanceId) return false;
+    if (this.#authorityRuntimeSession === null) this.#authorityRuntimeSession = snapshot.session;
+    return snapshot.session === this.#authorityRuntimeSession;
+  }
+
+  #applyAuthoritySnapshot(snapshot: SessionRuntimeAuthoritySnapshot): boolean {
+    if (!this.#acceptAuthoritySnapshotIdentity(snapshot)) {
+      this.#protocolFailure();
+      return false;
+    }
+    for (const authority of ["input", "focus", "geometry"] as const) {
+      const knownClientId = this.#authorityClientIds.get(authority);
+      if (!knownClientId || snapshot.owners[authority] !== knownClientId) {
+        this.#heldAuthorities.delete(authority);
+        this.#authorityClientIds.delete(authority);
+        this.#authorityLeases.delete(authority);
+      }
+    }
+    this.#listeners.onAuthoritySnapshot?.(snapshot);
+    return true;
+  }
+
   #protocolFailure(): void {
     this.#retire(
       transportError("protocol-error", "The pane-stream WebSocket protocol was invalid.", false),
       1002,
       "protocol-error",
+      "peer",
     );
   }
 
@@ -1016,9 +1864,40 @@ class PaneStreamSession {
     this.#resolveConnect(result);
   }
 
-  #retire(error: PaneStreamTransportError | null, closeCode?: number, closeReason?: string): void {
+  #recordDiagnostic(
+    stage: PaneStreamDiagnosticStage,
+    code: string | null = null,
+    origin: PaneStreamDiagnosticLifecycleEvent["origin"] = "unknown",
+    closeCode: number | null = null,
+    closeReason: string | null = null,
+  ): void {
+    this.#listeners.onDiagnosticLifecycle?.({
+      generation: this.#descriptor.daemonInstanceId,
+      requestId: this.#descriptor.requestId,
+      stage,
+      code: diagnosticCode(code),
+      origin,
+      closeCode:
+        Number.isInteger(closeCode) && closeCode! >= 1000 && closeCode! <= 4999 ? closeCode : null,
+      closeReason: diagnosticCloseReason(closeReason),
+    });
+  }
+
+  #retire(
+    error: PaneStreamTransportError | null,
+    closeCode?: number,
+    closeReason?: string,
+    origin: PaneStreamDiagnosticLifecycleEvent["origin"] = "client",
+  ): void {
     if (this.#phase === "closed") return;
     const wasLive = this.#phase === "live";
+    this.#recordDiagnostic(
+      "terminal",
+      error?.code ?? (origin === "dispose" ? "disposed" : null),
+      origin,
+      closeCode ?? null,
+      closeReason ?? null,
+    );
     this.#phase = "closed";
     this.#redemptionFrame = null;
     this.#cancelExpiry?.();
@@ -1027,6 +1906,14 @@ class PaneStreamSession {
     this.#cancelRedeemResponse = null;
     this.#cancelLifetime?.();
     this.#cancelLifetime = null;
+    for (const waiter of this.#authorityWaiters.values()) {
+      waiter.settle({ lease: null, snapshot: null, status: "closed" });
+    }
+    this.#authorityWaiters.clear();
+    for (const waiter of this.#viewportWaiters.values()) waiter.settle("stream-closed");
+    this.#viewportWaiters.clear();
+    for (const settle of this.#inputWaiters.values()) settle(false);
+    this.#inputWaiters.clear();
     this.#socket.removeEventListener("open", this.#onOpen);
     this.#socket.removeEventListener("message", this.#onMessage);
     this.#socket.removeEventListener("close", this.#onClose);
@@ -1112,7 +1999,7 @@ export function createPaneStreamTransport(
     dependencies.terminalDelivery === undefined
       ? ({
           protocolVersions: [1],
-          encodings: ["semantic-v1"],
+          encodings: ["semantic-compact-v1", "semantic-v1"],
           richPlacements: true,
         } as const)
       : dependencies.terminalDelivery;
@@ -1126,7 +2013,7 @@ export function createPaneStreamTransport(
         protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
         workspaceName: request.workspaceName,
         panes: request.panes,
-        viewerMode: "read-only",
+        viewerMode: request.viewerMode ?? "read-only",
         ...(terminalDelivery ? { terminalDelivery } : {}),
       });
       if (
@@ -1165,6 +2052,21 @@ export function createPaneStreamTransport(
           ),
         };
       }
+      listeners.onDescriptorIssued?.({
+        daemonInstanceId: descriptor.daemonInstanceId,
+        requestId: descriptor.requestId,
+        webSocketUrl: descriptor.webSocketUrl,
+        subprotocol: PANE_STREAM_TRANSPORT_PROTOCOL,
+      });
+      listeners.onDiagnosticLifecycle?.({
+        generation: descriptor.daemonInstanceId,
+        requestId: descriptor.requestId,
+        stage: "issued",
+        code: "none",
+        origin: "client",
+        closeCode: null,
+        closeReason: "none",
+      });
 
       let socket: PaneStreamWebSocket;
       try {

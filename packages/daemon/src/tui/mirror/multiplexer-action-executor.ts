@@ -18,15 +18,17 @@ import {
 } from "../../lib/canonical-daemon.ts";
 import type { SessionPaneDescriptor } from "../../terminal/protocol/session-descriptor-discovery.ts";
 import {
-  fetchCanonicalWorkspaceCatalog,
-  workspaceNameForSession,
+  fetchCanonicalWorkspaceRouting,
+  workspaceNameForLiveSession,
 } from "./canonical-workspace-routing.ts";
+import { OPEN_TUI_HOST_CLIENT_ID } from "./open-tui-workspace-runtime-port.ts";
 
 export type TuiMultiplexerAction =
   | { kind: "rename-session"; name: string }
   | { kind: "kill-session" }
   | { kind: "new-window" }
   | { kind: "rename-window"; name: string }
+  | { kind: "rename-pane"; name: string }
   | { kind: "kill-window" }
   | { kind: "zoom-pane" }
   | { kind: "swap-pane" }
@@ -68,6 +70,9 @@ const DEFAULT_DEPS: TuiMultiplexerExecutorDeps = {
     dispatchOwnerAction({
       baseUrl: canonicalDaemonUrl("http", daemon.bindHostname, daemon.port),
       ownerToken: daemon.authToken ?? "",
+      // Semantic mutations must present the same principal as the live
+      // OpenTUI runtime lane. Omitting it correctly loses the controller race.
+      hostClientId: OPEN_TUI_HOST_CLIENT_ID,
       name,
       input,
       operationId: options.operationId,
@@ -95,6 +100,10 @@ function localCommand(action: TuiMultiplexerAction, context: TuiMultiplexerConte
     }
     case "rename-window":
       return pane ? `rename-window -t ${pane} ${tmuxQuote(action.name)}` : null;
+    case "rename-pane":
+      return pane
+        ? `set-option -p -t ${pane} @ide_name ${tmuxQuote(action.name)} ; set-option -p -t ${pane} @tmux_ide_name_source manual ; select-pane -t ${pane} -T ${tmuxQuote(action.name)}`
+        : null;
     case "kill-window":
       return pane ? `kill-window -t ${pane}` : null;
     case "zoom-pane":
@@ -124,6 +133,8 @@ function successMessage(action: TuiMultiplexerAction, result?: unknown): string 
       return "new window";
     case "rename-window":
       return `renamed window → ${action.name}`;
+    case "rename-pane":
+      return `renamed pane → ${action.name}`;
     case "kill-window":
       return "closed window";
     case "zoom-pane": {
@@ -219,6 +230,18 @@ async function dispatch(
           workspaceName,
           scope: "window",
           target: { by: "pane", semanticPaneId: pane!.semanticPaneId },
+          name: action.name,
+        },
+        options,
+      );
+    case "rename-pane":
+      return deps.dispatchAction(
+        daemon,
+        "workspace.rename",
+        {
+          workspaceName,
+          scope: "pane",
+          semanticPaneId: pane!.semanticPaneId,
           name: action.name,
         },
         options,
@@ -323,8 +346,8 @@ export async function executeTuiMultiplexerAction(
   }
 
   try {
-    const catalog = await fetchCanonicalWorkspaceCatalog(canonical, deps.fetch);
-    const workspaceName = workspaceNameForSession(catalog, context.sessionName);
+    const catalog = await fetchCanonicalWorkspaceRouting(canonical, deps.fetch);
+    const workspaceName = workspaceNameForLiveSession(catalog, context.sessionName);
     if (!workspaceName) {
       return {
         status: "error",

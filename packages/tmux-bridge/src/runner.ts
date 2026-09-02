@@ -56,6 +56,23 @@ export function runTmux(args: string[], options: ExecFileSyncOptions = {}): stri
   return runTmuxBinary("tmux", args, options);
 }
 
+/**
+ * A tmux client may implicitly create the server. Keep the caller's ordinary
+ * execution context, but never let a headless parent's color opt-out become
+ * the server-global environment inherited by interactive sessions.
+ */
+export function sanitizeTmuxClientEnvironment(
+  source: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {
+    ...source,
+    COLORTERM: "truecolor",
+    COLORFGBG: "15;0",
+  };
+  delete environment.NO_COLOR;
+  return environment;
+}
+
 /** Execute a daemon-pinned tmux binary without consulting PATH at mutation time. */
 export function runTmuxBinary(
   executable: string,
@@ -69,6 +86,7 @@ export function runTmuxBinary(
   const execOptions: ExecFileSyncOptions = {
     stdio: ["ignore", "pipe", "pipe"],
     ...options,
+    env: sanitizeTmuxClientEnvironment(options.env ?? process.env),
   };
 
   try {

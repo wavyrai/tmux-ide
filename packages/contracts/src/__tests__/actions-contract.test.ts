@@ -37,6 +37,22 @@ describe("daemon action contract", () => {
     }
   });
 
+  it("renames panes through semantic identity only", () => {
+    const input = {
+      workspaceName: "workspace.alpha",
+      scope: "pane",
+      semanticPaneId: "pane.main",
+      name: "Build monitor",
+    } as const;
+    expect(ActionContractsZ["workspace.rename"].input.parse(input)).toEqual(input);
+    expect(
+      ActionContractsZ["workspace.rename"].input.safeParse({
+        ...input,
+        semanticPaneId: "%42",
+      }).success,
+    ).toBe(false);
+  });
+
   it("keeps config-free workspace admission semantic and its result browser-safe", () => {
     expect(ActionContractsZ["workspace.open"].input.parse({ projectDir: "/tmp/project" })).toEqual({
       projectDir: "/tmp/project",
@@ -66,6 +82,20 @@ describe("daemon action contract", () => {
       },
     });
     expect(JSON.stringify(result)).not.toMatch(/projectDir|sessionName|runtime|tmux|path/u);
+  });
+
+  it("lets the trusted desktop host select a folder without exposing its path", () => {
+    const input = {
+      source: { kind: "host-selection" },
+      previousWorkspaceName: "workspace.alpha",
+    } as const;
+    expect(ActionContractsZ["workspace.open.prepare"].input.parse(input)).toEqual(input);
+    expect(
+      ActionContractsZ["workspace.open.prepare"].input.safeParse({
+        ...input,
+        source: { kind: "host-selection", projectDir: "/private/project" },
+      }).success,
+    ).toBe(false);
   });
 
   it("accepts only semantic pane identities for a swap", () => {

@@ -16,13 +16,21 @@ import { discoverSessions, buildOverviews, buildProjectDetail } from "./discover
 import type { AgentTurnCompletion } from "./agent-status-watch.ts";
 import {
   DaemonFleetFactsObserver,
+  AGENT_STATE_TMUX_ARGS,
+  parseAgentStateFacts,
+  parseSessionCompositionFacts,
   readAgentStateFacts,
   readSessionCompositionFacts,
+  SESSION_COMPOSITION_TMUX_ARGS,
   type DaemonFleetFactsObserverOptions,
+  type DaemonFleetFactsObserverDiagnostic,
 } from "./daemon-fleet-facts-observer.ts";
 import { agentIdForPaneStamp } from "./resources/application-shell.ts";
 import { projectRegistryEmitter } from "../lib/project-registry.ts";
-import { getDefaultWorkspaceRegistry } from "../lib/workspace-registry.ts";
+import {
+  getDefaultWorkspaceRegistry,
+  isTmuxServerUnavailableError,
+} from "../lib/workspace-registry.ts";
 import {
   DaemonEventClientFrameSchemaZ,
   DaemonEventResourceChangedFrameSchemaZ,
@@ -127,7 +135,14 @@ export function broadcastResourceChanged(
 ): DaemonEventResourceChangedFrame {
   useResourceEventGeneration(daemonInstanceId);
   const key = resourceRevisionKey(change.workspaceName, change.resource);
-  const previousRevision = resourceRevisions.get(key) ?? 0;
+  // Terminal topology has both global (out-of-band tmux) and workspace-scoped
+  // invalidations. They describe one authority and therefore require one
+  // monotonically increasing daemon-generation clock across both scopes.
+  const revisionKey =
+    change.resource === "terminal-runtime-inventory"
+      ? resourceRevisionKey(null, change.resource)
+      : key;
+  const previousRevision = resourceRevisions.get(revisionKey) ?? 0;
   // A domain revision (for example AppWindow documentRevision) is a useful
   // lower bound, not the resource projection's whole clock: pane creation and
   // tmux mutations also change application-shell. Always advance strictly so
@@ -142,13 +157,24 @@ export function broadcastResourceChanged(
     causeOperationId: change.causeOperationId ?? null,
   });
   resourceEventSequence = frame.sequence;
-  resourceRevisions.set(key, revision);
+  resourceRevisions.set(revisionKey, revision);
   resourceEventJournal.push(frame);
   if (resourceEventJournal.length > RESOURCE_EVENT_JOURNAL_LIMIT) {
     resourceEventJournal.splice(0, resourceEventJournal.length - RESOURCE_EVENT_JOURNAL_LIMIT);
   }
   for (const client of allClients) client.broadcastResourceChanged(frame);
   return frame;
+}
+
+/** Current generation-scoped revision for a resource snapshot read barrier. */
+export function currentResourceRevision(
+  workspaceName: string,
+  resource: DaemonEventResourceKind,
+): number {
+  return Math.max(
+    resourceRevisions.get(resourceRevisionKey(workspaceName, resource)) ?? 0,
+    resourceRevisions.get(resourceRevisionKey(null, resource)) ?? 0,
+  );
 }
 
 export interface InteractionReceiptBroadcast {
@@ -198,10 +224,13 @@ export function broadcastInteractionReceipt(
 let projectRegistryListener: (() => void) | null = null;
 let workspaceRegistryListenerReleases: readonly (() => void)[] = [];
 let fleetFactsObserver: DaemonFleetFactsObserver | null = null;
+let fleetFactsDiagnostics: DaemonFleetFactsObserverOptions["diagnostics"] | undefined;
 let fleetFactsReaderOverride: Pick<
   DaemonFleetFactsObserverOptions,
   "readSessions" | "readAgents"
 > | null = null;
+let sessionCompositionReaderOverride: DaemonFleetFactsObserverOptions["readSessions"] | null = null;
+let agentStateReaderOverride: DaemonFleetFactsObserverOptions["readAgents"] | null = null;
 let sessionsObserverRefs = 0;
 let projectRegistryObserverRefs = 0;
 let agentStatusObserverRefs = 0;
@@ -238,7 +267,26 @@ function broadcastSessionCompositionChanged(): void {
       { workspaceName: null, resource: "fleet-catalog" },
       resourceEventGeneration,
     );
+    broadcastResourceChanged(
+      { workspaceName: null, resource: "terminal-runtime-inventory" },
+      resourceEventGeneration,
+    );
   }
+}
+
+function broadcastTerminalTopologyChanged(): void {
+  if (!resourceEventGeneration) return;
+  // Pane counts and the V3 tmux-incarnation identity are catalog facts even
+  // when the visible session name is unchanged (for example, same-name
+  // session recreation after a tmux server restart).
+  broadcastResourceChanged(
+    { workspaceName: null, resource: "workspace-catalog" },
+    resourceEventGeneration,
+  );
+  broadcastResourceChanged(
+    { workspaceName: null, resource: "terminal-runtime-inventory" },
+    resourceEventGeneration,
+  );
 }
 
 /**
@@ -253,6 +301,10 @@ function ensureProjectRegistryListener(): void {
     if (resourceEventGeneration) {
       broadcastResourceChanged(
         { workspaceName: null, resource: "workspace-catalog" },
+        resourceEventGeneration,
+      );
+      broadcastResourceChanged(
+        { workspaceName: null, resource: "terminal-runtime-inventory" },
         resourceEventGeneration,
       );
     }
@@ -340,12 +392,14 @@ function broadcastAdoptedCompositionChanged(): void {
 
 function ensureFleetFactsObserver(): DaemonFleetFactsObserver {
   const readers = fleetFactsReaderOverride ?? {
-    readSessions: readSessionCompositionFacts,
-    readAgents: readAgentStateFacts,
+    readSessions: sessionCompositionReaderOverride ?? readSessionCompositionFacts,
+    readAgents: agentStateReaderOverride ?? readAgentStateFacts,
   };
   fleetFactsObserver ??= new DaemonFleetFactsObserver({
     ...readers,
+    ...(fleetFactsDiagnostics ? { diagnostics: fleetFactsDiagnostics } : {}),
     onSessionsChanged: broadcastSessionCompositionChanged,
+    onTerminalTopologyChanged: broadcastTerminalTopologyChanged,
     onAdoptedChanged: broadcastAdoptedCompositionChanged,
     onAgentSessionsChanged: broadcastAgentSessionsChanged,
     onAgentTurnCompleted: (completion) => {
@@ -354,6 +408,45 @@ function ensureFleetFactsObserver(): DaemonFleetFactsObserver {
     },
   });
   return fleetFactsObserver;
+}
+
+export function setFleetFactsObserverDiagnostics(
+  diagnostics: {
+    readonly nowMicros: () => number;
+    readonly createTraceId: () => string;
+    readonly publish: (event: DaemonFleetFactsObserverDiagnostic) => void;
+  } | null,
+): void {
+  fleetFactsDiagnostics = diagnostics ?? undefined;
+}
+
+/** Pin fleet invalidations to the same tmux authority as catalog HTTP reads. */
+export function setFleetFactsTmuxRunner(
+  runTmux: ((args: readonly string[]) => string) | null,
+): void {
+  stopFleetFactsObserver();
+  sessionCompositionReaderOverride = runTmux
+    ? async () => {
+        try {
+          return parseSessionCompositionFacts(runTmux(SESSION_COMPOSITION_TMUX_ARGS));
+        } catch (error) {
+          // A daemon may legitimately precede the first tmux server. Socket
+          // absence is an authoritative empty fleet baseline, not a failed
+          // observation: catalog clients must be allowed to render their
+          // actionable first-run state while the observer waits for tmux.
+          return isTmuxServerUnavailableError(error) ? parseSessionCompositionFacts("") : null;
+        }
+      }
+    : null;
+  agentStateReaderOverride = runTmux
+    ? async () => {
+        try {
+          return parseAgentStateFacts(runTmux(AGENT_STATE_TMUX_ARGS));
+        } catch {
+          return null;
+        }
+      }
+    : null;
 }
 
 interface ResourceObservationHandle {
@@ -433,6 +526,11 @@ function acquireResourceObservation(
   if (interest.resource === "application-shell") {
     return acquireGlobalObserver("agents");
   }
+  if (interest.resource === "terminal-runtime-inventory") {
+    // Topology invalidations are emitted by the existing session/workspace
+    // composition authority. Crucially this lane never acquires agent polling.
+    return acquireGlobalObserver("sessions");
+  }
   if (isObservableWorkspaceResource(interest.resource) && interest.workspaceName !== null) {
     return ensureWorkspaceResourceObserver(daemonInstanceId).acquire(
       interest.workspaceName,
@@ -501,6 +599,14 @@ export function broadcastWorkspacePromotionCompleted(
 
 export function broadcastTerminalsChanged(sessionName: string): void {
   for (const client of allClients) client.broadcastTerminalsChanged(sessionName);
+  if (!resourceEventGeneration) return;
+  const workspaceName = workspaceNameForSession(sessionName);
+  if (workspaceName) {
+    broadcastResourceChanged(
+      { workspaceName, resource: "terminal-runtime-inventory" },
+      resourceEventGeneration,
+    );
+  }
 }
 
 function rawDataToText(data: RawData | string): string {
@@ -528,7 +634,7 @@ export function buildSessionSnapshot(sessionName: string): DaemonSessionSnapshot
 export function handleWsEventsConnection(
   socket: WebSocket | WsLike,
   daemonIdentity: DaemonInstanceIdentity,
-  options: { readonly mode?: "legacy" | "semantic" } = {},
+  options: { readonly mode?: "legacy" | "semantic"; readonly ownerAuthorized?: boolean } = {},
 ): void {
   useResourceEventGeneration(daemonIdentity.instanceId);
   const ws = socket as WsLike;
@@ -623,7 +729,9 @@ export function handleWsEventsConnection(
   const broadcastResourceChangedForClient = (frame: DaemonEventResourceChangedFrame): void => {
     if (
       legacyDeliveryEnabled ||
-      explicitInterestKeys.has(resourceRevisionKey(frame.workspaceName, frame.resource))
+      explicitInterestKeys.has(resourceRevisionKey(frame.workspaceName, frame.resource)) ||
+      (frame.workspaceName === null &&
+        [...explicitInterestKeys].some((key) => key.endsWith(`\0${frame.resource}`)))
     ) {
       send(frame);
       return;
@@ -694,6 +802,13 @@ export function handleWsEventsConnection(
   };
 
   const subscribeInterest = (interest: DaemonEventResourceInterest): ResourceObservationHandle => {
+    if (interest.resource === "terminal-runtime-inventory" && !options.ownerAuthorized) {
+      // Owner-only control retention: reject before acquiring any observer.
+      return {
+        ready: Promise.resolve({ status: "unavailable" }),
+        release: () => undefined,
+      };
+    }
     const key = resourceInterestKey(interest);
     const existing = interestHandles.get(key);
     if (existing && existing.status !== "unavailable") return existing.handle;
@@ -917,11 +1032,15 @@ export function _detachProjectRegistryListenerForTests(): void {
 
 /** Test-only hook to retire and reset the unified fleet facts observer. */
 export function _stopFleetFactsObserverForTests(): void {
+  stopFleetFactsObserver();
+}
+
+function stopFleetFactsObserver(): void {
   fleetFactsObserver?.stop();
   fleetFactsObserver = null;
 }
 
-/** Test-only reader seam; production always uses async tmux subprocesses. */
+/** Test-only full reader seam; it takes precedence over the production session pin. */
 export function _setFleetFactsReadersForTests(
   readers: Pick<DaemonFleetFactsObserverOptions, "readSessions" | "readAgents"> | null,
 ): void {

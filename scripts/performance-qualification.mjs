@@ -25,8 +25,15 @@ const referenceReport = process.env.TMUX_IDE_REFERENCE_REPORT
       source,
     )
   : null;
+const portableEvidence = process.env.TMUX_IDE_PORTABLE_EVIDENCE_REPORT
+  ? JSON.parse(readFileSync(resolve(root, process.env.TMUX_IDE_PORTABLE_EVIDENCE_REPORT), "utf8"))
+  : null;
 if (referenceReport && referenceReport.status !== "passed")
   throw new Error(`Explicit reference qualification is ${referenceReport.status}, not passed`);
+if (portableEvidence && !["passed", "passed-with-limitations"].includes(portableEvidence.status))
+  throw new Error(
+    `Explicit portable performance evidence is ${portableEvidence.status}, not passed`,
+  );
 
 validateReferenceBudget(baseline.referenceLatencyBudget);
 validateReferenceResult(baseline.referenceResult);
@@ -105,13 +112,13 @@ const suites = [
       "src/runtime/gui-performance-telemetry.test.ts",
       "src/runtime/gui-performance-hud.test.tsx",
       "src/experience/workspace-tiled-surface.test.tsx",
-      "src/terminal/pane-mirror-controller.test.ts",
+      "src/terminal/workspace-pane-compositor.test.ts",
       "src/terminal/xterm-renderer.test.ts",
     ],
     assertions: [
       "the HUD remains opt-in and browser-frame work coalesces across panes",
       "drag, swap, and resize floods produce one preview cadence and durable mutation",
-      "terminal reconnects discard stale buffered work and retain bounded candidates",
+      "terminal presentation fanout fences stale work and bounds replay and layout candidates",
       "authenticated pane relationships render without inventing external sources",
       "explicit ANSI colors remain protocol-faithful across themes",
     ],
@@ -185,12 +192,18 @@ const scenarioDefinitions = [
   ),
   {
     id: "cold-and-warm-startup",
-    coverage: referenceReport ? "measured-reference-only" : "not-covered",
+    coverage: portableEvidence
+      ? "measured-portable"
+      : referenceReport
+        ? "measured-reference-only"
+        : "not-covered",
     suites: [],
     assertions: [],
-    reason: referenceReport
-      ? `Reference startup measurement is ${referenceReport.measurements.startup.status}; portable CI does not infer it.`
-      : "No deterministic portable test currently measures cold and warm startup through first paint.",
+    reason: portableEvidence
+      ? `Isolated startup measurement is ${portableEvidence.measurements.startup.status}.`
+      : referenceReport
+        ? `Reference startup measurement is ${referenceReport.measurements.startup.status}; portable CI does not infer it.`
+        : "No deterministic portable test currently measures cold and warm startup through first paint.",
   },
   {
     id: "reference-input-to-paint-latency",
@@ -207,14 +220,66 @@ const scenarioDefinitions = [
   {
     id: "process-memory-slope",
     coverage:
-      referenceReport?.measurements.memory.status === "passed"
-        ? "measured-reference-only"
+      portableEvidence?.measurements.memory.status === "passed"
+        ? "measured-portable"
+        : referenceReport?.measurements.memory.status === "passed"
+          ? "measured-reference-only"
+          : "not-measured",
+    suites: [],
+    assertions: [],
+    reason: portableEvidence
+      ? `Isolated process-memory measurement is ${portableEvidence.measurements.memory.status}.`
+      : referenceReport
+        ? `Reference memory measurement is ${referenceReport.measurements.memory.status}; portable CI does not infer it.`
+        : "Portable tests prove bounded queues and caches, but do not claim deterministic RSS or heap slope.",
+  },
+  {
+    id: "coherent-terminal-frame",
+    coverage:
+      portableEvidence?.measurements.coherentTerminalFrame.status === "passed"
+        ? "measured-portable"
         : "not-measured",
     suites: [],
     assertions: [],
-    reason: referenceReport
-      ? `Reference memory measurement is ${referenceReport.measurements.memory.status}; portable CI does not infer it.`
-      : "Portable tests prove bounded queues and caches, but do not claim deterministic RSS or heap slope.",
+    reason: portableEvidence
+      ? `Portable coherent-terminal evidence is ${portableEvidence.measurements.coherentTerminalFrame.status}.`
+      : "No explicit ProductTestRig state was supplied to the portable evidence run.",
+  },
+  {
+    id: "portable-resize-and-drag-responsiveness",
+    coverage:
+      portableEvidence?.measurements.resizeResponsiveness.status === "passed"
+        ? "partially-measured-portable"
+        : "not-measured",
+    suites: ["opentui", "web"],
+    assertions: ["resize geometry settles within a portable command budget"],
+    reason: portableEvidence
+      ? `Resize is ${portableEvidence.measurements.resizeResponsiveness.status}; drag is ${portableEvidence.measurements.dragResponsiveness.status}.`
+      : "Contract tests cover coalescing, but no portable latency artifact was supplied.",
+  },
+  {
+    id: "deterministic-visual-captures",
+    coverage:
+      portableEvidence?.measurements.visualDeterminism.status === "passed"
+        ? "measured-portable"
+        : "not-measured",
+    suites: ["opentui"],
+    assertions: ["two idle captures of one mounted document have identical SHA-256 digests"],
+    reason: portableEvidence
+      ? `Portable capture determinism is ${portableEvidence.measurements.visualDeterminism.status}.`
+      : "Renderer snapshots are deterministic in tests, but no live capture digest artifact was supplied.",
+  },
+  {
+    id: "supported-tmux-capability-matrix",
+    coverage:
+      portableEvidence?.measurements.tmuxSupport.status === "passed"
+        ? "measured-portable"
+        : "not-measured",
+    suites: [],
+    assertions: [],
+    reason: portableEvidence
+      ? `Installed tmux capability matrix is ${portableEvidence.measurements.tmuxSupport.status}.`
+      : "No portable tmux capability observation was supplied.",
   },
 ];
 
@@ -302,11 +367,14 @@ const report = {
             : "failed",
   },
   referenceQualification: referenceReport,
+  portableEvidence,
   limitations: [
     "Suite wall durations are runner diagnostics, not UI latency measurements.",
     referenceReport
       ? "Reference-host measurements remain distinct from portable CI and are never generalized to other hosts."
-      : "Cold/warm startup, production stage timings, and process-memory slope remain explicitly unmeasured.",
+      : portableEvidence
+        ? "Headless startup measures first mounted application frame; visible terminal first-frame and input-to-paint remain reference-only."
+        : "Cold/warm startup, production stage timings, and process-memory slope remain explicitly unmeasured.",
     "Whether this workflow is required by repository branch protection is external to this artifact.",
   ],
 };
@@ -379,6 +447,9 @@ function markdownSummary(value) {
     value.referenceQualification
       ? `Explicit reference artifact: **${value.referenceQualification.status}** (${value.referenceQualification.provenance.cpuModel}).`
       : "Explicit reference artifact: **not provided**.",
+    value.portableEvidence
+      ? `Isolated executable evidence: **${value.portableEvidence.status}** (startup ${value.portableEvidence.measurements.startup.status}; memory ${value.portableEvidence.measurements.memory.status}; input-to-paint ${value.portableEvidence.measurements.inputToPaint.status}).`
+      : "Isolated executable evidence: **not provided**.",
     "",
   ];
   return `${lines.join("\n")}\n`;

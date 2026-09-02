@@ -1,5 +1,7 @@
 export interface SessionPaneDescriptor {
+  sessionName: string;
   runtimePaneId: string;
+  runtimeSessionId: string;
   semanticPaneId: string | null;
   role: string | null;
   type: string | null;
@@ -9,6 +11,15 @@ export interface SessionPaneDescriptor {
   windowIndex: number | null;
   windowName: string | null;
   windowId: string | null;
+  semanticWindowId: string | null;
+  paneIndex: number;
+  name: string | null;
+  nameSource: string | null;
+  missionStamp: string | null;
+  paneActive: boolean;
+  windowActive: boolean;
+  windowPaneCount: number;
+  sessionWindowCount: number;
 }
 
 /**
@@ -28,6 +39,16 @@ export const SESSION_PANE_DESCRIPTOR_FORMAT = [
   "#{qa:window_name}",
   "#{window_id}",
   "#{qa:pane_title}",
+  "#{session_id}",
+  "#{pane_index}",
+  "#{qa:@ide_name}",
+  "#{qa:@tmux_ide_mission}",
+  "#{pane_active}",
+  "#{?window_active,1,0}",
+  "#{qa:@tmux_ide_window_id}",
+  "#{qa:session_name}",
+  "#{window_panes}",
+  "#{session_windows}",
 ].join("\t");
 
 /** Decode the escapes emitted by tmux's `qa` format modifier. */
@@ -72,7 +93,7 @@ export function decodeTmuxArgument(value: string): string {
   return decoded;
 }
 
-interface ParsedSessionPaneDescriptorReply {
+export interface ParsedSessionPaneDescriptorReply {
   descriptors: SessionPaneDescriptor[];
   malformedUtf8Records: number;
 }
@@ -89,11 +110,17 @@ export function parseSessionPaneDescriptors(lines: readonly string[]): SessionPa
   return parseSessionPaneDescriptorReply(lines).descriptors;
 }
 
-function parseSessionPaneDescriptorReply(
+export function parseSessionPaneDescriptorReply(
   lines: readonly string[],
 ): ParsedSessionPaneDescriptorReply {
   const descriptors: SessionPaneDescriptor[] = [];
   let malformedUtf8Records = 0;
+  if (
+    lines.length > 4_096 ||
+    lines.reduce((bytes, line) => bytes + Buffer.byteLength(line, "latin1") + 1, 0) > 128 * 1_024
+  ) {
+    return { descriptors, malformedUtf8Records };
+  }
   for (const line of lines) {
     const utf8Line = decodeControlReplyUtf8(line);
     if (utf8Line === null) {
@@ -101,7 +128,7 @@ function parseSessionPaneDescriptorReply(
       continue;
     }
     const encoded = utf8Line.split("\t");
-    if (encoded.length !== 10) continue;
+    if (encoded.length !== 20) continue;
     const [
       runtimePaneId = "",
       semanticPaneId = "",
@@ -113,13 +140,59 @@ function parseSessionPaneDescriptorReply(
       windowName = "",
       windowId = "",
       title = "",
+      runtimeSessionId = "",
+      paneIndexRaw = "",
+      name = "",
+      missionStamp = "",
+      paneActiveRaw = "",
+      windowActiveRaw = "",
+      semanticWindowId = "",
+      sessionName = "",
+      windowPaneCountRaw = "",
+      sessionWindowCountRaw = "",
     ] = encoded.map(decodeTmuxArgument);
-    if (!/^%[0-9]+$/u.test(runtimePaneId)) continue;
+    if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtimePaneId) || runtimePaneId.length > 32) continue;
+    if (!/^\$(?:0|[1-9][0-9]*)$/u.test(runtimeSessionId) || runtimeSessionId.length > 32) continue;
     const parsedWindowIndex = Number(windowIndexRaw);
     const windowIndex =
       Number.isSafeInteger(parsedWindowIndex) && parsedWindowIndex >= 0 ? parsedWindowIndex : null;
+    const paneIndex = Number(paneIndexRaw);
+    const windowPaneCount = Number(windowPaneCountRaw);
+    const sessionWindowCount = Number(sessionWindowCountRaw);
+    if (!/^(?:0|[1-9][0-9]*)$/u.test(paneIndexRaw) || !Number.isSafeInteger(paneIndex)) continue;
+    if (
+      !/^[1-9][0-9]*$/u.test(windowPaneCountRaw) ||
+      !Number.isSafeInteger(windowPaneCount) ||
+      !/^[1-9][0-9]*$/u.test(sessionWindowCountRaw) ||
+      !Number.isSafeInteger(sessionWindowCount) ||
+      windowPaneCount < 1 ||
+      sessionWindowCount < 1
+    )
+      continue;
+    if (!["0", "1"].includes(paneActiveRaw) || !["0", "1"].includes(windowActiveRaw)) continue;
+    const bounded = (value: string, maximum: number): boolean =>
+      value.length <= maximum && !/[\0\r\n\t]/u.test(value);
+    if (
+      !bounded(semanticPaneId, 256) ||
+      !bounded(role, 256) ||
+      !bounded(type, 256) ||
+      !bounded(currentCommand, 512) ||
+      !bounded(cwd, 4_096) ||
+      !bounded(title, 1_024) ||
+      !bounded(windowName, 1_024) ||
+      !bounded(name, 256) ||
+      !bounded(missionStamp, 256) ||
+      !bounded(semanticWindowId, 256) ||
+      !bounded(sessionName, 160) ||
+      sessionName.length === 0 ||
+      windowId.length > 32
+    ) {
+      continue;
+    }
     descriptors.push({
+      sessionName,
       runtimePaneId,
+      runtimeSessionId,
       semanticPaneId: nonempty(semanticPaneId),
       role: nonempty(role),
       type: nonempty(type),
@@ -128,7 +201,18 @@ function parseSessionPaneDescriptorReply(
       title: nonempty(title),
       windowIndex,
       windowName: nonempty(windowName),
-      windowId: /^@[0-9]+$/u.test(windowId) ? windowId : null,
+      windowId: /^@(?:0|[1-9][0-9]*)$/u.test(windowId) ? windowId : null,
+      semanticWindowId: nonempty(semanticWindowId),
+      paneIndex,
+      name: nonempty(name),
+      // Source metadata is persisted for mutations, while this hot inventory
+      // stays wire-compatible. Generated names are recognized deterministically.
+      nameSource: null,
+      missionStamp: nonempty(missionStamp),
+      paneActive: paneActiveRaw === "1",
+      windowActive: windowActiveRaw === "1",
+      windowPaneCount,
+      sessionWindowCount,
     });
   }
   return { descriptors, malformedUtf8Records };
@@ -285,7 +369,7 @@ function nonempty(value: string): string | null {
 
 const STRICT_UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
 
-function decodeControlReplyUtf8(value: string): string | null {
+export function decodeControlReplyUtf8(value: string): string | null {
   try {
     return STRICT_UTF8_DECODER.decode(Buffer.from(value, "latin1"));
   } catch {

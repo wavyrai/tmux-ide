@@ -1,4 +1,10 @@
 import { z } from "zod";
+import {
+  CausalCellCapabilitySchemaZ,
+  CausalCellFailureV1SchemaZ,
+  CausalCellProbeV1SchemaZ,
+  CausalCellProofV1SchemaZ,
+} from "./causal-cell.ts";
 import { DaemonInstanceIdentitySchemaZ } from "./daemon-wire.ts";
 import {
   TerminalIssueErrorCodeCompatSchemaZ,
@@ -19,8 +25,26 @@ import {
   TerminalDeliveryVisibilitySchemaZ,
   TERMINAL_DELIVERY_CHUNK_BYTES,
 } from "./terminal-delivery.ts";
-import { SessionRuntimeSemanticIntentSchemaZ } from "./session-runtime.ts";
+import {
+  SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS,
+  SessionRuntimeActivityKindSchemaZ,
+  SessionRuntimeAuthorityKindSchemaZ,
+  SessionRuntimeAuthorityLeaseSchemaZ,
+  SessionRuntimeAuthoritySnapshotSchemaZ,
+  SessionRuntimePresenceStateSchemaZ,
+  SessionRuntimeSemanticIntentSchemaZ,
+  SessionRuntimeTerminalKeyInputSchemaZ,
+  SessionRuntimeTerminalKeyNameSchemaZ,
+  SessionRuntimeTerminalTextInputSchemaZ,
+} from "./session-runtime.ts";
 import { WorkspaceMultiplexerMutationResultSchemaZ } from "./workspace-multiplexer.ts";
+
+export const PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1 = "clock-bounds-v1" as const;
+export const PaneStreamDiagnosticCapabilitySchemaZ = z.union([
+  CausalCellCapabilitySchemaZ,
+  z.literal(PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1),
+]);
+export type PaneStreamDiagnosticCapability = z.infer<typeof PaneStreamDiagnosticCapabilitySchemaZ>;
 
 /**
  * Pane-stream wire contract (m43 card 2): the lease family and frame grammar
@@ -58,7 +82,7 @@ export const PANE_STREAM_MAX_LAYOUT_PANES = 64;
 export const PANE_STREAM_MAX_GRID_CELLS = 4096;
 /** Every client-authored text frame (redeem, input, consumed) fits this. */
 export const PANE_STREAM_MAX_CLIENT_FRAME_BYTES = 4096;
-export const PANE_STREAM_MAX_INPUT_TEXT_CHARS = 1024;
+export const PANE_STREAM_MAX_INPUT_TEXT_CHARS = SESSION_RUNTIME_MAX_TERMINAL_INPUT_TEXT_CHARS;
 export const PANE_STREAM_MAX_INPUT_SEQUENCE = 0xffff_ffff;
 
 export const PaneStreamSemanticPaneIdSchemaZ = TerminalAttachmentSemanticPaneIdSchemaZ;
@@ -181,6 +205,7 @@ export const PaneStreamRedeemFrameSchemaZ = z
      * renderer sets this; simple transcript clients omit it.
      */
     deliveryAcks: z.boolean().optional(),
+    diagnosticCapabilities: z.array(PaneStreamDiagnosticCapabilitySchemaZ).max(2).optional(),
   })
   .strict();
 export type PaneStreamRedeemFrame = z.infer<typeof PaneStreamRedeemFrameSchemaZ>;
@@ -190,42 +215,32 @@ export type PaneStreamRedeemFrame = z.infer<typeof PaneStreamRedeemFrameSchemaZ>
  * tmux key names built from this list can reach the daemon, so no quoting,
  * separator, or expansion character survives to a tmux command line.
  */
-export const PaneStreamKeyNameSchemaZ = z
-  .string()
-  .regex(
-    /^(?:C-|M-|S-){0,3}(?:F1[0-2]|F[1-9]|Enter|Escape|Space|Tab|BTab|BSpace|Home|End|NPage|PPage|PgUp|PgDn|DC|IC|Up|Down|Left|Right|[A-Za-z0-9])$/u,
-  );
+/** @deprecated Import SessionRuntimeTerminalKeyNameSchemaZ for new code. */
+export const PaneStreamKeyNameSchemaZ = SessionRuntimeTerminalKeyNameSchemaZ;
 
-const InputTextSchemaZ = z
-  .string()
-  .min(1)
-  .max(PANE_STREAM_MAX_INPUT_TEXT_CHARS)
-  .refine((value) => !value.includes("\0"), "input text must not contain NUL");
+const PaneStreamInputFrameMetadataShape = {
+  type: z.literal("input"),
+  pane: PaneStreamSemanticPaneIdSchemaZ,
+  seq: z.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
+  /** Opt-in controlled next-output probe; not a general causal assertion. */
+  performanceTraceId: z.uuid().optional(),
+  causalProbe: CausalCellProbeV1SchemaZ.optional(),
+} as const;
 
-export const PaneStreamInputFrameSchemaZ = z.discriminatedUnion("kind", [
-  z
-    .object({
-      type: z.literal("input"),
-      kind: z.literal("text"),
-      pane: PaneStreamSemanticPaneIdSchemaZ,
-      seq: z.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
-      data: InputTextSchemaZ,
-      /** Opt-in controlled next-output probe; not a general causal assertion. */
-      performanceTraceId: z.uuid().optional(),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("input"),
-      kind: z.literal("key"),
-      pane: PaneStreamSemanticPaneIdSchemaZ,
-      seq: z.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
-      data: PaneStreamKeyNameSchemaZ,
-      /** Opt-in controlled next-output probe; not a general causal assertion. */
-      performanceTraceId: z.uuid().optional(),
-    })
-    .strict(),
-]);
+export const PaneStreamInputFrameSchemaZ = z
+  .discriminatedUnion("kind", [
+    SessionRuntimeTerminalTextInputSchemaZ.extend(PaneStreamInputFrameMetadataShape),
+    SessionRuntimeTerminalKeyInputSchemaZ.extend(PaneStreamInputFrameMetadataShape),
+  ])
+  .superRefine((value, context) => {
+    if (!value.causalProbe) return;
+    if (value.performanceTraceId !== value.causalProbe.traceId)
+      context.addIssue({ code: "custom", message: "causal probe id must equal trace id" });
+    if (value.seq !== value.causalProbe.inputSequence)
+      context.addIssue({ code: "custom", message: "causal probe input sequence mismatch" });
+    if (value.pane !== value.causalProbe.semanticPaneId)
+      context.addIssue({ code: "custom", message: "causal probe pane mismatch" });
+  });
 export type PaneStreamInputFrame = z.infer<typeof PaneStreamInputFrameSchemaZ>;
 
 /** Cumulative renderer consumption ack: the highest applied server seq. */
@@ -268,6 +283,55 @@ export const PaneStreamViewportFrameSchemaZ = z
     seq: z.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
     cols: z.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
     rows: z.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
+    authorityLease: SessionRuntimeAuthorityLeaseSchemaZ,
+  })
+  .strict()
+  .refine((frame) => frame.authorityLease.authority === "geometry", {
+    message: "Viewport authority must be a geometry lease.",
+    path: ["authorityLease", "authority"],
+  });
+
+const PaneStreamAuthorityRequestIdSchemaZ = z.uuid();
+const PaneStreamAuthorityGenerationSchemaZ = DaemonInstanceIdentitySchemaZ.shape.instanceId;
+
+export const PaneStreamPresenceFrameSchemaZ = z
+  .object({
+    type: z.literal("presence"),
+    generation: PaneStreamAuthorityGenerationSchemaZ,
+    state: SessionRuntimePresenceStateSchemaZ,
+  })
+  .strict();
+export const PaneStreamActivityFrameSchemaZ = z
+  .object({
+    type: z.literal("activity"),
+    generation: PaneStreamAuthorityGenerationSchemaZ,
+    activity: SessionRuntimeActivityKindSchemaZ,
+  })
+  .strict();
+export const PaneStreamAuthorityRequestFrameSchemaZ = z
+  .object({
+    type: z.literal("authority-request"),
+    generation: PaneStreamAuthorityGenerationSchemaZ,
+    requestId: PaneStreamAuthorityRequestIdSchemaZ,
+    authority: SessionRuntimeAuthorityKindSchemaZ,
+  })
+  .strict();
+export const PaneStreamAuthorityReleaseFrameSchemaZ = z
+  .object({
+    type: z.literal("authority-release"),
+    generation: PaneStreamAuthorityGenerationSchemaZ,
+    requestId: PaneStreamAuthorityRequestIdSchemaZ,
+    authority: SessionRuntimeAuthorityKindSchemaZ,
+  })
+  .strict();
+
+const SharedMonotonicMicrosSchemaZ = z.number().int().nonnegative().safe();
+export const PaneStreamClockProbeFrameSchemaZ = z
+  .object({
+    type: z.literal("clock-probe"),
+    requestId: z.uuid(),
+    probe: z.number().int().min(1).max(5),
+    clientSendMicros: SharedMonotonicMicrosSchemaZ,
   })
   .strict();
 
@@ -279,6 +343,11 @@ export const PaneStreamClientFrameSchemaZ = z.union([
   PaneStreamTerminalDeliveryVisibilityFrameSchemaZ,
   PaneStreamSemanticIntentFrameSchemaZ,
   PaneStreamViewportFrameSchemaZ,
+  PaneStreamPresenceFrameSchemaZ,
+  PaneStreamActivityFrameSchemaZ,
+  PaneStreamAuthorityRequestFrameSchemaZ,
+  PaneStreamAuthorityReleaseFrameSchemaZ,
+  PaneStreamClockProbeFrameSchemaZ,
 ]);
 export type PaneStreamClientFrame = z.infer<typeof PaneStreamClientFrameSchemaZ>;
 
@@ -300,8 +369,12 @@ export const PaneStreamReadyFrameSchemaZ = z
     protocolVersion: z.literal(PANE_STREAM_PROTOCOL_VERSION),
     daemonInstanceId: BoundedIdentitySchemaZ,
     requestId: z.uuid(),
+    /** Daemon-authenticated identity of this exact redeemed physical connection. */
+    connectionClientId: BoundedIdentitySchemaZ.optional(),
     panes: PaneSetSchemaZ,
     effectiveViewerMode: PaneStreamViewerModeSchemaZ,
+    authority: SessionRuntimeAuthoritySnapshotSchemaZ.optional(),
+    diagnosticCapabilities: z.array(PaneStreamDiagnosticCapabilitySchemaZ).max(2).optional(),
   })
   .strict();
 
@@ -350,6 +423,15 @@ const BoundedDisplayNameSchemaZ = z
   .max(256)
   .refine((value) => !/[\0\r\n]/u.test(value));
 
+export const PaneDisplayNameSourceSchemaZ = z.enum([
+  "manual",
+  "agent",
+  "process",
+  "title",
+  "generated",
+]);
+export type PaneDisplayNameSource = z.infer<typeof PaneDisplayNameSourceSchemaZ>;
+
 export const PaneStreamLayoutFrameSchemaZ = z
   .object({
     type: z.literal("layout"),
@@ -368,6 +450,9 @@ export const PaneStreamLayoutFrameSchemaZ = z
           .object({
             /** Null while the pane's semantic identity join is unverified. */
             pane: PaneStreamSemanticPaneIdSchemaZ.nullable(),
+            /** Optional for compatibility with an older daemon during reconnect. */
+            displayName: BoundedDisplayNameSchemaZ.nullable().optional(),
+            displayNameSource: PaneDisplayNameSourceSchemaZ.nullable().optional(),
             left: CellCoordinateSchemaZ,
             top: CellCoordinateSchemaZ,
             width: GridCellSchemaZ,
@@ -379,6 +464,61 @@ export const PaneStreamLayoutFrameSchemaZ = z
       .max(PANE_STREAM_MAX_LAYOUT_PANES),
   })
   .strict();
+
+export const PaneStreamLayoutSnapshotFrameSchemaZ = z
+  .object({
+    type: z.literal("layout-snapshot"),
+    topologyEpoch: z.number().int().nonnegative(),
+    layouts: z.array(PaneStreamLayoutFrameSchemaZ).min(1).max(PANE_STREAM_MAX_PANES),
+  })
+  .strict()
+  .superRefine((snapshot, context) => {
+    const windows = new Set<string>();
+    const panes = new Set<string>();
+    let currentWindows = 0;
+    for (const [layoutIndex, layout] of snapshot.layouts.entries()) {
+      if (layout.semanticWindowId === null) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Layout authority snapshots require semantic window identities",
+          path: ["layouts", layoutIndex, "semanticWindowId"],
+        });
+      } else if (windows.has(layout.semanticWindowId)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Layout authority snapshots require unique windows",
+          path: ["layouts", layoutIndex, "semanticWindowId"],
+        });
+      } else {
+        windows.add(layout.semanticWindowId);
+      }
+      if (layout.currentWindow) currentWindows += 1;
+      for (const [paneIndex, pane] of layout.panes.entries()) {
+        if (pane.pane === null) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Layout authority snapshots require semantic pane identities",
+            path: ["layouts", layoutIndex, "panes", paneIndex, "pane"],
+          });
+        } else if (panes.has(pane.pane)) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Layout authority snapshots require unique panes",
+            path: ["layouts", layoutIndex, "panes", paneIndex, "pane"],
+          });
+        } else {
+          panes.add(pane.pane);
+        }
+      }
+    }
+    if (currentWindows !== 1) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Layout authority snapshots require exactly one current window",
+        path: ["layouts"],
+      });
+    }
+  });
 
 export const PaneStreamFlowFrameSchemaZ = z
   .object({
@@ -405,6 +545,25 @@ export const PaneStreamInputAckFrameSchemaZ = z
     pane: PaneStreamSemanticPaneIdSchemaZ,
     seq: z.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
   })
+  .strict();
+
+export const PaneStreamClockProbeAckFrameSchemaZ = z
+  .object({
+    type: z.literal("clock-probe-ack"),
+    requestId: z.uuid(),
+    daemonInstanceId: DaemonInstanceIdentitySchemaZ.shape.instanceId,
+    probe: z.number().int().min(1).max(5),
+    clientSendMicros: SharedMonotonicMicrosSchemaZ,
+    daemonReceiveMicros: SharedMonotonicMicrosSchemaZ,
+    daemonSendMicros: SharedMonotonicMicrosSchemaZ,
+  })
+  .strict();
+
+export const PaneStreamCausalCellProofFrameSchemaZ = z
+  .object({ type: z.literal("causal-cell-proof"), proof: CausalCellProofV1SchemaZ })
+  .strict();
+export const PaneStreamCausalCellFailureFrameSchemaZ = z
+  .object({ type: z.literal("causal-cell-failure"), failure: CausalCellFailureV1SchemaZ })
   .strict();
 
 export const PaneStreamTerminalDeliveryReadyFrameSchemaZ = z
@@ -460,6 +619,9 @@ export const PaneStreamSemanticIntentAckFrameSchemaZ = z
             "intent-session-mismatch",
             "intent-rejected",
             "intent-timed-out",
+            "pane_inventory_not_ready",
+            "pane_identity_changed_before_select",
+            "pane_not_active",
             "stream-unavailable",
           ]),
           message: z.string().min(1).max(512),
@@ -475,6 +637,29 @@ export const PaneStreamViewportAckFrameSchemaZ = z
     seq: z.number().int().positive().max(PANE_STREAM_MAX_INPUT_SEQUENCE),
     cols: z.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
     rows: z.number().int().min(2).max(PANE_STREAM_MAX_GRID_CELLS),
+    outcome: z.enum(["ok", "geometry-authority-conflict"]),
+    authorityLease: SessionRuntimeAuthorityLeaseSchemaZ,
+  })
+  .strict()
+  .refine((frame) => frame.authorityLease.authority === "geometry", {
+    message: "Viewport authority must be a geometry lease.",
+    path: ["authorityLease", "authority"],
+  });
+
+export const PaneStreamAuthoritySnapshotFrameSchemaZ = z
+  .object({
+    type: z.literal("authority-snapshot"),
+    snapshot: SessionRuntimeAuthoritySnapshotSchemaZ,
+  })
+  .strict();
+export const PaneStreamAuthorityReceiptFrameSchemaZ = z
+  .object({
+    type: z.literal("authority-receipt"),
+    requestId: PaneStreamAuthorityRequestIdSchemaZ,
+    authority: SessionRuntimeAuthorityKindSchemaZ,
+    status: z.enum(["granted", "released", "rejected"]),
+    lease: SessionRuntimeAuthorityLeaseSchemaZ.nullable(),
+    snapshot: SessionRuntimeAuthoritySnapshotSchemaZ,
   })
   .strict();
 
@@ -483,6 +668,7 @@ export const PaneStreamErrorFrameCodeSchemaZ = z.enum([
   "ticket-expired",
   "live-capacity-exhausted",
   "stream-unavailable",
+  "topology-changed",
   "input-rejected",
   "protocol-error",
 ]);
@@ -503,15 +689,21 @@ export const PaneStreamServerFrameSchemaZ = z.discriminatedUnion("type", [
   PaneStreamOutputFrameSchemaZ,
   PaneStreamCursorFrameSchemaZ,
   PaneStreamLayoutFrameSchemaZ,
+  PaneStreamLayoutSnapshotFrameSchemaZ,
   PaneStreamFlowFrameSchemaZ,
   PaneStreamClosedFrameSchemaZ,
   PaneStreamInputAckFrameSchemaZ,
+  PaneStreamClockProbeAckFrameSchemaZ,
+  PaneStreamCausalCellProofFrameSchemaZ,
+  PaneStreamCausalCellFailureFrameSchemaZ,
   PaneStreamTerminalDeliveryReadyFrameSchemaZ,
   PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ,
   PaneStreamTerminalDeliveryChunkFrameSchemaZ,
   PaneStreamTerminalDeliveryFaultFrameSchemaZ,
   PaneStreamSemanticIntentAckFrameSchemaZ,
   PaneStreamViewportAckFrameSchemaZ,
+  PaneStreamAuthoritySnapshotFrameSchemaZ,
+  PaneStreamAuthorityReceiptFrameSchemaZ,
   PaneStreamErrorFrameSchemaZ,
 ]);
 export type PaneStreamServerFrame = z.infer<typeof PaneStreamServerFrameSchemaZ>;

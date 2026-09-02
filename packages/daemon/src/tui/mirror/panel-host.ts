@@ -78,9 +78,6 @@ export const PANEL_GLYPHS: Readonly<Record<HostedPanelKind, string>> = {
 export const CANONICAL_PANEL_VIEWS: readonly WorkspaceFullPanelView[] = [
   { id: "home", title: "Home", panel: "home" },
   { id: "terminals", title: "Terminals", panel: "terminals" },
-  { id: "files", title: "Files", panel: "files" },
-  { id: "diff", title: "Diff", panel: "diff" },
-  { id: "missions", title: "Missions", panel: "missions" },
 ];
 
 export const HOSTED_VIEW_SHORTCUT_KEYS = [

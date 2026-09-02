@@ -12,6 +12,7 @@ import { getMDXComponents } from "@/mdx-components";
 import type { Metadata } from "next";
 import { createRelativeLink } from "fumadocs-ui/mdx";
 import { gitConfig } from "@/lib/layout.shared";
+import { SITE_DESCRIPTION, SITE_URL, absoluteUrl } from "@/lib/site";
 
 export default async function Page(props: { params: Promise<{ slug?: string[] }> }) {
   const params = await props.params;
@@ -19,27 +20,74 @@ export default async function Page(props: { params: Promise<{ slug?: string[] }>
   if (!page) notFound();
 
   const MDX = page.data.body;
+  const description = page.data.description ?? SITE_DESCRIPTION;
+  const pageUrl = absoluteUrl(page.url);
+  const breadcrumbs = [
+    { "@type": "ListItem", position: 1, name: "Home", item: absoluteUrl("/") },
+    {
+      "@type": "ListItem",
+      position: 2,
+      name: "Documentation",
+      item: absoluteUrl("/docs"),
+    },
+    ...(page.url === "/docs"
+      ? []
+      : [{ "@type": "ListItem", position: 3, name: page.data.title, item: pageUrl }]),
+  ];
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "TechArticle",
+        "@id": `${pageUrl}#article`,
+        headline: page.data.title,
+        description,
+        url: pageUrl,
+        mainEntityOfPage: pageUrl,
+        inLanguage: "en",
+        isPartOf: { "@id": `${SITE_URL}/#website` },
+        publisher: { "@id": `${SITE_URL}/#organization` },
+      },
+      {
+        "@type": "BreadcrumbList",
+        "@id": `${pageUrl}#breadcrumbs`,
+        itemListElement: breadcrumbs,
+      },
+    ],
+  };
 
   return (
-    <DocsPage toc={page.data.toc} full={page.data.full}>
-      <DocsTitle>{page.data.title}</DocsTitle>
-      <DocsDescription className="mb-0">{page.data.description}</DocsDescription>
-      <div className="flex flex-row gap-2 items-center border-b pb-6">
-        <MarkdownCopyButton markdownUrl={`${page.url}.mdx`} />
-        <ViewOptionsPopover
-          markdownUrl={`${page.url}.mdx`}
-          githubUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/content/docs/${page.path}`}
-        />
-      </div>
-      <DocsBody>
-        <MDX
-          components={getMDXComponents({
-            // this allows you to link to other pages with relative file paths
-            a: createRelativeLink(source, page),
-          })}
-        />
-      </DocsBody>
-    </DocsPage>
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</gu, "\\u003c") }}
+      />
+      <DocsPage
+        id="main-content"
+        tabIndex={-1}
+        toc={page.data.toc}
+        full={page.data.full}
+        className="docs-article"
+      >
+        <DocsTitle className="docs-title">{page.data.title}</DocsTitle>
+        <DocsDescription className="docs-description mb-0">{description}</DocsDescription>
+        <div className="flex flex-row gap-2 items-center border-b pb-6">
+          <MarkdownCopyButton markdownUrl={`${page.url}.mdx`} />
+          <ViewOptionsPopover
+            markdownUrl={`${page.url}.mdx`}
+            githubUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/content/docs/${page.path}`}
+          />
+        </div>
+        <DocsBody className="docs-prose">
+          <MDX
+            components={getMDXComponents({
+              // this allows you to link to other pages with relative file paths
+              a: createRelativeLink(source, page),
+            })}
+          />
+        </DocsBody>
+      </DocsPage>
+    </>
   );
 }
 
@@ -57,8 +105,28 @@ export async function generateMetadata(props: {
   return {
     title: page.data.title,
     description: page.data.description,
+    alternates: { canonical: page.url },
     openGraph: {
-      images: getPageImage(page).url,
+      type: "article",
+      url: absoluteUrl(page.url),
+      title: page.data.title,
+      description: page.data.description,
+      images: [
+        {
+          url: getPageImage(page).url,
+          width: 1200,
+          height: 630,
+          alt: `${page.data.title} — tmux-ide documentation`,
+        },
+      ],
+    },
+    twitter: {
+      card: "summary_large_image",
+      creator: "@prototyper_co",
+      site: "@prototyper_co",
+      title: page.data.title,
+      description: page.data.description,
+      images: [getPageImage(page).url],
     },
   };
 }

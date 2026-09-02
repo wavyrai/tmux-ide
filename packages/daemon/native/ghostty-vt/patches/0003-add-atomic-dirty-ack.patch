@@ -1,0 +1,56 @@
+diff --git a/include/ghostty/vt/render.h b/include/ghostty/vt/render.h
+index d1a3687d9..b73f3bc13 100644
+--- a/include/ghostty/vt/render.h
++++ b/include/ghostty/vt/render.h
+@@ -381,6 +381,9 @@ GHOSTTY_API GhosttyResult ghostty_render_state_set(GhosttyRenderState state,
+                                        GhosttyRenderStateOption option,
+                                        const void* value);
+ 
++/** Atomically acknowledge the global and all row dirty flags. */
++GHOSTTY_API GhosttyResult ghostty_render_state_dirty_clear(GhosttyRenderState state);
++
+ /**
+  * Get the current color information from a render state.
+  *
+diff --git a/src/lib_vt.zig b/src/lib_vt.zig
+index f4ef59d04..fd0ceb02d 100644
+--- a/src/lib_vt.zig
++++ b/src/lib_vt.zig
+@@ -214,6 +214,7 @@ comptime {
+         @export(&c.render_state_get, .{ .name = "ghostty_render_state_get" });
+         @export(&c.render_state_get_multi, .{ .name = "ghostty_render_state_get_multi" });
+         @export(&c.render_state_set, .{ .name = "ghostty_render_state_set" });
++        @export(&c.render_state_dirty_clear, .{ .name = "ghostty_render_state_dirty_clear" });
+         @export(&c.render_state_colors_get, .{ .name = "ghostty_render_state_colors_get" });
+         @export(&c.render_state_row_iterator_new, .{ .name = "ghostty_render_state_row_iterator_new" });
+         @export(&c.render_state_row_iterator_next, .{ .name = "ghostty_render_state_row_iterator_next" });
+diff --git a/src/terminal/c/main.zig b/src/terminal/c/main.zig
+index 39499b57a..c43acfc23 100644
+--- a/src/terminal/c/main.zig
++++ b/src/terminal/c/main.zig
+@@ -70,6 +70,7 @@ pub const render_state_update = render.update;
+ pub const render_state_get = render.get;
+ pub const render_state_get_multi = render.get_multi;
+ pub const render_state_set = render.set;
++pub const render_state_dirty_clear = render.dirtyClear;
+ pub const render_state_colors_get = render.colors_get;
+ pub const render_state_row_iterator_new = render.row_iterator_new;
+ pub const render_state_row_iterator_next = render.row_iterator_next;
+diff --git a/src/terminal/c/render.zig b/src/terminal/c/render.zig
+index af82ddfa1..642ec3b81 100644
+--- a/src/terminal/c/render.zig
++++ b/src/terminal/c/render.zig
+@@ -296,6 +296,13 @@ pub fn set(
+     };
+ }
+ 
++pub fn dirtyClear(state_: RenderState) callconv(lib.calling_conv) Result {
++    const state = state_ orelse return .invalid_value;
++    state.state.dirty = .false;
++    @memset(state.state.row_data.items(.dirty), false);
++    return .success;
++}
++
+ fn setTyped(
+     state_: RenderState,
+     comptime option: SetOption,

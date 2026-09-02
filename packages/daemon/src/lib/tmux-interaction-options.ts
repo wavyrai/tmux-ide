@@ -142,6 +142,18 @@ export function registerInternalReadOperation(runtimePaneId: string): string {
   return marker;
 }
 
+/**
+ * Retire one failed owner-local read proof without consuming any newer pane
+ * operation. The tmux option has a separate compare-and-unset fence; this is
+ * only the matching in-memory half of that retirement.
+ */
+export function retireInternalReadOperation(marker: string, runtimePaneId: string): boolean {
+  const registration = internalReads.get(marker);
+  if (!registration || registration.paneId !== runtimePaneId) return false;
+  internalReads.delete(marker);
+  return true;
+}
+
 export function consumeInternalReadOperation(
   marker: string | null,
   runtimePaneId: string,

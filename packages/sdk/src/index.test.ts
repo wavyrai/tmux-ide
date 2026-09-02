@@ -119,6 +119,40 @@ describe("createTmuxIdeSdk", () => {
     expect(listener).toHaveBeenCalledWith({ type: "workspaces.changed" });
   });
 
+  it("preserves caller operation ids through atomic workspace-open methods", async () => {
+    const base = createHost(async () => ({ status: "error" }));
+    const prepareProjectDirectory = vi.fn(async () => null);
+    const commitPreparedOpen = vi.fn(async () => ({
+      status: "error" as const,
+      error: { code: "preview-only" as const, reason: "fixture" },
+    }));
+    const cancelPreparedOpen = vi.fn(async () => ({
+      status: "error" as const,
+      error: { code: "preview-only" as const, reason: "fixture" },
+    }));
+    const sdk = createTmuxIdeSdk({
+      ...base,
+      workspace: {
+        ...base.workspace,
+        prepareProjectDirectory,
+        commitPreparedOpen,
+        cancelPreparedOpen,
+      },
+    });
+    const operationId = "10000000-0000-4000-8000-000000000001";
+    const decision = {
+      prepareToken: "20000000-0000-4000-8000-000000000001",
+      preparedRevision: 1,
+    };
+
+    await sdk.workspace.prepareProjectDirectory?.("alpha", operationId);
+    await sdk.workspace.commitPreparedOpen?.(decision, operationId);
+    await sdk.workspace.cancelPreparedOpen?.(decision, operationId);
+    expect(prepareProjectDirectory).toHaveBeenCalledWith("alpha", operationId);
+    expect(commitPreparedOpen).toHaveBeenCalledWith(decision, operationId);
+    expect(cancelPreparedOpen).toHaveBeenCalledWith(decision, operationId);
+  });
+
   it("rejects incomplete or version-skewed hosts before any call", () => {
     expect(() => createTmuxIdeSdk({ apiVersion: DESKTOP_HOST_API_VERSION })).toThrow(
       /incompatible/,

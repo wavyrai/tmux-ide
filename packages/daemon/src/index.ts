@@ -177,32 +177,6 @@ export {
   type ReconciledOrphanAttachmentDescriptor,
 } from "./terminal/attachments/lease-manager.ts";
 export {
-  TERMINAL_ATTACHMENT_MAX_CONTROL_BYTES,
-  TERMINAL_ATTACHMENT_MAX_LIVE_CONTROL_FRAMES,
-  TERMINAL_ATTACHMENT_MAX_REDEMPTION_BYTES,
-  TERMINAL_ATTACHMENT_MAX_REDEMPTION_MS,
-  TERMINAL_ATTACHMENT_REDEEM_PATH,
-  TERMINAL_ATTACHMENT_WEBSOCKET_PROTOCOL,
-  TerminalAttachmentAdmissionCoordinator,
-  TerminalAttachmentAdmissionError,
-  type DirectTerminalAttachmentDescriptor,
-  type DirectTerminalAttachmentIssueContext,
-  type DirectTerminalAttachmentLauncher,
-  type DirectTerminalAttachmentLeaseManager,
-  type DirectTerminalSocket,
-  type TerminalAttachmentAdmissionCoordinatorOptions,
-  type TerminalAttachmentAdmissionErrorCode,
-  type TerminalAttachmentAdmissionSnapshot,
-  type TerminalAttachmentGeometry,
-  type TerminalAttachmentGeometryClientProof,
-  type TerminalAttachmentPreAuthAdmission,
-  type TerminalAttachmentUpgradeDecision,
-} from "./terminal/attachments/direct-websocket.ts";
-export {
-  attachTerminalAttachmentWebSocket,
-  type TerminalAttachmentWebSocketBoundary,
-} from "./server/terminal-attachment-upgrade.ts";
-export {
   TmuxAttachmentViewExecutor,
   TmuxAttachmentOperationSerializer,
   TmuxAttachmentViewExecutorError,
@@ -218,22 +192,6 @@ export {
   type TmuxAttachmentViewExecutorErrorCode,
   type TmuxAttachmentViewExecutorOptions,
 } from "./terminal/attachments/tmux-view-executor.ts";
-export {
-  PtyTmuxAttachmentLauncher,
-  type ClaimedPtyTmuxAttachment,
-  type DaemonTmuxSocketSelector,
-  type PtyTmuxAttachmentClaimKey,
-  type PtyTmuxAttachmentLauncherOptions,
-} from "./terminal/attachments/pty-tmux-attachment-launcher.ts";
-export {
-  NativeTerminalAttachmentRuntime,
-  NativeTerminalAttachmentRuntimeError,
-  createNativeTerminalAttachmentRuntime,
-  type NativeTerminalAttachmentCommandExecutor,
-  type NativeTerminalAttachmentRuntimeErrorCode,
-  type NativeTerminalAttachmentRuntimeOptions,
-  type NativeTerminalAttachmentTmuxAuthority,
-} from "./terminal/attachments/native-runtime.ts";
 export {
   PaneStreamLeaseError,
   PaneStreamLeaseManager,

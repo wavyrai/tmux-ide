@@ -9,3 +9,7 @@ export * from "./agent-provisioning.ts";
 export * from "./navigator.ts";
 export * from "./performance-qualification.ts";
 export * from "./performance-metrics.ts";
+export * from "./optimistic-projection.ts";
+export * from "./optimistic-projection-store.ts";
+export * from "./optimistic-projection-conformance.ts";
+export * from "./app-window-identity.ts";

@@ -2,8 +2,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import {
-  APPLICATION_SHELL_RESOURCE_VERSION,
+  APPLICATION_SHELL_RESOURCE_V1_VERSION,
   ApplicationShellProjectionInputV1SchemaZ,
+  DAEMON_WIRE_PROTOCOL_VERSION,
   DESKTOP_HOST_API_VERSION,
   buildStartupReadinessLadder,
   type ApplicationShellProjectionInputV1,
@@ -48,14 +49,14 @@ function deferred<T>(): Deferred<T> {
 }
 
 const DAEMON_A: DaemonInstanceIdentity = {
-  protocolVersion: 1,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "test-a",
   instanceId: "00000000-0000-4000-8000-000000000001",
   startedAt: "2026-07-22T00:00:00.000Z",
 };
 
 const DAEMON_B: DaemonInstanceIdentity = {
-  protocolVersion: 1,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "test-b",
   instanceId: "00000000-0000-4000-8000-000000000002",
   startedAt: "2026-07-22T00:01:00.000Z",
@@ -145,6 +146,9 @@ function createHostHarness() {
 
   const stopTheme = vi.fn();
   const stopWindow = vi.fn();
+  const openProjectDirectory = vi.fn<HostCapabilities["workspace"]["openProjectDirectory"]>(
+    async () => null,
+  );
   const host: HostCapabilities = {
     apiVersion: DESKTOP_HOST_API_VERSION,
     bootstrap: vi.fn(async () => activeBootstrap),
@@ -157,7 +161,54 @@ function createHostHarness() {
         return stopWindow;
       },
     },
-    workspace: { openProjectDirectory: vi.fn(async () => null) },
+    workspace: {
+      openProjectDirectory,
+      prepareProjectDirectory: async (previousWorkspaceName, operationId) => {
+        const legacy = await openProjectDirectory();
+        if (!legacy || legacy.status === "error") return legacy;
+        return {
+          status: "ok",
+          result: {
+            operationId: operationId ?? legacy.result.operationId,
+            daemonInstanceId: legacy.result.daemonInstanceId,
+            phase: "prepared",
+            prepareToken: "90000000-0000-4000-8000-000000000001",
+            preparedRevision: 1,
+            outcome: legacy.result.outcome,
+            workspaceName: legacy.result.resource.workspaceName,
+            previousWorkspaceName: previousWorkspaceName ?? null,
+            proof: {
+              semanticPaneId: legacy.result.resource.initialPaneId,
+              paneCount: 1,
+              terminalRevision: 0,
+              terminalStateHash: "0123456789abcdef",
+            },
+          },
+        };
+      },
+      commitPreparedOpen: async (decision, operationId) => ({
+        status: "ok",
+        result: {
+          operationId: operationId ?? "90000000-0000-4000-8000-000000000002",
+          daemonInstanceId: activeDaemon.instanceId,
+          phase: "committed",
+          ...decision,
+          workspaceName: "project-00112233445566778899aabbccddeeff",
+          previousWorkspaceName: null,
+        },
+      }),
+      cancelPreparedOpen: async (decision, operationId) => ({
+        status: "ok",
+        result: {
+          operationId: operationId ?? "90000000-0000-4000-8000-000000000003",
+          daemonInstanceId: activeDaemon.instanceId,
+          phase: "cancelled",
+          ...decision,
+          workspaceName: "project-00112233445566778899aabbccddeeff",
+          previousWorkspaceName: null,
+        },
+      }),
+    },
     onboarding: { acknowledgeIntro: vi.fn(async () => undefined) },
     theme: {
       onChanged(listener) {
@@ -232,6 +283,24 @@ function createHostHarness() {
         status: "ok" as const,
         envelope: { version: 1 as const, daemon: activeDaemon, sessions: [] },
       })),
+      fetchWorkspaceCatalog: vi.fn(async () => ({
+        status: "ok" as const,
+        envelope: {
+          version: 2 as const,
+          daemon: activeDaemon,
+          intents: workspaceNames.map((workspaceName) => ({
+            workspaceName,
+            sessionName: workspaceName,
+            source: "project" as const,
+            availability: "live" as const,
+          })),
+          liveSessions: workspaceNames.map((workspaceName, index) => ({
+            sessionName: workspaceName,
+            fleetSessionId: `session.${String(index + 1).padStart(32, "0")}`,
+            paneCount: 1,
+          })),
+        },
+      })),
       promoteWorkspace: vi.fn(async () => ({
         status: "error" as const,
         error: { code: "preview-only" as const, reason: "not used by App tests" },
@@ -239,7 +308,7 @@ function createHostHarness() {
       fetchApplicationShell: vi.fn(async ({ workspaceName }) => ({
         status: "ok" as const,
         envelope: {
-          version: APPLICATION_SHELL_RESOURCE_VERSION,
+          version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
           daemon: activeDaemon,
           resource: shellInputs.get(workspaceName) ?? shellInput(workspaceName),
         },
@@ -306,6 +375,7 @@ function createHostHarness() {
     emit(workspaceNames: readonly string[], event: DesktopDaemonEvent) {
       for (const subscription of subscriptions) {
         if (
+          subscription.unsubscribe.mock.calls.length === 0 &&
           subscription.workspaceNames.length === workspaceNames.length &&
           subscription.workspaceNames.every((name, index) => name === workspaceNames[index])
         ) {
@@ -349,6 +419,7 @@ async function markLive(harness: ReturnType<typeof createHostHarness>, names: re
     expect(
       harness.subscriptions.some(
         (subscription) =>
+          subscription.unsubscribe.mock.calls.length === 0 &&
           subscription.workspaceNames.length === names.length &&
           subscription.workspaceNames.every((name, index) => name === names[index]),
       ),
@@ -374,7 +445,7 @@ async function mountResourceIdentityMismatch(
   mismatched.resolve({
     status: "ok",
     envelope: {
-      version: APPLICATION_SHELL_RESOURCE_VERSION,
+      version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
       daemon: DAEMON_B,
       resource: shellInput("Rejected mismatched workspace"),
     },
@@ -605,7 +676,7 @@ describe("desktop App live composition", () => {
     buttonNamed(root, "Open Folder")?.click();
     await vi.waitFor(() =>
       expect(root.querySelector('[role="alert"]')?.textContent).toContain(
-        "The selected project could not be opened.",
+        "tmux-ide could not open that folder through the verified daemon.",
       ),
     );
     expect(root.querySelector(".shell-workbench")).toBeNull();
@@ -838,6 +909,9 @@ describe("desktop App live composition", () => {
 
     harness.setWorkspaces("beta");
     harness.emit([], { type: "workspaces.changed" });
+    await vi.waitFor(() =>
+      expect(harness.host.daemon.fetchWorkspaceCatalog).toHaveBeenCalledTimes(2),
+    );
     await vi.waitFor(() => {
       expect(root.querySelector(".runtime-state-surface")?.getAttribute("data-state")).toBe(
         "chooser",
@@ -873,6 +947,7 @@ describe("desktop App live composition", () => {
     harness.setShell("new-workspace", shellInput("New generation"));
     vi.mocked(harness.host.daemon.refreshConnection).mockImplementationOnce(async () => {
       harness.setDaemon(DAEMON_B);
+      harness.setWorkspaces("new-workspace");
       return {
         outcome: "generation-replaced",
         previousIdentity: DAEMON_A,
@@ -929,7 +1004,7 @@ describe("desktop App live composition", () => {
       expect(root.querySelector(".runtime-state-surface")?.getAttribute("data-state")).toBe(
         "degraded",
       );
-      expect(root.textContent).toContain("rejected an incoherent semantic workspace update");
+      expect(root.textContent).toContain("failed semantic projection");
     });
     expect(root.querySelector(".shell-workbench")).toBeNull();
     expect(root.querySelector(".titlebar__preview-badge")).toBeNull();
@@ -968,7 +1043,7 @@ describe("desktop App live composition", () => {
     mismatched.resolve({
       status: "ok",
       envelope: {
-        version: APPLICATION_SHELL_RESOURCE_VERSION,
+        version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
         daemon: DAEMON_B,
         resource: shellInput("Mismatched resource"),
       },
@@ -996,14 +1071,20 @@ describe("desktop App live composition", () => {
     });
     await vi.waitFor(() =>
       expect(
-        harness.subscriptions.filter(({ workspaceNames }) => workspaceNames.length === 0).length,
+        harness.subscriptions.filter(
+          ({ workspaceNames, unsubscribe }) =>
+            workspaceNames.length === 0 && unsubscribe.mock.calls.length === 0,
+        ).length,
       ).toBeGreaterThanOrEqual(2),
     );
     harness.emit([], { type: "connection.changed", state: "live", error: null });
     await vi.waitFor(() =>
       expect(
-        harness.subscriptions.filter(({ workspaceNames }) => workspaceNames[0] === "alpha").length,
-      ).toBeGreaterThanOrEqual(2),
+        harness.subscriptions.filter(
+          ({ workspaceNames, unsubscribe }) =>
+            workspaceNames[0] === "alpha" && unsubscribe.mock.calls.length === 0,
+        ).length,
+      ).toBeGreaterThanOrEqual(1),
     );
     harness.emit(["alpha"], { type: "connection.changed", state: "live", error: null });
     await vi.waitFor(() => expect(root.textContent).toContain("Replacement generation"));
@@ -1021,7 +1102,7 @@ describe("desktop App live composition", () => {
     expect(harness.host.daemon.refreshConnection).toHaveBeenCalledOnce();
     expect(harness.host.daemon.fetchApplicationShell).toHaveBeenCalledTimes(fetchCount);
     expect(root.textContent).toContain("Replacement generation");
-    expect(root.querySelector(".runtime-resource-notice")).toBeNull();
+    expect(root.textContent).not.toContain("Late old-generation callback");
     dispose();
   });
 

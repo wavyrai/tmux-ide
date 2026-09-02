@@ -1,64 +1,49 @@
 ---
 title: tmux-ide
-description: The terminal that understands your agents — a native cockpit built around tmux
+description: Build and coordinate coding agents in one agent-aware workspace on top of durable tmux sessions
 ---
 
-# tmux-ide
-
-Other tools rebuild the terminal to understand agents. **tmux-ide teaches the terminal you already use to understand them.**
-
-One command adds a native chrome to any tmux session: a fleet of tabs with live agent-status glyphs, ground-truth working/blocked/done detection, notifications when an agent needs you, and a crash-proof restore that rebuilds your whole fleet — including your Claude conversations. It's built _around_ tmux, not on top of a reinvented terminal, so there's nothing to migrate and nothing to lock into.
+tmux-ide is a mouse-friendly OpenTUI application around ordinary tmux sessions.
+It adds Home, clickable window and pane chrome, agent indicators, memorable
+names, and direct controls. tmux remains the authority for processes, PTYs,
+topology, persistence, and SSH.
 
 ```bash
-npm i -g tmux-ide
-tmux-ide adopt work    # add the chrome to a session you already have
+npm install -g tmux-ide@beta
+tmux-ide app
 ```
 
-`adopt` is just tmux options. `tmux-ide unadopt work` reverts it, and if tmux-ide ever dies, your sessions are untouched plain tmux.
+## The current app
 
-## The three-beat story
+The default app starts with two core views and adds project-defined views when
+they are present in `.tmux-ide/workspace.yml`:
 
-**1 — Adopt in place.** `tmux-ide adopt <session>` drops a status bar onto any existing session: clickable fleet tabs, per-agent glyphs, and `[ ⌂ home ] [ ⧉ switch ] [ ? keys ]` triggers. Because the chrome lives server-side, it renders from any client — including SSH from a laptop or a phone. See [The dock & keys](/docs/the-dock).
+- **Home** discovers live sessions and provides a clean first-run state.
+- **Terminals** renders the selected tmux session with window tabs, pane
+  headers, agent awareness, and terminal content.
+- Optional **Files**, **Diff**, and **Missions** panels can appear through
+  `app.views`; mission profiles are validated but not dispatched by the CLI yet.
+- **Commands** exposes contextual actions and settings.
+- Mouse and keyboard control pane focus, windows, splitting, resizing,
+  renaming, creation, and confirmed closing.
+- `tmux-ide web` is intentionally unavailable in this beta; the canonical
+  daemon API remains renderer-neutral.
 
-**2 — Know your fleet.** Install the Claude Code integration and working/blocked/done come straight from the agent's own lifecycle. A toast fires on every attached client the moment an agent goes blocked or done; per-pane border chips read `claude · working`. See [Agent detection](/docs/agent-detection) and [Notifications & events](/docs/notifications-events).
+## Why tmux stays underneath
 
-**3 — Survive anything.** Continuous snapshots mean a tmux server death isn't a lost afternoon. `tmux-ide restore` rebuilds every session, window, layout, cwd, and title; `--resume-agents` revives your Claude conversations from their recorded session ids. See [Restore & resume](/docs/restore-resume).
+tmux has years of coverage for shells, terminal modes, resizes, detach/attach,
+disconnects, and SSH. tmux-ide does not duplicate that multiplexer. If the app
+or daemon stops, your sessions remain ordinary tmux sessions.
 
-## One app, a keystroke away
+```mermaid
+flowchart LR
+  T[tmux\nPTYs · processes · topology · persistence]
+  D[daemon\ndiscovery · lifecycle · agent state · pane streams]
+  U[OpenTUI\nHome · Terminals · chrome · input]
+  T <--> D
+  D <--> U
+```
 
-Once a session is adopted, the whole UI is a couple of keystrokes away — one interaction grammar (`j`/`k` move, `enter` opens, `/` filters, `esc` backs out, `?` asks) and one theme file.
-
-Every surface has a **prefix twin** (`prefix` then a letter) that works under every keyboard protocol, plus an `⌥` fast-path for a single keystroke when your terminal allows it. Lead with the prefix — an agent pane can temporarily swallow root-table `Alt` binds, but the tmux prefix always reaches tmux.
-
-| Surface                                        | Prefix (always works) | Alt fast-path  |
-| ---------------------------------------------- | --------------------- | -------------- |
-| Home cockpit — fleet tree, detail, preview     | `prefix h`            | `⌥h`           |
-| Switch session                                 | `prefix j`            | `⌥p`           |
-| Cheat sheet — every key on one page            | `prefix k`            | `⌥k`           |
-| Actions menu — at the pointer (or right-click) | `prefix u`            | `⌥m`           |
-| Sidebar — a fleet nav column                   | `prefix b`            | `⌥b`           |
-| Panels — explorer / changes / config           | `prefix e` `g` `v`    | `⌥e` `⌥g` `⌥,` |
-
-See [Home, sidebar & panels](/docs/app-surfaces) and [The dock & keys](/docs/the-dock).
-
-## Start here
-
-<Cards>
-  <Card title="Getting started" href="/docs/getting-started" />
-  <Card title="The dock & keys" href="/docs/the-dock" />
-  <Card title="Agent detection" href="/docs/agent-detection" />
-  <Card title="Multi-agent teams" href="/docs/multi-agent-teams" />
-  <Card title="Notifications & events" href="/docs/notifications-events" />
-  <Card title="Restore & resume" href="/docs/restore-resume" />
-  <Card title="Worktrees" href="/docs/worktrees" />
-  <Card title="Theming & config" href="/docs/theming" />
-  <Card title="CLI reference" href="/docs/commands" />
-</Cards>
-
-## Requirements
-
-- **tmux** — 3.2+ recommended (`doctor` requires ≥ 3.0; some chrome features assume newer builds; 3.6 is the smoothest)
-- **Node.js** — ≥ 20
-- **Bun** — only for the TUI surfaces (home, sidebar, and the floating widget panels)
-
-Run `tmux-ide doctor` to check your machine.
+Continue with [Getting started](/docs/getting-started) or read the
+[2.9 release cut](/docs/release-2-9-0-beta-1). The
+[OpenTUI demo](/docs/demo) is generated from the production component tree.

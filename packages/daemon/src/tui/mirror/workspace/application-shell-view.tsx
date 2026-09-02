@@ -1,0 +1,169 @@
+/* @jsxImportSource @opentui/solid */
+import type { JSX } from "solid-js";
+import { For } from "solid-js";
+import {
+  ContextStatusBar,
+  ShellMiniSidebar,
+  ShellTabBar,
+  type ShellTabBarProps,
+} from "../shell-chrome-view.tsx";
+import type { SemanticThemeSnapshot } from "../theme.ts";
+import type { ApplicationShellProjection } from "./application-shell.ts";
+
+export interface ApplicationShellProps {
+  theme: SemanticThemeSnapshot;
+  projection: ApplicationShellProjection;
+  help: string;
+  onHelp?: () => void;
+  interactionMode?: string | null;
+  focusLabel?: string | null;
+  note?: string | null;
+  showToolStatus?: boolean;
+  showSidebar?: boolean;
+  sidebar?: JSX.Element;
+  rightChips?: readonly {
+    id: string;
+    label: string;
+    hovered?: boolean;
+    context?: boolean;
+    attention?: boolean;
+  }[];
+  children: JSX.Element;
+}
+
+/** Catalog chrome uses the same canonical tab owner before a workspace exists. */
+export function ApplicationCatalogTabBar(props: ShellTabBarProps) {
+  return <ShellTabBar {...props} />;
+}
+
+/**
+ * Presentational application frame. It deliberately owns no keyboard hooks,
+ * renderer lifecycle, tmux connection, filesystem access, or mutable store.
+ */
+export function ApplicationShell(props: ApplicationShellProps) {
+  const showSidebar = () => props.showSidebar !== false;
+  const mainWidth = () =>
+    showSidebar() ? props.projection.layout.main.width : props.projection.layout.width;
+  const contentWidth = () =>
+    showSidebar() ? props.projection.content.width : props.projection.layout.width;
+  const statusLayout = () =>
+    showSidebar()
+      ? props.projection.layout
+      : {
+          ...props.projection.layout,
+          status: { ...props.projection.layout.status, width: props.projection.layout.width },
+        };
+  const activePaneTitle = () => {
+    const inventory = props.projection.semantic.terminalInventory;
+    if (!inventory) return null;
+    return (
+      inventory.resources.find((resource) => resource.id === inventory.activeResourceId)?.title ??
+      null
+    );
+  };
+  return (
+    <box
+      width={props.projection.layout.width}
+      height={props.projection.layout.height}
+      flexDirection="column"
+      backgroundColor={props.theme.colors.background}
+      overflow="hidden"
+    >
+      <ShellTabBar
+        theme={props.theme}
+        width={props.projection.layout.width}
+        variant={props.projection.layout.variant}
+        views={props.projection.views}
+        activeViewId={props.projection.activeViewId}
+        hoveredIndex={props.projection.tabs.findIndex((tab) => tab.hovered)}
+        attentionViewIds={
+          new Set(props.projection.tabs.filter((tab) => tab.attention).map((tab) => tab.id))
+        }
+        note={props.note}
+        rightChips={props.rightChips}
+        navigationFocused={props.projection.navigation.focused}
+      />
+      <box
+        width={props.projection.layout.width}
+        height={props.projection.layout.sidebar.height}
+        flexDirection="row"
+        overflow="hidden"
+      >
+        <For each={showSidebar() ? [true] : []}>
+          {() =>
+            props.sidebar ?? (
+              <ShellMiniSidebar
+                theme={props.theme}
+                width={props.projection.layout.sidebar.width}
+                variant={props.projection.layout.variant}
+                sessions={props.projection.sessions}
+                active={props.projection.activeSession}
+                hint={props.projection.sidebarHint}
+              />
+            )
+          }
+        </For>
+        <box
+          width={mainWidth()}
+          height={props.projection.layout.main.height}
+          flexDirection="column"
+          overflow="hidden"
+        >
+          <box
+            width={contentWidth()}
+            height={props.projection.content.height}
+            flexDirection="column"
+            overflow="hidden"
+          >
+            {props.children}
+          </box>
+          <ContextStatusBar
+            theme={props.theme}
+            layout={statusLayout()}
+            project={props.projection.semantic.project.name}
+            session={props.projection.activeSession}
+            pane={activePaneTitle()}
+            mode={
+              props.projection.semantic.primaryNavigation.items.find(
+                (item) => item.id === props.projection.semantic.workspaceCanvas.activeMode,
+              )?.label ?? props.projection.semantic.workspaceCanvas.activeMode
+            }
+            inputMode={props.interactionMode}
+            tool={
+              props.showToolStatus === false
+                ? null
+                : (props.projection.semantic.bottomDock.tools.find(
+                    (item) => item.id === props.projection.semantic.bottomDock.activeTool,
+                  )?.label ?? props.projection.semantic.bottomDock.activeTool)
+            }
+            dockMode={
+              props.showToolStatus === false ? null : props.projection.semantic.bottomDock.mode
+            }
+            focus={props.focusLabel ?? applicationShellFocusLabel(props.projection)}
+            notification={props.projection.semantic.statusStrip.message}
+            transient={props.note}
+            connectionState={props.projection.semantic.statusStrip.state}
+            help={props.help}
+            onHelp={props.onHelp}
+          />
+        </box>
+      </box>
+    </box>
+  );
+}
+
+function applicationShellFocusLabel(projection: ApplicationShellProjection): string {
+  const zone = projection.semantic.focus.zone;
+  if (projection.semantic.focus.overlays.length > 0) return "palette";
+  if (zone === "terminal") return "terminal";
+  if (zone === "dock-tabs") return "tool tabs";
+  if (zone === "dock-body") {
+    return (
+      projection.semantic.bottomDock.tools
+        .find((item) => item.id === projection.semantic.bottomDock.activeTool)
+        ?.label.toLowerCase() ?? "tool"
+    );
+  }
+  if (zone === "primary-navigation") return "workspace tabs";
+  return zone.replaceAll("-", " ");
+}

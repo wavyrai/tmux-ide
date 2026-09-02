@@ -5,12 +5,17 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
 import type { InteractionReceipt, SessionRuntimeSemanticIntent } from "@tmux-ide/contracts";
+import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TmuxExternalInteractionObserver } from "../../lib/tmux-external-interaction-observer.ts";
 import { WorkspaceMultiplexerAuthority } from "../../lib/workspace-multiplexer-verbs.ts";
+import { WorkspacePaneCreationAuthority } from "../../lib/workspace-pane-creation.ts";
+import { createActionDispatcher } from "../../command-center/actions/dispatcher.ts";
 import { WorkspaceRegistry } from "../../lib/workspace-registry.ts";
+import { createSessionRuntimeMultiplexerBackend } from "./multiplexer-backend.ts";
 import { SessionRuntimeRegistry } from "./registry.ts";
+import { SessionRuntimeTransportBinder } from "./transport-binding.ts";
 
 const tmuxPath = spawnSync("sh", ["-c", "command -v tmux"], { encoding: "utf8" }).stdout.trim();
 const hasTmux = tmuxPath.length > 0;
@@ -100,6 +105,11 @@ describe.skipIf(!hasTmux).sequential("semantic mutation production cutover, live
       tmuxAuthority,
     });
     const receipts: InteractionReceipt[] = [];
+    const resourceChanges: Array<{
+      workspaceName: string | null;
+      resource: string;
+      causeOperationId: string;
+    }> = [];
     const executionOrder: string[] = [];
     let sequence = 0;
     let registry!: SessionRuntimeRegistry;
@@ -131,6 +141,7 @@ describe.skipIf(!hasTmux).sequential("semantic mutation production cutover, live
           receipts.push(published);
           return published;
         },
+        publishResourceChange: (change) => resourceChanges.push(change),
         observationTimeoutMs: 5_000,
       },
     });
@@ -148,7 +159,155 @@ describe.skipIf(!hasTmux).sequential("semantic mutation production cutover, live
               operationKind: observation.operationKind,
             }),
     });
-    observer.start();
+    await observer.start();
+
+    // Production-shaped owner path: create through the action dispatcher,
+    // then reuse the exact already-bound OpenTUI controller for select and
+    // rename. No anonymous command-center consumer may be manufactured while
+    // that controller is held.
+    const creation = new WorkspacePaneCreationAuthority({
+      daemonInstanceId: generation,
+      registry: workspaceRegistry,
+      tmuxAuthority,
+    });
+    const backend = createSessionRuntimeMultiplexerBackend({
+      registry,
+      resolveSession: (workspace) =>
+        workspace === workspaceName
+          ? (workspaceRegistry.get(workspace)?.sessionName ?? null)
+          : null,
+    });
+    const app = new Hono();
+    app.post(
+      "/api/v2/action/:name",
+      createActionDispatcher({
+        daemonInstanceId: generation,
+        workspacePaneCreationBackend: creation,
+        workspaceMultiplexerBackend: backend,
+      }),
+    );
+    const post = async (
+      action: string,
+      operationId: string,
+      body: unknown,
+      hostClientId = "opentui:production-shaped",
+    ) => {
+      const response = await app.request(`http://localhost/api/v2/action/${action}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Tmux-Ide-Operation-Id": operationId,
+          ...(hostClientId ? { "X-Tmux-Ide-Host-Client-Id": hostClientId } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+      expect(response.status).toBe(200);
+      return response.json() as Promise<{
+        ok: boolean;
+        result?: Record<string, unknown>;
+        error?: { code?: string };
+      }>;
+    };
+    const createId = randomUUID();
+    const created = await post("workspace.pane.create", createId, {
+      kind: "terminal",
+      workspaceName,
+      displayTitle: "Lifecycle Two",
+      placement: { kind: "window" },
+    });
+    expect(created).toMatchObject({ ok: true, result: { outcome: "created" } });
+    const createdPane = created.result?.resource as { semanticPaneId?: string };
+    expect(createdPane.semanticPaneId).toMatch(/^pane\./u);
+    const inventory = run([
+      "list-panes",
+      "-s",
+      "-t",
+      `=${session}`,
+      "-F",
+      "#{session_name}\t#{@tmux_ide_pane_id}\t#{pane_id}\t#{window_id}",
+    ])
+      .trim()
+      .split("\n")
+      .map((row) => {
+        const [sessionName, semanticPaneId, runtimePaneId, windowId] = row.split("\t");
+        return {
+          sessionName: sessionName!,
+          semanticPaneId: semanticPaneId!,
+          runtimePaneId: runtimePaneId!,
+          windowId: windowId!,
+        };
+      });
+    expect(authority.adoptSessionPaneInventory(session, inventory)).toBe(true);
+    const binding = new SessionRuntimeTransportBinder(registry).bind({
+      transport: "pane-stream",
+      transportLeaseId: randomUUID(),
+      session,
+      hostClientId: "opentui:production-shaped",
+      allowedSourcePaneIds: ["pane.editor", createdPane.semanticPaneId!],
+      interactive: true,
+      explicitAuthority: true,
+    });
+    expect(binding.requestAuthority("input")).not.toBeNull();
+    const authorityBeforeActions = binding.authoritySnapshot();
+    const selectId = randomUUID();
+    const selected = await post("workspace.pane.select", selectId, {
+      workspaceName,
+      semanticPaneId: createdPane.semanticPaneId,
+    });
+    expect(selected, JSON.stringify(selected)).toMatchObject({
+      ok: true,
+      result: { outcome: "applied" },
+    });
+    expect(resourceChanges).toEqual([
+      { workspaceName, resource: "application-shell", causeOperationId: selectId },
+      { workspaceName, resource: "workspace-missions", causeOperationId: selectId },
+    ]);
+    const staleRename = await post(
+      "workspace.rename",
+      randomUUID(),
+      {
+        workspaceName,
+        scope: "window",
+        target: { by: "pane", semanticPaneId: createdPane.semanticPaneId },
+        name: "Must Not Apply",
+      },
+      "stale-host",
+    );
+    expect(staleRename).toMatchObject({ ok: false, error: { code: "operation_conflict" } });
+    expect(resourceChanges).toHaveLength(2);
+    expect(
+      run(["list-panes", "-s", "-t", `=${session}`, "-F", "#{@tmux_ide_pane_id}\t#{window_name}"]),
+    ).toContain(`${createdPane.semanticPaneId}\tLifecycle Two`);
+    const renameId = randomUUID();
+    expect(
+      await post("workspace.rename", renameId, {
+        workspaceName,
+        scope: "window",
+        target: { by: "pane", semanticPaneId: createdPane.semanticPaneId },
+        name: "Lifecycle Renamed",
+      }),
+    ).toMatchObject({
+      ok: true,
+      result: { operationId: renameId, outcome: "applied", scope: "window" },
+    });
+    expect(resourceChanges.slice(2)).toEqual([
+      { workspaceName, resource: "application-shell", causeOperationId: renameId },
+      { workspaceName, resource: "workspace-missions", causeOperationId: renameId },
+    ]);
+    expect(
+      run(["list-panes", "-s", "-t", `=${session}`, "-F", "#{@tmux_ide_pane_id}\t#{window_name}"])
+        .trim()
+        .split("\n")
+        .find((row) => row.startsWith(`${createdPane.semanticPaneId}\t`)),
+    ).toBe(`${createdPane.semanticPaneId}\tLifecycle Renamed`);
+    expect(registry.qualificationSnapshot().sessions).toEqual([
+      expect.objectContaining({ session, consumers: 1 }),
+    ]);
+    expect(binding.authoritySnapshot()).toEqual(authorityBeforeActions);
+    await binding.close();
+    await creation.dispose();
+    executionOrder.length = 0;
+    receipts.length = 0;
 
     const consumer = registry.connect(session, "command-center", `live:${randomUUID()}`);
     const lease = consumer.acquireController();

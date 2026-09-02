@@ -115,12 +115,20 @@ describe("PaneFeed", () => {
     expect(batch.map((event) => event.type)).toEqual(["seed"]);
   });
 
-  it("aborts back to live delivery without emitting a seed", () => {
+  it("quarantines output after an aborted seed until a fresh authoritative seed", () => {
     const feed = new PaneFeed();
     const epoch = feed.beginReseed();
     expect(delta(feed, "discarded")).toEqual([]);
     feed.abort(epoch);
-    expect(feed.currentState()).toBe("live");
+    expect(feed.currentState()).toBe("quarantined");
+    expect(delta(feed, "quarantined")).toEqual([]);
+    const fresh = feed.beginReseed();
+    feed.captureReply(fresh, ["truth"]);
+    expect(feed.cursorReply(fresh, "0 0 80 24").map((event) => event.type)).toEqual([
+      "reset",
+      "seed",
+      "cursor",
+    ]);
     expect(text(delta(feed, "flowing")[0])).toBe("flowing");
   });
 
@@ -132,6 +140,27 @@ describe("PaneFeed", () => {
     expect(feed.currentState()).toBe("awaiting-capture");
     feed.captureReply(second, ["seed"]);
     expect(feed.cursorReply(second, "0 0 5 5").map((event) => event.type)).toEqual([
+      "reset",
+      "seed",
+      "cursor",
+    ]);
+  });
+
+  it("bounds cursor-window retention, quarantines incomplete bytes, and requires a fresh reseed", () => {
+    const feed = new PaneFeed();
+    const epoch = feed.beginReseed();
+    feed.captureReply(epoch, ["provisional"]);
+    for (let index = 0; index < PaneFeed.MAX_HELD_CHUNKS; index += 1)
+      expect(delta(feed, "x")).toEqual([]);
+    const replay = delta(feed, "z");
+    expect(replay).toEqual([]);
+    expect(feed.takeOverflowed()).toBe(true);
+    expect(feed.takeOverflowed()).toBe(false);
+    expect(feed.cursorReply(epoch, "0 0 80 24")).toEqual([]);
+
+    const next = feed.beginReseed();
+    feed.captureReply(next, ["authoritative"]);
+    expect(feed.cursorReply(next, "0 0 80 24").map((event) => event.type)).toEqual([
       "reset",
       "seed",
       "cursor",

@@ -1,8 +1,12 @@
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it } from "vitest";
 import { FleetCatalogResourceV1SchemaZ, type DaemonInstanceIdentity } from "@tmux-ide/contracts";
 import { mountFleetResourceRoute } from "./fleet-resource-route.ts";
-import { _setTmuxRunner } from "../discovery.ts";
+import { _setTmuxRunner, readAdoptedFleet } from "../discovery.ts";
 
 const DAEMON: DaemonInstanceIdentity = {
   protocolVersion: 1,
@@ -30,6 +34,8 @@ function paneLine(
   return [
     sessionName,
     paneId,
+    `pane.test.${paneId.slice(1)}`,
+    "1700000000",
     active ? "1" : "0",
     command,
     path,
@@ -55,12 +61,14 @@ function pinRunner(sessions: string, panes: string): () => void {
 function appWith(options: {
   ownerToken: string | null;
   registry?: { list(): { sessionName: string }[] };
+  readFleet?: () => ReturnType<typeof readAdoptedFleet>;
 }): Hono {
   const app = new Hono();
   mountFleetResourceRoute(app, {
     daemon: DAEMON,
     ownerToken: options.ownerToken,
     registry: options.registry ?? { list: () => [] },
+    readFleet: options.readFleet,
   });
   return app;
 }
@@ -162,6 +170,55 @@ describe("GET /api/resources/fleet-catalog", () => {
     const parsed = FleetCatalogResourceV1SchemaZ.parse(await res.json());
     expect(parsed.sessions).toEqual([]);
     expect(parsed.daemon).toEqual(DAEMON);
+  });
+
+  it("reads the daemon-generation-pinned private socket and excludes the ambient server", async (context) => {
+    if (spawnSync("tmux", ["-V"], { stdio: "ignore" }).status !== 0) {
+      context.skip();
+      return;
+    }
+    const fixtureRoot = mkdtempSync(join(tmpdir(), "tmux-ide-fleet-route-"));
+    const pinnedSocket = join(fixtureRoot, "pinned.sock");
+    const ambientSocket = join(fixtureRoot, "ambient.sock");
+    const runnerFor =
+      (socketPath: string) =>
+      (args: string[]): string =>
+        execFileSync("tmux", ["-S", socketPath, ...args], { encoding: "utf8" }).trim();
+    try {
+      for (const [socketPath, sessionName] of [
+        [pinnedSocket, "isolated"],
+        [ambientSocket, "unrelated"],
+      ] as const) {
+        execFileSync("tmux", ["-S", socketPath, "new-session", "-d", "-s", sessionName]);
+        execFileSync("tmux", [
+          "-S",
+          socketPath,
+          "set-option",
+          "-t",
+          sessionName,
+          "@tmux_ide_adopted",
+          "1",
+        ]);
+      }
+      restoreRunner = _setTmuxRunner(runnerFor(ambientSocket));
+      const registry = { list: () => [] };
+      const app = appWith({
+        ownerToken: OWNER,
+        registry,
+        readFleet: () => readAdoptedFleet(registry, runnerFor(pinnedSocket)),
+      });
+      const response = await app.request("/api/resources/fleet-catalog", bearer());
+      expect(response.status).toBe(200);
+      const parsed = FleetCatalogResourceV1SchemaZ.parse(await response.json());
+      expect(parsed.sessions.map(({ label }) => label)).toEqual(["isolated"]);
+      expect(parsed.sessions.some(({ label }) => label === "unrelated")).toBe(false);
+    } finally {
+      restoreRunner?.();
+      restoreRunner = null;
+      for (const socketPath of [pinnedSocket, ambientSocket])
+        spawnSync("tmux", ["-S", socketPath, "kill-server"], { stdio: "ignore" });
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
   });
 
   it("sanitizes a hostile self-reported display name", async () => {

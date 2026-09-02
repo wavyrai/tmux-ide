@@ -3,9 +3,9 @@
 // esbuild banner. Dev iteration uses `bun bin/cli.ts` directly, which
 // doesn't need a shebang.
 import { parseArgs } from "node:util";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -24,9 +24,11 @@ import { resolveConfig } from "../packages/daemon/src/lib/resolved-config.ts";
 import { resolveProjectConfigContext } from "../packages/daemon/src/lib/config-context.ts";
 import {
   ensureCompiledTuiRuntimeDir,
+  ensureTuiLaunchAvailable,
   resolveTuiLaunch,
   findCompiledTui,
   isBunAvailable,
+  openTuiLaunchEnvironment,
 } from "../packages/daemon/src/tui/compiled.ts";
 import { init } from "../packages/daemon/src/init.ts";
 import { stop } from "../packages/daemon/src/stop.ts";
@@ -45,6 +47,8 @@ import { send } from "../packages/daemon/src/send.ts";
 import { IdeError } from "../packages/daemon/src/lib/errors.ts";
 import { printCommandError } from "../packages/daemon/src/lib/output.ts";
 import { runHeadlessDaemon } from "../packages/daemon/src/lib/headless-daemon.ts";
+import { ensureCanonicalDaemon } from "../packages/daemon/src/lib/canonical-daemon-bootstrap.ts";
+import { stateHome } from "../packages/daemon/src/lib/state-home.ts";
 import {
   wantsHostedApp,
   hostedEnvVars,
@@ -53,6 +57,9 @@ import {
   hostCreateArgv,
   hostSetupArgvs,
   hostAttachArgv,
+  hostRootBindingsArgv,
+  hostPutAwayBindingArgv,
+  hostedPutAwayBindingState,
   HOSTED_ENV,
 } from "../packages/daemon/src/tui/mirror/hosted.ts";
 
@@ -160,6 +167,7 @@ const knownCommands = new Set([
   "update",
   "skill-sync",
   "widget",
+  "web",
   "serve",
   "command-center",
   "server",
@@ -199,6 +207,7 @@ function printHelp() {
 
 ${bold("Usage:")}
   ${cyan("tmux-ide")}                    ${dim("Open the visual tmux app (workspace config is optional)")}
+  ${cyan("tmux-ide start")} [path]       ${dim("Explicitly launch the declarative project layout")}
   ${cyan("tmux-ide --headless")}         ${dim("Run the canonical daemon in this foreground process")}
   ${cyan("tmux-ide <path>")}             ${dim("Open a configured workspace, or visually manage tmux from that folder")}
   ${cyan("tmux-ide setup")}              ${dim("Interactive TUI setup wizard")}
@@ -214,6 +223,7 @@ ${bold("Usage:")}
   ${cyan("tmux-ide team")} [--json]      ${dim("TUI over all tmux sessions (--json prints fleet state)")}
   ${cyan("tmux-ide app")} [session]      ${dim("Unified app: fleet home + live session mirror (bare = home)")}
   ${cyan("tmux-ide app --detachable")}   ${dim("Host the app in tmux and attach — survives the terminal, ^q detaches")}
+  ${cyan("tmux-ide app --hosted")}       ${dim("Alias for --detachable")}
   ${cyan("tmux-ide switcher")}           ${dim("Compact session picker (opens in the M-p popup on adopted sessions)")}
   ${cyan("tmux-ide wait agent-status")} <session> --status <s> [--timeout <ms>]
                               ${dim("Block until a session reaches a status (exit 0 match / 1 timeout)")}
@@ -224,7 +234,10 @@ ${bold("Usage:")}
   ${cyan("tmux-ide adopt")} <session>    ${dim("Add the live tmux-ide status bar to a session")}
   ${cyan("tmux-ide adopt --all")}        ${dim("Adopt every live (non-internal) session")}
   ${cyan("tmux-ide unadopt")} <session>  ${dim("Remove the status bar")}
-  ${cyan("tmux-ide integration install claude")}  ${dim("Authoritative agent status via Claude Code hooks")}
+  ${cyan("tmux-ide integration install claude")}  ${dim("Claude Code lifecycle hooks + managed tmux-ide skill")}
+  ${cyan("tmux-ide integration install opencode")} ${dim("Capture opencode session ids for restore --resume-agents")}
+  ${cyan("tmux-ide integration uninstall")} <claude|opencode> ${dim("Remove tmux-ide's integration entries")}
+  ${cyan("tmux-ide integration status")} [--json]  ${dim("Show discovered agents, integration state, and resume-id capture")}
   ${cyan("tmux-ide agent explain")} <pane> [--json]  ${dim("Debug how a pane's agent state is detected")}
   ${cyan("tmux-ide cheatsheet")}         ${dim("Print the key cheat sheet (⌥k / [ ? keys ] popup)")}
   ${cyan("tmux-ide menu")} [--client N]  ${dim("Open the right-click actions menu (⌥m / right-click any pane or the bar)")}
@@ -242,10 +255,9 @@ ${bold("Usage:")}
   ${cyan("tmux-ide inspect")} [--json]   ${dim("Show effective config and runtime state")}
   ${cyan("tmux-ide doctor")}             ${dim("Check system requirements")}
   ${cyan("tmux-ide update")} [--dry-run] ${dim("Update tmux-ide (detects dev checkout vs npm/pnpm/bun global)")}
+  ${cyan("tmux-ide update --tui-binary")} ${dim("Download and verify this version's compiled OpenTUI runtime")}
   ${cyan("tmux-ide update --manifests")} ${dim("Fetch the latest agent-detection manifest pack (your overrides still win)")}
   ${cyan("tmux-ide skill-sync")}         ${dim("Refresh the bundled Claude Code skill in ~/.claude/skills/tmux-ide")}
-  ${cyan("tmux-ide show <file>")}          ${dim("Show rich content inside this pane (Ctrl-C restores it)")}
-  ${cyan("tmux-ide widget <name> [file]")} ${dim("Low-level explicit rich-content command")}
   ${cyan("tmux-ide validate")} [--json]  ${dim("Validate workspace config")}
   ${cyan("tmux-ide detect")} [--json]    ${dim("Detect project stack")}
   ${cyan("tmux-ide detect --write")}     ${dim("Detect and write .tmux-ide/workspace.yml")}
@@ -263,6 +275,7 @@ ${bold("Pane Messaging:")}
   ${cyan("tmux-ide send")} <target> --no-enter msg  ${dim("Send text without pressing Enter")}
 
 ${bold("Server:")}
+  ${cyan("tmux-ide serve")} [socket-path]         ${dim("Foreground owner-only local NDJSON control socket")}
   ${cyan("tmux-ide command-center")} [--port N]    ${dim("Start the command-center HTTP API")}
   ${cyan("tmux-ide server")} [--port N]            ${dim("Start HTTP + PTY WebSocket server")}
 
@@ -275,7 +288,7 @@ ${bold("Discover (in the TUI):")}
   ${dim("A first-run welcome card names these keys once. Run")} ${cyan("tmux-ide cheatsheet")} ${dim("to see the full sheet.")}
 
 ${bold("Flags:")}
-  ${cyan("--json")}                      ${dim("Output as JSON (all commands)")}
+  ${cyan("--json")}                      ${dim("Structured output on commands that advertise JSON support")}
   ${cyan("--headless")}                  ${dim("Canonical daemon only; no tmux workspace or TUI")}
   ${cyan("--template <name>")}           ${dim("Use specific template for init")}
   ${cyan("--write")}                     ${dim("Write detected config to .tmux-ide/workspace.yml")}
@@ -315,41 +328,109 @@ function execBunWidget(
     );
   }
 
-  const env = {
-    ...process.env,
+  const launchEpochMs = Date.now();
+  let automaticDiagnosticLog: string | undefined;
+  if (surface === "app" && !process.env.TMUX_IDE_TUI_PERF_LOG) {
+    try {
+      const logDirectory = join(stateHome(), "logs");
+      mkdirSync(logDirectory, { recursive: true, mode: 0o700 });
+      automaticDiagnosticLog = join(logDirectory, "tui-latest.jsonl");
+      writeFileSync(
+        automaticDiagnosticLog,
+        `${JSON.stringify({
+          phase: "launcher-start",
+          elapsedMs: 0,
+          at: new Date(launchEpochMs).toISOString(),
+          surface,
+          launchMode: launch.mode,
+        })}\n`,
+        { mode: 0o600 },
+      );
+    } catch {
+      // Diagnostics must never prevent the product from launching.
+      automaticDiagnosticLog = undefined;
+    }
+  }
+  const env = openTuiLaunchEnvironment(process.env, {
     TMUX_IDE_CWD: process.cwd(),
     TMUX_IDE_CLI: nodeCliPath,
+    ...(automaticDiagnosticLog
+      ? {
+          TMUX_IDE_TUI_PERF_LOG: automaticDiagnosticLog,
+          TMUX_IDE_TUI_LAUNCH_EPOCH_MS: String(launchEpochMs),
+        }
+      : {}),
     ...extraEnv,
+  });
+  const markChildExited = () => {
+    if (!automaticDiagnosticLog) return;
+    try {
+      appendFileSync(
+        automaticDiagnosticLog,
+        `${JSON.stringify({
+          phase: "launcher-child-exited",
+          elapsedMs: Date.now() - launchEpochMs,
+          at: new Date().toISOString(),
+          status: 0,
+          signal: null,
+        })}\n`,
+      );
+    } catch {
+      // Diagnostics must never change successful process semantics.
+    }
   };
-  if (launch.mode === "bun") {
-    // Spawn from the repo root so bun finds `bunfig.toml` (the @opentui/solid
-    // JSX preload). Without this, running from any other cwd — e.g. bare
-    // `tmux-ide` in a project dir — falls back to the React JSX runtime and the
-    // widget fails to load. The real invocation dir rides in env so in-widget
-    // prompts (register / new session) still default to where the user is.
+  try {
+    if (launch.mode === "bun") {
+      // Spawn from the repo root so bun finds `bunfig.toml` (the @opentui/solid
+      // JSX preload). Without this, running from any other cwd — e.g. bare
+      // `tmux-ide` in a project dir — falls back to the React JSX runtime and the
+      // widget fails to load. The real invocation dir rides in env so in-widget
+      // prompts (register / new session) still default to where the user is.
+      execFileSync(launch.bin, launch.argv, {
+        stdio: "inherit",
+        cwd: resolve(__dirname, ".."),
+        env,
+      });
+      markChildExited();
+      return;
+    }
+
+    // A compiled Bun executable still reads bunfig.toml from its cwd before the
+    // embedded app starts. Isolate it from the project checkout; TMUX_IDE_CWD
+    // preserves the user's real project directory for every app action.
     execFileSync(launch.bin, launch.argv, {
       stdio: "inherit",
-      cwd: resolve(__dirname, ".."),
+      cwd: ensureCompiledTuiRuntimeDir(),
       env,
     });
-    return;
+    markChildExited();
+  } catch (error) {
+    if (automaticDiagnosticLog) {
+      try {
+        const childError = error as { status?: unknown; signal?: unknown };
+        appendFileSync(
+          automaticDiagnosticLog,
+          `${JSON.stringify({
+            phase: "launcher-child-failed",
+            elapsedMs: Date.now() - launchEpochMs,
+            at: new Date().toISOString(),
+            status: childError.status ?? null,
+            signal: childError.signal ?? null,
+          })}\n`,
+        );
+      } catch {
+        // Preserve the original child failure.
+      }
+    }
+    throw error;
   }
-
-  // A compiled Bun executable still reads bunfig.toml from its cwd before the
-  // embedded app starts. Isolate it from the project checkout; TMUX_IDE_CWD
-  // preserves the user's real project directory for every app action.
-  execFileSync(launch.bin, launch.argv, {
-    stdio: "inherit",
-    cwd: ensureCompiledTuiRuntimeDir(),
-    env,
-  });
 }
 
 // The detachable cockpit (M23.2): instead of running the app in THIS terminal,
 // ensure the internal `_tmux-ide-app` session exists running it full-screen
 // (status off, window-size latest — see hostSetupArgvs), then attach here.
-// Re-invocation from any terminal reattaches the SAME cockpit; ^q inside a
-// hosted app detaches (the HOSTED_ENV marker on the pane command flips it).
+// Re-invocation from any terminal reattaches the SAME cockpit; tmux handles ^q
+// with the exact invoking client as context while the resident app stays alive.
 // Inside tmux the client switch-clients instead of nesting an attach.
 function launchHostedApp(scriptPath: string, appArgs: string[]): void {
   const launch = resolveTuiLaunch({
@@ -400,6 +481,29 @@ function launchHostedApp(scriptPath: string, appArgs: string[]): void {
   // `resize-window` flipped to manual — the measured way a cockpit gets stuck
   // at a departed client's size.
   for (const args of hostSetupArgvs()) execFileSync("tmux", args, { stdio: "ignore" });
+  // Ctrl-Q must be resolved by tmux while the exact input client is still the
+  // command context. The shared renderer pane cannot identify which of several
+  // attached terminals supplied a key. Never replace a user-owned root bind:
+  // tmux 3.0 has no single-key/formatted list-keys query, so classify its
+  // bounded canonical root-table listing in-process.
+  const rootBindings = execFileSync("tmux", hostRootBindingsArgv(), {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 1_500,
+    maxBuffer: 1024 * 1024,
+  });
+  const putAwayBinding = hostedPutAwayBindingState(rootBindings);
+  if (putAwayBinding === "conflict") {
+    throw new IdeError(
+      "Cannot enable hosted Ctrl-Q because tmux's root C-q key is already user-bound. " +
+        "tmux-ide left that binding unchanged. Unbind or remap it, then run the app again; " +
+        "tmux prefix+d remains available for detaching.",
+      { code: "USAGE", exitCode: 1 },
+    );
+  }
+  if (putAwayBinding === "absent") {
+    execFileSync("tmux", hostPutAwayBindingArgv(), { stdio: "ignore" });
+  }
   execFileSync("tmux", hostAttachArgv(Boolean(process.env.TMUX)), { stdio: "inherit" });
 }
 
@@ -463,7 +567,28 @@ function launchTeamCockpit(): void {
 // `app.detachable` in config) route through the hosted launcher, everything
 // else runs the app in this terminal as before. The HOSTED_ENV guard keeps the
 // app INSIDE the host session from re-hosting itself.
-function runApp(appArgs: string[]): void {
+async function runApp(appArgs: string[]): Promise<void> {
+  // A clean npm install has neither a checkout runtime nor Bun. Acquire the
+  // exact-version OpenTUI release artifact on the first explicit app launch so
+  // users never need a hidden setup command. This must complete before daemon
+  // election: a failed/offline download must not leave a persistent background
+  // process behind. Existing binaries and Bun-backed development checkouts
+  // return without network work.
+  await ensureTuiLaunchAvailable(
+    {
+      surface: "app",
+      scriptPath: appScriptPath,
+      args: appArgs,
+      checkoutExists: existsSync(appScriptPath),
+      bunAvailable: isBunAvailable(),
+      compiledBinary: findCompiledTui(),
+      preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1",
+    },
+    { log: (message) => process.stderr.write(`[tmux-ide] ${message}\n`) },
+  );
+  // The app is a thin client. Establish the one persistent daemon generation
+  // only after its renderer is known-runnable, then mount against that owner.
+  await ensureCanonicalDaemon({ entryPath: nodeCliPath });
   const hosted = wantsHostedApp({
     flagDetachable: values.detachable === true,
     flagHosted: values.hosted === true,
@@ -478,8 +603,8 @@ function runApp(appArgs: string[]): void {
 // app`'s HOME panel when `app.frontDoor` is on and there's nothing else to
 // launch. Same entry as the explicit `app` command with no session positional
 // — including the hosted flip when `app.detachable` is set (M23.2).
-function launchApp(): void {
-  runApp([]);
+function launchApp(): Promise<void> {
+  return runApp([]);
 }
 
 try {
@@ -534,6 +659,7 @@ try {
       // cockpit; a present project config still auto-launches the project; otherwise
       // `app.frontDoor` flips the default no-project entry to the unified app.
       const entry = resolveEntry({
+        bareInvocation: firstPositional === undefined,
         configKind: configContext.configKind,
         hasWorkspaceConfig: configContext.hasWorkspaceConfig,
         hasIdeYml: configContext.hasIdeYml,
@@ -547,7 +673,7 @@ try {
           await printFleetJson();
           break;
         }
-        if (entry === "app") launchApp();
+        if (entry === "app") await launchApp();
         else launchTeamCockpit();
         break;
       }
@@ -715,7 +841,7 @@ try {
       // cockpit at CREATE time; a reattach finds the app exactly as left.
       const session = positionals[1];
       const appArgs = session ? [`--target=${session}`] : [];
-      runApp(appArgs);
+      await runApp(appArgs);
       break;
     }
 
@@ -1961,6 +2087,13 @@ try {
       process.on("SIGINT", shutdown);
       await new Promise(() => {}); // the server owns the process lifetime
       break;
+    }
+
+    case "web": {
+      throw new IdeError(
+        "The Web GUI is not included in the OpenTUI beta. Run `tmux-ide app` for the supported interface.",
+        { code: "WEB_GUI_NOT_INCLUDED", exitCode: 1 },
+      );
     }
 
     case "command-center": {

@@ -49,6 +49,7 @@ export interface PaneStreamIssueContext {
   readonly projectIdentity: string;
   /** Daemon-resolved tmux session backing the workspace. Never renderer input. */
   readonly sessionName: string;
+  readonly runtimeSessionId?: string;
   readonly hostClientId?: string;
 }
 
@@ -62,6 +63,7 @@ export interface PaneStreamLeaseDescriptor {
   readonly workspaceName: string;
   /** Daemon-internal: consumed by the endpoint, never sent to a renderer. */
   readonly sessionName: string;
+  readonly runtimeSessionId: string | null;
   readonly panes: readonly string[];
   readonly viewerMode: PaneStreamViewerMode;
   readonly terminalDelivery: TerminalDeliveryOffer | null;
@@ -114,6 +116,7 @@ interface LeaseState {
   hostClientId: string | null;
   request: PaneStreamLeaseRequest;
   sessionName: string;
+  runtimeSessionId: string | null;
   status: PaneStreamLeaseStatus;
   issuedAt: number;
   expiresAt: number;
@@ -202,6 +205,8 @@ export class PaneStreamLeaseManager {
         hostClientId,
         request: parsedRequest,
         sessionName,
+        runtimeSessionId:
+          typeof context.runtimeSessionId === "string" ? context.runtimeSessionId : null,
         status: "awaiting-redemption",
         issuedAt,
         expiresAt: issuedAt + this.#ticketTtlMs,
@@ -358,6 +363,7 @@ export class PaneStreamLeaseManager {
       hostClientId: state.hostClientId,
       workspaceName: state.request.workspaceName,
       sessionName: state.sessionName,
+      runtimeSessionId: state.runtimeSessionId,
       panes: [...state.request.panes],
       viewerMode: state.request.viewerMode,
       terminalDelivery: state.request.terminalDelivery ?? null,

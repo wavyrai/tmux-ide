@@ -16,6 +16,8 @@
 export type EntryTarget = "project" | "cockpit" | "app";
 
 export interface ResolveEntryOptions {
+  /** True only for `tmux-ide` with no command or path positional. */
+  bareInvocation?: boolean;
   /** Legacy compatibility fact retained for older callers. */
   hasIdeYml: boolean;
   /** Whether a workspace config is present in the target directory. */
@@ -36,6 +38,10 @@ export interface ResolveEntryOptions {
  */
 export function resolveEntry(opts: ResolveEntryOptions): EntryTarget {
   if (opts.teamFlag) return "cockpit";
+  // Bare `tmux-ide` is the product's visual front door even when the current
+  // directory contains an optional declarative layout. Project launch remains
+  // available through the explicit `start` command or a path positional.
+  if (opts.bareInvocation) return opts.frontDoor ? "app" : "cockpit";
   if (opts.configKind === "workspace" || opts.configKind === "legacy") return "project";
   if (opts.hasWorkspaceConfig || opts.hasIdeYml) return "project";
   return opts.frontDoor ? "app" : "cockpit";

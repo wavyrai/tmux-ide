@@ -31,6 +31,19 @@ describe("resolveEntry", () => {
   });
 
   describe("front-door flip (app.frontDoor)", () => {
+    it("keeps bare tmux-ide on the visual app even when this directory has a project config", () => {
+      expect(
+        resolveEntry({
+          bareInvocation: true,
+          hasIdeYml: false,
+          hasWorkspaceConfig: true,
+          configKind: "workspace",
+          teamFlag: false,
+          frontDoor: true,
+        }),
+      ).toBe("app");
+    });
+
     it("opens the unified app when no ide.yml and the front door is on", () => {
       expect(resolveEntry({ hasIdeYml: false, teamFlag: false, frontDoor: true })).toBe("app");
     });

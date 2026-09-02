@@ -3,136 +3,230 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { loadLocalSourceImportGraph } from "../../../../test-support/source-import-graph.ts";
-import { OPENTUI_PRODUCTION_ROOT_SOURCES } from "../../../../test-support/opentui-production-root-manifest.ts";
+import {
+  OPENTUI_PRODUCTION_APPLICATION_ROOT,
+  OPENTUI_PRODUCTION_ROOT_SOURCES,
+  OPENTUI_REQUIRED_PRODUCTION_MODULES,
+  OPENTUI_RETIRED_PRODUCTION_MODULES,
+} from "../../../../test-support/opentui-production-root-manifest.ts";
 
 const repoRoot = fileURLToPath(new URL("../../../../../../", import.meta.url));
 const productionGraph = await loadLocalSourceImportGraph(repoRoot, OPENTUI_PRODUCTION_ROOT_SOURCES);
+const productionFiles = new Set(productionGraph.files);
 const source = productionGraph.files
   .map(
     (path) => productionGraph.sourceByFile.get(path) ?? readFileSync(join(repoRoot, path), "utf8"),
   )
   .join("\n");
+const applicationRootSource =
+  productionGraph.sourceByFile.get(OPENTUI_PRODUCTION_APPLICATION_ROOT) ??
+  readFileSync(join(repoRoot, OPENTUI_PRODUCTION_APPLICATION_ROOT), "utf8");
+const terminalRendererSourcesPath =
+  "packages/daemon/src/tui/mirror/runtime/application-terminal-renderer-sources.ts";
+const PURE_PRESENTATION_MODULE =
+  /packages\/daemon\/src\/tui\/mirror\/(?:ui\/|workspace\/|shell-chrome-view\.tsx$|runtime\/application-shell-(?:catalog|home|overlay-stack|overlays|sidebar)\.tsx$)/u;
 
-describe("production OpenTUI data path", () => {
-  it("contains no recurring catalog work or legacy direct observation path", () => {
-    const forbiddenPaths: ReadonlyArray<{
-      readonly text: string;
-      readonly compatibilityDefinitions?: readonly string[];
-    }> = [
-      { text: "setInterval(" },
-      { text: 'team", "--json' },
-      {
-        text: "readMissionWorkspace",
-        compatibilityDefinitions: [
-          "packages/daemon/src/tui/mirror/legacy/missions-workspace-loader.ts",
-        ],
-      },
-      {
-        text: "MissionRepository",
-        compatibilityDefinitions: [
-          "packages/daemon/src/tui/mirror/legacy/missions-workspace-loader.ts",
-          "packages/daemon/src/lib/mission-repository.ts",
-        ],
-      },
-      { text: "watchDirectory" },
-      { text: "filesStatusPoll" },
-      { text: "fleetTimer" },
-      { text: "diffTimer" },
-      { text: "fleetRefresh" },
-    ];
-    for (const { text, compatibilityDefinitions = [] } of forbiddenPaths) {
-      const offenders = productionGraph.files.filter(
-        (path) =>
-          !compatibilityDefinitions.includes(path) &&
-          productionGraph.sourceByFile.get(path)?.includes(text),
+const RETIRED_FEATURE_PATHS = [
+  /\/runtime\/application-optional-features\.ts$/u,
+  /\/runtime\/(?:optional-feature-registry|tool-resource-(?:controller|projection)|terminal-tool-readiness)\.ts$/u,
+  /\/features\//u,
+  /\/(?:files|changes|missions|activity)-surface(?:-view)?\.tsx?$/u,
+  /\/workspace\/agent-terminal-canvas(?:-view)?\.tsx?$/u,
+  /\/widget-(?:fallback|surface|surface-model)\.tsx?$/u,
+] as const;
+
+const RETIRED_CONSTRUCTORS = [
+  "connectOpenTuiApplicationShellAuthority(",
+  "createApplicationShellSession(",
+  "connectOpenTuiSessionRuntime(",
+  "new OpenTuiTerminalWorkspaceAdapter(",
+  "new PaneScopedTerminalOwner(",
+  "dispatchTerminalInputWithAuthority(",
+  "new OpenTuiWorkspaceHandoffClient(",
+  "createApplicationOptionalFeatureRegistry(",
+  "new OptionalFeatureRegistry(",
+  "new ToolResourceController(",
+  "<WidgetSurface",
+  "<FilesSurface",
+  "<ChangesSurface",
+  "<MissionsSurface",
+  "<ActivitySurface",
+] as const;
+
+const RAW_RENDER_COLOR = /RGBA\.fromInts\(|#[0-9a-fA-F]{6}\b|\b0x[0-9a-fA-F]{6}\b|colour[0-9]+/u;
+const DESIGN_SYSTEM_COLOR_OWNERS = [
+  // User-facing semantic defaults; not a rendered surface.
+  "packages/daemon/src/lib/app-config.ts",
+  // Native renderable constructor safety before semantic props arrive.
+  "packages/daemon/src/tui/mirror/pane-surface.tsx",
+  // The sole OpenTUI token/palette projection boundary.
+  "packages/daemon/src/tui/mirror/theme.ts",
+] as const;
+
+function occurrences(pattern: RegExp): number {
+  return source.match(pattern)?.length ?? 0;
+}
+
+describe("production OpenTUI v2 data path", () => {
+  it("boots the v2 root and never reaches the retired production stack", () => {
+    for (const required of OPENTUI_REQUIRED_PRODUCTION_MODULES) {
+      expect(productionFiles.has(required), `production graph is missing ${required}`).toBe(true);
+    }
+    for (const retired of OPENTUI_RETIRED_PRODUCTION_MODULES) {
+      expect(productionFiles.has(retired), `production graph still reaches ${retired}`).toBe(false);
+    }
+    const featureDebt = productionGraph.files.filter((path) =>
+      RETIRED_FEATURE_PATHS.some((pattern) => pattern.test(path)),
+    );
+    expect(featureDebt).toEqual([]);
+  });
+
+  it("contains no executable reference to a retired authority, replica, handoff, or tool owner", () => {
+    for (const constructor of RETIRED_CONSTRUCTORS) {
+      expect(source.includes(constructor), `production graph still references ${constructor}`).toBe(
+        false,
       );
-      expect(offenders, `production graph contains executable ${text}`).toEqual([]);
+    }
+    expect(source).not.toMatch(/\b(?:Missions|Activity|Files|Changes)\b/u);
+  });
+
+  it("keeps raw colors out of every production app-owned surface", () => {
+    const owners = productionGraph.files.filter((path) =>
+      RAW_RENDER_COLOR.test(productionGraph.sourceByFile.get(path) ?? ""),
+    );
+    expect(owners).toEqual([...DESIGN_SYSTEM_COLOR_OWNERS].sort());
+  });
+
+  it("constructs exactly one WorkspaceClient and one TerminalFastLane owner", () => {
+    expect(occurrences(/\bcreateWorkspaceClient\s*\(/gu)).toBe(1);
+    expect(occurrences(/\bcreateTerminalFastLane\s*\(/gu)).toBe(1);
+    expect(source).toContain("new TerminalFastLaneRendererAdapter(");
+    expect(source).toContain("<PaneScopedTerminalSurface");
+  });
+
+  it("stages candidate interests before prepare and trims only at atomic activation", () => {
+    const generationHost = productionGraph.sourceByFile.get(
+      "packages/daemon/src/tui/mirror/runtime/open-tui-generation-host.ts",
+    )!;
+    const productionBundleStart = generationHost.indexOf("function buildProductionBundle(");
+    const connectStart = generationHost.indexOf("connectRuntime:", productionBundleStart);
+    const connectBlock = generationHost.slice(
+      connectStart,
+      generationHost.indexOf("didActivateRuntime:", connectStart),
+    );
+    const activationStart = generationHost.indexOf(
+      "didActivateRuntime: (runtime, inventory)",
+      productionBundleStart,
+    );
+    const activationBlock = generationHost.slice(
+      activationStart,
+      generationHost.indexOf("didRetireRuntime:", activationStart),
+    );
+    expect(connectBlock).not.toContain("retainPanes(");
+    expect(connectBlock).toContain("stagePanes(inventory.semanticPaneIds)");
+    expect(connectBlock.indexOf("stagePanes(")).toBeLessThan(
+      connectBlock.indexOf("connectOpenTuiWorkspaceRuntimePort("),
+    );
+    expect(activationBlock).toContain("retainPanes(inventory.semanticPaneIds)");
+    expect(activationBlock.indexOf("retainPanes(")).toBeLessThan(
+      activationBlock.indexOf("releaseStage?.()"),
+    );
+  });
+
+  it("does not couple viewport fitting to terminal layout publications", () => {
+    const terminalInputIngress = productionGraph.sourceByFile.get(
+      "packages/daemon/src/tui/mirror/runtime/application-terminal-input-ingress.ts",
+    )!;
+    expect(applicationRootSource).not.toContain("layoutSnapshot();");
+    expect(terminalInputIngress).toContain('active?.status === "live"');
+    expect(terminalInputIngress).not.toContain("layoutSnapshot");
+  });
+
+  it("gates application-mouse ingress diagnostics before the workspace clock boundary", () => {
+    expect(applicationRootSource).toMatch(
+      /const applicationMouseIngress = applicationMousePointerIngressCapability\(\s*tuiPerfStream,\s*selectionOwner\.beginPointerIngress,\s*\)/u,
+    );
+    expect(applicationRootSource).toContain(
+      "onApplicationMousePointerIngress={focusedApplicationMouseIngress}",
+    );
+    expect(applicationRootSource).toMatch(
+      /const focusedApplicationMouseIngress = recoverHostFocus\.optional\(applicationMouseIngress\)/u,
+    );
+    expect(applicationRootSource).not.toContain(
+      "onApplicationMousePointerIngress={selectionOwner.beginPointerIngress}",
+    );
+  });
+
+  it("keeps the coherent terminal renderer resident while authority rebinds", () => {
+    const owners = productionGraph.files.filter((path) => path === terminalRendererSourcesPath);
+    expect(owners).toEqual([terminalRendererSourcesPath]);
+    const rendererSources = productionGraph.sourceByFile.get(terminalRendererSourcesPath);
+    expect(rendererSources).toMatch(
+      /active\?\.adapter\s*&&\s*\(active\.status\s*===\s*["']live["']\s*\|\|\s*active\.status\s*===\s*["']rebinding["']\)/u,
+    );
+    expect(
+      applicationRootSource.match(/createApplicationTerminalRendererSources\(generation\)/gu),
+    ).toHaveLength(1);
+    expect(applicationRootSource).not.toMatch(
+      /active\?\.adapter\s*&&\s*\(active\.status\s*===\s*["']live["']\s*\|\|\s*active\.status\s*===\s*["']rebinding["']\)/u,
+    );
+  });
+
+  it("keeps renderer startup and shutdown behind the lifecycle bootstrap", () => {
+    expect(source).toContain("await startTuiApplication");
+    expect(source).toContain("new TuiApplicationLifecycle");
+    expect(source).toContain("renderer.destroy()");
+    expect(source).not.toContain("process.exit(");
+  });
+
+  it("owns keyboard and paste ingress exactly once at the application root", () => {
+    expect(occurrences(/\buseKeyboard\s*\(/gu)).toBe(1);
+    expect(occurrences(/\busePaste\s*\(/gu)).toBe(1);
+    expect(applicationRootSource).toContain("createKeyboardRouteOwner()");
+    expect(applicationRootSource).toContain("componentKeyboardRoutes.route(event)");
+  });
+
+  it("keeps renderer-local tmux calls isolated to clipboard policy", () => {
+    const directTmuxOwners = productionGraph.files.filter((path) =>
+      productionGraph.sourceByFile.get(path)?.match(/execFile\(\s*["']tmux["']/u),
+    );
+    expect(directTmuxOwners).toEqual([
+      "packages/daemon/src/tui/mirror/runtime/host-local-tmux-adapter.ts",
+    ]);
+    const adapterSource = productionGraph.sourceByFile.get(directTmuxOwners[0]!)!;
+    expect(adapterSource).toContain('["set-option", "-gq", "set-clipboard", "on"]');
+    expect(adapterSource).toContain('["set-option", "-gq", "allow-passthrough", "on"]');
+    expect(adapterSource).not.toMatch(
+      /(?:switch|detach)-client|(?:select|resize|new|kill)-(?:pane|window|session)/u,
+    );
+  });
+
+  it("keeps pure renderer composition free of host IO and authority owners", () => {
+    for (const path of [
+      "packages/daemon/src/tui/mirror/runtime/application-shell-view.tsx",
+      "packages/daemon/src/tui/mirror/runtime/application-terminal-workspace.tsx",
+      "packages/daemon/src/tui/mirror/runtime/pane-scoped-terminal-surface.tsx",
+      "packages/daemon/src/tui/mirror/workspace/application-shell-view.tsx",
+      "packages/daemon/src/tui/mirror/shell-chrome-view.tsx",
+    ]) {
+      const renderer = productionGraph.sourceByFile.get(path);
+      expect(renderer, `production graph is missing pure renderer ${path}`).toBeDefined();
+      expect(renderer).not.toMatch(
+        /(?:from\s+|import\s*\()["'](?:node:|[^"']*(?:canonical-daemon|daemon-transport|tmux-bridge))/u,
+      );
+      expect(renderer).not.toMatch(/\b(?:useKeyboard|usePaste|createCliRenderer)\b/u);
     }
   });
 
-  it("follows literal dynamic imports through optional feature roots", () => {
-    expect(productionGraph.files).toEqual(
-      expect.arrayContaining([
-        "packages/daemon/src/tui/mirror/runtime/application-entry.ts",
-        "packages/daemon/src/tui/mirror/runtime/application-root.tsx",
-        "packages/daemon/src/tui/mirror/runtime/application-optional-features.ts",
-        "packages/daemon/src/tui/mirror/features/changes/feature.tsx",
-        "packages/daemon/src/tui/mirror/features/missions-activity/feature.tsx",
-        "packages/daemon/src/tui/mirror/features/dialogs/feature.tsx",
-        "packages/daemon/src/tui/mirror/features/settings/feature.ts",
-        "packages/daemon/src/tui/mirror/files-surface-view.tsx",
-        "packages/daemon/src/tui/mirror/changes-surface-view.tsx",
-        "packages/daemon/src/tui/mirror/missions-surface.tsx",
-        "packages/daemon/src/tui/mirror/activity-surface-view.tsx",
-        "packages/daemon/src/tui/mirror/workspace/command-palette-surface-view.tsx",
-        "packages/daemon/src/tui/mirror/widget-surface.tsx",
-      ]),
+  it("keeps the production root reviewable as a small renderer client", () => {
+    // Includes the one root-owned keyboard/paste ingress and its provider boundary.
+    expect(applicationRootSource.trim().split(/\r?\n/u).length).toBeLessThanOrEqual(510);
+    // Component leaves are reviewable presentation modules, not authority/data-path
+    // owners. Their import boundary is enforced by production-design-system-contract;
+    // retain the original budget for the runtime and authority graph itself.
+    const authorityDataPathFiles = productionGraph.files.filter(
+      (path) => !PURE_PRESENTATION_MODULE.test(path),
     );
-  });
-
-  it("publishes input readiness before admitting daemon tool demand", () => {
-    const readiness = source.indexOf('publishTuiInputReady("app")');
-    const demand = source.indexOf("publishToolReadiness()", readiness);
-    expect(readiness).toBeGreaterThan(0);
-    expect(demand).toBeGreaterThan(readiness);
-  });
-
-  it("cuts production through the lifecycle bootstrap, terminal adapter, and local view owner", () => {
-    expect(source).toContain("await startTuiApplication");
-    expect(source).toContain('await import("./application-root.tsx")');
-    expect(source).toContain("new TuiApplicationLifecycle");
-    expect(source).toContain("new OpenTuiTerminalWorkspaceAdapter");
-    expect(source).toContain("new OpenTuiLocalViewController");
-    expect(source).toContain('applicationLifecycle.registerCloser("tool-resources"');
-    expect(source).toContain('applicationLifecycle.registerCloser("local-view"');
-    expect(source).toContain('applicationLifecycle.registerCloser("terminal-workspace"');
-    expect(source).toContain("adapter.renderSource");
-    expect(source).toContain("replica.adapter.sendText");
-    expect(source).toContain("terminalWorkspaceAdapter?.fitViewport");
-  });
-
-  it("fences tool projections by generation and applies same-millisecond resources by identity", () => {
-    expect(source).toContain("state.generation !== toolResourceGeneration");
-    expect(source).toContain("appliedToolSnapshots.clear()");
-    expect(source).toContain("filesSession()?.resetCatalog()");
-    expect(source).toContain("changesSession()?.reset()");
-    expect(source).toContain("slot.resource.kind) !== slot.resource");
-    expect(source).not.toContain("slot.resource.kind) !== slot.updatedAt");
-  });
-
-  it("admits targeted tool demand only after geometry and a committed native frame", () => {
-    expect(source).toContain("runtimeLaneFitKey = fitKey");
-    expect(source).toContain('appRenderer.on("frame", acknowledgeTerminalFramePublication)');
-    expect(source).toContain("terminalToolReadiness.observeTerminalFrameCommitted()");
-    expect(source).toContain('tuiPerfMark("first-terminal-frame")');
-    expect(source).not.toContain('tuiPerfMark("tmux-geometry-ready")');
-    expect(source).not.toContain("terminalToolReadiness.observeTerminalRender()");
-    expect(source).toContain("toolResources.markCatalogReady()");
-  });
-
-  it("owns optional feature admission and metrics inside the application lifecycle", () => {
-    expect(source).toContain("createApplicationOptionalFeatureRegistry()");
-    expect(source).toContain('applicationLifecycle.registerCloser("optional-features"');
-    expect(source).toContain('tuiPerfMark("optional-feature-metrics"');
-    expect(source).toContain("optionalFeatures.dispose()");
-    expect(source.match(/optionalFeatures\.admit\(\)/gu)).toHaveLength(2);
-  });
-
-  it("builds actionable agent rows from generation-bound local tmux identity proof", () => {
-    expect(source).toContain('"list-panes", "-s", "-t", `=${sessionName}`');
-    expect(source).toContain("SESSION_PANE_DESCRIPTOR_FORMAT");
-    expect(source).toContain("candidate.setRuntimeDescriptors(");
-    expect(source).toContain("candidate.setRuntimeAuthorityGeneration(authorityGeneration)");
-    expect(source).toContain("candidate.retireRuntimeAuthority()");
-    expect(source).toContain(
-      "refreshLocalRuntimeDescriptors(sessionName, candidate, authorityGeneration)",
-    );
-    expect(source).toContain("parseSessionPaneDescriptors(stdout.trimEnd().split");
-    expect(source).toContain("projectAuthoritativeAgentRows");
-  });
-
-  it("releases tools only when the dock collapses", () => {
-    expect(source).toContain('dockMode() === "collapsed"');
-    expect(source).toContain("toolResources.setOpenDock(null)");
+    expect(authorityDataPathFiles.length).toBeLessThan(110);
   });
 });

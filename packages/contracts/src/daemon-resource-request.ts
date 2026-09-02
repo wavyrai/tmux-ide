@@ -27,6 +27,7 @@ import {
   DesktopDaemonFetchApplicationShellRequestSchemaZ,
   DesktopDaemonFetchApplicationShellResultSchemaZ,
   DesktopDaemonFetchFleetCatalogResultSchemaZ,
+  DesktopDaemonFetchWorkspaceCatalogResultSchemaZ,
   DesktopDaemonFetchWorkspaceChangeDiffRequestSchemaZ,
   DesktopDaemonFetchWorkspaceChangeDiffResultSchemaZ,
   DesktopDaemonFetchWorkspaceChangesRequestSchemaZ,
@@ -43,6 +44,7 @@ import {
   type DesktopDaemonCapabilitiesResult,
   type DesktopDaemonFetchApplicationShellResult,
   type DesktopDaemonFetchFleetCatalogResult,
+  type DesktopDaemonFetchWorkspaceCatalogResult,
   type DesktopDaemonFetchWorkspaceChangeDiffResult,
   type DesktopDaemonFetchWorkspaceChangesResult,
   type DesktopDaemonFetchWorkspaceFilePreviewResult,
@@ -53,7 +55,7 @@ import {
   type DesktopDaemonStartupReadinessResult,
 } from "./desktop-host.ts";
 import {
-  AppWindowMutationArgumentsSchemaZ,
+  AppWindowMutationInvocationSchemaZ,
   AppWindowMutationHostResultSchemaZ,
   type AppWindowMutationHostResult,
 } from "./app-window-mutation.ts";
@@ -102,6 +104,7 @@ export const DaemonResourceRequestSchemaZ = z.discriminatedUnion("resource", [
   z.object({ resource: z.literal("refreshConnection") }).strict(),
   z.object({ resource: z.literal("listWorkspaces") }).strict(),
   z.object({ resource: z.literal("fetchFleetCatalog") }).strict(),
+  z.object({ resource: z.literal("fetchWorkspaceCatalog") }).strict(),
   z.object({ resource: z.literal("startupReadiness") }).strict(),
   z
     .object({
@@ -149,7 +152,7 @@ export const DaemonResourceRequestSchemaZ = z.discriminatedUnion("resource", [
     })
     .strict(),
   z
-    .object({ resource: z.literal("mutateAppWindow"), request: AppWindowMutationArgumentsSchemaZ })
+    .object({ resource: z.literal("mutateAppWindow"), request: AppWindowMutationInvocationSchemaZ })
     .strict(),
   // One resource for every tmux verb rather than one per route: see
   // MultiplexerVerbInvocation for why the invocation carries both the verb the
@@ -188,6 +191,7 @@ export interface DaemonResourceResultMap extends Record<DaemonResourceKind, unkn
   refreshConnection: DesktopDaemonRefreshConnectionResult;
   listWorkspaces: DesktopDaemonListWorkspacesResult;
   fetchFleetCatalog: DesktopDaemonFetchFleetCatalogResult;
+  fetchWorkspaceCatalog: DesktopDaemonFetchWorkspaceCatalogResult;
   startupReadiness: DesktopDaemonStartupReadinessResult;
   fetchApplicationShell: DesktopDaemonFetchApplicationShellResult;
   fetchWorkspaceFiles: DesktopDaemonFetchWorkspaceFilesResult;
@@ -218,6 +222,7 @@ export const DAEMON_RESOURCE_RESULT_SCHEMAS: {
   refreshConnection: DesktopDaemonRefreshConnectionResultSchemaZ,
   listWorkspaces: DesktopDaemonListWorkspacesResultSchemaZ,
   fetchFleetCatalog: DesktopDaemonFetchFleetCatalogResultSchemaZ,
+  fetchWorkspaceCatalog: DesktopDaemonFetchWorkspaceCatalogResultSchemaZ,
   startupReadiness: DesktopDaemonStartupReadinessResultSchemaZ,
   fetchApplicationShell: DesktopDaemonFetchApplicationShellResultSchemaZ,
   fetchWorkspaceFiles: DesktopDaemonFetchWorkspaceFilesResultSchemaZ,
@@ -263,6 +268,7 @@ export const CANCELLABLE_DAEMON_RESOURCE_KINDS = [
   "capabilities",
   "listWorkspaces",
   "fetchFleetCatalog",
+  "fetchWorkspaceCatalog",
   "startupReadiness",
   "fetchApplicationShell",
   "fetchWorkspaceFiles",
@@ -357,6 +363,7 @@ const REQUESTLESS_DAEMON_RESOURCES: ReadonlySet<DaemonResourceKind> = new Set([
   "refreshConnection",
   "listWorkspaces",
   "fetchFleetCatalog",
+  "fetchWorkspaceCatalog",
   "startupReadiness",
 ]);
 

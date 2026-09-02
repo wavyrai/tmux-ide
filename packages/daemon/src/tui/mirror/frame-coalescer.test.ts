@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FrameCoalescer, type FrameCoalescerClock } from "./frame-coalescer.ts";
+import { runtimeResourceSnapshot } from "@tmux-ide/daemon-client/runtime-resource-ledger";
 
 class ManualClock implements FrameCoalescerClock {
   time = 0;
@@ -89,11 +90,14 @@ describe("FrameCoalescer", () => {
   });
 
   it("cancels pending work on dispose", () => {
+    const baseline = runtimeResourceSnapshot()["runtime-timer"].active;
     const clock = new ManualClock();
     let flushes = 0;
     const coalescer = new FrameCoalescer(() => flushes++, 16, clock);
     coalescer.request();
+    expect(runtimeResourceSnapshot()["runtime-timer"].active).toBe(baseline + 1);
     coalescer.dispose();
+    expect(runtimeResourceSnapshot()["runtime-timer"].active).toBe(baseline);
     clock.advance(100);
     expect(flushes).toBe(0);
   });

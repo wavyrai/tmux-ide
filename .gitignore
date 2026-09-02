@@ -34,11 +34,8 @@ context/
 # local task board
 .tasks/
 
-# local workspace overrides; .tmux-ide/workspace.yml is shareable project config
-.tmux-ide/workspace.local.yml
-.tmux-ide/terminals.json
-.tmux-ide/skills/
-.tmux-ide/library/
+# tmux-ide's local runtime, workspace metadata, skills, and research library
+.tmux-ide/
 
 # Orchestrator worktrees
 .worktrees/

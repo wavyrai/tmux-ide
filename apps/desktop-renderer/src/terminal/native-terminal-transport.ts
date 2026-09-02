@@ -12,8 +12,34 @@ export interface NativeTerminalGeometry {
   readonly clientViewport: TerminalAttachmentViewport;
 }
 
+export interface NativeTerminalCanonicalProjection {
+  readonly deliveryRequestId?: string;
+  readonly generation: string;
+  readonly incarnation: string;
+  readonly revision: number;
+  readonly stateHash: string;
+  readonly cols: number;
+  readonly rows: number;
+  readonly sourceEpoch: number;
+  readonly alternateScreen: boolean;
+  readonly cursor: Readonly<{
+    x: number;
+    y: number;
+    hidden: boolean;
+    style: "block" | "underline" | "bar";
+    blink: boolean;
+  }>;
+  readonly gridRowsRead: number;
+  readonly gridCellsRead: number;
+  readonly fullGridWalks: number;
+}
+
 export type NativeTerminalEvent =
-  | { readonly type: "output"; readonly bytes: Uint8Array }
+  | {
+      readonly type: "output";
+      readonly bytes: Uint8Array;
+      readonly canonical?: NativeTerminalCanonicalProjection;
+    }
   | {
       readonly type: "state";
       readonly state: "connected";

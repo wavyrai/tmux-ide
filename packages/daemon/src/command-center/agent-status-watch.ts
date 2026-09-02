@@ -42,7 +42,7 @@ export function agentStateWord(raw: string): string {
   return separator < 0 ? raw : raw.slice(0, separator);
 }
 
-/** Per-session view of pane → agent-authority reading, as read from tmux. */
+/** Per-session view of pane → agent-discovery reading, as read from tmux. */
 export type AgentStateReading = ReadonlyMap<string, ReadonlyMap<string, AgentPaneStateReading>>;
 
 function sessionStateWordsChanged(
@@ -52,7 +52,12 @@ function sessionStateWordsChanged(
   if (previous.size !== next.size) return true;
   for (const [paneId, reading] of next) {
     const prior = previous.get(paneId);
-    if (prior === undefined || agentStateWord(prior.state) !== agentStateWord(reading.state)) {
+    if (
+      prior === undefined ||
+      agentStateWord(prior.state) !== agentStateWord(reading.state) ||
+      prior.paneStamp !== reading.paneStamp ||
+      (prior.command ?? "") !== (reading.command ?? "")
+    ) {
       return true;
     }
   }

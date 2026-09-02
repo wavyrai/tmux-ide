@@ -1,595 +1,382 @@
-import Link from "next/link";
 import type { Metadata } from "next";
-import { CopyButton } from "./copy-button";
-import { AsciiLogo } from "./ascii-logo";
-import { AppIcon } from "@/components/app-icon";
-import { TuiIsland } from "@/components/tui-island";
-import { MacWindow } from "@/components/mac-window";
-import { GrainStage } from "@/components/grain-backdrop";
 import Image from "next/image";
+import Link from "next/link";
+
+import { AppIcon } from "@/components/app-icon";
+import { AsciiWordmark } from "@/components/ascii-wordmark";
+import { LandingFaqJsonLd } from "@/components/landing-faq-json-ld";
+import {
+  Band,
+  BandBody,
+  Cell,
+  MarketingFrame,
+  MarketingGrid,
+  Mosaic,
+  Stretch,
+} from "@/components/marketing/lattice";
+import { SectionHeader } from "@/components/marketing/section-header";
+import { TechnicalCaption } from "@/components/marketing/technical-caption";
+import { TuiMiniFigure, type TuiFigureVariant } from "@/components/marketing/tui-mini-figure";
+import {
+  LANDING_AGENT_FEATURES,
+  LANDING_ARCHITECTURE,
+  LANDING_CAPABILITIES,
+  LANDING_FAQ,
+} from "@/lib/landing-content";
+import { APP_COMMAND, CURRENT_RELEASE_PATH, INSTALL_COMMAND } from "@/lib/site";
+import { CopyButton } from "./copy-button";
 
 export const metadata: Metadata = {
-  title: "tmux-ide — teach the terminal you already use to understand agents",
+  title: "tmux-ide — a dedicated workspace for coding agents",
   description:
-    "tmux-ide adds a native chrome to any tmux session: ground-truth agent status, notifications, and crash-proof restore. One command on the terminal you already run — zero lock-in.",
-  openGraph: {
-    title: "tmux-ide — the terminal that understands your agents",
-    description:
-      "Adopt in place, know your fleet at a glance, survive anything. A terminal-native agent cockpit built around tmux.",
-    images: [{ url: "/og-image.png", width: 1200, height: 630, alt: "tmux-ide" }],
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "tmux-ide — the terminal that understands your agents",
-    description:
-      "Ground-truth agent status, notifications, and crash-proof restore — layered onto the tmux you already use.",
-    images: ["/og-image.png"],
-  },
+    "Give coding agents a dedicated tmux workspace with memorable names, live status, exact pane navigation, terminal-native controls, durable sessions, and SSH support.",
   alternates: { canonical: "/" },
 };
 
-/** The agents starring in the live demo, with their own marks. */
-const agentCast = [
-  { name: "codex", logo: "/agents/codex.webp" },
-  { name: "claude code", logo: "/agents/claude.webp" },
-  { name: "cursor", logo: "/agents/cursor.webp" },
-];
+const bodyCopy = "marketing-type-body max-w-[62ch] text-fd-muted-foreground";
+const agentVisuals = ["names", "status", "navigate"] satisfies TuiFigureVariant[];
+const architectureVisuals = ["tmux", "daemon", "opentui"] satisfies TuiFigureVariant[];
 
-const installCommand = "npm i -g tmux-ide";
-const adoptCommand = "tmux-ide adopt <session>";
-
-/**
- * Server-side fetch of the GitHub star count. Cached for an hour via
- * Next's revalidate so we don't burn the API rate limit on every render.
- * Falls back to `null` on failure (rate-limited, network down) — the
- * button degrades to plain "GitHub" without a counter.
- */
 async function fetchStarCount(): Promise<number | null> {
   try {
-    const res = await fetch("https://api.github.com/repos/wavyrai/tmux-ide", {
+    const response = await fetch("https://api.github.com/repos/wavyrai/tmux-ide", {
       next: { revalidate: 3600 },
       headers: { Accept: "application/vnd.github+json" },
     });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { stargazers_count?: number };
+    if (!response.ok) return null;
+    const data = (await response.json()) as { stargazers_count?: number };
     return typeof data.stargazers_count === "number" ? data.stargazers_count : null;
   } catch {
     return null;
   }
 }
 
-function formatStars(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k`;
-  return String(n);
-}
-
-const STRIPE_BG =
-  "repeating-linear-gradient(-60deg, transparent, transparent 4px, var(--fd-border) 4px, var(--fd-border) 5px)";
-
-function SectionDivider() {
-  return (
-    <div className="w-full py-1">
-      <div
-        className="h-4 w-full border-y border-fd-border"
-        style={{ backgroundImage: STRIPE_BG }}
-      />
-    </div>
-  );
-}
-
-/** The three-beat story — the spine of the pitch. */
-const beats = [
-  {
-    kicker: "Adopt in place",
-    title: "One command on the tmux you already run",
-    body: "tmux-ide adopt <session> drops a native chrome row onto any existing session — fleet tabs, live agent glyphs, home / switch / keys triggers. It's just tmux options: unadopt reverts it, and if tmux-ide ever dies your sessions are untouched plain tmux. No new terminal to learn, no lock-in.",
-  },
-  {
-    kicker: "Know your fleet",
-    title: "Ground-truth agent status, at a glance",
-    body: "Install the Claude Code integration and working / blocked / done come straight from the agent's own lifecycle — not a guess. Border chips show claude · working per pane; a toast fires on every attached client the moment an agent goes blocked or done. One glance tells you who needs you.",
-  },
-  {
-    kicker: "Survive anything",
-    title: "Rebuild the whole fleet after a crash",
-    body: "Continuous snapshots mean a tmux server death isn't a lost afternoon. tmux-ide restore rebuilds every session, window, layout, cwd, and title — and --resume-agents revives your Claude conversations from their recorded session ids. Nothing was lost.",
-  },
-];
-
-const surfaces = [
-  {
-    key: "prefix h · ⌥h",
-    title: "Home cockpit",
-    body: "Bare tmux-ide is the home screen — a fleet tree, detail pane, live preview, and rollup header. prefix h opens it as a popup over any session.",
-  },
-  {
-    key: "prefix b · ⌥b",
-    title: "Sidebar",
-    body: "A nav column you toggle in any session. The fleet, a keystroke away, without leaving your work.",
-  },
-  {
-    key: "prefix e g v",
-    title: "Floating panels",
-    body: "File explorer, git changes, and the config editor as popups over whatever you're doing. esc to close.",
-  },
-  {
-    key: "prefix u · right-click",
-    title: "Actions menu",
-    body: "Right-click any pane or the status bar for a native tmux menu at the pointer — the same actions, wherever you are.",
-  },
-  {
-    key: "prefix k · ⌥k",
-    title: "Cheat sheet",
-    body: "Every key on one iPadOS-style sheet. One interaction grammar everywhere: j/k move, enter opens, / filters, esc backs out, ? asks.",
-  },
-  {
-    key: "prefix + letter, always",
-    title: "Reliable keys",
-    body: "Prefix twins work under every keyboard protocol; the ⌥ fast-path is a one-key shortcut when your terminal allows it. One theme file colors chrome AND widgets.",
-  },
-];
-
-const features = [
-  {
-    title: "The dock",
-    description:
-      "A native tmux chrome row on any session: clickable fleet tabs with blocked / working / done / idle glyphs, plus home, switch, and keys triggers.",
-  },
-  {
-    title: "Two-layer detection",
-    description:
-      "Authoritative status from Claude Code hooks; process-tree + evidence-tuned screen manifests as the fallback. User-overridable, debuggable with agent explain.",
-  },
-  {
-    title: "Self-report contract",
-    description:
-      "Any agent can join the authority layer by writing one pane option: tmux set-option -p @agent_state working:$(date +%s). No integration required.",
-  },
-  {
-    title: "The who-needs-me loop",
-    description:
-      "Toasts on any client when an agent goes blocked or done anywhere, optional macOS notifications, and per-pane border chips.",
-  },
-  {
-    title: "Event stream",
-    description:
-      "tmux-ide events --follow is a JSONL stream of every agent-status transition — pipe it anywhere.",
-  },
-  {
-    title: "Coordination primitives",
-    description:
-      "wait agent-status and wait output --match block until a session hits a status or a pane matches a regex. Scriptable synchronization.",
-  },
-  {
-    title: "Missions workspace preview",
-    description:
-      "A durable project-scoped Missions board, history, and details surface for reviewing mission progress inside the current app.",
-  },
-  {
-    title: "Crash-proof restore",
-    description:
-      "Continuous snapshots; tmux-ide restore rebuilds sessions, windows, layouts, cwds, and titles after a tmux server death.",
-  },
-  {
-    title: "Conversation revival",
-    description:
-      "restore --resume-agents brings Claude conversations back via their recorded session ids (claude --resume).",
-  },
-  {
-    title: "Worktree flow",
-    description:
-      "tmux-ide worktree create <branch> = a git worktree plus an adopted session inside it. Parallel agents on parallel branches.",
-  },
-  {
-    title: "Works over SSH",
-    description:
-      "The chrome lives server-side, so it renders from any client — including SSH from a laptop or a phone.",
-  },
-  {
-    title: "ide.yml layouts",
-    description:
-      "Optional: describe rows, panes, commands, and a sidebar in one file. tmux-ide init scaffolds it from your detected stack.",
-  },
-  {
-    title: "Programmatic CLI",
-    description:
-      "--json on every command. status, inspect, events, and agent explain all speak structured output for scripting.",
-  },
-];
-
-/** The three setup commands, in order. */
-const steps = [
-  {
-    phase: "01",
-    title: "Adopt",
-    cmd: "tmux-ide adopt work",
-    description:
-      "Add the chrome to a session you already have. Fleet tabs, agent glyphs, and triggers appear. Nothing else changes.",
-  },
-  {
-    phase: "02",
-    title: "Integrate",
-    cmd: "tmux-ide integration install claude",
-    description:
-      "Hook Claude Code's lifecycle so working / blocked / done are ground truth. Any agent can self-report the same way.",
-  },
-  {
-    phase: "03",
-    title: "Work",
-    cmd: "tmux-ide events --follow",
-    description:
-      "Glance at the dock, get toasts when an agent needs you, and restore the whole fleet if the server ever dies.",
-  },
-];
-
-/**
- * One chapter of the manual. Every chapter is the same shape — a numbered
- * kicker, a heading, a lead, then the surface itself — so the page reads as a
- * sequence rather than as a pile of sections. The rule between chapters is the
- * old SectionDivider, kept as the one visual seam.
- */
-function Chapter({
-  n,
-  id,
-  title,
-  lead,
-  children,
-  last,
-}: {
-  n: string;
-  id: string;
-  title: string;
-  lead: string;
-  children: React.ReactNode;
-  last?: boolean;
-}) {
-  return (
-    <section id={id} className="scroll-mt-24 py-14 first:pt-4">
-      <div className="mb-6 flex items-baseline gap-4">
-        <span className="font-mono text-xs tracking-widest text-fd-muted-foreground/70">{n}</span>
-        <div>
-          <h2 className="font-sans text-2xl text-fd-foreground">{title}</h2>
-          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-fd-muted-foreground">{lead}</p>
-        </div>
-      </div>
-      {children}
-      {!last ? (
-        <div className="pt-14">
-          <SectionDivider />
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-/** The line under a live window: what you're looking at, and what to try. */
-function Caption({ children }: { children: React.ReactNode }) {
-  return <p className="mt-3 text-xs leading-relaxed text-fd-muted-foreground">{children}</p>;
+function formatStars(count: number): string {
+  if (count >= 1000) return `${(count / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+  return String(count);
 }
 
 export default async function HomePage() {
   const stars = await fetchStarCount();
+
   return (
-    <div className="font-sans">
-      {/* HERO ROW 1 — full-width ASCII logo + positioning line */}
-      <section className="relative max-w-screen-xl mx-auto pt-16 md:pt-28 px-6 text-center">
-        <div className="mb-8 flex justify-center">
-          <AppIcon size={120} priority />
-        </div>
-        <AsciiLogo />
-        <div className="mt-4 flex items-center justify-center gap-3">
-          <h1 className="font-sans text-3xl md:text-4xl lg:text-5xl leading-[1.1] tracking-tight text-fd-foreground">
-            The terminal that understands your agents.
-          </h1>
-          <Link
-            href="/docs/release-2-8-0"
-            className="inline-flex items-center border border-fd-border px-2 py-0.5 text-[10px] font-mono tracking-[0.18em] text-fd-muted-foreground transition-colors hover:bg-fd-accent hover:text-fd-foreground shrink-0"
-          >
-            2.8
-          </Link>
-        </div>
-      </section>
-
-      {/* HERO ROW 2 — the pitch + the install. The screenshot slot is gone: the
-        live app window below IS the screenshot. */}
-      <section className="max-w-2xl mx-auto pb-10 md:pb-16 pt-8 md:pt-12 flex flex-col items-center gap-8 px-6 text-center">
-        <div className="space-y-8 w-full flex flex-col items-center">
-          <p className="text-fd-muted-foreground text-base leading-normal max-w-xl">
-            Other tools rebuild the terminal to understand agents. tmux-ide teaches the terminal you
-            already use to understand them. One command adds a native chrome to any tmux session —
-            ground-truth agent status, notifications, and crash-proof restore. Zero lock-in.
-          </p>
-
-          <div className="w-full max-w-[480px] space-y-2 text-left">
-            <CopyButton
-              text={installCommand}
-              className="group flex items-center gap-3 w-full border border-fd-border p-2 px-4 text-sm transition-colors hover:bg-fd-accent cursor-pointer relative bg-fd-muted/10"
-            >
-              <span className="font-mono text-fd-foreground">$ {installCommand}</span>
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="ml-auto text-fd-muted-foreground group-hover:text-fd-foreground transition-colors shrink-0"
-              >
-                <rect x="9" y="9" width="13" height="13" rx="0" ry="0" />
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-              </svg>
-            </CopyButton>
-            <CopyButton
-              text={adoptCommand}
-              className="group flex items-center gap-3 w-full border border-fd-border p-2 px-4 text-sm transition-colors hover:bg-fd-accent cursor-pointer relative bg-fd-muted/10"
-            >
-              <span className="font-mono text-fd-foreground">$ {adoptCommand}</span>
-              <span className="ml-auto font-mono text-fd-muted-foreground text-xs">
-                on any session
-              </span>
-            </CopyButton>
-          </div>
-
-          <div className="flex items-center justify-center gap-4">
+    <MarketingFrame id="main-content" tabIndex={-1}>
+      <Stretch ground="paper">
+        <Band>
+          <BandBody className="pb-10 pt-10! md:pb-12 md:pt-12!">
             <Link
-              href="/docs/getting-started"
-              className="bg-fd-primary px-6 py-2.5 text-sm font-mono text-fd-primary-foreground hover:opacity-90 transition-opacity"
+              href={CURRENT_RELEASE_PATH}
+              className="marketing-enter-fast marketing-pill-action mb-8 inline-flex items-center gap-2 rounded-full border border-marketing-line bg-marketing-raise px-3 py-1.5 text-xs text-fd-foreground"
             >
-              Get started
+              <span className="marketing-flag font-mono text-fd-primary">New</span>
+              <span>OpenTUI workspace in 2.9</span>
+              <span aria-hidden className="text-fd-muted-foreground">
+                →
+              </span>
             </Link>
-            <a
-              href="https://github.com/wavyrai/tmux-ide"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 border border-fd-border px-6 py-2.5 text-sm font-mono text-fd-foreground hover:bg-fd-accent transition-colors"
-            >
-              <span>GitHub</span>
-              {stars !== null && (
-                <span className="inline-flex items-center gap-1 text-fd-muted-foreground">
-                  <span aria-hidden="true">★</span>
-                  <span>{formatStars(stars)}</span>
+            <div className="mb-10 w-full max-w-3xl">
+              <AsciiWordmark animated className="marketing-enter-step-2" />
+            </div>
+            <MarketingGrid className="items-end gap-y-8 lg:gap-x-12">
+              <Cell className="marketing-enter marketing-enter-step-3 lg:col-span-14">
+                <span className="marketing-flag marketing-type-caption font-mono text-fd-primary">
+                  Build your team of agents
                 </span>
-              )}
-            </a>
-          </div>
-        </div>
-      </section>
+                <h1 className="text-marketing-display mt-5 max-w-[17ch] text-fd-foreground">
+                  A dedicated workspace for your coding agents.
+                </h1>
+              </Cell>
 
-      {/* THE MANUAL. Six numbered chapters, one rhythm each: a kicker, a
-        heading, a lead, then the surface itself — live. The page used to carry
-        three overlapping lists (a key grid, a feature grid, and a
-        trust/resilience/DX bullet block that restated both); the reference list
-        is now singular, in chapter 05. */}
-      <div className="max-w-screen-lg mx-auto px-6">
-        {/* 01 — THE FLEET */}
-        <Chapter
-          n="01"
-          id="fleet"
-          title="See who needs you"
-          lead="Adopt a session and the fleet gets a face: every agent's state, live, sorted so whoever is blocked rises to the top. The window below is the app's real sidebar component, running here."
-        >
-          <GrainStage tone="teal">
-            <MacWindow
-              title="tmux-ide — checkout-api"
-              accessory={agentCast.map((a) => (
-                <span key={a.name} className="flex items-center gap-1.5">
-                  <Image src={a.logo} alt="" width={14} height={14} unoptimized />
-                  <span className="hidden text-[11px] text-[#98989d] lg:inline">{a.name}</span>
-                </span>
-              ))}
-              footer={
-                <p className="text-xs leading-relaxed text-gray-400">
-                  Three agents, one project.{" "}
-                  <span className="text-gray-100">
-                    codex hands the migration to claude for review
-                  </span>{" "}
-                  —{" "}
-                  <code className="font-mono text-[11px]">tmux-ide send claude &quot;…&quot;</code>{" "}
-                  types the message straight into claude&apos;s pane. claude hits a call it
-                  can&apos;t make alone and goes{" "}
-                  <span className="text-[rgb(240,100,100)]">blocked</span>, which floats it to the
-                  top of the sidebar. Once you answer, it hands the tests to cursor. No message bus:
-                  the terminal is the bus.
+              <Cell className="marketing-enter marketing-enter-step-4 lg:col-span-10">
+                <p className="text-marketing-lead mt-7 max-w-[62ch] text-fd-muted-foreground">
+                  Build, coordinate, and navigate a team of coding agents from one agent-aware
+                  communication plane. See what every agent is doing and jump directly to the one
+                  that needs you.
                 </p>
+                <CopyButton
+                  text={INSTALL_COMMAND}
+                  className="marketing-copy-action mt-7 flex w-full max-w-lg cursor-pointer items-center gap-3 border border-fd-primary bg-fd-primary px-5 py-3.5 text-left text-sm text-fd-primary-foreground"
+                >
+                  <span aria-hidden>$</span>
+                  <code className="font-mono">{INSTALL_COMMAND}</code>
+                  <span className="ml-auto text-xs opacity-65">copy</span>
+                </CopyButton>
+                <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-fd-muted-foreground">
+                  <span>
+                    Then run <code className="font-mono text-fd-foreground">{APP_COMMAND}</code>
+                  </span>
+                  <Link
+                    href="/docs/getting-started"
+                    className="marketing-link-action text-fd-foreground"
+                  >
+                    Docs →
+                  </Link>
+                  <a
+                    href="https://github.com/wavyrai/tmux-ide"
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label={
+                      stars === null
+                        ? "tmux-ide on GitHub (opens in a new tab)"
+                        : `tmux-ide on GitHub, ${stars} stars (opens in a new tab)`
+                    }
+                    className="marketing-link-action inline-flex items-center gap-1.5 text-fd-foreground"
+                  >
+                    <span>GitHub</span>
+                    {stars !== null ? (
+                      <span className="inline-flex items-center gap-1 font-mono text-xs text-fd-muted-foreground">
+                        <span aria-hidden>★</span>
+                        <span>{formatStars(stars)}</span>
+                      </span>
+                    ) : null}
+                  </a>
+                </div>
+              </Cell>
+            </MarketingGrid>
+          </BandBody>
+          <figure
+            id="figure-01"
+            aria-labelledby="figure-01-caption"
+            className="marketing-enter marketing-enter-step-5"
+          >
+            <div className="border-y border-marketing-line bg-terminal-stage p-2 md:p-4">
+              <div className="border border-terminal-line bg-terminal-stage">
+                <Image
+                  src="/tui-demo.svg"
+                  alt="Animated production tmux-ide OpenTUI showing agent status, terminal panes, window controls, and the command palette"
+                  width={1344}
+                  height={792}
+                  unoptimized
+                  loading="eager"
+                  className="h-auto w-full"
+                />
+              </div>
+            </div>
+            <TechnicalCaption
+              id="figure-01-caption"
+              number="01"
+              ruled={false}
+              className="bg-marketing-raise px-6 py-5 xl:px-10"
+              action={
+                <Link href="/docs/demo" className="marketing-link-action shrink-0 text-fd-primary">
+                  Method notes →
+                </Link>
               }
             >
-              <TuiIsland className="min-w-[760px]" />
-            </MacWindow>
-          </GrainStage>
+              Production OpenTUI / sessions, agents, panes, and commands
+            </TechnicalCaption>
+          </figure>
+        </Band>
+      </Stretch>
 
-          <div className="mt-8 space-y-px bg-fd-border border border-fd-border">
-            {beats.map((beat, i) => (
-              <div key={beat.kicker} className="bg-fd-background p-6 md:p-8">
-                <div className="flex flex-col md:flex-row md:items-start gap-4 md:gap-8">
-                  <div className="md:w-40 shrink-0">
-                    <span className="text-xs text-fd-muted-foreground tracking-widest">
-                      {String(i + 1).padStart(2, "0")}
-                    </span>
-                    <div className="text-sm text-fd-primary mt-1">{beat.kicker}</div>
-                  </div>
-                  <div className="space-y-2">
-                    <h3 className="font-sans text-lg text-fd-foreground">{beat.title}</h3>
-                    <p className="text-fd-muted-foreground text-sm leading-normal">{beat.body}</p>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Chapter>
-
-        {/* 02 — COORDINATION */}
-        <Chapter
-          n="02"
-          id="coordination"
-          title="Agents that task each other"
-          lead="Run a mixed fleet — Claude Code, codex, cursor, aider, anything — and let them coordinate. One agent tasks another by typing into its prompt; any agent can block until a teammate finishes. Claude Code reports automatically; everyone else self-reports with a one-line pane option."
-        >
-          <GrainStage tone="indigo">
-            <MacWindow title="checkout-api — coordination">
-              <TuiIsland scene="cli" className="min-w-[860px]" />
-            </MacWindow>
-          </GrainStage>
-          <Caption>
-            Click a command to run it. <code className="font-mono">send</code> types the message
-            into %2 and its hooks flip it to working; <code className="font-mono">wait</code> blocks
-            until the pane prints the match. Three commands, one loop —{" "}
-            <Link href="/docs/multi-agent-teams" className="text-fd-primary hover:underline">
-              how multi-agent teams work →
-            </Link>
-          </Caption>
-        </Chapter>
-
-        {/* 03 — THE PALETTE + THE KEYS */}
-        <Chapter
-          n="03"
-          id="palette"
-          title="Every verb, one keystroke"
-          lead="⌘K opens the palette; the prefix twins open everything else — reliable under every keyboard protocol, with an ⌥ fast-path on top. One grammar, one theme."
-        >
-          <GrainStage tone="violet">
-            <MacWindow title="⌘K — command palette">
-              <TuiIsland scene="palette" className="min-w-[620px]" />
-            </MacWindow>
-          </GrainStage>
-          <Caption>
-            Click <code className="font-mono">⌘K</code>, then type — try{" "}
-            <code className="font-mono">ses</code>, <code className="font-mono">agent</code>, or{" "}
-            <code className="font-mono">layout</code>. The rows and the ranking are the app&apos;s
-            own; the highlighted characters are its matcher showing its work. (The real chord is ⌘K;
-            on this page that belongs to the site search, so the demo opens on a click.)
-          </Caption>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 mt-8">
-            {surfaces.map((s) => (
-              <div className="border border-fd-border p-1 -mt-[1px] -ml-[1px]" key={s.title}>
-                <div className="p-4 space-y-3">
-                  <code className="text-xs text-fd-primary font-mono">{s.key}</code>
-                  <h3 className="text-sm text-fd-foreground">{s.title}</h3>
-                  <p className="text-fd-muted-foreground text-sm">{s.body}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Chapter>
-
-        {/* 04 — FILES & DIFFS */}
-        <Chapter
-          n="04"
-          id="files"
-          title="Files and diffs, without leaving"
-          lead="F3 is a file explorer with a native editor; F4 is a diff you can stage from. The tree's hide/ignore rules, the diff's grouping, and the line colors below are the app's own code."
-        >
-          <div className="space-y-10">
-            <div>
-              <GrainStage tone="ember">
-                <MacWindow title="F3 — files">
-                  <TuiIsland scene="files" className="min-w-[760px]" />
-                </MacWindow>
-              </GrainStage>
-              <Caption>
-                Click a folder to expand, a file to open. Toggle{" "}
-                <code className="font-mono">H</code> and <code className="font-mono">I</code> —{" "}
-                <code className="font-mono">node_modules</code> and{" "}
-                <code className="font-mono">.git</code> stay hidden either way, because the app
-                always ignores them.
-              </Caption>
-            </div>
-            <div>
-              <GrainStage tone="sky">
-                <MacWindow title="F4 — diff">
-                  <TuiIsland scene="diff" className="min-w-[760px]" />
-                </MacWindow>
-              </GrainStage>
-              <Caption>
-                Real <code className="font-mono">git status --porcelain</code>, grouped into staged
-                / unstaged / untracked by the app&apos;s parser. Pick a file, then{" "}
-                <code className="font-mono">[s stage]</code> — it moves between groups, no shell
-                required.
-              </Caption>
-            </div>
-          </div>
-        </Chapter>
-
-        {/* 05 — THE REFERENCE LIST */}
-        <Chapter
-          n="05"
-          id="capabilities"
-          title="Everything else it does"
-          lead="The full surface, once over lightly. Each of these has a page in the docs."
-        >
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-            {features.map((f) => (
-              <div className="border border-fd-border p-1 -mt-[1px] -ml-[1px]" key={f.title}>
-                <div className="p-4 space-y-4">
-                  <h3 className="text-sm text-fd-foreground">{f.title}</h3>
-                  <p className="text-fd-muted-foreground text-sm">{f.description}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Chapter>
-
-        {/* 06 — GET STARTED */}
-        <Chapter
-          n="06"
-          id="start"
-          title="From zero to fleet in three commands"
-          lead="No migration, no new terminal. Adopt the sessions you already have."
-          last
-        >
-          <div className="grid grid-cols-1 md:grid-cols-3">
-            {steps.map((item) => (
-              <div className="border border-fd-border p-1 -mt-[1px] -ml-[1px]" key={item.phase}>
-                <div className="p-4 space-y-3">
-                  <span className="text-xs text-fd-muted-foreground lowercase tracking-widest">
-                    step {item.phase}
-                  </span>
-                  <h3 className="text-sm text-fd-foreground">{item.title}</h3>
-                  <code className="block text-xs text-fd-primary font-mono break-all">
-                    $ {item.cmd}
-                  </code>
-                  <p className="text-fd-muted-foreground text-sm">{item.description}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Chapter>
-      </div>
-
-      {/* FOOTER CTA — on the grain, back on the tone the page opened with: the
-        last card closes the loop the hero started. The diagonal stripes are
-        retired; the ground is the texture now. */}
-      <div className="max-w-screen-lg mx-auto mt-16 mb-24 px-6">
-        <GrainStage tone="teal">
-          <div className="py-6 text-center lg:py-10">
-            {/* The icon closes the page the way it opened it — the hero's mark,
-              smaller, sitting above the last ask. */}
-            <div className="mb-5 flex justify-center">
-              <AppIcon size={56} />
-            </div>
-            <h2 className="font-sans text-2xl sm:text-3xl text-fd-foreground mb-4">Get started</h2>
-            <p className="font-sans text-base text-fd-muted-foreground mb-6 max-w-lg mx-auto">
-              Keep your terminal. Add the chrome. Adopt a session in seconds.
+      <Stretch ground="raise">
+        <Band>
+          <BandBody>
+            <SectionHeader
+              eyebrow="one workspace, every agent accounted for"
+              title="Name them. See their state. Go straight to the right pane."
+              description="A clear three-step loop replaces terminal hunting with a workspace the whole team can understand."
+            />
+            <p className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-2 font-mono text-sm text-fd-muted-foreground">
+              <span className="text-fd-foreground">name</span>
+              <span aria-hidden>→</span>
+              <span className="text-fd-foreground">monitor</span>
+              <span aria-hidden>→</span>
+              <span className="text-fd-primary">navigate</span>
             </p>
-            <div className="flex flex-wrap justify-center gap-4">
-              <Link
-                href="/docs/getting-started"
-                className="bg-fd-primary px-6 py-2.5 text-sm font-mono text-fd-primary-foreground hover:opacity-90 transition-opacity"
-              >
-                Get started
-              </Link>
-              <Link
-                href="/docs/release-2-8-0"
-                className="border border-fd-border bg-fd-background px-6 py-2.5 text-sm font-mono text-fd-foreground hover:bg-fd-accent transition-colors"
-              >
-                What&apos;s new in 2.8
+            <Mosaic bleed className="mt-12 lg:grid-cols-3">
+              {LANDING_AGENT_FEATURES.map((feature, index) => (
+                <Cell
+                  key={feature.title}
+                  ground="paper"
+                  className="flex h-full flex-col p-7 md:p-9"
+                >
+                  <div className="marketing-flag marketing-type-caption flex items-center justify-between gap-4 font-mono">
+                    <span className="text-fd-primary">{feature.index}</span>
+                    <span className="text-fd-muted-foreground">{feature.eyebrow}</span>
+                  </div>
+                  <h3 className="marketing-type-subtitle mt-10 text-fd-foreground">
+                    {feature.title}
+                  </h3>
+                  <p className={`mt-4 ${bodyCopy}`}>{feature.body}</p>
+                  <TuiMiniFigure
+                    variant={agentVisuals[index]}
+                    figure={feature.figure}
+                    className="mt-10"
+                  />
+                </Cell>
+              ))}
+            </Mosaic>
+          </BandBody>
+        </Band>
+        <Band>
+          <BandBody>
+            <SectionHeader
+              eyebrow="durable by architecture"
+              title="Close the interface. Disconnect SSH. Your agents keep running."
+              description={
+                <>
+                  tmux has already absorbed years of terminal, resize, shell, disconnect, and remote
+                  session edge cases. Its commands and session vocabulary are also familiar to
+                  coding agents. tmux-ide builds on that shared language instead of introducing a
+                  private multiplexer protocol.
+                </>
+              }
+            />
+            <Mosaic bleed className="mt-12 lg:grid-cols-3">
+              {LANDING_ARCHITECTURE.map((layer, index) => (
+                <Cell key={layer.owner} ground="paper" className="flex h-full flex-col p-7">
+                  <span className="font-mono text-xs text-fd-primary">0{index + 1}</span>
+                  <h3 className="mt-8 font-mono text-lg text-fd-foreground">{layer.owner}</h3>
+                  <p className="mt-3 min-h-12 font-mono text-xs leading-relaxed text-fd-muted-foreground">
+                    {layer.responsibility}
+                  </p>
+                  <p className="mt-8 border-t border-fd-border pt-4 text-sm text-fd-foreground">
+                    {layer.outcome}
+                  </p>
+                  <TuiMiniFigure
+                    variant={architectureVisuals[index]}
+                    figure={layer.figure}
+                    className="mt-6"
+                  />
+                </Cell>
+              ))}
+            </Mosaic>
+            <div className="mt-8 flex flex-wrap items-center gap-x-8 gap-y-3 font-mono text-sm text-fd-muted-foreground">
+              <span className="text-fd-foreground">Local terminal</span>
+              <span aria-hidden>→</span>
+              <span className="text-fd-foreground">SSH</span>
+              <span aria-hidden>→</span>
+              <span className="text-fd-primary">same durable tmux workspace</span>
+            </div>
+            <p className="marketing-type-body mt-6 max-w-[72ch] text-fd-muted-foreground">
+              That makes tmux-ide legible to both humans and agents: inspect sessions, target a
+              named pane, and communicate through established tmux primitives rather than teaching
+              every agent a proprietary control plane.
+            </p>
+          </BandBody>
+        </Band>
+      </Stretch>
+
+      <Stretch ground="paper">
+        <Band>
+          <BandBody>
+            <SectionHeader
+              eyebrow="everything remains ordinary tmux"
+              title="Create, arrange, and operate without breaking flow."
+              description="The visual layer maps directly onto familiar tmux operations. Use it when it helps, then drop back to tmux whenever you want."
+            />
+            <Mosaic bleed className="mt-12 lg:grid-cols-3">
+              {LANDING_CAPABILITIES.map((capability, index) => (
+                <Cell
+                  key={capability.title}
+                  ground="raise"
+                  className="flex h-full flex-col p-7 md:p-9"
+                >
+                  <span className="marketing-type-micro font-mono text-fd-primary">
+                    {capability.index}
+                  </span>
+                  <h3 className="marketing-type-subtitle mt-8 text-fd-foreground">
+                    {capability.title}
+                  </h3>
+                  <p className={`mt-4 ${bodyCopy}`}>{capability.body}</p>
+                  <ul className="mt-6 flex flex-wrap gap-x-5 gap-y-2 font-mono text-xs text-fd-muted-foreground">
+                    {capability.items.map((item) => (
+                      <li
+                        key={item}
+                        className="before:mr-2 before:text-fd-primary before:content-['·']"
+                      >
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                  <TuiMiniFigure
+                    variant={capability.visual}
+                    figure={capability.figure}
+                    motionCount={3}
+                    motionIndex={index}
+                    className="mt-8"
+                  />
+                </Cell>
+              ))}
+            </Mosaic>
+            <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm text-fd-muted-foreground">
+              <span>Every action remains inspectable from an ordinary tmux client.</span>
+              <Link href="/docs/commands" className="marketing-link-action text-fd-primary">
+                Explore all commands →
               </Link>
             </div>
-          </div>
-        </GrainStage>
-      </div>
-    </div>
+          </BandBody>
+        </Band>
+        <Band>
+          <BandBody>
+            <LandingFaqJsonLd />
+            <SectionHeader eyebrow="questions, answered" title="The important details." />
+            <div id="faq" className="mt-12 border-t border-fd-border">
+              {LANDING_FAQ.map(({ question, answer }) => (
+                <details key={question} className="group border-b border-fd-border py-6">
+                  <summary className="flex cursor-pointer list-none items-center gap-6 text-base font-normal text-fd-foreground marker:content-none">
+                    <span>{question}</span>
+                    <span
+                      aria-hidden
+                      className="ml-auto font-mono text-fd-primary transition-transform duration-200 ease-smooth group-open:rotate-45 motion-reduce:transition-none"
+                    >
+                      +
+                    </span>
+                  </summary>
+                  <p className={`marketing-faq-answer pt-4 ${bodyCopy}`}>{answer}</p>
+                </details>
+              ))}
+            </div>
+          </BandBody>
+        </Band>
+      </Stretch>
+
+      <Stretch ground="panel">
+        {/* The footer owns the closing seam with its top rule. */}
+        <Band rule={false}>
+          <BandBody>
+            <MarketingGrid>
+              <Cell className="lg:col-span-12 lg:col-start-7">
+                <SectionHeader
+                  align="center"
+                  className="max-w-none"
+                  eyebrow={
+                    <span className="inline-flex items-center justify-center gap-3 text-fd-muted-foreground">
+                      <AppIcon size={28} />
+                      ready when you are
+                    </span>
+                  }
+                  title="Build your team of agents."
+                  description="Install tmux-ide, open the app, and turn the tmux sessions you already use into one clear agent workspace."
+                />
+                <div className="mt-8 text-center">
+                  <CopyButton
+                    text={INSTALL_COMMAND}
+                    className="marketing-copy-action flex w-full cursor-pointer items-center gap-3 border border-fd-primary bg-fd-primary px-5 py-3.5 text-left text-sm text-fd-primary-foreground"
+                  >
+                    <span aria-hidden>$</span>
+                    <code className="font-mono">{INSTALL_COMMAND}</code>
+                    <span className="ml-auto text-xs opacity-65">copy</span>
+                  </CopyButton>
+                  <p className="mt-4 text-sm text-fd-muted-foreground">
+                    Then run <code className="font-mono text-fd-foreground">{APP_COMMAND}</code>
+                    <span aria-hidden className="mx-3">
+                      ·
+                    </span>
+                    <Link
+                      href="/docs/getting-started"
+                      className="marketing-link-action text-fd-foreground"
+                    >
+                      Read the guide →
+                    </Link>
+                  </p>
+                </div>
+              </Cell>
+            </MarketingGrid>
+          </BandBody>
+        </Band>
+      </Stretch>
+    </MarketingFrame>
   );
 }

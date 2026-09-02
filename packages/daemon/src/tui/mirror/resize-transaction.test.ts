@@ -47,6 +47,7 @@ function harness(options: { submitError?: Error } = {}) {
 }
 
 const begin = {
+  authorityGeneration: "lane-a",
   workspaceName: "workspace.alpha",
   semanticPaneId: "pane.editor",
   axis: "cols" as const,
@@ -156,6 +157,30 @@ describe("ResizeTransactionController", () => {
     expect(h.states).toHaveLength(before + 1);
   });
 
+  it("ignores duplicate and reordered layout settlement after the core operation is terminal", () => {
+    const h = harness();
+    h.controller.begin(begin);
+    h.controller.move(60);
+    const operationId = h.controller.release()!;
+    expect(h.controller.observeLayout(observation(operationId, 58))).toBe(true);
+    const afterFirst = h.states.length;
+
+    expect(h.controller.observeLayout(observation(operationId, 60))).toBe(false);
+    expect(h.controller.observeLayout(observation("older-operation", 40))).toBe(false);
+    expect(h.states).toHaveLength(afterFirst);
+    expect(h.controller.state()).toMatchObject({ canonicalCells: 58 });
+  });
+
+  it("rejects empty routing identity before creating the core generation", () => {
+    const h = harness();
+    expect(() => h.controller.begin({ ...begin, workspaceName: "" })).toThrow(
+      "workspaceName must not be empty",
+    );
+    expect(() => h.controller.begin({ ...begin, semanticPaneId: "" })).toThrow(
+      "semanticPaneId must not be empty",
+    );
+  });
+
   it("times out and reverts exactly once without resubmitting", () => {
     const h = harness();
     h.controller.begin(begin);
@@ -188,6 +213,24 @@ describe("ResizeTransactionController", () => {
     expect(h.controller.state()).toMatchObject({ phase: "pending", operationId: first });
     expect(h.controller.observeLayout(observation(first, 55))).toBe(true);
     expect(h.controller.begin({ ...begin, canonicalCells: 55 })).toBe(true);
+  });
+
+  it("retires a runtime generation and ignores its late layout and rejection", () => {
+    const h = harness();
+    h.controller.begin(begin);
+    h.controller.move(60);
+    const operationId = h.controller.release()!;
+    h.controller.retire();
+    const afterRetire = h.states.length;
+
+    expect(h.controller.observeLayout(observation(operationId, 60))).toBe(false);
+    expect(h.controller.reject({ operationId, code: "retired", message: "late old lane" })).toBe(
+      false,
+    );
+    expect(h.states).toHaveLength(afterRetire);
+    expect(h.controller.state()).toEqual({ phase: "idle", canonicalCells: null, outcome: null });
+
+    expect(h.controller.begin({ ...begin, authorityGeneration: "lane-b" })).toBe(true);
   });
 
   it("does not submit an unchanged gesture and can cancel before release", () => {

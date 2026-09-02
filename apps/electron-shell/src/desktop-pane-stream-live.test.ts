@@ -52,6 +52,7 @@ interface WireRecord {
   readonly direction: "sent" | "received";
   readonly type: string;
   readonly pane?: string;
+  readonly code?: string;
 }
 
 function delay(ms: number): Promise<void> {
@@ -83,11 +84,12 @@ function auditingWebSocketFactory(transcript: WireRecord[]): PaneStreamWebSocket
     const socket = new WebSocket(url, protocol, { origin: rendererOrigin });
     const record = (direction: "sent" | "received", data: unknown): void => {
       try {
-        const frame = JSON.parse(String(data)) as { type?: string; pane?: string };
+        const frame = JSON.parse(String(data)) as { type?: string; pane?: string; code?: string };
         transcript.push({
           direction,
           type: typeof frame.type === "string" ? frame.type : "unknown",
           ...(typeof frame.pane === "string" ? { pane: frame.pane } : {}),
+          ...(typeof frame.code === "string" ? { code: frame.code } : {}),
         });
       } catch {
         transcript.push({ direction, type: "unparseable" });
@@ -268,7 +270,7 @@ describe
       rmSync(root, { recursive: true, force: true });
     });
 
-    it("mirrors two panes independently live, isolates a flood, and closes honestly", async () => {
+    it("mirrors two panes independently, isolates a flood, and fails closed on topology change", async () => {
       spawnDaemon();
       const daemon = await waitForConnectedDaemon();
       const coordinator = new DaemonConnectionCoordinator({
@@ -372,26 +374,20 @@ describe
       );
       expect(ends).toEqual([]);
 
-      // Kill a pane: its node receives the honest closed frame; siblings live on.
+      // Kill a pane: the exact-inventory lease fails closed so WorkspaceClient
+      // can refresh topology and reconnect rather than retaining stale lanes.
       runTmux(["kill-pane", "-t", `=${sessionName}:0.2`]);
       await waitUntil(
-        () =>
-          paneEvents.some((event) => event.pane === PANE_THREE && event.type === "closed")
-            ? true
-            : null,
-        "a killed pane must deliver its closed frame",
+        () => (ends.length === 1 ? true : null),
+        "a killed pane must retire the exact-inventory stream",
       );
-      const markerAfterClose = `M43_POST_${randomUUID().slice(0, 8)}`;
-      runTmux(["send-keys", "-t", `=${sessionName}:0.0`, `echo ${markerAfterClose}`, "Enter"]);
-      await waitUntil(
-        () => (visiblePaneText(PANE_ONE).includes(markerAfterClose) ? true : null),
-        "surviving panes must stay live after a sibling pane closes",
-      );
-      expect(ends).toEqual([]);
+      expect(ends).toEqual([
+        expect.objectContaining({ code: "topology-changed", retryable: true }),
+      ]);
 
       // Wire transcript audit: one redeem, one lease ready, one semantic lane
-      // per pane, semantic ACKs flowing back, and an honest pane-three close at
-      // the renderer boundary (the wire close is a semantic tombstone envelope).
+      // per pane, semantic ACKs flowing back, and an honest retryable topology
+      // retirement when the lease's exact pane inventory changes.
       expect(transcript.filter(({ type }) => type === "redeem")).toHaveLength(1);
       expect(transcript.filter(({ type }) => type === "ready")).toHaveLength(1);
       expect(transcript[0]).toMatchObject({ direction: "sent", type: "redeem" });
@@ -411,9 +407,14 @@ describe
           (record) => record.direction === "sent" && record.type === "terminal-delivery-ack",
         ).length,
       ).toBeGreaterThan(0);
-      expect(paneEvents.some((event) => event.pane === PANE_THREE && event.type === "closed")).toBe(
-        true,
-      );
+      expect(
+        transcript.some(
+          (record) =>
+            record.direction === "received" &&
+            record.type === "error" &&
+            record.code === "topology-changed",
+        ),
+      ).toBe(true);
       expect(
         transcript.filter((record) => record.direction === "sent" && record.type === "input"),
       ).toHaveLength(0);

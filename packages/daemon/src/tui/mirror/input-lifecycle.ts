@@ -229,12 +229,8 @@ export interface TuiLifecycleExecutor {
 
 export function createTuiLifecycleExecutor(deps: {
   destroyRenderer: () => void;
-  switchClientBack: (callback: (error: unknown) => void) => void;
-  detachClient: () => void;
 }): TuiLifecycleExecutor {
   let destroyRequested = false;
-  let hostedDetachRequested = false;
-  let fallbackDetachRequested = false;
 
   return {
     run(command) {
@@ -244,13 +240,9 @@ export function createTuiLifecycleExecutor(deps: {
         deps.destroyRenderer();
         return;
       }
-      if (hostedDetachRequested) return;
-      hostedDetachRequested = true;
-      deps.switchClientBack((error) => {
-        if (!error || fallbackDetachRequested) return;
-        fallbackDetachRequested = true;
-        deps.detachClient();
-      });
+      // Hosted detach belongs to tmux's root key binding, where the invoking
+      // client is still known. A command injected directly into the shared
+      // renderer pane is deliberately consumed without client mutation.
     },
   };
 }

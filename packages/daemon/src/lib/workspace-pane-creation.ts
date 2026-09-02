@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { delimiter, isAbsolute, join, relative, sep } from "node:path";
 
@@ -20,8 +21,15 @@ import {
   type WorkspaceConfigSourceMetadata,
 } from "./workspace-config-loader.ts";
 import { getDefaultWorkspaceRegistry, type WorkspaceRegistry } from "./workspace-registry.ts";
+import { memorablePaneName } from "../terminal/protocol/pane-display-name.ts";
 import { shellEscape } from "./shell.ts";
 import { MissionRepository } from "./mission-repository.ts";
+import { resolveRuntimeNamespace } from "./runtime-namespace.ts";
+import { prepareTmuxTruecolorEnvironment } from "./tmux-terminal-color.ts";
+import {
+  captureUnixSocketIdentity,
+  revalidateUnixSocketIdentity,
+} from "./unix-socket-authority.ts";
 
 const MAX_LIVE_OR_UNSAFE_OPERATIONS = 128;
 const MAX_REPLAYABLE_FAILURES = 64;
@@ -141,7 +149,7 @@ export interface WorkspacePaneTmuxAuthority {
   readonly executablePath: string;
   readonly socketSelector:
     | { readonly kind: "path"; readonly path: string }
-    | { readonly kind: "name"; readonly name: "default" };
+    | { readonly kind: "name"; readonly name: string };
 }
 
 function canonicalProjectDir(path: string): string {
@@ -235,7 +243,6 @@ function resolveTmuxExecutable(): string {
 }
 
 const SAFE_TERMINAL_VALUE = /^(?:xterm|screen|tmux|rxvt|vt100|ansi)[A-Za-z0-9+._-]{0,58}$/u;
-const SAFE_COLOR_TERMINAL_VALUE = /^(?:truecolor|24bit)$/u;
 const SAFE_LOCALE_VALUE = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$/u;
 
 /**
@@ -247,10 +254,11 @@ const SAFE_LOCALE_VALUE = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$/u;
 function tmuxClientEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {
     TERM: SAFE_TERMINAL_VALUE.test(source.TERM ?? "") ? source.TERM : "xterm-256color",
+    // A pinned runner may be the first tmux client and therefore create the
+    // server. Never let a headless parent (`TERM=dumb`, `NO_COLOR=1`) become
+    // the global environment inherited by every later interactive child.
+    COLORTERM: "truecolor",
   };
-  if (SAFE_COLOR_TERMINAL_VALUE.test(source.COLORTERM ?? "")) {
-    environment.COLORTERM = source.COLORTERM;
-  }
   for (const name of ["LANG", "LC_ALL", "LC_CTYPE"] as const) {
     const value = source[name];
     if (value && SAFE_LOCALE_VALUE.test(value)) environment[name] = value;
@@ -267,59 +275,121 @@ export function resolveWorkspacePaneTmuxAuthority(): WorkspacePaneTmuxAuthority 
   const executablePath = resolveTmuxExecutable();
   const environmentSocket = tmuxSocketFromEnvironment();
   if (environmentSocket) {
-    const path = realpathSync(environmentSocket);
-    if (!statSync(path).isSocket()) {
-      throw new WorkspacePaneCreationError("workspace_unavailable", {
-        reason: "tmux_socket_unavailable",
-      });
+    let socket;
+    try {
+      socket = captureUnixSocketIdentity(environmentSocket);
+    } catch (error) {
+      throw new WorkspacePaneCreationError(
+        "workspace_unavailable",
+        {
+          reason: "tmux_socket_unavailable",
+        },
+        error,
+      );
     }
     return Object.freeze({
       executablePath,
-      socketSelector: { kind: "path" as const, path },
+      socketSelector: { kind: "path" as const, path: socket.path },
     });
   }
   // A sessionless daemon may start before the default tmux server exists. Pin
   // the daemon's default socket *name* and captured environment rather than
   // consulting a later request's TMUX/PATH.
-  return Object.freeze({
-    executablePath,
-    socketSelector: { kind: "name" as const, name: "default" as const },
-  });
+  return Object.freeze({ executablePath, socketSelector: resolveRuntimeNamespace().tmuxSocket });
 }
 
 /** Execute mutations only through the daemon-generation-pinned tmux authority. */
 export function createPinnedWorkspaceTmuxRunner(
   authority: WorkspacePaneTmuxAuthority,
+  options: Readonly<{ timeoutMs?: number }> = {},
 ): (args: readonly string[]) => string {
   const executablePath = realpathSync(authority.executablePath);
   accessSync(executablePath, constants.X_OK);
   if (!isAbsolute(executablePath) || !statSync(executablePath).isFile()) {
     throw new TypeError("Pinned tmux executable is invalid.");
   }
-  const socketArgv =
+  if (
+    options.timeoutMs !== undefined &&
+    (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1)
+  ) {
+    throw new TypeError("Pinned tmux timeout is invalid.");
+  }
+  const socketIdentity =
     authority.socketSelector.kind === "path"
-      ? (() => {
-          const path = realpathSync(authority.socketSelector.path);
-          if (!isAbsolute(path) || !statSync(path).isSocket()) {
-            throw new TypeError("Pinned tmux socket is invalid.");
-          }
-          return ["-S", path];
-        })()
-      : authority.socketSelector.name === "default"
-        ? ["-L", "default"]
-        : (() => {
-            throw new TypeError("Pinned tmux socket is invalid.");
-          })();
+      ? captureUnixSocketIdentity(authority.socketSelector.path)
+      : null;
+  if (
+    socketIdentity === null &&
+    (authority.socketSelector.kind !== "name" ||
+      !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(authority.socketSelector.name))
+  )
+    throw new TypeError("Pinned tmux socket is invalid.");
+  const socketArgv = socketIdentity
+    ? ["-S", socketIdentity.path]
+    : ["-L", authority.socketSelector.kind === "name" ? authority.socketSelector.name : ""];
   const environment = Object.freeze(tmuxClientEnvironment(process.env));
-  return (args) =>
-    String(
-      runTmuxBinary(executablePath, [...socketArgv, ...args], {
+  return (args) => {
+    const selector = socketIdentity
+      ? ["-S", revalidateUnixSocketIdentity(socketIdentity)]
+      : socketArgv;
+    return String(
+      runTmuxBinary(executablePath, [...selector, ...args], {
         encoding: "utf8",
         env: environment,
         maxBuffer: TMUX_OUTPUT_BYTES,
         stdio: ["ignore", "pipe", "pipe"],
+        ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
       }),
     ).replace(/(?:\r?\n)+$/u, "");
+  };
+}
+
+/** Execute read-only observer work without blocking the daemon event loop. */
+export function createPinnedWorkspaceTmuxAsyncRunner(
+  authority: WorkspacePaneTmuxAuthority,
+): (args: readonly string[], signal?: AbortSignal) => Promise<string> {
+  const executablePath = realpathSync(authority.executablePath);
+  accessSync(executablePath, constants.X_OK);
+  if (!isAbsolute(executablePath) || !statSync(executablePath).isFile()) {
+    throw new TypeError("Pinned tmux executable is invalid.");
+  }
+  const socketIdentity =
+    authority.socketSelector.kind === "path"
+      ? captureUnixSocketIdentity(authority.socketSelector.path)
+      : null;
+  if (
+    socketIdentity === null &&
+    (authority.socketSelector.kind !== "name" ||
+      !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(authority.socketSelector.name))
+  )
+    throw new TypeError("Pinned tmux socket is invalid.");
+  const socketArgv = socketIdentity
+    ? ["-S", socketIdentity.path]
+    : ["-L", authority.socketSelector.kind === "name" ? authority.socketSelector.name : ""];
+  const environment = Object.freeze(tmuxClientEnvironment(process.env));
+  return (args, signal) => {
+    const selector = socketIdentity
+      ? ["-S", revalidateUnixSocketIdentity(socketIdentity)]
+      : socketArgv;
+    return new Promise<string>((resolve, reject) => {
+      execFile(
+        executablePath,
+        [...selector, ...args],
+        {
+          encoding: "utf8",
+          env: environment,
+          maxBuffer: TMUX_OUTPUT_BYTES,
+          timeout: 5_000,
+          ...(signal ? { signal } : {}),
+          windowsHide: true,
+        },
+        (error, stdout) => {
+          if (error) reject(error);
+          else resolve(stdout.replace(/(?:\r?\n)+$/u, ""));
+        },
+      );
+    });
+  };
 }
 
 function profileCommand(profile: WorkspaceHarnessProfile): readonly string[] {
@@ -507,12 +577,18 @@ function parseCreatedRuntime(
 }
 
 function defaultTitle(
-  intent: WorkspacePaneCreateMutationRequest["intent"],
+  request: WorkspacePaneCreateMutationRequest,
   harness: ResolvedHarnessLaunch | null,
 ): string {
+  const intent = request.intent;
   if (intent.displayTitle) return intent.displayTitle;
   if (intent.kind === "agent") return (harness?.label ?? intent.harnessProfileId).slice(0, 80);
-  return "Terminal";
+  return memorablePaneName(semanticPaneId(request.operationId));
+}
+
+function nameSource(intent: WorkspacePaneCreateMutationRequest["intent"]): string {
+  if (intent.displayTitle) return "manual";
+  return intent.kind === "agent" ? "agent" : "generated";
 }
 
 function resourceFor(
@@ -739,7 +815,7 @@ export class WorkspacePaneCreationAuthority {
           ? await this.#io.resolveMission(trustedWorkspace, canonicalRoot, request.intent.missionId)
           : null;
       this.#assertActive(request.operationId);
-      const title = defaultTitle(request.intent, harness);
+      const title = defaultTitle(request, harness);
       const resource = resourceFor(request, title, resolvedMissionId);
       const placement = request.intent.placement ?? ({ kind: "window" } as const);
       const runtimeScope = placement.kind === "window" ? "window" : "pane";
@@ -797,6 +873,7 @@ export class WorkspacePaneCreationAuthority {
             workspaceName: workspace.name,
           });
         }
+        prepareTmuxTruecolorEnvironment(this.#io.runTmux, workspace.sessionName);
         const createArgs =
           placement.kind === "window"
             ? [
@@ -827,6 +904,10 @@ export class WorkspacePaneCreationAuthority {
         for (const [key, value] of Object.entries(harness?.environment ?? {}).sort(([a], [b]) =>
           a.localeCompare(b),
         )) {
+          // Terminal presentation is owned by tmux-ide. In particular an
+          // inherited/profile NO_COLOR must not override the removal tombstone
+          // installed immediately above, and TERM remains tmux-owned.
+          if (key === "NO_COLOR" || key === "COLORTERM" || key === "TERM") continue;
           createArgs.push("-e", `${key}=${value}`);
         }
         if (harness) createArgs.push(harness.command.map(shellEscape).join(" "));
@@ -888,6 +969,7 @@ export class WorkspacePaneCreationAuthority {
         ["@ide_type", resource.kind === "agent" ? "agent" : "shell"],
         ["@ide_role", resource.role ?? "shell"],
         ["@ide_name", resource.displayTitle],
+        ["@tmux_ide_name_source", nameSource(request.intent)],
         ["@agent_hint", agentHintForCommand(harness?.command.join(" ")) ?? ""],
         [HARNESS_OPTION, resource.harnessProfileId ?? ""],
         [MISSION_OPTION, resource.missionId ?? ""],

@@ -24,6 +24,10 @@
 import type { AgentManifest } from "../detect/manifest.ts";
 import type { DialogRowAction, DialogSelectItem } from "./dialog-model.ts";
 import { agentAgeLabel, agentDisplayKind, type AgentRowInput } from "./agent-rows.ts";
+import {
+  TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
+  truecolorShellCommand,
+} from "../../lib/tmux-terminal-color.ts";
 
 /** The "Custom command…" picker row — resolves to a DialogPrompt, not a kind. */
 export const CUSTOM_KIND_ID = "custom-command";
@@ -262,8 +266,17 @@ export function spawnAgentArgs(
   command: string,
 ): string[] {
   const cd = dir ? ["-c", dir] : [];
+  const launch = truecolorShellCommand(command);
   if (placement === "window") {
-    return ["new-window", "-t", `${target.session}:`, ...PRINT_PANE_ID, ...cd, command];
+    return [
+      "new-window",
+      "-t",
+      `${target.session}:`,
+      ...PRINT_PANE_ID,
+      ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
+      ...cd,
+      launch,
+    ];
   }
   const flag = placement === "split-h" ? "-h" : "-v";
   return [
@@ -272,8 +285,9 @@ export function spawnAgentArgs(
     "-t",
     target.paneId ?? `${target.session}:`,
     ...PRINT_PANE_ID,
+    ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
     ...cd,
-    command,
+    launch,
   ];
 }
 
@@ -284,7 +298,16 @@ export function spawnAgentArgs(
  * {@link spawnAgentArgs}.
  */
 export function spawnSessionArgs(name: string, dir: string | null, command: string): string[] {
-  return ["new-session", "-d", "-s", name, ...PRINT_PANE_ID, ...(dir ? ["-c", dir] : []), command];
+  return [
+    "new-session",
+    "-d",
+    "-s",
+    name,
+    ...PRINT_PANE_ID,
+    ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
+    ...(dir ? ["-c", dir] : []),
+    truecolorShellCommand(command),
+  ];
 }
 
 /** PURE — title the spawned pane after its agent (`select-pane -T`), so the
@@ -397,7 +420,15 @@ export function paneHostsShell(startCommand: string, manifests: readonly AgentMa
  * pane's current path first) so the cwd is preserved on every tmux version.
  */
 export function respawnArgs(paneId: string, command: string, dir: string | null): string[] {
-  return ["respawn-pane", "-k", "-t", paneId, ...(dir ? ["-c", dir] : []), command];
+  return [
+    "respawn-pane",
+    "-k",
+    "-t",
+    paneId,
+    ...TMUX_TRUECOLOR_ENVIRONMENT_ARGS,
+    ...(dir ? ["-c", dir] : []),
+    truecolorShellCommand(command),
+  ];
 }
 
 /** PURE — one interrupt (ctrl-c) to the pane. Sent TWICE by the flows: TUI
@@ -411,7 +442,7 @@ export function interruptArgs(paneId: string): string[] {
  *  command text, then Enter as a key. Two calls — `-l` must not eat "Enter". */
 export function relaunchArgs(paneId: string, command: string): string[][] {
   return [
-    ["send-keys", "-t", paneId, "-l", command],
+    ["send-keys", "-t", paneId, "-l", truecolorShellCommand(command)],
     ["send-keys", "-t", paneId, "Enter"],
   ];
 }

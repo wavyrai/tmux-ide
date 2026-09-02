@@ -1,5 +1,12 @@
 export { TmuxError } from "./errors.ts";
-export { runTmux, runTmuxBinary, _setExecutor, _setSpawner, _getSpawner } from "./runner.ts";
+export {
+  runTmux,
+  runTmuxBinary,
+  sanitizeTmuxClientEnvironment,
+  _setExecutor,
+  _setSpawner,
+  _getSpawner,
+} from "./runner.ts";
 export {
   attachSession,
   createDetachedSession,

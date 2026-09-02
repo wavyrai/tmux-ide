@@ -4,6 +4,7 @@ import {
   type TuiLifecycleCommand,
   type TuiLifecycleExecutor,
 } from "../input-lifecycle.ts";
+import { acquireRuntimeResource } from "@tmux-ide/daemon-client/runtime-resource-ledger";
 
 export type TuiShutdownReason = TuiLifecycleCommand["source"] | "bootstrap-error" | "host";
 
@@ -27,6 +28,17 @@ export interface TuiPendingWork {
 }
 
 export type TuiAsyncCloser = () => void | Promise<void>;
+
+export type TuiHostDeathSignal = "SIGHUP" | "SIGTERM";
+
+export interface TuiHostSignalTarget {
+  on(signal: TuiHostDeathSignal, listener: () => void): unknown;
+  off(signal: TuiHostDeathSignal, listener: () => void): unknown;
+}
+
+export interface TuiHostSignalShutdown {
+  dispose(): void;
+}
 
 export interface TuiApplicationLifecycleOptions {
   readonly destroyRenderer: () => void | Promise<void>;
@@ -253,8 +265,14 @@ export class TuiApplicationLifecycle {
   ): Promise<TuiShutdownReport> {
     const outstanding = new Set(awaited);
     let timer: ReturnType<typeof setTimeout> | null = null;
+    // The root's post-close snapshot occurs while this enclosing guard still
+    // owns the closer; it retires before the shared shutdown promise resolves.
+    const releaseTimer = acquireRuntimeResource("host-shutdown-timer");
     const deadline = new Promise<"timeout">((resolve) => {
-      timer = this.#setTimer(() => resolve("timeout"), this.#shutdownTimeoutMs);
+      timer = this.#setTimer(() => {
+        releaseTimer();
+        resolve("timeout");
+      }, this.#shutdownTimeoutMs);
     });
 
     // Drain to quiescence. A pending creator is allowed to finish by handing
@@ -291,6 +309,7 @@ export class TuiApplicationLifecycle {
       }
     }
     if (timer !== null) this.#clearTimer(timer);
+    releaseTimer();
 
     for (const entry of this.#retiringClosers) outstanding.add(entry);
     const timedOut = [...outstanding].map((entry) => entry.name);
@@ -303,21 +322,48 @@ export class TuiApplicationLifecycle {
   }
 }
 
+/**
+ * A hosted renderer belongs to its tmux pane. If tmux destroys that pane or
+ * server, SIGHUP/SIGTERM must enter the same bounded lifecycle as an explicit
+ * app quit; otherwise Bun can keep the renderer orphaned after its TTY dies.
+ * Ordinary put-away only detaches/switches a client and emits neither signal.
+ */
+export function installTuiHostSignalShutdown(
+  lifecycle: TuiApplicationLifecycle,
+  options: Readonly<{
+    hosted: boolean;
+    signalTarget?: TuiHostSignalTarget;
+  }>,
+): TuiHostSignalShutdown {
+  const signalTarget = options.signalTarget ?? process;
+  let disposed = false;
+  const shutdown = (): void => {
+    void lifecycle.shutdown("host").catch(() => undefined);
+  };
+  if (options.hosted) {
+    signalTarget.on("SIGHUP", shutdown);
+    signalTarget.on("SIGTERM", shutdown);
+  }
+  return Object.freeze({
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      if (!options.hosted) return;
+      signalTarget.off("SIGHUP", shutdown);
+      signalTarget.off("SIGTERM", shutdown);
+    },
+  });
+}
+
 /** Bridge the existing input-layer semantics into the one async owner. */
 export function createApplicationLifecycleInputExecutor(
   lifecycle: TuiApplicationLifecycle,
-  hosted: {
-    readonly switchClientBack: (callback: (error: unknown) => void) => void;
-    readonly detachClient: () => void;
-  },
 ): TuiLifecycleExecutor {
   let destroyReason: TuiShutdownReason = "keyboard";
   const executor = createTuiLifecycleExecutor({
     destroyRenderer: () => {
       void lifecycle.shutdown(destroyReason);
     },
-    switchClientBack: hosted.switchClientBack,
-    detachClient: hosted.detachClient,
   });
   return {
     run(command) {

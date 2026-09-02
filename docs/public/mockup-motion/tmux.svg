@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="140" viewBox="0 0 360 140" role="img" aria-label="An animated cursor performance">
+<style>.mt-cursor{transform:translate(293px,90px)}
+.mt-rip{fill:none;stroke:#087c9f;stroke-width:2;opacity:0;transform-box:fill-box;transform-origin:center}
+@media (prefers-reduced-motion: no-preference){
+.mt-cursor{animation:mt-travel 4000ms linear infinite both}
+.mt-rip{animation:mt-ripple 4000ms linear infinite both}
+}
+@keyframes mt-travel{0%{transform:translate(334px,122px)}5%{transform:translate(334px,121.98px)}6.0417%{transform:translate(331.19px,122.76px)}7.0833%{transform:translate(316.81px,126.15px)}8.125%{transform:translate(285.29px,130.46px)}9.1667%{transform:translate(242.18px,132.67px)}10.2083%{transform:translate(193.31px,127.72px)}11.25%{transform:translate(146.97px,117.06px)}12.2917%{transform:translate(110.89px,104.33px)}13.3333%{transform:translate(86.66px,93.53px)}14.375%{transform:translate(72.81px,87.21px)}15.4167%{transform:translate(70.76px,86.04px)}16.4583%{transform:translate(73.58px,87.36px)}17.5%{transform:translate(77.49px,89.3px)}18.5417%{transform:translate(78.99px,89.99px)}26.25%{transform:translate(78.9px,89.77px)}27.2917%{transform:translate(80.57px,89.18px)}28.3333%{transform:translate(89.85px,87.25px)}29.375%{transform:translate(110.36px,85.38px)}30.4167%{transform:translate(139.74px,85.59px)}31.4583%{transform:translate(166.18px,87.57px)}32.5%{transform:translate(182.62px,89.44px)}33.5417%{transform:translate(189.35px,90.38px)}34.5833%{transform:translate(188.92px,90.32px)}35.625%{transform:translate(186.6px,90.08px)}36.4564%{transform:translate(186px,90px)}47.5%{transform:translate(185.81px,89.68px)}48.5417%{transform:translate(187.44px,89.01px)}49.5833%{transform:translate(197.93px,85.11px)}50.625%{transform:translate(221.39px,80.3px)}51.6667%{transform:translate(253.32px,79.42px)}52.7083%{transform:translate(278.45px,83.42px)}53.75%{transform:translate(291.24px,88.59px)}54.7917%{transform:translate(296.11px,91.95px)}55.8333%{transform:translate(295.63px,91.75px)}56.875%{transform:translate(293.55px,90.37px)}57.7064%{transform:translate(293px,90px)}67.9167%{transform:translate(293px,90px)}68.75%{transform:translate(293.08px,88.54px)}82.2917%{transform:translate(292.87px,88.5px)}82.5%{transform:translate(293px,90px)}100%{transform:translate(293px,90px)}}
+@keyframes mt-ripple{
+0%{opacity:.55;transform:scale(.12)}
+15.5%{opacity:0;transform:scale(1)}
+100%{opacity:0;transform:scale(1)}
+}</style>
+
+<g><circle class="mt-rip" cx="79" cy="90" r="20" style="animation-delay:814.7ms"/><circle class="mt-rip" cx="186" cy="90" r="20" style="animation-delay:1528.3ms"/><circle class="mt-rip" cx="293" cy="90" r="20" style="animation-delay:2378.3ms"/></g>
+<g class="mt-cursor">
+<g transform="translate(-5,-2.5)">
+<path d="M5 2.5 L5 19.4 L9.2 15.3 L11.9 21.2 L14.6 20 L11.9 14.2 L17.6 14.2 Z" fill="#fff" stroke="rgba(17,17,20,0.92)" stroke-width="1.35" stroke-linejoin="round"/>
+</g>
+</g>
+</svg>

@@ -12,7 +12,7 @@ import {
   type PaneFrameHostLeaves,
   type PaneFrameModel,
   type PaneFrameStatusItem,
-} from "./presenter.js";
+} from "@tmux-ide/presentation/pane-frame";
 
 const disposers: Array<() => void> = [];
 

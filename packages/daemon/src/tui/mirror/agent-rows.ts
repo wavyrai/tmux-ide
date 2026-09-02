@@ -36,6 +36,10 @@ export interface AgentRowInput {
   /** Self-reported display name (`@agent_display_name`) — row-label precedence
    *  over the detected `kind` ({@link agentDisplayKind}). */
   displayName?: string;
+  /** Opaque owner-action identities; present only after an unambiguous catalog join. */
+  fleetSessionId?: string;
+  fleetAgentId?: string;
+  fleetCatalogRevision?: string;
 }
 
 /** PURE — what an agent row is CALLED: the self-reported display name when one
@@ -43,6 +47,36 @@ export interface AgentRowInput {
  *  detected kind. The one precedence rule every label surface shares. */
 export function agentDisplayKind(a: Pick<AgentRowInput, "kind" | "displayName">): string {
   return a.displayName ?? a.kind;
+}
+
+/**
+ * Hide panes whose close mutation was acknowledged before the asynchronous
+ * fleet/application-shell projections retire their last snapshots.
+ */
+export function visibleAgentRows<T extends Pick<AgentRowInput, "paneId">>(
+  agents: readonly T[],
+  closedPaneIds: ReadonlySet<string>,
+): T[] {
+  return agents.filter((agent) => !closedPaneIds.has(agent.paneId));
+}
+
+/**
+ * Retire close tombstones once a fresh authoritative projection no longer
+ * contains the pane. This keeps immediate close feedback without hiding a
+ * future pane if a restarted tmux server eventually reuses the raw `%pane` id.
+ */
+export function reconcileClosedAgentPaneIds<T extends Pick<AgentRowInput, "paneId">>(
+  closedPaneIds: ReadonlySet<string>,
+  agents: readonly T[],
+): ReadonlySet<string> {
+  const livePaneIds = new Set(agents.map((agent) => agent.paneId));
+  const retained = new Set([...closedPaneIds].filter((paneId) => livePaneIds.has(paneId)));
+  if (
+    retained.size === closedPaneIds.size &&
+    [...retained].every((paneId) => closedPaneIds.has(paneId))
+  )
+    return closedPaneIds;
+  return retained;
 }
 
 /** Attention-first rank: blocked, working, done, idle (from `ROLLUP_ORDER`), then

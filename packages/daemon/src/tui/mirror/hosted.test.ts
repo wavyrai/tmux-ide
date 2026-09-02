@@ -11,6 +11,10 @@ import {
   hostSetupArgvs,
   hostAttachArgv,
   HOST_RESIZE_HOOKS,
+  HOSTED_PUT_AWAY_KEY,
+  hostRootBindingsArgv,
+  hostPutAwayBindingArgv,
+  hostedPutAwayBindingState,
 } from "./hosted.ts";
 
 const noEntry = {
@@ -67,6 +71,7 @@ describe("hostedEnvVars", () => {
       [HOSTED_ENV]: "1",
       TMUX_IDE_CWD: "/work",
       TMUX_IDE_CLI: "/repo/bin/cli.js",
+      COLORTERM: "truecolor",
     });
   });
 
@@ -93,7 +98,7 @@ describe("hostedCommandLine", () => {
       TMUX_IDE_CWD: "/work dir",
     });
     expect(line).toBe(
-      `exec env TMUX_IDE_HOSTED='1' TMUX_IDE_CWD='/work dir' 'bun' '/repo/app.tsx' '--target=web'`,
+      `exec env -u NO_COLOR TMUX_IDE_HOSTED='1' TMUX_IDE_CWD='/work dir' 'bun' '/repo/app.tsx' '--target=web'`,
     );
   });
 });
@@ -152,6 +157,52 @@ describe("tmux argv builders", () => {
   it("attach from a plain terminal, switch-client from inside tmux", () => {
     expect(hostAttachArgv(false)).toEqual(["attach-session", "-t", `=${APP_HOST_SESSION}`]);
     expect(hostAttachArgv(true)).toEqual(["switch-client", "-t", `=${APP_HOST_SESSION}`]);
+  });
+
+  it("routes hosted Ctrl-Q through tmux's exact invoking-client context", () => {
+    expect(hostPutAwayBindingArgv()).toEqual([
+      "bind-key",
+      "-T",
+      "root",
+      HOSTED_PUT_AWAY_KEY,
+      "if-shell",
+      "-F",
+      `#{==:#{session_name},${APP_HOST_SESSION}}`,
+      "if-shell -F '#{client_last_session}' 'switch-client -l' 'detach-client'",
+      `send-keys ${HOSTED_PUT_AWAY_KEY}`,
+    ]);
+  });
+
+  it("uses the tmux-3.0-compatible root listing for binding preflight", () => {
+    expect(hostRootBindingsArgv()).toEqual(["list-keys", "-T", "root"]);
+  });
+
+  it("installs only when absent and recognizes only our idempotent binding", () => {
+    expect(hostedPutAwayBindingState("bind-key -T root MouseDown1Pane select-pane\n")).toBe(
+      "absent",
+    );
+    expect(
+      hostedPutAwayBindingState(
+        `bind-key  -T root C-q  if-shell -F "#{==:#{session_name},${APP_HOST_SESSION}}" "if-shell -F '#{client_last_session}' 'switch-client -l' 'detach-client'" "send-keys C-q"\n`,
+      ),
+    ).toBe("owned");
+  });
+
+  it("fails closed for user, duplicate, and malformed Ctrl-Q bindings", () => {
+    expect(hostedPutAwayBindingState("bind-key -T root C-q display-message user-owned\n")).toBe(
+      "conflict",
+    );
+    expect(
+      hostedPutAwayBindingState(
+        "bind-key -T root C-q display-message one\nbind-key -T root C-q display-message two\n",
+      ),
+    ).toBe("conflict");
+    expect(
+      hostedPutAwayBindingState(
+        `bind-key -T root C-q if-shell -F "#{==:#{session_name},${APP_HOST_SESSION}}" "if-shell -F '#{client_last_session}' 'switch-client -l' 'detach-client'" "send-keys C-q ; display-message augmented"\n`,
+      ),
+    ).toBe("conflict");
+    expect(hostedPutAwayBindingState("\0")).toBe("conflict");
   });
 });
 

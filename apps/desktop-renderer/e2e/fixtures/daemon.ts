@@ -13,6 +13,7 @@ import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { CanonicalDaemonInfoSchema, type CanonicalDaemonInfo } from "@tmux-ide/contracts";
 
 import {
   pollUntil,
@@ -29,12 +30,7 @@ const BUNDLE_BUILD_TIMEOUT_MS = 120_000;
 export const repoRoot = resolve(import.meta.dirname, "..", "..", "..", "..");
 export const rendererRoot = resolve(import.meta.dirname, "..", "..");
 
-export interface CanonicalDaemonRecord {
-  readonly port: number;
-  readonly pid: number;
-  readonly instanceId: string;
-  readonly authToken: string;
-}
+export type CanonicalDaemonRecord = CanonicalDaemonInfo & { readonly authToken: string };
 
 export interface StartupReadinessRung {
   readonly rung: string;
@@ -111,10 +107,19 @@ export async function startDaemon(fleet: ScratchFleet): Promise<RunningDaemon> {
       if (harness.child.exitCode !== null) {
         throw new Error(`daemon exited (${harness.child.exitCode})\n${harness.output()}`);
       }
-      const parsed = JSON.parse(
-        await readFile(join(fleet.daemonInfoDir, "daemon.json"), "utf8"),
-      ) as Partial<CanonicalDaemonRecord>;
-      return parsed.port && parsed.authToken ? (parsed as CanonicalDaemonRecord) : null;
+      const parsed = CanonicalDaemonInfoSchema.safeParse(
+        JSON.parse(await readFile(join(fleet.daemonInfoDir, "daemon.json"), "utf8")),
+      );
+      // A SIGKILL intentionally leaves daemon.json behind. Never let a newly
+      // spawned harness child "become ready" by reading its predecessor's
+      // still-valid record before it has published its own identity.
+      if (
+        !parsed.success ||
+        parsed.data.authToken === null ||
+        parsed.data.pid !== harness.child.pid
+      )
+        return null;
+      return parsed.data as CanonicalDaemonRecord;
     },
     detail: "the daemon to publish its canonical record",
     timeoutMs: DAEMON_READY_TIMEOUT_MS,

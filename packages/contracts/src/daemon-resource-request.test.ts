@@ -21,6 +21,7 @@ const REQUESTS: readonly DaemonResourceRequest[] = [
   { resource: "refreshConnection" },
   { resource: "listWorkspaces" },
   { resource: "fetchFleetCatalog" },
+  { resource: "fetchWorkspaceCatalog" },
   { resource: "fetchWidgetAsset", request: { assetId: "a".repeat(64) } },
   { resource: "startupReadiness" },
   { resource: "fetchApplicationShell", request: { workspaceName: WORKSPACE } },
@@ -51,9 +52,11 @@ const REQUESTS: readonly DaemonResourceRequest[] = [
   {
     resource: "mutateAppWindow",
     request: {
-      workspaceName: WORKSPACE,
-      expectedDocumentRevision: 4,
-      command: { type: "window.move", windowId: "window.worker", x: 10, y: 20 },
+      intent: {
+        workspaceName: WORKSPACE,
+        expectedDocumentRevision: 4,
+        command: { type: "window.move", windowId: "window.worker", x: 10, y: 20 },
+      },
     },
   },
   {
@@ -164,9 +167,11 @@ describe("daemon resource request union", () => {
       expect(typeof methods[kind]).toBe("function");
     }
     await methods.listWorkspaces();
+    await methods.fetchWorkspaceCatalog();
     await methods.fetchWorkspaceChanges({ workspaceName: WORKSPACE });
     expect(seen).toEqual([
       { resource: "listWorkspaces" },
+      { resource: "fetchWorkspaceCatalog" },
       { resource: "fetchWorkspaceChanges", request: { workspaceName: WORKSPACE } },
     ]);
   });

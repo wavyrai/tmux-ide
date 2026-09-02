@@ -30,7 +30,7 @@
  */
 import type { MirrorPaneEvent } from "./events.ts";
 
-export type PaneFeedState = "live" | "awaiting-capture" | "awaiting-cursor";
+export type PaneFeedState = "live" | "quarantined" | "awaiting-capture" | "awaiting-cursor";
 
 /** Parsed `display-message "#{cursor_x} #{cursor_y} #{pane_width} #{pane_height}"`. */
 export interface CursorProbe {
@@ -64,10 +64,14 @@ export function seedBytesFromCapture(lines: readonly string[]): Uint8Array {
 }
 
 export class PaneFeed {
+  static readonly MAX_HELD_CHUNKS = 512;
+  static readonly MAX_HELD_BYTES = 1024 * 1024;
   private state: PaneFeedState = "live";
   private epoch = 0;
   private seedLines: readonly string[] | null = null;
   private held: Uint8Array[] = [];
+  private heldBytes = 0;
+  private overflowed = false;
 
   currentState(): PaneFeedState {
     return this.state;
@@ -80,6 +84,8 @@ export class PaneFeed {
     this.state = "awaiting-capture";
     this.seedLines = null;
     this.held = [];
+    this.heldBytes = 0;
+    this.overflowed = false;
     return this.epoch;
   }
 
@@ -88,8 +94,29 @@ export class PaneFeed {
    *  plain delta event otherwise. */
   delta(data: Uint8Array): MirrorPaneEvent[] {
     if (this.state === "live") return [{ type: "delta", data }];
-    if (this.state === "awaiting-cursor") this.held.push(data);
+    if (this.state === "quarantined") return [];
+    if (this.state === "awaiting-cursor") {
+      if (
+        this.held.length >= PaneFeed.MAX_HELD_CHUNKS ||
+        this.heldBytes + data.byteLength > PaneFeed.MAX_HELD_BYTES
+      ) {
+        this.state = "quarantined";
+        this.seedLines = null;
+        this.held = [];
+        this.heldBytes = 0;
+        this.overflowed = true;
+        return [];
+      }
+      this.held.push(data);
+      this.heldBytes += data.byteLength;
+    }
     return [];
+  }
+
+  takeOverflowed(): boolean {
+    const overflowed = this.overflowed;
+    this.overflowed = false;
+    return overflowed;
   }
 
   /** The capture reply landed (synchronously, in channel read order). */
@@ -117,6 +144,7 @@ export class PaneFeed {
     this.state = "live";
     this.seedLines = null;
     this.held = [];
+    this.heldBytes = 0;
 
     const probe = parseCursorProbe(line);
     const events: MirrorPaneEvent[] = [];
@@ -130,12 +158,36 @@ export class PaneFeed {
     return events;
   }
 
-  /** A probe errored (pane raced away, channel died). Drop back to live so
-   *  deltas are not black-holed; the owner decides closure separately. */
+  /** A probe errored (pane raced away, channel died). Quarantine subsequent
+   *  deltas until a new authoritative seed succeeds or the owner retires it. */
   abort(epoch: number): void {
     if (epoch !== this.epoch || this.state === "live") return;
-    this.state = "live";
+    this.state = "quarantined";
     this.seedLines = null;
     this.held = [];
+    this.heldBytes = 0;
+    this.overflowed = false;
+  }
+
+  abortCurrent(): void {
+    this.epoch += 1;
+    this.state = "quarantined";
+    this.seedLines = null;
+    this.held = [];
+    this.heldBytes = 0;
+    this.overflowed = false;
+  }
+
+  /** Keep a completed authoritative snapshot as the recovery candidate while
+   * dropping later raw deltas until the owner proves convergence. */
+  quarantine(epoch: number): void {
+    if (epoch !== this.epoch || this.state !== "live") return;
+    this.state = "quarantined";
+  }
+
+  /** Recovery owner only: the published candidate has passed its independent
+   * confirmation proof, so subsequent deltas may flow again. */
+  releaseQuarantine(): void {
+    if (this.state === "quarantined") this.state = "live";
   }
 }

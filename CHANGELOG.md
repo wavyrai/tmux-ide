@@ -4,8 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### OpenTUI beta
+
+- The installable beta is intentionally cut to Home and Terminals: ordinary
+  tmux discovery/control, pane and window chrome, and textual agent states.
+  The web client and optional legacy/experimental surfaces are deferred.
+- `tmux-ide app` now acquires a matching macOS/Linux OpenTUI runtime on first
+  launch, verifies bounded downloads against version/platform/commit-bound
+  SHA-256 manifests, and gives an actionable retry command on failure.
+- Agent state is readable without color: `IDLE`, `WORKING`, `BLOCKED`, `DONE`,
+  `FAILED`, and `UNKNOWN` appear in sidebar, window, and pane chrome.
+- The minimal F5 command palette provides Home/Terminals navigation, pane
+  splitting, and confirmed pane close. `Ctrl+O` cycles panes, `Ctrl+T` cycles
+  windows, and hosted `Ctrl+Q` puts the app away without destroying it.
+- Beta publication uses the npm `beta` dist-tag and leaves the stable Homebrew
+  formula untouched. Stable releases retain their full gate and notifier.
+
 ### Changed
 
+- Consolidated OpenTUI keyboard handling behind one root-owned ingress and semantic component router, removing the distributed listener pattern that could trigger MaxListeners warnings.
+- Deleted the retired 9,000-line OpenTUI root and its parallel authority, terminal adapter, and workspace handoff implementations.
+- Rebuilt the marketing and documentation surface around the actual 2.9 release cut. The non-shipping browser TUI demo and obsolete release-tour pages are no longer part of the site.
 - Replaced the legacy `/tmp`-file performance taps with shared, demand-only OpenTUI and web HUD telemetry plus a deterministic multi-client SessionRuntime qualification gate.
 
 ### Fixed

@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { TuiCleanupRegistry } from "../input-lifecycle.ts";
+import { runtimeResourceSnapshot } from "@tmux-ide/daemon-client/runtime-resource-ledger";
 import {
   TuiApplicationLifecycle,
   createApplicationLifecycleInputExecutor,
+  installTuiHostSignalShutdown,
+  type TuiHostDeathSignal,
 } from "./application-lifecycle.ts";
 
 function deferred<T = void>() {
@@ -17,7 +20,46 @@ function deferred<T = void>() {
 }
 
 describe("OpenTUI application lifecycle", () => {
+  it("turns hosted pane-death signals into one lifecycle shutdown and removes both listeners", async () => {
+    const listeners = new Map<TuiHostDeathSignal, Set<() => void>>([
+      ["SIGHUP", new Set()],
+      ["SIGTERM", new Set()],
+    ]);
+    const signalTarget = {
+      on: (signal: TuiHostDeathSignal, listener: () => void) =>
+        listeners.get(signal)!.add(listener),
+      off: (signal: TuiHostDeathSignal, listener: () => void) =>
+        listeners.get(signal)!.delete(listener),
+    };
+    const destroy = vi.fn();
+    const lifecycle = new TuiApplicationLifecycle({ destroyRenderer: destroy });
+    const hostSignals = installTuiHostSignalShutdown(lifecycle, { hosted: true, signalTarget });
+    lifecycle.registerCloser("host-death-signals", hostSignals.dispose);
+    expect([...listeners.values()].map(({ size }) => size)).toEqual([1, 1]);
+
+    for (const listener of listeners.get("SIGHUP")!) listener();
+    for (const listener of listeners.get("SIGTERM")!) listener();
+    const report = await lifecycle.shutdown("keyboard");
+
+    expect(report.reason).toBe("host");
+    expect(destroy).toHaveBeenCalledOnce();
+    expect([...listeners.values()].map(({ size }) => size)).toEqual([0, 0]);
+  });
+
+  it("does not claim process signals outside hosted mode", () => {
+    const signalTarget = { on: vi.fn(), off: vi.fn() };
+    const lifecycle = new TuiApplicationLifecycle({ destroyRenderer: vi.fn() });
+    const hostSignals = installTuiHostSignalShutdown(lifecycle, {
+      hosted: false,
+      signalTarget,
+    });
+    hostSignals.dispose();
+    expect(signalTarget.on).not.toHaveBeenCalled();
+    expect(signalTarget.off).not.toHaveBeenCalled();
+  });
+
   it("returns one shutdown Promise and destroys the renderer after every owned resource settles", async () => {
+    const timerBaseline = runtimeResourceSnapshot()["host-shutdown-timer"].active;
     const calls: string[] = [];
     const child = deferred();
     const socket = deferred();
@@ -36,6 +78,7 @@ describe("OpenTUI application lifecycle", () => {
 
     const first = lifecycle.shutdown("keyboard");
     const duplicate = lifecycle.shutdown("palette");
+    expect(runtimeResourceSnapshot()["host-shutdown-timer"].active).toBe(timerBaseline + 1);
 
     expect(first).toBe(duplicate);
     expect(lifecycle.accepting).toBe(false);
@@ -47,6 +90,7 @@ describe("OpenTUI application lifecycle", () => {
     expect(calls).not.toContain("renderer");
     socket.resolve();
     await expect(first).resolves.toEqual({ reason: "keyboard", failures: [], timedOut: [] });
+    expect(runtimeResourceSnapshot()["host-shutdown-timer"].active).toBe(timerBaseline);
     expect(calls).toEqual([
       "kill-child",
       "close-socket",
@@ -217,10 +261,7 @@ describe("OpenTUI application lifecycle", () => {
   it("routes the existing input lifecycle into async shutdown without process exit", async () => {
     const destroy = vi.fn();
     const lifecycle = new TuiApplicationLifecycle({ destroyRenderer: destroy });
-    const executor = createApplicationLifecycleInputExecutor(lifecycle, {
-      switchClientBack: vi.fn(),
-      detachClient: vi.fn(),
-    });
+    const executor = createApplicationLifecycleInputExecutor(lifecycle);
 
     executor.run({ kind: "destroy-renderer", source: "palette" });
     executor.run({ kind: "destroy-renderer", source: "palette" });

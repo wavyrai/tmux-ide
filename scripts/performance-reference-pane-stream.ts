@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { openPaneStreamRuntimeClient } from "@tmux-ide/daemon-client/pane-stream-client";
 import type { PaneStreamServerFrame } from "@tmux-ide/contracts";
 
-import { createOpenTuiPaneStreamSocket } from "../packages/daemon/src/tui/mirror/application-shell-daemon-runtime.ts";
+import { createOpenTuiPaneStreamSocket } from "../packages/daemon/src/tui/mirror/open-tui-pane-stream-socket.ts";
 
 const workspaceName = required("TMUX_IDE_REFERENCE_WORKSPACE");
 const semanticPaneId = required("TMUX_IDE_REFERENCE_PANE");

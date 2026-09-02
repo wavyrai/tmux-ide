@@ -24,11 +24,10 @@ export default defineConfig({
   test: {
     css: true,
     environment: "node",
-    // The live suites spawn real daemons/tmux/pty; at unbounded parallelism
-    // those spawns starve their budgets. Four workers leaves enough process and
-    // PTY headroom for the 20-contender election and live terminal suites even
-    // while a developer has the real GUI/TUI stack open beside the test run.
-    maxWorkers: 4,
+    // The hermetic suite still includes several subprocess-heavy compact-state
+    // and takeover proofs. Keep two workers so those fixed lifecycle budgets
+    // remain meaningful while a developer has the real GUI/TUI stack open.
+    maxWorkers: 2,
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     // These import `bun:test` and are run by `bun test` (see the root
     // package.json `test:daemon-bun` / `test:tui-renderer` scripts and the
@@ -36,6 +35,11 @@ export default defineConfig({
     exclude: [
       "**/node_modules/**",
       "**/dist/**",
+      // Real tmux/daemon integration owns shared process and PTY resources.
+      // The package test script runs these through vitest.live.config.ts with
+      // one worker after the hermetic suite has retired.
+      "src/**/*-live.test.ts",
+      "src/lib/__tests__/headless-cli-entrypoint.test.ts",
       // OpenTUI renderer suites require Bun plus the Solid/OpenTUI preloads.
       // The root `test:tui-renderer` gate owns every file with this suffix.
       "src/tui/**/*-renderer.test.tsx",
@@ -90,6 +94,9 @@ export default defineConfig({
       "src/server/ws-route.test.ts",
       "src/stop.test.ts",
       "src/tui/mirror/features/rich-preview/feature.test.ts",
+      "src/tui/mirror/runtime/runtime-layout-presentation.test.ts",
+      "src/tui/mirror/runtime/terminal-fast-lane-renderer-adapter.test.ts",
+      "src/tui/mirror/runtime/terminal-pane-input-router.test.ts",
       "src/tui/mirror/testing/renderer-harness.test.ts",
       "src/tui/mirror/workspace/terminal-pane-chrome-view.test.tsx",
       "src/ui/web/utils/color.test.ts",

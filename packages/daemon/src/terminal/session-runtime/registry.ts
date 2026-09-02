@@ -1,16 +1,27 @@
 import {
   SessionRuntimeClientIdSchemaZ,
+  SessionRuntimeAuthorityLeaseSchemaZ,
   SessionRuntimeControllerLeaseSchemaZ,
   SessionRuntimeGenerationSchemaZ,
   SessionRuntimeSemanticIntentSchemaZ,
+  SessionRuntimeTerminalInputSchemaZ,
+  CausalCellProbeV1SchemaZ,
   type AuthoredInteractionOrigin,
   type InteractionReceipt,
   type SessionRuntimeControllerLease,
   type SessionRuntimeControllerRole,
   type SessionRuntimeControllerSnapshot,
+  type SessionRuntimeActivityKind,
+  type SessionRuntimeAuthorityKind,
+  type SessionRuntimeAuthorityLease,
+  type SessionRuntimeAuthoritySnapshot,
+  type SessionRuntimePresenceState,
   type SessionRuntimeGeneration,
   type SessionRuntimeSemanticIntent,
+  type SessionRuntimeTerminalInput,
   type CanonicalTerminalReplicaUpdate,
+  type CausalCellFailureReasonV1,
+  type CausalCellProbeV1,
   type TerminalDeliveryAck,
   type TerminalDeliveryNack,
   type TerminalDeliveryOffer,
@@ -20,12 +31,15 @@ import {
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type {
+  MirrorLayoutAuthoritySnapshot,
   MirrorLayoutEvent,
   MirrorPaneEvent,
   MirrorSessionDescription,
 } from "../mirror/events.ts";
 import {
   MirrorService,
+  type MirrorAuthoritativeLayoutRequest,
+  type MirrorLayoutSubscription,
   type MirrorServiceOptions,
   type MirrorSubscribeRequest,
   type MirrorSubscription,
@@ -60,6 +74,23 @@ import {
   type SessionRuntimeTraceContext,
 } from "./runtime-observability.ts";
 import { RuntimeTraceCorrelator } from "./runtime-trace-correlator.ts";
+import type { MirrorOutputTiming } from "../mirror/control-channel.ts";
+import type { TrustedMirrorSessionInventory } from "../mirror/trusted-inventory.ts";
+import { SessionRuntimeAuthorityArbiter } from "./authority-arbiter.ts";
+import type { CausalCellLedgerResult } from "./causal-cell-ledger.ts";
+
+async function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  signal.throwIfAborted();
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    void promise.then(resolve, reject).then(
+      () => signal.removeEventListener("abort", onAbort),
+      () => signal.removeEventListener("abort", onAbort),
+    );
+  });
+}
 
 export interface SessionRuntimeRegistryOptions {
   readonly generation: string;
@@ -67,10 +98,18 @@ export interface SessionRuntimeRegistryOptions {
   readonly semanticMutations?: SessionSemanticMutationExecutorOptions;
   /** Deterministic seam for lease tests. Production uses cryptographic UUIDs. */
   readonly createControllerToken?: () => string;
+  /** Native terminal activity quiet period before tmux-ide may size again. */
+  readonly nativeGeometryHysteresisMs?: number;
   readonly scheduler?: SessionRuntimeScheduler;
   readonly observability?: SessionRuntimeObservability;
   /** Deterministic qualification seam; never invoked while observability is disabled. */
   readonly createTraceCorrelator?: (scheduler: SessionRuntimeScheduler) => RuntimeTraceCorrelator;
+}
+
+/** Opaque daemon-internal proof that an inventory came from one exact runtime owner. */
+export interface TrustedSessionInventoryCandidate {
+  readonly inventory: TrustedMirrorSessionInventory;
+  readonly token: object;
 }
 
 export interface SessionRuntimeQualificationSnapshot {
@@ -127,6 +166,12 @@ export interface SessionRuntimeConsumer {
   readonly clientId: string;
   controllerRole(): SessionRuntimeControllerRole;
   controllerSnapshot(): SessionRuntimeControllerSnapshot;
+  authoritySnapshot(): SessionRuntimeAuthoritySnapshot;
+  onAuthoritySnapshot(listener: (snapshot: SessionRuntimeAuthoritySnapshot) => void): () => void;
+  updatePresence(state: SessionRuntimePresenceState): void;
+  noteActivity(activity: SessionRuntimeActivityKind): void;
+  acquireAuthority(authority: SessionRuntimeAuthorityKind): SessionRuntimeAuthorityLease | null;
+  releaseAuthority(authority: SessionRuntimeAuthorityKind): void;
   acquireController(): SessionRuntimeControllerLease;
   handoffController(
     lease: SessionRuntimeControllerLease,
@@ -141,11 +186,18 @@ export interface SessionRuntimeConsumer {
   sendInput(
     lease: SessionRuntimeControllerLease,
     semanticPaneId: string,
-    kind: "text" | "key",
-    data: string,
+    input: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
+    causalProbe?: CausalCellProbeV1,
+    onCausalResult?: (result: CausalCellLedgerResult) => void,
+  ): void;
+  failCausalCellProbe(
+    semanticPaneId: string,
+    traceId: string,
+    reason: CausalCellFailureReasonV1,
   ): void;
   fitViewport(lease: SessionRuntimeControllerLease, cols: number, rows: number): void;
+  fitViewportWithAuthority(lease: SessionRuntimeAuthorityLease, cols: number, rows: number): void;
   describe(): Promise<MirrorSessionDescription>;
   subscribe(
     semanticPaneId: string,
@@ -158,6 +210,7 @@ export interface SessionRuntimeConsumer {
   ): Promise<TerminalReplicaSubscription>;
   openTerminalDelivery(
     deliverySubscriberId: string,
+    deliveryRequestId: string,
     semanticPaneId: string,
     offer: TerminalDeliveryOffer,
     onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
@@ -197,10 +250,13 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   readonly #semanticMutations: SessionSemanticMutationExecutor | null;
   readonly #resolveSession: ((workspaceName: string) => string | null) | null;
   readonly #createControllerToken: () => string;
+  readonly #nativeGeometryHysteresisMs: number | undefined;
   readonly #scheduler: SessionRuntimeScheduler;
   readonly #observability: SessionRuntimeObservability;
   readonly #createTraceCorrelator: (scheduler: SessionRuntimeScheduler) => RuntimeTraceCorrelator;
   readonly #sessions = new Map<string, SessionRuntime>();
+  readonly #proofPrewarmOwnership = new Map<SessionRuntime, { owned: boolean; claims: number }>();
+  readonly #trustedInventoryTokens = new WeakMap<object, SessionRuntime>();
   readonly #executionHandles = new WeakMap<object, ExecutionHandleState>();
   readonly #stopExitObserver: () => void;
   #disposed = false;
@@ -212,7 +268,125 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
     this.#createTraceCorrelator =
       options.createTraceCorrelator ?? ((scheduler) => new RuntimeTraceCorrelator(scheduler));
-    this.#mirror = new MirrorService(options.mirror);
+    const diagnosticMirrorOptions: Partial<MirrorServiceOptions> = {
+      onInputAccepted: (session, action, acceptedAtMicros, ok) => {
+        for (const traceId of action.traceIds ?? []) {
+          this.#sessions.get(session)?.noteInputControlReply(traceId, ok);
+          if (!this.#observability.enabled) continue;
+          const trace = this.#observability.beginTrace(
+            "terminal-input-to-paint",
+            { generation: this.generation, incarnation: null },
+            traceId,
+          );
+          this.#observability.recordSpan(
+            "tmux",
+            ok ? "control-command-accepted" : "control-command-rejected",
+            acceptedAtMicros,
+            acceptedAtMicros,
+            trace,
+          );
+        }
+      },
+      ...(this.#observability.enabled
+        ? {
+            nowMicros: () => this.#observability.nowMicros(),
+            onInputWrite: (_session, action, startedAtMicros, endedAtMicros, pendingBeforeSend) => {
+              for (const traceId of action.traceIds ?? []) {
+                const trace = this.#observability.beginTrace(
+                  "terminal-input-to-paint",
+                  { generation: this.generation, incarnation: null },
+                  traceId,
+                );
+                this.#observability.recordSpan(
+                  "tmux",
+                  "control-write",
+                  startedAtMicros,
+                  endedAtMicros,
+                  trace,
+                );
+                this.#observability.recordSpan(
+                  "tmux",
+                  pendingBeforeSend === 0
+                    ? "control-queue-empty-at-send"
+                    : "control-queue-nonempty-at-send",
+                  endedAtMicros,
+                  endedAtMicros,
+                  trace,
+                );
+              }
+            },
+          }
+        : {}),
+    };
+    const observeOutput =
+      this.#observability.enabled || options.mirror?.onOutputObserved
+        ? (
+            session: string,
+            semanticPaneId: string,
+            ageMs: number | null,
+            timing?: MirrorOutputTiming,
+          ) => {
+            options.mirror?.onOutputObserved?.(session, semanticPaneId, ageMs, timing);
+            if (this.#observability.enabled)
+              this.#sessions.get(session)?.noteOutputObserved(semanticPaneId, ageMs, timing);
+          }
+        : undefined;
+    const observeFlowRecovery =
+      this.#observability.enabled || options.mirror?.onFlowRecoveryObserved
+        ? (
+            session: string,
+            observation: Parameters<NonNullable<MirrorServiceOptions["onFlowRecoveryObserved"]>>[1],
+          ) => {
+            options.mirror?.onFlowRecoveryObserved?.(session, observation);
+            if (!this.#observability.enabled) return;
+            const atMicros = this.#observability.nowMicros();
+            this.#observability.recordSpan(
+              "tmux",
+              `terminal-mirror-flow-${observation.phase}`,
+              atMicros,
+              atMicros,
+              null,
+              undefined,
+              {
+                workspaceName: session,
+                semanticPaneId: observation.semanticPaneId,
+                mirrorFlowPhase: observation.phase,
+                mirrorFlowRecoveryOrdinal: observation.recoveryOrdinal,
+                mirrorPaneIncarnation: observation.paneIncarnation,
+                mirrorOutputOrdinal: observation.outputOrdinal,
+                mirrorRecoveryElapsedMicros: observation.elapsedMicros,
+                mirrorRecoveryConfirmationOrdinal: observation.confirmationOrdinal,
+                mirrorCollectorStarted: observation.collectorStarted,
+                mirrorCollectorLastCompletedOrdinal: observation.collectorLastCompletedOrdinal,
+                mirrorCollectorCaptureLineCount: observation.collectorCaptureLineCount,
+                mirrorCollectorCaptureByteCount: observation.collectorCaptureByteCount,
+                mirrorCollectorContinueObserved: observation.collectorContinueObserved,
+                mirrorCollectorStatusObserved: observation.collectorStatusObserved,
+                mirrorCollectorObserverEmissionObserved:
+                  observation.collectorObserverEmissionObserved,
+                ...(observation.collectorFailureReason
+                  ? { mirrorCollectorFailureReason: observation.collectorFailureReason }
+                  : {}),
+                ...(observation.fingerprintExact === null
+                  ? {}
+                  : { mirrorRecoveryFingerprintExact: observation.fingerprintExact }),
+                ...(observation.failureReason
+                  ? { mirrorFlowFailureReason: observation.failureReason }
+                  : {}),
+              },
+            );
+          }
+        : undefined;
+    this.#mirror = new MirrorService({
+      ...options.mirror,
+      ...diagnosticMirrorOptions,
+      onNativeClientActivity: (session) => {
+        options.mirror?.onNativeClientActivity?.(session);
+        this.#sessions.get(session)?.noteNativeGeometryActivity();
+      },
+      ...(observeOutput ? { onOutputObserved: observeOutput } : {}),
+      ...(observeFlowRecovery ? { onFlowRecoveryObserved: observeFlowRecovery } : {}),
+    });
     this.#semanticMutations = options.semanticMutations
       ? new SessionSemanticMutationExecutor({
           ...options.semanticMutations,
@@ -222,6 +396,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
       : null;
     this.#resolveSession = options.semanticMutations?.resolveSession ?? null;
     this.#createControllerToken = options.createControllerToken ?? randomUUID;
+    this.#nativeGeometryHysteresisMs = options.nativeGeometryHysteresisMs;
     this.#stopExitObserver = this.#mirror.onSessionExit((session) => {
       this.#sessions.get(session)?.noteControlExit();
     });
@@ -237,12 +412,126 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
    * consumed by admission, so prewarming cannot weaken pane enumeration or
    * create a second control authority.
    */
-  async prewarmSession(session: string): Promise<void> {
+  async prewarmSession(session: string, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     const runtime = this.#runtime(session);
-    await runtime.whenReady();
+    await abortable(runtime.whenReady(), signal);
     if (this.#sessions.get(session) !== runtime) {
       throw new Error(`SessionRuntime ${session} was retired while prewarming`);
     }
+  }
+
+  /**
+   * Mark the exact retained runtime as eligible for daemon-private inventory.
+   * This is intentionally separate from ordinary renderer prewarming: only
+   * the native discovery path may call it after its parser and global catalog
+   * analyzer proved the session attachable.
+   */
+  async prewarmProofQualifiedSession(
+    session: string,
+    runtimeSessionId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    signal?.throwIfAborted();
+    if (!/^\$(?:0|[1-9][0-9]*)$/u.test(runtimeSessionId)) {
+      throw new Error(`SessionRuntime ${session} received an invalid runtime session identity`);
+    }
+    let runtime = this.#acquireProofPrewarmRuntime(session);
+    try {
+      await this.#observeTerminalAttempt(
+        "terminal-prewarm-readiness",
+        abortable(runtime.whenReady(), signal),
+      );
+      if (this.#sessions.get(session) !== runtime) {
+        throw new Error(`SessionRuntime ${session} was retired while qualifying inventory`);
+      }
+      let attachedIdentity = await this.#observeTerminalAttempt(
+        "terminal-attached-identity",
+        abortable(runtime.attachedSessionIdentity(), signal),
+      );
+      if (attachedIdentity?.runtimeSessionId !== runtimeSessionId) {
+        if (this.#sessions.get(session) === runtime) this.#sessions.delete(session);
+        await abortable(runtime.dispose(), signal);
+        this.#releaseProofPrewarmRuntime(runtime);
+        signal?.throwIfAborted();
+        runtime = this.#acquireProofPrewarmRuntime(session);
+        await this.#observeTerminalAttempt(
+          "terminal-prewarm-readiness",
+          abortable(runtime.whenReady(), signal),
+        );
+        if (this.#sessions.get(session) !== runtime) {
+          throw new Error(`SessionRuntime ${session} was retired while replacing inventory`);
+        }
+        attachedIdentity = await this.#observeTerminalAttempt(
+          "terminal-attached-identity",
+          abortable(runtime.attachedSessionIdentity(), signal),
+        );
+      }
+      if (
+        attachedIdentity?.sessionName !== session ||
+        attachedIdentity.runtimeSessionId !== runtimeSessionId
+      ) {
+        throw new Error(`SessionRuntime ${session} is attached to a different tmux identity`);
+      }
+      signal?.throwIfAborted();
+      runtime.qualifyTrustedInventory(runtimeSessionId);
+    } finally {
+      this.#releaseProofPrewarmRuntime(runtime);
+    }
+  }
+
+  /** Daemon-internal only. Runtime tmux ids in the result must never cross wire. */
+  async describeTrustedSessionInventory(
+    session: string,
+    signal?: AbortSignal,
+  ): Promise<TrustedMirrorSessionInventory> {
+    return (await this.describeTrustedSessionInventoryCandidate(session, signal)).inventory;
+  }
+
+  /**
+   * Return an opaque token bound to the exact runtime that produced the
+   * inventory. Consumers must revalidate it after their final await.
+   */
+  async describeTrustedSessionInventoryCandidate(
+    session: string,
+    signal?: AbortSignal,
+  ): Promise<TrustedSessionInventoryCandidate> {
+    signal?.throwIfAborted();
+    if (this.#disposed) throw new Error("SessionRuntimeRegistry is disposed");
+    const runtime = this.#sessions.get(session);
+    if (!runtime?.trustedInventoryQualified()) {
+      throw new Error(`SessionRuntime ${session} has no proof-qualified inventory authority`);
+    }
+    const inventory = await this.#observeTerminalAttempt(
+      "terminal-trusted-inventory-attempt",
+      abortable(runtime.describeTrustedInventory(), signal),
+    );
+    if (this.#sessions.get(session) !== runtime || !runtime.trustedInventoryQualified()) {
+      throw new Error(`SessionRuntime ${session} changed during trusted inventory discovery`);
+    }
+    if (!inventory) {
+      throw new Error(`SessionRuntime ${session} lost its retained inventory authority`);
+    }
+    const token = Object.freeze({});
+    this.#trustedInventoryTokens.set(token, runtime);
+    return Object.freeze({ inventory, token });
+  }
+
+  isTrustedSessionInventoryCandidateCurrent(session: string, token: object): boolean {
+    if (this.#disposed) return false;
+    const runtime = this.#trustedInventoryTokens.get(token);
+    return (
+      runtime !== undefined &&
+      this.#sessions.get(session) === runtime &&
+      runtime.trustedInventoryQualified()
+    );
+  }
+
+  hasProofQualifiedInventory(session: string): boolean {
+    return (
+      (this.#sessions.get(session)?.trustedInventoryQualified() ?? false) &&
+      this.#mirror.hasRetainedSession(session)
+    );
   }
 
   /** Retire one no-longer-registered session without disturbing siblings. */
@@ -401,6 +690,93 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     return await this.#runtime(session).describe();
   }
 
+  async describeSessionAuthority(session: string): Promise<{
+    readonly description: MirrorSessionDescription;
+    readonly runtimeSessionId: string;
+  }> {
+    const runtime = this.#runtime(session);
+    await runtime.whenReady();
+    const authority = await this.#mirror.describeSessionAuthority(session);
+    if (this.#disposed || this.#sessions.get(session) !== runtime) {
+      const error = new Error(`session runtime ${session} changed topology`);
+      error.name = "MirrorTopologyChangedError";
+      throw error;
+    }
+    return authority;
+  }
+
+  async subscribeLayout(
+    session: string,
+    onLayout: (event: MirrorLayoutEvent) => void,
+    authority?: MirrorAuthoritativeLayoutRequest,
+  ): Promise<MirrorLayoutSubscription> {
+    const runtime = this.#runtime(session);
+    await runtime.whenReady();
+    let retired = false;
+    const isCurrent = (): boolean =>
+      !retired && !this.#disposed && this.#sessions.get(session) === runtime;
+    const assertCurrent = (): void => {
+      if (!isCurrent()) {
+        const error = new Error(`session runtime ${session} changed topology`);
+        error.name = "MirrorTopologyChangedError";
+        throw error;
+      }
+    };
+    assertCurrent();
+    const expectedRuntimeSessionId = authority?.expectedRuntimeSessionId;
+    const stagedAuthority: { value: MirrorLayoutAuthoritySnapshot | null } = { value: null };
+    const stagedLayouts: MirrorLayoutEvent[] = [];
+    let layoutOverflow = false;
+    let activated = false;
+    const subscription = await this.#mirror.subscribeLayout(
+      session,
+      (event) => {
+        if (!isCurrent()) return;
+        if (activated) onLayout(event);
+        else if (stagedLayouts.length < 256) stagedLayouts.push(event);
+        else layoutOverflow = true;
+      },
+      authority
+        ? {
+            ...authority,
+            onAuthority: (snapshot) => {
+              if (!isCurrent()) return;
+              if (activated) authority.onAuthority?.(snapshot);
+              else stagedAuthority.value = snapshot;
+            },
+          }
+        : undefined,
+    );
+    try {
+      assertCurrent();
+      if (
+        layoutOverflow ||
+        (authority &&
+          (stagedAuthority.value === null ||
+            stagedAuthority.value.runtimeSessionId !== expectedRuntimeSessionId))
+      ) {
+        const error = new Error(`session runtime ${session} lacks layout authority`);
+        error.name = "MirrorTopologyChangedError";
+        throw error;
+      }
+      activated = true;
+      if (authority?.onAuthority && stagedAuthority.value)
+        authority.onAuthority(stagedAuthority.value);
+      for (const event of stagedLayouts) onLayout(event);
+    } catch (error) {
+      await subscription.close().catch(() => undefined);
+      throw error;
+    }
+    return {
+      session,
+      close: async () => {
+        if (retired) return;
+        retired = true;
+        await subscription.close();
+      },
+    };
+  }
+
   async subscribe(request: MirrorSubscribeRequest): Promise<MirrorSubscription> {
     const runtime = this.#runtime(request.session);
     await runtime.whenReady();
@@ -470,6 +846,15 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     return count;
   }
 
+  authoritySnapshot(session: string): SessionRuntimeAuthoritySnapshot {
+    return this.#runtime(session).authoritySnapshot();
+  }
+
+  /** Native client activity makes an existing daemon runtime size-passive. */
+  noteNativeGeometryActivity(session: string): void {
+    this.#sessions.get(session)?.noteNativeGeometryActivity();
+  }
+
   qualificationSnapshot(): SessionRuntimeQualificationSnapshot {
     return Object.freeze({
       generation: this.generation,
@@ -491,6 +876,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
         await this.#semanticMutations?.dispose();
         await Promise.allSettled([...this.#sessions.values()].map((runtime) => runtime.dispose()));
         this.#sessions.clear();
+        this.#proofPrewarmOwnership.clear();
         await this.#mirror.dispose();
       })();
     }
@@ -500,7 +886,11 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   #runtime(session: string): SessionRuntime {
     if (this.#disposed) throw new Error("SessionRuntimeRegistry is disposed");
     const existing = this.#sessions.get(session);
-    if (existing) return existing;
+    if (existing) {
+      const ownership = this.#proofPrewarmOwnership.get(existing);
+      if (ownership) ownership.owned = false;
+      return existing;
+    }
     const runtime: SessionRuntime = new SessionRuntime(
       this.generation,
       session,
@@ -509,6 +899,7 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
       this.#scheduler,
       this.#observability,
       this.#createTraceCorrelator,
+      this.#nativeGeometryHysteresisMs,
       (
         owner,
         lease,
@@ -530,6 +921,57 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     this.#sessions.set(session, runtime);
     return runtime;
   }
+
+  #acquireProofPrewarmRuntime(session: string): SessionRuntime {
+    const existing = this.#sessions.get(session);
+    const runtime = existing ?? this.#runtime(session);
+    const ownership = this.#proofPrewarmOwnership.get(runtime);
+    if (ownership) ownership.claims += 1;
+    else this.#proofPrewarmOwnership.set(runtime, { owned: existing === undefined, claims: 1 });
+    return runtime;
+  }
+
+  #releaseProofPrewarmRuntime(runtime: SessionRuntime): void {
+    const ownership = this.#proofPrewarmOwnership.get(runtime);
+    if (!ownership) return;
+    ownership.claims -= 1;
+    if (ownership.claims > 0) return;
+    this.#proofPrewarmOwnership.delete(runtime);
+    if (
+      !ownership.owned ||
+      this.#sessions.get(runtime.session) !== runtime ||
+      runtime.hasConsumers() ||
+      runtime.trustedInventoryQualified()
+    ) {
+      return;
+    }
+    this.#sessions.delete(runtime.session);
+    void runtime.dispose().catch(() => undefined);
+  }
+
+  async #observeTerminalAttempt<Value>(operation: string, promise: Promise<Value>): Promise<Value> {
+    if (!this.#observability.enabled) return promise;
+    let startedAtMicros: number;
+    try {
+      startedAtMicros = this.#observability.nowMicros();
+    } catch {
+      return promise;
+    }
+    try {
+      return await promise;
+    } finally {
+      try {
+        this.#observability.recordSpan(
+          "transport",
+          operation,
+          startedAtMicros,
+          this.#observability.nowMicros(),
+        );
+      } catch {
+        // Diagnostics never change qualification success or failure.
+      }
+    }
+  }
 }
 
 class SessionRuntime {
@@ -539,8 +981,14 @@ class SessionRuntime {
   readonly #terminalReplicas = new Map<string, SessionRuntimeTerminalReplicaOwner>();
   readonly #terminalReplicaClocks = new Map<string, { epoch: number; revision: number }>();
   #outputTraces: RuntimeTraceCorrelator | null;
+  readonly #outputObservations = new Map<
+    string,
+    { readonly ageMs: number | null; readonly timing?: MirrorOutputTiming }
+  >();
   readonly #createTraceCorrelator: (scheduler: SessionRuntimeScheduler) => RuntimeTraceCorrelator;
   readonly #terminalDeliveryHub: SessionRuntimeTerminalDeliveryHub;
+  readonly #authority: SessionRuntimeAuthorityArbiter;
+  readonly #authorityListeners = new Set<(snapshot: SessionRuntimeAuthoritySnapshot) => void>();
   readonly #scheduler: SessionRuntimeScheduler;
   readonly #observability: SessionRuntimeObservability;
   readonly #createControllerToken: () => string;
@@ -561,6 +1009,8 @@ class SessionRuntime {
   readonly #completedHandoffs = new Map<string, SessionRuntimeControllerLease>();
   readonly #releasedLeases = new Set<string>();
   #disposed = false;
+  #trustedInventoryRuntimeSessionId: string | null = null;
+  #activeCausalCellProbes = 0;
 
   constructor(
     readonly generation: SessionRuntimeGeneration,
@@ -570,6 +1020,7 @@ class SessionRuntime {
     scheduler: SessionRuntimeScheduler,
     observability: SessionRuntimeObservability,
     createTraceCorrelator: (scheduler: SessionRuntimeScheduler) => RuntimeTraceCorrelator,
+    nativeGeometryHysteresisMs: number | undefined,
     submitAuthorized: (
       runtime: SessionRuntime,
       lease: SessionRuntimeControllerLease,
@@ -586,6 +1037,15 @@ class SessionRuntime {
     this.#observability = observability;
     this.#createControllerToken = createControllerToken;
     this.#submitAuthorized = submitAuthorized;
+    this.#authority = new SessionRuntimeAuthorityArbiter({
+      generation,
+      session,
+      scheduler,
+      nativeGeometryHysteresisMs,
+      onGeometryAuthorityChanged: (clientId) =>
+        this.#mirror.setGeometryParticipation(this.session, clientId !== null),
+      onNativeGeometryYieldExpired: () => this.#publishAuthority(),
+    });
     this.#terminalDeliveryHub = new SessionRuntimeTerminalDeliveryHub(
       generation,
       session,
@@ -602,6 +1062,7 @@ class SessionRuntime {
     const consumer = new SessionRuntimeConsumerImpl(this, surface, clientId);
     this.#consumers.add(consumer);
     this.#consumersByClientId.set(clientId, consumer);
+    this.#authority.connect(clientId, surface);
     return consumer;
   }
 
@@ -618,12 +1079,69 @@ class SessionRuntime {
     };
   }
 
+  authoritySnapshot(): SessionRuntimeAuthoritySnapshot {
+    return this.#authority.snapshot();
+  }
+
+  updatePresence(clientId: string, state: SessionRuntimePresenceState): void {
+    this.#authority.updatePresence(clientId, state);
+    this.#publishAuthority();
+  }
+
+  noteActivity(clientId: string, activity: SessionRuntimeActivityKind): void {
+    this.#authority.noteActivity(clientId, activity);
+    this.#publishAuthority();
+  }
+
+  acquireAuthority(
+    clientId: string,
+    authority: SessionRuntimeAuthorityKind,
+  ): SessionRuntimeAuthorityLease | null {
+    if (authority === "input" && this.#controllerClientId !== clientId) {
+      // Input's executable proof is the compatibility controller lease. The
+      // transport synchronization seam must establish/handoff it first.
+      return null;
+    }
+    const lease = this.#authority.claim(clientId, authority);
+    this.#publishAuthority();
+    return lease;
+  }
+
+  releaseAuthority(clientId: string, authority: SessionRuntimeAuthorityKind): void {
+    if (authority === "input" && this.#controllerClientId === clientId) {
+      throw new SessionRuntimeControllerLeaseError(
+        "invalid-client-capability",
+        "Release the executable controller before releasing input authority.",
+      );
+    }
+    this.#authority.release(clientId, authority);
+    this.#publishAuthority();
+  }
+
+  noteNativeGeometryActivity(): void {
+    this.#authority.noteNativeGeometryActivity();
+    this.#publishAuthority();
+  }
+
+  onAuthoritySnapshot(listener: (snapshot: SessionRuntimeAuthoritySnapshot) => void): () => void {
+    this.#authorityListeners.add(listener);
+    // A binding must start from current retained authority truth. Registration
+    // is synchronous and precedes replay, so a re-entrant mutation is observed
+    // after this snapshot and cannot be lost between snapshot and subscribe.
+    listener(this.#authority.snapshot());
+    return () => this.#authorityListeners.delete(listener);
+  }
+
   ownsConsumer(candidate: SessionRuntimeConsumer): boolean {
     return this.#consumers.has(candidate as SessionRuntimeConsumerImpl);
   }
 
   hasController(): boolean {
     return this.#controllerClientId !== null;
+  }
+
+  hasConsumers(): boolean {
+    return this.#consumers.size > 0;
   }
 
   qualificationSnapshot(): SessionRuntimeQualificationSnapshot["sessions"][number] {
@@ -646,13 +1164,22 @@ class SessionRuntime {
 
   acquireController(clientId: string): SessionRuntimeControllerLease {
     this.#assertConnected(clientId);
-    if (this.#controllerClientId === clientId) return this.#currentLease();
+    if (this.#controllerClientId === clientId) {
+      this.#authority.updatePresence(clientId, "foreground");
+      this.#authority.claim(clientId, "input");
+      return this.#currentLease();
+    }
     if (this.#controllerClientId !== null) {
       throw new SessionRuntimeControllerLeaseError(
         "controller-conflict",
         `Session ${this.session} already has a controller.`,
       );
     }
+    // Compatibility adapter for v1 clients: the historical controller means
+    // input authority only. Geometry is acquired lazily by fitViewport and
+    // shared focus is never implied by interactivity.
+    this.#authority.updatePresence(clientId, "foreground");
+    this.#authority.claim(clientId, "input");
     return this.#assignController(clientId);
   }
 
@@ -682,6 +1209,11 @@ class SessionRuntime {
       );
     }
     if (parsedTarget === this.#controllerClientId) return this.#currentLease();
+    this.#authority.release(callerClientId, "input");
+    this.#authority.release(callerClientId, "geometry");
+    this.#authority.updatePresence(callerClientId, "background");
+    this.#authority.updatePresence(parsedTarget, "foreground");
+    this.#authority.claim(parsedTarget, "input");
     const handedOff = this.#assignController(parsedTarget);
     this.#completedHandoffs.set(replayKey, handedOff);
     if (this.#completedHandoffs.size > 32) {
@@ -700,6 +1232,8 @@ class SessionRuntime {
       this.#releasedLeases.delete(this.#releasedLeases.values().next().value!);
     }
     this.#clearController();
+    this.#authority.release(callerClientId, "input");
+    this.#authority.release(callerClientId, "geometry");
   }
 
   assertController(lease: SessionRuntimeControllerLease, callerClientId?: string): void {
@@ -746,12 +1280,34 @@ class SessionRuntime {
     clientId: string,
     lease: SessionRuntimeControllerLease,
     semanticPaneId: string,
-    kind: "text" | "key",
-    data: string,
+    rawInput: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
+    rawCausalProbe?: CausalCellProbeV1,
+    onCausalResult?: (result: CausalCellLedgerResult) => void,
   ): void {
     this.assertController(lease, clientId);
+    const inputLease = this.#authority.leaseFor(clientId, "input");
+    if (!inputLease) {
+      throw new SessionRuntimeControllerLeaseError(
+        "stale-controller-lease",
+        "The client no longer owns input authority.",
+      );
+    }
+    const input = SessionRuntimeTerminalInputSchemaZ.parse(rawInput);
     if (performanceTraceId !== undefined) performanceTraceId = z.uuid().parse(performanceTraceId);
+    const causalProbe =
+      rawCausalProbe === undefined ? null : CausalCellProbeV1SchemaZ.parse(rawCausalProbe);
+    if (causalProbe) {
+      if (
+        causalProbe.traceId !== performanceTraceId ||
+        causalProbe.clientId !== clientId ||
+        causalProbe.semanticPaneId !== semanticPaneId ||
+        causalProbe.generation !== this.generation
+      )
+        throw new Error("Causal-cell authority binding mismatch");
+      if (!onCausalResult) throw new Error("Causal-cell result sink is required");
+      if (this.#activeCausalCellProbes >= 16) throw new Error("Causal-cell capacity exhausted");
+    }
     const trace: SessionRuntimeTraceContext | null = performanceTraceId
       ? Object.freeze({
           traceId: performanceTraceId,
@@ -765,17 +1321,44 @@ class SessionRuntime {
           })
         : null;
     const started = this.#observability.enabled ? this.#observability.nowMicros() : 0;
+    const replicaOwner = this.#terminalReplicaOwner(semanticPaneId);
+    if (causalProbe) {
+      this.#activeCausalCellProbes += 1;
+      let settled = false;
+      try {
+        replicaOwner.armCausalCellProbe(causalProbe, (result) => {
+          if (!settled) {
+            settled = true;
+            this.#activeCausalCellProbes -= 1;
+          }
+          onCausalResult!(result);
+        });
+      } catch (error) {
+        this.#activeCausalCellProbes -= 1;
+        throw error;
+      }
+    }
     if (trace && performanceTraceId) {
       this.#outputTraces ??= this.#createTraceCorrelator(this.#scheduler);
-      this.#terminalReplicaOwner(semanticPaneId).installOutputTraceReader(() =>
-        this.#takeOutputTrace(semanticPaneId),
-      );
+      replicaOwner.installOutputTraceReader(() => this.#takeOutputTrace(semanticPaneId));
       this.#outputTraces.arm(semanticPaneId, trace);
     }
     try {
-      if (kind === "text") this.#mirror.sendText(this.session, semanticPaneId, data);
-      else this.#mirror.sendKey(this.session, semanticPaneId, data);
+      if (input.kind === "text")
+        this.#mirror.sendText(
+          this.session,
+          semanticPaneId,
+          input.data,
+          performanceTraceId,
+          causalProbe !== null,
+        );
+      else this.#mirror.sendKey(this.session, semanticPaneId, input.data, performanceTraceId);
+      // Admission succeeded. Arm one product write independently of optional
+      // qualification traces; rejected control writes must never affect the
+      // parser's next unrelated output.
+      replicaOwner.prioritizeNextWrite();
     } catch (error) {
+      if (causalProbe) replicaOwner.failCausalCell("transport-closed");
       if (trace && performanceTraceId) this.#outputTraces?.take(semanticPaneId);
       throw error;
     }
@@ -787,6 +1370,48 @@ class SessionRuntime {
         this.#observability.nowMicros(),
         trace,
       );
+    if (this.#observability.enabled && trace && performanceTraceId) {
+      const scheduledAt = this.#observability.nowMicros();
+      setImmediate(() => {
+        this.#observability.recordSpan(
+          "transport",
+          "daemon-event-loop-turn",
+          scheduledAt,
+          this.#observability.nowMicros(),
+          trace,
+        );
+      });
+    }
+  }
+
+  failCausalCellProbe(
+    semanticPaneId: string,
+    traceId: string,
+    reason: CausalCellFailureReasonV1,
+  ): void {
+    this.#terminalReplicas.get(semanticPaneId)?.failCausalCell(reason, traceId);
+  }
+
+  noteInputControlReply(traceId: string, ok: boolean): void {
+    for (const owner of this.#terminalReplicas.values())
+      owner.noteCausalCellControlReply(traceId, ok);
+  }
+
+  /**
+   * Synchronous control-reader seam. SessionChannel invokes this immediately
+   * before feeding the same output bytes to the terminal replica owner, so a
+   * subsequent trace take observes timing for that exact output publication.
+   */
+  noteOutputObserved(
+    semanticPaneId: string,
+    ageMs: number | null,
+    timing?: MirrorOutputTiming,
+  ): void {
+    if (!this.#observability.enabled) return;
+    this.#outputObservations.set(
+      semanticPaneId,
+      Object.freeze({ ageMs, ...(timing ? { timing } : {}) }),
+    );
   }
 
   fitViewport(
@@ -796,6 +1421,41 @@ class SessionRuntime {
     rows: number,
   ): void {
     this.assertController(lease, clientId);
+    const geometryLease =
+      this.#authority.leaseFor(clientId, "geometry") ?? this.#authority.claim(clientId, "geometry");
+    if (!geometryLease) {
+      throw new SessionRuntimeControllerLeaseError(
+        "invalid-client-capability",
+        "The client is not the foreground geometry authority.",
+      );
+    }
+    this.#mirror.setGeometryParticipation(this.session, true);
+    this.#mirror.fitViewport(this.session, cols, rows);
+  }
+
+  fitViewportWithAuthority(
+    clientId: string,
+    lease: SessionRuntimeAuthorityLease,
+    cols: number,
+    rows: number,
+  ): void {
+    const parsed = SessionRuntimeAuthorityLeaseSchemaZ.parse(lease);
+    let exact: SessionRuntimeAuthorityLease;
+    try {
+      exact = this.#authority.assertLease(parsed);
+    } catch {
+      throw new SessionRuntimeControllerLeaseError(
+        "stale-controller-lease",
+        "Geometry authority retired.",
+      );
+    }
+    if (exact.clientId !== clientId || exact.authority !== "geometry") {
+      throw new SessionRuntimeControllerLeaseError(
+        "invalid-client-capability",
+        "The client does not own this geometry authority lease.",
+      );
+    }
+    this.#mirror.setGeometryParticipation(this.session, true);
     this.#mirror.fitViewport(this.session, cols, rows);
   }
 
@@ -822,6 +1482,48 @@ class SessionRuntime {
   async describe(): Promise<MirrorSessionDescription> {
     await this.whenReady();
     return await this.#mirror.describeSession(this.session);
+  }
+
+  qualifyTrustedInventory(runtimeSessionId: string): void {
+    if (this.#disposed || !this.#retention) {
+      throw new Error(`SessionRuntime ${this.session} is not retained`);
+    }
+    this.#trustedInventoryRuntimeSessionId = runtimeSessionId;
+  }
+
+  trustedInventoryQualified(): boolean {
+    return !this.#disposed && this.#trustedInventoryRuntimeSessionId !== null;
+  }
+
+  async describeTrustedInventory(): Promise<TrustedMirrorSessionInventory | null> {
+    if (!this.trustedInventoryQualified()) {
+      throw new Error(`SessionRuntime ${this.session} is not inventory-qualified`);
+    }
+    await this.whenReady();
+    const expectedRuntimeSessionId = this.#trustedInventoryRuntimeSessionId;
+    if (!expectedRuntimeSessionId) return null;
+    const inventory = await this.#mirror.describeTrustedInventory(
+      this.session,
+      expectedRuntimeSessionId,
+    );
+    if (
+      inventory !== null &&
+      inventory.runtimeSessionId !== this.#trustedInventoryRuntimeSessionId
+    ) {
+      return null;
+    }
+    if (!this.trustedInventoryQualified()) {
+      throw new Error(`SessionRuntime ${this.session} changed during trusted inventory discovery`);
+    }
+    return inventory;
+  }
+
+  async attachedSessionIdentity(): Promise<{
+    sessionName: string;
+    runtimeSessionId: string;
+  } | null> {
+    await this.whenReady();
+    return await this.#mirror.retainedSessionIdentity(this.session);
   }
 
   async subscribe(
@@ -861,7 +1563,9 @@ class SessionRuntime {
 
   async openTerminalDelivery(
     clientId: string,
+    surface: string,
     deliverySubscriberId: string,
+    deliveryRequestId: string,
     semanticPaneId: string,
     offer: TerminalDeliveryOffer,
     onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
@@ -874,6 +1578,12 @@ class SessionRuntime {
       semanticPaneId,
       offer,
       onMessage,
+      Object.freeze({
+        clientId,
+        surface,
+        laneId: deliverySubscriberId,
+        requestId: deliveryRequestId,
+      }),
     );
   }
 
@@ -936,9 +1646,39 @@ class SessionRuntime {
       .get(semanticPaneId)
       ?.qualificationSnapshot().incarnation;
     const authority = { generation: this.generation, incarnation: incarnation ?? null };
-    return this.#observability.enabled
-      ? this.#observability.beginTrace(pending.scenario, authority, pending.traceId)
-      : Object.freeze({ ...pending, authority });
+    if (!this.#observability.enabled) return Object.freeze({ ...pending, authority });
+    const trace = this.#observability.beginTrace(pending.scenario, authority, pending.traceId);
+    const observation = this.#outputObservations.get(semanticPaneId);
+    this.#outputObservations.delete(semanticPaneId);
+    if (trace && observation) {
+      const observedAtMicros = this.#observability.nowMicros();
+      if (observation.ageMs !== null) {
+        this.#observability.recordSpan(
+          "tmux",
+          "tmux-output-server-age",
+          observedAtMicros - observation.ageMs * 1_000,
+          observedAtMicros,
+          trace,
+        );
+      }
+      if (observation.timing) {
+        this.#observability.recordSpan(
+          "parse",
+          "control-stdout-parse",
+          observation.timing.receivedAtMicros,
+          observation.timing.parsedAtMicros,
+          trace,
+        );
+        this.#observability.recordSpan(
+          "reduce",
+          "control-output-to-replica",
+          observation.timing.parsedAtMicros,
+          observedAtMicros,
+          trace,
+        );
+      }
+    }
+    return trace;
   }
 
   release(consumer: SessionRuntimeConsumerImpl): void {
@@ -947,13 +1687,17 @@ class SessionRuntime {
       this.#consumersByClientId.delete(consumer.clientId);
     }
     if (this.#controllerClientId === consumer.clientId) this.#clearController();
+    this.#authority.disconnect(consumer.clientId);
+    this.#publishAuthority();
   }
 
   noteControlExit(): void {
+    this.#trustedInventoryRuntimeSessionId = null;
     const retention = this.#retention;
     this.#retention = null;
     this.#startPromise = null;
     this.#outputTraces?.clear();
+    this.#outputObservations.clear();
     const owners = [...this.#terminalReplicas.values()];
     this.#terminalReplicas.clear();
     this.#restartBarrier = this.#restartBarrier.then(async () => {
@@ -967,9 +1711,12 @@ class SessionRuntime {
   async dispose(): Promise<void> {
     if (this.#disposed) return;
     this.#disposed = true;
+    this.#trustedInventoryRuntimeSessionId = null;
     const consumers = [...this.#consumers];
     await Promise.allSettled(consumers.map((consumer) => consumer.close()));
     this.#clearController();
+    this.#authority.dispose();
+    this.#authorityListeners.clear();
     this.#completedHandoffs.clear();
     this.#releasedLeases.clear();
     this.#outputTraces?.clear();
@@ -1051,6 +1798,12 @@ class SessionRuntime {
     }
     return parsed.data;
   }
+
+  #publishAuthority(): void {
+    if (this.#disposed) return;
+    const snapshot = this.#authority.snapshot();
+    for (const listener of this.#authorityListeners) listener(snapshot);
+  }
 }
 
 class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
@@ -1084,6 +1837,36 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
     return this.#runtime.controllerSnapshot();
   }
 
+  authoritySnapshot(): SessionRuntimeAuthoritySnapshot {
+    this.#assertOpen();
+    return this.#runtime.authoritySnapshot();
+  }
+
+  onAuthoritySnapshot(listener: (snapshot: SessionRuntimeAuthoritySnapshot) => void): () => void {
+    this.#assertOpen();
+    return this.#runtime.onAuthoritySnapshot(listener);
+  }
+
+  updatePresence(state: SessionRuntimePresenceState): void {
+    this.#assertOpen();
+    this.#runtime.updatePresence(this.clientId, state);
+  }
+
+  noteActivity(activity: SessionRuntimeActivityKind): void {
+    this.#assertOpen();
+    this.#runtime.noteActivity(this.clientId, activity);
+  }
+
+  acquireAuthority(authority: SessionRuntimeAuthorityKind): SessionRuntimeAuthorityLease | null {
+    this.#assertOpen();
+    return this.#runtime.acquireAuthority(this.clientId, authority);
+  }
+
+  releaseAuthority(authority: SessionRuntimeAuthorityKind): void {
+    this.#assertOpen();
+    this.#runtime.releaseAuthority(this.clientId, authority);
+  }
+
   acquireController(): SessionRuntimeControllerLease {
     this.#assertOpen();
     return this.#runtime.acquireController(this.clientId);
@@ -1114,17 +1897,39 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
   sendInput(
     lease: SessionRuntimeControllerLease,
     semanticPaneId: string,
-    kind: "text" | "key",
-    data: string,
+    input: SessionRuntimeTerminalInput,
     performanceTraceId?: string,
+    causalProbe?: CausalCellProbeV1,
+    onCausalResult?: (result: CausalCellLedgerResult) => void,
   ): void {
     this.#assertOpen();
-    this.#runtime.sendInput(this.clientId, lease, semanticPaneId, kind, data, performanceTraceId);
+    this.#runtime.sendInput(
+      this.clientId,
+      lease,
+      semanticPaneId,
+      input,
+      performanceTraceId,
+      causalProbe,
+      onCausalResult,
+    );
+  }
+
+  failCausalCellProbe(
+    semanticPaneId: string,
+    traceId: string,
+    reason: CausalCellFailureReasonV1,
+  ): void {
+    this.#runtime.failCausalCellProbe(semanticPaneId, traceId, reason);
   }
 
   fitViewport(lease: SessionRuntimeControllerLease, cols: number, rows: number): void {
     this.#assertOpen();
     this.#runtime.fitViewport(this.clientId, lease, cols, rows);
+  }
+
+  fitViewportWithAuthority(lease: SessionRuntimeAuthorityLease, cols: number, rows: number): void {
+    this.#assertOpen();
+    this.#runtime.fitViewportWithAuthority(this.clientId, lease, cols, rows);
   }
 
   async describe(): Promise<MirrorSessionDescription> {
@@ -1183,6 +1988,7 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
 
   async openTerminalDelivery(
     deliverySubscriberId: string,
+    deliveryRequestId: string,
     semanticPaneId: string,
     offer: TerminalDeliveryOffer,
     onMessage: (message: TerminalDeliveryServerMessage) => void | Promise<void>,
@@ -1190,7 +1996,9 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
     this.#assertOpen();
     const upstream = await this.#runtime.openTerminalDelivery(
       this.clientId,
+      this.surface,
       deliverySubscriberId,
+      deliveryRequestId,
       semanticPaneId,
       offer,
       onMessage,

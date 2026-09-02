@@ -2,12 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   APPLICATION_SHELL_RESOURCE_V2_VERSION,
   type CanonicalDaemonInfo,
-  type WorkspaceCatalogResourceV1,
+  type WorkspaceCatalogResourceV2,
 } from "@tmux-ide/contracts";
-import type {
-  ApplicationShellSession,
-  ApplicationShellTransport,
-} from "@tmux-ide/daemon-client/application-shell-session";
+import type { ApplicationShellSession } from "@tmux-ide/daemon-client/application-shell-session";
+import type { TerminalFirstDaemonTransport } from "@tmux-ide/daemon-client/direct-application-shell-transport";
 
 import {
   connectOpenTuiApplicationShellAuthority,
@@ -26,15 +24,29 @@ const daemon: CanonicalDaemonInfo = {
 };
 
 const catalog = {
-  version: 1,
+  version: 2,
   daemon: {
     protocolVersion: daemon.protocolVersion,
     productVersion: daemon.productVersion,
     instanceId: daemon.instanceId,
     startedAt: daemon.startedAt,
   },
-  workspaces: [{ workspaceName: "workspace.alpha", sessionName: "alpha" }],
-} as WorkspaceCatalogResourceV1;
+  intents: [
+    {
+      workspaceName: "workspace.alpha",
+      sessionName: "alpha",
+      source: "workspace",
+      availability: "live",
+    },
+  ],
+  liveSessions: [
+    {
+      sessionName: "alpha",
+      fleetSessionId: "session.aaaaaaaaaaaaaaaaaaaa",
+      paneCount: 1,
+    },
+  ],
+} as WorkspaceCatalogResourceV2;
 
 describe("OpenTUI canonical application-shell authority", () => {
   it("derives an uncredentialed descriptor from the canonical daemon", () => {
@@ -48,7 +60,16 @@ describe("OpenTUI canonical application-shell authority", () => {
   });
 
   it("maps the runtime session through the catalog and creates the shared client session", async () => {
-    const transport = {} as ApplicationShellTransport;
+    const transport = {
+      validateTarget: (value: unknown) => value,
+      fetchApplicationShell: vi.fn(),
+      connectEvents: vi.fn(),
+      prepareTerminalRuntimeInventory: vi.fn(),
+      adoptTerminalRuntimeInventory: vi.fn(),
+      disposeEventSupervisor: vi.fn(),
+      selectApplicationShellFallback: vi.fn(),
+      refreshTerminalRuntimeInventory: vi.fn(),
+    } as unknown as TerminalFirstDaemonTransport;
     const dispose = vi.fn();
     const session = { dispose } as unknown as ApplicationShellSession;
     const createTransport = vi.fn(() => transport);
@@ -56,7 +77,7 @@ describe("OpenTUI canonical application-shell authority", () => {
     const authority = await connectOpenTuiApplicationShellAuthority("alpha", {
       readCanonicalDaemonInfo: () => daemon,
       isCanonicalDaemonAlive: async () => true,
-      fetchCanonicalWorkspaceCatalog: async () => catalog,
+      fetchCanonicalWorkspaceRouting: async () => catalog,
       createTransport,
       createSession,
     });
@@ -75,7 +96,14 @@ describe("OpenTUI canonical application-shell authority", () => {
         applicationShellResourceVersion: APPLICATION_SHELL_RESOURCE_V2_VERSION,
       }),
     );
-    expect(createSession).toHaveBeenCalledWith({ target: authority?.target, transport });
+    expect(createSession).toHaveBeenCalledWith({
+      target: authority?.target,
+      transport: expect.objectContaining({
+        validateTarget: expect.any(Function),
+        fetchApplicationShell: expect.any(Function),
+        connectEvents: expect.any(Function),
+      }),
+    });
     authority?.dispose();
     expect(dispose).toHaveBeenCalledOnce();
     expect(() =>
@@ -91,8 +119,22 @@ describe("OpenTUI canonical application-shell authority", () => {
     const authority = await connectOpenTuiApplicationShellAuthority("missing", {
       readCanonicalDaemonInfo: () => daemon,
       isCanonicalDaemonAlive: async () => true,
-      fetchCanonicalWorkspaceCatalog: async () => catalog,
+      fetchCanonicalWorkspaceRouting: async () => catalog,
     });
+    expect(authority).toBeNull();
+  });
+
+  it("does not route mutations through stopped durable intent", async () => {
+    const authority = await connectOpenTuiApplicationShellAuthority("alpha", {
+      readCanonicalDaemonInfo: () => daemon,
+      isCanonicalDaemonAlive: async () => true,
+      fetchCanonicalWorkspaceRouting: async () => ({
+        ...catalog,
+        intents: catalog.intents.map((intent) => ({ ...intent, availability: "stopped" })),
+        liveSessions: [],
+      }),
+    });
+
     expect(authority).toBeNull();
   });
 });

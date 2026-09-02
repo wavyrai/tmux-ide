@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  _invalidateCacheForTests,
   _resetCacheForTests,
   applyAction,
   buildRegisteredProject,
@@ -100,6 +101,23 @@ describe("registerProject / listProjects / getProject", () => {
     expect(project.hasIdeYml).toBe(false);
     expect(listProjects()).toHaveLength(1);
     expect(getProject(project.name)?.name).toBe(project.name);
+  });
+
+  it("keeps volatile fixtures live without persisting them", async () => {
+    const project = await registerProject({
+      dir: projectDir,
+      name: "performance-fixture",
+      io: fakeIo,
+      persistence: "volatile",
+    });
+    expect(getProject(project.name)?.dir).toBe(projectDir);
+    const persisted = JSON.parse(readFileSync(join(registryHome, "projects.json"), "utf8")) as {
+      projects: unknown[];
+    };
+    expect(persisted.projects).toEqual([]);
+
+    _invalidateCacheForTests();
+    expect(getProject(project.name)).toBeNull();
   });
 
   it("captures hasIdeYml=true when ide.yml is on disk", async () => {

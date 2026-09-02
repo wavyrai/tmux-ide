@@ -11,7 +11,7 @@ function ArrowUpRight() {
       viewBox="0 0 10 10"
       fill="none"
       aria-hidden
-      className="transition-transform duration-150 group-hover:translate-x-px group-hover:-translate-y-px"
+      className="marketing-transform-action motion-reduce:transform-none"
     >
       <path
         d="M2 8 8 2M8 2H3.2M8 2v4.8"
@@ -49,26 +49,28 @@ export function TopBanner() {
           href="https://www.prototyper.co"
           target="_blank"
           rel="noreferrer"
-          className="flex items-center gap-2 text-white transition-opacity hover:opacity-80"
+          aria-label="Prototyper OSS program (opens in a new tab)"
+          className="marketing-logo-action flex items-center gap-2 text-white"
         >
           <PrototyperWordmark width={92} />
-          <span className="font-mono text-[10px] tracking-[0.22em] text-white/60">oss</span>
+          <span className="marketing-type-caption font-mono text-white/60">oss</span>
         </Link>
 
         <Link
           href="https://www.prototyper.co"
           target="_blank"
           rel="noreferrer"
-          className="group ml-auto flex items-center gap-1.5 text-xs text-white/70 transition-colors hover:text-white"
+          className="group marketing-banner-link-action ml-auto flex items-center gap-1.5 text-xs text-white/70"
         >
           <span className="max-sm:hidden">
-            <span className="font-medium text-white">tmux-ide</span> is open source, built at{" "}
-            <span className="font-medium text-white">Prototyper</span>.
+            <span className="font-normal text-white">tmux-ide</span> is open source, built at{" "}
+            <span className="font-normal text-white">Prototyper</span>.
           </span>
-          <span className="inline-flex items-center gap-1 font-medium text-white">
+          <span className="inline-flex items-center gap-1 font-normal text-white">
             Learn more
             <ArrowUpRight />
           </span>
+          <span className="sr-only">(opens in a new tab)</span>
         </Link>
       </div>
     </div>

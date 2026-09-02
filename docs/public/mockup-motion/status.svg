@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="140" viewBox="0 0 360 140" role="img" aria-label="An animated cursor performance">
+<style>.mt-cursor{transform:translate(281px,86px)}
+.mt-rip{fill:none;stroke:#087c9f;stroke-width:2;opacity:0;transform-box:fill-box;transform-origin:center}
+@media (prefers-reduced-motion: no-preference){
+.mt-cursor{animation:mt-travel 4000ms linear infinite both}
+.mt-rip{animation:mt-ripple 4000ms linear infinite both}
+}
+@keyframes mt-travel{0%{transform:translate(334px,122px)}5%{transform:translate(334.2px,122.2px)}6.0417%{transform:translate(333.37px,119.59px)}7.0833%{transform:translate(328.09px,108.51px)}8.125%{transform:translate(317.75px,89.19px)}9.1667%{transform:translate(303.19px,67.51px)}10.2083%{transform:translate(290.16px,51.35px)}11.25%{transform:translate(281.61px,42.5px)}12.2917%{transform:translate(278.48px,39.38px)}13.3333%{transform:translate(279.39px,40.54px)}14.375%{transform:translate(280.78px,41.97px)}26.25%{transform:translate(280.92px,41.75px)}27.2917%{transform:translate(281.8px,43.38px)}28.3333%{transform:translate(283.86px,50.81px)}29.375%{transform:translate(284.35px,65.12px)}30.4167%{transform:translate(282.97px,78.88px)}31.4583%{transform:translate(280.6px,86.22px)}32.5%{transform:translate(280.78px,87.73px)}33.5417%{transform:translate(280.92px,86.21px)}46.6667%{transform:translate(281px,86px)}47.5%{transform:translate(280.98px,85.19px)}57.9167%{transform:translate(281.37px,85.33px)}68.3333%{transform:translate(281.74px,85.51px)}79.7917%{transform:translate(282.07px,85.78px)}81.875%{transform:translate(282.12px,85.83px)}82.5%{transform:translate(281px,86px)}100%{transform:translate(281px,86px)}}
+@keyframes mt-ripple{
+0%{opacity:.55;transform:scale(.12)}
+15.5%{opacity:0;transform:scale(1)}
+100%{opacity:0;transform:scale(1)}
+}</style>
+
+<g><circle class="mt-rip" cx="281" cy="42" r="20" style="animation-delay:665.1ms"/><circle class="mt-rip" cx="281" cy="86" r="20" style="animation-delay:1439.2ms"/></g>
+<g class="mt-cursor">
+<g transform="translate(-5,-2.5)">
+<path d="M5 2.5 L5 19.4 L9.2 15.3 L11.9 21.2 L14.6 20 L11.9 14.2 L17.6 14.2 Z" fill="#fff" stroke="rgba(17,17,20,0.92)" stroke-width="1.35" stroke-linejoin="round"/>
+</g>
+</g>
+</svg>

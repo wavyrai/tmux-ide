@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="140" viewBox="0 0 360 140" role="img" aria-label="An animated cursor performance">
+<style>.mt-cursor{transform:translate(220px,92px)}
+.mt-rip{fill:none;stroke:#087c9f;stroke-width:2;opacity:0;transform-box:fill-box;transform-origin:center}
+@media (prefers-reduced-motion: no-preference){
+.mt-cursor{animation:mt-travel 4000ms linear infinite both}
+.mt-rip{animation:mt-ripple 4000ms linear infinite both}
+}
+@keyframes mt-travel{0%{transform:translate(334px,122px)}5%{transform:translate(334.2px,122.2px)}6.0417%{transform:translate(331.65px,121.15px)}7.0833%{transform:translate(318.99px,116.04px)}8.125%{transform:translate(294.58px,107.66px)}9.1667%{transform:translate(262.69px,99.47px)}10.2083%{transform:translate(231.53px,94.25px)}11.25%{transform:translate(209.31px,92.3px)}12.2917%{transform:translate(196.46px,92.09px)}13.3333%{transform:translate(193.47px,92.26px)}14.375%{transform:translate(194.87px,92.28px)}15.4167%{transform:translate(197.55px,92.02px)}16.0808%{transform:translate(198px,92px)}26.25%{transform:translate(197.92px,91.75px)}27.2917%{transform:translate(199.21px,91.64px)}28.3333%{transform:translate(204.61px,90.55px)}29.375%{transform:translate(213.67px,90.68px)}30.4167%{transform:translate(219.28px,91.62px)}31.4583%{transform:translate(220.41px,92.09px)}33.0642%{transform:translate(220px,92px)}42.9167%{transform:translate(220px,92px)}43.75%{transform:translate(219.98px,91.19px)}54.1667%{transform:translate(220.37px,91.33px)}64.5833%{transform:translate(220.74px,91.51px)}76.0417%{transform:translate(221.07px,91.78px)}82.2917%{transform:translate(221.21px,91.94px)}82.5%{transform:translate(220px,92px)}100%{transform:translate(220px,92px)}}
+@keyframes mt-ripple{
+0%{opacity:.55;transform:scale(.12)}
+15.5%{opacity:0;transform:scale(1)}
+100%{opacity:0;transform:scale(1)}
+}</style>
+
+<g><circle class="mt-rip" cx="198" cy="92" r="20" style="animation-delay:713.2ms"/></g>
+<g class="mt-cursor">
+<g transform="translate(-5,-2.5)">
+<path d="M5 2.5 L5 19.4 L9.2 15.3 L11.9 21.2 L14.6 20 L11.9 14.2 L17.6 14.2 Z" fill="#fff" stroke="rgba(17,17,20,0.92)" stroke-width="1.35" stroke-linejoin="round"/>
+</g>
+</g>
+</svg>

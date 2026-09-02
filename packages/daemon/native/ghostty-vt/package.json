@@ -1,0 +1,13 @@
+{
+  "name": "@tmux-ide/ghostty-vt-native-proof",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "pnpm run test:native && pnpm run test:canonical",
+    "test:native": "node test/native-proof.mjs && node test/history-delta.mjs build/ghostty_vt_proof.node && node --expose-gc test/native-workers.mjs build/ghostty_vt_proof.node",
+    "test:canonical": "TMUX_IDE_GHOSTTY_PROOF_ADDON=build/ghostty_vt_proof.node pnpm exec vitest run --config vitest.config.mjs",
+    "bench:native": "node benchmark/native-benchmark.mjs",
+    "bench:qualification": "node --expose-gc benchmark/qualification.mjs"
+  }
+}

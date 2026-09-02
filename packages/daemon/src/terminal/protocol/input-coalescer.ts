@@ -44,16 +44,18 @@ import { chunkByBytes } from "./chunk-bytes.ts";
  * nothing, and 40× from the yacc cliff.
  */
 export const SEND_KEYS_CHUNK_BYTES = 256;
+const MAX_INPUT_TRACE_IDS = 256;
 
 /** One flushed input action, ready to become a control-mode write. */
 export type InputAction =
-  | { kind: "literal"; pane: string; text: string }
-  | { kind: "key"; pane: string; key: string };
+  | { kind: "literal"; pane: string; text: string; traceIds?: readonly string[] }
+  | { kind: "key"; pane: string; key: string; traceIds?: readonly string[] };
 
 export class InputCoalescer {
   private pane = "";
   private buf = "";
   private scheduled = false;
+  private traceIds: string[] = [];
 
   constructor(
     private readonly emit: (action: InputAction) => void,
@@ -64,11 +66,13 @@ export class InputCoalescer {
   /** Buffer literal text for `pane`; a pending run for ANOTHER pane flushes
    *  first so cross-pane order is preserved. Schedules an auto-flush once per
    *  pending run. */
-  literal(pane: string, text: string): void {
+  literal(pane: string, text: string, traceId?: string): void {
     if (!pane || !text) return;
     if (this.buf.length > 0 && this.pane !== pane) this.flush();
     this.pane = pane;
     this.buf += text;
+    if (traceId && this.traceIds.length < MAX_INPUT_TRACE_IDS && !this.traceIds.includes(traceId))
+      this.traceIds.push(traceId);
     if (!this.scheduled) {
       this.scheduled = true;
       this.schedule(() => {
@@ -80,10 +84,10 @@ export class InputCoalescer {
 
   /** Emit a named tmux key (Enter, C-c, Up, …) — pending literals flush first
    *  (synchronously) so the key can never overtake buffered characters. */
-  key(pane: string, key: string): void {
+  key(pane: string, key: string, traceId?: string): void {
     if (!pane || !key) return;
     this.flush();
-    this.emit({ kind: "key", pane, key });
+    this.emit({ kind: "key", pane, key, ...(traceId ? { traceIds: [traceId] } : {}) });
   }
 
   /** Drain the pending literal run now (chunked under the byte cap). Also the
@@ -92,9 +96,16 @@ export class InputCoalescer {
     if (this.buf.length === 0) return;
     const pane = this.pane;
     const text = this.buf;
+    const traceIds = this.traceIds;
     this.buf = "";
+    this.traceIds = [];
     for (const chunk of chunkByBytes(text, this.maxChunkBytes)) {
-      this.emit({ kind: "literal", pane, text: chunk });
+      this.emit({
+        kind: "literal",
+        pane,
+        text: chunk,
+        ...(traceIds.length > 0 ? { traceIds: [...traceIds] } : {}),
+      });
     }
   }
 

@@ -37,7 +37,7 @@ import {
   type FleetCatalogResourceV1,
   type FleetCatalogSessionEntryV1,
 } from "@tmux-ide/contracts";
-import type { FleetSessionFacts } from "../discovery.ts";
+import type { FleetPaneFacts, FleetSessionFacts } from "../discovery.ts";
 import {
   harnessForPane,
   isAgentPane,
@@ -49,6 +49,33 @@ function digest(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 20);
 }
 
+function paneIncarnationKey(pane: FleetPaneFacts): string {
+  return pane.semanticPaneId
+    ? `semantic:${pane.semanticPaneId}\u0000${pane.incarnation}`
+    : `runtime:${pane.runtimePaneId}\u0000${pane.incarnation}`;
+}
+
+/**
+ * Stable optimistic-concurrency fence over authority identity, not presentation.
+ * Sorting makes the fence independent of tmux enumeration order; the semantic
+ * stamp plus birth epoch prevents a killed/recreated pane from inheriting an
+ * old mutation lease even when tmux later reuses a runtime id.
+ */
+export function fleetCatalogRevisionForFacts(sessions: readonly FleetSessionFacts[]): string {
+  const canonical = sessions
+    .map((session) => ({
+      sessionId: fleetSessionIdForName(session.name),
+      panes: session.panes
+        .map((pane) => ({
+          agentId: fleetAgentIdForPane(session.name, pane),
+          incarnation: paneIncarnationKey(pane),
+        }))
+        .sort((left, right) => left.agentId.localeCompare(right.agentId)),
+    }))
+    .sort((left, right) => left.sessionId.localeCompare(right.sessionId));
+  return digest(JSON.stringify(canonical));
+}
+
 /**
  * Mint the opaque fleet session id for a live tmux session name. The SINGLE
  * source of truth for `session.<digest>`: the catalog projector emits it and the
@@ -58,6 +85,10 @@ function digest(value: string): string {
  */
 export function fleetSessionIdForName(sessionName: string): string {
   return `session.${digest(sessionName)}`;
+}
+
+export function fleetAgentIdForPane(sessionName: string, pane: FleetPaneFacts): string {
+  return `agent.${digest(`${sessionName}\u0000${paneIncarnationKey(pane)}`)}`;
 }
 
 /**
@@ -123,7 +154,7 @@ function projectSession(
     if (!isAgentPane(presentationPane)) continue;
     const presentation = resolveAgentPresentation(presentationPane, nowSec);
     agents.push({
-      agentId: `agent.${digest(`${session.name}\u0000${pane.runtimePaneId}`)}`,
+      agentId: fleetAgentIdForPane(session.name, pane),
       name: fleetLabel(presentation.displayName ?? pane.currentCommand, `Agent ${index + 1}`),
       harness: harnessForPane(presentationPane),
       activity: presentation.activity,
@@ -163,6 +194,7 @@ export function projectFleetCatalog(
   return FleetCatalogResourceV1SchemaZ.parse({
     version: FLEET_CATALOG_RESOURCE_VERSION,
     daemon,
+    catalogRevision: fleetCatalogRevisionForFacts(sessions),
     sessions: projected,
   });
 }

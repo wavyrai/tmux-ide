@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CausalCellProofV1SchemaZ } from "./causal-cell.ts";
 import { TerminalAttachmentSemanticPaneIdSchemaZ } from "./semantic-identity.ts";
 import { SessionRuntimeGenerationSchemaZ } from "./session-runtime.ts";
 import { WorkspaceIdSchemaZ } from "./workspace-state.ts";
@@ -14,6 +15,7 @@ export const TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES = 512 * 1024;
 export const TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES = 16 * 1024 * 1024;
 
 export const TerminalDeliveryEncodingSchemaZ = z.enum([
+  "semantic-compact-v1",
   "semantic-v1",
   "ansi-diff-v1",
   "ansi-raw-v1",
@@ -23,7 +25,7 @@ export type TerminalDeliveryEncoding = z.infer<typeof TerminalDeliveryEncodingSc
 export const TerminalDeliveryOfferSchemaZ = z
   .object({
     protocolVersions: z.array(z.number().int().positive()).min(1).max(8),
-    encodings: z.array(TerminalDeliveryEncodingSchemaZ).min(1).max(3),
+    encodings: z.array(TerminalDeliveryEncodingSchemaZ).min(1).max(4),
     richPlacements: z.boolean(),
   })
   .strict()
@@ -39,13 +41,20 @@ export const TerminalDeliveryNegotiatedSchemaZ = z
   .object({
     protocolVersion: z.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
     encoding: TerminalDeliveryEncodingSchemaZ,
+    fallbackEncoding: z.literal("semantic-v1").nullable().optional(),
     richPlacements: z.boolean(),
     generation: SessionRuntimeGenerationSchemaZ,
     deliveryNonce: z.uuid(),
   })
   .strict()
   .superRefine((value, context) => {
-    if (value.richPlacements && value.encoding !== "semantic-v1")
+    if (value.fallbackEncoding && value.encoding !== "semantic-compact-v1")
+      context.addIssue({ code: "custom", message: "fallback encoding requires compact semantic" });
+    if (
+      value.richPlacements &&
+      value.encoding !== "semantic-v1" &&
+      value.encoding !== "semantic-compact-v1"
+    )
       context.addIssue({ code: "custom", message: "rich placements require semantic delivery" });
   });
 export type TerminalDeliveryNegotiated = z.infer<typeof TerminalDeliveryNegotiatedSchemaZ>;
@@ -84,6 +93,8 @@ export const TerminalDeliveryEnvelopeSchemaZ = DeliveryAddressSchemaZ.extend({
    * as general causality: unrelated external tmux output may consume the probe.
    */
   performanceTraceId: z.uuid().optional(),
+  /** Finalized diagnostic proof for this exact canonical revision/hash. */
+  causalCellProof: CausalCellProofV1SchemaZ.optional(),
   protocolVersion: z.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
   encoding: TerminalDeliveryEncodingSchemaZ,
   frame: z.enum(["seed", "patch", "tombstone"]),
@@ -103,6 +114,7 @@ export const TerminalDeliveryEnvelopeSchemaZ = DeliveryAddressSchemaZ.extend({
 })
   .strict()
   .superRefine((value, context) => {
+    const semantic = value.encoding === "semantic-v1" || value.encoding === "semantic-compact-v1";
     const expectedChunks = Math.max(
       1,
       Math.ceil(value.representationBytes / TERMINAL_DELIVERY_CHUNK_BYTES),
@@ -123,25 +135,21 @@ export const TerminalDeliveryEnvelopeSchemaZ = DeliveryAddressSchemaZ.extend({
         message: "patch/tombstone requires an earlier baseRevision",
       });
     if (
-      value.encoding === "semantic-v1" &&
+      semantic &&
       (!value.canonicalEquivalent || (value.frame !== "tombstone" && value.history !== "complete"))
     )
       context.addIssue({
         code: "custom",
         message: "semantic delivery must be complete canonical truth",
       });
-    if (
-      value.encoding === "semantic-v1" &&
-      value.frame === "tombstone" &&
-      value.history !== "not-applicable"
-    )
+    if (semantic && value.frame === "tombstone" && value.history !== "not-applicable")
       context.addIssue({ code: "custom", message: "semantic tombstones have no history" });
-    if (value.encoding !== "semantic-v1" && value.canonicalEquivalent)
+    if (!semantic && value.canonicalEquivalent)
       context.addIssue({
         code: "custom",
         message: "ANSI representation cannot claim canonical equivalence",
       });
-    if (value.encoding !== "semantic-v1" && value.richPlacements)
+    if (!semantic && value.richPlacements)
       context.addIssue({ code: "custom", message: "ANSI cannot carry rich placements" });
   });
 export type TerminalDeliveryEnvelope = z.infer<typeof TerminalDeliveryEnvelopeSchemaZ>;

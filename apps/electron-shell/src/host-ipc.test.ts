@@ -15,6 +15,7 @@ import type {
 import {
   DESKTOP_PACKAGED_RENDERER_ENTRY_URL,
   DESKTOP_PACKAGED_RENDERER_ORIGIN,
+  DesktopWebHostClientIdSchemaZ,
   buildStartupReadinessLadder,
 } from "@tmux-ide/contracts";
 
@@ -22,6 +23,9 @@ import type { DaemonConnectionAuthority } from "./daemon-connection-coordinator.
 import { BrokerPromotionFailure } from "./daemon-resource-broker.ts";
 import { registerHostIpc, rendererLocationIsTrusted } from "./host-ipc.ts";
 import { HOST_IPC } from "./ipc-channels.ts";
+import { mintDesktopWebHostClientId } from "./web-host-client-id.ts";
+import { SessionRuntimeRegistry } from "../../../packages/daemon/src/terminal/session-runtime/registry.ts";
+import { SessionRuntimeTransportBinder } from "../../../packages/daemon/src/terminal/session-runtime/transport-binding.ts";
 
 describe("host IPC trust boundary", () => {
   it("accepts only the current window main frame and removes every handler", async () => {
@@ -399,9 +403,12 @@ describe("host IPC trust boundary", () => {
     const mutated = await handlers.get(HOST_IPC.daemonRequest)?.(trustedEvent, {
       resource: "mutateAppWindow",
       request: {
-        workspaceName: "product",
-        expectedDocumentRevision: 4,
-        command: { type: "window.focus", windowId: null },
+        operationId: "10000000-0000-4000-8000-000000000001",
+        intent: {
+          workspaceName: "product",
+          expectedDocumentRevision: 4,
+          command: { type: "window.focus", windowId: null },
+        },
       },
     });
     expect(mutated).toMatchObject({
@@ -410,6 +417,7 @@ describe("host IPC trust boundary", () => {
     });
     expect(daemonResources.mutateAppWindow).toHaveBeenCalledOnce();
     expect(vi.mocked(daemonResources.mutateAppWindow).mock.calls[0]?.[0]).toMatchObject({
+      operationId: "10000000-0000-4000-8000-000000000001",
       expectedDaemonInstanceId: daemon.descriptor.instanceId,
       intent: { workspaceName: "product", expectedDocumentRevision: 4 },
     });
@@ -1064,6 +1072,7 @@ describe("host IPC pane-stream issuance (m43 card 3)", () => {
       async (
         request: PaneStreamIssueMutationRequest,
         origin: string,
+        _hostClientId?: string,
       ): Promise<PaneStreamIssueResult> => {
         expect(origin).toBe("http://127.0.0.1:5173");
         return {
@@ -1097,6 +1106,9 @@ describe("host IPC pane-stream issuance (m43 card 3)", () => {
       stream,
     });
     expect(authored?.requestId).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(issuePaneStream.mock.calls[0]?.[2]).toMatch(
+      /^web:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+    );
     expect(JSON.stringify(authored)).not.toMatch(/ownerToken|authorization|rendererOrigin/iu);
 
     // A renderer-smuggled envelope field is an invalid request, never forwarded.
@@ -1111,6 +1123,106 @@ describe("host IPC pane-stream issuance (m43 card 3)", () => {
     ).toMatchObject({ status: "error", error: { code: "invalid-request" } });
     expect(issuePaneStream).toHaveBeenCalledOnce();
     h.registration.dispose();
+  });
+
+  it("mints one exact Web principal per renderer generation and fences stale issuance", async () => {
+    let finishFirst: ((result: PaneStreamIssueResult) => void) | undefined;
+    const issuePaneStream = vi
+      .fn(
+        async (
+          request: PaneStreamIssueMutationRequest,
+          _origin?: string,
+          _hostClientId?: string,
+        ): Promise<PaneStreamIssueResult> => ({
+          status: "issued",
+          descriptor: streamDescriptor(request, request.expectedDaemonInstanceId),
+        }),
+      )
+      .mockImplementationOnce(
+        async (_request, _origin, _hostClientId) =>
+          new Promise<PaneStreamIssueResult>((resolve) => {
+            finishFirst = resolve;
+          }),
+      );
+    const h = paneStreamHarness({
+      frameUrl: "http://127.0.0.1:5173/src/main.tsx",
+      trustedRendererLocation: { kind: "development-origin", origin: "http://127.0.0.1:5173" },
+      issuePaneStream,
+    });
+    const request = {
+      protocolVersion: 1,
+      workspaceName: "product",
+      panes: PANES,
+      viewerMode: "read-only",
+    } as const;
+    const stale = h.handlers.get(HOST_IPC.daemonRequest)?.(h.event, {
+      resource: "issuePaneStream",
+      request,
+    });
+    await vi.waitFor(() => expect(issuePaneStream).toHaveBeenCalledOnce());
+    const staleRequest = issuePaneStream.mock.calls[0]?.[0];
+    const firstHostClientId = issuePaneStream.mock.calls[0]?.[2];
+
+    h.handlers.get(HOST_IPC.bootstrap)?.(h.event);
+    finishFirst?.({
+      status: "issued",
+      descriptor: streamDescriptor(staleRequest!, h.identity.instanceId),
+    });
+    await expect(stale).resolves.toMatchObject({ status: "error", error: { code: "disposed" } });
+
+    await expect(
+      h.handlers.get(HOST_IPC.daemonRequest)?.(h.event, {
+        resource: "issuePaneStream",
+        request,
+      }),
+    ).resolves.toMatchObject({ status: "issued" });
+    const secondHostClientId = issuePaneStream.mock.calls[1]?.[2];
+    expect(firstHostClientId).toMatch(/^web:[0-9a-f-]{36}$/u);
+    expect(secondHostClientId).toMatch(/^web:[0-9a-f-]{36}$/u);
+    expect(secondHostClientId).not.toBe(firstHostClientId);
+    await expect(
+      h.handlers.get(HOST_IPC.daemonRequest)?.(h.event, {
+        resource: "issuePaneStream",
+        request,
+      }),
+    ).resolves.toMatchObject({ status: "issued" });
+    expect(issuePaneStream.mock.calls[2]?.[2]).toBe(secondHostClientId);
+    const registry = new SessionRuntimeRegistry({
+      generation: h.identity.instanceId,
+      createControllerToken: () => "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+    const binding = new SessionRuntimeTransportBinder(registry).bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000081",
+      session: "product",
+      hostClientId: secondHostClientId!,
+      allowedSourcePaneIds: PANES,
+      interactive: true,
+      explicitAuthority: true,
+    });
+    expect(binding.authoritySnapshot().clients).toContainEqual(
+      expect.objectContaining({ clientId: secondHostClientId, surface: "web" }),
+    );
+    await binding.close();
+    await registry.dispose();
+    h.registration.dispose();
+  });
+
+  it("mints only schema-valid distinct Electron Web principals", () => {
+    const first = mintDesktopWebHostClientId();
+    const second = mintDesktopWebHostClientId();
+    expect(first).toMatch(
+      /^web:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+    );
+    expect(second).not.toBe(first);
+    expect(DesktopWebHostClientIdSchemaZ.safeParse(first).success).toBe(true);
+    expect(
+      DesktopWebHostClientIdSchemaZ.safeParse("12345678-1234-4123-8123-123456789abc").success,
+    ).toBe(false);
+    expect(
+      DesktopWebHostClientIdSchemaZ.safeParse("dev-web:12345678-1234-4123-8123-123456789abc")
+        .success,
+    ).toBe(false);
   });
 
   it("reports a degraded daemon as degraded, not merely unavailable", async () => {

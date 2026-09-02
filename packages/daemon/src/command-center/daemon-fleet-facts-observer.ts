@@ -13,18 +13,41 @@ export type FleetFactsDemand = "sessions" | "adopted" | "agents";
 export interface SessionCompositionFacts {
   readonly sessions: readonly string[];
   readonly adopted: readonly string[];
+  /** Agent-free topology/stamp proof used by terminal-runtime invalidation. */
+  readonly terminalTopology?: readonly string[];
 }
 
 export interface DaemonFleetFactsObserverOptions {
   readonly readSessions: () => Promise<SessionCompositionFacts | null>;
   readonly readAgents: () => Promise<AgentStateReading | null>;
   readonly onSessionsChanged: () => void;
+  readonly onTerminalTopologyChanged?: () => void;
   readonly onAdoptedChanged: () => void;
   readonly onAgentSessionsChanged: (sessions: readonly string[]) => void;
   readonly onAgentTurnCompleted: (completion: AgentTurnCompletion) => void;
   readonly intervalMs?: number;
   readonly setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   readonly clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
+  readonly diagnostics?: {
+    readonly nowMicros: () => number;
+    readonly createTraceId: () => string;
+    readonly publish: (event: DaemonFleetFactsObserverDiagnostic) => void;
+    readonly queueMicrotask?: (callback: () => void) => void;
+  };
+}
+
+export interface DaemonFleetFactsObserverDiagnostic {
+  readonly operation: "fleet-cycle";
+  readonly phase: "begin" | "event-loop-sentinel" | "end";
+  readonly traceId: string;
+  readonly processId: string;
+  readonly clockId: "node-performance-now";
+  readonly clockKind: "performance-now";
+  readonly atMicros: number;
+  readonly activeOperations: number;
+  readonly sessions: boolean;
+  readonly agents: boolean;
+  readonly succeeded?: boolean;
 }
 
 interface ReadyWaiter {
@@ -44,12 +67,14 @@ export class DaemonFleetFactsObserver {
   readonly #waiters = new Set<ReadyWaiter>();
   #sessionNames: readonly string[] | null = null;
   #adoptedNames: readonly string[] | null = null;
+  #terminalTopology: readonly string[] | null = null;
   #agentFacts: AgentStateReading | null = null;
   #timer: ReturnType<typeof setTimeout> | null = null;
   #running: Promise<void> | null = null;
   #startQueued = false;
   #generation = 0;
   #demandVersion = 0;
+  #diagnosticActiveOperations = 0;
 
   constructor(options: DaemonFleetFactsObserverOptions) {
     this.#options = options;
@@ -129,7 +154,16 @@ export class DaemonFleetFactsObserver {
     this.#running = this.#cycle(generation, demandEpochs, wantsSessions, wantsAgents).finally(
       () => {
         this.#running = null;
-        if (generation !== this.#generation || this.#refs.size === 0) return;
+        if (this.#refs.size === 0) return;
+        // A connection can release the final demand and a replacement can
+        // acquire the same observer while the retired tmux read is still in
+        // flight. `stop()` generation-fences that read; once it settles, the
+        // replacement must get its own baseline cycle instead of inheriting a
+        // permanently pending readiness Promise.
+        if (generation !== this.#generation) {
+          this.#queueStart();
+          return;
+        }
         if (demandVersion !== this.#demandVersion && this.#hasUnbaselinedDemand()) {
           void this.#runOnce(true);
           return;
@@ -162,6 +196,7 @@ export class DaemonFleetFactsObserver {
     this.#baselined.clear();
     this.#sessionNames = null;
     this.#adoptedNames = null;
+    this.#terminalTopology = null;
     this.#agentFacts = null;
     for (const waiter of this.#waiters) waiter.resolve();
     this.#waiters.clear();
@@ -181,23 +216,102 @@ export class DaemonFleetFactsObserver {
     wantsSessions: boolean,
     wantsAgents: boolean,
   ): Promise<void> {
-    const [sessions, agents] = await Promise.all([
-      wantsSessions ? this.#options.readSessions() : Promise.resolve(null),
-      wantsAgents ? this.#options.readAgents() : Promise.resolve(null),
-    ]);
-    if (generation !== this.#generation) return;
-    if (wantsSessions && sessions) {
-      const acceptSessions = this.#sameDemandEpoch("sessions", demandEpochs);
-      const acceptAdopted = this.#sameDemandEpoch("adopted", demandEpochs);
-      if (acceptSessions) this.#baselined.add("sessions");
-      if (acceptAdopted) this.#baselined.add("adopted");
-      this.#acceptSessions(sessions, acceptSessions, acceptAdopted);
+    const finish = this.#beginDiagnostic(wantsSessions, wantsAgents);
+    let sessions: SessionCompositionFacts | null;
+    let agents: AgentStateReading | null;
+    try {
+      [sessions, agents] = await Promise.all([
+        wantsSessions ? this.#options.readSessions() : Promise.resolve(null),
+        wantsAgents ? this.#options.readAgents() : Promise.resolve(null),
+      ]);
+    } catch (error) {
+      finish(false);
+      throw error;
     }
-    if (wantsAgents && agents && this.#sameDemandEpoch("agents", demandEpochs)) {
-      this.#baselined.add("agents");
-      this.#acceptAgents(agents);
+    try {
+      if (generation !== this.#generation) {
+        finish(true);
+        return;
+      }
+      if (wantsSessions && sessions) {
+        const acceptSessions = this.#sameDemandEpoch("sessions", demandEpochs);
+        const acceptAdopted = this.#sameDemandEpoch("adopted", demandEpochs);
+        if (acceptSessions) this.#baselined.add("sessions");
+        if (acceptAdopted) this.#baselined.add("adopted");
+        this.#acceptSessions(sessions, acceptSessions, acceptAdopted);
+      }
+      if (wantsAgents && agents && this.#sameDemandEpoch("agents", demandEpochs)) {
+        this.#baselined.add("agents");
+        this.#acceptAgents(agents);
+      }
+      this.#settleWaiters();
+      finish(true);
+    } catch (error) {
+      finish(false);
+      throw error;
     }
-    this.#settleWaiters();
+  }
+
+  #beginDiagnostic(wantsSessions: boolean, wantsAgents: boolean): (succeeded: boolean) => void {
+    const diagnostics = this.#options.diagnostics;
+    if (!diagnostics) return () => undefined;
+    let traceId: string;
+    let startedAtMicros: number;
+    try {
+      traceId = diagnostics.createTraceId();
+      startedAtMicros = diagnostics.nowMicros();
+    } catch {
+      return () => undefined;
+    }
+    this.#diagnosticActiveOperations += 1;
+    const publish = (
+      phase: DaemonFleetFactsObserverDiagnostic["phase"],
+      atMicros: number,
+      succeeded?: boolean,
+    ): void => {
+      try {
+        diagnostics.publish({
+          operation: "fleet-cycle",
+          phase,
+          traceId,
+          processId: `daemon:${process.pid}`,
+          clockId: "node-performance-now",
+          clockKind: "performance-now",
+          atMicros,
+          activeOperations: this.#diagnosticActiveOperations,
+          sessions: wantsSessions,
+          agents: wantsAgents,
+          ...(succeeded === undefined ? {} : { succeeded }),
+        });
+      } catch {
+        // Fleet observation remains authoritative when diagnostics fail.
+      }
+    };
+    publish("begin", startedAtMicros);
+    try {
+      (diagnostics.queueMicrotask ?? queueMicrotask)(() => {
+        try {
+          publish("event-loop-sentinel", diagnostics.nowMicros());
+        } catch {
+          // Diagnostics are fail-open.
+        }
+      });
+    } catch {
+      // Diagnostics are fail-open.
+    }
+    let finished = false;
+    return (succeeded) => {
+      if (finished) return;
+      finished = true;
+      let atMicros = startedAtMicros;
+      try {
+        atMicros = diagnostics.nowMicros();
+      } catch {
+        // The operation still settles if the optional clock fails.
+      }
+      publish("end", atMicros, succeeded);
+      this.#diagnosticActiveOperations = Math.max(0, this.#diagnosticActiveOperations - 1);
+    };
   }
 
   #acceptSessions(
@@ -207,9 +321,17 @@ export class DaemonFleetFactsObserver {
   ): void {
     if (acceptSessions) {
       const previous = this.#sessionNames;
+      const previousTopology = this.#terminalTopology;
       this.#sessionNames = next.sessions;
+      this.#terminalTopology = next.terminalTopology ?? next.sessions;
       if (previous && JSON.stringify(previous) !== JSON.stringify(next.sessions))
         this.#options.onSessionsChanged();
+      if (
+        previousTopology &&
+        JSON.stringify(previousTopology) !== JSON.stringify(this.#terminalTopology)
+      ) {
+        this.#options.onTerminalTopologyChanged?.();
+      }
     }
     if (acceptAdopted) {
       const previous = this.#adoptedNames;
@@ -260,29 +382,40 @@ export class DaemonFleetFactsObserver {
 }
 
 export function parseSessionCompositionFacts(raw: string): SessionCompositionFacts {
-  const sessions: string[] = [];
-  const adopted: string[] = [];
+  const sessions = new Set<string>();
+  const adopted = new Set<string>();
+  const terminalTopology: string[] = [];
   for (const line of raw.split("\n")) {
     if (!line) continue;
     const [name = "", adoptedFlag = ""] = line.split("\t");
     if (!name) continue;
-    sessions.push(name);
-    if (adoptedFlag === "1" && isVisibleFleetSession(name)) adopted.push(name);
+    sessions.add(name);
+    if (adoptedFlag === "1" && isVisibleFleetSession(name)) adopted.add(name);
+    terminalTopology.push(line);
   }
-  return { sessions: sessions.sort(), adopted: adopted.sort() };
+  return {
+    sessions: [...sessions].sort(),
+    adopted: [...adopted].sort(),
+    terminalTopology: terminalTopology.sort(),
+  };
 }
 
 export function parseAgentStateFacts(raw: string): AgentStateReading {
   const result = new Map<string, Map<string, AgentPaneStateReading>>();
   for (const line of raw.split("\n")) {
     const fields = line.split("\t");
-    if (fields.length !== 4 || !fields[0] || !/^%[0-9]+$/u.test(fields[1] ?? "")) continue;
+    if (fields.length < 4 || fields.length > 5 || !fields[0] || !/^%[0-9]+$/u.test(fields[1] ?? ""))
+      continue;
     let panes = result.get(fields[0]);
     if (!panes) {
       panes = new Map();
       result.set(fields[0], panes);
     }
-    panes.set(fields[1]!, { paneStamp: fields[2] || null, state: fields[3] ?? "" });
+    panes.set(fields[1]!, {
+      paneStamp: fields[2] || null,
+      state: fields[3] ?? "",
+      command: fields[4] ?? "",
+    });
   }
   return result;
 }
@@ -296,9 +429,22 @@ function execTmux(args: readonly string[]): Promise<string | null> {
 }
 
 export const SESSION_COMPOSITION_TMUX_ARGS = [
-  "list-sessions",
+  "list-panes",
+  "-a",
   "-F",
-  "#{session_name}\t#{@tmux_ide_adopted}",
+  [
+    "#{session_name}",
+    "#{@tmux_ide_adopted}",
+    "#{pid}",
+    "#{session_id}",
+    "#{session_created}",
+    "#{window_id}",
+    "#{pane_id}",
+    "#{window_panes}",
+    "#{session_windows}",
+    "#{@tmux_ide_pane_id}",
+    "#{@tmux_ide_window_id}",
+  ].join("\t"),
 ] as const;
 
 export async function readSessionCompositionFacts(): Promise<SessionCompositionFacts | null> {
@@ -306,12 +452,14 @@ export async function readSessionCompositionFacts(): Promise<SessionCompositionF
   return raw === null ? null : parseSessionCompositionFacts(raw);
 }
 
+export const AGENT_STATE_TMUX_ARGS = [
+  "list-panes",
+  "-a",
+  "-F",
+  "#{session_name}\t#{pane_id}\t#{@tmux_ide_pane_id}\t#{@agent_state}\t#{pane_current_command}",
+] as const;
+
 export async function readAgentStateFacts(): Promise<AgentStateReading | null> {
-  const raw = await execTmux([
-    "list-panes",
-    "-a",
-    "-F",
-    "#{session_name}\t#{pane_id}\t#{@tmux_ide_pane_id}\t#{@agent_state}",
-  ]);
+  const raw = await execTmux(AGENT_STATE_TMUX_ARGS);
   return raw === null ? null : parseAgentStateFacts(raw);
 }

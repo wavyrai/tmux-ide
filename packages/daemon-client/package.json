@@ -5,15 +5,25 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./bootstrap-coordinator": "./src/bootstrap-coordinator.ts",
     "./connection-supervisor": "./src/connection-supervisor.ts",
     "./resource-replica": "./src/resource-replica.ts",
     "./push-resource-session": "./src/push-resource-session.ts",
     "./generation-bound-store": "./src/generation-bound-store.ts",
     "./application-shell-session": "./src/application-shell-session.ts",
     "./direct-application-shell-transport": "./src/direct-application-shell-transport.ts",
+    "./workspace-event-supervisor": "./src/workspace-event-supervisor.ts",
     "./owner-action-client": "./src/owner-action-client.ts",
     "./workspace-pane-client": "./src/workspace-pane-client.ts",
-    "./pane-stream-client": "./src/pane-stream-client.ts"
+    "./pane-stream-client": "./src/pane-stream-client.ts",
+    "./pane-stream-clock-calibration": "./src/pane-stream-clock-calibration.ts",
+    "./workspace-catalog-v2": "./src/workspace-catalog-v2.ts",
+    "./workspace-client": "./src/workspace-client.ts",
+    "./workspace-client-types": "./src/workspace-client-types.ts",
+    "./workspace-client-conformance": "./src/workspace-client-conformance.ts",
+    "./terminal-fast-lane": "./src/terminal-fast-lane.ts",
+    "./first-latest-coordinator": "./src/first-latest-coordinator.ts",
+    "./runtime-resource-ledger": "./src/runtime-resource-ledger.ts"
   },
   "main": "src/index.ts",
   "scripts": {
@@ -22,7 +32,8 @@
     "test": "bun test src"
   },
   "dependencies": {
-    "@tmux-ide/contracts": "workspace:*"
+    "@tmux-ide/contracts": "workspace:*",
+    "@tmux-ide/core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

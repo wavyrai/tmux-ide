@@ -9,7 +9,7 @@ import {
   APPLICATION_SHELL_AGENT_TERMINAL_ACTION_IDS,
   paneFrameModelsFromApplicationShellAgents,
   paneFrameTerminalsFromApplicationShellInventory,
-} from "./model.js";
+} from "@tmux-ide/presentation/pane-frame";
 
 type ConnectionState = ApplicationShellProjectionV1["statusStrip"]["state"];
 

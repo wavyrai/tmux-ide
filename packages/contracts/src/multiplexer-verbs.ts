@@ -419,6 +419,8 @@ export function multiplexerVerbAvailability(
  */
 export const MultiplexerVerbInvocationSchemaZ = z
   .object({
+    /** Renderer correlation only; daemon generation authority is host-issued. */
+    operationId: z.uuid().optional(),
     verbId: MultiplexerVerbIdSchemaZ,
     intent: WorkspaceMultiplexerIntentSchemaZ,
   })

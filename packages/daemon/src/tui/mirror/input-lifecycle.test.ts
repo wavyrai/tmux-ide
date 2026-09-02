@@ -282,8 +282,6 @@ describe("input lifecycle boundary", () => {
     const calls: string[] = [];
     const executor = createTuiLifecycleExecutor({
       destroyRenderer: () => calls.push("destroy"),
-      switchClientBack: () => calls.push("switch"),
-      detachClient: () => calls.push("detach"),
     });
 
     executor.run({ kind: "destroy-renderer", source: "keyboard" });
@@ -292,29 +290,22 @@ describe("input lifecycle boundary", () => {
     expect(calls).toEqual(["destroy"]);
   });
 
-  it("executes hosted detach once and falls back to one detach on switch failure", () => {
+  it("consumes direct pane-injected hosted detach without mutating a client", () => {
     const calls: string[] = [];
     const executor = createTuiLifecycleExecutor({
       destroyRenderer: () => calls.push("destroy"),
-      switchClientBack: (callback) => {
-        calls.push("switch");
-        callback(new Error("no last client"));
-      },
-      detachClient: () => calls.push("detach"),
     });
 
     executor.run({ kind: "hosted-detach", source: "keyboard" });
     executor.run({ kind: "hosted-detach", source: "keyboard" });
 
-    expect(calls).toEqual(["switch", "detach"]);
+    expect(calls).toEqual([]);
   });
 
   it("executes hosted palette quit as destroy once", () => {
     const calls: string[] = [];
     const executor = createTuiLifecycleExecutor({
       destroyRenderer: () => calls.push("destroy"),
-      switchClientBack: () => calls.push("switch"),
-      detachClient: () => calls.push("detach"),
     });
 
     executor.run(resolveQuitLifecycleCommand({ hosted: true }, "palette"));

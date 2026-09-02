@@ -1,0 +1,29 @@
+---
+title: OpenTUI demo
+description: A reproducible tour rendered by the production tmux-ide OpenTUI components
+---
+
+![Animated tmux-ide OpenTUI tour showing Home, Terminals, and Commands](/tui-demo.svg)
+
+This is not a hand-built browser imitation. The artifact renders the production
+`ApplicationShellView`, pane surfaces, theme tokens, terminal adapter contract,
+and command palette against a deterministic in-memory tmux fixture. It cycles
+through Home, an agent-aware four-pane workspace, and Commands.
+
+That boundary follows the useful lesson from tmuxy's demo: keep the product UI
+and replace only the external tmux authority with deterministic demo data.
+tmux-ide's release client is a native terminal renderer, so the checked-in demo
+is an animated SVG capture rather than a second DOM implementation.
+
+Regenerate it from a checkout:
+
+```bash
+pnpm demo:tui
+```
+
+The command writes `docs/public/tui-demo.svg`. It requires the same Bun and
+OpenTUI development dependencies used by renderer tests; installed users do
+not need them.
+
+With reduced motion enabled, the SVG shows the Terminals frame without
+animation.

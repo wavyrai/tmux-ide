@@ -9,6 +9,7 @@ import {
   webSocketOriginFor,
 } from "./src/runtime/dev-web-host-config.ts";
 import { DevelopmentHostSessionRegistry } from "./src/runtime/dev-host-session-registry.ts";
+import { openSelectedDevelopmentProject } from "./scripts/dev-native-folder-host.ts";
 
 /**
  * Legacy direct mode needs one tightly scoped daemon `connect-src`. Gateway
@@ -52,24 +53,84 @@ function activeDevelopmentHostSession(
 }
 
 function developmentHostBootstrap(): Plugin {
+  const hostSessionPath = "/api/dev/host-session";
+  const openProjectPath = "/api/dev/open-project-directory";
   return {
     name: "tmux-ide-dev-host-bootstrap",
+    transformIndexHtml() {
+      if (process.env.VITE_TMUX_IDE_DEV_GATEWAY !== "1") return [];
+      const { token } = developmentHostSessions.mint();
+      return [
+        {
+          tag: "meta",
+          attrs: { name: "tmux-ide-dev-host-session", content: token },
+          injectTo: "head",
+        },
+      ];
+    },
     configureServer(server) {
       server.middlewares.use((request, response, next) => {
         const pageOrigin = `http://127.0.0.1:${developmentServerPort()}`;
         const pathname = request.url?.split("?", 1)[0];
-        const privilegedGatewayRequest =
-          pathname === "/__tmux_ide_host_session" || pathname?.startsWith("/api");
-        if (
-          process.env.VITE_TMUX_IDE_DEV_GATEWAY === "1" &&
-          privilegedGatewayRequest &&
-          !isExactDevelopmentPageOrigin(request.headers.origin, pageOrigin)
-        ) {
-          response.statusCode = 404;
-          response.end();
+        if (pathname === openProjectPath) {
+          const token = request.headers["x-tmux-ide-dev-host-session"];
+          const session = activeDevelopmentHostSession(
+            typeof token === "string" ? token : undefined,
+          );
+          if (
+            process.env.VITE_TMUX_IDE_DEV_GATEWAY !== "1" ||
+            request.method !== "POST" ||
+            !isExactDevelopmentPageOrigin(request.headers.origin, pageOrigin) ||
+            !session
+          ) {
+            response.statusCode = session ? 404 : 401;
+            response.setHeader("Content-Type", "application/json");
+            response.setHeader("Cache-Control", "no-store");
+            response.end(JSON.stringify({ code: "dev_host_session_invalid" }));
+            return;
+          }
+          const daemonOrigin = loopbackHttpOriginOrNull(process.env.TMUX_IDE_DEV_DAEMON_URL);
+          const ownerToken = process.env.TMUX_IDE_DEV_OWNER_TOKEN;
+          if (!daemonOrigin || !ownerToken) {
+            response.statusCode = 503;
+            response.setHeader("Content-Type", "application/json");
+            response.setHeader("Cache-Control", "no-store");
+            response.end(
+              JSON.stringify({
+                status: "error",
+                error: { code: "daemon-unavailable", reason: "The daemon is unavailable." },
+              }),
+            );
+            return;
+          }
+          void openSelectedDevelopmentProject({
+            daemonOrigin,
+            ownerToken,
+            hostClientId: session.hostClientId,
+          })
+            .then((result) => {
+              response.statusCode = 200;
+              response.setHeader("Content-Type", "application/json");
+              response.setHeader("Cache-Control", "no-store");
+              response.end(JSON.stringify(result));
+            })
+            .catch(() => {
+              response.statusCode = 200;
+              response.setHeader("Content-Type", "application/json");
+              response.setHeader("Cache-Control", "no-store");
+              response.end(
+                JSON.stringify({
+                  status: "error",
+                  error: {
+                    code: "request-failed",
+                    reason: "The native folder picker could not be opened.",
+                  },
+                }),
+              );
+            });
           return;
         }
-        if (pathname !== "/__tmux_ide_host_session") {
+        if (pathname !== hostSessionPath) {
           if (process.env.VITE_TMUX_IDE_DEV_GATEWAY === "1" && pathname?.startsWith("/api")) {
             const originalMethod = request.headers["x-tmux-ide-dev-original-method"];
             if (originalMethod !== undefined) {
@@ -78,9 +139,9 @@ function developmentHostBootstrap(): Plugin {
                 response.end();
                 return;
               }
-              // Same-origin GET fetches omit Origin in browsers. The renderer
-              // therefore tunnels a logical GET through an origin-bearing POST;
-              // restore the method only after the exact-origin check above.
+              // Logical GETs travel as POSTs so embedded browsers cannot apply
+              // a separate navigation/fetch policy. Restore the method only
+              // after the document-scoped host capability has authenticated it.
               request.method = "GET";
               delete request.headers["x-tmux-ide-dev-original-method"];
             }
@@ -118,7 +179,7 @@ function developmentHostBootstrap(): Plugin {
   };
 }
 
-function developmentDaemonProxy(devServerPort: number): Record<string, ProxyOptions> | undefined {
+function developmentDaemonProxy(): Record<string, ProxyOptions> | undefined {
   if (process.env.VITE_TMUX_IDE_DEV_GATEWAY !== "1") return undefined;
   const rawOrigin = process.env.TMUX_IDE_DEV_DAEMON_URL;
   const origin = loopbackHttpOriginOrNull(rawOrigin);
@@ -131,9 +192,6 @@ function developmentDaemonProxy(devServerPort: number): Record<string, ProxyOpti
   if (!ownerToken) {
     throw new Error("TMUX_IDE_DEV_OWNER_TOKEN is required in gateway mode");
   }
-  const pageOrigin = `http://127.0.0.1:${devServerPort}`;
-  const acceptsOrigin = (value: string | undefined): boolean =>
-    isExactDevelopmentPageOrigin(value, pageOrigin);
   // Keep the proxy surface explicit. In particular, this is not a catch-all
   // forwarder that turns the browser origin into arbitrary daemon authority.
   const options = (webSocket: boolean): ProxyOptions => ({
@@ -142,12 +200,11 @@ function developmentDaemonProxy(devServerPort: number): Record<string, ProxyOpti
     ws: webSocket,
     configure(proxy) {
       proxy.on("proxyReq", (request, incoming) => {
-        if (!acceptsOrigin(incoming.headers.origin)) {
-          request.destroy(new Error("cross-origin daemon gateway request refused"));
+        const hostClientId = incoming.headers["x-tmux-ide-trusted-host-client-id"];
+        if (typeof hostClientId !== "string") {
+          request.destroy(new Error("unauthenticated daemon gateway request refused"));
           return;
         }
-        const hostClientId = incoming.headers["x-tmux-ide-trusted-host-client-id"];
-        if (typeof hostClientId !== "string") return;
         request.removeHeader("X-Tmux-Ide-Dev-Host-Session");
         request.removeHeader("X-Tmux-Ide-Trusted-Host-Client-Id");
         request.setHeader("Authorization", `Bearer ${ownerToken}`);
@@ -156,7 +213,10 @@ function developmentDaemonProxy(devServerPort: number): Record<string, ProxyOpti
       proxy.on("proxyReqWs", (request, incoming) => {
         const capability = consumeDevelopmentWebSocketSession(incoming.url);
         const session = activeDevelopmentHostSession(capability?.token);
-        if (!acceptsOrigin(incoming.headers.origin) || !capability || !session) {
+        // The URL capability is minted into one document and removed before
+        // forwarding. Embedded browsers may omit Origin on loopback sockets;
+        // the unguessable, expiring capability remains the socket authority.
+        if (!capability || !session) {
           request.destroy(new Error("cross-origin daemon gateway socket refused"));
           return;
         }
@@ -209,7 +269,7 @@ export default defineConfig({
     host: "127.0.0.1",
     port: devServerPort,
     strictPort: true,
-    proxy: developmentDaemonProxy(devServerPort),
+    proxy: developmentDaemonProxy(),
     headers: {
       "Content-Security-Policy": [
         "default-src 'self'",

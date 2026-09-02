@@ -54,7 +54,7 @@ preserved preferred open height; effective focus zones; responsive minimums;
 and exact tab, action, canvas, and dock-body hit cells.
 
 `workbench-shell.tsx` only paints that projection. Its production dock now runs
-through `ui/workbench-dock/presenter.tsx`, an intrinsic-free Solid presenter
+through `@tmux-ide/presentation/workbench-dock`, an intrinsic-free Solid presenter
 whose capitalized leaves are supplied by either the OpenTUI or standard DOM
 host. `workbench-shell.ts` remains the single geometry/state projection and
 `workbench-controller.ts` remains the input policy boundary; neither host
@@ -71,7 +71,7 @@ typecheck/build lanes plus transitive import-DAG guards.
 Browser/Electron renderers can consume `@tmux-ide/daemon/workbench-dock-web`
 and its explicit `@tmux-ide/daemon/workbench-dock-web.css` style export.
 
-Pane chrome follows the same boundary. `ui/pane-frame/presenter.tsx` owns
+Pane chrome follows the same boundary. `@tmux-ide/presentation/pane-frame` owns
 semantic identity and action intents, while the OpenTUI cell host and standard
 Solid DOM host own only their native leaves. Browser/Electron consumers can use
 `@tmux-ide/daemon/pane-frame-web` with

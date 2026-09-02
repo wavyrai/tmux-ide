@@ -4,6 +4,7 @@ import {
   APPLICATION_SHELL_RESOURCE_V3_VERSION,
   ApplicationShellProjectionInputV3SchemaZ,
   COHESION_FIXTURE_V1,
+  DAEMON_WIRE_PROTOCOL_VERSION,
   DesktopApplicationShellTargetSchemaZ,
   type ApplicationShellProjectionInputV1,
   type DesktopDaemonHostDescriptor,
@@ -25,7 +26,7 @@ import {
 
 const descriptor: DesktopDaemonHostDescriptor = {
   apiBaseUrl: "http://127.0.0.1:6060",
-  protocolVersion: 1,
+  protocolVersion: DAEMON_WIRE_PROTOCOL_VERSION,
   productVersion: "2.8.0",
   instanceId: "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
   startedAt: "2026-07-21T00:00:00.000Z",

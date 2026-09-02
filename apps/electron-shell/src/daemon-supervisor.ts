@@ -10,6 +10,11 @@ import {
   type DesktopDaemonHostState,
   type DesktopDaemonSupervisorFatalReason,
 } from "@tmux-ide/contracts";
+import {
+  DaemonBootstrapCoordinator,
+  DaemonBootstrapError,
+  type DaemonBootstrapProbe,
+} from "@tmux-ide/daemon-client";
 
 import {
   canonicalDaemonClaimAllowsStartupAttempt,
@@ -491,68 +496,168 @@ export class DesktopDaemonSupervisor {
   }
 
   async #attemptStart(): Promise<StartAttemptOutcome> {
-    const initial = await runDaemonPreflight(
-      this.#options.preflight,
-      this.#options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
-    );
-    this.#daemon = initial;
-    if (this.#stopRequested) return this.#cancelledOutcome();
-    if (initial.status === "connected") {
-      this.#phase = "attached";
-      return { daemon: initial, terminal: "attached", failure: null };
-    }
-    if (
-      initial.status === "degraded" ||
-      (initial.code !== "record-missing" && initial.code !== "process-not-running")
-    ) {
-      this.#phase = "unavailable";
-      return { daemon: initial, terminal: "failed", failure: preflightFailure(initial) };
-    }
+    type Connected = Extract<DesktopDaemonHostState, { status: "connected" }>;
+    type Unready = Exclude<DesktopDaemonHostState, { status: "connected" }>;
+    const timeoutMs = this.#options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
+    let lastUnready: Unready | null = null;
+    let spawnAttempted = false;
+    let spawnedPid: number | null = null;
 
-    const spawnIsSafe = await this.#spawnIsSafe(initial.code);
-    if (this.#stopRequested) return this.#cancelledOutcome();
-    if (!spawnIsSafe) {
-      const current = await runDaemonPreflight(
+    const probe = async (): Promise<DaemonBootstrapProbe<Connected, Unready>> => {
+      const state = await runDaemonPreflight(
         this.#options.preflight,
         this.#options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
       );
-      this.#daemon = current;
-      if (this.#stopRequested) return this.#cancelledOutcome();
-      if (current.status === "connected") {
-        this.#phase = "attached";
-        return { daemon: current, terminal: "attached", failure: null };
+      this.#daemon = state;
+      if (state.status === "connected") return { status: "compatible", candidate: state };
+      lastUnready = state;
+      // Child ownership remains Electron-specific. Surface its exit through the
+      // coordinator probe rather than letting a frozen/test clock (or a very
+      // large timeout) keep polling a generation that can no longer publish.
+      if (spawnedPid !== null && this.#childExit) {
+        throw new Error("The bundled daemon exited before readiness.");
       }
-      this.#phase = "unavailable";
-      return { daemon: current, terminal: "failed", failure: preflightFailure(current) };
-    }
+      if (
+        state.status === "unavailable" &&
+        (state.code === "record-missing" || state.code === "process-not-running")
+      ) {
+        return { status: "absent-or-stale" };
+      }
+      return { status: "incompatible", reason: state };
+    };
 
-    let child: SpawnedDaemonChild;
+    const coordinator = new DaemonBootstrapCoordinator<Connected, never, Unready>({
+      probe,
+      timeoutMs,
+      now: this.#dependencies.now,
+      sleep: this.#dependencies.sleep,
+      pollMs: (poll) => Math.min(25 * 2 ** poll, MAX_BACKOFF_MS),
+      onPhaseChanged: ({ phase }) => {
+        if (phase === "spawning" || phase === "control-ready") this.#phase = "starting";
+      },
+      spawn: async () => {
+        if (this.#stopRequested) throw new Error("Desktop daemon startup was cancelled.");
+        const state = lastUnready;
+        if (
+          !state ||
+          state.status !== "unavailable" ||
+          (state.code !== "record-missing" && state.code !== "process-not-running") ||
+          !(await this.#spawnIsSafe(state.code))
+        ) {
+          // The coordinator performs one final probe after this throw, allowing
+          // a concurrent canonical winner to turn the local loss into attach.
+          throw new Error("Canonical startup authority is no longer available.");
+        }
+        if (this.#stopRequested) throw new Error("Desktop daemon startup was cancelled.");
+        spawnAttempted = true;
+        const child = this.#dependencies.spawnChild(
+          this.#options.childEntryPath,
+          this.#options.productVersion,
+        );
+        this.#adoptSpawnedChild(child);
+        if (!Number.isInteger(child.pid) || (child.pid ?? 0) < 1) {
+          await this.#stopSpawnedChild();
+          throw new Error("The bundled daemon process did not publish a process ID.");
+        }
+        spawnedPid = child.pid!;
+      },
+    });
+
     try {
-      child = this.#dependencies.spawnChild(
-        this.#options.childEntryPath,
-        this.#options.productVersion,
-      );
-    } catch {
-      const failure = startupFailure("The bundled daemon process could not be started.");
-      this.#daemon = failure;
-      this.#phase = "unavailable";
-      return { daemon: failure, terminal: "failed", failure: { kind: "spawn-failed" } };
-    }
-    this.#adoptSpawnedChild(child);
-    this.#phase = "starting";
-    if (this.#stopRequested) {
-      await this.#stopSpawnedChild();
-      return this.#cancelledOutcome();
-    }
-    if (!Number.isInteger(child.pid) || (child.pid ?? 0) < 1) {
-      await this.#stopSpawnedChild();
-      const failure = startupFailure("The bundled daemon process did not publish a process ID.");
-      this.#daemon = failure;
-      this.#phase = "unavailable";
-      return { daemon: failure, terminal: "failed", failure: { kind: "spawn-failed" } };
-    }
+      const result = await coordinator.ensure();
+      if (this.#stopRequested) {
+        await this.#stopSpawnedChild();
+        return this.#cancelledOutcome();
+      }
+      const daemon = result.candidate;
+      this.#daemon = daemon;
+      if (spawnedPid === null) {
+        this.#phase = "attached";
+        return { daemon, terminal: "attached", failure: null };
+      }
 
-    return this.#waitUntilReady(child.pid!);
+      const canonical = this.#dependencies.inspectCanonical();
+      if (canonical.status !== "valid" || !canonicalMatchesDaemon(canonical.info, daemon)) {
+        await this.#stopSpawnedChild();
+        const failure = startupFailure(
+          "Canonical daemon identity changed during the desktop readiness barrier.",
+        );
+        this.#daemon = failure;
+        this.#phase = "unavailable";
+        return { daemon: failure, terminal: "failed", failure: { kind: "identity-changed" } };
+      }
+      if (canonical.info.pid !== spawnedPid) {
+        await this.#stopSpawnedChild();
+        this.#phase = "attached";
+        return { daemon, terminal: "attached", failure: null };
+      }
+      if (this.#childExit) {
+        const exit = this.#childExit;
+        const failure: DesktopDaemonHostState = {
+          status: "unavailable",
+          code: "process-not-running",
+          reason: "The bundled daemon exited during the desktop readiness barrier.",
+        };
+        this.#daemon = failure;
+        this.#phase = "unavailable";
+        return {
+          daemon: failure,
+          terminal: "failed",
+          failure: { kind: "child-exit", exitCode: exit.code, signal: exit.signal },
+        };
+      }
+      this.#ownedGeneration = {
+        pid: spawnedPid,
+        instanceId: canonical.info.instanceId,
+        startedAt: canonical.info.startedAt,
+      };
+      this.#phase = "owned";
+      return { daemon, terminal: "owned", failure: null };
+    } catch (error) {
+      if (this.#stopRequested) {
+        await this.#stopSpawnedChild();
+        return this.#cancelledOutcome();
+      }
+      if (this.#childExit) {
+        const exit = this.#childExit;
+        const state = lastUnready ?? startupFailure("The bundled daemon exited before readiness.");
+        this.#daemon = state;
+        this.#phase = "unavailable";
+        return {
+          daemon: state,
+          terminal: "failed",
+          failure: { kind: "child-exit", exitCode: exit.code, signal: exit.signal },
+        };
+      }
+      if (error instanceof DaemonBootstrapError && error.code === "incompatible" && error.reason) {
+        this.#daemon = error.reason;
+        this.#phase = "unavailable";
+        return {
+          daemon: error.reason,
+          terminal: "failed",
+          failure: preflightFailure(error.reason),
+        };
+      }
+      await this.#stopSpawnedChild();
+      if (error instanceof DaemonBootstrapError && error.code === "control-timeout") {
+        const failure = startupTimeout(timeoutMs);
+        this.#daemon = failure;
+        this.#phase = "unavailable";
+        return { daemon: failure, terminal: "failed", failure: { kind: "readiness-timeout" } };
+      }
+      const failure =
+        lastUnready && !spawnAttempted
+          ? lastUnready
+          : startupFailure("The bundled daemon process could not be started.");
+      this.#daemon = failure;
+      this.#phase = "unavailable";
+      return {
+        daemon: failure,
+        terminal: "failed",
+        failure:
+          lastUnready && !spawnAttempted ? preflightFailure(lastUnready) : { kind: "spawn-failed" },
+      };
+    }
   }
 
   /** Reset per-generation child state and wire capture/exit for a new child. */
@@ -603,102 +708,6 @@ export class DesktopDaemonSupervisor {
     if (code === "record-missing") return current.status === "missing";
     if (current.status !== "valid") return false;
     return this.#dependencies.ownerProvenDead(current);
-  }
-
-  async #waitUntilReady(childPid: number): Promise<StartAttemptOutcome> {
-    const timeoutMs = this.#options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
-    const deadline = this.#dependencies.now() + timeoutMs;
-    let backoffMs = 25;
-    while (this.#dependencies.now() < deadline) {
-      if (this.#stopRequested) {
-        await this.#stopSpawnedChild();
-        return this.#cancelledOutcome();
-      }
-      const daemon = await runDaemonPreflight(
-        this.#options.preflight,
-        this.#options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
-      );
-      if (this.#stopRequested) {
-        await this.#stopSpawnedChild();
-        return this.#cancelledOutcome();
-      }
-      if (daemon.status === "connected") {
-        const canonical = this.#dependencies.inspectCanonical();
-        if (canonical.status !== "valid" || !canonicalMatchesDaemon(canonical.info, daemon)) {
-          await this.#stopSpawnedChild();
-          const failure = startupFailure(
-            "Canonical daemon identity changed during the desktop readiness barrier.",
-          );
-          this.#daemon = failure;
-          this.#phase = "unavailable";
-          return { daemon: failure, terminal: "failed", failure: { kind: "identity-changed" } };
-        }
-        this.#daemon = daemon;
-        if (canonical.info.pid === childPid) {
-          if (this.#childExit) {
-            const exit = this.#childExit;
-            const failure: DesktopDaemonHostState = {
-              status: "unavailable",
-              code: "process-not-running",
-              reason: "The bundled daemon exited during the desktop readiness barrier.",
-            };
-            this.#daemon = failure;
-            this.#phase = "unavailable";
-            return {
-              daemon: failure,
-              terminal: "failed",
-              failure: { kind: "child-exit", exitCode: exit.code, signal: exit.signal },
-            };
-          }
-          this.#ownedGeneration = {
-            pid: childPid,
-            instanceId: canonical.info.instanceId,
-            startedAt: canonical.info.startedAt,
-          };
-          this.#phase = "owned";
-        } else {
-          await this.#stopSpawnedChild();
-          this.#phase = "attached";
-        }
-        return {
-          daemon,
-          terminal: this.#phase === "owned" ? "owned" : "attached",
-          failure: null,
-        };
-      }
-      if (daemon.status === "degraded") {
-        await this.#stopSpawnedChild();
-        this.#daemon = daemon;
-        this.#phase = "unavailable";
-        return { daemon, terminal: "failed", failure: preflightFailure(daemon) };
-      }
-      if (this.#childExit) {
-        const exit = this.#childExit;
-        const current = await runDaemonPreflight(
-          this.#options.preflight,
-          this.#options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
-        );
-        this.#daemon = current;
-        if (current.status === "connected") {
-          this.#phase = "attached";
-          return { daemon: current, terminal: "attached", failure: null };
-        }
-        this.#phase = "unavailable";
-        return {
-          daemon: current,
-          terminal: "failed",
-          failure: { kind: "child-exit", exitCode: exit.code, signal: exit.signal },
-        };
-      }
-      await this.#dependencies.sleep(backoffMs);
-      backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
-    }
-
-    await this.#stopSpawnedChild();
-    const failure = startupTimeout(timeoutMs);
-    this.#daemon = failure;
-    this.#phase = "unavailable";
-    return { daemon: failure, terminal: "failed", failure: { kind: "readiness-timeout" } };
   }
 
   async #stopOwned(): Promise<void> {

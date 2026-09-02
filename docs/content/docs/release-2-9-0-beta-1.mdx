@@ -1,0 +1,52 @@
+---
+title: OpenTUI 2.9 beta.3
+description: The current 2.9.0-beta.3 visual tmux release with agent-aware chrome
+---
+
+The current package is `2.9.0-beta.3`. It ships a polished OpenTUI client around ordinary tmux
+sessions. tmux owns PTYs, processes, topology, persistence, and SSH; the daemon
+publishes semantic workspace state and pane streams; OpenTUI owns presentation
+and input.
+
+## Install
+
+```bash
+npm install -g tmux-ide@beta
+tmux-ide app
+```
+
+Pass a session name to bypass Home:
+
+```bash
+tmux-ide app work
+```
+
+## Included
+
+- Home, Terminals, and contextual Commands.
+- Configless discovery and creation of ordinary tmux sessions.
+- Agent state in the sidebar, window tabs, and pane chrome.
+- Agent-row navigation to the correct pane.
+- Mouse and keyboard pane/window selection and control.
+- Pane splitting, resizing, renaming, creation, and confirmed closing.
+- Memorable names for newly created panes and windows.
+- Indexed and truecolor terminal cells.
+- Retained content through quiet panes, resize, theme changes, daemon
+  replacement, and viewer reattachment.
+- A downloadable, checksummed runtime for macOS and Linux on arm64 and x64.
+- Detachable app hosting with `tmux-ide app --detachable`.
+- Optional workspace-defined Files, Diff, Missions, split, and tab views.
+- Rich Markdown, raster image, and structured card rendering in panes.
+
+## Deliberately bounded
+
+`tmux-ide web` fails with an explicit message instead of starting an unsupported
+web client. The native desktop client is still under development. Mission
+profiles and the Missions panel exist, but public CLI mission dispatch from
+workspace defaults is not wired in this beta.
+
+## Reporting issues
+
+Open a [GitHub issue](https://github.com/wavyrai/tmux-ide/issues) with your OS,
+architecture, tmux version, `tmux-ide doctor --json`, and the shortest
+reproduction sequence.

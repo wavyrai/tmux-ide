@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "groups": {
+    "grouped-pty": { "maximumUses": 11, "targetUses": 0 },
+    "direct-tmux": { "maximumUses": 51, "targetUses": 0 },
+    "v1-catalog": { "maximumUses": 13, "targetUses": 0 },
+    "v1-default-authority": { "maximumUses": 0, "targetUses": 0 },
+    "v1-standalone-authority": { "maximumUses": 4, "targetUses": 0 }
+  }
+}

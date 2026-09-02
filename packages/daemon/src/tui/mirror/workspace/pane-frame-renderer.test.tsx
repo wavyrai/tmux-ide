@@ -20,7 +20,7 @@ import {
 import {
   paneFrameModelsFromApplicationShellAgents,
   paneFrameTerminalsFromApplicationShellInventory,
-} from "../../../ui/pane-frame/model.ts";
+} from "@tmux-ide/presentation/pane-frame";
 import type { PaneFrameInput } from "./pane-frame.ts";
 import { paneFrameHitTest, projectPaneFrame, projectSemanticPaneFrame } from "./pane-frame.ts";
 import { PaneFrame } from "./pane-frame.tsx";

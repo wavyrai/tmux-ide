@@ -8,7 +8,7 @@ import type {
   WorkbenchDockHostActionId,
   WorkbenchDockHostMode,
   WorkbenchDockHostTabId,
-} from "./presenter.tsx";
+} from "@tmux-ide/presentation/workbench-dock";
 
 export function createWorkbenchDockHostFixture(
   overrides: Partial<WorkbenchShellInput> = {},

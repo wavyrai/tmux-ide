@@ -119,15 +119,20 @@ export interface ApplicationShellSessionFacts {
   readonly panes: readonly ApplicationShellPaneFacts[];
 }
 
-export interface LegacyApplicationShellPaneFacts extends ApplicationShellPanePresentationFacts {
+/**
+ * @deprecated Compatibility input for the standalone `command-center` V1
+ * endpoint. The embedded daemon uses `ApplicationShellSessionFacts` instead.
+ */
+export interface DeprecatedStandaloneApplicationShellPaneFacts extends ApplicationShellPanePresentationFacts {
   /** Legacy live identity. It is intentionally excluded from the V1 projection. */
   readonly id: string;
 }
 
-export interface LegacyApplicationShellSessionFacts {
+/** @deprecated See `DeprecatedStandaloneApplicationShellPaneFacts`. */
+export interface DeprecatedStandaloneApplicationShellSessionFacts {
   readonly name: string;
   readonly dir: string;
-  readonly panes: readonly LegacyApplicationShellPaneFacts[];
+  readonly panes: readonly DeprecatedStandaloneApplicationShellPaneFacts[];
 }
 
 /**
@@ -327,9 +332,9 @@ export function paneIdentities(session: ApplicationShellSessionFacts): readonly 
   });
 }
 
-function legacyFallbackPaneId(pane: LegacyApplicationShellPaneFacts): string {
-  // Preserve the original V1 identity projection. Runtime pane ids were not
-  // part of this legacy fallback and still never cross the resource wire.
+function deprecatedStandaloneFallbackPaneId(
+  pane: DeprecatedStandaloneApplicationShellPaneFacts,
+): string {
   return semanticId(
     "pane.discovered",
     JSON.stringify({
@@ -343,8 +348,8 @@ function legacyFallbackPaneId(pane: LegacyApplicationShellPaneFacts): string {
   );
 }
 
-function legacyPaneIdentities(
-  panes: readonly LegacyApplicationShellPaneFacts[],
+function deprecatedStandalonePaneIdentities(
+  panes: readonly DeprecatedStandaloneApplicationShellPaneFacts[],
 ): readonly string[] {
   const validCounts = new Map<string, number>();
   for (const pane of panes) {
@@ -363,7 +368,7 @@ function legacyPaneIdentities(
       claimed.add(stamped);
       return stamped;
     }
-    const base = legacyFallbackPaneId(pane);
+    const base = deprecatedStandaloneFallbackPaneId(pane);
     let candidate = base;
     let suffix = 1;
     while (claimed.has(candidate)) candidate = `${base}.${suffix++}`;
@@ -384,6 +389,39 @@ export function harnessForPane(
   return "custom";
 }
 
+const GENERIC_PANE_LABELS = new Set(["shell", "terminal", "tmux"]);
+
+function isGenericPaneLabel(value: string | null | undefined): boolean {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  return normalized.length === 0 || GENERIC_PANE_LABELS.has(normalized);
+}
+
+/**
+ * A promoted configless pane can be stamped as `Terminal` before the native
+ * inventory's process-tree pass resolves a wrapped/version-shaped agent
+ * executable. Once that stronger identity exists, do not keep publishing the
+ * provisional generic label into the sidebar and pane chrome.
+ */
+function resolvedAgentLabel(
+  pane: ApplicationShellPanePresentationFacts,
+  presentation: ResolvedAgentPresentation,
+  index: number,
+): string {
+  if (presentation.displayName !== undefined) {
+    return label(presentation.displayName, `Agent ${index + 1}`);
+  }
+  if (!isGenericPaneLabel(pane.name)) return label(pane.name, `Agent ${index + 1}`);
+
+  const harness = harnessForPane(pane);
+  if (harness === "codex") return "Codex";
+  if (harness === "claude-code") return "Claude Code";
+
+  if (!isGenericPaneLabel(pane.title) && !isHostNameTitle(pane.title, hostname())) {
+    return label(pane.title, `Agent ${index + 1}`);
+  }
+  return `Agent ${index + 1}`;
+}
+
 const AGENT_STATE_STAMP = /^(?:working|blocked|done|idle):\d+$/u;
 
 export function isAgentPane(pane: ApplicationShellPanePresentationFacts): boolean {
@@ -394,6 +432,13 @@ export function isAgentPane(pane: ApplicationShellPanePresentationFacts): boolea
   if (pane.agentStateRaw != null && AGENT_STATE_STAMP.test(pane.agentStateRaw.trim())) {
     return true;
   }
+  // The native inventory probe has already resolved wrappers and version-shaped
+  // executables through the pane's process tree. Treat that resolved manifest
+  // kind as authoritative agent identity; `pane_current_command` for Claude can
+  // be only its version (for example `2.1.247`), so re-checking the shallow tmux
+  // command here would incorrectly hide a live agent from the sidebar.
+  const detectedKind = pane.agentKind?.trim().toLowerCase();
+  if (detectedKind && detectedKind !== "shell") return true;
   const metadata = `${pane.currentCommand} ${pane.type ?? ""}`.toLowerCase();
   return (
     metadata.includes("codex") ||
@@ -574,8 +619,9 @@ function projectApplicationShellResourceV1Core(
       {
         id: semanticId("agent", paneId),
         // A fresh authority stamp's sanitized display name outranks the raw pane
-        // title; both pass through label()'s control-strip/clamp before the wire.
-        name: label(presentation.displayName ?? pane.name ?? pane.title, `Agent ${index + 1}`),
+        // title. Process-tree identity also replaces provisional promotion
+        // labels such as `Terminal` with the canonical harness name.
+        name: resolvedAgentLabel(pane, presentation, index),
         harness: harnessForPane(pane),
         activity: presentation.activity,
         paneId,
@@ -673,10 +719,13 @@ export function projectApplicationShellResource(
   const focusedPaneId = core.focus.appFocusedPaneId;
   const terminalResources = session.panes.map((pane, index) => {
     const identity = identities[index]!;
+    const agent = core.workspace.sidebar.agents.find(
+      ({ paneId }) => paneId === identity.resourceId,
+    );
     return {
       id: identity.resourceId,
       title: label(
-        pane.name ?? (isHostNameTitle(pane.title, hostname()) ? null : pane.title),
+        agent?.name ?? pane.name ?? (isHostNameTitle(pane.title, hostname()) ? null : pane.title),
         `Terminal ${index + 1}`,
       ),
       kind: isAgentPane(pane) ? ("agent" as const) : ("terminal" as const),
@@ -842,18 +891,18 @@ function missionStatusForDock(
 }
 
 /**
- * Preserve the pre-inventory V1 resource for standalone command-center
- * callers. This adapter deliberately cannot produce a V2 inventory: its
- * discovery input was not collected by the pinned attachment runtime and
- * therefore carries no attachability authority.
+ * @deprecated Explicit V1 compatibility for the public standalone
+ * `tmux-ide command-center` process. Remove after the advertised sunset once
+ * telemetry confirms no callers remain. It must never become the unversioned
+ * default or feed V2/V3 resources.
  */
-export function projectLegacyApplicationShellResourceV1(
-  session: LegacyApplicationShellSessionFacts,
+export function projectDeprecatedStandaloneApplicationShellResourceV1(
+  session: DeprecatedStandaloneApplicationShellSessionFacts,
 ): ApplicationShellProjectionInputV1 {
   return deepFreeze(
     projectApplicationShellResourceV1Core(
       session,
-      legacyPaneIdentities(session.panes),
+      deprecatedStandalonePaneIdentities(session.panes),
       Math.floor(Date.now() / 1000),
     ),
   );

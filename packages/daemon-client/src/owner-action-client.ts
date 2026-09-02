@@ -11,8 +11,19 @@ export interface OwnerActionClientOptions<Name extends ActionName> {
   readonly name: Name;
   readonly input: ActionInput<Name>;
   readonly operationId?: string | null;
+  /** Stable renderer principal for generation-scoped multi-client handoffs. */
+  readonly hostClientId?: string | null;
   readonly fetch?: typeof fetch;
   readonly timeoutMs?: number;
+  /**
+   * Total transport attempts for an idempotent operation. Every attempt keeps
+   * the exact same operation id; actions without one are always single-shot.
+   */
+  readonly maximumAttempts?: number;
+  /** Bounded delay after an ambiguous attempt, indexed by completed attempt. */
+  readonly retryDelayMs?: (completedAttempts: number) => number;
+  /** Test seam for retry delay without real wall-clock sleeps. */
+  readonly wait?: (delayMs: number) => Promise<void>;
 }
 
 export class DaemonActionInvocationError extends Error {
@@ -43,7 +54,14 @@ export async function dispatchOwnerAction<Name extends ActionName>(
   const contract = ActionContractsZ[options.name];
   const input = contract.input.parse(options.input);
   const operationId = options.operationId ?? null;
-  const maximumAttempts = operationId ? 2 : 1;
+  const requestedAttempts = options.maximumAttempts ?? 2;
+  const maximumAttempts = operationId
+    ? Number.isSafeInteger(requestedAttempts) && requestedAttempts > 0
+      ? requestedAttempts
+      : 1
+    : 1;
+  const wait =
+    options.wait ?? ((delayMs: number) => new Promise((resolve) => setTimeout(resolve, delayMs)));
 
   for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
     let body: unknown;
@@ -56,6 +74,7 @@ export async function dispatchOwnerAction<Name extends ActionName>(
             "Content-Type": "application/json",
             Authorization: `Bearer ${options.ownerToken}`,
             ...(operationId ? { "X-Tmux-Ide-Operation-Id": operationId } : {}),
+            ...(options.hostClientId ? { "X-Tmux-Ide-Host-Client-Id": options.hostClientId } : {}),
           },
           body: JSON.stringify(input),
           signal: AbortSignal.timeout(options.timeoutMs ?? 2_000),
@@ -63,6 +82,10 @@ export async function dispatchOwnerAction<Name extends ActionName>(
       );
       body = await response.json();
     } catch {
+      if (attempt + 1 < maximumAttempts) {
+        const delayMs = Math.max(0, options.retryDelayMs?.(attempt + 1) ?? 0);
+        if (delayMs > 0) await wait(delayMs);
+      }
       continue;
     }
 
@@ -80,6 +103,10 @@ export async function dispatchOwnerAction<Name extends ActionName>(
     if (isRecord(body) && body.ok === true && "result" in body) {
       const parsed = contract.result.safeParse(body.result);
       if (parsed.success) return parsed.data as ActionResult<Name>;
+    }
+    if (attempt + 1 < maximumAttempts) {
+      const delayMs = Math.max(0, options.retryDelayMs?.(attempt + 1) ?? 0);
+      if (delayMs > 0) await wait(delayMs);
     }
   }
   return null;

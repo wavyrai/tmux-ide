@@ -5,11 +5,11 @@ import { createSignal, onCleanup } from "solid-js";
 import { describe, expect, it } from "bun:test";
 import { buildHostedPanelViews } from "./panel-host.ts";
 import {
+  ContextStatusBar,
   ShellCompositeLeafChrome,
   ShellMiniSidebar,
-  ShellStatusStrip,
   ShellTabBar,
-} from "./shell-chrome.tsx";
+} from "./shell-chrome-view.tsx";
 import {
   shellChromeLayout,
   shellNavigationPresentation,
@@ -90,8 +90,8 @@ function expectRenderedTabBoundaries(frame: string, width: number, height: numbe
   }
 }
 
-function ShellChromeHarness(props: { width: number; height: number }) {
-  const theme = createSemanticThemeSnapshot({ mode: "dark" });
+function ShellChromeHarness(props: { width: number; height: number; mode?: ResolvedThemeMode }) {
+  const theme = createSemanticThemeSnapshot({ mode: props.mode ?? "dark" });
   const [active, setActive] = createSignal("terminal");
   const [hovered, setHovered] = createSignal<number | null>(null);
   const [message, setMessage] = createSignal("ready");
@@ -212,13 +212,17 @@ function ShellChromeHarness(props: { width: number; height: number }) {
               focused
             />
           </Surface>
-          <ShellStatusStrip
+          <ContextStatusBar
             theme={theme}
             layout={layout()}
             project="tmux-ide"
+            session="web"
+            pane="Claude Code"
             mode={active()}
             notification={message()}
+            connectionState="connected"
             help="F5 palette · arrows move · ^q quit"
+            onHelp={() => setMessage("palette")}
           />
         </box>
       </box>
@@ -226,15 +230,48 @@ function ShellChromeHarness(props: { width: number; height: number }) {
   );
 }
 
-async function renderShell(width: number, height: number) {
-  setup = await renderForTest(() => <ShellChromeHarness width={width} height={height} />, {
-    width,
-    height,
-  });
+async function renderShell(width: number, height: number, mode: ResolvedThemeMode = "dark") {
+  setup = await renderForTest(
+    () => <ShellChromeHarness width={width} height={height} mode={mode} />,
+    {
+      width,
+      height,
+    },
+  );
   await setup.renderOnce();
   return {
     frame: () => setup!.captureCharFrame(),
   };
+}
+
+async function renderContextStatus(input: {
+  notification: string;
+  transient?: string;
+  connectionState?: "connected" | "reconnecting" | "disconnected" | "recovering";
+}) {
+  const width = 120;
+  const theme = createSemanticThemeSnapshot({ mode: "dark" });
+  const baseLayout = shellChromeLayout(width, 40, 28);
+  const layout = { ...baseLayout, status: { ...baseLayout.status, width } };
+  setup = await renderForTest(
+    () => (
+      <ContextStatusBar
+        theme={theme}
+        layout={layout}
+        project="tmux-ide"
+        session="calm-lynx"
+        pane="Claude Code"
+        mode="Terminals"
+        notification={input.notification}
+        transient={input.transient}
+        connectionState={input.connectionState ?? "connected"}
+        help="F5 Commands"
+      />
+    ),
+    { width, height: 1 },
+  );
+  await setup.renderOnce();
+  return setup.captureCharFrame();
 }
 
 describe("ShellChrome OpenTUI renderer", () => {
@@ -254,6 +291,27 @@ describe("ShellChrome OpenTUI renderer", () => {
     expectRenderedTabBoundaries(frame, width, height);
   });
 
+  it.each([
+    ["dark", 80, 24],
+    ["dark", 120, 40],
+    ["dark", 200, 60],
+    ["light", 80, 24],
+    ["light", 120, 40],
+    ["light", 200, 60],
+  ] as const)("proves semantic %s chrome at %sx%s", async (mode, width, height) => {
+    const harness = await renderShell(width, height, mode);
+    const theme = createSemanticThemeSnapshot({ mode });
+    const spans = setup!.captureSpans().lines.flatMap((line) => line.spans);
+    expectFrameBounds(harness.frame(), width, height);
+    expect(stableFrame(harness.frame())).toContain("workspace");
+    expect(spans.some((span) => colorKey(span.bg) === colorKey(theme.roles.surfaces.header))).toBe(
+      true,
+    );
+    expect(spans.some((span) => colorKey(span.bg) === colorKey(theme.roles.surfaces.panel))).toBe(
+      true,
+    );
+  });
+
   it("drives keyboard navigation through the shell harness", async () => {
     const harness = await renderShell(120, 40);
     setup!.mockInput.pressArrow("right");
@@ -262,6 +320,59 @@ describe("ShellChrome OpenTUI renderer", () => {
     await setup!.mockInput.pressKey("f5");
     await setup!.renderOnce();
     expect(stableFrame(harness.frame())).toContain("palette");
+  });
+
+  it.each([
+    [80, 24, ["web", "F5"], ["tmux-ide", "terminal", "Commands", "Claude Code"]],
+    [120, 40, ["web", "terminal", "F5 Commands"], ["tmux-ide", "Claude Code"]],
+    [200, 60, ["tmux-ide", "web", "terminal", "Claude Code", "F5 Commands"], []],
+  ] as const)(
+    "collapses contextual footer segments deliberately at %sx%s",
+    async (width, height, visible, hidden) => {
+      const harness = await renderShell(width, height);
+      const footer = frameLines(harness.frame())[height - 1]!.slice(
+        shellChromeLayout(width, height, 28).sidebar.width,
+      );
+      for (const label of visible) expect(footer).toContain(label);
+      for (const label of hidden) expect(footer).not.toContain(label);
+    },
+  );
+
+  it("routes the Commands key hint through the same action as F5", async () => {
+    const harness = await renderShell(120, 40);
+    const footer = frameLines(harness.frame())[39]!;
+    const commandX = footer.indexOf("F5 Commands") + 2;
+    expect(commandX).toBeGreaterThan(1);
+    await setup!.mockMouse.click(commandX, 39, MouseButtons.LEFT);
+    await setup!.renderOnce();
+    expect(stableFrame(harness.frame())).toContain("palette");
+
+    setup!.mockInput.pressArrow("right");
+    await setup!.renderOnce();
+    expect(stableFrame(harness.frame())).toContain("selected files");
+    await setup!.mockInput.pressKey("f5");
+    await setup!.renderOnce();
+    expect(stableFrame(harness.frame())).toContain("palette");
+  });
+
+  it("renders transient confirmation and attention as distinct contextual modes", async () => {
+    const confirmation = await renderContextStatus({
+      notification: "agent needs attention",
+      transient: "split pane right",
+    });
+    expect(confirmation).toContain("✓ split pane right");
+    expect(confirmation).not.toContain("agent needs attention");
+    setup!.renderer.destroy();
+
+    const attention = await renderContextStatus({ notification: "agent needs attention" });
+    expect(attention).toContain("! agent needs attention");
+    setup!.renderer.destroy();
+
+    const reconnecting = await renderContextStatus({
+      notification: "ready",
+      connectionState: "reconnecting",
+    });
+    expect(reconnecting).toContain("Reconnecting");
   });
 
   it("routes mouse hover/click from the same projected tab spans", async () => {
