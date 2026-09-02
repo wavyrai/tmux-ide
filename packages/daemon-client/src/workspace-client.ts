@@ -777,11 +777,22 @@ export function createWorkspaceClient<
                 publishTerminalUpdate(interest, nextRuntime, update, metadata);
                 return;
               }
-              let encodedBytes = MAX_PREPARED_TERMINAL_BYTES + 1;
-              try {
-                encodedBytes = UTF8_ENCODER.encode(JSON.stringify({ update, metadata })).byteLength;
-              } catch {
-                // An unencodable canonical update cannot be admitted safely.
+              // A seed is already retained by the candidate runtime as its
+              // canonical baseline. Buffering it here adds only one reference,
+              // so charging its fully expanded JSON representation can reject
+              // an otherwise bounded multi-pane bootstrap before activation.
+              // Patches and tombstones are additional retained payloads and
+              // continue to count against the byte budget.
+              let encodedBytes = 0;
+              if (update.type !== "terminal.seed") {
+                encodedBytes = MAX_PREPARED_TERMINAL_BYTES + 1;
+                try {
+                  encodedBytes = UTF8_ENCODER.encode(
+                    JSON.stringify({ update, metadata }),
+                  ).byteLength;
+                } catch {
+                  // An unencodable canonical update cannot be admitted safely.
+                }
               }
               if (
                 prepared.bufferedUpdateCount + 1 > MAX_PREPARED_TERMINAL_UPDATES ||

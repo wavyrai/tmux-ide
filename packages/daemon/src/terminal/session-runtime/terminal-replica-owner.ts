@@ -298,7 +298,10 @@ export class SessionRuntimeTerminalReplicaOwner {
               rows: lease.pane.height,
               chunks: reseed.chunks,
               trace: reseed.trace,
-              cursor: { x: event.x, y: event.y },
+              // tmux can report x === cols while its terminal is in the
+              // right-margin wrap-pending state. The canonical replica stores
+              // a cell position, so project that state onto the final column.
+              cursor: { x: Math.min(event.x, reseed.nativeCols - 1), y: event.y },
               bootstrap: "painted-capture",
               validateBeforeCommit: () => this.#leaseIsCurrent(lease, reseed.subscriptionEpoch),
               onInvalidated: () => this.#retryReseedOrFault("terminal reseed layout lease crossed"),
@@ -399,17 +402,13 @@ export class SessionRuntimeTerminalReplicaOwner {
     const lease = reseed.layoutLease;
     if (!lease || !this.#leaseIsCurrent(lease, reseed.subscriptionEpoch)) return null;
     if (lease.pane.width !== reseed.nativeCols) return null;
-    const rowsExact =
-      lease.paneBorderStatus === "off"
-        ? lease.pane.height === reseed.nativeRows
-        : lease.pane.height === reseed.nativeRows + 1;
-    if (!rowsExact) return null;
+    if (!nativeRowsMatchLease(lease, reseed.nativeRows)) return null;
     if (
       !Number.isSafeInteger(cursorX) ||
       !Number.isSafeInteger(cursorY) ||
       cursorX < 0 ||
       cursorY < 0 ||
-      cursorX >= reseed.nativeCols ||
+      cursorX > reseed.nativeCols ||
       cursorY >= reseed.nativeRows
     )
       return null;
@@ -477,13 +476,31 @@ function boundedPositive(value: number): boolean {
   return Number.isSafeInteger(value) && value > 0 && value <= 65_535;
 }
 
+function nativeRowsMatchLease(lease: LayoutLease, nativeRows: number): boolean {
+  if (lease.paneBorderStatus === "off") return lease.pane.height === nativeRows;
+
+  // pane-border-status consumes a terminal row only on the pane touching the
+  // configured outer window edge. Interior separators are drawn inside the
+  // layout and tmux reports their capture at the full visible pane height.
+  const touchesStatusEdge =
+    lease.paneBorderStatus === "top"
+      ? lease.pane.top === 0
+      : lease.pane.top + lease.pane.height === lease.windowRows;
+  return lease.pane.height === nativeRows + (touchesStatusEdge ? 1 : 0);
+}
+
 function layoutLeaseEqual(
   left: LayoutLease | Omit<LayoutLease, "epoch">,
   right: LayoutLease | Omit<LayoutLease, "epoch">,
 ): boolean {
+  // Focus is ordinary mutable tmux state, not terminal geometry. A second
+  // attached client can switch the current window or active pane while an
+  // atomic capture is in flight without changing the bytes' dimensions or
+  // identity. Treating those flags as part of the capture lease made that
+  // harmless navigation invalidate bootstrap, eventually faulting the whole
+  // pane stream after the single reseed retry.
   return (
     left.semanticWindowId === right.semanticWindowId &&
-    left.currentWindow === right.currentWindow &&
     left.zoomed === right.zoomed &&
     left.windowCols === right.windowCols &&
     left.windowRows === right.windowRows &&
@@ -492,7 +509,6 @@ function layoutLeaseEqual(
     left.pane.left === right.pane.left &&
     left.pane.top === right.pane.top &&
     left.pane.width === right.pane.width &&
-    left.pane.height === right.pane.height &&
-    left.pane.active === right.pane.active
+    left.pane.height === right.pane.height
   );
 }

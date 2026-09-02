@@ -298,6 +298,32 @@ class FakeRuntime implements WorkspaceClientRuntimePort<string, string> {
   }
 }
 
+class EagerSeedRuntime extends FakeRuntime {
+  constructor(
+    generation: string,
+    private readonly snapshot: string,
+  ) {
+    super(generation);
+  }
+
+  override async subscribeTerminal(
+    address: TerminalReplicaAddress,
+  ): Promise<FakeTerminalSubscription> {
+    const subscription = new FakeTerminalSubscription(this.generation);
+    const onUpdate = subscription.onUpdate.bind(subscription);
+    subscription.onUpdate = (listener) => {
+      const unsubscribe = onUpdate(listener);
+      listener({
+        ...terminalSeedFor(address.semanticPaneId, this.generation),
+        snapshot: this.snapshot,
+      });
+      return unsubscribe;
+    };
+    this.subscriptions.set(address.semanticPaneId, subscription);
+    return subscription;
+  }
+}
+
 class ClosableFakeRuntime extends FakeRuntime {
   private readonly closedState = deferred<void>();
   override readonly closed = this.closedState.promise;
@@ -878,6 +904,36 @@ describe("WorkspaceClient", () => {
     expect(
       [...runtime.subscriptions.values()].every((subscription) => subscription.closeCount === 1),
     ).toBe(true);
+  });
+
+  it("does not charge an eager canonical seed against the candidate update buffer", async () => {
+    const shell = shellBroker({ alpha: shellResource("alpha", ["pane.alpha"]) });
+    const runtime = new EagerSeedRuntime(ALPHA_DAEMON.instanceId, "x".repeat(8 * 1024 * 1024 + 1));
+    const publications: TerminalReplicaUpdate<string, string>[] = [];
+    const activations: FakeRuntime[] = [];
+    const client = createWorkspaceClient<string, string>({
+      target: target("alpha"),
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async (_current, _inventory, _signal, prepare) => {
+          await prepare(runtime);
+          return runtime;
+        },
+        didActivateRuntime: (nextRuntime) => activations.push(nextRuntime as FakeRuntime),
+        actions,
+      },
+    });
+    client.subscribeTerminal({ workspaceName: "alpha", semanticPaneId: "pane.alpha" }, (update) =>
+      publications.push(update),
+    );
+
+    shell.connections[0]!.handlers.onVerifiedOpen();
+    await settle();
+
+    expect(activations).toEqual([runtime]);
+    expect(publications).toHaveLength(1);
+    expect(publications[0]?.type).toBe("terminal.seed");
+    await client.dispose();
   });
 
   it("does not reconnect when a shell refresh leaves runtime inventory unchanged", async () => {
