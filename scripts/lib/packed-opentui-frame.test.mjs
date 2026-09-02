@@ -22,6 +22,19 @@ test("accepts the session-scoped component status bar", () => {
   );
 });
 
+test("accepts the narrow Linux active-tab marker with a live session footer", () => {
+  assert.equal(
+    frameShowsTerminalFocus(
+      "  ⌂  ●❯                              live\n journey-beta  Live tmux session discovered  F5",
+    ),
+    true,
+  );
+});
+
 test("rejects non-terminal focus", () => {
   assert.equal(frameShowsTerminalFocus("Home · primary navigation · ready"), false);
+});
+
+test("rejects a live session footer without terminal focus evidence", () => {
+  assert.equal(frameShowsTerminalFocus("journey-beta  Live tmux session discovered"), false);
 });
