@@ -44,9 +44,17 @@ if (process.argv[2] === "decode") {
   let timerDelayMs = 0;
   let heartbeatActive = true;
   let heartbeatAt = performance.now();
-  let sliceAt = heartbeatAt;
+  let sliceCpu = process.cpuUsage();
   let maxSliceMs = 0;
   let maxSliceStage = "start";
+  const recordSlice = (stage: string): void => {
+    const usage = process.cpuUsage(sliceCpu);
+    const elapsed = (usage.user + usage.system) / 1_000;
+    if (elapsed > maxSliceMs) {
+      maxSliceMs = elapsed;
+      maxSliceStage = stage;
+    }
+  };
   const heartbeat = (): void => {
     const now = performance.now();
     timerDelayMs = Math.max(timerDelayMs, now - heartbeatAt);
@@ -56,14 +64,9 @@ if (process.argv[2] === "decode") {
   setImmediate(heartbeat);
   for (const chunk of chunks) {
     assembler.write(chunk);
-    const assembledAt = performance.now();
-    const assembledElapsed = assembledAt - sliceAt;
-    if (assembledElapsed > maxSliceMs) {
-      maxSliceMs = assembledElapsed;
-      maxSliceStage = "assembler-chunk";
-    }
+    recordSlice("assembler-chunk");
     await new Promise<void>((resolve) => setImmediate(resolve));
-    sliceAt = performance.now();
+    sliceCpu = process.cpuUsage();
   }
   const assembledBytes = assembler.complete();
   const verified = await decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
@@ -73,14 +76,9 @@ if (process.argv[2] === "decode") {
     {
       grantReducerAdoption: true,
       yieldControl: async () => {
-        const now = performance.now();
-        const elapsed = now - sliceAt;
-        if (elapsed > maxSliceMs) {
-          maxSliceMs = elapsed;
-          maxSliceStage = new Error().stack?.split("\n")[2]?.trim() ?? "unknown";
-        }
+        recordSlice(new Error().stack?.split("\n")[2]?.trim() ?? "unknown");
         await new Promise<void>((resolve) => setImmediate(resolve));
-        sliceAt = performance.now();
+        sliceCpu = process.cpuUsage();
       },
     },
   );
@@ -113,14 +111,9 @@ if (process.argv[2] === "decode") {
       "0000000000000000",
       {
         yieldControl: async () => {
-          const now = performance.now();
-          const elapsed = now - sliceAt;
-          if (elapsed > maxSliceMs) {
-            maxSliceMs = elapsed;
-            maxSliceStage = "dense-json";
-          }
+          recordSlice("dense-json");
           await new Promise<void>((resolve) => setImmediate(resolve));
-          sliceAt = performance.now();
+          sliceCpu = process.cpuUsage();
         },
       },
     );
@@ -128,12 +121,8 @@ if (process.argv[2] === "decode") {
     denseRejected = true;
   }
   if (!denseRejected) throw new Error("dense malformed compact representation was accepted");
+  recordSlice("final-return");
   await new Promise<void>((resolve) => setImmediate(resolve));
-  const finalSliceMs = performance.now() - sliceAt;
-  if (finalSliceMs > maxSliceMs) {
-    maxSliceMs = finalSliceMs;
-    maxSliceStage = "final-return";
-  }
   heartbeatActive = false;
   const memory = process.memoryUsage();
   process.stdout.write(

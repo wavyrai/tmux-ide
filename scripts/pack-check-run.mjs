@@ -1134,6 +1134,12 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     );
   }
   clickText(one, agentClickLabel);
+  await observe(
+    "recreated sidebar agent exact-pane navigation",
+    10_000,
+    () => activePane("journey-beta") === recreatedAgentPane,
+    one.diagnostics,
+  );
   const recreatedAgentMarker = `PACK_AGENT_RECREATED_${process.pid}`;
   typeCommand(one, recreatedAgentMarker);
   await observe(
