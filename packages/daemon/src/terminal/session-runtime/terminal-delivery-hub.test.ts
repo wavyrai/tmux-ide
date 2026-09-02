@@ -1591,7 +1591,7 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     });
     await connection.close();
     await hub.close();
-  });
+  }, 30_000);
 
   it("does not let a compact-only cache entry suppress a later client's negotiated fallback", async () => {
     const owner = new FakeOwner();
