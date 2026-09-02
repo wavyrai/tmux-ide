@@ -908,10 +908,7 @@ describe("WorkspaceClient", () => {
 
   it("does not charge an eager canonical seed against the candidate update buffer", async () => {
     const shell = shellBroker({ alpha: shellResource("alpha", ["pane.alpha"]) });
-    const runtime = new EagerSeedRuntime(
-      ALPHA_DAEMON.instanceId,
-      "x".repeat(8 * 1024 * 1024 + 1),
-    );
+    const runtime = new EagerSeedRuntime(ALPHA_DAEMON.instanceId, "x".repeat(8 * 1024 * 1024 + 1));
     const publications: TerminalReplicaUpdate<string, string>[] = [];
     const activations: FakeRuntime[] = [];
     const client = createWorkspaceClient<string, string>({
@@ -926,9 +923,8 @@ describe("WorkspaceClient", () => {
         actions,
       },
     });
-    client.subscribeTerminal(
-      { workspaceName: "alpha", semanticPaneId: "pane.alpha" },
-      (update) => publications.push(update),
+    client.subscribeTerminal({ workspaceName: "alpha", semanticPaneId: "pane.alpha" }, (update) =>
+      publications.push(update),
     );
 
     shell.connections[0]!.handlers.onVerifiedOpen();
