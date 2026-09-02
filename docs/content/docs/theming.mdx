@@ -3,14 +3,13 @@ title: Appearance
 description: Light, dark, and system appearance in the OpenTUI
 ---
 
-# Appearance
-
 The OpenTUI has one appearance authority. Home, application chrome, sidebars,
 tabs, pane headers, status bars, dialogs, and overlays all consume the same
 semantic token snapshot.
 
-Choose **light**, **dark**, or **system** from Home. A switch publishes one new
-appearance generation and repaints every app-owned surface atomically.
+Choose **light**, **dark**, or **system** from the command palette's Settings
+group. A switch publishes one new appearance generation and repaints every
+app-owned surface atomically.
 
 Terminal content is different: applications inside tmux own their ANSI colors.
 tmux-ide preserves those indexed and truecolor cells rather than recoloring

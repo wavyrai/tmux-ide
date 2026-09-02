@@ -6,12 +6,427 @@
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --font-pixel: var(--font-geist-pixel-square);
+  /* Semantic voices reference next/font variables owned by app/layout.tsx. */
+  --font-marketing: var(--font-geist-sans);
+  --font-interface: var(--font-geist-sans);
+  --font-display: var(--font-geist-sans);
+  --font-brand: var(--font-geist-pixel-square);
+
+  --color-marketing-paper: var(--marketing-paper);
+  --color-marketing-raise: var(--marketing-raise);
+  --color-marketing-panel: var(--marketing-panel);
+  --color-marketing-line: var(--marketing-line);
+  --color-terminal-stage: var(--terminal-stage);
+  --color-terminal-line: var(--terminal-line);
+
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out-fluid: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-in-quart: cubic-bezier(0.895, 0.03, 0.685, 0.22);
 }
 
-@keyframes fadeIn {
+/* Hover feedback belongs to pointer devices; this prevents sticky hover
+   states after touch interactions. */
+@custom-variant hover-only (@media (hover: hover));
+
+:root {
+  /* Optical white, neutral paper greys, and ink-black controls preserve the
+     original tmux-ide site. Product color belongs to the TUI specimen itself. */
+  --color-fd-background: #ffffff;
+  --color-fd-foreground: #171717;
+  --color-fd-muted: #f5f5f5;
+  --color-fd-muted-foreground: #737373;
+  --color-fd-card: #fafafa;
+  --color-fd-card-foreground: #171717;
+  --color-fd-border: rgb(23 23 23 / 12%);
+  --color-fd-primary: #171717;
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-ring: #525252;
+  --color-fd-accent: rgb(23 23 23 / 7%);
+  --color-fd-accent-foreground: #171717;
+  --marketing-paper: #ffffff;
+  --marketing-raise: #fafafa;
+  --marketing-panel: #f4f4f4;
+  --marketing-line: #e5e5e5;
+  --terminal-stage: #0f0f14;
+  --terminal-line: rgb(255 255 255 / 10%);
+}
+
+.dark {
+  --color-fd-background: #0d0d0d;
+  --color-fd-foreground: #f5f5f5;
+  --color-fd-muted: #171717;
+  --color-fd-muted-foreground: #a3a3a3;
+  --color-fd-card: #121212;
+  --color-fd-card-foreground: #f5f5f5;
+  --color-fd-border: rgb(245 245 245 / 13%);
+  --color-fd-primary: #f5f5f5;
+  --color-fd-primary-foreground: #0d0d0d;
+  --color-fd-ring: #a3a3a3;
+  --color-fd-accent: rgb(245 245 245 / 9%);
+  --color-fd-accent-foreground: #f5f5f5;
+  --marketing-paper: #0d0d0d;
+  --marketing-raise: #121212;
+  --marketing-panel: #171717;
+  --marketing-line: #292929;
+  --terminal-stage: #0f0f14;
+  --terminal-line: rgb(255 255 255 / 10%);
+}
+
+/* Marketing uses named voices so font loading can change in one next/font
+   owner without rewriting every band. Product depictions opt back into the
+   interface voice; tmux-ide's brand marks retain the separate pixel voice. */
+.font-marketing {
+  font-family: var(--font-marketing), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 300;
+}
+
+.font-interface {
+  font-family: var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+}
+
+.font-display {
+  font-family: var(--font-display), var(--font-marketing), ui-sans-serif, system-ui, sans-serif;
+}
+
+.font-brand {
+  font-family: var(--font-brand), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Marketing and docs share an explicit keyboard-focus contract. This remains
+   visible even when a component only defines hover styling. */
+:where([data-slot="marketing-home"], [data-slot="docs-site"])
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 3px;
+}
+
+/* A role-based type ladder keeps the landing page's hierarchy coordinated.
+   Components consume roles instead of inventing local pixel sizes, following
+   the same system-level density principle as Fluid Functionalism without
+   adding a client-side provider to this static marketing route. */
+@utility text-marketing-display {
+  font-size: clamp(3rem, 6vw, 4rem);
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  text-wrap: balance;
+}
+
+/* These role utilities deliberately avoid Tailwind's `text-*` namespace.
+   tailwind-merge otherwise mistakes a type role for a text color and drops
+   one of them when components compose their class names. */
+@utility marketing-type-title {
+  font-size: clamp(1.5rem, 3vw, 2.25rem);
+  font-weight: 300;
+  line-height: 1.1;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+@utility text-marketing-lead {
+  font-size: clamp(0.96875rem, 1.4vw, 1.09375rem);
+  line-height: 1.65;
+  text-wrap: pretty;
+}
+
+@utility marketing-type-subtitle {
+  font-size: clamp(1.25rem, 2vw, 1.5rem);
+  font-weight: 300;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+
+@utility marketing-type-body {
+  font-size: 0.96875rem;
+  line-height: 1.65;
+  text-wrap: pretty;
+}
+
+@utility marketing-type-caption {
+  font-size: 0.72rem;
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: -0.015rem;
+}
+
+@utility marketing-type-micro {
+  font-size: 0.68rem;
+  line-height: 1.45;
+  letter-spacing: -0.01rem;
+}
+
+/* Uppercase is reserved for small navigational flags and section eyebrows.
+   Captions, figures, controls, and prose retain their natural casing. */
+.marketing-flag {
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+/* The Prototyper banner owns the first sticky row (2.5rem); the Fumadocs
+   marketing nav stacks immediately below it. Docs routes do not render the
+   banner, so this remains scoped to the HomeLayout ancestry. */
+[data-slot="marketing-home"] #nd-nav {
+  top: 2.5rem !important;
+}
+
+/* The marketing shell uses real variable-font weights only. Antialiasing and
+   explicit kerning keep the light hierarchy crisp at display sizes. */
+[data-slot="marketing-home"] {
+  font-synthesis: none;
+  font-kerning: normal;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Mono is the technical annotation voice, so it carries one more step of
+   weight than the deliberately light marketing prose. Controls stay in the
+   regular sans voice so actions read as interface rather than terminal data. */
+[data-slot="marketing-home"] .font-mono {
+  font-weight: 400;
+}
+
+[data-slot="marketing-home"] button,
+[data-slot="marketing-home"] [data-marketing-button] {
+  font-family: var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 400;
+  border-radius: 9999px;
+}
+
+/* Documentation uses the same typographic voices as marketing while keeping
+   Fumadocs' navigation and accessibility behavior. Route-level scoping means
+   new MDX pages inherit the system without page-specific typography classes. */
+[data-slot="docs-site"] {
+  font-family: var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 300;
+  font-synthesis: none;
+  font-kerning: normal;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+[data-slot="docs-site"] .font-mono,
+[data-slot="docs-site"] :where(code, pre) {
+  font-weight: 400;
+}
+
+.docs-title {
+  font-size: clamp(2.25rem, 5vw, 3.5rem) !important;
+  font-weight: 300 !important;
+  line-height: 1.02 !important;
+  letter-spacing: -0.04em !important;
+  text-wrap: balance;
+}
+
+.docs-description {
+  max-width: 62ch;
+  font-size: clamp(1rem, 1.5vw, 1.125rem) !important;
+  font-weight: 300 !important;
+  line-height: 1.65 !important;
+  text-wrap: pretty;
+}
+
+.docs-prose {
+  font-size: 0.96875rem !important;
+  font-weight: 300 !important;
+  line-height: 1.72 !important;
+}
+
+.docs-prose :where(h1, h2, h3, h4):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+  font-family: var(--font-display), var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 300 !important;
+  line-height: 1.15 !important;
+  letter-spacing: -0.03em !important;
+  text-wrap: balance;
+}
+
+.docs-prose :where(strong):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+  font-weight: 500;
+}
+
+[data-slot="docs-site"] button {
+  font-family: var(--font-interface), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 400;
+}
+
+/* The footer is an intentionally permanent dark close, independent of the
+   reader's theme. Rebinding the same semantic tokens keeps every child on the
+   design system instead of scattering one-off white/black utilities. */
+.marketing-dark-footer {
+  --color-fd-background: #0d0d0d;
+  --color-fd-foreground: #f5f5f5;
+  --color-fd-muted-foreground: #a3a3a3;
+  --color-fd-primary: #ffffff;
+  --color-marketing-paper: #0d0d0d;
+  --color-marketing-raise: #141414;
+  --color-marketing-line: rgb(255 255 255 / 12%);
+  --marketing-paper: #0d0d0d;
+  --marketing-raise: #141414;
+  --marketing-line: rgb(255 255 255 / 12%);
+  background-color: #0d0d0d;
+  color: #f5f5f5;
+  color-scheme: dark;
+}
+
+/* The mini TUI figures share a four-second Matinee clock. Cards in each
+   section are offset onto a common 12s/24s timeline, so only one performance
+   speaks at a time. Diagram state changes land with the cursor action. */
+.tui-motion-before,
+.tui-motion-after,
+.tui-motion-cursor {
+  animation-delay: var(--mockup-delay);
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  animation-fill-mode: both;
+}
+
+.tui-motion-after,
+.tui-motion-cursor {
+  opacity: 0;
+}
+
+[data-motion-count="3"] :is(.tui-motion-before, .tui-motion-after, .tui-motion-cursor) {
+  animation-duration: 12s;
+}
+
+[data-motion-count="6"] :is(.tui-motion-before, .tui-motion-after, .tui-motion-cursor) {
+  animation-duration: 24s;
+}
+
+.tui-motion-before {
+  animation-name: tui-motion-before-3;
+}
+
+.tui-motion-after {
+  animation-name: tui-motion-after-3;
+}
+
+.tui-motion-cursor {
+  animation-name: tui-motion-cursor-3;
+}
+
+[data-motion-count="6"] .tui-motion-before {
+  animation-name: tui-motion-before-6;
+}
+
+[data-motion-count="6"] .tui-motion-after {
+  animation-name: tui-motion-after-6;
+}
+
+[data-motion-count="6"] .tui-motion-cursor {
+  animation-name: tui-motion-cursor-6;
+}
+
+@keyframes tui-motion-before-3 {
+  0%,
+  9% {
+    opacity: 1;
+  }
+  13%,
+  29% {
+    opacity: 0;
+  }
+  33%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes tui-motion-after-3 {
+  0%,
+  9% {
+    opacity: 0;
+  }
+  13%,
+  29% {
+    opacity: 1;
+  }
+  33%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes tui-motion-cursor-3 {
+  0%,
+  1% {
+    opacity: 0;
+  }
+  3%,
+  30% {
+    opacity: 1;
+  }
+  33%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes tui-motion-before-6 {
+  0%,
+  4.5% {
+    opacity: 1;
+  }
+  6.5%,
+  14.5% {
+    opacity: 0;
+  }
+  16.5%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes tui-motion-after-6 {
+  0%,
+  4.5% {
+    opacity: 0;
+  }
+  6.5%,
+  14.5% {
+    opacity: 1;
+  }
+  16.5%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes tui-motion-cursor-6 {
+  0%,
+  0.5% {
+    opacity: 0;
+  }
+  1.5%,
+  15% {
+    opacity: 1;
+  }
+  16.5%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tui-motion-before,
+  .tui-motion-cursor {
+    display: none;
+  }
+
+  .tui-motion-after {
+    opacity: 1;
+    animation: none;
+  }
+}
+
+/* Marketing motion roles keep the rendered HTML compact and ensure every
+   interaction shares the same duration, easing, and input-mode behavior. */
+@keyframes marketing-enter {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(0.5rem);
   }
   to {
     opacity: 1;
@@ -19,23 +434,170 @@
   }
 }
 
-@keyframes paneIn {
+@keyframes marketing-feedback-enter {
   from {
-    flex: 0 0 0%;
     opacity: 0;
-    transform: scaleX(0.3);
+    transform: scale(0.95);
   }
   to {
-    flex: 1 1 0%;
     opacity: 1;
-    transform: scaleX(1);
+    transform: scale(1);
   }
 }
 
-@utility animate-fade-in {
-  animation: fadeIn 400ms ease-out;
+.marketing-enter,
+.marketing-enter-fast,
+.marketing-faq-answer,
+.marketing-feedback-enter {
+  animation: marketing-enter 260ms var(--ease-out-fluid) both;
 }
 
-@utility animate-pane-in {
-  animation: paneIn 600ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+.marketing-enter-fast {
+  animation-duration: 150ms;
+}
+
+.marketing-enter-step-2 {
+  animation-delay: 50ms;
+}
+
+.marketing-enter-step-3 {
+  animation-delay: 100ms;
+}
+
+.marketing-enter-step-4 {
+  animation-delay: 150ms;
+}
+
+.marketing-enter-step-5 {
+  animation-delay: 210ms;
+}
+
+.marketing-faq-answer {
+  animation-name: marketing-enter;
+}
+
+.marketing-feedback-enter {
+  animation-name: marketing-feedback-enter;
+  animation-duration: 150ms;
+}
+
+.marketing-link-action,
+.marketing-logo-action {
+  transition: opacity 150ms var(--ease-smooth);
+}
+
+.marketing-copy-action {
+  transition:
+    color 150ms var(--ease-smooth),
+    background-color 150ms var(--ease-smooth),
+    border-color 150ms var(--ease-smooth),
+    box-shadow 150ms var(--ease-smooth),
+    opacity 150ms var(--ease-smooth),
+    transform 150ms var(--ease-smooth);
+}
+
+.marketing-pill-action {
+  transition:
+    color 150ms var(--ease-smooth),
+    background-color 150ms var(--ease-smooth),
+    border-color 150ms var(--ease-smooth),
+    box-shadow 150ms var(--ease-smooth),
+    opacity 150ms var(--ease-smooth);
+}
+
+.marketing-color-action,
+.marketing-banner-link-action,
+.marketing-wordmark-action {
+  transition: color 150ms var(--ease-smooth);
+}
+
+.marketing-transform-action,
+.marketing-skip-action {
+  transition: transform 150ms var(--ease-smooth);
+}
+
+.marketing-skip-action {
+  transition-timing-function: var(--ease-out-fluid);
+}
+
+@media (hover: hover) {
+  .marketing-link-action:hover {
+    opacity: 0.65;
+  }
+
+  .marketing-logo-action:hover {
+    opacity: 0.78;
+  }
+
+  .marketing-copy-action:hover {
+    opacity: 0.9;
+  }
+
+  .marketing-pill-action:hover {
+    background-color: var(--color-fd-accent);
+  }
+
+  .marketing-color-action:hover {
+    color: var(--color-fd-muted-foreground);
+  }
+
+  .marketing-banner-link-action:hover {
+    color: white;
+  }
+
+  .marketing-wordmark-action:hover {
+    color: rgb(255 255 255 / 45%);
+  }
+
+  .group:hover .marketing-transform-action {
+    transform: translate(1px, -1px);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .marketing-copy-action:active {
+    transform: scale(0.97);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marketing-enter,
+  .marketing-enter-fast,
+  .marketing-faq-answer,
+  .marketing-feedback-enter {
+    animation: none;
+  }
+
+  .marketing-link-action,
+  .marketing-logo-action,
+  .marketing-copy-action,
+  .marketing-pill-action,
+  .marketing-color-action,
+  .marketing-banner-link-action,
+  .marketing-wordmark-action,
+  .marketing-transform-action,
+  .marketing-skip-action {
+    transition: none;
+  }
+}
+
+@keyframes copy-check-draw {
+  from {
+    stroke-dashoffset: 22;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.copy-check-path {
+  stroke-dasharray: 22;
+  animation: copy-check-draw 200ms linear 50ms both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .copy-check-path {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
 }

@@ -1,9 +1,7 @@
 ---
-title: Home and Terminals
-description: The two product surfaces in the OpenTUI 2.9 release
+title: App surfaces
+description: Home, Terminals, contextual commands, and optional project views
 ---
-
-# Home and Terminals
 
 ## Home
 
@@ -32,11 +30,17 @@ daemon replacement, and viewer reattachment. tmux remains the source of truth.
 
 ## Commands and notifications
 
-`F5` opens the command surface. Transient action notes, such as a successful
+`F5` or `Ctrl+P` opens the command surface. Transient action notes, such as a successful
 split, dismiss automatically and do not become permanent chrome.
 
-## Deferred surfaces
+## Project-defined views
 
-Files, diffs, missions, rich media, the web client, and the native desktop
-client are not release surfaces for 2.9. The daemon boundary remains
-renderer-neutral so future clients do not require a second backend.
+WorkspaceConfigV1 can order full-panel views for `home`, `terminals`, `files`,
+`diff`, and `missions`, or compose them with split and tab layouts. Files,
+changes, dialogs, settings, palettes, and rich previews are loaded as optional
+features so the resident terminal path stays small.
+
+The Missions panel is presentational in this beta. `harnesses`, `agents`, and
+`missions` workspace blocks are validated, but there is no public CLI command
+that dispatches those mission defaults yet. `tmux-ide web` is also explicitly
+unavailable; the daemon remains renderer-neutral for future clients.

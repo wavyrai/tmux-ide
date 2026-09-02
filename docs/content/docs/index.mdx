@@ -1,9 +1,7 @@
 ---
 title: tmux-ide
-description: A visual tmux client designed for working with coding agents
+description: Build and coordinate coding agents in one agent-aware workspace on top of durable tmux sessions
 ---
-
-# tmux-ide
 
 tmux-ide is a mouse-friendly OpenTUI application around ordinary tmux sessions.
 It adds Home, clickable window and pane chrome, agent indicators, memorable
@@ -15,18 +13,21 @@ npm install -g tmux-ide@beta
 tmux-ide app
 ```
 
-## The product boundary
+## The current app
 
-The 2.9 release is deliberately narrow:
+The default app starts with two core views and adds project-defined views when
+they are present in `.tmux-ide/workspace.yml`:
 
-- **F1 Home** discovers live sessions and provides a clean first-run state.
-- **F2 Terminals** renders the selected tmux session with window tabs, pane
-  headers, sidebar agents, and terminal content.
-- **F5 Commands** exposes the actions appropriate to the current state.
+- **Home** discovers live sessions and provides a clean first-run state.
+- **Terminals** renders the selected tmux session with window tabs, pane
+  headers, agent awareness, and terminal content.
+- Optional **Files**, **Diff**, and **Missions** panels can appear through
+  `app.views`; mission profiles are validated but not dispatched by the CLI yet.
+- **Commands** exposes contextual actions and settings.
 - Mouse and keyboard control pane focus, windows, splitting, resizing,
   renaming, creation, and confirmed closing.
-- A later web client can use the same daemon API, but the web client is not part
-  of this release.
+- `tmux-ide web` is intentionally unavailable in this beta; the canonical
+  daemon API remains renderer-neutral.
 
 ## Why tmux stays underneath
 

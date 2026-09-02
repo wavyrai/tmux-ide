@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="140" viewBox="0 0 360 140" role="img" aria-label="An animated cursor performance">
+<style>.mt-cursor{transform:translate(295px,75px)}
+.mt-rip{fill:none;stroke:#087c9f;stroke-width:2;opacity:0;transform-box:fill-box;transform-origin:center}
+@media (prefers-reduced-motion: no-preference){
+.mt-cursor{animation:mt-travel 4000ms linear infinite both}
+.mt-rip{animation:mt-ripple 4000ms linear infinite both}
+}
+@keyframes mt-travel{0%{transform:translate(334px,122px)}5%{transform:translate(334.2px,122.2px)}6.0417%{transform:translate(330.76px,121.02px)}7.0833%{transform:translate(313.19px,114.11px)}8.125%{transform:translate(276.38px,102.28px)}9.1667%{transform:translate(224.9px,89.63px)}10.2083%{transform:translate(168.73px,79.87px)}11.25%{transform:translate(120.52px,74.92px)}12.2917%{transform:translate(87.85px,74.29px)}13.3333%{transform:translate(67.26px,75.46px)}14.375%{transform:translate(62.98px,75.69px)}15.4167%{transform:translate(64.67px,75.11px)}16.4583%{transform:translate(70.39px,74.96px)}17.5%{transform:translate(72px,75px)}22.5%{transform:translate(71.92px,74.75px)}23.5417%{transform:translate(73.55px,73.93px)}24.5833%{transform:translate(83.26px,70.37px)}25.625%{transform:translate(104.05px,66.79px)}26.6667%{transform:translate(133.57px,67.07px)}27.7083%{transform:translate(160.08px,70.57px)}28.75%{transform:translate(176.33px,73.92px)}29.7917%{transform:translate(183.39px,75.63px)}30.8333%{transform:translate(182.8px,75.58px)}31.875%{transform:translate(180.7px,75.18px)}32.7354%{transform:translate(180px,75px)}43.75%{transform:translate(180.04px,75.03px)}44.7917%{transform:translate(182.09px,75.65px)}45.8333%{transform:translate(192.37px,78.98px)}46.875%{transform:translate(214.82px,83.14px)}47.9167%{transform:translate(245.97px,84.17px)}48.9583%{transform:translate(273.75px,80.98px)}50%{transform:translate(290.27px,76.64px)}51.0417%{transform:translate(298.59px,73.69px)}52.0833%{transform:translate(298.66px,73.72px)}53.125%{transform:translate(296.09px,74.65px)}54.1667%{transform:translate(295px,75px)}60.4167%{transform:translate(295px,75px)}61.25%{transform:translate(294.88px,73.48px)}82.0833%{transform:translate(294.61px,73.59px)}82.5%{transform:translate(295px,75px)}100%{transform:translate(295px,75px)}}
+@keyframes mt-ripple{
+0%{opacity:.55;transform:scale(.12)}
+15.5%{opacity:0;transform:scale(1)}
+100%{opacity:0;transform:scale(1)}
+}</style>
+
+<g><circle class="mt-rip" cx="180" cy="75" r="20" style="animation-delay:1379.4ms"/></g>
+<g class="mt-cursor">
+<g transform="translate(-5,-2.5)">
+<path d="M5 2.5 L5 19.4 L9.2 15.3 L11.9 21.2 L14.6 20 L11.9 14.2 L17.6 14.2 Z" fill="#fff" stroke="rgba(17,17,20,0.92)" stroke-width="1.35" stroke-linejoin="round"/>
+</g>
+</g>
+</svg>

@@ -1,229 +1,158 @@
 ---
-title: CLI Reference
-description: Every tmux-ide command — the current surface, straight from tmux-ide --help
+title: CLI reference
+description: The supported tmux-ide commands and flags in 2.9.0-beta.3
 ---
 
-# CLI reference
+This page follows the public surface printed by `tmux-ide --help` in
+`2.9.0-beta.3`. `--json` is available on the scripting commands that explicitly
+list it below; interactive commands do not emit JSON.
 
-Every command accepts `--json` for structured output. Run `tmux-ide --help` for
-the built-in version of this list.
+## Open tmux-ide
 
-## Sessions
+| Command                     | What it does                                                                                           |
+| --------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `tmux-ide`                  | Open the visual app when no workspace config is present; launch the project layout when one is present |
+| `tmux-ide <path>`           | Open or launch from a particular directory                                                             |
+| `tmux-ide start [path]`     | Explicitly launch the declarative project layout                                                       |
+| `tmux-ide app [session]`    | Open Home, or bypass Home and open a live session                                                      |
+| `tmux-ide app --detachable` | Host the app in `_tmux-ide-app`; `Ctrl+Q` detaches and the viewer survives                             |
+| `tmux-ide app --hosted`     | Alias for `--detachable`                                                                               |
+| `tmux-ide team [--json]`    | Open the classic fleet cockpit, or print fleet state as JSON                                           |
+| `tmux-ide --team`           | Force the classic fleet cockpit for a bare invocation                                                  |
 
-| Command                             | Description                                                         |
-| ----------------------------------- | ------------------------------------------------------------------- |
-| `tmux-ide`                          | Open the visual app; workspace config is optional                   |
-| `tmux-ide app [session]`            | Open Home, or open a particular live tmux session directly          |
-| `tmux-ide <path>`                   | Open the app from a directory and use its optional workspace config |
-| `tmux-ide init [--template <name>]` | Scaffold `.tmux-ide/workspace.yml` (auto-detects stack)             |
-| `tmux-ide stop`                     | Kill the current IDE session                                        |
-| `tmux-ide restart`                  | Stop and relaunch the session                                       |
-| `tmux-ide attach`                   | Reattach to a running session                                       |
-| `tmux-ide ls`                       | List all tmux sessions                                              |
-| `tmux-ide status [--json]`          | Show session status                                                 |
+`app.detachable` in `~/.tmux-ide/config.json` makes detachable mode the default.
 
-## Retained classic tmux chrome
+## Sessions and recovery
 
-These commands remain available for existing workflows, but they are not the
-focused Home-and-Terminals path shown in the 2.9 OpenTUI demo.
+| Command                                                                    | What it does                                                                         |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `tmux-ide init [--template <name>] [--json]`                               | Scaffold `.tmux-ide/workspace.yml`; auto-detect the stack unless a template is named |
+| `tmux-ide stop [session] [--json]`                                         | Kill the resolved project session or the named session                               |
+| `tmux-ide restart [session] [--json]`                                      | Stop and relaunch the session                                                        |
+| `tmux-ide attach [session] [--json]`                                       | Reattach to a running session                                                        |
+| `tmux-ide ls [--json]`                                                     | List tmux sessions                                                                   |
+| `tmux-ide status [session] [--json]`                                       | Show session status                                                                  |
+| `tmux-ide restore [--dry-run] [--run-commands] [--resume-agents] [--json]` | Rebuild the fleet from the last snapshot                                             |
 
-| Command                                 | Description                                             |
-| --------------------------------------- | ------------------------------------------------------- |
-| `tmux-ide adopt <session>`              | Add the live status bar (dock) to a session             |
-| `tmux-ide adopt --all`                  | Adopt every live (non-internal) session                 |
-| `tmux-ide unadopt <session>`            | Remove the status bar                                   |
-| `tmux-ide team [--json]`                | TUI over all sessions (`--json` prints fleet state)     |
-| `tmux-ide switcher`                     | Compact session picker (`prefix j` / `⌥p`)              |
-| `tmux-ide cheatsheet`                   | Print the key cheat sheet (`prefix k` / `⌥k`)           |
-| `tmux-ide menu [--client N]`            | Open the actions menu (`prefix u` / `⌥m` / right-click) |
-| `tmux-ide popup <widget>`               | Open a widget panel (`explorer` / `changes` / `config`) |
-| `tmux-ide sidebar-toggle [--session S]` | Toggle the nav column (`prefix b` / `⌥b`)               |
+Restore does not replay recorded commands unless `--run-commands` is present.
+`--resume-agents` uses captured conversation IDs and each supported agent's
+native resume command. See [Restore & resume](/docs/restore-resume).
 
-## Agent status
+## Inspect and edit a workspace
 
-| Command                                                                 | Description                                                       |
-| ----------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `tmux-ide integration install claude`                                   | Authoritative agent status via Claude Code hooks                  |
-| `tmux-ide agent explain <pane> [--json]`                                | Debug how a pane's agent state is detected                        |
-| `tmux-ide events [--follow] [--json]`                                   | Stream agent-status transitions (needs an adopted session)        |
-| `tmux-ide wait agent-status <session> --status <s> [--timeout <ms>]`    | Block until a session reaches a status (exit 0 match / 1 timeout) |
-| `tmux-ide wait output <pane\|session> --match <regex> [--timeout <ms>]` | Block until a pane's output matches a regex                       |
+| Command                                                                             | What it does                                           |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `tmux-ide setup`                                                                    | Open the interactive setup wizard                      |
+| `tmux-ide setup --edit`                                                             | Open the config tree editor                            |
+| `tmux-ide settings`                                                                 | Open the standalone config manager                     |
+| `tmux-ide inspect [path] [--json]`                                                  | Show the effective config and live runtime state       |
+| `tmux-ide doctor [--json]`                                                          | Check the local installation and requirements          |
+| `tmux-ide validate [path] [--json]`                                                 | Validate the resolved workspace config                 |
+| `tmux-ide detect [path] [--json]`                                                   | Detect the project stack and show a suggested layout   |
+| `tmux-ide detect [path] --write`                                                    | Write the detected layout to `.tmux-ide/workspace.yml` |
+| `tmux-ide migrate [path] --dry-run [--json]`                                        | Preview migration from legacy `ide.yml`                |
+| `tmux-ide migrate [path] --write [--json]`                                          | Create `.tmux-ide/workspace.yml` from `ide.yml`        |
+| `tmux-ide config [--json]`                                                          | Print the resolved launch projection                   |
+| `tmux-ide config set <path> <value>`                                                | Set a workspace value by dot path                      |
+| `tmux-ide config add-pane --row <N> --title <T> [--command <C>] [--size <percent>]` | Add a pane                                             |
+| `tmux-ide config remove-pane --row <N> --pane <M>`                                  | Remove a pane                                          |
+| `tmux-ide config add-row [--size <percent>]`                                        | Add a row containing a shell pane                      |
 
-See [Agent detection](/docs/agent-detection) and
-[Notifications & events](/docs/notifications-events).
+Row and pane indexes are zero-based. Config mutations preserve
+WorkspaceConfigV1 and refuse legacy-only fields rather than silently losing
+them.
 
-## Restore
+## Agent awareness and coordination
 
-| Command                                                                    | Description                                                 |
-| -------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `tmux-ide restore [--dry-run] [--run-commands] [--resume-agents] [--json]` | Rebuild the fleet from the last snapshot after a tmux crash |
+| Command                                                                           | What it does                                                                    |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `tmux-ide integration install claude`                                             | Install Claude Code lifecycle hooks and refresh the bundled Claude skill        |
+| `tmux-ide integration install opencode`                                           | Install session-ID capture for future opencode sessions                         |
+| `tmux-ide integration uninstall <claude\|opencode>`                               | Remove only tmux-ide's integration entries                                      |
+| `tmux-ide integration status [--json]`                                            | Show discovered agents, integration state, and resume-ID capture                |
+| `tmux-ide agent explain <pane\|session> [--json]`                                 | Explain exactly how an agent state was classified                               |
+| `tmux-ide send <target> <message> [--no-enter] [--json]`                          | Type into a pane selected by ID, title, semantic name, or supported legacy role |
+| `tmux-ide send --to <target> <message> [--no-enter] [--json]`                     | Equivalent explicit target form                                                 |
+| `tmux-ide events [--follow] [--json]`                                             | Read recent agent-state transitions or follow them                              |
+| `tmux-ide events --follow --socket[=<path>]`                                      | Follow pushed events from a running control server                              |
+| `tmux-ide wait agent-status <session> --status <state> [--timeout <ms>] [--json]` | Wait for a session status; exit 0 on match and 1 on timeout                     |
+| `tmux-ide wait output <pane\|session> --match <regex> [--timeout <ms>] [--json]`  | Wait until visible pane output matches                                          |
+| `tmux-ide serve [socket-path]`                                                    | Run the foreground, owner-only local NDJSON control socket                      |
 
-`--resume-agents` revives Claude conversations via `claude --resume`. See
-[Restore & resume](/docs/restore-resume).
+`serve` defaults to `~/.tmux-ide/control.sock`. The wait commands use it when
+requested and otherwise fall back to direct polling.
+
+## Adopt ordinary tmux sessions
+
+| Command                                      | What it does                                             |
+| -------------------------------------------- | -------------------------------------------------------- |
+| `tmux-ide adopt <session>`                   | Add tmux-ide's server-side status bar and agent tracking |
+| `tmux-ide adopt --all`                       | Adopt every live non-internal session                    |
+| `tmux-ide unadopt <session>`                 | Remove tmux-ide chrome without killing the session       |
+| `tmux-ide switcher [--client <name>]`        | Open the compact session picker                          |
+| `tmux-ide cheatsheet`                        | Print the complete key sheet                             |
+| `tmux-ide menu [--client <name>]`            | Open the contextual tmux actions menu                    |
+| `tmux-ide popup <explorer\|changes\|config>` | Open a widget in a tmux popup                            |
+| `tmux-ide sidebar-toggle [--session <name>]` | Toggle the app navigation column                         |
+
+See [The dock & keys](/docs/the-dock) for the matching tmux bindings.
 
 ## Worktrees
 
-| Command                                                                          | Description                                              |
-| -------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `tmux-ide worktree create <branch> [--from <ref>] [--dir <path>] [--no-session]` | Add a git worktree (new branch) + open a session in it   |
-| `tmux-ide worktree open <branch>`                                                | Open (or switch to) the session for an existing worktree |
-| `tmux-ide worktree list [--json]`                                                | List worktrees joined with their session status          |
-| `tmux-ide worktree remove <branch> [--force]`                                    | Kill the worktree's session + remove the worktree        |
+| Command                                                                          | What it does                                                  |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `tmux-ide worktree create <branch> [--from <ref>] [--dir <path>] [--no-session]` | Add a worktree and, by default, open an adopted session in it |
+| `tmux-ide worktree open <branch>`                                                | Open or switch to the worktree's session                      |
+| `tmux-ide worktree list [--json]`                                                | Join git worktrees with their live session status             |
+| `tmux-ide worktree remove <branch> [--force]`                                    | Remove the worktree, then kill only its derived session       |
 
-See [Worktrees](/docs/worktrees).
+Removal refuses a dirty worktree unless `--force` is explicit.
 
-## Config & inspection
+## Rich pane content
 
-| Command                                                          | Description                                              |
-| ---------------------------------------------------------------- | -------------------------------------------------------- |
-| `tmux-ide inspect [--json]`                                      | Show effective config and runtime state                  |
-| `tmux-ide doctor`                                                | Check system requirements                                |
-| `tmux-ide validate [--json]`                                     | Validate the resolved project config                     |
-| `tmux-ide detect [--json]`                                       | Detect project stack                                     |
-| `tmux-ide detect --write`                                        | Detect and write `.tmux-ide/workspace.yml`               |
-| `tmux-ide migrate --dry-run [--json]`                            | Preview `ide.yml` to `.tmux-ide/workspace.yml` migration |
-| `tmux-ide migrate --write [--json]`                              | Create `.tmux-ide/workspace.yml` from `ide.yml`          |
-| `tmux-ide config [--json]`                                       | Dump config as JSON                                      |
-| `tmux-ide config set <path> <value>`                             | Set a config value by dot path                           |
-| `tmux-ide config add-pane --row <N> --title <T> [--command <C>]` | Add a pane                                               |
-| `tmux-ide config remove-pane --row <N> --pane <M>`               | Remove a pane                                            |
-| `tmux-ide config add-row [--size <percent>]`                     | Add a row                                                |
+| Command                           | What it does                                                  |
+| --------------------------------- | ------------------------------------------------------------- |
+| `tmux-ide show <file>`            | Select Markdown or raster-image rendering from the file type  |
+| `tmux-ide widget markdown [file]` | Render Markdown from a file or stdin                          |
+| `tmux-ide widget image <file>`    | Render PNG, JPEG, GIF, WebP, or AVIF content                  |
+| `tmux-ide widget card [file]`     | Render the structured card JSON contract from a file or stdin |
 
-## Setup & settings
+File-backed widgets refresh when their source changes. `Ctrl+C` restores the
+ordinary terminal surface.
 
-| Command                 | Description                    |
-| ----------------------- | ------------------------------ |
-| `tmux-ide setup`        | Interactive TUI setup wizard   |
-| `tmux-ide setup --edit` | Open the config tree editor    |
-| `tmux-ide settings`     | Interactive TUI config manager |
+## Updates
 
-## Pane messaging
+| Command                                 | What it does                                                         |
+| --------------------------------------- | -------------------------------------------------------------------- |
+| `tmux-ide update [--dry-run]`           | Update according to the detected install method, or print the plan   |
+| `tmux-ide update --tui-binary [--json]` | Download and verify the matching compiled OpenTUI runtime            |
+| `tmux-ide update --manifests [--json]`  | Refresh the agent-detection manifest pack; local overrides still win |
+| `tmux-ide skill-sync [--json]`          | Refresh the managed Claude Code skill in `~/.claude/skills/tmux-ide` |
 
-| Command                                   | Description                        |
-| ----------------------------------------- | ---------------------------------- |
-| `tmux-ide send <target> <message>`        | Send a message to a pane           |
-| `tmux-ide send --to <name> <message>`     | Target by name, title, role, or ID |
-| `tmux-ide send <target> --no-enter <msg>` | Send text without pressing Enter   |
+## Daemon and server entry points
 
-`send` also reads from stdin: `echo "msg" | tmux-ide send <target>`.
+These are integration surfaces for process hosts, not the normal way to open
+the app.
 
-## Server
+| Command                                     | What it does                                                             |
+| ------------------------------------------- | ------------------------------------------------------------------------ |
+| `tmux-ide --headless [--port <N>] [--json]` | Own the canonical daemon in the foreground without opening tmux or a TUI |
+| `tmux-ide command-center [--port <N>]`      | Start the command-center HTTP API (default port 4000)                    |
+| `tmux-ide server [--port <N>]`              | Start the HTTP and PTY-WebSocket server                                  |
 
-| Command                              | Description                                         |
-| ------------------------------------ | --------------------------------------------------- |
-| `tmux-ide --headless [--port N]`     | Own the canonical daemon in this foreground process |
-| `tmux-ide command-center [--port N]` | Start the legacy command-center HTTP API            |
-| `tmux-ide server [--port N]`         | Start the legacy HTTP + PTY WebSocket server        |
+The headless owner publishes `~/.tmux-ide/daemon.json` with owner-only
+permissions. A host should wait until both `/identity` matches that record and
+`/health` reports a compatible protocol before considering the child ready.
+Stop it with `SIGINT` or `SIGTERM`; do not wrap it in a second daemonizer.
 
-### Native and desktop handoff
+## Global flags
 
-`--headless` is the config-free daemon entry point for the native app and other
-process hosts. Launch the installed executable directly with an argv array:
+| Flag              | Meaning                                                        |
+| ----------------- | -------------------------------------------------------------- |
+| `-h`, `--help`    | Print built-in help                                            |
+| `-v`, `--version` | Print the installed version                                    |
+| `--verbose`       | Log tmux commands; `TMUX_IDE_DEBUG=1` is equivalent            |
+| `--json`          | Request structured output where the command lists JSON support |
+| `--headless`      | Run only the canonical daemon in this process                  |
 
-```text
-executable: /resolved/path/to/tmux-ide
-argv:       ["--headless"]
-```
-
-Resolve `executable` to the installed root package's `tmux-ide` bin (not a
-workspace source file or the private `@tmux-ide/daemon` package). Pass every
-argument as its own argv element. Use an existing directory as the child working
-directory, inherit `HOME` unless you deliberately isolate daemon state, and
-retain the returned child PID. Stdio may be piped or redirected to null, but do
-not wrap the invocation in a shell, append `&`/`nohup`, or add a second
-daemonizer. Readiness is established by the probes below, not by the spawn call
-returning and not by parsing stdout.
-
-`tmux-ide --headless` stays in the foreground; the spawned process is the daemon
-owner even when the host detaches its stdio. It does not open a TUI, launch a
-tmux workspace, require a project config, install anything, or inherit
-remote-access authentication. `--port N` is optional; omitting it selects a free
-loopback port. Treat a non-zero child exit before readiness as launch failure and
-surface its stderr/structured error to the user.
-
-The owner first atomically acquires a process-lifetime claim, then publishes
-this versioned discovery shape with owner-only permissions. The claim spans
-record inspection, socket binding, publication, and the daemon's full lifetime;
-concurrent cold-start losers wait for and reuse the winner instead of binding or
-publishing another daemon:
-
-```json
-{
-  "pid": 4312,
-  "port": 4010,
-  "protocolVersion": 2,
-  "productVersion": "2.9.0-beta.3",
-  "instanceId": "9bcf33b0-c837-4a94-b5e8-c0977f54464f",
-  "startedAt": "2026-07-21T00:00:00.000Z",
-  "environmentId": "machine-environment-id",
-  "bindHostname": "127.0.0.1",
-  "authToken": "owner-only-token"
-}
-```
-
-Startup is ready only when all checks succeed:
-
-1. `~/.tmux-ide/daemon.json` exists (or the directory selected by
-   `TMUX_IDE_DAEMON_INFO_DIR`) and names the child PID and port.
-2. The unauthenticated `GET /identity` response exactly matches the record's
-   `pid`, `protocolVersion`, `instanceId`, and `startedAt`. This binds the
-   endpoint before the host sends any credential. `productVersion` is reported
-   as a diagnostic and may differ when the wire protocol remains compatible.
-3. `GET /health` succeeds and reports the compatible daemon wire protocol and
-   its diagnostic `productVersion`. `/healthz` reports that same value.
-
-Construct probe URLs with a URL API or bracket an IPv6 literal (`[::1]`); never
-interpolate an unbracketed IPv6 hostname into `http://host:port`.
-
-A second `tmux-ide --headless` never takes over a healthy daemon. If its wire
-protocol is compatible, the second process reports `already-running` and exits
-zero; a product-version difference is diagnostic only. An incompatible wire
-protocol or disagreement between discovery and health exits non-zero so the host
-can ask the user to restart or upgrade. Only a dead PID is stale state and may be
-removed. A live PID whose health endpoint is unavailable still owns the slot:
-the contender exits non-zero without clearing the record or starting another
-daemon.
-
-Publication is create-if-absent and cleanup is generation-safe: an owner removes
-only the record carrying its own `instanceId`. It never deletes a record that a
-concurrent process replaced while cleanup was in progress.
-
-An existing record that is protocol-less, malformed, oversized, symlinked,
-owned by another user, or not owner-only is **invalid**, not missing. Do not
-delete it or start another owner. The CLI only removes a securely read invalid
-record when its positive recorded PID is explicitly proven dead; otherwise the
-host should ask the user to inspect or remove the record after verifying the
-owner process.
-
-Send `SIGINT` or `SIGTERM` to stop the owner. The daemon shutdown action follows
-the same idempotent path. Both close HTTP/WebSocket/PTY resources, remove the
-canonical record, and let the owner exit zero; a cleanup failure exits non-zero.
-
-## Flags
-
-| Flag                | Description                                        |
-| ------------------- | -------------------------------------------------- |
-| `--json`            | Output as JSON (all commands)                      |
-| `--headless`        | Run only the canonical daemon in this process      |
-| `--template <name>` | Use a specific template for `init`                 |
-| `--write`           | Write detected config to `.tmux-ide/workspace.yml` |
-| `--verbose`         | Log all tmux commands (or set `TMUX_IDE_DEBUG=1`)  |
-
-## Key discovery
-
-Once a session is adopted, the whole UI is a keystroke or two away. Each surface
-has a **prefix twin** (`prefix` then a letter) that works under every keyboard
-protocol, plus an `⌥` fast-path when your terminal allows it — lead with the
-prefix.
-
-| Surface                        | Prefix (always works) | Alt fast-path  |
-| ------------------------------ | --------------------- | -------------- |
-| Home cockpit from anywhere     | `prefix h`            | `⌥h`           |
-| Switch session                 | `prefix j`            | `⌥p`           |
-| Cheat sheet (all keys)         | `prefix k`            | `⌥k`           |
-| Actions menu (or right-click)  | `prefix u`            | `⌥m`           |
-| Sidebar                        | `prefix b`            | `⌥b`           |
-| File / changes / config panels | `prefix e` `g` `v`    | `⌥e` `⌥g` `⌥,` |
-
-Rebind any of them in `~/.tmux-ide/config.json` (`keys.*`) — the prefix twin
-follows the fast-path key. See [Theming & config](/docs/theming).
+Command-specific flags are documented with their command above.

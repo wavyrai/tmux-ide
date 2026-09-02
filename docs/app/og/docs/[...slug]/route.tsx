@@ -1,4 +1,6 @@
 import { getPageImage, source } from "@/lib/source";
+import { SocialCard } from "@/components/social-card";
+import { SITE_DESCRIPTION } from "@/lib/site";
 import { notFound } from "next/navigation";
 import { ImageResponse } from "@takumi-rs/image-response";
 
@@ -10,34 +12,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ slug: s
   if (!page) notFound();
 
   return new ImageResponse(
-    <div
-      style={{
-        alignItems: "flex-start",
-        background: "#0c0d10",
-        color: "#f5f5f4",
-        display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        justifyContent: "space-between",
-        padding: "72px",
-        width: "100%",
-      }}
-    >
-      <div style={{ color: "#67e8f9", display: "flex", fontSize: 34, fontWeight: 700 }}>
-        tmux-ide
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 24, maxWidth: 980 }}>
-        <div style={{ display: "flex", fontSize: 72, fontWeight: 700, lineHeight: 1.05 }}>
-          {page.data.title}
-        </div>
-        <div style={{ color: "#a8a29e", display: "flex", fontSize: 32, lineHeight: 1.35 }}>
-          {page.data.description}
-        </div>
-      </div>
-      <div style={{ color: "#a8a29e", display: "flex", fontSize: 26 }}>
-        OpenTUI control plane for the tmux sessions you already own.
-      </div>
-    </div>,
+    <SocialCard
+      eyebrow="tmux-ide documentation"
+      title={page.data.title}
+      description={page.data.description ?? SITE_DESCRIPTION}
+    />,
     {
       width: 1200,
       height: 630,

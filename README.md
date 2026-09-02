@@ -10,8 +10,12 @@
 <p align="center"><strong>A visual tmux client designed for working with coding agents.</strong></p>
 
 <p align="center">
-  <img src="./docs/public/tui-demo.svg" alt="Animated tmux-ide OpenTUI demo" width="960" />
+  <img src="./docs/public/tui-demo.svg" alt="Animated tmux-ide OpenTUI demo showing Home, named coding agents, live status, terminal panes, and the command palette" width="960" />
 </p>
+
+The demo above is a self-contained animated SVG generated from the production
+OpenTUI renderer—not a video or a hand-maintained mockup. It is committed with
+the project, so the animation runs directly in GitHub.
 
 tmux-ide adds an application shell to ordinary tmux sessions. tmux still owns
 the processes, PTYs, sessions, windows, panes, and persistence; tmux-ide adds

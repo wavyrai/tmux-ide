@@ -231,7 +231,7 @@ function document(frames: CapturedFrame[]): string {
   <style>
     text { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size: 13px; white-space: pre; }
     .demo-frame { opacity: 0; animation: demo-cycle 12s steps(1, end) infinite; }
-    .demo-frame-0 { animation-delay: 0s; }
+    .demo-frame-0 { opacity: 1; animation-delay: 0s; }
     .demo-frame-1 { animation-delay: -8s; }
     .demo-frame-2 { animation-delay: -4s; }
     @keyframes demo-cycle { 0%, 31% { opacity: 1; } 32%, 100% { opacity: 0; } }

@@ -45,16 +45,16 @@ terminal:
 
 ### Top level
 
-| Field       | Type   | Notes                              |
-| ----------- | ------ | ---------------------------------- |
-| `version`   | `1`    | Workspace config version           |
-| `name`      | string | tmux session name                  |
-| `before`    | string | Optional pre-launch shell hook     |
-| `terminal`  | object | Launch layout and terminal theme   |
-| `app`       | object | Optional app view configuration    |
-| `harnesses` | object | Declarative agent harness profiles |
-| `agents`    | object | Declarative agent profiles         |
-| `missions`  | object | Declarative mission defaults       |
+| Field       | Required | Notes                                                        |
+| ----------- | -------- | ------------------------------------------------------------ |
+| `version`   | yes      | Must be `1`                                                  |
+| `name`      | no       | tmux session name; falls back to the project directory       |
+| `before`    | no       | Pre-launch shell hook                                        |
+| `terminal`  | no       | Repeatable tmux rows, panes, and per-session colors          |
+| `app`       | no       | Ordered full-panel or composite app views                    |
+| `harnesses` | no       | Named agent adapter, command, and environment profiles       |
+| `agents`    | no       | Named harness, model, and role profiles                      |
+| `missions`  | no       | Validated mission defaults; runtime consumption is not wired |
 
 ### Rows
 
@@ -67,16 +67,17 @@ terminal:
 
 ### Panes
 
-| Field     | Type    | Notes                                          |
-| --------- | ------- | ---------------------------------------------- |
-| `title`   | string  | Pane border label                              |
-| `command` | string  | Command to run in the pane                     |
-| `size`    | percent | Pane width (e.g. `50%`)                        |
-| `dir`     | string  | Per-pane working directory                     |
-| `focus`   | boolean | Initial focus                                  |
-| `env`     | map     | Environment variables                          |
-| `type`    | string  | Render a widget instead of a shell (see below) |
-| `target`  | string  | Target path for a widget pane                  |
+| Field     | Type    | Notes                                         |
+| --------- | ------- | --------------------------------------------- |
+| `id`      | string  | Stable semantic pane ID; unique when provided |
+| `title`   | string  | Pane border label                             |
+| `command` | string  | Command to run in the pane                    |
+| `size`    | percent | Pane width such as `50%`                      |
+| `dir`     | string  | Per-pane working directory                    |
+| `focus`   | boolean | Initial focus                                 |
+| `env`     | map     | String or numeric environment values          |
+| `type`    | string  | Render a supported widget instead of a shell  |
+| `target`  | string  | Target path for widgets that accept one       |
 
 ### Widget panes
 
@@ -91,10 +92,64 @@ panes:
     type: changes
 ```
 
-Available types are `explorer`, `changes`, `preview`, `setup`, `config`, and
-`sidebar`. The same widgets are available as floating panels (`prefix e` / `g` /
-`v`, or `⌥e` / `⌥g` / `⌥,`) from any adopted session — see
+The launch resolver currently implements `explorer`, `changes`, `preview`,
+`config`, and `sidebar`. The setup wizard is a CLI surface (`tmux-ide setup`),
+not a workspace pane type. Explorer, changes, and config are also available as
+floating panels (`prefix e` / `g` / `v`, or `⌥e` / `⌥g` / `⌥,`) from an
+adopted session — see
 [Home, sidebar & panels](/docs/app-surfaces).
+
+## App views
+
+`app.views` controls the ordered views shown by the unified app. A simple view
+selects one of `home`, `terminals`, `files`, `diff`, or `missions`:
+
+```yaml
+app:
+  views:
+    - id: home
+      title: Home
+      panel: home
+    - id: terminals
+      title: Terminals
+      panel: terminals
+```
+
+Composite views use a recursive `layout` of `panel`, `split`, and `tabs` nodes.
+Node IDs must be unique within the view. Splits contain two to four children;
+tabs contain one to eight. When supplied, split `weights` must have one entry
+per child and a tab's `active` value must name one of its children.
+
+## Agent profiles and mission defaults
+
+Harness commands may be a shell string or an executable/argv array. Agent roles
+are `manager`, `implementer`, `reviewer`, `researcher`, or `validator`:
+
+```yaml
+harnesses:
+  claude:
+    adapter: claude
+    command: [claude, --dangerously-skip-permissions]
+
+agents:
+  lead:
+    harness: claude
+    role: manager
+  reviewer:
+    harness: claude
+    model: sonnet
+    role: reviewer
+
+missions:
+  manager: lead
+  reviewer: reviewer
+  isolation: worktree
+  max_concurrent_tasks: 3
+```
+
+Agent and mission references are validated. In the current release these blocks
+are declarative defaults only: the app can show its Missions panel, but the CLI
+does not yet launch or dispatch a mission from this workspace data.
 
 ### Per-session theme
 
@@ -144,7 +199,7 @@ See [Theming & config](/docs/theming) for the full palette.
 
 ## Editing config programmatically
 
-Every field is reachable from the CLI with `--json` output, e.g.:
+Use the typed `config` subcommands to mutate workspace fields, then validate the result with structured output:
 
 ```bash
 tmux-ide config set name "my-app"
@@ -155,11 +210,12 @@ tmux-ide validate --json
 See the [CLI reference](/docs/commands) for the full `config` surface, and
 [Templates](/docs/templates) for ready-made starting points.
 
-## Agent teams & orchestration
+## Legacy compatibility
 
 The legacy `team`, pane `role`/`task` metadata, `sidebar`, and `orchestrator`
 blocks are not represented in WorkspaceConfigV1. The migration command reports
 those fields as diagnostics instead of silently dropping them.
 
-Mission runtime wiring is future work for the workspace config model. Do not add
-mission or orchestrator runtime fields to `.tmux-ide/workspace.yml` yet.
+Use the typed `harnesses`, `agents`, and `missions` fields above for declarative
+profiles. Do not copy the legacy `orchestrator` runtime block into
+`.tmux-ide/workspace.yml`.

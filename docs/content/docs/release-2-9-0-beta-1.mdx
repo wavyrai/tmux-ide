@@ -1,11 +1,9 @@
 ---
-title: OpenTUI 2.9 beta
-description: The focused visual tmux release with agent-aware chrome
+title: OpenTUI 2.9 beta.3
+description: The current 2.9.0-beta.3 visual tmux release with agent-aware chrome
 ---
 
-# OpenTUI 2.9 beta
-
-2.9 ships one product path: a polished OpenTUI client around ordinary tmux
+The current package is `2.9.0-beta.3`. It ships a polished OpenTUI client around ordinary tmux
 sessions. tmux owns PTYs, processes, topology, persistence, and SSH; the daemon
 publishes semantic workspace state and pane streams; OpenTUI owns presentation
 and input.
@@ -25,7 +23,7 @@ tmux-ide app work
 
 ## Included
 
-- F1 Home, F2 Terminals, and F5 Commands.
+- Home, Terminals, and contextual Commands.
 - Configless discovery and creation of ordinary tmux sessions.
 - Agent state in the sidebar, window tabs, and pane chrome.
 - Agent-row navigation to the correct pane.
@@ -35,13 +33,17 @@ tmux-ide app work
 - Indexed and truecolor terminal cells.
 - Retained content through quiet panes, resize, theme changes, daemon
   replacement, and viewer reattachment.
-- A downloadable, checksummed runtime for macOS and Linux.
+- A downloadable, checksummed runtime for macOS and Linux on arm64 and x64.
+- Detachable app hosting with `tmux-ide app --detachable`.
+- Optional workspace-defined Files, Diff, Missions, split, and tab views.
+- Rich Markdown, raster image, and structured card rendering in panes.
 
-## Deliberately deferred
+## Deliberately bounded
 
-The web client, native desktop client, files, diffs, missions, and rich-media
-surfaces are not included in this release. `tmux-ide web` fails with an explicit
-message instead of starting a half-supported product.
+`tmux-ide web` fails with an explicit message instead of starting an unsupported
+web client. The native desktop client is still under development. Mission
+profiles and the Missions panel exist, but public CLI mission dispatch from
+workspace defaults is not wired in this beta.
 
 ## Reporting issues
 

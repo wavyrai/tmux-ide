@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="140" viewBox="0 0 360 140" role="img" aria-label="An animated cursor performance">
+<style>.mt-cursor{transform:translate(187px,79px)}
+.mt-rip{fill:none;stroke:#087c9f;stroke-width:2;opacity:0;transform-box:fill-box;transform-origin:center}
+@media (prefers-reduced-motion: no-preference){
+.mt-cursor{animation:mt-travel 4000ms linear infinite both}
+.mt-rip{animation:mt-ripple 4000ms linear infinite both}
+}
+@keyframes mt-travel{0%{transform:translate(334px,122px)}5%{transform:translate(334.2px,122.2px)}6.0417%{transform:translate(331.35px,121.08px)}7.0833%{transform:translate(317.47px,116.38px)}8.125%{transform:translate(287.67px,107.43px)}9.1667%{transform:translate(242.39px,95.87px)}10.2083%{transform:translate(188.87px,85.67px)}11.25%{transform:translate(135.36px,79.47px)}12.2917%{transform:translate(90.22px,77.62px)}13.3333%{transform:translate(59.81px,77.67px)}14.375%{transform:translate(39.19px,79.37px)}15.4167%{transform:translate(31.65px,79.79px)}16.4583%{transform:translate(32.91px,79.84px)}17.5%{transform:translate(37.13px,79.16px)}18.5417%{transform:translate(41.26px,79.17px)}19.3079%{transform:translate(42px,79px)}26.25%{transform:translate(41.92px,78.75px)}27.2917%{transform:translate(43.84px,78.02px)}28.3333%{transform:translate(53.45px,73.65px)}29.375%{transform:translate(75.7px,68.31px)}30.4167%{transform:translate(109.86px,67.06px)}31.4583%{transform:translate(145.89px,70.5px)}32.5%{transform:translate(172.1px,75.31px)}33.5417%{transform:translate(187.22px,79.26px)}34.5833%{transform:translate(191.88px,80.67px)}35.625%{transform:translate(190.63px,80.18px)}36.6667%{transform:translate(187.51px,79.21px)}37.475%{transform:translate(187px,79px)}46.6667%{transform:translate(187px,79px)}47.5%{transform:translate(186.98px,78.19px)}57.9167%{transform:translate(187.37px,78.33px)}68.3333%{transform:translate(187.74px,78.51px)}79.7917%{transform:translate(188.07px,78.78px)}81.875%{transform:translate(188.12px,78.83px)}82.5%{transform:translate(187px,79px)}100%{transform:translate(187px,79px)}}
+@keyframes mt-ripple{
+0%{opacity:.55;transform:scale(.12)}
+15.5%{opacity:0;transform:scale(1)}
+100%{opacity:0;transform:scale(1)}
+}</style>
+
+<g><circle class="mt-rip" cx="42" cy="79" r="20" style="animation-delay:842.3ms"/><circle class="mt-rip" cx="187" cy="79" r="20" style="animation-delay:1569ms"/></g>
+<g class="mt-cursor">
+<g transform="translate(-5,-2.5)">
+<path d="M5 2.5 L5 19.4 L9.2 15.3 L11.9 21.2 L14.6 20 L11.9 14.2 L17.6 14.2 Z" fill="#fff" stroke="rgba(17,17,20,0.92)" stroke-width="1.35" stroke-linejoin="round"/>
+</g>
+</g>
+</svg>

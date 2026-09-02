@@ -1,5 +1,6 @@
 import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
 import { AppIcon } from "@/components/app-icon";
+import { AsciiWordmark } from "@/components/ascii-wordmark";
 
 export const gitConfig = {
   user: "wavyrai",
@@ -13,7 +14,7 @@ export function baseOptions(): BaseLayoutProps {
       title: (
         <span className="flex items-center gap-2">
           <AppIcon size={22} priority />
-          <span className="font-pixel text-lg">tmux-ide</span>
+          <AsciiWordmark size="nav" />
         </span>
       ),
     },

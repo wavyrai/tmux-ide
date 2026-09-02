@@ -1,9 +1,7 @@
 ---
 title: Getting started
-description: Install the OpenTUI beta and open your first tmux session
+description: Install tmux-ide 2.9 beta and open your first tmux session
 ---
-
-# Getting started
 
 ## Requirements
 
@@ -11,8 +9,9 @@ description: Install the OpenTUI beta and open your first tmux session
 - Node.js 20 or newer
 - macOS arm64/x64 or Linux arm64/x64
 
-Installed releases do not require Bun. Development checkouts use Bun to build
-and run the OpenTUI source.
+Installed releases use a compiled OpenTUI runtime and do not require Bun.
+Development checkouts use Bun to build the runtime and can opt into live source
+with `TMUX_IDE_TUI_SOURCE=1`.
 
 ## Install
 
@@ -21,8 +20,10 @@ npm install -g tmux-ide@beta
 tmux-ide app
 ```
 
-The first explicit app launch downloads the matching OpenTUI runtime, verifies
-its metadata and SHA-256 digests, and caches it under `~/.tmux-ide/bin`.
+If the exact-version runtime is not already installed, the first explicit app
+launch downloads it, verifies its release metadata and SHA-256 digest, and
+caches it under `~/.tmux-ide/bin`. The daemon starts only after a runnable TUI
+has been selected.
 
 If the download was interrupted:
 
@@ -46,15 +47,20 @@ not kill the tmux session.
 
 ## Controls
 
-| Key          | Action                               |
-| ------------ | ------------------------------------ |
-| `F1`         | Home                                 |
-| `F2`         | Terminals                            |
-| `F5`         | Commands                             |
-| `Ctrl+O`     | Cycle panes                          |
-| `Ctrl+T`     | Cycle windows                        |
-| `Meta+Arrow` | Resize the focused pane              |
-| `Ctrl+Q`     | Quit or put away a detachable viewer |
+| Key              | Action                                                |
+| ---------------- | ----------------------------------------------------- |
+| `F1`             | Home                                                  |
+| `F2`             | Terminals                                             |
+| `F3`, `F4`, `F6` | Files, Diff, Missions when those views are configured |
+| `F5`, `Ctrl+P`   | Commands                                              |
+| `F8`, `Ctrl+Tab` | Cycle focus inside a composite view                   |
+| `F12`            | Performance HUD                                       |
+| `Ctrl+O`         | Cycle panes                                           |
+| `Ctrl+T`         | Cycle windows                                         |
+| `Ctrl+G`         | Return to Home                                        |
+| `Ctrl+E`         | Toggle the Files editor                               |
+| `Meta+Arrow`     | Resize the focused pane                               |
+| `Ctrl+Q`         | Quit, or detach a detachable viewer                   |
 
 Pane headers and window tabs also expose mouse controls for the supported
 actions.

@@ -70843,6 +70843,7 @@ ${bold3("Usage:")}
   ${cyan2("tmux-ide team")} [--json]      ${dim3("TUI over all tmux sessions (--json prints fleet state)")}
   ${cyan2("tmux-ide app")} [session]      ${dim3("Unified app: fleet home + live session mirror (bare = home)")}
   ${cyan2("tmux-ide app --detachable")}   ${dim3("Host the app in tmux and attach \u2014 survives the terminal, ^q detaches")}
+  ${cyan2("tmux-ide app --hosted")}       ${dim3("Alias for --detachable")}
   ${cyan2("tmux-ide switcher")}           ${dim3("Compact session picker (opens in the M-p popup on adopted sessions)")}
   ${cyan2("tmux-ide wait agent-status")} <session> --status <s> [--timeout <ms>]
                               ${dim3("Block until a session reaches a status (exit 0 match / 1 timeout)")}
@@ -70853,7 +70854,10 @@ ${bold3("Usage:")}
   ${cyan2("tmux-ide adopt")} <session>    ${dim3("Add the live tmux-ide status bar to a session")}
   ${cyan2("tmux-ide adopt --all")}        ${dim3("Adopt every live (non-internal) session")}
   ${cyan2("tmux-ide unadopt")} <session>  ${dim3("Remove the status bar")}
-  ${cyan2("tmux-ide integration install claude")}  ${dim3("Authoritative agent status via Claude Code hooks")}
+  ${cyan2("tmux-ide integration install claude")}  ${dim3("Claude Code lifecycle hooks + managed tmux-ide skill")}
+  ${cyan2("tmux-ide integration install opencode")} ${dim3("Capture opencode session ids for restore --resume-agents")}
+  ${cyan2("tmux-ide integration uninstall")} <claude|opencode> ${dim3("Remove tmux-ide's integration entries")}
+  ${cyan2("tmux-ide integration status")} [--json]  ${dim3("Show discovered agents, integration state, and resume-id capture")}
   ${cyan2("tmux-ide agent explain")} <pane> [--json]  ${dim3("Debug how a pane's agent state is detected")}
   ${cyan2("tmux-ide cheatsheet")}         ${dim3("Print the key cheat sheet (\u2325k / [ ? keys ] popup)")}
   ${cyan2("tmux-ide menu")} [--client N]  ${dim3("Open the right-click actions menu (\u2325m / right-click any pane or the bar)")}
@@ -70871,10 +70875,9 @@ ${bold3("Usage:")}
   ${cyan2("tmux-ide inspect")} [--json]   ${dim3("Show effective config and runtime state")}
   ${cyan2("tmux-ide doctor")}             ${dim3("Check system requirements")}
   ${cyan2("tmux-ide update")} [--dry-run] ${dim3("Update tmux-ide (detects dev checkout vs npm/pnpm/bun global)")}
+  ${cyan2("tmux-ide update --tui-binary")} ${dim3("Download and verify this version's compiled OpenTUI runtime")}
   ${cyan2("tmux-ide update --manifests")} ${dim3("Fetch the latest agent-detection manifest pack (your overrides still win)")}
   ${cyan2("tmux-ide skill-sync")}         ${dim3("Refresh the bundled Claude Code skill in ~/.claude/skills/tmux-ide")}
-  ${cyan2("tmux-ide show <file>")}          ${dim3("Show rich content inside this pane (Ctrl-C restores it)")}
-  ${cyan2("tmux-ide widget <name> [file]")} ${dim3("Low-level explicit rich-content command")}
   ${cyan2("tmux-ide validate")} [--json]  ${dim3("Validate workspace config")}
   ${cyan2("tmux-ide detect")} [--json]    ${dim3("Detect project stack")}
   ${cyan2("tmux-ide detect --write")}     ${dim3("Detect and write .tmux-ide/workspace.yml")}
@@ -70892,6 +70895,7 @@ ${bold3("Pane Messaging:")}
   ${cyan2("tmux-ide send")} <target> --no-enter msg  ${dim3("Send text without pressing Enter")}
 
 ${bold3("Server:")}
+  ${cyan2("tmux-ide serve")} [socket-path]         ${dim3("Foreground owner-only local NDJSON control socket")}
   ${cyan2("tmux-ide command-center")} [--port N]    ${dim3("Start the command-center HTTP API")}
   ${cyan2("tmux-ide server")} [--port N]            ${dim3("Start HTTP + PTY WebSocket server")}
 
@@ -70904,7 +70908,7 @@ ${bold3("Discover (in the TUI):")}
   ${dim3("A first-run welcome card names these keys once. Run")} ${cyan2("tmux-ide cheatsheet")} ${dim3("to see the full sheet.")}
 
 ${bold3("Flags:")}
-  ${cyan2("--json")}                      ${dim3("Output as JSON (all commands)")}
+  ${cyan2("--json")}                      ${dim3("Structured output on commands that advertise JSON support")}
   ${cyan2("--headless")}                  ${dim3("Canonical daemon only; no tmux workspace or TUI")}
   ${cyan2("--template <name>")}           ${dim3("Use specific template for init")}
   ${cyan2("--write")}                     ${dim3("Write detected config to .tmux-ide/workspace.yml")}

@@ -252,6 +252,9 @@ importers:
       '@types/react-dom':
         specifier: ^19.2.3
         version: 19.2.3(@types/react@19.2.14)
+      matinee:
+        specifier: 0.1.2
+        version: 0.1.2(react@19.2.4)
       postcss:
         specifier: 8.5.26
         version: 8.5.26
@@ -3617,6 +3620,12 @@ packages:
     resolution: {integrity: sha512-boeBdiS0ghpWcSwoNm/jJBwdpFaMnZWRzjA6SkUMYb40SVaN1x7mmfGKp0jvexGcx+7y2La5zRZsYFZI6Qpypg==}
     engines: {node: '>= 20'}
     hasBin: true
+
+  matinee@0.1.2:
+    resolution: {integrity: sha512-Syrlq178ZqcFLsx734lei3hhhYMS8uWwURBvtJoXeHCC/7odjeJ8HvjFkS8f5yJyvJ+oeWWowZasCx0hoMAj9A==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      react: '>=18'
 
   mdast-util-find-and-replace@3.0.2:
     resolution: {integrity: sha512-Tmd1Vg/m3Xz43afeNxDIhWRtFZgM2VLyaf4vSTYwudTyeuTneoL3qtWMA5jeLyz/O1vDJmmV4QuScFCA2tBPwg==}
@@ -7617,6 +7626,10 @@ snapshots:
   marked@16.4.2: {}
 
   marked@17.0.1: {}
+
+  matinee@0.1.2(react@19.2.4):
+    dependencies:
+      react: 19.2.4
 
   mdast-util-find-and-replace@3.0.2:
     dependencies:

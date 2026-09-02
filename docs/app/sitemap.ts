@@ -1,23 +1,24 @@
 import type { MetadataRoute } from "next";
 import { source } from "@/lib/source";
-
-const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://tmux.thijsverreck.com";
+import { SITE_URL } from "@/lib/site";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const docs = source.getPages().map((page) => ({
-    url: `${siteUrl}${page.url}`,
-    lastModified: new Date(),
+    url: `${SITE_URL}${page.url}`,
     changeFrequency: "weekly" as const,
-    priority: 0.8,
+    priority: page.url === "/docs" ? 0.9 : 0.7,
   }));
 
-  return [
+  const routes: MetadataRoute.Sitemap = [
     {
-      url: siteUrl,
-      lastModified: new Date(),
+      url: `${SITE_URL}/`,
       changeFrequency: "weekly",
       priority: 1,
     },
     ...docs,
   ];
+
+  return routes.filter(
+    (route, index) => routes.findIndex((candidate) => candidate.url === route.url) === index,
+  );
 }
