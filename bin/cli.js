@@ -13508,20 +13508,25 @@ function validSocketPath(path2) {
 function captureUnixSocketIdentity(path2) {
   if (!validSocketPath(path2)) throw new TypeError("Unix socket path is invalid");
   const sourceParent = lstatSync(dirname7(path2));
-  const source = lstatSync(path2);
+  const source = lstatSync(path2, { bigint: true });
   if (!sourceParent.isDirectory() || sourceParent.isSymbolicLink() || !source.isSocket())
     throw new TypeError("Unix socket authority is invalid");
   const canonicalPath = join7(realpathSync4(dirname7(path2)), basename5(path2));
-  const canonical = lstatSync(canonicalPath);
+  const canonical = lstatSync(canonicalPath, { bigint: true });
   if (!canonical.isSocket() || canonical.dev !== source.dev || canonical.ino !== source.ino)
     throw new TypeError("Unix socket authority changed while resolving");
-  return Object.freeze({ path: canonicalPath, dev: canonical.dev, ino: canonical.ino });
+  return Object.freeze({
+    path: canonicalPath,
+    dev: Number(canonical.dev),
+    ino: Number(canonical.ino),
+    ctimeNs: canonical.ctimeNs
+  });
 }
 function revalidateUnixSocketIdentity(identity) {
-  if (!validSocketPath(identity.path) || !Number.isSafeInteger(identity.dev) || identity.dev < 0 || !Number.isSafeInteger(identity.ino) || identity.ino < 0)
+  if (!validSocketPath(identity.path) || !Number.isSafeInteger(identity.dev) || identity.dev < 0 || !Number.isSafeInteger(identity.ino) || identity.ino < 0 || typeof identity.ctimeNs !== "bigint" || identity.ctimeNs < 0n)
     throw new TypeError("Unix socket identity is invalid");
-  const current = lstatSync(identity.path);
-  if (!current.isSocket() || current.dev !== identity.dev || current.ino !== identity.ino)
+  const current = lstatSync(identity.path, { bigint: true });
+  if (!current.isSocket() || current.dev !== BigInt(identity.dev) || current.ino !== BigInt(identity.ino) || current.ctimeNs !== identity.ctimeNs)
     throw new TypeError("Unix socket authority changed before use");
   return identity.path;
 }

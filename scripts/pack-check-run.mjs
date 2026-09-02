@@ -247,6 +247,15 @@ async function runInstalledTuiGate(installedCli) {
     "bin",
     `tmux-ide-tui-${platformTag}-${packageVersion}`,
   );
+  // `npm pack` compiles the tracked CLI before the runtime build. Capture that
+  // post-pack source state so the assertion describes the exact compiled input
+  // while the evidence record still proves qualification began from `sourceState`.
+  const compiledSourceState = releaseSourceState(
+    spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], {
+      cwd: root,
+      encoding: "utf8",
+    }).stdout ?? "",
+  );
   run("bun", ["scripts/build-tui.mjs", "--outfile", mockReleaseBinaryPath], {
     stdio: "inherit",
   });
@@ -265,7 +274,7 @@ async function runInstalledTuiGate(installedCli) {
     version: packageVersion,
     commit: releaseCommit,
     platform: platformTag,
-    sourceState,
+    sourceState: compiledSourceState,
   };
   if (JSON.stringify(runtimeProvenance) !== JSON.stringify(expectedProvenance)) {
     throw new Error(
