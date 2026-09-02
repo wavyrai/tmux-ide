@@ -6,7 +6,7 @@ import {
   overlayFrameSize,
   overlayTopmost,
   overlayZIndex,
-} from "./overlay-host.ts";
+} from "./overlay-model.ts";
 
 describe("overlay host model", () => {
   it("keeps one deterministic topmost layer and monotonic z-order", () => {

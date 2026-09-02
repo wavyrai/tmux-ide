@@ -3,7 +3,7 @@ import type { JSX } from "@opentui/solid";
 
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { clipTerminal } from "../terminal-text.ts";
-import { overlayFrameSize, type OverlayPlacement } from "./overlay-host.ts";
+import { overlayFrameSize, type OverlayPlacement } from "./overlay-model.ts";
 
 export interface OverlayFrameProps {
   theme: SemanticThemeSnapshot;

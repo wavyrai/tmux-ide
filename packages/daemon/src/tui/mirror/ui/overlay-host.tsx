@@ -7,7 +7,7 @@ import {
   overlayEscapeTarget,
   overlayZIndex,
   type OverlayDismissReason,
-} from "./overlay-host.ts";
+} from "./overlay-model.ts";
 import { useKeyboardRoute } from "./keyboard-router.tsx";
 
 export interface OverlayLayerContext {

@@ -3,7 +3,7 @@ import type { JSX } from "@opentui/solid";
 
 import type { SemanticThemeSnapshot } from "../theme.ts";
 import { OverlayFrame } from "./overlay-frame.tsx";
-import type { OverlayPlacement } from "./overlay-host.ts";
+import type { OverlayPlacement } from "./overlay-model.ts";
 
 export interface DialogProps {
   theme: SemanticThemeSnapshot;

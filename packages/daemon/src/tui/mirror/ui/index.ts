@@ -34,7 +34,7 @@ export {
   overlayFrameSize,
   overlayTopmost,
   overlayZIndex,
-} from "./overlay-host.ts";
+} from "./overlay-model.ts";
 export { OverlayListRow, type OverlayListRowProps } from "./overlay-list-row.tsx";
 export {
   componentPalette,
