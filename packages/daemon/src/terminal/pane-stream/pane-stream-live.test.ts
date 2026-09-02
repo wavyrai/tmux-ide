@@ -228,24 +228,28 @@ describe.skipIf(!hasTmux)("pane-stream wire live", () => {
 
     // ── Stall S, then flood ────────────────────────────────────────────────
     clientS.ws.pause();
-    // Keep the producer finite. An effectively unbounded `seq` can enqueue an
-    // arbitrarily large PTY backlog before the test observes pause under host
-    // load, making the later resume assertion measure drain time rather than
-    // per-client flow isolation. This is still comfortably above the 256 KiB
-    // admission budget while keeping recovery bounded.
-    runTmux(["send-keys", "-t", runtimePanes[0]!, "seq 1 250000", "Enter"]);
+    // Drive until the live socket itself proves backpressure, then interrupt
+    // immediately. A finite byte count is not portable here: Linux TCP receive
+    // autotuning can absorb several MiB while macOS parks much sooner, so the
+    // same count either misses the wire ledger or leaves a large recovery
+    // backlog. The finally block bounds the producer on every path.
+    runTmux(["send-keys", "-t", runtimePanes[0]!, "yes PANE_STREAM_FLOW_42", "Enter"]);
     // The daemon parks ONLY S's flood-pane delivery: its ws-send-buffer
     // tickets stay outstanding past the budget.
-    await vi.waitFor(
-      () => {
-        const snapshot = coordinator.flowSnapshot();
-        const stalled = Object.values(snapshot).some(
-          (panes) => (panes[floodPane]?.["ws-send-buffer"] ?? 0) > 256 << 10,
-        );
-        expect(stalled).toBe(true);
-      },
-      { timeout: 30_000 },
-    );
+    try {
+      await vi.waitFor(
+        () => {
+          const snapshot = coordinator.flowSnapshot();
+          const stalled = Object.values(snapshot).some(
+            (panes) => (panes[floodPane]?.["ws-send-buffer"] ?? 0) > 256 << 10,
+          );
+          expect(stalled).toBe(true);
+        },
+        { timeout: 30_000 },
+      );
+    } finally {
+      runTmux(["send-keys", "-t", runtimePanes[0]!, "C-c", ""]);
+    }
 
     // The healthy client keeps receiving the flood AND the quiet panes.
     const floodBytesBefore = textOf(clientH, floodPane).length;
@@ -260,7 +264,6 @@ describe.skipIf(!hasTmux)("pane-stream wire live", () => {
 
     // ── Resume S: its own flow events + a fresh atomic seed batch arrive ──
     clientS.ws.resume();
-    runTmux(["send-keys", "-t", runtimePanes[0]!, "C-c", ""]);
     await vi.waitFor(
       () => {
         const flow = framesOf(clientS, "flow", floodPane);
