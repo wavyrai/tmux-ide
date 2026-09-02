@@ -7,7 +7,8 @@ export interface UnixSocketIdentity {
   readonly path: string;
   readonly dev: number;
   readonly ino: number;
-  readonly ctimeNs: bigint;
+  readonly mtimeNs: bigint;
+  readonly birthtimeNs: bigint;
 }
 
 function validSocketPath(path: string): boolean {
@@ -33,7 +34,8 @@ export function captureUnixSocketIdentity(path: string): UnixSocketIdentity {
     path: canonicalPath,
     dev: Number(canonical.dev),
     ino: Number(canonical.ino),
-    ctimeNs: canonical.ctimeNs,
+    mtimeNs: canonical.mtimeNs,
+    birthtimeNs: canonical.birthtimeNs,
   });
 }
 
@@ -44,8 +46,10 @@ export function revalidateUnixSocketIdentity(identity: UnixSocketIdentity): stri
     identity.dev < 0 ||
     !Number.isSafeInteger(identity.ino) ||
     identity.ino < 0 ||
-    typeof identity.ctimeNs !== "bigint" ||
-    identity.ctimeNs < 0n
+    typeof identity.mtimeNs !== "bigint" ||
+    identity.mtimeNs < 0n ||
+    typeof identity.birthtimeNs !== "bigint" ||
+    identity.birthtimeNs < 0n
   )
     throw new TypeError("Unix socket identity is invalid");
   const current = lstatSync(identity.path, { bigint: true });
@@ -53,7 +57,8 @@ export function revalidateUnixSocketIdentity(identity: UnixSocketIdentity): stri
     !current.isSocket() ||
     current.dev !== BigInt(identity.dev) ||
     current.ino !== BigInt(identity.ino) ||
-    current.ctimeNs !== identity.ctimeNs
+    current.mtimeNs !== identity.mtimeNs ||
+    current.birthtimeNs !== identity.birthtimeNs
   )
     throw new TypeError("Unix socket authority changed before use");
   return identity.path;

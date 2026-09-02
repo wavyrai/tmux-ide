@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -44,6 +44,16 @@ describe("Unix socket authority", () => {
     const second = await socketAt(path);
     expect(second.listening).toBe(true);
     expect(() => revalidateUnixSocketIdentity(identity)).toThrow(/changed before use/u);
+  });
+
+  it("accepts benign socket metadata changes made by an attached client", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tmux-ide-socket-metadata-"));
+    roots.push(root);
+    const path = join(root, "t.sock");
+    await socketAt(path);
+    const identity = captureUnixSocketIdentity(path);
+    chmodSync(path, 0o600);
+    expect(revalidateUnixSocketIdentity(identity)).toBe(identity.path);
   });
 
   it("rejects missing, regular, relative, oversized, final-symlink, and parent-symlink paths", async () => {

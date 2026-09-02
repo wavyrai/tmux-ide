@@ -13519,14 +13519,15 @@ function captureUnixSocketIdentity(path2) {
     path: canonicalPath,
     dev: Number(canonical.dev),
     ino: Number(canonical.ino),
-    ctimeNs: canonical.ctimeNs
+    mtimeNs: canonical.mtimeNs,
+    birthtimeNs: canonical.birthtimeNs
   });
 }
 function revalidateUnixSocketIdentity(identity) {
-  if (!validSocketPath(identity.path) || !Number.isSafeInteger(identity.dev) || identity.dev < 0 || !Number.isSafeInteger(identity.ino) || identity.ino < 0 || typeof identity.ctimeNs !== "bigint" || identity.ctimeNs < 0n)
+  if (!validSocketPath(identity.path) || !Number.isSafeInteger(identity.dev) || identity.dev < 0 || !Number.isSafeInteger(identity.ino) || identity.ino < 0 || typeof identity.mtimeNs !== "bigint" || identity.mtimeNs < 0n || typeof identity.birthtimeNs !== "bigint" || identity.birthtimeNs < 0n)
     throw new TypeError("Unix socket identity is invalid");
   const current = lstatSync(identity.path, { bigint: true });
-  if (!current.isSocket() || current.dev !== BigInt(identity.dev) || current.ino !== BigInt(identity.ino) || current.ctimeNs !== identity.ctimeNs)
+  if (!current.isSocket() || current.dev !== BigInt(identity.dev) || current.ino !== BigInt(identity.ino) || current.mtimeNs !== identity.mtimeNs || current.birthtimeNs !== identity.birthtimeNs)
     throw new TypeError("Unix socket authority changed before use");
   return identity.path;
 }
