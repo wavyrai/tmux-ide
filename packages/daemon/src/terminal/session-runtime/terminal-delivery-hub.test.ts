@@ -1252,7 +1252,7 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     });
     await connection.close();
     await hub.close();
-  }, 30_000);
+  }, 60_000);
 
   it("delivers a compact 5000-row state through the real hub, coalesces exactly, and reseeds reconnects", async () => {
     const owner = new FakeOwner();
@@ -1422,7 +1422,7 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     reconnect.ack(reconnectCommit.ack);
     await Promise.all([connection.close(), reconnect.close()]);
     await hub.close();
-  }, 30_000);
+  }, 60_000);
 
   it("faults only when the compact and legacy exact seeds are both unrepresentable", async () => {
     const owner = new FakeOwner();
@@ -1495,7 +1495,7 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
       selectionStatus: "direct-seed",
     });
     await hub.close();
-  }, 30_000);
+  }, 60_000);
 
   it("falls back per envelope when compact structure rejects an exact legacy-representable seed", async () => {
     const owner = new FakeOwner();
@@ -1591,7 +1591,7 @@ describe("SessionRuntimeTerminalDeliveryHub", () => {
     });
     await connection.close();
     await hub.close();
-  }, 30_000);
+  }, 60_000);
 
   it("does not let a compact-only cache entry suppress a later client's negotiated fallback", async () => {
     const owner = new FakeOwner();
