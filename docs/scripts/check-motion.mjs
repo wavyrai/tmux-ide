@@ -37,6 +37,7 @@ if (/\b(?:animate-fade-in|animate-pane-in)\b|@keyframes\s+(?:fadeIn|paneIn)\b/u.
 }
 
 const css = readFileSync(resolve(root, "app/global.css"), "utf8");
+const page = readFileSync(resolve(root, "app/(home)/page.tsx"), "utf8");
 for (const token of [
   "--ease-smooth",
   "--ease-out-fluid",
@@ -44,6 +45,18 @@ for (const token of [
   "@custom-variant hover-only",
 ]) {
   if (!css.includes(token)) failures.push(`missing shared motion primitive: ${token}`);
+}
+
+for (const token of ["motionCount={9}", "motionIndex={index + 3}", "motionIndex={index + 6}"]) {
+  if (!page.includes(token)) failures.push(`landing-page demos must share one queue: ${token}`);
+}
+for (const token of [
+  '[data-motion-count="9"]',
+  "@keyframes tui-motion-before-9",
+  "@keyframes tui-motion-after-9",
+  "@keyframes tui-motion-cursor-9",
+]) {
+  if (!css.includes(token)) failures.push(`missing nine-figure motion queue primitive: ${token}`);
 }
 
 for (const { path, source } of sources.filter(({ path }) => extname(path) !== ".css")) {

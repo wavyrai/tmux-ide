@@ -202,6 +202,8 @@ export default async function HomePage() {
                   <TuiMiniFigure
                     variant={agentVisuals[index]}
                     figure={feature.figure}
+                    motionCount={9}
+                    motionIndex={index}
                     className="mt-10"
                   />
                 </Cell>
@@ -237,6 +239,8 @@ export default async function HomePage() {
                   <TuiMiniFigure
                     variant={architectureVisuals[index]}
                     figure={layer.figure}
+                    motionCount={9}
+                    motionIndex={index + 3}
                     className="mt-6"
                   />
                 </Cell>
@@ -293,8 +297,8 @@ export default async function HomePage() {
                   <TuiMiniFigure
                     variant={capability.visual}
                     figure={capability.figure}
-                    motionCount={3}
-                    motionIndex={index}
+                    motionCount={9}
+                    motionIndex={index + 6}
                     className="mt-8"
                   />
                 </Cell>

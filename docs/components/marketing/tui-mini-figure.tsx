@@ -23,7 +23,7 @@ type Props = {
     label: string;
   };
   className?: string;
-  motionCount?: 3 | 6;
+  motionCount?: 3 | 6 | 9;
   motionIndex?: number;
 };
 

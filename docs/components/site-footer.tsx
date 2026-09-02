@@ -38,25 +38,25 @@ const columns = [
 
 export function SiteFooter() {
   return (
-    <footer className="marketing-dark-footer overflow-hidden border-t border-marketing-line bg-marketing-paper">
-      <MarketingFrame className="border-y-0">
+    <footer className="marketing-dark-footer overflow-hidden border-t">
+      <MarketingFrame className="footer-frame border-y-0">
         {/* A line-colored canvas owns every internal seam; dark cells repaint
             the surface so adjacent columns can never manufacture double rules. */}
-        <div className="grid grid-cols-1 gap-px border-b border-marketing-line bg-marketing-line sm:grid-cols-2 lg:grid-cols-5">
-          <div className="bg-marketing-paper px-6 py-12 sm:col-span-2 lg:py-16 xl:px-10">
+        <div className="footer-rule-grid grid grid-cols-1 gap-px border-b sm:grid-cols-2 lg:grid-cols-5">
+          <div className="footer-surface px-6 py-12 sm:col-span-2 lg:py-16 xl:px-10">
             <Link
               href="/"
               aria-label="tmux-ide home"
-              className="marketing-logo-action inline-flex items-center gap-3 text-fd-foreground"
+              className="footer-foreground marketing-logo-action inline-flex items-center gap-3"
             >
               <AppIcon size={30} />
               <AsciiWordmark size="footer" inverted />
             </Link>
-            <p className="mt-5 max-w-md text-sm leading-6 text-fd-muted-foreground">
+            <p className="footer-muted mt-5 max-w-md text-sm leading-6">
               The agent-aware communication plane for building and coordinating a team of coding
               agents on durable tmux sessions.
             </p>
-            <code className="mt-7 inline-block font-mono text-xs text-fd-foreground">
+            <code className="footer-foreground mt-7 inline-block font-mono text-xs">
               {INSTALL_COMMAND}
             </code>
           </div>
@@ -66,14 +66,14 @@ export function SiteFooter() {
           ))}
         </div>
 
-        <div className="grid grid-cols-1 gap-px border-b border-marketing-line bg-marketing-line sm:grid-cols-2">
-          <div className="flex items-center gap-2 bg-marketing-paper px-6 py-6 font-mono text-xs text-fd-muted-foreground xl:px-10">
+        <div className="footer-rule-grid grid grid-cols-1 gap-px border-b sm:grid-cols-2">
+          <div className="footer-muted footer-surface flex items-center gap-2 px-6 py-6 font-mono text-xs xl:px-10">
             <span className="text-emerald-400" aria-hidden>
               ●
             </span>
             <span>Open source · terminal native · SSH ready</span>
           </div>
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 bg-marketing-paper px-6 py-6 text-xs text-fd-muted-foreground sm:justify-end xl:px-10">
+          <div className="footer-muted footer-surface flex flex-wrap items-center gap-x-5 gap-y-2 px-6 py-6 text-xs sm:justify-end xl:px-10">
             <span>© {new Date().getFullYear()} tmux-ide</span>
             <span>tmux owns the processes. tmux-ide gives them a workspace.</span>
           </div>
@@ -84,9 +84,9 @@ export function SiteFooter() {
           target="_blank"
           rel="noreferrer"
           aria-label="Prototyper (opens in a new tab)"
-          className="group block bg-marketing-paper px-4 pt-6 text-fd-foreground sm:px-6 sm:pt-8 xl:px-8"
+          className="footer-foreground footer-surface group block px-4 pt-6 sm:px-6 sm:pt-8 xl:px-8"
         >
-          <span className="marketing-wordmark-action mx-auto block w-[90%] translate-y-[40%] text-white/32">
+          <span className="footer-wordmark marketing-wordmark-action mx-auto block w-[90%] translate-y-[40%]">
             <PrototyperWordmark width="100%" outline className="block h-auto w-full" />
           </span>
         </Link>
@@ -103,12 +103,12 @@ function FooterLinkGroup({
   links: readonly (readonly [string, string])[];
 }) {
   return (
-    <nav className="bg-marketing-paper px-6 py-12 lg:py-16" aria-label={`${title} links`}>
-      <p className="marketing-type-caption font-mono text-fd-muted-foreground">{title}</p>
+    <nav className="footer-surface px-6 py-12 lg:py-16" aria-label={`${title} links`}>
+      <p className="footer-muted marketing-type-caption font-mono">{title}</p>
       <ul className="mt-6 space-y-3">
         {links.map(([label, href]) => (
           <li key={label}>
-            <Link href={href} className="marketing-color-action text-sm text-fd-foreground">
+            <Link href={href} className="footer-foreground marketing-color-action text-sm">
               {label}
             </Link>
           </li>

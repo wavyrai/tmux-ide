@@ -117,6 +117,24 @@ expectAbsent(
   "marketing type roles must not use Tailwind's ambiguous text-* namespace",
 );
 
+for (const role of [
+  "footer-frame",
+  "footer-rule-grid",
+  "footer-surface",
+  "footer-foreground",
+  "footer-muted",
+  "footer-wordmark",
+]) {
+  if (!footer.includes(role) || !globalCss.includes(`.${role}`)) {
+    failures.push(`the production-stable dark footer must define and consume ${role}`);
+  }
+}
+expectAbsent(
+  footer,
+  /\b(?:bg-marketing-(?:paper|line)|text-fd-(?:foreground|muted-foreground))\b/u,
+  "the permanent dark footer must not depend on page-theme utility inheritance",
+);
+
 if (failures.length > 0) {
   console.error(`Marketing structure check failed:\n- ${failures.join("\n- ")}`);
   process.exit(1);
