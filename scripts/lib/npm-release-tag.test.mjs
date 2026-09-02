@@ -76,3 +76,41 @@ test("binary releases bind manual tags, builds, and manifests to one resolved co
   assert.match(workflow, /printf 'commit %s\\n' "\$\{\{ needs\.release\.outputs\.commit \}\}"/u);
   assert.match(workflow, /verify_dispatch_tag required/u);
 });
+
+test("manual binary releases explicitly dispatch npm from the exact release tag", () => {
+  const workflow = readFileSync(
+    new URL("../../.github/workflows/release-binaries.yml", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(workflow, /permissions:[\s\S]+actions: write[\s\S]+contents: write/u);
+  assert.match(workflow, /dispatch_npm_release:[\s\S]+needs: \[release, binaries\]/u);
+  assert.match(workflow, /if: \$\{\{ github\.event_name == 'workflow_dispatch' \}\}/u);
+  assert.match(workflow, /RELEASE_TAG: \$\{\{ needs\.release\.outputs\.tag \}\}/u);
+  assert.match(workflow, /RELEASE_VERSION: \$\{\{ needs\.release\.outputs\.version \}\}/u);
+  assert.match(
+    workflow,
+    /gh workflow run release\.yml[\s\S]+--ref "\$RELEASE_TAG"[\s\S]+--field "version=\$RELEASE_VERSION"/u,
+  );
+});
+
+test("npm release uses OIDC trusted publishing instead of a repository token", () => {
+  const workflow = readFileSync(
+    new URL("../../.github/workflows/release.yml", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(workflow, /permissions:[\s\S]+id-token: write/u);
+  assert.match(workflow, /environment: npm/u);
+  assert.match(workflow, /npm install --global npm@11\.6\.2/u);
+  assert.match(workflow, /run: npm publish --access public --tag/u);
+  assert.doesNotMatch(workflow, /NPM_TOKEN|NODE_AUTH_TOKEN/u);
+});
+
+test("retired desktop surfaces cannot block the terminal product CI", () => {
+  const workflow = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+
+  assert.doesNotMatch(workflow, /desktop_renderer|Desktop renderer|e2e:app|smoke:dev-csp/u);
+  assert.match(workflow, /opentui_package_qualification:/u);
+  assert.match(workflow, /run: pnpm run release:opentui:check/u);
+});
