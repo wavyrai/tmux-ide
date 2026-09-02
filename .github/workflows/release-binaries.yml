@@ -23,6 +23,7 @@ on:
         required: true
 
 permissions:
+  actions: write
   contents: write
 
 jobs:
@@ -252,3 +253,26 @@ jobs:
           # was already accepted by GitHub.
           gh release upload "${{ needs.release.outputs.tag }}" "${asset}.sha256" --clobber
           gh release upload "${{ needs.release.outputs.tag }}" "$asset" --clobber
+
+  # Tags created with GITHUB_TOKEN do not emit another workflow's tag-push
+  # event. A manual binary release therefore hands the exact tag/version to
+  # the npm workflow explicitly after every runtime asset is available.
+  dispatch_npm_release:
+    name: Dispatch npm release
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: [release, binaries]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Dispatch exact-tag npm release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.release.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run release.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$RELEASE_TAG" \
+            --field "version=$RELEASE_VERSION"
+          echo "Dispatched release.yml for $RELEASE_TAG ($RELEASE_VERSION)."

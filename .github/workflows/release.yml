@@ -1,9 +1,9 @@
 name: Release
 
-# Single source of truth for npm releases. Triggered by a semver tag
-# push (`vX.Y.Z`) or a manual `workflow_dispatch` with an explicit
-# version. Replaces the older `publish.yml` which raced this workflow
-# on the same tag-push trigger (G22-P3 housekeeping).
+# Single source of truth for npm releases. Triggered by a semver tag push
+# (`vX.Y.Z`), a manual `workflow_dispatch`, or the explicit handoff from the
+# manually-run binary workflow. The dispatch always runs from the release tag,
+# so the npm package and downloadable runtimes share one commit.
 #
 # Scope: npm — the terminal-first CLI/daemon plus its hidden macOS notification
 # sender (not a standalone desktop product).
@@ -99,6 +99,13 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           cache: pnpm
+
+      - name: Setup npm trusted publishing client
+        # npm trusted publishing requires npm >= 11.5.1. Pin the release
+        # client so the runner image cannot silently fall below that contract.
+        run: |
+          npm install --global npm@11.6.2
+          npm --version
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -240,9 +247,10 @@ jobs:
         run: pnpm exec tsc -p tsconfig.json
 
       - name: Publish tmux-ide
-        run: pnpm publish --access public --no-git-checks --tag "${{ steps.npm.outputs.tag }}"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # The `npm` GitHub environment is registered as this package's trusted
+        # publisher on npm. OIDC removes the expiring automation-token failure
+        # mode while `id-token: write` supplies signed provenance.
+        run: npm publish --access public --tag "${{ steps.npm.outputs.tag }}"
 
   # Push the just-released version into the Homebrew tap
   # (wavyrai/homebrew-tap → Formula/tmux-ide.rb). The formula's source of
