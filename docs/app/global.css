@@ -270,6 +270,36 @@
   color-scheme: dark;
 }
 
+/* Footer colors are deliberately concrete rather than inherited Tailwind
+   theme utilities. Production CSS optimization can flatten theme aliases at
+   their declaration scope; these roles keep the permanent dark close stable
+   in both the light and dark page themes. */
+.marketing-dark-footer,
+.marketing-dark-footer .footer-frame,
+.marketing-dark-footer .footer-rule-grid {
+  border-color: rgb(255 255 255 / 12%);
+}
+
+.marketing-dark-footer .footer-rule-grid {
+  background-color: rgb(255 255 255 / 12%);
+}
+
+.marketing-dark-footer .footer-surface {
+  background-color: #0d0d0d;
+}
+
+.marketing-dark-footer .footer-foreground {
+  color: #f5f5f5;
+}
+
+.marketing-dark-footer .footer-muted {
+  color: #a3a3a3;
+}
+
+.marketing-dark-footer .footer-wordmark {
+  color: rgb(255 255 255 / 32%);
+}
+
 /* The mini TUI figures share a four-second Matinee clock. Cards in each
    section are offset onto a common 12s/24s timeline, so only one performance
    speaks at a time. Diagram state changes land with the cursor action. */
@@ -295,6 +325,10 @@
   animation-duration: 24s;
 }
 
+[data-motion-count="9"] :is(.tui-motion-before, .tui-motion-after, .tui-motion-cursor) {
+  animation-duration: 36s;
+}
+
 .tui-motion-before {
   animation-name: tui-motion-before-3;
 }
@@ -317,6 +351,18 @@
 
 [data-motion-count="6"] .tui-motion-cursor {
   animation-name: tui-motion-cursor-6;
+}
+
+[data-motion-count="9"] .tui-motion-before {
+  animation-name: tui-motion-before-9;
+}
+
+[data-motion-count="9"] .tui-motion-after {
+  animation-name: tui-motion-after-9;
+}
+
+[data-motion-count="9"] .tui-motion-cursor {
+  animation-name: tui-motion-cursor-9;
 }
 
 @keyframes tui-motion-before-3 {
@@ -404,6 +450,51 @@
     opacity: 1;
   }
   16.5%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes tui-motion-before-9 {
+  0%,
+  3% {
+    opacity: 1;
+  }
+  4.3%,
+  9.8% {
+    opacity: 0;
+  }
+  11.1%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes tui-motion-after-9 {
+  0%,
+  3% {
+    opacity: 0;
+  }
+  4.3%,
+  9.8% {
+    opacity: 1;
+  }
+  11.1%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes tui-motion-cursor-9 {
+  0%,
+  0.4% {
+    opacity: 0;
+  }
+  1%,
+  10.2% {
+    opacity: 1;
+  }
+  11.1%,
   100% {
     opacity: 0;
   }
