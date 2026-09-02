@@ -47379,8 +47379,13 @@ var init_terminal_replica_interpreter = __esm({
 function boundedPositive(value) {
   return Number.isSafeInteger(value) && value > 0 && value <= 65535;
 }
+function nativeRowsMatchLease(lease, nativeRows) {
+  if (lease.paneBorderStatus === "off") return lease.pane.height === nativeRows;
+  const touchesStatusEdge = lease.paneBorderStatus === "top" ? lease.pane.top === 0 : lease.pane.top + lease.pane.height === lease.windowRows;
+  return lease.pane.height === nativeRows + (touchesStatusEdge ? 1 : 0);
+}
 function layoutLeaseEqual(left, right) {
-  return left.semanticWindowId === right.semanticWindowId && left.currentWindow === right.currentWindow && left.zoomed === right.zoomed && left.windowCols === right.windowCols && left.windowRows === right.windowRows && left.paneBorderStatus === right.paneBorderStatus && left.pane.semanticPaneId === right.pane.semanticPaneId && left.pane.left === right.pane.left && left.pane.top === right.pane.top && left.pane.width === right.pane.width && left.pane.height === right.pane.height && left.pane.active === right.pane.active;
+  return left.semanticWindowId === right.semanticWindowId && left.zoomed === right.zoomed && left.windowCols === right.windowCols && left.windowRows === right.windowRows && left.paneBorderStatus === right.paneBorderStatus && left.pane.semanticPaneId === right.pane.semanticPaneId && left.pane.left === right.pane.left && left.pane.top === right.pane.top && left.pane.width === right.pane.width && left.pane.height === right.pane.height;
 }
 var SessionRuntimeTerminalReplicaOwner;
 var init_terminal_replica_owner = __esm({
@@ -47586,7 +47591,10 @@ var init_terminal_replica_owner = __esm({
               rows: lease.pane.height,
               chunks: reseed.chunks,
               trace: reseed.trace,
-              cursor: { x: event.x, y: event.y },
+              // tmux can report x === cols while its terminal is in the
+              // right-margin wrap-pending state. The canonical replica stores
+              // a cell position, so project that state onto the final column.
+              cursor: { x: Math.min(event.x, reseed.nativeCols - 1), y: event.y },
               bootstrap: "painted-capture",
               validateBeforeCommit: () => this.#leaseIsCurrent(lease, reseed.subscriptionEpoch),
               onInvalidated: () => this.#retryReseedOrFault("terminal reseed layout lease crossed")
@@ -47666,9 +47674,8 @@ var init_terminal_replica_owner = __esm({
         const lease = reseed.layoutLease;
         if (!lease || !this.#leaseIsCurrent(lease, reseed.subscriptionEpoch)) return null;
         if (lease.pane.width !== reseed.nativeCols) return null;
-        const rowsExact = lease.paneBorderStatus === "off" ? lease.pane.height === reseed.nativeRows : lease.pane.height === reseed.nativeRows + 1;
-        if (!rowsExact) return null;
-        if (!Number.isSafeInteger(cursorX) || !Number.isSafeInteger(cursorY) || cursorX < 0 || cursorY < 0 || cursorX >= reseed.nativeCols || cursorY >= reseed.nativeRows)
+        if (!nativeRowsMatchLease(lease, reseed.nativeRows)) return null;
+        if (!Number.isSafeInteger(cursorX) || !Number.isSafeInteger(cursorY) || cursorX < 0 || cursorY < 0 || cursorX > reseed.nativeCols || cursorY >= reseed.nativeRows)
           return null;
         return lease;
       }

@@ -19,6 +19,7 @@ import type {
 } from "@tmux-ide/contracts";
 import {
   TerminalDeliveryAssembler,
+  decodeVerifiedCompactSemanticTerminalUpdate,
   decodeVerifiedCompactSemanticTerminalUpdateCooperatively,
   decodeVerifiedLegacySemanticTerminalUpdate,
   terminalDeliveryEncodingAccepted,
@@ -474,6 +475,26 @@ class WireTerminalEndpoint {
       if (chunk.index + 1 < envelope.chunkCount) return consumed;
       const bytes = assembler.complete();
       if (envelope.encoding === "semantic-compact-v1") {
+        // Bootstrap every endpoint synchronously. Opening a workspace starts
+        // several cooperative decoders at once while live panes are already
+        // producing deltas; under sustained output one initial seed could be
+        // perpetually retired before it established a canonical baseline.
+        // Compact seeds are already size-bounded and decoding one atomically
+        // gives the endpoint the baseline needed for subsequent cooperative
+        // patches and their normal backpressure.
+        if (envelope.frame === "seed" && !this.#hasCanonicalSeed) {
+          const verified = decodeVerifiedCompactSemanticTerminalUpdate(
+            bytes,
+            this.#canonicalSnapshot,
+            envelope.canonicalStateHash,
+            {
+              grantReducerAdoption: true,
+              ...(this.#compactDecodeProfile ? { onComplete: this.#compactDecodeProfile } : {}),
+            },
+          );
+          this.#acceptVerified(envelope, verified, performanceSink, parseStartedAt);
+          return consumed;
+        }
         const token = Object.freeze({});
         this.#decodeToken = token;
         void this.#completeCooperativeCompactDecode(

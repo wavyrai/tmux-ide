@@ -388,6 +388,40 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
     await port.close();
   });
 
+  it("commits a large compact bootstrap seed before cooperative patch scheduling", async () => {
+    const immediate = vi.spyOn(globalThis, "setImmediate");
+    const test = rig(false, false, "semantic-compact-v1");
+    const opening = connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory([PANE_A]),
+      routing: test.routing,
+    });
+    await Promise.resolve();
+    test.options().onLayout?.({
+      type: "layout",
+      semanticWindowId: "window.main",
+      windowName: "main",
+      currentWindow: true,
+      cols: 132,
+      rows: 41,
+      zoomed: false,
+      paneBorderStatus: "off",
+      panes: [{ pane: PANE_A, left: 0, top: 0, width: 132, height: 41, active: true }],
+    });
+    const blank = blankTerminalReplicaSnapshot(132, 41);
+    const snapshot = Object.freeze({
+      ...blank,
+      history: repeatedBlankHistoryRows(1_000),
+    }) as TerminalReplicaSnapshot;
+    const seed = seedDelivery(PANE_A, snapshot, "203", undefined, "semantic-compact-v1");
+    test.options().onTerminalDelivery(PANE_A, seed.envelope);
+    for (const chunk of seed.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+
+    const port = await opening;
+    expect(immediate).not.toHaveBeenCalled();
+    immediate.mockRestore();
+    await port.close();
+  });
+
   for (const [name, mutate] of [
     ["missing", (panes: Array<Record<string, unknown>>) => panes.slice(0, 1)],
     ["extra", (panes: Array<Record<string, unknown>>) => [...panes, { ...panes[0], pane: PANE_C }]],

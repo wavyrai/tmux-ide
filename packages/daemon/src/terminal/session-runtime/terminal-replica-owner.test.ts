@@ -212,6 +212,68 @@ describe("SessionRuntimeTerminalReplicaOwner", () => {
     },
   );
 
+  it.each(["top", "bottom"] as const)(
+    "keeps an interior pane's full native height with %s border status",
+    async (status) => {
+      const updates: CanonicalTerminalReplicaUpdate[] = [];
+      const mirror = {
+        subscribe: async (candidate: MirrorSubscribeRequest): Promise<MirrorSubscription> => {
+          queueMicrotask(() => {
+            const base = layout(8, 10, status);
+            candidate.onLayout?.({
+              ...base,
+              panes: [{ ...base.panes[0]!, top: 3, height: 4 }],
+            });
+            candidate.onEvent({ type: "reset", cols: 8, rows: 4 });
+            candidate.onEvent({ type: "seed", data: new TextEncoder().encode("interior") });
+            candidate.onEvent({ type: "cursor", x: 1, y: 0 });
+          });
+          return subscription(candidate);
+        },
+      };
+      const owner = new SessionRuntimeTerminalReplicaOwner(
+        generation,
+        "workspace",
+        "pane-a",
+        mirror as never,
+        { incarnation: `${generation}:0`, initialRevision: 0 },
+      );
+      await owner.subscribe((update) => updates.push(update));
+      expect(updates).toHaveLength(1);
+      expect(updates[0]).toMatchObject({ type: "terminal.seed", cols: 8, rows: 4 });
+      await owner.dispose();
+    },
+  );
+
+  it("normalizes tmux's right-margin cursor state into the final canonical column", async () => {
+    const updates: CanonicalTerminalReplicaUpdate[] = [];
+    const mirror = {
+      subscribe: async (candidate: MirrorSubscribeRequest): Promise<MirrorSubscription> => {
+        queueMicrotask(() => {
+          candidate.onLayout?.(layout(8, 4, "top"));
+          candidate.onEvent({ type: "reset", cols: 8, rows: 3 });
+          candidate.onEvent({ type: "seed", data: new TextEncoder().encode("wrapped!") });
+          candidate.onEvent({ type: "cursor", x: 8, y: 0 });
+        });
+        return subscription(candidate);
+      },
+    };
+    const owner = new SessionRuntimeTerminalReplicaOwner(
+      generation,
+      "workspace",
+      "pane-a",
+      mirror as never,
+      { incarnation: `${generation}:0`, initialRevision: 0 },
+    );
+    await owner.subscribe((update) => updates.push(update));
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({
+      type: "terminal.seed",
+      snapshot: { cursor: { x: 7, y: 0 } },
+    });
+    await owner.dispose();
+  });
+
   it("retries one crossed layout epoch and commits only the current capture", async () => {
     let request: MirrorSubscribeRequest | undefined;
     let reseeds = 0;
@@ -405,10 +467,47 @@ describe("SessionRuntimeTerminalReplicaOwner", () => {
     await owner.dispose();
   });
 
+  it("keeps a pending capture valid across ordinary tmux focus changes", async () => {
+    let reseeds = 0;
+    const updates: CanonicalTerminalReplicaUpdate[] = [];
+    const mirror = {
+      subscribe: async (candidate: MirrorSubscribeRequest): Promise<MirrorSubscription> => {
+        queueMicrotask(() => {
+          const initial = layout(8, 4, "top");
+          candidate.onLayout?.(initial);
+          candidate.onEvent({ type: "reset", cols: 8, rows: 3 });
+          candidate.onEvent({ type: "seed", data: new TextEncoder().encode("stable") });
+          candidate.onLayout?.({
+            ...initial,
+            currentWindow: false,
+            panes: initial.panes.map((pane) => ({ ...pane, active: false })),
+          });
+          candidate.onEvent({ type: "cursor", x: 1, y: 0 });
+        });
+        return {
+          ...subscription(candidate),
+          reseed: () => (reseeds += 1),
+        };
+      },
+    };
+    const owner = new SessionRuntimeTerminalReplicaOwner(
+      generation,
+      "workspace",
+      "pane-a",
+      mirror as never,
+      { incarnation: `${generation}:0`, initialRevision: 0 },
+    );
+    await owner.subscribe((update) => updates.push(update));
+    expect(reseeds).toBe(0);
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({ type: "terminal.seed", cols: 8, rows: 4 });
+    await owner.dispose();
+  });
+
   it.each([
     ["column mismatch", layout(9, 4, "top"), { cols: 8, rows: 3, x: 1, y: 0 }],
     ["off-row mismatch", layout(8, 4, "off"), { cols: 8, rows: 3, x: 1, y: 0 }],
-    ["cursor overflow", layout(8, 4, "top"), { cols: 8, rows: 3, x: 8, y: 0 }],
+    ["cursor overflow", layout(8, 4, "top"), { cols: 8, rows: 3, x: 9, y: 0 }],
     [
       "duplicate pane identity",
       {
