@@ -13104,10 +13104,10 @@ __export(classify_exports, {
 });
 function parseAuthority(raw, nowSec) {
   if (!raw) return null;
-  const sep9 = raw.lastIndexOf(":");
-  if (sep9 === -1) return null;
-  const state = raw.slice(0, sep9);
-  const epoch = Number(raw.slice(sep9 + 1));
+  const sep10 = raw.lastIndexOf(":");
+  if (sep10 === -1) return null;
+  const state = raw.slice(0, sep10);
+  const epoch = Number(raw.slice(sep10 + 1));
   if (!AUTHORITY_STATES.has(state) || !Number.isFinite(epoch)) return null;
   if ((state === "working" || state === "blocked") && nowSec - epoch > AUTHORITY_STALE_SECONDS) {
     return null;
@@ -13123,9 +13123,9 @@ function sanitizeAgentText(raw) {
 }
 function parseAuthorityEpoch(raw) {
   if (!raw) return null;
-  const sep9 = raw.lastIndexOf(":");
-  if (sep9 === -1) return null;
-  const epoch = Number(raw.slice(sep9 + 1));
+  const sep10 = raw.lastIndexOf(":");
+  if (sep10 === -1) return null;
+  const epoch = Number(raw.slice(sep10 + 1));
   return Number.isFinite(epoch) ? epoch : null;
 }
 function classifyInstant(snapshot, manifest) {
@@ -15526,9 +15526,23 @@ var init_tui_binary = __esm({
 // packages/daemon/src/tui/compiled.ts
 import { existsSync as existsSync11, mkdirSync as mkdirSync9 } from "node:fs";
 import { homedir as homedir8 } from "node:os";
-import { dirname as dirname14, join as join14, resolve as resolve9 } from "node:path";
+import { dirname as dirname14, join as join14, resolve as resolve9, sep as sep3 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 import { execFileSync as execFileSync5 } from "node:child_process";
+function hasDevelopmentTuiSource(scriptPath, environment = process.env) {
+  if (!existsSync11(scriptPath)) return false;
+  if (environment.TMUX_IDE_TUI_SOURCE === "1") return true;
+  if (resolve9(scriptPath).split(sep3).includes("node_modules")) return false;
+  let cursor = dirname14(scriptPath);
+  while (true) {
+    if (existsSync11(join14(cursor, ".git")) && existsSync11(join14(cursor, "pnpm-workspace.yaml"))) {
+      return true;
+    }
+    const parent = dirname14(cursor);
+    if (parent === cursor) return false;
+    cursor = parent;
+  }
+}
 function openTuiLaunchEnvironment(inherited, overlay = {}) {
   const environment = {
     ...inherited,
@@ -15664,7 +15678,7 @@ function sidebarWidgetCommand(scriptPath, session, dir, theme) {
     surface: "sidebar",
     scriptPath,
     args,
-    checkoutExists: existsSync12(scriptPath),
+    checkoutExists: hasDevelopmentTuiSource(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui(),
     preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1"
@@ -15780,7 +15794,7 @@ function resolveWidgetCommand(type, opts) {
     surface: type,
     scriptPath,
     args: widgetArgs(opts),
-    checkoutExists: existsSync13(scriptPath),
+    checkoutExists: hasDevelopmentTuiSource(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui(),
     preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1"
@@ -15802,7 +15816,7 @@ function resolveWidgetSpawn(type, opts) {
     surface: type,
     scriptPath,
     args: widgetArgs(opts),
-    checkoutExists: existsSync13(scriptPath),
+    checkoutExists: hasDevelopmentTuiSource(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui(),
     preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1"
@@ -23467,7 +23481,7 @@ import {
   unlinkSync as unlinkSync3,
   writeFileSync as writeFileSync18
 } from "node:fs";
-import { isAbsolute as isAbsolute6, join as join28, relative as relative3, resolve as resolve29, sep as sep3, win32 } from "node:path";
+import { isAbsolute as isAbsolute6, join as join28, relative as relative3, resolve as resolve29, sep as sep4, win32 } from "node:path";
 function createProjectRuntimeRepository(resolution, options = {}) {
   return new ProjectRuntimeRepository(resolution, options);
 }
@@ -23668,7 +23682,7 @@ function validateSafeStreamId(value) {
 }
 function isWithinDirectory(path2, root) {
   const fromRoot = relative3(root, path2);
-  return fromRoot === "" || fromRoot !== ".." && !fromRoot.startsWith(`..${sep3}`) && !isAbsolute6(fromRoot);
+  return fromRoot === "" || fromRoot !== ".." && !fromRoot.startsWith(`..${sep4}`) && !isAbsolute6(fromRoot);
 }
 function safeTempId(value) {
   return value.replace(/[^A-Za-z0-9_-]/g, "_");
@@ -24338,7 +24352,7 @@ var init_project_runtime_repository = __esm({
 
 // packages/daemon/src/lib/directory-watcher.ts
 import { watch as fsWatch } from "node:fs";
-import { join as join29, sep as sep4 } from "node:path";
+import { join as join29, sep as sep5 } from "node:path";
 async function loadParcel() {
   if (parcel !== void 0) return parcel;
   try {
@@ -24365,7 +24379,7 @@ function fsWatchDirectory(dir, onChange, ignore2, debounceMs, requireInstalled, 
     handle = fsWatch(dir, { recursive: true }, (_event, filename) => {
       if (!filename) return;
       const rel = filename.toString();
-      if (rel.split(sep4).some((part) => ignoreSet.has(part))) return;
+      if (rel.split(sep5).some((part) => ignoreSet.has(part))) return;
       if (timeout) clearTimeout(timeout);
       timeout = setTimeout(() => onChange([{ type: "update", path: join29(dir, rel) }]), debounceMs);
     });
@@ -25769,7 +25783,7 @@ var init_project_readiness = __esm({
 // packages/daemon/src/lib/project-readiness-probe.ts
 import { execFile as execFile5 } from "node:child_process";
 import { accessSync as accessSync3, constants as constants3, existsSync as existsSync30, realpathSync as realpathSync6, statSync as statSync6 } from "node:fs";
-import { delimiter, isAbsolute as isAbsolute8, basename as basename13, resolve as resolve31, sep as sep5 } from "node:path";
+import { delimiter, isAbsolute as isAbsolute8, basename as basename13, resolve as resolve31, sep as sep6 } from "node:path";
 function errorCode(error) {
   if (!error || typeof error !== "object" || !("code" in error)) return void 0;
   const code = error.code;
@@ -25840,7 +25854,7 @@ function locateExecutable(executable, cwd, environment, io) {
   if (!hasValidExecutableToken(executable)) {
     return { availability: "missing", path: null };
   }
-  if (isAbsolute8(executable) || executable.includes(sep5) || executable.includes("/") || executable.includes("\\")) {
+  if (isAbsolute8(executable) || executable.includes(sep6) || executable.includes("/") || executable.includes("\\")) {
     const candidate = isAbsolute8(executable) ? executable : resolve31(cwd, executable);
     const availability = inspectExecutableCandidate(candidate, io);
     return {
@@ -27279,7 +27293,7 @@ var init_tmux_terminal_color = __esm({
 // packages/daemon/src/lib/workspace-pane-creation.ts
 import { execFile as execFile6 } from "node:child_process";
 import { accessSync as accessSync4, constants as constants4, realpathSync as realpathSync7, statSync as statSync7 } from "node:fs";
-import { delimiter as delimiter2, isAbsolute as isAbsolute9, join as join31, relative as relative4, sep as sep6 } from "node:path";
+import { delimiter as delimiter2, isAbsolute as isAbsolute9, join as join31, relative as relative4, sep as sep7 } from "node:path";
 function canonicalProjectDir(path2) {
   const canonical = realpathSync7(path2);
   if (!statSync7(canonical).isDirectory()) throw new Error("project root is not a directory");
@@ -27301,7 +27315,7 @@ function canonicalWorkspaceFile(workspace, canonicalRoot, candidate, source) {
     );
   }
   const ownedRelativePath = relative4(canonicalRoot, canonicalConfig);
-  if (ownedRelativePath === "" || ownedRelativePath === ".." || ownedRelativePath.startsWith(`..${sep6}`) || isAbsolute9(ownedRelativePath)) {
+  if (ownedRelativePath === "" || ownedRelativePath === ".." || ownedRelativePath.startsWith(`..${sep7}`) || isAbsolute9(ownedRelativePath)) {
     throw new WorkspacePaneCreationError("workspace_unavailable", {
       workspaceName: workspace.name,
       reason: `${source}_config_outside_workspace`
@@ -35720,9 +35734,9 @@ function parseControlLine(line, insideReply) {
     const space = rest.indexOf(" ");
     const pane = space === -1 ? rest : rest.slice(0, space);
     const tail = space === -1 ? "" : rest.slice(space + 1);
-    const sep9 = tail.indexOf(" : ");
-    const meta = sep9 === -1 ? tail : tail.slice(0, sep9);
-    const payload = sep9 === -1 ? "" : tail.slice(sep9 + 3);
+    const sep10 = tail.indexOf(" : ");
+    const meta = sep10 === -1 ? tail : tail.slice(0, sep10);
+    const payload = sep10 === -1 ? "" : tail.slice(sep10 + 3);
     const age = Number(meta.trim().split(/\s+/)[0]);
     return {
       kind: "extended-output",
@@ -57136,10 +57150,10 @@ var init_inspect = __esm({
 // packages/daemon/src/lib/filesystem-browser.ts
 import { realpathSync as realpathSync13, readdirSync as readdirSync4, statSync as statSync13 } from "node:fs";
 import { homedir as homedir17 } from "node:os";
-import { isAbsolute as isAbsolute14, join as join36, resolve as resolve33, sep as sep7 } from "node:path";
+import { isAbsolute as isAbsolute14, join as join36, resolve as resolve33, sep as sep8 } from "node:path";
 function isUnderRoot(canonical, root) {
   if (canonical === root) return true;
-  const prefix = root.endsWith(sep7) ? root : root + sep7;
+  const prefix = root.endsWith(sep8) ? root : root + sep8;
   return canonical.startsWith(prefix);
 }
 function assertInsideSandbox(canonical, home) {
@@ -57395,7 +57409,7 @@ var init_workspace_resource_ids = __esm({
 
 // packages/daemon/src/command-center/resources/workspace-files-authority.ts
 import { lstatSync as lstatSync5, readdirSync as readdirSync5, readFileSync as readFileSync27, realpathSync as realpathSync14 } from "node:fs";
-import { basename as basename15, dirname as dirname32, resolve as resolvePath, sep as sep8 } from "node:path";
+import { basename as basename15, dirname as dirname32, resolve as resolvePath, sep as sep9 } from "node:path";
 import ignore from "ignore";
 function extensionOf(name) {
   const dot = name.lastIndexOf(".");
@@ -57479,7 +57493,7 @@ function safeName(value, fallback) {
 }
 function isWithin2(root, candidate) {
   if (candidate === root) return true;
-  const prefix = root.endsWith(sep8) ? root : `${root}${sep8}`;
+  const prefix = root.endsWith(sep9) ? root : `${root}${sep9}`;
   return candidate.startsWith(prefix);
 }
 var ALWAYS_IGNORED_NAMES, LANGUAGE_BY_EXTENSION, MEDIA_TYPE_BY_EXTENSION, FilesAuthority;
@@ -61994,20 +62008,19 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.0-beta.3",
+      version: "2.9.0-beta.7",
       description: "A visual, agent-aware IDE for any tmux session, with optional workspace presets",
       type: "module",
       bin: {
         "tmux-ide": "bin/cli.js"
       },
       files: [
-        "bin",
-        "scripts",
+        "bin/cli.js",
+        "scripts/postinstall.js",
         "skill",
         "templates",
         "packages/daemon/dist/**/*.js",
         "packages/daemon/dist/**/*.jsx",
-        "packages/daemon/dist/**/*.d.ts",
         "packages/daemon/dist/native/**",
         "packages/daemon/src",
         "bunfig.toml",
@@ -62101,23 +62114,22 @@ var require_package = __commonJS({
       dependencies: {
         "@hono/node-server": "^2.1.0",
         "@hono/zod-validator": "^0.7.6",
-        "@opentui/core": "^0.5.1",
-        "@opentui/solid": "^0.5.1",
         "@parcel/watcher": "^2.5.6",
-        "@types/ws": "^8.18.1",
         hono: "^4.12.34",
         ignore: "^7.0.5",
         "js-yaml": "^4.3.1",
         "node-pty": "1.2.0-beta.12",
-        "solid-js": "1.9.12",
         "string-width": "^7.2.0",
         ws: "^8.21.0",
         zod: "^4.3.6"
       },
       devDependencies: {
         "@eslint/js": "^10.0.1",
+        "@opentui/core": "^0.5.1",
+        "@opentui/solid": "^0.5.1",
         "@tsconfig/bun": "^1.0.10",
         "@types/node": "^25.5.0",
+        "@types/ws": "^8.18.1",
         "@typescript-eslint/eslint-plugin": "^8.57.1",
         "@typescript-eslint/parser": "^8.57.1",
         "@vitest/coverage-v8": "^4.1.6",
@@ -62125,13 +62137,11 @@ var require_package = __commonJS({
         eslint: "^10.0.3",
         globals: "^17.4.0",
         prettier: "^3.8.1",
+        "solid-js": "1.9.12",
         tsx: "^4.20.7",
         turbo: "^2.9.14",
         typescript: "^5.9.3",
         vitest: "^4.1.6"
-      },
-      optionalDependencies: {
-        "@opentui/core-darwin-arm64": "^0.4.3"
       }
     };
   }
@@ -62352,10 +62362,10 @@ function buildReport(target) {
   let ageSeconds = null;
   let stale = false;
   if (authRaw) {
-    const sep9 = authRaw.lastIndexOf(":");
-    if (sep9 !== -1) {
-      authState = authRaw.slice(0, sep9);
-      const epoch = Number(authRaw.slice(sep9 + 1));
+    const sep10 = authRaw.lastIndexOf(":");
+    if (sep10 !== -1) {
+      authState = authRaw.slice(0, sep10);
+      const epoch = Number(authRaw.slice(sep10 + 1));
       if (Number.isFinite(epoch)) {
         authEpoch = epoch;
         ageSeconds = nowSec - epoch;
@@ -63686,6 +63696,7 @@ var init_command_center = __esm({
 // packages/daemon/src/server/index.ts
 var server_exports3 = {};
 __export(server_exports3, {
+  SERVER_BIND_HOST: () => SERVER_BIND_HOST,
   createApp: () => createApp2,
   resolvePort: () => resolvePort,
   start: () => start
@@ -63727,12 +63738,15 @@ async function start(port) {
   });
   await new Promise((resolve37, reject) => {
     server.once("error", reject);
-    server.listen(resolvedPort, "0.0.0.0", () => {
+    server.listen(resolvedPort, SERVER_BIND_HOST, () => {
       server.off("error", reject);
       resolve37();
     });
   });
-  console.log(`tmux-ide server listening on http://0.0.0.0:${resolvedPort}`);
+  console.warn(
+    "[tmux-ide] `tmux-ide server` is deprecated; use `tmux-ide --headless` for the supported daemon."
+  );
+  console.log(`tmux-ide server listening on http://${SERVER_BIND_HOST}:${resolvedPort}`);
   return {
     port: resolvedPort,
     server,
@@ -63743,12 +63757,13 @@ async function start(port) {
     })
   };
 }
-var DEFAULT_PORT;
+var DEFAULT_PORT, SERVER_BIND_HOST;
 var init_server3 = __esm({
   "packages/daemon/src/server/index.ts"() {
     "use strict";
     init_ws_route();
     DEFAULT_PORT = 6070;
+    SERVER_BIND_HOST = "127.0.0.1";
   }
 });
 
@@ -64182,7 +64197,9 @@ async function doctor({
           resolve20(here, "tui/team/index.tsx")
         ].find(existsSync25);
         const binary = findCompiledTui();
-        if (checkoutEntry && isBunAvailable()) return "dev checkout (bun)";
+        if (checkoutEntry && hasDevelopmentTuiSource(checkoutEntry) && isBunAvailable()) {
+          return "dev checkout (bun)";
+        }
         if (binary) return `compiled binary (${binary})`;
         throw new Error(
           "no dev checkout+bun and no compiled binary \u2014 build one with `pnpm build:tui` or install a release that ships it"
@@ -70910,7 +70927,7 @@ ${bold3("Pane Messaging:")}
 ${bold3("Server:")}
   ${cyan2("tmux-ide serve")} [socket-path]         ${dim3("Foreground owner-only local NDJSON control socket")}
   ${cyan2("tmux-ide command-center")} [--port N]    ${dim3("Start the command-center HTTP API")}
-  ${cyan2("tmux-ide server")} [--port N]            ${dim3("Start HTTP + PTY WebSocket server")}
+  ${cyan2("tmux-ide server")} [--port N]            ${dim3("Deprecated loopback-only PTY server")}
 
 ${bold3("Discover (in the TUI):")}
   ${dim3("Bare")} ${cyan2("tmux-ide")} ${dim3("with no project config opens the HOME cockpit \u2014 the fleet home screen.")}
@@ -70930,16 +70947,20 @@ ${bold3("Flags:")}
   ${cyan2("-h, --help")}                  ${dim3("Show usage")}
   ${cyan2("-v, --version")}               ${dim3("Show version number")}`);
 }
-function execBunWidget(surface, scriptPath, args, commandLabel, extraEnv = {}) {
-  const launch2 = resolveTuiLaunch({
-    surface,
-    scriptPath,
-    args,
-    checkoutExists: existsSync38(scriptPath),
-    bunAvailable: isBunAvailable(),
-    compiledBinary: findCompiledTui(),
-    preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1"
-  });
+async function execBunWidget(surface, scriptPath, args, commandLabel, extraEnv = {}) {
+  const launch2 = await ensureTuiLaunchAvailable(
+    {
+      surface,
+      scriptPath,
+      args,
+      checkoutExists: hasDevelopmentTuiSource(scriptPath),
+      bunAvailable: isBunAvailable(),
+      compiledBinary: findCompiledTui(),
+      preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1"
+    },
+    { log: (message) => process.stderr.write(`[tmux-ide] ${message}
+`) }
+  );
   if (launch2.mode === "unavailable") {
     throw new IdeError(
       `\`tmux-ide ${commandLabel}\` is unavailable because ${launch2.reasons.join(" and ")}.
@@ -71038,7 +71059,7 @@ function launchHostedApp(scriptPath, appArgs) {
     surface: "app",
     scriptPath,
     args: appArgs,
-    checkoutExists: existsSync38(scriptPath),
+    checkoutExists: hasDevelopmentTuiSource(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui(),
     preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1"
@@ -71121,8 +71142,8 @@ async function waitOverSocket(params) {
 }
 var teamScriptPath = resolve36(__dirname5, "../packages/daemon/src/tui/team/index.tsx");
 var appScriptPath = resolve36(__dirname5, "../packages/daemon/src/tui/mirror/app.tsx");
-function launchTeamCockpit() {
-  execBunWidget("team", teamScriptPath, [], "team");
+async function launchTeamCockpit() {
+  await execBunWidget("team", teamScriptPath, [], "team");
 }
 async function runApp(appArgs) {
   await ensureTuiLaunchAvailable(
@@ -71130,7 +71151,7 @@ async function runApp(appArgs) {
       surface: "app",
       scriptPath: appScriptPath,
       args: appArgs,
-      checkoutExists: existsSync38(appScriptPath),
+      checkoutExists: hasDevelopmentTuiSource(appScriptPath),
       bunAvailable: isBunAvailable(),
       compiledBinary: findCompiledTui(),
       preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1"
@@ -71146,7 +71167,7 @@ async function runApp(appArgs) {
     hostedEnv: process.env[HOSTED_ENV] === "1"
   });
   if (hosted) launchHostedApp(appScriptPath, appArgs);
-  else execBunWidget("app", appScriptPath, appArgs, "app");
+  else await execBunWidget("app", appScriptPath, appArgs, "app");
 }
 function launchApp() {
   return runApp([]);
@@ -71205,7 +71226,7 @@ try {
           break;
         }
         if (entry === "app") await launchApp();
-        else launchTeamCockpit();
+        else await launchTeamCockpit();
         break;
       }
       await launch(startTargetDir, { json });
@@ -71284,7 +71305,7 @@ try {
         configArgs = [];
       } else if (sub === "edit") {
         const scriptPath = resolve36(__dirname5, "../packages/daemon/src/widgets/setup/index.tsx");
-        execBunWidget(
+        await execBunWidget(
           "setup",
           scriptPath,
           ["--dir=" + resolve36(startTargetDir || "."), "--edit"],
@@ -71300,7 +71321,7 @@ try {
       const setupArgs = ["--dir=" + resolve36(startTargetDir || ".")];
       if (positionals[1] === "--edit" || values.edit) setupArgs.push("--edit");
       if (positionals[1] === "--wizard" || values.wizard) setupArgs.push("--wizard");
-      execBunWidget("setup", scriptPath, setupArgs, "setup");
+      await execBunWidget("setup", scriptPath, setupArgs, "setup");
       break;
     }
     case "send": {
@@ -71316,7 +71337,12 @@ try {
     }
     case "settings": {
       const scriptPath = resolve36(__dirname5, "../packages/daemon/src/widgets/config/index.tsx");
-      execBunWidget("config", scriptPath, ["--dir=" + resolve36(startTargetDir || ".")], "settings");
+      await execBunWidget(
+        "config",
+        scriptPath,
+        ["--dir=" + resolve36(startTargetDir || ".")],
+        "settings"
+      );
       break;
     }
     case "team": {
@@ -71326,12 +71352,12 @@ try {
       }
       if (values.popup === true) {
         const clientArg = typeof values.client === "string" ? values.client : "";
-        execBunWidget("team", teamScriptPath, [], "team --popup", {
+        await execBunWidget("team", teamScriptPath, [], "team --popup", {
           TMUX_IDE_POPUP_CLIENT: clientArg
         });
         break;
       }
-      launchTeamCockpit();
+      await launchTeamCockpit();
       break;
     }
     case "app": {
@@ -71342,7 +71368,9 @@ try {
     }
     case "switcher": {
       const clientArg = typeof values.client === "string" ? values.client : "";
-      execBunWidget("team", teamScriptPath, [], "switcher", { TMUX_IDE_PICKER_CLIENT: clientArg });
+      await execBunWidget("team", teamScriptPath, [], "switcher", {
+        TMUX_IDE_PICKER_CLIENT: clientArg
+      });
       break;
     }
     case "wait": {
@@ -71882,7 +71910,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
       }
       const popupArgs = [`--dir=${process.cwd()}`];
       if (popupSession) popupArgs.push(`--session=${popupSession}`);
-      execBunWidget(widget, scriptPath, popupArgs, `popup ${widget}`);
+      await execBunWidget(widget, scriptPath, popupArgs, `popup ${widget}`);
       break;
     }
     case "sidebar-toggle": {

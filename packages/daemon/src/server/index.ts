@@ -6,6 +6,7 @@ import { WebSocketServer } from "ws";
 import { handlePtyWebSocket, shutdownPtyBridges } from "./ws-route.ts";
 
 const DEFAULT_PORT = 6070;
+export const SERVER_BIND_HOST = "127.0.0.1";
 
 export interface StartedTmuxIdeServer {
   port: number;
@@ -53,13 +54,16 @@ export async function start(port?: number): Promise<StartedTmuxIdeServer> {
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(resolvedPort, "0.0.0.0", () => {
+    server.listen(resolvedPort, SERVER_BIND_HOST, () => {
       server.off("error", reject);
       resolve();
     });
   });
 
-  console.log(`tmux-ide server listening on http://0.0.0.0:${resolvedPort}`);
+  console.warn(
+    "[tmux-ide] `tmux-ide server` is deprecated; use `tmux-ide --headless` for the supported daemon.",
+  );
+  console.log(`tmux-ide server listening on http://${SERVER_BIND_HOST}:${resolvedPort}`);
 
   return {
     port: resolvedPort,

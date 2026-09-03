@@ -125,8 +125,9 @@ function shQuote(value) {
   return `'${String(value).replaceAll("'", `'\\''`)}'`;
 }
 
-function tmuxEnv(runtimePath, fetchMode = "success") {
+function tmuxEnv(runtimePath, fetchMode = "success", includeBun = false) {
   const tmuxPath = run("sh", ["-c", "command -v tmux"]).stdout.trim();
+  const bunPath = includeBun ? run("sh", ["-c", "command -v bun"]).stdout.trim() : "";
   return {
     HOME: homeDir,
     TMUX_TMPDIR: tmuxTmpDir,
@@ -141,10 +142,17 @@ function tmuxEnv(runtimePath, fetchMode = "success") {
     TMUX_IDE_PACK_FETCH_MODE: fetchMode,
     TMUX_IDE_PACK_TUI_ASSET: mockReleaseAssetPath,
     TMUX_IDE_PACK_TUI_MANIFEST: mockReleaseManifestPath,
-    // Do not let the installed smoke accidentally resolve tools from this
-    // checkout's node_modules/.bin. The compiled TUI needs neither Bun nor the
-    // repository after it has been built.
-    PATH: [runtimePath, dirname(process.execPath), dirname(tmuxPath), "/usr/bin", "/bin"]
+    // Keep Bun visible to reproduce the real installed failure mode: shipped
+    // `.tsx` files must not be mistaken for a development checkout merely
+    // because Bun is installed. Still exclude this checkout's node_modules/.bin.
+    PATH: [
+      runtimePath,
+      dirname(process.execPath),
+      dirname(tmuxPath),
+      ...(bunPath ? [dirname(bunPath)] : []),
+      "/usr/bin",
+      "/bin",
+    ]
       .filter((value, index, values) => value && values.indexOf(value) === index)
       .join(":"),
   };
@@ -323,7 +331,7 @@ async function runInstalledTuiGate(installedCli) {
   const stderrPath = join(tmpRoot, "installed-tui.stderr");
   const launcherPath = join(tmpRoot, "launch-installed-tui.sh");
   const inputMarker = `M59_PACKED_INPUT_${process.pid}`;
-  const runtimeEnv = tmuxEnv(dirname(installedCli));
+  const runtimeEnv = tmuxEnv(dirname(installedCli), "success", true);
   const tmuxArgs = (...args) => ["-S", installedTmuxSocketPath, ...args];
   const tmuxResult = (args, stdio = "pipe") =>
     spawnSync("tmux", tmuxArgs(...args), {

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { getCurrentVersion, getUpdateStatus } from "./lib/update-check.ts";
 import { installedSkillVersion } from "./lib/skill-sync.ts";
 import { discoverAgents, presentAgents, type DiscoveredAgent } from "./lib/agent-discovery.ts";
-import { findCompiledTui, isBunAvailable } from "./tui/compiled.ts";
+import { findCompiledTui, hasDevelopmentTuiSource, isBunAvailable } from "./tui/compiled.ts";
 import { claudeSettingsPath } from "./tui/integrations/claude.ts";
 import { readNotificationPrefs, resolveNativeMacosNotifierPath } from "./tui/chrome/notify.ts";
 import { resolveConfig } from "./lib/resolved-config.ts";
@@ -213,7 +213,9 @@ export async function doctor({
           resolve(here, "tui/team/index.tsx"),
         ].find(existsSync);
         const binary = findCompiledTui();
-        if (checkoutEntry && isBunAvailable()) return "dev checkout (bun)";
+        if (checkoutEntry && hasDevelopmentTuiSource(checkoutEntry) && isBunAvailable()) {
+          return "dev checkout (bun)";
+        }
         if (binary) return `compiled binary (${binary})`;
         throw new Error(
           "no dev checkout+bun and no compiled binary — build one with `pnpm build:tui` or install a release that ships it",

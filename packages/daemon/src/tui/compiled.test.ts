@@ -4,7 +4,7 @@
  * `tmux-ide-tui` binary when installed).
  */
 import { describe, expect, it } from "vitest";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +12,7 @@ import {
   compiledTuiRuntimeDir,
   ensureTuiLaunchAvailable,
   ensureCompiledTuiRuntimeDir,
+  hasDevelopmentTuiSource,
   openTuiLaunchEnvironment,
   resolveTuiLaunch,
 } from "./compiled.ts";
@@ -24,6 +25,36 @@ const base = {
   scriptPath: "/checkout/widgets/explorer/index.tsx",
   args: ["--session=s", "--dir=/proj"],
 };
+
+describe("hasDevelopmentTuiSource", () => {
+  it("distinguishes a repository checkout from sources shipped in an npm package", () => {
+    const root = mkdtempSync(resolve(tmpdir(), "tmux-ide-source-identity-"));
+    try {
+      const checkoutEntry = resolve(root, "checkout/packages/daemon/src/tui/mirror/app.tsx");
+      mkdirSync(dirname(checkoutEntry), { recursive: true });
+      writeFileSync(checkoutEntry, "export {};\n");
+      writeFileSync(resolve(root, "checkout/.git"), "gitdir: /tmp/example\n");
+      writeFileSync(resolve(root, "checkout/pnpm-workspace.yaml"), "packages: []\n");
+
+      const consumerRoot = resolve(root, "consumer");
+      mkdirSync(consumerRoot, { recursive: true });
+      writeFileSync(resolve(consumerRoot, ".git"), "gitdir: /tmp/consumer\n");
+      writeFileSync(resolve(consumerRoot, "pnpm-workspace.yaml"), "packages: []\n");
+      const installedEntry = resolve(
+        consumerRoot,
+        "node_modules/tmux-ide/packages/daemon/src/tui/mirror/app.tsx",
+      );
+      mkdirSync(dirname(installedEntry), { recursive: true });
+      writeFileSync(installedEntry, "export {};\n");
+
+      expect(hasDevelopmentTuiSource(checkoutEntry, {})).toBe(true);
+      expect(hasDevelopmentTuiSource(installedEntry, {})).toBe(false);
+      expect(hasDevelopmentTuiSource(installedEntry, { TMUX_IDE_TUI_SOURCE: "1" })).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("resolveTuiLaunch — fast binary with an explicit source override", () => {
   it("uses the compiled binary when both paths are present", () => {
@@ -196,6 +227,31 @@ describe("ensureTuiLaunchAvailable — installed first run", () => {
     expect(launch.mode).toBe("bun");
   });
 
+  it("acquires the release runtime when npm-shipped sources exist beside Bun", async () => {
+    let downloads = 0;
+    const launch = await ensureTuiLaunchAvailable(
+      {
+        ...base,
+        checkoutExists: false,
+        bunAvailable: true,
+        compiledBinary: null,
+      },
+      {
+        download: async () => {
+          downloads += 1;
+          return { path: "/downloaded/tmux-ide-tui", bytes: 20_000_000 };
+        },
+      },
+    );
+
+    expect(downloads).toBe(1);
+    expect(launch).toEqual({
+      mode: "binary",
+      bin: "/downloaded/tmux-ide-tui",
+      argv: [base.surface, ...base.args],
+    });
+  });
+
   it("acquires the release runtime when a clean install has no Bun or binary", async () => {
     const messages: string[] = [];
     const launch = await ensureTuiLaunchAvailable(
@@ -277,6 +333,12 @@ describe("packed-install OpenTUI gate", () => {
     expect(runApp.indexOf("ensureCanonicalDaemon")).toBeGreaterThan(
       runApp.indexOf("ensureTuiLaunchAvailable"),
     );
+  });
+
+  it("keeps Bun visible in the packed-install environment", () => {
+    const src = readFileSync(script, "utf8");
+    expect(src).toContain('const runtimeEnv = tmuxEnv(dirname(installedCli), "success", true)');
+    expect(src).toContain("...(bunPath ? [dirname(bunPath)] : [])");
   });
 
   it("keeps the deferred Web GUI out of the OpenTUI beta command graph", () => {

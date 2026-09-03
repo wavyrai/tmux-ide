@@ -25,6 +25,7 @@ import { resolveProjectConfigContext } from "../packages/daemon/src/lib/config-c
 import {
   ensureCompiledTuiRuntimeDir,
   ensureTuiLaunchAvailable,
+  hasDevelopmentTuiSource,
   resolveTuiLaunch,
   findCompiledTui,
   isBunAvailable,
@@ -277,7 +278,7 @@ ${bold("Pane Messaging:")}
 ${bold("Server:")}
   ${cyan("tmux-ide serve")} [socket-path]         ${dim("Foreground owner-only local NDJSON control socket")}
   ${cyan("tmux-ide command-center")} [--port N]    ${dim("Start the command-center HTTP API")}
-  ${cyan("tmux-ide server")} [--port N]            ${dim("Start HTTP + PTY WebSocket server")}
+  ${cyan("tmux-ide server")} [--port N]            ${dim("Deprecated loopback-only PTY server")}
 
 ${bold("Discover (in the TUI):")}
   ${dim("Bare")} ${cyan("tmux-ide")} ${dim("with no project config opens the HOME cockpit — the fleet home screen.")}
@@ -303,22 +304,25 @@ ${bold("Flags:")}
 // fall back to the compiled `tmux-ide-tui` binary (see scripts/build-tui.mjs).
 // `resolveTuiLaunch` encodes the "checkout first, binary second" order; when
 // nothing is available it hands back an actionable reason set for an IdeError.
-function execBunWidget(
+async function execBunWidget(
   surface: string,
   scriptPath: string,
   args: string[],
   commandLabel: string,
   extraEnv: Record<string, string> = {},
-): void {
-  const launch = resolveTuiLaunch({
-    surface,
-    scriptPath,
-    args,
-    checkoutExists: existsSync(scriptPath),
-    bunAvailable: isBunAvailable(),
-    compiledBinary: findCompiledTui(),
-    preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1",
-  });
+): Promise<void> {
+  const launch = await ensureTuiLaunchAvailable(
+    {
+      surface,
+      scriptPath,
+      args,
+      checkoutExists: hasDevelopmentTuiSource(scriptPath),
+      bunAvailable: isBunAvailable(),
+      compiledBinary: findCompiledTui(),
+      preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1",
+    },
+    { log: (message) => process.stderr.write(`[tmux-ide] ${message}\n`) },
+  );
 
   if (launch.mode === "unavailable") {
     throw new IdeError(
@@ -437,7 +441,7 @@ function launchHostedApp(scriptPath: string, appArgs: string[]): void {
     surface: "app",
     scriptPath,
     args: appArgs,
-    checkoutExists: existsSync(scriptPath),
+    checkoutExists: hasDevelopmentTuiSource(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui(),
     preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1",
@@ -559,8 +563,8 @@ const appScriptPath = resolve(__dirname, "../packages/daemon/src/tui/mirror/app.
 // `tmux-ide team` runs the standalone full-screen cockpit (the OpenTUI app owns
 // the whole terminal). The floating switcher popup (M-p on adopted sessions)
 // supersedes the old nested `[ switcher | main ]` host shell.
-function launchTeamCockpit(): void {
-  execBunWidget("team", teamScriptPath, [], "team");
+async function launchTeamCockpit(): Promise<void> {
+  await execBunWidget("team", teamScriptPath, [], "team");
 }
 
 // The one entry for the unified app: `--detachable`/`--hosted` (or
@@ -579,7 +583,7 @@ async function runApp(appArgs: string[]): Promise<void> {
       surface: "app",
       scriptPath: appScriptPath,
       args: appArgs,
-      checkoutExists: existsSync(appScriptPath),
+      checkoutExists: hasDevelopmentTuiSource(appScriptPath),
       bunAvailable: isBunAvailable(),
       compiledBinary: findCompiledTui(),
       preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1",
@@ -596,7 +600,7 @@ async function runApp(appArgs: string[]): Promise<void> {
     hostedEnv: process.env[HOSTED_ENV] === "1",
   });
   if (hosted) launchHostedApp(appScriptPath, appArgs);
-  else execBunWidget("app", appScriptPath, appArgs, "app");
+  else await execBunWidget("app", appScriptPath, appArgs, "app");
 }
 
 // The unified app as the front door (M22.6): bare `tmux-ide` opens `tmux-ide
@@ -674,7 +678,7 @@ try {
           break;
         }
         if (entry === "app") await launchApp();
-        else launchTeamCockpit();
+        else await launchTeamCockpit();
         break;
       }
       await launch(startTargetDir, { json });
@@ -767,7 +771,7 @@ try {
         configArgs = [];
       } else if (sub === "edit") {
         const scriptPath = resolve(__dirname, "../packages/daemon/src/widgets/setup/index.tsx");
-        execBunWidget(
+        await execBunWidget(
           "setup",
           scriptPath,
           ["--dir=" + resolve(startTargetDir || "."), "--edit"],
@@ -785,7 +789,7 @@ try {
       const setupArgs = ["--dir=" + resolve(startTargetDir || ".")];
       if (positionals[1] === "--edit" || values.edit) setupArgs.push("--edit");
       if (positionals[1] === "--wizard" || values.wizard) setupArgs.push("--wizard");
-      execBunWidget("setup", scriptPath, setupArgs, "setup");
+      await execBunWidget("setup", scriptPath, setupArgs, "setup");
       break;
     }
 
@@ -803,7 +807,12 @@ try {
 
     case "settings": {
       const scriptPath = resolve(__dirname, "../packages/daemon/src/widgets/config/index.tsx");
-      execBunWidget("config", scriptPath, ["--dir=" + resolve(startTargetDir || ".")], "settings");
+      await execBunWidget(
+        "config",
+        scriptPath,
+        ["--dir=" + resolve(startTargetDir || ".")],
+        "settings",
+      );
       break;
     }
 
@@ -822,12 +831,12 @@ try {
       // switcher it keeps the full two-column layout, not the compact picker.
       if (values.popup === true) {
         const clientArg = typeof values.client === "string" ? values.client : "";
-        execBunWidget("team", teamScriptPath, [], "team --popup", {
+        await execBunWidget("team", teamScriptPath, [], "team --popup", {
           TMUX_IDE_POPUP_CLIENT: clientArg,
         });
         break;
       }
-      launchTeamCockpit();
+      await launchTeamCockpit();
       break;
     }
 
@@ -852,7 +861,9 @@ try {
       // both flips the app into picker mode and carries an optional explicit
       // client name; empty means "resolve it yourself from inside the popup".
       const clientArg = typeof values.client === "string" ? values.client : "";
-      execBunWidget("team", teamScriptPath, [], "switcher", { TMUX_IDE_PICKER_CLIENT: clientArg });
+      await execBunWidget("team", teamScriptPath, [], "switcher", {
+        TMUX_IDE_PICKER_CLIENT: clientArg,
+      });
       break;
     }
 
@@ -1553,7 +1564,7 @@ try {
       }
       const popupArgs = [`--dir=${process.cwd()}`];
       if (popupSession) popupArgs.push(`--session=${popupSession}`);
-      execBunWidget(widget, scriptPath, popupArgs, `popup ${widget}`);
+      await execBunWidget(widget, scriptPath, popupArgs, `popup ${widget}`);
       break;
     }
 

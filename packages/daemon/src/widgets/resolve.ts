@@ -5,6 +5,7 @@ import type { ThemeConfig } from "../types.ts";
 import { shellEscape } from "../lib/shell.ts";
 import {
   ensureCompiledTuiRuntimeDir,
+  hasDevelopmentTuiSource,
   resolveTuiLaunch,
   findCompiledTui,
   isBunAvailable,
@@ -70,7 +71,7 @@ export function resolveWidgetCommand(type: string, opts: WidgetOptions): string 
     surface: type,
     scriptPath,
     args: widgetArgs(opts),
-    checkoutExists: existsSync(scriptPath),
+    checkoutExists: hasDevelopmentTuiSource(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui(),
     preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1",
@@ -111,7 +112,7 @@ export function resolveWidgetSpawn(type: string, opts: WidgetOptions): WidgetSpa
     surface: type,
     scriptPath,
     args: widgetArgs(opts),
-    checkoutExists: existsSync(scriptPath),
+    checkoutExists: hasDevelopmentTuiSource(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui(),
     preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1",

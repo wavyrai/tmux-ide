@@ -25,6 +25,7 @@ import { shellEscape } from "../../lib/shell.ts";
 import { SIDEBAR_PANE_OPTION } from "../team/sessions.ts";
 import {
   ensureCompiledTuiRuntimeDir,
+  hasDevelopmentTuiSource,
   resolveTuiLaunch,
   findCompiledTui,
   isBunAvailable,
@@ -70,7 +71,7 @@ export function sidebarWidgetCommand(
     surface: "sidebar",
     scriptPath,
     args,
-    checkoutExists: existsSync(scriptPath),
+    checkoutExists: hasDevelopmentTuiSource(scriptPath),
     bunAvailable: isBunAvailable(),
     compiledBinary: findCompiledTui(),
     preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1",
