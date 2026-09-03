@@ -1,6 +1,6 @@
 {
   "name": "@tmux-ide/daemon",
-  "version": "2.9.0-beta.3",
+  "version": "2.9.0-beta.7",
   "private": true,
   "description": "Singleton background daemon for tmux-ide — embeddable workspace registry, command-center API, and chat/codex orchestration.",
   "type": "module",
@@ -28,10 +28,6 @@
     "./errors": {
       "types": "./dist/command-center/actions/errors.d.ts",
       "default": "./dist/command-center/actions/errors.js"
-    },
-    "./codex": {
-      "types": "./dist/codex/index.d.ts",
-      "default": "./dist/codex/index.js"
     }
   },
   "files": [

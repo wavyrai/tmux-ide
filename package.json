@@ -1,19 +1,18 @@
 {
   "name": "tmux-ide",
-  "version": "2.9.0-beta.3",
+  "version": "2.9.0-beta.7",
   "description": "A visual, agent-aware IDE for any tmux session, with optional workspace presets",
   "type": "module",
   "bin": {
     "tmux-ide": "bin/cli.js"
   },
   "files": [
-    "bin",
-    "scripts",
+    "bin/cli.js",
+    "scripts/postinstall.js",
     "skill",
     "templates",
     "packages/daemon/dist/**/*.js",
     "packages/daemon/dist/**/*.jsx",
-    "packages/daemon/dist/**/*.d.ts",
     "packages/daemon/dist/native/**",
     "packages/daemon/src",
     "bunfig.toml",
@@ -107,23 +106,22 @@
   "dependencies": {
     "@hono/node-server": "^2.1.0",
     "@hono/zod-validator": "^0.7.6",
-    "@opentui/core": "^0.5.1",
-    "@opentui/solid": "^0.5.1",
     "@parcel/watcher": "^2.5.6",
-    "@types/ws": "^8.18.1",
     "hono": "^4.12.34",
     "ignore": "^7.0.5",
     "js-yaml": "^4.3.1",
     "node-pty": "1.2.0-beta.12",
-    "solid-js": "1.9.12",
     "string-width": "^7.2.0",
     "ws": "^8.21.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@opentui/core": "^0.5.1",
+    "@opentui/solid": "^0.5.1",
     "@tsconfig/bun": "^1.0.10",
     "@types/node": "^25.5.0",
+    "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^8.57.1",
     "@typescript-eslint/parser": "^8.57.1",
     "@vitest/coverage-v8": "^4.1.6",
@@ -131,12 +129,10 @@
     "eslint": "^10.0.3",
     "globals": "^17.4.0",
     "prettier": "^3.8.1",
+    "solid-js": "1.9.12",
     "tsx": "^4.20.7",
     "turbo": "^2.9.14",
     "typescript": "^5.9.3",
     "vitest": "^4.1.6"
-  },
-  "optionalDependencies": {
-    "@opentui/core-darwin-arm64": "^0.4.3"
   }
 }

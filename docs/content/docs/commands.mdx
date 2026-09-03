@@ -1,10 +1,10 @@
 ---
 title: CLI reference
-description: The supported tmux-ide commands and flags in 2.9.0-beta.3
+description: The supported tmux-ide commands and flags in 2.9.0-beta.7
 ---
 
 This page follows the public surface printed by `tmux-ide --help` in
-`2.9.0-beta.3`. `--json` is available on the scripting commands that explicitly
+`2.9.0-beta.7`. `--json` is available on the scripting commands that explicitly
 list it below; interactive commands do not emit JSON.
 
 ## Open tmux-ide
@@ -138,7 +138,7 @@ the app.
 | ------------------------------------------- | ------------------------------------------------------------------------ |
 | `tmux-ide --headless [--port <N>] [--json]` | Own the canonical daemon in the foreground without opening tmux or a TUI |
 | `tmux-ide command-center [--port <N>]`      | Start the command-center HTTP API (default port 4000)                    |
-| `tmux-ide server [--port <N>]`              | Start the HTTP and PTY-WebSocket server                                  |
+| `tmux-ide server [--port <N>]`              | Deprecated loopback-only PTY server; use `--headless`                    |
 
 The headless owner publishes `~/.tmux-ide/daemon.json` with owner-only
 permissions. A host should wait until both `/identity` matches that record and

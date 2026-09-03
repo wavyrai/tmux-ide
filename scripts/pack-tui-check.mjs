@@ -41,10 +41,6 @@ const files = new Set(report.files.map((entry) => entry.path));
 for (const required of [
   "bin/cli.js",
   "scripts/postinstall.js",
-  "scripts/build-tui.mjs",
-  "scripts/opentui-release-check.mjs",
-  "scripts/prepublish-opentui-check.mjs",
-  "scripts/lib/npm-release-tag.mjs",
   "packages/daemon/src/tui/main.ts",
   "packages/daemon/src/tui/compiled.ts",
   "packages/daemon/src/lib/tui-binary.ts",
@@ -56,6 +52,18 @@ for (const required of [
 ]) {
   if (!files.has(required))
     throw new Error(`npm package is missing OpenTUI runtime file ${required}`);
+}
+
+const packagedDevelopmentScripts = [...files].filter(
+  (path) => path.startsWith("scripts/") && path !== "scripts/postinstall.js",
+);
+if (packagedDevelopmentScripts.length > 0) {
+  throw new Error(
+    `OpenTUI npm package leaked development scripts: ${packagedDevelopmentScripts.join(", ")}`,
+  );
+}
+if (files.has("bin/cli.ts")) {
+  throw new Error("OpenTUI npm package leaked the CLI TypeScript source");
 }
 
 const webAssets = [...files].filter((path) => path.startsWith("apps/desktop-renderer/dist/"));

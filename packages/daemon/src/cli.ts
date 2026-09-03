@@ -217,7 +217,7 @@ ${bold("Pane Messaging:")}
 
 ${bold("Server:")}
   ${cyan("tmux-ide command-center")} [--port N]    ${dim("Start the command-center HTTP API")}
-  ${cyan("tmux-ide server")} [--port N]            ${dim("Start HTTP + PTY WebSocket server")}
+  ${cyan("tmux-ide server")} [--port N]            ${dim("Deprecated loopback-only PTY server")}
 
 ${bold("Flags:")}
   ${cyan("--json")}                      ${dim("Output as JSON (all commands)")}

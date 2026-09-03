@@ -18,7 +18,7 @@
  */
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { downloadTuiBinary, findDownloadedTui } from "../lib/tui-binary.ts";
@@ -52,6 +52,36 @@ export interface TuiLaunchAcquisitionOptions {
   readonly download?: (options: {
     readonly log?: (message: string) => void;
   }) => Promise<{ readonly path: string; readonly bytes: number }>;
+}
+
+/**
+ * True only for source files that belong to an actual repository checkout.
+ *
+ * npm releases intentionally ship selected TypeScript sources, so existence of
+ * a `.tsx` entry alone does not prove that Bun can execute it: workspace links,
+ * the JSX preload, and the rest of the monorepo may be absent. Walk upward for
+ * the two checkout markers instead. `TMUX_IDE_TUI_SOURCE=1` remains an explicit
+ * escape hatch for source archives and unusual development layouts.
+ */
+export function hasDevelopmentTuiSource(
+  scriptPath: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (!existsSync(scriptPath)) return false;
+  if (environment.TMUX_IDE_TUI_SOURCE === "1") return true;
+  // A dependency can itself be installed inside another pnpm workspace. Do
+  // not mistake the consuming repository's markers for tmux-ide's checkout.
+  if (resolve(scriptPath).split(sep).includes("node_modules")) return false;
+
+  let cursor = dirname(scriptPath);
+  while (true) {
+    if (existsSync(join(cursor, ".git")) && existsSync(join(cursor, "pnpm-workspace.yaml"))) {
+      return true;
+    }
+    const parent = dirname(cursor);
+    if (parent === cursor) return false;
+    cursor = parent;
+  }
 }
 
 /**
