@@ -63,7 +63,10 @@ export function MinimalPalette(props: {
     Math.max(3, Math.min(16, props.commands.length + 4, props.height - verticalInset() * 2));
   const innerWidth = () => Math.max(1, width() - 2);
   const commandLabel = (command: ApplicationPaletteCommand): string => {
-    if (typeof command === "object") return `Jump to ${command.label} · ${command.sessionName}`;
+    if (typeof command === "object")
+      return command.kind === "open-session"
+        ? `Open session · ${command.label}`
+        : `Jump to ${command.label} · ${command.sessionName}`;
     if (command === "home")
       return `F1 Home${innerWidth() >= 32 ? " · sessions and agent state" : ""}`;
     if (command === "terminals")

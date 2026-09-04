@@ -34,6 +34,8 @@ export interface ApplicationHomeCatalogFailure {
 
 export interface ApplicationHomeCatalogSession {
   readonly id: string;
+  readonly liveSessionId?: string;
+  readonly workspaceName?: string;
   readonly name: string;
   readonly paneCount: number;
 }
@@ -268,6 +270,9 @@ function projectCatalog(resource: WorkspaceCatalogResourceV3): ApplicationHomeCa
     sessions: resource.liveSessions
       .map(({ liveSessionId, sessionName, paneCount }) => ({
         id: `${resource.daemon.instanceId}:${liveSessionId}`,
+        liveSessionId,
+        workspaceName: resource.intents.find((intent) => intent.sessionName === sessionName)
+          ?.workspaceName,
         name: sessionName,
         paneCount,
       }))
@@ -379,6 +384,11 @@ export function createApplicationHomeCatalog(
       return;
     }
     if (state.target && snapshot.phase !== "unavailable") {
+      // A push-invalidated read is not evidence that live sessions vanished.
+      // Keep incarnation identities until the replacement read settles; only
+      // a different daemon generation must clear the selector immediately.
+      if (snapshot.phase === "live" && snapshot.daemonInstanceId === state.target.daemon.instanceId)
+        return;
       publish({
         phase: "loading",
         daemonInstanceId: state.target.daemon.instanceId,

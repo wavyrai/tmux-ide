@@ -20,21 +20,15 @@ import {
   type StartApplicationRootOptions,
 } from "./application-root-configuration.ts";
 import { createApplicationHomeCatalogOwner } from "./application-home-catalog-owner.ts";
+import { createApplicationHomeNavigationOwner } from "./application-home-agents-owner.ts";
 import { ApplicationShellView, applicationShellKeyAction } from "./application-shell-view.tsx";
-import {
-  createApplicationAgentNavigator,
-  createApplicationGenerationStarter,
-} from "./application-generation-starter.ts";
+import { createApplicationGenerationStarter } from "./application-generation-starter.ts";
 import { createApplicationInputReadiness } from "./application-input-readiness.ts";
 import { applyApplicationAppearanceToRenderer } from "./application-theme-repaint.ts";
 import {
-  applicationPaletteCommands,
-  applicationPaletteCommandSource,
   applicationPaletteKeyboardDisposition,
   applicationPaletteOwnsInput,
 } from "./application-palette-input.ts";
-import { createApplicationPaletteCommandOwner } from "./application-palette-command-owner.ts";
-import { createApplicationPaneRenameOwner as createPaneRenameOwner } from "./application-pane-rename-owner.ts";
 import { createApplicationTerminalInteractionController } from "./application-terminal-interaction-controller.ts";
 import {
   createApplicationHostFocusRecovery,
@@ -290,12 +284,6 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           startGeneration,
           setNote: appearance.setNote,
         });
-        const openAgent = createApplicationAgentNavigator({
-          startGeneration: generationStarter,
-          sessionOwner: () => sessionOwner!,
-          selectPane: interaction.selectPane,
-        });
-        const paletteCommandList = createMemo(() => applicationPaletteCommands(shell().semantic));
         onCleanup(() => {
           terminalInputIngress.dispose();
           semanticViewportResize.dispose();
@@ -306,18 +294,20 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           componentKeyboardRoutes.dispose();
           sessionFocusOwner?.dispose();
         });
-        const paletteCommands = createApplicationPaletteCommandOwner({
-          activeSurface,
-          binding: shellBinding,
-          commandSource: applicationPaletteCommandSource,
-          setSurface,
-          setNote: setTransientNote,
-          newWindow: interaction.newWindow,
-          splitPane: interaction.splitPane,
-          closePane: interaction.closePane,
-          openAgent,
-        });
-        const paneRename = createPaneRenameOwner(interaction.renamePane, setTransientNote);
+        const { homeAgents, paneRename, paletteCommands, paletteCommandList, openAgent } =
+          createApplicationHomeNavigationOwner({
+            catalog: homeCatalog,
+            activeSurface,
+            shell,
+            binding: shellBinding,
+            sessionOwner: () => sessionOwner,
+            generationStarter,
+            startGeneration,
+            interaction,
+            rendererFocused,
+            setSurface,
+            setNote: setTransientNote,
+          });
         let paintedAppearanceGeneration: number | null = null;
         createEffect(() => {
           const nextAppearance = appearance.appearance();
@@ -367,6 +357,8 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
             else paletteCommands.setOpen(chromeAction === "palette-open", "keyboard");
             return;
           }
+          // Exact-agent admission must settle before any keys reach a PTY.
+          if (homeAgents?.opening()) return;
           if (
             activeSurface() === "terminals" &&
             shell().semantic === null &&
@@ -404,6 +396,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           )
             return;
           if (activeSurface() !== "terminals") return;
+          if (homeAgents?.opening()) return;
           terminalInputIngress.routePaste(event.bytes);
         });
         onMount(() => {
@@ -420,6 +413,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         return (
           <KeyboardRouteProvider owner={componentKeyboardRoutes}>
             <ApplicationShellView
+              homeAgents={homeAgents.presentation}
               dimensions={dimensions}
               surface={activeSurface}
               semantic={() => shell().semantic}
@@ -444,11 +438,13 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
               theme={theme()}
               palette={palette()}
               onOpenSurface={recoverHostFocus(paletteCommands.openSurface)}
-              onOpenSession={recoverHostFocus(
-                (sessionName) => void startGeneration(sessionName, false, "mouse"),
-              )}
-              onOpenAgent={recoverHostFocus((sessionName, paneId) => {
-                void openAgent(sessionName, paneId);
+              onOpenSession={recoverHostFocus((sessionName, source) => {
+                homeAgents?.cancel();
+                void startGeneration(sessionName, false, source);
+              })}
+              onOpenAgent={recoverHostFocus((sessionName, paneId, source) => {
+                homeAgents?.cancel();
+                void openAgent(sessionName, paneId, source);
               })}
               onSetPaletteOpen={recoverHostFocus(paletteCommands.setOpen)}
               onPaletteActivate={recoverHostFocus(paletteCommands.activate)}

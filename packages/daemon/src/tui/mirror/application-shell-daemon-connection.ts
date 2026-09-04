@@ -3,6 +3,8 @@ import {
   type CanonicalDaemonInfo,
   type DesktopApplicationShellTarget,
   type DesktopDaemonHostDescriptor,
+  type WorkspaceCatalogResourceV2,
+  type WorkspaceCatalogResourceV3,
 } from "@tmux-ide/contracts";
 import {
   createDirectLoopbackDaemonTransport,
@@ -19,7 +21,7 @@ import {
   readCanonicalDaemonInfo,
 } from "../../lib/canonical-daemon.ts";
 import {
-  fetchCanonicalWorkspaceRouting,
+  fetchCanonicalLiveWorkspaceRouting,
   workspaceNameForLiveSession,
 } from "./canonical-workspace-routing.ts";
 import { ensureOpenTuiSessionWorkspace } from "./configless-session-bootstrap.ts";
@@ -37,6 +39,8 @@ import {
  */
 export interface OpenTuiApplicationShellConnection {
   readonly workspaceName: string;
+  /** Incarnation captured by the connection's routing read, never copied from a later catalog. */
+  readonly liveSessionId?: string | null;
   readonly target: DesktopApplicationShellTarget;
   readonly transport: TerminalFirstDaemonTransport;
   readonly catalog: WorkspaceClientCatalogPort;
@@ -49,7 +53,11 @@ export interface OpenTuiApplicationShellConnection {
 export interface OpenTuiApplicationShellConnectionDependencies {
   readonly readCanonicalDaemonInfo: () => CanonicalDaemonInfo | null;
   readonly isCanonicalDaemonAlive: (daemon: CanonicalDaemonInfo) => Promise<boolean>;
-  readonly fetchCanonicalWorkspaceRouting: typeof fetchCanonicalWorkspaceRouting;
+  readonly fetchCanonicalWorkspaceRouting: (
+    daemon: CanonicalDaemonInfo,
+    request?: typeof fetch,
+    signal?: AbortSignal,
+  ) => Promise<WorkspaceCatalogResourceV2 | WorkspaceCatalogResourceV3>;
   readonly createTransport: (options: {
     readonly descriptor: DesktopDaemonHostDescriptor;
     readonly workspaceName: string;
@@ -66,7 +74,7 @@ export interface OpenTuiApplicationShellConnectionDependencies {
 const DEFAULT_DEPENDENCIES: OpenTuiApplicationShellConnectionDependencies = {
   readCanonicalDaemonInfo,
   isCanonicalDaemonAlive,
-  fetchCanonicalWorkspaceRouting,
+  fetchCanonicalWorkspaceRouting: fetchCanonicalLiveWorkspaceRouting,
   createTransport: ({
     descriptor,
     workspaceName,
@@ -131,6 +139,12 @@ export async function resolveOpenTuiApplicationShellConnection(
   if (catalog.daemon.instanceId !== daemon.instanceId) return null;
   const workspaceName = workspaceNameForLiveSession(catalog, sessionName);
   if (!workspaceName) return null;
+  const liveSessionId =
+    catalog.version === 3
+      ? (catalog.liveSessions.find((session) => session.sessionName === sessionName)
+          ?.liveSessionId ?? null)
+      : null;
+  if (catalog.version === 3 && liveSessionId === null) return null;
 
   const target: DesktopApplicationShellTarget = {
     daemon: {
@@ -221,7 +235,18 @@ export async function resolveOpenTuiApplicationShellConnection(
       if (!connection) throw new Error("WorkspaceClient catalog read has no event barrier");
       await awaitCatalogBarrier(connection.ready, signal);
       if (signal.aborted) throw signal.reason;
-      return dependencies.fetchCanonicalWorkspaceRouting(daemon, fetch, signal);
+      const resource = await dependencies.fetchCanonicalWorkspaceRouting(daemon, fetch, signal);
+      // WorkspaceClient's existing catalog port is V2. Incarnation evidence is
+      // retained on the connection, not leaked as an unsupported port version.
+      return resource.version === 3
+        ? {
+            ...resource,
+            version: 2,
+            liveSessions: resource.liveSessions.map(
+              ({ liveSessionId: _liveSessionId, ...session }) => session,
+            ),
+          }
+        : resource;
     },
     subscribe(value, invalidate) {
       const safeTarget = transport.validateTarget(value);
@@ -301,6 +326,7 @@ export async function resolveOpenTuiApplicationShellConnection(
 
   return {
     workspaceName,
+    liveSessionId,
     target,
     transport,
     catalog: catalogPort,

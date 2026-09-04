@@ -11,6 +11,7 @@ import {
 import { createFleetSession } from "./fleet-lifecycle-client.ts";
 
 export interface ApplicationHomeCatalogOwner {
+  readonly snapshot: Accessor<ApplicationHomeCatalogSnapshot>;
   readonly phase: Accessor<ApplicationHomeCatalogSnapshot["phase"]>;
   readonly sessionNames: Accessor<readonly string[]>;
   readonly selectedSessionIndex: Accessor<number>;
@@ -87,6 +88,7 @@ export function createApplicationHomeCatalogOwner(
   onCleanup(close);
 
   return Object.freeze({
+    snapshot,
     phase: () => snapshot().phase,
     sessionNames,
     selectedSessionIndex,

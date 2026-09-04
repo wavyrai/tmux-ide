@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { CanonicalDaemonInfo } from "@tmux-ide/contracts";
 
-import { fetchCanonicalWorkspaceRouting } from "./canonical-workspace-routing.ts";
+import {
+  fetchCanonicalWorkspaceRouting,
+  fetchCanonicalLiveWorkspaceRouting,
+} from "./canonical-workspace-routing.ts";
 
 const daemon: CanonicalDaemonInfo = {
   pid: 123,
@@ -27,6 +30,25 @@ const catalog = {
 };
 
 describe("canonical workspace routing", () => {
+  it("reads the incarnation-bearing V3 catalog with one bounded request", async () => {
+    const v3 = { ...catalog, version: 3 };
+    const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json(v3));
+    await expect(fetchCanonicalLiveWorkspaceRouting(daemon, request)).resolves.toEqual(v3);
+    expect(request).toHaveBeenCalledOnce();
+    expect(String(request.mock.calls[0][0])).toContain("workspace-catalog?version=3");
+  });
+  it("rejects incarnation catalogs belonging to a retired daemon", async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({
+        ...catalog,
+        version: 3,
+        daemon: { ...catalog.daemon, instanceId: "22222222-2222-4222-8222-222222222222" },
+      }),
+    );
+    await expect(fetchCanonicalLiveWorkspaceRouting(daemon, request)).rejects.toThrow(
+      "daemon generation changed",
+    );
+  });
   it("retries bounded timeout-only cold catalog reads", async () => {
     const request = vi
       .fn<typeof fetch>()

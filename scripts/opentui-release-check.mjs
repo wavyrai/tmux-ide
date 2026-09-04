@@ -168,6 +168,11 @@ const checks = [
       "./packages/daemon/test-support/opentui-renderer-preload.ts",
       "./packages/daemon/src/tui/mirror/runtime/application-terminal-workspace-renderer.test.tsx",
       "./packages/daemon/src/tui/mirror/runtime/application-shell-view-renderer.test.tsx",
+      "./packages/daemon/src/tui/mirror/runtime/application-shell-home-renderer.test.tsx",
+      "./packages/daemon/src/tui/mirror/runtime/application-home-agent-roster-renderer.test.tsx",
+      "./packages/daemon/src/tui/mirror/runtime/application-home-agent-flow-renderer.test.tsx",
+      "./packages/daemon/src/tui/mirror/runtime/application-shell-sidebar-catalog-renderer.test.tsx",
+      "./packages/daemon/src/tui/mirror/workspace/terminal-pane-header-polish-renderer.test.tsx",
     ],
   },
   {

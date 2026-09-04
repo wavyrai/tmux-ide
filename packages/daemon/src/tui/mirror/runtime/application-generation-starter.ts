@@ -45,20 +45,27 @@ export function createApplicationGenerationStarter(
     workspacePrepared = false,
     source: Source = "keyboard",
     focusFirstPane = true,
+    admission: () => boolean = () => true,
   ): Promise<ApplicationGenerationStartResult> => {
     const token = ++startToken;
+    const isCurrent = () => token === startToken && admission();
+    if (!isCurrent())
+      return { opened: false, sessionName, generationKey: null, failure: "superseded" };
     options.setNote(`opening ${sessionName}`);
     const owner = options.sessionOwner();
     let result: Awaited<ReturnType<typeof options.binding.openSession>>;
     try {
-      result = await options.binding.openSession(sessionName, sourceFor(source), (name) =>
-        owner.open(name, workspacePrepared),
+      result = await options.binding.openSession(
+        sessionName,
+        sourceFor(source),
+        async (name) => (isCurrent() ? owner.open(name, workspacePrepared) : false),
+        isCurrent,
       );
     } catch {
-      if (token === startToken) options.setNote(`${sessionName} could not attach`);
+      if (isCurrent()) options.setNote(`${sessionName} could not attach`);
       return { opened: false, sessionName, generationKey: null, failure: "attach-failed" };
     }
-    if (token !== startToken)
+    if (!isCurrent())
       return { opened: false, sessionName, generationKey: null, failure: "superseded" };
     const snapshot = owner.snapshot();
     if (result.opened && snapshot && (snapshot.status === "live" || snapshot.status === "empty")) {

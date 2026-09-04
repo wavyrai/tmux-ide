@@ -117,6 +117,33 @@ function adapterHarness(
 }
 
 describe("application Home catalog", () => {
+  it("retains live incarnation identities while a same-daemon push refresh is pending", async () => {
+    const first = catalog(DAEMON_A, [{ id: "aaaaaaaaaaaaaaaaaaaa", name: "alpha" }]);
+    let resolveRefresh!: (value: WorkspaceCatalogResourceV3) => void;
+    let reads = 0;
+    const harness = adapterHarness(async () =>
+      ++reads === 1
+        ? first
+        : new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+    );
+    const owner = createApplicationHomeCatalog({
+      readCanonicalDaemonInfo: () => DAEMON_A,
+      createAdapter: (retired) => harness.bindRetirement(retired),
+    });
+    owner.start();
+    await vi.waitFor(() => expect(owner.getSnapshot().phase).toBe("live"));
+    const previous = owner.getSnapshot();
+    harness.invalidate();
+    await vi.waitFor(() => expect(reads).toBe(2));
+    expect(owner.getSnapshot()).toEqual(previous);
+    resolveRefresh(catalog(DAEMON_A, [{ id: "aaaaaaaaaaaaaaaaaaaa", name: "renamed" }]));
+    await vi.waitFor(() => expect(owner.getSnapshot().sessions[0]?.name).toBe("renamed"));
+    expect(owner.getSnapshot().sessions[0]?.id).toBe(previous.sessions[0]?.id);
+    owner.dispose();
+  });
+
   it("releases its logical observer before retiring the physical transport", () => {
     const order: string[] = [];
     closeApplicationHomeCatalogTransport(

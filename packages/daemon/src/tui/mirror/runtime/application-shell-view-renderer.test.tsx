@@ -293,19 +293,19 @@ function rendererShellClient(initial: ReturnType<typeof semantic>) {
 
 describe("production ApplicationShellView", () => {
   it("selects a deterministic terminal-safe Home brand for each golden viewport", () => {
-    expect(applicationHomeBrandVariant(52, 21)).toBe("compact");
-    expect(applicationHomeBrandVariant(92, 37)).toBe("full");
-    expect(applicationHomeBrandVariant(172, 57)).toBe("full");
+    expect(applicationHomeBrandVariant(52, 21)).toBe("wordmark");
+    expect(applicationHomeBrandVariant(92, 37)).toBe("wordmark");
+    expect(applicationHomeBrandVariant(172, 57)).toBe("wordmark");
     expect(applicationHomeBrandVariant(24, 10)).toBe("wordmark");
   });
 
   it.each([
-    [80, 24, "compact"],
-    [120, 40, "full"],
-    [200, 60, "full"],
+    [80, 24],
+    [120, 40],
+    [200, 60],
   ] as const)(
     "renders the responsive Home identity and clickable actions at %sx%s",
-    async (width, height, expectedBrand) => {
+    async (width, height) => {
       const theme = createSemanticThemeSnapshot({ mode: "dark" });
       const palette = createTerminalPaletteProjection(theme);
       const events: string[] = [];
@@ -340,15 +340,16 @@ describe("production ApplicationShellView", () => {
       await setup.renderOnce();
       const frame = setup.captureCharFrame();
       expectFrameBounds(frame, width, height);
-      expect(frame).toContain("Your tmux sessions");
-      expect(frame).toContain("2 sessions · 1 working · 0 need attention");
+      expect(frame).toContain("tmux-ide");
+      expect(frame).toContain("2 sessions in view");
+      expect(frame).toContain("Current session · 1 working · 0 need attention");
       expect(frame).toContain("main · live");
       expect(frame).toContain("Open terminals F2");
       expect(frame).toContain("Commands F5");
       expect(frame).toContain("Theme: dark");
       expect(frame).not.toContain("website");
-      if (expectedBrand === "full") expect(frame).toContain("░████████");
-      else expect(frame).toContain("▀█▀ █▄█ █ █ ▀▄▀");
+      expect(frame).not.toContain("░████████");
+      expect(frame).not.toContain("▀█▀ █▄█ █ █ ▀▄▀");
 
       const rows = frame.split("\n");
       const terminalsY = rows.findIndex((row) => row.includes("Open terminals F2"));
@@ -411,7 +412,7 @@ describe("production ApplicationShellView", () => {
       theme: Boolean(backgroundFor("Theme: light")),
     }).toEqual({ commands: true, theme: true });
     expect(colorKey(backgroundFor("Commands F5")!)).toBe(colorKey(light.roles.surfaces.panel));
-    expect(colorKey(backgroundFor("Theme: light")!)).toBe(colorKey(light.roles.surfaces.panel));
+    expect(colorKey(backgroundFor("Theme: light")!)).toBe(colorKey(light.roles.surfaces.canvas));
     expect(colorKey(backgroundFor("Commands F5")!)).not.toBe("255,255,255,255");
     expect(colorKey(backgroundFor("Theme: light")!)).not.toBe("255,255,255,255");
     setup.renderer.destroy();
@@ -1753,6 +1754,8 @@ describe("production ApplicationShellView", () => {
     expect(frame).toContain("[IDLE]");
     expect(frame).toContain("• Codex [WORKING]");
     expect(frame).toContain("! Scout ! [IDLE]");
+    // The trusted live catalog, not an unrelated semantic display label, owns session routes.
+    expect(frame).not.toContain("website");
     expect(shellChromeSnapshot(frame)).toMatchSnapshot();
     setup.renderer.destroy();
   });

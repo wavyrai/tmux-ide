@@ -1,17 +1,16 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const sourcePath = resolve(
-  import.meta.dirname,
-  "../../packages/daemon/src/tui/mirror/runtime/application-shell-home.tsx",
-);
 const outputPath = resolve(import.meta.dirname, "../public/ascii-wordmark.svg");
-const source = readFileSync(sourcePath, "utf8");
-const match = source.match(/const APPLICATION_HOME_FULL_LOGO = `([\s\S]*?)`;/u);
-
-if (!match) throw new Error(`Could not find APPLICATION_HOME_FULL_LOGO in ${sourcePath}`);
-
-const lines = match[1].split("\n");
+// Marketing keeps its large wordmark; the application's compact Home no longer
+// renders it. Do not couple documentation generation to private screen constants.
+const lines = `   ░██                                             ░██       ░██
+   ░██                                                       ░██
+░████████ ░█████████████  ░██    ░██ ░██    ░██    ░██ ░████████  ░███████
+   ░██    ░██   ░██   ░██ ░██    ░██  ░██  ░██     ░██░██    ░██ ░██    ░██
+   ░██    ░██   ░██   ░██ ░██    ░██   ░█████      ░██░██    ░██ ░█████████
+   ░██    ░██   ░██   ░██ ░██   ░███  ░██  ░██     ░██░██   ░███ ░██
+    ░████ ░██   ░██   ░██  ░█████░██ ░██    ░██    ░██ ░█████░██  ░███████`.split("\n");
 const cellWidth = 8.4;
 const cellHeight = 18;
 const width = Math.max(...lines.map((line) => [...line].length)) * cellWidth;
@@ -33,4 +32,4 @@ const svg = `<?xml version="1.0" encoding="UTF-8"?>
 `;
 
 writeFileSync(outputPath, svg);
-process.stdout.write(`Generated ${outputPath} from the production OpenTUI wordmark\n`);
+process.stdout.write(`Generated ${outputPath} from the docs marketing wordmark\n`);

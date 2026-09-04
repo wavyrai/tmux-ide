@@ -103,6 +103,13 @@ export function PaneTitleBar(props: PaneTitleBarProps) {
       attention: props.attention,
       status: status(),
     });
+  // Hierarchy belongs to the title, not the status badge: an inactive pane is
+  // quieter, while selection or either input focus keeps its name prominent.
+  const titleEmphasized = () => props.selected || props.keyboardFocused || props.terminalFocused;
+  const titleForeground = () =>
+    titleEmphasized() || props.hovered || props.attention
+      ? palette().foreground
+      : props.theme.roles.text.secondary;
   const activateMenu = () => {
     if (!props.menuDisabled) props.onMenuIntent(props.menuAnchor);
   };
@@ -165,10 +172,10 @@ export function PaneTitleBar(props: PaneTitleBarProps) {
           width={titleWidth()}
           height={1}
           overflow="hidden"
-          fg={palette().foreground}
+          fg={titleForeground()}
           bg={palette().background}
         >
-          {props.selected || props.keyboardFocused ? (
+          {titleEmphasized() ? (
             <strong>{clipTerminal(props.title, titleWidth())}</strong>
           ) : (
             clipTerminal(props.title, titleWidth())
